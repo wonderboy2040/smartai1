@@ -91,7 +91,7 @@ export const NeuralChat = React.memo(({ geminiKey, portfolioContext }: NeuralCha
 
     try {
       const ai = new GoogleGenAI({ apiKey: geminiKey });
-      const modelName = "gemini-1.5-flash";
+      const modelName = "gemini-2.0-flash";
       
       const formattedContents: any[] = [];
       let expectedRole = 'user';
