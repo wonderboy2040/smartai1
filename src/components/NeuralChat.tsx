@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { MessageSquare, Send, BrainCircuit, X, Volume2 } from 'lucide-react';
+import { Send, BrainCircuit, X, Volume2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GoogleGenAI, Modality } from "@google/genai";
 
 interface ChatMessage {
   role: 'user' | 'model';
@@ -9,11 +8,11 @@ interface ChatMessage {
 }
 
 export interface NeuralChatProps {
-  geminiKey: string;
+  groqKey: string;
   portfolioContext: string;
 }
 
-export const NeuralChat = React.memo(({ geminiKey, portfolioContext }: NeuralChatProps) => {
+export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'model',
     text: '🤖 **System Online: Quantum Neural Core Active**\n\nNagraj Bhai, main piche background me USA aur India dono markets track kar raha hu. Live VIX, RSI aur Institutional MACD data meri system me fed hai.\n\nPucho kya analyse karna hai ("Market kaisa hai?", "Kisme invest karu?", ya phir "Mera portfolio kaisa hai?").'
@@ -33,42 +32,16 @@ export const NeuralChat = React.memo(({ geminiKey, portfolioContext }: NeuralCha
   }, [chatMessages, showChat, scrollToBottom]);
 
   const speakText = async (text: string) => {
-    if (!text || !geminiKey) return;
+    // TTS Optional via Web Speech API so we don't rely on Gemini
+    if (!text) return;
     setIsSpeaking(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: geminiKey });
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text: `Say in a professional, slightly robotic AI voice: ${text.replace(/[*_]/g, '')}` }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Fenrir' } }
-          }
-        }
-      });
-
-      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (base64Audio) {
-        const binaryString = window.atob(base64Audio);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
-        
-        const int16Array = new Int16Array(bytes.buffer);
-        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-        const audioBuffer = audioContext.createBuffer(1, int16Array.length, 24000);
-        const channelData = audioBuffer.getChannelData(0);
-        for (let i = 0; i < int16Array.length; i++) channelData[i] = int16Array[i] / 32768.0;
-        
-        const source = audioContext.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(audioContext.destination);
-        source.start();
-        source.onended = () => setIsSpeaking(false);
-      }
+      const msg = new SpeechSynthesisUtterance(text.replace(/[*_#]/g, ''));
+      msg.rate = 1.1;
+      msg.pitch = 0.9;
+      msg.onend = () => setIsSpeaking(false);
+      window.speechSynthesis.speak(msg);
     } catch (e) {
-      console.error("TTS Error:", e);
       setIsSpeaking(false);
     }
   };
@@ -76,11 +49,11 @@ export const NeuralChat = React.memo(({ geminiKey, portfolioContext }: NeuralCha
   const handleChat = async () => {
     if (!chatInput.trim()) return;
 
-    if (!geminiKey) {
+    if (!groqKey) {
       const prompt = chatInput;
       setChatInput('');
       setChatMessages(prev => [...prev, { role: 'user', text: prompt }]);
-      setChatMessages(prev => [...prev, { role: 'model', text: "Neural Link Offline: Top Bar pe settings icon click karke GEMINI API KEY dalo pehle." }]);
+      setChatMessages(prev => [...prev, { role: 'model', text: "Neural Link Offline: Top Bar pe settings icon click karke GROQ API KEY dalo pehle. \n(Get your free key at console.groq.com)" }]);
       return;
     }
 
@@ -90,26 +63,12 @@ export const NeuralChat = React.memo(({ geminiKey, portfolioContext }: NeuralCha
     setIsThinking(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: geminiKey });
-      const modelName = "gemini-2.0-flash";
-      
-      const formattedContents: any[] = [];
-      let expectedRole = 'user';
       const recentMessages = [...chatMessages.slice(-5), { role: 'user', text: prompt }];
       
-      for (const msg of recentMessages) {
-        const role = msg.role === 'model' ? 'model' : 'user';
-        if (role === expectedRole) {
-          formattedContents.push({ role, parts: [{ text: msg.text }] });
-          expectedRole = role === 'user' ? 'model' : 'user';
-        } else if (formattedContents.length > 0) {
-          formattedContents[formattedContents.length - 1].parts[0].text += '\n\n' + msg.text;
-        } else if (role === 'model') {
-          continue;
-        }
-      }
-
-      const sysInstruction = `You are the Deep Mind AI Market Insider. You are talking to "Nagraj Bhai".
+      const groqMessages = [
+        {
+          role: 'system',
+          content: `You are the Deep Mind AI Market Insider. You are talking to "Nagraj Bhai".
 You MUST speak natively in heavily mixed Hinglish, similar to a highly experienced professional Indian Dalal street institutional trader. 
 Use markdown formatting (bolding, lists, emojis).
 Be extremely precise with market insights. Use real-time data to justify your responses. 
@@ -118,22 +77,36 @@ Be extremely precise with market insights. Use real-time data to justify your re
 ${portfolioContext}
 --- END CONTEXT ---
 
-The user has provided the above hidden prompt to give you exact visibility into their holding metrics, P&L, MACD/RSI indicators, and live prices of IN & US assets. If they ask "kisme invest karu?" or "kisko sell karu?", scan this context immediately to provide accurate advice, noting oversold RSIs or Bearish MACDs respectively.
-If asked about general news, rely on your tools.`;
+The user has provided the above hidden prompt to give you exact visibility into their holding metrics, P&L, MACD/RSI indicators, and live prices of IN & US assets. If they ask "kisme invest karu?" or "kisko sell karu?", scan this context immediately to provide accurate advice, noting oversold RSIs or Bearish MACDs respectively.`
+        },
+        ...recentMessages.map(m => ({ role: m.role === 'model' ? 'assistant' : 'user', content: m.text }))
+      ];
 
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents: formattedContents,
-        config: {
-          systemInstruction: sysInstruction,
-          tools: [{ googleSearch: {} }]
-        }
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${groqKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'llama3-70b-8192',
+          messages: groqMessages,
+          temperature: 0.7,
+          max_tokens: 1024
+        })
       });
 
-      const aiText = response.text || "Neural link unstable. Please retry.";
+      if (!res.ok) {
+         const err = await res.json();
+         throw new Error(err.error?.message || 'API request failed');
+      }
+      
+      const data = await res.json();
+      const aiText = data.choices?.[0]?.message?.content || "Neural link unstable. Please retry.";
+      
       setChatMessages(prev => [...prev, { role: 'model', text: aiText }]);
     } catch (e) {
-      console.error("Gemini Error:", e);
+      console.error("Groq Error:", e);
       setChatMessages(prev => [...prev, { role: 'model', text: `Error: ${e instanceof Error ? e.message : String(e)}` }]);
     } finally {
       setIsThinking(false);
