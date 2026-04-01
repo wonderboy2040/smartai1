@@ -557,7 +557,7 @@ export default function App() {
           <div className="text-center mb-8">
             <div className="relative inline-block">
               <div className="text-7xl mb-2 animate-float">💎</div>
-              <div className="absolute -inset-4 bg-cyan-500/10 rounded-full blur-xl" />
+              <div className="absolute -inset-4 bg-cyan-500/10 rounded-full blur-xl pointer-events-none" />
             </div>
             <h1 className="text-3xl font-black gradient-text-cyan font-display mt-4">
               Wealth AI
@@ -567,22 +567,24 @@ export default function App() {
             </div>
             <p className="text-slate-500 text-sm mt-3">Secure PIN enter karein</p>
           </div>
-          <input
-            type="password"
-            value={pinInput}
-            onChange={e => setPinInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && verifyPin()}
-            placeholder="••••"
-            maxLength={4}
-            className="w-full text-center px-4 py-5 glass-input rounded-2xl text-3xl tracking-[0.5em] text-cyan-400 font-bold mb-5 font-mono placeholder-slate-700"
-          />
+          <div className="relative z-10">
+            <input
+              type="password"
+              value={pinInput}
+              onChange={e => setPinInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && verifyPin()}
+              placeholder="••••"
+              maxLength={4}
+              className="w-full text-center px-4 py-5 glass-input rounded-2xl text-3xl tracking-[0.5em] text-cyan-400 font-bold mb-5 font-mono placeholder-slate-700 relative z-10"
+            />
+          </div>
           <button
             onClick={verifyPin}
-            className="btn-primary w-full py-4 bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 animate-gradient rounded-2xl font-bold text-white text-lg"
+            className="btn-primary w-full py-4 bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 animate-gradient rounded-2xl font-bold text-white text-lg relative z-10"
           >
             🔓 Unlock Terminal
           </button>
-          <div className="text-center mt-5">
+          <div className="text-center mt-5 relative z-10">
             <span className="text-[10px] text-slate-600 font-mono tracking-wider">ENCRYPTED • AES-256 • NEURAL LOCKED</span>
           </div>
         </div>
