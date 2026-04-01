@@ -302,26 +302,7 @@ export default function App() {
     }
   }, [portfolio]);
 
-  // Auto Telegram Notifications (market hours only, every 30 min)
-  useEffect(() => {
-    if (!isAuthenticated || !autoTelegram || portfolio.length === 0) return;
 
-    const sendIfMarketOpen = async () => {
-      if (!isAnyMarketOpen()) return;
-      const msg = generateDeepAnalysis(portfolio, livePrices, usdInrRate, metrics);
-      await sendTelegramAlert(TG_TOKEN, TG_CHAT_ID, msg);
-    };
-
-    // Send initial report after 2 min delay
-    const initialTimeout = setTimeout(sendIfMarketOpen, 120000);
-    // Then every 30 min
-    telegramIntervalRef.current = window.setInterval(sendIfMarketOpen, 1800000);
-
-    return () => {
-      clearTimeout(initialTimeout);
-      if (telegramIntervalRef.current) clearInterval(telegramIntervalRef.current);
-    };
-  }, [isAuthenticated, autoTelegram, portfolio.length]);
 
   // Continuous Forex Rate Refresh (every 60s)
   useEffect(() => {
@@ -486,6 +467,33 @@ export default function App() {
   }, [portfolio, livePrices, usdInrRate]);
 
   const metrics = calculateMetrics();
+
+  const latestDataRef = useRef({ portfolio, livePrices, usdInrRate, metrics });
+  useEffect(() => {
+    latestDataRef.current = { portfolio, livePrices, usdInrRate, metrics };
+  }, [portfolio, livePrices, usdInrRate, metrics]);
+
+  // Auto Telegram Notifications (market hours only, every 30 min)
+  useEffect(() => {
+    if (!isAuthenticated || !autoTelegram || portfolio.length === 0) return;
+
+    const sendIfMarketOpen = async () => {
+      const d = latestDataRef.current;
+      if (!isAnyMarketOpen()) return;
+      const msg = generateDeepAnalysis(d.portfolio, d.livePrices, d.usdInrRate, d.metrics);
+      await sendTelegramAlert(TG_TOKEN, TG_CHAT_ID, msg);
+    };
+
+    // Send initial report after 2 min delay
+    const initialTimeout = setTimeout(sendIfMarketOpen, 120000);
+    // Then every 30 min
+    telegramIntervalRef.current = window.setInterval(sendIfMarketOpen, 1800000);
+
+    return () => {
+      clearTimeout(initialTimeout);
+      if (telegramIntervalRef.current) clearInterval(telegramIntervalRef.current);
+    };
+  }, [isAuthenticated, autoTelegram, portfolio.length]);
 
   // VIX based sentiment
   const usVix = livePrices['US_VIX']?.price || 15;
@@ -862,14 +870,14 @@ export default function App() {
                     <div className="text-[10px] text-slate-600 mt-1">{currentRsi < 30 ? 'OVERSOLD 🟢' : currentRsi > 70 ? 'OVERBOUGHT 🔴' : 'NEUTRAL ↔'}</div>
                   </div>
 
-                  {/* MACD Trend */}
+                  {/* MACD / SMA Trend */}
                   <div className="bg-black/30 rounded-xl p-4 text-center border border-white/5">
                     <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-2">MACD Trend</div>
-                    <div className={`text-2xl font-black ${currentChange > 0.5 ? 'text-emerald-400' : currentChange < -0.5 ? 'text-red-400' : 'text-slate-400'}`}>
-                      {currentChange > 0.5 ? '📈 BULL' : currentChange < -0.5 ? '📉 BEAR' : '➡️ FLAT'}
+                    <div className={`text-2xl font-black ${currentData?.macd !== undefined ? (currentData.macd > 0 ? 'text-emerald-400' : 'text-red-400') : (currentChange > 0.5 ? 'text-emerald-400' : currentChange < -0.5 ? 'text-red-400' : 'text-slate-400')}`}>
+                      {currentData?.macd !== undefined ? (currentData.macd > 0 ? '📈 BULL' : '📉 BEAR') : (currentChange > 0.5 ? '📈 BULL' : currentChange < -0.5 ? '📉 BEAR' : '➡️ FLAT')}
                     </div>
                     <div className="text-[10px] text-slate-600 mt-1">
-                      Momentum: {Math.abs(currentChange) > 2 ? 'STRONG' : Math.abs(currentChange) > 0.5 ? 'MODERATE' : 'WEAK'}
+                      {currentData?.macd !== undefined ? `MACD: ${currentData.macd.toFixed(2)}` : `Momentum: ${Math.abs(currentChange) > 2 ? 'STRONG' : Math.abs(currentChange) > 0.5 ? 'MODERATE' : 'WEAK'}`}
                     </div>
                   </div>
 
@@ -1301,7 +1309,7 @@ export default function App() {
                 <div className="grid md:grid-cols-2 gap-3 mb-4">
                   {portfolio.slice(0, 8).map(p => {
                     const key = `${p.market}_${p.symbol}`;
-                    const signal = analyzeAsset(p, livePrices[key], usdInrRate);
+                    const signal = analyzeAsset(p, livePrices[key]);
                     const signalColors: Record<string, { bg: string; text: string; border: string }> = {
                       'BUY': { bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/20' },
                       'SELL': { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20' },
@@ -1351,7 +1359,7 @@ export default function App() {
 
                 {/* Allocation Recommendations */}
                 {(() => {
-                  const allocs = getSmartAllocations(livePrices, usdInrRate, indiaSIP, usSIP);
+                  const allocs = getSmartAllocations(livePrices);
                   return (
                     <div className="bg-black/20 rounded-xl p-4 border border-purple-500/15">
                       <div className="text-[10px] text-purple-400 font-bold uppercase tracking-wider mb-3">
