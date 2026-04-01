@@ -1,315 +1,44 @@
-/* Fonts - Import must be first */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@500;700&display=swap');
-
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&family=Space+Grotesk:wght@500;700&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-* {
-  font-family: 'Inter', sans-serif;
-}
+* { font-family: 'Inter', sans-serif; }
+.font-mono { font-family: 'Space Grotesk', monospace; font-variant-numeric: tabular-nums; }
 
-.font-mono {
-  font-family: 'Space Grotesk', monospace;
-  font-variant-numeric: tabular-nums;
-}
-
-/* Scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.5);
-}
-
-::-webkit-scrollbar-thumb {
-  background: rgba(99, 102, 241, 0.5);
-  border-radius: 10px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(99, 102, 241, 0.8);
-}
-
-/* Animations */
-@keyframes ticker {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
-}
-
-.ticker-tape {
-  animation: ticker 40s linear infinite;
-}
-
-@keyframes flash-green {
-  0% {
-    background-color: rgba(34, 197, 94, 0.4);
-    text-shadow: 0 0 8px rgba(34, 197, 94, 0.8);
-  }
-  100% {
-    background-color: transparent;
-    text-shadow: none;
-  }
-}
-
-@keyframes flash-red {
-  0% {
-    background-color: rgba(239, 68, 68, 0.4);
-    text-shadow: 0 0 8px rgba(239, 68, 68, 0.8);
-  }
-  100% {
-    background-color: transparent;
-    text-shadow: none;
-  }
-}
-
-.flash-green {
-  animation: flash-green 0.8s ease-out;
-}
-
-.flash-red {
-  animation: flash-red 0.8s ease-out;
-}
-
-@keyframes slide-up {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.slide-up {
-  animation: slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@keyframes pulse-glow {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-
-.pulse-glow {
-  animation: pulse-glow 1.5s ease-in-out infinite;
-}
-
-@keyframes scanline {
-  0% { transform: translateY(-100%); }
-  100% { transform: translateY(100%); }
-}
-
-.quantum-scan::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: rgba(56, 189, 248, 0.5);
-  box-shadow: 0 0 10px rgba(56, 189, 248, 0.8);
-  animation: scanline 3s linear infinite;
-  pointer-events: none;
-  z-index: 50;
-}
-
-/* Gradient Backgrounds */
-.gradient-bg {
-  background-image: radial-gradient(circle at 15% 0%, #1e1b4b 0%, #020617 40%, #000000 100%);
-}
-
-/* Glass Effect */
-.card-glass {
-  background: rgba(15, 23, 42, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(10px);
-}
-
-/* Glow Effects */
-.glow-cyan {
-  box-shadow: 0 0 20px rgba(6, 182, 212, 0.3);
-}
-
-.glow-emerald {
-  box-shadow: 0 0 20px rgba(16, 185, 129, 0.3);
-}
-
-.glow-red {
-  box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
-}
-
-.deep-glow-green {
-  border-color: rgba(16, 185, 129, 0.5) !important;
-  background-image: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(0, 0, 0, 0));
-  animation: pulse-glow 1.5s ease-in-out infinite alternate;
-}
-
-.deep-glow-red {
-  border-color: rgba(239, 68, 68, 0.5) !important;
-  background-image: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(0, 0, 0, 0));
-  animation: pulse-glow 1.5s ease-in-out infinite alternate;
-}
-
-/* Expert Button Hover */
-.expert-btn {
-  transition: transform 0.2s ease;
-}
-
-.expert-btn:hover {
-  transform: translateY(-4px) scale(1.05);
-}
-
-/* Tab Active State */
-.tab-active {
-  background-color: rgba(34, 197, 94, 0.1);
-  border: 1px solid rgba(34, 197, 94, 0.3);
-  color: #4ade80 !important;
-}
-
-/* Mobile Optimizations */
-@media (max-width: 768px) {
-  body {
-    font-size: 14px;
-  }
-  
-  .container {
-    padding-left: 12px !important;
-    padding-right: 12px !important;
-  }
-}
-
-/* TradingView Widget Container */
-.tradingview-widget-container {
-  height: 100% !important;
-  width: 100% !important;
-}
-
-.tradingview-widget-container__widget {
-  height: 100% !important;
-  width: 100% !important;
-}
-
-/* Selection Color */
-::selection {
-  background: rgba(99, 102, 241, 0.3);
-}
-
-/* Focus States */
-input:focus, select:focus, button:focus {
-  outline: none;
-}
-
-/* Touch Optimization */
-button, [onclick] {
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-/* Number Input Spinner Remove */
-input[type="number"]::-webkit-inner-spin-button,
-input[type="number"]::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
-input[type="number"] {
-  -moz-appearance: textfield;
-}
-
-/* Loading Skeleton */
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-
-.skeleton {
-  background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-}
-
-/* Price Flash Animation */
-@keyframes price-update {
-  0% { transform: scale(1); }
-  50% { transform: scale(1.05); }
-  100% { transform: scale(1); }
-}
-
-.price-update {
-  animation: price-update 0.3s ease-out;
-}
-
-/* Floating Action Button */
-.fab-shadow {
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 30px rgba(6, 182, 212, 0.3);
-}
-
-/* Chart Container */
-#tv_widget_core {
-  height: 100%;
-  width: 100%;
-  border-radius: 12px;
-  overflow: hidden;
-}
-
-/* Custom Radio/Checkbox */
-input[type="checkbox"], input[type="radio"] {
-  accent-color: #06b6d4;
-}
-
-/* Progress Bar Glow */
-.progress-glow {
-  box-shadow: 0 0 15px rgba(251, 146, 60, 0.8);
-}
-
-/* Responsive Table */
-@media (max-width: 640px) {
-  table {
-    font-size: 12px;
-  }
-  
-  th, td {
-    padding: 8px !important;
-  }
-}
-
-/* Anti-aliased Text */
 body {
+  background-color: #0b0e14;
+  color: #e2e8f0;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Modal Backdrop */
-.modal-backdrop {
-  backdrop-filter: blur(20px);
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: #0b0e14; }
+::-webkit-scrollbar-thumb { background: rgba(6, 182, 212, 0.3); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(6, 182, 212, 0.8); }
+
+.gradient-bg {
+  background-image: radial-gradient(circle at top right, rgba(6, 182, 212, 0.05) 0%, transparent 40%),
+                    radial-gradient(circle at bottom left, rgba(139, 92, 246, 0.05) 0%, transparent 40%);
 }
 
-/* Gradient Text */
-.gradient-text {
-  background: linear-gradient(135deg, #06b6d4, #8b5cf6);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+.card-glass {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
 }
 
-/* Border Gradient */
-.border-gradient {
-  border-image: linear-gradient(135deg, #06b6d4, #8b5cf6) 1;
+.glow-cyan {
+  box-shadow: 0 0 15px rgba(6, 182, 212, 0.4);
+  transition: all 0.3s ease;
+}
+.glow-cyan:hover {
+  box-shadow: 0 0 25px rgba(6, 182, 212, 0.7);
 }
 
-/* Neon Effect */
-.neon-cyan {
-  text-shadow: 0 0 10px #06b6d4, 0 0 20px #06b6d4, 0 0 30px #06b6d4;
+/* Fix for TradingView iframe embedding */
+.tradingview-widget-container iframe {
+  border-radius: 0.75rem;
 }
 
-.neon-green {
-  text-shadow: 0 0 10px #10b981, 0 0 20px #10b981, 0 0 30px #10b981;
-}
-
-.neon-red {
-  text-shadow: 0 0 10px #ef4444, 0 0 20px #ef4444, 0 0 30px #ef4444;
-}
+input, button { outline: none !important; }
