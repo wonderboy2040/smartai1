@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, BrainCircuit, X, Volume2 } from 'lucide-react';
+import { Send, BrainCircuit, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface ChatMessage {
@@ -20,7 +20,6 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
   const [chatInput, setChatInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [showChat, setShowChat] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = useCallback(() => {
@@ -30,21 +29,6 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
   useEffect(() => {
     if (showChat) scrollToBottom();
   }, [chatMessages, showChat, scrollToBottom]);
-
-  const speakText = async (text: string) => {
-    // TTS Optional via Web Speech API so we don't rely on Gemini
-    if (!text) return;
-    setIsSpeaking(true);
-    try {
-      const msg = new SpeechSynthesisUtterance(text.replace(/[*_#]/g, ''));
-      msg.rate = 1.1;
-      msg.pitch = 0.9;
-      msg.onend = () => setIsSpeaking(false);
-      window.speechSynthesis.speak(msg);
-    } catch (e) {
-      setIsSpeaking(false);
-    }
-  };
 
   const handleChat = async () => {
     if (!chatInput.trim()) return;
@@ -172,16 +156,6 @@ Analyze the provided LIVE SENSOR DATA immediately. If the user asks general ques
                       : 'bg-slate-900/80 text-slate-200 rounded-tl-none border border-white/5'
                   }`}>
                     {msg.text}
-                    {msg.role === 'model' && (
-                      <button 
-                        onClick={() => speakText(msg.text)}
-                        className="mt-3 flex items-center gap-1.5 text-xs font-semibold text-cyan-400 hover:text-cyan-300 bg-cyan-950/50 w-fit px-2.5 py-1.5 rounded-lg border border-cyan-500/20 transition-colors"
-                        disabled={isSpeaking}
-                      >
-                        <Volume2 size={14} className={isSpeaking ? "animate-pulse" : ""} />
-                        {isSpeaking ? 'SPEAKING...' : 'PLAY AUDIO'}
-                      </button>
-                    )}
                   </div>
                 </div>
               ))}
