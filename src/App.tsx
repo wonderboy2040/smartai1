@@ -8,6 +8,10 @@ import {
   fetchSinglePrice, batchFetchPrices, fetchForexRate, 
   syncToCloud, loadFromCloud, sendTelegramAlert 
 } from './utils/api';
+import {
+  isAnyMarketOpen, getMarketStatus, analyzeAsset,
+  getSmartAllocations, generateDeepAnalysis
+} from './utils/telegram';
 
 export default function App() {
   // Auth State
@@ -57,6 +61,9 @@ export default function App() {
   const syncIntervalRef = useRef<number | null>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [pendingAnalyze, setPendingAnalyze] = useState<string | null>(null);
+  const [autoTelegram, setAutoTelegram] = useState(true);
+  const telegramIntervalRef = useRef<number | null>(null);
+  const forexIntervalRef = useRef<number | null>(null);
 
   // Initialize
   useEffect(() => {
@@ -294,6 +301,42 @@ export default function App() {
       syncToCloud(portfolio, usdInrRate);
     }
   }, [portfolio]);
+
+  // Auto Telegram Notifications (market hours only, every 30 min)
+  useEffect(() => {
+    if (!isAuthenticated || !autoTelegram || portfolio.length === 0) return;
+
+    const sendIfMarketOpen = async () => {
+      if (!isAnyMarketOpen()) return;
+      const msg = generateDeepAnalysis(portfolio, livePrices, usdInrRate, metrics);
+      await sendTelegramAlert(TG_TOKEN, TG_CHAT_ID, msg);
+    };
+
+    // Send initial report after 2 min delay
+    const initialTimeout = setTimeout(sendIfMarketOpen, 120000);
+    // Then every 30 min
+    telegramIntervalRef.current = window.setInterval(sendIfMarketOpen, 1800000);
+
+    return () => {
+      clearTimeout(initialTimeout);
+      if (telegramIntervalRef.current) clearInterval(telegramIntervalRef.current);
+    };
+  }, [isAuthenticated, autoTelegram, portfolio.length]);
+
+  // Continuous Forex Rate Refresh (every 60s)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    
+    const refreshForex = async () => {
+      const rate = await fetchForexRate();
+      setUsdInrRate(rate);
+    };
+
+    forexIntervalRef.current = window.setInterval(refreshForex, 60000);
+    return () => {
+      if (forexIntervalRef.current) clearInterval(forexIntervalRef.current);
+    };
+  }, [isAuthenticated]);
 
   // Expert Modal
   const openExpert = (type: 'IN' | 'US') => {
@@ -625,6 +668,13 @@ export default function App() {
             </div>
 
             <div className="flex gap-2">
+              <button 
+                onClick={() => setAutoTelegram(prev => !prev)} 
+                className={`btn-glass p-2.5 rounded-xl text-lg transition-all ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`} 
+                title={autoTelegram ? 'Auto Alerts ON' : 'Auto Alerts OFF'}
+              >
+                {autoTelegram ? '🔔' : '🔕'}
+              </button>
               <button onClick={() => window.location.reload()} className="btn-glass p-2.5 rounded-xl text-lg" title="Refresh">🔄</button>
               <button onClick={logout} className="btn-glass p-2.5 rounded-xl text-lg" title="Logout">🔐</button>
             </div>
@@ -790,6 +840,79 @@ export default function App() {
                 className="h-[500px] rounded-xl bg-black/30 border border-white/5 overflow-hidden"
               />
             </div>
+
+            {/* Quantum Forensics Panel */}
+            {currentPrice > 0 && (
+              <div className="glass-card rounded-2xl p-5 border-cyan-500/10 animate-fade-in-up delay-200">
+                <h2 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+                  <span className="w-7 h-7 rounded-lg bg-purple-500/10 flex items-center justify-center text-sm">🧬</span>
+                  Quantum Forensics — {currentSymbol.replace('.NS', '')}
+                  <span className="ml-auto badge bg-purple-500/10 text-purple-400 border border-purple-500/20 text-[10px]">DEEP SCAN</span>
+                </h2>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  {/* RSI Gauge */}
+                  <div className="bg-black/30 rounded-xl p-4 text-center border border-white/5">
+                    <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-2">RSI Gauge</div>
+                    <div className="relative w-full h-3 bg-gradient-to-r from-emerald-600 via-amber-500 to-red-600 rounded-full overflow-hidden mb-2">
+                      <div className="absolute top-0 w-1 h-full bg-white shadow-lg shadow-white/50" style={{ left: `${Math.min(100, currentRsi)}%` }} />
+                    </div>
+                    <div className={`text-2xl font-black font-mono ${currentRsi < 35 ? 'text-emerald-400' : currentRsi > 65 ? 'text-red-400' : 'text-amber-400'}`}>
+                      {currentRsi.toFixed(1)}
+                    </div>
+                    <div className="text-[10px] text-slate-600 mt-1">{currentRsi < 30 ? 'OVERSOLD 🟢' : currentRsi > 70 ? 'OVERBOUGHT 🔴' : 'NEUTRAL ↔'}</div>
+                  </div>
+
+                  {/* MACD Trend */}
+                  <div className="bg-black/30 rounded-xl p-4 text-center border border-white/5">
+                    <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-2">MACD Trend</div>
+                    <div className={`text-2xl font-black ${currentChange > 0.5 ? 'text-emerald-400' : currentChange < -0.5 ? 'text-red-400' : 'text-slate-400'}`}>
+                      {currentChange > 0.5 ? '📈 BULL' : currentChange < -0.5 ? '📉 BEAR' : '➡️ FLAT'}
+                    </div>
+                    <div className="text-[10px] text-slate-600 mt-1">
+                      Momentum: {Math.abs(currentChange) > 2 ? 'STRONG' : Math.abs(currentChange) > 0.5 ? 'MODERATE' : 'WEAK'}
+                    </div>
+                  </div>
+
+                  {/* Volume Analysis */}
+                  <div className="bg-black/30 rounded-xl p-4 text-center border border-white/5">
+                    <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-2">Volume Flow</div>
+                    <div className="text-2xl font-black text-cyan-400 font-mono">
+                      {currentData?.volume ? (currentData.volume > 1000000 ? `${(currentData.volume / 1000000).toFixed(1)}M` : `${(currentData.volume / 1000).toFixed(0)}K`) : 'N/A'}
+                    </div>
+                    <div className="text-[10px] text-slate-600 mt-1">
+                      {currentData?.volume && currentData.volume > 500000 ? '🔥 HIGH ACTIVITY' : '💤 LOW FLOW'}
+                    </div>
+                  </div>
+
+                  {/* Day Range */}
+                  <div className="bg-black/30 rounded-xl p-4 text-center border border-white/5">
+                    <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-2">Day Range</div>
+                    <div className="flex items-center gap-2 justify-center mb-1">
+                      <span className="text-xs font-mono text-emerald-400">{formatPrice(currentData?.low || currentPrice * 0.98, currentMarket === 'IN' ? '₹' : '$')}</span>
+                      <span className="text-slate-600">→</span>
+                      <span className="text-xs font-mono text-red-400">{formatPrice(currentData?.high || currentPrice * 1.02, currentMarket === 'IN' ? '₹' : '$')}</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                      <div className="bg-gradient-to-r from-emerald-500 to-cyan-500 h-full rounded-full" style={{ width: `${currentData?.high && currentData?.low ? ((currentPrice - currentData.low) / (currentData.high - currentData.low)) * 100 : 50}%` }} />
+                    </div>
+                    <div className="text-[10px] text-slate-600 mt-1">Position in range</div>
+                  </div>
+                </div>
+
+                {/* Market Status Bar */}
+                <div className="flex flex-wrap gap-2">
+                  <span className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${isAnyMarketOpen() ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-500/10 text-slate-400 border border-slate-500/20'}`}>
+                    {getMarketStatus()}
+                  </span>
+                  <span className="px-3 py-1.5 rounded-lg text-[10px] font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                    💱 USD/INR ₹{usdInrRate.toFixed(2)}
+                  </span>
+                  <span className={`px-3 py-1.5 rounded-lg text-[10px] font-bold ${currentChange >= 0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+                    {currentChange >= 0 ? '📈' : '📉'} {currentChange >= 0 ? '+' : ''}{currentChange.toFixed(2)}% Today
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* Quick Assets */}
             <div className="glass-card rounded-2xl p-5 border-cyan-500/10 animate-fade-in-up delay-300">
@@ -1164,6 +1287,93 @@ export default function App() {
                 </div>
               </div>
             </div>
+
+            {/* Smart AI Allocations */}
+            {portfolio.length > 0 && (
+              <div className="glass-card rounded-2xl p-5 border-purple-500/10 animate-fade-in-up delay-300">
+                <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+                  <span className="w-7 h-7 rounded-lg bg-purple-500/10 flex items-center justify-center text-sm">🤖</span>
+                  Smart AI Allocation Engine
+                  <span className="ml-auto badge bg-purple-500/10 text-purple-400 border border-purple-500/20 text-[10px]">DEEP AI</span>
+                </h3>
+
+                {/* Per-Asset Analysis Cards */}
+                <div className="grid md:grid-cols-2 gap-3 mb-4">
+                  {portfolio.slice(0, 8).map(p => {
+                    const key = `${p.market}_${p.symbol}`;
+                    const signal = analyzeAsset(p, livePrices[key], usdInrRate);
+                    const signalColors: Record<string, { bg: string; text: string; border: string }> = {
+                      'BUY': { bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/20' },
+                      'SELL': { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20' },
+                      'HOLD': { bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/20' },
+                    };
+                    const sc = signalColors[signal.action] || signalColors['HOLD'];
+
+                    return (
+                      <div key={p.id} className={`bg-black/20 rounded-xl p-4 border ${sc.border}`}>
+                        <div className="flex justify-between items-start mb-3">
+                          <div>
+                            <div className="font-bold text-white text-sm">{p.symbol.replace('.NS', '')}</div>
+                            <div className="text-[10px] text-slate-500">{p.market === 'IN' ? '🇮🇳 India' : '🦅 USA'}</div>
+                          </div>
+                          <span className={`${sc.bg} ${sc.text} px-2.5 py-1 rounded-lg text-[10px] font-black border ${sc.border}`}>
+                            {signal.action === 'BUY' ? '🟢' : signal.action === 'SELL' ? '🔴' : '🟡'} {signal.action}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-center mb-3">
+                          <div>
+                            <div className="text-[9px] text-slate-600 uppercase">RSI</div>
+                            <div className={`text-xs font-bold font-mono ${signal.rsi < 35 ? 'text-emerald-400' : signal.rsi > 65 ? 'text-red-400' : 'text-amber-400'}`}>{signal.rsi.toFixed(0)}</div>
+                          </div>
+                          <div>
+                            <div className="text-[9px] text-slate-600 uppercase">Trend</div>
+                            <div className="text-xs font-bold">{signal.trend === 'up' ? '📈' : signal.trend === 'down' ? '📉' : '↔'}</div>
+                          </div>
+                          <div>
+                            <div className="text-[9px] text-slate-600 uppercase">Price</div>
+                            <div className="text-xs font-bold text-cyan-400 font-mono">{p.market === 'IN' ? '₹' : '$'}{signal.price.toFixed(2)}</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 text-[10px] text-slate-500">
+                            Fib S/R: <span className="text-emerald-400 font-mono">{(signal.fibLow || 0).toFixed(1)}</span>
+                            {' → '}
+                            <span className="text-red-400 font-mono">{(signal.fibHigh || 0).toFixed(1)}</span>
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            Score: <span className={`font-bold ${sc.text}`}>{signal.confidence}/100</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Allocation Recommendations */}
+                {(() => {
+                  const allocs = getSmartAllocations(livePrices, usdInrRate, indiaSIP, usSIP);
+                  return (
+                    <div className="bg-black/20 rounded-xl p-4 border border-purple-500/15">
+                      <div className="text-[10px] text-purple-400 font-bold uppercase tracking-wider mb-3">
+                        💰 Recommended Monthly Allocation (₹{Math.round(indiaSIP).toLocaleString()} IN + ${usSIP} US)
+                      </div>
+                      <div className="space-y-2">
+                        {allocs.map((a, i) => (
+                          <div key={i} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm">{a.market === 'IN' ? '🇮🇳' : '🦅'}</span>
+                              <span className="font-bold text-white text-sm">{a.symbol.replace('.NS', '')}</span>
+                              <span className="text-[10px] text-slate-500 max-w-[200px] truncate">{a.signal}</span>
+                            </div>
+                            <span className="font-black text-cyan-400 font-mono text-sm">{a.market === 'IN' ? '₹' : '$'}{Math.round(a.currentPrice * a.allocPct).toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
           </div>
         )}
 
