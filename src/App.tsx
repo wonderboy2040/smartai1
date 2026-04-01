@@ -10,7 +10,7 @@ import {
 } from './utils/api';
 import {
   isAnyMarketOpen, getMarketStatus, analyzeAsset,
-  getSmartAllocations, generateDeepAnalysis
+  getSmartAllocations, generateDeepAnalysis, generateNeuralInsiderResponse
 } from './utils/telegram';
 
 export default function App() {
@@ -320,28 +320,19 @@ export default function App() {
   }, [isAuthenticated]);
 
   // Expert Modal
-  const openExpert = (type: 'IN' | 'US') => {
-    const info: ExpertInfo = type === 'US' ? {
-      id: 'US',
-      icon: '🦅',
-      name: 'Wall Street Quantum Insider',
-      role: 'Global Macro & Dark Pool Matrix',
-      colorBg: 'from-blue-900 to-cyan-900',
+  const openExpert = () => {
+    const info: ExpertInfo = {
+      id: 'DEEP_MIND',
+      name: 'Deep Mind Neural AI',
+      role: 'GLOBAL MACRO INSIDER',
+      icon: '🧠',
+      colorBg: 'from-cyan-900/80 to-indigo-950/90',
       border: 'border-cyan-500/50'
-    } : {
-      id: 'IN',
-      icon: '🇮🇳',
-      name: 'Dalal Street Neural Core',
-      role: 'NSE FII/DII Algorithmic Tracker',
-      colorBg: 'from-orange-900 to-emerald-900',
-      border: 'border-orange-500/50'
     };
     
     setExpertInfo(info);
     setExpertMessages([{
-      text: type === 'US' 
-        ? 'System Online. I am the US Macro Insider.\n\nTracking FED liquidity, Dark Pool block trades, and S&P 500 whale movements 24/7.'
-        : 'System Online. I am the Dalal Street Neural Core.\n\nMonitoring RBI sweeps, DII SIP deployments, and FII derivative footprints.',
+      text: '🤖 **System Online: Quantum Neural Core Active**\n\nBhai, main piche background me USA aur India dono markets track kar raha hu. Live VIX, RSI aur Institutional data scan ho raha hai.\n\nPucho kya analyse karna hai ("Market kaisa hai?", "Kisme invest karu?", ya phir "Kab profit book karu?").',
       sender: 'expert'
     }]);
     setShowExpertModal(true);
@@ -355,34 +346,10 @@ export default function App() {
     setExpertMessages(prev => [...prev, { text: msg, sender: 'user' }]);
     
     // Simulate AI response
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 800));
     
-    const response = generateExpertResponse(msg);
+    const response = generateNeuralInsiderResponse(msg, portfolio, livePrices);
     setExpertMessages(prev => [...prev, { text: response, sender: 'expert' }]);
-  };
-
-  const generateExpertResponse = (query: string): string => {
-    const q = query.toLowerCase();
-    const usVix = livePrices['US_VIX']?.price || 15;
-    const inVix = livePrices['IN_INDIAVIX']?.price || 15;
-    
-    if (q.includes('crash') || q.includes('risk')) {
-      return `🔍 Global Macro Analysis:\n\nUS VIX: ${usVix.toFixed(1)} | India VIX: ${inVix.toFixed(1)}\n\n${usVix > 20 ? '⚠️ HIGH RISK: Market volatility elevated. Consider defensive positions.' : '✅ NORMAL: Volatility within acceptable range. Standard SIP safe.'}`;
-    }
-    
-    if (q.includes('whale') || q.includes('buy')) {
-      const lowRsiAssets = portfolio.filter(p => {
-        const key = `${p.market}_${p.symbol}`;
-        return (livePrices[key]?.rsi || 50) < 40;
-      });
-      
-      if (lowRsiAssets.length > 0) {
-        return `🐋 Whale Accumulation Detected:\n\n${lowRsiAssets.map(a => `• ${a.symbol}: RSI ${(livePrices[`${a.market}_${a.symbol}`]?.rsi || 50).toFixed(1)}`).join('\n')}\n\nThese assets show institutional buying patterns.`;
-      }
-      return '📊 No significant whale activity detected in your portfolio right now.';
-    }
-    
-    return `🧠 AI Analysis:\n\nYour query: "${query}"\n\nBased on current market conditions (VIX: ${((usVix + inVix) / 2).toFixed(1)}), I recommend maintaining your current SIP allocation and monitoring key support levels.`;
   };
 
   // Load TradingView Chart
@@ -597,21 +564,14 @@ export default function App() {
       {/* Expert Floating Buttons */}
       <div className="fixed bottom-6 right-6 flex flex-col gap-3 z-50">
         <button
-          onClick={() => openExpert('IN')}
-          className="fab w-12 h-12 bg-gradient-to-br from-orange-600/80 via-slate-800/90 to-green-700/80 rounded-full flex items-center justify-center border border-orange-500/30 relative"
-          title="Dalal Street Insider"
+          onClick={() => openExpert()}
+          className="fab w-14 h-14 bg-gradient-to-br from-cyan-600/90 via-blue-800/90 to-indigo-900/90 rounded-2xl flex items-center justify-center border border-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.4)] relative overflow-hidden group"
+          title="Deep Mind AI Market Insider"
         >
-          <span className="text-xl">🇮🇳</span>
-          <span className="ripple-ring rounded-full text-orange-500/30" />
-        </button>
-        <button
-          onClick={() => openExpert('US')}
-          className="fab w-14 h-14 bg-gradient-to-br from-blue-700/80 via-indigo-900/90 to-cyan-800/80 rounded-2xl flex items-center justify-center border border-cyan-500/30 relative"
-          title="Wall Street Insider"
-        >
-          <span className="text-2xl">🦅</span>
-          <span className="absolute -top-1 -right-1 w-3 h-3 bg-cyan-400 rounded-full animate-pulse-dot" />
-          <span className="ripple-ring rounded-2xl text-cyan-500/30" />
+          <span className="text-2xl z-10 group-hover:scale-110 transition-transform">🧠</span>
+          <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-400 rounded-full animate-pulse-dot z-10 border-2 border-slate-900" />
+          <div className="absolute inset-0 bg-gradient-to-t from-cyan-400/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+          <span className="ripple-ring rounded-2xl text-cyan-400/50" />
         </button>
       </div>
 
