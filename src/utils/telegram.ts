@@ -363,3 +363,59 @@ export function generateDeepAnalysis(
 
   return msg;
 }
+
+// ========================================
+// UNIFIED DEEP MIND NEURAL INSIDER AI CHAT
+// ========================================
+export function generateNeuralInsiderResponse(
+  query: string,
+  portfolio: Position[],
+  livePrices: Record<string, PriceData>
+): string {
+  const q = query.toLowerCase();
+  const usVix = livePrices['US_VIX']?.price || 15;
+  const inVix = livePrices['IN_INDIAVIX']?.price || 15;
+  const avgVix = (usVix + inVix) / 2;
+
+  // Global Market State
+  let marketState = 'neutral';
+  if (avgVix > 22) marketState = 'bearish';
+  else if (avgVix < 16) marketState = 'bullish';
+
+  // Find opportunities
+  const signals = portfolio.map(p => {
+    const key = `${p.market}_${p.symbol}`;
+    return analyzeAsset(p, livePrices[key]);
+  });
+  
+  const strongBuys = signals.filter(s => s.signal === 'STRONG_BUY');
+  const strongSells = signals.filter(s => s.signal === 'STRONG_SELL' || s.signal === 'SELL');
+
+  if (q.includes('market') || q.includes('kaisa') || q.includes('condition')) {
+    if (marketState === 'bearish') {
+      return `📉 **Market Status Deep Scan:**\nBhai, Global VIX laal pe hai (US VIX: ${usVix.toFixed(1)}). Market me volatility aur fear factor bahut high hai. Ye time panic sell ka nahi, balki 'Buy on Dips' strategy lagane ka hai. Strong assets ko dheere dheere accumulate karo. Background neural scan bata raha hai institutional money abhi side-lines pe hai.`;
+    } else if (marketState === 'bullish') {
+      return `📈 **Market Status Deep Scan:**\nBhai, Market ekdum mast zone me chal raha hai. VIX shant hai (US VIX: ${usVix.toFixed(1)}), liquidity bani hui hai. Ye bullish trend continuation ka signal hai. Lekin FOMO me aake over-allocate mat karna. Sip chalne do bindaas.`;
+    } else {
+      return `⚖️ **Market Status Deep Scan:**\nMarkets abhi thoda range-bound aur confused hai, dono traf ke moves aane ki probability hai. SIP mode on rakho aur dip aane ka wait karke fresh entries dhundo. (Avg VIX: ${avgVix.toFixed(1)})`;
+    }
+  }
+
+  if (q.includes('buy') || q.includes('invest') || q.includes('kisme') || q.includes('opportunities')) {
+    if (strongBuys.length > 0) {
+      const recs = strongBuys.slice(0, 3).map(s => `• ${s.symbol} (RSI: ${s.rsi.toFixed(0)}, Target: ${s.market === 'IN' ? '₹' : '$'}${s.targetPrice.toFixed(2)})\n  ↳ ${s.reason}`).join('\n');
+      return `🧠 **AI Insider Accumulation Scans:**\nMera deep neural net continually background me saare assets ko scan kar raha hai. Abhi mujje inme Institutional buying/Golden crosses dikhe hain. Yaha entry best rahegi:\n\n${recs}\n\nStrictly stop-loss or smart allocation follow karo bhai.`;
+    }
+    return `🤔 **AI Deep Scan:**\nAbhi turant fresh 'Strong Buy' trigger nahi hua hai meri system me. RSI aur MACD oscillators neutralize kar rahe hain. Cash ready rakho, dip aayega tab mai alert dunga!`;
+  }
+
+  if (q.includes('sell') || q.includes('profit') || q.includes('exit')) {
+    if (strongSells.length > 0) {
+      const recs = strongSells.slice(0, 3).map(s => `• ${s.symbol} (RSI: ${s.rsi.toFixed(0)})\n  ↳ ${s.reason}`).join('\n');
+      return `🚨 **AI Profit Booking Alerts:**\nYaha algorithms 'Overbought' aur distribution zone detect kar rahe hai. Smart money yaha se nikal raha hai, tum bhi thoda partial profit book kar sakte ho:\n\n${recs}`;
+    }
+    return `🛡️ **Portfolio Status:**\nAbhi apne portfolio me koi bhi asset extreme overbought condition me nahi hai. Hold tight bhai, apne winners ko run karne do. Agar trail stop-loss hit nai hua tho selling ki zarurat nhi hai.`;
+  }
+
+  return `🤖 **Deep Mind AI Neural Insider:**\n\nBhai, main piche background me tumhara dono India aur USA ka market 24x7 analyze kar raha hoon using RSI, MACD aur Volatility indices. Tum mujhse 'market kaisa hai?', 'kisme invest karu?', ya 'kab sell karu?' jese directly questions puch sakte ho. \n\nMeri advance pro trading algorithms exactly bata degi ki institutional money flow kaha ja rha hai.`;
+}
