@@ -58,13 +58,27 @@ export interface AssetSignal {
 
 export function analyzeAsset(
   position: Position,
-  priceData: PriceData | undefined,
-  usdInrRate: number
+  priceData: PriceData | undefined
 ): AssetSignal {
   const price = priceData?.price || position.avgPrice;
   const rsi = priceData?.rsi || 50;
   const change = priceData?.change || 0;
   const cagr = getAssetCagrProxy(position.symbol, position.market);
+
+  // Advanced Technicals
+  const sma20 = priceData?.sma20;
+  const sma50 = priceData?.sma50;
+  const macd = priceData?.macd;
+  
+  // Trend Determination via SMA Crossover & MACD
+  let isBullishTrend = change > 0.5;
+  let isBearishTrend = change < -0.5;
+  
+  if (sma20 && sma50) {
+    // Golden Cross / Death Cross proximity
+    isBullishTrend = sma20 > sma50 || (macd !== undefined && macd > 0);
+    isBearishTrend = sma50 > sma20 || (macd !== undefined && macd < 0);
+  }
 
   // Calculate support/target levels
   const low = priceData?.low || price * 0.98;
@@ -82,34 +96,52 @@ export function analyzeAsset(
     signal = 'STRONG_BUY';
     confidence = 95;
     targetPrice = supportLevel;
-    reason = `RSI ${rsi.toFixed(0)} oversold — institutional accumulation zone`;
+    reason = `RSI ${rsi.toFixed(0)} oversold — institutional accumulation zone.`;
   } else if (rsi < 40) {
     signal = 'BUY';
     confidence = 80;
     targetPrice = low;
-    reason = `RSI ${rsi.toFixed(0)} approaching oversold — good entry`;
+    reason = `RSI ${rsi.toFixed(0)} approaching oversold — good entry.`;
+    if (isBullishTrend) {
+      reason += ' Bullish momentum building.';
+      confidence += 5;
+    }
   } else if (rsi > 75) {
     signal = 'STRONG_SELL';
     confidence = 90;
     targetPrice = resistanceLevel;
-    reason = `RSI ${rsi.toFixed(0)} overbought — distribution zone`;
+    reason = `RSI ${rsi.toFixed(0)} overbought — distribution zone.`;
   } else if (rsi > 65) {
     signal = 'SELL';
     confidence = 70;
     targetPrice = high;
-    reason = `RSI ${rsi.toFixed(0)} elevated — consider partial booking`;
+    reason = `RSI ${rsi.toFixed(0)} elevated — consider partial booking.`;
+    if (isBearishTrend) {
+      reason += ' Bearish momentum detected.';
+      confidence += 5;
+    }
   } else {
-    // Check trend via change
-    if (change < -3) {
+    // SMA & MACD purely trend-following entries in neutral RSI
+    if (isBullishTrend && rsi < 55) {
+      signal = 'BUY';
+      confidence = 75;
+      targetPrice = sma20 || price * 0.98;
+      reason = `Golden Cross / Bullish MACD detected. Accumulate on dips.`;
+    } else if (isBearishTrend && rsi > 55) {
+      signal = 'SELL';
+      confidence = 65;
+      targetPrice = sma20 || price * 1.02;
+      reason = `Death Cross / Bearish MACD momentum. Book partials.`;
+    } else if (change < -3) {
       signal = 'BUY';
       confidence = 75;
       targetPrice = price * 0.98;
-      reason = `Sharp dip ${change.toFixed(1)}% — potential reversal`;
+      reason = `Sharp dip ${change.toFixed(1)}% — potential reversal.`;
     } else if (change > 3) {
       signal = 'SELL';
       confidence = 65;
       targetPrice = price * 1.02;
-      reason = `Strong rally ${change.toFixed(1)}% — book partial profits`;
+      reason = `Strong rally ${change.toFixed(1)}% — book partial profits.`;
     }
   }
 
@@ -118,7 +150,7 @@ export function analyzeAsset(
 
   // Derive simplified action & trend
   const action: AssetSignal['action'] = (signal === 'STRONG_BUY' || signal === 'BUY') ? 'BUY' : (signal === 'STRONG_SELL' || signal === 'SELL') ? 'SELL' : 'HOLD';
-  const trend: AssetSignal['trend'] = change > 0.5 ? 'up' : change < -0.5 ? 'down' : 'flat';
+  const trend: AssetSignal['trend'] = isBullishTrend ? 'up' : isBearishTrend ? 'down' : 'flat';
 
   return {
     symbol: position.symbol.replace('.NS', ''),
@@ -153,10 +185,7 @@ export interface AllocationRec {
 }
 
 export function getSmartAllocations(
-  livePrices: Record<string, PriceData>,
-  usdInrRate: number,
-  indiaBudget: number,
-  usBudget: number
+  livePrices: Record<string, PriceData>
 ): AllocationRec[] {
   const recs: AllocationRec[] = [];
 
@@ -168,20 +197,22 @@ export function getSmartAllocations(
     const price = data?.price || 0;
     const rsi = data?.rsi || 50;
     const low = data?.low || price * 0.98;
+    const isBull = data?.sma20 && data?.sma50 ? data.sma20 > data.sma50 : false;
+    const hasMACDMomentum = data?.macd ? data.macd > 0 : false;
 
-    // Dynamic allocation: increase weight for oversold assets
+    // Dynamic allocation: increase weight for oversold or breaking out assets
     let allocMult = 1.0;
-    if (rsi < 35) allocMult = 1.5;
-    else if (rsi < 45) allocMult = 1.2;
-    else if (rsi > 70) allocMult = 0.5;
+    if (rsi < 35 || (isBull && hasMACDMomentum)) allocMult = 1.5;
+    else if (rsi < 45 || isBull) allocMult = 1.2;
+    else if (rsi > 70 && !hasMACDMomentum) allocMult = 0.5;
 
     const targetEntry = rsi < 40 ? low : price * 0.99;
     const discount = price > 0 ? ((price - targetEntry) / price) * 100 : 0;
 
     let signal = '🟡 WAIT';
-    if (rsi < 35) signal = '🟢 BUY NOW';
-    else if (rsi < 45) signal = '🟢 ACCUMULATE';
-    else if (rsi > 70) signal = '🔴 AVOID';
+    if (rsi < 35 || (isBull && hasMACDMomentum)) signal = '🟢 BUY NOW';
+    else if (rsi < 45 || isBull) signal = '🟢 ACCUMULATE';
+    else if (rsi > 70 && !hasMACDMomentum) signal = '🔴 AVOID';
 
     recs.push({
       symbol: etf.sym,
@@ -203,19 +234,21 @@ export function getSmartAllocations(
     const price = data?.price || 0;
     const rsi = data?.rsi || 50;
     const low = data?.low || price * 0.98;
+    const isBull = data?.sma20 && data?.sma50 ? data.sma20 > data.sma50 : false;
+    const hasMACDMomentum = data?.macd ? data.macd > 0 : false;
 
     let allocMult = 1.0;
-    if (rsi < 35) allocMult = 1.5;
-    else if (rsi < 45) allocMult = 1.2;
-    else if (rsi > 70) allocMult = 0.5;
+    if (rsi < 35 || (isBull && hasMACDMomentum)) allocMult = 1.5;
+    else if (rsi < 45 || isBull) allocMult = 1.2;
+    else if (rsi > 70 && !hasMACDMomentum) allocMult = 0.5;
 
     const targetEntry = rsi < 40 ? low : price * 0.99;
     const discount = price > 0 ? ((price - targetEntry) / price) * 100 : 0;
 
     let signal = '🟡 WAIT';
-    if (rsi < 35) signal = '🟢 BUY NOW';
-    else if (rsi < 45) signal = '🟢 ACCUMULATE';
-    else if (rsi > 70) signal = '🔴 AVOID';
+    if (rsi < 35 || (isBull && hasMACDMomentum)) signal = '🟢 BUY NOW';
+    else if (rsi < 45 || isBull) signal = '🟢 ACCUMULATE';
+    else if (rsi > 70 && !hasMACDMomentum) signal = '🔴 AVOID';
 
     recs.push({
       symbol: etf.sym,
@@ -264,7 +297,7 @@ export function generateDeepAnalysis(
   // Asset signals
   const signals = portfolio.map(p => {
     const key = `${p.market}_${p.symbol}`;
-    return analyzeAsset(p, livePrices[key], usdInrRate);
+    return analyzeAsset(p, livePrices[key]);
   });
 
   const buySignals = signals.filter(s => s.signal === 'STRONG_BUY' || s.signal === 'BUY');
