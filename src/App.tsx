@@ -10,8 +10,9 @@ import {
 } from './utils/api';
 import {
   isAnyMarketOpen, getMarketStatus, analyzeAsset,
-  getSmartAllocations, generateDeepAnalysis, generateNeuralInsiderResponse
+  getSmartAllocations, generateDeepAnalysis
 } from './utils/telegram';
+import { NeuralChat } from './components/NeuralChat';
 
 export default function App() {
   // Auth State
@@ -43,10 +44,10 @@ export default function App() {
 
   // Modal State
   const [showAddModal, setShowAddModal] = useState(false);
-  const [showExpertModal, setShowExpertModal] = useState(false);
-  const [expertInfo, setExpertInfo] = useState<ExpertInfo | null>(null);
-  const [expertMessages, setExpertMessages] = useState<Array<{text: string; sender: 'user' | 'expert'}>>([]);
-  const [expertInput, setExpertInput] = useState('');
+  
+  // Settings / Keys State
+  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('WEALTH_AI_GEMINI') || '');
+  const [showSettings, setShowSettings] = useState(false);
   
   // Add Modal State
   const [addSymbol, setAddSymbol] = useState('');
@@ -319,38 +320,7 @@ export default function App() {
     };
   }, [isAuthenticated]);
 
-  // Expert Modal
-  const openExpert = () => {
-    const info: ExpertInfo = {
-      id: 'DEEP_MIND',
-      name: 'Deep Mind Neural AI',
-      role: 'GLOBAL MACRO INSIDER',
-      icon: '🧠',
-      colorBg: 'from-cyan-900/80 to-indigo-950/90',
-      border: 'border-cyan-500/50'
-    };
-    
-    setExpertInfo(info);
-    setExpertMessages([{
-      text: '🤖 **System Online: Quantum Neural Core Active**\n\nBhai, main piche background me USA aur India dono markets track kar raha hu. Live VIX, RSI aur Institutional data scan ho raha hai.\n\nPucho kya analyse karna hai ("Market kaisa hai?", "Kisme invest karu?", ya phir "Kab profit book karu?").',
-      sender: 'expert'
-    }]);
-    setShowExpertModal(true);
-  };
-
-  const sendToExpert = async () => {
-    if (!expertInput.trim()) return;
-    
-    const msg = expertInput;
-    setExpertInput('');
-    setExpertMessages(prev => [...prev, { text: msg, sender: 'user' }]);
-    
-    // Simulate AI response
-    await new Promise(r => setTimeout(r, 800));
-    
-    const response = generateNeuralInsiderResponse(msg, portfolio, livePrices);
-    setExpertMessages(prev => [...prev, { text: response, sender: 'expert' }]);
-  };
+  // Deep Mind AI Neural Chat now handles expert logic natively.
 
   // Load TradingView Chart
   const loadTradingViewChart = useCallback(() => {
@@ -558,23 +528,8 @@ export default function App() {
       </div>
     );
   }
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-[#0a0f1e] to-slate-950 text-slate-200">
-      {/* Expert Floating Buttons */}
-      <div className="fixed bottom-6 right-6 flex flex-col gap-3 z-50">
-        <button
-          onClick={() => openExpert()}
-          className="fab w-14 h-14 bg-gradient-to-br from-cyan-600/90 via-blue-800/90 to-indigo-900/90 rounded-2xl flex items-center justify-center border border-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.4)] relative overflow-hidden group"
-          title="Deep Mind AI Market Insider"
-        >
-          <span className="text-2xl z-10 group-hover:scale-110 transition-transform">🧠</span>
-          <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-400 rounded-full animate-pulse-dot z-10 border-2 border-slate-900" />
-          <div className="absolute inset-0 bg-gradient-to-t from-cyan-400/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-          <span className="ripple-ring rounded-2xl text-cyan-400/50" />
-        </button>
-      </div>
-
       {/* Header */}
       <header className="sticky top-0 z-40 glass-ultra border-b border-white/5">
         {/* Ticker */}
@@ -637,7 +592,34 @@ export default function App() {
               ))}
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-2 relative">
+              <div className="relative">
+                <button 
+                  onClick={() => setShowSettings(!showSettings)} 
+                  className={`btn-glass p-2.5 rounded-xl text-lg transition-all ${showSettings ? 'bg-cyan-500/10 border border-cyan-500/30' : ''}`} 
+                  title="AI Settings"
+                >
+                  ⚙️
+                </button>
+                {showSettings && (
+                  <div className="absolute right-0 top-full mt-3 w-72 glass-modal p-4 rounded-2xl shadow-2xl z-50 animate-scale-in">
+                    <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                      <span className="text-lg">🧠</span> Gemini AI Key
+                    </div>
+                    <input 
+                      type="password" 
+                      placeholder="Paste your AI Studio Key..."
+                      value={geminiKey}
+                      onChange={(e) => {
+                        setGeminiKey(e.target.value);
+                        localStorage.setItem('WEALTH_AI_GEMINI', e.target.value);
+                      }}
+                      className="w-full glass-input rounded-xl px-4 py-3 text-sm text-white"
+                    />
+                    <div className="text-[10px] text-slate-500 mt-3 font-medium">Deep Mind requires Gemini 2.5/3.0 to run live market logic. 24x7.</div>
+                  </div>
+                )}
+              </div>
               <button 
                 onClick={() => setAutoTelegram(prev => !prev)} 
                 className={`btn-glass p-2.5 rounded-xl text-lg transition-all ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`} 
@@ -1494,42 +1476,8 @@ export default function App() {
         </div>
       )}
 
-      {showExpertModal && expertInfo && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-xl z-50 flex items-end sm:items-center justify-center p-4 animate-fade-in">
-          <div className="glass-modal rounded-t-2xl sm:rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col animate-scale-in">
-            <div className={`bg-gradient-to-r ${expertInfo.colorBg} p-4 border-b border-white/5 rounded-t-2xl flex items-center justify-between`}>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-black/40 rounded-xl flex items-center justify-center text-xl border border-white/10">{expertInfo.icon}</div>
-                <div>
-                  <h3 className="font-bold text-lg text-white">{expertInfo.name}</h3>
-                  <p className="text-cyan-400/80 text-[10px] font-bold uppercase tracking-wider">{expertInfo.role}</p>
-                </div>
-              </div>
-              <button onClick={() => setShowExpertModal(false)} className="w-8 h-8 rounded-lg bg-black/30 hover:bg-red-500/20 flex items-center justify-center text-lg text-slate-400 hover:text-red-400 transition-all">×</button>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[300px] max-h-[400px]">
-              {expertMessages.map((msg, i) => (
-                <div key={i} className={`flex gap-3 ${msg.sender === 'user' ? 'flex-row-reverse' : ''}`}>
-                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 text-sm ${msg.sender === 'user' ? 'bg-cyan-500/10' : `bg-gradient-to-br ${expertInfo.colorBg}`}`}>
-                    {msg.sender === 'user' ? '👤' : expertInfo.icon}
-                  </div>
-                  <div className={`rounded-2xl p-3.5 max-w-[85%] ${msg.sender === 'user' ? 'bg-cyan-500/10 border border-cyan-500/15' : 'bg-black/30 border border-white/5'}`}>
-                    <div className="text-sm whitespace-pre-line">{msg.text}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="p-4 border-t border-white/5">
-              <div className="flex gap-2">
-                <input type="text" value={expertInput} onChange={e => setExpertInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendToExpert()} placeholder="Ask about market, stocks, risk..." className="flex-1 px-4 py-2.5 glass-input rounded-xl text-sm text-white" />
-                <button onClick={sendToExpert} className="btn-primary px-5 py-2.5 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-sm text-cyan-100">Send ⚡</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Neural Core Chat AI Integration with Deep Real-Time Portolio Context Injection */}
+      <NeuralChat geminiKey={geminiKey} portfolioContext={generateDeepAnalysis(portfolio, livePrices, usdInrRate, metrics)} />
     </div>
   );
 }
