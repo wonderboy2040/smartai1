@@ -75,7 +75,7 @@ async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean)
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify({
         symbols: { tickers: tvTickers },
-        columns: ['name', 'close', 'change', 'high', 'low', 'volume']
+        columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
       }),
       signal: AbortSignal.timeout(6000)
     });
@@ -92,9 +92,11 @@ async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean)
             price: priceVal,
             change: changeVal,
             high: parseFloat(item.d[3]) || priceVal,
-            low: parseFloat(item.d[4]) || priceVal,
             volume: parseFloat(item.d[5]) || 0,
-            rsi: Math.max(10, Math.min(90, 50 + (changeVal * 5))),
+            sma20: parseFloat(item.d[6]) || undefined,
+            sma50: parseFloat(item.d[7]) || undefined,
+            rsi: parseFloat(item.d[8]) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
+            macd: parseFloat(item.d[9]) || undefined,
             market: isIndian ? 'IN' : 'US',
             tvExchange: item.s.split(':')[0],
             tvExactSymbol: item.s,
@@ -155,7 +157,7 @@ export async function batchFetchPrices(
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         body: JSON.stringify({
           symbols: { tickers: uniqueTickers },
-          columns: ['name', 'close', 'change', 'high', 'low', 'volume']
+          columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
         }),
         signal: AbortSignal.timeout(6000)
       });
@@ -181,7 +183,10 @@ export async function batchFetchPrices(
               high: parseFloat(item.d[3]) || priceVal,
               low: parseFloat(item.d[4]) || priceVal,
               volume: parseFloat(item.d[5]) || 0,
-              rsi: Math.max(10, Math.min(90, 50 + (changeVal * 5))),
+              sma20: parseFloat(item.d[6]) || undefined,
+              sma50: parseFloat(item.d[7]) || undefined,
+              rsi: parseFloat(item.d[8]) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
+              macd: parseFloat(item.d[9]) || undefined,
               time: Date.now(),
               market: mkt,
               tvExchange: item.s.split(':')[0],
