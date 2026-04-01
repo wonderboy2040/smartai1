@@ -614,9 +614,15 @@ export default function App() {
                         setGeminiKey(e.target.value);
                         localStorage.setItem('WEALTH_AI_GEMINI', e.target.value);
                       }}
-                      className="w-full glass-input rounded-xl px-4 py-3 text-sm text-white"
+                      className="w-full glass-input rounded-xl px-4 py-3 text-sm text-white mb-3"
                     />
-                    <div className="text-[10px] text-slate-500 mt-3 font-medium">Deep Mind requires Gemini 2.5/3.0 to run live market logic. 24x7.</div>
+                    <button 
+                      onClick={() => setShowSettings(false)}
+                      className="w-full btn-primary py-2.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-900/30 text-sm"
+                    >
+                      💾 Secure & Save Key
+                    </button>
+                    <div className="text-[10px] text-slate-500 mt-3 font-medium text-center">Deep Mind requires Gemini 2.5/3.0 to run live market logic. 24x7.</div>
                   </div>
                 )}
               </div>
