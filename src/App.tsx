@@ -46,7 +46,7 @@ export default function App() {
   const [showAddModal, setShowAddModal] = useState(false);
   
   // Settings / Keys State
-  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('WEALTH_AI_GEMINI') || '');
+  const [groqKey, setGroqKey] = useState(() => localStorage.getItem('WEALTH_AI_GROQ') || '');
   const [showSettings, setShowSettings] = useState(false);
   
   // Add Modal State
@@ -604,15 +604,15 @@ export default function App() {
                 {showSettings && (
                   <div className="absolute right-0 top-full mt-3 w-72 glass-modal p-4 rounded-2xl shadow-2xl z-50 animate-scale-in">
                     <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                      <span className="text-lg">🧠</span> Gemini AI Key
+                      <span className="text-lg">🧠</span> Groq API Key
                     </div>
                     <input 
                       type="password" 
-                      placeholder="Paste your AI Studio Key..."
-                      value={geminiKey}
+                      placeholder="Paste your Groq API Key..."
+                      value={groqKey}
                       onChange={(e) => {
-                        setGeminiKey(e.target.value);
-                        localStorage.setItem('WEALTH_AI_GEMINI', e.target.value);
+                        setGroqKey(e.target.value);
+                        localStorage.setItem('WEALTH_AI_GROQ', e.target.value);
                       }}
                       className="w-full glass-input rounded-xl px-4 py-3 text-sm text-white mb-3"
                     />
@@ -622,7 +622,7 @@ export default function App() {
                     >
                       💾 Secure & Save Key
                     </button>
-                    <div className="text-[10px] text-slate-500 mt-3 font-medium text-center">Deep Mind requires Gemini 2.5/3.0 to run live market logic. 24x7.</div>
+                    <div className="text-[10px] text-slate-500 mt-3 font-medium text-center">Deep Mind requires Groq (Llama 3 70B) for 24x7 free live market logic.</div>
                   </div>
                 )}
               </div>
@@ -1483,7 +1483,7 @@ export default function App() {
       )}
 
       {/* Neural Core Chat AI Integration with Deep Real-Time Portolio Context Injection */}
-      <NeuralChat geminiKey={geminiKey} portfolioContext={generateDeepAnalysis(portfolio, livePrices, usdInrRate, metrics)} />
+      <NeuralChat groqKey={groqKey} portfolioContext={generateDeepAnalysis(portfolio, livePrices, usdInrRate, metrics)} />
     </div>
   );
 }
