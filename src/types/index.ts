@@ -19,7 +19,9 @@ export interface PriceData {
   market: string;
   tvExchange?: string;
   tvExactSymbol?: string;
-  sma200?: number;
+  sma20?: number;
+  sma50?: number;
+  macd?: number;
 }
 
 export interface ETFInfo {
