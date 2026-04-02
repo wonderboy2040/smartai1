@@ -203,7 +203,6 @@ export function getSmartAllocations(
   const usVix = livePrices['US_VIX']?.price || 15;
   const inVix = livePrices['IN_INDIAVIX']?.price || 15;
   const avgVix = (usVix + inVix) / 2;
-  const vixMultiplier = avgVix > 25 ? 0.6 : avgVix > 20 ? 0.8 : avgVix > 16 ? 1.0 : 1.15;
 
   const processETF = (etf: typeof ALPHA_ETFS_IN[0], market: 'IN' | 'US') => {
     const key = `${market}_${etf.sym}`;
@@ -257,14 +256,8 @@ export function getSmartAllocations(
     else if (volume > 500000) volumeSignal = '📊 Active';
     else if (volume > 100000) volumeSignal = '⚡ Normal';
 
-    // === DYNAMIC ALLOCATION ===
+    // === DYNAMIC ALLOCATION DISABLED (Fixed Allocations based on User Request) ===
     let allocMult = 1.0;
-    if (rsi < 30 && hasMACDMomentum) allocMult = 2.0;
-    else if (rsi < 35 || (isBull && hasMACDMomentum)) allocMult = 1.5;
-    else if (rsi < 45 || isBull) allocMult = 1.2;
-    else if (rsi > 75) allocMult = 0.3;
-    else if (rsi > 70 && !hasMACDMomentum) allocMult = 0.5;
-    allocMult *= vixMultiplier;
 
     const targetEntry = rsi < 40 ? low : price * 0.99;
     const discount = price > 0 ? ((price - targetEntry) / price) * 100 : 0;
