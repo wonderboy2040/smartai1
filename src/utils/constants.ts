@@ -6,7 +6,7 @@ export const TG_TOKEN = "8561229979:AAH24LmFeRbhoDCAIL6colX-KlogOseI9aY";
 export const TG_CHAT_ID = "5488576360";
 
 export const TAX_PAIRS: Record<string, string> = {
-  'JUNIORBEES',
+  'ITBEES.NS': 'TATAIT.NS',
   'QQQM': 'QQQ',
   'SMH': 'SOXX'
 };
