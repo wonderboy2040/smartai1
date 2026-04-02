@@ -92,6 +92,7 @@ async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean)
             price: priceVal,
             change: changeVal,
             high: parseFloat(item.d[3]) || priceVal,
+            low: parseFloat(item.d[4]) || priceVal,
             volume: parseFloat(item.d[5]) || 0,
             sma20: parseFloat(item.d[6]) || undefined,
             sma50: parseFloat(item.d[7]) || undefined,
