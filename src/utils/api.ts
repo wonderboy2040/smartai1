@@ -297,3 +297,195 @@ export async function sendTelegramAlert(token: string, chatId: string, message: 
     return false;
   }
 }
+
+// ========================================
+// GROQ API KEY — CLOUD SYNC
+// ========================================
+export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
+  if (!API_URL || !key) return false;
+  try {
+    await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ groqKey: key, action: 'saveKey', timestamp: Date.now() })
+    });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+export async function loadGroqKeyFromCloud(): Promise<string | null> {
+  if (!API_URL) return null;
+  try {
+    const res = await fetch(`${API_URL}?action=loadKey&t=${Date.now()}`);
+    if (!res.ok) return null;
+    const text = await res.text();
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const data = JSON.parse(match[0]);
+    if (data.groqKey && typeof data.groqKey === 'string' && data.groqKey.length > 10) {
+      return data.groqKey;
+    }
+  } catch (e) {}
+  return null;
+}
+
+// ========================================
+// MARKET INTELLIGENCE — LIVE GLOBAL DATA
+// ========================================
+export interface MarketIntelligence {
+  globalIndices: { name: string; price: number; change: number }[];
+  sectors: { name: string; change: number }[];
+  fearGreedScore: number;
+  marketNarrative: string;
+  keyLevels: { nifty: number; sensex: number; spy: number; qqq: number };
+  timestamp: number;
+}
+
+export async function fetchMarketIntelligence(): Promise<MarketIntelligence> {
+  const intelligence: MarketIntelligence = {
+    globalIndices: [],
+    sectors: [],
+    fearGreedScore: 50,
+    marketNarrative: '',
+    keyLevels: { nifty: 0, sensex: 0, spy: 0, qqq: 0 },
+    timestamp: Date.now()
+  };
+
+  // Batch fetch major global indices + sectors via TradingView
+  try {
+    const indexTickers = [
+      'NSE:NIFTY', 'BSE:SENSEX', 'NSE:BANKNIFTY',
+      'AMEX:SPY', 'NASDAQ:QQQ', 'AMEX:DIA', 'AMEX:IWM',
+      'TVC:DXY', 'COMEX:GC1!', 'NYMEX:CL1!',
+      'CBOE:VIX', 'NSE:INDIAVIX'
+    ];
+    const sectorTickers = [
+      'AMEX:XLK', 'AMEX:XLF', 'AMEX:XLE', 'AMEX:XLV', 'AMEX:XLI',
+      'NSE:CNXIT', 'NSE:CNXFIN', 'NSE:CNXPHARMA'
+    ];
+
+    const [indexRes, sectorRes] = await Promise.allSettled([
+      fetch('https://scanner.tradingview.com/global/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({
+          symbols: { tickers: indexTickers },
+          columns: ['name', 'close', 'change']
+        }),
+        signal: AbortSignal.timeout(6000)
+      }),
+      fetch('https://scanner.tradingview.com/global/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({
+          symbols: { tickers: sectorTickers },
+          columns: ['name', 'close', 'change']
+        }),
+        signal: AbortSignal.timeout(6000)
+      })
+    ]);
+
+    if (indexRes.status === 'fulfilled' && indexRes.value.ok) {
+      const data = await indexRes.value.json();
+      if (data?.data) {
+        const nameMap: Record<string, string> = {
+          'NSE:NIFTY': 'NIFTY 50', 'BSE:SENSEX': 'SENSEX', 'NSE:BANKNIFTY': 'BANK NIFTY',
+          'AMEX:SPY': 'S&P 500', 'NASDAQ:QQQ': 'NASDAQ 100', 'AMEX:DIA': 'DOW JONES',
+          'AMEX:IWM': 'RUSSELL 2000', 'TVC:DXY': 'US DOLLAR', 'COMEX:GC1!': 'GOLD',
+          'NYMEX:CL1!': 'CRUDE OIL', 'CBOE:VIX': 'VIX', 'NSE:INDIAVIX': 'INDIA VIX'
+        };
+        data.data.forEach((item: any) => {
+          if (item.d && item.d[1] !== null) {
+            intelligence.globalIndices.push({
+              name: nameMap[item.s] || item.d[0],
+              price: parseFloat(item.d[1]) || 0,
+              change: parseFloat(item.d[2]) || 0
+            });
+            // Extract key levels
+            if (item.s === 'NSE:NIFTY') intelligence.keyLevels.nifty = parseFloat(item.d[1]) || 0;
+            if (item.s === 'BSE:SENSEX') intelligence.keyLevels.sensex = parseFloat(item.d[1]) || 0;
+            if (item.s === 'AMEX:SPY') intelligence.keyLevels.spy = parseFloat(item.d[1]) || 0;
+            if (item.s === 'NASDAQ:QQQ') intelligence.keyLevels.qqq = parseFloat(item.d[1]) || 0;
+          }
+        });
+      }
+    }
+
+    if (sectorRes.status === 'fulfilled' && sectorRes.value.ok) {
+      const data = await sectorRes.value.json();
+      if (data?.data) {
+        const sectorNameMap: Record<string, string> = {
+          'AMEX:XLK': 'US Tech', 'AMEX:XLF': 'US Finance', 'AMEX:XLE': 'US Energy',
+          'AMEX:XLV': 'US Healthcare', 'AMEX:XLI': 'US Industrial',
+          'NSE:CNXIT': 'IN IT', 'NSE:CNXFIN': 'IN Finance', 'NSE:CNXPHARMA': 'IN Pharma'
+        };
+        data.data.forEach((item: any) => {
+          if (item.d && item.d[2] !== null) {
+            intelligence.sectors.push({
+              name: sectorNameMap[item.s] || item.d[0],
+              change: parseFloat(item.d[2]) || 0
+            });
+          }
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('Market intelligence fetch partial failure');
+  }
+
+  // Calculate Fear/Greed from VIX
+  const vix = intelligence.globalIndices.find(i => i.name === 'VIX');
+  const inVix = intelligence.globalIndices.find(i => i.name === 'INDIA VIX');
+  const avgVix = ((vix?.price || 15) + (inVix?.price || 15)) / 2;
+  if (avgVix > 30) intelligence.fearGreedScore = 10;
+  else if (avgVix > 25) intelligence.fearGreedScore = 20;
+  else if (avgVix > 20) intelligence.fearGreedScore = 35;
+  else if (avgVix > 16) intelligence.fearGreedScore = 50;
+  else if (avgVix > 12) intelligence.fearGreedScore = 70;
+  else intelligence.fearGreedScore = 85;
+
+  // Build market narrative
+  const bullSectors = intelligence.sectors.filter(s => s.change > 1).map(s => s.name);
+  const bearSectors = intelligence.sectors.filter(s => s.change < -1).map(s => s.name);
+  const niftyMove = intelligence.globalIndices.find(i => i.name === 'NIFTY 50')?.change || 0;
+  const spyMove = intelligence.globalIndices.find(i => i.name === 'S&P 500')?.change || 0;
+
+  let narrative = '';
+  if (avgVix > 25) narrative = `FEAR DOMINANT — VIX at ${avgVix.toFixed(1)}. Institutional hedging active. Cash is king.`;
+  else if (avgVix > 18) narrative = `CAUTIOUS — Elevated volatility (VIX ${avgVix.toFixed(1)}). Mixed signals, selective entries only.`;
+  else if (avgVix < 13) narrative = `EXTREME GREED — VIX ultra-low at ${avgVix.toFixed(1)}. Complacency high, protect profits.`;
+  else narrative = `NEUTRAL-BULLISH — VIX steady at ${avgVix.toFixed(1)}. SIP mode optimal, accumulate quality.`;
+
+  if (niftyMove > 1.5 || spyMove > 1.5) narrative += ` Strong rally underway (NIFTY ${niftyMove > 0 ? '+' : ''}${niftyMove.toFixed(1)}%, SPY ${spyMove > 0 ? '+' : ''}${spyMove.toFixed(1)}%).`;
+  else if (niftyMove < -1.5 || spyMove < -1.5) narrative += ` Selloff in progress (NIFTY ${niftyMove.toFixed(1)}%, SPY ${spyMove.toFixed(1)}%). Look for value.`;
+
+  if (bullSectors.length > 0) narrative += ` Sectors leading: ${bullSectors.join(', ')}.`;
+  if (bearSectors.length > 0) narrative += ` Sectors lagging: ${bearSectors.join(', ')}.`;
+
+  intelligence.marketNarrative = narrative;
+
+  return intelligence;
+}
+
+export function formatMarketIntelligenceForAI(intel: MarketIntelligence): string {
+  let ctx = `\n--- LIVE GLOBAL MARKET INTELLIGENCE (${new Date(intel.timestamp).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST) ---\n`;
+
+  ctx += `\n📊 GLOBAL INDICES:\n`;
+  intel.globalIndices.forEach(i => {
+    ctx += `  ${i.name}: ${i.price.toFixed(2)} (${i.change >= 0 ? '+' : ''}${i.change.toFixed(2)}%)\n`;
+  });
+
+  ctx += `\n🏭 SECTOR ROTATION:\n`;
+  intel.sectors.forEach(s => {
+    const emoji = s.change > 1 ? '🟢' : s.change < -1 ? '🔴' : '⚪';
+    ctx += `  ${emoji} ${s.name}: ${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)}%\n`;
+  });
+
+  ctx += `\n🧭 FEAR/GREED INDEX: ${intel.fearGreedScore}/100 (${intel.fearGreedScore > 60 ? 'GREED' : intel.fearGreedScore < 40 ? 'FEAR' : 'NEUTRAL'})\n`;
+  ctx += `📋 MARKET NARRATIVE: ${intel.marketNarrative}\n`;
+  ctx += `--- END GLOBAL INTELLIGENCE ---\n`;
+
+  return ctx;
+}
