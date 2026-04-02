@@ -6,7 +6,8 @@ import {
 } from './utils/constants';
 import { 
   fetchSinglePrice, batchFetchPrices, fetchForexRate, 
-  syncToCloud, loadFromCloud, sendTelegramAlert 
+  syncToCloud, loadFromCloud, sendTelegramAlert,
+  syncGroqKeyToCloud, loadGroqKeyFromCloud
 } from './utils/api';
 import {
   isAnyMarketOpen, getMarketStatus, analyzeAsset,
@@ -32,6 +33,7 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [liveStatus, setLiveStatus] = useState('Connecting...');
   const [syncStatus, setSyncStatus] = useState('');
+  const [pricesLoaded, setPricesLoaded] = useState(false);
 
   // Planner State
   const [indiaSIP, setIndiaSIP] = useState(10000);
@@ -101,6 +103,14 @@ export default function App() {
       }
     }).catch(() => console.warn('Cloud sync unavailable'));
 
+    // Load Groq key from cloud
+    loadGroqKeyFromCloud().then(key => {
+      if (key) {
+        setGroqKey(key);
+        localStorage.setItem('WEALTH_AI_GROQ', key);
+      }
+    }).catch(() => {});
+
     // Fetch forex rate
     fetchForexRate().then(rate => setUsdInrRate(rate));
   }, [isAuthenticated]);
@@ -121,6 +131,7 @@ export default function App() {
       });
       
       setLiveStatus('● QUANTUM LINK ACTIVE');
+      setPricesLoaded(true);
     };
 
     sync();
@@ -612,18 +623,22 @@ export default function App() {
                       placeholder="Paste your Groq API Key..."
                       value={groqKey}
                       onChange={(e) => {
-                        setGroqKey(e.target.value);
-                        localStorage.setItem('WEALTH_AI_GROQ', e.target.value);
+                        const val = e.target.value;
+                        setGroqKey(val);
+                        localStorage.setItem('WEALTH_AI_GROQ', val);
                       }}
                       className="w-full glass-input rounded-xl px-4 py-3 text-sm text-white mb-3"
                     />
                     <button 
-                      onClick={() => setShowSettings(false)}
+                      onClick={() => {
+                        setShowSettings(false);
+                        if (groqKey) syncGroqKeyToCloud(groqKey);
+                      }}
                       className="w-full btn-primary py-2.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-900/30 text-sm"
                     >
-                      💾 Secure & Save Key
+                      💾 Save & Cloud Sync
                     </button>
-                    <div className="text-[10px] text-slate-500 mt-3 font-medium text-center">Deep Mind requires Groq (Llama 3 70B) for 24x7 free live market logic.</div>
+                    <div className="text-[10px] text-slate-500 mt-3 font-medium text-center">Key auto-syncs to cloud. Free at console.groq.com</div>
                   </div>
                 )}
               </div>
@@ -1253,7 +1268,7 @@ export default function App() {
                 <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
                   <span className="w-7 h-7 rounded-lg bg-purple-500/10 flex items-center justify-center text-sm">🤖</span>
                   Smart AI Allocation Engine
-                  <span className="ml-auto badge bg-purple-500/10 text-purple-400 border border-purple-500/20 text-[10px]">DEEP AI</span>
+                  <span className="ml-auto badge bg-purple-500/10 text-purple-400 border border-purple-500/20 text-[10px]">PRO ENGINE</span>
                 </h3>
 
                 {/* Per-Asset Analysis Cards */}
@@ -1267,6 +1282,7 @@ export default function App() {
                       'HOLD': { bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/20' },
                     };
                     const sc = signalColors[signal.action] || signalColors['HOLD'];
+                    const cur = p.market === 'IN' ? '₹' : '$';
 
                     return (
                       <div key={p.id} className={`bg-black/20 rounded-xl p-4 border ${sc.border}`}>
@@ -1279,29 +1295,36 @@ export default function App() {
                             {signal.action === 'BUY' ? '🟢' : signal.action === 'SELL' ? '🔴' : '🟡'} {signal.action}
                           </span>
                         </div>
-                        <div className="grid grid-cols-3 gap-2 text-center mb-3">
-                          <div>
-                            <div className="text-[9px] text-slate-600 uppercase">RSI</div>
+                        {/* Metrics Grid */}
+                        <div className="grid grid-cols-4 gap-1.5 text-center mb-3">
+                          <div className="bg-black/30 rounded-lg p-1.5">
+                            <div className="text-[8px] text-slate-600 uppercase">RSI</div>
                             <div className={`text-xs font-bold font-mono ${signal.rsi < 35 ? 'text-emerald-400' : signal.rsi > 65 ? 'text-red-400' : 'text-amber-400'}`}>{signal.rsi.toFixed(0)}</div>
                           </div>
-                          <div>
-                            <div className="text-[9px] text-slate-600 uppercase">Trend</div>
+                          <div className="bg-black/30 rounded-lg p-1.5">
+                            <div className="text-[8px] text-slate-600 uppercase">Trend</div>
                             <div className="text-xs font-bold">{signal.trend === 'up' ? '📈' : signal.trend === 'down' ? '📉' : '↔'}</div>
                           </div>
-                          <div>
-                            <div className="text-[9px] text-slate-600 uppercase">Price</div>
-                            <div className="text-xs font-bold text-cyan-400 font-mono">{p.market === 'IN' ? '₹' : '$'}{signal.price.toFixed(2)}</div>
+                          <div className="bg-black/30 rounded-lg p-1.5">
+                            <div className="text-[8px] text-slate-600 uppercase">Price</div>
+                            <div className="text-xs font-bold text-cyan-400 font-mono">{cur}{signal.price.toFixed(2)}</div>
+                          </div>
+                          <div className="bg-black/30 rounded-lg p-1.5">
+                            <div className="text-[8px] text-slate-600 uppercase">Score</div>
+                            <div className={`text-xs font-bold font-mono ${sc.text}`}>{signal.confidence}</div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 text-[10px] text-slate-500">
-                            Fib S/R: <span className="text-emerald-400 font-mono">{(signal.fibLow || 0).toFixed(1)}</span>
-                            {' → '}
-                            <span className="text-red-400 font-mono">{(signal.fibHigh || 0).toFixed(1)}</span>
+                        {/* Strength Bar */}
+                        <div className="mb-2">
+                          <div className="w-full bg-slate-800/60 rounded-full h-1.5">
+                            <div className={`h-full rounded-full transition-all ${signal.confidence > 75 ? 'bg-gradient-to-r from-emerald-500 to-cyan-400' : signal.confidence > 50 ? 'bg-gradient-to-r from-amber-500 to-yellow-400' : 'bg-gradient-to-r from-red-500 to-orange-400'}`} style={{ width: `${signal.confidence}%` }} />
                           </div>
-                          <div className="text-[10px] text-slate-500">
-                            Score: <span className={`font-bold ${sc.text}`}>{signal.confidence}/100</span>
-                          </div>
+                        </div>
+                        {/* Fib S/R */}
+                        <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                          <span>SL: <span className="text-red-400 font-mono">{cur}{(signal.fibLow || 0).toFixed(1)}</span></span>
+                          <span className="text-slate-700">→</span>
+                          <span>TP: <span className="text-emerald-400 font-mono">{cur}{(signal.fibHigh || 0).toFixed(1)}</span></span>
                         </div>
                       </div>
                     );
@@ -1310,23 +1333,60 @@ export default function App() {
 
                 {/* Allocation Recommendations */}
                 {(() => {
-                  const allocs = getSmartAllocations(livePrices);
+                  const allocs = getSmartAllocations(livePrices, indiaSIP, usSIP);
                   return (
                     <div className="bg-black/20 rounded-xl p-4 border border-purple-500/15">
-                      <div className="text-[10px] text-purple-400 font-bold uppercase tracking-wider mb-3">
-                        💰 Recommended Monthly Allocation (₹{Math.round(indiaSIP).toLocaleString()} IN + ${usSIP} US)
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="text-[10px] text-purple-400 font-bold uppercase tracking-wider">
+                          💰 Monthly SIP Allocation
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-mono">
+                          ₹{Math.round(indiaSIP).toLocaleString()} IN + ${usSIP} US
+                        </div>
                       </div>
-                      <div className="space-y-2">
-                        {allocs.map((a, i) => (
-                          <div key={i} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm">{a.market === 'IN' ? '🇮🇳' : '🦅'}</span>
-                              <span className="font-bold text-white text-sm">{a.symbol.replace('.NS', '')}</span>
-                              <span className="text-[10px] text-slate-500 max-w-[200px] truncate">{a.signal}</span>
+                      <div className="space-y-3">
+                        {allocs.map((a, i) => {
+                          const cur = a.market === 'IN' ? '₹' : '$';
+                          const isGreen = a.signal.includes('BUY') || a.signal.includes('ACCUMULATE') || a.signal.includes('STRONG');
+                          const isRed = a.signal.includes('AVOID') || a.signal.includes('DISTRIBUTE');
+                          return (
+                            <div key={i} className="bg-black/20 rounded-xl p-3 border border-white/5 hover:border-cyan-500/20 transition-all">
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm">{a.market === 'IN' ? '🇮🇳' : '🦅'}</span>
+                                  <div>
+                                    <span className="font-bold text-white text-sm">{a.symbol.replace('.NS', '')}</span>
+                                    <div className="text-[9px] text-slate-600 truncate max-w-[160px]">{a.name}</div>
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <div className="font-black text-cyan-400 font-mono text-sm">{cur}{a.allocAmount.toLocaleString()}</div>
+                                  <div className="text-[9px] text-slate-600">{(a.allocPct * 100).toFixed(0)}% of SIP</div>
+                                </div>
+                              </div>
+                              {/* Signal + Allocation Bar */}
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border ${
+                                  isGreen ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                                  isRed ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                                  'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                                }`}>{a.signal}</span>
+                                <div className="flex-1 bg-slate-800/60 rounded-full h-1.5">
+                                  <div className={`h-full rounded-full transition-all ${isGreen ? 'bg-emerald-500' : isRed ? 'bg-red-500' : 'bg-amber-500'}`} style={{ width: `${a.allocPct * 100}%` }} />
+                                </div>
+                              </div>
+                              {/* Details Row */}
+                              <div className="grid grid-cols-4 gap-1 text-[9px] text-slate-500">
+                                <div>RSI: <span className="text-slate-300 font-mono">{a.rsi.toFixed(0)}</span></div>
+                                <div>Entry: <span className="text-cyan-400 font-mono">{cur}{a.targetEntry.toFixed(1)}</span></div>
+                                <div>Str: <span className={`font-bold ${a.strength > 65 ? 'text-emerald-400' : a.strength < 35 ? 'text-red-400' : 'text-amber-400'}`}>{a.strength}</span></div>
+                                <div>R:R <span className="text-cyan-300 font-mono">{a.riskReward.toFixed(1)}</span></div>
+                              </div>
+                              {/* Reason */}
+                              <div className="text-[9px] text-slate-600 mt-1.5 italic leading-snug">{a.reason}</div>
                             </div>
-                            <span className="font-black text-cyan-400 font-mono text-sm">{a.market === 'IN' ? '₹' : '$'}{Math.round(a.currentPrice * a.allocPct).toLocaleString()}</span>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   );
