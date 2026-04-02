@@ -6,22 +6,22 @@ export const TG_TOKEN = "8561229979:AAH24LmFeRbhoDCAIL6colX-KlogOseI9aY";
 export const TG_CHAT_ID = "5488576360";
 
 export const TAX_PAIRS: Record<string, string> = {
-  'ITBEES.NS': 'TATAIT.NS',
+  'JUNIORBEES',
   'QQQM': 'QQQ',
   'SMH': 'SOXX'
 };
 
 export const ALPHA_ETFS_IN: ETFInfo[] = [
-  { sym: 'JUNIORBEES', name: 'Nippon India ETF Junior BeES', cagr: 18.5, maxDD: 30, cat: 'Next 50', aum: '₹2.5k Cr', vol: 'High', fixedAlloc: 0.30 },
-  { sym: 'MOMOMENTUM', name: 'Motilal Oswal Nifty 200 Momentum 30', cagr: 22.5, maxDD: 30, cat: 'Smart Beta', aum: '₹1.2k Cr', vol: 'Moderate', fixedAlloc: 0.25 },
-  { sym: 'SMALLCAP', name: 'Nippon India Nifty Smallcap 250', cagr: 26.5, maxDD: 40, cat: 'Growth', aum: '₹1k Cr', vol: 'Moderate', fixedAlloc: 0.25 },
+  { sym: 'JUNIORBEES', name: 'Nippon India ETF Junior BeES', cagr: 18.5, maxDD: 30, cat: 'Next 50', aum: '₹2.5k Cr', vol: 'High', fixedAlloc: 0.15 },
+  { sym: 'MOMOMENTUM', name: 'Motilal Oswal Nifty 200 Momentum 30', cagr: 22.5, maxDD: 30, cat: 'Smart Beta', aum: '₹1.2k Cr', vol: 'Moderate', fixedAlloc: 0.38 },
+  { sym: 'SMALLCAP', name: 'Nippon India Nifty Smallcap 250', cagr: 26.5, maxDD: 40, cat: 'Growth', aum: '₹1k Cr', vol: 'Moderate', fixedAlloc: 0.27 },
   { sym: 'MID150BEES', name: 'Nippon India Nifty Midcap 150', cagr: 21.0, maxDD: 35, cat: 'Growth', aum: '₹2.8k Cr', vol: 'High', fixedAlloc: 0.20 }
 ];
 
 export const ALPHA_ETFS_US: ETFInfo[] = [
-  { sym: 'SMH', name: 'VanEck Semiconductor', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', aum: '$15B', vol: 'Extreme', fixedAlloc: 0.40 },
+  { sym: 'SMH', name: 'VanEck Semiconductor', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', aum: '$15B', vol: 'Extreme', fixedAlloc: 0.45 },
   { sym: 'QQQM', name: 'Invesco NASDAQ 100', cagr: 19.5, maxDD: 34, cat: 'Broad Tech', aum: '$30B', vol: 'High', fixedAlloc: 0.35 },
-  { sym: 'XLK', name: 'Technology Select Sector SPDR', cagr: 20.5, maxDD: 33, cat: 'Tech', aum: '$60B', vol: 'High', fixedAlloc: 0.25 }
+  { sym: 'XLK', name: 'Technology Select Sector SPDR', cagr: 20.5, maxDD: 33, cat: 'Tech', aum: '$60B', vol: 'High', fixedAlloc: 0.20 }
 ];
 
 export const EXACT_TICKER_MAP: Record<string, string> = {
