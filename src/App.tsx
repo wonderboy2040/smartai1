@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Position, PriceData, TabType, RiskLevel, ExpertInfo, TransactionType } from './types';
+import { Position, PriceData, TabType, RiskLevel, TransactionType } from './types';
 import { 
   SECURE_PIN, TG_TOKEN, TG_CHAT_ID,
   getTodayString, guessMarket, getAssetCagrProxy, formatPrice
@@ -99,7 +99,7 @@ export default function App() {
         setPortfolio(data);
         localStorage.setItem('portfolio', JSON.stringify(data));
       }
-    });
+    }).catch(() => console.warn('Cloud sync unavailable'));
 
     // Fetch forex rate
     fetchForexRate().then(rate => setUsdInrRate(rate));
@@ -129,7 +129,7 @@ export default function App() {
     return () => {
       if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
     };
-  }, [isAuthenticated, portfolio.length]);
+  }, [isAuthenticated, portfolio.map(p => p.id).join(',')]);
 
   // Save portfolio to localStorage
   useEffect(() => {
@@ -208,9 +208,9 @@ export default function App() {
 
   // Quick select from portfolio
   const quickSelect = (sym: string) => {
-    const cleanSym = sym.replace('.NS', '').toUpperCase().trim();
-    setSymbolInput(cleanSym);
-    setPendingAnalyze(sym.toUpperCase().trim());
+    const fullSym = sym.toUpperCase().trim();
+    setSymbolInput(fullSym.replace('.NS', ''));
+    setPendingAnalyze(fullSym);
   };
 
   // Add/Edit Position
@@ -240,7 +240,7 @@ export default function App() {
     const result = await fetchSinglePrice(sym);
     if (result) {
       setModalPrice({ price: result.price, change: result.change, market: result.market });
-      if (!addPrice) setAddPrice(result.price.toString());
+      setAddPrice(result.price.toString());
     }
   };
 
@@ -469,7 +469,8 @@ export default function App() {
   const totalInvestedPlanner = totalSIP * months;
   const rate = cagr / 100 / 12;
   const fvMed = totalSIP > 0 ? totalSIP * (Math.pow(1 + rate, months) - 1) * (1 + rate) / rate : 0;
-  const fvWorst = totalSIP > 0 ? totalSIP * (Math.pow(1 + Math.max(0.01, (cagr - 8)) / 100 / 12, months) - 1) * (1 + Math.max(0.01, (cagr - 8)) / 100 / 12) / (Math.max(0.01, (cagr - 8)) / 100 / 12) : 0;
+  const worstRate = Math.max(0.5, cagr - 8) / 100 / 12;
+  const fvWorst = totalSIP > 0 ? totalSIP * (Math.pow(1 + worstRate, months) - 1) * (1 + worstRate) / worstRate : 0;
   const fvBest = totalSIP > 0 ? totalSIP * (Math.pow(1 + (cagr + 8) / 100 / 12, months) - 1) * (1 + (cagr + 8) / 100 / 12) / ((cagr + 8) / 100 / 12) : 0;
   const multiplier = totalInvestedPlanner > 0 ? fvMed / totalInvestedPlanner : 0;
 
