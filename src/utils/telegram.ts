@@ -181,95 +181,122 @@ export interface AllocationRec {
   discount: number;
   signal: string;
   allocPct: number;
+  allocAmount: number;
   rsi: number;
+  strength: number;
+  stopLoss: number;
+  takeProfit: number;
+  riskReward: number;
+  trendStrength: 'STRONG' | 'MODERATE' | 'WEAK' | 'REVERSAL';
+  volumeSignal: string;
+  reason: string;
 }
 
 export function getSmartAllocations(
-  livePrices: Record<string, PriceData>
+  livePrices: Record<string, PriceData>,
+  indiaSIP: number = 10000,
+  usSIP: number = 200
 ): AllocationRec[] {
   const recs: AllocationRec[] = [];
 
-  // India ETFs
-  ALPHA_ETFS_IN.forEach(etf => {
-    const key = `IN_${etf.sym}`;
-    const altKey = `IN_${etf.sym}.NS`;
+  // Global VIX for risk adjustment
+  const usVix = livePrices['US_VIX']?.price || 15;
+  const inVix = livePrices['IN_INDIAVIX']?.price || 15;
+  const avgVix = (usVix + inVix) / 2;
+  const vixMultiplier = avgVix > 25 ? 0.6 : avgVix > 20 ? 0.8 : avgVix > 16 ? 1.0 : 1.15;
+
+  const processETF = (etf: typeof ALPHA_ETFS_IN[0], market: 'IN' | 'US') => {
+    const key = `${market}_${etf.sym}`;
+    const altKey = `${market}_${etf.sym}.NS`;
     const data = livePrices[key] || livePrices[altKey];
     const price = data?.price || 0;
     const rsi = data?.rsi || 50;
     const low = data?.low || price * 0.98;
-    const isBull = data?.sma20 && data?.sma50 ? data.sma20 > data.sma50 : false;
-    const hasMACDMomentum = data?.macd ? data.macd > 0 : false;
+    const high = data?.high || price * 1.02;
+    const volume = data?.volume || 0;
+    const sma20 = data?.sma20;
+    const sma50 = data?.sma50;
+    const macd = data?.macd;
+    const isBull = sma20 && sma50 ? sma20 > sma50 : false;
+    const hasMACDMomentum = macd !== undefined ? macd > 0 : false;
 
-    // Dynamic allocation: increase weight for oversold or breaking out assets
+    // === STRENGTH SCORE (0-100) ===
+    let strength = 50;
+    // RSI contribution (0-30 points)
+    if (rsi < 30) strength += 30;
+    else if (rsi < 40) strength += 20;
+    else if (rsi < 50) strength += 10;
+    else if (rsi > 70) strength -= 20;
+    else if (rsi > 60) strength -= 10;
+    // MACD contribution (0-20 points)
+    if (hasMACDMomentum) strength += 15;
+    else if (macd !== undefined) strength -= 10;
+    // SMA trend (0-20 points)
+    if (isBull) strength += 15;
+    else if (sma20 && sma50 && sma50 > sma20) strength -= 10;
+    // VIX adjustment (-10 to +10)
+    if (avgVix < 14) strength += 5;
+    else if (avgVix > 22) strength -= 10;
+    strength = Math.max(5, Math.min(99, strength));
+
+    // === STOP LOSS & TAKE PROFIT ===
+    const atr = (high - low) || price * 0.02;
+    const stopLoss = price > 0 ? price - (atr * 1.5) : 0;
+    const takeProfit = price > 0 ? price + (atr * 2.5) : 0;
+    const riskReward = price > 0 && (price - stopLoss) > 0 ? (takeProfit - price) / (price - stopLoss) : 0;
+
+    // === TREND STRENGTH ===
+    let trendStrength: AllocationRec['trendStrength'] = 'WEAK';
+    if (isBull && hasMACDMomentum && rsi < 60) trendStrength = 'STRONG';
+    else if (isBull || hasMACDMomentum) trendStrength = 'MODERATE';
+    else if (rsi < 35 && !isBull) trendStrength = 'REVERSAL';
+
+    // === VOLUME SIGNAL ===
+    let volumeSignal = '💤 Low';
+    if (volume > 1000000) volumeSignal = '🔥 High Volume';
+    else if (volume > 500000) volumeSignal = '📊 Active';
+    else if (volume > 100000) volumeSignal = '⚡ Normal';
+
+    // === DYNAMIC ALLOCATION ===
     let allocMult = 1.0;
-    if (rsi < 35 || (isBull && hasMACDMomentum)) allocMult = 1.5;
+    if (rsi < 30 && hasMACDMomentum) allocMult = 2.0;
+    else if (rsi < 35 || (isBull && hasMACDMomentum)) allocMult = 1.5;
     else if (rsi < 45 || isBull) allocMult = 1.2;
+    else if (rsi > 75) allocMult = 0.3;
     else if (rsi > 70 && !hasMACDMomentum) allocMult = 0.5;
+    allocMult *= vixMultiplier;
 
     const targetEntry = rsi < 40 ? low : price * 0.99;
     const discount = price > 0 ? ((price - targetEntry) / price) * 100 : 0;
 
+    // === SIGNAL + REASON ===
     let signal = '🟡 WAIT';
-    if (rsi < 35 || (isBull && hasMACDMomentum)) signal = '🟢 BUY NOW';
-    else if (rsi < 45 || isBull) signal = '🟢 ACCUMULATE';
-    else if (rsi > 70 && !hasMACDMomentum) signal = '🔴 AVOID';
+    let reason = 'Neutral zone — wait for dip entry';
+    if (rsi < 30 && hasMACDMomentum) { signal = '🟢 STRONG BUY'; reason = `RSI ${rsi.toFixed(0)} oversold + MACD bullish crossover. Institutional accumulation zone.`; }
+    else if (rsi < 35 || (isBull && hasMACDMomentum)) { signal = '🟢 BUY NOW'; reason = `${isBull ? 'Golden Cross active' : `RSI ${rsi.toFixed(0)} near oversold`}. ${hasMACDMomentum ? 'MACD momentum positive.' : ''}`; }
+    else if (rsi < 45 || isBull) { signal = '🟢 ACCUMULATE'; reason = `Favorable entry zone. ${isBull ? 'SMA20 > SMA50 trend intact.' : `RSI ${rsi.toFixed(0)} approaching value.`}`; }
+    else if (rsi > 75) { signal = '🔴 DISTRIBUTE'; reason = `RSI ${rsi.toFixed(0)} extreme overbought. Distribution phase — book 50%+ profits.`; }
+    else if (rsi > 70 && !hasMACDMomentum) { signal = '🔴 AVOID'; reason = `RSI ${rsi.toFixed(0)} overbought. MACD losing momentum. Not a good entry.`; }
+    else { reason = `RSI ${rsi.toFixed(0)} neutral. ${avgVix > 20 ? 'High VIX — maintain cash buffer.' : 'Wait for breakout or dip.'}`; }
 
     recs.push({
-      symbol: etf.sym,
-      name: etf.name,
-      market: 'IN',
-      currentPrice: price,
-      targetEntry,
-      discount,
-      signal,
-      allocPct: etf.fixedAlloc * allocMult,
-      rsi
+      symbol: etf.sym, name: etf.name, market, currentPrice: price,
+      targetEntry, discount, signal, allocPct: etf.fixedAlloc * allocMult,
+      allocAmount: 0, rsi, strength, stopLoss, takeProfit, riskReward,
+      trendStrength, volumeSignal, reason
     });
-  });
+  };
 
-  // US ETFs
-  ALPHA_ETFS_US.forEach(etf => {
-    const key = `US_${etf.sym}`;
-    const data = livePrices[key];
-    const price = data?.price || 0;
-    const rsi = data?.rsi || 50;
-    const low = data?.low || price * 0.98;
-    const isBull = data?.sma20 && data?.sma50 ? data.sma20 > data.sma50 : false;
-    const hasMACDMomentum = data?.macd ? data.macd > 0 : false;
+  ALPHA_ETFS_IN.forEach(etf => processETF(etf, 'IN'));
+  ALPHA_ETFS_US.forEach(etf => processETF(etf, 'US'));
 
-    let allocMult = 1.0;
-    if (rsi < 35 || (isBull && hasMACDMomentum)) allocMult = 1.5;
-    else if (rsi < 45 || isBull) allocMult = 1.2;
-    else if (rsi > 70 && !hasMACDMomentum) allocMult = 0.5;
-
-    const targetEntry = rsi < 40 ? low : price * 0.99;
-    const discount = price > 0 ? ((price - targetEntry) / price) * 100 : 0;
-
-    let signal = '🟡 WAIT';
-    if (rsi < 35 || (isBull && hasMACDMomentum)) signal = '🟢 BUY NOW';
-    else if (rsi < 45 || isBull) signal = '🟢 ACCUMULATE';
-    else if (rsi > 70 && !hasMACDMomentum) signal = '🔴 AVOID';
-
-    recs.push({
-      symbol: etf.sym,
-      name: etf.name,
-      market: 'US',
-      currentPrice: price,
-      targetEntry,
-      discount,
-      signal,
-      allocPct: etf.fixedAlloc * allocMult,
-      rsi
-    });
-  });
-
-  // Normalize allocations per market
+  // Normalize allocations per market and calculate ₹/$ amounts
   const inRecs = recs.filter(r => r.market === 'IN');
   const usRecs = recs.filter(r => r.market === 'US');
   const inTotal = inRecs.reduce((s, r) => s + r.allocPct, 0) || 1;
   const usTotal = usRecs.reduce((s, r) => s + r.allocPct, 0) || 1;
-  inRecs.forEach(r => r.allocPct = r.allocPct / inTotal);
-  usRecs.forEach(r => r.allocPct = r.allocPct / usTotal);
+  inRecs.forEach(r => { r.allocPct = r.allocPct / inTotal; r.allocAmount = Math.round(indiaSIP * r.allocPct); });
+  usRecs.forEach(r => { r.allocPct = r.allocPct / usTotal; r.allocAmount = Math.round(usSIP * r.allocPct); });
 
   return recs;
 }
