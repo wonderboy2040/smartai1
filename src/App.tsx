@@ -159,7 +159,10 @@ export default function App() {
     syncIntervalRef.current = window.setInterval(sync, 10000);
 
     // Ultra-fast TradingView WebSocket integration
-    const symbolsToSub = portfolio.map(p => p.symbol);
+    const symbolsToSub = portfolio.map(p => `${p.market}_${p.symbol}`);
+    if (currentSymbol) {
+      symbolsToSub.push(`${currentMarket}_${currentSymbol}`);
+    }
     const unsubscribe = subscribeToPrices(symbolsToSub, (key, data) => {
       setLivePrices(prev => {
         const existingInfo = prev[key] || {};
@@ -175,7 +178,7 @@ export default function App() {
       if (livePricesWriteTimerRef.current) clearTimeout(livePricesWriteTimerRef.current);
       unsubscribe();
     };
-  }, [isAuthenticated, portfolioIdKey, debouncedSavePrices]);
+  }, [isAuthenticated, portfolioIdKey, debouncedSavePrices, currentSymbol, currentMarket]);
 
   // Save portfolio to localStorage & Handle Initial Symbol
   useEffect(() => {
