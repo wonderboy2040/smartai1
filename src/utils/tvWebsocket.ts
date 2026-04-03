@@ -1,64 +1,37 @@
 import { PriceData } from '../types';
 
-
 let ws: WebSocket | null = null;
 let currentSession = '';
-let shouldReconnect = true;
 const callbacks: Set<(symbol: string, data: Partial<PriceData>) => void> = new Set();
-let activeSymbols: Map<string, Set<(symbol: string, data: Partial<PriceData>) => void>> = new Map();
+let activeSymbols: Set<string> = new Set();
 let pingInterval: number;
 
 function generateSession(): string {
   return 'qs_' + Math.random().toString(36).substring(2, 12);
 }
 
-function formatMessage(name: string, payload: unknown[]): string {
+function formatMessage(name: string, payload: any[]): string {
   const msg = JSON.stringify({ m: name, p: payload });
   return `~m~${msg.length}~m~${msg}`;
 }
 
-function sendMsg(name: string, payload: unknown[]) {
+function sendMsg(name: string, payload: any[]) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(formatMessage(name, payload));
   }
 }
 
-function getAllActiveSymbols(): string[] {
-  return [...new Set([...activeSymbols.keys()])];
-}
-
-let tvSymbolToKey: Map<string, string> = new Map();
-
-export function subscribeToPrices(keys: string[], onUpdate: (key: string, data: Partial<PriceData>) => void) {
+export function subscribeToPrices(symbols: string[], onUpdate: (sym: string, data: Partial<PriceData>) => void) {
   callbacks.add(onUpdate);
-  
-  const formattedSymbols = keys.map(key => {
-    // keys format: "IN_RELIANCE" or "US_AAPL"
-    const parts = key.split('_');
-    const mkt = parts[0];
-    const s = parts.slice(1).join('_');
-
-    const cleanSym = s.toUpperCase().replace('.NS', '').replace('.BO', '');
-    let tvSym = '';
-
-    if (mkt === 'IN' || s.includes('.NS') || s.includes('.BO') || s.includes('BEES')) {
-      tvSym = `NSE:${cleanSym}`;
-    } else {
-      tvSym = cleanSym.includes(':') ? cleanSym : `NASDAQ:${cleanSym}`;
+  const formattedSymbols = symbols.map(s => {
+    let sym = s.toUpperCase().replace('.NS', '').replace('.BO', '');
+    if (s.includes('.NS') || s.includes('.BO') || s.includes('BEES')) {
+      return `NSE:${sym}`;
     }
-
-    tvSymbolToKey.set(tvSym, key);
-    return tvSym;
+    return sym.includes(':') ? sym : `NASDAQ:${sym}`;
   });
 
-  formattedSymbols.forEach(s => {
-    if (!activeSymbols.has(s)) {
-      activeSymbols.set(s, new Set());
-    }
-    activeSymbols.get(s)!.add(onUpdate);
-  });
-
-  shouldReconnect = true;
+  formattedSymbols.forEach(s => activeSymbols.add(s));
 
   if (!ws || ws.readyState === WebSocket.CLOSED) {
     connect();
@@ -66,55 +39,13 @@ export function subscribeToPrices(keys: string[], onUpdate: (key: string, data: 
     sendMsg('quote_add_symbols', [currentSession, ...formattedSymbols]);
   }
 
-  // Return cleanup function
   return () => {
     callbacks.delete(onUpdate);
-
-    // Remove this callback from all symbols and clean up symbols with no listeners
-    const symbolsToRemove: string[] = [];
-    activeSymbols.forEach((cbs, sym) => {
-      cbs.delete(onUpdate);
-      if (cbs.size === 0) {
-        symbolsToRemove.push(sym);
-      }
-    });
-    symbolsToRemove.forEach(sym => activeSymbols.delete(sym));
-
-    // If no more callbacks, disconnect completely
-    if (callbacks.size === 0) {
-      shouldReconnect = false;
-      if (ws) {
-        ws.close();
-        ws = null;
-      }
-      clearInterval(pingInterval);
-      activeSymbols.clear();
-    }
   };
 }
 
-function buildFallbackKey(tvSymbol: string): string {
-  const parts = tvSymbol.split(':');
-  const exchange = parts[0] || '';
-  const rawSym = parts[1] || tvSymbol;
-  const isIndian = exchange === 'NSE' || exchange === 'BSE';
-  
-  if (isIndian) {
-    if (rawSym.includes('BEES') || rawSym === 'INDIAVIX') {
-      return `IN_${rawSym}`;
-    }
-    return `IN_${rawSym}.NS`;
-  }
-  return `US_${rawSym}`;
-}
-
 function connect() {
-  if (ws) {
-    try { ws.close(); } catch (_e) { /* ignore */ }
-  }
-  
-  if (!shouldReconnect) return;
-  
+  if (ws) ws.close();
   ws = new WebSocket('wss://data.tradingview.com/socket.io/websocket', ['chat']);
   
   ws.onopen = () => {
@@ -123,17 +54,16 @@ function connect() {
     sendMsg('quote_create_session', [currentSession]);
     sendMsg('quote_set_fields', [
       currentSession,
-      'lp',
-      'ch',
-      'chp',
+      'lp', // last price
+      'ch', // change
+      'chp', // change percent
       'high_price',
       'low_price',
       'volume'
     ]);
     
-    const syms = getAllActiveSymbols();
-    if (syms.length > 0) {
-      sendMsg('quote_add_symbols', [currentSession, ...syms]);
+    if (activeSymbols.size > 0) {
+      sendMsg('quote_add_symbols', [currentSession, ...Array.from(activeSymbols)]);
     }
 
     pingInterval = window.setInterval(() => {
@@ -151,12 +81,13 @@ function connect() {
         try {
           const parsed = JSON.parse(packet);
           if (parsed.m === 'qsd' && parsed.p && parsed.p[1]) {
-            const tvSymbol = parsed.p[1].n || '';
+            const sym = parsed.p[0]; // e.g., "NSE:RELIANCE"
             const payload = parsed.p[1];
             
             if (payload.s === 'ok' && payload.v) {
-              // Find the EXACT key App.tsx expects
-              const finalKey = tvSymbolToKey.get(tvSymbol) || buildFallbackKey(tvSymbol);
+              const rawSym = sym.split(':')[1] || sym;
+              const isIndian = sym.includes('NSE') || sym.includes('BSE');
+              const finalKey = `${isIndian ? 'IN' : 'US'}_${rawSym}${isIndian && !rawSym.includes('BEES') ? '.NS' : ''}`;
               
               const update: Partial<PriceData> = {};
               if (payload.v.lp !== undefined) update.price = payload.v.lp;
@@ -170,7 +101,7 @@ function connect() {
               }
             }
           }
-        } catch (_e) {
+        } catch (e) {
           // Ignore parse errors from generic socket messages
         }
       });
@@ -179,12 +110,6 @@ function connect() {
 
   ws.onclose = () => {
     clearInterval(pingInterval);
-    if (shouldReconnect && callbacks.size > 0) {
-      setTimeout(connect, 3000);
-    }
-  };
-
-  ws.onerror = () => {
-    console.warn('[WS] TradingView WebSocket error, will reconnect...');
+    setTimeout(connect, 3000); // Reconnect loop
   };
 }

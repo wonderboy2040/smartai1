@@ -1,10 +1,15 @@
 import { ETFInfo } from '../types';
 
-// Security: Secrets loaded from .env via Vite's import.meta.env (not bundled in source)
-export const SECURE_PIN = import.meta.env.VITE_SECURE_PIN || "2023";
-export const API_URL = import.meta.env.VITE_API_URL || "";
-export const TG_TOKEN = import.meta.env.VITE_TG_TOKEN || "";
-export const TG_CHAT_ID = import.meta.env.VITE_TG_CHAT_ID || "";
+export const SECURE_PIN = "2023";
+export const API_URL = "https://script.google.com/macros/s/AKfycbxITH5b_KKXvhPq3RukOA04d4pVgPrwp4uIiY2BDDMPWZ99oE0Ism2u5FJONR3LUDvhsg/exec";
+export const TG_TOKEN = "8561229979:AAH24LmFeRbhoDCAIL6colX-KlogOseI9aY";
+export const TG_CHAT_ID = "5488576360";
+
+export const TAX_PAIRS: Record<string, string> = {
+  'ITBEES.NS': 'TATAIT.NS',
+  'QQQM': 'QQQ',
+  'SMH': 'SOXX'
+};
 
 export const ALPHA_ETFS_IN: ETFInfo[] = [
   { sym: 'JUNIORBEES', name: 'Nippon India ETF Junior BeES', cagr: 18.5, maxDD: 30, cat: 'Next 50', aum: '₹2.5k Cr', vol: 'High', fixedAlloc: 0.15 },
@@ -34,14 +39,13 @@ export const EXACT_TICKER_MAP: Record<string, string> = {
 
 export const CORS_PROXIES = [
   'https://api.allorigins.win/raw?url=',
-  'https://corsproxy.io/?',
-  'https://api.codetabs.com/v1/proxy?quest='
+  'https://corsproxy.io/?'
 ];
 
 export function getTodayString(): string {
   const t = new Date();
-  const m = t.getMonth() + 1;
-  const d = t.getDate();
+  let m = t.getMonth() + 1;
+  let d = t.getDate();
   return `${t.getFullYear()}-${m < 10 ? '0' + m : m}-${d < 10 ? '0' + d : d}`;
 }
 
@@ -62,6 +66,12 @@ export function getAssetCagrProxy(sym: string, mkt: string): number {
   if (u) return u.cagr;
   if (sym.includes('XAU') || sym.includes('XAG')) return 8;
   return mkt?.toUpperCase() === 'IN' ? 14 : 12;
+}
+
+export function formatCurrency(amount: number, currency: string = '₹'): string {
+  if (amount >= 10000000) return `${currency}${(amount / 10000000).toFixed(2)} Cr`;
+  if (amount >= 100000) return `${currency}${(amount / 100000).toFixed(2)} L`;
+  return `${currency}${amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 }
 
 export function formatPrice(price: number, currency: string = '₹'): string {

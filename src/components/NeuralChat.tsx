@@ -9,20 +9,8 @@ interface ChatMessage {
   timestamp: number;
 }
 
-function sanitizeHtml(text: string): string {
-  // Strip dangerous tags/attributes to prevent XSS from AI responses
-  return text
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '')
-    .replace(/<object[^>]*>[\s\S]*?<\/object>/gi, '')
-    .replace(/<embed[^>]*>/gi, '')
-    .replace(/on\w+\s*=\s*["'][^"']*["']/gi, '')
-    .replace(/javascript:/gi, '');
-}
-
 function renderMarkdown(text: string): string {
-  const sanitized = sanitizeHtml(text);
-  return sanitized
+  return text
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     .replace(/_(.+?)_/g, '<em>$1</em>')
@@ -115,15 +103,15 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
   // Fetch market intelligence on chat open & every 2 minutes
   useEffect(() => {
     if (!showChat) return;
-    const fetchIntel = async () => {
+    const fetch = async () => {
       try {
         const intel = await fetchMarketIntelligence();
         setMarketIntel(intel);
         marketIntelRef.current = intel;
-      } catch (e) { console.warn('[AI] Market intelligence fetch failed:', e); }
+      } catch (e) {}
     };
-    fetchIntel();
-    const iv = setInterval(fetchIntel, 120000);
+    fetch();
+    const iv = setInterval(fetch, 120000);
     return () => clearInterval(iv);
   }, [showChat]);
 
@@ -138,7 +126,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
       return;
     }
 
-    setChatMessages(prev => [...prev.slice(-99), { role: 'user', text: userMessage, timestamp: Date.now() }]);
+    setChatMessages(prev => [...prev, { role: 'user', text: userMessage, timestamp: Date.now() }]);
     setIsThinking(true);
 
     try {
@@ -174,7 +162,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
 
       const data = await res.json();
       const aiText = data.choices?.[0]?.message?.content || "Neural link unstable. Please retry.";
-      setChatMessages(prev => [...prev.slice(-99), { role: 'model', text: aiText, timestamp: Date.now() }]);
+      setChatMessages(prev => [...prev, { role: 'model', text: aiText, timestamp: Date.now() }]);
     } catch (e) {
       console.error("Groq Error:", e);
       setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanceof Error ? e.message : String(e)}`, timestamp: Date.now() }]);
