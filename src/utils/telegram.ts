@@ -54,6 +54,8 @@ export interface AssetSignal {
   fibHigh: number;
   confidence: number;
   reason: string;
+  allocPct?: number;
+  allocAmount?: number;
 }
 
 export function analyzeAsset(
@@ -323,38 +325,40 @@ export function generateDeepAnalysis(
   const buySignals = signals.filter(s => s.signal === 'STRONG_BUY' || s.signal === 'BUY');
   const sellSignals = signals.filter(s => s.signal === 'STRONG_SELL' || s.signal === 'SELL');
 
-  let msg = `📊 *WEALTH AI — Deep Analysis*\n`;
-  msg += `⏰ ${timeStr} IST\n\n`;
+  let msg = `📊 <b>WEALTH AI — Pro Radar</b>\n`;
+  msg += `⏰ <i>${timeStr} IST</i>\n\n`;
 
   // Portfolio Summary
-  msg += `💼 *Portfolio*\n`;
-  msg += `Total: ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n`;
-  msg += `P&L: ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(1)}%)\n`;
-  msg += `Today: ${metrics.todayPL >= 0 ? '📈+' : '📉'}₹${Math.round(Math.abs(metrics.todayPL)).toLocaleString('en-IN')}\n\n`;
+  msg += `💼 <b>Portfolio Sandbox</b>\n`;
+  msg += `Current Equity: <b>₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}</b>\n`;
+  msg += `Total Return: <b>${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')}</b> <i>(${metrics.plPct.toFixed(2)}%)</i>\n`;
+  msg += `Today's Action: <b>${metrics.todayPL >= 0 ? '📈 +' : '📉 '}₹${Math.round(Math.abs(metrics.todayPL)).toLocaleString('en-IN')}</b>\n\n`;
 
   // Market Fundamentals
-  msg += `🌍 *Market Regime: ${regime}*\n`;
-  msg += `US VIX: ${usVix.toFixed(1)} | India VIX: ${inVix.toFixed(1)}\n`;
-  msg += `USD/INR: ₹${usdInrRate.toFixed(2)}\n\n`;
+  msg += `🌍 <b>Global Market Engine</b>\n`;
+  msg += `Regime: <b>${regime}</b>\n`;
+  msg += `<code>US VIX: ${usVix.toFixed(1)} | India VIX: ${inVix.toFixed(1)}</code>\n`;
+  msg += `<code>USD/INR: ₹${usdInrRate.toFixed(2)}</code> <i>(Live FOREX)</i>\n\n`;
 
   // Buy Signals
   if (buySignals.length > 0) {
-    msg += `🟢 *BUY SIGNALS*\n`;
+    msg += `🟢 <b>STRONG BUY / ACCUMULATE</b>\n`;
     buySignals.forEach(s => {
       const cur = s.market === 'IN' ? '₹' : '$';
-      msg += `• ${s.symbol}: ${cur}${s.price.toFixed(2)} | RSI ${s.rsi.toFixed(0)} | Target: ${cur}${s.targetPrice.toFixed(2)}\n`;
-      msg += `  _${s.reason}_\n`;
+      msg += `• <b>${s.symbol}</b>: ${cur}${s.price.toFixed(2)} | RSI <b>${s.rsi.toFixed(0)}</b>\n`;
+      msg += `  <i>${s.reason}</i>\n`;
+      if (s.allocAmount) msg += `  <code>↳ Target SIP: ${cur}${s.allocAmount.toLocaleString()}</code>\n`;
     });
     msg += '\n';
   }
 
   // Sell Signals
   if (sellSignals.length > 0) {
-    msg += `🔴 *SELL/BOOK SIGNALS*\n`;
+    msg += `🔴 <b>DISTRIBUTE / SELL</b>\n`;
     sellSignals.forEach(s => {
       const cur = s.market === 'IN' ? '₹' : '$';
-      msg += `• ${s.symbol}: ${cur}${s.price.toFixed(2)} | RSI ${s.rsi.toFixed(0)}\n`;
-      msg += `  _${s.reason}_\n`;
+      msg += `• <b>${s.symbol}</b>: ${cur}${s.price.toFixed(2)} | RSI <b>${s.rsi.toFixed(0)}</b>\n`;
+      msg += `  <i>${s.reason}</i>\n`;
     });
     msg += '\n';
   }
@@ -364,21 +368,21 @@ export function generateDeepAnalysis(
     (s.change < -2 && s.rsi < 40) || (s.change > 2 && s.rsi > 60)
   );
   if (reversals.length > 0) {
-    msg += `🔄 *REVERSAL ALERTS*\n`;
+    msg += `🔄 <b>REVERSAL SCANS ACTIVE</b>\n`;
     reversals.forEach(s => {
-      const dir = s.change < 0 ? '⬇️ Down→Up potential' : '⬆️ Up→Down potential';
-      msg += `• ${s.symbol}: ${dir} (${s.change > 0 ? '+' : ''}${s.change.toFixed(1)}%)\n`;
+      const dir = s.change < 0 ? '⬇️ Bottoming Potential' : '⬆️ Topping Potential';
+      msg += `• <b>${s.symbol}</b>: ${dir} (<b>${s.change > 0 ? '+' : ''}${s.change.toFixed(1)}%</b>)\n`;
     });
     msg += '\n';
   }
 
   // Market Direction
   if (avgVix < 15) {
-    msg += `📈 *Outlook: Markets likely to RALLY*\nLow VIX = complacency. SIP aggressively.\n`;
+    msg += `📈 <b>Quantum Outlook: RALLY MODE 🚀</b>\nLow Volatility = Complacency zone. Continue automated SIP routing.\n`;
   } else if (avgVix > 22) {
-    msg += `📉 *Outlook: Markets under PRESSURE*\nHigh VIX = fear. Accumulate quality on dips.\n`;
+    msg += `📉 <b>Quantum Outlook: HIGH PRESSURE ⚠️</b>\nFear dominating. Wait for RSI to bottom out below 30. Hoard Capital.\n`;
   } else {
-    msg += `➡️ *Outlook: RANGE-BOUND*\nStick to SIP schedule. Wait for clarity.\n`;
+    msg += `➡️ <b>Quantum Outlook: CHOPPY RANGE</b>\nStick to absolute strict SIP schedules. No extra deployment recommended.\n`;
   }
 
   return msg;
