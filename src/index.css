@@ -676,3 +676,63 @@ select option {
 .animate-message-in {
   animation: messageIn 0.3s ease-out;
 }
+
+/* ========================================
+   LIGHT THEME OVERRIDES (PRO DAY MODE)
+   ======================================== */
+.light,
+.light.min-h-screen {
+  background: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+.light .glass-card,
+.light .glass-ultra,
+.light .glass-modal {
+  background: rgba(255, 255, 255, 0.8) !important;
+  backdrop-filter: blur(24px) !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+  color: #0f172a !important;
+}
+
+.light h1, .light h2, .light h3, .light .text-white {
+  color: #020617 !important;
+}
+
+.light .text-slate-200,
+.light .text-slate-300,
+.light .text-slate-400 {
+  color: #334155 !important;
+}
+
+.light .text-slate-500,
+.light .text-slate-600 {
+  color: #64748b !important;
+}
+
+.light .bg-black\/40,
+.light .bg-black\/20,
+.light .bg-black\/30 {
+  background: rgba(0, 0, 0, 0.03) !important;
+}
+
+.light .border-white\/5,
+.light .border-white\/10 {
+  border-color: rgba(0, 0, 0, 0.1) !important;
+}
+
+.light .bg-white\/5,
+.light .hover\:bg-white\/10:hover {
+  background: rgba(0, 0, 0, 0.05) !important;
+}
+
+.light .glass-input {
+  background: rgba(255, 255, 255, 0.9) !important;
+  border-color: rgba(0, 0, 0, 0.1) !important;
+  color: #0f172a !important;
+}
+
+.light .bg-noise {
+  opacity: 0.01 !important;
+}
