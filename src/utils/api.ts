@@ -208,10 +208,23 @@ export async function batchFetchPrices(
 }
 
 export async function fetchForexRate(): Promise<number> {
-  // Try multiple APIs
+  // Primary: Yahoo Finance (Hyper-accurate real-time & weekend fallback)
+  for (const proxy of CORS_PROXIES) {
+    try {
+      const url = `${proxy}${encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/INR=X?interval=1d&range=1d')}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        const data = await res.json();
+        const price = parseFloat(data?.chart?.result?.[0]?.meta?.regularMarketPrice);
+        if (!isNaN(price) && price > 50 && price < 150) return price;
+      }
+    } catch (e) {}
+  }
+
+  // Backup 1: AwesomeAPI (Real-time fallback)
   try {
     const res = await fetch(`https://economia.awesomeapi.com.br/json/last/USD-INR?t=${Date.now()}`, {
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(4000)
     });
     if (res.ok) {
       const data = await res.json();
@@ -222,10 +235,10 @@ export async function fetchForexRate(): Promise<number> {
     }
   } catch (e) {}
 
-  // Fallback
+  // Backup 2: Open ER-API (Daily updates)
   try {
     const res = await fetch(`https://open.er-api.com/v6/latest/USD?t=${Date.now()}`, {
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(4000)
     });
     if (res.ok) {
       const data = await res.json();
@@ -290,7 +303,7 @@ export async function sendTelegramAlert(token: string, chatId: string, message: 
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'Markdown' })
+      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML' })
     });
     return res.ok;
   } catch (e) {
