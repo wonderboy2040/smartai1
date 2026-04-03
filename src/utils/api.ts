@@ -12,7 +12,7 @@ export async function fetchSinglePrice(symbol: string, retryAttempt = 0): Promis
   try {
     const tvResult = await tryTradingView(sym, cleanSym, isIndian);
     if (tvResult && tvResult.price > 0) return tvResult;
-  } catch (e) {}
+  } catch (e) { console.warn('[TV] TradingView fetch failed:', e); }
 
   // Fallback to Yahoo Finance
   const yahooSymbol = isIndian ? `${cleanSym}.NS` : cleanSym;
@@ -46,7 +46,7 @@ export async function fetchSinglePrice(symbol: string, retryAttempt = 0): Promis
           }
         }
       }
-    } catch (e) {}
+    } catch (e) { console.warn('[Yahoo] Proxy failed:', e); }
   }
 
   // Retry with alternate symbol
@@ -75,7 +75,7 @@ async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean)
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify({
         symbols: { tickers: tvTickers },
-        columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
+        columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd', 'RSI|15', 'RSI|60', 'RSI|240', 'High.52Week', 'Low.52Week', 'sector']
       }),
       signal: AbortSignal.timeout(6000)
     });
@@ -98,6 +98,12 @@ async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean)
             sma50: parseFloat(item.d[7]) || undefined,
             rsi: parseFloat(item.d[8]) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
             macd: parseFloat(item.d[9]) || undefined,
+            rsi15: parseFloat(item.d[10]) || undefined,
+            rsi60: parseFloat(item.d[11]) || undefined,
+            rsi240: parseFloat(item.d[12]) || undefined,
+            high52w: parseFloat(item.d[13]) || undefined,
+            low52w: parseFloat(item.d[14]) || undefined,
+            sector: item.d[15] || undefined,
             market: isIndian ? 'IN' : 'US',
             tvExchange: item.s.split(':')[0],
             tvExactSymbol: item.s,
@@ -106,7 +112,7 @@ async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean)
         }
       }
     }
-  } catch (e) {}
+  } catch (e) { console.warn('[TV] Scanner failed:', e); }
 
   return null;
 }
@@ -158,7 +164,7 @@ export async function batchFetchPrices(
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         body: JSON.stringify({
           symbols: { tickers: uniqueTickers },
-          columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
+          columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd', 'RSI|15', 'RSI|60', 'RSI|240', 'High.52Week', 'Low.52Week', 'sector']
         }),
         signal: AbortSignal.timeout(6000)
       });
@@ -188,6 +194,12 @@ export async function batchFetchPrices(
               sma50: parseFloat(item.d[7]) || undefined,
               rsi: parseFloat(item.d[8]) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
               macd: parseFloat(item.d[9]) || undefined,
+              rsi15: parseFloat(item.d[10]) || undefined,
+              rsi60: parseFloat(item.d[11]) || undefined,
+              rsi240: parseFloat(item.d[12]) || undefined,
+              high52w: parseFloat(item.d[13]) || undefined,
+              low52w: parseFloat(item.d[14]) || undefined,
+              sector: item.d[15] || undefined,
               time: Date.now(),
               market: mkt,
               tvExchange: item.s.split(':')[0],
@@ -296,17 +308,18 @@ export async function loadFromCloud(): Promise<Position[] | null> {
   return null;
 }
 
-export async function sendTelegramAlert(token: string, chatId: string, message: string): Promise<boolean> {
+export async function sendTelegramAlert(token: string, chatId: string, message: string, parseMode: 'HTML' | 'Markdown' = 'HTML'): Promise<boolean> {
   if (!token || !chatId) return false;
   
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML' })
+      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: parseMode })
     });
     return res.ok;
   } catch (e) {
+    console.warn('[TG] Telegram alert failed:', e);
     return false;
   }
 }
