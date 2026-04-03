@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Position, PriceData, TabType, RiskLevel, TransactionType } from './types';
 import { 
   SECURE_PIN, TG_TOKEN, TG_CHAT_ID,
@@ -15,6 +15,7 @@ import {
   getSmartAllocations, generateDeepAnalysis
 } from './utils/telegram';
 import { NeuralChat } from './components/NeuralChat';
+import { Clock } from './components/Clock';
 
 export default function App() {
   // Auth State
@@ -32,7 +33,6 @@ export default function App() {
   const [symbolInput, setSymbolInput] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [chartInterval, setChartInterval] = useState('D');
-  const [currentTime, setCurrentTime] = useState(new Date());
   const [liveStatus, setLiveStatus] = useState('Connecting...');
   const [syncStatus, setSyncStatus] = useState('');
   const [pricesLoaded, setPricesLoaded] = useState(false);
@@ -78,11 +78,7 @@ export default function App() {
     }
   }, []);
 
-  // Time update
-  useEffect(() => {
-    const interval = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(interval);
-  }, []);
+  // Time update removed -> Replaced by <Clock />
 
   // Load data when authenticated
   useEffect(() => {
@@ -117,14 +113,21 @@ export default function App() {
     fetchForexRate().then(rate => setUsdInrRate(rate));
   }, [isAuthenticated]);
 
+  const portfolioRef = useRef(portfolio);
+  useEffect(() => {
+    portfolioRef.current = portfolio;
+  }, [portfolio]);
+
   // Background sync & WebSocket
   useEffect(() => {
-    if (!isAuthenticated || portfolio.length === 0) return;
+    if (!isAuthenticated) return;
+    const currentPortfolio = portfolioRef.current;
+    if (currentPortfolio.length === 0) return;
 
     // Fast HTTP Sync (Runs exactly once and every 10s for backup)
     const sync = async () => {
       setLiveStatus('● SYNCING...');
-      await batchFetchPrices(portfolio, (key, data) => {
+      await batchFetchPrices(portfolioRef.current, (key, data) => {
         setLivePrices(prev => {
           const updated = { ...prev, [key]: data };
           localStorage.setItem('livePrices', JSON.stringify(updated));
@@ -132,14 +135,13 @@ export default function App() {
         });
       });
       setLiveStatus('● QUANTUM LINK ACTIVE');
-      setPricesLoaded(true);
     };
 
     sync();
     syncIntervalRef.current = window.setInterval(sync, 10000);
 
     // Ultra-fast TradingView WebSocket integration
-    const symbolsToSub = portfolio.map(p => p.symbol);
+    const symbolsToSub = currentPortfolio.map(p => p.symbol);
     const unsubscribe = subscribeToPrices(symbolsToSub, (key, data) => {
       setLivePrices(prev => {
         const existingInfo = prev[key] || {};
@@ -154,7 +156,7 @@ export default function App() {
       if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
       unsubscribe();
     };
-  }, [isAuthenticated, portfolio.map(p => p.id).join(',')]);
+  }, [isAuthenticated, portfolio.map(p => p.symbol).sort().join(',')]);
 
   // Save portfolio to localStorage & Handle Initial Symbol
   useEffect(() => {
@@ -432,7 +434,8 @@ export default function App() {
     return { totalInvested, totalValue, totalPL, plPct, todayPL, todayPct, indPL, usPL };
   }, [portfolio, livePrices, usdInrRate]);
 
-  const metrics = calculateMetrics();
+  // Metrics calculation memoization
+  const metrics = useMemo(() => calculateMetrics(), [calculateMetrics]);
 
   const latestDataRef = useRef({ portfolio, livePrices, usdInrRate, metrics });
   useEffect(() => {
@@ -597,7 +600,7 @@ export default function App() {
                   <span className={`w-1.5 h-1.5 rounded-full ${liveStatus.includes('ACTIVE') ? 'bg-cyan-400 animate-pulse-dot' : 'bg-amber-500 animate-pulse'}`} />
                   <span className={`font-medium ${liveStatus.includes('ACTIVE') ? 'text-cyan-500/80' : 'bg-amber-400/80'}`}>{liveStatus.includes('ACTIVE') ? 'LIVE' : 'SYNCING'}</span>
                   <span className="text-slate-700">•</span>
-                  <span className="text-slate-500 font-mono text-[10px]">{currentTime.toLocaleTimeString('en-US', { hour12: false })}</span>
+                  <Clock />
                 </div>
               </div>
             </div>
