@@ -1,5 +1,5 @@
 import { PriceData } from '../types';
-import { guessMarket } from './constants';
+
 
 let ws: WebSocket | null = null;
 let currentSession = '';
@@ -27,16 +27,28 @@ function getAllActiveSymbols(): string[] {
   return [...new Set([...activeSymbols.keys()])];
 }
 
-export function subscribeToPrices(symbols: string[], onUpdate: (sym: string, data: Partial<PriceData>) => void) {
+let tvSymbolToKey: Map<string, string> = new Map();
+
+export function subscribeToPrices(keys: string[], onUpdate: (key: string, data: Partial<PriceData>) => void) {
   callbacks.add(onUpdate);
   
-  const formattedSymbols = symbols.map(s => {
-    const sym = s.toUpperCase().replace('.NS', '').replace('.BO', '');
-    const mkt = guessMarket(s);
+  const formattedSymbols = keys.map(key => {
+    // keys format: "IN_RELIANCE" or "US_AAPL"
+    const parts = key.split('_');
+    const mkt = parts[0];
+    const s = parts.slice(1).join('_');
+
+    const cleanSym = s.toUpperCase().replace('.NS', '').replace('.BO', '');
+    let tvSym = '';
+
     if (mkt === 'IN' || s.includes('.NS') || s.includes('.BO') || s.includes('BEES')) {
-      return `NSE:${sym}`;
+      tvSym = `NSE:${cleanSym}`;
+    } else {
+      tvSym = cleanSym.includes(':') ? cleanSym : `NASDAQ:${cleanSym}`;
     }
-    return sym.includes(':') ? sym : `NASDAQ:${sym}`;
+
+    tvSymbolToKey.set(tvSym, key);
+    return tvSym;
   });
 
   formattedSymbols.forEach(s => {
@@ -81,16 +93,13 @@ export function subscribeToPrices(symbols: string[], onUpdate: (sym: string, dat
   };
 }
 
-function buildKeyFromTvSymbol(tvSymbol: string): string {
-  // tvSymbol like "NSE:RELIANCE" or "NASDAQ:AAPL"
+function buildFallbackKey(tvSymbol: string): string {
   const parts = tvSymbol.split(':');
   const exchange = parts[0] || '';
   const rawSym = parts[1] || tvSymbol;
   const isIndian = exchange === 'NSE' || exchange === 'BSE';
   
-  // Match the key format used by batchFetchPrices: "IN_SYMBOL.NS" or "US_SYMBOL"
   if (isIndian) {
-    // For BEES-type ETFs, don't add .NS suffix
     if (rawSym.includes('BEES') || rawSym === 'INDIAVIX') {
       return `IN_${rawSym}`;
     }
@@ -146,7 +155,8 @@ function connect() {
             const payload = parsed.p[1];
             
             if (payload.s === 'ok' && payload.v) {
-              const finalKey = buildKeyFromTvSymbol(tvSymbol);
+              // Find the EXACT key App.tsx expects
+              const finalKey = tvSymbolToKey.get(tvSymbol) || buildFallbackKey(tvSymbol);
               
               const update: Partial<PriceData> = {};
               if (payload.v.lp !== undefined) update.price = payload.v.lp;
