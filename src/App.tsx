@@ -26,7 +26,8 @@ export default function App() {
   const [portfolio, setPortfolio] = useState<Position[]>([]);
   const [livePrices, setLivePrices] = useState<Record<string, PriceData>>({});
   const [usdInrRate, setUsdInrRate] = useState(83.5);
-  const [currentSymbol, setCurrentSymbol] = useState('ITBEES.NS');
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('theme') as 'dark' | 'light') || 'dark');
+  const [currentSymbol, setCurrentSymbol] = useState('');
   const [currentMarket, setCurrentMarket] = useState<'IN' | 'US'>('IN');
   const [symbolInput, setSymbolInput] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -155,18 +156,22 @@ export default function App() {
     };
   }, [isAuthenticated, portfolio.map(p => p.id).join(',')]);
 
-  // Save portfolio to localStorage
+  // Save portfolio to localStorage & Handle Initial Symbol
   useEffect(() => {
     if (portfolio.length > 0) {
       localStorage.setItem('portfolio', JSON.stringify(portfolio));
+      if (!currentSymbol) {
+        setCurrentSymbol(portfolio[0].symbol);
+        setCurrentMarket(portfolio[0].market as 'IN' | 'US');
+      }
     }
   }, [portfolio]);
 
   // Load chart when symbol changes
   useEffect(() => {
-    if (!isAuthenticated || !chartContainerRef.current) return;
+    if (!isAuthenticated || !chartContainerRef.current || !currentSymbol) return;
     loadTradingViewChart();
-  }, [currentSymbol, chartInterval, isAuthenticated]);
+  }, [currentSymbol, chartInterval, isAuthenticated, theme]);
 
   // Verify PIN
   const verifyPin = () => {
@@ -554,7 +559,7 @@ export default function App() {
     );
   }
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-[#0a0f1e] to-slate-950 text-slate-200">
+    <div className={`min-h-screen bg-gradient-to-br from-slate-950 via-[#0a0f1e] to-slate-950 text-slate-200 ${theme}`}>
       {/* Header */}
       <header className="sticky top-0 z-40 glass-ultra border-b border-white/5">
         {/* Ticker */}
@@ -590,7 +595,7 @@ export default function App() {
                 </div>
                 <div className="flex items-center gap-2 text-[11px]">
                   <span className={`w-1.5 h-1.5 rounded-full ${liveStatus.includes('ACTIVE') ? 'bg-cyan-400 animate-pulse-dot' : 'bg-amber-500 animate-pulse'}`} />
-                  <span className={`font-medium ${liveStatus.includes('ACTIVE') ? 'text-cyan-500/80' : 'text-amber-400/80'}`}>{liveStatus.includes('ACTIVE') ? 'LIVE' : 'SYNCING'}</span>
+                  <span className={`font-medium ${liveStatus.includes('ACTIVE') ? 'text-cyan-500/80' : 'bg-amber-400/80'}`}>{liveStatus.includes('ACTIVE') ? 'LIVE' : 'SYNCING'}</span>
                   <span className="text-slate-700">•</span>
                   <span className="text-slate-500 font-mono text-[10px]">{currentTime.toLocaleTimeString('en-US', { hour12: false })}</span>
                 </div>
@@ -662,6 +667,13 @@ export default function App() {
               >
                 {autoTelegram ? '🔔' : '🔕'}
               </button>
+              <button onClick={() => {
+              const newTheme = theme === 'dark' ? 'light' : 'dark';
+              setTheme(newTheme);
+              localStorage.setItem('theme', newTheme);
+            }} className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>
+              {theme === 'dark' ? '🌞' : '🌙'}
+            </button>
               <button onClick={() => window.location.reload()} className="btn-glass p-2.5 rounded-xl text-lg" title="Refresh">🔄</button>
               <button onClick={logout} className="btn-glass p-2.5 rounded-xl text-lg" title="Logout">🔐</button>
             </div>
@@ -671,7 +683,7 @@ export default function App() {
 
       <main className="container mx-auto px-4 py-6">
         {/* Dashboard Tab */}
-        {activeTab === 'dashboard' && (
+        {activeTab === 'dashboard' && currentSymbol && (
           <div className="space-y-5 animate-fade-in">
             {/* Macro Alert */}
             <div className={`alert-banner glass-card rounded-2xl p-4 border ${avgVix > 17 ? 'border-red-500/30 bg-red-950/20' : 'border-emerald-500/30 bg-emerald-950/20'} animate-fade-in-up`}>
