@@ -6,6 +6,7 @@
 
 import TelegramBot from 'node-telegram-bot-api';
 import cron from 'node-cron';
+import express from 'express';
 import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen } from './market.mjs';
 import { loadPortfolioFromCloud, loadGroqKeyFromCloud } from './cloud.mjs';
@@ -25,6 +26,20 @@ let usdInrRate = 85.5;
 let marketIntel = null;
 let autoAlerts = true;
 let botReady = false;
+
+// ========================================
+// 🌐 DUMMY WEB SERVER (For 24/7 UptimeRobot Trick)
+// ========================================
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send('Deep Mind AI Telegram Bot is ALIVE and RUNNING! 🚀');
+});
+
+app.listen(PORT, () => {
+  console.log(`🌐 Dummy Web Server listening on port ${PORT} for Free Tier Keep-Alive!`);
+});
 
 // ========================================
 // INITIALIZE BOT
