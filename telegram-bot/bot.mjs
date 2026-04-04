@@ -368,6 +368,30 @@ bot.onText(/\/clear/, async (msg) => {
 });
 
 // ========================================
+// COMMAND: /setkey (set Groq API key)
+// ========================================
+bot.onText(/\/setkey (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const key = match[1].trim();
+  console.log(`📥 /setkey from ${msg.from?.first_name || chatId}`);
+  
+  // Set dynamically
+  const { setGroqKey, API_URL } = await import('./config.mjs');
+  setGroqKey(key);
+  
+  // Sync to cloud so web app can also use it
+  try {
+    await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ groqKey: key, action: 'saveKey', timestamp: Date.now() })
+    });
+  } catch (e) {}
+
+  await safeSend(chatId, '✅ <b>Groq API Key Set!</b>\n\nAI Engine is now <b>ONLINE</b> 🧠⚡️.\nTum abhi kisi bhi sawal ka answer AI se le sakte ho!');
+});
+
+// ========================================
 // COMMAND: /ai <message> — Explicit AI chat
 // ========================================
 bot.onText(/\/ai (.+)/, async (msg, match) => {
