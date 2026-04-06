@@ -115,22 +115,28 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
     return () => clearInterval(iv);
   }, [showChat]);
 
+  const messagesRef = useRef<ChatMessage[]>(chatMessages);
+  useEffect(() => {
+    messagesRef.current = chatMessages;
+  }, [chatMessages]);
+
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim()) return;
 
     if (!groqKey) {
       setChatMessages(prev => [...prev,
         { role: 'user', text: userMessage, timestamp: Date.now() },
-        { role: 'model', text: '⚠️ **Neural Link Offline**\n\nGroq API Key set nahi hai. Settings (⚙️) icon click karke GROQ API KEY paste karo.\n\n**Free key milega:** [console.groq.com](https://console.groq.com)\n\nEk baar key set kar do, phir 24/7 unlimited free AI analysis milega!', timestamp: Date.now() }
+        { role: 'model', text: '⚠️ **Neural Link Offline**\n\nGroq API Key set nahi hai. Settings (⚙️) icon click karke GROQ API KEY paste karo.\n\n**Free key milega:** console.groq.com\n\nEk baar key set kar do, phir 24/7 unlimited free AI analysis milega!', timestamp: Date.now() }
       ]);
       return;
     }
 
+    const currentMessages = messagesRef.current;
     setChatMessages(prev => [...prev, { role: 'user', text: userMessage, timestamp: Date.now() }]);
     setIsThinking(true);
 
     try {
-      const recentMessages = [...chatMessages.slice(-6), { role: 'user', text: userMessage }];
+      const recentMessages = [...currentMessages.slice(-6), { role: 'user', text: userMessage }];
       const intelContext = marketIntelRef.current ? formatMarketIntelligenceForAI(marketIntelRef.current) : '';
 
       const groqMessages = [

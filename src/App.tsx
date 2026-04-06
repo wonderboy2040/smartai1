@@ -70,11 +70,11 @@ export default function App() {
 
   // Modal State
   const [showAddModal, setShowAddModal] = useState(false);
-  
+
   // Settings / Keys State
   const [groqKey, setGroqKey] = useState(() => localStorage.getItem('WEALTH_AI_GROQ') || '');
   const [showSettings, setShowSettings] = useState(false);
-  
+
   // Add Modal State
   const [addSymbol, setAddSymbol] = useState('');
   const [addQty, setAddQty] = useState('');
@@ -82,7 +82,7 @@ export default function App() {
   const [addDate, setAddDate] = useState(getTodayString());
   const [addLeverage, setAddLeverage] = useState('1');
   const [transactionType, setTransactionType] = useState<TransactionType>('buy');
-  const [modalPrice, setModalPrice] = useState<{price: number; change: number; market: string} | null>(null);
+  const [modalPrice, setModalPrice] = useState<{ price: number; change: number; market: string } | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
 
   const syncIntervalRef = useRef<number | null>(null);
@@ -105,15 +105,15 @@ export default function App() {
   // Load data when authenticated
   useEffect(() => {
     if (!isAuthenticated) return;
-    
+
     // Load from localStorage
     try {
       const saved = localStorage.getItem('portfolio');
       if (saved) setPortfolio(JSON.parse(saved));
-      
+
       const savedPrices = localStorage.getItem('livePrices');
       if (savedPrices) setLivePrices(JSON.parse(savedPrices));
-    } catch (e) {}
+    } catch (e) { }
 
     // Load from cloud
     loadFromCloud().then(data => {
@@ -129,7 +129,7 @@ export default function App() {
         setGroqKey(key);
         localStorage.setItem('WEALTH_AI_GROQ', key);
       }
-    }).catch(() => {});
+    }).catch(() => { });
 
     // Fetch forex rate
     fetchForexRate().then(rate => setUsdInrRate(rate));
@@ -256,16 +256,16 @@ export default function App() {
   // Analyze symbol
   const analyzeSymbol = async () => {
     if (isAnalyzing || !symbolInput.trim()) return;
-    
+
     setIsAnalyzing(true);
     const sym = symbolInput.toUpperCase().trim();
-    
+
     try {
       const result = await fetchSinglePrice(sym);
       if (result && result.price > 0) {
         setCurrentSymbol(sym);
         setCurrentMarket(result.market as 'IN' | 'US');
-        
+
         const key = `${result.market}_${sym}`;
         setLivePrices(prev => ({ ...prev, [key]: result }));
       }
@@ -323,7 +323,7 @@ export default function App() {
     }
     setTransactionType('buy');
     setShowAddModal(true);
-    
+
     if (currentSymbol) fetchModalPriceData(currentSymbol);
   };
 
@@ -339,7 +339,7 @@ export default function App() {
     const qty = parseFloat(addQty);
     const price = parseFloat(addPrice);
     const leverage = parseFloat(addLeverage) || 1;
-    
+
     if (!addSymbol || isNaN(qty) || isNaN(price) || qty <= 0 || price <= 0) {
       alert('Neural Error: Quantity ya price sahi daalo bhai.');
       return;
@@ -359,7 +359,7 @@ export default function App() {
       }
     } else {
       if (editId) {
-        setPortfolio(prev => prev.map(p => 
+        setPortfolio(prev => prev.map(p =>
           p.id === editId ? { ...p, symbol: addSymbol, qty, avgPrice: price, leverage, dateAdded: addDate, market: mkt as 'IN' | 'US' } : p
         ));
       } else {
@@ -367,7 +367,7 @@ export default function App() {
         if (existing) {
           const totalQty = existing.qty + qty;
           const totalCost = (existing.qty * existing.avgPrice) + (qty * price);
-          setPortfolio(prev => prev.map(p => 
+          setPortfolio(prev => prev.map(p =>
             p.id === existing.id ? { ...p, qty: totalQty, avgPrice: totalCost / totalQty, leverage: Math.max(p.leverage, leverage) } : p
           ));
         } else {
@@ -387,11 +387,17 @@ export default function App() {
     setShowAddModal(false);
   };
 
-  // Sync to cloud whenever portfolio changes
+  // Sync to cloud whenever portfolio changes (debounced 3s)
+  const cloudSyncTimerRef = useRef<number | null>(null);
   useEffect(() => {
-    if (portfolio.length > 0) {
+    if (portfolio.length === 0) return;
+    if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
+    cloudSyncTimerRef.current = window.setTimeout(() => {
       syncToCloud(portfolio, usdInrRate);
-    }
+    }, 3000);
+    return () => {
+      if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
+    };
   }, [portfolio]);
 
 
@@ -399,7 +405,7 @@ export default function App() {
   // Continuous Forex Rate Refresh (every 60s)
   useEffect(() => {
     if (!isAuthenticated) return;
-    
+
     const refreshForex = async () => {
       const rate = await fetchForexRate();
       setUsdInrRate(rate);
@@ -416,26 +422,26 @@ export default function App() {
   // Load TradingView Chart
   const loadTradingViewChart = useCallback(() => {
     if (!chartContainerRef.current) return;
-    
+
     const cleanSym = currentSymbol.replace('.NS', '').replace('.BO', '');
     const isIndian = currentMarket === 'IN' || currentSymbol.includes('.NS');
     const tvSymbol = isIndian ? `BSE:${cleanSym}` : `NASDAQ:${cleanSym}`;
-    
+
     chartContainerRef.current.innerHTML = '';
-    
+
     const container = document.createElement('div');
     container.className = 'tradingview-widget-container';
     container.style.height = '100%';
     container.style.width = '100%';
-    
+
     const inner = document.createElement('div');
     inner.className = 'tradingview-widget-container__widget';
     inner.style.height = '100%';
     inner.style.width = '100%';
     container.appendChild(inner);
-    
+
     chartContainerRef.current.appendChild(container);
-    
+
     const script = document.createElement('script');
     script.type = 'text/javascript';
     script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
@@ -459,38 +465,38 @@ export default function App() {
   const calculateMetrics = useCallback(() => {
     let totalInvested = 0, totalValue = 0, todayPL = 0;
     let indPL = 0, usPL = 0;
-    
+
     portfolio.forEach(p => {
       const key = `${p.market}_${p.symbol}`;
       const data = livePrices[key];
       const curPrice = data?.price || p.avgPrice;
       const change = data?.change || 0;
       const lev = p.leverage || 1;
-      
+
       const posSize = p.avgPrice * p.qty;
       const inv = posSize / lev;
       const curVal = curPrice * p.qty;
       const eqVal = inv + (curVal - posSize);
-      
+
       const invINR = p.market === 'IN' ? inv : inv * usdInrRate;
       const valINR = p.market === 'IN' ? eqVal : eqVal * usdInrRate;
-      
+
       totalInvested += invINR;
       totalValue += valINR;
-      
+
       const prevPrice = curPrice / (1 + (change / 100));
       const dayPL = (curPrice - prevPrice) * p.qty;
       const dayPLINR = p.market === 'IN' ? dayPL : dayPL * usdInrRate;
       todayPL += dayPLINR;
-      
+
       if (p.market === 'IN') indPL += dayPLINR;
       else usPL += dayPLINR;
     });
-    
+
     const totalPL = totalValue - totalInvested;
     const plPct = totalInvested > 0 ? (totalPL / totalInvested) * 100 : 0;
     const todayPct = (totalValue - todayPL) > 0 ? (todayPL / (totalValue - todayPL)) * 100 : 0;
-    
+
     return { totalInvested, totalValue, totalPL, plPct, todayPL, todayPct, indPL, usPL };
   }, [portfolio, livePrices, usdInrRate]);
 
@@ -528,7 +534,7 @@ export default function App() {
   const usVix = livePrices['US_VIX']?.price || 15;
   const inVix = livePrices['IN_INDIAVIX']?.price || 15;
   const avgVix = (usVix + inVix) / 2;
-  
+
   const getSentiment = () => {
     if (avgVix > 22) return { text: '🔴 Global Risk Severe | Institutional Liquidation Active', color: 'text-red-400' };
     if (avgVix > 17) return { text: '🟠 Elevated Volatility | Smart Money Cautious', color: 'text-amber-400' };
@@ -568,7 +574,8 @@ export default function App() {
 
   // FIRE calculations
   const fireNumber = monthlyExpenses * 12 * 25;
-  const yearsToFire = totalSIP > 0 && rate > 0 ? Math.ceil(Math.log((fireNumber * rate / totalSIP) + 1) / Math.log(1 + rate) / 12) : 99;
+  const rawYears = totalSIP > 0 && rate > 0 && fireNumber > 0 ? Math.log((fireNumber * rate / totalSIP) + 1) / Math.log(1 + rate) / 12 : null;
+  const yearsToFire = rawYears !== null && isFinite(rawYears) && rawYears > 0 ? Math.max(1, Math.ceil(rawYears)) : 99;
   const fireProgress = fireNumber > 0 ? Math.min(100, (metrics.totalValue / fireNumber) * 100) : 0;
 
   // Push Telegram Report
@@ -644,7 +651,7 @@ export default function App() {
             ))}
           </div>
         </div>
-        
+
         <div className="container mx-auto px-4 py-2.5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -671,11 +678,10 @@ export default function App() {
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`tab-btn px-4 py-2 rounded-xl font-semibold text-sm transition-all ${
-                    activeTab === tab 
-                      ? 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20' 
+                  className={`tab-btn px-4 py-2 rounded-xl font-semibold text-sm transition-all ${activeTab === tab
+                      ? 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
                       : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
-                  }`}
+                    }`}
                 >
                   {tab === 'dashboard' && '📊 Dashboard'}
                   {tab === 'portfolio' && '💼 Portfolio'}
@@ -687,9 +693,9 @@ export default function App() {
 
             <div className="flex gap-2 relative">
               <div className="relative">
-                <button 
-                  onClick={() => setShowSettings(!showSettings)} 
-                  className={`btn-glass p-2.5 rounded-xl text-lg transition-all ${showSettings ? 'bg-cyan-500/10 border border-cyan-500/30' : ''}`} 
+                <button
+                  onClick={() => setShowSettings(!showSettings)}
+                  className={`btn-glass p-2.5 rounded-xl text-lg transition-all ${showSettings ? 'bg-cyan-500/10 border border-cyan-500/30' : ''}`}
                   title="AI Settings"
                 >
                   ⚙️
@@ -699,8 +705,8 @@ export default function App() {
                     <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                       <span className="text-lg">🧠</span> Groq API Key
                     </div>
-                    <input 
-                      type="password" 
+                    <input
+                      type="password"
                       placeholder="Paste your Groq API Key..."
                       value={groqKey}
                       onChange={(e) => {
@@ -710,7 +716,7 @@ export default function App() {
                       }}
                       className="w-full glass-input rounded-xl px-4 py-3 text-sm text-white mb-3"
                     />
-                    <button 
+                    <button
                       onClick={() => {
                         setShowSettings(false);
                         if (groqKey) syncGroqKeyToCloud(groqKey);
@@ -723,20 +729,20 @@ export default function App() {
                   </div>
                 )}
               </div>
-              <button 
-                onClick={() => setAutoTelegram(prev => !prev)} 
-                className={`btn-glass p-2.5 rounded-xl text-lg transition-all ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`} 
+              <button
+                onClick={() => setAutoTelegram(prev => !prev)}
+                className={`btn-glass p-2.5 rounded-xl text-lg transition-all ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`}
                 title={autoTelegram ? 'Auto Alerts ON' : 'Auto Alerts OFF'}
               >
                 {autoTelegram ? '🔔' : '🔕'}
               </button>
               <button onClick={() => {
-              const newTheme = theme === 'dark' ? 'light' : 'dark';
-              setTheme(newTheme);
-              localStorage.setItem('theme', newTheme);
-            }} className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>
-              {theme === 'dark' ? '🌞' : '🌙'}
-            </button>
+                const newTheme = theme === 'dark' ? 'light' : 'dark';
+                setTheme(newTheme);
+                localStorage.setItem('theme', newTheme);
+              }} className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>
+                {theme === 'dark' ? '🌞' : '🌙'}
+              </button>
               <button onClick={() => window.location.reload()} className="btn-glass p-2.5 rounded-xl text-lg" title="Refresh">🔄</button>
               <button onClick={logout} className="btn-glass p-2.5 rounded-xl text-lg" title="Logout">🔐</button>
             </div>
@@ -863,11 +869,11 @@ export default function App() {
                   <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">AI Verdict</div>
                   <div className="text-sm font-bold text-white mt-1">
                     {currentRsi < 45 ? `📈 WHALE ACTION: Algorithms buying ${currentSymbol.replace('.NS', '')}` :
-                     currentRsi > 65 ? `📉 DISTRIBUTION: Book partial profits` :
-                     `📊 NEUTRAL: Trading at fair valuation`}
+                      currentRsi > 65 ? `📉 DISTRIBUTION: Book partial profits` :
+                        `📊 NEUTRAL: Trading at fair valuation`}
                   </div>
                 </div>
-                <button 
+                <button
                   onClick={() => openAddModal()}
                   className="btn-primary px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-cyan-600 rounded-xl font-bold text-white text-sm whitespace-nowrap"
                 >
@@ -888,17 +894,16 @@ export default function App() {
                     <button
                       key={int}
                       onClick={() => setChartInterval(int)}
-                      className={`px-3.5 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                        chartInterval === int ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/20' : 'text-slate-500 hover:text-slate-300'
-                      }`}
+                      className={`px-3.5 py-1.5 rounded-md text-xs font-semibold transition-all ${chartInterval === int ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/20' : 'text-slate-500 hover:text-slate-300'
+                        }`}
                     >
                       1{int}
                     </button>
                   ))}
                 </div>
               </div>
-              <div 
-                ref={chartContainerRef} 
+              <div
+                ref={chartContainerRef}
                 className="h-[500px] rounded-xl bg-black/30 border border-white/5 overflow-hidden"
               />
             </div>
@@ -1122,7 +1127,7 @@ export default function App() {
                   const eqVal = inv + pl;
                   const prevPrice = curPrice / (1 + (change / 100));
                   const todayPL = (curPrice - prevPrice) * p.qty;
-                  
+
                   // Pro UI Calculations
                   const low = data?.low || curPrice * 0.98;
                   const high = data?.high || curPrice * 1.02;
@@ -1131,7 +1136,7 @@ export default function App() {
 
                   return (
                     <div key={p.id} className="grid grid-cols-1 md:grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto] md:items-center gap-4 p-4 hover:bg-white/[0.02] transition-colors group relative">
-                      
+
                       {/* 1. ASSET & ALLOCATION */}
                       <div>
                         <div className="flex items-center justify-between md:justify-start gap-3">
@@ -1223,14 +1228,36 @@ export default function App() {
                       {/* 6. ACTIONS */}
                       <div className="pt-2 md:pt-0 mt-3 border-t border-white/5 md:border-0 md:mt-0 flex justify-end gap-2 md:justify-center">
                         <button
-                          onClick={() => { setAddSymbol(p.symbol); setTransactionType('buy'); setShowAddModal(true); fetchModalPriceData(p.symbol); }}
+                          onClick={() => {
+                            setAddSymbol(p.symbol);
+                            setCurrentMarket(p.market);
+                            setAddQty('');
+                            setAddPrice(data?.price?.toString() || p.avgPrice.toString());
+                            setAddDate(getTodayString());
+                            setAddLeverage(p.leverage.toString());
+                            setEditId(null);
+                            setTransactionType('buy');
+                            setShowAddModal(true);
+                            setModalPrice(data ? { price: data.price, change: data.change, market: data.market } : null);
+                          }}
                           className="px-3 py-1.5 md:w-8 md:h-8 md:p-0 flex items-center justify-center bg-cyan-500/10 hover:bg-cyan-500 w-full md:hover:rotate-12 hover:shadow-[0_0_15px_rgba(6,182,212,0.4)] border border-cyan-500/30 rounded-lg transition-all text-xs text-cyan-400 hover:text-white font-bold uppercase tracking-wider"
                           title="Buy / Accumulate"
                         >
                           <span className="md:hidden mr-1">Buy</span> B
                         </button>
                         <button
-                          onClick={() => { setAddSymbol(p.symbol); setAddQty(p.qty.toString()); setTransactionType('sell'); setShowAddModal(true); fetchModalPriceData(p.symbol); }}
+                          onClick={() => {
+                            setAddSymbol(p.symbol);
+                            setCurrentMarket(p.market);
+                            setAddQty(p.qty.toString());
+                            setAddPrice(data?.price?.toString() || p.avgPrice.toString());
+                            setAddDate(p.dateAdded);
+                            setAddLeverage(p.leverage.toString());
+                            setEditId(p.id);
+                            setTransactionType('sell');
+                            setShowAddModal(true);
+                            setModalPrice(data ? { price: data.price, change: data.change, market: data.market } : null);
+                          }}
                           className="px-3 py-1.5 md:w-8 md:h-8 md:p-0 flex items-center justify-center bg-red-500/10 hover:bg-red-500 w-full md:hover:-rotate-12 hover:shadow-[0_0_15px_rgba(239,68,68,0.4)] border border-red-500/30 rounded-lg transition-all text-xs text-red-400 hover:text-white font-bold uppercase tracking-wider"
                           title="Sell / Distribute"
                         >
@@ -1501,11 +1528,10 @@ export default function App() {
                               </div>
                               {/* Signal + Allocation Bar */}
                               <div className="flex items-center gap-2 mb-2">
-                                <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border ${
-                                  isGreen ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                                  isRed ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                                  'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                                }`}>{a.signal}</span>
+                                <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border ${isGreen ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                                    isRed ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                                      'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                                  }`}>{a.signal}</span>
                                 <div className="flex-1 bg-slate-800/60 rounded-full h-1.5">
                                   <div className={`h-full rounded-full transition-all ${isGreen ? 'bg-emerald-500' : isRed ? 'bg-red-500' : 'bg-amber-500'}`} style={{ width: `${a.allocPct * 100}%` }} />
                                 </div>
@@ -1570,12 +1596,12 @@ export default function App() {
                   const data = livePrices[key];
                   const rsi = data?.rsi || 50;
                   const cgr = getAssetCagrProxy(p.symbol, p.market);
-                  
+
                   const colorMap: Record<string, { border: string; bg: string; text: string }> = {
-                    red:     { border: 'border-red-500/20',     bg: 'bg-red-500/5',     text: 'text-red-400' },
+                    red: { border: 'border-red-500/20', bg: 'bg-red-500/5', text: 'text-red-400' },
                     emerald: { border: 'border-emerald-500/20', bg: 'bg-emerald-500/5', text: 'text-emerald-400' },
-                    amber:   { border: 'border-amber-500/20',   bg: 'bg-amber-500/5',   text: 'text-amber-400' },
-                    blue:    { border: 'border-blue-500/20',    bg: 'bg-blue-500/5',    text: 'text-blue-400' },
+                    amber: { border: 'border-amber-500/20', bg: 'bg-amber-500/5', text: 'text-amber-400' },
+                    blue: { border: 'border-blue-500/20', bg: 'bg-blue-500/5', text: 'text-blue-400' },
                   };
 
                   let tag = '🔵 FAIR VALUE', colorKey = 'blue';
@@ -1583,7 +1609,7 @@ export default function App() {
                   else if (rsi < 45) { tag = '🟢 VALUE'; colorKey = 'emerald'; }
                   else if (rsi > 70) { tag = '🟠 HOT'; colorKey = 'amber'; }
                   const c = colorMap[colorKey];
-                  
+
                   return (
                     <div key={p.id} className={`bg-black/20 p-4 rounded-xl border ${c.border}`}>
                       <div className="flex justify-between items-start mb-2">
