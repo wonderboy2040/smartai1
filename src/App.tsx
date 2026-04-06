@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Position, PriceData, TabType, RiskLevel, TransactionType } from './types';
 import {
   SECURE_PIN, TG_TOKEN, TG_CHAT_ID,
@@ -37,17 +37,12 @@ function mergePriceData(existing: PriceData | undefined, incoming: Partial<Price
   const tvExchange = incoming.tvExchange ?? existing?.tvExchange;
   const tvExactSymbol = incoming.tvExactSymbol ?? existing?.tvExactSymbol;
 
-  // Skip re-render if nothing meaningfully changed (price must differ > 0.0001%)
-  // Use sameValue for optional fields to treat undefined===undefined as equal
-  const sameValue = (a: number | undefined, b: number | undefined) =>
-    a === b || (a === undefined && b === undefined);
-
+  // Skip re-render if nothing meaningfully changed (price must differ > 0.01%)
   if (
     existing &&
-    Math.abs(existing.price - price) / price < 0.000001 &&
+    price > 0 &&
+    Math.abs(existing.price - price) / price < 0.0001 &&
     existing.change === change &&
-    sameValue(existing.high, high) &&
-    sameValue(existing.low, low) &&
     existing.rsi === rsi
   ) {
     return existing;
@@ -74,7 +69,6 @@ export default function App() {
   const [chartInterval, setChartInterval] = useState('D');
   const [liveStatus, setLiveStatus] = useState('Connecting...');
   const [syncStatus, setSyncStatus] = useState('');
-  const [pricesLoaded, setPricesLoaded] = useState(false);
 
   // Planner State
   const [indiaSIP, setIndiaSIP] = useState(10000);
@@ -102,7 +96,6 @@ export default function App() {
   const [modalPrice, setModalPrice] = useState<{ price: number; change: number; market: string } | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
 
-  const syncIntervalRef = useRef<number | null>(null);
   const priceFlushRef = useRef<number | null>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [pendingAnalyze, setPendingAnalyze] = useState<string | null>(null);
