@@ -77,7 +77,7 @@ async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean)
         symbols: { tickers: tvTickers },
         columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
       }),
-      signal: AbortSignal.timeout(6000)
+      signal: AbortSignal.timeout(3000)
     });
 
     if (res.ok) {

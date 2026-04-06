@@ -38,12 +38,16 @@ function mergePriceData(existing: PriceData | undefined, incoming: Partial<Price
   const tvExactSymbol = incoming.tvExactSymbol ?? existing?.tvExactSymbol;
 
   // Skip re-render if nothing meaningfully changed (price must differ > 0.0001%)
+  // Use sameValue for optional fields to treat undefined===undefined as equal
+  const sameValue = (a: number | undefined, b: number | undefined) =>
+    a === b || (a === undefined && b === undefined);
+
   if (
     existing &&
     Math.abs(existing.price - price) / price < 0.000001 &&
     existing.change === change &&
-    existing.high === high &&
-    existing.low === low &&
+    sameValue(existing.high, high) &&
+    sameValue(existing.low, low) &&
     existing.rsi === rsi
   ) {
     return existing;
@@ -154,11 +158,11 @@ export default function App() {
     portfolioRef.current = portfolio;
   }, [portfolio]);
 
-  // Ultra-fast price batching: WebSocket ticks → batch → ~100ms flush to React state
-  // This prevents React from re-rendering on EVERY WebSocket tick — batches them at ~10fps for butter-smooth UI
+  // Ultra-fast price batching: WebSocket ticks → batch → ~50ms flush to React state
   const pendingPricesRef = useRef<Record<string, PriceData>>({});
+  const lastLocalSaveRef = useRef(0);
 
-  // Flush all pending WebSocket ticks into React state (batched at ~100ms intervals)
+  // Flush all pending WebSocket ticks into React state (batched at ~50ms intervals)
   const flushPricesToStorage = useCallback(() => {
     const batched = { ...pendingPricesRef.current };
     pendingPricesRef.current = {};
@@ -166,29 +170,34 @@ export default function App() {
 
     setLivePrices(prev => {
       const merged = { ...prev };
+      let changed = false;
       for (const [key, data] of Object.entries(batched)) {
         const existing = merged[key] as PriceData | undefined;
         const result = mergePriceData(existing, data);
-        if (result !== existing) merged[key] = result;
+        if (result !== existing) { merged[key] = result; changed = true; }
       }
-      try {
-        localStorage.setItem('livePrices', JSON.stringify(merged));
-      } catch { /* quota exceeded */ }
+      // Throttle localStorage writes to max every 2s to avoid main thread blocking
+      const now = Date.now();
+      if (changed && now - lastLocalSaveRef.current > 2000) {
+        lastLocalSaveRef.current = now;
+        try { localStorage.setItem('livePrices', JSON.stringify(merged)); } catch { /* quota */ }
+      }
       return merged;
     });
   }, []);
 
-  // Flush batched WS ticks at ~10fps (100ms) for butter-smooth UI
+  // Flush batched WS ticks at ~20fps (50ms) for ultra-smooth UI
   useEffect(() => {
     if (!isAuthenticated || portfolio.length === 0) return;
-    priceFlushRef.current = window.setInterval(flushPricesToStorage, 100);
+    priceFlushRef.current = window.setInterval(flushPricesToStorage, 50);
     return () => {
       if (priceFlushRef.current) {
         clearInterval(priceFlushRef.current);
         priceFlushRef.current = null;
       }
     };
-  }, [isAuthenticated, portfolio.length, flushPricesToStorage]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, portfolio.length]);
 
   // Background sync & WebSocket
   useEffect(() => {
@@ -213,7 +222,7 @@ export default function App() {
     };
 
     sync();
-    const syncInterval = window.setInterval(sync, 8000);
+    const syncInterval = window.setInterval(sync, 4000);
 
     // Ultra-fast TradingView WebSocket — batch all ticks into 100ms flush (zero direct state updates)
     let statusCounter = 0;
