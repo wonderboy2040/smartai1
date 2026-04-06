@@ -20,73 +20,6 @@ const MAX_RECONNECT_ATTEMPTS = 25;
 let isDestroyed = false;
 
 // ========================================
-// LATENCY & PRICE VALIDATION
-// ========================================
-let pingStartTime = 0;
-let latencyHistory: number[] = [];
-let currentLatency = 500; // ms, default estimate
-let adaptiveHeartbeatMs = 15000; // default 15s
-let subscribedSymbols = new Set<string>();
-
-// Price validation state
-const lastKnownPrices: Map<string, { price: number; time: number }> = new Map();
-
-/**
- * Track round-trip latency for adaptive heartbeat tuning
- */
-function measureLatency(): void {
-  pingStartTime = Date.now();
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(`~m~2~m~~h~${Math.floor(Math.random() * 1000)}`);
-    // pong response arrives via onmessage — we detect it there
-  }
-}
-
-function recordLatency(latency: number): void {
-  latencyHistory.push(latency);
-  if (latencyHistory.length > 10) latencyHistory = latencyHistory.slice(-10);
-  // Exponential moving average
-  currentLatency = latencyHistory.reduce((a, b) => a + b, 0) / latencyHistory.length;
-  // Adaptive heartbeat: faster on good connections, slower on high latency
-  adaptiveHeartbeatMs = Math.max(5000, Math.min(30000, currentLatency * 15));
-}
-
-/**
- * Validate incoming price against last known value
- * Rejects outliers (>50% change) and stuck prices (>60s unchanged)
- */
-function validatePrice(
-  key: string,
-  price: number,
-  lastPrice?: number
-): { valid: boolean; reason?: string } {
-  if (price <= 0 || isNaN(price)) {
-    return { valid: false, reason: 'Non-positive or NaN price' };
-  }
-
-  // Reject extreme outliers
-  if (lastPrice && lastPrice > 0) {
-    const pctChange = Math.abs(price - lastPrice) / lastPrice;
-    if (pctChange > 0.5) {
-      return { valid: false, reason: `Extreme jump ${((pctChange) * 100).toFixed(1)}%` };
-    }
-  }
-
-  // Check for stuck prices (no change for >60s)
-  const last = lastKnownPrices.get(key);
-  if (last && last.price === price) {
-    const age = Date.now() - last.time;
-    if (age > 60000) {
-      return { valid: false, reason: `Stuck price for ${Math.round(age / 1000)}s` };
-    }
-  }
-
-  // Update tracking
-  lastKnownPrices.set(key, { price, time: Date.now() });
-  return { valid: true };
-}
-
-// ========================================
 // HELPERS
 // ========================================
 function generateSession(): string {
@@ -260,21 +193,19 @@ function connect() {
       'prev_close_price' // previous close
     ]);
 
-    // Subscribe all symbols (with dedup via subscribedSymbols set)
+    // Subscribe all symbols
     const allTvSymbols = [...new Set(keyToTvSymbol.values())];
-    const newSymbols = allTvSymbols.filter(s => !subscribedSymbols.has(s));
     if (allTvSymbols.length > 0) {
       sendMsg('quote_add_symbols', [currentSession, ...allTvSymbols]);
-      allTvSymbols.forEach(s => subscribedSymbols.add(s));
     }
 
-    // Adaptive heartbeat — measures RTT and adjusts interval
+    // Faster heartbeat (15s) for more reliable connection
     if (pingInterval) clearInterval(pingInterval);
     pingInterval = window.setInterval(() => {
       if (ws?.readyState === WebSocket.OPEN) {
-        measureLatency();
+        ws.send(`~m~2~m~~h~${Math.floor(Math.random() * 1000)}`);
       }
-    }, adaptiveHeartbeatMs);
+    }, 15000);
   };
 
   ws.onmessage = (event: MessageEvent) => {
@@ -316,12 +247,6 @@ function connect() {
         const parsed = JSON.parse(jsonStr);
         handleParsedMessage(parsed);
       } catch {
-        // Detect pong response for latency measurement
-        if (data.substring(jsonStart, jsonEnd).includes('~h~') && pingStartTime > 0) {
-          const latency = Date.now() - pingStartTime;
-          recordLatency(latency);
-          pingStartTime = 0;
-        }
         // Skip non-JSON messages
       }
 
@@ -356,21 +281,7 @@ function handleParsedMessage(parsed: Record<string, unknown>): void {
   if (!key) return;
 
   const update: Partial<PriceData> = {};
-  const rawPrice = v.lp !== undefined && !isNaN(v.lp) && v.lp > 0 ? v.lp : undefined;
-
-  // Price validation
-  if (rawPrice !== undefined) {
-    const lastEntry = lastKnownPrices.get(key);
-    const lastPrice = lastEntry?.price;
-    const validation = validatePrice(key, rawPrice, lastPrice);
-    if (!validation.valid) {
-      // Log silently — bad ticks are common on WS feeds
-      console.debug(`[WS] ${key}: ${validation.reason} (${rawPrice})`);
-      return;
-    }
-    update.price = rawPrice;
-  }
-
+  if (v.lp !== undefined && !isNaN(v.lp) && v.lp > 0) update.price = v.lp;
   if (v.chp !== undefined && !isNaN(v.chp)) update.change = v.chp;
   else if (v.ch !== undefined && !isNaN(v.ch) && update.price) {
     update.change = (v.ch / update.price) * 100;
@@ -389,10 +300,6 @@ function handleParsedMessage(parsed: Record<string, unknown>): void {
   }
 }
 
-export function getWebSocketLatency(): { avg: number; heartbeat: number } {
-  return { avg: Math.round(currentLatency), heartbeat: adaptiveHeartbeatMs };
-}
-
 function scheduleReconnect(): void {
   if (isDestroyed) return;
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
@@ -402,7 +309,6 @@ function scheduleReconnect(): void {
 
   const delay = Math.min(30000, 1000 * Math.pow(1.8, reconnectAttempts));
   reconnectTimer = window.setTimeout(() => {
-    subscribedSymbols.clear(); // Clear subscription state so reconnect resubscribes
     connect();
   }, delay);
 }

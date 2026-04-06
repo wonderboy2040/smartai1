@@ -1,92 +1,17 @@
 import { PriceData, Position } from '../types';
 import { CORS_PROXIES, EXACT_TICKER_MAP, guessMarket, API_URL } from './constants';
 
-// ========================================
-// SMART CACHE with TTL
-// ========================================
-interface CacheEntry<T> {
-  data: T;
-  timestamp: number;
-  ttl: number;
-}
-
-class SmartCache<T> {
-  private store = new Map<string, CacheEntry<T>>();
-  private maxSize: number;
-
-  constructor(maxSize: number = 50) {
-    this.maxSize = maxSize;
-  }
-
-  get(key: string): T | null {
-    const entry = this.store.get(key);
-    if (!entry) return null;
-    if (Date.now() - entry.timestamp > entry.ttl) {
-      this.store.delete(key);
-      return null;
-    }
-    return entry.data;
-  }
-
-  set(key: string, data: T, ttl: number = 5000): void {
-    if (this.store.size >= this.maxSize) {
-      const oldestKey = this.store.keys().next().value;
-      this.store.delete(oldestKey);
-    }
-    this.store.set(key, { data, timestamp: Date.now(), ttl });
-  }
-
-  invalidate(key: string): void {
-    this.store.delete(key);
-  }
-}
-
-const priceCache = new SmartCache<PriceData>(50);
-const pendingRequests = new Map<string, Promise<PriceData | null>>();
-
-/**
- * Get market-aware batch interval. Reduces from 4s during open markets.
- */
-export function getBatchInterval(): number {
-  return isAnyMarketOpen() ? 2000 : 8000;
-}
-
 export async function fetchSinglePrice(symbol: string, retryAttempt = 0): Promise<PriceData | null> {
   if (!symbol) return null;
-
+  
   const sym = symbol.toUpperCase().trim();
-
-  // Check cache first (stale-while-revalidate pattern)
-  const cached = priceCache.get(sym);
-  if (cached) {
-    // Return cached data but fetch fresh in background (SWR)
-    const data = { ...cached, time: Date.now() };
-    fetchWithStaleCheck(sym, retryAttempt);
-    return data;
-  }
-
-  // Deduplicate in-flight requests
-  if (pendingRequests.has(sym)) {
-    return pendingRequests.get(sym)!;
-  }
-
-  const promise = fetchWithStaleCheck(sym, retryAttempt);
-  pendingRequests.set(sym, promise);
-  promise.finally(() => pendingRequests.delete(sym));
-  return promise;
-}
-
-async function fetchWithStaleCheck(sym: string, retryAttempt: number): Promise<PriceData | null> {
   const cleanSym = sym.replace('.NS', '').replace('.BO', '');
   const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEES') || guessMarket(sym) === 'IN';
 
   // Try TradingView first
   try {
     const tvResult = await tryTradingView(sym, cleanSym, isIndian);
-    if (tvResult && tvResult.price > 0) {
-      priceCache.set(sym, tvResult, 1000); // 1s TTL for prices
-      return tvResult;
-    }
+    if (tvResult && tvResult.price > 0) return tvResult;
   } catch (e) {}
 
   // Fallback to Yahoo Finance
@@ -106,7 +31,7 @@ async function fetchWithStaleCheck(sym: string, retryAttempt: number): Promise<P
           const changeVal = prevClose ? ((priceVal - prevClose) / prevClose) * 100 : 0;
           
           if (!isNaN(priceVal) && priceVal > 0) {
-            const result: PriceData = {
+            return {
               price: priceVal,
               change: changeVal,
               high: parseFloat(meta.regularMarketDayHigh) || priceVal,
@@ -118,8 +43,6 @@ async function fetchWithStaleCheck(sym: string, retryAttempt: number): Promise<P
               tvExactSymbol: yahooSymbol,
               time: Date.now()
             };
-            priceCache.set(sym, result, 1000);
-            return result;
           }
         }
       }
