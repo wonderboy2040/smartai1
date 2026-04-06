@@ -14,10 +14,9 @@ import {
   isAnyMarketOpen, getMarketStatus, analyzeAsset,
   getSmartAllocations, generateDeepAnalysis
 } from './utils/telegram';
-import { calculateVaR, runStressTests, analyzeConcentrationRisk, analyzeDrawdown } from './utils/riskEngine';
-import { PredictionEngine, TechnicalIndicators, AnomalyDetector } from './utils/mlPrediction';
+import { calculateVaR, runStressTests, analyzeConcentrationRisk } from './utils/riskEngine';
+import { AnomalyDetector } from './utils/mlPrediction';
 import { AlertManager, detectSmartMoney } from './utils/alertManager';
-import { ETFAnalyticsEngine } from './utils/etfAnalytics';
 import { getBatchInterval } from './utils/api';
 import { NeuralChat } from './components/NeuralChat';
 import { Clock } from './components/Clock';
@@ -110,14 +109,22 @@ export default function App() {
 
   // Advanced features state
   const [wsLatency, setWsLatency] = useState<{ avg: number; heartbeat: number }>({ avg: 500, heartbeat: 15000 });
+  const [portfolioContextText, setPortfolioContextText] = useState<string>('');
   const alertManagerRef = useRef<AlertManager>(new AlertManager());
   const anomalyDetectorRef = useRef<AnomalyDetector>(new AnomalyDetector());
+  const lastContextGenRef = useRef(0);
+
 
   // Initialize
   useEffect(() => {
     const auth = localStorage.getItem('authDone');
     if (auth === 'true') {
       setIsAuthenticated(true);
+    }
+    // Ensure Groq key is persisted
+    const savedKey = localStorage.getItem('WEALTH_AI_GROQ');
+    if (!savedKey) {
+      // Key must be set via Settings panel or cloud sync
     }
   }, []);
 
@@ -144,13 +151,24 @@ export default function App() {
       }
     }).catch(() => console.warn('Cloud sync unavailable'));
 
-    // Load Groq key from cloud
-    loadGroqKeyFromCloud().then(key => {
-      if (key) {
-        setGroqKey(key);
-        localStorage.setItem('WEALTH_AI_GROQ', key);
+    // Load Groq key from cloud, fallback to local, then sync to cloud
+    loadGroqKeyFromCloud().then(cloudKey => {
+      if (cloudKey) {
+        setGroqKey(cloudKey);
+        localStorage.setItem('WEALTH_AI_GROQ', cloudKey);
+      } else {
+        const localKey = localStorage.getItem('WEALTH_AI_GROQ');
+        if (localKey) {
+          syncGroqKeyToCloud(localKey).catch(() => {});
+        }
       }
-    }).catch(() => { });
+    }).catch(() => {
+      const localKey = localStorage.getItem('WEALTH_AI_GROQ');
+      if (localKey) {
+        syncGroqKeyToCloud(localKey).catch(() => {});
+        setGroqKey(localKey);
+      }
+    });
 
     // Fetch forex rate
     fetchForexRate().then(rate => setUsdInrRate(rate));
@@ -536,6 +554,16 @@ export default function App() {
 
   // Metrics calculation memoization
   const metrics = useMemo(() => calculateMetrics(), [calculateMetrics]);
+
+  // Throttle generateDeepAnalysis to run once per 60s (was running 20x/sec on every render)
+  useEffect(() => {
+    const now = Date.now();
+    if (now - lastContextGenRef.current > 60000) {
+      lastContextGenRef.current = now;
+      const ctx = generateDeepAnalysis(portfolio, livePrices, usdInrRate, metrics);
+      setPortfolioContextText(ctx);
+    }
+  }, [portfolio.length, livePrices, usdInrRate, metrics.totalValue]);
 
   const latestDataRef = useRef({ portfolio, livePrices, usdInrRate, metrics });
   useEffect(() => {
@@ -1892,7 +1920,7 @@ export default function App() {
       )}
 
       {/* Neural Core Chat AI Integration with Deep Real-Time Portolio Context Injection */}
-      <NeuralChat groqKey={groqKey} portfolioContext={generateDeepAnalysis(portfolio, livePrices, usdInrRate, metrics)} />
+      <NeuralChat groqKey={groqKey} portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'} />
     </div>
   );
 }

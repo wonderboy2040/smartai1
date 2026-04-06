@@ -1,5 +1,6 @@
 import { PriceData, Position } from '../types';
 import { CORS_PROXIES, EXACT_TICKER_MAP, guessMarket, API_URL } from './constants';
+import { isAnyMarketOpen } from './telegram';
 
 // ========================================
 // SMART CACHE with TTL
