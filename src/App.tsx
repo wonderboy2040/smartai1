@@ -20,23 +20,36 @@ import { Clock } from './components/Clock';
 /**
  * Merge incoming WebSocket price data into existing PriceData.
  * Preserves fields not sent by TV (like sma20, sma50, macd from HTTP batch).
+ * Only returns NEW object if a field actually changed — prevents unnecessary re-renders.
  */
 function mergePriceData(existing: PriceData | undefined, incoming: Partial<PriceData>): PriceData {
-  return {
-    price: incoming.price ?? existing?.price ?? 0,
-    change: incoming.change ?? existing?.change ?? 0,
-    high: incoming.high ?? existing?.high,
-    low: incoming.low ?? existing?.low,
-    volume: incoming.volume ?? existing?.volume,
-    rsi: incoming.rsi ?? existing?.rsi ?? 50,
-    time: incoming.time ?? Date.now(),
-    market: incoming.market ?? existing?.market ?? 'IN',
-    sma20: incoming.sma20 ?? existing?.sma20,
-    sma50: incoming.sma50 ?? existing?.sma50,
-    macd: incoming.macd ?? existing?.macd,
-    tvExchange: incoming.tvExchange ?? existing?.tvExchange,
-    tvExactSymbol: incoming.tvExactSymbol ?? existing?.tvExactSymbol,
-  };
+  const price = incoming.price ?? existing?.price ?? 0;
+  const change = incoming.change ?? existing?.change ?? 0;
+  const high = incoming.high ?? existing?.high;
+  const low = incoming.low ?? existing?.low;
+  const volume = incoming.volume ?? existing?.volume;
+  const rsi = incoming.rsi ?? existing?.rsi ?? 50;
+  const time = incoming.time ?? Date.now();
+  const market = incoming.market ?? existing?.market ?? 'IN';
+  const sma20 = incoming.sma20 ?? existing?.sma20;
+  const sma50 = incoming.sma50 ?? existing?.sma50;
+  const macd = incoming.macd ?? existing?.macd;
+  const tvExchange = incoming.tvExchange ?? existing?.tvExchange;
+  const tvExactSymbol = incoming.tvExactSymbol ?? existing?.tvExactSymbol;
+
+  // Skip re-render if nothing meaningfully changed (price must differ > 0.0001%)
+  if (
+    existing &&
+    Math.abs(existing.price - price) / price < 0.000001 &&
+    existing.change === change &&
+    existing.high === high &&
+    existing.low === low &&
+    existing.rsi === rsi
+  ) {
+    return existing;
+  }
+
+  return { price, change, high, low, volume, rsi, time, market, sma20, sma50, macd, tvExchange, tvExactSymbol };
 }
 
 export default function App() {
@@ -179,18 +192,24 @@ export default function App() {
     const currentPortfolio = portfolioRef.current;
     if (currentPortfolio.length === 0) return;
 
-    // Fast HTTP Sync (runs every 10s as backup)
+    // Fast HTTP Sync (runs every 8s as backup, faster initial fill)
+    let statusThrottle = 0;
     const sync = async () => {
-      setLiveStatus('● SYNCING...');
+      if (statusThrottle < 3) {
+        setLiveStatus('● SYNCING...');
+        statusThrottle++;
+      }
       await batchFetchPrices(currentPortfolio, (key, data) => {
         pendingPricesRef.current[key] = data;
       });
       flushPricesToStorage();
-      setLiveStatus('● QUANTUM LINK ACTIVE');
+      if (statusThrottle < 3) {
+        setLiveStatus('● QUANTUM LINK ACTIVE');
+      }
     };
 
     sync();
-    const syncInterval = window.setInterval(sync, 10000);
+    const syncInterval = window.setInterval(sync, 8000);
 
     // Ultra-fast TradingView WebSocket
     const symbolsToSub = currentPortfolio.map(p => p.symbol);
@@ -200,15 +219,13 @@ export default function App() {
         ...(pendingPricesRef.current[key] || {}),
         ...data
       } as PriceData;
-      // React state updates immediately for instant UI
+      // React state updates immediately for instant UI — mergePriceData dedupes re-renders
       setLivePrices(prev => {
         const existing = prev[key];
-        return {
-          ...prev,
-          [key]: mergePriceData(existing, data as PriceData)
-        };
+        const merged = mergePriceData(existing, data as PriceData);
+        if (merged === existing) return prev; // skip re-render if no change
+        return { ...prev, [key]: merged };
       });
-      setLiveStatus('● TV SOCKET LIVE ⚡');
     });
 
     return () => {
