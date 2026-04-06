@@ -17,6 +17,28 @@ import {
 import { NeuralChat } from './components/NeuralChat';
 import { Clock } from './components/Clock';
 
+/**
+ * Merge incoming WebSocket price data into existing PriceData.
+ * Preserves fields not sent by TV (like sma20, sma50, macd from HTTP batch).
+ */
+function mergePriceData(existing: PriceData | undefined, incoming: Partial<PriceData>): PriceData {
+  return {
+    price: incoming.price ?? existing?.price ?? 0,
+    change: incoming.change ?? existing?.change ?? 0,
+    high: incoming.high ?? existing?.high,
+    low: incoming.low ?? existing?.low,
+    volume: incoming.volume ?? existing?.volume,
+    rsi: incoming.rsi ?? existing?.rsi ?? 50,
+    time: incoming.time ?? Date.now(),
+    market: incoming.market ?? existing?.market ?? 'IN',
+    sma20: incoming.sma20 ?? existing?.sma20,
+    sma50: incoming.sma50 ?? existing?.sma50,
+    macd: incoming.macd ?? existing?.macd,
+    tvExchange: incoming.tvExchange ?? existing?.tvExchange,
+    tvExactSymbol: incoming.tvExactSymbol ?? existing?.tvExactSymbol,
+  };
+}
+
 export default function App() {
   // Auth State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
