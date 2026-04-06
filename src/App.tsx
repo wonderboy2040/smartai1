@@ -579,8 +579,8 @@ export default function App() {
       if (data?.price) {
         anomalyManager.update(key, data.price);
         const result = anomalyManager.isAnomalous(key);
+        const symbol = key.replace('IN_', '').replace('US_', '');
         if (result.anomalous) {
-          const symbol = key.replace('IN_', '').replace('US_', '');
           alertManagerRef.current.processPriceData(symbol, data);
         }
 
@@ -598,7 +598,7 @@ export default function App() {
     }
 
     return () => clearInterval(interval);
-  }, [isAuthenticated, livePrices]);
+  }, [isAuthenticated]);
 
   // VIX based sentiment
   const usVix = livePrices['US_VIX']?.price || 15;

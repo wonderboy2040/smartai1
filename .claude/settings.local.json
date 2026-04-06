@@ -4,7 +4,9 @@
       "Bash(npx vite:*)",
       "Bash(npm run:*)",
       "Bash(npx tsc:*)",
-      "Bash(ls -la src/utils/*.ts)"
+      "Bash(ls -la src/utils/*.ts)",
+      "Bash(netstat -ano)",
+      "Bash(start http://localhost:5173)"
     ]
   }
 }
