@@ -5,7 +5,8 @@
       "Bash(npm run:*)",
       "Bash(npx tsc:*)",
       "Bash(npx --no-install vite build)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(node -e \":*)"
     ]
   }
 }

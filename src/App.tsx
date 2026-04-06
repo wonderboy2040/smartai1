@@ -17,7 +17,7 @@ import {
 import { calculateVaR, runStressTests, analyzeConcentrationRisk, analyzeDrawdown } from './utils/riskEngine';
 import { PredictionEngine, TechnicalIndicators, AnomalyDetector } from './utils/mlPrediction';
 import { AlertManager, detectSmartMoney } from './utils/alertManager';
-import { ETFAnalyticsEngine } from './utils/etfAnalytics';
+
 import { getBatchInterval } from './utils/api';
 import { NeuralChat } from './components/NeuralChat';
 import { Clock } from './components/Clock';
@@ -570,10 +570,15 @@ export default function App() {
     const interval = setInterval(() => {
       setWsLatency(getWebSocketLatency());
     }, 15000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
 
-    // Detect anomalies on price changes
+  // Detect anomalies on price changes (debounced to avoid re-render loops)
+  const lastAnomalyCheckRef = useRef<Record<string, number>>({});
+  useEffect(() => {
+    if (!isAuthenticated || Object.keys(livePrices).length === 0) return;
     const anomalyManager = anomalyDetectorRef.current;
-    const keys = Object.keys(livePrices).slice(-20); // Check recent 20
+    const keys = Object.keys(livePrices).slice(0, 20);
     for (const key of keys) {
       const data = livePrices[key];
       if (data?.price) {
@@ -581,24 +586,24 @@ export default function App() {
         const result = anomalyManager.isAnomalous(key);
         if (result.anomalous) {
           const symbol = key.replace('IN_', '').replace('US_', '');
-          alertManagerRef.current.processPriceData(symbol, data);
+          const lastSeen = lastAnomalyCheckRef.current[symbol] || 0;
+          if (Date.now() - lastSeen > 300000) {
+            lastAnomalyCheckRef.current[symbol] = Date.now();
+            alertManagerRef.current.processPriceData(symbol, data);
+          }
         }
-
-        // Detect smart money signals
         if (data?.volume) {
+          const symbol = key.replace('IN_', '').replace('US_', '');
+          const lastSeen = lastAnomalyCheckRef.current[symbol] || 0;
           const smartMoney = detectSmartMoney(symbol, data.volume, data.change);
-          if (smartMoney) {
-            alertManagerRef.current.processPriceData(symbol, {
-              ...data,
-              message: `Smart money ${smartMoney.type} detected (${(smartMoney.volume / 1000000).toFixed(1)}M volume)`
-            });
+          if (smartMoney && Date.now() - lastSeen > 300000) {
+            lastAnomalyCheckRef.current[symbol] = Date.now();
+            alertManagerRef.current.processPriceData(symbol, data);
           }
         }
       }
     }
-
-    return () => clearInterval(interval);
-  }, [isAuthenticated, livePrices]);
+  }, [isAuthenticated, portfolio.length]);
 
   // VIX based sentiment
   const usVix = livePrices['US_VIX']?.price || 15;
@@ -1727,7 +1732,7 @@ export default function App() {
                         <div className="text-lg font-black text-orange-400 font-mono">Rs.{varResult.monteCarlo.toLocaleString('en-IN')}</div>
                       </div>
                       <div className="col-span-3 text-center mt-2">
-                        <span className="text-[10px] text-slate-400">Confidence: {varResult.confidence * 100}% &mdash; Max daily loss estimate</span>
+                        <span className="text-[10px] text-slate-400">Confidence: {varResult.confidence * 100}% -- Max daily loss estimate</span>
                       </div>
                     </div>
                   );
