@@ -99,6 +99,7 @@ export default function App() {
   const [editId, setEditId] = useState<string | null>(null);
 
   const syncIntervalRef = useRef<number | null>(null);
+  const priceFlushRef = useRef<number | null>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [pendingAnalyze, setPendingAnalyze] = useState<string | null>(null);
   const [autoTelegram, setAutoTelegram] = useState(true);
@@ -153,19 +154,22 @@ export default function App() {
     portfolioRef.current = portfolio;
   }, [portfolio]);
 
-  // Throttle localStorage writes to every 2s instead of every tick
-  const priceFlushRef = useRef<number | null>(null);
+  // Ultra-fast price batching: WebSocket ticks → batch → ~100ms flush to React state
+  // This prevents React from re-rendering on EVERY WebSocket tick — batches them at ~10fps for butter-smooth UI
   const pendingPricesRef = useRef<Record<string, PriceData>>({});
 
+  // Flush all pending WebSocket ticks into React state (batched at ~100ms intervals)
   const flushPricesToStorage = useCallback(() => {
-    const pending = pendingPricesRef.current;
-    if (Object.keys(pending).length === 0) return;
-    const pendingCopy = { ...pendingPricesRef.current };
+    const batched = { ...pendingPricesRef.current };
     pendingPricesRef.current = {};
+    if (Object.keys(batched).length === 0) return;
+
     setLivePrices(prev => {
       const merged = { ...prev };
-      for (const [key, data] of Object.entries(pendingCopy)) {
-        merged[key] = mergePriceData(merged[key] as PriceData | undefined, data);
+      for (const [key, data] of Object.entries(batched)) {
+        const existing = merged[key] as PriceData | undefined;
+        const result = mergePriceData(existing, data);
+        if (result !== existing) merged[key] = result;
       }
       try {
         localStorage.setItem('livePrices', JSON.stringify(merged));
@@ -174,10 +178,10 @@ export default function App() {
     });
   }, []);
 
-  // Auto-flush every 2 seconds
+  // Flush batched WS ticks at ~10fps (100ms) for butter-smooth UI
   useEffect(() => {
     if (!isAuthenticated || portfolio.length === 0) return;
-    priceFlushRef.current = window.setInterval(flushPricesToStorage, 2000);
+    priceFlushRef.current = window.setInterval(flushPricesToStorage, 100);
     return () => {
       if (priceFlushRef.current) {
         clearInterval(priceFlushRef.current);
@@ -211,27 +215,28 @@ export default function App() {
     sync();
     const syncInterval = window.setInterval(sync, 8000);
 
-    // Ultra-fast TradingView WebSocket
+    // Ultra-fast TradingView WebSocket — batch all ticks into 100ms flush (zero direct state updates)
+    let statusCounter = 0;
     const symbolsToSub = currentPortfolio.map(p => p.symbol);
     const unsubscribe = subscribeToPrices(symbolsToSub, (key, data) => {
-      // Queue for batched localStorage flush
+      // Queue into batch buffer — flushPricesToStorage handles React state at 10fps
       pendingPricesRef.current[key] = {
         ...(pendingPricesRef.current[key] || {}),
         ...data
       } as PriceData;
-      // React state updates immediately for instant UI — mergePriceData dedupes re-renders
-      setLivePrices(prev => {
-        const existing = prev[key];
-        const merged = mergePriceData(existing, data as PriceData);
-        if (merged === existing) return prev; // skip re-render if no change
-        return { ...prev, [key]: merged };
-      });
+      // Only update status every 50th tick to avoid wasteful re-renders
+      statusCounter++;
+      if (statusCounter % 50 === 1) {
+        setLiveStatus('● TV SOCKET LIVE ⚡');
+      }
     });
 
     return () => {
       clearInterval(syncInterval);
       unsubscribe();
       disconnectPrices();
+      // Flush any pending prices before cleanup
+      flushPricesToStorage();
     };
   }, [isAuthenticated, portfolio.map(p => p.symbol).sort().join(',')]);
 
