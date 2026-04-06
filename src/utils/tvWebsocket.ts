@@ -1,42 +1,129 @@
 import { PriceData } from '../types';
+import { EXACT_TICKER_MAP, guessMarket } from './constants';
 
+// ========================================
+// STATE
+// ========================================
 let ws: WebSocket | null = null;
 let currentSession = '';
-const callbacks: Set<(symbol: string, data: Partial<PriceData>) => void> = new Set();
-let activeSymbols: Set<string> = new Set();
-let pingInterval: number;
+const callbacks: Set<(key: string, data: Partial<PriceData>) => void> = new Set();
 
+// Map: portfolio key ("IN_RELIANCE") -> TV symbol ("NSE:RELIANCE")
+const keyToTvSymbol: Map<string, string> = new Map();
+// Reverse map: TV symbol -> portfolio key
+const tvSymbolToKey: Map<string, string> = new Map();
+
+let pingInterval: number | null = null;
+let reconnectTimer: number | null = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 25;
+let isDestroyed = false;
+
+// ========================================
+// HELPERS
+// ========================================
 function generateSession(): string {
-  return 'qs_' + Math.random().toString(36).substring(2, 12);
+  return 'ws_' + Math.random().toString(36).substring(2, 14) + Date.now().toString(36);
 }
 
-function formatMessage(name: string, payload: any[]): string {
+function formatMessage(name: string, payload: unknown[]): string {
   const msg = JSON.stringify({ m: name, p: payload });
   return `~m~${msg.length}~m~${msg}`;
 }
 
-function sendMsg(name: string, payload: any[]) {
+function sendMsg(name: string, payload: unknown[]) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(formatMessage(name, payload));
   }
 }
 
-export function subscribeToPrices(symbols: string[], onUpdate: (sym: string, data: Partial<PriceData>) => void) {
+/**
+ * Convert a portfolio symbol + market to a proper TradingView symbol.
+ * Uses EXACT_TICKER_MAP for precise matching, falls back to NSE/NASDAQ.
+ */
+function portfolioSymbolToTv(sym: string, market: 'IN' | 'US'): string {
+  const cleanSym = sym.replace('.NS', '').replace('.BO', '').trim();
+
+  // Check exact ticker map first
+  if (EXACT_TICKER_MAP[cleanSym]) {
+    return EXACT_TICKER_MAP[cleanSym];
+  }
+
+  if (market === 'IN') {
+    return `NSE:${cleanSym}`;
+  }
+
+  // US market — try common exchanges
+  return `NASDAQ:${cleanSym}`;
+}
+
+/**
+ * Convert a TV symbol from the WebSocket back to the portfolio key.
+ * This is the critical mapping that was broken before.
+ */
+function tvSymbolToPortfolioKey(tvSymbol: string): string | null {
+  // Direct reverse lookup
+  const direct = tvSymbolToKey.get(tvSymbol);
+  if (direct) return direct;
+
+  // Parse "NSE:RELIANCE" or "CBOE:VIX"
+  const parts = tvSymbol.split(':');
+  if (parts.length < 2) return null;
+
+  const exchange = parts[0].toUpperCase();
+  const rawSym = parts[1].toUpperCase();
+
+  // Check all registered keys for a matching raw symbol
+  for (const [key, tvSym] of keyToTvSymbol.entries()) {
+    const tvParts = tvSym.split(':');
+    if (tvParts.length < 2) continue;
+    const tvRaw = tvParts[1].toUpperCase();
+
+    // Match on raw symbol (flexible exchange matching)
+    if (rawSym === tvRaw) return key;
+
+    // Cross-match: NSE/BSE are both Indian
+    if ((exchange === 'NSE' || exchange === 'BSE') &&
+        (tvParts[0].toUpperCase() === 'NSE' || tvParts[0].toUpperCase() === 'BSE') &&
+        rawSym === tvRaw) return key;
+
+    // Cross-match: US exchanges (NASDAQ/NYSE/AMEX/ARCA)
+    const usExchanges = new Set(['NASDAQ', 'NYSE', 'AMEX', 'ARCA']);
+    if (usExchanges.has(exchange) && usExchanges.has(tvParts[0].toUpperCase()) && rawSym === tvRaw) return key;
+  }
+
+  return null;
+}
+
+// ========================================
+// PUBLIC API
+// ========================================
+export function subscribeToPrices(
+  symbols: string[],
+  onUpdate: (key: string, data: Partial<PriceData>) => void
+) {
   callbacks.add(onUpdate);
-  const formattedSymbols = symbols.map(s => {
-    let sym = s.toUpperCase().replace('.NS', '').replace('.BO', '');
-    if (s.includes('.NS') || s.includes('.BO') || s.includes('BEES')) {
-      return `NSE:${sym}`;
-    }
-    return sym.includes(':') ? sym : `NASDAQ:${sym}`;
+
+  // Build symbol mapping
+  symbols.forEach(sym => {
+    const mkt = guessMarket(sym);
+    const tvSym = portfolioSymbolToTv(sym, mkt);
+    const key = `${mkt}_${sym}`;
+
+    keyToTvSymbol.set(key, tvSym);
+    tvSymbolToKey.set(tvSym, key);
   });
 
-  formattedSymbols.forEach(s => activeSymbols.add(s));
-
   if (!ws || ws.readyState === WebSocket.CLOSED) {
+    reconnectAttempts = 0;
     connect();
   } else if (ws.readyState === WebSocket.OPEN) {
-    sendMsg('quote_add_symbols', [currentSession, ...formattedSymbols]);
+    const tvSymbols = symbols.map(s => {
+      const mkt = guessMarket(s);
+      return portfolioSymbolToTv(s, mkt);
+    });
+    // Remove duplicates
+    sendMsg('quote_add_symbols', [currentSession, ...new Set(tvSymbols)]);
   }
 
   return () => {
@@ -44,72 +131,184 @@ export function subscribeToPrices(symbols: string[], onUpdate: (sym: string, dat
   };
 }
 
+/**
+ * Cleanly disconnect the WebSocket
+ */
+export function disconnectPrices() {
+  isDestroyed = true;
+  if (pingInterval) {
+    clearInterval(pingInterval);
+    pingInterval = null;
+  }
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (ws) {
+    ws.onclose = null;
+    ws.close();
+    ws = null;
+  }
+  currentSession = '';
+  reconnectAttempts = 0;
+}
+
+// ========================================
+// CONNECTION
+// ========================================
 function connect() {
-  if (ws) ws.close();
-  ws = new WebSocket('wss://data.tradingview.com/socket.io/websocket', ['chat']);
-  
+  if (isDestroyed) return;
+  if (ws) {
+    ws.onclose = null;
+    ws.close();
+  }
+
+  try {
+    ws = new WebSocket('wss://data.tradingview.com/socket.io/websocket', ['protocol-protocol']);
+  } catch (e) {
+    scheduleReconnect();
+    return;
+  }
+
   ws.onopen = () => {
+    reconnectAttempts = 0;
     currentSession = generateSession();
+
+    // Auth
     sendMsg('set_auth_token', ['unauthorized_user_token']);
+
+    // Create session
     sendMsg('quote_create_session', [currentSession]);
+
+    // Set fields we want
     sendMsg('quote_set_fields', [
       currentSession,
-      'lp', // last price
-      'ch', // change
-      'chp', // change percent
-      'high_price',
-      'low_price',
-      'volume'
+      'lp',          // last price
+      'ch',           // change
+      'chp',          // change percent
+      'high_price',   // day high
+      'low_price',    // day low
+      'volume',       // volume
+      'open_price',   // open
+      'prev_close_price' // previous close
     ]);
-    
-    if (activeSymbols.size > 0) {
-      sendMsg('quote_add_symbols', [currentSession, ...Array.from(activeSymbols)]);
+
+    // Subscribe all symbols
+    const allTvSymbols = [...new Set(keyToTvSymbol.values())];
+    if (allTvSymbols.length > 0) {
+      sendMsg('quote_add_symbols', [currentSession, ...allTvSymbols]);
     }
 
+    // Faster heartbeat (15s) for more reliable connection
+    if (pingInterval) clearInterval(pingInterval);
     pingInterval = window.setInterval(() => {
       if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(`~m~2~m~~h~2`);
+        ws.send(`~m~2~m~~h~${Math.floor(Math.random() * 1000)}`);
       }
-    }, 20000);
+    }, 15000);
   };
 
-  ws.onmessage = (event) => {
-    const data = event.data.toString();
-    if (data.includes('~m~')) {
-      const packets = data.split('~m~').filter((p: string) => p && !p.startsWith('~h~') && !/^\d+$/.test(p));
-      packets.forEach((packet: string) => {
-        try {
-          const parsed = JSON.parse(packet);
-          if (parsed.m === 'qsd' && parsed.p && parsed.p[1]) {
-            const sym = parsed.p[0]; // e.g., "NSE:RELIANCE"
-            const payload = parsed.p[1];
-            
-            if (payload.s === 'ok' && payload.v) {
-              const rawSym = sym.split(':')[1] || sym;
-              const isIndian = sym.includes('NSE') || sym.includes('BSE');
-              const finalKey = `${isIndian ? 'IN' : 'US'}_${rawSym}${isIndian && !rawSym.includes('BEES') ? '.NS' : ''}`;
-              
-              const update: Partial<PriceData> = {};
-              if (payload.v.lp !== undefined) update.price = payload.v.lp;
-              if (payload.v.chp !== undefined) update.change = payload.v.chp;
-              if (payload.v.high_price !== undefined) update.high = payload.v.high_price;
-              if (payload.v.low_price !== undefined) update.low = payload.v.low_price;
-              if (payload.v.volume !== undefined) update.volume = payload.v.volume;
+  ws.onmessage = (event: MessageEvent) => {
+    const data: string = typeof event.data === 'string' ? event.data : '';
+    if (!data) return;
 
-              if (Object.keys(update).length > 0) {
-                callbacks.forEach(cb => cb(finalKey, update));
-              }
-            }
-          }
-        } catch (e) {
-          // Ignore parse errors from generic socket messages
-        }
-      });
+    // Parse TradingView wire format: ~m~<length>~m~<json>
+    if (!data.includes('~m~')) return;
+
+    let offset = 0;
+    while (offset < data.length) {
+      const markerStart = data.indexOf('~m~', offset);
+      if (markerStart === -1) break;
+
+      const lengthStart = markerStart + 3;
+      const markerEnd = data.indexOf('~m~', lengthStart);
+      if (markerEnd === -1) break;
+
+      const msgLength = parseInt(data.substring(lengthStart, markerEnd), 10);
+      if (isNaN(msgLength) || msgLength <= 0) {
+        offset = markerEnd + 3;
+        continue;
+      }
+
+      const jsonStart = markerEnd + 3;
+      const jsonEnd = jsonStart + msgLength;
+
+      if (jsonEnd > data.length) break;
+
+      const jsonStr = data.substring(jsonStart, jsonEnd);
+
+      // Skip heartbeat responses
+      if (jsonStr.startsWith('~h~') || /^\d+$/.test(jsonStr.trim())) {
+        offset = jsonEnd;
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(jsonStr);
+        handleParsedMessage(parsed);
+      } catch {
+        // Skip non-JSON messages
+      }
+
+      offset = jsonEnd;
     }
   };
 
   ws.onclose = () => {
-    clearInterval(pingInterval);
-    setTimeout(connect, 3000); // Reconnect loop
+    if (pingInterval) {
+      clearInterval(pingInterval);
+      pingInterval = null;
+    }
+    scheduleReconnect();
   };
+
+  ws.onerror = () => {
+    // Error triggers onclose automatically
+  };
+}
+
+function handleParsedMessage(parsed: Record<string, unknown>): void {
+  if (parsed.m !== 'qsd' || !Array.isArray(parsed.p) || parsed.p.length < 2) return;
+
+  const tvSymbol = parsed.p[0] as string;
+  const payload = parsed.p[1] as Record<string, unknown> | null;
+  if (!payload || payload.s !== 'ok' || !payload.v) return;
+
+  const v = payload.v as Record<string, number>;
+
+  // Map TV symbol back to portfolio key
+  const key = tvSymbolToPortfolioKey(tvSymbol);
+  if (!key) return;
+
+  const update: Partial<PriceData> = {};
+  if (v.lp !== undefined && !isNaN(v.lp) && v.lp > 0) update.price = v.lp;
+  if (v.chp !== undefined && !isNaN(v.chp)) update.change = v.chp;
+  else if (v.ch !== undefined && !isNaN(v.ch) && update.price) {
+    update.change = (v.ch / update.price) * 100;
+  }
+  if (v.high_price !== undefined && !isNaN(v.high_price)) update.high = v.high_price;
+  if (v.low_price !== undefined && !isNaN(v.low_price)) update.low = v.low_price;
+  if (v.volume !== undefined && !isNaN(v.volume)) update.volume = v.volume;
+
+  update.time = Date.now();
+
+  // Derive market from the key
+  update.market = key.startsWith('IN_') ? 'IN' : 'US';
+
+  if (Object.keys(update).length > 1) { // more than just 'time'
+    callbacks.forEach(cb => cb(key, update));
+  }
+}
+
+function scheduleReconnect(): void {
+  if (isDestroyed) return;
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    return;
+  }
+  reconnectAttempts++;
+
+  const delay = Math.min(30000, 1000 * Math.pow(1.8, reconnectAttempts));
+  reconnectTimer = window.setTimeout(() => {
+    connect();
+  }, delay);
 }

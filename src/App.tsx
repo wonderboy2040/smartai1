@@ -1,15 +1,15 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import { Position, PriceData, TabType, RiskLevel, TransactionType } from './types';
-import { 
+import {
   SECURE_PIN, TG_TOKEN, TG_CHAT_ID,
   getTodayString, guessMarket, getAssetCagrProxy, formatPrice
 } from './utils/constants';
-import { 
-  fetchSinglePrice, batchFetchPrices, fetchForexRate, 
+import {
+  fetchSinglePrice, batchFetchPrices, fetchForexRate,
   syncToCloud, loadFromCloud, sendTelegramAlert,
   syncGroqKeyToCloud, loadGroqKeyFromCloud
 } from './utils/api';
-import { subscribeToPrices } from './utils/tvWebsocket';
+import { subscribeToPrices, disconnectPrices } from './utils/tvWebsocket';
 import {
   isAnyMarketOpen, getMarketStatus, analyzeAsset,
   getSmartAllocations, generateDeepAnalysis
@@ -118,43 +118,81 @@ export default function App() {
     portfolioRef.current = portfolio;
   }, [portfolio]);
 
+  // Throttle localStorage writes to every 2s instead of every tick
+  const priceFlushRef = useRef<number | null>(null);
+  const pendingPricesRef = useRef<Record<string, PriceData>>({});
+
+  const flushPricesToStorage = useCallback(() => {
+    const pending = pendingPricesRef.current;
+    if (Object.keys(pending).length === 0) return;
+    const pendingCopy = { ...pendingPricesRef.current };
+    pendingPricesRef.current = {};
+    setLivePrices(prev => {
+      const merged = { ...prev };
+      for (const [key, data] of Object.entries(pendingCopy)) {
+        merged[key] = mergePriceData(merged[key] as PriceData | undefined, data);
+      }
+      try {
+        localStorage.setItem('livePrices', JSON.stringify(merged));
+      } catch { /* quota exceeded */ }
+      return merged;
+    });
+  }, []);
+
+  // Auto-flush every 2 seconds
+  useEffect(() => {
+    if (!isAuthenticated || portfolio.length === 0) return;
+    priceFlushRef.current = window.setInterval(flushPricesToStorage, 2000);
+    return () => {
+      if (priceFlushRef.current) {
+        clearInterval(priceFlushRef.current);
+        priceFlushRef.current = null;
+      }
+    };
+  }, [isAuthenticated, portfolio.length, flushPricesToStorage]);
+
   // Background sync & WebSocket
   useEffect(() => {
     if (!isAuthenticated) return;
     const currentPortfolio = portfolioRef.current;
     if (currentPortfolio.length === 0) return;
 
-    // Fast HTTP Sync (Runs exactly once and every 10s for backup)
+    // Fast HTTP Sync (runs every 10s as backup)
     const sync = async () => {
       setLiveStatus('● SYNCING...');
-      await batchFetchPrices(portfolioRef.current, (key, data) => {
-        setLivePrices(prev => {
-          const updated = { ...prev, [key]: data };
-          localStorage.setItem('livePrices', JSON.stringify(updated));
-          return updated;
-        });
+      await batchFetchPrices(currentPortfolio, (key, data) => {
+        pendingPricesRef.current[key] = data;
       });
+      flushPricesToStorage();
       setLiveStatus('● QUANTUM LINK ACTIVE');
     };
 
     sync();
-    syncIntervalRef.current = window.setInterval(sync, 10000);
+    const syncInterval = window.setInterval(sync, 10000);
 
-    // Ultra-fast TradingView WebSocket integration
+    // Ultra-fast TradingView WebSocket
     const symbolsToSub = currentPortfolio.map(p => p.symbol);
     const unsubscribe = subscribeToPrices(symbolsToSub, (key, data) => {
+      // Queue for batched localStorage flush
+      pendingPricesRef.current[key] = {
+        ...(pendingPricesRef.current[key] || {}),
+        ...data
+      } as PriceData;
+      // React state updates immediately for instant UI
       setLivePrices(prev => {
-        const existingInfo = prev[key] || {};
-        const updated = { ...prev, [key]: { ...existingInfo, ...data, time: Date.now() } };
-        localStorage.setItem('livePrices', JSON.stringify(updated));
-        return updated;
+        const existing = prev[key];
+        return {
+          ...prev,
+          [key]: mergePriceData(existing, data as PriceData)
+        };
       });
       setLiveStatus('● TV SOCKET LIVE ⚡');
     });
 
     return () => {
-      if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
+      clearInterval(syncInterval);
       unsubscribe();
+      disconnectPrices();
     };
   }, [isAuthenticated, portfolio.map(p => p.symbol).sort().join(',')]);
 
