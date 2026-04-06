@@ -14,6 +14,8 @@ import {
   isAnyMarketOpen, getMarketStatus, analyzeAsset,
   getSmartAllocations, generateDeepAnalysis
 } from './utils/telegram';
+import { calculateVaR, runStressTests, analyzeConcentrationRisk } from './utils/riskEngine';
+import { AlertManager, detectSmartMoney } from './utils/alertManager';
 import { NeuralChat } from './components/NeuralChat';
 import { Clock } from './components/Clock';
 
@@ -102,6 +104,10 @@ export default function App() {
   const [autoTelegram, setAutoTelegram] = useState(true);
   const telegramIntervalRef = useRef<number | null>(null);
   const forexIntervalRef = useRef<number | null>(null);
+
+  // Advanced features refs
+  const alertManagerRef = useRef<AlertManager>(new AlertManager());
+  const lastAlertCheckRef = useRef<Record<string, number>>({});
 
   // Initialize
   useEffect(() => {
@@ -215,7 +221,7 @@ export default function App() {
     };
 
     sync();
-    const syncInterval = window.setInterval(sync, 4000);
+    const syncInterval = window.setInterval(sync, isAnyMarketOpen() ? 2000 : 4000);
 
     // Ultra-fast TradingView WebSocket — batch all ticks into 100ms flush (zero direct state updates)
     let statusCounter = 0;
@@ -566,6 +572,30 @@ export default function App() {
     return { text: '🟢 Ultra Low Risk | Whale Accumulation Zone', color: 'text-emerald-400' };
   };
   const sentiment = getSentiment();
+
+  // Background alert detection (no re-render — uses refs)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const am = alertManagerRef.current;
+    for (const key of Object.keys(livePrices).slice(0, 15)) {
+      const d = livePrices[key];
+      if (!d?.price) continue;
+      const sym = key.replace('IN_', '').replace('US_', '');
+      const last = lastAlertCheckRef.current[sym] || 0;
+      if (Date.now() - last < 300000) continue; // 5 min throttle
+      if (d.change > 5 || d.change < -5 || d.rsi > 80 || d.rsi < 20) {
+        lastAlertCheckRef.current[sym] = Date.now();
+        am.processPriceData(sym, d);
+      }
+      if (d.volume) {
+        const sm = detectSmartMoney(sym, d.volume, d.change);
+        if (sm) {
+          lastAlertCheckRef.current[sym] = Date.now();
+          am.processPriceData(sym, d);
+        }
+      }
+    }
+  }, [isAuthenticated, livePrices]);
 
   // Current symbol data
   const currentKey = `${currentMarket}_${currentSymbol}`;
@@ -1655,6 +1685,93 @@ export default function App() {
                 )}
               </div>
             </div>
+
+            {/* VaR Analysis */}
+            {portfolio.length > 0 && (() => {
+              const varResult = calculateVaR(metrics.totalValue, portfolio, livePrices);
+              return (
+                <div className="glass-card rounded-2xl p-5 animate-fade-in-up delay-200">
+                  <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+                    <span className="w-7 h-7 rounded-lg bg-red-500/10 flex items-center justify-center text-sm">VaR</span>
+                    Value at Risk
+                    <span className="ml-auto badge bg-red-500/10 text-red-400 border border-red-500/20 text-[10px]">ADVANCED</span>
+                  </h3>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-red-500/5 border border-red-500/15 p-4 rounded-xl text-center">
+                      <div className="text-[10px] text-red-400/80 font-bold uppercase tracking-wider mb-1">Parametric</div>
+                      <div className="text-lg font-black text-red-400 font-mono">Rs.{varResult.parametric.toLocaleString('en-IN')}</div>
+                    </div>
+                    <div className="bg-amber-500/5 border border-amber-500/15 p-4 rounded-xl text-center">
+                      <div className="text-[10px] text-amber-400/80 font-bold uppercase tracking-wider mb-1">Historical</div>
+                      <div className="text-lg font-black text-amber-400 font-mono">Rs.{varResult.historical.toLocaleString('en-IN')}</div>
+                    </div>
+                    <div className="bg-orange-500/5 border border-orange-500/15 p-4 rounded-xl text-center">
+                      <div className="text-[10px] text-orange-400/80 font-bold uppercase tracking-wider mb-1">Monte Carlo</div>
+                      <div className="text-lg font-black text-orange-400 font-mono">Rs.{varResult.monteCarlo.toLocaleString('en-IN')}</div>
+                    </div>
+                    <div className="col-span-3 text-center mt-1">
+                      <span className="text-[10px] text-slate-400">Confidence: {varResult.confidence * 100}% -- daily loss estimate</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Stress Tests */}
+            {portfolio.length > 0 && (() => {
+              const stressResults = runStressTests(portfolio, livePrices);
+              return (
+                <div className="glass-card rounded-2xl p-5 animate-fade-in-up delay-300">
+                  <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+                    <span className="w-7 h-7 rounded-lg bg-rose-500/10 flex items-center justify-center text-sm">Stress</span>
+                    Stress Testing
+                  </h3>
+                  <div className="space-y-2">
+                    {stressResults.map((s, i) => (
+                      <div key={i} className="bg-black/20 rounded-xl p-3 border border-white/5 flex items-center justify-between">
+                        <div>
+                          <div className="font-bold text-white text-sm">{s.name}</div>
+                          <div className="text-[10px] text-slate-500">{s.description}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-black text-red-400 font-mono">Rs.{Math.round(Math.abs(s.impactPct * metrics.totalValue / 100)).toLocaleString('en-IN')}</div>
+                          <div className="text-[10px] text-red-400/60">{Math.abs(s.impactPct)}%</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Concentration Risk */}
+            {portfolio.length > 0 && (() => {
+              const conc = analyzeConcentrationRisk(portfolio, livePrices);
+              return (
+                <div className="glass-card rounded-2xl p-5 animate-fade-in-up">
+                  <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+                    <span className="w-7 h-7 rounded-lg bg-yellow-500/10 flex items-center justify-center text-sm">Conc</span>
+                    Concentration Risk
+                  </h3>
+                  <div className="space-y-2">
+                    {conc.map((c, i) => (
+                      <div key={i} className="bg-black/20 rounded-xl p-3 border border-white/5">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="font-bold text-white text-sm">{c.symbol}</div>
+                          <div className="text-right">
+                            <span className="text-xs text-slate-300">{c.weight}%</span>
+                            <span className="text-[10px] text-slate-500 ml-2">Risk: {c.contributionToRisk}</span>
+                          </div>
+                        </div>
+                        <div className="w-full h-1 bg-slate-800/80 rounded-full overflow-hidden">
+                          <div className="h-full bg-gradient-to-r from-cyan-500 to-red-500 transition-all" style={{ width: `${Math.min(100, c.contributionToRisk * 2)}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </main>
