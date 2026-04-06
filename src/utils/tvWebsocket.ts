@@ -262,7 +262,6 @@ function connect() {
 
     // Subscribe all symbols (with dedup via subscribedSymbols set)
     const allTvSymbols = [...new Set(keyToTvSymbol.values())];
-    const newSymbols = allTvSymbols.filter(s => !subscribedSymbols.has(s));
     if (allTvSymbols.length > 0) {
       sendMsg('quote_add_symbols', [currentSession, ...allTvSymbols]);
       allTvSymbols.forEach(s => subscribedSymbols.add(s));

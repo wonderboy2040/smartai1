@@ -1,8 +1,6 @@
 // Quantum-inspired portfolio optimization algorithms
 // Implements QAOA and VQE-inspired approaches for classical hardware
 
-import { Position } from '../types';
-import { ETFInfo } from '../constants';
 
 /**
  * Quantum Approximate Optimization Algorithm (QAOA) inspired portfolio optimization

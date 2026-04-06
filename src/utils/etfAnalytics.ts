@@ -1,8 +1,8 @@
 // ETF Analytics Suite
 // Comprehensive analytics for ETFs including tracking error, holdings overlap, liquidity, tax efficiency, and factor exposure
 
-import { ETFInfo } from './constants';
-import { Position, PriceData } from '../types';
+import { ETFInfo } from '../types';
+import { PriceData } from '../types';
 
 /**
  * ETF Analytics Engine
@@ -104,7 +104,7 @@ export class ETFAnalyticsEngine {
    */
   public static calculateTaxEfficiencyScore(
     etf: ETFInfo,
-    holdingPeriodYears: number = 3
+    _holdingPeriodYears: number = 3
   ): number {
     // India-specific tax considerations
     if (etf.sym.endsWith('.NS') || etf.sym.endsWith('.BO')) {
@@ -114,7 +114,7 @@ export class ETFAnalyticsEngine {
 
       // For simplicity, assuming equity ETF with long-term holding
       const ltcgRate = 0.10; // 10% LTCG
-      const STCG_rate = 0.15; // 15% STCG
+      // STCG @ 15% — reserved for tax calculation extension
       const dividendTaxRate = 0.10; // 10% dividend distribution tax
 
       // Assuming 60% capital gains, 40% dividends return composition
@@ -235,12 +235,6 @@ export class ETFAnalyticsEngine {
     holdingPeriodRecommendation: string;
     overallScore: number;
   } {
-    // Get current price data
-    const keyIN = `IN_${etf.sym}`;
-    const keyIN_NS = `IN_${etf.sym}.NS`;
-    const keyUS = `US_${etf.sym}`;
-    const priceData = livePrices[keyIN] || livePrices[keyIN_NS] || livePrices[keyUS];
-
     // Calculate tracking error if historical data provided
     let trackingError: number | undefined;
     if (historicalData && benchmarkReturns && historicalData.length > 0) {

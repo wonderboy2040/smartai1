@@ -111,7 +111,6 @@ export class TechnicalIndicators {
    * Stochastic Oscillator
    */
   static Stochastic(closes: number[], highs: number[], lows: number[], kPeriod: number = 14): { k: number; d: number } {
-    const recentCloses = closes.slice(-kPeriod);
     const recentHighs = highs.slice(-kPeriod);
     const recentLows = lows.slice(-kPeriod);
     const highestHigh = Math.max(...recentHighs);
@@ -218,7 +217,7 @@ export class PredictionEngine {
   static predictPrice(
     historicalPrices: number[],
     currentPrice: number,
-    liveData?: PriceData,
+    _liveData?: PriceData,
     daysAhead: number = 1
   ): PredictionResult {
     const closes = historicalPrices.length > 0 ? historicalPrices : [currentPrice];

@@ -32,7 +32,7 @@ class SmartCache<T> {
   set(key: string, data: T, ttl: number = 5000): void {
     if (this.store.size >= this.maxSize) {
       const oldestKey = this.store.keys().next().value;
-      this.store.delete(oldestKey);
+      if (oldestKey) this.store.delete(oldestKey);
     }
     this.store.set(key, { data, timestamp: Date.now(), ttl });
   }
