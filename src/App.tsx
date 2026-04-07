@@ -108,6 +108,7 @@ export default function App() {
 
   const priceFlushRef = useRef<number | null>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  const tvWidgetRef = useRef<any>(null);
   const [pendingAnalyze, setPendingAnalyze] = useState<string | null>(null);
   const [autoTelegram, setAutoTelegram] = useState(true);
   const telegramIntervalRef = useRef<number | null>(null);
@@ -291,7 +292,7 @@ export default function App() {
   useEffect(() => {
     if (!isAuthenticated || !chartContainerRef.current || !currentSymbol) return;
     loadTradingViewChart();
-  }, [currentSymbol, chartInterval, isAuthenticated, theme]);
+  }, [currentSymbol, chartInterval, isAuthenticated]);
 
   // Verify PIN
   const verifyPin = () => {
@@ -481,44 +482,85 @@ export default function App() {
   const loadTradingViewChart = useCallback(() => {
     if (!chartContainerRef.current) return;
 
+    // Clean up previous widget
+    if (tvWidgetRef.current && typeof tvWidgetRef.current === 'object') {
+      try {
+        // TradingView widget doesn't have a formal destroy method, but we can remove it
+        chartContainerRef.current.innerHTML = '';
+      } catch (e) {
+        console.warn('Failed to clean up previous chart:', e);
+        chartContainerRef.current.innerHTML = '';
+      }
+    }
+
     const cleanSym = currentSymbol.replace('.NS', '').replace('.BO', '');
     const isIndian = currentMarket === 'IN' || currentSymbol.includes('.NS');
     const tvSymbol = EXACT_TICKER_MAP[cleanSym] || (isIndian ? `NSE:${cleanSym}` : `NASDAQ:${cleanSym}`);
-
-    chartContainerRef.current.innerHTML = '';
 
     const container = document.createElement('div');
     container.className = 'tradingview-widget-container';
     container.style.height = '100%';
     container.style.width = '100%';
+    container.style.overflow = 'hidden';
 
     const inner = document.createElement('div');
     inner.className = 'tradingview-widget-container__widget';
     inner.style.height = '100%';
     inner.style.width = '100%';
+    inner.id = `tv-chart-${Date.now()}`; // Unique ID to prevent conflicts
     container.appendChild(inner);
 
     chartContainerRef.current.appendChild(container);
 
-    const script = document.createElement('script');
-    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
-    script.async = true;
-    script.onload = () => {
-      (window as WindowWithTradingView).TradingView?.widget({
-        autosize: true,
-        symbol: tvSymbol,
-        interval: chartInterval,
-        timezone: 'Asia/Kolkata',
-        theme: 'dark',
-        style: '1',
-        locale: 'en',
-        enable_publishing: false,
-        allow_symbol_change: true,
-        studies: ['STD;RSI', 'STD;MACD'],
-        container_id: inner
-      });
-    };
-    container.appendChild(script);
+    // Load TradingView script only if not already loaded
+    if (!document.querySelector('script[src*="embed-widget-advanced-chart.js"]')) {
+      const script = document.createElement('script');
+      script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+      script.async = true;
+      script.onload = () => {
+        if ((window as WindowWithTradingView).TradingView) {
+          tvWidgetRef.current = (window as WindowWithTradingView).TradingView.widget({
+            autosize: true,
+            symbol: tvSymbol,
+            interval: chartInterval,
+            timezone: 'Asia/Kolkata',
+            theme: 'dark',
+            style: '1',
+            locale: 'en',
+            enable_publishing: false,
+            allow_symbol_change: true,
+            studies: ['STD;RSI', 'STD;MACD'],
+            container_id: inner.id,
+            withdateranges: true,
+            calendar: false,
+            support_host: 'https://www.tradingview.com'
+          });
+        }
+      };
+      document.head.appendChild(script);
+    } else {
+      // Script already loaded, initialize widget directly
+      setTimeout(() => {
+        if ((window as WindowWithTradingView).TradingView) {
+          tvWidgetRef.current = (window as WindowWithTradingView).TradingView.widget({
+            autosize: true,
+            symbol: tvSymbol,
+            interval: chartInterval,
+            timezone: 'Asia/Kolkata',
+            theme: 'dark',
+            style: '1',
+            locale: 'en',
+            enable_publishing: false,
+            allow_symbol_change: true,
+            studies: ['STD;RSI', 'STD;MACD'],
+            container_id: inner.id,
+            withdateranges: true,
+            calendar: false,
+            support_host: 'https://www.tradingview.com'
+          });
+        }
+      }, 100);
+    }
   }, [currentSymbol, currentMarket, chartInterval]);
 
   // Calculate portfolio metrics

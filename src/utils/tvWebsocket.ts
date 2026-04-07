@@ -107,9 +107,10 @@ function sendMsg(name: string, payload: unknown[]) {
 /**
  * Convert a portfolio symbol + market to a proper TradingView symbol.
  * Uses EXACT_TICKER_MAP for precise matching, falls back to NSE/NASDAQ.
+ * Also handles BSE stocks and special cases.
  */
 function portfolioSymbolToTv(sym: string, market: 'IN' | 'US'): string {
-  const cleanSym = sym.replace('.NS', '').replace('.BO', '').trim();
+  const cleanSym = sym.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
 
   // Check exact ticker map first
   if (EXACT_TICKER_MAP[cleanSym]) {
@@ -117,10 +118,19 @@ function portfolioSymbolToTv(sym: string, market: 'IN' | 'US'): string {
   }
 
   if (market === 'IN') {
+    // For Indian stocks, prefer NSE but try BSE as fallback if not found
+    // Also try to preserve exchange if already specified
+    if (sym.includes('.BO') || sym.toUpperCase().includes('BSE')) {
+      return `BSE:${cleanSym}`;
+    }
     return `NSE:${cleanSym}`;
   }
 
-  // US market — try common exchanges
+  // US market — try multiple exchanges in order of preference
+  // Use AMEX for ETFs often listed there, otherwise NASDAQ
+  if (cleanSym.endsWith('ETF') || cleanSym.includes('V') || cleanSym.includes('IWM')) {
+    return `AMEX:${cleanSym}`;
+  }
   return `NASDAQ:${cleanSym}`;
 }
 
@@ -363,8 +373,7 @@ function handleParsedMessage(parsed: Record<string, unknown>): void {
     const lastPrice = lastEntry?.price;
     const validation = validatePrice(key, rawPrice, lastPrice);
     if (!validation.valid) {
-      // Log silently — bad ticks are common on WS feeds
-      console.debug(`[WS] ${key}: ${validation.reason} (${rawPrice})`);
+      // Silently skip bad ticks (common on WS feeds)
       return;
     }
     update.price = rawPrice;

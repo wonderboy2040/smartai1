@@ -25,6 +25,7 @@ export const ALPHA_ETFS_US: ETFInfo[] = [
 ];
 
 export const EXACT_TICKER_MAP: Record<string, string> = {
+  // US ETFs & Indices
   'SMH': 'NASDAQ:SMH',
   'QQQM': 'NASDAQ:QQQM',
   'XLK': 'AMEX:XLK',
@@ -34,7 +35,37 @@ export const EXACT_TICKER_MAP: Record<string, string> = {
   'SPY': 'AMEX:SPY',
   'DIA': 'AMEX:DIA',
   'XLV': 'AMEX:XLV',
-  'VIX': 'CBOE:VIX'
+  'VIX': 'CBOE:VIX',
+  'SPX': 'SP:SPX',
+  'NDX': 'NASDAQ:NDX',
+  'DJI': 'TVC:DJI',
+  'RUT': 'AMEX:RUT',
+
+  // Indian ETFs & Indices (already have NSE: prefix in code, but explicit mapping for accuracy)
+  'NIFTY': 'NSE:NIFTY',
+  'SENSEX': 'BSE:SENSEX',
+  'BANKNIFTY': 'NSE:BANKNIFTY',
+  'NIFTY50': 'NSE:NIFTY',
+  'NIFTYBANK': 'NSE:BANKNIFTY',
+  'INDIAVIX': 'NSE:INDIAVIX',
+
+  // Common Indian ETFs from ALPHA_ETFS_IN
+  'JUNIORBEES': 'NSE:JUNIORBEES',
+  'MOMOMENTUM': 'NSE:MOMOMENTUM',
+  'SMALLCAP': 'NSE:SMALLCAP',
+  'MID150BEES': 'NSE:MID150BEES',
+
+  // Additional US symbols
+  'QQQ': 'NASDAQ:QQQ',
+  'AAPL': 'NASDAQ:AAPL',
+  'MSFT': 'NASDAQ:MSFT',
+  'GOOGL': 'NASDAQ:GOOGL',
+  'AMZN': 'NASDAQ:AMZN',
+  'META': 'NASDAQ:META',
+  'NVDA': 'NASDAQ:NVDA',
+  'TSLA': 'NASDAQ:TSLA',
+  'BTC': 'BITSTAMP:BTCUSD',
+  'ETH': 'BITSTAMP:ETHUSD'
 };
 
 export const CORS_PROXIES = [
