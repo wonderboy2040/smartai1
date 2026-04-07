@@ -6,7 +6,8 @@
       "Bash(npx tsc:*)",
       "Bash(ls -la src/utils/*.ts)",
       "Bash(netstat -ano)",
-      "Bash(start http://localhost:5173)"
+      "Bash(start http://localhost:5173)",
+      "Bash(wc -l src/utils/*.ts src/App.tsx)"
     ]
   }
 }

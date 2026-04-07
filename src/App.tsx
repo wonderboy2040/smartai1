@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Position, PriceData, TabType, RiskLevel, TransactionType } from './types';
 import {
   SECURE_PIN, TG_TOKEN, TG_CHAT_ID,
-  getTodayString, guessMarket, getAssetCagrProxy, formatPrice
+  getTodayString, guessMarket, getAssetCagrProxy, formatPrice, EXACT_TICKER_MAP
 } from './utils/constants';
 import {
   fetchSinglePrice, batchFetchPrices, fetchForexRate,
@@ -477,7 +477,7 @@ export default function App() {
 
     const cleanSym = currentSymbol.replace('.NS', '').replace('.BO', '');
     const isIndian = currentMarket === 'IN' || currentSymbol.includes('.NS');
-    const tvSymbol = isIndian ? `BSE:${cleanSym}` : `NASDAQ:${cleanSym}`;
+    const tvSymbol = EXACT_TICKER_MAP[cleanSym] || (isIndian ? `NSE:${cleanSym}` : `NASDAQ:${cleanSym}`);
 
     chartContainerRef.current.innerHTML = '';
 
