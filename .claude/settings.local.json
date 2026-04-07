@@ -7,7 +7,9 @@
       "Bash(ls -la src/utils/*.ts)",
       "Bash(netstat -ano)",
       "Bash(start http://localhost:5173)",
-      "Bash(wc -l src/utils/*.ts src/App.tsx)"
+      "Bash(wc -l src/utils/*.ts src/App.tsx)",
+      "Bash(git:*)",
+      "Bash(dir:*)"
     ]
   }
 }

@@ -1,4 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+
+interface WindowWithTradingView extends Window {
+  TradingView?: {
+    widget: (config: any) => void;
+  };
+}
 import { Position, PriceData, TabType, RiskLevel, TransactionType } from './types';
 import {
   SECURE_PIN, TG_TOKEN, TG_CHAT_ID,
@@ -495,21 +501,23 @@ export default function App() {
     chartContainerRef.current.appendChild(container);
 
     const script = document.createElement('script');
-    script.type = 'text/javascript';
     script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
     script.async = true;
-    script.innerHTML = JSON.stringify({
-      autosize: true,
-      symbol: tvSymbol,
-      interval: chartInterval,
-      timezone: 'Asia/Kolkata',
-      theme: 'dark',
-      style: '1',
-      locale: 'en',
-      enable_publishing: false,
-      allow_symbol_change: true,
-      studies: ['STD;RSI', 'STD;MACD']
-    });
+    script.onload = () => {
+      (window as WindowWithTradingView).TradingView?.widget({
+        autosize: true,
+        symbol: tvSymbol,
+        interval: chartInterval,
+        timezone: 'Asia/Kolkata',
+        theme: 'dark',
+        style: '1',
+        locale: 'en',
+        enable_publishing: false,
+        allow_symbol_change: true,
+        studies: ['STD;RSI', 'STD;MACD'],
+        container_id: inner
+      });
+    };
     container.appendChild(script);
   }, [currentSymbol, currentMarket, chartInterval]);
 

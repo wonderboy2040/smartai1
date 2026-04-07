@@ -222,7 +222,7 @@ export class ETFAnalyticsEngine {
    */
   public static analyzeETF(
     etf: ETFInfo,
-    livePrices: Record<string, PriceData>,
+    _livePrices: Record<string, PriceData>,
     historicalData?: number[][],
     benchmarkReturns?: number[]
   ): {
