@@ -299,16 +299,19 @@ Chat history reset karo.
 bot.onText(/\/portfolio/, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /portfolio from ${msg.from?.first_name || chatId}`);
-  
-  if (portfolio.length === 0) {
-    await safeSend(chatId, '⚠️ Portfolio empty hai. Web app se positions add karo — automatic cloud sync hoga.');
-    return;
+  try {
+    if (portfolio.length === 0) {
+      await safeSend(chatId, '⚠️ Portfolio empty hai. Web app se positions add karo — automatic cloud sync hoga.');
+      return;
+    }
+    await safeSend(chatId, '📊 <i>Scanning portfolio... ek second...</i>');
+    await refreshPrices();
+    const report = generatePortfolioReport(portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /portfolio error:', e.message);
+    await safeSend(chatId, `❌ Portfolio report me error aaya: ${e.message}\n\nPlease try again.`);
   }
-
-  await safeSend(chatId, '📊 <i>Scanning portfolio... ek second...</i>');
-  await refreshPrices();
-  const report = generatePortfolioReport(portfolio, livePrices, usdInrRate);
-  await safeSend(chatId, report);
 });
 
 // ========================================
@@ -317,11 +320,15 @@ bot.onText(/\/portfolio/, async (msg) => {
 bot.onText(/\/market/, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /market from ${msg.from?.first_name || chatId}`);
-
-  await safeSend(chatId, '🌍 <i>Scanning global markets... ek second...</i>');
-  await Promise.all([refreshPrices(), refreshIntel()]);
-  const report = generateMarketReport(livePrices, marketIntel);
-  await safeSend(chatId, report);
+  try {
+    await safeSend(chatId, '🌍 <i>Scanning global markets... ek second...</i>');
+    await Promise.all([refreshPrices(), refreshIntel()]);
+    const report = generateMarketReport(livePrices, marketIntel);
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /market error:', e.message);
+    await safeSend(chatId, `❌ Market report me error aaya: ${e.message}\n\nPlease try again.`);
+  }
 });
 
 // ========================================
@@ -330,16 +337,19 @@ bot.onText(/\/market/, async (msg) => {
 bot.onText(/\/signals/, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /signals from ${msg.from?.first_name || chatId}`);
-
-  if (portfolio.length === 0) {
-    await safeSend(chatId, '⚠️ Portfolio empty hai. Pehle web app se positions add karo.');
-    return;
+  try {
+    if (portfolio.length === 0) {
+      await safeSend(chatId, '⚠️ Portfolio empty hai. Pehle web app se positions add karo.');
+      return;
+    }
+    await safeSend(chatId, '🎯 <i>Running signal analysis... ek second...</i>');
+    await refreshPrices();
+    const report = generateSignalsReport(portfolio, livePrices);
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /signals error:', e.message);
+    await safeSend(chatId, `❌ Signal analysis me error aaya: ${e.message}\n\nPlease try again.`);
   }
-
-  await safeSend(chatId, '🎯 <i>Running signal analysis... ek second...</i>');
-  await refreshPrices();
-  const report = generateSignalsReport(portfolio, livePrices);
-  await safeSend(chatId, report);
 });
 
 // ========================================
@@ -348,11 +358,15 @@ bot.onText(/\/signals/, async (msg) => {
 bot.onText(/\/allocation/, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /allocation from ${msg.from?.first_name || chatId}`);
-
-  await safeSend(chatId, '📈 <i>Calculating SIP matrix... ek second...</i>');
-  await refreshPrices();
-  const report = generateAllocationReport(livePrices, usdInrRate);
-  await safeSend(chatId, report);
+  try {
+    await safeSend(chatId, '📈 <i>Calculating SIP matrix... ek second...</i>');
+    await refreshPrices();
+    const report = generateAllocationReport(livePrices, usdInrRate);
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /allocation error:', e.message);
+    await safeSend(chatId, `❌ Allocation report me error aaya: ${e.message}\n\nPlease try again.`);
+  }
 });
 
 // ========================================
@@ -361,11 +375,15 @@ bot.onText(/\/allocation/, async (msg) => {
 bot.onText(/\/risk/, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /risk from ${msg.from?.first_name || chatId}`);
-
-  await safeSend(chatId, '🛡️ <i>Analyzing risk factors... ek second...</i>');
-  await Promise.all([refreshPrices(), refreshIntel()]);
-  const report = generateRiskReport(livePrices, portfolio, usdInrRate);
-  await safeSend(chatId, report);
+  try {
+    await safeSend(chatId, '🛡️ <i>Analyzing risk factors... ek second...</i>');
+    await Promise.all([refreshPrices(), refreshIntel()]);
+    const report = generateRiskReport(livePrices, portfolio, usdInrRate);
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /risk error:', e.message);
+    await safeSend(chatId, `❌ Risk report me error aaya: ${e.message}\n\nPlease try again.`);
+  }
 });
 
 // ========================================
@@ -374,10 +392,14 @@ bot.onText(/\/risk/, async (msg) => {
 bot.onText(/\/forex/, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /forex from ${msg.from?.first_name || chatId}`);
-
-  await refreshForex();
-  const report = generateForexReport(usdInrRate);
-  await safeSend(chatId, report);
+  try {
+    await refreshForex();
+    const report = generateForexReport(usdInrRate);
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /forex error:', e.message);
+    await safeSend(chatId, `❌ Forex fetch me error: ${e.message}`);
+  }
 });
 
 // ========================================
@@ -412,21 +434,25 @@ bot.onText(/\/setkey (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const key = match[1].trim();
   console.log(`📥 /setkey from ${msg.from?.first_name || chatId}`);
-  
-  // Set dynamically
-  const { setGroqKey, API_URL } = await import('./config.mjs');
-  setGroqKey(key);
-  
-  // Sync to cloud so web app can also use it
   try {
-    await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ groqKey: key, action: 'saveKey', timestamp: Date.now() })
-    });
-  } catch (e) {}
+    // Set dynamically
+    const { setGroqKey, API_URL } = await import('./config.mjs');
+    setGroqKey(key);
+    
+    // Sync to cloud so web app can also use it
+    try {
+      await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ groqKey: key, action: 'saveKey', timestamp: Date.now() })
+      });
+    } catch (e) {}
 
-  await safeSend(chatId, '✅ <b>Groq API Key Set!</b>\n\nAI Engine is now <b>ONLINE</b> 🧠⚡️.\nTum abhi kisi bhi sawal ka answer AI se le sakte ho!');
+    await safeSend(chatId, '✅ <b>Groq API Key Set!</b>\n\nAI Engine is now <b>ONLINE</b> 🧠⚡️.\nTum abhi kisi bhi sawal ka answer AI se le sakte ho!');
+  } catch (e) {
+    console.error('❌ /setkey error:', e.message);
+    await safeSend(chatId, `❌ Key set me error: ${e.message}`);
+  }
 });
 
 // ========================================
@@ -436,11 +462,15 @@ bot.onText(/\/ai (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const query = match[1];
   console.log(`📥 /ai "${query.substring(0, 50)}..." from ${msg.from?.first_name || chatId}`);
-
-  await safeSend(chatId, '🧠 <i>Deep Mind analyzing...</i>');
-  await refreshPrices();
-  const response = await chatWithAI(chatId, query, portfolio, livePrices, usdInrRate);
-  await safeSend(chatId, response);
+  try {
+    await safeSend(chatId, '🧠 <i>Deep Mind analyzing...</i>');
+    await refreshPrices();
+    const response = await chatWithAI(chatId, query, portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, response);
+  } catch (e) {
+    console.error('❌ /ai error:', e.message);
+    await safeSend(chatId, `❌ AI me error aaya: ${e.message}\n\nRetry karo ya /clear karke phir try karo.`);
+  }
 });
 
 // ========================================
@@ -450,11 +480,15 @@ bot.onText(/\/chat (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const query = match[1];
   console.log(`📥 /chat "${query.substring(0, 50)}..." from ${msg.from?.first_name || chatId}`);
-
-  await safeSend(chatId, '🧠 <i>Deep Mind analyzing...</i>');
-  await refreshPrices();
-  const response = await chatWithAI(chatId, query, portfolio, livePrices, usdInrRate);
-  await safeSend(chatId, response);
+  try {
+    await safeSend(chatId, '🧠 <i>Deep Mind analyzing...</i>');
+    await refreshPrices();
+    const response = await chatWithAI(chatId, query, portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, response);
+  } catch (e) {
+    console.error('❌ /chat error:', e.message);
+    await safeSend(chatId, `❌ AI me error aaya: ${e.message}\n\nRetry karo ya /clear karke phir try karo.`);
+  }
 });
 
 // ========================================
@@ -464,15 +498,19 @@ bot.onText(/\/scan (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const symbol = match[1].trim().toUpperCase();
   console.log(`📥 /scan ${symbol} from ${msg.from?.first_name || chatId}`);
-
-  await safeSend(chatId, `🔍 <i>Deep scanning ${symbol}... ek second...</i>`);
-  const data = await fetchSingleSymbol(symbol);
-  if (!data) {
-    await safeSend(chatId, `❌ <b>${symbol}</b> not found. Check symbol name and try again.\n\nExamples: <code>/scan RELIANCE</code>, <code>/scan AAPL</code>, <code>/scan SMH</code>`);
-    return;
+  try {
+    await safeSend(chatId, `🔍 <i>Deep scanning ${symbol}... ek second...</i>`);
+    const data = await fetchSingleSymbol(symbol);
+    if (!data) {
+      await safeSend(chatId, `❌ <b>${symbol}</b> not found. Check symbol name and try again.\n\nExamples: <code>/scan RELIANCE</code>, <code>/scan AAPL</code>, <code>/scan SMH</code>`);
+      return;
+    }
+    const report = generateScanReport(data);
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /scan error:', e.message);
+    await safeSend(chatId, `❌ Scan me error aaya: ${e.message}\n\nPlease try again.`);
   }
-  const report = generateScanReport(data);
-  await safeSend(chatId, report);
 });
 
 // ========================================
@@ -481,16 +519,19 @@ bot.onText(/\/scan (.+)/, async (msg, match) => {
 bot.onText(/\/heatmap/, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /heatmap from ${msg.from?.first_name || chatId}`);
-
-  if (portfolio.length === 0) {
-    await safeSend(chatId, '⚠️ Portfolio empty hai. Web app se positions add karo.');
-    return;
+  try {
+    if (portfolio.length === 0) {
+      await safeSend(chatId, '⚠️ Portfolio empty hai. Web app se positions add karo.');
+      return;
+    }
+    await safeSend(chatId, '🗺️ <i>Generating heatmap... ek second...</i>');
+    await refreshPrices();
+    const report = generateHeatmapReport(portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /heatmap error:', e.message);
+    await safeSend(chatId, `❌ Heatmap me error aaya: ${e.message}\n\nPlease try again.`);
   }
-
-  await safeSend(chatId, '🗺️ <i>Generating heatmap... ek second...</i>');
-  await refreshPrices();
-  const report = generateHeatmapReport(portfolio, livePrices, usdInrRate);
-  await safeSend(chatId, report);
 });
 
 // ========================================
@@ -500,26 +541,27 @@ bot.onText(/\/compare (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const args = match[1].trim().toUpperCase().split(/[\s,vs]+/);
   console.log(`📥 /compare ${args.join(' vs ')} from ${msg.from?.first_name || chatId}`);
-
-  if (args.length < 2) {
-    await safeSend(chatId, '⚠️ Dono symbols likho!\n\nExample: <code>/compare RELIANCE TCS</code> or <code>/compare SMH QQQM</code>');
-    return;
+  try {
+    if (args.length < 2) {
+      await safeSend(chatId, '⚠️ Dono symbols likho!\n\nExample: <code>/compare RELIANCE TCS</code> or <code>/compare SMH QQQM</code>');
+      return;
+    }
+    await safeSend(chatId, `⚖️ <i>Comparing ${args[0]} vs ${args[1]}... ek second...</i>`);
+    const [data1, data2] = await Promise.all([
+      fetchSingleSymbol(args[0]),
+      fetchSingleSymbol(args[1])
+    ]);
+    if (!data1 || !data2) {
+      const missing = !data1 ? args[0] : args[1];
+      await safeSend(chatId, `❌ <b>${missing}</b> not found. Check symbol name.`);
+      return;
+    }
+    const report = generateCompareReport(data1, data2);
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /compare error:', e.message);
+    await safeSend(chatId, `❌ Compare me error aaya: ${e.message}\n\nPlease try again.`);
   }
-
-  await safeSend(chatId, `⚖️ <i>Comparing ${args[0]} vs ${args[1]}... ek second...</i>`);
-  const [data1, data2] = await Promise.all([
-    fetchSingleSymbol(args[0]),
-    fetchSingleSymbol(args[1])
-  ]);
-
-  if (!data1 || !data2) {
-    const missing = !data1 ? args[0] : args[1];
-    await safeSend(chatId, `❌ <b>${missing}</b> not found. Check symbol name.`);
-    return;
-  }
-
-  const report = generateCompareReport(data1, data2);
-  await safeSend(chatId, report);
 });
 
 // ========================================
@@ -528,24 +570,28 @@ bot.onText(/\/compare (.+)/, async (msg, match) => {
 bot.onText(/\/streak/, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /streak from ${msg.from?.first_name || chatId}`);
+  try {
+    let streakMsg = `📊 <b>Performance Streak Tracker</b>\n\n`;
+    if (dailyPLHistory.length === 0) {
+      streakMsg += `⚠️ Data abhi collect ho raha hai. Thodi der baad check karo.\n<i>Bot market close pe daily P&L record karta hai.</i>`;
+    } else {
+      const streak = consecutiveStreak;
+      if (streak > 0) streakMsg += `🟢🔥 <b>${streak} consecutive GREEN days!</b>\n`;
+      else if (streak < 0) streakMsg += `🔴 <b>${Math.abs(streak)} consecutive RED days</b>\n`;
+      else streakMsg += `⚪ No streak active\n`;
 
-  let streakMsg = `📊 <b>Performance Streak Tracker</b>\n\n`;
-  if (dailyPLHistory.length === 0) {
-    streakMsg += `⚠️ Data abhi collect ho raha hai. Thodi der baad check karo.\n<i>Bot market close pe daily P&L record karta hai.</i>`;
-  } else {
-    const streak = consecutiveStreak;
-    if (streak > 0) streakMsg += `🟢🔥 <b>${streak} consecutive GREEN days!</b>\n`;
-    else if (streak < 0) streakMsg += `🔴 <b>${Math.abs(streak)} consecutive RED days</b>\n`;
-    else streakMsg += `⚪ No streak active\n`;
-
-    streakMsg += `\n<b>Recent History:</b>\n`;
-    const recent = dailyPLHistory.slice(-7).reverse();
-    for (const d of recent) {
-      streakMsg += `${d.pl >= 0 ? '🟢' : '🔴'} ${d.date}: ${d.pl >= 0 ? '+' : ''}₹${Math.round(d.pl).toLocaleString('en-IN')} (${d.pct >= 0 ? '+' : ''}${d.pct.toFixed(2)}%)\n`;
+      streakMsg += `\n<b>Recent History:</b>\n`;
+      const recent = dailyPLHistory.slice(-7).reverse();
+      for (const d of recent) {
+        streakMsg += `${d.pl >= 0 ? '🟢' : '🔴'} ${d.date}: ${d.pl >= 0 ? '+' : ''}₹${Math.round(d.pl).toLocaleString('en-IN')} (${d.pct >= 0 ? '+' : ''}${d.pct.toFixed(2)}%)\n`;
+      }
     }
+    streakMsg += `\n💎 <i>Deep Mind AI</i>`;
+    await safeSend(chatId, streakMsg);
+  } catch (e) {
+    console.error('❌ /streak error:', e.message);
+    await safeSend(chatId, `❌ Streak me error: ${e.message}`);
   }
-  streakMsg += `\n💎 <i>Deep Mind AI</i>`;
-  await safeSend(chatId, streakMsg);
 });
 
 // ========================================
@@ -561,11 +607,15 @@ bot.on('message', async (msg) => {
   if (!text.trim()) return;
 
   console.log(`💬 AI Chat: "${text.substring(0, 50)}..." from ${msg.from?.first_name || chatId}`);
-
-  await safeSend(chatId, '🧠 <i>Deep Mind processing...</i>');
-  await refreshPrices();
-  const response = await chatWithAI(chatId, text, portfolio, livePrices, usdInrRate);
-  await safeSend(chatId, response);
+  try {
+    await safeSend(chatId, '🧠 <i>Deep Mind processing...</i>');
+    await refreshPrices();
+    const response = await chatWithAI(chatId, text, portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, response);
+  } catch (e) {
+    console.error('❌ AI chat error:', e.message);
+    await safeSend(chatId, `❌ AI processing me error: ${e.message}\n\nRetry karo ya /clear karke phir try karo.`);
+  }
 });
 
 // ========================================

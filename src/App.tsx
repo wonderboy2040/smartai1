@@ -899,6 +899,16 @@ export default function App() {
                 {theme === 'dark' ? '🌞' : '🌙'}
               </button>
               <button onClick={() => window.location.reload()} className="btn-glass p-2.5 rounded-xl text-lg" title="Refresh">🔄</button>
+              <button onClick={() => {
+                const pin = localStorage.getItem('WEALTH_AI_PIN');
+                const groqSaved = localStorage.getItem('WEALTH_AI_GROQ');
+                const themeSaved = localStorage.getItem('theme');
+                localStorage.clear();
+                if (pin) localStorage.setItem('WEALTH_AI_PIN', pin);
+                if (groqSaved) localStorage.setItem('WEALTH_AI_GROQ', groqSaved);
+                if (themeSaved) localStorage.setItem('theme', themeSaved);
+                window.location.reload();
+              }} className="btn-glass p-2.5 rounded-xl text-lg" title="Flush Cache — Clear all cached data and reload">🧹</button>
               <button onClick={logout} className="btn-glass p-2.5 rounded-xl text-lg" title="Logout">🔐</button>
             </div>
           </div>

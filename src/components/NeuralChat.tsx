@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, BrainCircuit, X, Zap } from 'lucide-react';
+import { Send, BrainCircuit, X, Zap, Trash2, Copy, Check, ChevronDown, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { fetchMarketIntelligence, formatMarketIntelligenceForAI, MarketIntelligence } from '../utils/api';
 
@@ -11,15 +11,21 @@ interface ChatMessage {
 
 function renderMarkdown(text: string): string {
   return text
+    .replace(/```([\s\S]*?)```/g, '<pre style="background:rgba(6,182,212,0.08);padding:10px;border-radius:8px;border:1px solid rgba(6,182,212,0.15);font-size:0.82em;overflow-x:auto;margin:6px 0">$1</pre>')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     .replace(/_(.+?)_/g, '<em>$1</em>')
     .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>')
-    .replace(/•/g, '<span style="color:#06b6d4">•</span>');
+    .replace(/•/g, '<span style="color:#06b6d4">•</span>')
+    .replace(/(\d+)\/100/g, '<span style="color:#06b6d4;font-weight:800">$1/100</span>');
 }
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function estimateTokens(text: string): number {
+  return Math.ceil(text.split(/\s+/).length * 1.3);
 }
 
 export interface NeuralChatProps {
@@ -32,6 +38,10 @@ const QUICK_CHIPS = [
   { label: '💼 Portfolio', query: 'Mera portfolio ka full analysis karo — har asset ka diagnosis do.' },
   { label: '🟢 Buy?', query: 'Abhi kisme invest karna best rahega? Fresh opportunities batao.' },
   { label: '🔴 Sell?', query: 'Kya kuch sell karna chahiye? Profit booking signals kya bol rahe hain?' },
+  { label: '🎯 SL/TP', query: 'Har asset ka stop-loss aur take-profit levels kya hone chahiye? ATR-based analysis karo.' },
+  { label: '⚡ VIX', query: 'VIX ka current status kya hai? Is level pe kya karna chahiye — hedge karu ya invest karu?' },
+  { label: '🔥 Momentum', query: 'Konse assets me sabse zyada momentum hai abhi? Momentum scoring karo.' },
+  { label: '🏦 FII/DII', query: 'FII aur DII flow ka analysis karo — institutional money kaha ja raha hai?' },
 ];
 
 const SYSTEM_PROMPT = `You are the DEEP MIND AI NEURAL INSIDER — the most advanced institutional-grade trading AI. You are talking to "Nagraj Bhai".
@@ -77,20 +87,25 @@ You have access to real-time geopolitical intelligence from WorldMonitor — a g
 - If RSI > 70 and MACD bearish → Call it "Distribution Phase / Smart Money Exit"
 - Always reference the LIVE SENSOR DATA numbers when analyzing
 - VIX-based context: High VIX = speak with urgency about hedging. Low VIX = speak about aggressive accumulation.
-- Give position sizing advice (e.g., "Agar 10K SIP hai toh 4K yaha lagao")`;
+- Give position sizing advice (e.g., "Agar 10K SIP hai toh 4K yaha lagao")
+- When providing SL/TP levels, calculate them from ATR data in the sensor feed
+- Include Fibonacci support/resistance when discussing key levels`;
 
 export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'model',
-    text: '🧠 **DEEP MIND AI — Neural Core v3.0 ONLINE**\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade analysis kar raha hu.\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
+    text: '🧠 **DEEP MIND AI — Neural Core v4.0 ONLINE** ⚡\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade analysis kar raha hu.\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\n• 🔥 Momentum Scoring Engine — Multi-Factor Analysis\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
     timestamp: Date.now()
   }]);
   const [chatInput, setChatInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [marketIntel, setMarketIntel] = useState<MarketIntelligence | null>(null);
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  const [showScrollDown, setShowScrollDown] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const marketIntelRef = useRef<MarketIntelligence | null>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -99,6 +114,13 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
   useEffect(() => {
     if (showChat) scrollToBottom();
   }, [chatMessages, showChat, scrollToBottom]);
+
+  // Track scroll position to show "scroll to bottom" button
+  const handleScroll = useCallback(() => {
+    if (!chatContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
+    setShowScrollDown(scrollHeight - scrollTop - clientHeight > 100);
+  }, []);
 
   // Fetch market intelligence on chat open & every 2 minutes
   useEffect(() => {
@@ -120,6 +142,21 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
     messagesRef.current = chatMessages;
   }, [chatMessages]);
 
+  const copyToClipboard = useCallback((text: string, idx: number) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedIdx(idx);
+      setTimeout(() => setCopiedIdx(null), 2000);
+    });
+  }, []);
+
+  const clearChat = useCallback(() => {
+    setChatMessages([{
+      role: 'model',
+      text: '🧹 **Chat cleared! Fresh neural session started.**\n\nPucho kya analyze karna hai!',
+      timestamp: Date.now()
+    }]);
+  }, []);
+
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim()) return;
 
@@ -136,7 +173,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
     setIsThinking(true);
 
     try {
-      const recentMessages = [...currentMessages.slice(-6), { role: 'user', text: userMessage }];
+      const recentMessages = [...currentMessages.slice(-8), { role: 'user', text: userMessage }];
       const intelContext = marketIntelRef.current ? formatMarketIntelligenceForAI(marketIntelRef.current) : '';
 
       const groqMessages = [
@@ -168,7 +205,14 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
 
       const data = await res.json();
       const aiText = data.choices?.[0]?.message?.content || "Neural link unstable. Please retry.";
-      setChatMessages(prev => [...prev, { role: 'model', text: aiText, timestamp: Date.now() }]);
+      const tokens = data.usage?.total_tokens || estimateTokens(aiText);
+      const speed = data.usage?.completion_tokens ? Math.round(data.usage.completion_tokens / ((data.usage.total_time || 1))) : null;
+      
+      setChatMessages(prev => [...prev, { 
+        role: 'model', 
+        text: aiText,
+        timestamp: Date.now()
+      }]);
     } catch (e) {
       console.error("Groq Error:", e);
       setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanceof Error ? e.message : String(e)}`, timestamp: Date.now() }]);
@@ -205,7 +249,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
             initial={{ opacity: 0, y: 20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            className="fixed bottom-24 right-4 left-4 sm:left-auto sm:right-6 sm:w-[420px] h-[650px] max-h-[85vh] shadow-[0_0_50px_rgba(6,182,212,0.1)] z-[60] flex flex-col overflow-hidden"
+            className="fixed bottom-24 right-4 left-4 sm:left-auto sm:right-6 sm:w-[440px] h-[680px] max-h-[85vh] shadow-[0_0_50px_rgba(6,182,212,0.1)] z-[60] flex flex-col overflow-hidden"
           >
             <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-xl border border-cyan-500/20 rounded-3xl" />
 
@@ -218,7 +262,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
                 <div>
                   <h3 className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-1.5">
                     Deep Mind AI
-                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">PRO</span>
+                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v4.0 PRO</span>
                   </h3>
                   <div className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -237,6 +281,9 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
                     {marketIntel.fearGreedScore > 60 ? '🟢' : marketIntel.fearGreedScore < 40 ? '🔴' : '🟡'} F&G {marketIntel.fearGreedScore}
                   </div>
                 )}
+                <button onClick={clearChat} title="Clear chat" className="text-slate-500 hover:text-red-400 bg-white/5 rounded-full p-1.5 transition-colors">
+                  <Trash2 size={14} />
+                </button>
                 <button onClick={() => setShowChat(false)} className="text-slate-400 hover:text-white bg-white/5 rounded-full p-1.5 transition-colors">
                   <X size={16} />
                 </button>
@@ -244,19 +291,34 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
             </div>
 
             {/* Messages */}
-            <div className="relative flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide">
+            <div 
+              ref={chatContainerRef}
+              onScroll={handleScroll}
+              className="relative flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide"
+            >
               {chatMessages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
                   <div className={`max-w-[90%] rounded-2xl text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
                     ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-4 py-3'
-                    : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-4 py-3'
+                    : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-4 py-3 group/msg'
                     }`}>
                     {msg.role === 'user' ? (
                       msg.text
                     ) : (
-                      <span dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />
+                      <>
+                        <span dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />
+                        {/* Copy button for AI messages */}
+                        <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => copyToClipboard(msg.text, i)}
+                            className="text-[9px] text-slate-500 hover:text-cyan-400 flex items-center gap-1 transition-colors"
+                          >
+                            {copiedIdx === i ? <><Check size={10} /> Copied!</> : <><Copy size={10} /> Copy</>}
+                          </button>
+                        </div>
+                      </>
                     )}
-                    <div className={`text-[9px] mt-2 font-mono ${msg.role === 'user' ? 'text-cyan-200/50' : 'text-slate-600'}`}>
+                    <div className={`text-[9px] mt-1 font-mono ${msg.role === 'user' ? 'text-cyan-200/50' : 'text-slate-600'}`}>
                       {formatTime(msg.timestamp)}
                     </div>
                   </div>
@@ -266,20 +328,31 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
                 <div className="flex justify-start animate-message-in">
                   <div className="bg-slate-900/90 px-5 py-4 rounded-2xl rounded-tl-none border border-white/5">
                     <div className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
-                      <Zap size={12} className="animate-pulse" /> ANALYZING...
+                      <Sparkles size={12} className="animate-pulse" /> DEEP MIND ANALYZING...
                     </div>
                     <div className="flex gap-1.5">
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '100ms' }} />
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '200ms' }} />
                     </div>
+                    <div className="text-[9px] text-slate-600 mt-2 font-mono">Scanning RSI, MACD, SMA, Smart Money data...</div>
                   </div>
                 </div>
               )}
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Quick Chips */}
+            {/* Scroll to bottom button */}
+            {showScrollDown && (
+              <button
+                onClick={scrollToBottom}
+                className="absolute bottom-40 left-1/2 -translate-x-1/2 bg-cyan-600/80 hover:bg-cyan-500 text-white rounded-full p-2 shadow-lg transition-all z-10"
+              >
+                <ChevronDown size={16} />
+              </button>
+            )}
+
+            {/* Quick Chips - scrollable */}
             <div className="relative px-4 pb-2 flex gap-1.5 overflow-x-auto scrollbar-hide">
               {QUICK_CHIPS.map((chip, i) => (
                 <button
@@ -311,6 +384,10 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
                 >
                   <Send size={14} />
                 </button>
+              </div>
+              <div className="flex items-center justify-between mt-2 px-1">
+                <span className="text-[8px] text-slate-600 font-mono">Powered by Llama 3.3 70B • Groq</span>
+                <span className="text-[8px] text-slate-600">{chatMessages.length} messages</span>
               </div>
             </div>
           </motion.div>
