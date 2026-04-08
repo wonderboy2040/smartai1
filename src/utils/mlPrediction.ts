@@ -329,3 +329,301 @@ export class AnomalyDetector {
     return { anomalous: false, zScore: Math.round(zScore * 100) / 100 };
   }
 }
+
+// ========================================
+// MOMENTUM SCORING ENGINE
+// Multi-factor momentum with RSI, MACD, volume, price velocity
+// ========================================
+export interface MomentumScore {
+  symbol: string;
+  score: number;        // 0-100
+  grade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
+  factors: {
+    rsiMomentum: number;
+    macdStrength: number;
+    priceVelocity: number;
+    volumeForce: number;
+    trendAlignment: number;
+  };
+  signal: 'STRONG_MOMENTUM' | 'BUILDING' | 'NEUTRAL' | 'FADING' | 'REVERSAL';
+}
+
+export function calculateMomentumScore(
+  rsi: number,
+  macd: number | undefined,
+  sma20: number | undefined,
+  sma50: number | undefined,
+  price: number,
+  change: number,
+  volume: number
+): MomentumScore {
+  // Factor 1: RSI Momentum (0-25)
+  let rsiMomentum = 0;
+  if (rsi >= 50 && rsi <= 70) rsiMomentum = 20 + (rsi - 50) * 0.25;  // Sweet spot
+  else if (rsi > 70) rsiMomentum = Math.max(0, 25 - (rsi - 70) * 1.5); // Overextended
+  else if (rsi >= 30 && rsi < 50) rsiMomentum = rsi * 0.3;  // Building
+  else rsiMomentum = 5; // Oversold = reversal potential
+
+  // Factor 2: MACD Strength (0-25)
+  let macdStrength = 12.5;
+  if (macd !== undefined) {
+    macdStrength = macd > 0 ? Math.min(25, 12.5 + macd * 5) : Math.max(0, 12.5 + macd * 5);
+  }
+
+  // Factor 3: Price Velocity (0-20)
+  const priceVelocity = Math.min(20, Math.max(0, 10 + change * 3));
+
+  // Factor 4: Volume Force (0-15)
+  let volumeForce = 7.5;
+  if (volume > 5000000) volumeForce = 15;
+  else if (volume > 1000000) volumeForce = 12;
+  else if (volume > 500000) volumeForce = 10;
+  else if (volume < 50000) volumeForce = 3;
+
+  // Factor 5: Trend Alignment (0-15)
+  let trendAlignment = 7.5;
+  if (sma20 && sma50) {
+    if (sma20 > sma50 && price > sma20) trendAlignment = 15;  // Perfect alignment
+    else if (sma20 > sma50) trendAlignment = 12;
+    else if (price > sma20) trendAlignment = 8;
+    else if (sma50 > sma20 && price < sma50) trendAlignment = 0;  // Full bearish
+    else trendAlignment = 4;
+  }
+
+  const totalScore = Math.round(rsiMomentum + macdStrength + priceVelocity + volumeForce + trendAlignment);
+  const score = Math.max(0, Math.min(100, totalScore));
+
+  let grade: MomentumScore['grade'] = 'C';
+  if (score >= 85) grade = 'A+';
+  else if (score >= 70) grade = 'A';
+  else if (score >= 55) grade = 'B';
+  else if (score >= 40) grade = 'C';
+  else if (score >= 25) grade = 'D';
+  else grade = 'F';
+
+  let signal: MomentumScore['signal'] = 'NEUTRAL';
+  if (score >= 75 && change > 0) signal = 'STRONG_MOMENTUM';
+  else if (score >= 60) signal = 'BUILDING';
+  else if (score <= 30 && change < -1) signal = 'REVERSAL';
+  else if (score <= 40) signal = 'FADING';
+
+  return {
+    symbol: '',
+    score,
+    grade,
+    factors: {
+      rsiMomentum: Math.round(rsiMomentum * 10) / 10,
+      macdStrength: Math.round(macdStrength * 10) / 10,
+      priceVelocity: Math.round(priceVelocity * 10) / 10,
+      volumeForce: Math.round(volumeForce * 10) / 10,
+      trendAlignment: Math.round(trendAlignment * 10) / 10,
+    },
+    signal,
+  };
+}
+
+// ========================================
+// MEAN REVERSION SCANNER
+// Z-score based mean reversion probability
+// ========================================
+export interface MeanReversionResult {
+  symbol: string;
+  zScore: number;
+  probability: number;  // 0-100% chance of reverting to mean
+  direction: 'OVEREXTENDED_UP' | 'OVEREXTENDED_DOWN' | 'NEAR_MEAN';
+  meanPrice: number;
+  currentPrice: number;
+  expectedMove: number; // % expected move toward mean
+}
+
+export function scanMeanReversion(
+  prices: number[],
+  currentPrice: number
+): Omit<MeanReversionResult, 'symbol'> | null {
+  if (prices.length < 10) return null;
+
+  const mean = prices.reduce((s, v) => s + v, 0) / prices.length;
+  const std = Math.sqrt(prices.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / prices.length);
+
+  if (std === 0 || mean === 0) return null;
+
+  const zScore = (currentPrice - mean) / std;
+  const absZ = Math.abs(zScore);
+
+  // Probability of mean reversion increases with distance from mean
+  // Using simplified normal distribution CDF approximation
+  const probability = Math.min(95, Math.round(absZ > 1 ? 50 + (absZ - 1) * 20 : absZ * 30));
+
+  let direction: MeanReversionResult['direction'] = 'NEAR_MEAN';
+  if (zScore > 1.5) direction = 'OVEREXTENDED_UP';
+  else if (zScore < -1.5) direction = 'OVEREXTENDED_DOWN';
+
+  const expectedMove = mean > 0 ? ((mean - currentPrice) / currentPrice) * 100 : 0;
+
+  return {
+    zScore: Math.round(zScore * 100) / 100,
+    probability,
+    direction,
+    meanPrice: Math.round(mean * 100) / 100,
+    currentPrice,
+    expectedMove: Math.round(expectedMove * 100) / 100,
+  };
+}
+
+// ========================================
+// CORRELATION ANALYSIS
+// Portfolio correlation matrix for diversification
+// ========================================
+export interface CorrelationPair {
+  symbol1: string;
+  symbol2: string;
+  correlation: number;  // -1 to +1
+  risk: 'HIGH_CORRELATION' | 'MODERATE' | 'DIVERSIFIED' | 'INVERSE';
+}
+
+export function calculateCorrelation(returns1: number[], returns2: number[]): number {
+  const n = Math.min(returns1.length, returns2.length);
+  if (n < 5) return 0;
+
+  const r1 = returns1.slice(-n);
+  const r2 = returns2.slice(-n);
+
+  const mean1 = r1.reduce((s, v) => s + v, 0) / n;
+  const mean2 = r2.reduce((s, v) => s + v, 0) / n;
+
+  let cov = 0, var1 = 0, var2 = 0;
+  for (let i = 0; i < n; i++) {
+    const d1 = r1[i] - mean1;
+    const d2 = r2[i] - mean2;
+    cov += d1 * d2;
+    var1 += d1 * d1;
+    var2 += d2 * d2;
+  }
+
+  const denom = Math.sqrt(var1 * var2);
+  if (denom === 0) return 0;
+
+  return Math.round((cov / denom) * 1000) / 1000;
+}
+
+export function analyzePortfolioCorrelations(
+  priceHistories: Map<string, number[]>
+): CorrelationPair[] {
+  const symbols = Array.from(priceHistories.keys());
+  const pairs: CorrelationPair[] = [];
+
+  // Convert prices to returns
+  const returnsMap = new Map<string, number[]>();
+  for (const [sym, prices] of priceHistories) {
+    const returns: number[] = [];
+    for (let i = 1; i < prices.length; i++) {
+      returns.push(prices[i - 1] > 0 ? (prices[i] - prices[i - 1]) / prices[i - 1] : 0);
+    }
+    returnsMap.set(sym, returns);
+  }
+
+  for (let i = 0; i < symbols.length; i++) {
+    for (let j = i + 1; j < symbols.length; j++) {
+      const r1 = returnsMap.get(symbols[i]) || [];
+      const r2 = returnsMap.get(symbols[j]) || [];
+      const corr = calculateCorrelation(r1, r2);
+
+      let risk: CorrelationPair['risk'] = 'MODERATE';
+      if (corr > 0.8) risk = 'HIGH_CORRELATION';
+      else if (corr < -0.3) risk = 'INVERSE';
+      else if (corr < 0.4) risk = 'DIVERSIFIED';
+
+      pairs.push({
+        symbol1: symbols[i],
+        symbol2: symbols[j],
+        correlation: corr,
+        risk,
+      });
+    }
+  }
+
+  return pairs.sort((a, b) => Math.abs(b.correlation) - Math.abs(a.correlation));
+}
+
+// ========================================
+// MARKET REGIME DETECTOR
+// HMM-inspired regime classifier (bull/bear/sideways)
+// ========================================
+export type MarketRegime = 'STRONG_BULL' | 'BULL' | 'SIDEWAYS' | 'BEAR' | 'STRONG_BEAR' | 'TRANSITION';
+
+export interface RegimeResult {
+  regime: MarketRegime;
+  confidence: number;     // 0-100
+  duration: number;       // estimated regime duration in ticks
+  volatilityState: 'LOW' | 'NORMAL' | 'HIGH' | 'EXTREME';
+  trendStrength: number;  // 0-100
+}
+
+export function detectRegime(
+  prices: number[],
+  vix: number = 15
+): RegimeResult {
+  if (prices.length < 20) {
+    return { regime: 'SIDEWAYS', confidence: 30, duration: 0, volatilityState: 'NORMAL', trendStrength: 0 };
+  }
+
+  // Calculate returns
+  const returns: number[] = [];
+  for (let i = 1; i < prices.length; i++) {
+    returns.push(prices[i - 1] > 0 ? (prices[i] - prices[i - 1]) / prices[i - 1] * 100 : 0);
+  }
+
+  const recentReturns = returns.slice(-20);
+  const meanReturn = recentReturns.reduce((s, v) => s + v, 0) / recentReturns.length;
+  const volatility = Math.sqrt(recentReturns.reduce((s, v) => s + Math.pow(v - meanReturn, 2), 0) / recentReturns.length);
+
+  // Short-term vs long-term trend
+  const shortPrices = prices.slice(-5);
+  const longPrices = prices.slice(-20);
+  const shortMean = shortPrices.reduce((s, v) => s + v, 0) / shortPrices.length;
+  const longMean = longPrices.reduce((s, v) => s + v, 0) / longPrices.length;
+  const trendDiff = longMean > 0 ? ((shortMean - longMean) / longMean) * 100 : 0;
+
+  // Count consecutive moves
+  let posCount = 0, negCount = 0;
+  for (const r of recentReturns.slice(-10)) {
+    if (r > 0) posCount++;
+    else negCount++;
+  }
+
+  // Regime classification
+  let regime: MarketRegime = 'SIDEWAYS';
+  let confidence = 50;
+  let trendStrength = 50;
+
+  if (meanReturn > 0.5 && trendDiff > 2 && posCount >= 7) {
+    regime = 'STRONG_BULL'; confidence = 85; trendStrength = 90;
+  } else if (meanReturn > 0.2 && trendDiff > 0.5 && posCount >= 6) {
+    regime = 'BULL'; confidence = 70; trendStrength = 70;
+  } else if (meanReturn < -0.5 && trendDiff < -2 && negCount >= 7) {
+    regime = 'STRONG_BEAR'; confidence = 85; trendStrength = 90;
+  } else if (meanReturn < -0.2 && trendDiff < -0.5 && negCount >= 6) {
+    regime = 'BEAR'; confidence = 70; trendStrength = 70;
+  } else if (volatility > 2) {
+    regime = 'TRANSITION'; confidence = 45; trendStrength = 30;
+  } else {
+    regime = 'SIDEWAYS'; confidence = 60; trendStrength = 20;
+  }
+
+  // Volatility state from VIX
+  let volatilityState: RegimeResult['volatilityState'] = 'NORMAL';
+  if (vix > 30) volatilityState = 'EXTREME';
+  else if (vix > 22) volatilityState = 'HIGH';
+  else if (vix < 12) volatilityState = 'LOW';
+
+  // Duration estimate (how long since regime started)
+  let duration = 0;
+  const isCurrentlyBullish = meanReturn > 0;
+  for (let i = recentReturns.length - 1; i >= 0; i--) {
+    if ((isCurrentlyBullish && recentReturns[i] > -0.3) || (!isCurrentlyBullish && recentReturns[i] < 0.3)) {
+      duration++;
+    } else break;
+  }
+
+  return { regime, confidence, duration, volatilityState, trendStrength };
+}

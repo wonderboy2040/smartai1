@@ -5,15 +5,14 @@ import tailwindcss from '@tailwindcss/vite';
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  esbuild: {
+    drop: ['console'],
+    legalComments: 'none',
+  },
   build: {
     // Optimizations for smaller bundle
     target: 'es2022',
     minify: 'esbuild',
-    // esbuild options
-    esbuild: {
-      drop: console, // Remove console statements
-      legalComments: 'none',
-    },
     // Code splitting for better caching
     rollupOptions: {
       output: {

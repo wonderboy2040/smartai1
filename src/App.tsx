@@ -98,6 +98,12 @@ export default function App() {
 
   // Add Modal State
   const [addSymbol, setAddSymbol] = useState('');
+
+  // Memoize portfolio symbol key to prevent infinite WebSocket reconnect
+  const portfolioSymbolKey = useMemo(
+    () => portfolio.map(p => p.symbol).sort().join(','),
+    [portfolio]
+  );
   const [addQty, setAddQty] = useState('');
   const [addPrice, setAddPrice] = useState('');
   const [addDate, setAddDate] = useState(getTodayString());
@@ -204,9 +210,9 @@ export default function App() {
         const result = mergePriceData(existing, data);
         if (result !== existing) { merged[key] = result; changed = true; }
       }
-      // Throttle localStorage writes to max every 2s to avoid main thread blocking
+      // Throttle localStorage writes to max every 5s to avoid main thread blocking
       const now = Date.now();
-      if (changed && now - lastLocalSaveRef.current > 2000) {
+      if (changed && now - lastLocalSaveRef.current > 5000) {
         lastLocalSaveRef.current = now;
         try { localStorage.setItem('livePrices', JSON.stringify(merged)); } catch { /* quota */ }
       }
@@ -275,7 +281,7 @@ export default function App() {
       // Flush any pending prices before cleanup
       flushPricesToStorage();
     };
-  }, [isAuthenticated, portfolio.map(p => p.symbol).sort().join(',')]);
+  }, [isAuthenticated, portfolioSymbolKey]);
 
   // Save portfolio to localStorage & Handle Initial Symbol
   useEffect(() => {
@@ -613,7 +619,8 @@ export default function App() {
       const ctx = generateDeepAnalysis(portfolio, livePrices, usdInrRate, metrics);
       setPortfolioContextText(ctx);
     }
-  }, [portfolio.length, livePrices, usdInrRate, metrics.totalValue]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portfolio.length, usdInrRate]);
 
   const latestDataRef = useRef({ portfolio, livePrices, usdInrRate, metrics });
   useEffect(() => {
@@ -648,10 +655,14 @@ export default function App() {
     const interval = setInterval(() => {
       setWsLatency(getWebSocketLatency());
     }, 15000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
 
-    // Detect anomalies on price changes
+  // Detect anomalies on price changes (separate effect with deps)
+  useEffect(() => {
+    if (!isAuthenticated) return;
     const anomalyManager = anomalyDetectorRef.current;
-    const keys = Object.keys(livePrices).slice(-20); // Check recent 20
+    const keys = Object.keys(livePrices).slice(-20);
     for (const key of keys) {
       const data = livePrices[key];
       if (data?.price) {
@@ -661,8 +672,6 @@ export default function App() {
         if (result.anomalous) {
           alertManagerRef.current.processPriceData(symbol, data);
         }
-
-        // Detect smart money signals
         if (data?.volume) {
           const smartMoney = detectSmartMoney(symbol, data.volume, data.change);
           if (smartMoney) {
@@ -674,9 +683,7 @@ export default function App() {
         }
       }
     }
-
-    return () => clearInterval(interval);
-  }, [isAuthenticated]);
+  }, [isAuthenticated, livePrices]);
 
   // VIX based sentiment
   const usVix = livePrices['US_VIX']?.price || 15;
@@ -728,7 +735,7 @@ export default function App() {
 
   // Push Telegram Report
   const pushTelegramReport = async () => {
-    const msg = `🧠 *Quantum AI Master Report*\n\n🌍 *Global State:* ${sentiment.text}\n\n💼 *Total Equity:* ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n📈 *P&L:* ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(2)}%)\n⚡ *Today:* ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')}`;
+    const msg = `🧠 <b>Quantum AI Master Report</b>\n\n🌍 <b>Global State:</b> ${sentiment.text}\n\n💼 <b>Total Equity:</b> ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n📈 <b>P&L:</b> ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(2)}%)\n⚡ <b>Today:</b> ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')}`;
     await sendTelegramAlert(TG_TOKEN, TG_CHAT_ID, msg);
     setSyncStatus('✅ Sent');
     setTimeout(() => setSyncStatus(''), 3000);

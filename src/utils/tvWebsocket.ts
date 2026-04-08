@@ -179,6 +179,8 @@ export function subscribeToPrices(
   symbols: string[],
   onUpdate: (key: string, data: Partial<PriceData>) => void
 ) {
+  // Reset destroyed flag so reconnection works after previous disconnect
+  isDestroyed = false;
   callbacks.add(onUpdate);
 
   // Build symbol mapping

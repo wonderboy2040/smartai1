@@ -137,6 +137,101 @@ export async function batchFetchPrices(positions) {
 }
 
 // ========================================
+// SINGLE SYMBOL SCAN (for /scan command)
+// ========================================
+export async function fetchSingleSymbol(symbol) {
+  const cleanSym = symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
+  const mkt = guessMarket(cleanSym);
+
+  // Try multiple exchanges
+  let tickers;
+  if (EXACT_TICKER_MAP[cleanSym]) {
+    tickers = [EXACT_TICKER_MAP[cleanSym]];
+  } else if (mkt === 'IN') {
+    tickers = [`NSE:${cleanSym}`, `BSE:${cleanSym}`];
+  } else {
+    tickers = [`NASDAQ:${cleanSym}`, `NYSE:${cleanSym}`, `AMEX:${cleanSym}`];
+  }
+
+  const endpoint = mkt === 'IN' ? 'india' : 'america';
+  try {
+    const res = await fetch(`https://scanner.tradingview.com/${endpoint}/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({
+        symbols: { tickers },
+        columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd', 'open', 'Perf.W', 'Perf.1M', 'Perf.3M']
+      }),
+      signal: AbortSignal.timeout(8000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.data?.[0]?.d) {
+        const d = data.data[0].d;
+        const price = parseFloat(d[1]);
+        if (isNaN(price) || price <= 0) return null;
+        return {
+          symbol: cleanSym,
+          name: d[0] || cleanSym,
+          market: mkt,
+          price,
+          change: parseFloat(d[2]) || 0,
+          high: parseFloat(d[3]) || price,
+          low: parseFloat(d[4]) || price,
+          volume: parseFloat(d[5]) || 0,
+          sma20: parseFloat(d[6]) || undefined,
+          sma50: parseFloat(d[7]) || undefined,
+          rsi: parseFloat(d[8]) || 50,
+          macd: parseFloat(d[9]) || undefined,
+          open: parseFloat(d[10]) || price,
+          weekChange: parseFloat(d[11]) || 0,
+          monthChange: parseFloat(d[12]) || 0,
+          threeMonthChange: parseFloat(d[13]) || 0,
+          tvSymbol: data.data[0].s,
+          time: Date.now()
+        };
+      }
+    }
+  } catch (e) {
+    console.warn(`Single symbol fetch failed for ${cleanSym}:`, e.message);
+  }
+  return null;
+}
+
+// ========================================
+// VIX CHANGE TRACKING (for spike detection)
+// ========================================
+let lastVixSnapshot = { usVix: 0, inVix: 0, time: 0 };
+
+export function trackVixChange(livePrices) {
+  const usVix = livePrices['US_VIX']?.price || 0;
+  const inVix = livePrices['IN_INDIAVIX']?.price || 0;
+  const now = Date.now();
+
+  if (lastVixSnapshot.time === 0 || usVix === 0) {
+    lastVixSnapshot = { usVix, inVix, time: now };
+    return null;
+  }
+
+  const elapsed = (now - lastVixSnapshot.time) / 60000; // minutes
+  if (elapsed < 5) return null; // Check every 5 min minimum
+
+  const usChange = lastVixSnapshot.usVix > 0 ? ((usVix - lastVixSnapshot.usVix) / lastVixSnapshot.usVix) * 100 : 0;
+  const inChange = lastVixSnapshot.inVix > 0 ? ((inVix - lastVixSnapshot.inVix) / lastVixSnapshot.inVix) * 100 : 0;
+
+  lastVixSnapshot = { usVix, inVix, time: now };
+
+  // Alert if VIX jumps > 5% in short period
+  if (Math.abs(usChange) > 5 || Math.abs(inChange) > 5) {
+    return {
+      usVix, inVix, usChange, inChange,
+      severity: Math.max(Math.abs(usChange), Math.abs(inChange)) > 10 ? 'EXTREME' : 'HIGH'
+    };
+  }
+  return null;
+}
+
+// ========================================
 // FOREX RATE — USD/INR
 // ========================================
 export async function fetchForexRate() {

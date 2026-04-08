@@ -8,12 +8,13 @@ import TelegramBot from 'node-telegram-bot-api';
 import cron from 'node-cron';
 import express from 'express';
 import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY } from './config.mjs';
-import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen } from './market.mjs';
+import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen } from './market.mjs';
 import { loadPortfolioFromCloud, loadGroqKeyFromCloud } from './cloud.mjs';
 import { 
   generatePortfolioReport, generateMarketReport, generateSignalsReport,
   generateAllocationReport, generateRiskReport, generateAutoReport,
-  generateForexReport, calculateMetrics
+  generateForexReport, calculateMetrics, generateScanReport,
+  generateHeatmapReport, generateCompareReport
 } from './analysis.mjs';
 import { chatWithAI, clearChatHistory } from './ai-chat.mjs';
 
@@ -26,6 +27,10 @@ let usdInrRate = 85.5;
 let marketIntel = null;
 let autoAlerts = true;
 let botReady = false;
+
+// Performance streak tracking
+let dailyPLHistory = []; // { date, pl, pct }
+let consecutiveStreak = 0; // positive = green days, negative = red days
 
 // ========================================
 // 🌐 DUMMY WEB SERVER (For 24/7 UptimeRobot Trick)
@@ -189,7 +194,7 @@ bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /start from ${msg.from?.first_name || chatId}`);
 
-  const welcome = `🧠 <b>DEEP MIND AI — Trading Bot v1.0</b>
+  const welcome = `🧠 <b>DEEP MIND AI — Trading Bot v2.0</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Nagraj Bhai, main tumhara personal AI Trading assistant hoon! 24x7 tumhare portfolio ko monitor kar raha hoon aur market hours me automatic analysis bhejta hoon.
@@ -201,6 +206,10 @@ Nagraj Bhai, main tumhara personal AI Trading assistant hoon! 24x7 tumhare portf
 🎯 /signals — AI buy/sell signals
 📈 /allocation — Smart SIP allocation matrix
 🛡️ /risk — Risk assessment + VIX analysis
+🔍 /scan <SYMBOL> — Deep scan any symbol
+⚖️ /compare <SYM1> <SYM2> — Head-to-head comparison
+🗺️ /heatmap — Visual portfolio heatmap
+📊 /streak — Performance streak tracker
 💱 /forex — Live USD/INR rate
 🔔 /alert — Toggle auto alerts ON/OFF
 🧹 /clear — Clear AI chat history
@@ -250,6 +259,20 @@ Smart SIP allocation matrix — kaha kitna paisa lagana hai.
 🛡️ <b>/risk</b>
 Risk command center — VIX analysis, drawdown estimates, safety check.
 
+🔍 <b>/scan &lt;SYMBOL&gt;</b>
+Deep analysis of ANY symbol — RSI, MACD, SMA, Fib levels, performance.
+Example: <code>/scan RELIANCE</code>, <code>/scan AAPL</code>
+
+⚖️ <b>/compare &lt;SYM1&gt; &lt;SYM2&gt;</b>
+Head-to-head comparison of two symbols.
+Example: <code>/compare SMH QQQM</code>, <code>/compare TCS INFY</code>
+
+🗺️ <b>/heatmap</b>
+Visual portfolio heatmap — performance, RSI, weights at a glance.
+
+📊 <b>/streak</b>
+Performance streak tracker — consecutive green/red days history.
+
 💱 <b>/forex</b>
 Live USD/INR conversion rate.
 
@@ -265,7 +288,7 @@ Chat history reset karo.
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 💬 <b>Pro Tip:</b> Bina command ke koi bhi message likho = AI chat mode automatic activate hoga!
 
-💎 <i>Deep Mind AI Pro Trading Terminal</i>`;
+💎 <i>Deep Mind AI Pro Trading Terminal v2.0</i>`;
 
   await safeSend(chatId, help);
 });
@@ -435,6 +458,97 @@ bot.onText(/\/chat (.+)/, async (msg, match) => {
 });
 
 // ========================================
+// COMMAND: /scan <SYMBOL> — Deep Symbol Scan
+// ========================================
+bot.onText(/\/scan (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const symbol = match[1].trim().toUpperCase();
+  console.log(`📥 /scan ${symbol} from ${msg.from?.first_name || chatId}`);
+
+  await safeSend(chatId, `🔍 <i>Deep scanning ${symbol}... ek second...</i>`);
+  const data = await fetchSingleSymbol(symbol);
+  if (!data) {
+    await safeSend(chatId, `❌ <b>${symbol}</b> not found. Check symbol name and try again.\n\nExamples: <code>/scan RELIANCE</code>, <code>/scan AAPL</code>, <code>/scan SMH</code>`);
+    return;
+  }
+  const report = generateScanReport(data);
+  await safeSend(chatId, report);
+});
+
+// ========================================
+// COMMAND: /heatmap — Portfolio Heatmap
+// ========================================
+bot.onText(/\/heatmap/, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /heatmap from ${msg.from?.first_name || chatId}`);
+
+  if (portfolio.length === 0) {
+    await safeSend(chatId, '⚠️ Portfolio empty hai. Web app se positions add karo.');
+    return;
+  }
+
+  await safeSend(chatId, '🗺️ <i>Generating heatmap... ek second...</i>');
+  await refreshPrices();
+  const report = generateHeatmapReport(portfolio, livePrices, usdInrRate);
+  await safeSend(chatId, report);
+});
+
+// ========================================
+// COMMAND: /compare <SYM1> <SYM2> — Side by Side
+// ========================================
+bot.onText(/\/compare (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const args = match[1].trim().toUpperCase().split(/[\s,vs]+/);
+  console.log(`📥 /compare ${args.join(' vs ')} from ${msg.from?.first_name || chatId}`);
+
+  if (args.length < 2) {
+    await safeSend(chatId, '⚠️ Dono symbols likho!\n\nExample: <code>/compare RELIANCE TCS</code> or <code>/compare SMH QQQM</code>');
+    return;
+  }
+
+  await safeSend(chatId, `⚖️ <i>Comparing ${args[0]} vs ${args[1]}... ek second...</i>`);
+  const [data1, data2] = await Promise.all([
+    fetchSingleSymbol(args[0]),
+    fetchSingleSymbol(args[1])
+  ]);
+
+  if (!data1 || !data2) {
+    const missing = !data1 ? args[0] : args[1];
+    await safeSend(chatId, `❌ <b>${missing}</b> not found. Check symbol name.`);
+    return;
+  }
+
+  const report = generateCompareReport(data1, data2);
+  await safeSend(chatId, report);
+});
+
+// ========================================
+// COMMAND: /streak — Performance Streak
+// ========================================
+bot.onText(/\/streak/, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /streak from ${msg.from?.first_name || chatId}`);
+
+  let streakMsg = `📊 <b>Performance Streak Tracker</b>\n\n`;
+  if (dailyPLHistory.length === 0) {
+    streakMsg += `⚠️ Data abhi collect ho raha hai. Thodi der baad check karo.\n<i>Bot market close pe daily P&L record karta hai.</i>`;
+  } else {
+    const streak = consecutiveStreak;
+    if (streak > 0) streakMsg += `🟢🔥 <b>${streak} consecutive GREEN days!</b>\n`;
+    else if (streak < 0) streakMsg += `🔴 <b>${Math.abs(streak)} consecutive RED days</b>\n`;
+    else streakMsg += `⚪ No streak active\n`;
+
+    streakMsg += `\n<b>Recent History:</b>\n`;
+    const recent = dailyPLHistory.slice(-7).reverse();
+    for (const d of recent) {
+      streakMsg += `${d.pl >= 0 ? '🟢' : '🔴'} ${d.date}: ${d.pl >= 0 ? '+' : ''}₹${Math.round(d.pl).toLocaleString('en-IN')} (${d.pct >= 0 ? '+' : ''}${d.pct.toFixed(2)}%)\n`;
+    }
+  }
+  streakMsg += `\n💎 <i>Deep Mind AI</i>`;
+  await safeSend(chatId, streakMsg);
+});
+
+// ========================================
 // FREE TEXT → AI CHAT (any message without /)
 // ========================================
 bot.on('message', async (msg) => {
@@ -586,6 +700,47 @@ cron.schedule('0,30 * * * *', async () => {
   await refreshPrices();
   const report = generateAutoReport(portfolio, livePrices, usdInrRate);
   await safeSend(TG_CHAT_ID, report);
+});
+
+// VIX Spike Emergency Alert: check every 5 minutes
+cron.schedule('*/5 * * * *', async () => {
+  if (!autoAlerts || !isAnyMarketOpen()) return;
+  const spike = trackVixChange(livePrices);
+  if (spike) {
+    const emoji = spike.severity === 'EXTREME' ? '🚨🚨🚨' : '⚠️⚠️';
+    let msg = `${emoji} <b>VIX SPIKE ALERT!</b>\n\n`;
+    msg += `US VIX: <b>${spike.usVix.toFixed(1)}</b> (${spike.usChange >= 0 ? '+' : ''}${spike.usChange.toFixed(1)}%)\n`;
+    msg += `India VIX: <b>${spike.inVix.toFixed(1)}</b> (${spike.inChange >= 0 ? '+' : ''}${spike.inChange.toFixed(1)}%)\n\n`;
+    msg += `<b>Severity:</b> ${spike.severity}\n`;
+    if (spike.severity === 'EXTREME') {
+      msg += `\n⚠️ <b>DANGER ZONE!</b> Institutional hedging massive. Protect your capital!`;
+    } else {
+      msg += `\n⚡ <i>Elevated volatility detected. Monitor positions closely.</i>`;
+    }
+    msg += `\n\n💎 <i>Deep Mind AI Auto Alert</i>`;
+    await safeSend(TG_CHAT_ID, msg);
+    console.log(`🚨 VIX spike alert sent: US ${spike.usChange.toFixed(1)}%, IN ${spike.inChange.toFixed(1)}%`);
+  }
+});
+
+// Record daily P&L at India market close
+cron.schedule('10 10 * * 1-5', async () => {
+  if (portfolio.length === 0) return;
+  await refreshPrices();
+  const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
+  const today = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short' });
+
+  dailyPLHistory.push({ date: today, pl: metrics.todayPL, pct: metrics.todayPct });
+  if (dailyPLHistory.length > 30) dailyPLHistory = dailyPLHistory.slice(-30);
+
+  // Update streak
+  if (metrics.todayPL >= 0) {
+    consecutiveStreak = consecutiveStreak >= 0 ? consecutiveStreak + 1 : 1;
+  } else {
+    consecutiveStreak = consecutiveStreak <= 0 ? consecutiveStreak - 1 : -1;
+  }
+
+  console.log(`📈 Daily P&L recorded: ₹${Math.round(metrics.todayPL)} | Streak: ${consecutiveStreak}`);
 });
 
 // ========================================

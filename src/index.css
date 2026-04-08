@@ -196,6 +196,29 @@ body {
   animation: message-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* ========================================
+   GPU ACCELERATION & PERF HINTS
+   ======================================== */
+.animate-fade-in-up,
+.animate-fade-in,
+.animate-scale-in,
+.animate-slide-up-modal,
+.animate-slide-right,
+.animate-float {
+  will-change: transform, opacity;
+}
+
+.ticker-content {
+  will-change: transform;
+  transform: translate3d(0, 0, 0);
+}
+
+/* Content visibility for off-screen sections */
+.glass-card,
+.stat-card {
+  contain: layout style;
+}
+
 /* Staggered animation delays */
 .delay-75 { animation-delay: 75ms; }
 .delay-100 { animation-delay: 100ms; }

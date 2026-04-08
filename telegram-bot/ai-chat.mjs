@@ -65,7 +65,7 @@ function buildPortfolioContext(portfolio, livePrices, usdInrRate) {
   ctx += `US VIX: ${usVix.toFixed(1)} | India VIX: ${inVix.toFixed(1)}\n`;
   ctx += `USD/INR: ₹${usdInrRate.toFixed(2)}\n\n`;
 
-  ctx += `PORTFOLIO POSITIONS:\n`;
+  ctx += `PORTFOLIO POSITIONS + SIGNALS:\n`;
   for (const p of portfolio) {
     const key = `${p.market}_${p.symbol}`;
     const data = livePrices[key];
@@ -78,7 +78,13 @@ function buildPortfolioContext(portfolio, livePrices, usdInrRate) {
     const pl = (curPrice - p.avgPrice) * p.qty;
     const cleanSym = p.symbol.replace('.NS', '');
 
-    ctx += `• ${cleanSym} (${p.market}): Price=${p.market === 'IN' ? '₹' : '$'}${curPrice.toFixed(2)}, Change=${change.toFixed(2)}%, RSI=${rsi.toFixed(1)}, SMA20=${sma20}, SMA50=${sma50}, MACD=${macd}, Qty=${p.qty}, AvgCost=${p.avgPrice.toFixed(2)}, P&L=${pl >= 0 ? '+' : ''}${pl.toFixed(2)}\n`;
+    // Generate signal inline
+    const signal = analyzeAsset(p, data);
+    const atr = ((data?.high || curPrice) - (data?.low || curPrice)) || curPrice * 0.02;
+    const slPrice = curPrice - atr * 1.5;
+    const tpPrice = curPrice + atr * 2.5;
+
+    ctx += `• ${cleanSym} (${p.market}): Price=${p.market === 'IN' ? '₹' : '$'}${curPrice.toFixed(2)}, Change=${change.toFixed(2)}%, RSI=${rsi.toFixed(1)}, SMA20=${sma20}, SMA50=${sma50}, MACD=${macd}, Signal=${signal.signal}, Confidence=${signal.confidence}%, SL=${slPrice.toFixed(2)}, TP=${tpPrice.toFixed(2)}, Qty=${p.qty}, AvgCost=${p.avgPrice.toFixed(2)}, P&L=${pl >= 0 ? '+' : ''}${pl.toFixed(2)}\n`;
   }
 
   ctx += `--- END SENSOR DATA ---\n`;
@@ -154,7 +160,7 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
         model: 'llama-3.3-70b-versatile',
         messages,
         temperature: 0.75,
-        max_tokens: 1500
+        max_tokens: 2000
       }),
       signal: AbortSignal.timeout(30000)
     });

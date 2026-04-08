@@ -493,3 +493,184 @@ export function generateForexReport(usdInrRate) {
   msg += `\n💎 <i>Deep Mind AI Pro Trading Terminal</i>`;
   return msg;
 }
+
+// ========================================
+// /scan <SYMBOL> — Single Symbol Deep Scan
+// ========================================
+export function generateScanReport(symbolData) {
+  const timeStr = getISTTime();
+  const d = symbolData;
+  const cur = d.market === 'IN' ? '₹' : '$';
+  const rsi = d.rsi || 50;
+  const change = d.change || 0;
+  const sma20 = d.sma20;
+  const sma50 = d.sma50;
+  const macd = d.macd;
+
+  // Signal logic
+  const isBull = sma20 && sma50 ? sma20 > sma50 : false;
+  const hasMACDMom = macd !== undefined ? macd > 0 : false;
+  let signal = '🟡 NEUTRAL';
+  let verdict = 'No strong signal. Wait for confirmation.';
+  if (rsi < 30 && hasMACDMom) { signal = '🟢🟢 STRONG BUY'; verdict = 'Oversold + MACD bullish. Institutional accumulation zone!'; }
+  else if (rsi < 35) { signal = '🟢 BUY'; verdict = 'RSI approaching oversold. Good entry opportunity.'; }
+  else if (rsi < 45 && isBull) { signal = '🟢 ACCUMULATE'; verdict = 'Bullish trend intact. SMA Golden Cross active.'; }
+  else if (rsi > 75) { signal = '🔴 STRONG SELL'; verdict = 'Extreme overbought. Distribution phase. Book profits!'; }
+  else if (rsi > 65 && !hasMACDMom) { signal = '🔴 SELL'; verdict = 'Overbought + MACD losing momentum.'; }
+  else if (isBull && hasMACDMom) { signal = '🟢 BULLISH'; verdict = 'Uptrend momentum. Hold/Accumulate.'; }
+
+  // Fib levels
+  const dayRange = (d.high || d.price) - (d.low || d.price);
+  const support = (d.low || d.price) - dayRange * 0.382;
+  const resistance = (d.high || d.price) + dayRange * 0.382;
+
+  // Volume analysis
+  let volText = '💤 Low';
+  if (d.volume > 10000000) volText = '🔥 Very High';
+  else if (d.volume > 1000000) volText = '📊 High';
+  else if (d.volume > 100000) volText = '⚡ Active';
+
+  let msg = `🔍 <b>DEEP SCAN — ${d.symbol}</b>\n`;
+  msg += `⏰ <i>${timeStr} IST</i> | ${d.market === 'IN' ? '🇮🇳' : '🇺🇸'} ${d.name || d.symbol}\n\n`;
+
+  msg += `📊 <b>Price Action</b>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  msg += `CMP:        <b>${cur}${d.price.toFixed(2)}</b> (${change >= 0 ? '+' : ''}${change.toFixed(2)}%)\n`;
+  msg += `Day Range:  ${cur}${(d.low || d.price).toFixed(2)} — ${cur}${(d.high || d.price).toFixed(2)}\n`;
+  msg += `Open:       ${cur}${(d.open || d.price).toFixed(2)}\n`;
+  msg += `Volume:     ${volText} (${(d.volume / 1000000).toFixed(2)}M)\n\n`;
+
+  msg += `🧠 <b>Technical Analysis</b>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  msg += `RSI (14):   <b>${rsi.toFixed(1)}</b> ${rsi < 35 ? '🟢 Oversold' : rsi > 65 ? '🔴 Overbought' : '🟡 Neutral'}\n`;
+  if (sma20) msg += `SMA 20:     ${cur}${sma20.toFixed(2)} ${d.price > sma20 ? '📈 Above' : '📉 Below'}\n`;
+  if (sma50) msg += `SMA 50:     ${cur}${sma50.toFixed(2)} ${d.price > sma50 ? '📈 Above' : '📉 Below'}\n`;
+  if (sma20 && sma50) msg += `SMA Cross:  ${isBull ? '🟢 Golden Cross' : '🔴 Death Cross'}\n`;
+  if (macd !== undefined) msg += `MACD:       ${macd.toFixed(2)} ${hasMACDMom ? '📈 Bullish' : '📉 Bearish'}\n`;
+  msg += `\n`;
+
+  msg += `📈 <b>Performance</b>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  msg += `Weekly:     ${d.weekChange >= 0 ? '📈 +' : '📉 '}${d.weekChange.toFixed(2)}%\n`;
+  msg += `Monthly:    ${d.monthChange >= 0 ? '📈 +' : '📉 '}${d.monthChange.toFixed(2)}%\n`;
+  msg += `3-Month:    ${d.threeMonthChange >= 0 ? '📈 +' : '📉 '}${d.threeMonthChange.toFixed(2)}%\n\n`;
+
+  msg += `🎯 <b>Key Levels</b>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  msg += `Support:    <b>${cur}${support.toFixed(2)}</b> (Fib 38.2%)\n`;
+  msg += `Resistance: <b>${cur}${resistance.toFixed(2)}</b> (Fib 38.2%)\n\n`;
+
+  msg += `⚡ <b>AI VERDICT:</b> ${signal}\n`;
+  msg += `<i>${verdict}</i>\n`;
+  msg += `\n💎 <i>Deep Mind AI Pro Trading Terminal</i>`;
+  return msg;
+}
+
+// ========================================
+// /heatmap — Visual Portfolio Heatmap
+// ========================================
+export function generateHeatmapReport(portfolio, livePrices, usdInrRate) {
+  const timeStr = getISTTime();
+  let msg = `🗺️ <b>PORTFOLIO HEATMAP</b>\n`;
+  msg += `⏰ <i>${timeStr} IST</i>\n\n`;
+
+  if (portfolio.length === 0) {
+    msg += `⚠️ Portfolio empty hai. Web app se positions add karo.\n`;
+    return msg;
+  }
+
+  // Calculate weights and performance
+  const positions = portfolio.map(p => {
+    const key = `${p.market}_${p.symbol}`;
+    const data = livePrices[key];
+    const curPrice = data?.price || p.avgPrice;
+    const change = data?.change || 0;
+    const rsi = data?.rsi || 50;
+    const curVal = curPrice * p.qty;
+    const invVal = p.avgPrice * p.qty;
+    const pl = curVal - invVal;
+    const plPct = invVal > 0 ? (pl / invVal) * 100 : 0;
+    const valINR = p.market === 'IN' ? curVal : curVal * usdInrRate;
+    return { ...p, curPrice, change, rsi, curVal, valINR, pl, plPct, cleanSym: p.symbol.replace('.NS', '') };
+  });
+
+  const totalVal = positions.reduce((s, p) => s + p.valINR, 0);
+
+  // Sort by change (worst to best)
+  const sorted = [...positions].sort((a, b) => a.change - b.change);
+
+  msg += `<code>Symbol     Chg%   RSI  Weight  Status</code>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+
+  for (const p of sorted) {
+    const weight = totalVal > 0 ? ((p.valINR / totalVal) * 100).toFixed(0) : '0';
+    const chgStr = (p.change >= 0 ? '+' : '') + p.change.toFixed(1) + '%';
+    const rsiStr = p.rsi.toFixed(0);
+    const sym = p.cleanSym.padEnd(10).substring(0, 10);
+
+    // Heat indicator
+    let heat;
+    if (p.change > 2) heat = '🟢🟢';
+    else if (p.change > 0.5) heat = '🟢';
+    else if (p.change > -0.5) heat = '⚪';
+    else if (p.change > -2) heat = '🔴';
+    else heat = '🔴🔴';
+
+    msg += `<code>${sym} ${chgStr.padStart(6)} ${rsiStr.padStart(4)}  ${weight.padStart(4)}%</code> ${heat}\n`;
+  }
+
+  msg += `\n<b>Portfolio Heat:</b> `;
+  const avgChange = positions.reduce((s, p) => s + p.change, 0) / positions.length;
+  if (avgChange > 1) msg += `🟢🟢 Strong Green Day`;
+  else if (avgChange > 0) msg += `🟢 Mild Positive`;
+  else if (avgChange > -1) msg += `🔴 Mild Negative`;
+  else msg += `🔴🔴 Red Day`;
+
+  msg += `\n\n💎 <i>Deep Mind AI Pro Trading Terminal</i>`;
+  return msg;
+}
+
+// ========================================
+// /compare — Side-by-Side Symbol Comparison
+// ========================================
+export function generateCompareReport(data1, data2) {
+  const timeStr = getISTTime();
+
+  let msg = `⚖️ <b>HEAD TO HEAD</b>\n`;
+  msg += `⏰ <i>${timeStr} IST</i>\n`;
+  msg += `<b>${data1.symbol}</b> vs <b>${data2.symbol}</b>\n\n`;
+
+  const cur1 = data1.market === 'IN' ? '₹' : '$';
+  const cur2 = data2.market === 'IN' ? '₹' : '$';
+
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  msg += `<code>Metric      ${data1.symbol.padEnd(10)} ${data2.symbol.padEnd(10)}</code>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  msg += `<code>Price       ${(cur1 + data1.price.toFixed(2)).padEnd(10)} ${(cur2 + data2.price.toFixed(2)).padEnd(10)}</code>\n`;
+  msg += `<code>Change      ${((data1.change >= 0 ? '+' : '') + data1.change.toFixed(2) + '%').padEnd(10)} ${((data2.change >= 0 ? '+' : '') + data2.change.toFixed(2) + '%').padEnd(10)}</code>\n`;
+  msg += `<code>RSI         ${(data1.rsi || 50).toFixed(0).padEnd(10)} ${(data2.rsi || 50).toFixed(0).padEnd(10)}</code>\n`;
+
+  if (data1.weekChange !== undefined) {
+    msg += `<code>Week        ${((data1.weekChange >= 0 ? '+' : '') + data1.weekChange.toFixed(1) + '%').padEnd(10)} ${((data2.weekChange >= 0 ? '+' : '') + data2.weekChange.toFixed(1) + '%').padEnd(10)}</code>\n`;
+  }
+  if (data1.monthChange !== undefined) {
+    msg += `<code>Month       ${((data1.monthChange >= 0 ? '+' : '') + data1.monthChange.toFixed(1) + '%').padEnd(10)} ${((data2.monthChange >= 0 ? '+' : '') + data2.monthChange.toFixed(1) + '%').padEnd(10)}</code>\n`;
+  }
+  if (data1.threeMonthChange !== undefined) {
+    msg += `<code>3-Month     ${((data1.threeMonthChange >= 0 ? '+' : '') + data1.threeMonthChange.toFixed(1) + '%').padEnd(10)} ${((data2.threeMonthChange >= 0 ? '+' : '') + data2.threeMonthChange.toFixed(1) + '%').padEnd(10)}</code>\n`;
+  }
+
+  msg += `<code>Vol(M)      ${((data1.volume / 1000000).toFixed(1)).padEnd(10)} ${((data2.volume / 1000000).toFixed(1)).padEnd(10)}</code>\n`;
+
+  // Winner verdict
+  msg += `\n⚡ <b>AI Verdict:</b> `;
+  const score1 = (data1.rsi < 40 ? 20 : 0) + (data1.change > 0 ? 10 : 0) + ((data1.monthChange || 0) > 0 ? 15 : 0);
+  const score2 = (data2.rsi < 40 ? 20 : 0) + (data2.change > 0 ? 10 : 0) + ((data2.monthChange || 0) > 0 ? 15 : 0);
+
+  if (score1 > score2) msg += `<b>${data1.symbol}</b> looks stronger for entry right now`;
+  else if (score2 > score1) msg += `<b>${data2.symbol}</b> looks stronger for entry right now`;
+  else msg += `Both symbols are equally positioned`;
+
+  msg += `\n\n💎 <i>Deep Mind AI Pro Trading Terminal</i>`;
+  return msg;
+}
