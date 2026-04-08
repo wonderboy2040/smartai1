@@ -1,28 +1,39 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { viteSingleFile } from 'vite-plugin-singlefile';
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss(), viteSingleFile()],
+  plugins: [react(), tailwindcss()],
   build: {
     // Optimizations for smaller bundle
-    target: 'es2015',
+    target: 'es2022',
     minify: 'esbuild',
     // esbuild options
     esbuild: {
       drop: console, // Remove console statements
       legalComments: 'none',
     },
-    // Code splitting not possible with singlefile plugin
+    // Code splitting for better caching
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          ml: ['@google/genai'],
+          utils: ['lucide-react', 'clsx', 'tailwind-merge'],
+        },
+      },
+    },
   },
   resolve: {
     alias: {
       '@': '/src',
     },
   },
-  // Disable source maps for production to reduce size
+  // Optimize dependencies
+  optimizeDeps: {
+    include: ['react', 'react-dom'],
+  },
   preview: {
     enabled: true,
   },
