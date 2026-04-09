@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, BrainCircuit, X, Zap, Trash2, Copy, Check, ChevronDown, Sparkles } from 'lucide-react';
+import { Send, BrainCircuit, X, Trash2, Copy, Check, ChevronDown, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { fetchMarketIntelligence, formatMarketIntelligenceForAI, MarketIntelligence } from '../utils/api';
 
@@ -125,15 +125,15 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
   // Fetch market intelligence on chat open & every 2 minutes
   useEffect(() => {
     if (!showChat) return;
-    const fetch = async () => {
+    const loadIntel = async () => {
       try {
         const intel = await fetchMarketIntelligence();
         setMarketIntel(intel);
         marketIntelRef.current = intel;
       } catch (e) {}
     };
-    fetch();
-    const iv = setInterval(fetch, 120000);
+    loadIntel();
+    const iv = setInterval(loadIntel, 120000);
     return () => clearInterval(iv);
   }, [showChat]);
 
@@ -205,8 +205,6 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
 
       const data = await res.json();
       const aiText = data.choices?.[0]?.message?.content || "Neural link unstable. Please retry.";
-      const tokens = data.usage?.total_tokens || estimateTokens(aiText);
-      const speed = data.usage?.completion_tokens ? Math.round(data.usage.completion_tokens / ((data.usage.total_time || 1))) : null;
       
       setChatMessages(prev => [...prev, { 
         role: 'model', 
@@ -268,6 +266,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                     Neural Link Active
                     {marketIntel && <span className="text-slate-500 ml-1">• {marketIntel.globalIndices.length} feeds</span>}
+                    {portfolioContext && portfolioContext.length > 50 && <span className="text-cyan-500/50 ml-1">• Portfolio ✓</span>}
                   </div>
                 </div>
               </div>

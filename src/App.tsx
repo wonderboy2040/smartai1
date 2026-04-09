@@ -1,10 +1,4 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-
-interface WindowWithTradingView extends Window {
-  TradingView?: {
-    widget: (config: any) => void;
-  };
-}
 import { Position, PriceData, TabType, RiskLevel, TransactionType } from './types';
 import {
   SECURE_PIN, TG_TOKEN, TG_CHAT_ID,
@@ -489,85 +483,97 @@ export default function App() {
     if (!chartContainerRef.current) return;
 
     // Clean up previous widget
-    if (tvWidgetRef.current && typeof tvWidgetRef.current === 'object') {
-      try {
-        // TradingView widget doesn't have a formal destroy method, but we can remove it
-        chartContainerRef.current.innerHTML = '';
-      } catch (e) {
-        console.warn('Failed to clean up previous chart:', e);
-        chartContainerRef.current.innerHTML = '';
-      }
-    }
+    chartContainerRef.current.innerHTML = '';
+    tvWidgetRef.current = null;
 
     const cleanSym = currentSymbol.replace('.NS', '').replace('.BO', '');
     const isIndian = currentMarket === 'IN' || currentSymbol.includes('.NS');
     const tvSymbol = EXACT_TICKER_MAP[cleanSym] || (isIndian ? `NSE:${cleanSym}` : `NASDAQ:${cleanSym}`);
 
+    const containerId = `tv-chart-${Date.now()}`;
     const container = document.createElement('div');
-    container.className = 'tradingview-widget-container';
+    container.id = containerId;
     container.style.height = '100%';
     container.style.width = '100%';
-    container.style.overflow = 'hidden';
-
-    const inner = document.createElement('div');
-    inner.className = 'tradingview-widget-container__widget';
-    inner.style.height = '100%';
-    inner.style.width = '100%';
-    inner.id = `tv-chart-${Date.now()}`; // Unique ID to prevent conflicts
-    container.appendChild(inner);
-
     chartContainerRef.current.appendChild(container);
 
-    // Load TradingView script only if not already loaded
-    if (!document.querySelector('script[src*="embed-widget-advanced-chart.js"]')) {
+    const initWidget = () => {
+      if (!(window as any).TradingView) return;
+      try {
+        tvWidgetRef.current = new (window as any).TradingView.widget({
+          autosize: true,
+          symbol: tvSymbol,
+          interval: chartInterval,
+          timezone: 'Asia/Kolkata',
+          theme: theme === 'dark' ? 'dark' : 'light',
+          style: '1',
+          locale: 'en',
+          enable_publishing: false,
+          allow_symbol_change: true,
+          studies: ['STD;RSI', 'STD;MACD'],
+          container_id: containerId,
+          withdateranges: true,
+          calendar: false,
+          hide_side_toolbar: false,
+          details: true,
+          hotlist: true,
+          support_host: 'https://www.tradingview.com'
+        });
+      } catch (e) {
+        console.warn('TradingView widget init error:', e);
+      }
+    };
+
+    // Use tv.js (the library that exposes TradingView.widget constructor)
+    const tvScript = document.querySelector('script[src="https://s3.tradingview.com/tv.js"]');
+    if (!tvScript) {
       const script = document.createElement('script');
-      script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+      script.src = 'https://s3.tradingview.com/tv.js';
       script.async = true;
-      script.onload = () => {
-        if ((window as WindowWithTradingView).TradingView) {
-          tvWidgetRef.current = (window as WindowWithTradingView).TradingView.widget({
+      script.onload = () => setTimeout(initWidget, 100);
+      script.onerror = () => {
+        console.warn('TradingView tv.js failed to load, trying embed widget fallback');
+        // Fallback: use embed widget approach
+        if (chartContainerRef.current) {
+          chartContainerRef.current.innerHTML = '';
+          const widgetDiv = document.createElement('div');
+          widgetDiv.className = 'tradingview-widget-container';
+          widgetDiv.style.height = '100%';
+          widgetDiv.style.width = '100%';
+          widgetDiv.innerHTML = `<div class="tradingview-widget-container__widget" style="height:100%;width:100%"></div>`;
+          const embedScript = document.createElement('script');
+          embedScript.type = 'text/javascript';
+          embedScript.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+          embedScript.async = true;
+          embedScript.innerHTML = JSON.stringify({
             autosize: true,
             symbol: tvSymbol,
             interval: chartInterval,
             timezone: 'Asia/Kolkata',
-            theme: 'dark',
+            theme: theme === 'dark' ? 'dark' : 'light',
             style: '1',
             locale: 'en',
             enable_publishing: false,
             allow_symbol_change: true,
-            studies: ['STD;RSI', 'STD;MACD'],
-            container_id: inner.id,
-            withdateranges: true,
             calendar: false,
+            studies: ['STD;RSI', 'STD;MACD'],
             support_host: 'https://www.tradingview.com'
           });
+          widgetDiv.appendChild(embedScript);
+          chartContainerRef.current.appendChild(widgetDiv);
         }
       };
       document.head.appendChild(script);
     } else {
-      // Script already loaded, initialize widget directly
-      setTimeout(() => {
-        if ((window as WindowWithTradingView).TradingView) {
-          tvWidgetRef.current = (window as WindowWithTradingView).TradingView.widget({
-            autosize: true,
-            symbol: tvSymbol,
-            interval: chartInterval,
-            timezone: 'Asia/Kolkata',
-            theme: 'dark',
-            style: '1',
-            locale: 'en',
-            enable_publishing: false,
-            allow_symbol_change: true,
-            studies: ['STD;RSI', 'STD;MACD'],
-            container_id: inner.id,
-            withdateranges: true,
-            calendar: false,
-            support_host: 'https://www.tradingview.com'
-          });
-        }
-      }, 100);
+      // Script already loaded
+      if ((window as any).TradingView) {
+        setTimeout(initWidget, 50);
+      } else {
+        // Script in DOM but not loaded yet - wait for it
+        tvScript.addEventListener('load', () => setTimeout(initWidget, 100));
+      }
     }
-  }, [currentSymbol, currentMarket, chartInterval]);
+  }, [currentSymbol, currentMarket, chartInterval, theme]);
 
   // Calculate portfolio metrics
   const calculateMetrics = useCallback(() => {
@@ -611,16 +617,69 @@ export default function App() {
   // Metrics calculation memoization
   const metrics = useMemo(() => calculateMetrics(), [calculateMetrics]);
 
-  // Throttle generateDeepAnalysis to run once per 60s (was running 20x/sec on every render)
+  // Track meaningful price changes to regenerate AI context
+  const priceUpdateCounterRef = useRef(0);
+  const [contextTrigger, setContextTrigger] = useState(0);
+
+  // Increment context trigger when livePrices change meaningfully (throttled)
   useEffect(() => {
-    const now = Date.now();
-    if (now - lastContextGenRef.current > 60000) {
-      lastContextGenRef.current = now;
-      const ctx = generateDeepAnalysis(portfolio, livePrices, usdInrRate, metrics);
-      setPortfolioContextText(ctx);
+    if (!isAuthenticated || portfolio.length === 0) return;
+    const keys = Object.keys(livePrices);
+    if (keys.length === 0) return;
+    priceUpdateCounterRef.current++;
+    // Trigger AI context regeneration every 15 price updates (roughly every ~30s at 2s batch interval)
+    if (priceUpdateCounterRef.current % 15 === 0) {
+      setContextTrigger(prev => prev + 1);
     }
+  }, [isAuthenticated, portfolio.length, livePrices]);
+
+  // Generate portfolio context text for NeuralChat AI with full live data
+  useEffect(() => {
+    if (portfolio.length === 0) return;
+    const now = Date.now();
+    // Allow regeneration at minimum 15s intervals
+    if (now - lastContextGenRef.current < 15000) return;
+    lastContextGenRef.current = now;
+
+    // Build comprehensive context with ALL positions and live prices
+    let ctx = `--- DEEP MIND QUANTUM LIVE SENSOR DATA ---\n`;
+    const usVix = livePrices['US_VIX']?.price || 15;
+    const inVix = livePrices['IN_INDIAVIX']?.price || 15;
+    ctx += `Timestamp: ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST\n`;
+    ctx += `US VIX: ${usVix.toFixed(1)} | India VIX: ${inVix.toFixed(1)}\n`;
+    ctx += `USD/INR: ₹${usdInrRate.toFixed(2)}\n`;
+    ctx += `Portfolio Value: ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n`;
+    ctx += `Total P&L: ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(2)}%)\n`;
+    ctx += `Today P&L: ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')}\n\n`;
+    ctx += `PORTFOLIO POSITIONS + LIVE TECHNICALS:\n`;
+
+    for (const p of portfolio) {
+      const key = `${p.market}_${p.symbol}`;
+      const data = livePrices[key];
+      const curPrice = data?.price || p.avgPrice;
+      const rsi = data?.rsi || 50;
+      const change = data?.change || 0;
+      const sma20 = data?.sma20 ? data.sma20.toFixed(2) : 'N/A';
+      const sma50 = data?.sma50 ? data.sma50.toFixed(2) : 'N/A';
+      const macd = data?.macd !== undefined ? data.macd.toFixed(2) : 'N/A';
+      const pl = (curPrice - p.avgPrice) * p.qty;
+      const plPct = p.avgPrice > 0 ? ((curPrice - p.avgPrice) / p.avgPrice) * 100 : 0;
+      const cleanSym = p.symbol.replace('.NS', '');
+      const cur = p.market === 'IN' ? '₹' : '$';
+
+      // Signal detection
+      const sig = analyzeAsset(p, data);
+      const atr = ((data?.high || curPrice) - (data?.low || curPrice)) || curPrice * 0.02;
+      const slPrice = curPrice - atr * 1.5;
+      const tpPrice = curPrice + atr * 2.5;
+
+      ctx += `• ${cleanSym} (${p.market}): Price=${cur}${curPrice.toFixed(2)}, Change=${change.toFixed(2)}%, RSI=${rsi.toFixed(1)}, SMA20=${sma20}, SMA50=${sma50}, MACD=${macd}, Signal=${sig.signal}, Confidence=${sig.confidence}%, SL=${cur}${slPrice.toFixed(2)}, TP=${cur}${tpPrice.toFixed(2)}, Qty=${p.qty}, AvgCost=${cur}${p.avgPrice.toFixed(2)}, P&L=${pl >= 0 ? '+' : ''}${cur}${Math.abs(pl).toFixed(2)} (${plPct >= 0 ? '+' : ''}${plPct.toFixed(1)}%)\n`;
+    }
+    ctx += `--- END SENSOR DATA ---\n`;
+
+    setPortfolioContextText(ctx);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [portfolio.length, usdInrRate]);
+  }, [portfolio.length, usdInrRate, contextTrigger]);
 
   const latestDataRef = useRef({ portfolio, livePrices, usdInrRate, metrics });
   useEffect(() => {
