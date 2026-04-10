@@ -193,9 +193,11 @@ async function safeSend(chatId, text, options = {}) {
         await bot.sendMessage(chatId, chunk, mergedOpts);
       } catch (e) {
         console.error('Send error:', e.message);
-        // Fallback: try without HTML
         try {
-          await bot.sendMessage(chatId, chunk.replace(/<[^>]+>/g, ''), { disable_web_page_preview: true });
+          // Fallback: Drop parse_mode so it sends as plain text without parsing errors, but keep the raw string
+          const fallbackOpts = { ...mergedOpts };
+          delete fallbackOpts.parse_mode;
+          await bot.sendMessage(chatId, chunk, fallbackOpts);
         } catch (e2) {
           console.error('Send fallback error:', e2.message);
         }
@@ -207,7 +209,9 @@ async function safeSend(chatId, text, options = {}) {
     } catch (e) {
       console.error('Send error:', e.message);
       try {
-        await bot.sendMessage(chatId, text.replace(/<[^>]+>/g, ''), { disable_web_page_preview: true });
+        const fallbackOpts = { ...mergedOpts };
+        delete fallbackOpts.parse_mode;
+        await bot.sendMessage(chatId, text, fallbackOpts);
       } catch (e2) {
         console.error('Send fallback error:', e2.message);
       }
@@ -234,8 +238,8 @@ Nagraj Bhai, main tumhara personal AI Trading assistant hoon! 24x7 tumhare portf
 🎯 /signals — AI buy/sell signals
 📈 /allocation — Smart SIP allocation matrix
 🛡️ /risk — Risk assessment + VIX analysis
-🔍 /scan <SYMBOL> — Deep scan any symbol
-⚖️ /compare <SYM1> <SYM2> — Head-to-head comparison
+🔍 /scan &lt;SYMBOL&gt; — Deep scan any symbol
+⚖️ /compare &lt;SYM1&gt; &lt;SYM2&gt; — Head-to-head comparison
 🗺️ /heatmap — Visual portfolio heatmap
 📊 /streak — Performance streak tracker
 💱 /forex — Live USD/INR rate

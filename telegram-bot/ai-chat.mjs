@@ -173,8 +173,12 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
     const data = await res.json();
     const aiText = data.choices?.[0]?.message?.content || 'Neural link unstable. Retry karo.';
 
+    // Clean up reasoning tags and prevent HTML injection errors
+    let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    safeText = safeText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
     // Convert markdown to HTML for Telegram
-    const htmlText = aiText
+    const htmlText = safeText
       .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
       .replace(/\*(.+?)\*/g, '<i>$1</i>')
       .replace(/_(.+?)_/g, '<i>$1</i>')
