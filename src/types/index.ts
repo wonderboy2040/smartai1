@@ -44,6 +44,24 @@ export interface ExpertInfo {
   border: string;
 }
 
-export type TabType = 'dashboard' | 'portfolio' | 'planner' | 'macro';
+export type TabType = 'dashboard' | 'portfolio' | 'planner' | 'macro' | 'premarket';
 export type RiskLevel = 'low' | 'medium' | 'high';
 export type TransactionType = 'buy' | 'sell';
+
+export interface PremarketAnalysis {
+  market: 'IN' | 'US';
+  predictedGap: number; // percentage
+  sentimentScore: number; // -1 to 1
+  volatilityForecast: 'low' | 'medium' | 'high';
+  keySectors: { sector: string; trend: 'bullish' | 'bearish' | 'neutral' }[];
+  aiConfidence: number; // 0 to 1
+  summary: string;
+}
+
+export interface PartialProfitResult {
+  symbol: string;
+  sellQty: number;
+  realizedProfit: number;
+  remainingQty: number;
+  newAvgPrice: number;
+}
