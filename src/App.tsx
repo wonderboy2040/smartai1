@@ -7,7 +7,7 @@ import {
 import {
   fetchSinglePrice, batchFetchPrices, fetchForexRate,
   syncToCloud, loadFromCloud, sendTelegramAlert,
-  syncClaudeKeyToCloud, loadClaudeKeyFromCloud
+  syncGeminiKeyToCloud, loadGeminiKeyFromCloud
 } from './utils/api';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from './utils/tvWebsocket';
 import {
@@ -87,7 +87,7 @@ export default function App() {
   const [showAddModal, setShowAddModal] = useState(false);
 
   // Settings / Keys State
-  const [claudeKey, setClaudeKey] = useState(() => localStorage.getItem('WEALTH_AI_CLAUDE') || localStorage.getItem('WEALTH_AI_GROQ') || '');
+  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('WEALTH_AI_GEMINI') || localStorage.getItem('WEALTH_AI_CLAUDE') || localStorage.getItem('WEALTH_AI_GROQ') || '');
   const [showSettings, setShowSettings] = useState(false);
 
   // Add Modal State
@@ -128,8 +128,8 @@ export default function App() {
     if (auth === 'true') {
       setIsAuthenticated(true);
     }
-    // Ensure Claude key is persisted
-    const savedKey = localStorage.getItem('WEALTH_AI_CLAUDE') || localStorage.getItem('WEALTH_AI_GROQ');
+    // Ensure Gemini key is persisted
+    const savedKey = localStorage.getItem('WEALTH_AI_GEMINI') || localStorage.getItem('WEALTH_AI_CLAUDE') || localStorage.getItem('WEALTH_AI_GROQ');
     if (!savedKey) {
       // Key must be set via Settings panel or cloud sync
     }
@@ -158,22 +158,22 @@ export default function App() {
       }
     }).catch(() => console.warn('Cloud sync unavailable'));
 
-    // Load Claude key from cloud, fallback to local, then sync to cloud
-    loadClaudeKeyFromCloud().then(cloudKey => {
+    // Load Gemini key from cloud, fallback to local, then sync to cloud
+    loadGeminiKeyFromCloud().then(cloudKey => {
       if (cloudKey) {
-        setClaudeKey(cloudKey);
-        localStorage.setItem('WEALTH_AI_CLAUDE', cloudKey);
+        setGeminiKey(cloudKey);
+        localStorage.setItem('WEALTH_AI_GEMINI', cloudKey);
       } else {
-        const localKey = localStorage.getItem('WEALTH_AI_CLAUDE') || localStorage.getItem('WEALTH_AI_GROQ');
+        const localKey = localStorage.getItem('WEALTH_AI_GEMINI') || localStorage.getItem('WEALTH_AI_CLAUDE') || localStorage.getItem('WEALTH_AI_GROQ');
         if (localKey) {
-          syncClaudeKeyToCloud(localKey).catch(() => {});
+          syncGeminiKeyToCloud(localKey).catch(() => {});
         }
       }
     }).catch(() => {
-      const localKey = localStorage.getItem('WEALTH_AI_CLAUDE') || localStorage.getItem('WEALTH_AI_GROQ');
+      const localKey = localStorage.getItem('WEALTH_AI_GEMINI') || localStorage.getItem('WEALTH_AI_CLAUDE') || localStorage.getItem('WEALTH_AI_GROQ');
       if (localKey) {
-        syncClaudeKeyToCloud(localKey).catch(() => {});
-        setClaudeKey(localKey);
+        syncGeminiKeyToCloud(localKey).catch(() => {});
+        setGeminiKey(localKey);
       }
     });
 
@@ -924,29 +924,29 @@ export default function App() {
                 {showSettings && (
                   <div className="absolute right-0 top-full mt-3 w-72 glass-modal p-4 rounded-2xl shadow-2xl z-50 animate-scale-in">
                     <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                      <span className="text-lg">🧠</span> Claude API Key
+                      <span className="text-lg">🧠</span> Gemini API Key (FREE)
                     </div>
                     <input
                       type="password"
-                      placeholder="Paste your Claude API Key..."
-                      value={claudeKey}
+                      placeholder="Paste your Gemini API Key..."
+                      value={geminiKey}
                       onChange={(e) => {
                         const val = e.target.value;
-                        setClaudeKey(val);
-                        localStorage.setItem('WEALTH_AI_CLAUDE', val);
+                        setGeminiKey(val);
+                        localStorage.setItem('WEALTH_AI_GEMINI', val);
                       }}
                       className="w-full glass-input rounded-xl px-4 py-3 text-sm text-white mb-3"
                     />
                     <button
                       onClick={() => {
                         setShowSettings(false);
-                        if (claudeKey) syncClaudeKeyToCloud(claudeKey);
+                        if (geminiKey) syncGeminiKeyToCloud(geminiKey);
                       }}
                       className="w-full btn-primary py-2.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-900/30 text-sm"
                     >
                       💾 Save & Cloud Sync
                     </button>
-                    <div className="text-[10px] text-slate-500 mt-3 font-medium text-center">Key auto-syncs to cloud. Get at console.anthropic.com</div>
+                    <div className="text-[10px] text-slate-500 mt-3 font-medium text-center">FREE key at aistudio.google.com/apikey</div>
                   </div>
                 )}
               </div>
@@ -967,11 +967,11 @@ export default function App() {
               <button onClick={() => window.location.reload()} className="btn-glass p-2.5 rounded-xl text-lg" title="Refresh">🔄</button>
               <button onClick={() => {
                 const pin = localStorage.getItem('WEALTH_AI_PIN');
-                const claudeSaved = localStorage.getItem('WEALTH_AI_CLAUDE');
+                const geminiSaved = localStorage.getItem('WEALTH_AI_GEMINI');
                 const themeSaved = localStorage.getItem('theme');
                 localStorage.clear();
                 if (pin) localStorage.setItem('WEALTH_AI_PIN', pin);
-                if (claudeSaved) localStorage.setItem('WEALTH_AI_CLAUDE', claudeSaved);
+                if (geminiSaved) localStorage.setItem('WEALTH_AI_GEMINI', geminiSaved);
                 if (themeSaved) localStorage.setItem('theme', themeSaved);
                 window.location.reload();
               }} className="btn-glass p-2.5 rounded-xl text-lg" title="Flush Cache — Clear all cached data and reload">🧹</button>
@@ -2053,7 +2053,7 @@ export default function App() {
       )}
 
       {/* Neural Core Chat AI Integration with Deep Real-Time Portolio Context Injection */}
-      <NeuralChat claudeKey={claudeKey} portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'} />
+      <NeuralChat geminiKey={geminiKey} portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'} />
     </div>
   );
 }

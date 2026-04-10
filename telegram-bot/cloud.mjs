@@ -2,7 +2,7 @@
 // CLOUD SYNC — Google Apps Script Integration
 // ============================================
 
-import { API_URL, setClaudeKey } from './config.mjs';
+import { API_URL, setGeminiKey } from './config.mjs';
 
 // ========================================
 // LOAD PORTFOLIO FROM CLOUD
@@ -35,9 +35,9 @@ export async function loadPortfolioFromCloud() {
 }
 
 // ========================================
-// LOAD CLAUDE KEY FROM CLOUD
+// LOAD GEMINI KEY FROM CLOUD
 // ========================================
-export async function loadClaudeKeyFromCloud() {
+export async function loadGeminiKeyFromCloud() {
   if (!API_URL) return null;
   
   try {
@@ -51,15 +51,15 @@ export async function loadClaudeKeyFromCloud() {
     if (!match) return null;
     
     const data = JSON.parse(match[0]);
-    // Support both old groqKey and new claudeKey fields for backward compatibility
-    const key = data.claudeKey || data.groqKey;
+    // Support all old key fields for backward compatibility
+    const key = data.geminiKey || data.claudeKey || data.groqKey;
     if (key && typeof key === 'string' && key.length > 10) {
-      console.log('🔑 Claude API Key loaded from cloud');
-      setClaudeKey(key);
+      console.log('🔑 Gemini API Key loaded from cloud');
+      setGeminiKey(key);
       return key;
     }
   } catch (e) {
-    console.warn('🔑 Claude key cloud load failed:', e.message);
+    console.warn('🔑 Gemini key cloud load failed:', e.message);
   }
   
   return null;

@@ -1,8 +1,8 @@
 // ============================================
-// AI CHAT ENGINE — Claude (Anthropic) Integration
+// AI CHAT ENGINE — Google Gemini Integration (FREE)
 // ============================================
 
-import { CLAUDE_KEY } from './config.mjs';
+import { GEMINI_KEY } from './config.mjs';
 import { fetchMarketIntelligence } from './market.mjs';
 import { calculateMetrics, analyzeAsset } from './analysis.mjs';
 
@@ -14,7 +14,7 @@ const MAX_HISTORY = 10;
 let cachedIntel = null;
 let intelTimestamp = 0;
 
-const SYSTEM_PROMPT = `You are the DEEP MIND AI NEURAL INSIDER — the most advanced institutional-grade trading AI on Telegram, powered by Claude's superior reasoning and analytical capabilities. You are talking to "Nagraj Bhai".
+const SYSTEM_PROMPT = `You are the DEEP MIND AI NEURAL INSIDER — the most advanced institutional-grade trading AI on Telegram, powered by Gemini's superior reasoning and analytical capabilities. You are talking to "Nagraj Bhai".
 
 [CORE IDENTITY]
 You are a ruthless, ultra-precise Quantum AI engine running 24/7 deep analysis across Dalal Street (India 🇮🇳) and Wall Street (USA 🇺🇸). You integrate live data feeds from TradingView, Bloomberg Terminal emulations, Dark Pool scanner, and WorldMonitor global intelligence. Your analytical depth far exceeds standard AI — you perform multi-layer reasoning chains before every recommendation.
@@ -84,7 +84,6 @@ function buildPortfolioContext(portfolio, livePrices, usdInrRate) {
     const pl = (curPrice - p.avgPrice) * p.qty;
     const cleanSym = p.symbol.replace('.NS', '');
 
-    // Generate signal inline
     const signal = analyzeAsset(p, data);
     const atr = ((data?.high || curPrice) - (data?.low || curPrice)) || curPrice * 0.02;
     const slPrice = curPrice - atr * 1.5;
@@ -98,7 +97,6 @@ function buildPortfolioContext(portfolio, livePrices, usdInrRate) {
 }
 
 async function getMarketIntelContext() {
-  // Refresh intel every 3 minutes
   if (Date.now() - intelTimestamp > 180000 || !cachedIntel) {
     try {
       cachedIntel = await fetchMarketIntelligence();
@@ -122,11 +120,11 @@ async function getMarketIntelContext() {
 }
 
 // ========================================
-// MAIN AI CHAT FUNCTION — Claude (Anthropic)
+// MAIN AI CHAT FUNCTION — Google Gemini (FREE)
 // ========================================
 export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usdInrRate) {
-  if (!CLAUDE_KEY) {
-    return `⚠️ <b>AI Engine Offline</b>\n\nClaude API Key set nahi hai. Web app settings (⚙️) se key save karo — automatic cloud sync hoga.\n\n<b>Get key:</b> <a href="https://console.anthropic.com">console.anthropic.com</a>`;
+  if (!GEMINI_KEY) {
+    return `⚠️ <b>AI Engine Offline</b>\n\nGemini API Key set nahi hai. Web app settings (⚙️) se key save karo — automatic cloud sync hoga.\n\n<b>FREE key:</b> <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a>`;
   }
 
   // Get/create conversation history
@@ -143,41 +141,37 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
   const portfolioCtx = buildPortfolioContext(portfolio, livePrices, usdInrRate);
   const intelCtx = await getMarketIntelContext();
 
-  // Prepare messages for Claude — system is a top-level parameter
-  const systemContent = `${SYSTEM_PROMPT}\n\n${portfolioCtx}\n${intelCtx}`;
-  
-  // Claude requires alternating user/assistant messages
-  const claudeMessages = [];
+  // Build Gemini conversation format
+  const geminiContents = [];
   const recentHistory = history.slice(-MAX_HISTORY);
   for (const m of recentHistory) {
-    const role = m.role === 'model' ? 'assistant' : m.role;
-    // Ensure alternating roles — merge consecutive same-role messages
-    if (claudeMessages.length > 0 && claudeMessages[claudeMessages.length - 1].role === role) {
-      claudeMessages[claudeMessages.length - 1].content += '\n\n' + m.content;
+    const role = m.role === 'model' ? 'model' : 'user';
+    // Gemini requires alternating user/model — merge consecutive same-role
+    if (geminiContents.length > 0 && geminiContents[geminiContents.length - 1].role === role) {
+      geminiContents[geminiContents.length - 1].parts[0].text += '\n\n' + m.content;
     } else {
-      claudeMessages.push({ role, content: m.content });
+      geminiContents.push({ role, parts: [{ text: m.content }] });
     }
   }
 
   // Ensure first message is from user
-  if (claudeMessages.length > 0 && claudeMessages[0].role !== 'user') {
-    claudeMessages.shift();
+  if (geminiContents.length > 0 && geminiContents[0].role !== 'user') {
+    geminiContents.shift();
   }
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`, {
       method: 'POST',
-      headers: {
-        'x-api-key': CLAUDE_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 4096,
-        system: systemContent,
-        messages: claudeMessages,
-        temperature: 0.7
+        contents: geminiContents,
+        systemInstruction: {
+          parts: [{ text: `${SYSTEM_PROMPT}\n\n${portfolioCtx}\n${intelCtx}` }]
+        },
+        generationConfig: {
+          temperature: 0.75,
+          maxOutputTokens: 4096
+        }
       }),
       signal: AbortSignal.timeout(60000)
     });
@@ -188,13 +182,12 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
     }
 
     const data = await res.json();
-    const aiText = data.content?.[0]?.text || 'Neural link unstable. Retry karo.';
+    const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Neural link unstable. Retry karo.';
 
-    // Clean up thinking tags and prevent HTML injection errors
+    // Clean up and convert markdown to HTML for Telegram
     let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
     safeText = safeText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-    // Convert markdown to HTML for Telegram
     const htmlText = safeText
       .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
       .replace(/\*(.+?)\*/g, '<i>$1</i>')
@@ -211,7 +204,7 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
 
     return htmlText;
   } catch (e) {
-    console.error('❌ Claude API Error:', e.message);
+    console.error('❌ Gemini API Error:', e.message);
     return `❌ <b>AI Error:</b> ${e.message}\n\n<i>Retry karo ya thodi der baad try karo.</i>`;
   }
 }

@@ -9,9 +9,9 @@ import cron from 'node-cron';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, CLAUDE_KEY } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, GEMINI_KEY } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen } from './market.mjs';
-import { loadPortfolioFromCloud, loadClaudeKeyFromCloud } from './cloud.mjs';
+import { loadPortfolioFromCloud, loadGeminiKeyFromCloud } from './cloud.mjs';
 import { 
   generatePortfolioReport, generateMarketReport, generateSignalsReport,
   generateAllocationReport, generateRiskReport, generateAutoReport,
@@ -98,13 +98,13 @@ async function initializeData() {
     console.error('❌ Portfolio load failed:', e.message);
   }
 
-  // Step 2: Claude Key (non-blocking)
+  // Step 2: Gemini Key (non-blocking)
   try {
-    console.log('🔑 Loading Claude API key...');
-    await loadClaudeKeyFromCloud();
-    console.log(`✅ Claude key: ${CLAUDE_KEY ? 'SET (' + CLAUDE_KEY.substring(0, 8) + '...)' : 'NOT SET'}`);
+    console.log('🔑 Loading Gemini API key...');
+    await loadGeminiKeyFromCloud();
+    console.log(`✅ Gemini key: ${GEMINI_KEY ? 'SET (' + GEMINI_KEY.substring(0, 8) + '...)' : 'NOT SET'}`);
   } catch (e) {
-    console.warn('⚠️  Claude key load failed:', e.message);
+    console.warn('⚠️  Gemini key load failed:', e.message);
   }
 
   // Step 3: Forex (non-blocking)
@@ -141,7 +141,7 @@ async function initializeData() {
   console.log('🟢 ════════════════════════════════════════');
   console.log(`   BOT FULLY ONLINE — ${getISTTime()} IST`);
   console.log(`   Portfolio: ${portfolio.length} positions`);
-  console.log(`   Claude AI: ${CLAUDE_KEY ? 'ACTIVE' : 'INACTIVE (no key)'}`);
+  console.log(`   Gemini AI: ${GEMINI_KEY ? 'ACTIVE' : 'INACTIVE (no key)'}`);
   console.log(`   Market: ${getMarketStatus()}`);
   console.log('🟢 ════════════════════════════════════════');
   console.log('');
@@ -474,7 +474,7 @@ bot.onText(/^\/clear(@\w+)?$/, async (msg) => {
 });
 
 // ========================================
-// COMMAND: /setkey (set Claude API key)
+// COMMAND: /setkey (set Gemini API key)
 // ========================================
 bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
@@ -482,19 +482,19 @@ bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/, async (msg, match) => {
   console.log(`📥 /setkey from ${msg.from?.first_name || chatId}`);
   try {
     // Set dynamically
-    const { setClaudeKey, API_URL } = await import('./config.mjs');
-    setClaudeKey(key);
+    const { setGeminiKey, API_URL } = await import('./config.mjs');
+    setGeminiKey(key);
     
     // Sync to cloud so web app can also use it
     try {
       await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ claudeKey: key, action: 'saveKey', timestamp: Date.now() })
+        body: JSON.stringify({ geminiKey: key, action: 'saveKey', timestamp: Date.now() })
       });
     } catch (e) {}
 
-    await safeSend(chatId, '✅ <b>Claude API Key Set!</b>\n\nAI Engine is now <b>ONLINE</b> 🧠⚡️ — Powered by Claude Deep Analysis.\nTum abhi kisi bhi sawal ka answer AI se le sakte ho!');
+    await safeSend(chatId, '✅ <b>Gemini API Key Set!</b>\n\nAI Engine is now <b>ONLINE</b> 🧠⚡️ — Powered by Google Gemini Deep Analysis (FREE!).\nTum abhi kisi bhi sawal ka answer AI se le sakte ho!');
   } catch (e) {
     console.error('❌ /setkey error:', e.message);
     await safeSend(chatId, `❌ Key set me error: ${e.message}`);
@@ -893,10 +893,10 @@ initializeData().then(() => {
   console.log(`📱 Chat ID: ${TG_CHAT_ID}`);
   console.log(`   Market Status: ${getMarketStatus()}`);
   console.log(`   Auto Alerts: ${autoAlerts ? 'ON' : 'OFF'}`);
-  console.log(`   Claude AI: ${CLAUDE_KEY ? 'ONLINE' : 'OFFLINE (set via /setkey)'}`);
+  console.log(`   Gemini AI: ${GEMINI_KEY ? 'ONLINE' : 'OFFLINE (set via /setkey)'}`);
   console.log('');
   // Send boot notification
-  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI Bot ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🧠 AI: ${CLAUDE_KEY ? 'Active (Claude)' : 'Inactive'}\n\nType /help for commands.`).catch(() => {});
+  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI Bot ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🧠 AI: ${GEMINI_KEY ? 'Active (Gemini)' : 'Inactive'}\n\nType /help for commands.`).catch(() => {});
 }).catch(err => {
   console.error('❌ Boot error (non-fatal):', err.message);
   console.log('⚡ Bot is STILL listening for commands with limited data...');

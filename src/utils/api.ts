@@ -390,15 +390,15 @@ export async function sendTelegramAlert(token: string, chatId: string, message: 
 }
 
 // ========================================
-// CLAUDE API KEY — CLOUD SYNC
+// GEMINI API KEY — CLOUD SYNC (FREE)
 // ========================================
-export async function syncClaudeKeyToCloud(key: string): Promise<boolean> {
+export async function syncGeminiKeyToCloud(key: string): Promise<boolean> {
   if (!API_URL || !key) return false;
   try {
     await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ claudeKey: key, action: 'saveKey', timestamp: Date.now() })
+      body: JSON.stringify({ geminiKey: key, action: 'saveKey', timestamp: Date.now() })
     });
     return true;
   } catch (e) {
@@ -406,7 +406,7 @@ export async function syncClaudeKeyToCloud(key: string): Promise<boolean> {
   }
 }
 
-export async function loadClaudeKeyFromCloud(): Promise<string | null> {
+export async function loadGeminiKeyFromCloud(): Promise<string | null> {
   if (!API_URL) return null;
   try {
     const res = await fetch(`${API_URL}?action=loadKey&t=${Date.now()}`);
@@ -415,8 +415,8 @@ export async function loadClaudeKeyFromCloud(): Promise<string | null> {
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return null;
     const data = JSON.parse(match[0]);
-    // Support both new claudeKey and old groqKey for backward compatibility
-    const key = data.claudeKey || data.groqKey;
+    // Support all old key fields for backward compatibility
+    const key = data.geminiKey || data.claudeKey || data.groqKey;
     if (key && typeof key === 'string' && key.length > 10) {
       return key;
     }

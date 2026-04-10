@@ -29,7 +29,7 @@ function estimateTokens(text: string): number {
 }
 
 export interface NeuralChatProps {
-  claudeKey: string;
+  geminiKey: string;
   portfolioContext: string;
 }
 
@@ -44,7 +44,7 @@ const QUICK_CHIPS = [
   { label: '🏦 FII/DII', query: 'FII aur DII flow ka deep analysis karo — institutional money kaha ja raha hai? Passive vs active flow decomposition do.' },
 ];
 
-const SYSTEM_PROMPT = `You are the DEEP MIND AI NEURAL INSIDER — the most advanced institutional-grade trading AI, powered by Claude's superior deep reasoning and analytical capabilities. You are talking to "Nagraj Bhai".
+const SYSTEM_PROMPT = `You are the DEEP MIND AI NEURAL INSIDER — the most advanced institutional-grade trading AI, powered by Google Gemini's superior deep reasoning and analytical capabilities. You are talking to "Nagraj Bhai".
 
 [CORE IDENTITY]
 You are a ruthless, ultra-precise Quantum AI engine running 24/7 background analysis across Dalal Street (India 🇮🇳) and Wall Street (USA 🇺🇸). You integrate live data feeds from TradingView, Bloomberg Terminal emulations, Dark Pool scanner, and WorldMonitor global intelligence. Your analytical depth far exceeds standard AI — you perform multi-layer reasoning chains before every recommendation.
@@ -96,10 +96,10 @@ For EVERY response, you MUST include:
 - Include Fibonacci support/resistance when discussing key levels
 - Perform CHAIN-OF-THOUGHT reasoning before conclusions — show your analytical depth`;
 
-export const NeuralChat = React.memo(({ claudeKey, portfolioContext }: NeuralChatProps) => {
+export const NeuralChat = React.memo(({ geminiKey, portfolioContext }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'model',
-    text: '🧠 **DEEP MIND AI — Claude Neural Core v5.0 ONLINE** ⚡\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade deep analysis kar raha hu — powered by Claude\'s superior reasoning.\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\n• 🔥 Multi-Factor Momentum Engine — Statistical Edge Detection\n• 🧩 Wyckoff Phase Detector — Accumulation/Distribution\n• 📐 Elliott Wave Analyzer — Wave Count + Fibonacci Targets\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
+    text: '🧠 **DEEP MIND AI — Gemini Neural Core v5.0 ONLINE** ⚡\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade deep analysis kar raha hu — powered by Google Gemini\'s advanced reasoning (FREE & UNLIMITED!).\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\n• 🔥 Multi-Factor Momentum Engine — Statistical Edge Detection\n• 🧩 Wyckoff Phase Detector — Accumulation/Distribution\n• 📐 Elliott Wave Analyzer — Wave Count + Fibonacci Targets\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
     timestamp: Date.now()
   }]);
   const [chatInput, setChatInput] = useState('');
@@ -120,14 +120,12 @@ export const NeuralChat = React.memo(({ claudeKey, portfolioContext }: NeuralCha
     if (showChat) scrollToBottom();
   }, [chatMessages, showChat, scrollToBottom]);
 
-  // Track scroll position to show "scroll to bottom" button
   const handleScroll = useCallback(() => {
     if (!chatContainerRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
     setShowScrollDown(scrollHeight - scrollTop - clientHeight > 100);
   }, []);
 
-  // Fetch market intelligence on chat open & every 2 minutes
   useEffect(() => {
     if (!showChat) return;
     const loadIntel = async () => {
@@ -165,10 +163,10 @@ export const NeuralChat = React.memo(({ claudeKey, portfolioContext }: NeuralCha
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim()) return;
 
-    if (!claudeKey) {
+    if (!geminiKey) {
       setChatMessages(prev => [...prev,
         { role: 'user', text: userMessage, timestamp: Date.now() },
-        { role: 'model', text: '⚠️ **Neural Link Offline**\n\nClaude API Key set nahi hai. Settings (⚙️) icon click karke API KEY paste karo.\n\n**Get key:** console.anthropic.com\n\nEk baar key set kar do, phir 24/7 Claude deep AI analysis milega!', timestamp: Date.now() }
+        { role: 'model', text: '⚠️ **Neural Link Offline**\n\nGemini API Key set nahi hai. Settings (⚙️) icon click karke API KEY paste karo.\n\n**FREE key milega:** aistudio.google.com/apikey\n\nEk baar key set kar do, phir 24/7 unlimited FREE AI analysis milega!', timestamp: Date.now() }
       ]);
       return;
     }
@@ -181,38 +179,35 @@ export const NeuralChat = React.memo(({ claudeKey, portfolioContext }: NeuralCha
       const recentMessages = [...currentMessages.slice(-8), { role: 'user' as const, text: userMessage }];
       const intelContext = marketIntelRef.current ? formatMarketIntelligenceForAI(marketIntelRef.current) : '';
 
-      // Claude uses system as a top-level parameter, not a message role
       const systemContent = `${SYSTEM_PROMPT}\n\n--- DEEP MIND QUANTUM LIVE SENSOR DATA (PORTFOLIO + TECHNICALS): ---\n${portfolioContext}\n--- END SENSOR DATA ---\n${intelContext}`;
 
-      // Build Claude-compatible messages — ensure alternating user/assistant roles
-      const claudeMessages: { role: string; content: string }[] = [];
+      // Build Gemini-compatible contents — must alternate user/model roles
+      const geminiContents: { role: string; parts: { text: string }[] }[] = [];
       for (const m of recentMessages) {
-        const role = m.role === 'model' ? 'assistant' : 'user';
-        if (claudeMessages.length > 0 && claudeMessages[claudeMessages.length - 1].role === role) {
-          claudeMessages[claudeMessages.length - 1].content += '\n\n' + m.text;
+        const role = m.role === 'model' ? 'model' : 'user';
+        if (geminiContents.length > 0 && geminiContents[geminiContents.length - 1].role === role) {
+          geminiContents[geminiContents.length - 1].parts[0].text += '\n\n' + m.text;
         } else {
-          claudeMessages.push({ role, content: m.text });
+          geminiContents.push({ role, parts: [{ text: m.text }] });
         }
       }
       // Ensure first message is from user
-      if (claudeMessages.length > 0 && claudeMessages[0].role !== 'user') {
-        claudeMessages.shift();
+      if (geminiContents.length > 0 && geminiContents[0].role !== 'user') {
+        geminiContents.shift();
       }
 
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
         method: 'POST',
-        headers: {
-          'x-api-key': claudeKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-          'anthropic-dangerous-direct-browser-access': 'true'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 4096,
-          system: systemContent,
-          messages: claudeMessages,
-          temperature: 0.7
+          contents: geminiContents,
+          systemInstruction: {
+            parts: [{ text: systemContent }]
+          },
+          generationConfig: {
+            temperature: 0.75,
+            maxOutputTokens: 4096
+          }
         })
       });
 
@@ -222,7 +217,7 @@ export const NeuralChat = React.memo(({ claudeKey, portfolioContext }: NeuralCha
       }
 
       const data = await res.json();
-      const aiText = data.content?.[0]?.text || "Neural link unstable. Please retry.";
+      const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || "Neural link unstable. Please retry.";
       
       setChatMessages(prev => [...prev, { 
         role: 'model', 
@@ -230,7 +225,7 @@ export const NeuralChat = React.memo(({ claudeKey, portfolioContext }: NeuralCha
         timestamp: Date.now()
       }]);
     } catch (e) {
-      console.error("Claude Error:", e);
+      console.error("Gemini Error:", e);
       setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanceof Error ? e.message : String(e)}`, timestamp: Date.now() }]);
     } finally {
       setIsThinking(false);
@@ -278,7 +273,7 @@ export const NeuralChat = React.memo(({ claudeKey, portfolioContext }: NeuralCha
                 <div>
                   <h3 className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-1.5">
                     Deep Mind AI
-                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v5.0 CLAUDE</span>
+                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v5.0 GEMINI</span>
                   </h3>
                   <div className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -324,7 +319,6 @@ export const NeuralChat = React.memo(({ claudeKey, portfolioContext }: NeuralCha
                     ) : (
                       <>
                         <span dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />
-                        {/* Copy button for AI messages */}
                         <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
                           <button
                             onClick={() => copyToClipboard(msg.text, i)}
@@ -345,7 +339,7 @@ export const NeuralChat = React.memo(({ claudeKey, portfolioContext }: NeuralCha
                 <div className="flex justify-start animate-message-in">
                   <div className="bg-slate-900/90 px-5 py-4 rounded-2xl rounded-tl-none border border-white/5">
                     <div className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
-                      <Sparkles size={12} className="animate-pulse" /> CLAUDE DEEP ANALYZING...
+                      <Sparkles size={12} className="animate-pulse" /> GEMINI DEEP ANALYZING...
                     </div>
                     <div className="flex gap-1.5">
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
@@ -403,7 +397,7 @@ export const NeuralChat = React.memo(({ claudeKey, portfolioContext }: NeuralCha
                 </button>
               </div>
               <div className="flex items-center justify-between mt-2 px-1">
-                <span className="text-[8px] text-slate-600 font-mono">Powered by Claude Sonnet 4 • Anthropic</span>
+                <span className="text-[8px] text-slate-600 font-mono">Powered by Gemini 2.5 Flash • Google AI (FREE)</span>
                 <span className="text-[8px] text-slate-600">{chatMessages.length} messages</span>
               </div>
             </div>
