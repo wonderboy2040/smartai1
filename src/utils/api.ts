@@ -415,8 +415,7 @@ export async function loadGeminiKeyFromCloud(): Promise<string | null> {
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return null;
     const data = JSON.parse(match[0]);
-    // Support all old key fields for backward compatibility
-    const key = data.geminiKey || data.claudeKey || data.groqKey;
+    const key = data.geminiKey;
     if (key && typeof key === 'string' && key.length > 10) {
       return key;
     }

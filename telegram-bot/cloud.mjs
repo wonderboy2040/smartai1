@@ -51,8 +51,7 @@ export async function loadGeminiKeyFromCloud() {
     if (!match) return null;
     
     const data = JSON.parse(match[0]);
-    // Support all old key fields for backward compatibility
-    const key = data.geminiKey || data.claudeKey || data.groqKey;
+    const key = data.geminiKey;
     if (key && typeof key === 'string' && key.length > 10) {
       console.log('🔑 Gemini API Key loaded from cloud');
       setGeminiKey(key);

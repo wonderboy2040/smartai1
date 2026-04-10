@@ -87,7 +87,7 @@ export default function App() {
   const [showAddModal, setShowAddModal] = useState(false);
 
   // Settings / Keys State
-  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('WEALTH_AI_GEMINI') || localStorage.getItem('WEALTH_AI_CLAUDE') || localStorage.getItem('WEALTH_AI_GROQ') || '');
+  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('WEALTH_AI_GEMINI') || '');
   const [showSettings, setShowSettings] = useState(false);
 
   // Add Modal State
@@ -129,7 +129,7 @@ export default function App() {
       setIsAuthenticated(true);
     }
     // Ensure Gemini key is persisted
-    const savedKey = localStorage.getItem('WEALTH_AI_GEMINI') || localStorage.getItem('WEALTH_AI_CLAUDE') || localStorage.getItem('WEALTH_AI_GROQ');
+    const savedKey = localStorage.getItem('WEALTH_AI_GEMINI');
     if (!savedKey) {
       // Key must be set via Settings panel or cloud sync
     }
@@ -164,13 +164,13 @@ export default function App() {
         setGeminiKey(cloudKey);
         localStorage.setItem('WEALTH_AI_GEMINI', cloudKey);
       } else {
-        const localKey = localStorage.getItem('WEALTH_AI_GEMINI') || localStorage.getItem('WEALTH_AI_CLAUDE') || localStorage.getItem('WEALTH_AI_GROQ');
+        const localKey = localStorage.getItem('WEALTH_AI_GEMINI');
         if (localKey) {
           syncGeminiKeyToCloud(localKey).catch(() => {});
         }
       }
     }).catch(() => {
-      const localKey = localStorage.getItem('WEALTH_AI_GEMINI') || localStorage.getItem('WEALTH_AI_CLAUDE') || localStorage.getItem('WEALTH_AI_GROQ');
+      const localKey = localStorage.getItem('WEALTH_AI_GEMINI');
       if (localKey) {
         syncGeminiKeyToCloud(localKey).catch(() => {});
         setGeminiKey(localKey);
@@ -214,10 +214,10 @@ export default function App() {
     });
   }, []);
 
-  // Flush batched WS ticks at ~20fps (50ms) for ultra-smooth UI
+  // Flush batched WS ticks at 1fps (1000ms) for ultra-smooth UI without thread locking
   useEffect(() => {
     if (!isAuthenticated || portfolio.length === 0) return;
-    priceFlushRef.current = window.setInterval(flushPricesToStorage, 50);
+    priceFlushRef.current = window.setInterval(flushPricesToStorage, 1000);
     return () => {
       if (priceFlushRef.current) {
         clearInterval(priceFlushRef.current);
