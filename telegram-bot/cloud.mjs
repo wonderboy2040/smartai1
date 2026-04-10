@@ -2,7 +2,7 @@
 // CLOUD SYNC — Google Apps Script Integration
 // ============================================
 
-import { API_URL, setGroqKey } from './config.mjs';
+import { API_URL, setClaudeKey } from './config.mjs';
 
 // ========================================
 // LOAD PORTFOLIO FROM CLOUD
@@ -35,9 +35,9 @@ export async function loadPortfolioFromCloud() {
 }
 
 // ========================================
-// LOAD GROQ KEY FROM CLOUD
+// LOAD CLAUDE KEY FROM CLOUD
 // ========================================
-export async function loadGroqKeyFromCloud() {
+export async function loadClaudeKeyFromCloud() {
   if (!API_URL) return null;
   
   try {
@@ -51,13 +51,15 @@ export async function loadGroqKeyFromCloud() {
     if (!match) return null;
     
     const data = JSON.parse(match[0]);
-    if (data.groqKey && typeof data.groqKey === 'string' && data.groqKey.length > 10) {
-      console.log('🔑 Groq API Key loaded from cloud');
-      setGroqKey(data.groqKey);
-      return data.groqKey;
+    // Support both old groqKey and new claudeKey fields for backward compatibility
+    const key = data.claudeKey || data.groqKey;
+    if (key && typeof key === 'string' && key.length > 10) {
+      console.log('🔑 Claude API Key loaded from cloud');
+      setClaudeKey(key);
+      return key;
     }
   } catch (e) {
-    console.warn('🔑 Groq key cloud load failed:', e.message);
+    console.warn('🔑 Claude key cloud load failed:', e.message);
   }
   
   return null;

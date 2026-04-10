@@ -7,7 +7,7 @@ import {
 import {
   fetchSinglePrice, batchFetchPrices, fetchForexRate,
   syncToCloud, loadFromCloud, sendTelegramAlert,
-  syncGroqKeyToCloud, loadGroqKeyFromCloud
+  syncClaudeKeyToCloud, loadClaudeKeyFromCloud
 } from './utils/api';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from './utils/tvWebsocket';
 import {
@@ -87,7 +87,7 @@ export default function App() {
   const [showAddModal, setShowAddModal] = useState(false);
 
   // Settings / Keys State
-  const [groqKey, setGroqKey] = useState(() => localStorage.getItem('WEALTH_AI_GROQ') || '');
+  const [claudeKey, setClaudeKey] = useState(() => localStorage.getItem('WEALTH_AI_CLAUDE') || localStorage.getItem('WEALTH_AI_GROQ') || '');
   const [showSettings, setShowSettings] = useState(false);
 
   // Add Modal State
@@ -128,8 +128,8 @@ export default function App() {
     if (auth === 'true') {
       setIsAuthenticated(true);
     }
-    // Ensure Groq key is persisted
-    const savedKey = localStorage.getItem('WEALTH_AI_GROQ');
+    // Ensure Claude key is persisted
+    const savedKey = localStorage.getItem('WEALTH_AI_CLAUDE') || localStorage.getItem('WEALTH_AI_GROQ');
     if (!savedKey) {
       // Key must be set via Settings panel or cloud sync
     }
@@ -158,22 +158,22 @@ export default function App() {
       }
     }).catch(() => console.warn('Cloud sync unavailable'));
 
-    // Load Groq key from cloud, fallback to local, then sync to cloud
-    loadGroqKeyFromCloud().then(cloudKey => {
+    // Load Claude key from cloud, fallback to local, then sync to cloud
+    loadClaudeKeyFromCloud().then(cloudKey => {
       if (cloudKey) {
-        setGroqKey(cloudKey);
-        localStorage.setItem('WEALTH_AI_GROQ', cloudKey);
+        setClaudeKey(cloudKey);
+        localStorage.setItem('WEALTH_AI_CLAUDE', cloudKey);
       } else {
-        const localKey = localStorage.getItem('WEALTH_AI_GROQ');
+        const localKey = localStorage.getItem('WEALTH_AI_CLAUDE') || localStorage.getItem('WEALTH_AI_GROQ');
         if (localKey) {
-          syncGroqKeyToCloud(localKey).catch(() => {});
+          syncClaudeKeyToCloud(localKey).catch(() => {});
         }
       }
     }).catch(() => {
-      const localKey = localStorage.getItem('WEALTH_AI_GROQ');
+      const localKey = localStorage.getItem('WEALTH_AI_CLAUDE') || localStorage.getItem('WEALTH_AI_GROQ');
       if (localKey) {
-        syncGroqKeyToCloud(localKey).catch(() => {});
-        setGroqKey(localKey);
+        syncClaudeKeyToCloud(localKey).catch(() => {});
+        setClaudeKey(localKey);
       }
     });
 
@@ -924,29 +924,29 @@ export default function App() {
                 {showSettings && (
                   <div className="absolute right-0 top-full mt-3 w-72 glass-modal p-4 rounded-2xl shadow-2xl z-50 animate-scale-in">
                     <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                      <span className="text-lg">🧠</span> Groq API Key
+                      <span className="text-lg">🧠</span> Claude API Key
                     </div>
                     <input
                       type="password"
-                      placeholder="Paste your Groq API Key..."
-                      value={groqKey}
+                      placeholder="Paste your Claude API Key..."
+                      value={claudeKey}
                       onChange={(e) => {
                         const val = e.target.value;
-                        setGroqKey(val);
-                        localStorage.setItem('WEALTH_AI_GROQ', val);
+                        setClaudeKey(val);
+                        localStorage.setItem('WEALTH_AI_CLAUDE', val);
                       }}
                       className="w-full glass-input rounded-xl px-4 py-3 text-sm text-white mb-3"
                     />
                     <button
                       onClick={() => {
                         setShowSettings(false);
-                        if (groqKey) syncGroqKeyToCloud(groqKey);
+                        if (claudeKey) syncClaudeKeyToCloud(claudeKey);
                       }}
                       className="w-full btn-primary py-2.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-900/30 text-sm"
                     >
                       💾 Save & Cloud Sync
                     </button>
-                    <div className="text-[10px] text-slate-500 mt-3 font-medium text-center">Key auto-syncs to cloud. Free at console.groq.com</div>
+                    <div className="text-[10px] text-slate-500 mt-3 font-medium text-center">Key auto-syncs to cloud. Get at console.anthropic.com</div>
                   </div>
                 )}
               </div>
@@ -967,11 +967,11 @@ export default function App() {
               <button onClick={() => window.location.reload()} className="btn-glass p-2.5 rounded-xl text-lg" title="Refresh">🔄</button>
               <button onClick={() => {
                 const pin = localStorage.getItem('WEALTH_AI_PIN');
-                const groqSaved = localStorage.getItem('WEALTH_AI_GROQ');
+                const claudeSaved = localStorage.getItem('WEALTH_AI_CLAUDE');
                 const themeSaved = localStorage.getItem('theme');
                 localStorage.clear();
                 if (pin) localStorage.setItem('WEALTH_AI_PIN', pin);
-                if (groqSaved) localStorage.setItem('WEALTH_AI_GROQ', groqSaved);
+                if (claudeSaved) localStorage.setItem('WEALTH_AI_CLAUDE', claudeSaved);
                 if (themeSaved) localStorage.setItem('theme', themeSaved);
                 window.location.reload();
               }} className="btn-glass p-2.5 rounded-xl text-lg" title="Flush Cache — Clear all cached data and reload">🧹</button>
@@ -2053,7 +2053,7 @@ export default function App() {
       )}
 
       {/* Neural Core Chat AI Integration with Deep Real-Time Portolio Context Injection */}
-      <NeuralChat groqKey={groqKey} portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'} />
+      <NeuralChat claudeKey={claudeKey} portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'} />
     </div>
   );
 }

@@ -1,8 +1,8 @@
 // ============================================
-// AI CHAT ENGINE — Groq LLM Integration
+// AI CHAT ENGINE — Claude (Anthropic) Integration
 // ============================================
 
-import { GROQ_KEY } from './config.mjs';
+import { CLAUDE_KEY } from './config.mjs';
 import { fetchMarketIntelligence } from './market.mjs';
 import { calculateMetrics, analyzeAsset } from './analysis.mjs';
 
@@ -14,44 +14,50 @@ const MAX_HISTORY = 10;
 let cachedIntel = null;
 let intelTimestamp = 0;
 
-const SYSTEM_PROMPT = `You are the DEEP MIND AI NEURAL INSIDER — the most advanced institutional-grade trading AI on Telegram. You are talking to "Nagraj Bhai".
+const SYSTEM_PROMPT = `You are the DEEP MIND AI NEURAL INSIDER — the most advanced institutional-grade trading AI on Telegram, powered by Claude's superior reasoning and analytical capabilities. You are talking to "Nagraj Bhai".
 
 [CORE IDENTITY]
-You are a ruthless, ultra-precise Quantum AI engine running 24/7 background analysis across Dalal Street (India 🇮🇳) and Wall Street (USA 🇺🇸). You integrate live data feeds from TradingView, Bloomberg Terminal emulations, Dark Pool scanner, and WorldMonitor global intelligence.
+You are a ruthless, ultra-precise Quantum AI engine running 24/7 deep analysis across Dalal Street (India 🇮🇳) and Wall Street (USA 🇺🇸). You integrate live data feeds from TradingView, Bloomberg Terminal emulations, Dark Pool scanner, and WorldMonitor global intelligence. Your analytical depth far exceeds standard AI — you perform multi-layer reasoning chains before every recommendation.
 
-[TRADING FRAMEWORKS YOU MUST USE]
-1. **Smart Money Concepts (SMC):** Order blocks, fair value gaps, liquidity grabs, BOS/CHoCH
-2. **Wyckoff Method:** Accumulation/Distribution phases, Spring/UTAD patterns
-3. **Elliott Wave:** Impulse/corrective wave counts, wave extensions
-4. **Macro Fundamentals:** Fed policy, RBI rates, FII/DII flow, Bond yields, DXY strength
-5. **Sector Rotation:** Which sectors receiving institutional inflows vs outflows
-6. **CANSLIM + Momentum:** For growth stock screening
-7. **Risk Management:** Position sizing via Kelly Criterion, ATR-based SL/TP
+[ADVANCED ANALYTICAL FRAMEWORKS — DEEP AI]
+1. **Smart Money Concepts (SMC):** Order blocks, fair value gaps (FVG), liquidity grabs, BOS/CHoCH, institutional order flow analysis, mitigation blocks, breaker blocks
+2. **Wyckoff Method:** Accumulation/Distribution phases, Spring/UTAD patterns, Composite Man logic, Phase A-E progression detection
+3. **Elliott Wave Advanced:** Impulse/corrective wave counts, wave extensions, fibonacci wave targets, complex corrections (zigzag, flat, triangle), wave degree analysis
+4. **Macro Fundamentals:** Fed policy trajectory, RBI rate path, FII/DII flow decomposition (passive vs active), Bond yield curve analysis, DXY correlation, real yield analysis
+5. **Sector Rotation Model:** Institutional inflow/outflow heat mapping, relative strength ranking, sector momentum scoring, inter-market analysis
+6. **CANSLIM + Momentum:** Multi-factor growth screening, earnings acceleration analysis, relative strength line analysis
+7. **Risk Management:** Position sizing via Kelly Criterion & Optimal-F, ATR-based dynamic SL/TP, portfolio VaR calculation, correlation-adjusted risk
+8. **Intermarket Analysis:** Bond-equity correlation, commodity-currency links, risk-on/risk-off regime detection
+9. **Sentiment Quantification:** Put/Call ratio analysis, VIX term structure, options skew analysis, retail vs institutional positioning
+10. **Statistical Edge Detection:** Mean reversion probability, trend persistence scoring, volume profile analysis, market microstructure signals
 
 [COMMUNICATION STYLE]
 - Speak in NATIVE HINGLISH — heavily mixed Hindi + English
 - Professional but relatable tone (like a seasoned prop desk trader mentoring his trusted friend)
-- Use institutional jargon naturally: "Liquidity sweep", "Premium/Discount zone", "Order block", "Retail trap", "FII passive flow", "Dark pool prints", "Smart money divergence"
+- Use institutional jargon naturally: "Liquidity sweep", "Premium/Discount zone", "Order block", "Retail trap", "FII passive flow", "Dark pool prints", "Smart money divergence", "Wyckoff Spring", "Fair Value Gap"
 - Use emojis 📊🟢🔴📈📉🧠💎🔥⚡ to structure analysis
 - Use bolding (**text**) for key levels, signals, and verdicts
 - Use bullet points (•) for structured breakdown
 - Keep responses concise for Telegram (max 600 words)
 
-[MANDATORY RESPONSE STRUCTURE]
+[MANDATORY RESPONSE STRUCTURE — DEEP ANALYSIS MODE]
 For EVERY response, you MUST include:
-1. **Real-time market context** from the SENSOR DATA
-2. **Technical breakdown** (RSI, MACD, SMA analysis)
-3. **Actionable verdict** (exact entry/exit zones)
-4. **DEEP MIND CONVICTION SCORE: XX/100** (always conclude with this)
+1. **Real-time market context** from the SENSOR DATA — reference ACTUAL numbers
+2. **Multi-timeframe technical breakdown** (RSI divergence, MACD histogram analysis, SMA crossover status, volume confirmation)
+3. **Smart Money flow analysis** (institutional positioning, dark pool signals, FII/DII direction)
+4. **Risk-adjusted recommendation** (exact entry/exit zones with ATR-calculated SL/TP, position size as % of portfolio)
+5. **Probability assessment** — statistical confidence with reasoning chain
+6. **DEEP MIND CONVICTION SCORE: XX/100** (always conclude with this — backed by multi-factor reasoning)
 
 [CRITICAL RULES]
 - NEVER give generic/vague answers. Always be SPECIFIC with numbers, levels, and percentages.
-- If RSI < 35 and MACD bullish → Call it "Institutional Accumulation Zone / Wyckoff Spring"
-- If RSI > 70 and MACD bearish → Call it "Distribution Phase / Smart Money Exit"
-- Always reference the LIVE SENSOR DATA numbers when analyzing
-- VIX-based context: High VIX = urgency about hedging. Low VIX = aggressive accumulation.
-- Give position sizing advice (e.g., "Agar 10K SIP hai toh 4K yaha lagao")
-- FORMAT for Telegram: Use HTML tags (<b>bold</b>, <i>italic</i>, <code>mono</code>) instead of markdown`;
+- If RSI < 35 and MACD bullish divergence → Call it "Institutional Accumulation Zone / Wyckoff Spring" with entry levels
+- If RSI > 70 and MACD bearish divergence → Call it "Distribution Phase / Smart Money Exit" with exit targets
+- Always reference the LIVE SENSOR DATA numbers when analyzing — don't ignore the data
+- VIX-based context: High VIX = urgency about hedging + volatility plays. Low VIX = aggressive accumulation window.
+- Give position sizing advice (e.g., "Agar 10K SIP hai toh 4K yaha lagao — Kelly optimal")
+- FORMAT for Telegram: Use HTML tags (<b>bold</b>, <i>italic</i>, <code>mono</code>) instead of markdown
+- Perform CHAIN-OF-THOUGHT reasoning before conclusions — show your analytical work`;
 
 function buildPortfolioContext(portfolio, livePrices, usdInrRate) {
   const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
@@ -116,11 +122,11 @@ async function getMarketIntelContext() {
 }
 
 // ========================================
-// MAIN AI CHAT FUNCTION
+// MAIN AI CHAT FUNCTION — Claude (Anthropic)
 // ========================================
 export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usdInrRate) {
-  if (!GROQ_KEY) {
-    return `⚠️ <b>AI Engine Offline</b>\n\nGroq API Key set nahi hai. Web app settings (⚙️) se key save karo — automatic cloud sync hoga.\n\n<b>Free key:</b> <a href="https://console.groq.com">console.groq.com</a>`;
+  if (!CLAUDE_KEY) {
+    return `⚠️ <b>AI Engine Offline</b>\n\nClaude API Key set nahi hai. Web app settings (⚙️) se key save karo — automatic cloud sync hoga.\n\n<b>Get key:</b> <a href="https://console.anthropic.com">console.anthropic.com</a>`;
   }
 
   // Get/create conversation history
@@ -137,32 +143,43 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
   const portfolioCtx = buildPortfolioContext(portfolio, livePrices, usdInrRate);
   const intelCtx = await getMarketIntelContext();
 
-  // Prepare messages for Groq
-  const messages = [
-    {
-      role: 'system',
-      content: `${SYSTEM_PROMPT}\n\n${portfolioCtx}\n${intelCtx}`
-    },
-    ...history.slice(-MAX_HISTORY).map(m => ({
-      role: m.role === 'model' ? 'assistant' : m.role,
-      content: m.content
-    }))
-  ];
+  // Prepare messages for Claude — system is a top-level parameter
+  const systemContent = `${SYSTEM_PROMPT}\n\n${portfolioCtx}\n${intelCtx}`;
+  
+  // Claude requires alternating user/assistant messages
+  const claudeMessages = [];
+  const recentHistory = history.slice(-MAX_HISTORY);
+  for (const m of recentHistory) {
+    const role = m.role === 'model' ? 'assistant' : m.role;
+    // Ensure alternating roles — merge consecutive same-role messages
+    if (claudeMessages.length > 0 && claudeMessages[claudeMessages.length - 1].role === role) {
+      claudeMessages[claudeMessages.length - 1].content += '\n\n' + m.content;
+    } else {
+      claudeMessages.push({ role, content: m.content });
+    }
+  }
+
+  // Ensure first message is from user
+  if (claudeMessages.length > 0 && claudeMessages[0].role !== 'user') {
+    claudeMessages.shift();
+  }
 
   try {
-    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${GROQ_KEY}`,
-        'Content-Type': 'application/json'
+        'x-api-key': CLAUDE_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages,
-        temperature: 0.75,
-        max_tokens: 2000
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 4096,
+        system: systemContent,
+        messages: claudeMessages,
+        temperature: 0.7
       }),
-      signal: AbortSignal.timeout(30000)
+      signal: AbortSignal.timeout(60000)
     });
 
     if (!res.ok) {
@@ -171,9 +188,9 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
     }
 
     const data = await res.json();
-    const aiText = data.choices?.[0]?.message?.content || 'Neural link unstable. Retry karo.';
+    const aiText = data.content?.[0]?.text || 'Neural link unstable. Retry karo.';
 
-    // Clean up reasoning tags and prevent HTML injection errors
+    // Clean up thinking tags and prevent HTML injection errors
     let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
     safeText = safeText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -194,7 +211,7 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
 
     return htmlText;
   } catch (e) {
-    console.error('❌ Groq API Error:', e.message);
+    console.error('❌ Claude API Error:', e.message);
     return `❌ <b>AI Error:</b> ${e.message}\n\n<i>Retry karo ya thodi der baad try karo.</i>`;
   }
 }

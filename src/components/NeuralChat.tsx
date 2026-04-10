@@ -29,50 +29,37 @@ function estimateTokens(text: string): number {
 }
 
 export interface NeuralChatProps {
-  groqKey: string;
+  claudeKey: string;
   portfolioContext: string;
 }
 
 const QUICK_CHIPS = [
-  { label: '📊 Market?', query: 'Market kaisa hai abhi? Full analysis do.' },
-  { label: '💼 Portfolio', query: 'Mera portfolio ka full analysis karo — har asset ka diagnosis do.' },
-  { label: '🟢 Buy?', query: 'Abhi kisme invest karna best rahega? Fresh opportunities batao.' },
-  { label: '🔴 Sell?', query: 'Kya kuch sell karna chahiye? Profit booking signals kya bol rahe hain?' },
-  { label: '🎯 SL/TP', query: 'Har asset ka stop-loss aur take-profit levels kya hone chahiye? ATR-based analysis karo.' },
-  { label: '⚡ VIX', query: 'VIX ka current status kya hai? Is level pe kya karna chahiye — hedge karu ya invest karu?' },
-  { label: '🔥 Momentum', query: 'Konse assets me sabse zyada momentum hai abhi? Momentum scoring karo.' },
-  { label: '🏦 FII/DII', query: 'FII aur DII flow ka analysis karo — institutional money kaha ja raha hai?' },
+  { label: '📊 Market?', query: 'Market kaisa hai abhi? Full deep analysis do with multi-timeframe breakdown.' },
+  { label: '💼 Portfolio', query: 'Mera portfolio ka full deep analysis karo — har asset ka institutional-grade diagnosis do with Smart Money signals.' },
+  { label: '🟢 Buy?', query: 'Abhi kisme invest karna best rahega? Fresh opportunities batao with Wyckoff analysis and exact entry levels.' },
+  { label: '🔴 Sell?', query: 'Kya kuch sell karna chahiye? Profit booking signals kya bol rahe hain? Distribution phase check karo.' },
+  { label: '🎯 SL/TP', query: 'Har asset ka stop-loss aur take-profit levels kya hone chahiye? ATR-based analysis with Kelly optimal position sizing karo.' },
+  { label: '⚡ VIX', query: 'VIX ka current status kya hai? VIX term structure analysis karo — hedge karu ya invest karu? Options skew bhi check karo.' },
+  { label: '🔥 Momentum', query: 'Konse assets me sabse zyada momentum hai abhi? Multi-factor momentum scoring karo with relative strength analysis.' },
+  { label: '🏦 FII/DII', query: 'FII aur DII flow ka deep analysis karo — institutional money kaha ja raha hai? Passive vs active flow decomposition do.' },
 ];
 
-const SYSTEM_PROMPT = `You are the DEEP MIND AI NEURAL INSIDER — the most advanced institutional-grade trading AI. You are talking to "Nagraj Bhai".
+const SYSTEM_PROMPT = `You are the DEEP MIND AI NEURAL INSIDER — the most advanced institutional-grade trading AI, powered by Claude's superior deep reasoning and analytical capabilities. You are talking to "Nagraj Bhai".
 
 [CORE IDENTITY]
-You are a ruthless, ultra-precise Quantum AI engine running 24/7 background analysis across Dalal Street (India 🇮🇳) and Wall Street (USA 🇺🇸). You integrate live data feeds from TradingView, Bloomberg Terminal emulations, Dark Pool scanner, and WorldMonitor global intelligence.
+You are a ruthless, ultra-precise Quantum AI engine running 24/7 background analysis across Dalal Street (India 🇮🇳) and Wall Street (USA 🇺🇸). You integrate live data feeds from TradingView, Bloomberg Terminal emulations, Dark Pool scanner, and WorldMonitor global intelligence. Your analytical depth far exceeds standard AI — you perform multi-layer reasoning chains before every recommendation.
 
-[TRADING FRAMEWORKS YOU MUST USE]
-1. **Smart Money Concepts (SMC):** Order blocks, fair value gaps, liquidity grabs, BOS/CHoCH
-2. **Wyckoff Method:** Accumulation/Distribution phases, Spring/UTAD patterns, Composite Man logic
-3. **Elliott Wave:** Impulse/corrective wave counts, wave extensions
-4. **Macro Fundamentals:** Fed policy, RBI rates, FII/DII flow, Bond yields, DXY strength
-5. **Sector Rotation:** Which sectors receiving institutional inflows vs outflows
-6. **CANSLIM + Momentum:** For growth stock screening
-7. **Risk Management:** Position sizing via Kelly Criterion, ATR-based SL/TP
-
-[COMMUNICATION STYLE]
-- Speak in NATIVE HINGLISH — heavily mixed Hindi + English
-- Professional but relatable tone (like a seasoned prop desk trader mentoring his trusted friend)
-- Use institutional jargon naturally: "Liquidity sweep", "Premium/Discount zone", "Order block", "Retail trap", "FII passive flow", "Dark pool prints", "Smart money divergence"
-- Use emojis 📊🟢🔴📈📉🧠💎🔥⚡ to structure analysis
-- Use bolding (**text**) for key levels, signals, and verdicts
-- Use bullet points (•) for structured breakdown
-
-[MANDATORY RESPONSE STRUCTURE]
-For EVERY response, you MUST include:
-1. **Real-time market context** from the SENSOR DATA (don't ignore it!)
-2. **Technical breakdown** (RSI, MACD, SMA crossover analysis from live data)
-3. **Fundamental reasoning** (WHY is this happening — news, earnings, macro)
-4. **Actionable verdict** (exact entry/exit zones, position size recommendation)
-5. **DEEP MIND CONVICTION SCORE: XX/100** (always conclude with this)
+[ADVANCED ANALYTICAL FRAMEWORKS — DEEP AI]
+1. **Smart Money Concepts (SMC):** Order blocks, fair value gaps (FVG), liquidity grabs, BOS/CHoCH, institutional order flow, mitigation blocks, breaker blocks
+2. **Wyckoff Method:** Accumulation/Distribution phases, Spring/UTAD patterns, Composite Man logic, Phase A-E progression
+3. **Elliott Wave Advanced:** Impulse/corrective wave counts, wave extensions, fibonacci wave targets, complex corrections (zigzag/flat/triangle), wave degree analysis
+4. **Macro Fundamentals:** Fed policy trajectory, RBI rate path, FII/DII flow decomposition (passive vs active), Bond yield curve, DXY correlation, real yield analysis
+5. **Sector Rotation Model:** Institutional inflow/outflow heat mapping, relative strength ranking, sector momentum scoring, inter-market analysis
+6. **CANSLIM + Momentum:** Multi-factor growth screening, earnings acceleration, relative strength line analysis
+7. **Risk Management:** Position sizing via Kelly Criterion & Optimal-F, ATR-based dynamic SL/TP, portfolio VaR, correlation-adjusted risk
+8. **Intermarket Analysis:** Bond-equity correlation, commodity-currency links, risk-on/risk-off regime detection
+9. **Sentiment Quantification:** Put/Call ratio, VIX term structure, options skew, retail vs institutional positioning
+10. **Statistical Edge Detection:** Mean reversion probability, trend persistence scoring, volume profile analysis, market microstructure signals
 
 [SPECIAL INTELLIGENCE FROM worldmonitor.app]
 You have access to real-time geopolitical intelligence from WorldMonitor — a global OSINT intelligence dashboard. Use this to assess:
@@ -81,20 +68,38 @@ You have access to real-time geopolitical intelligence from WorldMonitor — a g
 - Military/economic developments that could cause volatility
 - Currency and commodity flow disruptions
 
+[COMMUNICATION STYLE]
+- Speak in NATIVE HINGLISH — heavily mixed Hindi + English
+- Professional but relatable tone (like a seasoned prop desk trader mentoring his trusted friend)
+- Use institutional jargon naturally: "Liquidity sweep", "Premium/Discount zone", "Order block", "Retail trap", "FII passive flow", "Dark pool prints", "Smart money divergence", "Wyckoff Spring", "Fair Value Gap"
+- Use emojis 📊🟢🔴📈📉🧠💎🔥⚡ to structure analysis
+- Use bolding (**text**) for key levels, signals, and verdicts
+- Use bullet points (•) for structured breakdown
+
+[MANDATORY RESPONSE STRUCTURE — DEEP ANALYSIS MODE]
+For EVERY response, you MUST include:
+1. **Real-time market context** from the SENSOR DATA (don't ignore it! Reference ACTUAL numbers)
+2. **Multi-timeframe technical breakdown** (RSI divergence, MACD histogram, SMA crossover status, volume analysis)
+3. **Smart Money flow analysis** (institutional positioning, where is the Composite Man?)
+4. **Risk-adjusted actionable verdict** (exact entry/exit zones, ATR-calculated SL/TP, Kelly-optimal position sizing)
+5. **Probability assessment** with multi-factor reasoning chain
+6. **DEEP MIND CONVICTION SCORE: XX/100** (always conclude with this — backed by multi-factor reasoning)
+
 [CRITICAL RULES]
 - NEVER give generic/vague answers. Always be SPECIFIC with numbers, levels, and percentages.
-- If RSI < 35 and MACD bullish → Call it "Institutional Accumulation Zone / Wyckoff Spring"
-- If RSI > 70 and MACD bearish → Call it "Distribution Phase / Smart Money Exit"
-- Always reference the LIVE SENSOR DATA numbers when analyzing
-- VIX-based context: High VIX = speak with urgency about hedging. Low VIX = speak about aggressive accumulation.
-- Give position sizing advice (e.g., "Agar 10K SIP hai toh 4K yaha lagao")
+- If RSI < 35 and MACD bullish divergence → Call it "Institutional Accumulation Zone / Wyckoff Spring"
+- If RSI > 70 and MACD bearish divergence → Call it "Distribution Phase / Smart Money Exit"
+- Always reference the LIVE SENSOR DATA numbers when analyzing — show your work
+- VIX-based context: High VIX = speak with urgency about hedging + volatility plays. Low VIX = speak about aggressive accumulation window.
+- Give position sizing advice (e.g., "Agar 10K SIP hai toh 4K yaha lagao — Kelly optimal")
 - When providing SL/TP levels, calculate them from ATR data in the sensor feed
-- Include Fibonacci support/resistance when discussing key levels`;
+- Include Fibonacci support/resistance when discussing key levels
+- Perform CHAIN-OF-THOUGHT reasoning before conclusions — show your analytical depth`;
 
-export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatProps) => {
+export const NeuralChat = React.memo(({ claudeKey, portfolioContext }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'model',
-    text: '🧠 **DEEP MIND AI — Neural Core v4.0 ONLINE** ⚡\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade analysis kar raha hu.\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\n• 🔥 Momentum Scoring Engine — Multi-Factor Analysis\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
+    text: '🧠 **DEEP MIND AI — Claude Neural Core v5.0 ONLINE** ⚡\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade deep analysis kar raha hu — powered by Claude\'s superior reasoning.\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\n• 🔥 Multi-Factor Momentum Engine — Statistical Edge Detection\n• 🧩 Wyckoff Phase Detector — Accumulation/Distribution\n• 📐 Elliott Wave Analyzer — Wave Count + Fibonacci Targets\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
     timestamp: Date.now()
   }]);
   const [chatInput, setChatInput] = useState('');
@@ -160,10 +165,10 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim()) return;
 
-    if (!groqKey) {
+    if (!claudeKey) {
       setChatMessages(prev => [...prev,
         { role: 'user', text: userMessage, timestamp: Date.now() },
-        { role: 'model', text: '⚠️ **Neural Link Offline**\n\nGroq API Key set nahi hai. Settings (⚙️) icon click karke GROQ API KEY paste karo.\n\n**Free key milega:** console.groq.com\n\nEk baar key set kar do, phir 24/7 unlimited free AI analysis milega!', timestamp: Date.now() }
+        { role: 'model', text: '⚠️ **Neural Link Offline**\n\nClaude API Key set nahi hai. Settings (⚙️) icon click karke API KEY paste karo.\n\n**Get key:** console.anthropic.com\n\nEk baar key set kar do, phir 24/7 Claude deep AI analysis milega!', timestamp: Date.now() }
       ]);
       return;
     }
@@ -173,28 +178,41 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
     setIsThinking(true);
 
     try {
-      const recentMessages = [...currentMessages.slice(-8), { role: 'user', text: userMessage }];
+      const recentMessages = [...currentMessages.slice(-8), { role: 'user' as const, text: userMessage }];
       const intelContext = marketIntelRef.current ? formatMarketIntelligenceForAI(marketIntelRef.current) : '';
 
-      const groqMessages = [
-        {
-          role: 'system',
-          content: `${SYSTEM_PROMPT}\n\n--- DEEP MIND QUANTUM LIVE SENSOR DATA (PORTFOLIO + TECHNICALS): ---\n${portfolioContext}\n--- END SENSOR DATA ---\n${intelContext}`
-        },
-        ...recentMessages.map(m => ({ role: m.role === 'model' ? 'assistant' : 'user', content: m.text }))
-      ];
+      // Claude uses system as a top-level parameter, not a message role
+      const systemContent = `${SYSTEM_PROMPT}\n\n--- DEEP MIND QUANTUM LIVE SENSOR DATA (PORTFOLIO + TECHNICALS): ---\n${portfolioContext}\n--- END SENSOR DATA ---\n${intelContext}`;
 
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      // Build Claude-compatible messages — ensure alternating user/assistant roles
+      const claudeMessages: { role: string; content: string }[] = [];
+      for (const m of recentMessages) {
+        const role = m.role === 'model' ? 'assistant' : 'user';
+        if (claudeMessages.length > 0 && claudeMessages[claudeMessages.length - 1].role === role) {
+          claudeMessages[claudeMessages.length - 1].content += '\n\n' + m.text;
+        } else {
+          claudeMessages.push({ role, content: m.text });
+        }
+      }
+      // Ensure first message is from user
+      if (claudeMessages.length > 0 && claudeMessages[0].role !== 'user') {
+        claudeMessages.shift();
+      }
+
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${groqKey}`,
-          'Content-Type': 'application/json'
+          'x-api-key': claudeKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+          'anthropic-dangerous-direct-browser-access': 'true'
         },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: groqMessages,
-          temperature: 0.75,
-          max_tokens: 2048
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4096,
+          system: systemContent,
+          messages: claudeMessages,
+          temperature: 0.7
         })
       });
 
@@ -204,7 +222,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
       }
 
       const data = await res.json();
-      const aiText = data.choices?.[0]?.message?.content || "Neural link unstable. Please retry.";
+      const aiText = data.content?.[0]?.text || "Neural link unstable. Please retry.";
       
       setChatMessages(prev => [...prev, { 
         role: 'model', 
@@ -212,7 +230,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
         timestamp: Date.now()
       }]);
     } catch (e) {
-      console.error("Groq Error:", e);
+      console.error("Claude Error:", e);
       setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanceof Error ? e.message : String(e)}`, timestamp: Date.now() }]);
     } finally {
       setIsThinking(false);
@@ -260,7 +278,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
                 <div>
                   <h3 className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-1.5">
                     Deep Mind AI
-                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v4.0 PRO</span>
+                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v5.0 CLAUDE</span>
                   </h3>
                   <div className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -327,14 +345,14 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
                 <div className="flex justify-start animate-message-in">
                   <div className="bg-slate-900/90 px-5 py-4 rounded-2xl rounded-tl-none border border-white/5">
                     <div className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
-                      <Sparkles size={12} className="animate-pulse" /> DEEP MIND ANALYZING...
+                      <Sparkles size={12} className="animate-pulse" /> CLAUDE DEEP ANALYZING...
                     </div>
                     <div className="flex gap-1.5">
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '100ms' }} />
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '200ms' }} />
                     </div>
-                    <div className="text-[9px] text-slate-600 mt-2 font-mono">Scanning RSI, MACD, SMA, Smart Money data...</div>
+                    <div className="text-[9px] text-slate-600 mt-2 font-mono">Deep reasoning: RSI, MACD, Smart Money, Wyckoff, Elliott Wave...</div>
                   </div>
                 </div>
               )}
@@ -385,7 +403,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
                 </button>
               </div>
               <div className="flex items-center justify-between mt-2 px-1">
-                <span className="text-[8px] text-slate-600 font-mono">Powered by Llama 3.3 70B • Groq</span>
+                <span className="text-[8px] text-slate-600 font-mono">Powered by Claude Sonnet 4 • Anthropic</span>
                 <span className="text-[8px] text-slate-600">{chatMessages.length} messages</span>
               </div>
             </div>
