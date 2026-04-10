@@ -488,7 +488,14 @@ export default function App() {
 
     const cleanSym = currentSymbol.replace('.NS', '').replace('.BO', '');
     const isIndian = currentMarket === 'IN' || currentSymbol.includes('.NS');
-    const tvSymbol = EXACT_TICKER_MAP[cleanSym] || (isIndian ? `NSE:${cleanSym}` : `NASDAQ:${cleanSym}`);
+    let tvSymbol = EXACT_TICKER_MAP[cleanSym] || (isIndian ? `NSE:${cleanSym}` : `NASDAQ:${cleanSym}`);
+
+    // Override for TradingView Chart widgets to use BSE for common ETFs
+    // (BSE allows free real-time rendering in widgets while NSE restricts it)
+    const BSE_CHART_OVERRIDES = ['JUNIORBEES', 'MOMOMENTUM', 'SMALLCAP', 'MID150BEES'];
+    if (BSE_CHART_OVERRIDES.includes(cleanSym)) {
+      tvSymbol = `BSE:${cleanSym}`;
+    }
 
     const containerId = `tv-chart-${Date.now()}`;
     const container = document.createElement('div');
