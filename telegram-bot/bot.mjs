@@ -48,7 +48,7 @@ const distPath = path.join(__dirname, '../dist');
 app.use(express.static(distPath));
 
 // Fallback to React Router or ping message
-app.get('*', (req, res) => {
+app.use((req, res) => {
   res.sendFile(path.join(distPath, 'index.html'), (err) => {
     if (err) {
       res.send('Deep Mind AI Telegram Bot is ALIVE and RUNNING! 🚀 (Frontend not built)');
