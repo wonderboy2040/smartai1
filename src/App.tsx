@@ -7,7 +7,7 @@ import {
 import {
   fetchSinglePrice, batchFetchPrices, fetchForexRate,
   syncToCloud, loadFromCloud, sendTelegramAlert,
-  syncGeminiKeyToCloud, loadGeminiKeyFromCloud
+  syncGroqKeyToCloud, loadGroqKeyFromCloud
 } from './utils/api';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from './utils/tvWebsocket';
 import {
