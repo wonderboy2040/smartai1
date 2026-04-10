@@ -2053,7 +2053,7 @@ export default function App() {
       )}
 
       {/* Neural Core Chat AI Integration with Deep Real-Time Portolio Context Injection */}
-      <NeuralChat groqKey={groqKey} portfolioContext={portfolioContext || 'System initialized. Awaiting data...'} />
+      <NeuralChat groqKey={groqKey} portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'} />
     </div>
   );
 }
