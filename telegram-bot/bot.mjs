@@ -7,6 +7,8 @@
 import TelegramBot from 'node-telegram-bot-api';
 import cron from 'node-cron';
 import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen } from './market.mjs';
 import { loadPortfolioFromCloud, loadGroqKeyFromCloud } from './cloud.mjs';
@@ -33,17 +35,29 @@ let dailyPLHistory = []; // { date, pl, pct }
 let consecutiveStreak = 0; // positive = green days, negative = red days
 
 // ========================================
-// 🌐 DUMMY WEB SERVER (For 24/7 UptimeRobot Trick)
+// 🌐 FULL SITE + BOT SERVER (For Render deployment)
 // ========================================
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.get('/', (req, res) => {
-  res.send('Deep Mind AI Telegram Bot is ALIVE and RUNNING! 🚀');
+// Serve the compiled Vite React frontend
+const distPath = path.join(__dirname, '../dist');
+app.use(express.static(distPath));
+
+// Fallback to React Router or ping message
+app.get('*', (req, res) => {
+  res.sendFile(path.join(distPath, 'index.html'), (err) => {
+    if (err) {
+      res.send('Deep Mind AI Telegram Bot is ALIVE and RUNNING! 🚀 (Frontend not built)');
+    }
+  });
 });
 
 app.listen(PORT, () => {
-  console.log(`🌐 Dummy Web Server listening on port ${PORT} for Free Tier Keep-Alive!`);
+  console.log(`🌐 Web Server running on port ${PORT} - Hosting Bot & Site!`);
 });
 
 // ========================================

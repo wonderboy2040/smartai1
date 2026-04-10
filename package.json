@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "node telegram-bot/bot.mjs",
+    "postinstall": "cd telegram-bot && npm install"
   },
   "dependencies": {
     "@google/genai": "^1.48.0",
