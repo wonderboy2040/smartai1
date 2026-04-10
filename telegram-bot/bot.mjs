@@ -481,6 +481,10 @@ bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/, async (msg, match) => {
   const key = match[1].trim();
   console.log(`📥 /setkey from ${msg.from?.first_name || chatId}`);
   try {
+    if (key.startsWith('gsk_')) {
+      await safeSend(chatId, '❌ <b>Invalid API Key!</b>\n\nYeh Groq key (gsk_...) hai. System ab advanced **Google Gemini** pe chalta hai. Free Gemini key idhar se lo: https://aistudio.google.com/apikey');
+      return;
+    }
     // Set dynamically
     const { setGeminiKey, API_URL } = await import('./config.mjs');
     setGeminiKey(key);
