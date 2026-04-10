@@ -474,31 +474,31 @@ bot.onText(/^\/clear(@\w+)?$/, async (msg) => {
 });
 
 // ========================================
-// COMMAND: /setkey (set Gemini API key)
+// COMMAND: /setkey (set Groq API key)
 // ========================================
 bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const key = match[1].trim();
   console.log(`📥 /setkey from ${msg.from?.first_name || chatId}`);
   try {
-    if (key.startsWith('gsk_')) {
-      await safeSend(chatId, '❌ <b>Invalid API Key!</b>\n\nYeh Groq key (gsk_...) hai. System ab advanced **Google Gemini** pe chalta hai. Free Gemini key idhar se lo: https://aistudio.google.com/apikey');
+    if (!key.startsWith('gsk_')) {
+      await safeSend(chatId, '❌ <b>Invalid API Key!</b>\n\nAb system ultra-fast **Groq (Llama-3)** pe upgrade ho gaya hai! Aapki key hamesha `gsk_` se start honi chahiye. Galti se aapne Gemini ya koi aur key daal di hai.\n\n👉 **Free API Key 1 min me yahan se lein:** https://console.groq.com/keys');
       return;
     }
     // Set dynamically
-    const { setGeminiKey, API_URL } = await import('./config.mjs');
-    setGeminiKey(key);
+    const { setGroqKey, API_URL } = await import('./config.mjs');
+    setGroqKey(key);
     
     // Sync to cloud so web app can also use it
     try {
       await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ geminiKey: key, action: 'saveKey', timestamp: Date.now() })
+        body: JSON.stringify({ groqKey: key, action: 'saveKey', timestamp: Date.now() })
       });
     } catch (e) {}
 
-    await safeSend(chatId, '✅ <b>Gemini API Key Set!</b>\n\nAI Engine is now <b>ONLINE</b> 🧠⚡️ — Powered by Google Gemini Deep Analysis (FREE!).\nTum abhi kisi bhi sawal ka answer AI se le sakte ho!');
+    await safeSend(chatId, '✅ <b>Groq Llama-3 API Key Set!</b>\n\nAI Engine is now <b>ONLINE</b> 🧠⚡️ — Powered by groq.com (Superfast Llama-3 70B!).\nTum abhi kisi bhi sawal ka answer AI se le sakte ho!');
   } catch (e) {
     console.error('❌ /setkey error:', e.message);
     await safeSend(chatId, `❌ Key set me error: ${e.message}`);

@@ -87,7 +87,7 @@ export default function App() {
   const [showAddModal, setShowAddModal] = useState(false);
 
   // Settings / Keys State
-  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('WEALTH_AI_GEMINI') || '');
+  const [groqKey, setGroqKey] = useState(() => localStorage.getItem('WEALTH_AI_GROQ') || '');
   const [showSettings, setShowSettings] = useState(false);
 
   // Add Modal State
@@ -128,8 +128,8 @@ export default function App() {
     if (auth === 'true') {
       setIsAuthenticated(true);
     }
-    // Ensure Gemini key is persisted
-    const savedKey = localStorage.getItem('WEALTH_AI_GEMINI');
+    // Ensure Groq key is persisted
+    const savedKey = localStorage.getItem('WEALTH_AI_GROQ');
     if (!savedKey) {
       // Key must be set via Settings panel or cloud sync
     }
@@ -159,21 +159,21 @@ export default function App() {
     }).catch(() => console.warn('Cloud sync unavailable'));
 
     // Load Gemini key from cloud, fallback to local, then sync to cloud
-    loadGeminiKeyFromCloud().then(cloudKey => {
+    loadGroqKeyFromCloud().then(cloudKey => {
       if (cloudKey) {
-        setGeminiKey(cloudKey);
-        localStorage.setItem('WEALTH_AI_GEMINI', cloudKey);
+        setGroqKey(cloudKey);
+        localStorage.setItem('WEALTH_AI_GROQ', cloudKey);
       } else {
-        const localKey = localStorage.getItem('WEALTH_AI_GEMINI');
+        const localKey = localStorage.getItem('WEALTH_AI_GROQ');
         if (localKey) {
-          syncGeminiKeyToCloud(localKey).catch(() => {});
+          syncGroqKeyToCloud(localKey).catch(() => {});
         }
       }
     }).catch(() => {
-      const localKey = localStorage.getItem('WEALTH_AI_GEMINI');
+      const localKey = localStorage.getItem('WEALTH_AI_GROQ');
       if (localKey) {
-        syncGeminiKeyToCloud(localKey).catch(() => {});
-        setGeminiKey(localKey);
+        syncGroqKeyToCloud(localKey).catch(() => {});
+        setGroqKey(localKey);
       }
     });
 
@@ -924,29 +924,29 @@ export default function App() {
                 {showSettings && (
                   <div className="absolute right-0 top-full mt-3 w-72 glass-modal p-4 rounded-2xl shadow-2xl z-50 animate-scale-in">
                     <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                      <span className="text-lg">🧠</span> Gemini API Key (FREE)
+                      <span className="text-lg">🧠</span> Groq Llama-3 API (FREE)
                     </div>
                     <input
                       type="password"
-                      placeholder="Paste your Gemini API Key..."
-                      value={geminiKey}
+                      placeholder="Paste your 'gsk_' Groq API Key..."
+                      value={groqKey}
                       onChange={(e) => {
                         const val = e.target.value;
-                        setGeminiKey(val);
-                        localStorage.setItem('WEALTH_AI_GEMINI', val);
+                        setGroqKey(val);
+                        localStorage.setItem('WEALTH_AI_GROQ', val);
                       }}
                       className="w-full glass-input rounded-xl px-4 py-3 text-sm text-white mb-3"
                     />
                     <button
                       onClick={() => {
                         setShowSettings(false);
-                        if (geminiKey) syncGeminiKeyToCloud(geminiKey);
+                        if (groqKey) syncGroqKeyToCloud(groqKey);
                       }}
                       className="w-full btn-primary py-2.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-900/30 text-sm"
                     >
                       💾 Save & Cloud Sync
                     </button>
-                    <div className="text-[10px] text-slate-500 mt-3 font-medium text-center">FREE key at aistudio.google.com/apikey</div>
+                    <div className="text-[10px] text-slate-500 mt-3 font-medium text-center">FREE key at console.groq.com/keys</div>
                   </div>
                 )}
               </div>
@@ -967,11 +967,11 @@ export default function App() {
               <button onClick={() => window.location.reload()} className="btn-glass p-2.5 rounded-xl text-lg" title="Refresh">🔄</button>
               <button onClick={() => {
                 const pin = localStorage.getItem('WEALTH_AI_PIN');
-                const geminiSaved = localStorage.getItem('WEALTH_AI_GEMINI');
+                const groqSaved = localStorage.getItem('WEALTH_AI_GROQ');
                 const themeSaved = localStorage.getItem('theme');
                 localStorage.clear();
                 if (pin) localStorage.setItem('WEALTH_AI_PIN', pin);
-                if (geminiSaved) localStorage.setItem('WEALTH_AI_GEMINI', geminiSaved);
+                if (groqSaved) localStorage.setItem('WEALTH_AI_GROQ', groqSaved);
                 if (themeSaved) localStorage.setItem('theme', themeSaved);
                 window.location.reload();
               }} className="btn-glass p-2.5 rounded-xl text-lg" title="Flush Cache — Clear all cached data and reload">🧹</button>
@@ -2053,7 +2053,7 @@ export default function App() {
       )}
 
       {/* Neural Core Chat AI Integration with Deep Real-Time Portolio Context Injection */}
-      <NeuralChat geminiKey={geminiKey} portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'} />
+      <NeuralChat groqKey={groqKey} portfolioContext={portfolioContext || 'System initialized. Awaiting data...'} />
     </div>
   );
 }

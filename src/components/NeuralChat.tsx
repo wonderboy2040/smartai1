@@ -29,7 +29,7 @@ function estimateTokens(text: string): number {
 }
 
 export interface NeuralChatProps {
-  geminiKey: string;
+  groqKey: string;
   portfolioContext: string;
 }
 
@@ -96,10 +96,10 @@ For EVERY response, you MUST include:
 - Include Fibonacci support/resistance when discussing key levels
 - Perform CHAIN-OF-THOUGHT reasoning before conclusions — show your analytical depth`;
 
-export const NeuralChat = React.memo(({ geminiKey, portfolioContext }: NeuralChatProps) => {
+export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'model',
-    text: '🧠 **DEEP MIND AI — Gemini Neural Core v5.0 ONLINE** ⚡\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade deep analysis kar raha hu — powered by Google Gemini\'s advanced reasoning (FREE & UNLIMITED!).\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\n• 🔥 Multi-Factor Momentum Engine — Statistical Edge Detection\n• 🧩 Wyckoff Phase Detector — Accumulation/Distribution\n• 📐 Elliott Wave Analyzer — Wave Count + Fibonacci Targets\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
+    text: '🧠 **DEEP MIND AI — Groq Llama-3.3 Core v5.0 ONLINE** ⚡\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade deep analysis kar raha hu — powered by Groq Llama-3 70B (Fastest AI in the world!).\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\n• 🔥 Multi-Factor Momentum Engine — Statistical Edge Detection\n• 🧩 Wyckoff Phase Detector — Accumulation/Distribution\n• 📐 Elliott Wave Analyzer — Wave Count + Fibonacci Targets\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
     timestamp: Date.now()
   }]);
   const [chatInput, setChatInput] = useState('');
@@ -163,10 +163,10 @@ export const NeuralChat = React.memo(({ geminiKey, portfolioContext }: NeuralCha
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim()) return;
 
-    if (!geminiKey) {
+    if (!groqKey) {
       setChatMessages(prev => [...prev,
         { role: 'user', text: userMessage, timestamp: Date.now() },
-        { role: 'model', text: '⚠️ **Neural Link Offline**\n\nGemini API Key set nahi hai. Settings (⚙️) icon click karke API KEY paste karo.\n\n**FREE key milega:** aistudio.google.com/apikey\n\nEk baar key set kar do, phir 24/7 unlimited FREE AI analysis milega!', timestamp: Date.now() }
+        { role: 'model', text: '⚠️ **Neural Link Offline**\n\nGroq API Key set nahi hai. Settings (⚙️) icon click karke API KEY paste karo.\n\n**FREE key milega:** console.groq.com/keys\n\nEk baar key set kar do, phir system ultra-fast chalega!', timestamp: Date.now() }
       ]);
       return;
     }
@@ -181,43 +181,35 @@ export const NeuralChat = React.memo(({ geminiKey, portfolioContext }: NeuralCha
 
       const systemContent = `${SYSTEM_PROMPT}\n\n--- DEEP MIND QUANTUM LIVE SENSOR DATA (PORTFOLIO + TECHNICALS): ---\n${portfolioContext}\n--- END SENSOR DATA ---\n${intelContext}`;
 
-      // Build Gemini-compatible contents — must alternate user/model roles
-      const geminiContents: { role: string; parts: { text: string }[] }[] = [];
-      for (const m of recentMessages) {
-        const role = m.role === 'model' ? 'model' : 'user';
-        if (geminiContents.length > 0 && geminiContents[geminiContents.length - 1].role === role) {
-          geminiContents[geminiContents.length - 1].parts[0].text += '\n\n' + m.text;
-        } else {
-          geminiContents.push({ role, parts: [{ text: m.text }] });
-        }
-      }
-      // Ensure first message is from user
-      if (geminiContents.length > 0 && geminiContents[0].role !== 'user') {
-        geminiContents.shift();
-      }
+      const groqMessages = [
+        { role: 'system', content: systemContent },
+        ...recentMessages.map(m => ({
+          role: m.role === 'model' ? 'assistant' : 'user',
+          content: m.text
+        }))
+      ];
 
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`, {
+      const res = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Authorization': `Bearer ${groqKey}`,
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({
-          contents: geminiContents,
-          systemInstruction: {
-            parts: [{ text: systemContent }]
-          },
-          generationConfig: {
-            temperature: 0.75,
-            maxOutputTokens: 4096
-          }
+          model: 'llama-3.3-70b-versatile',
+          messages: groqMessages,
+          temperature: 0.75,
+          max_completion_tokens: 4096
         })
       });
 
       if (!res.ok) {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         throw new Error(err.error?.message || 'API request failed');
       }
 
       const data = await res.json();
-      const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || "Neural link unstable. Please retry.";
+      const aiText = data.choices?.[0]?.message?.content || "Neural link unstable. Please retry.";
       
       setChatMessages(prev => [...prev, { 
         role: 'model', 
@@ -273,7 +265,7 @@ export const NeuralChat = React.memo(({ geminiKey, portfolioContext }: NeuralCha
                 <div>
                   <h3 className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-1.5">
                     Deep Mind AI
-                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v5.0 GEMINI</span>
+                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v5.0 GROQ</span>
                   </h3>
                   <div className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -339,7 +331,7 @@ export const NeuralChat = React.memo(({ geminiKey, portfolioContext }: NeuralCha
                 <div className="flex justify-start animate-message-in">
                   <div className="bg-slate-900/90 px-5 py-4 rounded-2xl rounded-tl-none border border-white/5">
                     <div className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
-                      <Sparkles size={12} className="animate-pulse" /> GEMINI DEEP ANALYZING...
+                      <Sparkles size={12} className="animate-pulse" /> GROQ LLAMA-3 ANALYZING...
                     </div>
                     <div className="flex gap-1.5">
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
@@ -397,7 +389,7 @@ export const NeuralChat = React.memo(({ geminiKey, portfolioContext }: NeuralCha
                 </button>
               </div>
               <div className="flex items-center justify-between mt-2 px-1">
-                <span className="text-[8px] text-slate-600 font-mono">Powered by Gemini 2.5 Flash • Google AI (FREE)</span>
+                <span className="text-[8px] text-slate-600 font-mono">Powered by Groq • Llama-3.3-70B (FREE)</span>
                 <span className="text-[8px] text-slate-600">{chatMessages.length} messages</span>
               </div>
             </div>

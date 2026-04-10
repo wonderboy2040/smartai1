@@ -120,11 +120,11 @@ async function getMarketIntelContext() {
 }
 
 // ========================================
-// MAIN AI CHAT FUNCTION — Google Gemini (FREE)
+// MAIN AI CHAT FUNCTION — Groq
 // ========================================
 export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usdInrRate) {
-  if (!GEMINI_KEY) {
-    return `⚠️ <b>AI Engine Offline</b>\n\nGemini API Key set nahi hai. Web app settings (⚙️) se key save karo — automatic cloud sync hoga.\n\n<b>FREE key:</b> <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a>`;
+  if (!GROQ_KEY) {
+    return `⚠️ <b>AI Engine Offline</b>\n\nGroq API Key set nahi hai. Web app settings (⚙️) se key save karo.`;
   }
 
   // Get/create conversation history
@@ -141,37 +141,30 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
   const portfolioCtx = buildPortfolioContext(portfolio, livePrices, usdInrRate);
   const intelCtx = await getMarketIntelContext();
 
-  // Build Gemini conversation format
-  const geminiContents = [];
+  // Build Groq conversation format
+  const groqMessages = [
+    { role: 'system', content: `${SYSTEM_PROMPT}\n\n${portfolioCtx}\n${intelCtx}` }
+  ];
   const recentHistory = history.slice(-MAX_HISTORY);
   for (const m of recentHistory) {
-    const role = m.role === 'model' ? 'model' : 'user';
-    // Gemini requires alternating user/model — merge consecutive same-role
-    if (geminiContents.length > 0 && geminiContents[geminiContents.length - 1].role === role) {
-      geminiContents[geminiContents.length - 1].parts[0].text += '\n\n' + m.content;
-    } else {
-      geminiContents.push({ role, parts: [{ text: m.content }] });
-    }
-  }
-
-  // Ensure first message is from user
-  if (geminiContents.length > 0 && geminiContents[0].role !== 'user') {
-    geminiContents.shift();
+    groqMessages.push({
+      role: m.role === 'model' ? 'assistant' : 'user',
+      content: m.content
+    });
   }
 
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`, {
+    const res = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Authorization': `Bearer ${GROQ_KEY}`,
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify({
-        contents: geminiContents,
-        systemInstruction: {
-          parts: [{ text: `${SYSTEM_PROMPT}\n\n${portfolioCtx}\n${intelCtx}` }]
-        },
-        generationConfig: {
-          temperature: 0.75,
-          maxOutputTokens: 4096
-        }
+        model: 'llama-3.3-70b-versatile',
+        messages: groqMessages,
+        temperature: 0.75,
+        max_completion_tokens: 4096
       }),
       signal: AbortSignal.timeout(60000)
     });
@@ -182,7 +175,7 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
     }
 
     const data = await res.json();
-    const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Neural link unstable. Retry karo.';
+    const aiText = data.choices?.[0]?.message?.content || 'Neural link unstable. Retry karo.';
 
     // Clean up and convert markdown to HTML for Telegram
     let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();

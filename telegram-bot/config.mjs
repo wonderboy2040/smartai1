@@ -10,8 +10,8 @@ export const TG_CHAT_ID = "5488576360";
 export const API_URL = "https://script.google.com/macros/s/AKfycbxITH5b_KKXvhPq3RukOA04d4pVgPrwp4uIiY2BDDMPWZ99oE0Ism2u5FJONR3LUDvhsg/exec";
 
 // Gemini AI (Google — FREE)
-export let GEMINI_KEY = "";
-export function setGeminiKey(key) { GEMINI_KEY = key; }
+export let GROQ_KEY = "";
+export function setGroqKey(key) { GROQ_KEY = key; }
 
 // SIP Defaults
 export const DEFAULT_INDIA_SIP = 10000;
