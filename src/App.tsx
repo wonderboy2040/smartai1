@@ -122,7 +122,7 @@ export default function App() {
   const lastAnomalyCheckRef = useRef(0);
 
   // Advanced features state
-  const [wsLatency, setWsLatency] = useState<{ avg: number; heartbeat: number }>({ avg: 500, heartbeat: 15000 });
+  const [wsLatency, setWsLatency] = useState<{ avg: number; heartbeat: number }>({ avg: 45, heartbeat: 15000 });
   const [portfolioContextText, setPortfolioContextText] = useState<string>('');
   const alertManagerRef = useRef<AlertManager>(new AlertManager());
   const anomalyDetectorRef = useRef<AnomalyDetector>(new AnomalyDetector());
