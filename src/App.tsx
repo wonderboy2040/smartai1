@@ -20,6 +20,11 @@ import { AlertManager, detectSmartMoney } from './utils/alertManager';
 import { getBatchInterval } from './utils/api';
 import { NeuralChat } from './components/NeuralChat';
 import { Clock } from './components/Clock';
+import { MarketHUD } from './components/MarketHUD';
+import { PreMarketWatch } from './components/PreMarketWatch';
+import { SentimentHeatmap } from './components/SentimentHeatmap';
+import { MLPricePredictor } from './components/MLPricePredictor';
+
 
 /**
  * Merge incoming WebSocket price data into existing PriceData.
@@ -61,7 +66,7 @@ export default function App() {
   const [pinInput, setPinInput] = useState('');
 
   // Main State
-  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
+  const [activeTab, setActiveTab] = useState<TabType | 'tools'>('dashboard');
   const [portfolio, setPortfolio] = useState<Position[]>([]);
   const [livePrices, setLivePrices] = useState<Record<string, PriceData>>({});
   const [usdInrRate, setUsdInrRate] = useState(83.5);
@@ -113,6 +118,8 @@ export default function App() {
   const [autoTelegram, setAutoTelegram] = useState(true);
   const telegramIntervalRef = useRef<number | null>(null);
   const forexIntervalRef = useRef<number | null>(null);
+  // 🔧 Anomaly detector throttle — prevents per-tick re-render
+  const lastAnomalyCheckRef = useRef(0);
 
   // Advanced features state
   const [wsLatency, setWsLatency] = useState<{ avg: number; heartbeat: number }>({ avg: 500, heartbeat: 15000 });
@@ -724,9 +731,12 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isAuthenticated]);
 
-  // Detect anomalies on price changes (separate effect with deps)
+  // Detect anomalies on price changes — THROTTLED to every 3s
   useEffect(() => {
     if (!isAuthenticated) return;
+    const now = Date.now();
+    if (now - lastAnomalyCheckRef.current < 3000) return; // 🔧 Throttle
+    lastAnomalyCheckRef.current = now;
     const anomalyManager = anomalyDetectorRef.current;
     const keys = Object.keys(livePrices).slice(-20);
     for (const key of keys) {
@@ -982,6 +992,34 @@ export default function App() {
       </header>
 
       <main className="container mx-auto px-4 py-6">
+        {/* 🌅 Pre-Market Watch — Shows only in pre-market hours */}
+        {activeTab === 'dashboard' && <PreMarketWatch />}
+
+        {/* 🔮 Black Swan Predictor Banner */}
+        {activeTab === 'dashboard' && avgVix > 22 && (
+          <div className="mb-5 black-swan-alert glass-card rounded-2xl p-4 border border-red-500/40 animate-fade-in-up">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-xl bg-red-500/15 flex items-center justify-center text-2xl flex-shrink-0">🦢</div>
+              <div className="flex-1">
+                <div className="font-black text-red-400 uppercase tracking-wider text-sm">⚠️ BLACK SWAN ALERT — VIX SPIKE DETECTED</div>
+                <div className="text-xs text-slate-400 mt-0.5">VIX at {avgVix.toFixed(1)} — Institutional hedging extreme. Deep crash Fibonacci buy zones:</div>
+                <div className="flex flex-wrap gap-3 mt-2">
+                  {currentPrice > 0 && [
+                    { label: 'Fib 0.618', price: currentPrice * (1 - 0.382 * (avgVix / 30)), color: 'text-emerald-400' },
+                    { label: 'Fib 0.786', price: currentPrice * (1 - 0.5   * (avgVix / 30)), color: 'text-amber-400' },
+                    { label: 'Fib 0.886', price: currentPrice * (1 - 0.618 * (avgVix / 30)), color: 'text-red-400' },
+                  ].map(({ label, price, color }) => (
+                    <div key={label} className="bg-black/30 rounded-lg px-3 py-1">
+                      <div className="text-[9px] text-slate-500">{label} Buy Zone</div>
+                      <div className={`text-sm font-black font-mono ${color}`}>{currentMarket === 'IN' ? '₹' : '$'}{price.toFixed(2)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <button onClick={pushTelegramReport} className="btn-glass px-3 py-2 rounded-xl text-xs font-bold text-red-400 whitespace-nowrap">📲 Alert TG</button>
+            </div>
+          </div>
+        )}
         {/* Dashboard Tab */}
         {activeTab === 'dashboard' && currentSymbol && (
           <div className="space-y-5 animate-fade-in">
@@ -1983,6 +2021,36 @@ export default function App() {
         )}
       </main>
 
+      {/* ⚡ AI Tools Tab */}
+      {activeTab === 'tools' && (
+        <main className="container mx-auto px-4 py-6">
+          <div className="space-y-5 animate-fade-in">
+            <h2 className="text-2xl font-black gradient-text-cyan font-display">⚡ Quantum AI Tools</h2>
+
+            {/* Pre-Market Watch — Always visible in Tools */}
+            <PreMarketWatch alwaysShow />
+
+            {/* Sentiment Heatmap */}
+            <SentimentHeatmap
+              portfolio={portfolio}
+              livePrices={livePrices}
+              totalValue={metrics.totalValue}
+              usdInrRate={usdInrRate}
+              onSelect={(sym) => { quickSelect(sym); setActiveTab('dashboard'); }}
+              currentSymbol={currentSymbol}
+            />
+
+            {/* ML Price Predictor */}
+            <MLPricePredictor
+              symbol={currentSymbol || (portfolio[0]?.symbol ?? '')}
+              market={currentMarket}
+              data={livePrices[`${currentMarket}_${currentSymbol}`]}
+              usdInrRate={usdInrRate}
+            />
+          </div>
+        </main>
+      )}
+
       {showAddModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-xl z-50 flex items-center justify-center p-4 animate-fade-in">
           <div className="glass-modal rounded-2xl w-full max-w-md shadow-2xl animate-scale-in">
@@ -2052,8 +2120,15 @@ export default function App() {
         </div>
       )}
 
-      {/* Neural Core Chat AI Integration with Deep Real-Time Portolio Context Injection */}
-      <NeuralChat groqKey={groqKey} portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'} />
+      {/* Neural Core Chat AI Integration with Deep Real-Time Portfolio Context Injection */}
+      <NeuralChat
+        groqKey={groqKey}
+        portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'}
+        onTelegramPush={pushTelegramReport}
+      />
+
+      {/* ⚡ Market HUD Overlay */}
+      <MarketHUD wsLatency={wsLatency} liveStatus={liveStatus} />
     </div>
   );
 }

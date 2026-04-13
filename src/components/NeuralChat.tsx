@@ -29,8 +29,9 @@ function estimateTokens(text: string): number {
 }
 
 export interface NeuralChatProps {
-  groqKey: string;
+  groqKey:          string;
   portfolioContext: string;
+  onTelegramPush?:  () => void;
 }
 
 const QUICK_CHIPS = [
@@ -96,7 +97,7 @@ For EVERY response, you MUST include:
 - Include Fibonacci support/resistance when discussing key levels
 - Perform CHAIN-OF-THOUGHT reasoning before conclusions — show your analytical depth`;
 
-export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatProps) => {
+export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'model',
     text: '🧠 **DEEP MIND AI — Groq Llama-3.3 Core v5.0 ONLINE** ⚡\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade deep analysis kar raha hu — powered by Groq Llama-3 70B (Fastest AI in the world!).\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\n• 🔥 Multi-Factor Momentum Engine — Statistical Edge Detection\n• 🧩 Wyckoff Phase Detector — Accumulation/Distribution\n• 📐 Elliott Wave Analyzer — Wave Count + Fibonacci Targets\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
@@ -285,6 +286,13 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
                     {marketIntel.fearGreedScore > 60 ? '🟢' : marketIntel.fearGreedScore < 40 ? '🔴' : '🟡'} F&G {marketIntel.fearGreedScore}
                   </div>
                 )}
+                {onTelegramPush && (
+                  <button
+                    onClick={onTelegramPush}
+                    title="Push report to Telegram"
+                    className="text-slate-500 hover:text-indigo-400 bg-white/5 rounded-full p-1.5 transition-colors"
+                  >📲</button>
+                )}
                 <button onClick={clearChat} title="Clear chat" className="text-slate-500 hover:text-red-400 bg-white/5 rounded-full p-1.5 transition-colors">
                   <Trash2 size={14} />
                 </button>
@@ -355,7 +363,35 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
               </button>
             )}
 
+            {/* Quick Trading Tools — Screenshot Links */}
+            <div className="relative px-4 pt-3 pb-1">
+              <div className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mb-2">⚡ Quick Trading Tools</div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {[
+                  { icon: '🆓', label: 'Free Option Data', sub: 'Sensibull',    url: 'https://sensibull.com',     clr: 'hover:bg-emerald-500/10 hover:border-emerald-500/30' },
+                  { icon: '📊', label: 'Option Trading',   sub: 'Front Page',   url: 'https://frontpage.in',      clr: 'hover:bg-blue-500/10 hover:border-blue-500/30' },
+                  { icon: '📰', label: 'Market News',      sub: 'Money Control', url: 'https://moneycontrol.com', clr: 'hover:bg-amber-500/10 hover:border-amber-500/30' },
+                  { icon: '🔍', label: 'Fundamentals',     sub: 'Screener.in',   url: 'https://screener.in',      clr: 'hover:bg-purple-500/10 hover:border-purple-500/30' },
+                ].map((tool, i) => (
+                  <a
+                    key={i}
+                    href={tool.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`flex items-center gap-2 px-2.5 py-2 rounded-xl bg-white/[0.02] border border-white/[0.06] ${tool.clr} transition-all group`}
+                  >
+                    <span className="text-base flex-shrink-0">{tool.icon}</span>
+                    <div className="overflow-hidden min-w-0">
+                      <div className="text-[9px] font-bold text-slate-300 group-hover:text-white truncate leading-tight">{tool.label}</div>
+                      <div className="text-[8px] font-bold text-slate-600 group-hover:text-slate-400 truncate">{tool.sub} ↗</div>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+
             {/* Quick Chips - scrollable */}
+
             <div className="relative px-4 pb-2 flex gap-1.5 overflow-x-auto scrollbar-hide">
               {QUICK_CHIPS.map((chip, i) => (
                 <button
