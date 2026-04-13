@@ -905,10 +905,10 @@ export default function App() {
 
             {/* Tabs */}
             <div className="flex gap-0.5 glass-card p-1 rounded-2xl">
-              {(['dashboard', 'portfolio', 'planner', 'macro'] as TabType[]).map(tab => (
+              {(['dashboard', 'portfolio', 'planner', 'macro', 'tools'] as const).map(tab => (
                 <button
                   key={tab}
-                  onClick={() => setActiveTab(tab)}
+                  onClick={() => setActiveTab(tab as any)}
                   className={`tab-btn px-4 py-2 rounded-xl font-semibold text-sm transition-all ${activeTab === tab
                       ? 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
                       : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
@@ -916,8 +916,9 @@ export default function App() {
                 >
                   {tab === 'dashboard' && '📊 Dashboard'}
                   {tab === 'portfolio' && '💼 Portfolio'}
-                  {tab === 'planner' && '🎯 Planner'}
-                  {tab === 'macro' && '🌍 Risk'}
+                  {tab === 'planner'   && '🎯 Planner'}
+                  {tab === 'macro'     && '🌍 Risk'}
+                  {tab === 'tools'     && '⚡ AI Tools'}
                 </button>
               ))}
             </div>

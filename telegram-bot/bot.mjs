@@ -240,7 +240,7 @@ bot.onText(/^\/start(@\w+)?$/, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /start from ${msg.from?.first_name || chatId}`);
 
-  const welcome = `🧠 <b>DEEP MIND AI — Trading Bot v2.0</b>
+  const welcome = `🧠 <b>DEEP MIND AI — Trading Bot v3.0</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Nagraj Bhai, main tumhara personal AI Trading assistant hoon! 24x7 tumhare portfolio ko monitor kar raha hoon aur market hours me automatic analysis bhejta hoon.
@@ -249,6 +249,7 @@ Nagraj Bhai, main tumhara personal AI Trading assistant hoon! 24x7 tumhare portf
 
 📊 /portfolio — Full portfolio analysis + P&L
 🌍 /market — Global market snapshot
+🌅 /premarket — Pre-market intelligence (GIFT Nifty + Futures)
 🎯 /signals — AI buy/sell signals
 📈 /allocation — Smart SIP allocation matrix
 🛡️ /risk — Risk assessment + VIX analysis
@@ -257,6 +258,7 @@ Nagraj Bhai, main tumhara personal AI Trading assistant hoon! 24x7 tumhare portf
 🗺️ /heatmap — Visual portfolio heatmap
 📊 /streak — Performance streak tracker
 💱 /forex — Live USD/INR rate
+🔗 /links — Trading tools & resources
 🔔 /alert — Toggle auto alerts ON/OFF
 🧹 /clear — Clear AI chat history
 ❓ /help — Full command reference
@@ -271,11 +273,17 @@ Examples:
 • <i>risk assessment karo</i>
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━
+🔗 <b>Quick Trading Tools:</b>
+🆓 <a href="https://sensibull.com">Sensibull</a> — Free Option Data
+📈 <a href="https://frontpage.in">Front Page</a> — Options Trading
+📰 <a href="https://moneycontrol.com">Money Control</a> — Market News
+🔍 <a href="https://screener.in">Screener.in</a> — Fundamentals
+━━━━━━━━━━━━━━━━━━━━━━━━━
 📡 Status: <b>${getMarketStatus()}</b>
 💼 Portfolio: <b>${portfolio.length} positions</b>
 🔔 Auto Alerts: <b>${autoAlerts ? 'ON ✅' : 'OFF ❌'}</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-💎 <i>Powered by Deep Mind AI Pro Trading Terminal</i>`;
+💎 <i>Powered by Deep Mind AI Pro Trading Terminal v3.0</i>`;
 
   await safeSend(chatId, welcome);
 });
@@ -337,6 +345,125 @@ Chat history reset karo.
 💎 <i>Deep Mind AI Pro Trading Terminal v2.0</i>`;
 
   await safeSend(chatId, help);
+});
+
+// ========================================
+// COMMAND: /links — Trading Resources
+// ========================================
+bot.onText(/^\/links(@\w+)?$/, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /links from ${msg.from?.first_name || chatId}`);
+  
+  const linksMsg = `🔗 <b>Trading Tools & Resources</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 <b>Options Trading</b>
+🆓 <a href="https://sensibull.com">Sensibull</a> — Free Option Chain + Greeks Data
+📈 <a href="https://frontpage.in">Front Page</a> — Advanced Options Trading Platform
+
+📰 <b>Research & News</b>
+📰 <a href="https://moneycontrol.com">Money Control</a> — Latest Market News & Analysis
+🔍 <a href="https://screener.in">Screener.in</a> — Free Fundamental Stock Analysis
+
+📡 <b>Market Data</b>
+📊 <a href="https://chartink.com">Chartink</a> — Technical Screener + Scans
+🌐 <a href="https://tradingview.com">TradingView</a> — Professional Charting
+
+━━━━━━━━━━━━━━━━━━━━━━━━━
+💡 <i>Tip: Koi bhi question ho toh seedha type karo — Deep Mind AI analyze kar dega!</i>
+
+💎 <i>Deep Mind AI Pro Terminal v3.0</i>`;
+  
+  await safeSend(chatId, linksMsg);
+});
+
+// ========================================
+// COMMAND: /premarket — Pre-Market Intelligence
+// ========================================
+bot.onText(/^\/premarket(@\w+)?$/, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /premarket from ${msg.from?.first_name || chatId}`);
+  try {
+    await safeSend(chatId, '🌅 <i>Fetching global pre-market data...</i>');
+    
+    const tickers = [
+      'NSE:GIFT_NIFTY', 'NSE:GIFTYNIFTY',
+      'CME_MINI:ES1!', 'CME_MINI:NQ1!',
+      'TVC:NI225', 'TVC:HSI', 'XETR:DAX',
+      'TVC:DXY', 'COMEX:GC1!', 'NYMEX:CL1!'
+    ];
+    
+    const nameMap = {
+      'NSE:GIFT_NIFTY':  '🎯 GIFT Nifty',
+      'NSE:GIFTYNIFTY':  '🎯 GIFT Nifty',
+      'CME_MINI:ES1!':   '🇺🇸 S&P 500 Fut',
+      'CME_MINI:NQ1!':   '📱 NASDAQ Fut',
+      'TVC:NI225':       '🇯🇵 Nikkei 225',
+      'TVC:HSI':         '🇭🇰 Hang Seng',
+      'XETR:DAX':        '🇩🇪 DAX',
+      'TVC:DXY':         '💵 DXY Dollar',
+      'COMEX:GC1!':      '🥇 Gold',
+      'NYMEX:CL1!':      '🛢️ Crude Oil',
+    };
+    
+    const res = await fetch('https://scanner.tradingview.com/global/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({ symbols: { tickers }, columns: ['close', 'change'] }),
+      signal: AbortSignal.timeout(10000)
+    });
+    
+    let report = `🌅 <b>PRE-MARKET INTELLIGENCE</b>\n`;
+    report += `⏰ <i>${getISTTime()} IST</i>\n`;
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    
+    const seen = new Set();
+    let giftChange = 0;
+    let esChange = 0;
+    let nqChange = 0;
+    
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.data) {
+        for (const item of data.data) {
+          const name = nameMap[item.s];
+          if (!name || seen.has(name)) continue;
+          seen.add(name);
+          const price = parseFloat(item.d?.[0]) || 0;
+          const change = parseFloat(item.d?.[1]) || 0;
+          if (price <= 0) continue;
+          
+          if (item.s.includes('GIFT')) giftChange = change;
+          if (item.s === 'CME_MINI:ES1!') esChange = change;
+          if (item.s === 'CME_MINI:NQ1!') nqChange = change;
+          
+          const arrow = change >= 0 ? '▲' : '▼';
+          const sign  = change >= 0 ? '+' : '';
+          report += `${name}\n`;
+          report += `  ${arrow} <b>${sign}${change.toFixed(2)}%</b> | ${price > 1000 ? price.toFixed(0) : price.toFixed(2)}\n\n`;
+        }
+      }
+    }
+    
+    // AI Verdict
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    report += `🧠 <b>AI Pre-Market Verdict:</b>\n`;
+    const avgUS = (esChange + nqChange) / 2;
+    if (giftChange > 0.5 || avgUS > 0.5) {
+      report += `🟢 Strong pre-market! GIFT ${giftChange >= 0 ? '+' : ''}${giftChange.toFixed(2)}% — Gap-Up expected. Bullish open ho sakta hai!`;
+    } else if (giftChange < -0.5 || avgUS < -0.5) {
+      report += `🔴 Weak pre-market — GIFT ${giftChange.toFixed(2)}%. Gap-Down risk! First 15-min candle break karo phir entry lo.`;
+    } else {
+      report += `🟡 Mixed signals — Flat to rangebound open expected. Wait for direction.`;
+    }
+    
+    report += `\n\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    await safeSend(chatId, report);
+    
+  } catch (e) {
+    console.error('❌ /premarket error:', e.message);
+    await safeSend(chatId, `❌ Pre-market data fetch me error: ${e.message}\n\nPlease try again.`);
+  }
 });
 
 // ========================================
