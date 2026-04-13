@@ -9,9 +9,9 @@ import cron from 'node-cron';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, GEMINI_KEY } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen } from './market.mjs';
-import { loadPortfolioFromCloud, loadGeminiKeyFromCloud } from './cloud.mjs';
+import { loadPortfolioFromCloud, loadGroqKeyFromCloud } from './cloud.mjs';
 import { 
   generatePortfolioReport, generateMarketReport, generateSignalsReport,
   generateAllocationReport, generateRiskReport, generateAutoReport,
@@ -98,13 +98,13 @@ async function initializeData() {
     console.error('❌ Portfolio load failed:', e.message);
   }
 
-  // Step 2: Gemini Key (non-blocking)
+  // Step 2: Groq Key (non-blocking)
   try {
-    console.log('🔑 Loading Gemini API key...');
-    await loadGeminiKeyFromCloud();
-    console.log(`✅ Gemini key: ${GEMINI_KEY ? 'SET (' + GEMINI_KEY.substring(0, 8) + '...)' : 'NOT SET'}`);
+    console.log('🔑 Loading Groq API key...');
+    await loadGroqKeyFromCloud();
+    console.log(`✅ Groq key: ${GROQ_KEY ? 'SET (' + GROQ_KEY.substring(0, 8) + '...)' : 'NOT SET'}`);
   } catch (e) {
-    console.warn('⚠️  Gemini key load failed:', e.message);
+    console.warn('⚠️  Groq key load failed:', e.message);
   }
 
   // Step 3: Forex (non-blocking)
@@ -141,10 +141,36 @@ async function initializeData() {
   console.log('🟢 ════════════════════════════════════════');
   console.log(`   BOT FULLY ONLINE — ${getISTTime()} IST`);
   console.log(`   Portfolio: ${portfolio.length} positions`);
-  console.log(`   Gemini AI: ${GEMINI_KEY ? 'ACTIVE' : 'INACTIVE (no key)'}`);
+  console.log(`   Groq AI: ${GROQ_KEY ? 'ACTIVE' : 'INACTIVE (no key)'}`);
   console.log(`   Market: ${getMarketStatus()}`);
   console.log('🟢 ════════════════════════════════════════');
   console.log('');
+
+  // Step 6: Set Persistent Telegram Menu Commands
+  try {
+    await bot.setMyCommands([
+      { command: 'start', description: 'Main Menu & Overview' },
+      { command: 'portfolio', description: 'Full Portfolio Analysis' },
+      { command: 'market', description: 'Global Market Snapshot' },
+      { command: 'premarket', description: 'Pre-market Intelligence' },
+      { command: 'options', description: 'Options Analysis (PCR/IV)' },
+      { command: 'strategy', description: 'AI Option Strategies' },
+      { command: 'news', description: 'Global Market Sentiment' },
+      { command: 'fundamental', description: 'Deep Fundamental Analysis' },
+      { command: 'signals', description: 'AI Buy/Sell Signals' },
+      { command: 'allocation', description: 'Smart SIP Matrix' },
+      { command: 'risk', description: 'Risk & VIX Assessment' },
+      { command: 'scan', description: 'Deep scan any symbol' },
+      { command: 'compare', description: 'Head-to-head comparison' },
+      { command: 'heatmap', description: 'Visual Heatmap' },
+      { command: 'streak', description: 'Performance streak tracker' },
+      { command: 'forex', description: 'Live Forex (USD/INR)' },
+      { command: 'clear', description: 'Clear AI Memory' }
+    ]);
+    console.log('✅ Telegram Menu Commands Updated');
+  } catch (e) {
+    console.warn('⚠️  Could not set Telegram commands:', e.message);
+  }
 }
 
 // ========================================
@@ -708,8 +734,12 @@ bot.onText(/^\/chat(?:@\w+)?\s+(.+)/, async (msg, match) => {
 // ========================================
 // COMMAND: /scan <SYMBOL> — Deep Symbol Scan
 // ========================================
-bot.onText(/^\/scan(?:@\w+)?\s+(.+)/, async (msg, match) => {
+bot.onText(/^\/scan(?:@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
   const chatId = msg.chat.id;
+  if (!match[1]) {
+    await safeSend(chatId, '⚠️ <b>Symbol is missing!</b>\n\nCommand ke aage symbol likho. Example: <code>/scan RELIANCE</code> or <code>/scan AAPL</code>');
+    return;
+  }
   const symbol = match[1].trim().toUpperCase();
   console.log(`📥 /scan ${symbol} from ${msg.from?.first_name || chatId}`);
   try {
@@ -751,8 +781,12 @@ bot.onText(/^\/heatmap(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /compare <SYM1> <SYM2> — Side by Side
 // ========================================
-bot.onText(/^\/compare(?:@\w+)?\s+(.+)/, async (msg, match) => {
+bot.onText(/^\/compare(?:@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
   const chatId = msg.chat.id;
+  if (!match[1]) {
+    await safeSend(chatId, '⚠️ <b>Symbols missing!</b>\n\nDono symbols likho!\n\nExample: <code>/compare RELIANCE TCS</code> or <code>/compare SMH QQQM</code>');
+    return;
+  }
   const args = match[1].trim().toUpperCase().split(/[\s,vs]+/);
   console.log(`📥 /compare ${args.join(' vs ')} from ${msg.from?.first_name || chatId}`);
   try {

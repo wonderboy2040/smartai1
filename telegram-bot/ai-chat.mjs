@@ -1,8 +1,7 @@
 // ============================================
-// AI CHAT ENGINE — Google Gemini Integration (FREE)
+// AI CHAT ENGINE — Groq Integration
 // ============================================
-
-import { GEMINI_KEY } from './config.mjs';
+import { GROQ_KEY } from './config.mjs';
 import { fetchMarketIntelligence } from './market.mjs';
 import { calculateMetrics, analyzeAsset } from './analysis.mjs';
 
@@ -197,7 +196,7 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
 
     return htmlText;
   } catch (e) {
-    console.error('❌ Gemini API Error:', e.message);
+    console.error('❌ Groq API Error:', e.message);
     return `❌ <b>AI Error:</b> ${e.message}\n\n<i>Retry karo ya thodi der baad try karo.</i>`;
   }
 }
