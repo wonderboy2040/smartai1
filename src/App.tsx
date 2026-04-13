@@ -217,7 +217,7 @@ export default function App() {
         lastLocalSaveRef.current = now;
         try { localStorage.setItem('livePrices', JSON.stringify(merged)); } catch { /* quota */ }
       }
-      return merged;
+      return changed ? merged : prev;
     });
   }, []);
 
