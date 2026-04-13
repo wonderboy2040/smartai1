@@ -24,13 +24,12 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-function estimateTokens(text: string): number {
-  return Math.ceil(text.split(/\s+/).length * 1.3);
-}
+
 
 export interface NeuralChatProps {
-  groqKey: string;
+  groqKey:          string;
   portfolioContext: string;
+  onTelegramPush?:  () => void;
 }
 
 const QUICK_CHIPS = [
@@ -44,59 +43,18 @@ const QUICK_CHIPS = [
   { label: '🏦 FII/DII', query: 'FII aur DII flow ka deep analysis karo — institutional money kaha ja raha hai? Passive vs active flow decomposition do.' },
 ];
 
-const SYSTEM_PROMPT = `You are the DEEP MIND AI NEURAL INSIDER — the most advanced institutional-grade trading AI, powered by Google Gemini's superior deep reasoning and analytical capabilities. You are talking to "Nagraj Bhai".
+const SYSTEM_PROMPT = `You are DEEP MIND AI NEURAL INSIDER. You talk to "Nagraj Bhai" in NATIVE HINGLISH.
+You are a ruthless, precise Quantum AI that runs Dalal Street & Wall Street using SMC, Wyckoff, MACD, RSI, VIX, risk arrays. Tone: confident, professional, friendly pro trader.
 
-[CORE IDENTITY]
-You are a ruthless, ultra-precise Quantum AI engine running 24/7 background analysis across Dalal Street (India 🇮🇳) and Wall Street (USA 🇺🇸). You integrate live data feeds from TradingView, Bloomberg Terminal emulations, Dark Pool scanner, and WorldMonitor global intelligence. Your analytical depth far exceeds standard AI — you perform multi-layer reasoning chains before every recommendation.
+Response rules:
+1. Reference LIVE SENSOR DATA (numbers).
+2. Tech & SMC analysis breakdown
+3. Risk-adjusted call (SL/TP)
+4. "CONVICTION SCORE: XX/100"
 
-[ADVANCED ANALYTICAL FRAMEWORKS — DEEP AI]
-1. **Smart Money Concepts (SMC):** Order blocks, fair value gaps (FVG), liquidity grabs, BOS/CHoCH, institutional order flow, mitigation blocks, breaker blocks
-2. **Wyckoff Method:** Accumulation/Distribution phases, Spring/UTAD patterns, Composite Man logic, Phase A-E progression
-3. **Elliott Wave Advanced:** Impulse/corrective wave counts, wave extensions, fibonacci wave targets, complex corrections (zigzag/flat/triangle), wave degree analysis
-4. **Macro Fundamentals:** Fed policy trajectory, RBI rate path, FII/DII flow decomposition (passive vs active), Bond yield curve, DXY correlation, real yield analysis
-5. **Sector Rotation Model:** Institutional inflow/outflow heat mapping, relative strength ranking, sector momentum scoring, inter-market analysis
-6. **CANSLIM + Momentum:** Multi-factor growth screening, earnings acceleration, relative strength line analysis
-7. **Risk Management:** Position sizing via Kelly Criterion & Optimal-F, ATR-based dynamic SL/TP, portfolio VaR, correlation-adjusted risk
-8. **Intermarket Analysis:** Bond-equity correlation, commodity-currency links, risk-on/risk-off regime detection
-9. **Sentiment Quantification:** Put/Call ratio, VIX term structure, options skew, retail vs institutional positioning
-10. **Statistical Edge Detection:** Mean reversion probability, trend persistence scoring, volume profile analysis, market microstructure signals
+Critical: Be concise! Keep tokens low. HTML bolding & Emojis allowed.`;
 
-[SPECIAL INTELLIGENCE FROM worldmonitor.app]
-You have access to real-time geopolitical intelligence from WorldMonitor — a global OSINT intelligence dashboard. Use this to assess:
-- Geopolitical risk factors affecting markets
-- Global trade sentiment and tariff impacts
-- Military/economic developments that could cause volatility
-- Currency and commodity flow disruptions
-
-[COMMUNICATION STYLE]
-- Speak in NATIVE HINGLISH — heavily mixed Hindi + English
-- Professional but relatable tone (like a seasoned prop desk trader mentoring his trusted friend)
-- Use institutional jargon naturally: "Liquidity sweep", "Premium/Discount zone", "Order block", "Retail trap", "FII passive flow", "Dark pool prints", "Smart money divergence", "Wyckoff Spring", "Fair Value Gap"
-- Use emojis 📊🟢🔴📈📉🧠💎🔥⚡ to structure analysis
-- Use bolding (**text**) for key levels, signals, and verdicts
-- Use bullet points (•) for structured breakdown
-
-[MANDATORY RESPONSE STRUCTURE — DEEP ANALYSIS MODE]
-For EVERY response, you MUST include:
-1. **Real-time market context** from the SENSOR DATA (don't ignore it! Reference ACTUAL numbers)
-2. **Multi-timeframe technical breakdown** (RSI divergence, MACD histogram, SMA crossover status, volume analysis)
-3. **Smart Money flow analysis** (institutional positioning, where is the Composite Man?)
-4. **Risk-adjusted actionable verdict** (exact entry/exit zones, ATR-calculated SL/TP, Kelly-optimal position sizing)
-5. **Probability assessment** with multi-factor reasoning chain
-6. **DEEP MIND CONVICTION SCORE: XX/100** (always conclude with this — backed by multi-factor reasoning)
-
-[CRITICAL RULES]
-- NEVER give generic/vague answers. Always be SPECIFIC with numbers, levels, and percentages.
-- If RSI < 35 and MACD bullish divergence → Call it "Institutional Accumulation Zone / Wyckoff Spring"
-- If RSI > 70 and MACD bearish divergence → Call it "Distribution Phase / Smart Money Exit"
-- Always reference the LIVE SENSOR DATA numbers when analyzing — show your work
-- VIX-based context: High VIX = speak with urgency about hedging + volatility plays. Low VIX = speak about aggressive accumulation window.
-- Give position sizing advice (e.g., "Agar 10K SIP hai toh 4K yaha lagao — Kelly optimal")
-- When providing SL/TP levels, calculate them from ATR data in the sensor feed
-- Include Fibonacci support/resistance when discussing key levels
-- Perform CHAIN-OF-THOUGHT reasoning before conclusions — show your analytical depth`;
-
-export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatProps) => {
+export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'model',
     text: '🧠 **DEEP MIND AI — Groq Llama-3.3 Core v5.0 ONLINE** ⚡\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade deep analysis kar raha hu — powered by Groq Llama-3 70B (Fastest AI in the world!).\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\n• 🔥 Multi-Factor Momentum Engine — Statistical Edge Detection\n• 🧩 Wyckoff Phase Detector — Accumulation/Distribution\n• 📐 Elliott Wave Analyzer — Wave Count + Fibonacci Targets\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
@@ -176,10 +134,10 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
     setIsThinking(true);
 
     try {
-      const recentMessages = [...currentMessages.slice(-8), { role: 'user' as const, text: userMessage }];
+      const recentMessages = [...currentMessages.slice(-2), { role: 'user' as const, text: userMessage }];
       const intelContext = marketIntelRef.current ? formatMarketIntelligenceForAI(marketIntelRef.current) : '';
 
-      const systemContent = `${SYSTEM_PROMPT}\n\n--- DEEP MIND QUANTUM LIVE SENSOR DATA (PORTFOLIO + TECHNICALS): ---\n${portfolioContext}\n--- END SENSOR DATA ---\n${intelContext}`;
+      const systemContent = `${SYSTEM_PROMPT}\n\n--- SENSOR DATA ---\n${portfolioContext}\n${intelContext}`;
 
       const groqMessages = [
         { role: 'system', content: systemContent },
@@ -189,27 +147,47 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
         }))
       ];
 
-      const res = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${groqKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: groqMessages,
-          temperature: 0.75,
-          max_completion_tokens: 4096
-        })
-      });
+      const MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it', 'llama3-70b-8192'];
+      let aiText = '';
+      let lastError = '';
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || 'API request failed');
+      for (const model of MODELS) {
+        try {
+          const res = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${groqKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: model,
+              messages: groqMessages,
+              temperature: 0.75,
+              max_completion_tokens: 800
+            })
+          });
+
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            const errMsg = err.error?.message || 'API request failed';
+            if (res.status === 429 || errMsg.includes('decommissioned') || errMsg.includes('not exist')) {
+              lastError = `Skipping ${model}.`;
+              continue; // Fallback to next model
+            }
+            throw new Error(errMsg);
+          }
+
+          const data = await res.json();
+          aiText = data.choices?.[0]?.message?.content || "";
+          break; // Success, exit loop
+        } catch (e: any) {
+          lastError = e.message;
+          if (e.message.includes('Rate limit') || e.message.includes('decommissioned')) continue;
+          throw e; // Unrecoverable error
+        }
       }
 
-      const data = await res.json();
-      const aiText = data.choices?.[0]?.message?.content || "Neural link unstable. Please retry.";
+      if (!aiText) throw new Error(lastError || "All AI models exhausted their daily limits!");
       
       setChatMessages(prev => [...prev, { 
         role: 'model', 
@@ -285,6 +263,13 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
                     {marketIntel.fearGreedScore > 60 ? '🟢' : marketIntel.fearGreedScore < 40 ? '🔴' : '🟡'} F&G {marketIntel.fearGreedScore}
                   </div>
                 )}
+                {onTelegramPush && (
+                  <button
+                    onClick={onTelegramPush}
+                    title="Push report to Telegram"
+                    className="text-slate-500 hover:text-indigo-400 bg-white/5 rounded-full p-1.5 transition-colors"
+                  >📲</button>
+                )}
                 <button onClick={clearChat} title="Clear chat" className="text-slate-500 hover:text-red-400 bg-white/5 rounded-full p-1.5 transition-colors">
                   <Trash2 size={14} />
                 </button>
@@ -355,7 +340,35 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext }: NeuralChatP
               </button>
             )}
 
+            {/* Quick Trading Tools — Screenshot Links */}
+            <div className="relative px-4 pt-3 pb-1">
+              <div className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mb-2">⚡ Quick Trading Tools</div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {[
+                  { icon: '🧠', label: 'Options Analysis', sub: 'Sensibull Quantum', action: 'Scan live Option Chain for NIFTY. Analyze Put-Call Ratio (PCR), Max Pain, and Implied Volatility to find strong support and resistance levels.', clr: 'hover:bg-emerald-500/10 hover:border-emerald-500/30' },
+                  { icon: '🎯', label: 'Option Strategist', sub: 'FrontPage AI', action: 'Based on current market volatility, construct 2 optimal actionable Option Strategies (e.g. Bull Call Spread, Iron Condor) with exact strikes, target, and SL.', clr: 'hover:bg-blue-500/10 hover:border-blue-500/30' },
+                  { icon: '🌍', label: 'News Sentiment', sub: 'Global Pulse', action: 'Summarize the latest financial market news and calculate a collective Bullish/Bearish sentiment score (1-100) affecting the markets today.', clr: 'hover:bg-amber-500/10 hover:border-amber-500/30' },
+                  { icon: '💼', label: 'Fund. Forensics', sub: 'Screener AI', action: 'Execute a deep fundamental forensic analysis for the top holding in my portfolio. Calculate Intrinsic Value using Benjamin Graham framework.', clr: 'hover:bg-purple-500/10 hover:border-purple-500/30' },
+                ].map((tool, i) => (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      sendMessage(tool.action);
+                    }}
+                    className={`flex items-center text-left gap-2 px-2.5 py-2 rounded-xl bg-white/[0.02] border border-white/[0.06] ${tool.clr} transition-all group`}
+                  >
+                    <span className="text-base flex-shrink-0">{tool.icon}</span>
+                    <div className="overflow-hidden min-w-0">
+                      <div className="text-[9px] font-bold text-slate-300 group-hover:text-white truncate leading-tight">{tool.label}</div>
+                      <div className="text-[8px] font-bold text-slate-600 group-hover:text-slate-400 truncate">{tool.sub} ⚡</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Quick Chips - scrollable */}
+
             <div className="relative px-4 pb-2 flex gap-1.5 overflow-x-auto scrollbar-hide">
               {QUICK_CHIPS.map((chip, i) => (
                 <button

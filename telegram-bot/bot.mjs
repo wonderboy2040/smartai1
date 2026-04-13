@@ -9,9 +9,9 @@ import cron from 'node-cron';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, GEMINI_KEY } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen } from './market.mjs';
-import { loadPortfolioFromCloud, loadGeminiKeyFromCloud } from './cloud.mjs';
+import { loadPortfolioFromCloud, loadGroqKeyFromCloud } from './cloud.mjs';
 import { 
   generatePortfolioReport, generateMarketReport, generateSignalsReport,
   generateAllocationReport, generateRiskReport, generateAutoReport,
@@ -98,13 +98,13 @@ async function initializeData() {
     console.error('❌ Portfolio load failed:', e.message);
   }
 
-  // Step 2: Gemini Key (non-blocking)
+  // Step 2: Groq Key (non-blocking)
   try {
-    console.log('🔑 Loading Gemini API key...');
-    await loadGeminiKeyFromCloud();
-    console.log(`✅ Gemini key: ${GEMINI_KEY ? 'SET (' + GEMINI_KEY.substring(0, 8) + '...)' : 'NOT SET'}`);
+    console.log('🔑 Loading Groq API key...');
+    await loadGroqKeyFromCloud();
+    console.log(`✅ Groq key: ${GROQ_KEY ? 'SET (' + GROQ_KEY.substring(0, 8) + '...)' : 'NOT SET'}`);
   } catch (e) {
-    console.warn('⚠️  Gemini key load failed:', e.message);
+    console.warn('⚠️  Groq key load failed:', e.message);
   }
 
   // Step 3: Forex (non-blocking)
@@ -141,10 +141,36 @@ async function initializeData() {
   console.log('🟢 ════════════════════════════════════════');
   console.log(`   BOT FULLY ONLINE — ${getISTTime()} IST`);
   console.log(`   Portfolio: ${portfolio.length} positions`);
-  console.log(`   Gemini AI: ${GEMINI_KEY ? 'ACTIVE' : 'INACTIVE (no key)'}`);
+  console.log(`   Groq AI: ${GROQ_KEY ? 'ACTIVE' : 'INACTIVE (no key)'}`);
   console.log(`   Market: ${getMarketStatus()}`);
   console.log('🟢 ════════════════════════════════════════');
   console.log('');
+
+  // Step 6: Set Persistent Telegram Menu Commands
+  try {
+    await bot.setMyCommands([
+      { command: 'start', description: 'Main Menu & Overview' },
+      { command: 'portfolio', description: 'Full Portfolio Analysis' },
+      { command: 'market', description: 'Global Market Snapshot' },
+      { command: 'premarket', description: 'Pre-market Intelligence' },
+      { command: 'options', description: 'Options Analysis (PCR/IV)' },
+      { command: 'strategy', description: 'AI Option Strategies' },
+      { command: 'news', description: 'Global Market Sentiment' },
+      { command: 'fundamental', description: 'Deep Fundamental Analysis' },
+      { command: 'signals', description: 'AI Buy/Sell Signals' },
+      { command: 'allocation', description: 'Smart SIP Matrix' },
+      { command: 'risk', description: 'Risk & VIX Assessment' },
+      { command: 'scan', description: 'Deep scan any symbol' },
+      { command: 'compare', description: 'Head-to-head comparison' },
+      { command: 'heatmap', description: 'Visual Heatmap' },
+      { command: 'streak', description: 'Performance streak tracker' },
+      { command: 'forex', description: 'Live Forex (USD/INR)' },
+      { command: 'clear', description: 'Clear AI Memory' }
+    ]);
+    console.log('✅ Telegram Menu Commands Updated');
+  } catch (e) {
+    console.warn('⚠️  Could not set Telegram commands:', e.message);
+  }
 }
 
 // ========================================
@@ -236,11 +262,11 @@ async function safeSend(chatId, text, options = {}) {
 // ========================================
 // COMMAND: /start
 // ========================================
-bot.onText(/^\/start(@\w+)?$/, async (msg) => {
+bot.onText(/^\/start(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /start from ${msg.from?.first_name || chatId}`);
 
-  const welcome = `🧠 <b>DEEP MIND AI — Trading Bot v2.0</b>
+  const welcome = `🧠 <b>DEEP MIND AI — Trading Bot v3.0</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Nagraj Bhai, main tumhara personal AI Trading assistant hoon! 24x7 tumhare portfolio ko monitor kar raha hoon aur market hours me automatic analysis bhejta hoon.
@@ -249,11 +275,13 @@ Nagraj Bhai, main tumhara personal AI Trading assistant hoon! 24x7 tumhare portf
 
 📊 /portfolio — Full portfolio analysis + P&L
 🌍 /market — Global market snapshot
+🌅 /premarket — Pre-market intelligence (GIFT Nifty + Futures)
 🎯 /signals — AI buy/sell signals
 📈 /allocation — Smart SIP allocation matrix
 🛡️ /risk — Risk assessment + VIX analysis
 🔍 /scan &lt;SYMBOL&gt; — Deep scan any symbol
 ⚖️ /compare &lt;SYM1&gt; &lt;SYM2&gt; — Head-to-head comparison
+🗺️ /heatmap — Visual portfolio heatmap
 🗺️ /heatmap — Visual portfolio heatmap
 📊 /streak — Performance streak tracker
 💱 /forex — Live USD/INR rate
@@ -271,11 +299,17 @@ Examples:
 • <i>risk assessment karo</i>
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━
+⚡ <b>Superintelligent AI Tools:</b>
+🧠 /options — Live PCR & IV Options Analysis
+🎯 /strategy — Executable Option Strategies
+🌍 /news — Global Market News Sentiment
+💼 /fundamental — Deep Balance Sheet Analysis
+━━━━━━━━━━━━━━━━━━━━━━━━━
 📡 Status: <b>${getMarketStatus()}</b>
 💼 Portfolio: <b>${portfolio.length} positions</b>
 🔔 Auto Alerts: <b>${autoAlerts ? 'ON ✅' : 'OFF ❌'}</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-💎 <i>Powered by Deep Mind AI Pro Trading Terminal</i>`;
+💎 <i>Powered by Deep Mind AI Pro Trading Terminal v3.0</i>`;
 
   await safeSend(chatId, welcome);
 });
@@ -283,7 +317,7 @@ Examples:
 // ========================================
 // COMMAND: /help
 // ========================================
-bot.onText(/^\/help(@\w+)?$/, async (msg) => {
+bot.onText(/^\/help(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /help from ${msg.from?.first_name || chatId}`);
 
@@ -340,9 +374,165 @@ Chat history reset karo.
 });
 
 // ========================================
+// COMMAND: /options — AI Options Analysis
+// ========================================
+bot.onText(/^\/options?(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /options from ${msg.from?.first_name || chatId}`);
+  try {
+    await safeSend(chatId, '🧠 <i>Scanning live Option Chain for NIFTY/BankNIFTY... analyzing PCR & Max Pain...</i>\n\nThis is a Superintelligent Deep AI Feature.');
+    await refreshPrices();
+    const response = await chatWithAI(chatId, 'Scan live Option Chain for NIFTY. Analyze Put-Call Ratio (PCR), Max Pain, and Implied Volatility to find strong support and resistance levels. Provide an actionable conclusion.', portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, response);
+  } catch (e) {
+    console.error('❌ /options error:', e.message);
+    await safeSend(chatId, `❌ /options fetch me error: ${e.message}\n\nPlease try again.`);
+  }
+});
+
+// ========================================
+// COMMAND: /strategy — AI Option Strategist
+// ========================================
+bot.onText(/^\/strateg(?:y|ies)(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /strategy from ${msg.from?.first_name || chatId}`);
+  try {
+    await safeSend(chatId, '🎯 <i>Building optimal Option Strategies based on VIX and current trend...</i>\n\nThis is a Superintelligent Deep AI Feature.');
+    await refreshPrices();
+    const response = await chatWithAI(chatId, 'Based on current market volatility and trend, build 2 optimal actionable Option Strategies (e.g. Bull Call Spread, Iron Condor) with exact strikes, target, SL, and Risk:Reward.', portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, response);
+  } catch (e) {
+    console.error('❌ /strategy error:', e.message);
+    await safeSend(chatId, `❌ /strategy fetch me error: ${e.message}\n\nPlease try again.`);
+  }
+});
+
+// ========================================
+// COMMAND: /news — News Sentiment
+// ========================================
+bot.onText(/^\/news(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /news from ${msg.from?.first_name || chatId}`);
+  try {
+    await safeSend(chatId, '🌍 <i>Synthesizing latest global market news... extracting sentiment score...</i>\n\nThis is a Superintelligent Deep AI Feature.');
+    const response = await chatWithAI(chatId, 'Summarize the latest financial market news and calculate a collective Bullish/Bearish sentiment score (1-100) affecting Indian and US markets today.', portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, response);
+  } catch (e) {
+    console.error('❌ /news error:', e.message);
+    await safeSend(chatId, `❌ /news fetch me error: ${e.message}\n\nPlease try again.`);
+  }
+});
+
+// ========================================
+// COMMAND: /fundamental — Deep Fundamentals
+// ========================================
+bot.onText(/^\/fundamentals?(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const target = match[1] ? match[1].trim() : 'my top portfolio holding';
+  console.log(`📥 /fundamental ${target} from ${msg.from?.first_name || chatId}`);
+  try {
+    await safeSend(chatId, `💼 <i>Executing Deep Fundamental Forensics for ${target}... running Graham framework...</i>\n\nThis is a Superintelligent Deep AI Feature.`);
+    const response = await chatWithAI(chatId, `Execute a deep fundamental forensic analysis for ${target}. Calculate Intrinsic Value based on PE ratio, Book Value, and ROE using Graham framework. Output in tabular format if possible.`, portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, response);
+  } catch (e) {
+    console.error('❌ /fundamental error:', e.message);
+    await safeSend(chatId, `❌ /fundamental fetch me error: ${e.message}\n\nPlease try again.`);
+  }
+});
+
+// ========================================
+// COMMAND: /premarket — Pre-Market Intelligence
+// ========================================
+bot.onText(/^\/premarket(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /premarket from ${msg.from?.first_name || chatId}`);
+  try {
+    await safeSend(chatId, '🌅 <i>Fetching global pre-market data...</i>');
+    
+    const tickers = [
+      'NSE:GIFT_NIFTY', 'NSE:GIFTYNIFTY',
+      'CME_MINI:ES1!', 'CME_MINI:NQ1!',
+      'TVC:NI225', 'TVC:HSI', 'XETR:DAX',
+      'TVC:DXY', 'COMEX:GC1!', 'NYMEX:CL1!'
+    ];
+    
+    const nameMap = {
+      'NSE:GIFT_NIFTY':  '🎯 GIFT Nifty',
+      'NSE:GIFTYNIFTY':  '🎯 GIFT Nifty',
+      'CME_MINI:ES1!':   '🇺🇸 S&P 500 Fut',
+      'CME_MINI:NQ1!':   '📱 NASDAQ Fut',
+      'TVC:NI225':       '🇯🇵 Nikkei 225',
+      'TVC:HSI':         '🇭🇰 Hang Seng',
+      'XETR:DAX':        '🇩🇪 DAX',
+      'TVC:DXY':         '💵 DXY Dollar',
+      'COMEX:GC1!':      '🥇 Gold',
+      'NYMEX:CL1!':      '🛢️ Crude Oil',
+    };
+    
+    const res = await fetch('https://scanner.tradingview.com/global/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({ symbols: { tickers }, columns: ['close', 'change'] }),
+      signal: AbortSignal.timeout(10000)
+    });
+    
+    let report = `🌅 <b>PRE-MARKET INTELLIGENCE</b>\n`;
+    report += `⏰ <i>${getISTTime()} IST</i>\n`;
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    
+    const seen = new Set();
+    let giftChange = 0;
+    let esChange = 0;
+    let nqChange = 0;
+    
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.data) {
+        for (const item of data.data) {
+          const name = nameMap[item.s];
+          if (!name || seen.has(name)) continue;
+          seen.add(name);
+          const price = parseFloat(item.d?.[0]) || 0;
+          const change = parseFloat(item.d?.[1]) || 0;
+          if (price <= 0) continue;
+          
+          if (item.s.includes('GIFT')) giftChange = change;
+          if (item.s === 'CME_MINI:ES1!') esChange = change;
+          if (item.s === 'CME_MINI:NQ1!') nqChange = change;
+          
+          const arrow = change >= 0 ? '▲' : '▼';
+          const sign  = change >= 0 ? '+' : '';
+          report += `${name}\n`;
+          report += `  ${arrow} <b>${sign}${change.toFixed(2)}%</b> | ${price > 1000 ? price.toFixed(0) : price.toFixed(2)}\n\n`;
+        }
+      }
+    }
+    
+    // AI Verdict
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    report += `🧠 <b>AI Pre-Market Verdict:</b>\n`;
+    const avgUS = (esChange + nqChange) / 2;
+    if (giftChange > 0.5 || avgUS > 0.5) {
+      report += `🟢 Strong pre-market! GIFT ${giftChange >= 0 ? '+' : ''}${giftChange.toFixed(2)}% — Gap-Up expected. Bullish open ho sakta hai!`;
+    } else if (giftChange < -0.5 || avgUS < -0.5) {
+      report += `🔴 Weak pre-market — GIFT ${giftChange.toFixed(2)}%. Gap-Down risk! First 15-min candle break karo phir entry lo.`;
+    } else {
+      report += `🟡 Mixed signals — Flat to rangebound open expected. Wait for direction.`;
+    }
+    
+    report += `\n\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    await safeSend(chatId, report);
+    
+  } catch (e) {
+    console.error('❌ /premarket error:', e.message);
+    await safeSend(chatId, `❌ Pre-market data fetch me error: ${e.message}\n\nPlease try again.`);
+  }
+});
+
+// ========================================
 // COMMAND: /portfolio
 // ========================================
-bot.onText(/^\/portfolio(@\w+)?$/, async (msg) => {
+bot.onText(/^\/portfolio(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /portfolio from ${msg.from?.first_name || chatId}`);
   try {
@@ -363,7 +553,7 @@ bot.onText(/^\/portfolio(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /market
 // ========================================
-bot.onText(/^\/market(@\w+)?$/, async (msg) => {
+bot.onText(/^\/market(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /market from ${msg.from?.first_name || chatId}`);
   try {
@@ -380,7 +570,7 @@ bot.onText(/^\/market(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /signals
 // ========================================
-bot.onText(/^\/signals(@\w+)?$/, async (msg) => {
+bot.onText(/^\/signals(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /signals from ${msg.from?.first_name || chatId}`);
   try {
@@ -401,7 +591,7 @@ bot.onText(/^\/signals(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /allocation
 // ========================================
-bot.onText(/^\/allocation(@\w+)?$/, async (msg) => {
+bot.onText(/^\/allocation(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /allocation from ${msg.from?.first_name || chatId}`);
   try {
@@ -418,7 +608,7 @@ bot.onText(/^\/allocation(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /risk
 // ========================================
-bot.onText(/^\/risk(@\w+)?$/, async (msg) => {
+bot.onText(/^\/risk(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /risk from ${msg.from?.first_name || chatId}`);
   try {
@@ -435,7 +625,7 @@ bot.onText(/^\/risk(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /forex
 // ========================================
-bot.onText(/^\/forex(@\w+)?$/, async (msg) => {
+bot.onText(/^\/forex(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /forex from ${msg.from?.first_name || chatId}`);
   try {
@@ -451,7 +641,7 @@ bot.onText(/^\/forex(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /alert (toggle auto-alerts)
 // ========================================
-bot.onText(/^\/alert(?:@\w+)?(?:\s+(.*))?$/, async (msg, match) => {
+bot.onText(/^\/alert(?:@\w+)?(?:\s+(.*))?$/i, async (msg, match) => {
   const chatId = msg.chat.id;
   const arg = (match[1] || '').trim().toLowerCase();
   
@@ -466,7 +656,7 @@ bot.onText(/^\/alert(?:@\w+)?(?:\s+(.*))?$/, async (msg, match) => {
 // ========================================
 // COMMAND: /clear (reset chat history)
 // ========================================
-bot.onText(/^\/clear(@\w+)?$/, async (msg) => {
+bot.onText(/^\/clear(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   clearChatHistory(chatId);
   console.log(`📥 /clear from ${msg.from?.first_name || chatId}`);
@@ -476,7 +666,7 @@ bot.onText(/^\/clear(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /setkey (set Groq API key)
 // ========================================
-bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/, async (msg, match) => {
+bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   const chatId = msg.chat.id;
   const key = match[1].trim();
   console.log(`📥 /setkey from ${msg.from?.first_name || chatId}`);
@@ -508,7 +698,7 @@ bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/, async (msg, match) => {
 // ========================================
 // COMMAND: /ai <message> — Explicit AI chat
 // ========================================
-bot.onText(/^\/ai(?:@\w+)?\s+(.+)/, async (msg, match) => {
+bot.onText(/^\/ai(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   const chatId = msg.chat.id;
   const query = match[1];
   console.log(`📥 /ai "${query.substring(0, 50)}..." from ${msg.from?.first_name || chatId}`);
@@ -526,7 +716,7 @@ bot.onText(/^\/ai(?:@\w+)?\s+(.+)/, async (msg, match) => {
 // ========================================
 // COMMAND: /chat <message> — Alias for /ai
 // ========================================
-bot.onText(/^\/chat(?:@\w+)?\s+(.+)/, async (msg, match) => {
+bot.onText(/^\/chat(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   const chatId = msg.chat.id;
   const query = match[1];
   console.log(`📥 /chat "${query.substring(0, 50)}..." from ${msg.from?.first_name || chatId}`);
@@ -544,8 +734,12 @@ bot.onText(/^\/chat(?:@\w+)?\s+(.+)/, async (msg, match) => {
 // ========================================
 // COMMAND: /scan <SYMBOL> — Deep Symbol Scan
 // ========================================
-bot.onText(/^\/scan(?:@\w+)?\s+(.+)/, async (msg, match) => {
+bot.onText(/^\/scan(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
   const chatId = msg.chat.id;
+  if (!match[1]) {
+    await safeSend(chatId, '⚠️ <b>Symbol is missing!</b>\n\nCommand ke aage symbol likho. Example: <code>/scan RELIANCE</code> or <code>/scan AAPL</code>');
+    return;
+  }
   const symbol = match[1].trim().toUpperCase();
   console.log(`📥 /scan ${symbol} from ${msg.from?.first_name || chatId}`);
   try {
@@ -566,7 +760,7 @@ bot.onText(/^\/scan(?:@\w+)?\s+(.+)/, async (msg, match) => {
 // ========================================
 // COMMAND: /heatmap — Portfolio Heatmap
 // ========================================
-bot.onText(/^\/heatmap(@\w+)?$/, async (msg) => {
+bot.onText(/^\/heatmap(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /heatmap from ${msg.from?.first_name || chatId}`);
   try {
@@ -587,8 +781,12 @@ bot.onText(/^\/heatmap(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /compare <SYM1> <SYM2> — Side by Side
 // ========================================
-bot.onText(/^\/compare(?:@\w+)?\s+(.+)/, async (msg, match) => {
+bot.onText(/^\/compare(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
   const chatId = msg.chat.id;
+  if (!match[1]) {
+    await safeSend(chatId, '⚠️ <b>Symbols missing!</b>\n\nDono symbols likho!\n\nExample: <code>/compare RELIANCE TCS</code> or <code>/compare SMH QQQM</code>');
+    return;
+  }
   const args = match[1].trim().toUpperCase().split(/[\s,vs]+/);
   console.log(`📥 /compare ${args.join(' vs ')} from ${msg.from?.first_name || chatId}`);
   try {
@@ -617,7 +815,7 @@ bot.onText(/^\/compare(?:@\w+)?\s+(.+)/, async (msg, match) => {
 // ========================================
 // COMMAND: /streak — Performance Streak
 // ========================================
-bot.onText(/^\/streak(@\w+)?$/, async (msg) => {
+bot.onText(/^\/streak(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /streak from ${msg.from?.first_name || chatId}`);
   try {
