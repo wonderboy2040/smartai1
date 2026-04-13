@@ -164,7 +164,7 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
         model: 'llama-3.3-70b-versatile',
         messages: groqMessages,
         temperature: 0.75,
-        max_completion_tokens: 4096
+        max_completion_tokens: 1500
       }),
       signal: AbortSignal.timeout(60000)
     });

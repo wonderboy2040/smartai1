@@ -198,7 +198,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
           model: 'llama-3.3-70b-versatile',
           messages: groqMessages,
           temperature: 0.75,
-          max_completion_tokens: 4096
+          max_completion_tokens: 1500
         })
       });
 

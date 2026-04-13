@@ -239,7 +239,7 @@ body {
   /* 🔧 GPU ISOLATION — Prevents scroll repaints */
   transform: translateZ(0);
   will-change: transform;
-  contain: layout style paint;
+  contain: layout style;
 }
 
 .glass-card {
@@ -250,8 +250,8 @@ body {
   box-shadow:
     0 4px 24px rgba(0, 0, 0, 0.3),
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  /* 🔧 PAINT ISOLATION */
-  contain: layout style paint;
+  /* 🔧 PAINT ISOLATION REMOVED to prevent dropdown clipping */
+  contain: layout style;
 }
 
 .glass-input {
