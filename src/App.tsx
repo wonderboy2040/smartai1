@@ -7,7 +7,7 @@ import {
 import {
   fetchSinglePrice, batchFetchPrices, fetchForexRate,
   syncToCloud, loadFromCloud, sendTelegramAlert,
-  syncGroqKeyToCloud, loadGroqKeyFromCloud
+  syncGeminiKeyToCloud, loadGeminiKeyFromCloud
 } from './utils/api';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from './utils/tvWebsocket';
 import {
@@ -92,7 +92,7 @@ export default function App() {
   const [showAddModal, setShowAddModal] = useState(false);
 
   // Settings / Keys State
-  const [groqKey, setGroqKey] = useState(() => localStorage.getItem('WEALTH_AI_GROQ') || '');
+  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('WEALTH_AI_GEMINI') || '');
   const [showSettings, setShowSettings] = useState(false);
 
   // Add Modal State
@@ -135,8 +135,8 @@ export default function App() {
     if (auth === 'true') {
       setIsAuthenticated(true);
     }
-    // Ensure Groq key is persisted
-    const savedKey = localStorage.getItem('WEALTH_AI_GROQ');
+    // Ensure Gemini key is persisted
+    const savedKey = localStorage.getItem('WEALTH_AI_GEMINI');
     if (!savedKey) {
       // Key must be set via Settings panel or cloud sync
     }
@@ -166,21 +166,21 @@ export default function App() {
     }).catch(() => console.warn('Cloud sync unavailable'));
 
     // Load Gemini key from cloud, fallback to local, then sync to cloud
-    loadGroqKeyFromCloud().then(cloudKey => {
+    loadGeminiKeyFromCloud().then(cloudKey => {
       if (cloudKey) {
-        setGroqKey(cloudKey);
-        localStorage.setItem('WEALTH_AI_GROQ', cloudKey);
+        setGeminiKey(cloudKey);
+        localStorage.setItem('WEALTH_AI_GEMINI', cloudKey);
       } else {
-        const localKey = localStorage.getItem('WEALTH_AI_GROQ');
+        const localKey = localStorage.getItem('WEALTH_AI_GEMINI');
         if (localKey) {
-          syncGroqKeyToCloud(localKey).catch(() => {});
+          syncGeminiKeyToCloud(localKey).catch(() => { });
         }
       }
     }).catch(() => {
-      const localKey = localStorage.getItem('WEALTH_AI_GROQ');
+      const localKey = localStorage.getItem('WEALTH_AI_GEMINI');
       if (localKey) {
-        syncGroqKeyToCloud(localKey).catch(() => {});
-        setGroqKey(localKey);
+        syncGeminiKeyToCloud(localKey).catch(() => { });
+        setGeminiKey(localKey);
       }
     });
 
@@ -499,8 +499,12 @@ export default function App() {
 
     // Override for TradingView Chart widgets to use BSE for common ETFs
     // (BSE allows free real-time rendering in widgets while NSE restricts it)
-    const BSE_CHART_OVERRIDES = ['JUNIORBEES', 'MOMOMENTUM', 'SMALLCAP', 'MID150BEES'];
-    if (BSE_CHART_OVERRIDES.includes(cleanSym)) {
+    const BSE_CHART_OVERRIDES = [
+      'JUNIORBEES', 'MOMOMENTUM', 'SMALLCAP', 'MID150BEES', 'NIFTYBEES',
+      'BANKBEES', 'GOLDBEES', 'SILVERBEES', 'LIQUIDBEES', 'ITBEES',
+      'PHARMABEES', 'MON100', 'CPSEETF', 'ALPHA', 'LOWVOL1', 'CONSUMBEES'
+    ];
+    if (BSE_CHART_OVERRIDES.includes(cleanSym) || cleanSym.includes('BEES') || cleanSym.includes('ETF')) {
       tvSymbol = `BSE:${cleanSym}`;
     }
 
@@ -692,7 +696,7 @@ export default function App() {
     ctx += `--- END SENSOR DATA ---\n`;
 
     setPortfolioContextText(ctx);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portfolio.length, usdInrRate, contextTrigger]);
 
   const latestDataRef = useRef({ portfolio, livePrices, usdInrRate, metrics });
@@ -910,15 +914,15 @@ export default function App() {
                   key={tab}
                   onClick={() => setActiveTab(tab as any)}
                   className={`tab-btn px-4 py-2 rounded-xl font-semibold text-sm transition-all ${activeTab === tab
-                      ? 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
-                      : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
+                    ? 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
                     }`}
                 >
                   {tab === 'dashboard' && '📊 Dashboard'}
                   {tab === 'portfolio' && '💼 Portfolio'}
-                  {tab === 'planner'   && '🎯 Planner'}
-                  {tab === 'macro'     && '🌍 Risk'}
-                  {tab === 'tools'     && '⚡ AI Tools'}
+                  {tab === 'planner' && '🎯 Planner'}
+                  {tab === 'macro' && '🌍 Risk'}
+                  {tab === 'tools' && '⚡ AI Tools'}
                 </button>
               ))}
             </div>
@@ -935,29 +939,29 @@ export default function App() {
                 {showSettings && (
                   <div className="absolute right-0 top-full mt-3 w-72 glass-modal p-4 rounded-2xl shadow-2xl z-50 animate-scale-in">
                     <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                      <span className="text-lg">🧠</span> Groq Llama-3 API (FREE)
+                      <span className="text-lg">🧠</span> Google Gemini 3.1 Pro API (FREE)
                     </div>
                     <input
                       type="password"
-                      placeholder="Paste your 'gsk_' Groq API Key..."
-                      value={groqKey}
+                      placeholder="Paste your 'AIza' Gemini API Key..."
+                      value={geminiKey}
                       onChange={(e) => {
-                        const val = e.target.value;
-                        setGroqKey(val);
-                        localStorage.setItem('WEALTH_AI_GROQ', val);
+                        const val = e.target.value.trim();
+                        setGeminiKey(val);
+                        localStorage.setItem('WEALTH_AI_GEMINI', val);
                       }}
                       className="w-full glass-input rounded-xl px-4 py-3 text-sm text-white mb-3"
                     />
                     <button
                       onClick={() => {
                         setShowSettings(false);
-                        if (groqKey) syncGroqKeyToCloud(groqKey);
+                        if (geminiKey) syncGeminiKeyToCloud(geminiKey);
                       }}
                       className="w-full btn-primary py-2.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-900/30 text-sm"
                     >
                       💾 Save & Cloud Sync
                     </button>
-                    <div className="text-[10px] text-slate-500 mt-3 font-medium text-center">FREE key at console.groq.com/keys</div>
+                    <div className="text-[10px] text-slate-500 mt-3 font-medium text-center">FREE key at aistudio.google.com/app/apikey</div>
                   </div>
                 )}
               </div>
@@ -978,11 +982,11 @@ export default function App() {
               <button onClick={() => window.location.reload()} className="btn-glass p-2.5 rounded-xl text-lg" title="Refresh">🔄</button>
               <button onClick={() => {
                 const pin = localStorage.getItem('WEALTH_AI_PIN');
-                const groqSaved = localStorage.getItem('WEALTH_AI_GROQ');
+                const geminiSaved = localStorage.getItem('WEALTH_AI_GEMINI');
                 const themeSaved = localStorage.getItem('theme');
                 localStorage.clear();
                 if (pin) localStorage.setItem('WEALTH_AI_PIN', pin);
-                if (groqSaved) localStorage.setItem('WEALTH_AI_GROQ', groqSaved);
+                if (geminiSaved) localStorage.setItem('WEALTH_AI_GEMINI', geminiSaved);
                 if (themeSaved) localStorage.setItem('theme', themeSaved);
                 window.location.reload();
               }} className="btn-glass p-2.5 rounded-xl text-lg" title="Flush Cache — Clear all cached data and reload">🧹</button>
@@ -1007,7 +1011,7 @@ export default function App() {
                 <div className="flex flex-wrap gap-3 mt-2">
                   {currentPrice > 0 && [
                     { label: 'Fib 0.618', price: currentPrice * (1 - 0.382 * (avgVix / 30)), color: 'text-emerald-400' },
-                    { label: 'Fib 0.786', price: currentPrice * (1 - 0.5   * (avgVix / 30)), color: 'text-amber-400' },
+                    { label: 'Fib 0.786', price: currentPrice * (1 - 0.5 * (avgVix / 30)), color: 'text-amber-400' },
                     { label: 'Fib 0.886', price: currentPrice * (1 - 0.618 * (avgVix / 30)), color: 'text-red-400' },
                   ].map(({ label, price, color }) => (
                     <div key={label} className="bg-black/30 rounded-lg px-3 py-1">
@@ -1799,8 +1803,8 @@ export default function App() {
                               {/* Signal + Allocation Bar */}
                               <div className="flex items-center gap-2 mb-2">
                                 <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border ${isGreen ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                                    isRed ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                                      'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                                  isRed ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                                    'bg-amber-500/10 text-amber-400 border-amber-500/20'
                                   }`}>{a.signal}</span>
                                 <div className="flex-1 bg-slate-800/60 rounded-full h-1.5">
                                   <div className={`h-full rounded-full transition-all ${isGreen ? 'bg-emerald-500' : isRed ? 'bg-red-500' : 'bg-amber-500'}`} style={{ width: `${a.allocPct * 100}%` }} />
@@ -2123,7 +2127,7 @@ export default function App() {
 
       {/* Neural Core Chat AI Integration with Deep Real-Time Portfolio Context Injection */}
       <NeuralChat
-        groqKey={groqKey}
+        geminiKey={geminiKey}
         portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'}
         onTelegramPush={pushTelegramReport}
       />

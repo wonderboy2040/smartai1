@@ -2,7 +2,7 @@
 // CLOUD SYNC — Google Apps Script Integration
 // ============================================
 
-import { API_URL, setGroqKey } from './config.mjs';
+import { API_URL, setGeminiKey } from './config.mjs';
 
 // ========================================
 // LOAD PORTFOLIO FROM CLOUD
@@ -35,9 +35,9 @@ export async function loadPortfolioFromCloud() {
 }
 
 // ========================================
-// LOAD GROQ KEY FROM CLOUD
+// LOAD GEMINI KEY FROM CLOUD
 // ========================================
-export async function loadGroqKeyFromCloud() {
+export async function loadGeminiKeyFromCloud() {
   if (!API_URL) return null;
   
   try {
@@ -51,14 +51,14 @@ export async function loadGroqKeyFromCloud() {
     if (!match) return null;
     
     const data = JSON.parse(match[0]);
-    const key = data.groqKey || data.geminiKey || data.claudeKey;
+    const key = data.geminiKey || data.groqKey || data.claudeKey;
     if (key && typeof key === 'string' && key.length > 10) {
-      console.log('🔑 Groq API Key loaded from cloud');
-      setGroqKey(key);
+      console.log('🔑 Gemini API Key loaded from cloud');
+      setGeminiKey(key);
       return key;
     }
   } catch (e) {
-    console.warn('🔑 Groq key cloud load failed:', e.message);
+    console.warn('🔑 Gemini key cloud load failed:', e.message);
   }
   
   return null;

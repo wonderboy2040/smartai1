@@ -27,7 +27,7 @@ function formatTime(ts: number): string {
 
 
 export interface NeuralChatProps {
-  groqKey:          string;
+  geminiKey:        string;
   portfolioContext: string;
   onTelegramPush?:  () => void;
 }
@@ -95,10 +95,10 @@ For EVERY response, you MUST include:
 - Include Fibonacci support/resistance when discussing key levels
 - Perform CHAIN-OF-THOUGHT reasoning before conclusions — show your analytical depth`;
 
-export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
+export const NeuralChat = React.memo(({ geminiKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'model',
-    text: '🧠 **DEEP MIND AI — Groq Llama-3.3 Core v5.0 ONLINE** ⚡\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade deep analysis kar raha hu — powered by Groq Llama-3 70B (Fastest AI in the world!).\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\n• 🔥 Multi-Factor Momentum Engine — Statistical Edge Detection\n• 🧩 Wyckoff Phase Detector — Accumulation/Distribution\n• 📐 Elliott Wave Analyzer — Wave Count + Fibonacci Targets\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
+    text: '🧠 **DEEP MIND AI — Google Gemini 3.1 Pro Core ONLINE** ⚡\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade deep analysis kar raha hu — powered by Google Gemini (Deep Reasoning Model!).\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\n• 🔥 Multi-Factor Momentum Engine — Statistical Edge Detection\n• 🧩 Wyckoff Phase Detector — Accumulation/Distribution\n• 📐 Elliott Wave Analyzer — Wave Count + Fibonacci Targets\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
     timestamp: Date.now()
   }]);
   const [chatInput, setChatInput] = useState('');
@@ -162,10 +162,10 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim()) return;
 
-    if (!groqKey) {
+    if (!geminiKey) {
       setChatMessages(prev => [...prev,
         { role: 'user', text: userMessage, timestamp: Date.now() },
-        { role: 'model', text: '⚠️ **Neural Link Offline**\n\nGroq API Key set nahi hai. Settings (⚙️) icon click karke API KEY paste karo.\n\n**FREE key milega:** console.groq.com/keys\n\nEk baar key set kar do, phir system ultra-fast chalega!', timestamp: Date.now() }
+        { role: 'model', text: '⚠️ **Neural Link Offline**\n\nGemini API Key set nahi hai. Settings (⚙️) icon click karke API KEY paste karo.\n\n**FREE key milega:** aistudio.google.com/app/apikey\n\nEk baar key set kar do, phir system ultra-fast chalega!', timestamp: Date.now() }
       ]);
       return;
     }
@@ -180,25 +180,23 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
 
       const systemContent = `${SYSTEM_PROMPT}\n\n--- DEEP MIND QUANTUM LIVE SENSOR DATA (PORTFOLIO + TECHNICALS): ---\n${portfolioContext}\n--- END SENSOR DATA ---\n${intelContext}`;
 
-      const groqMessages = [
-        { role: 'system', content: systemContent },
-        ...recentMessages.map(m => ({
-          role: m.role === 'model' ? 'assistant' : 'user',
-          content: m.text
-        }))
-      ];
+      const geminiContents = recentMessages.map(m => ({
+        role: m.role === 'model' ? 'model' : 'user',
+        parts: [{ text: m.text }]
+      }));
 
-      const res = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${geminiKey}`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${groqKey}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: groqMessages,
-          temperature: 0.75,
-          max_completion_tokens: 1500
+          systemInstruction: { parts: [{ text: systemContent }] },
+          contents: geminiContents,
+          generationConfig: {
+            temperature: 0.75,
+            maxOutputTokens: 1500
+          }
         })
       });
 
@@ -208,7 +206,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
       }
 
       const data = await res.json();
-      const aiText = data.choices?.[0]?.message?.content || "Neural link unstable. Please retry.";
+      const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || "Neural link unstable. Please retry.";
       
       setChatMessages(prev => [...prev, { 
         role: 'model', 
@@ -264,7 +262,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
                 <div>
                   <h3 className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-1.5">
                     Deep Mind AI
-                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v5.0 GROQ</span>
+                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v6.0 GEMINI</span>
                   </h3>
                   <div className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -337,7 +335,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
                 <div className="flex justify-start animate-message-in">
                   <div className="bg-slate-900/90 px-5 py-4 rounded-2xl rounded-tl-none border border-white/5">
                     <div className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
-                      <Sparkles size={12} className="animate-pulse" /> GROQ LLAMA-3 ANALYZING...
+                      <Sparkles size={12} className="animate-pulse" /> GEMINI AI ANALYZING...
                     </div>
                     <div className="flex gap-1.5">
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
@@ -423,7 +421,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
                 </button>
               </div>
               <div className="flex items-center justify-between mt-2 px-1">
-                <span className="text-[8px] text-slate-600 font-mono">Powered by Groq • Llama-3.3-70B (FREE)</span>
+                <span className="text-[8px] text-slate-600 font-mono">Powered by Google Gemini 3.1 Pro (FREE)</span>
                 <span className="text-[8px] text-slate-600">{chatMessages.length} messages</span>
               </div>
             </div>
