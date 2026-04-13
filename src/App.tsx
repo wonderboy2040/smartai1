@@ -24,6 +24,7 @@ import { MarketHUD } from './components/MarketHUD';
 import { PreMarketWatch } from './components/PreMarketWatch';
 import { SentimentHeatmap } from './components/SentimentHeatmap';
 import { MLPricePredictor } from './components/MLPricePredictor';
+import { FIIDIILiveTracker } from './components/FIIDIILiveTracker';
 
 
 /**
@@ -2029,6 +2030,9 @@ export default function App() {
 
             {/* Pre-Market Watch — Always visible in Tools */}
             <PreMarketWatch alwaysShow />
+
+            {/* FII/DII Live Tracker */}
+            <FIIDIILiveTracker />
 
             {/* Sentiment Heatmap */}
             <SentimentHeatmap
