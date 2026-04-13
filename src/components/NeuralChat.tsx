@@ -147,7 +147,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
         }))
       ];
 
-      const MODELS = ['llama-3.3-70b-versatile', 'mixtral-8x7b-32768', 'llama-3.1-8b-instant', 'gemma2-9b-it'];
+      const MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it', 'llama3-70b-8192'];
       let aiText = '';
       let lastError = '';
 
@@ -169,11 +169,12 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
 
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            if (res.status === 429) {
-              lastError = `Rate limit on ${model}.`;
+            const errMsg = err.error?.message || 'API request failed';
+            if (res.status === 429 || errMsg.includes('decommissioned') || errMsg.includes('not exist')) {
+              lastError = `Skipping ${model}.`;
               continue; // Fallback to next model
             }
-            throw new Error(err.error?.message || 'API request failed');
+            throw new Error(errMsg);
           }
 
           const data = await res.json();
@@ -181,7 +182,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
           break; // Success, exit loop
         } catch (e: any) {
           lastError = e.message;
-          if (e.message.includes('Rate limit')) continue;
+          if (e.message.includes('Rate limit') || e.message.includes('decommissioned')) continue;
           throw e; // Unrecoverable error
         }
       }

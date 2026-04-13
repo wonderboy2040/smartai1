@@ -119,7 +119,7 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
   }
 
   try {
-    const MODELS = ['llama-3.3-70b-versatile', 'mixtral-8x7b-32768', 'llama-3.1-8b-instant', 'gemma2-9b-it'];
+    const MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it', 'llama3-70b-8192'];
     let aiText = '';
     let lastError = '';
 
@@ -142,12 +142,13 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          if (res.status === 429) {
-            console.warn(`⚠️ Rate limit on ${model}, falling back...`);
-            lastError = `Rate limit on ${model}.`;
+          const errMsg = err.error?.message || `API Error: ${res.status}`;
+          if (res.status === 429 || errMsg.includes('decommissioned') || errMsg.includes('not exist')) {
+            console.warn(`⚠️ Skipping ${model}: ${errMsg}`);
+            lastError = `Skipped ${model}.`;
             continue; // Fallback
           }
-          throw new Error(err.error?.message || `API Error: ${res.status}`);
+          throw new Error(errMsg);
         }
 
         const data = await res.json();
@@ -155,7 +156,7 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
         break; // Success
       } catch (e) {
         lastError = e.message;
-        if (e.message.includes('Rate limit') || e.message.includes('429')) continue;
+        if (e.message.includes('Rate limit') || e.message.includes('decommissioned') || e.message.includes('429')) continue;
         throw e;
       }
     }
