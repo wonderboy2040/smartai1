@@ -37,12 +37,10 @@ export interface SentimentPortfolio {
  */
 export class QuantumSentimentAnalyzer {
   private decayFactor: number;
-  private coherenceDecay: number;
   private sentimentHistory: Map<string, QuantumSentimentState[]>;
 
-  constructor(decayFactor: number = 0.95, coherenceDecay: number = 0.9) {
+  constructor(decayFactor: number = 0.95) {
     this.decayFactor = decayFactor;
-    this.coherenceDecay = coherenceDecay;
     this.sentimentHistory = new Map();
   }
 
@@ -358,7 +356,7 @@ export class QuantumSentimentAnalyzer {
     let totalCoherence = 0;
     let count = 0;
 
-    for (const [symbol, history] of this.sentimentHistory) {
+    for (const [, history] of this.sentimentHistory) {
       if (history.length > 0) {
         const latest = history[history.length - 1];
         totalBullish += latest.bullishProbability;

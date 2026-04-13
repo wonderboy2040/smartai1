@@ -34,6 +34,8 @@ export default defineConfig({
     include: ['react', 'react-dom'],
   },
   preview: {
-    enabled: true,
+    port: 5173,
+    host: '0.0.0.0',
+    strictPort: true,
   },
 });

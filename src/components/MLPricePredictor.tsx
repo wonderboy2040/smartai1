@@ -84,7 +84,6 @@ function runMLEngine(data: PriceData | undefined): Prediction | null {
 
   // ── Direction & Confidence ───────────────────────────
   const pUp     = score / 100;
-  const pDown   = 1 - pUp;
   const signal: Prediction['signal'] = score > 60 ? 'BULLISH' : score < 40 ? 'BEARISH' : 'NEUTRAL';
 
   // Confidence: alignment of signals

@@ -94,7 +94,7 @@ export const SentimentHeatmap = React.memo(({
         className="grid gap-2"
         style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
       >
-        {cells.map(({ p, rsi, change, pl, weight, curPrice }) => {
+        {cells.map(({ p, rsi, change, pl, weight }) => {
           const style = rsiStyle(rsi);
           const isSelected = currentSymbol === p.symbol;
           const cur = p.market === 'IN' ? '₹' : '$';

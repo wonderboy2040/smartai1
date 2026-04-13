@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 
 interface MarketHUDProps {
   wsLatency: { avg: number; heartbeat: number };

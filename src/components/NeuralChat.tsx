@@ -24,9 +24,7 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-function estimateTokens(text: string): number {
-  return Math.ceil(text.split(/\s+/).length * 1.3);
-}
+
 
 export interface NeuralChatProps {
   groqKey:          string;
@@ -376,7 +374,6 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
                   <button
                     key={i}
                     onClick={() => {
-                      chatInputRef.current?.focus();
                       sendMessage(tool.action);
                     }}
                     className={`flex items-center text-left gap-2 px-2.5 py-2 rounded-xl bg-white/[0.02] border border-white/[0.06] ${tool.clr} transition-all group`}
