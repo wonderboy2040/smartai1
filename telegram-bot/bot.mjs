@@ -145,28 +145,6 @@ async function initializeData() {
   console.log(`   Market: ${getMarketStatus()}`);
   console.log('🟢 ════════════════════════════════════════');
   console.log('');
-  // Step 6: Set Persistent Telegram Menu Commands
-  try {
-    await bot.setMyCommands([
-      { command: 'start', description: 'Main Menu & Overview' },
-      { command: 'portfolio', description: 'Full Portfolio Analysis' },
-      { command: 'market', description: 'Global Market Snapshot' },
-      { command: 'premarket', description: 'Pre-market Intelligence' },
-      { command: 'options', description: 'Options Analysis (PCR/IV)' },
-      { command: 'strategy', description: 'AI Option Strategies' },
-      { command: 'news', description: 'Global Market Sentiment' },
-      { command: 'fundamental', description: 'Deep Fundamental Analysis' },
-      { command: 'signals', description: 'AI Buy/Sell Signals' },
-      { command: 'allocation', description: 'Smart SIP Matrix' },
-      { command: 'risk', description: 'Risk & VIX Assessment' },
-      { command: 'heatmap', description: 'Visual Heatmap' },
-      { command: 'forex', description: 'Live Forex (USD/INR)' },
-      { command: 'clear', description: 'Clear AI Memory' }
-    ]);
-    console.log('✅ Telegram Menu Commands Updated');
-  } catch (e) {
-    console.warn('⚠️  Could not set Telegram commands:', e.message);
-  }
 }
 
 // ========================================
@@ -660,31 +638,31 @@ bot.onText(/^\/clear(@\w+)?$/, async (msg) => {
 });
 
 // ========================================
-// COMMAND: /setkey (set Gemini API key)
+// COMMAND: /setkey (set Groq API key)
 // ========================================
 bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const key = match[1].trim();
   console.log(`📥 /setkey from ${msg.from?.first_name || chatId}`);
   try {
-    if (!key.startsWith('AIza')) {
-      await safeSend(chatId, '❌ <b>Invalid API Key!</b>\n\nSystem ab Gemini 3.1 Pro pe upgrade ho gaya hai! Aapki key hamesha `AIza` se start honi chahiye.\n\n👉 **Free API Key 1 min me yahan se lein:** https://aistudio.google.com/app/apikey');
+    if (!key.startsWith('gsk_')) {
+      await safeSend(chatId, '❌ <b>Invalid API Key!</b>\n\nAb system ultra-fast **Groq (Llama-3)** pe upgrade ho gaya hai! Aapki key hamesha `gsk_` se start honi chahiye. Galti se aapne Gemini ya koi aur key daal di hai.\n\n👉 **Free API Key 1 min me yahan se lein:** https://console.groq.com/keys');
       return;
     }
     // Set dynamically
-    const { setGeminiKey, API_URL } = await import('./config.mjs');
-    setGeminiKey(key);
+    const { setGroqKey, API_URL } = await import('./config.mjs');
+    setGroqKey(key);
     
     // Sync to cloud so web app can also use it
     try {
       await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ geminiKey: key, action: 'saveKey', timestamp: Date.now() })
+        body: JSON.stringify({ groqKey: key, action: 'saveKey', timestamp: Date.now() })
       });
     } catch (e) {}
 
-    await safeSend(chatId, '✅ <b>Gemini 3.1 Pro API Key Set!</b>\n\nAI Engine is now <b>ONLINE</b> 🧠⚡️ — Powered by Google Gemini.\nTum abhi kisi bhi sawal ka answer AI se le sakte ho!');
+    await safeSend(chatId, '✅ <b>Groq Llama-3 API Key Set!</b>\n\nAI Engine is now <b>ONLINE</b> 🧠⚡️ — Powered by groq.com (Superfast Llama-3 70B!).\nTum abhi kisi bhi sawal ka answer AI se le sakte ho!');
   } catch (e) {
     console.error('❌ /setkey error:', e.message);
     await safeSend(chatId, `❌ Key set me error: ${e.message}`);
