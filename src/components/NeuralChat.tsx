@@ -175,7 +175,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
     setIsThinking(true);
 
     try {
-      const recentMessages = [...currentMessages.slice(-8), { role: 'user' as const, text: userMessage }];
+      const recentMessages = [...currentMessages.slice(-4), { role: 'user' as const, text: userMessage }];
       const intelContext = marketIntelRef.current ? formatMarketIntelligenceForAI(marketIntelRef.current) : '';
 
       const systemContent = `${SYSTEM_PROMPT}\n\n--- DEEP MIND QUANTUM LIVE SENSOR DATA (PORTFOLIO + TECHNICALS): ---\n${portfolioContext}\n--- END SENSOR DATA ---\n${intelContext}`;
@@ -195,7 +195,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
+          model: 'llama-3.1-8b-instant',
           messages: groqMessages,
           temperature: 0.75,
           max_completion_tokens: 1500

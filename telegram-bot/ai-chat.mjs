@@ -7,7 +7,7 @@ import { calculateMetrics, analyzeAsset } from './analysis.mjs';
 
 // Per-user conversation history (in-memory)
 const chatHistory = new Map();
-const MAX_HISTORY = 10;
+const MAX_HISTORY = 4;
 
 // Market intelligence cache
 let cachedIntel = null;
@@ -160,7 +160,7 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'llama-3.1-8b-instant',
         messages: groqMessages,
         temperature: 0.75,
         max_completion_tokens: 1500
