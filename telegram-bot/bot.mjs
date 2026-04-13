@@ -262,7 +262,7 @@ async function safeSend(chatId, text, options = {}) {
 // ========================================
 // COMMAND: /start
 // ========================================
-bot.onText(/^\/start(@\w+)?$/, async (msg) => {
+bot.onText(/^\/start(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /start from ${msg.from?.first_name || chatId}`);
 
@@ -317,7 +317,7 @@ Examples:
 // ========================================
 // COMMAND: /help
 // ========================================
-bot.onText(/^\/help(@\w+)?$/, async (msg) => {
+bot.onText(/^\/help(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /help from ${msg.from?.first_name || chatId}`);
 
@@ -376,7 +376,7 @@ Chat history reset karo.
 // ========================================
 // COMMAND: /options — AI Options Analysis
 // ========================================
-bot.onText(/^\/options(@\w+)?$/, async (msg) => {
+bot.onText(/^\/options?(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /options from ${msg.from?.first_name || chatId}`);
   try {
@@ -393,7 +393,7 @@ bot.onText(/^\/options(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /strategy — AI Option Strategist
 // ========================================
-bot.onText(/^\/strategy(@\w+)?$/, async (msg) => {
+bot.onText(/^\/strateg(?:y|ies)(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /strategy from ${msg.from?.first_name || chatId}`);
   try {
@@ -410,7 +410,7 @@ bot.onText(/^\/strategy(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /news — News Sentiment
 // ========================================
-bot.onText(/^\/news(@\w+)?$/, async (msg) => {
+bot.onText(/^\/news(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /news from ${msg.from?.first_name || chatId}`);
   try {
@@ -426,7 +426,7 @@ bot.onText(/^\/news(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /fundamental — Deep Fundamentals
 // ========================================
-bot.onText(/^\/fundamental(?:@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
+bot.onText(/^\/fundamentals?(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
   const chatId = msg.chat.id;
   const target = match[1] ? match[1].trim() : 'my top portfolio holding';
   console.log(`📥 /fundamental ${target} from ${msg.from?.first_name || chatId}`);
@@ -443,7 +443,7 @@ bot.onText(/^\/fundamental(?:@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
 // ========================================
 // COMMAND: /premarket — Pre-Market Intelligence
 // ========================================
-bot.onText(/^\/premarket(@\w+)?$/, async (msg) => {
+bot.onText(/^\/premarket(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /premarket from ${msg.from?.first_name || chatId}`);
   try {
@@ -532,7 +532,7 @@ bot.onText(/^\/premarket(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /portfolio
 // ========================================
-bot.onText(/^\/portfolio(@\w+)?$/, async (msg) => {
+bot.onText(/^\/portfolio(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /portfolio from ${msg.from?.first_name || chatId}`);
   try {
@@ -553,7 +553,7 @@ bot.onText(/^\/portfolio(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /market
 // ========================================
-bot.onText(/^\/market(@\w+)?$/, async (msg) => {
+bot.onText(/^\/market(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /market from ${msg.from?.first_name || chatId}`);
   try {
@@ -570,7 +570,7 @@ bot.onText(/^\/market(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /signals
 // ========================================
-bot.onText(/^\/signals(@\w+)?$/, async (msg) => {
+bot.onText(/^\/signals(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /signals from ${msg.from?.first_name || chatId}`);
   try {
@@ -591,7 +591,7 @@ bot.onText(/^\/signals(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /allocation
 // ========================================
-bot.onText(/^\/allocation(@\w+)?$/, async (msg) => {
+bot.onText(/^\/allocation(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /allocation from ${msg.from?.first_name || chatId}`);
   try {
@@ -608,7 +608,7 @@ bot.onText(/^\/allocation(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /risk
 // ========================================
-bot.onText(/^\/risk(@\w+)?$/, async (msg) => {
+bot.onText(/^\/risk(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /risk from ${msg.from?.first_name || chatId}`);
   try {
@@ -625,7 +625,7 @@ bot.onText(/^\/risk(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /forex
 // ========================================
-bot.onText(/^\/forex(@\w+)?$/, async (msg) => {
+bot.onText(/^\/forex(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /forex from ${msg.from?.first_name || chatId}`);
   try {
@@ -641,7 +641,7 @@ bot.onText(/^\/forex(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /alert (toggle auto-alerts)
 // ========================================
-bot.onText(/^\/alert(?:@\w+)?(?:\s+(.*))?$/, async (msg, match) => {
+bot.onText(/^\/alert(?:@\w+)?(?:\s+(.*))?$/i, async (msg, match) => {
   const chatId = msg.chat.id;
   const arg = (match[1] || '').trim().toLowerCase();
   
@@ -656,7 +656,7 @@ bot.onText(/^\/alert(?:@\w+)?(?:\s+(.*))?$/, async (msg, match) => {
 // ========================================
 // COMMAND: /clear (reset chat history)
 // ========================================
-bot.onText(/^\/clear(@\w+)?$/, async (msg) => {
+bot.onText(/^\/clear(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   clearChatHistory(chatId);
   console.log(`📥 /clear from ${msg.from?.first_name || chatId}`);
@@ -666,7 +666,7 @@ bot.onText(/^\/clear(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /setkey (set Groq API key)
 // ========================================
-bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/, async (msg, match) => {
+bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   const chatId = msg.chat.id;
   const key = match[1].trim();
   console.log(`📥 /setkey from ${msg.from?.first_name || chatId}`);
@@ -698,7 +698,7 @@ bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/, async (msg, match) => {
 // ========================================
 // COMMAND: /ai <message> — Explicit AI chat
 // ========================================
-bot.onText(/^\/ai(?:@\w+)?\s+(.+)/, async (msg, match) => {
+bot.onText(/^\/ai(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   const chatId = msg.chat.id;
   const query = match[1];
   console.log(`📥 /ai "${query.substring(0, 50)}..." from ${msg.from?.first_name || chatId}`);
@@ -716,7 +716,7 @@ bot.onText(/^\/ai(?:@\w+)?\s+(.+)/, async (msg, match) => {
 // ========================================
 // COMMAND: /chat <message> — Alias for /ai
 // ========================================
-bot.onText(/^\/chat(?:@\w+)?\s+(.+)/, async (msg, match) => {
+bot.onText(/^\/chat(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   const chatId = msg.chat.id;
   const query = match[1];
   console.log(`📥 /chat "${query.substring(0, 50)}..." from ${msg.from?.first_name || chatId}`);
@@ -734,7 +734,7 @@ bot.onText(/^\/chat(?:@\w+)?\s+(.+)/, async (msg, match) => {
 // ========================================
 // COMMAND: /scan <SYMBOL> — Deep Symbol Scan
 // ========================================
-bot.onText(/^\/scan(?:@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
+bot.onText(/^\/scan(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
   const chatId = msg.chat.id;
   if (!match[1]) {
     await safeSend(chatId, '⚠️ <b>Symbol is missing!</b>\n\nCommand ke aage symbol likho. Example: <code>/scan RELIANCE</code> or <code>/scan AAPL</code>');
@@ -760,7 +760,7 @@ bot.onText(/^\/scan(?:@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
 // ========================================
 // COMMAND: /heatmap — Portfolio Heatmap
 // ========================================
-bot.onText(/^\/heatmap(@\w+)?$/, async (msg) => {
+bot.onText(/^\/heatmap(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /heatmap from ${msg.from?.first_name || chatId}`);
   try {
@@ -781,7 +781,7 @@ bot.onText(/^\/heatmap(@\w+)?$/, async (msg) => {
 // ========================================
 // COMMAND: /compare <SYM1> <SYM2> — Side by Side
 // ========================================
-bot.onText(/^\/compare(?:@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
+bot.onText(/^\/compare(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
   const chatId = msg.chat.id;
   if (!match[1]) {
     await safeSend(chatId, '⚠️ <b>Symbols missing!</b>\n\nDono symbols likho!\n\nExample: <code>/compare RELIANCE TCS</code> or <code>/compare SMH QQQM</code>');
@@ -815,7 +815,7 @@ bot.onText(/^\/compare(?:@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
 // ========================================
 // COMMAND: /streak — Performance Streak
 // ========================================
-bot.onText(/^\/streak(@\w+)?$/, async (msg) => {
+bot.onText(/^\/streak(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /streak from ${msg.from?.first_name || chatId}`);
   try {
