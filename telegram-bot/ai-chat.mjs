@@ -119,28 +119,48 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
   }
 
   try {
-    const res = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${GROQ_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: groqMessages,
-        temperature: 0.75,
-        max_completion_tokens: 800
-      }),
-      signal: AbortSignal.timeout(60000)
-    });
+    const MODELS = ['llama-3.3-70b-versatile', 'mixtral-8x7b-32768', 'llama-3.1-8b-instant', 'gemma2-9b-it'];
+    let aiText = '';
+    let lastError = '';
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `API Error: ${res.status}`);
+    for (const model of MODELS) {
+      try {
+        const res = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${GROQ_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: groqMessages,
+            temperature: 0.75,
+            max_completion_tokens: 800
+          }),
+          signal: AbortSignal.timeout(60000)
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          if (res.status === 429) {
+            console.warn(`⚠️ Rate limit on ${model}, falling back...`);
+            lastError = `Rate limit on ${model}.`;
+            continue; // Fallback
+          }
+          throw new Error(err.error?.message || `API Error: ${res.status}`);
+        }
+
+        const data = await res.json();
+        aiText = data.choices?.[0]?.message?.content || '';
+        break; // Success
+      } catch (e) {
+        lastError = e.message;
+        if (e.message.includes('Rate limit') || e.message.includes('429')) continue;
+        throw e;
+      }
     }
 
-    const data = await res.json();
-    const aiText = data.choices?.[0]?.message?.content || 'Neural link unstable. Retry karo.';
+    if (!aiText) throw new Error(lastError || 'All AI models exhausted their daily limits!');
 
     // Clean up and convert markdown to HTML for Telegram
     let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();

@@ -147,27 +147,46 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
         }))
       ];
 
-      const res = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${groqKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: groqMessages,
-          temperature: 0.75,
-          max_completion_tokens: 800
-        })
-      });
+      const MODELS = ['llama-3.3-70b-versatile', 'mixtral-8x7b-32768', 'llama-3.1-8b-instant', 'gemma2-9b-it'];
+      let aiText = '';
+      let lastError = '';
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || 'API request failed');
+      for (const model of MODELS) {
+        try {
+          const res = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${groqKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: model,
+              messages: groqMessages,
+              temperature: 0.75,
+              max_completion_tokens: 800
+            })
+          });
+
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            if (res.status === 429) {
+              lastError = `Rate limit on ${model}.`;
+              continue; // Fallback to next model
+            }
+            throw new Error(err.error?.message || 'API request failed');
+          }
+
+          const data = await res.json();
+          aiText = data.choices?.[0]?.message?.content || "";
+          break; // Success, exit loop
+        } catch (e: any) {
+          lastError = e.message;
+          if (e.message.includes('Rate limit')) continue;
+          throw e; // Unrecoverable error
+        }
       }
 
-      const data = await res.json();
-      const aiText = data.choices?.[0]?.message?.content || "Neural link unstable. Please retry.";
+      if (!aiText) throw new Error(lastError || "All AI models exhausted their daily limits!");
       
       setChatMessages(prev => [...prev, { 
         role: 'model', 
