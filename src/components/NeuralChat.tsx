@@ -368,24 +368,25 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
               <div className="text-[8px] font-bold text-slate-600 uppercase tracking-widest mb-2">⚡ Quick Trading Tools</div>
               <div className="grid grid-cols-2 gap-1.5">
                 {[
-                  { icon: '🆓', label: 'Free Option Data', sub: 'Sensibull',    url: 'https://sensibull.com',     clr: 'hover:bg-emerald-500/10 hover:border-emerald-500/30' },
-                  { icon: '📊', label: 'Option Trading',   sub: 'Front Page',   url: 'https://frontpage.in',      clr: 'hover:bg-blue-500/10 hover:border-blue-500/30' },
-                  { icon: '📰', label: 'Market News',      sub: 'Money Control', url: 'https://moneycontrol.com', clr: 'hover:bg-amber-500/10 hover:border-amber-500/30' },
-                  { icon: '🔍', label: 'Fundamentals',     sub: 'Screener.in',   url: 'https://screener.in',      clr: 'hover:bg-purple-500/10 hover:border-purple-500/30' },
+                  { icon: '🧠', label: 'Options Analysis', sub: 'Sensibull Quantum', action: 'Scan live Option Chain for NIFTY. Analyze Put-Call Ratio (PCR), Max Pain, and Implied Volatility to find strong support and resistance levels.', clr: 'hover:bg-emerald-500/10 hover:border-emerald-500/30' },
+                  { icon: '🎯', label: 'Option Strategist', sub: 'FrontPage AI', action: 'Based on current market volatility, construct 2 optimal actionable Option Strategies (e.g. Bull Call Spread, Iron Condor) with exact strikes, target, and SL.', clr: 'hover:bg-blue-500/10 hover:border-blue-500/30' },
+                  { icon: '🌍', label: 'News Sentiment', sub: 'Global Pulse', action: 'Summarize the latest financial market news and calculate a collective Bullish/Bearish sentiment score (1-100) affecting the markets today.', clr: 'hover:bg-amber-500/10 hover:border-amber-500/30' },
+                  { icon: '💼', label: 'Fund. Forensics', sub: 'Screener AI', action: 'Execute a deep fundamental forensic analysis for the top holding in my portfolio. Calculate Intrinsic Value using Benjamin Graham framework.', clr: 'hover:bg-purple-500/10 hover:border-purple-500/30' },
                 ].map((tool, i) => (
-                  <a
+                  <button
                     key={i}
-                    href={tool.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`flex items-center gap-2 px-2.5 py-2 rounded-xl bg-white/[0.02] border border-white/[0.06] ${tool.clr} transition-all group`}
+                    onClick={() => {
+                      chatInputRef.current?.focus();
+                      sendMessage(tool.action);
+                    }}
+                    className={`flex items-center text-left gap-2 px-2.5 py-2 rounded-xl bg-white/[0.02] border border-white/[0.06] ${tool.clr} transition-all group`}
                   >
                     <span className="text-base flex-shrink-0">{tool.icon}</span>
                     <div className="overflow-hidden min-w-0">
                       <div className="text-[9px] font-bold text-slate-300 group-hover:text-white truncate leading-tight">{tool.label}</div>
-                      <div className="text-[8px] font-bold text-slate-600 group-hover:text-slate-400 truncate">{tool.sub} ↗</div>
+                      <div className="text-[8px] font-bold text-slate-600 group-hover:text-slate-400 truncate">{tool.sub} ⚡</div>
                     </div>
-                  </a>
+                  </button>
                 ))}
               </div>
             </div>

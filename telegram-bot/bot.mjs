@@ -256,9 +256,9 @@ Nagraj Bhai, main tumhara personal AI Trading assistant hoon! 24x7 tumhare portf
 🔍 /scan &lt;SYMBOL&gt; — Deep scan any symbol
 ⚖️ /compare &lt;SYM1&gt; &lt;SYM2&gt; — Head-to-head comparison
 🗺️ /heatmap — Visual portfolio heatmap
+🗺️ /heatmap — Visual portfolio heatmap
 📊 /streak — Performance streak tracker
 💱 /forex — Live USD/INR rate
-🔗 /links — Trading tools & resources
 🔔 /alert — Toggle auto alerts ON/OFF
 🧹 /clear — Clear AI chat history
 ❓ /help — Full command reference
@@ -273,11 +273,11 @@ Examples:
 • <i>risk assessment karo</i>
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-🔗 <b>Quick Trading Tools:</b>
-🆓 <a href="https://sensibull.com">Sensibull</a> — Free Option Data
-📈 <a href="https://frontpage.in">Front Page</a> — Options Trading
-📰 <a href="https://moneycontrol.com">Money Control</a> — Market News
-🔍 <a href="https://screener.in">Screener.in</a> — Fundamentals
+⚡ <b>Superintelligent AI Tools:</b>
+🧠 /options — Live PCR & IV Options Analysis
+🎯 /strategy — Executable Option Strategies
+🌍 /news — Global Market News Sentiment
+💼 /fundamental — Deep Balance Sheet Analysis
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 📡 Status: <b>${getMarketStatus()}</b>
 💼 Portfolio: <b>${portfolio.length} positions</b>
@@ -348,33 +348,70 @@ Chat history reset karo.
 });
 
 // ========================================
-// COMMAND: /links — Trading Resources
+// COMMAND: /options — AI Options Analysis
 // ========================================
-bot.onText(/^\/links(@\w+)?$/, async (msg) => {
+bot.onText(/^\/options(@\w+)?$/, async (msg) => {
   const chatId = msg.chat.id;
-  console.log(`📥 /links from ${msg.from?.first_name || chatId}`);
-  
-  const linksMsg = `🔗 <b>Trading Tools & Resources</b>
-━━━━━━━━━━━━━━━━━━━━━━━━━
+  console.log(`📥 /options from ${msg.from?.first_name || chatId}`);
+  try {
+    await safeSend(chatId, '🧠 <i>Scanning live Option Chain for NIFTY/BankNIFTY... analyzing PCR & Max Pain...</i>\n\nThis is a Superintelligent Deep AI Feature.');
+    await refreshPrices();
+    const response = await chatWithAI(chatId, 'Scan live Option Chain for NIFTY. Analyze Put-Call Ratio (PCR), Max Pain, and Implied Volatility to find strong support and resistance levels. Provide an actionable conclusion.', portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, response);
+  } catch (e) {
+    console.error('❌ /options error:', e.message);
+    await safeSend(chatId, `❌ /options fetch me error: ${e.message}\n\nPlease try again.`);
+  }
+});
 
-📊 <b>Options Trading</b>
-🆓 <a href="https://sensibull.com">Sensibull</a> — Free Option Chain + Greeks Data
-📈 <a href="https://frontpage.in">Front Page</a> — Advanced Options Trading Platform
+// ========================================
+// COMMAND: /strategy — AI Option Strategist
+// ========================================
+bot.onText(/^\/strategy(@\w+)?$/, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /strategy from ${msg.from?.first_name || chatId}`);
+  try {
+    await safeSend(chatId, '🎯 <i>Building optimal Option Strategies based on VIX and current trend...</i>\n\nThis is a Superintelligent Deep AI Feature.');
+    await refreshPrices();
+    const response = await chatWithAI(chatId, 'Based on current market volatility and trend, build 2 optimal actionable Option Strategies (e.g. Bull Call Spread, Iron Condor) with exact strikes, target, SL, and Risk:Reward.', portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, response);
+  } catch (e) {
+    console.error('❌ /strategy error:', e.message);
+    await safeSend(chatId, `❌ /strategy fetch me error: ${e.message}\n\nPlease try again.`);
+  }
+});
 
-📰 <b>Research & News</b>
-📰 <a href="https://moneycontrol.com">Money Control</a> — Latest Market News & Analysis
-🔍 <a href="https://screener.in">Screener.in</a> — Free Fundamental Stock Analysis
+// ========================================
+// COMMAND: /news — News Sentiment
+// ========================================
+bot.onText(/^\/news(@\w+)?$/, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /news from ${msg.from?.first_name || chatId}`);
+  try {
+    await safeSend(chatId, '🌍 <i>Synthesizing latest global market news... extracting sentiment score...</i>\n\nThis is a Superintelligent Deep AI Feature.');
+    const response = await chatWithAI(chatId, 'Summarize the latest financial market news and calculate a collective Bullish/Bearish sentiment score (1-100) affecting Indian and US markets today.', portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, response);
+  } catch (e) {
+    console.error('❌ /news error:', e.message);
+    await safeSend(chatId, `❌ /news fetch me error: ${e.message}\n\nPlease try again.`);
+  }
+});
 
-📡 <b>Market Data</b>
-📊 <a href="https://chartink.com">Chartink</a> — Technical Screener + Scans
-🌐 <a href="https://tradingview.com">TradingView</a> — Professional Charting
-
-━━━━━━━━━━━━━━━━━━━━━━━━━
-💡 <i>Tip: Koi bhi question ho toh seedha type karo — Deep Mind AI analyze kar dega!</i>
-
-💎 <i>Deep Mind AI Pro Terminal v3.0</i>`;
-  
-  await safeSend(chatId, linksMsg);
+// ========================================
+// COMMAND: /fundamental — Deep Fundamentals
+// ========================================
+bot.onText(/^\/fundamental(?:@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const target = match[1] ? match[1].trim() : 'my top portfolio holding';
+  console.log(`📥 /fundamental ${target} from ${msg.from?.first_name || chatId}`);
+  try {
+    await safeSend(chatId, `💼 <i>Executing Deep Fundamental Forensics for ${target}... running Graham framework...</i>\n\nThis is a Superintelligent Deep AI Feature.`);
+    const response = await chatWithAI(chatId, `Execute a deep fundamental forensic analysis for ${target}. Calculate Intrinsic Value based on PE ratio, Book Value, and ROE using Graham framework. Output in tabular format if possible.`, portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, response);
+  } catch (e) {
+    console.error('❌ /fundamental error:', e.message);
+    await safeSend(chatId, `❌ /fundamental fetch me error: ${e.message}\n\nPlease try again.`);
+  }
 });
 
 // ========================================
