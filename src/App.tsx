@@ -681,13 +681,12 @@ export default function App() {
       const cleanSym = p.symbol.replace('.NS', '');
       const cur = p.market === 'IN' ? '₹' : '$';
 
-      // Signal detection
       const sig = analyzeAsset(p, data);
       const atr = ((data?.high || curPrice) - (data?.low || curPrice)) || curPrice * 0.02;
       const slPrice = curPrice - atr * 1.5;
       const tpPrice = curPrice + atr * 2.5;
 
-      ctx += `• ${cleanSym} (${p.market}): Price=${cur}${curPrice.toFixed(2)}, Change=${change.toFixed(2)}%, RSI=${rsi.toFixed(1)}, SMA20=${sma20}, SMA50=${sma50}, MACD=${macd}, Signal=${sig.signal}, Confidence=${sig.confidence}%, SL=${cur}${slPrice.toFixed(2)}, TP=${cur}${tpPrice.toFixed(2)}, Qty=${p.qty}, AvgCost=${cur}${p.avgPrice.toFixed(2)}, P&L=${pl >= 0 ? '+' : ''}${cur}${Math.abs(pl).toFixed(2)} (${plPct >= 0 ? '+' : ''}${plPct.toFixed(1)}%)\n`;
+      ctx += `${cleanSym}:Pr=${curPrice.toFixed(1)}|Chg=${change.toFixed(1)}%|RSI=${rsi.toFixed(0)}|MACD=${macd}|Sig=${sig.signal}|SL=${slPrice.toFixed(1)}|TP=${tpPrice.toFixed(1)}|Qty=${p.qty}|P&L=${plPct.toFixed(1)}%\n`;
     }
     ctx += `--- END SENSOR DATA ---\n`;
 

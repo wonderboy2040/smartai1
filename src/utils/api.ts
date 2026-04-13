@@ -562,22 +562,16 @@ export async function fetchMarketIntelligence(): Promise<MarketIntelligence> {
 }
 
 export function formatMarketIntelligenceForAI(intel: MarketIntelligence): string {
-  let ctx = `\n--- LIVE GLOBAL MARKET INTELLIGENCE (${new Date(intel.timestamp).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST) ---\n`;
-
-  ctx += `\n📊 GLOBAL INDICES:\n`;
+  let ctx = `INTEL: `;
   intel.globalIndices.forEach(i => {
-    ctx += `  ${i.name}: ${i.price.toFixed(2)} (${i.change >= 0 ? '+' : ''}${i.change.toFixed(2)}%)\n`;
+    ctx += `${i.name}:${i.price.toFixed(1)}(${i.change.toFixed(1)}%),`;
   });
-
-  ctx += `\n🏭 SECTOR ROTATION:\n`;
+  ctx += ` SECTORS: `;
   intel.sectors.forEach(s => {
-    const emoji = s.change > 1 ? '🟢' : s.change < -1 ? '🔴' : '⚪';
-    ctx += `  ${emoji} ${s.name}: ${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)}%\n`;
+    ctx += `${s.name}:${s.change.toFixed(1)}%,`;
   });
-
-  ctx += `\n🧭 FEAR/GREED INDEX: ${intel.fearGreedScore}/100 (${intel.fearGreedScore > 60 ? 'GREED' : intel.fearGreedScore < 40 ? 'FEAR' : 'NEUTRAL'})\n`;
-  ctx += `📋 MARKET NARRATIVE: ${intel.marketNarrative}\n`;
-  ctx += `--- END GLOBAL INTELLIGENCE ---\n`;
+  ctx += ` F&G:${intel.fearGreedScore}/100 `;
+  ctx += `NARRATIVE:${intel.marketNarrative}\n`;
 
   return ctx;
 }
