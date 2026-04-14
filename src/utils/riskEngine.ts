@@ -61,30 +61,30 @@ export function calculateHistoricalVaR(
 }
 
 /**
- * Monte Carlo VaR with 10000 simulation paths
+ * Monte Carlo VaR with simulations
  */
 export function calculateMonteCarloVaR(
   portfolioValue: number,
   expectedReturn: number,
   volatility: number,
   days: number = 1,
-  simulations: number = 5000,
+  simulations: number = 2000,
   confidence: number = 0.95
 ): number {
-  const results: number[] = [];
+  const results = new Float64Array(simulations);
+  const dailyReturn = expectedReturn / 252;
+  const dailyVol = volatility / Math.sqrt(252);
 
   for (let i = 0; i < simulations; i++) {
     let simValue = portfolioValue;
     for (let d = 0; d < days; d++) {
-      const dailyReturn = expectedReturn / 252;
-      const dailyVol = volatility / Math.sqrt(252);
       const shock = gaussianRandom() * dailyVol + dailyReturn;
       simValue *= (1 + shock);
     }
-    results.push(simValue);
+    results[i] = simValue;
   }
 
-  results.sort((a, b) => a - b);
+  results.sort();
   const percentile = confidence === 0.95 ? 0.05 : confidence === 0.99 ? 0.01 : 0.10;
   const threshold = results[Math.floor(results.length * percentile)];
 
@@ -125,7 +125,7 @@ export function calculateVaR(
     : 0;
 
   const parametric = calculateParametricVaR(portfolioValue, volatility, confidence);
-  const montecarlo = calculateMonteCarloVaR(portfolioValue, avgReturn, volatility, 1, 500, confidence);
+  const montecarlo = calculateMonteCarloVaR(portfolioValue, avgReturn, volatility, 1, 1000, confidence);
 
   return {
     parametric: Math.round(parametric),

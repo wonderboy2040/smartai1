@@ -139,7 +139,7 @@ function portfolioSymbolToTv(sym: string, market: 'IN' | 'US'): string {
  * This is the critical mapping that was broken before.
  */
 function tvSymbolToPortfolioKey(tvSymbol: string): string | null {
-  // Direct reverse lookup
+  // Direct reverse lookup (O(1))
   const direct = tvSymbolToKey.get(tvSymbol);
   if (direct) return direct;
 
@@ -150,7 +150,9 @@ function tvSymbolToPortfolioKey(tvSymbol: string): string | null {
   const exchange = parts[0].toUpperCase();
   const rawSym = parts[1].toUpperCase();
 
-  // Check all registered keys for a matching raw symbol
+  // We can't easily do O(1) for cross-exchange matches because we don't have a
+  // dedicated symbol-to-key map that ignores exchanges.
+  // However, we only enter this loop if the direct match fails.
   for (const [key, tvSym] of keyToTvSymbol.entries()) {
     const tvParts = tvSym.split(':');
     if (tvParts.length < 2) continue;
@@ -254,6 +256,7 @@ function connect() {
     currentSession = generateSession();
 
     // Auth
+    // Using a generic token for public data access; real tokens should be handled via secure vault
     sendMsg('set_auth_token', ['unauthorized_user_token']);
 
     // Create session

@@ -1,5 +1,5 @@
 import { PriceData, Position } from '../types';
-import { CORS_PROXIES, EXACT_TICKER_MAP, guessMarket, API_URL } from './constants';
+import { CORS_PROXIES, EXACT_TICKER_MAP, guessMarket, API_URL, DEFAULT_USD_INR } from './constants';
 import { isAnyMarketOpen } from './telegram';
 
 // ========================================
@@ -85,7 +85,7 @@ async function fetchWithStaleCheck(sym: string, retryAttempt: number): Promise<P
   try {
     const tvResult = await tryTradingView(sym, cleanSym, isIndian);
     if (tvResult && tvResult.price > 0) {
-      priceCache.set(sym, tvResult, 1000); // 1s TTL for prices
+      priceCache.set(sym, tvResult, 5000); // Increased to 5s for stability
       return tvResult;
     }
   } catch (e) {}
@@ -119,7 +119,7 @@ async function fetchWithStaleCheck(sym: string, retryAttempt: number): Promise<P
               tvExactSymbol: yahooSymbol,
               time: Date.now()
             };
-            priceCache.set(sym, result, 1000);
+            priceCache.set(sym, result, 5000);
             return result;
           }
         }
@@ -290,13 +290,18 @@ export async function fetchForexRate(): Promise<number> {
   for (const proxy of CORS_PROXIES) {
     try {
       const url = `${proxy}${encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/INR=X?interval=1d&range=1d')}`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(5000),
+        cache: 'no-store'
+      });
       if (res.ok) {
         const data = await res.json();
         const price = parseFloat(data?.chart?.result?.[0]?.meta?.regularMarketPrice);
         if (!isNaN(price) && price > 50 && price < 150) return price;
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn(`Forex proxy ${proxy} failed:`, e);
+    }
   }
 
   // Backup 1: AwesomeAPI (Real-time fallback)
@@ -327,16 +332,19 @@ export async function fetchForexRate(): Promise<number> {
     }
   } catch (e) {}
 
-  return 83.5; // Default fallback
+  return DEFAULT_USD_INR; // Default fallback
 }
 
 export async function syncToCloud(portfolio: Position[], usdInr: number): Promise<boolean> {
   if (!API_URL) return false;
-  
+
   try {
     const res = await fetch(API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Auth-Token': 'WEALTH_AI_SECURE_SYNC_2026' // Simple auth header for basic security
+      },
       body: JSON.stringify({ portfolio, timestamp: Date.now(), usdInr })
     });
     return res.ok;
@@ -397,7 +405,10 @@ export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
   try {
     await fetch(API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Auth-Token': 'WEALTH_AI_SECURE_SYNC_2026'
+      },
       body: JSON.stringify({ groqKey: key, action: 'saveKey', timestamp: Date.now() })
     });
     return true;

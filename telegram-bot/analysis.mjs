@@ -2,9 +2,9 @@
 // ANALYSIS ENGINE — Signals, Reports, Allocation
 // ============================================
 
-import { 
-  ALPHA_ETFS_IN, ALPHA_ETFS_US, getAssetCagrProxy, 
-  formatCurrency, formatPrice, DEFAULT_INDIA_SIP, DEFAULT_US_SIP 
+import {
+  ALPHA_ETFS_IN, ALPHA_ETFS_US, getAssetCagrProxy,
+  formatCurrency, formatPrice, DEFAULT_INDIA_SIP, DEFAULT_US_SIP, DEFAULT_USD_INR
 } from './config.mjs';
 import { getISTTime, getMarketStatus, isIndiaMarketOpen, isUSMarketOpen } from './market.mjs';
 

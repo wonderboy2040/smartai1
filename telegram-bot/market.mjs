@@ -2,7 +2,7 @@
 // MARKET DATA ENGINE — TradingView + Yahoo + Forex
 // ============================================
 
-import { EXACT_TICKER_MAP, guessMarket } from './config.mjs';
+import { EXACT_TICKER_MAP, guessMarket, DEFAULT_USD_INR } from './config.mjs';
 
 // ========================================
 // MARKET HOURS DETECTION
@@ -275,7 +275,7 @@ export async function fetchForexRate() {
     }
   } catch (e) {}
 
-  return 85.5; // Default
+  return DEFAULT_USD_INR; // Default
 }
 
 // ========================================
