@@ -22,6 +22,10 @@ export interface PriceData {
   sma20?: number;
   sma50?: number;
   macd?: number;
+  // Multi-timeframe indicators
+  timeframe15m?: { rsi: number; trend: 'up' | 'down' | 'flat' };
+  timeframe1h?: { rsi: number; trend: 'up' | 'down' | 'flat' };
+  timeframe1d?: { rsi: number; trend: 'up' | 'down' | 'flat' };
 }
 
 export interface ETFInfo {

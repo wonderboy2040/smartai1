@@ -15,11 +15,18 @@ export function analyzeAsset(position, priceData) {
   const price = priceData?.price || position.avgPrice;
   const rsi = priceData?.rsi || 50;
   const change = priceData?.change || 0;
+  const volume = priceData?.volume || 0;
   const cagr = getAssetCagrProxy(position.symbol, position.market);
 
   const sma20 = priceData?.sma20;
   const sma50 = priceData?.sma50;
   const macd = priceData?.macd;
+
+  // Institutional Volume Tracking
+  // Volume spike > 2x average (approximate)
+  const isVolumeSpike = volume > 1000000 && (priceData?.change !== undefined ? Math.abs(priceData.change) > 1.5 : false);
+  const instAccumulation = isVolumeSpike && change > 0;
+  const instDistribution = isVolumeSpike && change < 0;
 
   let isBullishTrend = change > 0.5;
   let isBearishTrend = change < -0.5;
@@ -43,17 +50,21 @@ export function analyzeAsset(position, priceData) {
   if (rsi < 30) {
     signal = 'STRONG_BUY'; confidence = 95; targetPrice = supportLevel;
     reason = `RSI ${rsi.toFixed(0)} oversold — institutional accumulation zone.`;
+    if (instAccumulation) { confidence = 99; reason = `🔥 MAX CONVICTION: RSI ${rsi.toFixed(0)} + Volume Spike! Institutional buying detected.`; }
   } else if (rsi < 40) {
     signal = 'BUY'; confidence = 80; targetPrice = low;
     reason = `RSI ${rsi.toFixed(0)} approaching oversold — good entry.`;
     if (isBullishTrend) { reason += ' Bullish momentum building.'; confidence += 5; }
+    if (instAccumulation) { confidence += 10; reason += ' Volume confirming accumulation.'; }
   } else if (rsi > 75) {
     signal = 'STRONG_SELL'; confidence = 90; targetPrice = resistanceLevel;
     reason = `RSI ${rsi.toFixed(0)} overbought — distribution zone.`;
+    if (instDistribution) { confidence = 98; reason = `🔥 MAX RISK: RSI ${rsi.toFixed(0)} + Volume Spike! Institutional distribution detected.`; }
   } else if (rsi > 65) {
     signal = 'SELL'; confidence = 70; targetPrice = high;
     reason = `RSI ${rsi.toFixed(0)} elevated — consider partial booking.`;
     if (isBearishTrend) { reason += ' Bearish momentum detected.'; confidence += 5; }
+    if (instDistribution) { confidence += 10; reason += ' Volume confirming distribution.'; }
   } else {
     if (isBullishTrend && rsi < 55) {
       signal = 'BUY'; confidence = 75; targetPrice = sma20 || price * 0.98;

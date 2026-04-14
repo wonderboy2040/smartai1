@@ -475,7 +475,7 @@ export async function fetchMarketIntelligence(): Promise<MarketIntelligence> {
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         body: JSON.stringify({
           symbols: { tickers: indexTickers },
-          columns: ['name', 'close', 'change']
+          columns: ['name', 'close', 'change', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
         }),
         signal: AbortSignal.timeout(6000)
       }),
@@ -484,7 +484,7 @@ export async function fetchMarketIntelligence(): Promise<MarketIntelligence> {
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         body: JSON.stringify({
           symbols: { tickers: sectorTickers },
-          columns: ['name', 'close', 'change']
+          columns: ['name', 'close', 'change', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
         }),
         signal: AbortSignal.timeout(6000)
       })

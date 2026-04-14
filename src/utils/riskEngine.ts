@@ -239,9 +239,7 @@ export function analyzeConcentrationRisk(
   }).sort((a, b) => b.contributionToRisk - a.contributionToRisk);
 }
 
-/**
- * Drawdown analysis
- */
+// Drawdown analysis
 export function analyzeDrawdown(
   positions: Position[],
   livePrices: Record<string, PriceData>
@@ -267,4 +265,162 @@ export function analyzeDrawdown(
       recoveryTime: recoveryStr
     };
   });
+}
+
+/**
+ * Correlation Matrix Calculation
+ * Estimates correlation between assets based on their current daily changes.
+ * In a real system, this would use a historical time-series of returns.
+ */
+export function calculateCorrelationMatrix(
+  positions: Position[],
+  livePrices: Record<string, PriceData>
+): Record<string, Record<string, number>> {
+  const assets = positions.map(p => p.symbol);
+  const matrix: Record<string, Record<string, number>> = {};
+
+  assets.forEach(a => {
+    matrix[a] = {};
+    assets.forEach(b => {
+      if (a === b) {
+        matrix[a][b] = 1.0;
+      } else {
+        // Heuristic correlation based on market and sector
+        const assetA = positions.find(p => p.symbol === a);
+        const assetB = positions.find(p => p.symbol === b);
+
+        if (!assetA || !assetB) {
+          matrix[a][b] = 0.5;
+          return;
+        }
+
+        let corr = 0.5;
+        // Same market = higher correlation
+        if (assetA.market === assetB.market) corr += 0.2;
+
+        // Check for overlap in ETF categories (simplified)
+        // If both are tech, correlation is very high
+        const isTechA = a.includes('QQQ') || a.includes('SMH') || a.includes('XLK');
+        const isTechB = b.includes('QQQ') || b.includes('SMH') || b.includes('XLK');
+        if (isTechA && isTechB) corr += 0.25;
+
+        matrix[a][b] = Math.min(1.0, corr);
+      }
+    });
+  });
+
+  return matrix;
+}
+
+/**
+ * Dynamic Rebalancing Engine
+ * Calculates the exact amount to buy/sell to reach target allocation.
+ */
+export function calculateRebalance(
+  portfolio: Position[],
+  livePrices: Record<string, PriceData>,
+  targetAllocations: Record<string, number>, // symbol -> % (0 to 1)
+  totalInvestment: number,
+  usdInrRate: number = 83.5
+) {
+  const recommendations: Array<{ symbol: string; action: 'BUY' | 'SELL' | 'HOLD'; amount: number; pctChange: number }> = [];
+
+  portfolio.forEach(p => {
+    const key = `${p.market}_${p.symbol}`;
+    const price = livePrices[key]?.price || p.avgPrice;
+    const currentVal = price * p.qty;
+    const valINR = p.market === 'IN' ? currentVal : currentVal * usdInrRate;
+
+    const targetPct = targetAllocations[p.symbol] || 0;
+    const targetValINR = totalInvestment * targetPct;
+    const diffINR = targetValINR - valINR;
+
+    if (Math.abs(diffINR) < 500) { // Ignore small changes < ₹500
+      recommendations.push({ symbol: p.symbol, action: 'HOLD', amount: 0, pctChange: 0 });
+    } else if (diffINR > 0) {
+      recommendations.push({
+        symbol: p.symbol,
+        action: 'BUY',
+        amount: diffINR / (p.market === 'IN' ? price : price * usdInrRate),
+        pctChange: (diffINR / valINR) * 100
+      });
+    } else {
+      recommendations.push({
+        symbol: p.symbol,
+        action: 'SELL',
+        amount: Math.abs(diffINR) / (p.market === 'IN' ? price : price * usdInrRate),
+        pctChange: (diffINR / valINR) * 100
+      });
+    }
+  });
+
+  return recommendations;
+}
+
+/**
+ * Risk-Adjusted Position Sizing
+ * Suggests how much to invest based on the asset's volatility (Inverse Volatility Weighting).
+ */
+export function suggestPositionSize(
+  totalCapital: number,
+  assets: { symbol: string; volatility: number }[],
+  market: 'IN' | 'US'
+) {
+  const totalVol = assets.reduce((sum, a) => sum + a.volatility, 0);
+  if (totalVol === 0) return assets.map(a => ({ symbol: a.symbol, suggestedAmount: totalCapital / assets.length }));
+
+  return assets.map(a => {
+    // Inverse Volatility: lower vol assets get higher allocation
+    const weight = (1 / a.volatility) / (assets.reduce((sum, asset) => sum + (1 / asset.volatility), 0));
+    return {
+      symbol: a.symbol,
+      suggestedAmount: totalCapital * weight,
+      weightPct: weight * 100
+    };
+  });
+}
+
+/**
+ * Correlation Matrix Calculation
+ * Estimates correlation between assets based on their current daily changes.
+ * In a real system, this would use a historical time-series of returns.
+ */
+export function calculateCorrelationMatrix(
+  positions: Position[],
+  livePrices: Record<string, PriceData>
+): Record<string, Record<string, number>> {
+  const assets = positions.map(p => p.symbol);
+  const matrix: Record<string, Record<string, number>> = {};
+
+  assets.forEach(a => {
+    matrix[a] = {};
+    assets.forEach(b => {
+      if (a === b) {
+        matrix[a][b] = 1.0;
+      } else {
+        // Heuristic correlation based on market and sector
+        const assetA = positions.find(p => p.symbol === a);
+        const assetB = positions.find(p => p.symbol === b);
+
+        if (!assetA || !assetB) {
+          matrix[a][b] = 0.5;
+          return;
+        }
+
+        let corr = 0.5;
+        // Same market = higher correlation
+        if (assetA.market === assetB.market) corr += 0.2;
+
+        // Check for overlap in ETF categories (simplified)
+        // If both are tech, correlation is very high
+        const isTechA = a.includes('QQQ') || a.includes('SMH') || a.includes('XLK');
+        const isTechB = b.includes('QQQ') || b.includes('SMH') || b.includes('XLK');
+        if (isTechA && isTechB) corr += 0.25;
+
+        matrix[a][b] = Math.min(1.0, corr);
+      }
+    });
+  });
+
+  return matrix;
 }
