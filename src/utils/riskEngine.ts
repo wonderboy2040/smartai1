@@ -267,50 +267,6 @@ export function analyzeDrawdown(
   });
 }
 
-/**
- * Correlation Matrix Calculation
- * Estimates correlation between assets based on their current daily changes.
- * In a real system, this would use a historical time-series of returns.
- */
-export function calculateCorrelationMatrix(
-  positions: Position[],
-  livePrices: Record<string, PriceData>
-): Record<string, Record<string, number>> {
-  const assets = positions.map(p => p.symbol);
-  const matrix: Record<string, Record<string, number>> = {};
-
-  assets.forEach(a => {
-    matrix[a] = {};
-    assets.forEach(b => {
-      if (a === b) {
-        matrix[a][b] = 1.0;
-      } else {
-        // Heuristic correlation based on market and sector
-        const assetA = positions.find(p => p.symbol === a);
-        const assetB = positions.find(p => p.symbol === b);
-
-        if (!assetA || !assetB) {
-          matrix[a][b] = 0.5;
-          return;
-        }
-
-        let corr = 0.5;
-        // Same market = higher correlation
-        if (assetA.market === assetB.market) corr += 0.2;
-
-        // Check for overlap in ETF categories (simplified)
-        // If both are tech, correlation is very high
-        const isTechA = a.includes('QQQ') || a.includes('SMH') || a.includes('XLK');
-        const isTechB = b.includes('QQQ') || b.includes('SMH') || b.includes('XLK');
-        if (isTechA && isTechB) corr += 0.25;
-
-        matrix[a][b] = Math.min(1.0, corr);
-      }
-    });
-  });
-
-  return matrix;
-}
 
 /**
  * Dynamic Rebalancing Engine
@@ -380,47 +336,3 @@ export function suggestPositionSize(
   });
 }
 
-/**
- * Correlation Matrix Calculation
- * Estimates correlation between assets based on their current daily changes.
- * In a real system, this would use a historical time-series of returns.
- */
-export function calculateCorrelationMatrix(
-  positions: Position[],
-  livePrices: Record<string, PriceData>
-): Record<string, Record<string, number>> {
-  const assets = positions.map(p => p.symbol);
-  const matrix: Record<string, Record<string, number>> = {};
-
-  assets.forEach(a => {
-    matrix[a] = {};
-    assets.forEach(b => {
-      if (a === b) {
-        matrix[a][b] = 1.0;
-      } else {
-        // Heuristic correlation based on market and sector
-        const assetA = positions.find(p => p.symbol === a);
-        const assetB = positions.find(p => p.symbol === b);
-
-        if (!assetA || !assetB) {
-          matrix[a][b] = 0.5;
-          return;
-        }
-
-        let corr = 0.5;
-        // Same market = higher correlation
-        if (assetA.market === assetB.market) corr += 0.2;
-
-        // Check for overlap in ETF categories (simplified)
-        // If both are tech, correlation is very high
-        const isTechA = a.includes('QQQ') || a.includes('SMH') || a.includes('XLK');
-        const isTechB = b.includes('QQQ') || b.includes('SMH') || b.includes('XLK');
-        if (isTechA && isTechB) corr += 0.25;
-
-        matrix[a][b] = Math.min(1.0, corr);
-      }
-    });
-  });
-
-  return matrix;
-}
