@@ -1,6 +1,5 @@
-import React, { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { PriceData } from '../types';
-import { TrendingUp, TrendingDown, Activity, Zap, Target, Clock, Brain, Eye, Gauge, Layers } from 'lucide-react';
 
 interface MLProps {
   symbol:      string;
@@ -148,7 +147,7 @@ function runMLEngine(data: PriceData | undefined): Prediction | null {
   const resistance2 = high + atr;
 
   // ── Value Zone (Benjamin Graham) ───────────────────
-  const peProxy = 20 - (rsi / 10); // Simplified P/E
+  const _peProxy = 20 - (rsi / 10); // Simplified P/E (unused - kept for future use)
   const valueZoneLow = price * 0.85;
   const valueZoneHigh = price * 1.15;
   let valueZoneCurrent = 'FAIR VALUE';

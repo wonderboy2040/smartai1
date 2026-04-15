@@ -319,8 +319,7 @@ export function calculateRebalance(
  */
 export function suggestPositionSize(
   totalCapital: number,
-  assets: { symbol: string; volatility: number }[],
-  market: 'IN' | 'US'
+  assets: { symbol: string; volatility: number }[]
 ) {
   const totalVol = assets.reduce((sum, a) => sum + a.volatility, 0);
   if (totalVol === 0) return assets.map(a => ({ symbol: a.symbol, suggestedAmount: totalCapital / assets.length }));

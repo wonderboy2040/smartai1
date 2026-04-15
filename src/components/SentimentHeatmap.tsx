@@ -1,6 +1,7 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { Position, PriceData } from '../types';
-import { TrendingUp, TrendingDown, Activity, Target, Brain, Eye } from 'lucide-react';
+import { Brain } from 'lucide-react';
+import { memo } from 'react';
 
 interface HeatmapProps {
   portfolio:    Position[];
@@ -34,7 +35,7 @@ function getSignalData(rsi: number, change: number, sma20?: number, sma50?: numb
   let entryQuality = 'AVERAGE';
 
   const smaBullish = sma20 && sma50 ? sma20 > sma50 : false;
-  const macdBullish = (macd ?? 0) > 0;
+  const _macdBullish = (macd ?? 0) > 0;
 
   if (rsi < 30 && smaBullish) {
     signal = 'STRONG BUY';
@@ -84,7 +85,7 @@ function rsiStyle(rsi: number): { bg: string; border: string; shadow: string; ba
   return           { bg: 'bg-red-500/25',     border: 'border-red-500/50',     shadow: '0 0 18px rgba(239,68,68,0.3)',  badge: 'DISTRIBUTE', color: 'text-red-400' };
 }
 
-export const SentimentHeatmap = React.memo(({
+export const SentimentHeatmap = memo(({
   portfolio, livePrices, totalValue, usdInrRate, onSelect, currentSymbol
 }: HeatmapProps) => {
 

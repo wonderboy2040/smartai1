@@ -114,11 +114,11 @@ function getAdvancedVerdict(data: PreMarketData): VerdictResult {
   const vix = data.vix?.price ?? 15;
   const inVix = data.indiaVix?.price ?? 15;
   const goldChg = data.gold?.change ?? 0;
-  const dxyChg = data.dxy?.change ?? 0;
+  // dxyChg - kept for future macro analysis
 
   const avgUS = (esChg + nqChg) / 2;
   const avgIndia = (giftChg + bankChg + sensexChg) / 3;
-  const globalBias = (avgUS + avgIndia) / 2;
+  // globalBias - kept for potential future use
 
   let direction: VerdictResult['direction'] = 'NEUTRAL';
   let gapProbability = 50;
@@ -198,7 +198,6 @@ export const PreMarketWatch = React.memo(({ alwaysShow = false }: Props) => {
 
   const inPre = isIndiaPreMarket();
   const usPre = isUSPreMarket();
-  const marketOpen = isMarketOpen();
   const session = getMarketSession();
 
   const verdict = useMemo(() => getAdvancedVerdict(data), [data]);
@@ -223,7 +222,7 @@ export const PreMarketWatch = React.memo(({ alwaysShow = false }: Props) => {
   const clr = (v: number) => v >= 0 ? 'text-emerald-400' : 'text-red-400';
   const bg = (v: number) => v >= 0 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30';
 
-  const sessionColor = session === 'LIVE' ? 'text-emerald-400' : session === 'PRE-MARKET' ? 'text-amber-400' : 'text-slate-400';
+  // sessionColor - kept for potential future use
 
   return (
     <div className={`glass-card rounded-2xl p-5 animate-fade-in-up ${inPre || usPre ? 'premarket-live' : ''}`}>

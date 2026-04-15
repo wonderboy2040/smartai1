@@ -1095,10 +1095,10 @@ initializeData().then(() => {
   console.log(`📱 Chat ID: ${TG_CHAT_ID}`);
   console.log(`   Market Status: ${getMarketStatus()}`);
   console.log(`   Auto Alerts: ${autoAlerts ? 'ON' : 'OFF'}`);
-  console.log(`   Gemini AI: ${GEMINI_KEY ? 'ONLINE' : 'OFFLINE (set via /setkey)'}`);
+  console.log(`   Groq AI: ${GROQ_KEY ? 'ONLINE' : 'OFFLINE (set via /setkey)'}`);
   console.log('');
   // Send boot notification
-  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI Bot ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🧠 AI: ${GEMINI_KEY ? 'Active (Gemini)' : 'Inactive'}\n\nType /help for commands.`).catch(() => {});
+  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI Bot ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🧠 AI: ${GROQ_KEY ? 'Active (Groq)' : 'Inactive'}\n\nType /help for commands.`).catch(() => {});
 }).catch(err => {
   console.error('❌ Boot error (non-fatal):', err.message);
   console.log('⚡ Bot is STILL listening for commands with limited data...');

@@ -674,10 +674,7 @@ export default function App() {
       const curPrice = data?.price || p.avgPrice;
       const rsi = data?.rsi || 50;
       const change = data?.change || 0;
-      const sma20 = data?.sma20 ? data.sma20.toFixed(2) : 'N/A';
-      const sma50 = data?.sma50 ? data.sma50.toFixed(2) : 'N/A';
       const macd = data?.macd !== undefined ? data.macd.toFixed(2) : 'N/A';
-      const pl = (curPrice - p.avgPrice) * p.qty;
       const plPct = p.avgPrice > 0 ? ((curPrice - p.avgPrice) / p.avgPrice) * 100 : 0;
       const cleanSym = p.symbol.replace('.NS', '');
       const cur = p.market === 'IN' ? '₹' : '$';
@@ -905,7 +902,7 @@ export default function App() {
 
             {/* Tabs */}
             <div className="flex gap-0.5 glass-card p-1 rounded-2xl">
-              {(['dashboard', 'portfolio', 'planner', 'macro', 'tools'] as const).map(tab => (
+              {(['dashboard', 'portfolio', 'planner', 'macro', 'tools'] satisfies Array<TabType | 'tools'>).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab as any)}
@@ -977,11 +974,9 @@ export default function App() {
               </button>
               <button onClick={() => window.location.reload()} className="btn-glass p-2.5 rounded-xl text-lg" title="Refresh">🔄</button>
               <button onClick={() => {
-                const pin = localStorage.getItem('WEALTH_AI_PIN');
                 const groqSaved = localStorage.getItem('WEALTH_AI_GROQ');
                 const themeSaved = localStorage.getItem('theme');
                 localStorage.clear();
-                if (pin) localStorage.setItem('WEALTH_AI_PIN', pin);
                 if (groqSaved) localStorage.setItem('WEALTH_AI_GROQ', groqSaved);
                 if (themeSaved) localStorage.setItem('theme', themeSaved);
                 window.location.reload();

@@ -112,7 +112,7 @@ function analyzeFlow(data: FIIData[]) {
   return { sentiment, fiiTrend, diiTrend, conviction, fiiCumulative, diiCumulative, netFlow, flowDirection };
 }
 
-export const FIIDIILiveTracker = React.memo(({ onSelect }: FIIProps) => {
+export const FIIDIILiveTracker = React.memo(() => {
   const [data, setData] = useState<FIIData[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(0);
@@ -240,7 +240,7 @@ export const FIIDIILiveTracker = React.memo(({ onSelect }: FIIProps) => {
             const maxVal = Math.max(Math.abs(fiiCumulative), Math.abs(diiCumulative), 1000);
             const fiiHeight = (Math.abs(d.fii) / maxVal) * 100;
             const diiHeight = (Math.abs(d.dii) / maxVal) * 100;
-            const netHeight = (Math.abs(d.netChange) / maxVal) * 100;
+            // netHeight - kept for potential future annotation
             return (
               <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
                 <div className="w-full bg-blue-500/40 rounded-t" style={{ height: `${fiiHeight}%` }} title={`FII: ₹${(d.fii/100).toFixed(0)}Cr`} />
