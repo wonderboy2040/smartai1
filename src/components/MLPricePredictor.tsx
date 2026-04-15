@@ -1,74 +1,75 @@
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { PriceData } from '../types';
+import { Brain } from 'lucide-react';
 
 interface MLProps {
-  symbol:      string;
-  market:      'IN' | 'US';
-  data:        PriceData | undefined;
-  usdInrRate:  number;
+  symbol: string;
+  market: 'IN' | 'US';
+  data: PriceData | undefined;
+  usdInrRate: number;
 }
 
 interface Prediction {
-  currentPrice:    number;
-  expectedPrice:   number;
+  currentPrice: number;
+  expectedPrice: number;
   expectedMovePct: number;
-  rangeLow70:      number;
-  rangeHigh70:     number;
-  rangeLow90:      number;
-  rangeHigh90:     number;
-  targetBull:      number;
-  stopBull:        number;
-  targetBear:      number;
-  stopBear:        number;
-  fib618:          number;
-  fib382:          number;
-  fib786:          number;
-  support1:        number;
-  support2:        number;
-  resistance1:     number;
-  resistance2:     number;
-  atr:             number;
-  atrPct:          number;
-  momentumScore:   number;
-  pUp:             number;
-  confidence:      number;
-  signal:          'BULLISH' | 'BEARISH' | 'NEUTRAL';
-  rrBull:          number;
-  factors:         string[];
-  wyckoffPhase:    string;
-  adx:             number;
-  vwap:            number;
-  bbUpper:         number;
-  bbMiddle:        number;
-  bbLower:         number;
-  volumeSignal:    string;
-  trendStrength:   string;
+  rangeLow70: number;
+  rangeHigh70: number;
+  rangeLow90: number;
+  rangeHigh90: number;
+  targetBull: number;
+  stopBull: number;
+  targetBear: number;
+  stopBear: number;
+  fib618: number;
+  fib382: number;
+  fib786: number;
+  support1: number;
+  support2: number;
+  resistance1: number;
+  resistance2: number;
+  atr: number;
+  atrPct: number;
+  momentumScore: number;
+  pUp: number;
+  confidence: number;
+  signal: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  rrBull: number;
+  factors: string[];
+  wyckoffPhase: string;
+  adx: number;
+  vwap: number;
+  bbUpper: number;
+  bbMiddle: number;
+  bbLower: number;
+  volumeSignal: string;
+  trendStrength: string;
   historicalAccuracy: number;
   smartMoneySignal: string;
   institutionalBias: string;
-  elliottWave:      string;
-  marketCycle:      string;
-  multiTimeframe:   { daily: string; weekly: string; monthly: string };
-  valueZone:       { low: number; high: number; current: string };
-  setups:          { name: string; probability: number; direction: string }[];
-  quantumScore:    number;
+  elliottWave: string;
+  marketCycle: string;
+  multiTimeframe: { daily: string; weekly: string; monthly: string };
+  valueZone: { low: number; high: number; current: string };
+  setups: { name: string; probability: number; direction: string }[];
+  quantumScore: number;
 }
 
 function runMLEngine(data: PriceData | undefined): Prediction | null {
   if (!data || data.price <= 0) return null;
 
-  const price  = data.price;
-  const rsi    = data.rsi    ?? 50;
+  const price = data.price;
+  const rsi = data.rsi ?? 50;
   const change = data.change ?? 0;
-  const high   = data.high   ?? price * 1.02;
-  const low    = data.low    ?? price * 0.98;
-  const sma20  = data.sma20  ?? price;
-  const sma50  = data.sma50  ?? price;
-  const macd   = data.macd   ?? 0;
+  const high = data.high ?? price * 1.02;
+  const low = data.low ?? price * 0.98;
+  const sma20 = data.sma20 ?? price;
+  const sma50 = data.sma50 ?? price;
+  const macd = data.macd ?? 0;
   const volume = data.volume ?? 0;
 
   // ── ATR (Average True Range) ────────────────────────
-  const atr    = Math.max(high - low, price * 0.012);
+  const atr = Math.max(high - low, price * 0.012);
   const atrPct = (atr / price) * 100;
 
   // ── Bollinger Bands ────────────────────────────────
@@ -122,7 +123,7 @@ function runMLEngine(data: PriceData | undefined): Prediction | null {
   if (waveScore > 15) elliottWave = 'WAVE 3 (STRONG IMPULSE)';
   else if (waveScore > 5) elliottWave = 'WAVE 5 (EXTENSION)';
   else if (waveScore > -5) elliottWave = 'WAVE A (CORRECTION)';
-  else if (waveScore > -15)elliottWave = 'WAVE B (RETRACEMENT)';
+  else if (waveScore > -15) elliottWave = 'WAVE B (RETRACEMENT)';
   else elliottWave = 'WAVE C (BEARISH)';
 
   // ── Market Cycle ───────────────────────────────────
@@ -156,7 +157,7 @@ function runMLEngine(data: PriceData | undefined): Prediction | null {
 
   // ── Trading Setups ─────────────────────────────────
   const setups: { name: string; probability: number; direction: string }[] = [];
-  
+
   if (rsi < 30 && sma20 > sma50) {
     setups.push({ name: 'RSI Oversold + Golden Cross', probability: 78, direction: 'LONG' });
   }
@@ -193,32 +194,32 @@ function runMLEngine(data: PriceData | undefined): Prediction | null {
   const factors: string[] = [];
 
   // RSI Signal (weighted)
-  if      (rsi < 25) { score += 25; factors.push('RSI Extreme Oversold (<25) — Wyckoff accumulation zone'); }
+  if (rsi < 25) { score += 25; factors.push('RSI Extreme Oversold (<25) — Wyckoff accumulation zone'); }
   else if (rsi < 30) { score += 20; factors.push('RSI Oversold (<30) — Strong bounce expected'); }
   else if (rsi < 40) { score += 12; factors.push('RSI Buy Zone (30-40) — Accumulation momentum'); }
-  else if (rsi < 55) { score +=  0; factors.push('RSI Neutral (40-55) — No directional bias'); }
-  else if (rsi < 65) { score -=  8; factors.push('RSI Elevated (55-65) — Momentum slowing'); }
+  else if (rsi < 55) { score += 0; factors.push('RSI Neutral (40-55) — No directional bias'); }
+  else if (rsi < 65) { score -= 8; factors.push('RSI Elevated (55-65) — Momentum slowing'); }
   else if (rsi < 75) { score -= 15; factors.push('RSI Overbought (65-75) — Distribution zone'); }
-  else               { score -= 22; factors.push('RSI Extreme (75+) — Reversal risk HIGH'); }
+  else { score -= 22; factors.push('RSI Extreme (75+) — Reversal risk HIGH'); }
 
   // SMA Crossover - weighted
-  if (smaSignal > 0) { 
-    score += 12; 
+  if (smaSignal > 0) {
+    score += 12;
     factors.push(`SMA20 > SMA50 — Uptrend confirmed`);
   }
-  else { 
-    score -= 12; 
+  else {
+    score -= 12;
     factors.push(`SMA20 < SMA50 — Downtrend active`);
   }
 
   // MACD - weighted
-  if      (macdSignal > 0) { score += 10; factors.push('MACD Bullish histogram — Momentum building'); }
+  if (macdSignal > 0) { score += 10; factors.push('MACD Bullish histogram — Momentum building'); }
   else if (macdSignal < 0) { score -= 10; factors.push('MACD Bearish histogram — Selling pressure'); }
-  else                     { factors.push('MACD Flat — Consolidation phase'); }
+  else { factors.push('MACD Flat — Consolidation phase'); }
 
   // Price vs SMA20
   const priceSMA20Ratio = price / sma20;
-  if      (priceSMA20Ratio < 0.95) { score += 10; factors.push('Price well below SMA20 — Deep value zone'); }
+  if (priceSMA20Ratio < 0.95) { score += 10; factors.push('Price well below SMA20 — Deep value zone'); }
   else if (priceSMA20Ratio > 1.05) { score -= 10; factors.push('Price 5%+ above SMA20 — Extended, caution'); }
 
   // Bollinger Band position
@@ -239,8 +240,8 @@ function runMLEngine(data: PriceData | undefined): Prediction | null {
   else if (volumeSignal === 'VERY HIGH' && change < -1) { score -= 8; factors.push('High volume + price down — Distribution'); }
 
   // Momentum
-  if      (change > 3)   { score += 8; factors.push(`Strong momentum up ${change.toFixed(1)}% — Breakout`); }
-  else if (change < -3)  { score -= 8; factors.push(`Sharp drop ${change.toFixed(1)}% — Breakdown risk`); }
+  if (change > 3) { score += 8; factors.push(`Strong momentum up ${change.toFixed(1)}% — Breakout`); }
+  else if (change < -3) { score -= 8; factors.push(`Sharp drop ${change.toFixed(1)}% — Breakdown risk`); }
 
   // ADX strength
   if (adx > 25) { score += 5; factors.push(`ADX ${adx.toFixed(0)} — Strong trend`); }
@@ -249,7 +250,7 @@ function runMLEngine(data: PriceData | undefined): Prediction | null {
   score = Math.max(5, Math.min(95, score));
 
   // ── Direction & Confidence ───────────────────────────
-  const pUp     = score / 100;
+  const pUp = score / 100;
   const signal: Prediction['signal'] = score > 60 ? 'BULLISH' : score < 40 ? 'BEARISH' : 'NEUTRAL';
 
   const alignedFactors = smaSignal + macdSignal + (rsi < 45 ? 1 : rsi > 65 ? -1 : 0);
@@ -264,26 +265,26 @@ function runMLEngine(data: PriceData | undefined): Prediction | null {
   else if (adx < 15) trendStrength = 'WEAK/RANGE';
 
   // ── Price Targets ───────────────────────────────────
-  const expectedMove     = (pUp - 0.5) * atr * 2.5;
-  const expectedPrice    = price + expectedMove;
-  const expectedMovePct  = (expectedMove / price) * 100;
+  const expectedMove = (pUp - 0.5) * atr * 2.5;
+  const expectedPrice = price + expectedMove;
+  const expectedMovePct = (expectedMove / price) * 100;
 
-  const rangeLow70  = price - atr * 0.8;
+  const rangeLow70 = price - atr * 0.8;
   const rangeHigh70 = price + atr * 0.8;
-  const rangeLow90  = price - atr * 1.5;
+  const rangeLow90 = price - atr * 1.5;
   const rangeHigh90 = price + atr * 1.5;
 
   const targetBull = price + atr * 3.0;
-  const stopBull   = price - atr * 1.0;
+  const stopBull = price - atr * 1.0;
   const targetBear = price - atr * 2.5;
-  const stopBear   = price + atr * 1.2;
-  const rrBull     = (targetBull - price) / (price - stopBull);
+  const stopBear = price + atr * 1.2;
+  const rrBull = (targetBull - price) / (price - stopBull);
 
   // Fibonacci levels
   const swingRange = (high - low) * 1.618;
-  const fib618     = low  + swingRange * 0.618;
-  const fib382     = low  + swingRange * 0.382;
-  const fib786     = low  + swingRange * 0.786;
+  const fib618 = low + swingRange * 0.618;
+  const fib382 = low + swingRange * 0.382;
+  const fib786 = low + swingRange * 0.786;
 
   const historicalAccuracy = Math.min(92, 55 + confidence * 0.35 + (Math.abs(score - 50) / 50) * 25);
 
@@ -308,7 +309,7 @@ function runMLEngine(data: PriceData | undefined): Prediction | null {
 
 export const MLPricePredictor = React.memo(({ symbol, market, data }: MLProps) => {
   const pred = useMemo(() => runMLEngine(data), [data]);
-  const cur  = market === 'IN' ? '₹' : '$';
+  const cur = market === 'IN' ? '₹' : '$';
 
   if (!pred) {
     return (
@@ -335,7 +336,7 @@ export const MLPricePredictor = React.memo(({ symbol, market, data }: MLProps) =
     valueZone, setups, quantumScore } = pred;
 
   const sigColor = signal === 'BULLISH' ? 'text-emerald-400' : signal === 'BEARISH' ? 'text-red-400' : 'text-amber-400';
-  const sigBg    = signal === 'BULLISH' ? 'bg-emerald-500/10 border-emerald-500/25' : signal === 'BEARISH' ? 'bg-red-500/10 border-red-500/25' : 'bg-amber-500/10 border-amber-500/25';
+  const sigBg = signal === 'BULLISH' ? 'bg-emerald-500/10 border-emerald-500/25' : signal === 'BEARISH' ? 'bg-red-500/10 border-red-500/25' : 'bg-amber-500/10 border-amber-500/25';
   const sigEmoji = signal === 'BULLISH' ? '📈' : signal === 'BEARISH' ? '📉' : '↔️';
 
   const wyckoffColor = wyckoffPhase === 'ACCUMULATION' ? 'text-emerald-400' : wyckoffPhase === 'DISTRIBUTION' ? 'text-red-400' : wyckoffPhase === 'MARKUP' ? 'text-cyan-400' : wyckoffPhase === 'MARKDOWN' ? 'text-orange-400' : 'text-amber-400';

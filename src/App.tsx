@@ -67,7 +67,7 @@ export default function App() {
   const [pinInput, setPinInput] = useState('');
 
   // Main State
-  const [activeTab, setActiveTab] = useState<TabType | 'tools'>('dashboard');
+  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [portfolio, setPortfolio] = useState<Position[]>([]);
   const [livePrices, setLivePrices] = useState<Record<string, PriceData>>({});
   const [usdInrRate, setUsdInrRate] = useState(83.5);
@@ -174,13 +174,13 @@ export default function App() {
       } else {
         const localKey = localStorage.getItem('WEALTH_AI_GROQ');
         if (localKey) {
-          syncGroqKeyToCloud(localKey).catch(() => {});
+          syncGroqKeyToCloud(localKey).catch(() => { });
         }
       }
     }).catch(() => {
       const localKey = localStorage.getItem('WEALTH_AI_GROQ');
       if (localKey) {
-        syncGroqKeyToCloud(localKey).catch(() => {});
+        syncGroqKeyToCloud(localKey).catch(() => { });
         setGroqKey(localKey);
       }
     });
@@ -689,7 +689,7 @@ export default function App() {
     ctx += `--- END SENSOR DATA ---\n`;
 
     setPortfolioContextText(ctx);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portfolio.length, usdInrRate, contextTrigger]);
 
   const latestDataRef = useRef({ portfolio, livePrices, usdInrRate, metrics });
@@ -902,20 +902,20 @@ export default function App() {
 
             {/* Tabs */}
             <div className="flex gap-0.5 glass-card p-1 rounded-2xl">
-              {(['dashboard', 'portfolio', 'planner', 'macro', 'tools'] satisfies Array<TabType | 'tools'>).map(tab => (
+              {(['dashboard', 'portfolio', 'planner', 'macro', 'tools'] as TabType[]).map(tab => (
                 <button
                   key={tab}
-                  onClick={() => setActiveTab(tab as any)}
+                  onClick={() => setActiveTab(tab)}
                   className={`tab-btn px-4 py-2 rounded-xl font-semibold text-sm transition-all ${activeTab === tab
-                      ? 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
-                      : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
+                    ? 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
                     }`}
                 >
                   {tab === 'dashboard' && '📊 Dashboard'}
                   {tab === 'portfolio' && '💼 Portfolio'}
-                  {tab === 'planner'   && '🎯 Planner'}
-                  {tab === 'macro'     && '🌍 Risk'}
-                  {tab === 'tools'     && '⚡ AI Tools'}
+                  {tab === 'planner' && '🎯 Planner'}
+                  {tab === 'macro' && '🌍 Risk'}
+                  {tab === 'tools' && '⚡ AI Tools'}
                 </button>
               ))}
             </div>
@@ -1002,7 +1002,7 @@ export default function App() {
                 <div className="flex flex-wrap gap-3 mt-2">
                   {currentPrice > 0 && [
                     { label: 'Fib 0.618', price: currentPrice * (1 - 0.382 * (avgVix / 30)), color: 'text-emerald-400' },
-                    { label: 'Fib 0.786', price: currentPrice * (1 - 0.5   * (avgVix / 30)), color: 'text-amber-400' },
+                    { label: 'Fib 0.786', price: currentPrice * (1 - 0.5 * (avgVix / 30)), color: 'text-amber-400' },
                     { label: 'Fib 0.886', price: currentPrice * (1 - 0.618 * (avgVix / 30)), color: 'text-red-400' },
                   ].map(({ label, price, color }) => (
                     <div key={label} className="bg-black/30 rounded-lg px-3 py-1">
@@ -1794,8 +1794,8 @@ export default function App() {
                               {/* Signal + Allocation Bar */}
                               <div className="flex items-center gap-2 mb-2">
                                 <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border ${isGreen ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                                    isRed ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                                      'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                                  isRed ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                                    'bg-amber-500/10 text-amber-400 border-amber-500/20'
                                   }`}>{a.signal}</span>
                                 <div className="flex-1 bg-slate-800/60 rounded-full h-1.5">
                                   <div className={`h-full rounded-full transition-all ${isGreen ? 'bg-emerald-500' : isRed ? 'bg-red-500' : 'bg-amber-500'}`} style={{ width: `${a.allocPct * 100}%` }} />
