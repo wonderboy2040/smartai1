@@ -160,6 +160,7 @@ async function initializeData() {
       { command: 'signals', description: 'AI Buy/Sell Signals' },
       { command: 'allocation', description: 'Smart SIP Matrix' },
       { command: 'risk', description: 'Risk & VIX Assessment' },
+      { command: 'trim', description: 'Trim + Re-Entry Rules Card' },
       { command: 'scan', description: 'Deep scan any symbol' },
       { command: 'compare', description: 'Head-to-head comparison' },
       { command: 'heatmap', description: 'Visual Heatmap' },
@@ -285,6 +286,7 @@ Nagraj Bhai, main tumhara personal AI Trading assistant hoon! 24x7 tumhare portf
 🗺️ /heatmap — Visual portfolio heatmap
 📊 /streak — Performance streak tracker
 💱 /forex — Live USD/INR rate
+✂️ /trim — Trim + Re-Entry Rules Card
 🔔 /alert — Toggle auto alerts ON/OFF
 🧹 /clear — Clear AI chat history
 ❓ /help — Full command reference
@@ -840,6 +842,109 @@ bot.onText(/^\/streak(@\w+)?$/i, async (msg) => {
     console.error('❌ /streak error:', e.message);
     await safeSend(chatId, `❌ Streak me error: ${e.message}`);
   }
+});
+
+// ========================================
+// COMMAND: /trim or /rules — Trim + Re-Entry Rules
+// ========================================
+bot.onText(/^\/(trim|rules)(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /trim from ${msg.from?.first_name || chatId}`);
+
+  let r = `✂️ <b>TRIM + RE-ENTRY RULES CARD</b>\n`;
+  r += `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  r += `🇺🇸 <b>USA ETFs:</b>\n\n`;
+
+  r += `🔥 <b>SMH</b> (Most Aggressive)\n`;
+  r += `1. TRIM: Weight >53% OR rally 20%+ in 6wk\n`;
+  r += `2. SIZE: 10-15% of position (max 20%)\n`;
+  r += `3. RE-ENTRY: Wait for 8-10% dip\n`;
+  r += `4. STYLE: 3 equal parts (33% each)\n`;
+  r += `5. ROTATE: QQQM\n\n`;
+
+  r += `💎 <b>QQQM</b> (Core — Rarely Touch)\n`;
+  r += `1. TRIM: Weight >42% (rare)\n`;
+  r += `2. SIZE: 5-8% only\n`;
+  r += `3. RE-ENTRY: Wait for 6-8% dip\n`;
+  r += `4. STYLE: 2 equal parts (50% each)\n`;
+  r += `5. ROTATE: SMH or XLK\n\n`;
+
+  r += `⚡ <b>XLK</b> (Semi-Core)\n`;
+  r += `1. TRIM: Weight >27% OR rally 22%+ in 3mo\n`;
+  r += `2. SIZE: 10-12% of position\n`;
+  r += `3. RE-ENTRY: Wait for 7-9% dip\n`;
+  r += `4. STYLE: 2-3 equal parts\n`;
+  r += `5. ROTATE: QQQM\n\n`;
+
+  await safeSend(chatId, r);
+
+  // Part 2: India ETFs
+  let r2 = `🇮🇳 <b>INDIA ETFs:</b>\n\n`;
+
+  r2 += `🇮🇳 <b>MOMOMENTUM</b> (Aggressive)\n`;
+  r2 += `1. TRIM: Weight >44% OR rally 25%+ in 3mo\n`;
+  r2 += `2. SIZE: 10-15% of position\n`;
+  r2 += `3. RE-ENTRY: Wait for 10% correction\n`;
+  r2 += `4. STYLE: 3 equal SIP-style buys\n`;
+  r2 += `5. ROTATE: MID150BEES or JUNIORBEES\n\n`;
+
+  r2 += `🚀 <b>SMALLCAP</b> (Highest Risk)\n`;
+  r2 += `1. TRIM: Weight >33% OR rally 30%+ in 4mo\n`;
+  r2 += `2. SIZE: 12-18% of position\n`;
+  r2 += `3. RE-ENTRY: Wait for 12-15% correction\n`;
+  r2 += `4. STYLE: 3-4 staggered buys\n`;
+  r2 += `5. ROTATE: MID150BEES\n\n`;
+
+  r2 += `🏛️ <b>MID150BEES</b> (Core)\n`;
+  r2 += `1. TRIM: Weight >27% (rarely)\n`;
+  r2 += `2. SIZE: 5-10% only\n`;
+  r2 += `3. RE-ENTRY: Wait for 8% dip\n`;
+  r2 += `4. STYLE: 2 parts\n`;
+  r2 += `5. ROTATE: JUNIORBEES\n\n`;
+
+  r2 += `🛡️ <b>JUNIORBEES</b> (Most Stable)\n`;
+  r2 += `1. TRIM: Weight >22% (very rarely)\n`;
+  r2 += `2. SIZE: 5-8% only\n`;
+  r2 += `3. RE-ENTRY: Wait for 6% dip\n`;
+  r2 += `4. STYLE: 2 parts\n`;
+  r2 += `5. ROTATE: MID150BEES\n\n`;
+
+  await safeSend(chatId, r2);
+
+  // Part 3: Golden Rules + Cash Mgmt
+  let r3 = `🎯 <b>GOLDEN RULES</b>\n`;
+  r3 += `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  r3 += `✅ Trim only OVERWEIGHT positions\n`;
+  r3 += `✅ Max 15-20% trim per action\n`;
+  r3 += `✅ Re-enter in PARTS (never full)\n`;
+  r3 += `✅ Wait for confirmed dip\n`;
+  r3 += `✅ Continue SIP regardless\n`;
+  r3 += `✅ Document every trim for tax\n`;
+  r3 += `✅ Review every 6 months only\n\n`;
+  r3 += `❌ Never full exit\n`;
+  r3 += `❌ Never panic trim in red days\n`;
+  r3 += `❌ Never chase same price after trim\n`;
+  r3 += `❌ Never trim more than 1x per quarter\n\n`;
+
+  r3 += `💰 <b>CASH POST-TRIM:</b>\n`;
+  r3 += `├─ Max: 5-7% of portfolio\n`;
+  r3 += `├─ Deploy: 30-90 days\n`;
+  r3 += `├─ Method: 3 staggered parts\n`;
+  r3 += `└─ No dip in 90d? Deploy anyway\n\n`;
+
+  r3 += `🔄 <b>RE-ENTRY TIMELINE:</b>\n`;
+  r3 += `Day 1-30:  WAIT\n`;
+  r3 += `Day 30-60: Dip 8%+ → Buy 33%\n`;
+  r3 += `Day 60-90: Dip 10%+ → Buy 33%\n`;
+  r3 += `Day 90+:   Deploy remaining 33%\n\n`;
+
+  r3 += `🎯 <b>ONE RULE:</b>\n`;
+  r3 += `<i>"Trim only when overweight + parabolic, Re-enter in 3 parts on dip, Continue SIP always, Review every 6 months, Ignore noise, follow rules."</i>\n\n`;
+  r3 += `🎯 GOAL: 20%+ CAGR for 15-20 years\n`;
+  r3 += `💎 <i>Deep Mind AI Pro Terminal</i>`;
+
+  await safeSend(chatId, r3);
 });
 
 // ========================================

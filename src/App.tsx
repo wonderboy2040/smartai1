@@ -25,6 +25,7 @@ import { PreMarketWatch } from './components/PreMarketWatch';
 import { SentimentHeatmap } from './components/SentimentHeatmap';
 import { MLPricePredictor } from './components/MLPricePredictor';
 import { FIIDIILiveTracker } from './components/FIIDIILiveTracker';
+import { TrimRules } from './components/TrimRules';
 
 
 /**
@@ -902,7 +903,7 @@ export default function App() {
 
             {/* Tabs */}
             <div className="flex gap-0.5 glass-card p-1 rounded-2xl">
-              {(['dashboard', 'portfolio', 'planner', 'macro', 'tools'] as TabType[]).map(tab => (
+              {(['dashboard', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -913,9 +914,10 @@ export default function App() {
                 >
                   {tab === 'dashboard' && '📊 Dashboard'}
                   {tab === 'portfolio' && '💼 Portfolio'}
-                  {tab === 'planner' && '🎯 Planner'}
-                  {tab === 'macro' && '🌍 Risk'}
-                  {tab === 'tools' && '⚡ AI Tools'}
+                  {tab === 'planner'   && '🎯 Planner'}
+                  {tab === 'macro'     && '🌍 Risk'}
+                  {tab === 'tools'     && '⚡ AI Tools'}
+                  {tab === 'trim'      && '✂️ Trim Rules'}
                 </button>
               ))}
             </div>
@@ -2047,6 +2049,13 @@ export default function App() {
               usdInrRate={usdInrRate}
             />
           </div>
+        </main>
+      )}
+
+      {/* ✂️ Trim Rules Tab */}
+      {activeTab === 'trim' && (
+        <main className="container mx-auto px-4 py-6">
+          <TrimRules />
         </main>
       )}
 
