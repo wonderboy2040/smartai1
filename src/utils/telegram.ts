@@ -441,6 +441,24 @@ return generateForexReport(livePrices);
 if (q.startsWith('/trim')) {
 return generateTrimLogicReport(portfolio, livePrices);
 }
+if (q.startsWith('/start')) {
+return generateStartMessage(portfolio, livePrices);
+}
+if (q.startsWith('/portfolio')) {
+return generatePortfolioReport(portfolio, livePrices);
+}
+if (q.startsWith('/market')) {
+return generateMarketReport(livePrices);
+}
+if (q.startsWith('/allocation')) {
+return generateAllocationReport(portfolio, livePrices);
+}
+if (q.startsWith('/clear')) {
+return generateClearMessage();
+}
+if (q.startsWith('/trim')) {
+return generateTrimLogicReport(portfolio, livePrices);
+}
 
 // Global Market State
 let marketState = 'neutral';
@@ -746,4 +764,120 @@ msg += `⏸️ HOLD - No action needed\n\n`;
 
 msg += `💡 **Rule:** Trim when RSI > 70, Re-enter when RSI < 30`;
 return msg;
+}
+
+function generateStartMessage(portfolio: Position[], livePrices: Record<string, PriceData>): string {
+let msg = `🧠 **DEEP MIND AI TRADING BOT**\n`;
+msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+msg += `🤖 Welcome to Quantum AI Pro Terminal!\n\n`;
+msg += `📊 **Portfolio:** ${portfolio.length} positions\n`;
+msg += `🌍 **Markets:** India + USA\n`;
+msg += `🤖 **AI Engine:** Groq Llama-3\n\n`;
+
+msg += `📜 **Available Commands:**\n`;
+msg += `/premarket - Pre-market intelligence\n`;
+msg += `/market - Live market status\n`;
+msg += `/signals - Buy/Sell signals\n`;
+msg += `/portfolio - Portfolio analysis\n`;
+msg += `/allocation - Asset allocation\n`;
+msg += `/risk - Risk metrics\n`;
+msg += `/strategy - Strategy recommendations\n`;
+msg += `/trim - Trim & re-entry logic\n`;
+msg += `/forex - Forex rates\n`;
+msg += `/scan - Market scanner\n`;
+msg += `/compare - Compare assets\n`;
+msg += `/heatmap - Market heatmap\n`;
+msg += `/streak - Streak analysis\n`;
+msg += `/options - Options analysis\n`;
+msg += `/fundamentals - Fundamental data\n`;
+msg += `/news - Market news\n`;
+msg += `/clear - Clear chat history\n`;
+
+return msg;
+}
+
+function generatePortfolioReport(portfolio: Position[], livePrices: Record<string, PriceData>): string {
+if (portfolio.length === 0) {
+return `📊 **Portfolio Report**\nNo holdings yet. Add positions to start tracking.`;
+}
+
+let msg = `💼 **PORTFOLIO REPORT**\n`;
+msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+
+let totalValue = 0;
+let totalCost = 0;
+
+portfolio.forEach(p => {
+const key = `${p.market}_${p.symbol}`;
+const data = livePrices[key];
+const price = data?.price || p.avgPrice;
+const value = price * p.qty;
+const cost = p.avgPrice * p.qty;
+totalValue += value;
+totalCost += cost;
+
+msg += `\n📌 **${p.symbol}**:\n`;
+msg += `Qty: ${p.qty} | Avg: ${p.market === 'IN' ? '₹' : '$'}${p.avgPrice.toFixed(2)}\n`;
+msg += `Current: ${p.market === 'IN' ? '₹' : '$'}${price.toFixed(2)}\n`;
+msg += `P&L: ${value >= cost ? '+' : ''}${((value - cost) / cost * 100).toFixed(1)}%\n`;
+});
+
+const totalPL = totalValue - totalCost;
+msg += `\n💰 **Summary:**\n`;
+msg += `Total Value: ${portfolio[0]?.market === 'IN' ? '₹' : '$'}${totalValue.toLocaleString('en-IN')}\n`;
+msg += `Total P&L: ${totalPL >= 0 ? '+' : ''}${(totalPL / totalCost * 100).toFixed(1)}%\n`;
+
+return msg;
+}
+
+function generateMarketReport(livePrices: Record<string, PriceData>): string {
+const usVix = livePrices['US_VIX']?.price || 15;
+const inVix = livePrices['IN_INDIAVIX']?.price || 15;
+const marketStatus = isAnyMarketOpen() ? '🟢 OPEN' : '🔴 CLOSED';
+
+let msg = `🌍 **MARKET STATUS**\n`;
+msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+msg += `${marketStatus}\n\n`;
+
+msg += `🇺🇸 **US Market:**\n`;
+msg += `VIX: ${usVix.toFixed(1)} ${usVix > 20 ? '🔴 High' : '🟢 Normal'}\n`;
+msg += `Status: ${isUSMarketOpen() ? 'Open' : 'Closed'}\n\n`;
+
+msg += `🇮🇳 **India Market:**\n`;
+msg += `VIX: ${inVix.toFixed(1)} ${inVix > 20 ? '🔴 High' : '🟢 Normal'}\n`;
+msg += `Status: ${isIndiaMarketOpen() ? 'Open' : 'Closed'}\n`;
+
+return msg;
+}
+
+function generateAllocationReport(portfolio: Position[], livePrices: Record<string, PriceData>): string {
+if (portfolio.length === 0) {
+return `📊 **Allocation Report**\nNo holdings yet.`;
+}
+
+let totalValue = 0;
+const allocation: Record<string, number> = {};
+
+portfolio.forEach(p => {
+const key = `${p.market}_${p.symbol}`;
+const price = livePrices[key]?.price || p.avgPrice;
+const value = price * p.qty;
+totalValue += value;
+allocation[p.symbol] = value;
+});
+
+let msg = `📊 **ASSET ALLOCATION**\n`;
+msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
+msg += `Total Value: ${portfolio[0]?.market === 'IN' ? '₹' : '$'}${totalValue.toLocaleString('en-IN')}\n\n`;
+
+Object.entries(allocation).forEach(([symbol, value]) => {
+const pct = (value / totalValue) * 100;
+msg += `${symbol}: ${pct.toFixed(1)}%\n`;
+});
+
+return msg;
+}
+
+function generateClearMessage(): string {
+return `🧹 **Chat history cleared!**\nStarting fresh conversation.`;
 }
