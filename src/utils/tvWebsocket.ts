@@ -178,12 +178,16 @@ function tvSymbolToPortfolioKey(tvSymbol: string): string | null {
 // PUBLIC API
 // ========================================
 export function subscribeToPrices(
-  symbols: string[],
-  onUpdate: (key: string, data: Partial<PriceData>) => void
-) {
-  // Reset destroyed flag so reconnection works after previous disconnect
-  isDestroyed = false;
-  callbacks.add(onUpdate);
+symbols: string[],
+onUpdate: (key: string, data: Partial<PriceData>) => void
+): () => void {
+if (symbols.length === 0) {
+return () => {}; // Return noop unsubscribe function
+}
+
+// Reset destroyed flag so reconnection works after previous disconnect
+isDestroyed = false;
+callbacks.add(onUpdate);
 
   // Build symbol mapping
   symbols.forEach(sym => {

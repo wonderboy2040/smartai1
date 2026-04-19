@@ -78,8 +78,12 @@ export async function fetchSinglePrice(symbol: string, retryAttempt = 0): Promis
 }
 
 async function fetchWithStaleCheck(sym: string, retryAttempt: number): Promise<PriceData | null> {
-  const cleanSym = sym.replace('.NS', '').replace('.BO', '');
-  const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEES') || guessMarket(sym) === 'IN';
+if (!sym || typeof sym !== 'string') {
+return null;
+}
+
+const cleanSym = sym.replace('.NS', '').replace('.BO', '');
+const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEES') || guessMarket(sym) === 'IN';
 
   // Try TradingView first
   try {

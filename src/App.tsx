@@ -633,9 +633,22 @@ export default function App() {
   // Metrics calculation memoization
   const metrics = useMemo(() => calculateMetrics(), [calculateMetrics]);
 
-  // Track meaningful price changes to regenerate AI context
-  const priceUpdateCounterRef = useRef(0);
-  const [contextTrigger, setContextTrigger] = useState(0);
+// Track meaningful price changes to regenerate AI context
+const priceUpdateCounterRef = useRef(0);
+const [contextTrigger, setContextTrigger] = useState(0);
+const isComponentMountedRef = useRef(true);
+
+// Cleanup on unmount to prevent memory leaks
+useEffect(() => {
+return () => {
+isComponentMountedRef.current = false;
+if (priceFlushRef.current) clearInterval(priceFlushRef.current);
+if (telegramIntervalRef.current) clearInterval(telegramIntervalRef.current);
+if (forexIntervalRef.current) clearInterval(forexIntervalRef.current);
+if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
+};
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
 
   // Increment context trigger when livePrices change meaningfully (throttled)
   useEffect(() => {

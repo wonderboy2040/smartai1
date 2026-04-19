@@ -187,16 +187,16 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
         }
       }
 
-      if (!aiText) throw new Error(lastError || "All AI models exhausted their daily limits!");
+      if (!aiText) throw new Error(lastError || "Groq AI models unavailable. Check API key or try again.");
       
       setChatMessages(prev => [...prev, { 
         role: 'model', 
         text: aiText,
         timestamp: Date.now()
       }]);
-    } catch (e) {
-      console.error("Gemini Error:", e);
-      setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanceof Error ? e.message : String(e)}`, timestamp: Date.now() }]);
+} catch (e) {
+console.error("Groq AI Error:", e);
+setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanceof Error ? e.message : String(e)}`, timestamp: Date.now() }]);
     } finally {
       setIsThinking(false);
     }

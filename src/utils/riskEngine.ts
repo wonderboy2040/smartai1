@@ -139,21 +139,21 @@ export function calculateVaR(
  * Stress testing scenarios
  */
 export function runStressTests(
-  positions: Position[],
-  livePrices: Record<string, PriceData>
+positions: Position[],
+livePrices: Record<string, PriceData>
 ): StressTestScenario[] {
-  let totalValue = 0;
-  const positionValues: Array<{ symbol: string; value: number; market: string }> = [];
+let totalValue = 0;
+const positionValues: Array<{ symbol: string; value: number; market: string }> = [];
 
-  positions.forEach(p => {
-    const key = `${p.market}_${p.symbol}`;
-    const price = livePrices[key]?.price || p.avgPrice;
-    const value = price * p.qty;
-    positionValues.push({ symbol: p.symbol, value, market: p.market });
-    totalValue += value;
-  });
+positions.forEach(p => {
+const key = `${p.market}_${p.symbol}`;
+const price = livePrices[key]?.price || p.avgPrice;
+const value = price * p.qty;
+positionValues.push({ symbol: p.symbol, value, market: p.market });
+totalValue += value;
+});
 
-  if (totalValue === 0) return [];
+if (totalValue === 0 || positions.length === 0) return [];
 
   const scenarios: StressTestScenario[] = [
     {
