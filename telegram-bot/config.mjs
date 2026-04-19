@@ -16,6 +16,7 @@ export function setGroqKey(key) { GROQ_KEY = key; }
 // SIP Defaults
 export const DEFAULT_INDIA_SIP = 10000;
 export const DEFAULT_US_SIP = 200;
+export const DEFAULT_USD_INR = 83.5;
 
 // CORS Proxies (for Yahoo Finance — server-side we can call directly)
 export const CORS_PROXIES = [
