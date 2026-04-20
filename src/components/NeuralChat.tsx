@@ -32,10 +32,8 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-
-
 export interface NeuralChatProps {
-  groqKey:          string;
+  aiKeys:          Record<string, string>;
   portfolioContext: string;
   onTelegramPush?:  () => void;
 }
@@ -51,25 +49,28 @@ const QUICK_CHIPS = [
   { label: '🏦 FII/DII', query: 'FII aur DII flow ka deep analysis karo — institutional money kaha ja raha hai? Passive vs active flow decomposition do.' },
 ];
 
-const SYSTEM_PROMPT = `You are DEEP MIND AI NEURAL INSIDER. You talk to "Nagraj Bhai" in NATIVE HINGLISH.
-You are a ruthless, precise Quantum AI that runs Dalal Street & Wall Street using SMC, Wyckoff, MACD, RSI, VIX, risk arrays. Tone: confident, professional, friendly pro trader.
+const SYSTEM_PROMPT = \`You are DEEP ADVANCE PRO QUANTUM MIND AI — an Elite Multi-Model Trading Intelligence Engine. Talk to "Nagraj Bhai" in NATIVE HINGLISH.
+You operate at INSTITUTIONAL LEVEL by routing queries through a neural network of specialized AIs:
+• Gemini 1.5 Pro (General Market Intelligence & News)
+• Perplexity AI (Breaking News & Real-time Web Sources)
+• DeepSeek V3 (Deep Portfolio Analysis, Strategy & Quant Math)
 
 Response rules:
 1. Reference LIVE SENSOR DATA (numbers).
 2. Tech & SMC analysis breakdown
 3. Risk-adjusted call (SL/TP)
 4. "CONVICTION SCORE: XX/100"
+Critical: Be concise! Keep tokens low. HTML bolding & Emojis allowed.\`;
 
-Critical: Be concise! Keep tokens low. HTML bolding & Emojis allowed.`;
-
-export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
+export const NeuralChat = React.memo(({ aiKeys, portfolioContext, onTelegramPush }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'model',
-    text: '🧠 **DEEP MIND AI — Groq Llama-3.3 Core v5.0 ONLINE** ⚡\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade deep analysis kar raha hu — powered by Groq Llama-3 70B (Fastest AI in the world!).\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\n• 🔥 Multi-Factor Momentum Engine — Statistical Edge Detection\n• 🧩 Wyckoff Phase Detector — Accumulation/Distribution\n• 📐 Elliott Wave Analyzer — Wave Count + Fibonacci Targets\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
+    text: '🧠 **DEEP MIND AI — Quantum Mind v6.0 ONLINE** ⚡\\n\\nNagraj Bhai, main 24/7 dono markets ka institutional-grade deep analysis kar raha hu — powered by Quantum Mind AI (Gemini 1.5 Pro, Perplexity, DeepSeek V3).\\n\\n**Live Systems Active:**\\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\\n• 📈 Sector Rotation Engine — Smart Money Movement\\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\\n• 🔥 Multi-Factor Momentum Engine — Statistical Edge Detection\\n• 🧩 Wyckoff Phase Detector — Accumulation/Distribution\\n• 📐 Elliott Wave Analyzer — Wave Count + Fibonacci Targets\\n\\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
     timestamp: Date.now()
   }]);
   const [chatInput, setChatInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
+  const [thinkingModel, setThinkingModel] = useState('');
   const [showChat, setShowChat] = useState(false);
   const [marketIntel, setMarketIntel] = useState<MarketIntelligence | null>(null);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
@@ -121,7 +122,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
   const clearChat = useCallback(() => {
     setChatMessages([{
       role: 'model',
-      text: '🧹 **Chat cleared! Fresh neural session started.**\n\nPucho kya analyze karna hai!',
+      text: '🧹 **Chat cleared! Fresh neural session started.**\\n\\nPucho kya analyze karna hai!',
       timestamp: Date.now()
     }]);
   }, []);
@@ -129,10 +130,10 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim()) return;
 
-    if (!groqKey) {
+    if (Object.values(aiKeys).every(k => !k)) {
       setChatMessages(prev => [...prev,
         { role: 'user', text: userMessage, timestamp: Date.now() },
-        { role: 'model', text: '⚠️ **Neural Link Offline**\n\nGroq API Key set nahi hai. Settings (⚙️) icon click karke API KEY paste karo.\n\n**FREE key milega:** console.groq.com/keys\n\nEk baar key set kar do, phir system ultra-fast chalega!', timestamp: Date.now() }
+        { role: 'model', text: '⚠️ **Neural Link Offline**\\n\\nQuantum Mind API Keys set nahi hain. Settings (⚙️) icon click karke API KEYS paste karo.\\n\\nEk baar keys set kar do, phir system ultra-fast chalega!', timestamp: Date.now() }
       ]);
       return;
     }
@@ -144,10 +145,9 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
     try {
       const recentMessages = [...currentMessages.slice(-8), { role: 'user' as const, text: userMessage }];
       const intelContext = marketIntelRef.current ? formatMarketIntelligenceForAI(marketIntelRef.current) : '';
+      const systemContent = \`\${SYSTEM_PROMPT}\\n\\n--- SENSOR DATA ---\\n\${portfolioContext}\\n\${intelContext}\`;
 
-      const systemContent = `${SYSTEM_PROMPT}\n\n--- SENSOR DATA ---\n${portfolioContext}\n${intelContext}`;
-
-      const groqMessages = [
+      const messages = [
         { role: 'system', content: systemContent },
         ...recentMessages.map(m => ({
           role: m.role === 'model' ? 'assistant' : 'user',
@@ -155,58 +155,72 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
         }))
       ];
 
-      const MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+      const q = userMessage.toLowerCase();
+      let provider = 'GEMINI';
+      if (q.includes('breaking') || q.includes('latest news') || q.includes('source') || q.includes('search') || q.includes('web')) {
+        provider = 'PERPLEXITY';
+      } else if (q.includes('portfolio') || q.includes('calculate') || q.includes('strategy') || q.includes('risk') || q.includes('math') || q.includes('analyze this asset')) {
+        provider = 'DEEPSEEK';
+      }
+
+      setThinkingModel(provider);
+
       let aiText = '';
-      let lastError = '';
 
-      for (const model of MODELS) {
-        try {
-          const res = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${groqKey}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              model: model,
-              messages: groqMessages,
-              temperature: 0.75,
-              max_completion_tokens: 800
-            })
-          });
-
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            const errMsg = err.error?.message || 'API request failed';
-            if (res.status === 429 || errMsg.includes('decommissioned') || errMsg.includes('not exist')) {
-              lastError = `Skipping ${model}.`;
-              continue; // Fallback to next model
-            }
-            throw new Error(errMsg);
-          }
-
+      // Routing Chain
+      if (provider === 'PERPLEXITY' && aiKeys.perplexity) {
+        const res = await fetch('https://api.perplexity.ai/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': \`Bearer \${aiKeys.perplexity}\`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: 'llama-3.1-sonar-large-128k-online', messages, temperature: 0.75, max_tokens: 800 })
+        });
+        if (res.ok) {
           const data = await res.json();
-          aiText = data.choices?.[0]?.message?.content || "";
-          break; // Success, exit loop
-        } catch (e: any) {
-          lastError = e.message;
-          if (e.message.includes('Rate limit') || e.message.includes('decommissioned')) continue;
-          throw e; // Unrecoverable error
+          aiText = data.choices?.[0]?.message?.content || '';
         }
       }
 
-      if (!aiText) throw new Error(lastError || "Groq AI models unavailable. Check API key or try again.");
-      
-      setChatMessages(prev => [...prev, { 
-        role: 'model', 
-        text: aiText,
+      if (!aiText && provider === 'DEEPSEEK' && aiKeys.deepseek) {
+        const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': \`Bearer \${aiKeys.deepseek}\`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: 'deepseek-chat', messages, temperature: 0.75, max_tokens: 800 })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          aiText = data.choices?.[0]?.message?.content || '';
+        }
+      }
+
+      if (!aiText && aiKeys.gemini) {
+        const res = await fetch(\`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=\${aiKeys.gemini}\`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: messages.filter(m => m.role !== 'system').map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })) })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        }
+      }
+
+      if (!aiText) throw new Error("Quantum Routing failed. No available AI keys for the selected model.");
+
+      // Post-process: Remove <think> tags and fix markdown-like bolding for HTML compatibility
+      let safeText = aiText.replace(/<think>[\\s\\S]*?<\\/think>/gi, '').trim();
+      safeText = safeText.replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>').replace(/\\*(.+?)\\*/g, '<em>$1</em>').replace(/_(.+?)_/g, '<em>$1</em>').replace(/\\`(.+?)\\`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>');
+
+      setChatMessages(prev => [...prev, {
+        role: 'model',
+        text: safeText,
         timestamp: Date.now()
       }]);
-} catch (e) {
-console.error("Groq AI Error:", e);
-setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanceof Error ? e.message : String(e)}`, timestamp: Date.now() }]);
+    } catch (e) {
+      console.error("Quantum Mind AI Error:", e);
+      setChatMessages(prev => [...prev, { role: 'model', text: \`❌ Error: \${e instanceof Error ? e.message : String(e)}\`, timestamp: Date.now() }]);
     } finally {
       setIsThinking(false);
+      setThinkingModel('');
     }
   };
 
@@ -251,7 +265,7 @@ setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanc
                 <div>
                   <h3 className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-1.5">
                     Deep Mind AI
-                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v5.0 GROQ</span>
+                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v6.0 QUANTUM MIND</span}
                   </h3>
                   <div className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -288,7 +302,7 @@ setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanc
             </div>
 
             {/* Messages */}
-            <div 
+            <div
               ref={chatContainerRef}
               onScroll={handleScroll}
               className="relative flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide"
@@ -324,7 +338,7 @@ setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanc
                 <div className="flex justify-start animate-message-in">
                   <div className="bg-slate-900/90 px-5 py-4 rounded-2xl rounded-tl-none border border-white/5">
                     <div className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
-                      <Sparkles size={12} className="animate-pulse" /> GROQ LLAMA-3 ANALYZING...
+                      <Sparkles size={12} className="animate-pulse" /> QUANTUM MIND ROUTING... {thinkingModel} ACTIVE
                     </div>
                     <div className="flex gap-1.5">
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
@@ -410,7 +424,7 @@ setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanc
                 </button>
               </div>
               <div className="flex items-center justify-between mt-2 px-1">
-                <span className="text-[8px] text-slate-600 font-mono">Powered by Groq • Llama-3.3-70B (FREE)</span>
+                <span className="text-[8px] text-slate-600 font-mono">Powered by Quantum Mind AI (Gemini + Perplexity + DeepSeek)</span>
                 <span className="text-[8px] text-slate-600">{chatMessages.length} messages</span>
               </div>
             </div>

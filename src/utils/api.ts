@@ -404,11 +404,8 @@ export async function sendTelegramAlert(token: string, chatId: string, message: 
   }
 }
 
-// ========================================
-// GROQ API KEY — CLOUD SYNC (FREE)
-// ========================================
-export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
-  if (!API_URL || !key) return false;
+export async function syncAIKeysToCloud(keys: Record<string, string>): Promise<boolean> {
+  if (!API_URL || !keys) return false;
   try {
     await fetch(API_URL, {
       method: 'POST',
@@ -416,7 +413,7 @@ export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
         'Content-Type': 'application/json',
         'X-Auth-Token': 'WEALTH_AI_SECURE_SYNC_2026'
       },
-      body: JSON.stringify({ groqKey: key, action: 'saveKey', timestamp: Date.now() })
+      body: JSON.stringify({ aiKeys: keys, action: 'saveKeys', timestamp: Date.now() })
     });
     return true;
   } catch (e) {
@@ -424,18 +421,18 @@ export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
   }
 }
 
-export async function loadGroqKeyFromCloud(): Promise<string | null> {
+export async function loadAIKeysFromCloud(): Promise<Record<string, string> | null> {
   if (!API_URL) return null;
   try {
-    const res = await fetch(`${API_URL}?action=loadKey&t=${Date.now()}`);
+    const res = await fetch(`${API_URL}?action=loadKeys&t=${Date.now()}`);
     if (!res.ok) return null;
     const text = await res.text();
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return null;
     const data = JSON.parse(match[0]);
-    const key = data.groqKey;
-    if (key && typeof key === 'string' && key.length > 10) {
-      return key;
+    const keys = data.aiKeys;
+    if (keys && typeof keys === 'object') {
+      return keys;
     }
   } catch (e) {}
   return null;

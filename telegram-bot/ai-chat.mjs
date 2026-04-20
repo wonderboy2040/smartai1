@@ -1,7 +1,7 @@
 // ============================================
-// AI CHAT ENGINE — Groq Integration
+// AI CHAT ENGINE — Quantum Mind AI Routing
 // ============================================
-import { GROQ_KEY } from './config.mjs';
+import { AI_KEYS } from './config.mjs';
 import { fetchMarketIntelligence } from './market.mjs';
 import { calculateMetrics, analyzeAsset } from './analysis.mjs';
 
@@ -13,8 +13,11 @@ const MAX_HISTORY = 8;
 let cachedIntel = null;
 let intelTimestamp = 0;
 
-const SYSTEM_PROMPT = `You are DEEP MIND AI NEURAL INSIDER — an Elite Pro Trading Intelligence Engine. Talk to "Nagraj Bhai" in NATIVE HINGLISH.
-You operate at INSTITUTIONAL LEVEL using these frameworks:
+const SYSTEM_PROMPT = `You are DEEP ADVANCE PRO QUANTUM MIND AI — an Elite Multi-Model Trading Intelligence Engine. Talk to "Nagraj Bhai" in NATIVE HINGLISH.
+You operate at INSTITUTIONAL LEVEL by routing queries through a neural network of specialized AIs:
+• Gemini 1.5 Pro (General Market Intelligence & News)
+• Perplexity AI (Breaking News & Real-time Web Sources)
+• DeepSeek V3 (Deep Portfolio Analysis, Strategy & Quant Math)
 
 TECHNICAL ARSENAL:
 • Smart Money Concepts (SMC): Order Blocks, Fair Value Gaps (FVG), Break of Structure (BOS), Change of Character (CHoCH), Liquidity Sweeps, Inducement
@@ -39,6 +42,35 @@ Response rules:
 6. If volatile market, add "EMERGENCY PROTOCOL" section
 
 Critical: Be concise! Keep tokens low. Use HTML tags (<b>bold</b>, <i>italic</i>, <code>mono</code>) instead of markdown. Emojis allowed.`;
+
+function routeQuery(query) {
+  const q = query.toLowerCase();
+  if (q.includes('breaking') || q.includes('latest news') || q.includes('source') || q.includes('search') || q.includes('web')) return 'PERPLEXITY';
+  if (q.includes('portfolio') || q.includes('calculate') || q.includes('strategy') || q.includes('risk') || q.includes('math') || q.includes('analyze this asset')) return 'DEEPSEEK';
+  return 'GEMINI';
+}
+
+async function callGemini(messages, key) {
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${key}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contents: messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })) })
+  });
+  if (!res.ok) throw new Error(`Gemini API Error: ${res.status}`);
+  const data = await res.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
+
+async function callOpenAICompat(endpoint, messages, key, model) {
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, messages, temperature: 0.75, max_tokens: 800 })
+  });
+  if (!res.ok) throw new Error(`API Error ${endpoint}: ${res.status}`);
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
+}
 
 function buildPortfolioContext(portfolio, livePrices, usdInrRate) {
   const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
@@ -101,118 +133,60 @@ async function getMarketIntelContext() {
 }
 
 // ========================================
-// MAIN AI CHAT FUNCTION — Groq
+// MAIN AI CHAT FUNCTION — Quantum Mind Routing
 // ========================================
 export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usdInrRate) {
-  if (!GROQ_KEY) {
-    return `⚠️ <b>AI Engine Offline</b>\n\nGroq API Key set nahi hai. Web app settings (⚙️) se key save karo.`;
+  if (Object.values(AI_KEYS).every(k => !k)) {
+    return `⚠️ <b>AI Engine Offline</b>\n\nQuantum Mind API Keys set nahi hain. Web app settings (⚙️) se keys save karo.`;
   }
 
-  // Get/create conversation history
   const idStr = String(chatId);
-  if (!chatHistory.has(idStr)) {
-    chatHistory.set(idStr, []);
-  }
+  if (!chatHistory.has(idStr)) chatHistory.set(idStr, []);
   const history = chatHistory.get(idStr);
-
-  // Add user message
   history.push({ role: 'user', content: userMessage });
 
-  // Build context
   const portfolioCtx = buildPortfolioContext(portfolio, livePrices, usdInrRate);
   const intelCtx = await getMarketIntelContext();
+  const systemContent = `${SYSTEM_PROMPT}\n\n${portfolioCtx}\n${intelCtx}`;
 
-  // Build Groq conversation format
-  const groqMessages = [
-    { role: 'system', content: `${SYSTEM_PROMPT}\n\n${portfolioCtx}\n${intelCtx}` }
-  ];
+  const messages = [{ role: 'system', content: systemContent }];
   const recentHistory = history.slice(-MAX_HISTORY);
   for (const m of recentHistory) {
-    groqMessages.push({
-      role: m.role === 'model' ? 'assistant' : 'user',
-      content: m.content
-    });
+    messages.push({ role: m.role === 'model' ? 'assistant' : 'user', content: m.content });
   }
 
+  const provider = routeQuery(userMessage);
+  let aiText = '';
+
   try {
-    const MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it', 'llama3-70b-8192'];
-    let aiText = '';
-    let lastError = '';
-
-    for (const model of MODELS) {
-      try {
-        const res = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${GROQ_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: model,
-            messages: groqMessages,
-            temperature: 0.75,
-            max_completion_tokens: 800
-          }),
-          signal: AbortSignal.timeout(60000)
-        });
-
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          const errMsg = err.error?.message || `API Error: ${res.status}`;
-          if (res.status === 429 || errMsg.includes('decommissioned') || errMsg.includes('not exist')) {
-            console.warn(`⚠️ Skipping ${model}: ${errMsg}`);
-            lastError = `Skipped ${model}.`;
-            continue; // Fallback
-          }
-          throw new Error(errMsg);
-        }
-
-        const data = await res.json();
-        aiText = data.choices?.[0]?.message?.content || '';
-        break; // Success
-      } catch (e) {
-        lastError = e.message;
-        if (e.message.includes('Rate limit') || e.message.includes('decommissioned') || e.message.includes('429')) continue;
-        throw e;
-      }
+    if (provider === 'PERPLEXITY' && AI_KEYS.perplexity) {
+      aiText = await callOpenAICompat('https://api.perplexity.ai/chat/completions', messages, AI_KEYS.perplexity, 'llama-3.1-sonar-large-128k-online');
+    } else if (provider === 'DEEPSEEK' && AI_KEYS.deepseek) {
+      aiText = await callOpenAICompat('https://api.deepseek.com/v1/chat/completions', messages, AI_KEYS.deepseek, 'deepseek-chat');
+    } else if (AI_KEYS.gemini) {
+      aiText = await callGemini(messages, AI_KEYS.gemini);
+    } else if (AI_KEYS.groq) {
+      aiText = await callOpenAICompat('https://api.groq.com/openai/v1/chat/completions', messages, AI_KEYS.groq, 'llama-3.3-70b-versatile');
+    } else {
+      throw new Error('No available AI keys for this request.');
     }
 
-    if (!aiText) throw new Error(lastError || 'All AI models exhausted their daily limits!');
-
-  // Clean up thinking tags and convert markdown to HTML for Telegram
-  let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-
-  // First convert markdown to Telegram HTML tags (before escaping)
-  safeText = safeText
-    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-    .replace(/\*(.+?)\*/g, '<i>$1</i>')
-    .replace(/_(.+?)_/g, '<i>$1</i>')
-    .replace(/`(.+?)`/g, '<code>$1</code>');
-
-  // Now escape remaining raw < > that are NOT Telegram HTML tags
-  const allowedTags = /<\/?(?:b|i|code|pre|a|s|u|em|strong|tg-spoiler|blockquote)>/gi;
-  const parts = safeText.split(allowedTags);
-  const htmlText = parts.map(part => {
-    if (allowedTags.test(part)) {
+    let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    safeText = safeText.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\*(.+?)\*/g, '<i>$1</i>').replace(/_(.+?)_/g, '<i>$1</i>').replace(/`(.+?)`/g, '<code>$1</code>');
+    const allowedTags = /<\/?(?:b|i|code|pre|a|s|u|em|strong|tg-spoiler|blockquote)>/gi;
+    const parts = safeText.split(allowedTags);
+    const htmlText = parts.map(part => {
+      if (allowedTags.test(part)) { allowedTags.lastIndex = 0; return part; }
       allowedTags.lastIndex = 0;
-      return part;
-    }
-    allowedTags.lastIndex = 0;
-    return part.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }).join('');
+      return part.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }).join('');
 
-    // Save to history
     history.push({ role: 'model', content: aiText });
-
-    // Trim history
-    if (history.length > MAX_HISTORY * 2) {
-      history.splice(0, history.length - MAX_HISTORY);
-    }
-
+    if (history.length > MAX_HISTORY * 2) history.splice(0, history.length - MAX_HISTORY);
     return htmlText;
   } catch (e) {
-    console.error('❌ Groq API Error:', e.message);
-    return `❌ <b>AI Error:</b> ${e.message}\n\n<i>Retry karo ya thodi der baad try karo.</i>`;
+    console.error('❌ Quantum Mind AI Error:', e.message);
+    return `❌ <b>AI Error:</b> ${e.message}\n\n<i>Quantum Routing failed. Retry karo ya keys check karo.</i>`;
   }
 }
 
