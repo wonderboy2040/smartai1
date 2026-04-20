@@ -4,4 +4,6 @@ dist
 .env.local
 .env.production
 telegram-bot/node_modules
+telegram-bot/.env
+telegram-bot/streak-data.json
 *.log

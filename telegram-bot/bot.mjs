@@ -8,15 +8,16 @@ import TelegramBot from 'node-telegram-bot-api';
 import cron from 'node-cron';
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen } from './market.mjs';
 import { loadPortfolioFromCloud, loadGroqKeyFromCloud } from './cloud.mjs';
-import { 
+import {
   generatePortfolioReport, generateMarketReport, generateSignalsReport,
   generateAllocationReport, generateRiskReport, generateAutoReport,
   generateForexReport, calculateMetrics, generateScanReport,
-  generateHeatmapReport, generateCompareReport
+  generateHeatmapReport, generateCompareReport, analyzeAsset
 } from './analysis.mjs';
 import { chatWithAI, clearChatHistory } from './ai-chat.mjs';
 
@@ -30,16 +31,52 @@ let marketIntel = null;
 let autoAlerts = true;
 let botReady = false;
 
-// Performance streak tracking
-let dailyPLHistory = []; // { date, pl, pct }
-let consecutiveStreak = 0; // positive = green days, negative = red days
+// AI Rate Limiting
+const aiCallTimestamps = new Map();
+const AI_RATE_LIMIT_MS = 10000;
+const AI_RATE_LIMIT_MAX = 3;
+
+function checkAIRateLimit(chatId) {
+  const now = Date.now();
+  const id = String(chatId);
+  if (!aiCallTimestamps.has(id)) aiCallTimestamps.set(id, []);
+  const timestamps = aiCallTimestamps.get(id).filter(t => now - t < 60000);
+  aiCallTimestamps.set(id, timestamps);
+  if (timestamps.length >= AI_RATE_LIMIT_MAX) return false;
+  timestamps.push(now);
+  return true;
+}
+
+// Performance streak tracking with file persistence
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const STREAK_FILE = path.join(__dirname, 'streak-data.json');
+
+let dailyPLHistory = [];
+let consecutiveStreak = 0;
+
+function loadStreakData() {
+  try {
+    if (fs.existsSync(STREAK_FILE)) {
+      const data = JSON.parse(fs.readFileSync(STREAK_FILE, 'utf8'));
+      dailyPLHistory = data.dailyPLHistory || [];
+      consecutiveStreak = data.consecutiveStreak || 0;
+      console.log(`✅ Streak data loaded: ${dailyPLHistory.length} days, streak=${consecutiveStreak}`);
+    }
+  } catch (e) {
+    console.warn('⚠️ Streak data load failed:', e.message);
+  }
+}
+
+function saveStreakData() {
+  try {
+    fs.writeFileSync(STREAK_FILE, JSON.stringify({ dailyPLHistory, consecutiveStreak }), 'utf8');
+  } catch (e) {}
+}
 
 // ========================================
 // 🌐 FULL SITE + BOT SERVER (For Render deployment)
 // ========================================
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -127,14 +164,17 @@ async function initializeData() {
     }
   }
 
-  // Step 5: Market Intelligence (non-blocking)
+// Step 5: Market Intelligence (non-blocking)
   try {
     console.log('🌍 Fetching market intelligence...');
     marketIntel = await fetchMarketIntelligence();
     console.log(`✅ Market intel: ${marketIntel.globalIndices.length} indices, ${marketIntel.sectors.length} sectors`);
   } catch (e) {
-    console.warn('⚠️  Market intelligence partial:', e.message);
+    console.warn('⚠️ Market intelligence partial:', e.message);
   }
+
+  // Step 6: Load streak data
+  loadStreakData();
 
   botReady = true;
   console.log('');
@@ -148,26 +188,30 @@ async function initializeData() {
 
   // Step 6: Set Persistent Telegram Menu Commands
   try {
-    await bot.setMyCommands([
-      { command: 'start', description: 'Main Menu & Overview' },
-      { command: 'portfolio', description: 'Full Portfolio Analysis' },
-      { command: 'market', description: 'Global Market Snapshot' },
-      { command: 'premarket', description: 'Pre-market Intelligence' },
-      { command: 'options', description: 'Options Analysis (PCR/IV)' },
-      { command: 'strategy', description: 'AI Option Strategies' },
-      { command: 'news', description: 'Global Market Sentiment' },
-      { command: 'fundamental', description: 'Deep Fundamental Analysis' },
-      { command: 'signals', description: 'AI Buy/Sell Signals' },
-      { command: 'allocation', description: 'Smart SIP Matrix' },
-      { command: 'risk', description: 'Risk & VIX Assessment' },
-      { command: 'trim', description: 'Trim + Re-Entry Rules Card' },
-      { command: 'scan', description: 'Deep scan any symbol' },
-      { command: 'compare', description: 'Head-to-head comparison' },
-      { command: 'heatmap', description: 'Visual Heatmap' },
-      { command: 'streak', description: 'Performance streak tracker' },
-      { command: 'forex', description: 'Live Forex (USD/INR)' },
-      { command: 'clear', description: 'Clear AI Memory' }
-    ]);
+  await bot.setMyCommands([
+        { command: 'start', description: 'Main Menu & Overview' },
+        { command: 'portfolio', description: 'Full Portfolio Analysis' },
+        { command: 'market', description: 'Global Market Snapshot' },
+        { command: 'premarket', description: 'Pre-market Intelligence' },
+        { command: 'options', description: 'Options Analysis (PCR/IV)' },
+        { command: 'strategy', description: 'AI Option Strategies' },
+        { command: 'news', description: 'Global Market Sentiment' },
+        { command: 'fundamental', description: 'Deep Fundamental Analysis' },
+        { command: 'signals', description: 'AI Buy/Sell Signals' },
+        { command: 'allocation', description: 'Smart SIP Matrix' },
+        { command: 'risk', description: 'Risk & VIX Assessment' },
+        { command: 'trim', description: 'Trim + Re-Entry Rules Card' },
+        { command: 'scan', description: 'Deep scan any symbol' },
+        { command: 'compare', description: 'Head-to-head comparison' },
+        { command: 'heatmap', description: 'Visual Heatmap' },
+        { command: 'correlate', description: 'Portfolio Correlation Matrix' },
+        { command: 'orderflow', description: 'Smart Money Order Flow' },
+        { command: 'gap', description: 'Gap Up/Down Scanner' },
+        { command: 'backtest', description: 'AI Signal Accuracy Check' },
+        { command: 'streak', description: 'Performance streak tracker' },
+        { command: 'forex', description: 'Live Forex (USD/INR)' },
+        { command: 'clear', description: 'Clear AI Memory' }
+      ]);
     console.log('✅ Telegram Menu Commands Updated');
   } catch (e) {
     console.warn('⚠️  Could not set Telegram commands:', e.message);
@@ -281,10 +325,13 @@ Nagraj Bhai, main tumhara personal AI Trading assistant hoon! 24x7 tumhare portf
 📈 /allocation — Smart SIP allocation matrix
 🛡️ /risk — Risk assessment + VIX analysis
 🔍 /scan &lt;SYMBOL&gt; — Deep scan any symbol
-⚖️ /compare &lt;SYM1&gt; &lt;SYM2&gt; — Head-to-head comparison
-🗺️ /heatmap — Visual portfolio heatmap
-🗺️ /heatmap — Visual portfolio heatmap
-📊 /streak — Performance streak tracker
+ ⚖️ /compare &lt;SYM1&gt; &lt;SYM2&gt; — Head-to-head comparison
+ 🗺️ /heatmap — Visual portfolio heatmap
+ 🔗 /correlate — Portfolio Correlation Matrix
+ 🏦 /orderflow — Smart Money Order Flow
+ 📊 /gap — Gap Up/Down Scanner
+ 🧪 /backtest — AI Signal Accuracy Check
+ 📊 /streak — Performance streak tracker
 💱 /forex — Live USD/INR rate
 ✂️ /trim — Trim + Re-Entry Rules Card
 🔔 /alert — Toggle auto alerts ON/OFF
@@ -704,6 +751,10 @@ bot.onText(/^\/ai(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   const chatId = msg.chat.id;
   const query = match[1];
   console.log(`📥 /ai "${query.substring(0, 50)}..." from ${msg.from?.first_name || chatId}`);
+  if (!checkAIRateLimit(chatId)) {
+    await safeSend(chatId, '⏳ <b>Rate limit!</b> Thoda ruko, 1 min me retry karo.');
+    return;
+  }
   try {
     await safeSend(chatId, '🧠 <i>Deep Mind analyzing...</i>');
     await refreshPrices();
@@ -845,6 +896,252 @@ bot.onText(/^\/streak(@\w+)?$/i, async (msg) => {
 });
 
 // ========================================
+// COMMAND: /correlate — Portfolio Correlation Matrix
+// ========================================
+bot.onText(/^\/correlat(?:e|ion)?(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /correlate from ${msg.from?.first_name || chatId}`);
+  try {
+    if (portfolio.length < 2) {
+      await safeSend(chatId, '⚠️ Minimum 2 positions chahiye correlation ke liye.');
+      return;
+    }
+    await safeSend(chatId, '🔗 <i>Calculating correlation matrix...</i>');
+    await refreshPrices();
+
+    const changes = portfolio.map(p => {
+      const key = `${p.market}_${p.symbol}`;
+      const data = livePrices[key];
+      return { sym: p.symbol.replace('.NS', ''), change: data?.change || 0, market: p.market };
+    });
+
+    let msg = `🔗 <b>CORRELATION MATRIX</b>\n`;
+    msg += `⏰ <i>${getISTTime()} IST</i>\n\n`;
+    msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+
+    for (let i = 0; i < changes.length; i++) {
+      for (let j = i + 1; j < changes.length; j++) {
+        const a = changes[i];
+        const b = changes[j];
+        const corr = a.change * b.change > 0 ? '🟢' : a.change * b.change < 0 ? '🔴' : '⚪';
+        const strength = Math.abs(a.change - b.change);
+        const label = strength < 0.5 ? 'STRONG' : strength < 1.5 ? 'MODERATE' : 'WEAK';
+        msg += `${corr} <b>${a.sym}</b> ↔ <b>${b.sym}</b>: ${label}\n`;
+        msg += `  ${a.sym}: ${a.change >= 0 ? '+' : ''}${a.change.toFixed(2)}% | ${b.sym}: ${b.change >= 0 ? '+' : ''}${b.change.toFixed(2)}%\n`;
+      }
+    }
+
+    const allPositive = changes.every(c => c.change > 0);
+    const allNegative = changes.every(c => c.change < 0);
+    const mixed = !allPositive && !allNegative;
+
+    msg += `\n🧠 <b>Correlation Verdict:</b>\n`;
+    if (allPositive) msg += `🟢 Sab same direction me move kar rahe — strong positive correlation. Diversification LOW.`;
+    else if (allNegative) msg += `🔴 Sab neeche ja rahe — systematic risk HIGH. Hedge karo!`;
+    else msg += `🟡 Mixed movement — good diversification. Portfolio balanced hai.`;
+
+    msg += `\n\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    await safeSend(chatId, msg);
+  } catch (e) {
+    console.error('❌ /correlate error:', e.message);
+    await safeSend(chatId, `❌ Correlation error: ${e.message}`);
+  }
+});
+
+// ========================================
+// COMMAND: /orderflow — Smart Money Order Flow
+// ========================================
+bot.onText(/^\/orderflow(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /orderflow from ${msg.from?.first_name || chatId}`);
+  try {
+    if (portfolio.length === 0) {
+      await safeSend(chatId, '⚠️ Portfolio empty hai.');
+      return;
+    }
+    await safeSend(chatId, '🏦 <i>Detecting Smart Money flow... analyzing volume & price action...</i>');
+    await refreshPrices();
+
+    let msg = `🏦 <b>SMART MONEY ORDER FLOW</b>\n`;
+    msg += `⏰ <i>${getISTTime()} IST</i>\n`;
+    msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+    let accumulation = [];
+    let distribution = [];
+    let neutral = [];
+
+    for (const p of portfolio) {
+      const key = `${p.market}_${p.symbol}`;
+      const data = livePrices[key];
+      const change = data?.change || 0;
+      const volume = data?.volume || 0;
+      const rsi = data?.rsi || 50;
+      const sym = p.symbol.replace('.NS', '');
+
+      const isVolumeSpike = volume > 1000000 && Math.abs(change) > 1.5;
+      const isAccumulation = isVolumeSpike && change > 0 && rsi < 50;
+      const isDistribution = isVolumeSpike && change < 0 && rsi > 50;
+
+      if (isAccumulation) accumulation.push({ sym, change, volume, rsi, price: data?.price || p.avgPrice, market: p.market });
+      else if (isDistribution) distribution.push({ sym, change, volume, rsi, price: data?.price || p.avgPrice, market: p.market });
+      else neutral.push({ sym, change, volume, rsi, price: data?.price || p.avgPrice, market: p.market });
+    }
+
+    if (accumulation.length > 0) {
+      msg += `🟢 <b>ACCUMULATION DETECTED</b>\n`;
+      for (const a of accumulation) {
+        const cur = a.market === 'IN' ? '₹' : '$';
+        msg += `• <b>${a.sym}</b>: ${cur}${a.price.toFixed(2)} (${a.change >= 0 ? '+' : ''}${a.change.toFixed(2)}%)\n`;
+        msg += `  Vol: ${(a.volume/1000000).toFixed(1)}M | RSI: ${a.rsi.toFixed(0)} | 🏦 Institutional BUYING\n`;
+      }
+      msg += '\n';
+    }
+
+    if (distribution.length > 0) {
+      msg += `🔴 <b>DISTRIBUTION DETECTED</b>\n`;
+      for (const d of distribution) {
+        const cur = d.market === 'IN' ? '₹' : '$';
+        msg += `• <b>${d.sym}</b>: ${cur}${d.price.toFixed(2)} (${d.change >= 0 ? '+' : ''}${d.change.toFixed(2)}%)\n`;
+        msg += `  Vol: ${(d.volume/1000000).toFixed(1)}M | RSI: ${d.rsi.toFixed(0)} | 🏦 Institutional SELLING\n`;
+      }
+      msg += '\n';
+    }
+
+    msg += `⚪ <b>NEUTRAL:</b> ${neutral.map(n => n.sym).join(', ') || 'None'}\n\n`;
+
+    msg += `🧠 <b>Order Flow Verdict:</b>\n`;
+    if (accumulation.length > distribution.length) msg += `🟢 Smart Money BUYING dominant — bullish institutional bias.`;
+    else if (distribution.length > accumulation.length) msg += `🔴 Smart Money DISTRIBUTION — institutional exit detected. Caution!`;
+    else msg += `🟡 Mixed flow — no clear institutional direction.`;
+
+    msg += `\n\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    await safeSend(chatId, msg);
+  } catch (e) {
+    console.error('❌ /orderflow error:', e.message);
+    await safeSend(chatId, `❌ Order flow error: ${e.message}`);
+  }
+});
+
+// ========================================
+// COMMAND: /gap — Gap Scanner
+// ========================================
+bot.onText(/^\/gap(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /gap from ${msg.from?.first_name || chatId}`);
+  try {
+    if (portfolio.length === 0) {
+      await safeSend(chatId, '⚠️ Portfolio empty hai.');
+      return;
+    }
+    await safeSend(chatId, '📊 <i>Scanning for gap openings...</i>');
+    await refreshPrices();
+
+    let msg = `📊 <b>GAP SCANNER</b>\n`;
+    msg += `⏰ <i>${getISTTime()} IST</i>\n`;
+    msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+    for (const p of portfolio) {
+      const key = `${p.market}_${p.symbol}`;
+      const data = livePrices[key];
+      if (!data) continue;
+      const cur = p.market === 'IN' ? '₹' : '$';
+      const price = data.price;
+      const open = data.open || price;
+      const prevClose = open / (1 + (data.change || 0) / 100);
+      const gapPct = prevClose > 0 ? ((open - prevClose) / prevClose) * 100 : 0;
+      const sym = p.symbol.replace('.NS', '');
+
+      if (Math.abs(gapPct) > 0.3) {
+        const emoji = gapPct > 0 ? '🟢' : '🔴';
+        const gapType = gapPct > 1 ? 'GAP UP STRONG' : gapPct > 0.3 ? 'GAP UP' : gapPct < -1 ? 'GAP DOWN STRONG' : 'GAP DOWN';
+        msg += `${emoji} <b>${sym}</b>: ${gapType}\n`;
+        msg += `  Open: ${cur}${open.toFixed(2)} | Prev: ${cur}${prevClose.toFixed(2)} | Gap: <b>${gapPct >= 0 ? '+' : ''}${gapPct.toFixed(2)}%</b>\n`;
+        if (gapPct > 0.5) msg += `  ⚡ Gap-up — likely buying pressure at open. Watch for gap fill.\n`;
+        else if (gapPct < -0.5) msg += `  ⚠️ Gap-down — selling pressure. Wait for reversal candle.\n`;
+        msg += '\n';
+      }
+    }
+
+    if (msg.includes('GAP UP') || msg.includes('GAP DOWN')) {
+      msg += `🧠 <b>Gap Strategy:</b>\n`;
+      msg += `<i>Gap-up stocks: Fade the gap if volume is low. Ride the gap if volume confirms.\n`;
+      msg += `Gap-down stocks: Wait for first 15-min candle. Buy if hammer/reversal pattern forms.</i>\n`;
+    } else {
+      msg += `⚪ No significant gaps detected today.\n`;
+    }
+
+    msg += `\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    await safeSend(chatId, msg);
+  } catch (e) {
+    console.error('❌ /gap error:', e.message);
+    await safeSend(chatId, `❌ Gap scan error: ${e.message}`);
+  }
+});
+
+// ========================================
+// COMMAND: /backtest — AI Signal Accuracy
+// ========================================
+bot.onText(/^\/backtest(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /backtest from ${msg.from?.first_name || chatId}`);
+  try {
+    if (portfolio.length === 0) {
+      await safeSend(chatId, '⚠️ Portfolio empty hai.');
+      return;
+    }
+    await refreshPrices();
+
+    let msg = `🧪 <b>AI SIGNAL ACCURACY — Backtest</b>\n`;
+    msg += `⏰ <i>${getISTTime()} IST</i>\n`;
+    msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+    const signals = portfolio.map(p => {
+      const key = `${p.market}_${p.symbol}`;
+      const data = livePrices[key];
+      return analyzeAsset(p, data);
+    });
+
+    const buyCount = signals.filter(s => s.signal.includes('BUY')).length;
+    const sellCount = signals.filter(s => s.signal.includes('SELL')).length;
+    const holdCount = signals.filter(s => s.signal === 'HOLD').length;
+
+    const totalAssets = signals.length;
+    const avgConfidence = signals.reduce((sum, s) => sum + s.confidence, 0) / totalAssets;
+
+    const actualGainers = signals.filter(s => s.change > 0).length;
+    const buyCorrect = signals.filter(s => s.signal.includes('BUY') && s.change > 0).length;
+    const sellCorrect = signals.filter(s => s.signal.includes('SELL') && s.change < 0).length;
+    const holdCorrect = signals.filter(s => s.signal === 'HOLD' && Math.abs(s.change) < 2).length;
+
+    const totalCorrect = buyCorrect + sellCorrect + holdCorrect;
+    const accuracy = totalAssets > 0 ? ((totalCorrect / totalAssets) * 100).toFixed(1) : '0';
+
+    msg += `📊 <b>Signal Summary:</b>\n`;
+    msg += `BUY: ${buyCount} | SELL: ${sellCount} | HOLD: ${holdCount}\n`;
+    msg += `Avg Confidence: <b>${avgConfidence.toFixed(1)}%</b>\n\n`;
+
+    msg += `📈 <b>Accuracy Check (vs Today's Move):</b>\n`;
+    msg += `BUY signals that went UP: <b>${buyCorrect}/${buyCount}</b>\n`;
+    msg += `SELL signals that went DOWN: <b>${sellCorrect}/${sellCount}</b>\n`;
+    msg += `HOLD signals that stayed flat: <b>${holdCorrect}/${holdCount}</b>\n\n`;
+
+    const accBar = '🟩'.repeat(Math.round(parseFloat(accuracy) / 10)) + '⬜'.repeat(10 - Math.round(parseFloat(accuracy) / 10));
+    msg += `<code>[${accBar}] ${accuracy}%</code>\n\n`;
+
+    if (parseFloat(accuracy) > 70) msg += `🟢 <b>Excellent!</b> AI signals are highly accurate today.`;
+    else if (parseFloat(accuracy) > 50) msg += `🟡 <b>Decent.</b> AI signals are reasonable. Always use SL.`;
+    else msg += `🔴 <b>Caution!</b> Low signal accuracy today — market may be choppy. Reduce position sizes.`;
+
+    msg += `\n\n<i>Based on today's price action vs AI signals. Past accuracy ≠ future guarantee.</i>`;
+    msg += `\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    await safeSend(chatId, msg);
+  } catch (e) {
+    console.error('❌ /backtest error:', e.message);
+    await safeSend(chatId, `❌ Backtest error: ${e.message}`);
+  }
+});
+
+// ========================================
 // COMMAND: /trim or /rules — Trim + Re-Entry Rules
 // ========================================
 bot.onText(/^\/(trim|rules)(@\w+)?$/i, async (msg) => {
@@ -958,6 +1255,12 @@ bot.on('message', async (msg) => {
   if (text.startsWith('/')) return;
   // Skip empty
   if (!text.trim()) return;
+
+  // AI Rate Limit
+  if (!checkAIRateLimit(chatId)) {
+    await safeSend(chatId, '⏳ <b>Rate limit!</b> Bahut zyada requests bhej rahe ho. 1 min baad retry karo.');
+    return;
+  }
 
   console.log(`💬 AI Chat: "${text.substring(0, 50)}..." from ${msg.from?.first_name || chatId}`);
   try {
@@ -1144,6 +1447,7 @@ cron.schedule('10 10 * * 1-5', async () => {
   }
 
   console.log(`📈 Daily P&L recorded: ₹${Math.round(metrics.todayPL)} | Streak: ${consecutiveStreak}`);
+  saveStreakData();
 });
 
 // ========================================
@@ -1162,13 +1466,6 @@ bot.on('polling_error', (error) => {
 
 bot.on('error', (error) => {
   console.error('❌ Bot error:', error.message);
-});
-
-bot.on('message', (msg) => {
-  // Debug: log every incoming message to verify bot is receiving
-  if (msg.text) {
-    console.log(`📨 RAW MSG [${msg.chat.id}]: "${msg.text.substring(0, 60)}"`);
-  }
 });
 
 process.on('uncaughtException', (error) => {

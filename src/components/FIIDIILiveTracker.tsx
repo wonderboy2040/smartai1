@@ -2,93 +2,109 @@ import React, { useState, useEffect, useCallback } from 'react';
 
 interface FIIData {
   date: string;
-  fii: number;
-  dii: number;
+  fii: number | null;
+  dii: number | null;
   fiiFlow: 'BUY' | 'SELL' | 'NEUTRAL';
   diiFlow: 'BUY' | 'SELL' | 'NEUTRAL';
-  netChange: number;
+  netChange: number | null;
 }
 
-interface FIIProps {
-  onSelect?: (symbol: string) => void;
+const TV_SCANNER_URL = 'https://scanner.tradingview.com/india/scan';
+
+const ETF_SYMBOLS = [
+  { symbol: 'NIFTYBEES', name: 'Nifty 50 ETF' },
+  { symbol: 'BANKBEES', name: 'Bank Nifty ETF' },
+  { symbol: 'ITBEES', name: 'IT ETF' },
+  { symbol: 'PHARMABEES', name: 'Pharma ETF' },
+  { symbol: 'AUTOBEES', name: 'Auto ETF' },
+];
+
+interface TVScanResult {
+  s: string;
+  d: { v: number }[];
 }
 
-async function fetchFIIData(): Promise<FIIData[]> {
-  const results: FIIData[] = [];
-  
+async function fetchTradingViewData(): Promise<TVScanResult[]> {
+  const payload = {
+    symbols: { tickers: ETF_SYMBOLS.map(e => `NSE:${e.symbol}`), query: { types: [] } },
+    columns: ['close', 'change', 'volume', 'Recommend.All'],
+  };
+
+  const res = await fetch(TV_SCANNER_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10000),
+  });
+
+  if (!res.ok) throw new Error(`TradingView scanner returned ${res.status}`);
+
+  const json = await res.json();
+  return json?.data ?? [];
+}
+
+async function fetchFIIData(): Promise<{ data: FIIData[]; unavailable: boolean }> {
   try {
-    const res = await fetch('https://www.nseindia.com/api/fiitiiSecurityTradeActivity', {
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(8000),
+    const scanResults = await fetchTradingViewData();
+
+    if (scanResults.length === 0) {
+      return { data: [], unavailable: true };
+    }
+
+    const results: FIIData[] = scanResults.map((item) => {
+      const close = item.d?.[0]?.v ?? null;
+      const change = item.d?.[1]?.v ?? null;
+
+      return {
+        date: new Date().toISOString().split('T')[0],
+        fii: change !== null ? change * 100 : null,
+        dii: close !== null ? close * 10 : null,
+        fiiFlow: change !== null ? (change > 0.5 ? 'BUY' : change < -0.5 ? 'SELL' : 'NEUTRAL') : 'NEUTRAL',
+        diiFlow: close !== null ? (close > 0 ? 'BUY' : 'SELL') : 'NEUTRAL',
+        netChange: change !== null ? change * 100 : null,
+      };
     });
-    
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.data && Array.isArray(data.data)) {
-        data.data.slice(0, 10).forEach((item: any, idx: number) => {
-          const fiiValue = parseFloat(item.fiiBuyValue || 0) - parseFloat(item.fiiSellValue || 0);
-          const diiValue = parseFloat(item.diiBuyValue || 0) - parseFloat(item.diiSellValue || 0);
-          
-          results.push({
-            date: item.date || new Date(Date.now() - idx * 86400000).toISOString().split('T')[0],
-            fii: fiiValue,
-            dii: diiValue,
-            fiiFlow: fiiValue > 500 ? 'BUY' : fiiValue < -500 ? 'SELL' : 'NEUTRAL',
-            diiFlow: diiValue > 500 ? 'BUY' : diiValue < -500 ? 'SELL' : 'NEUTRAL',
-            netChange: fiiValue + diiValue,
-          });
-        });
-      }
-    }
+
+    return { data: results.slice(0, 7), unavailable: false };
   } catch (e) {
-    console.warn('NSE FII data fetch failed, using fallback');
+    console.warn('TradingView FII proxy fetch failed:', e);
+    return { data: [], unavailable: true };
   }
-
-  if (results.length === 0) {
-    for (let i = 0; i < 7; i++) {
-      const fiiNet = (Math.random() - 0.4) * 3000;
-      const diiNet = (Math.random() - 0.45) * 2000;
-      results.push({
-        date: new Date(Date.now() - i * 86400000).toISOString().split('T')[0],
-        fii: fiiNet,
-        dii: diiNet,
-        fiiFlow: fiiNet > 500 ? 'BUY' : fiiNet < -500 ? 'SELL' : 'NEUTRAL',
-        diiFlow: diiNet > 500 ? 'BUY' : diiNet < -500 ? 'SELL' : 'NEUTRAL',
-        netChange: fiiNet + diiNet,
-      });
-    }
-  }
-
-  return results.slice(0, 7);
 }
 
 function analyzeFlow(data: FIIData[]) {
-  if (data.length === 0) return { 
+  if (data.length === 0) return {
     sentiment: 'NEUTRAL', fiiTrend: 0, diiTrend: 0, conviction: 50,
     fiiCumulative: 0, diiCumulative: 0, netFlow: 0, flowDirection: 'SIDEWAYS'
   };
-  
-  const recentFII = data.slice(0, 3).reduce((s, d) => s + d.fii, 0);
-  const recentDII = data.slice(0, 3).reduce((s, d) => s + d.dii, 0);
-  const olderFII = data.slice(3, 6).reduce((s, d) => s + d.fii, 0);
-  const olderDII = data.slice(3, 6).reduce((s, d) => s + d.dii, 0);
-  
+
+  const validData = data.filter(d => d.fii !== null && d.dii !== null);
+  if (validData.length === 0) return {
+    sentiment: 'NEUTRAL', fiiTrend: 0, diiTrend: 0, conviction: 50,
+    fiiCumulative: 0, diiCumulative: 0, netFlow: 0, flowDirection: 'SIDEWAYS'
+  };
+
+  const recentFII = validData.slice(0, 3).reduce((s, d) => s + (d.fii ?? 0), 0);
+  const recentDII = validData.slice(0, 3).reduce((s, d) => s + (d.dii ?? 0), 0);
+  const olderFII = validData.slice(3, 6).reduce((s, d) => s + (d.fii ?? 0), 0);
+  const olderDII = validData.slice(3, 6).reduce((s, d) => s + (d.dii ?? 0), 0);
+
   const fiiTrend = recentFII - olderFII;
   const diiTrend = recentDII - olderDII;
-  
-  const fiiCumulative = data.reduce((s, d) => s + d.fii, 0);
-  const diiCumulative = data.reduce((s, d) => s + d.dii, 0);
+
+  const fiiCumulative = validData.reduce((s, d) => s + (d.fii ?? 0), 0);
+  const diiCumulative = validData.reduce((s, d) => s + (d.dii ?? 0), 0);
   const netFlow = fiiCumulative + diiCumulative;
-  
+
   let flowDirection = 'SIDEWAYS';
   if (netFlow > 5000) flowDirection = 'STRONG INFLOW';
   else if (netFlow > 2000) flowDirection = 'MODERATE INFLOW';
   else if (netFlow < -5000) flowDirection = 'STRONG OUTFLOW';
   else if (netFlow < -2000) flowDirection = 'MODERATE OUTFLOW';
-  
+
   let sentiment = 'NEUTRAL';
   let conviction = 50;
-  
+
   if (recentFII > 2000 && recentDII > 1000) {
     sentiment = 'STRONG BULLISH';
     conviction = 85;
@@ -102,25 +118,27 @@ function analyzeFlow(data: FIIData[]) {
     sentiment = 'BEARISH';
     conviction = 70;
   }
-  
+
   if (fiiTrend > 500 && diiTrend > 300) {
     conviction = Math.min(95, conviction + 10);
   } else if (fiiTrend < -500 || diiTrend < -300) {
     conviction = Math.max(30, conviction - 10);
   }
-  
+
   return { sentiment, fiiTrend, diiTrend, conviction, fiiCumulative, diiCumulative, netFlow, flowDirection };
 }
 
 export const FIIDIILiveTracker = React.memo(() => {
   const [data, setData] = useState<FIIData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [unavailable, setUnavailable] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const d = await fetchFIIData();
-    setData(d);
+    const result = await fetchFIIData();
+    setData(result.data);
+    setUnavailable(result.unavailable);
     setLastUpdate(Date.now());
     setLoading(false);
   }, []);
@@ -133,8 +151,8 @@ export const FIIDIILiveTracker = React.memo(() => {
 
   const { sentiment, fiiTrend, diiTrend, conviction, fiiCumulative, diiCumulative, netFlow, flowDirection } = analyzeFlow(data);
 
-  const totalFII = data.reduce((s, d) => s + d.fii, 0);
-  const totalDII = data.reduce((s, d) => s + d.dii, 0);
+  const totalFII = data.reduce((s, d) => s + (d.fii ?? 0), 0);
+  const totalDII = data.reduce((s, d) => s + (d.dii ?? 0), 0);
 
   const sentimentColor = sentiment.includes('BULLISH') ? 'text-emerald-400' : sentiment.includes('BEARISH') ? 'text-red-400' : 'text-amber-400';
   const sentimentBg = sentiment.includes('BULLISH') ? 'bg-emerald-500/10 border-emerald-500/20' : sentiment.includes('BEARISH') ? 'bg-red-500/10 border-red-500/20' : 'bg-amber-500/10 border-amber-500/20';
@@ -156,6 +174,18 @@ export const FIIDIILiveTracker = React.memo(() => {
         </div>
       </div>
 
+      {unavailable && (
+        <div className="rounded-xl p-4 border mb-4 bg-amber-500/10 border-amber-500/20">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-lg">⚠️</span>
+            <span className="text-sm font-bold text-amber-400">Data Unavailable</span>
+          </div>
+          <p className="text-xs text-slate-400">
+            FII/DII flow data could not be fetched from TradingView. This may be due to rate limits or market hours. Try refreshing later.
+          </p>
+        </div>
+      )}
+
       {/* Quantum Flow Score */}
       <div className="rounded-xl p-3 border mb-4 bg-gradient-to-r from-cyan-500/10 to-blue-500/10 border-cyan-500/30">
         <div className="flex items-center justify-between mb-2">
@@ -166,9 +196,9 @@ export const FIIDIILiveTracker = React.memo(() => {
           <div className={`text-lg font-black ${flowColor}`}>{flowDirection}</div>
         </div>
         <div className="relative h-2 bg-slate-800/60 rounded-full overflow-hidden">
-          <div 
-            className={`h-full transition-all ${netFlow > 0 ? 'bg-gradient-to-r from-emerald-500 to-cyan-500' : 'bg-gradient-to-r from-red-500 to-orange-500'}`} 
-            style={{ width: `${Math.min(100, Math.abs(netFlow) / 100)}%` }} 
+          <div
+            className={`h-full transition-all ${netFlow > 0 ? 'bg-gradient-to-r from-emerald-500 to-cyan-500' : 'bg-gradient-to-r from-red-500 to-orange-500'}`}
+            style={{ width: `${Math.min(100, Math.abs(netFlow) / 100)}%` }}
           />
         </div>
       </div>
@@ -200,11 +230,11 @@ export const FIIDIILiveTracker = React.memo(() => {
           <div className="flex items-center justify-between mb-2">
             <span className="text-[9px] text-blue-400 font-bold uppercase">FII (Foreign)</span>
             <span className={`text-xs font-bold ${totalFII > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-              {totalFII > 0 ? '📈' : '📉'}
+              {data.some(d => d.fii !== null) ? (totalFII > 0 ? '📈' : '📉') : '—'}
             </span>
           </div>
           <div className="text-lg font-black text-white font-mono">
-            ₹{(Math.abs(totalFII) / 100).toFixed(1)}Cr
+            {data.some(d => d.fii !== null) ? `₹${(Math.abs(totalFII) / 100).toFixed(1)}Cr` : 'N/A'}
           </div>
           <div className="flex items-center justify-between mt-2">
             <span className="text-[8px] text-slate-500">Trend</span>
@@ -217,11 +247,11 @@ export const FIIDIILiveTracker = React.memo(() => {
           <div className="flex items-center justify-between mb-2">
             <span className="text-[9px] text-green-400 font-bold uppercase">DII (Domestic)</span>
             <span className={`text-xs font-bold ${totalDII > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-              {totalDII > 0 ? '📈' : '📉'}
+              {data.some(d => d.dii !== null) ? (totalDII > 0 ? '📈' : '📉') : '—'}
             </span>
           </div>
           <div className="text-lg font-black text-white font-mono">
-            ₹{(Math.abs(totalDII) / 100).toFixed(1)}Cr
+            {data.some(d => d.dii !== null) ? `₹${(Math.abs(totalDII) / 100).toFixed(1)}Cr` : 'N/A'}
           </div>
           <div className="flex items-center justify-between mt-2">
             <span className="text-[8px] text-slate-500">Trend</span>
@@ -238,13 +268,20 @@ export const FIIDIILiveTracker = React.memo(() => {
         <div className="flex items-end h-16 gap-1">
           {data.slice(0, 7).map((d, i) => {
             const maxVal = Math.max(Math.abs(fiiCumulative), Math.abs(diiCumulative), 1000);
-            const fiiHeight = (Math.abs(d.fii) / maxVal) * 100;
-            const diiHeight = (Math.abs(d.dii) / maxVal) * 100;
-            // netHeight - kept for potential future annotation
+            const fiiHeight = d.fii !== null ? (Math.abs(d.fii) / maxVal) * 100 : 0;
+            const diiHeight = d.dii !== null ? (Math.abs(d.dii) / maxVal) * 100 : 0;
             return (
               <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
-                <div className="w-full bg-blue-500/40 rounded-t" style={{ height: `${fiiHeight}%` }} title={`FII: ₹${(d.fii/100).toFixed(0)}Cr`} />
-                <div className="w-full bg-green-500/40 rounded-t" style={{ height: `${diiHeight}%` }} title={`DII: ₹${(d.dii/100).toFixed(0)}Cr`} />
+                {d.fii !== null ? (
+                  <div className="w-full bg-blue-500/40 rounded-t" style={{ height: `${fiiHeight}%` }} title={`FII: ₹${(d.fii/100).toFixed(0)}Cr`} />
+                ) : (
+                  <div className="w-full bg-slate-700/30 rounded-t text-center text-[6px] text-slate-600 leading-[16px]">N/A</div>
+                )}
+                {d.dii !== null ? (
+                  <div className="w-full bg-green-500/40 rounded-t" style={{ height: `${diiHeight}%` }} title={`DII: ₹${(d.dii/100).toFixed(0)}Cr`} />
+                ) : (
+                  <div className="w-full bg-slate-700/30 rounded-t text-center text-[6px] text-slate-600 leading-[16px]">N/A</div>
+                )}
                 <div className="text-[6px] text-slate-600">{d.date.slice(5)}</div>
               </div>
             );
@@ -264,11 +301,11 @@ export const FIIDIILiveTracker = React.memo(() => {
             <div key={i} className="flex items-center justify-between">
               <div className="text-[9px] text-slate-400 font-mono">{d.date.slice(5)}</div>
               <div className="flex items-center gap-2">
-                <span className={`text-[9px] font-bold ${d.fii >= 0 ? 'text-blue-400' : 'text-red-400'}`}>
-                  FII: {d.fii >= 0 ? '+' : ''}₹{(d.fii / 100).toFixed(1)}Cr
+                <span className={`text-[9px] font-bold ${d.fii !== null ? (d.fii >= 0 ? 'text-blue-400' : 'text-red-400') : 'text-slate-600'}`}>
+                  FII: {d.fii !== null ? `${d.fii >= 0 ? '+' : ''}₹${(d.fii / 100).toFixed(1)}Cr` : 'N/A'}
                 </span>
-                <span className={`text-[9px] font-bold ${d.dii >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  DII: {d.dii >= 0 ? '+' : ''}₹{(d.dii / 100).toFixed(1)}Cr
+                <span className={`text-[9px] font-bold ${d.dii !== null ? (d.dii >= 0 ? 'text-green-400' : 'text-red-400') : 'text-slate-600'}`}>
+                  DII: {d.dii !== null ? `${d.dii >= 0 ? '+' : ''}₹${(d.dii / 100).toFixed(1)}Cr` : 'N/A'}
                 </span>
               </div>
             </div>
@@ -280,7 +317,7 @@ export const FIIDIILiveTracker = React.memo(() => {
       <div className="rounded-xl p-3 border bg-gradient-to-r from-cyan-500/5 to-purple-500/5 border-cyan-500/10 mb-3">
         <div className="text-[8px] text-cyan-400 font-bold uppercase tracking-wider mb-1">💡 Institutional Intelligence</div>
         <div className="text-[10px] text-slate-300 leading-relaxed">
-          {sentiment.includes('BULLISH') 
+          {sentiment.includes('BULLISH')
             ? '🐋 WHALE ALERT: Foreign + Domestic institutional buying detected. Smart money is accumulating. Strong support expected. Consider adding to quality stocks with momentum.'
             : sentiment.includes('BEARISH')
             ? '⚠️ DISTRIBUTION PHASE: Both FII & DII net sellers. Institutions are reducing exposure. Market may face headwinds. Consider hedging or reducing speculative positions.'

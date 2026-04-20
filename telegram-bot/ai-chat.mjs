@@ -7,20 +7,36 @@ import { calculateMetrics, analyzeAsset } from './analysis.mjs';
 
 // Per-user conversation history (in-memory)
 const chatHistory = new Map();
-const MAX_HISTORY = 2;
+const MAX_HISTORY = 8;
 
 // Market intelligence cache
 let cachedIntel = null;
 let intelTimestamp = 0;
 
-const SYSTEM_PROMPT = `You are DEEP MIND AI NEURAL INSIDER. Talk to "Nagraj Bhai" in NATIVE HINGLISH.
-You are a ruthless, precise Quantum AI that runs Dalal Street & Wall Street using SMC, Wyckoff, MACD, RSI, VIX, risk arrays. Tone: confident, professional, friendly pro trader.
+const SYSTEM_PROMPT = `You are DEEP MIND AI NEURAL INSIDER — an Elite Pro Trading Intelligence Engine. Talk to "Nagraj Bhai" in NATIVE HINGLISH.
+You operate at INSTITUTIONAL LEVEL using these frameworks:
+
+TECHNICAL ARSENAL:
+• Smart Money Concepts (SMC): Order Blocks, Fair Value Gaps (FVG), Break of Structure (BOS), Change of Character (CHoCH), Liquidity Sweeps, Inducement
+• Wyckoff Method: Accumulation/Distribution phases, Spring/Upthrust, Effort vs Result
+• Fibonacci: Retracement (0.236-0.786), Extension (1.272-2.618), Confluence zones
+• Volume Profile: POC, Value Area High/Low, Delta Analysis, Imbalance detection
+• Order Flow: Bid/Ask imbalance, Iceberg orders, Stop runs, Trap detection
+
+RISK MANAGEMENT:
+• Position sizing using Kelly Criterion and volatility-based stops
+• ATR-based dynamic Stop Loss (1.5-2.5x ATR)
+• Risk per trade: max 2% of portfolio, max 6% drawdown limit
+• R:R minimum 1:2, prefer 1:3+
+• Correlation-aware position sizing
 
 Response rules:
-1. Reference LIVE SENSOR DATA (numbers).
-2. Tech & SMC analysis breakdown
-3. Risk-adjusted call (SL/TP)
-4. "CONVICTION SCORE: XX/100"
+1. Reference LIVE SENSOR DATA (actual numbers from portfolio context)
+2. SMC/Wyckoff structure analysis with key levels
+3. Order Block / FVG identification if applicable
+4. Risk-adjusted call with exact SL (ATR-based), TP (Fib extension), position size
+5. "CONVICTION SCORE: XX/100" with reasoning
+6. If volatile market, add "EMERGENCY PROTOCOL" section
 
 Critical: Be concise! Keep tokens low. Use HTML tags (<b>bold</b>, <i>italic</i>, <code>mono</code>) instead of markdown. Emojis allowed.`;
 
@@ -163,15 +179,27 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
 
     if (!aiText) throw new Error(lastError || 'All AI models exhausted their daily limits!');
 
-    // Clean up and convert markdown to HTML for Telegram
-    let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-    safeText = safeText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // Clean up thinking tags and convert markdown to HTML for Telegram
+  let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
-    const htmlText = safeText
-      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-      .replace(/\*(.+?)\*/g, '<i>$1</i>')
-      .replace(/_(.+?)_/g, '<i>$1</i>')
-      .replace(/`(.+?)`/g, '<code>$1</code>');
+  // First convert markdown to Telegram HTML tags (before escaping)
+  safeText = safeText
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/\*(.+?)\*/g, '<i>$1</i>')
+    .replace(/_(.+?)_/g, '<i>$1</i>')
+    .replace(/`(.+?)`/g, '<code>$1</code>');
+
+  // Now escape remaining raw < > that are NOT Telegram HTML tags
+  const allowedTags = /<\/?(?:b|i|code|pre|a|s|u|em|strong|tg-spoiler|blockquote)>/gi;
+  const parts = safeText.split(allowedTags);
+  const htmlText = parts.map(part => {
+    if (allowedTags.test(part)) {
+      allowedTags.lastIndex = 0;
+      return part;
+    }
+    allowedTags.lastIndex = 0;
+    return part.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }).join('');
 
     // Save to history
     history.push({ role: 'model', content: aiText });

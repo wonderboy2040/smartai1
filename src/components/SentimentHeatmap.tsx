@@ -1,6 +1,5 @@
 import { useMemo } from 'react';
 import { Position, PriceData } from '../types';
-import { Brain } from 'lucide-react';
 import { memo } from 'react';
 
 interface HeatmapProps {
@@ -97,7 +96,7 @@ export const SentimentHeatmap = memo(({
         const curPrice = data?.price || p.avgPrice;
         const rsi      = data?.rsi ?? 50;
         const change   = data?.change ?? 0;
-        const pl       = (curPrice - p.avgPrice) * p.qty;
+        const pl = ((curPrice - p.avgPrice) * p.qty) / (p.leverage || 1);
         const sma20    = data?.sma20;
         const sma50    = data?.sma50;
         const macd     = data?.macd;

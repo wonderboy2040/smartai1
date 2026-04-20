@@ -7,13 +7,17 @@ interface MarketHUDProps {
 
 function pad(n: number) { return n.toString().padStart(2, '0'); }
 
-function getCountdownTo(hour: number, min: number, tz: string): string {
+function getMsTo(hour: number, min: number, tz: string): number {
   const now = new Date();
   const local = new Date(now.toLocaleString('en-US', { timeZone: tz }));
   const target = new Date(local);
   target.setHours(hour, min, 0, 0);
   if (target.getTime() <= local.getTime()) target.setDate(target.getDate() + 1);
-  const diff = Math.max(0, target.getTime() - local.getTime());
+  return Math.max(0, target.getTime() - local.getTime());
+}
+
+function getCountdownTo(hour: number, min: number, tz: string): string {
+  const diff = getMsTo(hour, min, tz);
   const h = Math.floor(diff / 3600000);
   const m = Math.floor((diff % 3600000) / 60000);
   const s = Math.floor((diff % 60000) / 1000);
@@ -73,19 +77,39 @@ export const MarketHUD = React.memo(({ wsLatency, liveStatus }: MarketHUDProps) 
     : wsLatency.avg < 800 ? 'bg-amber-400' : 'bg-red-400';
 
   let countdownLabel = '';
-  let countdownVal   = '';
+  let countdownVal = '';
   if (inOpen) {
     countdownLabel = '🇮🇳 Closes';
-    countdownVal   = getCountdownTo(15, 30, 'Asia/Kolkata');
+    countdownVal = getCountdownTo(15, 30, 'Asia/Kolkata');
   } else if (usOpen) {
     countdownLabel = '🇺🇸 Closes';
-    countdownVal   = getCountdownTo(16, 0, 'America/New_York');
+    countdownVal = getCountdownTo(16, 0, 'America/New_York');
+  } else if (inPre && usPre) {
+    const inMs = getMsTo(9, 15, 'Asia/Kolkata');
+    const usMs = getMsTo(9, 30, 'America/New_York');
+    if (inMs <= usMs) {
+      countdownLabel = '🇮🇳 Opens';
+      countdownVal = getCountdownTo(9, 15, 'Asia/Kolkata');
+    } else {
+      countdownLabel = '🇺🇸 Opens';
+      countdownVal = getCountdownTo(9, 30, 'America/New_York');
+    }
   } else if (inPre) {
     countdownLabel = '🇮🇳 Opens';
-    countdownVal   = getCountdownTo(9, 15, 'Asia/Kolkata');
+    countdownVal = getCountdownTo(9, 15, 'Asia/Kolkata');
+  } else if (usPre) {
+    countdownLabel = '🇺🇸 Opens';
+    countdownVal = getCountdownTo(9, 30, 'America/New_York');
   } else {
-    countdownLabel = '🇮🇳 Opens';
-    countdownVal   = getCountdownTo(9, 15, 'Asia/Kolkata');
+    const inMs = getMsTo(9, 15, 'Asia/Kolkata');
+    const usMs = getMsTo(9, 30, 'America/New_York');
+    if (inMs <= usMs) {
+      countdownLabel = '🇮🇳 Opens';
+      countdownVal = getCountdownTo(9, 15, 'Asia/Kolkata');
+    } else {
+      countdownLabel = '🇺🇸 Opens';
+      countdownVal = getCountdownTo(9, 30, 'America/New_York');
+    }
   }
 
   const mktBadge = inOpen || usOpen ? 'text-emerald-400' : inPre || usPre ? 'text-amber-400' : 'text-slate-500';

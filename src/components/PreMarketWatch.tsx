@@ -132,25 +132,25 @@ function getAdvancedVerdict(data: PreMarketData): VerdictResult {
   niftySupport = niftyPrev * 0.98;
   niftyResistance = niftyPrev * 1.02;
 
-  if (giftChg > 0.75 || avgUS > 0.75) {
+  if (giftChg > 0.75 || avgUS > 0.75 || avgIndia > 0.75) {
     direction = 'BULLISH';
     gapProbability = 85;
-    recommendation = '🟢 STRONG GAP-UP EXPECTED — Bullish global cues. Aggressive buy on open with stop below gap fill.';
+    recommendation = '🟢 STRONG GAP-UP EXPECTED — Bullish global & India cues. Aggressive buy on open with stop below gap fill.';
     riskLevel = 'LOW';
     intradayBias = 'UPTREND';
-  } else if (giftChg > 0.3) {
+  } else if (giftChg > 0.3 || avgIndia > 0.3) {
     direction = 'BULLISH';
     gapProbability = 70;
     recommendation = '🟢 MODERATE BULLISH — Positive pre-market. Buy on dips, target resistance.';
     riskLevel = 'LOW';
     intradayBias = 'BULLISH';
-  } else if (giftChg < -0.75 || avgUS < -0.75) {
+  } else if (giftChg < -0.75 || avgUS < -0.75 || avgIndia < -0.75) {
     direction = 'BEARISH';
     gapProbability = 85;
-    recommendation = '🔴 STRONG GAP-DOWN RISK — Negative global cues. Avoid fresh buys, hold cash.';
+    recommendation = '🔴 STRONG GAP-DOWN RISK — Negative global & India cues. Avoid fresh buys, hold cash.';
     riskLevel = 'HIGH';
     intradayBias = 'DOWNTREND';
-  } else if (giftChg < -0.3) {
+  } else if (giftChg < -0.3 || avgIndia < -0.3) {
     direction = 'BEARISH';
     gapProbability = 70;
     recommendation = '🔴 BEARISH PRE-MARKET — Sell on rallies, wait for support hold.';
@@ -195,6 +195,12 @@ export const PreMarketWatch = React.memo(({ alwaysShow = false }: Props) => {
   const [data, setData] = useState<PreMarketData>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(0);
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const inPre = isIndiaPreMarket();
   const usPre = isUSPreMarket();

@@ -1,33 +1,138 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { PremarketAnalysis } from '../types';
+
+const PREMARKET_TICKERS = [
+  'NSE:GIFT_NIFTY', 'NSE:GIFTYNIFTY',
+  'CME_MINI:ES1!', 'CME_MINI:NQ1!',
+  'TVC:NI225', 'TVC:HSI', 'XETR:DAX',
+  'TVC:DXY', 'COMEX:GC1!', 'NYMEX:CL1!',
+  'NSE:BANKNIFTY', 'NSE:CNXIT', 'NSE:CNXFIN'
+];
+
+const TICKER_NAMES: Record<string, string> = {
+  'NSE:GIFT_NIFTY': 'GIFT Nifty', 'NSE:GIFTYNIFTY': 'GIFT Nifty',
+  'CME_MINI:ES1!': 'S&P 500 Fut', 'CME_MINI:NQ1!': 'NASDAQ Fut',
+  'TVC:NI225': 'Nikkei 225', 'TVC:HSI': 'Hang Seng', 'XETR:DAX': 'DAX',
+  'TVC:DXY': 'DXY Dollar', 'COMEX:GC1!': 'Gold', 'NYMEX:CL1!': 'Crude Oil',
+  'NSE:BANKNIFTY': 'Bank Nifty', 'NSE:CNXIT': 'IT Sector', 'NSE:CNXFIN': 'Finance Sector'
+};
+
+const SECTOR_TICKERS: Record<string, string> = {
+  'NSE:BANKNIFTY': 'Nifty Bank', 'NSE:CNXIT': 'IT', 'NSE:CNXFIN': 'Finance'
+};
 
 export function PremarketTab() {
   const [analysis, setAnalysis] = useState<PremarketAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    // Simulating Quantum AI analysis delay
-    const timer = setTimeout(() => {
+  const fetchPremarket = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('https://scanner.tradingview.com/global/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({ symbols: { tickers: PREMARKET_TICKERS }, columns: ['close', 'change'] }),
+        signal: AbortSignal.timeout(10000)
+      });
+
+      if (!res.ok) throw new Error('API unavailable');
+
+      const data = await res.json();
+      if (!data?.data || data.data.length === 0) throw new Error('No data returned');
+
+      const results: Record<string, { price: number; change: number }> = {};
+      const seen = new Set<string>();
+      for (const item of data.data) {
+        const name = TICKER_NAMES[item.s];
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        const price = parseFloat(item.d?.[0]) || 0;
+        const change = parseFloat(item.d?.[1]) || 0;
+        if (price > 0) results[item.s] = { price, change };
+      }
+
+      if (Object.keys(results).length === 0) throw new Error('No valid price data');
+
+      let giftChange = 0;
+      let esChange = 0;
+      let nqChange = 0;
+      let goldChange = 0;
+      let crudeChange = 0;
+      const sectorTrends: { sector: string; trend: 'bullish' | 'bearish' | 'neutral' }[] = [];
+
+      for (const [ticker, val] of Object.entries(results)) {
+        if (ticker.includes('GIFT')) giftChange = val.change;
+        if (ticker === 'CME_MINI:ES1!') esChange = val.change;
+        if (ticker === 'CME_MINI:NQ1!') nqChange = val.change;
+        if (ticker === 'COMEX:GC1!') goldChange = val.change;
+        if (ticker === 'NYMEX:CL1!') crudeChange = val.change;
+        if (SECTOR_TICKERS[ticker]) {
+          sectorTrends.push({
+            sector: SECTOR_TICKERS[ticker],
+            trend: val.change > 0.5 ? 'bullish' : val.change < -0.5 ? 'bearish' : 'neutral'
+          });
+        }
+      }
+
+      const avgUS = (esChange + nqChange) / 2;
+      const predictedGap = giftChange !== 0 ? giftChange : avgUS * 0.6;
+      const sentimentScore = Math.max(-1, Math.min(1, (giftChange * 0.4 + avgUS * 0.3 + goldChange * 0.15 + crudeChange * 0.15) / 2));
+      const volatilityForecast = Math.abs(giftChange) > 1 || Math.abs(avgUS) > 1.5 ? 'high' : Math.abs(giftChange) > 0.3 || Math.abs(avgUS) > 0.5 ? 'medium' : 'low';
+
+      const dataPoints = Object.keys(results).length;
+      const aiConfidence = Math.min(0.95, 0.4 + (dataPoints / PREMARKET_TICKERS.length) * 0.55);
+
+      let summary = '';
+      if (giftChange > 0.5 || avgUS > 0.5) {
+        summary = `Strong pre-market signals detected. GIFT Nifty at ${giftChange >= 0 ? '+' : ''}${giftChange.toFixed(2)}%, US Futures ${avgUS >= 0 ? '+' : ''}${avgUS.toFixed(2)}%. Gap-Up opening likely. Bullish momentum expected at open.`;
+      } else if (giftChange < -0.5 || avgUS < -0.5) {
+        summary = `Weak pre-market conditions. GIFT Nifty at ${giftChange.toFixed(2)}%, US Futures ${avgUS.toFixed(2)}%. Gap-Down risk elevated. Wait for first 15-min candle break before entry.`;
+      } else {
+        summary = `Mixed pre-market signals. GIFT Nifty ${giftChange >= 0 ? '+' : ''}${giftChange.toFixed(2)}%, US Futures ${avgUS >= 0 ? '+' : ''}${avgUS.toFixed(2)}%. Flat to rangebound opening expected. Watch for directional breakout.`;
+      }
+      if (goldChange > 0.5) summary += ' Gold rising — risk-off sentiment.';
+      if (crudeChange > 1) summary += ' Crude oil spike — watch India fiscal impact.';
+
+      if (sectorTrends.length === 0) {
+        sectorTrends.push(
+          { sector: 'Nifty Bank', trend: giftChange > 0.3 ? 'bullish' : giftChange < -0.3 ? 'bearish' : 'neutral' },
+          { sector: 'IT', trend: avgUS > 0.3 ? 'bullish' : avgUS < -0.3 ? 'bearish' : 'neutral' },
+          { sector: 'Auto', trend: 'neutral' }
+        );
+      }
+
       setAnalysis({
         market: 'IN',
-        predictedGap: 0.45,
-        sentimentScore: 0.72,
-        volatilityForecast: 'medium',
-        keySectors: [
-          { sector: 'Nifty Bank', trend: 'bullish' },
-          { sector: 'IT', trend: 'neutral' },
-          { sector: 'Auto', trend: 'bearish' }
-        ],
-        aiConfidence: 0.89,
-        summary: "Quantum analysis suggests a bullish opening for NSE driven by strong overnight US tech gains and stabilized crude prices. Watch for volatility in banking sector."
+        predictedGap: Math.round(predictedGap * 100) / 100,
+        sentimentScore: Math.round(sentimentScore * 100) / 100,
+        volatilityForecast,
+        keySectors: sectorTrends,
+        aiConfidence: Math.round(aiConfidence * 100) / 100,
+        summary
       });
+    } catch (e: any) {
+      setError(e.message || 'Failed to fetch premarket data');
+    } finally {
       setLoading(false);
-    }, 2000);
-    return () => clearTimeout(timer);
+    }
   }, []);
 
-  if (loading) return <div className="p-8 text-center text-gray-400 animate-pulse">Initializing Quantum Market Engine...</div>;
-  if (!analysis) return <div className="p-8 text-center text-red-400">Error fetching intelligence.</div>;
+  useEffect(() => {
+    fetchPremarket();
+    const interval = setInterval(fetchPremarket, 60000);
+    return () => clearInterval(interval);
+  }, [fetchPremarket]);
+
+  if (loading && !analysis) return <div className="p-8 text-center text-gray-400 animate-pulse">Fetching live pre-market data...</div>;
+  if (error && !analysis) return (
+    <div className="p-8 text-center">
+      <div className="text-red-400 mb-4">Error: {error}</div>
+      <button onClick={fetchPremarket} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">Retry</button>
+    </div>
+  );
+  if (!analysis) return <div className="p-8 text-center text-gray-400">No data available.</div>;
 
   return (
     <div className="p-6 space-y-6 bg-[#0a0a0a] min-h-screen text-white">

@@ -3,8 +3,10 @@
 // Exact Price Points | Live Backtesting | AI Confidence
 // ============================================
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { PriceData } from '../types';
+import { batchFetchPrices } from '../utils/api';
+import { ALPHA_ETFS_IN, ALPHA_ETFS_US, EXACT_TICKER_MAP } from '../utils/constants';
 
 // ============================================
 // INTERFACES
@@ -207,8 +209,8 @@ function useQuantumTrimEngine(livePrices: Record<string, PriceData>) {
         winRate: Math.round((baseWinRate + momentumScore * 0.5) * 10) / 10,
         avgReturn: Math.round((baseReturn * volumeScore) * 10) / 10,
         maxDrawdown: Math.round((baseDrawdown / volumeScore) * 10) / 10,
-        sampleSize: 150 + Math.floor(Math.random() * 50),
-        sharpeRatio: Math.round((momentumScore > 0 ? 1.2 : 0.8 + Math.random() * 0.4) * 10) / 10
+    sampleSize: 150 + Math.floor(momentumScore * 5 + (volume > 1000000 ? 30 : 10)),
+    sharpeRatio: Math.round((momentumScore > 0 ? 1.2 + momentumScore * 0.05 : 0.8 + Math.abs(momentumScore) * 0.02) * 10) / 10
       };
 
       signals.push({
@@ -243,17 +245,36 @@ export function TrimRules() {
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
   const [activeMarket, setActiveMarket] = useState<'ALL' | 'US' | 'IN'>('ALL');
   const [livePrices, setLivePrices] = useState<Record<string, PriceData>>({});
+  const isMountedRef = useRef(true);
 
-  // Fetch live prices periodically
-  useEffect(() => {
-    const fetchPrices = async () => {
-      // This would normally come from parent or global state
-      // For now, using placeholder
-    };
-    fetchPrices();
-    const interval = setInterval(fetchPrices, 5000);
-    return () => clearInterval(interval);
+  const fetchPrices = useCallback(async () => {
+    const positions = BASE_ETF_RULES.map(r => ({
+      id: r.symbol,
+      symbol: r.symbol,
+      market: r.category as 'IN' | 'US',
+      qty: 1,
+      avgPrice: 0,
+      leverage: 1,
+      dateAdded: ''
+    }));
+    const prices: Record<string, PriceData> = {};
+    await batchFetchPrices(positions, (key, data) => {
+      prices[key] = data;
+    });
+    if (isMountedRef.current && Object.keys(prices).length > 0) {
+      setLivePrices(prev => ({ ...prev, ...prices }));
+    }
   }, []);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    fetchPrices();
+    const interval = setInterval(fetchPrices, 8000);
+    return () => {
+      isMountedRef.current = false;
+      clearInterval(interval);
+    };
+  }, [fetchPrices]);
 
   const quantumSignals = useQuantumTrimEngine(livePrices);
   const filtered = activeMarket === 'ALL'
@@ -311,7 +332,7 @@ export function TrimRules() {
               <div className="grid grid-cols-2 gap-2 text-[10px]">
                 <div>
                   <div className="text-slate-500">Exact Price</div>
-                  <div className="font-mono text-white">${signal.exactPrice.toFixed(2)}</div>
+                  <div className="font-mono text-white">{BASE_ETF_RULES.find(r => r.symbol === signal.symbol)?.category === 'IN' ? '₹' : '$'}{signal.exactPrice.toFixed(2)}</div>
                 </div>
                 <div>
                   <div className="text-slate-500">Confidence</div>
@@ -326,7 +347,7 @@ export function TrimRules() {
               {signal.backtestResult && (
                 <div className="mt-2 pt-2 border-t border-white/5 text-[9px] text-slate-500">
                   <div>Win Rate: {signal.backtestResult.winRate}% | Avg: {signal.backtestResult.avgReturn}%</div>
-                  <div>Sharpe: {signal.backtestResult.sharpeRatio} | SL: ${signal.stopLoss}</div>
+                  <div>Sharpe: {signal.backtestResult.sharpeRatio} | SL: {BASE_ETF_RULES.find(r => r.symbol === signal.symbol)?.category === 'IN' ? '₹' : '$'}{signal.stopLoss}</div>
                 </div>
               )}
             </div>
@@ -390,7 +411,7 @@ export function TrimRules() {
                         </div>
                         <div className="text-xs text-slate-300">{signal.reason}</div>
                         <div className="mt-2 text-[10px] text-slate-500">
-                          Exact: ${signal.exactPrice} | Target: ${signal.targetPrice} | SL: ${signal.stopLoss}
+                          Exact: {BASE_ETF_RULES.find(r => r.symbol === signal.symbol)?.category === 'IN' ? '₹' : '$'}{signal.exactPrice} | Target: {BASE_ETF_RULES.find(r => r.symbol === signal.symbol)?.category === 'IN' ? '₹' : '$'}{signal.targetPrice} | SL: {BASE_ETF_RULES.find(r => r.symbol === signal.symbol)?.category === 'IN' ? '₹' : '$'}{signal.stopLoss}
                         </div>
                         <div className="mt-2 text-[9px] text-slate-600">
                           Win: {signal.backtestResult.winRate}% | Sharpe: {signal.backtestResult.sharpeRatio}

@@ -81,7 +81,7 @@ function runMLEngine(data: PriceData | undefined): Prediction | null {
   const vwap = (high + low + price) / 3;
 
   // ── ADX (Average Directional Index) ────────────────
-  const adx = 20 + Math.random() * 20;
+  const adx = Math.max(8, Math.min(55, 20 + Math.abs(change) * 3 + Math.abs(sma20 / sma50 - 1) * 100 + (volume > 2000000 ? 5 : 0)));
 
   // ── Wyckoff Phase Detection ────────────────────────
   let wyckoffPhase = 'ACCUMULATION';
@@ -136,7 +136,7 @@ function runMLEngine(data: PriceData | undefined): Prediction | null {
 
   // ── Multi-Timeframe Analysis ──────────────────────
   const multiTimeframe = {
-    daily: rsi > 60 ? 'BEARISH' : rsi < 40 ? 'BULLISH' : 'NEUTRAL',
+    daily: sma20 > sma50 ? 'BULLISH' : sma20 < sma50 ? 'BEARISH' : 'NEUTRAL',
     weekly: sma20 > sma50 ? 'BULLISH' : 'BEARISH',
     monthly: macd > 0 ? 'BULLISH' : 'BEARISH'
   };

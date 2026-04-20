@@ -369,14 +369,17 @@ export async function loadFromCloud(): Promise<Position[] | null> {
     const res = await fetch(`${API_URL}?action=load&t=${Date.now()}`);
     if (!res.ok) return null;
     
-    const text = await res.text();
-    const match = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-    if (!match || match[0] === '{}') return null;
-    
-    let data = JSON.parse(match[0]);
-    if (typeof data === 'string') data = JSON.parse(data);
-    
-    if (data.portfolio && Array.isArray(data.portfolio)) {
+  const text = await res.text();
+  const match = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+  if (!match || match[0] === '{}') return null;
+
+  let data;
+  try { data = JSON.parse(match[0]); } catch { return null; }
+  if (typeof data === 'string') {
+    try { data = JSON.parse(data); } catch { return null; }
+  }
+
+  if (data.portfolio && Array.isArray(data.portfolio)) {
       return data.portfolio;
     }
   } catch (e) {

@@ -9,15 +9,23 @@ interface ChatMessage {
   timestamp: number;
 }
 
+function sanitizeHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<script[^>]*>/gi, '')
+    .replace(/\s*on\w+\s*=\s*["'][^"']*["']/gi, '')
+    .replace(/\s*on\w+\s*=\s*[^\s>]+/gi, '');
+}
+
 function renderMarkdown(text: string): string {
-  return text
+  return sanitizeHtml(text
     .replace(/```([\s\S]*?)```/g, '<pre style="background:rgba(6,182,212,0.08);padding:10px;border-radius:8px;border:1px solid rgba(6,182,212,0.15);font-size:0.82em;overflow-x:auto;margin:6px 0">$1</pre>')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     .replace(/_(.+?)_/g, '<em>$1</em>')
     .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>')
     .replace(/•/g, '<span style="color:#06b6d4">•</span>')
-    .replace(/(\d+)\/100/g, '<span style="color:#06b6d4;font-weight:800">$1/100</span>');
+    .replace(/(\d+)\/100/g, '<span style="color:#06b6d4;font-weight:800">$1/100</span>'));
 }
 
 function formatTime(ts: number): string {
@@ -107,7 +115,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
     navigator.clipboard.writeText(text).then(() => {
       setCopiedIdx(idx);
       setTimeout(() => setCopiedIdx(null), 2000);
-    });
+    }).catch(() => {});
   }, []);
 
   const clearChat = useCallback(() => {
@@ -134,7 +142,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
     setIsThinking(true);
 
     try {
-      const recentMessages = [...currentMessages.slice(-2), { role: 'user' as const, text: userMessage }];
+      const recentMessages = [...currentMessages.slice(-8), { role: 'user' as const, text: userMessage }];
       const intelContext = marketIntelRef.current ? formatMarketIntelligenceForAI(marketIntelRef.current) : '';
 
       const systemContent = `${SYSTEM_PROMPT}\n\n--- SENSOR DATA ---\n${portfolioContext}\n${intelContext}`;
@@ -147,7 +155,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
         }))
       ];
 
-      const MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it', 'llama3-70b-8192'];
+      const MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
       let aiText = '';
       let lastError = '';
 

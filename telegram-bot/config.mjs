@@ -2,12 +2,14 @@
 // DEEP MIND AI TRADING BOT — CONFIGURATION
 // ============================================
 
-// Telegram Credentials
-export const TG_TOKEN = "8561229979:AAH24LmFeRbhoDCAIL6colX-KlogOseI9aY";
-export const TG_CHAT_ID = "5488576360";
+import 'dotenv/config';
+
+// Telegram Credentials (set via environment variables / .env file)
+export const TG_TOKEN = process.env.TG_TOKEN || "";
+export const TG_CHAT_ID = process.env.TG_CHAT_ID || "";
 
 // Google Apps Script Cloud Sync
-export const API_URL = "https://script.google.com/macros/s/AKfycbxITH5b_KKXvhPq3RukOA04d4pVgPrwp4uIiY2BDDMPWZ99oE0Ism2u5FJONR3LUDvhsg/exec";
+export const API_URL = process.env.API_URL || "";
 
 // Gemini AI (Google — FREE)
 export let GROQ_KEY = "";

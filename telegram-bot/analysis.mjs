@@ -83,6 +83,8 @@ export function analyzeAsset(position, priceData) {
 
   if (cagr > 20 && signal === 'BUY') confidence = Math.min(99, confidence + 10);
 
+  confidence = Math.max(1, Math.min(99, confidence));
+
   const action = (signal === 'STRONG_BUY' || signal === 'BUY') ? 'BUY' : (signal === 'STRONG_SELL' || signal === 'SELL') ? 'SELL' : 'HOLD';
   const trend = isBullishTrend ? 'up' : isBearishTrend ? 'down' : 'flat';
 
@@ -131,7 +133,8 @@ export function calculateMetrics(portfolio, livePrices, usdInrRate) {
 
   const totalPL = totalValue - totalInvested;
   const plPct = totalInvested > 0 ? (totalPL / totalInvested) * 100 : 0;
-  const todayPct = (totalValue - todayPL) > 0 ? (todayPL / (totalValue - todayPL)) * 100 : 0;
+  const prevDayValue = totalValue - todayPL;
+  const todayPct = prevDayValue > 0 ? (todayPL / prevDayValue) * 100 : 0;
 
   return { totalInvested, totalValue, totalPL, plPct, todayPL, todayPct, indPL, usPL };
 }

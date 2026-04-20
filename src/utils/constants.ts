@@ -2,9 +2,9 @@ import { ETFInfo } from '../types';
 
 export const SECURE_PIN = "2023";
 export const DEFAULT_USD_INR = 83.5;
-export const API_URL = "https://script.google.com/macros/s/AKfycbxITH5b_KKXvhPq3RukOA04d4pVgPrwp4uIiY2BDDMPWZ99oE0Ism2u5FJONR3LUDvhsg/exec";
-export const TG_TOKEN = "8561229979:AAH24LmFeRbhoDCAIL6colX-KlogOseI9aY";
-export const TG_CHAT_ID = "5488576360";
+export const API_URL = import.meta.env.VITE_API_URL || "";
+export const TG_TOKEN = import.meta.env.VITE_TG_TOKEN || "";
+export const TG_CHAT_ID = import.meta.env.VITE_TG_CHAT_ID || "";
 
 export const TAX_PAIRS: Record<string, string> = {
   'ITBEES.NS': 'TATAIT.NS',

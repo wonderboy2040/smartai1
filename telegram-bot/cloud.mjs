@@ -16,12 +16,15 @@ export async function loadPortfolioFromCloud() {
     });
     if (!res.ok) return null;
     
-    const text = await res.text();
-    const match = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-    if (!match || match[0] === '{}') return null;
-    
-    let data = JSON.parse(match[0]);
-    if (typeof data === 'string') data = JSON.parse(data);
+  const text = await res.text();
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match || match[0] === '{}') return null;
+
+  let data;
+  try { data = JSON.parse(match[0]); } catch { return null; }
+  if (typeof data === 'string') {
+    try { data = JSON.parse(data); } catch { return null; }
+  }
     
     if (data.portfolio && Array.isArray(data.portfolio)) {
       console.log(`☁️ Cloud Sync: Loaded ${data.portfolio.length} positions`);
@@ -46,12 +49,13 @@ export async function loadGroqKeyFromCloud() {
     });
     if (!res.ok) return null;
     
-    const text = await res.text();
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    
-    const data = JSON.parse(match[0]);
-    const key = data.groqKey || data.geminiKey || data.claudeKey;
+  const text = await res.text();
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+
+  let data;
+  try { data = JSON.parse(match[0]); } catch { return null; }
+  const key = data.groqKey || data.geminiKey || data.claudeKey;
     if (key && typeof key === 'string' && key.length > 10) {
       console.log('🔑 Groq API Key loaded from cloud');
       setGroqKey(key);
