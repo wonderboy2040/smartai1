@@ -21,15 +21,15 @@ export function setAIKeys(keys) { AI_KEYS = { ...AI_KEYS, ...keys }; }
 
 // API Endpoints for multi-model routing
 export const AI_ENDPOINTS = {
-  GEMINI: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent',
-  PERPLEXITY: 'https://api.perplexity.ai/chat/completions',
+  GEMINI: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
+  PERPLEXITY: 'https://api.tavily.com/search',
   DEEPSEEK: 'https://api.deepseek.com/chat/completions'
 };
 
 // Model Names
 export const AI_MODELS = {
-  GEMINI: 'gemini-1.5-pro',
-  PERPLEXITY: 'sonar-reasoning',
+  GEMINI: 'gemini-1.5-flash',
+  PERPLEXITY: 'tavily-search',
   DEEPSEEK: 'deepseek-chat'
 };
 

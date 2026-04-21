@@ -68,7 +68,7 @@ async function callAIProvider(provider: string, apiKey: string, messages: Array<
   let body: any;
 
   if (provider === 'GEMINI') {
-    endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${apiKey}`;
+    endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
     body = {
       contents: [{
         role: 'user',
@@ -77,12 +77,42 @@ async function callAIProvider(provider: string, apiKey: string, messages: Array<
       generationConfig: { temperature: 0.7, maxOutputTokens: 800 }
     };
   } else if (provider === 'PERPLEXITY') {
-    endpoint = 'https://api.perplexity.ai/chat/completions';
-    body = {
-      model: 'sonar-reasoning',
-      messages: messages,
-      temperature: 0.7
-    };
+    // Tavily is a Search API, not a Chat API. We fetch results and then summarize with Gemini.
+    const searchRes = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query: messages[messages.length - 1].content,
+        search_depth: 'advanced',
+        max_results: 5
+      }),
+      signal: AbortSignal.timeout(30000)
+    });
+
+    if (!searchRes.ok) throw new Error(`Tavily API Error: ${searchRes.status}`);
+    const searchData = await searchRes.json();
+    const searchContext = searchData.results?.map((r: any) => `Source: ${r.url}\nContent: ${r.content}`).join('\n\n') || 'No relevant news found.';
+
+    // Now use GEMINI to synthesize the search results into a response
+    const geminiKey = aiKeys.GEMINI;
+    if (!geminiKey) throw new Error('Tavily search succeeded, but GEMINI key is missing for summarization.');
+
+    const synthRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          role: 'user',
+          parts: [{ text: `Using the following real-time search results, provide a professional yet native Hinglish response to the user's query. Keep it concise, use HTML tags for formatting, and mention the sources.\n\nUSER QUERY: ${messages[messages.length - 1].content}\n\nSEARCH RESULTS:\n${searchContext}` }]
+        }],
+        generationConfig: { temperature: 0.7, maxOutputTokens: 800 }
+      }),
+      signal: AbortSignal.timeout(30000)
+    });
+
+    const synthData = await synthRes.json();
+    return synthData.candidates?.[0]?.content?.parts?.[0]?.text || 'Could not synthesize search results.';
   } else if (provider === 'DEEPSEEK') {
     endpoint = 'https://api.deepseek.com/chat/completions';
     body = {
@@ -99,7 +129,7 @@ async function callAIProvider(provider: string, apiKey: string, messages: Array<
       ...(provider !== 'GEMINI' && { 'Authorization': `Bearer ${apiKey}` })
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60000)
+    signal: AbortSignal.timeout(45000)
   });
 
   if (!res.ok) {
