@@ -73,12 +73,16 @@ export async function loadGroqKeyFromCloud() {
 // ========================================
 export async function syncPortfolioToCloud(portfolio, usdInr) {
   if (!API_URL) return false;
-  
+  if (!portfolio || portfolio.length === 0) {
+    console.warn('☁️ Cloud Sync: Blocking sync because portfolio is empty to prevent accidental deletion.');
+    return false;
+  }
+
   try {
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ portfolio, timestamp: Date.now(), usdInr })
+      body: JSON.stringify({ action: 'update', portfolio, timestamp: Date.now(), usdInr })
     });
     return res.ok;
   } catch (e) {

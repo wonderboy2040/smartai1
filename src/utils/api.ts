@@ -341,20 +341,24 @@ export async function fetchForexRate(): Promise<number> {
 
 export async function syncToCloud(portfolio: Position[], usdInr: number): Promise<boolean> {
   if (!API_URL) return false;
+  if (!portfolio || portfolio.length === 0) {
+    console.warn('☁️ Cloud Sync: Blocking sync because portfolio is empty to prevent accidental deletion.');
+    return false;
+  }
 
   try {
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Auth-Token': 'WEALTH_AI_SECURE_SYNC_2026' // Simple auth header for basic security
+        'X-Auth-Token': 'WEALTH_AI_SECURE_SYNC_2026'
       },
-      body: JSON.stringify({ portfolio, timestamp: Date.now(), usdInr })
+      body: JSON.stringify({ action: 'update', portfolio, timestamp: Date.now(), usdInr })
     });
     return res.ok;
   } catch (e) {
     try {
-      await fetch(`${API_URL}?action=save&data=${encodeURIComponent(JSON.stringify({ portfolio, timestamp: Date.now(), usdInr }))}`, { mode: 'no-cors' });
+      await fetch(`${API_URL}?action=update&data=${encodeURIComponent(JSON.stringify({ portfolio, timestamp: Date.now(), usdInr }))}`, { mode: 'no-cors' });
       return true;
     } catch (e) {
       return false;
