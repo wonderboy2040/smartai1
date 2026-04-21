@@ -16,7 +16,9 @@
       "Bash(findstr :5173)",
       "Bash(xargs grep:*)",
       "Bash(cd /d smartai11/smartai1/.claude/worktrees/agent-ac7cb9a6)",
-      "Bash(node --check telegram-bot/bot.mjs)"
+      "Bash(node --check telegram-bot/bot.mjs)",
+      "Bash(node --max-old-space-size=4096 node_modules/.bin/vite build)",
+      "Bash(node *)"
     ]
   }
 }

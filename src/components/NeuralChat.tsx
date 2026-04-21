@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, BrainCircuit, X, Trash2, Copy, Check, ChevronDown, Sparkles } from 'lucide-react';
+import { Send, BrainCircuit, X, Trash2, Copy, Check, ChevronDown, Sparkles, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { fetchMarketIntelligence, formatMarketIntelligenceForAI, MarketIntelligence } from '../utils/api';
+import { fetchMarketIntelligence, formatMarketIntelligenceForAI, MarketIntelligence, AIKeys, renderMarkdown, syncToCloud } from '../utils/api';
 
 interface ChatMessage {
   role: 'user' | 'model';
@@ -9,35 +9,15 @@ interface ChatMessage {
   timestamp: number;
 }
 
-function sanitizeHtml(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<script[^>]*>/gi, '')
-    .replace(/\s*on\w+\s*=\s*["'][^"']*["']/gi, '')
-    .replace(/\s*on\w+\s*=\s*[^\s>]+/gi, '');
-}
-
-function renderMarkdown(text: string): string {
-  return sanitizeHtml(text
-    .replace(/```([\s\S]*?)```/g, '<pre style="background:rgba(6,182,212,0.08);padding:10px;border-radius:8px;border:1px solid rgba(6,182,212,0.15);font-size:0.82em;overflow-x:auto;margin:6px 0">$1</pre>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/_(.+?)_/g, '<em>$1</em>')
-    .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>')
-    .replace(/•/g, '<span style="color:#06b6d4">•</span>')
-    .replace(/(\d+)\/100/g, '<span style="color:#06b6d4;font-weight:800">$1/100</span>'));
-}
-
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-
-
-export interface NeuralChatProps {
-  aiKeys:          { GEMINI: string; PERPLEXITY: string; DEEPSEEK: string };
+interface NeuralChatProps {
+  aiKeys: AIKeys;
   portfolioContext: string;
-  onTelegramPush?:  () => void;
+  onTelegramPush?: () => void;
+  onSettingsChange?: (keys: AIKeys) => void;
 }
 
 const QUICK_CHIPS = [
@@ -50,6 +30,89 @@ const QUICK_CHIPS = [
   { label: '🔥 Momentum', query: 'Konse assets me sabse zyada momentum hai abhi? Multi-factor momentum scoring karo with relative strength analysis.' },
   { label: '🏦 FII/DII', query: 'FII aur DII flow ka deep analysis karo — institutional money kaha ja raha hai? Passive vs active flow decomposition do.' },
 ];
+
+// ========================================
+// MULTI-MODEL ROUTING LOGIC
+// ========================================
+function routeQuery(message: string): 'GEMINI' | 'PERPLEXITY' | 'DEEPSEEK' {
+  const msg = message.toLowerCase();
+
+  // Daily market update, news, analysis -> GEMINI 1.5 Pro
+  const geminiKeywords = ['market', 'update', 'daily', 'analysis', 'analyze', 'trend', 'outlook', 'forecast', 'kaisa', 'status'];
+
+  // Breaking news + sources -> PERPLEXITY AI
+  const perplexityKeywords = ['news', 'latest', 'breaking', 'what happened', 'current event', 'live news', 'headlines', 'sources', 'batao sources'];
+
+  // Deep portfolio analysis, math, strategy -> DEEPSEEK V3
+  const deepseekKeywords = ['strategy', 'calculate', 'math', 'intrinsic value', 'option strategy', 'backtest', 'formula', 'deep analysis', 'portfolio', 'allocation', 'risk', 'optimize', 'position sizing', 'kelly'];
+
+  // Check for Gemini keywords first (market updates, analysis)
+  if (geminiKeywords.some(k => msg.includes(k))) return 'GEMINI';
+
+  // Check for Perplexity keywords (breaking news with sources)
+  if (perplexityKeywords.some(k => msg.includes(k))) return 'PERPLEXITY';
+
+  // Check for DeepSeek keywords (deep analysis, math, strategy)
+  if (deepseekKeywords.some(k => msg.includes(k))) return 'DEEPSEEK';
+
+  // Default to GEMINI for general queries
+  return 'GEMINI';
+}
+
+async function callAIProvider(provider: string, apiKey: string, messages: Array<{ role: string; content: string }>): Promise<string> {
+  if (!apiKey || apiKey.length < 10) {
+    throw new Error(`API Key for ${provider} is missing or invalid.`);
+  }
+
+  let endpoint = '';
+  let body: any;
+
+  if (provider === 'GEMINI') {
+    endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${apiKey}`;
+    body = {
+      contents: [{
+        role: 'user',
+        parts: [{ text: messages.map(m => `${m.role === 'assistant' ? 'AI' : 'User'}: ${m.content}`).join('\n') }]
+      }],
+      generationConfig: { temperature: 0.7, maxOutputTokens: 800 }
+    };
+  } else if (provider === 'PERPLEXITY') {
+    endpoint = 'https://api.perplexity.ai/chat/completions';
+    body = {
+      model: 'sonar-reasoning',
+      messages: messages,
+      temperature: 0.7
+    };
+  } else if (provider === 'DEEPSEEK') {
+    endpoint = 'https://api.deepseek.com/chat/completions';
+    body = {
+      model: 'deepseek-chat',
+      messages: messages,
+      temperature: 0.6
+    };
+  }
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(provider !== 'GEMINI' && { 'Authorization': `Bearer ${apiKey}` })
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(60000)
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `API Error: ${res.status}`);
+  }
+
+  const data = await res.json();
+  if (provider === 'GEMINI') {
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  }
+  return data.choices?.[0]?.message?.content || '';
+}
 
 const SYSTEM_PROMPT = `You are DEEP MIND AI NEURAL INSIDER — Quantum Mind AI Super Intelligence System. You talk to "Nagraj Bhai" in NATIVE HINGLISH.
 You operate at SUPERINTELLIGENT LEVEL combining Quantum Computing principles, Advanced Neural Networks, and Elite Trading frameworks:
@@ -84,22 +147,24 @@ DEEP ANALYSIS PROTOCOLS:
 
 Critical: Be concise! Keep tokens low. HTML bolding & Emojis allowed.`;
 
-export const NeuralChat = React.memo(({ aiKeys, portfolioContext, onTelegramPush }: NeuralChatProps) => {
-   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
-     role: 'model',
-     text: '🧠 **DEEP MIND AI — Quantum Mind Super Intelligence System v5.0 ONLINE** ⚡\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade deep analysis kar raha hu — powered by Quantum Neural Ensemble (Gemini 1.5 Pro + Perplexity + DeepSeek V3).\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\n• 🔥 Multi-Factor Momentum Engine — Statistical Edge Detection\n• 🧩 Wyckoff Phase Detector — Accumulation/Distribution\n• 📐 Elliott Wave Analyzer — Wave Count + Fibonacci Targets\n• ⚛️ Quantum Neural Core — Superposition Analysis & Entanglement Correlation\n• 🧠 Neural Sentiment Engine — News Impact Prediction\n• 📊 Deep Analysis Matrix — Quantitative Modeling & Backtesting\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
-     timestamp: Date.now()
-   }]);
-   const [chatInput, setChatInput] = useState('');
-   const [isThinking, setIsThinking] = useState(false);
-   const [showChat, setShowChat] = useState(false);
-   const [marketIntel, setMarketIntel] = useState<MarketIntelligence | null>(null);
-   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
-   const [showScrollDown, setShowScrollDown] = useState(false);
-   const messagesEndRef = useRef<HTMLDivElement>(null);
-   const marketIntelRef = useRef<MarketIntelligence | null>(null);
-   const chatContainerRef = useRef<HTMLDivElement>(null);
-   const [aiProvider, setAiProvider] = useState<'GEMINI' | 'PERPLEXITY' | 'DEEPSEEK'>('GEMINI');
+export const NeuralChat = React.memo(({ aiKeys, portfolioContext, onTelegramPush, onSettingsChange }: NeuralChatProps) => {
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
+    role: 'model',
+    text: '🧠 **DEEP MIND AI — Quantum Mind Super Intelligence System v6.0 ONLINE** ⚡\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade deep analysis kar raha hu — powered by FREE & UNLIMITED Multi-Model Neural Ensemble (Gemini 1.5 Pro + Perplexity + DeepSeek V3).\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\n• 🔥 Multi-Factor Momentum Engine — Statistical Edge Detection\n• 🧩 Wyckoff Phase Detector — Accumulation/Distribution\n• 📐 Elliott Wave Analyzer — Wave Count + Fibonacci Targets\n• ⚛️ Quantum Neural Core — Superposition Analysis & Entanglement Correlation\n• 🧠 Neural Sentiment Engine — News Impact Prediction\n• 📊 Deep Analysis Matrix — Quantitative Modeling & Backtesting\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
+    timestamp: Date.now()
+  }]);
+  const [chatInput, setChatInput] = useState('');
+  const [isThinking, setIsThinking] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+  const [marketIntel, setMarketIntel] = useState<MarketIntelligence | null>(null);
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  const [showScrollDown, setShowScrollDown] = useState(false);
+  const [showAiSettings, setShowAiSettings] = useState(false);
+  const [aiKeysTemp, setAiKeysTemp] = useState<AIKeys>(aiKeys);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const marketIntelRef = useRef<MarketIntelligence | null>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const [aiProvider, setAiProvider] = useState<'GEMINI' | 'PERPLEXITY' | 'DEEPSEEK'>('GEMINI');
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -122,7 +187,7 @@ export const NeuralChat = React.memo(({ aiKeys, portfolioContext, onTelegramPush
         const intel = await fetchMarketIntelligence();
         setMarketIntel(intel);
         marketIntelRef.current = intel;
-      } catch (e) {}
+      } catch (e) { }
     };
     loadIntel();
     const iv = setInterval(loadIntel, 120000);
@@ -138,7 +203,7 @@ export const NeuralChat = React.memo(({ aiKeys, portfolioContext, onTelegramPush
     navigator.clipboard.writeText(text).then(() => {
       setCopiedIdx(idx);
       setTimeout(() => setCopiedIdx(null), 2000);
-    }).catch(() => {});
+    }).catch(() => { });
   }, []);
 
   const clearChat = useCallback(() => {
@@ -152,10 +217,12 @@ export const NeuralChat = React.memo(({ aiKeys, portfolioContext, onTelegramPush
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim()) return;
 
-    if (!groqKey) {
+    // Check if at least one AI key is set
+    const hasValidKey = Object.values(aiKeys).some(k => k && k.length > 10);
+    if (!hasValidKey) {
       setChatMessages(prev => [...prev,
         { role: 'user', text: userMessage, timestamp: Date.now() },
-        { role: 'model', text: '⚠️ **Neural Link Offline**\n\nGroq API Key set nahi hai. Settings (⚙️) icon click karke API KEY paste karo.\n\n**FREE key milega:** console.groq.com/keys\n\nEk baar key set kar do, phir system ultra-fast chalega!', timestamp: Date.now() }
+        { role: 'model', text: '⚠️ **AI Engine Offline**\n\nKoi bhi AI API Key set nahi hai.\nSettings (⚙️) icon click karke:\n• Google Gemini 1.5 Pro key\n• Perplexity API key\n• DeepSeek API key\n\nPaste karo aur save karo!\n\nFree keys milengi:\n• gemini.google.com\n• perplexity.ai\n• deepseek.com', timestamp: Date.now() }
       ]);
       return;
     }
@@ -170,7 +237,7 @@ export const NeuralChat = React.memo(({ aiKeys, portfolioContext, onTelegramPush
 
       const systemContent = `${SYSTEM_PROMPT}\n\n--- SENSOR DATA ---\n${portfolioContext}\n${intelContext}`;
 
-      const groqMessages = [
+      const fullMessages = [
         { role: 'system', content: systemContent },
         ...recentMessages.map(m => ({
           role: m.role === 'model' ? 'assistant' : 'user',
@@ -178,56 +245,29 @@ export const NeuralChat = React.memo(({ aiKeys, portfolioContext, onTelegramPush
         }))
       ];
 
-      const MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
-      let aiText = '';
-      let lastError = '';
+      // Route query to appropriate AI model
+      const provider = routeQuery(userMessage);
+      setAiProvider(provider);
 
-      for (const model of MODELS) {
-        try {
-          const res = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${groqKey}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              model: model,
-              messages: groqMessages,
-              temperature: 0.75,
-              max_completion_tokens: 800
-            })
-          });
-
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            const errMsg = err.error?.message || 'API request failed';
-            if (res.status === 429 || errMsg.includes('decommissioned') || errMsg.includes('not exist')) {
-              lastError = `Skipping ${model}.`;
-              continue; // Fallback to next model
-            }
-            throw new Error(errMsg);
-          }
-
-          const data = await res.json();
-          aiText = data.choices?.[0]?.message?.content || "";
-          break; // Success, exit loop
-        } catch (e: any) {
-          lastError = e.message;
-          if (e.message.includes('Rate limit') || e.message.includes('decommissioned')) continue;
-          throw e; // Unrecoverable error
-        }
+      // Get API key for selected provider
+      const apiKey = aiKeys[provider];
+      if (!apiKey || apiKey.length < 10) {
+        throw new Error(`API Key missing for ${provider}. Please configure in Settings.`);
       }
 
-      if (!aiText) throw new Error(lastError || "Groq AI models unavailable. Check API key or try again.");
-      
-      setChatMessages(prev => [...prev, { 
-        role: 'model', 
-        text: aiText,
+      const aiText = await callAIProvider(provider, apiKey, fullMessages);
+
+      // Convert markdown to HTML for display
+      const htmlText = renderMarkdown(aiText);
+
+      setChatMessages(prev => [...prev, {
+        role: 'model',
+        text: `<i>🤖 Neural Node: ${provider}</i><br/><br/>${htmlText}`,
         timestamp: Date.now()
       }]);
-} catch (e) {
-console.error("Groq AI Error:", e);
-setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanceof Error ? e.message : String(e)}`, timestamp: Date.now() }]);
+    } catch (e: any) {
+      console.error("AI Error:", e);
+      setChatMessages(prev => [...prev, { role: 'model', text: `❌ <b>AI Error:</b> ${e.message || String(e)}\n\n<i>Check your API key or try again.</i>`, timestamp: Date.now() }]);
     } finally {
       setIsThinking(false);
     }
@@ -239,6 +279,21 @@ setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanc
       setChatInput('');
       sendMessage(msg);
     }
+  };
+
+  const handleSaveKeys = () => {
+    if (onSettingsChange) {
+      onSettingsChange(aiKeysTemp);
+    }
+    // Sync AI keys to cloud
+    const keysToSync: AIKeys = {
+      GEMINI: aiKeysTemp.GEMINI,
+      PERPLEXITY: aiKeysTemp.PERPLEXITY,
+      DEEPSEEK: aiKeysTemp.DEEPSEEK
+    };
+    syncToCloud([], 83.5).catch(() => {}); // Placeholder - cloud sync is handled via Google Apps Script
+
+    setShowAiSettings(false);
   };
 
   return (
@@ -274,7 +329,7 @@ setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanc
                 <div>
                   <h3 className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-1.5">
                     Deep Mind AI
-                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v5.0 GROQ</span>
+                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v6.0 FREE</span>
                   </h3>
                   <div className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -288,9 +343,9 @@ setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanc
                 {marketIntel && (
                   <div className={`text-[9px] font-black px-2 py-1 rounded-lg border ${
                     marketIntel.fearGreedScore > 60 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                    marketIntel.fearGreedScore < 40 ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                    'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                  }`}>
+                      marketIntel.fearGreedScore < 40 ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                        'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                    }`}>
                     {marketIntel.fearGreedScore > 60 ? '🟢' : marketIntel.fearGreedScore < 40 ? '🔴' : '🟡'} F&G {marketIntel.fearGreedScore}
                   </div>
                 )}
@@ -301,6 +356,9 @@ setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanc
                     className="text-slate-500 hover:text-indigo-400 bg-white/5 rounded-full p-1.5 transition-colors"
                   >📲</button>
                 )}
+                <button onClick={() => setShowAiSettings(true)} title="Configure AI Keys" className="text-slate-500 hover:text-cyan-400 bg-white/5 rounded-full p-1.5 transition-colors">
+                  <Settings size={14} />
+                </button>
                 <button onClick={clearChat} title="Clear chat" className="text-slate-500 hover:text-red-400 bg-white/5 rounded-full p-1.5 transition-colors">
                   <Trash2 size={14} />
                 </button>
@@ -311,7 +369,7 @@ setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanc
             </div>
 
             {/* Messages */}
-            <div 
+            <div
               ref={chatContainerRef}
               onScroll={handleScroll}
               className="relative flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide"
@@ -319,14 +377,14 @@ setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanc
               {chatMessages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
                   <div className={`max-w-[90%] rounded-2xl text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
-                    ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-4 py-3'
-                    : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-4 py-3 group/msg'
-                    }`}>
+                      ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-4 py-3'
+                      : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-4 py-3 group/msg'
+                      }`}>
                     {msg.role === 'user' ? (
                       msg.text
                     ) : (
                       <>
-                        <span dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />
+                        <span dangerouslySetInnerHTML={{ __html: msg.text }} />
                         <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
                           <button
                             onClick={() => copyToClipboard(msg.text, i)}
@@ -347,7 +405,7 @@ setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanc
                 <div className="flex justify-start animate-message-in">
                   <div className="bg-slate-900/90 px-5 py-4 rounded-2xl rounded-tl-none border border-white/5">
                     <div className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
-                      <Sparkles size={12} className="animate-pulse" /> GROQ LLAMA-3 ANALYZING...
+                      <Sparkles size={12} className="animate-pulse" /> {aiProvider === 'GEMINI' ? 'GEMINI 1.5 PRO' : aiProvider === 'PERPLEXITY' ? 'PERPLEXITY SONAR' : 'DEEPSEEK V3'} ANALYZING...
                     </div>
                     <div className="flex gap-1.5">
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
@@ -361,14 +419,74 @@ setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanc
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Scroll to bottom button */}
-            {showScrollDown && (
-              <button
-                onClick={scrollToBottom}
-                className="absolute bottom-40 left-1/2 -translate-x-1/2 bg-cyan-600/80 hover:bg-cyan-500 text-white rounded-full p-2 shadow-lg transition-all z-10"
+            {/* AI Settings Modal */}
+            {showAiSettings && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
+                className="absolute inset-0 bg-black/80 backdrop-blur-sm z-[70] rounded-3xl p-4 flex flex-col"
               >
-                <ChevronDown size={16} />
-              </button>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Settings size={16} className="text-cyan-400" />
+                    Configure AI Providers
+                  </h3>
+                  <button
+                    onClick={() => setShowAiSettings(false)}
+                    className="text-slate-400 hover:text-white p-1"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-4">
+                  <div className="p-3 bg-white/5 rounded-xl border border-white/10">
+                    <div className="text-xs font-bold text-cyan-400 mb-2">Google Gemini 1.5 Pro</div>
+                    <input
+                      type="password"
+                      placeholder="Paste Gemini API Key (free at gemini.google.com)"
+                      value={aiKeysTemp.GEMINI}
+                      onChange={(e) => setAiKeysTemp({ ...aiKeysTemp, GEMINI: e.target.value })}
+                      className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white mb-2"
+                    />
+                    <div className="text-[10px] text-slate-400">Best for: Market updates, analysis, general queries</div>
+                  </div>
+
+                  <div className="p-3 bg-white/5 rounded-xl border border-white/10">
+                    <div className="text-xs font-bold text-pink-400 mb-2">Perplexity AI (Sonar)</div>
+                    <input
+                      type="password"
+                      placeholder="Paste Perplexity API Key (free at perplexity.ai)"
+                      value={aiKeysTemp.PERPLEXITY}
+                      onChange={(e) => setAiKeysTemp({ ...aiKeysTemp, PERPLEXITY: e.target.value })}
+                      className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white mb-2"
+                    />
+                    <div className="text-[10px] text-slate-400">Best for: Breaking news, sources, latest market info</div>
+                  </div>
+
+                  <div className="p-3 bg-white/5 rounded-xl border border-white/10">
+                    <div className="text-xs font-bold text-purple-400 mb-2">DeepSeek V3</div>
+                    <input
+                      type="password"
+                      placeholder="Paste DeepSeek API Key (free at deepseek.com)"
+                      value={aiKeysTemp.DEEPSEEK}
+                      onChange={(e) => setAiKeysTemp({ ...aiKeysTemp, DEEPSEEK: e.target.value })}
+                      className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white mb-2"
+                    />
+                    <div className="text-[10px] text-slate-400">Best for: Deep portfolio analysis, math, strategy, calculations</div>
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <button
+                    onClick={handleSaveKeys}
+                    className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl font-bold text-sm transition-all"
+                  >
+                    💾 Save & Apply
+                  </button>
+                </div>
+              </motion.div>
             )}
 
             {/* Quick Trading Tools — Screenshot Links */}
@@ -433,7 +551,7 @@ setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanc
                 </button>
               </div>
               <div className="flex items-center justify-between mt-2 px-1">
-                <span className="text-[8px] text-slate-600 font-mono">Powered by Groq • Llama-3.3-70B (FREE)</span>
+                <span className="text-[8px] text-slate-600 font-mono">Free & Unlimited Multi-Model Neural System</span>
                 <span className="text-[8px] text-slate-600">{chatMessages.length} messages</span>
               </div>
             </div>

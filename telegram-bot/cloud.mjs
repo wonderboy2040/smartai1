@@ -9,13 +9,13 @@ import { API_URL, setAIKeys } from './config.mjs';
 // ========================================
 export async function loadPortfolioFromCloud() {
   if (!API_URL) return null;
-  
+
   try {
     const res = await fetch(`${API_URL}?action=load&t=${Date.now()}`, {
       signal: AbortSignal.timeout(10000)
     });
     if (!res.ok) return null;
-    
+
   const text = await res.text();
   const match = text.match(/\{[\s\S]*\}/);
   if (!match || match[0] === '{}') return null;
@@ -25,7 +25,7 @@ export async function loadPortfolioFromCloud() {
   if (typeof data === 'string') {
     try { data = JSON.parse(data); } catch { return null; }
   }
-    
+
     if (data.portfolio && Array.isArray(data.portfolio)) {
       console.log(`☁️ Cloud Sync: Loaded ${data.portfolio.length} positions`);
       return data.portfolio;
@@ -33,7 +33,7 @@ export async function loadPortfolioFromCloud() {
   } catch (e) {
     console.warn('☁️ Cloud load failed:', e.message);
   }
-  
+
   return null;
 }
 
@@ -79,7 +79,7 @@ export async function loadAIKeysFromCloud() {
 // ========================================
 export async function syncPortfolioToCloud(portfolio, usdInr) {
   if (!API_URL) return false;
-  
+
   try {
     const res = await fetch(API_URL, {
       method: 'POST',

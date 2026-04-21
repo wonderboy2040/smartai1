@@ -714,31 +714,55 @@ bot.onText(/^\/clear(@\w+)?$/i, async (msg) => {
 });
 
 // ========================================
-// COMMAND: /setkey (set Groq API key)
+// COMMAND: /setkey (set AI API keys)
+// Usage: /setkey gemini YOUR_KEY
+//        /setkey perplexity YOUR_KEY
+//        /setkey deepseek YOUR_KEY
 // ========================================
-bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/i, async (msg, match) => {
+bot.onText(/^\/setkey(?:@\w+)?\s+(gemini|perplexity|deepseek)\s+(.+)/i, async (msg, match) => {
   const chatId = msg.chat.id;
-  const key = match[1].trim();
-  console.log(`📥 /setkey from ${msg.from?.first_name || chatId}`);
+  const provider = match[1].toUpperCase();
+  const key = match[2].trim();
+  console.log(`📥 /setkey ${provider} from ${msg.from?.first_name || chatId}`);
   try {
-    // Simplified logic for quick setting of a primary key (defaults to Gemini)
-    const { setAIKeys, API_URL } = await import('./config.mjs');
-    setAIKeys({ GEMINI: key });
+    const { setAIKeys, API_URL, AI_ENDPOINTS } = await import('./config.mjs');
+    setAIKeys({ [provider]: key });
 
     // Sync to cloud
     try {
+      const payload = provider === 'GEMINI' ? { geminiKey: key } :
+                      provider === 'PERPLEXITY' ? { perplexityKey: key } :
+                      { deepseekKey: key };
       await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ geminiKey: key, action: 'saveKey', timestamp: Date.now() })
+        body: JSON.stringify({ ...payload, action: 'saveKey', timestamp: Date.now() })
       });
     } catch (e) {}
 
-    await safeSend(chatId, '✅ <b>AI Neural Key Set!</b>\n\nAI Engine is now <b>ONLINE</b> 🧠⚡️ — Powered by Super Intelligence Neural System.\nTum abhi kisi bhi sawal ka answer AI se le sakte ho!');
+    const providerName = provider === 'GEMINI' ? 'Gemini 1.5 Pro' :
+                         provider === 'PERPLEXITY' ? 'Perplexity Sonar' :
+                         'DeepSeek V3';
+    await safeSend(chatId, `✅ <b>${providerName} API Key Set!</b>\n\nAI Neural Engine ab <b>ONLINE</b> 🧠⚡️\nProvider: ${providerName}\nTum abhi kisi bhi sawal ka answer AI se le sakte ho!`);
   } catch (e) {
     console.error('❌ /setkey error:', e.message);
-    await safeSend(chatId, `❌ Key set me error: ${e.message}`);
+    await safeSend(chatId, `❌ Key set me error: ${e.message}\n\nUse: <code>/setkey gemini YOUR_KEY</code>`);
   }
+});
+
+// ========================================
+// COMMAND: /showkeys (show configured providers)
+// ========================================
+bot.onText(/^\/showkeys(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /showkeys from ${msg.from?.first_name || chatId}`);
+  const keys = Object.entries(AI_KEYS).filter(([_, v]) => v && v.length > 10);
+  if (keys.length === 0) {
+    await safeSend(chatId, '❌ <b>No AI keys configured!</b>\n\nSet keys via:\n<code>/setkey gemini YOUR_GEMINI_KEY</code>\n<code>/setkey perplexity YOUR_PERPLEXITY_KEY</code>\n<code>/setkey deepseek YOUR_DEEPSEEK_KEY</code>');
+    return;
+  }
+  const list = keys.map(([k]) => `• ${k === 'GEMINI' ? 'Gemini 1.5 Pro' : k === 'PERPLEXITY' ? 'Perplexity Sonar' : 'DeepSeek V3'}`).join('\n');
+  await safeSend(chatId, `✅ <b>AI Providers Configured:</b>\n\n${list}\n\nUse /clearchat to reset conversation and start fresh!`);
 });
 
 // ========================================

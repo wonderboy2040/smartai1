@@ -226,12 +226,42 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
   }
 
   try {
-    let aiText = await callAIProvider(provider, messages);
+    let aiText = '';
+    let errorCount = 0;
 
-    // Fallback logic
-    if (!aiText) {
-       const fallbackProvider = provider === 'GEMINI' ? 'DEEPSEEK' : 'GEMINI';
-       aiText = await callAIProvider(fallbackProvider, messages);
+    // Try primary provider first
+    try {
+      aiText = await callAIProvider(provider, messages);
+    } catch (e) {
+      errorCount++;
+      console.warn(`Primary provider ${provider} failed:`, e.message);
+      aiText = '';
+    }
+
+    // Fallback to other available providers if primary fails
+    if (!aiText || aiText.length === 0) {
+      const fallbackOrder = provider === 'GEMINI' ? ['DEEPSEEK', 'PERPLEXITY'] :
+                          provider === 'DEEPSEEK' ? ['GEMINI', 'PERPLEXITY'] :
+                          ['GEMINI', 'DEEPSEEK'];
+
+      for (const fallbackProvider of fallbackOrder) {
+        try {
+          if (AI_KEYS[fallbackProvider] && AI_KEYS[fallbackProvider].length > 10) {
+            aiText = await callAIProvider(fallbackProvider, messages);
+            if (aiText && aiText.length > 0) {
+              console.log(`Fallback to ${fallbackProvider} successful`);
+              break;
+            }
+          }
+        } catch (e) {
+          console.warn(`Fallback provider ${fallbackProvider} failed:`, e.message);
+          continue;
+        }
+      }
+    }
+
+    if (!aiText || aiText.length === 0) {
+      throw new Error('All AI providers failed. Please check your API keys.');
     }
 
   // Clean up thinking tags and convert markdown to HTML for Telegram

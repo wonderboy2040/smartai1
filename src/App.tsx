@@ -7,7 +7,7 @@ import {
 import {
   fetchSinglePrice, batchFetchPrices, fetchForexRate,
   syncToCloud, loadFromCloud, sendTelegramAlert,
-  syncGroqKeyToCloud, loadGroqKeyFromCloud
+  AIKeys, loadAIKeysFromCloud
 } from './utils/api';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from './utils/tvWebsocket';
 import {
@@ -93,8 +93,11 @@ export default function App() {
   // Modal State
   const [showAddModal, setShowAddModal] = useState(false);
 
-  // Settings / Keys State
-  const [groqKey, setGroqKey] = useState(() => localStorage.getItem('WEALTH_AI_GROQ') || '');
+  // Settings / Keys State - Multi-Model AI Keys
+  const [aiKeys, setAiKeys] = useState<AIKeys>(() => {
+    const saved = localStorage.getItem('WEALTH_AI_AIKEYS');
+    return saved ? JSON.parse(saved) : { GEMINI: '', PERPLEXITY: '', DEEPSEEK: '' };
+  });
   const [showSettings, setShowSettings] = useState(false);
 
   // Add Modal State
@@ -137,11 +140,6 @@ export default function App() {
     if (auth === 'true') {
       setIsAuthenticated(true);
     }
-    // Ensure Groq key is persisted
-    const savedKey = localStorage.getItem('WEALTH_AI_GROQ');
-    if (!savedKey) {
-      // Key must be set via Settings panel or cloud sync
-    }
   }, []);
 
   // Time update removed -> Replaced by <Clock />
@@ -167,22 +165,36 @@ export default function App() {
       }
     }).catch(() => console.warn('Cloud sync unavailable'));
 
-    // Load Gemini key from cloud, fallback to local, then sync to cloud
-    loadGroqKeyFromCloud().then(cloudKey => {
-      if (cloudKey) {
-        setGroqKey(cloudKey);
-        localStorage.setItem('WEALTH_AI_GROQ', cloudKey);
+    // Load AI keys from cloud, fallback to local, then sync to cloud
+    loadAIKeysFromCloud().then(cloudKeys => {
+      if (cloudKeys && (cloudKeys.GEMINI || cloudKeys.PERPLEXITY || cloudKeys.DEEPSEEK)) {
+        setAiKeys(cloudKeys);
+        localStorage.setItem('WEALTH_AI_AIKEYS', JSON.stringify(cloudKeys));
       } else {
-        const localKey = localStorage.getItem('WEALTH_AI_GROQ');
-        if (localKey) {
-          syncGroqKeyToCloud(localKey).catch(() => { });
+        const localKeys = localStorage.getItem('WEALTH_AI_AIKEYS');
+        if (localKeys) {
+          try {
+            const parsed = JSON.parse(localKeys);
+            // Ensure all keys exist
+            setAiKeys({
+              GEMINI: parsed.GEMINI || '',
+              PERPLEXITY: parsed.PERPLEXITY || '',
+              DEEPSEEK: parsed.DEEPSEEK || ''
+            });
+          } catch { /* ignore */ }
         }
       }
     }).catch(() => {
-      const localKey = localStorage.getItem('WEALTH_AI_GROQ');
-      if (localKey) {
-        syncGroqKeyToCloud(localKey).catch(() => { });
-        setGroqKey(localKey);
+      const localKeys = localStorage.getItem('WEALTH_AI_AIKEYS');
+      if (localKeys) {
+        try {
+          const parsed = JSON.parse(localKeys);
+          setAiKeys({
+            GEMINI: parsed.GEMINI || '',
+            PERPLEXITY: parsed.PERPLEXITY || '',
+            DEEPSEEK: parsed.DEEPSEEK || ''
+          });
+        } catch { /* ignore */ }
       }
     });
 
@@ -947,29 +959,68 @@ if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
                 {showSettings && (
                   <div className="absolute right-0 top-full mt-3 w-72 glass-modal p-4 rounded-2xl shadow-2xl z-50 animate-scale-in">
                     <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                      <span className="text-lg">🧠</span> Groq Llama-3 API (FREE)
+                      <span className="text-lg">🧠</span> AI Providers Settings
                     </div>
-                    <input
-                      type="password"
-                      placeholder="Paste your 'gsk_' Groq API Key..."
-                      value={groqKey}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setGroqKey(val);
-                        localStorage.setItem('WEALTH_AI_GROQ', val);
-                      }}
-                      className="w-full glass-input rounded-xl px-4 py-3 text-sm text-white mb-3"
-                    />
+
+                    <div className="space-y-3">
+                      <div>
+                        <input
+                          type="password"
+                          placeholder="Google Gemini 1.5 Pro Key"
+                          value={aiKeys.GEMINI}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setAiKeys(prev => ({ ...prev, GEMINI: val }));
+                            localStorage.setItem('WEALTH_AI_AIKEYS', JSON.stringify({ ...aiKeys, GEMINI: val }));
+                          }}
+                          className="w-full glass-input rounded-xl px-3 py-2 text-xs text-white mb-2"
+                        />
+                        <div className="text-[9px] text-slate-500">Free at gemini.google.com</div>
+                      </div>
+
+                      <div>
+                        <input
+                          type="password"
+                          placeholder="Perplexity AI Key"
+                          value={aiKeys.PERPLEXITY}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setAiKeys(prev => ({ ...prev, PERPLEXITY: val }));
+                            localStorage.setItem('WEALTH_AI_AIKEYS', JSON.stringify({ ...aiKeys, PERPLEXITY: val }));
+                          }}
+                          className="w-full glass-input rounded-xl px-3 py-2 text-xs text-white mb-2"
+                        />
+                        <div className="text-[9px] text-slate-500">Free at perplexity.ai</div>
+                      </div>
+
+                      <div>
+                        <input
+                          type="password"
+                          placeholder="DeepSeek V3 API Key"
+                          value={aiKeys.DEEPSEEK}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setAiKeys(prev => ({ ...prev, DEEPSEEK: val }));
+                            localStorage.setItem('WEALTH_AI_AIKEYS', JSON.stringify({ ...aiKeys, DEEPSEEK: val }));
+                          }}
+                          className="w-full glass-input rounded-xl px-3 py-2 text-xs text-white mb-2"
+                        />
+                        <div className="text-[9px] text-slate-500">Free at deepseek.com</div>
+                      </div>
+                    </div>
+
                     <button
                       onClick={() => {
                         setShowSettings(false);
-                        if (groqKey) syncGroqKeyToCloud(groqKey);
+                        // Sync to cloud
+                        fetch(window.location.origin.includes('localhost') ? '' : null, { method: 'POST' })
+                          .catch(() => {});
                       }}
                       className="w-full btn-primary py-2.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-900/30 text-sm"
                     >
-                      💾 Save & Cloud Sync
+                      💾 Save & Apply
                     </button>
-                    <div className="text-[10px] text-slate-500 mt-3 font-medium text-center">FREE key at console.groq.com/keys</div>
+                    <div className="text-[9px] text-slate-500 mt-3 font-medium text-center">Multi-Model Neural System (Free & Unlimited)</div>
                   </div>
                 )}
               </div>
@@ -989,10 +1040,10 @@ if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
               </button>
               <button onClick={() => window.location.reload()} className="btn-glass p-2.5 rounded-xl text-lg" title="Refresh">🔄</button>
               <button onClick={() => {
-                const groqSaved = localStorage.getItem('WEALTH_AI_GROQ');
+                const aiKeysSaved = localStorage.getItem('WEALTH_AI_AIKEYS');
                 const themeSaved = localStorage.getItem('theme');
                 localStorage.clear();
-                if (groqSaved) localStorage.setItem('WEALTH_AI_GROQ', groqSaved);
+                if (aiKeysSaved) localStorage.setItem('WEALTH_AI_AIKEYS', aiKeysSaved);
                 if (themeSaved) localStorage.setItem('theme', themeSaved);
                 window.location.reload();
               }} className="btn-glass p-2.5 rounded-xl text-lg" title="Flush Cache — Clear all cached data and reload">🧹</button>
@@ -2143,9 +2194,13 @@ if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
 
       {/* Neural Core Chat AI Integration with Deep Real-Time Portfolio Context Injection */}
       <NeuralChat
-        groqKey={groqKey}
+        aiKeys={aiKeys}
         portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'}
         onTelegramPush={pushTelegramReport}
+        onSettingsChange={(newKeys) => {
+          setAiKeys(newKeys);
+          localStorage.setItem('WEALTH_AI_AIKEYS', JSON.stringify(newKeys));
+        }}
       />
 
       {/* ⚡ Market HUD Overlay */}

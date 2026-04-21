@@ -11,13 +11,34 @@ export const TG_CHAT_ID = process.env.TG_CHAT_ID || "";
 // Google Apps Script Cloud Sync
 export const API_URL = process.env.API_URL || "";
 
-// AI Super Intelligence Keys (Vault)
+// AI Super Intelligence Keys (Vault) - FREE & UNLIMITED
 export let AI_KEYS = {
   GEMINI: "",
   PERPLEXITY: "",
   DEEPSEEK: ""
 };
 export function setAIKeys(keys) { AI_KEYS = { ...AI_KEYS, ...keys }; }
+
+// API Endpoints for multi-model routing
+export const AI_ENDPOINTS = {
+  GEMINI: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent',
+  PERPLEXITY: 'https://api.perplexity.ai/chat/completions',
+  DEEPSEEK: 'https://api.deepseek.com/chat/completions'
+};
+
+// Model Names
+export const AI_MODELS = {
+  GEMINI: 'gemini-1.5-pro',
+  PERPLEXITY: 'sonar-reasoning',
+  DEEPSEEK: 'deepseek-chat'
+};
+
+// Default API keys for free tier (if user doesn't provide)
+export const DEFAULT_KEYS = {
+  GEMINI: '',  // Google Gemini 1.5 Pro - Free tier available
+  PERPLEXITY: '',  // Perplexity Sonar - Free tier available
+  DEEPSEEK: ''  // DeepSeek V3 - Free tier available
+};
 
 // SIP Defaults
 export const DEFAULT_INDIA_SIP = 10000;

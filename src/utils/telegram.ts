@@ -772,7 +772,7 @@ msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
 msg += `🤖 Welcome to Quantum AI Pro Terminal!\n\n`;
 msg += `📊 **Portfolio:** ${portfolio.length} positions\n`;
 msg += `🌍 **Markets:** India + USA\n`;
-msg += `🤖 **AI Engine:** Groq Llama-3\n\n`;
+msg += `🤖 **AI Engine:** Gemini 1.5 Pro + Perplexity + DeepSeek\n\n`;
 
 msg += `📜 **Available Commands:**\n`;
 msg += `/premarket - Pre-market intelligence\n`;

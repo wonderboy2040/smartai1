@@ -3,6 +3,15 @@ import { CORS_PROXIES, EXACT_TICKER_MAP, guessMarket, API_URL, DEFAULT_USD_INR }
 import { isAnyMarketOpen } from './telegram';
 
 // ========================================
+// AI KEYS INTERFACE
+// ========================================
+export interface AIKeys {
+  GEMINI: string;
+  PERPLEXITY: string;
+  DEEPSEEK: string;
+}
+
+// ========================================
 // SMART CACHE with TTL
 // ========================================
 interface CacheEntry<T> {
@@ -404,44 +413,8 @@ export async function sendTelegramAlert(token: string, chatId: string, message: 
   }
 }
 
-// ========================================
-// GROQ API KEY — CLOUD SYNC (FREE)
-// ========================================
-export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
-  if (!API_URL || !key) return false;
-  try {
-    await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Auth-Token': 'WEALTH_AI_SECURE_SYNC_2026'
-      },
-      body: JSON.stringify({ groqKey: key, action: 'saveKey', timestamp: Date.now() })
-    });
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
 
-export async function loadGroqKeyFromCloud(): Promise<string | null> {
-  if (!API_URL) return null;
-  try {
-    const res = await fetch(`${API_URL}?action=loadKey&t=${Date.now()}`);
-    if (!res.ok) return null;
-    const text = await res.text();
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    const data = JSON.parse(match[0]);
-    const key = data.groqKey;
-    if (key && typeof key === 'string' && key.length > 10) {
-      return key;
-    }
-  } catch (e) {}
-  return null;
-}
-
-export async function loadAIKeysFromCloud(): Promise<<AIAIKeys | null> {
+export async function loadAIKeysFromCloud(): Promise<AIKeys | null> {
   if (!API_URL) return null;
   try {
     const res = await fetch(`${API_URL}?action=loadKeys&t=${Date.now()}`);
@@ -607,4 +580,19 @@ export function formatMarketIntelligenceForAI(intel: MarketIntelligence): string
   ctx += `NARRATIVE:${intel.marketNarrative}\n`;
 
   return ctx;
+}
+
+// ========================================
+// SIMPLE MARKDOWN RENDERER
+// ========================================
+export function renderMarkdown(text: string): string {
+  if (!text) return '';
+
+  let html = text
+    .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')      // **bold** -> <b>bold</b>
+    .replace(/\*(.*?)\*/g, '<i>$1</i>')          // *italic* -> <i>italic</i>
+    .replace(/`(.*?)`/g, '<code>$1</code>')      // `code` -> <code>code</code>
+    .replace(/\n/g, '<br/>');                    // newlines -> <br/>
+
+  return html;
 }
