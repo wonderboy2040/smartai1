@@ -2,7 +2,7 @@
 // CLOUD SYNC — Google Apps Script Integration
 // ============================================
 
-import { API_URL, setGroqKey } from './config.mjs';
+import { API_URL, setAIKeys } from './config.mjs';
 
 // ========================================
 // LOAD PORTFOLIO FROM CLOUD
@@ -38,33 +38,39 @@ export async function loadPortfolioFromCloud() {
 }
 
 // ========================================
-// LOAD GROQ KEY FROM CLOUD
+// LOAD AI KEYS FROM CLOUD
 // ========================================
-export async function loadGroqKeyFromCloud() {
+export async function loadAIKeysFromCloud() {
   if (!API_URL) return null;
-  
+
   try {
-    const res = await fetch(`${API_URL}?action=loadKey&t=${Date.now()}`, {
+    const res = await fetch(`${API_URL}?action=loadKeys&t=${Date.now()}`, {
       signal: AbortSignal.timeout(8000)
     });
     if (!res.ok) return null;
-    
+
   const text = await res.text();
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) return null;
 
   let data;
   try { data = JSON.parse(match[0]); } catch { return null; }
-  const key = data.groqKey || data.geminiKey || data.claudeKey;
-    if (key && typeof key === 'string' && key.length > 10) {
-      console.log('🔑 Groq API Key loaded from cloud');
-      setGroqKey(key);
-      return key;
-    }
-  } catch (e) {
-    console.warn('🔑 Groq key cloud load failed:', e.message);
+
+  const keys = {
+    GEMINI: data.geminiKey || "",
+    PERPLEXITY: data.perplexityKey || "",
+    DEEPSEEK: data.deepseekKey || ""
+  };
+
+  if (Object.values(keys).some(k => k && k.length > 10)) {
+    console.log('🔑 AI Super Intelligence Keys loaded from cloud');
+    setAIKeys(keys);
+    return keys;
   }
-  
+  } catch (e) {
+    console.warn('🔑 AI keys cloud load failed:', e.message);
+  }
+
   return null;
 }
 

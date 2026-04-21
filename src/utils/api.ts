@@ -441,9 +441,24 @@ export async function loadGroqKeyFromCloud(): Promise<string | null> {
   return null;
 }
 
-// ========================================
-// MARKET INTELLIGENCE — LIVE GLOBAL DATA
-// ========================================
+export async function loadAIKeysFromCloud(): Promise<<AIAIKeys | null> {
+  if (!API_URL) return null;
+  try {
+    const res = await fetch(`${API_URL}?action=loadKeys&t=${Date.now()}`);
+    if (!res.ok) return null;
+    const text = await res.text();
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const data = JSON.parse(match[0]);
+    return {
+      GEMINI: data.geminiKey || "",
+      PERPLEXITY: data.perplexityKey || "",
+      DEEPSEEK: data.deepseekKey || ""
+    };
+  } catch (e) {}
+  return null;
+}
+
 export interface MarketIntelligence {
   globalIndices: { name: string; price: number; change: number }[];
   sectors: { name: string; change: number }[];

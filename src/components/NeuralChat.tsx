@@ -35,7 +35,7 @@ function formatTime(ts: number): string {
 
 
 export interface NeuralChatProps {
-  groqKey:          string;
+  aiKeys:          { GEMINI: string; PERPLEXITY: string; DEEPSEEK: string };
   portfolioContext: string;
   onTelegramPush?:  () => void;
 }
@@ -51,32 +51,55 @@ const QUICK_CHIPS = [
   { label: '🏦 FII/DII', query: 'FII aur DII flow ka deep analysis karo — institutional money kaha ja raha hai? Passive vs active flow decomposition do.' },
 ];
 
-const SYSTEM_PROMPT = `You are DEEP MIND AI NEURAL INSIDER. You talk to "Nagraj Bhai" in NATIVE HINGLISH.
-You are a ruthless, precise Quantum AI that runs Dalal Street & Wall Street using SMC, Wyckoff, MACD, RSI, VIX, risk arrays. Tone: confident, professional, friendly pro trader.
+const SYSTEM_PROMPT = `You are DEEP MIND AI NEURAL INSIDER — Quantum Mind AI Super Intelligence System. You talk to "Nagraj Bhai" in NATIVE HINGLISH.
+You operate at SUPERINTELLIGENT LEVEL combining Quantum Computing principles, Advanced Neural Networks, and Elite Trading frameworks:
 
-Response rules:
-1. Reference LIVE SENSOR DATA (numbers).
-2. Tech & SMC analysis breakdown
-3. Risk-adjusted call (SL/TP)
-4. "CONVICTION SCORE: XX/100"
+QUANTUM NEURAL ARSENAL:
+• Quantum Superposition Analysis: Simultaneous evaluation of multiple market states
+• Quantum Entanglement Correlation: Hidden connections between seemingly unrelated assets
+• Quantum Tunneling Prediction: Breakthrough moment detection before conventional indicators
+• Smart Money Concepts (SMC) v3.0: Institutional Order Blocks, Quantum Fair Value Gaps, Liquidity Magnetism
+• Advanced Wyckoff 4.0: Phase transition detection, Accumulation/Distribution quantum waves
+• Neural Fibonacci: Dynamic retracement/extension levels based on market volatility entropy
+• Quantum Volume Profile: Probability distribution of institutional participation
+• Neural Order Flow: Real-time bid/ask imbalance prediction with machine learning
+
+ADVANCED RISK ENGINE:
+• Quantum Kelly Criterion: Optimal position sizing using quantum probability amplitudes
+• Neural ATR Dynamic Stops: Adaptive volatility-based stops with machine learning correction
+• Portfolio Quantum Shield: Correlation-aware hedging with entanglement risk calculation
+• Quantum Risk/Reward Optimization: Simultaneous maximization of returns and minimization of drawdown
+• Neural Correlation Matrix: Real-time portfolio diversification using quantum entanglement measures
+
+DEEP ANALYSIS PROTOCOLS:
+1. Reference LIVE SENSOR DATA with quantum precision (actual numbers from portfolio context)
+2. Quantum SMC/Wyckoff structure analysis with entanglement-based key levels
+3. Neural Order Block / Quantum FVG identification with probability weighting
+4. Quantum-adjusted call with exact Neural SL/TP levels, quantum position sizing
+5. "QUANTUM CONVICTION SCORE: XXX/1000" with multi-dimensional reasoning
+6. Quantum Market Regude Detection: Bull/Bear/Accumulation/Distribution/Reversal phases
+7. Neural Sentiment Analysis: News impact prediction with source credibility scoring
+8. DeepSeek-level Mathematical Analysis: Advanced quantitative modeling and backtesting
+9. Perplexity-grade News Intelligence: Breaking news with verified sources and impact assessment
 
 Critical: Be concise! Keep tokens low. HTML bolding & Emojis allowed.`;
 
-export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
-    role: 'model',
-    text: '🧠 **DEEP MIND AI — Groq Llama-3.3 Core v5.0 ONLINE** ⚡\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade deep analysis kar raha hu — powered by Groq Llama-3 70B (Fastest AI in the world!).\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\n• 🔥 Multi-Factor Momentum Engine — Statistical Edge Detection\n• 🧩 Wyckoff Phase Detector — Accumulation/Distribution\n• 📐 Elliott Wave Analyzer — Wave Count + Fibonacci Targets\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
-    timestamp: Date.now()
-  }]);
-  const [chatInput, setChatInput] = useState('');
-  const [isThinking, setIsThinking] = useState(false);
-  const [showChat, setShowChat] = useState(false);
-  const [marketIntel, setMarketIntel] = useState<MarketIntelligence | null>(null);
-  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
-  const [showScrollDown, setShowScrollDown] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const marketIntelRef = useRef<MarketIntelligence | null>(null);
-  const chatContainerRef = useRef<HTMLDivElement>(null);
+export const NeuralChat = React.memo(({ aiKeys, portfolioContext, onTelegramPush }: NeuralChatProps) => {
+   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
+     role: 'model',
+     text: '🧠 **DEEP MIND AI — Quantum Mind Super Intelligence System v5.0 ONLINE** ⚡\n\nNagraj Bhai, main 24/7 dono markets ka institutional-grade deep analysis kar raha hu — powered by Quantum Neural Ensemble (Gemini 1.5 Pro + Perplexity + DeepSeek V3).\n\n**Live Systems Active:**\n• 📊 TradingView Scanner — RSI, MACD, SMA Crossovers\n• 🌍 WorldMonitor — Geopolitical Intelligence Feed\n• 🏦 FII/DII Flow Tracker — Institutional Money Detection\n• 📈 Sector Rotation Engine — Smart Money Movement\n• 🎯 ATR-Based SL/TP Calculator — Risk Management\n• 🔥 Multi-Factor Momentum Engine — Statistical Edge Detection\n• 🧩 Wyckoff Phase Detector — Accumulation/Distribution\n• 📐 Elliott Wave Analyzer — Wave Count + Fibonacci Targets\n• ⚛️ Quantum Neural Core — Superposition Analysis & Entanglement Correlation\n• 🧠 Neural Sentiment Engine — News Impact Prediction\n• 📊 Deep Analysis Matrix — Quantitative Modeling & Backtesting\n\nPucho kya analyze karna hai — Market, Portfolio, Buy/Sell signals ya kuch bhi!',
+     timestamp: Date.now()
+   }]);
+   const [chatInput, setChatInput] = useState('');
+   const [isThinking, setIsThinking] = useState(false);
+   const [showChat, setShowChat] = useState(false);
+   const [marketIntel, setMarketIntel] = useState<MarketIntelligence | null>(null);
+   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+   const [showScrollDown, setShowScrollDown] = useState(false);
+   const messagesEndRef = useRef<HTMLDivElement>(null);
+   const marketIntelRef = useRef<MarketIntelligence | null>(null);
+   const chatContainerRef = useRef<HTMLDivElement>(null);
+   const [aiProvider, setAiProvider] = useState<'GEMINI' | 'PERPLEXITY' | 'DEEPSEEK'>('GEMINI');
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });

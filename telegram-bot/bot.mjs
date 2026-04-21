@@ -10,9 +10,9 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, AI_KEYS } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen } from './market.mjs';
-import { loadPortfolioFromCloud, loadGroqKeyFromCloud } from './cloud.mjs';
+import { loadPortfolioFromCloud, loadAIKeysFromCloud } from './cloud.mjs';
 import {
   generatePortfolioReport, generateMarketReport, generateSignalsReport,
   generateAllocationReport, generateRiskReport, generateAutoReport,
@@ -135,13 +135,14 @@ async function initializeData() {
     console.error('❌ Portfolio load failed:', e.message);
   }
 
-  // Step 2: Groq Key (non-blocking)
+  // Step 2: AI Keys (non-blocking)
   try {
-    console.log('🔑 Loading Groq API key...');
-    await loadGroqKeyFromCloud();
-    console.log(`✅ Groq key: ${GROQ_KEY ? 'SET (' + GROQ_KEY.substring(0, 8) + '...)' : 'NOT SET'}`);
+    console.log('🔑 Loading AI Super Intelligence keys...');
+    await loadAIKeysFromCloud();
+    const activeKeys = Object.values(AI_KEYS).filter(k => k && k.length > 10).length;
+    console.log(`✅ AI Keys: ${activeKeys}/${3} loaded from cloud`);
   } catch (e) {
-    console.warn('⚠️  Groq key load failed:', e.message);
+    console.warn('⚠️  AI keys load failed:', e.message);
   }
 
   // Step 3: Forex (non-blocking)
@@ -181,7 +182,7 @@ async function initializeData() {
   console.log('🟢 ════════════════════════════════════════');
   console.log(`   BOT FULLY ONLINE — ${getISTTime()} IST`);
   console.log(`   Portfolio: ${portfolio.length} positions`);
-  console.log(`   Groq AI: ${GROQ_KEY ? 'ACTIVE' : 'INACTIVE (no key)'}`);
+  console.log(`   AI: ${Object.values(AI_KEYS).some(k => k && k.length > 10) ? 'ONLINE (Neural System)' : 'OFFLINE (no keys)'}`);
   console.log(`   Market: ${getMarketStatus()}`);
   console.log('🟢 ════════════════════════════════════════');
   console.log('');
@@ -720,24 +721,20 @@ bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   const key = match[1].trim();
   console.log(`📥 /setkey from ${msg.from?.first_name || chatId}`);
   try {
-    if (!key.startsWith('gsk_')) {
-      await safeSend(chatId, '❌ <b>Invalid API Key!</b>\n\nAb system ultra-fast **Groq (Llama-3)** pe upgrade ho gaya hai! Aapki key hamesha `gsk_` se start honi chahiye. Galti se aapne Gemini ya koi aur key daal di hai.\n\n👉 **Free API Key 1 min me yahan se lein:** https://console.groq.com/keys');
-      return;
-    }
-    // Set dynamically
-    const { setGroqKey, API_URL } = await import('./config.mjs');
-    setGroqKey(key);
-    
-    // Sync to cloud so web app can also use it
+    // Simplified logic for quick setting of a primary key (defaults to Gemini)
+    const { setAIKeys, API_URL } = await import('./config.mjs');
+    setAIKeys({ GEMINI: key });
+
+    // Sync to cloud
     try {
       await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ groqKey: key, action: 'saveKey', timestamp: Date.now() })
+        body: JSON.stringify({ geminiKey: key, action: 'saveKey', timestamp: Date.now() })
       });
     } catch (e) {}
 
-    await safeSend(chatId, '✅ <b>Groq Llama-3 API Key Set!</b>\n\nAI Engine is now <b>ONLINE</b> 🧠⚡️ — Powered by groq.com (Superfast Llama-3 70B!).\nTum abhi kisi bhi sawal ka answer AI se le sakte ho!');
+    await safeSend(chatId, '✅ <b>AI Neural Key Set!</b>\n\nAI Engine is now <b>ONLINE</b> 🧠⚡️ — Powered by Super Intelligence Neural System.\nTum abhi kisi bhi sawal ka answer AI se le sakte ho!');
   } catch (e) {
     console.error('❌ /setkey error:', e.message);
     await safeSend(chatId, `❌ Key set me error: ${e.message}`);
@@ -1497,10 +1494,10 @@ initializeData().then(() => {
   console.log(`📱 Chat ID: ${TG_CHAT_ID}`);
   console.log(`   Market Status: ${getMarketStatus()}`);
   console.log(`   Auto Alerts: ${autoAlerts ? 'ON' : 'OFF'}`);
-  console.log(`   Groq AI: ${GROQ_KEY ? 'ONLINE' : 'OFFLINE (set via /setkey)'}`);
+  console.log(`   AI: ${Object.values(AI_KEYS).some(k => k && k.length > 10) ? 'ONLINE (Neural System)' : 'OFFLINE (no keys)'}`);
   console.log('');
   // Send boot notification
-  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI Bot ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🧠 AI: ${GROQ_KEY ? 'Active (Groq)' : 'Inactive'}\n\nType /help for commands.`).catch(() => {});
+  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI Bot ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🧠 AI: ${Object.values(AI_KEYS).some(k => k && k.length > 10) ? 'Active (Neural)' : 'Inactive'}\n\nType /help for commands.`).catch(() => {});
 }).catch(err => {
   console.error('❌ Boot error (non-fatal):', err.message);
   console.log('⚡ Bot is STILL listening for commands with limited data...');

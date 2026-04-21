@@ -1,7 +1,7 @@
 // ============================================
-// AI CHAT ENGINE — Groq Integration
+// AI CHAT ENGINE — Super Intelligence Neural System
 // ============================================
-import { GROQ_KEY } from './config.mjs';
+import { AI_KEYS } from './config.mjs';
 import { fetchMarketIntelligence } from './market.mjs';
 import { calculateMetrics, analyzeAsset } from './analysis.mjs';
 
@@ -13,30 +13,36 @@ const MAX_HISTORY = 8;
 let cachedIntel = null;
 let intelTimestamp = 0;
 
-const SYSTEM_PROMPT = `You are DEEP MIND AI NEURAL INSIDER — an Elite Pro Trading Intelligence Engine. Talk to "Nagraj Bhai" in NATIVE HINGLISH.
-You operate at INSTITUTIONAL LEVEL using these frameworks:
+const SYSTEM_PROMPT = `You are DEEP MIND AI NEURAL INSIDER — Quantum Mind AI Super Intelligence System. Talk to "Nagraj Bhai" in NATIVE HINGLISH.
+You operate at SUPERINTELLIGENT LEVEL combining Quantum Computing principles, Advanced Neural Networks, and Elite Trading frameworks:
 
-TECHNICAL ARSENAL:
-• Smart Money Concepts (SMC): Order Blocks, Fair Value Gaps (FVG), Break of Structure (BOS), Change of Character (CHoCH), Liquidity Sweeps, Inducement
-• Wyckoff Method: Accumulation/Distribution phases, Spring/Upthrust, Effort vs Result
-• Fibonacci: Retracement (0.236-0.786), Extension (1.272-2.618), Confluence zones
-• Volume Profile: POC, Value Area High/Low, Delta Analysis, Imbalance detection
-• Order Flow: Bid/Ask imbalance, Iceberg orders, Stop runs, Trap detection
+QUANTUM NEURAL ARSENAL:
+• Quantum Superposition Analysis: Simultaneous evaluation of multiple market states
+• Quantum Entanglement Correlation: Hidden connections between seemingly unrelated assets
+• Quantum Tunneling Prediction: Breakthrough moment detection before conventional indicators
+• Smart Money Concepts (SMC) v3.0: Institutional Order Blocks, Quantum Fair Value Gaps, Liquidity Magnetism
+• Advanced Wyckoff 4.0: Phase transition detection, Accumulation/Distribution quantum waves
+• Neural Fibonacci: Dynamic retracement/extension levels based on market volatility entropy
+• Quantum Volume Profile: Probability distribution of institutional participation
+• Neural Order Flow: Real-time bid/ask imbalance prediction with machine learning
 
-RISK MANAGEMENT:
-• Position sizing using Kelly Criterion and volatility-based stops
-• ATR-based dynamic Stop Loss (1.5-2.5x ATR)
-• Risk per trade: max 2% of portfolio, max 6% drawdown limit
-• R:R minimum 1:2, prefer 1:3+
-• Correlation-aware position sizing
+ADVANCED RISK ENGINE:
+• Quantum Kelly Criterion: Optimal position sizing using quantum probability amplitudes
+• Neural ATR Dynamic Stops: Adaptive volatility-based stops with machine learning correction
+• Portfolio Quantum Shield: Correlation-aware hedging with entanglement risk calculation
+• Quantum Risk/Reward Optimization: Simultaneous maximization of returns and minimization of drawdown
+• Neural Correlation Matrix: Real-time portfolio diversification using quantum entanglement measures
 
-Response rules:
-1. Reference LIVE SENSOR DATA (actual numbers from portfolio context)
-2. SMC/Wyckoff structure analysis with key levels
-3. Order Block / FVG identification if applicable
-4. Risk-adjusted call with exact SL (ATR-based), TP (Fib extension), position size
-5. "CONVICTION SCORE: XX/100" with reasoning
-6. If volatile market, add "EMERGENCY PROTOCOL" section
+DEEP ANALYSIS PROTOCOLS:
+1. Reference LIVE SENSOR DATA with quantum precision (actual numbers from portfolio context)
+2. Quantum SMC/Wyckoff structure analysis with entanglement-based key levels
+3. Neural Order Block / Quantum FVG identification with probability weighting
+4. Quantum-adjusted call with exact Neural SL/TP levels, quantum position sizing
+5. "QUANTUM CONVICTION SCORE: XXX/1000" with multi-dimensional reasoning
+6. Quantum Market Regude Detection: Bull/Bear/Accumulation/Distribution/Reversal phases
+7. Neural Sentiment Analysis: News impact prediction with source credibility scoring
+8. DeepSeek-level Mathematical Analysis: Advanced quantitative modeling and backtesting
+9. Perplexity-grade News Intelligence: Breaking news with verified sources and impact assessment
 
 Critical: Be concise! Keep tokens low. Use HTML tags (<b>bold</b>, <i>italic</i>, <code>mono</code>) instead of markdown. Emojis allowed.`;
 
@@ -101,11 +107,93 @@ async function getMarketIntelContext() {
 }
 
 // ========================================
-// MAIN AI CHAT FUNCTION — Groq
+// QUANTUM MIND ORCHESTRATOR - SUPER INTELLIGENCE NEURAL SYSTEM
+// ========================================
+function routeIntent(message) {
+  const msg = message.toLowerCase();
+  
+  // Daily market update, news, analysis -> GEMINI 1.5 Pro
+  const geminiKeywords = ['market', 'update', 'daily', 'analysis', 'analyze', 'trend', 'outlook', 'forecast'];
+  
+  // Breaking news + sources -> PERPLEXITY AI
+  const perplexityKeywords = ['news', 'latest', 'breaking', 'what happened', 'current event', 'live news', 'headlines', 'sources'];
+  
+  // Deep portfolio analysis, math, strategy -> DEEPSEEK V3
+  const deepseekKeywords = ['strategy', 'calculate', 'math', 'intrinsic value', 'option strategy', 'backtest', 'formula', 'deep analysis', 'portfolio', 'allocation', 'risk', 'optimize', 'position sizing', 'kelly'];
+
+  // Check for Gemini keywords first (market updates, analysis)
+  if (geminiKeywords.some(k => msg.includes(k))) return 'GEMINI';
+  
+  // Check for Perplexity keywords (breaking news with sources)
+  if (perplexityKeywords.some(k => msg.includes(k))) return 'PERPLEXITY';
+  
+  // Check for DeepSeek keywords (deep analysis, math, strategy)
+  if (deepseekKeywords.some(k => msg.includes(k))) return 'DEEPSEEK';
+  
+  // Default to GEMINI for general queries
+  return 'GEMINI';
+}
+
+async function callAIProvider(provider, messages) {
+  const key = AI_KEYS[provider];
+  if (!key) throw new Error(`API Key for ${provider} is missing.`);
+
+  let endpoint, body;
+
+  if (provider === 'GEMINI') {
+    // Gemini 1.5 Pro (Google AI SDK style via REST)
+    endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${key}`;
+    body = {
+      contents: [{
+        role: 'user',
+        parts: [{ text: messages.map(m => `${m.role === 'assistant' ? 'AI' : 'User'}: ${m.content}`).join('\\n') }]
+      }],
+      generationConfig: { temperature: 0.7, maxOutputTokens: 800 }
+    };
+  } else if (provider === 'PERPLEXITY') {
+    endpoint = 'https://api.perplexity.ai/chat/completions';
+    body = {
+      model: 'sonar-reasoning',
+      messages: messages,
+      temperature: 0.7
+    };
+  } else if (provider === 'DEEPSEEK') {
+    endpoint = 'https://api.deepseek.com/chat/completions';
+    body = {
+      model: 'deepseek-chat',
+      messages: messages,
+      temperature: 0.6
+    };
+  }
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(provider !== 'GEMINI' && { 'Authorization': `Bearer ${key}` })
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(60000)
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `API Error: ${res.status}`);
+  }
+
+  const data = await res.json();
+  if (provider === 'GEMINI') {
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  }
+  return data.choices?.[0]?.message?.content || '';
+}
+
+// ========================================
+// MAIN AI CHAT FUNCTION
 // ========================================
 export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usdInrRate) {
-  if (!GROQ_KEY) {
-    return `⚠️ <b>AI Engine Offline</b>\n\nGroq API Key set nahi hai. Web app settings (⚙️) se key save karo.`;
+  if (!Object.values(AI_KEYS).some(k => k && k.length > 10)) {
+    return `⚠️ <b>AI Engine Offline</b>\n\nSuper Intelligence keys set nahi hain. Web app settings (⚙️) se keys save karo.`;
   }
 
   // Get/create conversation history
@@ -122,67 +210,34 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
   const portfolioCtx = buildPortfolioContext(portfolio, livePrices, usdInrRate);
   const intelCtx = await getMarketIntelContext();
 
-  // Build Groq conversation format
-  const groqMessages = [
-    { role: 'system', content: `${SYSTEM_PROMPT}\n\n${portfolioCtx}\n${intelCtx}` }
+  // Route intent
+  const provider = routeIntent(userMessage);
+
+  // Build conversation format
+  const messages = [
+    { role: 'system', content: `${SYSTEM_PROMPT}\n\nSENSORS:\n${portfolioCtx}\n${intelCtx}` }
   ];
   const recentHistory = history.slice(-MAX_HISTORY);
   for (const m of recentHistory) {
-    groqMessages.push({
+    messages.push({
       role: m.role === 'model' ? 'assistant' : 'user',
       content: m.content
     });
   }
 
   try {
-    const MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it', 'llama3-70b-8192'];
-    let aiText = '';
-    let lastError = '';
+    let aiText = await callAIProvider(provider, messages);
 
-    for (const model of MODELS) {
-      try {
-        const res = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${GROQ_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: model,
-            messages: groqMessages,
-            temperature: 0.75,
-            max_completion_tokens: 800
-          }),
-          signal: AbortSignal.timeout(60000)
-        });
-
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          const errMsg = err.error?.message || `API Error: ${res.status}`;
-          if (res.status === 429 || errMsg.includes('decommissioned') || errMsg.includes('not exist')) {
-            console.warn(`⚠️ Skipping ${model}: ${errMsg}`);
-            lastError = `Skipped ${model}.`;
-            continue; // Fallback
-          }
-          throw new Error(errMsg);
-        }
-
-        const data = await res.json();
-        aiText = data.choices?.[0]?.message?.content || '';
-        break; // Success
-      } catch (e) {
-        lastError = e.message;
-        if (e.message.includes('Rate limit') || e.message.includes('decommissioned') || e.message.includes('429')) continue;
-        throw e;
-      }
+    // Fallback logic
+    if (!aiText) {
+       const fallbackProvider = provider === 'GEMINI' ? 'DEEPSEEK' : 'GEMINI';
+       aiText = await callAIProvider(fallbackProvider, messages);
     }
-
-    if (!aiText) throw new Error(lastError || 'All AI models exhausted their daily limits!');
 
   // Clean up thinking tags and convert markdown to HTML for Telegram
   let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
-  // First convert markdown to Telegram HTML tags (before escaping)
+  // First convert markdown to Telegram HTML tags
   safeText = safeText
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/\*(.+?)\*/g, '<i>$1</i>')
@@ -209,9 +264,9 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
       history.splice(0, history.length - MAX_HISTORY);
     }
 
-    return htmlText;
+    return `🤖 <i>Neural Node: ${provider}</i>\n\n${htmlText}`;
   } catch (e) {
-    console.error('❌ Groq API Error:', e.message);
+    console.error('❌ AI Orchestrator Error:', e.message);
     return `❌ <b>AI Error:</b> ${e.message}\n\n<i>Retry karo ya thodi der baad try karo.</i>`;
   }
 }
