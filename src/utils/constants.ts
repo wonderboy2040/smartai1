@@ -117,8 +117,8 @@ export function getTodayString(): string {
 export function guessMarket(sym: string): 'IN' | 'US' {
   sym = (sym || '').toUpperCase();
   if (sym.includes('.NS') || sym.includes('.BO')) return 'IN';
-  if (sym === 'RELIANCE' || sym === 'NIFTY' || sym === 'SENSEX') return 'IN';
-  if (sym.includes('BEES')) return 'IN';
+  if (sym === 'RELIANCE' || sym === 'NIFTY' || sym === 'SENSEX' || sym === 'TATA') return 'IN';
+  if (sym.includes('BEES') || sym.includes('NIFTY') || sym.includes('SENSEX')) return 'IN';
   if (ALPHA_ETFS_IN.some(e => e.sym.replace('.NS', '') === sym)) return 'IN';
   return 'US';
 }
