@@ -472,7 +472,7 @@ export const NeuralChat = React.memo(({ aiKeys, portfolioContext, onTelegramPush
 
                 <div className="flex-1 overflow-y-auto space-y-4">
                   <div className="p-3 bg-white/5 rounded-xl border border-white/10">
-                    <div className="text-xs font-bold text-cyan-400 mb-2">Google Gemini 1.5 Pro</div>
+                    <div className="text-xs font-bold text-cyan-400 mb-2">Google Gemini 1.5 Flash</div>
                     <input
                       type="password"
                       placeholder="Paste Gemini API Key (free at gemini.google.com)"
@@ -484,7 +484,7 @@ export const NeuralChat = React.memo(({ aiKeys, portfolioContext, onTelegramPush
                   </div>
 
                   <div className="p-3 bg-white/5 rounded-xl border border-white/10">
-                    <div className="text-xs font-bold text-pink-400 mb-2">Perplexity AI (Sonar)</div>
+                    <div className="text-xs font-bold text-pink-400 mb-2">Tavily AI Search</div>
                     <input
                       type="password"
                       placeholder="Paste Tavily API Key (free at tavily.com)"
