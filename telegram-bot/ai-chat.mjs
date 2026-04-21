@@ -161,6 +161,11 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
   try {
     if (provider === 'PERPLEXITY' && AI_KEYS.perplexity) {
       aiText = await callOpenAICompat('https://api.perplexity.ai/chat/completions', messages, AI_KEYS.perplexity, 'llama-3.1-sonar-large-128k-online');
+    } else if (provider === 'PERPLEXITY' && AI_KEYS.gemini) {
+      // Mock Perplexity experience using Gemini's search capabilities
+      const searchMessages = [...messages];
+      searchMessages[0].content = `${SYSTEM_PROMPT}\n\nCRITICAL: Act as PERPLEXITY AI. Perform a deep web search for the latest breaking news. Provide detailed analysis with citations and sources. Be precise and current.`;
+      aiText = await callGemini(searchMessages, AI_KEYS.gemini);
     } else if (provider === 'DEEPSEEK' && AI_KEYS.deepseek) {
       aiText = await callOpenAICompat('https://api.deepseek.com/v1/chat/completions', messages, AI_KEYS.deepseek, 'deepseek-chat');
     } else if (AI_KEYS.gemini) {
