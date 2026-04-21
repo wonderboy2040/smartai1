@@ -228,14 +228,14 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
             </div>
 
             {/* Messages */}
-            <<divdiv
+            <div
               ref={chatContainerRef}
               onScroll={handleScroll}
               className="relative flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide"
             >
               {chatMessages.map((msg, i) => (
-                <<divdiv key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
-                  <<divdiv className={`max-w-[90%] rounded-2xl text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
+                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
+                  <div className={`max-w-[90%] rounded-2xl text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
                     ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-4 py-3'
                     : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-4 py-3 group/msg'
                     }`}>
@@ -243,63 +243,63 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
                       msg.text
                     ) : (
                       <>
-                        <<divdiv className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase mb-2 border ${MODEL_TAGS[msg.model || 'system']}`}>
+                        <div className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase mb-2 border ${MODEL_TAGS[msg.model || 'system']}`}>
                           {msg.model ? getModelLabel(msg.model) : 'Quantum System'}
                         </div>
-                        <<spanspan dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />
-                        <<divdiv className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
-                          <<buttonbutton
+                        <span dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />
+                        <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                          <button
                             onClick={() => copyToClipboard(msg.text, i)}
                             className="text-[9px] text-slate-500 hover:text-cyan-400 flex items-center gap-1 transition-colors"
                           >
-                            {copiedIdx === i ? <<>><Check size={10} /> Copied!</> : <<>><Copy size={10} /> Copy</>}
+                            {copiedIdx === i ? <><Check size={10} /> Copied!</> : <><Copy size={10} /> Copy</>}
                           </button>
                         </div>
                       </>
                     )}
-                    <<divdiv className={`text-[9px] mt-1 font-mono ${msg.role === 'user' ? 'text-cyan-200/50' : 'text-slate-600'}`}>
+                    <div className={`text-[9px] mt-1 font-mono ${msg.role === 'user' ? 'text-cyan-200/50' : 'text-slate-600'}`}>
                       {formatTime(msg.timestamp)}
                     </div>
                   </div>
                 </div>
               ))}
               {isThinking && (
-                <<divdiv className="flex justify-start animate-message-in">
-                  <<divdiv className="bg-slate-900/90 px-5 py-4 rounded-2xl rounded-tl-none border border-white/5">
-                    <<divdiv className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
-                      <<SparkSparkles size={12} className="animate-pulse" /> Routing to optimal AI...
+                <div className="flex justify-start animate-message-in">
+                  <div className="bg-slate-900/90 px-5 py-4 rounded-2xl rounded-tl-none border border-white/5">
+                    <div className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
+                      <Sparkles size={12} className="animate-pulse" /> Routing to optimal AI...
                     </div>
-                    <<divdiv className="flex gap-1.5">
-                      <<divdiv className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
-                      <<divdiv className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '100ms' }} />
-                      <<divdiv className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '200ms' }} />
+                    <div className="flex gap-1.5">
+                      <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
+                      <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '100ms' }} />
+                      <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '200ms' }} />
                     </div>
                   </div>
                 </div>
               )}
-              <<divdiv ref={messagesEndRef} />
+              <div ref={messagesEndRef} />
             </div>
 
             {/* Quick Actions Bar */}
-            <<divdiv className="relative px-4 py-3 bg-slate-900/40 border-t border-cyan-500/10">
-              <<divdiv className="flex gap-2 overflow-x-auto scrollbar-hide">
+            <div className="relative px-4 py-3 bg-slate-900/40 border-t border-cyan-500/10">
+              <div className="flex gap-2 overflow-x-auto scrollbar-hide">
                 {QUICK_ACTIONS.map((action, i) => (
-                  <<buttonbutton
+                  <button
                     key={i}
                     onClick={() => { setChatInput(''); sendMessage(action.query); }}
                     disabled={isThinking}
                     className="flex items-center gap-1.5 whitespace-nowrap text-[10px] font-bold px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-slate-400 hover:text-white hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all disabled:opacity-30 shrink-0"
                   >
-                    <<spanspan className="text-cyan-400">{action.icon}</span>
+                    <span className="text-cyan-400">{action.icon}</span>
                     {action.label}
                   </button>
                 ))}
               </div>
             </div>
 
-            <<divdiv className="relative p-4 bg-slate-950/95 border-t border-cyan-500/15 rounded-b-3xl">
-              <<divdiv className="relative flex items-center">
-                <<inputinput
+            <div className="relative p-4 bg-slate-950/95 border-t border-cyan-500/15 rounded-b-3xl">
+              <div className="relative flex items-center">
+                <input
                   type="text"
                   placeholder="Ask Quantum AI anything..."
                   className="w-full bg-slate-900/60 border border-slate-700/80 rounded-2xl py-3 pl-4 pr-12 text-sm text-white outline-none focus:border-cyan-500/60 transition-all font-medium placeholder:text-slate-600"
@@ -307,17 +307,17 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleChat()}
                 />
-                <<buttonbutton
+                <button
                   onClick={handleChat}
                   disabled={isThinking || !chatInput.trim()}
                   className="absolute right-1.5 p-2 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-xl disabled:opacity-30 transition-all"
                 >
-                  <<SendSend size={14} />
+                  <Send size={14} />
                 </button>
               </div>
               <div className="flex items-center justify-between mt-2 px-1">
-                <<spanspan className="text-[8px] text-slate-600 font-mono">Sensing: {selectedModel === 'auto' ? 'Auto-Route' : selectedModel.toUpperCase()}</span>
-                <<spanspan className="text-[8px] text-slate-600">{chatMessages.length} neural pulses</span>
+                <span className="text-[8px] text-slate-600 font-mono">Sensing: {selectedModel === 'auto' ? 'Auto-Route' : selectedModel.toUpperCase()}</span>
+                <span className="text-[8px] text-slate-600">{chatMessages.length} neural pulses</span>
               </div>
             </div>
           </motion.div>
