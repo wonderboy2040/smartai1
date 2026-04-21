@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx vite:*)",
+      "Bash(npm run:*)",
+      "Bash(npx tsc:*)",
+      "Bash(ls -la src/utils/*.ts)",
+      "Bash(netstat -ano)",
+      "Bash(start http://localhost:5173)",
+      "Bash(wc -l src/utils/*.ts src/App.tsx)",
+      "Bash(git:*)",
+      "Bash(dir:*)",
+      "Bash(xargs wc:*)",
+      "Bash(taskkill //IM vite.exe //F)",
+      "Bash(npm uninstall:*)",
+      "Bash(findstr :5173)",
+      "Bash(xargs grep:*)",
+      "Bash(cd /d smartai11/smartai1/.claude/worktrees/agent-ac7cb9a6)",
+      "Bash(node --check telegram-bot/bot.mjs)"
+    ]
+  }
+}
