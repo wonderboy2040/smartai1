@@ -252,7 +252,7 @@ export const NeuralChat = React.memo(({ aiKeys, portfolioContext, onTelegramPush
     if (!hasValidKey) {
       setChatMessages(prev => [...prev,
         { role: 'user', text: userMessage, timestamp: Date.now() },
-        { role: 'model', text: '⚠️ **AI Engine Offline**\n\nKoi bhi AI API Key set nahi hai.\nSettings (⚙️) icon click karke:\n• Google Gemini 1.5 Pro key\n• Perplexity API key\n• DeepSeek API key\n\nPaste karo aur save karo!\n\nFree keys milengi:\n• gemini.google.com\n• perplexity.ai\n• deepseek.com', timestamp: Date.now() }
+        { role: 'model', text: '⚠️ **AI Engine Offline**\n\nKoi bhi AI API Key set nahi hai.\nSettings (⚙️) icon click karke:\n• Google Gemini 1.5 Flash key\n• Tavily Search API key\n• DeepSeek API key\n\nPaste karo aur save karo!\n\nFree keys milengi:\n• gemini.google.com\n• tavily.com\n• deepseek.com', timestamp: Date.now() }
       ]);
       return;
     }
@@ -487,7 +487,7 @@ export const NeuralChat = React.memo(({ aiKeys, portfolioContext, onTelegramPush
                     <div className="text-xs font-bold text-pink-400 mb-2">Perplexity AI (Sonar)</div>
                     <input
                       type="password"
-                      placeholder="Paste Perplexity API Key (free at perplexity.ai)"
+                      placeholder="Paste Tavily API Key (free at tavily.com)"
                       value={aiKeysTemp.PERPLEXITY}
                       onChange={(e) => setAiKeysTemp({ ...aiKeysTemp, PERPLEXITY: e.target.value })}
                       className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white mb-2"
