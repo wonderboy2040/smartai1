@@ -174,7 +174,7 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
 
   return (
     <>
-      <<buttonbutton
+      <button
         onClick={() => setShowChat(!showChat)}
         className="fab fixed bottom-6 right-6 w-14 h-14 bg-gradient-to-br from-cyan-600/90 via-blue-800/90 to-indigo-900/90 rounded-2xl flex items-center justify-center border border-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.4)] z-[60] overflow-hidden group hover:scale-110 transition-transform"
       >
