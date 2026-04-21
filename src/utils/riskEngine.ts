@@ -116,16 +116,16 @@ export function calculateVaR(
     if (data?.change !== undefined) returns.push(data.change);
   });
 
-  const volatility = returns.length > 1
-    ? Math.sqrt(returns.reduce((s, r) => s + r * r, 0) / (returns.length - 1)) / 100
-    : 0.02; // 2% default
+    const volatility = returns.length > 1
+      ? Math.sqrt(returns.reduce((s, r) => s + r * r, 0) / (returns.length - 1)) / 100
+      : 0; // Default to 0 to avoid overestimating risk when data is missing, flagged as unreliable
 
   const avgReturn = returns.length > 0
     ? returns.reduce((s, r) => s + r, 0) / returns.length / 100
     : 0;
 
   const parametric = calculateParametricVaR(portfolioValue, volatility, confidence);
-  const montecarlo = calculateMonteCarloVaR(portfolioValue, avgReturn, volatility, 1, 1000, confidence);
+  const montecarlo = calculateMonteCarloVaR(portfolioValue, avgReturn, volatility, 1, 10000, confidence);
 
   return {
     parametric: Math.round(parametric),

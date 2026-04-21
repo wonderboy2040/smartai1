@@ -210,10 +210,15 @@ export const PreMarketWatch = React.memo(({ alwaysShow = false }: Props) => {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const d = await fetchPreMarket();
-    setData(d);
-    setLastUpdate(Date.now());
-    setLoading(false);
+    try {
+      const d = await fetchPreMarket();
+      setData(d);
+      setLastUpdate(Date.now());
+    } catch (e) {
+      console.error('[PreMarket] Load error:', e);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {

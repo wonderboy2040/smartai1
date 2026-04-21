@@ -1,6 +1,6 @@
 import { ETFInfo } from '../types';
 
-export const SECURE_PIN = "2023";
+export const SECURE_PIN = import.meta.env.VITE_SECURE_PIN || "CHANGE_ME";
 export const DEFAULT_USD_INR = 83.5;
 export const API_URL = import.meta.env.VITE_API_URL || "";
 export const TG_TOKEN = import.meta.env.VITE_TG_TOKEN || "";

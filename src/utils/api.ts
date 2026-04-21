@@ -1,3 +1,4 @@
+import { Market, Logger } from './logger';
 import { PriceData, Position } from '../types';
 import { CORS_PROXIES, EXACT_TICKER_MAP, guessMarket, API_URL, DEFAULT_USD_INR } from './constants';
 import { isAnyMarketOpen } from './telegram';
@@ -26,6 +27,17 @@ class SmartCache<T> {
 
   constructor(maxSize: number = 50) {
     this.maxSize = maxSize;
+    // Periodic reaper to clear expired entries every 30 seconds
+    setInterval(() => this.reap(), 30000).unref?.();
+  }
+
+  private reap(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.store.entries()) {
+      if (now - entry.timestamp > entry.ttl) {
+        this.store.delete(key);
+      }
+    }
   }
 
   get(key: string): T | null {
@@ -69,10 +81,11 @@ export async function fetchSinglePrice(symbol: string, retryAttempt = 0): Promis
   // Check cache first (stale-while-revalidate pattern)
   const cached = priceCache.get(sym);
   if (cached) {
-    // Return cached data but fetch fresh in background (SWR)
-    const data = { ...cached, time: Date.now() };
-    fetchWithStaleCheck(sym, retryAttempt);
-    return data;
+    // Only trigger background fetch if data is older than 1 second to prevent API spamming
+    if (Date.now() - cached.timestamp > 1000) {
+      fetchWithStaleCheck(sym, retryAttempt);
+    }
+    return { ...cached, time: Date.now() };
   }
 
   // Deduplicate in-flight requests
@@ -101,7 +114,9 @@ const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEE
       priceCache.set(sym, tvResult, 5000); // Increased to 5s for stability
       return tvResult;
     }
-  } catch (e) {}
+  } catch (e) {
+    Logger.warn(`Forex fetch failed`, e);
+  }
 
   // Fallback to Yahoo Finance
   const yahooSymbol = isIndian ? `${cleanSym}.NS` : cleanSym;
@@ -126,7 +141,7 @@ const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEE
               high: parseFloat(meta.regularMarketDayHigh) || priceVal,
               low: parseFloat(meta.regularMarketDayLow) || priceVal,
               volume: parseFloat(meta.regularMarketVolume) || 0,
-              rsi: Math.max(10, Math.min(90, 50 + (changeVal * 5))),
+              rsi: undefined,
               market: isIndian ? 'IN' : 'US',
               tvExchange: isIndian ? 'NSE' : 'NASDAQ',
               tvExactSymbol: yahooSymbol,
@@ -137,7 +152,9 @@ const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEE
           }
         }
       }
-    } catch (e) {}
+    } catch (e) {
+    Logger.warn(`Forex fetch failed`, e);
+  }
   }
 
   // Retry with alternate symbol
@@ -187,7 +204,7 @@ async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean)
             volume: parseFloat(item.d[5]) || 0,
             sma20: parseFloat(item.d[6]) || undefined,
             sma50: parseFloat(item.d[7]) || undefined,
-            rsi: parseFloat(item.d[8]) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
+            rsi: parseFloat(item.d[8]) || undefined,
             macd: parseFloat(item.d[9]) || undefined,
             market: isIndian ? 'IN' : 'US',
             tvExchange: item.s.split(':')[0],
@@ -197,7 +214,9 @@ async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean)
         }
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    Logger.warn(`Forex fetch failed`, e);
+  }
 
   return null;
 }
@@ -277,7 +296,7 @@ export async function batchFetchPrices(
               volume: parseFloat(item.d[5]) || 0,
               sma20: parseFloat(item.d[6]) || undefined,
               sma50: parseFloat(item.d[7]) || undefined,
-              rsi: parseFloat(item.d[8]) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
+              rsi: parseFloat(item.d[8]) || undefined,
               macd: parseFloat(item.d[9]) || undefined,
               time: Date.now(),
               market: mkt,
@@ -329,7 +348,9 @@ export async function fetchForexRate(): Promise<number> {
         if (!isNaN(price) && price > 50 && price < 150) return price;
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    Logger.warn(`Forex fetch failed`, e);
+  }
 
   // Backup 2: Open ER-API (Daily updates)
   try {
@@ -343,7 +364,9 @@ export async function fetchForexRate(): Promise<number> {
         if (!isNaN(price) && price > 50 && price < 150) return price;
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    Logger.warn(`Forex fetch failed`, e);
+  }
 
   return DEFAULT_USD_INR; // Default fallback
 }
@@ -356,7 +379,7 @@ export async function syncToCloud(portfolio: Position[], usdInr: number): Promis
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Auth-Token': 'WEALTH_AI_SECURE_SYNC_2026' // Simple auth header for basic security
+        'X-Auth-Token': import.meta.env.VITE_SYNC_TOKEN || 'REQUIRED_SYNC_TOKEN' // Use env var for security
       },
       body: JSON.stringify({ portfolio, timestamp: Date.now(), usdInr })
     });
@@ -428,7 +451,9 @@ export async function loadAIKeysFromCloud(): Promise<AIKeys | null> {
       PERPLEXITY: data.perplexityKey || "",
       DEEPSEEK: data.deepseekKey || ""
     };
-  } catch (e) {}
+  } catch (e) {
+    Logger.warn(`Forex fetch failed`, e);
+  }
   return null;
 }
 

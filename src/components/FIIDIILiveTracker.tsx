@@ -136,11 +136,16 @@ export const FIIDIILiveTracker = React.memo(() => {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const result = await fetchFIIData();
-    setData(result.data);
-    setUnavailable(result.unavailable);
-    setLastUpdate(Date.now());
-    setLoading(false);
+    try {
+      const result = await fetchFIIData();
+      setData(result.data);
+      setUnavailable(result.unavailable);
+      setLastUpdate(Date.now());
+    } catch (e) {
+      setUnavailable(true);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
