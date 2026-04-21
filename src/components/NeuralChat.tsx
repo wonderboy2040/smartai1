@@ -13,21 +13,21 @@ interface ChatMessage {
 
 function sanitizeHtml(html: string): string {
   return html
-    .replace(/<<scriptscript[\s\S]*?<\/script>/gi, '')
-    .replace(/<<scriptscript[^>]*>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<script[^>]*>/gi, '')
     .replace(/\s*on\w+\s*=\s*["'][^"']*["']/gi, '')
     .replace(/\s*on\w+\s*=\s*[^\s>]+/gi, '');
 }
 
 function renderMarkdown(text: string): string {
   return sanitizeHtml(text
-    .replace(/```([\s\S]*?)```/g, '<<prepre style="background:rgba(6,182,212,0.08);padding:10px;border-radius:8px;border:1px solid rgba(6,182,212,0.15);font-size:0.82em;overflow-x:auto;margin:6px 0">$1</pre>')
-    .replace(/\*\*(.+?)\*\*/g, '<<strongstrong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<<emem>$1</em>')
-    .replace(/_(.+?)_/g, '<<emem>$1</em>')
-    .replace(/`(.+?)`/g, '<<codecode style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>')
-    .replace(/•/g, '<<spanspan style="color:#06b6d4">•</span>')
-    .replace(/(\d+)\/100/g, '<<spanspan style="color:#06b6d4;font-weight:800">$1/100</span>'));
+    .replace(/```([\s\S]*?)```/g, '<pre style="background:rgba(6,182,212,0.08);padding:10px;border-radius:8px;border:1px solid rgba(6,182,212,0.15);font-size:0.82em;overflow-x:auto;margin:6px 0">$1</pre>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/_(.+?)_/g, '<em>$1</em>')
+    .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>')
+    .replace(/•/g, '<span style="color:#06b6d4">•</span>')
+    .replace(/(\d+)\/100/g, '<span style="color:#06b6d4;font-weight:800">$1/100</span>'));
 }
 
 function formatTime(ts: number): string {
@@ -41,12 +41,12 @@ export interface NeuralChatProps {
 }
 
 const QUICK_ACTIONS = [
-  { label: 'Morning Brief', query: '/morning', icon: <<ActivityActivity size={12}/>, model: 'gemini' },
-  { label: 'Latest News', query: '/news', icon: <<ZapZap size={12}/>, model: 'gemini' },
-  { label: 'Weekly Review', query: '/weekly', icon: <<BarBarChart3 size={12}/>, model: 'deepseek' },
-  { label: 'Deep Analyze', query: '/analyze', icon: <<BrainBrainCircuit size={12}/>, model: 'deepseek' },
-  { label: 'Trim Check', query: '/trim', icon: <<ShieldShieldAlert size={12}/>, model: 'deepseek' },
-  { label: 'Crisis Check', query: '/crisis', icon: <<ShieldShieldAlert size={12}/>, model: 'gemini' },
+  { label: 'Morning Brief', query: '/morning', icon: <Activity size={12}/>, model: 'gemini' },
+  { label: 'Latest News', query: '/news', icon: <Zap size={12}/>, model: 'gemini' },
+  { label: 'Weekly Review', query: '/weekly', icon: <BarChart3 size={12}/>, model: 'deepseek' },
+  { label: 'Deep Analyze', query: '/analyze', icon: <BrainCircuit size={12}/>, model: 'deepseek' },
+  { label: 'Trim Check', query: '/trim', icon: <ShieldAlert size={12}/>, model: 'deepseek' },
+  { label: 'Crisis Check', query: '/crisis', icon: <ShieldAlert size={12}/>, model: 'gemini' },
 ];
 
 const MODEL_TAGS = {
@@ -58,7 +58,7 @@ const MODEL_TAGS = {
 };
 
 export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
-  const [chatMessages, setChatMessages] = useState<<ChatMessageChatMessage[]>([{
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'model',
     text: '🧠 **QUANTUM AI — Neural Link Online** ⚡\n\nNagraj Bhai, Quantum Routing Engine active hai. Main Gemini, DeepSeek, aur Groq ko intelligently route karunga based on your query.\n\n**Active Modes:**\n• 🌐 Gemini: Real-time News & Live Data\n• 🧠 DeepSeek: Quant Analysis & Trim Rules\n• ⚡ Groq: Fast Concept Explanations\n\nKya analyze karna hai aaj?',
     timestamp: Date.now(),
@@ -67,13 +67,13 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
   const [chatInput, setChatInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [showChat, setShowChat] = useState(false);
-  const [marketIntel, setMarketIntel] = useState<<MarketMarketIntelligence | null>(null);
-  const [copiedIdx, setCopiedIdx] = useState<<numbernumber | null>(null);
+  const [marketIntel, setMarketIntel] = useState<MarketIntelligence | null>(null);
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [selectedModel, setSelectedModel] = useState<'auto' | 'gemini' | 'deepseek' | 'groq' | 'multi'>('auto');
   const [showScrollDown, setShowScrollDown] = useState(false);
-  const messagesEndRef = useRef<<HTMLHTMLDivElement>(null);
-  const marketIntelRef = useRef<<MarketMarketIntelligence | null>(null);
-  const chatContainerRef = useRef<<HTMLHTMLHDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const marketIntelRef = useRef<MarketIntelligence | null>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -178,46 +178,46 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
         onClick={() => setShowChat(!showChat)}
         className="fab fixed bottom-6 right-6 w-14 h-14 bg-gradient-to-br from-cyan-600/90 via-blue-800/90 to-indigo-900/90 rounded-2xl flex items-center justify-center border border-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.4)] z-[60] overflow-hidden group hover:scale-110 transition-transform"
       >
-        {showChat ? <<XX className="text-white z-10" /> : <<spanspan className="text-2xl z-10">🧠</span>}
-        <<spanspan className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-400 rounded-full animate-pulse-dot z-10 border-2 border-slate-900" />
+        {showChat ? <X className="text-white z-10" /> : <span className="text-2xl z-10">🧠</span>}
+        <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-400 rounded-full animate-pulse-dot z-10 border-2 border-slate-900" />
       </button>
 
-      <<AnAnimatePresence>
+      <AnimatePresence>
         {showChat && (
-          <<motionmotion.div
+          <motion.div
             initial={{ opacity: 0, y: 20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             className="fixed bottom-24 right-4 left-4 sm:left-auto sm:right-6 sm:w-[480px] h-[720px] max-h-[85vh] shadow-[0_0_50px_rgba(6,182,212,0.1)] z-[60] flex flex-col overflow-hidden"
           >
-            <<divdiv className="absolute inset-0 bg-slate-950/90 backdrop-blur-xl border border-cyan-500/20 rounded-3xl" />
+            <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-xl border border-cyan-500/20 rounded-3xl" />
 
-            <<divdiv className="relative p-4 border-b border-cyan-500/20 bg-gradient-to-r from-cyan-950/60 to-indigo-950/60 flex items-center justify-between rounded-t-3xl">
-              <<divdiv className="flex items-center gap-3">
-                <<divdiv className="w-10 h-10 bg-gradient-to-br from-cyan-800/60 to-indigo-900/60 border border-cyan-500/30 rounded-xl flex items-center justify-center">
-                  <<BrainBrainCircuit className="text-cyan-400" size={20} />
+            <div className="relative p-4 border-b border-cyan-500/20 bg-gradient-to-r from-cyan-950/60 to-indigo-950/60 flex items-center justify-between rounded-t-3 la">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-cyan-800/60 to-indigo-900/60 border border-cyan-500/30 rounded-xl flex items-center justify-center">
+                  <BrainCircuit className="text-cyan-400" size={20} />
                 </div>
                 <div>
-                  <<hh3 className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-1.5">
+                  <h3 className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-1.5">
                     Quantum AI Assistant
-                    <<spanspan className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v6.0 ROUTER</span>
+                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v6.0 ROUTER</span>
                   </h3>
-                  <<divdiv className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1">
-                    <<spanspan className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <div className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                     Multi-AI Routing Active
                   </div>
                 </div>
               </div>
-              <<divdiv className="flex items-center gap-1.5">
-                <<buttonbutton onClick={clearChat} className="text-slate-500 hover:text-red-400 bg-white/5 rounded-full p-1.5 transition-colors"><<TrashTrash2 size={14} /></button>
-                <<buttonbutton onClick={() => setShowChat(false)} className="text-slate-400 hover:text-white bg-white/5 rounded-full p-1.5 transition-colors"><<XX size={16} /></button>
+              <div className="flex items-center gap-1.5">
+                <button onClick={clearChat} className="text-slate-500 hover:text-red-400 bg-white/5 rounded-full p-1.5 transition-colors"><Trash2 size={14} /></button>
+                <button onClick={() => setShowChat(false)} className="text-slate-400 hover:text-white bg-white/5 rounded-full p-1.5 transition-colors"><X size={16} /></button>
               </div>
             </div>
 
             {/* Model Selector Bar */}
-            <<divdiv className="relative px-4 py-3 bg-slate-900/40 border-b border-cyan-500/10 flex gap-2 overflow-x-auto scrollbar-hide">
+            <div className="relative px-4 py-3 bg-slate-900/40 border-b border-cyan-500/10 flex gap-2 overflow-x-auto scrollbar-hide">
               {(['auto', 'gemini', 'deepseek', 'groq', 'multi'] as const).map(m => (
-                <<buttonbutton
+                <button
                   key={m}
                   onClick={() => setSelectedModel(m)}
                   className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase transition-all border ${selectedModel === m ? 'bg-cyan-600 text-white border-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.3)]' : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-cyan-500/50'}`}
