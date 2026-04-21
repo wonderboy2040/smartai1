@@ -40,8 +40,11 @@ export class TechnicalIndicators {
    */
   static SMA(closes: number[], period: number): number {
     if (closes.length < period) return closes[closes.length - 1] || 0;
-    const slice = closes.slice(-period);
-    return slice.reduce((sum, v) => sum + v, 0) / period;
+    let sum = 0;
+    for (let i = closes.length - period; i < closes.length; i++) {
+      sum += closes[i];
+    }
+    return sum / period;
   }
 
   /**
@@ -61,18 +64,30 @@ export class TechnicalIndicators {
    * MACD (Moving Average Convergence Divergence)
    */
   static MACD(closes: number[]): { macd: number; signal: number; histogram: number } {
+    if (closes.length < 26) return { macd: 0, signal: 0, histogram: 0 };
+
     const ema12 = this.EMA(closes, 12);
     const ema26 = this.EMA(closes, 26);
     const macdLine = ema12 - ema26;
 
     // Calculate signal line (9-period EMA of MACD)
     const dailyMacd: number[] = [];
-    for (let i = 26; i <= closes.length; i++) {
-      const e12 = closes.slice(0, i).length >= 12 ? this.EMA(closes.slice(0, i), 12) : ema12;
-      const e26 = this.EMA(closes.slice(0, i), 26);
-      dailyMacd.push(e12 - e26);
+
+    // Optimization: Use a running EMA approach instead of slice-and-recalculate
+    let currentEma12 = this.EMA(closes.slice(0, 26), 12);
+    let currentEma26 = this.EMA(closes.slice(0, 26), 26);
+    dailyMacd.push(currentEma12 - currentEma26);
+
+    const k12 = 2 / (12 + 1);
+    const k26 = 2 / (26 + 1);
+
+    for (let i = 26; i < closes.length; i++) {
+      currentEma12 = closes[i] * k12 + currentEma12 * (1 - k12);
+      currentEma26 = closes[i] * k26 + currentEma26 * (1 - k26);
+      dailyMacd.push(currentEma12 - currentEma26);
     }
-    const signal = dailyMacd.length > 0 ? this.EMA(dailyMacd, 9) : macdLine;
+
+    const signal = this.EMA(dailyMacd, 9);
 
     return { macd: macdLine, signal, histogram: macdLine - signal };
   }
@@ -111,15 +126,27 @@ export class TechnicalIndicators {
    * Stochastic Oscillator
    */
   static Stochastic(closes: number[], highs: number[], lows: number[], kPeriod: number = 14): { k: number; d: number } {
-    const recentHighs = highs.slice(-kPeriod);
-    const recentLows = lows.slice(-kPeriod);
-    const highestHigh = Math.max(...recentHighs);
-    const lowestLow = Math.min(...recentLows);
-    const range = highestHigh - lowestLow;
+    if (closes.length < kPeriod + 3) return { k: 50, d: 50 };
 
-    if (range === 0) return { k: 50, d: 50 };
-    const k = ((closes[closes.length - 1] - lowestLow) / range) * 100;
-    return { k, d: k }; // Simplified (D requires 3-period SMA of K)
+    const kValues: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const endIdx = closes.length - i;
+      const sliceH = highs.slice(Math.max(0, endIdx - kPeriod), endIdx);
+      const sliceL = lows.slice(Math.max(0, endIdx - kPeriod), endIdx);
+      const highestHigh = Math.max(...sliceH);
+      const lowestLow = Math.min(...sliceL);
+      const range = highestHigh - lowestLow;
+
+      if (range === 0) {
+        kValues.push(50);
+      } else {
+        kValues.push(((closes[endIdx - 1] - lowestLow) / range) * 100);
+      }
+    }
+
+    const k = kValues[0];
+    const d = kValues.reduce((s, v) => s + v, 0) / kValues.length;
+    return { k, d };
   }
 
   /**
@@ -217,25 +244,41 @@ export class PredictionEngine {
   static predictPrice(
     historicalPrices: number[],
     currentPrice: number,
-    _liveData?: PriceData,
     daysAhead: number = 1
   ): PredictionResult {
     const closes = historicalPrices.length > 0 ? historicalPrices : [currentPrice];
     const latest = closes[closes.length - 1] || currentPrice;
 
-    // Multiple model predictions
+    // Model 1: Linear Regression ( captures long-term linear trend)
     const linearPred = this.linearRegressionPredict(closes, daysAhead);
+
+    // Model 2: Holt Exponential Smoothing ( captures trend and level)
     const holtPred = this.holtExponentialSmoothing(closes, 0.3, 0.1, daysAhead);
 
-    // WMA for short-term forecast
+    // Model 3: WMA-based short-term momentum forecast
     const recentCount = Math.min(10, closes.length);
     const recent = closes.slice(-recentCount);
     const wmaPred = this.weightedMA(recent, recent.map((_, i) => i + 1));
-    const shortForecast = wmaPred * (1 + (wmaPred - closes.slice(-20)[0]) / closes.slice(-20)[0] * daysAhead * 0.1);
 
-    // Simple equal-weight ensemble
-    const predictions = [linearPred, holtPred, shortForecast];
-    const avgPrediction = predictions.reduce((s, v) => s + v, 0) / predictions.length;
+    const lookback20 = closes.slice(-20);
+    const basePrice = lookback20.length > 0 ? lookback20[0] : latest;
+    const shortForecast = wmaPred * (1 + (wmaPred - basePrice) / basePrice * daysAhead * 0.1);
+
+    // ADVANCED: Adaptive Weighting based on Regime
+    // If the market is strongly trending, weight Linear/Holt more.
+    // If sideways, weight WMA/Short-term more.
+    let weights = { linear: 0.33, holt: 0.33, short: 0.34 };
+
+    if (closes.length >= 20) {
+      const regime = detectRegime(closes);
+      if (regime.regime === 'STRONG_BULL' || regime.regime === 'STRONG_BEAR') {
+        weights = { linear: 0.4, holt: 0.4, short: 0.2 };
+      } else if (regime.regime === 'SIDEWAYS') {
+        weights = { linear: 0.2, holt: 0.2, short: 0.6 };
+      }
+    }
+
+    const avgPrediction = (linearPred * weights.linear) + (holtPred * weights.holt) + (shortForecast * weights.short);
 
     // Predicted change percentage
     const predictedChange = currentPrice > 0
@@ -246,9 +289,16 @@ export class PredictionEngine {
     const direction: PredictionResult['direction'] =
       predictedChange > 0.5 ? 'up' : predictedChange < -0.5 ? 'down' : 'flat';
 
-    // Confidence based on model agreement
+    // Confidence based on model agreement and regime confidence
+    const predictions = [linearPred, holtPred, shortForecast];
     const predStd = Math.sqrt(predictions.reduce((s, p) => s + Math.pow(p - avgPrediction, 2), 0) / predictions.length);
-    const confidence = Math.max(10, Math.min(95, 80 - predStd / latest * 1000));
+
+    let baseConfidence = 80 - predStd / latest * 1000;
+    if (closes.length >= 20) {
+      const regime = detectRegime(closes);
+      baseConfidence = (baseConfidence * 0.7) + (regime.confidence * 0.3);
+    }
+    const confidence = Math.max(10, Math.min(95, baseConfidence));
 
     // Support / Resistance from Bollinger Bands
     const bb = TechnicalIndicators.BollingerBands(closes);
@@ -281,7 +331,7 @@ export class PredictionEngine {
       confidence: Math.round(confidence),
       direction,
       timeframe,
-      model: 'Ensemble (Linear + Holt Exp + WMA)',
+      model: 'Adaptive Ensemble (Linear + Holt + WMA)',
       supportLevel: Math.round(supportLevel * 100) / 100,
       resistanceLevel: Math.round(resistanceLevel * 100) / 100,
       indicators

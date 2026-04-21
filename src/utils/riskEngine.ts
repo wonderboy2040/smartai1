@@ -2,7 +2,7 @@
 // VaR, stress testing, concentration risk, drawdown analysis
 
 import { PriceData, Position } from '../types';
-import { getAssetCagrProxy } from './constants';
+import { getAssetCagrProxy, STRESS_TEST_SCENARIOS } from './constants';
 
 export interface VaRResult {
   parametric: number;
@@ -142,57 +142,25 @@ export function runStressTests(
 positions: Position[],
 livePrices: Record<string, PriceData>
 ): StressTestScenario[] {
-let totalValue = 0;
-const positionValues: Array<{ symbol: string; value: number; market: string }> = [];
+  let totalValue = 0;
+  const positionValues: Array<{ symbol: string; value: number; market: string }> = [];
 
-positions.forEach(p => {
-const key = `${p.market}_${p.symbol}`;
-const price = livePrices[key]?.price || p.avgPrice;
-const value = price * p.qty;
-positionValues.push({ symbol: p.symbol, value, market: p.market });
-totalValue += value;
-});
+  positions.forEach(p => {
+    const key = `${p.market}_${p.symbol}`;
+    const price = livePrices[key]?.price || p.avgPrice;
+    const value = price * p.qty;
+    positionValues.push({ symbol: p.symbol, value, market: p.market });
+    totalValue += value;
+  });
 
-if (totalValue === 0 || positions.length === 0) return [];
+  if (totalValue === 0 || positions.length === 0) return [];
 
-  const scenarios: StressTestScenario[] = [
-    {
-      name: '2008 Financial Crisis',
-      impact: -totalValue * 0.45,
-      impactPct: -45,
-      description: 'Lehman collapse, portfolio drops ~45%'
-    },
-    {
-      name: 'COVID Crash (2020)',
-      impact: -totalValue * 0.30,
-      impactPct: -30,
-      description: 'Pandemic crash, portfolio drops ~30%'
-    },
-    {
-      name: 'Interest Rate Shock (+2%)',
-      impact: -totalValue * 0.15,
-      impactPct: -15,
-      description: 'Fed raises rates 200bps, equity re-rating'
-    },
-    {
-      name: 'Geopolitical Shock',
-      impact: -totalValue * 0.20,
-      impactPct: -20,
-      description: 'Major geopolitical event, risk-off flight'
-    },
-    {
-      name: 'Tech Sector Selloff',
-      impact: -totalValue * 0.18,
-      impactPct: -18,
-      description: 'Tech-heavy correction similar to dot-com crash'
-    },
-    {
-      name: 'India Market Crisis',
-      impact: -totalValue * 0.35,
-      impactPct: -35,
-      description: 'India-specific crisis (taper tantrum, demonetization)'
-    }
-  ];
+  const scenarios = STRESS_TEST_SCENARIOS.map(s => ({
+    name: s.name,
+    impact: -totalValue * (s.impactPct / 100),
+    impactPct: s.impactPct,
+    description: s.description
+  }));
 
   return scenarios.map(s => ({
     ...s,

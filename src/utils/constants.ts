@@ -74,6 +74,39 @@ export const CORS_PROXIES = [
   'https://corsproxy.io/?'
 ];
 
+export const STRESS_TEST_SCENARIOS = [
+  {
+    name: '2008 Financial Crisis',
+    impactPct: -45,
+    description: 'Lehman collapse, portfolio drops ~45%'
+  },
+  {
+    name: 'COVID Crash (2020)',
+    impactPct: -30,
+    description: 'Pandemic crash, portfolio drops ~30%'
+  },
+  {
+    name: 'Interest Rate Shock (+2%)',
+    impactPct: -15,
+    description: 'Fed raises rates 200bps, equity re-rating'
+  },
+  {
+    name: 'Geopolitical Shock',
+    impactPct: -20,
+    description: 'Major geopolitical event, risk-off flight'
+  },
+  {
+    name: 'Tech Sector Selloff',
+    impactPct: -18,
+    description: 'Tech-heavy correction similar to dot-com crash'
+  },
+  {
+    name: 'India Market Crisis',
+    impactPct: -35,
+    description: 'India-specific crisis (taper tantrum, demonetization)'
+  }
+];
+
 export function getTodayString(): string {
   const t = new Date();
   let m = t.getMonth() + 1;
