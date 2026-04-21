@@ -464,7 +464,7 @@ bot.onText(/^\/news(@\w+)?$/i, async (msg) => {
   console.log(`📥 /news from ${msg.from?.first_name || chatId}`);
   try {
     await safeSend(chatId, '🌍 <i>Synthesizing latest global market news... extracting sentiment score...</i>\n\nThis is a Superintelligent Deep AI Feature.');
-    const response = await chatWithAI(chatId, 'Summarize the latest financial market news and calculate a collective Bullish/Bearish sentiment score (1-100) affecting Indian and US markets today.', portfolio, livePrices, usdInrRate);
+    const response = await chatWithAI(chatId, '/news', portfolio, livePrices, usdInrRate);
     await safeSend(chatId, response);
   } catch (e) {
     console.error('❌ /news error:', e.message);
