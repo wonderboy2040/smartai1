@@ -145,7 +145,7 @@ export const NeuralChat = React.memo(({ aiKeys, portfolioContext, onTelegramPush
     try {
       const recentMessages = [...currentMessages.slice(-8), { role: 'user' as const, text: userMessage }];
       const intelContext = marketIntelRef.current ? formatMarketIntelligenceForAI(marketIntelRef.current) : '';
-      const systemContent = \`\${SYSTEM_PROMPT}\\n\\n--- SENSOR DATA ---\\n\${portfolioContext}\\n\${intelContext}\`;
+      const systemContent = `${SYSTEM_PROMPT}\n\n--- SENSOR DATA ---\n${portfolioContext}\n${intelContext}`;
 
       const messages = [
         { role: 'system', content: systemContent },
