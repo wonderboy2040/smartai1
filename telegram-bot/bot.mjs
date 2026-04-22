@@ -178,12 +178,14 @@ async function initializeData() {
 
   botReady = true;
   console.log('');
-  console.log('🟢 ════════════════════════════════════════');
-  console.log(`   BOT FULLY ONLINE — ${getISTTime()} IST`);
-  console.log(`   Portfolio: ${portfolio.length} positions`);
-  console.log(`   Groq AI: ${GROQ_KEY ? 'ACTIVE' : 'INACTIVE (no key)'}`);
-  console.log(`   Market: ${getMarketStatus()}`);
-  console.log('🟢 ════════════════════════════════════════');
+console.log('🟢 ════════════════════════════════════════');
+console.log(` BOT FULLY ONLINE — ${getISTTime()} IST`);
+console.log(` Portfolio: ${portfolio.length} positions`);
+console.log(` Groq AI: ${GROQ_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
+console.log(` Gemini AI: ${GEMINI_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
+console.log(` DeepSeek AI: ${DEEPSEEK_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
+console.log(` Market: ${getMarketStatus()}`);
+console.log('🟢 ════════════════════════════════════════');
   console.log('');
 
   // Step 6: Set Persistent Telegram Menu Commands
@@ -713,70 +715,16 @@ bot.onText(/^\/clear(@\w+)?$/i, async (msg) => {
 });
 
 // ========================================
-// COMMAND: /setkey (set Groq API key)
+// COMMAND: /setkey (Admin-only Groq key update)
 // ========================================
 bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   const chatId = msg.chat.id;
   const key = match[1].trim();
   console.log(`📥 /setkey from ${msg.from?.first_name || chatId}`);
-  try {
-    if (!key.startsWith('gsk_')) {
-      await safeSend(chatId, '❌ <b>Invalid API Key!</b>\n\nAb system ultra-fast **Groq (Llama-3)** pe upgrade ho gaya hai! Aapki key hamesha `gsk_` se start honi chahiye. Galti se aapne Gemini ya koi aur key daal di hai.\n\n👉 **Free API Key 1 min me yahan se lein:** https://console.groq.com/keys');
-      return;
-    }
-    // Set dynamically
-    const { setGroqKey, API_URL } = await import('./config.mjs');
-    setGroqKey(key);
-
-    // Sync to cloud so web app can also use it
-    try {
-      await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ groqKey: key, action: 'saveKey', timestamp: Date.now() })
-      });
-    } catch (e) {}
-
-    await safeSend(chatId, '✅ <b>Groq Llama-3 API Key Set!</b>\n\nAI Engine is now <b>ONLINE</b> 🧠⚡️ — Powered by groq.com (Superfast Llama-3 70B!).\nTum abhi kisi bhi sawal ka answer AI se le sakte ho!');
-  } catch (e) {
-    console.error('❌ /setkey error:', e.message);
-    await safeSend(chatId, `❌ Key set me error: ${e.message}`);
-  }
+  await safeSend(chatId, '⚠️ <b>API Keys are pre-configured!</b>\n\nYe system already environment me configure hai. Admin se contact karo agar key change karni hai.');
 });
 
-// ========================================
-// COMMAND: /setgemini (set Gemini API key)
-// ========================================
-bot.onText(/^\/setgemini(?:@\w+)?\s+(.+)/i, async (msg, match) => {
-  const chatId = msg.chat.id;
-  const key = match[1].trim();
-  console.log(`📥 /setgemini from ${msg.from?.first_name || chatId}`);
-  try {
-    const { setGeminiKey } = await import('./config.mjs');
-    setGeminiKey(key);
-    await safeSend(chatId, '✅ <b>Gemini 1.5 Pro API Key Set!</b>\n\nReal-time market data ke liye Gemini active hai. Perfect for news, prices, aur live updates! 🔵');
-  } catch (e) {
-    console.error('❌ /setgemini error:', e.message);
-    await safeSend(chatId, `❌ Gemini key set me error: ${e.message}`);
-  }
-});
-
-// ========================================
-// COMMAND: /setdeepseek (set DeepSeek API key)
-// ========================================
-bot.onText(/^\/setdeepseek(?:@\w+)?\s+(.+)/i, async (msg, match) => {
-  const chatId = msg.chat.id;
-  const key = match[1].trim();
-  console.log(`📥 /setdeepseek from ${msg.from?.first_name || chatId}`);
-  try {
-    const { setDeepSeekKey } = await import('./config.mjs');
-    setDeepSeekKey(key);
-    await safeSend(chatId, '✅ <b>DeepSeek V3 API Key Set!</b>\n\nDeep analysis aur complex reasoning ke liye DeepSeek active hai. Perfect for portfolio analysis, backtesting, aur quantitative strategies! 🧠');
-  } catch (e) {
-    console.error('❌ /setdeepseek error:', e.message);
-    await safeSend(chatId, `❌ DeepSeek key set me error: ${e.message}`);
-  }
-});
+// API key commands are disabled - keys are pre-configured in environment
 
 // ========================================
 // COMMAND: /ai <message> — Explicit AI chat

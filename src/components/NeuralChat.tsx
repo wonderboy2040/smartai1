@@ -35,7 +35,7 @@ function formatTime(ts: number): string {
 }
 
 export interface NeuralChatProps {
-  groqKey: string;
+  groqKey?: string;
   geminiKey?: string;
   deepseekKey?: string;
   portfolioContext: string;
@@ -59,10 +59,12 @@ const MODEL_TAGS = {
   system: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
 };
 
-export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deepseekKey: propDeepseekKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
+export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGeminiKey, deepseekKey: propDeepseekKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
+  // Use environment variables as primary source, fallback to props
+  const groqKey = propGroqKey || import.meta.env.VITE_GROQ_KEY || '';
   const geminiKey = propGeminiKey || import.meta.env.VITE_GEMINI_KEY || groqKey;
   const deepseekKey = propDeepseekKey || import.meta.env.VITE_DEEPSEEK_KEY || groqKey;
-  
+
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'model',
     text: '🧠 **QUANTUM AI — Neural Link Online** ⚡\n\nNagraj Bhai, Quantum Routing Engine active hai. Main Gemini, DeepSeek, aur Groq ko intelligently route karunga based on your query.\n\n**Active Modes:**\n• 🌐 Gemini: Real-time News & Live Data\n• 🧠 DeepSeek: Quant Analysis & Trim Rules\n• ⚡ Groq: Fast Concept Explanations\n\nKya analyze karna hai aaj?',
@@ -125,7 +127,7 @@ export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deeps
   }, []);
 
   const callGemini = async (messages: any[], systemPrompt: string) => {
-    const apiKey = import.meta.env.VITE_GEMINI_KEY || groqKey;
+    const apiKey = geminiKey;
     if (!apiKey) throw new Error('Gemini API Key missing');
 
     const formattedMessages = [
@@ -152,7 +154,7 @@ export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deeps
   };
 
   const callDeepSeek = async (messages: any[], systemPrompt: string) => {
-    const apiKey = import.meta.env.VITE_DEEPSEEK_KEY || groqKey;
+    const apiKey = deepseekKey;
     if (!apiKey) throw new Error('DeepSeek API Key missing');
 
     const formattedMessages = [
@@ -184,7 +186,8 @@ export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deeps
   };
 
   const callGroq = async (messages: any[], systemPrompt: string) => {
-    if (!groqKey) throw new Error('Groq API Key missing');
+    const apiKey = groqKey;
+    if (!apiKey) throw new Error('Groq API Key missing');
 
     const formattedMessages = [
       { role: 'system', content: systemPrompt },
@@ -194,7 +197,7 @@ export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deeps
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${groqKey}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -217,10 +220,11 @@ export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deeps
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim()) return;
 
-    if (!groqKey) {
+    // Check if at least one AI key is available
+    if (!groqKey && !geminiKey && !deepseekKey) {
       setChatMessages(prev => [...prev,
         { role: 'user', text: userMessage, timestamp: Date.now() },
-        { role: 'model', text: '⚠️ **Neural Link Offline**\n\nAPI Key missing. Settings (⚙️) check karo.', timestamp: Date.now(), model: 'system' }
+        { role: 'model', text: '⚠️ **Neural Link Offline**\n\nAI keys not configured. Check environment variables.', timestamp: Date.now(), model: 'system' }
       ]);
       return;
     }
@@ -278,7 +282,7 @@ export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deeps
     <>
       <button
         onClick={() => setShowChat(!showChat)}
-        className="fab fixed bottom-6 right-6 w-14 h-14 bg-gradient-to-br from-cyan-600/90 via-blue-800/90 to-indigo-900/90 rounded-2xl flex items-center justify-center border border-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.4)] z-[60] overflow-hidden group hover:scale-110 transition-transform"
+        className="fab fixed bottom-6 right-6 w-14 h-14 bg-gradient-to-br from-cyan-600/90 via-blue-800/90 to-indigo-900/90 rounded-2xl flex items-center justify-center border border-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.4)] z-[60] overflow-hidden group hover:scale-110 transition-transform sm:w-16 sm:h-16"
       >
         {showChat ? <X className="text-white z-10" /> : <span className="text-2xl z-10">🧠</span>}
         <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-400 rounded-full animate-pulse-dot z-10 border-2 border-slate-900" />
@@ -290,27 +294,29 @@ export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deeps
             initial={{ opacity: 0, y: 20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            className="fixed bottom-24 right-4 left-4 sm:left-auto sm:right-6 sm:w-[480px] h-[720px] max-h-[85vh] shadow-[0_0_50px_rgba(6,182,212,0.1)] z-[60] flex flex-col overflow-hidden"
+            className="fixed bottom-0 left-0 right-0 sm:bottom-24 sm:right-6 sm:w-[480px] h-[85vh] sm:h-[720px] max-h-[85vh] shadow-[0_0_50px_rgba(6,182,212,0.1)] z-[60] flex flex-col overflow-hidden sm:rounded-3xl"
           >
             <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-xl border border-cyan-500/20 rounded-3xl" />
 
-            <div className="relative p-4 border-b border-cyan-500/20 bg-gradient-to-r from-cyan-950/60 to-indigo-950/60 flex items-center justify-between rounded-t-3 la">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-cyan-800/60 to-indigo-900/60 border border-cyan-500/30 rounded-xl flex items-center justify-center">
-                  <BrainCircuit className="text-cyan-400" size={20} />
+            <div className="relative p-3 sm:p-4 border-b border-cyan-500/20 bg-gradient-to-r from-cyan-950/60 to-indigo-950/60 flex items-center justify-between rounded-t-3xl">
+              <div className="flex items-center gap-2 sm:gap-3">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 bg-gradient-to-br from-cyan-800/60 to-indigo-900/60 border border-cyan-500/30 rounded-xl flex items-center justify-center flex-shrink-0">
+                  <BrainCircuit className="text-cyan-400" size={18} />
                 </div>
-                <div>
-                  <h3 className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-1.5">
-                    Quantum AI Assistant
-                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v6.0 ROUTER</span>
+                <div className="min-w-0">
+                  <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
+                    <span className="hidden xs:inline">Quantum AI Assistant</span>
+                    <span className="xs:hidden">Quantum AI</span>
+                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">v6.0</span>
                   </h3>
-                  <div className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1">
+                  <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    Multi-AI Routing Active
+                    <span className="hidden sm:inline">Multi-AI Routing Active</span>
+                    <span className="sm:hidden">Active</span>
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
                 <button onClick={clearChat} className="text-slate-500 hover:text-red-400 bg-white/5 rounded-full p-1.5 transition-colors"><Trash2 size={14} /></button>
                 <button onClick={() => setShowChat(false)} className="text-slate-400 hover:text-white bg-white/5 rounded-full p-1.5 transition-colors"><X size={16} /></button>
               </div>
@@ -333,13 +339,13 @@ export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deeps
             <div
               ref={chatContainerRef}
               onScroll={handleScroll}
-              className="relative flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide"
+              className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide"
             >
               {chatMessages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
-                  <div className={`max-w-[90%] rounded-2xl text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
-                    ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-4 py-3'
-                    : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-4 py-3 group/msg'
+                  <div className={`max-w-[85%] sm:max-w-[90%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
+                    ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-3 py-2.5 sm:px-4 sm:py-3'
+                    : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-3 py-2.5 sm:px-4 sm:py-3 group/msg'
                     }`}>
                     {msg.role === 'user' ? (
                       msg.text
@@ -399,12 +405,12 @@ export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deeps
               </div>
             </div>
 
-            <div className="relative p-4 bg-slate-950/95 border-t border-cyan-500/15 rounded-b-3xl">
+            <div className="relative p-3 sm:p-4 bg-slate-950/95 border-t border-cyan-500/15 rounded-b-3xl">
               <div className="relative flex items-center">
                 <input
                   type="text"
-                  placeholder="Ask Quantum AI anything..."
-                  className="w-full bg-slate-900/60 border border-slate-700/80 rounded-2xl py-3 pl-4 pr-12 text-sm text-white outline-none focus:border-cyan-500/60 transition-all font-medium placeholder:text-slate-600"
+                  placeholder="Ask Quantum AI..."
+                  className="w-full bg-slate-900/60 border border-slate-700/80 rounded-xl sm:rounded-2xl py-2.5 sm:py-3 pl-3 sm:pl-4 pr-10 sm:pr-12 text-xs sm:text-sm text-white outline-none focus:border-cyan-500/60 transition-all font-medium placeholder:text-slate-600"
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleChat()}
@@ -412,14 +418,14 @@ export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deeps
                 <button
                   onClick={handleChat}
                   disabled={isThinking || !chatInput.trim()}
-                  className="absolute right-1.5 p-2 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-xl disabled:opacity-30 transition-all"
+                  className="absolute right-1 sm:right-1.5 p-1.5 sm:p-2 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-lg sm:rounded-xl disabled:opacity-30 transition-all"
                 >
                   <Send size={14} />
                 </button>
               </div>
-              <div className="flex items-center justify-between mt-2 px-1">
-                <span className="text-[8px] text-slate-600 font-mono">Sensing: {selectedModel === 'auto' ? 'Auto-Route' : selectedModel.toUpperCase()}</span>
-                <span className="text-[8px] text-slate-600">{chatMessages.length} neural pulses</span>
+              <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
+                <span className="text-[7px] sm:text-[8px] text-slate-600 font-mono truncate max-w-[60%]">Sensing: {selectedModel === 'auto' ? 'Auto-Route' : selectedModel.toUpperCase()}</span>
+                <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">{chatMessages.length} pulses</span>
               </div>
             </div>
           </motion.div>

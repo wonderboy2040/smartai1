@@ -46,6 +46,11 @@ function detectIntent(prompt) {
   return 'groq';
 }
 
+// Validate that at least one AI key is configured
+if (!GROQ_KEY && !GEMINI_KEY && !DEEPSEEK_KEY) {
+  console.warn('⚠️ WARNING: No AI keys configured! Set GROQ_KEY, GEMINI_KEY, or DEEPSEEK_KEY in environment.');
+}
+
 // Gemini API Call
 async function callGemini(messages, systemPrompt) {
   if (!GEMINI_KEY) throw new Error('Gemini key missing');
