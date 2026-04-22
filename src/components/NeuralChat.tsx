@@ -138,15 +138,20 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
       }))
     ];
 
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${apiKey}`, {
+    // Use gemini-1.5-flash for faster, cheaper responses (gemini-1.5-pro may require billing)
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: formattedMessages })
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Gemini API Error: ${res.status}`);
+      let errMsg = `Gemini API Error: ${res.status}`;
+      try {
+        const errData = await res.json();
+        errMsg = errData.error?.message || `Gemini API Error: ${res.status}`;
+      } catch {}
+      throw new Error(errMsg);
     }
 
     const data = await res.json();
@@ -177,8 +182,18 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `DeepSeek API Error: ${res.status}`);
+      let errMsg = `DeepSeek API Error: ${res.status}`;
+      try {
+        const errData = await res.json();
+        if (errData.error?.code === 'insufficient_balance' || (errData.error?.message && errData.error.message.includes('Insufficient Balance'))) {
+          errMsg = 'DeepSeek API: Insufficient balance. Please recharge your DeepSeek account.';
+        } else {
+          errMsg = errData.error?.message || `DeepSeek API Error: ${res.status}`;
+        }
+      } catch {
+        errMsg = `DeepSeek API Error: ${res.status}`;
+      }
+      throw new Error(errMsg);
     }
 
     const data = await res.json();

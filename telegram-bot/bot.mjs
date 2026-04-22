@@ -10,7 +10,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_KEY, DEEPSEEK_KEY } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen } from './market.mjs';
 import { loadPortfolioFromCloud, loadGroqKeyFromCloud, saveGroqKeyToCloud } from './cloud.mjs';
 import {
@@ -20,6 +20,12 @@ import {
   generateHeatmapReport, generateCompareReport, analyzeAsset
 } from './analysis.mjs';
 import { chatWithAI, clearChatHistory } from './ai-chat.mjs';
+
+// Validate required environment variables
+if (!TG_TOKEN) {
+  console.error('❌ CRITICAL: TG_TOKEN (Telegram Bot Token) is missing! Bot cannot start.');
+  process.exit(1);
+}
 
 // ========================================
 // GLOBAL STATE

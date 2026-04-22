@@ -13,42 +13,50 @@ const MAX_HISTORY = 8;
 let cachedIntel = null;
 let intelTimestamp = 0;
 
-// AI Router — Intent Detection
+// AI Router — Intent Detection with fallback logic
 function detectIntent(prompt) {
   const lower = prompt.toLowerCase();
 
   // Emergency/Crisis routing - Always Gemini for real-time
   if (/\b(crash|circuit|emergency|war|ban|halt|breaking)\b/i.test(lower)) {
-    return 'gemini';
+    return GEMINI_KEY ? 'gemini' : GROQ_KEY ? 'groq' : 'deepseek';
   }
 
   // Deep quantitative - Always DeepSeek
   if (/\b(calculate|monte carlo|sharpe|backtest|projection|calculate|optimization)\b/i.test(lower)) {
-    return 'deepseek';
+    return DEEPSEEK_KEY ? 'deepseek' : GROQ_KEY ? 'groq' : 'gemini';
   }
 
   // Real-time data queries - Gemini
   if (/\b(today|aaj|abhi|now|live|latest|breaking|price|rate|news|market|nifty|sensex|vix|gift nifty|us markets|global markets)\b/i.test(lower)) {
-    return 'gemini';
+    return GEMINI_KEY ? 'gemini' : GROQ_KEY ? 'groq' : 'deepseek';
   }
 
   // Portfolio/Analysis - DeepSeek
   if (/\b(analyze|analysis|portfolio|allocation|risk|compare|backtest|optimize|strategy|allocation|rebalance|trim)\b/i.test(lower)) {
-    return 'deepseek';
+    return DEEPSEEK_KEY ? 'deepseek' : GROQ_KEY ? 'groq' : 'gemini';
   }
 
   // News/Updates - Gemini
   if (/\b(news|khabar|update|announcement|earnings|ipo|merger)\b/i.test(lower)) {
-    return 'gemini';
+    return GEMINI_KEY ? 'gemini' : GROQ_KEY ? 'groq' : 'deepseek';
   }
 
-  // Quick questions - Groq
-  return 'groq';
+  // Quick questions - Groq (fallback to any available)
+  return GROQ_KEY ? 'groq' : GEMINI_KEY ? 'gemini' : 'deepseek';
 }
 
 // Validate that at least one AI key is configured
-if (!GROQ_KEY && !GEMINI_KEY && !DEEPSEEK_KEY) {
-  console.warn('⚠️ WARNING: No AI keys configured! Set GROQ_KEY, GEMINI_KEY, or DEEPSEEK_KEY in environment.');
+const availableAIs = [];
+if (GROQ_KEY) availableAIs.push('Groq');
+if (GEMINI_KEY) availableAIs.push('Gemini');
+if (DEEPSEEK_KEY) availableAIs.push('DeepSeek');
+
+if (availableAIs.length === 0) {
+  console.error('❌ CRITICAL: No AI keys configured! Set GROQ_KEY, GEMINI_KEY, or DEEPSEEK_KEY in environment.');
+  console.error('Bot will not be able to respond to AI queries.');
+} else {
+  console.log(`🧠 AI Engines Available: ${availableAIs.join(', ')}`);
 }
 
 // Gemini API Call
@@ -292,11 +300,40 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
 
   try {
     let aiText = '';
-    
+    let usedModel = intent;
+
+    // Check if the detected intent's AI is available, fallback to available AI
+    const checkAndRoute = (model) => {
+      if (model === 'gemini' && GEMINI_KEY) return true;
+      if (model === 'deepseek' && DEEPSEEK_KEY) return true;
+      if (model === 'groq' && GROQ_KEY) return true;
+      return false;
+    };
+
+    // Try primary intent first, then fallback
+    const fallbackOrder = ['groq', 'gemini', 'deepseek'];
+    let routedModel = null;
+
+    if (checkAndRoute(intent)) {
+      routedModel = intent;
+    } else {
+      // Find first available
+      for (const model of fallbackOrder) {
+        if (checkAndRoute(model)) {
+          routedModel = model;
+          break;
+        }
+      }
+    }
+
+    if (!routedModel) {
+      throw new Error('No AI engines available. Check API keys.');
+    }
+
     // Route to appropriate AI
-    if (intent === 'gemini') {
+    if (routedModel === 'gemini') {
       aiText = await callGemini(recentHistory, systemPrompt);
-    } else if (intent === 'deepseek') {
+    } else if (routedModel === 'deepseek') {
       aiText = await callDeepSeek(recentHistory, systemPrompt);
     } else {
       aiText = await callGroq(recentHistory, systemPrompt);
@@ -336,8 +373,15 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
 
     return htmlText;
   } catch (e) {
-    console.error(`❌ ${intent.toUpperCase()} AI Error:`, e.message);
-    return `❌ <b>AI Error:</b> ${e.message}\n\n<i>Retry karo ya thodi der baad try karo.</i>`;
+    console.error(`❌ ${usedModel || intent} AI Error:`, e.message);
+    let errorMsg = e.message;
+    if (errorMsg.includes('No AI engines available')) {
+      return `❌ <b>AI Configuration Error:</b> No API keys configured. Admin se contact karo.`;
+    }
+    if (errorMsg.includes('Insufficient balance') || errorMsg.includes('insufficient_balance')) {
+      return `❌ <b>API Balance Error:</b> Insufficient balance in AI service. Admin se contact karo.`;
+    }
+    return `❌ <b>AI Error:</b> ${errorMsg}\n\n<i>Retry karo ya /clear karke phir try karo.</i>`;
   }
 }
 
