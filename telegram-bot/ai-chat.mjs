@@ -1,7 +1,7 @@
 // ============================================
-// AI CHAT ENGINE — Multi-AI (Groq + Gemini + DeepSeek)
+// AI CHAT ENGINE — Multi-AI (NVIDIA Primary + Groq + Fallback)
 // ============================================
-import { GROQ_KEY, GEMINI_KEY, DEEPSEEK_KEY } from './config.mjs';
+import { GROQ_KEY, GEMINI_KEY, DEEPSEEK_KEY, NVIDIA_API_KEY, NVIDIA_BASE_URL, NVIDIA_DEEPSEEK_MODEL, NVIDIA_GEMINI_MODEL } from './config.mjs';
 import { fetchMarketIntelligence } from './market.mjs';
 import { calculateMetrics, analyzeAsset } from './analysis.mjs';
 
@@ -13,55 +13,143 @@ const MAX_HISTORY = 8;
 let cachedIntel = null;
 let intelTimestamp = 0;
 
-// AI Router — Intent Detection with fallback logic
+// NVIDIA API is primary now (more reliable, no balance issues)
+const hasNVIDIA = NVIDIA_API_KEY && NVIDIA_API_KEY.startsWith('nvapi-');
+const hasGroq = GROQ_KEY && GROQ_KEY.startsWith('gsk_');
+
+// AI Router — Intent Detection with NVIDIA-first logic
 function detectIntent(prompt) {
   const lower = prompt.toLowerCase();
 
-  // Emergency/Crisis routing - Always Gemini for real-time
+  // Emergency/Crisis routing - NVIDIA Gemini
   if (/\b(crash|circuit|emergency|war|ban|halt|breaking)\b/i.test(lower)) {
-    return GEMINI_KEY ? 'gemini' : GROQ_KEY ? 'groq' : 'deepseek';
+    return hasNVIDIA ? 'nvidia-gemini' : hasGroq ? 'groq' : 'deepseek';
   }
 
-  // Deep quantitative - Always DeepSeek
+  // Deep quantitative - NVIDIA DeepSeek
   if (/\b(calculate|monte carlo|sharpe|backtest|projection|calculate|optimization)\b/i.test(lower)) {
-    return DEEPSEEK_KEY ? 'deepseek' : GROQ_KEY ? 'groq' : 'gemini';
+    return hasNVIDIA ? 'nvidia-deepseek' : hasGroq ? 'groq' : 'gemini';
   }
 
-  // Real-time data queries - Gemini
+  // Real-time data queries - NVIDIA Gemini
   if (/\b(today|aaj|abhi|now|live|latest|breaking|price|rate|news|market|nifty|sensex|vix|gift nifty|us markets|global markets)\b/i.test(lower)) {
-    return GEMINI_KEY ? 'gemini' : GROQ_KEY ? 'groq' : 'deepseek';
+    return hasNVIDIA ? 'nvidia-gemini' : hasGroq ? 'groq' : 'deepseek';
   }
 
-  // Portfolio/Analysis - DeepSeek
+  // Portfolio/Analysis - NVIDIA DeepSeek
   if (/\b(analyze|analysis|portfolio|allocation|risk|compare|backtest|optimize|strategy|allocation|rebalance|trim)\b/i.test(lower)) {
-    return DEEPSEEK_KEY ? 'deepseek' : GROQ_KEY ? 'groq' : 'gemini';
+    return hasNVIDIA ? 'nvidia-deepseek' : hasGroq ? 'groq' : 'gemini';
   }
 
-  // News/Updates - Gemini
+  // News/Updates - NVIDIA Gemini
   if (/\b(news|khabar|update|announcement|earnings|ipo|merger)\b/i.test(lower)) {
-    return GEMINI_KEY ? 'gemini' : GROQ_KEY ? 'groq' : 'deepseek';
+    return hasNVIDIA ? 'nvidia-gemini' : hasGroq ? 'groq' : 'deepseek';
   }
 
-  // Quick questions - Groq (fallback to any available)
-  return GROQ_KEY ? 'groq' : GEMINI_KEY ? 'gemini' : 'deepseek';
+  // Quick questions - NVIDIA or Groq
+  return hasNVIDIA ? 'nvidia-gemini' : hasGroq ? 'groq' : 'gemini';
 }
 
-// Validate that at least one AI key is configured
+// Validate AI configuration
 const availableAIs = [];
-if (GROQ_KEY) availableAIs.push('Groq');
-if (GEMINI_KEY) availableAIs.push('Gemini');
-if (DEEPSEEK_KEY) availableAIs.push('DeepSeek');
+if (hasNVIDIA) availableAIs.push('NVIDIA (DeepSeek + Gemini)');
+if (hasGroq) availableAIs.push('Groq');
 
 if (availableAIs.length === 0) {
-  console.error('❌ CRITICAL: No AI keys configured! Set GROQ_KEY, GEMINI_KEY, or DEEPSEEK_KEY in environment.');
+  console.error('❌ CRITICAL: No AI keys configured!');
   console.error('Bot will not be able to respond to AI queries.');
 } else {
-  console.log(`🧠 AI Engines Available: ${availableAIs.join(', ')}`);
+  console.log(`🧠 AI Engines Available: ${availableAIs.join(', ')} (NVIDIA Primary)`);
 }
 
-// Gemini API Call
+// NVIDIA Gemini API Call (Primary)
+async function callNvidiaGemini(messages, systemPrompt) {
+  if (!NVIDIA_API_KEY) throw new Error('NVIDIA API key missing');
+
+  const formattedMessages = [
+    { role: 'system', content: systemPrompt },
+    ...messages.map(m => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: m.content
+    }))
+  ];
+
+  try {
+    const res = await fetch(`${NVIDIA_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${NVIDIA_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: NVIDIA_GEMINI_MODEL,
+        messages: formattedMessages,
+        temperature: 0.7,
+        max_tokens: 2048
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `NVIDIA Gemini API Error: ${res.status}`);
+    }
+
+    const data = await res.json();
+    if (!data.choices?.[0]?.message?.content) {
+      throw new Error('Empty response from NVIDIA Gemini');
+    }
+    return data.choices[0].message.content;
+  } catch (e) {
+    console.error('❌ NVIDIA Gemini API Error:', e.message);
+    throw e;
+  }
+}
+
+// NVIDIA DeepSeek API Call (Primary)
+async function callNvidiaDeepSeek(messages, systemPrompt) {
+  if (!NVIDIA_API_KEY) throw new Error('NVIDIA API key missing');
+
+  const formattedMessages = [
+    { role: 'system', content: systemPrompt },
+    ...messages.map(m => ({ role: m.role, content: m.content }))
+  ];
+
+  try {
+    const res = await fetch(`${NVIDIA_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${NVIDIA_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: NVIDIA_DEEPSEEK_MODEL,
+        messages: formattedMessages,
+        temperature: 0.7,
+        max_tokens: 2048
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `NVIDIA DeepSeek API Error: ${res.status}`);
+    }
+
+    const data = await res.json();
+    if (!data.choices?.[0]?.message?.content) {
+      throw new Error('Empty response from NVIDIA DeepSeek');
+    }
+    return data.choices[0].message.content;
+  } catch (e) {
+    console.error('❌ NVIDIA DeepSeek API Error:', e.message);
+    throw e;
+  }
+}
+
+// Legacy Gemini API Call (Fallback)
 async function callGemini(messages, systemPrompt) {
-  if (!GEMINI_KEY) throw new Error('Gemini key missing');
+  if (!GEMINI_KEY || !GEMINI_KEY.startsWith('AIza')) {
+    throw new Error('Gemini API key missing');
+  }
 
   const formattedMessages = [
     { role: 'system', parts: [{ text: systemPrompt }] },
@@ -72,7 +160,7 @@ async function callGemini(messages, systemPrompt) {
   ];
 
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${GEMINI_KEY}`, {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: formattedMessages })
@@ -94,9 +182,9 @@ async function callGemini(messages, systemPrompt) {
   }
 }
 
-// DeepSeek API Call
+// Legacy DeepSeek API Call (Fallback)
 async function callDeepSeek(messages, systemPrompt) {
-  if (!DEEPSEEK_KEY) throw new Error('DeepSeek key missing');
+  if (!DEEPSEEK_KEY || !GEMINI_KEY) throw new Error('DeepSeek key missing');
 
   const formattedMessages = [
     { role: 'system', content: systemPrompt },
@@ -330,13 +418,16 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
       throw new Error('No AI engines available. Check API keys.');
     }
 
-    // Route to appropriate AI
-    if (routedModel === 'gemini') {
-      aiText = await callGemini(recentHistory, systemPrompt);
-    } else if (routedModel === 'deepseek') {
-      aiText = await callDeepSeek(recentHistory, systemPrompt);
-    } else {
+    // Route to appropriate AI (NVIDIA first)
+    if (intent === 'nvidia-gemini' || intent === 'gemini') {
+      aiText = hasNVIDIA ? await callNvidiaGemini(recentHistory, systemPrompt) : await callGemini(recentHistory, systemPrompt);
+    } else if (intent === 'nvidia-deepseek' || intent === 'deepseek') {
+      aiText = hasNVIDIA ? await callNvidiaDeepSeek(recentHistory, systemPrompt) : await callDeepSeek(recentHistory, systemPrompt);
+    } else if (intent === 'groq') {
       aiText = await callGroq(recentHistory, systemPrompt);
+    } else {
+      // Fallback to NVIDIA
+      aiText = hasNVIDIA ? await callNvidiaGemini(recentHistory, systemPrompt) : await callGroq(recentHistory, systemPrompt);
     }
 
     if (!aiText) throw new Error('AI returned empty response');

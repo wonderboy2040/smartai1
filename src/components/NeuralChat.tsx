@@ -60,10 +60,16 @@ const MODEL_TAGS = {
 };
 
 export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGeminiKey, deepseekKey: propDeepseekKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
+  // NVIDIA API Configuration (Primary)
+  const nvidiaApiKey = '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';
+  const nvidiaBaseUrl = 'https://integrate.api.nvidia.com/v1';
+  const nvidiaDeepSeekModel = 'deepseek-ai/deepseek-v3.2';
+  const nvidiaGeminiModel = 'google/gemini-2.0-flash-exp';
+
   // Use environment variables as primary source, fallback to props
   const groqKey = propGroqKey || import.meta.env.VITE_GROQ_KEY || import.meta.env.VITE_GROQ_API_KEY || '';
-  const geminiKey = propGeminiKey || import.meta.env.VITE_GEMINI_KEY || import.meta.env.VITE_GEMINI_API_KEY || groqKey;
-  const deepseekKey = propDeepseekKey || import.meta.env.VITE_DEEPSEEK_KEY || import.meta.env.VITE_DEEPSEEK_API_KEY || groqKey;
+  const geminiKey = propGeminiKey || import.meta.env.VITE_GEMINI_KEY || import.meta.env.VITE_GEMINI_API_KEY || nvidiaApiKey;
+  const deepseekKey = propDeepseekKey || import.meta.env.VITE_DEEPSEEK_KEY || import.meta.env.VITE_DEEPSEEK_API_KEY || nvidiaApiKey;
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'model',
@@ -127,71 +133,78 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
   }, []);
 
   const callGemini = async (messages: any[], systemPrompt: string) => {
-    const apiKey = geminiKey;
-    if (!apiKey) throw new Error('Gemini API Key missing');
-
-    const formattedMessages = [
-      { role: 'system', parts: [{ text: systemPrompt }] },
-      ...messages.map(m => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }]
-      }))
-    ];
-
-    // Use gemini-1.5-flash for faster, cheaper responses (gemini-1.5-pro may require billing)
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: formattedMessages })
-    });
-
-    if (!res.ok) {
-      let errMsg = `Gemini API Error: ${res.status}`;
-      try {
-        const errData = await res.json();
-        errMsg = errData.error?.message || `Gemini API Error: ${res.status}`;
-      } catch {}
-      throw new Error(errMsg);
-    }
-
-    const data = await res.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  };
-
-  const callDeepSeek = async (messages: any[], systemPrompt: string) => {
-    const apiKey = deepseekKey;
-    if (!apiKey) throw new Error('DeepSeek API Key missing');
+    // Use NVIDIA API for Gemini (more reliable)
+    const apiKey = nvidiaApiKey || geminiKey;
+    if (!apiKey) throw new Error('Gemini/NVIDIA API Key missing');
 
     const formattedMessages = [
       { role: 'system', content: systemPrompt },
-      ...messages.map(m => ({ role: m.role, content: m.content }))
+      ...messages.map(m => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: m.content
+      }))
     ];
 
-    const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+    // NVIDIA OpenAI-compatible endpoint
+    const res = await fetch(`${nvidiaBaseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'deepseek-chat',
+        model: nvidiaGeminiModel,
         messages: formattedMessages,
         temperature: 0.7,
-        max_tokens: 1200
+        max_tokens: 2048
       })
     });
 
     if (!res.ok) {
-      let errMsg = `DeepSeek API Error: ${res.status}`;
+      let errMsg = `NVIDIA Gemini API Error: ${res.status}`;
       try {
         const errData = await res.json();
-        if (errData.error?.code === 'insufficient_balance' || (errData.error?.message && errData.error.message.includes('Insufficient Balance'))) {
-          errMsg = 'DeepSeek API: Insufficient balance. Please recharge your DeepSeek account.';
-        } else {
-          errMsg = errData.error?.message || `DeepSeek API Error: ${res.status}`;
-        }
+        errMsg = errData.error?.message || `NVIDIA Gemini API Error: ${res.status}`;
+      } catch {}
+      throw new Error(errMsg);
+    }
+
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || '';
+  };
+
+  const callDeepSeek = async (messages: any[], systemPrompt: string) => {
+    // Use NVIDIA API for DeepSeek (no balance issues)
+    const apiKey = nvidiaApiKey || deepseekKey;
+    if (!apiKey) throw new Error('DeepSeek/NVIDIA API Key missing');
+
+    const formattedMessages = [
+      { role: 'system', content: systemPrompt },
+      ...messages.map(m => ({ role: m.role, content: m.content }))
+    ];
+
+    // NVIDIA OpenAI-compatible endpoint
+    const res = await fetch(`${nvidiaBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: nvidiaDeepSeekModel,
+        messages: formattedMessages,
+        temperature: 0.7,
+        max_tokens: 2048
+      })
+    });
+
+    if (!res.ok) {
+      let errMsg = `NVIDIA DeepSeek API Error: ${res.status}`;
+      try {
+        const errData = await res.json();
+        errMsg = errData.error?.message || `NVIDIA DeepSeek API Error: ${res.status}`;
       } catch {
-        errMsg = `DeepSeek API Error: ${res.status}`;
+        errMsg = `NVIDIA DeepSeek API Error: ${res.status}`;
       }
       throw new Error(errMsg);
     }

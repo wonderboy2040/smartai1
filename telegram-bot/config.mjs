@@ -13,8 +13,14 @@ export const API_URL = process.env.API_URL || "";
 
 // Multi-AI API Keys
 export let GROQ_KEY = process.env.GROQ_KEY || "";
-export let GEMINI_KEY = process.env.GEMINI_KEY || "";
-export let DEEPSEEK_KEY = process.env.DEEPSEEK_KEY || "";
+// NVIDIA API Keys (Primary - more reliable)
+export const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || "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";
+export const NVIDIA_BASE_URL = process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1";
+export const NVIDIA_DEEPSEEK_MODEL = process.env.NVIDIA_DEEPSEEK_MODEL || "deepseek-ai/deepseek-v3.2";
+export const NVIDIA_GEMINI_MODEL = process.env.NVIDIA_GEMINI_MODEL || "google/gemini-2.0-flash-exp";
+// Legacy keys (fallback)
+export let GEMINI_KEY = process.env.GEMINI_KEY || NVIDIA_API_KEY;
+export let DEEPSEEK_KEY = process.env.DEEPSEEK_KEY || NVIDIA_API_KEY;
 
 export function setGroqKey(key) { GROQ_KEY = key; }
 export function setGeminiKey(key) { GEMINI_KEY = key; }
