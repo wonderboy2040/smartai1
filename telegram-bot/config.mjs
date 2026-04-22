@@ -13,13 +13,15 @@ export const API_URL = process.env.API_URL || "";
 
 // Multi-AI API Keys
 export let GROQ_KEY = process.env.GROQ_KEY || "";
-// NVIDIA API Keys (Primary - more reliable)
+// Tavily Search API (Real-time Web Data - Replaces Gemini)
+export const TAVILY_API_KEY = process.env.TAVILY_API_KEY || "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";
+export const TAVILY_BASE_URL = "https://api.tavily.com/search";
+// NVIDIA API Keys (DeepSeek V3 for Analysis)
 export const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || "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";
 export const NVIDIA_BASE_URL = process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1";
 export const NVIDIA_DEEPSEEK_MODEL = process.env.NVIDIA_DEEPSEEK_MODEL || "deepseek-ai/deepseek-v3.2";
-export const NVIDIA_GEMINI_MODEL = process.env.NVIDIA_GEMINI_MODEL || "google/gemini-2.0-flash-exp";
 // Legacy keys (fallback)
-export let GEMINI_KEY = process.env.GEMINI_KEY || NVIDIA_API_KEY;
+export let GEMINI_KEY = process.env.GEMINI_KEY || TAVILY_API_KEY; // Tavily replaces Gemini
 export let DEEPSEEK_KEY = process.env.DEEPSEEK_KEY || NVIDIA_API_KEY;
 
 export function setGroqKey(key) { GROQ_KEY = key; }

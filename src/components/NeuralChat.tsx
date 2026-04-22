@@ -60,15 +60,21 @@ const MODEL_TAGS = {
 };
 
 export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGeminiKey, deepseekKey: propDeepseekKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
-  // NVIDIA API Configuration (Primary)
+  // Tavily Search API Configuration (Real-time Web Search - Gemini Replacement)
+  const tavilyApiKey = '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';
+  const tavilyBaseUrl = 'https://api.tavily.com/search';
+
+  // NVIDIA API Configuration (DeepSeek V3 for Analysis)
   const nvidiaApiKey = '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';
   const nvidiaBaseUrl = 'https://integrate.api.nvidia.com/v1';
   const nvidiaDeepSeekModel = 'deepseek-ai/deepseek-v3.2';
-  const nvidiaGeminiModel = 'google/gemini-2.0-flash-exp';
+
+  // Groq API Configuration (Fast Responses)
+  const groqApiKey = propGroqKey || import.meta.env.VITE_GROQ_KEY || import.meta.env.VITE_GROQ_API_KEY || '';
 
   // Use environment variables as primary source, fallback to props
-  const groqKey = propGroqKey || import.meta.env.VITE_GROQ_KEY || import.meta.env.VITE_GROQ_API_KEY || '';
-  const geminiKey = propGeminiKey || import.meta.env.VITE_GEMINI_KEY || import.meta.env.VITE_GEMINI_API_KEY || nvidiaApiKey;
+  const groqKey = groqApiKey;
+  const geminiKey = tavilyApiKey; // Tavily replaces Gemini for real-time data
   const deepseekKey = propDeepseekKey || import.meta.env.VITE_DEEPSEEK_KEY || import.meta.env.VITE_DEEPSEEK_API_KEY || nvidiaApiKey;
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
@@ -116,6 +122,31 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
     return () => clearInterval(iv);
   }, [showChat]);
 
+  // Tavily Web Search (Real-time Data - Replaces Gemini)
+  const searchTavily = async (query: string, days = 7) => {
+    if (!tavilyApiKey) throw new Error('Tavily API Key missing');
+
+    const res = await fetch(tavilyBaseUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: query,
+        max_results: 5,
+        days: days,
+        include_domains: [],
+        exclude_domains: []
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `Tavily API Error: ${res.status}`);
+    }
+
+    const data = await res.json();
+    return data.results || [];
+  };
+
   const copyToClipboard = useCallback((text: string, idx: number) => {
     navigator.clipboard.writeText(text).then(() => {
       setCopiedIdx(idx);
@@ -133,61 +164,39 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
   }, []);
 
   const callGemini = async (messages: any[], systemPrompt: string) => {
-    // Use NVIDIA API for Gemini (more reliable)
-    const apiKey = nvidiaApiKey || geminiKey;
-    if (!apiKey) throw new Error('Gemini/NVIDIA API Key missing');
+    // Tavily Search for real-time data (replaces Gemini)
+    const apiKey = tavilyApiKey || geminiKey;
+    if (!apiKey) throw new Error('Tavily API Key missing');
 
+    // Extract user query from messages
+    const lastMessage = messages[messages.length - 1]?.content || '';
+
+    // First, search the web for real-time data
+    const searchResults = await searchTavily(lastMessage, 7);
+
+    // Build context from search results
+    let searchContext = '';
+    if (searchResults.length > 0) {
+      searchContext = '\n\n--- REAL-TIME WEB DATA (Tavily) ---\n';
+      searchResults.forEach((result: any, i: number) => {
+        searchContext += `${i + 1}. [${result.title || 'Result'}](${result.url || ''})\n   ${result.content}\n\n`;
+      });
+    }
+
+    // Use DeepSeek via NVIDIA for final response with search context
     const formattedMessages = [
-      { role: 'system', content: systemPrompt },
+      { role: 'system', content: `${systemPrompt}\n\nUse the following real-time web data to answer the query accurately:${searchContext}` },
       ...messages.map(m => ({
         role: m.role === 'assistant' ? 'assistant' : 'user',
         content: m.content
       }))
     ];
 
-    // NVIDIA OpenAI-compatible endpoint
+    // NVIDIA DeepSeek for analysis
     const res = await fetch(`${nvidiaBaseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: nvidiaGeminiModel,
-        messages: formattedMessages,
-        temperature: 0.7,
-        max_tokens: 2048
-      })
-    });
-
-    if (!res.ok) {
-      let errMsg = `NVIDIA Gemini API Error: ${res.status}`;
-      try {
-        const errData = await res.json();
-        errMsg = errData.error?.message || `NVIDIA Gemini API Error: ${res.status}`;
-      } catch {}
-      throw new Error(errMsg);
-    }
-
-    const data = await res.json();
-    return data.choices?.[0]?.message?.content || '';
-  };
-
-  const callDeepSeek = async (messages: any[], systemPrompt: string) => {
-    // Use NVIDIA API for DeepSeek (no balance issues)
-    const apiKey = nvidiaApiKey || deepseekKey;
-    if (!apiKey) throw new Error('DeepSeek/NVIDIA API Key missing');
-
-    const formattedMessages = [
-      { role: 'system', content: systemPrompt },
-      ...messages.map(m => ({ role: m.role, content: m.content }))
-    ];
-
-    // NVIDIA OpenAI-compatible endpoint
-    const res = await fetch(`${nvidiaBaseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${nvidiaApiKey}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -203,8 +212,46 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
       try {
         const errData = await res.json();
         errMsg = errData.error?.message || `NVIDIA DeepSeek API Error: ${res.status}`;
+      } catch {}
+      throw new Error(errMsg);
+    }
+
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || '';
+  };
+
+  const callDeepSeek = async (messages: any[], systemPrompt: string) => {
+    // Use NVIDIA API for DeepSeek V3 (best analysis)
+    const apiKey = nvidiaApiKey || deepseekKey;
+    if (!apiKey) throw new Error('DeepSeek/NVIDIA API Key missing');
+
+    const formattedMessages = [
+      { role: 'system', content: systemPrompt },
+      ...messages.map(m => ({ role: m.role, content: m.content }))
+    ];
+
+    // NVIDIA OpenAI-compatible endpoint for DeepSeek V3
+    const res = await fetch(`${nvidiaBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: nvidiaDeepSeekModel,
+        messages: formattedMessages,
+        temperature: 0.7,
+        max_tokens: 2048
+      })
+    });
+
+    if (!res.ok) {
+      let errMsg = `NVIDIA DeepSeek V3 API Error: ${res.status}`;
+      try {
+        const errData = await res.json();
+        errMsg = errData.error?.message || `NVIDIA DeepSeek V3 API Error: ${res.status}`;
       } catch {
-        errMsg = `NVIDIA DeepSeek API Error: ${res.status}`;
+        errMsg = `NVIDIA DeepSeek V3 API Error: ${res.status}`;
       }
       throw new Error(errMsg);
     }
@@ -222,6 +269,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
       ...messages.map(m => ({ role: m.role, content: m.content }))
     ];
 
+    // Groq Llama-3.3-70B for ultra-fast responses
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -237,8 +285,14 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Groq API Error: ${res.status}`);
+      let errMsg = `Groq API Error: ${res.status}`;
+      try {
+        const errData = await res.json();
+        errMsg = errData.error?.message || `Groq API Error: ${res.status}`;
+      } catch {
+        errMsg = `Groq API Error: ${res.status}`;
+      }
+      throw new Error(errMsg);
     }
 
     const data = await res.json();
@@ -273,17 +327,18 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
       let aiText = '';
       let usedModel: AIModel = 'groq';
 
-      // Route to appropriate AI based on intent or manual selection
-      if (finalModel === 'gemini' || (finalModel === 'auto' && intent.model === 'gemini')) {
-        aiText = await callGemini(recentMessages, systemPrompt);
-        usedModel = 'gemini';
-      } else if (finalModel === 'deepseek' || (finalModel === 'auto' && intent.model === 'deepseek')) {
-        aiText = await callDeepSeek(recentMessages, systemPrompt);
-        usedModel = 'deepseek';
-      } else {
-        aiText = await callGroq(recentMessages, systemPrompt);
-        usedModel = 'groq';
-      }
+    // Route to appropriate AI based on intent or manual selection
+    // Tavily (real-time search) → DeepSeek V3 (analysis) → Groq (fast responses)
+    if (finalModel === 'gemini' || (finalModel === 'auto' && intent.model === 'gemini')) {
+      aiText = await callGemini(recentMessages, systemPrompt); // Tavily + DeepSeek
+      usedModel = 'tavily';
+    } else if (finalModel === 'deepseek' || (finalModel === 'auto' && intent.model === 'deepseek')) {
+      aiText = await callDeepSeek(recentMessages, systemPrompt); // NVIDIA DeepSeek V3
+      usedModel = 'deepseek';
+    } else {
+      aiText = await callGroq(recentMessages, systemPrompt); // Groq Llama-3
+      usedModel = 'groq';
+    }
 
       setChatMessages(prev => [...prev, {
         role: 'model',

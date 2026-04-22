@@ -1,7 +1,7 @@
 // ============================================
-// AI CHAT ENGINE — Multi-AI (NVIDIA Primary + Groq + Fallback)
+// AI CHAT ENGINE — Tavily Search + NVIDIA DeepSeek V3 + Groq
 // ============================================
-import { GROQ_KEY, GEMINI_KEY, DEEPSEEK_KEY, NVIDIA_API_KEY, NVIDIA_BASE_URL, NVIDIA_DEEPSEEK_MODEL, NVIDIA_GEMINI_MODEL } from './config.mjs';
+import { GROQ_KEY, GEMINI_KEY, DEEPSEEK_KEY, TAVILY_API_KEY, TAVILY_BASE_URL, NVIDIA_API_KEY, NVIDIA_BASE_URL, NVIDIA_DEEPSEEK_MODEL } from './config.mjs';
 import { fetchMarketIntelligence } from './market.mjs';
 import { calculateMetrics, analyzeAsset } from './analysis.mjs';
 
@@ -13,7 +13,8 @@ const MAX_HISTORY = 8;
 let cachedIntel = null;
 let intelTimestamp = 0;
 
-// NVIDIA API is primary now (more reliable, no balance issues)
+// API Configuration
+const hasTavily = TAVILY_API_KEY && TAVILY_API_KEY.startsWith('tvly-');
 const hasNVIDIA = NVIDIA_API_KEY && NVIDIA_API_KEY.startsWith('nvapi-');
 const hasGroq = GROQ_KEY && GROQ_KEY.startsWith('gsk_');
 
