@@ -35,9 +35,11 @@ function formatTime(ts: number): string {
 }
 
 export interface NeuralChatProps {
-  groqKey:          string;
+  groqKey: string;
+  geminiKey?: string;
+  deepseekKey?: string;
   portfolioContext: string;
-  onTelegramPush?:  () => void;
+  onTelegramPush?: () => void;
 }
 
 const QUICK_ACTIONS = [
@@ -57,7 +59,10 @@ const MODEL_TAGS = {
   system: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
 };
 
-export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
+export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deepseekKey: propDeepseekKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
+  const geminiKey = propGeminiKey || import.meta.env.VITE_GEMINI_KEY || groqKey;
+  const deepseekKey = propDeepseekKey || import.meta.env.VITE_DEEPSEEK_KEY || groqKey;
+  
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'model',
     text: '🧠 **QUANTUM AI — Neural Link Online** ⚡\n\nNagraj Bhai, Quantum Routing Engine active hai. Main Gemini, DeepSeek, aur Groq ko intelligently route karunga based on your query.\n\n**Active Modes:**\n• 🌐 Gemini: Real-time News & Live Data\n• 🧠 DeepSeek: Quant Analysis & Trim Rules\n• ⚡ Groq: Fast Concept Explanations\n\nKya analyze karna hai aaj?',
@@ -119,6 +124,96 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
     }]);
   }, []);
 
+  const callGemini = async (messages: any[], systemPrompt: string) => {
+    const apiKey = import.meta.env.VITE_GEMINI_KEY || groqKey;
+    if (!apiKey) throw new Error('Gemini API Key missing');
+
+    const formattedMessages = [
+      { role: 'system', parts: [{ text: systemPrompt }] },
+      ...messages.map(m => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }]
+      }))
+    ];
+
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: formattedMessages })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `Gemini API Error: ${res.status}`);
+    }
+
+    const data = await res.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  };
+
+  const callDeepSeek = async (messages: any[], systemPrompt: string) => {
+    const apiKey = import.meta.env.VITE_DEEPSEEK_KEY || groqKey;
+    if (!apiKey) throw new Error('DeepSeek API Key missing');
+
+    const formattedMessages = [
+      { role: 'system', content: systemPrompt },
+      ...messages.map(m => ({ role: m.role, content: m.content }))
+    ];
+
+    const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: formattedMessages,
+        temperature: 0.7,
+        max_tokens: 1200
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `DeepSeek API Error: ${res.status}`);
+    }
+
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || '';
+  };
+
+  const callGroq = async (messages: any[], systemPrompt: string) => {
+    if (!groqKey) throw new Error('Groq API Key missing');
+
+    const formattedMessages = [
+      { role: 'system', content: systemPrompt },
+      ...messages.map(m => ({ role: m.role, content: m.content }))
+    ];
+
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${groqKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: formattedMessages,
+        temperature: 0.75,
+        max_completion_tokens: 800
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `Groq API Error: ${res.status}`);
+    }
+
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || '';
+  };
+
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim()) return;
 
@@ -136,26 +231,33 @@ export const NeuralChat = React.memo(({ groqKey, portfolioContext, onTelegramPus
     try {
       const intent = detectIntent(userMessage);
       const finalModel = selectedModel === 'auto' ? intent.model : (selectedModel === 'multi' ? 'multi' : selectedModel as AIModel);
+      const systemPrompt = `You are DEEP MIND AI — Quantum Trading Assistant. ${portfolioContext}`;
 
-      // In a real implementation, this would call the new /api/ask endpoint with the routing metadata
-      // For now, we'll simulate the routing display logic
-      const res = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile', // Simplified for demo
-          messages: [{ role: 'system', content: `Quantum AI Router: ${finalModel === 'auto' ? intent.routingInfo : 'Forced to ' + finalModel}` }, { role: 'user', content: userMessage }],
-        })
-      });
+      const recentMessages = chatMessages.slice(-8).map(m => ({
+        role: m.role === 'model' ? 'assistant' : m.role,
+        content: m.text
+      }));
 
-      const data = await res.json();
-      const aiText = data.choices?.[0]?.message?.content || "No response";
+      let aiText = '';
+      let usedModel: AIModel = 'groq';
+
+      // Route to appropriate AI based on intent or manual selection
+      if (finalModel === 'gemini' || (finalModel === 'auto' && intent.model === 'gemini')) {
+        aiText = await callGemini(recentMessages, systemPrompt);
+        usedModel = 'gemini';
+      } else if (finalModel === 'deepseek' || (finalModel === 'auto' && intent.model === 'deepseek')) {
+        aiText = await callDeepSeek(recentMessages, systemPrompt);
+        usedModel = 'deepseek';
+      } else {
+        aiText = await callGroq(recentMessages, systemPrompt);
+        usedModel = 'groq';
+      }
 
       setChatMessages(prev => [...prev, {
         role: 'model',
         text: aiText,
         timestamp: Date.now(),
-        model: finalModel === 'auto' ? intent.model : (finalModel === 'multi' ? 'multi' : finalModel as AIModel)
+        model: finalModel === 'auto' ? usedModel : (finalModel === 'multi' ? 'multi' : finalModel as AIModel)
       }]);
     } catch (e) {
       setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanceof Error ? e.message : String(e)}`, timestamp: Date.now(), model: 'system' }]);

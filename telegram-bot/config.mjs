@@ -11,9 +11,14 @@ export const TG_CHAT_ID = process.env.TG_CHAT_ID || "";
 // Google Apps Script Cloud Sync
 export const API_URL = process.env.API_URL || "";
 
-// Gemini AI (Google — FREE)
-export let GROQ_KEY = "";
+// Multi-AI API Keys
+export let GROQ_KEY = process.env.GROQ_KEY || "";
+export let GEMINI_KEY = process.env.GEMINI_KEY || "";
+export let DEEPSEEK_KEY = process.env.DEEPSEEK_KEY || "";
+
 export function setGroqKey(key) { GROQ_KEY = key; }
+export function setGeminiKey(key) { GEMINI_KEY = key; }
+export function setDeepSeekKey(key) { DEEPSEEK_KEY = key; }
 
 // SIP Defaults
 export const DEFAULT_INDIA_SIP = 10000;

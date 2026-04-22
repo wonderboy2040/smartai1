@@ -12,7 +12,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen } from './market.mjs';
-import { loadPortfolioFromCloud, loadGroqKeyFromCloud } from './cloud.mjs';
+import { loadPortfolioFromCloud, loadGroqKeyFromCloud, saveGroqKeyToCloud } from './cloud.mjs';
 import {
   generatePortfolioReport, generateMarketReport, generateSignalsReport,
   generateAllocationReport, generateRiskReport, generateAutoReport,
@@ -727,7 +727,7 @@ bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/i, async (msg, match) => {
     // Set dynamically
     const { setGroqKey, API_URL } = await import('./config.mjs');
     setGroqKey(key);
-    
+
     // Sync to cloud so web app can also use it
     try {
       await fetch(API_URL, {
@@ -741,6 +741,40 @@ bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   } catch (e) {
     console.error('❌ /setkey error:', e.message);
     await safeSend(chatId, `❌ Key set me error: ${e.message}`);
+  }
+});
+
+// ========================================
+// COMMAND: /setgemini (set Gemini API key)
+// ========================================
+bot.onText(/^\/setgemini(?:@\w+)?\s+(.+)/i, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const key = match[1].trim();
+  console.log(`📥 /setgemini from ${msg.from?.first_name || chatId}`);
+  try {
+    const { setGeminiKey } = await import('./config.mjs');
+    setGeminiKey(key);
+    await safeSend(chatId, '✅ <b>Gemini 1.5 Pro API Key Set!</b>\n\nReal-time market data ke liye Gemini active hai. Perfect for news, prices, aur live updates! 🔵');
+  } catch (e) {
+    console.error('❌ /setgemini error:', e.message);
+    await safeSend(chatId, `❌ Gemini key set me error: ${e.message}`);
+  }
+});
+
+// ========================================
+// COMMAND: /setdeepseek (set DeepSeek API key)
+// ========================================
+bot.onText(/^\/setdeepseek(?:@\w+)?\s+(.+)/i, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const key = match[1].trim();
+  console.log(`📥 /setdeepseek from ${msg.from?.first_name || chatId}`);
+  try {
+    const { setDeepSeekKey } = await import('./config.mjs');
+    setDeepSeekKey(key);
+    await safeSend(chatId, '✅ <b>DeepSeek V3 API Key Set!</b>\n\nDeep analysis aur complex reasoning ke liye DeepSeek active hai. Perfect for portfolio analysis, backtesting, aur quantitative strategies! 🧠');
+  } catch (e) {
+    console.error('❌ /setdeepseek error:', e.message);
+    await safeSend(chatId, `❌ DeepSeek key set me error: ${e.message}`);
   }
 });
 

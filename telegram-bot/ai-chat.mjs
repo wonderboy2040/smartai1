@@ -1,7 +1,7 @@
 // ============================================
-// AI CHAT ENGINE — Groq Integration
+// AI CHAT ENGINE — Multi-AI (Groq + Gemini + DeepSeek)
 // ============================================
-import { GROQ_KEY } from './config.mjs';
+import { GROQ_KEY, GEMINI_KEY, DEEPSEEK_KEY } from './config.mjs';
 import { fetchMarketIntelligence } from './market.mjs';
 import { calculateMetrics, analyzeAsset } from './analysis.mjs';
 
@@ -12,6 +12,167 @@ const MAX_HISTORY = 8;
 // Market intelligence cache
 let cachedIntel = null;
 let intelTimestamp = 0;
+
+// AI Router — Intent Detection
+function detectIntent(prompt) {
+  const lower = prompt.toLowerCase();
+
+  // Emergency/Crisis routing - Always Gemini for real-time
+  if (/\b(crash|circuit|emergency|war|ban|halt|breaking)\b/i.test(lower)) {
+    return 'gemini';
+  }
+
+  // Deep quantitative - Always DeepSeek
+  if (/\b(calculate|monte carlo|sharpe|backtest|projection|calculate|optimization)\b/i.test(lower)) {
+    return 'deepseek';
+  }
+
+  // Real-time data queries - Gemini
+  if (/\b(today|aaj|abhi|now|live|latest|breaking|price|rate|news|market|nifty|sensex|vix|gift nifty|us markets|global markets)\b/i.test(lower)) {
+    return 'gemini';
+  }
+
+  // Portfolio/Analysis - DeepSeek
+  if (/\b(analyze|analysis|portfolio|allocation|risk|compare|backtest|optimize|strategy|allocation|rebalance|trim)\b/i.test(lower)) {
+    return 'deepseek';
+  }
+
+  // News/Updates - Gemini
+  if (/\b(news|khabar|update|announcement|earnings|ipo|merger)\b/i.test(lower)) {
+    return 'gemini';
+  }
+
+  // Quick questions - Groq
+  return 'groq';
+}
+
+// Gemini API Call
+async function callGemini(messages, systemPrompt) {
+  if (!GEMINI_KEY) throw new Error('Gemini key missing');
+
+  const formattedMessages = [
+    { role: 'system', parts: [{ text: systemPrompt }] },
+    ...messages.map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }]
+    }))
+  ];
+
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${GEMINI_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: formattedMessages })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `Gemini API Error: ${res.status}`);
+    }
+
+    const data = await res.json();
+    if (!data.candidates?.[0]?.content?.parts?.[0]?.text) {
+      throw new Error('Empty response from Gemini');
+    }
+    return data.candidates[0].content.parts[0].text;
+  } catch (e) {
+    console.error('❌ Gemini API Error:', e.message);
+    throw e;
+  }
+}
+
+// DeepSeek API Call
+async function callDeepSeek(messages, systemPrompt) {
+  if (!DEEPSEEK_KEY) throw new Error('DeepSeek key missing');
+
+  const formattedMessages = [
+    { role: 'system', content: systemPrompt },
+    ...messages.map(m => ({ role: m.role, content: m.content }))
+  ];
+
+  try {
+    const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${DEEPSEEK_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: formattedMessages,
+        temperature: 0.7,
+        max_tokens: 1200
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `DeepSeek API Error: ${res.status}`);
+    }
+
+    const data = await res.json();
+    if (!data.choices?.[0]?.message?.content) {
+      throw new Error('Empty response from DeepSeek');
+    }
+    return data.choices[0].message.content;
+  } catch (e) {
+    console.error('❌ DeepSeek API Error:', e.message);
+    throw e;
+  }
+}
+
+// Groq API Call (existing logic)
+async function callGroq(messages, systemPrompt) {
+  if (!GROQ_KEY) throw new Error('Groq key missing');
+
+  const formattedMessages = [
+    { role: 'system', content: systemPrompt },
+    ...messages.map(m => ({ role: m.role, content: m.content }))
+  ];
+
+  const MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+  let lastError = '';
+
+  for (const model of MODELS) {
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model,
+          messages: formattedMessages,
+          temperature: 0.75,
+          max_completion_tokens: 800
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const errMsg = err.error?.message || `API Error: ${res.status}`;
+        if (res.status === 429 || errMsg.includes('decommissioned') || errMsg.includes('not exist')) {
+          lastError = `Skipped ${model}.`;
+          continue;
+        }
+        throw new Error(errMsg);
+      }
+
+      const data = await res.json();
+      if (!data.choices?.[0]?.message?.content) {
+        throw new Error('Empty response from Groq');
+      }
+      return data.choices[0].message.content;
+    } catch (e) {
+      lastError = e.message;
+      if (e.message.includes('Rate limit') || e.message.includes('decommissioned')) continue;
+      throw e;
+    }
+  }
+
+  throw new Error(lastError || 'Groq models exhausted');
+}
 
 const SYSTEM_PROMPT = `You are DEEP MIND AI NEURAL INSIDER — an Elite Pro Trading Intelligence Engine. Talk to "Nagraj Bhai" in NATIVE HINGLISH.
 You operate at INSTITUTIONAL LEVEL using these frameworks:
@@ -101,12 +262,13 @@ async function getMarketIntelContext() {
 }
 
 // ========================================
-// MAIN AI CHAT FUNCTION — Groq
+// MAIN AI CHAT FUNCTION — Multi-AI Router
 // ========================================
 export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usdInrRate) {
-  if (!GROQ_KEY) {
-    return `⚠️ <b>AI Engine Offline</b>\n\nGroq API Key set nahi hai. Web app settings (⚙️) se key save karo.`;
-  }
+  // Build context
+  const portfolioCtx = buildPortfolioContext(portfolio, livePrices, usdInrRate);
+  const intelCtx = await getMarketIntelContext();
+  const systemPrompt = `${SYSTEM_PROMPT}\n\n${portfolioCtx}\n${intelCtx}`;
 
   // Get/create conversation history
   const idStr = String(chatId);
@@ -114,92 +276,50 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
     chatHistory.set(idStr, []);
   }
   const history = chatHistory.get(idStr);
-
-  // Add user message
   history.push({ role: 'user', content: userMessage });
 
-  // Build context
-  const portfolioCtx = buildPortfolioContext(portfolio, livePrices, usdInrRate);
-  const intelCtx = await getMarketIntelContext();
-
-  // Build Groq conversation format
-  const groqMessages = [
-    { role: 'system', content: `${SYSTEM_PROMPT}\n\n${portfolioCtx}\n${intelCtx}` }
-  ];
-  const recentHistory = history.slice(-MAX_HISTORY);
-  for (const m of recentHistory) {
-    groqMessages.push({
-      role: m.role === 'model' ? 'assistant' : 'user',
-      content: m.content
-    });
-  }
+  // Detect intent and route to optimal AI
+  const intent = detectIntent(userMessage);
+  const recentHistory = history.slice(-MAX_HISTORY).map(m => ({
+    role: m.role === 'model' ? 'assistant' : 'user',
+    content: m.content
+  }));
 
   try {
-    const MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it', 'llama3-70b-8192'];
     let aiText = '';
-    let lastError = '';
+    
+    // Route to appropriate AI
+    if (intent === 'gemini') {
+      aiText = await callGemini(recentHistory, systemPrompt);
+    } else if (intent === 'deepseek') {
+      aiText = await callDeepSeek(recentHistory, systemPrompt);
+    } else {
+      aiText = await callGroq(recentHistory, systemPrompt);
+    }
 
-    for (const model of MODELS) {
-      try {
-        const res = await fetch(`https://api.groq.com/openai/v1/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${GROQ_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: model,
-            messages: groqMessages,
-            temperature: 0.75,
-            max_completion_tokens: 800
-          }),
-          signal: AbortSignal.timeout(60000)
-        });
+    if (!aiText) throw new Error('AI returned empty response');
 
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          const errMsg = err.error?.message || `API Error: ${res.status}`;
-          if (res.status === 429 || errMsg.includes('decommissioned') || errMsg.includes('not exist')) {
-            console.warn(`⚠️ Skipping ${model}: ${errMsg}`);
-            lastError = `Skipped ${model}.`;
-            continue; // Fallback
-          }
-          throw new Error(errMsg);
-        }
+    // Clean up thinking tags and convert markdown to HTML for Telegram
+    let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
-        const data = await res.json();
-        aiText = data.choices?.[0]?.message?.content || '';
-        break; // Success
-      } catch (e) {
-        lastError = e.message;
-        if (e.message.includes('Rate limit') || e.message.includes('decommissioned') || e.message.includes('429')) continue;
-        throw e;
+    // Convert markdown to Telegram HTML tags
+    safeText = safeText
+      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+      .replace(/\*(.+?)\*/g, '<i>$1</i>')
+      .replace(/_(.+?)_/g, '<i>$1</i>')
+      .replace(/`(.+?)`/g, '<code>$1</code>');
+
+    // Escape raw < > that are NOT Telegram HTML tags
+    const allowedTags = /<\/?(?:b|i|code|pre|a|s|u|em|strong|tg-spoiler|blockquote)>/gi;
+    const parts = safeText.split(allowedTags);
+    const htmlText = parts.map(part => {
+      if (allowedTags.test(part)) {
+        allowedTags.lastIndex = 0;
+        return part;
       }
-    }
-
-    if (!aiText) throw new Error(lastError || 'All AI models exhausted their daily limits!');
-
-  // Clean up thinking tags and convert markdown to HTML for Telegram
-  let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-
-  // First convert markdown to Telegram HTML tags (before escaping)
-  safeText = safeText
-    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-    .replace(/\*(.+?)\*/g, '<i>$1</i>')
-    .replace(/_(.+?)_/g, '<i>$1</i>')
-    .replace(/`(.+?)`/g, '<code>$1</code>');
-
-  // Now escape remaining raw < > that are NOT Telegram HTML tags
-  const allowedTags = /<\/?(?:b|i|code|pre|a|s|u|em|strong|tg-spoiler|blockquote)>/gi;
-  const parts = safeText.split(allowedTags);
-  const htmlText = parts.map(part => {
-    if (allowedTags.test(part)) {
       allowedTags.lastIndex = 0;
-      return part;
-    }
-    allowedTags.lastIndex = 0;
-    return part.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }).join('');
+      return part.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }).join('');
 
     // Save to history
     history.push({ role: 'model', content: aiText });
@@ -211,7 +331,7 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
 
     return htmlText;
   } catch (e) {
-    console.error('❌ Groq API Error:', e.message);
+    console.error(`❌ ${intent.toUpperCase()} AI Error:`, e.message);
     return `❌ <b>AI Error:</b> ${e.message}\n\n<i>Retry karo ya thodi der baad try karo.</i>`;
   }
 }
