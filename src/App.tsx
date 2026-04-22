@@ -27,6 +27,9 @@ import { SentimentHeatmap } from './components/SentimentHeatmap';
 import { MLPricePredictor } from './components/MLPricePredictor';
 import { FIIDIILiveTracker } from './components/FIIDIILiveTracker';
 import { TrimRules } from './components/TrimRules';
+import { QuantumPortfolio } from './components/QuantumPortfolio';
+import { QuantumSignals } from './components/QuantumSignals';
+import { SuperIntelligence } from './components/SuperIntelligence';
 
 
 /**
@@ -918,7 +921,7 @@ if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
 
             {/* Tabs */}
             <div className="flex gap-0.5 glass-card p-1 rounded-2xl">
-              {(['dashboard', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
+              {(['dashboard', 'quantum', 'signals', 'intelligence', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -927,12 +930,15 @@ if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
                     : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
                     }`}
                 >
-                  {tab === 'dashboard' && '📊 Dashboard'}
-                  {tab === 'portfolio' && '💼 Portfolio'}
-                  {tab === 'planner'   && '🎯 Planner'}
-                  {tab === 'macro'     && '🌍 Risk'}
-                  {tab === 'tools'     && '⚡ AI Tools'}
-                  {tab === 'trim'      && '✂️ Trim Rules'}
+{tab === 'dashboard' && '📊 Dashboard'}
+{tab === 'quantum' && '⚛️ Quantum AI'}
+{tab === 'signals' && '🎯 Signals'}
+{tab === 'intelligence' && '🧠 Super AI'}
+{tab === 'portfolio' && '💼 Portfolio'}
+{tab === 'planner' && '🎯 Planner'}
+{tab === 'macro' && '🌍 Risk'}
+{tab === 'tools' && '⚡ AI Tools'}
+{tab === 'trim' && '✂️ Trim Rules'}
                 </button>
               ))}
             </div>
