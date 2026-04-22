@@ -4,23 +4,23 @@ import { motion, AnimatePresence } from 'motion/react';
 
 // API Configurations from Environment Variables
 const CONFIG = {
-  // Tavily Search API (Real-time Web Data)
-  tavily: {
-    apiKey: import.meta.env.VITE_TAVILY_API_KEY || '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',
-    baseUrl: 'https://api.tavily.com/search'
-  },
-  // NVIDIA API (DeepSeek V3 for Analysis)
-  nvidia: {
-    apiKey: import.meta.env.VITE_NVIDIA_API_KEY || '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',
-    baseUrl: import.meta.env.VITE_NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
-    model: import.meta.env.VITE_NVIDIA_MODEL || 'deepseek-ai/deepseek-v3.2'
-  },
-  // Groq API (Fast Responses)
-  groq: {
-    apiKey: import.meta.env.VITE_GROQ_API_KEY || '',
-    baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
-    model: 'llama-3.3-70b-versatile'
-  }
+// Tavily Search API (Real-time Web Data)
+tavily: {
+apiKey: import.meta.env.VITE_TAVILY_API_KEY || 'tvly-dev-1Ck5et_vJzTUOAaAJVAakimgoGhHhiWTBvT7THrA9rU7SU7CO',
+baseUrl: 'https://api.tavily.com/search'
+},
+// NVIDIA API (DeepSeek V3 for Analysis)
+nvidia: {
+apiKey: import.meta.env.VITE_NVIDIA_API_KEY || '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',
+baseUrl: import.meta.env.VITE_NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
+model: import.meta.env.VITE_NVIDIA_MODEL || 'deepseek-ai/deepseek-v3.2'
+},
+// Groq API (Fast Responses)
+groq: {
+apiKey: import.meta.env.VITE_GROQ_API_KEY || 'gsk_7rTlR1JQwJzQ8vP9mK2LWGzy',
+baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
+model: 'llama-3.3-70b-versatile'
+}
 } as const;
 
 interface ChatMessage {
@@ -96,138 +96,174 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
     }]);
   }, []);
 
-  // Tavily Search (Real-time Web Data)
-  const searchTavily = async (query: string, days = 7) => {
-    try {
-      const res = await fetch(CONFIG.tavily.baseUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: query,
-          max_results: 5,
-          days: days,
-          search_depth: 'advanced'
-        })
-      });
+// Tavily Search (Real-time Web Data)
+const searchTavily = async (query: string, days = 7) => {
+try {
+const res = await fetch(CONFIG.tavily.baseUrl, {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({
+query: query,
+max_results: 5,
+days: days,
+search_depth: 'advanced'
+})
+});
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `Tavily API Error: ${res.status}`);
-      }
+if (!res.ok) {
+const err = await res.json().catch(() => ({}));
+throw new Error(err.error?.message || `Tavily API Error: ${res.status}`);
+}
 
-      const data = await res.json();
-      return data.results || [];
-    } catch (error) {
-      console.error('Tavily Search Error:', error);
-      throw error;
-    }
-  };
+const data = await res.json();
+return data.results || [];
+} catch (error) {
+console.error('Tavily Search Error:', error);
+// Return empty results instead of throwing to prevent complete failure
+return [];
+}
+};
 
-  // NVIDIA DeepSeek V3 (Analysis)
-  const callDeepSeek = async (messages: any[], systemPrompt: string) => {
-    try {
-      const formattedMessages = [
-        { role: 'system', content: systemPrompt },
-        ...messages.map(m => ({ role: m.role, content: m.content }))
-      ];
+// NVIDIA DeepSeek V3 (Analysis)
+const callDeepSeek = async (messages: any[], systemPrompt: string) => {
+try {
+const formattedMessages = [
+{ role: 'system', content: systemPrompt },
+...messages.map(m => ({ role: m.role, content: m.content }))
+];
 
-      const res = await fetch(`${CONFIG.nvidia.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${CONFIG.nvidia.apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: CONFIG.nvidia.model,
-          messages: formattedMessages,
-          temperature: 0.7,
-          max_tokens: 2048
-        })
-      });
+const res = await fetch(`${CONFIG.nvidia.baseUrl}/chat/completions`, {
+method: 'POST',
+headers: {
+'Authorization': `Bearer ${CONFIG.nvidia.apiKey}`,
+'Content-Type': 'application/json'
+},
+body: JSON.stringify({
+model: CONFIG.nvidia.model,
+messages: formattedMessages,
+temperature: 0.7,
+max_tokens: 2048
+})
+});
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `NVIDIA DeepSeek API Error: ${res.status}`);
-      }
+if (!res.ok) {
+const err = await res.json().catch(() => ({}));
+throw new Error(err.error?.message || `NVIDIA DeepSeek API Error: ${res.status}`);
+}
 
-      const data = await res.json();
-      return data.choices?.[0]?.message?.content || '';
-    } catch (error) {
-      console.error('DeepSeek Error:', error);
-      throw error;
-    }
-  };
+const data = await res.json();
+return data.choices?.[0]?.message?.content || '';
+} catch (error) {
+console.error('DeepSeek Error:', error);
+// Return fallback response instead of throwing
+return "DeepSeek API currently unavailable. Using fallback analysis...";
+}
+};
 
-  // Groq (Fast Responses)
-  const callGroq = async (messages: any[], systemPrompt: string) => {
-    try {
-      const apiKey = propGroqKey || '';
-      if (!apiKey) throw new Error('Groq API Key missing');
+// Groq (Fast Responses)
+const callGroq = async (messages: any[], systemPrompt: string) => {
+try {
+const apiKey = propGroqKey || CONFIG.groq.apiKey;
+if (!apiKey) throw new Error('Groq API Key missing');
 
-      const formattedMessages = [
-        { role: 'system', content: systemPrompt },
-        ...messages.map(m => ({ role: m.role, content: m.content }))
-      ];
+const formattedMessages = [
+{ role: 'system', content: systemPrompt },
+...messages.map(m => ({ role: m.role, content: m.content }))
+];
 
-      const res = await fetch(CONFIG.groq.baseUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: CONFIG.groq.model,
-          messages: formattedMessages,
-          temperature: 0.75,
-          max_completion_tokens: 800
-        })
-      });
+const res = await fetch(CONFIG.groq.baseUrl, {
+method: 'POST',
+headers: {
+'Authorization': `Bearer ${apiKey}`,
+'Content-Type': 'application/json'
+},
+body: JSON.stringify({
+model: CONFIG.groq.model,
+messages: formattedMessages,
+temperature: 0.75,
+max_completion_tokens: 800
+})
+});
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `Groq API Error: ${res.status}`);
-      }
+if (!res.ok) {
+const err = await res.json().catch(() => ({}));
+throw new Error(err.error?.message || `Groq API Error: ${res.status}`);
+}
 
-      const data = await res.json();
-      return data.choices?.[0]?.message?.content || '';
-    } catch (error) {
-      console.error('Groq Error:', error);
-      throw error;
-    }
-  };
+const data = await res.json();
+return data.choices?.[0]?.message?.content || '';
+} catch (error) {
+console.error('Groq Error:', error);
+// Return fallback response
+return "Groq API unavailable. Using fallback response...";
+}
+};
 
-  // Main AI routing with Tavily + DeepSeek combination
-  const callAI = async (userMessage: string, model: string) => {
-    const systemPrompt = `You are DEEP MIND AI — Quantum Trading Assistant. Provide expert-level trading insights, market analysis, and portfolio recommendations. Use Hinglish (Hindi + English) for Indian users. Be concise but informative.`;
-    
-    const recentMessages = chatMessages.slice(-6).map(m => ({
-      role: m.role === 'model' || m.role === 'system' ? 'assistant' : 'user',
-      content: m.text
-    }));
+// Main AI routing with Tavily + DeepSeek combination
+const callAI = async (userMessage: string, model: string) => {
+const systemPrompt = `You are DEEP MIND AI — Quantum Trading Assistant. Provide expert-level trading insights, market analysis, and portfolio recommendations. Use Hinglish (Hindi + English) for Indian users. Be concise but informative.`;
 
-    // Tavily + DeepSeek combination for real-time queries
-    if (model === 'tavily' || model === 'auto') {
-      try {
-        // Step 1: Search web for real-time data
-        const searchResults = await searchTavily(userMessage, 7);
-        
-        let searchContext = '';
-        if (searchResults.length > 0) {
-          searchContext = '\n\n--- REAL-TIME WEB DATA (Tavily Search) ---\n';
-          searchResults.forEach((result: any, i: number) => {
-            searchContext += `${i + 1}. **${result.title || 'Result'}**\n   ${result.content}\n   Source: ${result.url || 'Web'}\n\n`;
-          });
-        }
+const recentMessages = chatMessages.slice(-6).map(m => ({
+role: m.role === 'model' || m.role === 'system' ? 'assistant' : 'user',
+content: m.text
+}));
 
-        // Step 2: Use DeepSeek V3 for analysis with search context
-        const fullSystemPrompt = `${systemPrompt}\n\nUse the following real-time web data to provide accurate, up-to-date answers:${searchContext}`;
-        const aiText = await callDeepSeek(recentMessages, fullSystemPrompt);
-        
-        return {
-          text: aiText,
-          model: 'deepseek' as const,
-          sources: searchResults.map((r: any) => ({ title: r.title, url: r.url }))
-        };
+// Tavily + DeepSeek combination for real-time queries
+if (model === 'tavily' || model === 'auto') {
+try {
+// Step 1: Search web for real-time data
+const searchResults = await searchTavily(userMessage, 7);
+
+let searchContext = '';
+if (searchResults.length > 0) {
+searchContext = '\n\n--- REAL-TIME WEB DATA (Tavily Search) ---\n';
+searchResults.forEach((result: any, i: number) => {
+searchContext += `${i + 1}. **${result.title || 'Result'}**\n ${result.content}\n Source: ${result.url || 'Web'}\n\n`;
+});
+}
+
+// Step 2: Use DeepSeek V3 for analysis with search context
+const fullSystemPrompt = `${systemPrompt}\n\nUse the following real-time web data to provide accurate, up-to-date answers:${searchContext}`;
+const aiText = await callDeepSeek(recentMessages, fullSystemPrompt);
+
+return {
+text: aiText,
+model: 'deepseek' as const,
+sources: searchResults.map((r: any) => ({ title: r.title, url: r.url }))
+};
+} catch (error) {
+// Fallback to Groq if Tavily/DeepSeek fails
+console.log('Tavily/DeepSeek failed, using Groq fallback');
+try {
+const aiText = await callGroq(recentMessages, systemPrompt);
+return { text: aiText, model: 'groq' as const };
+} catch (groqError) {
+// If both fail, return a helpful fallback message
+return { text: `🤖 **AI Response:**\n\nMarket data analyze karne me temporary issue aa raha hai. Aapka query: "${userMessage}"\n\nRetry karein ya specific asset puchein.`, model: 'groq' as const };
+}
+}
+}
+
+// Direct DeepSeek for analysis
+if (model === 'deepseek') {
+try {
+const aiText = await callDeepSeek(recentMessages, systemPrompt);
+return { text: aiText, model: 'deepseek' as const };
+} catch (error) {
+// Fallback to Groq
+const aiText = await callGroq(recentMessages, systemPrompt);
+return { text: aiText, model: 'groq' as const };
+}
+}
+
+// Groq for fast responses
+if (model === 'groq') {
+const aiText = await callGroq(recentMessages, systemPrompt);
+return { text: aiText, model: 'groq' as const };
+}
+
+throw new Error('Invalid model selected');
+};
       } catch (error) {
         // Fallback to Groq if Tavily/DeepSeek fails
         console.log('Tavily/DeepSeek failed, using Groq fallback');
@@ -289,14 +325,21 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
         model: result.model,
         sources: result.sources
       } as ChatMessage]);
-    } catch (error) {
-      setChatMessages(prev => [...prev, {
-        role: 'system',
-        text: `❌ **AI Error:** ${error instanceof Error ? error.message : 'Unknown error'}\n\nPlease try again or check your API keys.`,
-        timestamp: Date.now(),
-        model: 'system'
-      }]);
-    } finally {
+} catch (error) {
+const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+// Check if it's a network error vs API key error
+const isAuthError = errorMsg.toLowerCase().includes('auth') || errorMsg.toLowerCase().includes('key');
+const helpfulMsg = isAuthError
+? `🔑 **API Key Issue:** ${errorMsg}\n\nSettings panel me API key check karein.`
+: `⚠️ **AI Response:** ${errorMsg}\n\nNetwork check karein ya retry karein.`;
+
+setChatMessages(prev => [...prev, {
+role: 'system',
+text: `❌ ${helpfulMsg}`,
+timestamp: Date.now(),
+model: 'system'
+}]);
+} finally {
       setIsThinking(false);
     }
   };
