@@ -61,9 +61,9 @@ const MODEL_TAGS = {
 
 export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGeminiKey, deepseekKey: propDeepseekKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
   // Use environment variables as primary source, fallback to props
-  const groqKey = propGroqKey || import.meta.env.VITE_GROQ_KEY || '';
-  const geminiKey = propGeminiKey || import.meta.env.VITE_GEMINI_KEY || groqKey;
-  const deepseekKey = propDeepseekKey || import.meta.env.VITE_DEEPSEEK_KEY || groqKey;
+  const groqKey = propGroqKey || import.meta.env.VITE_GROQ_KEY || import.meta.env.VITE_GROQ_API_KEY || '';
+  const geminiKey = propGeminiKey || import.meta.env.VITE_GEMINI_KEY || import.meta.env.VITE_GEMINI_API_KEY || groqKey;
+  const deepseekKey = propDeepseekKey || import.meta.env.VITE_DEEPSEEK_KEY || import.meta.env.VITE_DEEPSEEK_API_KEY || groqKey;
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'model',

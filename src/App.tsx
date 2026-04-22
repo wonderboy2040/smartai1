@@ -1287,9 +1287,53 @@ if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
               </div>
             </div>
           </div>
-        )}
+)}
 
-        {activeTab === 'portfolio' && (
+      {/* Quantum AI Tab */}
+      {activeTab === 'quantum' && (
+        <div className="space-y-5 animate-fade-in">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-black gradient-text-cyan font-display">⚛️ Quantum AI Dashboard</h2>
+          </div>
+          <QuantumPortfolio 
+            portfolio={portfolio}
+            livePrices={livePrices}
+            usdInrRate={usdInrRate}
+            totalValue={metrics.totalValue}
+            totalPL={metrics.totalPL}
+            plPct={metrics.plPct}
+            todayPL={metrics.todayPL}
+          />
+        </div>
+      )}
+
+      {/* Signals Tab */}
+      {activeTab === 'signals' && (
+        <div className="space-y-5 animate-fade-in">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-black gradient-text-cyan font-display">🎯 AI Signals</h2>
+          </div>
+          <QuantumSignals 
+            livePrices={livePrices}
+            portfolioSymbols={portfolio.map(p => p.symbol)}
+          />
+        </div>
+      )}
+
+      {/* Super Intelligence Tab */}
+      {activeTab === 'intelligence' && (
+        <div className="space-y-5 animate-fade-in">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-black gradient-text-cyan font-display">🧠 Super Intelligence</h2>
+          </div>
+          <SuperIntelligence 
+            livePrices={livePrices}
+            portfolioSymbols={portfolio.map(p => p.symbol)}
+          />
+        </div>
+      )}
+
+      {activeTab === 'portfolio' && (
           <div className="space-y-5 animate-fade-in">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-2xl font-black gradient-text-cyan font-display">
