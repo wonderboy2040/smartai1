@@ -27,6 +27,9 @@ import { SentimentHeatmap } from './components/SentimentHeatmap';
 import { MLPricePredictor } from './components/MLPricePredictor';
 import { FIIDIILiveTracker } from './components/FIIDIILiveTracker';
 import { TrimRules } from './components/TrimRules';
+import { QuantumPortfolio } from './components/QuantumPortfolio';
+import { QuantumSignals } from './components/QuantumSignals';
+import { SuperIntelligence } from './components/SuperIntelligence';
 
 
 /**
@@ -214,12 +217,12 @@ export default function App() {
         const result = mergePriceData(existing, data);
         if (result !== existing) { merged[key] = result; changed = true; }
       }
-// Throttle localStorage writes to max every 5s to avoid main thread blocking
-    const now = Date.now();
-    if (changed && now - lastLocalSaveRef.current > 5000) {
-      lastLocalSaveRef.current = now;
-      try { secureStorage.setItem('livePrices', JSON.stringify(merged)); } catch { /* quota */ }
-    }
+      // Throttle localStorage writes to max every 5s to avoid main thread blocking
+      const now = Date.now();
+      if (changed && now - lastLocalSaveRef.current > 5000) {
+        lastLocalSaveRef.current = now;
+        try { secureStorage.setItem('livePrices', JSON.stringify(merged)); } catch { /* quota */ }
+      }
       return changed ? merged : prev;
     });
   }, []);
@@ -635,22 +638,22 @@ export default function App() {
   // Metrics calculation memoization
   const metrics = useMemo(() => calculateMetrics(), [calculateMetrics]);
 
-// Track meaningful price changes to regenerate AI context
-const priceUpdateCounterRef = useRef(0);
-const [contextTrigger, setContextTrigger] = useState(0);
-const isComponentMountedRef = useRef(true);
+  // Track meaningful price changes to regenerate AI context
+  const priceUpdateCounterRef = useRef(0);
+  const [contextTrigger, setContextTrigger] = useState(0);
+  const isComponentMountedRef = useRef(true);
 
-// Cleanup on unmount to prevent memory leaks
-useEffect(() => {
-return () => {
-isComponentMountedRef.current = false;
-if (priceFlushRef.current) clearInterval(priceFlushRef.current);
-if (telegramIntervalRef.current) clearInterval(telegramIntervalRef.current);
-if (forexIntervalRef.current) clearInterval(forexIntervalRef.current);
-if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
-};
-// eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
+  // Cleanup on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      isComponentMountedRef.current = false;
+      if (priceFlushRef.current) clearInterval(priceFlushRef.current);
+      if (telegramIntervalRef.current) clearInterval(telegramIntervalRef.current);
+      if (forexIntervalRef.current) clearInterval(forexIntervalRef.current);
+      if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Increment context trigger when livePrices change meaningfully (throttled)
   useEffect(() => {
@@ -918,7 +921,7 @@ if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
 
             {/* Tabs */}
             <div className="flex gap-0.5 glass-card p-1 rounded-2xl">
-              {(['dashboard', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
+              {(['dashboard', 'quantum', 'signals', 'intelligence', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -928,11 +931,14 @@ if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
                     }`}
                 >
                   {tab === 'dashboard' && '📊 Dashboard'}
+                  {tab === 'quantum' && '⚛️ Quantum AI'}
+                  {tab === 'signals' && '🎯 Signals'}
+                  {tab === 'intelligence' && '🧠 Super AI'}
                   {tab === 'portfolio' && '💼 Portfolio'}
-                  {tab === 'planner'   && '🎯 Planner'}
-                  {tab === 'macro'     && '🌍 Risk'}
-                  {tab === 'tools'     && '⚡ AI Tools'}
-                  {tab === 'trim'      && '✂️ Trim Rules'}
+                  {tab === 'planner' && '🎯 Planner'}
+                  {tab === 'macro' && '🌍 Risk'}
+                  {tab === 'tools' && '⚡ AI Tools'}
+                  {tab === 'trim' && '✂️ Trim Rules'}
                 </button>
               ))}
             </div>

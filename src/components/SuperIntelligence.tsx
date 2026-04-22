@@ -183,8 +183,126 @@ export function SuperIntelligence({ livePrices, portfolioSymbols }: SuperIntelli
         </div>
       </div>
 
-      {/* Predictions Grid */}
+        {/* Predictions Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {isAnalyzing ? (
           <div className="glass-card rounded-2xl p-12 text-center col-span-full">
-            <div className="text-6xl mb
+            <div className="text-6xl mb-4 animate-spin">🧠</div>
+            <div className="text-indigo-400 font-bold">SUPER INTELLIGENCE ANALYZING...</div>
+            <div className="text-slate-500 text-sm mt-2">Running quantum predictions</div>
+          </div>
+        ) : predictions.length === 0 ? (
+          <div className="glass-card rounded-2xl p-12 text-center col-span-full">
+            <div className="text-6xl mb-4">📊</div>
+            <div className="text-slate-400 font-bold">No predictions available</div>
+            <div className="text-slate-500 text-sm mt-2">Add assets to analyze</div>
+          </div>
+        ) : (
+          predictions.map((pred, idx) => (
+            <div 
+              key={pred.symbol}
+              className="glass-card rounded-2xl p-5 border border-slate-700/50 hover:border-indigo-500/30 transition-all"
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-2xl">{getTrendIcon(pred.trend)}</span>
+                    <h3 className="text-xl font-black text-white">{pred.symbol}</h3>
+                  </div>
+                  <div className="flex items-center gap-3 text-sm">
+                    <div className="text-slate-400">
+                      Current: <span className="text-white font-mono">${pred.currentPrice.toFixed(2)}</span>
+                    </div>
+                    <div className="text-slate-400">
+                      Predicted: <span className={`${pred.predictedChange >= 0 ? 'text-emerald-400' : 'text-red-400'} font-mono`}>
+                        ${pred.predictedPrice.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className={`text-3xl font-black ${getAIScoreColor(pred.aiScore)}`}>
+                    {pred.aiScore}
+                  </div>
+                  <div className="text-xs text-slate-500">AI Score</div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                <div className="bg-slate-900/60 rounded-lg p-3 text-center">
+                  <div className="text-[10px] text-slate-500 uppercase">Support</div>
+                  <div className="text-lg font-black text-emerald-400 font-mono">${pred.support.toFixed(2)}</div>
+                </div>
+                <div className="bg-slate-900/60 rounded-lg p-3 text-center">
+                  <div className="text-[10px] text-slate-500 uppercase">Resistance</div>
+                  <div className="text-lg font-black text-red-400 font-mono">${pred.resistance.toFixed(2)}</div>
+                </div>
+                <div className="bg-slate-900/60 rounded-lg p-3 text-center">
+                  <div className="text-[10px] text-slate-500 uppercase">Change</div>
+                  <div className={`text-lg font-black font-mono ${pred.predictedChange >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {pred.predictedChange >= 0 ? '+' : ''}{pred.predictedChange.toFixed(1)}%
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-4 border-t border-slate-700/50">
+                <div className="flex items-center gap-3">
+                  <div className={`px-3 py-1 rounded-full text-xs font-bold ${
+                    pred.trend === 'BULLISH' ? 'bg-emerald-500/20 text-emerald-400' :
+                    pred.trend === 'BEARISH' ? 'bg-red-500/20 text-red-400' :
+                    'bg-amber-500/20 text-amber-400'
+                  }`}>
+                    {pred.trend}
+                  </div>
+                  <div className="text-xs text-slate-400">
+                    Confidence: <span className="text-cyan-400">{pred.confidence}%</span>
+                  </div>
+                </div>
+                <div className="text-xs text-slate-500">
+                  {pred.timeframe} Prediction
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* AI Insights */}
+      <div className="glass-card rounded-2xl p-6 border-purple-500/20 bg-gradient-to-br from-purple-500/5 to-pink-500/5">
+        <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+          <span className="text-xl">💡</span>
+          Quantum AI Insights
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-slate-900/60 rounded-xl p-4">
+            <div className="text-slate-500 text-xs mb-2">Top Pick</div>
+            <div className="text-lg font-black text-emerald-400">
+              {predictions.length > 0 ? predictions[0]?.symbol : '---'}
+            </div>
+            <div className="text-xs text-slate-400 mt-1">
+              Highest AI Score
+            </div>
+          </div>
+          <div className="bg-slate-900/60 rounded-xl p-4">
+            <div className="text-slate-500 text-xs mb-2">Market Sentiment</div>
+            <div className="text-lg font-black text-cyan-400">
+              {predictions.filter(p => p.trend === 'BULLISH').length > predictions.filter(p => p.trend === 'BEARISH').length ? 'BULLISH' : 'BEARISH'}
+            </div>
+            <div className="text-xs text-slate-400 mt-1">
+              Portfolio Bias
+            </div>
+          </div>
+          <div className="bg-slate-900/60 rounded-xl p-4">
+            <div className="text-slate-500 text-xs mb-2">Risk Level</div>
+            <div className="text-lg font-black text-amber-400">
+              {predictions.reduce((s, p) => s + p.confidence, 0) / predictions.length > 0 ? 'MODERATE' : 'LOW'}
+            </div>
+            <div className="text-xs text-slate-400 mt-1">
+              Based on Volatility
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
