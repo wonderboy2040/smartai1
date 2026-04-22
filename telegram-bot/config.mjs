@@ -24,6 +24,23 @@ export const NVIDIA_DEEPSEEK_MODEL = process.env.NVIDIA_DEEPSEEK_MODEL || "deeps
 export let GEMINI_KEY = process.env.GEMINI_KEY || TAVILY_API_KEY; // Tavily replaces Gemini
 export let DEEPSEEK_KEY = process.env.DEEPSEEK_KEY || NVIDIA_API_KEY;
 
+// Validate API keys at startup
+const missingKeys = [];
+if (!TAVILY_API_KEY || !TAVILY_API_KEY.startsWith('tvly-')) missingKeys.push('TAVILY_API_KEY');
+if (!NVIDIA_API_KEY || !NVIDIA_API_KEY.startsWith('nvapi-')) missingKeys.push('NVIDIA_API_KEY');
+if (!GROQ_KEY || !GROQ_KEY.startsWith('gsk_')) missingKeys.push('GROQ_KEY (optional)');
+
+if (missingKeys.length > 0 && missingKeys[0] !== 'GROQ_KEY (optional)') {
+  console.warn('⚠️  WARNING: Some API keys are missing or invalid:');
+  console.warn('  ' + missingKeys.join(', '));
+  console.warn('Some features may not work properly.');
+} else {
+  console.log('✅ All required API keys validated successfully');
+  if (TAVILY_API_KEY) console.log('  ✓ Tavily Search API configured');
+  if (NVIDIA_API_KEY) console.log('  ✓ NVIDIA DeepSeek V3 configured');
+  if (GROQ_KEY) console.log('  ✓ Groq Llama-3 configured');
+}
+
 export function setGroqKey(key) { GROQ_KEY = key; }
 export function setGeminiKey(key) { GEMINI_KEY = key; }
 export function setDeepSeekKey(key) { DEEPSEEK_KEY = key; }

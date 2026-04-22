@@ -2,21 +2,22 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-// API Configurations
+// API Configurations from Environment Variables
 const CONFIG = {
   // Tavily Search API (Real-time Web Data)
   tavily: {
-    apiKey: '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',
+    apiKey: import.meta.env.VITE_TAVILY_API_KEY || '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',
     baseUrl: 'https://api.tavily.com/search'
   },
   // NVIDIA API (DeepSeek V3 for Analysis)
   nvidia: {
-    apiKey: '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',
-    baseUrl: 'https://integrate.api.nvidia.com/v1',
-    model: 'deepseek-ai/deepseek-v3.2'
+    apiKey: import.meta.env.VITE_NVIDIA_API_KEY || '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',
+    baseUrl: import.meta.env.VITE_NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
+    model: import.meta.env.VITE_NVIDIA_MODEL || 'deepseek-ai/deepseek-v3.2'
   },
   // Groq API (Fast Responses)
   groq: {
+    apiKey: import.meta.env.VITE_GROQ_API_KEY || '',
     baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
     model: 'llama-3.3-70b-versatile'
   }
@@ -324,7 +325,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
             initial={{ opacity: 0, y: 20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            className="fixed bottom-0 left-0 right-0 sm:bottom-24 sm:right-6 sm:w-[480px] h-[85vh] sm:h-[720px] max-h-[85vh] shadow-[0_0_50px_rgba(6,182,212,0.1)] z-[60] flex flex-col overflow-hidden sm:rounded-3xl"
+            className="fixed bottom-0 left-0 right-0 sm:bottom-24 sm:left-1/2 sm:right-auto sm:w-[520px] sm:-translate-x-1/2 h-[85vh] sm:h-[700px] max-h-[85vh] shadow-[0_0_50px_rgba(6,182,212,0.2)] z-[60] flex flex-col overflow-hidden sm:rounded-3xl border border-cyan-500/20"
           >
             <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-xl border border-cyan-500/20 rounded-3xl" />
 
