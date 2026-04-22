@@ -9,6 +9,7 @@ import {
   syncToCloud, loadFromCloud, sendTelegramAlert,
   syncGroqKeyToCloud, loadGroqKeyFromCloud
 } from './utils/api';
+import { secureStorage } from './utils/secureStorage';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from './utils/tvWebsocket';
 import {
   isAnyMarketOpen, getMarketStatus, analyzeAsset,
@@ -72,7 +73,7 @@ export default function App() {
   const [portfolio, setPortfolio] = useState<Position[]>([]);
   const [livePrices, setLivePrices] = useState<Record<string, PriceData>>({});
   const [usdInrRate, setUsdInrRate] = useState(83.5);
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('theme') as 'dark' | 'light') || 'dark');
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (secureStorage.getItem('theme') as 'dark' | 'light') || 'dark');
   const [currentSymbol, setCurrentSymbol] = useState('');
   const [currentMarket, setCurrentMarket] = useState<'IN' | 'US'>('IN');
   const [symbolInput, setSymbolInput] = useState('');
@@ -94,7 +95,7 @@ export default function App() {
   const [showAddModal, setShowAddModal] = useState(false);
 
   // Settings / Keys State
-  const [groqKey, setGroqKey] = useState(() => localStorage.getItem('WEALTH_AI_GROQ') || '');
+  const [groqKey, setGroqKey] = useState(() => secureStorage.getItem('WEALTH_AI_GROQ') || '');
   const [showSettings, setShowSettings] = useState(false);
 
   // Add Modal State
@@ -133,12 +134,12 @@ export default function App() {
 
   // Initialize
   useEffect(() => {
-    const auth = localStorage.getItem('authDone');
+    const auth = secureStorage.getItem('authDone');
     if (auth === 'true') {
       setIsAuthenticated(true);
     }
     // Ensure Groq key is persisted
-    const savedKey = localStorage.getItem('WEALTH_AI_GROQ');
+    const savedKey = secureStorage.getItem('WEALTH_AI_GROQ');
     if (!savedKey) {
       // Key must be set via Settings panel or cloud sync
     }
@@ -152,10 +153,10 @@ export default function App() {
 
     // Load from localStorage
     try {
-      const saved = localStorage.getItem('portfolio');
+      const saved = secureStorage.getItem('portfolio');
       if (saved) setPortfolio(JSON.parse(saved));
 
-      const savedPrices = localStorage.getItem('livePrices');
+      const savedPrices = secureStorage.getItem('livePrices');
       if (savedPrices) setLivePrices(JSON.parse(savedPrices));
     } catch (e) { }
 
@@ -163,7 +164,7 @@ export default function App() {
     loadFromCloud().then(data => {
       if (data && data.length > 0) {
         setPortfolio(data);
-        localStorage.setItem('portfolio', JSON.stringify(data));
+        secureStorage.setItem('portfolio', JSON.stringify(data));
       }
     }).catch(() => console.warn('Cloud sync unavailable'));
 
@@ -171,15 +172,15 @@ export default function App() {
     loadGroqKeyFromCloud().then(cloudKey => {
       if (cloudKey) {
         setGroqKey(cloudKey);
-        localStorage.setItem('WEALTH_AI_GROQ', cloudKey);
+        secureStorage.setItem('WEALTH_AI_GROQ', cloudKey);
       } else {
-        const localKey = localStorage.getItem('WEALTH_AI_GROQ');
+        const localKey = secureStorage.getItem('WEALTH_AI_GROQ');
         if (localKey) {
           syncGroqKeyToCloud(localKey).catch(() => { });
         }
       }
     }).catch(() => {
-      const localKey = localStorage.getItem('WEALTH_AI_GROQ');
+      const localKey = secureStorage.getItem('WEALTH_AI_GROQ');
       if (localKey) {
         syncGroqKeyToCloud(localKey).catch(() => { });
         setGroqKey(localKey);
@@ -213,12 +214,12 @@ export default function App() {
         const result = mergePriceData(existing, data);
         if (result !== existing) { merged[key] = result; changed = true; }
       }
-      // Throttle localStorage writes to max every 5s to avoid main thread blocking
-      const now = Date.now();
-      if (changed && now - lastLocalSaveRef.current > 5000) {
-        lastLocalSaveRef.current = now;
-        try { localStorage.setItem('livePrices', JSON.stringify(merged)); } catch { /* quota */ }
-      }
+// Throttle localStorage writes to max every 5s to avoid main thread blocking
+    const now = Date.now();
+    if (changed && now - lastLocalSaveRef.current > 5000) {
+      lastLocalSaveRef.current = now;
+      try { secureStorage.setItem('livePrices', JSON.stringify(merged)); } catch { /* quota */ }
+    }
       return changed ? merged : prev;
     });
   }, []);
@@ -289,7 +290,7 @@ export default function App() {
   // Save portfolio to localStorage & Handle Initial Symbol
   useEffect(() => {
     if (portfolio.length > 0) {
-      localStorage.setItem('portfolio', JSON.stringify(portfolio));
+      secureStorage.setItem('portfolio', JSON.stringify(portfolio));
       if (!currentSymbol) {
         setCurrentSymbol(portfolio[0].symbol);
         setCurrentMarket(portfolio[0].market as 'IN' | 'US');
@@ -306,7 +307,7 @@ export default function App() {
   // Verify PIN
   const verifyPin = () => {
     if (pinInput === SECURE_PIN) {
-      localStorage.setItem('authDone', 'true');
+      secureStorage.setItem('authDone', 'true');
       setIsAuthenticated(true);
     } else {
       alert('❌ Security Access Denied. Galat PIN!');
@@ -316,7 +317,7 @@ export default function App() {
 
   // Logout
   const logout = () => {
-    localStorage.removeItem('authDone');
+    secureStorage.removeItem('authDone');
     setIsAuthenticated(false);
     setPinInput('');
   };
@@ -462,11 +463,12 @@ export default function App() {
     if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
     cloudSyncTimerRef.current = window.setTimeout(() => {
       syncToCloud(portfolio, usdInrRate);
+      secureStorage.setItem('portfolio', JSON.stringify(portfolio));
     }, 3000);
     return () => {
       if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
     };
-  }, [portfolio]);
+  }, [portfolio, usdInrRate]);
 
 
 
