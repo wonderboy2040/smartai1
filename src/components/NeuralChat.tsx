@@ -1,38 +1,48 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, BrainCircuit, X, Trash2, Copy, Check, ChevronDown, Sparkles, Zap, Activity, BarChart3, ShieldAlert } from 'lucide-react';
+import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { fetchMarketIntelligence, formatMarketIntelligenceForAI, MarketIntelligence } from '../utils/api';
-import { detectIntent, getModelLabel, AIModel } from '../utils/ai-router';
+
+// API Configurations
+const CONFIG = {
+  // Tavily Search API (Real-time Web Data)
+  tavily: {
+    apiKey: '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',
+    baseUrl: 'https://api.tavily.com/search'
+  },
+  // NVIDIA API (DeepSeek V3 for Analysis)
+  nvidia: {
+    apiKey: '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',
+    baseUrl: 'https://integrate.api.nvidia.com/v1',
+    model: 'deepseek-ai/deepseek-v3.2'
+  },
+  // Groq API (Fast Responses)
+  groq: {
+    baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
+    model: 'llama-3.3-70b-versatile'
+  }
+} as const;
 
 interface ChatMessage {
-  role: 'user' | 'model';
+  role: 'user' | 'model' | 'system';
   text: string;
   timestamp: number;
-  model?: AIModel;
+  model?: 'tavily' | 'deepseek' | 'groq' | 'system';
+  sources?: Array<{ title: string; url: string }>;
 }
 
-function sanitizeHtml(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<script[^>]*>/gi, '')
-    .replace(/\s*on\w+\s*=\s*["'][^"']*["']/gi, '')
-    .replace(/\s*on\w+\s*=\s*[^\s>]+/gi, '');
-}
+const QUICK_ACTIONS = [
+  { label: 'Market News', query: 'Latest market news and analysis', icon: '📰', type: 'tavily' },
+  { label: 'Portfolio Analysis', query: 'Analyze my portfolio and give recommendations', icon: '📊', type: 'deepseek' },
+  { label: 'Quick Question', query: 'Explain RSI indicator', icon: '⚡', type: 'groq' },
+  { label: 'Nifty Analysis', query: 'Nifty 50 technical analysis with support resistance', icon: '📈', type: 'tavily' }
+];
 
-function renderMarkdown(text: string): string {
-  return sanitizeHtml(text
-    .replace(/```([\s\S]*?)```/g, '<pre style="background:rgba(6,182,212,0.08);padding:10px;border-radius:8px;border:1px solid rgba(6,182,212,0.15);font-size:0.82em;overflow-x:auto;margin:6px 0">$1</pre>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/_(.+?)_/g, '<em>$1</em>')
-    .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>')
-    .replace(/•/g, '<span style="color:#06b6d4">•</span>')
-    .replace(/(\d+)\/100/g, '<span style="color:#06b6d4;font-weight:800">$1/100</span>'));
-}
-
-function formatTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
-}
+const MODEL_COLORS = {
+  tavily: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+  deepseek: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+  groq: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+  system: 'bg-slate-500/10 text-slate-400 border-slate-500/20'
+};
 
 export interface NeuralChatProps {
   groqKey?: string;
@@ -42,111 +52,32 @@ export interface NeuralChatProps {
   onTelegramPush?: () => void;
 }
 
-const QUICK_ACTIONS = [
-  { label: 'Morning Brief', query: '/morning', icon: <Activity size={12}/>, model: 'gemini' },
-  { label: 'Latest News', query: '/news', icon: <Zap size={12}/>, model: 'gemini' },
-  { label: 'Weekly Review', query: '/weekly', icon: <BarChart3 size={12}/>, model: 'deepseek' },
-  { label: 'Deep Analyze', query: '/analyze', icon: <BrainCircuit size={12}/>, model: 'deepseek' },
-  { label: 'Trim Check', query: '/trim', icon: <ShieldAlert size={12}/>, model: 'deepseek' },
-  { label: 'Crisis Check', query: '/crisis', icon: <ShieldAlert size={12}/>, model: 'gemini' },
-];
-
-const MODEL_TAGS = {
-  gemini: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-  deepseek: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-  groq: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
-  multi: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
-  system: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
-};
-
-export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGeminiKey, deepseekKey: propDeepseekKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
-  // Tavily Search API Configuration (Real-time Web Search - Gemini Replacement)
-  const tavilyApiKey = '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';
-  const tavilyBaseUrl = 'https://api.tavily.com/search';
-
-  // NVIDIA API Configuration (DeepSeek V3 for Analysis)
-  const nvidiaApiKey = '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';
-  const nvidiaBaseUrl = 'https://integrate.api.nvidia.com/v1';
-  const nvidiaDeepSeekModel = 'deepseek-ai/deepseek-v3.2';
-
-  // Groq API Configuration (Fast Responses)
-  const groqApiKey = propGroqKey || import.meta.env.VITE_GROQ_KEY || import.meta.env.VITE_GROQ_API_KEY || '';
-
-  // Use environment variables as primary source, fallback to props
-  const groqKey = groqApiKey;
-  const geminiKey = tavilyApiKey; // Tavily replaces Gemini for real-time data
-  const deepseekKey = propDeepseekKey || import.meta.env.VITE_DEEPSEEK_KEY || import.meta.env.VITE_DEEPSEEK_API_KEY || nvidiaApiKey;
-
+export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
-    role: 'model',
-    text: '🧠 **QUANTUM AI — Neural Link Online** ⚡\n\nNagraj Bhai, Quantum Routing Engine active hai. Main Gemini, DeepSeek, aur Groq ko intelligently route karunga based on your query.\n\n**Active Modes:**\n• 🌐 Gemini: Real-time News & Live Data\n• 🧠 DeepSeek: Quant Analysis & Trim Rules\n• ⚡ Groq: Fast Concept Explanations\n\nKya analyze karna hai aaj?',
+    role: 'system',
+    text: '🧠 **DEEP MIND AI — Quantum Trading Assistant**\n\n**Active AI Engines:**\n🔍 **Tavily Search**: Real-time web & market data\n🧠 **DeepSeek V3**: Advanced portfolio analysis (via NVIDIA)\n⚡ **Groq Llama-3**: Ultra-fast responses\n\nAsk anything about markets, portfolio, or trading!',
     timestamp: Date.now(),
     model: 'system'
   }]);
+  
   const [chatInput, setChatInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [showChat, setShowChat] = useState(false);
-  const [marketIntel, setMarketIntel] = useState<MarketIntelligence | null>(null);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
-  const [selectedModel, setSelectedModel] = useState<'auto' | 'gemini' | 'deepseek' | 'groq' | 'multi'>('auto');
-  const [showScrollDown, setShowScrollDown] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<'auto' | 'tavily' | 'deepseek' | 'groq'>('auto');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const marketIntelRef = useRef<MarketIntelligence | null>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
+  // Auto-scroll to bottom
   const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
   useEffect(() => {
     if (showChat) scrollToBottom();
   }, [chatMessages, showChat, scrollToBottom]);
 
-  const handleScroll = useCallback(() => {
-    if (!chatContainerRef.current) return;
-    const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
-    setShowScrollDown(scrollHeight - scrollTop - clientHeight > 100);
-  }, []);
-
-  useEffect(() => {
-    if (!showChat) return;
-    const loadIntel = async () => {
-      try {
-        const intel = await fetchMarketIntelligence();
-        setMarketIntel(intel);
-        marketIntelRef.current = intel;
-      } catch (e) {}
-    };
-    loadIntel();
-    const iv = setInterval(loadIntel, 120000);
-    return () => clearInterval(iv);
-  }, [showChat]);
-
-  // Tavily Web Search (Real-time Data - Replaces Gemini)
-  const searchTavily = async (query: string, days = 7) => {
-    if (!tavilyApiKey) throw new Error('Tavily API Key missing');
-
-    const res = await fetch(tavilyBaseUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: query,
-        max_results: 5,
-        days: days,
-        include_domains: [],
-        exclude_domains: []
-      })
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Tavily API Error: ${res.status}`);
-    }
-
-    const data = await res.json();
-    return data.results || [];
-  };
-
+  // Copy to clipboard
   const copyToClipboard = useCallback((text: string, idx: number) => {
     navigator.clipboard.writeText(text).then(() => {
       setCopiedIdx(idx);
@@ -154,200 +85,216 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
     }).catch(() => {});
   }, []);
 
+  // Clear chat
   const clearChat = useCallback(() => {
     setChatMessages([{
-      role: 'model',
-      text: '🧹 **Chat cleared! Quantum session reset.**\n\nReady for new analysis!',
+      role: 'system',
+      text: '🧹 **Chat cleared!**\n\nReady for new analysis!',
       timestamp: Date.now(),
       model: 'system'
     }]);
   }, []);
 
-  const callGemini = async (messages: any[], systemPrompt: string) => {
-    // Tavily Search for real-time data (replaces Gemini)
-    const apiKey = tavilyApiKey || geminiKey;
-    if (!apiKey) throw new Error('Tavily API Key missing');
-
-    // Extract user query from messages
-    const lastMessage = messages[messages.length - 1]?.content || '';
-
-    // First, search the web for real-time data
-    const searchResults = await searchTavily(lastMessage, 7);
-
-    // Build context from search results
-    let searchContext = '';
-    if (searchResults.length > 0) {
-      searchContext = '\n\n--- REAL-TIME WEB DATA (Tavily) ---\n';
-      searchResults.forEach((result: any, i: number) => {
-        searchContext += `${i + 1}. [${result.title || 'Result'}](${result.url || ''})\n   ${result.content}\n\n`;
+  // Tavily Search (Real-time Web Data)
+  const searchTavily = async (query: string, days = 7) => {
+    try {
+      const res = await fetch(CONFIG.tavily.baseUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: query,
+          max_results: 5,
+          days: days,
+          search_depth: 'advanced'
+        })
       });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || `Tavily API Error: ${res.status}`);
+      }
+
+      const data = await res.json();
+      return data.results || [];
+    } catch (error) {
+      console.error('Tavily Search Error:', error);
+      throw error;
     }
-
-    // Use DeepSeek via NVIDIA for final response with search context
-    const formattedMessages = [
-      { role: 'system', content: `${systemPrompt}\n\nUse the following real-time web data to answer the query accurately:${searchContext}` },
-      ...messages.map(m => ({
-        role: m.role === 'assistant' ? 'assistant' : 'user',
-        content: m.content
-      }))
-    ];
-
-    // NVIDIA DeepSeek for analysis
-    const res = await fetch(`${nvidiaBaseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${nvidiaApiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: nvidiaDeepSeekModel,
-        messages: formattedMessages,
-        temperature: 0.7,
-        max_tokens: 2048
-      })
-    });
-
-    if (!res.ok) {
-      let errMsg = `NVIDIA DeepSeek API Error: ${res.status}`;
-      try {
-        const errData = await res.json();
-        errMsg = errData.error?.message || `NVIDIA DeepSeek API Error: ${res.status}`;
-      } catch {}
-      throw new Error(errMsg);
-    }
-
-    const data = await res.json();
-    return data.choices?.[0]?.message?.content || '';
   };
 
+  // NVIDIA DeepSeek V3 (Analysis)
   const callDeepSeek = async (messages: any[], systemPrompt: string) => {
-    // Use NVIDIA API for DeepSeek V3 (best analysis)
-    const apiKey = nvidiaApiKey || deepseekKey;
-    if (!apiKey) throw new Error('DeepSeek/NVIDIA API Key missing');
+    try {
+      const formattedMessages = [
+        { role: 'system', content: systemPrompt },
+        ...messages.map(m => ({ role: m.role, content: m.content }))
+      ];
 
-    const formattedMessages = [
-      { role: 'system', content: systemPrompt },
-      ...messages.map(m => ({ role: m.role, content: m.content }))
-    ];
+      const res = await fetch(`${CONFIG.nvidia.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${CONFIG.nvidia.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: CONFIG.nvidia.model,
+          messages: formattedMessages,
+          temperature: 0.7,
+          max_tokens: 2048
+        })
+      });
 
-    // NVIDIA OpenAI-compatible endpoint for DeepSeek V3
-    const res = await fetch(`${nvidiaBaseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: nvidiaDeepSeekModel,
-        messages: formattedMessages,
-        temperature: 0.7,
-        max_tokens: 2048
-      })
-    });
-
-    if (!res.ok) {
-      let errMsg = `NVIDIA DeepSeek V3 API Error: ${res.status}`;
-      try {
-        const errData = await res.json();
-        errMsg = errData.error?.message || `NVIDIA DeepSeek V3 API Error: ${res.status}`;
-      } catch {
-        errMsg = `NVIDIA DeepSeek V3 API Error: ${res.status}`;
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || `NVIDIA DeepSeek API Error: ${res.status}`);
       }
-      throw new Error(errMsg);
-    }
 
-    const data = await res.json();
-    return data.choices?.[0]?.message?.content || '';
+      const data = await res.json();
+      return data.choices?.[0]?.message?.content || '';
+    } catch (error) {
+      console.error('DeepSeek Error:', error);
+      throw error;
+    }
   };
 
+  // Groq (Fast Responses)
   const callGroq = async (messages: any[], systemPrompt: string) => {
-    const apiKey = groqKey;
-    if (!apiKey) throw new Error('Groq API Key missing');
+    try {
+      const apiKey = propGroqKey || '';
+      if (!apiKey) throw new Error('Groq API Key missing');
 
-    const formattedMessages = [
-      { role: 'system', content: systemPrompt },
-      ...messages.map(m => ({ role: m.role, content: m.content }))
-    ];
+      const formattedMessages = [
+        { role: 'system', content: systemPrompt },
+        ...messages.map(m => ({ role: m.role, content: m.content }))
+      ];
 
-    // Groq Llama-3.3-70B for ultra-fast responses
-    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: formattedMessages,
-        temperature: 0.75,
-        max_completion_tokens: 800
-      })
-    });
+      const res = await fetch(CONFIG.groq.baseUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: CONFIG.groq.model,
+          messages: formattedMessages,
+          temperature: 0.75,
+          max_completion_tokens: 800
+        })
+      });
 
-    if (!res.ok) {
-      let errMsg = `Groq API Error: ${res.status}`;
-      try {
-        const errData = await res.json();
-        errMsg = errData.error?.message || `Groq API Error: ${res.status}`;
-      } catch {
-        errMsg = `Groq API Error: ${res.status}`;
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || `Groq API Error: ${res.status}`);
       }
-      throw new Error(errMsg);
-    }
 
-    const data = await res.json();
-    return data.choices?.[0]?.message?.content || '';
+      const data = await res.json();
+      return data.choices?.[0]?.message?.content || '';
+    } catch (error) {
+      console.error('Groq Error:', error);
+      throw error;
+    }
   };
 
+  // Main AI routing with Tavily + DeepSeek combination
+  const callAI = async (userMessage: string, model: string) => {
+    const systemPrompt = `You are DEEP MIND AI — Quantum Trading Assistant. Provide expert-level trading insights, market analysis, and portfolio recommendations. Use Hinglish (Hindi + English) for Indian users. Be concise but informative.`;
+    
+    const recentMessages = chatMessages.slice(-6).map(m => ({
+      role: m.role === 'model' || m.role === 'system' ? 'assistant' : 'user',
+      content: m.text
+    }));
+
+    // Tavily + DeepSeek combination for real-time queries
+    if (model === 'tavily' || model === 'auto') {
+      try {
+        // Step 1: Search web for real-time data
+        const searchResults = await searchTavily(userMessage, 7);
+        
+        let searchContext = '';
+        if (searchResults.length > 0) {
+          searchContext = '\n\n--- REAL-TIME WEB DATA (Tavily Search) ---\n';
+          searchResults.forEach((result: any, i: number) => {
+            searchContext += `${i + 1}. **${result.title || 'Result'}**\n   ${result.content}\n   Source: ${result.url || 'Web'}\n\n`;
+          });
+        }
+
+        // Step 2: Use DeepSeek V3 for analysis with search context
+        const fullSystemPrompt = `${systemPrompt}\n\nUse the following real-time web data to provide accurate, up-to-date answers:${searchContext}`;
+        const aiText = await callDeepSeek(recentMessages, fullSystemPrompt);
+        
+        return {
+          text: aiText,
+          model: 'deepseek' as const,
+          sources: searchResults.map((r: any) => ({ title: r.title, url: r.url }))
+        };
+      } catch (error) {
+        // Fallback to Groq if Tavily/DeepSeek fails
+        console.log('Tavily/DeepSeek failed, using Groq fallback');
+        const aiText = await callGroq(recentMessages, systemPrompt);
+        return { text: aiText, model: 'groq' as const };
+      }
+    }
+
+    // Direct DeepSeek for analysis
+    if (model === 'deepseek') {
+      const aiText = await callDeepSeek(recentMessages, systemPrompt);
+      return { text: aiText, model: 'deepseek' as const };
+    }
+
+    // Groq for fast responses
+    if (model === 'groq') {
+      const aiText = await callGroq(recentMessages, systemPrompt);
+      return { text: aiText, model: 'groq' as const };
+    }
+
+    throw new Error('Invalid model selected');
+  };
+
+  // Send message handler
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim()) return;
 
-    // Check if at least one AI key is available
-    if (!groqKey && !geminiKey && !deepseekKey) {
-      setChatMessages(prev => [...prev,
-        { role: 'user', text: userMessage, timestamp: Date.now() },
-        { role: 'model', text: '⚠️ **Neural Link Offline**\n\nAI keys not configured. Check environment variables.', timestamp: Date.now(), model: 'system' }
-      ]);
-      return;
-    }
-
-    setChatMessages(prev => [...prev, { role: 'user', text: userMessage, timestamp: Date.now() }]);
     setIsThinking(true);
+    
+    // Add user message
+    setChatMessages(prev => [...prev, {
+      role: 'user',
+      text: userMessage,
+      timestamp: Date.now()
+    }]);
 
     try {
-      const intent = detectIntent(userMessage);
-      const finalModel = selectedModel === 'auto' ? intent.model : (selectedModel === 'multi' ? 'multi' : selectedModel as AIModel);
-      const systemPrompt = `You are DEEP MIND AI — Quantum Trading Assistant. ${portfolioContext}`;
+      // Detect intent or use selected model
+      const lowerQuery = userMessage.toLowerCase();
+      let selectedModelType = selectedModel;
+      
+      if (selectedModel === 'auto') {
+        if (lowerQuery.includes('news') || lowerQuery.includes('market') || lowerQuery.includes('nifty') || lowerQuery.includes('analysis')) {
+          selectedModelType = 'tavily';
+        } else if (lowerQuery.includes('portfolio') || lowerQuery.includes('analyze') || lowerQuery.includes('calculate')) {
+          selectedModelType = 'deepseek';
+        } else {
+          selectedModelType = 'groq';
+        }
+      }
 
-      const recentMessages = chatMessages.slice(-8).map(m => ({
-        role: m.role === 'model' ? 'assistant' : m.role,
-        content: m.text
-      }));
-
-      let aiText = '';
-      let usedModel: AIModel = 'groq';
-
-    // Route to appropriate AI based on intent or manual selection
-    // Tavily (real-time search) → DeepSeek V3 (analysis) → Groq (fast responses)
-    if (finalModel === 'gemini' || (finalModel === 'auto' && intent.model === 'gemini')) {
-      aiText = await callGemini(recentMessages, systemPrompt); // Tavily + DeepSeek
-      usedModel = 'tavily';
-    } else if (finalModel === 'deepseek' || (finalModel === 'auto' && intent.model === 'deepseek')) {
-      aiText = await callDeepSeek(recentMessages, systemPrompt); // NVIDIA DeepSeek V3
-      usedModel = 'deepseek';
-    } else {
-      aiText = await callGroq(recentMessages, systemPrompt); // Groq Llama-3
-      usedModel = 'groq';
-    }
+      // Call AI with selected model
+      const result = await callAI(userMessage, selectedModelType);
 
       setChatMessages(prev => [...prev, {
         role: 'model',
-        text: aiText,
+        text: result.text,
         timestamp: Date.now(),
-        model: finalModel === 'auto' ? usedModel : (finalModel === 'multi' ? 'multi' : finalModel as AIModel)
+        model: result.model,
+        sources: result.sources
+      } as ChatMessage]);
+    } catch (error) {
+      setChatMessages(prev => [...prev, {
+        role: 'system',
+        text: `❌ **AI Error:** ${error instanceof Error ? error.message : 'Unknown error'}\n\nPlease try again or check your API keys.`,
+        timestamp: Date.now(),
+        model: 'system'
       }]);
-    } catch (e) {
-      setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanceof Error ? e.message : String(e)}`, timestamp: Date.now(), model: 'system' }]);
     } finally {
       setIsThinking(false);
     }
@@ -365,7 +312,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
     <>
       <button
         onClick={() => setShowChat(!showChat)}
-        className="fab fixed bottom-6 right-6 w-14 h-14 bg-gradient-to-br from-cyan-600/90 via-blue-800/90 to-indigo-900/90 rounded-2xl flex items-center justify-center border border-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.4)] z-[60] overflow-hidden group hover:scale-110 transition-transform sm:w-16 sm:h-16"
+        className="fab fixed bottom-6 right-6 w-14 h-14 bg-gradient-to-br from-cyan-600/90 via-blue-800/90 to-indigo-900/90 rounded-2xl flex items-center justify-center border border-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.4)] z-[60] overflow-hidden group hover:scale-110 transition-transform"
       >
         {showChat ? <X className="text-white z-10" /> : <span className="text-2xl z-10">🧠</span>}
         <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-400 rounded-full animate-pulse-dot z-10 border-2 border-slate-900" />
@@ -381,6 +328,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
           >
             <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-xl border border-cyan-500/20 rounded-3xl" />
 
+            {/* Header */}
             <div className="relative p-3 sm:p-4 border-b border-cyan-500/20 bg-gradient-to-r from-cyan-950/60 to-indigo-950/60 flex items-center justify-between rounded-t-3xl">
               <div className="flex items-center gap-2 sm:gap-3">
                 <div className="w-9 h-9 sm:w-10 sm:h-10 bg-gradient-to-br from-cyan-800/60 to-indigo-900/60 border border-cyan-500/30 rounded-xl flex items-center justify-center flex-shrink-0">
@@ -388,14 +336,14 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
                 </div>
                 <div className="min-w-0">
                   <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
-                    <span className="hidden xs:inline">Quantum AI Assistant</span>
-                    <span className="xs:hidden">Quantum AI</span>
-                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">v6.0</span>
+                    <span className="hidden xs:inline">Deep Mind AI</span>
+                    <span className="xs:hidden">AI Assistant</span>
+                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">v7.0</span>
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="hidden sm:inline">Multi-AI Routing Active</span>
-                    <span className="sm:hidden">Active</span>
+                    <span className="hidden sm:inline">Tavily + DeepSeek V3 + Groq</span>
+                    <span className="sm:hidden">Online</span>
                   </div>
                 </div>
               </div>
@@ -405,15 +353,19 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
               </div>
             </div>
 
-            {/* Model Selector Bar */}
-            <div className="relative px-4 py-3 bg-slate-900/40 border-b border-cyan-500/10 flex gap-2 overflow-x-auto scrollbar-hide">
-              {(['auto', 'gemini', 'deepseek', 'groq', 'multi'] as const).map(m => (
+            {/* Model Selector */}
+            <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-b border-cyan-500/10 flex gap-2 overflow-x-auto scrollbar-hide">
+              {(['auto', 'tavily', 'deepseek', 'groq'] as const).map(m => (
                 <button
                   key={m}
                   onClick={() => setSelectedModel(m)}
-                  className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase transition-all border ${selectedModel === m ? 'bg-cyan-600 text-white border-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.3)]' : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-cyan-500/50'}`}
+                  className={`px-2 sm:px-3 py-1 rounded-full text-[9px] sm:text-[10px] font-bold uppercase transition-all border whitespace-nowrap ${
+                    selectedModel === m
+                      ? 'bg-cyan-600 text-white border-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
+                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-cyan-500/50'
+                  }`}
                 >
-                  {m === 'auto' ? 'Auto-Route' : m === 'multi' ? 'Multi-AI' : getModelLabel(m as AIModel).split(' ')[0]}
+                  {m === 'auto' ? 'Auto-Detect' : m === 'tavily' ? 'Tavily+AI' : m === 'deepseek' ? 'DeepSeek V3' : 'Groq Fast'}
                 </button>
               ))}
             </div>
@@ -421,23 +373,48 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
             {/* Messages */}
             <div
               ref={chatContainerRef}
-              onScroll={handleScroll}
               className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide"
             >
               {chatMessages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
-                  <div className={`max-w-[85%] sm:max-w-[90%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
-                    ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-3 py-2.5 sm:px-4 sm:py-3'
-                    : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-3 py-2.5 sm:px-4 sm:py-3 group/msg'
-                    }`}>
+                  <div className={`max-w-[85%] sm:max-w-[90%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${
+                    msg.role === 'user'
+                      ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-3 py-2.5 sm:px-4 sm:py-3'
+                      : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-3 py-2.5 sm:px-4 sm:py-3 group/msg'
+                  }`}>
                     {msg.role === 'user' ? (
                       msg.text
                     ) : (
                       <>
-                        <div className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase mb-2 border ${MODEL_TAGS[msg.model || 'system']}`}>
-                          {msg.model ? getModelLabel(msg.model) : 'Quantum System'}
-                        </div>
-                        <span dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />
+                        {msg.model && (
+                          <div className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase mb-2 border ${MODEL_COLORS[msg.model] || MODEL_COLORS.system}`}>
+                            {msg.model === 'tavily' ? 'Tavily Search' : msg.model === 'deepseek' ? 'DeepSeek V3' : msg.model === 'groq' ? 'Groq' : 'System'}
+                          </div>
+                        )}
+                        <span dangerouslySetInnerHTML={{ 
+                          __html: msg.text
+                            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                            .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                            .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>')
+                        }} />
+                        
+                        {msg.sources && msg.sources.length > 0 && (
+                          <div className="mt-3 pt-2 border-t border-cyan-500/20">
+                            <div className="text-[9px] font-bold text-cyan-400 mb-1">Sources:</div>
+                            {msg.sources.slice(0, 3).map((source, idx) => (
+                              <a
+                                key={idx}
+                                href={source.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="block text-[9px] text-slate-400 hover:text-cyan-400 truncate mb-0.5"
+                              >
+                                🔗 {source.title}
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                        
                         <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
                           <button
                             onClick={() => copyToClipboard(msg.text, i)}
@@ -449,16 +426,17 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
                       </>
                     )}
                     <div className={`text-[9px] mt-1 font-mono ${msg.role === 'user' ? 'text-cyan-200/50' : 'text-slate-600'}`}>
-                      {formatTime(msg.timestamp)}
+                      {new Date(msg.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
                     </div>
                   </div>
                 </div>
               ))}
+              
               {isThinking && (
                 <div className="flex justify-start animate-message-in">
-                  <div className="bg-slate-900/90 px-5 py-4 rounded-2xl rounded-tl-none border border-white/5">
+                  <div className="bg-slate-900/90 px-4 py-3 rounded-2xl rounded-tl-none border border-white/5">
                     <div className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
-                      <Sparkles size={12} className="animate-pulse" /> Routing to optimal AI...
+                      <Sparkles size={12} className="animate-pulse" /> AI is thinking...
                     </div>
                     <div className="flex gap-1.5">
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
@@ -471,28 +449,29 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Quick Actions Bar */}
-            <div className="relative px-4 py-3 bg-slate-900/40 border-t border-cyan-500/10">
+            {/* Quick Actions */}
+            <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-t border-cyan-500/10">
               <div className="flex gap-2 overflow-x-auto scrollbar-hide">
                 {QUICK_ACTIONS.map((action, i) => (
                   <button
                     key={i}
                     onClick={() => { setChatInput(''); sendMessage(action.query); }}
                     disabled={isThinking}
-                    className="flex items-center gap-1.5 whitespace-nowrap text-[10px] font-bold px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-slate-400 hover:text-white hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all disabled:opacity-30 shrink-0"
+                    className="flex items-center gap-1.5 whitespace-nowrap text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-slate-400 hover:text-white hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all disabled:opacity-30 shrink-0"
                   >
-                    <span className="text-cyan-400">{action.icon}</span>
+                    <span className="text-base">{action.icon}</span>
                     {action.label}
                   </button>
                 ))}
               </div>
             </div>
 
+            {/* Input */}
             <div className="relative p-3 sm:p-4 bg-slate-950/95 border-t border-cyan-500/15 rounded-b-3xl">
               <div className="relative flex items-center">
                 <input
                   type="text"
-                  placeholder="Ask Quantum AI..."
+                  placeholder="Ask Deep Mind AI anything..."
                   className="w-full bg-slate-900/60 border border-slate-700/80 rounded-xl sm:rounded-2xl py-2.5 sm:py-3 pl-3 sm:pl-4 pr-10 sm:pr-12 text-xs sm:text-sm text-white outline-none focus:border-cyan-500/60 transition-all font-medium placeholder:text-slate-600"
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
@@ -507,8 +486,12 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, geminiKey: propGem
                 </button>
               </div>
               <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
-                <span className="text-[7px] sm:text-[8px] text-slate-600 font-mono truncate max-w-[60%]">Sensing: {selectedModel === 'auto' ? 'Auto-Route' : selectedModel.toUpperCase()}</span>
-                <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">{chatMessages.length} pulses</span>
+                <span className="text-[7px] sm:text-[8px] text-slate-600 font-mono truncate max-w-[60%]">
+                  Model: {selectedModel === 'auto' ? 'Auto-Detect' : selectedModel.toUpperCase()}
+                </span>
+                <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
+                  {chatMessages.length} messages
+                </span>
               </div>
             </div>
           </motion.div>

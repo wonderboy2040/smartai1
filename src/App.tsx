@@ -1312,11 +1312,31 @@ if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
         <div className="space-y-5 animate-fade-in">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-black gradient-text-cyan font-display">🎯 AI Signals</h2>
+            <button
+              onClick={() => window.open('https://tavily.com', '_blank')}
+              className="btn-glass px-4 py-2 rounded-xl font-semibold text-sm"
+            >
+              🔍 Tavily Search
+            </button>
           </div>
-          <QuantumSignals 
-            livePrices={livePrices}
-            portfolioSymbols={portfolio.map(p => p.symbol)}
-          />
+          {portfolio.length === 0 ? (
+            <div className="glass-card rounded-2xl p-8 text-center animate-fade-in">
+              <div className="text-6xl mb-4">🎯</div>
+              <h3 className="text-xl font-black text-white mb-2">No Holdings Yet</h3>
+              <p className="text-slate-400 mb-4">Add assets to your portfolio to generate AI-powered buy/sell signals</p>
+              <button
+                onClick={() => setActiveTab('portfolio')}
+                className="btn-primary px-6 py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-white"
+              >
+                ➕ Add Your First Asset
+              </button>
+            </div>
+          ) : (
+            <QuantumSignals 
+              livePrices={livePrices}
+              portfolioSymbols={portfolio.map(p => p.symbol)}
+            />
+          )}
         </div>
       )}
 
@@ -1325,11 +1345,30 @@ if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
         <div className="space-y-5 animate-fade-in">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-black gradient-text-cyan font-display">🧠 Super Intelligence</h2>
+            <div className="flex items-center gap-2">
+              <span className="badge bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">
+                Tavily + DeepSeek V3
+              </span>
+            </div>
           </div>
-          <SuperIntelligence 
-            livePrices={livePrices}
-            portfolioSymbols={portfolio.map(p => p.symbol)}
-          />
+          {portfolio.length === 0 ? (
+            <div className="glass-card rounded-2xl p-8 text-center animate-fade-in">
+              <div className="text-6xl mb-4">🧠</div>
+              <h3 className="text-xl font-black text-white mb-2">Add Assets to Analyze</h3>
+              <p className="text-slate-400 mb-4">Add holdings to get deep AI analysis with Tavily real-time data and DeepSeek V3 reasoning</p>
+              <button
+                onClick={() => setActiveTab('portfolio')}
+                className="btn-primary px-6 py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-white"
+              >
+                ➕ Add Assets First
+              </button>
+            </div>
+          ) : (
+            <SuperIntelligence 
+              livePrices={livePrices}
+              portfolioSymbols={portfolio.map(p => p.symbol)}
+            />
+          )}
         </div>
       )}
 
