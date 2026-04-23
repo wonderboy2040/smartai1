@@ -1,7 +1,7 @@
 // ============================================
 // AI CHAT ENGINE — Tavily Search + NVIDIA DeepSeek V3 + Groq
 // ============================================
-import { GROQ_KEY, GEMINI_KEY, DEEPSEEK_KEY, TAVILY_API_KEY, TAVILY_BASE_URL, NVIDIA_API_KEY, NVIDIA_BASE_URL, NVIDIA_DEEPSEEK_MODEL } from './config.mjs';
+import { GROQ_KEY, GEMINI_KEY, DEEPSEEK_KEY, TAVILY_API_KEY, TAVILY_BASE_URL, NVIDIA_API_KEY, NVIDIA_BASE_URL, NVIDIA_DEEPSEEK_MODEL, NVIDIA_GEMINI_MODEL } from './config.mjs';
 import { fetchMarketIntelligence } from './market.mjs';
 import { calculateMetrics, analyzeAsset } from './analysis.mjs';
 
@@ -17,6 +17,44 @@ let intelTimestamp = 0;
 const hasTavily = TAVILY_API_KEY && TAVILY_API_KEY.startsWith('tvly-');
 const hasNVIDIA = NVIDIA_API_KEY && NVIDIA_API_KEY.startsWith('nvapi-');
 const hasGroq = GROQ_KEY && GROQ_KEY.startsWith('gsk_');
+
+// Tavily Search Function (for real-time web data)
+async function searchTavily(query, days = 7) {
+  if (!hasTavily) {
+    console.log('Tavily not configured, skipping search');
+    return [];
+  }
+
+  try {
+    const res = await fetch(TAVILY_BASE_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${TAVILY_API_KEY}`
+      },
+      body: JSON.stringify({
+        query: query,
+        max_results: 5,
+        days: days,
+        search_depth: 'advanced',
+        include_answer: true,
+        include_images: false
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.warn('Tavily API Error:', res.status, err);
+      return [];
+    }
+
+    const data = await res.json();
+    return data.results || [];
+  } catch (e) {
+    console.error('Tavily Search Error:', e.message);
+    return [];
+  }
+}
 
 // AI Router — Intent Detection with NVIDIA-first logic
 function detectIntent(prompt) {

@@ -19,7 +19,8 @@ export const TAVILY_BASE_URL = "https://api.tavily.com/search";
 // NVIDIA API Keys (DeepSeek V3 for Analysis)
 export const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || "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";
 export const NVIDIA_BASE_URL = process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1";
-export const NVIDIA_DEEPSEEK_MODEL = process.env.NVIDIA_DEEPSEEK_MODEL || "deepseek-ai/deepseek-v3.2";
+export const NVIDIA_DEEPSEEK_MODEL = process.env.NVIDIA_DEEPSEEK_MODEL || "deepseek-ai/deepseek-r1";
+export const NVIDIA_GEMINI_MODEL = process.env.NVIDIA_GEMINI_MODEL || "google/gemma-2-27b-it";
 // Legacy keys (fallback)
 export let GEMINI_KEY = process.env.GEMINI_KEY || TAVILY_API_KEY; // Tavily replaces Gemini
 export let DEEPSEEK_KEY = process.env.DEEPSEEK_KEY || NVIDIA_API_KEY;

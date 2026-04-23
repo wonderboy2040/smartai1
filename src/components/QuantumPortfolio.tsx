@@ -24,6 +24,15 @@ interface AllocationData {
 export function QuantumPortfolio({ portfolio, livePrices, usdInrRate, totalValue, totalPL, plPct, todayPL }: QuantumPortfolioProps) {
   const [allocations, setAllocations] = useState<AllocationData[]>([]);
   const [momentumScores, setMomentumScores] = useState<Record<string, any>>({});
+  const [lastUpdate, setLastUpdate] = useState<number>(Date.now());
+
+  // Auto-refresh trigger every 3 seconds for real-time price updates
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setLastUpdate(Date.now());
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (portfolio.length === 0 || totalValue === 0) return;
@@ -38,7 +47,7 @@ export function QuantumPortfolio({ portfolio, livePrices, usdInrRate, totalValue
       const percentage = (value / totalValue) * 100;
       const targetAlloc = getTargetAllocation(p.symbol);
       const diff = percentage - targetAlloc;
-      
+
       let action: AllocationData['action'] = 'BALANCED';
       if (diff > 5) action = 'OVERWEIGHT';
       else if (diff < -5) action = 'UNDERWEIGHT';
@@ -74,7 +83,7 @@ export function QuantumPortfolio({ portfolio, livePrices, usdInrRate, totalValue
       }
     });
     setMomentumScores(momScores);
-  }, [portfolio, livePrices, totalValue]);
+  }, [portfolio, livePrices, totalValue, lastUpdate, usdInrRate]);
 
   const getTargetAllocation = (symbol: string): number => {
     const targets: Record<string, number> = {

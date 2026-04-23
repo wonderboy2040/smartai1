@@ -98,105 +98,133 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
 
 // Tavily Search (Real-time Web Data)
 const searchTavily = async (query: string, days = 7) => {
-try {
-const res = await fetch(CONFIG.tavily.baseUrl, {
-method: 'POST',
-headers: { 'Content-Type': 'application/json' },
-body: JSON.stringify({
-query: query,
-max_results: 5,
-days: days,
-search_depth: 'advanced'
-})
-});
+  try {
+    // Validate API key
+    const apiKey = import.meta.env.VITE_TAVILY_API_KEY || CONFIG.tavily.apiKey;
+    if (!apiKey || apiKey === 'tvly-dev-1Ck5et_vJzTUOAaAJVAakimgoGhHhiWTBvT7THrA9rU7SU7CO') {
+      console.warn('Tavily API key not configured properly');
+      return [];
+    }
 
-if (!res.ok) {
-const err = await res.json().catch(() => ({}));
-throw new Error(err.error?.message || `Tavily API Error: ${res.status}`);
-}
+    const res = await fetch(CONFIG.tavily.baseUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        query: query,
+        max_results: 5,
+        days: days,
+        search_depth: 'advanced',
+        include_answer: true,
+        include_images: false,
+        include_raw_content: false
+      })
+    });
 
-const data = await res.json();
-return data.results || [];
-} catch (error) {
-console.error('Tavily Search Error:', error);
-// Return empty results instead of throwing to prevent complete failure
-return [];
-}
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `Tavily API Error: ${res.status}`);
+    }
+
+    const data = await res.json();
+    return data.results || [];
+  } catch (error) {
+    console.error('Tavily Search Error:', error);
+    return [];
+  }
 };
 
 // NVIDIA DeepSeek V3 (Analysis)
 const callDeepSeek = async (messages: any[], systemPrompt: string) => {
-try {
-const formattedMessages = [
-{ role: 'system', content: systemPrompt },
-...messages.map(m => ({ role: m.role, content: m.content }))
-];
+  try {
+    // Validate API key
+    const apiKey = import.meta.env.VITE_NVIDIA_API_KEY || CONFIG.nvidia.apiKey;
+    if (!apiKey || !apiKey.startsWith('nvapi-')) {
+      throw new Error('NVIDIA API key not configured');
+    }
 
-const res = await fetch(`${CONFIG.nvidia.baseUrl}/chat/completions`, {
-method: 'POST',
-headers: {
-'Authorization': `Bearer ${CONFIG.nvidia.apiKey}`,
-'Content-Type': 'application/json'
-},
-body: JSON.stringify({
-model: CONFIG.nvidia.model,
-messages: formattedMessages,
-temperature: 0.7,
-max_tokens: 2048
-})
-});
+    const formattedMessages = [
+      { role: 'system', content: systemPrompt },
+      ...messages.map(m => ({ role: m.role, content: m.content }))
+    ];
 
-if (!res.ok) {
-const err = await res.json().catch(() => ({}));
-throw new Error(err.error?.message || `NVIDIA DeepSeek API Error: ${res.status}`);
-}
+    // Use NVIDIA NIM API endpoint for DeepSeek
+    const res = await fetch(`${CONFIG.nvidia.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'deepseek-ai/deepseek-r1',
+        messages: formattedMessages,
+        temperature: 0.6,
+        max_tokens: 2048,
+        top_p: 0.9,
+        stream: false
+      })
+    });
 
-const data = await res.json();
-return data.choices?.[0]?.message?.content || '';
-} catch (error) {
-console.error('DeepSeek Error:', error);
-// Return fallback response instead of throwing
-return "DeepSeek API currently unavailable. Using fallback analysis...";
-}
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.error('NVIDIA API Error:', res.status, err);
+      throw new Error(err.error?.message || `NVIDIA DeepSeek API Error: ${res.status}`);
+    }
+
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || '';
+  } catch (error) {
+    console.error('DeepSeek Error:', error);
+    return "DeepSeek API currently unavailable. Using fallback analysis...";
+  }
 };
 
 // Groq (Fast Responses)
 const callGroq = async (messages: any[], systemPrompt: string) => {
-try {
-const apiKey = propGroqKey || CONFIG.groq.apiKey;
-if (!apiKey) throw new Error('Groq API Key missing');
+  try {
+    // Get API key from environment or props - check all possible sources
+    const envKey = import.meta.env.VITE_GROQ_API_KEY;
+    const apiKey = envKey || propGroqKey || CONFIG.groq.apiKey;
 
-const formattedMessages = [
-{ role: 'system', content: systemPrompt },
-...messages.map(m => ({ role: m.role, content: m.content }))
-];
+    if (!apiKey || !apiKey.startsWith('gsk_')) {
+      console.error('Groq API Key missing or invalid. Key starts with:', apiKey ? apiKey.substring(0, 10) : 'undefined');
+      throw new Error('Groq API Key missing or invalid');
+    }
 
-const res = await fetch(CONFIG.groq.baseUrl, {
-method: 'POST',
-headers: {
-'Authorization': `Bearer ${apiKey}`,
-'Content-Type': 'application/json'
-},
-body: JSON.stringify({
-model: CONFIG.groq.model,
-messages: formattedMessages,
-temperature: 0.75,
-max_completion_tokens: 800
-})
-});
+    const formattedMessages = [
+      { role: 'system', content: systemPrompt },
+      ...messages.map(m => ({ role: m.role, content: m.content }))
+    ];
 
-if (!res.ok) {
-const err = await res.json().catch(() => ({}));
-throw new Error(err.error?.message || `Groq API Error: ${res.status}`);
-}
+    const res = await fetch(CONFIG.groq.baseUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: formattedMessages,
+        temperature: 0.75,
+        max_completion_tokens: 800
+      })
+    });
 
-const data = await res.json();
-return data.choices?.[0]?.message?.content || '';
-} catch (error) {
-console.error('Groq Error:', error);
-// Return fallback response
-return "Groq API unavailable. Using fallback response...";
-}
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.error('Groq API Error:', res.status, err);
+      throw new Error(err.error?.message || `Groq API Error: ${res.status}`);
+    }
+
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || '';
+  } catch (error) {
+    console.error('Groq Error:', error);
+    return "🤖 Groq API unavailable. Please check your API key in environment variables.";
+  }
 };
 
 // Main AI routing with Tavily + DeepSeek combination
