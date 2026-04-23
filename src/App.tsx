@@ -97,11 +97,10 @@ export default function App() {
   // Modal State
   const [showAddModal, setShowAddModal] = useState(false);
 
-  // Settings / Keys State
+// Settings / Keys State
   const [groqKey, setGroqKey] = useState(() => secureStorage.getItem('WEALTH_AI_GROQ') || '');
-  const [showSettings, setShowSettings] = useState(false);
 
-  // Add Modal State
+// Add Modal State
   const [addSymbol, setAddSymbol] = useState('');
 
   // Memoize portfolio symbol key to prevent infinite WebSocket reconnect
@@ -251,6 +250,20 @@ const symbolsToSub = currentPortfolio.length > 0
 ? [...new Set(currentPortfolio.map(p => p.symbol))]
 : defaultSymbols;
 
+// Convert symbols to Position[] for batchFetchPrices
+const positionsToSub: Position[] = symbolsToSub.map(symbol => {
+  const [market, sym] = symbol.split('_') as ['IN' | 'US', string];
+  return {
+    id: `temp-${symbol}`,
+    symbol: sym,
+    market,
+    qty: 1,
+    avgPrice: 1,
+    leverage: 1,
+    dateAdded: getTodayString()
+  };
+});
+
 // Fast HTTP Sync (runs every 8s as backup, faster initial fill)
 let statusThrottle = 0;
 const sync = async () => {
@@ -258,8 +271,8 @@ if (statusThrottle < 3) {
 setLiveStatus('● SYNCING...');
 statusThrottle++;
 }
-await batchFetchPrices(symbolsToSub, (key, data) => {
-pendingPricesRef.current[key] = data;
+await batchFetchPrices(positionsToSub, (key, data) => {
+  pendingPricesRef.current[key] = data;
 });
 flushPricesToStorage();
 if (statusThrottle < 3) {
@@ -692,18 +705,17 @@ let statusCounter = 0;
     ctx += `PORTFOLIO POSITIONS + LIVE TECHNICALS:\n`;
 
     for (const p of portfolio) {
-      const key = `${p.market}_${p.symbol}`;
-      const data = livePrices[key];
-      const curPrice = data?.price || p.avgPrice;
-      const rsi = data?.rsi || 50;
-      const change = data?.change || 0;
-      const macd = data?.macd !== undefined ? data.macd.toFixed(2) : 'N/A';
-      const plPct = p.avgPrice > 0 ? ((curPrice - p.avgPrice) / p.avgPrice) * 100 : 0;
-      const cleanSym = p.symbol.replace('.NS', '');
-      const cur = p.market === 'IN' ? '₹' : '$';
+        const key = `${p.market}_${p.symbol}`;
+        const data = livePrices[key];
+        const curPrice = data?.price || p.avgPrice;
+        const rsi = data?.rsi || 50;
+        const change = data?.change || 0;
+        const macd = data?.macd !== undefined ? data.macd.toFixed(2) : 'N/A';
+        const plPct = p.avgPrice > 0 ? ((curPrice - p.avgPrice) / p.avgPrice) * 100 : 0;
+        const cleanSym = p.symbol.replace('.NS', '');
 
-      const sig = analyzeAsset(p, data);
-      const atr = ((data?.high || curPrice) - (data?.low || curPrice)) || curPrice * 0.02;
+        const sig = analyzeAsset(p, data);
+        const atr = ((data?.high || curPrice) - (data?.low || curPrice)) || curPrice * 0.02;
       const slPrice = curPrice - atr * 1.5;
       const tpPrice = curPrice + atr * 2.5;
 

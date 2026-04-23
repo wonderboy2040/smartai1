@@ -1,14 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Position, PriceData } from '../types';
 import { QuantumPredictor, QuantumPrediction } from '../utils/quantum-advanced';
 
 interface DeepQuantumDashboardProps {
   portfolio: Position[];
   livePrices: Record<string, PriceData>;
-  usdInrRate: number;
 }
 
-export function DeepQuantumDashboard({ portfolio, livePrices, usdInrRate }: DeepQuantumDashboardProps) {
+export function DeepQuantumDashboard({ portfolio, livePrices }: DeepQuantumDashboardProps) {
   const [predictions, setPredictions] = useState<QuantumPrediction[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState('');
   const quantumPredictor = new QuantumPredictor();

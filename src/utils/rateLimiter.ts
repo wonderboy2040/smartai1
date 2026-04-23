@@ -145,8 +145,8 @@ export async function retryWithBackoff<T>(
     backoffFactor = 2
   } = options;
 
-  let lastError: Error;
-  let delay = initialDelay;
+let lastError: Error | null = null;
+let delay = initialDelay;
 
   for (let i = 0; i <= maxRetries; i++) {
     try {
@@ -166,5 +166,10 @@ export async function retryWithBackoff<T>(
     }
   }
 
-  throw lastError;
+  if (lastError !== null) {
+     throw lastError;
+   }
+   // If we get here without setting lastError, it means all attempts succeeded but we didn't return?
+   // This shouldn't happen, but just in case
+   throw new Error('Unknown error in retryWithBackoff');
 }
