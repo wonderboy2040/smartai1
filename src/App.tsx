@@ -247,7 +247,7 @@ const currentPortfolio = portfolioRef.current;
 // Add default symbols if portfolio is empty
 const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA', 'IN_INDIAVIX', 'US_VIX'];
 const symbolsToSub = currentPortfolio.length > 0
-? [...new Set(currentPortfolio.map(p => p.symbol))]
+? [...new Set(currentPortfolio.map(p => `${p.market}_${p.symbol}`))]
 : defaultSymbols;
 
 // Convert symbols to Position[] for batchFetchPrices
