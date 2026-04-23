@@ -923,137 +923,71 @@ let statusCounter = 0;
               </div>
             </div>
 
-<<<<<<< HEAD
-            {/* Tabs */}
-            <div className="flex gap-0.5 glass-card p-1 rounded-2xl">
-              {(['dashboard', 'quantum', 'signals', 'intelligence', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`tab-btn px-4 py-2 rounded-xl font-semibold text-sm transition-all ${activeTab === tab
-                    ? 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
-                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
-                    }`}
-                >
-                  {tab === 'dashboard' && '📊 Dashboard'}
-                  {tab === 'quantum' && '⚛️ Quantum AI'}
-                  {tab === 'signals' && '🎯 Signals'}
-                  {tab === 'intelligence' && '🧠 Super AI'}
-                  {tab === 'portfolio' && '💼 Portfolio'}
-                  {tab === 'planner' && '🎯 Planner'}
-                  {tab === 'macro' && '🌍 Risk'}
-                  {tab === 'tools' && '⚡ AI Tools'}
-                  {tab === 'trim' && '✂️ Trim Rules'}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex gap-2 relative">
-              <div className="relative">
-                <button
-                  onClick={() => setShowSettings(!showSettings)}
-                  className={`btn-glass p-2.5 rounded-xl text-lg transition-all ${showSettings ? 'bg-cyan-500/10 border border-cyan-500/30' : ''}`}
-                  title="AI Settings"
-                >
-                  ⚙️
-                </button>
-                {showSettings && (
-                  <div className="absolute right-0 top-full mt-3 w-72 glass-modal p-4 rounded-2xl shadow-2xl z-50 animate-scale-in">
-                    <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                      <span className="text-lg">🧠</span> Groq Llama-3 API (FREE)
-                    </div>
-                    <input
-                      type="password"
-                      placeholder="Paste your 'gsk_' Groq API Key..."
-                      value={groqKey}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setGroqKey(val);
-                        localStorage.setItem('WEALTH_AI_GROQ', val);
-                      }}
-                      className="w-full glass-input rounded-xl px-4 py-3 text-sm text-white mb-3"
-                    />
-                    <button
-                      onClick={() => {
-                        setShowSettings(false);
-                        if (groqKey) syncGroqKeyToCloud(groqKey);
-                      }}
-                      className="w-full btn-primary py-2.5 rounded-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-900/30 text-sm"
-                    >
-                      💾 Save & Cloud Sync
-                    </button>
-                    <div className="text-[10px] text-slate-500 mt-3 font-medium text-center">FREE key at console.groq.com/keys</div>
-                  </div>
-                )}
-              </div>
-=======
-          {/* Tabs */}
-          <div className="flex gap-0.5 glass-card p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
-            {(['dashboard', 'quantum', 'signals', 'intelligence', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
->>>>>>> 0f3f8c6c2ad894372fe55d48eb11eab3f9672649
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`tab-btn px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm transition-all whitespace-nowrap flex-shrink-0 ${activeTab === tab
-                  ? 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
-                  : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
-                }`}
-              >
-                <span className="hidden sm:inline">
-                  {tab === 'dashboard' && '📊 Dashboard'}
-                  {tab === 'quantum' && '⚛️ Quantum AI'}
-                  {tab === 'signals' && '🎯 Signals'}
-                  {tab === 'intelligence' && '🧠 Super AI'}
-                  {tab === 'portfolio' && '💼 Portfolio'}
-                  {tab === 'planner' && '🎯 Planner'}
-                  {tab === 'macro' && '🌍 Risk'}
-                  {tab === 'tools' && '⚡ AI Tools'}
-                  {tab === 'trim' && '✂️ Trim Rules'}
-                </span>
-                <span className="sm:hidden">
-                  {tab === 'dashboard' && '📊'}
-                  {tab === 'quantum' && '⚛️'}
-                  {tab === 'signals' && '🎯'}
-                  {tab === 'intelligence' && '🧠'}
-                  {tab === 'portfolio' && '💼'}
-                  {tab === 'planner' && '🎯'}
-                  {tab === 'macro' && '🌍'}
-                  {tab === 'tools' && '⚡'}
-                  {tab === 'trim' && '✂️'}
-                </span>
-              </button>
-            ))}
-          </div>
+{/* Tabs */}
+<div className="flex gap-0.5 glass-card p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
+  {(['dashboard', 'quantum', 'signals', 'intelligence', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
+    <button
+      key={tab}
+      onClick={() => setActiveTab(tab)}
+      className={`tab-btn px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm transition-all whitespace-nowrap flex-shrink-0 ${activeTab === tab
+        ? 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+        : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
+        }`}
+    >
+      <span className="hidden sm:inline">
+        {tab === 'dashboard' && '📊 Dashboard'}
+        {tab === 'quantum' && '⚛️ Quantum AI'}
+        {tab === 'signals' && '🎯 Signals'}
+        {tab === 'intelligence' && '🧠 Super AI'}
+        {tab === 'portfolio' && '💼 Portfolio'}
+        {tab === 'planner' && '🎯 Planner'}
+        {tab === 'macro' && '🌍 Risk'}
+        {tab === 'tools' && '⚡ AI Tools'}
+        {tab === 'trim' && '✂️ Trim Rules'}
+      </span>
+      <span className="sm:hidden">
+        {tab === 'dashboard' && '📊'}
+        {tab === 'quantum' && '⚛️'}
+        {tab === 'signals' && '🎯'}
+        {tab === 'intelligence' && '🧠'}
+        {tab === 'portfolio' && '💼'}
+        {tab === 'planner' && '🎯'}
+        {tab === 'macro' && '🌍'}
+        {tab === 'tools' && '⚡'}
+        {tab === 'trim' && '✂️'}
+      </span>
+    </button>
+  ))}
+</div>
 
 <div className="flex gap-2 relative">
   <button
-                onClick={() => setAutoTelegram(prev => !prev)}
-                className={`btn-glass p-2.5 rounded-xl text-lg transition-all ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`}
-                title={autoTelegram ? 'Auto Alerts ON' : 'Auto Alerts OFF'}
-              >
-                {autoTelegram ? '🔔' : '🔕'}
-              </button>
-              <button onClick={() => {
-                const newTheme = theme === 'dark' ? 'light' : 'dark';
-                setTheme(newTheme);
-                localStorage.setItem('theme', newTheme);
-              }} className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>
-                {theme === 'dark' ? '🌞' : '🌙'}
-              </button>
-              <button onClick={() => window.location.reload()} className="btn-glass p-2.5 rounded-xl text-lg" title="Refresh">🔄</button>
-              <button onClick={() => {
-                const groqSaved = localStorage.getItem('WEALTH_AI_GROQ');
-                const themeSaved = localStorage.getItem('theme');
-                localStorage.clear();
-                if (groqSaved) localStorage.setItem('WEALTH_AI_GROQ', groqSaved);
-                if (themeSaved) localStorage.setItem('theme', themeSaved);
-                window.location.reload();
-              }} className="btn-glass p-2.5 rounded-xl text-lg" title="Flush Cache — Clear all cached data and reload">🧹</button>
-              <button onClick={logout} className="btn-glass p-2.5 rounded-xl text-lg" title="Logout">🔐</button>
-            </div>
-          </div>
-        </div>
-      </header>
+    onClick={() => setAutoTelegram(prev => !prev)}
+    className={`btn-glass p-2.5 rounded-xl text-lg transition-all ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`}
+    title={autoTelegram ? 'Auto Alerts ON' : 'Auto Alerts OFF'}
+  >
+    🔔
+  </button>
+  <button onClick={() => {
+    const newTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(newTheme);
+    localStorage.setItem('theme', newTheme);
+  }} className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>
+    🌞
+  </button>
+  <button onClick={() => window.location.reload()} className="btn-glass p-2.5 rounded-xl text-lg" title="Refresh">🔄</button>
+  <button onClick={() => {
+    const groqSaved = localStorage.getItem('WEALTH_AI_GROQ');
+    const themeSaved = localStorage.getItem('theme');
+    localStorage.clear();
+    if (groqSaved) localStorage.setItem('WEALTH_AI_GROQ', groqSaved);
+    if (themeSaved) localStorage.setItem('theme', themeSaved);
+    window.location.reload();
+  }} className="btn-glass p-2.5 rounded-xl text-lg" title="Flush Cache — Clear all cached data and reload">🧹</button>
+  <button onClick={logout} className="btn-glass p-2.5 rounded-xl text-lg" title="Logout">🔐</button>
+</div>
+</div>
+</header>
 
       <main className="container mx-auto px-4 py-6">
         {/* 🌅 Pre-Market Watch — Shows only in pre-market hours */}
