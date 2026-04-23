@@ -39,14 +39,19 @@ export function QuantumSignals({ livePrices, portfolioSymbols }: QuantumSignalsP
     return () => clearTimeout(timeout);
   }, [livePrices, portfolioSymbols]);
 
-  const generateSignals = () => {
-    const symbols = portfolioSymbols.length > 0 ? portfolioSymbols : Object.keys(livePrices);
-    const signalList: SignalData[] = [];
-    let regimeCounter = 0;
+const generateSignals = () => {
+let symbols: string[] = portfolioSymbols.length > 0 ? portfolioSymbols : Object.keys(livePrices);
+const signalList: SignalData[] = [];
 
-    symbols.forEach(symbol => {
-      const data = livePrices[symbol];
-      if (!data || !data.price) return;
+// Add default symbols if portfolio is empty and no live prices
+if (symbols.length === 0) {
+const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA'];
+symbols = defaultSymbols.filter(sym => livePrices[sym]?.price > 0);
+}
+
+symbols.forEach(symbol => {
+const data = livePrices[symbol];
+if (!data || !data.price) return;
 
       const priceHistory = Array.from({ length: 50 }, (_, i) => 
         data.price * (1 + (Math.sin(i / 10) * 0.02) + (Math.random() - 0.5) * 0.01)
@@ -128,6 +133,7 @@ export function QuantumSignals({ livePrices, portfolioSymbols }: QuantumSignalsP
     });
 
     setSignals(signalList.sort((a, b) => b.quantumScore - a.quantumScore));
+};
   };
 
   const getSignalColor = (signal: string) => {

@@ -34,13 +34,19 @@ export function SuperIntelligence({ livePrices, portfolioSymbols }: SuperIntelli
     return () => clearTimeout(timeout);
   }, [livePrices, portfolioSymbols, selectedTimeframe]);
 
-  const generatePredictions = () => {
-    const symbols = portfolioSymbols.length > 0 ? portfolioSymbols : Object.keys(livePrices);
-    const predictionList: PredictionCard[] = [];
+const generatePredictions = () => {
+let symbols: string[] = portfolioSymbols.length > 0 ? portfolioSymbols : Object.keys(livePrices);
+const predictionList: PredictionCard[] = [];
 
-    symbols.forEach(symbol => {
-      const data = livePrices[symbol];
-      if (!data || !data.price) return;
+// Add default symbols if portfolio is empty and no live prices
+if (symbols.length === 0) {
+const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA'];
+symbols = defaultSymbols.filter(sym => livePrices[sym]?.price > 0);
+}
+
+symbols.forEach(symbol => {
+const data = livePrices[symbol];
+if (!data || !data.price) return;
 
       const priceHistory = Array.from({ length: 100 }, (_, i) => {
         const base = data.price;
@@ -62,9 +68,9 @@ export function SuperIntelligence({ livePrices, portfolioSymbols }: SuperIntelli
         (trend === 'BULLISH' ? 20 : trend === 'BEARISH' ? -10 : 0)
       );
 
-      predictionList.push({
-        symbol: symbol.replace('IN_', '').replace('US_', '').replace('.NS', ''),
-        currentPrice: data.price,
+predictionList.push({
+symbol: symbol.replace('IN_', '').replace('US_', '').replace('.NS', '').replace('.BO', ''),
+currentPrice: data.price,
         predictedPrice: prediction.predictedPrice,
         predictedChange: prediction.predictedChange,
         confidence: prediction.confidence,
@@ -76,7 +82,7 @@ export function SuperIntelligence({ livePrices, portfolioSymbols }: SuperIntelli
       });
     });
 
-    setPredictions(predictionList.sort((a, b) => b.aiScore - a.aiScore));
+    setPredictions(predictionList.sort((a, b) => b.aiScore - a.aiScore).filter(p => p.aiScore > 0));
   };
 
   const getTimeframeDays = (tf: string) => {
