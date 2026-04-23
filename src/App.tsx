@@ -919,6 +919,7 @@ export default function App() {
               </div>
             </div>
 
+<<<<<<< HEAD
             {/* Tabs */}
             <div className="flex gap-0.5 glass-card p-1 rounded-2xl">
               {(['dashboard', 'quantum', 'signals', 'intelligence', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
@@ -981,7 +982,47 @@ export default function App() {
                   </div>
                 )}
               </div>
+=======
+          {/* Tabs */}
+          <div className="flex gap-0.5 glass-card p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
+            {(['dashboard', 'quantum', 'signals', 'intelligence', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
+>>>>>>> 0f3f8c6c2ad894372fe55d48eb11eab3f9672649
               <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`tab-btn px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm transition-all whitespace-nowrap flex-shrink-0 ${activeTab === tab
+                  ? 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+                  : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
+                }`}
+              >
+                <span className="hidden sm:inline">
+                  {tab === 'dashboard' && '📊 Dashboard'}
+                  {tab === 'quantum' && '⚛️ Quantum AI'}
+                  {tab === 'signals' && '🎯 Signals'}
+                  {tab === 'intelligence' && '🧠 Super AI'}
+                  {tab === 'portfolio' && '💼 Portfolio'}
+                  {tab === 'planner' && '🎯 Planner'}
+                  {tab === 'macro' && '🌍 Risk'}
+                  {tab === 'tools' && '⚡ AI Tools'}
+                  {tab === 'trim' && '✂️ Trim Rules'}
+                </span>
+                <span className="sm:hidden">
+                  {tab === 'dashboard' && '📊'}
+                  {tab === 'quantum' && '⚛️'}
+                  {tab === 'signals' && '🎯'}
+                  {tab === 'intelligence' && '🧠'}
+                  {tab === 'portfolio' && '💼'}
+                  {tab === 'planner' && '🎯'}
+                  {tab === 'macro' && '🌍'}
+                  {tab === 'tools' && '⚡'}
+                  {tab === 'trim' && '✂️'}
+                </span>
+              </button>
+            ))}
+          </div>
+
+<div className="flex gap-2 relative">
+  <button
                 onClick={() => setAutoTelegram(prev => !prev)}
                 className={`btn-glass p-2.5 rounded-xl text-lg transition-all ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`}
                 title={autoTelegram ? 'Auto Alerts ON' : 'Auto Alerts OFF'}
@@ -1311,9 +1352,92 @@ export default function App() {
               </div>
             </div>
           </div>
-        )}
+)}
 
-        {activeTab === 'portfolio' && (
+      {/* Quantum AI Tab */}
+      {activeTab === 'quantum' && (
+        <div className="space-y-5 animate-fade-in">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-black gradient-text-cyan font-display">⚛️ Quantum AI Dashboard</h2>
+          </div>
+          <QuantumPortfolio 
+            portfolio={portfolio}
+            livePrices={livePrices}
+            usdInrRate={usdInrRate}
+            totalValue={metrics.totalValue}
+            totalPL={metrics.totalPL}
+            plPct={metrics.plPct}
+            todayPL={metrics.todayPL}
+          />
+        </div>
+      )}
+
+      {/* Signals Tab */}
+      {activeTab === 'signals' && (
+        <div className="space-y-5 animate-fade-in">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-black gradient-text-cyan font-display">🎯 AI Signals</h2>
+            <button
+              onClick={() => window.open('https://tavily.com', '_blank')}
+              className="btn-glass px-4 py-2 rounded-xl font-semibold text-sm"
+            >
+              🔍 Tavily Search
+            </button>
+          </div>
+          {portfolio.length === 0 ? (
+            <div className="glass-card rounded-2xl p-8 text-center animate-fade-in">
+              <div className="text-6xl mb-4">🎯</div>
+              <h3 className="text-xl font-black text-white mb-2">No Holdings Yet</h3>
+              <p className="text-slate-400 mb-4">Add assets to your portfolio to generate AI-powered buy/sell signals</p>
+              <button
+                onClick={() => setActiveTab('portfolio')}
+                className="btn-primary px-6 py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-white"
+              >
+                ➕ Add Your First Asset
+              </button>
+            </div>
+          ) : (
+            <QuantumSignals 
+              livePrices={livePrices}
+              portfolioSymbols={portfolio.map(p => p.symbol)}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Super Intelligence Tab */}
+      {activeTab === 'intelligence' && (
+        <div className="space-y-5 animate-fade-in">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-black gradient-text-cyan font-display">🧠 Super Intelligence</h2>
+            <div className="flex items-center gap-2">
+              <span className="badge bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">
+                Tavily + DeepSeek V3
+              </span>
+            </div>
+          </div>
+          {portfolio.length === 0 ? (
+            <div className="glass-card rounded-2xl p-8 text-center animate-fade-in">
+              <div className="text-6xl mb-4">🧠</div>
+              <h3 className="text-xl font-black text-white mb-2">Add Assets to Analyze</h3>
+              <p className="text-slate-400 mb-4">Add holdings to get deep AI analysis with Tavily real-time data and DeepSeek V3 reasoning</p>
+              <button
+                onClick={() => setActiveTab('portfolio')}
+                className="btn-primary px-6 py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-white"
+              >
+                ➕ Add Assets First
+              </button>
+            </div>
+          ) : (
+            <SuperIntelligence 
+              livePrices={livePrices}
+              portfolioSymbols={portfolio.map(p => p.symbol)}
+            />
+          )}
+        </div>
+      )}
+
+      {activeTab === 'portfolio' && (
           <div className="space-y-5 animate-fade-in">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-2xl font-black gradient-text-cyan font-display">
@@ -2149,12 +2273,14 @@ export default function App() {
         </div>
       )}
 
-      {/* Neural Core Chat AI Integration with Deep Real-Time Portfolio Context Injection */}
-      <NeuralChat
-        groqKey={groqKey}
-        portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'}
-        onTelegramPush={pushTelegramReport}
-      />
+{/* Neural Core Chat AI Integration with Deep Real-Time Portfolio Context Injection */}
+<NeuralChat
+  groqKey={groqKey}
+  geminiKey={import.meta.env.VITE_GEMINI_KEY}
+  deepseekKey={import.meta.env.VITE_DEEPSEEK_KEY}
+  portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'}
+  onTelegramPush={pushTelegramReport}
+/>
 
       {/* ⚡ Market HUD Overlay */}
       <MarketHUD wsLatency={wsLatency} liveStatus={liveStatus} />

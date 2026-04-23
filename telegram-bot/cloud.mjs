@@ -69,6 +69,24 @@ export async function loadGroqKeyFromCloud() {
 }
 
 // ========================================
+// SAVE GROQ KEY TO CLOUD
+// ========================================
+export async function saveGroqKeyToCloud(key) {
+  if (!API_URL || !key) return false;
+
+  try {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ groqKey: key, action: 'saveKey', timestamp: Date.now() })
+    });
+    return res.ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+// ========================================
 // SYNC PORTFOLIO TO CLOUD
 // ========================================
 export async function syncPortfolioToCloud(portfolio, usdInr) {

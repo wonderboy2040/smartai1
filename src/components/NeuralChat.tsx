@@ -1,113 +1,84 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, BrainCircuit, X, Trash2, Copy, Check, ChevronDown, Sparkles, Zap, Activity, BarChart3, ShieldAlert } from 'lucide-react';
+import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { fetchMarketIntelligence, formatMarketIntelligenceForAI, MarketIntelligence } from '../utils/api';
-import { detectIntent, getModelLabel, AIModel } from '../utils/ai-router';
+
+// API Configurations from Environment Variables
+const CONFIG = {
+  // Tavily Search API (Real-time Web Data)
+  tavily: {
+    apiKey: import.meta.env.VITE_TAVILY_API_KEY || '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',
+    baseUrl: 'https://api.tavily.com/search'
+  },
+  // NVIDIA API (DeepSeek V3 for Analysis)
+  nvidia: {
+    apiKey: import.meta.env.VITE_NVIDIA_API_KEY || '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',
+    baseUrl: import.meta.env.VITE_NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
+    model: import.meta.env.VITE_NVIDIA_MODEL || 'deepseek-ai/deepseek-v3.2'
+  },
+  // Groq API (Fast Responses)
+  groq: {
+    apiKey: import.meta.env.VITE_GROQ_API_KEY || '',
+    baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
+    model: 'llama-3.3-70b-versatile'
+  }
+} as const;
 
 interface ChatMessage {
-  role: 'user' | 'model';
+  role: 'user' | 'model' | 'system';
   text: string;
   timestamp: number;
-  model?: AIModel;
+  model?: 'tavily' | 'deepseek' | 'groq' | 'system';
+  sources?: Array<{ title: string; url: string }>;
 }
 
-function sanitizeHtml(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<script[^>]*>/gi, '')
-    .replace(/\s*on\w+\s*=\s*["'][^"']*["']/gi, '')
-    .replace(/\s*on\w+\s*=\s*[^\s>]+/gi, '');
-}
+const QUICK_ACTIONS = [
+  { label: 'Market News', query: 'Latest market news and analysis', icon: '📰', type: 'tavily' },
+  { label: 'Portfolio Analysis', query: 'Analyze my portfolio and give recommendations', icon: '📊', type: 'deepseek' },
+  { label: 'Quick Question', query: 'Explain RSI indicator', icon: '⚡', type: 'groq' },
+  { label: 'Nifty Analysis', query: 'Nifty 50 technical analysis with support resistance', icon: '📈', type: 'tavily' }
+];
 
-function renderMarkdown(text: string): string {
-  return sanitizeHtml(text
-    .replace(/```([\s\S]*?)```/g, '<pre style="background:rgba(6,182,212,0.08);padding:10px;border-radius:8px;border:1px solid rgba(6,182,212,0.15);font-size:0.82em;overflow-x:auto;margin:6px 0">$1</pre>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/_(.+?)_/g, '<em>$1</em>')
-    .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>')
-    .replace(/•/g, '<span style="color:#06b6d4">•</span>')
-    .replace(/(\d+)\/100/g, '<span style="color:#06b6d4;font-weight:800">$1/100</span>'));
-}
-
-function formatTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
-}
+const MODEL_COLORS = {
+  tavily: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+  deepseek: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+  groq: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+  system: 'bg-slate-500/10 text-slate-400 border-slate-500/20'
+};
 
 export interface NeuralChatProps {
-  groqKey: string;
+  groqKey?: string;
   geminiKey?: string;
   deepseekKey?: string;
   portfolioContext: string;
   onTelegramPush?: () => void;
 }
 
-const QUICK_ACTIONS = [
-  { label: 'Morning Brief', query: '/morning', icon: <Activity size={12}/>, model: 'gemini' },
-  { label: 'Latest News', query: '/news', icon: <Zap size={12}/>, model: 'gemini' },
-  { label: 'Weekly Review', query: '/weekly', icon: <BarChart3 size={12}/>, model: 'deepseek' },
-  { label: 'Deep Analyze', query: '/analyze', icon: <BrainCircuit size={12}/>, model: 'deepseek' },
-  { label: 'Trim Check', query: '/trim', icon: <ShieldAlert size={12}/>, model: 'deepseek' },
-  { label: 'Crisis Check', query: '/crisis', icon: <ShieldAlert size={12}/>, model: 'gemini' },
-];
-
-const MODEL_TAGS = {
-  gemini: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-  deepseek: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-  groq: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
-  multi: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
-  system: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
-};
-
-export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deepseekKey: propDeepseekKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
-  const geminiKey = propGeminiKey || import.meta.env.VITE_GEMINI_KEY || groqKey;
-  const deepseekKey = propDeepseekKey || import.meta.env.VITE_DEEPSEEK_KEY || groqKey;
-  
+export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
-    role: 'model',
-    text: '🧠 **QUANTUM AI — Neural Link Online** ⚡\n\nNagraj Bhai, Quantum Routing Engine active hai. Main Gemini, DeepSeek, aur Groq ko intelligently route karunga based on your query.\n\n**Active Modes:**\n• 🌐 Gemini: Real-time News & Live Data\n• 🧠 DeepSeek: Quant Analysis & Trim Rules\n• ⚡ Groq: Fast Concept Explanations\n\nKya analyze karna hai aaj?',
+    role: 'system',
+    text: '🧠 **DEEP MIND AI — Quantum Trading Assistant**\n\n**Active AI Engines:**\n🔍 **Tavily Search**: Real-time web & market data\n🧠 **DeepSeek V3**: Advanced portfolio analysis (via NVIDIA)\n⚡ **Groq Llama-3**: Ultra-fast responses\n\nAsk anything about markets, portfolio, or trading!',
     timestamp: Date.now(),
     model: 'system'
   }]);
+  
   const [chatInput, setChatInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [showChat, setShowChat] = useState(false);
-  const [marketIntel, setMarketIntel] = useState<MarketIntelligence | null>(null);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
-  const [selectedModel, setSelectedModel] = useState<'auto' | 'gemini' | 'deepseek' | 'groq' | 'multi'>('auto');
-  const [showScrollDown, setShowScrollDown] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<'auto' | 'tavily' | 'deepseek' | 'groq'>('auto');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const marketIntelRef = useRef<MarketIntelligence | null>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
+  // Auto-scroll to bottom
   const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
   useEffect(() => {
     if (showChat) scrollToBottom();
   }, [chatMessages, showChat, scrollToBottom]);
 
-  const handleScroll = useCallback(() => {
-    if (!chatContainerRef.current) return;
-    const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
-    setShowScrollDown(scrollHeight - scrollTop - clientHeight > 100);
-  }, []);
-
-  useEffect(() => {
-    if (!showChat) return;
-    const loadIntel = async () => {
-      try {
-        const intel = await fetchMarketIntelligence();
-        setMarketIntel(intel);
-        marketIntelRef.current = intel;
-      } catch (e) {}
-    };
-    loadIntel();
-    const iv = setInterval(loadIntel, 120000);
-    return () => clearInterval(iv);
-  }, [showChat]);
-
+  // Copy to clipboard
   const copyToClipboard = useCallback((text: string, idx: number) => {
     navigator.clipboard.writeText(text).then(() => {
       setCopiedIdx(idx);
@@ -115,152 +86,216 @@ export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deeps
     }).catch(() => {});
   }, []);
 
+  // Clear chat
   const clearChat = useCallback(() => {
     setChatMessages([{
-      role: 'model',
-      text: '🧹 **Chat cleared! Quantum session reset.**\n\nReady for new analysis!',
+      role: 'system',
+      text: '🧹 **Chat cleared!**\n\nReady for new analysis!',
       timestamp: Date.now(),
       model: 'system'
     }]);
   }, []);
 
-  const callGemini = async (messages: any[], systemPrompt: string) => {
-    const apiKey = import.meta.env.VITE_GEMINI_KEY || groqKey;
-    if (!apiKey) throw new Error('Gemini API Key missing');
+  // Tavily Search (Real-time Web Data)
+  const searchTavily = async (query: string, days = 7) => {
+    try {
+      const res = await fetch(CONFIG.tavily.baseUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: query,
+          max_results: 5,
+          days: days,
+          search_depth: 'advanced'
+        })
+      });
 
-    const formattedMessages = [
-      { role: 'system', parts: [{ text: systemPrompt }] },
-      ...messages.map(m => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }]
-      }))
-    ];
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || `Tavily API Error: ${res.status}`);
+      }
 
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: formattedMessages })
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Gemini API Error: ${res.status}`);
+      const data = await res.json();
+      return data.results || [];
+    } catch (error) {
+      console.error('Tavily Search Error:', error);
+      throw error;
     }
-
-    const data = await res.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
   };
 
+  // NVIDIA DeepSeek V3 (Analysis)
   const callDeepSeek = async (messages: any[], systemPrompt: string) => {
-    const apiKey = import.meta.env.VITE_DEEPSEEK_KEY || groqKey;
-    if (!apiKey) throw new Error('DeepSeek API Key missing');
+    try {
+      const formattedMessages = [
+        { role: 'system', content: systemPrompt },
+        ...messages.map(m => ({ role: m.role, content: m.content }))
+      ];
 
-    const formattedMessages = [
-      { role: 'system', content: systemPrompt },
-      ...messages.map(m => ({ role: m.role, content: m.content }))
-    ];
+      const res = await fetch(`${CONFIG.nvidia.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${CONFIG.nvidia.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: CONFIG.nvidia.model,
+          messages: formattedMessages,
+          temperature: 0.7,
+          max_tokens: 2048
+        })
+      });
 
-    const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'deepseek-chat',
-        messages: formattedMessages,
-        temperature: 0.7,
-        max_tokens: 1200
-      })
-    });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || `NVIDIA DeepSeek API Error: ${res.status}`);
+      }
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `DeepSeek API Error: ${res.status}`);
+      const data = await res.json();
+      return data.choices?.[0]?.message?.content || '';
+    } catch (error) {
+      console.error('DeepSeek Error:', error);
+      throw error;
     }
-
-    const data = await res.json();
-    return data.choices?.[0]?.message?.content || '';
   };
 
+  // Groq (Fast Responses)
   const callGroq = async (messages: any[], systemPrompt: string) => {
-    if (!groqKey) throw new Error('Groq API Key missing');
+    try {
+      const apiKey = propGroqKey || '';
+      if (!apiKey) throw new Error('Groq API Key missing');
 
-    const formattedMessages = [
-      { role: 'system', content: systemPrompt },
-      ...messages.map(m => ({ role: m.role, content: m.content }))
-    ];
+      const formattedMessages = [
+        { role: 'system', content: systemPrompt },
+        ...messages.map(m => ({ role: m.role, content: m.content }))
+      ];
 
-    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${groqKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: formattedMessages,
-        temperature: 0.75,
-        max_completion_tokens: 800
-      })
-    });
+      const res = await fetch(CONFIG.groq.baseUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: CONFIG.groq.model,
+          messages: formattedMessages,
+          temperature: 0.75,
+          max_completion_tokens: 800
+        })
+      });
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Groq API Error: ${res.status}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || `Groq API Error: ${res.status}`);
+      }
+
+      const data = await res.json();
+      return data.choices?.[0]?.message?.content || '';
+    } catch (error) {
+      console.error('Groq Error:', error);
+      throw error;
     }
-
-    const data = await res.json();
-    return data.choices?.[0]?.message?.content || '';
   };
 
+  // Main AI routing with Tavily + DeepSeek combination
+  const callAI = async (userMessage: string, model: string) => {
+    const systemPrompt = `You are DEEP MIND AI — Quantum Trading Assistant. Provide expert-level trading insights, market analysis, and portfolio recommendations. Use Hinglish (Hindi + English) for Indian users. Be concise but informative.`;
+    
+    const recentMessages = chatMessages.slice(-6).map(m => ({
+      role: m.role === 'model' || m.role === 'system' ? 'assistant' : 'user',
+      content: m.text
+    }));
+
+    // Tavily + DeepSeek combination for real-time queries
+    if (model === 'tavily' || model === 'auto') {
+      try {
+        // Step 1: Search web for real-time data
+        const searchResults = await searchTavily(userMessage, 7);
+        
+        let searchContext = '';
+        if (searchResults.length > 0) {
+          searchContext = '\n\n--- REAL-TIME WEB DATA (Tavily Search) ---\n';
+          searchResults.forEach((result: any, i: number) => {
+            searchContext += `${i + 1}. **${result.title || 'Result'}**\n   ${result.content}\n   Source: ${result.url || 'Web'}\n\n`;
+          });
+        }
+
+        // Step 2: Use DeepSeek V3 for analysis with search context
+        const fullSystemPrompt = `${systemPrompt}\n\nUse the following real-time web data to provide accurate, up-to-date answers:${searchContext}`;
+        const aiText = await callDeepSeek(recentMessages, fullSystemPrompt);
+        
+        return {
+          text: aiText,
+          model: 'deepseek' as const,
+          sources: searchResults.map((r: any) => ({ title: r.title, url: r.url }))
+        };
+      } catch (error) {
+        // Fallback to Groq if Tavily/DeepSeek fails
+        console.log('Tavily/DeepSeek failed, using Groq fallback');
+        const aiText = await callGroq(recentMessages, systemPrompt);
+        return { text: aiText, model: 'groq' as const };
+      }
+    }
+
+    // Direct DeepSeek for analysis
+    if (model === 'deepseek') {
+      const aiText = await callDeepSeek(recentMessages, systemPrompt);
+      return { text: aiText, model: 'deepseek' as const };
+    }
+
+    // Groq for fast responses
+    if (model === 'groq') {
+      const aiText = await callGroq(recentMessages, systemPrompt);
+      return { text: aiText, model: 'groq' as const };
+    }
+
+    throw new Error('Invalid model selected');
+  };
+
+  // Send message handler
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim()) return;
 
-    if (!groqKey) {
-      setChatMessages(prev => [...prev,
-        { role: 'user', text: userMessage, timestamp: Date.now() },
-        { role: 'model', text: '⚠️ **Neural Link Offline**\n\nAPI Key missing. Settings (⚙️) check karo.', timestamp: Date.now(), model: 'system' }
-      ]);
-      return;
-    }
-
-    setChatMessages(prev => [...prev, { role: 'user', text: userMessage, timestamp: Date.now() }]);
     setIsThinking(true);
+    
+    // Add user message
+    setChatMessages(prev => [...prev, {
+      role: 'user',
+      text: userMessage,
+      timestamp: Date.now()
+    }]);
 
     try {
-      const intent = detectIntent(userMessage);
-      const finalModel = selectedModel === 'auto' ? intent.model : (selectedModel === 'multi' ? 'multi' : selectedModel as AIModel);
-      const systemPrompt = `You are DEEP MIND AI — Quantum Trading Assistant. ${portfolioContext}`;
-
-      const recentMessages = chatMessages.slice(-8).map(m => ({
-        role: m.role === 'model' ? 'assistant' : m.role,
-        content: m.text
-      }));
-
-      let aiText = '';
-      let usedModel: AIModel = 'groq';
-
-      // Route to appropriate AI based on intent or manual selection
-      if (finalModel === 'gemini' || (finalModel === 'auto' && intent.model === 'gemini')) {
-        aiText = await callGemini(recentMessages, systemPrompt);
-        usedModel = 'gemini';
-      } else if (finalModel === 'deepseek' || (finalModel === 'auto' && intent.model === 'deepseek')) {
-        aiText = await callDeepSeek(recentMessages, systemPrompt);
-        usedModel = 'deepseek';
-      } else {
-        aiText = await callGroq(recentMessages, systemPrompt);
-        usedModel = 'groq';
+      // Detect intent or use selected model
+      const lowerQuery = userMessage.toLowerCase();
+      let selectedModelType = selectedModel;
+      
+      if (selectedModel === 'auto') {
+        if (lowerQuery.includes('news') || lowerQuery.includes('market') || lowerQuery.includes('nifty') || lowerQuery.includes('analysis')) {
+          selectedModelType = 'tavily';
+        } else if (lowerQuery.includes('portfolio') || lowerQuery.includes('analyze') || lowerQuery.includes('calculate')) {
+          selectedModelType = 'deepseek';
+        } else {
+          selectedModelType = 'groq';
+        }
       }
+
+      // Call AI with selected model
+      const result = await callAI(userMessage, selectedModelType);
 
       setChatMessages(prev => [...prev, {
         role: 'model',
-        text: aiText,
+        text: result.text,
         timestamp: Date.now(),
-        model: finalModel === 'auto' ? usedModel : (finalModel === 'multi' ? 'multi' : finalModel as AIModel)
+        model: result.model,
+        sources: result.sources
+      } as ChatMessage]);
+    } catch (error) {
+      setChatMessages(prev => [...prev, {
+        role: 'system',
+        text: `❌ **AI Error:** ${error instanceof Error ? error.message : 'Unknown error'}\n\nPlease try again or check your API keys.`,
+        timestamp: Date.now(),
+        model: 'system'
       }]);
-    } catch (e) {
-      setChatMessages(prev => [...prev, { role: 'model', text: `❌ Error: ${e instanceof Error ? e.message : String(e)}`, timestamp: Date.now(), model: 'system' }]);
     } finally {
       setIsThinking(false);
     }
@@ -290,41 +325,48 @@ export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deeps
             initial={{ opacity: 0, y: 20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            className="fixed bottom-24 right-4 left-4 sm:left-auto sm:right-6 sm:w-[480px] h-[720px] max-h-[85vh] shadow-[0_0_50px_rgba(6,182,212,0.1)] z-[60] flex flex-col overflow-hidden"
+            className="fixed bottom-0 left-0 right-0 sm:bottom-24 sm:left-1/2 sm:right-auto sm:w-[520px] sm:-translate-x-1/2 h-[85vh] sm:h-[700px] max-h-[85vh] shadow-[0_0_50px_rgba(6,182,212,0.2)] z-[60] flex flex-col overflow-hidden sm:rounded-3xl border border-cyan-500/20"
           >
             <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-xl border border-cyan-500/20 rounded-3xl" />
 
-            <div className="relative p-4 border-b border-cyan-500/20 bg-gradient-to-r from-cyan-950/60 to-indigo-950/60 flex items-center justify-between rounded-t-3 la">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-cyan-800/60 to-indigo-900/60 border border-cyan-500/30 rounded-xl flex items-center justify-center">
-                  <BrainCircuit className="text-cyan-400" size={20} />
+            {/* Header */}
+            <div className="relative p-3 sm:p-4 border-b border-cyan-500/20 bg-gradient-to-r from-cyan-950/60 to-indigo-950/60 flex items-center justify-between rounded-t-3xl">
+              <div className="flex items-center gap-2 sm:gap-3">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 bg-gradient-to-br from-cyan-800/60 to-indigo-900/60 border border-cyan-500/30 rounded-xl flex items-center justify-center flex-shrink-0">
+                  <BrainCircuit className="text-cyan-400" size={18} />
                 </div>
-                <div>
-                  <h3 className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-1.5">
-                    Quantum AI Assistant
-                    <span className="text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">v6.0 ROUTER</span>
+                <div className="min-w-0">
+                  <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
+                    <span className="hidden xs:inline">Deep Mind AI</span>
+                    <span className="xs:hidden">AI Assistant</span>
+                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">v7.0</span>
                   </h3>
-                  <div className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1">
+                  <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    Multi-AI Routing Active
+                    <span className="hidden sm:inline">Tavily + DeepSeek V3 + Groq</span>
+                    <span className="sm:hidden">Online</span>
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
                 <button onClick={clearChat} className="text-slate-500 hover:text-red-400 bg-white/5 rounded-full p-1.5 transition-colors"><Trash2 size={14} /></button>
                 <button onClick={() => setShowChat(false)} className="text-slate-400 hover:text-white bg-white/5 rounded-full p-1.5 transition-colors"><X size={16} /></button>
               </div>
             </div>
 
-            {/* Model Selector Bar */}
-            <div className="relative px-4 py-3 bg-slate-900/40 border-b border-cyan-500/10 flex gap-2 overflow-x-auto scrollbar-hide">
-              {(['auto', 'gemini', 'deepseek', 'groq', 'multi'] as const).map(m => (
+            {/* Model Selector */}
+            <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-b border-cyan-500/10 flex gap-2 overflow-x-auto scrollbar-hide">
+              {(['auto', 'tavily', 'deepseek', 'groq'] as const).map(m => (
                 <button
                   key={m}
                   onClick={() => setSelectedModel(m)}
-                  className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase transition-all border ${selectedModel === m ? 'bg-cyan-600 text-white border-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.3)]' : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-cyan-500/50'}`}
+                  className={`px-2 sm:px-3 py-1 rounded-full text-[9px] sm:text-[10px] font-bold uppercase transition-all border whitespace-nowrap ${
+                    selectedModel === m
+                      ? 'bg-cyan-600 text-white border-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
+                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-cyan-500/50'
+                  }`}
                 >
-                  {m === 'auto' ? 'Auto-Route' : m === 'multi' ? 'Multi-AI' : getModelLabel(m as AIModel).split(' ')[0]}
+                  {m === 'auto' ? 'Auto-Detect' : m === 'tavily' ? 'Tavily+AI' : m === 'deepseek' ? 'DeepSeek V3' : 'Groq Fast'}
                 </button>
               ))}
             </div>
@@ -332,23 +374,48 @@ export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deeps
             {/* Messages */}
             <div
               ref={chatContainerRef}
-              onScroll={handleScroll}
-              className="relative flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide"
+              className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide"
             >
               {chatMessages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
-                  <div className={`max-w-[90%] rounded-2xl text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
-                    ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-4 py-3'
-                    : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-4 py-3 group/msg'
-                    }`}>
+                  <div className={`max-w-[85%] sm:max-w-[90%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${
+                    msg.role === 'user'
+                      ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-3 py-2.5 sm:px-4 sm:py-3'
+                      : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-3 py-2.5 sm:px-4 sm:py-3 group/msg'
+                  }`}>
                     {msg.role === 'user' ? (
                       msg.text
                     ) : (
                       <>
-                        <div className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase mb-2 border ${MODEL_TAGS[msg.model || 'system']}`}>
-                          {msg.model ? getModelLabel(msg.model) : 'Quantum System'}
-                        </div>
-                        <span dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />
+                        {msg.model && (
+                          <div className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase mb-2 border ${MODEL_COLORS[msg.model] || MODEL_COLORS.system}`}>
+                            {msg.model === 'tavily' ? 'Tavily Search' : msg.model === 'deepseek' ? 'DeepSeek V3' : msg.model === 'groq' ? 'Groq' : 'System'}
+                          </div>
+                        )}
+                        <span dangerouslySetInnerHTML={{ 
+                          __html: msg.text
+                            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                            .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                            .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>')
+                        }} />
+                        
+                        {msg.sources && msg.sources.length > 0 && (
+                          <div className="mt-3 pt-2 border-t border-cyan-500/20">
+                            <div className="text-[9px] font-bold text-cyan-400 mb-1">Sources:</div>
+                            {msg.sources.slice(0, 3).map((source, idx) => (
+                              <a
+                                key={idx}
+                                href={source.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="block text-[9px] text-slate-400 hover:text-cyan-400 truncate mb-0.5"
+                              >
+                                🔗 {source.title}
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                        
                         <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
                           <button
                             onClick={() => copyToClipboard(msg.text, i)}
@@ -360,16 +427,17 @@ export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deeps
                       </>
                     )}
                     <div className={`text-[9px] mt-1 font-mono ${msg.role === 'user' ? 'text-cyan-200/50' : 'text-slate-600'}`}>
-                      {formatTime(msg.timestamp)}
+                      {new Date(msg.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
                     </div>
                   </div>
                 </div>
               ))}
+              
               {isThinking && (
                 <div className="flex justify-start animate-message-in">
-                  <div className="bg-slate-900/90 px-5 py-4 rounded-2xl rounded-tl-none border border-white/5">
+                  <div className="bg-slate-900/90 px-4 py-3 rounded-2xl rounded-tl-none border border-white/5">
                     <div className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
-                      <Sparkles size={12} className="animate-pulse" /> Routing to optimal AI...
+                      <Sparkles size={12} className="animate-pulse" /> AI is thinking...
                     </div>
                     <div className="flex gap-1.5">
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
@@ -382,29 +450,30 @@ export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deeps
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Quick Actions Bar */}
-            <div className="relative px-4 py-3 bg-slate-900/40 border-t border-cyan-500/10">
+            {/* Quick Actions */}
+            <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-t border-cyan-500/10">
               <div className="flex gap-2 overflow-x-auto scrollbar-hide">
                 {QUICK_ACTIONS.map((action, i) => (
                   <button
                     key={i}
                     onClick={() => { setChatInput(''); sendMessage(action.query); }}
                     disabled={isThinking}
-                    className="flex items-center gap-1.5 whitespace-nowrap text-[10px] font-bold px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-slate-400 hover:text-white hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all disabled:opacity-30 shrink-0"
+                    className="flex items-center gap-1.5 whitespace-nowrap text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-slate-400 hover:text-white hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all disabled:opacity-30 shrink-0"
                   >
-                    <span className="text-cyan-400">{action.icon}</span>
+                    <span className="text-base">{action.icon}</span>
                     {action.label}
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="relative p-4 bg-slate-950/95 border-t border-cyan-500/15 rounded-b-3xl">
+            {/* Input */}
+            <div className="relative p-3 sm:p-4 bg-slate-950/95 border-t border-cyan-500/15 rounded-b-3xl">
               <div className="relative flex items-center">
                 <input
                   type="text"
-                  placeholder="Ask Quantum AI anything..."
-                  className="w-full bg-slate-900/60 border border-slate-700/80 rounded-2xl py-3 pl-4 pr-12 text-sm text-white outline-none focus:border-cyan-500/60 transition-all font-medium placeholder:text-slate-600"
+                  placeholder="Ask Deep Mind AI anything..."
+                  className="w-full bg-slate-900/60 border border-slate-700/80 rounded-xl sm:rounded-2xl py-2.5 sm:py-3 pl-3 sm:pl-4 pr-10 sm:pr-12 text-xs sm:text-sm text-white outline-none focus:border-cyan-500/60 transition-all font-medium placeholder:text-slate-600"
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleChat()}
@@ -412,14 +481,18 @@ export const NeuralChat = React.memo(({ groqKey, geminiKey: propGeminiKey, deeps
                 <button
                   onClick={handleChat}
                   disabled={isThinking || !chatInput.trim()}
-                  className="absolute right-1.5 p-2 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-xl disabled:opacity-30 transition-all"
+                  className="absolute right-1 sm:right-1.5 p-1.5 sm:p-2 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-lg sm:rounded-xl disabled:opacity-30 transition-all"
                 >
                   <Send size={14} />
                 </button>
               </div>
-              <div className="flex items-center justify-between mt-2 px-1">
-                <span className="text-[8px] text-slate-600 font-mono">Sensing: {selectedModel === 'auto' ? 'Auto-Route' : selectedModel.toUpperCase()}</span>
-                <span className="text-[8px] text-slate-600">{chatMessages.length} neural pulses</span>
+              <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
+                <span className="text-[7px] sm:text-[8px] text-slate-600 font-mono truncate max-w-[60%]">
+                  Model: {selectedModel === 'auto' ? 'Auto-Detect' : selectedModel.toUpperCase()}
+                </span>
+                <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
+                  {chatMessages.length} messages
+                </span>
               </div>
             </div>
           </motion.div>
