@@ -26,9 +26,10 @@ interface QuantumSignalsProps {
 }
 
 export function QuantumSignals({ livePrices, portfolioSymbols }: QuantumSignalsProps) {
-  const [signals, setSignals] = useState<SignalData[]>([]);
-  const [marketRegime, setMarketRegime] = useState<string>('ANALYZING');
-  const [isLoading, setIsLoading] = useState(true);
+const [signals, setSignals] = useState<SignalData[]>([]);
+const [marketRegime, setMarketRegime] = useState<string>('ANALYZING');
+const [isLoading, setIsLoading] = useState(true);
+let regimeCounter = 0;
 
   useEffect(() => {
     setIsLoading(true);
@@ -132,9 +133,8 @@ if (!data || !data.price) return;
       });
     });
 
-    setSignals(signalList.sort((a, b) => b.quantumScore - a.quantumScore));
+setSignals(signalList.sort((a, b) => b.quantumScore - a.quantumScore));
 };
-  };
 
   const getSignalColor = (signal: string) => {
     switch (signal) {

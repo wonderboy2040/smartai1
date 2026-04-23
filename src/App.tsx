@@ -987,6 +987,7 @@ let statusCounter = 0;
   <button onClick={logout} className="btn-glass p-2.5 rounded-xl text-lg" title="Logout">🔐</button>
 </div>
 </div>
+</div>
 </header>
 
       <main className="container mx-auto px-4 py-6">
