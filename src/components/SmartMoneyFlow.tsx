@@ -1,4 +1,3 @@
-import React from 'react';
 import { PriceData } from '../types';
 
 interface SmartMoneyFlowProps {

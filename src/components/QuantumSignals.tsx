@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { PriceData } from '../types';
 import { 
   detectRegime, 
@@ -75,7 +75,7 @@ if (!data || !data.price) return;
         data.volume || 0
       );
 
-      const prediction = PredictionEngine.predictPrice(priceHistory, data.price, data, 7);
+      const _prediction = PredictionEngine.predictPrice(priceHistory, data.price, data, 7);
 
       let signal: SignalData['signal'] = 'HOLD';
       let confidence = 50;
@@ -112,7 +112,7 @@ if (!data || !data.price) return;
         reasoning.push(`Mean reversion probability: ${meanRev.probability}%`);
       }
 
-      const atr = ((data.high || data.price) - (data.low || data.price)) || data.price * 0.02;
+      const _atr = ((data.high || data.price) - (data.low || data.price)) || data.price * 0.02;
       const quantumScore = Math.round(
         (momentum.score * 0.4) + 
         ((100 - Math.abs(data.change || 0) * 10) * 0.3) + 

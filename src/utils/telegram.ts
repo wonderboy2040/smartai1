@@ -566,7 +566,7 @@ portfolio.slice(0, 5).forEach(p => {
 const key = `${p.market}_${p.symbol}`;
 const data = livePrices[key];
 const rsi = data?.rsi || 50;
-const change = data?.change || 0;
+const _change = data?.change || 0;
 
 msg += `\n📌 **${p.symbol}**:\n`;
 msg += `Current: ${p.market === 'IN' ? '₹' : '$'}${data?.price || p.avgPrice} | RSI: ${rsi.toFixed(0)}\n`;
@@ -660,7 +660,7 @@ msg += `• Volatility: ${livePrices['US_VIX']?.price?.toFixed(1) || '15'} VIX\n
 return msg;
 }
 
-function generateScanReport(livePrices: Record<string, PriceData>): string {
+function generateScanReport(_livePrices: Record<string, PriceData>): string {
 let msg = `🔍 **MARKET SCAN**\n`;
 msg += `━━━━━━━━━━━━━━━━━━━━\n`;
 
@@ -688,7 +688,7 @@ msg += `**Correlation:** 0.72 (High)\n`;
 return msg;
 }
 
-function generateHeatmapReport(livePrices: Record<string, PriceData>): string {
+function generateHeatmapReport(_livePrices: Record<string, PriceData>): string {
 let msg = `🔥 **MARKET HEATMAP**\n`;
 msg += `━━━━━━━━━━━━━━━━━━━━\n`;
 
@@ -704,7 +704,7 @@ msg += `• REALTY, METAL\n`;
 return msg;
 }
 
-function generateStreakReport(livePrices: Record<string, PriceData>): string {
+function generateStreakReport(_livePrices: Record<string, PriceData>): string {
 let msg = `📈 **STREAK ANALYSIS**\n`;
 msg += `━━━━━━━━━━━━━━━━━━━━\n`;
 
@@ -766,7 +766,7 @@ msg += `💡 **Rule:** Trim when RSI > 70, Re-enter when RSI < 30`;
 return msg;
 }
 
-function generateStartMessage(portfolio: Position[], livePrices: Record<string, PriceData>): string {
+function generateStartMessage(portfolio: Position[], _livePrices: Record<string, PriceData>): string {
 let msg = `🧠 **DEEP MIND AI TRADING BOT**\n`;
 msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
 msg += `🤖 Welcome to Quantum AI Pro Terminal!\n\n`;

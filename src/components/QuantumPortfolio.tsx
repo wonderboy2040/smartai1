@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Position, PriceData } from '../types';
-import { calculateCorrelation, analyzePortfolioCorrelations, calculateMomentumScore } from '../utils/mlPrediction';
+import { calculateMomentumScore } from '../utils/mlPrediction';
 
 interface QuantumPortfolioProps {
   portfolio: Position[];

@@ -17,7 +17,10 @@
       "Bash(xargs grep:*)",
       "Bash(cd /d smartai11/smartai1/.claude/worktrees/agent-ac7cb9a6)",
       "Bash(node --check telegram-bot/bot.mjs)",
-      "Bash(\" && rm prompt1.txt prompt2.txt)"
+      "Bash(\" && rm prompt1.txt prompt2.txt)",
+      "Bash(python3 *)",
+      "Bash(node *)",
+      "Bash(npm install *)"
     ]
   }
 }

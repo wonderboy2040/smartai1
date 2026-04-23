@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Position, PriceData } from '../types';
 
 interface QuantumOptimizerProps {
@@ -19,7 +19,7 @@ interface OptimizationResult {
   sharpeRatio: number;
 }
 
-export function QuantumOptimizer({ portfolio, livePrices, usdInrRate, totalValue }: QuantumOptimizerProps) {
+export function QuantumOptimizer({ portfolio, livePrices, usdInrRate: _usdInrRate, totalValue }: QuantumOptimizerProps) {
   const [optimization, setOptimization] = useState<OptimizationResult[]>([]);
   const [showReport, setShowReport] = useState(false);
 

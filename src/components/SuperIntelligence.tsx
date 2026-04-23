@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { PriceData } from '../types';
-import { PredictionEngine, TechnicalIndicators } from '../utils/mlPrediction';
+import { PredictionEngine } from '../utils/mlPrediction';
 
 interface SuperIntelligenceProps {
   livePrices: Record<string, PriceData>;
@@ -85,7 +85,7 @@ currentPrice: data.price,
     setPredictions(predictionList.sort((a, b) => b.aiScore - a.aiScore).filter(p => p.aiScore > 0));
   };
 
-  const getTimeframeDays = (tf: string) => {
+  const _getTimeframeDays = (tf: string) => {
     switch (tf) {
       case '1D': return 1;
       case '3D': return 3;
@@ -204,7 +204,7 @@ currentPrice: data.price,
             <div className="text-slate-500 text-sm mt-2">Add assets to analyze</div>
           </div>
         ) : (
-          predictions.map((pred, idx) => (
+          predictions.map((pred, _idx) => (
             <div 
               key={pred.symbol}
               className="glass-card rounded-2xl p-5 border border-slate-700/50 hover:border-indigo-500/30 transition-all"

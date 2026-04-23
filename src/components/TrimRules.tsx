@@ -5,8 +5,6 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { PriceData } from '../types';
-import { batchFetchPrices } from '../utils/api';
-import { ALPHA_ETFS_IN, ALPHA_ETFS_US, EXACT_TICKER_MAP } from '../utils/constants';
 
 // ============================================
 // INTERFACES
@@ -316,7 +314,7 @@ export function TrimRules() {
           Live Quantum AI Signals
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {quantumSignals.slice(0, 6).map((signal, i) => (
+          {quantumSignals.slice(0, 6).map((signal, _i) => (
             <div key={signal.symbol} className="bg-black/30 rounded-xl p-4 border border-white/5">
               <div className="flex items-center justify-between mb-2">
                 <span className="font-bold text-white">{signal.symbol}</span>

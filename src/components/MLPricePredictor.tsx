@@ -148,7 +148,7 @@ function runMLEngine(data: PriceData | undefined): Prediction | null {
   const resistance2 = high + atr;
 
   // ── Value Zone (Benjamin Graham) ───────────────────
-  const _peProxy = 20 - (rsi / 10); // Simplified P/E (unused - kept for future use)
+  const _peProxy = 20 - (rsi / 10);
   const valueZoneLow = price * 0.85;
   const valueZoneHigh = price * 1.15;
   let valueZoneCurrent = 'FAIR VALUE';

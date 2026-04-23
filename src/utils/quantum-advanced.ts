@@ -152,7 +152,7 @@ export class QuantumPredictor {
     return { support, resistance };
   }
 
-  predict(symbol: string, currentPrice: number, liveData?: PriceData): QuantumPrediction {
+  predict(symbol: string, currentPrice: number, _liveData?: PriceData): QuantumPrediction {
     const prices = this.priceHistory.get(symbol) || [currentPrice];
     if (prices.length < 10) {
       prices.push(currentPrice);
@@ -191,7 +191,9 @@ export class QuantumPredictor {
       predictedPrice: Math.round(ensemble * 100) / 100,
       confidence: Math.round(winProbability),
       timeframe: '1d',
-      models: {
+    direction,
+    direction,
+      models {
         lstm: Math.round(lstmPred * 100) / 100,
         transformer: Math.round(transformerPred * 100) / 100,
         xgboost: Math.round(xgboostPred * 100) / 100,
