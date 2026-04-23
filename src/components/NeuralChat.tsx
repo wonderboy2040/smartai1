@@ -264,28 +264,6 @@ return { text: aiText, model: 'groq' as const };
 
 throw new Error('Invalid model selected');
 };
-      } catch (error) {
-        // Fallback to Groq if Tavily/DeepSeek fails
-        console.log('Tavily/DeepSeek failed, using Groq fallback');
-        const aiText = await callGroq(recentMessages, systemPrompt);
-        return { text: aiText, model: 'groq' as const };
-      }
-    }
-
-    // Direct DeepSeek for analysis
-    if (model === 'deepseek') {
-      const aiText = await callDeepSeek(recentMessages, systemPrompt);
-      return { text: aiText, model: 'deepseek' as const };
-    }
-
-    // Groq for fast responses
-    if (model === 'groq') {
-      const aiText = await callGroq(recentMessages, systemPrompt);
-      return { text: aiText, model: 'groq' as const };
-    }
-
-    throw new Error('Invalid model selected');
-  };
 
   // Send message handler
   const sendMessage = async (userMessage: string) => {
