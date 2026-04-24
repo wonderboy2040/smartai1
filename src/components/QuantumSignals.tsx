@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { PriceData } from '../types';
+import { PriceData, Position } from '../types';
 import { 
   detectRegime, 
   scanMeanReversion, 
@@ -22,10 +22,10 @@ interface SignalData {
 
 interface QuantumSignalsProps {
   livePrices: Record<string, PriceData>;
-  portfolioSymbols: string[];
+  portfolio: Position[];
 }
 
-export function QuantumSignals({ livePrices, portfolioSymbols }: QuantumSignalsProps) {
+export function QuantumSignals({ livePrices, portfolio }: QuantumSignalsProps) {
 const [signals, setSignals] = useState<SignalData[]>([]);
 const [marketRegime, setMarketRegime] = useState<string>('ANALYZING');
 const [isLoading, setIsLoading] = useState(true);
@@ -37,40 +37,47 @@ let regimeCounter = 0;
       generateSignals();
       setIsLoading(false);
     }, 800);
-    return () => clearTimeout(timeout);
-  }, [livePrices, portfolioSymbols]);
+  }, [livePrices, portfolio]);
 
 const generateSignals = () => {
-let symbols: string[] = portfolioSymbols.length > 0 ? portfolioSymbols : Object.keys(livePrices);
+let symbols: Position[] = portfolio.length > 0 ? portfolio : [];
 const signalList: SignalData[] = [];
 
-// Add default symbols if portfolio is empty and no live prices
+// Add default symbols if portfolio is empty
 if (symbols.length === 0) {
 const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA'];
-symbols = defaultSymbols.filter(sym => {
-  // Check if we have live prices for this symbol with any market prefix
-  return Object.keys(livePrices).some(key => key.endsWith(`_${sym}`) && livePrices[key]?.price > 0);
-});
+symbols = defaultSymbols.map(sym => ({
+  id: sym,
+  symbol: sym.replace('IN_', '').replace('US_', ''),
+  market: sym.startsWith('IN') ? 'IN' : 'US',
+  qty: 1,
+  avgPrice: livePrices[sym]?.price || 100,
+  leverage: 1,
+  dateAdded: ''
+}));
 }
 
-symbols.forEach(symbol => {
-// Find the live price data for this symbol (try different market prefixes)
-let data: PriceData | undefined;
-let marketPrefix = '';
+symbols.forEach(pos => {
+const symbol = pos.symbol;
+const marketPrefix = pos.market;
+const fullKey = `${marketPrefix}_${symbol}`;
 
-// Try to find the symbol with market prefix in livePrices
-const matchingKey = Object.keys(livePrices).find(key => key.endsWith(`_${symbol}`));
-if (matchingKey) {
-  data = livePrices[matchingKey];
-  marketPrefix = matchingKey.split('_')[0];
-} else {
-  // If not found, try direct access (for backward compatibility)
-  data = livePrices[symbol];
-}
+// Find the live price data for this symbol
+let data = livePrices[fullKey];
 
-      // Use live data if available, otherwise skip
-      const effectiveData = data && data.price ? data : null;
-      if (!effectiveData) return;
+      // Use live data if available, otherwise use portfolio avgPrice
+      const currentPrice = data?.price || pos.avgPrice;
+      const effectiveData = {
+        price: currentPrice,
+        change: data?.change || 0,
+        high: data?.high || currentPrice * 1.01,
+        low: data?.low || currentPrice * 0.99,
+        volume: data?.volume || 0,
+        rsi: data?.rsi || 50,
+        macd: data?.macd || 0,
+        sma20: data?.sma20 || currentPrice,
+        sma50: data?.sma50 || currentPrice
+      };
 
       const priceHistory = Array.from({ length: 50 }, (_, i) =>
         effectiveData.price * (1 + (Math.sin(i / 10) * 0.02) + (Math.random() - 0.5) * 0.01)
@@ -138,7 +145,7 @@ if (matchingKey) {
       );
 
       signalList.push({
-        symbol: symbol.replace('IN_', '').replace('US_', '').replace('.NS', ''),
+        symbol: symbol.replace('.NS', ''),
         signal,
         confidence: Math.round(confidence),
         timeframe: '7D',
@@ -262,13 +269,13 @@ setSignals(signalList.sort((a, b) => b.quantumScore - a.quantumScore));
                   </div>
                   <div className="flex items-center gap-4 text-sm">
                     <div className="text-slate-400">
-                      Entry: <span className="text-white font-mono">${sig.entryPrice?.toFixed(2)}</span>
+                      Entry: <span className="text-white font-mono">{symbols.find(p => p.symbol.replace('.NS', '') === sig.symbol)?.market === 'IN' ? '₹' : '$'}{sig.entryPrice?.toFixed(2)}</span>
                     </div>
                     <div className="text-slate-400">
-                      Target: <span className="text-emerald-400 font-mono">${sig.targetPrice?.toFixed(2)}</span>
+                      Target: <span className="text-emerald-400 font-mono">{symbols.find(p => p.symbol.replace('.NS', '') === sig.symbol)?.market === 'IN' ? '₹' : '$'}{sig.targetPrice?.toFixed(2)}</span>
                     </div>
                     <div className="text-slate-400">
-                      Stop: <span className="text-red-400 font-mono">${sig.stopLoss?.toFixed(2)}</span>
+                      Stop: <span className="text-red-400 font-mono">{symbols.find(p => p.symbol.replace('.NS', '') === sig.symbol)?.market === 'IN' ? '₹' : '$'}{sig.stopLoss?.toFixed(2)}</span>
                     </div>
                   </div>
                 </div>

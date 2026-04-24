@@ -1336,7 +1336,7 @@ Live Signals
 </div>
 <QuantumSignals
 livePrices={livePrices}
-portfolioSymbols={portfolio.map(p => p.symbol)}
+portfolio={portfolio}
 />
 </div>
 )}
@@ -1354,7 +1354,7 @@ Groq + Gemini + Claude
 </div>
 <SuperIntelligence
 livePrices={livePrices}
-portfolioSymbols={portfolio.map(p => p.symbol)}
+portfolio={portfolio}
 />
 </div>
 )}

@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { PriceData } from '../types';
+import { PriceData, Position } from '../types';
 import { PredictionEngine, TechnicalIndicators } from '../utils/mlPrediction';
 
 interface SuperIntelligenceProps {
   livePrices: Record<string, PriceData>;
-  portfolioSymbols: string[];
+  portfolio: Position[];
 }
 
 interface PredictionCard {
@@ -18,9 +18,10 @@ interface PredictionCard {
   resistance: number;
   trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   aiScore: number;
+  market: 'IN' | 'US';
 }
 
-export function SuperIntelligence({ livePrices, portfolioSymbols }: SuperIntelligenceProps) {
+export function SuperIntelligence({ livePrices, portfolio }: SuperIntelligenceProps) {
   const [predictions, setPredictions] = useState<PredictionCard[]>([]);
   const [selectedTimeframe, setSelectedTimeframe] = useState<'1D' | '3D' | '7D' | '14D'>('7D');
   const [isAnalyzing, setIsAnalyzing] = useState(true);
@@ -44,7 +45,7 @@ export function SuperIntelligence({ livePrices, portfolioSymbols }: SuperIntelli
       lastComputeRef.current = Date.now();
     }, isAnalyzing ? 1000 : 100);
     return () => clearTimeout(timeout);
-  }, [portfolioSymbols, selectedTimeframe]);
+  }, [portfolio, selectedTimeframe]);
 
   // Separate effect for price updates — throttled heavily
   useEffect(() => {
@@ -59,44 +60,43 @@ export function SuperIntelligence({ livePrices, portfolioSymbols }: SuperIntelli
   }, [livePrices]);
 
 const generatePredictions = () => {
-let symbols: string[] = portfolioSymbols.length > 0 ? portfolioSymbols : Object.keys(livePrices);
+let symbols: Position[] = portfolio.length > 0 ? portfolio : [];
 const predictionList: PredictionCard[] = [];
 
-// Add default symbols if portfolio is empty and no live prices
+// Add default symbols if portfolio is empty
 if (symbols.length === 0) {
 const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA'];
-symbols = defaultSymbols.filter(sym => {
-  // Check if we have live prices for this symbol with any market prefix
-  return Object.keys(livePrices).some(key => key.endsWith(`_${sym}`) && livePrices[key]?.price > 0);
-});
+symbols = defaultSymbols.map(sym => ({
+  id: sym,
+  symbol: sym.replace('IN_', '').replace('US_', ''),
+  market: sym.startsWith('IN') ? 'IN' : 'US',
+  qty: 1,
+  avgPrice: livePrices[sym]?.price || 100,
+  leverage: 1,
+  dateAdded: ''
+}));
 }
 
-symbols.forEach(symbol => {
-// Find the live price data for this symbol (try different market prefixes)
-let data: PriceData | undefined;
-let marketPrefix = '';
+symbols.forEach(pos => {
+const symbol = pos.symbol;
+const marketPrefix = pos.market;
+const fullKey = `${marketPrefix}_${symbol}`;
 
-// Try to find the symbol with market prefix in livePrices
-const matchingKey = Object.keys(livePrices).find(key => key.endsWith(`_${symbol}`));
-if (matchingKey) {
-  data = livePrices[matchingKey];
-  marketPrefix = matchingKey.split('_')[0];
-} else {
-  // If not found, try direct access (for backward compatibility)
-  data = livePrices[symbol];
-}
+// Find the live price data for this symbol
+let data = livePrices[fullKey];
 
-// Use live data if available, otherwise create mock data
-      const effectiveData = data && data.price ? data : {
-        price: 100 + Math.random() * 200,
-        change: (Math.random() - 0.5) * 2,
-        rsi: 30 + Math.random() * 40,
-        macd: (Math.random() - 0.5) * 2,
-        sma20: 100 + Math.random() * 50,
-        sma50: 95 + Math.random() * 50,
-        volume: 1000000,
-        high: 105,
-        low: 95
+// Use live data if available, otherwise use portfolio avgPrice
+      const currentPrice = data?.price || pos.avgPrice;
+      const effectiveData = {
+        price: currentPrice,
+        change: data?.change || 0,
+        high: data?.high || currentPrice * 1.01,
+        low: data?.low || currentPrice * 0.99,
+        volume: data?.volume || 0,
+        rsi: data?.rsi || 50,
+        macd: data?.macd || 0,
+        sma20: data?.sma20 || currentPrice,
+        sma50: data?.sma50 || currentPrice
       };
 
       const priceHistory = Array.from({ length: 100 }, (_, i) => {
@@ -120,7 +120,7 @@ if (matchingKey) {
       );
 
 predictionList.push({
-symbol: symbol.replace('IN_', '').replace('US_', '').replace('.NS', '').replace('.BO', ''),
+symbol: symbol.replace('.NS', '').replace('.BO', ''),
 currentPrice: effectiveData.price,
         predictedPrice: prediction.predictedPrice,
         predictedChange: prediction.predictedChange,
@@ -129,7 +129,8 @@ currentPrice: effectiveData.price,
         support: prediction.supportLevel,
         resistance: prediction.resistanceLevel,
         trend,
-        aiScore: Math.min(100, Math.max(0, aiScore))
+        aiScore: Math.min(100, Math.max(0, aiScore)),
+        market: pos.market
       });
     });
 
@@ -268,11 +269,11 @@ currentPrice: effectiveData.price,
                   </div>
                   <div className="flex items-center gap-3 text-sm">
                     <div className="text-slate-400">
-                      Current: <span className="text-white font-mono">${pred.currentPrice.toFixed(2)}</span>
+                      Current: <span className="text-white font-mono">{pred.market === 'IN' ? '₹' : '$'}{pred.currentPrice.toFixed(2)}</span>
                     </div>
                     <div className="text-slate-400">
                       Predicted: <span className={`${pred.predictedChange >= 0 ? 'text-emerald-400' : 'text-red-400'} font-mono`}>
-                        ${pred.predictedPrice.toFixed(2)}
+                        {pred.market === 'IN' ? '₹' : '$'}{pred.predictedPrice.toFixed(2)}
                       </span>
                     </div>
                   </div>
@@ -288,11 +289,11 @@ currentPrice: effectiveData.price,
               <div className="grid grid-cols-3 gap-3 mb-4">
                 <div className="bg-slate-900/60 rounded-lg p-3 text-center">
                   <div className="text-[10px] text-slate-500 uppercase">Support</div>
-                  <div className="text-lg font-black text-emerald-400 font-mono">${pred.support.toFixed(2)}</div>
+                  <div className="text-lg font-black text-emerald-400 font-mono">{pred.market === 'IN' ? '₹' : '$'}{pred.support.toFixed(2)}</div>
                 </div>
                 <div className="bg-slate-900/60 rounded-lg p-3 text-center">
                   <div className="text-[10px] text-slate-500 uppercase">Resistance</div>
-                  <div className="text-lg font-black text-red-400 font-mono">${pred.resistance.toFixed(2)}</div>
+                  <div className="text-lg font-black text-red-400 font-mono">{pred.market === 'IN' ? '₹' : '$'}{pred.resistance.toFixed(2)}</div>
                 </div>
                 <div className="bg-slate-900/60 rounded-lg p-3 text-center">
                   <div className="text-[10px] text-slate-500 uppercase">Change</div>
