@@ -41,11 +41,27 @@ const predictionList: PredictionCard[] = [];
 // Add default symbols if portfolio is empty and no live prices
 if (symbols.length === 0) {
 const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA'];
-symbols = defaultSymbols.filter(sym => livePrices[sym]?.price > 0);
+symbols = defaultSymbols.filter(sym => {
+  // Check if we have live prices for this symbol with any market prefix
+  return Object.keys(livePrices).some(key => key.endsWith(`_${sym}`) && livePrices[key]?.price > 0);
+});
 }
 
 symbols.forEach(symbol => {
-const data = livePrices[symbol];
+// Find the live price data for this symbol (try different market prefixes)
+let data: PriceData | undefined;
+let marketPrefix = '';
+
+// Try to find the symbol with market prefix in livePrices
+const matchingKey = Object.keys(livePrices).find(key => key.endsWith(`_${symbol}`));
+if (matchingKey) {
+  data = livePrices[matchingKey];
+  marketPrefix = matchingKey.split('_')[0];
+} else {
+  // If not found, try direct access (for backward compatibility)
+  data = livePrices[symbol];
+}
+
 // Use live data if available, otherwise create mock data
       const effectiveData = data && data.price ? data : {
         price: 100 + Math.random() * 200,

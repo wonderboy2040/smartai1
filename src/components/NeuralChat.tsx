@@ -178,7 +178,17 @@ const callDeepSeek = async (messages: any[], systemPrompt: string) => {
     return data.choices?.[0]?.message?.content || '';
   } catch (error) {
     console.error('DeepSeek Error:', error);
-    return "DeepSeek API currently unavailable. Using fallback analysis...";
+    // Check if it's a specific NVIDIA API key error
+    if (error instanceof Error) {
+      if (error.message.includes('410')) {
+        return "❌ NVIDIA API key error 410: API key has expired or is invalid. Please check your NVIDIA API key configuration.";
+      } else if (error.message.includes('401')) {
+        return "❌ NVIDIA API key error 401: Unauthorized access. Please check your NVIDIA API key configuration.";
+      } else if (error.message.includes('403')) {
+        return "❌ NVIDIA API key error 403: Forbidden access. Please check your NVIDIA API key permissions.";
+      }
+    }
+    return "❌ DeepSeek API currently unavailable. Using fallback analysis... Please check your API configuration.";
   }
 };
 
