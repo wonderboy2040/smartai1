@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { PriceData, Position } from '../types';
-import { 
-  detectRegime, 
-  scanMeanReversion, 
+import {
+  detectRegime,
+  scanMeanReversion,
   calculateMomentumScore,
-  PredictionEngine 
+  PredictionEngine
 } from '../utils/mlPrediction';
 
 interface SignalData {
@@ -28,8 +28,8 @@ interface QuantumSignalsProps {
 }
 
 export function QuantumSignals({ livePrices, portfolio, onViewDetails }: QuantumSignalsProps) {
-const [signals, setSignals] = useState<SignalData[]>([]);
-const [marketRegime, setMarketRegime] = useState<string>('ANALYZING');
+  const [signals, setSignals] = useState<SignalData[]>([]);
+  const [marketRegime, setMarketRegime] = useState<string>('ANALYZING');
   const [isLoading, setIsLoading] = useState(true);
   const lastComputeRef = useRef(0);
   const initialLoadRef = useRef(true);
@@ -44,41 +44,41 @@ const [marketRegime, setMarketRegime] = useState<string>('ANALYZING');
       setIsLoading(true);
       initialLoadRef.current = false;
     }
-    
+
     const timeout = setTimeout(() => {
       generateSignals();
       setIsLoading(false);
       lastComputeRef.current = Date.now();
     }, isLoading ? 800 : 200);
-    
+
     return () => clearTimeout(timeout);
   }, [livePrices, portfolio]);
 
-const generateSignals = () => {
-let symbols: Position[] = portfolio.length > 0 ? portfolio : [];
-const signalList: SignalData[] = [];
+  const generateSignals = () => {
+    let symbols: Position[] = portfolio.length > 0 ? portfolio : [];
+    const signalList: SignalData[] = [];
 
-// Add default symbols if portfolio is empty
-if (symbols.length === 0) {
-const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA'];
-symbols = defaultSymbols.map(sym => ({
-  id: sym,
-  symbol: sym.replace('IN_', '').replace('US_', ''),
-  market: sym.startsWith('IN') ? 'IN' : 'US',
-  qty: 1,
-  avgPrice: livePrices[sym]?.price || 100,
-  leverage: 1,
-  dateAdded: ''
-}));
-}
+    // Add default symbols if portfolio is empty
+    if (symbols.length === 0) {
+      const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA'];
+      symbols = defaultSymbols.map(sym => ({
+        id: sym,
+        symbol: sym.replace('IN_', '').replace('US_', ''),
+        market: sym.startsWith('IN') ? 'IN' : 'US',
+        qty: 1,
+        avgPrice: livePrices[sym]?.price || 100,
+        leverage: 1,
+        dateAdded: ''
+      }));
+    }
 
-symbols.forEach(pos => {
-const symbol = pos.symbol;
-const marketPrefix = pos.market;
-const fullKey = `${marketPrefix}_${symbol}`;
+    symbols.forEach(pos => {
+      const symbol = pos.symbol;
+      const marketPrefix = pos.market;
+      const fullKey = `${marketPrefix}_${symbol}`;
 
-// Find the live price data for this symbol
-let data = livePrices[fullKey];
+      // Find the live price data for this symbol
+      let data = livePrices[fullKey];
 
       // Use live data if available, otherwise use portfolio avgPrice
       const currentPrice = data?.price || pos.avgPrice;
@@ -154,8 +154,8 @@ let data = livePrices[fullKey];
 
       const atr = ((effectiveData.high || effectiveData.price) - (effectiveData.low || effectiveData.price)) || effectiveData.price * 0.02;
       const quantumScore = Math.round(
-        (momentum.score * 0.4) + 
-        ((100 - Math.abs(effectiveData.change || 0) * 10) * 0.3) + 
+        (momentum.score * 0.4) +
+        ((100 - Math.abs(effectiveData.change || 0) * 10) * 0.3) +
         ((regime.trendStrength) * 0.3)
       );
 
@@ -174,8 +174,8 @@ let data = livePrices[fullKey];
       });
     });
 
-setSignals(signalList.sort((a, b) => b.quantumScore - a.quantumScore));
-};
+    setSignals(signalList.sort((a, b) => b.quantumScore - a.quantumScore));
+  };
 
   const getSignalColor = (signal: string) => {
     switch (signal) {
@@ -267,12 +267,11 @@ setSignals(signalList.sort((a, b) => b.quantumScore - a.quantumScore));
           </div>
         ) : (
           signals.map((sig, idx) => (
-            <div 
+            <div
               key={sig.symbol}
-              className={`glass-card rounded-2xl p-5 border transition-all hover:scale-[1.02] ${
-                sig.signal.includes('BUY') ? 'border-emerald-500/30' : 
-                sig.signal.includes('SELL') ? 'border-red-500/30' : 'border-slate-700/50'
-              }`}
+              className={`glass-card rounded-2xl p-5 border transition-all hover:scale-[1.02] ${sig.signal.includes('BUY') ? 'border-emerald-500/30' :
+                  sig.signal.includes('SELL') ? 'border-red-500/30' : 'border-slate-700/50'
+                }`}
               style={{ animationDelay: `${idx * 100}ms` }}
             >
               <div className="flex items-start justify-between mb-4">
@@ -355,7 +354,7 @@ setSignals(signalList.sort((a, b) => b.quantumScore - a.quantumScore));
           <span className="text-2xl">⚠️</span>
           <div className="text-xs text-slate-400">
             <div className="font-bold text-amber-400 mb-1">AI Trading Disclaimer</div>
-            These signals are generated by machine learning algorithms and should not be considered as financial advice. 
+            These signals are generated by machine learning algorithms and should not be considered as financial advice.
             Always do your own research and consult with a qualified financial advisor before making investment decisions.
           </div>
         </div>
