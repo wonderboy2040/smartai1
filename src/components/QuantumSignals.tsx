@@ -18,6 +18,7 @@ interface SignalData {
   reasoning: string[];
   quantumScore: number;
   aiConfidence: number;
+  market: 'IN' | 'US';
 }
 
 interface QuantumSignalsProps {
@@ -28,15 +29,28 @@ interface QuantumSignalsProps {
 export function QuantumSignals({ livePrices, portfolio }: QuantumSignalsProps) {
 const [signals, setSignals] = useState<SignalData[]>([]);
 const [marketRegime, setMarketRegime] = useState<string>('ANALYZING');
-const [isLoading, setIsLoading] = useState(true);
-let regimeCounter = 0;
+  const [isLoading, setIsLoading] = useState(true);
+  const lastComputeRef = useRef(0);
+  const initialLoadRef = useRef(true);
+  let regimeCounter = 0;
 
   useEffect(() => {
-    setIsLoading(true);
+    const now = Date.now();
+    const shouldCompute = initialLoadRef.current || (now - lastComputeRef.current > 10000);
+    if (!shouldCompute) return;
+
+    if (initialLoadRef.current) {
+      setIsLoading(true);
+      initialLoadRef.current = false;
+    }
+    
     const timeout = setTimeout(() => {
       generateSignals();
       setIsLoading(false);
-    }, 800);
+      lastComputeRef.current = Date.now();
+    }, isLoading ? 800 : 200);
+    
+    return () => clearTimeout(timeout);
   }, [livePrices, portfolio]);
 
 const generateSignals = () => {
@@ -154,7 +168,8 @@ let data = livePrices[fullKey];
         stopLoss: effectiveData.price * (1 + (signal.includes('BUY') ? -0.05 : signal.includes('SELL') ? 0.03 : 0)),
         reasoning,
         quantumScore,
-        aiConfidence: Math.round((confidence + quantumScore) / 2)
+        aiConfidence: Math.round((confidence + quantumScore) / 2),
+        market: pos.market as 'IN' | 'US'
       });
     });
 
@@ -269,13 +284,13 @@ setSignals(signalList.sort((a, b) => b.quantumScore - a.quantumScore));
                   </div>
                   <div className="flex items-center gap-4 text-sm">
                     <div className="text-slate-400">
-                      Entry: <span className="text-white font-mono">{symbols.find(p => p.symbol.replace('.NS', '') === sig.symbol)?.market === 'IN' ? '₹' : '$'}{sig.entryPrice?.toFixed(2)}</span>
+                      Entry: <span className="text-white font-mono">{sig.market === 'IN' ? '₹' : '$'}{sig.entryPrice?.toFixed(2)}</span>
                     </div>
                     <div className="text-slate-400">
-                      Target: <span className="text-emerald-400 font-mono">{symbols.find(p => p.symbol.replace('.NS', '') === sig.symbol)?.market === 'IN' ? '₹' : '$'}{sig.targetPrice?.toFixed(2)}</span>
+                      Target: <span className="text-emerald-400 font-mono">{sig.market === 'IN' ? '₹' : '$'}{sig.targetPrice?.toFixed(2)}</span>
                     </div>
                     <div className="text-slate-400">
-                      Stop: <span className="text-red-400 font-mono">{symbols.find(p => p.symbol.replace('.NS', '') === sig.symbol)?.market === 'IN' ? '₹' : '$'}{sig.stopLoss?.toFixed(2)}</span>
+                      Stop: <span className="text-red-400 font-mono">{sig.market === 'IN' ? '₹' : '$'}{sig.stopLoss?.toFixed(2)}</span>
                     </div>
                   </div>
                 </div>
