@@ -68,6 +68,10 @@ if (matchingKey) {
   data = livePrices[symbol];
 }
 
+      // Use live data if available, otherwise skip
+      const effectiveData = data && data.price ? data : null;
+      if (!effectiveData) return;
+
       const priceHistory = Array.from({ length: 50 }, (_, i) =>
         effectiveData.price * (1 + (Math.sin(i / 10) * 0.02) + (Math.random() - 0.5) * 0.01)
       );

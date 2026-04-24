@@ -2,46 +2,44 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-// API Configurations from Environment Variables
+// AI Engine Configurations — Groq + Gemini + Claude (All FREE)
 const CONFIG = {
-// Tavily Search API (Real-time Web Data)
-tavily: {
-apiKey: import.meta.env.VITE_TAVILY_API_KEY || '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',
-baseUrl: 'https://api.tavily.com/search'
-},
-// NVIDIA API (DeepSeek V3 for Analysis)
-nvidia: {
-apiKey: import.meta.env.VITE_NVIDIA_API_KEY || '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',
-baseUrl: import.meta.env.VITE_NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
-  model: import.meta.env.VITE_NVIDIA_MODEL || 'deepseek-ai/deepseek-r1'
-},
-// Groq API (Fast Responses)
-groq: {
-apiKey: import.meta.env.VITE_GROQ_API_KEY || 'gsk_7rTlR1JQwJzQ8vP9mK2LWGzy',
-baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
-model: 'llama-3.3-70b-versatile'
-}
+  groq: {
+    apiKey: import.meta.env.VITE_GROQ_API_KEY || '',
+    baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
+    model: 'llama-3.3-70b-versatile'
+  },
+  gemini: {
+    apiKey: import.meta.env.VITE_GEMINI_API_KEY || '',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
+    model: 'gemini-2.0-flash'
+  },
+  claude: {
+    apiKey: import.meta.env.VITE_CLAUDE_API_KEY || '',
+    baseUrl: 'https://api.anthropic.com/v1/messages',
+    model: 'claude-sonnet-4-20250514'
+  }
 } as const;
 
 interface ChatMessage {
   role: 'user' | 'model' | 'system';
   text: string;
   timestamp: number;
-  model?: 'tavily' | 'deepseek' | 'groq' | 'system';
+  model?: 'groq' | 'gemini' | 'claude' | 'system';
   sources?: Array<{ title: string; url: string }>;
 }
 
 const QUICK_ACTIONS = [
-  { label: 'Market News', query: 'Latest market news and analysis', icon: '📰', type: 'tavily' },
-  { label: 'Portfolio Analysis', query: 'Analyze my portfolio and give recommendations', icon: '📊', type: 'deepseek' },
-  { label: 'Quick Question', query: 'Explain RSI indicator', icon: '⚡', type: 'groq' },
-  { label: 'Nifty Analysis', query: 'Nifty 50 technical analysis with support resistance', icon: '📈', type: 'tavily' }
+  { label: 'Market News', query: 'Latest Indian and US market news and analysis with key levels', icon: '📰', type: 'gemini' },
+  { label: 'Portfolio Analysis', query: 'Analyze my portfolio deeply with fundamentals, technicals and actionable recommendations', icon: '📊', type: 'claude' },
+  { label: 'Quick Question', query: 'Explain RSI divergence and how to use it for trading', icon: '⚡', type: 'groq' },
+  { label: 'Trading Strategy', query: 'Give me detailed intraday and swing trading strategies for current market conditions', icon: '🎯', type: 'claude' }
 ];
 
 const MODEL_COLORS = {
-  tavily: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-  deepseek: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
   groq: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+  gemini: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  claude: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
   system: 'bg-slate-500/10 text-slate-400 border-slate-500/20'
 };
 
@@ -54,7 +52,7 @@ export interface NeuralChatProps {
 export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
-    text: '🧠 **DEEP MIND AI — Quantum Trading Assistant**\n\n**Active AI Engines:**\n🔍 **Tavily Search**: Real-time web & market data\n🧠 **DeepSeek V3**: Advanced portfolio analysis (via NVIDIA)\n⚡ **Groq Llama-3**: Ultra-fast responses\n\nAsk anything about markets, portfolio, or trading!',
+    text: '🧠 **DEEP MIND AI — Pro Trading Assistant**\n\n**Active AI Engines:**\n⚡ **Groq Llama-3.3**: Ultra-fast responses\n🔵 **Google Gemini 2.0**: Real-time market intelligence\n🟣 **Claude Sonnet**: Deep analysis & strategies\n\nAsk anything about markets, portfolio, or trading!',
     timestamp: Date.now(),
     model: 'system'
   }]);
@@ -63,11 +61,10 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
   const [isThinking, setIsThinking] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
-  const [selectedModel, setSelectedModel] = useState<'auto' | 'tavily' | 'deepseek' | 'groq'>('auto');
+  const [selectedModel, setSelectedModel] = useState<'auto' | 'groq' | 'gemini' | 'claude'>('auto');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
@@ -76,7 +73,6 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
     if (showChat) scrollToBottom();
   }, [chatMessages, showChat, scrollToBottom]);
 
-  // Copy to clipboard
   const copyToClipboard = useCallback((text: string, idx: number) => {
     navigator.clipboard.writeText(text).then(() => {
       setCopiedIdx(idx);
@@ -84,7 +80,6 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
     }).catch(() => {});
   }, []);
 
-  // Clear chat
   const clearChat = useCallback(() => {
     setChatMessages([{
       role: 'system',
@@ -94,268 +89,190 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
     }]);
   }, []);
 
-// Tavily Search (Real-time Web Data)
-const searchTavily = async (query: string, days = 7) => {
-  try {
-    // Validate API key
-    const apiKey = import.meta.env.VITE_TAVILY_API_KEY || CONFIG.tavily.apiKey;
-    if (!apiKey || !apiKey.startsWith('tvly-')) {
-      console.warn('Tavily API key not configured properly');
-      return [];
-    }
-
-    const res = await fetch(CONFIG.tavily.baseUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        query: query,
-        max_results: 5,
-        days: days,
-        search_depth: 'advanced',
-        include_answer: true,
-        include_images: false,
-        include_raw_content: false
-      })
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Tavily API Error: ${res.status}`);
-    }
-
-    const data = await res.json();
-    return data.results || [];
-  } catch (error) {
-    console.error('Tavily Search Error:', error);
-    return [];
-  }
-};
-
-// NVIDIA DeepSeek V3 (Analysis)
-const callDeepSeek = async (messages: any[], systemPrompt: string) => {
-  try {
-    // Validate API key
-    const apiKey = import.meta.env.VITE_NVIDIA_API_KEY || CONFIG.nvidia.apiKey;
-    if (!apiKey || !apiKey.startsWith('nvapi-')) {
-      throw new Error('NVIDIA API key not configured');
-    }
-
-    const formattedMessages = [
-      { role: 'system', content: systemPrompt },
-      ...messages.map(m => ({ role: m.role, content: m.content }))
-    ];
-
-    // Use NVIDIA NIM API endpoint for DeepSeek
-    const res = await fetch(`${CONFIG.nvidia.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'deepseek-ai/deepseek-r1',
-        messages: formattedMessages,
-        temperature: 0.6,
-        max_tokens: 2048,
-        top_p: 0.9,
-        stream: false
-      })
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      console.error('NVIDIA API Error:', res.status, err);
-      throw new Error(err.error?.message || `NVIDIA DeepSeek API Error: ${res.status}`);
-    }
-
-    const data = await res.json();
-    return data.choices?.[0]?.message?.content || '';
-  } catch (error) {
-    console.error('DeepSeek Error:', error);
-    // Check if it's a specific NVIDIA API key error
-    if (error instanceof Error) {
-      if (error.message.includes('410')) {
-        return "❌ NVIDIA API key error 410: API key has expired or is invalid. Please check your NVIDIA API key configuration.";
-      } else if (error.message.includes('401')) {
-        return "❌ NVIDIA API key error 401: Unauthorized access. Please check your NVIDIA API key configuration.";
-      } else if (error.message.includes('403')) {
-        return "❌ NVIDIA API key error 403: Forbidden access. Please check your NVIDIA API key permissions.";
-      }
-    }
-    return "❌ DeepSeek API currently unavailable. Using fallback analysis... Please check your API configuration.";
-  }
-};
-
-// Groq (Fast Responses)
-const callGroq = async (messages: any[], systemPrompt: string) => {
-  try {
-    // Get API key from environment or props - check all possible sources
+  // ============ GROQ API (Ultra-Fast) ============
+  const callGroq = async (messages: any[], systemPrompt: string) => {
     const envKey = import.meta.env.VITE_GROQ_API_KEY;
     const apiKey = envKey || propGroqKey || CONFIG.groq.apiKey;
-
     if (!apiKey || !apiKey.startsWith('gsk_')) {
-      console.error('Groq API Key missing or invalid. Key starts with:', apiKey ? apiKey.substring(0, 10) : 'undefined');
-      throw new Error('Groq API Key missing or invalid');
+      throw new Error('Groq API Key missing — Settings me set karo');
     }
-
-    const formattedMessages = [
-      { role: 'system', content: systemPrompt },
-      ...messages.map(m => ({ role: m.role, content: m.content }))
-    ];
 
     const res = await fetch(CONFIG.groq.baseUrl, {
       method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: CONFIG.groq.model,
+        messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
+        temperature: 0.7,
+        max_completion_tokens: 1200
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `Groq API Error: ${res.status}`);
+    }
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || '';
+  };
+
+  // ============ GEMINI API (Real-time Intelligence) ============
+  const callGemini = async (messages: any[], systemPrompt: string) => {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || CONFIG.gemini.apiKey;
+    if (!apiKey || apiKey.length < 10) {
+      throw new Error('Gemini API Key missing — Settings me set karo');
+    }
+
+    const contents = [
+      { role: 'user', parts: [{ text: systemPrompt }] },
+      { role: 'model', parts: [{ text: 'Understood. I am DEEP MIND AI Pro Trading Assistant. Ready for analysis.' }] },
+      ...messages.map(m => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }]
+      }))
+    ];
+
+    const res = await fetch(`${CONFIG.gemini.baseUrl}/${CONFIG.gemini.model}:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents,
+        generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `Gemini API Error: ${res.status}`);
+    }
+    const data = await res.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  };
+
+  // ============ CLAUDE API (Deep Analysis) ============
+  const callClaude = async (messages: any[], systemPrompt: string) => {
+    const apiKey = import.meta.env.VITE_CLAUDE_API_KEY || CONFIG.claude.apiKey;
+    if (!apiKey || apiKey.length < 10) {
+      // Fallback to Gemini if Claude key missing
+      console.warn('Claude key missing, falling back to Gemini');
+      return await callGemini(messages, systemPrompt);
+    }
+
+    const res = await fetch(CONFIG.claude.baseUrl, {
+      method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: formattedMessages,
-        temperature: 0.75,
-        max_completion_tokens: 800
+        model: CONFIG.claude.model,
+        max_tokens: 2048,
+        system: systemPrompt,
+        messages: messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }))
       })
     });
-
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      console.error('Groq API Error:', res.status, err);
-      throw new Error(err.error?.message || `Groq API Error: ${res.status}`);
+      // Fallback to Gemini on any Claude error
+      console.warn('Claude API error, falling back to Gemini:', err);
+      return await callGemini(messages, systemPrompt);
+    }
+    const data = await res.json();
+    return data.content?.[0]?.text || '';
+  };
+
+  // ============ MAIN AI ROUTER ============
+  const callAI = async (userMessage: string, model: string) => {
+    const systemPrompt = `You are DEEP MIND AI — Elite Pro Trading Intelligence Assistant. You provide expert-level trading insights, real-time market analysis, detailed fundamentals, options strategies, and portfolio recommendations.
+
+RULES:
+1. Use Hinglish (Hindi + English mix) for Indian users
+2. Reference actual portfolio data provided in context
+3. Give specific actionable advice with exact levels (support, resistance, SL, TP)
+4. Include conviction scores and risk-reward ratios
+5. For market news, provide current trends and their impact
+6. Be concise but comprehensive
+
+PORTFOLIO CONTEXT:
+${portfolioContext || 'No portfolio data available. Provide general market analysis.'}`;
+
+    const recentMessages = chatMessages.slice(-6).map(m => ({
+      role: m.role === 'model' || m.role === 'system' ? 'assistant' : 'user',
+      content: m.text
+    }));
+
+    // Try primary model, fallback chain: Claude → Gemini → Groq
+    if (model === 'claude') {
+      try {
+        const text = await callClaude(recentMessages, systemPrompt);
+        return { text, model: 'claude' as const };
+      } catch (e) {
+        try {
+          const text = await callGemini(recentMessages, systemPrompt);
+          return { text, model: 'gemini' as const };
+        } catch {
+          const text = await callGroq(recentMessages, systemPrompt);
+          return { text, model: 'groq' as const };
+        }
+      }
     }
 
-    const data = await res.json();
-    return data.choices?.[0]?.message?.content || '';
-  } catch (error) {
-    console.error('Groq Error:', error);
-    return "🤖 Groq API unavailable. Please check your API key in environment variables.";
-  }
-};
+    if (model === 'gemini') {
+      try {
+        const text = await callGemini(recentMessages, systemPrompt);
+        return { text, model: 'gemini' as const };
+      } catch (e) {
+        const text = await callGroq(recentMessages, systemPrompt);
+        return { text, model: 'groq' as const };
+      }
+    }
 
-// Main AI routing with Tavily + DeepSeek combination
-const callAI = async (userMessage: string, model: string) => {
-const systemPrompt = `You are DEEP MIND AI — Quantum Trading Assistant. Provide expert-level trading insights, market analysis, and portfolio recommendations. Use Hinglish (Hindi + English) for Indian users. Be concise but informative.`;
+    // Groq (default/fast)
+    try {
+      const text = await callGroq(recentMessages, systemPrompt);
+      return { text, model: 'groq' as const };
+    } catch (e) {
+      try {
+        const text = await callGemini(recentMessages, systemPrompt);
+        return { text, model: 'gemini' as const };
+      } catch {
+        return { text: `🤖 **AI Response:**\n\nSabhi AI engines temporarily unavailable. Please check API keys in .env file.`, model: 'groq' as const };
+      }
+    }
+  };
 
-const recentMessages = chatMessages.slice(-6).map(m => ({
-role: m.role === 'model' || m.role === 'system' ? 'assistant' : 'user',
-content: m.text
-}));
-
-// Tavily + DeepSeek combination for real-time queries
-if (model === 'tavily' || model === 'auto') {
-try {
-// Step 1: Search web for real-time data
-const searchResults = await searchTavily(userMessage, 7);
-
-let searchContext = '';
-if (searchResults.length > 0) {
-searchContext = '\n\n--- REAL-TIME WEB DATA (Tavily Search) ---\n';
-searchResults.forEach((result: any, i: number) => {
-searchContext += `${i + 1}. **${result.title || 'Result'}**\n ${result.content}\n Source: ${result.url || 'Web'}\n\n`;
-});
-}
-
-// Step 2: Use DeepSeek V3 for analysis with search context
-const fullSystemPrompt = `${systemPrompt}\n\nUse the following real-time web data to provide accurate, up-to-date answers:${searchContext}`;
-const aiText = await callDeepSeek(recentMessages, fullSystemPrompt);
-
-return {
-text: aiText,
-model: 'deepseek' as const,
-sources: searchResults.map((r: any) => ({ title: r.title, url: r.url }))
-};
-} catch (error) {
-// Fallback to Groq if Tavily/DeepSeek fails
-console.log('Tavily/DeepSeek failed, using Groq fallback');
-try {
-const aiText = await callGroq(recentMessages, systemPrompt);
-return { text: aiText, model: 'groq' as const };
-} catch (groqError) {
-// If both fail, return a helpful fallback message
-return { text: `🤖 **AI Response:**\n\nMarket data analyze karne me temporary issue aa raha hai. Aapka query: "${userMessage}"\n\nRetry karein ya specific asset puchein.`, model: 'groq' as const };
-}
-}
-}
-
-// Direct DeepSeek for analysis
-if (model === 'deepseek') {
-try {
-const aiText = await callDeepSeek(recentMessages, systemPrompt);
-return { text: aiText, model: 'deepseek' as const };
-} catch (error) {
-// Fallback to Groq
-const aiText = await callGroq(recentMessages, systemPrompt);
-return { text: aiText, model: 'groq' as const };
-}
-}
-
-// Groq for fast responses
-if (model === 'groq') {
-const aiText = await callGroq(recentMessages, systemPrompt);
-return { text: aiText, model: 'groq' as const };
-}
-
-// Fallback to groq for any other model
-const aiText = await callGroq(recentMessages, systemPrompt);
-return { text: aiText, model: 'groq' as const };
-};
-
-  // Send message handler
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim()) return;
-
     setIsThinking(true);
     
-    // Add user message
-    setChatMessages(prev => [...prev, {
-      role: 'user',
-      text: userMessage,
-      timestamp: Date.now()
-    }]);
+    setChatMessages(prev => [...prev, { role: 'user', text: userMessage, timestamp: Date.now() }]);
 
     try {
-      // Detect intent or use selected model
       const lowerQuery = userMessage.toLowerCase();
       let selectedModelType = selectedModel;
       
       if (selectedModel === 'auto') {
-        if (lowerQuery.includes('news') || lowerQuery.includes('market') || lowerQuery.includes('nifty') || lowerQuery.includes('analysis')) {
-          selectedModelType = 'tavily';
-        } else if (lowerQuery.includes('portfolio') || lowerQuery.includes('analyze') || lowerQuery.includes('calculate')) {
-          selectedModelType = 'deepseek';
+        if (lowerQuery.includes('news') || lowerQuery.includes('market') || lowerQuery.includes('nifty') || lowerQuery.includes('live') || lowerQuery.includes('aaj')) {
+          selectedModelType = 'gemini';
+        } else if (lowerQuery.includes('portfolio') || lowerQuery.includes('analyze') || lowerQuery.includes('strategy') || lowerQuery.includes('fundamental') || lowerQuery.includes('deep')) {
+          selectedModelType = 'claude';
         } else {
           selectedModelType = 'groq';
         }
       }
 
-      // Call AI with selected model
       const result = await callAI(userMessage, selectedModelType);
-
       setChatMessages(prev => [...prev, {
-        role: 'model',
-        text: result.text,
-        timestamp: Date.now(),
-        model: result.model,
-        sources: result.sources
+        role: 'model', text: result.text, timestamp: Date.now(), model: result.model
       } as ChatMessage]);
-} catch (error) {
-const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-// Check if it's a network error vs API key error
-const isAuthError = errorMsg.toLowerCase().includes('auth') || errorMsg.toLowerCase().includes('key');
-const helpfulMsg = isAuthError
-? `🔑 **API Key Issue:** ${errorMsg}\n\nSettings panel me API key check karein.`
-: `⚠️ **AI Response:** ${errorMsg}\n\nNetwork check karein ya retry karein.`;
-
-setChatMessages(prev => [...prev, {
-role: 'system',
-text: `❌ ${helpfulMsg}`,
-timestamp: Date.now(),
-model: 'system'
-}]);
-} finally {
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      setChatMessages(prev => [...prev, {
+        role: 'system',
+        text: `❌ **Error:** ${errorMsg}\n\nAPI keys check karo ya retry karo.`,
+        timestamp: Date.now(), model: 'system'
+      }]);
+    } finally {
       setIsThinking(false);
     }
   };
@@ -398,11 +315,11 @@ model: 'system'
                   <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
                     <span className="hidden xs:inline">Deep Mind AI</span>
                     <span className="xs:hidden">AI Assistant</span>
-                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">v7.0</span>
+                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">v8.0</span>
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="hidden sm:inline">Tavily + DeepSeek V3 + Groq</span>
+                    <span className="hidden sm:inline">Groq + Gemini + Claude</span>
                     <span className="sm:hidden">Online</span>
                   </div>
                 </div>
@@ -415,7 +332,7 @@ model: 'system'
 
             {/* Model Selector */}
             <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-b border-cyan-500/10 flex gap-2 overflow-x-auto scrollbar-hide">
-              {(['auto', 'tavily', 'deepseek', 'groq'] as const).map(m => (
+              {(['auto', 'groq', 'gemini', 'claude'] as const).map(m => (
                 <button
                   key={m}
                   onClick={() => setSelectedModel(m)}
@@ -425,16 +342,13 @@ model: 'system'
                       : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-cyan-500/50'
                   }`}
                 >
-                  {m === 'auto' ? 'Auto-Detect' : m === 'tavily' ? 'Tavily+AI' : m === 'deepseek' ? 'DeepSeek V3' : 'Groq Fast'}
+                  {m === 'auto' ? '🤖 Auto' : m === 'groq' ? '⚡ Groq' : m === 'gemini' ? '🔵 Gemini' : '🟣 Claude'}
                 </button>
               ))}
             </div>
 
             {/* Messages */}
-            <div
-              ref={chatContainerRef}
-              className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide"
-            >
+            <div ref={chatContainerRef} className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide">
               {chatMessages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
                   <div className={`max-w-[85%] sm:max-w-[90%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${
@@ -442,13 +356,11 @@ model: 'system'
                       ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-3 py-2.5 sm:px-4 sm:py-3'
                       : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-3 py-2.5 sm:px-4 sm:py-3 group/msg'
                   }`}>
-                    {msg.role === 'user' ? (
-                      msg.text
-                    ) : (
+                    {msg.role === 'user' ? msg.text : (
                       <>
                         {msg.model && (
                           <div className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase mb-2 border ${MODEL_COLORS[msg.model] || MODEL_COLORS.system}`}>
-                            {msg.model === 'tavily' ? 'Tavily Search' : msg.model === 'deepseek' ? 'DeepSeek V3' : msg.model === 'groq' ? 'Groq' : 'System'}
+                            {msg.model === 'groq' ? '⚡ Groq' : msg.model === 'gemini' ? '🔵 Gemini' : msg.model === 'claude' ? '🟣 Claude' : 'System'}
                           </div>
                         )}
                         <span dangerouslySetInnerHTML={{ 
@@ -457,29 +369,8 @@ model: 'system'
                             .replace(/\*(.+?)\*/g, '<em>$1</em>')
                             .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>')
                         }} />
-                        
-                        {msg.sources && msg.sources.length > 0 && (
-                          <div className="mt-3 pt-2 border-t border-cyan-500/20">
-                            <div className="text-[9px] font-bold text-cyan-400 mb-1">Sources:</div>
-                            {msg.sources.slice(0, 3).map((source, idx) => (
-                              <a
-                                key={idx}
-                                href={source.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="block text-[9px] text-slate-400 hover:text-cyan-400 truncate mb-0.5"
-                              >
-                                🔗 {source.title}
-                              </a>
-                            ))}
-                          </div>
-                        )}
-                        
                         <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => copyToClipboard(msg.text, i)}
-                            className="text-[9px] text-slate-500 hover:text-cyan-400 flex items-center gap-1 transition-colors"
-                          >
+                          <button onClick={() => copyToClipboard(msg.text, i)} className="text-[9px] text-slate-500 hover:text-cyan-400 flex items-center gap-1 transition-colors">
                             {copiedIdx === i ? <><Check size={10} /> Copied!</> : <><Copy size={10} /> Copy</>}
                           </button>
                         </div>
@@ -547,7 +438,7 @@ model: 'system'
               </div>
               <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
                 <span className="text-[7px] sm:text-[8px] text-slate-600 font-mono truncate max-w-[60%]">
-                  Model: {selectedModel === 'auto' ? 'Auto-Detect' : selectedModel.toUpperCase()}
+                  Model: {selectedModel === 'auto' ? '🤖 Auto-Detect' : selectedModel === 'groq' ? '⚡ Groq' : selectedModel === 'gemini' ? '🔵 Gemini' : '🟣 Claude'}
                 </span>
                 <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
                   {chatMessages.length} messages

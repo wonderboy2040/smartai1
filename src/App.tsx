@@ -1348,7 +1348,7 @@ portfolioSymbols={portfolio.map(p => p.symbol)}
 <h2 className="text-2xl font-black gradient-text-cyan font-display">🧠 Super Intelligence</h2>
 <div className="flex items-center gap-2">
 <span className="badge bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">
-Tavily + DeepSeek V3
+Groq + Gemini + Claude
 </span>
 </div>
 </div>

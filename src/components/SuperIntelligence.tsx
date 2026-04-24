@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { PriceData } from '../types';
 import { PredictionEngine, TechnicalIndicators } from '../utils/mlPrediction';
 
@@ -24,15 +24,39 @@ export function SuperIntelligence({ livePrices, portfolioSymbols }: SuperIntelli
   const [predictions, setPredictions] = useState<PredictionCard[]>([]);
   const [selectedTimeframe, setSelectedTimeframe] = useState<'1D' | '3D' | '7D' | '14D'>('7D');
   const [isAnalyzing, setIsAnalyzing] = useState(true);
+  const lastComputeRef = useRef(0);
+  const initialLoadRef = useRef(true);
 
   useEffect(() => {
-    setIsAnalyzing(true);
+    // Only recompute on timeframe change OR every 10s max for price updates
+    const now = Date.now();
+    const isTimeframeChange = true; // timeframe is in deps
+    const shouldCompute = initialLoadRef.current || isTimeframeChange || (now - lastComputeRef.current > 10000);
+    if (!shouldCompute) return;
+
+    if (initialLoadRef.current) {
+      setIsAnalyzing(true);
+      initialLoadRef.current = false;
+    }
     const timeout = setTimeout(() => {
       generatePredictions();
       setIsAnalyzing(false);
-    }, 1000);
+      lastComputeRef.current = Date.now();
+    }, isAnalyzing ? 1000 : 100);
     return () => clearTimeout(timeout);
-  }, [livePrices, portfolioSymbols, selectedTimeframe]);
+  }, [portfolioSymbols, selectedTimeframe]);
+
+  // Separate effect for price updates — throttled heavily
+  useEffect(() => {
+    if (initialLoadRef.current) return;
+    const now = Date.now();
+    if (now - lastComputeRef.current < 10000) return;
+    const timeout = setTimeout(() => {
+      generatePredictions();
+      lastComputeRef.current = Date.now();
+    }, 200);
+    return () => clearTimeout(timeout);
+  }, [livePrices]);
 
 const generatePredictions = () => {
 let symbols: string[] = portfolioSymbols.length > 0 ? portfolioSymbols : Object.keys(livePrices);
