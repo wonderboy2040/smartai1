@@ -507,7 +507,7 @@ bot.onText(/^\/premarket(@\w+)?$/i, async (msg) => {
     await safeSend(chatId, '🌅 <i>Fetching global pre-market data...</i>');
     
     const tickers = [
-      'NSE:GIFT_NIFTY', 'NSE:GIFTYNIFTY',
+      'NSE:GIFT_NIFTY',
       'CME_MINI:ES1!', 'CME_MINI:NQ1!',
       'TVC:NI225', 'TVC:HSI', 'XETR:DAX',
       'TVC:DXY', 'COMEX:GC1!', 'NYMEX:CL1!'
@@ -515,7 +515,6 @@ bot.onText(/^\/premarket(@\w+)?$/i, async (msg) => {
     
     const nameMap = {
       'NSE:GIFT_NIFTY':  '🎯 GIFT Nifty',
-      'NSE:GIFTYNIFTY':  '🎯 GIFT Nifty',
       'CME_MINI:ES1!':   '🇺🇸 S&P 500 Fut',
       'CME_MINI:NQ1!':   '📱 NASDAQ Fut',
       'TVC:NI225':       '🇯🇵 Nikkei 225',
@@ -541,7 +540,7 @@ bot.onText(/^\/premarket(@\w+)?$/i, async (msg) => {
     let giftChange = 0;
     let esChange = 0;
     let nqChange = 0;
-    
+
     if (res.ok) {
       const data = await res.json();
       if (data?.data) {
@@ -552,8 +551,8 @@ bot.onText(/^\/premarket(@\w+)?$/i, async (msg) => {
           const price = parseFloat(item.d?.[0]) || 0;
           const change = parseFloat(item.d?.[1]) || 0;
           if (price <= 0) continue;
-          
-          if (item.s.includes('GIFT')) giftChange = change;
+
+          if (item.s === 'NSE:GIFT_NIFTY') giftChange = change;
           if (item.s === 'CME_MINI:ES1!') esChange = change;
           if (item.s === 'CME_MINI:NQ1!') nqChange = change;
           

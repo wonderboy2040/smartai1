@@ -22,7 +22,7 @@ export const NVIDIA_BASE_URL = process.env.NVIDIA_BASE_URL || "https://integrate
 export const NVIDIA_DEEPSEEK_MODEL = process.env.NVIDIA_DEEPSEEK_MODEL || "deepseek-ai/deepseek-r1";
 export const NVIDIA_GEMINI_MODEL = process.env.NVIDIA_GEMINI_MODEL || "google/gemma-2-27b-it";
 // Legacy keys (fallback)
-export let GEMINI_KEY = process.env.GEMINI_KEY || TAVILY_API_KEY; // Tavily replaces Gemini
+export let GEMINI_KEY = process.env.GEMINI_KEY || TAVILY_API_KEY;
 export let DEEPSEEK_KEY = process.env.DEEPSEEK_KEY || NVIDIA_API_KEY;
 
 // Validate API keys at startup
@@ -82,7 +82,9 @@ export const EXACT_TICKER_MAP = {
   'SPY': 'AMEX:SPY',
   'DIA': 'AMEX:DIA',
   'XLV': 'AMEX:XLV',
-  'VIX': 'CBOE:VIX'
+  'VIX': 'CBOE:VIX',
+  'NIFTY': 'NSE:NIFTY',
+  'GIFT_NIFTY': 'NSE:GIFT_NIFTY'
 };
 
 // Helpers

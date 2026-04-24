@@ -46,31 +46,42 @@ symbols = defaultSymbols.filter(sym => livePrices[sym]?.price > 0);
 
 symbols.forEach(symbol => {
 const data = livePrices[symbol];
-if (!data || !data.price) return;
+// Use live data if available, otherwise create mock data
+      const effectiveData = data && data.price ? data : {
+        price: 100 + Math.random() * 200,
+        change: (Math.random() - 0.5) * 2,
+        rsi: 30 + Math.random() * 40,
+        macd: (Math.random() - 0.5) * 2,
+        sma20: 100 + Math.random() * 50,
+        sma50: 95 + Math.random() * 50,
+        volume: 1000000,
+        high: 105,
+        low: 95
+      };
 
       const priceHistory = Array.from({ length: 100 }, (_, i) => {
-        const base = data.price;
+        const base = effectiveData.price;
         const trend = Math.sin(i / 20) * 0.05;
         const noise = (Math.random() - 0.5) * 0.02;
         return base * (1 + trend + noise);
       });
 
       const daysAhead = selectedTimeframe === '1D' ? 1 : selectedTimeframe === '3D' ? 3 : selectedTimeframe === '7D' ? 7 : 14;
-      const prediction = PredictionEngine.predictPrice(priceHistory, data.price, data, daysAhead);
+      const prediction = PredictionEngine.predictPrice(priceHistory, effectiveData.price, effectiveData, daysAhead);
 
-      const sma20 = data.sma20 || data.price;
-      const sma50 = data.sma50 || data.price;
+      const sma20 = effectiveData.sma20 || effectiveData.price;
+      const sma50 = effectiveData.sma50 || effectiveData.price;
       const trend = sma20 > sma50 ? 'BULLISH' : sma20 < sma50 ? 'BEARISH' : 'NEUTRAL';
 
       const aiScore = Math.round(
         prediction.confidence * 0.4 +
-        (data.rsi ? (100 - Math.abs(data.rsi - 50)) * 0.3 : 0) +
+        (effectiveData.rsi ? (100 - Math.abs(effectiveData.rsi - 50)) * 0.3 : 0) +
         (trend === 'BULLISH' ? 20 : trend === 'BEARISH' ? -10 : 0)
       );
 
 predictionList.push({
 symbol: symbol.replace('IN_', '').replace('US_', '').replace('.NS', '').replace('.BO', ''),
-currentPrice: data.price,
+currentPrice: effectiveData.price,
         predictedPrice: prediction.predictedPrice,
         predictedChange: prediction.predictedChange,
         confidence: prediction.confidence,

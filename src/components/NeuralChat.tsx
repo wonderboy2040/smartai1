@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'motion/react';
 const CONFIG = {
 // Tavily Search API (Real-time Web Data)
 tavily: {
-apiKey: import.meta.env.VITE_TAVILY_API_KEY || 'tvly-dev-1Ck5et_vJzTUOAaAJVAakimgoGhHhiWTBvT7THrA9rU7SU7CO',
+apiKey: import.meta.env.VITE_TAVILY_API_KEY || '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',
 baseUrl: 'https://api.tavily.com/search'
 },
 // NVIDIA API (DeepSeek V3 for Analysis)
@@ -101,7 +101,7 @@ const searchTavily = async (query: string, days = 7) => {
   try {
     // Validate API key
     const apiKey = import.meta.env.VITE_TAVILY_API_KEY || CONFIG.tavily.apiKey;
-    if (!apiKey || apiKey === 'tvly-dev-1Ck5et_vJzTUOAaAJVAakimgoGhHhiWTBvT7THrA9rU7SU7CO') {
+    if (!apiKey || apiKey === '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') {
       console.warn('Tavily API key not configured properly');
       return [];
     }

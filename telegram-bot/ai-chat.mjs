@@ -503,7 +503,7 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
 
     return htmlText;
   } catch (e) {
-    console.error(`❌ ${usedModel || intent} AI Error:`, e.message);
+    console.error(`❌ ${intent} AI Error:`, e.message);
     let errorMsg = e.message;
     if (errorMsg.includes('No AI engines available')) {
       return `❌ <b>AI Configuration Error:</b> No API keys configured. Admin se contact karo.`;
