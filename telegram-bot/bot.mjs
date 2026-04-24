@@ -10,7 +10,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_KEY, DEEPSEEK_KEY } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen } from './market.mjs';
 import { loadPortfolioFromCloud, loadGroqKeyFromCloud, saveGroqKeyToCloud } from './cloud.mjs';
 import {
@@ -188,8 +188,8 @@ console.log('🟢 ════════════════════�
 console.log(` BOT FULLY ONLINE — ${getISTTime()} IST`);
 console.log(` Portfolio: ${portfolio.length} positions`);
 console.log(` Groq AI: ${GROQ_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
-console.log(` Gemini AI: ${GEMINI_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
-console.log(` DeepSeek AI: ${DEEPSEEK_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
+console.log(` Gemini AI: ${GEMINI_API_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
+console.log(` Claude AI: ${CLAUDE_API_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
 console.log(` Market: ${getMarketStatus()}`);
 console.log('🟢 ════════════════════════════════════════');
   console.log('');
