@@ -12,29 +12,19 @@ export const TG_CHAT_ID = process.env.TG_CHAT_ID || "";
 export const API_URL = process.env.API_URL || "";
 
 // Multi-AI API Keys
-export let GROQ_KEY = process.env.GROQ_KEY || "";
-// Tavily Search API (Real-time Web Data - Replaces Gemini)
-export const TAVILY_API_KEY = process.env.TAVILY_API_KEY || "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";
-export const TAVILY_BASE_URL = "https://api.tavily.com/search";
-// NVIDIA API Keys (DeepSeek V3 for Analysis)
-export const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || "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";
-export const NVIDIA_BASE_URL = process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1";
-export const NVIDIA_DEEPSEEK_MODEL = process.env.NVIDIA_DEEPSEEK_MODEL || "deepseek-ai/deepseek-r1";
-export const NVIDIA_GEMINI_MODEL = process.env.NVIDIA_GEMINI_MODEL || "google/gemma-2-27b-it";
-// Legacy keys (fallback)
-export let GEMINI_KEY = process.env.GEMINI_KEY || TAVILY_API_KEY;
-export let DEEPSEEK_KEY = process.env.DEEPSEEK_KEY || NVIDIA_API_KEY;
+export let GROQ_KEY = process.env.GROQ_KEY || process.env.VITE_GROQ_API_KEY || "";
+export let GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
+export let CLAUDE_API_KEY = process.env.CLAUDE_API_KEY || process.env.VITE_CLAUDE_API_KEY || "";
 
 // Validate API keys at startup
 const missingKeys = [];
-if (!TAVILY_API_KEY || !TAVILY_API_KEY.startsWith('tvly-')) missingKeys.push('TAVILY_API_KEY');
-if (!NVIDIA_API_KEY || !NVIDIA_API_KEY.startsWith('nvapi-')) missingKeys.push('NVIDIA_API_KEY');
-if (!GROQ_KEY || !GROQ_KEY.startsWith('gsk_')) missingKeys.push('GROQ_KEY (optional)');
+if (!GROQ_KEY || !GROQ_KEY.startsWith('gsk_')) missingKeys.push('GROQ_KEY');
+if (!GEMINI_API_KEY || GEMINI_API_KEY.length < 10) missingKeys.push('GEMINI_API_KEY');
 
-if (missingKeys.length > 0 && missingKeys[0] !== 'GROQ_KEY (optional)') {
-  console.warn('⚠️  WARNING: Some API keys are missing or invalid:');
+if (missingKeys.length > 0) {
+  console.warn('⚠️  WARNING: Critical AI keys are missing:');
   console.warn('  ' + missingKeys.join(', '));
-  console.warn('Some features may not work properly.');
+  console.warn('AI responses will fallback or fail.');
 } else {
   console.log('✅ All required API keys validated successfully');
   if (TAVILY_API_KEY) console.log('  ✓ Tavily Search API configured');

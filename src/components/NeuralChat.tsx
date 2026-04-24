@@ -104,15 +104,18 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
         model: CONFIG.groq.model,
         messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
         temperature: 0.7,
-        max_completion_tokens: 1200
-      })
+        max_tokens: 1200
+      }),
+      signal: AbortSignal.timeout(15000)
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Groq API Error: ${res.status}`);
+      throw new Error(err.error?.message || `Groq Error: ${res.status}`);
     }
     const data = await res.json();
-    return data.choices?.[0]?.message?.content || '';
+    const text = data.choices?.[0]?.message?.content;
+    if (!text) throw new Error('Groq returned empty response');
+    return text;
   };
 
   // ============ GEMINI API (Real-time Intelligence) ============
@@ -137,14 +140,17 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
       body: JSON.stringify({
         contents,
         generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
-      })
+      }),
+      signal: AbortSignal.timeout(15000)
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Gemini API Error: ${res.status}`);
+      throw new Error(err.error?.message || `Gemini Error: ${res.status}`);
     }
     const data = await res.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error('Gemini returned empty response');
+    return text;
   };
 
   // ============ CLAUDE API (Deep Analysis) ============
@@ -169,16 +175,17 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
         max_tokens: 2048,
         system: systemPrompt,
         messages: messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }))
-      })
+      }),
+      signal: AbortSignal.timeout(15000)
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      // Fallback to Gemini on any Claude error
-      console.warn('Claude API error, falling back to Gemini:', err);
-      return await callGemini(messages, systemPrompt);
+      throw new Error(err.error?.message || `Claude Error: ${res.status}`);
     }
     const data = await res.json();
-    return data.content?.[0]?.text || '';
+    const text = data.content?.[0]?.text;
+    if (!text) throw new Error('Claude returned empty response');
+    return text;
   };
 
   // ============ MAIN AI ROUTER ============
@@ -203,41 +210,33 @@ ${portfolioContext || 'No portfolio data available. Provide general market analy
 
     // Try primary model, fallback chain: Claude → Gemini → Groq
     if (model === 'claude') {
-      try {
-        const text = await callClaude(recentMessages, systemPrompt);
-        return { text, model: 'claude' as const };
-      } catch (e) {
-        try {
-          const text = await callGemini(recentMessages, systemPrompt);
-          return { text, model: 'gemini' as const };
-        } catch {
-          const text = await callGroq(recentMessages, systemPrompt);
-          return { text, model: 'groq' as const };
+      try { return { text: await callClaude(recentMessages, systemPrompt), model: 'claude' as const }; }
+      catch (e) {
+        console.warn('Claude failed:', e);
+        try { return { text: await callGemini(recentMessages, systemPrompt), model: 'gemini' as const }; }
+        catch (e) {
+          console.warn('Gemini failed:', e);
+          try { return { text: await callGroq(recentMessages, systemPrompt), model: 'groq' as const }; }
+          catch (e) { return { text: `🤖 **AI Engines Offline**\n\nBhai, Claude, Gemini aur Groq sab fail ho gaye.\nCheck API keys in .env file.`, model: 'system' as const }; }
         }
       }
     }
 
     if (model === 'gemini') {
-      try {
-        const text = await callGemini(recentMessages, systemPrompt);
-        return { text, model: 'gemini' as const };
-      } catch (e) {
-        const text = await callGroq(recentMessages, systemPrompt);
-        return { text, model: 'groq' as const };
+      try { return { text: await callGemini(recentMessages, systemPrompt), model: 'gemini' as const }; }
+      catch (e) {
+        console.warn('Gemini failed:', e);
+        try { return { text: await callGroq(recentMessages, systemPrompt), model: 'groq' as const }; }
+        catch (e) { return { text: `🤖 **AI Engines Offline**\n\nBhai, Gemini aur Groq dono fail ho gaye.\nCheck API keys in .env file.`, model: 'system' as const }; }
       }
     }
 
     // Groq (default/fast)
-    try {
-      const text = await callGroq(recentMessages, systemPrompt);
-      return { text, model: 'groq' as const };
-    } catch (e) {
-      try {
-        const text = await callGemini(recentMessages, systemPrompt);
-        return { text, model: 'gemini' as const };
-      } catch {
-        return { text: `🤖 **AI Response:**\n\nSabhi AI engines temporarily unavailable. Please check API keys in .env file.`, model: 'groq' as const };
-      }
+    try { return { text: await callGroq(recentMessages, systemPrompt), model: 'groq' as const }; }
+    catch (e) {
+      console.warn('Groq failed:', e);
+      try { return { text: await callGemini(recentMessages, systemPrompt), model: 'gemini' as const }; }
+      catch (e) { return { text: `🤖 **AI Engines Offline**\n\nBhai, Groq aur Gemini dono fail ho gaye.\nCheck API keys in .env file.`, model: 'system' as const }; }
     }
   };
 
