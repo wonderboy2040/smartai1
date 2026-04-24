@@ -902,9 +902,9 @@ bot.onText(/^\/correlat(?:e|ion)?(@\w+)?$/i, async (msg) => {
       return { sym: p.symbol.replace('.NS', ''), change: data?.change || 0, market: p.market };
     });
 
-    let msg = `🔗 <b>CORRELATION MATRIX</b>\n`;
-    msg += `⏰ <i>${getISTTime()} IST</i>\n\n`;
-    msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+    let report = `🔗 <b>CORRELATION MATRIX</b>\n`;
+    report += `⏰ <i>${getISTTime()} IST</i>\n\n`;
+    report += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
 
     for (let i = 0; i < changes.length; i++) {
       for (let j = i + 1; j < changes.length; j++) {
@@ -913,8 +913,8 @@ bot.onText(/^\/correlat(?:e|ion)?(@\w+)?$/i, async (msg) => {
         const corr = a.change * b.change > 0 ? '🟢' : a.change * b.change < 0 ? '🔴' : '⚪';
         const strength = Math.abs(a.change - b.change);
         const label = strength < 0.5 ? 'STRONG' : strength < 1.5 ? 'MODERATE' : 'WEAK';
-        msg += `${corr} <b>${a.sym}</b> ↔ <b>${b.sym}</b>: ${label}\n`;
-        msg += `  ${a.sym}: ${a.change >= 0 ? '+' : ''}${a.change.toFixed(2)}% | ${b.sym}: ${b.change >= 0 ? '+' : ''}${b.change.toFixed(2)}%\n`;
+        report += `${corr} <b>${a.sym}</b> ↔ <b>${b.sym}</b>: ${label}\n`;
+        report += `  ${a.sym}: ${a.change >= 0 ? '+' : ''}${a.change.toFixed(2)}% | ${b.sym}: ${b.change >= 0 ? '+' : ''}${b.change.toFixed(2)}%\n`;
       }
     }
 
@@ -922,13 +922,13 @@ bot.onText(/^\/correlat(?:e|ion)?(@\w+)?$/i, async (msg) => {
     const allNegative = changes.every(c => c.change < 0);
     const mixed = !allPositive && !allNegative;
 
-    msg += `\n🧠 <b>Correlation Verdict:</b>\n`;
-    if (allPositive) msg += `🟢 Sab same direction me move kar rahe — strong positive correlation. Diversification LOW.`;
-    else if (allNegative) msg += `🔴 Sab neeche ja rahe — systematic risk HIGH. Hedge karo!`;
-    else msg += `🟡 Mixed movement — good diversification. Portfolio balanced hai.`;
+    report += `\n🧠 <b>Correlation Verdict:</b>\n`;
+    if (allPositive) report += `🟢 Sab same direction me move kar rahe — strong positive correlation. Diversification LOW.`;
+    else if (allNegative) report += `🔴 Sab neeche ja rahe — systematic risk HIGH. Hedge karo!`;
+    else report += `🟡 Mixed movement — good diversification. Portfolio balanced hai.`;
 
-    msg += `\n\n💎 <i>Deep Mind AI Pro Terminal</i>`;
-    await safeSend(chatId, msg);
+    report += `\n\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    await safeSend(chatId, report);
   } catch (e) {
     console.error('❌ /correlate error:', e.message);
     await safeSend(chatId, `❌ Correlation error: ${e.message}`);
@@ -949,9 +949,9 @@ bot.onText(/^\/orderflow(@\w+)?$/i, async (msg) => {
     await safeSend(chatId, '🏦 <i>Detecting Smart Money flow... analyzing volume & price action...</i>');
     await refreshPrices();
 
-    let msg = `🏦 <b>SMART MONEY ORDER FLOW</b>\n`;
-    msg += `⏰ <i>${getISTTime()} IST</i>\n`;
-    msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+    let report = `🏦 <b>SMART MONEY ORDER FLOW</b>\n`;
+    report += `⏰ <i>${getISTTime()} IST</i>\n`;
+    report += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
 
     let accumulation = [];
     let distribution = [];
@@ -975,34 +975,34 @@ bot.onText(/^\/orderflow(@\w+)?$/i, async (msg) => {
     }
 
     if (accumulation.length > 0) {
-      msg += `🟢 <b>ACCUMULATION DETECTED</b>\n`;
+      report += `🟢 <b>ACCUMULATION DETECTED</b>\n`;
       for (const a of accumulation) {
         const cur = a.market === 'IN' ? '₹' : '$';
-        msg += `• <b>${a.sym}</b>: ${cur}${a.price.toFixed(2)} (${a.change >= 0 ? '+' : ''}${a.change.toFixed(2)}%)\n`;
-        msg += `  Vol: ${(a.volume/1000000).toFixed(1)}M | RSI: ${a.rsi.toFixed(0)} | 🏦 Institutional BUYING\n`;
+        report += `• <b>${a.sym}</b>: ${cur}${a.price.toFixed(2)} (${a.change >= 0 ? '+' : ''}${a.change.toFixed(2)}%)\n`;
+        report += `  Vol: ${(a.volume/1000000).toFixed(1)}M | RSI: ${a.rsi.toFixed(0)} | 🏦 Institutional BUYING\n`;
       }
-      msg += '\n';
+      report += '\n';
     }
 
     if (distribution.length > 0) {
-      msg += `🔴 <b>DISTRIBUTION DETECTED</b>\n`;
+      report += `🔴 <b>DISTRIBUTION DETECTED</b>\n`;
       for (const d of distribution) {
         const cur = d.market === 'IN' ? '₹' : '$';
-        msg += `• <b>${d.sym}</b>: ${cur}${d.price.toFixed(2)} (${d.change >= 0 ? '+' : ''}${d.change.toFixed(2)}%)\n`;
-        msg += `  Vol: ${(d.volume/1000000).toFixed(1)}M | RSI: ${d.rsi.toFixed(0)} | 🏦 Institutional SELLING\n`;
+        report += `• <b>${d.sym}</b>: ${cur}${d.price.toFixed(2)} (${d.change >= 0 ? '+' : ''}${d.change.toFixed(2)}%)\n`;
+        report += `  Vol: ${(d.volume/1000000).toFixed(1)}M | RSI: ${d.rsi.toFixed(0)} | 🏦 Institutional SELLING\n`;
       }
-      msg += '\n';
+      report += '\n';
     }
 
-    msg += `⚪ <b>NEUTRAL:</b> ${neutral.map(n => n.sym).join(', ') || 'None'}\n\n`;
+    report += `⚪ <b>NEUTRAL:</b> ${neutral.map(n => n.sym).join(', ') || 'None'}\n\n`;
 
-    msg += `🧠 <b>Order Flow Verdict:</b>\n`;
-    if (accumulation.length > distribution.length) msg += `🟢 Smart Money BUYING dominant — bullish institutional bias.`;
-    else if (distribution.length > accumulation.length) msg += `🔴 Smart Money DISTRIBUTION — institutional exit detected. Caution!`;
-    else msg += `🟡 Mixed flow — no clear institutional direction.`;
+    report += `🧠 <b>Order Flow Verdict:</b>\n`;
+    if (accumulation.length > distribution.length) report += `🟢 Smart Money BUYING dominant — bullish institutional bias.`;
+    else if (distribution.length > accumulation.length) report += `🔴 Smart Money DISTRIBUTION — institutional exit detected. Caution!`;
+    else report += `🟡 Mixed flow — no clear institutional direction.`;
 
-    msg += `\n\n💎 <i>Deep Mind AI Pro Terminal</i>`;
-    await safeSend(chatId, msg);
+    report += `\n\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    await safeSend(chatId, report);
   } catch (e) {
     console.error('❌ /orderflow error:', e.message);
     await safeSend(chatId, `❌ Order flow error: ${e.message}`);
@@ -1023,9 +1023,9 @@ bot.onText(/^\/gap(@\w+)?$/i, async (msg) => {
     await safeSend(chatId, '📊 <i>Scanning for gap openings...</i>');
     await refreshPrices();
 
-    let msg = `📊 <b>GAP SCANNER</b>\n`;
-    msg += `⏰ <i>${getISTTime()} IST</i>\n`;
-    msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+    let report = `📊 <b>GAP SCANNER</b>\n`;
+    report += `⏰ <i>${getISTTime()} IST</i>\n`;
+    report += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
 
     for (const p of portfolio) {
       const key = `${p.market}_${p.symbol}`;
@@ -1041,24 +1041,24 @@ bot.onText(/^\/gap(@\w+)?$/i, async (msg) => {
       if (Math.abs(gapPct) > 0.3) {
         const emoji = gapPct > 0 ? '🟢' : '🔴';
         const gapType = gapPct > 1 ? 'GAP UP STRONG' : gapPct > 0.3 ? 'GAP UP' : gapPct < -1 ? 'GAP DOWN STRONG' : 'GAP DOWN';
-        msg += `${emoji} <b>${sym}</b>: ${gapType}\n`;
-        msg += `  Open: ${cur}${open.toFixed(2)} | Prev: ${cur}${prevClose.toFixed(2)} | Gap: <b>${gapPct >= 0 ? '+' : ''}${gapPct.toFixed(2)}%</b>\n`;
-        if (gapPct > 0.5) msg += `  ⚡ Gap-up — likely buying pressure at open. Watch for gap fill.\n`;
-        else if (gapPct < -0.5) msg += `  ⚠️ Gap-down — selling pressure. Wait for reversal candle.\n`;
-        msg += '\n';
+        report += `${emoji} <b>${sym}</b>: ${gapType}\n`;
+        report += `  Open: ${cur}${open.toFixed(2)} | Prev: ${cur}${prevClose.toFixed(2)} | Gap: <b>${gapPct >= 0 ? '+' : ''}${gapPct.toFixed(2)}%</b>\n`;
+        if (gapPct > 0.5) report += `  ⚡ Gap-up — likely buying pressure at open. Watch for gap fill.\n`;
+        else if (gapPct < -0.5) report += `  ⚠️ Gap-down — selling pressure. Wait for reversal candle.\n`;
+        report += '\n';
       }
     }
 
-    if (msg.includes('GAP UP') || msg.includes('GAP DOWN')) {
-      msg += `🧠 <b>Gap Strategy:</b>\n`;
-      msg += `<i>Gap-up stocks: Fade the gap if volume is low. Ride the gap if volume confirms.\n`;
-      msg += `Gap-down stocks: Wait for first 15-min candle. Buy if hammer/reversal pattern forms.</i>\n`;
+    if (report.includes('GAP UP') || report.includes('GAP DOWN')) {
+      report += `🧠 <b>Gap Strategy:</b>\n`;
+      report += `<i>Gap-up stocks: Fade the gap if volume is low. Ride the gap if volume confirms.\n`;
+      report += `Gap-down stocks: Wait for first 15-min candle. Buy if hammer/reversal pattern forms.</i>\n`;
     } else {
-      msg += `⚪ No significant gaps detected today.\n`;
+      report += `⚪ No significant gaps detected today.\n`;
     }
 
-    msg += `\n💎 <i>Deep Mind AI Pro Terminal</i>`;
-    await safeSend(chatId, msg);
+    report += `\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    await safeSend(chatId, report);
   } catch (e) {
     console.error('❌ /gap error:', e.message);
     await safeSend(chatId, `❌ Gap scan error: ${e.message}`);
@@ -1078,9 +1078,9 @@ bot.onText(/^\/backtest(@\w+)?$/i, async (msg) => {
     }
     await refreshPrices();
 
-    let msg = `🧪 <b>AI SIGNAL ACCURACY — Backtest</b>\n`;
-    msg += `⏰ <i>${getISTTime()} IST</i>\n`;
-    msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+    let report = `🧪 <b>AI SIGNAL ACCURACY — Backtest</b>\n`;
+    report += `⏰ <i>${getISTTime()} IST</i>\n`;
+    report += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
 
     const signals = portfolio.map(p => {
       const key = `${p.market}_${p.symbol}`;
@@ -1103,25 +1103,25 @@ bot.onText(/^\/backtest(@\w+)?$/i, async (msg) => {
     const totalCorrect = buyCorrect + sellCorrect + holdCorrect;
     const accuracy = totalAssets > 0 ? ((totalCorrect / totalAssets) * 100).toFixed(1) : '0';
 
-    msg += `📊 <b>Signal Summary:</b>\n`;
-    msg += `BUY: ${buyCount} | SELL: ${sellCount} | HOLD: ${holdCount}\n`;
-    msg += `Avg Confidence: <b>${avgConfidence.toFixed(1)}%</b>\n\n`;
+    report += `📊 <b>Signal Summary:</b>\n`;
+    report += `BUY: ${buyCount} | SELL: ${sellCount} | HOLD: ${holdCount}\n`;
+    report += `Avg Confidence: <b>${avgConfidence.toFixed(1)}%</b>\n\n`;
 
-    msg += `📈 <b>Accuracy Check (vs Today's Move):</b>\n`;
-    msg += `BUY signals that went UP: <b>${buyCorrect}/${buyCount}</b>\n`;
-    msg += `SELL signals that went DOWN: <b>${sellCorrect}/${sellCount}</b>\n`;
-    msg += `HOLD signals that stayed flat: <b>${holdCorrect}/${holdCount}</b>\n\n`;
+    report += `📈 <b>Accuracy Check (vs Today's Move):</b>\n`;
+    report += `BUY signals that went UP: <b>${buyCorrect}/${buyCount}</b>\n`;
+    report += `SELL signals that went DOWN: <b>${sellCorrect}/${sellCount}</b>\n`;
+    report += `HOLD signals that stayed flat: <b>${holdCorrect}/${holdCount}</b>\n\n`;
 
     const accBar = '🟩'.repeat(Math.round(parseFloat(accuracy) / 10)) + '⬜'.repeat(10 - Math.round(parseFloat(accuracy) / 10));
-    msg += `<code>[${accBar}] ${accuracy}%</code>\n\n`;
+    report += `<code>[${accBar}] ${accuracy}%</code>\n\n`;
 
-    if (parseFloat(accuracy) > 70) msg += `🟢 <b>Excellent!</b> AI signals are highly accurate today.`;
-    else if (parseFloat(accuracy) > 50) msg += `🟡 <b>Decent.</b> AI signals are reasonable. Always use SL.`;
-    else msg += `🔴 <b>Caution!</b> Low signal accuracy today — market may be choppy. Reduce position sizes.`;
+    if (parseFloat(accuracy) > 70) report += `🟢 <b>Excellent!</b> AI signals are highly accurate today.`;
+    else if (parseFloat(accuracy) > 50) report += `🟡 <b>Decent.</b> AI signals are reasonable. Always use SL.`;
+    else report += `🔴 <b>Caution!</b> Low signal accuracy today — market may be choppy. Reduce position sizes.`;
 
-    msg += `\n\n<i>Based on today's price action vs AI signals. Past accuracy ≠ future guarantee.</i>`;
-    msg += `\n💎 <i>Deep Mind AI Pro Terminal</i>`;
-    await safeSend(chatId, msg);
+    report += `\n\n<i>Based on today's price action vs AI signals. Past accuracy ≠ future guarantee.</i>`;
+    report += `\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    await safeSend(chatId, report);
   } catch (e) {
     console.error('❌ /backtest error:', e.message);
     await safeSend(chatId, `❌ Backtest error: ${e.message}`);

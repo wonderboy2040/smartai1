@@ -223,7 +223,7 @@ async function callGemini(messages, systemPrompt) {
 
 // Legacy DeepSeek API Call (Fallback)
 async function callDeepSeek(messages, systemPrompt) {
-  if (!DEEPSEEK_KEY || !GEMINI_KEY) throw new Error('DeepSeek key missing');
+  if (!DEEPSEEK_KEY) throw new Error('DeepSeek key missing');
 
   const formattedMessages = [
     { role: 'system', content: systemPrompt },
@@ -474,24 +474,15 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
     // Clean up thinking tags and convert markdown to HTML for Telegram
     let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
-    // Convert markdown to Telegram HTML tags
+    // First escape ALL < > to prevent injection
+    safeText = safeText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // Convert markdown to Telegram HTML tags (on already-escaped text)
     safeText = safeText
       .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
       .replace(/\*(.+?)\*/g, '<i>$1</i>')
       .replace(/_(.+?)_/g, '<i>$1</i>')
       .replace(/`(.+?)`/g, '<code>$1</code>');
-
-    // Escape raw < > that are NOT Telegram HTML tags
-    const allowedTags = /<\/?(?:b|i|code|pre|a|s|u|em|strong|tg-spoiler|blockquote)>/gi;
-    const parts = safeText.split(allowedTags);
-    const htmlText = parts.map(part => {
-      if (allowedTags.test(part)) {
-        allowedTags.lastIndex = 0;
-        return part;
-      }
-      allowedTags.lastIndex = 0;
-      return part.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }).join('');
 
     // Save to history
     history.push({ role: 'model', content: aiText });
@@ -501,7 +492,7 @@ export async function chatWithAI(chatId, userMessage, portfolio, livePrices, usd
       history.splice(0, history.length - MAX_HISTORY);
     }
 
-    return htmlText;
+    return safeText;
   } catch (e) {
     console.error(`❌ ${intent} AI Error:`, e.message);
     let errorMsg = e.message;

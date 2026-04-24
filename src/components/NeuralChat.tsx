@@ -13,7 +13,7 @@ baseUrl: 'https://api.tavily.com/search'
 nvidia: {
 apiKey: import.meta.env.VITE_NVIDIA_API_KEY || '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',
 baseUrl: import.meta.env.VITE_NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1',
-model: import.meta.env.VITE_NVIDIA_MODEL || 'deepseek-ai/deepseek-v3.2'
+  model: import.meta.env.VITE_NVIDIA_MODEL || 'deepseek-ai/deepseek-r1'
 },
 // Groq API (Fast Responses)
 groq: {
@@ -47,8 +47,6 @@ const MODEL_COLORS = {
 
 export interface NeuralChatProps {
   groqKey?: string;
-  geminiKey?: string;
-  deepseekKey?: string;
   portfolioContext: string;
   onTelegramPush?: () => void;
 }
@@ -101,7 +99,7 @@ const searchTavily = async (query: string, days = 7) => {
   try {
     // Validate API key
     const apiKey = import.meta.env.VITE_TAVILY_API_KEY || CONFIG.tavily.apiKey;
-    if (!apiKey || apiKey === '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') {
+    if (!apiKey || !apiKey.startsWith('tvly-')) {
       console.warn('Tavily API key not configured properly');
       return [];
     }
@@ -300,7 +298,9 @@ const aiText = await callGroq(recentMessages, systemPrompt);
 return { text: aiText, model: 'groq' as const };
 }
 
-throw new Error('Invalid model selected');
+// Fallback to groq for any other model
+const aiText = await callGroq(recentMessages, systemPrompt);
+return { text: aiText, model: 'groq' as const };
 };
 
   // Send message handler
