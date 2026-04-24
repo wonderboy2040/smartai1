@@ -301,7 +301,7 @@ ${contextData}`;
   return `${modelEmoji} <i>${modelLabel} | ${intent}</i>\n\n${safeText}`;
 }
 
-export function clearHistory(chatId) {
+export function clearChatHistory(chatId) {
   chatHistory.delete(chatId);
   return '🧹 Chat history cleared. Fresh start!';
 }
