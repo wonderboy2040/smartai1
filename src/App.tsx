@@ -1335,8 +1335,13 @@ Live Signals
 </div>
 </div>
 <QuantumSignals
-livePrices={livePrices}
-portfolio={portfolio}
+  livePrices={livePrices}
+  portfolio={portfolio}
+  onViewDetails={(symbol) => {
+    quickSelect(symbol);
+    setActiveTab('super-ai');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }}
 />
 </div>
 )}

@@ -11,10 +11,11 @@ export const TG_CHAT_ID = process.env.TG_CHAT_ID || "";
 // Google Apps Script Cloud Sync
 export const API_URL = process.env.API_URL || "";
 
-// Multi-AI API Keys
-export let GROQ_KEY = process.env.GROQ_KEY || process.env.VITE_GROQ_API_KEY || "";
-export let GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || "";
-export let CLAUDE_API_KEY = process.env.CLAUDE_API_KEY || process.env.VITE_CLAUDE_API_KEY || "";
+// Multi-AI API Keys (Case-insensitive support for user-added env vars)
+const env = process.env;
+export let GROQ_KEY = env.GROQ_KEY || env.GroqKey || env.VITE_GROQ_API_KEY || "";
+export let GEMINI_API_KEY = env.GEMINI_API_KEY || env.GeminiAPIKEY || env.GEMINI_KEY || env.VITE_GEMINI_API_KEY || "";
+export let CLAUDE_API_KEY = env.CLAUDE_API_KEY || env.ClaudeAPIKEY || env.CLAUDE_KEY || env.VITE_CLAUDE_API_KEY || "";
 
 // Validate API keys at startup
 const missingKeys = [];
@@ -33,8 +34,8 @@ if (missingKeys.length > 0) {
 }
 
 export function setGroqKey(key) { GROQ_KEY = key; }
-export function setGeminiKey(key) { GEMINI_KEY = key; }
-export function setDeepSeekKey(key) { DEEPSEEK_KEY = key; }
+export function setGeminiKey(key) { GEMINI_API_KEY = key; }
+export function setDeepSeekKey(key) { CLAUDE_API_KEY = key; }
 
 // SIP Defaults
 export const DEFAULT_INDIA_SIP = 10000;

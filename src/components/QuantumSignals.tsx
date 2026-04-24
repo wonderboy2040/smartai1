@@ -24,9 +24,10 @@ interface SignalData {
 interface QuantumSignalsProps {
   livePrices: Record<string, PriceData>;
   portfolio: Position[];
+  onViewDetails?: (symbol: string) => void;
 }
 
-export function QuantumSignals({ livePrices, portfolio }: QuantumSignalsProps) {
+export function QuantumSignals({ livePrices, portfolio, onViewDetails }: QuantumSignalsProps) {
 const [signals, setSignals] = useState<SignalData[]>([]);
 const [marketRegime, setMarketRegime] = useState<string>('ANALYZING');
   const [isLoading, setIsLoading] = useState(true);
@@ -337,10 +338,7 @@ setSignals(signalList.sort((a, b) => b.quantumScore - a.quantumScore));
                   <span className="text-xs text-slate-400">Real-time Analysis</span>
                 </div>
                 <button
-                  onClick={() => {
-                    // Add click handler for View Details button
-                    console.log(`View details for ${sig.symbol}`);
-                  }}
+                  onClick={() => onViewDetails?.(sig.symbol)}
                   className="px-4 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-cyan-400 text-sm font-bold transition-all"
                 >
                   📊 View Details
