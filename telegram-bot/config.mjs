@@ -13,9 +13,24 @@ export const API_URL = process.env.API_URL || "";
 
 // Multi-AI API Keys (Case-insensitive support for user-added env vars)
 const env = process.env;
+
+// Debug: Print available env keys
+console.log('🔍 [DEBUG] Checking System Environment Variables for AI Keys:');
+const foundKeys = Object.keys(env).filter(k => k.toUpperCase().includes('GROQ') || k.toUpperCase().includes('GEMINI') || k.toUpperCase().includes('CLAUDE'));
+if (foundKeys.length > 0) {
+  console.log(`🔍 [DEBUG] Found these potential key variables: ${foundKeys.join(', ')}`);
+} else {
+  console.log('🔍 [DEBUG] NO matching environment variables found in process.env!');
+}
+
 export let GROQ_KEY = env.GROQ_KEY || env.GroqKey || env.VITE_GROQ_API_KEY || "";
 export let GEMINI_API_KEY = env.GEMINI_API_KEY || env.GeminiAPIKEY || env.GEMINI_KEY || env.VITE_GEMINI_API_KEY || "";
 export let CLAUDE_API_KEY = env.CLAUDE_API_KEY || env.ClaudeAPIKEY || env.CLAUDE_KEY || env.VITE_CLAUDE_API_KEY || "";
+
+// Clean keys (remove accidentally pasted quotes or spaces)
+if (GROQ_KEY) GROQ_KEY = GROQ_KEY.replace(/['"]/g, '').trim();
+if (GEMINI_API_KEY) GEMINI_API_KEY = GEMINI_API_KEY.replace(/['"]/g, '').trim();
+if (CLAUDE_API_KEY) CLAUDE_API_KEY = CLAUDE_API_KEY.replace(/['"]/g, '').trim();
 
 // Validate API keys at startup
 const missingKeys = [];
