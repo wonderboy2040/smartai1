@@ -372,6 +372,39 @@ Examples:
 });
 
 // ========================================
+// COMMAND: /debug_env (Hidden Diagnosis)
+// ========================================
+bot.onText(/^\/debug_env(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  const env = process.env;
+  
+  let report = '🔍 <b>ENVIRONMENT VARIABLE DEBUGGER</b>\n━━━━━━━━━━━━━━━━━━━━━━\n';
+  
+  // Directly check the variables from config and process.env
+  report += `<b>GROQ_KEY:</b> ${env.GROQ_KEY ? '✅ Found (' + env.GROQ_KEY.length + ' ch)' : '❌ MISSING'}\n`;
+  report += `<b>VITE_GROQ_API_KEY:</b> ${env.VITE_GROQ_API_KEY ? '✅ Found (' + env.VITE_GROQ_API_KEY.length + ' ch)' : '❌ MISSING'}\n`;
+  report += `<b>GEMINI_API_KEY:</b> ${env.GEMINI_API_KEY ? '✅ Found (' + env.GEMINI_API_KEY.length + ' ch)' : '❌ MISSING'}\n`;
+  report += `<b>VITE_GEMINI_API_KEY:</b> ${env.VITE_GEMINI_API_KEY ? '✅ Found (' + env.VITE_GEMINI_API_KEY.length + ' ch)' : '❌ MISSING'}\n`;
+  report += `<b>CLAUDE_API_KEY:</b> ${env.CLAUDE_API_KEY ? '✅ Found (' + env.CLAUDE_API_KEY.length + ' ch)' : '❌ MISSING'}\n`;
+  report += `<b>VITE_CLAUDE_API_KEY:</b> ${env.VITE_CLAUDE_API_KEY ? '✅ Found (' + env.VITE_CLAUDE_API_KEY.length + ' ch)' : '❌ MISSING'}\n`;
+  report += `<b>TG_TOKEN:</b> ${env.TG_TOKEN ? '✅ Found (' + env.TG_TOKEN.length + ' ch)' : '❌ MISSING'}\n`;
+  
+  report += '\n<b>SYSTEM ENV KEYS SCAN:</b>\n';
+  const allKeys = Object.keys(env).filter(k => !k.startsWith('npm_') && !k.startsWith('Path')).sort();
+  for (const k of allKeys.slice(0, 30)) { // Limit to avoid hitting Telegram msg limits
+    if (k.includes('KEY') || k.includes('TOKEN') || k.includes('API') || k.includes('SECRET') || k.includes('URL')) {
+      report += `• ${k}: [REDACTED]\n`;
+    } else {
+      report += `• ${k}\n`;
+    }
+  }
+  
+  report += '\n<i>Note: If variables are missing here, add them to your Hosting Dashboard (Render/Vercel) Environment Variables section.</i>';
+  
+  await safeSend(chatId, report);
+});
+
+// ========================================
 // COMMAND: /help
 // ========================================
 bot.onText(/^\/help(@\w+)?$/i, async (msg) => {
