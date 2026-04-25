@@ -89,6 +89,15 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
     }]);
   }, []);
 
+  // ============ RETRY HELPER ============
+  const retryOnce = async (fn: () => Promise<string>): Promise<string> => {
+    try { return await fn(); }
+    catch (e) {
+      await new Promise(r => setTimeout(r, 1000 + Math.random() * 500));
+      return await fn();
+    }
+  };
+
   // ============ GROQ API (Ultra-Fast) ============
   const callGroq = async (messages: any[], systemPrompt: string) => {
     const envKey = import.meta.env.VITE_GROQ_API_KEY;
@@ -104,9 +113,9 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
         model: CONFIG.groq.model,
         messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
         temperature: 0.7,
-        max_tokens: 1200
+        max_tokens: 1500
       }),
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(20000)
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -114,7 +123,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
     }
     const data = await res.json();
     const text = data.choices?.[0]?.message?.content;
-    if (!text) throw new Error('Groq returned empty response');
+    if (!text || text.trim().length < 5) throw new Error('Groq returned empty response');
     return text;
   };
 
@@ -125,31 +134,50 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
       throw new Error('Gemini API Key missing — Settings me set karo');
     }
 
-    const contents = [
-      { role: 'user', parts: [{ text: systemPrompt }] },
-      { role: 'model', parts: [{ text: 'Understood. I am DEEP MIND AI Pro Trading Assistant. Ready for analysis.' }] },
-      ...messages.map(m => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }]
-      }))
-    ];
+    // Build contents with STRICT alternating user/model turns
+    const contents: Array<{role: string; parts: Array<{text: string}>}> = [];
+    contents.push({ role: 'user', parts: [{ text: systemPrompt }] });
+    contents.push({ role: 'model', parts: [{ text: 'Understood. DEEP MIND AI Pro Trader active. Ready for analysis in Pro Trader Hinglish.' }] });
+
+    // Ensure strict alternation — merge consecutive same-role messages
+    let lastRole = 'model';
+    for (const m of messages) {
+      const gemRole = m.role === 'assistant' ? 'model' : 'user';
+      if (gemRole === lastRole) {
+        contents[contents.length - 1].parts[0].text += '\n\n' + m.content;
+      } else {
+        contents.push({ role: gemRole, parts: [{ text: m.content }] });
+        lastRole = gemRole;
+      }
+    }
+    // Gemini requires last message to be 'user'
+    if (lastRole === 'model' && contents.length > 2) {
+      contents.push({ role: 'user', parts: [{ text: 'Please respond.' }] });
+    }
 
     const res = await fetch(`${CONFIG.gemini.baseUrl}/${CONFIG.gemini.model}:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents,
-        generationConfig: { temperature: 0.7, maxOutputTokens: 2048 }
+        generationConfig: { temperature: 0.7, maxOutputTokens: 2048, topP: 0.95, topK: 40 },
+        safetySettings: [
+          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+        ]
       }),
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(30000)
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error?.message || `Gemini Error: ${res.status}`);
     }
     const data = await res.json();
+    if (data.candidates?.[0]?.finishReason === 'SAFETY') throw new Error('Gemini blocked by safety filters');
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error('Gemini returned empty response');
+    if (!text || text.trim().length < 5) throw new Error('Gemini returned empty response');
     return text;
   };
 
@@ -157,9 +185,25 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
   const callClaude = async (messages: any[], systemPrompt: string) => {
     const apiKey = import.meta.env.VITE_CLAUDE_API_KEY || CONFIG.claude.apiKey;
     if (!apiKey || apiKey.length < 10) {
-      // Fallback to Gemini if Claude key missing
-      console.warn('Claude key missing, falling back to Gemini');
-      return await callGemini(messages, systemPrompt);
+      throw new Error('Claude API Key missing');
+    }
+
+    // Ensure messages alternate user/assistant and start with user
+    const fixed: Array<{role: string; content: string}> = [];
+    let expectedRole = 'user';
+    for (const m of messages) {
+      const role = m.role === 'assistant' ? 'assistant' : 'user';
+      if (role === expectedRole) {
+        fixed.push({ role, content: m.content });
+        expectedRole = expectedRole === 'user' ? 'assistant' : 'user';
+      } else if (role === 'user' && expectedRole === 'assistant') {
+        fixed.push({ role: 'assistant', content: 'Samjha. Continue karo.' });
+        fixed.push({ role: 'user', content: m.content });
+        expectedRole = 'assistant';
+      }
+    }
+    if (fixed.length === 0 || fixed[0].role !== 'user') {
+      fixed.unshift({ role: 'user', content: 'Hello' });
     }
 
     const res = await fetch(CONFIG.claude.baseUrl, {
@@ -174,9 +218,9 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
         model: CONFIG.claude.model,
         max_tokens: 2048,
         system: systemPrompt,
-        messages: messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }))
+        messages: fixed
       }),
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(45000)
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -184,60 +228,62 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
     }
     const data = await res.json();
     const text = data.content?.[0]?.text;
-    if (!text) throw new Error('Claude returned empty response');
+    if (!text || text.trim().length < 5) throw new Error('Claude returned empty response');
     return text;
   };
 
-  // ============ MAIN AI ROUTER ============
+  // ============ MAIN AI ROUTER — Advanced Fallback Chain ============
   const callAI = async (userMessage: string, model: string) => {
-    const systemPrompt = `You are DEEP MIND AI — Elite Pro Trading Intelligence Assistant. You provide expert-level trading insights, real-time market analysis, detailed fundamentals, options strategies, and portfolio recommendations.
+    const systemPrompt = `You are DEEP MIND AI — Elite Pro Trading Intelligence for Indian & US markets.
+
+PERSONA: Seasoned institutional trader guiding a younger brother ("Bhai"). 15+ years across NSE, BSE, NYSE, NASDAQ.
 
 RULES:
-1. Speak strictly in "Pro Trader Hinglish" (Hindi + English mix). Use terms like "Bhai", "Breakout aa gaya hai", "SL hit hone ka chance hai", "Market abhi sideways hai", "Capital bacha ke rakho".
-2. Reference actual portfolio data provided in context. Do not invent symbols.
-3. Give specific actionable advice with exact levels (Support, Resistance, Stop Loss, Target Price).
-4. Include conviction scores (1-10) and Risk-Reward ratios where applicable.
-5. For market news, explain the exact impact clearly. Use formatting like bullet points and bold text for readability.
-6. Be concise but extremely insightful.
+1. Speak strictly in "Pro Trader Hinglish" (Hindi + English mix). Use "Bhai", "Breakout aa gaya", "SL trail karo", "Fakeout se bacho", "Liquidity grab".
+2. Reference actual portfolio data. Do not invent symbols.
+3. Give SPECIFIC actionable levels: Support, Resistance, Stop Loss, Target Price.
+4. Include conviction scores (1-10) and Risk-Reward ratios.
+5. For news: explain exact impact like "Iska matlab sell-off aa sakta hai".
+6. Use institutional frameworks: SMC, Wyckoff, Elliott Wave, Fibonacci.
+7. Be concise, punchy. Max 500 words. Format with **bold** and emojis.
+8. End with clear verdict: BUY/SELL/HOLD/WAIT with levels.
 
 PORTFOLIO CONTEXT:
 ${portfolioContext || 'No portfolio data available. Provide general market analysis.'}`;
 
-    const recentMessages = chatMessages.slice(-6).map(m => ({
-      role: m.role === 'model' || m.role === 'system' ? 'assistant' : 'user',
-      content: m.text
-    }));
+    // Filter out system messages, keep only user/assistant, limit to recent
+    const recentMessages = chatMessages
+      .filter(m => m.role === 'user' || m.role === 'model')
+      .slice(-8)
+      .map(m => ({
+        role: m.role === 'model' ? 'assistant' : 'user',
+        content: m.text
+      }));
 
-    // Try primary model, fallback chain: Claude → Gemini → Groq
-    if (model === 'claude') {
-      try { return { text: await callClaude(recentMessages, systemPrompt), model: 'claude' as const }; }
-      catch (e) {
-        console.warn('Claude failed:', e);
-        try { return { text: await callGemini(recentMessages, systemPrompt), model: 'gemini' as const }; }
-        catch (e) {
-          console.warn('Gemini failed:', e);
-          try { return { text: await callGroq(recentMessages, systemPrompt), model: 'groq' as const }; }
-          catch (e) { return { text: `🤖 **AI Engines Offline**\n\nBhai, Claude, Gemini aur Groq sab fail ho gaye.\nCheck API keys in .env file.`, model: 'system' as const }; }
-        }
+    // Build fallback chain: primary → fallback1 → fallback2
+    type Engine = 'groq' | 'gemini' | 'claude';
+    const chain: Engine[] = model === 'gemini'
+      ? ['gemini', 'groq', 'claude']
+      : model === 'claude'
+      ? ['claude', 'gemini', 'groq']
+      : ['groq', 'gemini', 'claude'];
+
+    const callers: Record<Engine, (msgs: any[], sp: string) => Promise<string>> = {
+      groq: callGroq, gemini: callGemini, claude: callClaude
+    };
+
+    // Try each engine with one retry
+    for (const eng of chain) {
+      try {
+        const text = await retryOnce(() => callers[eng](recentMessages, systemPrompt));
+        return { text, model: eng };
+      } catch (e) {
+        console.warn(`${eng} failed:`, e);
+        continue;
       }
     }
 
-    if (model === 'gemini') {
-      try { return { text: await callGemini(recentMessages, systemPrompt), model: 'gemini' as const }; }
-      catch (e) {
-        console.warn('Gemini failed:', e);
-        try { return { text: await callGroq(recentMessages, systemPrompt), model: 'groq' as const }; }
-        catch (e) { return { text: `🤖 **AI Engines Offline**\n\nBhai, Gemini aur Groq dono fail ho gaye.\nCheck API keys in .env file.`, model: 'system' as const }; }
-      }
-    }
-
-    // Groq (default/fast)
-    try { return { text: await callGroq(recentMessages, systemPrompt), model: 'groq' as const }; }
-    catch (e) {
-      console.warn('Groq failed:', e);
-      try { return { text: await callGemini(recentMessages, systemPrompt), model: 'gemini' as const }; }
-      catch (e) { return { text: `🤖 **AI Engines Offline**\n\nBhai, Groq aur Gemini dono fail ho gaye.\nCheck API keys in .env file.`, model: 'system' as const }; }
-    }
+    return { text: `🤖 **AI Engines Offline**\n\nBhai, Groq, Gemini aur Claude — teeno fail ho gaye.\n\n**Possible reasons:**\n• API keys missing ya invalid\n• Rate limit hit\n• Network issue\n\nCheck .env file aur retry karo.`, model: 'system' as const };
   };
 
   const sendMessage = async (userMessage: string) => {
@@ -247,13 +293,14 @@ ${portfolioContext || 'No portfolio data available. Provide general market analy
     setChatMessages(prev => [...prev, { role: 'user', text: userMessage, timestamp: Date.now() }]);
 
     try {
-      const lowerQuery = userMessage.toLowerCase();
+      const q = userMessage.toLowerCase();
       let selectedModelType = selectedModel;
       
       if (selectedModel === 'auto') {
-        if (lowerQuery.includes('news') || lowerQuery.includes('market') || lowerQuery.includes('nifty') || lowerQuery.includes('live') || lowerQuery.includes('aaj')) {
+        // Advanced intent detection with Hindi/trading keywords
+        if (/\b(news|khabar|market|live|aaj|today|nifty|sensex|breaking|ipo|fii|dii|rbi|fed|crude|gold|dollar|vix|trend|intraday|pre.?market|global|sector|rally|crash|correction)\b/i.test(q)) {
           selectedModelType = 'gemini';
-        } else if (lowerQuery.includes('portfolio') || lowerQuery.includes('analyze') || lowerQuery.includes('strategy') || lowerQuery.includes('fundamental') || lowerQuery.includes('deep')) {
+        } else if (/\b(portfolio|analy[sz]|strategy|fundamental|backtest|risk|allocation|optimize|deep|comprehensive|options?|pcr|fibonacci|wyckoff|smc|elliott|valuation|dividend|dcf|compare|rebalance)\b/i.test(q)) {
           selectedModelType = 'claude';
         } else {
           selectedModelType = 'groq';

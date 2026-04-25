@@ -2203,8 +2203,6 @@ portfolio={portfolio}
 {/* Neural Core Chat AI Integration with Deep Real-Time Portfolio Context Injection */}
 <NeuralChat
   groqKey={groqKey}
-  geminiKey={import.meta.env.VITE_GEMINI_KEY}
-  deepseekKey={import.meta.env.VITE_DEEPSEEK_KEY}
   portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'}
   onTelegramPush={pushTelegramReport}
 />

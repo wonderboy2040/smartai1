@@ -21,21 +21,33 @@ export let CLAUDE_API_KEY = env.CLAUDE_API_KEY || env.ClaudeAPIKEY || env.CLAUDE
 const missingKeys = [];
 if (!GROQ_KEY || !GROQ_KEY.startsWith('gsk_')) missingKeys.push('GROQ_KEY');
 if (!GEMINI_API_KEY || GEMINI_API_KEY.length < 10) missingKeys.push('GEMINI_API_KEY');
+if (!CLAUDE_API_KEY || CLAUDE_API_KEY.length < 10) missingKeys.push('CLAUDE_API_KEY');
 
 if (missingKeys.length > 0) {
-  console.warn('⚠️  WARNING: Critical AI keys are missing:');
+  console.warn('⚠️  WARNING: Some AI keys are missing or invalid:');
   console.warn('  ' + missingKeys.join(', '));
-  console.warn('AI responses will fallback or fail.');
+  console.warn('  AI responses will use available engines with fallback chain.');
 } else {
-  console.log('✅ All required API keys validated successfully');
-  if (TAVILY_API_KEY) console.log('  ✓ Tavily Search API configured');
-  if (NVIDIA_API_KEY) console.log('  ✓ NVIDIA DeepSeek V3 configured');
-  if (GROQ_KEY) console.log('  ✓ Groq Llama-3 configured');
+  console.log('✅ All AI API keys validated successfully');
 }
+
+// Log individual key status
+console.log('🔑 AI Engine Key Status:');
+if (GROQ_KEY) console.log(`  ⚡ Groq: ✓ Valid (${GROQ_KEY.substring(0, 8)}...)`);
+else console.log('  ⚡ Groq: ✗ Missing');
+if (GEMINI_API_KEY && GEMINI_API_KEY.length > 10) console.log(`  🔵 Gemini: ✓ Valid (${GEMINI_API_KEY.substring(0, 8)}...)`);
+else console.log('  🔵 Gemini: ✗ Missing');
+if (CLAUDE_API_KEY && CLAUDE_API_KEY.length > 10) console.log(`  🟣 Claude: ✓ Valid (${CLAUDE_API_KEY.substring(0, 8)}...)`);
+else console.log('  🟣 Claude: ✗ Missing');
 
 export function setGroqKey(key) { GROQ_KEY = key; }
 export function setGeminiKey(key) { GEMINI_API_KEY = key; }
-export function setDeepSeekKey(key) { CLAUDE_API_KEY = key; }
+export function setClaudeKey(key) { CLAUDE_API_KEY = key; }
+
+// Dynamic key validation helpers (called at runtime, not module load)
+export function isGroqAvailable() { return !!(GROQ_KEY && GROQ_KEY.startsWith('gsk_')); }
+export function isGeminiAvailable() { return !!(GEMINI_API_KEY && GEMINI_API_KEY.length > 10); }
+export function isClaudeAvailable() { return !!(CLAUDE_API_KEY && CLAUDE_API_KEY.length > 10); }
 
 // SIP Defaults
 export const DEFAULT_INDIA_SIP = 10000;
