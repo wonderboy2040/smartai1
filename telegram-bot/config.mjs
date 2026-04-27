@@ -11,40 +11,58 @@ export const TG_CHAT_ID = process.env.TG_CHAT_ID || "";
 // Google Apps Script Cloud Sync
 export const API_URL = process.env.API_URL || "";
 
-// Multi-AI API Keys
-export let GROQ_KEY = process.env.GROQ_KEY || "";
-// Tavily Search API (Real-time Web Data - Replaces Gemini)
-export const TAVILY_API_KEY = process.env.TAVILY_API_KEY || "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";
-export const TAVILY_BASE_URL = "https://api.tavily.com/search";
-// NVIDIA API Keys (DeepSeek V3 for Analysis)
-export const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || "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";
-export const NVIDIA_BASE_URL = process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1";
-export const NVIDIA_DEEPSEEK_MODEL = process.env.NVIDIA_DEEPSEEK_MODEL || "deepseek-ai/deepseek-r1";
-export const NVIDIA_GEMINI_MODEL = process.env.NVIDIA_GEMINI_MODEL || "google/gemma-2-27b-it";
-// Legacy keys (fallback)
-export let GEMINI_KEY = process.env.GEMINI_KEY || TAVILY_API_KEY; // Tavily replaces Gemini
-export let DEEPSEEK_KEY = process.env.DEEPSEEK_KEY || NVIDIA_API_KEY;
+// Multi-AI API Keys (Case-insensitive support for user-added env vars)
+const env = process.env;
+
+// Debug: Print available env keys
+console.log('🔍 [DEBUG] Checking System Environment Variables for AI Keys:');
+const foundKeys = Object.keys(env).filter(k => k.toUpperCase().includes('GROQ') || k.toUpperCase().includes('GEMINI') || k.toUpperCase().includes('CLAUDE'));
+if (foundKeys.length > 0) {
+  console.log(`🔍 [DEBUG] Found these potential key variables: ${foundKeys.join(', ')}`);
+} else {
+  console.log('🔍 [DEBUG] NO matching environment variables found in process.env!');
+}
+
+export let GROQ_KEY = env.GROQ_KEY || env.GroqKey || env.VITE_GROQ_API_KEY || "";
+export let GEMINI_API_KEY = env.GEMINI_API_KEY || env.GeminiAPIKEY || env.GEMINI_KEY || env.VITE_GEMINI_API_KEY || "";
+export let CLAUDE_API_KEY = env.CLAUDE_API_KEY || env.ClaudeAPIKEY || env.CLAUDE_KEY || env.VITE_CLAUDE_API_KEY || "";
+
+// Clean keys (remove accidentally pasted quotes or spaces)
+if (GROQ_KEY) GROQ_KEY = GROQ_KEY.replace(/['"]/g, '').trim();
+if (GEMINI_API_KEY) GEMINI_API_KEY = GEMINI_API_KEY.replace(/['"]/g, '').trim();
+if (CLAUDE_API_KEY) CLAUDE_API_KEY = CLAUDE_API_KEY.replace(/['"]/g, '').trim();
 
 // Validate API keys at startup
 const missingKeys = [];
-if (!TAVILY_API_KEY || !TAVILY_API_KEY.startsWith('tvly-')) missingKeys.push('TAVILY_API_KEY');
-if (!NVIDIA_API_KEY || !NVIDIA_API_KEY.startsWith('nvapi-')) missingKeys.push('NVIDIA_API_KEY');
-if (!GROQ_KEY || !GROQ_KEY.startsWith('gsk_')) missingKeys.push('GROQ_KEY (optional)');
+if (!GROQ_KEY || !GROQ_KEY.startsWith('gsk_')) missingKeys.push('GROQ_KEY');
+if (!GEMINI_API_KEY || GEMINI_API_KEY.length < 10) missingKeys.push('GEMINI_API_KEY');
+if (!CLAUDE_API_KEY || CLAUDE_API_KEY.length < 10) missingKeys.push('CLAUDE_API_KEY');
 
-if (missingKeys.length > 0 && missingKeys[0] !== 'GROQ_KEY (optional)') {
-  console.warn('⚠️  WARNING: Some API keys are missing or invalid:');
+if (missingKeys.length > 0) {
+  console.warn('⚠️  WARNING: Some AI keys are missing or invalid:');
   console.warn('  ' + missingKeys.join(', '));
-  console.warn('Some features may not work properly.');
+  console.warn('  AI responses will use available engines with fallback chain.');
 } else {
-  console.log('✅ All required API keys validated successfully');
-  if (TAVILY_API_KEY) console.log('  ✓ Tavily Search API configured');
-  if (NVIDIA_API_KEY) console.log('  ✓ NVIDIA DeepSeek V3 configured');
-  if (GROQ_KEY) console.log('  ✓ Groq Llama-3 configured');
+  console.log('✅ All AI API keys validated successfully');
 }
 
+// Log individual key status
+console.log('🔑 AI Engine Key Status:');
+if (GROQ_KEY) console.log(`  ⚡ Groq: ✓ Valid (${GROQ_KEY.substring(0, 8)}...)`);
+else console.log('  ⚡ Groq: ✗ Missing');
+if (GEMINI_API_KEY && GEMINI_API_KEY.length > 10) console.log(`  🔵 Gemini: ✓ Valid (${GEMINI_API_KEY.substring(0, 8)}...)`);
+else console.log('  🔵 Gemini: ✗ Missing');
+if (CLAUDE_API_KEY && CLAUDE_API_KEY.length > 10) console.log(`  🟣 Claude: ✓ Valid (${CLAUDE_API_KEY.substring(0, 8)}...)`);
+else console.log('  🟣 Claude: ✗ Missing');
+
 export function setGroqKey(key) { GROQ_KEY = key; }
-export function setGeminiKey(key) { GEMINI_KEY = key; }
-export function setDeepSeekKey(key) { DEEPSEEK_KEY = key; }
+export function setGeminiKey(key) { GEMINI_API_KEY = key; }
+export function setClaudeKey(key) { CLAUDE_API_KEY = key; }
+
+// Dynamic key validation helpers (called at runtime, not module load)
+export function isGroqAvailable() { return !!(GROQ_KEY && GROQ_KEY.startsWith('gsk_')); }
+export function isGeminiAvailable() { return !!(GEMINI_API_KEY && GEMINI_API_KEY.length > 10); }
+export function isClaudeAvailable() { return !!(CLAUDE_API_KEY && CLAUDE_API_KEY.length > 10); }
 
 // SIP Defaults
 export const DEFAULT_INDIA_SIP = 10000;
@@ -82,7 +100,9 @@ export const EXACT_TICKER_MAP = {
   'SPY': 'AMEX:SPY',
   'DIA': 'AMEX:DIA',
   'XLV': 'AMEX:XLV',
-  'VIX': 'CBOE:VIX'
+  'VIX': 'CBOE:VIX',
+  'NIFTY': 'NSE:NIFTY',
+  'GIFT_NIFTY': 'NSE:GIFT_NIFTY'
 };
 
 // Helpers

@@ -456,9 +456,6 @@ return generateAllocationReport(portfolio, livePrices);
 if (q.startsWith('/clear')) {
 return generateClearMessage();
 }
-if (q.startsWith('/trim')) {
-return generateTrimLogicReport(portfolio, livePrices);
-}
 
 // Global Market State
 let marketState = 'neutral';

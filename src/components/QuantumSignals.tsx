@@ -1,10 +1,18 @@
+<<<<<<< HEAD
 import { useState, useEffect } from 'react';
 import { PriceData } from '../types';
 import { 
   detectRegime, 
   scanMeanReversion, 
+=======
+import React, { useState, useEffect, useRef } from 'react';
+import { PriceData, Position } from '../types';
+import {
+  detectRegime,
+  scanMeanReversion,
+>>>>>>> 9ea771916bb553c404143bbf5d3de85b77238d03
   calculateMomentumScore,
-  PredictionEngine 
+  PredictionEngine
 } from '../utils/mlPrediction';
 
 interface SignalData {
@@ -18,44 +26,84 @@ interface SignalData {
   reasoning: string[];
   quantumScore: number;
   aiConfidence: number;
+  market: 'IN' | 'US';
 }
 
 interface QuantumSignalsProps {
   livePrices: Record<string, PriceData>;
-  portfolioSymbols: string[];
+  portfolio: Position[];
+  onViewDetails?: (symbol: string) => void;
 }
 
-export function QuantumSignals({ livePrices, portfolioSymbols }: QuantumSignalsProps) {
-const [signals, setSignals] = useState<SignalData[]>([]);
-const [marketRegime, setMarketRegime] = useState<string>('ANALYZING');
-const [isLoading, setIsLoading] = useState(true);
-let regimeCounter = 0;
+export function QuantumSignals({ livePrices, portfolio, onViewDetails }: QuantumSignalsProps) {
+  const [signals, setSignals] = useState<SignalData[]>([]);
+  const [marketRegime, setMarketRegime] = useState<string>('ANALYZING');
+  const [isLoading, setIsLoading] = useState(true);
+  const lastComputeRef = useRef(0);
+  const initialLoadRef = useRef(true);
+  let regimeCounter = 0;
 
   useEffect(() => {
-    setIsLoading(true);
+    const now = Date.now();
+    const shouldCompute = initialLoadRef.current || (now - lastComputeRef.current > 10000);
+    if (!shouldCompute) return;
+
+    if (initialLoadRef.current) {
+      setIsLoading(true);
+      initialLoadRef.current = false;
+    }
+
     const timeout = setTimeout(() => {
       generateSignals();
       setIsLoading(false);
-    }, 800);
+      lastComputeRef.current = Date.now();
+    }, isLoading ? 800 : 200);
+
     return () => clearTimeout(timeout);
-  }, [livePrices, portfolioSymbols]);
+  }, [livePrices, portfolio]);
 
-const generateSignals = () => {
-let symbols: string[] = portfolioSymbols.length > 0 ? portfolioSymbols : Object.keys(livePrices);
-const signalList: SignalData[] = [];
+  const generateSignals = () => {
+    let symbols: Position[] = portfolio.length > 0 ? portfolio : [];
+    const signalList: SignalData[] = [];
 
-// Add default symbols if portfolio is empty and no live prices
-if (symbols.length === 0) {
-const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA'];
-symbols = defaultSymbols.filter(sym => livePrices[sym]?.price > 0);
-}
+    // Add default symbols if portfolio is empty
+    if (symbols.length === 0) {
+      const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA'];
+      symbols = defaultSymbols.map(sym => ({
+        id: sym,
+        symbol: sym.replace('IN_', '').replace('US_', ''),
+        market: sym.startsWith('IN') ? 'IN' : 'US',
+        qty: 1,
+        avgPrice: livePrices[sym]?.price || 100,
+        leverage: 1,
+        dateAdded: ''
+      }));
+    }
 
-symbols.forEach(symbol => {
-const data = livePrices[symbol];
-if (!data || !data.price) return;
+    symbols.forEach(pos => {
+      const symbol = pos.symbol;
+      const marketPrefix = pos.market;
+      const fullKey = `${marketPrefix}_${symbol}`;
 
-      const priceHistory = Array.from({ length: 50 }, (_, i) => 
-        data.price * (1 + (Math.sin(i / 10) * 0.02) + (Math.random() - 0.5) * 0.01)
+      // Find the live price data for this symbol
+      let data = livePrices[fullKey];
+
+      // Use live data if available, otherwise use portfolio avgPrice
+      const currentPrice = data?.price || pos.avgPrice;
+      const effectiveData = {
+        price: currentPrice,
+        change: data?.change || 0,
+        high: data?.high || currentPrice * 1.01,
+        low: data?.low || currentPrice * 0.99,
+        volume: data?.volume || 0,
+        rsi: data?.rsi || 50,
+        macd: data?.macd || 0,
+        sma20: data?.sma20 || currentPrice,
+        sma50: data?.sma50 || currentPrice
+      };
+
+      const priceHistory = Array.from({ length: 50 }, (_, i) =>
+        effectiveData.price * (1 + (Math.sin(i / 10) * 0.02) + (Math.random() - 0.5) * 0.01)
       );
 
       const regime = detectRegime(priceHistory, (livePrices['US_VIX']?.price || 15));
@@ -64,18 +112,22 @@ if (!data || !data.price) return;
       }
       regimeCounter++;
 
-      const meanRev = scanMeanReversion(priceHistory, data.price);
+      const meanRev = scanMeanReversion(priceHistory, effectiveData.price);
       const momentum = calculateMomentumScore(
-        data.rsi || 50,
-        data.macd,
-        data.sma20,
-        data.sma50,
-        data.price,
-        data.change,
-        data.volume || 0
+        effectiveData.rsi || 50,
+        effectiveData.macd,
+        effectiveData.sma20,
+        effectiveData.sma50,
+        effectiveData.price,
+        effectiveData.change,
+        effectiveData.volume || 0
       );
 
+<<<<<<< HEAD
       const _prediction = PredictionEngine.predictPrice(priceHistory, data.price, data, 7);
+=======
+      const prediction = PredictionEngine.predictPrice(priceHistory, effectiveData.price, effectiveData, 7);
+>>>>>>> 9ea771916bb553c404143bbf5d3de85b77238d03
 
       let signal: SignalData['signal'] = 'HOLD';
       let confidence = 50;
@@ -86,7 +138,7 @@ if (!data || !data.price) return;
         confidence = 85 + Math.random() * 10;
         reasoning.push(`Strong momentum score: ${momentum.score}/100`);
         reasoning.push(`Market regime: ${regime.regime.replace('_', ' ')}`);
-        reasoning.push(`RSI at ${data.rsi?.toFixed(1)} - Room for upside`);
+        reasoning.push(`RSI at ${effectiveData.rsi?.toFixed(1)} - Room for upside`);
       } else if (momentum.score >= 60) {
         signal = 'BUY';
         confidence = 65 + Math.random() * 15;
@@ -112,29 +164,34 @@ if (!data || !data.price) return;
         reasoning.push(`Mean reversion probability: ${meanRev.probability}%`);
       }
 
+<<<<<<< HEAD
       const _atr = ((data.high || data.price) - (data.low || data.price)) || data.price * 0.02;
+=======
+      const atr = ((effectiveData.high || effectiveData.price) - (effectiveData.low || effectiveData.price)) || effectiveData.price * 0.02;
+>>>>>>> 9ea771916bb553c404143bbf5d3de85b77238d03
       const quantumScore = Math.round(
-        (momentum.score * 0.4) + 
-        ((100 - Math.abs(data.change || 0) * 10) * 0.3) + 
+        (momentum.score * 0.4) +
+        ((100 - Math.abs(effectiveData.change || 0) * 10) * 0.3) +
         ((regime.trendStrength) * 0.3)
       );
 
       signalList.push({
-        symbol: symbol.replace('IN_', '').replace('US_', '').replace('.NS', ''),
+        symbol: symbol.replace('.NS', ''),
         signal,
         confidence: Math.round(confidence),
         timeframe: '7D',
-        entryPrice: data.price,
-        targetPrice: data.price * (1 + (signal.includes('BUY') ? 0.08 : signal.includes('SELL') ? -0.05 : 0)),
-        stopLoss: data.price * (1 + (signal.includes('BUY') ? -0.05 : signal.includes('SELL') ? 0.03 : 0)),
+        entryPrice: effectiveData.price,
+        targetPrice: effectiveData.price * (1 + (signal.includes('BUY') ? 0.08 : signal.includes('SELL') ? -0.05 : 0)),
+        stopLoss: effectiveData.price * (1 + (signal.includes('BUY') ? -0.05 : signal.includes('SELL') ? 0.03 : 0)),
         reasoning,
         quantumScore,
-        aiConfidence: Math.round((confidence + quantumScore) / 2)
+        aiConfidence: Math.round((confidence + quantumScore) / 2),
+        market: pos.market as 'IN' | 'US'
       });
     });
 
-setSignals(signalList.sort((a, b) => b.quantumScore - a.quantumScore));
-};
+    setSignals(signalList.sort((a, b) => b.quantumScore - a.quantumScore));
+  };
 
   const getSignalColor = (signal: string) => {
     switch (signal) {
@@ -226,12 +283,11 @@ setSignals(signalList.sort((a, b) => b.quantumScore - a.quantumScore));
           </div>
         ) : (
           signals.map((sig, idx) => (
-            <div 
+            <div
               key={sig.symbol}
-              className={`glass-card rounded-2xl p-5 border transition-all hover:scale-[1.02] ${
-                sig.signal.includes('BUY') ? 'border-emerald-500/30' : 
-                sig.signal.includes('SELL') ? 'border-red-500/30' : 'border-slate-700/50'
-              }`}
+              className={`glass-card rounded-2xl p-5 border transition-all hover:scale-[1.02] ${sig.signal.includes('BUY') ? 'border-emerald-500/30' :
+                  sig.signal.includes('SELL') ? 'border-red-500/30' : 'border-slate-700/50'
+                }`}
               style={{ animationDelay: `${idx * 100}ms` }}
             >
               <div className="flex items-start justify-between mb-4">
@@ -244,13 +300,13 @@ setSignals(signalList.sort((a, b) => b.quantumScore - a.quantumScore));
                   </div>
                   <div className="flex items-center gap-4 text-sm">
                     <div className="text-slate-400">
-                      Entry: <span className="text-white font-mono">${sig.entryPrice?.toFixed(2)}</span>
+                      Entry: <span className="text-white font-mono">{sig.market === 'IN' ? '₹' : '$'}{sig.entryPrice?.toFixed(2)}</span>
                     </div>
                     <div className="text-slate-400">
-                      Target: <span className="text-emerald-400 font-mono">${sig.targetPrice?.toFixed(2)}</span>
+                      Target: <span className="text-emerald-400 font-mono">{sig.market === 'IN' ? '₹' : '$'}{sig.targetPrice?.toFixed(2)}</span>
                     </div>
                     <div className="text-slate-400">
-                      Stop: <span className="text-red-400 font-mono">${sig.stopLoss?.toFixed(2)}</span>
+                      Stop: <span className="text-red-400 font-mono">{sig.market === 'IN' ? '₹' : '$'}{sig.stopLoss?.toFixed(2)}</span>
                     </div>
                   </div>
                 </div>
@@ -296,7 +352,10 @@ setSignals(signalList.sort((a, b) => b.quantumScore - a.quantumScore));
                   <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></div>
                   <span className="text-xs text-slate-400">Real-time Analysis</span>
                 </div>
-                <button className="px-4 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-cyan-400 text-sm font-bold transition-all">
+                <button
+                  onClick={() => onViewDetails?.(sig.symbol)}
+                  className="px-4 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-cyan-400 text-sm font-bold transition-all"
+                >
                   📊 View Details
                 </button>
               </div>
@@ -311,7 +370,7 @@ setSignals(signalList.sort((a, b) => b.quantumScore - a.quantumScore));
           <span className="text-2xl">⚠️</span>
           <div className="text-xs text-slate-400">
             <div className="font-bold text-amber-400 mb-1">AI Trading Disclaimer</div>
-            These signals are generated by machine learning algorithms and should not be considered as financial advice. 
+            These signals are generated by machine learning algorithms and should not be considered as financial advice.
             Always do your own research and consult with a qualified financial advisor before making investment decisions.
           </div>
         </div>

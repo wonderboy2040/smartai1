@@ -1,10 +1,16 @@
+<<<<<<< HEAD
 import { useState, useEffect } from 'react';
 import { PriceData } from '../types';
 import { PredictionEngine } from '../utils/mlPrediction';
+=======
+import React, { useState, useEffect, useRef } from 'react';
+import { PriceData, Position } from '../types';
+import { PredictionEngine, TechnicalIndicators } from '../utils/mlPrediction';
+>>>>>>> 9ea771916bb553c404143bbf5d3de85b77238d03
 
 interface SuperIntelligenceProps {
   livePrices: Record<string, PriceData>;
-  portfolioSymbols: string[];
+  portfolio: Position[];
 }
 
 interface PredictionCard {
@@ -18,59 +24,110 @@ interface PredictionCard {
   resistance: number;
   trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   aiScore: number;
+  market: 'IN' | 'US';
 }
 
-export function SuperIntelligence({ livePrices, portfolioSymbols }: SuperIntelligenceProps) {
+export function SuperIntelligence({ livePrices, portfolio }: SuperIntelligenceProps) {
   const [predictions, setPredictions] = useState<PredictionCard[]>([]);
   const [selectedTimeframe, setSelectedTimeframe] = useState<'1D' | '3D' | '7D' | '14D'>('7D');
   const [isAnalyzing, setIsAnalyzing] = useState(true);
+  const lastComputeRef = useRef(0);
+  const initialLoadRef = useRef(true);
 
   useEffect(() => {
-    setIsAnalyzing(true);
+    // Only recompute on timeframe change OR every 10s max for price updates
+    const now = Date.now();
+    const isTimeframeChange = true; // timeframe is in deps
+    const shouldCompute = initialLoadRef.current || isTimeframeChange || (now - lastComputeRef.current > 10000);
+    if (!shouldCompute) return;
+
+    if (initialLoadRef.current) {
+      setIsAnalyzing(true);
+      initialLoadRef.current = false;
+    }
     const timeout = setTimeout(() => {
       generatePredictions();
       setIsAnalyzing(false);
-    }, 1000);
+      lastComputeRef.current = Date.now();
+    }, isAnalyzing ? 1000 : 100);
     return () => clearTimeout(timeout);
-  }, [livePrices, portfolioSymbols, selectedTimeframe]);
+  }, [portfolio, selectedTimeframe]);
+
+  // Separate effect for price updates — throttled heavily
+  useEffect(() => {
+    if (initialLoadRef.current) return;
+    const now = Date.now();
+    if (now - lastComputeRef.current < 10000) return;
+    const timeout = setTimeout(() => {
+      generatePredictions();
+      lastComputeRef.current = Date.now();
+    }, 200);
+    return () => clearTimeout(timeout);
+  }, [livePrices]);
 
 const generatePredictions = () => {
-let symbols: string[] = portfolioSymbols.length > 0 ? portfolioSymbols : Object.keys(livePrices);
+let symbols: Position[] = portfolio.length > 0 ? portfolio : [];
 const predictionList: PredictionCard[] = [];
 
-// Add default symbols if portfolio is empty and no live prices
+// Add default symbols if portfolio is empty
 if (symbols.length === 0) {
 const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA'];
-symbols = defaultSymbols.filter(sym => livePrices[sym]?.price > 0);
+symbols = defaultSymbols.map(sym => ({
+  id: sym,
+  symbol: sym.replace('IN_', '').replace('US_', ''),
+  market: sym.startsWith('IN') ? 'IN' : 'US',
+  qty: 1,
+  avgPrice: livePrices[sym]?.price || 100,
+  leverage: 1,
+  dateAdded: ''
+}));
 }
 
-symbols.forEach(symbol => {
-const data = livePrices[symbol];
-if (!data || !data.price) return;
+symbols.forEach(pos => {
+const symbol = pos.symbol;
+const marketPrefix = pos.market;
+const fullKey = `${marketPrefix}_${symbol}`;
+
+// Find the live price data for this symbol
+let data = livePrices[fullKey];
+
+// Use live data if available, otherwise use portfolio avgPrice
+      const currentPrice = data?.price || pos.avgPrice;
+      const effectiveData = {
+        price: currentPrice,
+        change: data?.change || 0,
+        high: data?.high || currentPrice * 1.01,
+        low: data?.low || currentPrice * 0.99,
+        volume: data?.volume || 0,
+        rsi: data?.rsi || 50,
+        macd: data?.macd || 0,
+        sma20: data?.sma20 || currentPrice,
+        sma50: data?.sma50 || currentPrice
+      };
 
       const priceHistory = Array.from({ length: 100 }, (_, i) => {
-        const base = data.price;
+        const base = effectiveData.price;
         const trend = Math.sin(i / 20) * 0.05;
         const noise = (Math.random() - 0.5) * 0.02;
         return base * (1 + trend + noise);
       });
 
       const daysAhead = selectedTimeframe === '1D' ? 1 : selectedTimeframe === '3D' ? 3 : selectedTimeframe === '7D' ? 7 : 14;
-      const prediction = PredictionEngine.predictPrice(priceHistory, data.price, data, daysAhead);
+      const prediction = PredictionEngine.predictPrice(priceHistory, effectiveData.price, effectiveData, daysAhead);
 
-      const sma20 = data.sma20 || data.price;
-      const sma50 = data.sma50 || data.price;
+      const sma20 = effectiveData.sma20 || effectiveData.price;
+      const sma50 = effectiveData.sma50 || effectiveData.price;
       const trend = sma20 > sma50 ? 'BULLISH' : sma20 < sma50 ? 'BEARISH' : 'NEUTRAL';
 
       const aiScore = Math.round(
         prediction.confidence * 0.4 +
-        (data.rsi ? (100 - Math.abs(data.rsi - 50)) * 0.3 : 0) +
+        (effectiveData.rsi ? (100 - Math.abs(effectiveData.rsi - 50)) * 0.3 : 0) +
         (trend === 'BULLISH' ? 20 : trend === 'BEARISH' ? -10 : 0)
       );
 
 predictionList.push({
-symbol: symbol.replace('IN_', '').replace('US_', '').replace('.NS', '').replace('.BO', ''),
-currentPrice: data.price,
+symbol: symbol.replace('.NS', '').replace('.BO', ''),
+currentPrice: effectiveData.price,
         predictedPrice: prediction.predictedPrice,
         predictedChange: prediction.predictedChange,
         confidence: prediction.confidence,
@@ -78,7 +135,8 @@ currentPrice: data.price,
         support: prediction.supportLevel,
         resistance: prediction.resistanceLevel,
         trend,
-        aiScore: Math.min(100, Math.max(0, aiScore))
+        aiScore: Math.min(100, Math.max(0, aiScore)),
+        market: pos.market
       });
     });
 
@@ -217,11 +275,11 @@ currentPrice: data.price,
                   </div>
                   <div className="flex items-center gap-3 text-sm">
                     <div className="text-slate-400">
-                      Current: <span className="text-white font-mono">${pred.currentPrice.toFixed(2)}</span>
+                      Current: <span className="text-white font-mono">{pred.market === 'IN' ? '₹' : '$'}{pred.currentPrice.toFixed(2)}</span>
                     </div>
                     <div className="text-slate-400">
                       Predicted: <span className={`${pred.predictedChange >= 0 ? 'text-emerald-400' : 'text-red-400'} font-mono`}>
-                        ${pred.predictedPrice.toFixed(2)}
+                        {pred.market === 'IN' ? '₹' : '$'}{pred.predictedPrice.toFixed(2)}
                       </span>
                     </div>
                   </div>
@@ -237,11 +295,11 @@ currentPrice: data.price,
               <div className="grid grid-cols-3 gap-3 mb-4">
                 <div className="bg-slate-900/60 rounded-lg p-3 text-center">
                   <div className="text-[10px] text-slate-500 uppercase">Support</div>
-                  <div className="text-lg font-black text-emerald-400 font-mono">${pred.support.toFixed(2)}</div>
+                  <div className="text-lg font-black text-emerald-400 font-mono">{pred.market === 'IN' ? '₹' : '$'}{pred.support.toFixed(2)}</div>
                 </div>
                 <div className="bg-slate-900/60 rounded-lg p-3 text-center">
                   <div className="text-[10px] text-slate-500 uppercase">Resistance</div>
-                  <div className="text-lg font-black text-red-400 font-mono">${pred.resistance.toFixed(2)}</div>
+                  <div className="text-lg font-black text-red-400 font-mono">{pred.market === 'IN' ? '₹' : '$'}{pred.resistance.toFixed(2)}</div>
                 </div>
                 <div className="bg-slate-900/60 rounded-lg p-3 text-center">
                   <div className="text-[10px] text-slate-500 uppercase">Change</div>
