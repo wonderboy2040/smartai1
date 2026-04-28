@@ -1,20 +1,21 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { PriceData, Position } from '../types';
 import { analyzeAllSMC, getSessionStatus, SMCAnalysisResult } from '../utils/smcEngine';
+import { EXACT_TICKER_MAP } from '../utils/constants';
 
 interface SMCProIndicatorProps {
   livePrices: Record<string, PriceData>;
   portfolio: Position[];
 }
 
-// Convert portfolio symbol to TradingView symbol
+// Same symbol mapping as Dashboard — uses EXACT_TICKER_MAP + BSE overrides
 function toTvSymbol(symbol: string, market: string): string {
   const clean = symbol.replace('.NS', '').replace('.BO', '').toUpperCase();
-  const map: Record<string, string> = {
-    NIFTY: 'NSE:NIFTY', BANKNIFTY: 'NSE:BANKNIFTY', INDIAVIX: 'NSE:INDIAVIX',
-    SPY: 'AMEX:SPY', QQQ: 'NASDAQ:QQQ', VIX: 'CBOE:VIX',
-  };
-  if (map[clean]) return map[clean];
+  if (EXACT_TICKER_MAP[clean]) {
+    const BSE_OVERRIDES = ['JUNIORBEES', 'MOMOMENTUM', 'SMALLCAP', 'MID150BEES'];
+    if (BSE_OVERRIDES.includes(clean)) return `BSE:${clean}`;
+    return EXACT_TICKER_MAP[clean];
+  }
   return market === 'IN' ? `NSE:${clean}` : `NASDAQ:${clean}`;
 }
 
@@ -27,6 +28,7 @@ export function SMCProIndicator({ livePrices, portfolio }: SMCProIndicatorProps)
   const initialRef = useRef(true);
   const chartRef = useRef<HTMLDivElement>(null);
   const chartKeyRef = useRef('');
+  const tvWidgetRef = useRef<any>(null);
 
   useEffect(() => {
     const now = Date.now();
@@ -48,29 +50,48 @@ export function SMCProIndicator({ livePrices, portfolio }: SMCProIndicatorProps)
     return () => clearTimeout(t);
   }, [livePrices, portfolio]);
 
-  // TradingView chart — load/reload when selected asset changes
+  // TradingView chart using tv.js widget constructor (same as Dashboard — works for ALL IN+US symbols)
   const loadChart = useCallback((sym: string, market: string) => {
     const tvSym = toTvSymbol(sym, market);
     if (!chartRef.current || chartKeyRef.current === tvSym) return;
     chartKeyRef.current = tvSym;
     chartRef.current.innerHTML = '';
+    tvWidgetRef.current = null;
+
+    const containerId = `smc-tv-${Date.now()}`;
     const container = document.createElement('div');
-    container.className = 'tradingview-widget-container__widget';
+    container.id = containerId;
     container.style.height = '100%';
     container.style.width = '100%';
-    const script = document.createElement('script');
-    script.type = 'text/javascript';
-    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
-    script.async = true;
-    script.innerHTML = JSON.stringify({
-      autosize: true, symbol: tvSym, interval: '15', timezone: 'Asia/Kolkata',
-      theme: 'dark', style: '1', locale: 'en', enable_publishing: false,
-      allow_symbol_change: true, calendar: false,
-      studies: ['STD;RSI', 'STD;MACD', 'STD;EMA', 'STD;Pivot%1Points%1Standard'],
-      support_host: 'https://www.tradingview.com'
-    });
-    container.appendChild(script);
     chartRef.current.appendChild(container);
+
+    const initWidget = () => {
+      if (!(window as any).TradingView) return;
+      try {
+        tvWidgetRef.current = new (window as any).TradingView.widget({
+          autosize: true, symbol: tvSym, interval: '15',
+          timezone: 'Asia/Kolkata', theme: 'dark', style: '1', locale: 'en',
+          enable_publishing: false, allow_symbol_change: true,
+          studies: ['STD;RSI', 'STD;MACD', 'STD;EMA'],
+          container_id: containerId, withdateranges: true, calendar: false,
+          hide_side_toolbar: false, details: true, hotlist: true,
+          support_host: 'https://www.tradingview.com'
+        });
+      } catch (e) { console.warn('SMC TV widget error:', e); }
+    };
+
+    const tvScript = document.querySelector('script[src="https://s3.tradingview.com/tv.js"]');
+    if (!tvScript) {
+      const script = document.createElement('script');
+      script.src = 'https://s3.tradingview.com/tv.js';
+      script.async = true;
+      script.onload = () => setTimeout(initWidget, 100);
+      document.head.appendChild(script);
+    } else if ((window as any).TradingView) {
+      setTimeout(initWidget, 50);
+    } else {
+      tvScript.addEventListener('load', () => setTimeout(initWidget, 100));
+    }
   }, []);
 
   useEffect(() => {
