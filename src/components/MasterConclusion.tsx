@@ -5,6 +5,7 @@ import {
   MasterConclusionData,
   FinalVerdict
 } from '../utils/conclusionEngine';
+import { analyzeAllSMC, SMCAnalysisResult } from '../utils/smcEngine';
 
 interface MasterConclusionProps {
   portfolio: Position[];
@@ -23,6 +24,7 @@ const VERDICT_CONFIG: Record<FinalVerdict, { bg: string; text: string; border: s
 
 export function MasterConclusion({ portfolio, livePrices, usdInrRate, metrics }: MasterConclusionProps) {
   const [data, setData] = useState<MasterConclusionData | null>(null);
+  const [smcResults, setSmcResults] = useState<SMCAnalysisResult[]>([]);
   const [expandedAsset, setExpandedAsset] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const lastComputeRef = useRef(0);
@@ -41,6 +43,7 @@ export function MasterConclusion({ portfolio, livePrices, usdInrRate, metrics }:
     const timeout = setTimeout(() => {
       const result = generateMasterConclusion(portfolio, livePrices, usdInrRate, metrics);
       setData(result);
+      setSmcResults(analyzeAllSMC(portfolio, livePrices));
       setIsLoading(false);
       lastComputeRef.current = Date.now();
     }, isLoading ? 600 : 100);
@@ -57,6 +60,7 @@ export function MasterConclusion({ portfolio, livePrices, usdInrRate, metrics }:
     const timeout = setTimeout(() => {
       const result = generateMasterConclusion(portfolio, livePrices, usdInrRate, metrics);
       setData(result);
+      setSmcResults(analyzeAllSMC(portfolio, livePrices));
       lastComputeRef.current = Date.now();
     }, 300);
     return () => clearTimeout(timeout);
@@ -181,6 +185,75 @@ export function MasterConclusion({ portfolio, livePrices, usdInrRate, metrics }:
               <div className="text-[10px] text-red-400 font-mono">{topAvoid.priceAction}</div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ═══════ SMC PRO INDICATOR SUMMARY ═══════ */}
+      {smcResults.length > 0 && (
+        <div className="glass-card rounded-2xl p-5 border-purple-500/20 bg-gradient-to-br from-purple-500/5 to-indigo-500/5">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500/20 to-cyan-500/20 flex items-center justify-center border border-purple-500/30">
+              <span className="text-xl">🏦</span>
+            </div>
+            <div>
+              <div className="text-sm font-black text-white uppercase tracking-wider">SMC Pro Indicator Summary</div>
+              <div className="text-[10px] text-slate-500">Smart Money Concepts • BOS/CHoCH • Order Blocks • FVGs</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-4">
+            <div className="bg-black/30 rounded-lg p-2.5 text-center border border-white/5">
+              <div className="text-[8px] text-slate-500 uppercase">SMC Score</div>
+              <div className="text-lg font-black text-cyan-400 font-mono">{Math.round(smcResults.reduce((s, r) => s + r.smcScore, 0) / smcResults.length)}</div>
+            </div>
+            <div className="bg-black/30 rounded-lg p-2.5 text-center border border-white/5">
+              <div className="text-[8px] text-slate-500 uppercase">Bullish</div>
+              <div className="text-lg font-black text-emerald-400 font-mono">{smcResults.filter(r => r.structure.trendBias === 1).length}</div>
+            </div>
+            <div className="bg-black/30 rounded-lg p-2.5 text-center border border-white/5">
+              <div className="text-[8px] text-slate-500 uppercase">Bearish</div>
+              <div className="text-lg font-black text-red-400 font-mono">{smcResults.filter(r => r.structure.trendBias === -1).length}</div>
+            </div>
+            <div className="bg-black/30 rounded-lg p-2.5 text-center border border-white/5">
+              <div className="text-[8px] text-slate-500 uppercase">BOS</div>
+              <div className="text-lg font-black text-amber-400 font-mono">{smcResults.filter(r => r.hasBOS).length}</div>
+            </div>
+            <div className="bg-black/30 rounded-lg p-2.5 text-center border border-white/5">
+              <div className="text-[8px] text-slate-500 uppercase">CHoCH</div>
+              <div className="text-lg font-black text-purple-400 font-mono">{smcResults.filter(r => r.hasCHoCH).length}</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            {smcResults.slice(0, 6).map(r => {
+              const cur = r.market === 'IN' ? '₹' : '$';
+              const sigColor = r.signal.signal.includes('BUY') ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                : r.signal.signal.includes('SELL') ? 'text-red-400 bg-red-500/10 border-red-500/20'
+                : 'text-amber-400 bg-amber-500/10 border-amber-500/20';
+              return (
+                <div key={r.symbol} className="bg-black/20 rounded-lg p-3 border border-white/5">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-white text-sm">{r.symbol}</span>
+                    <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold border ${sigColor}`}>
+                      {r.signal.signal.replace('_', ' ')}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-slate-500">
+                    <span>{cur}{r.price.toFixed(2)}</span>
+                    <span>Score: <span className="text-cyan-400 font-bold">{r.smcScore}</span></span>
+                    <span>R:R <span className="text-white font-bold">{r.levels.riskReward.toFixed(1)}</span></span>
+                  </div>
+                  <div className="flex gap-1 mt-1.5">
+                    {r.hasBOS && <span className="text-[8px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/15">BOS</span>}
+                    {r.hasCHoCH && <span className="text-[8px] px-1 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/15">CHoCH</span>}
+                    {r.bullSweep && <span className="text-[8px] px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/15">🐂 Sweep</span>}
+                    {r.bearSweep && <span className="text-[8px] px-1 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/15">🐻 Sweep</span>}
+                    <span className={`text-[8px] px-1 py-0.5 rounded ${r.htfBias === 'Bullish' ? 'bg-emerald-500/10 text-emerald-400' : r.htfBias === 'Bearish' ? 'bg-red-500/10 text-red-400' : 'bg-slate-500/10 text-slate-400'}`}>{r.htfBias}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

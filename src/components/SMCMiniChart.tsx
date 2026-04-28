@@ -76,7 +76,7 @@ export function SMCMiniChart({ result }: SMCMiniChartProps) {
   const ema9 = useMemo(() => computeEMA(candles, 9), [candles]);
   const ema21 = useMemo(() => computeEMA(candles, 21), [candles]);
 
-  const W = 360, H = 150, PAD = 14, VOL_H = 20;
+  const W = 420, H = 200, PAD = 16, VOL_H = 25;
   const chartH = H - VOL_H - PAD;
   const allPrices = candles.flatMap(c => [c.h, c.l]).concat([levels.stopLoss, levels.takeProfit]);
   const minP = Math.min(...allPrices);
@@ -115,7 +115,7 @@ export function SMCMiniChart({ result }: SMCMiniChartProps) {
           <span className="flex items-center gap-0.5"><span className="w-3 h-[1px] bg-purple-400" />EMA21</span>
         </div>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 150 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 200 }}>
         <defs>
           <linearGradient id={`grad-${symbol}`} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={isBullish ? '#10b981' : '#ef4444'} stopOpacity={0.12} />
