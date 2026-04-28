@@ -94,10 +94,10 @@ export default function App() {
   // Modal State
   const [showAddModal, setShowAddModal] = useState(false);
 
-// Settings / Keys State
+  // Settings / Keys State
   const [groqKey, setGroqKey] = useState(() => secureStorage.getItem('WEALTH_AI_GROQ') || '');
 
-// Add Modal State
+  // Add Modal State
   const [addSymbol, setAddSymbol] = useState('');
 
   // Memoize portfolio symbol key to prevent infinite WebSocket reconnect
@@ -238,52 +238,52 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, portfolio.length]);
 
-// Background sync & WebSocket
-useEffect(() => {
-if (!isAuthenticated) return;
-const currentPortfolio = portfolioRef.current;
+  // Background sync & WebSocket
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const currentPortfolio = portfolioRef.current;
 
-// Add default symbols if portfolio is empty
-const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA', 'IN_INDIAVIX', 'US_VIX'];
-const symbolsToSub = currentPortfolio.length > 0
-? [...new Set(currentPortfolio.map(p => `${p.market}_${p.symbol}`))]
-: defaultSymbols;
+    // Add default symbols if portfolio is empty
+    const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA', 'IN_INDIAVIX', 'US_VIX'];
+    const symbolsToSub = currentPortfolio.length > 0
+      ? [...new Set(currentPortfolio.map(p => `${p.market}_${p.symbol}`))]
+      : defaultSymbols;
 
-// Convert symbols to Position[] for batchFetchPrices
-const positionsToSub: Position[] = symbolsToSub.map(symbol => {
-  const [market, sym] = symbol.split('_') as ['IN' | 'US', string];
-  return {
-    id: `temp-${symbol}`,
-    symbol: sym,
-    market,
-    qty: 1,
-    avgPrice: 1,
-    leverage: 1,
-    dateAdded: getTodayString()
-  };
-});
+    // Convert symbols to Position[] for batchFetchPrices
+    const positionsToSub: Position[] = symbolsToSub.map(symbol => {
+      const [market, sym] = symbol.split('_') as ['IN' | 'US', string];
+      return {
+        id: `temp-${symbol}`,
+        symbol: sym,
+        market,
+        qty: 1,
+        avgPrice: 1,
+        leverage: 1,
+        dateAdded: getTodayString()
+      };
+    });
 
-// Fast HTTP Sync (runs every 8s as backup, faster initial fill)
-let statusThrottle = 0;
-const sync = async () => {
-if (statusThrottle < 3) {
-setLiveStatus('● SYNCING...');
-statusThrottle++;
-}
-await batchFetchPrices(positionsToSub, (key, data) => {
-  pendingPricesRef.current[key] = data;
-});
-flushPricesToStorage();
-if (statusThrottle < 3) {
-setLiveStatus('● QUANTUM LINK ACTIVE');
-}
-};
+    // Fast HTTP Sync (runs every 8s as backup, faster initial fill)
+    let statusThrottle = 0;
+    const sync = async () => {
+      if (statusThrottle < 3) {
+        setLiveStatus('● SYNCING...');
+        statusThrottle++;
+      }
+      await batchFetchPrices(positionsToSub, (key, data) => {
+        pendingPricesRef.current[key] = data;
+      });
+      flushPricesToStorage();
+      if (statusThrottle < 3) {
+        setLiveStatus('● QUANTUM LINK ACTIVE');
+      }
+    };
 
-sync();
-const syncInterval = window.setInterval(sync, getBatchInterval());
+    sync();
+    const syncInterval = window.setInterval(sync, getBatchInterval());
 
-// Ultra-fast TradingView WebSocket — batch all ticks into 100ms flush (zero direct state updates)
-let statusCounter = 0;
+    // Ultra-fast TradingView WebSocket — batch all ticks into 100ms flush (zero direct state updates)
+    let statusCounter = 0;
     const unsubscribe = subscribeToPrices(symbolsToSub, (key, data) => {
       // Queue into batch buffer — flushPricesToStorage handles React state at 10fps
       pendingPricesRef.current[key] = {
@@ -718,7 +718,7 @@ let statusCounter = 0;
       const macd = data?.macd !== undefined ? data.macd.toFixed(2) : 'N/A';
       const sma20 = data?.sma20 ? data.sma20.toFixed(1) : 'N/A';
       const sma50 = data?.sma50 ? data.sma50.toFixed(1) : 'N/A';
-      const vol = data?.volume ? (data.volume > 1e6 ? `${(data.volume/1e6).toFixed(1)}M` : `${(data.volume/1e3).toFixed(0)}K`) : 'N/A';
+      const vol = data?.volume ? (data.volume > 1e6 ? `${(data.volume / 1e6).toFixed(1)}M` : `${(data.volume / 1e3).toFixed(0)}K`) : 'N/A';
       const plPct = p.avgPrice > 0 ? ((curPrice - p.avgPrice) / p.avgPrice) * 100 : 0;
       const cleanSym = p.symbol.replace('.NS', '');
       const invested = p.avgPrice * p.qty;
@@ -733,7 +733,7 @@ let statusCounter = 0;
       // Trend direction
       const trend = (data?.sma20 && data?.sma50) ? (data.sma20 > data.sma50 ? 'BULL' : 'BEAR') : (change > 0.5 ? 'BULL' : change < -0.5 ? 'BEAR' : 'FLAT');
 
-      ctx += `${idx+1}. ${cleanSym} [${p.market}] | Price=${curPrice.toFixed(2)} | Chg=${change >= 0 ? '+' : ''}${change.toFixed(2)}% | RSI=${rsi.toFixed(0)} | MACD=${macd} | SMA20=${sma20} | SMA50=${sma50} | Trend=${trend} | Vol=${vol} | Signal=${sig.signal} | Confidence=${sig.confidence}% | SL=${slPrice.toFixed(2)} | TP=${tpPrice.toFixed(2)} | AvgBuy=${p.avgPrice.toFixed(2)} | Qty=${p.qty} | Invested=${invested.toFixed(0)} | CurVal=${curVal.toFixed(0)} | P&L=${plPct >= 0 ? '+' : ''}${plPct.toFixed(2)}% (${plAbs >= 0 ? '+' : ''}${plAbs.toFixed(0)})\n`;
+      ctx += `${idx + 1}. ${cleanSym} [${p.market}] | Price=${curPrice.toFixed(2)} | Chg=${change >= 0 ? '+' : ''}${change.toFixed(2)}% | RSI=${rsi.toFixed(0)} | MACD=${macd} | SMA20=${sma20} | SMA50=${sma50} | Trend=${trend} | Vol=${vol} | Signal=${sig.signal} | Confidence=${sig.confidence}% | SL=${slPrice.toFixed(2)} | TP=${tpPrice.toFixed(2)} | AvgBuy=${p.avgPrice.toFixed(2)} | Qty=${p.qty} | Invested=${invested.toFixed(0)} | CurVal=${curVal.toFixed(0)} | P&L=${plPct >= 0 ? '+' : ''}${plPct.toFixed(2)}% (${plAbs >= 0 ? '+' : ''}${plAbs.toFixed(0)})\n`;
     }
     ctx += `=== END ALL ${portfolio.length} POSITIONS ===\n`;
 
@@ -949,74 +949,74 @@ let statusCounter = 0;
               </div>
             </div>
 
-{/* Tabs */}
-<div className="flex gap-0.5 glass-card p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
-  {(['conclusion', 'dashboard', 'signals', 'smc', 'intelligence', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
-    <button
-      key={tab}
-      onClick={() => setActiveTab(tab)}
-      className={`tab-btn px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm transition-all whitespace-nowrap flex-shrink-0 ${activeTab === tab
-        ? tab === 'conclusion' ? 'tab-active bg-gradient-to-r from-purple-500/15 to-cyan-500/15 text-cyan-400 border border-cyan-500/30 shadow-[0_0_10px_rgba(6,182,212,0.15)]' : 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
-        : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
-        }`}
-    >
-      <span className="hidden sm:inline">
-        {tab === 'conclusion' && '🔮 Conclusion'}
-        {tab === 'dashboard' && '📊 Dashboard'}
-        {tab === 'signals' && '🎯 Signals'}
-        {tab === 'smc' && '🏦 SMC Pro'}
-        {tab === 'intelligence' && '🧠 Super AI'}
-        {tab === 'portfolio' && '💼 Portfolio'}
-        {tab === 'planner' && '🎯 Planner'}
-        {tab === 'macro' && '🌍 Risk'}
-        {tab === 'tools' && '⚡ AI Tools'}
-        {tab === 'trim' && '✂️ Trim Rules'}
-      </span>
-      <span className="sm:hidden">
-        {tab === 'conclusion' && '🔮'}
-        {tab === 'dashboard' && '📊'}
-        {tab === 'signals' && '🎯'}
-        {tab === 'smc' && '🏦'}
-        {tab === 'intelligence' && '🧠'}
-        {tab === 'portfolio' && '💼'}
-        {tab === 'planner' && '🎯'}
-        {tab === 'macro' && '🌍'}
-        {tab === 'tools' && '⚡'}
-        {tab === 'trim' && '✂️'}
-      </span>
-    </button>
-  ))}
-</div>
+            {/* Tabs */}
+            <div className="flex gap-0.5 glass-card p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
+              {(['conclusion', 'dashboard', 'signals', 'smc', 'intelligence', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`tab-btn px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm transition-all whitespace-nowrap flex-shrink-0 ${activeTab === tab
+                    ? tab === 'conclusion' ? 'tab-active bg-gradient-to-r from-purple-500/15 to-cyan-500/15 text-cyan-400 border border-cyan-500/30 shadow-[0_0_10px_rgba(6,182,212,0.15)]' : 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
+                    }`}
+                >
+                  <span className="hidden sm:inline">
+                    {tab === 'conclusion' && '🔮 Conclusion'}
+                    {tab === 'dashboard' && '📊 Dashboard'}
+                    {tab === 'signals' && '🎯 Signals'}
+                    {tab === 'smc' && '🏦 SMC Pro'}
+                    {tab === 'intelligence' && '🧠 Super AI'}
+                    {tab === 'portfolio' && '💼 Portfolio'}
+                    {tab === 'planner' && '🎯 Planner'}
+                    {tab === 'macro' && '🌍 Risk'}
+                    {tab === 'tools' && '⚡ AI Tools'}
+                    {tab === 'trim' && '✂️ Trim Rules'}
+                  </span>
+                  <span className="sm:hidden">
+                    {tab === 'conclusion' && '🔮'}
+                    {tab === 'dashboard' && '📊'}
+                    {tab === 'signals' && '🎯'}
+                    {tab === 'smc' && '🏦'}
+                    {tab === 'intelligence' && '🧠'}
+                    {tab === 'portfolio' && '💼'}
+                    {tab === 'planner' && '🎯'}
+                    {tab === 'macro' && '🌍'}
+                    {tab === 'tools' && '⚡'}
+                    {tab === 'trim' && '✂️'}
+                  </span>
+                </button>
+              ))}
+            </div>
 
-<div className="flex gap-2 relative">
-  <button
-    onClick={() => setAutoTelegram(prev => !prev)}
-    className={`btn-glass p-2.5 rounded-xl text-lg transition-all ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`}
-    title={autoTelegram ? 'Auto Alerts ON' : 'Auto Alerts OFF'}
-  >
-    🔔
-  </button>
-  <button onClick={() => {
-    const newTheme = theme === 'dark' ? 'light' : 'dark';
-    setTheme(newTheme);
-    localStorage.setItem('theme', newTheme);
-  }} className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>
-    🌞
-  </button>
-  <button onClick={() => window.location.reload()} className="btn-glass p-2.5 rounded-xl text-lg" title="Refresh">🔄</button>
-  <button onClick={() => {
-    const groqSaved = localStorage.getItem('WEALTH_AI_GROQ');
-    const themeSaved = localStorage.getItem('theme');
-    localStorage.clear();
-    if (groqSaved) localStorage.setItem('WEALTH_AI_GROQ', groqSaved);
-    if (themeSaved) localStorage.setItem('theme', themeSaved);
-    window.location.reload();
-  }} className="btn-glass p-2.5 rounded-xl text-lg" title="Flush Cache — Clear all cached data and reload">🧹</button>
-  <button onClick={logout} className="btn-glass p-2.5 rounded-xl text-lg" title="Logout">🔐</button>
-</div>
-</div>
-</div>
-</header>
+            <div className="flex gap-2 relative">
+              <button
+                onClick={() => setAutoTelegram(prev => !prev)}
+                className={`btn-glass p-2.5 rounded-xl text-lg transition-all ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`}
+                title={autoTelegram ? 'Auto Alerts ON' : 'Auto Alerts OFF'}
+              >
+                🔔
+              </button>
+              <button onClick={() => {
+                const newTheme = theme === 'dark' ? 'light' : 'dark';
+                setTheme(newTheme);
+                localStorage.setItem('theme', newTheme);
+              }} className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>
+                🌞
+              </button>
+              <button onClick={() => window.location.reload()} className="btn-glass p-2.5 rounded-xl text-lg" title="Refresh">🔄</button>
+              <button onClick={() => {
+                const groqSaved = localStorage.getItem('WEALTH_AI_GROQ');
+                const themeSaved = localStorage.getItem('theme');
+                localStorage.clear();
+                if (groqSaved) localStorage.setItem('WEALTH_AI_GROQ', groqSaved);
+                if (themeSaved) localStorage.setItem('theme', themeSaved);
+                window.location.reload();
+              }} className="btn-glass p-2.5 rounded-xl text-lg" title="Flush Cache — Clear all cached data and reload">🧹</button>
+              <button onClick={logout} className="btn-glass p-2.5 rounded-xl text-lg" title="Logout">🔐</button>
+            </div>
+          </div>
+        </div>
+      </header>
 
       <main className="container mx-auto px-4 py-6">
         {/* 🔮 Master Conclusion Tab — All strategies aggregated */}
@@ -1331,70 +1331,70 @@ let statusCounter = 0;
               </div>
             </div>
           </div>
-)}
+        )}
 
 
 
-      {/* Signals Tab */}
-{activeTab === 'signals' && (
-<div className="space-y-5 animate-fade-in">
-<div className="flex items-center justify-between">
-<h2 className="text-2xl font-black gradient-text-cyan font-display">🎯 Quantum Signals</h2>
-<div className="flex items-center gap-2">
-<span className="badge bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">
-Live Signals
-</span>
-</div>
-</div>
-<QuantumSignals
-  livePrices={livePrices}
-  portfolio={portfolio}
-  onViewDetails={(symbol) => {
-    quickSelect(symbol);
-    setActiveTab('intelligence');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }}
-/>
-</div>
-)}
+        {/* Signals Tab */}
+        {activeTab === 'signals' && (
+          <div className="space-y-5 animate-fade-in">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-black gradient-text-cyan font-display">🎯 Quantum Signals</h2>
+              <div className="flex items-center gap-2">
+                <span className="badge bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">
+                  Live Signals
+                </span>
+              </div>
+            </div>
+            <QuantumSignals
+              livePrices={livePrices}
+              portfolio={portfolio}
+              onViewDetails={(symbol) => {
+                quickSelect(symbol);
+                setActiveTab('intelligence');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+            />
+          </div>
+        )}
 
-{/* SMC Pro Indicator Tab */}
-{activeTab === 'smc' && (
-<div className="space-y-5 animate-fade-in">
-<div className="flex items-center justify-between">
-<h2 className="text-2xl font-black gradient-text-cyan font-display">🏦 SMC Pro Indicator</h2>
-<div className="flex items-center gap-2">
-<span className="badge bg-purple-500/10 text-purple-400 border border-purple-500/20 text-xs">
-Smart Money Concepts
-</span>
-</div>
-</div>
-<SMCProIndicator
-  livePrices={livePrices}
-  portfolio={portfolio}
-/>
-</div>
-)}
+        {/* SMC Pro Indicator Tab */}
+        {activeTab === 'smc' && (
+          <div className="space-y-5 animate-fade-in">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-black gradient-text-cyan font-display">🏦 SMC Pro Indicator</h2>
+              <div className="flex items-center gap-2">
+                <span className="badge bg-purple-500/10 text-purple-400 border border-purple-500/20 text-xs">
+                  Smart Money Concepts
+                </span>
+              </div>
+            </div>
+            <SMCProIndicator
+              livePrices={livePrices}
+              portfolio={portfolio}
+            />
+          </div>
+        )}
 
-{/* Super Intelligence Tab */}
-{activeTab === 'intelligence' && (
-<div className="space-y-5 animate-fade-in">
-<div className="flex items-center justify-between">
-<h2 className="text-2xl font-black gradient-text-cyan font-display">🧠 Super Intelligence</h2>
-<div className="flex items-center gap-2">
-<span className="badge bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">
-Groq + Gemini + Claude
-</span>
-</div>
-</div>
-<SuperIntelligence
-livePrices={livePrices}
-portfolio={portfolio}
-/>
-</div>
-)}
+        {/* Super Intelligence Tab */}
+        {activeTab === 'intelligence' && (
+          <div className="space-y-5 animate-fade-in">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-black gradient-text-cyan font-display">🧠 Super Intelligence</h2>
+              <div className="flex items-center gap-2">
+                <span className="badge bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">
+                  Groq + Gemini + Claude
+                </span>
+              </div>
+            </div>
+            <SuperIntelligence
+              livePrices={livePrices}
+              portfolio={portfolio}
+            />
+          </div>
+        )}
 
-      {activeTab === 'portfolio' && (
+        {activeTab === 'portfolio' && (
           <div className="space-y-5 animate-fade-in">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-2xl font-black gradient-text-cyan font-display">
@@ -2211,12 +2211,12 @@ portfolio={portfolio}
         </div>
       )}
 
-{/* Neural Core Chat AI Integration with Deep Real-Time Portfolio Context Injection */}
-<NeuralChat
-  groqKey={groqKey}
-  portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'}
-  onTelegramPush={pushTelegramReport}
-/>
+      {/* Neural Core Chat AI Integration with Deep Real-Time Portfolio Context Injection */}
+      <NeuralChat
+        groqKey={groqKey}
+        portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'}
+        onTelegramPush={pushTelegramReport}
+      />
 
 
     </div>
