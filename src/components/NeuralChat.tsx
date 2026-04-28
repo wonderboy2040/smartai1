@@ -56,7 +56,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
     timestamp: Date.now(),
     model: 'system'
   }]);
-  
+
   const [chatInput, setChatInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -77,7 +77,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
     navigator.clipboard.writeText(text).then(() => {
       setCopiedIdx(idx);
       setTimeout(() => setCopiedIdx(null), 2000);
-    }).catch(() => {});
+    }).catch(() => { });
   }, []);
 
   const clearChat = useCallback(() => {
@@ -135,7 +135,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
     }
 
     // Build contents with STRICT alternating user/model turns
-    const contents: Array<{role: string; parts: Array<{text: string}>}> = [];
+    const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
     contents.push({ role: 'user', parts: [{ text: systemPrompt }] });
     contents.push({ role: 'model', parts: [{ text: 'Understood. DEEP MIND AI Pro Trader active. Ready for analysis in Pro Trader Hinglish.' }] });
 
@@ -189,7 +189,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
     }
 
     // Ensure messages alternate user/assistant and start with user
-    const fixed: Array<{role: string; content: string}> = [];
+    const fixed: Array<{ role: string; content: string }> = [];
     let expectedRole = 'user';
     for (const m of messages) {
       const role = m.role === 'assistant' ? 'assistant' : 'user';
@@ -267,8 +267,8 @@ ${portfolioContext || 'No portfolio data available. Provide general market analy
     const chain: Engine[] = model === 'gemini'
       ? ['gemini', 'groq', 'claude']
       : model === 'claude'
-      ? ['claude', 'gemini', 'groq']
-      : ['groq', 'gemini', 'claude'];
+        ? ['claude', 'gemini', 'groq']
+        : ['groq', 'gemini', 'claude'];
 
     const callers: Record<Engine, (msgs: any[], sp: string) => Promise<string>> = {
       groq: callGroq, gemini: callGemini, claude: callClaude
@@ -291,13 +291,13 @@ ${portfolioContext || 'No portfolio data available. Provide general market analy
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim()) return;
     setIsThinking(true);
-    
+
     setChatMessages(prev => [...prev, { role: 'user', text: userMessage, timestamp: Date.now() }]);
 
     try {
       const q = userMessage.toLowerCase();
       let selectedModelType = selectedModel;
-      
+
       if (selectedModel === 'auto') {
         // Advanced intent detection with Hindi/trading keywords
         if (/\b(news|khabar|market|live|aaj|today|nifty|sensex|breaking|ipo|fii|dii|rbi|fed|crude|gold|dollar|vix|trend|intraday|pre.?market|global|sector|rally|crash|correction)\b/i.test(q)) {
@@ -384,11 +384,10 @@ ${portfolioContext || 'No portfolio data available. Provide general market analy
                 <button
                   key={m}
                   onClick={() => setSelectedModel(m)}
-                  className={`px-2 sm:px-3 py-1 rounded-full text-[9px] sm:text-[10px] font-bold uppercase transition-all border whitespace-nowrap ${
-                    selectedModel === m
+                  className={`px-2 sm:px-3 py-1 rounded-full text-[9px] sm:text-[10px] font-bold uppercase transition-all border whitespace-nowrap ${selectedModel === m
                       ? 'bg-cyan-600 text-white border-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
                       : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-cyan-500/50'
-                  }`}
+                    }`}
                 >
                   {m === 'auto' ? '🤖 Auto' : m === 'groq' ? '⚡ Groq' : m === 'gemini' ? '🔵 Gemini' : '🟣 Claude'}
                 </button>
@@ -399,11 +398,10 @@ ${portfolioContext || 'No portfolio data available. Provide general market analy
             <div ref={chatContainerRef} className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide">
               {chatMessages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
-                  <div className={`max-w-[85%] sm:max-w-[90%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${
-                    msg.role === 'user'
+                  <div className={`max-w-[85%] sm:max-w-[90%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
                       ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-3 py-2.5 sm:px-4 sm:py-3'
                       : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-3 py-2.5 sm:px-4 sm:py-3 group/msg'
-                  }`}>
+                    }`}>
                     {msg.role === 'user' ? msg.text : (
                       <>
                         {msg.model && (
@@ -411,7 +409,7 @@ ${portfolioContext || 'No portfolio data available. Provide general market analy
                             {msg.model === 'groq' ? '⚡ Groq' : msg.model === 'gemini' ? '🔵 Gemini' : msg.model === 'claude' ? '🟣 Claude' : 'System'}
                           </div>
                         )}
-                        <span dangerouslySetInnerHTML={{ 
+                        <span dangerouslySetInnerHTML={{
                           __html: msg.text
                             .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
                             .replace(/\*(.+?)\*/g, '<em>$1</em>')
@@ -430,7 +428,7 @@ ${portfolioContext || 'No portfolio data available. Provide general market analy
                   </div>
                 </div>
               ))}
-              
+
               {isThinking && (
                 <div className="flex justify-start animate-message-in">
                   <div className="bg-slate-900/90 px-4 py-3 rounded-2xl rounded-tl-none border border-white/5">

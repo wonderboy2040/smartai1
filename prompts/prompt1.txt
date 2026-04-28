@@ -1,0 +1,427 @@
+You are an expert Pine Script v5 developer with a strong eye for institutional-grade financial UI design. I am going to paste my existing Pine Script v5 indicator ("SMC Pro") at the end of this message. It already works functionally — it detects market structure (HH/HL/LH/LL), Break of Structure, Change of Character, Liquidity Sweeps, Order Blocks, Fair Value Gaps, and generates Buy/Sell signals with alerts. The problem is purely visual: the chart looks cluttered, noisy, and amateur. Too many labels, redundant signals, overlapping boxes, saturated colors.
+
+Your job is to **redesign the visual layer only**. Do NOT change the detection logic, signal conditions, or alert structure. Preserve every existing feature and input. Only add new filtering, cleanup, and styling on top of what already exists. All current inputs must remain backward compatible — add new inputs alongside the old ones, never rename or remove them.
+
+Rewrite my indicator to look premium, minimal, and institutional — the aesthetic of a Bloomberg Terminal or a modern fintech dashboard, not a retail indicator. Apply every specification below.
+
+**1. SMART STRUCTURE LABEL FILTERING**
+Do not label every pivot. Track structural swings in arrays and only display the most recent 3–4 that are still relevant to current market structure. When a new structural label is added beyond the cap, delete the oldest `label` object from the chart. Add a new input: `maxStructureLabels` (default 4). Optionally fade older labels by applying reduced-opacity color before deletion.
+
+**2. SIGNAL DEDUPLICATION (COOLDOWN)**
+Currently Buy/Sell signals cluster together. Add a cooldown filter: do not plot a new Buy signal if another Buy was plotted within the last N bars; same for Sell. Use `var int lastBuyBar` and `var int lastSellBar` to track. Add a new input: `signalCooldown` (default 20 bars). This must wrap around the existing signal logic — do not modify the underlying detection.
+
+**3. ORDER BLOCK CLEANUP & MITIGATION**
+Limit visible Order Blocks to the last 2 bullish + last 2 bearish (4 total max). Store OB boxes in two separate arrays (bullish and bearish); when a new OB is added and the array exceeds 2, `box.delete()` the oldest and `array.shift()` it out. OBs must NOT extend infinitely right — on every bar, loop active OBs and if price mitigates the zone (bullish OB: `low <= box_top`; bearish OB: `high >= box_bottom`), delete the box and remove it from the array. Set OB fill opacity to ~88 (roughly 12% visible) for subtlety.
+
+**4. FVG SIMPLIFICATION & AUTO-MITIGATION**
+Only show unmitigated FVGs. Store active FVGs in two arrays (bullish/bearish). On each bar, check if price has traded through the gap — if filled, `box.delete()` and remove from the array. Cap at 3 bullish + 3 bearish visible at any time; evict the oldest when exceeded. Use very subtle fill (opacity ~92, about 8% visible).
+
+**5. BOS / CHoCH LINE CONTROL**
+Only keep the 2 most recent BOS lines and 2 most recent CHoCH lines on the chart. Store each type in its own array and `line.delete()` the oldest when the cap is exceeded. Render lines with `line.style_dashed` and `width = 1`. Keep the label text but use `size.tiny`.
+
+**6. PREMIUM COLOR PALETTE**
+Replace the current saturated colors with this muted, modern palette. Use `color.new(color, transparency)` for fills:
+
+- Bullish core: `#26A69A` (teal-green)
+- Bearish core: `#EF5350` (coral-red)
+- Structure bullish labels (HH, HL): `#4FC3F7` (soft blue)
+- Structure bearish labels (LH, LL): `#FF8A80` (soft coral)
+- Bullish OB fill: `color.new(#26A69A, 88)`
+- Bearish OB fill: `color.new(#EF5350, 88)`
+- Bullish FVG fill: `color.new(#26A69A, 92)`
+- Bearish FVG fill: `color.new(#EF5350, 92)`
+- BOS line + label: `#FFB74D` (soft amber)
+- CHoCH line + label: `#BA68C8` (soft purple)
+- Liquidity Sweep marker: `#FFD54F` (soft gold)
+
+Expose every one of these as a color input so users can customize, but use these as defaults. All colors must read cleanly on both dark and light TradingView themes.
+
+**7. TYPOGRAPHY & LABEL PLACEMENT**
+- HH/HL/LH/LL labels: `size.small`, `label.style_label_none` or minimal style, no border
+- Buy/Sell text: `size.normal`, bold feel via `label.style_label_up` / `label.style_label_down`
+- BOS/CHoCH labels: `size.tiny`
+- Use `yloc.abovebar` with a small positive offset for sell-side labels and `yloc.belowbar` with negative offset for buy-side — give every label breathing room so it does not touch the candle.
+
+**8. SIGNAL VISUAL ENHANCEMENT**
+Replace basic triangles with `shape.triangleup` (BUY, below bar) and `shape.triangledown` (SELL, above bar) via `plotshape()`, `size = size.normal`. Add a companion text label ("BUY" / "SELL") just beyond the arrow using `label.new()` with the premium bullish/bearish color. A subtle offset between the arrow and the text creates a layered, dimensional feel.
+
+**9. USER TOGGLES FOR EVERY VISUAL LAYER**
+Expose individual `input.bool` toggles, grouped under a "Display" group:
+- Show Structure Labels (default: true)
+- Show BOS Lines (default: true)
+- Show CHoCH Lines (default: true)
+- Show Order Blocks (default: true)
+- Show FVGs (default: **false** — these add the most clutter; let users opt in)
+- Show Liquidity Sweeps (default: true)
+- Show Buy/Sell Signals (default: true)
+
+**10. CHART BREATHING SPACE**
+The combined filtering above should keep no more than 4–5 active elements visible at any given time across all timeframes. Verify this holds on 15m, 1H, and Daily.
+
+**CODE REQUIREMENTS**
+Pine Script v5 only. Keep `indicator()`, `overlay=true`, `max_labels_count=500`, `max_lines_count=500`, `max_boxes_count=500`. Manage memory rigorously with `box.delete()`, `line.delete()`, `label.delete()` tied to array eviction. Organize the script with clear section comments, and add brief inline comments explaining each new filtering/cleanup block (cooldown, OB mitigation, FVG mitigation, label cap). Script must compile cleanly on first paste.
+
+**OUTPUT FORMAT**
+Return ONLY the complete, updated Pine Script code inside a single code block. No preamble, no summary, no explanation after. The code must be ready to paste directly into the TradingView Pine Editor.
+
+IMPORTANT: If at any point during your analysis you identify that 
+a feature could potentially break due to the new filtering (e.g., 
+structural labels depending on each other's positions), add a brief 
+comment flag (// WARNING: check if ...) near that section. 
+Otherwise, produce clean code.
+
+
+My existing Pine Script code is below:
+
+//@version=5
+indicator("SMC Pro — Structure, Liquidity, OB, FVG & Signals", shorttitle="SMC Pro", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
+
+// === INPUTS ===
+// --- Structure Settings ---
+grpStruct  = "Structure Settings"
+pivotLen   = input.int(5, "Swing Pivot Length", minval=1, maxval=50, group=grpStruct, tooltip="Bars left and right for pivot detection")
+showSwings = input.bool(true, "Show Swing Labels (HH/HL/LH/LL)", group=grpStruct)
+showBOS    = input.bool(true, "Show BOS", group=grpStruct)
+showCHoCH  = input.bool(true, "Show CHoCH", group=grpStruct)
+
+
+// --- Liquidity & Zones ---
+grpZones   = "Liquidity & Zones"
+showSweeps = input.bool(true, "Show Liquidity Sweeps", group=grpZones)
+showOB     = input.bool(true, "Show Order Blocks", group=grpZones)
+showFVG    = input.bool(true, "Show Fair Value Gaps", group=grpZones)
+maxOB      = input.int(5, "Max Order Blocks Displayed", minval=1, maxval=20, group=grpZones)
+maxFVG     = input.int(10, "Max FVGs Displayed", minval=1, maxval=30, group=grpZones)
+fvgExtend  = input.int(50, "FVG Extension Bars", minval=5, maxval=500, group=grpZones)
+
+
+// --- Signals ---
+grpSig      = "Signals"
+showSignals = input.bool(true, "Show BUY/SELL Signals", group=grpSig)
+sensitivity = input.string("Balanced", "Signal Sensitivity", options=["Conservative", "Balanced", "Aggressive"], group=grpSig, tooltip="Conservative: structure shift + sweep + zone confluence. Balanced: structure shift + (sweep OR zone). Aggressive: structure shift alone.")
+
+
+// --- Colors ---
+grpCol       = "Colors"
+bullCol      = input.color(#089981, "Bullish Color", group=grpCol)
+bearCol      = input.color(#F23645, "Bearish Color", group=grpCol)
+neutralCol   = input.color(#787878, "Neutral Label Color", group=grpCol)
+bosCol       = input.color(#2962FF, "BOS Line/Label Color", group=grpCol)
+chochCol     = input.color(#FF9800, "CHoCH Line/Label Color", group=grpCol)
+bullOBCol    = input.color(color.new(#089981, 85), "Bullish OB Fill", group=grpCol)
+bearOBCol    = input.color(color.new(#F23645, 85), "Bearish OB Fill", group=grpCol)
+bullFVGCol   = input.color(color.new(#089981, 88), "Bullish FVG Fill", group=grpCol)
+bearFVGCol   = input.color(color.new(#F23645, 88), "Bearish FVG Fill", group=grpCol)
+sweepBullCol = input.color(#00E5FF, "Bullish Sweep Marker", group=grpCol)
+sweepBearCol = input.color(#FFEB3B, "Bearish Sweep Marker", group=grpCol)
+
+
+// === SWING DETECTION ===
+// Pivots confirm `pivotLen` bars back, so drawings anchor at bar_index - pivotLen
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low,  pivotLen, pivotLen)
+
+
+// Persistent swing state (most recent and previous confirmed values)
+var float  lastPH       = na
+var float  prevPH       = na
+var int    lastPHbar    = na
+var float  lastPL       = na
+var float  prevPL       = na
+var int    lastPLbar    = na
+var string lastHighType = na  // "HH" or "LH"
+var string lastLowType  = na  // "HL" or "LL"
+
+
+// === MARKET STRUCTURE ===
+// Classify each confirmed swing by comparing with the previous swing of the same type
+if not na(ph)
+    prevPH    := lastPH
+    lastPH    := ph
+    lastPHbar := bar_index - pivotLen
+    hType      = na(prevPH) ? "HH" : (ph > prevPH ? "HH" : "LH")
+    lastHighType := hType
+    if showSwings
+        lblCol = hType == "HH" ? bullCol : bearCol
+        label.new(x=lastPHbar, y=ph, text=hType, style=label.style_label_down, color=color.new(lblCol, 80), textcolor=lblCol, size=size.small, yloc=yloc.abovebar)
+
+
+if not na(pl)
+    prevPL    := lastPL
+    lastPL    := pl
+    lastPLbar := bar_index - pivotLen
+    lType      = na(prevPL) ? "LL" : (pl > prevPL ? "HL" : "LL")
+    lastLowType := lType
+    if showSwings
+        lblCol = lType == "HL" ? bullCol : bearCol
+        label.new(x=lastPLbar, y=pl, text=lType, style=label.style_label_up, color=color.new(lblCol, 80), textcolor=lblCol, size=size.small, yloc=yloc.belowbar)
+
+
+// Trend bias derived from last swing classifications
+var int trendBias = 0  // 1 = bullish, -1 = bearish, 0 = neutral
+if lastHighType == "HH" and lastLowType == "HL"
+    trendBias := 1
+else if lastHighType == "LH" and lastLowType == "LL"
+    trendBias := -1
+
+
+// === BOS & CHoCH ===
+// BOS = continuation break in the direction of the prevailing trend
+// CHoCH = break that reverses the prevailing trend
+var float lastBrokenHigh = na
+var float lastBrokenLow  = na
+
+
+bullBOS    = false
+bearBOS    = false
+bullCHoCH  = false
+bearCHoCH  = false
+
+
+// Bullish break: close above most recent swing high (only fire once per level)
+if not na(lastPH) and close > lastPH and (na(lastBrokenHigh) or lastPH != lastBrokenHigh)
+    if trendBias >= 0
+        bullBOS := true
+    else
+        bullCHoCH := true
+    lastBrokenHigh := lastPH
+    trendBias := 1
+
+
+// Bearish break: close below most recent swing low (only fire once per level)
+if not na(lastPL) and close < lastPL and (na(lastBrokenLow) or lastPL != lastBrokenLow)
+    if trendBias <= 0
+        bearBOS := true
+    else
+        bearCHoCH := true
+    lastBrokenLow := lastPL
+    trendBias := -1
+
+
+// Draw BOS lines/labels
+if showBOS and bullBOS and not na(lastPHbar)
+    line.new(x1=lastPHbar, y1=lastBrokenHigh, x2=bar_index, y2=lastBrokenHigh, color=bosCol, width=2, style=line.style_solid)
+    label.new(x=bar_index, y=lastBrokenHigh, text="BOS", style=label.style_label_down, color=color.new(bosCol, 70), textcolor=bosCol, size=size.small)
+
+
+if showBOS and bearBOS and not na(lastPLbar)
+    line.new(x1=lastPLbar, y1=lastBrokenLow, x2=bar_index, y2=lastBrokenLow, color=bosCol, width=2, style=line.style_solid)
+    label.new(x=bar_index, y=lastBrokenLow, text="BOS", style=label.style_label_up, color=color.new(bosCol, 70), textcolor=bosCol, size=size.small)
+
+
+// Draw CHoCH lines/labels (dashed + distinct color)
+if showCHoCH and bullCHoCH and not na(lastPHbar)
+    line.new(x1=lastPHbar, y1=lastBrokenHigh, x2=bar_index, y2=lastBrokenHigh, color=chochCol, width=2, style=line.style_dashed)
+    label.new(x=bar_index, y=lastBrokenHigh, text="CHoCH", style=label.style_label_down, color=color.new(chochCol, 70), textcolor=chochCol, size=size.small)
+
+
+if showCHoCH and bearCHoCH and not na(lastPLbar)
+    line.new(x1=lastPLbar, y1=lastBrokenLow, x2=bar_index, y2=lastBrokenLow, color=chochCol, width=2, style=line.style_dashed)
+    label.new(x=bar_index, y=lastBrokenLow, text="CHoCH", style=label.style_label_up, color=color.new(chochCol, 70), textcolor=chochCol, size=size.small)
+
+
+// === LIQUIDITY SWEEPS ===
+// Bearish sweep: wick takes out prior swing high but candle closes back below it
+// Bullish sweep: wick takes out prior swing low but candle closes back above it
+bearSweep = not na(lastPH) and high > lastPH and close < lastPH
+bullSweep = not na(lastPL) and low  < lastPL and close > lastPL
+
+
+plotshape(showSweeps and bullSweep, title="Bullish Sweep", style=shape.diamond, location=location.belowbar, color=sweepBullCol, size=size.tiny)
+plotshape(showSweeps and bearSweep, title="Bearish Sweep", style=shape.diamond, location=location.abovebar, color=sweepBearCol, size=size.tiny)
+
+
+// Track most recent sweep bar for signal confluence
+var int lastBullSweepBar = na
+var int lastBearSweepBar = na
+if bullSweep
+    lastBullSweepBar := bar_index
+if bearSweep
+    lastBearSweepBar := bar_index
+
+
+// === ORDER BLOCKS ===
+// Bullish OB = last bearish candle before a bullish BOS/CHoCH
+// Bearish OB = last bullish candle before a bearish BOS/CHoCH
+var box[]   bullOBs    = array.new<box>()
+var box[]   bearOBs    = array.new<box>()
+var float[] bullOBtop  = array.new<float>()
+var float[] bullOBbot  = array.new<float>()
+var float[] bearOBtop  = array.new<float>()
+var float[] bearOBbot  = array.new<float>()
+
+
+// Scan back up to 20 bars for the last opposite-direction candle
+findLastBearCandle() =>
+    idx = -1
+    for i = 1 to 20
+        if close[i] < open[i]
+            idx := i
+            break
+    idx
+
+
+findLastBullCandle() =>
+    idx = -1
+    for i = 1 to 20
+        if close[i] > open[i]
+            idx := i
+            break
+    idx
+
+
+if (bullBOS or bullCHoCH) and showOB
+    i = findLastBearCandle()
+    if i >= 0
+        obTop = math.max(open[i], close[i])
+        obBot = low[i]
+        b = box.new(left=bar_index - i, top=obTop, right=bar_index + 20, bottom=obBot, bgcolor=bullOBCol, border_color=color.new(bullCol, 50), extend=extend.right)
+        array.push(bullOBs, b)
+        array.push(bullOBtop, obTop)
+        array.push(bullOBbot, obBot)
+        // Cap at maxOB — delete oldest when exceeded
+        if array.size(bullOBs) > maxOB
+            old = array.shift(bullOBs)
+            box.delete(old)
+            array.shift(bullOBtop)
+            array.shift(bullOBbot)
+
+
+if (bearBOS or bearCHoCH) and showOB
+    i = findLastBullCandle()
+    if i >= 0
+        obTop = high[i]
+        obBot = math.min(open[i], close[i])
+        b = box.new(left=bar_index - i, top=obTop, right=bar_index + 20, bottom=obBot, bgcolor=bearOBCol, border_color=color.new(bearCol, 50), extend=extend.right)
+        array.push(bearOBs, b)
+        array.push(bearOBtop, obTop)
+        array.push(bearOBbot, obBot)
+        if array.size(bearOBs) > maxOB
+            old = array.shift(bearOBs)
+            box.delete(old)
+            array.shift(bearOBtop)
+            array.shift(bearOBbot)
+
+
+// === FAIR VALUE GAPS ===
+// 3-candle imbalance: gap between bar[2] and current bar
+var box[]   bullFVGs   = array.new<box>()
+var box[]   bearFVGs   = array.new<box>()
+var float[] bullFVGtop = array.new<float>()
+var float[] bullFVGbot = array.new<float>()
+var float[] bearFVGtop = array.new<float>()
+var float[] bearFVGbot = array.new<float>()
+
+
+bullFVG = bar_index > 2 and low  > high[2]
+bearFVG = bar_index > 2 and high < low[2]
+
+
+if bullFVG and showFVG
+    fvgTop = low
+    fvgBot = high[2]
+    b = box.new(left=bar_index - 2, top=fvgTop, right=bar_index + fvgExtend, bottom=fvgBot, bgcolor=bullFVGCol, border_color=color.new(bullCol, 70))
+    array.push(bullFVGs, b)
+    array.push(bullFVGtop, fvgTop)
+    array.push(bullFVGbot, fvgBot)
+    if array.size(bullFVGs) > maxFVG
+        old = array.shift(bullFVGs)
+        box.delete(old)
+        array.shift(bullFVGtop)
+        array.shift(bullFVGbot)
+
+
+if bearFVG and showFVG
+    fvgTop = low[2]
+    fvgBot = high
+    b = box.new(left=bar_index - 2, top=fvgTop, right=bar_index + fvgExtend, bottom=fvgBot, bgcolor=bearFVGCol, border_color=color.new(bearCol, 70))
+    array.push(bearFVGs, b)
+    array.push(bearFVGtop, fvgTop)
+    array.push(bearFVGbot, fvgBot)
+    if array.size(bearFVGs) > maxFVG
+        old = array.shift(bearFVGs)
+        box.delete(old)
+        array.shift(bearFVGtop)
+        array.shift(bearFVGbot)
+
+
+// === SIGNALS ===
+// Check if current price is overlapping a tracked bullish OB or FVG zone
+nearBullZone() =>
+    found = false
+    if array.size(bullOBtop) > 0
+        for i = 0 to array.size(bullOBtop) - 1
+            t = array.get(bullOBtop, i)
+            b = array.get(bullOBbot, i)
+            if low <= t and high >= b
+                found := true
+                break
+    if not found and array.size(bullFVGtop) > 0
+        for i = 0 to array.size(bullFVGtop) - 1
+            t = array.get(bullFVGtop, i)
+            b = array.get(bullFVGbot, i)
+            if low <= t and high >= b
+                found := true
+                break
+    found
+
+
+nearBearZone() =>
+    found = false
+    if array.size(bearOBtop) > 0
+        for i = 0 to array.size(bearOBtop) - 1
+            t = array.get(bearOBtop, i)
+            b = array.get(bearOBbot, i)
+            if high >= b and low <= t
+                found := true
+                break
+    if not found and array.size(bearFVGtop) > 0
+        for i = 0 to array.size(bearFVGtop) - 1
+            t = array.get(bearFVGtop, i)
+            b = array.get(bearFVGbot, i)
+            if high >= b and low <= t
+                found := true
+                break
+    found
+
+
+// Recent sweep = within the last 10 bars
+recentBullSweep = not na(lastBullSweepBar) and (bar_index - lastBullSweepBar) <= 10
+recentBearSweep = not na(lastBearSweepBar) and (bar_index - lastBearSweepBar) <= 10
+
+
+structBull = bullBOS or bullCHoCH
+structBear = bearBOS or bearCHoCH
+
+
+buySignal  = false
+sellSignal = false
+
+
+// Sensitivity gates how much confluence is required
+if sensitivity == "Conservative"
+    buySignal  := structBull and recentBullSweep and nearBullZone()
+    sellSignal := structBear and recentBearSweep and nearBearZone()
+else if sensitivity == "Balanced"
+    buySignal  := structBull and (recentBullSweep or nearBullZone())
+    sellSignal := structBear and (recentBearSweep or nearBearZone())
+else
+    buySignal  := structBull
+    sellSignal := structBear
+
+
+// Non-repainting: only render on confirmed bars
+plotshape(showSignals and buySignal  and barstate.isconfirmed, title="BUY",  style=shape.triangleup,   location=location.belowbar, color=bullCol, textcolor=color.white, text="BUY",  size=size.normal)
+plotshape(showSignals and sellSignal and barstate.isconfirmed, title="SELL", style=shape.triangledown, location=location.abovebar, color=bearCol, textcolor=color.white, text="SELL", size=size.normal)
+
+
+// === ALERTS ===
+alertcondition(bullBOS,    title="Bullish BOS",             message="SMC: Bullish Break of Structure")
+alertcondition(bearBOS,    title="Bearish BOS",             message="SMC: Bearish Break of Structure")
+alertcondition(bullCHoCH,  title="Bullish CHoCH",           message="SMC: Bullish Change of Character")
+alertcondition(bearCHoCH,  title="Bearish CHoCH",           message="SMC: Bearish Change of Character")
+alertcondition(bullSweep,  title="Bullish Liquidity Sweep", message="SMC: Buy-side liquidity swept — potential bullish reversal")
+alertcondition(bearSweep,  title="Bearish Liquidity Sweep", message="SMC: Sell-side liquidity swept — potential bearish reversal")
+alertcondition(buySignal,  title="BUY Signal",              message="SMC: BUY signal confirmed")
+alertcondition(sellSignal, title="SELL Signal",             message="SMC: SELL signal confirmed")

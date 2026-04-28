@@ -48,7 +48,7 @@ export interface ExpertInfo {
   border: string;
 }
 
-export type TabType = 'conclusion' | 'dashboard' | 'portfolio' | 'planner' | 'macro' | 'tools' | 'trim' | 'quantum' | 'signals' | 'intelligence';
+export type TabType = 'conclusion' | 'dashboard' | 'portfolio' | 'planner' | 'macro' | 'tools' | 'trim' | 'quantum' | 'signals' | 'intelligence' | 'smc';
 export type RiskLevel = 'low' | 'medium' | 'high';
 export type TransactionType = 'buy' | 'sell';
 

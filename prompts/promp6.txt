@@ -1,0 +1,871 @@
+//@version=5
+strategy("SMC Pro + AlgoAlpha Trend Filter", shorttitle="SMC+AA Strat", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, commission_type=strategy.commission.percent, commission_value=0.04, slippage=2, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
+// ============================================================================
+// === INPUTS =================================================================
+// ============================================================================
+
+// --- Structure Settings ---
+grpStruct          = "Structure Settings"
+pivotLen           = input.int(5,  "Swing Pivot Length", minval=1, maxval=50, group=grpStruct)
+maxStructureLabels = input.int(4,  "Max Structure Labels Displayed", minval=1, maxval=20, group=grpStruct)
+
+// --- Liquidity & Zones ---
+grpZones  = "Liquidity & Zones"
+maxOB     = input.int(2, "Max Order Blocks (per side)",   minval=1, maxval=10, group=grpZones)
+maxFVG    = input.int(3, "Max FVGs (per side)",           minval=1, maxval=10, group=grpZones)
+fvgExtend = input.int(50,"FVG Extension Bars",            minval=5, maxval=500, group=grpZones)
+
+// --- Signals ---
+grpSig         = "Signals"
+sensitivity    = input.string("Balanced", "Signal Sensitivity", options=["Conservative", "Balanced", "Aggressive"], group=grpSig)
+signalCooldown = input.int(20, "Signal Cooldown (bars)", minval=0, maxval=500, group=grpSig)
+
+// --- Display ---
+grpDisp     = "Display"
+showSwings  = input.bool(true,  "Show Structure Labels",  group=grpDisp)
+showBOS     = input.bool(true,  "Show BOS Lines",         group=grpDisp)
+showCHoCH   = input.bool(true,  "Show CHoCH Lines",       group=grpDisp)
+showOB      = input.bool(true,  "Show Order Blocks",      group=grpDisp)
+showFVG     = input.bool(false, "Show Fair Value Gaps",   group=grpDisp)
+showSweeps  = input.bool(true,  "Show Liquidity Sweeps",  group=grpDisp)
+showSignals = input.bool(true,  "Show BUY/SELL Signals",  group=grpDisp)
+
+// --- Kill Zone Sessions ---
+grpSess       = "Kill Zone Sessions"
+showLondon    = input.bool(true, "Show London Session (08:00-11:00 GMT)", group=grpSess)
+showNY        = input.bool(true, "Show New York Session (13:00-17:00 GMT)", group=grpSess)
+maxSessions   = input.int(5, "Max Sessions Displayed (per side)", minval=1, maxval=20, group=grpSess)
+londonFillCol = input.color(color.new(#4FC3F7, 90), "London Session Fill",   group=grpSess)
+nyFillCol     = input.color(color.new(#FFB74D, 90), "New York Session Fill", group=grpSess)
+londonLineCol = input.color(#4FC3F7, "London Border/Label Color", group=grpSess)
+nyLineCol     = input.color(#FFB74D, "New York Border/Label Color", group=grpSess)
+
+// --- HTF & Dashboard ---
+grpHTF         = "HTF & Dashboard"
+htfAuto        = input.bool(true,  "Auto-select HTF from current timeframe", group=grpHTF)
+htfManual      = input.timeframe("240", "Manual HTF (if Auto is off)", group=grpHTF)
+htfPivotLen    = input.int(3, "HTF Swing Pivot Length", minval=1, maxval=20, group=grpHTF)
+useHTFFilter   = input.bool(false, "Filter LTF signals by HTF bias", group=grpHTF)
+showDashboard  = input.bool(true,  "Show Dashboard", group=grpHTF)
+dashPosition   = input.string("Top Right", "Dashboard Position", options=["Top Right","Top Left","Bottom Right","Bottom Left","Middle Right"], group=grpHTF)
+dashBullCol    = input.color(#26A69A,                  "Dashboard Bullish",   group=grpHTF)
+dashBearCol    = input.color(#EF5350,                  "Dashboard Bearish",   group=grpHTF)
+dashNeutralCol = input.color(#78909C,                  "Dashboard Neutral",   group=grpHTF)
+dashBgCol      = input.color(color.new(#1A1A2E, 15),   "Dashboard Background",group=grpHTF)
+dashHeaderCol  = input.color(color.new(#2A2A4E, 5),    "Dashboard Header",    group=grpHTF)
+dashBorderCol  = input.color(color.new(#FFFFFF, 80),   "Dashboard Border",    group=grpHTF)
+
+// --- Strategy Settings ---
+grpStrat         = "Strategy Settings"
+enableStrategy   = input.bool(true, "Enable Strategy Entries", group=grpStrat)
+rrRatio          = input.float(2.0, "Risk:Reward Ratio", minval=0.5, maxval=10.0, step=0.1, group=grpStrat)
+maxTradesPerDay  = input.int(3, "Max Trades Per Day", minval=1, maxval=20, group=grpStrat)
+atrBuffer        = input.float(0.2, "ATR Buffer for SL (multiplier)", minval=0.05, maxval=1.0, step=0.05, group=grpStrat)
+sessionOnly      = input.bool(true, "Enter only during London/NY sessions", group=grpStrat)
+
+// --- Trend Filter (AlgoAlpha) ---
+grpTrend          = "Trend Filter (AlgoAlpha)"
+enableTrendFilter = input.bool(true,  "Enable Trend Filter",          group=grpTrend, tooltip="When ON, blocks trades during ranging markets and requires trend direction to match trade direction.")
+kalmanAlpha       = input.float(0.01, "Kalman Alpha",                 group=grpTrend, tooltip="Smoothing. Smaller = more smoothing, larger = more responsive.")
+kalmanBeta        = input.float(0.1,  "Kalman Beta",                  group=grpTrend, tooltip="Trend sensitivity.")
+kalmanPeriod      = input.int(77,     "Kalman Period",                group=grpTrend)
+kalmanDev         = input.float(1.2,  "Deviation",                    group=grpTrend, tooltip="Multiplier for trend band width.")
+stFactor          = input.float(0.7,  "Supertrend Factor",            group=grpTrend)
+stAtrPeriod       = input.int(7,      "Supertrend ATR Period",        group=grpTrend)
+useKalmanSL       = input.bool(true,  "Use Kalman Bands for SL",      group=grpTrend, tooltip="When ON, SL = wider of (swept pivot ± ATR buffer) and (Kalman band).")
+showTrendOverlay  = input.bool(true,  "Show Trend Filter Overlay",    group=grpTrend)
+trendBullCol      = input.color(#00FFBB, "Trend Bullish Color",       group=grpTrend)
+trendBearCol      = input.color(#FF1100, "Trend Bearish Color",       group=grpTrend)
+
+// --- Colors ---
+grpCol        = "Colors"
+bullCol       = input.color(#26A69A,                   "Bullish Core",                    group=grpCol)
+bearCol       = input.color(#EF5350,                   "Bearish Core",                    group=grpCol)
+structBullCol = input.color(#4FC3F7,                   "Structure Bullish Labels (HH/HL)",group=grpCol)
+structBearCol = input.color(#FF8A80,                   "Structure Bearish Labels (LH/LL)",group=grpCol)
+neutralCol    = input.color(#787878,                   "Neutral Label Color",             group=grpCol)
+bosCol        = input.color(#FFB74D,                   "BOS Line/Label",                  group=grpCol)
+chochCol      = input.color(#BA68C8,                   "CHoCH Line/Label",                group=grpCol)
+bullOBCol     = input.color(color.new(#26A69A, 88),    "Bullish OB Fill",                 group=grpCol)
+bearOBCol     = input.color(color.new(#EF5350, 88),    "Bearish OB Fill",                 group=grpCol)
+bullFVGCol    = input.color(color.new(#26A69A, 92),    "Bullish FVG Fill",                group=grpCol)
+bearFVGCol    = input.color(color.new(#EF5350, 92),    "Bearish FVG Fill",                group=grpCol)
+sweepBullCol  = input.color(#FFD54F,                   "Bullish Sweep Marker",            group=grpCol)
+sweepBearCol  = input.color(#FFD54F,                   "Bearish Sweep Marker",            group=grpCol)
+
+// ============================================================================
+// === SWING DETECTION ========================================================
+// ============================================================================
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low,  pivotLen, pivotLen)
+
+var float  lastPH       = na
+var float  prevPH       = na
+var int    lastPHbar    = na
+var float  lastPL       = na
+var float  prevPL       = na
+var int    lastPLbar    = na
+var string lastHighType = na
+var string lastLowType  = na
+
+var label[] structLabels = array.new<label>()
+
+// ============================================================================
+// === MARKET STRUCTURE =======================================================
+// ============================================================================
+if not na(ph)
+    prevPH       := lastPH
+    lastPH       := ph
+    lastPHbar    := bar_index - pivotLen
+    hType         = na(prevPH) ? "HH" : (ph > prevPH ? "HH" : "LH")
+    lastHighType := hType
+    if showSwings
+        lblCol  = hType == "HH" ? structBullCol : structBearCol
+        newLbl  = label.new(x=lastPHbar, y=ph, text=hType, style=label.style_none, textcolor=lblCol, size=size.small, yloc=yloc.abovebar)
+        array.push(structLabels, newLbl)
+        if array.size(structLabels) > maxStructureLabels
+            label.delete(array.shift(structLabels))
+
+if not na(pl)
+    prevPL      := lastPL
+    lastPL      := pl
+    lastPLbar   := bar_index - pivotLen
+    lType        = na(prevPL) ? "LL" : (pl > prevPL ? "HL" : "LL")
+    lastLowType := lType
+    if showSwings
+        lblCol = lType == "HL" ? structBullCol : structBearCol
+        newLbl = label.new(x=lastPLbar, y=pl, text=lType, style=label.style_none, textcolor=lblCol, size=size.small, yloc=yloc.belowbar)
+        array.push(structLabels, newLbl)
+        if array.size(structLabels) > maxStructureLabels
+            label.delete(array.shift(structLabels))
+
+var int trendBias = 0
+if lastHighType == "HH" and lastLowType == "HL"
+    trendBias := 1
+else if lastHighType == "LH" and lastLowType == "LL"
+    trendBias := -1
+
+// ============================================================================
+// === BOS & CHoCH ============================================================
+// ============================================================================
+var float lastBrokenHigh = na
+var float lastBrokenLow  = na
+
+bullBOS   = false
+bearBOS   = false
+bullCHoCH = false
+bearCHoCH = false
+
+if not na(lastPH) and close > lastPH and (na(lastBrokenHigh) or lastPH != lastBrokenHigh)
+    if trendBias >= 0
+        bullBOS := true
+    else
+        bullCHoCH := true
+    lastBrokenHigh := lastPH
+    trendBias := 1
+
+if not na(lastPL) and close < lastPL and (na(lastBrokenLow) or lastPL != lastBrokenLow)
+    if trendBias <= 0
+        bearBOS := true
+    else
+        bearCHoCH := true
+    lastBrokenLow := lastPL
+    trendBias := -1
+
+var line[]  bosLines    = array.new<line>()
+var label[] bosLabels   = array.new<label>()
+var line[]  chochLines  = array.new<line>()
+var label[] chochLabels = array.new<label>()
+
+if showBOS and bullBOS and not na(lastPHbar)
+    ln  = line.new(x1=lastPHbar, y1=lastBrokenHigh, x2=bar_index, y2=lastBrokenHigh, color=bosCol, width=1, style=line.style_dashed)
+    lbl = label.new(x=bar_index, y=lastBrokenHigh, text="BOS", style=label.style_label_down, color=color.new(bosCol, 80), textcolor=bosCol, size=size.tiny)
+    array.push(bosLines, ln)
+    array.push(bosLabels, lbl)
+    if array.size(bosLines) > 2
+        line.delete(array.shift(bosLines))
+        label.delete(array.shift(bosLabels))
+
+if showBOS and bearBOS and not na(lastPLbar)
+    ln  = line.new(x1=lastPLbar, y1=lastBrokenLow, x2=bar_index, y2=lastBrokenLow, color=bosCol, width=1, style=line.style_dashed)
+    lbl = label.new(x=bar_index, y=lastBrokenLow, text="BOS", style=label.style_label_up, color=color.new(bosCol, 80), textcolor=bosCol, size=size.tiny)
+    array.push(bosLines, ln)
+    array.push(bosLabels, lbl)
+    if array.size(bosLines) > 2
+        line.delete(array.shift(bosLines))
+        label.delete(array.shift(bosLabels))
+
+if showCHoCH and bullCHoCH and not na(lastPHbar)
+    ln  = line.new(x1=lastPHbar, y1=lastBrokenHigh, x2=bar_index, y2=lastBrokenHigh, color=chochCol, width=1, style=line.style_dashed)
+    lbl = label.new(x=bar_index, y=lastBrokenHigh, text="CHoCH", style=label.style_label_down, color=color.new(chochCol, 80), textcolor=chochCol, size=size.tiny)
+    array.push(chochLines, ln)
+    array.push(chochLabels, lbl)
+    if array.size(chochLines) > 2
+        line.delete(array.shift(chochLines))
+        label.delete(array.shift(chochLabels))
+
+if showCHoCH and bearCHoCH and not na(lastPLbar)
+    ln  = line.new(x1=lastPLbar, y1=lastBrokenLow, x2=bar_index, y2=lastBrokenLow, color=chochCol, width=1, style=line.style_dashed)
+    lbl = label.new(x=bar_index, y=lastBrokenLow, text="CHoCH", style=label.style_label_up, color=color.new(chochCol, 80), textcolor=chochCol, size=size.tiny)
+    array.push(chochLines, ln)
+    array.push(chochLabels, lbl)
+    if array.size(chochLines) > 2
+        line.delete(array.shift(chochLines))
+        label.delete(array.shift(chochLabels))
+
+// ============================================================================
+// === LIQUIDITY SWEEPS =======================================================
+// ============================================================================
+bearSweep = not na(lastPH) and high > lastPH and close < lastPH
+bullSweep = not na(lastPL) and low  < lastPL and close > lastPL
+
+plotshape(showSweeps and bullSweep, title="Bullish Sweep", style=shape.diamond, location=location.belowbar, color=sweepBullCol, size=size.tiny)
+plotshape(showSweeps and bearSweep, title="Bearish Sweep", style=shape.diamond, location=location.abovebar, color=sweepBearCol, size=size.tiny)
+
+var int lastBullSweepBar = na
+var int lastBearSweepBar = na
+if bullSweep
+    lastBullSweepBar := bar_index
+if bearSweep
+    lastBearSweepBar := bar_index
+
+// ============================================================================
+// === ORDER BLOCKS ===========================================================
+// ============================================================================
+var box[]   bullOBs    = array.new<box>()
+var box[]   bearOBs    = array.new<box>()
+var float[] bullOBtop  = array.new<float>()
+var float[] bullOBbot  = array.new<float>()
+var float[] bearOBtop  = array.new<float>()
+var float[] bearOBbot  = array.new<float>()
+
+if array.size(bullOBs) > 0
+    for i = array.size(bullOBs) - 1 to 0
+        if low <= array.get(bullOBtop, i)
+            box.delete(array.get(bullOBs, i))
+            array.remove(bullOBs, i)
+            array.remove(bullOBtop, i)
+            array.remove(bullOBbot, i)
+
+if array.size(bearOBs) > 0
+    for i = array.size(bearOBs) - 1 to 0
+        if high >= array.get(bearOBbot, i)
+            box.delete(array.get(bearOBs, i))
+            array.remove(bearOBs, i)
+            array.remove(bearOBtop, i)
+            array.remove(bearOBbot, i)
+
+findLastBearCandle() =>
+    idx = -1
+    for i = 1 to 20
+        if close[i] < open[i]
+            idx := i
+            break
+    idx
+
+findLastBullCandle() =>
+    idx = -1
+    for i = 1 to 20
+        if close[i] > open[i]
+            idx := i
+            break
+    idx
+
+if (bullBOS or bullCHoCH) and showOB
+    i = findLastBearCandle()
+    if i >= 0
+        obTop = math.max(open[i], close[i])
+        obBot = low[i]
+        b = box.new(left=bar_index - i, top=obTop, right=bar_index + 20, bottom=obBot, bgcolor=bullOBCol, border_color=color.new(bullCol, 70), extend=extend.right)
+        array.push(bullOBs, b)
+        array.push(bullOBtop, obTop)
+        array.push(bullOBbot, obBot)
+        if array.size(bullOBs) > maxOB
+            box.delete(array.shift(bullOBs))
+            array.shift(bullOBtop)
+            array.shift(bullOBbot)
+
+if (bearBOS or bearCHoCH) and showOB
+    i = findLastBullCandle()
+    if i >= 0
+        obTop = high[i]
+        obBot = math.min(open[i], close[i])
+        b = box.new(left=bar_index - i, top=obTop, right=bar_index + 20, bottom=obBot, bgcolor=bearOBCol, border_color=color.new(bearCol, 70), extend=extend.right)
+        array.push(bearOBs, b)
+        array.push(bearOBtop, obTop)
+        array.push(bearOBbot, obBot)
+        if array.size(bearOBs) > maxOB
+            box.delete(array.shift(bearOBs))
+            array.shift(bearOBtop)
+            array.shift(bearOBbot)
+
+// ============================================================================
+// === FAIR VALUE GAPS ========================================================
+// ============================================================================
+var box[]   bullFVGs   = array.new<box>()
+var box[]   bearFVGs   = array.new<box>()
+var float[] bullFVGtop = array.new<float>()
+var float[] bullFVGbot = array.new<float>()
+var float[] bearFVGtop = array.new<float>()
+var float[] bearFVGbot = array.new<float>()
+
+if array.size(bullFVGs) > 0
+    for i = array.size(bullFVGs) - 1 to 0
+        if low <= array.get(bullFVGbot, i)
+            box.delete(array.get(bullFVGs, i))
+            array.remove(bullFVGs, i)
+            array.remove(bullFVGtop, i)
+            array.remove(bullFVGbot, i)
+
+if array.size(bearFVGs) > 0
+    for i = array.size(bearFVGs) - 1 to 0
+        if high >= array.get(bearFVGtop, i)
+            box.delete(array.get(bearFVGs, i))
+            array.remove(bearFVGs, i)
+            array.remove(bearFVGtop, i)
+            array.remove(bearFVGbot, i)
+
+bullFVG = bar_index > 2 and low  > high[2]
+bearFVG = bar_index > 2 and high < low[2]
+
+if bullFVG and showFVG
+    fvgTop = low
+    fvgBot = high[2]
+    b = box.new(left=bar_index - 2, top=fvgTop, right=bar_index + fvgExtend, bottom=fvgBot, bgcolor=bullFVGCol, border_color=color.new(bullCol, 85))
+    array.push(bullFVGs, b)
+    array.push(bullFVGtop, fvgTop)
+    array.push(bullFVGbot, fvgBot)
+    if array.size(bullFVGs) > maxFVG
+        box.delete(array.shift(bullFVGs))
+        array.shift(bullFVGtop)
+        array.shift(bullFVGbot)
+
+if bearFVG and showFVG
+    fvgTop = low[2]
+    fvgBot = high
+    b = box.new(left=bar_index - 2, top=fvgTop, right=bar_index + fvgExtend, bottom=fvgBot, bgcolor=bearFVGCol, border_color=color.new(bearCol, 85))
+    array.push(bearFVGs, b)
+    array.push(bearFVGtop, fvgTop)
+    array.push(bearFVGbot, fvgBot)
+    if array.size(bearFVGs) > maxFVG
+        box.delete(array.shift(bearFVGs))
+        array.shift(bearFVGtop)
+        array.shift(bearFVGbot)
+
+// ============================================================================
+// === KILL ZONE SESSIONS =====================================================
+// ============================================================================
+inLondon = not na(time(timeframe.period, "0800-1100", "GMT"))
+inNY     = not na(time(timeframe.period, "1300-1700", "GMT"))
+
+var bool wasInLondon = false
+var bool wasInNY     = false
+
+londonStart = inLondon and not wasInLondon
+londonEnd   = not inLondon and wasInLondon
+nyStart     = inNY and not wasInNY
+nyEnd       = not inNY and wasInNY
+
+var box   londonActiveBox   = na
+var label londonActiveLabel = na
+var box   nyActiveBox       = na
+var label nyActiveLabel     = na
+
+var box[]   londonBoxes  = array.new<box>()
+var label[] londonLabels = array.new<label>()
+var box[]   nyBoxes      = array.new<box>()
+var label[] nyLabels     = array.new<label>()
+
+if showLondon and londonStart
+    londonActiveBox   := box.new(left=bar_index, top=high, right=bar_index, bottom=low, bgcolor=londonFillCol, border_color=color.new(londonLineCol, 70), border_width=1)
+    londonActiveLabel := label.new(x=bar_index, y=high, text="LONDON", style=label.style_label_down, color=color.new(londonLineCol, 80), textcolor=londonLineCol, size=size.small)
+
+if showLondon and inLondon and not na(londonActiveBox)
+    newTop = math.max(box.get_top(londonActiveBox),    high)
+    newBot = math.min(box.get_bottom(londonActiveBox), low)
+    box.set_top(londonActiveBox, newTop)
+    box.set_bottom(londonActiveBox, newBot)
+    box.set_right(londonActiveBox, bar_index)
+    leftX = box.get_left(londonActiveBox)
+    label.set_x(londonActiveLabel, math.round((leftX + bar_index) / 2))
+    label.set_y(londonActiveLabel, newTop)
+
+if showLondon and londonEnd and not na(londonActiveBox)
+    array.push(londonBoxes,  londonActiveBox)
+    array.push(londonLabels, londonActiveLabel)
+    if array.size(londonBoxes) > maxSessions
+        box.delete(array.shift(londonBoxes))
+        label.delete(array.shift(londonLabels))
+    londonActiveBox   := na
+    londonActiveLabel := na
+
+if showNY and nyStart
+    nyActiveBox   := box.new(left=bar_index, top=high, right=bar_index, bottom=low, bgcolor=nyFillCol, border_color=color.new(nyLineCol, 70), border_width=1)
+    nyActiveLabel := label.new(x=bar_index, y=high, text="NEW YORK", style=label.style_label_down, color=color.new(nyLineCol, 80), textcolor=nyLineCol, size=size.small)
+
+if showNY and inNY and not na(nyActiveBox)
+    newTop = math.max(box.get_top(nyActiveBox),    high)
+    newBot = math.min(box.get_bottom(nyActiveBox), low)
+    box.set_top(nyActiveBox, newTop)
+    box.set_bottom(nyActiveBox, newBot)
+    box.set_right(nyActiveBox, bar_index)
+    leftX = box.get_left(nyActiveBox)
+    label.set_x(nyActiveLabel, math.round((leftX + bar_index) / 2))
+    label.set_y(nyActiveLabel, newTop)
+
+if showNY and nyEnd and not na(nyActiveBox)
+    array.push(nyBoxes,  nyActiveBox)
+    array.push(nyLabels, nyActiveLabel)
+    if array.size(nyBoxes) > maxSessions
+        box.delete(array.shift(nyBoxes))
+        label.delete(array.shift(nyLabels))
+    nyActiveBox   := na
+    nyActiveLabel := na
+
+wasInLondon := inLondon
+wasInNY     := inNY
+
+// ============================================================================
+// === SIGNALS ================================================================
+// ============================================================================
+nearBullZone() =>
+    found = false
+    if array.size(bullOBtop) > 0
+        for i = 0 to array.size(bullOBtop) - 1
+            t = array.get(bullOBtop, i)
+            b = array.get(bullOBbot, i)
+            if low <= t and high >= b
+                found := true
+                break
+    if not found and array.size(bullFVGtop) > 0
+        for i = 0 to array.size(bullFVGtop) - 1
+            t = array.get(bullFVGtop, i)
+            b = array.get(bullFVGbot, i)
+            if low <= t and high >= b
+                found := true
+                break
+    found
+
+nearBearZone() =>
+    found = false
+    if array.size(bearOBtop) > 0
+        for i = 0 to array.size(bearOBtop) - 1
+            t = array.get(bearOBtop, i)
+            b = array.get(bearOBbot, i)
+            if high >= b and low <= t
+                found := true
+                break
+    if not found and array.size(bearFVGtop) > 0
+        for i = 0 to array.size(bearFVGtop) - 1
+            t = array.get(bearFVGtop, i)
+            b = array.get(bearFVGbot, i)
+            if high >= b and low <= t
+                found := true
+                break
+    found
+
+recentBullSweep = not na(lastBullSweepBar) and (bar_index - lastBullSweepBar) <= 10
+recentBearSweep = not na(lastBearSweepBar) and (bar_index - lastBearSweepBar) <= 10
+
+structBull = bullBOS or bullCHoCH
+structBear = bearBOS or bearCHoCH
+
+buySignal  = false
+sellSignal = false
+
+if sensitivity == "Conservative"
+    buySignal  := structBull and recentBullSweep and nearBullZone()
+    sellSignal := structBear and recentBearSweep and nearBearZone()
+else if sensitivity == "Balanced"
+    buySignal  := structBull and (recentBullSweep or nearBullZone())
+    sellSignal := structBear and (recentBearSweep or nearBearZone())
+else
+    buySignal  := structBull
+    sellSignal := structBear
+
+var int lastBuyBar  = na
+var int lastSellBar = na
+
+buyDisplay  = showSignals and buySignal  and barstate.isconfirmed and (na(lastBuyBar)  or (bar_index - lastBuyBar)  >= signalCooldown)
+sellDisplay = showSignals and sellSignal and barstate.isconfirmed and (na(lastSellBar) or (bar_index - lastSellBar) >= signalCooldown)
+
+if buyDisplay
+    lastBuyBar := bar_index
+if sellDisplay
+    lastSellBar := bar_index
+
+plotshape(buyDisplay,  title="BUY Arrow",  style=shape.triangleup,   location=location.belowbar, color=bullCol, size=size.normal)
+plotshape(sellDisplay, title="SELL Arrow", style=shape.triangledown, location=location.abovebar, color=bearCol, size=size.normal)
+
+atrOff = nz(ta.atr(14), syminfo.mintick * 100)
+if buyDisplay
+    label.new(x=bar_index, y=low  - atrOff * 1.2, text="BUY",  style=label.style_label_up,   color=bullCol, textcolor=color.white, size=size.normal)
+if sellDisplay
+    label.new(x=bar_index, y=high + atrOff * 1.2, text="SELL", style=label.style_label_down, color=bearCol, textcolor=color.white, size=size.normal)
+
+// ============================================================================
+// === ALERTS =================================================================
+// ============================================================================
+alertcondition(bullBOS,    title="Bullish BOS",             message="SMC: Bullish Break of Structure")
+alertcondition(bearBOS,    title="Bearish BOS",             message="SMC: Bearish Break of Structure")
+alertcondition(bullCHoCH,  title="Bullish CHoCH",           message="SMC: Bullish Change of Character")
+alertcondition(bearCHoCH,  title="Bearish CHoCH",           message="SMC: Bearish Change of Character")
+alertcondition(bullSweep,  title="Bullish Liquidity Sweep", message="SMC: Buy-side liquidity swept")
+alertcondition(bearSweep,  title="Bearish Liquidity Sweep", message="SMC: Sell-side liquidity swept")
+alertcondition(buySignal,  title="BUY Signal",              message="SMC: BUY signal confirmed")
+alertcondition(sellSignal, title="SELL Signal",             message="SMC: SELL signal confirmed")
+
+// ============================================================================
+// === HTF BIAS ENGINE ========================================================
+// ============================================================================
+f_autoHTF() =>
+    tf = timeframe.period
+    result = htfManual
+    if tf == "5"
+        result := "60"
+    else if tf == "15"
+        result := "240"
+    else if tf == "60"
+        result := "D"
+    else if tf == "240"
+        result := "W"
+    else if tf == "D"
+        result := "W"
+    else
+        result := htfManual
+    result
+
+htfRes = htfAuto ? f_autoHTF() : htfManual
+
+[htfHigh, htfLow, htfClose] = request.security(syminfo.tickerid, htfRes, [high[1], low[1], close[1]], lookahead=barmerge.lookahead_off)
+
+htfPH = request.security(syminfo.tickerid, htfRes, ta.pivothigh(high, htfPivotLen, htfPivotLen)[1], lookahead=barmerge.lookahead_off)
+htfPL = request.security(syminfo.tickerid, htfRes, ta.pivotlow(low,   htfPivotLen, htfPivotLen)[1], lookahead=barmerge.lookahead_off)
+
+var float[] htfHighs = array.new<float>()
+var float[] htfLows  = array.new<float>()
+
+if not na(htfPH)
+    array.push(htfHighs, htfPH)
+    if array.size(htfHighs) > 3
+        array.shift(htfHighs)
+
+if not na(htfPL)
+    array.push(htfLows, htfPL)
+    if array.size(htfLows) > 3
+        array.shift(htfLows)
+
+f_ascending(arr) =>
+    ok = array.size(arr) >= 3
+    if ok
+        for i = 1 to array.size(arr) - 1
+            if array.get(arr, i) <= array.get(arr, i - 1)
+                ok := false
+                break
+    ok
+
+f_descending(arr) =>
+    ok = array.size(arr) >= 3
+    if ok
+        for i = 1 to array.size(arr) - 1
+            if array.get(arr, i) >= array.get(arr, i - 1)
+                ok := false
+                break
+    ok
+
+highsUp   = f_ascending(htfHighs)
+lowsUp    = f_ascending(htfLows)
+highsDown = f_descending(htfHighs)
+lowsDown  = f_descending(htfLows)
+
+var string htfBias = "Neutral"
+if highsUp and lowsUp
+    htfBias := "Bullish"
+else if highsDown and lowsDown
+    htfBias := "Bearish"
+else
+    htfBias := "Neutral"
+
+htfAlignedBuy  = buyDisplay  and (not useHTFFilter or htfBias == "Bullish")
+htfAlignedSell = sellDisplay and (not useHTFFilter or htfBias == "Bearish")
+
+var string lastSignalSide = "None"
+var int    lastSignalBar  = na
+if htfAlignedBuy
+    lastSignalSide := "BUY"
+    lastSignalBar  := bar_index
+if htfAlignedSell
+    lastSignalSide := "SELL"
+    lastSignalBar  := bar_index
+
+alertcondition(htfAlignedBuy,  title="BUY (HTF aligned)",  message="SMC: BUY aligned with HTF bias")
+alertcondition(htfAlignedSell, title="SELL (HTF aligned)", message="SMC: SELL aligned with HTF bias")
+
+// ============================================================================
+// === ALGOALPHA TREND FILTER (Kalman + Custom Supertrend) ====================
+// ============================================================================
+// Ported from AlgoAlpha "Range Filtered Trend Signals" (v6 → v5).
+// Detects ranging vs trending markets and provides Kalman bands for SL.
+//
+//   trend       =  1 (price > upper band)   |  -1 (price < lower band)
+//   ktrend      =  1 (Supertrend bullish)   |  -1 (Supertrend bearish)
+//   trendConfirmed = ktrend * trend ==  1   (both agree → TRENDING)
+//   isRanging      = ktrend * trend == -1   (disagree    → RANGING, no trade)
+// ============================================================================
+
+// Kalman filter — adaptive smoothing of close price
+f_kalman(a, b, alpha, beta) =>
+    var float v1 = na
+    var float v2 = 1.0
+    var float v3 = alpha * b
+    var float v4 = 0.0
+    var float v5 = na
+
+    if na(v1)
+        v1 := a[1]
+
+    v5 := v1
+    v4 := v2 / (v2 + v3)
+    v1 := v5 + v4 * (a - v5)
+    v2 := (1 - v4) * v2 + beta / b
+    v1
+
+// Custom Supertrend on the Kalman line
+f_pineSupertrend(k, factor, atrPeriod) =>
+    src = k
+    atr = ta.atr(atrPeriod)
+    upperBand = src + factor * atr
+    lowerBand = src - factor * atr
+    prevLowerBand = nz(lowerBand[1])
+    prevUpperBand = nz(upperBand[1])
+
+    lowerBand := lowerBand > prevLowerBand or k[1] < prevLowerBand ? lowerBand : prevLowerBand
+    upperBand := upperBand < prevUpperBand or k[1] > prevUpperBand ? upperBand : prevUpperBand
+    int _direction = na
+    float superTrend = na
+    prevSuperTrend = superTrend[1]
+    if na(atr[1])
+        _direction := 1
+    else if prevSuperTrend == prevUpperBand
+        _direction := k > upperBand ? -1 : 1
+    else
+        _direction := k < lowerBand ? 1 : -1
+    superTrend := _direction == -1 ? lowerBand : upperBand
+    [superTrend, _direction]
+
+// Compute Kalman line + Supertrend direction
+k = f_kalman(close, kalmanPeriod, kalmanAlpha, kalmanBeta)
+[supertrend, stDirection] = f_pineSupertrend(k, stFactor, stAtrPeriod)
+
+// Volatility-adjusted bands — used for SL anchoring and range visualization
+vola         = ta.wma(high - low, 200)
+kalmanUpper  = k + vola * kalmanDev
+kalmanLower  = k - vola * kalmanDev
+
+// Short-term trend state (price vs Kalman bands)
+var int trendAA = 0
+if close > kalmanUpper
+    trendAA := 1
+else if close < kalmanLower
+    trendAA := -1
+
+// Long-term trend state (inverted from raw Supertrend direction per AlgoAlpha)
+ktrend = 0
+if stDirection < 0
+    ktrend := 1
+else if stDirection > 0
+    ktrend := -1
+
+// Master filter flags
+trendConfirmed = ktrend * trendAA == 1     // both agree → TRENDING
+isRanging      = ktrend * trendAA == -1    // disagree  → RANGING
+
+// String label for dashboard
+trendFilterLabel = isRanging ? "Ranging" : trendAA == 1 and trendConfirmed ? "Bullish" : trendAA == -1 and trendConfirmed ? "Bearish" : "Neutral"
+
+// --- Trend filter visual overlay ---
+// Plot Kalman line only when TRENDING (matches AlgoAlpha behavior)
+plot(showTrendOverlay and trendConfirmed ? k : na, title="Kalman Line", color=color.new(color.gray, 30), linewidth=2, style=plot.style_linebr)
+plot(showTrendOverlay and (trendAA == -1 or isRanging) ? kalmanUpper : na, title="Kalman Upper Band", color=isRanging ? color.gray : ktrend == -1 ? color.new(trendBearCol, 70) : color.gray, style=plot.style_circles)
+plot(showTrendOverlay and (trendAA ==  1 or isRanging) ? kalmanLower : na, title="Kalman Lower Band", color=isRanging ? color.gray : ktrend ==  1 ? color.new(trendBullCol, 70) : color.gray, style=plot.style_circles)
+
+// Bar coloring — subtle highlight for ranging markets
+barcolor(showTrendOverlay and isRanging ? color.new(color.gray, 80) : na, title="Range Highlight")
+
+alertcondition(ta.crossover(ktrend * trendAA, 0),  title="Trend Filter: Trending", message="Trend filter flipped to TRENDING")
+alertcondition(ta.crossunder(ktrend * trendAA, 0), title="Trend Filter: Ranging",  message="Trend filter flipped to RANGING")
+
+// ============================================================================
+// === STRATEGY ENTRIES & EXITS ===============================================
+// ============================================================================
+// Daily trade counter (resets on each new calendar day)
+var int tradesToday = 0
+newDay = ta.change(time("D")) != 0
+if newDay
+    tradesToday := 0
+
+// ATR for stop buffer
+atrVal = nz(ta.atr(14), syminfo.mintick * 100)
+
+// Session gate — when sessionOnly is true, only enter during London/NY
+sessionOk = not sessionOnly or inLondon or inNY
+
+// --- Trend filter gate ---
+// When enableTrendFilter is OFF, these collapse to true (backward-compatible).
+// When ON, longs require bullish trend + confirmation; shorts require bearish trend + confirmation.
+trendOkLong  = not enableTrendFilter or (trendAA ==  1 and trendConfirmed)
+trendOkShort = not enableTrendFilter or (trendAA == -1 and trendConfirmed)
+
+// Entry gates
+canEnterLong  = enableStrategy and htfAlignedBuy  and sessionOk and tradesToday < maxTradesPerDay and not na(lastPL) and trendOkLong
+canEnterShort = enableStrategy and htfAlignedSell and sessionOk and tradesToday < maxTradesPerDay and not na(lastPH) and trendOkShort
+
+// LONG ENTRY
+if canEnterLong
+    if strategy.position_size < 0
+        strategy.close("SMC Short", comment="Flip Long")
+
+    // Base SL = swept low minus ATR buffer
+    slBase = lastPL - atrVal * atrBuffer
+    // Adaptive SL — when Kalman SL is enabled, use the WIDER of (base SL, kalmanLower)
+    // to avoid being shaken out by Kalman-band-respecting noise
+    slLong = useKalmanSL and not na(kalmanLower) ? math.min(slBase, kalmanLower) : slBase
+    riskL  = close - slLong
+    tpLong = close + riskL * rrRatio
+
+    if riskL > 0
+        strategy.entry("SMC Long", strategy.long, comment="BUY")
+        strategy.exit("Long TP/SL", from_entry="SMC Long", stop=slLong, limit=tpLong, comment_loss="SL Hit", comment_profit="TP Hit")
+        tradesToday += 1
+
+// SHORT ENTRY
+if canEnterShort
+    if strategy.position_size > 0
+        strategy.close("SMC Long", comment="Flip Short")
+
+    slBase  = lastPH + atrVal * atrBuffer
+    slShort = useKalmanSL and not na(kalmanUpper) ? math.max(slBase, kalmanUpper) : slBase
+    riskS   = slShort - close
+    tpShort = close - riskS * rrRatio
+
+    if riskS > 0
+        strategy.entry("SMC Short", strategy.short, comment="SELL")
+        strategy.exit("Short TP/SL", from_entry="SMC Short", stop=slShort, limit=tpShort, comment_loss="SL Hit", comment_profit="TP Hit")
+        tradesToday += 1
+
+// Visualize active SL/TP for current position
+var line slLine = na
+var line tpLine = na
+if strategy.position_size != 0 and barstate.isconfirmed
+    line.delete(slLine)
+    line.delete(tpLine)
+    entryPx = strategy.position_avg_price
+    isLong  = strategy.position_size > 0
+    slBase  = isLong ? lastPL - atrVal * atrBuffer : lastPH + atrVal * atrBuffer
+    slLevel = useKalmanSL ? (isLong ? math.min(slBase, kalmanLower) : math.max(slBase, kalmanUpper)) : slBase
+    riskPx  = math.abs(entryPx - slLevel)
+    tpLevel = isLong ? entryPx + riskPx * rrRatio : entryPx - riskPx * rrRatio
+    slLine := line.new(bar_index - 5, slLevel, bar_index + 5, slLevel, color=color.new(bearCol, 30), width=1, style=line.style_dashed, extend=extend.right)
+    tpLine := line.new(bar_index - 5, tpLevel, bar_index + 5, tpLevel, color=color.new(bullCol, 30), width=1, style=line.style_dashed, extend=extend.right)
+
+if strategy.position_size == 0 and (not na(slLine) or not na(tpLine))
+    line.delete(slLine)
+    line.delete(tpLine)
+    slLine := na
+    tpLine := na
+
+// ============================================================================
+// === DASHBOARD ==============================================================
+// ============================================================================
+f_structureLabel() =>
+    s = "Ranging"
+    if lastHighType == "HH" and lastLowType == "HL"
+        s := "HH / HL"
+    else if lastHighType == "LH" and lastLowType == "LL"
+        s := "LH / LL"
+    else
+        s := "Ranging"
+    s
+
+f_activeOBs() =>
+    array.size(bullOBs) + array.size(bearOBs)
+
+f_sessionLabel() =>
+    inLondon ? "London" : inNY ? "New York" : "Off-Session"
+
+f_stateColor(state) =>
+    col = dashNeutralCol
+    if state == "Bullish" or state == "BUY" or state == "HH / HL"
+        col := dashBullCol
+    else if state == "Bearish" or state == "SELL" or state == "LH / LL"
+        col := dashBearCol
+    else
+        col := dashNeutralCol
+    col
+
+f_tablePos() =>
+    p = position.top_right
+    if dashPosition == "Top Right"
+        p := position.top_right
+    else if dashPosition == "Top Left"
+        p := position.top_left
+    else if dashPosition == "Bottom Right"
+        p := position.bottom_right
+    else if dashPosition == "Bottom Left"
+        p := position.bottom_left
+    else
+        p := position.middle_right
+    p
+
+var table dash = na
+if showDashboard and na(dash)
+    dash := table.new(f_tablePos(), columns=2, rows=8, bgcolor=dashBgCol, border_width=1, border_color=dashBorderCol, frame_color=dashBorderCol, frame_width=1)
+
+if showDashboard and barstate.islast
+    structLabel  = f_structureLabel()
+    obCount      = f_activeOBs()
+    sessionLabel = f_sessionLabel()
+
+    htfBiasColor = f_stateColor(htfBias)
+    structColor  = f_stateColor(structLabel)
+    signalColor  = f_stateColor(lastSignalSide)
+    sessionColor = sessionLabel == "Off-Session" ? dashNeutralCol : dashBullCol
+    obColor      = obCount > 0 ? dashBullCol : dashNeutralCol
+    tradesLeftCol = tradesToday >= maxTradesPerDay ? dashBearCol : tradesToday > 0 ? dashBullCol : dashNeutralCol
+    trendCol      = trendFilterLabel == "Bullish" ? dashBullCol : trendFilterLabel == "Bearish" ? dashBearCol : dashNeutralCol
+
+    txtWhite = color.white
+    txtMuted = color.new(color.white, 25)
+
+    // Header
+    table.cell(dash, 0, 0, "SMC PRO + AA",  text_color=txtWhite, text_size=size.small, bgcolor=dashHeaderCol)
+    table.cell(dash, 1, 0, htfRes + " HTF", text_color=txtMuted, text_size=size.small, bgcolor=dashHeaderCol)
+
+    // Row 1 — HTF Bias
+    table.cell(dash, 0, 1, "HTF Bias",  text_color=txtMuted, text_size=size.small, bgcolor=dashBgCol)
+    table.cell(dash, 1, 1, htfBias,     text_color=htfBiasColor, text_size=size.small, bgcolor=dashBgCol)
+
+    // Row 2 — Structure
+    table.cell(dash, 0, 2, "Structure", text_color=txtMuted, text_size=size.small, bgcolor=dashBgCol)
+    table.cell(dash, 1, 2, structLabel, text_color=structColor, text_size=size.small, bgcolor=dashBgCol)
+
+    // Row 3 — Active OBs
+    table.cell(dash, 0, 3, "Active OBs", text_color=txtMuted, text_size=size.small, bgcolor=dashBgCol)
+    table.cell(dash, 1, 3, str.tostring(obCount), text_color=obColor, text_size=size.small, bgcolor=dashBgCol)
+
+    // Row 4 — Last Signal
+    table.cell(dash, 0, 4, "Last Signal",  text_color=txtMuted, text_size=size.small, bgcolor=dashBgCol)
+    table.cell(dash, 1, 4, lastSignalSide, text_color=signalColor, text_size=size.small, bgcolor=dashBgCol)
+
+    // Row 5 — Session
+    table.cell(dash, 0, 5, "Session",     text_color=txtMuted, text_size=size.small, bgcolor=dashBgCol)
+    table.cell(dash, 1, 5, sessionLabel,  text_color=sessionColor, text_size=size.small, bgcolor=dashBgCol)
+
+    // Row 6 — Trades Today
+    table.cell(dash, 0, 6, "Trades Today", text_color=txtMuted, text_size=size.small, bgcolor=dashBgCol)
+    table.cell(dash, 1, 6, str.tostring(tradesToday) + " / " + str.tostring(maxTradesPerDay), text_color=tradesLeftCol, text_size=size.small, bgcolor=dashBgCol)
+
+    // Row 7 — Trend Filter (AlgoAlpha)
+    table.cell(dash, 0, 7, "Trend Filter",   text_color=txtMuted, text_size=size.small, bgcolor=dashBgCol)
+    table.cell(dash, 1, 7, trendFilterLabel, text_color=trendCol, text_size=size.small, bgcolor=dashBgCol)

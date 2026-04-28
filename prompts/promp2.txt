@@ -1,0 +1,8 @@
+Add India session (9:15 AM – 3:30 PM ) and USA session (7:00 PM - 1:30 AM GMT) kill zone boxes to my SMC Pro indicator. Requirements:
+●	Semi-transparent colored zones on chart
+●	London: soft blue (#4FC3F7) with 10% opacity
+●	New York: soft amber (#FFB74D) with 10% opacity
+●	Show session labels on top of each zone
+●	Only show last 5 sessions (auto-cleanup older)
+●	User toggles to turn ON/OFF each session
+●	Keep all existing indicator logic unchanged Output only the updated Pine Script v5 code.

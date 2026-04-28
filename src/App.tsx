@@ -31,6 +31,7 @@ import { QuantumPortfolio } from './components/QuantumPortfolio';
 import { QuantumSignals } from './components/QuantumSignals';
 import { SuperIntelligence } from './components/SuperIntelligence';
 import { MasterConclusion } from './components/MasterConclusion';
+import { SMCProIndicator } from './components/SMCProIndicator';
 
 
 /**
@@ -955,7 +956,7 @@ let statusCounter = 0;
 
 {/* Tabs */}
 <div className="flex gap-0.5 glass-card p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
-  {(['conclusion', 'dashboard', 'quantum', 'signals', 'intelligence', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
+  {(['conclusion', 'dashboard', 'quantum', 'signals', 'smc', 'intelligence', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
     <button
       key={tab}
       onClick={() => setActiveTab(tab)}
@@ -969,6 +970,7 @@ let statusCounter = 0;
         {tab === 'dashboard' && '📊 Dashboard'}
         {tab === 'quantum' && '⚛️ Quantum AI'}
         {tab === 'signals' && '🎯 Signals'}
+        {tab === 'smc' && '🏦 SMC Pro'}
         {tab === 'intelligence' && '🧠 Super AI'}
         {tab === 'portfolio' && '💼 Portfolio'}
         {tab === 'planner' && '🎯 Planner'}
@@ -981,6 +983,7 @@ let statusCounter = 0;
         {tab === 'dashboard' && '📊'}
         {tab === 'quantum' && '⚛️'}
         {tab === 'signals' && '🎯'}
+        {tab === 'smc' && '🏦'}
         {tab === 'intelligence' && '🧠'}
         {tab === 'portfolio' && '💼'}
         {tab === 'planner' && '🎯'}
@@ -1374,6 +1377,24 @@ Live Signals
     setActiveTab('intelligence');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }}
+/>
+</div>
+)}
+
+{/* SMC Pro Indicator Tab */}
+{activeTab === 'smc' && (
+<div className="space-y-5 animate-fade-in">
+<div className="flex items-center justify-between">
+<h2 className="text-2xl font-black gradient-text-cyan font-display">🏦 SMC Pro Indicator</h2>
+<div className="flex items-center gap-2">
+<span className="badge bg-purple-500/10 text-purple-400 border border-purple-500/20 text-xs">
+Smart Money Concepts
+</span>
+</div>
+</div>
+<SMCProIndicator
+  livePrices={livePrices}
+  portfolio={portfolio}
 />
 </div>
 )}

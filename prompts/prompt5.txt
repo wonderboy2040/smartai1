@@ -1,0 +1,92 @@
+You are a Pine Script expert. I have TWO systems that I need to COMBINE into one powerful strategy:
+
+## SYSTEM 1: My SMC Pro Strategy (747 lines, Pine Script v5)
+- Liquidity sweep detection
+- Order blocks, BOS/CHoCH
+- Session filtering (London/NY)
+- HTF Bias engine + Dashboard
+- Strategy entries on sweep signals
+- PROBLEM: On Bitcoin (BTCUSDT 5m), it produces 56 trades with only 34% win rate, -$86 loss, profit factor 0.69
+
+## SYSTEM 2: AlgoAlpha — Range Filtered Trend Signals (112 lines, Pine Script v6)
+- Kalman Filter for price smoothing
+- Custom Supertrend for trend direction
+- Dual trend confirmation (trend + ktrend)
+- Range detection (ktrend * trend == -1 means RANGING)
+- Alerts for trending vs ranging market
+
+## WHAT I WANT:
+Integrate AlgoAlpha's trend filtering INTO my SMC strategy as an additional confirmation layer. The goal is to REDUCE false signals on Bitcoin by only allowing trades when the market is TRENDING according to AlgoAlpha, and BLOCKING trades when the market is RANGING.
+
+## INTEGRATION RULES:
+
+### A. Add AlgoAlpha's Core Engine
+- Port the Kalman filter function and custom Supertrend to my v5 script
+- Convert from v6 to v5 syntax (minor differences only)
+- Calculate `trend`, `ktrend`, and `ktrend * trend` exactly as AlgoAlpha does
+
+### B. MASTER TRADE FILTER
+- `trendConfirmed = ktrend * trend == 1` (both short-term and long-term agree)
+- `isRanging = ktrend * trend == -1` (conflicting = NO TRADE)
+- Additional: trend direction must MATCH trade direction:
+  - For LONG: `trend == 1` (bullish) AND `trendConfirmed`
+  - For SHORT: `trend == -1` (bearish) AND `trendConfirmed`
+
+### C. KALMAN-BASED ADAPTIVE STOP LOSS
+Instead of just swept pivot ± ATR buffer:
+- For LONG: SL = max(lastPL - atrBuffer, kalmanLower) — whichever is WIDER
+- For SHORT: SL = min(lastPH + atrBuffer, kalmanUpper) — whichever is WIDER
+- This uses the Kalman deviation bands as dynamic SL support
+- `kalmanUpper = k + vola * dev` and `kalmanLower = k - vola * dev`
+
+### D. New Input Group: "Trend Filter (AlgoAlpha)"
+
+grpTrend = "Trend Filter (AlgoAlpha)" enableTrendFilter = input.bool(true, "Enable Trend Filter", group=grpTrend) kalmanAlpha = input.float(0.01, "Kalman Alpha", group=grpTrend) kalmanBeta = input.float(0.1, "Kalman Beta", group=grpTrend) kalmanPeriod = input.int(77, "Kalman Period", group=grpTrend) kalmanDev = input.float(1.2, "Deviation", group=grpTrend) stFactor = input.float(0.7, "Supertrend Factor", group=grpTrend) stAtrPeriod = input.int(7, "Supertrend ATR Period", group=grpTrend) useKalmanSL = input.bool(true, "Use Kalman Bands for SL", group=grpTrend) 
+
+
+
+### E. DASHBOARD UPDATE
+Add a new row to the existing dashboard:
+- Row 7: "Trend Filter" → shows "Bullish" / "Bearish" / "Ranging"
+- Color: green for bullish trending, red for bearish trending, gray for ranging
+
+### F. VISUAL: Add Kalman line + bands to chart
+- Plot `k` (Kalman line) as a thin gray line
+- Plot `upper` and `lower` bands as dotted circles (same as AlgoAlpha)
+- Optional toggle: "Show Trend Filter Overlay" (default: true)
+
+### G. BACKWARD COMPATIBILITY
+- When `enableTrendFilter = false` → strategy works EXACTLY as before
+- When `true` → AlgoAlpha filtering is active
+- All existing visuals (sweeps, OBs, sessions, dashboard) still work
+
+## ENTRY LOGIC (MODIFIED):
+
+
+canEnterLong = enableStrategy AND htfAlignedBuy AND sessionOk AND tradesToday < maxTradesPerDay AND not na(lastPL) AND (not enableTrendFilter OR (trend == 1 AND trendConfirmed))
+canEnterShort = enableStrategy AND htfAlignedSell AND sessionOk AND tradesToday < maxTradesPerDay AND not na(lastPH) AND (not enableTrendFilter OR (trend == -1 AND trendConfirmed))
+
+
+
+## IMPORTANT:
+- Pine Script v5 syntax (NOT v6)
+- No errors — compile-ready
+- Keep ALL existing 747 lines intact
+- ADD new code at specific insertion points (mark clearly)
+- Well-commented
+- Test on BTCUSDT 5m
+
+## MY CURRENT STRATEGY CODE:
+[PASTE FULL 747-LINE STRATEGY CODE HERE]
+
+## ALGOALPHA REFERENCE CODE:
+[PASTE THE 112-LINE ALGOALPHA CODE HERE]
+
+Give me:
+1. New input group to INSERT after existing "Strategy Settings" inputs
+2. AlgoAlpha engine code to INSERT before the strategy entries section  
+3. Modified entry conditions
+4. Modified SL logic (Kalman-based)
+5. Dashboard update (add Row 7)
+6. Optional visual overlay plots
+Mark each insertion point clearly with line numbers.

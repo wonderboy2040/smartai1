@@ -1,0 +1,32 @@
+You are a Pine Script v6 expert. I have an existing SMC + Liquidity Sweep indicator on TradingView. I need you to ADD the following features to it:
+FEATURE 1: Higher Timeframe (HTF) Bias Engine
+●	Add an input for HTF selection (default: 1H if on 5m, 4H if on 15m, Daily if on 1H)
+●	Use request.security() to fetch HTF candle data
+●	Determine HTF bias using structure:
+○	Bullish = HTF making Higher Highs + Higher Lows
+○	Bearish = HTF making Lower Highs + Lower Lows
+○	Neutral = no clear structure
+●	Track last 3 HTF swing points to determine bias
+●	Only allow LTF signals that ALIGN with HTF bias (optional filter toggle)
+FEATURE 2: Real-Time Dashboard (table overlay)
+●	Position: top-right corner
+●	Style: glassmorphic dark theme (bgcolor semi-transparent)
+●	Use table.new() with these rows: Row 1: "HTF Bias" → Bullish / Bearish / Neutral Row 2: "Structure" → HH / LL / Ranging
+ Row 3: "Active OBs" → count of unfilled order blocks Row 4: "Last Signal" → BUY / SELL / None Row 5: "Session" → London / NY / Off-Session
+●	Color coding:
+○	Bullish/BUY/HH → #26A69A (teal)
+○	Bearish/SELL/LL → #EF5350 (coral)
+○	Neutral/Ranging/None → #78909C (gray)
+●	Update on every bar close
+●	Add input toggle: "Show Dashboard" (default: true)
+DESIGN RULES:
+●	Use bgcolor with transparency for glassmorphic look: color.new(#1A1A2E, 85)
+●	Border color: color.new(#FFFFFF, 90)
+●	Text: white, size.small
+●	Header row: slightly brighter background
+●	Keep code clean, commented, modular
+IMPORTANT:
+●	Maintain ALL existing indicator functionality
+●	Add these as new sections at the bottom of the code
+●	Use proper Pine Script v6 syntax
+●	Group all new inputs under "HTF & Dashboard" group Give me the COMPLETE additional code sections I need to add, with clear comments showing where to insert them.
