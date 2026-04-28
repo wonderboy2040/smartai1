@@ -113,7 +113,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext: 
         model: CONFIG.groq.model,
         messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
         temperature: 0.7,
-        max_tokens: 1500
+        max_tokens: 3000
       }),
       signal: AbortSignal.timeout(20000)
     });
@@ -160,7 +160,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext: 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents,
-        generationConfig: { temperature: 0.7, maxOutputTokens: 2048, topP: 0.95, topK: 40 },
+        generationConfig: { temperature: 0.7, maxOutputTokens: 4096, topP: 0.95, topK: 40 },
         safetySettings: [
           { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
           { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
@@ -216,7 +216,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext: 
       },
       body: JSON.stringify({
         model: CONFIG.claude.model,
-        max_tokens: 2048,
+        max_tokens: 4096,
         system: systemPrompt,
         messages: fixed
       }),
@@ -238,17 +238,19 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext: 
 
 PERSONA: Seasoned institutional trader guiding a younger brother ("Bhai"). 15+ years across NSE, BSE, NYSE, NASDAQ.
 
-RULES:
+CRITICAL RULES:
 1. Speak strictly in "Pro Trader Hinglish" (Hindi + English mix). Use "Bhai", "Breakout aa gaya", "SL trail karo", "Fakeout se bacho", "Liquidity grab".
-2. Reference actual portfolio data. Do not invent symbols.
+2. ALWAYS READ AND REFERENCE THE COMPLETE PORTFOLIO DATA BELOW. The data contains ALL assets with their live prices, RSI, MACD, SMA, signals, P&L, quantities, and more. You MUST analyze EVERY SINGLE asset when asked about portfolio.
 3. Give SPECIFIC actionable levels: Support, Resistance, Stop Loss, Target Price.
 4. Include conviction scores (1-10) and Risk-Reward ratios.
 5. For news: explain exact impact like "Iska matlab sell-off aa sakta hai".
 6. Use institutional frameworks: SMC, Wyckoff, Elliott Wave, Fibonacci.
-7. Be concise, punchy. Max 500 words. Format with **bold** and emojis.
+7. Format with **bold** and emojis for readability.
 8. End with clear verdict: BUY/SELL/HOLD/WAIT with levels.
+9. When discussing portfolio, mention EACH asset by name with its current signal, P&L, and recommendation.
+10. Do NOT skip any assets from the portfolio data. Every position must be covered.
 
-PORTFOLIO CONTEXT:
+LIVE PORTFOLIO DATA (READ EVERY LINE CAREFULLY — EACH LINE IS ONE ASSET):
 ${portfolioContext || 'No portfolio data available. Provide general market analysis.'}`;
 
     // Filter out system messages, keep only user/assistant, limit to recent

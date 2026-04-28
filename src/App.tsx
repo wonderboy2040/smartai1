@@ -30,6 +30,7 @@ import { TrimRules } from './components/TrimRules';
 import { QuantumPortfolio } from './components/QuantumPortfolio';
 import { QuantumSignals } from './components/QuantumSignals';
 import { SuperIntelligence } from './components/SuperIntelligence';
+import { MasterConclusion } from './components/MasterConclusion';
 
 
 /**
@@ -52,11 +53,11 @@ function mergePriceData(existing: PriceData | undefined, incoming: Partial<Price
   const tvExchange = incoming.tvExchange ?? existing?.tvExchange;
   const tvExactSymbol = incoming.tvExactSymbol ?? existing?.tvExactSymbol;
 
-  // Skip re-render if nothing meaningfully changed (price must differ > 0.01%)
+  // Skip re-render if nothing meaningfully changed (price must differ > 0.005%)
   if (
     existing &&
     price > 0 &&
-    Math.abs(existing.price - price) / price < 0.0001 &&
+    Math.abs(existing.price - price) / price < 0.00005 &&
     existing.change === change &&
     existing.rsi === rsi
   ) {
@@ -72,7 +73,7 @@ export default function App() {
   const [pinInput, setPinInput] = useState('');
 
   // Main State
-  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
+  const [activeTab, setActiveTab] = useState<TabType>('conclusion');
   const [portfolio, setPortfolio] = useState<Position[]>([]);
   const [livePrices, setLivePrices] = useState<Record<string, PriceData>>({});
   const [usdInrRate, setUsdInrRate] = useState(83.5);
@@ -226,10 +227,12 @@ export default function App() {
     });
   }, []);
 
-  // Flush batched WS ticks at 1fps (1000ms) for ultra-smooth UI without thread locking
+  // Flush batched WS ticks at 2fps (500ms) for ultra-fast real-time pricing
   useEffect(() => {
     if (!isAuthenticated || portfolio.length === 0) return;
-    priceFlushRef.current = window.setInterval(flushPricesToStorage, 1000);
+    priceFlushRef.current = window.setInterval(() => {
+      requestAnimationFrame(flushPricesToStorage);
+    }, 500);
     return () => {
       if (priceFlushRef.current) {
         clearInterval(priceFlushRef.current);
@@ -678,50 +681,65 @@ let statusCounter = 0;
     const keys = Object.keys(livePrices);
     if (keys.length === 0) return;
     priceUpdateCounterRef.current++;
-    // Trigger AI context regeneration every 15 price updates (roughly every ~30s at 2s batch interval)
-    if (priceUpdateCounterRef.current % 15 === 0) {
+    // Trigger AI context regeneration every 10 price updates (roughly every ~10s at 500ms batch interval)
+    if (priceUpdateCounterRef.current % 10 === 0) {
       setContextTrigger(prev => prev + 1);
     }
   }, [isAuthenticated, portfolio.length, livePrices]);
 
-  // Generate portfolio context text for NeuralChat AI with full live data
+  // Generate portfolio context text for NeuralChat AI with FULL live data for ALL assets
   useEffect(() => {
     if (portfolio.length === 0) return;
     const now = Date.now();
-    // Allow regeneration at minimum 15s intervals
-    if (now - lastContextGenRef.current < 15000) return;
+    // Allow regeneration at minimum 8s intervals
+    if (now - lastContextGenRef.current < 8000) return;
     lastContextGenRef.current = now;
 
-    // Build comprehensive context with ALL positions and live prices
+    // Build comprehensive context with ALL positions and live prices — NO truncation
     let ctx = `--- DEEP MIND QUANTUM LIVE SENSOR DATA ---\n`;
     const usVix = livePrices['US_VIX']?.price || 15;
     const inVix = livePrices['IN_INDIAVIX']?.price || 15;
+    const avgVixCtx = (usVix + inVix) / 2;
     ctx += `Timestamp: ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST\n`;
-    ctx += `US VIX: ${usVix.toFixed(1)} | India VIX: ${inVix.toFixed(1)}\n`;
+    ctx += `US VIX: ${usVix.toFixed(1)} | India VIX: ${inVix.toFixed(1)} | Avg: ${avgVixCtx.toFixed(1)}\n`;
+    ctx += `Market Regime: ${avgVixCtx > 22 ? 'BEARISH' : avgVixCtx > 16 ? 'VOLATILE' : 'BULLISH'}\n`;
     ctx += `USD/INR: ₹${usdInrRate.toFixed(2)}\n`;
     ctx += `Portfolio Value: ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n`;
     ctx += `Total P&L: ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(2)}%)\n`;
-    ctx += `Today P&L: ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')}\n\n`;
-    ctx += `PORTFOLIO POSITIONS + LIVE TECHNICALS:\n`;
+    ctx += `Today P&L: ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')}\n`;
+    ctx += `Total Assets: ${portfolio.length}\n\n`;
 
-    for (const p of portfolio) {
-        const key = `${p.market}_${p.symbol}`;
-        const data = livePrices[key];
-        const curPrice = data?.price || p.avgPrice;
-        const rsi = data?.rsi || 50;
-        const change = data?.change || 0;
-        const macd = data?.macd !== undefined ? data.macd.toFixed(2) : 'N/A';
-        const plPct = p.avgPrice > 0 ? ((curPrice - p.avgPrice) / p.avgPrice) * 100 : 0;
-        const cleanSym = p.symbol.replace('.NS', '');
+    // IMPORTANT: Include EVERY SINGLE portfolio asset — no slicing or truncation
+    ctx += `=== ALL ${portfolio.length} PORTFOLIO POSITIONS WITH LIVE TECHNICALS ===\n`;
 
-        const sig = analyzeAsset(p, data);
-        const atr = ((data?.high || curPrice) - (data?.low || curPrice)) || curPrice * 0.02;
+    for (let idx = 0; idx < portfolio.length; idx++) {
+      const p = portfolio[idx];
+      const key = `${p.market}_${p.symbol}`;
+      const data = livePrices[key];
+      const curPrice = data?.price || p.avgPrice;
+      const rsi = data?.rsi || 50;
+      const change = data?.change || 0;
+      const macd = data?.macd !== undefined ? data.macd.toFixed(2) : 'N/A';
+      const sma20 = data?.sma20 ? data.sma20.toFixed(1) : 'N/A';
+      const sma50 = data?.sma50 ? data.sma50.toFixed(1) : 'N/A';
+      const vol = data?.volume ? (data.volume > 1e6 ? `${(data.volume/1e6).toFixed(1)}M` : `${(data.volume/1e3).toFixed(0)}K`) : 'N/A';
+      const plPct = p.avgPrice > 0 ? ((curPrice - p.avgPrice) / p.avgPrice) * 100 : 0;
+      const cleanSym = p.symbol.replace('.NS', '');
+      const invested = p.avgPrice * p.qty;
+      const curVal = curPrice * p.qty;
+      const plAbs = curVal - invested;
+
+      const sig = analyzeAsset(p, data);
+      const atr = ((data?.high || curPrice) - (data?.low || curPrice)) || curPrice * 0.02;
       const slPrice = curPrice - atr * 1.5;
       const tpPrice = curPrice + atr * 2.5;
 
-      ctx += `${cleanSym}:Pr=${curPrice.toFixed(1)}|Chg=${change.toFixed(1)}%|RSI=${rsi.toFixed(0)}|MACD=${macd}|Sig=${sig.signal}|SL=${slPrice.toFixed(1)}|TP=${tpPrice.toFixed(1)}|Qty=${p.qty}|P&L=${plPct.toFixed(1)}%\n`;
+      // Trend direction
+      const trend = (data?.sma20 && data?.sma50) ? (data.sma20 > data.sma50 ? 'BULL' : 'BEAR') : (change > 0.5 ? 'BULL' : change < -0.5 ? 'BEAR' : 'FLAT');
+
+      ctx += `${idx+1}. ${cleanSym} [${p.market}] | Price=${curPrice.toFixed(2)} | Chg=${change >= 0 ? '+' : ''}${change.toFixed(2)}% | RSI=${rsi.toFixed(0)} | MACD=${macd} | SMA20=${sma20} | SMA50=${sma50} | Trend=${trend} | Vol=${vol} | Signal=${sig.signal} | Confidence=${sig.confidence}% | SL=${slPrice.toFixed(2)} | TP=${tpPrice.toFixed(2)} | AvgBuy=${p.avgPrice.toFixed(2)} | Qty=${p.qty} | Invested=${invested.toFixed(0)} | CurVal=${curVal.toFixed(0)} | P&L=${plPct >= 0 ? '+' : ''}${plPct.toFixed(2)}% (${plAbs >= 0 ? '+' : ''}${plAbs.toFixed(0)})\n`;
     }
-    ctx += `--- END SENSOR DATA ---\n`;
+    ctx += `=== END ALL ${portfolio.length} POSITIONS ===\n`;
 
     setPortfolioContextText(ctx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -937,16 +955,17 @@ let statusCounter = 0;
 
 {/* Tabs */}
 <div className="flex gap-0.5 glass-card p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
-  {(['dashboard', 'quantum', 'signals', 'intelligence', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
+  {(['conclusion', 'dashboard', 'quantum', 'signals', 'intelligence', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
     <button
       key={tab}
       onClick={() => setActiveTab(tab)}
       className={`tab-btn px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm transition-all whitespace-nowrap flex-shrink-0 ${activeTab === tab
-        ? 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+        ? tab === 'conclusion' ? 'tab-active bg-gradient-to-r from-purple-500/15 to-cyan-500/15 text-cyan-400 border border-cyan-500/30 shadow-[0_0_10px_rgba(6,182,212,0.15)]' : 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
         : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
         }`}
     >
       <span className="hidden sm:inline">
+        {tab === 'conclusion' && '🔮 Conclusion'}
         {tab === 'dashboard' && '📊 Dashboard'}
         {tab === 'quantum' && '⚛️ Quantum AI'}
         {tab === 'signals' && '🎯 Signals'}
@@ -958,6 +977,7 @@ let statusCounter = 0;
         {tab === 'trim' && '✂️ Trim Rules'}
       </span>
       <span className="sm:hidden">
+        {tab === 'conclusion' && '🔮'}
         {tab === 'dashboard' && '📊'}
         {tab === 'quantum' && '⚛️'}
         {tab === 'signals' && '🎯'}
@@ -1003,6 +1023,18 @@ let statusCounter = 0;
 </header>
 
       <main className="container mx-auto px-4 py-6">
+        {/* 🔮 Master Conclusion Tab — All strategies aggregated */}
+        {activeTab === 'conclusion' && (
+          <div className="space-y-5 animate-fade-in">
+            <MasterConclusion
+              portfolio={portfolio}
+              livePrices={livePrices}
+              usdInrRate={usdInrRate}
+              metrics={metrics}
+            />
+          </div>
+        )}
+
         {/* 🌅 Pre-Market Watch — Shows only in pre-market hours */}
         {activeTab === 'dashboard' && <PreMarketWatch />}
 
@@ -1339,7 +1371,7 @@ Live Signals
   portfolio={portfolio}
   onViewDetails={(symbol) => {
     quickSelect(symbol);
-    setActiveTab('super-ai');
+    setActiveTab('intelligence');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }}
 />
