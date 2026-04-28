@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { PriceData, Position } from '../types';
 import { analyzeAllSMC, getSessionStatus, SMCAnalysisResult } from '../utils/smcEngine';
+import { SMCMiniChart } from './SMCMiniChart';
 
 interface SMCProIndicatorProps {
   livePrices: Record<string, PriceData>;
@@ -17,7 +18,7 @@ export function SMCProIndicator({ livePrices, portfolio }: SMCProIndicatorProps)
 
   useEffect(() => {
     const now = Date.now();
-    if (!initialRef.current && now - lastComputeRef.current < 8000) return;
+    if (!initialRef.current && now - lastComputeRef.current < 12000) return;
     if (initialRef.current) { setIsLoading(true); initialRef.current = false; }
 
     const t = setTimeout(() => {
@@ -47,11 +48,14 @@ export function SMCProIndicator({ livePrices, portfolio }: SMCProIndicatorProps)
   const getBiasColor = (b: string) => b === 'Bullish' ? 'text-emerald-400' : b === 'Bearish' ? 'text-red-400' : 'text-slate-400';
   const getTrendBadge = (l: string) => l === 'Bullish' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : l === 'Bearish' ? 'bg-red-500/10 text-red-400 border-red-500/20' : l === 'Ranging' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-slate-500/10 text-slate-400 border-slate-500/20';
 
-  const filtered = filterSignal === 'ALL' ? results : results.filter(r => {
-    if (filterSignal === 'BUY') return r.signal.signal.includes('BUY');
-    if (filterSignal === 'SELL') return r.signal.signal.includes('SELL');
-    return r.signal.signal === 'HOLD';
-  });
+  const filtered = useMemo(() => {
+    if (filterSignal === 'ALL') return results;
+    return results.filter(r => {
+      if (filterSignal === 'BUY') return r.signal.signal.includes('BUY');
+      if (filterSignal === 'SELL') return r.signal.signal.includes('SELL');
+      return r.signal.signal === 'HOLD';
+    });
+  }, [results, filterSignal]);
 
   const buyCount = results.filter(r => r.signal.signal.includes('BUY')).length;
   const sellCount = results.filter(r => r.signal.signal.includes('SELL')).length;
@@ -220,6 +224,11 @@ export function SMCProIndicator({ livePrices, portfolio }: SMCProIndicatorProps)
                     </div>
                     <span className="text-cyan-400 font-bold">R:R {r.levels.riskReward.toFixed(1)}</span>
                   </div>
+                </div>
+
+                {/* Mini Candlestick Chart */}
+                <div className="px-5 pb-3">
+                  <SMCMiniChart result={r} />
                 </div>
 
                 {/* Expanded Details */}
