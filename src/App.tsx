@@ -227,12 +227,12 @@ export default function App() {
     });
   }, []);
 
-  // Flush batched WS ticks at 2fps (500ms) for ultra-fast real-time pricing
+  // Flush batched WS ticks at 1fps (1000ms) with RAF for smooth, lag-free real-time pricing
   useEffect(() => {
     if (!isAuthenticated || portfolio.length === 0) return;
     priceFlushRef.current = window.setInterval(() => {
       requestAnimationFrame(flushPricesToStorage);
-    }, 500);
+    }, 1000);
     return () => {
       if (priceFlushRef.current) {
         clearInterval(priceFlushRef.current);

@@ -30,7 +30,7 @@ export function MasterConclusion({ portfolio, livePrices, usdInrRate, metrics }:
 
   useEffect(() => {
     const now = Date.now();
-    const shouldCompute = initialLoadRef.current || (now - lastComputeRef.current > 8000);
+    const shouldCompute = initialLoadRef.current || (now - lastComputeRef.current > 15000);
     if (!shouldCompute) return;
 
     if (initialLoadRef.current) {
@@ -46,19 +46,21 @@ export function MasterConclusion({ portfolio, livePrices, usdInrRate, metrics }:
     }, isLoading ? 600 : 100);
 
     return () => clearTimeout(timeout);
-  }, [portfolio, livePrices, usdInrRate, metrics]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portfolio, usdInrRate]);
 
-  // Separate throttled update for live prices
+  // Separate throttled update for live prices — heavy computation, run max every 15s
   useEffect(() => {
     if (initialLoadRef.current) return;
     const now = Date.now();
-    if (now - lastComputeRef.current < 8000) return;
+    if (now - lastComputeRef.current < 15000) return;
     const timeout = setTimeout(() => {
       const result = generateMasterConclusion(portfolio, livePrices, usdInrRate, metrics);
       setData(result);
       lastComputeRef.current = Date.now();
-    }, 200);
+    }, 300);
     return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [livePrices]);
 
   if (isLoading || !data) {

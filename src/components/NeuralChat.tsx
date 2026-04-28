@@ -49,7 +49,7 @@ export interface NeuralChatProps {
   onTelegramPush?: () => void;
 }
 
-export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext: _portfolioContext, onTelegramPush: _onTelegramPush }: NeuralChatProps) => {
+export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
     text: '🧠 **DEEP MIND AI — Pro Trading Assistant**\n\n**Active AI Engines:**\n⚡ **Groq Llama-3.3**: Ultra-fast responses\n🔵 **Google Gemini 2.0**: Real-time market intelligence\n🟣 **Claude Sonnet**: Deep analysis & strategies\n\nAsk anything about markets, portfolio, or trading!',
