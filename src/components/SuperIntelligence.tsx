@@ -1,12 +1,6 @@
-<<<<<<< HEAD
-import { useState, useEffect } from 'react';
-import { PriceData } from '../types';
-import { PredictionEngine } from '../utils/mlPrediction';
-=======
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { PriceData, Position } from '../types';
-import { PredictionEngine, TechnicalIndicators } from '../utils/mlPrediction';
->>>>>>> 9ea771916bb553c404143bbf5d3de85b77238d03
+import { PredictionEngine } from '../utils/mlPrediction';
 
 interface SuperIntelligenceProps {
   livePrices: Record<string, PriceData>;

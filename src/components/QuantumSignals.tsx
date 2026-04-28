@@ -1,16 +1,8 @@
-<<<<<<< HEAD
-import { useState, useEffect } from 'react';
-import { PriceData } from '../types';
-import { 
-  detectRegime, 
-  scanMeanReversion, 
-=======
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { PriceData, Position } from '../types';
 import {
   detectRegime,
   scanMeanReversion,
->>>>>>> 9ea771916bb553c404143bbf5d3de85b77238d03
   calculateMomentumScore,
   PredictionEngine
 } from '../utils/mlPrediction';
@@ -123,11 +115,7 @@ export function QuantumSignals({ livePrices, portfolio, onViewDetails }: Quantum
         effectiveData.volume || 0
       );
 
-<<<<<<< HEAD
-      const _prediction = PredictionEngine.predictPrice(priceHistory, data.price, data, 7);
-=======
-      const prediction = PredictionEngine.predictPrice(priceHistory, effectiveData.price, effectiveData, 7);
->>>>>>> 9ea771916bb553c404143bbf5d3de85b77238d03
+      const _prediction = PredictionEngine.predictPrice(priceHistory, effectiveData.price, effectiveData as any, 7);
 
       let signal: SignalData['signal'] = 'HOLD';
       let confidence = 50;
@@ -164,11 +152,7 @@ export function QuantumSignals({ livePrices, portfolio, onViewDetails }: Quantum
         reasoning.push(`Mean reversion probability: ${meanRev.probability}%`);
       }
 
-<<<<<<< HEAD
-      const _atr = ((data.high || data.price) - (data.low || data.price)) || data.price * 0.02;
-=======
-      const atr = ((effectiveData.high || effectiveData.price) - (effectiveData.low || effectiveData.price)) || effectiveData.price * 0.02;
->>>>>>> 9ea771916bb553c404143bbf5d3de85b77238d03
+      const _atr = ((effectiveData.high || effectiveData.price) - (effectiveData.low || effectiveData.price)) || effectiveData.price * 0.02;
       const quantumScore = Math.round(
         (momentum.score * 0.4) +
         ((100 - Math.abs(effectiveData.change || 0) * 10) * 0.3) +
