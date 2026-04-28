@@ -1361,43 +1361,6 @@ export default function App() {
         {/* SMC Pro Indicator Tab */}
         {activeTab === 'smc' && (
           <div className="space-y-5 animate-fade-in">
-            <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-black gradient-text-cyan font-display">🏦 SMC Pro Indicator</h2>
-              <div className="flex items-center gap-2">
-                <span className="badge bg-purple-500/10 text-purple-400 border border-purple-500/20 text-xs">
-                  Smart Money Concepts
-                </span>
-              </div>
-            </div>
-
-            {/* TradingView Live Chart */}
-            <div className="glass-card rounded-2xl overflow-hidden border border-cyan-500/20" style={{ height: 480 }}>
-              <div className="tradingview-widget-container" style={{ height: '100%', width: '100%' }}>
-                <div className="tradingview-widget-container__widget" style={{ height: '100%', width: '100%' }} ref={(el) => {
-                  if (!el || el.querySelector('script')) return;
-                  const script = document.createElement('script');
-                  script.type = 'text/javascript';
-                  script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
-                  script.async = true;
-                  script.innerHTML = JSON.stringify({
-                    autosize: true,
-                    symbol: currentMarket === 'IN' ? `NSE:${currentSymbol}` : `NASDAQ:${currentSymbol}`,
-                    interval: 'D',
-                    timezone: 'Asia/Kolkata',
-                    theme: 'dark',
-                    style: '1',
-                    locale: 'en',
-                    enable_publishing: false,
-                    allow_symbol_change: true,
-                    calendar: false,
-                    studies: ['STD;RSI', 'STD;MACD', 'STD;EMA'],
-                    support_host: 'https://www.tradingview.com'
-                  });
-                  el.appendChild(script);
-                }} />
-              </div>
-            </div>
-
             <SMCProIndicator
               livePrices={livePrices}
               portfolio={portfolio}
