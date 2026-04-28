@@ -1,4 +1,4 @@
-import { PriceData } from '../types';
+
 
 export type AIModel = 'gemini' | 'deepseek' | 'groq';
 

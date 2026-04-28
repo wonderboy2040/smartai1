@@ -49,7 +49,7 @@ export interface NeuralChatProps {
   onTelegramPush?: () => void;
 }
 
-export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, onTelegramPush }: NeuralChatProps) => {
+export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, onTelegramPush: _onTelegramPush }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
     text: '🧠 **DEEP MIND AI — Pro Trading Assistant**\n\n**Active AI Engines:**\n⚡ **Groq Llama-3.3**: Ultra-fast responses\n🔵 **Google Gemini 2.0**: Real-time market intelligence\n🟣 **Claude Sonnet**: Deep analysis & strategies\n\nAsk anything about markets, portfolio, or trading!',
@@ -233,7 +233,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
   };
 
   // ============ MAIN AI ROUTER — Advanced Fallback Chain ============
-  const callAI = async (userMessage: string, model: string) => {
+  const callAI = async (_userMessage: string, model: string) => {
     const systemPrompt = `You are DEEP MIND AI — Elite Pro Trading Intelligence for Indian & US markets.
 
 PERSONA: Seasoned institutional trader guiding a younger brother ("Bhai"). 15+ years across NSE, BSE, NYSE, NASDAQ.

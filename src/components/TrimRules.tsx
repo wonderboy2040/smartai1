@@ -5,6 +5,7 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { PriceData } from '../types';
+import { batchFetchPrices } from '../utils/api';
 
 // ============================================
 // INTERFACES

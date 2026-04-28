@@ -191,9 +191,8 @@ export class QuantumPredictor {
       predictedPrice: Math.round(ensemble * 100) / 100,
       confidence: Math.round(winProbability),
       timeframe: '1d',
-    direction,
-    direction,
-      models {
+      direction,
+      models: {
         lstm: Math.round(lstmPred * 100) / 100,
         transformer: Math.round(transformerPred * 100) / 100,
         xgboost: Math.round(xgboostPred * 100) / 100,

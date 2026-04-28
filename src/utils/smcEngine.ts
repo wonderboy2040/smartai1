@@ -348,7 +348,7 @@ export function kalmanFilter(
   prevK: number | null,
   alpha: number = 0.01,
   beta: number = 0.1,
-  period: number = 77
+  _period: number = 77
 ): number {
   if (prevK === null) return price;
   const v3 = alpha * beta;
@@ -365,8 +365,8 @@ export function calculateTrendFilter(
   rsi: number,
   sma20: number,
   sma50: number,
-  change: number,
-  volume: number
+  _change: number,
+  _volume: number
 ): TrendFilterResult {
   // Simplified Kalman using exponential smoothing
   const alpha = 0.15;
@@ -513,7 +513,7 @@ export function generateSMCSignal(
 
   // Determine signal
   const netScore = bullScore - bearScore;
-  const totalConfluence = bullScore + bearScore;
+
   const confidence = Math.min(98, Math.max(20, 50 + Math.abs(netScore)));
 
   let signal: SMCSignal['signal'] = 'HOLD';

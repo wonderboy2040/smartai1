@@ -21,13 +21,8 @@ import { AlertManager, detectSmartMoney } from './utils/alertManager';
 import { getBatchInterval } from './utils/api';
 import { NeuralChat } from './components/NeuralChat';
 import { Clock } from './components/Clock';
-import { MarketHUD } from './components/MarketHUD';
 import { PreMarketWatch } from './components/PreMarketWatch';
-import { SentimentHeatmap } from './components/SentimentHeatmap';
-import { MLPricePredictor } from './components/MLPricePredictor';
-import { FIIDIILiveTracker } from './components/FIIDIILiveTracker';
 import { TrimRules } from './components/TrimRules';
-import { QuantumPortfolio } from './components/QuantumPortfolio';
 import { QuantumSignals } from './components/QuantumSignals';
 import { SuperIntelligence } from './components/SuperIntelligence';
 import { MasterConclusion } from './components/MasterConclusion';
@@ -1346,15 +1341,48 @@ let statusCounter = 0;
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-black gradient-text-cyan font-display">⚛️ Quantum AI Dashboard</h2>
           </div>
-          <QuantumPortfolio 
-            portfolio={portfolio}
-            livePrices={livePrices}
-            usdInrRate={usdInrRate}
-            totalValue={metrics.totalValue}
-            totalPL={metrics.totalPL}
-            plPct={metrics.plPct}
-            todayPL={metrics.todayPL}
-          />
+          <div className="glass-card rounded-2xl p-6 border border-cyan-500/20">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+              <div className="bg-black/20 rounded-xl p-4">
+                <div className="text-[10px] text-slate-500 uppercase">Portfolio Value</div>
+                <div className="text-xl font-black text-white font-mono mt-1">₹{Math.round(metrics.totalValue).toLocaleString('en-IN')}</div>
+              </div>
+              <div className="bg-black/20 rounded-xl p-4">
+                <div className="text-[10px] text-slate-500 uppercase">Total P&L</div>
+                <div className={`text-xl font-black font-mono mt-1 ${metrics.totalPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{metrics.totalPL >= 0 ? '+' : ''}₹{Math.round(metrics.totalPL).toLocaleString('en-IN')}</div>
+              </div>
+              <div className="bg-black/20 rounded-xl p-4">
+                <div className="text-[10px] text-slate-500 uppercase">P&L %</div>
+                <div className={`text-xl font-black font-mono mt-1 ${metrics.plPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{metrics.plPct >= 0 ? '+' : ''}{metrics.plPct.toFixed(2)}%</div>
+              </div>
+              <div className="bg-black/20 rounded-xl p-4">
+                <div className="text-[10px] text-slate-500 uppercase">Today P&L</div>
+                <div className={`text-xl font-black font-mono mt-1 ${metrics.todayPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{metrics.todayPL >= 0 ? '+' : ''}₹{Math.round(metrics.todayPL).toLocaleString('en-IN')}</div>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {portfolio.map(p => {
+                const key = `${p.market}_${p.symbol}`;
+                const d = livePrices[key];
+                const cur = p.market === 'IN' ? '₹' : '$';
+                const pl = d ? (d.price - p.avgPrice) * p.qty * (p.market === 'US' ? usdInrRate : 1) : 0;
+                return (
+                  <div key={p.id} className={`bg-black/20 rounded-xl p-3 border ${pl >= 0 ? 'border-emerald-500/15' : 'border-red-500/15'}`}>
+                    <div className="flex justify-between items-center">
+                      <span className="font-bold text-white text-sm">{p.symbol.replace('.NS','')}</span>
+                      <span className={`text-xs font-bold ${pl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{pl >= 0 ? '+' : ''}₹{Math.round(pl).toLocaleString('en-IN')}</span>
+                    </div>
+                    <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                      <span>{cur}{(d?.price || p.avgPrice).toFixed(2)}</span>
+                      <span>RSI: {(d?.rsi || 50).toFixed(0)}</span>
+                      <span className={`${(d?.change || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{(d?.change || 0) >= 0 ? '+' : ''}{(d?.change || 0).toFixed(2)}%</span>
+                    </div>
+                  </div>
+                );
+              })}
+              {portfolio.length === 0 && <div className="col-span-3 text-center text-slate-600 py-8">No assets in portfolio</div>}
+            </div>
+          </div>
         </div>
       )}
 
@@ -2153,26 +2181,7 @@ portfolio={portfolio}
             {/* Pre-Market Watch — Always visible in Tools */}
             <PreMarketWatch alwaysShow />
 
-            {/* FII/DII Live Tracker */}
-            <FIIDIILiveTracker />
 
-            {/* Sentiment Heatmap */}
-            <SentimentHeatmap
-              portfolio={portfolio}
-              livePrices={livePrices}
-              totalValue={metrics.totalValue}
-              usdInrRate={usdInrRate}
-              onSelect={(sym) => { quickSelect(sym); setActiveTab('dashboard'); }}
-              currentSymbol={currentSymbol}
-            />
-
-            {/* ML Price Predictor */}
-            <MLPricePredictor
-              symbol={currentSymbol || (portfolio[0]?.symbol ?? '')}
-              market={currentMarket}
-              data={livePrices[`${currentMarket}_${currentSymbol}`]}
-              usdInrRate={usdInrRate}
-            />
           </div>
         </main>
       )}
@@ -2260,8 +2269,7 @@ portfolio={portfolio}
   onTelegramPush={pushTelegramReport}
 />
 
-      {/* ⚡ Market HUD Overlay */}
-      <MarketHUD wsLatency={wsLatency} liveStatus={liveStatus} />
+
     </div>
   );
 }
