@@ -88,13 +88,8 @@ function isUSPreMarket(): boolean {
   return m >= 240 && m < 570;
 }
 
-function _isMarketOpen(): boolean {
-  const ist = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-  const d = ist.getDay();
-  if (d === 0 || d === 6) return false;
-  const m = ist.getHours() * 60 + ist.getMinutes();
-  return m >= 555 && m <= 930;
-}
+
+
 
 interface VerdictResult {
   direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';

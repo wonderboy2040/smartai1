@@ -567,7 +567,7 @@ portfolio.slice(0, 5).forEach(p => {
 const key = `${p.market}_${p.symbol}`;
 const data = livePrices[key];
 const rsi = data?.rsi || 50;
-const _change = data?.change || 0;
+// change available via data?.change
 
 msg += `\n📌 **${p.symbol}**:\n`;
 msg += `Current: ${p.market === 'IN' ? '₹' : '$'}${data?.price || p.avgPrice} | RSI: ${rsi.toFixed(0)}\n`;
@@ -602,13 +602,11 @@ msg += avgVix > 18 ? `⚠️ Fear dominant - defensive stance` : `✅ Greed mode
 return msg;
 }
 
-function generateFundamentalReport(portfolio: Position[], livePrices: Record<string, PriceData>): string {
+function generateFundamentalReport(portfolio: Position[], _livePrices: Record<string, PriceData>): string {
 let msg = `📊 **FUNDAMENTAL ANALYSIS**\n`;
 msg += `━━━━━━━━━━━━━━━━━━━━\n`;
 
 portfolio.slice(0, 3).forEach(p => {
-const key = `${p.market}_${p.symbol}`;
-const data = livePrices[key];
 const pe = 22 + Math.random() * 8 - 4; // Simulated
 const pb = 3 + Math.random() * 2 - 1;
 
