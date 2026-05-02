@@ -1,6 +1,5 @@
 import { Position, PriceData } from '../types';
 import { ALPHA_ETFS_IN, ALPHA_ETFS_US, getAssetCagrProxy } from './constants';
-import { analyzeAllSMC } from './smcEngine';
 
 // ========================================
 // MARKET HOURS CHECK
@@ -439,9 +438,7 @@ return generateStreakReport(livePrices);
 if (q.startsWith('/forex')) {
 return generateForexReport(livePrices);
 }
-if (q.startsWith('/smc')) {
-  return generateSMCReport(portfolio, livePrices);
-}
+
 if (q.startsWith('/trim')) {
 return generateTrimLogicReport(portfolio, livePrices);
 }
@@ -790,7 +787,7 @@ msg += `/streak - Streak analysis\n`;
 msg += `/options - Options analysis\n`;
 msg += `/fundamentals - Fundamental data\n`;
 msg += `/news - Market news\n`;
-msg += `/smc - SMC Pro Indicator analysis\n`;
+
 msg += `/clear - Clear chat history\n`;
 
 return msg;
@@ -882,53 +879,3 @@ function generateClearMessage(): string {
   return `🧹 **Chat history cleared!**\nStarting fresh conversation.`;
 }
 
-// ========================================
-// SMC PRO INDICATOR REPORT
-// ========================================
-function generateSMCReport(portfolio: Position[], livePrices: Record<string, PriceData>): string {
-  const positions = portfolio.length > 0 ? portfolio : [
-    'IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA'
-  ].map(s => {
-    const [m, sym] = s.split('_') as ['IN' | 'US', string];
-    return { id: s, symbol: sym, market: m, qty: 1, avgPrice: livePrices[s]?.price || 100, leverage: 1, dateAdded: '' };
-  });
-
-  const results = analyzeAllSMC(positions, livePrices);
-  if (results.length === 0) return '🏦 **SMC Pro:** No data available.';
-
-  let msg = `🏦 **SMC PRO INDICATOR**\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `📊 Analyzing ${results.length} assets with Smart Money Concepts\n\n`;
-
-  // Summary
-  const buys = results.filter(r => r.signal.signal.includes('BUY'));
-  const sells = results.filter(r => r.signal.signal.includes('SELL'));
-  const avgScore = Math.round(results.reduce((s, r) => s + r.smcScore, 0) / results.length);
-
-  msg += `📈 Buy Signals: ${buys.length} | 📉 Sell Signals: ${sells.length}\n`;
-  msg += `🎯 Avg SMC Score: ${avgScore}/100\n\n`;
-
-  results.forEach(r => {
-    const cur = r.market === 'IN' ? '₹' : '$';
-    const sigEmoji = r.signal.signal.includes('BUY') ? '🟢' : r.signal.signal.includes('SELL') ? '🔴' : '🟡';
-    const trendEmoji = r.structure.trendBias === 1 ? '📈' : r.structure.trendBias === -1 ? '📉' : '➡️';
-
-    msg += `${sigEmoji} **${r.symbol}** [${r.market}] — ${r.signal.signal.replace('_', ' ')}\n`;
-    msg += `  Price: ${cur}${r.price.toFixed(2)} (${r.change >= 0 ? '+' : ''}${r.change.toFixed(2)}%)\n`;
-    msg += `  ${trendEmoji} Structure: ${r.structure.lastHighType}/${r.structure.lastLowType} | Bias: ${r.htfBias}\n`;
-    msg += `  🎯 Entry: ${cur}${r.levels.entry.toFixed(2)} | SL: ${cur}${r.levels.stopLoss.toFixed(2)} | TP: ${cur}${r.levels.takeProfit.toFixed(2)}\n`;
-    msg += `  📊 R:R ${r.levels.riskReward.toFixed(1)} | Score: ${r.smcScore} | Conf: ${r.signal.confidence}%\n`;
-
-    if (r.hasBOS) msg += `  ⚡ BOS: ${r.bosType} detected\n`;
-    if (r.hasCHoCH) msg += `  🔄 CHoCH: ${r.chochType} — trend reversal\n`;
-    if (r.bullSweep) msg += `  🐂 Bullish liquidity sweep detected\n`;
-    if (r.bearSweep) msg += `  🐻 Bearish liquidity sweep detected\n`;
-    msg += `  OB: ${r.orderBlocks.length} active | FVG: ${r.fvgs.length} gaps\n`;
-    msg += `\n`;
-  });
-
-  msg += `💡 **Legend:** BOS=Break of Structure, CHoCH=Change of Character\n`;
-  msg += `📊 Based on SMC, Kalman Filter, Fibonacci, Order Flow`;
-
-  return msg;
-}

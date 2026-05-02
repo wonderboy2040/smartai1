@@ -16,13 +16,12 @@ import {
   getSmartAllocations, generateDeepAnalysis
 } from './utils/telegram';
 import { calculateVaR, runStressTests, analyzeConcentrationRisk } from './utils/riskEngine';
-import { AnomalyDetector } from './utils/mlPrediction';
-import { AlertManager, detectSmartMoney } from './utils/alertManager';
+
 import { getBatchInterval } from './utils/api';
 import { NeuralChat } from './components/NeuralChat';
 import { Clock } from './components/Clock';
 import { TrimRules } from './components/TrimRules';
-import { MasterConclusion } from './components/MasterConclusion';
+
 
 
 /**
@@ -65,7 +64,7 @@ export default function App() {
   const [pinInput, setPinInput] = useState('');
 
   // Main State
-  const [activeTab, setActiveTab] = useState<TabType>('conclusion');
+  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [portfolio, setPortfolio] = useState<Position[]>([]);
   const [livePrices, setLivePrices] = useState<Record<string, PriceData>>({});
   const [usdInrRate, setUsdInrRate] = useState(83.5);
@@ -117,13 +116,12 @@ export default function App() {
   const telegramIntervalRef = useRef<number | null>(null);
   const forexIntervalRef = useRef<number | null>(null);
   // 🔧 Anomaly detector throttle — prevents per-tick re-render
-  const lastAnomalyCheckRef = useRef(0);
+
 
   // Advanced features state
   const [wsLatency, setWsLatency] = useState<{ avg: number; heartbeat: number }>({ avg: 45, heartbeat: 15000 });
   const [portfolioContextText, setPortfolioContextText] = useState<string>('');
-  const alertManagerRef = useRef<AlertManager>(new AlertManager());
-  const anomalyDetectorRef = useRef<AnomalyDetector>(new AnomalyDetector());
+
   const lastContextGenRef = useRef(0);
 
 
@@ -774,34 +772,7 @@ export default function App() {
   }, [isAuthenticated]);
 
   // Detect anomalies on price changes — THROTTLED to every 3s
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    const now = Date.now();
-    if (now - lastAnomalyCheckRef.current < 3000) return; // 🔧 Throttle
-    lastAnomalyCheckRef.current = now;
-    const anomalyManager = anomalyDetectorRef.current;
-    const keys = Object.keys(livePrices).slice(-20);
-    for (const key of keys) {
-      const data = livePrices[key];
-      if (data?.price) {
-        anomalyManager.update(key, data.price);
-        const result = anomalyManager.isAnomalous(key);
-        const symbol = key.replace('IN_', '').replace('US_', '');
-        if (result.anomalous) {
-          alertManagerRef.current.processPriceData(symbol, data);
-        }
-        if (data?.volume) {
-          const smartMoney = detectSmartMoney(symbol, data.volume, data.change);
-          if (smartMoney) {
-            alertManagerRef.current.processPriceData(symbol, {
-              ...data,
-              message: `Smart money ${smartMoney.type} detected (${(smartMoney.volume / 1000000).toFixed(1)}M volume)`
-            });
-          }
-        }
-      }
-    }
-  }, [isAuthenticated, livePrices]);
+
 
   // VIX based sentiment
   const usVix = livePrices['US_VIX']?.price || 15;
@@ -947,17 +918,16 @@ export default function App() {
 
             {/* Tabs */}
             <div className="flex gap-0.5 glass-card p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
-              {(['conclusion', 'dashboard', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
+              {(['dashboard', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
                   className={`tab-btn px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm transition-all whitespace-nowrap flex-shrink-0 ${activeTab === tab
-                    ? tab === 'conclusion' ? 'tab-active bg-gradient-to-r from-purple-500/15 to-cyan-500/15 text-cyan-400 border border-cyan-500/30 shadow-[0_0_10px_rgba(6,182,212,0.15)]' : 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+                    ? 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
                     : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
                     }`}
                 >
                   <span className="hidden sm:inline">
-                    {tab === 'conclusion' && '🔮 Conclusion'}
                     {tab === 'dashboard' && '📊 Dashboard'}
                     {tab === 'portfolio' && '💼 Portfolio'}
                     {tab === 'planner' && '🎯 Planner'}
@@ -966,7 +936,6 @@ export default function App() {
                     {tab === 'trim' && '✂️ Trim Rules'}
                   </span>
                   <span className="sm:hidden">
-                    {tab === 'conclusion' && '🔮'}
                     {tab === 'dashboard' && '📊'}
                     {tab === 'portfolio' && '💼'}
                     {tab === 'planner' && '🎯'}
@@ -1009,17 +978,7 @@ export default function App() {
       </header>
 
       <main className="container mx-auto px-4 py-6">
-        {/* 🔮 Master Conclusion Tab — All strategies aggregated */}
-        {activeTab === 'conclusion' && (
-          <div className="space-y-5 animate-fade-in">
-            <MasterConclusion
-              portfolio={portfolio}
-              livePrices={livePrices}
-              usdInrRate={usdInrRate}
-              metrics={metrics}
-            />
-          </div>
-        )}
+
 
         {/* 🌅 Pre-Market Watch — Shows only in pre-market hours */}
 
