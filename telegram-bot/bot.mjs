@@ -11,13 +11,15 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY } from './config.mjs';
-import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen } from './market.mjs';
+import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
 import { loadPortfolioFromCloud, loadGroqKeyFromCloud, saveGroqKeyToCloud } from './cloud.mjs';
 import {
   generatePortfolioReport, generateMarketReport, generateSignalsReport,
   generateAllocationReport, generateRiskReport, generateAutoReport,
   generateForexReport, calculateMetrics, generateScanReport,
-  generateHeatmapReport, generateCompareReport, analyzeAsset
+  generateHeatmapReport, generateCompareReport, analyzeAsset,
+  generateLiveReport, generateCryptoReport, generateSIPReport,
+  generateETFReport, generateDigestReport, generateFIIDIIReport, generateIPOReport
 } from './analysis.mjs';
 import { chatWithAI, clearChatHistory } from './ai-chat.mjs';
 
@@ -1430,6 +1432,126 @@ cron.schedule('35 13 * * 1-5', async () => {
   await safeSend(TG_CHAT_ID, msg);
 });
 
+// ========================================
+// /live — Real-Time Market Sensor (ALL data)
+// ========================================
+bot.onText(/^\/live(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  await safeSend(msg.chat.id, '📡 <b>Fetching live sensor data...</b>', { parse_mode: 'HTML' });
+  try {
+    const [intel, cryptos, bonds] = await Promise.allSettled([
+      fetchMarketIntelligence(),
+      fetchCryptoPrices(),
+      fetchBondYields()
+    ]);
+    const report = generateLiveReport(
+      intel.status === 'fulfilled' ? intel.value : null,
+      cryptos.status === 'fulfilled' ? cryptos.value : [],
+      bonds.status === 'fulfilled' ? bonds.value : [],
+      usdInrRate
+    );
+    await safeSend(msg.chat.id, report);
+  } catch (e) {
+    await safeSend(msg.chat.id, `❌ Error: ${e.message}`);
+  }
+});
+
+// ========================================
+// /crypto — Crypto Market Report
+// ========================================
+bot.onText(/^\/crypto(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  await safeSend(msg.chat.id, '🪙 <b>Fetching crypto prices...</b>', { parse_mode: 'HTML' });
+  try {
+    const cryptos = await fetchCryptoPrices();
+    const report = generateCryptoReport(cryptos, usdInrRate);
+    await safeSend(msg.chat.id, report);
+  } catch (e) {
+    await safeSend(msg.chat.id, `❌ Error: ${e.message}`);
+  }
+});
+
+// ========================================
+// /sip — SIP Calculator
+// ========================================
+bot.onText(/^\/sip(?:@\w+)?(?:\s+(\d+))?$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
+  const amount = parseInt(match?.[1]) || 10000;
+  const report = generateSIPReport(amount);
+  await safeSend(msg.chat.id, report);
+});
+
+// ========================================
+// /etf — ETF Portfolio Analysis
+// ========================================
+bot.onText(/^\/etf(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  await refreshPrices();
+  const report = generateETFReport(portfolio, livePrices, usdInrRate);
+  await safeSend(msg.chat.id, report);
+});
+
+// ========================================
+// /digest — Daily Market Digest
+// ========================================
+bot.onText(/^\/digest(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  await safeSend(msg.chat.id, '🌅 <b>Generating daily digest...</b>', { parse_mode: 'HTML' });
+  try {
+    await refreshPrices();
+    const [intel, cryptos, bonds] = await Promise.allSettled([
+      fetchMarketIntelligence(),
+      fetchCryptoPrices(),
+      fetchBondYields()
+    ]);
+    const report = generateDigestReport(
+      intel.status === 'fulfilled' ? intel.value : null,
+      cryptos.status === 'fulfilled' ? cryptos.value : [],
+      bonds.status === 'fulfilled' ? bonds.value : [],
+      usdInrRate, portfolio, livePrices
+    );
+    await safeSend(msg.chat.id, report);
+  } catch (e) {
+    await safeSend(msg.chat.id, `❌ Error: ${e.message}`);
+  }
+});
+
+// ========================================
+// /fiidii — FII/DII Flow Tracker
+// ========================================
+bot.onText(/^\/(fiidii|fii|dii)(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  await safeSend(msg.chat.id, '🏛️ <b>Fetching FII/DII flows...</b>', { parse_mode: 'HTML' });
+  try {
+    const { TAVILY_API_KEY } = await import('./config.mjs');
+    const fiiData = await fetchFIIDIIData(TAVILY_API_KEY);
+    const report = generateFIIDIIReport(fiiData);
+    await safeSend(msg.chat.id, report);
+  } catch (e) {
+    await safeSend(msg.chat.id, `❌ Error: ${e.message}`);
+  }
+});
+
+// ========================================
+// /ipo — IPO Tracker
+// ========================================
+bot.onText(/^\/ipo(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  await safeSend(msg.chat.id, '🚀 <b>Fetching IPO data...</b>', { parse_mode: 'HTML' });
+  try {
+    const { TAVILY_API_KEY } = await import('./config.mjs');
+    const ipoData = await fetchIPOData(TAVILY_API_KEY);
+    const report = generateIPOReport(ipoData);
+    await safeSend(msg.chat.id, report);
+  } catch (e) {
+    await safeSend(msg.chat.id, `❌ Error: ${e.message}`);
+  }
+});
+
+// ========================================
+// CRON JOBS — Scheduled Automation
+// ========================================
+
 // Regular market hours scan: every 30 minutes (at :00 and :30)
 cron.schedule('0,30 * * * *', async () => {
   if (!autoAlerts || portfolio.length === 0) return;
@@ -1459,6 +1581,89 @@ cron.schedule('*/5 * * * *', async () => {
     msg += `\n\n💎 <i>Deep Mind AI Auto Alert</i>`;
     await safeSend(TG_CHAT_ID, msg);
     console.log(`🚨 VIX spike alert sent: US ${spike.usChange.toFixed(1)}%, IN ${spike.inChange.toFixed(1)}%`);
+  }
+});
+
+// 🌅 8:00 AM IST Daily Digest — Morning Brief
+cron.schedule('30 2 * * 1-5', async () => {
+  // 2:30 UTC = 8:00 AM IST
+  console.log(`🌅 Daily Digest triggered at ${getISTTime()} IST`);
+  try {
+    await refreshPrices();
+    const [intel, cryptos, bonds] = await Promise.allSettled([
+      fetchMarketIntelligence(),
+      fetchCryptoPrices(),
+      fetchBondYields()
+    ]);
+    const report = generateDigestReport(
+      intel.status === 'fulfilled' ? intel.value : null,
+      cryptos.status === 'fulfilled' ? cryptos.value : [],
+      bonds.status === 'fulfilled' ? bonds.value : [],
+      usdInrRate, portfolio, livePrices
+    );
+    await safeSend(TG_CHAT_ID, report);
+    console.log('🌅 Daily digest sent successfully');
+  } catch (e) {
+    console.error('🌅 Daily digest failed:', e.message);
+  }
+});
+
+// 📊 9:00 AM IST Pre-Market Alert (15 min before India open)
+cron.schedule('30 3 * * 1-5', async () => {
+  // 3:30 UTC = 9:00 AM IST
+  if (!autoAlerts) return;
+  try {
+    await refreshPrices();
+    const intel = await fetchMarketIntelligence();
+    let msg = `🔔 <b>PRE-MARKET ALERT</b>\n`;
+    msg += `⏰ India market opens in 15 min!\n\n`;
+    if (intel?.marketNarrative) msg += `💬 ${intel.marketNarrative}\n\n`;
+    if (intel?.fearGreedScore !== undefined) {
+      msg += `🎭 Fear/Greed: ${intel.fearGreedScore}/100\n`;
+    }
+    if (portfolio.length > 0) {
+      const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
+      msg += `💼 Portfolio: ₹${Math.round(metrics.totalValueINR).toLocaleString('en-IN')}\n`;
+    }
+    msg += `\n💎 <i>Deep Mind AI • Pre-Market Brief</i>`;
+    await safeSend(TG_CHAT_ID, msg);
+  } catch (e) {
+    console.error('Pre-market alert failed:', e.message);
+  }
+});
+
+// 🔔 3:45 PM IST Market Close Summary
+cron.schedule('15 10 * * 1-5', async () => {
+  // 10:15 UTC = 3:45 PM IST (after India close)
+  if (!autoAlerts || portfolio.length === 0) return;
+  try {
+    await refreshPrices();
+    const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
+    let msg = `🔔 <b>MARKET CLOSE SUMMARY</b>\n`;
+    msg += `⏰ India market closed\n\n`;
+    msg += `💼 <b>Portfolio:</b> ₹${Math.round(metrics.totalValueINR).toLocaleString('en-IN')}\n`;
+    msg += `📊 <b>Today:</b> ${metrics.todayPL >= 0 ? '🟢 +' : '🔴 '}₹${Math.round(Math.abs(metrics.todayPL)).toLocaleString('en-IN')} (${metrics.todayPct >= 0 ? '+' : ''}${metrics.todayPct.toFixed(2)}%)\n`;
+    msg += `📈 <b>Overall:</b> ${metrics.totalPL >= 0 ? '🟢 +' : '🔴 '}₹${Math.round(Math.abs(metrics.totalPL)).toLocaleString('en-IN')}\n`;
+    msg += `\n💎 <i>Deep Mind AI • Closing Bell</i>`;
+    await safeSend(TG_CHAT_ID, msg);
+  } catch (e) {
+    console.error('Market close summary failed:', e.message);
+  }
+});
+
+// 📊 Smart RSI Alert — every 10 min during market hours
+cron.schedule('*/10 * * * *', async () => {
+  if (!autoAlerts || portfolio.length === 0 || !isAnyMarketOpen()) return;
+  for (const pos of portfolio) {
+    const key = `${pos.market}_${pos.symbol}`;
+    const data = livePrices[key];
+    if (!data?.rsi) continue;
+    
+    if (data.rsi >= 80) {
+      await safeSend(TG_CHAT_ID, `⚠️ <b>RSI ALERT:</b> ${pos.symbol} RSI = ${data.rsi.toFixed(0)} — <b>OVERBOUGHT</b>\nConsider trimming or setting trailing SL\n\n💎 <i>Deep Mind AI • Smart Alert</i>`);
+    } else if (data.rsi <= 20) {
+      await safeSend(TG_CHAT_ID, `🟢 <b>RSI ALERT:</b> ${pos.symbol} RSI = ${data.rsi.toFixed(0)} — <b>OVERSOLD</b>\nPotential bounce entry point\n\n💎 <i>Deep Mind AI • Smart Alert</i>`);
+    }
   }
 });
 

@@ -398,3 +398,122 @@ export async function fetchMarketIntelligence() {
   intelligence.marketNarrative = narrative;
   return intelligence;
 }
+
+// ========================================
+// CRYPTO PRICES (TradingView)
+// ========================================
+export async function fetchCryptoPrices() {
+  try {
+    const tickers = ['BINANCE:BTCUSDT', 'BINANCE:ETHUSDT', 'BINANCE:SOLUSDT', 'BINANCE:XRPUSDT', 'BINANCE:BNBUSDT', 'BINANCE:ADAUSDT', 'BINANCE:DOGEUSDT', 'BINANCE:DOTUSDT'];
+    const res = await fetch('https://scanner.tradingview.com/crypto/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({ symbols: { tickers }, columns: ['description', 'close', 'change', 'volume', 'market_cap_basic', 'high', 'low'] }),
+      signal: AbortSignal.timeout(6000)
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const nameMap = { 'BINANCE:BTCUSDT': 'BTC', 'BINANCE:ETHUSDT': 'ETH', 'BINANCE:SOLUSDT': 'SOL', 'BINANCE:XRPUSDT': 'XRP', 'BINANCE:BNBUSDT': 'BNB', 'BINANCE:ADAUSDT': 'ADA', 'BINANCE:DOGEUSDT': 'DOGE', 'BINANCE:DOTUSDT': 'DOT' };
+    return (data?.data || []).map(item => ({
+      symbol: nameMap[item.s] || item.s,
+      name: item.d?.[0] || '',
+      price: parseFloat(item.d?.[1]) || 0,
+      change: parseFloat(item.d?.[2]) || 0,
+      volume: parseFloat(item.d?.[3]) || 0,
+      marketCap: parseFloat(item.d?.[4]) || 0,
+      high: parseFloat(item.d?.[5]) || 0,
+      low: parseFloat(item.d?.[6]) || 0
+    })).filter(c => c.price > 0);
+  } catch (e) {
+    console.warn('Crypto fetch failed:', e.message);
+    return [];
+  }
+}
+
+// ========================================
+// BOND YIELDS (TradingView)
+// ========================================
+export async function fetchBondYields() {
+  try {
+    const tickers = ['TVC:US10Y', 'TVC:US02Y', 'TVC:IN10Y', 'TVC:JP10Y', 'TVC:DE10Y'];
+    const res = await fetch('https://scanner.tradingview.com/bond/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({ symbols: { tickers }, columns: ['description', 'close', 'change'] }),
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const nameMap = { 'TVC:US10Y': 'US 10Y', 'TVC:US02Y': 'US 2Y', 'TVC:IN10Y': 'India 10Y', 'TVC:JP10Y': 'Japan 10Y', 'TVC:DE10Y': 'Germany 10Y' };
+    return (data?.data || []).map(item => ({
+      name: nameMap[item.s] || item.s,
+      yield: parseFloat(item.d?.[1]) || 0,
+      change: parseFloat(item.d?.[2]) || 0
+    })).filter(b => b.yield > 0);
+  } catch (e) {
+    console.warn('Bond yields fetch failed:', e.message);
+    return [];
+  }
+}
+
+// ========================================
+// FII/DII DATA (via Tavily Search — daily summary)
+// ========================================
+export async function fetchFIIDIIData(tavilyKey) {
+  if (!tavilyKey) return null;
+  try {
+    const res = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: tavilyKey,
+        query: 'FII DII data today India stock market net buy sell crore',
+        search_depth: 'basic',
+        include_answer: true,
+        max_results: 3,
+        topic: 'finance'
+      }),
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      summary: data.answer || 'FII/DII data unavailable',
+      sources: (data.results || []).slice(0, 2).map(r => ({ title: r.title, url: r.url }))
+    };
+  } catch (e) {
+    console.warn('FII/DII fetch failed:', e.message);
+    return null;
+  }
+}
+
+// ========================================
+// IPO DATA (via Tavily Search)
+// ========================================
+export async function fetchIPOData(tavilyKey) {
+  if (!tavilyKey) return null;
+  try {
+    const res = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: tavilyKey,
+        query: 'upcoming IPO India 2026 open subscription GMP latest',
+        search_depth: 'basic',
+        include_answer: true,
+        max_results: 4,
+        topic: 'finance'
+      }),
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      summary: data.answer || 'IPO data unavailable',
+      sources: (data.results || []).slice(0, 3).map(r => ({ title: r.title, url: r.url }))
+    };
+  } catch (e) {
+    console.warn('IPO fetch failed:', e.message);
+    return null;
+  }
+}

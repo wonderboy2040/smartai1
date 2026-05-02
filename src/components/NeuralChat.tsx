@@ -26,27 +26,72 @@ const TAVILY_KEY = import.meta.env.VITE_TAVILY_API_KEY || '';
 // Fetch real-time market snapshot for AI context
 async function fetchRealtimeSnapshot(): Promise<string> {
   try {
-    const tickers = [
-      'NSE:NIFTY', 'BSE:SENSEX', 'NSE:BANKNIFTY',
-      'AMEX:SPY', 'NASDAQ:QQQ', 'CBOE:VIX', 'NSE:INDIAVIX',
-      'TVC:DXY', 'COMEX:GC1!', 'NYMEX:CL1!'
-    ];
-    const res = await fetch('https://scanner.tradingview.com/global/scan', {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify({ symbols: { tickers }, columns: ['name', 'close', 'change'] }),
-      signal: AbortSignal.timeout(5000)
-    });
-    if (!res.ok) return '';
-    const data = await res.json();
-    const nameMap: Record<string, string> = { 'NSE:NIFTY': 'NIFTY50', 'BSE:SENSEX': 'SENSEX', 'NSE:BANKNIFTY': 'BANKNIFTY', 'AMEX:SPY': 'S&P500', 'NASDAQ:QQQ': 'NASDAQ100', 'CBOE:VIX': 'US_VIX', 'NSE:INDIAVIX': 'INDIA_VIX', 'TVC:DXY': 'DXY', 'COMEX:GC1!': 'GOLD', 'NYMEX:CL1!': 'CRUDE_OIL' };
+    // Indices + Commodities + Crypto + Bonds — all in parallel
+    const [idxRes, cryptoRes, bondRes] = await Promise.allSettled([
+      fetch('https://scanner.tradingview.com/global/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({ symbols: { tickers: [
+          'NSE:NIFTY', 'BSE:SENSEX', 'NSE:BANKNIFTY',
+          'AMEX:SPY', 'NASDAQ:QQQ', 'CBOE:VIX', 'NSE:INDIAVIX',
+          'TVC:DXY', 'COMEX:GC1!', 'NYMEX:CL1!'
+        ] }, columns: ['name', 'close', 'change'] }),
+        signal: AbortSignal.timeout(5000)
+      }),
+      fetch('https://scanner.tradingview.com/crypto/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({ symbols: { tickers: ['BINANCE:BTCUSDT', 'BINANCE:ETHUSDT', 'BINANCE:SOLUSDT'] }, columns: ['description', 'close', 'change'] }),
+        signal: AbortSignal.timeout(5000)
+      }),
+      fetch('https://scanner.tradingview.com/bond/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({ symbols: { tickers: ['TVC:US10Y', 'TVC:IN10Y'] }, columns: ['description', 'close', 'change'] }),
+        signal: AbortSignal.timeout(5000)
+      })
+    ]);
+
     let snap = 'REAL-TIME MARKET:\n';
-    for (const item of (data?.data || [])) {
-      const n = nameMap[item.s] || item.s;
-      const p = parseFloat(item.d?.[1]) || 0;
-      const c = parseFloat(item.d?.[2]) || 0;
-      if (p > 0) snap += `${n}: ${p.toFixed(2)} (${c >= 0 ? '+' : ''}${c.toFixed(2)}%)\n`;
+    const nameMap: Record<string, string> = { 'NSE:NIFTY': 'NIFTY50', 'BSE:SENSEX': 'SENSEX', 'NSE:BANKNIFTY': 'BANKNIFTY', 'AMEX:SPY': 'S&P500', 'NASDAQ:QQQ': 'NASDAQ100', 'CBOE:VIX': 'US_VIX', 'NSE:INDIAVIX': 'INDIA_VIX', 'TVC:DXY': 'DXY', 'COMEX:GC1!': 'GOLD', 'NYMEX:CL1!': 'CRUDE_OIL' };
+
+    // Indices
+    if (idxRes.status === 'fulfilled' && idxRes.value.ok) {
+      const data = await idxRes.value.json();
+      for (const item of (data?.data || [])) {
+        const n = nameMap[item.s] || item.s;
+        const p = parseFloat(item.d?.[1]) || 0;
+        const c = parseFloat(item.d?.[2]) || 0;
+        if (p > 0) snap += `${n}: ${p.toFixed(2)} (${c >= 0 ? '+' : ''}${c.toFixed(2)}%)\n`;
+      }
     }
+
+    // Crypto
+    const cryptoMap: Record<string, string> = { 'BINANCE:BTCUSDT': 'BTC', 'BINANCE:ETHUSDT': 'ETH', 'BINANCE:SOLUSDT': 'SOL' };
+    if (cryptoRes.status === 'fulfilled' && cryptoRes.value.ok) {
+      const data = await cryptoRes.value.json();
+      snap += '\nCRYPTO:\n';
+      for (const item of (data?.data || [])) {
+        const n = cryptoMap[item.s] || item.s;
+        const p = parseFloat(item.d?.[1]) || 0;
+        const c = parseFloat(item.d?.[2]) || 0;
+        if (p > 0) snap += `${n}: $${p >= 1000 ? p.toFixed(0) : p.toFixed(2)} (${c >= 0 ? '+' : ''}${c.toFixed(2)}%)\n`;
+      }
+    }
+
+    // Bond Yields
+    const bondMap: Record<string, string> = { 'TVC:US10Y': 'US_10Y_YIELD', 'TVC:IN10Y': 'INDIA_10Y_YIELD' };
+    if (bondRes.status === 'fulfilled' && bondRes.value.ok) {
+      const data = await bondRes.value.json();
+      snap += '\nBOND YIELDS:\n';
+      for (const item of (data?.data || [])) {
+        const n = bondMap[item.s] || item.s;
+        const p = parseFloat(item.d?.[1]) || 0;
+        const c = parseFloat(item.d?.[2]) || 0;
+        if (p > 0) snap += `${n}: ${p.toFixed(3)}% (${c >= 0 ? '+' : ''}${c.toFixed(3)})\n`;
+      }
+    }
+
     return snap;
   } catch { return ''; }
 }

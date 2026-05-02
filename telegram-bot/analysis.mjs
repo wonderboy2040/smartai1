@@ -721,3 +721,408 @@ export function generateCompareReport(data1, data2) {
   msg += `\n\n💎 <i>Deep Mind AI Pro Trading Terminal</i>`;
   return msg;
 }
+
+// ========================================
+// /live — Real-Time Market Sensor Data
+// ========================================
+export function generateLiveReport(intel, cryptos, bonds, usdInr) {
+  const timeStr = getISTTime();
+  let msg = `📡 <b>LIVE MARKET SENSOR</b>\n`;
+  msg += `⏰ <i>${timeStr} IST</i> | ${getMarketStatus()}\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+  // Global Indices
+  if (intel?.globalIndices?.length > 0) {
+    msg += `🌍 <b>GLOBAL INDICES</b>\n`;
+    for (const idx of intel.globalIndices) {
+      const em = idx.change >= 0 ? '🟢' : '🔴';
+      msg += `${em} <b>${idx.name}</b>: ${idx.price?.toFixed(2)} (${idx.change >= 0 ? '+' : ''}${idx.change?.toFixed(2)}%)\n`;
+    }
+    msg += `\n`;
+  }
+
+  // Crypto
+  if (cryptos?.length > 0) {
+    msg += `🪙 <b>CRYPTO</b>\n`;
+    for (const c of cryptos.slice(0, 6)) {
+      const em = c.change >= 0 ? '🟢' : '🔴';
+      const priceStr = c.price >= 1000 ? `$${c.price.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}` : `$${c.price.toFixed(4)}`;
+      msg += `${em} <b>${c.symbol}</b>: ${priceStr} (${c.change >= 0 ? '+' : ''}${c.change.toFixed(2)}%)\n`;
+    }
+    msg += `\n`;
+  }
+
+  // Bond Yields
+  if (bonds?.length > 0) {
+    msg += `📊 <b>BOND YIELDS</b>\n`;
+    for (const b of bonds) {
+      const em = b.change >= 0 ? '⬆️' : '⬇️';
+      msg += `${em} <b>${b.name}</b>: ${b.yield.toFixed(3)}% (${b.change >= 0 ? '+' : ''}${b.change.toFixed(3)})\n`;
+    }
+    // Yield curve analysis
+    const us10 = bonds.find(b => b.name === 'US 10Y');
+    const us2 = bonds.find(b => b.name === 'US 2Y');
+    if (us10 && us2) {
+      const spread = us10.yield - us2.yield;
+      msg += `📐 <b>US Yield Curve:</b> ${spread > 0 ? 'NORMAL' : '⚠️ INVERTED'} (${spread >= 0 ? '+' : ''}${spread.toFixed(3)})\n`;
+    }
+    msg += `\n`;
+  }
+
+  // Forex
+  msg += `💱 <b>FOREX</b>\n`;
+  msg += `🇺🇸🇮🇳 USD/INR: <b>₹${usdInr.toFixed(4)}</b>\n\n`;
+
+  // Sectors
+  if (intel?.sectors?.length > 0) {
+    msg += `🏭 <b>SECTORS</b>\n`;
+    const sorted = [...intel.sectors].sort((a, b) => b.change - a.change);
+    for (const s of sorted.slice(0, 5)) {
+      msg += `${s.change >= 0 ? '📈' : '📉'} ${s.name}: ${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)}%\n`;
+    }
+    msg += `\n`;
+  }
+
+  // Fear/Greed
+  if (intel?.fearGreedScore !== undefined) {
+    let fg = '😰 EXTREME FEAR';
+    if (intel.fearGreedScore > 75) fg = '🤑 EXTREME GREED';
+    else if (intel.fearGreedScore > 55) fg = '😀 GREED';
+    else if (intel.fearGreedScore > 40) fg = '😐 NEUTRAL';
+    else if (intel.fearGreedScore > 20) fg = '😟 FEAR';
+    msg += `🎭 <b>Fear/Greed:</b> ${intel.fearGreedScore}/100 — ${fg}\n`;
+  }
+
+  if (intel?.marketNarrative) {
+    msg += `\n💬 <i>${intel.marketNarrative}</i>\n`;
+  }
+
+  msg += `\n💎 <i>Deep Mind AI Quantum Pro • Live Sensor</i>`;
+  return msg;
+}
+
+// ========================================
+// /crypto — Crypto Market Report
+// ========================================
+export function generateCryptoReport(cryptos, usdInr) {
+  const timeStr = getISTTime();
+  let msg = `🪙 <b>CRYPTO MARKET LIVE</b>\n`;
+  msg += `⏰ <i>${timeStr} IST</i>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+  if (!cryptos || cryptos.length === 0) {
+    msg += `⚠️ Crypto data unavailable. Try again later.\n`;
+    return msg;
+  }
+
+  const totalMcap = cryptos.reduce((s, c) => s + (c.marketCap || 0), 0);
+  const bullish = cryptos.filter(c => c.change > 0).length;
+  const bearish = cryptos.filter(c => c.change < 0).length;
+
+  msg += `📊 <b>Market Overview</b>\n`;
+  msg += `Total MCap: <b>$${(totalMcap / 1e12).toFixed(2)}T</b>\n`;
+  msg += `Bullish/Bearish: <b>${bullish}/${bearish}</b>\n\n`;
+
+  for (const c of cryptos) {
+    const em = c.change >= 0 ? '🟢' : '🔴';
+    const priceStr = c.price >= 1000
+      ? `$${c.price.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}` 
+      : c.price >= 1 ? `$${c.price.toFixed(2)}` : `$${c.price.toFixed(4)}`;
+    const inrPrice = c.price * usdInr;
+    const inrStr = inrPrice >= 1000 
+      ? `₹${inrPrice.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}` 
+      : `₹${inrPrice.toFixed(2)}`;
+    const mcapStr = c.marketCap > 0 ? `$${(c.marketCap / 1e9).toFixed(1)}B` : '-';
+
+    msg += `${em} <b>${c.symbol}</b> (${c.name})\n`;
+    msg += `   💲 ${priceStr} | 🇮🇳 ${inrStr}\n`;
+    msg += `   📈 ${c.change >= 0 ? '+' : ''}${c.change.toFixed(2)}% | MCap: ${mcapStr}\n`;
+    if (c.high && c.low) {
+      msg += `   🔼 High: $${c.high >= 1000 ? c.high.toFixed(0) : c.high.toFixed(2)} | 🔽 Low: $${c.low >= 1000 ? c.low.toFixed(0) : c.low.toFixed(2)}\n`;
+    }
+    msg += `\n`;
+  }
+
+  // BTC Dominance approximation
+  const btc = cryptos.find(c => c.symbol === 'BTC');
+  if (btc && totalMcap > 0) {
+    const dom = ((btc.marketCap / totalMcap) * 100).toFixed(1);
+    msg += `👑 <b>BTC Dominance:</b> ~${dom}%\n`;
+  }
+
+  msg += `\n💎 <i>Deep Mind AI Quantum Pro • Crypto Terminal</i>`;
+  return msg;
+}
+
+// ========================================
+// /sip — SIP Calculator
+// ========================================
+export function generateSIPReport(monthlyAmount, years = 10) {
+  const timeStr = getISTTime();
+  let msg = `💰 <b>SIP INVESTMENT CALCULATOR</b>\n`;
+  msg += `⏰ <i>${timeStr} IST</i>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+  msg += `📌 Monthly SIP: <b>₹${monthlyAmount.toLocaleString('en-IN')}</b>\n\n`;
+
+  const scenarios = [
+    { name: 'Conservative (Debt/FD)', rate: 7, emoji: '🟡' },
+    { name: 'Balanced (Hybrid Fund)', rate: 10, emoji: '🟢' },
+    { name: 'Aggressive (Equity ETF)', rate: 13, emoji: '🔵' },
+    { name: 'High Growth (Small Cap)', rate: 16, emoji: '🟣' },
+    { name: 'Nifty 50 Historical', rate: 12, emoji: '🇮🇳' },
+    { name: 'S&P 500 Historical', rate: 11, emoji: '🇺🇸' }
+  ];
+
+  const durations = [3, 5, 10, 15, 20, 25];
+
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  for (const s of scenarios) {
+    msg += `\n${s.emoji} <b>${s.name}</b> (${s.rate}% CAGR)\n`;
+    for (const y of durations) {
+      const r = s.rate / 100 / 12;
+      const n = y * 12;
+      const fv = monthlyAmount * ((Math.pow(1 + r, n) - 1) / r) * (1 + r);
+      const invested = monthlyAmount * n;
+      const returns = fv - invested;
+      msg += `  ${y}Y → <b>₹${Math.round(fv).toLocaleString('en-IN')}</b> (Invested: ₹${invested.toLocaleString('en-IN')} | Gain: ₹${Math.round(returns).toLocaleString('en-IN')})\n`;
+    }
+  }
+
+  msg += `\n⚠️ <i>Past returns don't guarantee future results. This is for educational purposes only.</i>`;
+  msg += `\n\n💎 <i>Deep Mind AI Quantum Pro • SIP Planner</i>`;
+  return msg;
+}
+
+// ========================================
+// /etf — ETF Portfolio Analysis
+// ========================================
+export function generateETFReport(portfolio, livePrices, usdInr) {
+  const timeStr = getISTTime();
+  let msg = `📊 <b>ETF PORTFOLIO ANALYSIS</b>\n`;
+  msg += `⏰ <i>${timeStr} IST</i>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+  // All known ETFs with categories
+  const etfDb = {
+    // Indian ETFs
+    'NIFTYBEES': { cat: 'Large Cap', bench: 'NIFTY 50', expense: 0.04 },
+    'MID150BEES': { cat: 'Mid Cap', bench: 'NIFTY MIDCAP 150', expense: 0.15 },
+    'JUNIORBEES': { cat: 'Large Cap', bench: 'NIFTY NEXT 50', expense: 0.15 },
+    'SMALLCAP': { cat: 'Small Cap', bench: 'NIFTY SMALLCAP 250', expense: 0.40 },
+    'MOMOMENTUM': { cat: 'Factor', bench: 'NIFTY 200 MOMENTUM 30', expense: 0.20 },
+    'GOLDBEES': { cat: 'Commodity', bench: 'GOLD', expense: 0.60 },
+    'SILVERBEES': { cat: 'Commodity', bench: 'SILVER', expense: 0.55 },
+    'BANKBEES': { cat: 'Sectoral', bench: 'BANK NIFTY', expense: 0.15 },
+    'ITBEES': { cat: 'Sectoral', bench: 'NIFTY IT', expense: 0.15 },
+    'N100': { cat: 'International', bench: 'NASDAQ 100', expense: 0.45 },
+    'MON100': { cat: 'International', bench: 'NASDAQ 100', expense: 0.50 },
+    // US ETFs
+    'SPY': { cat: 'Large Cap', bench: 'S&P 500', expense: 0.09 },
+    'QQQ': { cat: 'Tech', bench: 'NASDAQ 100', expense: 0.20 },
+    'VOO': { cat: 'Large Cap', bench: 'S&P 500', expense: 0.03 },
+    'VTI': { cat: 'Total Market', bench: 'US Total', expense: 0.03 },
+    'IWM': { cat: 'Small Cap', bench: 'Russell 2000', expense: 0.19 },
+  };
+
+  const etfPositions = portfolio.filter(p => {
+    const sym = p.symbol.replace('.NS', '').replace('.BO', '').toUpperCase();
+    return etfDb[sym] || sym.includes('BEES') || sym.includes('ETF');
+  });
+
+  if (etfPositions.length === 0) {
+    msg += `⚠️ No ETFs found in your portfolio.\n\n`;
+    msg += `📌 <b>Recommended ETF Portfolio (Aggressive):</b>\n`;
+    msg += `  🇮🇳 NIFTYBEES (30%) — Large Cap core\n`;
+    msg += `  🇮🇳 MID150BEES (20%) — Mid Cap growth\n`;
+    msg += `  🇮🇳 MOMOMENTUM (15%) — Factor alpha\n`;
+    msg += `  🇮🇳 GOLDBEES (10%) — Hedge\n`;
+    msg += `  🇺🇸 MON100/N100 (25%) — International\n`;
+    msg += `\n💎 <i>Deep Mind AI • ETF Terminal</i>`;
+    return msg;
+  }
+
+  let totalVal = 0, totalInvested = 0;
+  const catAlloc = {};
+
+  for (const pos of etfPositions) {
+    const key = `${pos.market}_${pos.symbol}`;
+    const price = livePrices[key]?.price || pos.avgPrice;
+    const change = livePrices[key]?.change || 0;
+    const sym = pos.symbol.replace('.NS', '').replace('.BO', '').toUpperCase();
+    const info = etfDb[sym] || { cat: 'Other', bench: '-', expense: 0 };
+    const isUS = pos.market === 'US';
+    const curr = isUS ? '$' : '₹';
+    const val = price * pos.qty * (isUS ? usdInr : 1);
+    const invested = pos.avgPrice * pos.qty * (isUS ? usdInr : 1);
+    const pl = val - invested;
+
+    totalVal += val;
+    totalInvested += invested;
+    catAlloc[info.cat] = (catAlloc[info.cat] || 0) + val;
+
+    const em = change >= 0 ? '🟢' : '🔴';
+    msg += `${em} <b>${pos.symbol}</b> [${info.cat}]\n`;
+    msg += `   ${curr}${price.toFixed(2)} (${change >= 0 ? '+' : ''}${change.toFixed(2)}%)\n`;
+    msg += `   Qty: ${pos.qty} | P&L: ${pl >= 0 ? '+' : ''}₹${Math.round(pl).toLocaleString('en-IN')}\n`;
+    msg += `   Benchmark: ${info.bench} | Expense: ${info.expense}%\n\n`;
+  }
+
+  const totalPL = totalVal - totalInvested;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  msg += `💼 <b>ETF Portfolio: ₹${Math.round(totalVal).toLocaleString('en-IN')}</b>\n`;
+  msg += `📈 P&L: ${totalPL >= 0 ? '+' : ''}₹${Math.round(totalPL).toLocaleString('en-IN')} (${((totalPL/totalInvested)*100).toFixed(1)}%)\n\n`;
+
+  msg += `🥧 <b>Category Allocation:</b>\n`;
+  for (const [cat, val] of Object.entries(catAlloc).sort((a, b) => b[1] - a[1])) {
+    const pct = ((val / totalVal) * 100).toFixed(1);
+    msg += `  ${cat}: ${pct}% (₹${Math.round(val).toLocaleString('en-IN')})\n`;
+  }
+
+  msg += `\n💎 <i>Deep Mind AI Quantum Pro • ETF Terminal</i>`;
+  return msg;
+}
+
+// ========================================
+// /digest — AI Daily Market Digest
+// ========================================
+export function generateDigestReport(intel, cryptos, bonds, usdInr, portfolio, livePrices) {
+  const timeStr = getISTTime();
+  const today = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' });
+  
+  let msg = `🌅 <b>DAILY MARKET DIGEST</b>\n`;
+  msg += `📅 ${today}\n`;
+  msg += `⏰ <i>${timeStr} IST</i>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+  // Key Indices
+  if (intel?.globalIndices?.length > 0) {
+    msg += `🌍 <b>GLOBAL PULSE</b>\n`;
+    const key = ['NIFTY 50', 'SENSEX', 'BANK NIFTY', 'S&P 500', 'NASDAQ 100', 'VIX'];
+    for (const name of key) {
+      const idx = intel.globalIndices.find(i => i.name === name);
+      if (idx) {
+        msg += `${idx.change >= 0 ? '🟢' : '🔴'} ${idx.name}: ${idx.price.toFixed(0)} (${idx.change >= 0 ? '+' : ''}${idx.change.toFixed(2)}%)\n`;
+      }
+    }
+    msg += `\n`;
+  }
+
+  // Crypto Snapshot
+  if (cryptos?.length > 0) {
+    const btc = cryptos.find(c => c.symbol === 'BTC');
+    const eth = cryptos.find(c => c.symbol === 'ETH');
+    if (btc) msg += `🪙 BTC: $${btc.price.toFixed(0)} (${btc.change >= 0 ? '+' : ''}${btc.change.toFixed(1)}%) | `;
+    if (eth) msg += `ETH: $${eth.price.toFixed(0)} (${eth.change >= 0 ? '+' : ''}${eth.change.toFixed(1)}%)\n`;
+    msg += `\n`;
+  }
+
+  // Bond Yields
+  if (bonds?.length > 0) {
+    const us10 = bonds.find(b => b.name === 'US 10Y');
+    const in10 = bonds.find(b => b.name === 'India 10Y');
+    if (us10) msg += `📊 US 10Y: ${us10.yield.toFixed(3)}% | `;
+    if (in10) msg += `India 10Y: ${in10.yield.toFixed(3)}%\n`;
+    msg += `\n`;
+  }
+
+  // Forex
+  msg += `💱 USD/INR: ₹${usdInr.toFixed(4)}\n\n`;
+
+  // Portfolio Quick Summary
+  if (portfolio?.length > 0) {
+    const metrics = calculateMetrics(portfolio, livePrices, usdInr);
+    msg += `💼 <b>YOUR PORTFOLIO</b>\n`;
+    msg += `Total: <b>₹${Math.round(metrics.totalValueINR).toLocaleString('en-IN')}</b>\n`;
+    msg += `Today: ${metrics.todayPL >= 0 ? '🟢 +' : '🔴 '}₹${Math.round(Math.abs(metrics.todayPL)).toLocaleString('en-IN')} (${metrics.todayPct >= 0 ? '+' : ''}${metrics.todayPct.toFixed(2)}%)\n`;
+    msg += `Overall: ${metrics.totalPL >= 0 ? '🟢 +' : '🔴 '}₹${Math.round(Math.abs(metrics.totalPL)).toLocaleString('en-IN')} (${metrics.totalPLPct >= 0 ? '+' : ''}${metrics.totalPLPct.toFixed(2)}%)\n\n`;
+
+    // Top Movers
+    const movers = portfolio.map(p => {
+      const key = `${p.market}_${p.symbol}`;
+      return { symbol: p.symbol, change: livePrices[key]?.change || 0 };
+    }).sort((a, b) => b.change - a.change);
+
+    if (movers.length > 0) {
+      msg += `📈 Top: <b>${movers[0].symbol}</b> (${movers[0].change >= 0 ? '+' : ''}${movers[0].change.toFixed(2)}%)\n`;
+      msg += `📉 Bottom: <b>${movers[movers.length-1].symbol}</b> (${movers[movers.length-1].change >= 0 ? '+' : ''}${movers[movers.length-1].change.toFixed(2)}%)\n\n`;
+    }
+  }
+
+  // Fear/Greed
+  if (intel?.fearGreedScore !== undefined) {
+    let fg = '😰 EXTREME FEAR';
+    if (intel.fearGreedScore > 75) fg = '🤑 EXTREME GREED';
+    else if (intel.fearGreedScore > 55) fg = '😀 GREED';
+    else if (intel.fearGreedScore > 40) fg = '😐 NEUTRAL';
+    else if (intel.fearGreedScore > 20) fg = '😟 FEAR';
+    msg += `🎭 Fear/Greed: <b>${intel.fearGreedScore}/100 — ${fg}</b>\n`;
+  }
+
+  // Market Narrative
+  if (intel?.marketNarrative) {
+    msg += `\n💬 <i>${intel.marketNarrative}</i>\n`;
+  }
+
+  // Sector Leaders
+  if (intel?.sectors?.length > 0) {
+    const top3 = [...intel.sectors].sort((a, b) => b.change - a.change).slice(0, 3);
+    const bot3 = [...intel.sectors].sort((a, b) => a.change - b.change).slice(0, 3);
+    msg += `\n📈 <b>Leading:</b> ${top3.map(s => `${s.name} +${s.change.toFixed(1)}%`).join(', ')}\n`;
+    msg += `📉 <b>Lagging:</b> ${bot3.map(s => `${s.name} ${s.change.toFixed(1)}%`).join(', ')}\n`;
+  }
+
+  msg += `\n<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  msg += `🧠 <i>Deep Mind AI Quantum Pro v4.0 • Daily Digest</i>`;
+  return msg;
+}
+
+// ========================================
+// FII/DII Report
+// ========================================
+export function generateFIIDIIReport(fiiData) {
+  const timeStr = getISTTime();
+  let msg = `🏛️ <b>FII / DII FLOW TRACKER</b>\n`;
+  msg += `⏰ <i>${timeStr} IST</i>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+  if (!fiiData || !fiiData.summary) {
+    msg += `⚠️ FII/DII data unavailable. Try again during market hours.\n`;
+  } else {
+    msg += `📊 <b>Latest Data:</b>\n${fiiData.summary}\n\n`;
+    if (fiiData.sources?.length > 0) {
+      msg += `🔗 <b>Sources:</b>\n`;
+      for (const src of fiiData.sources) {
+        msg += `• <a href="${src.url}">${src.title}</a>\n`;
+      }
+    }
+  }
+
+  msg += `\n💎 <i>Deep Mind AI • Institutional Flow Tracker</i>`;
+  return msg;
+}
+
+// ========================================
+// IPO Report
+// ========================================
+export function generateIPOReport(ipoData) {
+  const timeStr = getISTTime();
+  let msg = `🚀 <b>IPO TRACKER</b>\n`;
+  msg += `⏰ <i>${timeStr} IST</i>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+  if (!ipoData || !ipoData.summary) {
+    msg += `⚠️ IPO data unavailable. Try again later.\n`;
+  } else {
+    msg += `📋 <b>Latest IPO Updates:</b>\n${ipoData.summary}\n\n`;
+    if (ipoData.sources?.length > 0) {
+      msg += `🔗 <b>Sources:</b>\n`;
+      for (const src of ipoData.sources) {
+        msg += `• <a href="${src.url}">${src.title}</a>\n`;
+      }
+    }
+  }
+
+  msg += `\n💎 <i>Deep Mind AI • IPO Intelligence</i>`;
+  return msg;
+}
