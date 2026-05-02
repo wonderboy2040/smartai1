@@ -1,10 +1,17 @@
 // ============================================
-// AI CHAT ENGINE v2.0 — Advanced Pro Deep Mind AI
-// Groq + Gemini + Claude with Smart Fallback Chain
+// AI CHAT ENGINE v4.0 — Quantum Pro Deep Mind AI
+// Groq + Gemini + Claude + Tavily Real-Time Search
 // ============================================
 import { GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, isGroqAvailable, isGeminiAvailable, isClaudeAvailable } from './config.mjs';
-import { fetchMarketIntelligence } from './market.mjs';
+import { fetchMarketIntelligence, fetchForexRate } from './market.mjs';
 import { calculateMetrics, analyzeAsset } from './analysis.mjs';
+
+// Tavily API for real-time web search
+const TAVILY_API_KEY = process.env.TAVILY_API_KEY || process.env.VITE_TAVILY_API_KEY || '';
+
+// Real-time market data cache
+let realtimeMarketCache = { data: null, timestamp: 0 };
+let realtimeForexCache = { rate: 85.5, timestamp: 0 };
 
 // Per-user conversation history (in-memory)
 const chatHistory = new Map();
@@ -66,7 +73,93 @@ async function retryWithBackoff(fn, maxRetries = 2, baseDelay = 1000) {
 }
 
 // ============================================
-// GROQ API — Ultra-fast Responses
+// TAVILY REAL-TIME WEB SEARCH — Live Market Data
+// ============================================
+async function fetchRealtimeWebData(query) {
+  if (!TAVILY_API_KEY) return '';
+  try {
+    const res = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: TAVILY_API_KEY,
+        query: query,
+        search_depth: 'advanced',
+        include_answer: true,
+        max_results: 5,
+        topic: 'finance'
+      }),
+      signal: AbortSignal.timeout(8000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      let context = '';
+      if (data.answer) context += `LIVE WEB INTEL: ${data.answer}\n`;
+      if (data.results) {
+        for (const r of data.results.slice(0, 3)) {
+          context += `• ${r.title}: ${r.content?.substring(0, 200)}\n`;
+        }
+      }
+      return context;
+    }
+  } catch (e) {
+    console.warn('Tavily search failed:', e.message);
+  }
+  return '';
+}
+
+// Fetch real-time market snapshot for AI context
+async function getRealtimeMarketSnapshot() {
+  const now = Date.now();
+  if (realtimeMarketCache.data && now - realtimeMarketCache.timestamp < 60000) {
+    return realtimeMarketCache.data;
+  }
+  try {
+    const tickers = [
+      'NSE:NIFTY', 'BSE:SENSEX', 'NSE:BANKNIFTY',
+      'AMEX:SPY', 'NASDAQ:QQQ', 'CBOE:VIX', 'NSE:INDIAVIX',
+      'TVC:DXY', 'COMEX:GC1!', 'NYMEX:CL1!', 'BITSTAMP:BTCUSD'
+    ];
+    const res = await fetch('https://scanner.tradingview.com/global/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({ symbols: { tickers }, columns: ['name', 'close', 'change', 'high', 'low', 'volume'] }),
+      signal: AbortSignal.timeout(6000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      let snapshot = 'REAL-TIME MARKET SNAPSHOT:\n';
+      const nameMap = { 'NSE:NIFTY': 'NIFTY50', 'BSE:SENSEX': 'SENSEX', 'NSE:BANKNIFTY': 'BANKNIFTY', 'AMEX:SPY': 'S&P500', 'NASDAQ:QQQ': 'NASDAQ100', 'CBOE:VIX': 'US_VIX', 'NSE:INDIAVIX': 'INDIA_VIX', 'TVC:DXY': 'DXY', 'COMEX:GC1!': 'GOLD', 'NYMEX:CL1!': 'CRUDE_OIL', 'BITSTAMP:BTCUSD': 'BITCOIN' };
+      if (data?.data) {
+        for (const item of data.data) {
+          const name = nameMap[item.s] || item.s;
+          const price = parseFloat(item.d?.[1]) || 0;
+          const change = parseFloat(item.d?.[2]) || 0;
+          if (price > 0) snapshot += `${name}: ${price.toFixed(2)} (${change >= 0 ? '+' : ''}${change.toFixed(2)}%)\n`;
+        }
+      }
+      realtimeMarketCache = { data: snapshot, timestamp: now };
+      return snapshot;
+    }
+  } catch (e) {
+    console.warn('Market snapshot failed:', e.message);
+  }
+  return realtimeMarketCache.data || '';
+}
+
+// Fetch real-time USD/INR
+async function getRealtimeForex() {
+  const now = Date.now();
+  if (now - realtimeForexCache.timestamp < 30000) return realtimeForexCache.rate;
+  try {
+    const rate = await fetchForexRate();
+    realtimeForexCache = { rate, timestamp: now };
+    return rate;
+  } catch (e) { return realtimeForexCache.rate; }
+}
+
+// ============================================
+// GROQ API — Ultra-fast Responses (Latest Model)
 // ============================================
 async function callGroq(messages, systemPrompt) {
   if (!isGroqAvailable()) throw new Error('Groq key missing or invalid');
@@ -85,7 +178,7 @@ async function callGroq(messages, systemPrompt) {
         ...messages
       ],
       temperature: 0.7,
-      max_completion_tokens: 1500
+      max_completion_tokens: 2000
     }),
     signal: AbortSignal.timeout(25000)
   });
@@ -141,7 +234,7 @@ async function callGemini(messages, systemPrompt) {
     contents.push({ role: 'user', parts: [{ text: 'Please respond to my last query.' }] });
   }
 
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -222,7 +315,7 @@ async function callClaude(messages, systemPrompt) {
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 2048,
+      max_tokens: 3000,
       system: systemPrompt,
       messages: fixedMessages
     }),
@@ -265,14 +358,23 @@ function detectIntent(query) {
 }
 
 // ============================================
-// BUILD CONTEXT — Portfolio + Market Data
+// BUILD CONTEXT — Real-Time Portfolio + Market + Web Data
 // ============================================
-async function buildContext(portfolio, livePrices, usdInrRate) {
+async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
   let ctx = '';
 
-  // Refresh market intelligence (cache 3 min)
+  // 1. Real-time market snapshot (live prices)
+  const marketSnapshot = await getRealtimeMarketSnapshot();
+  if (marketSnapshot) ctx += marketSnapshot + '\n';
+
+  // 2. Real-time USD/INR
+  const liveForex = await getRealtimeForex();
+  ctx += `LIVE USD/INR: ₹${liveForex.toFixed(4)}\n`;
+  ctx += `Timestamp: ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST\n\n`;
+
+  // 3. Refresh market intelligence (cache 2 min)
   const now = Date.now();
-  if (!cachedIntel || now - intelTimestamp > 180000) {
+  if (!cachedIntel || now - intelTimestamp > 120000) {
     try {
       cachedIntel = await fetchMarketIntelligence();
       intelTimestamp = now;
@@ -283,31 +385,58 @@ async function buildContext(portfolio, livePrices, usdInrRate) {
 
   // Market intelligence context
   if (cachedIntel) {
-    ctx += `GLOBAL MARKET DATA:\n`;
+    ctx += `GLOBAL INDICES:\n`;
     cachedIntel.globalIndices.forEach(i => {
       ctx += `${i.name}: ${i.price.toFixed(1)} (${i.change >= 0 ? '+' : ''}${i.change.toFixed(1)}%)\n`;
     });
-    ctx += `Fear/Greed Score: ${cachedIntel.fearGreedScore}/100\n`;
-    ctx += `Market Narrative: ${cachedIntel.marketNarrative}\n\n`;
+    ctx += `\nSECTOR ROTATION:\n`;
+    cachedIntel.sectors.forEach(s => {
+      ctx += `${s.name}: ${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)}%\n`;
+    });
+    ctx += `Fear/Greed: ${cachedIntel.fearGreedScore}/100\n`;
+    ctx += `AI Narrative: ${cachedIntel.marketNarrative}\n\n`;
   }
 
-  // Portfolio context
+  // 4. Real-time web search for market-related queries
+  if (userQuery && TAVILY_API_KEY) {
+    const isMarketQuery = /\b(news|market|nifty|sensex|fed|rbi|ipo|fii|dii|crude|gold|dollar|bitcoin|crypto|budget|gdp|inflation|earnings|results|breaking|today|aaj|live)\b/i.test(userQuery);
+    if (isMarketQuery) {
+      console.log('  🔍 Fetching real-time web data via Tavily...');
+      const webData = await fetchRealtimeWebData(`${userQuery} India US stock market latest 2026`);
+      if (webData) ctx += `\nLIVE WEB SEARCH RESULTS:\n${webData}\n`;
+    }
+  }
+
+  // 5. Portfolio context with full technicals
   if (portfolio && portfolio.length > 0) {
     const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
-    ctx += `PORTFOLIO (₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}):\n`;
-    ctx += `Total P&L: ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(1)}%)\n`;
-    ctx += `Today: ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')}\n\n`;
+    ctx += `\nPORTFOLIO DASHBOARD:\n`;
+    ctx += `Total Value: ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n`;
+    ctx += `Invested: ₹${Math.round(metrics.totalInvested).toLocaleString('en-IN')}\n`;
+    ctx += `Total P&L: ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(2)}%)\n`;
+    ctx += `Today P&L: ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')} (${metrics.todayPct.toFixed(2)}%)\n`;
+    ctx += `India Today: ${metrics.indPL >= 0 ? '+' : ''}₹${Math.round(metrics.indPL).toLocaleString('en-IN')}\n`;
+    ctx += `US Today: ${metrics.usPL >= 0 ? '+' : ''}₹${Math.round(metrics.usPL).toLocaleString('en-IN')}\n\n`;
 
-    ctx += `POSITIONS:\n`;
+    ctx += `POSITIONS WITH LIVE TECHNICALS:\n`;
     for (const p of portfolio) {
       const key = `${p.market}_${p.symbol}`;
       const data = livePrices[key];
       const price = data?.price || p.avgPrice;
       const change = data?.change || 0;
       const rsi = data?.rsi || 50;
+      const sma20 = data?.sma20;
+      const sma50 = data?.sma50;
+      const macd = data?.macd;
+      const volume = data?.volume || 0;
       const plPct = p.avgPrice > 0 ? ((price - p.avgPrice) / p.avgPrice) * 100 : 0;
+      const plAbs = (price - p.avgPrice) * p.qty;
+      const plINR = p.market === 'US' ? plAbs * usdInrRate : plAbs;
       const sig = analyzeAsset(p, data);
-      ctx += `${p.symbol}: ₹${price.toFixed(1)} (${change >= 0 ? '+' : ''}${change.toFixed(1)}%) RSI=${rsi.toFixed(0)} Signal=${sig.signal} P&L=${plPct.toFixed(1)}%\n`;
+      const curVal = price * p.qty;
+      const curValINR = p.market === 'US' ? curVal * usdInrRate : curVal;
+      const cur = p.market === 'IN' ? '₹' : '$';
+      ctx += `${p.symbol.replace('.NS','')} [${p.market}]: ${cur}${price.toFixed(2)} (${change >= 0 ? '+' : ''}${change.toFixed(1)}%) | RSI=${rsi.toFixed(0)} | MACD=${macd?.toFixed(2) || 'N/A'} | SMA20=${sma20?.toFixed(1) || 'N/A'} SMA50=${sma50?.toFixed(1) || 'N/A'} | Vol=${(volume/1000000).toFixed(1)}M | Signal=${sig.signal} (${sig.confidence}%) | Qty=${p.qty} Avg=${cur}${p.avgPrice.toFixed(2)} P&L=${plPct.toFixed(1)}% (₹${Math.round(plINR).toLocaleString('en-IN')}) Val=₹${Math.round(curValINR).toLocaleString('en-IN')}\n`;
     }
   }
 
@@ -318,23 +447,41 @@ async function buildContext(portfolio, livePrices, usdInrRate) {
 // SYSTEM PROMPT — Pro Trader Hinglish AI
 // ============================================
 function buildSystemPrompt(contextData, intent) {
-  return `You are DEEP MIND AI — Elite Pro Trading Intelligence for Indian & US markets.
+  const todayDate = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
+  const currentTime = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
+  
+  return `You are DEEP MIND AI QUANTUM PRO v4.0 — Elite Institutional-Grade Trading Intelligence for Indian & US markets. You have access to REAL-TIME LIVE market data feeds.
 
-PERSONA: You are a seasoned institutional trader guiding a younger brother ("Bhai"). You have 15+ years of market experience across NSE, BSE, NYSE, NASDAQ.
+PERSONA: You are a seasoned institutional quant trader (15+ years NSE, BSE, NYSE, NASDAQ, FnO, Options) guiding Nagraj Bhai like a senior trader mentoring a junior. You think like Goldman Sachs + Citadel + Renaissance Technologies combined.
 
-RULES:
-1. Speak strictly in "Pro Trader Hinglish" (Hindi + English mix). Always use terms like "Bhai", "Breakout ho gaya", "SL trail karte chalo", "Fakeout se bacho", "Liquidity grab hua hai".
-2. Act as a seasoned institutional trader guiding a younger brother.
-3. Use institutional frameworks: SMC (Smart Money Concepts), Wyckoff, Elliott Wave, Fibonacci.
-4. Give SPECIFIC actionable levels: exact Support, Resistance, Stop Loss, Target Price. Do not be vague.
-5. Include conviction scores (1-10) and clear risk-reward ratios for all setups.
-6. For news: explain the exact impact clearly, like "Iska matlab market me sell-off aa sakta hai".
-7. Be concise, punchy, and highly insightful. Max 500 words. Format with bold text and emojis for readability.
-8. Always end with a clear actionable verdict: BUY/SELL/HOLD/WAIT with specific levels.
+CRITICAL ANTI-HALLUCINATION RULES:
+- TODAY'S DATE: ${todayDate} | TIME: ${currentTime} IST
+- ONLY use the REAL-TIME data provided below. Do NOT invent, guess, or use memorized old prices.
+- If data is not available for a symbol, say "Live data not available" — do NOT make up numbers.
+- All prices, RSI, MACD values MUST come from the live data below. If missing, explicitly state it.
+- NEVER reference old/historical prices from your training data as current prices.
+
+TRADING RULES:
+1. Speak strictly in "Pro Trader Hinglish" — use terms like "Bhai", "Breakout confirm hua", "SL trail karte chalo", "Fakeout se bacho", "Liquidity grab hua hai", "Smart Money ne accumulate kiya hai".
+2. Use institutional frameworks: SMC (Smart Money Concepts), Wyckoff Phases, Elliott Wave counts, Fibonacci retracements/extensions, Order Flow analysis, Dark Pool activity.
+3. Give SPECIFIC actionable levels: exact Support, Resistance, Stop Loss, Target 1, Target 2, Target 3 prices FROM THE DATA PROVIDED.
+4. Include conviction scores (1-10) and precise risk-reward ratios (e.g., 1:2.5) for all setups.
+5. For news/events: explain exact market impact like "RBI rate cut = Bank Nifty me 500 point rally expected".
+6. Be concise, punchy, ultra-insightful. Max 600 words. Format with **bold** and emojis.
+7. Always end with CLEAR ACTIONABLE VERDICT: 🟢 BUY / 🔴 SELL / 🟡 HOLD / ⏳ WAIT with specific price levels.
+8. Reference USD/INR exchange rate when discussing US holdings in INR terms.
+9. For portfolio queries, calculate and show actual P&L from the live data provided.
+
+QUANTITATIVE EDGE:
+- Calculate implied volatility impact on options
+- Identify sector rotation patterns from the data
+- Detect institutional accumulation/distribution via volume + price action
+- Apply Kelly Criterion for position sizing recommendations
+- Use Sharpe Ratio context for risk-adjusted returns
 
 INTENT: ${intent}
 
-LIVE DATA:
+LIVE REAL-TIME DATA (USE ONLY THIS — DO NOT INVENT DATA):
 ${contextData}`;
 }
 
@@ -356,7 +503,7 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
   // Build portfolio + market context
   let contextData = '';
   try {
-    contextData = await buildContext(portfolio, livePrices, usdInrRate);
+    contextData = await buildContext(portfolio, livePrices, usdInrRate, userMessage);
   } catch (e) {
     console.warn('  ⚠ Context build partial failure:', e.message);
   }
@@ -459,9 +606,9 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
 
   // Add model indicator
   const modelEmoji = usedModel === 'groq' ? '⚡' : usedModel === 'gemini' ? '🔵' : usedModel === 'claude' ? '🟣' : '🤖';
-  const modelLabel = usedModel === 'groq' ? 'Groq' : usedModel === 'gemini' ? 'Gemini' : usedModel === 'claude' ? 'Claude' : 'System';
+  const modelLabel = usedModel === 'groq' ? 'Groq' : usedModel === 'gemini' ? 'Gemini 2.5' : usedModel === 'claude' ? 'Claude Sonnet 4' : 'System';
 
-  return `${modelEmoji} <i>${modelLabel} | ${intent}</i>\n\n${safeText}`;
+  return `${modelEmoji} <i>${modelLabel} | ${intent} | LIVE</i>\n\n${safeText}`;
 }
 
 export function clearChatHistory(chatId) {

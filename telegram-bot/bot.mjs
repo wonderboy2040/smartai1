@@ -108,10 +108,11 @@ app.listen(PORT, () => {
 // ========================================
 console.log('');
 console.log('╔══════════════════════════════════════════════╗');
-console.log('║  🧠 DEEP MIND AI TRADING BOT v1.0           ║');
+console.log('║  🧠 DEEP MIND AI QUANTUM PRO v4.0         ║');
 console.log('║  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ║');
-console.log('║  Telegram AI Trading Command System         ║');
-console.log('║  24x7 Portfolio Analysis + Pro Signals       ║');
+console.log('║  Real-Time Pro Trading Intelligence      ║');
+console.log('║  Groq + Gemini 2.5 + Claude Sonnet 4     ║');
+console.log('║  Live Market Data + Tavily Web Search     ║');
 console.log('╚══════════════════════════════════════════════╝');
 console.log('');
 
@@ -319,54 +320,57 @@ bot.onText(/^\/start(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /start from ${msg.from?.first_name || chatId}`);
 
-  const welcome = `🧠 <b>DEEP MIND AI — Trading Bot v3.0</b>
+  const welcome = `🧠 <b>DEEP MIND AI QUANTUM PRO v4.0</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Nagraj Bhai, main tumhara personal AI Trading assistant hoon! 24x7 tumhare portfolio ko monitor kar raha hoon aur market hours me automatic analysis bhejta hoon.
+Nagraj Bhai, main tumhara QUANTUM PRO AI Trading assistant hoon! 🚀
 
-⚡ <b>Available Commands:</b>
+⚡ <b>Real-Time Data Feeds:</b>
+• TradingView Live Scanner (NSE/BSE/NYSE/NASDAQ)
+• Live USD/INR Exchange Rate
+• Tavily Web Search (Breaking News)
+• VIX, Gold, Crude, DXY, Bitcoin
 
-📊 /portfolio — Full portfolio analysis + P&L
+🤖 <b>AI Engines:</b>
+• ⚡ Groq Llama-3.3 70B (Ultra-Fast)
+• 🔵 Google Gemini 2.5 Flash (Real-Time Intel)
+• 🟣 Claude Sonnet 4 (Deep Analysis)
+
+📊 <b>Commands:</b>
+
+📊 /portfolio — Full portfolio + live P&L
 🌍 /market — Global market snapshot
-🌅 /premarket — Pre-market intelligence (GIFT Nifty + Futures)
+🌅 /premarket — Pre-market intelligence
 🎯 /signals — AI buy/sell signals
-📈 /allocation — Smart SIP allocation matrix
-🛡️ /risk — Risk assessment + VIX analysis
-🔍 /scan &lt;SYMBOL&gt; — Deep scan any symbol
- ⚖️ /compare &lt;SYM1&gt; &lt;SYM2&gt; — Head-to-head comparison
- 🗺️ /heatmap — Visual portfolio heatmap
- 🔗 /correlate — Portfolio Correlation Matrix
- 🏦 /orderflow — Smart Money Order Flow
- 📊 /gap — Gap Up/Down Scanner
- 🧪 /backtest — AI Signal Accuracy Check
- 📊 /streak — Performance streak tracker
-💱 /forex — Live USD/INR rate
-✂️ /trim — Trim + Re-Entry Rules Card
-🔔 /alert — Toggle auto alerts ON/OFF
-🧹 /clear — Clear AI chat history
-❓ /help — Full command reference
+📈 /allocation — Smart SIP matrix
+🛡️ /risk — VIX risk assessment
+🔍 /scan &lt;SYM&gt; — Deep scan any symbol
+⚖️ /compare &lt;S1&gt; &lt;S2&gt; — Head-to-head
+🗺️ /heatmap — Portfolio heatmap
+🔗 /correlate — Correlation matrix
+🏦 /orderflow — Smart money flow
+📊 /gap — Gap scanner
+🧪 /backtest — Signal accuracy
+📊 /streak — Performance tracker
+💱 /forex — Live USD/INR
+✂️ /trim — Trim rules card
+🧠 /options — PCR & IV analysis
+🎯 /strategy — Option strategies
+🌍 /news — Market sentiment
+💼 /fundamental — Deep fundamentals
+🔔 /alert — Toggle auto alerts
+🧹 /clear — Clear AI memory
 
 🧠 <b>AI Chat Mode:</b>
-Simply type any question (without /) to chat with Deep Mind AI!
+Bina / ke koi bhi message likho = AI QUANTUM chat!
 
-Examples:
-• <i>market kaisa hai?</i>
-• <i>kisme invest karu?</i>
-• <i>NIFTY ka analysis do</i>
-• <i>risk assessment karo</i>
-
-━━━━━━━━━━━━━━━━━━━━━━━━━
-⚡ <b>Superintelligent AI Tools:</b>
-🧠 /options — Live PCR & IV Options Analysis
-🎯 /strategy — Executable Option Strategies
-🌍 /news — Global Market News Sentiment
-💼 /fundamental — Deep Balance Sheet Analysis
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 📡 Status: <b>${getMarketStatus()}</b>
 💼 Portfolio: <b>${portfolio.length} positions</b>
 🔔 Auto Alerts: <b>${autoAlerts ? 'ON ✅' : 'OFF ❌'}</b>
+💱 USD/INR: <b>₹${usdInrRate.toFixed(2)}</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-💎 <i>Powered by Deep Mind AI Pro Trading Terminal v3.0</i>`;
+💎 <i>Powered by Deep Mind AI Quantum Pro Terminal v4.0</i>`;
 
   await safeSend(chatId, welcome);
 });
@@ -720,7 +724,16 @@ bot.onText(/^\/forex(@\w+)?$/i, async (msg) => {
   try {
     await refreshForex();
     const report = generateForexReport(usdInrRate);
-    await safeSend(chatId, report);
+    // Also fetch fresh live rate for enhanced display
+    let liveRateMsg = '';
+    try {
+      const freshRate = await fetchForexRate();
+      if (Math.abs(freshRate - usdInrRate) > 0.01) {
+        liveRateMsg = `\n🔄 <i>Rate difference detected: Yahoo=${freshRate.toFixed(4)} vs Cached=${usdInrRate.toFixed(4)}</i>`;
+        usdInrRate = freshRate; // Update global
+      }
+    } catch(e) {}
+    await safeSend(chatId, report + liveRateMsg);
   } catch (e) {
     console.error('❌ /forex error:', e.message);
     await safeSend(chatId, `❌ Forex fetch me error: ${e.message}`);

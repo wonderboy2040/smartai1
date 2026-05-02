@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { PriceData, Position } from '../types';
 import {
   detectRegime,
@@ -115,8 +115,7 @@ export function QuantumSignals({ livePrices, portfolio, onViewDetails }: Quantum
         effectiveData.volume || 0
       );
 
-      // Prediction computed but used indirectly via regime scoring
-      PredictionEngine.predictPrice(priceHistory, effectiveData.price, effectiveData as any, 7);
+      const prediction = PredictionEngine.predictPrice(priceHistory, effectiveData.price, effectiveData, 7);
 
       let signal: SignalData['signal'] = 'HOLD';
       let confidence = 50;
@@ -153,8 +152,7 @@ export function QuantumSignals({ livePrices, portfolio, onViewDetails }: Quantum
         reasoning.push(`Mean reversion probability: ${meanRev.probability}%`);
       }
 
-
-
+      const atr = ((effectiveData.high || effectiveData.price) - (effectiveData.low || effectiveData.price)) || effectiveData.price * 0.02;
       const quantumScore = Math.round(
         (momentum.score * 0.4) +
         ((100 - Math.abs(effectiveData.change || 0) * 10) * 0.3) +

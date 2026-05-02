@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { PriceData, Position } from '../types';
-import { PredictionEngine } from '../utils/mlPrediction';
+import { PredictionEngine, TechnicalIndicators } from '../utils/mlPrediction';
 
 interface SuperIntelligenceProps {
   livePrices: Record<string, PriceData>;
@@ -107,7 +107,7 @@ let data = livePrices[fullKey];
       });
 
       const daysAhead = selectedTimeframe === '1D' ? 1 : selectedTimeframe === '3D' ? 3 : selectedTimeframe === '7D' ? 7 : 14;
-      const prediction = PredictionEngine.predictPrice(priceHistory, effectiveData.price, effectiveData as PriceData, daysAhead);
+      const prediction = PredictionEngine.predictPrice(priceHistory, effectiveData.price, effectiveData, daysAhead);
 
       const sma20 = effectiveData.sma20 || effectiveData.price;
       const sma50 = effectiveData.sma50 || effectiveData.price;
@@ -137,7 +137,15 @@ currentPrice: effectiveData.price,
     setPredictions(predictionList.sort((a, b) => b.aiScore - a.aiScore).filter(p => p.aiScore > 0));
   };
 
-
+  const _getTimeframeDays = (tf: string) => {
+    switch (tf) {
+      case '1D': return 1;
+      case '3D': return 3;
+      case '7D': return 7;
+      case '14D': return 14;
+      default: return 7;
+    }
+  };
 
   const getAIScoreColor = (score: number) => {
     if (score >= 80) return 'text-emerald-400';

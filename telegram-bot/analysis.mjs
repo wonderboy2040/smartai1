@@ -493,18 +493,51 @@ export function generateAutoReport(portfolio, livePrices, usdInrRate) {
   return msg;
 }
 
-// /forex — Forex Report
+// /forex — Enhanced Forex Report
 export function generateForexReport(usdInrRate) {
   const timeStr = getISTTime();
-  let msg = `💱 <b>FOREX — USD/INR Live</b>\n`;
-  msg += `⏰ <i>${timeStr} IST</i>\n\n`;
-  msg += `🇺🇸 1 USD = 🇮🇳 <b>₹${usdInrRate.toFixed(4)}</b>\n\n`;
-  msg += `<b>Quick Conversion:</b>\n`;
-  msg += `<code>$10   = ₹${(10 * usdInrRate).toFixed(0)}</code>\n`;
-  msg += `<code>$100  = ₹${(100 * usdInrRate).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</code>\n`;
-  msg += `<code>$500  = ₹${(500 * usdInrRate).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</code>\n`;
-  msg += `<code>$1000 = ₹${(1000 * usdInrRate).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</code>\n`;
-  msg += `\n💎 <i>Deep Mind AI Pro Trading Terminal</i>`;
+  const rate = usdInrRate;
+  
+  // Estimate if rupee is strong or weak based on rate
+  const isStrong = rate < 84;
+  const isWeak = rate > 87;
+  const trend = isWeak ? '📉 Rupee Weakening' : isStrong ? '📈 Rupee Strengthening' : '↔️ Stable Range';
+  
+  let msg = `💱 <b>FOREX COMMAND CENTER — USD/INR</b>\n`;
+  msg += `⏰ <i>${timeStr} IST</i> | <b>LIVE</b>\n\n`;
+  
+  msg += `🇺🇸 1 USD = 🇮🇳 <b>₹${rate.toFixed(4)}</b>\n`;
+  msg += `🇮🇳 1 INR = 🇺🇸 <b>$${(1/rate).toFixed(6)}</b>\n\n`;
+  
+  msg += `📊 <b>Trend:</b> ${trend}\n\n`;
+  
+  msg += `<b>💵 USD → INR Conversion:</b>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  msg += `<code>$1     = ₹${rate.toFixed(2)}</code>\n`;
+  msg += `<code>$5     = ₹${(5 * rate).toFixed(0)}</code>\n`;
+  msg += `<code>$10    = ₹${(10 * rate).toFixed(0)}</code>\n`;
+  msg += `<code>$25    = ₹${(25 * rate).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</code>\n`;
+  msg += `<code>$50    = ₹${(50 * rate).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</code>\n`;
+  msg += `<code>$100   = ₹${(100 * rate).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</code>\n`;
+  msg += `<code>$500   = ₹${(500 * rate).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</code>\n`;
+  msg += `<code>$1000  = ₹${(1000 * rate).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</code>\n`;
+  msg += `<code>$5000  = ₹${(5000 * rate).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</code>\n`;
+  msg += `<code>$10000 = ₹${(10000 * rate).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</code>\n\n`;
+  
+  msg += `<b>₹ INR → USD Conversion:</b>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  msg += `<code>₹1000   = $${(1000/rate).toFixed(2)}</code>\n`;
+  msg += `<code>₹5000   = $${(5000/rate).toFixed(2)}</code>\n`;
+  msg += `<code>₹10000  = $${(10000/rate).toFixed(2)}</code>\n`;
+  msg += `<code>₹50000  = $${(50000/rate).toFixed(2)}</code>\n`;
+  msg += `<code>₹100000 = $${(100000/rate).toFixed(2)}</code>\n\n`;
+  
+  msg += `🧠 <b>AI Forex Insight:</b>\n`;
+  if (isWeak) msg += `<i>Rupee weak zone me hai. US stocks ka INR value badh raha hai — aapke US portfolio ka fayda! But new US investments costly ho gaye.</i>\n`;
+  else if (isStrong) msg += `<i>Rupee strong ho raha hai. US me invest karne ka achha time — dollar sasta pad raha hai. US portfolio ka INR value thoda kam dikhega.</i>\n`;
+  else msg += `<i>Rupee stable range me hai — normal zone. SIP continue karo dono markets me.</i>\n`;
+  
+  msg += `\n💎 <i>Deep Mind AI Quantum Pro Terminal</i>`;
   return msg;
 }
 

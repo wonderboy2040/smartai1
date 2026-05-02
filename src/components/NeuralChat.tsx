@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-// AI Engine Configurations — Groq + Gemini + Claude (All FREE)
+// AI Engine Configurations — Groq + Gemini 2.5 + Claude Sonnet 4 (Pro Quantum)
 const CONFIG = {
   groq: {
     apiKey: import.meta.env.VITE_GROQ_API_KEY || '',
@@ -12,7 +12,7 @@ const CONFIG = {
   gemini: {
     apiKey: import.meta.env.VITE_GEMINI_API_KEY || '',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
-    model: 'gemini-2.0-flash'
+    model: 'gemini-2.5-flash'
   },
   claude: {
     apiKey: import.meta.env.VITE_CLAUDE_API_KEY || '',
@@ -20,6 +20,70 @@ const CONFIG = {
     model: 'claude-sonnet-4-20250514'
   }
 } as const;
+
+const TAVILY_KEY = import.meta.env.VITE_TAVILY_API_KEY || '';
+
+// Fetch real-time market snapshot for AI context
+async function fetchRealtimeSnapshot(): Promise<string> {
+  try {
+    const tickers = [
+      'NSE:NIFTY', 'BSE:SENSEX', 'NSE:BANKNIFTY',
+      'AMEX:SPY', 'NASDAQ:QQQ', 'CBOE:VIX', 'NSE:INDIAVIX',
+      'TVC:DXY', 'COMEX:GC1!', 'NYMEX:CL1!'
+    ];
+    const res = await fetch('https://scanner.tradingview.com/global/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({ symbols: { tickers }, columns: ['name', 'close', 'change'] }),
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!res.ok) return '';
+    const data = await res.json();
+    const nameMap: Record<string, string> = { 'NSE:NIFTY': 'NIFTY50', 'BSE:SENSEX': 'SENSEX', 'NSE:BANKNIFTY': 'BANKNIFTY', 'AMEX:SPY': 'S&P500', 'NASDAQ:QQQ': 'NASDAQ100', 'CBOE:VIX': 'US_VIX', 'NSE:INDIAVIX': 'INDIA_VIX', 'TVC:DXY': 'DXY', 'COMEX:GC1!': 'GOLD', 'NYMEX:CL1!': 'CRUDE_OIL' };
+    let snap = 'REAL-TIME MARKET:\n';
+    for (const item of (data?.data || [])) {
+      const n = nameMap[item.s] || item.s;
+      const p = parseFloat(item.d?.[1]) || 0;
+      const c = parseFloat(item.d?.[2]) || 0;
+      if (p > 0) snap += `${n}: ${p.toFixed(2)} (${c >= 0 ? '+' : ''}${c.toFixed(2)}%)\n`;
+    }
+    return snap;
+  } catch { return ''; }
+}
+
+// Fetch real-time USD/INR
+async function fetchLiveForex(): Promise<number> {
+  try {
+    const res = await fetch('https://open.er-api.com/v6/latest/USD', { signal: AbortSignal.timeout(4000) });
+    if (res.ok) {
+      const data = await res.json();
+      const rate = parseFloat(data?.rates?.INR);
+      if (!isNaN(rate) && rate > 50 && rate < 150) return rate;
+    }
+  } catch {}
+  return 85.5;
+}
+
+// Tavily web search for live news
+async function fetchWebIntel(query: string): Promise<string> {
+  if (!TAVILY_KEY) return '';
+  try {
+    const res = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: TAVILY_KEY, query: `${query} stock market India US latest`, search_depth: 'basic', include_answer: true, max_results: 3, topic: 'finance' }),
+      signal: AbortSignal.timeout(6000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      let ctx = '';
+      if (data.answer) ctx += `LIVE NEWS: ${data.answer}\n`;
+      for (const r of (data.results || []).slice(0, 2)) ctx += `• ${r.title}: ${r.content?.substring(0, 150)}\n`;
+      return ctx;
+    }
+  } catch {}
+  return '';
+}
 
 interface ChatMessage {
   role: 'user' | 'model' | 'system';
@@ -52,7 +116,7 @@ export interface NeuralChatProps {
 export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, onTelegramPush: _onTelegramPush }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
-    text: '🧠 **DEEP MIND AI — Pro Trading Assistant**\n\n**Active AI Engines:**\n⚡ **Groq Llama-3.3**: Ultra-fast responses\n🔵 **Google Gemini 2.0**: Real-time market intelligence\n🟣 **Claude Sonnet**: Deep analysis & strategies\n\nAsk anything about markets, portfolio, or trading!',
+    text: '🧠 **DEEP MIND AI QUANTUM PRO v10.0**\n\n**🚀 Active AI Engines:**\n⚡ **Groq Llama-3.3 70B**: Ultra-fast responses\n🔵 **Google Gemini 2.5 Flash**: Real-time market intelligence\n🟣 **Claude Sonnet 4**: Deep institutional analysis\n🔍 **Tavily Search**: Live market news & data\n\n**📊 Real-Time Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n• VIX, Gold, Crude, DXY tracking\n\nAsk anything — I have LIVE market data!',
     timestamp: Date.now(),
     model: 'system'
   }]);
@@ -232,26 +296,50 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
     return text;
   };
 
-  // ============ MAIN AI ROUTER — Advanced Fallback Chain ============
-  const callAI = async (_userMessage: string, model: string) => {
-    const systemPrompt = `You are DEEP MIND AI — Elite Pro Trading Intelligence for Indian & US markets.
+  // ============ MAIN AI ROUTER — Advanced Fallback Chain with Live Data ============
+  const callAI = async (userMessage: string, model: string) => {
+    // Fetch real-time data in parallel
+    const [marketSnap, liveForex, webIntel] = await Promise.allSettled([
+      fetchRealtimeSnapshot(),
+      fetchLiveForex(),
+      /\b(news|market|nifty|sensex|fed|rbi|ipo|crude|gold|dollar|breaking|aaj|today|live)\b/i.test(userMessage) ? fetchWebIntel(userMessage) : Promise.resolve('')
+    ]);
 
-PERSONA: Seasoned institutional trader guiding a younger brother ("Bhai"). 15+ years across NSE, BSE, NYSE, NASDAQ.
+    const marketData = marketSnap.status === 'fulfilled' ? marketSnap.value : '';
+    const forexRate = liveForex.status === 'fulfilled' ? liveForex.value : 85.5;
+    const newsData = webIntel.status === 'fulfilled' ? webIntel.value : '';
 
-CRITICAL RULES:
-1. Speak strictly in "Pro Trader Hinglish" (Hindi + English mix). Use "Bhai", "Breakout aa gaya", "SL trail karo", "Fakeout se bacho", "Liquidity grab".
-2. ALWAYS READ AND REFERENCE THE COMPLETE PORTFOLIO DATA BELOW. The data contains ALL assets with their live prices, RSI, MACD, SMA, signals, P&L, quantities, and more. You MUST analyze EVERY SINGLE asset when asked about portfolio.
-3. Give SPECIFIC actionable levels: Support, Resistance, Stop Loss, Target Price.
-4. Include conviction scores (1-10) and Risk-Reward ratios.
-5. For news: explain exact impact like "Iska matlab sell-off aa sakta hai".
-6. Use institutional frameworks: SMC, Wyckoff, Elliott Wave, Fibonacci.
-7. Format with **bold** and emojis for readability.
-8. End with clear verdict: BUY/SELL/HOLD/WAIT with levels.
-9. When discussing portfolio, mention EACH asset by name with its current signal, P&L, and recommendation.
-10. Do NOT skip any assets from the portfolio data. Every position must be covered.
+    const portfolioCtx = portfolioContext || 'No portfolio data.';
 
-LIVE PORTFOLIO DATA (READ EVERY LINE CAREFULLY — EACH LINE IS ONE ASSET):
-${portfolioContext || 'No portfolio data available. Provide general market analysis.'}`;
+    const systemPrompt = `You are DEEP MIND AI QUANTUM PRO v10.0 — Elite Institutional-Grade Trading Intelligence for Indian & US markets with REAL-TIME LIVE data access.
+
+PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies combined.
+
+CRITICAL ANTI-HALLUCINATION RULES:
+- ONLY use the REAL-TIME data provided below. Do NOT invent, guess, or use memorized old prices.
+- If data is not available for a symbol, say "Live data not available" — do NOT make up numbers.
+- Today's date is ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}.
+- All prices, RSI, MACD values MUST come from the data below. If missing, explicitly state it.
+
+TRADING RULES:
+1. Speak in "Pro Trader Hinglish" — "Bhai", "Breakout confirm hua", "SL trail karo", "Liquidity grab", "Smart Money accumulation".
+2. ALWAYS analyze EVERY asset from portfolio data. Do NOT skip any position.
+3. Use frameworks: SMC, Wyckoff, Elliott Wave, Fibonacci, Order Flow, Dark Pool analysis.
+4. Give SPECIFIC levels: Support, Resistance, SL, Target 1/2/3 with exact prices FROM THE DATA.
+5. Include conviction (1-10) and risk-reward ratios (e.g. 1:2.5) for all setups.
+6. For news: explain exact impact — "RBI cut = Bank Nifty 500pt rally expected".
+7. Concise, punchy, max 600 words. **Bold** + emojis.
+8. End with VERDICT: 🟢 BUY / 🔴 SELL / 🟡 HOLD / ⏳ WAIT + levels.
+9. USD/INR: ₹${forexRate.toFixed(4)} (LIVE). Convert US holdings to INR.
+10. Calculate actual P&L from provided data.
+
+LIVE REAL-TIME DATA (USE ONLY THIS — DO NOT INVENT):
+${marketData}
+USD/INR: ₹${forexRate.toFixed(4)}
+${newsData ? '\nLIVE NEWS:\n' + newsData : ''}
+
+PORTFOLIO CONTEXT:
+${portfolioCtx}`;
 
     // Filter out system messages, keep only user/assistant, limit to recent
     const recentMessages = chatMessages
@@ -363,12 +451,12 @@ ${portfolioContext || 'No portfolio data available. Provide general market analy
                   <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
                     <span className="hidden xs:inline">Deep Mind AI</span>
                     <span className="xs:hidden">AI Assistant</span>
-                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">v8.0</span>
+                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">QUANTUM PRO v10</span>
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="hidden sm:inline">Groq + Gemini + Claude</span>
-                    <span className="sm:hidden">Online</span>
+                    <span className="hidden sm:inline">Groq + Gemini 2.5 + Claude Sonnet 4</span>
+                    <span className="sm:hidden">LIVE • Quantum Pro</span>
                   </div>
                 </div>
               </div>
@@ -389,7 +477,7 @@ ${portfolioContext || 'No portfolio data available. Provide general market analy
                       : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-cyan-500/50'
                     }`}
                 >
-                  {m === 'auto' ? '🤖 Auto' : m === 'groq' ? '⚡ Groq' : m === 'gemini' ? '🔵 Gemini' : '🟣 Claude'}
+                  {m === 'auto' ? '🤖 Auto' : m === 'groq' ? '⚡ Groq' : m === 'gemini' ? '🔵 Gemini 2.5' : '🟣 Claude 4'}
                 </button>
               ))}
             </div>
@@ -406,7 +494,7 @@ ${portfolioContext || 'No portfolio data available. Provide general market analy
                       <>
                         {msg.model && (
                           <div className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase mb-2 border ${MODEL_COLORS[msg.model] || MODEL_COLORS.system}`}>
-                            {msg.model === 'groq' ? '⚡ Groq' : msg.model === 'gemini' ? '🔵 Gemini' : msg.model === 'claude' ? '🟣 Claude' : 'System'}
+                            {msg.model === 'groq' ? '⚡ Groq' : msg.model === 'gemini' ? '🔵 Gemini 2.5' : msg.model === 'claude' ? '🟣 Claude Sonnet 4' : 'System'}
                           </div>
                         )}
                         <span dangerouslySetInnerHTML={{
@@ -484,7 +572,7 @@ ${portfolioContext || 'No portfolio data available. Provide general market analy
               </div>
               <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
                 <span className="text-[7px] sm:text-[8px] text-slate-600 font-mono truncate max-w-[60%]">
-                  Model: {selectedModel === 'auto' ? '🤖 Auto-Detect' : selectedModel === 'groq' ? '⚡ Groq' : selectedModel === 'gemini' ? '🔵 Gemini' : '🟣 Claude'}
+                  Model: {selectedModel === 'auto' ? '🤖 Auto-Detect' : selectedModel === 'groq' ? '⚡ Groq' : selectedModel === 'gemini' ? '🔵 Gemini 2.5' : '🟣 Claude Sonnet 4'}
                 </span>
                 <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
                   {chatMessages.length} messages
