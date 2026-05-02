@@ -21,12 +21,8 @@ import { AlertManager, detectSmartMoney } from './utils/alertManager';
 import { getBatchInterval } from './utils/api';
 import { NeuralChat } from './components/NeuralChat';
 import { Clock } from './components/Clock';
-import { PreMarketWatch } from './components/PreMarketWatch';
 import { TrimRules } from './components/TrimRules';
-import { QuantumSignals } from './components/QuantumSignals';
-import { SuperIntelligence } from './components/SuperIntelligence';
 import { MasterConclusion } from './components/MasterConclusion';
-import { SMCProIndicator } from './components/SMCProIndicator';
 
 
 /**
@@ -951,7 +947,7 @@ export default function App() {
 
             {/* Tabs */}
             <div className="flex gap-0.5 glass-card p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
-              {(['conclusion', 'dashboard', 'signals', 'smc', 'intelligence', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
+              {(['conclusion', 'dashboard', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -963,9 +959,6 @@ export default function App() {
                   <span className="hidden sm:inline">
                     {tab === 'conclusion' && '🔮 Conclusion'}
                     {tab === 'dashboard' && '📊 Dashboard'}
-                    {tab === 'signals' && '🎯 Signals'}
-                    {tab === 'smc' && '🏦 SMC Pro'}
-                    {tab === 'intelligence' && '🧠 Super AI'}
                     {tab === 'portfolio' && '💼 Portfolio'}
                     {tab === 'planner' && '🎯 Planner'}
                     {tab === 'macro' && '🌍 Risk'}
@@ -975,9 +968,6 @@ export default function App() {
                   <span className="sm:hidden">
                     {tab === 'conclusion' && '🔮'}
                     {tab === 'dashboard' && '📊'}
-                    {tab === 'signals' && '🎯'}
-                    {tab === 'smc' && '🏦'}
-                    {tab === 'intelligence' && '🧠'}
                     {tab === 'portfolio' && '💼'}
                     {tab === 'planner' && '🎯'}
                     {tab === 'macro' && '🌍'}
@@ -1032,7 +1022,7 @@ export default function App() {
         )}
 
         {/* 🌅 Pre-Market Watch — Shows only in pre-market hours */}
-        {activeTab === 'dashboard' && <PreMarketWatch />}
+
 
         {/* 🔮 Black Swan Predictor Banner */}
         {activeTab === 'dashboard' && avgVix > 22 && (
@@ -1334,57 +1324,6 @@ export default function App() {
         )}
 
 
-
-        {/* Signals Tab */}
-        {activeTab === 'signals' && (
-          <div className="space-y-5 animate-fade-in">
-            <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-black gradient-text-cyan font-display">🎯 Quantum Signals</h2>
-              <div className="flex items-center gap-2">
-                <span className="badge bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">
-                  Live Signals
-                </span>
-              </div>
-            </div>
-            <QuantumSignals
-              livePrices={livePrices}
-              portfolio={portfolio}
-              onViewDetails={(symbol) => {
-                quickSelect(symbol);
-                setActiveTab('intelligence');
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
-            />
-          </div>
-        )}
-
-        {/* SMC Pro Indicator Tab */}
-        {activeTab === 'smc' && (
-          <div className="space-y-5 animate-fade-in">
-            <SMCProIndicator
-              livePrices={livePrices}
-              portfolio={portfolio}
-            />
-          </div>
-        )}
-
-        {/* Super Intelligence Tab */}
-        {activeTab === 'intelligence' && (
-          <div className="space-y-5 animate-fade-in">
-            <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-black gradient-text-cyan font-display">🧠 Super Intelligence</h2>
-              <div className="flex items-center gap-2">
-                <span className="badge bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">
-                  Groq + Gemini + Claude
-                </span>
-              </div>
-            </div>
-            <SuperIntelligence
-              livePrices={livePrices}
-              portfolio={portfolio}
-            />
-          </div>
-        )}
 
         {activeTab === 'portfolio' && (
           <div className="space-y-5 animate-fade-in">
@@ -2119,8 +2058,6 @@ export default function App() {
           <div className="space-y-5 animate-fade-in">
             <h2 className="text-2xl font-black gradient-text-cyan font-display">⚡ Quantum AI Tools</h2>
 
-            {/* Pre-Market Watch — Always visible in Tools */}
-            <PreMarketWatch alwaysShow />
 
 
           </div>

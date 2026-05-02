@@ -268,65 +268,6 @@ export function generateMarketReport(livePrices, intelligence) {
   return msg;
 }
 
-// /signals — Buy/Sell Signals
-export function generateSignalsReport(portfolio, livePrices) {
-  const timeStr = getISTTime();
-  const signals = portfolio.map(p => {
-    const key = `${p.market}_${p.symbol}`;
-    return analyzeAsset(p, livePrices[key]);
-  });
-
-  const buySignals = signals.filter(s => s.signal === 'STRONG_BUY' || s.signal === 'BUY');
-  const sellSignals = signals.filter(s => s.signal === 'STRONG_SELL' || s.signal === 'SELL');
-  const holdSignals = signals.filter(s => s.signal === 'HOLD');
-
-  let msg = `🎯 <b>WEALTH AI — Signal Scanner</b>\n`;
-  msg += `⏰ <i>${timeStr} IST</i>\n\n`;
-
-  if (buySignals.length > 0) {
-    msg += `🟢 <b>BUY / ACCUMULATE SIGNALS</b>\n`;
-    msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
-    for (const s of buySignals) {
-      const cur = s.market === 'IN' ? '₹' : '$';
-      const emoji = s.signal === 'STRONG_BUY' ? '🟢🟢' : '🟢';
-      msg += `\n${emoji} <b>${s.symbol}</b> — ${s.signal.replace('_', ' ')}\n`;
-      msg += `  Price: ${cur}${s.price.toFixed(2)} | RSI: <b>${s.rsi.toFixed(0)}</b>\n`;
-      msg += `  Target: ${cur}${s.targetPrice.toFixed(2)}\n`;
-      msg += `  Confidence: <b>${s.confidence}%</b>\n`;
-      msg += `  <i>${s.reason}</i>\n`;
-    }
-    msg += '\n';
-  }
-
-  if (sellSignals.length > 0) {
-    msg += `🔴 <b>SELL / DISTRIBUTE SIGNALS</b>\n`;
-    msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
-    for (const s of sellSignals) {
-      const cur = s.market === 'IN' ? '₹' : '$';
-      const emoji = s.signal === 'STRONG_SELL' ? '🔴🔴' : '🔴';
-      msg += `\n${emoji} <b>${s.symbol}</b> — ${s.signal.replace('_', ' ')}\n`;
-      msg += `  Price: ${cur}${s.price.toFixed(2)} | RSI: <b>${s.rsi.toFixed(0)}</b>\n`;
-      msg += `  <i>${s.reason}</i>\n`;
-    }
-    msg += '\n';
-  }
-
-  if (holdSignals.length > 0) {
-    msg += `🟡 <b>HOLD / NEUTRAL</b>\n`;
-    msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
-    for (const s of holdSignals) {
-      msg += `⚪ <b>${s.symbol}</b>: RSI ${s.rsi.toFixed(0)} | ${s.change >= 0 ? '+' : ''}${s.change.toFixed(1)}% | <i>${s.reason}</i>\n`;
-    }
-    msg += '\n';
-  }
-
-  if (buySignals.length === 0 && sellSignals.length === 0) {
-    msg += `⚪ <b>All Clear</b>\nKoi strong signal nahi hai abhi. Sab neutral zone me hain.\nSIP chalne do, dip aaye toh mai alert dunga.\n`;
-  }
-
-  msg += `\n💎 <i>Deep Mind AI Pro Trading Terminal</i>`;
-  return msg;
-}
 
 // /allocation — Smart SIP Allocation
 export function generateAllocationReport(livePrices, usdInrRate) {
@@ -613,69 +554,6 @@ export function generateScanReport(symbolData) {
   return msg;
 }
 
-// ========================================
-// /heatmap — Visual Portfolio Heatmap
-// ========================================
-export function generateHeatmapReport(portfolio, livePrices, usdInrRate) {
-  const timeStr = getISTTime();
-  let msg = `🗺️ <b>PORTFOLIO HEATMAP</b>\n`;
-  msg += `⏰ <i>${timeStr} IST</i>\n\n`;
-
-  if (portfolio.length === 0) {
-    msg += `⚠️ Portfolio empty hai. Web app se positions add karo.\n`;
-    return msg;
-  }
-
-  // Calculate weights and performance
-  const positions = portfolio.map(p => {
-    const key = `${p.market}_${p.symbol}`;
-    const data = livePrices[key];
-    const curPrice = data?.price || p.avgPrice;
-    const change = data?.change || 0;
-    const rsi = data?.rsi || 50;
-    const curVal = curPrice * p.qty;
-    const invVal = p.avgPrice * p.qty;
-    const pl = curVal - invVal;
-    const plPct = invVal > 0 ? (pl / invVal) * 100 : 0;
-    const valINR = p.market === 'IN' ? curVal : curVal * usdInrRate;
-    return { ...p, curPrice, change, rsi, curVal, valINR, pl, plPct, cleanSym: p.symbol.replace('.NS', '') };
-  });
-
-  const totalVal = positions.reduce((s, p) => s + p.valINR, 0);
-
-  // Sort by change (worst to best)
-  const sorted = [...positions].sort((a, b) => a.change - b.change);
-
-  msg += `<code>Symbol     Chg%   RSI  Weight  Status</code>\n`;
-  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
-
-  for (const p of sorted) {
-    const weight = totalVal > 0 ? ((p.valINR / totalVal) * 100).toFixed(0) : '0';
-    const chgStr = (p.change >= 0 ? '+' : '') + p.change.toFixed(1) + '%';
-    const rsiStr = p.rsi.toFixed(0);
-    const sym = p.cleanSym.padEnd(10).substring(0, 10);
-
-    // Heat indicator
-    let heat;
-    if (p.change > 2) heat = '🟢🟢';
-    else if (p.change > 0.5) heat = '🟢';
-    else if (p.change > -0.5) heat = '⚪';
-    else if (p.change > -2) heat = '🔴';
-    else heat = '🔴🔴';
-
-    msg += `<code>${sym} ${chgStr.padStart(6)} ${rsiStr.padStart(4)}  ${weight.padStart(4)}%</code> ${heat}\n`;
-  }
-
-  msg += `\n<b>Portfolio Heat:</b> `;
-  const avgChange = positions.reduce((s, p) => s + p.change, 0) / positions.length;
-  if (avgChange > 1) msg += `🟢🟢 Strong Green Day`;
-  else if (avgChange > 0) msg += `🟢 Mild Positive`;
-  else if (avgChange > -1) msg += `🔴 Mild Negative`;
-  else msg += `🔴🔴 Red Day`;
-
-  msg += `\n\n💎 <i>Deep Mind AI Pro Trading Terminal</i>`;
-  return msg;
-}
 
 // ========================================
 // /compare — Side-by-Side Symbol Comparison

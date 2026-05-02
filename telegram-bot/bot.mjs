@@ -14,10 +14,10 @@ import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY } from '
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
 import { loadPortfolioFromCloud, loadGroqKeyFromCloud, saveGroqKeyToCloud } from './cloud.mjs';
 import {
-  generatePortfolioReport, generateMarketReport, generateSignalsReport,
+  generatePortfolioReport, generateMarketReport,
   generateAllocationReport, generateRiskReport, generateAutoReport,
   generateForexReport, calculateMetrics, generateScanReport,
-  generateHeatmapReport, generateCompareReport, analyzeAsset,
+  generateCompareReport, analyzeAsset,
   generateLiveReport, generateCryptoReport, generateSIPReport,
   generateETFReport, generateDigestReport, generateFIIDIIReport, generateIPOReport
 } from './analysis.mjs';
@@ -469,39 +469,6 @@ Chat history reset karo.
   await safeSend(chatId, help);
 });
 
-// ========================================
-// COMMAND: /options — AI Options Analysis
-// ========================================
-bot.onText(/^\/options?(@\w+)?$/i, async (msg) => {
-  const chatId = msg.chat.id;
-  console.log(`📥 /options from ${msg.from?.first_name || chatId}`);
-  try {
-    await safeSend(chatId, '🧠 <i>Scanning live Option Chain for NIFTY/BankNIFTY... analyzing PCR & Max Pain...</i>\n\nThis is a Superintelligent Deep AI Feature.');
-    await refreshPrices();
-    const response = await chatWithAI(chatId, 'Scan live Option Chain for NIFTY. Analyze Put-Call Ratio (PCR), Max Pain, and Implied Volatility to find strong support and resistance levels. Provide an actionable conclusion.', portfolio, livePrices, usdInrRate);
-    await safeSend(chatId, response);
-  } catch (e) {
-    console.error('❌ /options error:', e.message);
-    await safeSend(chatId, `❌ /options fetch me error: ${e.message}\n\nPlease try again.`);
-  }
-});
-
-// ========================================
-// COMMAND: /strategy — AI Option Strategist
-// ========================================
-bot.onText(/^\/strateg(?:y|ies)(@\w+)?$/i, async (msg) => {
-  const chatId = msg.chat.id;
-  console.log(`📥 /strategy from ${msg.from?.first_name || chatId}`);
-  try {
-    await safeSend(chatId, '🎯 <i>Building optimal Option Strategies based on VIX and current trend...</i>\n\nThis is a Superintelligent Deep AI Feature.');
-    await refreshPrices();
-    const response = await chatWithAI(chatId, 'Based on current market volatility and trend, build 2 optimal actionable Option Strategies (e.g. Bull Call Spread, Iron Condor) with exact strikes, target, SL, and Risk:Reward.', portfolio, livePrices, usdInrRate);
-    await safeSend(chatId, response);
-  } catch (e) {
-    console.error('❌ /strategy error:', e.message);
-    await safeSend(chatId, `❌ /strategy fetch me error: ${e.message}\n\nPlease try again.`);
-  }
-});
 
 // ========================================
 // COMMAND: /news — News Sentiment
@@ -536,93 +503,6 @@ bot.onText(/^\/fundamentals?(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
   }
 });
 
-// ========================================
-// COMMAND: /premarket — Pre-Market Intelligence
-// ========================================
-bot.onText(/^\/premarket(@\w+)?$/i, async (msg) => {
-  const chatId = msg.chat.id;
-  console.log(`📥 /premarket from ${msg.from?.first_name || chatId}`);
-  try {
-    await safeSend(chatId, '🌅 <i>Fetching global pre-market data...</i>');
-    
-    const tickers = [
-      'NSE:GIFT_NIFTY',
-      'CME_MINI:ES1!', 'CME_MINI:NQ1!',
-      'TVC:NI225', 'TVC:HSI', 'XETR:DAX',
-      'TVC:DXY', 'COMEX:GC1!', 'NYMEX:CL1!'
-    ];
-    
-    const nameMap = {
-      'NSE:GIFT_NIFTY':  '🎯 GIFT Nifty',
-      'CME_MINI:ES1!':   '🇺🇸 S&P 500 Fut',
-      'CME_MINI:NQ1!':   '📱 NASDAQ Fut',
-      'TVC:NI225':       '🇯🇵 Nikkei 225',
-      'TVC:HSI':         '🇭🇰 Hang Seng',
-      'XETR:DAX':        '🇩🇪 DAX',
-      'TVC:DXY':         '💵 DXY Dollar',
-      'COMEX:GC1!':      '🥇 Gold',
-      'NYMEX:CL1!':      '🛢️ Crude Oil',
-    };
-    
-    const res = await fetch('https://scanner.tradingview.com/global/scan', {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify({ symbols: { tickers }, columns: ['close', 'change'] }),
-      signal: AbortSignal.timeout(10000)
-    });
-    
-    let report = `🌅 <b>PRE-MARKET INTELLIGENCE</b>\n`;
-    report += `⏰ <i>${getISTTime()} IST</i>\n`;
-    report += `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-    
-    const seen = new Set();
-    let giftChange = 0;
-    let esChange = 0;
-    let nqChange = 0;
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.data) {
-        for (const item of data.data) {
-          const name = nameMap[item.s];
-          if (!name || seen.has(name)) continue;
-          seen.add(name);
-          const price = parseFloat(item.d?.[0]) || 0;
-          const change = parseFloat(item.d?.[1]) || 0;
-          if (price <= 0) continue;
-
-          if (item.s === 'NSE:GIFT_NIFTY') giftChange = change;
-          if (item.s === 'CME_MINI:ES1!') esChange = change;
-          if (item.s === 'CME_MINI:NQ1!') nqChange = change;
-          
-          const arrow = change >= 0 ? '▲' : '▼';
-          const sign  = change >= 0 ? '+' : '';
-          report += `${name}\n`;
-          report += `  ${arrow} <b>${sign}${change.toFixed(2)}%</b> | ${price > 1000 ? price.toFixed(0) : price.toFixed(2)}\n\n`;
-        }
-      }
-    }
-    
-    // AI Verdict
-    report += `━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-    report += `🧠 <b>AI Pre-Market Verdict:</b>\n`;
-    const avgUS = (esChange + nqChange) / 2;
-    if (giftChange > 0.5 || avgUS > 0.5) {
-      report += `🟢 Strong pre-market! GIFT ${giftChange >= 0 ? '+' : ''}${giftChange.toFixed(2)}% — Gap-Up expected. Bullish open ho sakta hai!`;
-    } else if (giftChange < -0.5 || avgUS < -0.5) {
-      report += `🔴 Weak pre-market — GIFT ${giftChange.toFixed(2)}%. Gap-Down risk! First 15-min candle break karo phir entry lo.`;
-    } else {
-      report += `🟡 Mixed signals — Flat to rangebound open expected. Wait for direction.`;
-    }
-    
-    report += `\n\n💎 <i>Deep Mind AI Pro Terminal</i>`;
-    await safeSend(chatId, report);
-    
-  } catch (e) {
-    console.error('❌ /premarket error:', e.message);
-    await safeSend(chatId, `❌ Pre-market data fetch me error: ${e.message}\n\nPlease try again.`);
-  }
-});
 
 // ========================================
 // COMMAND: /portfolio
@@ -662,26 +542,6 @@ bot.onText(/^\/market(@\w+)?$/i, async (msg) => {
   }
 });
 
-// ========================================
-// COMMAND: /signals
-// ========================================
-bot.onText(/^\/signals(@\w+)?$/i, async (msg) => {
-  const chatId = msg.chat.id;
-  console.log(`📥 /signals from ${msg.from?.first_name || chatId}`);
-  try {
-    if (portfolio.length === 0) {
-      await safeSend(chatId, '⚠️ Portfolio empty hai. Pehle web app se positions add karo.');
-      return;
-    }
-    await safeSend(chatId, '🎯 <i>Running signal analysis... ek second...</i>');
-    await refreshPrices();
-    const report = generateSignalsReport(portfolio, livePrices);
-    await safeSend(chatId, report);
-  } catch (e) {
-    console.error('❌ /signals error:', e.message);
-    await safeSend(chatId, `❌ Signal analysis me error aaya: ${e.message}\n\nPlease try again.`);
-  }
-});
 
 // ========================================
 // COMMAND: /allocation
@@ -845,26 +705,6 @@ bot.onText(/^\/scan(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
   }
 });
 
-// ========================================
-// COMMAND: /heatmap — Portfolio Heatmap
-// ========================================
-bot.onText(/^\/heatmap(@\w+)?$/i, async (msg) => {
-  const chatId = msg.chat.id;
-  console.log(`📥 /heatmap from ${msg.from?.first_name || chatId}`);
-  try {
-    if (portfolio.length === 0) {
-      await safeSend(chatId, '⚠️ Portfolio empty hai. Web app se positions add karo.');
-      return;
-    }
-    await safeSend(chatId, '🗺️ <i>Generating heatmap... ek second...</i>');
-    await refreshPrices();
-    const report = generateHeatmapReport(portfolio, livePrices, usdInrRate);
-    await safeSend(chatId, report);
-  } catch (e) {
-    console.error('❌ /heatmap error:', e.message);
-    await safeSend(chatId, `❌ Heatmap me error aaya: ${e.message}\n\nPlease try again.`);
-  }
-});
 
 // ========================================
 // COMMAND: /compare <SYM1> <SYM2> — Side by Side
@@ -900,35 +740,6 @@ bot.onText(/^\/compare(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
   }
 });
 
-// ========================================
-// COMMAND: /streak — Performance Streak
-// ========================================
-bot.onText(/^\/streak(@\w+)?$/i, async (msg) => {
-  const chatId = msg.chat.id;
-  console.log(`📥 /streak from ${msg.from?.first_name || chatId}`);
-  try {
-    let streakMsg = `📊 <b>Performance Streak Tracker</b>\n\n`;
-    if (dailyPLHistory.length === 0) {
-      streakMsg += `⚠️ Data abhi collect ho raha hai. Thodi der baad check karo.\n<i>Bot market close pe daily P&L record karta hai.</i>`;
-    } else {
-      const streak = consecutiveStreak;
-      if (streak > 0) streakMsg += `🟢🔥 <b>${streak} consecutive GREEN days!</b>\n`;
-      else if (streak < 0) streakMsg += `🔴 <b>${Math.abs(streak)} consecutive RED days</b>\n`;
-      else streakMsg += `⚪ No streak active\n`;
-
-      streakMsg += `\n<b>Recent History:</b>\n`;
-      const recent = dailyPLHistory.slice(-7).reverse();
-      for (const d of recent) {
-        streakMsg += `${d.pl >= 0 ? '🟢' : '🔴'} ${d.date}: ${d.pl >= 0 ? '+' : ''}₹${Math.round(d.pl).toLocaleString('en-IN')} (${d.pct >= 0 ? '+' : ''}${d.pct.toFixed(2)}%)\n`;
-      }
-    }
-    streakMsg += `\n💎 <i>Deep Mind AI</i>`;
-    await safeSend(chatId, streakMsg);
-  } catch (e) {
-    console.error('❌ /streak error:', e.message);
-    await safeSend(chatId, `❌ Streak me error: ${e.message}`);
-  }
-});
 
 // ========================================
 // COMMAND: /correlate — Portfolio Correlation Matrix
@@ -983,135 +794,7 @@ bot.onText(/^\/correlat(?:e|ion)?(@\w+)?$/i, async (msg) => {
   }
 });
 
-// ========================================
-// COMMAND: /orderflow — Smart Money Order Flow
-// ========================================
-bot.onText(/^\/orderflow(@\w+)?$/i, async (msg) => {
-  const chatId = msg.chat.id;
-  console.log(`📥 /orderflow from ${msg.from?.first_name || chatId}`);
-  try {
-    if (portfolio.length === 0) {
-      await safeSend(chatId, '⚠️ Portfolio empty hai.');
-      return;
-    }
-    await safeSend(chatId, '🏦 <i>Detecting Smart Money flow... analyzing volume & price action...</i>');
-    await refreshPrices();
 
-    let report = `🏦 <b>SMART MONEY ORDER FLOW</b>\n`;
-    report += `⏰ <i>${getISTTime()} IST</i>\n`;
-    report += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
-
-    let accumulation = [];
-    let distribution = [];
-    let neutral = [];
-
-    for (const p of portfolio) {
-      const key = `${p.market}_${p.symbol}`;
-      const data = livePrices[key];
-      const change = data?.change || 0;
-      const volume = data?.volume || 0;
-      const rsi = data?.rsi || 50;
-      const sym = p.symbol.replace('.NS', '');
-
-      const isVolumeSpike = volume > 1000000 && Math.abs(change) > 1.5;
-      const isAccumulation = isVolumeSpike && change > 0 && rsi < 50;
-      const isDistribution = isVolumeSpike && change < 0 && rsi > 50;
-
-      if (isAccumulation) accumulation.push({ sym, change, volume, rsi, price: data?.price || p.avgPrice, market: p.market });
-      else if (isDistribution) distribution.push({ sym, change, volume, rsi, price: data?.price || p.avgPrice, market: p.market });
-      else neutral.push({ sym, change, volume, rsi, price: data?.price || p.avgPrice, market: p.market });
-    }
-
-    if (accumulation.length > 0) {
-      report += `🟢 <b>ACCUMULATION DETECTED</b>\n`;
-      for (const a of accumulation) {
-        const cur = a.market === 'IN' ? '₹' : '$';
-        report += `• <b>${a.sym}</b>: ${cur}${a.price.toFixed(2)} (${a.change >= 0 ? '+' : ''}${a.change.toFixed(2)}%)\n`;
-        report += `  Vol: ${(a.volume/1000000).toFixed(1)}M | RSI: ${a.rsi.toFixed(0)} | 🏦 Institutional BUYING\n`;
-      }
-      report += '\n';
-    }
-
-    if (distribution.length > 0) {
-      report += `🔴 <b>DISTRIBUTION DETECTED</b>\n`;
-      for (const d of distribution) {
-        const cur = d.market === 'IN' ? '₹' : '$';
-        report += `• <b>${d.sym}</b>: ${cur}${d.price.toFixed(2)} (${d.change >= 0 ? '+' : ''}${d.change.toFixed(2)}%)\n`;
-        report += `  Vol: ${(d.volume/1000000).toFixed(1)}M | RSI: ${d.rsi.toFixed(0)} | 🏦 Institutional SELLING\n`;
-      }
-      report += '\n';
-    }
-
-    report += `⚪ <b>NEUTRAL:</b> ${neutral.map(n => n.sym).join(', ') || 'None'}\n\n`;
-
-    report += `🧠 <b>Order Flow Verdict:</b>\n`;
-    if (accumulation.length > distribution.length) report += `🟢 Smart Money BUYING dominant — bullish institutional bias.`;
-    else if (distribution.length > accumulation.length) report += `🔴 Smart Money DISTRIBUTION — institutional exit detected. Caution!`;
-    else report += `🟡 Mixed flow — no clear institutional direction.`;
-
-    report += `\n\n💎 <i>Deep Mind AI Pro Terminal</i>`;
-    await safeSend(chatId, report);
-  } catch (e) {
-    console.error('❌ /orderflow error:', e.message);
-    await safeSend(chatId, `❌ Order flow error: ${e.message}`);
-  }
-});
-
-// ========================================
-// COMMAND: /gap — Gap Scanner
-// ========================================
-bot.onText(/^\/gap(@\w+)?$/i, async (msg) => {
-  const chatId = msg.chat.id;
-  console.log(`📥 /gap from ${msg.from?.first_name || chatId}`);
-  try {
-    if (portfolio.length === 0) {
-      await safeSend(chatId, '⚠️ Portfolio empty hai.');
-      return;
-    }
-    await safeSend(chatId, '📊 <i>Scanning for gap openings...</i>');
-    await refreshPrices();
-
-    let report = `📊 <b>GAP SCANNER</b>\n`;
-    report += `⏰ <i>${getISTTime()} IST</i>\n`;
-    report += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
-
-    for (const p of portfolio) {
-      const key = `${p.market}_${p.symbol}`;
-      const data = livePrices[key];
-      if (!data) continue;
-      const cur = p.market === 'IN' ? '₹' : '$';
-      const price = data.price;
-      const open = data.open || price;
-      const prevClose = open / (1 + (data.change || 0) / 100);
-      const gapPct = prevClose > 0 ? ((open - prevClose) / prevClose) * 100 : 0;
-      const sym = p.symbol.replace('.NS', '');
-
-      if (Math.abs(gapPct) > 0.3) {
-        const emoji = gapPct > 0 ? '🟢' : '🔴';
-        const gapType = gapPct > 1 ? 'GAP UP STRONG' : gapPct > 0.3 ? 'GAP UP' : gapPct < -1 ? 'GAP DOWN STRONG' : 'GAP DOWN';
-        report += `${emoji} <b>${sym}</b>: ${gapType}\n`;
-        report += `  Open: ${cur}${open.toFixed(2)} | Prev: ${cur}${prevClose.toFixed(2)} | Gap: <b>${gapPct >= 0 ? '+' : ''}${gapPct.toFixed(2)}%</b>\n`;
-        if (gapPct > 0.5) report += `  ⚡ Gap-up — likely buying pressure at open. Watch for gap fill.\n`;
-        else if (gapPct < -0.5) report += `  ⚠️ Gap-down — selling pressure. Wait for reversal candle.\n`;
-        report += '\n';
-      }
-    }
-
-    if (report.includes('GAP UP') || report.includes('GAP DOWN')) {
-      report += `🧠 <b>Gap Strategy:</b>\n`;
-      report += `<i>Gap-up stocks: Fade the gap if volume is low. Ride the gap if volume confirms.\n`;
-      report += `Gap-down stocks: Wait for first 15-min candle. Buy if hammer/reversal pattern forms.</i>\n`;
-    } else {
-      report += `⚪ No significant gaps detected today.\n`;
-    }
-
-    report += `\n💎 <i>Deep Mind AI Pro Terminal</i>`;
-    await safeSend(chatId, report);
-  } catch (e) {
-    console.error('❌ /gap error:', e.message);
-    await safeSend(chatId, `❌ Gap scan error: ${e.message}`);
-  }
-});
 
 // ========================================
 // COMMAND: /backtest — AI Signal Accuracy
@@ -1552,37 +1235,7 @@ bot.onText(/^\/ipo(@\w+)?$/i, async (msg) => {
 // CRON JOBS — Scheduled Automation
 // ========================================
 
-// Regular market hours scan: every 30 minutes (at :00 and :30)
-cron.schedule('0,30 * * * *', async () => {
-  if (!autoAlerts || portfolio.length === 0) return;
-  if (!isAnyMarketOpen()) return;
-  
-  console.log(`📨 Scheduled scan at ${getISTTime()} IST`);
-  await refreshPrices();
-  const report = generateAutoReport(portfolio, livePrices, usdInrRate);
-  await safeSend(TG_CHAT_ID, report);
-});
 
-// VIX Spike Emergency Alert: check every 5 minutes
-cron.schedule('*/5 * * * *', async () => {
-  if (!autoAlerts || !isAnyMarketOpen()) return;
-  const spike = trackVixChange(livePrices);
-  if (spike) {
-    const emoji = spike.severity === 'EXTREME' ? '🚨🚨🚨' : '⚠️⚠️';
-    let msg = `${emoji} <b>VIX SPIKE ALERT!</b>\n\n`;
-    msg += `US VIX: <b>${spike.usVix.toFixed(1)}</b> (${spike.usChange >= 0 ? '+' : ''}${spike.usChange.toFixed(1)}%)\n`;
-    msg += `India VIX: <b>${spike.inVix.toFixed(1)}</b> (${spike.inChange >= 0 ? '+' : ''}${spike.inChange.toFixed(1)}%)\n\n`;
-    msg += `<b>Severity:</b> ${spike.severity}\n`;
-    if (spike.severity === 'EXTREME') {
-      msg += `\n⚠️ <b>DANGER ZONE!</b> Institutional hedging massive. Protect your capital!`;
-    } else {
-      msg += `\n⚡ <i>Elevated volatility detected. Monitor positions closely.</i>`;
-    }
-    msg += `\n\n💎 <i>Deep Mind AI Auto Alert</i>`;
-    await safeSend(TG_CHAT_ID, msg);
-    console.log(`🚨 VIX spike alert sent: US ${spike.usChange.toFixed(1)}%, IN ${spike.inChange.toFixed(1)}%`);
-  }
-});
 
 // 🌅 8:00 AM IST Daily Digest — Morning Brief
 cron.schedule('30 2 * * 1-5', async () => {
@@ -1651,21 +1304,7 @@ cron.schedule('15 10 * * 1-5', async () => {
   }
 });
 
-// 📊 Smart RSI Alert — every 10 min during market hours
-cron.schedule('*/10 * * * *', async () => {
-  if (!autoAlerts || portfolio.length === 0 || !isAnyMarketOpen()) return;
-  for (const pos of portfolio) {
-    const key = `${pos.market}_${pos.symbol}`;
-    const data = livePrices[key];
-    if (!data?.rsi) continue;
-    
-    if (data.rsi >= 80) {
-      await safeSend(TG_CHAT_ID, `⚠️ <b>RSI ALERT:</b> ${pos.symbol} RSI = ${data.rsi.toFixed(0)} — <b>OVERBOUGHT</b>\nConsider trimming or setting trailing SL\n\n💎 <i>Deep Mind AI • Smart Alert</i>`);
-    } else if (data.rsi <= 20) {
-      await safeSend(TG_CHAT_ID, `🟢 <b>RSI ALERT:</b> ${pos.symbol} RSI = ${data.rsi.toFixed(0)} — <b>OVERSOLD</b>\nPotential bounce entry point\n\n💎 <i>Deep Mind AI • Smart Alert</i>`);
-    }
-  }
-});
+
 
 // Record daily P&L at India market close
 cron.schedule('10 10 * * 1-5', async () => {
