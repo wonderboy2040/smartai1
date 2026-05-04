@@ -24,7 +24,7 @@ const INTENT_PATTERNS: Record<AIModel, RegExp[]> = {
     /\b(ipo|listing|merger|acquisition)\b/i,
     /\b(global|world|international|geopolitical)\b/i,
     /\b(sector|performance|weekly|monthly)\b/i,
-    /\b(smh|qqqm|xlk|momomentum|smallcap|mid150|juniorbees)\b/i,
+    /\b(smh|qqqm|vgt|momentum50|smallcap|mid150|juniorbees)\b/i,
     /\b(nvidia|apple|microsoft|broadcom|amd|tsmc)\b/i,
     /\b(inflation|gdp|unemployment|economic|data)\b/i,
     /\b(bull|bear|rally|crash|correction|dip)\b/i,
@@ -50,7 +50,7 @@ const INTENT_PATTERNS: Record<AIModel, RegExp[]> = {
     /\b(should i|kya karu|kitna lagau|recommend)\b/i,
     /\b(compare|comparison|vs|versus|better|best)\b/i,
     /\b(expected|probability|scenario|forecast|project)\b/i,
-    /\b(momomentum|smallcap|mid150|juniorbees|smh|qqqm|xlk)\b/i,
+    /\b(momentum50|smallcap|mid150|juniorbees|smh|qqqm|vgt)\b/i,
     /\b(deep|detailed|comprehensive|complete|full)\b/i,
   ],
   groq: [

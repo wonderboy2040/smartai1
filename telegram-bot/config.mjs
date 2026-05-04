@@ -82,7 +82,7 @@ export const CORS_PROXIES = [
 // ETF Configurations
 export const ALPHA_ETFS_IN = [
   { sym: 'JUNIORBEES', name: 'Nippon India ETF Junior BeES', cagr: 18.5, maxDD: 30, cat: 'Next 50', fixedAlloc: 0.15 },
-  { sym: 'MOMOMENTUM', name: 'Motilal Oswal Nifty 200 Momentum 30', cagr: 22.5, maxDD: 30, cat: 'Smart Beta', fixedAlloc: 0.38 },
+  { sym: 'MOMENTUM50', name: 'Motilal Oswal Nifty 500 Momentum 50', cagr: 22.5, maxDD: 30, cat: 'Smart Beta', fixedAlloc: 0.38 },
   { sym: 'SMALLCAP', name: 'Nippon India Nifty Smallcap 250', cagr: 26.5, maxDD: 40, cat: 'Growth', fixedAlloc: 0.27 },
   { sym: 'MID150BEES', name: 'Nippon India Nifty Midcap 150', cagr: 21.0, maxDD: 35, cat: 'Growth', fixedAlloc: 0.20 }
 ];
@@ -90,13 +90,13 @@ export const ALPHA_ETFS_IN = [
 export const ALPHA_ETFS_US = [
   { sym: 'SMH', name: 'VanEck Semiconductor', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', fixedAlloc: 0.45 },
   { sym: 'QQQM', name: 'Invesco NASDAQ 100', cagr: 19.5, maxDD: 34, cat: 'Broad Tech', fixedAlloc: 0.35 },
-  { sym: 'XLK', name: 'Technology Select Sector SPDR', cagr: 20.5, maxDD: 33, cat: 'Tech', fixedAlloc: 0.20 }
+  { sym: 'VGT', name: 'Vanguard Information Technology ETF', cagr: 21.0, maxDD: 33, cat: 'Tech', fixedAlloc: 0.20 }
 ];
 
 export const EXACT_TICKER_MAP = {
   'SMH': 'NASDAQ:SMH',
   'QQQM': 'NASDAQ:QQQM',
-  'XLK': 'AMEX:XLK',
+  'VGT': 'AMEX:VGT',
   'AVUV': 'AMEX:AVUV',
   'IWM': 'AMEX:IWM',
   'VEA': 'AMEX:VEA',

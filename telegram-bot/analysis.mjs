@@ -788,7 +788,7 @@ export function generateETFReport(portfolio, livePrices, usdInr) {
     'MID150BEES': { cat: 'Mid Cap', bench: 'NIFTY MIDCAP 150', expense: 0.15 },
     'JUNIORBEES': { cat: 'Large Cap', bench: 'NIFTY NEXT 50', expense: 0.15 },
     'SMALLCAP': { cat: 'Small Cap', bench: 'NIFTY SMALLCAP 250', expense: 0.40 },
-    'MOMOMENTUM': { cat: 'Factor', bench: 'NIFTY 200 MOMENTUM 30', expense: 0.20 },
+    'MOMENTUM50': { cat: 'Factor', bench: 'NIFTY 500 MOMENTUM 50', expense: 0.20 },
     'GOLDBEES': { cat: 'Commodity', bench: 'GOLD', expense: 0.60 },
     'SILVERBEES': { cat: 'Commodity', bench: 'SILVER', expense: 0.55 },
     'BANKBEES': { cat: 'Sectoral', bench: 'BANK NIFTY', expense: 0.15 },
@@ -813,7 +813,7 @@ export function generateETFReport(portfolio, livePrices, usdInr) {
     msg += `📌 <b>Recommended ETF Portfolio (Aggressive):</b>\n`;
     msg += `  🇮🇳 NIFTYBEES (30%) — Large Cap core\n`;
     msg += `  🇮🇳 MID150BEES (20%) — Mid Cap growth\n`;
-    msg += `  🇮🇳 MOMOMENTUM (15%) — Factor alpha\n`;
+    msg += `  🇮🇳 MOMENTUM50 (15%) — Factor alpha\n`;
     msg += `  🇮🇳 GOLDBEES (10%) — Hedge\n`;
     msg += `  🇺🇸 MON100/N100 (25%) — International\n`;
     msg += `\n💎 <i>Deep Mind AI • ETF Terminal</i>`;
@@ -911,9 +911,9 @@ export function generateDigestReport(intel, cryptos, bonds, usdInr, portfolio, l
   if (portfolio?.length > 0) {
     const metrics = calculateMetrics(portfolio, livePrices, usdInr);
     msg += `💼 <b>YOUR PORTFOLIO</b>\n`;
-    msg += `Total: <b>₹${Math.round(metrics.totalValueINR).toLocaleString('en-IN')}</b>\n`;
+    msg += `Total: <b>₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}</b>\n`;
     msg += `Today: ${metrics.todayPL >= 0 ? '🟢 +' : '🔴 '}₹${Math.round(Math.abs(metrics.todayPL)).toLocaleString('en-IN')} (${metrics.todayPct >= 0 ? '+' : ''}${metrics.todayPct.toFixed(2)}%)\n`;
-    msg += `Overall: ${metrics.totalPL >= 0 ? '🟢 +' : '🔴 '}₹${Math.round(Math.abs(metrics.totalPL)).toLocaleString('en-IN')} (${metrics.totalPLPct >= 0 ? '+' : ''}${metrics.totalPLPct.toFixed(2)}%)\n\n`;
+    msg += `Overall: ${metrics.totalPL >= 0 ? '🟢 +' : '🔴 '}₹${Math.round(Math.abs(metrics.totalPL)).toLocaleString('en-IN')} (${metrics.plPct >= 0 ? '+' : ''}${metrics.plPct.toFixed(2)}%)\n\n`;
 
     // Top Movers
     const movers = portfolio.map(p => {

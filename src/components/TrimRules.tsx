@@ -69,12 +69,12 @@ const BASE_ETF_RULES: ETFRule[] = [
     symbol: 'QQQM', emoji: '💎', label: 'Core — Rarely Touch', category: 'US',
     style: 'Core', trimWhen: 'Weight > 42% (rare)',
     trimSize: '5-8% only', reEntryDip: '6-8% dip',
-    reEntryStyle: '2 equal parts (50% each)', rotateTo: 'SMH (if not re-entering) or XLK',
+    reEntryStyle: '2 equal parts (50% each)', rotateTo: 'SMH (if not re-entering) or VGT',
     masterLine: 'Rarely trim, Re-enter on -7% dip',
     accentFrom: 'from-cyan-500', accentTo: 'to-blue-500'
   },
   {
-    symbol: 'XLK', emoji: '⚡', label: 'Semi-Core', category: 'US',
+    symbol: 'VGT', emoji: '⚡', label: 'Semi-Core', category: 'US',
     style: 'Semi-Core', trimWhen: 'Weight > 27% OR rally 22%+ in 3 months',
     trimSize: '10-12% of position', reEntryDip: '7-9% dip from trim price',
     reEntryStyle: '2-3 equal parts', rotateTo: 'QQQM (broader exposure)',
@@ -82,7 +82,7 @@ const BASE_ETF_RULES: ETFRule[] = [
     accentFrom: 'from-amber-500', accentTo: 'to-yellow-500'
   },
   {
-    symbol: 'MOMOMENTUM', emoji: '🇮🇳', label: 'Aggressive', category: 'IN',
+    symbol: 'MOMENTUM50', emoji: '🇮🇳', label: 'Aggressive', category: 'IN',
     style: 'Aggressive', trimWhen: 'Weight > 44% OR rally 25%+ in 3 months',
     trimSize: '10-15% of position', reEntryDip: '10% correction',
     reEntryStyle: '3 equal SIP-style buys', rotateTo: 'MID150BEES or JUNIORBEES',

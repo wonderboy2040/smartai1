@@ -516,7 +516,7 @@ export default function App() {
 
     // Override for TradingView Chart widgets to use BSE for common ETFs
     // (BSE allows free real-time rendering in widgets while NSE restricts it)
-    const BSE_CHART_OVERRIDES = ['JUNIORBEES', 'MOMOMENTUM', 'SMALLCAP', 'MID150BEES'];
+    const BSE_CHART_OVERRIDES = ['JUNIORBEES', 'MOMENTUM50', 'SMALLCAP', 'MID150BEES'];
     if (BSE_CHART_OVERRIDES.includes(cleanSym)) {
       tvSymbol = `BSE:${cleanSym}`;
     }

@@ -55,6 +55,12 @@ function checkAIRateLimit(chatId) {
   return true;
 }
 
+// Authorization check — only allow the configured chat ID
+function isAuthorized(msg) {
+  if (!TG_CHAT_ID) return true; // No chat ID configured = allow all
+  return String(msg.chat.id) === String(TG_CHAT_ID);
+}
+
 // Performance streak tracking with file persistence
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -203,24 +209,25 @@ console.log('🟢 ════════════════════�
         { command: 'start', description: 'Main Menu & Overview' },
         { command: 'portfolio', description: 'Full Portfolio Analysis' },
         { command: 'market', description: 'Global Market Snapshot' },
-        { command: 'premarket', description: 'Pre-market Intelligence' },
-        { command: 'options', description: 'Options Analysis (PCR/IV)' },
-        { command: 'strategy', description: 'AI Option Strategies' },
-        { command: 'news', description: 'Global Market Sentiment' },
-        { command: 'fundamental', description: 'Deep Fundamental Analysis' },
-        { command: 'signals', description: 'AI Buy/Sell Signals' },
+        { command: 'live', description: 'Live Market Sensor Data' },
         { command: 'allocation', description: 'Smart SIP Matrix' },
         { command: 'risk', description: 'Risk & VIX Assessment' },
         { command: 'trim', description: 'Trim + Re-Entry Rules Card' },
         { command: 'scan', description: 'Deep scan any symbol' },
         { command: 'compare', description: 'Head-to-head comparison' },
-        { command: 'heatmap', description: 'Visual Heatmap' },
         { command: 'correlate', description: 'Portfolio Correlation Matrix' },
-        { command: 'orderflow', description: 'Smart Money Order Flow' },
-        { command: 'gap', description: 'Gap Up/Down Scanner' },
         { command: 'backtest', description: 'AI Signal Accuracy Check' },
         { command: 'streak', description: 'Performance streak tracker' },
+        { command: 'etf', description: 'ETF Portfolio Analysis' },
+        { command: 'crypto', description: 'Crypto Market Report' },
+        { command: 'sip', description: 'SIP Calculator' },
+        { command: 'digest', description: 'Daily Market Digest' },
+        { command: 'fiidii', description: 'FII/DII Flow Tracker' },
+        { command: 'ipo', description: 'IPO Tracker' },
         { command: 'forex', description: 'Live Forex (USD/INR)' },
+        { command: 'news', description: 'Global Market Sentiment' },
+        { command: 'fundamental', description: 'Deep Fundamental Analysis' },
+        { command: 'alert', description: 'Toggle auto alerts' },
         { command: 'clear', description: 'Clear AI Memory' }
       ]);
     console.log('✅ Telegram Menu Commands Updated');
@@ -342,22 +349,22 @@ Nagraj Bhai, main tumhara QUANTUM PRO AI Trading assistant hoon! 🚀
 
 📊 /portfolio — Full portfolio + live P&L
 🌍 /market — Global market snapshot
-🌅 /premarket — Pre-market intelligence
-🎯 /signals — AI buy/sell signals
+📡 /live — Real-time market sensor
 📈 /allocation — Smart SIP matrix
 🛡️ /risk — VIX risk assessment
+✂️ /trim — Trim rules card
 🔍 /scan &lt;SYM&gt; — Deep scan any symbol
 ⚖️ /compare &lt;S1&gt; &lt;S2&gt; — Head-to-head
-🗺️ /heatmap — Portfolio heatmap
 🔗 /correlate — Correlation matrix
-🏦 /orderflow — Smart money flow
-📊 /gap — Gap scanner
 🧪 /backtest — Signal accuracy
 📊 /streak — Performance tracker
+📊 /etf — ETF portfolio analysis
+🪙 /crypto — Crypto market
+💰 /sip — SIP calculator
+🌅 /digest — Daily digest
+🏛️ /fiidii — FII/DII flows
+🚀 /ipo — IPO tracker
 💱 /forex — Live USD/INR
-✂️ /trim — Trim rules card
-🧠 /options — PCR & IV analysis
-🎯 /strategy — Option strategies
 🌍 /news — Market sentiment
 💼 /fundamental — Deep fundamentals
 🔔 /alert — Toggle auto alerts
@@ -426,14 +433,17 @@ Full portfolio breakdown — har position ka live price, P&L, RSI status.
 🌍 <b>/market</b>
 Global market radar — NIFTY, S&P 500, VIX, Sectors, Fear/Greed Index.
 
-🎯 <b>/signals</b>
-AI Buy/Sell signals — RSI + MACD + SMA analysis on all holdings.
+📡 <b>/live</b>
+Real-time market sensor — Indices, Crypto, Bonds, Forex, Sectors.
 
 📈 <b>/allocation</b>
 Smart SIP allocation matrix — kaha kitna paisa lagana hai.
 
 🛡️ <b>/risk</b>
 Risk command center — VIX analysis, drawdown estimates, safety check.
+
+✂️ <b>/trim</b>
+Trim + Re-Entry rules card — institutional-grade rebalancing rules.
 
 🔍 <b>/scan &lt;SYMBOL&gt;</b>
 Deep analysis of ANY symbol — RSI, MACD, SMA, Fib levels, performance.
@@ -443,20 +453,45 @@ Example: <code>/scan RELIANCE</code>, <code>/scan AAPL</code>
 Head-to-head comparison of two symbols.
 Example: <code>/compare SMH QQQM</code>, <code>/compare TCS INFY</code>
 
-🗺️ <b>/heatmap</b>
-Visual portfolio heatmap — performance, RSI, weights at a glance.
+🔗 <b>/correlate</b>
+Portfolio correlation matrix — diversification check.
+
+🧪 <b>/backtest</b>
+AI signal accuracy — check how well today's signals performed.
 
 📊 <b>/streak</b>
 Performance streak tracker — consecutive green/red days history.
 
+📊 <b>/etf</b>
+ETF portfolio analysis — categorization, P&L, allocation.
+
+🪙 <b>/crypto</b>
+Crypto market — BTC, ETH, SOL and more with INR conversion.
+
+💰 <b>/sip &lt;AMOUNT&gt;</b>
+SIP calculator — future value projections at various CAGRs.
+Example: <code>/sip 10000</code>
+
+🌅 <b>/digest</b>
+Daily market digest — comprehensive morning brief.
+
+🏛️ <b>/fiidii</b>
+FII/DII flow tracker — institutional money flows.
+
+🚀 <b>/ipo</b>
+IPO tracker — upcoming and recent IPOs.
+
 💱 <b>/forex</b>
-Live USD/INR conversion rate.
+Live USD/INR conversion rate with trend analysis.
+
+🌍 <b>/news</b>
+Global market sentiment — AI-powered news synthesis.
+
+💼 <b>/fundamental &lt;SYMBOL&gt;</b>
+Deep fundamental analysis using Graham framework.
 
 🔔 <b>/alert</b>
 Toggle scheduled auto-analysis ON/OFF.
-
-🧠 <b>/ai &lt;question&gt;</b>
-AI se direct kuch bhi pucho.
 
 🧹 <b>/clear</b>
 Chat history reset karo.
@@ -464,7 +499,7 @@ Chat history reset karo.
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 💬 <b>Pro Tip:</b> Bina command ke koi bhi message likho = AI chat mode automatic activate hoga!
 
-💎 <i>Deep Mind AI Pro Trading Terminal v2.0</i>`;
+💎 <i>Deep Mind AI Quantum Pro Terminal v4.0</i>`;
 
   await safeSend(chatId, help);
 });
@@ -794,7 +829,61 @@ bot.onText(/^\/correlat(?:e|ion)?(@\w+)?$/i, async (msg) => {
   }
 });
 
+// ========================================
+// COMMAND: /streak — Performance Tracker
+// ========================================
+bot.onText(/^\/streak(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /streak from ${msg.from?.first_name || chatId}`);
+  try {
+    if (portfolio.length === 0) {
+      await safeSend(chatId, '⚠️ Portfolio empty hai. Data collect hone do.');
+      return;
+    }
+    await refreshPrices();
+    const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
 
+    let report = `📈 <b>PERFORMANCE STREAK TRACKER</b>\n`;
+    report += `⏰ <i>${getISTTime()} IST</i>\n`;
+    report += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+    // Current streak
+    const streakEmoji = consecutiveStreak > 0 ? '🟢' : consecutiveStreak < 0 ? '🔴' : '⚪';
+    const streakLabel = consecutiveStreak > 0 ? 'GREEN' : consecutiveStreak < 0 ? 'RED' : 'NEUTRAL';
+    report += `${streakEmoji} <b>Current Streak:</b> ${Math.abs(consecutiveStreak)} day${Math.abs(consecutiveStreak) !== 1 ? 's' : ''} ${streakLabel}\n\n`;
+
+    // Today's P&L
+    report += `📊 <b>Today:</b> ${metrics.todayPL >= 0 ? '🟢 +' : '🔴 '}₹${Math.round(Math.abs(metrics.todayPL)).toLocaleString('en-IN')} (${metrics.todayPct >= 0 ? '+' : ''}${metrics.todayPct.toFixed(2)}%)\n\n`;
+
+    // History (last 10 days)
+    if (dailyPLHistory.length > 0) {
+      report += `📅 <b>Recent History (${Math.min(dailyPLHistory.length, 10)} days):</b>\n`;
+      const recent = dailyPLHistory.slice(-10);
+      for (const day of recent) {
+        const emoji = day.pl >= 0 ? '🟢' : '🔴';
+        report += `${emoji} ${day.date}: ${day.pl >= 0 ? '+' : ''}₹${Math.round(Math.abs(day.pl)).toLocaleString('en-IN')} (${day.pct >= 0 ? '+' : ''}${day.pct.toFixed(2)}%)\n`;
+      }
+
+      // Stats
+      const greenDays = dailyPLHistory.filter(d => d.pl >= 0).length;
+      const totalDays = dailyPLHistory.length;
+      const winRate = totalDays > 0 ? ((greenDays / totalDays) * 100).toFixed(1) : '0';
+      const avgPL = dailyPLHistory.reduce((s, d) => s + d.pl, 0) / totalDays;
+
+      report += `\n📊 <b>Statistics (${totalDays} days):</b>\n`;
+      report += `Win Rate: <b>${winRate}%</b> (${greenDays}/${totalDays})\n`;
+      report += `Avg Daily P&L: <b>${avgPL >= 0 ? '+' : ''}₹${Math.round(avgPL).toLocaleString('en-IN')}</b>\n`;
+    } else {
+      report += `⚠️ <i>No historical data yet. Data is recorded at India market close.</i>\n`;
+    }
+
+    report += `\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /streak error:', e.message);
+    await safeSend(chatId, `❌ Streak error: ${e.message}`);
+  }
+});
 
 // ========================================
 // COMMAND: /backtest — AI Signal Accuracy
@@ -883,9 +972,9 @@ bot.onText(/^\/(trim|rules)(@\w+)?$/i, async (msg) => {
   r += `2. SIZE: 5-8% only\n`;
   r += `3. RE-ENTRY: Wait for 6-8% dip\n`;
   r += `4. STYLE: 2 equal parts (50% each)\n`;
-  r += `5. ROTATE: SMH or XLK\n\n`;
+  r += `5. ROTATE: SMH or VGT\n\n`;
 
-  r += `⚡ <b>XLK</b> (Semi-Core)\n`;
+  r += `⚡ <b>VGT</b> (Semi-Core)\n`;
   r += `1. TRIM: Weight >27% OR rally 22%+ in 3mo\n`;
   r += `2. SIZE: 10-12% of position\n`;
   r += `3. RE-ENTRY: Wait for 7-9% dip\n`;
@@ -897,7 +986,7 @@ bot.onText(/^\/(trim|rules)(@\w+)?$/i, async (msg) => {
   // Part 2: India ETFs
   let r2 = `🇮🇳 <b>INDIA ETFs:</b>\n\n`;
 
-  r2 += `🇮🇳 <b>MOMOMENTUM</b> (Aggressive)\n`;
+  r2 += `🇮🇳 <b>MOMENTUM50</b> (Aggressive)\n`;
   r2 += `1. TRIM: Weight >44% OR rally 25%+ in 3mo\n`;
   r2 += `2. SIZE: 10-15% of position\n`;
   r2 += `3. RE-ENTRY: Wait for 10% correction\n`;
@@ -1261,29 +1350,7 @@ cron.schedule('30 2 * * 1-5', async () => {
   }
 });
 
-// 📊 9:00 AM IST Pre-Market Alert (15 min before India open)
-cron.schedule('30 3 * * 1-5', async () => {
-  // 3:30 UTC = 9:00 AM IST
-  if (!autoAlerts) return;
-  try {
-    await refreshPrices();
-    const intel = await fetchMarketIntelligence();
-    let msg = `🔔 <b>PRE-MARKET ALERT</b>\n`;
-    msg += `⏰ India market opens in 15 min!\n\n`;
-    if (intel?.marketNarrative) msg += `💬 ${intel.marketNarrative}\n\n`;
-    if (intel?.fearGreedScore !== undefined) {
-      msg += `🎭 Fear/Greed: ${intel.fearGreedScore}/100\n`;
-    }
-    if (portfolio.length > 0) {
-      const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
-      msg += `💼 Portfolio: ₹${Math.round(metrics.totalValueINR).toLocaleString('en-IN')}\n`;
-    }
-    msg += `\n💎 <i>Deep Mind AI • Pre-Market Brief</i>`;
-    await safeSend(TG_CHAT_ID, msg);
-  } catch (e) {
-    console.error('Pre-market alert failed:', e.message);
-  }
-});
+// Duplicate pre-market cron removed — already handled at line 1026
 
 // 🔔 3:45 PM IST Market Close Summary
 cron.schedule('15 10 * * 1-5', async () => {
@@ -1294,7 +1361,7 @@ cron.schedule('15 10 * * 1-5', async () => {
     const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
     let msg = `🔔 <b>MARKET CLOSE SUMMARY</b>\n`;
     msg += `⏰ India market closed\n\n`;
-    msg += `💼 <b>Portfolio:</b> ₹${Math.round(metrics.totalValueINR).toLocaleString('en-IN')}\n`;
+    msg += `💼 <b>Portfolio:</b> ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n`;
     msg += `📊 <b>Today:</b> ${metrics.todayPL >= 0 ? '🟢 +' : '🔴 '}₹${Math.round(Math.abs(metrics.todayPL)).toLocaleString('en-IN')} (${metrics.todayPct >= 0 ? '+' : ''}${metrics.todayPct.toFixed(2)}%)\n`;
     msg += `📈 <b>Overall:</b> ${metrics.totalPL >= 0 ? '🟢 +' : '🔴 '}₹${Math.round(Math.abs(metrics.totalPL)).toLocaleString('en-IN')}\n`;
     msg += `\n💎 <i>Deep Mind AI • Closing Bell</i>`;
