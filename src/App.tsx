@@ -5,7 +5,7 @@ import {
   getTodayString, guessMarket, getAssetCagrProxy, formatPrice, EXACT_TICKER_MAP, isCryptoSymbol
 } from './utils/constants';
 import {
-  fetchSinglePrice, batchFetchPrices, fetchForexRate,
+  fetchSinglePrice, batchFetchPrices, fetchForexRate, fetchCryptoUsdInrRate,
   syncToCloud, loadFromCloud, sendTelegramAlert,
   syncGroqKeyToCloud, loadGroqKeyFromCloud
 } from './utils/api';
@@ -71,6 +71,9 @@ export default function App() {
   const [usdInrRate, setUsdInrRate] = useState(83.5);
   const usdInrRateRef = useRef(83.5);
   useEffect(() => { usdInrRateRef.current = usdInrRate; }, [usdInrRate]);
+  const [cryptoUsdInrRate, setCryptoUsdInrRate] = useState(88.0);
+  const cryptoUsdInrRateRef = useRef(88.0);
+  useEffect(() => { cryptoUsdInrRateRef.current = cryptoUsdInrRate; }, [cryptoUsdInrRate]);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (secureStorage.getItem('theme') as 'dark' | 'light') || 'dark');
   const [currentSymbol, setCurrentSymbol] = useState('');
   const [currentMarket, setCurrentMarket] = useState<'IN' | 'US'>('IN');
@@ -186,6 +189,7 @@ export default function App() {
 
     // Fetch forex rate
     fetchForexRate().then(rate => setUsdInrRate(rate));
+    fetchCryptoUsdInrRate().then(rate => setCryptoUsdInrRate(rate));
   }, [isAuthenticated]);
 
   const portfolioRef = useRef(portfolio);
@@ -307,7 +311,7 @@ export default function App() {
       // Incoming data from Binance is in USD. 
       // We convert it to INR if the key specifies IN_ market.
       const isIN = key.startsWith('IN_');
-      const rate = usdInrRateRef.current;
+      const rate = cryptoUsdInrRateRef.current;
       
       const convertedData = { ...data };
       if (isIN) {
@@ -453,7 +457,7 @@ export default function App() {
     if (result) {
       let finalPrice = result.price;
       if (isCryptoSymbol(sym.replace('.NS', '').replace('.BO', '')) && result.market === 'IN') {
-        finalPrice = finalPrice * usdInrRateRef.current;
+        finalPrice = finalPrice * cryptoUsdInrRateRef.current;
       }
       setModalPrice({ price: finalPrice, change: result.change, market: result.market });
       setAddPrice(finalPrice.toString());
@@ -535,6 +539,8 @@ export default function App() {
     const refreshForex = async () => {
       const rate = await fetchForexRate();
       setUsdInrRate(rate);
+      const cryptoRate = await fetchCryptoUsdInrRate();
+      setCryptoUsdInrRate(cryptoRate);
     };
 
     forexIntervalRef.current = window.setInterval(refreshForex, 60000);

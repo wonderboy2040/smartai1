@@ -368,6 +368,41 @@ export async function fetchForexRate(): Promise<number> {
   return DEFAULT_USD_INR; // Default fallback
 }
 
+export async function fetchCryptoUsdInrRate(): Promise<number> {
+  // Primary: WazirX USDT/INR (Very reliable for Indian crypto premium)
+  try {
+    const res = await fetch(`https://api.wazirx.com/sapi/v1/ticker/24hr?symbol=usdtinr`, {
+      signal: AbortSignal.timeout(4000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.lastPrice) {
+        const price = parseFloat(data.lastPrice);
+        if (!isNaN(price) && price > 60 && price < 150) return price;
+      }
+    }
+  } catch (e) {}
+  
+  // Backup: CoinDCX USDT/INR
+  try {
+    const res = await fetch(`https://api.coindcx.com/exchange/ticker`, {
+        signal: AbortSignal.timeout(4000)
+    });
+    if (res.ok) {
+        const data = await res.json();
+        const usdtTicker = data.find((t: any) => t.market === 'B-USDT_INR' || t.market === 'I-USDT_INR' || t.market === 'USDTINR');
+        if (usdtTicker && usdtTicker.last_price) {
+            const price = parseFloat(usdtTicker.last_price);
+            if (!isNaN(price) && price > 60 && price < 150) return price;
+        }
+    }
+  } catch (e) {}
+
+  // Fallback to a fixed 5% premium over normal FOREX if all fails
+  const normalRate = await fetchForexRate();
+  return normalRate * 1.05;
+}
+
 export async function syncToCloud(portfolio: Position[], usdInr: number): Promise<boolean> {
   if (!API_URL) return false;
   if (!portfolio || portfolio.length === 0) {
