@@ -658,7 +658,7 @@ export default function App() {
   // Calculate portfolio metrics
   const calculateMetrics = useCallback(() => {
     let totalInvested = 0, totalValue = 0, todayPL = 0;
-    let indPL = 0, usPL = 0;
+    let indPL = 0, usPL = 0, cryptoPL = 0;
 
     portfolio.forEach(p => {
       const key = `${p.market}_${p.symbol}`;
@@ -683,7 +683,8 @@ export default function App() {
       const dayPLINR = p.market === 'IN' ? dayPL : dayPL * usdInrRate;
       todayPL += dayPLINR;
 
-      if (p.market === 'IN') indPL += dayPLINR;
+      if (isCryptoSymbol(p.symbol.replace('.NS', '').replace('.BO', ''))) cryptoPL += dayPLINR;
+      else if (p.market === 'IN') indPL += dayPLINR;
       else usPL += dayPLINR;
     });
 
@@ -691,7 +692,7 @@ export default function App() {
     const plPct = totalInvested > 0 ? (totalPL / totalInvested) * 100 : 0;
     const todayPct = (totalValue - todayPL) > 0 ? (todayPL / (totalValue - todayPL)) * 100 : 0;
 
-    return { totalInvested, totalValue, totalPL, plPct, todayPL, todayPct, indPL, usPL };
+    return { totalInvested, totalValue, totalPL, plPct, todayPL, todayPct, indPL, usPL, cryptoPL };
   }, [portfolio, livePrices, usdInrRate]);
 
   // Metrics calculation memoization
@@ -1395,12 +1396,15 @@ export default function App() {
                 <div className={`text-xl font-black font-mono mt-1 ${metrics.todayPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                   {metrics.todayPL >= 0 ? '+' : ''}₹{Math.round(metrics.todayPL).toLocaleString('en-IN')}
                 </div>
-                <div className="flex gap-3 mt-1.5">
-                  <span className={`text-[10px] font-bold ${metrics.indPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    🇮🇳 {metrics.indPL >= 0 ? '+' : ''}₹{Math.round(metrics.indPL).toLocaleString('en-IN')}
+                <div className="flex flex-wrap gap-2 mt-1.5">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded bg-black/20 font-bold ${metrics.indPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    🇮🇳 IN: {metrics.indPL >= 0 ? '+' : ''}₹{Math.round(metrics.indPL).toLocaleString('en-IN')}
                   </span>
-                  <span className={`text-[10px] font-bold ${metrics.usPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    🦅 {metrics.usPL >= 0 ? '+' : ''}₹{Math.round(metrics.usPL).toLocaleString('en-IN')}
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded bg-black/20 font-bold ${metrics.usPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    🦅 US: {metrics.usPL >= 0 ? '+' : ''}₹{Math.round(metrics.usPL).toLocaleString('en-IN')}
+                  </span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded bg-black/20 font-bold ${metrics.cryptoPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    ₿ BTC: {metrics.cryptoPL >= 0 ? '+' : ''}₹{Math.round(metrics.cryptoPL).toLocaleString('en-IN')}
                   </span>
                 </div>
               </div>
