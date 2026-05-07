@@ -197,7 +197,8 @@ export interface AllocationRec {
 export function getSmartAllocations(
   livePrices: Record<string, PriceData>,
   indiaSIP: number = 10000,
-  usSIP: number = 200
+  usSIP: number = 200,
+  btcSIP: number = 1000
 ): AllocationRec[] {
   const recs: AllocationRec[] = [];
 
@@ -292,6 +293,31 @@ export function getSmartAllocations(
   const usTotal = usRecs.reduce((s, r) => s + r.allocPct, 0) || 1;
   inRecs.forEach(r => { r.allocPct = r.allocPct / inTotal; r.allocAmount = Math.round(indiaSIP * r.allocPct); });
   usRecs.forEach(r => { r.allocPct = r.allocPct / usTotal; r.allocAmount = Math.round(usSIP * r.allocPct); });
+
+  // Add BTC allocation
+  const btcData = livePrices['US_BTC'] || livePrices['IN_BTC'];
+  const btcPrice = btcData?.price || 0;
+  const btcRsi = btcData?.rsi || 50;
+  
+  recs.push({
+    symbol: 'BTC',
+    name: 'Bitcoin',
+    market: 'IN', // using IN so it formats as ₹ in the UI
+    currentPrice: btcPrice,
+    targetEntry: btcPrice > 0 ? btcPrice * 0.95 : 0,
+    discount: 5,
+    signal: btcRsi < 40 ? '🟢 STRONG BUY' : btcRsi > 70 ? '🟡 WAIT/HOLD' : '🟢 ACCUMULATE',
+    allocPct: 1.0, // It is 100% of the btcSIP
+    allocAmount: btcSIP,
+    rsi: btcRsi,
+    strength: btcRsi < 45 ? 85 : 50,
+    stopLoss: btcPrice * 0.8,
+    takeProfit: btcPrice * 1.5,
+    riskReward: 2.5,
+    trendStrength: 'STRONG',
+    volumeSignal: '🔥 High Volume',
+    reason: 'Digital Gold — Dedicated Monthly SIP'
+  });
 
   return recs;
 }

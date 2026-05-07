@@ -79,7 +79,8 @@ export default function App() {
 
   // Planner State
   const [indiaSIP, setIndiaSIP] = useState(10000);
-  const [usSIP, setUsSIP] = useState(200);
+  const [usSIP, setUsSIP] = useState(154.62);
+  const [btcSIP, setBtcSIP] = useState(1000);
   const [emergencyFund, setEmergencyFund] = useState(50000);
   const [investYears, setInvestYears] = useState(15);
   const [riskLevel, setRiskLevel] = useState<RiskLevel>('medium');
@@ -805,7 +806,7 @@ export default function App() {
   const signalData = getSignal();
 
   // Planner calculations
-  const totalSIP = indiaSIP + (usSIP * usdInrRate);
+  const totalSIP = indiaSIP + (usSIP * usdInrRate) + btcSIP;
   const cagr = riskLevel === 'low' ? 8 : riskLevel === 'high' ? 18 : 12;
   const months = investYears * 12;
   const totalInvestedPlanner = totalSIP * months;
@@ -918,7 +919,7 @@ export default function App() {
 
             {/* Tabs */}
             <div className="flex gap-0.5 glass-card p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
-              {(['dashboard', 'portfolio', 'planner', 'macro', 'tools', 'trim'] as TabType[]).map(tab => (
+              {(['dashboard', 'portfolio', 'planner', 'macro', 'trim'] as TabType[]).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -932,7 +933,6 @@ export default function App() {
                     {tab === 'portfolio' && '💼 Portfolio'}
                     {tab === 'planner' && '🎯 Planner'}
                     {tab === 'macro' && '🌍 Risk'}
-                    {tab === 'tools' && '⚡ AI Tools'}
                     {tab === 'trim' && '✂️ Trim Rules'}
                   </span>
                   <span className="sm:hidden">
@@ -940,7 +940,6 @@ export default function App() {
                     {tab === 'portfolio' && '💼'}
                     {tab === 'planner' && '🎯'}
                     {tab === 'macro' && '🌍'}
-                    {tab === 'tools' && '⚡'}
                     {tab === 'trim' && '✂️'}
                   </span>
                 </button>
@@ -1549,7 +1548,7 @@ export default function App() {
             {/* SIP Config */}
             <div className="glass-card rounded-2xl p-5 animate-fade-in-up">
               <div className="text-[10px] text-cyan-500/70 font-bold uppercase tracking-wider mb-4">Monthly SIP Configuration</div>
-              <div className="grid md:grid-cols-3 gap-3 mb-5">
+              <div className="grid md:grid-cols-4 gap-3 mb-5">
                 <div className="bg-blue-500/5 border border-blue-500/15 p-4 rounded-xl">
                   <div className="text-xs font-bold text-blue-400 mb-2">🇮🇳 India SIP</div>
                   <div className="flex items-center gap-2 glass-input p-2 rounded-lg">
@@ -1562,6 +1561,13 @@ export default function App() {
                   <div className="flex items-center gap-2 glass-input p-2 rounded-lg">
                     <span className="text-lg text-emerald-500/50">$</span>
                     <input type="number" value={usSIP} onChange={e => setUsSIP(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
+                  </div>
+                </div>
+                <div className="bg-orange-500/5 border border-orange-500/15 p-4 rounded-xl">
+                  <div className="text-xs font-bold text-orange-400 mb-2">🪙 Bitcoin SIP</div>
+                  <div className="flex items-center gap-2 glass-input p-2 rounded-lg">
+                    <span className="text-lg text-orange-500/50">₹</span>
+                    <input type="number" value={btcSIP} onChange={e => setBtcSIP(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
                   </div>
                 </div>
                 <div className="bg-purple-500/5 border border-purple-500/15 p-4 rounded-xl">
@@ -1754,7 +1760,7 @@ export default function App() {
 
                 {/* Allocation Recommendations */}
                 {(() => {
-                  const allocs = getSmartAllocations(livePrices, indiaSIP, usSIP);
+                  const allocs = getSmartAllocations(livePrices, indiaSIP, usSIP, btcSIP);
                   return (
                     <div className="bg-black/20 rounded-xl p-4 border border-purple-500/15">
                       <div className="flex items-center justify-between mb-4">
@@ -1762,7 +1768,7 @@ export default function App() {
                           💰 Monthly SIP Allocation
                         </div>
                         <div className="text-[10px] text-slate-500 font-mono">
-                          ₹{Math.round(indiaSIP).toLocaleString()} IN + ${usSIP} US
+                          ₹{Math.round(indiaSIP).toLocaleString()} IN + ${usSIP} US + ₹{btcSIP.toLocaleString()} BTC
                         </div>
                       </div>
                       <div className="space-y-3">
@@ -2011,17 +2017,7 @@ export default function App() {
         )}
       </main>
 
-      {/* ⚡ AI Tools Tab */}
-      {activeTab === 'tools' && (
-        <main className="container mx-auto px-4 py-6">
-          <div className="space-y-5 animate-fade-in">
-            <h2 className="text-2xl font-black gradient-text-cyan font-display">⚡ Quantum AI Tools</h2>
 
-
-
-          </div>
-        </main>
-      )}
 
       {/* ✂️ Trim Rules Tab */}
       {activeTab === 'trim' && (
