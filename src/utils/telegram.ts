@@ -295,7 +295,7 @@ export function getSmartAllocations(
   usRecs.forEach(r => { r.allocPct = r.allocPct / usTotal; r.allocAmount = Math.round(usSIP * r.allocPct); });
 
   // Add BTC allocation
-  const btcData = livePrices['US_BTC'] || livePrices['IN_BTC'];
+  const btcData = livePrices['IN_BTC'] || livePrices['US_BTC'];
   const btcPrice = btcData?.price || 0;
   const btcRsi = btcData?.rsi || 50;
   

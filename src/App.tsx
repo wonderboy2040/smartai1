@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Position, PriceData, TabType, RiskLevel, TransactionType } from './types';
 import {
   SECURE_PIN, TG_TOKEN, TG_CHAT_ID,
-  getTodayString, guessMarket, getAssetCagrProxy, formatPrice, EXACT_TICKER_MAP
+  getTodayString, guessMarket, getAssetCagrProxy, formatPrice, EXACT_TICKER_MAP, isCryptoSymbol
 } from './utils/constants';
 import {
   fetchSinglePrice, batchFetchPrices, fetchForexRate,
@@ -11,6 +11,7 @@ import {
 } from './utils/api';
 import { secureStorage } from './utils/secureStorage';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from './utils/tvWebsocket';
+import { subscribeToCryptoPrices, disconnectCryptoPrices } from './utils/binanceWebsocket';
 import {
   isAnyMarketOpen, getMarketStatus, analyzeAsset,
   getSmartAllocations, generateDeepAnalysis
@@ -68,6 +69,8 @@ export default function App() {
   const [portfolio, setPortfolio] = useState<Position[]>([]);
   const [livePrices, setLivePrices] = useState<Record<string, PriceData>>({});
   const [usdInrRate, setUsdInrRate] = useState(83.5);
+  const usdInrRateRef = useRef(83.5);
+  useEffect(() => { usdInrRateRef.current = usdInrRate; }, [usdInrRate]);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (secureStorage.getItem('theme') as 'dark' | 'light') || 'dark');
   const [currentSymbol, setCurrentSymbol] = useState('');
   const [currentMarket, setCurrentMarket] = useState<'IN' | 'US'>('IN');
@@ -79,7 +82,7 @@ export default function App() {
 
   // Planner State
   const [indiaSIP, setIndiaSIP] = useState(10000);
-  const [usSIP, setUsSIP] = useState(154.62);
+  const [usSIP, setUsSIP] = useState(51.54);
   const [btcSIP, setBtcSIP] = useState(1000);
   const [emergencyFund, setEmergencyFund] = useState(50000);
   const [investYears, setInvestYears] = useState(15);
@@ -239,10 +242,15 @@ export default function App() {
     const currentPortfolio = portfolioRef.current;
 
     // Add default symbols if portfolio is empty
-    const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA', 'IN_INDIAVIX', 'US_VIX'];
-    const symbolsToSub = currentPortfolio.length > 0
+    const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA', 'IN_INDIAVIX', 'US_VIX', 'IN_BTC'];
+    let symbolsToSub = currentPortfolio.length > 0
       ? [...new Set(currentPortfolio.map(p => `${p.market}_${p.symbol}`))]
       : defaultSymbols;
+
+    // Ensure BTC is always tracked for the Wealth Planner allocations
+    if (!symbolsToSub.includes('IN_BTC')) {
+      symbolsToSub.push('IN_BTC');
+    }
 
     // Convert symbols to Position[] for batchFetchPrices
     const positionsToSub: Position[] = symbolsToSub.map(symbol => {
@@ -279,23 +287,53 @@ export default function App() {
 
     // Ultra-fast TradingView WebSocket — batch all ticks into 100ms flush (zero direct state updates)
     let statusCounter = 0;
-    const unsubscribe = subscribeToPrices(symbolsToSub, (key, data) => {
-      // Queue into batch buffer — flushPricesToStorage handles React state at 10fps
+    
+    // Split symbols into Crypto and Traditional
+    const cryptoSymbols = symbolsToSub.filter(s => isCryptoSymbol(s.split('_')[1]));
+    const tvSymbols = symbolsToSub.filter(s => !isCryptoSymbol(s.split('_')[1]));
+
+    const unsubscribeTv = subscribeToPrices(tvSymbols, (key, data) => {
       pendingPricesRef.current[key] = {
         ...(pendingPricesRef.current[key] || {}),
         ...data
       } as PriceData;
-      // Only update status every 50th tick to avoid wasteful re-renders
       statusCounter++;
       if (statusCounter % 50 === 1) {
         setLiveStatus('● TV SOCKET LIVE ⚡');
       }
     });
 
+    const unsubscribeBinance = subscribeToCryptoPrices(cryptoSymbols.map(s => s.split('_')[1]), (key, data) => {
+      // Incoming data from Binance is in USD. 
+      // We convert it to INR if the key specifies IN_ market.
+      const isIN = key.startsWith('IN_');
+      const rate = usdInrRateRef.current;
+      
+      const convertedData = { ...data };
+      if (isIN) {
+        if (convertedData.price) convertedData.price = convertedData.price * rate;
+        if (convertedData.high) convertedData.high = convertedData.high * rate;
+        if (convertedData.low) convertedData.low = convertedData.low * rate;
+        // change is a percentage, it doesn't need conversion
+      }
+
+      pendingPricesRef.current[key] = {
+        ...(pendingPricesRef.current[key] || {}),
+        ...convertedData
+      } as PriceData;
+      
+      statusCounter++;
+      if (statusCounter % 50 === 1) {
+        setLiveStatus('● BINANCE SOCKET LIVE ⚡');
+      }
+    });
+
     return () => {
       clearInterval(syncInterval);
-      unsubscribe();
+      unsubscribeTv();
+      unsubscribeBinance();
       disconnectPrices();
+      disconnectCryptoPrices();
       // Flush any pending prices before cleanup
       flushPricesToStorage();
     };
@@ -413,8 +451,12 @@ export default function App() {
   const fetchModalPriceData = async (sym: string) => {
     const result = await fetchSinglePrice(sym);
     if (result) {
-      setModalPrice({ price: result.price, change: result.change, market: result.market });
-      setAddPrice(result.price.toString());
+      let finalPrice = result.price;
+      if (isCryptoSymbol(sym.replace('.NS', '').replace('.BO', '')) && result.market === 'IN') {
+        finalPrice = finalPrice * usdInrRateRef.current;
+      }
+      setModalPrice({ price: finalPrice, change: result.change, market: result.market });
+      setAddPrice(finalPrice.toString());
     }
   };
 

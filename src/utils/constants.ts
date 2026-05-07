@@ -81,12 +81,17 @@ export function getTodayString(): string {
   return `${t.getFullYear()}-${m < 10 ? '0' + m : m}-${d < 10 ? '0' + d : d}`;
 }
 
+export function isCryptoSymbol(sym: string): boolean {
+  return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX'].includes(sym.toUpperCase());
+}
+
 export function guessMarket(sym: string): 'IN' | 'US' {
   sym = (sym || '').toUpperCase();
   if (sym.includes('.NS') || sym.includes('.BO')) return 'IN';
   if (sym === 'RELIANCE' || sym === 'NIFTY' || sym === 'SENSEX') return 'IN';
   if (sym.includes('BEES')) return 'IN';
   if (ALPHA_ETFS_IN.some(e => e.sym.replace('.NS', '') === sym)) return 'IN';
+  if (isCryptoSymbol(sym)) return 'IN'; // User buys via CoinDCX in INR
   return 'US';
 }
 

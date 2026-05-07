@@ -1,5 +1,5 @@
 import { PriceData, Position } from '../types';
-import { CORS_PROXIES, EXACT_TICKER_MAP, guessMarket, API_URL, DEFAULT_USD_INR } from './constants';
+import { CORS_PROXIES, EXACT_TICKER_MAP, guessMarket, API_URL, DEFAULT_USD_INR, isCryptoSymbol } from './constants';
 import { isAnyMarketOpen } from './telegram';
 
 // ========================================
@@ -84,6 +84,35 @@ return null;
 
 const cleanSym = sym.replace('.NS', '').replace('.BO', '');
 const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEES') || guessMarket(sym) === 'IN';
+
+  // Try Binance if Crypto
+  if (isCryptoSymbol(cleanSym)) {
+    try {
+      const binanceSym = `${cleanSym}USDT`;
+      const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSym}`);
+      if (res.ok) {
+        const data = await res.json();
+        const priceVal = parseFloat(data.lastPrice);
+        const changeVal = parseFloat(data.priceChangePercent);
+        if (!isNaN(priceVal) && priceVal > 0) {
+          const result: PriceData = {
+            price: priceVal,
+            change: changeVal,
+            high: parseFloat(data.highPrice) || priceVal,
+            low: parseFloat(data.lowPrice) || priceVal,
+            volume: parseFloat(data.volume) || 0,
+            rsi: 50, // Default RSI for crypto search
+            market: 'IN', // User wants INR
+            tvExchange: 'BINANCE',
+            tvExactSymbol: binanceSym,
+            time: Date.now()
+          };
+          priceCache.set(sym, result, 5000);
+          return result;
+        }
+      }
+    } catch(e) {}
+  }
 
   // Try TradingView first
   try {
