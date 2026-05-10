@@ -59,6 +59,29 @@ function mergePriceData(existing: PriceData | undefined, incoming: Partial<Price
   return { price, change, high, low, volume, rsi, time, market, sma20, sma50, macd, tvExchange, tvExactSymbol };
 }
 
+// Memoized asset button to prevent re-renders on unrelated portfolio changes
+const MemoAssetButton = React.memo(function MemoAssetButton({
+  symbol, market, price, change, onClick
+}: { symbol: string; market: string; price: number; change: number; onClick: (s: string) => void }) {
+  const cur = market === 'IN' ? '₹' : '$';
+  return (
+    <button
+      onClick={() => onClick(symbol)}
+      className="stat-card glass-card px-4 py-3 rounded-xl text-left transition-all hover:-translate-y-0.5"
+    >
+      <div className="font-bold text-white text-sm">{symbol.replace('.NS', '')}</div>
+      <div className="flex items-center gap-2 mt-1.5">
+        <span className="font-mono text-xs text-slate-300">
+          {formatPrice(price, cur)}
+        </span>
+        <span className={`font-bold text-xs ${change >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+          {change >= 0 ? '+' : ''}{change.toFixed(2)}%
+        </span>
+      </div>
+    </button>
+  );
+});
+
 export default function App() {
   // Auth State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -230,7 +253,7 @@ export default function App() {
     if (!isAuthenticated || portfolio.length === 0) return;
     priceFlushRef.current = window.setInterval(() => {
       requestAnimationFrame(flushPricesToStorage);
-    }, 1000);
+    }, 2000);
     return () => {
       if (priceFlushRef.current) {
         clearInterval(priceFlushRef.current);
@@ -700,8 +723,6 @@ export default function App() {
   const metrics = useMemo(() => calculateMetrics(), [calculateMetrics]);
 
   // Track meaningful price changes to regenerate AI context
-  const priceUpdateCounterRef = useRef(0);
-  const [contextTrigger, setContextTrigger] = useState(0);
   const isComponentMountedRef = useRef(true);
 
   // Cleanup on unmount to prevent memory leaks
@@ -716,25 +737,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Increment context trigger when livePrices change meaningfully (throttled)
-  useEffect(() => {
-    if (!isAuthenticated || portfolio.length === 0) return;
-    const keys = Object.keys(livePrices);
-    if (keys.length === 0) return;
-    priceUpdateCounterRef.current++;
-    // Trigger AI context regeneration every 20 price updates (~20s) to reduce CPU load
-    // Only if NeuralChat is active (no point generating if chat is closed)
-    if (priceUpdateCounterRef.current % 20 === 0 && activeTab === 'dashboard') {
-      setContextTrigger(prev => prev + 1);
-    }
-  }, [isAuthenticated, portfolio.length, livePrices, activeTab]);
-
-  // Generate portfolio context text for NeuralChat AI with FULL live data for ALL assets
+  // Context regeneration throttled by lastContextGenRef (30s minimum)
   useEffect(() => {
     if (portfolio.length === 0) return;
     const now = Date.now();
-    // Allow regeneration at minimum 15s intervals
-    if (now - lastContextGenRef.current < 15000) return;
+    // Allow regeneration at minimum 30s intervals to reduce CPU
+    if (now - lastContextGenRef.current < 30000) return;
     lastContextGenRef.current = now;
 
     // Build comprehensive context with ALL positions and live prices — NO truncation
@@ -804,8 +812,6 @@ export default function App() {
   useEffect(() => {
     latestDataRef.current = { portfolio, livePrices, usdInrRate, metrics };
   }, [portfolio, livePrices, usdInrRate, metrics]);
-
-  // Auto Telegram Notifications (market hours only, every 30 min)
   useEffect(() => {
     if (!isAuthenticated || !autoTelegram || portfolio.length === 0) return;
 
@@ -1315,28 +1321,19 @@ export default function App() {
                     <p className="text-xs text-slate-700 mt-1">Add assets to start tracking</p>
                   </div>
                 ) : (
-                  [...new Set(portfolio.map(p => p.symbol))].map((sym, i) => {
-                    const p = portfolio.find(x => x.symbol === sym)!;
-                    const key = `${p.market}_${sym}`;
+                  portfolio.map((p) => {
+                    const key = `${p.market}_${p.symbol}`;
                     const data = livePrices[key];
                     const change = data?.change || 0;
                     return (
-                      <button
-                        key={sym}
-                        onClick={() => quickSelect(sym)}
-                        className="stat-card glass-card px-4 py-3 rounded-xl text-left animate-fade-in-up"
-                        style={{ animationDelay: `${i * 50}ms` }}
-                      >
-                        <div className="font-bold text-white text-sm">{sym.replace('.NS', '')}</div>
-                        <div className="flex items-center gap-2 mt-1.5">
-                          <span className="font-mono text-xs text-slate-300">
-                            {formatPrice(data?.price || p.avgPrice, p.market === 'IN' ? '₹' : '$')}
-                          </span>
-                          <span className={`font-bold text-xs ${change >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {change >= 0 ? '+' : ''}{change.toFixed(2)}%
-                          </span>
-                        </div>
-                      </button>
+                      <MemoAssetButton
+                        key={`${key}`}
+                        symbol={p.symbol}
+                        market={p.market}
+                        price={data?.price || p.avgPrice}
+                        change={change}
+                        onClick={quickSelect}
+                      />
                     );
                   })
                 )}
