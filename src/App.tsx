@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Position, PriceData, TabType, RiskLevel, TransactionType } from './types';
 import {
   SECURE_PIN, TG_TOKEN, TG_CHAT_ID,
@@ -806,7 +806,7 @@ export default function App() {
 
     setPortfolioContextText(ctx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [portfolio.length, usdInrRate, contextTrigger]);
+  }, [portfolio.length, usdInrRate]);
 
   const latestDataRef = useRef({ portfolio, livePrices, usdInrRate, metrics });
   useEffect(() => {
