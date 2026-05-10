@@ -456,7 +456,8 @@ export default function App() {
     const result = await fetchSinglePrice(sym);
     if (result) {
       let finalPrice = result.price;
-      if (isCryptoSymbol(sym.replace('.NS', '').replace('.BO', '')) && result.market === 'IN') {
+      // Only convert USD→INR if the source is Binance (USD). CoinDCX already returns INR.
+      if (isCryptoSymbol(sym.replace('.NS', '').replace('.BO', '')) && result.market === 'IN' && result.tvExchange === 'BINANCE') {
         finalPrice = finalPrice * cryptoUsdInrRateRef.current;
       }
       setModalPrice({ price: finalPrice, change: result.change, market: result.market });

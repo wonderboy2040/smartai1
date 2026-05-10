@@ -85,11 +85,48 @@ return null;
 const cleanSym = sym.replace('.NS', '').replace('.BO', '');
 const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEES') || guessMarket(sym) === 'IN';
 
-  // Try Binance if Crypto
+  // Try CoinDCX first (direct INR price — matches user's exchange)
+  if (isCryptoSymbol(cleanSym)) {
+    try {
+      const res = await fetch(`https://api.coindcx.com/exchange/ticker`, {
+        signal: AbortSignal.timeout(5000)
+      });
+      if (res.ok) {
+        const tickers = await res.json();
+        // CoinDCX markets: BTCINR, ETHINR, SOLINR, etc.
+        const inrTicker = tickers.find((t: any) => t.market === `${cleanSym}INR`);
+        if (inrTicker && inrTicker.last_price) {
+          const priceVal = parseFloat(inrTicker.last_price);
+          const changeVal = parseFloat(inrTicker.change_24_hour) || 0;
+          if (!isNaN(priceVal) && priceVal > 0) {
+            const result: PriceData = {
+              price: priceVal,
+              change: changeVal,
+              high: parseFloat(inrTicker.high) || priceVal,
+              low: parseFloat(inrTicker.low) || priceVal,
+              volume: parseFloat(inrTicker.volume) || 0,
+              rsi: 50,
+              market: 'IN',
+              tvExchange: 'COINDCX',
+              tvExactSymbol: `${cleanSym}INR`,
+              time: Date.now()
+            };
+            const cacheTTL = 5000; // Crypto is 24/7
+            priceCache.set(sym, result, cacheTTL);
+            return result;
+          }
+        }
+      }
+    } catch(e) {}
+  }
+
+  // Binance fallback for crypto (USD price — will be converted to INR by WebSocket handler)
   if (isCryptoSymbol(cleanSym)) {
     try {
       const binanceSym = `${cleanSym}USDT`;
-      const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSym}`);
+      const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSym}`, {
+        signal: AbortSignal.timeout(5000)
+      });
       if (res.ok) {
         const data = await res.json();
         const priceVal = parseFloat(data.lastPrice);
@@ -102,12 +139,12 @@ const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEE
             low: parseFloat(data.lowPrice) || priceVal,
             volume: parseFloat(data.volume) || 0,
             rsi: 50,
-            market: 'IN', // User wants INR
+            market: 'IN',
             tvExchange: 'BINANCE',
             tvExactSymbol: binanceSym,
             time: Date.now()
           };
-          const cacheTTL = isAnyMarketOpen() ? 5000 : 30000;
+          const cacheTTL = 5000;
           priceCache.set(sym, result, cacheTTL);
           return result;
         }
@@ -380,7 +417,22 @@ export async function fetchForexRate(): Promise<number> {
 }
 
 export async function fetchCryptoUsdInrRate(): Promise<number> {
-  // Primary: WazirX USDT/INR (Very reliable for Indian crypto premium)
+  // Primary: CoinDCX USDT/INR (matches user's exchange for accurate INR conversion)
+  try {
+    const res = await fetch(`https://api.coindcx.com/exchange/ticker`, {
+      signal: AbortSignal.timeout(5000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const usdtTicker = data.find((t: any) => t.market === 'USDTINR');
+      if (usdtTicker && usdtTicker.last_price) {
+        const price = parseFloat(usdtTicker.last_price);
+        if (!isNaN(price) && price > 60 && price < 150) return price;
+      }
+    }
+  } catch (e) {}
+
+  // Backup: WazirX USDT/INR
   try {
     const res = await fetch(`https://api.wazirx.com/sapi/v1/ticker/24hr?symbol=usdtinr`, {
       signal: AbortSignal.timeout(4000)
@@ -391,21 +443,6 @@ export async function fetchCryptoUsdInrRate(): Promise<number> {
         const price = parseFloat(data.lastPrice);
         if (!isNaN(price) && price > 60 && price < 150) return price;
       }
-    }
-  } catch (e) {}
-  
-  // Backup: CoinDCX USDT/INR
-  try {
-    const res = await fetch(`https://api.coindcx.com/exchange/ticker`, {
-        signal: AbortSignal.timeout(4000)
-    });
-    if (res.ok) {
-        const data = await res.json();
-        const usdtTicker = data.find((t: any) => t.market === 'B-USDT_INR' || t.market === 'I-USDT_INR' || t.market === 'USDTINR');
-        if (usdtTicker && usdtTicker.last_price) {
-            const price = parseFloat(usdtTicker.last_price);
-            if (!isNaN(price) && price > 60 && price < 150) return price;
-        }
     }
   } catch (e) {}
 
