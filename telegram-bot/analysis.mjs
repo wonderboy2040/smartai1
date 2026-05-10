@@ -4,7 +4,7 @@
 
 import {
   ALPHA_ETFS_IN, ALPHA_ETFS_US, getAssetCagrProxy,
-  formatCurrency, formatPrice, DEFAULT_INDIA_SIP, DEFAULT_US_SIP, DEFAULT_USD_INR
+  formatCurrency, formatPrice, DEFAULT_INDIA_SIP, DEFAULT_US_SIP, DEFAULT_USD_INR, isCryptoSymbol
 } from './config.mjs';
 import { getISTTime, getMarketStatus, isIndiaMarketOpen, isUSMarketOpen } from './market.mjs';
 
@@ -17,6 +17,13 @@ export function analyzeAsset(position, priceData) {
   const change = priceData?.change || 0;
   const volume = priceData?.volume || 0;
   const cagr = getAssetCagrProxy(position.symbol, position.market);
+  const isCrypto = isCryptoSymbol(position.symbol);
+
+  // Crypto uses wider RSI thresholds (more volatile)
+  const oversoldThreshold = isCrypto ? 25 : 30;
+  const overboughtThreshold = isCrypto ? 80 : 65;
+  const strongOversold = isCrypto ? 20 : 30;
+  const strongOverbought = isCrypto ? 85 : 75;
 
   const sma20 = priceData?.sma20;
   const sma50 = priceData?.sma50;
@@ -47,20 +54,20 @@ export function analyzeAsset(position, priceData) {
   let reason = 'Neutral range, maintain position';
   let targetPrice = price;
 
-  if (rsi < 30) {
+  if (rsi < strongOversold) {
     signal = 'STRONG_BUY'; confidence = 95; targetPrice = supportLevel;
-    reason = `RSI ${rsi.toFixed(0)} oversold — institutional accumulation zone.`;
+    reason = `RSI ${rsi.toFixed(0)} oversold${isCrypto ? ' (crypto zone)' : ''} — institutional accumulation zone.`;
     if (instAccumulation) { confidence = 99; reason = `🔥 MAX CONVICTION: RSI ${rsi.toFixed(0)} + Volume Spike! Institutional buying detected.`; }
-  } else if (rsi < 40) {
+  } else if (rsi < oversoldThreshold + 10) {
     signal = 'BUY'; confidence = 80; targetPrice = low;
     reason = `RSI ${rsi.toFixed(0)} approaching oversold — good entry.`;
     if (isBullishTrend) { reason += ' Bullish momentum building.'; confidence += 5; }
     if (instAccumulation) { confidence += 10; reason += ' Volume confirming accumulation.'; }
-  } else if (rsi > 75) {
+  } else if (rsi > strongOverbought) {
     signal = 'STRONG_SELL'; confidence = 90; targetPrice = resistanceLevel;
-    reason = `RSI ${rsi.toFixed(0)} overbought — distribution zone.`;
+    reason = `RSI ${rsi.toFixed(0)} overbought${isCrypto ? ' (crypto zone)' : ''} — distribution zone.`;
     if (instDistribution) { confidence = 98; reason = `🔥 MAX RISK: RSI ${rsi.toFixed(0)} + Volume Spike! Institutional distribution detected.`; }
-  } else if (rsi > 65) {
+  } else if (rsi > overboughtThreshold) {
     signal = 'SELL'; confidence = 70; targetPrice = high;
     reason = `RSI ${rsi.toFixed(0)} elevated — consider partial booking.`;
     if (isBearishTrend) { reason += ' Bearish momentum detected.'; confidence += 5; }
@@ -102,7 +109,7 @@ export function analyzeAsset(position, priceData) {
 // ========================================
 export function calculateMetrics(portfolio, livePrices, usdInrRate) {
   let totalInvested = 0, totalValue = 0, todayPL = 0;
-  let indPL = 0, usPL = 0;
+  let indPL = 0, usPL = 0, cryptoPL = 0;
 
   for (const p of portfolio) {
     const key = `${p.market}_${p.symbol}`;
@@ -127,7 +134,9 @@ export function calculateMetrics(portfolio, livePrices, usdInrRate) {
     const dayPLINR = p.market === 'IN' ? dayPL : dayPL * usdInrRate;
     todayPL += dayPLINR;
 
-    if (p.market === 'IN') indPL += dayPLINR;
+    const cleanSym = p.symbol.replace('.NS', '').replace('.BO', '');
+    if (isCryptoSymbol(cleanSym)) cryptoPL += dayPLINR;
+    else if (p.market === 'IN') indPL += dayPLINR;
     else usPL += dayPLINR;
   }
 
@@ -136,7 +145,7 @@ export function calculateMetrics(portfolio, livePrices, usdInrRate) {
   const prevDayValue = totalValue - todayPL;
   const todayPct = prevDayValue > 0 ? (todayPL / prevDayValue) * 100 : 0;
 
-  return { totalInvested, totalValue, totalPL, plPct, todayPL, todayPct, indPL, usPL };
+  return { totalInvested, totalValue, totalPL, plPct, todayPL, todayPct, indPL, usPL, cryptoPL };
 }
 
 // ========================================

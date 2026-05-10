@@ -49,7 +49,7 @@ const pendingRequests = new Map<string, Promise<PriceData | null>>();
  * Get market-aware batch interval. Reduces from 4s during open markets.
  */
 export function getBatchInterval(): number {
-  return isAnyMarketOpen() ? 2000 : 8000;
+  return isAnyMarketOpen() ? 2000 : 30000;
 }
 
 export async function fetchSinglePrice(symbol: string, retryAttempt = 0): Promise<PriceData | null> {
@@ -101,13 +101,14 @@ const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEE
             high: parseFloat(data.highPrice) || priceVal,
             low: parseFloat(data.lowPrice) || priceVal,
             volume: parseFloat(data.volume) || 0,
-            rsi: 50, // Default RSI for crypto search
+            rsi: 50,
             market: 'IN', // User wants INR
             tvExchange: 'BINANCE',
             tvExactSymbol: binanceSym,
             time: Date.now()
           };
-          priceCache.set(sym, result, 5000);
+          const cacheTTL = isAnyMarketOpen() ? 5000 : 30000;
+          priceCache.set(sym, result, cacheTTL);
           return result;
         }
       }
@@ -118,7 +119,8 @@ const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEE
   try {
     const tvResult = await tryTradingView(sym, cleanSym, isIndian);
     if (tvResult && tvResult.price > 0) {
-      priceCache.set(sym, tvResult, 5000); // Increased to 5s for stability
+      const cacheTTL = isAnyMarketOpen() ? 5000 : 30000;
+      priceCache.set(sym, tvResult, cacheTTL);
       return tvResult;
     }
   } catch (e) {}
@@ -238,8 +240,17 @@ export async function batchFetchPrices(
 
     if (EXACT_TICKER_MAP[cleanSym]) {
       const t = EXACT_TICKER_MAP[cleanSym];
-      if (mkt === 'IN') inTickers.push(t); else usTickers.push(t);
-      tickerToKey[t] = key;
+      // Route crypto to separate list
+      if (isCryptoSymbol(cleanSym)) {
+        // Skip — crypto is handled by Binance WebSocket, not TradingView batch
+        tickerToKey[t] = key;
+      } else if (mkt === 'IN') {
+        inTickers.push(t);
+        tickerToKey[t] = key;
+      } else {
+        usTickers.push(t);
+        tickerToKey[t] = key;
+      }
     } else if (mkt === 'IN') {
       inTickers.push(`NSE:${cleanSym}`, `BSE:${cleanSym}`);
       tickerToKey[`NSE:${cleanSym}`] = key;

@@ -166,7 +166,7 @@ export default function App() {
         setPortfolio(data);
         secureStorage.setItem('portfolio', JSON.stringify(data));
       }
-    }).catch(() => console.warn('Cloud sync unavailable'));
+    }).catch(() => {});
 
     // Load Gemini key from cloud, fallback to local, then sync to cloud
     loadGroqKeyFromCloud().then(cloudKey => {
@@ -217,7 +217,7 @@ export default function App() {
       }
       // Throttle localStorage writes to max every 5s to avoid main thread blocking
       const now = Date.now();
-      if (changed && now - lastLocalSaveRef.current > 5000) {
+      if (changed && now - lastLocalSaveRef.current > 10000) {
         lastLocalSaveRef.current = now;
         try { secureStorage.setItem('livePrices', JSON.stringify(merged)); } catch { /* quota */ }
       }
@@ -416,7 +416,7 @@ export default function App() {
             const key = `${result.market}_${sym}`;
             setLivePrices(prev => ({ ...prev, [key]: result }));
           }
-        } catch (e) { console.warn('Analyze error:', e); }
+        } catch (e) { }
         finally { setIsAnalyzing(false); }
       })();
     }
@@ -722,10 +722,11 @@ export default function App() {
     if (keys.length === 0) return;
     priceUpdateCounterRef.current++;
     // Trigger AI context regeneration every 20 price updates (~20s) to reduce CPU load
-    if (priceUpdateCounterRef.current % 20 === 0) {
+    // Only if NeuralChat is active (no point generating if chat is closed)
+    if (priceUpdateCounterRef.current % 20 === 0 && activeTab === 'dashboard') {
       setContextTrigger(prev => prev + 1);
     }
-  }, [isAuthenticated, portfolio.length, livePrices]);
+  }, [isAuthenticated, portfolio.length, livePrices, activeTab]);
 
   // Generate portfolio context text for NeuralChat AI with FULL live data for ALL assets
   useEffect(() => {
@@ -774,10 +775,23 @@ export default function App() {
       const slPrice = curPrice - atr * 1.5;
       const tpPrice = curPrice + atr * 2.5;
 
+      // Holding period calculation
+      const buyDate = new Date(p.dateAdded);
+      const holdingDays = Math.max(0, Math.round((Date.now() - buyDate.getTime()) / (1000 * 60 * 60 * 24)));
+      const holdingLabel = holdingDays > 365 ? `${(holdingDays / 365).toFixed(1)}Y` : `${holdingDays}D`;
+
+      // CAGR since inception
+      const years = holdingDays / 365;
+      const cagrPct = (years > 0.1 && p.avgPrice > 0) ? ((Math.pow(curPrice / p.avgPrice, 1 / years) - 1) * 100) : plPct;
+
+      // Crypto label
+      const isCryptoAsset = isCryptoSymbol(cleanSym);
+      const assetType = isCryptoAsset ? 'CRYPTO' : p.market;
+
       // Trend direction
       const trend = (data?.sma20 && data?.sma50) ? (data.sma20 > data.sma50 ? 'BULL' : 'BEAR') : (change > 0.5 ? 'BULL' : change < -0.5 ? 'BEAR' : 'FLAT');
 
-      ctx += `${idx + 1}. ${cleanSym} [${p.market}] | Price=${curPrice.toFixed(2)} | Chg=${change >= 0 ? '+' : ''}${change.toFixed(2)}% | RSI=${rsi.toFixed(0)} | MACD=${macd} | SMA20=${sma20} | SMA50=${sma50} | Trend=${trend} | Vol=${vol} | Signal=${sig.signal} | Confidence=${sig.confidence}% | SL=${slPrice.toFixed(2)} | TP=${tpPrice.toFixed(2)} | AvgBuy=${p.avgPrice.toFixed(2)} | Qty=${p.qty} | Invested=${invested.toFixed(0)} | CurVal=${curVal.toFixed(0)} | P&L=${plPct >= 0 ? '+' : ''}${plPct.toFixed(2)}% (${plAbs >= 0 ? '+' : ''}${plAbs.toFixed(0)})\n`;
+      ctx += `${idx + 1}. ${cleanSym} [${assetType}] | Price=${curPrice.toFixed(2)} | Chg=${change >= 0 ? '+' : ''}${change.toFixed(2)}% | RSI=${rsi.toFixed(0)} | MACD=${macd} | SMA20=${sma20} | SMA50=${sma50} | Trend=${trend} | Vol=${vol} | Signal=${sig.signal} | Confidence=${sig.confidence}% | SL=${slPrice.toFixed(2)} | TP=${tpPrice.toFixed(2)} | AvgBuy=${p.avgPrice.toFixed(2)} | Qty=${p.qty} | Invested=${invested.toFixed(0)} | CurVal=${curVal.toFixed(0)} | P&L=${plPct >= 0 ? '+' : ''}${plPct.toFixed(2)}% (${plAbs >= 0 ? '+' : ''}${plAbs.toFixed(0)}) | Holding=${holdingLabel} | CAGR=${cagrPct >= 0 ? '+' : ''}${cagrPct.toFixed(1)}%\n`;
     }
     ctx += `=== END ALL ${portfolio.length} POSITIONS ===\n`;
 

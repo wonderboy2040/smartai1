@@ -1,7 +1,7 @@
 import { ETFInfo } from '../types';
 
 export const SECURE_PIN = "2023";
-export const DEFAULT_USD_INR = 83.5;
+export const DEFAULT_USD_INR = 85.5;
 export const API_URL = import.meta.env.VITE_API_URL || "";
 export const TG_TOKEN = import.meta.env.VITE_TG_TOKEN || "";
 export const TG_CHAT_ID = import.meta.env.VITE_TG_CHAT_ID || "";
@@ -65,8 +65,11 @@ export const EXACT_TICKER_MAP: Record<string, string> = {
   'META': 'NASDAQ:META',
   'NVDA': 'NASDAQ:NVDA',
   'TSLA': 'NASDAQ:TSLA',
-  'BTC': 'BITSTAMP:BTCUSD',
-  'ETH': 'BITSTAMP:ETHUSD'
+  'BTC': 'BINANCE:BTCUSDT',
+  'ETH': 'BINANCE:ETHUSDT',
+  'SOL': 'BINANCE:SOLUSDT',
+  'BNB': 'BINANCE:BNBUSDT',
+  'XRP': 'BINANCE:XRPUSDT'
 };
 
 export const CORS_PROXIES = [
@@ -82,7 +85,8 @@ export function getTodayString(): string {
 }
 
 export function isCryptoSymbol(sym: string): boolean {
-  return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX'].includes(sym.toUpperCase());
+  const clean = sym.toUpperCase().replace('USDT', '').replace('USD', '').replace('.NS', '').replace('.BO', '');
+  return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI', 'BITCOIN', 'ETHEREUM'].includes(clean);
 }
 
 export function guessMarket(sym: string): 'IN' | 'US' {
@@ -95,8 +99,16 @@ export function guessMarket(sym: string): 'IN' | 'US' {
   return 'US';
 }
 
+// Crypto CAGR proxies (conservative long-term estimates)
+const CRYPTO_CAGR: Record<string, number> = {
+  'BTC': 55, 'ETH': 45, 'SOL': 40, 'BNB': 35, 'XRP': 25,
+  'DOGE': 20, 'ADA': 20, 'AVAX': 30, 'DOT': 25, 'LINK': 30
+};
+
 export function getAssetCagrProxy(sym: string, mkt: string): number {
-  sym = sym.toUpperCase();
+  sym = sym.toUpperCase().replace('.NS', '').replace('.BO', '');
+  // Crypto check first
+  if (isCryptoSymbol(sym)) return CRYPTO_CAGR[sym] || 30;
   const i = ALPHA_ETFS_IN.find(e => e.sym === sym);
   if (i) return i.cagr;
   const u = ALPHA_ETFS_US.find(e => e.sym === sym);

@@ -70,7 +70,7 @@ export function isClaudeAvailable() { return !!(CLAUDE_API_KEY && CLAUDE_API_KEY
 // SIP Defaults
 export const DEFAULT_INDIA_SIP = 10000;
 export const DEFAULT_US_SIP = 50;
-export const DEFAULT_USD_INR = 90;
+export const DEFAULT_USD_INR = 85.5;
 
 // CORS Proxies (for Yahoo Finance — server-side we can call directly)
 export const CORS_PROXIES = [
@@ -94,6 +94,7 @@ export const ALPHA_ETFS_US = [
 ];
 
 export const EXACT_TICKER_MAP = {
+  // US ETFs & Indices
   'SMH': 'NASDAQ:SMH',
   'QQQM': 'NASDAQ:QQQM',
   'VGT': 'AMEX:VGT',
@@ -104,9 +105,43 @@ export const EXACT_TICKER_MAP = {
   'DIA': 'AMEX:DIA',
   'XLV': 'AMEX:XLV',
   'VIX': 'CBOE:VIX',
+  'SPX': 'SP:SPX',
+  'NDX': 'NASDAQ:NDX',
+  'QQQ': 'NASDAQ:QQQ',
+  'AAPL': 'NASDAQ:AAPL',
+  'MSFT': 'NASDAQ:MSFT',
+  'GOOGL': 'NASDAQ:GOOGL',
+  'AMZN': 'NASDAQ:AMZN',
+  'META': 'NASDAQ:META',
+  'NVDA': 'NASDAQ:NVDA',
+  'TSLA': 'NASDAQ:TSLA',
+  // Indian ETFs & Indices
   'NIFTY': 'NSE:NIFTY',
-  'GIFT_NIFTY': 'NSE:GIFT_NIFTY'
+  'SENSEX': 'BSE:SENSEX',
+  'BANKNIFTY': 'NSE:BANKNIFTY',
+  'NIFTY50': 'NSE:NIFTY',
+  'INDIAVIX': 'NSE:INDIAVIX',
+  'GIFT_NIFTY': 'NSE:GIFT_NIFTY',
+  'JUNIORBEES': 'NSE:JUNIORBEES',
+  'MOMENTUM50': 'NSE:MOMENTUM50',
+  'SMALLCAP': 'NSE:SMALLCAP',
+  'MID150BEES': 'NSE:MID150BEES',
+  // Crypto
+  'BTC': 'BINANCE:BTCUSDT',
+  'ETH': 'BINANCE:ETHUSDT',
+  'SOL': 'BINANCE:SOLUSDT',
+  'BNB': 'BINANCE:BNBUSDT',
+  'XRP': 'BINANCE:XRPUSDT'
 };
+
+// Crypto symbol detection
+export function isCryptoSymbol(sym) {
+  const clean = (sym || '').toUpperCase().replace('USDT', '').replace('USD', '').replace('.NS', '').replace('.BO', '');
+  return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI', 'BITCOIN', 'ETHEREUM'].includes(clean);
+}
+
+// Crypto CAGR proxies
+const CRYPTO_CAGR = { 'BTC': 55, 'ETH': 45, 'SOL': 40, 'BNB': 35, 'XRP': 25, 'DOGE': 20, 'ADA': 20, 'AVAX': 30 };
 
 // Helpers
 export function guessMarket(sym) {
@@ -115,11 +150,14 @@ export function guessMarket(sym) {
   if (sym === 'RELIANCE' || sym === 'NIFTY' || sym === 'SENSEX') return 'IN';
   if (sym.includes('BEES')) return 'IN';
   if (ALPHA_ETFS_IN.some(e => e.sym === sym.replace('.NS', ''))) return 'IN';
+  if (isCryptoSymbol(sym)) return 'IN'; // User buys crypto via CoinDCX in INR
   return 'US';
 }
 
 export function getAssetCagrProxy(sym, mkt) {
-  sym = sym.toUpperCase();
+  sym = (sym || '').toUpperCase().replace('.NS', '').replace('.BO', '');
+  // Crypto check first
+  if (isCryptoSymbol(sym)) return CRYPTO_CAGR[sym] || 30;
   const i = ALPHA_ETFS_IN.find(e => e.sym === sym);
   if (i) return i.cagr;
   const u = ALPHA_ETFS_US.find(e => e.sym === sym);
