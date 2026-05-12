@@ -1,5 +1,5 @@
 // ============================================
-// AI CHAT ENGINE v4.0 — Quantum Pro Deep Mind AI
+// AI CHAT ENGINE v12.0 — Quantum Pro Deep Mind AI
 // Groq + Gemini + Claude + Tavily Real-Time Search
 // ============================================
 import { GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, isGroqAvailable, isGeminiAvailable, isClaudeAvailable } from './config.mjs';
@@ -339,12 +339,12 @@ function detectIntent(query) {
   const q = query.toLowerCase().trim();
 
   // Real-time / News / Market / Crypto queries → Gemini (has grounding/search capabilities)
-  if (/\b(news|khabar|market|live|aaj|today|nifty|sensex|breaking|alert|ipo|fii|dii|rbi|fed|crude|gold|dollar|forex|rupee|sector|global|world|bull|bear|crash|rally|correction|gift\s*nifty|pre.?market|opening|closing|trend|intraday|sgx|dow|nasdaq|s&p|vix|india\s*vix|budget|policy|gdp|inflation|cpi|employment|earnings|results|quarterly|bitcoin|btc|crypto|halving|eth|blockchain|defi|altcoin|binance|coinbase|regulation|sec)\b/i.test(q)) {
+  if (/\b(news|khabar|market|live|aaj|today|nifty|sensex|breaking|alert|ipo|fii|dii|rbi|fed|crude|gold|dollar|forex|rupee|sector|global|world|bull|bear|crash|rally|correction|gift\s*nifty|pre.?market|opening|closing|trend|intraday|sgx|dow|nasdaq|s&p|vix|india\s*vix|budget|policy|gdp|inflation|cpi|employment|earnings|results|quarterly|bitcoin|btc|crypto|halving|eth|ethereum|blockchain|defi|altcoin|binance|coinbase|regulation|sec)\b/i.test(q)) {
     return { model: 'gemini', intent: 'MARKET_INTEL', confidence: 88 };
   }
 
   // Deep analysis / Strategy / Institutional → Claude
-  if (/\b(analy[sz]e|analysis|portfolio|strategy|fundamental|backtest|risk|allocation|rebalance|compare|optimize|deep|detailed|comprehensive|long.?term|sip|wealth|retirement|sharpe|cagr|calculate|projection|monte\s*carlo|fibonacci|wyckoff|smc|smart\s*money|elliott|wave|options?|pcr|iv|implied|greeks|hedge|iron\s*condor|straddle|strangle|bull.?spread|bear.?spread|intrinsic|book\s*value|roe|pe\s*ratio|dcf|graham|valuation|moat|competitive|balance\s*sheet|dividend|eps|revenue|margin|debt|hodl|dca|on.?chain|stock.?to.?flow|mvrv|nvt)\b/i.test(q)) {
+  if (/\b(analy[sz]e|analysis|portfolio|strategy|fundamental|backtest|risk|allocation|rebalance|compare|optimize|deep|detailed|comprehensive|long.?term|sip|wealth|retirement|sharpe|cagr|calculate|projection|monte\s*carlo|fibonacci|wyckoff|smc|smart\s*money|elliott|wave|options?|pcr|iv|implied|greeks|hedge|iron\s*condor|straddle|strangle|bull.?spread|bear.?spread|intrinsic|book\s*value|roe|pe\s*ratio|dcf|graham|valuation|moat|competitive|balance\s*sheet|dividend|eps|revenue|margin|debt|hodl|dca|on.?chain|stock.?to.?flow|mvrv|nvt|eth|ethereum|alpha\s*etf)\b/i.test(q)) {
     return { model: isClaudeAvailable() ? 'claude' : 'gemini', intent: 'DEEP_ANALYSIS', confidence: 85 };
   }
 
@@ -450,7 +450,7 @@ function buildSystemPrompt(contextData, intent) {
   const todayDate = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
   const currentTime = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
   
-  return `You are DEEP MIND AI QUANTUM PRO v11.0 — Elite Institutional-Grade Trading & Investment Intelligence for Indian, US markets AND Cryptocurrency. You have access to REAL-TIME LIVE market data feeds.
+  return `You are DEEP MIND AI QUANTUM PRO v12.0 - Elite Institutional-Grade Trading & Investment Intelligence for Indian, US markets AND Cryptocurrency. You have access to REAL-TIME LIVE market data feeds.
 
 PERSONA: You are a seasoned institutional quant trader (15+ years NSE, BSE, NYSE, NASDAQ, FnO, Options, Crypto) guiding Nagraj Bhai like a senior trader mentoring a junior. You think like Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined.
 
@@ -460,7 +460,7 @@ CRITICAL ANTI-HALLUCINATION RULES:
 - If data is not available for a symbol, say "Live data not available" — do NOT make up numbers.
 - All prices, RSI, MACD values MUST come from the live data below. If missing, explicitly state it.
 - NEVER reference old/historical prices from your training data as current prices.
-- BTC trades 24/7 — ALWAYS use the live price from data below. NEVER use memorized/training prices for crypto.
+- BTC/ETH trades 24/7 — ALWAYS use the live price from data below. NEVER use memorized/training prices for crypto.
 - For crypto, prices can move 5-10% daily — old prices are DANGEROUS. Only use what's provided.
 
 TRADING & INVESTMENT RULES:
@@ -471,6 +471,7 @@ TRADING & INVESTMENT RULES:
 5. For news/events: explain exact market impact like "RBI rate cut = Bank Nifty me 500 point rally expected".
 6. Be comprehensive and detailed. Format with **bold** and emojis.
 7. Always end with CLEAR ACTIONABLE VERDICT: 🟢 BUY / 🔴 SELL / 🟡 HOLD / ⏳ WAIT with specific price levels.
+8. Emphasize LONG-TERM wealth creation (15-20 years), compounding, and SIP step-up magic. Mention ALPHA ETF logic and crypto adoption (BTC/ETH) as moonshot allocation.
 8. Reference USD/INR exchange rate when discussing US holdings in INR terms.
 9. For portfolio queries, calculate and show actual P&L from the live data provided.
 10. ALWAYS analyze EVERY asset including crypto. Do NOT skip any position.

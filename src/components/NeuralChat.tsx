@@ -140,10 +140,10 @@ interface ChatMessage {
 
 const QUICK_ACTIONS = [
   { label: 'Market News', query: 'Latest Indian and US market news and analysis with key levels', icon: '📰', type: 'gemini' },
-  { label: 'Portfolio Analysis', query: 'Analyze my ENTIRE portfolio deeply — every single position including crypto. Show P&L, technicals, fundamentals, and give specific BUY/HOLD/SELL verdict for each asset.', icon: '📊', type: 'claude' },
-  { label: 'BTC Analysis', query: 'Deep analysis of my Bitcoin (BTC) position with on-chain context, halving cycle position, support/resistance levels, accumulation zones, and long-term HODL thesis', icon: '₿', type: 'claude' },
-  { label: 'Quick Question', query: 'Explain RSI divergence and how to use it for trading', icon: '⚡', type: 'groq' },
-  { label: 'Crypto News', query: 'Latest Bitcoin and crypto market news, regulatory updates, ETF flows, and on-chain analysis with price impact assessment', icon: '🪙', type: 'gemini' }
+  { label: 'Portfolio Analysis', query: 'Analyze my ENTIRE portfolio deeply - every single position including crypto. Show P&L, technicals, fundamentals, and give specific BUY/HOLD/SELL verdict for each asset.', icon: '💼', type: 'claude' },
+  { label: 'ETH Analysis', query: 'Deep analysis of my Ethereum (ETH) position with on-chain context, support/resistance levels, and long-term HODL thesis', icon: '🪙', type: 'claude' },
+  { label: 'Long-Term Strategy', query: 'Give me a 15-20 year wealth creation roadmap focusing on SIP step-up and compound growth', icon: '📈', type: 'claude' },
+  { label: 'ETF Allocation', query: 'Analyze ETF allocations including Kotak Nifty Alpha 50 (ALPHA) ETF with momentum and growth projections', icon: '🎯', type: 'claude' }
 ];
 
 const MODEL_COLORS = {
@@ -162,7 +162,7 @@ export interface NeuralChatProps {
 export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, onTelegramPush: _onTelegramPush }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
-    text: '🧠 **DEEP MIND AI QUANTUM PRO v10.0**\n\n**🚀 Active AI Engines:**\n⚡ **Groq Llama-3.3 70B**: Ultra-fast responses\n🔵 **Google Gemini 2.5 Flash**: Real-time market intelligence\n🟣 **Claude Sonnet 4**: Deep institutional analysis\n🔍 **Tavily Search**: Live market news & data\n\n**📊 Real-Time Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n• VIX, Gold, Crude, DXY tracking\n\nAsk anything — I have LIVE market data!',
+    text: '🤖 **DEEP MIND AI QUANTUM PRO v12.0**\n\n**⚡ Active AI Engines:**\n🚀 **Groq Llama-3.3 70B**: Ultra-fast responses\n🧠 **Google Gemini 2.5 Flash**: Real-time market intelligence\n💎 **Claude Sonnet 4**: Deep institutional analysis\n🔍 **Tavily Search**: Live market news & data\n\n**📊 Real-Time Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n• Crypto (BTC/ETH), VIX, Gold tracking\n\nAsk anything — I have LIVE market data!',
     timestamp: Date.now(),
     model: 'system'
   }]);
@@ -357,7 +357,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
 
     const portfolioCtx = portfolioContext || 'No portfolio data.';
 
-    const systemPrompt = `You are DEEP MIND AI QUANTUM PRO v11.0 — Elite Institutional-Grade Trading & Investment Intelligence for Indian, US markets AND Cryptocurrency with REAL-TIME LIVE data access.
+    const systemPrompt = `You are DEEP MIND AI QUANTUM PRO v12.0 — Elite Institutional-Grade Trading & Investment Intelligence for Indian, US markets AND Cryptocurrency with REAL-TIME LIVE data access.
 
 PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined.
 
@@ -366,7 +366,7 @@ CRITICAL ANTI-HALLUCINATION RULES:
 - If data is not available for a symbol, say "Live data not available" — do NOT make up numbers.
 - Today's date is ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}.
 - All prices, RSI, MACD values MUST come from the data below. If missing, explicitly state it.
-- BTC trades 24/7 — ALWAYS use the live price from data below. NEVER use memorized/training prices for crypto.
+- BTC/ETH trades 24/7 — ALWAYS use the live price from data below. NEVER use memorized/training prices for crypto.
 - For crypto, prices can move 5-10% daily — old prices are DANGEROUS. Only use what's provided.
 
 TRADING & INVESTMENT RULES:
@@ -375,9 +375,10 @@ TRADING & INVESTMENT RULES:
 3. Use frameworks: SMC, Wyckoff, Elliott Wave, Fibonacci, Order Flow for stocks. For crypto: on-chain analysis, halving cycles, supply dynamics, whale tracking.
 4. Give SPECIFIC levels: Support, Resistance, SL, Target 1/2/3 with exact prices FROM THE DATA.
 5. Include conviction (1-10) and risk-reward ratios for all setups.
-6. For news: explain exact impact — "RBI cut = Bank Nifty 500pt rally expected", "BTC ETF inflows = bullish".
+6. For news: explain exact impact — "RBI cut = Bank Nifty 500pt rally expected", "ETH ETF inflows = bullish".
 7. Be comprehensive and detailed. Use **Bold** + emojis.
 8. End with VERDICT: 🟢 BUY / 🔴 SELL / 🟡 HOLD / ⏳ WAIT + levels.
+9. Emphasize LONG-TERM wealth creation (15-20 years), compounding, and SIP step-up magic. Mention ALPHA ETF logic and crypto adoption (BTC/ETH) as moonshot allocation.
 9. USD/INR: ₹${forexRate.toFixed(4)} (LIVE). Convert US holdings to INR.
 10. Calculate actual P&L from provided data.
 

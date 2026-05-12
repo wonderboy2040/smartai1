@@ -84,7 +84,8 @@ export const ALPHA_ETFS_IN = [
   { sym: 'JUNIORBEES', name: 'Nippon India ETF Junior BeES', cagr: 18.5, maxDD: 30, cat: 'Next 50', fixedAlloc: 0.15 },
   { sym: 'MOMENTUM50', name: 'Motilal Oswal Nifty 500 Momentum 50', cagr: 22.5, maxDD: 30, cat: 'Smart Beta', fixedAlloc: 0.38 },
   { sym: 'SMALLCAP', name: 'Nippon India Nifty Smallcap 250', cagr: 26.5, maxDD: 40, cat: 'Growth', fixedAlloc: 0.27 },
-  { sym: 'MID150BEES', name: 'Nippon India Nifty Midcap 150', cagr: 21.0, maxDD: 35, cat: 'Growth', fixedAlloc: 0.20 }
+  { sym: 'MID150BEES', name: 'Nippon India Nifty Midcap 150', cagr: 21.0, maxDD: 35, cat: 'Growth', fixedAlloc: 0.20 },
+  { sym: 'ALPHA', name: 'Kotak Nifty Alpha 50 ETF', cagr: 24.0, maxDD: 35, cat: 'Alpha Factor', fixedAlloc: 0.20 }
 ];
 
 export const ALPHA_ETFS_US = [
@@ -126,6 +127,7 @@ export const EXACT_TICKER_MAP = {
   'MOMENTUM50': 'NSE:MOMENTUM50',
   'SMALLCAP': 'NSE:SMALLCAP',
   'MID150BEES': 'NSE:MID150BEES',
+  'ALPHA': 'NSE:ALPHA',
   // Crypto
   'BTC': 'BINANCE:BTCUSDT',
   'ETH': 'BINANCE:ETHUSDT',

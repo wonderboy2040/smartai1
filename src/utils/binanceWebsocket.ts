@@ -78,6 +78,12 @@ function connect(initialSymbols: string[]) {
     subscribeStreams(initialSymbols);
   };
 
+  ws.onerror = (error) => {
+    console.warn('Binance WebSocket error:', error);
+  };
+
+  const lastUpdateMap: Map<string, number> = new Map();
+
   ws.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
@@ -87,6 +93,11 @@ function connect(initialSymbols: string[]) {
         const baseSymbol = symbolMap.get(binanceSymbol);
         
         if (baseSymbol) {
+          const now = Date.now();
+          const lastUpdate = lastUpdateMap.get(baseSymbol) || 0;
+          if (now - lastUpdate < 800) return; // Throttle to max ~1.25 updates per sec per symbol
+          lastUpdateMap.set(baseSymbol, now);
+
           // Send price via callbacks. Note: The price here is in USD.
           // The UI batcher will multiply it by the INR rate to display natively as INR!
           const update: Partial<PriceData> = {
@@ -95,7 +106,7 @@ function connect(initialSymbols: string[]) {
             high: parseFloat(data.h),
             low: parseFloat(data.l),
             volume: parseFloat(data.v),
-            time: Date.now(),
+            time: now,
             market: 'US', // Treating crypto as US market for tracking purposes since it uses USD baseline
           };
 
