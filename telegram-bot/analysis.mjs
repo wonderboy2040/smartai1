@@ -4,7 +4,7 @@
 
 import {
   ALPHA_ETFS_IN, ALPHA_ETFS_US, getAssetCagrProxy,
-  formatCurrency, formatPrice, DEFAULT_INDIA_SIP, DEFAULT_US_SIP, DEFAULT_USD_INR
+  formatCurrency, formatPrice, DEFAULT_INDIA_SIP, DEFAULT_US_SIP, DEFAULT_USD_INR, isCryptoSymbol
 } from './config.mjs';
 import { getISTTime, getMarketStatus, isIndiaMarketOpen, isUSMarketOpen } from './market.mjs';
 
@@ -17,6 +17,13 @@ export function analyzeAsset(position, priceData) {
   const change = priceData?.change || 0;
   const volume = priceData?.volume || 0;
   const cagr = getAssetCagrProxy(position.symbol, position.market);
+  const isCrypto = isCryptoSymbol(position.symbol);
+
+  // Crypto uses wider RSI thresholds (more volatile)
+  const oversoldThreshold = isCrypto ? 25 : 30;
+  const overboughtThreshold = isCrypto ? 80 : 65;
+  const strongOversold = isCrypto ? 20 : 30;
+  const strongOverbought = isCrypto ? 85 : 75;
 
   const sma20 = priceData?.sma20;
   const sma50 = priceData?.sma50;
@@ -47,20 +54,20 @@ export function analyzeAsset(position, priceData) {
   let reason = 'Neutral range, maintain position';
   let targetPrice = price;
 
-  if (rsi < 30) {
+  if (rsi < strongOversold) {
     signal = 'STRONG_BUY'; confidence = 95; targetPrice = supportLevel;
-    reason = `RSI ${rsi.toFixed(0)} oversold — institutional accumulation zone.`;
+    reason = `RSI ${rsi.toFixed(0)} oversold${isCrypto ? ' (crypto zone)' : ''} — institutional accumulation zone.`;
     if (instAccumulation) { confidence = 99; reason = `🔥 MAX CONVICTION: RSI ${rsi.toFixed(0)} + Volume Spike! Institutional buying detected.`; }
-  } else if (rsi < 40) {
+  } else if (rsi < oversoldThreshold + 10) {
     signal = 'BUY'; confidence = 80; targetPrice = low;
     reason = `RSI ${rsi.toFixed(0)} approaching oversold — good entry.`;
     if (isBullishTrend) { reason += ' Bullish momentum building.'; confidence += 5; }
     if (instAccumulation) { confidence += 10; reason += ' Volume confirming accumulation.'; }
-  } else if (rsi > 75) {
+  } else if (rsi > strongOverbought) {
     signal = 'STRONG_SELL'; confidence = 90; targetPrice = resistanceLevel;
-    reason = `RSI ${rsi.toFixed(0)} overbought — distribution zone.`;
+    reason = `RSI ${rsi.toFixed(0)} overbought${isCrypto ? ' (crypto zone)' : ''} — distribution zone.`;
     if (instDistribution) { confidence = 98; reason = `🔥 MAX RISK: RSI ${rsi.toFixed(0)} + Volume Spike! Institutional distribution detected.`; }
-  } else if (rsi > 65) {
+  } else if (rsi > overboughtThreshold) {
     signal = 'SELL'; confidence = 70; targetPrice = high;
     reason = `RSI ${rsi.toFixed(0)} elevated — consider partial booking.`;
     if (isBearishTrend) { reason += ' Bearish momentum detected.'; confidence += 5; }
@@ -102,7 +109,7 @@ export function analyzeAsset(position, priceData) {
 // ========================================
 export function calculateMetrics(portfolio, livePrices, usdInrRate) {
   let totalInvested = 0, totalValue = 0, todayPL = 0;
-  let indPL = 0, usPL = 0;
+  let indPL = 0, usPL = 0, cryptoPL = 0;
 
   for (const p of portfolio) {
     const key = `${p.market}_${p.symbol}`;
@@ -127,7 +134,9 @@ export function calculateMetrics(portfolio, livePrices, usdInrRate) {
     const dayPLINR = p.market === 'IN' ? dayPL : dayPL * usdInrRate;
     todayPL += dayPLINR;
 
-    if (p.market === 'IN') indPL += dayPLINR;
+    const cleanSym = p.symbol.replace('.NS', '').replace('.BO', '');
+    if (isCryptoSymbol(cleanSym)) cryptoPL += dayPLINR;
+    else if (p.market === 'IN') indPL += dayPLINR;
     else usPL += dayPLINR;
   }
 
@@ -136,7 +145,7 @@ export function calculateMetrics(portfolio, livePrices, usdInrRate) {
   const prevDayValue = totalValue - todayPL;
   const todayPct = prevDayValue > 0 ? (todayPL / prevDayValue) * 100 : 0;
 
-  return { totalInvested, totalValue, totalPL, plPct, todayPL, todayPct, indPL, usPL };
+  return { totalInvested, totalValue, totalPL, plPct, todayPL, todayPct, indPL, usPL, cryptoPL };
 }
 
 // ========================================
@@ -951,7 +960,7 @@ export function generateDigestReport(intel, cryptos, bonds, usdInr, portfolio, l
   }
 
   msg += `\n<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
-  msg += `🧠 <i>Deep Mind AI Quantum Pro v4.0 • Daily Digest</i>`;
+  msg += `🧠 <i>Deep Mind AI Quantum Pro v12.0 • Daily Digest</i>`;
   return msg;
 }
 
@@ -1002,5 +1011,69 @@ export function generateIPOReport(ipoData) {
   }
 
   msg += `\n💎 <i>Deep Mind AI • IPO Intelligence</i>`;
+  return msg;
+}
+
+// ========================================
+// /longterm - 15-20yr Wealth Strategy
+// ========================================
+export function generateLongTermReport() {
+  const timeStr = getISTTime();
+  let msg = `📈 <b>LONG-TERM WEALTH CREATION (15-20Y)</b>\n`;
+  msg += `⏰ <i>${timeStr} IST</i>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+  msg += `🚀 <b>The Power of 10% SIP Step-Up</b>\n`;
+  msg += `<i>Increasing your SIP by just 10% every year drastically boosts final wealth due to compound interest magic.</i>\n\n`;
+
+  const baseSIP = 25000;
+  msg += `📌 <b>Example: ₹${baseSIP.toLocaleString('en-IN')}/mo base SIP</b>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  msg += `<b>No Step-Up (15% CAGR, 15 Years)</b>\n`;
+  msg += `Invested: ₹45,00,000\n`;
+  msg += `Final Wealth: ₹1.69 Cr\n\n`;
+
+  msg += `<b>10% Annual Step-Up (15% CAGR, 15 Years)</b>\n`;
+  msg += `Invested: ₹95,30,000\n`;
+  msg += `Final Wealth: <b>₹3.02 Cr (Almost double!)</b>\n\n`;
+
+  msg += `🧠 <b>Actionable Advice:</b>\n`;
+  msg += `1. Never stop SIPs during bear markets.\n`;
+  msg += `2. Top up investments by 20% when VIX > 25.\n`;
+  msg += `3. Always opt for 10% annual step-ups linked to your salary increment.\n`;
+  msg += `\n💎 <i>Deep Mind AI Quantum Pro v12.0</i>`;
+  return msg;
+}
+
+// ========================================
+// /strategy - Institutional Asset Strategy
+// ========================================
+export function generateStrategyReport(portfolio, livePrices, usdInr) {
+  const timeStr = getISTTime();
+  let msg = `🎯 <b>INSTITUTIONAL ASSET ALLOCATION</b>\n`;
+  msg += `⏰ <i>${timeStr} IST</i>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+  msg += `💼 <b>Core-Satellite Strategy (Rule of 100)</b>\n`;
+  msg += `<i>Aimed to generate maximum Alpha with protected downside.</i>\n\n`;
+
+  msg += `<b>1. Core Holdings (50-60%)</b>\n`;
+  msg += `Index/Large Cap: NIFTYBEES, SPY, VOO\n`;
+  msg += `Purpose: Foundation and stability.\n\n`;
+
+  msg += `<b>2. Satellite Growth (30-40%)</b>\n`;
+  msg += `Mid/Small Cap & Momentum: MID150BEES, MOMENTUM50, ALPHA ETF\n`;
+  msg += `Purpose: Beat the index returns (Alpha generation).\n\n`;
+
+  msg += `<b>3. Moonshot (5-10%)</b>\n`;
+  msg += `Crypto: BTC, ETH\n`;
+  msg += `Purpose: Massive asymmetric upside.\n\n`;
+
+  msg += `<b>4. Hedge (5-10%)</b>\n`;
+  msg += `Commodities: GOLDBEES, SILVERBEES\n`;
+  msg += `Purpose: Bear market protection.\n\n`;
+
+  msg += `🧠 <b>Deep Mind Logic:</b> Maintain heavy allocation in momentum and alpha ETFs when VIX < 18. Shift 10% to Hedge when VIX > 25.\n`;
+  msg += `\n💎 <i>Deep Mind AI Quantum Pro v12.0</i>`;
   return msg;
 }

@@ -19,7 +19,8 @@ import {
   generateForexReport, calculateMetrics, generateScanReport,
   generateCompareReport, analyzeAsset,
   generateLiveReport, generateCryptoReport, generateSIPReport,
-  generateETFReport, generateDigestReport, generateFIIDIIReport, generateIPOReport
+  generateETFReport, generateDigestReport, generateFIIDIIReport, generateIPOReport,
+  generateLongTermReport, generateStrategyReport
 } from './analysis.mjs';
 import { chatWithAI, clearChatHistory } from './ai-chat.mjs';
 
@@ -116,7 +117,7 @@ app.listen(PORT, () => {
 // ========================================
 console.log('');
 console.log('╔══════════════════════════════════════════════╗');
-console.log('║  🧠 DEEP MIND AI QUANTUM PRO v4.0         ║');
+console.log('║  🧠 DEEP MIND AI QUANTUM PRO v5.0         ║');
 console.log('║  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ║');
 console.log('║  Real-Time Pro Trading Intelligence      ║');
 console.log('║  Groq + Gemini 2.5 + Claude Sonnet 4     ║');
@@ -219,8 +220,10 @@ console.log('🟢 ════════════════════�
         { command: 'backtest', description: 'AI Signal Accuracy Check' },
         { command: 'streak', description: 'Performance streak tracker' },
         { command: 'etf', description: 'ETF Portfolio Analysis' },
-        { command: 'crypto', description: 'Crypto Market Report' },
+        { command: 'crypto', description: 'Crypto Market (BTC/ETH)' },
         { command: 'sip', description: 'SIP Calculator' },
+        { command: 'longterm', description: '15-20yr Wealth Strategy' },
+        { command: 'strategy', description: 'Institutional Asset Allocation' },
         { command: 'digest', description: 'Daily Market Digest' },
         { command: 'fiidii', description: 'FII/DII Flow Tracker' },
         { command: 'ipo', description: 'IPO Tracker' },
@@ -329,7 +332,7 @@ bot.onText(/^\/start(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /start from ${msg.from?.first_name || chatId}`);
 
-  const welcome = `🧠 <b>DEEP MIND AI QUANTUM PRO v4.0</b>
+  const welcome = `🧠 <b>DEEP MIND AI QUANTUM PRO v5.0</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Nagraj Bhai, main tumhara QUANTUM PRO AI Trading assistant hoon! 🚀
@@ -359,8 +362,10 @@ Nagraj Bhai, main tumhara QUANTUM PRO AI Trading assistant hoon! 🚀
 🧪 /backtest — Signal accuracy
 📊 /streak — Performance tracker
 📊 /etf — ETF portfolio analysis
-🪙 /crypto — Crypto market
+🪙 /crypto — Crypto market (BTC, ETH)
 💰 /sip — SIP calculator
+📈 /longterm — 15-20yr wealth plan
+🎯 /strategy — Institutional asset strategy
 🌅 /digest — Daily digest
 🏛️ /fiidii — FII/DII flows
 🚀 /ipo — IPO tracker
@@ -379,7 +384,7 @@ Bina / ke koi bhi message likho = AI QUANTUM chat!
 🔔 Auto Alerts: <b>${autoAlerts ? 'ON ✅' : 'OFF ❌'}</b>
 💱 USD/INR: <b>₹${usdInrRate.toFixed(2)}</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-💎 <i>Powered by Deep Mind AI Quantum Pro Terminal v4.0</i>`;
+💎 <i>Powered by Deep Mind AI Quantum Pro Terminal v5.0</i>`;
 
   await safeSend(chatId, welcome);
 });
@@ -472,6 +477,12 @@ Crypto market — BTC, ETH, SOL and more with INR conversion.
 SIP calculator — future value projections at various CAGRs.
 Example: <code>/sip 10000</code>
 
+📈 <b>/longterm</b>
+15-20 year wealth creation roadmap focusing on SIP step-up and compound growth.
+
+🎯 <b>/strategy</b>
+Institutional asset allocation strategy for your portfolio.
+
 🌅 <b>/digest</b>
 Daily market digest — comprehensive morning brief.
 
@@ -499,7 +510,7 @@ Chat history reset karo.
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 💬 <b>Pro Tip:</b> Bina command ke koi bhi message likho = AI chat mode automatic activate hoga!
 
-💎 <i>Deep Mind AI Quantum Pro Terminal v4.0</i>`;
+💎 <i>Deep Mind AI Quantum Pro Terminal v5.0</i>`;
 
   await safeSend(chatId, help);
 });
@@ -1250,6 +1261,25 @@ bot.onText(/^\/sip(?:@\w+)?(?:\s+(\d+))?$/i, async (msg, match) => {
   if (!isAuthorized(msg)) return;
   const amount = parseInt(match?.[1]) || 10000;
   const report = generateSIPReport(amount);
+  await safeSend(msg.chat.id, report);
+});
+
+// ========================================
+// /longterm - 15-20yr Wealth Strategy
+// ========================================
+bot.onText(/^\/longterm(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const report = generateLongTermReport();
+  await safeSend(msg.chat.id, report);
+});
+
+// ========================================
+// /strategy - Institutional Asset Strategy
+// ========================================
+bot.onText(/^\/strategy(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  await refreshPrices();
+  const report = generateStrategyReport(portfolio, livePrices, usdInrRate);
   await safeSend(msg.chat.id, report);
 });
 

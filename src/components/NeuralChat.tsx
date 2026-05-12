@@ -116,7 +116,7 @@ async function fetchWebIntel(query: string): Promise<string> {
     const res = await fetch('https://api.tavily.com/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_key: TAVILY_KEY, query: `${query} stock market India US latest`, search_depth: 'basic', include_answer: true, max_results: 3, topic: 'finance' }),
+      body: JSON.stringify({ api_key: TAVILY_KEY, query: `${query} stock market India US crypto latest`, search_depth: 'basic', include_answer: true, max_results: 3, topic: 'finance' }),
       signal: AbortSignal.timeout(6000)
     });
     if (res.ok) {
@@ -140,9 +140,10 @@ interface ChatMessage {
 
 const QUICK_ACTIONS = [
   { label: 'Market News', query: 'Latest Indian and US market news and analysis with key levels', icon: '📰', type: 'gemini' },
-  { label: 'Portfolio Analysis', query: 'Analyze my portfolio deeply with fundamentals, technicals and actionable recommendations', icon: '📊', type: 'claude' },
-  { label: 'Quick Question', query: 'Explain RSI divergence and how to use it for trading', icon: '⚡', type: 'groq' },
-  { label: 'Trading Strategy', query: 'Give me detailed intraday and swing trading strategies for current market conditions', icon: '🎯', type: 'claude' }
+  { label: 'Portfolio Analysis', query: 'Analyze my ENTIRE portfolio deeply - every single position including crypto. Show P&L, technicals, fundamentals, and give specific BUY/HOLD/SELL verdict for each asset.', icon: '💼', type: 'claude' },
+  { label: 'ETH Analysis', query: 'Deep analysis of my Ethereum (ETH) position with on-chain context, support/resistance levels, and long-term HODL thesis', icon: '🪙', type: 'claude' },
+  { label: 'Long-Term Strategy', query: 'Give me a 15-20 year wealth creation roadmap focusing on SIP step-up and compound growth', icon: '📈', type: 'claude' },
+  { label: 'ETF Allocation', query: 'Analyze ETF allocations including Kotak Nifty Alpha 50 (ALPHA) ETF with momentum and growth projections', icon: '🎯', type: 'claude' }
 ];
 
 const MODEL_COLORS = {
@@ -161,7 +162,7 @@ export interface NeuralChatProps {
 export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, onTelegramPush: _onTelegramPush }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
-    text: '🧠 **DEEP MIND AI QUANTUM PRO v10.0**\n\n**🚀 Active AI Engines:**\n⚡ **Groq Llama-3.3 70B**: Ultra-fast responses\n🔵 **Google Gemini 2.5 Flash**: Real-time market intelligence\n🟣 **Claude Sonnet 4**: Deep institutional analysis\n🔍 **Tavily Search**: Live market news & data\n\n**📊 Real-Time Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n• VIX, Gold, Crude, DXY tracking\n\nAsk anything — I have LIVE market data!',
+    text: '🤖 **DEEP MIND AI QUANTUM PRO v12.0**\n\n**⚡ Active AI Engines:**\n🚀 **Groq Llama-3.3 70B**: Ultra-fast responses\n🧠 **Google Gemini 2.5 Flash**: Real-time market intelligence\n💎 **Claude Sonnet 4**: Deep institutional analysis\n🔍 **Tavily Search**: Live market news & data\n\n**📊 Real-Time Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n• Crypto (BTC/ETH), VIX, Gold tracking\n\nAsk anything — I have LIVE market data!',
     timestamp: Date.now(),
     model: 'system'
   }]);
@@ -222,7 +223,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
         model: CONFIG.groq.model,
         messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
         temperature: 0.7,
-        max_tokens: 3000
+        max_tokens: 4000
       }),
       signal: AbortSignal.timeout(20000)
     });
@@ -347,7 +348,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
     const [marketSnap, liveForex, webIntel] = await Promise.allSettled([
       fetchRealtimeSnapshot(),
       fetchLiveForex(),
-      /\b(news|market|nifty|sensex|fed|rbi|ipo|crude|gold|dollar|breaking|aaj|today|live)\b/i.test(userMessage) ? fetchWebIntel(userMessage) : Promise.resolve('')
+      /\b(news|market|nifty|sensex|fed|rbi|ipo|crude|gold|dollar|breaking|aaj|today|live|bitcoin|btc|crypto|halving|eth|blockchain|defi|altcoin|binance|coinbase|regulation|sec)\b/i.test(userMessage) ? fetchWebIntel(userMessage) : Promise.resolve('')
     ]);
 
     const marketData = marketSnap.status === 'fulfilled' ? marketSnap.value : '';
@@ -356,27 +357,55 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
 
     const portfolioCtx = portfolioContext || 'No portfolio data.';
 
-    const systemPrompt = `You are DEEP MIND AI QUANTUM PRO v10.0 — Elite Institutional-Grade Trading Intelligence for Indian & US markets with REAL-TIME LIVE data access.
+    const systemPrompt = `You are DEEP MIND AI QUANTUM PRO v12.0 — Elite Institutional-Grade Trading & Investment Intelligence for Indian, US markets AND Cryptocurrency with REAL-TIME LIVE data access.
 
-PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies combined.
+PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined.
 
 CRITICAL ANTI-HALLUCINATION RULES:
 - ONLY use the REAL-TIME data provided below. Do NOT invent, guess, or use memorized old prices.
 - If data is not available for a symbol, say "Live data not available" — do NOT make up numbers.
 - Today's date is ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}.
 - All prices, RSI, MACD values MUST come from the data below. If missing, explicitly state it.
+- BTC/ETH trades 24/7 — ALWAYS use the live price from data below. NEVER use memorized/training prices for crypto.
+- For crypto, prices can move 5-10% daily — old prices are DANGEROUS. Only use what's provided.
 
-TRADING RULES:
-1. Speak in "Pro Trader Hinglish" — "Bhai", "Breakout confirm hua", "SL trail karo", "Liquidity grab", "Smart Money accumulation".
-2. ALWAYS analyze EVERY asset from portfolio data. Do NOT skip any position.
-3. Use frameworks: SMC, Wyckoff, Elliott Wave, Fibonacci, Order Flow, Dark Pool analysis.
+TRADING & INVESTMENT RULES:
+1. Speak in "Pro Trader Hinglish" — "Bhai", "Breakout confirm hua", "SL trail karo", "Smart Money accumulation".
+2. ALWAYS analyze EVERY asset from portfolio data. Do NOT skip any position including crypto.
+3. Use frameworks: SMC, Wyckoff, Elliott Wave, Fibonacci, Order Flow for stocks. For crypto: on-chain analysis, halving cycles, supply dynamics, whale tracking.
 4. Give SPECIFIC levels: Support, Resistance, SL, Target 1/2/3 with exact prices FROM THE DATA.
-5. Include conviction (1-10) and risk-reward ratios (e.g. 1:2.5) for all setups.
-6. For news: explain exact impact — "RBI cut = Bank Nifty 500pt rally expected".
-7. Concise, punchy, max 600 words. **Bold** + emojis.
+5. Include conviction (1-10) and risk-reward ratios for all setups.
+6. For news: explain exact impact — "RBI cut = Bank Nifty 500pt rally expected", "ETH ETF inflows = bullish".
+7. Be comprehensive and detailed. Use **Bold** + emojis.
 8. End with VERDICT: 🟢 BUY / 🔴 SELL / 🟡 HOLD / ⏳ WAIT + levels.
+9. Emphasize LONG-TERM wealth creation (15-20 years), compounding, and SIP step-up magic. Mention ALPHA ETF logic and crypto adoption (BTC/ETH) as moonshot allocation.
 9. USD/INR: ₹${forexRate.toFixed(4)} (LIVE). Convert US holdings to INR.
 10. Calculate actual P&L from provided data.
+
+CRYPTO-SPECIFIC RULES (MANDATORY for BTC/crypto queries):
+- BTC Supply Cap: 21 million (scarcity thesis)
+- Halving Cycle: ~4 years. Historically, BTC rallies 12-18 months post-halving.
+- Key levels: All-time High, 200-week MA, realized price are critical for BTC.
+- Use crypto-specific metrics: MVRV ratio, NVT ratio, Exchange outflows, Whale accumulation.
+- For BTC portfolio analysis: Focus on DCA strategy, accumulation zones, and HODL thesis.
+- BTC RSI thresholds are wider than stocks: Oversold < 25, Overbought > 80.
+- Always mention BTC dominance trend if available.
+
+LONG-TERM INVESTMENT PERSPECTIVE:
+- This is a LONG-TERM HODL & SIP portfolio. Focus on accumulation strategy, not day-trading.
+- For crypto: Emphasize DCA (Dollar-Cost Averaging) over timing the market.
+- For ETFs: Focus on CAGR projections, compound growth, and allocation rebalancing.
+- Always give a 3-5 year outlook alongside short-term analysis.
+- Calculate projected portfolio value at 10%, 15%, 20% CAGR over 5/10/15 years.
+
+FUNDAMENTAL ANALYSIS PERMISSION:
+You HAVE full permission to provide deep fundamental analysis including:
+- On-chain metrics for crypto (supply, hash rate, active addresses, exchange flows)
+- PE ratios, PB ratios, ROE, ROCE for stocks
+- Intrinsic value calculations, DCF models, Graham Number
+- Sector analysis, competitive moat assessment
+- Dividend yield analysis, free cash flow analysis
+- BTC stock-to-flow model interpretation
 
 LIVE REAL-TIME DATA (USE ONLY THIS — DO NOT INVENT):
 ${marketData}
@@ -432,10 +461,10 @@ ${portfolioCtx}`;
       let selectedModelType = selectedModel;
 
       if (selectedModel === 'auto') {
-        // Advanced intent detection with Hindi/trading keywords
-        if (/\b(news|khabar|market|live|aaj|today|nifty|sensex|breaking|ipo|fii|dii|rbi|fed|crude|gold|dollar|vix|trend|intraday|pre.?market|global|sector|rally|crash|correction)\b/i.test(q)) {
+        // Advanced intent detection with Hindi/trading/crypto keywords
+        if (/\b(news|khabar|market|live|aaj|today|nifty|sensex|breaking|ipo|fii|dii|rbi|fed|crude|gold|dollar|vix|trend|intraday|pre.?market|global|sector|rally|crash|correction|bitcoin|btc|crypto|halving|blockchain)\b/i.test(q)) {
           selectedModelType = 'gemini';
-        } else if (/\b(portfolio|analy[sz]|strategy|fundamental|backtest|risk|allocation|optimize|deep|comprehensive|options?|pcr|fibonacci|wyckoff|smc|elliott|valuation|dividend|dcf|compare|rebalance)\b/i.test(q)) {
+        } else if (/\b(portfolio|analy[sz]|strategy|fundamental|backtest|risk|allocation|optimize|deep|comprehensive|options?|pcr|fibonacci|wyckoff|smc|elliott|valuation|dividend|dcf|compare|rebalance|hodl|dca|long.?term|cagr|projection|on.?chain|intrinsic)\b/i.test(q)) {
           selectedModelType = 'claude';
         } else {
           selectedModelType = 'groq';

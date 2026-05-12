@@ -1,7 +1,7 @@
 import { ETFInfo } from '../types';
 
 export const SECURE_PIN = "2023";
-export const DEFAULT_USD_INR = 83.5;
+export const DEFAULT_USD_INR = 85.5;
 export const API_URL = import.meta.env.VITE_API_URL || "";
 export const TG_TOKEN = import.meta.env.VITE_TG_TOKEN || "";
 export const TG_CHAT_ID = import.meta.env.VITE_TG_CHAT_ID || "";
@@ -13,10 +13,11 @@ export const TAX_PAIRS: Record<string, string> = {
 };
 
 export const ALPHA_ETFS_IN: ETFInfo[] = [
-  { sym: 'JUNIORBEES', name: 'Nippon India ETF Junior BeES', cagr: 18.5, maxDD: 30, cat: 'Next 50', aum: '₹2.5k Cr', vol: 'High', fixedAlloc: 0.15 },
-  { sym: 'MOMENTUM50', name: 'Motilal Oswal Nifty 500 Momentum 50', cagr: 22.5, maxDD: 30, cat: 'Smart Beta', aum: '₹3k Cr', vol: 'Moderate', fixedAlloc: 0.38 },
-  { sym: 'SMALLCAP', name: 'Nippon India Nifty Smallcap 250', cagr: 26.5, maxDD: 40, cat: 'Growth', aum: '₹1k Cr', vol: 'Moderate', fixedAlloc: 0.27 },
-  { sym: 'MID150BEES', name: 'Nippon India Nifty Midcap 150', cagr: 21.0, maxDD: 35, cat: 'Growth', aum: '₹2.8k Cr', vol: 'High', fixedAlloc: 0.20 }
+  { sym: 'JUNIORBEES', name: 'Nippon India ETF Junior BeES', cagr: 18.5, maxDD: 30, cat: 'Next 50', aum: '₹2.5k Cr', vol: 'High', fixedAlloc: 0.12 },
+  { sym: 'MOMENTUM50', name: 'Motilal Oswal Nifty 500 Momentum 50', cagr: 22.5, maxDD: 30, cat: 'Smart Beta', aum: '₹3k Cr', vol: 'Moderate', fixedAlloc: 0.30 },
+  { sym: 'SMALLCAP', name: 'Nippon India Nifty Smallcap 250', cagr: 26.5, maxDD: 40, cat: 'Growth', aum: '₹1k Cr', vol: 'Moderate', fixedAlloc: 0.22 },
+  { sym: 'MID150BEES', name: 'Nippon India Nifty Midcap 150', cagr: 21.0, maxDD: 35, cat: 'Growth', aum: '₹2.8k Cr', vol: 'High', fixedAlloc: 0.16 },
+  { sym: 'ALPHA', name: 'Kotak Nifty Alpha 50 ETF', cagr: 24.0, maxDD: 35, cat: 'Alpha Factor', aum: '₹1.2k Cr', vol: 'High', fixedAlloc: 0.20 }
 ];
 
 export const ALPHA_ETFS_US: ETFInfo[] = [
@@ -55,6 +56,7 @@ export const EXACT_TICKER_MAP: Record<string, string> = {
   'MOMENTUM50': 'NSE:MOMENTUM50',
   'SMALLCAP': 'NSE:SMALLCAP',
   'MID150BEES': 'NSE:MID150BEES',
+  'ALPHA': 'NSE:ALPHA',
 
   // Additional US symbols
   'QQQ': 'NASDAQ:QQQ',
@@ -65,8 +67,11 @@ export const EXACT_TICKER_MAP: Record<string, string> = {
   'META': 'NASDAQ:META',
   'NVDA': 'NASDAQ:NVDA',
   'TSLA': 'NASDAQ:TSLA',
-  'BTC': 'BITSTAMP:BTCUSD',
-  'ETH': 'BITSTAMP:ETHUSD'
+  'BTC': 'BINANCE:BTCUSDT',
+  'ETH': 'BINANCE:ETHUSDT',
+  'SOL': 'BINANCE:SOLUSDT',
+  'BNB': 'BINANCE:BNBUSDT',
+  'XRP': 'BINANCE:XRPUSDT'
 };
 
 export const CORS_PROXIES = [
@@ -82,21 +87,30 @@ export function getTodayString(): string {
 }
 
 export function isCryptoSymbol(sym: string): boolean {
-  return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX'].includes(sym.toUpperCase());
+  const clean = sym.toUpperCase().replace('USDT', '').replace('USD', '').replace('.NS', '').replace('.BO', '');
+  return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI', 'BITCOIN', 'ETHEREUM'].includes(clean);
 }
 
 export function guessMarket(sym: string): 'IN' | 'US' {
   sym = (sym || '').toUpperCase();
   if (sym.includes('.NS') || sym.includes('.BO')) return 'IN';
   if (sym === 'RELIANCE' || sym === 'NIFTY' || sym === 'SENSEX') return 'IN';
-  if (sym.includes('BEES')) return 'IN';
+  if (sym.includes('BEES') || sym === 'ALPHA') return 'IN';
   if (ALPHA_ETFS_IN.some(e => e.sym.replace('.NS', '') === sym)) return 'IN';
   if (isCryptoSymbol(sym)) return 'IN'; // User buys via CoinDCX in INR
   return 'US';
 }
 
+// Crypto CAGR proxies (conservative long-term estimates)
+const CRYPTO_CAGR: Record<string, number> = {
+  'BTC': 55, 'ETH': 45, 'SOL': 40, 'BNB': 35, 'XRP': 25,
+  'DOGE': 20, 'ADA': 20, 'AVAX': 30, 'DOT': 25, 'LINK': 30
+};
+
 export function getAssetCagrProxy(sym: string, mkt: string): number {
-  sym = sym.toUpperCase();
+  sym = sym.toUpperCase().replace('.NS', '').replace('.BO', '');
+  // Crypto check first
+  if (isCryptoSymbol(sym)) return CRYPTO_CAGR[sym] || 30;
   const i = ALPHA_ETFS_IN.find(e => e.sym === sym);
   if (i) return i.cagr;
   const u = ALPHA_ETFS_US.find(e => e.sym === sym);

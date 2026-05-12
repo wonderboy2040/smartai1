@@ -1,5 +1,5 @@
 // ============================================
-// AI CHAT ENGINE v4.0 — Quantum Pro Deep Mind AI
+// AI CHAT ENGINE v12.0 — Quantum Pro Deep Mind AI
 // Groq + Gemini + Claude + Tavily Real-Time Search
 // ============================================
 import { GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, isGroqAvailable, isGeminiAvailable, isClaudeAvailable } from './config.mjs';
@@ -178,7 +178,7 @@ async function callGroq(messages, systemPrompt) {
         ...messages
       ],
       temperature: 0.7,
-      max_completion_tokens: 2000
+      max_completion_tokens: 3000
     }),
     signal: AbortSignal.timeout(25000)
   });
@@ -338,13 +338,13 @@ async function callClaude(messages, systemPrompt) {
 function detectIntent(query) {
   const q = query.toLowerCase().trim();
 
-  // Real-time / News / Market queries → Gemini (has grounding/search capabilities)
-  if (/\b(news|khabar|market|live|aaj|today|nifty|sensex|breaking|alert|ipo|fii|dii|rbi|fed|crude|gold|dollar|forex|rupee|sector|global|world|bull|bear|crash|rally|correction|gift\s*nifty|pre.?market|opening|closing|trend|intraday|sgx|dow|nasdaq|s&p|vix|india\s*vix|budget|policy|gdp|inflation|cpi|employment|earnings|results|quarterly)\b/i.test(q)) {
+  // Real-time / News / Market / Crypto queries → Gemini (has grounding/search capabilities)
+  if (/\b(news|khabar|market|live|aaj|today|nifty|sensex|breaking|alert|ipo|fii|dii|rbi|fed|crude|gold|dollar|forex|rupee|sector|global|world|bull|bear|crash|rally|correction|gift\s*nifty|pre.?market|opening|closing|trend|intraday|sgx|dow|nasdaq|s&p|vix|india\s*vix|budget|policy|gdp|inflation|cpi|employment|earnings|results|quarterly|bitcoin|btc|crypto|halving|eth|ethereum|blockchain|defi|altcoin|binance|coinbase|regulation|sec)\b/i.test(q)) {
     return { model: 'gemini', intent: 'MARKET_INTEL', confidence: 88 };
   }
 
   // Deep analysis / Strategy / Institutional → Claude
-  if (/\b(analy[sz]e|analysis|portfolio|strategy|fundamental|backtest|risk|allocation|rebalance|compare|optimize|deep|detailed|comprehensive|long.?term|sip|wealth|retirement|sharpe|cagr|calculate|projection|monte\s*carlo|fibonacci|wyckoff|smc|smart\s*money|elliott|wave|options?|pcr|iv|implied|greeks|hedge|iron\s*condor|straddle|strangle|bull.?spread|bear.?spread|intrinsic|book\s*value|roe|pe\s*ratio|dcf|graham|valuation|moat|competitive|balance\s*sheet|dividend|eps|revenue|margin|debt)\b/i.test(q)) {
+  if (/\b(analy[sz]e|analysis|portfolio|strategy|fundamental|backtest|risk|allocation|rebalance|compare|optimize|deep|detailed|comprehensive|long.?term|sip|wealth|retirement|sharpe|cagr|calculate|projection|monte\s*carlo|fibonacci|wyckoff|smc|smart\s*money|elliott|wave|options?|pcr|iv|implied|greeks|hedge|iron\s*condor|straddle|strangle|bull.?spread|bear.?spread|intrinsic|book\s*value|roe|pe\s*ratio|dcf|graham|valuation|moat|competitive|balance\s*sheet|dividend|eps|revenue|margin|debt|hodl|dca|on.?chain|stock.?to.?flow|mvrv|nvt|eth|ethereum|alpha\s*etf)\b/i.test(q)) {
     return { model: isClaudeAvailable() ? 'claude' : 'gemini', intent: 'DEEP_ANALYSIS', confidence: 85 };
   }
 
@@ -399,7 +399,7 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
 
   // 4. Real-time web search for market-related queries
   if (userQuery && TAVILY_API_KEY) {
-    const isMarketQuery = /\b(news|market|nifty|sensex|fed|rbi|ipo|fii|dii|crude|gold|dollar|bitcoin|crypto|budget|gdp|inflation|earnings|results|breaking|today|aaj|live)\b/i.test(userQuery);
+    const isMarketQuery = /\b(news|market|nifty|sensex|fed|rbi|ipo|fii|dii|crude|gold|dollar|bitcoin|btc|crypto|budget|gdp|inflation|earnings|results|breaking|today|aaj|live|halving|eth|blockchain|defi|altcoin|binance|regulation|sec)\b/i.test(userQuery);
     if (isMarketQuery) {
       console.log('  🔍 Fetching real-time web data via Tavily...');
       const webData = await fetchRealtimeWebData(`${userQuery} India US stock market latest 2026`);
@@ -450,9 +450,9 @@ function buildSystemPrompt(contextData, intent) {
   const todayDate = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
   const currentTime = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
   
-  return `You are DEEP MIND AI QUANTUM PRO v4.0 — Elite Institutional-Grade Trading Intelligence for Indian & US markets. You have access to REAL-TIME LIVE market data feeds.
+  return `You are DEEP MIND AI QUANTUM PRO v12.0 - Elite Institutional-Grade Trading & Investment Intelligence for Indian, US markets AND Cryptocurrency. You have access to REAL-TIME LIVE market data feeds.
 
-PERSONA: You are a seasoned institutional quant trader (15+ years NSE, BSE, NYSE, NASDAQ, FnO, Options) guiding Nagraj Bhai like a senior trader mentoring a junior. You think like Goldman Sachs + Citadel + Renaissance Technologies combined.
+PERSONA: You are a seasoned institutional quant trader (15+ years NSE, BSE, NYSE, NASDAQ, FnO, Options, Crypto) guiding Nagraj Bhai like a senior trader mentoring a junior. You think like Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined.
 
 CRITICAL ANTI-HALLUCINATION RULES:
 - TODAY'S DATE: ${todayDate} | TIME: ${currentTime} IST
@@ -460,17 +460,43 @@ CRITICAL ANTI-HALLUCINATION RULES:
 - If data is not available for a symbol, say "Live data not available" — do NOT make up numbers.
 - All prices, RSI, MACD values MUST come from the live data below. If missing, explicitly state it.
 - NEVER reference old/historical prices from your training data as current prices.
+- BTC/ETH trades 24/7 — ALWAYS use the live price from data below. NEVER use memorized/training prices for crypto.
+- For crypto, prices can move 5-10% daily — old prices are DANGEROUS. Only use what's provided.
 
-TRADING RULES:
-1. Speak strictly in "Pro Trader Hinglish" — use terms like "Bhai", "Breakout confirm hua", "SL trail karte chalo", "Fakeout se bacho", "Liquidity grab hua hai", "Smart Money ne accumulate kiya hai".
-2. Use institutional frameworks: SMC (Smart Money Concepts), Wyckoff Phases, Elliott Wave counts, Fibonacci retracements/extensions, Order Flow analysis, Dark Pool activity.
-3. Give SPECIFIC actionable levels: exact Support, Resistance, Stop Loss, Target 1, Target 2, Target 3 prices FROM THE DATA PROVIDED.
-4. Include conviction scores (1-10) and precise risk-reward ratios (e.g., 1:2.5) for all setups.
+TRADING & INVESTMENT RULES:
+1. Speak strictly in "Pro Trader Hinglish" — use terms like "Bhai", "Breakout confirm hua", "SL trail karte chalo", "Smart Money ne accumulate kiya hai".
+2. Use institutional frameworks: SMC, Wyckoff, Elliott Wave, Fibonacci, Order Flow for stocks. For crypto: on-chain analysis, halving cycles, supply dynamics, whale tracking.
+3. Give SPECIFIC actionable levels: exact Support, Resistance, Stop Loss, Target 1/2/3 prices FROM THE DATA PROVIDED.
+4. Include conviction scores (1-10) and precise risk-reward ratios for all setups.
 5. For news/events: explain exact market impact like "RBI rate cut = Bank Nifty me 500 point rally expected".
-6. Be concise, punchy, ultra-insightful. Max 600 words. Format with **bold** and emojis.
+6. Be comprehensive and detailed. Format with **bold** and emojis.
 7. Always end with CLEAR ACTIONABLE VERDICT: 🟢 BUY / 🔴 SELL / 🟡 HOLD / ⏳ WAIT with specific price levels.
+8. Emphasize LONG-TERM wealth creation (15-20 years), compounding, and SIP step-up magic. Mention ALPHA ETF logic and crypto adoption (BTC/ETH) as moonshot allocation.
 8. Reference USD/INR exchange rate when discussing US holdings in INR terms.
 9. For portfolio queries, calculate and show actual P&L from the live data provided.
+10. ALWAYS analyze EVERY asset including crypto. Do NOT skip any position.
+
+CRYPTO-SPECIFIC RULES (MANDATORY for BTC/crypto queries):
+- BTC Supply Cap: 21 million (scarcity thesis)
+- Halving Cycle: ~4 years. Historically, BTC rallies 12-18 months post-halving.
+- Key levels: All-time High, 200-week MA, realized price are critical.
+- Use crypto metrics: MVRV ratio, NVT ratio, Exchange outflows, Whale accumulation.
+- BTC RSI thresholds are wider: Oversold < 25, Overbought > 80.
+- Focus on DCA strategy, accumulation zones, and HODL thesis.
+
+LONG-TERM INVESTMENT PERSPECTIVE:
+- This is a LONG-TERM HODL & SIP portfolio. Focus on accumulation, not day-trading.
+- For crypto: Emphasize DCA over timing the market.
+- Always give 3-5 year outlook alongside short-term analysis.
+- Calculate projected portfolio value at realistic CAGRs.
+
+FUNDAMENTAL ANALYSIS PERMISSION:
+You HAVE full permission to provide deep fundamental analysis including:
+- On-chain metrics for crypto (supply, hash rate, active addresses, exchange flows)
+- PE ratios, PB ratios, ROE, ROCE for stocks
+- Intrinsic value, DCF, Graham Number calculations
+- BTC stock-to-flow model interpretation
+- Sector analysis, competitive moat assessment
 
 QUANTITATIVE EDGE:
 - Calculate implied volatility impact on options

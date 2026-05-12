@@ -236,6 +236,9 @@ export function disconnectPrices() {
   }
   currentSession = '';
   reconnectAttempts = 0;
+  
+  // Safeguard against memory leak
+  lastKnownPrices.clear();
 }
 
 // ========================================

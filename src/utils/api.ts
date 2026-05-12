@@ -49,7 +49,7 @@ const pendingRequests = new Map<string, Promise<PriceData | null>>();
  * Get market-aware batch interval. Reduces from 4s during open markets.
  */
 export function getBatchInterval(): number {
-  return isAnyMarketOpen() ? 2000 : 8000;
+  return isAnyMarketOpen() ? 2000 : 30000;
 }
 
 export async function fetchSinglePrice(symbol: string, retryAttempt = 0): Promise<PriceData | null> {
@@ -78,18 +78,55 @@ export async function fetchSinglePrice(symbol: string, retryAttempt = 0): Promis
 }
 
 async function fetchWithStaleCheck(sym: string, retryAttempt: number): Promise<PriceData | null> {
-if (!sym || typeof sym !== 'string') {
-return null;
-}
+  if (!sym || typeof sym !== 'string') {
+    return null;
+  }
 
-const cleanSym = sym.replace('.NS', '').replace('.BO', '');
-const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEES') || guessMarket(sym) === 'IN';
+  const cleanSym = sym.replace('.NS', '').replace('.BO', '');
+  const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEES') || guessMarket(sym) === 'IN';
 
-  // Try Binance if Crypto
+  // Try CoinDCX first (direct INR price — matches user's exchange)
+  if (isCryptoSymbol(cleanSym)) {
+    try {
+      const res = await fetch(`https://api.coindcx.com/exchange/ticker`, {
+        signal: AbortSignal.timeout(5000)
+      });
+      if (res.ok) {
+        const tickers = await res.json();
+        // CoinDCX markets: BTCINR, ETHINR, SOLINR, etc.
+        const inrTicker = tickers.find((t: any) => t.market === `${cleanSym}INR`);
+        if (inrTicker && inrTicker.last_price) {
+          const priceVal = parseFloat(inrTicker.last_price);
+          const changeVal = parseFloat(inrTicker.change_24_hour) || 0;
+          if (!isNaN(priceVal) && priceVal > 0) {
+            const result: PriceData = {
+              price: priceVal,
+              change: changeVal,
+              high: parseFloat(inrTicker.high) || priceVal,
+              low: parseFloat(inrTicker.low) || priceVal,
+              volume: parseFloat(inrTicker.volume) || 0,
+              rsi: 50,
+              market: 'IN',
+              tvExchange: 'COINDCX',
+              tvExactSymbol: `${cleanSym}INR`,
+              time: Date.now()
+            };
+            const cacheTTL = 5000; // Crypto is 24/7
+            priceCache.set(sym, result, cacheTTL);
+            return result;
+          }
+        }
+      }
+    } catch (e) { }
+  }
+
+  // Binance fallback for crypto (USD price — will be converted to INR by WebSocket handler)
   if (isCryptoSymbol(cleanSym)) {
     try {
       const binanceSym = `${cleanSym}USDT`;
-      const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSym}`);
+      const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSym}`, {
+        signal: AbortSignal.timeout(5000)
+      });
       if (res.ok) {
         const data = await res.json();
         const priceVal = parseFloat(data.lastPrice);
@@ -101,36 +138,38 @@ const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEE
             high: parseFloat(data.highPrice) || priceVal,
             low: parseFloat(data.lowPrice) || priceVal,
             volume: parseFloat(data.volume) || 0,
-            rsi: 50, // Default RSI for crypto search
-            market: 'IN', // User wants INR
+            rsi: 50,
+            market: 'IN',
             tvExchange: 'BINANCE',
             tvExactSymbol: binanceSym,
             time: Date.now()
           };
-          priceCache.set(sym, result, 5000);
+          const cacheTTL = 5000;
+          priceCache.set(sym, result, cacheTTL);
           return result;
         }
       }
-    } catch(e) {}
+    } catch (e) { }
   }
 
   // Try TradingView first
   try {
     const tvResult = await tryTradingView(sym, cleanSym, isIndian);
     if (tvResult && tvResult.price > 0) {
-      priceCache.set(sym, tvResult, 5000); // Increased to 5s for stability
+      const cacheTTL = isAnyMarketOpen() ? 5000 : 30000;
+      priceCache.set(sym, tvResult, cacheTTL);
       return tvResult;
     }
-  } catch (e) {}
+  } catch (e) { }
 
   // Fallback to Yahoo Finance
   const yahooSymbol = isIndian ? `${cleanSym}.NS` : cleanSym;
-  
+
   for (const proxy of CORS_PROXIES) {
     try {
       const url = `${proxy}${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?interval=1d&range=1d`)}`;
       const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-      
+
       if (res.ok) {
         const data = await res.json();
         if (data?.chart?.result?.[0]) {
@@ -138,7 +177,7 @@ const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEE
           const priceVal = parseFloat(meta.regularMarketPrice);
           const prevClose = parseFloat(meta.chartPreviousClose || meta.previousClose);
           const changeVal = prevClose ? ((priceVal - prevClose) / prevClose) * 100 : 0;
-          
+
           if (!isNaN(priceVal) && priceVal > 0) {
             const result: PriceData = {
               price: priceVal,
@@ -157,7 +196,7 @@ const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEE
           }
         }
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   // Retry with alternate symbol
@@ -170,7 +209,7 @@ const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEE
 
 async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean): Promise<PriceData | null> {
   const endpoint = isIndian ? 'india' : 'america';
-  
+
   let tvTickers: string[];
   if (EXACT_TICKER_MAP[cleanSym]) {
     tvTickers = [EXACT_TICKER_MAP[cleanSym]];
@@ -217,7 +256,7 @@ async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean)
         }
       }
     }
-  } catch (e) {}
+  } catch (e) { }
 
   return null;
 }
@@ -238,8 +277,17 @@ export async function batchFetchPrices(
 
     if (EXACT_TICKER_MAP[cleanSym]) {
       const t = EXACT_TICKER_MAP[cleanSym];
-      if (mkt === 'IN') inTickers.push(t); else usTickers.push(t);
-      tickerToKey[t] = key;
+      // Route crypto to separate list
+      if (isCryptoSymbol(cleanSym)) {
+        // Skip — crypto is handled by Binance WebSocket, not TradingView batch
+        tickerToKey[t] = key;
+      } else if (mkt === 'IN') {
+        inTickers.push(t);
+        tickerToKey[t] = key;
+      } else {
+        usTickers.push(t);
+        tickerToKey[t] = key;
+      }
     } else if (mkt === 'IN') {
       inTickers.push(`NSE:${cleanSym}`, `BSE:${cleanSym}`);
       tickerToKey[`NSE:${cleanSym}`] = key;
@@ -260,9 +308,9 @@ export async function batchFetchPrices(
 
   const scanBatch = async (endpoint: string, tickers: string[]) => {
     if (tickers.length === 0) return;
-    
+
     const uniqueTickers = [...new Set(tickers)];
-    
+
     try {
       const res = await fetch(`https://scanner.tradingview.com/${endpoint}/scan`, {
         method: 'POST',
@@ -279,10 +327,10 @@ export async function batchFetchPrices(
         if (data?.data) {
           data.data.forEach((item: any) => {
             if (!item.d || item.d[1] === null) return;
-            
+
             const priceVal = parseFloat(item.d[1]);
             if (isNaN(priceVal) || priceVal <= 0) return;
-            
+
             const key = tickerToKey[item.s];
             if (!key) return;
 
@@ -349,7 +397,7 @@ export async function fetchForexRate(): Promise<number> {
         if (!isNaN(price) && price > 50 && price < 150) return price;
       }
     }
-  } catch (e) {}
+  } catch (e) { }
 
   // Backup 2: Open ER-API (Daily updates)
   try {
@@ -363,13 +411,28 @@ export async function fetchForexRate(): Promise<number> {
         if (!isNaN(price) && price > 50 && price < 150) return price;
       }
     }
-  } catch (e) {}
+  } catch (e) { }
 
   return DEFAULT_USD_INR; // Default fallback
 }
 
 export async function fetchCryptoUsdInrRate(): Promise<number> {
-  // Primary: WazirX USDT/INR (Very reliable for Indian crypto premium)
+  // Primary: CoinDCX USDT/INR (matches user's exchange for accurate INR conversion)
+  try {
+    const res = await fetch(`https://api.coindcx.com/exchange/ticker`, {
+      signal: AbortSignal.timeout(5000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const usdtTicker = data.find((t: any) => t.market === 'USDTINR');
+      if (usdtTicker && usdtTicker.last_price) {
+        const price = parseFloat(usdtTicker.last_price);
+        if (!isNaN(price) && price > 60 && price < 150) return price;
+      }
+    }
+  } catch (e) { }
+
+  // Backup: WazirX USDT/INR
   try {
     const res = await fetch(`https://api.wazirx.com/sapi/v1/ticker/24hr?symbol=usdtinr`, {
       signal: AbortSignal.timeout(4000)
@@ -381,22 +444,7 @@ export async function fetchCryptoUsdInrRate(): Promise<number> {
         if (!isNaN(price) && price > 60 && price < 150) return price;
       }
     }
-  } catch (e) {}
-  
-  // Backup: CoinDCX USDT/INR
-  try {
-    const res = await fetch(`https://api.coindcx.com/exchange/ticker`, {
-        signal: AbortSignal.timeout(4000)
-    });
-    if (res.ok) {
-        const data = await res.json();
-        const usdtTicker = data.find((t: any) => t.market === 'B-USDT_INR' || t.market === 'I-USDT_INR' || t.market === 'USDTINR');
-        if (usdtTicker && usdtTicker.last_price) {
-            const price = parseFloat(usdtTicker.last_price);
-            if (!isNaN(price) && price > 60 && price < 150) return price;
-        }
-    }
-  } catch (e) {}
+  } catch (e) { }
 
   // Fallback to a fixed 5% premium over normal FOREX if all fails
   const normalRate = await fetchForexRate();
@@ -432,34 +480,34 @@ export async function syncToCloud(portfolio: Position[], usdInr: number): Promis
 
 export async function loadFromCloud(): Promise<Position[] | null> {
   if (!API_URL) return null;
-  
+
   try {
     const res = await fetch(`${API_URL}?action=load&t=${Date.now()}`);
     if (!res.ok) return null;
-    
-  const text = await res.text();
-  const match = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-  if (!match || match[0] === '{}') return null;
 
-  let data;
-  try { data = JSON.parse(match[0]); } catch { return null; }
-  if (typeof data === 'string') {
-    try { data = JSON.parse(data); } catch { return null; }
-  }
+    const text = await res.text();
+    const match = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+    if (!match || match[0] === '{}') return null;
 
-  if (data.portfolio && Array.isArray(data.portfolio)) {
+    let data;
+    try { data = JSON.parse(match[0]); } catch { return null; }
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data); } catch { return null; }
+    }
+
+    if (data.portfolio && Array.isArray(data.portfolio)) {
       return data.portfolio;
     }
   } catch (e) {
     console.warn('Cloud load failed:', e);
   }
-  
+
   return null;
 }
 
 export async function sendTelegramAlert(token: string, chatId: string, message: string): Promise<boolean> {
   if (!token || !chatId) return false;
-  
+
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
@@ -505,7 +553,7 @@ export async function loadGroqKeyFromCloud(): Promise<string | null> {
     if (key && typeof key === 'string' && key.length > 10) {
       return key;
     }
-  } catch (e) {}
+  } catch (e) { }
   return null;
 }
 

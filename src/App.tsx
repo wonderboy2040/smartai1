@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Position, PriceData, TabType, RiskLevel, TransactionType } from './types';
 import {
   SECURE_PIN, TG_TOKEN, TG_CHAT_ID,
-  getTodayString, guessMarket, getAssetCagrProxy, formatPrice, EXACT_TICKER_MAP, isCryptoSymbol
+  getTodayString, guessMarket, getAssetCagrProxy, formatPrice, formatCurrency, EXACT_TICKER_MAP, isCryptoSymbol
 } from './utils/constants';
 import {
   fetchSinglePrice, batchFetchPrices, fetchForexRate, fetchCryptoUsdInrRate,
@@ -59,6 +59,29 @@ function mergePriceData(existing: PriceData | undefined, incoming: Partial<Price
   return { price, change, high, low, volume, rsi, time, market, sma20, sma50, macd, tvExchange, tvExactSymbol };
 }
 
+// Memoized asset button to prevent re-renders on unrelated portfolio changes
+const MemoAssetButton = React.memo(function MemoAssetButton({
+  symbol, market, price, change, onClick
+}: { symbol: string; market: string; price: number; change: number; onClick: (s: string) => void }) {
+  const cur = market === 'IN' ? '₹' : '$';
+  return (
+    <button
+      onClick={() => onClick(symbol)}
+      className="stat-card glass-card px-4 py-3 rounded-xl text-left transition-all hover:-translate-y-0.5"
+    >
+      <div className="font-bold text-white text-sm">{symbol.replace('.NS', '')}</div>
+      <div className="flex items-center gap-2 mt-1.5">
+        <span className="font-mono text-xs text-slate-300">
+          {formatPrice(price, cur)}
+        </span>
+        <span className={`font-bold text-xs ${change >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+          {change >= 0 ? '+' : ''}{change.toFixed(2)}%
+        </span>
+      </div>
+    </button>
+  );
+});
+
 export default function App() {
   // Auth State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -87,6 +110,7 @@ export default function App() {
   const [indiaSIP, setIndiaSIP] = useState(10000);
   const [usSIP, setUsSIP] = useState(51.54);
   const [btcSIP, setBtcSIP] = useState(1000);
+  const [ethSIP, setEthSIP] = useState(500);
   const [emergencyFund, setEmergencyFund] = useState(50000);
   const [investYears, setInvestYears] = useState(15);
   const [riskLevel, setRiskLevel] = useState<RiskLevel>('medium');
@@ -166,7 +190,7 @@ export default function App() {
         setPortfolio(data);
         secureStorage.setItem('portfolio', JSON.stringify(data));
       }
-    }).catch(() => console.warn('Cloud sync unavailable'));
+    }).catch(() => {});
 
     // Load Gemini key from cloud, fallback to local, then sync to cloud
     loadGroqKeyFromCloud().then(cloudKey => {
@@ -190,7 +214,28 @@ export default function App() {
     // Fetch forex rate
     fetchForexRate().then(rate => setUsdInrRate(rate));
     fetchCryptoUsdInrRate().then(rate => setCryptoUsdInrRate(rate));
+
+    // Load Planner Settings
+    try {
+      const p = secureStorage.getItem('plannerSettings');
+      if (p) {
+        const settings = JSON.parse(p);
+        if (settings.indiaSIP) setIndiaSIP(settings.indiaSIP);
+        if (settings.usSIP) setUsSIP(settings.usSIP);
+        if (settings.btcSIP) setBtcSIP(settings.btcSIP);
+        if (settings.ethSIP) setEthSIP(settings.ethSIP);
+        if (settings.investYears) setInvestYears(settings.investYears);
+        if (settings.riskLevel) setRiskLevel(settings.riskLevel);
+      }
+    } catch(e) {}
   }, [isAuthenticated]);
+
+  // Persist Planner Settings
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const settings = { indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel };
+    secureStorage.setItem('plannerSettings', JSON.stringify(settings));
+  }, [indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, isAuthenticated]);
 
   const portfolioRef = useRef(portfolio);
   useEffect(() => {
@@ -215,9 +260,9 @@ export default function App() {
         const result = mergePriceData(existing, data);
         if (result !== existing) { merged[key] = result; changed = true; }
       }
-      // Throttle localStorage writes to max every 5s to avoid main thread blocking
+      // Throttle localStorage writes to max every 8s to avoid main thread blocking
       const now = Date.now();
-      if (changed && now - lastLocalSaveRef.current > 5000) {
+      if (changed && now - lastLocalSaveRef.current > 8000) {
         lastLocalSaveRef.current = now;
         try { secureStorage.setItem('livePrices', JSON.stringify(merged)); } catch { /* quota */ }
       }
@@ -230,7 +275,7 @@ export default function App() {
     if (!isAuthenticated || portfolio.length === 0) return;
     priceFlushRef.current = window.setInterval(() => {
       requestAnimationFrame(flushPricesToStorage);
-    }, 1000);
+    }, 1500);
     return () => {
       if (priceFlushRef.current) {
         clearInterval(priceFlushRef.current);
@@ -246,14 +291,17 @@ export default function App() {
     const currentPortfolio = portfolioRef.current;
 
     // Add default symbols if portfolio is empty
-    const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA', 'IN_INDIAVIX', 'US_VIX', 'IN_BTC'];
+    const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA', 'IN_INDIAVIX', 'US_VIX', 'IN_BTC', 'IN_ETH'];
     let symbolsToSub = currentPortfolio.length > 0
       ? [...new Set(currentPortfolio.map(p => `${p.market}_${p.symbol}`))]
       : defaultSymbols;
 
-    // Ensure BTC is always tracked for the Wealth Planner allocations
+    // Ensure BTC and ETH are always tracked for the Wealth Planner allocations
     if (!symbolsToSub.includes('IN_BTC')) {
       symbolsToSub.push('IN_BTC');
+    }
+    if (!symbolsToSub.includes('IN_ETH')) {
+      symbolsToSub.push('IN_ETH');
     }
 
     // Convert symbols to Position[] for batchFetchPrices
@@ -416,7 +464,7 @@ export default function App() {
             const key = `${result.market}_${sym}`;
             setLivePrices(prev => ({ ...prev, [key]: result }));
           }
-        } catch (e) { console.warn('Analyze error:', e); }
+        } catch (e) { }
         finally { setIsAnalyzing(false); }
       })();
     }
@@ -456,7 +504,8 @@ export default function App() {
     const result = await fetchSinglePrice(sym);
     if (result) {
       let finalPrice = result.price;
-      if (isCryptoSymbol(sym.replace('.NS', '').replace('.BO', '')) && result.market === 'IN') {
+      // Only convert USD→INR if the source is Binance (USD). CoinDCX already returns INR.
+      if (isCryptoSymbol(sym.replace('.NS', '').replace('.BO', '')) && result.market === 'IN' && result.tvExchange === 'BINANCE') {
         finalPrice = finalPrice * cryptoUsdInrRateRef.current;
       }
       setModalPrice({ price: finalPrice, change: result.change, market: result.market });
@@ -565,7 +614,7 @@ export default function App() {
 
     // Override for TradingView Chart widgets to use BSE for common ETFs
     // (BSE allows free real-time rendering in widgets while NSE restricts it)
-    const BSE_CHART_OVERRIDES = ['JUNIORBEES', 'MOMENTUM50', 'SMALLCAP', 'MID150BEES'];
+    const BSE_CHART_OVERRIDES = ['JUNIORBEES', 'MOMENTUM50', 'SMALLCAP', 'MID150BEES', 'ALPHA'];
     if (BSE_CHART_OVERRIDES.includes(cleanSym)) {
       tvSymbol = `BSE:${cleanSym}`;
     }
@@ -699,8 +748,6 @@ export default function App() {
   const metrics = useMemo(() => calculateMetrics(), [calculateMetrics]);
 
   // Track meaningful price changes to regenerate AI context
-  const priceUpdateCounterRef = useRef(0);
-  const [contextTrigger, setContextTrigger] = useState(0);
   const isComponentMountedRef = useRef(true);
 
   // Cleanup on unmount to prevent memory leaks
@@ -715,24 +762,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Increment context trigger when livePrices change meaningfully (throttled)
-  useEffect(() => {
-    if (!isAuthenticated || portfolio.length === 0) return;
-    const keys = Object.keys(livePrices);
-    if (keys.length === 0) return;
-    priceUpdateCounterRef.current++;
-    // Trigger AI context regeneration every 20 price updates (~20s) to reduce CPU load
-    if (priceUpdateCounterRef.current % 20 === 0) {
-      setContextTrigger(prev => prev + 1);
-    }
-  }, [isAuthenticated, portfolio.length, livePrices]);
-
-  // Generate portfolio context text for NeuralChat AI with FULL live data for ALL assets
+  // Context regeneration throttled by lastContextGenRef (30s minimum)
   useEffect(() => {
     if (portfolio.length === 0) return;
     const now = Date.now();
-    // Allow regeneration at minimum 15s intervals
-    if (now - lastContextGenRef.current < 15000) return;
+    // Allow regeneration at minimum 30s intervals to reduce CPU
+    if (now - lastContextGenRef.current < 30000) return;
     lastContextGenRef.current = now;
 
     // Build comprehensive context with ALL positions and live prices — NO truncation
@@ -774,23 +809,34 @@ export default function App() {
       const slPrice = curPrice - atr * 1.5;
       const tpPrice = curPrice + atr * 2.5;
 
+      // Holding period calculation
+      const buyDate = new Date(p.dateAdded);
+      const holdingDays = Math.max(0, Math.round((Date.now() - buyDate.getTime()) / (1000 * 60 * 60 * 24)));
+      const holdingLabel = holdingDays > 365 ? `${(holdingDays / 365).toFixed(1)}Y` : `${holdingDays}D`;
+
+      // CAGR since inception
+      const years = holdingDays / 365;
+      const cagrPct = (years > 0.1 && p.avgPrice > 0) ? ((Math.pow(curPrice / p.avgPrice, 1 / years) - 1) * 100) : plPct;
+
+      // Crypto label
+      const isCryptoAsset = isCryptoSymbol(cleanSym);
+      const assetType = isCryptoAsset ? 'CRYPTO' : p.market;
+
       // Trend direction
       const trend = (data?.sma20 && data?.sma50) ? (data.sma20 > data.sma50 ? 'BULL' : 'BEAR') : (change > 0.5 ? 'BULL' : change < -0.5 ? 'BEAR' : 'FLAT');
 
-      ctx += `${idx + 1}. ${cleanSym} [${p.market}] | Price=${curPrice.toFixed(2)} | Chg=${change >= 0 ? '+' : ''}${change.toFixed(2)}% | RSI=${rsi.toFixed(0)} | MACD=${macd} | SMA20=${sma20} | SMA50=${sma50} | Trend=${trend} | Vol=${vol} | Signal=${sig.signal} | Confidence=${sig.confidence}% | SL=${slPrice.toFixed(2)} | TP=${tpPrice.toFixed(2)} | AvgBuy=${p.avgPrice.toFixed(2)} | Qty=${p.qty} | Invested=${invested.toFixed(0)} | CurVal=${curVal.toFixed(0)} | P&L=${plPct >= 0 ? '+' : ''}${plPct.toFixed(2)}% (${plAbs >= 0 ? '+' : ''}${plAbs.toFixed(0)})\n`;
+      ctx += `${idx + 1}. ${cleanSym} [${assetType}] | Price=${curPrice.toFixed(2)} | Chg=${change >= 0 ? '+' : ''}${change.toFixed(2)}% | RSI=${rsi.toFixed(0)} | MACD=${macd} | SMA20=${sma20} | SMA50=${sma50} | Trend=${trend} | Vol=${vol} | Signal=${sig.signal} | Confidence=${sig.confidence}% | SL=${slPrice.toFixed(2)} | TP=${tpPrice.toFixed(2)} | AvgBuy=${p.avgPrice.toFixed(2)} | Qty=${p.qty} | Invested=${invested.toFixed(0)} | CurVal=${curVal.toFixed(0)} | P&L=${plPct >= 0 ? '+' : ''}${plPct.toFixed(2)}% (${plAbs >= 0 ? '+' : ''}${plAbs.toFixed(0)}) | Holding=${holdingLabel} | CAGR=${cagrPct >= 0 ? '+' : ''}${cagrPct.toFixed(1)}%\n`;
     }
     ctx += `=== END ALL ${portfolio.length} POSITIONS ===\n`;
 
     setPortfolioContextText(ctx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [portfolio.length, usdInrRate, contextTrigger]);
+  }, [portfolio.length, usdInrRate]);
 
   const latestDataRef = useRef({ portfolio, livePrices, usdInrRate, metrics });
   useEffect(() => {
     latestDataRef.current = { portfolio, livePrices, usdInrRate, metrics };
   }, [portfolio, livePrices, usdInrRate, metrics]);
-
-  // Auto Telegram Notifications (market hours only, every 30 min)
   useEffect(() => {
     if (!isAuthenticated || !autoTelegram || portfolio.length === 0) return;
 
@@ -829,13 +875,12 @@ export default function App() {
   const inVix = livePrices['IN_INDIAVIX']?.price || 15;
   const avgVix = (usVix + inVix) / 2;
 
-  const getSentiment = () => {
-    if (avgVix > 22) return { text: '🔴 Global Risk Severe | Institutional Liquidation Active', color: 'text-red-400' };
-    if (avgVix > 17) return { text: '🟠 Elevated Volatility | Smart Money Cautious', color: 'text-amber-400' };
-    if (avgVix > 14) return { text: '🟡 Normal Range | Standard SIP Optimal', color: 'text-yellow-400' };
+  const sentiment = useMemo(() => {
+    if (avgVix > 22) return { text: '🚨 Global Risk Severe | Institutional Liquidation Active', color: 'text-red-400' };
+    if (avgVix > 17) return { text: '⚠️ Elevated Volatility | Smart Money Cautious', color: 'text-amber-400' };
+    if (avgVix > 14) return { text: '✅ Normal Range | Standard SIP Optimal', color: 'text-yellow-400' };
     return { text: '🟢 Ultra Low Risk | Whale Accumulation Zone', color: 'text-emerald-400' };
-  };
-  const sentiment = getSentiment();
+  }, [avgVix]);
 
   // Current symbol data
   const currentKey = `${currentMarket}_${currentSymbol}`;
@@ -845,17 +890,16 @@ export default function App() {
   const currentRsi = currentData?.rsi || 50;
 
   // Generate signal
-  const getSignal = () => {
-    if (currentRsi < 35) return { signal: '🟢 MAX BUY', color: 'text-emerald-400', conf: 98 };
+  const signalData = useMemo(() => {
+    if (currentRsi < 35) return { signal: '🔥 MAX BUY', color: 'text-emerald-400', conf: 98 };
     if (currentRsi < 45) return { signal: '🟢 ACCUMULATE', color: 'text-emerald-400', conf: 85 };
     if (currentRsi < 60) return { signal: '🟡 MAINTAIN', color: 'text-amber-400', conf: 75 };
     if (currentRsi < 70) return { signal: '🟠 THROTTLE', color: 'text-orange-400', conf: 65 };
-    return { signal: '🔴 DISTRIBUTE', color: 'text-red-400', conf: 90 };
-  };
-  const signalData = getSignal();
+    return { signal: '🚨 DISTRIBUTE', color: 'text-red-400', conf: 90 };
+  }, [currentRsi]);
 
   // Planner calculations
-  const totalSIP = indiaSIP + (usSIP * usdInrRate) + btcSIP;
+  const totalSIP = indiaSIP + (usSIP * usdInrRate) + btcSIP + ethSIP;
   const cagr = riskLevel === 'low' ? 8 : riskLevel === 'high' ? 18 : 12;
   const months = investYears * 12;
   const totalInvestedPlanner = totalSIP * months;
@@ -955,7 +999,7 @@ export default function App() {
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="text-lg font-black gradient-text-cyan font-display uppercase tracking-wide">Wealth AI</h1>
-                  <span className="badge bg-cyan-500/10 text-cyan-400/80 border border-cyan-500/15">PRO</span>
+                  <span className="badge bg-cyan-500/10 text-cyan-400/80 border border-cyan-500/15">v12.0 PRO</span>
                 </div>
                 <div className="flex items-center gap-2 text-[11px]">
                   <span className={`w-1.5 h-1.5 rounded-full ${liveStatus.includes('ACTIVE') ? 'bg-cyan-400 animate-pulse-dot' : 'bg-amber-500 animate-pulse'}`} />
@@ -1306,28 +1350,19 @@ export default function App() {
                     <p className="text-xs text-slate-700 mt-1">Add assets to start tracking</p>
                   </div>
                 ) : (
-                  [...new Set(portfolio.map(p => p.symbol))].map((sym, i) => {
-                    const p = portfolio.find(x => x.symbol === sym)!;
-                    const key = `${p.market}_${sym}`;
+                  portfolio.map((p) => {
+                    const key = `${p.market}_${p.symbol}`;
                     const data = livePrices[key];
                     const change = data?.change || 0;
                     return (
-                      <button
-                        key={sym}
-                        onClick={() => quickSelect(sym)}
-                        className="stat-card glass-card px-4 py-3 rounded-xl text-left animate-fade-in-up"
-                        style={{ animationDelay: `${i * 50}ms` }}
-                      >
-                        <div className="font-bold text-white text-sm">{sym.replace('.NS', '')}</div>
-                        <div className="flex items-center gap-2 mt-1.5">
-                          <span className="font-mono text-xs text-slate-300">
-                            {formatPrice(data?.price || p.avgPrice, p.market === 'IN' ? '₹' : '$')}
-                          </span>
-                          <span className={`font-bold text-xs ${change >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {change >= 0 ? '+' : ''}{change.toFixed(2)}%
-                          </span>
-                        </div>
-                      </button>
+                      <MemoAssetButton
+                        key={`${key}`}
+                        symbol={p.symbol}
+                        market={p.market}
+                        price={data?.price || p.avgPrice}
+                        change={change}
+                        onClick={quickSelect}
+                      />
                     );
                   })
                 )}
@@ -1410,7 +1445,7 @@ export default function App() {
                     🦅 US: {metrics.usPL >= 0 ? '+' : ''}₹{Math.round(metrics.usPL).toLocaleString('en-IN')}
                   </span>
                   <span className={`text-[10px] px-1.5 py-0.5 rounded bg-black/20 font-bold ${metrics.cryptoPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    ₿ BTC: {metrics.cryptoPL >= 0 ? '+' : ''}₹{Math.round(metrics.cryptoPL).toLocaleString('en-IN')}
+                    🪙 Crypto: {metrics.cryptoPL >= 0 ? '+' : ''}₹{Math.round(metrics.cryptoPL).toLocaleString('en-IN')}
                   </span>
                 </div>
               </div>
@@ -1622,10 +1657,17 @@ export default function App() {
                   </div>
                 </div>
                 <div className="bg-orange-500/5 border border-orange-500/15 p-4 rounded-xl">
-                  <div className="text-xs font-bold text-orange-400 mb-2">🪙 Bitcoin SIP</div>
+                  <div className="text-xs font-bold text-orange-400 mb-2">₿ Bitcoin SIP</div>
                   <div className="flex items-center gap-2 glass-input p-2 rounded-lg">
                     <span className="text-lg text-orange-500/50">₹</span>
                     <input type="number" value={btcSIP} onChange={e => setBtcSIP(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
+                  </div>
+                </div>
+                <div className="bg-indigo-500/5 border border-indigo-500/15 p-4 rounded-xl">
+                  <div className="text-xs font-bold text-indigo-400 mb-2">🪙 Ethereum SIP</div>
+                  <div className="flex items-center gap-2 glass-input p-2 rounded-lg">
+                    <span className="text-lg text-indigo-500/50">₹</span>
+                    <input type="number" value={ethSIP} onChange={e => setEthSIP(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
                   </div>
                 </div>
                 <div className="bg-purple-500/5 border border-purple-500/15 p-4 rounded-xl">
@@ -1818,7 +1860,7 @@ export default function App() {
 
                 {/* Allocation Recommendations */}
                 {(() => {
-                  const allocs = getSmartAllocations(livePrices, indiaSIP, usSIP, btcSIP);
+                  const allocs = getSmartAllocations(livePrices, indiaSIP, usSIP, btcSIP + ethSIP);
                   return (
                     <div className="bg-black/20 rounded-xl p-4 border border-purple-500/15">
                       <div className="flex items-center justify-between mb-4">
@@ -1826,7 +1868,7 @@ export default function App() {
                           💰 Monthly SIP Allocation
                         </div>
                         <div className="text-[10px] text-slate-500 font-mono">
-                          ₹{Math.round(indiaSIP).toLocaleString()} IN + ${usSIP} US + ₹{btcSIP.toLocaleString()} BTC
+                          ₹{Math.round(indiaSIP).toLocaleString()} IN + ${usSIP} US + ₹{(btcSIP + ethSIP).toLocaleString()} Crypto
                         </div>
                       </div>
                       <div className="space-y-3">
@@ -1875,6 +1917,107 @@ export default function App() {
                     </div>
                   );
                 })()}
+
+                {/* Quantum Compound Growth Projection Panel */}
+                <div className="bg-black/20 rounded-xl p-4 border border-blue-500/15 col-span-1 md:col-span-2 mt-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center gap-2">
+                      <span className="text-lg">📈</span> Quantum Compound Growth Projection
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-white/5 text-slate-500">
+                          <th className="py-2">Horizon</th>
+                          <th className="py-2">Invested</th>
+                          <th className="py-2 text-emerald-400">@ 15% CAGR</th>
+                          <th className="py-2 text-emerald-400">@ 20% CAGR</th>
+                          <th className="py-2 text-emerald-400">@ 25% CAGR</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-slate-300">
+                        {[5, 10, 15, 20].map(y => {
+                          const inv = totalSIP * 12 * y;
+                          const calc = (rate: number) => totalSIP * 12 * ((Math.pow(1 + rate/100, y) - 1) / (rate/100));
+                          return (
+                            <tr key={y} className="border-b border-white/5 last:border-0 hover:bg-white/5">
+                              <td className="py-2 font-bold">{y} Years</td>
+                              <td className="py-2 font-mono">₹{formatCurrency(inv, '')}</td>
+                              <td className="py-2 font-mono text-emerald-400/70">₹{formatCurrency(calc(15), '')}</td>
+                              <td className="py-2 font-mono text-emerald-400/85">₹{formatCurrency(calc(20), '')}</td>
+                              <td className="py-2 font-mono text-emerald-400 font-bold">₹{formatCurrency(calc(25), '')}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Advanced Asset Allocation Strategy */}
+                <div className="bg-black/20 rounded-xl p-4 border border-cyan-500/15 mt-4">
+                  <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                    <span className="text-lg">🎯</span> Core-Satellite Allocation Strategy
+                  </div>
+                  <div className="space-y-3 text-sm text-slate-300">
+                    <div className="flex justify-between items-center p-2 bg-white/5 rounded">
+                      <span>Rule of 100 (Eq/Debt)</span>
+                      <span className="font-mono text-cyan-400">{100 - currentAge}% / {currentAge}%</span>
+                    </div>
+                    <div className="flex justify-between items-center p-2 bg-white/5 rounded">
+                      <span>Core (Index/Large Cap)</span>
+                      <span className="font-mono text-emerald-400">50-60%</span>
+                    </div>
+                    <div className="flex justify-between items-center p-2 bg-white/5 rounded">
+                      <span>Satellite (Mid/Small/Alpha)</span>
+                      <span className="font-mono text-orange-400">30-40%</span>
+                    </div>
+                    <div className="flex justify-between items-center p-2 bg-white/5 rounded">
+                      <span>Moonshot (Crypto/BTC/ETH)</span>
+                      <span className="font-mono text-purple-400">5-10%</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SIP Step-Up Calculator */}
+                <div className="bg-black/20 rounded-xl p-4 border border-purple-500/15 mt-4">
+                  <div className="text-xs font-bold text-purple-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                    <span className="text-lg">🚀</span> 10% Annual SIP Step-Up Magic
+                  </div>
+                  <div className="text-xs text-slate-400 mb-4">
+                    Increasing your SIP by 10% every year drastically boosts final wealth.
+                  </div>
+                  <div className="space-y-2">
+                    {(() => {
+                      const r = 0.15; // 15% CAGR
+                      const step = 0.10; // 10% Step-Up
+                      const y = investYears;
+                      let currentSip = totalSIP;
+                      let wealth = 0;
+                      let totalInv = 0;
+                      for(let i=1; i<=y; i++) {
+                        const yearlySip = currentSip * 12;
+                        totalInv += yearlySip;
+                        wealth = (wealth + yearlySip) * (1 + r);
+                        currentSip *= (1 + step);
+                      }
+                      return (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="p-3 bg-white/5 rounded-lg text-center">
+                            <div className="text-[10px] uppercase text-slate-500 mb-1">Total Invested</div>
+                            <div className="font-mono text-sm text-white">₹{formatCurrency(totalInv, '')}</div>
+                          </div>
+                          <div className="p-3 bg-white/5 rounded-lg text-center border border-emerald-500/30">
+                            <div className="text-[10px] uppercase text-emerald-500 mb-1">Final Wealth (15% CAGR)</div>
+                            <div className="font-mono text-sm text-emerald-400 font-bold">₹{formatCurrency(wealth, '')}</div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+
               </div>
             )}
           </div>
@@ -2091,7 +2234,7 @@ export default function App() {
               <h3 className="text-lg font-bold text-white">
                 {transactionType === 'sell' ? '📉 Sell Asset' : '➕ Add Asset'}
               </h3>
-              <button onClick={() => setShowAddModal(false)} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-red-500/20 flex items-center justify-center text-lg text-slate-400 hover:text-red-400 transition-all">×</button>
+              <button onClick={() => { setShowAddModal(false); setAddLeverage('1'); }} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-red-500/20 flex items-center justify-center text-lg text-slate-400 hover:text-red-400 transition-all">✕</button>
             </div>
             <div className="p-5 space-y-4">
               <div>
