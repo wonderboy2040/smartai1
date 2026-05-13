@@ -10,16 +10,26 @@ export default defineConfig({
     legalComments: 'none',
   },
   build: {
-    // Optimizations for smaller bundle
     target: 'es2022',
     minify: 'esbuild',
-    // Code splitting for better caching
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom'],
-          ml: ['@google/genai'],
-          utils: ['lucide-react', 'clsx', 'tailwind-merge'],
+        manualChunks: (id) => {
+          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) {
+            return 'vendor-react';
+          }
+          if (id.includes('@google/generative-ai') || id.includes('@ai-sdk')) {
+            return 'vendor-ml';
+          }
+          if (id.includes('framer-motion') || id.includes('motion')) {
+            return 'vendor-motion';
+          }
+          if (id.includes('lucide-react')) {
+            return 'vendor-icons';
+          }
+          if (id.includes('tailwindcss') || id.includes('clsx') || id.includes('tailwind-merge')) {
+            return 'vendor-utils';
+          }
         },
       },
     },
@@ -29,7 +39,6 @@ export default defineConfig({
       '@': '/src',
     },
   },
-  // Optimize dependencies
   optimizeDeps: {
     include: ['react', 'react-dom'],
   },

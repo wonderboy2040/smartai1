@@ -198,7 +198,8 @@ export function getSmartAllocations(
   livePrices: Record<string, PriceData>,
   indiaSIP: number = 10000,
   usSIP: number = 200,
-  btcSIP: number = 1000
+  btcSIP: number = 1000,
+  ethSIP: number = 500
 ): AllocationRec[] {
   const recs: AllocationRec[] = [];
 

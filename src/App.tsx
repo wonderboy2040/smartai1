@@ -748,12 +748,10 @@ export default function App() {
   const metrics = useMemo(() => calculateMetrics(), [calculateMetrics]);
 
   // Track meaningful price changes to regenerate AI context
-  const isComponentMountedRef = useRef(true);
 
   // Cleanup on unmount to prevent memory leaks
   useEffect(() => {
     return () => {
-      isComponentMountedRef.current = false;
       if (priceFlushRef.current) clearInterval(priceFlushRef.current);
       if (telegramIntervalRef.current) clearInterval(telegramIntervalRef.current);
       if (forexIntervalRef.current) clearInterval(forexIntervalRef.current);
@@ -1860,7 +1858,7 @@ export default function App() {
 
                 {/* Allocation Recommendations */}
                 {(() => {
-                  const allocs = getSmartAllocations(livePrices, indiaSIP, usSIP, btcSIP + ethSIP);
+                  const allocs = getSmartAllocations(livePrices, indiaSIP, usSIP, btcSIP, ethSIP);
                   return (
                     <div className="bg-black/20 rounded-xl p-4 border border-purple-500/15">
                       <div className="flex items-center justify-between mb-4">

@@ -26,7 +26,7 @@ const TAVILY_KEY = import.meta.env.VITE_TAVILY_API_KEY || '';
 // Fetch real-time market snapshot for AI context
 async function fetchRealtimeSnapshot(): Promise<string> {
   try {
-    const [idxRes, coindcxRes, , bondRes] = await Promise.allSettled([
+    const [idxRes, coindcxRes, bondRes] = await Promise.allSettled([
       fetch('https://scanner.tradingview.com/global/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
@@ -40,7 +40,6 @@ async function fetchRealtimeSnapshot(): Promise<string> {
       fetch('https://api.coindcx.com/exchange/ticker', {
         signal: AbortSignal.timeout(5000)
       }),
-      fetchLiveForex(),
       fetch('https://scanner.tradingview.com/bond/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
@@ -95,19 +94,6 @@ async function fetchRealtimeSnapshot(): Promise<string> {
 
     return snap;
   } catch { return ''; }
-}
-
-// Fetch real-time USD/INR
-async function fetchLiveForex(): Promise<number> {
-  try {
-    const res = await fetch('https://open.er-api.com/v6/latest/USD', { signal: AbortSignal.timeout(4000) });
-    if (res.ok) {
-      const data = await res.json();
-      const rate = parseFloat(data?.rates?.INR);
-      if (!isNaN(rate) && rate > 50 && rate < 150) return rate;
-    }
-  } catch {}
-  return 85.5;
 }
 
 // Tavily web search for live news
@@ -348,7 +334,6 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
     // Fetch real-time data in parallel
     const [marketSnap, liveForex, webIntel] = await Promise.allSettled([
       fetchRealtimeSnapshot(),
-      fetchLiveForex(),
       /\b(news|market|nifty|sensex|fed|rbi|ipo|crude|gold|dollar|breaking|aaj|today|live|bitcoin|btc|crypto|halving|eth|blockchain|defi|altcoin|binance|coinbase|regulation|sec)\b/i.test(userMessage) ? fetchWebIntel(userMessage) : Promise.resolve('')
     ]);
 

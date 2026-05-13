@@ -239,6 +239,9 @@ export function disconnectPrices() {
   
   // Safeguard against memory leak
   lastKnownPrices.clear();
+  keyToTvSymbol.clear();
+  tvSymbolToKey.clear();
+  subscribedSymbols.clear();
 }
 
 // ========================================

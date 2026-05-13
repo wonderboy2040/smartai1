@@ -44,6 +44,7 @@ export function disconnectCryptoPrices() {
     ws.close();
     ws = null;
   }
+  symbolMap.clear();
   reconnectAttempts = 0;
 }
 
