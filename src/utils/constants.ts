@@ -22,7 +22,7 @@ export const ALPHA_ETFS_IN: ETFInfo[] = [
 export const ALPHA_ETFS_US: ETFInfo[] = [
   { sym: 'SMH', name: 'VanEck Semiconductor', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', aum: '$15B', vol: 'Extreme', fixedAlloc: 0.40 },
   { sym: 'VGT', name: 'Vanguard Information Technology ETF', cagr: 21.0, maxDD: 33, cat: 'Tech', aum: '$75B', vol: 'High', fixedAlloc: 0.35 },
-  { sym: 'IWM', name: 'iShares Russell 2000 ETF', cagr: 18.5, maxDD: 40, cat: 'Small Cap US', aum: '$60B', vol: 'High', fixedAlloc: 0.25 }
+  { sym: 'IWY', name: 'iShares Russell 2000 Growth ETF', cagr: 18.5, maxDD: 40, cat: 'Small Cap US', aum: '$60B', vol: 'High', fixedAlloc: 0.25 }
 ];
 
 export const EXACT_TICKER_MAP: Record<string, string> = {
