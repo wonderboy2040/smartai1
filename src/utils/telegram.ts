@@ -298,16 +298,16 @@ export function getSmartAllocations(
   const btcData = livePrices['IN_BTC'] || livePrices['US_BTC'];
   const btcPrice = btcData?.price || 0;
   const btcRsi = btcData?.rsi || 50;
-  
+
   recs.push({
     symbol: 'BTC',
     name: 'Bitcoin',
-    market: 'IN', // using IN so it formats as ₹ in the UI
+    market: 'IN',
     currentPrice: btcPrice,
     targetEntry: btcPrice > 0 ? btcPrice * 0.95 : 0,
     discount: 5,
     signal: btcRsi < 40 ? '🟢 STRONG BUY' : btcRsi > 70 ? '🟡 WAIT/HOLD' : '🟢 ACCUMULATE',
-    allocPct: 1.0, // It is 100% of the btcSIP
+    allocPct: 1.0,
     allocAmount: btcSIP,
     rsi: btcRsi,
     strength: btcRsi < 45 ? 85 : 50,
@@ -317,6 +317,31 @@ export function getSmartAllocations(
     trendStrength: 'STRONG',
     volumeSignal: '🔥 High Volume',
     reason: 'Digital Gold — Dedicated Monthly SIP'
+  });
+
+  // Add ETH allocation
+  const ethData = livePrices['IN_ETH'] || livePrices['US_ETH'];
+  const ethPrice = ethData?.price || 0;
+  const ethRsi = ethData?.rsi || 50;
+
+  recs.push({
+    symbol: 'ETH',
+    name: 'Ethereum',
+    market: 'IN',
+    currentPrice: ethPrice,
+    targetEntry: ethPrice > 0 ? ethPrice * 0.95 : 0,
+    discount: 5,
+    signal: ethRsi < 40 ? '🟢 STRONG BUY' : ethRsi > 70 ? '🟡 WAIT/HOLD' : '🟢 ACCUMULATE',
+    allocPct: 1.0,
+    allocAmount: ethSIP,
+    rsi: ethRsi,
+    strength: ethRsi < 45 ? 85 : 50,
+    stopLoss: ethPrice * 0.8,
+    takeProfit: ethPrice * 1.5,
+    riskReward: 2.5,
+    trendStrength: 'STRONG',
+    volumeSignal: '🔥 High Volume',
+    reason: 'Smart Money ETH — Dedicated Monthly SIP'
   });
 
   return recs;
