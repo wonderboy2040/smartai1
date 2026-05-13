@@ -26,7 +26,7 @@ const TAVILY_KEY = import.meta.env.VITE_TAVILY_API_KEY || '';
 // Fetch real-time market snapshot for AI context
 async function fetchRealtimeSnapshot(): Promise<string> {
   try {
-    const [idxRes, coindcxRes, forexRes, bondRes] = await Promise.allSettled([
+    const [idxRes, coindcxRes, , bondRes] = await Promise.allSettled([
       fetch('https://scanner.tradingview.com/global/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },

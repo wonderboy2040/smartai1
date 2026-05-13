@@ -1380,16 +1380,25 @@ cron.schedule('30 2 * * 1-5', async () => {
   console.log(`🌅 Daily Digest triggered at ${getISTTime()} IST`);
   try {
     await refreshPrices();
-    const [intel, cryptos, bonds] = await Promise.allSettled([
+    const [intel, coindcx, bonds] = await Promise.allSettled([
       fetchMarketIntelligence(),
-      fetchCryptoPrices(),
+      fetchCryptoPricesINR(),
       fetchBondYields()
     ]);
+    let source = 'TRADINGVIEW';
+    let cryptos = coindcx.status === 'fulfilled' && coindcx.value.length > 0 ? coindcx.value : [];
+    if (cryptos.length === 0) {
+      source = 'TRADINGVIEW';
+      const tvCrypto = await fetchCryptoPrices();
+      cryptos = tvCrypto;
+    } else {
+      source = 'COINDCX';
+    }
     const report = generateDigestReport(
       intel.status === 'fulfilled' ? intel.value : null,
-      cryptos.status === 'fulfilled' ? cryptos.value : [],
+      cryptos,
       bonds.status === 'fulfilled' ? bonds.value : [],
-      usdInrRate, portfolio, livePrices
+      usdInrRate, portfolio, livePrices, source
     );
     await safeSend(TG_CHAT_ID, report);
     console.log('🌅 Daily digest sent successfully');
