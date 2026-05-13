@@ -26,8 +26,7 @@ const TAVILY_KEY = import.meta.env.VITE_TAVILY_API_KEY || '';
 // Fetch real-time market snapshot for AI context
 async function fetchRealtimeSnapshot(): Promise<string> {
   try {
-    // Indices + Commodities + Crypto + Bonds — all in parallel
-    const [idxRes, cryptoRes, bondRes] = await Promise.allSettled([
+    const [idxRes, coindcxRes, forexRes, bondRes] = await Promise.allSettled([
       fetch('https://scanner.tradingview.com/global/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
@@ -38,12 +37,10 @@ async function fetchRealtimeSnapshot(): Promise<string> {
         ] }, columns: ['name', 'close', 'change'] }),
         signal: AbortSignal.timeout(5000)
       }),
-      fetch('https://scanner.tradingview.com/crypto/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-        body: JSON.stringify({ symbols: { tickers: ['BINANCE:BTCUSDT', 'BINANCE:ETHUSDT', 'BINANCE:SOLUSDT'] }, columns: ['description', 'close', 'change'] }),
+      fetch('https://api.coindcx.com/exchange/ticker', {
         signal: AbortSignal.timeout(5000)
       }),
+      fetchLiveForex(),
       fetch('https://scanner.tradingview.com/bond/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
@@ -66,16 +63,20 @@ async function fetchRealtimeSnapshot(): Promise<string> {
       }
     }
 
-    // Crypto
-    const cryptoMap: Record<string, string> = { 'BINANCE:BTCUSDT': 'BTC', 'BINANCE:ETHUSDT': 'ETH', 'BINANCE:SOLUSDT': 'SOL' };
-    if (cryptoRes.status === 'fulfilled' && cryptoRes.value.ok) {
-      const data = await cryptoRes.value.json();
-      snap += '\nCRYPTO:\n';
-      for (const item of (data?.data || [])) {
-        const n = cryptoMap[item.s] || item.s;
-        const p = parseFloat(item.d?.[1]) || 0;
-        const c = parseFloat(item.d?.[2]) || 0;
-        if (p > 0) snap += `${n}: $${p >= 1000 ? p.toFixed(0) : p.toFixed(2)} (${c >= 0 ? '+' : ''}${c.toFixed(2)}%)\n`;
+    // Crypto (CoinDCX INR — matches user's exchange)
+    const coinDcxNameMap: Record<string, string> = { 'BTCINR': 'BTC', 'ETHINR': 'ETH', 'SOLINR': 'SOL' };
+    if (coindcxRes.status === 'fulfilled' && coindcxRes.value.ok) {
+      const tickers = await coindcxRes.value.json();
+      snap += '\nCRYPTO (CoinDCX INR):\n';
+      for (const t of tickers) {
+        if (coinDcxNameMap[t.market]) {
+          const p = parseFloat(t.last_price) || 0;
+          const c = parseFloat(t.change_24_hour) || 0;
+          if (p > 0) {
+            const inrStr = p >= 1000 ? `₹${p.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}` : `₹${p.toFixed(2)}`;
+            snap += `${coinDcxNameMap[t.market]}: ${inrStr} (${c >= 0 ? '+' : ''}${c.toFixed(2)}%)\n`;
+          }
+        }
       }
     }
 

@@ -400,7 +400,38 @@ export async function fetchMarketIntelligence() {
 }
 
 // ========================================
-// CRYPTO PRICES (TradingView)
+// CRYPTO PRICES (CoinDCX — Primary INR Source)
+// ========================================
+export async function fetchCryptoPricesINR() {
+  try {
+    const res = await fetch(`https://api.coindcx.com/exchange/ticker`, {
+      signal: AbortSignal.timeout(6000)
+    });
+    if (!res.ok) return [];
+    const tickers = await res.json();
+    const nameMap = { 'BTCINR': 'BTC', 'ETHINR': 'ETH', 'SOLINR': 'SOL', 'XRPINR': 'XRP', 'BNBINR': 'BNB', 'ADAINR': 'ADA', 'DOGEINR': 'DOGE', 'DOTINR': 'DOT' };
+    return tickers
+      .filter(t => nameMap[t.market])
+      .map(t => ({
+        symbol: nameMap[t.market] || t.market,
+        name: nameMap[t.market] === 'BTC' ? 'Bitcoin' : nameMap[t.market] === 'ETH' ? 'Ethereum' : nameMap[t.market],
+        price: parseFloat(t.last_price) || 0,
+        change: parseFloat(t.change_24_hour) || 0,
+        high: parseFloat(t.high) || 0,
+        low: parseFloat(t.low) || 0,
+        volume: parseFloat(t.volume) || 0,
+        marketCap: 0,
+        source: 'COINDCX'
+      }))
+      .filter(c => c.price > 0);
+  } catch (e) {
+    console.warn('CoinDCX crypto fetch failed:', e.message);
+    return [];
+  }
+}
+
+// ========================================
+// CRYPTO PRICES (TradingView — USD fallback)
 // ========================================
 export async function fetchCryptoPrices() {
   try {

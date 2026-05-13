@@ -8,7 +8,6 @@ export const TG_CHAT_ID = import.meta.env.VITE_TG_CHAT_ID || "";
 
 export const TAX_PAIRS: Record<string, string> = {
   'ITBEES.NS': 'TATAIT.NS',
-  'QQQM': 'QQQ',
   'SMH': 'SOXX'
 };
 
@@ -21,15 +20,13 @@ export const ALPHA_ETFS_IN: ETFInfo[] = [
 ];
 
 export const ALPHA_ETFS_US: ETFInfo[] = [
-  { sym: 'SMH', name: 'VanEck Semiconductor', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', aum: '$15B', vol: 'Extreme', fixedAlloc: 0.45 },
-  { sym: 'QQQM', name: 'Invesco NASDAQ 100', cagr: 19.5, maxDD: 34, cat: 'Broad Tech', aum: '$30B', vol: 'High', fixedAlloc: 0.35 },
-  { sym: 'VGT', name: 'Vanguard Information Technology ETF', cagr: 21.0, maxDD: 33, cat: 'Tech', aum: '$75B', vol: 'High', fixedAlloc: 0.20 }
+  { sym: 'SMH', name: 'VanEck Semiconductor', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', aum: '$15B', vol: 'Extreme', fixedAlloc: 0.55 },
+  { sym: 'VGT', name: 'Vanguard Information Technology ETF', cagr: 21.0, maxDD: 33, cat: 'Tech', aum: '$75B', vol: 'High', fixedAlloc: 0.45 }
 ];
 
 export const EXACT_TICKER_MAP: Record<string, string> = {
   // US ETFs & Indices
   'SMH': 'NASDAQ:SMH',
-  'QQQM': 'NASDAQ:QQQM',
   'VGT': 'AMEX:VGT',
   'AVUV': 'AMEX:AVUV',
   'IWM': 'AMEX:IWM',

@@ -11,7 +11,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY } from './config.mjs';
-import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
+import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchCryptoPricesINR, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
 import { loadPortfolioFromCloud, loadGroqKeyFromCloud, saveGroqKeyToCloud } from './cloud.mjs';
 import {
   generatePortfolioReport, generateMarketReport,
@@ -456,7 +456,7 @@ Example: <code>/scan RELIANCE</code>, <code>/scan AAPL</code>
 
 ⚖️ <b>/compare &lt;SYM1&gt; &lt;SYM2&gt;</b>
 Head-to-head comparison of two symbols.
-Example: <code>/compare SMH QQQM</code>, <code>/compare TCS INFY</code>
+Example: <code>/compare SMH VGT</code>, <code>/compare TCS INFY</code>
 
 🔗 <b>/correlate</b>
 Portfolio correlation matrix — diversification check.
@@ -758,14 +758,14 @@ bot.onText(/^\/scan(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
 bot.onText(/^\/compare(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
   const chatId = msg.chat.id;
   if (!match[1]) {
-    await safeSend(chatId, '⚠️ <b>Symbols missing!</b>\n\nDono symbols likho!\n\nExample: <code>/compare RELIANCE TCS</code> or <code>/compare SMH QQQM</code>');
+    await safeSend(chatId, '⚠️ <b>Symbols missing!</b>\n\nDono symbols likho!\n\nExample: <code>/compare RELIANCE TCS</code> or <code>/compare SMH VGT</code>');
     return;
   }
   const args = match[1].trim().toUpperCase().split(/[\s,vs]+/);
   console.log(`📥 /compare ${args.join(' vs ')} from ${msg.from?.first_name || chatId}`);
   try {
     if (args.length < 2) {
-      await safeSend(chatId, '⚠️ Dono symbols likho!\n\nExample: <code>/compare RELIANCE TCS</code> or <code>/compare SMH QQQM</code>');
+      await safeSend(chatId, '⚠️ Dono symbols likho!\n\nExample: <code>/compare RELIANCE TCS</code> or <code>/compare SMH VGT</code>');
       return;
     }
     await safeSend(chatId, `⚖️ <i>Comparing ${args[0]} vs ${args[1]}... ek second...</i>`);
@@ -976,21 +976,14 @@ bot.onText(/^\/(trim|rules)(@\w+)?$/i, async (msg) => {
   r += `2. SIZE: 10-15% of position (max 20%)\n`;
   r += `3. RE-ENTRY: Wait for 8-10% dip\n`;
   r += `4. STYLE: 3 equal parts (33% each)\n`;
-  r += `5. ROTATE: QQQM\n\n`;
-
-  r += `💎 <b>QQQM</b> (Core — Rarely Touch)\n`;
-  r += `1. TRIM: Weight >42% (rare)\n`;
-  r += `2. SIZE: 5-8% only\n`;
-  r += `3. RE-ENTRY: Wait for 6-8% dip\n`;
-  r += `4. STYLE: 2 equal parts (50% each)\n`;
-  r += `5. ROTATE: SMH or VGT\n\n`;
+  r += `5. ROTATE: VGT\n\n`;
 
   r += `⚡ <b>VGT</b> (Semi-Core)\n`;
   r += `1. TRIM: Weight >27% OR rally 22%+ in 3mo\n`;
   r += `2. SIZE: 10-12% of position\n`;
   r += `3. RE-ENTRY: Wait for 7-9% dip\n`;
   r += `4. STYLE: 2-3 equal parts\n`;
-  r += `5. ROTATE: QQQM\n\n`;
+  r += `5. ROTATE: SMH\n\n`;
 
   await safeSend(chatId, r);
 
@@ -1222,16 +1215,26 @@ bot.onText(/^\/live(@\w+)?$/i, async (msg) => {
   if (!isAuthorized(msg)) return;
   await safeSend(msg.chat.id, '📡 <b>Fetching live sensor data...</b>', { parse_mode: 'HTML' });
   try {
-    const [intel, cryptos, bonds] = await Promise.allSettled([
+    const [intel, coindcx, bonds] = await Promise.allSettled([
       fetchMarketIntelligence(),
-      fetchCryptoPrices(),
+      fetchCryptoPricesINR(),
       fetchBondYields()
     ]);
+    let source = 'TRADINGVIEW';
+    let cryptos = coindcx.status === 'fulfilled' && coindcx.value.length > 0 ? coindcx.value : [];
+    if (cryptos.length === 0) {
+      source = 'TRADINGVIEW';
+      const tvCrypto = await fetchCryptoPrices();
+      cryptos = tvCrypto;
+    } else {
+      source = 'COINDCX';
+    }
     const report = generateLiveReport(
       intel.status === 'fulfilled' ? intel.value : null,
-      cryptos.status === 'fulfilled' ? cryptos.value : [],
+      cryptos,
       bonds.status === 'fulfilled' ? bonds.value : [],
-      usdInrRate
+      usdInrRate,
+      source
     );
     await safeSend(msg.chat.id, report);
   } catch (e) {
@@ -1240,15 +1243,21 @@ bot.onText(/^\/live(@\w+)?$/i, async (msg) => {
 });
 
 // ========================================
-// /crypto — Crypto Market Report
+// /crypto — Crypto Market Report (CoinDCX INR)
 // ========================================
 bot.onText(/^\/crypto(@\w+)?$/i, async (msg) => {
   if (!isAuthorized(msg)) return;
-  await safeSend(msg.chat.id, '🪙 <b>Fetching crypto prices...</b>', { parse_mode: 'HTML' });
+  await safeSend(msg.chat.id, '🪙 <b>Fetching crypto prices from CoinDCX...</b>', { parse_mode: 'HTML' });
   try {
-    const cryptos = await fetchCryptoPrices();
-    const report = generateCryptoReport(cryptos, usdInrRate);
-    await safeSend(msg.chat.id, report);
+    const cryptos = await fetchCryptoPricesINR();
+    if (cryptos.length > 0) {
+      const report = generateCryptoReport(cryptos, usdInrRate, 'COINDCX');
+      await safeSend(msg.chat.id, report);
+    } else {
+      const fallback = await fetchCryptoPrices();
+      const report = generateCryptoReport(fallback, usdInrRate, 'TRADINGVIEW');
+      await safeSend(msg.chat.id, report);
+    }
   } catch (e) {
     await safeSend(msg.chat.id, `❌ Error: ${e.message}`);
   }
@@ -1301,16 +1310,25 @@ bot.onText(/^\/digest(@\w+)?$/i, async (msg) => {
   await safeSend(msg.chat.id, '🌅 <b>Generating daily digest...</b>', { parse_mode: 'HTML' });
   try {
     await refreshPrices();
-    const [intel, cryptos, bonds] = await Promise.allSettled([
+    const [intel, coindcx, bonds] = await Promise.allSettled([
       fetchMarketIntelligence(),
-      fetchCryptoPrices(),
+      fetchCryptoPricesINR(),
       fetchBondYields()
     ]);
+    let source = 'TRADINGVIEW';
+    let cryptos = coindcx.status === 'fulfilled' && coindcx.value.length > 0 ? coindcx.value : [];
+    if (cryptos.length === 0) {
+      source = 'TRADINGVIEW';
+      const tvCrypto = await fetchCryptoPrices();
+      cryptos = tvCrypto;
+    } else {
+      source = 'COINDCX';
+    }
     const report = generateDigestReport(
       intel.status === 'fulfilled' ? intel.value : null,
-      cryptos.status === 'fulfilled' ? cryptos.value : [],
+      cryptos,
       bonds.status === 'fulfilled' ? bonds.value : [],
-      usdInrRate, portfolio, livePrices
+      usdInrRate, portfolio, livePrices, source
     );
     await safeSend(msg.chat.id, report);
   } catch (e) {

@@ -611,8 +611,9 @@ export function generateCompareReport(data1, data2) {
 
 // ========================================
 // /live — Real-Time Market Sensor Data
+// source: 'COINDCX' = INR prices direct, 'TRADINGVIEW' = USD prices
 // ========================================
-export function generateLiveReport(intel, cryptos, bonds, usdInr) {
+export function generateLiveReport(intel, cryptos, bonds, usdInr, source = 'TRADINGVIEW') {
   const timeStr = getISTTime();
   let msg = `📡 <b>LIVE MARKET SENSOR</b>\n`;
   msg += `⏰ <i>${timeStr} IST</i> | ${getMarketStatus()}\n`;
@@ -630,11 +631,19 @@ export function generateLiveReport(intel, cryptos, bonds, usdInr) {
 
   // Crypto
   if (cryptos?.length > 0) {
-    msg += `🪙 <b>CRYPTO</b>\n`;
+    const isInr = source === 'COINDCX';
+    msg += `🪙 <b>CRYPTO${isInr ? ' (CoinDCX INR)' : ''}</b>\n`;
     for (const c of cryptos.slice(0, 6)) {
       const em = c.change >= 0 ? '🟢' : '🔴';
-      const priceStr = c.price >= 1000 ? `$${c.price.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}` : `$${c.price.toFixed(4)}`;
-      msg += `${em} <b>${c.symbol}</b>: ${priceStr} (${c.change >= 0 ? '+' : ''}${c.change.toFixed(2)}%)\n`;
+      if (isInr) {
+        const inrStr = c.price >= 1000
+          ? `₹${c.price.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`
+          : `₹${c.price.toFixed(2)}`;
+        msg += `${em} <b>${c.symbol}</b>: ${inrStr} (${c.change >= 0 ? '+' : ''}${c.change.toFixed(2)}%)\n`;
+      } else {
+        const priceStr = c.price >= 1000 ? `$${c.price.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}` : `$${c.price.toFixed(4)}`;
+        msg += `${em} <b>${c.symbol}</b>: ${priceStr} (${c.change >= 0 ? '+' : ''}${c.change.toFixed(2)}%)\n`;
+      }
     }
     msg += `\n`;
   }
@@ -690,8 +699,9 @@ export function generateLiveReport(intel, cryptos, bonds, usdInr) {
 
 // ========================================
 // /crypto — Crypto Market Report
+// source: 'COINDCX' = INR prices direct, 'TRADINGVIEW' = USD prices
 // ========================================
-export function generateCryptoReport(cryptos, usdInr) {
+export function generateCryptoReport(cryptos, usdInr, source = 'TRADINGVIEW') {
   const timeStr = getISTTime();
   let msg = `🪙 <b>CRYPTO MARKET LIVE</b>\n`;
   msg += `⏰ <i>${timeStr} IST</i>\n`;
@@ -705,32 +715,48 @@ export function generateCryptoReport(cryptos, usdInr) {
   const totalMcap = cryptos.reduce((s, c) => s + (c.marketCap || 0), 0);
   const bullish = cryptos.filter(c => c.change > 0).length;
   const bearish = cryptos.filter(c => c.change < 0).length;
+  const isInr = source === 'COINDCX';
 
   msg += `📊 <b>Market Overview</b>\n`;
-  msg += `Total MCap: <b>$${(totalMcap / 1e12).toFixed(2)}T</b>\n`;
-  msg += `Bullish/Bearish: <b>${bullish}/${bearish}</b>\n\n`;
+  if (totalMcap > 0) msg += `Total MCap: <b>$${(totalMcap / 1e12).toFixed(2)}T</b>\n`;
+  msg += `Bullish/Bearish: <b>${bullish}/${bearish}</b>\n`;
+  msg += `Source: <b>${isInr ? 'CoinDCX (INR)' : 'TradingView (USD)'}</b>\n\n`;
 
   for (const c of cryptos) {
     const em = c.change >= 0 ? '🟢' : '🔴';
-    const priceStr = c.price >= 1000
-      ? `$${c.price.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}` 
-      : c.price >= 1 ? `$${c.price.toFixed(2)}` : `$${c.price.toFixed(4)}`;
-    const inrPrice = c.price * usdInr;
-    const inrStr = inrPrice >= 1000 
-      ? `₹${inrPrice.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}` 
-      : `₹${inrPrice.toFixed(2)}`;
-    const mcapStr = c.marketCap > 0 ? `$${(c.marketCap / 1e9).toFixed(1)}B` : '-';
+    if (isInr) {
+      const inrPrice = c.price;
+      const inrStr = inrPrice >= 1000
+        ? `₹${inrPrice.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`
+        : `₹${inrPrice.toFixed(2)}`;
+      msg += `${em} <b>${c.symbol}</b>\n`;
+      msg += `   💲 ${inrStr}\n`;
+      msg += `   📈 ${c.change >= 0 ? '+' : ''}${c.change.toFixed(2)}%`;
+      if (c.high && c.low) {
+        msg += ` | 🔼 ₹${c.high >= 1000 ? c.high.toFixed(0) : c.high.toFixed(2)}`;
+        msg += ` | 🔽 ₹${c.low >= 1000 ? c.low.toFixed(0) : c.low.toFixed(2)}`;
+      }
+      msg += `\n\n`;
+    } else {
+      const priceStr = c.price >= 1000
+        ? `$${c.price.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`
+        : c.price >= 1 ? `$${c.price.toFixed(2)}` : `$${c.price.toFixed(4)}`;
+      const inrPrice = c.price * usdInr;
+      const inrStr = inrPrice >= 1000
+        ? `₹${inrPrice.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`
+        : `₹${inrPrice.toFixed(2)}`;
+      const mcapStr = c.marketCap > 0 ? `$${(c.marketCap / 1e9).toFixed(1)}B` : '-';
 
-    msg += `${em} <b>${c.symbol}</b> (${c.name})\n`;
-    msg += `   💲 ${priceStr} | 🇮🇳 ${inrStr}\n`;
-    msg += `   📈 ${c.change >= 0 ? '+' : ''}${c.change.toFixed(2)}% | MCap: ${mcapStr}\n`;
-    if (c.high && c.low) {
-      msg += `   🔼 High: $${c.high >= 1000 ? c.high.toFixed(0) : c.high.toFixed(2)} | 🔽 Low: $${c.low >= 1000 ? c.low.toFixed(0) : c.low.toFixed(2)}\n`;
+      msg += `${em} <b>${c.symbol}</b> (${c.name})\n`;
+      msg += `   💲 ${priceStr} | 🇮🇳 ${inrStr}\n`;
+      msg += `   📈 ${c.change >= 0 ? '+' : ''}${c.change.toFixed(2)}% | MCap: ${mcapStr}\n`;
+      if (c.high && c.low) {
+        msg += `   🔼 High: $${c.high >= 1000 ? c.high.toFixed(0) : c.high.toFixed(2)} | 🔽 Low: $${c.low >= 1000 ? c.low.toFixed(0) : c.low.toFixed(2)}\n`;
+      }
+      msg += `\n`;
     }
-    msg += `\n`;
   }
 
-  // BTC Dominance approximation
   const btc = cryptos.find(c => c.symbol === 'BTC');
   if (btc && totalMcap > 0) {
     const dom = ((btc.marketCap / totalMcap) * 100).toFixed(1);
@@ -872,8 +898,9 @@ export function generateETFReport(portfolio, livePrices, usdInr) {
 
 // ========================================
 // /digest — AI Daily Market Digest
+// source: 'COINDCX' = INR prices direct, 'TRADINGVIEW' = USD prices
 // ========================================
-export function generateDigestReport(intel, cryptos, bonds, usdInr, portfolio, livePrices) {
+export function generateDigestReport(intel, cryptos, bonds, usdInr, portfolio, livePrices, source = 'TRADINGVIEW') {
   const timeStr = getISTTime();
   const today = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' });
   
@@ -899,8 +926,14 @@ export function generateDigestReport(intel, cryptos, bonds, usdInr, portfolio, l
   if (cryptos?.length > 0) {
     const btc = cryptos.find(c => c.symbol === 'BTC');
     const eth = cryptos.find(c => c.symbol === 'ETH');
-    if (btc) msg += `🪙 BTC: $${btc.price.toFixed(0)} (${btc.change >= 0 ? '+' : ''}${btc.change.toFixed(1)}%) | `;
-    if (eth) msg += `ETH: $${eth.price.toFixed(0)} (${eth.change >= 0 ? '+' : ''}${eth.change.toFixed(1)}%)\n`;
+    const isInr = source === 'COINDCX';
+    if (isInr) {
+      if (btc) msg += `🪙 BTC: ₹${btc.price >= 1000 ? btc.price.toFixed(0) : btc.price.toFixed(2)} (${btc.change >= 0 ? '+' : ''}${btc.change.toFixed(1)}%) | `;
+      if (eth) msg += `ETH: ₹${eth.price >= 1000 ? eth.price.toFixed(0) : eth.price.toFixed(2)} (${eth.change >= 0 ? '+' : ''}${eth.change.toFixed(1)}%)\n`;
+    } else {
+      if (btc) msg += `🪙 BTC: $${btc.price.toFixed(0)} (${btc.change >= 0 ? '+' : ''}${btc.change.toFixed(1)}%) | `;
+      if (eth) msg += `ETH: $${eth.price.toFixed(0)} (${eth.change >= 0 ? '+' : ''}${eth.change.toFixed(1)}%)\n`;
+    }
     msg += `\n`;
   }
 

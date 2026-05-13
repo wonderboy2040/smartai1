@@ -92,7 +92,7 @@ For the Telegram bot, set keys via commands:
 - Use case: Deep analysis, portfolio optimization, quantitative calculations
 - Example queries:
   - "Analyze my portfolio allocation"
-  - "Compare SMH vs QQQM"
+  - "Compare SMH vs VGT"
   - "Backtest this strategy"
   - "Optimize my SIP allocation"
 

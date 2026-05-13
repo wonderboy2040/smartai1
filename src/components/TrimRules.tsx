@@ -61,23 +61,15 @@ const BASE_ETF_RULES: ETFRule[] = [
     symbol: 'SMH', emoji: '🔥', label: 'Most Aggressive', category: 'US',
     style: 'Aggressive', trimWhen: 'Weight > 53% OR rally 20%+ in 6 weeks',
     trimSize: '10-15% of position (max 20%)', reEntryDip: '8-10% dip from trim price',
-    reEntryStyle: '3 equal parts (33% each)', rotateTo: 'QQQM (if not re-entering)',
+    reEntryStyle: '3 equal parts (33% each)', rotateTo: 'VGT (if not re-entering)',
     masterLine: 'Trim aggressive, Re-enter on -10% dip',
     accentFrom: 'from-red-500', accentTo: 'to-orange-500'
-  },
-  {
-    symbol: 'QQQM', emoji: '💎', label: 'Core — Rarely Touch', category: 'US',
-    style: 'Core', trimWhen: 'Weight > 42% (rare)',
-    trimSize: '5-8% only', reEntryDip: '6-8% dip',
-    reEntryStyle: '2 equal parts (50% each)', rotateTo: 'SMH (if not re-entering) or VGT',
-    masterLine: 'Rarely trim, Re-enter on -7% dip',
-    accentFrom: 'from-cyan-500', accentTo: 'to-blue-500'
   },
   {
     symbol: 'VGT', emoji: '⚡', label: 'Semi-Core', category: 'US',
     style: 'Semi-Core', trimWhen: 'Weight > 27% OR rally 22%+ in 3 months',
     trimSize: '10-12% of position', reEntryDip: '7-9% dip from trim price',
-    reEntryStyle: '2-3 equal parts', rotateTo: 'QQQM (broader exposure)',
+    reEntryStyle: '2-3 equal parts', rotateTo: 'SMH (broader exposure)',
     masterLine: 'Moderate trim, Re-enter on -8% dip',
     accentFrom: 'from-amber-500', accentTo: 'to-yellow-500'
   },
