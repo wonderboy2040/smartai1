@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { Position, PriceData, TabType, RiskLevel, TransactionType } from './types';
 import {
   SECURE_PIN, TG_TOKEN, TG_CHAT_ID,
@@ -19,7 +19,7 @@ import {
 import { calculateVaR, runStressTests, analyzeConcentrationRisk } from './utils/riskEngine';
 
 import { getBatchInterval } from './utils/api';
-import { NeuralChat } from './components/NeuralChat';
+const NeuralChat = lazy(() => import('./components/NeuralChat').then(m => ({ default: m.NeuralChat })));
 import { Clock } from './components/Clock';
 import { TrimRules } from './components/TrimRules';
 
@@ -146,6 +146,8 @@ export default function App() {
   const [autoTelegram, setAutoTelegram] = useState(true);
   const telegramIntervalRef = useRef<number | null>(null);
   const forexIntervalRef = useRef<number | null>(null);
+  const syncIntervalRef = useRef<number | null>(null);
+  const initialTimeoutRef = useRef<number | null>(null);
   // 🔧 Anomaly detector throttle — prevents per-tick re-render
 
 
@@ -335,7 +337,7 @@ export default function App() {
     };
 
     sync();
-    const syncInterval = window.setInterval(sync, getBatchInterval());
+    syncIntervalRef.current = window.setInterval(sync, getBatchInterval());
 
     // Ultra-fast TradingView WebSocket — batch all ticks into 100ms flush (zero direct state updates)
     let statusCounter = 0;
@@ -381,7 +383,7 @@ export default function App() {
     });
 
     return () => {
-      clearInterval(syncInterval);
+      if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
       unsubscribeTv();
       unsubscribeBinance();
       disconnectPrices();
@@ -752,10 +754,13 @@ export default function App() {
   // Cleanup on unmount to prevent memory leaks
   useEffect(() => {
     return () => {
+      // Clear all intervals and timeouts
       if (priceFlushRef.current) clearInterval(priceFlushRef.current);
       if (telegramIntervalRef.current) clearInterval(telegramIntervalRef.current);
       if (forexIntervalRef.current) clearInterval(forexIntervalRef.current);
+      if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
       if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
+      if (initialTimeoutRef.current) clearTimeout(initialTimeoutRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -846,12 +851,12 @@ export default function App() {
     };
 
     // Send initial report after 2 min delay
-    const initialTimeout = setTimeout(sendIfMarketOpen, 120000);
+    initialTimeoutRef.current = setTimeout(sendIfMarketOpen, 120000);
     // Then every 30 min
     telegramIntervalRef.current = window.setInterval(sendIfMarketOpen, 1800000);
 
     return () => {
-      clearTimeout(initialTimeout);
+      if (initialTimeoutRef.current) clearTimeout(initialTimeoutRef.current);
       if (telegramIntervalRef.current) clearInterval(telegramIntervalRef.current);
     };
   }, [isAuthenticated, autoTelegram, portfolio.length]);
@@ -2295,11 +2300,20 @@ export default function App() {
       )}
 
       {/* Neural Core Chat AI Integration with Deep Real-Time Portfolio Context Injection */}
-      <NeuralChat
-        groqKey={groqKey}
-        portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'}
-        onTelegramPush={pushTelegramReport}
-      />
+      <Suspense fallback={
+        <div className="fixed bottom-6 right-6 w-80 h-96 glass-card rounded-2xl flex items-center justify-center animate-pulse">
+          <div className="text-center">
+            <div className="text-4xl mb-2 animate-float">🧠</div>
+            <div className="text-sm text-slate-400 font-medium">Loading AI Engine...</div>
+          </div>
+        </div>
+      }>
+        <NeuralChat
+          groqKey={groqKey}
+          portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'}
+          onTelegramPush={pushTelegramReport}
+        />
+      </Suspense>
 
 
     </div>
