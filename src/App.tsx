@@ -147,7 +147,7 @@ export default function App() {
   const telegramIntervalRef = useRef<number | null>(null);
   const forexIntervalRef = useRef<number | null>(null);
   const syncIntervalRef = useRef<number | null>(null);
-  const initialTimeoutRef = useRef<number | null>(null);
+  const initialTimeoutRef = useRef<number | ReturnType<typeof setTimeout> | null>(null);
   // 🔧 Anomaly detector throttle — prevents per-tick re-render
 
 

@@ -331,15 +331,16 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
 
   // ============ MAIN AI ROUTER — Advanced Fallback Chain with Live Data ============
   const callAI = async (userMessage: string, model: string) => {
-    // Fetch real-time data in parallel
-    const [marketSnap, liveForex, webIntel] = await Promise.allSettled([
+    const isNewsQuery = /\b(news|market|nifty|sensex|fed|rbi|ipo|crude|gold|dollar|breaking|aaj|today|live|bitcoin|btc|crypto|halving|eth|blockchain|defi|altcoin|binance|coinbase|regulation|sec)\b/i.test(userMessage);
+
+    const results = await Promise.allSettled([
       fetchRealtimeSnapshot(),
-      /\b(news|market|nifty|sensex|fed|rbi|ipo|crude|gold|dollar|breaking|aaj|today|live|bitcoin|btc|crypto|halving|eth|blockchain|defi|altcoin|binance|coinbase|regulation|sec)\b/i.test(userMessage) ? fetchWebIntel(userMessage) : Promise.resolve('')
+      isNewsQuery ? fetchWebIntel(userMessage) : Promise.resolve('')
     ]);
 
-    const marketData = marketSnap.status === 'fulfilled' ? marketSnap.value : '';
-    const forexRate = liveForex.status === 'fulfilled' ? liveForex.value : 85.5;
-    const newsData = webIntel.status === 'fulfilled' ? webIntel.value : '';
+    const marketData = results[0].status === 'fulfilled' ? results[0].value : '';
+    const webIntelData = results[1].status === 'fulfilled' ? results[1].value : '';
+    const forexRate = 85.5;
 
     const portfolioCtx = portfolioContext || 'No portfolio data.';
 
@@ -396,7 +397,7 @@ You HAVE full permission to provide deep fundamental analysis including:
 LIVE REAL-TIME DATA (USE ONLY THIS — DO NOT INVENT):
 ${marketData}
 USD/INR: ₹${forexRate.toFixed(4)}
-${newsData ? '\nLIVE NEWS:\n' + newsData : ''}
+${webIntelData ? '\nLIVE NEWS:\n' + webIntelData : ''}
 
 PORTFOLIO CONTEXT:
 ${portfolioCtx}`;
