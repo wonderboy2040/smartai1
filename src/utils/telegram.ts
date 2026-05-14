@@ -97,12 +97,12 @@ export function analyzeAsset(
   if (rsi < 30) {
     signal = 'STRONG_BUY';
     confidence = 95;
-    targetPrice = supportLevel;
+    targetPrice = resistanceLevel; // Upside target for buy signal
     reason = `RSI ${rsi.toFixed(0)} oversold — institutional accumulation zone.`;
   } else if (rsi < 40) {
     signal = 'BUY';
     confidence = 80;
-    targetPrice = low;
+    targetPrice = high; // Upside target for buy signal
     reason = `RSI ${rsi.toFixed(0)} approaching oversold — good entry.`;
     if (isBullishTrend) {
       reason += ' Bullish momentum building.';
@@ -111,12 +111,12 @@ export function analyzeAsset(
   } else if (rsi > 75) {
     signal = 'STRONG_SELL';
     confidence = 90;
-    targetPrice = resistanceLevel;
+    targetPrice = supportLevel; // Downside target for sell signal
     reason = `RSI ${rsi.toFixed(0)} overbought — distribution zone.`;
   } else if (rsi > 65) {
     signal = 'SELL';
     confidence = 70;
-    targetPrice = high;
+    targetPrice = low; // Downside target for sell signal
     reason = `RSI ${rsi.toFixed(0)} elevated — consider partial booking.`;
     if (isBearishTrend) {
       reason += ' Bearish momentum detected.';

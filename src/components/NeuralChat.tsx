@@ -144,9 +144,10 @@ export interface NeuralChatProps {
   groqKey?: string;
   portfolioContext: string;
   onTelegramPush?: () => void;
+  usdInrRate?: number;
 }
 
-export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, onTelegramPush: _onTelegramPush }: NeuralChatProps) => {
+export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, onTelegramPush: _onTelegramPush, usdInrRate: propUsdInrRate }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
     text: '🤖 **DEEP MIND AI QUANTUM PRO v12.0**\n\n**⚡ Active AI Engines:**\n🚀 **Groq Llama-3.3 70B**: Ultra-fast responses\n🧠 **Google Gemini 2.5 Flash**: Real-time market intelligence\n💎 **Claude Sonnet 4**: Deep institutional analysis\n🔍 **Tavily Search**: Live market news & data\n\n**📊 Real-Time Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n• Crypto (BTC/ETH), VIX, Gold tracking\n\nAsk anything — I have LIVE market data!',
@@ -340,7 +341,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
 
     const marketData = results[0].status === 'fulfilled' ? results[0].value : '';
     const webIntelData = results[1].status === 'fulfilled' ? results[1].value : '';
-    const forexRate = 85.5;
+    const forexRate = propUsdInrRate || 85.5;
 
     const portfolioCtx = portfolioContext || 'No portfolio data.';
 
@@ -559,10 +560,18 @@ ${portfolioCtx}`;
                           </div>
                         )}
                         <span dangerouslySetInnerHTML={{
-                          __html: msg.text
-                            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                            .replace(/\*(.+?)\*/g, '<em>$1</em>')
-                            .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>')
+                          __html: (() => {
+                            // Escape HTML entities first to prevent XSS
+                            const escaped = msg.text
+                              .replace(/&/g, '&amp;')
+                              .replace(/</g, '&lt;')
+                              .replace(/>/g, '&gt;')
+                              .replace(/"/g, '&quot;');
+                            return escaped
+                              .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                              .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                              .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>');
+                          })()
                         }} />
                         <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
                           <button onClick={() => copyToClipboard(msg.text, i)} className="text-[9px] text-slate-500 hover:text-cyan-400 flex items-center gap-1 transition-colors">

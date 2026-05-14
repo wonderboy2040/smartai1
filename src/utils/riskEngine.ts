@@ -25,6 +25,7 @@ export interface ConcentrationRisk {
 }
 
 export interface DrawdownInfo {
+  symbol: string;
   currentDrawdown: number;
   maxDrawdown: number;
   recoveryTime: string;

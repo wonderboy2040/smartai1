@@ -154,6 +154,7 @@ export default function App() {
   // Advanced features state
   const [wsLatency, setWsLatency] = useState<{ avg: number; heartbeat: number }>({ avg: 45, heartbeat: 15000 });
   const [portfolioContextText, setPortfolioContextText] = useState<string>('');
+  const [priceUpdateTick, setPriceUpdateTick] = useState(0);
 
   const lastContextGenRef = useRef(0);
 
@@ -228,6 +229,9 @@ export default function App() {
         if (settings.ethSIP) setEthSIP(settings.ethSIP);
         if (settings.investYears) setInvestYears(settings.investYears);
         if (settings.riskLevel) setRiskLevel(settings.riskLevel);
+        if (settings.emergencyFund) setEmergencyFund(settings.emergencyFund);
+        if (settings.currentAge) setCurrentAge(settings.currentAge);
+        if (settings.monthlyExpenses) setMonthlyExpenses(settings.monthlyExpenses);
       }
     } catch(e) {}
   }, [isAuthenticated]);
@@ -235,9 +239,9 @@ export default function App() {
   // Persist Planner Settings
   useEffect(() => {
     if (!isAuthenticated) return;
-    const settings = { indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel };
+    const settings = { indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses };
     secureStorage.setItem('plannerSettings', JSON.stringify(settings));
-  }, [indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, isAuthenticated]);
+  }, [indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses, isAuthenticated]);
 
   const portfolioRef = useRef(portfolio);
   useEffect(() => {
@@ -268,6 +272,7 @@ export default function App() {
         lastLocalSaveRef.current = now;
         try { secureStorage.setItem('livePrices', JSON.stringify(merged)); } catch { /* quota */ }
       }
+      if (changed) setPriceUpdateTick(t => t + 1);
       return changed ? merged : prev;
     });
   }, []);
@@ -834,7 +839,7 @@ export default function App() {
 
     setPortfolioContextText(ctx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [portfolio.length, usdInrRate]);
+  }, [portfolio.length, usdInrRate, priceUpdateTick]);
 
   const latestDataRef = useRef({ portfolio, livePrices, usdInrRate, metrics });
   useEffect(() => {
@@ -1059,17 +1064,17 @@ export default function App() {
               <button onClick={() => {
                 const newTheme = theme === 'dark' ? 'light' : 'dark';
                 setTheme(newTheme);
-                localStorage.setItem('theme', newTheme);
+                secureStorage.setItem('theme', newTheme);
               }} className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>
                 🌞
               </button>
               <button onClick={() => window.location.reload()} className="btn-glass p-2.5 rounded-xl text-lg" title="Refresh">🔄</button>
               <button onClick={() => {
-                const groqSaved = localStorage.getItem('WEALTH_AI_GROQ');
-                const themeSaved = localStorage.getItem('theme');
-                localStorage.clear();
-                if (groqSaved) localStorage.setItem('WEALTH_AI_GROQ', groqSaved);
-                if (themeSaved) localStorage.setItem('theme', themeSaved);
+                const groqSaved = secureStorage.getItem('WEALTH_AI_GROQ');
+                const themeSaved = secureStorage.getItem('theme');
+                secureStorage.clear();
+                if (groqSaved) secureStorage.setItem('WEALTH_AI_GROQ', groqSaved);
+                if (themeSaved) secureStorage.setItem('theme', themeSaved);
                 window.location.reload();
               }} className="btn-glass p-2.5 rounded-xl text-lg" title="Flush Cache — Clear all cached data and reload">🧹</button>
               <button onClick={logout} className="btn-glass p-2.5 rounded-xl text-lg" title="Logout">🔐</button>
@@ -2312,6 +2317,7 @@ export default function App() {
           groqKey={groqKey}
           portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'}
           onTelegramPush={pushTelegramReport}
+          usdInrRate={usdInrRate}
         />
       </Suspense>
 
