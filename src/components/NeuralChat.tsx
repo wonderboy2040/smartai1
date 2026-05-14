@@ -130,7 +130,7 @@ const QUICK_ACTIONS = [
   { label: 'Portfolio Analysis', query: 'Analyze my ENTIRE portfolio deeply - every single position including crypto. Show P&L, technicals, fundamentals, and give specific BUY/HOLD/SELL verdict for each asset.', icon: '💼', type: 'claude' },
   { label: 'ETH Analysis', query: 'Deep analysis of my Ethereum (ETH) position with on-chain context, support/resistance levels, and long-term HODL thesis', icon: '🪙', type: 'claude' },
   { label: 'Long-Term Strategy', query: 'Give me a 15-20 year wealth creation roadmap focusing on SIP step-up and compound growth', icon: '📈', type: 'claude' },
-  { label: 'ETF Allocation', query: 'Analyze ETF allocations including Kotak Nifty Alpha 50 (ALPHA) ETF with momentum and growth projections', icon: '🎯', type: 'claude' }
+  { label: 'ETF Allocation', query: 'Analyze ETF allocations including Momentum and Smallcap ETFs with growth projections', icon: '🎯', type: 'claude' }
 ];
 
 const MODEL_COLORS = {
@@ -364,7 +364,7 @@ TRADING & INVESTMENT RULES:
 6. For news: explain exact impact — "RBI cut = Bank Nifty 500pt rally expected", "ETH ETF inflows = bullish".
 7. Be comprehensive and detailed. Use **Bold** + emojis.
 8. End with VERDICT: 🟢 BUY / 🔴 SELL / 🟡 HOLD / ⏳ WAIT + levels.
-9. Emphasize LONG-TERM wealth creation (15-20 years), compounding, and SIP step-up magic. Mention ALPHA ETF logic and crypto adoption (BTC/ETH) as moonshot allocation.
+9. Emphasize LONG-TERM wealth creation (15-20 years), compounding, and SIP step-up magic. Mention crypto adoption (BTC/ETH) as moonshot allocation.
 9. USD/INR: ₹${forexRate.toFixed(4)} (LIVE). Convert US holdings to INR.
 10. Calculate actual P&L from provided data.
 

@@ -108,7 +108,7 @@ export default function App() {
 
   // Planner State
   const [indiaSIP, setIndiaSIP] = useState(10000);
-  const [usSIP, setUsSIP] = useState(51.54);
+  const [usSIP, setUsSIP] = useState(5000);
   const [btcSIP, setBtcSIP] = useState(1000);
   const [ethSIP, setEthSIP] = useState(500);
   const [emergencyFund, setEmergencyFund] = useState(50000);
@@ -614,7 +614,7 @@ export default function App() {
 
     // Override for TradingView Chart widgets to use BSE for common ETFs
     // (BSE allows free real-time rendering in widgets while NSE restricts it)
-    const BSE_CHART_OVERRIDES = ['JUNIORBEES', 'MOMENTUM50', 'SMALLCAP', 'MID150BEES', 'ALPHA'];
+    const BSE_CHART_OVERRIDES = ['JUNIORBEES', 'MOMENTUM50', 'SMALLCAP', 'MID150BEES'];
     if (BSE_CHART_OVERRIDES.includes(cleanSym)) {
       tvSymbol = `BSE:${cleanSym}`;
     }
@@ -897,7 +897,7 @@ export default function App() {
   }, [currentRsi]);
 
   // Planner calculations
-  const totalSIP = indiaSIP + (usSIP * usdInrRate) + btcSIP + ethSIP;
+  const totalSIP = indiaSIP + usSIP + btcSIP + ethSIP;
   const cagr = riskLevel === 'low' ? 8 : riskLevel === 'high' ? 18 : 12;
   const months = investYears * 12;
   const totalInvestedPlanner = totalSIP * months;
@@ -1650,7 +1650,7 @@ export default function App() {
                 <div className="bg-emerald-500/5 border border-emerald-500/15 p-4 rounded-xl">
                   <div className="text-xs font-bold text-emerald-400 mb-2">🌍 US/Global SIP</div>
                   <div className="flex items-center gap-2 glass-input p-2 rounded-lg">
-                    <span className="text-lg text-emerald-500/50">$</span>
+                    <span className="text-lg text-emerald-500/50">₹</span>
                     <input type="number" value={usSIP} onChange={e => setUsSIP(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
                   </div>
                 </div>
@@ -1866,7 +1866,7 @@ export default function App() {
                           💰 Monthly SIP Allocation
                         </div>
                         <div className="text-[10px] text-slate-500 font-mono">
-                          ₹{Math.round(indiaSIP).toLocaleString()} IN + ${usSIP} US + ₹{(btcSIP + ethSIP).toLocaleString()} Crypto
+                          ₹{Math.round(indiaSIP).toLocaleString()} IN + ₹{usSIP.toLocaleString()} US + ₹{(btcSIP + ethSIP).toLocaleString()} Crypto
                         </div>
                       </div>
                       <div className="space-y-3">
@@ -1885,7 +1885,7 @@ export default function App() {
                                   </div>
                                 </div>
                                 <div className="text-right">
-                                  <div className="font-black text-cyan-400 font-mono text-sm">{cur}{a.allocAmount.toLocaleString()}</div>
+                                  <div className="font-black text-cyan-400 font-mono text-sm">₹{a.allocAmount.toLocaleString()}</div>
                                   <div className="text-[9px] text-slate-600">{(a.allocPct * 100).toFixed(0)}% of SIP</div>
                                 </div>
                               </div>
