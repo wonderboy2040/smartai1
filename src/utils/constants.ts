@@ -21,7 +21,7 @@ export const ALPHA_ETFS_IN: ETFInfo[] = [
 export const ALPHA_ETFS_US: ETFInfo[] = [
   { sym: 'SMH', name: 'VanEck Semiconductor', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', aum: '$15B', vol: 'Extreme', fixedAlloc: 0.45 },
   { sym: 'VGT', name: 'Vanguard Information Technology ETF', cagr: 21.0, maxDD: 33, cat: 'Tech', aum: '$75B', vol: 'High', fixedAlloc: 0.33 },
-  { sym: 'IWY', name: 'iShares Russell 2000 Growth ETF', cagr: 18.5, maxDD: 40, cat: 'Small Cap US', aum: '$60B', vol: 'High', fixedAlloc: 0.22 }
+  { sym: 'IWY', name: 'iShares Russell Top 200 Growth ETF', cagr: 18.5, maxDD: 40, cat: 'Large Cap Growth', aum: '$60B', vol: 'High', fixedAlloc: 0.22 }
 ];
 
 export const EXACT_TICKER_MAP: Record<string, string> = {
@@ -38,6 +38,7 @@ export const EXACT_TICKER_MAP: Record<string, string> = {
   'SPX': 'SP:SPX',
   'NDX': 'NASDAQ:NDX',
   'DJI': 'TVC:DJI',
+  'IWY': 'AMEX:IWY',
   'RUT': 'AMEX:RUT',
 
   // Indian ETFs & Indices (already have NSE: prefix in code, but explicit mapping for accuracy)

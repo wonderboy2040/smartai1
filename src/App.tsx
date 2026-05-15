@@ -351,7 +351,7 @@ export default function App() {
     const cryptoSymbols = symbolsToSub.filter(s => isCryptoSymbol(s.split('_')[1]));
     const tvSymbols = symbolsToSub.filter(s => !isCryptoSymbol(s.split('_')[1]));
 
-    const unsubscribeTv = subscribeToPrices(tvSymbols, (key, data) => {
+    const unsubscribeTv = subscribeToPrices(tvSymbols.map(s => s.split('_')[1]), (key, data) => {
       pendingPricesRef.current[key] = {
         ...(pendingPricesRef.current[key] || {}),
         ...data
