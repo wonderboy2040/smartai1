@@ -589,7 +589,6 @@ return msg;
 function generateOptionsAnalysis(livePrices: Record<string, PriceData>): string {
 const nifty = livePrices['IN_NIFTY']?.price || 22000;
 const indiaVix = livePrices['IN_INDIAVIX']?.price || 15;
-const usVix = livePrices['US_VIX']?.price || 15;
 const niftyChange = livePrices['IN_NIFTY']?.change || 0;
 
 // VIX-based PCR estimation (real option chain requires NSE API — not available in browser)
@@ -673,31 +672,58 @@ return msg;
 }
 
 function generateNewsDigest(livePrices: Record<string, PriceData>): string {
-let msg = `📰 **MARKET NEWS DIGEST**\n`;
-msg += `━━━━━━━━━━━━━━━━━━━━\n`;
-msg += `🔥 **Top Stories:**\n`;
-msg += `• Fed rate decision awaited\n`;
-msg += `• Tech earnings beat estimates\n`;
-msg += `• Crude at $85 - inflation concerns\n\n`;
+let msg = `📰 **MARKET SENTIMENT DIGEST**\n`;
+msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-msg += `📊 **Sentiment:**\n`;
-const avgVix = ((livePrices['US_VIX']?.price || 15) + (livePrices['IN_INDIAVIX']?.price || 15)) / 2;
-msg += avgVix > 18 ? `⚠️ Fear dominant - defensive stance` : `✅ Greed mode - risk-on`;
+const usVix = livePrices['US_VIX']?.price || 15;
+const inVix = livePrices['IN_INDIAVIX']?.price || 15;
+const avgVix = (usVix + inVix) / 2;
+
+const nifty = livePrices['IN_NIFTY'];
+const spy = livePrices['US_SPY'];
+
+msg += `📊 **Market Pulse:**\n`;
+if (nifty) msg += `• NIFTY: ${nifty.price.toFixed(0)} (${nifty.change >= 0 ? '+' : ''}${(nifty.change || 0).toFixed(2)}%)\n`;
+if (spy) msg += `• S&P 500: ${spy.price.toFixed(0)} (${spy.change >= 0 ? '+' : ''}${(spy.change || 0).toFixed(2)}%)\n`;
+
+msg += `\n🌡️ **VIX Sentiment:**\n`;
+msg += `• US VIX: ${usVix.toFixed(1)} ${usVix > 20 ? '🔴 Fear' : '🟢 Calm'}\n`;
+msg += `• India VIX: ${inVix.toFixed(1)} ${inVix > 20 ? '🔴 Fear' : '🟢 Calm'}\n`;
+
+msg += `\n📊 **AI Sentiment:** `;
+msg += avgVix > 22 ? `⚠️ Fear dominant — defensive stance, cash buffer recommended` :
+       avgVix < 14 ? `✅ Extreme greed — caution, protect profits` :
+       `🟢 Neutral-bullish — SIP mode optimal`;
 
 return msg;
 }
 
-function generateFundamentalReport(portfolio: Position[], _livePrices: Record<string, PriceData>): string {
+function generateFundamentalReport(portfolio: Position[], livePrices: Record<string, PriceData>): string {
 let msg = `📊 **FUNDAMENTAL ANALYSIS**\n`;
 msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+msg += `_Note: Live fundamentals require API access. Showing technical signals._\n\n`;
 
-portfolio.slice(0, 3).forEach(p => {
-const pe = 22 + Math.random() * 8 - 4; // Simulated
-const pb = 3 + Math.random() * 2 - 1;
+portfolio.slice(0, 5).forEach(p => {
+const key = `${p.market}_${p.symbol}`;
+const data = livePrices[key];
+const price = data?.price || p.avgPrice;
+const rsi = data?.rsi || 50;
+const change = data?.change || 0;
+const sma20 = data?.sma20;
+const sma50 = data?.sma50;
+const macd = data?.macd;
+const cur = p.market === 'IN' ? '₹' : '$';
+
+const isBull = sma20 && sma50 ? sma20 > sma50 : false;
+const hasMACD = macd !== undefined ? macd > 0 : false;
 
 msg += `\n🏛️ **${p.symbol}**:\n`;
-msg += `P/E: ${pe.toFixed(1)} | P/B: ${pb.toFixed(1)}\n`;
-msg += `Valuation: ${pe > 25 ? 'Overvalued' : pe < 18 ? 'Undervalued' : 'Fair'}\n`;
+msg += `CMP: ${cur}${price.toFixed(2)} (${change >= 0 ? '+' : ''}${change.toFixed(2)}%)\n`;
+msg += `RSI: ${rsi.toFixed(0)} | MACD: ${macd?.toFixed(2) || 'N/A'}\n`;
+if (sma20) msg += `SMA20: ${cur}${sma20.toFixed(2)} ${price > sma20 ? '📈 Above' : '📉 Below'}\n`;
+if (sma50) msg += `SMA50: ${cur}${sma50.toFixed(2)} ${price > sma50 ? '📈 Above' : '📉 Below'}\n`;
+msg += `Trend: ${isBull ? '🟢 Bullish' : '🔴 Bearish'} | MACD: ${hasMACD ? '📈 Positive' : '📉 Negative'}\n`;
+msg += `Signal: ${rsi < 35 ? '🟢 Oversold — Accumulate' : rsi > 65 ? '🔴 Overbought — Book partials' : '🟡 Neutral — Hold'}\n`;
 });
 
 return msg;
@@ -744,75 +770,152 @@ msg += `• Volatility: ${livePrices['US_VIX']?.price?.toFixed(1) || '15'} VIX\n
 return msg;
 }
 
-function generateScanReport(_livePrices: Record<string, PriceData>): string {
+function generateScanReport(livePrices: Record<string, PriceData>): string {
 let msg = `🔍 **MARKET SCAN**\n`;
-msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-msg += `📈 **Top Gainers:**\n`;
-msg += `• STOCK1: +3.5% 🟢\n`;
-msg += `• STOCK2: +2.8% 🟢\n\n`;
+const entries = Object.entries(livePrices)
+  .filter(([, d]) => d?.price && d.price > 0)
+  .sort((a, b) => (b[1].change || 0) - (a[1].change || 0));
 
-msg += `📉 **Top Losers:**\n`;
-msg += `• STOCK3: -2.1% 🔴\n`;
-msg += `• STOCK4: -1.5% 🔴\n`;
+const gainers = entries.filter(([, d]) => (d.change || 0) > 0).slice(0, 5);
+const losers = entries.filter(([, d]) => (d.change || 0) < 0).slice(-5).reverse();
+
+if (gainers.length > 0) {
+  msg += `📈 **Top Gainers:**\n`;
+  gainers.forEach(([key, d]) => {
+    const sym = key.split('_')[1];
+    msg += `• ${sym}: +${(d.change || 0).toFixed(2)}% 🟢\n`;
+  });
+  msg += '\n';
+}
+
+if (losers.length > 0) {
+  msg += `📉 **Top Losers:**\n`;
+  losers.forEach(([key, d]) => {
+    const sym = key.split('_')[1];
+    msg += `• ${sym}: ${(d.change || 0).toFixed(2)}% 🔴\n`;
+  });
+}
+
+if (gainers.length === 0 && losers.length === 0) {
+  msg += `⚠️ No live price data available. Wait for market hours.\n`;
+}
 
 return msg;
 }
 
 function generateCompareReport(livePrices: Record<string, PriceData>): string {
 let msg = `📊 **COMPARISON**\n`;
-msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-msg += `**NIFTY vs S&P 500:**\n`;
-msg += `NIFTY: ${livePrices['IN_NIFTY']?.price?.toFixed(0) || '22000'} (${livePrices['IN_NIFTY']?.change?.toFixed(1) || '0'}%)\n`;
-msg += `S&P 500: ${livePrices['US_SPY']?.price?.toFixed(0) || '500'} (${livePrices['US_SPY']?.change?.toFixed(1) || '0'}%)\n\n`;
+const nifty = livePrices['IN_NIFTY'];
+const sensex = livePrices['IN_SENSEX'];
+const spy = livePrices['US_SPY'];
+const qqq = livePrices['US_QQQ'];
 
-msg += `**Correlation:** 0.72 (High)\n`;
+if (nifty && spy) {
+  const sameDir = (nifty.change || 0) * (spy.change || 0) > 0;
+  msg += `**NIFTY vs S&P 500:**\n`;
+  msg += `NIFTY: ${nifty.price.toFixed(0)} (${nifty.change >= 0 ? '+' : ''}${(nifty.change || 0).toFixed(2)}%)\n`;
+  msg += `S&P 500: ${spy.price.toFixed(0)} (${spy.change >= 0 ? '+' : ''}${(spy.change || 0).toFixed(2)}%)\n`;
+  msg += `Correlation: ${sameDir ? '🟢 Positive (moving together)' : '🔴 Negative (diverging)'}\n`;
+}
+
+if (sensex && qqq) {
+  msg += `\n**SENSEX vs NASDAQ:**\n`;
+  msg += `SENSEX: ${sensex.price.toFixed(0)} (${sensex.change >= 0 ? '+' : ''}${(sensex.change || 0).toFixed(2)}%)\n`;
+  msg += `NASDAQ: ${qqq.price.toFixed(0)} (${qqq.change >= 0 ? '+' : ''}${(qqq.change || 0).toFixed(2)}%)\n`;
+}
+
+if (!nifty && !spy) {
+  msg += `⚠️ No live data available for comparison.\n`;
+}
 
 return msg;
 }
 
-function generateHeatmapReport(_livePrices: Record<string, PriceData>): string {
+function generateHeatmapReport(livePrices: Record<string, PriceData>): string {
 let msg = `🔥 **MARKET HEATMAP**\n`;
-msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-msg += `🟢 **Strong (>2%):**\n`;
-msg += `• TECH, FINNIFTY\n\n`;
+const entries = Object.entries(livePrices)
+  .filter(([, d]) => d?.price && d.price > 0)
+  .map(([key, d]) => ({ sym: key.split('_')[1], change: d.change || 0, price: d.price }))
+  .sort((a, b) => b.change - a.change);
 
-msg += `🟡 **Neutral (±1%):**\n`;
-msg += `• NIFTY, BANKNIFTY\n\n`;
+const strong = entries.filter(e => Math.abs(e.change) > 2);
+const neutral = entries.filter(e => Math.abs(e.change) <= 1);
+const weak = entries.filter(e => e.change < -2);
 
-msg += `🔴 **Weak (<-2%):**\n`;
-msg += `• REALTY, METAL\n`;
+if (strong.length > 0) {
+  msg += `🟢 **Strong (>2%):**\n`;
+  strong.forEach(e => { msg += `• ${e.sym}: ${e.change >= 0 ? '+' : ''}${e.change.toFixed(2)}%\n`; });
+  msg += '\n';
+}
+
+if (neutral.length > 0) {
+  msg += `🟡 **Neutral (±1%):**\n`;
+  neutral.slice(0, 5).forEach(e => { msg += `• ${e.sym}: ${e.change >= 0 ? '+' : ''}${e.change.toFixed(2)}%\n`; });
+  msg += '\n';
+}
+
+if (weak.length > 0) {
+  msg += `🔴 **Weak (<-2%):**\n`;
+  weak.forEach(e => { msg += `• ${e.sym}: ${e.change.toFixed(2)}%\n`; });
+}
+
+if (entries.length === 0) {
+  msg += `⚠️ No live data available. Wait for market hours.\n`;
+}
 
 return msg;
 }
 
-function generateStreakReport(_livePrices: Record<string, PriceData>): string {
+function generateStreakReport(livePrices: Record<string, PriceData>): string {
 let msg = `📈 **STREAK ANALYSIS**\n`;
-msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-msg += `🔥 **NIFTY:** 3 day winning streak\n`;
-msg += `📊 **Probability:** 68% (historical)\n\n`;
+const nifty = livePrices['IN_NIFTY'];
+const sensex = livePrices['IN_SENSEX'];
+const spy = livePrices['US_SPY'];
 
-msg += `🔥 **BANKNIFTY:** 2 day losing streak\n`;
-msg += `📊 **Reversal chance:** 55%\n`;
+if (nifty) {
+  const dir = (nifty.change || 0) >= 0 ? '🟢' : '🔴';
+  msg += `${dir} **NIFTY:** ${nifty.price.toFixed(0)} (${nifty.change >= 0 ? '+' : ''}${(nifty.change || 0).toFixed(2)}%)\n`;
+}
+if (sensex) {
+  const dir = (sensex.change || 0) >= 0 ? '🟢' : '🔴';
+  msg += `${dir} **SENSEX:** ${sensex.price.toFixed(0)} (${sensex.change >= 0 ? '+' : ''}${(sensex.change || 0).toFixed(2)}%)\n`;
+}
+if (spy) {
+  const dir = (spy.change || 0) >= 0 ? '🟢' : '🔴';
+  msg += `${dir} **S&P 500:** ${spy.price.toFixed(0)} (${spy.change >= 0 ? '+' : ''}${(spy.change || 0).toFixed(2)}%)\n`;
+}
+
+msg += `\n📊 _Streak tracking requires historical daily data. Currently showing today's move._`;
 
 return msg;
 }
 
-function generateForexReport(livePrices: Record<string, PriceData>): string {
-const usdInr = livePrices['IN_USDINR']?.price || 83.5;
+function generateForexReport(livePrices: Record<string, PriceData>, usdInrRate?: number): string {
+const usdInr = usdInrRate || livePrices['US_USDINR']?.price || 85.5;
 
 let msg = `💱 **FOREX RATES**\n`;
-msg += `━━━━━━━━━━━━━━━━━━━━\n`;
+msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-msg += `🇺🇸 USD/INR: ₹${usdInr.toFixed(2)}\n`;
-msg += `🇪🇺 EUR/INR: ₹${(usdInr * 0.92).toFixed(2)}\n`;
-msg += `🇬🇧 GBP/INR: ₹${(usdInr * 1.27).toFixed(2)}\n`;
-msg += `🇯🇵 JPY/INR: ₹${(usdInr * 0.67).toFixed(2)}\n\n`;
+msg += `🇺🇸🇮🇳 **USD/INR:** ₹${usdInr.toFixed(4)}\n`;
+msg += `🇮🇳🇺🇸 **INR/USD:** $${(1/usdInr).toFixed(6)}\n\n`;
 
-msg += `💡 **Outlook:** ${usdInr > 83.5 ? 'Strong USD' : 'Weak USD'}\n`;
+msg += `📊 **Quick Conversion:**\n`;
+msg += `• $100 = ₹${(100 * usdInr).toLocaleString('en-IN', {maximumFractionDigits: 0})}\n`;
+msg += `• $1000 = ₹${(1000 * usdInr).toLocaleString('en-IN', {maximumFractionDigits: 0})}\n`;
+msg += `• ₹1,00,000 = $${(100000/usdInr).toFixed(2)}\n\n`;
+
+const trend = usdInr > 87 ? '📉 Rupee weakening — US holdings gain INR value' :
+              usdInr < 84 ? '📈 Rupee strengthening — good time for fresh US investments' :
+              '↔️ Stable range — normal zone';
+msg += `💡 **Outlook:** ${trend}\n`;
 
 return msg;
 }

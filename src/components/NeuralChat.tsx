@@ -513,7 +513,7 @@ ${portfolioCtx}`;
                   <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
                     <span className="hidden xs:inline">Deep Mind AI</span>
                     <span className="xs:hidden">AI Assistant</span>
-                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">QUANTUM PRO v10</span>
+                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">QUANTUM PRO v12</span>
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -539,7 +539,7 @@ ${portfolioCtx}`;
                       : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-cyan-500/50'
                     }`}
                 >
-                  {m === 'auto' ? '🤖 Auto' : m === 'groq' ? '⚡ Groq' : m === 'gemini' ? '🔵 Gemini 2.5' : '🟣 Claude 4'}
+                  {m === 'auto' ? '🤖 Auto' : m === 'groq' ? '⚡ Groq' : m === 'gemini' ? '🔵 Gemini 2.5' : '🟣 Claude Sonnet 4'}
                 </button>
               ))}
             </div>

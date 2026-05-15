@@ -21,7 +21,7 @@ import { calculateVaR, runStressTests, analyzeConcentrationRisk } from './utils/
 import { getBatchInterval } from './utils/api';
 const NeuralChat = lazy(() => import('./components/NeuralChat').then(m => ({ default: m.NeuralChat })));
 import { Clock } from './components/Clock';
-import { TrimRules } from './components/TrimRules';
+
 
 
 
@@ -1020,7 +1020,7 @@ export default function App() {
 
             {/* Tabs */}
             <div className="flex gap-0.5 glass-card p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
-              {(['dashboard', 'portfolio', 'planner', 'macro', 'trim'] as TabType[]).map(tab => (
+              {(['dashboard', 'portfolio', 'planner', 'macro'] as TabType[]).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -1037,7 +1037,6 @@ export default function App() {
                     {tab === 'optimizer' && '⚛️ Optimizer'}
                     {tab === 'planner' && '🎯 Planner'}
                     {tab === 'macro' && '🌍 Risk'}
-                    {tab === 'trim' && '✂️ Trim Rules'}
                   </span>
                   <span className="sm:hidden">
                     {tab === 'dashboard' && '📊'}
@@ -1047,7 +1046,6 @@ export default function App() {
                     {tab === 'optimizer' && '⚛️'}
                     {tab === 'planner' && '🎯'}
                     {tab === 'macro' && '🌍'}
-                    {tab === 'trim' && '✂️'}
                   </span>
                 </button>
               ))}
@@ -2228,12 +2226,6 @@ export default function App() {
 
 
 
-      {/* ✂️ Trim Rules Tab */}
-      {activeTab === 'trim' && (
-        <main className="container mx-auto px-4 py-6">
-          <TrimRules />
-        </main>
-      )}
 
       {showAddModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-xl z-50 flex items-center justify-center p-4 animate-fade-in">

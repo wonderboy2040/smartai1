@@ -90,7 +90,7 @@ export const ALPHA_ETFS_IN = [
 export const ALPHA_ETFS_US = [
   { sym: 'SMH', name: 'VanEck Semiconductor', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', fixedAlloc: 0.45 },
   { sym: 'VGT', name: 'Vanguard Information Technology ETF', cagr: 21.0, maxDD: 33, cat: 'Tech', fixedAlloc: 0.33 },
-  { sym: 'IWY', name: 'iShares Russell 2000 Growth ETF', cagr: 18.5, maxDD: 40, cat: 'Small Cap US', fixedAlloc: 0.22 }
+  { sym: 'IWY', name: 'iShares Russell Top 200 Growth ETF', cagr: 18.5, maxDD: 40, cat: 'Large Cap Growth', fixedAlloc: 0.22 }
 ];
 
 export const EXACT_TICKER_MAP = {
@@ -106,6 +106,7 @@ export const EXACT_TICKER_MAP = {
   'VIX': 'CBOE:VIX',
   'SPX': 'SP:SPX',
   'NDX': 'NASDAQ:NDX',
+  'IWY': 'AMEX:IWY',
   'QQQ': 'NASDAQ:QQQ',
   'AAPL': 'NASDAQ:AAPL',
   'MSFT': 'NASDAQ:MSFT',
