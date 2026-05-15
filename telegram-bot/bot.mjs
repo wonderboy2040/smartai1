@@ -10,7 +10,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, TAX_PAIRS } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchCryptoPricesINR, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
 import { loadPortfolioFromCloud, loadGroqKeyFromCloud, saveGroqKeyToCloud } from './cloud.mjs';
 import {
@@ -23,6 +23,7 @@ import {
   generateLongTermReport, generateStrategyReport
 } from './analysis.mjs';
 import { chatWithAI, clearChatHistory } from './ai-chat.mjs';
+import { backtestSignal, calculateBacktestMetrics } from './backtester.mjs';
 
 // Validate required environment variables
 if (!TG_TOKEN) {
@@ -217,6 +218,8 @@ console.log('🟢 ════════════════════�
         { command: 'scan', description: 'Deep scan any symbol' },
         { command: 'compare', description: 'Head-to-head comparison' },
         { command: 'correlate', description: 'Portfolio Correlation Matrix' },
+        { command: 'heatmap', description: 'Sector Heat Map' },
+        { command: 'taxloss', description: 'Tax-Loss Harvesting' },
         { command: 'backtest', description: 'AI Signal Accuracy Check' },
         { command: 'streak', description: 'Performance streak tracker' },
         { command: 'etf', description: 'ETF Portfolio Analysis' },
@@ -359,7 +362,9 @@ Nagraj Bhai, main tumhara QUANTUM PRO AI Trading assistant hoon! 🚀
 🔍 /scan &lt;SYM&gt; — Deep scan any symbol
 ⚖️ /compare &lt;S1&gt; &lt;S2&gt; — Head-to-head
 🔗 /correlate — Correlation matrix
+🔥 /heatmap — Sector heat map
 🧪 /backtest — Signal accuracy
+💸 /taxloss — Tax-loss harvesting
 📊 /streak — Performance tracker
 📊 /etf — ETF portfolio analysis
 🪙 /crypto — Crypto market (BTC, ETH)
@@ -461,8 +466,14 @@ Example: <code>/compare SMH VGT</code>, <code>/compare TCS INFY</code>
 🔗 <b>/correlate</b>
 Portfolio correlation matrix — diversification check.
 
+🔥 <b>/heatmap</b>
+Sector heat map — visualize winners and losers across global indices, sectors, and your portfolio.
+
 🧪 <b>/backtest</b>
 AI signal accuracy — check how well today's signals performed.
+
+💸 <b>/taxloss</b>
+Tax-loss harvesting — find losing positions with similar ETF pairs to book losses while maintaining exposure.
 
 📊 <b>/streak</b>
 Performance streak tracker — consecutive green/red days history.
@@ -841,6 +852,79 @@ bot.onText(/^\/correlat(?:e|ion)?(@\w+)?$/i, async (msg) => {
 });
 
 // ========================================
+// COMMAND: /heatmap — Sector Heat Map
+// ========================================
+bot.onText(/^\/heatmap(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /heatmap from ${msg.from?.first_name || chatId}`);
+  try {
+    await safeSend(chatId, '🔥 <i>Generating sector heatmap...</i>');
+    await Promise.all([refreshPrices(), refreshIntel()]);
+
+    let report = `🔥 <b>SECTOR HEAT MAP</b>\n`;
+    report += `⏰ <i>${getISTTime()} IST</i> | ${getMarketStatus()}\n`;
+    report += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+    // Global indices heatmap
+    if (marketIntel?.globalIndices?.length > 0) {
+      report += `🌍 <b>Global Indices</b>\n`;
+      const sorted = [...marketIntel.globalIndices].sort((a, b) => b.change - a.change);
+      for (const idx of sorted) {
+        const bar = idx.change >= 0
+          ? '🟩'.repeat(Math.min(10, Math.round(Math.abs(idx.change) * 2)))
+          : '🟥'.repeat(Math.min(10, Math.round(Math.abs(idx.change) * 2)));
+        report += `${idx.change >= 0 ? '🟢' : '🔴'} <b>${idx.name}</b>: ${idx.price.toFixed(0)} (${idx.change >= 0 ? '+' : ''}${idx.change.toFixed(2)}%)\n`;
+        report += `  ${bar}\n`;
+      }
+      report += `\n`;
+    }
+
+    // Sector heatmap
+    if (marketIntel?.sectors?.length > 0) {
+      report += `🏭 <b>Sector Performance</b>\n`;
+      const sorted = [...marketIntel.sectors].sort((a, b) => b.change - a.change);
+      for (const s of sorted) {
+        const bar = s.change >= 0
+          ? '🟩'.repeat(Math.min(10, Math.round(Math.abs(s.change) * 3)))
+          : '🟥'.repeat(Math.min(10, Math.round(Math.abs(s.change) * 3)));
+        report += `${s.change >= 0 ? '🟢' : '🔴'} <b>${s.name}</b>: ${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)}%\n`;
+        report += `  ${bar}\n`;
+      }
+      report += `\n`;
+    }
+
+    // Portfolio heatmap
+    if (portfolio.length > 0) {
+      report += `💼 <b>Your Portfolio Heat</b>\n`;
+      const positions = portfolio.map(p => {
+        const key = `${p.market}_${p.symbol}`;
+        const data = livePrices[key];
+        return {
+          symbol: p.symbol.replace('.NS', ''),
+          change: data?.change || 0,
+          market: p.market
+        };
+      }).sort((a, b) => b.change - a.change);
+
+      for (const p of positions) {
+        const bar = p.change >= 0
+          ? '🟩'.repeat(Math.min(8, Math.round(Math.abs(p.change) * 2)))
+          : '🟥'.repeat(Math.min(8, Math.round(Math.abs(p.change) * 2)));
+        const flag = p.market === 'IN' ? '🇮🇳' : '🇺🇸';
+        report += `${p.change >= 0 ? '🟢' : '🔴'} ${flag} <b>${p.symbol}</b>: ${p.change >= 0 ? '+' : ''}${p.change.toFixed(2)}%\n`;
+        report += `  ${bar}\n`;
+      }
+    }
+
+    report += `\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /heatmap error:', e.message);
+    await safeSend(chatId, `❌ Heatmap error: ${e.message}`);
+  }
+});
+
+// ========================================
 // COMMAND: /streak — Performance Tracker
 // ========================================
 bot.onText(/^\/streak(@\w+)?$/i, async (msg) => {
@@ -909,53 +993,142 @@ bot.onText(/^\/backtest(@\w+)?$/i, async (msg) => {
     }
     await refreshPrices();
 
-    let report = `🧪 <b>AI SIGNAL ACCURACY — Backtest</b>\n`;
+    let report = `🧪 <b>AI SIGNAL ACCURACY — Backtest Engine</b>\n`;
     report += `⏰ <i>${getISTTime()} IST</i>\n`;
     report += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
 
+    // Generate AI signals for each position
     const signals = portfolio.map(p => {
       const key = `${p.market}_${p.symbol}`;
       const data = livePrices[key];
       return analyzeAsset(p, data);
     });
 
+    // Run backtester engine on each signal vs today's actual move
+    const backtestResults = [];
+    for (const s of signals) {
+      const predictedChange = s.signal.includes('BUY') ? 2.0 : s.signal.includes('SELL') ? -2.0 : 0;
+      const actualChange = s.change || 0;
+      const result = await backtestSignal(s.symbol, predictedChange, actualChange, '1d');
+      result.confidence = s.confidence;
+      result.signal = s.signal;
+      backtestResults.push(result);
+    }
+
+    // Aggregate metrics
+    const metrics = calculateBacktestMetrics(backtestResults);
+
+    // Signal summary
     const buyCount = signals.filter(s => s.signal.includes('BUY')).length;
     const sellCount = signals.filter(s => s.signal.includes('SELL')).length;
     const holdCount = signals.filter(s => s.signal === 'HOLD').length;
-
-    const totalAssets = signals.length;
-    const avgConfidence = signals.reduce((sum, s) => sum + s.confidence, 0) / totalAssets;
-
-    const actualGainers = signals.filter(s => s.change > 0).length;
-    const buyCorrect = signals.filter(s => s.signal.includes('BUY') && s.change > 0).length;
-    const sellCorrect = signals.filter(s => s.signal.includes('SELL') && s.change < 0).length;
-    const holdCorrect = signals.filter(s => s.signal === 'HOLD' && Math.abs(s.change) < 2).length;
-
-    const totalCorrect = buyCorrect + sellCorrect + holdCorrect;
-    const accuracy = totalAssets > 0 ? ((totalCorrect / totalAssets) * 100).toFixed(1) : '0';
+    const avgConfidence = signals.reduce((sum, s) => sum + s.confidence, 0) / signals.length;
 
     report += `📊 <b>Signal Summary:</b>\n`;
     report += `BUY: ${buyCount} | SELL: ${sellCount} | HOLD: ${holdCount}\n`;
     report += `Avg Confidence: <b>${avgConfidence.toFixed(1)}%</b>\n\n`;
 
-    report += `📈 <b>Accuracy Check (vs Today's Move):</b>\n`;
-    report += `BUY signals that went UP: <b>${buyCorrect}/${buyCount}</b>\n`;
-    report += `SELL signals that went DOWN: <b>${sellCorrect}/${sellCount}</b>\n`;
-    report += `HOLD signals that stayed flat: <b>${holdCorrect}/${holdCount}</b>\n\n`;
+    // Per-asset results
+    report += `📈 <b>Backtest Results (vs Today's Move):</b>\n`;
+    report += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+    for (const r of backtestResults) {
+      const emoji = r.verdict === 'EXCELLENT' ? '🟢' : r.verdict === 'GOOD' ? '🟡' : '🔴';
+      report += `${emoji} <b>${r.symbol}</b>: ${r.signal} → ${r.actualMove >= 0 ? '+' : ''}${r.actualMove.toFixed(2)}%\n`;
+      report += `   Score: ${r.score}% | ${r.verdict} | Error: ${r.magnitudeError.toFixed(1)}%\n`;
+    }
 
-    const accBar = '🟩'.repeat(Math.round(parseFloat(accuracy) / 10)) + '⬜'.repeat(10 - Math.round(parseFloat(accuracy) / 10));
-    report += `<code>[${accBar}] ${accuracy}%</code>\n\n`;
+    // Overall metrics
+    report += `\n<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+    report += `🎯 <b>Aggregate Metrics:</b>\n`;
+    report += `Avg Accuracy: <b>${metrics.avgAccuracy}</b>\n`;
+    report += `Win Rate: <b>${metrics.winRate}</b>\n`;
+    report += `Sample: <b>${metrics.sampleSize} signals</b>\n\n`;
 
-    if (parseFloat(accuracy) > 70) report += `🟢 <b>Excellent!</b> AI signals are highly accurate today.`;
-    else if (parseFloat(accuracy) > 50) report += `🟡 <b>Decent.</b> AI signals are reasonable. Always use SL.`;
-    else report += `🔴 <b>Caution!</b> Low signal accuracy today — market may be choppy. Reduce position sizes.`;
+    const accVal = parseFloat(metrics.avgAccuracy);
+    const accBar = '🟩'.repeat(Math.round(accVal / 10)) + '⬜'.repeat(10 - Math.round(accVal / 10));
+    report += `<code>[${accBar}] ${metrics.avgAccuracy}</code>\n\n`;
 
-    report += `\n\n<i>Based on today's price action vs AI signals. Past accuracy ≠ future guarantee.</i>`;
+    if (accVal > 70) report += `🟢 <b>Excellent!</b> AI signals highly accurate today.`;
+    else if (accVal > 50) report += `🟡 <b>Decent.</b> AI signals reasonable. Always use SL.`;
+    else report += `🔴 <b>Caution!</b> Low accuracy — market may be choppy. Reduce sizes.`;
+
+    report += `\n\n<i>Engine: backtester.mjs | Past accuracy ≠ future guarantee.</i>`;
     report += `\n💎 <i>Deep Mind AI Pro Terminal</i>`;
     await safeSend(chatId, report);
   } catch (e) {
     console.error('❌ /backtest error:', e.message);
     await safeSend(chatId, `❌ Backtest error: ${e.message}`);
+  }
+});
+
+// ========================================
+// COMMAND: /taxloss — Tax-Loss Harvesting
+// ========================================
+bot.onText(/^\/taxloss(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /taxloss from ${msg.from?.first_name || chatId}`);
+  try {
+    if (portfolio.length === 0) {
+      await safeSend(chatId, '⚠️ Portfolio empty hai.');
+      return;
+    }
+    await refreshPrices();
+
+    let report = `💸 <b>TAX-LOSS HARVESTING</b>\n`;
+    report += `⏰ <i>${getISTTime()} IST</i>\n`;
+    report += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+    let harvestCount = 0;
+    let totalLoss = 0;
+
+    for (const p of portfolio) {
+      const key = `${p.market}_${p.symbol}`;
+      const data = livePrices[key];
+      const price = data?.price || p.avgPrice;
+      const plPct = p.avgPrice > 0 ? ((price - p.avgPrice) / p.avgPrice) * 100 : 0;
+      const plAbs = (price - p.avgPrice) * p.qty;
+      const plINR = p.market === 'US' ? plAbs * usdInrRate : plAbs;
+
+      // Only consider positions at a loss
+      if (plPct >= 0) continue;
+
+      const cleanSym = p.symbol.replace('.NS', '').replace('.BO', '');
+      const pairSym = TAX_PAIRS[cleanSym];
+
+      if (pairSym) {
+        harvestCount++;
+        totalLoss += Math.abs(plINR);
+        const flag = p.market === 'IN' ? '🇮🇳' : '🇺🇸';
+        const cur = p.market === 'IN' ? '₹' : '$';
+
+        report += `${flag} <b>${cleanSym}</b>: ${cur}${price.toFixed(2)} | P&L: <b>${plPct.toFixed(1)}%</b> (₹${Math.round(Math.abs(plINR)).toLocaleString('en-IN')} loss)\n`;
+        report += `  ↳ 🔄 Swap to: <b>${pairSym}</b> (similar exposure, book loss)\n`;
+        report += `  ↳ Qty: ${p.qty} | Avg: ${cur}${p.avgPrice.toFixed(2)}\n\n`;
+      }
+    }
+
+    if (harvestCount === 0) {
+      report += `✅ <b>No harvest opportunities!</b>\n\n`;
+      report += `All positions with matching pairs are in profit.\n`;
+      report += `No tax-loss swaps available right now.`;
+    } else {
+      const taxSaving = totalLoss * 0.10; // ~10% STCG tax rate assumption
+      report += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+      report += `📊 <b>Summary:</b>\n`;
+      report += `Harvestable positions: <b>${harvestCount}</b>\n`;
+      report += `Total bookable loss: <b>₹${Math.round(totalLoss).toLocaleString('en-IN')}</b>\n`;
+      report += `Est. tax saving (10% STCG): <b>₹${Math.round(taxSaving).toLocaleString('en-IN')}</b>\n\n`;
+      report += `💡 <b>How it works:</b>\n`;
+      report += `Sell the losing asset → Buy the paired ETF (similar sector exposure)\n`;
+      report += `Book the loss for tax offset → Maintain market exposure via the pair\n`;
+      report += `After 30 days, swap back if desired (avoid wash sale rule)\n`;
+    }
+
+    report += `\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /taxloss error:', e.message);
+    await safeSend(chatId, `❌ Tax-loss error: ${e.message}`);
   }
 });
 

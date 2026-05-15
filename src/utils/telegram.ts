@@ -588,21 +588,57 @@ return msg;
 
 function generateOptionsAnalysis(livePrices: Record<string, PriceData>): string {
 const nifty = livePrices['IN_NIFTY']?.price || 22000;
-const pcr = 1.15; // Simulated
-const maxPain = nifty * 0.995;
+const indiaVix = livePrices['IN_INDIAVIX']?.price || 15;
+const usVix = livePrices['US_VIX']?.price || 15;
+const niftyChange = livePrices['IN_NIFTY']?.change || 0;
+
+// VIX-based PCR estimation (real option chain requires NSE API — not available in browser)
+let pcr: number;
+if (indiaVix < 12) pcr = 0.78;
+else if (indiaVix < 15) pcr = 0.92;
+else if (indiaVix < 18) pcr = 1.05;
+else if (indiaVix < 22) pcr = 1.18;
+else if (indiaVix < 28) pcr = 1.32;
+else pcr = 1.50;
+
+// Adjust for market direction (falling market = more puts = higher PCR)
+if (niftyChange < -1) pcr += 0.08;
+else if (niftyChange > 1) pcr -= 0.05;
+
+// Max pain estimation (typically near current price with slight put bias)
+const maxPain = nifty * (pcr > 1 ? 0.993 : 1.003);
+
+// OI estimation based on VIX
+const callOI = indiaVix < 18 ? '2.5M' : '1.8M';
+const putOI = indiaVix < 18 ? '2.2M' : '3.1M';
+const callChange = niftyChange > 0 ? '+12%' : '-5%';
+const putChange = niftyChange < 0 ? '+15%' : '-3%';
 
 let msg = `📊 **OPTIONS ANALYSIS**\n`;
 msg += `━━━━━━━━━━━━━━━━━━━━\n`;
-msg += `🎯 **Nifty:** ${nifty.toFixed(2)}\n`;
-msg += `📊 **PCR:** ${pcr.toFixed(2)} ${pcr > 1 ? '🟢 Bullish' : '🔴 Bearish'}\n`;
-msg += `📍 **Max Pain:** ${maxPain.toFixed(0)}\n\n`;
+msg += `🎯 **Nifty:** ${nifty.toFixed(2)} (${niftyChange >= 0 ? '+' : ''}${niftyChange.toFixed(2)}%)\n`;
+msg += `🌡️ **India VIX:** ${indiaVix.toFixed(1)} ${indiaVix > 20 ? '🔴 HIGH FEAR' : indiaVix < 13 ? '🟢 LOW VOL' : '🟡 NORMAL'}\n`;
+msg += `📊 **PCR (est):** ${pcr.toFixed(2)} ${pcr > 1 ? '🟢 Bullish bias' : '🔴 Bearish bias'}\n`;
+msg += `📍 **Max Pain (est):** ${maxPain.toFixed(0)}\n\n`;
 
-msg += `🔥 **OI Data:**\n`;
-msg += `Call OI: 2.4M (-5%) 🟢\n`;
-msg += `Put OI: 2.8M (+8%) 🟢\n\n`;
+msg += `📈 **OI Estimate (VIX-based):**\n`;
+msg += `Call OI: ${callOI} (${callChange}) ${niftyChange > 0 ? '🟢' : '🔴'}\n`;
+msg += `Put OI: ${putOI} (${putChange}) ${niftyChange < 0 ? '🟢' : '🔴'}\n\n`;
 
 msg += `💡 **Strategy:**\n`;
-msg += pcr > 1 ? `Long Straddle/Strangle - Volatility expected` : `Avoid naked options - use spreads`;
+if (indiaVix > 22) {
+  msg += `High VIX → Sell options (credit spreads, iron condors)\n`;
+  msg += `Premium rich — theta decay favors sellers`;
+} else if (indiaVix < 13) {
+  msg += `Low VIX → Buy options (long straddle before events)\n`;
+  msg += `Cheap premiums — bet on volatility expansion`;
+} else {
+  msg += pcr > 1
+    ? `Bullish bias → Bull call spread or sell puts at support`
+    : `Bearish bias → Bear put spread or sell calls at resistance`;
+}
+
+msg += `\n\n⚠️ *PCR estimated from India VIX. For live OI data, use /ai options analysis*`;
 
 return msg;
 }

@@ -2,7 +2,7 @@
 // AI CHAT ENGINE v12.0 — Quantum Pro Deep Mind AI
 // Groq + Gemini + Claude + Tavily Real-Time Search
 // ============================================
-import { GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, isGroqAvailable, isGeminiAvailable, isClaudeAvailable } from './config.mjs';
+import { GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, isGroqAvailable, isGeminiAvailable, isClaudeAvailable, ALPHA_ETFS_IN, ALPHA_ETFS_US } from './config.mjs';
 import { fetchMarketIntelligence, fetchForexRate } from './market.mjs';
 import { calculateMetrics, analyzeAsset } from './analysis.mjs';
 
@@ -489,6 +489,15 @@ LONG-TERM INVESTMENT PERSPECTIVE:
 - For crypto: Emphasize DCA over timing the market.
 - Always give 3-5 year outlook alongside short-term analysis.
 - Calculate projected portfolio value at realistic CAGRs.
+
+ALPHA ETF UNIVERSE (use these exact CAGR/maxDD for projections):
+India:
+${ALPHA_ETFS_IN.map(e => `• ${e.sym} (${e.name}): CAGR ${e.cagr}%, MaxDD ${e.maxDD}%, Category: ${e.cat}, Allocation: ${(e.fixedAlloc * 100).toFixed(0)}%`).join('\n')}
+
+US:
+${ALPHA_ETFS_US.map(e => `• ${e.sym} (${e.name}): CAGR ${e.cagr}%, MaxDD ${e.maxDD}%, Category: ${e.cat}, Allocation: ${(e.fixedAlloc * 100).toFixed(0)}%`).join('\n')}
+
+Use these CAGR values for SIP projections and wealth creation calculations. Reference maxDD for risk context.
 
 FUNDAMENTAL ANALYSIS PERMISSION:
 You HAVE full permission to provide deep fundamental analysis including:

@@ -133,6 +133,16 @@ export const EXACT_TICKER_MAP = {
   'XRP': 'BINANCE:XRPUSDT'
 };
 
+// Tax-loss harvesting pairs (similar ETFs to swap into when booking losses)
+export const TAX_PAIRS = {
+  'ITBEES': 'TATAIT',     // Nifty IT → Tata IT
+  'TATAIT': 'ITBEES',     // reverse
+  'SMH': 'SOXX',          // Semiconductors → Semiconductor broad
+  'SOXX': 'SMH',          // reverse
+  'JUNIORBEES': 'NIFTYJR', // Next 50 variants
+  'MOMENTUM50': 'NIFTY50', // Momentum → broad market
+};
+
 // Crypto symbol detection
 export function isCryptoSymbol(sym) {
   const clean = (sym || '').toUpperCase().replace('USDT', '').replace('USD', '').replace('.NS', '').replace('.BO', '');
