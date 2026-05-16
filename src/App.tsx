@@ -29,7 +29,28 @@ const NeuralChat = lazy(() => import('./components/NeuralChat').then(m => ({ def
 import { Clock } from './components/Clock';
 
 
+// Guide helper components
+function GuideItem({ title, emoji, desc, imp }: { title: string; emoji: string; desc: string; imp?: string }) {
+  return (
+    <div className="bg-black/20 rounded-lg p-3">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-sm">{emoji}</span>
+        <span className="text-xs font-bold text-slate-200">{title}</span>
+      </div>
+      <p className="text-[11px] text-slate-400 leading-relaxed mb-1">{desc}</p>
+      {imp && <p className="text-[11px] text-amber-400/80 leading-relaxed">💡 {imp}</p>}
+    </div>
+  );
+}
 
+function GuideCommand({ cmd, desc }: { cmd: string; desc: string }) {
+  return (
+    <div className="flex items-center gap-2 bg-black/20 rounded-lg px-3 py-2">
+      <code className="text-cyan-400 font-mono text-[11px] font-bold whitespace-nowrap">/{cmd}</code>
+      <span className="text-slate-500 text-[10px]">{desc}</span>
+    </div>
+  );
+}
 
 /**
  * Merge incoming WebSocket price data into existing PriceData.
@@ -1043,7 +1064,7 @@ export default function App() {
 
             {/* Tabs */}
             <div className="flex gap-0.5 glass-card p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
-              {(['dashboard', 'portfolio', 'planner', 'macro'] as TabType[]).map(tab => (
+              {(['dashboard', 'portfolio', 'planner', 'macro', 'guide'] as TabType[]).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -1060,6 +1081,7 @@ export default function App() {
                     {tab === 'optimizer' && '⚛️ Optimizer'}
                     {tab === 'planner' && '🎯 Planner'}
                     {tab === 'macro' && '🌍 Risk'}
+                    {tab === 'guide' && '📖 Guide'}
                   </span>
                   <span className="sm:hidden">
                     {tab === 'dashboard' && '📊'}
@@ -1069,6 +1091,7 @@ export default function App() {
                     {tab === 'optimizer' && '⚛️'}
                     {tab === 'planner' && '🎯'}
                     {tab === 'macro' && '🌍'}
+                    {tab === 'guide' && '📖'}
                   </span>
                 </button>
               ))}
@@ -2278,6 +2301,194 @@ export default function App() {
                   <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">Batch Interval</div>
                   <div className="text-lg font-black text-purple-400 font-mono">{getBatchInterval() / 1000}s</div>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================ */}
+        {/* GUIDE TAB — Complete Feature Guide */}
+        {/* ============================================ */}
+        {activeTab === 'guide' && (
+          <div className="space-y-4 animate-fade-in">
+            <div className="glass-card rounded-2xl p-5 border-cyan-500/10">
+              <h1 className="text-xl font-bold text-white mb-2">📖 Wealth AI Pro — Complete Guide</h1>
+              <p className="text-sm text-slate-400">Sab features ka detailed guide. Long-term investing ke liye banaya gaya hai. Sirf buy-on-dip strategy follow karta hai.</p>
+            </div>
+
+            {/* DASHBOARD TAB FEATURES */}
+            <div className="glass-card rounded-2xl p-5">
+              <h2 className="text-base font-bold text-cyan-400 mb-3">📊 DASHBOARD TAB</h2>
+              <div className="space-y-3">
+                <GuideItem title="Live Price Stats" emoji="📈"
+                  desc="Sab assets ka real-time price, 24h change, high/low. TradingView WebSocket + Binance WebSocket se data aata hai. Har 1.5 second me update hota hai."
+                  imp="Market hours me sabse zyada useful. Weekend me prices freeze dikhte hain — ye normal hai." />
+                <GuideItem title="AI Signal Engine" emoji="🤖"
+                  desc="Har asset ke liye AI signal generate hota hai: STRONG_BUY, BUY, HOLD, SELL, STRONG_SELL. RSI, SMA20/SMA50 crossover, MACD, aur CAGR proxy se calculate hota hai."
+                  imp="RSI < 30 = Deep Oversold (BUY karo). RSI > 75 = Overbought (mat karo). Signal confidence 0-100% hota hai — zyada confidence = zyada reliable." />
+                <GuideItem title="Buy-the-Dip Intelligence" emoji="🎯"
+                  desc="Portfolio ke har asset ka dip depth track karta hai. SMA20/SMA50 se kitna niche hai, RSI oversold hai ya nahi. Dip Ladder dikhata hai — 5%, 10%, 15%, 20% pe kitna buy karna hai (pyramid buying)."
+                  imp="DEEP DIP = RSI < 30 ya SMA50 se 5%+ niche. MILD DIP = RSI < 40 ya SMA20 se 2%+ niche. Deep dip pe aggressive buy karo, mild dip pe normal SIP." />
+                <GuideItem title="Multi-Factor Screener" emoji="📊"
+                  desc="Sab assets ka Alpha Score (0-100) calculate karta hai. 3 factors: Quality (40%) — CAGR aur drawdown. Momentum (30%) — RSI, SMA trend, price change. Value (30%) — PEG proxy, discount to SMA."
+                  imp="Alpha 75+ = STRONG BUY. Alpha 55+ = BUY. Alpha 35+ = HOLD. Below 35 = AVOID. Top alpha scores wale assets best risk-adjusted returns dete hain." />
+                <GuideItem title="TradingView Chart" emoji="📉"
+                  desc="Interactive TradingView chart embedded hai. Candlestick, line, bar chart support. Indicators add kar sakte ho (RSI, MACD, Bollinger, etc)."
+                  imp="Chart pe click karke timeframe change karo (1D, 1W, 1M). Drawing tools support/resistance ke liye use karo." />
+                <GuideItem title="Quantum Forensics" emoji="🔬"
+                  desc="Advanced technical analysis panel. Volume analysis, price action patterns, trend strength. Institutional-grade data." />
+              </div>
+            </div>
+
+            {/* PORTFOLIO TAB FEATURES */}
+            <div className="glass-card rounded-2xl p-5">
+              <h2 className="text-base font-bold text-emerald-400 mb-3">💼 PORTFOLIO TAB</h2>
+              <div className="space-y-3">
+                <GuideItem title="Portfolio Table" emoji="📋"
+                  desc="Sab assets ka table: Symbol, Qty, Avg Price, LTP (Last Traded Price), Today's Change, P&L (Profit & Loss), Equity Value. INR aur USD dono me dikhta hai."
+                  imp="Green = profit me hai. Red = loss me hai. LTP real-time update hota hai WebSocket se." />
+                <GuideItem title="Buy/Sell Actions" emoji="💱"
+                  desc="Buy button se naya asset add karte ho ya existing me quantity badhate ho. Sell button se quantity kam karte ho (partial profit booking)."
+                  imp="LONG-TERM STRATEGY: Sirf buy karo, sell mat karo. Dip pe buy karo aur hold karo. Compounding ka magic time ke saath aata hai." />
+                <GuideItem title="Cloud Sync" emoji="☁️"
+                  desc="Portfolio data Google Apps Script pe sync hota hai. Multiple devices pe same data dikhta hai. Auto-save hota hai har change ke baad (3 second debounce)."
+                  imp="Agar data loss ho jaye to cloud se restore hota hai. Manual sync button bhi hai." />
+                <GuideItem title="Allocation Bars" emoji="📊"
+                  desc="Har asset ka portfolio me kitna % hai — visual bar se dikhta hai. Concentration risk identify karta hai."
+                  imp="Kisi ek asset me 40%+ hai to overconcentrated hai. Diversify karo across sectors and markets." />
+              </div>
+            </div>
+
+            {/* PLANNER TAB FEATURES */}
+            <div className="glass-card rounded-2xl p-5">
+              <h2 className="text-base font-bold text-amber-400 mb-3">🎯 PLANNER TAB</h2>
+              <div className="space-y-3">
+                <GuideItem title="SIP Configuration" emoji="💰"
+                  desc="Monthly SIP set karo: India (₹10,000 default), US ($50 default), BTC (₹1,000), ETH (₹500). Investment horizon (3-30 years) aur risk appetite (low/medium/high) select karo."
+                  imp="SIP = Systematic Investment Plan. Har month fixed amount invest karo. Market up ho ya down — SIP chalne do. Time in the market > Timing the market." />
+                <GuideItem title="Smart Dip Position Sizing" emoji="📐"
+                  desc="Monthly dip budget set karo. Kelly Criterion + Inverse Volatility se calculate karta hai ki har asset me kitna invest karo. Deep dips ko zyada allocation milta hai (pyramid buying)."
+                  imp="Kelly Criterion: Optimal bet size calculate karta hai win rate aur risk/reward se. Half-Kelly use hota hai safety ke liye. InvVol: Kam volatility wale asset me zyada invest karo." />
+                <GuideItem title="Monte Carlo Simulator" emoji="🎲"
+                  desc="Future portfolio value ka simulation. Worst case, Expected, Best case scenarios. CAGR-based compound growth formula use karta hai."
+                  imp="15% CAGR expected hai Indian ETFs ke liye. 20%+ CAGR momentum/smallcap ETFs ke liye. Crypto me 30-55% CAGR possible but volatile." />
+                <GuideItem title="FIRE Calculator" emoji="🔥"
+                  desc="Financial Independence, Retire Early calculator. Monthly expenses + current age se FIRE number calculate karta hai (expenses × 12 × 25). 4% rule se passive income dikhta hai."
+                  imp="FIRE Number = 25 years of expenses. Agar ₹50,000/month expenses hain to FIRE Number = ₹1.5 Crore. Uske baad 4% withdrawal se ₹50,000/month milta hai." />
+                <GuideItem title="Quantum Compound Growth" emoji="🚀"
+                  desc="Table dikhta hai: 15%, 20%, 25% CAGR pe 5/10/15/20 years me kitna banega. Compound interest ka power dikhata hai."
+                  imp="₹10,000/month SIP at 20% CAGR for 15 years = ₹1 Crore+ (invested ₹18L). Compounding ka magic: pehle 5 years slow, last 5 years explosive growth." />
+                <GuideItem title="Core-Satellite Strategy" emoji="🛰️"
+                  desc="Rule of 100: Age ke hisaab se equity/debt split. Core (50-60%) = safe ETFs. Satellite (30-40%) = growth ETFs. Moonshot (5-10%) = crypto/high-risk."
+                  imp="Age 30 = 70% equity, 30% debt. Age 50 = 50% equity, 50% debt. Core me NIFTY/Sensex ETFs, Satellite me Momentum/Smallcap, Moonshot me BTC/ETH." />
+                <GuideItem title="SIP Step-Up Calculator" emoji="📈"
+                  desc="Har saal 10% SIP badhao. Pehle saal ₹10,000, doosre saal ₹11,000, teesre saal ₹12,100... 15 years me total invested vs final wealth dikhta hai."
+                  imp="Step-up SIP se normal SIP se 2-3x zyada wealth banti hai. Salary badhne ke saath SIP bhi badhao." />
+              </div>
+            </div>
+
+            {/* RISK RADAR TAB FEATURES */}
+            <div className="glass-card rounded-2xl p-5">
+              <h2 className="text-base font-bold text-red-400 mb-3">🌍 RISK RADAR TAB</h2>
+              <div className="space-y-3">
+                <GuideItem title="Macro Regime Detector" emoji="🌐"
+                  desc="Market ka regime detect karta hai: RISK_ON (low VIX, strong breadth), RISK_OFF (high VIX, weak), STAGFLATION (rising rates, growth lagging), GOLDILOCKS (ideal conditions)."
+                  imp="RISK_OFF = Cash hoard karo, sirf deep dips buy karo. GOLDILOCKS = Full deployment, SIP maximum. Regime ke hisaab se allocation adjust karo." />
+                <GuideItem title="Smart Money Flow (FII/DII)" emoji="💰"
+                  desc="Foreign Institutional Investors (FII) aur Domestic Institutional Investors (DII) ka buy/sell data. FII = Foreign big money. DII = Indian mutual funds, insurance companies."
+                  imp="FII + DII dono buying = STRONG BUY signal. FII selling + DII buying = DII absorbing, support zone. FII + DII dono selling = CAUTION, sirf deep dips." />
+                <GuideItem title="Sector Rotation Intelligence" emoji="🔄"
+                  desc="8 sectors track karta hai: US Tech, US Finance, US Energy, US Healthcare, US Industrial, IN IT, IN Finance, IN Pharma. Relative strength aur momentum score dikhta hai."
+                  imp="LEADING sector me invest karo, LAGGING sector se nikalo. Sector rotation = #1 alpha generator. 5-10% annual alpha add kar sakta hai." />
+                <GuideItem title="VIX (Fear Index)" emoji="😱"
+                  desc="CBOE VIX (US) aur India VIX. Market fear/greed measure karta hai. VIX < 15 = Greed (stable). VIX 15-22 = Normal. VIX 22-30 = Fear. VIX 30+ = Extreme Fear."
+                  imp="High VIX = Buy opportunities (log darr rahe hain = saste me mil raha hai). Low VIX = Caution (overconfidence = expensive prices)." />
+                <GuideItem title="Value at Risk (VaR)" emoji="📉"
+                  desc="3 methods se calculate hota hai: Parametric (normal distribution), Historical (actual past data), Monte Carlo (2000 simulations). Batata hai ki ek din me kitna loss ho sakta hai."
+                  imp="95% VaR = 95% chance ki isse zyada loss nahi hoga. Agar VaR ₹50,000 hai to ek din me ₹50,000 se zyada loss unlikely hai." />
+                <GuideItem title="Stress Testing" emoji="⚡"
+                  desc="6 historical scenarios test karta hai: 2008 Financial Crisis (-45%), COVID Crash (-30%), Interest Rate Shock (-15%), Geopolitical Shock (-20%), Tech Selloff (-18%), India Crisis (-35%)."
+                  imp="Ye worst-case scenarios hain. Agar portfolio in scenarios me survive kar raha hai to long-term safe hai. Drawdown tolerance check karo." />
+                <GuideItem title="Concentration Risk" emoji="⚠️"
+                  desc="Har asset ka portfolio me weight % aur risk contribution dikhta hai. Agar koi ek asset 35%+ hai to overconcentrated hai."
+                  imp="Diversify karo! Kisi ek asset/sector me 30% se zyada mat rakho. India + US + Crypto mix karo for global diversification." />
+              </div>
+            </div>
+
+            {/* BACKGROUND PROCESSES */}
+            <div className="glass-card rounded-2xl p-5">
+              <h2 className="text-base font-bold text-purple-400 mb-3">⚙️ BACKGROUND PROCESSES (Hamesha Chalte Rahte Hain)</h2>
+              <div className="space-y-3">
+                <GuideItem title="Portfolio Health Monitor" emoji="💊"
+                  desc="Floating badge (bottom-right corner) me health score dikhta hai 0-100. Har 60 second me check hota hai. Drawdown, RSI extremes, VIX spikes, trend reversals monitor karta hai."
+                  imp="GREEN (70+) = Sab theek hai. YELLOW (45-70) = Caution. RED (<45) = Danger — buy opportunities dekho. Click karke details dikhti hain." />
+                <GuideItem title="Price WebSocket" emoji="📡"
+                  desc="TradingView WebSocket stocks/ETFs ke liye. Binance WebSocket crypto ke liye. Real-time streaming prices. Batch update har 1.5 second me hota hai (performance optimization)."
+                  imp="WebSocket connected = green dot dikhta hai. Disconnected = red dot (auto-reconnect hota hai). Latency bhi dikhta hai — kam latency = better data." />
+                <GuideItem title="Telegram Alerts" emoji="📲"
+                  desc="Auto-alerts ON karo to har 30 minute me portfolio analysis Telegram pe bhejta hai (market hours me). VIX spike, deep dip, trend reversal pe instant alert."
+                  imp="Telegram bot commands: /dip, /health, /regime, /smartmoney, /screener. Daily digest 8 AM IST pe auto aata hai." />
+                <GuideItem title="Cloud Sync" emoji="☁️"
+                  desc="Portfolio data har 5 minute me cloud pe sync hota hai. API keys encrypted store hote hain (AES-256). Multiple devices pe same data."
+                  imp="Internet band ho jaye to local data kaam karta hai. Wapas aane pe auto-sync ho jata hai." />
+              </div>
+            </div>
+
+            {/* TELEGRAM BOT COMMANDS */}
+            <div className="glass-card rounded-2xl p-5">
+              <h2 className="text-base font-bold text-blue-400 mb-3">🤖 TELEGRAM BOT COMMANDS</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                <GuideCommand cmd="/portfolio" desc="Full portfolio report with P&L" />
+                <GuideCommand cmd="/market" desc="Market overview — indices, VIX, sectors" />
+                <GuideCommand cmd="/live" desc="Live prices for all assets" />
+                <GuideCommand cmd="/dip" desc="Buy-the-Dip scan for portfolio" />
+                <GuideCommand cmd="/health" desc="Portfolio health score (0-100)" />
+                <GuideCommand cmd="/regime" desc="Macro regime: Risk-On/Off/Stagflation/Goldilocks" />
+                <GuideCommand cmd="/smartmoney" desc="FII/DII smart money flow" />
+                <GuideCommand cmd="/screener" desc="Multi-factor screener (Alpha Score)" />
+                <GuideCommand cmd="/allocation" desc="Smart allocation recommendations" />
+                <GuideCommand cmd="/risk" desc="Risk analysis: VaR, stress tests" />
+                <GuideCommand cmd="/scan SYMBOL" desc="Deep scan any symbol (e.g., /scan INFY)" />
+                <GuideCommand cmd="/compare A B" desc="Compare two assets" />
+                <GuideCommand cmd="/crypto" desc="Crypto prices (INR + USD)" />
+                <GuideCommand cmd="/forex" desc="USD/INR forex rate" />
+                <GuideCommand cmd="/sip" desc="SIP report and recommendations" />
+                <GuideCommand cmd="/etf" desc="ETF analysis (Indian + US)" />
+                <GuideCommand cmd="/fiidii" desc="FII/DII data via web search" />
+                <GuideCommand cmd="/ipo" desc="Upcoming IPO data" />
+                <GuideCommand cmd="/news" desc="Latest market news" />
+                <GuideCommand cmd="/backtest" desc="Backtest AI signal accuracy" />
+                <GuideCommand cmd="/taxloss" desc="Tax-loss harvesting pairs" />
+                <GuideCommand cmd="/longterm" desc="Long-term investment report" />
+                <GuideCommand cmd="/strategy" desc="Full strategy report" />
+                <GuideCommand cmd="/digest" desc="Daily digest summary" />
+                <GuideCommand cmd="/ai QUESTION" desc="AI chat (Groq/Gemini/Claude)" />
+              </div>
+            </div>
+
+            {/* IMPORTANT TIPS */}
+            <div className="glass-card rounded-2xl p-5 border-amber-500/20">
+              <h2 className="text-base font-bold text-amber-400 mb-3">💡 IMPORTANT TIPS FOR LONG-TERM INVESTING</h2>
+              <div className="space-y-2 text-xs text-slate-300">
+                <p>🎯 <b className="text-white">Sirf Buy-on-Dip Strategy:</b> Sell mat karo. Jab market gire (dip) tab buy karo. Time ke saath compounding ka magic hoga.</p>
+                <p>📊 <b className="text-white">SIP Discipline:</b> Har month fixed amount invest karo. Market up ho ya down — SIP chalne do. 15+ years me 15-25% CAGR possible hai.</p>
+                <p>🔄 <b className="text-white">Sector Rotation:</b> Leading sectors me zyada invest karo. Lagging sectors se shift karo. Sector rotation se 5-10% extra alpha milta hai.</p>
+                <p>💰 <b className="text-white">Smart Money Follow Karo:</b> FII buying = market strong. FII selling = caution. DII usually counter-cyclical hai (FII sell kare to DII buy karta hai).</p>
+                <p>📉 <b className="text-white">VIX = Opportunity:</b> High VIX (fear) = saste me buy karo. Low VIX (greed) = expensive prices. Warren Buffett: "Be fearful when others are greedy, greedy when others are fearful."</p>
+                <p>🛡️ <b className="text-white">Diversification:</b> India + US + Crypto mix karo. Kisi ek sector/asset me 30%+ mat rakho. Core-Satellite strategy follow karo.</p>
+                <p>⏰ <b className="text-white">Time over Timing:</b> Market time karna impossible hai. Time IN the market zyada important hai. 15+ years hold karo.</p>
+                <p>🧠 <b className="text-white">AI Signals Trust Karo:</b> STRONG_BUY signal pe aggressive buy karo. AVOID signal pe mat buy karo. Confidence 80%+ signals zyada reliable hain.</p>
+              </div>
+            </div>
+
+            {/* NEURAL CHAT */}
+            <div className="glass-card rounded-2xl p-5 border-violet-500/20">
+              <h2 className="text-base font-bold text-violet-400 mb-3">🧠 NEURAL CHAT (AI Assistant)</h2>
+              <div className="space-y-2 text-xs text-slate-300">
+                <p>Bottom-right corner me chat icon hai. Click karo aur kuch bhi pucho — market analysis, stock advice, portfolio review.</p>
+                <p><b className="text-white">3 AI Engines:</b> Groq (fastest — general queries), Gemini (real-time news), Claude (deep analysis). Auto-detect karta hai kaunsa use karna hai.</p>
+                <p><b className="text-white">Quick Actions:</b> Pre-built prompts hain — "Market Overview", "Buy Signals", "Portfolio Review", "Risk Analysis". Ek click me response.</p>
+                <p><b className="text-white">Context-Aware:</b> AI ko tumhara portfolio data, live prices, market intelligence sab pata hota hai. Isliye personalized advice milta hai.</p>
               </div>
             </div>
           </div>
