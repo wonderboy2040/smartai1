@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { Position, PriceData, TabType, RiskLevel, TransactionType } from './types';
 import {
-  SECURE_PIN, TG_TOKEN, TG_CHAT_ID,
+  SECURE_PIN, TG_TOKEN, TG_CHAT_ID, DEFAULT_USD_INR,
   getTodayString, guessMarket, getAssetCagrProxy, formatPrice, formatCurrency, EXACT_TICKER_MAP, isCryptoSymbol
 } from './utils/constants';
 import {
   fetchSinglePrice, batchFetchPrices, fetchForexRate, fetchCryptoUsdInrRate,
   syncToCloud, loadFromCloud, sendTelegramAlert,
-  syncGroqKeyToCloud, loadGroqKeyFromCloud
+  syncGroqKeyToCloud, loadGroqKeyFromCloud, getBatchInterval
 } from './utils/api';
 import { secureStorage } from './utils/secureStorage';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from './utils/tvWebsocket';
@@ -17,8 +17,6 @@ import {
   getSmartAllocations, generateDeepAnalysis
 } from './utils/telegram';
 import { calculateVaR, runStressTests, analyzeConcentrationRisk } from './utils/riskEngine';
-
-import { getBatchInterval } from './utils/api';
 const NeuralChat = lazy(() => import('./components/NeuralChat').then(m => ({ default: m.NeuralChat })));
 import { Clock } from './components/Clock';
 
@@ -91,8 +89,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [portfolio, setPortfolio] = useState<Position[]>([]);
   const [livePrices, setLivePrices] = useState<Record<string, PriceData>>({});
-  const [usdInrRate, setUsdInrRate] = useState(83.5);
-  const usdInrRateRef = useRef(83.5);
+  const [usdInrRate, setUsdInrRate] = useState(DEFAULT_USD_INR);
+  const usdInrRateRef = useRef(DEFAULT_USD_INR);
   useEffect(() => { usdInrRateRef.current = usdInrRate; }, [usdInrRate]);
   const [cryptoUsdInrRate, setCryptoUsdInrRate] = useState(88.0);
   const cryptoUsdInrRateRef = useRef(88.0);
@@ -185,7 +183,7 @@ export default function App() {
 
       const savedPrices = secureStorage.getItem('livePrices');
       if (savedPrices) setLivePrices(JSON.parse(savedPrices));
-    } catch (e) { }
+    } catch (e) { console.warn('Failed to load local state:', e); }
 
     // Load from cloud
     loadFromCloud().then(data => {
@@ -471,7 +469,7 @@ export default function App() {
             const key = `${result.market}_${sym}`;
             setLivePrices(prev => ({ ...prev, [key]: result }));
           }
-        } catch (e) { }
+        } catch (e) { console.warn('Symbol analysis failed:', e); }
         finally { setIsAnalyzing(false); }
       })();
     }

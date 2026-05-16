@@ -9,6 +9,7 @@ interface ImportMetaEnv {
   readonly VITE_CLAUDE_API_KEY: string;
   readonly VITE_TAVILY_API_KEY: string;
   readonly VITE_ENCRYPTION_KEY: string;
+  readonly VITE_SECURE_PIN: string;
 }
 
 interface ImportMeta {

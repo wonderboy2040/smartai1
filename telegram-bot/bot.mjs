@@ -59,7 +59,10 @@ function checkAIRateLimit(chatId) {
 
 // Authorization check — only allow the configured chat ID
 function isAuthorized(msg) {
-  if (!TG_CHAT_ID) return true; // No chat ID configured = allow all
+  if (!TG_CHAT_ID) {
+    console.warn('TG_CHAT_ID not configured — rejecting all messages for security');
+    return false;
+  }
   return String(msg.chat.id) === String(TG_CHAT_ID);
 }
 

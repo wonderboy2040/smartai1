@@ -77,7 +77,7 @@ export async function saveGroqKeyToCloud(key) {
   try {
     const res = await fetch(API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ groqKey: key, action: 'saveKey', timestamp: Date.now() })
     });
     return res.ok;
@@ -99,7 +99,7 @@ export async function syncPortfolioToCloud(portfolio, usdInr) {
   try {
     const res = await fetch(API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'update', portfolio, timestamp: Date.now(), usdInr })
     });
     return res.ok;

@@ -1,16 +1,20 @@
 import CryptoJS from 'crypto-js';
 
-const ENCRYPTION_KEY = import.meta.env.VITE_ENCRYPTION_KEY || 'wealth-ai-default-key-change-in-prod';
+const ENCRYPTION_KEY = import.meta.env.VITE_ENCRYPTION_KEY;
+if (!ENCRYPTION_KEY) {
+  console.warn('VITE_ENCRYPTION_KEY not set — secureStorage encryption is disabled');
+}
 
 /**
  * Encrypt sensitive data (API keys, etc.)
  */
 export function encryptData(data: string): string {
   try {
+    if (!ENCRYPTION_KEY) return data;
     return CryptoJS.AES.encrypt(data, ENCRYPTION_KEY).toString();
   } catch (e) {
-    console.error('Encryption failed:', e);
-    return data; // Fallback to plain text (not ideal, but prevents breakage)
+    console.warn('Encryption failed:', e);
+    return data;
   }
 }
 
@@ -19,11 +23,12 @@ export function encryptData(data: string): string {
  */
 export function decryptData(encrypted: string): string {
   try {
+    if (!ENCRYPTION_KEY) return encrypted;
     const bytes = CryptoJS.AES.decrypt(encrypted, ENCRYPTION_KEY);
     return bytes.toString(CryptoJS.enc.Utf8);
   } catch (e) {
-    console.error('Decryption failed:', e);
-    return encrypted; // Fallback
+    console.warn('Decryption failed:', e);
+    return encrypted;
   }
 }
 
@@ -47,16 +52,15 @@ export const secureStorage = {
 
   setItem(key: string, value: string): void {
     try {
-      // Encrypt sensitive keys
       const sensitiveKeys = ['WEALTH_AI_GROQ', 'TG_TOKEN', 'TG_CHAT_ID'];
-      if (sensitiveKeys.includes(key)) {
+      if (sensitiveKeys.includes(key) && ENCRYPTION_KEY) {
         const encrypted = encryptData(value);
         localStorage.setItem(key, `enc:${encrypted}`);
       } else {
         localStorage.setItem(key, value);
       }
     } catch (e) {
-      console.error('Storage setItem failed:', e);
+      console.warn('Storage setItem failed:', e);
     }
   },
 

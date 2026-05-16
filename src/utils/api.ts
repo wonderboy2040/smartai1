@@ -117,7 +117,7 @@ async function fetchWithStaleCheck(sym: string, retryAttempt: number): Promise<P
           }
         }
       }
-    } catch (e) { }
+    } catch (e) { console.warn('CoinDCX fetch failed:', e); }
   }
 
   // Binance fallback for crypto (USD price — will be converted to INR by WebSocket handler)
@@ -149,7 +149,7 @@ async function fetchWithStaleCheck(sym: string, retryAttempt: number): Promise<P
           return result;
         }
       }
-    } catch (e) { }
+    } catch (e) { console.warn('Binance fetch failed:', e); }
   }
 
   // Try TradingView first
@@ -160,7 +160,7 @@ async function fetchWithStaleCheck(sym: string, retryAttempt: number): Promise<P
       priceCache.set(sym, tvResult, cacheTTL);
       return tvResult;
     }
-  } catch (e) { }
+  } catch (e) { console.warn('TradingView fetch failed:', e); }
 
   // Fallback to Yahoo Finance
   const yahooSymbol = isIndian ? `${cleanSym}.NS` : cleanSym;
@@ -196,7 +196,7 @@ async function fetchWithStaleCheck(sym: string, retryAttempt: number): Promise<P
           }
         }
       }
-    } catch (e) { }
+    } catch (e) { console.warn('Yahoo Finance fetch failed:', e); }
   }
 
   // Retry with alternate symbol
@@ -256,7 +256,7 @@ async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean)
         }
       }
     }
-  } catch (e) { }
+  } catch (e) { console.warn('TradingView single fetch failed:', e); }
 
   return null;
 }
@@ -397,7 +397,7 @@ export async function fetchForexRate(): Promise<number> {
         if (!isNaN(price) && price > 50 && price < 150) return price;
       }
     }
-  } catch (e) { }
+  } catch (e) { console.warn('AwesomeAPI forex fetch failed:', e); }
 
   // Backup 2: Open ER-API (Daily updates)
   try {
@@ -411,7 +411,7 @@ export async function fetchForexRate(): Promise<number> {
         if (!isNaN(price) && price > 50 && price < 150) return price;
       }
     }
-  } catch (e) { }
+  } catch (e) { console.warn('Open ER-API forex fetch failed:', e); }
 
   return DEFAULT_USD_INR; // Default fallback
 }
@@ -430,7 +430,7 @@ export async function fetchCryptoUsdInrRate(): Promise<number> {
         if (!isNaN(price) && price > 60 && price < 150) return price;
       }
     }
-  } catch (e) { }
+  } catch (e) { console.warn('CoinDCX USDT/INR fetch failed:', e); }
 
   // Backup: WazirX USDT/INR
   try {
@@ -444,7 +444,7 @@ export async function fetchCryptoUsdInrRate(): Promise<number> {
         if (!isNaN(price) && price > 60 && price < 150) return price;
       }
     }
-  } catch (e) { }
+  } catch (e) { console.warn('WazirX USDT/INR fetch failed:', e); }
 
   // Fallback to a fixed 5% premium over normal FOREX if all fails
   const normalRate = await fetchForexRate();
@@ -553,7 +553,7 @@ export async function loadGroqKeyFromCloud(): Promise<string | null> {
     if (key && typeof key === 'string' && key.length > 10) {
       return key;
     }
-  } catch (e) { }
+  } catch (e) { console.warn('Groq key cloud load failed:', e); }
   return null;
 }
 

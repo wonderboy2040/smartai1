@@ -6,7 +6,7 @@ import tailwindcss from '@tailwindcss/vite';
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   esbuild: {
-    drop: ['console'],
+    ...(process.env.NODE_ENV === 'production' ? { drop: ['console'] } : {}),
     legalComments: 'none',
   },
   build: {
@@ -18,16 +18,7 @@ export default defineConfig({
           if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) {
             return 'vendor-react';
           }
-          if (id.includes('@google/generative-ai') || id.includes('@ai-sdk')) {
-            return 'vendor-ml';
-          }
-          if (id.includes('framer-motion') || id.includes('motion')) {
-            return 'vendor-motion';
-          }
-          if (id.includes('lucide-react')) {
-            return 'vendor-icons';
-          }
-          if (id.includes('tailwindcss') || id.includes('clsx') || id.includes('tailwind-merge')) {
+          if (id.includes('crypto-js')) {
             return 'vendor-utils';
           }
         },
