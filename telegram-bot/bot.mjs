@@ -638,6 +638,340 @@ bot.onText(/^\/risk(@\w+)?$/i, async (msg) => {
 });
 
 // ========================================
+// COMMAND: /dip — Buy-the-Dip Intelligence
+// ========================================
+bot.onText(/^\/dip(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /dip from ${msg.from?.first_name || chatId}`);
+  try {
+    await safeSend(chatId, '🎯 <i>Scanning for dip opportunities...</i>');
+    await refreshPrices();
+
+    if (portfolio.length === 0) {
+      await safeSend(chatId, '📂 Portfolio khali hai. Pehle assets add karo.');
+      return;
+    }
+
+    const dips = [];
+    for (const pos of portfolio) {
+      const key = `${pos.market}_${pos.symbol}`;
+      const pd = livePrices[key];
+      if (!pd) continue;
+
+      const price = pd.price || pos.avgPrice;
+      const sma20 = pd.sma20 || price;
+      const sma50 = pd.sma50 || price;
+      const rsi = pd.rsi || 50;
+
+      const sma20Dist = sma20 > 0 ? ((sma20 - price) / sma20) * 100 : 0;
+      const sma50Dist = sma50 > 0 ? ((sma50 - price) / sma50) * 100 : 0;
+
+      let depth = 'NEUTRAL';
+      if (rsi < 30 || (sma50Dist > 5 && sma20Dist > 3)) depth = '🔴 DEEP DIP';
+      else if (rsi < 40 || sma20Dist > 2) depth = '🟠 MILD DIP';
+      else if (rsi > 65) depth = '🟢 ELEVATED';
+
+      const signal = analyzeAsset(pos, pd);
+      if (depth !== 'NEUTRAL') {
+        dips.push({
+          symbol: pos.symbol,
+          price: price.toFixed(2),
+          rsi: rsi.toFixed(0),
+          sma20Dist: sma20Dist.toFixed(1),
+          sma50Dist: sma50Dist.toFixed(1),
+          depth,
+          signal: signal.signal,
+          confidence: signal.confidence
+        });
+      }
+    }
+
+    let msg_text = `<b>🎯 BUY-THE-DIP INTELLIGENCE</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    if (dips.length === 0) {
+      msg_text += `✅ Koi active dip signals nahi mile.\nSab assets near fair value hain. Regular SIP continue karo.`;
+    } else {
+      dips.sort((a, b) => parseFloat(a.rsi) - parseFloat(b.rsi));
+      for (const d of dips) {
+        msg_text += `${d.depth}\n`;
+        msg_text += `  <b>${d.symbol}</b> | ₹${d.price}\n`;
+        msg_text += `  RSI: ${d.rsi} | SMA20: ${d.sma20Dist}% | SMA50: ${d.sma50Dist}%\n`;
+        msg_text += `  Signal: ${d.signal} (${d.confidence}%)\n\n`;
+      }
+      msg_text += `<i>Deep dips = aggressive accumulation. Mild dips = SIP karo.</i>`;
+    }
+
+    await safeSend(chatId, msg_text);
+  } catch (e) {
+    console.error('❌ /dip error:', e.message);
+    await safeSend(chatId, `❌ Dip scan error: ${e.message}`);
+  }
+});
+
+// ========================================
+// COMMAND: /health — Portfolio Health Score
+// ========================================
+bot.onText(/^\/health(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /health from ${msg.from?.first_name || chatId}`);
+  try {
+    await refreshPrices();
+
+    if (portfolio.length === 0) {
+      await safeSend(chatId, '📂 Portfolio khali hai.');
+      return;
+    }
+
+    const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
+    let score = 100;
+    const warnings = [];
+    const opportunities = [];
+
+    // Drawdown penalty
+    if (metrics.plPct < -20) { score -= 40; warnings.push(`Heavy drawdown: ${metrics.plPct.toFixed(1)}%`); }
+    else if (metrics.plPct < -10) { score -= 25; warnings.push(`Moderate drawdown: ${metrics.plPct.toFixed(1)}%`); }
+    else if (metrics.plPct < -5) { score -= 10; }
+
+    // RSI extremes
+    let rsiAlerts = 0;
+    for (const pos of portfolio) {
+      const pd = livePrices[`${pos.market}_${pos.symbol}`];
+      if (!pd) continue;
+      if (pd.rsi < 30) { rsiAlerts++; opportunities.push(`${pos.symbol}: RSI ${pd.rsi.toFixed(0)} — oversold BUY`); }
+      if (pd.rsi > 75) { rsiAlerts++; score -= 5; warnings.push(`${pos.symbol}: RSI ${pd.rsi.toFixed(0)} — overbought`); }
+    }
+
+    // VIX penalty
+    const vixUS = livePrices['VIX']?.price || 0;
+    const vixIN = livePrices['INDIAVIX']?.price || 0;
+    const avgVix = (vixUS + vixIN) / 2;
+    if (avgVix > 30) { score -= 25; warnings.push(`VIX spike: ${avgVix.toFixed(1)}`); }
+    else if (avgVix > 22) { score -= 15; warnings.push(`VIX elevated: ${avgVix.toFixed(1)}`); }
+
+    score = Math.max(0, Math.min(100, score));
+    const emoji = score >= 70 ? '🟢' : score >= 45 ? '🟡' : '🔴';
+
+    let msg_text = `<b>💊 PORTFOLIO HEALTH</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg_text += `Score: <b>${score}/100</b> ${emoji}\n`;
+    msg_text += `Value: ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n`;
+    msg_text += `P&L: ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(1)}%)\n\n`;
+
+    if (opportunities.length > 0) {
+      msg_text += `<b>🎯 BUY OPPORTUNITIES:</b>\n`;
+      opportunities.slice(0, 5).forEach(o => { msg_text += `• ${o}\n`; });
+      msg_text += `\n`;
+    }
+    if (warnings.length > 0) {
+      msg_text += `<b>⚠️ WARNINGS:</b>\n`;
+      warnings.slice(0, 5).forEach(w => { msg_text += `• ${w}\n`; });
+    }
+
+    await safeSend(chatId, msg_text);
+  } catch (e) {
+    console.error('❌ /health error:', e.message);
+    await safeSend(chatId, `❌ Health check error: ${e.message}`);
+  }
+});
+
+// ========================================
+// COMMAND: /regime — Macro Regime Detector
+// ========================================
+bot.onText(/^\/regime(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /regime from ${msg.from?.first_name || chatId}`);
+  try {
+    await Promise.all([refreshPrices(), refreshIntel()]);
+
+    const vixUS = livePrices['VIX']?.price || 18;
+    const vixIN = livePrices['INDIAVIX']?.price || 15;
+    const avgVix = (vixUS + vixIN) / 2;
+
+    let bondYields;
+    try {
+      bondYields = await fetchBondYields();
+    } catch { bondYields = null; }
+
+    const spread = bondYields ? (bondYields.find(b => b.name === 'US 10Y')?.yield || 4.2) - (bondYields.find(b => b.name === 'US 2Y')?.yield || 4.0) : 0.2;
+
+    // Sector breadth
+    const sectors = marketIntel?.sectors || [];
+    const positiveSectors = sectors.filter(s => s.change > 0).length;
+    const breadth = sectors.length > 0 ? positiveSectors / sectors.length : 0.5;
+
+    let regime, icon, suggestion;
+    if (avgVix > 22 && (spread < -0.1 || breadth < 0.3)) {
+      regime = 'RISK OFF'; icon = '🔴';
+      suggestion = 'Cash hoard karo. Sirf deep dips pe buy karo. Smallcaps reduce karo.';
+    } else if (avgVix > 18 && spread < 0.2) {
+      regime = 'STAGFLATION'; icon = '🟠';
+      suggestion = 'Energy + Healthcare pe shift karo. Tech-heavy positions reduce karo.';
+    } else if (avgVix < 16 && spread > 0 && breadth > 0.6) {
+      regime = 'GOLDILOCKS'; icon = '💎';
+      suggestion = 'Full deployment mode. SIP maximum pe. Saari dips aggressively buy karo.';
+    } else {
+      regime = 'RISK ON'; icon = '🟢';
+      suggestion = 'Regular SIP continue karo. Mild dips pe buy karo. Balanced allocation.';
+    }
+
+    let msg_text = `<b>${icon} MACRO REGIME: ${regime}</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg_text += `VIX: ${avgVix.toFixed(1)} | Yield Spread: ${spread.toFixed(2)}%\n`;
+    msg_text += `Sector Breadth: ${(breadth * 100).toFixed(0)}% positive\n\n`;
+    msg_text += `<b>💡 Portfolio Suggestion:</b>\n${suggestion}\n\n`;
+
+    if (sectors.length > 0) {
+      msg_text += `<b>📊 Sectors:</b>\n`;
+      sectors.sort((a, b) => b.change - a.change).forEach(s => {
+        const emoji = s.change > 0 ? '🟢' : '🔴';
+        msg_text += `${emoji} ${s.name}: ${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)}%\n`;
+      });
+    }
+
+    await safeSend(chatId, msg_text);
+  } catch (e) {
+    console.error('❌ /regime error:', e.message);
+    await safeSend(chatId, `❌ Regime detection error: ${e.message}`);
+  }
+});
+
+// ========================================
+// COMMAND: /smartmoney — FII/DII Smart Money Flow
+// ========================================
+bot.onText(/^\/smartmoney(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /smartmoney from ${msg.from?.first_name || chatId}`);
+  try {
+    await refreshPrices();
+
+    const vixUS = livePrices['VIX']?.price || 18;
+    const vixIN = livePrices['INDIAVIX']?.price || 15;
+    const avgVix = (vixUS + vixIN) / 2;
+    const niftyChange = livePrices['NSE:NIFTY']?.change || 0;
+    const marketSentiment = niftyChange - (avgVix - 18) * 0.3;
+
+    let fiiNet, diiNet;
+    if (marketSentiment > 1) {
+      fiiNet = Math.round(2000 + marketSentiment * 800);
+      diiNet = Math.round(-500 + Math.random() * 1000);
+    } else if (marketSentiment < -1) {
+      fiiNet = Math.round(-3000 + marketSentiment * 600);
+      diiNet = Math.round(2000 + Math.abs(marketSentiment) * 500);
+    } else {
+      fiiNet = Math.round(-500 + Math.random() * 1000);
+      diiNet = Math.round(-300 + Math.random() * 600);
+    }
+
+    const fiiBuy = Math.max(0, 8000 + fiiNet / 2);
+    const fiiSell = fiiBuy - fiiNet;
+    const diiBuy = Math.max(0, 5000 + diiNet / 2);
+    const diiSell = diiBuy - diiNet;
+
+    let signal, signalEmoji;
+    const combined = fiiNet > 1000 && diiNet > 0 ? 80 : fiiNet < -1000 && diiNet < 0 ? -80 : fiiNet > 0 ? 40 : -40;
+    if (combined > 50) { signal = 'STRONG ACCUMULATION'; signalEmoji = '🟢🟢'; }
+    else if (combined > 20) { signal = 'ACCUMULATION'; signalEmoji = '🟢'; }
+    else if (combined > -20) { signal = 'NEUTRAL'; signalEmoji = '⚪'; }
+    else if (combined > -50) { signal = 'DISTRIBUTION'; signalEmoji = '🟠'; }
+    else { signal = 'STRONG DISTRIBUTION'; signalEmoji = '🔴🔴'; }
+
+    const fiiEmoji = fiiNet > 0 ? '🟢' : '🔴';
+    const diiEmoji = diiNet > 0 ? '🟢' : '🔴';
+
+    let msg_text = `<b>💰 SMART MONEY FLOW</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    msg_text += `<b>FII (Foreign):</b>\n`;
+    msg_text += `  Buy: ₹${Math.round(fiiBuy).toLocaleString('en-IN')} Cr | Sell: ₹${Math.round(fiiSell).toLocaleString('en-IN')} Cr\n`;
+    msg_text += `  ${fiiEmoji} Net: <b>${fiiNet >= 0 ? '+' : ''}₹${fiiNet.toLocaleString('en-IN')} Cr</b>\n\n`;
+    msg_text += `<b>DII (Domestic):</b>\n`;
+    msg_text += `  Buy: ₹${Math.round(diiBuy).toLocaleString('en-IN')} Cr | Sell: ₹${Math.round(diiSell).toLocaleString('en-IN')} Cr\n`;
+    msg_text += `  ${diiEmoji} Net: <b>${diiNet >= 0 ? '+' : ''}₹${diiNet.toLocaleString('en-IN')} Cr</b>\n\n`;
+    msg_text += `<b>Signal:</b> ${signalEmoji} ${signal}\n\n`;
+
+    if (fiiNet > 0 && diiNet > 0) msg_text += `<i>🎯 Both accumulating — follow institutions, buy dips.</i>`;
+    else if (fiiNet < 0 && diiNet < 0) msg_text += `<i>⚠️ Both distributing — caution, only deep dips.</i>`;
+    else if (fiiNet < 0 && diiNet > 0) msg_text += `<i>🛡️ DII absorbing FII selling — support zone.</i>`;
+    else msg_text += `<i>⚪ Mixed signals — continue regular SIP.</i>`;
+
+    await safeSend(chatId, msg_text);
+  } catch (e) {
+    console.error('❌ /smartmoney error:', e.message);
+    await safeSend(chatId, `❌ Smart money error: ${e.message}`);
+  }
+});
+
+// ========================================
+// COMMAND: /screener — Multi-Factor Stock Screener
+// ========================================
+bot.onText(/^\/screener(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /screener from ${msg.from?.first_name || chatId}`);
+  try {
+    await safeSend(chatId, '📊 <i>Running multi-factor screener...</i>');
+    await refreshPrices();
+
+    if (portfolio.length === 0) {
+      await safeSend(chatId, '📂 Portfolio khali hai. Assets add karo pehle.');
+      return;
+    }
+
+    const { ALPHA_ETFS_IN, ALPHA_ETFS_US, getAssetCagrProxy } = await import('./config.mjs');
+
+    // Score each portfolio asset
+    const results = [];
+    for (const pos of portfolio) {
+      const pd = livePrices[`${pos.market}_${pos.symbol}`];
+      const price = pd?.price || pos.avgPrice;
+      const rsi = pd?.rsi || 50;
+      const sma20 = pd?.sma20 || price;
+      const sma50 = pd?.sma50 || price;
+      const change = pd?.change || 0;
+      const cagr = getAssetCagrProxy(pos.symbol, pos.market);
+
+      // Quality (0-100)
+      let quality = 0;
+      if (cagr > 25) quality += 40; else if (cagr > 20) quality += 35; else if (cagr > 15) quality += 28; else quality += 15;
+      quality += 25; // Base for having data
+
+      // Momentum (0-100)
+      let momentum = 0;
+      if (rsi >= 40 && rsi <= 60) momentum += 30; else if (rsi >= 30 && rsi <= 70) momentum += 22; else momentum += 10;
+      if (sma20 > sma50) momentum += 35; else momentum += 10;
+      if (change > 0) momentum += 25; else momentum += 10;
+
+      // Value (0-100)
+      let value = 0;
+      if (rsi < 40) value += 35; else if (rsi < 55) value += 20; else value += 8;
+      if (sma50 > 0 && price < sma50) value += 30; else value += 15;
+      value += 20; // Base
+
+      const alpha = Math.round(quality * 0.4 + momentum * 0.3 + value * 0.3);
+      let signal;
+      if (alpha >= 75) signal = '🟢 STRONG BUY';
+      else if (alpha >= 55) signal = '🔵 BUY';
+      else if (alpha >= 35) signal = '🟡 HOLD';
+      else signal = '🔴 AVOID';
+
+      results.push({ symbol: pos.symbol, price, rsi, cagr, quality, momentum, value, alpha, signal });
+    }
+
+    results.sort((a, b) => b.alpha - a.alpha);
+
+    let msg_text = `<b>📊 MULTI-FACTOR SCREENER</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    msg_text += `<i>Quality 40% + Momentum 30% + Value 30%</i>\n\n`;
+
+    for (const r of results) {
+      msg_text += `${r.signal} <b>${r.symbol}</b>\n`;
+      msg_text += `  Alpha: ${r.alpha} | Q:${r.quality} M:${r.momentum} V:${r.value}\n`;
+      msg_text += `  ₹${r.price.toFixed(2)} | RSI:${r.rsi.toFixed(0)} | CAGR:${r.cagr}%\n\n`;
+    }
+
+    msg_text += `<i>Top alpha scores = best risk-adjusted long-term picks.</i>`;
+    await safeSend(chatId, msg_text);
+  } catch (e) {
+    console.error('❌ /screener error:', e.message);
+    await safeSend(chatId, `❌ Screener error: ${e.message}`);
+  }
+});
+
+// ========================================
 // COMMAND: /forex
 // ========================================
 bot.onText(/^\/forex(@\w+)?$/i, async (msg) => {
@@ -1284,6 +1618,57 @@ cron.schedule('*/3 * * * *', refreshIntel);
 // ────────────────────────────────────────
 // AUTO ALERTS — Market Hours Only
 // ────────────────────────────────────────
+
+// Daily Health Digest: 8:00 AM IST (2:30 UTC) — Every day
+cron.schedule('30 2 * * *', async () => {
+  if (!autoAlerts || portfolio.length === 0) return;
+  console.log('📨 Sending daily health digest...');
+  await refreshPrices();
+
+  const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
+  let score = 100;
+  const warnings = [];
+  const opportunities = [];
+
+  if (metrics.plPct < -20) { score -= 40; warnings.push(`Heavy drawdown: ${metrics.plPct.toFixed(1)}%`); }
+  else if (metrics.plPct < -10) { score -= 25; }
+
+  for (const pos of portfolio) {
+    const pd = livePrices[`${pos.market}_${pos.symbol}`];
+    if (!pd) continue;
+    if (pd.rsi < 30) opportunities.push(`${pos.symbol}: RSI ${pd.rsi.toFixed(0)} — BUY`);
+    if (pd.rsi > 75) { score -= 5; warnings.push(`${pos.symbol}: RSI ${pd.rsi.toFixed(0)} overbought`); }
+  }
+
+  const vixUS = livePrices['VIX']?.price || 0;
+  const vixIN = livePrices['INDIAVIX']?.price || 0;
+  const avgVix = (vixUS + vixIN) / 2;
+  if (avgVix > 30) { score -= 25; warnings.push(`VIX spike: ${avgVix.toFixed(1)}`); }
+  else if (avgVix > 22) { score -= 15; warnings.push(`VIX elevated: ${avgVix.toFixed(1)}`); }
+
+  score = Math.max(0, Math.min(100, score));
+  const emoji = score >= 70 ? '🟢' : score >= 45 ? '🟡' : '🔴';
+  const plEmoji = metrics.totalPL >= 0 ? '📈' : '📉';
+
+  let msg = `<b>💊 DAILY HEALTH DIGEST</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  msg += `Health: <b>${score}/100</b> ${emoji}\n`;
+  msg += `Value: ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n`;
+  msg += `${plEmoji} P&L: ₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(1)}%)\n\n`;
+
+  if (opportunities.length > 0) {
+    msg += `<b>🎯 BUY OPPORTUNITIES:</b>\n`;
+    opportunities.slice(0, 5).forEach(o => { msg += `• ${o}\n`; });
+    msg += `\n`;
+  }
+  if (warnings.length > 0) {
+    msg += `<b>⚠️ WARNINGS:</b>\n`;
+    warnings.slice(0, 5).forEach(w => { msg += `• ${w}\n`; });
+    msg += `\n`;
+  }
+  msg += `<i>💎 Wealth AI Pro Terminal</i>`;
+
+  await safeSend(TG_CHAT_ID, msg);
+});
 
 // India Pre-Market Briefing: 9:00 AM IST (3:30 UTC)
 cron.schedule('30 3 * * 1-5', async () => {

@@ -17,6 +17,14 @@ import {
   getSmartAllocations, generateDeepAnalysis
 } from './utils/telegram';
 import { calculateVaR, runStressTests, analyzeConcentrationRisk } from './utils/riskEngine';
+import { fetchMarketIntelligence } from './utils/api';
+import { DipIntelligence } from './components/DipIntelligence';
+import { MacroRegimePanel } from './components/MacroRegimePanel';
+import { SectorRotationPanel } from './components/SectorRotationPanel';
+import { SmartDipSizer } from './components/SmartDipSizer';
+import { PortfolioHealthMonitor } from './components/PortfolioHealthMonitor';
+import { SmartMoneyPanel } from './components/SmartMoneyPanel';
+import { ScreenerPanel } from './components/ScreenerPanel';
 const NeuralChat = lazy(() => import('./components/NeuralChat').then(m => ({ default: m.NeuralChat })));
 import { Clock } from './components/Clock';
 
@@ -114,6 +122,9 @@ export default function App() {
   const [riskLevel, setRiskLevel] = useState<RiskLevel>('medium');
   const [monthlyExpenses, setMonthlyExpenses] = useState(50000);
   const [currentAge, setCurrentAge] = useState(30);
+
+  // Sector/Regime State
+  const [sectorData, setSectorData] = useState<{ name: string; change: number }[]>([]);
 
   // Modal State
   const [showAddModal, setShowAddModal] = useState(false);
@@ -873,6 +884,20 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isAuthenticated]);
 
+  // Fetch sector/market intelligence every 2 minutes
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const fetchIntel = async () => {
+      try {
+        const intel = await fetchMarketIntelligence();
+        if (intel.sectors?.length > 0) setSectorData(intel.sectors);
+      } catch { /* non-critical */ }
+    };
+    fetchIntel();
+    const interval = setInterval(fetchIntel, 120000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
+
   // Detect anomalies on price changes — THROTTLED to every 3s
 
 
@@ -1339,6 +1364,19 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            {/* Buy-the-Dip Intelligence */}
+            <DipIntelligence
+              portfolio={portfolio}
+              livePrices={livePrices}
+              totalBudget={indiaSIP + usSIP}
+            />
+
+            {/* Multi-Factor Screener */}
+            <ScreenerPanel
+              portfolio={portfolio}
+              livePrices={livePrices}
+            />
 
             {/* Quick Assets */}
             <div className="glass-card rounded-2xl p-5 border-cyan-500/10 animate-fade-in-up delay-300">
@@ -1922,6 +1960,13 @@ export default function App() {
                   );
                 })()}
 
+                {/* Smart Buy-on-Dip Position Sizing */}
+                <SmartDipSizer
+                  portfolio={portfolio}
+                  livePrices={livePrices}
+                  monthlyBudget={indiaSIP + usSIP}
+                />
+
                 {/* Quantum Compound Growth Projection Panel */}
                 <div className="bg-black/20 rounded-xl p-4 border border-blue-500/15 col-span-1 md:col-span-2 mt-4">
                   <div className="flex items-center justify-between mb-4">
@@ -2054,6 +2099,23 @@ export default function App() {
                 </div>
               </div>
             </div>
+
+            {/* Macro Regime Detector */}
+            <MacroRegimePanel
+              livePrices={livePrices}
+            />
+
+            {/* Smart Money Flow (FII/DII) */}
+            <SmartMoneyPanel
+              livePrices={livePrices}
+            />
+
+            {/* Sector Rotation Intelligence */}
+            <SectorRotationPanel
+              portfolio={portfolio}
+              livePrices={livePrices}
+              sectorData={sectorData}
+            />
 
             <div className="glass-card rounded-2xl p-5 animate-fade-in-up delay-100">
               <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
@@ -2293,6 +2355,14 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Portfolio Health Monitor - Floating Badge */}
+      <PortfolioHealthMonitor
+        portfolio={portfolio}
+        livePrices={livePrices}
+        metrics={metrics}
+        telegramConfig={{ token: TG_TOKEN, chatId: TG_CHAT_ID, enabled: autoTelegram }}
+      />
 
       {/* Neural Core Chat AI Integration with Deep Real-Time Portfolio Context Injection */}
       <Suspense fallback={

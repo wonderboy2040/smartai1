@@ -69,3 +69,84 @@ export interface PartialProfitResult {
   remainingQty: number;
   newAvgPrice: number;
 }
+
+// ========================================
+// BUY-THE-DIP & LONG-TERM INVESTMENT TYPES
+// ========================================
+
+export interface DipLevel {
+  label: string;
+  percentBelow: number;
+  targetPrice: number;
+  suggestedAmount: number;
+  triggered: boolean;
+}
+
+export interface DipSignal {
+  symbol: string;
+  market: 'IN' | 'US';
+  currentPrice: number;
+  sma20: number;
+  sma50: number;
+  sma20Distance: number;
+  sma50Distance: number;
+  rsi: number;
+  dipDepth: 'DEEP' | 'MILD' | 'NEUTRAL' | 'ELEVATED';
+  fibSupport: number;
+  fibResistance: number;
+  entryTarget: number;
+  dipLadder: DipLevel[];
+  confidence: number;
+  reason: string;
+}
+
+export interface PortfolioHealth {
+  score: number;
+  drawdownFromHigh: number;
+  rsiExtremeCount: number;
+  trendReversals: string[];
+  vixStatus: 'NORMAL' | 'ELEVATED' | 'SPIKE';
+  alertLevel: 'GREEN' | 'YELLOW' | 'RED';
+  buyOpportunities: string[];
+  warnings: string[];
+}
+
+export interface MacroRegime {
+  regime: 'RISK_ON' | 'RISK_OFF' | 'STAGFLATION' | 'GOLDILOCKS';
+  confidence: number;
+  vix: number;
+  yieldCurve: number;
+  description: string;
+  portfolioSuggestion: string;
+  sectorRecommendation: { sector: string; action: 'OVERWEIGHT' | 'UNDERWEIGHT' | 'NEUTRAL'; reason: string }[];
+}
+
+export interface SectorMomentum {
+  name: string;
+  ticker: string;
+  change: number;
+  relativeStrength: number;
+  compositeScore: number;
+  trend: 'LEADING' | 'LAGGING' | 'IMPROVING' | 'WEAKENING';
+}
+
+export interface ScreenerResult {
+  symbol: string;
+  market: 'IN' | 'US';
+  name: string;
+  price: number;
+  qualityScore: number;
+  cagr: number;
+  maxDrawdown: number;
+  momentumScore: number;
+  rsi: number;
+  sma20: number;
+  sma50: number;
+  aboveSma200: boolean;
+  change: number;
+  valueScore: number;
+  pegRatio: number;
+  alphaScore: number;
+  signal: 'STRONG_BUY' | 'BUY' | 'HOLD' | 'AVOID';
+  reason: string;
+}
