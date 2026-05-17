@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Quantum Execution Market Terminal</title>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Config -->
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-container-low": "#1c1b1b",
+                        "on-primary-fixed": "#002022",
+                        "surface-container-high": "#2a2a2a",
+                        "on-secondary-container": "#fff6fc",
+                        "on-primary": "#00363a",
+                        "surface-container-highest": "#353534",
+                        "secondary-fixed-dim": "#ebb2ff",
+                        "secondary": "#ebb2ff",
+                        "error": "#ffb4ab",
+                        "on-primary-fixed-variant": "#004f54",
+                        "on-tertiary": "#233148",
+                        "outline-variant": "#3a494b",
+                        "on-primary-container": "#006a71",
+                        "tertiary-fixed": "#d6e3ff",
+                        "primary-fixed-dim": "#00dbe7",
+                        "error-container": "#93000a",
+                        "outline": "#849495",
+                        "surface-container": "#201f1f",
+                        "inverse-on-surface": "#313030",
+                        "surface-variant": "#353534",
+                        "on-background": "#e5e2e1",
+                        "on-surface": "#e5e2e1",
+                        "surface-container-lowest": "#0e0e0e",
+                        "on-error": "#690005",
+                        "primary-container": "#00f2ff",
+                        "on-secondary-fixed": "#320047",
+                        "inverse-surface": "#e5e2e1",
+                        "primary-fixed": "#74f5ff",
+                        "on-tertiary-container": "#526079",
+                        "tertiary-fixed-dim": "#b9c7e4",
+                        "on-tertiary-fixed": "#0d1c32",
+                        "on-surface-variant": "#b9cacb",
+                        "on-secondary": "#520072",
+                        "inverse-primary": "#00696f",
+                        "surface": "#131313",
+                        "secondary-fixed": "#f8d8ff",
+                        "primary": "#e1fdff",
+                        "background": "#131313",
+                        "surface-dim": "#131313",
+                        "on-error-container": "#ffdad6",
+                        "tertiary-container": "#cddbf9",
+                        "surface-bright": "#3a3939",
+                        "tertiary": "#f6f7ff",
+                        "on-secondary-fixed-variant": "#74009f",
+                        "on-tertiary-fixed-variant": "#39475f",
+                        "surface-tint": "#00dbe7",
+                        "secondary-container": "#b600f8"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "xs": "4px",
+                        "container-max": "1440px",
+                        "lg": "40px",
+                        "base": "8px",
+                        "xl": "64px",
+                        "sm": "12px",
+                        "md": "24px",
+                        "gutter": "24px"
+                    },
+                    "fontFamily": {
+                        "h2": ["Space Grotesk"],
+                        "body-md": ["Inter"],
+                        "mono-data": ["Space Grotesk"],
+                        "label-caps": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "h1": ["Space Grotesk"],
+                        "display": ["Space Grotesk"]
+                    },
+                    "fontSize": {
+                        "h2": ["24px", { "lineHeight": "1.3", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "1.5", "fontWeight": "400" }],
+                        "mono-data": ["14px", { "lineHeight": "1", "letterSpacing": "0.05em", "fontWeight": "500" }],
+                        "label-caps": ["12px", { "lineHeight": "1", "letterSpacing": "0.1em", "fontWeight": "600" }],
+                        "body-lg": ["18px", { "lineHeight": "1.6", "fontWeight": "400" }],
+                        "h1": ["32px", { "lineHeight": "1.2", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "display": ["48px", { "lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "700" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        /* Glassmorphism card utility */
+        .glass-card {
+            background-color: rgba(10, 25, 47, 0.4);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            border-left: 1px solid rgba(255, 255, 255, 0.1);
+            border-right: 1px solid rgba(0, 0, 0, 0.5);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.5);
+        }
+        /* Custom neon grid pattern for heatmap */
+        .neon-grid-bg {
+            background-image: 
+                linear-gradient(to right, rgba(0, 242, 255, 0.05) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(0, 242, 255, 0.05) 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-surface min-h-screen overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full z-50 flex justify-between items-center px-8 h-16 bg-slate-950/80 backdrop-blur-md font-space-grotesk tracking-widest uppercase border-b border-white/10 shadow-[0_4px_30px_rgba(0,0,0,0.1)]">
+<div class="flex items-center gap-md">
+<span class="text-xl font-bold tracking-tighter text-cyan-400 drop-shadow-[0_0_8px_rgba(0,242,255,0.5)]">QUANTUM_TRADE</span>
+</div>
+<div class="flex items-center gap-md">
+<div class="relative hidden md:block">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">search</span>
+<input class="bg-white/5 border-b border-slate-700 text-cyan-400 font-mono-data text-mono-data pl-10 pr-4 py-2 focus:outline-none focus:border-cyan-400 focus:bg-white/10 transition-all placeholder:text-slate-600" placeholder="SEARCH TICKER..." type="text"/>
+</div>
+<div class="flex items-center gap-sm">
+<button class="text-slate-500 hover:text-cyan-300 hover:bg-white/5 transition-all p-2 rounded-full flex items-center justify-center group active:scale-95 duration-150">
+<span class="material-symbols-outlined group-hover:drop-shadow-[0_0_8px_rgba(0,242,255,0.5)]">sync</span>
+</button>
+<button class="text-slate-500 hover:text-cyan-300 hover:bg-white/5 transition-all p-2 rounded-full flex items-center justify-center group active:scale-95 duration-150">
+<span class="material-symbols-outlined group-hover:drop-shadow-[0_0_8px_rgba(0,242,255,0.5)]">verified_user</span>
+</button>
+<button class="text-slate-500 hover:text-cyan-300 hover:bg-white/5 transition-all p-2 rounded-full flex items-center justify-center group active:scale-95 duration-150 relative">
+<span class="absolute top-2 right-2 w-2 h-2 bg-secondary-container rounded-full shadow-[0_0_5px_rgba(182,0,248,0.8)]"></span>
+<span class="material-symbols-outlined group-hover:drop-shadow-[0_0_8px_rgba(0,242,255,0.5)]">notifications</span>
+</button>
+</div>
+<div class="ml-sm border-l border-white/10 pl-md">
+<div class="w-8 h-8 rounded-full bg-gradient-to-br from-primary-container to-secondary-container flex items-center justify-center shadow-[0_0_10px_rgba(0,242,255,0.3)] cursor-pointer">
+<img alt="Elite User Profile" class="w-full h-full rounded-full object-cover mix-blend-overlay opacity-80" data-alt="Futuristic cybernetic avatar portrait with neon lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAeBwWJcZ5FHxKUI4mpPcMeqW9AyymfmxcQbaewf0DEtP3Tjwk9dSXI0-Q64FPn-vrqodzdSAmCShwcA4g0ku8RohsgFqfa6xtUA4DaH9vmkUlru0V6wbUtWLPJJzZtGcyd-WVjROoSdumLACJ303XZ9mqW9S5N2VEgHAuIYHGEnnqt9walkMPlfmVBKshntG9Bh9V91qi2ULVAfThagXSOv1_Ffi0cfd7uO4J12wSQss2y05HvbRiSHOqfPsVMlDB7R-goSC4VqT0"/>
+</div>
+</div>
+</div>
+</header>
+<!-- SideNavBar & Main Content Wrapper -->
+<div class="flex pt-16">
+<!-- SideNavBar -->
+<nav class="hidden md:flex fixed left-0 top-16 h-[calc(100vh-64px)] w-64 flex-col py-6 bg-slate-950/90 backdrop-blur-xl border-r border-white/10 shadow-2xl z-40">
+<div class="px-6 mb-8">
+<div class="flex items-center gap-sm mb-2">
+<div class="w-10 h-10 rounded border border-cyan-400/30 bg-cyan-400/10 flex items-center justify-center overflow-hidden relative">
+<div class="absolute inset-0 bg-gradient-to-t from-primary-container/20 to-transparent"></div>
+<span class="material-symbols-outlined text-cyan-400 text-lg">memory</span>
+</div>
+<div>
+<h3 class="font-space-grotesk font-bold text-sm tracking-widest text-cyan-400">NODE_01</h3>
+<p class="font-space-grotesk text-[10px] tracking-widest text-secondary-fixed flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary-fixed animate-pulse"></span> Sync Active
+                        </p>
+</div>
+</div>
+</div>
+<ul class="flex flex-col gap-1 px-4 flex-1">
+<!-- Active Tab: Terminal -->
+<li>
+<a class="flex items-center gap-sm px-4 py-3 rounded text-cyan-400 bg-cyan-400/10 border-r-2 border-cyan-400 font-space-grotesk text-xs tracking-widest hover:bg-white/5 transition-colors group" href="#">
+<span class="material-symbols-outlined text-lg group-hover:translate-x-1 duration-300">terminal</span>
+                        Terminal
+                    </a>
+</li>
+<li>
+<a class="flex items-center gap-sm px-4 py-3 rounded text-slate-500 hover:text-slate-300 font-space-grotesk text-xs tracking-widest hover:bg-white/5 transition-colors group" href="#">
+<span class="material-symbols-outlined text-lg group-hover:translate-x-1 duration-300">psychology</span>
+                        Intelligence
+                    </a>
+</li>
+<li>
+<a class="flex items-center gap-sm px-4 py-3 rounded text-slate-500 hover:text-slate-300 font-space-grotesk text-xs tracking-widest hover:bg-white/5 transition-colors group" href="#">
+<span class="material-symbols-outlined text-lg group-hover:translate-x-1 duration-300">account_balance_wallet</span>
+                        Portfolio
+                    </a>
+</li>
+<li>
+<a class="flex items-center gap-sm px-4 py-3 rounded text-slate-500 hover:text-slate-300 font-space-grotesk text-xs tracking-widest hover:bg-white/5 transition-colors group" href="#">
+<span class="material-symbols-outlined text-lg group-hover:translate-x-1 duration-300">query_stats</span>
+                        Market
+                    </a>
+</li>
+<li>
+<a class="flex items-center gap-sm px-4 py-3 rounded text-slate-500 hover:text-slate-300 font-space-grotesk text-xs tracking-widest hover:bg-white/5 transition-colors group" href="#">
+<span class="material-symbols-outlined text-lg group-hover:translate-x-1 duration-300">security</span>
+                        Security
+                    </a>
+</li>
+</ul>
+<div class="px-6 mt-auto">
+<button class="w-full py-3 bg-gradient-to-r from-cyan-600 to-cyan-900 border border-cyan-400/50 rounded text-white font-space-grotesk text-xs tracking-[0.2em] uppercase shadow-[0_0_15px_rgba(0,242,255,0.2)] hover:shadow-[0_0_25px_rgba(0,242,255,0.4)] transition-all">
+                    EXECUTE TRADE
+                </button>
+</div>
+</nav>
+<!-- Main Canvas -->
+<main class="flex-1 md:ml-64 p-md md:p-xl w-full max-w-container-max mx-auto relative">
+<!-- Ambient Background Glow -->
+<div class="absolute top-0 left-1/4 w-1/2 h-96 bg-primary-container/5 blur-[120px] rounded-full pointer-events-none -z-10"></div>
+<div class="absolute bottom-0 right-1/4 w-1/3 h-64 bg-secondary-container/5 blur-[100px] rounded-full pointer-events-none -z-10"></div>
+<header class="mb-lg flex flex-col md:flex-row justify-between items-start md:items-end gap-md">
+<div>
+<div class="flex items-center gap-sm mb-2">
+<span class="px-2 py-1 rounded-full border border-primary-container/30 bg-primary-container/10 font-label-caps text-label-caps text-primary-container">LIVE ENVIRONMENT</span>
+<div class="flex items-center gap-1 text-secondary-fixed font-mono-data text-[10px]">
+<span class="material-symbols-outlined text-[14px]">psychology</span>
+                            AI OPTIMIZATION ACTIVE
+                        </div>
+</div>
+<h1 class="font-h1 text-h1 text-inverse-surface mb-1 shadow-black drop-shadow-md">Quantum Execution Hub</h1>
+<p class="font-body-md text-body-md text-on-surface-variant max-w-2xl">High-frequency order flow routing and multi-stage leverage management.</p>
+</div>
+</header>
+<!-- Grid Layout -->
+<div class="grid grid-cols-1 md:grid-cols-12 gap-md">
+<!-- Order Flow Heatmap -->
+<div class="col-span-1 md:col-span-8 glass-card rounded-xl flex flex-col relative overflow-hidden">
+<div class="p-md border-b border-white/5 flex justify-between items-center bg-surface-container/50">
+<h2 class="font-h2 text-[18px] text-inverse-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-primary-container">blur_on</span>
+                            Order Flow Heatmap
+                        </h2>
+<div class="flex gap-2">
+<button class="px-3 py-1 bg-primary-container/20 text-primary-container font-mono-data text-xs rounded border border-primary-container/30">SPY</button>
+<button class="px-3 py-1 bg-surface-container text-on-surface-variant hover:text-inverse-surface font-mono-data text-xs rounded border border-outline/30 transition-colors">NIFTYBEES</button>
+</div>
+</div>
+<div class="flex-1 p-md relative min-h-[300px] neon-grid-bg">
+<!-- Simulated Chart Elements -->
+<div class="absolute inset-0 p-md flex items-end">
+<svg class="w-full h-full overflow-visible" preserveaspectratio="none">
+<defs>
+<filter height="140%" id="glow" width="140%" x="-20%" y="-20%">
+<fegaussianblur result="blur" stddeviation="4"></fegaussianblur>
+<femerge>
+<femergenode in="blur"></femergenode>
+<femergenode in="SourceGraphic"></femergenode>
+</femerge>
+</filter>
+<lineargradient id="lineGrad" x1="0" x2="1" y1="0" y2="0">
+<stop offset="0%" stop-color="#00f2ff" stop-opacity="0.2"></stop>
+<stop offset="100%" stop-color="#00f2ff" stop-opacity="1"></stop>
+</lineargradient>
+</defs>
+<!-- Price Line -->
+<path d="M 0 150 Q 50 140, 100 160 T 200 120 T 300 180 T 400 90 T 500 110 T 600 50 T 700 80" fill="none" filter="url(#glow)" stroke="url(#lineGrad)" stroke-width="2"></path>
+</svg>
+</div>
+<!-- Simulated Heatmap Clusters -->
+<div class="absolute top-[20%] left-[30%] w-24 h-24 bg-error/20 rounded-full blur-xl mix-blend-screen"></div>
+<div class="absolute top-[60%] left-[70%] w-32 h-32 bg-primary-fixed/20 rounded-full blur-xl mix-blend-screen"></div>
+<!-- Data Points Overlay -->
+<div class="absolute inset-0 p-md flex justify-between">
+<div class="flex flex-col justify-between h-full font-mono-data text-[10px] text-outline">
+<span>512.40</span>
+<span>512.00</span>
+<span>511.60</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Advanced Execution Panel -->
+<div class="col-span-1 md:col-span-4 glass-card rounded-xl p-md flex flex-col">
+<div class="flex justify-between items-center mb-6">
+<h2 class="font-h2 text-[18px] text-inverse-surface">Terminal Execute</h2>
+<div class="flex items-center gap-1 text-[10px] font-label-caps text-secondary-fixed bg-secondary-container/10 px-2 py-1 rounded border border-secondary-container/30">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary-fixed animate-pulse"></span>
+                            QUANTUM LINK
+                        </div>
+</div>
+<!-- Buy/Sell Toggle -->
+<div class="flex bg-surface-container-highest p-1 rounded-lg mb-6">
+<button class="flex-1 py-2 text-center font-label-caps text-sm rounded bg-primary-container text-on-primary-container shadow-[0_0_10px_rgba(0,242,255,0.3)] transition-all">LONG</button>
+<button class="flex-1 py-2 text-center font-label-caps text-sm rounded text-on-surface-variant hover:text-inverse-surface transition-all">SHORT</button>
+</div>
+<!-- Input Fields -->
+<div class="space-y-4 mb-6">
+<div class="relative">
+<label class="font-mono-data text-[10px] text-outline absolute -top-2 left-2 bg-[#0a192f] px-1 z-10">SIZE (QTY)</label>
+<input class="w-full bg-transparent border-b border-outline-variant text-inverse-surface font-mono-data text-body-lg pb-2 pt-3 focus:outline-none focus:border-primary-container focus:shadow-[0_1px_0_rgba(0,242,255,0.5)] transition-all" type="text" value="10,000"/>
+</div>
+<div class="relative">
+<label class="font-mono-data text-[10px] text-outline absolute -top-2 left-2 bg-[#0a192f] px-1 z-10">LIMIT PRICE</label>
+<input class="w-full bg-transparent border-b border-outline-variant text-inverse-surface font-mono-data text-body-lg pb-2 pt-3 focus:outline-none focus:border-primary-container focus:shadow-[0_1px_0_rgba(0,242,255,0.5)] transition-all" type="text" value="512.25"/>
+<span class="absolute right-0 bottom-2 text-primary-container font-mono-data text-sm">MARKET</span>
+</div>
+</div>
+<!-- Leverage Control -->
+<div class="mb-6">
+<div class="flex justify-between items-end mb-2">
+<span class="font-mono-data text-xs text-on-surface-variant">LEVERAGE</span>
+<span class="font-mono-data text-lg text-secondary-fixed">100x</span>
+</div>
+<div class="h-1 bg-surface-container-highest rounded-full overflow-hidden">
+<div class="w-full h-full bg-gradient-to-r from-primary-container to-secondary-container shadow-[0_0_8px_rgba(182,0,248,0.6)]"></div>
+</div>
+<div class="flex justify-between mt-1 font-mono-data text-[10px] text-outline">
+<span>1x</span>
+<span>50x</span>
+<span>100x</span>
+</div>
+</div>
+<!-- Slippage Toggle -->
+<div class="flex items-center justify-between mb-8 p-3 bg-surface-container/50 rounded border border-white/5">
+<div>
+<span class="block font-mono-data text-xs text-inverse-surface">Slippage Minimization</span>
+<span class="block font-body-md text-[10px] text-on-surface-variant mt-0.5">AI routing enabled</span>
+</div>
+<div class="w-10 h-5 bg-primary-container/20 rounded-full relative cursor-pointer border border-primary-container/50">
+<div class="absolute right-1 top-1 w-3 h-3 bg-primary-container rounded-full shadow-[0_0_5px_rgba(0,242,255,0.8)]"></div>
+</div>
+</div>
+<!-- Execute Button -->
+<button class="mt-auto w-full py-4 rounded bg-gradient-to-r from-primary-container to-secondary-container text-background font-h2 text-[16px] tracking-widest shadow-[0_0_20px_rgba(0,242,255,0.4)] hover:shadow-[0_0_30px_rgba(0,242,255,0.6)] transition-all relative overflow-hidden group">
+<div class="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out"></div>
+<span class="relative z-10 flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-[20px]">bolt</span>
+                            COMMIT ORDER
+                        </span>
+</button>
+</div>
+<!-- Real-time Trade Log -->
+<div class="col-span-1 md:col-span-12 glass-card rounded-xl mt-4 overflow-hidden">
+<div class="p-md border-b border-white/5 bg-surface-container/50 flex justify-between items-center">
+<h3 class="font-h2 text-[16px] text-inverse-surface">Microsecond Execution Log</h3>
+<div class="flex gap-4 text-xs font-mono-data text-outline">
+<span class="flex items-center gap-1"><div class="w-2 h-2 rounded-full bg-primary-container"></div> FILLS</span>
+<span class="flex items-center gap-1"><div class="w-2 h-2 rounded-full bg-secondary-fixed"></div> ROUTING</span>
+</div>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-left font-mono-data text-xs whitespace-nowrap">
+<thead class="text-outline-variant bg-surface-container-highest/30">
+<tr>
+<th class="py-3 px-md font-normal">TIMESTAMP (μs)</th>
+<th class="py-3 px-md font-normal">PAIR</th>
+<th class="py-3 px-md font-normal">TYPE</th>
+<th class="py-3 px-md font-normal text-right">SIZE</th>
+<th class="py-3 px-md font-normal text-right">PRICE</th>
+<th class="py-3 px-md font-normal text-right">LATENCY</th>
+<th class="py-3 px-md font-normal text-center">STATUS</th>
+</tr>
+</thead>
+<tbody class="text-on-surface-variant divide-y divide-white/5">
+<tr class="hover:bg-white/5 transition-colors">
+<td class="py-3 px-md text-primary-container">10:42:01.993821</td>
+<td class="py-3 px-md text-inverse-surface">SPY</td>
+<td class="py-3 px-md text-primary-fixed-dim">BUY LIMIT</td>
+<td class="py-3 px-md text-right">10,000</td>
+<td class="py-3 px-md text-right">512.25</td>
+<td class="py-3 px-md text-right">0.8ms</td>
+<td class="py-3 px-md text-center"><span class="px-2 py-0.5 rounded bg-primary-container/10 text-primary-container border border-primary-container/20">FILLED</span></td>
+</tr>
+<tr class="hover:bg-white/5 transition-colors">
+<td class="py-3 px-md text-primary-container">10:42:01.993015</td>
+<td class="py-3 px-md text-inverse-surface">SPY</td>
+<td class="py-3 px-md text-secondary-fixed-dim">AI ROUTE</td>
+<td class="py-3 px-md text-right">--</td>
+<td class="py-3 px-md text-right">--</td>
+<td class="py-3 px-md text-right">0.1ms</td>
+<td class="py-3 px-md text-center"><span class="px-2 py-0.5 rounded bg-secondary-container/10 text-secondary-fixed border border-secondary-container/20">OPTIMIZED</span></td>
+</tr>
+<tr class="hover:bg-white/5 transition-colors">
+<td class="py-3 px-md text-primary-container">10:41:45.102944</td>
+<td class="py-3 px-md text-inverse-surface">NIFTYBEES</td>
+<td class="py-3 px-md text-error">SELL MKT</td>
+<td class="py-3 px-md text-right">5,500</td>
+<td class="py-3 px-md text-right">285.10</td>
+<td class="py-3 px-md text-right">1.2ms</td>
+<td class="py-3 px-md text-center"><span class="px-2 py-0.5 rounded bg-surface-container text-outline border border-outline/20">CLOSED</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

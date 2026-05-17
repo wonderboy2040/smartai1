@@ -37,10 +37,10 @@ export function calculateDipDepth(
     dipDepth = 'NEUTRAL';
   }
 
-  // Fibonacci levels
+  // Fibonacci levels (standard retracement: 0.382 closer to low = support, 0.618 closer to high = resistance)
   const range = high - low;
-  const fibSupport = low + range * 0.618;
-  const fibResistance = low + range * 0.382;
+  const fibSupport = low + range * 0.382;
+  const fibResistance = low + range * 0.618;
 
   // Entry target: below SMA20 or at fib support
   const entryTarget = dipDepth === 'DEEP' || dipDepth === 'MILD'

@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Quantum Trade - Multi-Dimensional Portfolio</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-container-low": "#1c1b1b",
+                        "on-primary-fixed": "#002022",
+                        "surface-container-high": "#2a2a2a",
+                        "on-secondary-container": "#fff6fc",
+                        "on-primary": "#00363a",
+                        "surface-container-highest": "#353534",
+                        "secondary-fixed-dim": "#ebb2ff",
+                        "secondary": "#ebb2ff",
+                        "error": "#ffb4ab",
+                        "on-primary-fixed-variant": "#004f54",
+                        "on-tertiary": "#233148",
+                        "outline-variant": "#3a494b",
+                        "on-primary-container": "#006a71",
+                        "tertiary-fixed": "#d6e3ff",
+                        "primary-fixed-dim": "#00dbe7",
+                        "error-container": "#93000a",
+                        "outline": "#849495",
+                        "surface-container": "#201f1f",
+                        "inverse-on-surface": "#313030",
+                        "surface-variant": "#353534",
+                        "on-background": "#e5e2e1",
+                        "on-surface": "#e5e2e1",
+                        "surface-container-lowest": "#0e0e0e",
+                        "on-error": "#690005",
+                        "primary-container": "#00f2ff",
+                        "on-secondary-fixed": "#320047",
+                        "inverse-surface": "#e5e2e1",
+                        "primary-fixed": "#74f5ff",
+                        "on-tertiary-container": "#526079",
+                        "tertiary-fixed-dim": "#b9c7e4",
+                        "on-tertiary-fixed": "#0d1c32",
+                        "on-surface-variant": "#b9cacb",
+                        "on-secondary": "#520072",
+                        "inverse-primary": "#00696f",
+                        "surface": "#131313",
+                        "secondary-fixed": "#f8d8ff",
+                        "primary": "#e1fdff",
+                        "background": "#131313",
+                        "surface-dim": "#131313",
+                        "on-error-container": "#ffdad6",
+                        "tertiary-container": "#cddbf9",
+                        "surface-bright": "#3a3939",
+                        "tertiary": "#f6f7ff",
+                        "on-secondary-fixed-variant": "#74009f",
+                        "on-tertiary-fixed-variant": "#39475f",
+                        "surface-tint": "#00dbe7",
+                        "secondary-container": "#b600f8"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "xs": "4px",
+                        "container-max": "1440px",
+                        "lg": "40px",
+                        "base": "8px",
+                        "xl": "64px",
+                        "sm": "12px",
+                        "md": "24px",
+                        "gutter": "24px"
+                    },
+                    "fontFamily": {
+                        "h2": ["Space Grotesk"],
+                        "body-md": ["Inter"],
+                        "mono-data": ["Space Grotesk"],
+                        "label-caps": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "h1": ["Space Grotesk"],
+                        "display": ["Space Grotesk"]
+                    },
+                    "fontSize": {
+                        "h2": ["24px", { "lineHeight": "1.3", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "1.5", "fontWeight": "400" }],
+                        "mono-data": ["14px", { "lineHeight": "1", "letterSpacing": "0.05em", "fontWeight": "500" }],
+                        "label-caps": ["12px", { "lineHeight": "1", "letterSpacing": "0.1em", "fontWeight": "600" }],
+                        "body-lg": ["18px", { "lineHeight": "1.6", "fontWeight": "400" }],
+                        "h1": ["32px", { "lineHeight": "1.2", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "display": ["48px", { "lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "700" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .glass-panel {
+            background: rgba(10, 25, 47, 0.4);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            border-left: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .text-glow {
+            text-shadow: 0 0 8px rgba(0, 242, 255, 0.5);
+        }
+        .neon-border {
+            box-shadow: inset 0 0 10px rgba(0, 242, 255, 0.2), 0 0 15px rgba(0, 242, 255, 0.1);
+        }
+        /* Custom scrollbar for dark tech theme */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #050505;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(0, 242, 255, 0.3);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 242, 255, 0.6);
+        }
+    </style>
+</head>
+<body class="bg-[#050505] text-on-surface min-h-screen font-body-md selection:bg-primary-container selection:text-on-primary-container overflow-x-hidden">
+<!-- TopAppBar -->
+<nav class="fixed top-0 w-full z-50 flex justify-between items-center px-8 h-16 bg-slate-950/80 backdrop-blur-md shadow-[0_4px_30px_rgba(0,0,0,0.1)] border-b border-white/10 text-cyan-400">
+<div class="flex items-center gap-md">
+<span class="font-h2 text-h2 font-bold tracking-tighter text-cyan-400 drop-shadow-[0_0_8px_rgba(0,242,255,0.5)]">QUANTUM_TRADE</span>
+</div>
+<div class="hidden md:flex flex-1 max-w-md mx-md">
+<div class="relative w-full">
+<input class="w-full bg-transparent border-0 border-b border-[#0a192f] focus:border-primary-container focus:ring-0 text-on-surface font-mono-data text-mono-data placeholder:text-on-surface/40 pb-2 transition-colors" placeholder="SEARCH ASSETS / INTELLIGENCE..." type="text"/>
+<span class="material-symbols-outlined absolute right-0 top-0 text-cyan-400">search</span>
+</div>
+</div>
+<div class="flex items-center gap-md">
+<div class="flex gap-sm">
+<button class="w-8 h-8 rounded-full hover:bg-white/5 transition-all flex items-center justify-center hover:text-cyan-300 group">
+<span class="material-symbols-outlined text-slate-500 group-hover:text-cyan-300">sync</span>
+</button>
+<button class="w-8 h-8 rounded-full hover:bg-white/5 transition-all flex items-center justify-center hover:text-cyan-300 group">
+<span class="material-symbols-outlined text-slate-500 group-hover:text-cyan-300">verified_user</span>
+</button>
+<button class="w-8 h-8 rounded-full hover:bg-white/5 transition-all flex items-center justify-center hover:text-cyan-300 group">
+<span class="material-symbols-outlined text-slate-500 group-hover:text-cyan-300">notifications</span>
+</button>
+</div>
+<img alt="Elite User Profile" class="w-8 h-8 rounded-full border border-cyan-400/30" data-alt="Cyberpunk style avatar portrait of a trader with neon blue lighting accents" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCHz0jE8Aoyk_KodkOq-Lw_7jcpMD3CymRIqbQ_sK1IAJ4Qn7xlWiLdCQgWHC755x0xfd6vbDPPgiUc43tTGIg2uEdg-ilBmGwY3LAeP967zoL9yIdVrVAba1RufbZEGFRIwQRcWX9BS2dlHjMkHXzlBCjGg6rWWh-sS95E3o7-YZFmukIT41mL2N9Nlr1wwuxpyieE8imHK9NiWIxICmg2PlAKwQ0psSwS2-50UVOmRvdLfd2CCYHh2GCwubSFFnbSvxj-sT7lIgQ"/>
+</div>
+</nav>
+<!-- SideNavBar -->
+<aside class="hidden md:flex fixed left-0 top-16 h-[calc(100vh-64px)] flex-col py-6 w-64 bg-slate-950/90 backdrop-blur-xl border-r border-white/10 shadow-2xl z-40">
+<div class="px-6 mb-8">
+<div class="flex items-center gap-sm mb-2">
+<div class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse text-glow"></div>
+<span class="font-mono-data text-mono-data text-cyan-400">NODE_01</span>
+</div>
+<span class="font-label-caps text-label-caps text-slate-500 uppercase">Sync Active</span>
+</div>
+<nav class="flex-1 flex flex-col gap-2 px-4 font-space-grotesk text-xs tracking-widest uppercase">
+<a class="flex items-center gap-4 px-4 py-3 rounded-DEFAULT text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-colors group hover:translate-x-1 duration-300" href="#">
+<span class="material-symbols-outlined group-hover:text-cyan-300 transition-colors">terminal</span>
+<span>Terminal</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 rounded-DEFAULT text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-colors group hover:translate-x-1 duration-300" href="#">
+<span class="material-symbols-outlined group-hover:text-cyan-300 transition-colors">psychology</span>
+<span>Intelligence</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 rounded-DEFAULT text-cyan-400 bg-cyan-400/10 border-r-2 border-cyan-400 text-glow" href="#">
+<span class="material-symbols-outlined">account_balance_wallet</span>
+<span>Portfolio</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 rounded-DEFAULT text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-colors group hover:translate-x-1 duration-300" href="#">
+<span class="material-symbols-outlined group-hover:text-cyan-300 transition-colors">query_stats</span>
+<span>Market</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 rounded-DEFAULT text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-colors group hover:translate-x-1 duration-300" href="#">
+<span class="material-symbols-outlined group-hover:text-cyan-300 transition-colors">security</span>
+<span>Security</span>
+</a>
+</nav>
+<div class="px-6 mt-auto">
+<button class="w-full py-3 px-4 bg-gradient-to-r from-[#00f2ff] to-[#b600f8] text-white font-label-caps text-label-caps rounded-DEFAULT tracking-[0.05em] hover:opacity-90 transition-opacity flex justify-center items-center gap-2">
+<span class="material-symbols-outlined text-sm">bolt</span>
+                EXECUTE TRADE
+            </button>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="pt-24 pb-12 px-6 md:pl-72 md:pr-12 max-w-container-max mx-auto">
+<!-- Header Section -->
+<header class="mb-xl flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+<div>
+<div class="flex items-center gap-3 mb-2">
+<span class="font-h1 text-h1 text-on-surface">Multi-Dimensional Portfolio</span>
+<div class="px-3 py-1 rounded-full border border-cyan-400/30 bg-cyan-400/5 flex items-center gap-2">
+<span class="w-1.5 h-1.5 rounded-full bg-cyan-400 text-glow"></span>
+<span class="font-mono-data text-[10px] text-cyan-400">QUANTUM_SYNC_ACTIVE</span>
+</div>
+</div>
+<p class="font-body-md text-body-md text-slate-400">Total Asset Matrix &amp; AI Rebalancing Sensors</p>
+</div>
+<!-- Self Healing Toggle -->
+<div class="glass-panel rounded-lg p-4 flex items-center gap-4">
+<div class="flex flex-col">
+<span class="font-label-caps text-label-caps text-on-surface">Self-Healing Protocol</span>
+<span class="font-mono-data text-[10px] text-secondary">AI Automated Rebalancing</span>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox" value=""/>
+<div class="w-11 h-6 bg-surface-container-high peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-primary-container peer-checked:to-secondary-container"></div>
+</label>
+</div>
+</header>
+<!-- Bento Grid Layout -->
+<div class="grid grid-cols-1 md:grid-cols-12 gap-md">
+<!-- Matrix Table (Spans 8 columns) -->
+<div class="md:col-span-8 glass-panel rounded-xl overflow-hidden flex flex-col">
+<div class="p-6 border-b border-white/5 flex justify-between items-center">
+<h2 class="font-h2 text-h2 text-on-surface">Asset Holdings</h2>
+<button class="text-cyan-400 hover:text-cyan-300 font-mono-data text-[12px] flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">filter_list</span> FILTER
+                    </button>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="font-label-caps text-label-caps text-slate-500 border-b border-white/5">
+<th class="p-6 font-normal">ASSET ID</th>
+<th class="p-6 font-normal">REGION</th>
+<th class="p-6 font-normal text-right">WEIGHT</th>
+<th class="p-6 font-normal text-right">CURRENT VAL</th>
+<th class="p-6 font-normal text-right">ALPHA SENSOR</th>
+</tr>
+</thead>
+<tbody class="font-mono-data text-mono-data">
+<tr class="border-b border-white/5 hover:bg-white/5 transition-colors group">
+<td class="p-6">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-cyan-400">
+<span class="material-symbols-outlined text-sm">currency_rupee</span>
+</div>
+<div>
+<div class="text-on-surface group-hover:text-cyan-400 transition-colors">INDA</div>
+<div class="text-[10px] text-slate-500">iShares MSCI India</div>
+</div>
+</div>
+</td>
+<td class="p-6 text-slate-300">INDIA</td>
+<td class="p-6 text-right text-slate-300">24.5%</td>
+<td class="p-6 text-right text-on-surface">$1.24M</td>
+<td class="p-6 text-right">
+<span class="text-emerald-400 flex items-center justify-end gap-1">
+<span class="material-symbols-outlined text-[14px]">arrow_upward</span> +2.4%
+                                    </span>
+</td>
+</tr>
+<tr class="border-b border-white/5 hover:bg-white/5 transition-colors group">
+<td class="p-6">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-secondary">
+<span class="material-symbols-outlined text-sm">attach_money</span>
+</div>
+<div>
+<div class="text-on-surface group-hover:text-secondary transition-colors">QQQ</div>
+<div class="text-[10px] text-slate-500">Invesco QQQ Trust</div>
+</div>
+</div>
+</td>
+<td class="p-6 text-slate-300">USA</td>
+<td class="p-6 text-right text-slate-300">45.2%</td>
+<td class="p-6 text-right text-on-surface">$3.85M</td>
+<td class="p-6 text-right">
+<span class="text-emerald-400 flex items-center justify-end gap-1">
+<span class="material-symbols-outlined text-[14px]">arrow_upward</span> +1.8%
+                                    </span>
+</td>
+</tr>
+<tr class="border-b border-white/5 hover:bg-white/5 transition-colors group">
+<td class="p-6">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-cyan-400">
+<span class="material-symbols-outlined text-sm">currency_rupee</span>
+</div>
+<div>
+<div class="text-on-surface group-hover:text-cyan-400 transition-colors">EPI</div>
+<div class="text-[10px] text-slate-500">WisdomTree India Earnings</div>
+</div>
+</div>
+</td>
+<td class="p-6 text-slate-300">INDIA</td>
+<td class="p-6 text-right text-slate-300">12.3%</td>
+<td class="p-6 text-right text-on-surface">$0.85M</td>
+<td class="p-6 text-right">
+<span class="text-error flex items-center justify-end gap-1">
+<span class="material-symbols-outlined text-[14px]">arrow_downward</span> -0.5%
+                                    </span>
+</td>
+</tr>
+<tr class="hover:bg-white/5 transition-colors group">
+<td class="p-6">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-secondary">
+<span class="material-symbols-outlined text-sm">attach_money</span>
+</div>
+<div>
+<div class="text-on-surface group-hover:text-secondary transition-colors">VTI</div>
+<div class="text-[10px] text-slate-500">Vanguard Total Stock Market</div>
+</div>
+</div>
+</td>
+<td class="p-6 text-slate-300">USA</td>
+<td class="p-6 text-right text-slate-300">18.0%</td>
+<td class="p-6 text-right text-on-surface">$1.45M</td>
+<td class="p-6 text-right">
+<span class="text-emerald-400 flex items-center justify-end gap-1">
+<span class="material-symbols-outlined text-[14px]">arrow_upward</span> +0.9%
+                                    </span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<!-- Risk Metrics (Spans 4 columns) -->
+<div class="md:col-span-4 flex flex-col gap-md">
+<!-- Cyberpunk Widget 1 -->
+<div class="glass-panel rounded-xl p-6 relative overflow-hidden neon-border group">
+<div class="absolute -right-4 -top-4 w-24 h-24 bg-primary-container/10 rounded-full blur-xl group-hover:bg-primary-container/20 transition-colors"></div>
+<h3 class="font-label-caps text-label-caps text-slate-400 mb-4">SHARPE RATIO</h3>
+<div class="flex items-end gap-2">
+<span class="font-display text-display text-primary-container text-glow">2.84</span>
+<span class="font-mono-data text-[12px] text-emerald-400 mb-2">+0.12</span>
+</div>
+<div class="w-full h-1 bg-surface-container-high mt-4 rounded-full overflow-hidden">
+<div class="h-full bg-primary-container w-[85%] shadow-[0_0_10px_rgba(0,242,255,0.8)]"></div>
+</div>
+</div>
+<!-- Cyberpunk Widget 2 -->
+<div class="glass-panel rounded-xl p-6 relative overflow-hidden">
+<h3 class="font-label-caps text-label-caps text-slate-400 mb-4">SORTINO RATIO</h3>
+<div class="flex items-end gap-2">
+<span class="font-display text-display text-secondary text-glow">3.12</span>
+<span class="font-mono-data text-[12px] text-emerald-400 mb-2">+0.08</span>
+</div>
+<!-- Minimalist line chart representation using CSS gradients -->
+<div class="w-full h-12 mt-4 bg-gradient-to-r from-transparent via-secondary/20 to-secondary/40 border-b-2 border-secondary relative">
+<div class="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-secondary shadow-[0_0_8px_#ebb2ff] translate-y-1/2 translate-x-1/2"></div>
+</div>
+</div>
+<!-- Cyberpunk Widget 3 -->
+<div class="glass-panel rounded-xl p-6 relative overflow-hidden">
+<h3 class="font-label-caps text-label-caps text-slate-400 mb-4">CALMAR RATIO</h3>
+<div class="flex items-end gap-2">
+<span class="font-display text-display text-on-surface">1.95</span>
+<span class="font-mono-data text-[12px] text-error mb-2">-0.04</span>
+</div>
+</div>
+</div>
+<!-- Geographic Allocation (Spans 12 columns) -->
+<div class="md:col-span-12 glass-panel rounded-xl p-6 md:p-8 mt-4 flex flex-col md:flex-row items-center gap-xl relative overflow-hidden">
+<!-- Atmospheric background element -->
+<div class="absolute left-1/4 top-1/2 -translate-y-1/2 w-64 h-64 bg-secondary-container/10 rounded-full blur-3xl pointer-events-none"></div>
+<div class="flex-1 z-10 w-full">
+<h2 class="font-h2 text-h2 text-on-surface mb-2">Geographic Matrix</h2>
+<p class="font-body-md text-body-md text-slate-400 mb-8">AI-optimized spatial distribution across key economic nodes.</p>
+<div class="space-y-6">
+<div>
+<div class="flex justify-between font-mono-data text-mono-data mb-2">
+<span class="text-secondary">USA (North America Node)</span>
+<span class="text-on-surface">63.2%</span>
+</div>
+<div class="w-full h-2 bg-surface-container-high rounded-full overflow-hidden">
+<div class="h-full bg-gradient-to-r from-secondary-container to-secondary w-[63.2%] shadow-[0_0_10px_rgba(235,178,255,0.5)]"></div>
+</div>
+</div>
+<div>
+<div class="flex justify-between font-mono-data text-mono-data mb-2">
+<span class="text-primary-container">INDIA (South Asia Node)</span>
+<span class="text-on-surface">36.8%</span>
+</div>
+<div class="w-full h-2 bg-surface-container-high rounded-full overflow-hidden">
+<div class="h-full bg-gradient-to-r from-[#00696f] to-primary-container w-[36.8%] shadow-[0_0_10px_rgba(0,242,255,0.5)]"></div>
+</div>
+</div>
+</div>
+</div>
+<!-- Abstract 3D Radial Representation using overlapping gradients and borders -->
+<div class="w-64 h-64 relative flex-shrink-0 z-10 hidden md:block">
+<!-- Outer Ring USA -->
+<div class="absolute inset-0 rounded-full border-[12px] border-surface-container-high"></div>
+<div class="absolute inset-0 rounded-full border-[12px] border-secondary border-t-transparent border-r-transparent rotate-45 drop-shadow-[0_0_15px_rgba(235,178,255,0.4)]"></div>
+<!-- Inner Ring India -->
+<div class="absolute inset-8 rounded-full border-[12px] border-surface-container-high"></div>
+<div class="absolute inset-8 rounded-full border-[12px] border-primary-container border-b-transparent border-l-transparent -rotate-12 drop-shadow-[0_0_15px_rgba(0,242,255,0.4)]"></div>
+<!-- Center Core -->
+<div class="absolute inset-20 rounded-full bg-surface-container-lowest border border-white/10 flex items-center justify-center flex-col shadow-[inset_0_0_20px_rgba(0,0,0,0.8)]">
+<span class="font-mono-data text-[10px] text-slate-500">TOTAL AUM</span>
+<span class="font-h2 text-[20px] text-on-surface font-bold text-glow">$7.39M</span>
+</div>
+</div>
+</div>
+</div>
+</main>
+</body></html>

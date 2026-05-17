@@ -39,7 +39,10 @@ export const SmartMoneyPanel = React.memo(({ livePrices }: SmartMoneyPanelProps)
 
   return (
     <div className="bg-slate-900/60 border border-slate-700/50 rounded-xl p-4 mb-4">
-      <h3 className="text-sm font-semibold text-slate-200 tracking-wide mb-3">SMART MONEY FLOW (FII/DII)</h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-slate-200 tracking-wide">SMART MONEY FLOW (FII/DII)</h3>
+        <span className="text-[10px] text-amber-400/60 bg-amber-500/5 px-2 py-0.5 rounded border border-amber-500/10">ESTIMATED</span>
+      </div>
 
       {/* Signal Badge */}
       <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-bold mb-3 ${color}`}>

@@ -1,5 +1,6 @@
 import { PriceData } from '../types';
 import { EXACT_TICKER_MAP, guessMarket } from './constants';
+import { isAnyMarketOpen } from './telegram';
 
 // ========================================
 // STATE
@@ -72,9 +73,10 @@ function validatePrice(
     }
   }
 
-  // Check for stuck prices (no change for >60s)
+  // Check for stuck prices (no change for >60s) — only during market hours
+  // During closures, legitimate prices naturally don't change
   const last = lastKnownPrices.get(key);
-  if (last && last.price === price) {
+  if (last && last.price === price && isAnyMarketOpen()) {
     const age = Date.now() - last.time;
     if (age > 60000) {
       return { valid: false, reason: `Stuck price for ${Math.round(age / 1000)}s` };
