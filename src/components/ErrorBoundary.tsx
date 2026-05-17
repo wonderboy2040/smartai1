@@ -41,7 +41,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
       return (
         <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white p-6">
-          <div className="max-w-md w-full glass-card rounded-2xl p-8 border border-red-500/20">
+          <div className="max-w-md w-full quantum-panel rounded-2xl p-8 border border-red-500/20">
             <div className="text-center mb-6">
               <div className="text-6xl mb-4">🚨</div>
               <h2 className="text-2xl font-bold text-red-400 mb-2">
@@ -55,7 +55,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             <div className="space-y-3">
               <button
                 onClick={this.handleRetry}
-                className="w-full btn-primary py-3 bg-gradient-to-r from-red-600 to-orange-600 rounded-xl font-bold text-white"
+                className="w-full quantum-btn-primary py-3 bg-gradient-to-r from-red-600 to-orange-600 rounded-xl font-bold text-white"
               >
                 🔄 Reload Application
               </button>

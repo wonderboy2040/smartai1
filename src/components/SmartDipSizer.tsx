@@ -29,9 +29,9 @@ export const SmartDipSizer = React.memo(({ portfolio, livePrices, monthlyBudget,
   if (portfolio.length === 0) return null;
 
   return (
-    <div className="bg-slate-900/60 border border-slate-700/50 rounded-xl p-4 mb-4">
+    <div className="quantum-panel p-4 mb-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-slate-200 tracking-wide">SMART DIP POSITION SIZING</h3>
+        <h3 className="text-sm font-h2 text-on-surface">SMART DIP POSITION SIZING</h3>
         <div className="flex items-center gap-2">
           <span className="text-xs text-slate-500">Monthly Budget:</span>
           <input
@@ -85,8 +85,8 @@ export const SmartDipSizer = React.memo(({ portfolio, livePrices, monthlyBudget,
           </div>
 
           {/* Kelly Explainer */}
-          <div className="mt-3 bg-slate-800/50 rounded-lg p-2.5">
-            <div className="text-[10px] text-slate-500 mb-1">SIZING METHODOLOGY</div>
+          <div className="mt-3 quantum-stat p-2.5">
+            <div className="quantum-label mb-1">SIZING METHODOLOGY</div>
             <p className="text-[11px] text-slate-400 leading-relaxed">
               <span className="text-cyan-400 font-medium">Kelly Criterion</span> — optimal bet size based on win rate and risk/reward.
               <span className="text-blue-400 font-medium"> InvVol</span> — inverse volatility weighting (lower vol = higher allocation).

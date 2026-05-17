@@ -46,8 +46,8 @@ export const SectorRotationPanel = React.memo(({ portfolio, livePrices, sectorDa
   if (sectorData.length === 0) return null;
 
   return (
-    <div className="bg-slate-900/60 border border-slate-700/50 rounded-xl p-4 mb-4">
-      <h3 className="text-sm font-semibold text-slate-200 tracking-wide mb-3">SECTOR ROTATION INTELLIGENCE</h3>
+    <div className="quantum-panel p-4 mb-4">
+      <h3 className="text-sm font-h2 text-on-surface mb-3">SECTOR ROTATION INTELLIGENCE</h3>
 
       {/* Sector Heatmap */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
@@ -78,9 +78,9 @@ export const SectorRotationPanel = React.memo(({ portfolio, livePrices, sectorDa
             {exposure.recommendations.map(r => (
               <div key={r.sector} className="flex items-center gap-2 text-xs">
                 <span className="text-slate-300 w-28 truncate">{r.sector}</span>
-                <div className="flex-1 h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
+                <div className="flex-1 quantum-progress">
                   <div
-                    className={`h-full rounded-full ${r.momentum > 50 ? 'bg-emerald-500' : r.momentum > 35 ? 'bg-amber-500' : 'bg-red-500'}`}
+                    className={`quantum-progress-fill ${r.momentum > 50 ? 'bg-emerald-500' : r.momentum > 35 ? 'bg-amber-500' : 'bg-red-500'}`}
                     style={{ width: `${Math.min(r.currentPct, 100)}%` }}
                   />
                 </div>
@@ -92,7 +92,7 @@ export const SectorRotationPanel = React.memo(({ portfolio, livePrices, sectorDa
 
           {/* Key Insight */}
           {exposure.recommendations.length > 0 && exposure.recommendations[0].currentPct > 30 && (
-            <div className="mt-2 bg-slate-800/50 rounded-lg p-2">
+            <div className="mt-2 quantum-stat p-2">
               <p className="text-[11px] text-slate-400">
                 <span className="text-amber-400 font-medium">Insight: </span>
                 Your {exposure.recommendations[0].currentPct}% in {exposure.recommendations[0].sector} — {exposure.recommendations[0].action}

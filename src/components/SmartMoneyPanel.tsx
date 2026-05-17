@@ -38,10 +38,10 @@ export const SmartMoneyPanel = React.memo(({ livePrices }: SmartMoneyPanelProps)
   const icon = signalIcons[signal.signal];
 
   return (
-    <div className="bg-slate-900/60 border border-slate-700/50 rounded-xl p-4 mb-4">
+    <div className="quantum-panel p-4 mb-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-slate-200 tracking-wide">SMART MONEY FLOW (FII/DII)</h3>
-        <span className="text-[10px] text-amber-400/60 bg-amber-500/5 px-2 py-0.5 rounded border border-amber-500/10">ESTIMATED</span>
+        <h3 className="text-sm font-h2 text-on-surface">SMART MONEY FLOW (FII/DII)</h3>
+        <span className="quantum-badge">ESTIMATED</span>
       </div>
 
       {/* Signal Badge */}
@@ -54,8 +54,8 @@ export const SmartMoneyPanel = React.memo(({ livePrices }: SmartMoneyPanelProps)
       {/* FII/DII Cards */}
       <div className="grid grid-cols-2 gap-3 mb-3">
         {/* FII */}
-        <div className="bg-black/20 rounded-lg p-3">
-          <div className="text-[10px] text-slate-500 font-bold uppercase mb-1">FII (Foreign)</div>
+        <div className="quantum-stat p-3">
+          <div className="quantum-label mb-1">FII (Foreign)</div>
           <div className="grid grid-cols-2 gap-1 text-xs mb-1">
             <div>
               <span className="text-slate-500">Buy: </span>
@@ -75,8 +75,8 @@ export const SmartMoneyPanel = React.memo(({ livePrices }: SmartMoneyPanelProps)
         </div>
 
         {/* DII */}
-        <div className="bg-black/20 rounded-lg p-3">
-          <div className="text-[10px] text-slate-500 font-bold uppercase mb-1">DII (Domestic)</div>
+        <div className="quantum-stat p-3">
+          <div className="quantum-label mb-1">DII (Domestic)</div>
           <div className="grid grid-cols-2 gap-1 text-xs mb-1">
             <div>
               <span className="text-slate-500">Buy: </span>
@@ -103,9 +103,9 @@ export const SmartMoneyPanel = React.memo(({ livePrices }: SmartMoneyPanelProps)
             <span className="text-slate-500">FII Confidence</span>
             <span className={signal.fiiConfidence > 0 ? 'text-emerald-400' : 'text-red-400'}>{signal.fiiConfidence}%</span>
           </div>
-          <div className="w-full h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
+          <div className="quantum-progress">
             <div
-              className={`h-full rounded-full ${signal.fiiConfidence > 0 ? 'bg-emerald-500' : 'bg-red-500'}`}
+              className={`quantum-progress-fill ${signal.fiiConfidence > 0 ? 'bg-emerald-500' : 'bg-red-500'}`}
               style={{ width: `${Math.abs(signal.fiiConfidence)}%` }}
             />
           </div>
@@ -115,9 +115,9 @@ export const SmartMoneyPanel = React.memo(({ livePrices }: SmartMoneyPanelProps)
             <span className="text-slate-500">DII Confidence</span>
             <span className={signal.diiConfidence > 0 ? 'text-emerald-400' : 'text-red-400'}>{signal.diiConfidence}%</span>
           </div>
-          <div className="w-full h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
+          <div className="quantum-progress">
             <div
-              className={`h-full rounded-full ${signal.diiConfidence > 0 ? 'bg-emerald-500' : 'bg-red-500'}`}
+              className={`quantum-progress-fill ${signal.diiConfidence > 0 ? 'bg-emerald-500' : 'bg-red-500'}`}
               style={{ width: `${Math.abs(signal.diiConfidence)}%` }}
             />
           </div>
@@ -125,7 +125,7 @@ export const SmartMoneyPanel = React.memo(({ livePrices }: SmartMoneyPanelProps)
       </div>
 
       {/* Description */}
-      <div className="bg-slate-800/50 rounded-lg p-2.5">
+      <div className="quantum-stat p-2.5">
         <p className="text-xs text-slate-400 leading-relaxed">{signal.description}</p>
         <p className="text-[10px] text-slate-500 mt-1">
           {signal.signal === 'STRONG_ACCUMULATION' || signal.signal === 'ACCUMULATION'

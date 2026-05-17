@@ -46,9 +46,9 @@ export const DipIntelligence = React.memo(({ portfolio, livePrices, totalBudget,
   if (portfolio.length === 0) return null;
 
   return (
-    <div className="bg-slate-900/60 border border-slate-700/50 rounded-xl p-4 mb-4">
+    <div className="quantum-panel p-4 mb-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-slate-200 tracking-wide">BUY-THE-DIP INTELLIGENCE</h3>
+        <h3 className="text-sm font-h2 text-on-surface">BUY-THE-DIP INTELLIGENCE</h3>
         <span className="text-xs text-slate-400">Budget: ₹{totalBudget.toLocaleString('en-IN')}/mo</span>
       </div>
 
@@ -94,9 +94,9 @@ export const DipIntelligence = React.memo(({ portfolio, livePrices, totalBudget,
             {allocations.slice(0, 6).map(a => (
               <div key={a.symbol} className="flex items-center gap-2 text-xs">
                 <span className="text-slate-300 w-24 truncate">{a.symbol}</span>
-                <div className="flex-1 h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
+                <div className="flex-1 quantum-progress">
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-blue-500 to-cyan-400"
+                    className="quantum-progress-fill bg-gradient-to-r from-blue-500 to-cyan-400"
                     style={{ width: `${Math.min(a.allocationPct, 100)}%` }}
                   />
                 </div>
@@ -193,7 +193,7 @@ function DipCard({ signal, onBuy }: { signal: DipSignal; onBuy?: (symbol: string
       {onBuy && (signal.dipDepth === 'DEEP' || signal.dipDepth === 'MILD') && (
         <button
           onClick={() => onBuy(signal.symbol, 0)}
-          className="mt-1.5 w-full text-center text-xs font-medium py-1 rounded bg-white/5 hover:bg-white/10 transition-colors"
+          className="mt-1.5 w-full text-center quantum-btn-ghost px-3 py-1.5 rounded-lg text-xs"
         >
           Buy This Dip
         </button>

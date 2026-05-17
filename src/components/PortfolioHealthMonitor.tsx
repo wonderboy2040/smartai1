@@ -92,7 +92,7 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
 
       {/* Expanded Panel */}
       {expanded && (
-        <div className="absolute bottom-12 right-0 w-72 bg-slate-900 border border-slate-700/50 rounded-xl p-3 shadow-2xl">
+        <div className="absolute bottom-12 right-0 w-72 quantum-panel p-3 shadow-2xl">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-slate-200">PORTFOLIO HEALTH</span>
             <span className={`text-sm font-bold ${health.alertLevel === 'GREEN' ? 'text-emerald-400' : health.alertLevel === 'YELLOW' ? 'text-amber-400' : 'text-red-400'}`}>
@@ -101,9 +101,9 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
           </div>
 
           {/* Health Bar */}
-          <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden mb-2">
+          <div className="quantum-progress mb-2">
             <div
-              className={`h-full rounded-full transition-all ${health.score >= 70 ? 'bg-emerald-500' : health.score >= 45 ? 'bg-amber-500' : 'bg-red-500'}`}
+              className={`quantum-progress-fill transition-all ${health.score >= 70 ? 'bg-emerald-500' : health.score >= 45 ? 'bg-amber-500' : 'bg-red-500'}`}
               style={{ width: `${health.score}%` }}
             />
           </div>
@@ -111,15 +111,15 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
           {/* Metrics */}
           <div className="grid grid-cols-3 gap-2 mb-2">
             <div className="text-center">
-              <div className="text-[9px] text-slate-500">Drawdown</div>
+              <div className="quantum-label">Drawdown</div>
               <div className="text-xs font-mono text-red-400">{health.drawdownFromHigh.toFixed(1)}%</div>
             </div>
             <div className="text-center">
-              <div className="text-[9px] text-slate-500">RSI Alerts</div>
+              <div className="quantum-label">RSI Alerts</div>
               <div className="text-xs font-mono text-amber-400">{health.rsiExtremeCount}</div>
             </div>
             <div className="text-center">
-              <div className="text-[9px] text-slate-500">VIX</div>
+              <div className="quantum-label">VIX</div>
               <div className={`text-xs font-mono ${health.vixStatus === 'SPIKE' ? 'text-red-400' : health.vixStatus === 'ELEVATED' ? 'text-amber-400' : 'text-emerald-400'}`}>
                 {health.vixStatus}
               </div>

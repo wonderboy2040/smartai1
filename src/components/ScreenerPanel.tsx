@@ -47,9 +47,9 @@ export const ScreenerPanel = React.memo(({ portfolio, livePrices }: ScreenerPane
   if (results.length === 0) return null;
 
   return (
-    <div className="bg-slate-900/60 border border-slate-700/50 rounded-xl p-4 mb-4">
+    <div className="quantum-panel p-4 mb-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-slate-200 tracking-wide">MULTI-FACTOR SCREENER</h3>
+        <h3 className="text-sm font-h2 text-on-surface">MULTI-FACTOR SCREENER</h3>
         <span className="text-[10px] text-slate-500">Quality 40% + Momentum 30% + Value 30%</span>
       </div>
 
@@ -62,8 +62,8 @@ export const ScreenerPanel = React.memo(({ portfolio, livePrices }: ScreenerPane
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
-                filter === f ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : 'bg-slate-800/50 text-slate-500 hover:text-slate-400'
+              className={`quantum-btn-ghost px-3 py-1.5 rounded-lg text-xs ${
+                filter === f ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : ''
               }`}
             >
               {f === 'ALL' ? 'All' : f.replace('_', ' ')} ({count})
@@ -75,7 +75,7 @@ export const ScreenerPanel = React.memo(({ portfolio, livePrices }: ScreenerPane
       {/* Results Grid */}
       <div className="space-y-1.5">
         {filtered.map(r => (
-          <div key={r.symbol} className="flex items-center gap-2 bg-black/20 rounded-lg px-3 py-2">
+          <div key={r.symbol} className="flex items-center gap-2 quantum-stat px-3 py-2">
             {/* Symbol + Signal */}
             <div className="w-28">
               <div className="text-xs font-medium text-slate-200 truncate">{r.symbol}</div>
@@ -97,8 +97,8 @@ export const ScreenerPanel = React.memo(({ portfolio, livePrices }: ScreenerPane
                   <span className="text-slate-500">Q</span>
                   <span className={getScoreColor(r.qualityScore)}>{r.qualityScore}</span>
                 </div>
-                <div className="w-full h-1 bg-slate-700/50 rounded-full overflow-hidden">
-                  <div className="h-full rounded-full bg-purple-500" style={{ width: `${r.qualityScore}%` }} />
+                <div className="quantum-progress">
+                  <div className="quantum-progress-fill bg-purple-500" style={{ width: `${r.qualityScore}%` }} />
                 </div>
               </div>
               <div>
@@ -106,8 +106,8 @@ export const ScreenerPanel = React.memo(({ portfolio, livePrices }: ScreenerPane
                   <span className="text-slate-500">M</span>
                   <span className={getScoreColor(r.momentumScore)}>{r.momentumScore}</span>
                 </div>
-                <div className="w-full h-1 bg-slate-700/50 rounded-full overflow-hidden">
-                  <div className="h-full rounded-full bg-cyan-500" style={{ width: `${r.momentumScore}%` }} />
+                <div className="quantum-progress">
+                  <div className="quantum-progress-fill bg-cyan-500" style={{ width: `${r.momentumScore}%` }} />
                 </div>
               </div>
               <div>
@@ -115,8 +115,8 @@ export const ScreenerPanel = React.memo(({ portfolio, livePrices }: ScreenerPane
                   <span className="text-slate-500">V</span>
                   <span className={getScoreColor(r.valueScore)}>{r.valueScore}</span>
                 </div>
-                <div className="w-full h-1 bg-slate-700/50 rounded-full overflow-hidden">
-                  <div className="h-full rounded-full bg-amber-500" style={{ width: `${r.valueScore}%` }} />
+                <div className="quantum-progress">
+                  <div className="quantum-progress-fill bg-amber-500" style={{ width: `${r.valueScore}%` }} />
                 </div>
               </div>
             </div>

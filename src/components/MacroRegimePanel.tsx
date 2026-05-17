@@ -33,8 +33,8 @@ export const MacroRegimePanel = React.memo(({ livePrices }: MacroRegimePanelProp
   const icon = regimeIcons[regime.regime];
 
   return (
-    <div className="bg-slate-900/60 border border-slate-700/50 rounded-xl p-4 mb-4">
-      <h3 className="text-sm font-semibold text-slate-200 tracking-wide mb-3">MACRO REGIME DETECTOR</h3>
+    <div className="quantum-panel p-4 mb-4">
+      <h3 className="text-sm font-h2 text-on-surface mb-3">MACRO REGIME DETECTOR</h3>
 
       {/* Regime Badge */}
       <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-bold mb-3 ${color}`}>
@@ -46,19 +46,19 @@ export const MacroRegimePanel = React.memo(({ livePrices }: MacroRegimePanelProp
       {/* Key Metrics */}
       <div className="grid grid-cols-3 gap-3 mb-3">
         <div className="text-center">
-          <div className="text-[10px] text-slate-500 mb-0.5">VIX</div>
+          <div className="quantum-label mb-0.5">VIX</div>
           <div className={`text-sm font-mono ${regime.vix > 25 ? 'text-red-400' : regime.vix > 18 ? 'text-amber-400' : 'text-emerald-400'}`}>
             {regime.vix.toFixed(1)}
           </div>
         </div>
         <div className="text-center">
-          <div className="text-[10px] text-slate-500 mb-0.5">Yield Spread</div>
+          <div className="quantum-label mb-0.5">Yield Spread</div>
           <div className={`text-sm font-mono ${regime.yieldCurve < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
             {regime.yieldCurve.toFixed(2)}%
           </div>
         </div>
         <div className="text-center">
-          <div className="text-[10px] text-slate-500 mb-0.5">Confidence</div>
+          <div className="quantum-label mb-0.5">Confidence</div>
           <div className="text-sm font-mono text-amber-400">{regime.confidence}%</div>
         </div>
       </div>
@@ -67,15 +67,15 @@ export const MacroRegimePanel = React.memo(({ livePrices }: MacroRegimePanelProp
       <p className="text-xs text-slate-400 mb-3 leading-relaxed">{regime.description}</p>
 
       {/* Portfolio Suggestion */}
-      <div className="bg-slate-800/50 rounded-lg p-2.5 mb-3">
-        <div className="text-[10px] text-slate-500 mb-1">PORTFOLIO SUGGESTION</div>
+      <div className="quantum-stat p-2.5 mb-3">
+        <div className="quantum-label mb-1">PORTFOLIO SUGGESTION</div>
         <p className="text-xs text-slate-300">{regime.portfolioSuggestion}</p>
       </div>
 
       {/* Sector Recommendations */}
       {regime.sectorRecommendation.length > 0 && (
         <div>
-          <div className="text-[10px] text-slate-500 mb-2">SECTOR RECOMMENDATIONS</div>
+          <div className="quantum-label mb-2">SECTOR RECOMMENDATIONS</div>
           <div className="space-y-1.5">
             {regime.sectorRecommendation.map(s => (
               <div key={s.sector} className="flex items-center gap-2 text-xs">

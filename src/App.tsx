@@ -32,7 +32,7 @@ import { Clock } from './components/Clock';
 // Guide helper components
 function GuideItem({ title, emoji, desc, imp }: { title: string; emoji: string; desc: string; imp?: string }) {
   return (
-    <div className="bg-black/20 rounded-lg p-3">
+    <div className="quantum-stat rounded-xl p-4">
       <div className="flex items-center gap-2 mb-1">
         <span className="text-sm">{emoji}</span>
         <span className="text-xs font-bold text-slate-200">{title}</span>
@@ -45,7 +45,7 @@ function GuideItem({ title, emoji, desc, imp }: { title: string; emoji: string; 
 
 function GuideCommand({ cmd, desc }: { cmd: string; desc: string }) {
   return (
-    <div className="flex items-center gap-2 bg-black/20 rounded-lg px-3 py-2">
+    <div className="flex items-center gap-2 quantum-stat rounded-xl px-4 py-3">
       <code className="text-cyan-400 font-mono text-[11px] font-bold whitespace-nowrap">/{cmd}</code>
       <span className="text-slate-500 text-[10px]">{desc}</span>
     </div>
@@ -94,7 +94,7 @@ const MemoAssetButton = React.memo(function MemoAssetButton({
   return (
     <button
       onClick={() => onClick(symbol)}
-      className="stat-card glass-card px-4 py-3 rounded-xl text-left transition-all hover:-translate-y-0.5"
+      className="quantum-stat quantum-panel px-4 py-3 rounded-xl text-left transition-all hover:-translate-y-0.5"
     >
       <div className="font-bold text-white text-sm">{symbol.replace('.NS', '')}</div>
       <div className="flex items-center gap-2 mt-1.5">
@@ -980,17 +980,17 @@ export default function App() {
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen login-bg flex items-center justify-center p-4">
-        <div className="login-card glass-modal rounded-3xl p-8 max-w-sm w-full animate-scale-in">
+        <div className="login-card quantum-modal rounded-3xl p-8 max-w-sm w-full animate-scale-in">
           <div className="text-center mb-8">
             <div className="relative inline-block">
               <div className="text-7xl mb-2 animate-float">💎</div>
               <div className="absolute -inset-4 bg-cyan-500/10 rounded-full blur-xl pointer-events-none" />
             </div>
-            <h1 className="text-3xl font-black gradient-text-cyan font-display mt-4">
+            <h1 className="text-3xl font-black gradient-text-cyan font-display text-glow mt-4">
               Wealth AI
             </h1>
             <div className="flex items-center justify-center gap-2 mt-2">
-              <span className="badge bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">QUANTUM TERMINAL</span>
+              <span className="quantum-badge">QUANTUM TERMINAL</span>
             </div>
             <p className="text-slate-500 text-sm mt-3">Secure PIN enter karein</p>
           </div>
@@ -1002,12 +1002,12 @@ export default function App() {
               onKeyDown={e => e.key === 'Enter' && verifyPin()}
               placeholder="••••"
               maxLength={4}
-              className="w-full text-center px-4 py-5 glass-input rounded-2xl text-3xl tracking-[0.5em] text-cyan-400 font-bold mb-5 font-mono placeholder-slate-700 relative z-10"
+              className="w-full text-center px-4 py-5 quantum-input rounded-2xl text-3xl tracking-[0.5em] text-cyan-400 font-bold mb-5 font-mono placeholder-slate-700 relative z-10"
             />
           </div>
           <button
             onClick={verifyPin}
-            className="btn-primary w-full py-4 bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 animate-gradient rounded-2xl font-bold text-white text-lg relative z-10"
+            className="quantum-btn-primary w-full py-4 bg-gradient-to-r from-cyan-500 to-purple-600 animate-gradient rounded-2xl font-bold text-white text-lg relative z-10"
           >
             🔓 Unlock Terminal
           </button>
@@ -1021,7 +1021,7 @@ export default function App() {
   return (
     <div className={`min-h-screen bg-gradient-to-br from-slate-950 via-[#0a0f1e] to-slate-950 text-slate-200 ${theme}`}>
       {/* Header */}
-      <header className="sticky top-0 z-40 glass-ultra border-b border-white/5">
+      <header className="sticky top-0 z-40 quantum-appbar border-b border-white/5">
         {/* Ticker */}
         <div className="ticker-wrapper py-1.5 border-b border-white/5 bg-black/30">
           <div className="ticker-content">
@@ -1050,8 +1050,8 @@ export default function App() {
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h1 className="text-lg font-black gradient-text-cyan font-display uppercase tracking-wide">Wealth AI</h1>
-                  <span className="badge bg-cyan-500/10 text-cyan-400/80 border border-cyan-500/15">v12.0 PRO</span>
+                  <h1 className="text-lg font-black gradient-text-cyan font-display uppercase tracking-wider text-glow">QUANTUM_TRADE</h1>
+                  <span className="quantum-badge">v12.0 PRO</span>
                 </div>
                 <div className="flex items-center gap-2 text-[11px]">
                   <span className={`w-1.5 h-1.5 rounded-full ${liveStatus.includes('ACTIVE') ? 'bg-cyan-400 animate-pulse-dot' : 'bg-amber-500 animate-pulse'}`} />
@@ -1063,13 +1063,13 @@ export default function App() {
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-0.5 glass-card p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
+            <div className="flex gap-0.5 quantum-panel p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
               {(['dashboard', 'portfolio', 'planner', 'macro', 'guide'] as TabType[]).map(tab => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`tab-btn px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm transition-all whitespace-nowrap flex-shrink-0 ${activeTab === tab
-                    ? 'tab-active bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+                  className={`quantum-tab px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${activeTab === tab
+                    ? 'active'
                     : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
                     }`}
                 >
@@ -1100,7 +1100,7 @@ export default function App() {
             <div className="flex gap-2 relative">
               <button
                 onClick={() => setAutoTelegram(prev => !prev)}
-                className={`btn-glass p-2.5 rounded-xl text-lg transition-all ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`}
+                className={`quantum-btn-ghost p-2 rounded-xl text-lg transition-all ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`}
                 title={autoTelegram ? 'Auto Alerts ON' : 'Auto Alerts OFF'}
               >
                 🔔
@@ -1112,7 +1112,7 @@ export default function App() {
               }} className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>
                 🌞
               </button>
-              <button onClick={() => window.location.reload()} className="btn-glass p-2.5 rounded-xl text-lg" title="Refresh">🔄</button>
+              <button onClick={() => window.location.reload()} className="quantum-btn-ghost p-2 rounded-xl text-lg" title="Refresh">🔄</button>
               <button onClick={() => {
                 const groqSaved = secureStorage.getItem('WEALTH_AI_GROQ');
                 const themeSaved = secureStorage.getItem('theme');
@@ -1120,8 +1120,8 @@ export default function App() {
                 if (groqSaved) secureStorage.setItem('WEALTH_AI_GROQ', groqSaved);
                 if (themeSaved) secureStorage.setItem('theme', themeSaved);
                 window.location.reload();
-              }} className="btn-glass p-2.5 rounded-xl text-lg" title="Flush Cache — Clear all cached data and reload">🧹</button>
-              <button onClick={logout} className="btn-glass p-2.5 rounded-xl text-lg" title="Logout">🔐</button>
+              }} className="quantum-btn-ghost p-2 rounded-xl text-lg" title="Flush Cache — Clear all cached data and reload">🧹</button>
+              <button onClick={logout} className="quantum-btn-ghost p-2 rounded-xl text-lg" title="Logout">🔐</button>
             </div>
           </div>
         </div>
@@ -1135,7 +1135,7 @@ export default function App() {
 
         {/* 🔮 Black Swan Predictor Banner */}
         {activeTab === 'dashboard' && avgVix > 22 && (
-          <div className="mb-5 black-swan-alert glass-card rounded-2xl p-4 border border-red-500/40 animate-fade-in-up">
+          <div className="mb-5 black-swan-alert quantum-panel rounded-2xl p-4 border border-red-500/40 animate-fade-in-up">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-xl bg-red-500/15 flex items-center justify-center text-2xl flex-shrink-0">🦢</div>
               <div className="flex-1">
@@ -1154,7 +1154,7 @@ export default function App() {
                   ))}
                 </div>
               </div>
-              <button onClick={pushTelegramReport} className="btn-glass px-3 py-2 rounded-xl text-xs font-bold text-red-400 whitespace-nowrap">📲 Alert TG</button>
+              <button onClick={pushTelegramReport} className="quantum-btn-ghost px-3 py-2 rounded-xl text-xs font-bold text-red-400 whitespace-nowrap">📲 Alert TG</button>
             </div>
           </div>
         )}
@@ -1162,7 +1162,7 @@ export default function App() {
         {activeTab === 'dashboard' && currentSymbol && (
           <div className="space-y-5 animate-fade-in">
             {/* Macro Alert */}
-            <div className={`alert-banner glass-card rounded-2xl p-4 border ${avgVix > 17 ? 'border-red-500/30 bg-red-950/20' : 'border-emerald-500/30 bg-emerald-950/20'} animate-fade-in-up`}>
+            <div className={`alert-banner quantum-panel rounded-2xl p-4 border ${avgVix > 17 ? 'border-red-500/30 bg-red-950/20' : 'border-emerald-500/30 bg-emerald-950/20'} animate-fade-in-up`}>
               <div className="flex items-center gap-4">
                 <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl ${avgVix > 17 ? 'bg-red-500/10' : 'bg-emerald-500/10'}`}>
                   {avgVix > 17 ? '🚨' : '🚀'}
@@ -1179,7 +1179,7 @@ export default function App() {
             </div>
 
             {/* Search */}
-            <div className="flex gap-3 glass-card p-3 rounded-2xl animate-fade-in-up delay-75">
+            <div className="flex gap-3 quantum-panel p-3 rounded-2xl animate-fade-in-up delay-75">
               <div className="flex-1 relative">
                 <input
                   type="text"
@@ -1187,14 +1187,14 @@ export default function App() {
                   onChange={e => setSymbolInput(e.target.value.toUpperCase())}
                   onKeyDown={e => e.key === 'Enter' && analyzeSymbol()}
                   placeholder="Search any asset... (AAPL, RELIANCE, SPY)"
-                  className="w-full px-5 py-3.5 pl-12 glass-input rounded-xl uppercase font-semibold text-white placeholder-slate-600"
+                  className="w-full px-5 py-3.5 pl-12 quantum-input rounded-xl uppercase font-semibold text-white placeholder-slate-600"
                 />
                 <span className="absolute left-4 top-3.5 text-lg text-slate-500">🔍</span>
               </div>
               <button
                 onClick={analyzeSymbol}
                 disabled={isAnalyzing}
-                className="btn-primary px-7 py-3.5 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-white disabled:opacity-50"
+                className="quantum-btn-primary px-7 py-3.5 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-white disabled:opacity-50"
               >
                 {isAnalyzing ? '⏳ Scanning...' : 'SCAN ⚡'}
               </button>
@@ -1202,12 +1202,12 @@ export default function App() {
 
             {/* Stats */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 animate-fade-in-up delay-100">
-              <div className="stat-card glass-card rounded-2xl p-4">
+              <div className="quantum-stat rounded-2xl p-4">
                 <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Target Asset</div>
                 <div className="text-xl font-black text-cyan-400 mt-1 font-display">{currentSymbol.replace('.NS', '') || '---'}</div>
                 <div className="text-[10px] text-slate-600 mt-1 font-mono">{currentMarket === 'IN' ? 'NSE/BSE' : 'NASDAQ/NYSE'}</div>
               </div>
-              <div className="stat-card glass-card rounded-2xl p-4">
+              <div className="quantum-stat rounded-2xl p-4">
                 <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Live Price</div>
                 <div className={`text-xl font-black font-mono mt-1 ${currentChange >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                   {currentPrice > 0 ? formatPrice(currentPrice, currentMarket === 'IN' ? '₹' : '$') : '--'}
@@ -1216,7 +1216,7 @@ export default function App() {
                   <span className="text-[10px]">{currentChange >= 0 ? '▲' : '▼'}</span> {currentChange.toFixed(2)}%
                 </div>
               </div>
-              <div className="stat-card glass-card rounded-2xl p-4">
+              <div className="quantum-stat rounded-2xl p-4">
                 <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">AI Signal</div>
                 <div className={`text-lg font-black mt-1 ${signalData.color}`}>{signalData.signal}</div>
                 <div className="mt-1">
@@ -1226,14 +1226,14 @@ export default function App() {
                   <div className="text-[10px] text-slate-500 mt-1 font-mono">{signalData.conf}% confidence</div>
                 </div>
               </div>
-              <div className="stat-card glass-card rounded-2xl p-4">
+              <div className="quantum-stat rounded-2xl p-4">
                 <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">RSI Index</div>
                 <div className={`text-xl font-black font-mono mt-1 ${currentRsi < 35 ? 'text-emerald-400' : currentRsi > 65 ? 'text-red-400' : 'text-cyan-400'}`}>
                   {currentRsi.toFixed(1)}
                 </div>
                 <div className="text-[10px] text-slate-600 mt-1">{currentRsi < 35 ? '⬇ Oversold' : currentRsi > 65 ? '⬆ Overbought' : '↔ Neutral'}</div>
               </div>
-              <div className="stat-card glass-card rounded-2xl p-4 col-span-2 md:col-span-1">
+              <div className="quantum-stat rounded-2xl p-4 col-span-2 md:col-span-1">
                 <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Portfolio</div>
                 <div className="text-xl font-black text-purple-400 font-mono mt-1">₹{Math.round(metrics.totalValue).toLocaleString('en-IN')}</div>
                 <div className={`text-xs font-bold mt-1 ${metrics.totalPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
@@ -1243,7 +1243,7 @@ export default function App() {
             </div>
 
             {/* Value Zones */}
-            <div className="glass-card rounded-2xl p-5 border-cyan-500/10 animate-fade-in-up delay-150">
+            <div className="quantum-panel rounded-2xl p-5 border-cyan-500/10 animate-fade-in-up delay-150">
               <h2 className="text-base font-bold text-white mb-4 flex items-center gap-2">
                 <span className="w-7 h-7 rounded-lg bg-cyan-500/10 flex items-center justify-center text-sm">🎯</span>
                 Value Zones
@@ -1282,7 +1282,7 @@ export default function App() {
                 </div>
                 <button
                   onClick={() => openAddModal()}
-                  className="btn-primary px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-cyan-600 rounded-xl font-bold text-white text-sm whitespace-nowrap"
+                  className="quantum-btn-primary px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-cyan-600 rounded-xl font-bold text-white text-sm whitespace-nowrap"
                 >
                   📈 Invest
                 </button>
@@ -1290,7 +1290,7 @@ export default function App() {
             </div>
 
             {/* Chart */}
-            <div className="glass-card rounded-2xl p-5 border-cyan-500/10 animate-fade-in-up delay-200">
+            <div className="quantum-panel rounded-2xl p-5 border-cyan-500/10 animate-fade-in-up delay-200">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-base font-bold text-white flex items-center gap-2">
                   <span className="w-7 h-7 rounded-lg bg-cyan-500/10 flex items-center justify-center text-sm">📊</span>
@@ -1317,7 +1317,7 @@ export default function App() {
 
             {/* Quantum Forensics Panel */}
             {currentPrice > 0 && (
-              <div className="glass-card rounded-2xl p-5 border-cyan-500/10 animate-fade-in-up delay-200">
+              <div className="quantum-panel rounded-2xl p-5 border-cyan-500/10 animate-fade-in-up delay-200">
                 <h2 className="text-base font-bold text-white mb-4 flex items-center gap-2">
                   <span className="w-7 h-7 rounded-lg bg-purple-500/10 flex items-center justify-center text-sm">🧬</span>
                   Quantum Forensics — {currentSymbol.replace('.NS', '')}
@@ -1402,7 +1402,7 @@ export default function App() {
             />
 
             {/* Quick Assets */}
-            <div className="glass-card rounded-2xl p-5 border-cyan-500/10 animate-fade-in-up delay-300">
+            <div className="quantum-panel rounded-2xl p-5 border-cyan-500/10 animate-fade-in-up delay-300">
               <h2 className="text-base font-bold text-white mb-4 flex items-center gap-2">
                 <span className="w-7 h-7 rounded-lg bg-cyan-500/10 flex items-center justify-center text-sm">📂</span>
                 Core Holdings
@@ -1447,19 +1447,19 @@ export default function App() {
               <div className="flex gap-2">
                 <button
                   onClick={() => loadFromCloud().then(data => { if (data) setPortfolio(data); })}
-                  className="btn-glass px-4 py-2 rounded-xl font-semibold text-sm"
+                  className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm"
                 >
                   📥 Sync
                 </button>
                 <button
                   onClick={() => openAddModal()}
-                  className="btn-primary px-5 py-2 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-sm text-white"
+                  className="quantum-btn-primary px-5 py-2 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-sm text-white"
                 >
                   + Add Asset
                 </button>
                 <button
                   onClick={pushTelegramReport}
-                  className="btn-glass px-4 py-2 rounded-xl font-semibold text-sm text-indigo-300 border-indigo-500/20"
+                  className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm text-indigo-300 border-indigo-500/20"
                 >
                   📲 TG {syncStatus}
                 </button>
@@ -1467,7 +1467,7 @@ export default function App() {
             </div>
 
             {/* USD/INR */}
-            <div className="glass-card rounded-xl p-3 flex items-center justify-between">
+            <div className="quantum-panel rounded-xl p-3 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-base">💱</div>
                 <span className="text-sm font-medium text-slate-400">USD/INR</span>
@@ -1478,17 +1478,17 @@ export default function App() {
 
             {/* Summary Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="stat-card glass-card rounded-2xl p-4 animate-fade-in-up">
+              <div className="quantum-stat rounded-2xl p-4 animate-fade-in-up">
                 <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Capital Deployed</div>
                 <div className="text-xl font-black text-white font-mono mt-1">₹{Math.round(metrics.totalInvested).toLocaleString('en-IN')}</div>
                 <div className="text-[10px] text-slate-600 mt-1 font-mono">${Math.round(metrics.totalInvested / usdInrRate).toLocaleString('en-US')}</div>
               </div>
-              <div className="stat-card glass-card rounded-2xl p-4 border-cyan-500/15 animate-fade-in-up delay-75">
+              <div className="quantum-stat rounded-2xl p-4 border-cyan-500/15 animate-fade-in-up delay-75">
                 <div className="text-cyan-500/80 text-[10px] font-bold uppercase tracking-wider">Current Equity</div>
                 <div className="text-xl font-black text-cyan-400 font-mono mt-1">₹{Math.round(metrics.totalValue).toLocaleString('en-IN')}</div>
                 <div className="text-[10px] text-slate-600 mt-1 font-mono">${Math.round(metrics.totalValue / usdInrRate).toLocaleString('en-US')}</div>
               </div>
-              <div className="stat-card glass-card rounded-2xl p-4 animate-fade-in-up delay-150">
+              <div className="quantum-stat rounded-2xl p-4 animate-fade-in-up delay-150">
                 <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Total P&L</div>
                 <div className={`text-xl font-black font-mono mt-1 ${metrics.totalPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                   {metrics.totalPL >= 0 ? '+' : ''}₹{Math.round(metrics.totalPL).toLocaleString('en-IN')}
@@ -1497,7 +1497,7 @@ export default function App() {
                   {metrics.plPct >= 0 ? '+' : ''}{metrics.plPct.toFixed(2)}%
                 </div>
               </div>
-              <div className="stat-card glass-card rounded-2xl p-4 animate-fade-in-up delay-200">
+              <div className="quantum-stat rounded-2xl p-4 animate-fade-in-up delay-200">
                 <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Today's P&L</div>
                 <div className={`text-xl font-black font-mono mt-1 ${metrics.todayPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                   {metrics.todayPL >= 0 ? '+' : ''}₹{Math.round(metrics.todayPL).toLocaleString('en-IN')}
@@ -1518,7 +1518,7 @@ export default function App() {
 
 
             {/* Advance Pro Trader Portfolio Grid */}
-            <div className="glass-card rounded-2xl overflow-hidden animate-fade-in-up delay-200 p-1">
+            <div className="quantum-panel rounded-2xl overflow-hidden animate-fade-in-up delay-200 p-1">
               <div className="hidden md:grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto] gap-4 px-6 py-3 bg-black/40 border-b border-white/5 text-[10px] uppercase tracking-wider text-slate-500 font-bold">
                 <div>Asset & Allocation</div>
                 <div>LTP & 24H Range</div>
@@ -1704,40 +1704,40 @@ export default function App() {
             </h2>
 
             {/* SIP Config */}
-            <div className="glass-card rounded-2xl p-5 animate-fade-in-up">
+            <div className="quantum-panel rounded-2xl p-5 animate-fade-in-up">
               <div className="text-[10px] text-cyan-500/70 font-bold uppercase tracking-wider mb-4">Monthly SIP Configuration</div>
               <div className="grid md:grid-cols-4 gap-3 mb-5">
                 <div className="bg-blue-500/5 border border-blue-500/15 p-4 rounded-xl">
                   <div className="text-xs font-bold text-blue-400 mb-2">🇮🇳 India SIP</div>
-                  <div className="flex items-center gap-2 glass-input p-2 rounded-lg">
+                  <div className="flex items-center gap-2 quantum-input p-2 rounded-lg">
                     <span className="text-lg text-blue-500/50">₹</span>
                     <input type="number" value={indiaSIP} onChange={e => setIndiaSIP(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
                   </div>
                 </div>
                 <div className="bg-emerald-500/5 border border-emerald-500/15 p-4 rounded-xl">
                   <div className="text-xs font-bold text-emerald-400 mb-2">🌍 US/Global SIP</div>
-                  <div className="flex items-center gap-2 glass-input p-2 rounded-lg">
+                  <div className="flex items-center gap-2 quantum-input p-2 rounded-lg">
                     <span className="text-lg text-emerald-500/50">₹</span>
                     <input type="number" value={usSIP} onChange={e => setUsSIP(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
                   </div>
                 </div>
                 <div className="bg-orange-500/5 border border-orange-500/15 p-4 rounded-xl">
                   <div className="text-xs font-bold text-orange-400 mb-2">₿ Bitcoin SIP</div>
-                  <div className="flex items-center gap-2 glass-input p-2 rounded-lg">
+                  <div className="flex items-center gap-2 quantum-input p-2 rounded-lg">
                     <span className="text-lg text-orange-500/50">₹</span>
                     <input type="number" value={btcSIP} onChange={e => setBtcSIP(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
                   </div>
                 </div>
                 <div className="bg-indigo-500/5 border border-indigo-500/15 p-4 rounded-xl">
                   <div className="text-xs font-bold text-indigo-400 mb-2">🪙 Ethereum SIP</div>
-                  <div className="flex items-center gap-2 glass-input p-2 rounded-lg">
+                  <div className="flex items-center gap-2 quantum-input p-2 rounded-lg">
                     <span className="text-lg text-indigo-500/50">₹</span>
                     <input type="number" value={ethSIP} onChange={e => setEthSIP(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
                   </div>
                 </div>
                 <div className="bg-purple-500/5 border border-purple-500/15 p-4 rounded-xl">
                   <div className="text-xs font-bold text-purple-400 mb-2">💵 Emergency Fund</div>
-                  <div className="flex items-center gap-2 glass-input p-2 rounded-lg">
+                  <div className="flex items-center gap-2 quantum-input p-2 rounded-lg">
                     <span className="text-lg text-purple-500/50">₹</span>
                     <input type="number" value={emergencyFund} onChange={e => setEmergencyFund(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
                   </div>
@@ -1746,7 +1746,7 @@ export default function App() {
               <div className="grid md:grid-cols-2 gap-5">
                 <div>
                   <label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider block mb-2">Investment Horizon</label>
-                  <select value={investYears} onChange={e => setInvestYears(parseInt(e.target.value))} className="w-full px-4 py-3 glass-input rounded-xl text-white">
+                  <select value={investYears} onChange={e => setInvestYears(parseInt(e.target.value))} className="w-full px-4 py-3 quantum-input rounded-xl text-white">
                     {[3, 5, 10, 15, 20, 25, 30].map(y => (<option key={y} value={y}>{y} Years</option>))}
                   </select>
                 </div>
@@ -1754,7 +1754,7 @@ export default function App() {
                   <label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider block mb-2">Risk Appetite</label>
                   <div className="flex gap-1.5">
                     {(['low', 'medium', 'high'] as RiskLevel[]).map(r => (
-                      <button key={r} onClick={() => setRiskLevel(r)} className={`flex-1 py-2.5 rounded-xl font-semibold text-xs transition-all ${riskLevel === r ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/20' : 'glass-input text-slate-500'}`}>
+                      <button key={r} onClick={() => setRiskLevel(r)} className={`flex-1 py-2.5 rounded-xl font-semibold text-xs transition-all ${riskLevel === r ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/20' : 'quantum-input text-slate-500'}`}>
                         {r === 'low' && '🛡️ Safe'}{r === 'medium' && '⚖️ Balanced'}{r === 'high' && '🚀 Aggressive'}
                       </button>
                     ))}
@@ -1764,17 +1764,17 @@ export default function App() {
             </div>
 
             {/* Monte Carlo */}
-            <div className="glass-card rounded-2xl p-5 animate-fade-in-up delay-100">
+            <div className="quantum-panel rounded-2xl p-5 animate-fade-in-up delay-100">
               <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
                 <span className="w-7 h-7 rounded-lg bg-cyan-500/10 flex items-center justify-center text-sm">🔮</span>
                 Monte Carlo Simulator
               </h3>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                <div className="stat-card glass-card p-3 rounded-xl text-center">
+                <div className="quantum-stat p-3 rounded-xl text-center">
                   <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">Monthly SIP</div>
                   <div className="text-lg font-black text-white font-mono">₹{Math.round(totalSIP).toLocaleString('en-IN')}</div>
                 </div>
-                <div className="stat-card glass-card p-3 rounded-xl text-center">
+                <div className="quantum-stat p-3 rounded-xl text-center">
                   <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">Total Invested</div>
                   <div className="text-lg font-black text-slate-300 font-mono">₹{Math.round(totalInvestedPlanner).toLocaleString('en-IN')}</div>
                 </div>
@@ -1804,7 +1804,7 @@ export default function App() {
             </div>
 
             {/* FIRE */}
-            <div className="glass-card rounded-2xl p-5 border-orange-500/10 animate-fade-in-up delay-200">
+            <div className="quantum-panel rounded-2xl p-5 border-orange-500/10 animate-fade-in-up delay-200">
               <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
                 <span className="w-7 h-7 rounded-lg bg-orange-500/10 flex items-center justify-center text-sm">🔥</span>
                 FIRE Calculator
@@ -1812,14 +1812,14 @@ export default function App() {
               <div className="grid md:grid-cols-2 gap-3 mb-4">
                 <div className="bg-black/20 p-4 rounded-xl">
                   <label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider block mb-2">Monthly Expenses</label>
-                  <div className="flex items-center gap-2 glass-input p-2 rounded-lg">
+                  <div className="flex items-center gap-2 quantum-input p-2 rounded-lg">
                     <span className="text-lg text-slate-600">₹</span>
                     <input type="number" value={monthlyExpenses} onChange={e => setMonthlyExpenses(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
                   </div>
                 </div>
                 <div className="bg-black/20 p-4 rounded-xl">
                   <label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider block mb-2">Current Age</label>
-                  <div className="flex items-center gap-2 glass-input p-2 rounded-lg">
+                  <div className="flex items-center gap-2 quantum-input p-2 rounded-lg">
                     <span className="text-lg">🎂</span>
                     <input type="number" value={currentAge} onChange={e => setCurrentAge(parseInt(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
                   </div>
@@ -1856,7 +1856,7 @@ export default function App() {
 
             {/* Smart AI Allocations */}
             {portfolio.length > 0 && (
-              <div className="glass-card rounded-2xl p-5 border-purple-500/10 animate-fade-in-up delay-300">
+              <div className="quantum-panel rounded-2xl p-5 border-purple-500/10 animate-fade-in-up delay-300">
                 <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
                   <span className="w-7 h-7 rounded-lg bg-purple-500/10 flex items-center justify-center text-sm">🤖</span>
                   Smart AI Allocation Engine
@@ -2101,7 +2101,7 @@ export default function App() {
               🌍 Risk Radar
             </h2>
 
-            <div className="glass-card rounded-2xl p-5 animate-fade-in-up">
+            <div className="quantum-panel rounded-2xl p-5 animate-fade-in-up">
               <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
                 <span className="w-7 h-7 rounded-lg bg-cyan-500/10 flex items-center justify-center text-sm">⚙️</span>
                 Risk Diagnostics
@@ -2140,7 +2140,7 @@ export default function App() {
               sectorData={sectorData}
             />
 
-            <div className="glass-card rounded-2xl p-5 animate-fade-in-up delay-100">
+            <div className="quantum-panel rounded-2xl p-5 animate-fade-in-up delay-100">
               <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
                 <span className="w-7 h-7 rounded-lg bg-teal-500/10 flex items-center justify-center text-sm">🤖</span>
                 Asset Analysis
@@ -2189,7 +2189,7 @@ export default function App() {
 
             {/* VaR Analysis */}
             {portfolio.length > 0 && (
-              <div className="glass-card rounded-2xl p-5 animate-fade-in-up delay-200">
+              <div className="quantum-panel rounded-2xl p-5 animate-fade-in-up delay-200">
                 <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
                   <span className="w-7 h-7 rounded-lg bg-red-500/10 flex items-center justify-center text-sm">VaR</span>
                   Value at Risk Analysis
@@ -2222,7 +2222,7 @@ export default function App() {
 
             {/* Stress Test Scenarios */}
             {portfolio.length > 0 && (
-              <div className="glass-card rounded-2xl p-5 animate-fade-in-up delay-300">
+              <div className="quantum-panel rounded-2xl p-5 animate-fade-in-up delay-300">
                 <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
                   <span className="w-7 h-7 rounded-lg bg-rose-500/10 flex items-center justify-center text-sm">Stress</span>
                   Stress Testing
@@ -2251,7 +2251,7 @@ export default function App() {
 
             {/* Concentration Risk */}
             {portfolio.length > 0 && (
-              <div className="glass-card rounded-2xl p-5 animate-fade-in-up delay-400">
+              <div className="quantum-panel rounded-2xl p-5 animate-fade-in-up delay-400">
                 <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
                   <span className="w-7 h-7 rounded-lg bg-yellow-500/10 flex items-center justify-center text-sm">Concentration</span>
                   Concentration Risk
@@ -2281,7 +2281,7 @@ export default function App() {
             )}
 
             {/* WebSocket Latency & Market Status */}
-            <div className="glass-card rounded-2xl p-5 animate-fade-in-up">
+            <div className="quantum-panel rounded-2xl p-5 animate-fade-in-up">
               <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
                 <span className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center text-sm">Conn</span>
                 Connection Quality
@@ -2311,13 +2311,13 @@ export default function App() {
         {/* ============================================ */}
         {activeTab === 'guide' && (
           <div className="space-y-4 animate-fade-in">
-            <div className="glass-card rounded-2xl p-5 border-cyan-500/10">
+            <div className="quantum-panel rounded-2xl p-5 border-cyan-500/10">
               <h1 className="text-xl font-bold text-white mb-2">📖 Wealth AI Pro — Complete Guide</h1>
               <p className="text-sm text-slate-400">Sab features ka detailed guide. Long-term investing ke liye banaya gaya hai. Sirf buy-on-dip strategy follow karta hai.</p>
             </div>
 
             {/* DASHBOARD TAB FEATURES */}
-            <div className="glass-card rounded-2xl p-5">
+            <div className="quantum-panel rounded-2xl p-5">
               <h2 className="text-base font-bold text-cyan-400 mb-3">📊 DASHBOARD TAB</h2>
               <div className="space-y-3">
                 <GuideItem title="Live Price Stats" emoji="📈"
@@ -2341,7 +2341,7 @@ export default function App() {
             </div>
 
             {/* PORTFOLIO TAB FEATURES */}
-            <div className="glass-card rounded-2xl p-5">
+            <div className="quantum-panel rounded-2xl p-5">
               <h2 className="text-base font-bold text-emerald-400 mb-3">💼 PORTFOLIO TAB</h2>
               <div className="space-y-3">
                 <GuideItem title="Portfolio Table" emoji="📋"
@@ -2360,7 +2360,7 @@ export default function App() {
             </div>
 
             {/* PLANNER TAB FEATURES */}
-            <div className="glass-card rounded-2xl p-5">
+            <div className="quantum-panel rounded-2xl p-5">
               <h2 className="text-base font-bold text-amber-400 mb-3">🎯 PLANNER TAB</h2>
               <div className="space-y-3">
                 <GuideItem title="SIP Configuration" emoji="💰"
@@ -2388,7 +2388,7 @@ export default function App() {
             </div>
 
             {/* RISK RADAR TAB FEATURES */}
-            <div className="glass-card rounded-2xl p-5">
+            <div className="quantum-panel rounded-2xl p-5">
               <h2 className="text-base font-bold text-red-400 mb-3">🌍 RISK RADAR TAB</h2>
               <div className="space-y-3">
                 <GuideItem title="Macro Regime Detector" emoji="🌐"
@@ -2416,7 +2416,7 @@ export default function App() {
             </div>
 
             {/* BACKGROUND PROCESSES */}
-            <div className="glass-card rounded-2xl p-5">
+            <div className="quantum-panel rounded-2xl p-5">
               <h2 className="text-base font-bold text-purple-400 mb-3">⚙️ BACKGROUND PROCESSES (Hamesha Chalte Rahte Hain)</h2>
               <div className="space-y-3">
                 <GuideItem title="Portfolio Health Monitor" emoji="💊"
@@ -2435,7 +2435,7 @@ export default function App() {
             </div>
 
             {/* TELEGRAM BOT COMMANDS */}
-            <div className="glass-card rounded-2xl p-5">
+            <div className="quantum-panel rounded-2xl p-5">
               <h2 className="text-base font-bold text-blue-400 mb-3">🤖 TELEGRAM BOT COMMANDS</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                 <GuideCommand cmd="/portfolio" desc="Full portfolio report with P&L" />
@@ -2467,7 +2467,7 @@ export default function App() {
             </div>
 
             {/* IMPORTANT TIPS */}
-            <div className="glass-card rounded-2xl p-5 border-amber-500/20">
+            <div className="quantum-panel rounded-2xl p-5 border-amber-500/20">
               <h2 className="text-base font-bold text-amber-400 mb-3">💡 IMPORTANT TIPS FOR LONG-TERM INVESTING</h2>
               <div className="space-y-2 text-xs text-slate-300">
                 <p>🎯 <b className="text-white">Sirf Buy-on-Dip Strategy:</b> Sell mat karo. Jab market gire (dip) tab buy karo. Time ke saath compounding ka magic hoga.</p>
@@ -2482,7 +2482,7 @@ export default function App() {
             </div>
 
             {/* NEURAL CHAT */}
-            <div className="glass-card rounded-2xl p-5 border-violet-500/20">
+            <div className="quantum-panel rounded-2xl p-5 border-violet-500/20">
               <h2 className="text-base font-bold text-violet-400 mb-3">🧠 NEURAL CHAT (AI Assistant)</h2>
               <div className="space-y-2 text-xs text-slate-300">
                 <p>Bottom-right corner me chat icon hai. Click karo aur kuch bhi pucho — market analysis, stock advice, portfolio review.</p>
@@ -2500,7 +2500,7 @@ export default function App() {
 
       {showAddModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-xl z-50 flex items-center justify-center p-4 animate-fade-in">
-          <div className="glass-modal rounded-2xl w-full max-w-md shadow-2xl animate-scale-in">
+          <div className="quantum-modal rounded-2xl w-full max-w-md shadow-2xl animate-scale-in">
             <div className="p-5 border-b border-white/5 flex justify-between items-center">
               <h3 className="text-lg font-bold text-white">
                 {transactionType === 'sell' ? '📉 Sell Asset' : '➕ Add Asset'}
@@ -2511,12 +2511,12 @@ export default function App() {
               <div>
                 <label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Symbol</label>
                 <div className="flex gap-2">
-                  <input type="text" value={addSymbol} onChange={e => setAddSymbol(e.target.value.toUpperCase())} placeholder="e.g. AAPL, RELIANCE" className="flex-1 px-4 py-2.5 glass-input rounded-xl uppercase font-bold text-white" />
-                  <button onClick={() => fetchModalPriceData(addSymbol)} className="btn-glass px-4 py-2.5 rounded-xl font-bold text-cyan-400">🔍</button>
+                  <input type="text" value={addSymbol} onChange={e => setAddSymbol(e.target.value.toUpperCase())} placeholder="e.g. AAPL, RELIANCE" className="flex-1 px-4 py-2.5 quantum-input rounded-xl uppercase font-bold text-white" />
+                  <button onClick={() => fetchModalPriceData(addSymbol)} className="quantum-btn-ghost px-4 py-2.5 rounded-xl font-bold text-cyan-400">🔍</button>
                 </div>
               </div>
               {modalPrice && (
-                <div className="glass-card rounded-xl p-3 flex justify-between items-center">
+                <div className="quantum-panel rounded-xl p-3 flex justify-between items-center">
                   <span className="text-slate-500 text-[10px] uppercase font-bold tracking-wider">Live Price</span>
                   <div className="text-right">
                     <span className={`text-xl font-black font-mono ${modalPrice.change >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
@@ -2535,21 +2535,21 @@ export default function App() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Quantity</label>
-                  <input type="number" value={addQty} onChange={e => setAddQty(e.target.value)} placeholder="0" className="w-full px-4 py-2.5 glass-input rounded-xl font-bold text-lg text-white" />
+                  <input type="number" value={addQty} onChange={e => setAddQty(e.target.value)} placeholder="0" className="w-full px-4 py-2.5 quantum-input rounded-xl font-bold text-lg text-white" />
                 </div>
                 <div>
                   <label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Price</label>
-                  <input type="number" value={addPrice} onChange={e => setAddPrice(e.target.value)} placeholder="0.00" className="w-full px-4 py-2.5 glass-input rounded-xl font-bold text-lg text-white" />
+                  <input type="number" value={addPrice} onChange={e => setAddPrice(e.target.value)} placeholder="0.00" className="w-full px-4 py-2.5 quantum-input rounded-xl font-bold text-lg text-white" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Date</label>
-                  <input type="date" value={addDate} onChange={e => setAddDate(e.target.value)} className="w-full px-4 py-2.5 glass-input rounded-xl text-slate-300" />
+                  <input type="date" value={addDate} onChange={e => setAddDate(e.target.value)} className="w-full px-4 py-2.5 quantum-input rounded-xl text-slate-300" />
                 </div>
                 <div>
                   <label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Leverage</label>
-                  <select value={addLeverage} onChange={e => setAddLeverage(e.target.value)} className="w-full px-4 py-2.5 glass-input rounded-xl text-slate-300">
+                  <select value={addLeverage} onChange={e => setAddLeverage(e.target.value)} className="w-full px-4 py-2.5 quantum-input rounded-xl text-slate-300">
                     <option value="1">1x (Cash)</option>
                     <option value="2">2x MTF</option>
                     <option value="3">3x</option>
@@ -2559,7 +2559,7 @@ export default function App() {
               </div>
             </div>
             <div className="p-5 border-t border-white/5">
-              <button onClick={savePosition} className="btn-primary w-full py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-white">
+              <button onClick={savePosition} className="quantum-btn-primary w-full py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-white">
                 💾 Save
               </button>
             </div>
@@ -2577,7 +2577,7 @@ export default function App() {
 
       {/* Neural Core Chat AI Integration with Deep Real-Time Portfolio Context Injection */}
       <Suspense fallback={
-        <div className="fixed bottom-6 right-6 w-80 h-96 glass-card rounded-2xl flex items-center justify-center animate-pulse">
+        <div className="fixed bottom-6 right-6 w-80 h-96 quantum-panel rounded-2xl flex items-center justify-center animate-pulse">
           <div className="text-center">
             <div className="text-4xl mb-2 animate-float">🧠</div>
             <div className="text-sm text-slate-400 font-medium">Loading AI Engine...</div>
