@@ -125,7 +125,7 @@ export function useAppState() {
       }
       if (!changed) return prev;
       const now = Date.now();
-      if (now - lastLocalSaveRef.current > 10000) {
+      if (now - lastLocalSaveRef.current > 30000) {
         lastLocalSaveRef.current = now;
         try { secureStorage.setItem('livePrices', JSON.stringify(merged)); } catch { /* quota */ }
       }
@@ -183,10 +183,10 @@ export function useAppState() {
     secureStorage.setItem('plannerSettings', JSON.stringify({ indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses }));
   }, [indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses, isAuthenticated]);
 
-  // --- Price flush interval (2s instead of 1.5s) ---
+  // --- Price flush interval (3s — WS gives real-time, no need for faster) ---
   useEffect(() => {
     if (!isAuthenticated || portfolio.length === 0) return;
-    priceFlushRef.current = window.setInterval(() => { requestAnimationFrame(flushPricesToStorage); }, 2000);
+    priceFlushRef.current = window.setInterval(() => { requestAnimationFrame(flushPricesToStorage); }, 3000);
     return () => { if (priceFlushRef.current) { clearInterval(priceFlushRef.current); priceFlushRef.current = null; } };
   }, [isAuthenticated, portfolio.length, flushPricesToStorage]);
 
@@ -258,14 +258,14 @@ export function useAppState() {
     return () => { if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current); };
   }, [portfolio, usdInrRate]);
 
-  // --- Forex refresh (90s instead of 60s) ---
+  // --- Forex refresh (180s — rates don't change fast) ---
   useEffect(() => {
     if (!isAuthenticated) return;
     const refreshForex = async () => {
       const rate = await fetchForexRate(); setUsdInrRate(rate);
       const cryptoRate = await fetchCryptoUsdInrRate(); setCryptoUsdInrRate(cryptoRate);
     };
-    forexIntervalRef.current = window.setInterval(refreshForex, 90000);
+    forexIntervalRef.current = window.setInterval(refreshForex, 180000);
     return () => { if (forexIntervalRef.current) clearInterval(forexIntervalRef.current); };
   }, [isAuthenticated]);
 
@@ -371,11 +371,11 @@ export function useAppState() {
   // Update latestDataRef for telegram interval
   useEffect(() => { latestDataRef.current = { portfolio, livePrices, usdInrRate }; }, [portfolio, livePrices, usdInrRate]);
 
-  // --- Context regeneration (throttled 60s) ---
+  // --- Context regeneration (throttled 120s — heavy string ops) ---
   useEffect(() => {
     if (portfolio.length === 0) return;
     const now = Date.now();
-    if (now - lastContextGenRef.current < 60000) return;
+    if (now - lastContextGenRef.current < 120000) return;
     lastContextGenRef.current = now;
     let ctx = `--- DEEP MIND QUANTUM LIVE SENSOR DATA ---\n`;
     const usVix = livePrices['US_VIX']?.price || 15;
@@ -441,10 +441,10 @@ export function useAppState() {
     };
   }, [isAuthenticated, autoTelegram, portfolio.length, metrics]);
 
-  // --- WS Latency (30s instead of 15s) ---
+  // --- WS Latency (60s — cosmetic metric, no need for fast updates) ---
   useEffect(() => {
     if (!isAuthenticated) return;
-    const interval = setInterval(() => { setWsLatency(getWebSocketLatency()); }, 30000);
+    const interval = setInterval(() => { setWsLatency(getWebSocketLatency()); }, 60000);
     return () => clearInterval(interval);
   }, [isAuthenticated]);
 

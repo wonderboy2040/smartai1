@@ -5,11 +5,13 @@ import { useAppState } from './hooks/useAppState';
 import { AppContext } from './hooks/AppContext';
 import { PortfolioHealthMonitor } from './components/PortfolioHealthMonitor';
 import { Clock } from './components/Clock';
-import DashboardTab from './components/tabs/DashboardTab';
-import PortfolioTab from './components/tabs/PortfolioTab';
-import PlannerTab from './components/tabs/PlannerTab';
-import { MacroTab } from './components/tabs/MacroTab';
-import { GuideTab } from './components/tabs/GuideTab';
+
+// Lazy load all tab components for faster initial load
+const DashboardTab = lazy(() => import('./components/tabs/DashboardTab'));
+const PortfolioTab = lazy(() => import('./components/tabs/PortfolioTab'));
+const PlannerTab = lazy(() => import('./components/tabs/PlannerTab'));
+const MacroTab = lazy(() => import('./components/tabs/MacroTab').then(m => ({ default: m.MacroTab })));
+const GuideTab = lazy(() => import('./components/tabs/GuideTab').then(m => ({ default: m.GuideTab })));
 
 const NeuralChat = lazy(() => import('./components/NeuralChat').then(m => ({ default: m.NeuralChat })));
 
@@ -123,11 +125,13 @@ export default function App() {
         </header>
 
         <main className="container mx-auto px-4 py-6">
-          {activeTab === 'dashboard' && <DashboardTab />}
-          {activeTab === 'portfolio' && <PortfolioTab />}
-          {activeTab === 'planner' && <PlannerTab />}
-          {activeTab === 'macro' && <MacroTab />}
-          {activeTab === 'guide' && <GuideTab />}
+          <Suspense fallback={<div className="flex items-center justify-center py-20"><div className="text-center"><div className="text-4xl mb-3 animate-float">⚡</div><div className="text-sm text-slate-500 font-medium">Loading module...</div></div></div>}>
+            {activeTab === 'dashboard' && <DashboardTab />}
+            {activeTab === 'portfolio' && <PortfolioTab />}
+            {activeTab === 'planner' && <PlannerTab />}
+            {activeTab === 'macro' && <MacroTab />}
+            {activeTab === 'guide' && <GuideTab />}
+          </Suspense>
         </main>
 
         {/* Add/Edit Modal */}

@@ -13,6 +13,8 @@ const callbacks: Set<(key: string, data: Partial<PriceData>) => void> = new Set(
 const keyToTvSymbol: Map<string, string> = new Map();
 // Reverse map: TV symbol -> portfolio key
 const tvSymbolToKey: Map<string, string> = new Map();
+// Reverse map: raw symbol name ("RELIANCE") -> portfolio key (for cross-exchange O(1) lookup)
+const rawSymbolToKey: Map<string, string> = new Map();
 
 let pingInterval: number | null = null;
 let reconnectTimer: number | null = null;
@@ -138,7 +140,7 @@ function portfolioSymbolToTv(sym: string, market: 'IN' | 'US'): string {
 
 /**
  * Convert a TV symbol from the WebSocket back to the portfolio key.
- * This is the critical mapping that was broken before.
+ * Uses O(1) lookups via direct and rawSymbol maps.
  */
 function tvSymbolToPortfolioKey(tvSymbol: string): string | null {
   // Direct reverse lookup (O(1))
@@ -149,29 +151,11 @@ function tvSymbolToPortfolioKey(tvSymbol: string): string | null {
   const parts = tvSymbol.split(':');
   if (parts.length < 2) return null;
 
-  const exchange = parts[0].toUpperCase();
   const rawSym = parts[1].toUpperCase();
 
-  // We can't easily do O(1) for cross-exchange matches because we don't have a
-  // dedicated symbol-to-key map that ignores exchanges.
-  // However, we only enter this loop if the direct match fails.
-  for (const [key, tvSym] of keyToTvSymbol.entries()) {
-    const tvParts = tvSym.split(':');
-    if (tvParts.length < 2) continue;
-    const tvRaw = tvParts[1].toUpperCase();
-
-    // Match on raw symbol (flexible exchange matching)
-    if (rawSym === tvRaw) return key;
-
-    // Cross-match: NSE/BSE are both Indian
-    if ((exchange === 'NSE' || exchange === 'BSE') &&
-        (tvParts[0].toUpperCase() === 'NSE' || tvParts[0].toUpperCase() === 'BSE') &&
-        rawSym === tvRaw) return key;
-
-    // Cross-match: US exchanges (NASDAQ/NYSE/AMEX/ARCA)
-    const usExchanges = new Set(['NASDAQ', 'NYSE', 'AMEX', 'ARCA']);
-    if (usExchanges.has(exchange) && usExchanges.has(tvParts[0].toUpperCase()) && rawSym === tvRaw) return key;
-  }
+  // O(1) raw symbol lookup — handles cross-exchange matches automatically
+  const rawMatch = rawSymbolToKey.get(rawSym);
+  if (rawMatch) return rawMatch;
 
   return null;
 }
@@ -199,6 +183,9 @@ callbacks.add(onUpdate);
 
     keyToTvSymbol.set(key, tvSym);
     tvSymbolToKey.set(tvSym, key);
+    // Also store raw symbol for cross-exchange O(1) lookup
+    const rawParts = tvSym.split(':');
+    if (rawParts.length >= 2) rawSymbolToKey.set(rawParts[1].toUpperCase(), key);
   });
 
   if (!ws || ws.readyState === WebSocket.CLOSED) {
@@ -243,6 +230,7 @@ export function disconnectPrices() {
   lastKnownPrices.clear();
   keyToTvSymbol.clear();
   tvSymbolToKey.clear();
+  rawSymbolToKey.clear();
   subscribedSymbols.clear();
 }
 

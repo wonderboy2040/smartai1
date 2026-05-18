@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Position, PriceData, PortfolioHealth } from '../types';
 import { computeHealthScore, checkAlertConditions, generateDailyDigest } from '../utils/portfolioMonitor';
 import { sendTelegramAlert } from '../utils/api';
@@ -17,18 +17,16 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
   const lastDigestDateRef = useRef<string>('');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Compute health score
-  const currentHealth = useMemo(() => {
-    if (portfolio.length === 0) return null;
-    return computeHealthScore(portfolio, livePrices, metrics);
-  }, [portfolio, livePrices, metrics]);
-
-  // Update health state periodically (every 30s to avoid excessive renders)
+  // Compute health score — throttled to every 30s to avoid expensive recalculations
+  const lastHealthComputeRef = useRef(0);
   useEffect(() => {
-    if (currentHealth) {
-      setHealth(currentHealth);
-    }
-  }, [currentHealth]);
+    if (portfolio.length === 0) return;
+    const now = Date.now();
+    if (now - lastHealthComputeRef.current < 30000) return;
+    lastHealthComputeRef.current = now;
+    const computed = computeHealthScore(portfolio, livePrices, metrics);
+    if (computed) setHealth(computed);
+  }, [portfolio, livePrices, metrics]);
 
   // Background monitoring: check alerts every 60s
   useEffect(() => {
@@ -59,9 +57,9 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
       const todayStr = ist.toISOString().split('T')[0];
       const hour = ist.getHours();
 
-      if (hour === 8 && lastDigestDateRef.current !== todayStr && currentHealth) {
+      if (hour === 8 && lastDigestDateRef.current !== todayStr && health) {
         lastDigestDateRef.current = todayStr;
-        const digest = generateDailyDigest(portfolio, livePrices, currentHealth, metrics);
+        const digest = generateDailyDigest(portfolio, livePrices, health, metrics);
         sendTelegramAlert(telegramConfig.token, telegramConfig.chatId, digest).catch(() => {});
       }
     }, 60000);
@@ -69,7 +67,7 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [telegramConfig, portfolio, livePrices, currentHealth, metrics]);
+  }, [telegramConfig, portfolio, livePrices, health, metrics]);
 
   if (!health || portfolio.length === 0) return null;
 

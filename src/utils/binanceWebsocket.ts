@@ -96,7 +96,7 @@ function connect(initialSymbols: string[]) {
         if (baseSymbol) {
           const now = Date.now();
           const lastUpdate = lastUpdateMap.get(baseSymbol) || 0;
-          if (now - lastUpdate < 800) return; // Throttle to max ~1.25 updates per sec per symbol
+          if (now - lastUpdate < 1500) return; // Throttle to ~0.67 updates per sec per symbol
           lastUpdateMap.set(baseSymbol, now);
 
           // Send price via callbacks. Note: The price here is in USD.

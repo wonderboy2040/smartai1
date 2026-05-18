@@ -4,8 +4,7 @@
    Glassmorphism + High-Tech Futurism + Premium UI
     ======================================== */
 
-/* Fonts */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap');
+/* Fonts — loaded via index.html <link> to avoid render-blocking duplicate */
 
 @import "tailwindcss";
 
@@ -83,7 +82,7 @@
 * {
   font-family: 'Inter', 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
   box-sizing: border-box;
-  text-rendering: optimizeLegibility;
+  text-rendering: optimizeSpeed;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -192,15 +191,13 @@
 }
 
 .bento-item {
-  background: rgba(10, 25, 47, 0.5);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(10, 25, 47, 0.75);
   contain: layout style paint;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 16px;
   position: relative;
   overflow: hidden;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: border-color 0.2s ease, transform 0.2s ease;
 }
 
 .bento-item::before {
@@ -357,9 +354,7 @@
    Glassmorphism with rim light effect
    ======================================== */
 .glass-card, .glass-panel {
-  background: rgba(10, 25, 47, 0.65);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(10, 25, 47, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.08);
   position: relative;
   overflow: hidden;
@@ -379,21 +374,17 @@
 }
 
 .glass-ultra {
-  background: rgba(15, 23, 42, 0.7);
-  backdrop-filter: blur(8px) saturate(150%);
-  -webkit-backdrop-filter: blur(8px) saturate(150%);
+  background: rgba(15, 23, 42, 0.9);
   contain: layout style paint;
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 /* Premium Cyber Panel */
 .glass-premium {
-  background: linear-gradient(135deg, rgba(10, 25, 47, 0.6) 0%, rgba(20, 35, 60, 0.4) 100%);
-  backdrop-filter: blur(8px) saturate(150%);
-  -webkit-backdrop-filter: blur(8px) saturate(150%);
+  background: linear-gradient(135deg, rgba(10, 25, 47, 0.85) 0%, rgba(20, 35, 60, 0.8) 100%);
   contain: layout style paint;
   border: 1px solid rgba(0, 242, 255, 0.15);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 }
 
 /* Neon Border Effect */
@@ -404,11 +395,9 @@
 
 /* Premium Glass Input */
 .glass-input {
-  background: rgba(10, 25, 47, 0.7);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(10, 25, 47, 0.85);
   border: 1px solid rgba(0, 242, 255, 0.15);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .glass-input:focus {
@@ -418,8 +407,6 @@
 
 .glass-modal {
   background: rgba(10, 20, 40, 0.98);
-  backdrop-filter: blur(8px) saturate(150%);
-  -webkit-backdrop-filter: blur(8px) saturate(150%);
   border: 1px solid rgba(0, 242, 255, 0.25);
 }
 
@@ -520,9 +507,8 @@
 .stat-card {
   position: relative;
   overflow: hidden;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  background: rgba(10, 25, 47, 0.4);
-  backdrop-filter: blur(6px);
+  transition: border-color 0.2s ease;
+  background: rgba(10, 25, 47, 0.7);
   border: 1px solid rgba(255, 255, 255, 0.05);
   contain: layout style paint;
 }
@@ -1017,9 +1003,9 @@ input[type="range"]::-webkit-slider-runnable-track {
 .stat-card,
 .quantum-panel,
 .quantum-stat {
-  contain: layout style;
+  contain: layout style paint;
   content-visibility: auto;
-  contain-intrinsic-size: auto 200px;
+  contain-intrinsic-size: auto 150px;
 }
 
 /* ========================================
@@ -1193,9 +1179,7 @@ input[type="range"]::-webkit-slider-runnable-track {
 
 /* Premium TopAppBar - Quantum Noir Style */
 .quantum-appbar {
-  background: rgba(5, 5, 5, 0.92);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(5, 5, 5, 0.97);
   border-bottom: 1px solid rgba(0, 242, 255, 0.1);
 }
 
@@ -1211,11 +1195,9 @@ input[type="range"]::-webkit-slider-runnable-track {
 
 /* Premium SideNav - Quantum Noir Style */
 .quantum-sidenav {
-  background: linear-gradient(180deg, rgba(5, 5, 5, 0.95) 0%, rgba(10, 10, 15, 0.9) 100%);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: linear-gradient(180deg, rgba(5, 5, 5, 0.98) 0%, rgba(10, 10, 15, 0.95) 100%);
   border-right: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow: 4px 0 30px rgba(0, 0, 0, 0.3);
+  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.3);
 }
 
 .quantum-sidenav::before {
@@ -1265,9 +1247,7 @@ input[type="range"]::-webkit-slider-runnable-track {
 
 /* Premium Glass Panel - Enhanced */
 .quantum-panel {
-  background: linear-gradient(135deg, rgba(10, 25, 47, 0.7) 0%, rgba(15, 30, 55, 0.5) 100%);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: linear-gradient(135deg, rgba(10, 25, 47, 0.85) 0%, rgba(15, 30, 55, 0.8) 100%);
   contain: layout style paint;
   border: 1px solid rgba(0, 242, 255, 0.1);
   border-radius: 0.75rem;
@@ -1293,9 +1273,7 @@ input[type="range"]::-webkit-slider-runnable-track {
 /* Premium Stat Card - Enhanced */
 .quantum-stat {
   position: relative;
-  background: rgba(10, 25, 47, 0.55);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(10, 25, 47, 0.8);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 0.75rem;
   overflow: hidden;
@@ -1436,13 +1414,11 @@ input[type="range"]::-webkit-slider-runnable-track {
 
 /* Premium Input */
 .quantum-input {
-  background: rgba(10, 25, 47, 0.6);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(10, 25, 47, 0.85);
   border: 1px solid rgba(0, 242, 255, 0.15);
   border-radius: 0.5rem;
   color: #e5e2e1;
-  transition: all 0.3s ease;
+  transition: border-color 0.2s ease;
 }
 
 .quantum-input:focus {
@@ -1621,12 +1597,10 @@ input[type="range"]::-webkit-slider-runnable-track {
 /* Premium Modal */
 .quantum-modal {
   position: relative;
-  background: rgba(10, 20, 40, 0.98);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(10, 20, 40, 0.99);
   border: 1px solid rgba(0, 242, 255, 0.2);
   border-radius: 1rem;
-  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
 }
 
 .quantum-modal::before {
@@ -1852,9 +1826,7 @@ input[type="range"]::-webkit-slider-runnable-track {
   left: 0;
   right: 0;
   height: 64px;
-  background: rgba(5, 5, 5, 0.95);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(5, 5, 5, 0.98);
   border-top: 1px solid rgba(0, 242, 255, 0.1);
   display: flex;
   align-items: center;
@@ -1955,18 +1927,7 @@ input[type="range"]::-webkit-slider-runnable-track {
   border-radius: 2px;
 }
 
-/* Backdrop blur support */
-@supports (backdrop-filter: blur(20px)) {
-  .glass-card, .glass-panel, .quantum-panel, .quantum-stat {
-    backdrop-filter: blur(20px);
-  }
-}
-
-@supports not (backdrop-filter: blur(20px)) {
-  .glass-card, .glass-panel, .quantum-panel, .quantum-stat {
-    background: rgba(10, 20, 40, 0.95);
-  }
-}
+/* Backdrop blur — disabled for performance. Opacity-based glassmorphism used instead. */
 
 .modal-close:hover {
   background: rgba(239, 68, 68, 0.1);

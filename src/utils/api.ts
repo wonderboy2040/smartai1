@@ -46,10 +46,11 @@ const priceCache = new SmartCache<PriceData>(50);
 const pendingRequests = new Map<string, Promise<PriceData | null>>();
 
 /**
- * Get market-aware batch interval. Reduces from 4s during open markets.
+ * Get market-aware batch interval. WebSocket handles real-time;
+ * HTTP batch is supplementary for technical indicators (SMA/MACD/RSI).
  */
 export function getBatchInterval(): number {
-  return isAnyMarketOpen() ? 2000 : 30000;
+  return isAnyMarketOpen() ? 8000 : 60000;
 }
 
 export async function fetchSinglePrice(symbol: string, retryAttempt = 0): Promise<PriceData | null> {
