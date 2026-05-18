@@ -21,6 +21,12 @@ export default defineConfig({
           if (id.includes('crypto-js')) {
             return 'vendor-utils';
           }
+          if (id.includes('node_modules/motion') || id.includes('node_modules/framer-motion')) {
+            return 'vendor-motion';
+          }
+          // Split heavy utils into separate chunks
+          if (id.includes('utils/telegram')) return 'utils-telegram';
+          if (id.includes('utils/riskEngine') || id.includes('utils/screener') || id.includes('utils/dipEngine')) return 'utils-analysis';
         },
       },
     },
