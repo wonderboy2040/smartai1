@@ -380,16 +380,18 @@
 
 .glass-ultra {
   background: rgba(15, 23, 42, 0.7);
-  backdrop-filter: blur(32px) saturate(200%);
-  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  backdrop-filter: blur(8px) saturate(150%);
+  -webkit-backdrop-filter: blur(8px) saturate(150%);
+  contain: layout style paint;
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 /* Premium Cyber Panel */
 .glass-premium {
   background: linear-gradient(135deg, rgba(10, 25, 47, 0.6) 0%, rgba(20, 35, 60, 0.4) 100%);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(8px) saturate(150%);
+  -webkit-backdrop-filter: blur(8px) saturate(150%);
+  contain: layout style paint;
   border: 1px solid rgba(0, 242, 255, 0.15);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
@@ -403,8 +405,8 @@
 /* Premium Glass Input */
 .glass-input {
   background: rgba(10, 25, 47, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   border: 1px solid rgba(0, 242, 255, 0.15);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -416,8 +418,8 @@
 
 .glass-modal {
   background: rgba(10, 20, 40, 0.98);
-  backdrop-filter: blur(40px) saturate(200%);
-  -webkit-backdrop-filter: blur(40px) saturate(200%);
+  backdrop-filter: blur(8px) saturate(150%);
+  -webkit-backdrop-filter: blur(8px) saturate(150%);
   border: 1px solid rgba(0, 242, 255, 0.25);
 }
 
@@ -520,8 +522,9 @@
   overflow: hidden;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   background: rgba(10, 25, 47, 0.4);
-  backdrop-filter: blur(15px);
+  backdrop-filter: blur(6px);
   border: 1px solid rgba(255, 255, 255, 0.05);
+  contain: layout style paint;
 }
 
 .stat-card:hover {
@@ -744,7 +747,7 @@
 .login-card {
   position: relative;
   background: rgba(10, 25, 47, 0.4);
-  backdrop-filter: blur(15px);
+  backdrop-filter: blur(8px);
   border: 1px solid rgba(0, 242, 255, 0.2);
 }
 
@@ -883,7 +886,7 @@ select option {
 .light .glass-ultra,
 .light .glass-modal {
   background: rgba(255, 255, 255, 0.8) !important;
-  backdrop-filter: blur(24px) !important;
+  backdrop-filter: blur(8px) !important;
   border: 1px solid rgba(0, 0, 0, 0.08) !important;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
   color: #0f172a !important;
@@ -1148,8 +1151,8 @@ input[type="range"]::-webkit-slider-runnable-track {
    MODAL SYSTEM
    ======================================== */
 .modal-backdrop {
-  backdrop-filter: blur(16px) saturate(120%);
-  -webkit-backdrop-filter: blur(16px) saturate(120%);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   background: rgba(2, 6, 23, 0.85);
 }
 
@@ -1191,8 +1194,8 @@ input[type="range"]::-webkit-slider-runnable-track {
 /* Premium TopAppBar - Quantum Noir Style */
 .quantum-appbar {
   background: rgba(5, 5, 5, 0.92);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   border-bottom: 1px solid rgba(0, 242, 255, 0.1);
 }
 
@@ -1209,8 +1212,8 @@ input[type="range"]::-webkit-slider-runnable-track {
 /* Premium SideNav - Quantum Noir Style */
 .quantum-sidenav {
   background: linear-gradient(180deg, rgba(5, 5, 5, 0.95) 0%, rgba(10, 10, 15, 0.9) 100%);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   border-right: 1px solid rgba(255, 255, 255, 0.06);
   box-shadow: 4px 0 30px rgba(0, 0, 0, 0.3);
 }
@@ -1263,8 +1266,9 @@ input[type="range"]::-webkit-slider-runnable-track {
 /* Premium Glass Panel - Enhanced */
 .quantum-panel {
   background: linear-gradient(135deg, rgba(10, 25, 47, 0.7) 0%, rgba(15, 30, 55, 0.5) 100%);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  contain: layout style paint;
   border: 1px solid rgba(0, 242, 255, 0.1);
   border-radius: 0.75rem;
   position: relative;
@@ -1433,8 +1437,8 @@ input[type="range"]::-webkit-slider-runnable-track {
 /* Premium Input */
 .quantum-input {
   background: rgba(10, 25, 47, 0.6);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   border: 1px solid rgba(0, 242, 255, 0.15);
   border-radius: 0.5rem;
   color: #e5e2e1;
@@ -1618,8 +1622,8 @@ input[type="range"]::-webkit-slider-runnable-track {
 .quantum-modal {
   position: relative;
   background: rgba(10, 20, 40, 0.98);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   border: 1px solid rgba(0, 242, 255, 0.2);
   border-radius: 1rem;
   box-shadow: 0 25px 60px rgba(0, 0, 0, 0.6);
@@ -1849,8 +1853,8 @@ input[type="range"]::-webkit-slider-runnable-track {
   right: 0;
   height: 64px;
   background: rgba(5, 5, 5, 0.95);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   border-top: 1px solid rgba(0, 242, 255, 0.1);
   display: flex;
   align-items: center;
