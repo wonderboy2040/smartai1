@@ -277,8 +277,6 @@ export function useAppState() {
     const cleanSym = currentSymbol.replace('.NS', '').replace('.BO', '');
     const isIndian = currentMarket === 'IN' || currentSymbol.includes('.NS');
     let tvSymbol = EXACT_TICKER_MAP[cleanSym] || (isIndian ? `NSE:${cleanSym}` : `NASDAQ:${cleanSym}`);
-    const BSE_CHART_OVERRIDES = ['JUNIORBEES', 'MOMENTUM50', 'SMALLCAP', 'MID150BEES'];
-    if (BSE_CHART_OVERRIDES.includes(cleanSym)) tvSymbol = `BSE:${cleanSym}`;
     const containerId = `tv-chart-${Date.now()}`;
     const container = document.createElement('div');
     container.id = containerId; container.style.height = '100%'; container.style.width = '100%';
