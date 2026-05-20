@@ -48,9 +48,48 @@ export interface ExpertInfo {
   border: string;
 }
 
-export type TabType = 'dashboard' | 'portfolio' | 'quantum' | 'flow' | 'optimizer' | 'planner' | 'macro' | 'tools' | 'guide';
+export type TabType = 'dashboard' | 'portfolio' | 'quantum' | 'flow' | 'optimizer' | 'planner' | 'macro' | 'tools' | 'guide' | 'deepmind';
 export type RiskLevel = 'low' | 'medium' | 'high';
 export type TransactionType = 'buy' | 'sell';
+
+export interface DeepScanStock {
+  symbol: string;
+  name: string;
+  market: 'IN' | 'US';
+  sector: string;
+  price: number;
+  change: number;
+  rsi: number;
+  sma20: number;
+  sma50: number;
+  macd: number;
+  volume: number;
+  high: number;
+  low: number;
+  // Multi-factor AI scores (0-100)
+  fundamentalScore: number;
+  technicalScore: number;
+  momentumScore: number;
+  sentimentScore: number;
+  valueScore: number;
+  aiScore: number; // weighted composite
+  aiConfidence: number; // 90-95%
+  // Signal
+  signal: 'STRONG_BUY' | 'BUY' | 'HOLD' | 'SELL' | 'STRONG_SELL';
+  actionHindi: string; // "Abhi Buy Karo", etc.
+  // Targets
+  target1Y: number;
+  target2Y: number;
+  return1Y: number; // expected % return
+  return2Y: number;
+  stopLoss: number;
+  // Timing
+  buyTiming: string;
+  sellTiming: string;
+  // AI reasoning
+  aiReasoning: string;
+  claudeAnalysis?: string; // Claude Sonnet deep analysis
+}
 
 export interface PremarketAnalysis {
   market: 'IN' | 'US';
