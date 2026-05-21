@@ -38,30 +38,46 @@ export default React.memo(function DeepScanTab() {
   const scanInterval = useRef<number | null>(null);
   const tgInterval = useRef<number | null>(null);
 
-  // Run scan
+  // Stable refs to avoid re-triggering scan on every price tick
+  const livePricesRef = useRef(livePrices);
+  livePricesRef.current = livePrices;
+  const vixRef = useRef({ usVix, inVix });
+  vixRef.current = { usVix, inVix };
+
+  // Persistent store for Gemini analyses — never lost on re-scan
+  const geminiCache = useRef<Record<string, string>>({});
+
+  // Run scan — stable callback, doesn't depend on livePrices directly
   const doScan = useCallback(async () => {
     setIsScanning(true);
     try {
       const prices = await fetchDeepScanPrices();
       // Also inject any prices we already have from the main app
       const merged = { ...prices };
-      for (const [k, v] of Object.entries(livePrices)) {
+      for (const [k, v] of Object.entries(livePricesRef.current)) {
         if (!merged[k] && v.price > 0) merged[k] = v;
       }
-      const result = runDeepScan(merged, usVix, inVix);
-      setStocks(result);
+      const result = runDeepScan(merged, vixRef.current.usVix, vixRef.current.inVix);
+
+      // Merge back any cached Gemini analyses so they persist across re-scans
+      const resultWithAnalysis = result.map(s =>
+        geminiCache.current[s.symbol] ? { ...s, geminiAnalysis: geminiCache.current[s.symbol] } : s
+      );
+      setStocks(resultWithAnalysis);
       setLastScan(new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit' }));
 
       // Try Gemini 3.5 Flash analysis for top 5 (non-blocking)
       setGeminiLoading(true);
       getGeminiDeepAnalysis(result, 5).then(analyses => {
         if (Object.keys(analyses).length > 0) {
+          // Save to persistent cache
+          Object.assign(geminiCache.current, analyses);
           setStocks(prev => prev.map(s => analyses[s.symbol] ? { ...s, geminiAnalysis: analyses[s.symbol] } : s));
         }
       }).catch(() => {}).finally(() => setGeminiLoading(false));
     } catch (e) { console.warn('Deep scan failed:', e); }
     finally { setIsScanning(false); }
-  }, [usVix, inVix, livePrices]);
+  }, []); // stable — no dependencies, uses refs
 
   // Auto-scan every 5 min
   useEffect(() => {
@@ -285,7 +301,7 @@ export default React.memo(function DeepScanTab() {
                   <div className="text-xs text-slate-300">{s.aiReasoning}</div>
                 </div>
 
-                {/* Claude Analysis */}
+                {/* Gemini 3.5 Flash Analysis */}
                 {s.geminiAnalysis && (
                   <div className="bg-blue-500/5 rounded-xl p-3 border border-blue-500/20">
                     <div className="text-[10px] text-blue-400 font-bold uppercase mb-1">🔵 Gemini 3.5 Flash Pro Analysis</div>
