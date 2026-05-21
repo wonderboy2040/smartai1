@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-// AI Engine Configurations — Groq + Gemini 2.5 + Claude Sonnet 4 (Pro Quantum)
+// AI Engine Configurations — Groq + Gemini 3.5 Flash + Claude Sonnet 4 (Pro Quantum)
 const CONFIG = {
   groq: {
     apiKey: import.meta.env.VITE_GROQ_API_KEY || '',
@@ -12,7 +12,7 @@ const CONFIG = {
   gemini: {
     apiKey: import.meta.env.VITE_GEMINI_API_KEY || '',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
-    model: 'gemini-2.5-flash'
+    model: 'gemini-3.5-flash'
   },
   claude: {
     apiKey: import.meta.env.VITE_CLAUDE_API_KEY || '',
@@ -150,7 +150,7 @@ export interface NeuralChatProps {
 export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, onTelegramPush: _onTelegramPush, usdInrRate: propUsdInrRate }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
-    text: '🤖 **DEEP MIND AI QUANTUM PRO v12.0**\n\n**⚡ Active AI Engines:**\n🚀 **Groq Llama-3.3 70B**: Ultra-fast responses\n🧠 **Google Gemini 2.5 Flash**: Real-time market intelligence\n💎 **Claude Sonnet 4**: Deep institutional analysis\n🔍 **Tavily Search**: Live market news & data\n\n**📊 Real-Time Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n• Crypto (BTC/ETH), VIX, Gold tracking\n\nAsk anything — I have LIVE market data!',
+    text: '🤖 **DEEP MIND AI QUANTUM PRO v12.0**\n\n**⚡ Active AI Engines:**\n🚀 **Groq Llama-3.3 70B**: Ultra-fast responses\n🧠 **Google Gemini 3.5 Flash**: Real-time market intelligence\n💎 **Claude Sonnet 4**: Deep institutional analysis\n🔍 **Tavily Search**: Live market news & data\n\n**📊 Real-Time Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n• Crypto (BTC/ETH), VIX, Gold tracking\n\nAsk anything — I have LIVE market data!',
     timestamp: Date.now(),
     model: 'system'
   }]);
@@ -517,7 +517,7 @@ ${portfolioCtx}`;
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="hidden sm:inline">Groq + Gemini 2.5 + Claude Sonnet 4</span>
+                    <span className="hidden sm:inline">Groq + Gemini 3.5 + Claude Sonnet 4</span>
                     <span className="sm:hidden">LIVE • Quantum Pro</span>
                   </div>
                 </div>
@@ -539,7 +539,7 @@ ${portfolioCtx}`;
                       : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-cyan-500/50'
                     }`}
                 >
-                  {m === 'auto' ? '🤖 Auto' : m === 'groq' ? '⚡ Groq' : m === 'gemini' ? '🔵 Gemini 2.5' : '🟣 Claude Sonnet 4'}
+                  {m === 'auto' ? '🤖 Auto' : m === 'groq' ? '⚡ Groq' : m === 'gemini' ? '🔵 Gemini 3.5' : '🟣 Claude Sonnet 4'}
                 </button>
               ))}
             </div>
@@ -556,7 +556,7 @@ ${portfolioCtx}`;
                       <>
                         {msg.model && (
                           <div className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase mb-2 border ${MODEL_COLORS[msg.model] || MODEL_COLORS.system}`}>
-                            {msg.model === 'groq' ? '⚡ Groq' : msg.model === 'gemini' ? '🔵 Gemini 2.5' : msg.model === 'claude' ? '🟣 Claude Sonnet 4' : 'System'}
+                            {msg.model === 'groq' ? '⚡ Groq' : msg.model === 'gemini' ? '🔵 Gemini 3.5' : msg.model === 'claude' ? '🟣 Claude Sonnet 4' : 'System'}
                           </div>
                         )}
                         <span dangerouslySetInnerHTML={{
@@ -642,7 +642,7 @@ ${portfolioCtx}`;
               </div>
               <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
                 <span className="text-[7px] sm:text-[8px] text-slate-600 font-mono truncate max-w-[60%]">
-                  Model: {selectedModel === 'auto' ? '🤖 Auto-Detect' : selectedModel === 'groq' ? '⚡ Groq' : selectedModel === 'gemini' ? '🔵 Gemini 2.5' : '🟣 Claude Sonnet 4'}
+                  Model: {selectedModel === 'auto' ? '🤖 Auto-Detect' : selectedModel === 'groq' ? '⚡ Groq' : selectedModel === 'gemini' ? '🔵 Gemini 3.5' : '🟣 Claude Sonnet 4'}
                 </span>
                 <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
                   {chatMessages.length} messages

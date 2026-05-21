@@ -1,7 +1,7 @@
 // ============================================
 // DEEP QUANTUM AI STOCK SCANNER ENGINE
 // Scans Top Individual Stocks — India + USA
-// Multi-Factor AI Scoring with Claude Sonnet 4
+// Multi-Factor AI Scoring with Gemini 3.5 Flash
 // ============================================
 
 import { DeepScanStock, PriceData } from '../types';
@@ -418,42 +418,57 @@ export function runDeepScan(
   return results.sort((a, b) => b.aiScore - a.aiScore);
 }
 
-// ========== CLAUDE SONNET DEEP ANALYSIS ==========
-export async function getClaudeDeepAnalysis(
+// ========== GEMINI 3.5 FLASH DEEP ANALYSIS — Advanced Pro Trader ==========
+export async function getGeminiDeepAnalysis(
   stocks: DeepScanStock[],
   top: number = 5
 ): Promise<Record<string, string>> {
-  const apiKey = (import.meta as any).env?.VITE_CLAUDE_API_KEY || '';
+  const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
   if (!apiKey || apiKey.length < 10) return {};
 
   const topStocks = stocks.slice(0, top);
   const stockSummary = topStocks.map((s, i) =>
-    `${i + 1}. ${s.symbol} (${s.market}) — ₹${s.price.toFixed(2)} | AI Score: ${s.aiScore} | RSI: ${s.rsi.toFixed(0)} | Signal: ${s.signal} | 1Y Target: ${s.target1Y} | ${s.aiReasoning}`
+    `${i + 1}. ${s.symbol} (${s.market}) — ${s.market === 'IN' ? '₹' : '$'}${s.price.toFixed(2)} | AI Score: ${s.aiScore}/100 | RSI: ${s.rsi.toFixed(0)} | Signal: ${s.signal} | SMA20: ${s.sma20.toFixed(1)} | SMA50: ${s.sma50.toFixed(1)} | MACD: ${s.macd.toFixed(2)} | Vol: ${(s.volume / 1e6).toFixed(1)}M | 1Y Target: ${s.market === 'IN' ? '₹' : '$'}${s.target1Y} (+${s.return1Y}%) | ${s.aiReasoning}`
   ).join('\n');
 
-  const systemPrompt = `You are DEEP MIND QUANTUM AI — an elite institutional stock analyst. Analyze each stock in 2-3 lines MAX. Use Pro Trader Hinglish. For each stock give: 1) Conviction (1-10), 2) Key catalyst, 3) Risk factor. Be SPECIFIC with price levels. Today: ${new Date().toLocaleDateString('en-IN')}.`;
+  const systemPrompt = `You are DEEP MIND QUANTUM AI — an elite institutional-grade stock analyst with 20+ years of experience at Goldman Sachs, Citadel, and Renaissance Technologies. You are an ADVANCE PRO TRADER analyzing stocks for HIGH RETURN potential.
+
+RULES:
+1. Analyze each stock in 3-4 lines MAX. Use Pro Trader Hinglish ("Bhai", "Breakout", "Accumulate").
+2. For each stock give: Conviction (1-10), Key Catalyst, Entry Zone, Stop Loss, Target, Risk Factor.
+3. Be SPECIFIC with exact price levels from the data provided.
+4. Focus on HIGH RETURN setups — only recommend if risk-reward is 2:1 or better.
+5. Use institutional frameworks: SMC, Wyckoff, Elliott Wave, Fibonacci.
+6. Today: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}.
+7. End each analysis with emoji verdict: 🟢 BUY / 🔴 SELL / 🟡 HOLD`;
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const contents = [
+      { role: 'user', parts: [{ text: systemPrompt }] },
+      { role: 'model', parts: [{ text: 'Understood. DEEP MIND AI Pro Trader active. Ready for institutional-grade stock analysis.' }] },
+      { role: 'user', parts: [{ text: `Analyze these top AI-picked stocks for HIGH RETURN potential (1-2 year horizon). AI Confidence: 90-95%. Give separate analysis per stock.\n\n${stockSummary}\n\nFormat each as: **SYMBOL**: analysis` }] }
+    ];
+
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2048,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: `Analyze these top AI-picked stocks for short-term (1-2 year) highest return potential:\n\n${stockSummary}\n\nGive separate analysis per stock. Format: **SYMBOL**: analysis` }]
+        contents,
+        generationConfig: { temperature: 0.7, maxOutputTokens: 4096, topP: 0.95, topK: 40 },
+        safetySettings: [
+          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
+          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
+        ]
       }),
       signal: AbortSignal.timeout(30000)
     });
 
     if (!res.ok) return {};
     const data = await res.json();
-    const text = data.content?.[0]?.text || '';
+    if (data.candidates?.[0]?.finishReason === 'SAFETY') return {};
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
     // Parse per-stock analysis
     const analyses: Record<string, string> = {};
@@ -464,11 +479,11 @@ export async function getClaudeDeepAnalysis(
     }
     // If parsing failed, give full text to first stock
     if (Object.keys(analyses).length === 0 && text.length > 10) {
-      analyses[topStocks[0].symbol] = text.substring(0, 500);
+      analyses[topStocks[0].symbol] = text.substring(0, 600);
     }
     return analyses;
   } catch (e) {
-    console.warn('Claude deep analysis failed:', e);
+    console.warn('Gemini 3.5 deep analysis failed:', e);
     return {};
   }
 }
@@ -497,7 +512,7 @@ export function formatDeepScanTelegram(stocks: DeepScanStock[], market?: 'IN' | 
     line += `  📈 1Y: <b>${cur}${s.target1Y}</b> (+${s.return1Y}%) | 2Y: <b>${cur}${s.target2Y}</b> (+${s.return2Y}%)\n`;
     line += `  🎯 Buy: <i>${s.buyTiming}</i>\n`;
     line += `  🛑 SL: ${cur}${s.stopLoss} | Sell: <i>${s.sellTiming}</i>\n`;
-    if (s.claudeAnalysis) line += `  🤖 <i>${s.claudeAnalysis.substring(0, 120)}</i>\n`;
+    if (s.geminiAnalysis) line += `  🤖 <i>${s.geminiAnalysis.substring(0, 120)}</i>\n`;
     return line;
   };
 
@@ -519,7 +534,7 @@ export function formatDeepScanTelegram(stocks: DeepScanStock[], market?: 'IN' | 
   }
 
   msg += `\n━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `<i>🧠 Deep Quantum AI | Fundamental 30% + Technical 25% + Momentum 20% + Sentiment 15% + Value 10%</i>`;
+  msg += `<i>🧠 Deep Quantum AI (Gemini 3.5 Flash) | Fundamental 30% + Technical 25% + Momentum 20% + Sentiment 15% + Value 10%</i>`;
 
   return msg;
 }

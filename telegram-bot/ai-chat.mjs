@@ -234,7 +234,7 @@ async function callGemini(messages, systemPrompt) {
     contents.push({ role: 'user', parts: [{ text: 'Please respond to my last query.' }] });
   }
 
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -641,7 +641,7 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
 
   // Add model indicator
   const modelEmoji = usedModel === 'groq' ? '⚡' : usedModel === 'gemini' ? '🔵' : usedModel === 'claude' ? '🟣' : '🤖';
-  const modelLabel = usedModel === 'groq' ? 'Groq' : usedModel === 'gemini' ? 'Gemini 2.5' : usedModel === 'claude' ? 'Claude Sonnet 4' : 'System';
+  const modelLabel = usedModel === 'groq' ? 'Groq' : usedModel === 'gemini' ? 'Gemini 3.5' : usedModel === 'claude' ? 'Claude Sonnet 4' : 'System';
 
   return `${modelEmoji} <i>${modelLabel} | ${intent} | LIVE</i>\n\n${safeText}`;
 }

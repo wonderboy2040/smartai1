@@ -88,7 +88,7 @@ export interface DeepScanStock {
   sellTiming: string;
   // AI reasoning
   aiReasoning: string;
-  claudeAnalysis?: string; // Claude Sonnet deep analysis
+  geminiAnalysis?: string; // Gemini 3.5 Flash deep analysis
 }
 
 export interface PremarketAnalysis {

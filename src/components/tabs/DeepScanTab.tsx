@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useApp } from '../../hooks/AppContext';
 import { DeepScanStock } from '../../types';
-import { fetchDeepScanPrices, runDeepScan, getClaudeDeepAnalysis, formatDeepScanTelegram } from '../../utils/deepScanner';
+import { fetchDeepScanPrices, runDeepScan, getGeminiDeepAnalysis, formatDeepScanTelegram } from '../../utils/deepScanner';
 import { sendTelegramAlert } from '../../utils/api';
 import { TG_TOKEN, TG_CHAT_ID } from '../../utils/constants';
 
@@ -33,7 +33,7 @@ export default React.memo(function DeepScanTab() {
   const [isScanning, setIsScanning] = useState(false);
   const [lastScan, setLastScan] = useState<string>('');
   const [expandedStock, setExpandedStock] = useState<string | null>(null);
-  const [claudeLoading, setClaudeLoading] = useState(false);
+  const [geminiLoading, setGeminiLoading] = useState(false);
   const [tgSending, setTgSending] = useState(false);
   const scanInterval = useRef<number | null>(null);
   const tgInterval = useRef<number | null>(null);
@@ -52,13 +52,13 @@ export default React.memo(function DeepScanTab() {
       setStocks(result);
       setLastScan(new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit' }));
 
-      // Try Claude analysis for top 5 (non-blocking)
-      setClaudeLoading(true);
-      getClaudeDeepAnalysis(result, 5).then(analyses => {
+      // Try Gemini 3.5 Flash analysis for top 5 (non-blocking)
+      setGeminiLoading(true);
+      getGeminiDeepAnalysis(result, 5).then(analyses => {
         if (Object.keys(analyses).length > 0) {
-          setStocks(prev => prev.map(s => analyses[s.symbol] ? { ...s, claudeAnalysis: analyses[s.symbol] } : s));
+          setStocks(prev => prev.map(s => analyses[s.symbol] ? { ...s, geminiAnalysis: analyses[s.symbol] } : s));
         }
-      }).catch(() => {}).finally(() => setClaudeLoading(false));
+      }).catch(() => {}).finally(() => setGeminiLoading(false));
     } catch (e) { console.warn('Deep scan failed:', e); }
     finally { setIsScanning(false); }
   }, [usVix, inVix, livePrices]);
@@ -79,7 +79,7 @@ export default React.memo(function DeepScanTab() {
     };
     // Send initial after 2 min
     const initTimeout = setTimeout(sendAlert, 120000);
-    tgInterval.current = window.setInterval(sendAlert, 21600000); // 6 hours
+    tgInterval.current = window.setInterval(sendAlert, 7200000); // 2 hours — high-confidence picks alert
     return () => { clearTimeout(initTimeout); if (tgInterval.current) clearInterval(tgInterval.current); };
   }, [stocks]);
 
@@ -118,7 +118,7 @@ export default React.memo(function DeepScanTab() {
             <span className="text-[11px] text-slate-500 font-mono">
               {isScanning ? 'SCANNING...' : `Last: ${lastScan || '--'}`}
             </span>
-            {claudeLoading && <span className="text-[10px] text-purple-400 animate-pulse">🟣 Claude Analyzing...</span>}
+            {geminiLoading && <span className="text-[10px] text-blue-400 animate-pulse">🔵 Gemini 3.5 Analyzing...</span>}
           </div>
         </div>
         <div className="flex gap-2">
@@ -286,10 +286,10 @@ export default React.memo(function DeepScanTab() {
                 </div>
 
                 {/* Claude Analysis */}
-                {s.claudeAnalysis && (
-                  <div className="bg-purple-500/5 rounded-xl p-3 border border-purple-500/20">
-                    <div className="text-[10px] text-purple-400 font-bold uppercase mb-1">🟣 Claude Sonnet 4 Deep Analysis</div>
-                    <div className="text-xs text-purple-200 whitespace-pre-line">{s.claudeAnalysis}</div>
+                {s.geminiAnalysis && (
+                  <div className="bg-blue-500/5 rounded-xl p-3 border border-blue-500/20">
+                    <div className="text-[10px] text-blue-400 font-bold uppercase mb-1">🔵 Gemini 3.5 Flash Pro Analysis</div>
+                    <div className="text-xs text-blue-200 whitespace-pre-line">{s.geminiAnalysis}</div>
                   </div>
                 )}
               </div>
@@ -318,7 +318,7 @@ export default React.memo(function DeepScanTab() {
           <span><span className="text-amber-400 font-bold">10%</span> Value (PEG, Discount)</span>
         </div>
         <div className="mt-2 text-[9px] text-slate-600 font-mono">
-          Powered by TradingView Scanner + Claude Sonnet 4 | Auto-refresh: 5min | Telegram: 24x7 Alerts
+          Powered by TradingView Scanner + Gemini 3.5 Flash | Auto-refresh: 5min | Telegram: 24x7 Alerts (2hr)
         </div>
       </div>
     </div>
