@@ -2003,3 +2003,75 @@ input[type="range"]::-webkit-slider-runnable-track {
     0 0 100px rgba(0, 242, 255, 0.08),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
+
+/* ========================================
+   TRADING TAB CUSTOM CLASSES
+   ======================================== */
+.trade-signal-long {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(16, 185, 129, 0.02) 100%);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.trade-signal-short {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(239, 68, 68, 0.02) 100%);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.trade-price-ladder {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.trade-conviction-gauge {
+  background: radial-gradient(circle at center, rgba(0, 242, 255, 0.2) 0%, transparent 70%);
+}
+
+.trade-badge-strong-long {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.3);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.2);
+}
+
+.trade-badge-long {
+  background: rgba(16, 185, 129, 0.05);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.2);
+}
+
+.trade-badge-strong-short {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.3);
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
+}
+
+.trade-badge-short {
+  background: rgba(239, 68, 68, 0.05);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.trade-pnl-flash {
+  animation: pnl-flash 1s ease-out forwards;
+}
+
+@keyframes pnl-flash {
+  0% { transform: scale(1.1); filter: brightness(1.5); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+
+.trade-leverage-chip {
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  color: #a78bfa;
+}
+
+.trade-card-hover {
+  transition: all 0.3s ease;
+}
+
+.trade-card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}

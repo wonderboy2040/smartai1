@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { TabType } from './types';
 import { TG_TOKEN, TG_CHAT_ID } from './utils/constants';
 import { useAppState } from './hooks/useAppState';
@@ -31,6 +31,22 @@ export default function App() {
     transactionType, setTransactionType, modalPrice,
     savePosition, usdInrRate, portfolioContextText,
   } = state;
+
+  // Keyboard Shortcuts for Tabs (1-7)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const tabs: TabType[] = ['dashboard', 'trade', 'portfolio', 'deepmind', 'planner', 'macro', 'guide'];
+      const key = parseInt(e.key);
+      if (!isNaN(key) && key >= 1 && key <= 7) {
+        setActiveTab(tabs[key - 1]);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isAuthenticated, setActiveTab]);
 
   // Auth Screen
   if (!isAuthenticated) {

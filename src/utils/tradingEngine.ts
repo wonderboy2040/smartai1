@@ -268,8 +268,8 @@ export function runTradingScan(
     const potentialReturn = ((Math.abs(target1 - price)) / price) * 100;
     const riskReward = riskPercent > 0 ? potentialReturn / riskPercent : 1;
 
-    // Only show R:R >= 1.5
-    if (riskReward < 1.5) continue;
+    // Only show R:R >= 2.0
+    if (riskReward < 2) continue;
 
     // Conviction
     const conviction = Math.min(99, Math.max(80, Math.round(aiScore * 1.1)));

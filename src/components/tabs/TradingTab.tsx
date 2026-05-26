@@ -31,6 +31,18 @@ export default React.memo(function TradingTab() {
   const [geminiLoading, setGeminiLoading] = useState(false);
   const [tgSending, setTgSending] = useState(false);
 
+  // Mock data for Active Trades & Journal
+  const [activeTrades] = useState([
+    { id: 1, sym: 'BTC', dir: 'LONG', lev: 10, entry: 64200, current: 65150, pnl: 14.8, pnlValue: 125.4 },
+    { id: 2, sym: 'NVDA', dir: 'SHORT', lev: 5, entry: 1150.2, current: 1162.5, pnl: -5.3, pnlValue: -32.1 }
+  ]);
+
+  const [journal] = useState([
+    { id: 1, sym: 'SOL', dir: 'LONG', date: '25 May, 14:30', pnl: 45.2, result: 'WIN' },
+    { id: 2, sym: 'TSLA', dir: 'LONG', date: '24 May, 10:15', pnl: -12.4, result: 'LOSS' },
+    { id: 3, sym: 'RELIANCE', dir: 'SHORT', date: '23 May, 09:45', pnl: 28.5, result: 'WIN' }
+  ]);
+
   const scanInterval = useRef<number | null>(null);
   const livePricesRef = useRef(livePrices);
   livePricesRef.current = livePrices;
@@ -333,6 +345,58 @@ export default React.memo(function TradingTab() {
         </div>
       )}
 
+      {/* Active Trades & Journal */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in-up">
+        {/* Active Trades Tracker */}
+        <div className="quantum-panel rounded-2xl p-4 border border-cyan-500/10">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">🟢 Active Trades</h3>
+            <span className="text-[10px] text-slate-500 font-mono">Live P&L</span>
+          </div>
+          <div className="space-y-2">
+            {activeTrades.map(t => (
+              <div key={t.id} className="bg-black/30 rounded-xl p-3 border border-white/5 flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm text-white">{t.sym}</span>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${t.dir === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{t.dir} {t.lev}x</span>
+                  </div>
+                  <div className="text-[10px] text-slate-500 mt-1">Entry: ${t.entry} → ${t.current}</div>
+                </div>
+                <div className="text-right">
+                  <div className={`text-sm font-black font-mono ${t.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{t.pnl >= 0 ? '+' : ''}{t.pnlValue.toFixed(2)}</div>
+                  <div className={`text-[10px] font-bold ${t.pnl >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{t.pnl >= 0 ? '+' : ''}{t.pnl.toFixed(1)}%</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Trade Journal */}
+        <div className="quantum-panel rounded-2xl p-4 border border-purple-500/10">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">📔 Trade Journal</h3>
+            <span className="text-[10px] text-slate-500 font-mono">Completed</span>
+          </div>
+          <div className="space-y-2">
+            {journal.map(t => (
+              <div key={t.id} className="bg-black/30 rounded-xl p-3 border border-white/5 flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm text-white">{t.sym}</span>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${t.result === 'WIN' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{t.result}</span>
+                  </div>
+                  <div className="text-[10px] text-slate-500 mt-1">{t.date}</div>
+                </div>
+                <div className="text-right">
+                  <div className={`text-sm font-black font-mono ${t.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{t.pnl >= 0 ? '+' : ''}{t.pnl.toFixed(1)}%</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {/* Legend */}
       <div className="quantum-panel rounded-2xl p-4 animate-fade-in-up">
         <div className="text-[10px] text-slate-500 font-bold uppercase mb-2">⚡ Trading AI Methodology</div>
@@ -343,7 +407,7 @@ export default React.memo(function TradingTab() {
           <span><span className="text-blue-400 font-bold">10%</span> Sentiment (VIX, Fear/Greed)</span>
         </div>
         <div className="mt-2 text-[9px] text-slate-600 font-mono">
-          Powered by TradingView + Binance + Gemini 3.5 Flash | Auto-scan: 2min | R:R ≥ 1.5:1 filter | Telegram: Instant Alerts
+          Powered by TradingView + Binance + Gemini 3.5 Flash | Auto-scan: 2min | R:R ≥ 2.0:1 filter | Telegram: Instant Alerts
         </div>
       </div>
     </div>
