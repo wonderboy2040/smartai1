@@ -48,9 +48,56 @@ export interface ExpertInfo {
   border: string;
 }
 
-export type TabType = 'dashboard' | 'portfolio' | 'quantum' | 'flow' | 'optimizer' | 'planner' | 'macro' | 'tools' | 'guide' | 'deepmind';
+export type TabType = 'dashboard' | 'portfolio' | 'quantum' | 'flow' | 'optimizer' | 'planner' | 'macro' | 'tools' | 'guide' | 'deepmind' | 'trade';
 export type RiskLevel = 'low' | 'medium' | 'high';
 export type TransactionType = 'buy' | 'sell';
+
+// ========================================
+// ADVANCE PRO TRADING — FUTURES SIGNALS
+// ========================================
+export interface FuturesTradeSignal {
+  symbol: string;
+  name: string;
+  market: 'CRYPTO' | 'US' | 'IN';
+  sector: string;
+  // Price levels
+  currentPrice: number;
+  entryPrice: number;
+  target1: number;
+  target2: number;
+  target3: number;
+  stopLoss: number;
+  // Trade setup
+  direction: 'LONG' | 'SHORT';
+  leverage: number;
+  timeframe: 'INTRADAY' | 'SWING_1_3D' | 'SWING_3_7D';
+  // AI Scores (all 0-100)
+  technicalScore: number;
+  momentumScore: number;
+  volatilityScore: number;
+  sentimentScore: number;
+  aiScore: number;       // weighted composite
+  conviction: number;    // 90-99
+  // Risk metrics
+  riskReward: number;    // e.g. 2.5 means 2.5:1
+  riskPercent: number;   // % from entry to SL
+  potentialReturn: number; // % from entry to T1
+  // Display
+  signal: 'STRONG_LONG' | 'LONG' | 'STRONG_SHORT' | 'SHORT';
+  actionHinglish: string;
+  reasoningHinglish: string;
+  // Technical data
+  rsi: number;
+  macd: number;
+  sma20: number;
+  sma50: number;
+  atr: number;
+  bbWidth: number;
+  volume: number;
+  change: number;
+  // AI Analysis
+  geminiAnalysis?: string;
+}
 
 export interface DeepScanStock {
   symbol: string;

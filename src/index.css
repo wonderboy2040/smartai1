@@ -813,6 +813,67 @@ input[type="checkbox"], input[type="radio"] {
 }
 
 /* ========================================
+   TRADING TAB — SIGNAL BADGES & CARDS
+   ======================================== */
+.trade-badge-strong-long {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  text-shadow: 0 0 8px rgba(16, 185, 129, 0.3);
+}
+
+.trade-badge-long {
+  background: rgba(6, 182, 212, 0.15);
+  color: #06b6d4;
+  border: 1px solid rgba(6, 182, 212, 0.3);
+}
+
+.trade-badge-strong-short {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  text-shadow: 0 0 8px rgba(239, 68, 68, 0.3);
+}
+
+.trade-badge-short {
+  background: rgba(249, 115, 22, 0.15);
+  color: #f97316;
+  border: 1px solid rgba(249, 115, 22, 0.3);
+}
+
+.trade-signal-card {
+  position: relative;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.trade-signal-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3px;
+  height: 100%;
+  border-radius: 3px 0 0 3px;
+  transition: opacity 0.25s ease;
+}
+
+.trade-signal-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 20px rgba(0, 242, 255, 0.05);
+}
+
+.trade-signal-card[class*="border-emerald"]::before {
+  background: linear-gradient(180deg, #10b981, #06b6d4);
+  opacity: 0.8;
+}
+
+.trade-signal-card[class*="border-red"]::before {
+  background: linear-gradient(180deg, #ef4444, #f97316);
+  opacity: 0.8;
+}
+
+
+/* ========================================
    SELECT DROPDOWN DARK THEME
    ======================================== */
 select option {
