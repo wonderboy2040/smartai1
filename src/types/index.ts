@@ -95,8 +95,63 @@ export interface FuturesTradeSignal {
   bbWidth: number;
   volume: number;
   change: number;
+  // Deep Quantum AI — Advanced indicators
+  vwap?: number;
+  ema10?: number;
+  ema20?: number;
+  fibLevels?: { s1: number; s2: number; s3: number; r1: number; r2: number; r3: number };
+  smartMoneySignal?: 'WHALE_BUY' | 'WHALE_SELL' | 'VOLUME_SPIKE' | 'BLOCK_DEAL' | 'NONE';
+  multiTimeframeScore?: number; // 0-100 confluence
+  mtfAlignment?: string; // "3/4 BULLISH" etc
+  // CoinDCX USDC/INR
+  coinDcxPair?: string;  // e.g. "BTCUSDC", "ETHUSDC"
+  coinDcxInrPrice?: number;
   // AI Analysis
   geminiAnalysis?: string;
+}
+
+// ========================================
+// ACTIVE TRADE TRACKING — LIVE P&L
+// ========================================
+export interface ActiveTrade {
+  id: string;
+  symbol: string;
+  market: 'CRYPTO' | 'US' | 'IN';
+  direction: 'LONG' | 'SHORT';
+  leverage: number;
+  entryPrice: number;
+  quantity: number;
+  stopLoss: number;
+  target1: number;
+  target2?: number;
+  entryTime: number; // timestamp
+  platform?: 'COINDCX' | 'ZERODHA' | 'BINANCE' | 'OTHER';
+  pair?: string; // USDC pair for CoinDCX
+  notes?: string;
+}
+
+// ========================================
+// TRADE JOURNAL — PERSISTENT HISTORY
+// ========================================
+export interface TradeJournalEntry {
+  id: string;
+  symbol: string;
+  market: 'CRYPTO' | 'US' | 'IN';
+  direction: 'LONG' | 'SHORT';
+  leverage: number;
+  entryPrice: number;
+  exitPrice: number;
+  quantity: number;
+  pnl: number; // absolute P&L
+  pnlPercent: number;
+  riskReward: number;
+  result: 'WIN' | 'LOSS' | 'BREAKEVEN';
+  entryTime: number;
+  exitTime: number;
+  platform?: string;
+  pair?: string;
+  notes?: string;
+  aiScore?: number;
 }
 
 export interface DeepScanStock {
@@ -136,6 +191,20 @@ export interface DeepScanStock {
   // AI reasoning
   aiReasoning: string;
   geminiAnalysis?: string; // Gemini 3.5 Flash deep analysis
+  // Deep Quantum AI — Enhanced fields
+  bbUpper?: number;
+  bbLower?: number;
+  atr?: number;
+  adx?: number;
+  obv?: number;
+  ema10?: number;
+  ema20?: number;
+  sectorRank?: number; // 1-10 sector relative strength
+  accDistPhase?: 'ACCUMULATION' | 'DISTRIBUTION' | 'MARKUP' | 'MARKDOWN' | 'NEUTRAL';
+  fibSupport?: number;
+  fibResistance?: number;
+  institutionalQuality?: number; // 0-100
+  volumeProfile?: 'ABOVE_AVG' | 'NORMAL' | 'LOW';
 }
 
 export interface PremarketAnalysis {

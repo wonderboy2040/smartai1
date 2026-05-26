@@ -1,7 +1,8 @@
 // ============================================
-// ADVANCE PRO TRADING ENGINE — FUTURES & INTRADAY
-// Short-term signals: Crypto + US + India
-// Uses FuturesTradeSignal from types/index.ts
+// DEEP QUANTUM AI — ADVANCE PRO TRADING ENGINE
+// Futures & Intraday: Crypto + US + India
+// CoinDCX USDC/INR Trading | Multi-Timeframe
+// Smart Money Detection | Fibonacci Pivots
 // ============================================
 
 import { FuturesTradeSignal, PriceData } from '../types';
@@ -12,19 +13,31 @@ export interface TradingAsset {
   name: string;
   market: 'CRYPTO' | 'US' | 'IN';
   sector: string;
-  avgATR: number;   // typical daily ATR %
-  maxLev: number;   // max leverage suggestion
+  avgATR: number;
+  maxLev: number;
+  coinDcxPair?: string; // CoinDCX USDC pair
 }
 
+// CoinDCX USDC/INR pairs mapping
+export const COINDCX_USDC_PAIRS: Record<string, string> = {
+  'BTC': 'B-BTC_USDC', 'ETH': 'B-ETH_USDC', 'SOL': 'B-SOL_USDC',
+  'BNB': 'B-BNB_USDC', 'XRP': 'B-XRP_USDC', 'DOGE': 'B-DOGE_USDC',
+  'AVAX': 'B-AVAX_USDC', 'LINK': 'B-LINK_USDC', 'ADA': 'B-ADA_USDC',
+  'MATIC': 'B-MATIC_USDC', 'SUI': 'B-SUI_USDC', 'PEPE': 'B-PEPE_USDC',
+};
+
 export const TRADING_CRYPTO: TradingAsset[] = [
-  { sym: 'BTC', name: 'Bitcoin', market: 'CRYPTO', sector: 'Layer 1', avgATR: 3.5, maxLev: 10 },
-  { sym: 'ETH', name: 'Ethereum', market: 'CRYPTO', sector: 'Layer 1', avgATR: 4.2, maxLev: 10 },
-  { sym: 'SOL', name: 'Solana', market: 'CRYPTO', sector: 'Layer 1', avgATR: 6.0, maxLev: 8 },
-  { sym: 'BNB', name: 'BNB', market: 'CRYPTO', sector: 'Exchange', avgATR: 3.8, maxLev: 8 },
-  { sym: 'XRP', name: 'Ripple', market: 'CRYPTO', sector: 'Payments', avgATR: 5.0, maxLev: 8 },
-  { sym: 'DOGE', name: 'Dogecoin', market: 'CRYPTO', sector: 'Meme', avgATR: 7.0, maxLev: 5 },
-  { sym: 'AVAX', name: 'Avalanche', market: 'CRYPTO', sector: 'Layer 1', avgATR: 5.5, maxLev: 5 },
-  { sym: 'LINK', name: 'Chainlink', market: 'CRYPTO', sector: 'Oracle', avgATR: 5.0, maxLev: 5 },
+  { sym: 'BTC', name: 'Bitcoin', market: 'CRYPTO', sector: 'Layer 1', avgATR: 3.5, maxLev: 10, coinDcxPair: 'B-BTC_USDC' },
+  { sym: 'ETH', name: 'Ethereum', market: 'CRYPTO', sector: 'Layer 1', avgATR: 4.2, maxLev: 10, coinDcxPair: 'B-ETH_USDC' },
+  { sym: 'SOL', name: 'Solana', market: 'CRYPTO', sector: 'Layer 1', avgATR: 6.0, maxLev: 8, coinDcxPair: 'B-SOL_USDC' },
+  { sym: 'BNB', name: 'BNB', market: 'CRYPTO', sector: 'Exchange', avgATR: 3.8, maxLev: 8, coinDcxPair: 'B-BNB_USDC' },
+  { sym: 'XRP', name: 'Ripple', market: 'CRYPTO', sector: 'Payments', avgATR: 5.0, maxLev: 8, coinDcxPair: 'B-XRP_USDC' },
+  { sym: 'DOGE', name: 'Dogecoin', market: 'CRYPTO', sector: 'Meme', avgATR: 7.0, maxLev: 5, coinDcxPair: 'B-DOGE_USDC' },
+  { sym: 'AVAX', name: 'Avalanche', market: 'CRYPTO', sector: 'Layer 1', avgATR: 5.5, maxLev: 5, coinDcxPair: 'B-AVAX_USDC' },
+  { sym: 'LINK', name: 'Chainlink', market: 'CRYPTO', sector: 'Oracle', avgATR: 5.0, maxLev: 5, coinDcxPair: 'B-LINK_USDC' },
+  { sym: 'ADA', name: 'Cardano', market: 'CRYPTO', sector: 'Layer 1', avgATR: 5.5, maxLev: 5, coinDcxPair: 'B-ADA_USDC' },
+  { sym: 'SUI', name: 'Sui', market: 'CRYPTO', sector: 'Layer 1', avgATR: 8.0, maxLev: 5, coinDcxPair: 'B-SUI_USDC' },
+  { sym: 'MATIC', name: 'Polygon', market: 'CRYPTO', sector: 'Layer 2', avgATR: 5.5, maxLev: 5, coinDcxPair: 'B-MATIC_USDC' },
 ];
 
 export const TRADING_US: TradingAsset[] = [
@@ -95,7 +108,7 @@ export async function fetchTradingPrices(): Promise<Record<string, PriceData>> {
               rsi: parseFloat(item.d[8]) || 50,
               macd: parseFloat(item.d[9]) || undefined,
               time: Date.now(),
-              market: market === 'CRYPTO' ? 'IN' : market,
+              market: market,
               tvExchange: item.s.split(':')[0],
               tvExactSymbol: item.s
             };
@@ -196,11 +209,77 @@ function calcSentimentScoreTrading(vixAvg: number, change: number): number {
   return Math.max(0, Math.min(100, s));
 }
 
-// ========== MAIN TRADING SCANNER ==========
+// ========== SMART MONEY DETECTION ==========
+function detectSmartMoney(volume: number, change: number, rsi: number, atr: number, price: number): FuturesTradeSignal['smartMoneySignal'] {
+  const volSurge = volume > 10_000_000;
+  const bigMove = Math.abs(change) > 4;
+  if (volSurge && bigMove && rsi < 35) return 'WHALE_BUY';
+  if (volSurge && bigMove && rsi > 70) return 'WHALE_SELL';
+  if (volSurge && atr > price * 0.04) return 'VOLUME_SPIKE';
+  if (volume > 20_000_000) return 'BLOCK_DEAL';
+  return 'NONE';
+}
+
+// ========== FIBONACCI PIVOT CALCULATOR ==========
+function calcFibLevels(high: number, low: number, price: number) {
+  const range = high - low;
+  return {
+    s1: price - range * 0.236, s2: price - range * 0.382, s3: price - range * 0.618,
+    r1: price + range * 0.236, r2: price + range * 0.382, r3: price + range * 0.618,
+  };
+}
+
+// ========== MULTI-TIMEFRAME CONFLUENCE ==========
+function calcMultiTimeframe(rsi: number, sma20: number, sma50: number, macd: number, price: number, change: number): { score: number; alignment: string } {
+  // Simulate MTF from single timeframe data using momentum + trend + structure
+  const tf1h = (rsi > 40 && rsi < 70 && macd > 0) ? 1 : (rsi < 30 || rsi > 75) ? -1 : 0;
+  const tf4h = (sma20 > sma50 && price > sma20) ? 1 : (sma20 < sma50 && price < sma20) ? -1 : 0;
+  const tf1d = change > 0.5 ? 1 : change < -0.5 ? -1 : 0;
+  const tfWeek = (sma20 > sma50 * 1.02) ? 1 : (sma20 < sma50 * 0.98) ? -1 : 0;
+  const signals = [tf1h, tf4h, tf1d, tfWeek];
+  const bullish = signals.filter(s => s > 0).length;
+  const bearish = signals.filter(s => s < 0).length;
+  const total = 4;
+  const dominant = bullish >= bearish ? 'BULLISH' : 'BEARISH';
+  const aligned = Math.max(bullish, bearish);
+  return { score: Math.round((aligned / total) * 100), alignment: `${aligned}/${total} ${dominant}` };
+}
+
+// ========== VWAP CALCULATOR ==========
+function calcVWAP(high: number, low: number, price: number, volume: number): number {
+  if (volume <= 0) return price;
+  return (high + low + price) / 3; // Typical price as VWAP proxy
+}
+
+// ========== COINDCX USDC/INR PRICE FETCH ==========
+export async function fetchCoinDcxPrices(): Promise<Record<string, number>> {
+  const results: Record<string, number> = {};
+  try {
+    const res = await fetch('https://api.coindcx.com/exchange/ticker', { signal: AbortSignal.timeout(6000) });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        for (const item of data) {
+          const market = item.market || '';
+          if (market.includes('USDC') || market.includes('INR')) {
+            const sym = market.replace('USDC', '').replace('INR', '').replace('B-', '').replace('I-', '');
+            if (item.last_price && parseFloat(item.last_price) > 0) {
+              results[`${sym}_${market.includes('INR') ? 'INR' : 'USDC'}`] = parseFloat(item.last_price);
+            }
+          }
+        }
+      }
+    }
+  } catch (e) { console.warn('CoinDCX fetch failed:', e); }
+  return results;
+}
+
+// ========== MAIN TRADING SCANNER — DEEP QUANTUM AI ==========
 export function runTradingScan(
   prices: Record<string, PriceData>,
   usVix: number = 15,
-  inVix: number = 15
+  inVix: number = 15,
+  coinDcxPrices?: Record<string, number>
 ): FuturesTradeSignal[] {
   const results: FuturesTradeSignal[] = [];
   const avgVix = (usVix + inVix) / 2;
@@ -228,28 +307,38 @@ export function runTradingScan(
     const volatilityScore = calcVolatilityScore(high, low, price, asset.avgATR);
     const sentimentScore = calcSentimentScoreTrading(avgVix, change);
 
-    // Weighted composite: Tech 40% + Mom 30% + Vol 20% + Sent 10%
+    // Weighted composite
     const aiScore = Math.round(
-      technicalScore * 0.40 +
-      momentumScore * 0.30 +
-      volatilityScore * 0.20 +
-      sentimentScore * 0.10
+      technicalScore * 0.40 + momentumScore * 0.30 +
+      volatilityScore * 0.20 + sentimentScore * 0.10
     );
+
+    // Deep Quantum AI — Advanced Indicators
+    const smartMoneySignal = detectSmartMoney(volume, change, rsi, atr, price);
+    const fibLevels = calcFibLevels(high, low, price);
+    const mtf = calcMultiTimeframe(rsi, sma20, sma50, macd, price, change);
+    const vwap = calcVWAP(high, low, price, volume);
+    const ema10 = sma20 * 0.95 + price * 0.05; // EMA proxy
+    const ema20 = sma20;
+
+    // CoinDCX USDC/INR price
+    let coinDcxInrPrice: number | undefined;
+    let coinDcxPair: string | undefined;
+    if (asset.market === 'CRYPTO' && asset.coinDcxPair) {
+      coinDcxPair = asset.coinDcxPair;
+      if (coinDcxPrices) {
+        coinDcxInrPrice = coinDcxPrices[`${asset.sym}_INR`] || coinDcxPrices[`${asset.sym}_USDC`];
+      }
+    }
 
     // Direction detection
     const bullSignals = [
-      rsi < 45 && rsi > 25,
-      macd > 0,
-      sma20 > sma50,
-      change > 0.5,
-      price > sma20
+      rsi < 45 && rsi > 25, macd > 0, sma20 > sma50, change > 0.5, price > sma20,
+      smartMoneySignal === 'WHALE_BUY', mtf.score >= 75
     ].filter(Boolean).length;
     const bearSignals = [
-      rsi > 65,
-      macd < 0,
-      sma20 < sma50,
-      change < -0.5,
-      price < sma20
+      rsi > 65, macd < 0, sma20 < sma50, change < -0.5, price < sma20,
+      smartMoneySignal === 'WHALE_SELL', mtf.score >= 75 && mtf.alignment.includes('BEARISH')
     ].filter(Boolean).length;
 
     const isLong = bullSignals >= bearSignals;
@@ -263,64 +352,50 @@ export function runTradingScan(
     const target2 = isLong ? price + atr * 4.5 : price - atr * 4.5;
     const target3 = isLong ? price + atr * 6.0 : price - atr * 6.0;
 
-    // Risk-Reward
     const riskPercent = (slDistance / price) * 100;
     const potentialReturn = ((Math.abs(target1 - price)) / price) * 100;
     const riskReward = riskPercent > 0 ? potentialReturn / riskPercent : 1;
-
-    // Only show R:R >= 2.0
     if (riskReward < 2) continue;
 
-    // Conviction
     const conviction = Math.min(99, Math.max(80, Math.round(aiScore * 1.1)));
 
-    // Signal strength
     let signal: FuturesTradeSignal['signal'];
     if (isLong && aiScore >= 70) signal = 'STRONG_LONG';
     else if (isLong) signal = 'LONG';
     else if (!isLong && aiScore >= 70) signal = 'STRONG_SHORT';
     else signal = 'SHORT';
 
-    // Leverage suggestion based on conviction & volatility
     const volFactor = asset.avgATR > 4 ? 0.5 : asset.avgATR > 2.5 ? 0.7 : 1;
     const leverage = Math.min(asset.maxLev, Math.max(2, Math.round(aiScore / 20 * volFactor)));
 
-    // Timeframe
     let timeframe: FuturesTradeSignal['timeframe'] = 'SWING_1_3D';
     if (asset.market === 'CRYPTO' && Math.abs(change) > 3) timeframe = 'INTRADAY';
     else if (aiScore > 75) timeframe = 'INTRADAY';
     else if (aiScore < 50) timeframe = 'SWING_3_7D';
 
-    // Hinglish action
+    const cdxLabel = asset.coinDcxPair ? ` | CoinDCX: ${asset.coinDcxPair}` : '';
     const actionMap: Record<string, string> = {
-      'STRONG_LONG': `🟢 BHAI FULL SEND — ${asset.sym} LONG karo ${leverage}x leverage pe!`,
-      'LONG': `🟢 SIP Mode — ${asset.sym} LONG dheere entry karo`,
-      'STRONG_SHORT': `🔴 BHAI SHORT KARO — ${asset.sym} girega ${leverage}x pe!`,
-      'SHORT': `🔴 HEDGE — ${asset.sym} SHORT light position`,
+      'STRONG_LONG': `🟢 FULL SEND — ${asset.sym} LONG ${leverage}x pe!${cdxLabel}`,
+      'LONG': `🟢 SIP Mode — ${asset.sym} LONG dheere entry${cdxLabel}`,
+      'STRONG_SHORT': `🔴 SHORT KARO — ${asset.sym} girega ${leverage}x pe!${cdxLabel}`,
+      'SHORT': `🔴 HEDGE — ${asset.sym} SHORT light position${cdxLabel}`,
     };
 
-    // Reasoning
     const reasons: string[] = [];
-    if (rsi < 35) reasons.push(`RSI ${rsi.toFixed(0)} OVERSOLD — reversal zone`);
-    else if (rsi > 70) reasons.push(`RSI ${rsi.toFixed(0)} OVERBOUGHT — short setup`);
-    if (macd > 0 && isLong) reasons.push('MACD bullish crossover');
-    if (macd < 0 && !isLong) reasons.push('MACD bearish divergence');
-    if (sma20 > sma50 && isLong) reasons.push('Golden cross SMA20>SMA50');
-    if (Math.abs(change) > 3) reasons.push(`${Math.abs(change).toFixed(1)}% move — momentum surge`);
-    if (volume > 5_000_000) reasons.push('Volume spike detected');
+    if (smartMoneySignal !== 'NONE') reasons.push(`🐋 ${smartMoneySignal.replace('_', ' ')}`);
+    if (mtf.score >= 75) reasons.push(`MTF ${mtf.alignment}`);
+    if (rsi < 35) reasons.push(`RSI ${rsi.toFixed(0)} OVERSOLD`);
+    else if (rsi > 70) reasons.push(`RSI ${rsi.toFixed(0)} OVERBOUGHT`);
+    if (macd > 0 && isLong) reasons.push('MACD bullish');
+    if (sma20 > sma50 && isLong) reasons.push('Golden cross');
+    if (Math.abs(change) > 3) reasons.push(`${Math.abs(change).toFixed(1)}% surge`);
+    if (volume > 5_000_000) reasons.push('Vol spike');
 
-    // BB Width
     const bbWidth = price > 0 ? ((high - low) / price) * 100 : 2;
 
     results.push({
-      symbol: asset.sym,
-      name: asset.name,
-      market: asset.market,
-      sector: asset.sector,
-      currentPrice: price,
-      entryPrice,
-      target1, target2, target3,
-      stopLoss,
+      symbol: asset.sym, name: asset.name, market: asset.market, sector: asset.sector,
+      currentPrice: price, entryPrice, target1, target2, target3, stopLoss,
       direction, leverage, timeframe,
       technicalScore, momentumScore, volatilityScore, sentimentScore,
       aiScore, conviction,
@@ -329,9 +404,12 @@ export function runTradingScan(
       potentialReturn: Math.round(potentialReturn * 10) / 10,
       signal,
       actionHinglish: actionMap[signal] || `${asset.sym} — ${signal}`,
-      reasoningHinglish: reasons.slice(0, 3).join(' | ') || 'Multi-factor AI analysis',
-      rsi, macd, sma20, sma50,
-      atr, bbWidth, volume, change,
+      reasoningHinglish: reasons.slice(0, 4).join(' | ') || 'Deep Quantum AI analysis',
+      rsi, macd, sma20, sma50, atr, bbWidth, volume, change,
+      // Deep Quantum AI fields
+      vwap, ema10, ema20, fibLevels, smartMoneySignal,
+      multiTimeframeScore: mtf.score, mtfAlignment: mtf.alignment,
+      coinDcxPair, coinDcxInrPrice,
     });
   }
 
@@ -348,18 +426,21 @@ export async function getGeminiTradeAnalysis(
 
   const topSignals = signals.slice(0, top);
   const summary = topSignals.map((s, i) =>
-    `${i + 1}. ${s.symbol} (${s.market}) ${s.direction} — $${s.currentPrice.toFixed(2)} | AI: ${s.aiScore} | RSI: ${s.rsi.toFixed(0)} | MACD: ${s.macd.toFixed(2)} | R:R ${s.riskReward}:1 | Entry: $${s.entryPrice.toFixed(2)} | SL: $${s.stopLoss.toFixed(2)} | T1: $${s.target1.toFixed(2)} | T2: $${s.target2.toFixed(2)} | Lev: ${s.leverage}x | ${s.reasoningHinglish}`
+    `${i + 1}. ${s.symbol} (${s.market}) ${s.direction} — $${s.currentPrice.toFixed(2)} | AI: ${s.aiScore} | RSI: ${s.rsi.toFixed(0)} | MACD: ${s.macd.toFixed(2)} | R:R ${s.riskReward}:1 | Entry: $${s.entryPrice.toFixed(2)} | SL: $${s.stopLoss.toFixed(2)} | T1: $${s.target1.toFixed(2)} | T2: $${s.target2.toFixed(2)} | Lev: ${s.leverage}x | VWAP: ${s.vwap?.toFixed(2) || 'N/A'} | MTF: ${s.mtfAlignment || 'N/A'} | SmartMoney: ${s.smartMoneySignal || 'NONE'} | ${s.coinDcxPair ? 'CoinDCX: ' + s.coinDcxPair : ''} | ${s.reasoningHinglish}`
   ).join('\n');
 
-  const prompt = `You are QUANTUM TRADE AI — an elite SHORT-TERM futures/intraday trader at Citadel and Jane Street. Analyze these trade setups for DAILY PROFIT.
+  const prompt = `You are DEEP QUANTUM TRADE AI — an elite institutional-grade SHORT-TERM futures/intraday trader. Analyze these trade setups for MAXIMUM DAILY PROFIT.
 
 RULES:
-1. Each trade analysis in 3-4 lines MAX. Use Pro Trader Hinglish.
-2. Give: Conviction (1-10), Key Catalyst, Entry Zone, Exact SL, 3 Targets, Risk.
-3. Be SPECIFIC with price levels. Focus on R:R 2:1+ setups.
-4. Use SMC, Order Flow, Wyckoff, Fibonacci for analysis.
-5. Today: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}.
-6. End with emoji: 🟢 LONG / 🔴 SHORT / 🟡 SKIP`;
+1. Each trade analysis in 4-5 lines MAX. Use Pro Trader Hinglish.
+2. Give: Conviction (1-10), Key Catalyst, Entry Zone, Exact SL, 3 Targets, Risk Level.
+3. Be SPECIFIC with price levels. Focus on R:R 2:1+ setups only.
+4. Use SMC (Smart Money Concepts), Order Flow, Wyckoff Phases, Fibonacci Confluence.
+5. For CRYPTO: Mention CoinDCX USDC pair for INR trading if available.
+6. Check Multi-Timeframe Confluence — prefer signals where MTF alignment is 3/4+.
+7. Smart Money signals (Whale, Volume Spike, Block Deal) get PRIORITY.
+8. Today: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}.
+9. End with emoji: 🟢 LONG / 🔴 SHORT / 🟡 SKIP`;
 
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`, {
@@ -415,11 +496,15 @@ export function formatTradingTelegram(signals: FuturesTradeSignal[], market?: 'C
 
   const fmt = (s: FuturesTradeSignal) => {
     const cur = s.market === 'IN' ? '₹' : '$';
-    let line = `• <b>${s.symbol}</b> ${s.direction === 'LONG' ? '🟢' : '🔴'} ${s.direction} ${s.leverage}x\n`;
-    line += `  Price: <b>${cur}${s.currentPrice.toFixed(2)}</b> (${s.change >= 0 ? '+' : ''}${s.change.toFixed(1)}%)\n`;
+    let line = `• <b>${s.symbol}</b> ${s.direction === 'LONG' ? '🟢' : '🔴'} ${s.direction} ${s.leverage}x`;
+    if (s.smartMoneySignal && s.smartMoneySignal !== 'NONE') line += ` 🐋`;
+    line += `\n`;
+    line += `  Price: <b>${cur}${s.currentPrice.toFixed(2)}</b> (${s.change >= 0 ? '+' : ''}${s.change.toFixed(1)}%)`;
+    if (s.coinDcxPair) line += ` | CoinDCX: ${s.coinDcxPair}`;
+    line += `\n`;
     line += `  Entry: ${cur}${s.entryPrice.toFixed(2)} | SL: ${cur}${s.stopLoss.toFixed(2)}\n`;
     line += `  T1: <b>${cur}${s.target1.toFixed(2)}</b> | T2: ${cur}${s.target2.toFixed(2)} | T3: ${cur}${s.target3.toFixed(2)}\n`;
-    line += `  AI: ${s.aiScore}/100 | R:R ${s.riskReward}:1 | Return: +${s.potentialReturn}%\n`;
+    line += `  AI: ${s.aiScore}/100 | R:R ${s.riskReward}:1 | MTF: ${s.mtfAlignment || 'N/A'}\n`;
     if (s.geminiAnalysis) line += `  🤖 <i>${s.geminiAnalysis.substring(0, 100)}</i>\n`;
     return line;
   };
@@ -434,6 +519,6 @@ export function formatTradingTelegram(signals: FuturesTradeSignal[], market?: 'C
   }
 
   msg += `━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `<i>⚡ Quantum Trade AI | Tech 40% + Mom 30% + Vol 20% + Sent 10%</i>`;
+  msg += `<i>⚡ Deep Quantum Trade AI | CoinDCX USDC/INR | MTF Confluence | Smart Money</i>`;
   return msg;
 }

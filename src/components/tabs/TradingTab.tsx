@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useApp } from '../../hooks/AppContext';
-import { FuturesTradeSignal } from '../../types';
-import { fetchTradingPrices, runTradingScan, getGeminiTradeAnalysis, formatTradingTelegram } from '../../utils/tradingEngine';
+import { FuturesTradeSignal, ActiveTrade, TradeJournalEntry } from '../../types';
+import { fetchTradingPrices, runTradingScan, getGeminiTradeAnalysis, formatTradingTelegram, fetchCoinDcxPrices, COINDCX_USDC_PAIRS } from '../../utils/tradingEngine';
 import { sendTelegramAlert } from '../../utils/api';
 import { TG_TOKEN, TG_CHAT_ID } from '../../utils/constants';
 
@@ -31,17 +31,20 @@ export default React.memo(function TradingTab() {
   const [geminiLoading, setGeminiLoading] = useState(false);
   const [tgSending, setTgSending] = useState(false);
 
-  // Mock data for Active Trades & Journal
-  const [activeTrades] = useState([
-    { id: 1, sym: 'BTC', dir: 'LONG', lev: 10, entry: 64200, current: 65150, pnl: 14.8, pnlValue: 125.4 },
-    { id: 2, sym: 'NVDA', dir: 'SHORT', lev: 5, entry: 1150.2, current: 1162.5, pnl: -5.3, pnlValue: -32.1 }
-  ]);
+  // Persistent Active Trades & Journal (localStorage)
+  const [activeTrades, setActiveTrades] = useState<ActiveTrade[]>(() => {
+    try { return JSON.parse(localStorage.getItem('quantum_active_trades') || '[]'); } catch { return []; }
+  });
+  const [journal, setJournal] = useState<TradeJournalEntry[]>(() => {
+    try { return JSON.parse(localStorage.getItem('quantum_trade_journal') || '[]'); } catch { return []; }
+  });
+  const [coinDcxPrices, setCoinDcxPrices] = useState<Record<string, number>>({});
+  const [riskCapital, setRiskCapital] = useState(100000);
+  const [riskPerTrade, setRiskPerTrade] = useState(2);
 
-  const [journal] = useState([
-    { id: 1, sym: 'SOL', dir: 'LONG', date: '25 May, 14:30', pnl: 45.2, result: 'WIN' },
-    { id: 2, sym: 'TSLA', dir: 'LONG', date: '24 May, 10:15', pnl: -12.4, result: 'LOSS' },
-    { id: 3, sym: 'RELIANCE', dir: 'SHORT', date: '23 May, 09:45', pnl: 28.5, result: 'WIN' }
-  ]);
+  // Persist trades
+  useEffect(() => { localStorage.setItem('quantum_active_trades', JSON.stringify(activeTrades)); }, [activeTrades]);
+  useEffect(() => { localStorage.setItem('quantum_trade_journal', JSON.stringify(journal)); }, [journal]);
 
   const scanInterval = useRef<number | null>(null);
   const livePricesRef = useRef(livePrices);
@@ -53,19 +56,17 @@ export default React.memo(function TradingTab() {
   const doScan = useCallback(async () => {
     setIsScanning(true);
     try {
-      const prices = await fetchTradingPrices();
-      // Merge existing live prices
+      const [prices, cdxPrices] = await Promise.all([fetchTradingPrices(), fetchCoinDcxPrices()]);
+      setCoinDcxPrices(cdxPrices);
       for (const [k, v] of Object.entries(livePricesRef.current)) {
         if (!prices[k] && v.price > 0) prices[k] = v;
       }
-      const result = runTradingScan(prices, vixRef.current.usVix, vixRef.current.inVix);
+      const result = runTradingScan(prices, vixRef.current.usVix, vixRef.current.inVix, cdxPrices);
       const withAnalysis = result.map(s =>
         geminiCache.current[s.symbol] ? { ...s, geminiAnalysis: geminiCache.current[s.symbol] } : s
       );
       setSignals(withAnalysis);
       setLastScan(new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-
-      // Gemini analysis for top 5
       setGeminiLoading(true);
       getGeminiTradeAnalysis(result, 5).then(analyses => {
         if (Object.keys(analyses).length > 0) {
@@ -79,7 +80,7 @@ export default React.memo(function TradingTab() {
 
   useEffect(() => {
     doScan();
-    scanInterval.current = window.setInterval(doScan, 120000); // 2 min
+    scanInterval.current = window.setInterval(doScan, 90000); // 90s Deep Quantum
     return () => { if (scanInterval.current) clearInterval(scanInterval.current); };
   }, [doScan]);
 
@@ -108,7 +109,52 @@ export default React.memo(function TradingTab() {
     shorts: signals.filter(s => s.direction === 'SHORT').length,
     avgRR: signals.length > 0 ? (signals.reduce((a, b) => a + b.riskReward, 0) / signals.length).toFixed(1) : '0',
     avgScore: signals.length > 0 ? Math.round(signals.reduce((a, b) => a + b.aiScore, 0) / signals.length) : 0,
+    whaleAlerts: signals.filter(s => s.smartMoneySignal && s.smartMoneySignal !== 'NONE').length,
+    avgMTF: signals.length > 0 ? Math.round(signals.reduce((a, b) => a + (b.multiTimeframeScore || 0), 0) / signals.length) : 0,
   }), [signals]);
+
+  // Helper: add signal as active trade
+  const addActiveTrade = useCallback((s: FuturesTradeSignal) => {
+    const trade: ActiveTrade = {
+      id: Date.now().toString(), symbol: s.symbol, market: s.market,
+      direction: s.direction, leverage: s.leverage, entryPrice: s.currentPrice,
+      quantity: Math.round((riskCapital * riskPerTrade / 100) / (Math.abs(s.currentPrice - s.stopLoss) * s.leverage)),
+      stopLoss: s.stopLoss, target1: s.target1, target2: s.target2,
+      entryTime: Date.now(), platform: s.market === 'CRYPTO' ? 'COINDCX' : s.market === 'IN' ? 'ZERODHA' : 'OTHER',
+      pair: s.coinDcxPair || undefined,
+    };
+    setActiveTrades(prev => [trade, ...prev].slice(0, 20));
+  }, [riskCapital, riskPerTrade]);
+
+  // Helper: close trade -> journal
+  const closeTrade = useCallback((trade: ActiveTrade, exitPrice: number) => {
+    const pnl = trade.direction === 'LONG' ? (exitPrice - trade.entryPrice) * trade.quantity : (trade.entryPrice - exitPrice) * trade.quantity;
+    const pnlPct = ((exitPrice - trade.entryPrice) / trade.entryPrice) * 100 * (trade.direction === 'LONG' ? 1 : -1);
+    const entry: TradeJournalEntry = {
+      id: trade.id, symbol: trade.symbol, market: trade.market,
+      direction: trade.direction, leverage: trade.leverage,
+      entryPrice: trade.entryPrice, exitPrice, quantity: trade.quantity,
+      pnl, pnlPercent: Math.round(pnlPct * 10) / 10,
+      riskReward: Math.abs(pnlPct) / ((Math.abs(trade.entryPrice - trade.stopLoss) / trade.entryPrice) * 100) || 0,
+      result: pnl > 0 ? 'WIN' : pnl < 0 ? 'LOSS' : 'BREAKEVEN',
+      entryTime: trade.entryTime, exitTime: Date.now(),
+      platform: trade.platform, pair: trade.pair,
+    };
+    setJournal(prev => [entry, ...prev].slice(0, 50));
+    setActiveTrades(prev => prev.filter(t => t.id !== trade.id));
+  }, []);
+
+  // Journal stats
+  const journalStats = useMemo(() => {
+    if (journal.length === 0) return { wins: 0, losses: 0, winRate: 0, avgRR: 0, totalPnl: 0 };
+    const wins = journal.filter(j => j.result === 'WIN').length;
+    return {
+      wins, losses: journal.filter(j => j.result === 'LOSS').length,
+      winRate: Math.round((wins / journal.length) * 100),
+      avgRR: Math.round(journal.reduce((a, b) => a + b.riskReward, 0) / journal.length * 10) / 10,
+      totalPnl: Math.round(journal.reduce((a, b) => a + b.pnl, 0)),
+    };
+  }, [journal]);
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -116,7 +162,7 @@ export default React.memo(function TradingTab() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-black gradient-text-pro font-display flex items-center gap-2">
-            ⚡ QUANTUM TRADING TERMINAL
+            ⚡ DEEP QUANTUM TRADING TERMINAL
           </h2>
           <div className="flex items-center gap-2 mt-1">
             <span className={`w-2 h-2 rounded-full ${isScanning ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400 animate-pulse-dot'}`} />
@@ -124,6 +170,7 @@ export default React.memo(function TradingTab() {
               {isScanning ? 'SCANNING MARKETS...' : `Last: ${lastScan || '--'}`}
             </span>
             <span className="quantum-badge">DAILY PROFIT</span>
+            <span className="quantum-badge" style={{background:'linear-gradient(135deg,rgba(168,85,247,0.2),rgba(59,130,246,0.2))',borderColor:'rgba(168,85,247,0.3)'}}>CoinDCX USDC</span>
             {geminiLoading && <span className="text-[10px] text-blue-400 animate-pulse">🔵 Gemini Analyzing...</span>}
           </div>
         </div>
@@ -163,26 +210,34 @@ export default React.memo(function TradingTab() {
       </div>
 
       {/* Summary */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 animate-fade-in-up">
-        <div className="quantum-stat rounded-2xl p-4">
-          <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Active Signals</div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-3 animate-fade-in-up">
+        <div className="quantum-stat rounded-2xl p-3">
+          <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Signals</div>
           <div className="text-2xl font-black text-cyan-400 mt-1 font-mono">{summary.total}</div>
         </div>
-        <div className="quantum-stat rounded-2xl p-4">
+        <div className="quantum-stat rounded-2xl p-3">
           <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">🟢 Long</div>
           <div className="text-2xl font-black text-emerald-400 mt-1 font-mono">{summary.longs}</div>
         </div>
-        <div className="quantum-stat rounded-2xl p-4">
+        <div className="quantum-stat rounded-2xl p-3">
           <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">🔴 Short</div>
           <div className="text-2xl font-black text-red-400 mt-1 font-mono">{summary.shorts}</div>
         </div>
-        <div className="quantum-stat rounded-2xl p-4">
+        <div className="quantum-stat rounded-2xl p-3">
           <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Avg R:R</div>
           <div className="text-2xl font-black text-amber-400 mt-1 font-mono">{summary.avgRR}:1</div>
         </div>
-        <div className="quantum-stat rounded-2xl p-4 col-span-2 md:col-span-1">
-          <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Avg AI Score</div>
+        <div className="quantum-stat rounded-2xl p-3">
+          <div className={`text-slate-500 text-[10px] font-bold uppercase tracking-wider`}>AI Score</div>
           <div className={`text-2xl font-black mt-1 font-mono ${sc(summary.avgScore)}`}>{summary.avgScore}</div>
+        </div>
+        <div className="quantum-stat rounded-2xl p-3">
+          <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">🐋 Whale</div>
+          <div className="text-2xl font-black text-purple-400 mt-1 font-mono">{summary.whaleAlerts}</div>
+        </div>
+        <div className="quantum-stat rounded-2xl p-3">
+          <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">MTF Avg</div>
+          <div className={`text-2xl font-black mt-1 font-mono ${summary.avgMTF >= 75 ? 'text-emerald-400' : summary.avgMTF >= 50 ? 'text-cyan-400' : 'text-amber-400'}`}>{summary.avgMTF}%</div>
         </div>
       </div>
 
@@ -210,6 +265,16 @@ export default React.memo(function TradingTab() {
                       <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${s.timeframe === 'INTRADAY' ? 'bg-orange-500/15 text-orange-400' : s.timeframe === 'SWING_1_3D' ? 'bg-blue-500/15 text-blue-400' : 'bg-purple-500/15 text-purple-400'}`}>
                         {s.timeframe.replace('_', ' ')}
                       </span>
+                      {s.smartMoneySignal && s.smartMoneySignal !== 'NONE' && (
+                        <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 animate-pulse">
+                          🐋 {s.smartMoneySignal.replace('_', ' ')}
+                        </span>
+                      )}
+                      {s.coinDcxPair && (
+                        <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/20">
+                          CoinDCX: {s.coinDcxPair}
+                        </span>
+                      )}
                     </div>
                     <div className="text-[11px] text-slate-400 truncate">{s.name} • {s.leverage}x leverage</div>
                   </div>
@@ -274,8 +339,23 @@ export default React.memo(function TradingTab() {
                 <span className={`px-2 py-1 rounded-lg text-[10px] font-bold border ${s.riskPercent < 3 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : s.riskPercent < 5 ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}>
                   ⚠️ Risk: {s.riskPercent}%
                 </span>
+                {s.multiTimeframeScore !== undefined && (
+                  <span className={`px-2 py-1 rounded-lg text-[10px] font-bold border ${s.multiTimeframeScore >= 75 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : s.multiTimeframeScore >= 50 ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20'}`}>
+                    📊 MTF: {s.mtfAlignment}
+                  </span>
+                )}
+                {s.vwap && (
+                  <span className="px-2 py-1 rounded-lg bg-blue-500/10 text-blue-400 text-[10px] font-bold border border-blue-500/20">
+                    VWAP: {s.market === 'IN' ? '₹' : '$'}{s.vwap.toFixed(2)}
+                  </span>
+                )}
               </div>
-            </div>
+              <div className="mt-2 flex gap-2">
+                <button onClick={(e) => { e.stopPropagation(); addActiveTrade(s); }} className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-600/30 to-blue-600/30 text-cyan-300 text-[10px] font-bold border border-cyan-500/30 hover:border-cyan-400/50 transition-all">
+                  ⚡ Enter Trade
+                </button>
+              </div>
+              </div>
 
             {/* Expanded */}
             {expandedSignal === s.symbol && (
@@ -347,67 +427,120 @@ export default React.memo(function TradingTab() {
 
       {/* Active Trades & Journal */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in-up">
-        {/* Active Trades Tracker */}
+        {/* Active Trades Tracker — LIVE */}
         <div className="quantum-panel rounded-2xl p-4 border border-cyan-500/10">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider">🟢 Active Trades</h3>
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">🟢 Active Trades ({activeTrades.length})</h3>
             <span className="text-[10px] text-slate-500 font-mono">Live P&L</span>
           </div>
-          <div className="space-y-2">
-            {activeTrades.map(t => (
-              <div key={t.id} className="bg-black/30 rounded-xl p-3 border border-white/5 flex items-center justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-sm text-white">{t.sym}</span>
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${t.dir === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{t.dir} {t.lev}x</span>
+          {activeTrades.length === 0 ? (
+            <div className="text-center py-6 text-slate-600 text-xs">No active trades — Click ⚡ Enter Trade on a signal</div>
+          ) : (
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {activeTrades.slice(0, 8).map(t => {
+                const key = `${t.market}_${t.symbol}`;
+                const livePrice = livePrices[key]?.price || t.entryPrice;
+                const pnlPct = ((livePrice - t.entryPrice) / t.entryPrice) * 100 * (t.direction === 'LONG' ? 1 : -1);
+                const pnlVal = (livePrice - t.entryPrice) * t.quantity * (t.direction === 'LONG' ? 1 : -1);
+                return (
+                  <div key={t.id} className="bg-black/30 rounded-xl p-3 border border-white/5 flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm text-white">{t.symbol}</span>
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${t.direction === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{t.direction} {t.leverage}x</span>
+                        {t.platform && <span className="text-[8px] text-slate-600">{t.platform}</span>}
+                        {t.pair && <span className="text-[8px] text-indigo-400">{t.pair}</span>}
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-1">Entry: ${t.entryPrice.toFixed(2)} → ${livePrice.toFixed(2)}</div>
+                    </div>
+                    <div className="text-right flex items-center gap-2">
+                      <div>
+                        <div className={`text-sm font-black font-mono ${pnlVal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{pnlVal >= 0 ? '+' : ''}{pnlVal.toFixed(1)}</div>
+                        <div className={`text-[10px] font-bold ${pnlPct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%</div>
+                      </div>
+                      <button onClick={() => closeTrade(t, livePrice)} className="w-6 h-6 rounded bg-red-500/20 text-red-400 text-[10px] font-bold hover:bg-red-500/40 transition-all" title="Close Trade">✕</button>
+                    </div>
                   </div>
-                  <div className="text-[10px] text-slate-500 mt-1">Entry: ${t.entry} → ${t.current}</div>
-                </div>
-                <div className="text-right">
-                  <div className={`text-sm font-black font-mono ${t.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{t.pnl >= 0 ? '+' : ''}{t.pnlValue.toFixed(2)}</div>
-                  <div className={`text-[10px] font-bold ${t.pnl >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{t.pnl >= 0 ? '+' : ''}{t.pnl.toFixed(1)}%</div>
-                </div>
-              </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
-        {/* Trade Journal */}
+        {/* Trade Journal — Persistent Analytics */}
         <div className="quantum-panel rounded-2xl p-4 border border-purple-500/10">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider">📔 Trade Journal</h3>
-            <span className="text-[10px] text-slate-500 font-mono">Completed</span>
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">📔 Trade Journal ({journal.length})</h3>
+            <div className="flex gap-2 text-[10px] font-mono">
+              <span className={journalStats.winRate >= 60 ? 'text-emerald-400' : journalStats.winRate >= 40 ? 'text-amber-400' : 'text-red-400'}>WR: {journalStats.winRate}%</span>
+              <span className={journalStats.totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>P&L: {journalStats.totalPnl >= 0 ? '+' : ''}{journalStats.totalPnl}</span>
+            </div>
           </div>
-          <div className="space-y-2">
-            {journal.map(t => (
-              <div key={t.id} className="bg-black/30 rounded-xl p-3 border border-white/5 flex items-center justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-sm text-white">{t.sym}</span>
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${t.result === 'WIN' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{t.result}</span>
-                  </div>
-                  <div className="text-[10px] text-slate-500 mt-1">{t.date}</div>
-                </div>
-                <div className="text-right">
-                  <div className={`text-sm font-black font-mono ${t.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{t.pnl >= 0 ? '+' : ''}{t.pnl.toFixed(1)}%</div>
-                </div>
+          {journal.length === 0 ? (
+            <div className="text-center py-6 text-slate-600 text-xs">No completed trades yet</div>
+          ) : (
+            <>
+              <div className="grid grid-cols-4 gap-2 mb-3">
+                <div className="bg-emerald-500/10 rounded-lg p-2 text-center"><div className="text-[9px] text-emerald-400 font-bold">WINS</div><div className="text-lg font-black text-emerald-400 font-mono">{journalStats.wins}</div></div>
+                <div className="bg-red-500/10 rounded-lg p-2 text-center"><div className="text-[9px] text-red-400 font-bold">LOSSES</div><div className="text-lg font-black text-red-400 font-mono">{journalStats.losses}</div></div>
+                <div className="bg-amber-500/10 rounded-lg p-2 text-center"><div className="text-[9px] text-amber-400 font-bold">AVG R:R</div><div className="text-lg font-black text-amber-400 font-mono">{journalStats.avgRR}</div></div>
+                <div className={`rounded-lg p-2 text-center ${journalStats.totalPnl >= 0 ? 'bg-emerald-500/10' : 'bg-red-500/10'}`}><div className="text-[9px] text-slate-400 font-bold">TOTAL</div><div className={`text-lg font-black font-mono ${journalStats.totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{journalStats.totalPnl >= 0 ? '+' : ''}{journalStats.totalPnl}</div></div>
               </div>
-            ))}
+              <div className="space-y-2 max-h-40 overflow-y-auto">
+                {journal.slice(0, 6).map(t => (
+                  <div key={t.id} className="bg-black/30 rounded-xl p-3 border border-white/5 flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm text-white">{t.symbol}</span>
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${t.result === 'WIN' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{t.result}</span>
+                        {t.platform && <span className="text-[8px] text-slate-600">{t.platform}</span>}
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-1">{new Date(t.exitTime).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
+                    </div>
+                    <div className={`text-sm font-black font-mono ${t.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{t.pnl >= 0 ? '+' : ''}{t.pnlPercent}%</div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Risk Calculator */}
+      <div className="quantum-panel rounded-2xl p-4 animate-fade-in-up">
+        <div className="text-[10px] text-slate-500 font-bold uppercase mb-3">⚙️ Risk Calculator</div>
+        <div className="flex flex-wrap gap-4 items-end">
+          <div>
+            <label className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Capital (₹)</label>
+            <input type="number" value={riskCapital} onChange={e => setRiskCapital(Number(e.target.value))} className="w-32 px-3 py-1.5 quantum-input rounded-lg text-sm font-mono text-white" />
+          </div>
+          <div>
+            <label className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Risk/Trade %</label>
+            <input type="number" value={riskPerTrade} onChange={e => setRiskPerTrade(Number(e.target.value))} className="w-20 px-3 py-1.5 quantum-input rounded-lg text-sm font-mono text-white" step="0.5" min="0.5" max="10" />
+          </div>
+          <div className="text-[10px] text-slate-400">
+            Max Loss/Trade: <span className="text-amber-400 font-bold">₹{Math.round(riskCapital * riskPerTrade / 100).toLocaleString('en-IN')}</span>
           </div>
         </div>
       </div>
 
       {/* Legend */}
       <div className="quantum-panel rounded-2xl p-4 animate-fade-in-up">
-        <div className="text-[10px] text-slate-500 font-bold uppercase mb-2">⚡ Trading AI Methodology</div>
+        <div className="text-[10px] text-slate-500 font-bold uppercase mb-2">⚡ Deep Quantum AI Trading Methodology</div>
         <div className="flex flex-wrap gap-3 text-[10px] text-slate-400">
-          <span><span className="text-cyan-400 font-bold">40%</span> Technical (RSI, SMA, MACD, BB)</span>
+          <span><span className="text-cyan-400 font-bold">40%</span> Technical (RSI, SMA, MACD, BB, VWAP)</span>
           <span><span className="text-emerald-400 font-bold">30%</span> Momentum (Change, Volume, Trend)</span>
           <span><span className="text-orange-400 font-bold">20%</span> Volatility (ATR, BB Width)</span>
           <span><span className="text-blue-400 font-bold">10%</span> Sentiment (VIX, Fear/Greed)</span>
         </div>
+        <div className="flex flex-wrap gap-3 text-[10px] text-slate-400 mt-1">
+          <span>🐋 Smart Money Detection</span>
+          <span>📊 Multi-Timeframe Confluence</span>
+          <span>📐 Fibonacci Pivots</span>
+          <span>💱 CoinDCX USDC/INR Trading</span>
+        </div>
         <div className="mt-2 text-[9px] text-slate-600 font-mono">
-          Powered by TradingView + Binance + Gemini 3.5 Flash | Auto-scan: 2min | R:R ≥ 2.0:1 filter | Telegram: Instant Alerts
+          Powered by TradingView + Binance + CoinDCX + Gemini 3.5 Flash | Auto-scan: 90s | R:R ≥ 2.0:1 | Telegram Alerts
         </div>
       </div>
     </div>

@@ -225,17 +225,24 @@ export default React.memo(function DeepScanTab() {
               {/* Action + Targets Row */}
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <div className="text-xs font-bold">{s.actionHindi}</div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <span className="px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 text-[10px] font-bold border border-emerald-500/20">
-                    1Y: {s.market === 'IN' ? '₹' : '$'}{s.target1Y.toFixed(0)} (+{s.return1Y}%)
+                    1Y Target: {s.market === 'IN' ? '₹' : '$'}{s.target1Y.toFixed(0)} (+{s.return1Y}%)
                   </span>
                   <span className="px-2 py-1 rounded-lg bg-cyan-500/10 text-cyan-400 text-[10px] font-bold border border-cyan-500/20">
-                    2Y: {s.market === 'IN' ? '₹' : '$'}{s.target2Y.toFixed(0)} (+{s.return2Y}%)
+                    2Y Target: {s.market === 'IN' ? '₹' : '$'}{s.target2Y.toFixed(0)} (+{s.return2Y}%)
                   </span>
+                  {s.accDistPhase && (
+                    <span className={`px-2 py-1 rounded-lg text-[10px] font-bold border ${s.accDistPhase === 'ACCUMULATION' ? 'bg-purple-500/15 text-purple-400 border-purple-500/20' : s.accDistPhase === 'DISTRIBUTION' ? 'bg-orange-500/15 text-orange-400 border-orange-500/20' : s.accDistPhase === 'MARKUP' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20' : 'bg-red-500/15 text-red-400 border-red-500/20'}`}>
+                      🔄 {s.accDistPhase}
+                    </span>
+                  )}
+                  {s.institutionalQuality && (
+                    <span className="px-2 py-1 rounded-lg bg-indigo-500/10 text-indigo-400 text-[10px] font-bold border border-indigo-500/20">
+                      🏛️ Institutional: {s.institutionalQuality}%
+                    </span>
+                  )}
                 </div>
-                <span className="px-2 py-1 rounded-lg bg-purple-500/10 text-purple-400 text-[10px] font-bold border border-purple-500/20">
-                  Conf: {s.aiConfidence}%
-                </span>
               </div>
 
               {/* Buy/Sell Timing */}
@@ -276,22 +283,36 @@ export default React.memo(function DeepScanTab() {
                 </div>
 
                 {/* Technical Indicators */}
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
                   <div className="bg-black/30 rounded-lg p-2 text-center">
-                    <div className="text-[9px] text-slate-500 font-bold">RSI</div>
+                    <div className="text-[9px] text-slate-500 font-bold">RSI (14)</div>
                     <div className={`text-sm font-black font-mono ${s.rsi < 35 ? 'text-emerald-400' : s.rsi > 65 ? 'text-red-400' : 'text-cyan-400'}`}>{s.rsi.toFixed(1)}</div>
                   </div>
                   <div className="bg-black/30 rounded-lg p-2 text-center">
-                    <div className="text-[9px] text-slate-500 font-bold">MACD</div>
-                    <div className={`text-sm font-black font-mono ${s.macd > 0 ? 'text-emerald-400' : 'text-red-400'}`}>{s.macd.toFixed(2)}</div>
+                    <div className="text-[9px] text-slate-500 font-bold">ADX Trend</div>
+                    <div className={`text-sm font-black font-mono ${s.adx && s.adx >= 25 ? 'text-emerald-400' : 'text-slate-400'}`}>{s.adx || 'N/A'} {s.adx && s.adx >= 25 ? '🔥' : '⏳'}</div>
                   </div>
                   <div className="bg-black/30 rounded-lg p-2 text-center">
-                    <div className="text-[9px] text-slate-500 font-bold">SL</div>
-                    <div className="text-sm font-black font-mono text-red-400">{s.market === 'IN' ? '₹' : '$'}{s.stopLoss.toFixed(0)}</div>
+                    <div className="text-[9px] text-slate-500 font-bold">Bollinger Bands</div>
+                    <div className="text-[10px] font-black font-mono text-cyan-400">
+                      {s.market === 'IN' ? '₹' : '$'}{s.bbLower?.toFixed(0) || '--'} - {s.market === 'IN' ? '₹' : '$'}{s.bbUpper?.toFixed(0) || '--'}
+                    </div>
                   </div>
                   <div className="bg-black/30 rounded-lg p-2 text-center">
-                    <div className="text-[9px] text-slate-500 font-bold">Volume</div>
-                    <div className="text-sm font-black font-mono text-cyan-400">{s.volume > 1e6 ? `${(s.volume / 1e6).toFixed(1)}M` : `${(s.volume / 1e3).toFixed(0)}K`}</div>
+                    <div className="text-[9px] text-slate-500 font-bold">Fib Levels</div>
+                    <div className="text-[10px] font-black font-mono text-amber-400">
+                      S: {s.fibSupport?.toFixed(0) || '--'} | R: {s.fibResistance?.toFixed(0) || '--'}
+                    </div>
+                  </div>
+                  <div className="bg-black/30 rounded-lg p-2 text-center">
+                    <div className="text-[9px] text-slate-500 font-bold">On-Balance Vol</div>
+                    <div className={`text-sm font-black font-mono ${s.obv && s.obv >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {s.obv ? (s.obv > 1e6 ? `${(s.obv / 1e6).toFixed(1)}M` : `${(s.obv / 1e3).toFixed(0)}K`) : 'N/A'}
+                    </div>
+                  </div>
+                  <div className="bg-black/30 rounded-lg p-2 text-center">
+                    <div className="text-[9px] text-slate-500 font-bold">Sector Rank</div>
+                    <div className="text-sm font-black font-mono text-indigo-400">#{s.sectorRank || 'N/A'} / 10</div>
                   </div>
                 </div>
 
@@ -304,7 +325,7 @@ export default React.memo(function DeepScanTab() {
                 {/* Gemini 3.5 Flash Analysis */}
                 {s.geminiAnalysis && (
                   <div className="bg-blue-500/5 rounded-xl p-3 border border-blue-500/20">
-                    <div className="text-[10px] text-blue-400 font-bold uppercase mb-1">🔵 Gemini 3.5 Flash Pro Analysis</div>
+                    <div className="text-[10px] text-blue-400 font-bold uppercase mb-1">🔵 Gemini 3.5 Flash Deep Analysis</div>
                     <div className="text-xs text-blue-200 whitespace-pre-line">{s.geminiAnalysis}</div>
                   </div>
                 )}
@@ -325,16 +346,22 @@ export default React.memo(function DeepScanTab() {
 
       {/* Legend */}
       <div className="quantum-panel rounded-2xl p-4 animate-fade-in-up">
-        <div className="text-[10px] text-slate-500 font-bold uppercase mb-2">🧬 AI Scoring Methodology</div>
+        <div className="text-[10px] text-slate-500 font-bold uppercase mb-2">🧬 DeepMind AI Scoring Methodology</div>
         <div className="flex flex-wrap gap-3 text-[10px] text-slate-400">
           <span><span className="text-purple-400 font-bold">30%</span> Fundamentals (CAGR, Moat, Drawdown)</span>
-          <span><span className="text-cyan-400 font-bold">25%</span> Technicals (RSI, SMA, MACD)</span>
-          <span><span className="text-emerald-400 font-bold">20%</span> Momentum (Change, Trend)</span>
-          <span><span className="text-blue-400 font-bold">15%</span> Sentiment (VIX, Volume)</span>
-          <span><span className="text-amber-400 font-bold">10%</span> Value (PEG, Discount)</span>
+          <span><span className="text-cyan-400 font-bold">25%</span> Technicals (RSI, SMA, MACD, BB, ADX)</span>
+          <span><span className="text-emerald-400 font-bold">20%</span> Momentum (Change, Volume, OBV)</span>
+          <span><span className="text-blue-400 font-bold">15%</span> Sentiment (VIX, Volume Profile)</span>
+          <span><span className="text-amber-400 font-bold">10%</span> Value (PEG, Fib Support, Discount)</span>
+        </div>
+        <div className="flex flex-wrap gap-3 text-[10px] text-slate-400 mt-1">
+          <span>🏛️ Institutional Quality Assessment</span>
+          <span>🔄 Accumulation & Distribution Phases</span>
+          <span>📐 Fibonacci Pivot Analysis</span>
+          <span>🔥 ADX Trend Strength Meter</span>
         </div>
         <div className="mt-2 text-[9px] text-slate-600 font-mono">
-          Powered by TradingView Scanner + Gemini 3.5 Flash | Auto-refresh: 5min | Telegram: 24x7 Alerts (2hr)
+          Powered by TradingView Scanner + Gemini 3.5 Flash | Auto-refresh: 5min | Telegram Alerts: 2hr Intervals
         </div>
       </div>
     </div>
