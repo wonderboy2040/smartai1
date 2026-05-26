@@ -343,7 +343,7 @@ export async function getGeminiTradeAnalysis(
   signals: FuturesTradeSignal[],
   top: number = 5
 ): Promise<Record<string, string>> {
-  const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
   if (!apiKey || apiKey.length < 10) return {};
 
   const topSignals = signals.slice(0, top);

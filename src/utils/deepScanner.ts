@@ -423,7 +423,7 @@ export async function getGeminiDeepAnalysis(
   stocks: DeepScanStock[],
   top: number = 5
 ): Promise<Record<string, string>> {
-  const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
   if (!apiKey || apiKey.length < 10) return {};
 
   const topStocks = stocks.slice(0, top);
