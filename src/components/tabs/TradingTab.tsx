@@ -451,7 +451,7 @@ export default React.memo(function TradingTab() {
                       <div className="text-[10px] text-slate-300 mt-1">{s.groqAnalysis ? s.groqAnalysis.substring(0, 80) + '...' : '⏳ Pending...'}</div>
                     </div>
                     <div className="bg-black/30 rounded-lg p-2">
-                      <div className="text-[8px] text-blue-400 font-bold">GEMINI 2.0 Flash</div>
+                      <div className="text-[8px] text-blue-400 font-bold">GEMINI 3.5 Flash</div>
                       <div className="text-[10px] text-slate-300 mt-1">{s.geminiAnalysis ? s.geminiAnalysis.substring(0, 80) + '...' : '⏳ Pending...'}</div>
                     </div>
                     <div className="bg-black/30 rounded-lg p-2">
