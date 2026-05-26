@@ -12,7 +12,7 @@ const CONFIG = {
   gemini: {
     apiKey: import.meta.env.VITE_GEMINI_API_KEY || '',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
-    model: 'gemini-3.5-flash'
+    model: 'gemini-2.0-flash'
   },
   claude: {
     apiKey: import.meta.env.VITE_CLAUDE_API_KEY || '',

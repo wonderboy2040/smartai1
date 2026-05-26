@@ -455,7 +455,7 @@ export default React.memo(function TradingTab() {
                       <div className="text-[10px] text-slate-300 mt-1">{s.geminiAnalysis ? s.geminiAnalysis.substring(0, 80) + '...' : '⏳ Pending...'}</div>
                     </div>
                     <div className="bg-black/30 rounded-lg p-2">
-                      <div className="text-[8px] text-violet-400 font-bold">CLAUDE Sonnet</div>
+                      <div className="text-[8px] text-violet-400 font-bold">CLAUDE / SMC Analyst</div>
                       <div className="text-[10px] text-slate-300 mt-1">{s.claudeAnalysis ? s.claudeAnalysis.substring(0, 80) + '...' : '⏳ Pending...'}</div>
                     </div>
                   </div>

@@ -97,11 +97,14 @@ export async function getClaudeTradeAnalysis(
   signals: FuturesTradeSignal[],
   top: number = 5
 ): Promise<Record<string, { analysis: string; direction: 'LONG' | 'SHORT' | 'SKIP'; conviction: number }>> {
-  if (!CLAUDE_API_KEY || CLAUDE_API_KEY.length < 10) return {};
+  if (!CLAUDE_API_KEY || CLAUDE_API_KEY.length < 10) {
+    // Claude key not set — use Groq with Claude-style deep analysis prompt as fallback
+    return getClaudeFallbackViaGroq(signals, top);
+  }
 
   const topSignals = signals.slice(0, top);
   const summary = topSignals.map((s, i) =>
-    `${i + 1}. ${s.symbol} (${s.market}/${s.sector}) | ₹${s.currentPrice.toFixed(2)} | ${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)}% | RSI: ${s.rsi.toFixed(0)} | StochRSI: ${s.stochRsi?.toFixed(0) || 'N/A'} | MACD: ${s.macd.toFixed(3)} | ADX: ${s.adx?.toFixed(0) || 'N/A'} | SMA20: ${s.sma20.toFixed(2)} vs SMA50: ${s.sma50.toFixed(2)} | Ichimoku: ${s.ichimokuSignal || 'N/A'} | Supertrend: ${s.supertrend || 'N/A'} | VWAP: ${s.vwap?.toFixed(2) || 'N/A'} | OBV: ${s.obvTrend || 'N/A'} | EMA9/21: ${s.emaCross || 'NONE'} | R:R ${s.riskReward}:1 | Entry: $${s.entryPrice.toFixed(2)} | SL: $${s.stopLoss.toFixed(2)} | T1: $${s.target1.toFixed(2)} | T2: $${s.target2.toFixed(2)} | SmartMoney: ${s.smartMoneySignal || 'NONE'} | MTF: ${s.mtfAlignment || 'N/A'}`
+    `${i + 1}. ${s.symbol} (${s.market}/${s.sector}) | ₹${s.currentPrice.toFixed(2)} | ${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)}% | RSI: ${s.rsi.toFixed(0)} | StochRSI: ${s.stochRsi?.toFixed(0) || 'N/A'} | MACD: ${s.macd.toFixed(3)} | ADX: ${s.adx?.toFixed(0) || 'N/A'} | SMA20: ${s.sma20.toFixed(2)} vs SMA50: ${s.sma50.toFixed(2)} | Ichimoku: ${s.ichimokuSignal || 'N/A'} | Supertrend: ${s.supertrend || 'N/A'} | R:R ${s.riskReward}:1 | Entry: $${s.entryPrice.toFixed(2)} | SL: $${s.stopLoss.toFixed(2)} | T1: $${s.target1.toFixed(2)} | T2: $${s.target2.toFixed(2)} | SmartMoney: ${s.smartMoneySignal || 'NONE'} | MTF: ${s.mtfAlignment || 'N/A'}`
   ).join('\n');
 
   try {
@@ -140,37 +143,81 @@ ${summary}`
       signal: AbortSignal.timeout(20000)
     });
 
-    if (!res.ok) return {};
+    if (!res.ok) {
+      console.warn('Claude API error:', res.status, res.statusText);
+      return getClaudeFallbackViaGroq(signals, top);
+    }
     const data = await res.json();
     const text = data.content?.[0]?.text || '';
 
-    const results: Record<string, { analysis: string; direction: 'LONG' | 'SHORT' | 'SKIP'; conviction: number }> = {};
-
-    for (const sig of topSignals) {
-      const regex = new RegExp(`\\*\\*${sig.symbol}\\*\\*[:\\s]*([\\s\\S]*?)(?=\\*\\*[A-Z]|$)`, 'i');
-      const match = text.match(regex);
-      if (match) {
-        const block = match[1].trim();
-        let direction: 'LONG' | 'SHORT' | 'SKIP' = 'SKIP';
-        if (/\bLONG\b/i.test(block) && !/\bSKIP\b/i.test(block)) direction = 'LONG';
-        else if (/\bSHORT\b/i.test(block) && !/\bSKIP\b/i.test(block)) direction = 'SHORT';
-
-        const convMatch = block.match(/Conviction[:\s]*(\d+)/i);
-        const conviction = convMatch ? parseInt(convMatch[1]) : 5;
-
-        results[sig.symbol] = { analysis: block.substring(0, 300), direction, conviction };
-      }
-    }
-
-    if (Object.keys(results).length === 0 && text.length > 10) {
-      results[topSignals[0].symbol] = { analysis: text.substring(0, 300), direction: 'SKIP', conviction: 5 };
-    }
-
-    return results;
+    return parseAiResponse(text, topSignals);
   } catch (e) {
-    console.warn('Claude trade analysis failed:', e);
+    console.warn('Claude trade analysis failed (CORS/Network), using Groq fallback:', e);
+    return getClaudeFallbackViaGroq(signals, top);
+  }
+}
+
+// Claude fallback via Groq with deep SMC/Wyckoff analysis prompt
+async function getClaudeFallbackViaGroq(
+  signals: FuturesTradeSignal[],
+  top: number = 5
+): Promise<Record<string, { analysis: string; direction: 'LONG' | 'SHORT' | 'SKIP'; conviction: number }>> {
+  if (!GROQ_API_KEY || GROQ_API_KEY.length < 10) return {};
+
+  const topSignals = signals.slice(0, top);
+  const summary = topSignals.map((s, i) =>
+    `${i + 1}. ${s.symbol} (${s.market}) | $${s.currentPrice.toFixed(2)} | RSI: ${s.rsi.toFixed(0)} | StochRSI: ${s.stochRsi?.toFixed(0) || 'N/A'} | MACD: ${s.macd.toFixed(3)} | ADX: ${s.adx?.toFixed(0) || 'N/A'} | SMA20 vs SMA50: ${s.sma20 > s.sma50 ? 'BULLISH' : 'BEARISH'} | Ichimoku: ${s.ichimokuSignal || 'N/A'} | Supertrend: ${s.supertrend || 'N/A'} | OBV: ${s.obvTrend || 'N/A'} | EMA: ${s.emaCross || 'NONE'} | R:R ${s.riskReward}:1 | SmartMoney: ${s.smartMoneySignal || 'NONE'}`
+  ).join('\n');
+
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'system', content: 'You are DEEP INSTITUTIONAL ANALYST using SMC (Smart Money Concepts) and Wyckoff methodology. Analyze with order blocks, supply/demand zones, accumulation/distribution phases.' },
+          { role: 'user', content: `Capital ₹5000, target ₹500-₹1000 daily profit. Analyze using SMC + Wyckoff + Order Flow.\nFor each: **SYMBOL**: DIRECTION(LONG/SHORT/SKIP) | Conviction: X/10 | SMC Hinglish analysis\n\n${summary}` }
+        ],
+        temperature: 0.3, max_tokens: 1500
+      }),
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!res.ok) return {};
+    const data = await res.json();
+    const text = data.choices?.[0]?.message?.content || '';
+    return parseAiResponse(text, topSignals);
+  } catch (e) {
+    console.warn('Claude fallback via Groq also failed:', e);
     return {};
   }
+}
+
+// Shared response parser
+function parseAiResponse(
+  text: string,
+  topSignals: FuturesTradeSignal[]
+): Record<string, { analysis: string; direction: 'LONG' | 'SHORT' | 'SKIP'; conviction: number }> {
+  const results: Record<string, { analysis: string; direction: 'LONG' | 'SHORT' | 'SKIP'; conviction: number }> = {};
+
+  for (const sig of topSignals) {
+    const regex = new RegExp(`\\*\\*${sig.symbol}\\*\\*[:\\s]*([\\s\\S]*?)(?=\\*\\*[A-Z]|$)`, 'i');
+    const match = text.match(regex);
+    if (match) {
+      const block = match[1].trim();
+      let direction: 'LONG' | 'SHORT' | 'SKIP' = 'SKIP';
+      if (/\bLONG\b/i.test(block) && !/\bSKIP\b/i.test(block)) direction = 'LONG';
+      else if (/\bSHORT\b/i.test(block) && !/\bSKIP\b/i.test(block)) direction = 'SHORT';
+      const convMatch = block.match(/Conviction[:\s]*(\d+)/i);
+      const conviction = convMatch ? parseInt(convMatch[1]) : 5;
+      results[sig.symbol] = { analysis: block.substring(0, 300), direction, conviction };
+    }
+  }
+
+  if (Object.keys(results).length === 0 && text.length > 10) {
+    results[topSignals[0].symbol] = { analysis: text.substring(0, 300), direction: 'SKIP', conviction: 5 };
+  }
+  return results;
 }
 
 // ========== ENHANCED GEMINI (Already exists — enhanced prompt) ==========
@@ -186,7 +233,7 @@ export async function getGeminiEnhancedAnalysis(
   ).join('\n');
 
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`, {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -204,33 +251,13 @@ export async function getGeminiEnhancedAnalysis(
       signal: AbortSignal.timeout(20000)
     });
 
-    if (!res.ok) return {};
+    if (!res.ok) {
+      console.warn('Gemini API error:', res.status, res.statusText);
+      return {};
+    }
     const data = await res.json();
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-    const results: Record<string, { analysis: string; direction: 'LONG' | 'SHORT' | 'SKIP'; conviction: number }> = {};
-
-    for (const sig of topSignals) {
-      const regex = new RegExp(`\\*\\*${sig.symbol}\\*\\*[:\\s]*([\\s\\S]*?)(?=\\*\\*[A-Z]|$)`, 'i');
-      const match = text.match(regex);
-      if (match) {
-        const block = match[1].trim();
-        let direction: 'LONG' | 'SHORT' | 'SKIP' = 'SKIP';
-        if (/\bLONG\b/i.test(block) && !/\bSKIP\b/i.test(block)) direction = 'LONG';
-        else if (/\bSHORT\b/i.test(block) && !/\bSKIP\b/i.test(block)) direction = 'SHORT';
-
-        const convMatch = block.match(/Conviction[:\s]*(\d+)/i);
-        const conviction = convMatch ? parseInt(convMatch[1]) : 5;
-
-        results[sig.symbol] = { analysis: block.substring(0, 300), direction, conviction };
-      }
-    }
-
-    if (Object.keys(results).length === 0 && text.length > 10) {
-      results[topSignals[0].symbol] = { analysis: text.substring(0, 300), direction: 'SKIP', conviction: 5 };
-    }
-
-    return results;
+    return parseAiResponse(text, topSignals);
   } catch (e) {
     console.warn('Gemini enhanced analysis failed:', e);
     return {};
