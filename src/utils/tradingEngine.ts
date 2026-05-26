@@ -1,11 +1,11 @@
 // ============================================
 // DEEP QUANTUM AI — ADVANCE PRO TRADING ENGINE
-// Futures & Intraday: Crypto + US + India
-// CoinDCX USDC/INR Trading | Multi-Timeframe
-// Smart Money Detection | Fibonacci Pivots
+// Daily Profit ₹500-₹1000 | Capital ₹5000
+// Multi-AI Consensus | 50+ Assets Radar
 // ============================================
 
 import { FuturesTradeSignal, PriceData } from '../types';
+import { calculateDailyProfitQty } from './multiAiEngine';
 
 // ========== TRADING UNIVERSE ==========
 export interface TradingAsset {
@@ -24,6 +24,8 @@ export const COINDCX_USDC_PAIRS: Record<string, string> = {
   'BNB': 'B-BNB_USDC', 'XRP': 'B-XRP_USDC', 'DOGE': 'B-DOGE_USDC',
   'AVAX': 'B-AVAX_USDC', 'LINK': 'B-LINK_USDC', 'ADA': 'B-ADA_USDC',
   'MATIC': 'B-MATIC_USDC', 'SUI': 'B-SUI_USDC', 'PEPE': 'B-PEPE_USDC',
+  'ARB': 'B-ARB_USDC', 'OP': 'B-OP_USDC', 'INJ': 'B-INJ_USDC',
+  'NEAR': 'B-NEAR_USDC', 'FTM': 'B-FTM_USDC', 'RENDER': 'B-RENDER_USDC',
 };
 
 export const TRADING_CRYPTO: TradingAsset[] = [
@@ -38,6 +40,15 @@ export const TRADING_CRYPTO: TradingAsset[] = [
   { sym: 'ADA', name: 'Cardano', market: 'CRYPTO', sector: 'Layer 1', avgATR: 5.5, maxLev: 5, coinDcxPair: 'B-ADA_USDC' },
   { sym: 'SUI', name: 'Sui', market: 'CRYPTO', sector: 'Layer 1', avgATR: 8.0, maxLev: 5, coinDcxPair: 'B-SUI_USDC' },
   { sym: 'MATIC', name: 'Polygon', market: 'CRYPTO', sector: 'Layer 2', avgATR: 5.5, maxLev: 5, coinDcxPair: 'B-MATIC_USDC' },
+  { sym: 'PEPE', name: 'Pepe', market: 'CRYPTO', sector: 'Meme', avgATR: 12.0, maxLev: 3, coinDcxPair: 'B-PEPE_USDC' },
+  { sym: 'ARB', name: 'Arbitrum', market: 'CRYPTO', sector: 'Layer 2', avgATR: 6.5, maxLev: 5, coinDcxPair: 'B-ARB_USDC' },
+  { sym: 'OP', name: 'Optimism', market: 'CRYPTO', sector: 'Layer 2', avgATR: 6.0, maxLev: 5, coinDcxPair: 'B-OP_USDC' },
+  { sym: 'INJ', name: 'Injective', market: 'CRYPTO', sector: 'DeFi', avgATR: 7.5, maxLev: 5, coinDcxPair: 'B-INJ_USDC' },
+  { sym: 'NEAR', name: 'NEAR Protocol', market: 'CRYPTO', sector: 'Layer 1', avgATR: 6.5, maxLev: 5, coinDcxPair: 'B-NEAR_USDC' },
+  { sym: 'FTM', name: 'Fantom', market: 'CRYPTO', sector: 'Layer 1', avgATR: 7.0, maxLev: 5, coinDcxPair: 'B-FTM_USDC' },
+  { sym: 'RENDER', name: 'Render', market: 'CRYPTO', sector: 'AI/GPU', avgATR: 8.0, maxLev: 3, coinDcxPair: 'B-RENDER_USDC' },
+  { sym: 'WIF', name: 'dogwifhat', market: 'CRYPTO', sector: 'Meme', avgATR: 15.0, maxLev: 3 },
+  { sym: 'BONK', name: 'Bonk', market: 'CRYPTO', sector: 'Meme', avgATR: 14.0, maxLev: 3 },
 ];
 
 export const TRADING_US: TradingAsset[] = [
@@ -51,6 +62,16 @@ export const TRADING_US: TradingAsset[] = [
   { sym: 'MSFT', name: 'Microsoft', market: 'US', sector: 'Tech', avgATR: 1.5, maxLev: 5 },
   { sym: 'AMZN', name: 'Amazon', market: 'US', sector: 'E-Com', avgATR: 2.2, maxLev: 5 },
   { sym: 'GOOGL', name: 'Alphabet', market: 'US', sector: 'Tech', avgATR: 2.0, maxLev: 5 },
+  { sym: 'SMCI', name: 'Super Micro', market: 'US', sector: 'AI Infra', avgATR: 6.0, maxLev: 3 },
+  { sym: 'ARM', name: 'ARM Holdings', market: 'US', sector: 'Semis', avgATR: 4.5, maxLev: 3 },
+  { sym: 'MARA', name: 'Marathon Digital', market: 'US', sector: 'Mining', avgATR: 7.0, maxLev: 3 },
+  { sym: 'SOFI', name: 'SoFi Tech', market: 'US', sector: 'Fintech', avgATR: 5.0, maxLev: 3 },
+  { sym: 'HOOD', name: 'Robinhood', market: 'US', sector: 'Fintech', avgATR: 5.5, maxLev: 3 },
+  { sym: 'NET', name: 'Cloudflare', market: 'US', sector: 'Cloud', avgATR: 4.0, maxLev: 3 },
+  { sym: 'CRWD', name: 'CrowdStrike', market: 'US', sector: 'Cybersec', avgATR: 3.5, maxLev: 3 },
+  { sym: 'NFLX', name: 'Netflix', market: 'US', sector: 'Streaming', avgATR: 3.0, maxLev: 5 },
+  { sym: 'SNAP', name: 'Snap Inc', market: 'US', sector: 'Social', avgATR: 5.0, maxLev: 3 },
+  { sym: 'RBLX', name: 'Roblox', market: 'US', sector: 'Gaming', avgATR: 4.5, maxLev: 3 },
 ];
 
 export const TRADING_IN: TradingAsset[] = [
@@ -62,6 +83,13 @@ export const TRADING_IN: TradingAsset[] = [
   { sym: 'ICICIBANK', name: 'ICICI Bank', market: 'IN', sector: 'Banking', avgATR: 1.8, maxLev: 5 },
   { sym: 'HDFCBANK', name: 'HDFC Bank', market: 'IN', sector: 'Banking', avgATR: 1.5, maxLev: 5 },
   { sym: 'INFY', name: 'Infosys', market: 'IN', sector: 'IT', avgATR: 1.8, maxLev: 5 },
+  { sym: 'TATAPOWER', name: 'Tata Power', market: 'IN', sector: 'Energy', avgATR: 3.0, maxLev: 5 },
+  { sym: 'ITC', name: 'ITC Ltd', market: 'IN', sector: 'FMCG', avgATR: 1.5, maxLev: 5 },
+  { sym: 'ZOMATO', name: 'Zomato', market: 'IN', sector: 'FoodTech', avgATR: 3.5, maxLev: 3 },
+  { sym: 'JSWSTEEL', name: 'JSW Steel', market: 'IN', sector: 'Metals', avgATR: 2.5, maxLev: 5 },
+  { sym: 'HINDALCO', name: 'Hindalco', market: 'IN', sector: 'Metals', avgATR: 2.8, maxLev: 5 },
+  { sym: 'COALINDIA', name: 'Coal India', market: 'IN', sector: 'Mining', avgATR: 2.0, maxLev: 5 },
+  { sym: 'PNB', name: 'Punjab National Bank', market: 'IN', sector: 'Banking', avgATR: 3.0, maxLev: 5 },
 ];
 
 // ========== LIVE DATA FETCH FOR TRADING ==========
@@ -248,7 +276,62 @@ function calcMultiTimeframe(rsi: number, sma20: number, sma50: number, macd: num
 // ========== VWAP CALCULATOR ==========
 function calcVWAP(high: number, low: number, price: number, volume: number): number {
   if (volume <= 0) return price;
-  return (high + low + price) / 3; // Typical price as VWAP proxy
+  return (high + low + price) / 3;
+}
+
+// ========== ADVANCED PRO-TRADER INDICATORS ==========
+function calcStochRSI(rsi: number): { stochRsi: number; signal: number } {
+  // Stochastic RSI: maps RSI to 0-100 with more sensitivity
+  const rsiMin = Math.max(0, rsi - 25);
+  const rsiMax = Math.min(100, rsi + 25);
+  const stochRsi = rsiMax > rsiMin ? ((rsi - rsiMin) / (rsiMax - rsiMin)) * 100 : 50;
+  const signal = stochRsi * 0.7 + rsi * 0.3; // Signal line smoothing
+  return { stochRsi: Math.round(stochRsi), signal: Math.round(signal) };
+}
+
+function calcADX(change: number, atr: number, price: number, sma20: number, sma50: number): number {
+  // ADX proxy: trend strength 0-100
+  const trendStrength = Math.abs(sma20 - sma50) / (price || 1) * 100;
+  const momentum = Math.abs(change);
+  const volatility = (atr / (price || 1)) * 100;
+  const adx = Math.min(80, Math.round(trendStrength * 8 + momentum * 5 + volatility * 3));
+  return Math.max(5, adx);
+}
+
+function calcIchimoku(price: number, sma20: number, sma50: number, high: number, low: number): 'ABOVE_CLOUD' | 'IN_CLOUD' | 'BELOW_CLOUD' {
+  // Ichimoku cloud proxy using SMA as Senkou spans
+  const spanA = (sma20 + sma50) / 2;
+  const spanB = (high + low) / 2;
+  const cloudTop = Math.max(spanA, spanB);
+  const cloudBottom = Math.min(spanA, spanB);
+  if (price > cloudTop) return 'ABOVE_CLOUD';
+  if (price < cloudBottom) return 'BELOW_CLOUD';
+  return 'IN_CLOUD';
+}
+
+function calcSupertrend(price: number, atr: number, sma20: number): { signal: 'BUY' | 'SELL'; value: number } {
+  const multiplier = 2.5;
+  const upperBand = ((price + sma20) / 2) + multiplier * atr;
+  const lowerBand = ((price + sma20) / 2) - multiplier * atr;
+  if (price > upperBand * 0.98) return { signal: 'BUY', value: lowerBand };
+  if (price < lowerBand * 1.02) return { signal: 'SELL', value: upperBand };
+  return price > sma20 ? { signal: 'BUY', value: lowerBand } : { signal: 'SELL', value: upperBand };
+}
+
+function calcOBVTrend(volume: number, change: number): 'BULLISH' | 'BEARISH' | 'NEUTRAL' {
+  if (change > 0.5 && volume > 2_000_000) return 'BULLISH';
+  if (change < -0.5 && volume > 2_000_000) return 'BEARISH';
+  return 'NEUTRAL';
+}
+
+function calcEMACross(sma20: number, sma50: number, price: number): { ema9: number; ema21: number; cross: 'GOLDEN' | 'DEATH' | 'NONE' } {
+  // EMA proxy from SMA data
+  const ema9 = price * 0.2 + sma20 * 0.8;
+  const ema21 = sma20 * 0.6 + sma50 * 0.4;
+  let cross: 'GOLDEN' | 'DEATH' | 'NONE' = 'NONE';
+  if (ema9 > ema21 * 1.005) cross = 'GOLDEN';
+  else if (ema9 < ema21 * 0.995) cross = 'DEATH';
+  return { ema9, ema21, cross };
 }
 
 // ========== COINDCX USDC/INR PRICE FETCH ==========
@@ -307,21 +390,29 @@ export function runTradingScan(
     const volatilityScore = calcVolatilityScore(high, low, price, asset.avgATR);
     const sentimentScore = calcSentimentScoreTrading(avgVix, change);
 
-    // Weighted composite
-    const aiScore = Math.round(
-      technicalScore * 0.40 + momentumScore * 0.30 +
-      volatilityScore * 0.20 + sentimentScore * 0.10
-    );
-
-    // Deep Quantum AI — Advanced Indicators
+    // Advanced Indicators
+    const stochData = calcStochRSI(rsi);
+    const adxValue = calcADX(change, atr, price, sma20, sma50);
+    const ichimokuSignal = calcIchimoku(price, sma20, sma50, high, low);
+    const supertrendData = calcSupertrend(price, atr, sma20);
+    const obvTrend = calcOBVTrend(volume, change);
+    const emaCrossData = calcEMACross(sma20, sma50, price);
     const smartMoneySignal = detectSmartMoney(volume, change, rsi, atr, price);
     const fibLevels = calcFibLevels(high, low, price);
     const mtf = calcMultiTimeframe(rsi, sma20, sma50, macd, price, change);
     const vwap = calcVWAP(high, low, price, volume);
-    const ema10 = sma20 * 0.95 + price * 0.05; // EMA proxy
-    const ema20 = sma20;
 
-    // CoinDCX USDC/INR price
+    // AI Consensus Score placeholder (updated by multi-AI engine later)
+    const aiConsensusScore = 50;
+
+    // Weighted composite (35% tech + 25% momentum + 15% vol + 10% sentiment + 15% consensus)
+    const aiScore = Math.round(
+      technicalScore * 0.35 + momentumScore * 0.25 +
+      volatilityScore * 0.15 + sentimentScore * 0.10 +
+      aiConsensusScore * 0.15
+    );
+
+    // CoinDCX pair
     let coinDcxInrPrice: number | undefined;
     let coinDcxPair: string | undefined;
     if (asset.market === 'CRYPTO' && asset.coinDcxPair) {
@@ -331,14 +422,37 @@ export function runTradingScan(
       }
     }
 
-    // Direction detection
+    // ACCURATE Direction detection — multi-condition
     const bullSignals = [
-      rsi < 45 && rsi > 25, macd > 0, sma20 > sma50, change > 0.5, price > sma20,
-      smartMoneySignal === 'WHALE_BUY', mtf.score >= 75
+      rsi < 50 && rsi > 20,
+      macd > 0,
+      sma20 > sma50,
+      price > sma20,
+      change > 0,
+      stochData.stochRsi < 70,
+      ichimokuSignal === 'ABOVE_CLOUD',
+      supertrendData.signal === 'BUY',
+      obvTrend === 'BULLISH',
+      emaCrossData.cross === 'GOLDEN',
+      smartMoneySignal === 'WHALE_BUY',
+      mtf.score >= 75 && mtf.alignment.includes('BULLISH'),
+      adxValue > 20,
     ].filter(Boolean).length;
+
     const bearSignals = [
-      rsi > 65, macd < 0, sma20 < sma50, change < -0.5, price < sma20,
-      smartMoneySignal === 'WHALE_SELL', mtf.score >= 75 && mtf.alignment.includes('BEARISH')
+      rsi > 55,
+      macd < 0,
+      sma20 < sma50,
+      price < sma20,
+      change < -0.3,
+      stochData.stochRsi > 70,
+      ichimokuSignal === 'BELOW_CLOUD',
+      supertrendData.signal === 'SELL',
+      obvTrend === 'BEARISH',
+      emaCrossData.cross === 'DEATH',
+      smartMoneySignal === 'WHALE_SELL',
+      mtf.score >= 75 && mtf.alignment.includes('BEARISH'),
+      adxValue > 20,
     ].filter(Boolean).length;
 
     const isLong = bullSignals >= bearSignals;
@@ -359,10 +473,14 @@ export function runTradingScan(
 
     const conviction = Math.min(99, Math.max(80, Math.round(aiScore * 1.1)));
 
+    // STRONG signal requires multi-indicator confirmation
     let signal: FuturesTradeSignal['signal'];
-    if (isLong && aiScore >= 70) signal = 'STRONG_LONG';
+    const strongBullConfirm = bullSignals >= 8 && adxValue > 20 && supertrendData.signal === 'BUY';
+    const strongBearConfirm = bearSignals >= 8 && adxValue > 20 && supertrendData.signal === 'SELL';
+
+    if (isLong && strongBullConfirm && aiScore >= 65) signal = 'STRONG_LONG';
     else if (isLong) signal = 'LONG';
-    else if (!isLong && aiScore >= 70) signal = 'STRONG_SHORT';
+    else if (!isLong && strongBearConfirm && aiScore >= 65) signal = 'STRONG_SHORT';
     else signal = 'SHORT';
 
     const volFactor = asset.avgATR > 4 ? 0.5 : asset.avgATR > 2.5 ? 0.7 : 1;
@@ -373,43 +491,65 @@ export function runTradingScan(
     else if (aiScore > 75) timeframe = 'INTRADAY';
     else if (aiScore < 50) timeframe = 'SWING_3_7D';
 
+    // Daily Profit Calculator (₹5000 capital)
+    const profitCalc500 = calculateDailyProfitQty(entryPrice, target1, leverage, 500, asset.market);
+    const profitCalc1000 = calculateDailyProfitQty(entryPrice, target1, leverage, 1000, asset.market);
+
     const cdxLabel = asset.coinDcxPair ? ` | CoinDCX: ${asset.coinDcxPair}` : '';
+    const platformLabel = asset.market === 'IN' ? ' | INDmoney' : '';
     const actionMap: Record<string, string> = {
-      'STRONG_LONG': `🟢 FULL SEND — ${asset.sym} LONG ${leverage}x pe!${cdxLabel}`,
-      'LONG': `🟢 SIP Mode — ${asset.sym} LONG dheere entry${cdxLabel}`,
-      'STRONG_SHORT': `🔴 SHORT KARO — ${asset.sym} girega ${leverage}x pe!${cdxLabel}`,
-      'SHORT': `🔴 HEDGE — ${asset.sym} SHORT light position${cdxLabel}`,
+      'STRONG_LONG': `🟢 FULL ENTRY — ${asset.sym} LONG ${leverage}x! Profit Target ₹500+${cdxLabel}${platformLabel}`,
+      'LONG': `🟢 BUY — ${asset.sym} LONG ${leverage}x entry karo${cdxLabel}${platformLabel}`,
+      'STRONG_SHORT': `🔴 SELL KARO — ${asset.sym} SHORT ${leverage}x! Girega pakka${cdxLabel}${platformLabel}`,
+      'SHORT': `🔴 SHORT — ${asset.sym} SHORT position lo${cdxLabel}${platformLabel}`,
     };
 
     const reasons: string[] = [];
-    if (smartMoneySignal !== 'NONE') reasons.push(`🐋 ${smartMoneySignal.replace('_', ' ')}`);
+    if (smartMoneySignal && smartMoneySignal !== 'NONE') reasons.push(`🐋 ${smartMoneySignal.replace('_', ' ')}`);
+    if (supertrendData.signal === (isLong ? 'BUY' : 'SELL')) reasons.push(`Supertrend ${supertrendData.signal}`);
+    if (ichimokuSignal === 'ABOVE_CLOUD' && isLong) reasons.push('☁️ Above Cloud');
+    if (ichimokuSignal === 'BELOW_CLOUD' && !isLong) reasons.push('☁️ Below Cloud');
+    if (emaCrossData.cross === 'GOLDEN' && isLong) reasons.push('⚡ Golden Cross');
+    if (emaCrossData.cross === 'DEATH' && !isLong) reasons.push('💀 Death Cross');
     if (mtf.score >= 75) reasons.push(`MTF ${mtf.alignment}`);
+    if (adxValue > 35) reasons.push(`ADX ${adxValue} Strong Trend`);
     if (rsi < 35) reasons.push(`RSI ${rsi.toFixed(0)} OVERSOLD`);
     else if (rsi > 70) reasons.push(`RSI ${rsi.toFixed(0)} OVERBOUGHT`);
-    if (macd > 0 && isLong) reasons.push('MACD bullish');
-    if (sma20 > sma50 && isLong) reasons.push('Golden cross');
-    if (Math.abs(change) > 3) reasons.push(`${Math.abs(change).toFixed(1)}% surge`);
-    if (volume > 5_000_000) reasons.push('Vol spike');
+    if (profitCalc500.feasible) reasons.push(`₹500 profit: ${profitCalc500.qty} qty`);
 
     const bbWidth = price > 0 ? ((high - low) / price) * 100 : 2;
+    const ema10 = sma20 * 0.95 + price * 0.05;
 
     results.push({
       symbol: asset.sym, name: asset.name, market: asset.market, sector: asset.sector,
       currentPrice: price, entryPrice, target1, target2, target3, stopLoss,
       direction, leverage, timeframe,
       technicalScore, momentumScore, volatilityScore, sentimentScore,
+      aiConsensusScore,
       aiScore, conviction,
       riskReward: Math.round(riskReward * 10) / 10,
       riskPercent: Math.round(riskPercent * 10) / 10,
       potentialReturn: Math.round(potentialReturn * 10) / 10,
       signal,
       actionHinglish: actionMap[signal] || `${asset.sym} — ${signal}`,
-      reasoningHinglish: reasons.slice(0, 4).join(' | ') || 'Deep Quantum AI analysis',
+      reasoningHinglish: reasons.slice(0, 5).join(' | ') || 'Deep Quantum AI analysis',
       rsi, macd, sma20, sma50, atr, bbWidth, volume, change,
       // Deep Quantum AI fields
-      vwap, ema10, ema20, fibLevels, smartMoneySignal,
+      vwap, ema10, ema20: sma20, fibLevels, smartMoneySignal,
       multiTimeframeScore: mtf.score, mtfAlignment: mtf.alignment,
       coinDcxPair, coinDcxInrPrice,
+      // Advanced Pro-Trader Indicators
+      stochRsi: stochData.stochRsi, stochRsiSignal: stochData.signal,
+      adx: adxValue, ichimokuSignal, supertrend: supertrendData.signal,
+      supertrendValue: supertrendData.value, obvTrend,
+      ema9: emaCrossData.ema9, ema21: emaCrossData.ema21, emaCross: emaCrossData.cross,
+      // Daily Profit Calculator
+      qty500: profitCalc500.qty, qty1000: profitCalc1000.qty,
+      dailyProfitPotential: profitCalc500.feasible ? 500 : Math.round(potentialReturn * 50),
+      investmentNeeded500: profitCalc500.investment,
+      investmentNeeded1000: profitCalc1000.investment,
+      // AI consensus (to be updated by multiAiEngine)
+      aiConsensus: 50, aiConsensusLabel: 'PENDING',
     });
   }
 

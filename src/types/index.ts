@@ -76,6 +76,7 @@ export interface FuturesTradeSignal {
   momentumScore: number;
   volatilityScore: number;
   sentimentScore: number;
+  aiConsensusScore: number; // Multi-AI agreement score
   aiScore: number;       // weighted composite
   conviction: number;    // 90-99
   // Risk metrics
@@ -106,8 +107,29 @@ export interface FuturesTradeSignal {
   // CoinDCX USDC/INR
   coinDcxPair?: string;  // e.g. "BTCUSDC", "ETHUSDC"
   coinDcxInrPrice?: number;
-  // AI Analysis
+  // Multi-AI Analysis (Groq + Gemini + Claude)
   geminiAnalysis?: string;
+  groqAnalysis?: string;
+  claudeAnalysis?: string;
+  aiConsensus?: number;        // 0-100 agreement between models
+  aiConsensusLabel?: 'STRONG_AGREE' | 'PARTIAL_AGREE' | 'DISAGREE' | 'PENDING';
+  // Advanced Pro-Trader Indicators
+  stochRsi?: number;           // 0-100, more sensitive than RSI
+  stochRsiSignal?: number;     // signal line
+  adx?: number;                // trend strength 0-100
+  ichimokuSignal?: 'ABOVE_CLOUD' | 'IN_CLOUD' | 'BELOW_CLOUD';
+  supertrend?: 'BUY' | 'SELL';
+  supertrendValue?: number;
+  obvTrend?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  ema9?: number;
+  ema21?: number;
+  emaCross?: 'GOLDEN' | 'DEATH' | 'NONE';
+  // Daily Profit Calculator (₹5000 capital)
+  qty500?: number;             // quantity needed for ₹500 profit
+  qty1000?: number;            // quantity needed for ₹1000 profit
+  dailyProfitPotential?: number; // estimated daily profit in ₹
+  investmentNeeded500?: number;  // capital needed for ₹500 target
+  investmentNeeded1000?: number; // capital needed for ₹1000 target
 }
 
 // ========================================
@@ -122,12 +144,20 @@ export interface ActiveTrade {
   entryPrice: number;
   quantity: number;
   stopLoss: number;
+  trailingStop?: number;
   target1: number;
   target2?: number;
+  target3?: number;
   entryTime: number; // timestamp
-  platform?: 'COINDCX' | 'ZERODHA' | 'BINANCE' | 'OTHER';
+  platform?: 'COINDCX' | 'INDMONEY' | 'ZERODHA' | 'BINANCE' | 'OTHER';
   pair?: string; // USDC pair for CoinDCX
   notes?: string;
+  // Partial profit tracking
+  t1Hit?: boolean;
+  t2Hit?: boolean;
+  partialExits?: { price: number; qty: number; time: number; pnl: number }[];
+  dailyTarget?: number; // ₹500 or ₹1000
+  aiConsensus?: number;
 }
 
 // ========================================
