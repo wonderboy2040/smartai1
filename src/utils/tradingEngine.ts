@@ -259,9 +259,9 @@ export function runTradingScan(
     const entryPrice = price;
     const slDistance = atr * 1.5;
     const stopLoss = isLong ? price - slDistance : price + slDistance;
-    const target1 = isLong ? price + atr * 2 : price - atr * 2;
-    const target2 = isLong ? price + atr * 3.5 : price - atr * 3.5;
-    const target3 = isLong ? price + atr * 5 : price - atr * 5;
+    const target1 = isLong ? price + atr * 3.0 : price - atr * 3.0;
+    const target2 = isLong ? price + atr * 4.5 : price - atr * 4.5;
+    const target3 = isLong ? price + atr * 6.0 : price - atr * 6.0;
 
     // Risk-Reward
     const riskPercent = (slDistance / price) * 100;
