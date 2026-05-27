@@ -349,6 +349,76 @@ export function calculateConsensus(
   };
 }
 
+// ========== LOCAL AI AGENTS (Work WITHOUT external API keys) ==========
+type LocalAI = { analysis: string; direction: 'LONG' | 'SHORT' | 'SKIP'; conviction: number };
+
+function localTechnicalAgent(s: FuturesTradeSignal): LocalAI {
+  const bullish: string[] = []; const bearish: string[] = [];
+  if (s.rsi < 40) bullish.push(`RSI ${s.rsi.toFixed(0)} oversold zone`);
+  else if (s.rsi > 65) bearish.push(`RSI ${s.rsi.toFixed(0)} overbought`);
+  if (s.macd > 0) bullish.push('MACD bullish'); else bearish.push('MACD bearish');
+  if (s.sma20 > s.sma50) bullish.push('SMA20>SMA50 uptrend'); else bearish.push('SMA20<SMA50 downtrend');
+  if (s.ichimokuSignal === 'ABOVE_CLOUD') bullish.push('Above Ichimoku Cloud');
+  else if (s.ichimokuSignal === 'BELOW_CLOUD') bearish.push('Below Ichimoku Cloud');
+  if (s.supertrend === 'BUY') bullish.push('Supertrend BUY'); else if (s.supertrend === 'SELL') bearish.push('Supertrend SELL');
+  if (s.currentPrice > s.sma20) bullish.push('Price>SMA20'); else bearish.push('Price<SMA20');
+  const dir: 'LONG'|'SHORT'|'SKIP' = bullish.length > bearish.length ? 'LONG' : bearish.length > bullish.length ? 'SHORT' : 'SKIP';
+  const conv = Math.min(10, Math.max(1, Math.round((Math.max(bullish.length, bearish.length) / 6) * 10)));
+  const top = dir === 'LONG' ? bullish : bearish;
+  const txt = `${s.symbol} ${dir} | ${top.slice(0,3).join(', ')} | RSI:${s.rsi.toFixed(0)} MACD:${s.macd > 0 ? '↑' : '↓'} | Conv ${conv}/10`;
+  return { analysis: txt, direction: dir, conviction: conv };
+}
+
+function localMomentumAgent(s: FuturesTradeSignal): LocalAI {
+  const bullish: string[] = []; const bearish: string[] = [];
+  if ((s.stochRsi || 50) < 30) bullish.push(`StochRSI ${s.stochRsi} oversold recovery`);
+  else if ((s.stochRsi || 50) > 75) bearish.push(`StochRSI ${s.stochRsi} overbought`);
+  if ((s.adx || 0) > 25) bullish.push(`ADX ${s.adx} strong trend`);
+  if (s.emaCross === 'GOLDEN') bullish.push('Golden Cross EMA'); else if (s.emaCross === 'DEATH') bearish.push('Death Cross EMA');
+  if (s.obvTrend === 'BULLISH') bullish.push('OBV bullish volume'); else if (s.obvTrend === 'BEARISH') bearish.push('OBV bearish volume');
+  if (s.change > 2) bullish.push(`+${s.change.toFixed(1)}% momentum`); else if (s.change < -2) bearish.push(`${s.change.toFixed(1)}% selling`);
+  if ((s.multiTimeframeScore || 0) >= 75) bullish.push(`MTF ${s.mtfAlignment}`);
+  const dir: 'LONG'|'SHORT'|'SKIP' = bullish.length > bearish.length ? 'LONG' : bearish.length > bullish.length ? 'SHORT' : 'SKIP';
+  const conv = Math.min(10, Math.max(1, Math.round((Math.max(bullish.length, bearish.length) / 5) * 10)));
+  const top = dir === 'LONG' ? bullish : bearish;
+  const txt = `${s.symbol} Momentum ${dir} | ${top.slice(0,3).join(', ')} | ADX:${s.adx || 'N/A'} Change:${s.change > 0 ? '+' : ''}${s.change.toFixed(1)}%`;
+  return { analysis: txt, direction: dir, conviction: conv };
+}
+
+function localSmartMoneyAgent(s: FuturesTradeSignal): LocalAI {
+  const signals: string[] = []; let bias: 'LONG'|'SHORT'|'SKIP' = 'SKIP'; let strength = 0;
+  if (s.smartMoneySignal === 'WHALE_BUY') { signals.push('🐋 Whale BUY detected'); bias = 'LONG'; strength += 3; }
+  else if (s.smartMoneySignal === 'WHALE_SELL') { signals.push('🐋 Whale SELL detected'); bias = 'SHORT'; strength += 3; }
+  else if (s.smartMoneySignal === 'VOLUME_SPIKE') { signals.push('📊 Volume Spike'); strength += 1; }
+  else if (s.smartMoneySignal === 'BLOCK_DEAL') { signals.push('🏦 Block Deal'); strength += 2; }
+  if (s.riskReward >= 3) { signals.push(`R:R ${s.riskReward}:1 excellent`); strength += 2; }
+  else if (s.riskReward >= 2) { signals.push(`R:R ${s.riskReward}:1 good`); strength += 1; }
+  if ((s.multiTimeframeScore || 0) >= 75) { signals.push(`MTF ${s.mtfAlignment} aligned`); strength += 2; }
+  if (s.volume > 10_000_000) { signals.push('High institutional volume'); strength += 1; }
+  if (bias === 'SKIP') bias = s.direction;
+  const conv = Math.min(10, Math.max(2, strength + 2));
+  const txt = `${s.symbol} SMC ${bias} | ${signals.slice(0,3).join(', ')} | SmartMoney: ${s.smartMoneySignal || 'NONE'} | R:R ${s.riskReward}:1`;
+  return { analysis: txt, direction: bias, conviction: conv };
+}
+
+// Generate local consensus for ALL signals (instant, no API needed)
+export function generateLocalConsensus(signals: FuturesTradeSignal[]): Record<string, AIConsensusResult> {
+  const results: Record<string, AIConsensusResult> = {};
+  for (const sig of signals.slice(0, 15)) {
+    const tech = localTechnicalAgent(sig);
+    const mom = localMomentumAgent(sig);
+    const smc = localSmartMoneyAgent(sig);
+    const consensusResult = calculateConsensus(
+      { analysis: tech.analysis, direction: tech.direction, conviction: tech.conviction },
+      { analysis: mom.analysis, direction: mom.direction, conviction: mom.conviction },
+      { analysis: smc.analysis, direction: smc.direction, conviction: smc.conviction },
+      sig.direction
+    );
+    results[sig.symbol] = { symbol: sig.symbol, ...consensusResult };
+  }
+  return results;
+}
+
 // ========== RUN ALL AI ANALYSES IN PARALLEL ==========
 export async function runMultiAiAnalysis(
   signals: FuturesTradeSignal[]
@@ -357,34 +427,51 @@ export async function runMultiAiAnalysis(
 
   const top = signals.slice(0, 8);
 
-  // Run all three AI models in parallel
-  const [groqResults, geminiResults, claudeResults] = await Promise.allSettled([
-    getGroqTradeAnalysis(signals, 8),
-    getGeminiEnhancedAnalysis(signals, 5),
-    getClaudeTradeAnalysis(signals, 5)
-  ]);
+  // ALWAYS generate local consensus first (instant, no API needed)
+  const localResults = generateLocalConsensus(signals);
 
-  const groqData = groqResults.status === 'fulfilled' ? groqResults.value : {};
-  const geminiData = geminiResults.status === 'fulfilled' ? geminiResults.value : {};
-  const claudeData = claudeResults.status === 'fulfilled' ? claudeResults.value : {};
+  // Check if any external API keys exist
+  const hasExternalAI = (GROQ_API_KEY && GROQ_API_KEY.length > 10) ||
+                        (GEMINI_API_KEY && GEMINI_API_KEY.length > 10) ||
+                        (CLAUDE_API_KEY && CLAUDE_API_KEY.length > 10);
 
-  const results: Record<string, AIConsensusResult> = {};
-
-  for (const sig of top) {
-    const consensusResult = calculateConsensus(
-      groqData[sig.symbol],
-      geminiData[sig.symbol],
-      claudeData[sig.symbol],
-      sig.direction
-    );
-
-    results[sig.symbol] = {
-      symbol: sig.symbol,
-      ...consensusResult
-    };
+  if (!hasExternalAI) {
+    // No API keys — return local consensus (never PENDING!)
+    return localResults;
   }
 
-  return results;
+  // External AI available — run in parallel and merge with local
+  try {
+    const [groqResults, geminiResults, claudeResults] = await Promise.allSettled([
+      getGroqTradeAnalysis(signals, 8),
+      getGeminiEnhancedAnalysis(signals, 5),
+      getClaudeTradeAnalysis(signals, 5)
+    ]);
+
+    const groqData = groqResults.status === 'fulfilled' ? groqResults.value : {};
+    const geminiData = geminiResults.status === 'fulfilled' ? geminiResults.value : {};
+    const claudeData = claudeResults.status === 'fulfilled' ? claudeResults.value : {};
+
+    // If external AI returned data, use it; otherwise keep local
+    const hasExtData = Object.keys(groqData).length > 0 || Object.keys(geminiData).length > 0 || Object.keys(claudeData).length > 0;
+
+    if (hasExtData) {
+      const results: Record<string, AIConsensusResult> = {};
+      for (const sig of top) {
+        const consensusResult = calculateConsensus(
+          groqData[sig.symbol] || { analysis: localResults[sig.symbol]?.groqAnalysis || '', direction: localResults[sig.symbol]?.groqDirection || 'SKIP', conviction: localResults[sig.symbol]?.groqConviction || 5 },
+          geminiData[sig.symbol] || { analysis: localResults[sig.symbol]?.geminiAnalysis || '', direction: localResults[sig.symbol]?.geminiDirection || 'SKIP', conviction: localResults[sig.symbol]?.geminiConviction || 5 },
+          claudeData[sig.symbol] || { analysis: localResults[sig.symbol]?.claudeAnalysis || '', direction: localResults[sig.symbol]?.claudeDirection || 'SKIP', conviction: localResults[sig.symbol]?.claudeConviction || 5 },
+          sig.direction
+        );
+        results[sig.symbol] = { symbol: sig.symbol, ...consensusResult };
+      }
+      // Merge: external results for top, local for rest
+      return { ...localResults, ...results };
+    }
+  } catch (e) { console.warn('External AI failed, using local consensus:', e); }
+
+  return localResults;
 }
 
 // ========== DAILY PROFIT CALCULATOR ==========

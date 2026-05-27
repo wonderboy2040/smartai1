@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useApp } from '../../hooks/AppContext';
 import { FuturesTradeSignal, ActiveTrade, TradeJournalEntry } from '../../types';
 import { fetchTradingPrices, runTradingScan, formatTradingTelegram, fetchCoinDcxPrices } from '../../utils/tradingEngine';
-import { runMultiAiAnalysis, AIConsensusResult } from '../../utils/multiAiEngine';
+import { runMultiAiAnalysis, generateLocalConsensus, AIConsensusResult } from '../../utils/multiAiEngine';
 import { sendTelegramAlert } from '../../utils/api';
 import { TG_TOKEN, TG_CHAT_ID } from '../../utils/constants';
 
@@ -65,15 +65,22 @@ export default React.memo(function TradingTab() {
         if (!prices[k] && v.price > 0) prices[k] = v;
       }
       const result = runTradingScan(prices, vixRef.current.usVix, vixRef.current.inVix, cdxPrices);
-      // Apply cached AI consensus
-      const withAi = result.map(s => {
+
+      // INSTANT local consensus — never PENDING
+      const localConsensus = generateLocalConsensus(result);
+      Object.assign(aiCache.current, localConsensus);
+      const withLocalAi = result.map(s => {
+        const c = localConsensus[s.symbol];
+        if (c) return { ...s, groqAnalysis: c.groqAnalysis, geminiAnalysis: c.geminiAnalysis, claudeAnalysis: c.claudeAnalysis, aiConsensus: c.consensus, aiConsensusLabel: c.consensusLabel as any };
         const cached = aiCache.current[s.symbol];
         if (cached) return { ...s, groqAnalysis: cached.groqAnalysis, geminiAnalysis: cached.geminiAnalysis, claudeAnalysis: cached.claudeAnalysis, aiConsensus: cached.consensus, aiConsensusLabel: cached.consensusLabel as any };
         return s;
       });
-      setSignals(withAi);
+      setSignals(withLocalAi);
+      setAiConsensus(localConsensus);
       setLastScan(new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-      // Run Multi-AI Analysis (Groq + Gemini + Claude) in background
+
+      // Run external Multi-AI Analysis in background (enhances local when API keys available)
       setAiLoading(true);
       runMultiAiAnalysis(result).then(consensusResults => {
         if (Object.keys(consensusResults).length > 0) {
@@ -168,13 +175,42 @@ export default React.memo(function TradingTab() {
     };
   }, [journal]);
 
+  // Market Regime Detection
+  const marketRegime = useMemo(() => {
+    const avgVix = (usVix + inVix) / 2;
+    const longs = signals.filter(s => s.direction === 'LONG').length;
+    const shorts = signals.filter(s => s.direction === 'SHORT').length;
+    const avgAdx = signals.length > 0 ? signals.reduce((a, b) => a + (b.adx || 0), 0) / signals.length : 20;
+    if (avgVix > 25) return { regime: 'HIGH_VOLATILITY', emoji: '🌊', color: 'from-red-500/20 to-orange-500/20', border: 'border-red-500/30', text: 'High Volatility — Hedge Positions', textColor: 'text-red-400' };
+    if (avgVix < 14 && longs > shorts * 2) return { regime: 'RISK_ON', emoji: '🚀', color: 'from-emerald-500/20 to-cyan-500/20', border: 'border-emerald-500/30', text: 'Risk-On Rally — Go Long Aggressively', textColor: 'text-emerald-400' };
+    if (shorts > longs * 1.5) return { regime: 'RISK_OFF', emoji: '🛡️', color: 'from-amber-500/20 to-red-500/20', border: 'border-amber-500/30', text: 'Risk-Off — Short/Hedge Mode', textColor: 'text-amber-400' };
+    if (avgAdx > 30) return { regime: 'TRENDING', emoji: '📈', color: 'from-cyan-500/20 to-blue-500/20', border: 'border-cyan-500/30', text: 'Strong Trend — Follow Momentum', textColor: 'text-cyan-400' };
+    return { regime: 'NEUTRAL', emoji: '⚖️', color: 'from-slate-500/20 to-slate-600/20', border: 'border-slate-500/30', text: 'Neutral — Selective Entries Only', textColor: 'text-slate-400' };
+  }, [signals, usVix, inVix]);
+
   return (
     <div className="space-y-5 animate-fade-in">
+      {/* Market Regime Banner */}
+      <div className={`bg-gradient-to-r ${marketRegime.color} border ${marketRegime.border} rounded-2xl p-4 flex items-center justify-between animate-fade-in-up`}>
+        <div className="flex items-center gap-3">
+          <span className="text-3xl animate-float">{marketRegime.emoji}</span>
+          <div>
+            <div className={`text-sm font-black uppercase tracking-wider ${marketRegime.textColor}`}>{marketRegime.regime.replace('_', ' ')} REGIME</div>
+            <div className="text-xs text-slate-400 mt-0.5">{marketRegime.text}</div>
+          </div>
+        </div>
+        <div className="flex gap-3 text-[10px] font-mono">
+          <span className={usVix > 20 ? 'text-red-400' : 'text-emerald-400'}>VIX US: {usVix.toFixed(1)}</span>
+          <span className={inVix > 20 ? 'text-red-400' : 'text-emerald-400'}>VIX IN: {inVix.toFixed(1)}</span>
+        </div>
+      </div>
+
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-black gradient-text-pro font-display flex items-center gap-2">
             ⚡ DEEP QUANTUM TRADING TERMINAL
+            <span className="px-2 py-0.5 text-[9px] rounded-md bg-gradient-to-r from-purple-500/30 to-cyan-500/30 border border-purple-500/30 text-purple-300 font-bold animate-pulse">ADVANCE PRO</span>
           </h2>
           <div className="flex items-center gap-2 mt-1">
             <span className={`w-2 h-2 rounded-full ${isScanning ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400 animate-pulse-dot'}`} />
@@ -182,8 +218,8 @@ export default React.memo(function TradingTab() {
               {isScanning ? 'SCANNING MARKETS...' : `Last: ${lastScan || '--'}`}
             </span>
             <span className="quantum-badge">DAILY PROFIT</span>
-            <span className="quantum-badge" style={{background:'linear-gradient(135deg,rgba(168,85,247,0.2),rgba(59,130,246,0.2))',borderColor:'rgba(168,85,247,0.3)'}}>GROQ + GEMINI + CLAUDE</span>
-            {aiLoading && <span className="text-[10px] text-purple-400 animate-pulse">🧠 Multi-AI Analyzing...</span>}
+            <span className="quantum-badge" style={{background:'linear-gradient(135deg,rgba(168,85,247,0.2),rgba(59,130,246,0.2))',borderColor:'rgba(168,85,247,0.3)'}}>MULTI-AI CONSENSUS</span>
+            {aiLoading && <span className="text-[10px] text-purple-400 animate-pulse">🧠 External AI Enhancing...</span>}
           </div>
         </div>
         <div className="flex gap-2">
@@ -442,29 +478,32 @@ export default React.memo(function TradingTab() {
                   ))}
                 </div>
 
-                {/* Multi-AI Consensus Panel */}
-                <div className="bg-gradient-to-r from-purple-500/5 via-cyan-500/5 to-blue-500/5 rounded-xl p-3 border border-purple-500/20">
-                  <div className="text-[10px] text-purple-400 font-bold uppercase mb-2">🧠 MULTI-AI CONSENSUS ({s.aiConsensusLabel || 'PENDING'})</div>
+                {/* Multi-AI Consensus Panel — ADVANCE PRO */}
+                <div className="bg-gradient-to-r from-purple-500/8 via-cyan-500/8 to-blue-500/8 rounded-xl p-3 border border-purple-500/25" style={{backdropFilter:'blur(8px)'}}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-[10px] text-purple-400 font-bold uppercase">🧠 MULTI-AI CONSENSUS</div>
+                    <span className={`px-2 py-0.5 rounded-md text-[9px] font-black border ${s.aiConsensusLabel === 'STRONG_AGREE' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : s.aiConsensusLabel === 'PARTIAL_AGREE' ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : s.aiConsensusLabel === 'DISAGREE' ? 'bg-red-500/20 text-red-400 border-red-500/30' : 'bg-purple-500/20 text-purple-400 border-purple-500/30'}`}>{s.aiConsensusLabel || 'ANALYZING'}</span>
+                  </div>
                   <div className="grid grid-cols-3 gap-2 mb-2">
-                    <div className="bg-black/30 rounded-lg p-2">
-                      <div className="text-[8px] text-orange-400 font-bold">GROQ (Llama 3.3)</div>
-                      <div className="text-[10px] text-slate-300 mt-1">{s.groqAnalysis ? s.groqAnalysis.substring(0, 80) + '...' : '⏳ Pending...'}</div>
+                    <div className="bg-black/40 rounded-lg p-2 border border-cyan-500/10">
+                      <div className="text-[8px] text-cyan-400 font-bold">📊 Technical AI</div>
+                      <div className="text-[10px] text-slate-300 mt-1 leading-tight">{s.groqAnalysis ? s.groqAnalysis.substring(0, 100) : 'Analyzing indicators...'}</div>
                     </div>
-                    <div className="bg-black/30 rounded-lg p-2">
-                      <div className="text-[8px] text-blue-400 font-bold">GEMINI 3.5 Flash</div>
-                      <div className="text-[10px] text-slate-300 mt-1">{s.geminiAnalysis ? s.geminiAnalysis.substring(0, 80) + '...' : '⏳ Pending...'}</div>
+                    <div className="bg-black/40 rounded-lg p-2 border border-emerald-500/10">
+                      <div className="text-[8px] text-emerald-400 font-bold">⚡ Momentum AI</div>
+                      <div className="text-[10px] text-slate-300 mt-1 leading-tight">{s.geminiAnalysis ? s.geminiAnalysis.substring(0, 100) : 'Analyzing momentum...'}</div>
                     </div>
-                    <div className="bg-black/30 rounded-lg p-2">
-                      <div className="text-[8px] text-violet-400 font-bold">CLAUDE / SMC Analyst</div>
-                      <div className="text-[10px] text-slate-300 mt-1">{s.claudeAnalysis ? s.claudeAnalysis.substring(0, 80) + '...' : '⏳ Pending...'}</div>
+                    <div className="bg-black/40 rounded-lg p-2 border border-purple-500/10">
+                      <div className="text-[8px] text-purple-400 font-bold">🐋 Smart Money AI</div>
+                      <div className="text-[10px] text-slate-300 mt-1 leading-tight">{s.claudeAnalysis ? s.claudeAnalysis.substring(0, 100) : 'Analyzing flow...'}</div>
                     </div>
                   </div>
                   {s.aiConsensus !== undefined && s.aiConsensus > 0 && (
                     <div className="flex items-center gap-2">
-                      <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
-                        <div className={`h-full rounded-full transition-all ${s.aiConsensus >= 75 ? 'bg-gradient-to-r from-emerald-500 to-cyan-500' : s.aiConsensus >= 45 ? 'bg-gradient-to-r from-amber-500 to-yellow-500' : 'bg-gradient-to-r from-red-500 to-orange-500'}`} style={{ width: `${s.aiConsensus}%` }} />
+                      <div className="flex-1 h-2.5 bg-slate-800 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all duration-700 ${s.aiConsensus >= 75 ? 'bg-gradient-to-r from-emerald-500 to-cyan-400' : s.aiConsensus >= 45 ? 'bg-gradient-to-r from-amber-500 to-yellow-400' : 'bg-gradient-to-r from-red-500 to-orange-400'}`} style={{ width: `${s.aiConsensus}%` }} />
                       </div>
-                      <span className={`text-xs font-black font-mono ${s.aiConsensus >= 75 ? 'text-emerald-400' : s.aiConsensus >= 45 ? 'text-amber-400' : 'text-red-400'}`}>{s.aiConsensus}%</span>
+                      <span className={`text-sm font-black font-mono ${s.aiConsensus >= 75 ? 'text-emerald-400' : s.aiConsensus >= 45 ? 'text-amber-400' : 'text-red-400'}`}>{s.aiConsensus}%</span>
                     </div>
                   )}
                 </div>
@@ -588,27 +627,31 @@ export default React.memo(function TradingTab() {
         </div>
       </div>
 
-      {/* Legend */}
-      <div className="quantum-panel rounded-2xl p-4 animate-fade-in-up">
-        <div className="text-[10px] text-slate-500 font-bold uppercase mb-2">⚡ Deep Quantum AI — Pro Trading Methodology</div>
+      {/* Legend — Advance Pro */}
+      <div className="quantum-panel rounded-2xl p-4 animate-fade-in-up border border-purple-500/10">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="text-[10px] text-slate-500 font-bold uppercase">⚡ Deep Quantum AI — Advance Pro Trading Engine</div>
+          <span className="px-1.5 py-0.5 text-[8px] rounded bg-gradient-to-r from-purple-500/30 to-cyan-500/30 text-purple-300 font-bold border border-purple-500/20">v12 PRO</span>
+        </div>
         <div className="flex flex-wrap gap-3 text-[10px] text-slate-400">
           <span><span className="text-cyan-400 font-bold">35%</span> Technical (RSI, StochRSI, SMA, MACD, Ichimoku)</span>
           <span><span className="text-emerald-400 font-bold">25%</span> Momentum (Change, ADX, OBV, EMA Cross)</span>
           <span><span className="text-orange-400 font-bold">15%</span> Volatility (ATR, BB, Supertrend)</span>
           <span><span className="text-blue-400 font-bold">10%</span> Sentiment (VIX, Fear/Greed)</span>
-          <span><span className="text-purple-400 font-bold">15%</span> AI Consensus (Groq + Gemini + Claude)</span>
+          <span><span className="text-purple-400 font-bold">15%</span> Multi-AI Consensus (Local + External)</span>
         </div>
         <div className="flex flex-wrap gap-3 text-[10px] text-slate-400 mt-1">
+          <span>🧠 3-Agent Local AI</span>
           <span>🐋 Smart Money Detection</span>
           <span>📊 Multi-Timeframe Confluence</span>
           <span>📐 Fibonacci Pivots</span>
           <span>☁️ Ichimoku Cloud</span>
           <span>📈 Supertrend</span>
+          <span>🌊 Market Regime</span>
           <span>💱 CoinDCX USDC/INR</span>
-          <span>📱 INDmoney</span>
         </div>
         <div className="mt-2 text-[9px] text-slate-600 font-mono">
-          Capital: ₹5,000 | Daily Target: ₹500-₹1000 | Groq + Gemini + Claude | 55+ Assets | Auto-scan: 60s | R:R ≥ 2.0:1
+          Capital: ₹5,000 | Daily Target: ₹500-₹1000 | 3-Agent AI + Groq + Gemini + Claude | 55+ Assets | Auto-scan: 60s | R:R ≥ 2.0:1
         </div>
       </div>
     </div>
