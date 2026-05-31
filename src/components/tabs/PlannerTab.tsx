@@ -1,20 +1,72 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { useApp } from '../../hooks/AppContext';
 import { RiskLevel } from '../../types';
 import { formatCurrency } from '../../utils/constants';
 import { analyzeAsset } from '../../utils/telegram';
 import { SmartDipSizer } from '../SmartDipSizer';
+import {
+  calculateWealthMilestones, compareSIPStepUps,
+  analyzeGoals, analyzeRebalancing,
+  DEFAULT_GOALS, type InvestmentGoal
+} from '../../utils/wealthEngine';
 
 export default React.memo(function PlannerTab() {
   const {
-    portfolio, livePrices,
+    portfolio, livePrices, usdInrRate, metrics,
     indiaSIP, setIndiaSIP, usSIP, setUsSIP, btcSIP, setBtcSIP, ethSIP, setEthSIP,
     emergencyFund, setEmergencyFund, investYears, setInvestYears, riskLevel, setRiskLevel,
     monthlyExpenses, setMonthlyExpenses, currentAge, setCurrentAge,
-    totalSIP, totalInvestedPlanner, fvMed, fvWorst, fvBest, multiplier,
+    totalSIP, cagr, totalInvestedPlanner, fvMed, fvWorst, fvBest, multiplier,
     fireNumber, yearsToFire, fireProgress,
     smartAllocations,
   } = useApp();
+
+  // --- Goals State (localStorage persisted) ---
+  const [goals, setGoals] = useState<InvestmentGoal[]>(() => {
+    try { const s = localStorage.getItem('wealth_goals'); return s ? JSON.parse(s) : DEFAULT_GOALS; } catch { return DEFAULT_GOALS; }
+  });
+  const [showAddGoal, setShowAddGoal] = useState(false);
+  const [newGoalName, setNewGoalName] = useState('');
+  const [newGoalAmount, setNewGoalAmount] = useState('');
+  const [newGoalYear, setNewGoalYear] = useState('2035');
+  const [newGoalEmoji, setNewGoalEmoji] = useState('🎯');
+
+  // Persist goals
+  React.useEffect(() => { localStorage.setItem('wealth_goals', JSON.stringify(goals)); }, [goals]);
+
+  // --- Computed: Wealth Milestones ---
+  const milestones = useMemo(() =>
+    calculateWealthMilestones(metrics.totalValue, totalSIP, cagr, 10),
+    [metrics.totalValue, totalSIP, cagr]
+  );
+
+  // --- Computed: SIP Step-Up Comparison ---
+  const stepUpScenarios = useMemo(() =>
+    compareSIPStepUps(totalSIP, investYears, cagr),
+    [totalSIP, investYears, cagr]
+  );
+
+  // --- Computed: Goal Analysis ---
+  const goalAnalysis = useMemo(() =>
+    analyzeGoals(goals, metrics.totalValue, totalSIP, cagr),
+    [goals, metrics.totalValue, totalSIP, cagr]
+  );
+
+  // --- Computed: Rebalancing ---
+  const rebalanceItems = useMemo(() =>
+    analyzeRebalancing(portfolio, livePrices, usdInrRate),
+    [portfolio, livePrices, usdInrRate]
+  );
+  const needsRebalance = rebalanceItems.filter(r => r.action !== 'OK');
+
+  const addGoal = () => {
+    const amt = parseFloat(newGoalAmount);
+    const yr = parseInt(newGoalYear);
+    if (!newGoalName || isNaN(amt) || amt <= 0 || isNaN(yr)) return;
+    setGoals(prev => [...prev, { id: Date.now().toString(), name: newGoalName, emoji: newGoalEmoji, targetAmount: amt, targetYear: yr, priority: 'MEDIUM' }]);
+    setNewGoalName(''); setNewGoalAmount(''); setNewGoalYear('2035'); setShowAddGoal(false);
+  };
+  const removeGoal = (id: string) => setGoals(prev => prev.filter(g => g.id !== id));
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -407,10 +459,287 @@ export default React.memo(function PlannerTab() {
                 );
               })()}
             </div>
+           </div>
+
+         </div>
+       )}
+
+      {/* ============ WEALTH MILESTONE TRACKER ============ */}
+      <div className="quantum-panel rounded-2xl p-5 border-amber-500/10 animate-fade-in-up">
+        <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+          <span className="w-7 h-7 rounded-lg bg-amber-500/10 flex items-center justify-center text-sm">🏆</span>
+          Wealth Milestone Tracker
+          <span className="ml-auto badge bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px]">JOURNEY</span>
+        </h3>
+        <div className="space-y-3">
+          {milestones.map((m, i) => (
+            <div key={i} className={`rounded-xl p-3 border transition-all ${
+              m.reached ? 'bg-emerald-500/10 border-emerald-500/30' :
+              m.progress > 50 ? 'bg-amber-500/5 border-amber-500/20' :
+              'bg-black/20 border-white/5'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">{m.emoji}</span>
+                  <div>
+                    <span className="font-bold text-white text-sm">{m.label}</span>
+                    {m.reached && <span className="ml-2 text-[10px] text-emerald-400 font-bold">✅ ACHIEVED!</span>}
+                  </div>
+                </div>
+                <div className="text-right">
+                  {m.reached ? (
+                    <div className="text-sm font-black text-emerald-400">Done!</div>
+                  ) : (
+                    <>
+                      <div className="text-sm font-black text-amber-400">{m.estimatedDate}</div>
+                      <div className="text-[10px] text-slate-500">{m.yearsToReach ? `${m.yearsToReach} years` : '50+ yrs'}</div>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="w-full bg-slate-800/60 rounded-full h-2 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ${
+                    m.reached ? 'bg-gradient-to-r from-emerald-500 to-cyan-400' :
+                    m.progress > 50 ? 'bg-gradient-to-r from-amber-500 to-yellow-400' :
+                    'bg-gradient-to-r from-cyan-600 to-blue-500'
+                  }`}
+                  style={{ width: `${m.progress}%` }}
+                />
+              </div>
+              <div className="flex justify-between mt-1 text-[10px] text-slate-500">
+                <span>{m.progress.toFixed(0)}%</span>
+                <span>{!m.reached ? `₹${Math.round(m.target - metrics.totalValue).toLocaleString('en-IN')} remaining` : ''}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ============ SIP STEP-UP COMPARISON ============ */}
+      <div className="quantum-panel rounded-2xl p-5 border-indigo-500/10 animate-fade-in-up">
+        <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+          <span className="w-7 h-7 rounded-lg bg-indigo-500/10 flex items-center justify-center text-sm">📊</span>
+          SIP Step-Up Power Comparison
+          <span className="ml-auto text-[10px] text-slate-500 font-mono">{investYears}yr @ {cagr}% CAGR</span>
+        </h3>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-white/5 text-slate-500">
+                <th className="py-2">Scenario</th>
+                <th className="py-2 text-right">Invested</th>
+                <th className="py-2 text-right">Final Wealth</th>
+                <th className="py-2 text-right">Profit</th>
+                <th className="py-2 text-right">Multiplier</th>
+              </tr>
+            </thead>
+            <tbody className="text-slate-300">
+              {stepUpScenarios.map((s, i) => (
+                <tr key={i} className={`border-b border-white/5 last:border-0 hover:bg-white/5 ${
+                  s.stepUpPercent === 10 ? 'bg-cyan-500/5' : ''
+                }`}>
+                  <td className="py-2.5">
+                    <span className="font-bold">{s.label}</span>
+                    {s.stepUpPercent === 10 && <span className="ml-1 text-[8px] bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded border border-cyan-500/20">RECOMMENDED</span>}
+                  </td>
+                  <td className="py-2.5 text-right font-mono text-slate-400">{formatCurrency(s.totalInvested)}</td>
+                  <td className="py-2.5 text-right font-mono text-emerald-400 font-bold">{formatCurrency(s.finalWealth)}</td>
+                  <td className="py-2.5 text-right font-mono text-cyan-400">{formatCurrency(s.wealthGain)}</td>
+                  <td className="py-2.5 text-right">
+                    <span className={`font-black font-mono ${
+                      s.multiplier >= 5 ? 'text-emerald-400' : s.multiplier >= 3 ? 'text-cyan-400' : 'text-amber-400'
+                    }`}>{s.multiplier}x</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {stepUpScenarios.length >= 2 && (
+          <div className="mt-3 p-3 bg-emerald-500/5 border border-emerald-500/15 rounded-xl text-xs text-emerald-400">
+            💡 <strong>10% Step-Up vs Flat SIP:</strong> You gain extra <strong>{formatCurrency((stepUpScenarios[2]?.finalWealth || 0) - (stepUpScenarios[0]?.finalWealth || 0))}</strong> — that's <strong>{((stepUpScenarios[2]?.finalWealth || 1) / (stepUpScenarios[0]?.finalWealth || 1) * 100 - 100).toFixed(0)}% MORE</strong> wealth!
+          </div>
+        )}
+      </div>
+
+      {/* ============ GOAL-BASED PLANNER ============ */}
+      <div className="quantum-panel rounded-2xl p-5 border-teal-500/10 animate-fade-in-up">
+        <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+          <span className="w-7 h-7 rounded-lg bg-teal-500/10 flex items-center justify-center text-sm">🎯</span>
+          Goal-Based Investment Planner
+          <button onClick={() => setShowAddGoal(!showAddGoal)} className="ml-auto quantum-btn-primary px-3 py-1.5 bg-gradient-to-r from-teal-600 to-cyan-600 rounded-lg text-[10px] font-bold text-white">+ Add Goal</button>
+        </h3>
+
+        {/* Add Goal Form */}
+        {showAddGoal && (
+          <div className="mb-4 p-4 bg-black/20 rounded-xl border border-teal-500/20 animate-fade-in">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <label className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Goal Name</label>
+                <input type="text" value={newGoalName} onChange={e => setNewGoalName(e.target.value)} placeholder="e.g. Dream House" className="w-full px-3 py-2 quantum-input rounded-lg text-xs text-white" />
+              </div>
+              <div>
+                <label className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Target (₹)</label>
+                <input type="number" value={newGoalAmount} onChange={e => setNewGoalAmount(e.target.value)} placeholder="3000000" className="w-full px-3 py-2 quantum-input rounded-lg text-xs text-white font-mono" />
+              </div>
+              <div>
+                <label className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Target Year</label>
+                <input type="number" value={newGoalYear} onChange={e => setNewGoalYear(e.target.value)} className="w-full px-3 py-2 quantum-input rounded-lg text-xs text-white font-mono" />
+              </div>
+              <div>
+                <label className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Emoji</label>
+                <div className="flex gap-1.5">
+                  {['🎯', '🏠', '🎓', '🚗', '✈️', '🏖️', '💍', '🏥'].map(e => (
+                    <button key={e} onClick={() => setNewGoalEmoji(e)} className={`w-8 h-8 rounded-lg flex items-center justify-center text-base transition-all ${
+                      newGoalEmoji === e ? 'bg-teal-500/20 border border-teal-500/40 scale-110' : 'bg-black/30 border border-white/5'
+                    }`}>{e}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <button onClick={addGoal} className="mt-3 quantum-btn-primary px-5 py-2 bg-gradient-to-r from-teal-600 to-emerald-600 rounded-lg text-xs font-bold text-white">✅ Add Goal</button>
+          </div>
+        )}
+
+        {/* Goal Cards */}
+        <div className="space-y-3">
+          {goalAnalysis.map(g => (
+            <div key={g.id} className={`rounded-xl p-4 border transition-all ${
+              g.feasibility === 'ON_TRACK' ? 'bg-emerald-500/5 border-emerald-500/20' :
+              g.feasibility === 'NEEDS_MORE' ? 'bg-amber-500/5 border-amber-500/20' :
+              'bg-red-500/5 border-red-500/20'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">{g.emoji}</span>
+                  <div>
+                    <span className="font-bold text-white text-sm">{g.name}</span>
+                    <div className="text-[10px] text-slate-500 font-mono">
+                      Target: {formatCurrency(g.targetAmount)} by {g.targetYear} ({g.yearsLeft}yr left)
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`px-2 py-1 rounded-lg text-[9px] font-bold border ${
+                    g.feasibility === 'ON_TRACK' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                    g.feasibility === 'NEEDS_MORE' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                    'bg-red-500/10 text-red-400 border-red-500/20'
+                  }`}>
+                    {g.feasibility === 'ON_TRACK' ? '🟢 ON TRACK' : g.feasibility === 'NEEDS_MORE' ? '🟡 NEEDS MORE' : '🔴 AT RISK'}
+                  </span>
+                  <button onClick={() => removeGoal(g.id)} className="text-slate-600 hover:text-red-400 transition-colors text-xs">✕</button>
+                </div>
+              </div>
+              <div className="w-full bg-slate-800/60 rounded-full h-1.5 mb-2 overflow-hidden">
+                <div className={`h-full rounded-full transition-all ${
+                  g.feasibility === 'ON_TRACK' ? 'bg-gradient-to-r from-emerald-500 to-cyan-400' :
+                  g.feasibility === 'NEEDS_MORE' ? 'bg-gradient-to-r from-amber-500 to-yellow-400' :
+                  'bg-gradient-to-r from-red-500 to-orange-400'
+                }`} style={{ width: `${Math.min(100, g.progress)}%` }} />
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-[10px]">
+                <div>
+                  <span className="text-slate-500">Monthly Needed: </span>
+                  <span className="text-cyan-400 font-mono font-bold">₹{g.monthlyNeeded.toLocaleString('en-IN')}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500">Progress: </span>
+                  <span className="text-white font-bold">{g.progress}%</span>
+                </div>
+                <div>
+                  {g.gap > 0 ? (
+                    <><span className="text-slate-500">Gap: </span><span className="text-red-400 font-mono font-bold">₹{g.gap.toLocaleString('en-IN')}/mo</span></>
+                  ) : (
+                    <span className="text-emerald-400 font-bold">✅ SIP Covers This!</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ============ REBALANCING ALERTS ============ */}
+      {portfolio.length > 1 && (
+        <div className="quantum-panel rounded-2xl p-5 border-rose-500/10 animate-fade-in-up">
+          <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+            <span className="w-7 h-7 rounded-lg bg-rose-500/10 flex items-center justify-center text-sm">⚖️</span>
+            Portfolio Rebalancing
+            {needsRebalance.length > 0 && (
+              <span className="ml-2 px-2 py-0.5 bg-red-500/20 text-red-400 text-[9px] font-bold rounded-md border border-red-500/30 animate-pulse">
+                {needsRebalance.length} ACTIONS NEEDED
+              </span>
+            )}
+          </h3>
+
+          <div className="space-y-2">
+            {rebalanceItems.map((r, i) => (
+              <div key={i} className={`rounded-xl p-3 border flex items-center gap-3 transition-all ${
+                r.action === 'BUY_MORE' ? 'bg-emerald-500/5 border-emerald-500/15' :
+                r.action === 'TRIM' ? 'bg-red-500/5 border-red-500/15' :
+                'bg-black/20 border-white/5'
+              }`}>
+                <div className="w-28">
+                  <div className="font-bold text-white text-sm">{r.symbol.replace('.NS', '')}</div>
+                  <div className="text-[9px] text-slate-500">{r.market === 'IN' ? '🇮🇳' : '🦅'} {r.market}</div>
+                </div>
+
+                {/* Weight Bars */}
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-[9px] text-slate-500 w-14">Current</span>
+                    <div className="flex-1 bg-slate-800/60 rounded-full h-1.5 overflow-hidden">
+                      <div className="bg-cyan-500 h-full rounded-full transition-all" style={{ width: `${Math.min(100, r.currentWeight)}%` }} />
+                    </div>
+                    <span className="text-[10px] text-cyan-400 font-mono w-10 text-right">{r.currentWeight}%</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] text-slate-500 w-14">Target</span>
+                    <div className="flex-1 bg-slate-800/60 rounded-full h-1.5 overflow-hidden">
+                      <div className="bg-amber-500/50 h-full rounded-full transition-all" style={{ width: `${Math.min(100, r.targetWeight)}%` }} />
+                    </div>
+                    <span className="text-[10px] text-amber-400 font-mono w-10 text-right">{r.targetWeight}%</span>
+                  </div>
+                </div>
+
+                {/* Drift */}
+                <div className="w-16 text-center">
+                  <div className={`text-xs font-black font-mono ${
+                    Math.abs(r.drift) > 5 ? (r.drift > 0 ? 'text-red-400' : 'text-emerald-400') : 'text-slate-400'
+                  }`}>
+                    {r.drift > 0 ? '+' : ''}{r.drift}%
+                  </div>
+                  <div className="text-[8px] text-slate-600">drift</div>
+                </div>
+
+                {/* Action */}
+                <div className="w-24 text-right">
+                  {r.action !== 'OK' ? (
+                    <>
+                      <div className={`text-[10px] font-bold ${r.action === 'BUY_MORE' ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {r.action === 'BUY_MORE' ? '🟢 BUY' : '🔴 TRIM'}
+                      </div>
+                      <div className="text-[10px] font-mono text-slate-400">
+                        ₹{Math.abs(r.adjustAmount).toLocaleString('en-IN')}
+                      </div>
+                    </>
+                  ) : (
+                    <span className="text-[10px] text-slate-500">✅ OK</span>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
 
+          {needsRebalance.length === 0 && (
+            <div className="mt-3 p-3 bg-emerald-500/5 border border-emerald-500/15 rounded-xl text-xs text-emerald-400 text-center">
+              ✅ Portfolio is well-balanced! No rebalancing needed.
+            </div>
+          )}
         </div>
       )}
-    </div>
-  );
-});
+
+     </div>
+   );
+ });

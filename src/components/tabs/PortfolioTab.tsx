@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useApp } from '../../hooks/AppContext';
 import { getTodayString } from '../../utils/constants';
+import { calculatePortfolioXIRR } from '../../utils/wealthEngine';
 
 const PortfolioTab = React.memo(function PortfolioTab() {
   const {
@@ -9,6 +10,17 @@ const PortfolioTab = React.memo(function PortfolioTab() {
     setAddSymbol, setCurrentMarket, setAddQty, setAddPrice, setAddDate,
     setAddLeverage, setEditId, setTransactionType, setShowAddModal, setModalPrice,
   } = useApp();
+
+  // --- XIRR Calculator ---
+  const xirrData = useMemo(() =>
+    calculatePortfolioXIRR(portfolio, livePrices, usdInrRate),
+    [portfolio, livePrices, usdInrRate]
+  );
+  const xirrMap = useMemo(() => {
+    const map: Record<string, number | null> = {};
+    xirrData.perAsset.forEach(a => { map[`${a.market}_${a.symbol}`] = a.xirr; });
+    return map;
+  }, [xirrData]);
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -88,6 +100,45 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         </div>
       </div>
 
+      {/* XIRR + Portfolio Intelligence */}
+      {portfolio.length > 0 && (
+        <div className="quantum-panel rounded-xl p-4 animate-fade-in-up delay-200">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center text-base">📊</div>
+              <div>
+                <div className="text-[10px] text-purple-400/80 font-bold uppercase tracking-wider">Portfolio XIRR (True Return)</div>
+                <div className="text-[9px] text-slate-500">Time-weighted annualized return accounting for all buy dates</div>
+              </div>
+            </div>
+            <div className={`text-2xl font-black font-mono ${(xirrData.overallXIRR || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              {xirrData.overallXIRR !== null ? `${xirrData.overallXIRR >= 0 ? '+' : ''}${xirrData.overallXIRR.toFixed(1)}%` : 'N/A'}
+            </div>
+          </div>
+          {/* Top/Bottom XIRR mini-list */}
+          <div className="grid grid-cols-2 gap-3 mt-3">
+            <div>
+              <div className="text-[9px] text-emerald-400 font-bold uppercase mb-1">🏆 Best Performers</div>
+              {xirrData.perAsset.filter(a => a.xirr !== null && a.xirr > 0).slice(0, 3).map(a => (
+                <div key={a.symbol} className="flex justify-between text-[10px] py-0.5">
+                  <span className="text-slate-300">{a.symbol.replace('.NS', '')}</span>
+                  <span className="text-emerald-400 font-mono font-bold">+{a.xirr?.toFixed(1)}%</span>
+                </div>
+              ))}
+            </div>
+            <div>
+              <div className="text-[9px] text-red-400 font-bold uppercase mb-1">⚠️ Needs Attention</div>
+              {xirrData.perAsset.filter(a => a.xirr !== null).sort((a, b) => (a.xirr || 0) - (b.xirr || 0)).slice(0, 3).map(a => (
+                <div key={a.symbol} className="flex justify-between text-[10px] py-0.5">
+                  <span className="text-slate-300">{a.symbol.replace('.NS', '')}</span>
+                  <span className={`font-mono font-bold ${(a.xirr || 0) >= 0 ? 'text-amber-400' : 'text-red-400'}`}>{a.xirr !== null ? `${a.xirr >= 0 ? '+' : ''}${a.xirr.toFixed(1)}%` : 'N/A'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {/* Advance Pro Trader Portfolio Grid */}
       <div className="quantum-panel rounded-2xl overflow-hidden animate-fade-in-up delay-200 p-1">
@@ -115,6 +166,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
             const eqVal = inv + pl;
             const prevPrice = curPrice / (1 + (change / 100));
             const todayPL = (curPrice - prevPrice) * p.qty;
+            const assetXirr = xirrMap[key];
 
             // Pro UI Calculations
             const low = data?.low || curPrice * 0.98;
@@ -135,6 +187,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                       <div className="font-black text-white text-base tracking-tight flex items-center gap-2">
                         {p.symbol.replace('.NS', '')}
                         {p.leverage > 1 && <span className="bg-indigo-500/20 text-indigo-400 text-[9px] px-1.5 py-0.5 rounded border border-indigo-500/20">{p.leverage}x</span>}
+                        {assetXirr !== null && assetXirr !== undefined && <span className={`text-[9px] px-1.5 py-0.5 rounded border font-bold font-mono ${assetXirr >= 15 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : assetXirr >= 0 ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}>XIRR {assetXirr >= 0 ? '+' : ''}{assetXirr.toFixed(0)}%</span>}
                       </div>
                       <div className="flex items-center gap-2 mt-0.5">
                         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${p.market === 'IN' ? 'bg-orange-500/10 text-orange-400' : 'bg-blue-500/10 text-blue-400'}`}>

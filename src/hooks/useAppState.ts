@@ -13,6 +13,7 @@ import { secureStorage } from '../utils/secureStorage';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from '../utils/tvWebsocket';
 import { subscribeToCryptoPrices, disconnectCryptoPrices } from '../utils/binanceWebsocket';
 import { isAnyMarketOpen, analyzeAsset, getSmartAllocations, generateDeepAnalysis } from '../utils/telegram';
+import { generateWeeklyWealthReport } from '../utils/wealthEngine';
 
 function mergePriceData(existing: PriceData | undefined, incoming: Partial<PriceData>): PriceData {
   const price = incoming.price ?? existing?.price ?? 0;
@@ -440,6 +441,45 @@ export function useAppState() {
       if (initialTimeoutRef.current) clearTimeout(initialTimeoutRef.current);
       if (telegramIntervalRef.current) clearInterval(telegramIntervalRef.current);
     };
+  }, [isAuthenticated, autoTelegram, portfolio.length, metrics]);
+
+  // --- Weekly Wealth Report (Sunday 9 AM IST) ---
+  const weeklyReportRef = useRef<string>('');
+  useEffect(() => {
+    if (!isAuthenticated || !autoTelegram || portfolio.length === 0) return;
+
+    const checkWeeklyReport = () => {
+      const now = new Date();
+      const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const day = ist.getDay(); // 0 = Sunday
+      const hour = ist.getHours();
+      const todayStr = ist.toISOString().split('T')[0];
+
+      // Send on Sunday at 9 AM IST, only once per day
+      if (day === 0 && hour === 9 && weeklyReportRef.current !== todayStr) {
+        weeklyReportRef.current = todayStr;
+        const d = latestDataRef.current;
+        const totalSIP = (parseFloat(secureStorage.getItem('indiaSIP') || '10000') || 10000)
+          + (parseFloat(secureStorage.getItem('usSIP') || '5000') || 5000)
+          + (parseFloat(secureStorage.getItem('btcSIP') || '1000') || 1000)
+          + (parseFloat(secureStorage.getItem('ethSIP') || '500') || 500);
+        const investYears = parseInt(secureStorage.getItem('investYears') || '15') || 15;
+        const cagr = 12; // default medium risk
+        const msg = generateWeeklyWealthReport(
+          d.portfolio, d.livePrices, d.usdInrRate,
+          { ...metrics, totalInvested: metrics.totalInvested || 0 },
+          totalSIP, investYears, cagr
+        );
+        sendTelegramAlert(TG_TOKEN, TG_CHAT_ID, msg).catch(() => {});
+        console.log('[WeeklyReport] Sunday wealth report sent!');
+      }
+    };
+
+    // Check every 10 minutes
+    const interval = setInterval(checkWeeklyReport, 600000);
+    // Also check immediately in case we're loading at Sunday 9 AM
+    checkWeeklyReport();
+    return () => clearInterval(interval);
   }, [isAuthenticated, autoTelegram, portfolio.length, metrics]);
 
   // --- WS Latency (60s — cosmetic metric, no need for fast updates) ---
