@@ -322,6 +322,9 @@ export function useAppState() {
     const rate = usdInrRateRef.current;
     let totalInvested = 0, totalValue = 0, todayPL = 0;
     let indPL = 0, usPL = 0, cryptoPL = 0;
+    let totalInvestedINR = 0, totalValueINR = 0;
+    let totalInvestedUSD = 0, totalValueUSD = 0;
+
     p.forEach(pos => {
       const key = `${pos.market}_${pos.symbol}`;
       const data = lp[key];
@@ -335,18 +338,47 @@ export function useAppState() {
       const invINR = pos.market === 'IN' ? inv : inv * rate;
       const valINR = pos.market === 'IN' ? eqVal : eqVal * rate;
       totalInvested += invINR; totalValue += valINR;
+
+      if (pos.market === 'IN') {
+        totalInvestedINR += inv;
+        totalValueINR += eqVal;
+      } else {
+        totalInvestedUSD += inv;
+        totalValueUSD += eqVal;
+      }
+
       const prevPrice = curPrice / (1 + (change / 100));
       const dayPL = (curPrice - prevPrice) * pos.qty;
       const dayPLINR = pos.market === 'IN' ? dayPL : dayPL * rate;
       todayPL += dayPLINR;
-      if (isCryptoSymbol(pos.symbol.replace('.NS', '').replace('.BO', ''))) cryptoPL += dayPLINR;
-      else if (pos.market === 'IN') indPL += dayPLINR;
-      else usPL += dayPLINR;
+
+      const cleanSym = pos.symbol.replace('.NS', '').replace('.BO', '');
+      if (isCryptoSymbol(cleanSym)) {
+        cryptoPL += dayPL;
+      } else if (pos.market === 'IN') {
+        indPL += dayPL;
+      } else {
+        usPL += dayPL; // USD native P&L
+      }
     });
     const totalPL = totalValue - totalInvested;
     const plPct = totalInvested > 0 ? (totalPL / totalInvested) * 100 : 0;
     const todayPct = (totalValue - todayPL) > 0 ? (todayPL / (totalValue - todayPL)) * 100 : 0;
-    return { totalInvested, totalValue, totalPL, plPct, todayPL, todayPct, indPL, usPL, cryptoPL };
+    return {
+      totalInvested,
+      totalValue,
+      totalPL,
+      plPct,
+      todayPL,
+      todayPct,
+      indPL,
+      usPL,
+      cryptoPL,
+      totalInvestedINR,
+      totalValueINR,
+      totalInvestedUSD,
+      totalValueUSD
+    };
   }, []);
 
   const metrics = useMemo(() => calculateMetrics(), [calculateMetrics, portfolio, livePrices, usdInrRate]);

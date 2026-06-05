@@ -65,20 +65,39 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         <div className="quantum-stat rounded-2xl p-4 animate-fade-in-up">
           <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Capital Deployed</div>
           <div className="text-xl font-black text-white font-mono mt-1">₹{Math.round(metrics.totalInvested).toLocaleString('en-IN')}</div>
-          <div className="text-[10px] text-slate-600 mt-1 font-mono">${Math.round(metrics.totalInvested / usdInrRate).toLocaleString('en-US')}</div>
+          <div className="text-[10px] text-slate-400 mt-1 font-mono flex items-center gap-1 flex-wrap">
+            <span>🇮🇳 ₹{Math.round(metrics.totalInvestedINR || 0).toLocaleString('en-IN')}</span>
+            <span className="text-slate-600 font-bold">•</span>
+            <span>🦅 ${Math.round(metrics.totalInvestedUSD || 0).toLocaleString('en-US')}</span>
+          </div>
         </div>
         <div className="quantum-stat rounded-2xl p-4 border-cyan-500/15 animate-fade-in-up delay-75">
           <div className="text-cyan-500/80 text-[10px] font-bold uppercase tracking-wider">Current Equity</div>
           <div className="text-xl font-black text-cyan-400 font-mono mt-1">₹{Math.round(metrics.totalValue).toLocaleString('en-IN')}</div>
-          <div className="text-[10px] text-slate-600 mt-1 font-mono">${Math.round(metrics.totalValue / usdInrRate).toLocaleString('en-US')}</div>
+          <div className="text-[10px] text-slate-400 mt-1 font-mono flex items-center gap-1 flex-wrap">
+            <span>🇮🇳 ₹{Math.round(metrics.totalValueINR || 0).toLocaleString('en-IN')}</span>
+            <span className="text-slate-600 font-bold">•</span>
+            <span>🦅 ${Math.round(metrics.totalValueUSD || 0).toLocaleString('en-US')}</span>
+          </div>
         </div>
         <div className="quantum-stat rounded-2xl p-4 animate-fade-in-up delay-150">
           <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Total P&L</div>
           <div className={`text-xl font-black font-mono mt-1 ${metrics.totalPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
             {metrics.totalPL >= 0 ? '+' : ''}₹{Math.round(metrics.totalPL).toLocaleString('en-IN')}
           </div>
-          <div className={`text-xs font-bold mt-1 ${metrics.totalPL >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-            {metrics.plPct >= 0 ? '+' : ''}{metrics.plPct.toFixed(2)}%
+          <div className="flex flex-col gap-0.5 mt-1">
+            <div className={`text-xs font-bold ${metrics.totalPL >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+              {metrics.plPct >= 0 ? '+' : ''}{metrics.plPct.toFixed(2)}%
+            </div>
+            <div className="text-[9px] text-slate-400 font-mono flex items-center gap-1 flex-wrap mt-0.5">
+              <span className={metrics.totalValueINR - metrics.totalInvestedINR >= 0 ? 'text-emerald-500/80' : 'text-red-500/80'}>
+                🇮🇳 {metrics.totalValueINR - metrics.totalInvestedINR >= 0 ? '+' : ''}₹{Math.round(metrics.totalValueINR - metrics.totalInvestedINR).toLocaleString('en-IN')}
+              </span>
+              <span className="text-slate-600 font-bold">•</span>
+              <span className={metrics.totalValueUSD - metrics.totalInvestedUSD >= 0 ? 'text-emerald-500/80' : 'text-red-500/80'}>
+                🦅 {metrics.totalValueUSD - metrics.totalInvestedUSD >= 0 ? '+' : ''}${Math.round(metrics.totalValueUSD - metrics.totalInvestedUSD).toLocaleString('en-US')}
+              </span>
+            </div>
           </div>
         </div>
         <div className="quantum-stat rounded-2xl p-4 animate-fade-in-up delay-200">
@@ -91,7 +110,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
               🇮🇳 IN: {metrics.indPL >= 0 ? '+' : ''}₹{Math.round(metrics.indPL).toLocaleString('en-IN')}
             </span>
             <span className={`text-[10px] px-1.5 py-0.5 rounded bg-black/20 font-bold ${metrics.usPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-              🦅 US: {metrics.usPL >= 0 ? '+' : ''}₹{Math.round(metrics.usPL).toLocaleString('en-IN')}
+              🦅 US: {metrics.usPL >= 0 ? '+' : ''}${Math.round(metrics.usPL).toLocaleString('en-US')}
             </span>
             <span className={`text-[10px] px-1.5 py-0.5 rounded bg-black/20 font-bold ${metrics.cryptoPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
               🪙 Crypto: {metrics.cryptoPL >= 0 ? '+' : ''}₹{Math.round(metrics.cryptoPL).toLocaleString('en-IN')}
