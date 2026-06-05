@@ -188,6 +188,60 @@ export function useAppState() {
     return () => { if (priceFlushRef.current) { clearInterval(priceFlushRef.current); priceFlushRef.current = null; } };
   }, [isAuthenticated, portfolio.length, flushPricesToStorage]);
 
+  // --- Crypto Fast Polling (CoinDCX INR prices updated every 2s) ---
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    
+    const pollCrypto = async () => {
+      try {
+        const res = await fetch(`https://api.coindcx.com/exchange/ticker?t=${Date.now()}`, {
+          signal: AbortSignal.timeout(3000)
+        });
+        if (res.ok) {
+          const tickers = await res.json();
+          let updated = false;
+          
+          // Identify any crypto assets in the portfolio or general watchlist
+          const cryptoSymbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'];
+          
+          cryptoSymbols.forEach(sym => {
+            const ticker = tickers.find((t: any) => t.market === `${sym}INR`);
+            if (ticker && ticker.last_price) {
+              const priceVal = parseFloat(ticker.last_price);
+              const changeVal = parseFloat(ticker.change_24_hour) || 0;
+              if (!isNaN(priceVal) && priceVal > 0) {
+                const key = `IN_${sym}`;
+                pendingPricesRef.current[key] = {
+                  price: priceVal,
+                  change: changeVal,
+                  high: parseFloat(ticker.high) || priceVal,
+                  low: parseFloat(ticker.low) || priceVal,
+                  volume: parseFloat(ticker.volume) || 0,
+                  rsi: 50,
+                  time: Date.now(),
+                  market: 'IN',
+                  tvExchange: 'COINDCX',
+                  tvExactSymbol: `${sym}INR`
+                };
+                updated = true;
+              }
+            }
+          });
+          
+          if (updated) {
+            flushPricesToStorage();
+          }
+        }
+      } catch (e) {
+        console.warn('Crypto fast poll failed:', e);
+      }
+    };
+
+    pollCrypto();
+    const cryptoInterval = window.setInterval(pollCrypto, 2000); // 2 seconds ultra-fast updates
+    return () => { clearInterval(cryptoInterval); };
+  }, [isAuthenticated, flushPricesToStorage]);
+
   // --- WebSocket + HTTP sync ---
   useEffect(() => {
     if (!isAuthenticated) return;

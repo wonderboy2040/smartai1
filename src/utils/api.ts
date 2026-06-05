@@ -269,20 +269,22 @@ export async function batchFetchPrices(
   const inTickers: string[] = [];
   const usTickers: string[] = [];
   const tickerToKey: Record<string, string> = {};
+  const cryptoPositions: Position[] = [];
 
   positions.forEach(p => {
     if (!p?.symbol) return;
     const mkt = (p.market || guessMarket(p.symbol)).toUpperCase();
     const key = `${mkt}_${p.symbol.trim()}`;
-    const cleanSym = p.symbol.replace('.NS', '').replace('.BO', '').trim();
+    const cleanSym = p.symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
+
+    if (isCryptoSymbol(cleanSym)) {
+      cryptoPositions.push(p);
+      return;
+    }
 
     if (EXACT_TICKER_MAP[cleanSym]) {
       const t = EXACT_TICKER_MAP[cleanSym];
-      // Route crypto to separate list
-      if (isCryptoSymbol(cleanSym)) {
-        // Skip — crypto is handled by Binance WebSocket, not TradingView batch
-        tickerToKey[t] = key;
-      } else if (mkt === 'IN') {
+      if (mkt === 'IN') {
         inTickers.push(t);
         tickerToKey[t] = key;
       } else {
@@ -361,9 +363,48 @@ export async function batchFetchPrices(
     }
   };
 
+  const fetchCrypto = async () => {
+    if (cryptoPositions.length === 0) return;
+    try {
+      const res = await fetch(`https://api.coindcx.com/exchange/ticker?t=${Date.now()}`, {
+        signal: AbortSignal.timeout(5000)
+      });
+      if (res.ok) {
+        const tickers = await res.json();
+        cryptoPositions.forEach(p => {
+          const cleanSym = p.symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
+          const inrTicker = tickers.find((t: any) => t.market === `${cleanSym}INR`);
+          if (inrTicker && inrTicker.last_price) {
+            const priceVal = parseFloat(inrTicker.last_price);
+            const changeVal = parseFloat(inrTicker.change_24_hour) || 0;
+            const mkt = 'IN';
+            const key = `${mkt}_${p.symbol.trim()}`;
+            if (!isNaN(priceVal) && priceVal > 0) {
+              onUpdate(key, {
+                price: priceVal,
+                change: changeVal,
+                high: parseFloat(inrTicker.high) || priceVal,
+                low: parseFloat(inrTicker.low) || priceVal,
+                volume: parseFloat(inrTicker.volume) || 0,
+                rsi: 50,
+                time: Date.now(),
+                market: mkt,
+                tvExchange: 'COINDCX',
+                tvExactSymbol: `${cleanSym}INR`
+              });
+            }
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('CoinDCX batch fetch failed:', e);
+    }
+  };
+
   await Promise.allSettled([
     scanBatch('india', inTickers),
-    scanBatch('america', usTickers)
+    scanBatch('america', usTickers),
+    fetchCrypto()
   ]);
 }
 
