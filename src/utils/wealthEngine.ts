@@ -4,7 +4,7 @@
 // ============================================
 
 import { Position, PriceData } from '../types';
-import { ALPHA_ETFS_IN, ALPHA_ETFS_US, getAssetCagrProxy, formatCurrency } from './constants';
+import { ALPHA_ETFS_IN, ALPHA_ETFS_US, formatCurrency } from './constants';
 
 // ========== XIRR CALCULATOR (Newton-Raphson) ==========
 interface CashFlow {

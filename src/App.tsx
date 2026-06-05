@@ -13,7 +13,7 @@ const PlannerTab = lazy(() => import('./components/tabs/PlannerTab'));
 const MacroTab = lazy(() => import('./components/tabs/MacroTab').then(m => ({ default: m.MacroTab })));
 const GuideTab = lazy(() => import('./components/tabs/GuideTab').then(m => ({ default: m.GuideTab })));
 const DeepScanTab = lazy(() => import('./components/tabs/DeepScanTab'));
-const TradingTab = lazy(() => import('./components/tabs/TradingTab'));
+
 
 const NeuralChat = lazy(() => import('./components/NeuralChat').then(m => ({ default: m.NeuralChat })));
 
@@ -27,7 +27,7 @@ export default function App() {
     liveStatus, pushTelegramReport,
     showAddModal, setShowAddModal, groqKey,
     addSymbol, setAddSymbol, addQty, setAddQty, addPrice, setAddPrice,
-    addDate, setAddDate, addLeverage, setAddLeverage,
+    addDate, setAddDate,
     transactionType, setTransactionType, modalPrice,
     savePosition, usdInrRate, portfolioContextText,
   } = state;
@@ -38,9 +38,9 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if user is typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      const tabs: TabType[] = ['dashboard', 'trade', 'portfolio', 'deepmind', 'planner', 'macro', 'guide'];
+      const tabs: TabType[] = ['dashboard', 'portfolio', 'deepmind', 'planner', 'macro', 'guide'];
       const key = parseInt(e.key);
-      if (!isNaN(key) && key >= 1 && key <= 7) {
+      if (!isNaN(key) && key >= 1 && key <= 6) {
         setActiveTab(tabs[key - 1]);
       }
     };
@@ -109,8 +109,8 @@ export default function App() {
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h1 className="text-lg font-black gradient-text-cyan font-display uppercase tracking-wider text-glow">QUANTUM_TRADE</h1>
-                    <span className="quantum-badge">v12.0 PRO</span>
+                    <h1 className="text-lg font-black gradient-text-cyan font-display uppercase tracking-wider text-glow">WEALTH AI</h1>
+                    <span className="quantum-badge">v13.0 LTI</span>
                   </div>
                   <div className="flex items-center gap-2 text-[11px]">
                     <span className={`w-1.5 h-1.5 rounded-full ${liveStatus.includes('ACTIVE') ? 'bg-cyan-400 animate-pulse-dot' : 'bg-amber-500 animate-pulse'}`} />
@@ -123,10 +123,10 @@ export default function App() {
 
               {/* Tabs */}
               <div className="flex gap-0.5 quantum-panel p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
-                {(['dashboard', 'trade', 'portfolio', 'deepmind', 'planner', 'macro', 'guide'] as TabType[]).map(tab => (
+                {(['dashboard', 'portfolio', 'deepmind', 'planner', 'macro', 'guide'] as TabType[]).map(tab => (
                   <button key={tab} onClick={() => setActiveTab(tab)} className={`quantum-tab px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${activeTab === tab ? 'active' : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'}`}>
-                    <span className="hidden sm:inline">{tab === 'dashboard' && '📊 Dashboard'}{tab === 'trade' && '⚡ Trading'}{tab === 'portfolio' && '💼 Portfolio'}{tab === 'deepmind' && '🧠 DeepMind'}{tab === 'planner' && '🎯 Planner'}{tab === 'macro' && '🌍 Risk'}{tab === 'guide' && '📖 Guide'}</span>
-                    <span className="sm:hidden">{tab === 'dashboard' && '📊'}{tab === 'trade' && '⚡'}{tab === 'portfolio' && '💼'}{tab === 'deepmind' && '🧠'}{tab === 'planner' && '🎯'}{tab === 'macro' && '🌍'}{tab === 'guide' && '📖'}</span>
+                    <span className="hidden sm:inline">{tab === 'dashboard' && '📊 Dashboard'}{tab === 'portfolio' && '💼 Portfolio'}{tab === 'deepmind' && '🧠 DeepMind'}{tab === 'planner' && '🎯 Planner'}{tab === 'macro' && '🌍 Risk'}{tab === 'guide' && '📖 Guide'}</span>
+                    <span className="sm:hidden">{tab === 'dashboard' && '📊'}{tab === 'portfolio' && '💼'}{tab === 'deepmind' && '🧠'}{tab === 'planner' && '🎯'}{tab === 'macro' && '🌍'}{tab === 'guide' && '📖'}</span>
                   </button>
                 ))}
               </div>
@@ -145,7 +145,7 @@ export default function App() {
         <main className="container mx-auto px-4 py-6">
           <Suspense fallback={<div className="flex items-center justify-center py-20"><div className="text-center"><div className="text-4xl mb-3 animate-float">⚡</div><div className="text-sm text-slate-500 font-medium">Loading module...</div></div></div>}>
             {activeTab === 'dashboard' && <DashboardTab />}
-            {activeTab === 'trade' && <TradingTab />}
+
             {activeTab === 'portfolio' && <PortfolioTab />}
             {activeTab === 'deepmind' && <DeepScanTab />}
             {activeTab === 'planner' && <PlannerTab />}
@@ -160,7 +160,7 @@ export default function App() {
             <div className="quantum-modal rounded-2xl w-full max-w-md shadow-2xl animate-scale-in">
               <div className="p-5 border-b border-white/5 flex justify-between items-center">
                 <h3 className="text-lg font-bold text-white">{transactionType === 'sell' ? '📉 Sell Asset' : '➕ Add Asset'}</h3>
-                <button onClick={() => { setShowAddModal(false); setAddLeverage('1'); }} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-red-500/20 flex items-center justify-center text-lg text-slate-400 hover:text-red-400 transition-all">✕</button>
+                <button onClick={() => setShowAddModal(false)} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-red-500/20 flex items-center justify-center text-lg text-slate-400 hover:text-red-400 transition-all">✕</button>
               </div>
               <div className="p-5 space-y-4">
                 <div>
@@ -186,9 +186,9 @@ export default function App() {
                   <div><label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Quantity</label><input type="number" value={addQty} onChange={e => setAddQty(e.target.value)} placeholder="0" className="w-full px-4 py-2.5 quantum-input rounded-xl font-bold text-lg text-white" /></div>
                   <div><label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Price</label><input type="number" value={addPrice} onChange={e => setAddPrice(e.target.value)} placeholder="0.00" className="w-full px-4 py-2.5 quantum-input rounded-xl font-bold text-lg text-white" /></div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div><label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Date</label><input type="date" value={addDate} onChange={e => setAddDate(e.target.value)} className="w-full px-4 py-2.5 quantum-input rounded-xl text-slate-300" /></div>
-                  <div><label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Leverage</label><select value={addLeverage} onChange={e => setAddLeverage(e.target.value)} className="w-full px-4 py-2.5 quantum-input rounded-xl text-slate-300"><option value="1">1x (Cash)</option><option value="2">2x MTF</option><option value="3">3x</option><option value="5">5x</option></select></div>
+                <div>
+                  <label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Date</label>
+                  <input type="date" value={addDate} onChange={e => setAddDate(e.target.value)} className="w-full px-4 py-2.5 quantum-input rounded-xl text-slate-300" />
                 </div>
               </div>
               <div className="p-5 border-t border-white/5">

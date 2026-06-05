@@ -8,7 +8,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
     portfolio, livePrices, usdInrRate, metrics,
     openAddModal, pushTelegramReport, syncStatus, loadFromCloud, setPortfolio,
     setAddSymbol, setCurrentMarket, setAddQty, setAddPrice, setAddDate,
-    setAddLeverage, setEditId, setTransactionType, setShowAddModal, setModalPrice,
+    setEditId, setTransactionType, setShowAddModal, setModalPrice,
   } = useApp();
 
   // --- XIRR Calculator ---
@@ -275,7 +275,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                       setAddQty('');
                       setAddPrice(data?.price?.toString() || p.avgPrice.toString());
                       setAddDate(getTodayString());
-                      setAddLeverage(p.leverage.toString());
+
                       setEditId(null);
                       setTransactionType('buy');
                       setShowAddModal(true);
@@ -293,7 +293,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                       setAddQty(p.qty.toString());
                       setAddPrice(data?.price?.toString() || p.avgPrice.toString());
                       setAddDate(p.dateAdded);
-                      setAddLeverage(p.leverage.toString());
+
                       setEditId(p.id);
                       setTransactionType('sell');
                       setShowAddModal(true);

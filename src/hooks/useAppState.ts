@@ -5,13 +5,12 @@ import {
   getTodayString, guessMarket, EXACT_TICKER_MAP, isCryptoSymbol
 } from '../utils/constants';
 import {
-  fetchSinglePrice, batchFetchPrices, fetchForexRate, fetchCryptoUsdInrRate,
+  fetchSinglePrice, batchFetchPrices, fetchForexRate,
   syncToCloud, loadFromCloud, sendTelegramAlert,
   syncGroqKeyToCloud, loadGroqKeyFromCloud, getBatchInterval, fetchMarketIntelligence
 } from '../utils/api';
 import { secureStorage } from '../utils/secureStorage';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from '../utils/tvWebsocket';
-import { subscribeToCryptoPrices, disconnectCryptoPrices } from '../utils/binanceWebsocket';
 import { isAnyMarketOpen, analyzeAsset, getSmartAllocations, generateDeepAnalysis } from '../utils/telegram';
 import { generateWeeklyWealthReport } from '../utils/wealthEngine';
 
@@ -47,9 +46,7 @@ export function useAppState() {
   const [usdInrRate, setUsdInrRate] = useState(DEFAULT_USD_INR);
   const usdInrRateRef = useRef(DEFAULT_USD_INR);
   useEffect(() => { usdInrRateRef.current = usdInrRate; }, [usdInrRate]);
-  const [cryptoUsdInrRate, setCryptoUsdInrRate] = useState(88.0);
-  const cryptoUsdInrRateRef = useRef(88.0);
-  useEffect(() => { cryptoUsdInrRateRef.current = cryptoUsdInrRate; }, [cryptoUsdInrRate]);
+
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (secureStorage.getItem('theme') as 'dark' | 'light') || 'dark');
   const [currentSymbol, setCurrentSymbol] = useState('');
   const [currentMarket, setCurrentMarket] = useState<'IN' | 'US'>('IN');
@@ -80,7 +77,7 @@ export function useAppState() {
   const [addQty, setAddQty] = useState('');
   const [addPrice, setAddPrice] = useState('');
   const [addDate, setAddDate] = useState(getTodayString());
-  const [addLeverage, setAddLeverage] = useState('1');
+
   const [transactionType, setTransactionType] = useState<TransactionType>('buy');
   const [modalPrice, setModalPrice] = useState<{ price: number; change: number; market: string } | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
@@ -160,7 +157,7 @@ export function useAppState() {
       else { const localKey = secureStorage.getItem('WEALTH_AI_GROQ'); if (localKey) syncGroqKeyToCloud(localKey).catch(() => {}); }
     }).catch(() => { const localKey = secureStorage.getItem('WEALTH_AI_GROQ'); if (localKey) { syncGroqKeyToCloud(localKey).catch(() => {}); setGroqKey(localKey); } });
     fetchForexRate().then(rate => setUsdInrRate(rate));
-    fetchCryptoUsdInrRate().then(rate => setCryptoUsdInrRate(rate));
+
     try {
       const p = secureStorage.getItem('plannerSettings');
       if (p) {
@@ -213,29 +210,14 @@ export function useAppState() {
     sync();
     syncIntervalRef.current = window.setInterval(sync, getBatchInterval());
     let statusCounter = 0;
-    const cryptoSymbols = symbolsToSub.filter(s => isCryptoSymbol(s.split('_')[1]));
-    const tvSymbols = symbolsToSub.filter(s => !isCryptoSymbol(s.split('_')[1]));
-    const unsubscribeTv = subscribeToPrices(tvSymbols.map(s => s.split('_')[1]), (key, data) => {
+    const unsubscribeTv = subscribeToPrices(symbolsToSub.map(s => s.split('_')[1]), (key, data) => {
       pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData;
       statusCounter++;
       if (statusCounter % 50 === 1) setLiveStatus('● TV SOCKET LIVE ⚡');
     });
-    const unsubscribeBinance = subscribeToCryptoPrices(cryptoSymbols.map(s => s.split('_')[1]), (key, data) => {
-      const isIN = key.startsWith('IN_');
-      const rate = cryptoUsdInrRateRef.current;
-      const convertedData = { ...data };
-      if (isIN) {
-        if (convertedData.price) convertedData.price *= rate;
-        if (convertedData.high) convertedData.high *= rate;
-        if (convertedData.low) convertedData.low *= rate;
-      }
-      pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...convertedData } as PriceData;
-      statusCounter++;
-      if (statusCounter % 50 === 1) setLiveStatus('● BINANCE SOCKET LIVE ⚡');
-    });
     return () => {
       if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
-      unsubscribeTv(); unsubscribeBinance(); disconnectPrices(); disconnectCryptoPrices();
+      unsubscribeTv(); disconnectPrices();
       flushPricesToStorage();
     };
   }, [isAuthenticated, portfolioSymbolKey, flushPricesToStorage]);
@@ -264,7 +246,6 @@ export function useAppState() {
     if (!isAuthenticated) return;
     const refreshForex = async () => {
       const rate = await fetchForexRate(); setUsdInrRate(rate);
-      const cryptoRate = await fetchCryptoUsdInrRate(); setCryptoUsdInrRate(cryptoRate);
     };
     forexIntervalRef.current = window.setInterval(refreshForex, 180000);
     return () => { if (forexIntervalRef.current) clearInterval(forexIntervalRef.current); };
@@ -605,10 +586,10 @@ export function useAppState() {
   const openAddModal = useCallback((position?: Position) => {
     if (position) {
       setAddSymbol(position.symbol); setAddQty(position.qty.toString()); setAddPrice(position.avgPrice.toString());
-      setAddDate(position.dateAdded); setAddLeverage(position.leverage.toString()); setEditId(position.id);
+      setAddDate(position.dateAdded); setEditId(position.id);
     } else {
       setAddSymbol(currentSymbol || ''); setAddQty(''); setAddPrice('');
-      setAddDate(getTodayString()); setAddLeverage('1'); setEditId(null);
+      setAddDate(getTodayString()); setEditId(null);
     }
     setTransactionType('buy'); setShowAddModal(true);
     if (currentSymbol) {
@@ -616,7 +597,7 @@ export function useAppState() {
         if (result) {
           let finalPrice = result.price;
           if (isCryptoSymbol(currentSymbol.replace('.NS', '').replace('.BO', '')) && result.market === 'IN' && result.tvExchange === 'BINANCE') {
-            finalPrice *= cryptoUsdInrRateRef.current;
+            finalPrice *= usdInrRateRef.current;
           }
           setModalPrice({ price: finalPrice, change: result.change, market: result.market });
           setAddPrice(finalPrice.toString());
@@ -628,7 +609,7 @@ export function useAppState() {
   const savePosition = useCallback(() => {
     const qty = parseFloat(addQty);
     const price = parseFloat(addPrice);
-    const leverage = parseFloat(addLeverage) || 1;
+    const leverage = 1;
     if (!addSymbol || isNaN(qty) || isNaN(price) || qty <= 0 || price <= 0) {
       alert('Neural Error: Quantity ya price sahi daalo bhai.'); return;
     }
@@ -655,7 +636,7 @@ export function useAppState() {
       }
     }
     setShowAddModal(false);
-  }, [addSymbol, addQty, addPrice, addLeverage, addDate, transactionType, editId, modalPrice, portfolio]);
+  }, [addSymbol, addQty, addPrice, addDate, transactionType, editId, modalPrice, portfolio]);
 
   const pushTelegramReport = useCallback(async () => {
     const msg = `🧠 <b>Quantum AI Master Report</b>\n\n🌍 <b>Global State:</b> ${sentiment.text}\n\n💼 <b>Total Equity:</b> ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n📈 <b>P&L:</b> ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(2)}%)\n⚡ <b>Today:</b> ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')}`;
@@ -693,7 +674,7 @@ export function useAppState() {
     sectorData,
     // Modal
     showAddModal, setShowAddModal, groqKey, addSymbol, setAddSymbol, addQty, setAddQty,
-    addPrice, setAddPrice, addDate, setAddDate, addLeverage, setAddLeverage,
+    addPrice, setAddPrice, addDate, setAddDate,
     transactionType, setTransactionType, modalPrice, setModalPrice, editId, setEditId,
     autoTelegram, setAutoTelegram,
     // Advanced
