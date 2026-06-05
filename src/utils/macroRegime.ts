@@ -7,7 +7,7 @@ import { Position, PriceData, MacroRegime, SectorMomentum } from '../types';
 
 // Sector → ETF mapping for portfolio exposure
 const SECTOR_MAP: Record<string, string> = {
-  'SMH': 'US Tech', 'VGT': 'US Tech', 'IWY': 'US Large Cap',
+  'SMH': 'US Tech', 'VGT': 'US Tech',
   'SPY': 'US Broad', 'QQQ': 'US Tech', 'DIA': 'US Broad',
   'XLV': 'US Healthcare', 'XLE': 'US Energy', 'XLF': 'US Finance',
   'XLI': 'US Industrial', 'JUNIORBEES': 'IN Broad', 'MOMENTUM50': 'IN Smart Beta',
