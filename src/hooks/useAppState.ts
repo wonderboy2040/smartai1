@@ -287,8 +287,13 @@ export function useAppState() {
     if (portfolio.length > 0) {
       secureStorage.setItem('portfolio', JSON.stringify(portfolio));
       if (!currentSymbol) { setCurrentSymbol(portfolio[0].symbol); setCurrentMarket(portfolio[0].market as 'IN' | 'US'); }
+    } else {
+      if (!currentSymbol) {
+        setCurrentSymbol('NIFTY');
+        setCurrentMarket('IN');
+      }
     }
-  }, [portfolio]);
+  }, [portfolio, currentSymbol]);
 
   // --- Cloud sync (debounced 5s instead of 3s) ---
   useEffect(() => {
