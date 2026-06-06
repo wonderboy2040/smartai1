@@ -124,7 +124,7 @@ console.log('╔═════════════════════�
 console.log('║  🧠 DEEP MIND AI QUANTUM PRO v5.0         ║');
 console.log('║  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ║');
 console.log('║  Real-Time Pro Trading Intelligence      ║');
-console.log('║  Groq + Gemini 2.5 + Claude Sonnet 4     ║');
+console.log('║  Groq + Gemini 3.5 + Claude Sonnet 4     ║');
 console.log('║  Live Market Data + Tavily Web Search     ║');
 console.log('╚══════════════════════════════════════════════╝');
 console.log('');
@@ -351,7 +351,7 @@ Nagraj Bhai, main tumhara QUANTUM PRO AI Trading assistant hoon! 🚀
 
 🤖 <b>AI Engines:</b>
 • ⚡ Groq Llama-3.3 70B (Ultra-Fast)
-• 🔵 Google Gemini 2.5 Flash (Real-Time Intel)
+• 🔵 Google Gemini 3.5 Flash (Real-Time Intel)
 • 🟣 Claude Sonnet 4 (Deep Analysis)
 
 📊 <b>Commands:</b>

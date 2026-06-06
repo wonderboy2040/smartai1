@@ -57,8 +57,8 @@ export function computeHealthScore(
   });
 
   // 3. VIX penalty (approximate from livePrices)
-  const vixUS = livePrices['VIX']?.price || 0;
-  const vixIN = livePrices['INDIAVIX']?.price || 0;
+  const vixUS = livePrices['US_VIX']?.price || 0;
+  const vixIN = livePrices['IN_INDIAVIX']?.price || 0;
   const avgVix = (vixUS + vixIN) / 2;
   let vixStatus: PortfolioHealth['vixStatus'] = 'NORMAL';
   if (avgVix > 30) { score -= 25; vixStatus = 'SPIKE'; warnings.push(`VIX spike: ${avgVix.toFixed(1)} — extreme fear`); }
@@ -138,8 +138,8 @@ export function checkAlertConditions(
   });
 
   // VIX spike
-  const vixUS = livePrices['VIX']?.price || 0;
-  const vixIN = livePrices['INDIAVIX']?.price || 0;
+  const vixUS = livePrices['US_VIX']?.price || 0;
+  const vixIN = livePrices['IN_INDIAVIX']?.price || 0;
   const avgVix = (vixUS + vixIN) / 2;
   if (avgVix > 30) {
     alerts.push({ type: 'VIX_SPIKE', symbol: 'VIX', message: `VIX spike to ${avgVix.toFixed(1)} — extreme fear, buy deep dips only`, severity: 'CRITICAL' });

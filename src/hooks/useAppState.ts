@@ -532,12 +532,21 @@ export function useAppState() {
       if (day === 0 && hour === 9 && weeklyReportRef.current !== todayStr) {
         weeklyReportRef.current = todayStr;
         const d = latestDataRef.current;
-        const totalSIP = (parseFloat(secureStorage.getItem('indiaSIP') || '10000') || 10000)
-          + (parseFloat(secureStorage.getItem('usSIP') || '5000') || 5000)
-          + (parseFloat(secureStorage.getItem('btcSIP') || '1000') || 1000)
-          + (parseFloat(secureStorage.getItem('ethSIP') || '500') || 500);
-        const investYears = parseInt(secureStorage.getItem('investYears') || '15') || 15;
-        const cagr = 12; // default medium risk
+        let weeklyTotalSIP = 16500;
+        let weeklyInvestYears = 15;
+        let weeklyCagr = 12;
+        try {
+          const ps = secureStorage.getItem('plannerSettings');
+          if (ps) {
+            const s = JSON.parse(ps);
+            weeklyTotalSIP = (s.indiaSIP || 10000) + (s.usSIP || 5000) + (s.btcSIP || 1000) + (s.ethSIP || 500);
+            weeklyInvestYears = s.investYears || 15;
+            weeklyCagr = s.riskLevel === 'low' ? 8 : s.riskLevel === 'high' ? 18 : 12;
+          }
+        } catch { /* use defaults */ }
+        const totalSIP = weeklyTotalSIP;
+        const investYears = weeklyInvestYears;
+        const cagr = weeklyCagr;
         const msg = generateWeeklyWealthReport(
           d.portfolio, d.livePrices, d.usdInrRate,
           { ...metrics, totalInvested: metrics.totalInvested || 0 },

@@ -24,22 +24,22 @@ export function detectMacroRegime(
   bondYields?: { us10y: number; us02y: number; spread: number }
 ): MacroRegime {
   // Get VIX data
-  const vixUS = livePrices['VIX']?.price || 18;
-  const vixIN = livePrices['INDIAVIX']?.price || 15;
+  const vixUS = livePrices['US_VIX']?.price || 18;
+  const vixIN = livePrices['IN_INDIAVIX']?.price || 15;
   const avgVix = (vixUS + vixIN) / 2;
 
   // Get yield curve
   const spread = bondYields?.spread ?? 0.3;
 
   // Get sector breadth (count positive vs negative sectors)
-  const sectorTickers = ['XLK', 'XLF', 'XLE', 'XLV', 'XLI', 'CNXIT', 'CNXFIN', 'CNXPHARMA'];
-  const sectorChanges = sectorTickers.map(t => livePrices[t]?.change || 0);
+  const sectorKeys = ['US_XLK', 'US_XLF', 'US_XLE', 'US_XLV', 'US_XLI', 'IN_CNXIT', 'IN_CNXFIN', 'IN_CNXPHARMA'];
+  const sectorChanges = sectorKeys.map(k => livePrices[k]?.change || 0);
   const positiveSectors = sectorChanges.filter(c => c > 0).length;
-  const sectorBreadth = positiveSectors / sectorTickers.length;
+  const sectorBreadth = positiveSectors / sectorKeys.length;
 
   // Get growth vs defensive performance
-  const growthChange = (livePrices['XLK']?.change || 0) + (livePrices['QQQ']?.change || 0);
-  const defensivChange = (livePrices['XLV']?.change || 0) + (livePrices['XLE']?.change || 0);
+  const growthChange = (livePrices['US_XLK']?.change || 0) + (livePrices['US_QQQ']?.change || 0);
+  const defensivChange = (livePrices['US_XLV']?.change || 0) + (livePrices['US_XLE']?.change || 0);
 
   // Regime detection
   let regime: MacroRegime['regime'];

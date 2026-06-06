@@ -32,8 +32,8 @@ export interface SmartMoneySignal {
 export function estimateFIIDIIFromMarket(
   livePrices: Record<string, PriceData>
 ): FIIDIIData {
-  const nifty = livePrices['NSE:NIFTY'];
-  const vix = livePrices['VIX'] || livePrices['INDIAVIX'];
+  const nifty = livePrices['IN_NIFTY'];
+  const vix = livePrices['US_VIX'] || livePrices['IN_INDIAVIX'];
 
   const niftyChange = nifty?.change || 0;
   const vixPrice = vix?.price || 18;
@@ -89,7 +89,7 @@ export function generateSmartMoneySignal(
   livePrices: Record<string, PriceData>
 ): SmartMoneySignal {
   const data = estimateFIIDIIFromMarket(livePrices);
-  const vix = ((livePrices['VIX']?.price || 0) + (livePrices['INDIAVIX']?.price || 0)) / 2;
+  const vix = ((livePrices['US_VIX']?.price || 0) + (livePrices['IN_INDIAVIX']?.price || 0)) / 2;
 
   // FII confidence: -100 to 100
   let fiiConfidence = 0;
