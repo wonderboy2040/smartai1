@@ -473,23 +473,38 @@ RULES:
     // 1. Try Nvidia DeepSeek V4 Pro (Active Primary)
     if (nvidiaKey && nvidiaKey.startsWith('nvapi-')) {
       try {
-        const res = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${nvidiaKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: 'deepseek-ai/deepseek-v4-pro',
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt }
-            ],
-            temperature: 0.7,
-            max_tokens: 3000
-          }),
-          signal: AbortSignal.timeout(35000)
-        });
+        const payload = {
+          model: 'deepseek-ai/deepseek-v4-pro',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature: 0.7,
+          max_tokens: 3000
+        };
+        let res;
+        try {
+          res = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${nvidiaKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(35000)
+          });
+        } catch (err) {
+          console.warn('Nvidia scanner call failed (CORS/network). Retrying via proxy...');
+          res = await fetch(`https://corsproxy.io/?${encodeURIComponent('https://integrate.api.nvidia.com/v1/chat/completions')}`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${nvidiaKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(35000)
+          });
+        }
         if (res.ok) {
           const data = await res.json();
           text = data.choices?.[0]?.message?.content || '';
@@ -507,23 +522,34 @@ RULES:
           { role: 'model', parts: [{ text: 'Understood. DEEP MIND AI Pro Trader active. Ready for institutional-grade stock analysis.' }] },
           { role: 'user', parts: [{ text: userPrompt }] }
         ];
-
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents,
-            generationConfig: { temperature: 0.7, maxOutputTokens: 4096, topP: 0.95, topK: 40 },
-            safetySettings: [
-              { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
-              { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
-              { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-              { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
-            ]
-          }),
-          signal: AbortSignal.timeout(30000)
-        });
-
+        const payload = {
+          contents,
+          generationConfig: { temperature: 0.7, maxOutputTokens: 4096, topP: 0.95, topK: 40 },
+          safetySettings: [
+            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
+            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
+            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
+            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
+          ]
+        };
+        const targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`;
+        let res;
+        try {
+          res = await fetch(targetUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(30000)
+          });
+        } catch (err) {
+          console.warn('Gemini scanner call failed (CORS/network). Retrying via proxy...');
+          res = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(30000)
+          });
+        }
         if (res.ok) {
           const data = await res.json();
           if (data.candidates?.[0]?.finishReason !== 'SAFETY') {
@@ -538,23 +564,39 @@ RULES:
     // 3. Try Groq Fallback
     if (!text && groqKey && groqKey.startsWith('gsk_')) {
       try {
-        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${groqKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: 'llama-3.3-70b-versatile',
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt }
-            ],
-            temperature: 0.7,
-            max_tokens: 3000
-          }),
-          signal: AbortSignal.timeout(25000)
-        });
+        const payload = {
+          model: 'llama-3.3-70b-versatile',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature: 0.7,
+          max_tokens: 3000
+        };
+        const targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
+        let res;
+        try {
+          res = await fetch(targetUrl, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${groqKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(25000)
+          });
+        } catch (err) {
+          console.warn('Groq scanner call failed (CORS/network). Retrying via proxy...');
+          res = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${groqKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(25000)
+          });
+        }
         if (res.ok) {
           const data = await res.json();
           text = data.choices?.[0]?.message?.content || '';

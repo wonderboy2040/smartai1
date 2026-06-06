@@ -220,17 +220,31 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
       throw new Error('Groq API Key missing — Settings me set karo');
     }
 
-    const res = await fetch(CONFIG.groq.baseUrl, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: CONFIG.groq.model,
-        messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
-        temperature: 0.7,
-        max_tokens: 4000
-      }),
-      signal: AbortSignal.timeout(20000)
-    });
+    const payload = {
+      model: CONFIG.groq.model,
+      messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
+      temperature: 0.7,
+      max_tokens: 4000
+    };
+
+    let res;
+    try {
+      res = await fetch(CONFIG.groq.baseUrl, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(20000)
+      });
+    } catch (e) {
+      console.warn('Groq direct call failed (CORS/network). Retrying via proxy...', e);
+      res = await fetch(`https://corsproxy.io/?${encodeURIComponent(CONFIG.groq.baseUrl)}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(20000)
+      });
+    }
+
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error?.message || `Groq Error: ${res.status}`);
@@ -269,21 +283,36 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
       contents.push({ role: 'user', parts: [{ text: 'Please respond.' }] });
     }
 
-    const res = await fetch(`${CONFIG.gemini.baseUrl}/${CONFIG.gemini.model}:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents,
-        generationConfig: { temperature: 0.7, maxOutputTokens: 4096, topP: 0.95, topK: 40 },
-        safetySettings: [
-          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
-          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
-          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
-        ]
-      }),
-      signal: AbortSignal.timeout(30000)
-    });
+    const payload = {
+      contents,
+      generationConfig: { temperature: 0.7, maxOutputTokens: 4096, topP: 0.95, topK: 40 },
+      safetySettings: [
+        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
+        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
+        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
+        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
+      ]
+    };
+    const targetUrl = `${CONFIG.gemini.baseUrl}/${CONFIG.gemini.model}:generateContent?key=${apiKey}`;
+
+    let res;
+    try {
+      res = await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(30000)
+      });
+    } catch (e) {
+      console.warn('Gemini direct call failed (CORS/network). Retrying via proxy...', e);
+      res = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(30000)
+      });
+    }
+
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error?.message || `Gemini Error: ${res.status}`);
@@ -320,22 +349,41 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
       fixed.unshift({ role: 'user', content: 'Hello' });
     }
 
-    const res = await fetch(CONFIG.claude.baseUrl, {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: CONFIG.claude.model,
-        max_tokens: 4096,
-        system: systemPrompt,
-        messages: fixed
-      }),
-      signal: AbortSignal.timeout(45000)
-    });
+    const payload = {
+      model: CONFIG.claude.model,
+      max_tokens: 4096,
+      system: systemPrompt,
+      messages: fixed
+    };
+
+    let res;
+    try {
+      res = await fetch(CONFIG.claude.baseUrl, {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(45000)
+      });
+    } catch (e) {
+      console.warn('Claude direct call failed (CORS/network). Retrying via proxy...', e);
+      res = await fetch(`https://corsproxy.io/?${encodeURIComponent(CONFIG.claude.baseUrl)}`, {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(45000)
+      });
+    }
+
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error?.message || `Claude Error: ${res.status}`);
@@ -353,26 +401,42 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
       throw new Error('Nvidia API Key missing — VITE_NVIDIA_API_KEY set karo');
     }
 
-    const res = await fetch(CONFIG.nvidia.baseUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: modelName,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          ...messages.map(m => ({
-            role: m.role === 'assistant' ? 'assistant' : 'user',
-            content: m.content
-          }))
-        ],
-        temperature: 0.7,
-        max_tokens: 3000
-      }),
-      signal: AbortSignal.timeout(45000)
-    });
+    const payload = {
+      model: modelName,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        ...messages.map(m => ({
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          content: m.content
+        }))
+      ],
+      temperature: 0.7,
+      max_tokens: 3000
+    };
+
+    let res;
+    try {
+      res = await fetch(CONFIG.nvidia.baseUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(45000)
+      });
+    } catch (e) {
+      console.warn('Nvidia direct call failed (CORS/network). Retrying via proxy...', e);
+      res = await fetch(`https://corsproxy.io/?${encodeURIComponent(CONFIG.nvidia.baseUrl)}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(45000)
+      });
+    }
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
