@@ -28,15 +28,23 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
     if (computed) setHealth(computed);
   }, [portfolio, livePrices, metrics]);
 
+  // Keep latest state in refs to avoid resetting the interval on every price/portfolio change
+  const stateRef = useRef({ portfolio, livePrices, health, metrics });
+  useEffect(() => {
+    stateRef.current = { portfolio, livePrices, health, metrics };
+  }, [portfolio, livePrices, health, metrics]);
+
   // Background monitoring: check alerts every 60s
   useEffect(() => {
     if (!telegramConfig.enabled || !telegramConfig.token || !telegramConfig.chatId) return;
 
     intervalRef.current = setInterval(() => {
+      const { portfolio: currentPortfolio, livePrices: currentLivePrices, health: currentHealth, metrics: currentMetrics } = stateRef.current;
+
       // Update previous highs
-      portfolio.forEach(pos => {
+      currentPortfolio.forEach(pos => {
         const key = `${pos.market}_${pos.symbol}`;
-        const price = livePrices[key]?.price;
+        const price = currentLivePrices[key]?.price;
         if (price) {
           const prev = previousHighsRef.current[key] || 0;
           if (price > prev) previousHighsRef.current[key] = price;
@@ -44,7 +52,7 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
       });
 
       // Check alert conditions
-      const alerts = checkAlertConditions(portfolio, livePrices, previousHighsRef.current);
+      const alerts = checkAlertConditions(currentPortfolio, currentLivePrices, previousHighsRef.current);
       const criticalAlerts = alerts.filter(a => a.severity === 'CRITICAL');
       if (criticalAlerts.length > 0) {
         const msg = `<b>🚨 PORTFOLIO ALERT</b>\n\n${criticalAlerts.map(a => `• ${a.message}`).join('\n')}\n\n<i>Wealth AI Pro</i>`;
@@ -57,9 +65,9 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
       const todayStr = ist.toISOString().split('T')[0];
       const hour = ist.getHours();
 
-      if (hour === 8 && lastDigestDateRef.current !== todayStr && health) {
+      if (hour === 8 && lastDigestDateRef.current !== todayStr && currentHealth) {
         lastDigestDateRef.current = todayStr;
-        const digest = generateDailyDigest(portfolio, livePrices, health, metrics);
+        const digest = generateDailyDigest(currentPortfolio, currentLivePrices, currentHealth, currentMetrics);
         sendTelegramAlert(telegramConfig.token, telegramConfig.chatId, digest).catch(() => {});
       }
     }, 60000);
@@ -67,7 +75,7 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [telegramConfig, portfolio, livePrices, health, metrics]);
+  }, [telegramConfig]);
 
   if (!health || portfolio.length === 0) return null;
 

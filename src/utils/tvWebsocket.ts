@@ -359,9 +359,12 @@ function connect() {
 function handleParsedMessage(parsed: Record<string, unknown>): void {
   if (parsed.m !== 'qsd' || !Array.isArray(parsed.p) || parsed.p.length < 2) return;
 
-  const tvSymbol = parsed.p[0] as string;
+  // TradingView qsd format: p[0] = session_id, p[1] = { n: "EXCHANGE:SYMBOL", s: "ok", v: { lp, ch, ... } }
   const payload = parsed.p[1] as Record<string, unknown> | null;
   if (!payload || payload.s !== 'ok' || !payload.v) return;
+
+  const tvSymbol = (payload.n as string) || '';
+  if (!tvSymbol) return;
 
   const v = payload.v as Record<string, number>;
 

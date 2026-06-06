@@ -898,8 +898,8 @@ msg += `\n📊 _Streak tracking requires historical daily data. Currently showin
 return msg;
 }
 
-function generateForexReport(livePrices: Record<string, PriceData>, usdInrRate?: number): string {
-const usdInr = usdInrRate || livePrices['US_USDINR']?.price || 85.5;
+function generateForexReport(livePrices: Record<string, PriceData>): string {
+const usdInr = livePrices['US_USDINR']?.price || 85.5;
 
 let msg = `💱 **FOREX RATES**\n`;
 msg += `━━━━━━━━━━━━━━━━━━━━\n\n`;

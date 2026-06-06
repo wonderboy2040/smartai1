@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react';
 import { Position, PriceData, DipSignal } from '../types';
 import { computePortfolioDipSignals, allocateDipBudget } from '../utils/dipEngine';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 
 interface DipIntelligenceProps {
   portfolio: Position[];

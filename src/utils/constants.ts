@@ -121,6 +121,7 @@ export function formatCurrency(amount: number, currency: string = '₹'): string
 }
 
 export function formatPrice(price: number, currency: string = '₹'): string {
-  if (price >= 1000) return `${currency}${price.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+  const locale = currency === '₹' ? 'en-IN' : 'en-US';
+  if (price >= 1000) return `${currency}${price.toLocaleString(locale, { maximumFractionDigits: 2 })}`;
   return `${currency}${price.toFixed(price < 1 ? 6 : 2)}`;
 }

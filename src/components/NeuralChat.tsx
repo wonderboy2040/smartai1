@@ -143,11 +143,10 @@ const MODEL_COLORS = {
 export interface NeuralChatProps {
   groqKey?: string;
   portfolioContext: string;
-  onTelegramPush?: () => void;
   usdInrRate?: number;
 }
 
-export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, onTelegramPush: _onTelegramPush, usdInrRate: propUsdInrRate }: NeuralChatProps) => {
+export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, usdInrRate: propUsdInrRate }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
     text: '🤖 **DEEP MIND AI QUANTUM PRO v12.0**\n\n**⚡ Active AI Engines:**\n🚀 **Groq Llama-3.3 70B**: Ultra-fast responses\n🧠 **Google Gemini 3.5 Flash**: Real-time market intelligence\n💎 **Claude Sonnet 4**: Deep institutional analysis\n🔍 **Tavily Search**: Live market news & data\n\n**📊 Real-Time Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n• Crypto (BTC/ETH), VIX, Gold tracking\n\nAsk anything — I have LIVE market data!',

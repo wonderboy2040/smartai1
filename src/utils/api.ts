@@ -458,6 +458,9 @@ export async function fetchForexRate(): Promise<number> {
   return DEFAULT_USD_INR; // Default fallback
 }
 
+/**
+ * @deprecated Kept for future crypto premium calculations or custom USDT/INR conversion screens
+ */
 export async function fetchCryptoUsdInrRate(): Promise<number> {
   // Primary: CoinDCX USDT/INR (matches user's exchange for accurate INR conversion)
   try {

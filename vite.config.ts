@@ -21,7 +21,7 @@ export default defineConfig({
           if (id.includes('crypto-js')) {
             return 'vendor-utils';
           }
-          if (id.includes('node_modules/motion') || id.includes('node_modules/framer-motion')) {
+          if (id.includes('node_modules/motion')) {
             return 'vendor-motion';
           }
           // Split heavy utils into separate chunks

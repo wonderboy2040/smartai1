@@ -172,7 +172,7 @@ export function useAppState() {
         if (s.currentAge) setCurrentAge(s.currentAge);
         if (s.monthlyExpenses) setMonthlyExpenses(s.monthlyExpenses);
       }
-    } catch {}
+    } catch (e) { console.warn('Failed to load planner settings:', e); }
   }, [isAuthenticated]);
 
   // --- Persist planner ---
@@ -189,8 +189,14 @@ export function useAppState() {
   }, [isAuthenticated, portfolio.length, flushPricesToStorage]);
 
   // --- Crypto Fast Polling (CoinDCX INR prices updated every 2s) ---
+  // Only run when portfolio contains crypto assets to avoid unnecessary network traffic
+  const hasCrypto = useMemo(() => {
+    if (portfolio.length === 0) return true; // Default: poll for dashboard crypto widgets
+    return portfolio.some(p => isCryptoSymbol(p.symbol.replace('.NS', '').replace('.BO', '')));
+  }, [portfolio]);
+
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !hasCrypto) return;
     
     const pollCrypto = async () => {
       try {
@@ -240,7 +246,7 @@ export function useAppState() {
     pollCrypto();
     const cryptoInterval = window.setInterval(pollCrypto, 2000); // 2 seconds ultra-fast updates
     return () => { clearInterval(cryptoInterval); };
-  }, [isAuthenticated, flushPricesToStorage]);
+  }, [isAuthenticated, hasCrypto, flushPricesToStorage]);
 
   // --- WebSocket + HTTP sync ---
   useEffect(() => {
@@ -290,7 +296,7 @@ export function useAppState() {
     if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
     cloudSyncTimerRef.current = window.setTimeout(() => {
       syncToCloud(portfolio, usdInrRate);
-      secureStorage.setItem('portfolio', JSON.stringify(portfolio));
+      // Note: localStorage save already handled by portfolio save effect above
     }, 5000);
     return () => { if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current); };
   }, [portfolio, usdInrRate]);
@@ -610,8 +616,8 @@ export function useAppState() {
   const cagr = riskLevel === 'low' ? 8 : riskLevel === 'high' ? 18 : 12;
   const months = investYears * 12;
   const totalInvestedPlanner = totalSIP * months;
-  const rate = cagr / 100 / 12;
-  const fvMed = totalSIP > 0 ? totalSIP * (Math.pow(1 + rate, months) - 1) * (1 + rate) / rate : 0;
+  const monthlyRate = cagr / 100 / 12;
+  const fvMed = totalSIP > 0 ? totalSIP * (Math.pow(1 + monthlyRate, months) - 1) * (1 + monthlyRate) / monthlyRate : 0;
   const worstRate = Math.max(0.5, cagr - 8) / 100 / 12;
   const fvWorst = totalSIP > 0 ? totalSIP * (Math.pow(1 + worstRate, months) - 1) * (1 + worstRate) / worstRate : 0;
   const fvBest = totalSIP > 0 ? totalSIP * (Math.pow(1 + (cagr + 8) / 100 / 12, months) - 1) * (1 + (cagr + 8) / 100 / 12) / ((cagr + 8) / 100 / 12) : 0;
@@ -619,7 +625,7 @@ export function useAppState() {
 
   // --- FIRE ---
   const fireNumber = monthlyExpenses * 12 * 25;
-  const rawYears = totalSIP > 0 && rate > 0 && fireNumber > 0 ? Math.log((fireNumber * rate / totalSIP) + 1) / Math.log(1 + rate) / 12 : null;
+  const rawYears = totalSIP > 0 && monthlyRate > 0 && fireNumber > 0 ? Math.log((fireNumber * monthlyRate / totalSIP) + 1) / Math.log(1 + monthlyRate) / 12 : null;
   const yearsToFire = rawYears !== null && isFinite(rawYears) && rawYears > 0 ? Math.max(1, Math.ceil(rawYears)) : 99;
   const fireProgress = fireNumber > 0 ? Math.min(100, (metrics.totalValue / fireNumber) * 100) : 0;
 
@@ -771,7 +777,7 @@ export function useAppState() {
     usVix, inVix, avgVix, sentiment, currentData, currentPrice, currentChange, currentRsi,
     signalData, metrics,
     // Planner computed
-    totalSIP, cagr, months, totalInvestedPlanner, rate, fvMed, fvWorst, fvBest, multiplier,
+    totalSIP, cagr, months, totalInvestedPlanner, rate: monthlyRate, fvMed, fvWorst, fvBest, multiplier,
     fireNumber, yearsToFire, fireProgress,
     // Smart allocations (memoized)
     smartAllocations,
