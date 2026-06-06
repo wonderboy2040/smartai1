@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-// AI Engine Configurations — Groq + Gemini 3.5 Flash + Claude Sonnet 4 (Pro Quantum)
+// AI Engine Configurations — Nvidia DeepSeek V4 + Groq + Gemini 3.5 Flash + Claude Sonnet 4 (Pro Quantum)
 const CONFIG = {
   groq: {
     apiKey: import.meta.env.VITE_GROQ_API_KEY || '',
@@ -18,10 +18,24 @@ const CONFIG = {
     apiKey: import.meta.env.VITE_CLAUDE_API_KEY || '',
     baseUrl: 'https://api.anthropic.com/v1/messages',
     model: 'claude-sonnet-4-20250514'
+  },
+  nvidia: {
+    apiKey: import.meta.env.VITE_NVIDIA_API_KEY || '',
+    baseUrl: 'https://integrate.api.nvidia.com/v1/chat/completions',
+    models: {
+      pro: 'deepseek-ai/deepseek-v4-pro',
+      flash: 'deepseek-ai/deepseek-v4-flash',
+      llama: 'meta/llama-3.3-70b-instruct'
+    }
   }
 } as const;
 
 const TAVILY_KEY = import.meta.env.VITE_TAVILY_API_KEY || '';
+
+const isNvidiaAvailable = () => {
+  const k = import.meta.env.VITE_NVIDIA_API_KEY || CONFIG.nvidia.apiKey;
+  return !!(k && k.startsWith('nvapi-'));
+};
 
 // Fetch real-time market snapshot for AI context
 async function fetchRealtimeSnapshot(): Promise<string> {
@@ -121,22 +135,25 @@ interface ChatMessage {
   role: 'user' | 'model' | 'system';
   text: string;
   timestamp: number;
-  model?: 'groq' | 'gemini' | 'claude' | 'system';
+  model?: 'groq' | 'gemini' | 'claude' | 'nvidia-pro' | 'nvidia-flash' | 'nvidia-llama' | 'system';
   sources?: Array<{ title: string; url: string }>;
 }
 
 const QUICK_ACTIONS = [
-  { label: 'Market News', query: 'Latest Indian and US market news and analysis with key levels', icon: '📰', type: 'gemini' },
-  { label: 'Portfolio Analysis', query: 'Analyze my ENTIRE portfolio deeply - every single position including crypto. Show P&L, technicals, fundamentals, and give specific BUY/HOLD/SELL verdict for each asset.', icon: '💼', type: 'claude' },
-  { label: 'ETH Analysis', query: 'Deep analysis of my Ethereum (ETH) position with on-chain context, support/resistance levels, and long-term HODL thesis', icon: '🪙', type: 'claude' },
-  { label: 'Long-Term Strategy', query: 'Give me a 15-20 year wealth creation roadmap focusing on SIP step-up and compound growth', icon: '📈', type: 'claude' },
-  { label: 'ETF Allocation', query: 'Analyze ETF allocations including Momentum and Smallcap ETFs with growth projections', icon: '🎯', type: 'claude' }
+  { label: 'Market News', query: 'Latest Indian and US market news and analysis with key levels', icon: '📰', type: 'nvidia-flash' },
+  { label: 'Portfolio Analysis', query: 'Analyze my ENTIRE portfolio deeply - every single position including crypto. Show P&L, technicals, fundamentals, and give specific BUY/HOLD/SELL verdict for each asset.', icon: '💼', type: 'nvidia-pro' },
+  { label: 'ETH Analysis', query: 'Deep analysis of my Ethereum (ETH) position with on-chain context, support/resistance levels, and long-term HODL thesis', icon: '🪙', type: 'nvidia-pro' },
+  { label: 'Long-Term Strategy', query: 'Give me a 15-20 year wealth creation roadmap focusing on SIP step-up and compound growth', icon: '📈', type: 'nvidia-pro' },
+  { label: 'ETF Allocation', query: 'Analyze ETF allocations including Momentum and Smallcap ETFs with growth projections', icon: '🎯', type: 'nvidia-pro' }
 ];
 
 const MODEL_COLORS = {
   groq: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
   gemini: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
   claude: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+  'nvidia-pro': 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
+  'nvidia-flash': 'bg-teal-500/10 text-teal-400 border-teal-500/20',
+  'nvidia-llama': 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20',
   system: 'bg-slate-500/10 text-slate-400 border-slate-500/20'
 };
 
@@ -149,7 +166,7 @@ export interface NeuralChatProps {
 export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, usdInrRate: propUsdInrRate }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
-    text: '🤖 **DEEP MIND AI QUANTUM PRO v12.0**\n\n**⚡ Active AI Engines:**\n🚀 **Groq Llama-3.3 70B**: Ultra-fast responses\n🧠 **Google Gemini 3.5 Flash**: Real-time market intelligence\n💎 **Claude Sonnet 4**: Deep institutional analysis\n🔍 **Tavily Search**: Live market news & data\n\n**📊 Real-Time Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n• Crypto (BTC/ETH), VIX, Gold tracking\n\nAsk anything — I have LIVE market data!',
+    text: '🤖 **DEEP MIND AI QUANTUM PRO v12.0**\n\n**⚡ Active Pro AI Engines:**\n🧠 **Nvidia DeepSeek V4 Pro**: Advanced pro-level reasoning & technical analysis\n🦁 **Nvidia Llama 3.3 Pro**: High-fidelity live trading assistant\n⚡ **Groq Llama-3.3**: Ultra-fast responses\n🔵 **Google Gemini 3.5**: Grounded market intelligence\n🟣 **Claude Sonnet 4**: Institutional portfolio strategies\n🔍 **Tavily Search**: Live market news & web data\n\n**📊 Real-Time Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n• Crypto (BTC/ETH), VIX, Gold tracking\n\nAsk anything — I have LIVE market data!',
     timestamp: Date.now(),
     model: 'system'
   }]);
@@ -158,7 +175,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
   const [isThinking, setIsThinking] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
-  const [selectedModel, setSelectedModel] = useState<'auto' | 'groq' | 'gemini' | 'claude'>('auto');
+  const [selectedModel, setSelectedModel] = useState<'auto' | 'nvidia-pro' | 'nvidia-llama' | 'groq' | 'gemini' | 'claude'>('auto');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
@@ -329,6 +346,44 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
     return text;
   };
 
+  // ============ NVIDIA API (DeepSeek V4 & Llama 3.3) ============
+  const callNvidia = async (messages: any[], systemPrompt: string, modelName: string) => {
+    const apiKey = import.meta.env.VITE_NVIDIA_API_KEY || CONFIG.nvidia.apiKey;
+    if (!apiKey || !apiKey.startsWith('nvapi-')) {
+      throw new Error('Nvidia API Key missing — VITE_NVIDIA_API_KEY set karo');
+    }
+
+    const res = await fetch(CONFIG.nvidia.baseUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: modelName,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...messages.map(m => ({
+            role: m.role === 'assistant' ? 'assistant' : 'user',
+            content: m.content
+          }))
+        ],
+        temperature: 0.7,
+        max_tokens: 3000
+      }),
+      signal: AbortSignal.timeout(45000)
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `Nvidia Error: ${res.status}`);
+    }
+    const data = await res.json();
+    const text = data.choices?.[0]?.message?.content;
+    if (!text || text.trim().length < 5) throw new Error('Nvidia returned empty response');
+    return text;
+  };
+
   // ============ MAIN AI ROUTER — Advanced Fallback Chain with Live Data ============
   const callAI = async (userMessage: string, model: string) => {
     const isNewsQuery = /\b(news|market|nifty|sensex|fed|rbi|ipo|crude|gold|dollar|breaking|aaj|today|live|bitcoin|btc|crypto|halving|eth|blockchain|defi|altcoin|binance|coinbase|regulation|sec)\b/i.test(userMessage);
@@ -411,16 +466,46 @@ ${portfolioCtx}`;
         content: m.text
       }));
 
-    // Build fallback chain: primary → fallback1 → fallback2
-    type Engine = 'groq' | 'gemini' | 'claude';
-    const chain: Engine[] = model === 'gemini'
-      ? ['gemini', 'groq', 'claude']
-      : model === 'claude'
-        ? ['claude', 'gemini', 'groq']
-        : ['groq', 'gemini', 'claude'];
+    // Build fallback chain: primary → fallback1 → fallback2...
+    type Engine = 'nvidia-pro' | 'nvidia-flash' | 'nvidia-llama' | 'groq' | 'gemini' | 'claude';
+    let chain: Engine[] = [];
+
+    const hasNvidia = isNvidiaAvailable();
+
+    if (model === 'nvidia-pro') {
+      chain = ['nvidia-pro', 'nvidia-llama', 'nvidia-flash', 'claude', 'gemini', 'groq'];
+    } else if (model === 'nvidia-flash') {
+      chain = ['nvidia-flash', 'nvidia-pro', 'nvidia-llama', 'gemini', 'groq', 'claude'];
+    } else if (model === 'nvidia-llama') {
+      chain = ['nvidia-llama', 'nvidia-pro', 'nvidia-flash', 'groq', 'gemini', 'claude'];
+    } else {
+      if (hasNvidia) {
+        if (model === 'gemini') {
+          chain = ['nvidia-flash', 'nvidia-pro', 'gemini', 'groq', 'claude'];
+        } else if (model === 'claude') {
+          chain = ['nvidia-pro', 'nvidia-llama', 'claude', 'gemini', 'groq'];
+        } else {
+          // groq or auto
+          chain = ['nvidia-llama', 'nvidia-pro', 'groq', 'gemini', 'claude'];
+        }
+      } else {
+        if (model === 'gemini') {
+          chain = ['gemini', 'groq', 'claude'];
+        } else if (model === 'claude') {
+          chain = ['claude', 'gemini', 'groq'];
+        } else {
+          chain = ['groq', 'gemini', 'claude'];
+        }
+      }
+    }
 
     const callers: Record<Engine, (msgs: any[], sp: string) => Promise<string>> = {
-      groq: callGroq, gemini: callGemini, claude: callClaude
+      'nvidia-pro': (msgs, sp) => callNvidia(msgs, sp, CONFIG.nvidia.models.pro),
+      'nvidia-flash': (msgs, sp) => callNvidia(msgs, sp, CONFIG.nvidia.models.flash),
+      'nvidia-llama': (msgs, sp) => callNvidia(msgs, sp, CONFIG.nvidia.models.llama),
+      groq: callGroq,
+      gemini: callGemini,
+      claude: callClaude
     };
 
     // Try each engine with one retry
@@ -434,7 +519,7 @@ ${portfolioCtx}`;
       }
     }
 
-    return { text: `🤖 **AI Engines Offline**\n\nBhai, Groq, Gemini aur Claude — teeno fail ho gaye.\n\n**Possible reasons:**\n• API keys missing ya invalid\n• Rate limit hit\n• Network issue\n\nCheck .env file aur retry karo.`, model: 'system' as const };
+    return { text: `🤖 **AI Engines Offline**\n\nBhai, Nvidia, Groq, Gemini aur Claude — sabhi engines fail ho gaye.\n\n**Possible reasons:**\n• API keys missing ya invalid\n• Rate limit hit\n• Network connectivity issues\n\nCheck .env file aur retry karo.`, model: 'system' as const };
   };
 
   const sendMessage = async (userMessage: string) => {
@@ -516,7 +601,7 @@ ${portfolioCtx}`;
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="hidden sm:inline">Groq + Gemini 3.5 + Claude Sonnet 4</span>
+                    <span className="hidden sm:inline">Nvidia + Groq + Gemini + Claude</span>
                     <span className="sm:hidden">LIVE • Quantum Pro</span>
                   </div>
                 </div>
@@ -529,7 +614,7 @@ ${portfolioCtx}`;
 
             {/* Model Selector */}
             <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-b border-cyan-500/10 flex gap-2 overflow-x-auto scrollbar-hide">
-              {(['auto', 'groq', 'gemini', 'claude'] as const).map(m => (
+              {(['auto', 'nvidia-pro', 'nvidia-llama', 'groq', 'gemini', 'claude'] as const).map(m => (
                 <button
                   key={m}
                   onClick={() => setSelectedModel(m)}
@@ -538,7 +623,12 @@ ${portfolioCtx}`;
                       : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-cyan-500/50'
                     }`}
                 >
-                  {m === 'auto' ? '🤖 Auto' : m === 'groq' ? '⚡ Groq' : m === 'gemini' ? '🔵 Gemini 3.5' : '🟣 Claude Sonnet 4'}
+                  {m === 'auto' ? '🤖 Auto' 
+                    : m === 'nvidia-pro' ? '🧠 DeepSeek V4 Pro' 
+                    : m === 'nvidia-llama' ? '🦁 Llama 3.3 Pro' 
+                    : m === 'groq' ? '⚡ Groq' 
+                    : m === 'gemini' ? '🔵 Gemini' 
+                    : '🟣 Claude Sonnet 4'}
                 </button>
               ))}
             </div>
@@ -555,7 +645,13 @@ ${portfolioCtx}`;
                       <>
                         {msg.model && (
                           <div className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase mb-2 border ${MODEL_COLORS[msg.model] || MODEL_COLORS.system}`}>
-                            {msg.model === 'groq' ? '⚡ Groq' : msg.model === 'gemini' ? '🔵 Gemini 3.5' : msg.model === 'claude' ? '🟣 Claude Sonnet 4' : 'System'}
+                            {msg.model === 'groq' ? '⚡ Groq' 
+                              : msg.model === 'gemini' ? '🔵 Gemini' 
+                              : msg.model === 'claude' ? '🟣 Claude Sonnet 4' 
+                              : msg.model === 'nvidia-pro' ? '🧠 DeepSeek V4 Pro' 
+                              : msg.model === 'nvidia-flash' ? '⚡ DeepSeek V4 Flash' 
+                              : msg.model === 'nvidia-llama' ? '🦁 Llama 3.3 Pro' 
+                              : 'System'}
                           </div>
                         )}
                         <span dangerouslySetInnerHTML={{
@@ -641,7 +737,12 @@ ${portfolioCtx}`;
               </div>
               <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
                 <span className="text-[7px] sm:text-[8px] text-slate-600 font-mono truncate max-w-[60%]">
-                  Model: {selectedModel === 'auto' ? '🤖 Auto-Detect' : selectedModel === 'groq' ? '⚡ Groq' : selectedModel === 'gemini' ? '🔵 Gemini 3.5' : '🟣 Claude Sonnet 4'}
+                  Model: {selectedModel === 'auto' ? '🤖 Auto-Detect' 
+                    : selectedModel === 'nvidia-pro' ? '🧠 DeepSeek V4 Pro' 
+                    : selectedModel === 'nvidia-llama' ? '🦁 Llama 3.3 Pro' 
+                    : selectedModel === 'groq' ? '⚡ Groq' 
+                    : selectedModel === 'gemini' ? '🔵 Gemini' 
+                    : '🟣 Claude Sonnet 4'}
                 </span>
                 <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
                   {chatMessages.length} messages

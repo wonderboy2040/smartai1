@@ -438,12 +438,16 @@ export function runDeepScan(
 }
 
 // ========== GEMINI 3.5 FLASH DEEP ANALYSIS — Advanced Pro Trader ==========
+// ========== GEMINI 3.5 FLASH DEEP ANALYSIS — Advanced Pro Trader ==========
 export async function getGeminiDeepAnalysis(
   stocks: DeepScanStock[],
   top: number = 5
 ): Promise<Record<string, string>> {
+  const nvidiaKey = import.meta.env.VITE_NVIDIA_API_KEY || '';
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
-  if (!apiKey || apiKey.length < 10) return {};
+  const groqKey = import.meta.env.VITE_GROQ_API_KEY || '';
+  
+  if (!nvidiaKey && !apiKey && !groqKey) return {};
 
   const topStocks = stocks.slice(0, top);
   const stockSummary = topStocks.map((s, i) =>
@@ -461,33 +465,106 @@ RULES:
 6. Today: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}.
 7. End each analysis with emoji verdict: 🟢 BUY / 🔴 SELL / 🟡 HOLD`;
 
+  const userPrompt = `Analyze these top AI-picked stocks for HIGH RETURN potential (1-2 year horizon). AI Confidence: 90-95%. Give separate analysis per stock.\n\n${stockSummary}\n\nFormat each as: **SYMBOL**: analysis`;
+
   try {
-    const contents = [
-      { role: 'user', parts: [{ text: systemPrompt }] },
-      { role: 'model', parts: [{ text: 'Understood. DEEP MIND AI Pro Trader active. Ready for institutional-grade stock analysis.' }] },
-      { role: 'user', parts: [{ text: `Analyze these top AI-picked stocks for HIGH RETURN potential (1-2 year horizon). AI Confidence: 90-95%. Give separate analysis per stock.\n\n${stockSummary}\n\nFormat each as: **SYMBOL**: analysis` }] }
-    ];
+    let text = '';
 
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents,
-        generationConfig: { temperature: 0.7, maxOutputTokens: 4096, topP: 0.95, topK: 40 },
-        safetySettings: [
-          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
-          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
-          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
-        ]
-      }),
-      signal: AbortSignal.timeout(30000)
-    });
+    // 1. Try Nvidia DeepSeek V4 Pro (Active Primary)
+    if (nvidiaKey && nvidiaKey.startsWith('nvapi-')) {
+      try {
+        const res = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${nvidiaKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'deepseek-ai/deepseek-v4-pro',
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt }
+            ],
+            temperature: 0.7,
+            max_tokens: 3000
+          }),
+          signal: AbortSignal.timeout(35000)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          text = data.choices?.[0]?.message?.content || '';
+        }
+      } catch (e) {
+        console.warn('Nvidia DeepSeek analysis call failed, falling back:', e);
+      }
+    }
 
-    if (!res.ok) return {};
-    const data = await res.json();
-    if (data.candidates?.[0]?.finishReason === 'SAFETY') return {};
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    // 2. Try Gemini Fallback
+    if (!text && apiKey && apiKey.length > 10) {
+      try {
+        const contents = [
+          { role: 'user', parts: [{ text: systemPrompt }] },
+          { role: 'model', parts: [{ text: 'Understood. DEEP MIND AI Pro Trader active. Ready for institutional-grade stock analysis.' }] },
+          { role: 'user', parts: [{ text: userPrompt }] }
+        ];
+
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents,
+            generationConfig: { temperature: 0.7, maxOutputTokens: 4096, topP: 0.95, topK: 40 },
+            safetySettings: [
+              { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
+              { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
+              { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
+              { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
+            ]
+          }),
+          signal: AbortSignal.timeout(30000)
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.candidates?.[0]?.finishReason !== 'SAFETY') {
+            text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          }
+        }
+      } catch (e) {
+        console.warn('Gemini deep analysis fallback failed:', e);
+      }
+    }
+
+    // 3. Try Groq Fallback
+    if (!text && groqKey && groqKey.startsWith('gsk_')) {
+      try {
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${groqKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'llama-3.3-70b-versatile',
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt }
+            ],
+            temperature: 0.7,
+            max_tokens: 3000
+          }),
+          signal: AbortSignal.timeout(25000)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          text = data.choices?.[0]?.message?.content || '';
+        }
+      } catch (e) {
+        console.warn('Groq deep analysis fallback failed:', e);
+      }
+    }
+
+    if (!text || text.trim().length < 5) return {};
 
     // Parse per-stock analysis
     const analyses: Record<string, string> = {};
@@ -498,11 +575,11 @@ RULES:
     }
     // If parsing failed, give full text to first stock
     if (Object.keys(analyses).length === 0 && text.length > 10) {
-      analyses[topStocks[0].symbol] = text.substring(0, 600);
+      analyses[topStocks[0].symbol] = text.substring(0, 800);
     }
     return analyses;
   } catch (e) {
-    console.warn('Gemini 3.5 deep analysis failed:', e);
+    console.warn('Deep analysis engine error:', e);
     return {};
   }
 }

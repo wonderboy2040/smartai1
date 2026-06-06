@@ -10,7 +10,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, TAX_PAIRS } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, NVIDIA_API_KEY, TAX_PAIRS } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchCryptoPricesINR, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
 import { loadPortfolioFromCloud, loadGroqKeyFromCloud, saveGroqKeyToCloud } from './cloud.mjs';
 import {
@@ -121,10 +121,10 @@ app.listen(PORT, () => {
 // ========================================
 console.log('');
 console.log('╔══════════════════════════════════════════════╗');
-console.log('║  🧠 DEEP MIND AI QUANTUM PRO v5.0         ║');
+console.log('║  🧠 DEEP MIND AI QUANTUM PRO v12.0        ║');
 console.log('║  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ║');
 console.log('║  Real-Time Pro Trading Intelligence      ║');
-console.log('║  Groq + Gemini 3.5 + Claude Sonnet 4     ║');
+console.log('║  Nvidia + Groq + Gemini + Claude         ║');
 console.log('║  Live Market Data + Tavily Web Search     ║');
 console.log('╚══════════════════════════════════════════════╝');
 console.log('');

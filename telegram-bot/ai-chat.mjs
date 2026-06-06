@@ -1,8 +1,8 @@
 // ============================================
 // AI CHAT ENGINE v12.0 — Quantum Pro Deep Mind AI
-// Groq + Gemini + Claude + Tavily Real-Time Search
+// Groq + Gemini + Claude + Nvidia DeepSeek + Tavily Real-Time Search
 // ============================================
-import { GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, isGroqAvailable, isGeminiAvailable, isClaudeAvailable, ALPHA_ETFS_IN, ALPHA_ETFS_US } from './config.mjs';
+import { GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, NVIDIA_API_KEY, isGroqAvailable, isGeminiAvailable, isClaudeAvailable, isNvidiaAvailable, ALPHA_ETFS_IN, ALPHA_ETFS_US } from './config.mjs';
 import { fetchMarketIntelligence, fetchForexRate } from './market.mjs';
 import { calculateMetrics, analyzeAsset } from './analysis.mjs';
 
@@ -25,7 +25,8 @@ let intelTimestamp = 0;
 const engineHealth = {
   groq: { failures: 0, lastFailure: 0, cooldownMs: 30000 },
   gemini: { failures: 0, lastFailure: 0, cooldownMs: 30000 },
-  claude: { failures: 0, lastFailure: 0, cooldownMs: 30000 }
+  claude: { failures: 0, lastFailure: 0, cooldownMs: 30000 },
+  nvidia: { failures: 0, lastFailure: 0, cooldownMs: 30000 }
 };
 
 function isEngineCoolingDown(engine) {
@@ -53,6 +54,7 @@ function logAIStatus() {
   console.log(`  ⚡ Groq: ${isGroqAvailable() ? '✓ Active' : '✗ Key Missing/Invalid'}`);
   console.log(`  🔵 Gemini: ${isGeminiAvailable() ? '✓ Active' : '✗ Key Missing/Invalid'}`);
   console.log(`  🟣 Claude: ${isClaudeAvailable() ? '✓ Active' : '✗ Key Missing/Invalid'}`);
+  console.log(`  🧠 Nvidia (DeepSeek V4): ${isNvidiaAvailable() ? '✓ Active' : '✗ Key Missing/Invalid'}`);
 }
 logAIStatus();
 
@@ -333,6 +335,48 @@ async function callClaude(messages, systemPrompt) {
 }
 
 // ============================================
+// NVIDIA API — DeepSeek V4 Pro & Llama 3.3 (Elite Quantum Engine)
+// ============================================
+async function callNvidia(messages, systemPrompt, modelName = 'deepseek-ai/deepseek-v4-pro') {
+  if (!isNvidiaAvailable()) throw new Error('Nvidia key missing or invalid');
+  if (isEngineCoolingDown('nvidia')) throw new Error('Nvidia temporarily cooling down after failures');
+
+  // Format messages for OpenAI compatibility
+  const formattedMessages = [
+    { role: 'system', content: systemPrompt },
+    ...messages.map(m => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: m.content
+    }))
+  ];
+
+  const res = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${NVIDIA_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: modelName,
+      messages: formattedMessages,
+      temperature: 0.7,
+      max_tokens: 3000
+    }),
+    signal: AbortSignal.timeout(45000)
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`Nvidia ${res.status}: ${err.error?.message || res.statusText}`);
+  }
+
+  const data = await res.json();
+  const text = data.choices?.[0]?.message?.content;
+  if (!text || text.trim().length < 5) throw new Error('Nvidia returned empty response');
+  return text;
+}
+
+// ============================================
 // ADVANCED INTENT DETECTION — Smart Model Routing
 // ============================================
 function detectIntent(query) {
@@ -556,16 +600,41 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
   let usedModel = targetModel;
 
   // Build smart fallback chain based on target
-  const modelChain = targetModel === 'gemini'
-    ? ['gemini', 'groq', 'claude']
-    : targetModel === 'claude'
-    ? ['claude', 'gemini', 'groq']
-    : ['groq', 'gemini', 'claude'];
+  let modelChain;
+  if (isNvidiaAvailable()) {
+    // Nvidia is fully working and pro-level. Prioritize it as primary.
+    modelChain = targetModel === 'gemini'
+      ? ['nvidia-flash', 'nvidia-pro', 'gemini', 'groq', 'claude']
+      : targetModel === 'claude'
+      ? ['nvidia-pro', 'nvidia-llama', 'claude', 'gemini', 'groq']
+      : ['nvidia-llama', 'nvidia-pro', 'groq', 'gemini', 'claude'];
+  } else {
+    modelChain = targetModel === 'gemini'
+      ? ['gemini', 'groq', 'claude']
+      : targetModel === 'claude'
+      ? ['claude', 'gemini', 'groq']
+      : ['groq', 'gemini', 'claude'];
+  }
 
   // Try each model in chain with retry
   for (const model of modelChain) {
     try {
-      if (model === 'groq' && isGroqAvailable()) {
+      if (model.startsWith('nvidia')) {
+        let nModel = 'deepseek-ai/deepseek-v4-pro';
+        let nLabel = 'DeepSeek V4 Pro';
+        if (model === 'nvidia-flash') {
+          nModel = 'deepseek-ai/deepseek-v4-flash';
+          nLabel = 'DeepSeek V4 Flash';
+        } else if (model === 'nvidia-llama') {
+          nModel = 'meta/llama-3.3-70b-instruct';
+          nLabel = 'Llama 3.3 Pro';
+        }
+        console.log(`  🧠 Trying Nvidia (${nLabel})...`);
+        aiText = await retryWithBackoff(() => callNvidia(recentHistory, systemPrompt, nModel), 1, 1000);
+        usedModel = model;
+        recordEngineSuccess('nvidia');
+        break;
+      } else if (model === 'groq' && isGroqAvailable()) {
         console.log(`  ⚡ Trying Groq...`);
         aiText = await retryWithBackoff(() => callGroq(recentHistory, systemPrompt), 1, 800);
         usedModel = 'groq';
@@ -588,7 +657,8 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
       }
     } catch (e) {
       console.warn(`  ❌ ${model} FAILED:`, e.message);
-      recordEngineFailure(model);
+      if (model.startsWith('nvidia')) recordEngineFailure('nvidia');
+      else recordEngineFailure(model);
       continue;
     }
   }
@@ -596,6 +666,7 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
   if (!aiText) {
     // All engines failed — provide diagnostic message
     const available = [];
+    if (isNvidiaAvailable()) available.push('Nvidia (DeepSeek V4)');
     if (isGroqAvailable()) available.push('Groq');
     if (isGeminiAvailable()) available.push('Gemini');
     if (isClaudeAvailable()) available.push('Claude');
@@ -603,6 +674,7 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
     if (available.length === 0) {
       aiText = '🤖 Bhai, koi bhi AI engine configured nahi hai!\n\n' +
         '🔑 Required API keys:\n' +
+        '• VITE_NVIDIA_API_KEY (get from build.nvidia.com)\n' +
         '• GROQ_KEY (get from console.groq.com)\n' +
         '• GEMINI_API_KEY (get from aistudio.google.com/apikey)\n' +
         '• CLAUDE_API_KEY (get from console.anthropic.com)\n\n' +
@@ -640,8 +712,27 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
   }
 
   // Add model indicator
-  const modelEmoji = usedModel === 'groq' ? '⚡' : usedModel === 'gemini' ? '🔵' : usedModel === 'claude' ? '🟣' : '🤖';
-  const modelLabel = usedModel === 'groq' ? 'Groq' : usedModel === 'gemini' ? 'Gemini 3.5' : usedModel === 'claude' ? 'Claude Sonnet 4' : 'System';
+  let modelEmoji = '🤖';
+  let modelLabel = 'System';
+  if (usedModel === 'groq') {
+    modelEmoji = '⚡';
+    modelLabel = 'Groq';
+  } else if (usedModel === 'gemini') {
+    modelEmoji = '🔵';
+    modelLabel = 'Gemini 3.5';
+  } else if (usedModel === 'claude') {
+    modelEmoji = '🟣';
+    modelLabel = 'Claude Sonnet 4';
+  } else if (usedModel === 'nvidia-pro') {
+    modelEmoji = '🧠';
+    modelLabel = 'Nvidia DeepSeek V4 Pro';
+  } else if (usedModel === 'nvidia-flash') {
+    modelEmoji = '⚡';
+    modelLabel = 'Nvidia DeepSeek V4 Flash';
+  } else if (usedModel === 'nvidia-llama') {
+    modelEmoji = '🦁';
+    modelLabel = 'Nvidia Llama 3.3 Pro';
+  }
 
   return `${modelEmoji} <i>${modelLabel} | ${intent} | LIVE</i>\n\n${safeText}`;
 }
@@ -654,6 +745,7 @@ export function clearChatHistory(chatId) {
 // Health check export
 export function getAIHealthStatus() {
   return {
+    nvidia: { available: isNvidiaAvailable(), health: engineHealth.nvidia },
     groq: { available: isGroqAvailable(), health: engineHealth.groq },
     gemini: { available: isGeminiAvailable(), health: engineHealth.gemini },
     claude: { available: isClaudeAvailable(), health: engineHealth.claude }

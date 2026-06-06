@@ -134,7 +134,7 @@ export default React.memo(function DeepScanTab() {
             <span className="text-[11px] text-slate-500 font-mono">
               {isScanning ? 'SCANNING...' : `Last: ${lastScan || '--'}`}
             </span>
-            {geminiLoading && <span className="text-[10px] text-blue-400 animate-pulse">🔵 Gemini 3.5 Analyzing...</span>}
+            {geminiLoading && <span className="text-[10px] text-cyan-400 animate-pulse">🧠 DeepMind Quantum Pro AI Analyzing...</span>}
           </div>
         </div>
         <div className="flex gap-2">
@@ -322,11 +322,11 @@ export default React.memo(function DeepScanTab() {
                   <div className="text-xs text-slate-300">{s.aiReasoning}</div>
                 </div>
 
-                {/* Gemini 3.5 Flash Analysis */}
+                {/* Upgraded Quantum Pro Deep Analysis */}
                 {s.geminiAnalysis && (
-                  <div className="bg-blue-500/5 rounded-xl p-3 border border-blue-500/20">
-                    <div className="text-[10px] text-blue-400 font-bold uppercase mb-1">🔵 Gemini 3.5 Flash Deep Analysis</div>
-                    <div className="text-xs text-blue-200 whitespace-pre-line">{s.geminiAnalysis}</div>
+                  <div className="bg-cyan-500/5 rounded-xl p-3 border border-cyan-500/20">
+                    <div className="text-[10px] text-cyan-400 font-bold uppercase mb-1">🧠 DeepMind Quantum Pro AI Analysis</div>
+                    <div className="text-xs text-cyan-200 whitespace-pre-line">{s.geminiAnalysis}</div>
                   </div>
                 )}
               </div>
@@ -361,7 +361,7 @@ export default React.memo(function DeepScanTab() {
           <span>🔥 ADX Trend Strength Meter</span>
         </div>
         <div className="mt-2 text-[9px] text-slate-600 font-mono">
-          Powered by TradingView Scanner + Gemini 3.5 Flash | Auto-refresh: 5min | Telegram Alerts: 2hr Intervals
+          Powered by TradingView Scanner + DeepMind Nvidia DeepSeek V4 | Auto-refresh: 5min | Telegram Alerts: 2hr Intervals
         </div>
       </div>
     </div>

@@ -29,17 +29,20 @@ if (foundKeys.length > 0) {
 export let GROQ_KEY = env.GROQ_KEY || env.GroqKey || env.VITE_GROQ_API_KEY || "";
 export let GEMINI_API_KEY = env.GEMINI_API_KEY || env.GeminiAPIKEY || env.GEMINI_KEY || env.VITE_GEMINI_API_KEY || "";
 export let CLAUDE_API_KEY = env.CLAUDE_API_KEY || env.ClaudeAPIKEY || env.CLAUDE_KEY || env.VITE_CLAUDE_API_KEY || "";
+export let NVIDIA_API_KEY = env.NVIDIA_API_KEY || env.NvidiaAPIKEY || env.VITE_NVIDIA_API_KEY || "";
 
 // Clean keys (remove accidentally pasted quotes or spaces)
 if (GROQ_KEY) GROQ_KEY = GROQ_KEY.replace(/['"]/g, '').trim();
 if (GEMINI_API_KEY) GEMINI_API_KEY = GEMINI_API_KEY.replace(/['"]/g, '').trim();
 if (CLAUDE_API_KEY) CLAUDE_API_KEY = CLAUDE_API_KEY.replace(/['"]/g, '').trim();
+if (NVIDIA_API_KEY) NVIDIA_API_KEY = NVIDIA_API_KEY.replace(/['"]/g, '').trim();
 
 // Validate API keys at startup
 const missingKeys = [];
 if (!GROQ_KEY || !GROQ_KEY.startsWith('gsk_')) missingKeys.push('GROQ_KEY');
 if (!GEMINI_API_KEY || GEMINI_API_KEY.length < 10) missingKeys.push('GEMINI_API_KEY');
 if (!CLAUDE_API_KEY || CLAUDE_API_KEY.length < 10) missingKeys.push('CLAUDE_API_KEY');
+if (!NVIDIA_API_KEY || !NVIDIA_API_KEY.startsWith('nvapi-')) missingKeys.push('NVIDIA_API_KEY');
 
 if (missingKeys.length > 0) {
   console.warn('⚠️  WARNING: Some AI keys are missing or invalid:');
@@ -57,15 +60,19 @@ if (GEMINI_API_KEY && GEMINI_API_KEY.length > 10) console.log(`  🔵 Gemini: �
 else console.log('  🔵 Gemini: ✗ Missing');
 if (CLAUDE_API_KEY && CLAUDE_API_KEY.length > 10) console.log(`  🟣 Claude: ✓ Valid (${CLAUDE_API_KEY.substring(0, 8)}...)`);
 else console.log('  🟣 Claude: ✗ Missing');
+if (NVIDIA_API_KEY && NVIDIA_API_KEY.startsWith('nvapi-')) console.log(`  🧠 Nvidia (DeepSeek V4): ✓ Valid (${NVIDIA_API_KEY.substring(0, 10)}...)`);
+else console.log('  🧠 Nvidia: ✗ Missing');
 
 export function setGroqKey(key) { GROQ_KEY = key; }
 export function setGeminiKey(key) { GEMINI_API_KEY = key; }
 export function setClaudeKey(key) { CLAUDE_API_KEY = key; }
+export function setNvidiaKey(key) { NVIDIA_API_KEY = key; }
 
 // Dynamic key validation helpers (called at runtime, not module load)
 export function isGroqAvailable() { return !!(GROQ_KEY && GROQ_KEY.startsWith('gsk_')); }
 export function isGeminiAvailable() { return !!(GEMINI_API_KEY && GEMINI_API_KEY.length > 10); }
 export function isClaudeAvailable() { return !!(CLAUDE_API_KEY && CLAUDE_API_KEY.length > 10); }
+export function isNvidiaAvailable() { return !!(NVIDIA_API_KEY && NVIDIA_API_KEY.startsWith('nvapi-')); }
 
 // SIP Defaults
 export const DEFAULT_INDIA_SIP = 10000;
