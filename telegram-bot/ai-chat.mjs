@@ -602,12 +602,11 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
   // Build smart fallback chain based on target
   let modelChain;
   if (isNvidiaAvailable()) {
-    // Nvidia is fully working and pro-level. Prioritize it as primary.
     modelChain = targetModel === 'gemini'
-      ? ['nvidia-flash', 'nvidia-pro', 'gemini', 'groq', 'claude']
+      ? ['gemini', 'nvidia-flash', 'nvidia-pro', 'groq', 'claude']
       : targetModel === 'claude'
-      ? ['nvidia-pro', 'nvidia-llama', 'claude', 'gemini', 'groq']
-      : ['nvidia-llama', 'nvidia-pro', 'groq', 'gemini', 'claude'];
+      ? ['claude', 'nvidia-pro', 'nvidia-llama', 'gemini', 'groq']
+      : ['groq', 'nvidia-llama', 'nvidia-pro', 'gemini', 'claude'];
   } else {
     modelChain = targetModel === 'gemini'
       ? ['gemini', 'groq', 'claude']

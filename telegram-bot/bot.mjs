@@ -742,8 +742,8 @@ bot.onText(/^\/health(@\w+)?$/i, async (msg) => {
     }
 
     // VIX penalty
-    const vixUS = livePrices['VIX']?.price || 0;
-    const vixIN = livePrices['INDIAVIX']?.price || 0;
+    const vixUS = livePrices['US_VIX']?.price || 0;
+    const vixIN = livePrices['IN_INDIAVIX']?.price || 0;
     const avgVix = (vixUS + vixIN) / 2;
     if (avgVix > 30) { score -= 25; warnings.push(`VIX spike: ${avgVix.toFixed(1)}`); }
     else if (avgVix > 22) { score -= 15; warnings.push(`VIX elevated: ${avgVix.toFixed(1)}`); }
@@ -782,8 +782,8 @@ bot.onText(/^\/regime(@\w+)?$/i, async (msg) => {
   try {
     await Promise.all([refreshPrices(), refreshIntel()]);
 
-    const vixUS = livePrices['VIX']?.price || 18;
-    const vixIN = livePrices['INDIAVIX']?.price || 15;
+    const vixUS = livePrices['US_VIX']?.price || 18;
+    const vixIN = livePrices['IN_INDIAVIX']?.price || 15;
     const avgVix = (vixUS + vixIN) / 2;
 
     let bondYields;
@@ -842,8 +842,8 @@ bot.onText(/^\/smartmoney(@\w+)?$/i, async (msg) => {
   try {
     await refreshPrices();
 
-    const vixUS = livePrices['VIX']?.price || 18;
-    const vixIN = livePrices['INDIAVIX']?.price || 15;
+    const vixUS = livePrices['US_VIX']?.price || 18;
+    const vixIN = livePrices['IN_INDIAVIX']?.price || 15;
     const avgVix = (vixUS + vixIN) / 2;
     const niftyChange = livePrices['NSE:NIFTY']?.change || 0;
     const marketSentiment = niftyChange - (avgVix - 18) * 0.3;
@@ -1640,8 +1640,8 @@ cron.schedule('30 2 * * *', async () => {
     if (pd.rsi > 75) { score -= 5; warnings.push(`${pos.symbol}: RSI ${pd.rsi.toFixed(0)} overbought`); }
   }
 
-  const vixUS = livePrices['VIX']?.price || 0;
-  const vixIN = livePrices['INDIAVIX']?.price || 0;
+  const vixUS = livePrices['US_VIX']?.price || 0;
+  const vixIN = livePrices['IN_INDIAVIX']?.price || 0;
   const avgVix = (vixUS + vixIN) / 2;
   if (avgVix > 30) { score -= 25; warnings.push(`VIX spike: ${avgVix.toFixed(1)}`); }
   else if (avgVix > 22) { score -= 15; warnings.push(`VIX elevated: ${avgVix.toFixed(1)}`); }

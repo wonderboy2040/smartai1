@@ -542,25 +542,23 @@ ${portfolioCtx}`;
       chain = ['nvidia-flash', 'nvidia-pro', 'nvidia-llama', 'gemini', 'groq', 'claude'];
     } else if (model === 'nvidia-llama') {
       chain = ['nvidia-llama', 'nvidia-pro', 'nvidia-flash', 'groq', 'gemini', 'claude'];
+    } else if (model === 'gemini') {
+      chain = hasNvidia
+        ? ['gemini', 'nvidia-flash', 'nvidia-pro', 'groq', 'claude']
+        : ['gemini', 'groq', 'claude'];
+    } else if (model === 'claude') {
+      chain = hasNvidia
+        ? ['claude', 'nvidia-pro', 'nvidia-llama', 'gemini', 'groq']
+        : ['claude', 'gemini', 'groq'];
+    } else if (model === 'groq') {
+      chain = hasNvidia
+        ? ['groq', 'nvidia-llama', 'nvidia-pro', 'gemini', 'claude']
+        : ['groq', 'gemini', 'claude'];
     } else {
-      if (hasNvidia) {
-        if (model === 'gemini') {
-          chain = ['nvidia-flash', 'nvidia-pro', 'gemini', 'groq', 'claude'];
-        } else if (model === 'claude') {
-          chain = ['nvidia-pro', 'nvidia-llama', 'claude', 'gemini', 'groq'];
-        } else {
-          // groq or auto
-          chain = ['nvidia-llama', 'nvidia-pro', 'groq', 'gemini', 'claude'];
-        }
-      } else {
-        if (model === 'gemini') {
-          chain = ['gemini', 'groq', 'claude'];
-        } else if (model === 'claude') {
-          chain = ['claude', 'gemini', 'groq'];
-        } else {
-          chain = ['groq', 'gemini', 'claude'];
-        }
-      }
+      // auto
+      chain = hasNvidia
+        ? ['nvidia-llama', 'nvidia-pro', 'groq', 'gemini', 'claude']
+        : ['groq', 'gemini', 'claude'];
     }
 
     const callers: Record<Engine, (msgs: any[], sp: string) => Promise<string>> = {
