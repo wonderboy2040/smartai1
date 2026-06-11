@@ -105,7 +105,12 @@ const distPath = path.join(__dirname, '../dist');
 app.use(express.static(distPath));
 
 // Fallback to React Router or ping message
+// IMPORTANT: never fall back to index.html for asset requests — serving HTML for a
+// missing /assets/*.js chunk causes "Failed to fetch dynamically imported module".
 app.use((req, res) => {
+  if (req.path.startsWith('/assets/') || /\.(js|mjs|css|map|ico|svg|png|jpg|jpeg|webp|woff2?)$/i.test(req.path)) {
+    return res.status(404).send('Not found');
+  }
   res.sendFile(path.join(distPath, 'index.html'), (err) => {
     if (err) {
       res.send('Deep Mind AI Telegram Bot is ALIVE and RUNNING! 🚀 (Frontend not built)');

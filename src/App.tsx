@@ -6,16 +6,34 @@ import { AppContext } from './hooks/AppContext';
 import { PortfolioHealthMonitor } from './components/PortfolioHealthMonitor';
 import { Clock } from './components/Clock';
 
+// Lazy load with auto-recovery: after a fresh deploy the cached index.html can
+// reference old hashed chunks that no longer exist ("Failed to fetch dynamically
+// imported module"). On first failure we force one full reload to pick up the new
+// build; if it fails again, the error surfaces normally to the ErrorBoundary.
+function lazyWithRetry(importFn: () => Promise<any>, name: string) {
+  return lazy(() =>
+    importFn().catch((err: unknown) => {
+      const key = `chunk_reload_${name}`;
+      if (!sessionStorage.getItem(key)) {
+        sessionStorage.setItem(key, '1');
+        window.location.reload();
+        return new Promise<never>(() => {}); // suspend while the page reloads
+      }
+      sessionStorage.removeItem(key);
+      throw err;
+    })
+  );
+}
+
 // Lazy load all tab components for faster initial load
-const DashboardTab = lazy(() => import('./components/tabs/DashboardTab'));
-const PortfolioTab = lazy(() => import('./components/tabs/PortfolioTab'));
-const PlannerTab = lazy(() => import('./components/tabs/PlannerTab'));
-const MacroTab = lazy(() => import('./components/tabs/MacroTab').then(m => ({ default: m.MacroTab })));
-const GuideTab = lazy(() => import('./components/tabs/GuideTab').then(m => ({ default: m.GuideTab })));
-const DeepScanTab = lazy(() => import('./components/tabs/DeepScanTab'));
+const DashboardTab = lazyWithRetry(() => import('./components/tabs/DashboardTab'), 'dashboard');
+const PortfolioTab = lazyWithRetry(() => import('./components/tabs/PortfolioTab'), 'portfolio');
+const PlannerTab = lazyWithRetry(() => import('./components/tabs/PlannerTab'), 'planner');
+const MacroTab = lazyWithRetry(() => import('./components/tabs/MacroTab').then(m => ({ default: m.MacroTab })), 'macro');
+const GuideTab = lazyWithRetry(() => import('./components/tabs/GuideTab').then(m => ({ default: m.GuideTab })), 'guide');
+const DeepScanTab = lazyWithRetry(() => import('./components/tabs/DeepScanTab'), 'deepscan');
 
-
-const NeuralChat = lazy(() => import('./components/NeuralChat').then(m => ({ default: m.NeuralChat })));
+const NeuralChat = lazyWithRetry(() => import('./components/NeuralChat').then(m => ({ default: m.NeuralChat })), 'neuralchat');
 
 export default function App() {
   const state = useAppState();
