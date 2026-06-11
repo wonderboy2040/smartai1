@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles } from 'lucide-react';
+import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 // AI Engine Configurations — Nvidia DeepSeek V4 + Groq + Gemini 3.5 Flash + Claude Sonnet 4 (Pro Quantum)
@@ -32,8 +32,8 @@ const CONFIG = {
 
 const TAVILY_KEY = import.meta.env.VITE_TAVILY_API_KEY || '';
 
-const isNvidiaAvailable = () => {
-  const k = import.meta.env.VITE_NVIDIA_API_KEY || CONFIG.nvidia.apiKey;
+const isNvidiaAvailable = (nvidiaKey?: string) => {
+  const k = nvidiaKey || import.meta.env.VITE_NVIDIA_API_KEY || CONFIG.nvidia.apiKey;
   return !!(k && k.startsWith('nvapi-'));
 };
 
@@ -111,8 +111,9 @@ async function fetchRealtimeSnapshot(): Promise<string> {
 }
 
 // Tavily web search for live news
-async function fetchWebIntel(query: string): Promise<string> {
-  if (!TAVILY_KEY) return '';
+async function fetchWebIntel(query: string, tavilyKey: string): Promise<string> {
+  const apiKey = tavilyKey || import.meta.env.VITE_TAVILY_API_KEY || '';
+  if (!apiKey) return '';
   try {
     const res = await fetch('https://api.tavily.com/search', {
       method: 'POST',
@@ -159,11 +160,27 @@ const MODEL_COLORS = {
 
 export interface NeuralChatProps {
   groqKey?: string;
+  aiKeys?: {
+    groqKey: string;
+    geminiKey: string;
+    claudeKey: string;
+    nvidiaKey: string;
+    tavilyKey: string;
+    tgToken: string;
+    tgChatId: string;
+  };
+  updateAiKeys?: (keys: Partial<NonNullable<NeuralChatProps['aiKeys']>>) => void;
   portfolioContext: string;
   usdInrRate?: number;
 }
 
-export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, usdInrRate: propUsdInrRate }: NeuralChatProps) => {
+export const NeuralChat = React.memo(({
+  groqKey: propGroqKey,
+  aiKeys,
+  updateAiKeys,
+  portfolioContext,
+  usdInrRate: propUsdInrRate
+}: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
     text: '🤖 **DEEP MIND AI QUANTUM PRO v12.0**\n\n**⚡ Active Pro AI Engines:**\n🧠 **Nvidia DeepSeek V4 Pro**: Advanced pro-level reasoning & technical analysis\n🦁 **Nvidia Llama 3.3 Pro**: High-fidelity live trading assistant\n⚡ **Groq Llama-3.3**: Ultra-fast responses\n🔵 **Google Gemini 3.5**: Grounded market intelligence\n🟣 **Claude Sonnet 4**: Institutional portfolio strategies\n🔍 **Tavily Search**: Live market news & web data\n\n**📊 Real-Time Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n• Crypto (BTC/ETH), VIX, Gold tracking\n\nAsk anything — I have LIVE market data!',
@@ -176,6 +193,39 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
   const [showChat, setShowChat] = useState(false);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [selectedModel, setSelectedModel] = useState<'auto' | 'nvidia-pro' | 'nvidia-llama' | 'groq' | 'gemini' | 'claude'>('auto');
+  const [showSettings, setShowSettings] = useState(false);
+  const [keysForm, setKeysForm] = useState({
+    groqKey: '',
+    geminiKey: '',
+    claudeKey: '',
+    nvidiaKey: '',
+    tavilyKey: '',
+    tgToken: '',
+    tgChatId: ''
+  });
+
+  // Sync keys from prop into state when settings is opened
+  useEffect(() => {
+    if (aiKeys) {
+      setKeysForm({
+        groqKey: aiKeys.groqKey || '',
+        geminiKey: aiKeys.geminiKey || '',
+        claudeKey: aiKeys.claudeKey || '',
+        nvidiaKey: aiKeys.nvidiaKey || '',
+        tavilyKey: aiKeys.tavilyKey || '',
+        tgToken: aiKeys.tgToken || '',
+        tgChatId: aiKeys.tgChatId || ''
+      });
+    }
+  }, [aiKeys, showSettings]);
+
+  const handleSaveKeys = () => {
+    if (updateAiKeys) {
+      updateAiKeys(keysForm);
+    }
+    setShowSettings(false);
+  };
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
@@ -215,8 +265,8 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
   // ============ GROQ API (Ultra-Fast) ============
   const callGroq = async (messages: any[], systemPrompt: string) => {
     const envKey = import.meta.env.VITE_GROQ_API_KEY;
-    const apiKey = envKey || propGroqKey || CONFIG.groq.apiKey;
-    if (!apiKey || !apiKey.startsWith('gsk_')) {
+    const apiKey = aiKeys?.groqKey || envKey || propGroqKey || CONFIG.groq.apiKey;
+    if (!apiKey || apiKey.length < 10) {
       throw new Error('Groq API Key missing — Settings me set karo');
     }
 
@@ -257,7 +307,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
 
   // ============ GEMINI API (Real-time Intelligence) ============
   const callGemini = async (messages: any[], systemPrompt: string) => {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || CONFIG.gemini.apiKey;
+    const apiKey = aiKeys?.geminiKey || import.meta.env.VITE_GEMINI_API_KEY || CONFIG.gemini.apiKey;
     if (!apiKey || apiKey.length < 10) {
       throw new Error('Gemini API Key missing — Settings me set karo');
     }
@@ -267,7 +317,6 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
     contents.push({ role: 'user', parts: [{ text: systemPrompt }] });
     contents.push({ role: 'model', parts: [{ text: 'Understood. DEEP MIND AI Pro Trader active. Ready for analysis in Pro Trader Hinglish.' }] });
 
-    // Ensure strict alternation — merge consecutive same-role messages
     let lastRole = 'model';
     for (const m of messages) {
       const gemRole = m.role === 'assistant' ? 'model' : 'user';
@@ -278,60 +327,77 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
         lastRole = gemRole;
       }
     }
-    // Gemini requires last message to be 'user'
     if (lastRole === 'model' && contents.length > 2) {
       contents.push({ role: 'user', parts: [{ text: 'Please respond.' }] });
     }
 
-    const payload = {
-      contents,
-      generationConfig: { temperature: 0.7, maxOutputTokens: 8192, topP: 0.95, topK: 40 },
-      safetySettings: [
-        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
-        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
-        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
-      ]
-    };
-    const targetUrl = `${CONFIG.gemini.baseUrl}/${CONFIG.gemini.model}:generateContent?key=${apiKey}`;
+    const modelOptions = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    let lastError: any = null;
 
-    let res;
-    try {
-      res = await fetch(targetUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(30000)
-      });
-    } catch (e) {
-      console.warn('Gemini direct call failed (CORS/network). Retrying via proxy...', e);
-      res = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(30000)
-      });
+    for (const modelName of modelOptions) {
+      const payload = {
+        contents,
+        generationConfig: { temperature: 0.7, maxOutputTokens: 8192, topP: 0.95, topK: 40 },
+        safetySettings: [
+          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
+          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
+        ]
+      };
+      const targetUrl = `${CONFIG.gemini.baseUrl}/${modelName}:generateContent?key=${apiKey}`;
+
+      let res;
+      try {
+        res = await fetch(targetUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(20000)
+        });
+      } catch (e) {
+        console.warn(`Gemini direct call for ${modelName} failed. Trying proxy...`, e);
+        try {
+          res = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(20000)
+          });
+        } catch (proxyErr) {
+          lastError = proxyErr;
+          continue;
+        }
+      }
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const errMsg = err.error?.message || `Status: ${res.status}`;
+        console.warn(`Gemini model ${modelName} error: ${errMsg}`);
+        lastError = new Error(errMsg);
+        if (res.status === 404 || res.status === 400) {
+          continue;
+        }
+        throw lastError;
+      }
+
+      const data = await res.json();
+      if (data.candidates?.[0]?.finishReason === 'SAFETY') throw new Error('Gemini blocked by safety filters');
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text || text.trim().length < 5) throw new Error('Gemini returned empty response');
+      return text;
     }
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Gemini Error: ${res.status}`);
-    }
-    const data = await res.json();
-    if (data.candidates?.[0]?.finishReason === 'SAFETY') throw new Error('Gemini blocked by safety filters');
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text || text.trim().length < 5) throw new Error('Gemini returned empty response');
-    return text;
+    throw lastError || new Error('All Gemini model fallbacks failed');
   };
 
   // ============ CLAUDE API (Deep Analysis) ============
   const callClaude = async (messages: any[], systemPrompt: string) => {
-    const apiKey = import.meta.env.VITE_CLAUDE_API_KEY || CONFIG.claude.apiKey;
+    const apiKey = aiKeys?.claudeKey || import.meta.env.VITE_CLAUDE_API_KEY || CONFIG.claude.apiKey;
     if (!apiKey || apiKey.length < 10) {
       throw new Error('Claude API Key missing');
     }
 
-    // Ensure messages alternate user/assistant and start with user
     const fixed: Array<{ role: string; content: string }> = [];
     let expectedRole = 'user';
     for (const m of messages) {
@@ -349,55 +415,74 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
       fixed.unshift({ role: 'user', content: 'Hello' });
     }
 
-    const payload = {
-      model: CONFIG.claude.model,
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages: fixed
-    };
+    const modelOptions = ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-latest'];
+    let lastError: any = null;
 
-    let res;
-    try {
-      res = await fetch(CONFIG.claude.baseUrl, {
-        method: 'POST',
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(45000)
-      });
-    } catch (e) {
-      console.warn('Claude direct call failed (CORS/network). Retrying via proxy...', e);
-      res = await fetch(`https://corsproxy.io/?${encodeURIComponent(CONFIG.claude.baseUrl)}`, {
-        method: 'POST',
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(45000)
-      });
+    for (const modelName of modelOptions) {
+      const payload = {
+        model: modelName,
+        max_tokens: 4096,
+        system: systemPrompt,
+        messages: fixed
+      };
+
+      let res;
+      try {
+        res = await fetch(CONFIG.claude.baseUrl, {
+          method: 'POST',
+          headers: {
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(30000)
+        });
+      } catch (e) {
+        console.warn(`Claude direct call for ${modelName} failed. Trying proxy...`, e);
+        try {
+          res = await fetch(`https://corsproxy.io/?${encodeURIComponent(CONFIG.claude.baseUrl)}`, {
+            method: 'POST',
+            headers: {
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01',
+              'anthropic-dangerous-direct-browser-access': 'true',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(30000)
+          });
+        } catch (proxyErr) {
+          lastError = proxyErr;
+          continue;
+        }
+      }
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const errMsg = err.error?.message || `Status: ${res.status}`;
+        console.warn(`Claude model ${modelName} error: ${errMsg}`);
+        lastError = new Error(errMsg);
+        if (res.status === 404 || res.status === 400) {
+          continue;
+        }
+        throw lastError;
+      }
+
+      const data = await res.json();
+      const text = data.content?.[0]?.text;
+      if (!text || text.trim().length < 5) throw new Error('Claude returned empty response');
+      return text;
     }
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Claude Error: ${res.status}`);
-    }
-    const data = await res.json();
-    const text = data.content?.[0]?.text;
-    if (!text || text.trim().length < 5) throw new Error('Claude returned empty response');
-    return text;
+    throw lastError || new Error('All Claude model fallbacks failed');
   };
 
   // ============ NVIDIA API (DeepSeek V4 & Llama 3.3) ============
   const callNvidia = async (messages: any[], systemPrompt: string, modelName: string) => {
-    const apiKey = import.meta.env.VITE_NVIDIA_API_KEY || CONFIG.nvidia.apiKey;
-    if (!apiKey || !apiKey.startsWith('nvapi-')) {
+    const apiKey = aiKeys?.nvidiaKey || import.meta.env.VITE_NVIDIA_API_KEY || CONFIG.nvidia.apiKey;
+    if (!apiKey || apiKey.length < 10) {
       throw new Error('Nvidia API Key missing — VITE_NVIDIA_API_KEY set karo');
     }
 
@@ -454,7 +539,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
 
     const results = await Promise.allSettled([
       fetchRealtimeSnapshot(),
-      isNewsQuery ? fetchWebIntel(userMessage) : Promise.resolve('')
+      isNewsQuery ? fetchWebIntel(userMessage, aiKeys?.tavilyKey || '') : Promise.resolve('')
     ]);
 
     const marketData = results[0].status === 'fulfilled' ? results[0].value : '';
@@ -535,7 +620,7 @@ ${portfolioCtx}`;
     type Engine = 'nvidia-pro' | 'nvidia-flash' | 'nvidia-llama' | 'groq' | 'gemini' | 'claude';
     let chain: Engine[] = [];
 
-    const hasNvidia = isNvidiaAvailable();
+    const hasNvidia = isNvidiaAvailable(aiKeys?.nvidiaKey);
 
     if (model === 'nvidia-pro') {
       chain = ['nvidia-pro'];
@@ -664,7 +749,8 @@ ${portfolioCtx}`;
                 </div>
               </div>
               <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
-                <button onClick={clearChat} className="text-slate-500 hover:text-red-400 bg-white/5 rounded-full p-1.5 transition-colors"><Trash2 size={14} /></button>
+                <button onClick={() => setShowSettings(!showSettings)} className={`rounded-full p-1.5 transition-colors ${showSettings ? 'text-cyan-400 bg-cyan-500/10' : 'text-slate-500 hover:text-cyan-400 bg-white/5'}`} title="API Key Settings"><Settings size={14} /></button>
+                <button onClick={clearChat} className="text-slate-500 hover:text-red-400 bg-white/5 rounded-full p-1.5 transition-colors" title="Clear Chat"><Trash2 size={14} /></button>
                 <button onClick={() => setShowChat(false)} className="text-slate-400 hover:text-white bg-white/5 rounded-full p-1.5 transition-colors"><X size={16} /></button>
               </div>
             </div>
@@ -690,8 +776,109 @@ ${portfolioCtx}`;
               ))}
             </div>
 
-            {/* Messages */}
-            <div ref={chatContainerRef} className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide">
+            {/* Settings Form or Messages */}
+            {showSettings ? (
+              <div className="relative flex-1 overflow-y-auto p-4 space-y-4 bg-slate-950/95 z-20 scrollbar-hide">
+                <div className="border-b border-cyan-500/20 pb-2">
+                  <h4 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5 text-cyan-400">
+                    <Settings size={14} /> API & Sync Configuration
+                  </h4>
+                  <p className="text-[10px] text-slate-400 mt-1">Configure your API keys. Settings automatically sync to Google Sheets and the Telegram Bot.</p>
+                </div>
+                
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <label className="text-slate-400 font-bold block mb-1">Groq API Key</label>
+                    <input
+                      type="password"
+                      value={keysForm.groqKey}
+                      onChange={(e) => setKeysForm({ ...keysForm, groqKey: e.target.value })}
+                      placeholder="gsk-..."
+                      className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-white focus:border-cyan-500 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-slate-400 font-bold block mb-1">Gemini API Key</label>
+                    <input
+                      type="password"
+                      value={keysForm.geminiKey}
+                      onChange={(e) => setKeysForm({ ...keysForm, geminiKey: e.target.value })}
+                      placeholder="AIzaSy..."
+                      className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-white focus:border-cyan-500 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-slate-400 font-bold block mb-1">Claude API Key</label>
+                    <input
+                      type="password"
+                      value={keysForm.claudeKey}
+                      onChange={(e) => setKeysForm({ ...keysForm, claudeKey: e.target.value })}
+                      placeholder="sk-ant-..."
+                      className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-white focus:border-cyan-500 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-slate-400 font-bold block mb-1">Nvidia API Key</label>
+                    <input
+                      type="password"
+                      value={keysForm.nvidiaKey}
+                      onChange={(e) => setKeysForm({ ...keysForm, nvidiaKey: e.target.value })}
+                      placeholder="nvapi-..."
+                      className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-white focus:border-cyan-500 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-slate-400 font-bold block mb-1">Tavily API Key (Search)</label>
+                    <input
+                      type="password"
+                      value={keysForm.tavilyKey}
+                      onChange={(e) => setKeysForm({ ...keysForm, tavilyKey: e.target.value })}
+                      placeholder="tvly-..."
+                      className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-white focus:border-cyan-500 outline-none"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-slate-400 font-bold block mb-1">Telegram Bot Token</label>
+                      <input
+                        type="password"
+                        value={keysForm.tgToken}
+                        onChange={(e) => setKeysForm({ ...keysForm, tgToken: e.target.value })}
+                        placeholder="Token"
+                        className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-white focus:border-cyan-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 font-bold block mb-1">Telegram Chat ID</label>
+                      <input
+                        type="text"
+                        value={keysForm.tgChatId}
+                        onChange={(e) => setKeysForm({ ...keysForm, tgChatId: e.target.value })}
+                        placeholder="Chat ID"
+                        className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-white focus:border-cyan-500 outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-2 flex gap-3">
+                  <button
+                    onClick={handleSaveKeys}
+                    className="flex-1 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-lg py-2 font-bold text-xs uppercase tracking-wider transition-all"
+                  >
+                    💾 Save & Sync
+                  </button>
+                  <button
+                    onClick={() => setShowSettings(false)}
+                    className="px-4 bg-slate-850 hover:bg-slate-800 text-slate-300 rounded-lg py-2 font-bold text-xs uppercase transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div ref={chatContainerRef} className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide">
               {chatMessages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
                   <div className={`max-w-[85%] sm:max-w-[90%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
@@ -806,6 +993,8 @@ ${portfolioCtx}`;
                 </span>
               </div>
             </div>
+              </>
+            )}
           </motion.div>
         )}
       </AnimatePresence>

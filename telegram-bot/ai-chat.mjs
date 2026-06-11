@@ -2,12 +2,13 @@
 // AI CHAT ENGINE v12.0 — Quantum Pro Deep Mind AI
 // Groq + Gemini + Claude + Nvidia DeepSeek + Tavily Real-Time Search
 // ============================================
-import { GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, NVIDIA_API_KEY, isGroqAvailable, isGeminiAvailable, isClaudeAvailable, isNvidiaAvailable, ALPHA_ETFS_IN, ALPHA_ETFS_US } from './config.mjs';
+import { 
+  GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, NVIDIA_API_KEY, TAVILY_API_KEY,
+  isGroqAvailable, isGeminiAvailable, isClaudeAvailable, isNvidiaAvailable, isTavilyAvailable,
+  ALPHA_ETFS_IN, ALPHA_ETFS_US 
+} from './config.mjs';
 import { fetchMarketIntelligence, fetchForexRate } from './market.mjs';
 import { calculateMetrics, analyzeAsset } from './analysis.mjs';
-
-// Tavily API for real-time web search
-const TAVILY_API_KEY = process.env.TAVILY_API_KEY || process.env.VITE_TAVILY_API_KEY || '';
 
 // Real-time market data cache
 let realtimeMarketCache = { data: null, timestamp: 0 };
@@ -78,7 +79,7 @@ async function retryWithBackoff(fn, maxRetries = 2, baseDelay = 1000) {
 // TAVILY REAL-TIME WEB SEARCH — Live Market Data
 // ============================================
 async function fetchRealtimeWebData(query) {
-  if (!TAVILY_API_KEY) return '';
+  if (!isTavilyAvailable()) return '';
   try {
     const res = await fetch('https://api.tavily.com/search', {
       method: 'POST',
@@ -236,41 +237,61 @@ async function callGemini(messages, systemPrompt) {
     contents.push({ role: 'user', parts: [{ text: 'Please respond to my last query.' }] });
   }
 
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents,
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 8192,
-        topP: 0.95,
-        topK: 40
-      },
-      safetySettings: [
-        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
-      ]
-    }),
-    signal: AbortSignal.timeout(45000)
-  });
+  const modelOptions = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+  let lastError = null;
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(`Gemini ${res.status}: ${err.error?.message || res.statusText}`);
+  for (const modelName of modelOptions) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents,
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 8192,
+            topP: 0.95,
+            topK: 40
+          },
+          safetySettings: [
+            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+          ]
+        }),
+        signal: AbortSignal.timeout(20000)
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const errMsg = err.error?.message || `Status: ${res.status}`;
+        console.warn(`[Gemini Fallback] Model ${modelName} failed: ${errMsg}`);
+        lastError = new Error(errMsg);
+        if (res.status === 404 || res.status === 400) {
+          continue;
+        }
+        throw lastError;
+      }
+
+      const data = await res.json();
+      if (data.candidates?.[0]?.finishReason === 'SAFETY') {
+        throw new Error('Gemini blocked response due to safety filters');
+      }
+
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text || text.trim().length < 5) throw new Error('Gemini returned empty response');
+      return text;
+    } catch (e) {
+      lastError = e;
+      if (e.message && (e.message.includes('404') || e.message.includes('400') || e.message.includes('not found') || e.message.includes('does not exist'))) {
+        continue;
+      }
+      throw e;
+    }
   }
-  const data = await res.json();
 
-  // Check for blocked responses
-  if (data.candidates?.[0]?.finishReason === 'SAFETY') {
-    throw new Error('Gemini blocked response due to safety filters');
-  }
-
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text || text.trim().length < 5) throw new Error('Gemini returned empty response');
-  return text;
+  throw lastError || new Error('All Gemini models in fallback chain failed');
 }
 
 // ============================================
@@ -308,30 +329,52 @@ async function callClaude(messages, systemPrompt) {
     fixedMessages.unshift({ role: 'user', content: 'Hello' });
   }
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': CLAUDE_API_KEY,
-      'anthropic-version': '2023-06-01',
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages: fixedMessages
-    }),
-    signal: AbortSignal.timeout(60000)
-  });
+  const modelOptions = ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-latest'];
+  let lastError = null;
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(`Claude ${res.status}: ${err.error?.message || res.statusText}`);
+  for (const modelName of modelOptions) {
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': CLAUDE_API_KEY,
+          'anthropic-version': '2023-06-01',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: modelName,
+          max_tokens: 4096,
+          system: systemPrompt,
+          messages: fixedMessages
+        }),
+        signal: AbortSignal.timeout(30000)
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const errMsg = err.error?.message || `Status: ${res.status}`;
+        console.warn(`[Claude Fallback] Model ${modelName} failed: ${errMsg}`);
+        lastError = new Error(errMsg);
+        if (res.status === 404 || res.status === 400) {
+          continue;
+        }
+        throw lastError;
+      }
+
+      const data = await res.json();
+      const text = data.content?.[0]?.text;
+      if (!text || text.trim().length < 5) throw new Error('Claude returned empty response');
+      return text;
+    } catch (e) {
+      lastError = e;
+      if (e.message && (e.message.includes('404') || e.message.includes('400') || e.message.includes('not found') || e.message.includes('does not exist'))) {
+        continue;
+      }
+      throw e;
+    }
   }
-  const data = await res.json();
-  const text = data.content?.[0]?.text;
-  if (!text || text.trim().length < 5) throw new Error('Claude returned empty response');
-  return text;
+
+  throw lastError || new Error('All Claude models in fallback chain failed');
 }
 
 // ============================================
@@ -624,7 +667,7 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
   // Try each model in chain with retry
   for (const model of modelChain) {
     try {
-      if (model.startsWith('nvidia')) {
+      if (model.startsWith('nvidia') && isNvidiaAvailable()) {
         let nModel = 'deepseek-ai/deepseek-v4-pro';
         let nLabel = 'DeepSeek V4 Pro';
         if (model === 'nvidia-flash') {

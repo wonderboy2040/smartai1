@@ -1021,6 +1021,7 @@ bot.onText(/^\/alert(?:@\w+)?(?:\s+(.*))?$/i, async (msg, match) => {
 // COMMAND: /clear (reset chat history)
 // ========================================
 bot.onText(/^\/clear(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   clearChatHistory(chatId);
   console.log(`📥 /clear from ${msg.from?.first_name || chatId}`);
@@ -1028,25 +1029,79 @@ bot.onText(/^\/clear(@\w+)?$/i, async (msg) => {
 });
 
 // ========================================
-// COMMAND: /setkey (Admin-only Groq key update)
+// COMMAND: /setkey (Update Dynamic API Keys)
 // ========================================
-bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/i, async (msg, match) => {
+bot.onText(/^\/setkey(?:@\w+)?(?:\s+(\w+)\s+(.+))?$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
-  const key = match[1].trim();
-  console.log(`📥 /setkey from ${msg.from?.first_name || chatId}`);
-  await safeSend(chatId, '⚠️ <b>API Keys are pre-configured!</b>\n\nYe system already environment me configure hai. Admin se contact karo agar key change karni hai.');
+  const keyName = match?.[1]?.toLowerCase().trim();
+  const keyValue = match?.[2]?.trim();
+
+  if (!keyName || !keyValue) {
+    let helpMsg = `🔑 <b>Dynamic API Key Settings</b>\n`;
+    helpMsg += `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    helpMsg += `Tum in keys ko runtime me update kar sakte ho:\n`;
+    helpMsg += `• <code>/setkey groq &lt;key&gt;</code>\n`;
+    helpMsg += `• <code>/setkey gemini &lt;key&gt;</code>\n`;
+    helpMsg += `• <code>/setkey claude &lt;key&gt;</code>\n`;
+    helpMsg += `• <code>/setkey nvidia &lt;key&gt;</code>\n`;
+    helpMsg += `• <code>/setkey tavily &lt;key&gt;</code>\n\n`;
+    helpMsg += `<b>Current Status:</b>\n`;
+    const { isGroqAvailable, isGeminiAvailable, isClaudeAvailable, isNvidiaAvailable, isTavilyAvailable } = await import('./config.mjs');
+    helpMsg += `⚡ Groq: ${isGroqAvailable() ? '🟢 Active' : '🔴 Missing'}\n`;
+    helpMsg += `🔵 Gemini: ${isGeminiAvailable() ? '🟢 Active' : '🔴 Missing'}\n`;
+    helpMsg += `🟣 Claude: ${isClaudeAvailable() ? '🟢 Active' : '🔴 Missing'}\n`;
+    helpMsg += `🧠 Nvidia (DeepSeek): ${isNvidiaAvailable() ? '🟢 Active' : '🔴 Missing'}\n`;
+    helpMsg += `🔍 Tavily (Search): ${isTavilyAvailable() ? '🟢 Active' : '🔴 Missing'}\n\n`;
+    helpMsg += `<i>Note: Settings automatically sync to Google Sheets and the website.</i>`;
+    await safeSend(chatId, helpMsg);
+    return;
+  }
+
+  const { setGroqKey, setGeminiKey, setClaudeKey, setNvidiaKey, setTavilyKey } = await import('./config.mjs');
+  const { saveAllKeysToCloud } = await import('./cloud.mjs');
+
+  let parsedName = '';
+  if (keyName === 'groq') {
+    setGroqKey(keyValue);
+    parsedName = 'Groq API Key';
+  } else if (keyName === 'gemini') {
+    setGeminiKey(keyValue);
+    parsedName = 'Gemini API Key';
+  } else if (keyName === 'claude') {
+    setClaudeKey(keyValue);
+    parsedName = 'Claude API Key';
+  } else if (keyName === 'nvidia') {
+    setNvidiaKey(keyValue);
+    parsedName = 'Nvidia API Key';
+  } else if (keyName === 'tavily') {
+    setTavilyKey(keyValue);
+    parsedName = 'Tavily API Key';
+  } else {
+    await safeSend(chatId, `❌ Unknown key name: <b>${keyName}</b>. Use: groq, gemini, claude, nvidia, or tavily.`);
+    return;
+  }
+
+  await safeSend(chatId, `⏳ Saving <b>${parsedName}</b> and syncing to Google Sheets...`);
+  const success = await saveAllKeysToCloud();
+  if (success) {
+    await safeSend(chatId, `✅ <b>${parsedName}</b> successfully saved and synchronized!`);
+  } else {
+    await safeSend(chatId, `⚠️ <b>${parsedName}</b> saved in-memory, but cloud sync failed. Check your API_URL.`);
+  }
 });
 
 // ========================================
 // COMMAND: /model (Set preferred AI model)
 // ========================================
 bot.onText(/^\/model(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   const modelArg = match[1] ? match[1].trim().toLowerCase() : '';
   
   if (!modelArg) {
     const current = userModels.get(chatId) || 'auto';
-    await safeSend(chatId, `🧠 <b>Current AI Model:</b> <code>${current}</code>\n\nAvailable models:\n• <code>auto</code> (Smart intent routing)\n• <code>groq</code> (Llama-3.3 70B - Ultra Fast)\n• <code>gemini</code> (Gemini 3.5 - Live Context)\n• <code>claude</code> (Claude Sonnet 4 - Deep Analysis)\n• <code>nvidia-pro</code> (DeepSeek V4 Pro)\n\nExample: <code>/model gemini</code>`);
+    await safeSend(chatId, `🧠 <b>Current AI Model:</b> <code>${current}</code>\n\nAvailable models:\n• <code>auto</code> (Smart intent routing)\n• <code>groq</code> (Llama-3.3 70B - Ultra Fast)\n• <code>gemini</code> (Gemini 3.5 - Live Context)\n• <code>claude</code> (Claude Sonnet 4 - Deep Analysis)\n• <code>nvidia-pro</code> (DeepSeek V4 Pro)\n• <code>nvidia-llama</code> (Llama 3.3 Pro via Nvidia)\n\nExample: <code>/model gemini</code>`);
     return;
   }
   

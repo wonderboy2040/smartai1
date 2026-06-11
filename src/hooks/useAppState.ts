@@ -72,7 +72,51 @@ export function useAppState() {
 
   // --- Modal ---
   const [showAddModal, setShowAddModal] = useState(false);
-  const [groqKey, setGroqKey] = useState(() => secureStorage.getItem('WEALTH_AI_GROQ') || '');
+  
+  // --- API Keys State ---
+  const [aiKeys, setAiKeys] = useState<{
+    groqKey: string;
+    geminiKey: string;
+    claudeKey: string;
+    nvidiaKey: string;
+    tavilyKey: string;
+    tgToken: string;
+    tgChatId: string;
+  }>(() => {
+    try {
+      const saved = secureStorage.getItem('WEALTH_AI_KEYS');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {
+      groqKey: secureStorage.getItem('WEALTH_AI_GROQ') || '',
+      geminiKey: secureStorage.getItem('WEALTH_AI_GEMINI') || '',
+      claudeKey: secureStorage.getItem('WEALTH_AI_CLAUDE') || '',
+      nvidiaKey: secureStorage.getItem('WEALTH_AI_NVIDIA') || '',
+      tavilyKey: secureStorage.getItem('WEALTH_AI_TAVILY') || '',
+      tgToken: secureStorage.getItem('TG_TOKEN') || '',
+      tgChatId: secureStorage.getItem('TG_CHAT_ID') || ''
+    };
+  });
+
+  const groqKey = aiKeys.groqKey;
+
+  const updateAiKeys = useCallback((newKeys: Partial<typeof aiKeys>) => {
+    setAiKeys(prev => {
+      const updated = { ...prev, ...newKeys };
+      secureStorage.setItem('WEALTH_AI_KEYS', JSON.stringify(updated));
+      if (updated.groqKey) secureStorage.setItem('WEALTH_AI_GROQ', updated.groqKey);
+      if (updated.geminiKey) secureStorage.setItem('WEALTH_AI_GEMINI', updated.geminiKey);
+      if (updated.claudeKey) secureStorage.setItem('WEALTH_AI_CLAUDE', updated.claudeKey);
+      if (updated.nvidiaKey) secureStorage.setItem('WEALTH_AI_NVIDIA', updated.nvidiaKey);
+      if (updated.tavilyKey) secureStorage.setItem('WEALTH_AI_TAVILY', updated.tavilyKey);
+      if (updated.tgToken) secureStorage.setItem('TG_TOKEN', updated.tgToken);
+      if (updated.tgChatId) secureStorage.setItem('TG_CHAT_ID', updated.tgChatId);
+      
+      const serialized = JSON.stringify(updated);
+      syncGroqKeyToCloud(serialized).catch(() => {});
+      return updated;
+    });
+  }, []);
   const [addSymbol, setAddSymbol] = useState('');
   const [addQty, setAddQty] = useState('');
   const [addPrice, setAddPrice] = useState('');
@@ -153,9 +197,61 @@ export function useAppState() {
       }
     }).catch(() => {});
     loadGroqKeyFromCloud().then(cloudKey => {
-      if (cloudKey) { setGroqKey(cloudKey); secureStorage.setItem('WEALTH_AI_GROQ', cloudKey); }
-      else { const localKey = secureStorage.getItem('WEALTH_AI_GROQ'); if (localKey) syncGroqKeyToCloud(localKey).catch(() => {}); }
-    }).catch(() => { const localKey = secureStorage.getItem('WEALTH_AI_GROQ'); if (localKey) { syncGroqKeyToCloud(localKey).catch(() => {}); setGroqKey(localKey); } });
+      if (cloudKey) {
+        if (cloudKey.startsWith('{') && cloudKey.endsWith('}')) {
+          try {
+            const parsed = JSON.parse(cloudKey);
+            setAiKeys(parsed);
+            secureStorage.setItem('WEALTH_AI_KEYS', cloudKey);
+            if (parsed.groqKey) secureStorage.setItem('WEALTH_AI_GROQ', parsed.groqKey);
+            if (parsed.geminiKey) secureStorage.setItem('WEALTH_AI_GEMINI', parsed.geminiKey);
+            if (parsed.claudeKey) secureStorage.setItem('WEALTH_AI_CLAUDE', parsed.claudeKey);
+            if (parsed.nvidiaKey) secureStorage.setItem('WEALTH_AI_NVIDIA', parsed.nvidiaKey);
+            if (parsed.tavilyKey) secureStorage.setItem('WEALTH_AI_TAVILY', parsed.tavilyKey);
+            if (parsed.tgToken) secureStorage.setItem('TG_TOKEN', parsed.tgToken);
+            if (parsed.tgChatId) secureStorage.setItem('TG_CHAT_ID', parsed.tgChatId);
+          } catch (e) {
+            setAiKeys(prev => {
+              const updated = { ...prev, groqKey: cloudKey };
+              secureStorage.setItem('WEALTH_AI_KEYS', JSON.stringify(updated));
+              secureStorage.setItem('WEALTH_AI_GROQ', cloudKey);
+              return updated;
+            });
+          }
+        } else {
+          setAiKeys(prev => {
+            const updated = { ...prev, groqKey: cloudKey };
+            secureStorage.setItem('WEALTH_AI_KEYS', JSON.stringify(updated));
+            secureStorage.setItem('WEALTH_AI_GROQ', cloudKey);
+            return updated;
+          });
+        }
+      } else {
+        const localKeys = secureStorage.getItem('WEALTH_AI_KEYS');
+        if (localKeys) {
+          syncGroqKeyToCloud(localKeys).catch(() => {});
+        } else {
+          const oldGroq = secureStorage.getItem('WEALTH_AI_GROQ');
+          if (oldGroq) {
+            const initial = {
+              groqKey: oldGroq,
+              geminiKey: secureStorage.getItem('WEALTH_AI_GEMINI') || '',
+              claudeKey: secureStorage.getItem('WEALTH_AI_CLAUDE') || '',
+              nvidiaKey: secureStorage.getItem('WEALTH_AI_NVIDIA') || '',
+              tavilyKey: secureStorage.getItem('WEALTH_AI_TAVILY') || '',
+              tgToken: secureStorage.getItem('TG_TOKEN') || '',
+              tgChatId: secureStorage.getItem('TG_CHAT_ID') || ''
+            };
+            syncGroqKeyToCloud(JSON.stringify(initial)).catch(() => {});
+          }
+        }
+      }
+    }).catch(() => {
+      try {
+        const saved = secureStorage.getItem('WEALTH_AI_KEYS');
+        if (saved) setAiKeys(JSON.parse(saved));
+      } catch {}
+    });
     fetchForexRate().then(rate => setUsdInrRate(rate));
 
     try {
@@ -181,10 +277,10 @@ export function useAppState() {
     secureStorage.setItem('plannerSettings', JSON.stringify({ indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses }));
   }, [indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses, isAuthenticated]);
 
-  // --- Price flush interval (3s — WS gives real-time, no need for faster) ---
+  // --- Price flush interval (5s — WS gives real-time, throttled for performance) ---
   useEffect(() => {
     if (!isAuthenticated || portfolio.length === 0) return;
-    priceFlushRef.current = window.setInterval(() => { requestAnimationFrame(flushPricesToStorage); }, 3000);
+    priceFlushRef.current = window.setInterval(() => { requestAnimationFrame(flushPricesToStorage); }, 5000);
     return () => { if (priceFlushRef.current) { clearInterval(priceFlushRef.current); priceFlushRef.current = null; } };
   }, [isAuthenticated, portfolio.length, flushPricesToStorage]);
 
@@ -234,9 +330,6 @@ export function useAppState() {
             }
           });
           
-          if (updated) {
-            flushPricesToStorage();
-          }
         }
       } catch (e) {
         console.warn('Crypto fast poll failed:', e);
@@ -244,9 +337,9 @@ export function useAppState() {
     };
 
     pollCrypto();
-    const cryptoInterval = window.setInterval(pollCrypto, 2000); // 2 seconds ultra-fast updates
+    const cryptoInterval = window.setInterval(pollCrypto, 10000); // 10 seconds updates (balanced for performance)
     return () => { clearInterval(cryptoInterval); };
-  }, [isAuthenticated, hasCrypto, flushPricesToStorage]);
+  }, [isAuthenticated, hasCrypto]);
 
   // --- WebSocket + HTTP sync ---
   useEffect(() => {
@@ -451,58 +544,67 @@ export function useAppState() {
   // Update latestDataRef for telegram interval
   useEffect(() => { latestDataRef.current = { portfolio, livePrices, usdInrRate }; }, [portfolio, livePrices, usdInrRate]);
 
-  // --- Context regeneration (throttled 120s — heavy string ops) ---
+  // --- Context regeneration (throttled 120s — optimized to run on interval, removing heavy dependency-triggered re-renders) ---
   useEffect(() => {
-    if (portfolio.length === 0) return;
-    const now = Date.now();
-    if (now - lastContextGenRef.current < 120000) return;
-    lastContextGenRef.current = now;
-    let ctx = `--- DEEP MIND QUANTUM LIVE SENSOR DATA ---\n`;
-    const usVix = livePrices['US_VIX']?.price || 15;
-    const inVix = livePrices['IN_INDIAVIX']?.price || 15;
-    const avgVixCtx = (usVix + inVix) / 2;
-    ctx += `Timestamp: ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST\n`;
-    ctx += `US VIX: ${usVix.toFixed(1)} | India VIX: ${inVix.toFixed(1)} | Avg: ${avgVixCtx.toFixed(1)}\n`;
-    ctx += `Market Regime: ${avgVixCtx > 22 ? 'BEARISH' : avgVixCtx > 16 ? 'VOLATILE' : 'BULLISH'}\n`;
-    ctx += `USD/INR: ₹${usdInrRate.toFixed(2)}\n`;
-    ctx += `Portfolio Value: ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n`;
-    ctx += `Total P&L: ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(2)}%)\n`;
-    ctx += `Today P&L: ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')}\n`;
-    ctx += `Total Assets: ${portfolio.length}\n\n`;
-    ctx += `=== ALL ${portfolio.length} PORTFOLIO POSITIONS WITH LIVE TECHNICALS ===\n`;
-    for (let idx = 0; idx < portfolio.length; idx++) {
-      const p = portfolio[idx];
-      const key = `${p.market}_${p.symbol}`;
-      const data = livePrices[key];
-      const curPrice = data?.price || p.avgPrice;
-      const rsi = data?.rsi || 50;
-      const change = data?.change || 0;
-      const macd = data?.macd !== undefined ? data.macd.toFixed(2) : 'N/A';
-      const sma20 = data?.sma20 ? data.sma20.toFixed(1) : 'N/A';
-      const sma50 = data?.sma50 ? data.sma50.toFixed(1) : 'N/A';
-      const vol = data?.volume ? (data.volume > 1e6 ? `${(data.volume / 1e6).toFixed(1)}M` : `${(data.volume / 1e3).toFixed(0)}K`) : 'N/A';
-      const plPct = p.avgPrice > 0 ? ((curPrice - p.avgPrice) / p.avgPrice) * 100 : 0;
-      const cleanSym = p.symbol.replace('.NS', '');
-      const invested = p.avgPrice * p.qty;
-      const curVal = curPrice * p.qty;
-      const plAbs = curVal - invested;
-      const sig = analyzeAsset(p, data);
-      const atr = ((data?.high || curPrice) - (data?.low || curPrice)) || curPrice * 0.02;
-      const slPrice = curPrice - atr * 1.5;
-      const tpPrice = curPrice + atr * 2.5;
-      const buyDate = new Date(p.dateAdded);
-      const holdingDays = Math.max(0, Math.round((Date.now() - buyDate.getTime()) / (1000 * 60 * 60 * 24)));
-      const holdingLabel = holdingDays > 365 ? `${(holdingDays / 365).toFixed(1)}Y` : `${holdingDays}D`;
-      const years = holdingDays / 365;
-      const cagrPct = (years > 0.1 && p.avgPrice > 0) ? ((Math.pow(curPrice / p.avgPrice, 1 / years) - 1) * 100) : plPct;
-      const isCryptoAsset = isCryptoSymbol(cleanSym);
-      const assetType = isCryptoAsset ? 'CRYPTO' : p.market;
-      const trend = (data?.sma20 && data?.sma50) ? (data.sma20 > data.sma50 ? 'BULL' : 'BEAR') : (change > 0.5 ? 'BULL' : change < -0.5 ? 'BEAR' : 'FLAT');
-      ctx += `${idx + 1}. ${cleanSym} [${assetType}] | Price=${curPrice.toFixed(2)} | Chg=${change >= 0 ? '+' : ''}${change.toFixed(2)}% | RSI=${rsi.toFixed(0)} | MACD=${macd} | SMA20=${sma20} | SMA50=${sma50} | Trend=${trend} | Vol=${vol} | Signal=${sig.signal} | Confidence=${sig.confidence}% | SL=${slPrice.toFixed(2)} | TP=${tpPrice.toFixed(2)} | AvgBuy=${p.avgPrice.toFixed(2)} | Qty=${p.qty} | Invested=${invested.toFixed(0)} | CurVal=${curVal.toFixed(0)} | P&L=${plPct >= 0 ? '+' : ''}${plPct.toFixed(2)}% (${plAbs >= 0 ? '+' : ''}${plAbs.toFixed(0)}) | Holding=${holdingLabel} | CAGR=${cagrPct >= 0 ? '+' : ''}${cagrPct.toFixed(1)}%\n`;
-    }
-    ctx += `=== END ALL ${portfolio.length} POSITIONS ===\n`;
-    setPortfolioContextText(ctx);
-  }, [portfolio.length, usdInrRate, livePrices, metrics]);
+    if (!isAuthenticated) return;
+    const generateContext = () => {
+      const p = portfolioRef.current;
+      const lp = livePricesRef.current;
+      const rate = usdInrRateRef.current;
+      if (p.length === 0) return;
+      const currentMetrics = calculateMetrics();
+      
+      let ctx = `--- DEEP MIND QUANTUM LIVE SENSOR DATA ---\n`;
+      const usVix = lp['US_VIX']?.price || 15;
+      const inVix = lp['IN_INDIAVIX']?.price || 15;
+      const avgVixCtx = (usVix + inVix) / 2;
+      ctx += `Timestamp: ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST\n`;
+      ctx += `US VIX: ${usVix.toFixed(1)} | India VIX: ${inVix.toFixed(1)} | Avg: ${avgVixCtx.toFixed(1)}\n`;
+      ctx += `Market Regime: ${avgVixCtx > 22 ? 'BEARISH' : avgVixCtx > 16 ? 'VOLATILE' : 'BULLISH'}\n`;
+      ctx += `USD/INR: ₹${rate.toFixed(2)}\n`;
+      ctx += `Portfolio Value: ₹${Math.round(currentMetrics.totalValue).toLocaleString('en-IN')}\n`;
+      ctx += `Total P&L: ${currentMetrics.totalPL >= 0 ? '+' : ''}₹${Math.round(currentMetrics.totalPL).toLocaleString('en-IN')} (${currentMetrics.plPct.toFixed(2)}%)\n`;
+      ctx += `Today P&L: ${currentMetrics.todayPL >= 0 ? '+' : ''}₹${Math.round(currentMetrics.todayPL).toLocaleString('en-IN')}\n`;
+      ctx += `Total Assets: ${p.length}\n\n`;
+      ctx += `=== ALL ${p.length} PORTFOLIO POSITIONS WITH LIVE TECHNICALS ===\n`;
+      for (let idx = 0; idx < p.length; idx++) {
+        const pos = p[idx];
+        const key = `${pos.market}_${pos.symbol}`;
+        const data = lp[key];
+        const curPrice = data?.price || pos.avgPrice;
+        const rsi = data?.rsi || 50;
+        const change = data?.change || 0;
+        const macd = data?.macd !== undefined ? data.macd.toFixed(2) : 'N/A';
+        const sma20 = data?.sma20 ? data.sma20.toFixed(1) : 'N/A';
+        const sma50 = data?.sma50 ? data.sma50.toFixed(1) : 'N/A';
+        const vol = data?.volume ? (data.volume > 1e6 ? `${(data.volume / 1e6).toFixed(1)}M` : `${(data.volume / 1e3).toFixed(0)}K`) : 'N/A';
+        const plPct = pos.avgPrice > 0 ? ((curPrice - pos.avgPrice) / pos.avgPrice) * 100 : 0;
+        const cleanSym = pos.symbol.replace('.NS', '');
+        const invested = pos.avgPrice * pos.qty;
+        const curVal = curPrice * pos.qty;
+        const plAbs = curVal - invested;
+        const sig = analyzeAsset(pos, data);
+        const atr = ((data?.high || curPrice) - (data?.low || curPrice)) || curPrice * 0.02;
+        const slPrice = curPrice - atr * 1.5;
+        const tpPrice = curPrice + atr * 2.5;
+        const buyDate = new Date(pos.dateAdded);
+        const holdingDays = Math.max(0, Math.round((Date.now() - buyDate.getTime()) / (1000 * 60 * 60 * 24)));
+        const holdingLabel = holdingDays > 365 ? `${(holdingDays / 365).toFixed(1)}Y` : `${holdingDays}D`;
+        const years = holdingDays / 365;
+        const cagrPct = (years > 0.1 && pos.avgPrice > 0) ? ((Math.pow(curPrice / pos.avgPrice, 1 / years) - 1) * 100) : plPct;
+        const isCryptoAsset = isCryptoSymbol(cleanSym);
+        const assetType = isCryptoAsset ? 'CRYPTO' : pos.market;
+        const trend = (data?.sma20 && data?.sma50) ? (data.sma20 > data.sma50 ? 'BULL' : 'BEAR') : (change > 0.5 ? 'BULL' : change < -0.5 ? 'BEAR' : 'FLAT');
+        ctx += `${idx + 1}. ${cleanSym} [${assetType}] | Price=${curPrice.toFixed(2)} | Chg=${change >= 0 ? '+' : ''}${change.toFixed(2)}% | RSI=${rsi.toFixed(0)} | MACD=${macd} | SMA20=${sma20} | SMA50=${sma50} | Trend=${trend} | Vol=${vol} | Signal=${sig.signal} | Confidence=${sig.confidence}% | SL=${slPrice.toFixed(2)} | TP=${tpPrice.toFixed(2)} | AvgBuy=${pos.avgPrice.toFixed(2)} | Qty=${pos.qty} | Invested=${invested.toFixed(0)} | CurVal=${curVal.toFixed(0)} | P&L=${plPct >= 0 ? '+' : ''}${plPct.toFixed(2)}% (${plAbs >= 0 ? '+' : ''}${plAbs.toFixed(0)}) | Holding=${holdingLabel} | CAGR=${cagrPct >= 0 ? '+' : ''}${cagrPct.toFixed(1)}%\n`;
+      }
+      ctx += `=== END ALL ${p.length} POSITIONS ===\n`;
+      setPortfolioContextText(ctx);
+    };
+
+    generateContext();
+    const interval = window.setInterval(generateContext, 120000); // 120 seconds
+    return () => { clearInterval(interval); };
+  }, [isAuthenticated]);
 
   // --- Telegram auto-report ---
   useEffect(() => {
@@ -781,6 +883,8 @@ export function useAppState() {
     // Modal
     showAddModal, setShowAddModal, groqKey, addSymbol, setAddSymbol, addQty, setAddQty,
     addPrice, setAddPrice, addDate, setAddDate,
+    // API Keys
+    aiKeys, updateAiKeys,
     transactionType, setTransactionType, modalPrice, setModalPrice, editId, setEditId,
     autoTelegram, setAutoTelegram,
     // Advanced

@@ -67,12 +67,14 @@ export function setGroqKey(key) { GROQ_KEY = key; }
 export function setGeminiKey(key) { GEMINI_API_KEY = key; }
 export function setClaudeKey(key) { CLAUDE_API_KEY = key; }
 export function setNvidiaKey(key) { NVIDIA_API_KEY = key; }
+export function setTavilyKey(key) { TAVILY_API_KEY = key; }
 
 // Dynamic key validation helpers (called at runtime, not module load)
-export function isGroqAvailable() { return !!(GROQ_KEY && GROQ_KEY.startsWith('gsk_')); }
+export function isGroqAvailable() { return !!(GROQ_KEY && GROQ_KEY.length > 10); }
 export function isGeminiAvailable() { return !!(GEMINI_API_KEY && GEMINI_API_KEY.length > 10); }
 export function isClaudeAvailable() { return !!(CLAUDE_API_KEY && CLAUDE_API_KEY.length > 10); }
-export function isNvidiaAvailable() { return !!(NVIDIA_API_KEY && NVIDIA_API_KEY.startsWith('nvapi-')); }
+export function isNvidiaAvailable() { return !!(NVIDIA_API_KEY && NVIDIA_API_KEY.length > 10); }
+export function isTavilyAvailable() { return !!(TAVILY_API_KEY && TAVILY_API_KEY.length > 10); }
 
 // SIP Defaults
 export const DEFAULT_INDIA_SIP = 10000;
