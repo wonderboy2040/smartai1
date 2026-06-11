@@ -115,7 +115,7 @@ export default function App() {
                   </div>
                   <div className="flex items-center gap-2 text-[11px]">
                     <span className={`w-1.5 h-1.5 rounded-full ${liveStatus.includes('ACTIVE') ? 'bg-cyan-400 animate-pulse-dot' : 'bg-amber-500 animate-pulse'}`} />
-                    <span className={`font-medium ${liveStatus.includes('ACTIVE') ? 'text-cyan-500/80' : 'bg-amber-400/80'}`}>{liveStatus.includes('ACTIVE') ? 'LIVE' : 'SYNCING'}</span>
+                    <span className={`font-medium ${liveStatus.includes('ACTIVE') ? 'text-cyan-500/80' : 'text-amber-400/80'}`}>{liveStatus.includes('ACTIVE') ? 'LIVE' : 'SYNCING'}</span>
                     <span className="text-slate-700">•</span>
                     <Clock />
                   </div>

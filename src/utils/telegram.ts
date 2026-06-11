@@ -762,9 +762,18 @@ return sum + (price * p.qty);
 
 msg += `Portfolio Value: ₹${totalValue.toLocaleString('en-IN')}\n\n`;
 
+// Value-based concentration: share of portfolio held in the 3 largest positions
+const positionValues = portfolio.map(p => {
+  const key = `${p.market}_${p.symbol}`;
+  const price = livePrices[key]?.price || p.avgPrice;
+  return price * p.qty;
+}).sort((a, b) => b - a);
+const top3Value = positionValues.slice(0, 3).reduce((s, v) => s + v, 0);
+const concentration = totalValue > 0 ? (top3Value / totalValue) * 100 : 0;
+
 msg += `📊 **Risk Metrics:**\n`;
 msg += `• VaR (95%): ₹${(totalValue * 0.05).toLocaleString('en-IN')} max loss\n`;
-msg += `• Concentration: Top 3 = ${Math.min(100, (portfolio.slice(0, 3).length / portfolio.length) * 100).toFixed(0)}%\n`;
+msg += `• Concentration: Top 3 = ${concentration.toFixed(0)}%\n`;
 msg += `• Volatility: ${livePrices['US_VIX']?.price?.toFixed(1) || '15'} VIX\n`;
 
 return msg;

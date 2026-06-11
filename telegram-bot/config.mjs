@@ -12,7 +12,8 @@ export const TG_CHAT_ID = process.env.TG_CHAT_ID || "";
 export const API_URL = process.env.API_URL || "";
 
 // Tavily Search API (Real-time Web Data)
-export const TAVILY_API_KEY = process.env.TAVILY_API_KEY || process.env.VITE_TAVILY_API_KEY || "";
+// NOTE: declared with `let` so setTavilyKey() can update it at runtime (/setkey tavily)
+export let TAVILY_API_KEY = process.env.TAVILY_API_KEY || process.env.VITE_TAVILY_API_KEY || "";
 
 // Multi-AI API Keys (Case-insensitive support for user-added env vars)
 const env = process.env;

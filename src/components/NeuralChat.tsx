@@ -7,12 +7,14 @@ const CONFIG = {
   groq: {
     apiKey: import.meta.env.VITE_GROQ_API_KEY || '',
     baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
-    model: 'llama-3.3-70b-versatile'
+    model: 'llama-3.3-70b-versatile',
+    // Groq Compound — FREE agentic model with built-in real-time web search (Market Expert)
+    marketModel: 'groq/compound'
   },
   gemini: {
     apiKey: import.meta.env.VITE_GEMINI_API_KEY || '',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
-    model: 'gemini-3.5-flash'
+    model: 'gemini-2.5-flash'
   },
   claude: {
     apiKey: import.meta.env.VITE_CLAUDE_API_KEY || '',
@@ -23,14 +25,12 @@ const CONFIG = {
     apiKey: import.meta.env.VITE_NVIDIA_API_KEY || '',
     baseUrl: 'https://integrate.api.nvidia.com/v1/chat/completions',
     models: {
-      pro: 'deepseek-ai/deepseek-v4-pro',
-      flash: 'deepseek-ai/deepseek-v4-flash',
+      pro: 'deepseek-ai/deepseek-r1',
+      flash: 'deepseek-ai/deepseek-r1-distill-llama-8b',
       llama: 'meta/llama-3.3-70b-instruct'
     }
   }
 } as const;
-
-const TAVILY_KEY = import.meta.env.VITE_TAVILY_API_KEY || '';
 
 const isNvidiaAvailable = (nvidiaKey?: string) => {
   const k = nvidiaKey || import.meta.env.VITE_NVIDIA_API_KEY || CONFIG.nvidia.apiKey;
@@ -118,7 +118,7 @@ async function fetchWebIntel(query: string, tavilyKey: string): Promise<string> 
     const res = await fetch('https://api.tavily.com/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_key: TAVILY_KEY, query: `${query} ${/news|stock|crypto|market|price/i.test(query) ? '' : 'latest market news'}`, search_depth: 'basic', include_answer: true, max_results: 3, topic: 'finance' }),
+      body: JSON.stringify({ api_key: apiKey, query: `${query} ${/news|stock|crypto|market|price/i.test(query) ? '' : 'latest market news'}`, search_depth: 'basic', include_answer: true, max_results: 3, topic: 'finance' }),
       signal: AbortSignal.timeout(6000)
     });
     if (res.ok) {
@@ -136,7 +136,7 @@ interface ChatMessage {
   role: 'user' | 'model' | 'system';
   text: string;
   timestamp: number;
-  model?: 'groq' | 'gemini' | 'claude' | 'nvidia-pro' | 'nvidia-flash' | 'nvidia-llama' | 'system';
+  model?: 'market' | 'groq' | 'gemini' | 'claude' | 'nvidia-pro' | 'nvidia-flash' | 'nvidia-llama' | 'system';
   sources?: Array<{ title: string; url: string }>;
 }
 
@@ -149,6 +149,7 @@ const QUICK_ACTIONS = [
 ];
 
 const MODEL_COLORS = {
+  market: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
   groq: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
   gemini: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
   claude: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
@@ -192,7 +193,7 @@ export const NeuralChat = React.memo(({
   const [isThinking, setIsThinking] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
-  const [selectedModel, setSelectedModel] = useState<'auto' | 'nvidia-pro' | 'nvidia-llama' | 'groq' | 'gemini' | 'claude'>('auto');
+  const [selectedModel, setSelectedModel] = useState<'auto' | 'market' | 'nvidia-pro' | 'nvidia-llama' | 'groq' | 'gemini' | 'claude'>('auto');
   const [showSettings, setShowSettings] = useState(false);
   const [keysForm, setKeysForm] = useState({
     groqKey: '',
@@ -256,14 +257,14 @@ export const NeuralChat = React.memo(({
   // ============ RETRY HELPER ============
   const retryOnce = async (fn: () => Promise<string>): Promise<string> => {
     try { return await fn(); }
-    catch (e) {
+    catch {
       await new Promise(r => setTimeout(r, 1000 + Math.random() * 500));
       return await fn();
     }
   };
 
-  // ============ GROQ API (Ultra-Fast) ============
-  const callGroq = async (messages: any[], systemPrompt: string) => {
+  // ============ GROQ API (Ultra-Fast + Market Expert via groq/compound) ============
+  const callGroq = async (messages: any[], systemPrompt: string, modelName: string = CONFIG.groq.model) => {
     const envKey = import.meta.env.VITE_GROQ_API_KEY;
     const apiKey = aiKeys?.groqKey || envKey || propGroqKey || CONFIG.groq.apiKey;
     if (!apiKey || apiKey.length < 10) {
@@ -271,29 +272,19 @@ export const NeuralChat = React.memo(({
     }
 
     const payload = {
-      model: CONFIG.groq.model,
+      model: modelName,
       messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
       temperature: 0.7,
       max_tokens: 8000
     };
 
-    let res;
-    try {
-      res = await fetch(CONFIG.groq.baseUrl, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(20000)
-      });
-    } catch (e) {
-      console.warn('Groq direct call failed (CORS/network). Retrying via proxy...', e);
-      res = await fetch(`https://corsproxy.io/?${encodeURIComponent(CONFIG.groq.baseUrl)}`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(20000)
-      });
-    }
+    // SECURITY: no third-party CORS proxy fallback — never send API keys to external proxies
+    const res = await fetch(CONFIG.groq.baseUrl, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(20000)
+    });
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -331,11 +322,11 @@ export const NeuralChat = React.memo(({
       contents.push({ role: 'user', parts: [{ text: 'Please respond.' }] });
     }
 
-    const modelOptions = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    const modelOptions = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
     let lastError: any = null;
 
     for (const modelName of modelOptions) {
-      const payload = {
+      const payload: Record<string, any> = {
         contents,
         generationConfig: { temperature: 0.7, maxOutputTokens: 8192, topP: 0.95, topK: 40 },
         safetySettings: [
@@ -345,6 +336,8 @@ export const NeuralChat = React.memo(({
           { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
         ]
       };
+      // Google Search grounding — FREE real-time live market data (Gemini 2.x models)
+      if (!modelName.includes('1.5')) payload.tools = [{ google_search: {} }];
       const targetUrl = `${CONFIG.gemini.baseUrl}/${modelName}:generateContent?key=${apiKey}`;
 
       let res;
@@ -356,18 +349,9 @@ export const NeuralChat = React.memo(({
           signal: AbortSignal.timeout(20000)
         });
       } catch (e) {
-        console.warn(`Gemini direct call for ${modelName} failed. Trying proxy...`, e);
-        try {
-          res = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(20000)
-          });
-        } catch (proxyErr) {
-          lastError = proxyErr;
-          continue;
-        }
+        // SECURITY: no third-party proxy fallback — the API key is embedded in the URL
+        lastError = e;
+        continue;
       }
 
       if (!res.ok) {
@@ -383,7 +367,9 @@ export const NeuralChat = React.memo(({
 
       const data = await res.json();
       if (data.candidates?.[0]?.finishReason === 'SAFETY') throw new Error('Gemini blocked by safety filters');
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      // Grounded responses can span multiple parts — join them all
+      const parts = data.candidates?.[0]?.content?.parts || [];
+      const text = parts.map((p: any) => p.text || '').join('');
       if (!text || text.trim().length < 5) throw new Error('Gemini returned empty response');
       return text;
     }
@@ -440,23 +426,9 @@ export const NeuralChat = React.memo(({
           signal: AbortSignal.timeout(30000)
         });
       } catch (e) {
-        console.warn(`Claude direct call for ${modelName} failed. Trying proxy...`, e);
-        try {
-          res = await fetch(`https://corsproxy.io/?${encodeURIComponent(CONFIG.claude.baseUrl)}`, {
-            method: 'POST',
-            headers: {
-              'x-api-key': apiKey,
-              'anthropic-version': '2023-06-01',
-              'anthropic-dangerous-direct-browser-access': 'true',
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(30000)
-          });
-        } catch (proxyErr) {
-          lastError = proxyErr;
-          continue;
-        }
+        // SECURITY: no third-party proxy fallback — never send API keys to external proxies
+        lastError = e;
+        continue;
       }
 
       if (!res.ok) {
@@ -499,37 +471,26 @@ export const NeuralChat = React.memo(({
       max_tokens: 4000
     };
 
-    let res;
-    try {
-      res = await fetch(CONFIG.nvidia.baseUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(45000)
-      });
-    } catch (e) {
-      console.warn('Nvidia direct call failed (CORS/network). Retrying via proxy...', e);
-      res = await fetch(`https://corsproxy.io/?${encodeURIComponent(CONFIG.nvidia.baseUrl)}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(45000)
-      });
-    }
+    // SECURITY: no third-party CORS proxy fallback — never send API keys to external proxies
+    const res = await fetch(CONFIG.nvidia.baseUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(45000)
+    });
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error?.message || `Nvidia Error: ${res.status}`);
     }
     const data = await res.json();
-    const text = data.choices?.[0]?.message?.content;
-    if (!text || text.trim().length < 5) throw new Error('Nvidia returned empty response');
+    let text: string = data.choices?.[0]?.message?.content || '';
+    // DeepSeek R1 emits <think> reasoning blocks — strip them from chat output
+    text = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    if (!text || text.length < 5) throw new Error('Nvidia returned empty response');
     return text;
   };
 
@@ -590,6 +551,9 @@ LONG-TERM INVESTMENT PERSPECTIVE:
 - Always give a 3-5 year outlook alongside short-term analysis.
 - Calculate projected portfolio value at 10%, 15%, 20% CAGR over 5/10/15 years.
 
+REAL-TIME DATA PERMISSION (24x7 FULL ACCESS):
+You HAVE FULL PERMISSION to use live web search results and ALL injected real-time market data 24x7 for: exact BUY/SELL price points, entry zones, stop-loss and target levels, backtesting context, and long-term (15-20 year) investment analysis. ALWAYS give EXACT actionable price points from the live data.
+
 FUNDAMENTAL ANALYSIS PERMISSION:
 You HAVE full permission to provide deep fundamental analysis including:
 - On-chain metrics for crypto (supply, hash rate, active addresses, exchange flows)
@@ -607,7 +571,10 @@ ${webIntelData ? '\nLIVE NEWS:\n' + webIntelData : ''}
 PORTFOLIO CONTEXT:
 ${portfolioCtx}`;
 
-    // Filter out system messages, keep only user/assistant, limit to recent
+    // Filter out system messages, keep only user/assistant, limit to recent.
+    // NOTE: chatMessages state is stale inside this closure (setState is async),
+    // so the current user message MUST be appended explicitly — otherwise the AI
+    // only sees the previous question and answers the wrong thing.
     const recentMessages = chatMessages
       .filter(m => m.role === 'user' || m.role === 'model')
       .slice(-8)
@@ -615,33 +582,39 @@ ${portfolioCtx}`;
         role: m.role === 'model' ? 'assistant' : 'user',
         content: m.text
       }));
+    if (recentMessages.length === 0 || recentMessages[recentMessages.length - 1].content !== userMessage) {
+      recentMessages.push({ role: 'user', content: userMessage });
+    }
 
     // Build fallback chain: primary → fallback1 → fallback2...
-    type Engine = 'nvidia-pro' | 'nvidia-flash' | 'nvidia-llama' | 'groq' | 'gemini' | 'claude';
+    type Engine = 'market' | 'nvidia-pro' | 'nvidia-flash' | 'nvidia-llama' | 'groq' | 'gemini' | 'claude';
     let chain: Engine[] = [];
 
     const hasNvidia = isNvidiaAvailable(aiKeys?.nvidiaKey);
 
-    if (model === 'nvidia-pro') {
+    if (model === 'market') {
+      chain = ['market', 'gemini', 'groq'];
+    } else if (model === 'nvidia-pro') {
       chain = ['nvidia-pro'];
     } else if (model === 'nvidia-flash') {
       chain = ['nvidia-flash'];
     } else if (model === 'nvidia-llama') {
       chain = ['nvidia-llama'];
     } else if (model === 'gemini') {
-      chain = ['gemini'];
+      chain = ['gemini', 'groq'];
     } else if (model === 'claude') {
       chain = ['claude'];
     } else if (model === 'groq') {
-      chain = ['groq'];
+      chain = ['groq', 'gemini'];
     } else {
-      // auto
+      // auto — FREE engines first (Groq + Market Expert + Gemini), paid engines as backup
       chain = hasNvidia
-        ? ['nvidia-llama', 'nvidia-pro', 'groq', 'gemini', 'claude']
-        : ['groq', 'gemini', 'claude'];
+        ? ['groq', 'market', 'gemini', 'nvidia-llama', 'nvidia-pro', 'claude']
+        : ['groq', 'market', 'gemini', 'claude'];
     }
 
     const callers: Record<Engine, (msgs: any[], sp: string) => Promise<string>> = {
+      market: (msgs, sp) => callGroq(msgs, sp, CONFIG.groq.marketModel),
       'nvidia-pro': (msgs, sp) => callNvidia(msgs, sp, CONFIG.nvidia.models.pro),
       'nvidia-flash': (msgs, sp) => callNvidia(msgs, sp, CONFIG.nvidia.models.flash),
       'nvidia-llama': (msgs, sp) => callNvidia(msgs, sp, CONFIG.nvidia.models.llama),
@@ -677,7 +650,8 @@ ${portfolioCtx}`;
       if (selectedModel === 'auto') {
         // Advanced intent detection with Hindi/trading/crypto keywords
         if (/\b(news|khabar|market|live|aaj|today|nifty|sensex|breaking|ipo|fii|dii|rbi|fed|crude|gold|dollar|vix|trend|intraday|pre.?market|global|sector|rally|crash|correction|bitcoin|btc|crypto|halving|blockchain)\b/i.test(q)) {
-          selectedModelType = 'gemini';
+          // Realtime market queries → Market Expert (Groq Compound live web search)
+          selectedModelType = 'market';
         } else if (/\b(portfolio|analy[sz]|strategy|fundamental|backtest|risk|allocation|optimize|deep|comprehensive|options?|pcr|fibonacci|wyckoff|smc|elliott|valuation|dividend|dcf|compare|rebalance|hodl|dca|long.?term|cagr|projection|on.?chain|intrinsic)\b/i.test(q)) {
           selectedModelType = 'claude';
         } else {
@@ -757,7 +731,7 @@ ${portfolioCtx}`;
 
             {/* Model Selector */}
             <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-b border-cyan-500/10 flex gap-2 overflow-x-auto scrollbar-hide">
-              {(['auto', 'nvidia-pro', 'nvidia-llama', 'groq', 'gemini', 'claude'] as const).map(m => (
+              {(['auto', 'market', 'groq', 'gemini', 'nvidia-pro', 'nvidia-llama', 'claude'] as const).map(m => (
                 <button
                   key={m}
                   onClick={() => setSelectedModel(m)}
@@ -767,7 +741,8 @@ ${portfolioCtx}`;
                     }`}
                 >
                   {m === 'auto' ? '🤖 Auto' 
-                    : m === 'nvidia-pro' ? '🧠 DeepSeek V4 Pro' 
+                    : m === 'market' ? '🌐 Market Expert' 
+                    : m === 'nvidia-pro' ? '🧠 DeepSeek R1 Pro' 
                     : m === 'nvidia-llama' ? '🦁 Llama 3.3 Pro' 
                     : m === 'groq' ? '⚡ Groq' 
                     : m === 'gemini' ? '🔵 Gemini' 
@@ -889,7 +864,8 @@ ${portfolioCtx}`;
                       <>
                         {msg.model && (
                           <div className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase mb-2 border ${MODEL_COLORS[msg.model] || MODEL_COLORS.system}`}>
-                            {msg.model === 'groq' ? '⚡ Groq' 
+                            {msg.model === 'market' ? '🌐 Market Expert Live' 
+                              : msg.model === 'groq' ? '⚡ Groq' 
                               : msg.model === 'gemini' ? '🔵 Gemini' 
                               : msg.model === 'claude' ? '🟣 Claude Sonnet 4' 
                               : msg.model === 'nvidia-pro' ? '🧠 DeepSeek V4 Pro' 
@@ -982,7 +958,8 @@ ${portfolioCtx}`;
               <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
                 <span className="text-[7px] sm:text-[8px] text-slate-600 font-mono truncate max-w-[60%]">
                   Model: {selectedModel === 'auto' ? '🤖 Auto-Detect' 
-                    : selectedModel === 'nvidia-pro' ? '🧠 DeepSeek V4 Pro' 
+                    : selectedModel === 'market' ? '🌐 Market Expert' 
+                    : selectedModel === 'nvidia-pro' ? '🧠 DeepSeek R1 Pro' 
                     : selectedModel === 'nvidia-llama' ? '🦁 Llama 3.3 Pro' 
                     : selectedModel === 'groq' ? '⚡ Groq' 
                     : selectedModel === 'gemini' ? '🔵 Gemini' 

@@ -6,7 +6,8 @@ import { analyzeAsset } from '../../utils/telegram';
 import { SmartDipSizer } from '../SmartDipSizer';
 import {
   calculateWealthMilestones, compareSIPStepUps,
-  analyzeGoals, analyzeRebalancing,
+  analyzeGoals, analyzeRebalancing, calculatePortfolioXIRR,
+  adjustForInflation, calculateFireVariants, planCryptoDCA,
   DEFAULT_GOALS, type InvestmentGoal
 } from '../../utils/wealthEngine';
 
@@ -58,6 +59,18 @@ export default React.memo(function PlannerTab() {
     [portfolio, livePrices, usdInrRate]
   );
   const needsRebalance = rebalanceItems.filter(r => r.action !== 'OK');
+
+  // --- Computed: XIRR / Real Returns / FIRE Variants / Crypto DCA ---
+  const xirrData = useMemo(() =>
+    calculatePortfolioXIRR(portfolio, livePrices, usdInrRate),
+    [portfolio, livePrices, usdInrRate]
+  );
+  const realFvMed = useMemo(() => adjustForInflation(fvMed, investYears), [fvMed, investYears]);
+  const fireVariants = useMemo(() =>
+    calculateFireVariants(monthlyExpenses, metrics.totalValue, currentAge, 60, cagr),
+    [monthlyExpenses, metrics.totalValue, currentAge, cagr]
+  );
+  const cryptoDCA = useMemo(() => planCryptoDCA(btcSIP, ethSIP, investYears), [btcSIP, ethSIP, investYears]);
 
   const addGoal = () => {
     const amt = parseFloat(newGoalAmount);
@@ -172,6 +185,13 @@ export default React.memo(function PlannerTab() {
           </div>
           <div className="text-3xl font-black text-amber-400 font-mono">{multiplier.toFixed(1)}x</div>
         </div>
+        <div className="mt-3 p-4 bg-blue-500/5 rounded-xl border border-blue-500/15 flex items-center justify-between">
+          <div>
+            <div className="text-[10px] text-blue-400 font-bold uppercase tracking-wider">🧮 Real Value (Inflation-Adjusted @ 6%)</div>
+            <div className="text-[10px] text-blue-200/40">Expected corpus in today's purchasing power</div>
+          </div>
+          <div className="text-xl font-black text-blue-300 font-mono">₹{Math.round(realFvMed).toLocaleString('en-IN')}</div>
+        </div>
       </div>
 
       {/* FIRE */}
@@ -223,7 +243,88 @@ export default React.memo(function PlannerTab() {
             <div className="bg-gradient-to-r from-orange-600 via-amber-400 to-emerald-400 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, fireProgress)}%` }} />
           </div>
         </div>
+        {/* FIRE Variants — Lean / Standard / Fat / Coast (inflation-adjusted to age 60) */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+          <div className="bg-black/20 p-3 rounded-xl text-center border border-white/5">
+            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">🌱 Lean FIRE (20x)</div>
+            <div className="text-sm font-black text-slate-200 font-mono">{formatCurrency(fireVariants.leanFire)}</div>
+          </div>
+          <div className="bg-black/20 p-3 rounded-xl text-center border border-white/5">
+            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">🔥 Standard (25x)</div>
+            <div className="text-sm font-black text-orange-300 font-mono">{formatCurrency(fireVariants.standardFire)}</div>
+          </div>
+          <div className="bg-black/20 p-3 rounded-xl text-center border border-white/5">
+            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">👑 Fat FIRE (33x)</div>
+            <div className="text-sm font-black text-purple-300 font-mono">{formatCurrency(fireVariants.fatFire)}</div>
+          </div>
+          <div className={`p-3 rounded-xl text-center border ${fireVariants.coastAchieved ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-black/20 border-white/5'}`}>
+            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">🏖️ Coast FIRE</div>
+            <div className={`text-sm font-black font-mono ${fireVariants.coastAchieved ? 'text-emerald-400' : 'text-cyan-300'}`}>{formatCurrency(fireVariants.coastFire)}</div>
+            {fireVariants.coastAchieved && <div className="text-[9px] text-emerald-400 font-bold mt-0.5">✅ ACHIEVED</div>}
+          </div>
+        </div>
+        <div className="text-[9px] text-slate-600 mt-2 italic">Targets are inflation-adjusted (6%) to age-60 expenses. Coast FIRE = corpus needed today to reach Standard FIRE with zero further SIP.</div>
       </div>
+
+      {/* ============ PORTFOLIO XIRR (TRUE ANNUALIZED RETURN) ============ */}
+      {portfolio.length > 0 && (
+        <div className="quantum-panel rounded-2xl p-5 border-emerald-500/10 animate-fade-in-up">
+          <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+            <span className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center text-sm">📐</span>
+            True Annualized Return (XIRR)
+            <span className="ml-auto badge bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px]">PRO METRIC</span>
+          </h3>
+          <div className="flex items-center justify-between p-4 bg-black/20 rounded-xl border border-emerald-500/15 mb-3">
+            <div>
+              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Overall Portfolio XIRR</div>
+              <div className="text-[9px] text-slate-600">Time-weighted annualized return (all assets, INR)</div>
+            </div>
+            <div className={`text-2xl font-black font-mono ${(xirrData.overallXIRR || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              {xirrData.overallXIRR !== null ? `${xirrData.overallXIRR >= 0 ? '+' : ''}${xirrData.overallXIRR.toFixed(1)}%` : 'N/A'}
+            </div>
+          </div>
+          <div className="grid md:grid-cols-2 gap-2">
+            {xirrData.perAsset.map((a, i) => (
+              <div key={i} className="flex items-center justify-between bg-black/20 rounded-lg px-3 py-2 border border-white/5">
+                <div>
+                  <span className="text-xs font-bold text-white">{a.symbol.replace('.NS', '')}</span>
+                  <span className="text-[9px] text-slate-600 ml-2">{a.holdingDays}d held</span>
+                </div>
+                <span className={`text-xs font-black font-mono ${(a.xirr || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {a.xirr !== null ? `${a.xirr >= 0 ? '+' : ''}${a.xirr.toFixed(1)}%` : 'N/A'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ============ CRYPTO DCA PLANNER ============ */}
+      {cryptoDCA.length > 0 && (
+        <div className="quantum-panel rounded-2xl p-5 border-orange-500/10 animate-fade-in-up">
+          <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+            <span className="w-7 h-7 rounded-lg bg-orange-500/10 flex items-center justify-center text-sm">🪙</span>
+            Crypto DCA Planner (BTC/ETH HODL)
+            <span className="ml-auto text-[10px] text-slate-500 font-mono">{investYears}yr horizon</span>
+          </h3>
+          <div className="grid md:grid-cols-2 gap-3">
+            {cryptoDCA.map((c, i) => (
+              <div key={i} className={`rounded-xl p-4 border ${c.asset === 'BTC' ? 'bg-orange-500/5 border-orange-500/15' : 'bg-indigo-500/5 border-indigo-500/15'}`}>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="font-bold text-white text-sm">{c.asset === 'BTC' ? '₿ Bitcoin' : 'Ξ Ethereum'}</span>
+                  <span className="text-[10px] text-slate-500 font-mono">₹{c.monthlySIP.toLocaleString('en-IN')}/mo</span>
+                </div>
+                <div className="space-y-2 text-[11px]">
+                  <div className="flex justify-between"><span className="text-slate-500">Total Invested</span><span className="font-mono text-slate-300">{formatCurrency(c.totalInvested)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Conservative ({c.conservativeCagr}% CAGR)</span><span className="font-mono text-amber-400">{formatCurrency(c.conservative)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Expected ({c.expectedCagr}% CAGR)</span><span className="font-mono text-emerald-400 font-bold">{formatCurrency(c.expected)}</span></div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="text-[9px] text-slate-600 mt-3 italic">⚠️ Crypto is high-volatility (50-80% drawdowns possible). DCA + long HODL horizon required. Keep crypto ≤10% of net worth.</div>
+        </div>
+      )}
 
       {/* Smart AI Allocations */}
       {portfolio.length > 0 && (

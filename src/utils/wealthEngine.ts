@@ -500,3 +500,84 @@ export function generateWeeklyWealthReport(
 
   return msg;
 }
+
+// ========== INFLATION-ADJUSTED (REAL) VALUE ==========
+export function adjustForInflation(nominalValue: number, years: number, inflationPct: number = 6): number {
+  return nominalValue / Math.pow(1 + inflationPct / 100, years);
+}
+
+// ========== ADVANCED FIRE VARIANTS (Lean / Standard / Fat / Coast) ==========
+export interface FireVariants {
+  leanFire: number;     // 20x annual expenses (frugal retirement)
+  standardFire: number; // 25x annual expenses (4% SWR)
+  fatFire: number;      // 33x annual expenses (3% SWR, luxury)
+  coastFire: number;    // corpus needed TODAY to coast to Standard FIRE with zero further SIP
+  coastAchieved: boolean;
+}
+
+export function calculateFireVariants(
+  monthlyExpenses: number,
+  currentValue: number,
+  currentAge: number,
+  retireAge: number = 60,
+  cagrPercent: number = 12,
+  inflationPct: number = 6
+): FireVariants {
+  const annualExpenses = monthlyExpenses * 12;
+  const yearsToRetire = Math.max(0, retireAge - currentAge);
+  // Inflate expenses to retirement year for realistic corpus targets
+  const futureAnnualExpenses = annualExpenses * Math.pow(1 + inflationPct / 100, yearsToRetire);
+
+  const standardFire = futureAnnualExpenses * 25;
+  const leanFire = futureAnnualExpenses * 20;
+  const fatFire = futureAnnualExpenses * 33;
+
+  // Coast FIRE = PV of Standard FIRE discounted at expected CAGR
+  const coastFire = yearsToRetire > 0
+    ? standardFire / Math.pow(1 + cagrPercent / 100, yearsToRetire)
+    : standardFire;
+
+  return {
+    leanFire: Math.round(leanFire),
+    standardFire: Math.round(standardFire),
+    fatFire: Math.round(fatFire),
+    coastFire: Math.round(coastFire),
+    coastAchieved: currentValue >= coastFire
+  };
+}
+
+// ========== CRYPTO DCA PLANNER (BTC/ETH SIP — HODL Strategy) ==========
+export interface CryptoDCAProjection {
+  asset: 'BTC' | 'ETH';
+  monthlySIP: number;
+  totalInvested: number;
+  conservative: number;
+  expected: number;
+  conservativeCagr: number;
+  expectedCagr: number;
+}
+
+export function planCryptoDCA(btcSIP: number, ethSIP: number, years: number): CryptoDCAProjection[] {
+  const project = (sip: number, cagr: number) => {
+    const r = cagr / 100 / 12;
+    let wealth = 0;
+    for (let m = 0; m < years * 12; m++) wealth = (wealth + sip) * (1 + r);
+    return Math.round(wealth);
+  };
+  const out: CryptoDCAProjection[] = [];
+  if (btcSIP > 0) {
+    out.push({
+      asset: 'BTC', monthlySIP: btcSIP, totalInvested: btcSIP * 12 * years,
+      conservative: project(btcSIP, 20), expected: project(btcSIP, 35),
+      conservativeCagr: 20, expectedCagr: 35
+    });
+  }
+  if (ethSIP > 0) {
+    out.push({
+      asset: 'ETH', monthlySIP: ethSIP, totalInvested: ethSIP * 12 * years,
+      conservative: project(ethSIP, 15), expected: project(ethSIP, 30),
+      conservativeCagr: 15, expectedCagr: 30
+    });
+  }
+  return out;
+}

@@ -164,7 +164,7 @@ async function getRealtimeForex() {
 // ============================================
 // GROQ API — Ultra-fast Responses (Latest Model)
 // ============================================
-async function callGroq(messages, systemPrompt) {
+async function callGroq(messages, systemPrompt, modelName = 'llama-3.3-70b-versatile') {
   if (!isGroqAvailable()) throw new Error('Groq key missing or invalid');
   if (isEngineCoolingDown('groq')) throw new Error('Groq temporarily cooling down after failures');
 
@@ -175,7 +175,7 @@ async function callGroq(messages, systemPrompt) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
+      model: modelName,
       messages: [
         { role: 'system', content: systemPrompt },
         ...messages
@@ -237,7 +237,7 @@ async function callGemini(messages, systemPrompt) {
     contents.push({ role: 'user', parts: [{ text: 'Please respond to my last query.' }] });
   }
 
-  const modelOptions = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+  const modelOptions = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
   let lastError = null;
 
   for (const modelName of modelOptions) {
@@ -247,6 +247,8 @@ async function callGemini(messages, systemPrompt) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents,
+          // Google Search grounding — FREE real-time live market data (Gemini 2.x models)
+          ...(modelName.includes('1.5') ? {} : { tools: [{ google_search: {} }] }),
           generationConfig: {
             temperature: 0.7,
             maxOutputTokens: 8192,
@@ -279,7 +281,9 @@ async function callGemini(messages, systemPrompt) {
         throw new Error('Gemini blocked response due to safety filters');
       }
 
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      // Grounded responses can span multiple parts — join them all
+      const parts = data.candidates?.[0]?.content?.parts || [];
+      const text = parts.map(p => p.text || '').join('');
       if (!text || text.trim().length < 5) throw new Error('Gemini returned empty response');
       return text;
     } catch (e) {
@@ -380,7 +384,7 @@ async function callClaude(messages, systemPrompt) {
 // ============================================
 // NVIDIA API — DeepSeek V4 Pro & Llama 3.3 (Elite Quantum Engine)
 // ============================================
-async function callNvidia(messages, systemPrompt, modelName = 'deepseek-ai/deepseek-v4-pro') {
+async function callNvidia(messages, systemPrompt, modelName = 'deepseek-ai/deepseek-r1') {
   if (!isNvidiaAvailable()) throw new Error('Nvidia key missing or invalid');
   if (isEngineCoolingDown('nvidia')) throw new Error('Nvidia temporarily cooling down after failures');
 
@@ -427,7 +431,7 @@ function detectIntent(query) {
 
   // Real-time / News / Market / Crypto queries → Gemini (has grounding/search capabilities)
   if (/\b(news|khabar|market|live|aaj|today|nifty|sensex|breaking|alert|ipo|fii|dii|rbi|fed|crude|gold|dollar|forex|rupee|sector|global|world|bull|bear|crash|rally|correction|gift\s*nifty|pre.?market|opening|closing|trend|intraday|sgx|dow|nasdaq|s&p|vix|india\s*vix|budget|policy|gdp|inflation|cpi|employment|earnings|results|quarterly|bitcoin|btc|crypto|halving|eth|ethereum|blockchain|defi|altcoin|binance|coinbase|regulation|sec)\b/i.test(q)) {
-    return { model: 'gemini', intent: 'MARKET_INTEL', confidence: 88 };
+    return { model: 'market', intent: 'MARKET_INTEL', confidence: 88 };
   }
 
   // Deep analysis / Strategy / Institutional → Claude
@@ -588,6 +592,9 @@ ${ALPHA_ETFS_US.map(e => `• ${e.sym} (${e.name}): CAGR ${e.cagr}%, MaxDD ${e.m
 
 Use these CAGR values for SIP projections and wealth creation calculations. Reference maxDD for risk context.
 
+REAL-TIME DATA PERMISSION (24x7 FULL ACCESS):
+You HAVE FULL PERMISSION to use live web search results and ALL injected real-time market data 24x7 for: exact BUY/SELL price points, entry zones, stop-loss and target levels, backtesting context, and long-term (15-20 year) investment analysis. ALWAYS give EXACT actionable price points from the live data.
+
 FUNDAMENTAL ANALYSIS PERMISSION:
 You HAVE full permission to provide deep fundamental analysis including:
 - On-chain metrics for crypto (supply, hash rate, active addresses, exchange flows)
@@ -647,20 +654,24 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
   // Build smart fallback chain based on target
   let modelChain;
   if (selectedModel && selectedModel !== 'auto') {
-    modelChain = [selectedModel];
+    modelChain = selectedModel === 'market' ? ['market', 'gemini', 'groq'] : [selectedModel];
   } else {
     if (isNvidiaAvailable()) {
-      modelChain = targetModel === 'gemini'
-        ? ['gemini', 'nvidia-flash', 'nvidia-pro', 'groq', 'claude']
+      modelChain = targetModel === 'market'
+        ? ['market', 'gemini', 'groq', 'nvidia-llama', 'claude']
+        : targetModel === 'gemini'
+        ? ['gemini', 'market', 'groq', 'nvidia-flash', 'claude']
         : targetModel === 'claude'
         ? ['claude', 'nvidia-pro', 'nvidia-llama', 'gemini', 'groq']
-        : ['groq', 'nvidia-llama', 'nvidia-pro', 'gemini', 'claude'];
+        : ['groq', 'market', 'gemini', 'nvidia-llama', 'nvidia-pro', 'claude'];
     } else {
-      modelChain = targetModel === 'gemini'
-        ? ['gemini', 'groq', 'claude']
+      modelChain = targetModel === 'market'
+        ? ['market', 'gemini', 'groq']
+        : targetModel === 'gemini'
+        ? ['gemini', 'market', 'groq', 'claude']
         : targetModel === 'claude'
         ? ['claude', 'gemini', 'groq']
-        : ['groq', 'gemini', 'claude'];
+        : ['groq', 'market', 'gemini', 'claude'];
     }
   }
 
@@ -668,11 +679,11 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
   for (const model of modelChain) {
     try {
       if (model.startsWith('nvidia') && isNvidiaAvailable()) {
-        let nModel = 'deepseek-ai/deepseek-v4-pro';
-        let nLabel = 'DeepSeek V4 Pro';
+        let nModel = 'deepseek-ai/deepseek-r1';
+        let nLabel = 'DeepSeek R1 Pro';
         if (model === 'nvidia-flash') {
-          nModel = 'deepseek-ai/deepseek-v4-flash';
-          nLabel = 'DeepSeek V4 Flash';
+          nModel = 'deepseek-ai/deepseek-r1-distill-llama-8b';
+          nLabel = 'DeepSeek R1 Flash';
         } else if (model === 'nvidia-llama') {
           nModel = 'meta/llama-3.3-70b-instruct';
           nLabel = 'Llama 3.3 Pro';
@@ -681,6 +692,12 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
         aiText = await retryWithBackoff(() => callNvidia(recentHistory, systemPrompt, nModel), 1, 1000);
         usedModel = model;
         recordEngineSuccess('nvidia');
+        break;
+      } else if (model === 'market' && isGroqAvailable()) {
+        console.log(`  🌐 Trying Market Expert (Groq Compound — live web search)...`);
+        aiText = await retryWithBackoff(() => callGroq(recentHistory, systemPrompt, 'groq/compound'), 1, 800);
+        usedModel = 'market';
+        recordEngineSuccess('groq');
         break;
       } else if (model === 'groq' && isGroqAvailable()) {
         console.log(`  ⚡ Trying Groq...`);
@@ -762,12 +779,15 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
   // Add model indicator
   let modelEmoji = '🤖';
   let modelLabel = 'System';
-  if (usedModel === 'groq') {
+  if (usedModel === 'market') {
+    modelEmoji = '🌐';
+    modelLabel = 'Market Expert Live';
+  } else if (usedModel === 'groq') {
     modelEmoji = '⚡';
     modelLabel = 'Groq';
   } else if (usedModel === 'gemini') {
     modelEmoji = '🔵';
-    modelLabel = 'Gemini 3.5';
+    modelLabel = 'Gemini 2.5 Flash';
   } else if (usedModel === 'claude') {
     modelEmoji = '🟣';
     modelLabel = 'Claude Sonnet 4';

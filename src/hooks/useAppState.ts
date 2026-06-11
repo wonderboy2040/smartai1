@@ -278,11 +278,13 @@ export function useAppState() {
   }, [indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses, isAuthenticated]);
 
   // --- Price flush interval (5s — WS gives real-time, throttled for performance) ---
+  // Runs even with an empty portfolio — the default watchlist + crypto ticks still need flushing,
+  // otherwise live prices never reach state until a position is added.
   useEffect(() => {
-    if (!isAuthenticated || portfolio.length === 0) return;
+    if (!isAuthenticated) return;
     priceFlushRef.current = window.setInterval(() => { requestAnimationFrame(flushPricesToStorage); }, 5000);
     return () => { if (priceFlushRef.current) { clearInterval(priceFlushRef.current); priceFlushRef.current = null; } };
-  }, [isAuthenticated, portfolio.length, flushPricesToStorage]);
+  }, [isAuthenticated, flushPricesToStorage]);
 
   // --- Crypto Fast Polling (CoinDCX INR prices updated every 2s) ---
   // Only run when portfolio contains crypto assets to avoid unnecessary network traffic
@@ -329,7 +331,8 @@ export function useAppState() {
               }
             }
           });
-          
+          // Push fresh crypto ticks to state immediately (don't wait for the 5s flush)
+          if (updated) flushPricesToStorage();
         }
       } catch (e) {
         console.warn('Crypto fast poll failed:', e);
@@ -339,7 +342,7 @@ export function useAppState() {
     pollCrypto();
     const cryptoInterval = window.setInterval(pollCrypto, 10000); // 10 seconds updates (balanced for performance)
     return () => { clearInterval(cryptoInterval); };
-  }, [isAuthenticated, hasCrypto]);
+  }, [isAuthenticated, hasCrypto, flushPricesToStorage]);
 
   // --- WebSocket + HTTP sync ---
   useEffect(() => {
@@ -473,11 +476,14 @@ export function useAppState() {
     loadTradingViewChart();
   }, [currentSymbol, chartInterval, isAuthenticated, loadTradingViewChart]);
 
-  // --- Metrics (optimized: use refs to avoid stale deps) ---
-  const calculateMetrics = useCallback(() => {
-    const p = portfolioRef.current;
-    const lp = livePricesRef.current;
-    const rate = usdInrRateRef.current;
+  // --- Metrics (pure with optional args; refs only for interval callers) ---
+  // NOTE: refs update in effects AFTER render, so the render-time useMemo must
+  // pass live state directly — otherwise metrics lag one render behind.
+  const calculateMetrics = useCallback((
+    p: Position[] = portfolioRef.current,
+    lp: Record<string, PriceData> = livePricesRef.current,
+    rate: number = usdInrRateRef.current
+  ) => {
     let totalInvested = 0, totalValue = 0, todayPL = 0;
     let indPL = 0, usPL = 0, cryptoPL = 0;
     let totalInvestedINR = 0, totalValueINR = 0;
@@ -539,7 +545,7 @@ export function useAppState() {
     };
   }, []);
 
-  const metrics = useMemo(() => calculateMetrics(), [calculateMetrics, portfolio, livePrices, usdInrRate]);
+  const metrics = useMemo(() => calculateMetrics(portfolio, livePrices, usdInrRate), [calculateMetrics, portfolio, livePrices, usdInrRate]);
 
   // Update latestDataRef for telegram interval
   useEffect(() => { latestDataRef.current = { portfolio, livePrices, usdInrRate }; }, [portfolio, livePrices, usdInrRate]);
@@ -858,11 +864,19 @@ export function useAppState() {
   }, [theme]);
 
   const flushCache = useCallback(() => {
-    const groqSaved = secureStorage.getItem('WEALTH_AI_GROQ');
-    const themeSaved = secureStorage.getItem('theme');
+    // Preserve credentials, settings, portfolio and auth — only flush cached market data
+    const preserveKeys = [
+      'WEALTH_AI_KEYS', 'WEALTH_AI_GROQ', 'WEALTH_AI_GEMINI', 'WEALTH_AI_CLAUDE',
+      'WEALTH_AI_NVIDIA', 'WEALTH_AI_TAVILY', 'TG_TOKEN', 'TG_CHAT_ID',
+      'theme', 'portfolio', 'plannerSettings', 'wealth_goals', 'authDone'
+    ];
+    const saved: Record<string, string> = {};
+    for (const k of preserveKeys) {
+      const v = secureStorage.getItem(k);
+      if (v) saved[k] = v;
+    }
     secureStorage.clear();
-    if (groqSaved) secureStorage.setItem('WEALTH_AI_GROQ', groqSaved);
-    if (themeSaved) secureStorage.setItem('theme', themeSaved);
+    for (const [k, v] of Object.entries(saved)) secureStorage.setItem(k, v);
     window.location.reload();
   }, []);
 
