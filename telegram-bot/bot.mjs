@@ -40,6 +40,7 @@ let usdInrRate = 85.5;
 let marketIntel = null;
 let autoAlerts = true;
 let botReady = false;
+const userModels = new Map();
 
 // AI Rate Limiting
 const aiCallTimestamps = new Map();
@@ -237,6 +238,7 @@ console.log('🟢 ════════════════════�
         { command: 'news', description: 'Global Market Sentiment' },
         { command: 'fundamental', description: 'Deep Fundamental Analysis' },
         { command: 'alert', description: 'Toggle auto alerts' },
+        { command: 'model', description: 'Select AI model' },
         { command: 'clear', description: 'Clear AI Memory' }
       ]);
     console.log('✅ Telegram Menu Commands Updated');
@@ -381,6 +383,7 @@ Nagraj Bhai, main tumhara QUANTUM PRO AI Trading assistant hoon! 🚀
 🌍 /news — Market sentiment
 💼 /fundamental — Deep fundamentals
 🔔 /alert — Toggle auto alerts
+🧠 /model — Select AI Model (groq/gemini/claude/auto)
 🧹 /clear — Clear AI memory
 
 🧠 <b>AI Chat Mode:</b>
@@ -518,6 +521,9 @@ Deep fundamental analysis using Graham framework.
 🔔 <b>/alert</b>
 Toggle scheduled auto-analysis ON/OFF.
 
+🧠 <b>/model &lt;NAME&gt;</b>
+Select specific AI model (auto, groq, gemini, claude, nvidia-pro).
+
 🧹 <b>/clear</b>
 Chat history reset karo.
 
@@ -538,7 +544,7 @@ bot.onText(/^\/news(@\w+)?$/i, async (msg) => {
   console.log(`📥 /news from ${msg.from?.first_name || chatId}`);
   try {
     await safeSend(chatId, '🌍 <i>Synthesizing latest global market news... extracting sentiment score...</i>\n\nThis is a Superintelligent Deep AI Feature.');
-    const response = await chatWithAI(chatId, '/news', portfolio, livePrices, usdInrRate);
+    const response = await chatWithAI(chatId, '/news', portfolio, livePrices, usdInrRate, userModels.get(chatId) || 'auto');
     await safeSend(chatId, response);
   } catch (e) {
     console.error('❌ /news error:', e.message);
@@ -555,7 +561,7 @@ bot.onText(/^\/fundamentals?(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
   console.log(`📥 /fundamental ${target} from ${msg.from?.first_name || chatId}`);
   try {
     await safeSend(chatId, `💼 <i>Executing Deep Fundamental Forensics for ${target}... running Graham framework...</i>\n\nThis is a Superintelligent Deep AI Feature.`);
-    const response = await chatWithAI(chatId, `Execute a deep fundamental forensic analysis for ${target}. Calculate Intrinsic Value based on PE ratio, Book Value, and ROE using Graham framework. Output in tabular format if possible.`, portfolio, livePrices, usdInrRate);
+    const response = await chatWithAI(chatId, `Execute a deep fundamental forensic analysis for ${target}. Calculate Intrinsic Value based on PE ratio, Book Value, and ROE using Graham framework. Output in tabular format if possible.`, portfolio, livePrices, usdInrRate, userModels.get(chatId) || 'auto');
     await safeSend(chatId, response);
   } catch (e) {
     console.error('❌ /fundamental error:', e.message);
@@ -1031,6 +1037,28 @@ bot.onText(/^\/setkey(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   await safeSend(chatId, '⚠️ <b>API Keys are pre-configured!</b>\n\nYe system already environment me configure hai. Admin se contact karo agar key change karni hai.');
 });
 
+// ========================================
+// COMMAND: /model (Set preferred AI model)
+// ========================================
+bot.onText(/^\/model(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const modelArg = match[1] ? match[1].trim().toLowerCase() : '';
+  
+  if (!modelArg) {
+    const current = userModels.get(chatId) || 'auto';
+    await safeSend(chatId, `🧠 <b>Current AI Model:</b> <code>${current}</code>\n\nAvailable models:\n• <code>auto</code> (Smart intent routing)\n• <code>groq</code> (Llama-3.3 70B - Ultra Fast)\n• <code>gemini</code> (Gemini 3.5 - Live Context)\n• <code>claude</code> (Claude Sonnet 4 - Deep Analysis)\n• <code>nvidia-pro</code> (DeepSeek V4 Pro)\n\nExample: <code>/model gemini</code>`);
+    return;
+  }
+  
+  const validModels = ['auto', 'groq', 'gemini', 'claude', 'nvidia-pro', 'nvidia-llama', 'nvidia-flash'];
+  if (validModels.includes(modelArg)) {
+    userModels.set(chatId, modelArg);
+    await safeSend(chatId, `✅ <b>AI Model updated to:</b> <code>${modelArg}</code>`);
+  } else {
+    await safeSend(chatId, `❌ Invalid model. Available:\n${validModels.join(', ')}`);
+  }
+});
+
 // API key commands are disabled - keys are pre-configured in environment
 
 // ========================================
@@ -1047,7 +1075,7 @@ bot.onText(/^\/ai(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   try {
     await safeSend(chatId, '🧠 <i>Deep Mind analyzing...</i>');
     await refreshPrices();
-    const response = await chatWithAI(chatId, query, portfolio, livePrices, usdInrRate);
+    const response = await chatWithAI(chatId, query, portfolio, livePrices, usdInrRate, userModels.get(chatId) || 'auto');
     await safeSend(chatId, response);
   } catch (e) {
     console.error('❌ /ai error:', e.message);
@@ -1065,7 +1093,7 @@ bot.onText(/^\/chat(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   try {
     await safeSend(chatId, '🧠 <i>Deep Mind analyzing...</i>');
     await refreshPrices();
-    const response = await chatWithAI(chatId, query, portfolio, livePrices, usdInrRate);
+    const response = await chatWithAI(chatId, query, portfolio, livePrices, usdInrRate, userModels.get(chatId) || 'auto');
     await safeSend(chatId, response);
   } catch (e) {
     console.error('❌ /chat error:', e.message);
@@ -1587,7 +1615,7 @@ bot.on('message', async (msg) => {
   try {
     await safeSend(chatId, '🧠 <i>Deep Mind processing...</i>');
     await refreshPrices();
-    const response = await chatWithAI(chatId, text, portfolio, livePrices, usdInrRate);
+    const response = await chatWithAI(chatId, text, portfolio, livePrices, usdInrRate, userModels.get(chatId) || 'auto');
     await safeSend(chatId, response);
   } catch (e) {
     console.error('❌ AI chat error:', e.message);

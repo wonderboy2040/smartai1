@@ -180,7 +180,7 @@ async function callGroq(messages, systemPrompt) {
         ...messages
       ],
       temperature: 0.7,
-      max_completion_tokens: 3000
+      max_completion_tokens: 8000
     }),
     signal: AbortSignal.timeout(25000)
   });
@@ -243,7 +243,7 @@ async function callGemini(messages, systemPrompt) {
       contents,
       generationConfig: {
         temperature: 0.7,
-        maxOutputTokens: 2048,
+        maxOutputTokens: 8192,
         topP: 0.95,
         topK: 40
       },
@@ -317,7 +317,7 @@ async function callClaude(messages, systemPrompt) {
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 3000,
+      max_tokens: 4096,
       system: systemPrompt,
       messages: fixedMessages
     }),
@@ -360,7 +360,7 @@ async function callNvidia(messages, systemPrompt, modelName = 'deepseek-ai/deeps
       model: modelName,
       messages: formattedMessages,
       temperature: 0.7,
-      max_tokens: 3000
+      max_tokens: 4000
     }),
     signal: AbortSignal.timeout(45000)
   });
@@ -446,7 +446,8 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
     const isMarketQuery = /\b(news|market|nifty|sensex|fed|rbi|ipo|fii|dii|crude|gold|dollar|bitcoin|btc|crypto|budget|gdp|inflation|earnings|results|breaking|today|aaj|live|halving|eth|blockchain|defi|altcoin|binance|regulation|sec)\b/i.test(userQuery);
     if (isMarketQuery) {
       console.log('  🔍 Fetching real-time web data via Tavily...');
-      const webData = await fetchRealtimeWebData(`${userQuery} India US stock market latest 2026`);
+      const searchSuffix = /news|stock|crypto|market|price/i.test(userQuery) ? '' : ' latest market news';
+      const webData = await fetchRealtimeWebData(`${userQuery}${searchSuffix}`);
       if (webData) ctx += `\nLIVE WEB SEARCH RESULTS:\n${webData}\n`;
     }
   }
@@ -501,6 +502,7 @@ PERSONA: You are a seasoned institutional quant trader (15+ years NSE, BSE, NYSE
 CRITICAL ANTI-HALLUCINATION RULES:
 - TODAY'S DATE: ${todayDate} | TIME: ${currentTime} IST
 - ONLY use the REAL-TIME data provided below. Do NOT invent, guess, or use memorized old prices.
+- STRICT RULE: You are strictly forbidden from referencing old, offline training data for market analysis. Only the LIVE data injected below is valid.
 - If data is not available for a symbol, say "Live data not available" — do NOT make up numbers.
 - All prices, RSI, MACD values MUST come from the live data below. If missing, explicitly state it.
 - NEVER reference old/historical prices from your training data as current prices.
@@ -567,7 +569,7 @@ ${contextData}`;
 // ============================================
 // MAIN CHAT FUNCTION — Advanced Fallback Chain
 // ============================================
-export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices = {}, usdInrRate = 83.5) {
+export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices = {}, usdInrRate = 83.5, selectedModel = 'auto') {
   // Get/create chat history
   if (!chatHistory.has(chatId)) chatHistory.set(chatId, []);
   const history = chatHistory.get(chatId);
@@ -601,18 +603,22 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
 
   // Build smart fallback chain based on target
   let modelChain;
-  if (isNvidiaAvailable()) {
-    modelChain = targetModel === 'gemini'
-      ? ['gemini', 'nvidia-flash', 'nvidia-pro', 'groq', 'claude']
-      : targetModel === 'claude'
-      ? ['claude', 'nvidia-pro', 'nvidia-llama', 'gemini', 'groq']
-      : ['groq', 'nvidia-llama', 'nvidia-pro', 'gemini', 'claude'];
+  if (selectedModel && selectedModel !== 'auto') {
+    modelChain = [selectedModel];
   } else {
-    modelChain = targetModel === 'gemini'
-      ? ['gemini', 'groq', 'claude']
-      : targetModel === 'claude'
-      ? ['claude', 'gemini', 'groq']
-      : ['groq', 'gemini', 'claude'];
+    if (isNvidiaAvailable()) {
+      modelChain = targetModel === 'gemini'
+        ? ['gemini', 'nvidia-flash', 'nvidia-pro', 'groq', 'claude']
+        : targetModel === 'claude'
+        ? ['claude', 'nvidia-pro', 'nvidia-llama', 'gemini', 'groq']
+        : ['groq', 'nvidia-llama', 'nvidia-pro', 'gemini', 'claude'];
+    } else {
+      modelChain = targetModel === 'gemini'
+        ? ['gemini', 'groq', 'claude']
+        : targetModel === 'claude'
+        ? ['claude', 'gemini', 'groq']
+        : ['groq', 'gemini', 'claude'];
+    }
   }
 
   // Try each model in chain with retry

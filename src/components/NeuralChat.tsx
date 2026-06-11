@@ -117,7 +117,7 @@ async function fetchWebIntel(query: string): Promise<string> {
     const res = await fetch('https://api.tavily.com/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_key: TAVILY_KEY, query: `${query} stock market India US crypto latest`, search_depth: 'basic', include_answer: true, max_results: 3, topic: 'finance' }),
+      body: JSON.stringify({ api_key: TAVILY_KEY, query: `${query} ${/news|stock|crypto|market|price/i.test(query) ? '' : 'latest market news'}`, search_depth: 'basic', include_answer: true, max_results: 3, topic: 'finance' }),
       signal: AbortSignal.timeout(6000)
     });
     if (res.ok) {
@@ -224,7 +224,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
       model: CONFIG.groq.model,
       messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
       temperature: 0.7,
-      max_tokens: 4000
+      max_tokens: 8000
     };
 
     let res;
@@ -285,7 +285,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
 
     const payload = {
       contents,
-      generationConfig: { temperature: 0.7, maxOutputTokens: 4096, topP: 0.95, topK: 40 },
+      generationConfig: { temperature: 0.7, maxOutputTokens: 8192, topP: 0.95, topK: 40 },
       safetySettings: [
         { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
         { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
@@ -411,7 +411,7 @@ export const NeuralChat = React.memo(({ groqKey: propGroqKey, portfolioContext, 
         }))
       ],
       temperature: 0.7,
-      max_tokens: 3000
+      max_tokens: 4000
     };
 
     let res;
@@ -469,6 +469,7 @@ PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/
 
 CRITICAL ANTI-HALLUCINATION RULES:
 - ONLY use the REAL-TIME data provided below. Do NOT invent, guess, or use memorized old prices.
+- STRICT RULE: You are strictly forbidden from referencing old, offline training data for market analysis. Only the LIVE data injected below is valid.
 - If data is not available for a symbol, say "Live data not available" — do NOT make up numbers.
 - Today's date is ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}.
 - All prices, RSI, MACD values MUST come from the data below. If missing, explicitly state it.
@@ -537,23 +538,17 @@ ${portfolioCtx}`;
     const hasNvidia = isNvidiaAvailable();
 
     if (model === 'nvidia-pro') {
-      chain = ['nvidia-pro', 'nvidia-llama', 'nvidia-flash', 'claude', 'gemini', 'groq'];
+      chain = ['nvidia-pro'];
     } else if (model === 'nvidia-flash') {
-      chain = ['nvidia-flash', 'nvidia-pro', 'nvidia-llama', 'gemini', 'groq', 'claude'];
+      chain = ['nvidia-flash'];
     } else if (model === 'nvidia-llama') {
-      chain = ['nvidia-llama', 'nvidia-pro', 'nvidia-flash', 'groq', 'gemini', 'claude'];
+      chain = ['nvidia-llama'];
     } else if (model === 'gemini') {
-      chain = hasNvidia
-        ? ['gemini', 'nvidia-flash', 'nvidia-pro', 'groq', 'claude']
-        : ['gemini', 'groq', 'claude'];
+      chain = ['gemini'];
     } else if (model === 'claude') {
-      chain = hasNvidia
-        ? ['claude', 'nvidia-pro', 'nvidia-llama', 'gemini', 'groq']
-        : ['claude', 'gemini', 'groq'];
+      chain = ['claude'];
     } else if (model === 'groq') {
-      chain = hasNvidia
-        ? ['groq', 'nvidia-llama', 'nvidia-pro', 'gemini', 'claude']
-        : ['groq', 'gemini', 'claude'];
+      chain = ['groq'];
     } else {
       // auto
       chain = hasNvidia
