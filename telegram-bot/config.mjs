@@ -43,7 +43,6 @@ const missingKeys = [];
 if (!GROQ_KEY || !GROQ_KEY.startsWith('gsk_')) missingKeys.push('GROQ_KEY');
 if (!GEMINI_API_KEY || GEMINI_API_KEY.length < 10) missingKeys.push('GEMINI_API_KEY');
 if (!CLAUDE_API_KEY || CLAUDE_API_KEY.length < 10) missingKeys.push('CLAUDE_API_KEY');
-if (!NVIDIA_API_KEY || !NVIDIA_API_KEY.startsWith('nvapi-')) missingKeys.push('NVIDIA_API_KEY');
 
 if (missingKeys.length > 0) {
   console.warn('⚠️  WARNING: Some AI keys are missing or invalid:');
@@ -61,8 +60,6 @@ if (GEMINI_API_KEY && GEMINI_API_KEY.length > 10) console.log(`  🔵 Gemini: �
 else console.log('  🔵 Gemini: ✗ Missing');
 if (CLAUDE_API_KEY && CLAUDE_API_KEY.length > 10) console.log(`  🟣 Claude: ✓ Valid (${CLAUDE_API_KEY.substring(0, 8)}...)`);
 else console.log('  🟣 Claude: ✗ Missing');
-if (NVIDIA_API_KEY && NVIDIA_API_KEY.startsWith('nvapi-')) console.log(`  🧠 Nvidia (DeepSeek V4): ✓ Valid (${NVIDIA_API_KEY.substring(0, 10)}...)`);
-else console.log('  🧠 Nvidia: ✗ Missing');
 
 export function setGroqKey(key) { GROQ_KEY = key; }
 export function setGeminiKey(key) { GEMINI_API_KEY = key; }
@@ -98,9 +95,9 @@ export const ALPHA_ETFS_IN = [
 ];
 
 export const ALPHA_ETFS_US = [
-  { sym: 'SMH', name: 'VanEck Semiconductor', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', fixedAlloc: 0.45 },
+  { sym: 'SMH', name: 'VanEck Semiconductor', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', fixedAlloc: 0.40 },
   { sym: 'VGT', name: 'Vanguard Information Technology ETF', cagr: 21.0, maxDD: 33, cat: 'Tech', fixedAlloc: 0.33 },
-  { sym: 'IWY', name: 'iShares Russell Top 200 Growth ETF', cagr: 18.5, maxDD: 40, cat: 'Large Cap Growth', fixedAlloc: 0.22 }
+  { sym: 'SPCX', name: 'SPAC and New Issue ETF', cagr: 15.0, maxDD: 35, cat: 'SPAC/Growth', fixedAlloc: 0.27 }
 ];
 
 export const EXACT_TICKER_MAP = {
@@ -117,6 +114,7 @@ export const EXACT_TICKER_MAP = {
   'SPX': 'SP:SPX',
   'NDX': 'NASDAQ:NDX',
   'IWY': 'AMEX:IWY',
+  'SPCX': 'AMEX:SPCX',
   'QQQ': 'NASDAQ:QQQ',
   'AAPL': 'NASDAQ:AAPL',
   'MSFT': 'NASDAQ:MSFT',

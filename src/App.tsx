@@ -129,7 +129,7 @@ export default function App() {
                 <div>
                   <div className="flex items-center gap-2">
                     <h1 className="text-lg font-black gradient-text-cyan font-display uppercase tracking-wider text-glow">WEALTH AI</h1>
-                    <span className="quantum-badge">v13.0 LTI</span>
+                    <span className="quantum-badge">v14.0 LTI</span>
                   </div>
                   <div className="flex items-center gap-2 text-[11px]">
                     <span className={`w-1.5 h-1.5 rounded-full ${liveStatus.includes('ACTIVE') ? 'bg-cyan-400 animate-pulse-dot' : 'bg-amber-500 animate-pulse'}`} />

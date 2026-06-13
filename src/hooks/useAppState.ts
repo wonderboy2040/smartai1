@@ -78,7 +78,6 @@ export function useAppState() {
     groqKey: string;
     geminiKey: string;
     claudeKey: string;
-    nvidiaKey: string;
     tavilyKey: string;
     tgToken: string;
     tgChatId: string;
@@ -91,7 +90,6 @@ export function useAppState() {
       groqKey: secureStorage.getItem('WEALTH_AI_GROQ') || '',
       geminiKey: secureStorage.getItem('WEALTH_AI_GEMINI') || '',
       claudeKey: secureStorage.getItem('WEALTH_AI_CLAUDE') || '',
-      nvidiaKey: secureStorage.getItem('WEALTH_AI_NVIDIA') || '',
       tavilyKey: secureStorage.getItem('WEALTH_AI_TAVILY') || '',
       tgToken: secureStorage.getItem('TG_TOKEN') || '',
       tgChatId: secureStorage.getItem('TG_CHAT_ID') || ''
@@ -107,7 +105,6 @@ export function useAppState() {
       if (updated.groqKey) secureStorage.setItem('WEALTH_AI_GROQ', updated.groqKey);
       if (updated.geminiKey) secureStorage.setItem('WEALTH_AI_GEMINI', updated.geminiKey);
       if (updated.claudeKey) secureStorage.setItem('WEALTH_AI_CLAUDE', updated.claudeKey);
-      if (updated.nvidiaKey) secureStorage.setItem('WEALTH_AI_NVIDIA', updated.nvidiaKey);
       if (updated.tavilyKey) secureStorage.setItem('WEALTH_AI_TAVILY', updated.tavilyKey);
       if (updated.tgToken) secureStorage.setItem('TG_TOKEN', updated.tgToken);
       if (updated.tgChatId) secureStorage.setItem('TG_CHAT_ID', updated.tgChatId);
