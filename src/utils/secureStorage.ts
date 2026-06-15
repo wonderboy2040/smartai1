@@ -5,6 +5,17 @@ if (!ENCRYPTION_KEY) {
   console.warn('VITE_ENCRYPTION_KEY not set — secureStorage encryption is disabled');
 }
 
+// All keys that hold sensitive data (API keys, tokens, combined blob)
+const SENSITIVE_KEYS = [
+  'WEALTH_AI_KEYS',
+  'WEALTH_AI_GROQ',
+  'WEALTH_AI_GEMINI',
+  'WEALTH_AI_CLAUDE',
+  'WEALTH_AI_TAVILY',
+  'TG_TOKEN',
+  'TG_CHAT_ID'
+];
+
 /**
  * Encrypt sensitive data (API keys, etc.)
  */
@@ -19,16 +30,20 @@ export function encryptData(data: string): string {
 }
 
 /**
- * Decrypt sensitive data
+ * Decrypt sensitive data. Returns null on failure so callers can
+ * safely fall back instead of receiving corrupted garbage.
  */
-export function decryptData(encrypted: string): string {
+export function decryptData(encrypted: string): string | null {
   try {
     if (!ENCRYPTION_KEY) return encrypted;
     const bytes = CryptoJS.AES.decrypt(encrypted, ENCRYPTION_KEY);
-    return bytes.toString(CryptoJS.enc.Utf8);
+    const text = bytes.toString(CryptoJS.enc.Utf8);
+    // Empty result means wrong key / corrupted ciphertext
+    if (!text) return null;
+    return text;
   } catch (e) {
     console.warn('Decryption failed:', e);
-    return encrypted;
+    return null;
   }
 }
 
@@ -40,9 +55,16 @@ export const secureStorage = {
     try {
       const item = localStorage.getItem(key);
       if (!item) return null;
-      // Check if item looks encrypted (has salt prefix)
+      // Encrypted items carry an "enc:" prefix
       if (item.startsWith('enc:')) {
-        return decryptData(item.slice(4));
+        const decrypted = decryptData(item.slice(4));
+        // FIX: if decryption fails (env key changed/missing), drop the
+        // corrupt entry instead of returning garbage to the app.
+        if (decrypted === null) {
+          try { localStorage.removeItem(key); } catch { }
+          return null;
+        }
+        return decrypted;
       }
       return item;
     } catch {
@@ -52,8 +74,8 @@ export const secureStorage = {
 
   setItem(key: string, value: string): void {
     try {
-      const sensitiveKeys = ['WEALTH_AI_GROQ', 'TG_TOKEN', 'TG_CHAT_ID'];
-      if (sensitiveKeys.includes(key) && ENCRYPTION_KEY) {
+      // FIX: encrypt ALL sensitive keys (was missing Gemini/Claude/Tavily/combined blob)
+      if (SENSITIVE_KEYS.includes(key) && ENCRYPTION_KEY) {
         const encrypted = encryptData(value);
         localStorage.setItem(key, `enc:${encrypted}`);
       } else {
@@ -65,10 +87,10 @@ export const secureStorage = {
   },
 
   removeItem(key: string): void {
-    localStorage.removeItem(key);
+    try { localStorage.removeItem(key); } catch (e) { console.warn('Storage removeItem failed:', e); }
   },
 
   clear(): void {
-    localStorage.clear();
+    try { localStorage.clear(); } catch (e) { console.warn('Storage clear failed:', e); }
   }
 };

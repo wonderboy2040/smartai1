@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-// AI Engine Configurations — Groq + Gemini (Free) + Claude (Free)
+// AI Engine Configurations — Groq + Gemini (Free) + Claude (Paid fallback)
 const CONFIG = {
   groq: {
     apiKey: import.meta.env.VITE_GROQ_API_KEY || '',
@@ -14,12 +14,12 @@ const CONFIG = {
   gemini: {
     apiKey: import.meta.env.VITE_GEMINI_API_KEY || '',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
-    model: 'gemini-3.5-flash'
+    model: 'gemini-2.0-flash'
   },
   claude: {
     apiKey: import.meta.env.VITE_CLAUDE_API_KEY || '',
     baseUrl: 'https://api.anthropic.com/v1/messages',
-    model: 'claude-sonnet-4-6'
+    model: 'claude-sonnet-4-5'
   }
 } as const;
 
@@ -170,7 +170,7 @@ export const NeuralChat = React.memo(({
 }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
-    text: '🤖 **DEEP MIND AI ADVANCE PRO v16.0**\n\n**🔬 3-Engine FREE AI Architecture:**\n🔵 **Google Gemini 3.5 Flash**: Real-time intel + Google Search grounding\n🟣 **Claude Sonnet 4.6**: Deep institutional analysis + strategy\n⚡ **Groq Llama-3.3 70B + Compound**: Ultra-fast + live web search\n🔍 **Tavily Search**: Live market news & web data\n\n**🧬 ADVANCE PRO Features:**\n• Deep Mind Analysis (Macro + Micro)\n• Deep Research (24x7 Live)\n• Real-Time Global Market Monitor\n• Portfolio Alert System (Hinglish)\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\nAsk anything — I have LIVE market data 24x7!',
+    text: '🤖 **DEEP MIND AI ADVANCE PRO v16.0**\n\n**🔬 3-Engine AI Architecture:**\n🔵 **Google Gemini 2.0 Flash**: Real-time intel + Google Search grounding\n🟣 **Claude Sonnet 4.5**: Deep institutional analysis + strategy\n⚡ **Groq Llama-3.3 70B + Compound**: Ultra-fast + live web search\n🔍 **Tavily Search**: Live market news & web data\n\n**🧬 ADVANCE PRO Features:**\n• Deep Mind Analysis (Macro + Micro)\n• Deep Research (24x7 Live)\n• Real-Time Global Market Monitor\n• Portfolio Alert System (Hinglish)\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\nAsk anything — I have LIVE market data 24x7!',
     timestamp: Date.now(),
     model: 'system'
   }]);
@@ -306,7 +306,7 @@ export const NeuralChat = React.memo(({
       contents.push({ role: 'user', parts: [{ text: 'Please respond.' }] });
     }
 
-    const modelOptions = ['gemini-3.5-flash', 'gemini-3.1-flash-lite'];
+    const modelOptions = ['gemini-2.0-flash', 'gemini-2.0-flash-lite'];
     let lastError: any = null;
 
     for (const modelName of modelOptions) {
@@ -385,7 +385,7 @@ export const NeuralChat = React.memo(({
       fixed.unshift({ role: 'user', content: 'Hello' });
     }
 
-    const modelOptions = ['claude-sonnet-4-6', 'claude-haiku-4-5'];
+    const modelOptions = ['claude-sonnet-4-5', 'claude-3-5-haiku-latest'];
     let lastError: any = null;
 
     for (const modelName of modelOptions) {
@@ -473,8 +473,8 @@ TRADING & INVESTMENT RULES:
 7. Be comprehensive and detailed. Use **Bold** + emojis.
 8. End with VERDICT: 🟢 BUY / 🔴 SELL / 🟡 HOLD / ⏳ WAIT + levels.
 9. Emphasize LONG-TERM wealth creation (15-20 years), compounding, and SIP step-up magic. Mention crypto adoption (BTC/ETH) as moonshot allocation.
-9. USD/INR: ₹${forexRate.toFixed(4)} (LIVE). Convert US holdings to INR.
-10. Calculate actual P&L from provided data.
+10. USD/INR: ₹${forexRate.toFixed(4)} (LIVE). Convert US holdings to INR.
+11. Calculate actual P&L from provided data.
 
 CRYPTO-SPECIFIC RULES (MANDATORY for BTC/crypto queries):
 - BTC Supply Cap: 21 million (scarcity thesis)
@@ -643,7 +643,7 @@ ${portfolioCtx}`;
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="hidden sm:inline">Gemini 3.5 + Claude + Groq | Advance Pro</span>
+                    <span className="hidden sm:inline">Gemini 2.0 + Claude + Groq | Advance Pro</span>
                     <span className="sm:hidden">LIVE • Advance Pro</span>
                   </div>
                 </div>

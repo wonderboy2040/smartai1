@@ -72,7 +72,7 @@ export function useAppState() {
 
   // --- Modal ---
   const [showAddModal, setShowAddModal] = useState(false);
-  
+
   // --- API Keys State ---
   const [aiKeys, setAiKeys] = useState<{
     groqKey: string;
@@ -85,7 +85,7 @@ export function useAppState() {
     try {
       const saved = secureStorage.getItem('WEALTH_AI_KEYS');
       if (saved) return JSON.parse(saved);
-    } catch {}
+    } catch { }
     return {
       groqKey: secureStorage.getItem('WEALTH_AI_GROQ') || '',
       geminiKey: secureStorage.getItem('WEALTH_AI_GEMINI') || '',
@@ -108,9 +108,9 @@ export function useAppState() {
       if (updated.tavilyKey) secureStorage.setItem('WEALTH_AI_TAVILY', updated.tavilyKey);
       if (updated.tgToken) secureStorage.setItem('TG_TOKEN', updated.tgToken);
       if (updated.tgChatId) secureStorage.setItem('TG_CHAT_ID', updated.tgChatId);
-      
+
       const serialized = JSON.stringify(updated);
-      syncGroqKeyToCloud(serialized).catch(() => {});
+      syncGroqKeyToCloud(serialized).catch(() => { });
       return updated;
     });
   }, []);
@@ -122,7 +122,9 @@ export function useAppState() {
   const [transactionType, setTransactionType] = useState<TransactionType>('buy');
   const [modalPrice, setModalPrice] = useState<{ price: number; change: number; market: string } | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
-  const [autoTelegram, setAutoTelegram] = useState(true);
+  // FIX: Default OFF to avoid duplicate Telegram alerts — the 24x7 bot already
+  // handles auto-alerts server-side. User can manually toggle ON from the UI.
+  const [autoTelegram, setAutoTelegram] = useState(false);
 
   // --- Advanced ---
   const [wsLatency, setWsLatency] = useState<{ avg: number; heartbeat: number }>({ avg: 45, heartbeat: 15000 });
@@ -192,7 +194,7 @@ export function useAppState() {
         setPortfolio(data);
         secureStorage.setItem('portfolio', JSON.stringify(data));
       }
-    }).catch(() => {});
+    }).catch(() => { });
     loadGroqKeyFromCloud().then(cloudKey => {
       if (cloudKey) {
         if (cloudKey.startsWith('{') && cloudKey.endsWith('}')) {
@@ -225,7 +227,7 @@ export function useAppState() {
       } else {
         const localKeys = secureStorage.getItem('WEALTH_AI_KEYS');
         if (localKeys) {
-          syncGroqKeyToCloud(localKeys).catch(() => {});
+          syncGroqKeyToCloud(localKeys).catch(() => { });
         } else {
           const oldGroq = secureStorage.getItem('WEALTH_AI_GROQ');
           if (oldGroq) {
@@ -237,7 +239,7 @@ export function useAppState() {
               tgToken: secureStorage.getItem('TG_TOKEN') || '',
               tgChatId: secureStorage.getItem('TG_CHAT_ID') || ''
             };
-            syncGroqKeyToCloud(JSON.stringify(initial)).catch(() => {});
+            syncGroqKeyToCloud(JSON.stringify(initial)).catch(() => { });
           }
         }
       }
@@ -245,7 +247,7 @@ export function useAppState() {
       try {
         const saved = secureStorage.getItem('WEALTH_AI_KEYS');
         if (saved) setAiKeys(JSON.parse(saved));
-      } catch {}
+      } catch { }
     });
     fetchForexRate().then(rate => setUsdInrRate(rate));
 
@@ -273,16 +275,13 @@ export function useAppState() {
   }, [indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses, isAuthenticated]);
 
   // --- Price flush interval (5s — WS gives real-time, throttled for performance) ---
-  // Runs even with an empty portfolio — the default watchlist + crypto ticks still need flushing,
-  // otherwise live prices never reach state until a position is added.
   useEffect(() => {
     if (!isAuthenticated) return;
     priceFlushRef.current = window.setInterval(() => { requestAnimationFrame(flushPricesToStorage); }, 5000);
     return () => { if (priceFlushRef.current) { clearInterval(priceFlushRef.current); priceFlushRef.current = null; } };
   }, [isAuthenticated, flushPricesToStorage]);
 
-  // --- Crypto Fast Polling (CoinDCX INR prices updated every 2s) ---
-  // Only run when portfolio contains crypto assets to avoid unnecessary network traffic
+  // --- Crypto Fast Polling (CoinDCX INR prices updated every 10s) ---
   const hasCrypto = useMemo(() => {
     if (portfolio.length === 0) return true; // Default: poll for dashboard crypto widgets
     return portfolio.some(p => isCryptoSymbol(p.symbol.replace('.NS', '').replace('.BO', '')));
@@ -290,7 +289,7 @@ export function useAppState() {
 
   useEffect(() => {
     if (!isAuthenticated || !hasCrypto) return;
-    
+
     const pollCrypto = async () => {
       try {
         const res = await fetch(`https://api.coindcx.com/exchange/ticker?t=${Date.now()}`, {
@@ -299,10 +298,9 @@ export function useAppState() {
         if (res.ok) {
           const tickers = await res.json();
           let updated = false;
-          
-          // Identify any crypto assets in the portfolio or general watchlist
+
           const cryptoSymbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'];
-          
+
           cryptoSymbols.forEach(sym => {
             const ticker = tickers.find((t: any) => t.market === `${sym}INR`);
             if (ticker && ticker.last_price) {
@@ -326,7 +324,6 @@ export function useAppState() {
               }
             }
           });
-          // Push fresh crypto ticks to state immediately (don't wait for the 5s flush)
           if (updated) flushPricesToStorage();
         }
       } catch (e) {
@@ -335,7 +332,7 @@ export function useAppState() {
     };
 
     pollCrypto();
-    const cryptoInterval = window.setInterval(pollCrypto, 10000); // 10 seconds updates (balanced for performance)
+    const cryptoInterval = window.setInterval(pollCrypto, 10000); // 10s (balanced for performance)
     return () => { clearInterval(cryptoInterval); };
   }, [isAuthenticated, hasCrypto, flushPricesToStorage]);
 
@@ -386,18 +383,17 @@ export function useAppState() {
     }
   }, [portfolio, currentSymbol]);
 
-  // --- Cloud sync (debounced 5s instead of 3s) ---
+  // --- Cloud sync (debounced 5s) ---
   useEffect(() => {
     if (portfolio.length === 0) return;
     if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
     cloudSyncTimerRef.current = window.setTimeout(() => {
       syncToCloud(portfolio, usdInrRate);
-      // Note: localStorage save already handled by portfolio save effect above
     }, 5000);
     return () => { if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current); };
   }, [portfolio, usdInrRate]);
 
-  // --- Forex refresh (180s — rates don't change fast) ---
+  // --- Forex refresh (180s) ---
   useEffect(() => {
     if (!isAuthenticated) return;
     const refreshForex = async () => {
@@ -415,7 +411,6 @@ export function useAppState() {
     const cleanSym = currentSymbol.replace('.NS', '').replace('.BO', '');
     const isIndian = currentMarket === 'IN' || currentSymbol.includes('.NS');
     let tvSymbol = EXACT_TICKER_MAP[cleanSym] || (isIndian ? `NSE:${cleanSym}` : `NASDAQ:${cleanSym}`);
-    // TradingView free embedded widget restricts NSE ETF symbols — BSE versions work
     const BSE_CHART_OVERRIDES = ['JUNIORBEES', 'MOMENTUM50', 'SMALLCAP', 'MID150BEES'];
     if (BSE_CHART_OVERRIDES.includes(cleanSym)) tvSymbol = `BSE:${cleanSym}`;
     const containerId = `tv-chart-${Date.now()}`;
@@ -472,8 +467,8 @@ export function useAppState() {
   }, [currentSymbol, chartInterval, isAuthenticated, loadTradingViewChart]);
 
   // --- Metrics (pure with optional args; refs only for interval callers) ---
-  // NOTE: refs update in effects AFTER render, so the render-time useMemo must
-  // pass live state directly — otherwise metrics lag one render behind.
+  // FIX: indPL/usPL/cryptoPL ab sab INR-normalized hain (consistent currency),
+  // taaki dashboard pe split buckets compare/add karte waqt mismatch na ho.
   const calculateMetrics = useCallback((
     p: Position[] = portfolioRef.current,
     lp: Record<string, PriceData> = livePricesRef.current,
@@ -511,13 +506,14 @@ export function useAppState() {
       const dayPLINR = pos.market === 'IN' ? dayPL : dayPL * rate;
       todayPL += dayPLINR;
 
+      // FIX: All P&L buckets in INR for consistent comparison/aggregation.
       const cleanSym = pos.symbol.replace('.NS', '').replace('.BO', '');
       if (isCryptoSymbol(cleanSym)) {
-        cryptoPL += dayPL;
+        cryptoPL += dayPLINR;
       } else if (pos.market === 'IN') {
-        indPL += dayPL;
+        indPL += dayPLINR;
       } else {
-        usPL += dayPL; // USD native P&L
+        usPL += dayPLINR; // INR-normalized (was USD native before)
       }
     });
     const totalPL = totalValue - totalInvested;
@@ -545,7 +541,7 @@ export function useAppState() {
   // Update latestDataRef for telegram interval
   useEffect(() => { latestDataRef.current = { portfolio, livePrices, usdInrRate }; }, [portfolio, livePrices, usdInrRate]);
 
-  // --- Context regeneration (throttled 120s — optimized to run on interval, removing heavy dependency-triggered re-renders) ---
+  // --- Context regeneration (throttled 120s) ---
   useEffect(() => {
     if (!isAuthenticated) return;
     const generateContext = () => {
@@ -554,7 +550,7 @@ export function useAppState() {
       const rate = usdInrRateRef.current;
       if (p.length === 0) return;
       const currentMetrics = calculateMetrics();
-      
+
       let ctx = `--- DEEP MIND QUANTUM LIVE SENSOR DATA ---\n`;
       const usVix = lp['US_VIX']?.price || 15;
       const inVix = lp['IN_INDIAVIX']?.price || 15;
@@ -605,11 +601,12 @@ export function useAppState() {
     generateContext();
     const interval = window.setInterval(generateContext, 120000); // 120 seconds
     return () => { clearInterval(interval); };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, calculateMetrics]);
 
-  // --- Telegram auto-report ---
+  // --- Telegram auto-report (OFF by default — bot handles 24x7 alerts) ---
   useEffect(() => {
     if (!isAuthenticated || !autoTelegram || portfolio.length === 0) return;
+    if (!TG_TOKEN || !TG_CHAT_ID) return; // FIX: skip if no telegram creds
     const sendIfMarketOpen = async () => {
       const d = latestDataRef.current;
       if (!isAnyMarketOpen()) return;
@@ -628,6 +625,7 @@ export function useAppState() {
   const weeklyReportRef = useRef<string>('');
   useEffect(() => {
     if (!isAuthenticated || !autoTelegram || portfolio.length === 0) return;
+    if (!TG_TOKEN || !TG_CHAT_ID) return; // FIX: skip if no telegram creds
 
     const checkWeeklyReport = () => {
       const now = new Date();
@@ -636,7 +634,6 @@ export function useAppState() {
       const hour = ist.getHours();
       const todayStr = ist.toISOString().split('T')[0];
 
-      // Send on Sunday at 9 AM IST, only once per day
       if (day === 0 && hour === 9 && weeklyReportRef.current !== todayStr) {
         weeklyReportRef.current = todayStr;
         const d = latestDataRef.current;
@@ -660,30 +657,28 @@ export function useAppState() {
           { ...metrics, totalInvested: metrics.totalInvested || 0 },
           totalSIP, investYears, cagr
         );
-        sendTelegramAlert(TG_TOKEN, TG_CHAT_ID, msg).catch(() => {});
+        sendTelegramAlert(TG_TOKEN, TG_CHAT_ID, msg).catch(() => { });
         console.log('[WeeklyReport] Sunday wealth report sent!');
       }
     };
 
-    // Check every 10 minutes
-    const interval = setInterval(checkWeeklyReport, 600000);
-    // Also check immediately in case we're loading at Sunday 9 AM
+    const interval = setInterval(checkWeeklyReport, 600000); // every 10 min
     checkWeeklyReport();
     return () => clearInterval(interval);
   }, [isAuthenticated, autoTelegram, portfolio.length, metrics]);
 
-  // --- WS Latency (60s — cosmetic metric, no need for fast updates) ---
+  // --- WS Latency (60s — cosmetic) ---
   useEffect(() => {
     if (!isAuthenticated) return;
     const interval = setInterval(() => { setWsLatency(getWebSocketLatency()); }, 60000);
     return () => clearInterval(interval);
   }, [isAuthenticated]);
 
-  // --- Sector intel (3min instead of 2min) ---
+  // --- Sector intel (3min) ---
   useEffect(() => {
     if (!isAuthenticated) return;
     const fetchIntel = async () => {
-      try { const intel = await fetchMarketIntelligence(); if (intel.sectors?.length > 0) setSectorData(intel.sectors); } catch {}
+      try { const intel = await fetchMarketIntelligence(); if (intel.sectors?.length > 0) setSectorData(intel.sectors); } catch { }
     };
     fetchIntel();
     const interval = setInterval(fetchIntel, 180000);
@@ -777,7 +772,6 @@ export function useAppState() {
   const quickSelect = useCallback((sym: string) => {
     const fullSym = sym.toUpperCase().trim();
     setSymbolInput(fullSym.replace('.NS', ''));
-    // Directly trigger analysis
     (async () => {
       setIsAnalyzing(true);
       try {
@@ -848,6 +842,7 @@ export function useAppState() {
   }, [addSymbol, addQty, addPrice, addDate, transactionType, editId, modalPrice, portfolio]);
 
   const pushTelegramReport = useCallback(async () => {
+    if (!TG_TOKEN || !TG_CHAT_ID) { setSyncStatus('⚠️ No Telegram config'); setTimeout(() => setSyncStatus(''), 3000); return; }
     const msg = `🧠 <b>Quantum AI Master Report</b>\n\n🌍 <b>Global State:</b> ${sentiment.text}\n\n💼 <b>Total Equity:</b> ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n📈 <b>P&L:</b> ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(2)}%)\n⚡ <b>Today:</b> ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')}`;
     await sendTelegramAlert(TG_TOKEN, TG_CHAT_ID, msg);
     setSyncStatus('✅ Sent'); setTimeout(() => setSyncStatus(''), 3000);
@@ -859,7 +854,6 @@ export function useAppState() {
   }, [theme]);
 
   const flushCache = useCallback(() => {
-    // Preserve credentials, settings, portfolio and auth — only flush cached market data
     const preserveKeys = [
       'WEALTH_AI_KEYS', 'WEALTH_AI_GROQ', 'WEALTH_AI_GEMINI', 'WEALTH_AI_CLAUDE',
       'WEALTH_AI_TAVILY', 'TG_TOKEN', 'TG_CHAT_ID',
