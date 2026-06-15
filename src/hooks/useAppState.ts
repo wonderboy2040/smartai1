@@ -203,7 +203,6 @@ export function useAppState() {
             if (parsed.groqKey) secureStorage.setItem('WEALTH_AI_GROQ', parsed.groqKey);
             if (parsed.geminiKey) secureStorage.setItem('WEALTH_AI_GEMINI', parsed.geminiKey);
             if (parsed.claudeKey) secureStorage.setItem('WEALTH_AI_CLAUDE', parsed.claudeKey);
-            if (parsed.nvidiaKey) secureStorage.setItem('WEALTH_AI_NVIDIA', parsed.nvidiaKey);
             if (parsed.tavilyKey) secureStorage.setItem('WEALTH_AI_TAVILY', parsed.tavilyKey);
             if (parsed.tgToken) secureStorage.setItem('TG_TOKEN', parsed.tgToken);
             if (parsed.tgChatId) secureStorage.setItem('TG_CHAT_ID', parsed.tgChatId);
@@ -234,7 +233,6 @@ export function useAppState() {
               groqKey: oldGroq,
               geminiKey: secureStorage.getItem('WEALTH_AI_GEMINI') || '',
               claudeKey: secureStorage.getItem('WEALTH_AI_CLAUDE') || '',
-              nvidiaKey: secureStorage.getItem('WEALTH_AI_NVIDIA') || '',
               tavilyKey: secureStorage.getItem('WEALTH_AI_TAVILY') || '',
               tgToken: secureStorage.getItem('TG_TOKEN') || '',
               tgChatId: secureStorage.getItem('TG_CHAT_ID') || ''
@@ -864,7 +862,7 @@ export function useAppState() {
     // Preserve credentials, settings, portfolio and auth — only flush cached market data
     const preserveKeys = [
       'WEALTH_AI_KEYS', 'WEALTH_AI_GROQ', 'WEALTH_AI_GEMINI', 'WEALTH_AI_CLAUDE',
-      'WEALTH_AI_NVIDIA', 'WEALTH_AI_TAVILY', 'TG_TOKEN', 'TG_CHAT_ID',
+      'WEALTH_AI_TAVILY', 'TG_TOKEN', 'TG_CHAT_ID',
       'theme', 'portfolio', 'plannerSettings', 'wealth_goals', 'authDone'
     ];
     const saved: Record<string, string> = {};
