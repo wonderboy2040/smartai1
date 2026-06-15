@@ -28,7 +28,7 @@ export const EXACT_TICKER_MAP: Record<string, string> = {
   // US ETFs & Indices
   'SMH': 'NASDAQ:SMH',
   'VGT': 'AMEX:VGT',
-  'SPCX': 'AMEX:SPCX',
+  'SPCX': 'NASDAQ:SPCX',
   'AVUV': 'AMEX:AVUV',
   'IWM': 'AMEX:IWM',
   'VEA': 'AMEX:VEA',

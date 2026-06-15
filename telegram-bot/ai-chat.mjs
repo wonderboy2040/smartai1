@@ -235,7 +235,7 @@ async function callGemini(messages, systemPrompt) {
     contents.push({ role: 'user', parts: [{ text: 'Please respond to my last query.' }] });
   }
 
-  const modelOptions = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+  const modelOptions = ['gemini-3.5-flash', 'gemini-2.5-flash'];
   let lastError = null;
 
   for (const modelName of modelOptions) {
@@ -245,8 +245,8 @@ async function callGemini(messages, systemPrompt) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents,
-          // Google Search grounding — FREE real-time live market data (Gemini 2.x models)
-          ...(modelName.includes('1.5') ? {} : { tools: [{ google_search: {} }] }),
+          // Google Search grounding — FREE real-time live market data (Gemini 2.x+ models)
+          tools: [{ google_search: {} }],
           generationConfig: {
             temperature: 0.7,
             maxOutputTokens: 8192,
@@ -498,7 +498,7 @@ function buildSystemPrompt(contextData, intent) {
   const todayDate = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
   const currentTime = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
   
-  return `You are DEEP MIND AI QUANTUM PRO v12.0 - Elite Institutional-Grade Trading & Investment Intelligence for Indian, US markets AND Cryptocurrency. You have access to REAL-TIME LIVE market data feeds.
+  return `You are DEEP MIND AI QUANTUM PRO v14.0 - Elite Institutional-Grade Trading & Investment Intelligence for Indian, US markets AND Cryptocurrency. You have access to REAL-TIME LIVE market data feeds.
 
 PERSONA: You are a seasoned institutional quant trader (15+ years NSE, BSE, NYSE, NASDAQ, FnO, Options, Crypto) guiding Nagraj Bhai like a senior trader mentoring a junior. You think like Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined.
 
@@ -715,7 +715,7 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
     modelLabel = 'Groq';
   } else if (usedModel === 'gemini') {
     modelEmoji = '🔵';
-    modelLabel = 'Gemini 2.0 Flash';
+    modelLabel = 'Gemini 3.5 Flash';
   } else if (usedModel === 'claude') {
     modelEmoji = '🟣';
     modelLabel = 'Claude';

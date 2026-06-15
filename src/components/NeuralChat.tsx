@@ -14,7 +14,7 @@ const CONFIG = {
   gemini: {
     apiKey: import.meta.env.VITE_GEMINI_API_KEY || '',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
-    model: 'gemini-2.0-flash'
+    model: 'gemini-3.5-flash'
   },
   claude: {
     apiKey: import.meta.env.VITE_CLAUDE_API_KEY || '',
@@ -166,7 +166,7 @@ export const NeuralChat = React.memo(({
 }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
-    text: '🤖 **DEEP MIND AI QUANTUM PRO v13.0**\n\n**⚡ Active AI Engines:**\n⚡ **Groq Llama-3.3 70B**: Ultra-fast responses\n🌐 **Groq Compound**: Real-time market expert with live web search\n🔵 **Google Gemini 2.0 Flash**: Grounded market intelligence\n🟣 **Claude Sonnet 4**: Institutional portfolio strategies\n🔍 **Tavily Search**: Live market news & web data\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\nAsk anything — I have LIVE market data!',
+    text: '🤖 **DEEP MIND AI QUANTUM PRO v14.0**\n\n**⚡ Active AI Engines:**\n⚡ **Groq Llama-3.3 70B**: Ultra-fast responses\n🌐 **Groq Compound**: Real-time market expert with live web search\n🔵 **Google Gemini 3.5 Flash**: Latest advanced grounded market intelligence\n🟣 **Claude Sonnet 4**: Institutional portfolio strategies\n🔍 **Tavily Search**: Live market news & web data\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\nAsk anything — I have LIVE market data!',
     timestamp: Date.now(),
     model: 'system'
   }]);
@@ -302,7 +302,7 @@ export const NeuralChat = React.memo(({
       contents.push({ role: 'user', parts: [{ text: 'Please respond.' }] });
     }
 
-    const modelOptions = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+    const modelOptions = ['gemini-3.5-flash', 'gemini-2.5-flash'];
     let lastError: any = null;
 
     for (const modelName of modelOptions) {
@@ -316,8 +316,8 @@ export const NeuralChat = React.memo(({
           { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
         ]
       };
-      // Google Search grounding — FREE real-time live market data (Gemini 2.x models)
-      if (!modelName.includes('1.5')) payload.tools = [{ google_search: {} }];
+      // Google Search grounding — FREE real-time live market data (Gemini 2.x+ models)
+      payload.tools = [{ google_search: {} }];
       const targetUrl = `${CONFIG.gemini.baseUrl}/${modelName}:generateContent?key=${apiKey}`;
 
       let res;
@@ -446,7 +446,7 @@ export const NeuralChat = React.memo(({
 
     const portfolioCtx = portfolioContext || 'No portfolio data.';
 
-    const systemPrompt = `You are DEEP MIND AI QUANTUM PRO v12.0 — Elite Institutional-Grade Trading & Investment Intelligence for Indian, US markets AND Cryptocurrency with REAL-TIME LIVE data access.
+    const systemPrompt = `You are DEEP MIND AI QUANTUM PRO v14.0 — Elite Institutional-Grade Trading & Investment Intelligence for Indian, US markets AND Cryptocurrency with REAL-TIME LIVE data access.
 
 PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined.
 
@@ -635,11 +635,11 @@ ${portfolioCtx}`;
                   <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
                     <span className="hidden xs:inline">Deep Mind AI</span>
                     <span className="xs:hidden">AI Assistant</span>
-                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">QUANTUM PRO v12</span>
+                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">QUANTUM PRO v14</span>
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="hidden sm:inline">Groq + Gemini + Claude</span>
+                    <span className="hidden sm:inline">Groq + Gemini 3.5 + Claude</span>
                     <span className="sm:hidden">LIVE • Quantum Pro</span>
                   </div>
                 </div>

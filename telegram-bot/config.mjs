@@ -114,7 +114,7 @@ export const EXACT_TICKER_MAP = {
   'SPX': 'SP:SPX',
   'NDX': 'NASDAQ:NDX',
   'IWY': 'AMEX:IWY',
-  'SPCX': 'AMEX:SPCX',
+  'SPCX': 'NASDAQ:SPCX',
   'QQQ': 'NASDAQ:QQQ',
   'AAPL': 'NASDAQ:AAPL',
   'MSFT': 'NASDAQ:MSFT',
