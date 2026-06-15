@@ -185,7 +185,7 @@ export function generatePortfolioReport(portfolio, livePrices, usdInrRate) {
       const pl = (curPrice - p.avgPrice) * p.qty;
       const plPct = p.avgPrice > 0 ? ((curPrice - p.avgPrice) / p.avgPrice) * 100 : 0;
       const cleanSym = p.symbol.replace('.NS', '');
-      
+
       msg += `\n• <b>${cleanSym}</b> × ${p.qty}\n`;
       msg += `  CMP: ₹${curPrice.toFixed(2)} <i>(${change >= 0 ? '+' : ''}${change.toFixed(2)}%)</i>\n`;
       msg += `  Avg: ₹${p.avgPrice.toFixed(2)} | P&L: <b>${pl >= 0 ? '+' : ''}₹${Math.round(pl).toLocaleString('en-IN')}</b> (${plPct >= 0 ? '+' : ''}${plPct.toFixed(1)}%)\n`;
@@ -206,7 +206,7 @@ export function generatePortfolioReport(portfolio, livePrices, usdInrRate) {
       const pl = (curPrice - p.avgPrice) * p.qty;
       const plINR = pl * usdInrRate;
       const plPct = p.avgPrice > 0 ? ((curPrice - p.avgPrice) / p.avgPrice) * 100 : 0;
-      
+
       msg += `\n• <b>${p.symbol}</b> × ${p.qty}\n`;
       msg += `  CMP: $${curPrice.toFixed(2)} <i>(${change >= 0 ? '+' : ''}${change.toFixed(2)}%)</i>\n`;
       msg += `  Avg: $${p.avgPrice.toFixed(2)} | P&L: <b>${pl >= 0 ? '+' : ''}$${Math.abs(pl).toFixed(2)}</b> (₹${Math.round(Math.abs(plINR)).toLocaleString('en-IN')})\n`;
@@ -353,7 +353,7 @@ export function generateRiskReport(livePrices, portfolio, usdInrRate) {
   let riskLevel = '🟢 LOW';
   let riskScore = 25;
   let advice = 'Market stable. Full SIP deployment recommended.';
-  
+
   if (avgVix > 30) { riskLevel = '🔴 EXTREME'; riskScore = 95; advice = 'DANGER ZONE — Paisa hath me rakho. Cash is king.'; }
   else if (avgVix > 25) { riskLevel = '🔴 HIGH'; riskScore = 80; advice = 'Major hedging required. Only essentials me invest karo.'; }
   else if (avgVix > 20) { riskLevel = '🟠 ELEVATED'; riskScore = 60; advice = 'Caution mode. SIP chalne do but extra deployment rokh ke rakho.'; }
@@ -379,7 +379,7 @@ export function generateRiskReport(livePrices, portfolio, usdInrRate) {
   msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
   msg += `Total Exposure:   ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n`;
   msg += `Today's Move:     ${metrics.todayPL >= 0 ? '📈 +' : '📉 '}₹${Math.round(Math.abs(metrics.todayPL)).toLocaleString('en-IN')} (${metrics.todayPct.toFixed(2)}%)\n`;
-  
+
   // Max drawdown estimate
   const maxDrawdown = metrics.totalValue * (avgVix > 25 ? 0.15 : avgVix > 18 ? 0.10 : 0.05);
   msg += `Max Drawdown Est: <b>₹${Math.round(maxDrawdown).toLocaleString('en-IN')}</b> <i>(${avgVix > 25 ? '15%' : avgVix > 18 ? '10%' : '5%'} worst case)</i>\n\n`;
@@ -447,20 +447,20 @@ export function generateAutoReport(portfolio, livePrices, usdInrRate) {
 export function generateForexReport(usdInrRate) {
   const timeStr = getISTTime();
   const rate = usdInrRate;
-  
+
   // Estimate if rupee is strong or weak based on rate
   const isStrong = rate < 84;
   const isWeak = rate > 87;
   const trend = isWeak ? '📉 Rupee Weakening' : isStrong ? '📈 Rupee Strengthening' : '↔️ Stable Range';
-  
+
   let msg = `💱 <b>FOREX COMMAND CENTER — USD/INR</b>\n`;
   msg += `⏰ <i>${timeStr} IST</i> | <b>LIVE</b>\n\n`;
-  
+
   msg += `🇺🇸 1 USD = 🇮🇳 <b>₹${rate.toFixed(4)}</b>\n`;
-  msg += `🇮🇳 1 INR = 🇺🇸 <b>$${(1/rate).toFixed(6)}</b>\n\n`;
-  
+  msg += `🇮🇳 1 INR = 🇺🇸 <b>$${(1 / rate).toFixed(6)}</b>\n\n`;
+
   msg += `📊 <b>Trend:</b> ${trend}\n\n`;
-  
+
   msg += `<b>💵 USD → INR Conversion:</b>\n`;
   msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
   msg += `<code>$1     = ₹${rate.toFixed(2)}</code>\n`;
@@ -473,20 +473,20 @@ export function generateForexReport(usdInrRate) {
   msg += `<code>$1000  = ₹${(1000 * rate).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</code>\n`;
   msg += `<code>$5000  = ₹${(5000 * rate).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</code>\n`;
   msg += `<code>$10000 = ₹${(10000 * rate).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</code>\n\n`;
-  
+
   msg += `<b>₹ INR → USD Conversion:</b>\n`;
   msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
-  msg += `<code>₹1000   = $${(1000/rate).toFixed(2)}</code>\n`;
-  msg += `<code>₹5000   = $${(5000/rate).toFixed(2)}</code>\n`;
-  msg += `<code>₹10000  = $${(10000/rate).toFixed(2)}</code>\n`;
-  msg += `<code>₹50000  = $${(50000/rate).toFixed(2)}</code>\n`;
-  msg += `<code>₹100000 = $${(100000/rate).toFixed(2)}</code>\n\n`;
-  
+  msg += `<code>₹1000   = $${(1000 / rate).toFixed(2)}</code>\n`;
+  msg += `<code>₹5000   = $${(5000 / rate).toFixed(2)}</code>\n`;
+  msg += `<code>₹10000  = $${(10000 / rate).toFixed(2)}</code>\n`;
+  msg += `<code>₹50000  = $${(50000 / rate).toFixed(2)}</code>\n`;
+  msg += `<code>₹100000 = $${(100000 / rate).toFixed(2)}</code>\n\n`;
+
   msg += `🧠 <b>AI Forex Insight:</b>\n`;
   if (isWeak) msg += `<i>Rupee weak zone me hai. US stocks ka INR value badh raha hai — aapke US portfolio ka fayda! But new US investments costly ho gaye.</i>\n`;
   else if (isStrong) msg += `<i>Rupee strong ho raha hai. US me invest karne ka achha time — dollar sasta pad raha hai. US portfolio ka INR value thoda kam dikhega.</i>\n`;
   else msg += `<i>Rupee stable range me hai — normal zone. SIP continue karo dono markets me.</i>\n`;
-  
+
   msg += `\n💎 <i>Deep Mind AI Quantum Pro Terminal</i>`;
   return msg;
 }
@@ -884,7 +884,7 @@ export function generateETFReport(portfolio, livePrices, usdInr) {
   const totalPL = totalVal - totalInvested;
   msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
   msg += `💼 <b>ETF Portfolio: ₹${Math.round(totalVal).toLocaleString('en-IN')}</b>\n`;
-  msg += `📈 P&L: ${totalPL >= 0 ? '+' : ''}₹${Math.round(totalPL).toLocaleString('en-IN')} (${((totalPL/totalInvested)*100).toFixed(1)}%)\n\n`;
+  msg += `📈 P&L: ${totalPL >= 0 ? '+' : ''}₹${Math.round(totalPL).toLocaleString('en-IN')} (${((totalPL / totalInvested) * 100).toFixed(1)}%)\n\n`;
 
   msg += `🥧 <b>Category Allocation:</b>\n`;
   for (const [cat, val] of Object.entries(catAlloc).sort((a, b) => b[1] - a[1])) {
@@ -903,7 +903,7 @@ export function generateETFReport(portfolio, livePrices, usdInr) {
 export function generateDigestReport(intel, cryptos, bonds, usdInr, portfolio, livePrices, source = 'TRADINGVIEW') {
   const timeStr = getISTTime();
   const today = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' });
-  
+
   let msg = `🌅 <b>DAILY MARKET DIGEST</b>\n`;
   msg += `📅 ${today}\n`;
   msg += `⏰ <i>${timeStr} IST</i>\n`;
@@ -965,7 +965,7 @@ export function generateDigestReport(intel, cryptos, bonds, usdInr, portfolio, l
 
     if (movers.length > 0) {
       msg += `📈 Top: <b>${movers[0].symbol}</b> (${movers[0].change >= 0 ? '+' : ''}${movers[0].change.toFixed(2)}%)\n`;
-      msg += `📉 Bottom: <b>${movers[movers.length-1].symbol}</b> (${movers[movers.length-1].change >= 0 ? '+' : ''}${movers[movers.length-1].change.toFixed(2)}%)\n\n`;
+      msg += `📉 Bottom: <b>${movers[movers.length - 1].symbol}</b> (${movers[movers.length - 1].change >= 0 ? '+' : ''}${movers[movers.length - 1].change.toFixed(2)}%)\n\n`;
     }
   }
 
@@ -1108,5 +1108,233 @@ export function generateStrategyReport(portfolio, livePrices, usdInr) {
 
   msg += `🧠 <b>Deep Mind Logic:</b> Maintain heavy allocation in momentum and alpha ETFs when VIX < 18. Shift 10% to Hedge when VIX > 25.\n`;
   msg += `\n💎 <i>Deep Mind AI Quantum Pro v12.0</i>`;
+  return msg;
+}
+// ========================================
+// /siptilt — Smart SIP Auto-Tilt (VIX + RSI based multiplier)
+// ========================================
+export function generateSipTiltReport(portfolio, livePrices, usdInr) {
+  const timeStr = getISTTime();
+  const usVix = livePrices['US_VIX']?.price || 15;
+  const inVix = livePrices['IN_INDIAVIX']?.price || 15;
+  const avgVix = (usVix + inVix) / 2;
+
+  // Portfolio average RSI (oversold = cheap = tilt up)
+  let rsiSum = 0, rsiCount = 0;
+  for (const p of portfolio) {
+    const d = livePrices[`${p.market}_${p.symbol}`];
+    if (d?.rsi) { rsiSum += d.rsi; rsiCount++; }
+  }
+  const avgRsi = rsiCount > 0 ? rsiSum / rsiCount : 50;
+
+  // Nifty drawdown from recent high (proxy via change-based regime)
+  const niftyChange = livePrices['IN_NIFTY']?.change || 0;
+
+  // --- Multiplier logic ---
+  // VIX high (fear) + RSI low (oversold) = market sasta = SIP zyada
+  let multiplier = 1.0;
+  let reason = '';
+
+  if (avgVix > 28 || avgRsi < 32) {
+    multiplier = 2.0;
+    reason = 'Market me bada fear/oversold. Maximum deployment — generational buying zone.';
+  } else if (avgVix > 22 || avgRsi < 40) {
+    multiplier = 1.5;
+    reason = 'Elevated fear / dip chal raha hai. SIP 1.5x karo — discount pe accumulate.';
+  } else if (avgVix < 13 && avgRsi > 65) {
+    multiplier = 0.75;
+    reason = 'Extreme greed + overbought (ATH zone). SIP thoda kam karo, cash bachao.';
+  } else if (avgVix < 15 || avgRsi > 60) {
+    multiplier = 0.9;
+    reason = 'Market mehnga lag raha hai. Normal se thoda kam, par SIP rokho mat.';
+  } else {
+    multiplier = 1.0;
+    reason = 'Neutral zone. Standard SIP optimal hai. Emotion-free chalu rakho.';
+  }
+
+  const baseIN = DEFAULT_INDIA_SIP;
+  const baseUS = DEFAULT_US_SIP;
+  const tiltIN = Math.round(baseIN * multiplier);
+  const tiltUS = Math.round(baseUS * multiplier);
+
+  const mEmoji = multiplier >= 1.5 ? '🟢🟢' : multiplier > 1 ? '🟢' : multiplier === 1 ? '🟡' : '🔴';
+
+  let msg = `📊 <b>SMART SIP AUTO-TILT</b>\n`;
+  msg += `⏰ <i>${timeStr} IST</i> | ${getMarketStatus()}\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+  msg += `🌡️ <b>Market Conditions</b>\n`;
+  msg += `Avg VIX: <b>${avgVix.toFixed(1)}</b> ${avgVix > 22 ? '🔴 Fear' : avgVix < 14 ? '🟢 Calm/Greed' : '🟡 Normal'}\n`;
+  msg += `Portfolio Avg RSI: <b>${avgRsi.toFixed(0)}</b> ${avgRsi < 40 ? '🟢 Cheap' : avgRsi > 60 ? '🔴 Expensive' : '🟡 Fair'}\n`;
+  msg += `NIFTY Today: ${niftyChange >= 0 ? '+' : ''}${niftyChange.toFixed(2)}%\n\n`;
+
+  msg += `${mEmoji} <b>Recommended SIP Multiplier: ${multiplier}x</b>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  msg += `🇮🇳 India SIP: ₹${baseIN.toLocaleString('en-IN')} → <b>₹${tiltIN.toLocaleString('en-IN')}</b>\n`;
+  msg += `🇺🇸 US SIP: $${baseUS} → <b>$${tiltUS}</b>\n\n`;
+
+  msg += `🧠 <b>AI Reasoning:</b>\n<i>${reason}</i>\n\n`;
+  msg += `💡 <i>Rule: Market sasta = zyada lagao, mehnga = kam. Emotion-free, mechanical.</i>`;
+  msg += `\n\n💎 <i>Deep Mind AI Quantum Pro • SIP Tilt Engine</i>`;
+  return msg;
+}
+
+// ========================================
+// /taxplan — India Tax Optimizer (LTCG + Crypto + Harvesting)
+// ========================================
+export function generateTaxPlanReport(portfolio, livePrices, usdInr) {
+  const timeStr = getISTTime();
+  const LTCG_EXEMPTION = 125000; // ₹1.25L LTCG exemption per FY (equity)
+
+  let msg = `💸 <b>TAX OPTIMIZER (India FY)</b>\n`;
+  msg += `⏰ <i>${timeStr} IST</i>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+  // Estimate unrealized gains split: equity vs crypto
+  let equityGain = 0, cryptoGain = 0, equityLoss = 0;
+  const harvestable = [];
+
+  for (const p of portfolio) {
+    const d = livePrices[`${p.market}_${p.symbol}`];
+    const price = d?.price || p.avgPrice;
+    const plAbs = (price - p.avgPrice) * p.qty;
+    const plINR = p.market === 'US' ? plAbs * usdInr : plAbs;
+    const cleanSym = p.symbol.replace('.NS', '').replace('.BO', '');
+
+    if (isCryptoSymbol(cleanSym)) {
+      if (plINR > 0) cryptoGain += plINR;
+    } else {
+      if (plINR > 0) equityGain += plINR;
+      else { equityLoss += Math.abs(plINR); harvestable.push({ sym: cleanSym, loss: Math.abs(plINR), market: p.market }); }
+    }
+  }
+
+  // 1. LTCG harvesting opportunity
+  msg += `🎯 <b>1. LTCG ₹1.25L Harvesting</b>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  msg += `Unrealized equity gains: <b>₹${Math.round(equityGain).toLocaleString('en-IN')}</b>\n`;
+  if (equityGain > 0) {
+    const bookable = Math.min(equityGain, LTCG_EXEMPTION);
+    msg += `✅ Tax-free book karne layak: <b>₹${Math.round(bookable).toLocaleString('en-IN')}</b>\n`;
+    msg += `<i>Itna gain sell karke turant re-buy karo — cost basis reset, ₹0 tax (LTCG exemption use).</i>\n`;
+    if (equityGain > LTCG_EXEMPTION) {
+      const taxable = (equityGain - LTCG_EXEMPTION) * 0.125;
+      msg += `⚠️ ₹1.25L se upar wale gain pe 12.5% LTCG ≈ <b>₹${Math.round(taxable).toLocaleString('en-IN')}</b> tax lagega.\n`;
+    }
+  } else {
+    msg += `<i>Abhi koi equity gain nahi — harvesting ki zarurat nahi.</i>\n`;
+  }
+  msg += `\n`;
+
+  // 2. Tax-loss harvesting
+  msg += `🔄 <b>2. Tax-Loss Harvesting</b>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  if (harvestable.length > 0) {
+    harvestable.sort((a, b) => b.loss - a.loss);
+    for (const h of harvestable) {
+      const flag = h.market === 'IN' ? '🇮🇳' : '🇺🇸';
+      msg += `${flag} <b>${h.sym}</b>: ₹${Math.round(h.loss).toLocaleString('en-IN')} loss bookable\n`;
+    }
+    msg += `<i>Total ₹${Math.round(equityLoss).toLocaleString('en-IN')} loss book karke gains se offset karo. /taxloss me swap pairs dekho.</i>\n`;
+  } else {
+    msg += `<i>Koi losing equity position nahi — sab profit me. 👍</i>\n`;
+  }
+  msg += `\n`;
+
+  // 3. Crypto 30% impact
+  msg += `🪙 <b>3. Crypto 30% Tax Impact</b>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  msg += `Unrealized crypto gains: <b>₹${Math.round(cryptoGain).toLocaleString('en-IN')}</b>\n`;
+  if (cryptoGain > 0) {
+    const cryptoTax = cryptoGain * 0.30;
+    msg += `⚠️ Sell karoge to flat 30% tax ≈ <b>₹${Math.round(cryptoTax).toLocaleString('en-IN')}</b> (+ 1% TDS).\n`;
+    msg += `<i>Crypto me loss offset NAHI hota, har gain pe 30%. Isliye HODL/DCA best — sell tabhi jab zaroori ho.</i>\n`;
+  } else {
+    msg += `<i>Abhi koi crypto gain nahi. Long-term HODL continue.</i>\n`;
+  }
+  msg += `\n`;
+
+  // 4. ELSS reminder
+  msg += `📋 <b>4. ELSS / 80C Reminder</b>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  msg += `<i>Old regime me ho to ELSS ₹1.5L (80C) invest karke ₹46,800 tak tax bachao. 3yr lock-in + equity returns.</i>\n`;
+
+  msg += `\n⚠️ <i>Educational hai, CA se confirm karo. FY-end (Mar 31) se pehle plan karo.</i>`;
+  msg += `\n💎 <i>Deep Mind AI Quantum Pro • Tax Optimizer</i>`;
+  return msg;
+}
+
+// ========================================
+// /drawdown — Drawdown Recovery Tracker
+// ========================================
+export function generateDrawdownReport(portfolio, livePrices, usdInr) {
+  const timeStr = getISTTime();
+
+  let msg = `📉 <b>DRAWDOWN RECOVERY TRACKER</b>\n`;
+  msg += `⏰ <i>${timeStr} IST</i>\n`;
+  msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n`;
+
+  if (portfolio.length === 0) {
+    msg += `⚠️ Portfolio khali hai.\n`;
+    return msg;
+  }
+
+  const positions = [];
+  for (const p of portfolio) {
+    const d = livePrices[`${p.market}_${p.symbol}`];
+    const price = d?.price || p.avgPrice;
+    const high = d?.high || price;
+    const cleanSym = p.symbol.replace('.NS', '').replace('.BO', '');
+    const cur = p.market === 'IN' ? '₹' : '$';
+
+    // Drawdown from avg cost (underwater) AND from day high
+    const ddFromAvg = p.avgPrice > 0 ? ((price - p.avgPrice) / p.avgPrice) * 100 : 0;
+    const cagr = getAssetCagrProxy(p.symbol, p.market);
+
+    // Recovery estimate: if underwater, time to regain avg cost at asset CAGR
+    let recoveryMonths = 0;
+    if (ddFromAvg < 0) {
+      const gainNeeded = (p.avgPrice / price) - 1; // fractional gain to break even
+      const monthlyRate = Math.pow(1 + cagr / 100, 1 / 12) - 1;
+      recoveryMonths = monthlyRate > 0 ? Math.log(1 + gainNeeded) / Math.log(1 + monthlyRate) : 0;
+    }
+
+    positions.push({ sym: cleanSym, cur, price, avg: p.avgPrice, ddFromAvg, recoveryMonths, cagr, underwater: ddFromAvg < 0 });
+  }
+
+  const underwater = positions.filter(p => p.underwater).sort((a, b) => a.ddFromAvg - b.ddFromAvg);
+  const profitable = positions.filter(p => !p.underwater);
+
+  // Portfolio-level
+  const metrics = calculateMetrics(portfolio, livePrices, usdInr);
+  msg += `💼 <b>Portfolio P&L:</b> ${metrics.plPct >= 0 ? '🟢 +' : '🔴 '}${metrics.plPct.toFixed(2)}%\n`;
+  msg += `Underwater positions: <b>${underwater.length}/${positions.length}</b>\n\n`;
+
+  if (underwater.length > 0) {
+    msg += `🌊 <b>UNDERWATER POSITIONS</b>\n`;
+    msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+    for (const p of underwater) {
+      const bars = Math.min(10, Math.round(Math.abs(p.ddFromAvg) / 3));
+      const ddBar = '🟥'.repeat(bars) + '⬜'.repeat(10 - bars);
+      let recStr;
+      if (p.recoveryMonths <= 0) recStr = 'N/A';
+      else if (p.recoveryMonths < 12) recStr = `~${Math.round(p.recoveryMonths)} mo`;
+      else recStr = `~${(p.recoveryMonths / 12).toFixed(1)} yr`;
+
+      msg += `\n🔴 <b>${p.sym}</b>: ${p.ddFromAvg.toFixed(1)}% underwater\n`;
+      msg += `   ${p.cur}${p.price.toFixed(2)} vs Avg ${p.cur}${p.avg.toFixed(2)}\n`;
+      msg += `   <code>[${ddBar}]</code>\n`;
+      msg += `   ⏳ Recovery est: <b>${recStr}</b> (@${p.cagr}% CAGR)\n`;
+    }
+    msg += `\n💪 <i>Bhai, drawdown temporary hai. Quality assets recover karte hain. Yahi accumulation ka time hai — ghabrao mat, SIP chalu rakho.</i>\n`;
+  } else {
+    msg += `✅ <b>Koi position underwater nahi!</b> Sab assets profit me hain. 🚀\n`;
+  }
+
+  if (profitable.length > 0) {
+    msg += `\n🟢 <b>In profit:</b> ${profitable.map(p => p.sym).join(', ')}\n`;
+  }
+
+  msg += `\n💎 <i>Deep Mind AI Quantum Pro • Drawdown Tracker</i>`;
   return msg;
 }

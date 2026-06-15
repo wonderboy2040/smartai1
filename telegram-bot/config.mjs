@@ -18,11 +18,11 @@ export const API_URL = process.env.API_URL || "";
 export let TAVILY_API_KEY = process.env.TAVILY_API_KEY || process.env.VITE_TAVILY_API_KEY || "";
 
 // ============================================
-// 3-ENGINE AI ARCHITECTURE (FREE MODELS ONLY)
+// 3-ENGINE AI ARCHITECTURE (FREE-FIRST)
 // ============================================
-// 1. Gemini — Latest FREE (gemini-3.5-flash)
-// 2. Claude — Latest FREE (claude-sonnet-4-6)
-// 3. Groq   — Latest FREE (llama-3.3-70b-versatile + compound)
+// 1. Gemini — Latest FREE (gemini-2.0-flash) — Google Search grounding
+// 2. Claude — Latest (claude-sonnet-4-5 / claude-3-5-haiku) — paid API, optional fallback
+// 3. Groq   — Latest FREE (llama-3.3-70b-versatile + groq/compound live web)
 // ============================================
 const env = process.env;
 

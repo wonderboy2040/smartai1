@@ -1,12 +1,12 @@
 // ============================================
 // AI CHAT ENGINE v16.0 — ADVANCE PRO Deep Mind AI
-// 3-Engine FREE Architecture: Groq + Gemini + Claude
+// 3-Engine Architecture: Groq + Gemini + Claude (+ Tavily Deep Research)
 // Deep Research + Deep Mind Analysis + Live Alerts
 // ============================================
-import { 
+import {
   GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, TAVILY_API_KEY,
   isGroqAvailable, isGeminiAvailable, isClaudeAvailable, isTavilyAvailable,
-  ALPHA_ETFS_IN, ALPHA_ETFS_US 
+  ALPHA_ETFS_IN, ALPHA_ETFS_US
 } from './config.mjs';
 import { fetchMarketIntelligence, fetchForexRate } from './market.mjs';
 import { calculateMetrics, analyzeAsset } from './analysis.mjs';
@@ -75,7 +75,7 @@ async function retryWithBackoff(fn, maxRetries = 2, baseDelay = 1000) {
 }
 
 // ============================================
-// TAVILY REAL-TIME WEB SEARCH — Live Market Data
+// TAVILY REAL-TIME WEB SEARCH — Live Market Data (Deep Research)
 // ============================================
 async function fetchRealtimeWebData(query) {
   if (!isTavilyAvailable()) return '';
@@ -161,7 +161,7 @@ async function getRealtimeForex() {
 }
 
 // ============================================
-// GROQ API — Ultra-fast Responses (Latest Model)
+// GROQ API — Ultra-fast Responses (Latest FREE Model)
 // ============================================
 async function callGroq(messages, systemPrompt, modelName = 'llama-3.3-70b-versatile') {
   if (!isGroqAvailable()) throw new Error('Groq key missing or invalid');
@@ -196,14 +196,13 @@ async function callGroq(messages, systemPrompt, modelName = 'llama-3.3-70b-versa
 }
 
 // ============================================
-// GEMINI API — Google AI (Real-time Intelligence)
+// GEMINI API — Google AI (Latest FREE — Real-time grounding)
 // ============================================
 async function callGemini(messages, systemPrompt) {
   if (!isGeminiAvailable()) throw new Error('Gemini key missing or invalid');
   if (isEngineCoolingDown('gemini')) throw new Error('Gemini temporarily cooling down after failures');
 
   // Build contents with STRICT alternating user/model turns
-  // Gemini requires: user → model → user → model pattern
   const contents = [];
 
   // Start with system prompt as first user message
@@ -214,10 +213,7 @@ async function callGemini(messages, systemPrompt) {
   let lastRole = 'model';
   for (const m of messages) {
     const geminiRole = m.role === 'assistant' ? 'model' : 'user';
-
-    // If same role as last, merge with previous or skip
     if (geminiRole === lastRole) {
-      // Merge into last message
       const lastMsg = contents[contents.length - 1];
       lastMsg.parts[0].text += '\n\n' + m.content;
     } else {
@@ -229,14 +225,12 @@ async function callGemini(messages, systemPrompt) {
     }
   }
 
-  // Gemini requires the last message to be 'user'
   if (lastRole === 'model' && contents.length > 2) {
-    // This shouldn't happen in normal flow since user message is always last
-    // But just in case, add a nudge
     contents.push({ role: 'user', parts: [{ text: 'Please respond to my last query.' }] });
   }
 
-  const modelOptions = ['gemini-3.5-flash', 'gemini-3.1-flash-lite'];
+  // Latest FREE Gemini models with Google Search grounding
+  const modelOptions = ['gemini-2.0-flash', 'gemini-2.0-flash-lite'];
   let lastError = null;
 
   for (const modelName of modelOptions) {
@@ -246,7 +240,7 @@ async function callGemini(messages, systemPrompt) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents,
-          // Google Search grounding — FREE real-time live market data (Gemini 2.x+ models)
+          // Google Search grounding — FREE real-time live market data
           tools: [{ google_search: {} }],
           generationConfig: {
             temperature: 0.7,
@@ -280,7 +274,6 @@ async function callGemini(messages, systemPrompt) {
         throw new Error('Gemini blocked response due to safety filters');
       }
 
-      // Grounded responses can span multiple parts — join them all
       const parts = data.candidates?.[0]?.content?.parts || [];
       const text = parts.map(p => p.text || '').join('');
       if (!text || text.trim().length < 5) throw new Error('Gemini returned empty response');
@@ -298,13 +291,12 @@ async function callGemini(messages, systemPrompt) {
 }
 
 // ============================================
-// CLAUDE API — Deep Analysis & Strategies
+// CLAUDE API — Deep Analysis & Strategies (Latest)
 // ============================================
 async function callClaude(messages, systemPrompt) {
   if (!isClaudeAvailable()) throw new Error('Claude key missing or invalid');
   if (isEngineCoolingDown('claude')) throw new Error('Claude temporarily cooling down after failures');
 
-  // Filter out any system messages — Claude uses `system` param separately
   const claudeMessages = messages
     .filter(m => m.role === 'user' || m.role === 'assistant')
     .map(m => ({
@@ -312,7 +304,6 @@ async function callClaude(messages, systemPrompt) {
       content: m.content
     }));
 
-  // Ensure messages alternate and start with user
   const fixedMessages = [];
   let expectedRole = 'user';
   for (const m of claudeMessages) {
@@ -320,19 +311,18 @@ async function callClaude(messages, systemPrompt) {
       fixedMessages.push(m);
       expectedRole = expectedRole === 'user' ? 'assistant' : 'user';
     } else if (m.role === 'user' && expectedRole === 'assistant') {
-      // Missing assistant message, add placeholder
       fixedMessages.push({ role: 'assistant', content: 'Samjha. Continue karo.' });
       fixedMessages.push(m);
       expectedRole = 'assistant';
     }
   }
 
-  // Must have at least one user message
   if (fixedMessages.length === 0 || fixedMessages[0].role !== 'user') {
     fixedMessages.unshift({ role: 'user', content: 'Hello' });
   }
 
-  const modelOptions = ['claude-sonnet-4-6', 'claude-haiku-4-5'];
+  // Latest Claude models (Sonnet 4.5 primary, Haiku 3.5 cheaper fallback)
+  const modelOptions = ['claude-sonnet-4-5', 'claude-3-5-haiku-latest'];
   let lastError = null;
 
   for (const modelName of modelOptions) {
@@ -386,22 +376,18 @@ async function callClaude(messages, systemPrompt) {
 function detectIntent(query) {
   const q = query.toLowerCase().trim();
 
-  // Real-time / News / Market / Crypto queries → Gemini (has grounding/search capabilities)
   if (/\b(news|khabar|market|live|aaj|today|nifty|sensex|breaking|alert|ipo|fii|dii|rbi|fed|crude|gold|dollar|forex|rupee|sector|global|world|bull|bear|crash|rally|correction|gift\s*nifty|pre.?market|opening|closing|trend|intraday|sgx|dow|nasdaq|s&p|vix|india\s*vix|budget|policy|gdp|inflation|cpi|employment|earnings|results|quarterly|bitcoin|btc|crypto|halving|eth|ethereum|blockchain|defi|altcoin|binance|coinbase|regulation|sec)\b/i.test(q)) {
     return { model: 'market', intent: 'MARKET_INTEL', confidence: 88 };
   }
 
-  // Deep analysis / Strategy / Institutional → Claude
   if (/\b(analy[sz]e|analysis|portfolio|strategy|fundamental|backtest|risk|allocation|rebalance|compare|optimize|deep|detailed|comprehensive|long.?term|sip|wealth|retirement|sharpe|cagr|calculate|projection|monte\s*carlo|fibonacci|wyckoff|smc|smart\s*money|elliott|wave|options?|pcr|iv|implied|greeks|hedge|iron\s*condor|straddle|strangle|bull.?spread|bear.?spread|intrinsic|book\s*value|roe|pe\s*ratio|dcf|graham|valuation|moat|competitive|balance\s*sheet|dividend|eps|revenue|margin|debt|hodl|dca|on.?chain|stock.?to.?flow|mvrv|nvt|eth|ethereum|alpha\s*etf)\b/i.test(q)) {
     return { model: isClaudeAvailable() ? 'claude' : 'gemini', intent: 'DEEP_ANALYSIS', confidence: 85 };
   }
 
-  // Hindi trading queries → Groq (fast response)
   if (/\b(kaise|kaisa|kya|kab|kidhar|konsa|kitna|achha|best|buy|sell|hold|entry|exit|target|stop.?loss|support|resistance|level|breakout|breakdown|accumulate|book\s*profit|averaging)\b/i.test(q)) {
     return { model: 'groq', intent: 'QUICK_TRADE', confidence: 75 };
   }
 
-  // Default → Groq (fastest for general queries)
   return { model: 'groq', intent: 'GENERAL', confidence: 70 };
 }
 
@@ -411,16 +397,13 @@ function detectIntent(query) {
 async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
   let ctx = '';
 
-  // 1. Real-time market snapshot (live prices)
   const marketSnapshot = await getRealtimeMarketSnapshot();
   if (marketSnapshot) ctx += marketSnapshot + '\n';
 
-  // 2. Real-time USD/INR
   const liveForex = await getRealtimeForex();
   ctx += `LIVE USD/INR: ₹${liveForex.toFixed(4)}\n`;
   ctx += `Timestamp: ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST\n\n`;
 
-  // 3. Refresh market intelligence (cache 2 min)
   const now = Date.now();
   if (!cachedIntel || now - intelTimestamp > 120000) {
     try {
@@ -431,7 +414,6 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
     }
   }
 
-  // Market intelligence context
   if (cachedIntel) {
     ctx += `GLOBAL INDICES:\n`;
     cachedIntel.globalIndices.forEach(i => {
@@ -445,18 +427,16 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
     ctx += `AI Narrative: ${cachedIntel.marketNarrative}\n\n`;
   }
 
-  // 4. Real-time web search for market-related queries
   if (userQuery && TAVILY_API_KEY) {
     const isMarketQuery = /\b(news|market|nifty|sensex|fed|rbi|ipo|fii|dii|crude|gold|dollar|bitcoin|btc|crypto|budget|gdp|inflation|earnings|results|breaking|today|aaj|live|halving|eth|blockchain|defi|altcoin|binance|regulation|sec)\b/i.test(userQuery);
     if (isMarketQuery) {
-      console.log('  🔍 Fetching real-time web data via Tavily...');
+      console.log('  🔍 Fetching real-time web data via Tavily (Deep Research)...');
       const searchSuffix = /news|stock|crypto|market|price/i.test(userQuery) ? '' : ' latest market news';
       const webData = await fetchRealtimeWebData(`${userQuery}${searchSuffix}`);
       if (webData) ctx += `\nLIVE WEB SEARCH RESULTS:\n${webData}\n`;
     }
   }
 
-  // 5. Portfolio context with full technicals
   if (portfolio && portfolio.length > 0) {
     const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
     ctx += `\nPORTFOLIO DASHBOARD:\n`;
@@ -485,7 +465,7 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
       const curVal = price * p.qty;
       const curValINR = p.market === 'US' ? curVal * usdInrRate : curVal;
       const cur = p.market === 'IN' ? '₹' : '$';
-      ctx += `${p.symbol.replace('.NS','')} [${p.market}]: ${cur}${price.toFixed(2)} (${change >= 0 ? '+' : ''}${change.toFixed(1)}%) | RSI=${rsi.toFixed(0)} | MACD=${macd?.toFixed(2) || 'N/A'} | SMA20=${sma20?.toFixed(1) || 'N/A'} SMA50=${sma50?.toFixed(1) || 'N/A'} | Vol=${(volume/1000000).toFixed(1)}M | Signal=${sig.signal} (${sig.confidence}%) | Qty=${p.qty} Avg=${cur}${p.avgPrice.toFixed(2)} P&L=${plPct.toFixed(1)}% (₹${Math.round(plINR).toLocaleString('en-IN')}) Val=₹${Math.round(curValINR).toLocaleString('en-IN')}\n`;
+      ctx += `${p.symbol.replace('.NS', '')} [${p.market}]: ${cur}${price.toFixed(2)} (${change >= 0 ? '+' : ''}${change.toFixed(1)}%) | RSI=${rsi.toFixed(0)} | MACD=${macd?.toFixed(2) || 'N/A'} | SMA20=${sma20?.toFixed(1) || 'N/A'} SMA50=${sma50?.toFixed(1) || 'N/A'} | Vol=${(volume / 1000000).toFixed(1)}M | Signal=${sig.signal} (${sig.confidence}%) | Qty=${p.qty} Avg=${cur}${p.avgPrice.toFixed(2)} P&L=${plPct.toFixed(1)}% (₹${Math.round(plINR).toLocaleString('en-IN')}) Val=₹${Math.round(curValINR).toLocaleString('en-IN')}\n`;
     }
   }
 
@@ -498,7 +478,7 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
 function buildSystemPrompt(contextData, intent) {
   const todayDate = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
   const currentTime = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
-  
+
   return `You are DEEP MIND AI ADVANCE PRO v16.0 - Elite Institutional-Grade Trading & Investment Intelligence with DEEP RESEARCH + DEEP MIND ANALYSIS for Indian, US markets AND Cryptocurrency. You have access to REAL-TIME LIVE market data feeds 24x7.
 
 PERSONA: You are a seasoned institutional quant trader (15+ years NSE, BSE, NYSE, NASDAQ, FnO, Options, Crypto) guiding Nagraj Bhai like a senior trader mentoring a junior. You think like Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined.
@@ -522,9 +502,9 @@ TRADING & INVESTMENT RULES:
 6. Be comprehensive and detailed. Format with **bold** and emojis.
 7. Always end with CLEAR ACTIONABLE VERDICT: 🟢 BUY / 🔴 SELL / 🟡 HOLD / ⏳ WAIT with specific price levels.
 8. Emphasize LONG-TERM wealth creation (15-20 years), compounding, and SIP step-up magic. Mention ALPHA ETF logic and crypto adoption (BTC/ETH) as moonshot allocation.
-8. Reference USD/INR exchange rate when discussing US holdings in INR terms.
-9. For portfolio queries, calculate and show actual P&L from the live data provided.
-10. ALWAYS analyze EVERY asset including crypto. Do NOT skip any position.
+9. Reference USD/INR exchange rate when discussing US holdings in INR terms.
+10. For portfolio queries, calculate and show actual P&L from the live data provided.
+11. ALWAYS analyze EVERY asset including crypto. Do NOT skip any position.
 
 CRYPTO-SPECIFIC RULES (MANDATORY for BTC/crypto queries):
 - BTC Supply Cap: 21 million (scarcity thesis)
@@ -577,18 +557,14 @@ ${contextData}`;
 // MAIN CHAT FUNCTION — Advanced Fallback Chain
 // ============================================
 export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices = {}, usdInrRate = 83.5, selectedModel = 'auto') {
-  // Get/create chat history
   if (!chatHistory.has(chatId)) chatHistory.set(chatId, []);
   const history = chatHistory.get(chatId);
 
-  // Add user message to history
   history.push({ role: 'user', content: userMessage });
 
-  // Detect intent and route to best model
   const { model: targetModel, intent, confidence } = detectIntent(userMessage);
   console.log(`  🧠 Intent: ${intent} | Target: ${targetModel} | Confidence: ${confidence}%`);
 
-  // Build portfolio + market context
   let contextData = '';
   try {
     contextData = await buildContext(portfolio, livePrices, usdInrRate, userMessage);
@@ -596,10 +572,8 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
     console.warn('  ⚠ Context build partial failure:', e.message);
   }
 
-  // Build system prompt
   const systemPrompt = buildSystemPrompt(contextData, intent);
 
-  // Build messages for API
   const recentHistory = history.slice(-MAX_HISTORY).map(m => ({
     role: m.role,
     content: m.content
@@ -608,7 +582,6 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
   let aiText = '';
   let usedModel = targetModel;
 
-  // Build smart fallback chain based on target
   let modelChain;
   if (selectedModel && selectedModel !== 'auto') {
     modelChain = selectedModel === 'market' ? ['market', 'gemini', 'groq'] : [selectedModel];
@@ -616,13 +589,12 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
     modelChain = targetModel === 'market'
       ? ['market', 'gemini', 'groq']
       : targetModel === 'gemini'
-      ? ['gemini', 'market', 'groq', 'claude']
-      : targetModel === 'claude'
-      ? ['claude', 'gemini', 'groq']
-      : ['groq', 'market', 'gemini', 'claude'];
+        ? ['gemini', 'market', 'groq', 'claude']
+        : targetModel === 'claude'
+          ? ['claude', 'gemini', 'groq']
+          : ['groq', 'market', 'gemini', 'claude'];
   }
 
-  // Try each model in chain with retry
   for (const model of modelChain) {
     try {
       if (model === 'market' && isGroqAvailable()) {
@@ -660,7 +632,6 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
   }
 
   if (!aiText) {
-    // All engines failed — provide diagnostic message
     const available = [];
     if (isGroqAvailable()) available.push('Groq');
     if (isGeminiAvailable()) available.push('Gemini');
@@ -684,28 +655,20 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
     usedModel = 'system';
   }
 
-  // Clean up and format for Telegram HTML
   let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-
-  // Escape ALL HTML first
   safeText = safeText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-  // Convert markdown to Telegram HTML
   safeText = safeText
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/\*(.+?)\*/g, '<i>$1</i>')
     .replace(/_(.+?)_/g, '<i>$1</i>')
     .replace(/`(.+?)`/g, '<code>$1</code>');
 
-  // Save to history
   history.push({ role: 'assistant', content: aiText });
 
-  // Trim history
   if (history.length > MAX_HISTORY * 2) {
     history.splice(0, history.length - MAX_HISTORY);
   }
 
-  // Add model indicator
   let modelEmoji = '🤖';
   let modelLabel = 'System';
   if (usedModel === 'market') {
@@ -713,13 +676,13 @@ export async function chatWithAI(chatId, userMessage, portfolio = [], livePrices
     modelLabel = 'Market Expert Live';
   } else if (usedModel === 'groq') {
     modelEmoji = '⚡';
-    modelLabel = 'Groq';
+    modelLabel = 'Groq Llama 3.3 70B';
   } else if (usedModel === 'gemini') {
     modelEmoji = '🔵';
-    modelLabel = 'Gemini 3.5 Flash';
+    modelLabel = 'Gemini 2.0 Flash';
   } else if (usedModel === 'claude') {
     modelEmoji = '🟣';
-    modelLabel = 'Claude';
+    modelLabel = 'Claude Sonnet 4.5';
   }
 
   return `${modelEmoji} <i>${modelLabel} | ${intent} | LIVE</i>\n\n${safeText}`;
@@ -730,7 +693,6 @@ export function clearChatHistory(chatId) {
   return '🧹 Chat history cleared. Fresh start!';
 }
 
-// Health check export
 export function getAIHealthStatus() {
   return {
     groq: { available: isGroqAvailable(), health: engineHealth.groq },

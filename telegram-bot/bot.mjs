@@ -20,8 +20,11 @@ import {
   generateCompareReport, analyzeAsset,
   generateLiveReport, generateCryptoReport, generateSIPReport,
   generateETFReport, generateDigestReport, generateFIIDIIReport, generateIPOReport,
-  generateLongTermReport, generateStrategyReport
+  generateLongTermReport, generateStrategyReport,
+  generateSipTiltReport, generateTaxPlanReport, generateDrawdownReport
 } from './analysis.mjs';
+
+
 import { chatWithAI, clearChatHistory } from './ai-chat.mjs';
 import { backtestSignal, calculateBacktestMetrics } from './backtester.mjs';
 
@@ -91,7 +94,7 @@ function loadStreakData() {
 function saveStreakData() {
   try {
     fs.writeFileSync(STREAK_FILE, JSON.stringify({ dailyPLHistory, consecutiveStreak }), 'utf8');
-  } catch (e) {}
+  } catch (e) { }
 }
 
 // ========================================
@@ -190,7 +193,7 @@ async function initializeData() {
     }
   }
 
-// Step 5: Market Intelligence (non-blocking)
+  // Step 5: Market Intelligence (non-blocking)
   try {
     console.log('🌍 Fetching market intelligence...');
     marketIntel = await fetchMarketIntelligence();
@@ -204,51 +207,55 @@ async function initializeData() {
 
   botReady = true;
   console.log('');
-console.log('🟢 ════════════════════════════════════════');
-console.log(` BOT FULLY ONLINE — ${getISTTime()} IST`);
-console.log(` Portfolio: ${portfolio.length} positions`);
-console.log(` Groq AI: ${GROQ_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
-console.log(` Gemini AI: ${GEMINI_API_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
-console.log(` Claude AI: ${CLAUDE_API_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
-console.log(` Market: ${getMarketStatus()}`);
-console.log('🟢 ════════════════════════════════════════');
+  console.log('🟢 ════════════════════════════════════════');
+  console.log(` BOT FULLY ONLINE — ${getISTTime()} IST`);
+  console.log(` Portfolio: ${portfolio.length} positions`);
+  console.log(` Groq AI: ${GROQ_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
+  console.log(` Gemini AI: ${GEMINI_API_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
+  console.log(` Claude AI: ${CLAUDE_API_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
+  console.log(` Market: ${getMarketStatus()}`);
+  console.log('🟢 ════════════════════════════════════════');
   console.log('');
 
   // Step 6: Set Persistent Telegram Menu Commands
   try {
-  await bot.setMyCommands([
-        { command: 'start', description: 'Main Menu & Overview' },
-        { command: 'portfolio', description: 'Full Portfolio Analysis' },
-        { command: 'market', description: 'Global Market Snapshot' },
-        { command: 'live', description: 'Live Market Sensor Data' },
-        { command: 'allocation', description: 'Smart SIP Matrix' },
-        { command: 'risk', description: 'Risk & VIX Assessment' },
-        { command: 'trim', description: 'Trim + Re-Entry Rules Card' },
-        { command: 'scan', description: 'Deep scan any symbol' },
-        { command: 'compare', description: 'Head-to-head comparison' },
-        { command: 'correlate', description: 'Portfolio Correlation Matrix' },
-        { command: 'heatmap', description: 'Sector Heat Map' },
-        { command: 'taxloss', description: 'Tax-Loss Harvesting' },
-        { command: 'backtest', description: 'AI Signal Accuracy Check' },
-        { command: 'streak', description: 'Performance streak tracker' },
-        { command: 'etf', description: 'ETF Portfolio Analysis' },
-        { command: 'crypto', description: 'Crypto Market (BTC/ETH)' },
-        { command: 'sip', description: 'SIP Calculator' },
-        { command: 'longterm', description: '15-20yr Wealth Strategy' },
-        { command: 'fire', description: 'FIRE / Early Retirement Calculator' },
-        { command: 'milestones', description: 'Wealth Milestone Tracker' },
-        { command: 'strategy', description: 'Institutional Asset Allocation' },
-        { command: 'premarket', description: 'Pre-market Intelligence' },
-        { command: 'digest', description: 'Daily Market Digest' },
-        { command: 'fiidii', description: 'FII/DII Flow Tracker' },
-        { command: 'ipo', description: 'IPO Tracker' },
-        { command: 'forex', description: 'Live Forex (USD/INR)' },
-        { command: 'news', description: 'Global Market Sentiment' },
-        { command: 'fundamental', description: 'Deep Fundamental Analysis' },
-        { command: 'alert', description: 'Toggle auto alerts' },
-        { command: 'model', description: 'Select AI model' },
-        { command: 'clear', description: 'Clear AI Memory' }
-      ]);
+    await bot.setMyCommands([
+      { command: 'start', description: 'Main Menu & Overview' },
+      { command: 'portfolio', description: 'Full Portfolio Analysis' },
+      { command: 'market', description: 'Global Market Snapshot' },
+      { command: 'live', description: 'Live Market Sensor Data' },
+      { command: 'allocation', description: 'Smart SIP Matrix' },
+      { command: 'risk', description: 'Risk & VIX Assessment' },
+      { command: 'trim', description: 'Trim + Re-Entry Rules Card' },
+      { command: 'scan', description: 'Deep scan any symbol' },
+      { command: 'compare', description: 'Head-to-head comparison' },
+      { command: 'correlate', description: 'Portfolio Correlation Matrix' },
+      { command: 'heatmap', description: 'Sector Heat Map' },
+      { command: 'taxloss', description: 'Tax-Loss Harvesting' },
+      { command: 'backtest', description: 'AI Signal Accuracy Check' },
+      { command: 'streak', description: 'Performance streak tracker' },
+      { command: 'etf', description: 'ETF Portfolio Analysis' },
+      { command: 'crypto', description: 'Crypto Market (BTC/ETH)' },
+      { command: 'sip', description: 'SIP Calculator' },
+      { command: 'longterm', description: '15-20yr Wealth Strategy' },
+      { command: 'fire', description: 'FIRE / Early Retirement Calculator' },
+      { command: 'milestones', description: 'Wealth Milestone Tracker' },
+      { command: 'strategy', description: 'Institutional Asset Allocation' },
+      { command: 'premarket', description: 'Pre-market Intelligence' },
+      { command: 'digest', description: 'Daily Market Digest' },
+      { command: 'fiidii', description: 'FII/DII Flow Tracker' },
+      { command: 'ipo', description: 'IPO Tracker' },
+      { command: 'forex', description: 'Live Forex (USD/INR)' },
+      { command: 'news', description: 'Global Market Sentiment' },
+      { command: 'fundamental', description: 'Deep Fundamental Analysis' },
+      { command: 'alert', description: 'Toggle auto alerts' },
+      { command: 'model', description: 'Select AI model' },
+      { command: 'siptilt', description: 'Smart SIP Auto-Tilt (VIX/RSI)' },
+      { command: 'taxplan', description: 'Tax Optimizer (LTCG + Crypto)' },
+      { command: 'drawdown', description: 'Drawdown Recovery Tracker' },
+
+      { command: 'clear', description: 'Clear AI Memory' }
+    ]);
     console.log('✅ Telegram Menu Commands Updated');
   } catch (e) {
     console.warn('⚠️  Could not set Telegram commands:', e.message);
@@ -270,7 +277,7 @@ async function refreshPrices() {
 async function refreshForex() {
   try {
     usdInrRate = await fetchForexRate();
-  } catch (e) {}
+  } catch (e) { }
 }
 
 async function refreshPortfolio() {
@@ -279,13 +286,13 @@ async function refreshPortfolio() {
     if (fresh && fresh.length > 0) {
       portfolio = fresh;
     }
-  } catch (e) {}
+  } catch (e) { }
 }
 
 async function refreshIntel() {
   try {
     marketIntel = await fetchMarketIntelligence();
-  } catch (e) {}
+  } catch (e) { }
 }
 
 // ========================================
@@ -294,7 +301,7 @@ async function refreshIntel() {
 async function safeSend(chatId, text, options = {}) {
   const defaultOpts = { parse_mode: 'HTML', disable_web_page_preview: true };
   const mergedOpts = { ...defaultOpts, ...options };
-  
+
   // Telegram max message length = 4096
   if (text.length > 4000) {
     // Split into chunks
@@ -367,8 +374,8 @@ Nagraj Bhai, main tumhara ADVANCE PRO AI Trading assistant hoon! 🚀
 • VIX, Gold, Crude, DXY, Bitcoin, Bonds
 
 🤖 <b>3-Engine FREE AI Architecture:</b>
-• 🔵 Google Gemini 3.5 Flash (Real-Time Intel + Google Search)
-• 🟣 Claude Sonnet 4.6 (Deep Analysis + Strategy)
+• 🔵 Google Gemini 2.0 Flash (Real-Time Intel + Google Search)
+• 🟣 Claude Sonnet 4.5 (Deep Analysis + Strategy)
 • ⚡ Groq Llama-3.3 70B + Compound (Ultra-Fast + Live Search)
 
 📊 <b>Commands:</b>
@@ -421,9 +428,9 @@ Bina / ke koi bhi message likho = ADVANCE PRO AI chat!
 bot.onText(/^\/debug_env(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   const env = process.env;
-  
+
   let report = '🔍 <b>ENVIRONMENT VARIABLE DEBUGGER</b>\n━━━━━━━━━━━━━━━━━━━━━━\n';
-  
+
   // Directly check the variables from config and process.env
   report += `<b>GROQ_KEY:</b> ${env.GROQ_KEY ? '✅ Found (' + env.GROQ_KEY.length + ' ch)' : '❌ MISSING'}\n`;
   report += `<b>VITE_GROQ_API_KEY:</b> ${env.VITE_GROQ_API_KEY ? '✅ Found (' + env.VITE_GROQ_API_KEY.length + ' ch)' : '❌ MISSING'}\n`;
@@ -432,7 +439,7 @@ bot.onText(/^\/debug_env(@\w+)?$/i, async (msg) => {
   report += `<b>CLAUDE_API_KEY:</b> ${env.CLAUDE_API_KEY ? '✅ Found (' + env.CLAUDE_API_KEY.length + ' ch)' : '❌ MISSING'}\n`;
   report += `<b>VITE_CLAUDE_API_KEY:</b> ${env.VITE_CLAUDE_API_KEY ? '✅ Found (' + env.VITE_CLAUDE_API_KEY.length + ' ch)' : '❌ MISSING'}\n`;
   report += `<b>TG_TOKEN:</b> ${env.TG_TOKEN ? '✅ Found (' + env.TG_TOKEN.length + ' ch)' : '❌ MISSING'}\n`;
-  
+
   report += '\n<b>SYSTEM ENV KEYS SCAN:</b>\n';
   const allKeys = Object.keys(env).filter(k => !k.startsWith('npm_') && !k.startsWith('Path')).sort();
   for (const k of allKeys.slice(0, 30)) { // Limit to avoid hitting Telegram msg limits
@@ -442,9 +449,9 @@ bot.onText(/^\/debug_env(@\w+)?$/i, async (msg) => {
       report += `• ${k}\n`;
     }
   }
-  
+
   report += '\n<i>Note: If variables are missing here, add them to your Hosting Dashboard (Render/Vercel) Environment Variables section.</i>';
-  
+
   await safeSend(chatId, report);
 });
 
@@ -1012,7 +1019,7 @@ bot.onText(/^\/forex(@\w+)?$/i, async (msg) => {
         liveRateMsg = `\n🔄 <i>Rate difference detected: Yahoo=${freshRate.toFixed(4)} vs Cached=${usdInrRate.toFixed(4)}</i>`;
         usdInrRate = freshRate; // Update global
       }
-    } catch(e) {}
+    } catch (e) { }
     await safeSend(chatId, report + liveRateMsg);
   } catch (e) {
     console.error('❌ /forex error:', e.message);
@@ -1026,7 +1033,7 @@ bot.onText(/^\/forex(@\w+)?$/i, async (msg) => {
 bot.onText(/^\/alert(?:@\w+)?(?:\s+(.*))?$/i, async (msg, match) => {
   const chatId = msg.chat.id;
   const arg = (match[1] || '').trim().toLowerCase();
-  
+
   if (arg === 'on') autoAlerts = true;
   else if (arg === 'off') autoAlerts = false;
   else autoAlerts = !autoAlerts;
@@ -1111,13 +1118,14 @@ bot.onText(/^\/model(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
   if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   const modelArg = match[1] ? match[1].trim().toLowerCase() : '';
-  
+
   if (!modelArg) {
     const current = userModels.get(chatId) || 'auto';
-    await safeSend(chatId, `🧠 <b>Current AI Model:</b> <code>${current}</code>\n\n<b>Available models (ALL FREE):</b>\n• <code>auto</code> (🤖 Smart intent routing — best engine auto-select)\n• <code>market</code> (🌐 Market Expert — Groq Compound, FREE realtime web search)\n• <code>groq</code> (⚡ Llama-3.3 70B - Ultra Fast, FREE)\n• <code>gemini</code> (🔵 Gemini 3.5 Flash - Live Search Grounding, FREE)\n• <code>claude</code> (🟣 Claude Sonnet 4.6 - Deep Analysis, FREE)\n\nExample: <code>/model market</code>`);
+    await safeSend(chatId, `🧠 <b>Current AI Model:</b> <code>${current}</code>\n\n<b>Available models:</b>\n• <code>auto</code> (🤖 Smart intent routing — best engine auto-select)\n• <code>market</code> (🌐 Market Expert — Groq Compound, FREE realtime web search)\n• <code>groq</code> (⚡ Llama-3.3 70B - Ultra Fast, FREE)\n• <code>gemini</code> (🔵 Gemini 2.0 Flash - Live Search Grounding, FREE)\n• <code>claude</code> (🟣 Claude Sonnet 4.5 - Deep Analysis)\n\nExample: <code>/model market</code>`);
+
     return;
   }
-  
+
   const validModels = ['auto', 'market', 'groq', 'gemini', 'claude'];
   if (validModels.includes(modelArg)) {
     userModels.set(chatId, modelArg);
@@ -1882,11 +1890,11 @@ cron.schedule('30 3 * * 1-5', async () => {
   console.log('📨 Sending India pre-market briefing...');
   await refreshPrices();
   await refreshIntel();
-  
+
   let msg = `☀️ <b>GOOD MORNING — Pre-Market Briefing</b>\n`;
   msg += `⏰ <i>${getISTTime()} IST</i>\n\n`;
   msg += `India market 15 minutes me open hoga!\n\n`;
-  
+
   // Global overnight summary
   if (marketIntel?.globalIndices) {
     const spy = marketIntel.globalIndices.find(i => i.name === 'S&P 500');
@@ -1894,13 +1902,13 @@ cron.schedule('30 3 * * 1-5', async () => {
     if (spy) msg += `🇺🇸 S&P 500 (overnight): <b>${spy.change >= 0 ? '+' : ''}${spy.change.toFixed(2)}%</b>\n`;
     if (qqq) msg += `🇺🇸 NASDAQ 100 (overnight): <b>${qqq.change >= 0 ? '+' : ''}${qqq.change.toFixed(2)}%</b>\n`;
   }
-  
+
   const usVix = livePrices['US_VIX']?.price || 15;
   msg += `\n📊 US VIX: <b>${usVix.toFixed(1)}</b> ${usVix > 20 ? '🔴 Caution' : '🟢 Stable'}\n`;
   msg += `💱 USD/INR: <b>₹${usdInrRate.toFixed(2)}</b>\n`;
   msg += `\n<i>Market open hote hi full scan bhejunga!</i>\n`;
   msg += `\n💎 <i>Deep Mind AI</i>`;
-  
+
   await safeSend(TG_CHAT_ID, msg);
 });
 
@@ -1928,7 +1936,7 @@ cron.schedule('5 10 * * 1-5', async () => {
   if (!autoAlerts || portfolio.length === 0) return;
   console.log('📨 India market close summary...');
   await refreshPrices();
-  
+
   const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
   let msg = `🔔 <b>MARKET CLOSE — Day Summary</b>\n`;
   msg += `⏰ <i>${getISTTime()} IST</i>\n\n`;
@@ -1936,13 +1944,13 @@ cron.schedule('5 10 * * 1-5', async () => {
   msg += `💼 Portfolio: <b>₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}</b>\n`;
   msg += `📊 Today P&L: <b>${metrics.todayPL >= 0 ? '📈 +' : '📉 '}₹${Math.round(Math.abs(metrics.todayPL)).toLocaleString('en-IN')}</b> (${metrics.todayPct.toFixed(2)}%)\n`;
   msg += `📈 Total P&L: <b>${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')}</b> (${metrics.plPct.toFixed(2)}%)\n\n`;
-  
+
   if (metrics.todayPL >= 0) {
     msg += `✅ <i>Aaj achha raha! Profits run karne do.</i>`;
   } else {
     msg += `⚠️ <i>Aaj thoda down raha. Don't panic — SIP chalne do.</i>`;
   }
-  
+
   msg += `\n\n💎 <i>Deep Mind AI</i>`;
   await safeSend(TG_CHAT_ID, msg);
 });
@@ -1954,10 +1962,10 @@ cron.schedule('35 13 * * 1-5', async () => {
   if (!hasUS) return;
   console.log('📨 US market open scan...');
   await refreshPrices();
-  
+
   let msg = `🇺🇸 <b>US MARKET OPEN — Scan Report</b>\n`;
   msg += `⏰ <i>${getISTTime()} IST</i>\n\n`;
-  
+
   const usPositions = portfolio.filter(p => p.market === 'US');
   for (const p of usPositions) {
     const key = `US_${p.symbol}`;
@@ -1966,21 +1974,22 @@ cron.schedule('35 13 * * 1-5', async () => {
     const change = data?.change || 0;
     const rsi = data?.rsi || 50;
     const pl = (curPrice - p.avgPrice) * p.qty;
-    
+
     msg += `• <b>${p.symbol}</b>: $${curPrice.toFixed(2)} (${change >= 0 ? '+' : ''}${change.toFixed(2)}%)\n`;
     msg += `  RSI: ${rsi.toFixed(0)} | P&L: ${pl >= 0 ? '+' : ''}$${pl.toFixed(2)}\n`;
   }
-  
+
   msg += `\n💎 <i>Deep Mind AI</i>`;
   await safeSend(TG_CHAT_ID, msg);
 });
 
 // ────────────────────────────────────────
-// 24x7 STRONG SIGNAL SCANNER — Exact Buy Price Points
-// Every 15 min: alerts STRONG_BUY/STRONG_SELL with Entry/SL/Target.
-// Crypto trades 24x7; stocks alert when fresh data is available.
+// ────────────────────────────────────────
+// 24x7 STRONG SIGNAL + VIX SPIKE + BIG MOVE SCANNER
+// Every 15 min: STRONG_BUY/SELL + VIX spike + big intraday moves (crypto 24x7)
 // ────────────────────────────────────────
 const lastSignalAlert = new Map(); // `${symbol}_${signal}` → timestamp (2h dedupe)
+const lastMoveAlert = new Map();   // `${symbol}` → timestamp (3h dedupe)
 
 cron.schedule('*/15 * * * *', async () => {
   if (!autoAlerts || portfolio.length === 0 || !TG_CHAT_ID) return;
@@ -1988,48 +1997,90 @@ cron.schedule('*/15 * * * *', async () => {
     await refreshPrices();
     const now = Date.now();
     const alerts = [];
+    const bigMoves = [];
 
     for (const p of portfolio) {
       const data = livePrices[`${p.market}_${p.symbol}`];
       if (!data || !data.price) continue;
+
+      // Strong signal detection
       const sig = analyzeAsset(p, data);
-      if ((sig.signal !== 'STRONG_BUY' && sig.signal !== 'STRONG_SELL') || sig.confidence < 85) continue;
+      if ((sig.signal === 'STRONG_BUY' || sig.signal === 'STRONG_SELL') && sig.confidence >= 85) {
+        const key = `${p.symbol}_${sig.signal}`;
+        if (!lastSignalAlert.has(key) || now - lastSignalAlert.get(key) >= 2 * 60 * 60 * 1000) {
+          lastSignalAlert.set(key, now);
+          const price = data.price;
+          const low = data.low || price * 0.98;
+          const high = data.high || price * 1.02;
+          const range = Math.max(high - low, price * 0.005);
+          const isBuy = sig.signal === 'STRONG_BUY';
+          const sl = isBuy ? low - range * 0.382 : high + range * 0.382;
+          const target = isBuy ? high + range * 0.382 : low - range * 0.382;
+          alerts.push({ p, sig, price, sl, target, rsi: data.rsi || 50 });
+        }
+      }
 
-      const key = `${p.symbol}_${sig.signal}`;
-      if (lastSignalAlert.has(key) && now - lastSignalAlert.get(key) < 2 * 60 * 60 * 1000) continue;
-      lastSignalAlert.set(key, now);
-
-      // Exact price points from live data (Fibonacci 38.2% extension of day range)
-      const price = data.price;
-      const low = data.low || price * 0.98;
-      const high = data.high || price * 1.02;
-      const range = Math.max(high - low, price * 0.005);
-      const isBuy = sig.signal === 'STRONG_BUY';
-      const sl = isBuy ? low - range * 0.382 : high + range * 0.382;
-      const target = isBuy ? high + range * 0.382 : low - range * 0.382;
-
-      alerts.push({ p, sig, price, sl, target, rsi: data.rsi || 50 });
+      // Big move detection (24x7, crypto bhi)
+      const chg = data.change || 0;
+      if (Math.abs(chg) >= 4) {
+        if (!lastMoveAlert.has(p.symbol) || now - lastMoveAlert.get(p.symbol) >= 3 * 60 * 60 * 1000) {
+          lastMoveAlert.set(p.symbol, now);
+          bigMoves.push({ p, price: data.price, change: chg, rsi: data.rsi || 50 });
+        }
+      }
     }
 
-    if (alerts.length === 0) return;
-
-    let msg = `🚨 <b>STRONG SIGNAL ALERT — Exact Price Points</b>\n⏰ <i>${getISTTime()} IST</i>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-    for (const a of alerts) {
-      const cur = a.p.market === 'IN' ? '₹' : '$';
-      const icon = a.sig.signal === 'STRONG_BUY' ? '🟢🟢' : '🔴🔴';
-      msg += `${icon} <b>${a.p.symbol.replace('.NS', '')}</b> — ${a.sig.signal.replace('_', ' ')} (${a.sig.confidence}%)\n`;
-      msg += `📍 Entry: <b>${cur}${a.price.toFixed(2)}</b> | RSI: ${a.rsi.toFixed(0)}\n`;
-      msg += `🛡️ SL: <b>${cur}${a.sl.toFixed(2)}</b> | 🎯 Target: <b>${cur}${a.target.toFixed(2)}</b>\n`;
-      if (a.sig.reason) msg += `💡 <i>${a.sig.reason}</i>\n`;
-      msg += `\n`;
+    // Strong signal alert
+    if (alerts.length > 0) {
+      let msg = `🚨 <b>STRONG SIGNAL ALERT — Exact Price Points</b>\n⏰ <i>${getISTTime()} IST</i>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      for (const a of alerts) {
+        const cur = a.p.market === 'IN' ? '₹' : '$';
+        const icon = a.sig.signal === 'STRONG_BUY' ? '🟢🟢' : '🔴🔴';
+        msg += `${icon} <b>${a.p.symbol.replace('.NS', '')}</b> — ${a.sig.signal.replace('_', ' ')} (${a.sig.confidence}%)\n`;
+        msg += `📍 Entry: <b>${cur}${a.price.toFixed(2)}</b> | RSI: ${a.rsi.toFixed(0)}\n`;
+        msg += `🛡️ SL: <b>${cur}${a.sl.toFixed(2)}</b> | 🎯 Target: <b>${cur}${a.target.toFixed(2)}</b>\n`;
+        if (a.sig.reason) msg += `💡 <i>${a.sig.reason}</i>\n`;
+        msg += `\n`;
+      }
+      msg += `<i>⚡ 24x7 Auto Scanner | /alert off to disable</i>`;
+      await safeSend(TG_CHAT_ID, msg);
+      console.log(`🚨 Sent ${alerts.length} strong signal alert(s)`);
     }
-    msg += `<i>⚡ 24x7 Auto Scanner | /alert off to disable</i>`;
-    await safeSend(TG_CHAT_ID, msg);
-    console.log(`🚨 Sent ${alerts.length} strong signal alert(s)`);
+
+    // Big move alert (Hinglish)
+    if (bigMoves.length > 0) {
+      let msg = `⚡ <b>BIG MOVE ALERT — Portfolio Hil Gaya!</b>\n⏰ <i>${getISTTime()} IST</i>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      for (const b of bigMoves) {
+        const cur = b.p.market === 'IN' ? '₹' : '$';
+        const dir = b.change >= 0 ? '🟢 UP' : '🔴 DOWN';
+        msg += `${dir} <b>${b.p.symbol.replace('.NS', '')}</b>: ${cur}${b.price.toFixed(2)} (${b.change >= 0 ? '+' : ''}${b.change.toFixed(2)}%)\n`;
+        msg += `   RSI: ${b.rsi.toFixed(0)} | ${b.change >= 0 ? 'Profit book ya hold? AI se pucho' : 'Dip hai - accumulate zone check karo'}\n`;
+      }
+      msg += `\n<i>Bhai, koi major move hua hai. /scan &lt;symbol&gt; ya AI chat se detail le lo.</i>`;
+      await safeSend(TG_CHAT_ID, msg);
+      console.log(`⚡ Sent ${bigMoves.length} big move alert(s)`);
+    }
+
+    // VIX spike alert (uses market.mjs trackVixChange)
+    const vixSpike = trackVixChange(livePrices);
+    if (vixSpike) {
+      let msg = `🌪️ <b>VIX SPIKE ALERT — Volatility Badh Gayi!</b>\n⏰ <i>${getISTTime()} IST</i>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      msg += `Severity: <b>${vixSpike.severity}</b>\n`;
+      msg += `🇺🇸 US VIX: <b>${vixSpike.usVix.toFixed(1)}</b> (${vixSpike.usChange >= 0 ? '+' : ''}${vixSpike.usChange.toFixed(1)}%)\n`;
+      msg += `🇮🇳 India VIX: <b>${vixSpike.inVix.toFixed(1)}</b> (${vixSpike.inChange >= 0 ? '+' : ''}${vixSpike.inChange.toFixed(1)}%)\n\n`;
+      if (vixSpike.usChange > 0 || vixSpike.inChange > 0) {
+        msg += `⚠️ <i>Fear badh raha hai. Naya cash bachao, deep dips pe staged buy karo. Panic mat karo - SIP chalu rakho.</i>`;
+      } else {
+        msg += `✅ <i>VIX cool ho raha hai. Fear kam, accumulation ke liye achha window.</i>`;
+      }
+      await safeSend(TG_CHAT_ID, msg);
+      console.log(`🌪️ Sent VIX spike alert (${vixSpike.severity})`);
+    }
   } catch (e) {
-    console.warn('⚠️ Signal scanner error:', e.message);
+    console.warn('⚠️ Scanner error:', e.message);
   }
 });
+
 
 // ========================================
 // /live — Real-Time Market Sensor (ALL data)
@@ -2348,6 +2399,57 @@ process.on('SIGTERM', () => {
   bot.stopPolling();
   process.exit(0);
 });
+// ========================================
+// COMMAND: /siptilt — Smart SIP Auto-Tilt
+// ========================================
+bot.onText(/^\/siptilt(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /siptilt from ${msg.from?.first_name || chatId}`);
+  try {
+    if (portfolio.length === 0) { await safeSend(chatId, '⚠️ Portfolio empty hai. Pehle assets add karo.'); return; }
+    await refreshPrices();
+    const report = generateSipTiltReport(portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /siptilt error:', e.message);
+    await safeSend(chatId, `❌ SIP Tilt error: ${e.message}`);
+  }
+});
+
+// ========================================
+// COMMAND: /taxplan — India Tax Optimizer
+// ========================================
+bot.onText(/^\/taxplan(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /taxplan from ${msg.from?.first_name || chatId}`);
+  try {
+    if (portfolio.length === 0) { await safeSend(chatId, '⚠️ Portfolio empty hai.'); return; }
+    await refreshPrices();
+    const report = generateTaxPlanReport(portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /taxplan error:', e.message);
+    await safeSend(chatId, `❌ Tax plan error: ${e.message}`);
+  }
+});
+
+// ========================================
+// COMMAND: /drawdown — Drawdown Recovery Tracker
+// ========================================
+bot.onText(/^\/drawdown(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /drawdown from ${msg.from?.first_name || chatId}`);
+  try {
+    if (portfolio.length === 0) { await safeSend(chatId, '⚠️ Portfolio empty hai.'); return; }
+    await refreshPrices();
+    const report = generateDrawdownReport(portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /drawdown error:', e.message);
+    await safeSend(chatId, `❌ Drawdown error: ${e.message}`);
+  }
+});
+
 
 // ========================================
 // BOOT UP
@@ -2362,7 +2464,7 @@ initializeData().then(() => {
   console.log(`   Groq: ${GROQ_KEY ? 'ONLINE' : 'OFFLINE'}`);
   console.log('');
   // Send boot notification
-  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI ADVANCE PRO v16.0 ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🤖 AI: 3-Engine (Gemini + Claude + Groq)\n🔬 Deep Research: ACTIVE 24x7\n🧬 Deep Mind Analysis: ACTIVE\n\nType /help for commands.`).catch(() => {});
+  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI ADVANCE PRO v16.0 ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🤖 AI: 3-Engine (Gemini + Claude + Groq)\n🔬 Deep Research: ACTIVE 24x7\n🧬 Deep Mind Analysis: ACTIVE\n\nType /help for commands.`).catch(() => { });
 }).catch(err => {
   console.error('❌ Boot error (non-fatal):', err.message);
   console.log('⚡ Bot is STILL listening for commands with limited data...');
