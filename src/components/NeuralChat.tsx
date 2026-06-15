@@ -19,7 +19,7 @@ const CONFIG = {
   claude: {
     apiKey: import.meta.env.VITE_CLAUDE_API_KEY || '',
     baseUrl: 'https://api.anthropic.com/v1/messages',
-    model: 'claude-sonnet-4-20250514'
+    model: 'claude-sonnet-4-6'
   }
 } as const;
 
@@ -30,11 +30,15 @@ async function fetchRealtimeSnapshot(): Promise<string> {
       fetch('https://scanner.tradingview.com/global/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-        body: JSON.stringify({ symbols: { tickers: [
-          'NSE:NIFTY', 'BSE:SENSEX', 'NSE:BANKNIFTY',
-          'AMEX:SPY', 'NASDAQ:QQQ', 'CBOE:VIX', 'NSE:INDIAVIX',
-          'TVC:DXY', 'COMEX:GC1!', 'NYMEX:CL1!'
-        ] }, columns: ['name', 'close', 'change'] }),
+        body: JSON.stringify({
+          symbols: {
+            tickers: [
+              'NSE:NIFTY', 'BSE:SENSEX', 'NSE:BANKNIFTY',
+              'AMEX:SPY', 'NASDAQ:QQQ', 'CBOE:VIX', 'NSE:INDIAVIX',
+              'TVC:DXY', 'COMEX:GC1!', 'NYMEX:CL1!'
+            ]
+          }, columns: ['name', 'close', 'change']
+        }),
         signal: AbortSignal.timeout(5000)
       }),
       fetch('https://api.coindcx.com/exchange/ticker', {
@@ -114,7 +118,7 @@ async function fetchWebIntel(query: string, tavilyKey: string): Promise<string> 
       for (const r of (data.results || []).slice(0, 2)) ctx += `• ${r.title}: ${r.content?.substring(0, 150)}\n`;
       return ctx;
     }
-  } catch {}
+  } catch { }
   return '';
 }
 
@@ -166,7 +170,7 @@ export const NeuralChat = React.memo(({
 }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
-    text: '🤖 **DEEP MIND AI QUANTUM PRO v14.0**\n\n**⚡ Active AI Engines:**\n⚡ **Groq Llama-3.3 70B**: Ultra-fast responses\n🌐 **Groq Compound**: Real-time market expert with live web search\n🔵 **Google Gemini 3.5 Flash**: Latest advanced grounded market intelligence\n🟣 **Claude Sonnet 4**: Institutional portfolio strategies\n🔍 **Tavily Search**: Live market news & web data\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\nAsk anything — I have LIVE market data!',
+    text: '🤖 **DEEP MIND AI QUANTUM PRO v15.0**\n\n**⚡ Active AI Engines:**\n⚡ **Groq Llama-3.3 70B**: Ultra-fast responses\n🌐 **Groq Compound**: Real-time market expert with live web search\n🔵 **Google Gemini 3.5 Flash**: Latest advanced grounded market intelligence\n🟣 **Claude Sonnet 4.6**: Institutional portfolio strategies\n🔍 **Tavily Search**: Live market news & web data\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\nAsk anything — I have LIVE market data!',
     timestamp: Date.now(),
     model: 'system'
   }]);
@@ -302,7 +306,7 @@ export const NeuralChat = React.memo(({
       contents.push({ role: 'user', parts: [{ text: 'Please respond.' }] });
     }
 
-    const modelOptions = ['gemini-3.5-flash', 'gemini-2.5-flash'];
+    const modelOptions = ['gemini-3.5-flash', 'gemini-3.1-flash-lite'];
     let lastError: any = null;
 
     for (const modelName of modelOptions) {
@@ -381,7 +385,7 @@ export const NeuralChat = React.memo(({
       fixed.unshift({ role: 'user', content: 'Hello' });
     }
 
-    const modelOptions = ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022'];
+    const modelOptions = ['claude-sonnet-4-6', 'claude-haiku-4-5'];
     let lastError: any = null;
 
     for (const modelName of modelOptions) {
@@ -446,7 +450,7 @@ export const NeuralChat = React.memo(({
 
     const portfolioCtx = portfolioContext || 'No portfolio data.';
 
-    const systemPrompt = `You are DEEP MIND AI QUANTUM PRO v14.0 — Elite Institutional-Grade Trading & Investment Intelligence for Indian, US markets AND Cryptocurrency with REAL-TIME LIVE data access.
+    const systemPrompt = `You are DEEP MIND AI QUANTUM PRO v15.0 — Elite Institutional-Grade Trading & Investment Intelligence for Indian, US markets AND Cryptocurrency with REAL-TIME LIVE data access.
 
 PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined.
 
@@ -635,7 +639,7 @@ ${portfolioCtx}`;
                   <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
                     <span className="hidden xs:inline">Deep Mind AI</span>
                     <span className="xs:hidden">AI Assistant</span>
-                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">QUANTUM PRO v14</span>
+                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">QUANTUM PRO v15</span>
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -658,15 +662,15 @@ ${portfolioCtx}`;
                   key={m}
                   onClick={() => setSelectedModel(m)}
                   className={`px-2 sm:px-3 py-1 rounded-full text-[9px] sm:text-[10px] font-bold uppercase transition-all border whitespace-nowrap ${selectedModel === m
-                      ? 'bg-cyan-600 text-white border-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
-                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-cyan-500/50'
+                    ? 'bg-cyan-600 text-white border-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
+                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-cyan-500/50'
                     }`}
                 >
-                  {m === 'auto' ? '🤖 Auto' 
-                    : m === 'market' ? '🌐 Market Expert' 
-                    : m === 'groq' ? '⚡ Groq' 
-                    : m === 'gemini' ? '🔵 Gemini' 
-                    : '🟣 Claude'}
+                  {m === 'auto' ? '🤖 Auto'
+                    : m === 'market' ? '🌐 Market Expert'
+                      : m === 'groq' ? '⚡ Groq'
+                        : m === 'gemini' ? '🔵 Gemini'
+                          : '🟣 Claude'}
                 </button>
               ))}
             </div>
@@ -680,7 +684,7 @@ ${portfolioCtx}`;
                   </h4>
                   <p className="text-[10px] text-slate-400 mt-1">Configure your API keys. Settings automatically sync to Google Sheets and the Telegram Bot.</p>
                 </div>
-                
+
                 <div className="space-y-3 text-xs">
                   <div>
                     <label className="text-slate-400 font-bold block mb-1">Groq API Key</label>
@@ -764,117 +768,117 @@ ${portfolioCtx}`;
             ) : (
               <>
                 <div ref={chatContainerRef} className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide">
-              {chatMessages.map((msg, i) => (
-                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
-                  <div className={`max-w-[85%] sm:max-w-[90%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
-                      ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-3 py-2.5 sm:px-4 sm:py-3'
-                      : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-3 py-2.5 sm:px-4 sm:py-3 group/msg'
-                    }`}>
-                    {msg.role === 'user' ? msg.text : (
-                      <>
-                        {msg.model && (
-                          <div className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase mb-2 border ${MODEL_COLORS[msg.model] || MODEL_COLORS.system}`}>
-                            {msg.model === 'market' ? '🌐 Market Expert Live' 
-                              : msg.model === 'groq' ? '⚡ Groq' 
-                              : msg.model === 'gemini' ? '🔵 Gemini' 
-                              : msg.model === 'claude' ? '🟣 Claude' 
-                              : 'System'}
-                          </div>
+                  {chatMessages.map((msg, i) => (
+                    <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
+                      <div className={`max-w-[85%] sm:max-w-[90%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
+                        ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-3 py-2.5 sm:px-4 sm:py-3'
+                        : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-3 py-2.5 sm:px-4 sm:py-3 group/msg'
+                        }`}>
+                        {msg.role === 'user' ? msg.text : (
+                          <>
+                            {msg.model && (
+                              <div className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase mb-2 border ${MODEL_COLORS[msg.model] || MODEL_COLORS.system}`}>
+                                {msg.model === 'market' ? '🌐 Market Expert Live'
+                                  : msg.model === 'groq' ? '⚡ Groq'
+                                    : msg.model === 'gemini' ? '🔵 Gemini'
+                                      : msg.model === 'claude' ? '🟣 Claude'
+                                        : 'System'}
+                              </div>
+                            )}
+                            <span dangerouslySetInnerHTML={{
+                              __html: (() => {
+                                // Escape HTML entities first to prevent XSS
+                                const escaped = msg.text
+                                  .replace(/&/g, '&amp;')
+                                  .replace(/</g, '&lt;')
+                                  .replace(/>/g, '&gt;')
+                                  .replace(/"/g, '&quot;');
+                                return escaped
+                                  .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                                  .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                                  .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>');
+                              })()
+                            }} />
+                            <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                              <button onClick={() => copyToClipboard(msg.text, i)} className="text-[9px] text-slate-500 hover:text-cyan-400 flex items-center gap-1 transition-colors">
+                                {copiedIdx === i ? <><Check size={10} /> Copied!</> : <><Copy size={10} /> Copy</>}
+                              </button>
+                            </div>
+                          </>
                         )}
-                        <span dangerouslySetInnerHTML={{
-                          __html: (() => {
-                            // Escape HTML entities first to prevent XSS
-                            const escaped = msg.text
-                              .replace(/&/g, '&amp;')
-                              .replace(/</g, '&lt;')
-                              .replace(/>/g, '&gt;')
-                              .replace(/"/g, '&quot;');
-                            return escaped
-                              .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                              .replace(/\*(.+?)\*/g, '<em>$1</em>')
-                              .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>');
-                          })()
-                        }} />
-                        <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
-                          <button onClick={() => copyToClipboard(msg.text, i)} className="text-[9px] text-slate-500 hover:text-cyan-400 flex items-center gap-1 transition-colors">
-                            {copiedIdx === i ? <><Check size={10} /> Copied!</> : <><Copy size={10} /> Copy</>}
-                          </button>
+                        <div className={`text-[9px] mt-1 font-mono ${msg.role === 'user' ? 'text-cyan-200/50' : 'text-slate-600'}`}>
+                          {new Date(msg.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
                         </div>
-                      </>
-                    )}
-                    <div className={`text-[9px] mt-1 font-mono ${msg.role === 'user' ? 'text-cyan-200/50' : 'text-slate-600'}`}>
-                      {new Date(msg.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                      </div>
                     </div>
+                  ))}
+
+                  {isThinking && (
+                    <div className="flex justify-start animate-message-in">
+                      <div className="bg-slate-900/90 px-4 py-3 rounded-2xl rounded-tl-none border border-white/5">
+                        <div className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
+                          <Sparkles size={12} className="animate-pulse" /> AI is thinking...
+                        </div>
+                        <div className="flex gap-1.5">
+                          <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
+                          <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '100ms' }} />
+                          <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '200ms' }} />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
+
+                {/* Quick Actions */}
+                <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-t border-cyan-500/10">
+                  <div className="flex gap-2 overflow-x-auto scrollbar-hide">
+                    {QUICK_ACTIONS.map((action, i) => (
+                      <button
+                        key={i}
+                        onClick={() => { setChatInput(''); sendMessage(action.query); }}
+                        disabled={isThinking}
+                        className="flex items-center gap-1.5 whitespace-nowrap text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-slate-400 hover:text-white hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all disabled:opacity-30 shrink-0"
+                      >
+                        <span className="text-base">{action.icon}</span>
+                        {action.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
-              ))}
 
-              {isThinking && (
-                <div className="flex justify-start animate-message-in">
-                  <div className="bg-slate-900/90 px-4 py-3 rounded-2xl rounded-tl-none border border-white/5">
-                    <div className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
-                      <Sparkles size={12} className="animate-pulse" /> AI is thinking...
-                    </div>
-                    <div className="flex gap-1.5">
-                      <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
-                      <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '100ms' }} />
-                      <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '200ms' }} />
-                    </div>
+                {/* Input */}
+                <div className="relative p-3 sm:p-4 bg-slate-950/95 border-t border-cyan-500/15 rounded-b-3xl">
+                  <div className="relative flex items-center">
+                    <input
+                      type="text"
+                      placeholder="Ask Deep Mind AI anything..."
+                      className="w-full bg-slate-900/60 border border-slate-700/80 rounded-xl sm:rounded-2xl py-2.5 sm:py-3 pl-3 sm:pl-4 pr-10 sm:pr-12 text-xs sm:text-sm text-white outline-none focus:border-cyan-500/60 transition-all font-medium placeholder:text-slate-600"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleChat()}
+                    />
+                    <button
+                      onClick={handleChat}
+                      disabled={isThinking || !chatInput.trim()}
+                      className="absolute right-1 sm:right-1.5 p-1.5 sm:p-2 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-lg sm:rounded-xl disabled:opacity-30 transition-all"
+                    >
+                      <Send size={14} />
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
+                    <span className="text-[7px] sm:text-[8px] text-slate-600 font-mono truncate max-w-[60%]">
+                      Model: {selectedModel === 'auto' ? '🤖 Auto-Detect'
+                        : selectedModel === 'market' ? '🌐 Market Expert'
+                          : selectedModel === 'groq' ? '⚡ Groq'
+                            : selectedModel === 'gemini' ? '🔵 Gemini'
+                              : '🟣 Claude'}
+                    </span>
+                    <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
+                      {chatMessages.length} messages
+                    </span>
                   </div>
                 </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* Quick Actions */}
-            <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-t border-cyan-500/10">
-              <div className="flex gap-2 overflow-x-auto scrollbar-hide">
-                {QUICK_ACTIONS.map((action, i) => (
-                  <button
-                    key={i}
-                    onClick={() => { setChatInput(''); sendMessage(action.query); }}
-                    disabled={isThinking}
-                    className="flex items-center gap-1.5 whitespace-nowrap text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-slate-400 hover:text-white hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all disabled:opacity-30 shrink-0"
-                  >
-                    <span className="text-base">{action.icon}</span>
-                    {action.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Input */}
-            <div className="relative p-3 sm:p-4 bg-slate-950/95 border-t border-cyan-500/15 rounded-b-3xl">
-              <div className="relative flex items-center">
-                <input
-                  type="text"
-                  placeholder="Ask Deep Mind AI anything..."
-                  className="w-full bg-slate-900/60 border border-slate-700/80 rounded-xl sm:rounded-2xl py-2.5 sm:py-3 pl-3 sm:pl-4 pr-10 sm:pr-12 text-xs sm:text-sm text-white outline-none focus:border-cyan-500/60 transition-all font-medium placeholder:text-slate-600"
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleChat()}
-                />
-                <button
-                  onClick={handleChat}
-                  disabled={isThinking || !chatInput.trim()}
-                  className="absolute right-1 sm:right-1.5 p-1.5 sm:p-2 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-lg sm:rounded-xl disabled:opacity-30 transition-all"
-                >
-                  <Send size={14} />
-                </button>
-              </div>
-              <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
-                <span className="text-[7px] sm:text-[8px] text-slate-600 font-mono truncate max-w-[60%]">
-                  Model: {selectedModel === 'auto' ? '🤖 Auto-Detect' 
-                    : selectedModel === 'market' ? '🌐 Market Expert' 
-                    : selectedModel === 'groq' ? '⚡ Groq' 
-                    : selectedModel === 'gemini' ? '🔵 Gemini' 
-                    : '🟣 Claude'}
-                </span>
-                <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
-                  {chatMessages.length} messages
-                </span>
-              </div>
-            </div>
               </>
             )}
           </motion.div>

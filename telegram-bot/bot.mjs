@@ -127,7 +127,7 @@ app.listen(PORT, () => {
 // ========================================
 console.log('');
 console.log('╔══════════════════════════════════════════════╗');
-console.log('║  🧠 DEEP MIND AI QUANTUM PRO v12.0        ║');
+console.log('║  🧠 DEEP MIND AI QUANTUM PRO v15.0        ║');
 console.log('║  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ║');
 console.log('║  Real-Time Pro Trading Intelligence      ║');
 console.log('║  Nvidia + Groq + Gemini + Claude         ║');
@@ -238,6 +238,7 @@ console.log('🟢 ════════════════════�
         { command: 'fire', description: 'FIRE / Early Retirement Calculator' },
         { command: 'milestones', description: 'Wealth Milestone Tracker' },
         { command: 'strategy', description: 'Institutional Asset Allocation' },
+        { command: 'premarket', description: 'Pre-market Intelligence' },
         { command: 'digest', description: 'Daily Market Digest' },
         { command: 'fiidii', description: 'FII/DII Flow Tracker' },
         { command: 'ipo', description: 'IPO Tracker' },
@@ -347,7 +348,7 @@ bot.onText(/^\/start(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /start from ${msg.from?.first_name || chatId}`);
 
-  const welcome = `🧠 <b>DEEP MIND AI QUANTUM PRO v5.0</b>
+  const welcome = `🧠 <b>DEEP MIND AI QUANTUM PRO v15.0</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Nagraj Bhai, main tumhara QUANTUM PRO AI Trading assistant hoon! 🚀
@@ -361,7 +362,7 @@ Nagraj Bhai, main tumhara QUANTUM PRO AI Trading assistant hoon! 🚀
 🤖 <b>AI Engines:</b>
 • ⚡ Groq Llama-3.3 70B (Ultra-Fast)
 • 🔵 Google Gemini 3.5 Flash (Real-Time Intel)
-• 🟣 Claude Sonnet 4 (Deep Analysis)
+• 🟣 Claude Sonnet 4.6 (Deep Analysis)
 
 📊 <b>Commands:</b>
 
@@ -381,8 +382,9 @@ Nagraj Bhai, main tumhara QUANTUM PRO AI Trading assistant hoon! 🚀
 📊 /etf — ETF portfolio analysis
 🪙 /crypto — Crypto market (BTC, ETH)
 💰 /sip — SIP calculator
-📈 /longterm — 15-20yr wealth plan
+🌅 /longterm — 15-20yr wealth plan
 🎯 /strategy — Institutional asset strategy
+🌅 /premarket — Pre-market intelligence
 🌅 /digest — Daily digest
 🏛️ /fiidii — FII/DII flows
 🚀 /ipo — IPO tracker
@@ -402,7 +404,7 @@ Bina / ke koi bhi message likho = AI QUANTUM chat!
 🔔 Auto Alerts: <b>${autoAlerts ? 'ON ✅' : 'OFF ❌'}</b>
 💱 USD/INR: <b>₹${usdInrRate.toFixed(2)}</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-💎 <i>Powered by Deep Mind AI Quantum Pro Terminal v5.0</i>`;
+💎 <i>Powered by Deep Mind AI Quantum Pro Terminal v15.0</i>`;
 
   await safeSend(chatId, welcome);
 });
@@ -507,6 +509,9 @@ Example: <code>/sip 10000</code>
 🎯 <b>/strategy</b>
 Institutional asset allocation strategy for your portfolio.
 
+🌅 <b>/premarket</b>
+Pre-market intelligence (India & US).
+
 🌅 <b>/digest</b>
 Daily market digest — comprehensive morning brief.
 
@@ -537,7 +542,7 @@ Chat history reset karo.
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 💬 <b>Pro Tip:</b> Bina command ke koi bhi message likho = AI chat mode automatic activate hoga!
 
-💎 <i>Deep Mind AI Quantum Pro Terminal v5.0</i>`;
+💎 <i>Deep Mind AI Quantum Pro Terminal v15.0</i>`;
 
   await safeSend(chatId, help);
 });
@@ -2120,6 +2125,20 @@ bot.onText(/^\/etf(@\w+)?$/i, async (msg) => {
 });
 
 // ========================================
+// /premarket — Pre-market Intelligence
+// ========================================
+bot.onText(/^\/premarket(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  await safeSend(msg.chat.id, '🌅 <b>Generating Pre-market Intelligence...</b>', { parse_mode: 'HTML' });
+  try {
+    const response = await chatWithAI(msg.chat.id, 'Generate a comprehensive pre-market briefing. Include global overnight summary, GIFT Nifty/US Futures, portfolio impact, and key events. Use real-time data.', portfolio, livePrices, usdInrRate, 'gemini');
+    await safeSend(msg.chat.id, response);
+  } catch (e) {
+    await safeSend(msg.chat.id, `❌ Error: ${e.message}`);
+  }
+});
+
+// ========================================
 // /digest — Daily Market Digest
 // ========================================
 bot.onText(/^\/digest(@\w+)?$/i, async (msg) => {
@@ -2189,7 +2208,29 @@ bot.onText(/^\/ipo(@\w+)?$/i, async (msg) => {
 // CRON JOBS — Scheduled Automation
 // ========================================
 
+// 🌅 8:45 AM IST India Pre-Market
+cron.schedule('15 3 * * 1-5', async () => {
+  if (!autoAlerts) return;
+  console.log(`🌅 India Pre-Market triggered at ${getISTTime()} IST`);
+  try {
+    const response = await chatWithAI(TG_CHAT_ID, 'Generate a comprehensive India pre-market briefing for 8:45 AM. Include global overnight summary, GIFT Nifty, portfolio impact, and key events. Use real-time data.', portfolio, livePrices, usdInrRate, 'gemini');
+    await safeSend(TG_CHAT_ID, `🔔 <b>INDIA PRE-MARKET BRIEFING</b>\n\n${response}`);
+  } catch (e) {
+    console.error('India Pre-Market failed:', e.message);
+  }
+});
 
+// 🌆 6:30 PM IST US Pre-Market
+cron.schedule('0 13 * * 1-5', async () => {
+  if (!autoAlerts) return;
+  console.log(`🌆 US Pre-Market triggered at ${getISTTime()} IST`);
+  try {
+    const response = await chatWithAI(TG_CHAT_ID, 'Generate a comprehensive US pre-market briefing for 6:30 PM IST. Include US Futures, Crypto movements, portfolio US holdings impact, and key events. Use real-time data.', portfolio, livePrices, usdInrRate, 'gemini');
+    await safeSend(TG_CHAT_ID, `🔔 <b>US PRE-MARKET BRIEFING</b>\n\n${response}`);
+  } catch (e) {
+    console.error('US Pre-Market failed:', e.message);
+  }
+});
 
 // 🌅 8:00 AM IST Daily Digest — Morning Brief
 cron.schedule('30 2 * * 1-5', async () => {

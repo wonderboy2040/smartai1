@@ -1,5 +1,5 @@
 // ============================================
-// AI CHAT ENGINE v12.0 — Quantum Pro Deep Mind AI
+// AI CHAT ENGINE v15.0 — Quantum Pro Deep Mind AI
 // Groq + Gemini + Claude + Nvidia DeepSeek + Tavily Real-Time Search
 // ============================================
 import { 
@@ -235,7 +235,7 @@ async function callGemini(messages, systemPrompt) {
     contents.push({ role: 'user', parts: [{ text: 'Please respond to my last query.' }] });
   }
 
-  const modelOptions = ['gemini-3.5-flash', 'gemini-2.5-flash'];
+  const modelOptions = ['gemini-3.5-flash', 'gemini-3.1-flash-lite'];
   let lastError = null;
 
   for (const modelName of modelOptions) {
@@ -331,7 +331,7 @@ async function callClaude(messages, systemPrompt) {
     fixedMessages.unshift({ role: 'user', content: 'Hello' });
   }
 
-  const modelOptions = ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022'];
+  const modelOptions = ['claude-sonnet-4-6', 'claude-haiku-4-5'];
   let lastError = null;
 
   for (const modelName of modelOptions) {
@@ -498,7 +498,7 @@ function buildSystemPrompt(contextData, intent) {
   const todayDate = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
   const currentTime = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
   
-  return `You are DEEP MIND AI QUANTUM PRO v14.0 - Elite Institutional-Grade Trading & Investment Intelligence for Indian, US markets AND Cryptocurrency. You have access to REAL-TIME LIVE market data feeds.
+  return `You are DEEP MIND AI QUANTUM PRO v15.0 - Elite Institutional-Grade Trading & Investment Intelligence for Indian, US markets AND Cryptocurrency. You have access to REAL-TIME LIVE market data feeds.
 
 PERSONA: You are a seasoned institutional quant trader (15+ years NSE, BSE, NYSE, NASDAQ, FnO, Options, Crypto) guiding Nagraj Bhai like a senior trader mentoring a junior. You think like Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined.
 
