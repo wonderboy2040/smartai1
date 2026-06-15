@@ -1,5 +1,5 @@
 // ============================================
-// DEEP QUANTUM AI STOCK SCANNER ENGINE
+// DEEP MIND AI ADVANCE PRO STOCK SCANNER ENGINE
 // Scans Top Individual Stocks — India + USA
 // Multi-Factor AI Scoring with Gemini 3.5 Flash
 // ============================================
@@ -443,18 +443,18 @@ export async function getGeminiDeepAnalysis(
   stocks: DeepScanStock[],
   top: number = 5
 ): Promise<Record<string, string>> {
-  const nvidiaKey = import.meta.env.VITE_NVIDIA_API_KEY || '';
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
   const groqKey = import.meta.env.VITE_GROQ_API_KEY || '';
+  const claudeKey = import.meta.env.VITE_CLAUDE_API_KEY || '';
   
-  if (!nvidiaKey && !apiKey && !groqKey) return {};
+  if (!apiKey && !groqKey && !claudeKey) return {};
 
   const topStocks = stocks.slice(0, top);
   const stockSummary = topStocks.map((s, i) =>
     `${i + 1}. ${s.symbol} (${s.market}) — ${s.market === 'IN' ? '₹' : '$'}${s.price.toFixed(2)} | AI Score: ${s.aiScore}/100 | RSI: ${s.rsi.toFixed(0)} | Signal: ${s.signal} | SMA20: ${s.sma20.toFixed(1)} | SMA50: ${s.sma50.toFixed(1)} | ADX: ${s.adx} | Phase: ${s.accDistPhase} | InstQuality: ${s.institutionalQuality}/100 | Fib Support: ${s.fibSupport?.toFixed(1)} | Fib Resistance: ${s.fibResistance?.toFixed(1)} | 1Y Target: ${s.market === 'IN' ? '₹' : '$'}${s.target1Y} (+${s.return1Y}%) | ${s.aiReasoning}`
   ).join('\n');
 
-  const systemPrompt = `You are DEEP MIND QUANTUM AI — an elite institutional-grade stock analyst with 20+ years of experience at Goldman Sachs, Citadel, and Renaissance Technologies. You are an ADVANCE PRO TRADER analyzing stocks for HIGH RETURN potential.
+  const systemPrompt = `You are DEEP MIND AI ADVANCE PRO — an elite institutional-grade stock analyst with 20+ years of experience at Goldman Sachs, Citadel, and Renaissance Technologies. You are an ADVANCE PRO TRADER analyzing stocks for HIGH RETURN potential.
 
 RULES:
 1. Analyze each stock in 3-4 lines MAX. Use Pro Trader Hinglish ("Bhai", "Breakout", "Accumulate").
@@ -470,51 +470,7 @@ RULES:
   try {
     let text = '';
 
-    // 1. Try Nvidia DeepSeek V4 Pro (Active Primary)
-    if (nvidiaKey && nvidiaKey.startsWith('nvapi-')) {
-      try {
-        const payload = {
-          model: 'deepseek-ai/deepseek-v4-pro',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature: 0.7,
-          max_tokens: 3000
-        };
-        let res;
-        try {
-          res = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${nvidiaKey}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(35000)
-          });
-        } catch (err) {
-          console.warn('Nvidia scanner call failed (CORS/network). Retrying via proxy...');
-          res = await fetch(`https://corsproxy.io/?${encodeURIComponent('https://integrate.api.nvidia.com/v1/chat/completions')}`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${nvidiaKey}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(35000)
-          });
-        }
-        if (res.ok) {
-          const data = await res.json();
-          text = data.choices?.[0]?.message?.content || '';
-        }
-      } catch (e) {
-        console.warn('Nvidia DeepSeek analysis call failed, falling back:', e);
-      }
-    }
-
-    // 2. Try Gemini Fallback
+    // 1. Try Gemini (Primary — FREE with Google Search grounding)
     if (!text && apiKey && apiKey.length > 10) {
       try {
         const contents = [
@@ -561,7 +517,7 @@ RULES:
       }
     }
 
-    // 3. Try Groq Fallback
+    // 2. Try Groq Fallback
     if (!text && groqKey && groqKey.startsWith('gsk_')) {
       try {
         const payload = {
@@ -672,7 +628,7 @@ export function formatDeepScanTelegram(stocks: DeepScanStock[], market?: 'IN' | 
   }
 
   msg += `\n━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `<i>🧠 Deep Quantum AI (Gemini 3.5 Flash) | Fundamental 30% + Technical 25% + Momentum 20% + Sentiment 15% + Value 10%</i>`;
+  msg += `<i>🧠 Deep Mind AI Advance Pro (Gemini 3.5 + Claude + Groq) | Fundamental 30% + Technical 25% + Momentum 20% + Sentiment 15% + Value 10%</i>`;
 
   return msg;
 }

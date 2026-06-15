@@ -1,11 +1,12 @@
 // ============================================
 // CLOUD SYNC — Google Apps Script Integration
+// Advance Pro v16.0 — 3-Engine Architecture
 // ============================================
 
 import { 
   API_URL, 
-  setGroqKey, setGeminiKey, setClaudeKey, setNvidiaKey, setTavilyKey,
-  GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, NVIDIA_API_KEY, TAVILY_API_KEY
+  setGroqKey, setGeminiKey, setClaudeKey, setTavilyKey,
+  GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, TAVILY_API_KEY
 } from './config.mjs';
 
 // ========================================
@@ -64,7 +65,6 @@ export async function loadGroqKeyFromCloud() {
           if (parsed.groqKey) setGroqKey(parsed.groqKey);
           if (parsed.geminiKey) setGeminiKey(parsed.geminiKey);
           if (parsed.claudeKey) setClaudeKey(parsed.claudeKey);
-          if (parsed.nvidiaKey) setNvidiaKey(parsed.nvidiaKey);
           if (parsed.tavilyKey) setTavilyKey(parsed.tavilyKey);
           console.log('🔑 Multi-AI API Keys loaded from cloud (JSON)');
           return parsed.groqKey || parsed.geminiKey || parsed.claudeKey || "";
@@ -95,7 +95,6 @@ export async function saveAllKeysToCloud() {
     groqKey: GROQ_KEY || "",
     geminiKey: GEMINI_API_KEY || "",
     claudeKey: CLAUDE_API_KEY || "",
-    nvidiaKey: NVIDIA_API_KEY || "",
     tavilyKey: TAVILY_API_KEY || ""
   };
   const serialized = JSON.stringify(payload);
@@ -122,7 +121,6 @@ export async function saveGroqKeyToCloud(key) {
         if (parsed.groqKey) setGroqKey(parsed.groqKey);
         if (parsed.geminiKey) setGeminiKey(parsed.geminiKey);
         if (parsed.claudeKey) setClaudeKey(parsed.claudeKey);
-        if (parsed.nvidiaKey) setNvidiaKey(parsed.nvidiaKey);
         if (parsed.tavilyKey) setTavilyKey(parsed.tavilyKey);
       } catch (err) {}
     } else {

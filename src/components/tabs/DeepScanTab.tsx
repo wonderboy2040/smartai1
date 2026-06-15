@@ -127,14 +127,14 @@ export default React.memo(function DeepScanTab() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-black gradient-text-cyan font-display flex items-center gap-2">
-            🧠 DEEPMIND QUANTUM SCANNER
+            🧠 DEEPMIND ADVANCE PRO SCANNER
           </h2>
           <div className="flex items-center gap-2 mt-1">
             <span className={`w-2 h-2 rounded-full ${isScanning ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400 animate-pulse-dot'}`} />
             <span className="text-[11px] text-slate-500 font-mono">
               {isScanning ? 'SCANNING...' : `Last: ${lastScan || '--'}`}
             </span>
-            {geminiLoading && <span className="text-[10px] text-cyan-400 animate-pulse">🧠 DeepMind Quantum Pro AI Analyzing...</span>}
+            {geminiLoading && <span className="text-[10px] text-cyan-400 animate-pulse">🧠 Advance Pro AI Analyzing...</span>}
           </div>
         </div>
         <div className="flex gap-2">
@@ -325,7 +325,7 @@ export default React.memo(function DeepScanTab() {
                 {/* Upgraded Quantum Pro Deep Analysis */}
                 {s.geminiAnalysis && (
                   <div className="bg-cyan-500/5 rounded-xl p-3 border border-cyan-500/20">
-                    <div className="text-[10px] text-cyan-400 font-bold uppercase mb-1">🧠 DeepMind Quantum Pro AI Analysis</div>
+                    <div className="text-[10px] text-cyan-400 font-bold uppercase mb-1">🧠 Deep Mind AI Advance Pro Analysis</div>
                     <div className="text-xs text-cyan-200 whitespace-pre-line">{s.geminiAnalysis}</div>
                   </div>
                 )}
@@ -346,7 +346,7 @@ export default React.memo(function DeepScanTab() {
 
       {/* Legend */}
       <div className="quantum-panel rounded-2xl p-4 animate-fade-in-up">
-        <div className="text-[10px] text-slate-500 font-bold uppercase mb-2">🧬 DeepMind AI Scoring Methodology</div>
+        <div className="text-[10px] text-slate-500 font-bold uppercase mb-2">🧬 Deep Mind AI Advance Pro Scoring</div>
         <div className="flex flex-wrap gap-3 text-[10px] text-slate-400">
           <span><span className="text-purple-400 font-bold">30%</span> Fundamentals (CAGR, Moat, Drawdown)</span>
           <span><span className="text-cyan-400 font-bold">25%</span> Technicals (RSI, SMA, MACD, BB, ADX)</span>
@@ -361,7 +361,7 @@ export default React.memo(function DeepScanTab() {
           <span>🔥 ADX Trend Strength Meter</span>
         </div>
         <div className="mt-2 text-[9px] text-slate-600 font-mono">
-          Powered by TradingView Scanner + DeepMind Nvidia DeepSeek V4 | Auto-refresh: 5min | Telegram Alerts: 2hr Intervals
+          Powered by TradingView Scanner + Gemini 3.5 + Claude + Groq (Advance Pro) | Auto-refresh: 5min | Telegram Alerts: 2hr Intervals
         </div>
       </div>
     </div>

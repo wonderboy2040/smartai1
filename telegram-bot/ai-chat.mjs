@@ -1,6 +1,7 @@
 // ============================================
-// AI CHAT ENGINE v15.0 — Quantum Pro Deep Mind AI
-// Groq + Gemini + Claude + Nvidia DeepSeek + Tavily Real-Time Search
+// AI CHAT ENGINE v16.0 — ADVANCE PRO Deep Mind AI
+// 3-Engine FREE Architecture: Groq + Gemini + Claude
+// Deep Research + Deep Mind Analysis + Live Alerts
 // ============================================
 import { 
   GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, TAVILY_API_KEY,
@@ -498,7 +499,7 @@ function buildSystemPrompt(contextData, intent) {
   const todayDate = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
   const currentTime = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
   
-  return `You are DEEP MIND AI QUANTUM PRO v15.0 - Elite Institutional-Grade Trading & Investment Intelligence for Indian, US markets AND Cryptocurrency. You have access to REAL-TIME LIVE market data feeds.
+  return `You are DEEP MIND AI ADVANCE PRO v16.0 - Elite Institutional-Grade Trading & Investment Intelligence with DEEP RESEARCH + DEEP MIND ANALYSIS for Indian, US markets AND Cryptocurrency. You have access to REAL-TIME LIVE market data feeds 24x7.
 
 PERSONA: You are a seasoned institutional quant trader (15+ years NSE, BSE, NYSE, NASDAQ, FnO, Options, Crypto) guiding Nagraj Bhai like a senior trader mentoring a junior. You think like Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined.
 

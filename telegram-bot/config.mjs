@@ -1,5 +1,7 @@
 // ============================================
 // DEEP MIND AI TRADING BOT — CONFIGURATION
+// Advance Pro v16.0 — 3-Engine Architecture
+// Gemini + Claude + Groq (Only FREE Models)
 // ============================================
 
 import 'dotenv/config';
@@ -15,7 +17,13 @@ export const API_URL = process.env.API_URL || "";
 // NOTE: declared with `let` so setTavilyKey() can update it at runtime (/setkey tavily)
 export let TAVILY_API_KEY = process.env.TAVILY_API_KEY || process.env.VITE_TAVILY_API_KEY || "";
 
-// Multi-AI API Keys (Case-insensitive support for user-added env vars)
+// ============================================
+// 3-ENGINE AI ARCHITECTURE (FREE MODELS ONLY)
+// ============================================
+// 1. Gemini — Latest FREE (gemini-3.5-flash)
+// 2. Claude — Latest FREE (claude-sonnet-4-6)
+// 3. Groq   — Latest FREE (llama-3.3-70b-versatile + compound)
+// ============================================
 const env = process.env;
 
 // Debug: Print available env keys
@@ -30,13 +38,11 @@ if (foundKeys.length > 0) {
 export let GROQ_KEY = env.GROQ_KEY || env.GroqKey || env.VITE_GROQ_API_KEY || "";
 export let GEMINI_API_KEY = env.GEMINI_API_KEY || env.GeminiAPIKEY || env.GEMINI_KEY || env.VITE_GEMINI_API_KEY || "";
 export let CLAUDE_API_KEY = env.CLAUDE_API_KEY || env.ClaudeAPIKEY || env.CLAUDE_KEY || env.VITE_CLAUDE_API_KEY || "";
-export let NVIDIA_API_KEY = env.NVIDIA_API_KEY || env.NvidiaAPIKEY || env.VITE_NVIDIA_API_KEY || "";
 
 // Clean keys (remove accidentally pasted quotes or spaces)
 if (GROQ_KEY) GROQ_KEY = GROQ_KEY.replace(/['"]/g, '').trim();
 if (GEMINI_API_KEY) GEMINI_API_KEY = GEMINI_API_KEY.replace(/['"]/g, '').trim();
 if (CLAUDE_API_KEY) CLAUDE_API_KEY = CLAUDE_API_KEY.replace(/['"]/g, '').trim();
-if (NVIDIA_API_KEY) NVIDIA_API_KEY = NVIDIA_API_KEY.replace(/['"]/g, '').trim();
 
 // Validate API keys at startup
 const missingKeys = [];
@@ -49,11 +55,11 @@ if (missingKeys.length > 0) {
   console.warn('  ' + missingKeys.join(', '));
   console.warn('  AI responses will use available engines with fallback chain.');
 } else {
-  console.log('✅ All AI API keys validated successfully');
+  console.log('✅ All 3 AI API keys validated successfully');
 }
 
 // Log individual key status
-console.log('🔑 AI Engine Key Status:');
+console.log('🔑 AI Engine Key Status (3-Engine Advance Pro):');
 if (GROQ_KEY) console.log(`  ⚡ Groq: ✓ Valid (${GROQ_KEY.substring(0, 8)}...)`);
 else console.log('  ⚡ Groq: ✗ Missing');
 if (GEMINI_API_KEY && GEMINI_API_KEY.length > 10) console.log(`  🔵 Gemini: ✓ Valid (${GEMINI_API_KEY.substring(0, 8)}...)`);
@@ -64,14 +70,12 @@ else console.log('  🟣 Claude: ✗ Missing');
 export function setGroqKey(key) { GROQ_KEY = key; }
 export function setGeminiKey(key) { GEMINI_API_KEY = key; }
 export function setClaudeKey(key) { CLAUDE_API_KEY = key; }
-export function setNvidiaKey(key) { NVIDIA_API_KEY = key; }
 export function setTavilyKey(key) { TAVILY_API_KEY = key; }
 
 // Dynamic key validation helpers (called at runtime, not module load)
 export function isGroqAvailable() { return !!(GROQ_KEY && GROQ_KEY.length > 10); }
 export function isGeminiAvailable() { return !!(GEMINI_API_KEY && GEMINI_API_KEY.length > 10); }
 export function isClaudeAvailable() { return !!(CLAUDE_API_KEY && CLAUDE_API_KEY.length > 10); }
-export function isNvidiaAvailable() { return !!(NVIDIA_API_KEY && NVIDIA_API_KEY.length > 10); }
 export function isTavilyAvailable() { return !!(TAVILY_API_KEY && TAVILY_API_KEY.length > 10); }
 
 // SIP Defaults

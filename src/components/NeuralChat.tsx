@@ -170,7 +170,7 @@ export const NeuralChat = React.memo(({
 }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
-    text: '🤖 **DEEP MIND AI QUANTUM PRO v15.0**\n\n**⚡ Active AI Engines:**\n⚡ **Groq Llama-3.3 70B**: Ultra-fast responses\n🌐 **Groq Compound**: Real-time market expert with live web search\n🔵 **Google Gemini 3.5 Flash**: Latest advanced grounded market intelligence\n🟣 **Claude Sonnet 4.6**: Institutional portfolio strategies\n🔍 **Tavily Search**: Live market news & web data\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\nAsk anything — I have LIVE market data!',
+    text: '🤖 **DEEP MIND AI ADVANCE PRO v16.0**\n\n**🔬 3-Engine FREE AI Architecture:**\n🔵 **Google Gemini 3.5 Flash**: Real-time intel + Google Search grounding\n🟣 **Claude Sonnet 4.6**: Deep institutional analysis + strategy\n⚡ **Groq Llama-3.3 70B + Compound**: Ultra-fast + live web search\n🔍 **Tavily Search**: Live market news & web data\n\n**🧬 ADVANCE PRO Features:**\n• Deep Mind Analysis (Macro + Micro)\n• Deep Research (24x7 Live)\n• Real-Time Global Market Monitor\n• Portfolio Alert System (Hinglish)\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\nAsk anything — I have LIVE market data 24x7!',
     timestamp: Date.now(),
     model: 'system'
   }]);
@@ -450,7 +450,7 @@ export const NeuralChat = React.memo(({
 
     const portfolioCtx = portfolioContext || 'No portfolio data.';
 
-    const systemPrompt = `You are DEEP MIND AI QUANTUM PRO v15.0 — Elite Institutional-Grade Trading & Investment Intelligence for Indian, US markets AND Cryptocurrency with REAL-TIME LIVE data access.
+    const systemPrompt = `You are DEEP MIND AI ADVANCE PRO v16.0 — Elite Institutional-Grade Trading & Investment Intelligence with DEEP RESEARCH + DEEP MIND ANALYSIS for Indian, US markets AND Cryptocurrency with REAL-TIME LIVE data access 24x7.
 
 PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined.
 
@@ -639,12 +639,12 @@ ${portfolioCtx}`;
                   <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
                     <span className="hidden xs:inline">Deep Mind AI</span>
                     <span className="xs:hidden">AI Assistant</span>
-                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">QUANTUM PRO v15</span>
+                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">ADVANCE PRO v16</span>
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="hidden sm:inline">Groq + Gemini 3.5 + Claude</span>
-                    <span className="sm:hidden">LIVE • Quantum Pro</span>
+                    <span className="hidden sm:inline">Gemini 3.5 + Claude + Groq | Advance Pro</span>
+                    <span className="sm:hidden">LIVE • Advance Pro</span>
                   </div>
                 </div>
               </div>
