@@ -321,7 +321,7 @@ export const NeuralChat = React.memo(({
         ]
       };
       // Google Search grounding — FREE real-time live market data (Gemini 2.x+ models)
-      payload.tools = [{ google_search: {} }];
+      payload.tools = [{ googleSearch: {} }];
       const targetUrl = `${CONFIG.gemini.baseUrl}/${modelName}:generateContent?key=${apiKey}`;
 
       let res;

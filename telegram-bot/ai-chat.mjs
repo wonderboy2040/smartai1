@@ -241,7 +241,7 @@ async function callGemini(messages, systemPrompt) {
         body: JSON.stringify({
           contents,
           // Google Search grounding — FREE real-time live market data
-          tools: [{ google_search: {} }],
+          tools: [{ googleSearch: {} }],
           generationConfig: {
             temperature: 0.7,
             maxOutputTokens: 8192,
