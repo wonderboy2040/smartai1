@@ -197,13 +197,45 @@ export const NeuralChat = React.memo(({
     }]);
   }, []);
 
-  // ============ RETRY HELPER ============
-  const retryOnce = async (fn: () => Promise<string>): Promise<string> => {
-    try { return await fn(); }
-    catch {
-      await new Promise(r => setTimeout(r, 1000 + Math.random() * 500));
-      return await fn();
+  // ============ RATE LIMITER & RETRY HELPER ============
+  const requestQueueRef = useRef<Promise<any>>(Promise.resolve());
+  const lastRequestTimeRef = useRef<number>(0);
+  const MIN_REQUEST_INTERVAL = 2000;
+
+  const rateLimitedFetch = async <T,>(fn: () => Promise<T>): Promise<T> => {
+    const now = Date.now();
+    const timeSinceLastRequest = now - lastRequestTimeRef.current;
+    
+    if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
+      const waitTime = MIN_REQUEST_INTERVAL - timeSinceLastRequest;
+      await new Promise(r => setTimeout(r, waitTime));
     }
+    
+    lastRequestTimeRef.current = Date.now();
+    
+    let retries = 0;
+    const maxRetries = 3;
+    let lastError: Error | null = null;
+    
+    while (retries <= maxRetries) {
+      try {
+        return await fn();
+      } catch (e) {
+        lastError = e instanceof Error ? e : new Error(String(e));
+        const isRateLimit = lastError.message.includes('429') || lastError.message.includes('Too Many Requests');
+        
+        if (isRateLimit && retries < maxRetries) {
+          const delay = Math.pow(2, retries + 1) * 2000 + Math.random() * 1000;
+          console.warn(`Rate limited, retrying in ${delay}ms (attempt ${retries + 1}/${maxRetries})`);
+          await new Promise(r => setTimeout(r, delay));
+          retries++;
+          continue;
+        }
+        throw lastError;
+      }
+    }
+    
+    throw lastError;
   };
 
   // ============ GROQ API (Ultra-Fast + Market Expert via groq/compound) ============
@@ -216,20 +248,13 @@ export const NeuralChat = React.memo(({
 
     const groqMessages = [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))];
 
-    const doFetch = async (retries = 0): Promise<any> => {
+    const doFetch = async (): Promise<any> => {
       const res = await fetch(CONFIG.groq.baseUrl, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: modelName, messages: groqMessages, temperature: 0.7, max_tokens: 8000 }),
         signal: AbortSignal.timeout(20000)
       });
-
-      if (res.status === 429 && retries < 3) {
-        const delay = Math.pow(2, retries + 1) * 1000;
-        console.warn(`Groq 429 rate limited, retrying in ${delay}ms (attempt ${retries + 1}/3)`);
-        await new Promise(r => setTimeout(r, delay));
-        return doFetch(retries + 1);
-      }
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -238,7 +263,7 @@ export const NeuralChat = React.memo(({
       return res.json();
     };
 
-    const data = await doFetch();
+    const data = await rateLimitedFetch(doFetch);
     const text = data.choices?.[0]?.message?.content;
     if (!text || text.trim().length < 5) throw new Error('Groq returned empty response');
     return text;
@@ -287,51 +312,35 @@ export const NeuralChat = React.memo(({
 
       const targetUrl = `${CONFIG.gemini.baseUrl}/${modelName}:generateContent?key=${apiKey}`;
 
-      let res;
-      let retries = 0;
-      const maxRetries = 3;
+      const doFetch = async (): Promise<any> => {
+        const res = await fetch(targetUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(20000)
+        });
 
-      while (retries <= maxRetries) {
-        try {
-          res = await fetch(targetUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(20000)
-          });
-
-          if (res.status === 429 && retries < maxRetries) {
-            const delay = Math.pow(2, retries + 1) * 1000;
-            console.warn(`Gemini 429 rate limited, retrying in ${delay}ms (attempt ${retries + 1}/${maxRetries})`);
-            await new Promise(r => setTimeout(r, delay));
-            retries++;
-            continue;
-          }
-          break;
-        } catch (e) {
-          lastError = e;
-          lastError = new Error(`Gemini network error: ${e instanceof Error ? e.message : String(e)}`);
-          break;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error?.message || `Gemini Error: ${res.status}`);
         }
-      }
+        return res.json();
+      };
 
-      if (!res || !res.ok) {
-        const err = await res?.json().catch(() => ({}));
-        const errMsg = err.error?.message || `Status: ${res?.status}`;
-        console.warn(`Gemini model ${modelName} error:`, errMsg, err);
-        lastError = new Error(errMsg);
-        if (res?.status === 404 || res?.status === 400) {
+      try {
+        const data = await rateLimitedFetch(doFetch);
+        if (data.candidates?.[0]?.finishReason === 'SAFETY') throw new Error('Gemini blocked by safety filters');
+        const parts = data.candidates?.[0]?.content?.parts || [];
+        const text = parts.map((p: any) => p.text || '').join('');
+        if (!text || text.trim().length < 5) throw new Error('Gemini returned empty response');
+        return text;
+      } catch (e) {
+        lastError = e instanceof Error ? e : new Error(String(e));
+        if (lastError.message.includes('404') || lastError.message.includes('400')) {
           continue;
         }
         throw lastError;
       }
-
-      const data = await res.json();
-      if (data.candidates?.[0]?.finishReason === 'SAFETY') throw new Error('Gemini blocked by safety filters');
-      const parts = data.candidates?.[0]?.content?.parts || [];
-      const text = parts.map((p: any) => p.text || '').join('');
-      if (!text || text.trim().length < 5) throw new Error('Gemini returned empty response');
-      return text;
     }
 
     throw lastError || new Error('All Gemini model fallbacks failed');
@@ -373,50 +382,35 @@ export const NeuralChat = React.memo(({
         messages: fixed
       };
 
-      let res;
-      let retries = 0;
-      const maxRetries = 3;
+      const doFetch = async (): Promise<any> => {
+        const res = await fetch(CONFIG.claude.baseUrl, {
+          method: 'POST',
+          headers: {
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(30000)
+        });
 
-      while (retries <= maxRetries) {
-        try {
-          res = await fetch(CONFIG.claude.baseUrl, {
-            method: 'POST',
-            headers: {
-              'x-api-key': apiKey,
-              'anthropic-version': '2023-06-01',
-              'anthropic-dangerous-direct-browser-access': 'true',
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(30000)
-          });
-
-          if (res.status === 429 && retries < maxRetries) {
-            const delay = Math.pow(2, retries + 1) * 1000;
-            console.warn(`Claude 429 rate limited, retrying in ${delay}ms (attempt ${retries + 1}/${maxRetries})`);
-            await new Promise(r => setTimeout(r, delay));
-            retries++;
-            continue;
-          }
-          break;
-        } catch (e) {
-          lastError = new Error(`Claude network error: ${e instanceof Error ? e.message : String(e)}`);
-          break;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error?.message || `Claude Error: ${res.status}`);
         }
-      }
+        return res.json();
+      };
 
-      if (!res || !res.ok) {
-        const err = await res?.json().catch(() => ({}));
-        const errMsg = err.error?.message || `Status: ${res?.status}`;
-        console.warn(`Claude model ${modelName} error:`, errMsg, err);
-        lastError = new Error(errMsg);
+      try {
+        const data = await rateLimitedFetch(doFetch);
+        const text = data.content?.[0]?.text;
+        if (!text || text.trim().length < 5) throw new Error('Claude returned empty response');
+        return text;
+      } catch (e) {
+        lastError = e instanceof Error ? e : new Error(String(e));
         continue;
       }
-
-      const data = await res.json();
-      const text = data.content?.[0]?.text;
-      if (!text || text.trim().length < 5) throw new Error('Claude returned empty response');
-      return text;
     }
 
     throw lastError || new Error('All Claude model fallbacks failed');
@@ -538,11 +532,11 @@ ${portfolioCtx}`;
       claude: callClaude
     };
 
-    // Try each engine with one retry
+    // Try each engine with rate limiting and retries
     let fallbackError = '';
     for (const eng of chain) {
       try {
-        const text = await retryOnce(() => callers[eng](recentMessages, systemPrompt));
+        const text = await rateLimitedFetch(() => callers[eng](recentMessages, systemPrompt));
         return { text, model: eng, fallbackError };
       } catch (e) {
         const errMsg = e instanceof Error ? e.message : String(e);
@@ -557,6 +551,7 @@ ${portfolioCtx}`;
 
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim()) return;
+    if (isThinking) return;
     setIsThinking(true);
 
     setChatMessages(prev => [...prev, { role: 'user', text: userMessage, timestamp: Date.now() }]);
