@@ -21,6 +21,8 @@ let reconnectTimer: number | null = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 25;
 let isDestroyed = false;
+let connectionHealthy = false;
+let lastSuccessfulMessage = 0;
 
 // ========================================
 // LATENCY & PRICE VALIDATION
@@ -298,6 +300,9 @@ function connect() {
     // Parse TradingView wire format: ~m~<length>~m~<json>
     if (!data.includes('~m~')) return;
 
+    lastSuccessfulMessage = Date.now();
+    connectionHealthy = true;
+
     let offset = 0;
     while (offset < data.length) {
       const markerStart = data.indexOf('~m~', offset);
@@ -343,16 +348,37 @@ function connect() {
     }
   };
 
-  ws.onclose = () => {
+  ws.onclose = (event) => {
+    connectionHealthy = false;
     if (pingInterval) {
       clearInterval(pingInterval);
       pingInterval = null;
     }
+    const wasClean = event.wasClean;
+    const code = event.code;
+    console.warn(`TV WS closed: code=${code}, clean=${wasClean}, attempts=${reconnectAttempts}`);
     scheduleReconnect();
   };
 
-  ws.onerror = () => {
+  ws.onerror = (err) => {
+    connectionHealthy = false;
+    console.error('TV WS error:', err);
     // Error triggers onclose automatically
+  };
+
+  // Health check: if no messages received for 90s, force reconnect
+  const healthCheck = window.setInterval(() => {
+    if (ws?.readyState === WebSocket.OPEN) {
+      const timeSinceLastMsg = Date.now() - lastSuccessfulMessage;
+      if (timeSinceLastMsg > 90000) {
+        console.warn('TV WS stale - no messages for 90s, forcing reconnect');
+        ws.close(4000, 'Stale connection');
+      }
+    }
+  }, 30000);
+  
+  return () => {
+    if (healthCheck) clearInterval(healthCheck);
   };
 }
 
@@ -410,6 +436,10 @@ export function getWebSocketLatency(): { avg: number; heartbeat: number } {
   // Actual push architecture latency is much faster (~20-80ms). We apply a 0.15x heuristic.
   const displayLatency = Math.max(12, Math.min(Math.round(currentLatency * 0.15 + 12), 150));
   return { avg: displayLatency, heartbeat: adaptiveHeartbeatMs };
+}
+
+export function isWebSocketHealthy(): boolean {
+  return connectionHealthy && ws?.readyState === WebSocket.OPEN;
 }
 
 function scheduleReconnect(): void {

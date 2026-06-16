@@ -50,10 +50,10 @@ export default React.memo(function DashboardTab() {
               <div className="font-black text-red-400 uppercase tracking-wider text-sm">⚠️ BLACK SWAN ALERT — VIX SPIKE DETECTED</div>
               <div className="text-xs text-slate-400 mt-0.5">VIX at {avgVix.toFixed(1)} — Institutional hedging extreme. Deep crash Fibonacci buy zones:</div>
               <div className="flex flex-wrap gap-3 mt-2">
-                {currentPrice > 0 && [
-                  { label: 'Fib 0.618', price: currentPrice * (1 - 0.382 * (avgVix / 30)), color: 'text-emerald-400' },
-                  { label: 'Fib 0.786', price: currentPrice * (1 - 0.5 * (avgVix / 30)), color: 'text-amber-400' },
-                  { label: 'Fib 0.886', price: currentPrice * (1 - 0.618 * (avgVix / 30)), color: 'text-red-400' },
+                {currentPrice > 0 && currentData && [
+                  { label: 'Fib 0.618', price: (currentData.high || currentPrice) - ((currentData.high || currentPrice) - (currentData.low || currentPrice)) * 0.618, color: 'text-emerald-400' },
+                  { label: 'Fib 0.786', price: (currentData.high || currentPrice) - ((currentData.high || currentPrice) - (currentData.low || currentPrice)) * 0.786, color: 'text-amber-400' },
+                  { label: 'Fib 0.886', price: (currentData.high || currentPrice) - ((currentData.high || currentPrice) - (currentData.low || currentPrice)) * 0.886, color: 'text-red-400' },
                 ].map(({ label, price, color }) => (
                   <div key={label} className="bg-black/30 rounded-lg px-3 py-1">
                     <div className="text-[9px] text-slate-500">{label} Buy Zone</div>

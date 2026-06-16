@@ -438,7 +438,6 @@ export function runDeepScan(
 }
 
 // ========== GEMINI 3.5 FLASH DEEP ANALYSIS — Advanced Pro Trader ==========
-// ========== GEMINI 3.5 FLASH DEEP ANALYSIS — Advanced Pro Trader ==========
 export async function getGeminiDeepAnalysis(
   stocks: DeepScanStock[],
   top: number = 5

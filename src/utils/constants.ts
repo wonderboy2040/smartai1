@@ -73,7 +73,8 @@ export const EXACT_TICKER_MAP: Record<string, string> = {
 
 export const CORS_PROXIES = [
   'https://api.allorigins.win/raw?url=',
-  'https://corsproxy.io/?'
+  'https://corsproxy.io/?',
+  'https://r.jina.ai/http://'
 ];
 
 export function getTodayString(): string {

@@ -93,6 +93,8 @@ export interface DeepScanStock {
   obv?: number;
   ema10?: number;
   ema20?: number;
+  ema50?: number;
+  ema200?: number;
   sectorRank?: number; // 1-10 sector relative strength
   accDistPhase?: 'ACCUMULATION' | 'DISTRIBUTION' | 'MARKUP' | 'MARKDOWN' | 'NEUTRAL';
   fibSupport?: number;

@@ -161,7 +161,8 @@ const PortfolioTab = React.memo(function PortfolioTab() {
 
       {/* Advance Pro Trader Portfolio Grid */}
       <div className="quantum-panel rounded-2xl overflow-hidden animate-fade-in-up delay-200 p-1">
-        <div className="hidden md:grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto] gap-4 px-6 py-3 bg-black/40 border-b border-white/5 text-[10px] uppercase tracking-wider text-slate-500 font-bold">
+        {/* Desktop Header */}
+        <div className="hidden lg:grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto] gap-4 px-6 py-3 bg-black/40 border-b border-white/5 text-[10px] uppercase tracking-wider text-slate-500 font-bold">
           <div>Asset & Allocation</div>
           <div>LTP & 24H Range</div>
           <div className="text-right">Today's P&L</div>
@@ -194,7 +195,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
             const allocPct = metrics.totalValue > 0 ? (eqVal * (p.market === 'US' ? usdInrRate : 1) / metrics.totalValue) * 100 : 0;
 
             return (
-              <div key={p.id} className="grid grid-cols-1 md:grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto] md:items-center gap-4 p-4 hover:bg-white/[0.02] transition-colors group relative">
+              <div key={p.id} className="p-4 hover:bg-white/[0.02] transition-colors group relative lg:grid lg:grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto] lg:items-center lg:gap-4">
 
                 {/* 1. ASSET & ALLOCATION */}
                 <div>
