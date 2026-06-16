@@ -107,6 +107,63 @@ const PORT = process.env.PORT || 3000;
 const distPath = path.join(__dirname, '../dist');
 app.use(express.static(distPath));
 
+// ========================================
+// API PROXY — Gemini & Claude (avoids CORS + browser key exposure)
+// Frontend calls /api/gemini or /api/claude → server uses env var keys
+// ========================================
+app.post('/api/gemini', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    if (!GEMINI_API_KEY || GEMINI_API_KEY.length < 10) {
+      return res.status(503).json({ error: 'Gemini API key not configured on server' });
+    }
+    const { contents, generationConfig, safetySettings, model } = req.body;
+    const modelName = model || 'gemini-2.0-flash';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`;
+    const apiRes = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents, generationConfig, safetySettings }),
+      signal: AbortSignal.timeout(25000)
+    });
+    const data = await apiRes.json();
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json(data);
+    }
+    res.json(data);
+  } catch (e) {
+    console.error('Gemini proxy error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/claude', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    if (!CLAUDE_API_KEY || CLAUDE_API_KEY.length < 10) {
+      return res.status(503).json({ error: 'Claude API key not configured on server' });
+    }
+    const { model, max_tokens, system, messages } = req.body;
+    const modelName = model || 'claude-sonnet-4-5';
+    const apiRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': CLAUDE_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ model: modelName, max_tokens: max_tokens || 4096, system, messages }),
+      signal: AbortSignal.timeout(30000)
+    });
+    const data = await apiRes.json();
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json(data);
+    }
+    res.json(data);
+  } catch (e) {
+    console.error('Claude proxy error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Fallback to React Router or ping message
 // IMPORTANT: never fall back to index.html for asset requests — serving HTML for a
 // missing /assets/*.js chunk causes "Failed to fetch dynamically imported module".

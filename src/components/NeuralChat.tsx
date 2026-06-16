@@ -240,11 +240,6 @@ export const NeuralChat = React.memo(({
 
   // ============ GEMINI API (Real-time Intelligence) ============
   const callGemini = async (messages: any[], systemPrompt: string) => {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || CONFIG.gemini.apiKey;
-    if (!apiKey || apiKey.length < 10) {
-      throw new Error('Gemini API Key missing — Settings me set karo');
-    }
-
     // Build contents with STRICT alternating user/model turns
     const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
     contents.push({ role: 'user', parts: [{ text: systemPrompt }] });
@@ -268,7 +263,8 @@ export const NeuralChat = React.memo(({
     let lastError: any = null;
 
     for (const modelName of modelOptions) {
-      const payload: Record<string, any> = {
+      const payload = {
+        model: modelName,
         contents,
         generationConfig: { temperature: 0.7, maxOutputTokens: 8192, topP: 0.95, topK: 40 },
         safetySettings: [
@@ -278,38 +274,57 @@ export const NeuralChat = React.memo(({
           { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
         ]
       };
-      // Google Search grounding — FREE real-time live market data (Gemini 2.x+ models)
-      payload.tools = [{ googleSearch: {} }];
-      const targetUrl = `${CONFIG.gemini.baseUrl}/${modelName}:generateContent?key=${apiKey}`;
 
-      let res;
+      // Try server proxy first (same origin), then direct browser call as fallback
+      let data: any = null;
+      let gotResponse = false;
+
+      // 1) Server proxy (no CORS, key on server)
       try {
-        res = await fetch(targetUrl, {
+        const proxyRes = await fetch('/api/gemini', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(25000)
+        });
+        if (proxyRes.ok) {
+          data = await proxyRes.json();
+          gotResponse = true;
+        } else if (proxyRes.status === 503) {
+          // Server doesn't have Gemini key — fall through to direct call
+          console.warn('Gemini proxy unavailable (503), trying direct browser call');
+        } else {
+          const err = await proxyRes.json().catch(() => ({}));
+          throw new Error(err.error?.message || `Gemini proxy ${proxyRes.status}`);
+        }
+      } catch (e) {
+        if (!gotResponse) {
+          console.warn('Gemini proxy failed, trying direct:', e);
+        }
+      }
+
+      // 2) Direct browser call fallback
+      if (!gotResponse) {
+        const apiKey = import.meta.env.VITE_GEMINI_API_KEY || CONFIG.gemini.apiKey;
+        if (!apiKey || apiKey.length < 10) {
+          throw new Error(`Gemini key missing — Server proxy 503 aur browser me bhi VITE_GEMINI_API_KEY nahi hai`);
+        }
+        const targetUrl = `${CONFIG.gemini.baseUrl}/${modelName}:generateContent?key=${apiKey}`;
+        const res = await fetch(targetUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
           signal: AbortSignal.timeout(20000)
         });
-      } catch (e) {
-        // SECURITY: no third-party proxy fallback — the API key is embedded in the URL
-        lastError = e;
-        continue;
-      }
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const errMsg = err.error?.message || `Status: ${res.status}`;
-        console.warn(`Gemini model ${modelName} error: ${errMsg}`);
-        lastError = new Error(errMsg);
-        if (res.status === 404 || res.status === 400) {
-          continue;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error?.message || `Gemini ${res.status}`);
         }
-        throw lastError;
+        data = await res.json();
+        gotResponse = true;
       }
 
-      const data = await res.json();
       if (data.candidates?.[0]?.finishReason === 'SAFETY') throw new Error('Gemini blocked by safety filters');
-      // Grounded responses can span multiple parts — join them all
       const parts = data.candidates?.[0]?.content?.parts || [];
       const text = parts.map((p: any) => p.text || '').join('');
       if (!text || text.trim().length < 5) throw new Error('Gemini returned empty response');
@@ -321,11 +336,6 @@ export const NeuralChat = React.memo(({
 
   // ============ CLAUDE API (Deep Analysis) ============
   const callClaude = async (messages: any[], systemPrompt: string) => {
-    const apiKey = import.meta.env.VITE_CLAUDE_API_KEY || CONFIG.claude.apiKey;
-    if (!apiKey || apiKey.length < 10) {
-      throw new Error('Claude API Key missing');
-    }
-
     const fixed: Array<{ role: string; content: string }> = [];
     let expectedRole = 'user';
     for (const m of messages) {
@@ -354,9 +364,38 @@ export const NeuralChat = React.memo(({
         messages: fixed
       };
 
-      let res;
+      // Try server proxy first, then direct browser call
+      let data: any = null;
+      let gotResponse = false;
+
+      // 1) Server proxy
       try {
-        res = await fetch(CONFIG.claude.baseUrl, {
+        const proxyRes = await fetch('/api/claude', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(35000)
+        });
+        if (proxyRes.ok) {
+          data = await proxyRes.json();
+          gotResponse = true;
+        } else if (proxyRes.status === 503) {
+          console.warn('Claude proxy unavailable (503), trying direct');
+        } else {
+          const err = await proxyRes.json().catch(() => ({}));
+          throw new Error(err.error?.message || `Claude proxy ${proxyRes.status}`);
+        }
+      } catch (e) {
+        if (!gotResponse) console.warn('Claude proxy failed, trying direct:', e);
+      }
+
+      // 2) Direct browser call fallback
+      if (!gotResponse) {
+        const apiKey = import.meta.env.VITE_CLAUDE_API_KEY || CONFIG.claude.apiKey;
+        if (!apiKey || apiKey.length < 10) {
+          throw new Error(`Claude key missing — Server proxy 503 aur browser me bhi VITE_CLAUDE_API_KEY nahi hai`);
+        }
+        const res = await fetch(CONFIG.claude.baseUrl, {
           method: 'POST',
           headers: {
             'x-api-key': apiKey,
@@ -367,24 +406,14 @@ export const NeuralChat = React.memo(({
           body: JSON.stringify(payload),
           signal: AbortSignal.timeout(30000)
         });
-      } catch (e) {
-        // SECURITY: no third-party proxy fallback — never send API keys to external proxies
-        lastError = e;
-        continue;
-      }
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const errMsg = err.error?.message || `Status: ${res.status}`;
-        console.warn(`Claude model ${modelName} error: ${errMsg}`);
-        lastError = new Error(errMsg);
-        if (res.status === 404 || res.status === 400) {
-          continue;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error?.message || `Claude ${res.status}`);
         }
-        throw lastError;
+        data = await res.json();
+        gotResponse = true;
       }
 
-      const data = await res.json();
       const text = data.content?.[0]?.text;
       if (!text || text.trim().length < 5) throw new Error('Claude returned empty response');
       return text;
@@ -510,12 +539,15 @@ ${portfolioCtx}`;
     };
 
     // Try each engine with one retry
+    let fallbackError = '';
     for (const eng of chain) {
       try {
         const text = await retryOnce(() => callers[eng](recentMessages, systemPrompt));
-        return { text, model: eng };
+        return { text, model: eng, fallbackError };
       } catch (e) {
+        const errMsg = e instanceof Error ? e.message : String(e);
         console.warn(`${eng} failed:`, e);
+        fallbackError += `⚠️ ${eng.toUpperCase()}: ${errMsg}\n`;
         continue;
       }
     }
@@ -544,8 +576,13 @@ ${portfolioCtx}`;
       }
 
       const result = await callAI(userMessage, selectedModelType);
+      let finalText = result.text;
+      // Show visible warning when engine fell back to a different model
+      if (result.fallbackError && result.model !== selectedModelType) {
+        finalText = `⚠️ **Fallback:** ${selectedModelType.toUpperCase()} respond nahi kar paya. ${result.model.toUpperCase()} se answer aa raha hai.\n\n**Errors:**\n${result.fallbackError}\n---\n\n${result.text}`;
+      }
       setChatMessages(prev => [...prev, {
-        role: 'model', text: result.text, timestamp: Date.now(), model: result.model
+        role: 'model', text: finalText, timestamp: Date.now(), model: result.model
       } as ChatMessage]);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
