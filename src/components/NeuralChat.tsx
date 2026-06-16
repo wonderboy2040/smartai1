@@ -148,12 +148,16 @@ const MODEL_COLORS = {
 
 export interface NeuralChatProps {
   groqKey?: string;
+  geminiKey?: string;
+  claudeKey?: string;
   portfolioContext: string;
   usdInrRate?: number;
 }
 
 export const NeuralChat = React.memo(({
   groqKey: propGroqKey,
+  geminiKey: propGeminiKey,
+  claudeKey: propClaudeKey,
   portfolioContext,
   usdInrRate: propUsdInrRate
 }: NeuralChatProps) => {
@@ -241,6 +245,7 @@ export const NeuralChat = React.memo(({
   // ============ GROQ API (Ultra-Fast + Market Expert via groq/compound) ============
   const callGroq = async (messages: any[], systemPrompt: string, modelName: string = CONFIG.groq.model) => {
     const apiKey = import.meta.env.VITE_GROQ_API_KEY || propGroqKey || CONFIG.groq.apiKey;
+    console.log('[Groq] Using key from:', import.meta.env.VITE_GROQ_API_KEY ? 'env' : propGroqKey ? 'prop' : 'config');
     console.log('[Groq] Key available:', !!apiKey, 'Key length:', apiKey?.length);
     if (!apiKey || apiKey.length < 10) {
       throw new Error('Groq API Key missing — Render me VITE_GROQ_API_KEY set karo aur redeploy karo');
@@ -271,10 +276,10 @@ export const NeuralChat = React.memo(({
 
   // ============ GEMINI API (Real-time Intelligence) ============
   const callGemini = async (messages: any[], systemPrompt: string) => {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || CONFIG.gemini.apiKey;
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || propGeminiKey || CONFIG.gemini.apiKey;
     console.log('[Gemini] Key available:', !!apiKey, 'Key length:', apiKey?.length);
     if (!apiKey || apiKey.length < 10) {
-      throw new Error('Gemini API Key missing — Render me VITE_GEMINI_API_KEY set karo aur redeploy karo');
+      throw new Error('Gemini API Key missing — Set VITE_GEMINI_API_KEY or add in Settings');
     }
 
     const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
@@ -348,10 +353,10 @@ export const NeuralChat = React.memo(({
 
   // ============ CLAUDE API (Deep Analysis) ============
   const callClaude = async (messages: any[], systemPrompt: string) => {
-    const apiKey = import.meta.env.VITE_CLAUDE_API_KEY || CONFIG.claude.apiKey;
+    const apiKey = import.meta.env.VITE_CLAUDE_API_KEY || propClaudeKey || CONFIG.claude.apiKey;
     console.log('[Claude] Key available:', !!apiKey, 'Key length:', apiKey?.length);
     if (!apiKey || apiKey.length < 10) {
-      throw new Error('Claude API Key missing — Render me VITE_CLAUDE_API_KEY set karo aur redeploy karo');
+      throw new Error('Claude API Key missing — Set VITE_CLAUDE_API_KEY or add in Settings');
     }
 
     const fixed: Array<{ role: string; content: string }> = [];
