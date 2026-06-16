@@ -208,34 +208,13 @@ export const NeuralChat = React.memo(({
 
   // ============ GROQ API (Ultra-Fast + Market Expert via groq/compound) ============
   const callGroq = async (messages: any[], systemPrompt: string, modelName: string = CONFIG.groq.model) => {
-    const groqMessages = [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))];
-
-    // 1) Server proxy first (uses GROQ_KEY from server env var)
-    try {
-      const proxyRes = await fetch('/api/groq', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: groqMessages, model: modelName }),
-        signal: AbortSignal.timeout(25000)
-      });
-      if (proxyRes.ok) {
-        const data = await proxyRes.json();
-        const text = data.choices?.[0]?.message?.content;
-        if (text && text.trim().length >= 5) return text;
-      } else if (proxyRes.status !== 503) {
-        const err = await proxyRes.json().catch(() => ({}));
-        throw new Error(err.error?.message || `Groq proxy ${proxyRes.status}`);
-      }
-    } catch (e) {
-      console.warn('Groq proxy failed, trying direct:', e);
-    }
-
-    // 2) Direct browser call fallback
     const apiKey = import.meta.env.VITE_GROQ_API_KEY || propGroqKey || CONFIG.groq.apiKey;
+    console.log('[Groq] Key available:', !!apiKey, 'Key length:', apiKey?.length);
     if (!apiKey || apiKey.length < 10) {
-      throw new Error('Groq key missing — Server proxy aur browser dono me key nahi hai');
+      throw new Error('Groq API Key missing — Render me VITE_GROQ_API_KEY set karo aur redeploy karo');
     }
 
+    const groqMessages = [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))];
     const res = await fetch(CONFIG.groq.baseUrl, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -255,7 +234,12 @@ export const NeuralChat = React.memo(({
 
   // ============ GEMINI API (Real-time Intelligence) ============
   const callGemini = async (messages: any[], systemPrompt: string) => {
-    // Build contents with STRICT alternating user/model turns
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || CONFIG.gemini.apiKey;
+    console.log('[Gemini] Key available:', !!apiKey, 'Key length:', apiKey?.length);
+    if (!apiKey || apiKey.length < 10) {
+      throw new Error('Gemini API Key missing — Render me VITE_GEMINI_API_KEY set karo aur redeploy karo');
+    }
+
     const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
     contents.push({ role: 'user', parts: [{ text: systemPrompt }] });
     contents.push({ role: 'model', parts: [{ text: 'Understood. DEEP MIND AI Pro Trader active. Ready for analysis in Pro Trader Hinglish.' }] });
@@ -278,8 +262,7 @@ export const NeuralChat = React.memo(({
     let lastError: any = null;
 
     for (const modelName of modelOptions) {
-      const payload = {
-        model: modelName,
+      const payload: Record<string, any> = {
         contents,
         generationConfig: { temperature: 0.7, maxOutputTokens: 8192, topP: 0.95, topK: 40 },
         safetySettings: [
@@ -290,55 +273,33 @@ export const NeuralChat = React.memo(({
         ]
       };
 
-      // Try server proxy first (same origin), then direct browser call as fallback
-      let data: any = null;
-      let gotResponse = false;
+      const targetUrl = `${CONFIG.gemini.baseUrl}/${modelName}:generateContent?key=${apiKey}`;
 
-      // 1) Server proxy (no CORS, key on server)
+      let res;
       try {
-        const proxyRes = await fetch('/api/gemini', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(25000)
-        });
-        if (proxyRes.ok) {
-          data = await proxyRes.json();
-          gotResponse = true;
-        } else if (proxyRes.status === 503) {
-          // Server doesn't have Gemini key — fall through to direct call
-          console.warn('Gemini proxy unavailable (503), trying direct browser call');
-        } else {
-          const err = await proxyRes.json().catch(() => ({}));
-          throw new Error(err.error?.message || `Gemini proxy ${proxyRes.status}`);
-        }
-      } catch (e) {
-        if (!gotResponse) {
-          console.warn('Gemini proxy failed, trying direct:', e);
-        }
-      }
-
-      // 2) Direct browser call fallback
-      if (!gotResponse) {
-        const apiKey = import.meta.env.VITE_GEMINI_API_KEY || CONFIG.gemini.apiKey;
-        if (!apiKey || apiKey.length < 10) {
-          throw new Error(`Gemini key missing — Server proxy 503 aur browser me bhi VITE_GEMINI_API_KEY nahi hai`);
-        }
-        const targetUrl = `${CONFIG.gemini.baseUrl}/${modelName}:generateContent?key=${apiKey}`;
-        const res = await fetch(targetUrl, {
+        res = await fetch(targetUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
           signal: AbortSignal.timeout(20000)
         });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error?.message || `Gemini ${res.status}`);
-        }
-        data = await res.json();
-        gotResponse = true;
+      } catch (e) {
+        lastError = e;
+        continue;
       }
 
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const errMsg = err.error?.message || `Status: ${res.status}`;
+        console.warn(`Gemini model ${modelName} error:`, errMsg, err);
+        lastError = new Error(errMsg);
+        if (res.status === 404 || res.status === 400) {
+          continue;
+        }
+        throw lastError;
+      }
+
+      const data = await res.json();
       if (data.candidates?.[0]?.finishReason === 'SAFETY') throw new Error('Gemini blocked by safety filters');
       const parts = data.candidates?.[0]?.content?.parts || [];
       const text = parts.map((p: any) => p.text || '').join('');
@@ -351,6 +312,12 @@ export const NeuralChat = React.memo(({
 
   // ============ CLAUDE API (Deep Analysis) ============
   const callClaude = async (messages: any[], systemPrompt: string) => {
+    const apiKey = import.meta.env.VITE_CLAUDE_API_KEY || CONFIG.claude.apiKey;
+    console.log('[Claude] Key available:', !!apiKey, 'Key length:', apiKey?.length);
+    if (!apiKey || apiKey.length < 10) {
+      throw new Error('Claude API Key missing — Render me VITE_CLAUDE_API_KEY set karo aur redeploy karo');
+    }
+
     const fixed: Array<{ role: string; content: string }> = [];
     let expectedRole = 'user';
     for (const m of messages) {
@@ -379,38 +346,9 @@ export const NeuralChat = React.memo(({
         messages: fixed
       };
 
-      // Try server proxy first, then direct browser call
-      let data: any = null;
-      let gotResponse = false;
-
-      // 1) Server proxy
+      let res;
       try {
-        const proxyRes = await fetch('/api/claude', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(35000)
-        });
-        if (proxyRes.ok) {
-          data = await proxyRes.json();
-          gotResponse = true;
-        } else if (proxyRes.status === 503) {
-          console.warn('Claude proxy unavailable (503), trying direct');
-        } else {
-          const err = await proxyRes.json().catch(() => ({}));
-          throw new Error(err.error?.message || `Claude proxy ${proxyRes.status}`);
-        }
-      } catch (e) {
-        if (!gotResponse) console.warn('Claude proxy failed, trying direct:', e);
-      }
-
-      // 2) Direct browser call fallback
-      if (!gotResponse) {
-        const apiKey = import.meta.env.VITE_CLAUDE_API_KEY || CONFIG.claude.apiKey;
-        if (!apiKey || apiKey.length < 10) {
-          throw new Error(`Claude key missing — Server proxy 503 aur browser me bhi VITE_CLAUDE_API_KEY nahi hai`);
-        }
-        const res = await fetch(CONFIG.claude.baseUrl, {
+        res = await fetch(CONFIG.claude.baseUrl, {
           method: 'POST',
           headers: {
             'x-api-key': apiKey,
@@ -421,14 +359,20 @@ export const NeuralChat = React.memo(({
           body: JSON.stringify(payload),
           signal: AbortSignal.timeout(30000)
         });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error?.message || `Claude ${res.status}`);
-        }
-        data = await res.json();
-        gotResponse = true;
+      } catch (e) {
+        lastError = e;
+        continue;
       }
 
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const errMsg = err.error?.message || `Status: ${res.status}`;
+        console.warn(`Claude model ${modelName} error:`, errMsg, err);
+        lastError = new Error(errMsg);
+        continue;
+      }
+
+      const data = await res.json();
       const text = data.content?.[0]?.text;
       if (!text || text.trim().length < 5) throw new Error('Claude returned empty response');
       return text;
