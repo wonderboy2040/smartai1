@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles, Settings } from 'lucide-react';
+import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 // AI Engine Configurations — Groq + Gemini (Free) + Claude (Paid fallback)
@@ -148,23 +148,12 @@ const MODEL_COLORS = {
 
 export interface NeuralChatProps {
   groqKey?: string;
-  aiKeys?: {
-    groqKey: string;
-    geminiKey: string;
-    claudeKey: string;
-    tavilyKey: string;
-    tgToken: string;
-    tgChatId: string;
-  };
-  updateAiKeys?: (keys: Partial<NonNullable<NeuralChatProps['aiKeys']>>) => void;
   portfolioContext: string;
   usdInrRate?: number;
 }
 
 export const NeuralChat = React.memo(({
   groqKey: propGroqKey,
-  aiKeys,
-  updateAiKeys,
   portfolioContext,
   usdInrRate: propUsdInrRate
 }: NeuralChatProps) => {
@@ -180,36 +169,6 @@ export const NeuralChat = React.memo(({
   const [showChat, setShowChat] = useState(false);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [selectedModel, setSelectedModel] = useState<'auto' | 'market' | 'groq' | 'gemini' | 'claude'>('auto');
-  const [showSettings, setShowSettings] = useState(false);
-  const [keysForm, setKeysForm] = useState({
-    groqKey: '',
-    geminiKey: '',
-    claudeKey: '',
-    tavilyKey: '',
-    tgToken: '',
-    tgChatId: ''
-  });
-
-  // Sync keys from prop into state when settings is opened
-  useEffect(() => {
-    if (aiKeys) {
-      setKeysForm({
-        groqKey: aiKeys.groqKey || '',
-        geminiKey: aiKeys.geminiKey || '',
-        claudeKey: aiKeys.claudeKey || '',
-        tavilyKey: aiKeys.tavilyKey || '',
-        tgToken: aiKeys.tgToken || '',
-        tgChatId: aiKeys.tgChatId || ''
-      });
-    }
-  }, [aiKeys, showSettings]);
-
-  const handleSaveKeys = () => {
-    if (updateAiKeys) {
-      updateAiKeys(keysForm);
-    }
-    setShowSettings(false);
-  };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -249,8 +208,7 @@ export const NeuralChat = React.memo(({
 
   // ============ GROQ API (Ultra-Fast + Market Expert via groq/compound) ============
   const callGroq = async (messages: any[], systemPrompt: string, modelName: string = CONFIG.groq.model) => {
-    const envKey = import.meta.env.VITE_GROQ_API_KEY;
-    const apiKey = aiKeys?.groqKey || envKey || propGroqKey || CONFIG.groq.apiKey;
+    const apiKey = import.meta.env.VITE_GROQ_API_KEY || propGroqKey || CONFIG.groq.apiKey;
     if (!apiKey || apiKey.length < 10) {
       throw new Error('Groq API Key missing — Settings me set karo');
     }
@@ -282,7 +240,7 @@ export const NeuralChat = React.memo(({
 
   // ============ GEMINI API (Real-time Intelligence) ============
   const callGemini = async (messages: any[], systemPrompt: string) => {
-    const apiKey = aiKeys?.geminiKey || import.meta.env.VITE_GEMINI_API_KEY || CONFIG.gemini.apiKey;
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || CONFIG.gemini.apiKey;
     if (!apiKey || apiKey.length < 10) {
       throw new Error('Gemini API Key missing — Settings me set karo');
     }
@@ -363,7 +321,7 @@ export const NeuralChat = React.memo(({
 
   // ============ CLAUDE API (Deep Analysis) ============
   const callClaude = async (messages: any[], systemPrompt: string) => {
-    const apiKey = aiKeys?.claudeKey || import.meta.env.VITE_CLAUDE_API_KEY || CONFIG.claude.apiKey;
+    const apiKey = import.meta.env.VITE_CLAUDE_API_KEY || CONFIG.claude.apiKey;
     if (!apiKey || apiKey.length < 10) {
       throw new Error('Claude API Key missing');
     }
@@ -441,7 +399,7 @@ export const NeuralChat = React.memo(({
 
     const results = await Promise.allSettled([
       fetchRealtimeSnapshot(),
-      isNewsQuery ? fetchWebIntel(userMessage, aiKeys?.tavilyKey || '') : Promise.resolve('')
+      isNewsQuery ? fetchWebIntel(userMessage, '') : Promise.resolve('')
     ]);
 
     const marketData = results[0].status === 'fulfilled' ? results[0].value : '';
@@ -649,7 +607,6 @@ ${portfolioCtx}`;
                 </div>
               </div>
               <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
-                <button onClick={() => setShowSettings(!showSettings)} className={`rounded-full p-1.5 transition-colors ${showSettings ? 'text-cyan-400 bg-cyan-500/10' : 'text-slate-500 hover:text-cyan-400 bg-white/5'}`} title="API Key Settings"><Settings size={14} /></button>
                 <button onClick={clearChat} className="text-slate-500 hover:text-red-400 bg-white/5 rounded-full p-1.5 transition-colors" title="Clear Chat"><Trash2 size={14} /></button>
                 <button onClick={() => setShowChat(false)} className="text-slate-400 hover:text-white bg-white/5 rounded-full p-1.5 transition-colors"><X size={16} /></button>
               </div>
@@ -675,98 +632,8 @@ ${portfolioCtx}`;
               ))}
             </div>
 
-            {/* Settings Form or Messages */}
-            {showSettings ? (
-              <div className="relative flex-1 overflow-y-auto p-4 space-y-4 bg-slate-950/95 z-20 scrollbar-hide">
-                <div className="border-b border-cyan-500/20 pb-2">
-                  <h4 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5 text-cyan-400">
-                    <Settings size={14} /> API & Sync Configuration
-                  </h4>
-                  <p className="text-[10px] text-slate-400 mt-1">Configure your API keys. Settings automatically sync to Google Sheets and the Telegram Bot.</p>
-                </div>
-
-                <div className="space-y-3 text-xs">
-                  <div>
-                    <label className="text-slate-400 font-bold block mb-1">Groq API Key</label>
-                    <input
-                      type="password"
-                      value={keysForm.groqKey}
-                      onChange={(e) => setKeysForm({ ...keysForm, groqKey: e.target.value })}
-                      placeholder="gsk-..."
-                      className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-white focus:border-cyan-500 outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-slate-400 font-bold block mb-1">Gemini API Key</label>
-                    <input
-                      type="password"
-                      value={keysForm.geminiKey}
-                      onChange={(e) => setKeysForm({ ...keysForm, geminiKey: e.target.value })}
-                      placeholder="AIzaSy..."
-                      className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-white focus:border-cyan-500 outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-slate-400 font-bold block mb-1">Claude API Key</label>
-                    <input
-                      type="password"
-                      value={keysForm.claudeKey}
-                      onChange={(e) => setKeysForm({ ...keysForm, claudeKey: e.target.value })}
-                      placeholder="sk-ant-..."
-                      className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-white focus:border-cyan-500 outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-slate-400 font-bold block mb-1">Tavily API Key (Search)</label>
-                    <input
-                      type="password"
-                      value={keysForm.tavilyKey}
-                      onChange={(e) => setKeysForm({ ...keysForm, tavilyKey: e.target.value })}
-                      placeholder="tvly-..."
-                      className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-white focus:border-cyan-500 outline-none"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-slate-400 font-bold block mb-1">Telegram Bot Token</label>
-                      <input
-                        type="password"
-                        value={keysForm.tgToken}
-                        onChange={(e) => setKeysForm({ ...keysForm, tgToken: e.target.value })}
-                        placeholder="Token"
-                        className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-white focus:border-cyan-500 outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-slate-400 font-bold block mb-1">Telegram Chat ID</label>
-                      <input
-                        type="text"
-                        value={keysForm.tgChatId}
-                        onChange={(e) => setKeysForm({ ...keysForm, tgChatId: e.target.value })}
-                        placeholder="Chat ID"
-                        className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-white focus:border-cyan-500 outline-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-2 flex gap-3">
-                  <button
-                    onClick={handleSaveKeys}
-                    className="flex-1 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-lg py-2 font-bold text-xs uppercase tracking-wider transition-all"
-                  >
-                    💾 Save & Sync
-                  </button>
-                  <button
-                    onClick={() => setShowSettings(false)}
-                    className="px-4 bg-slate-850 hover:bg-slate-800 text-slate-300 rounded-lg py-2 font-bold text-xs uppercase transition-all"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
+            {/* Messages */}
+            <>
                 <div ref={chatContainerRef} className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide">
                   {chatMessages.map((msg, i) => (
                     <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
@@ -877,10 +744,9 @@ ${portfolioCtx}`;
                     <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
                       {chatMessages.length} messages
                     </span>
-                  </div>
                 </div>
-              </>
-            )}
+              </div>
+            </>
           </motion.div>
         )}
       </AnimatePresence>

@@ -12,7 +12,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, TAX_PAIRS } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchCryptoPricesINR, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
-import { loadPortfolioFromCloud, loadGroqKeyFromCloud, saveGroqKeyToCloud } from './cloud.mjs';
+import { loadPortfolioFromCloud } from './cloud.mjs';
 import {
   generatePortfolioReport, generateMarketReport,
   generateAllocationReport, generateRiskReport, generateAutoReport,
@@ -164,14 +164,12 @@ async function initializeData() {
     console.error('❌ Portfolio load failed:', e.message);
   }
 
-  // Step 2: Groq Key (non-blocking)
-  try {
-    console.log('🔑 Loading Groq API key...');
-    await loadGroqKeyFromCloud();
-    console.log(`✅ Groq key: ${GROQ_KEY ? 'SET (' + GROQ_KEY.substring(0, 8) + '...)' : 'NOT SET'}`);
-  } catch (e) {
-    console.warn('⚠️  Groq key load failed:', e.message);
-  }
+  // Step 2: Keys are loaded from environment variables only (no cloud sync)
+  // Ensure GEMINI_API_KEY, CLAUDE_API_KEY, GROQ_KEY are set in Render env
+  console.log('🔑 API keys loaded from environment variables (cloud sync disabled)');
+  console.log(`  ⚡ Groq: ${GROQ_KEY ? '✓ SET' : '✗ MISSING'}`);
+  console.log(`  🔵 Gemini: ${GEMINI_API_KEY ? '✓ SET' : '✗ MISSING'}`);
+  console.log(`  🟣 Claude: ${CLAUDE_API_KEY ? '✓ SET' : '✗ MISSING'}`);
 
   // Step 3: Forex (non-blocking)
   try {
