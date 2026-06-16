@@ -215,18 +215,30 @@ export const NeuralChat = React.memo(({
     }
 
     const groqMessages = [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))];
-    const res = await fetch(CONFIG.groq.baseUrl, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: modelName, messages: groqMessages, temperature: 0.7, max_tokens: 8000 }),
-      signal: AbortSignal.timeout(20000)
-    });
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Groq Error: ${res.status}`);
-    }
-    const data = await res.json();
+    const doFetch = async (retries = 0): Promise<any> => {
+      const res = await fetch(CONFIG.groq.baseUrl, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelName, messages: groqMessages, temperature: 0.7, max_tokens: 8000 }),
+        signal: AbortSignal.timeout(20000)
+      });
+
+      if (res.status === 429 && retries < 3) {
+        const delay = Math.pow(2, retries + 1) * 1000;
+        console.warn(`Groq 429 rate limited, retrying in ${delay}ms (attempt ${retries + 1}/3)`);
+        await new Promise(r => setTimeout(r, delay));
+        return doFetch(retries + 1);
+      }
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || `Groq Error: ${res.status}`);
+      }
+      return res.json();
+    };
+
+    const data = await doFetch();
     const text = data.choices?.[0]?.message?.content;
     if (!text || text.trim().length < 5) throw new Error('Groq returned empty response');
     return text;
@@ -276,24 +288,39 @@ export const NeuralChat = React.memo(({
       const targetUrl = `${CONFIG.gemini.baseUrl}/${modelName}:generateContent?key=${apiKey}`;
 
       let res;
-      try {
-        res = await fetch(targetUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(20000)
-        });
-      } catch (e) {
-        lastError = e;
-        continue;
+      let retries = 0;
+      const maxRetries = 3;
+
+      while (retries <= maxRetries) {
+        try {
+          res = await fetch(targetUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(20000)
+          });
+
+          if (res.status === 429 && retries < maxRetries) {
+            const delay = Math.pow(2, retries + 1) * 1000;
+            console.warn(`Gemini 429 rate limited, retrying in ${delay}ms (attempt ${retries + 1}/${maxRetries})`);
+            await new Promise(r => setTimeout(r, delay));
+            retries++;
+            continue;
+          }
+          break;
+        } catch (e) {
+          lastError = e;
+          lastError = new Error(`Gemini network error: ${e instanceof Error ? e.message : String(e)}`);
+          break;
+        }
       }
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const errMsg = err.error?.message || `Status: ${res.status}`;
+      if (!res || !res.ok) {
+        const err = await res?.json().catch(() => ({}));
+        const errMsg = err.error?.message || `Status: ${res?.status}`;
         console.warn(`Gemini model ${modelName} error:`, errMsg, err);
         lastError = new Error(errMsg);
-        if (res.status === 404 || res.status === 400) {
+        if (res?.status === 404 || res?.status === 400) {
           continue;
         }
         throw lastError;
@@ -347,26 +374,40 @@ export const NeuralChat = React.memo(({
       };
 
       let res;
-      try {
-        res = await fetch(CONFIG.claude.baseUrl, {
-          method: 'POST',
-          headers: {
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-            'anthropic-dangerous-direct-browser-access': 'true',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(30000)
-        });
-      } catch (e) {
-        lastError = e;
-        continue;
+      let retries = 0;
+      const maxRetries = 3;
+
+      while (retries <= maxRetries) {
+        try {
+          res = await fetch(CONFIG.claude.baseUrl, {
+            method: 'POST',
+            headers: {
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01',
+              'anthropic-dangerous-direct-browser-access': 'true',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(30000)
+          });
+
+          if (res.status === 429 && retries < maxRetries) {
+            const delay = Math.pow(2, retries + 1) * 1000;
+            console.warn(`Claude 429 rate limited, retrying in ${delay}ms (attempt ${retries + 1}/${maxRetries})`);
+            await new Promise(r => setTimeout(r, delay));
+            retries++;
+            continue;
+          }
+          break;
+        } catch (e) {
+          lastError = new Error(`Claude network error: ${e instanceof Error ? e.message : String(e)}`);
+          break;
+        }
       }
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const errMsg = err.error?.message || `Status: ${res.status}`;
+      if (!res || !res.ok) {
+        const err = await res?.json().catch(() => ({}));
+        const errMsg = err.error?.message || `Status: ${res?.status}`;
         console.warn(`Claude model ${modelName} error:`, errMsg, err);
         lastError = new Error(errMsg);
         continue;
