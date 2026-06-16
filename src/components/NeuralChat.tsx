@@ -208,23 +208,38 @@ export const NeuralChat = React.memo(({
 
   // ============ GROQ API (Ultra-Fast + Market Expert via groq/compound) ============
   const callGroq = async (messages: any[], systemPrompt: string, modelName: string = CONFIG.groq.model) => {
-    const apiKey = import.meta.env.VITE_GROQ_API_KEY || propGroqKey || CONFIG.groq.apiKey;
-    if (!apiKey || apiKey.length < 10) {
-      throw new Error('Groq API Key missing — Settings me set karo');
+    const groqMessages = [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))];
+
+    // 1) Server proxy first (uses GROQ_KEY from server env var)
+    try {
+      const proxyRes = await fetch('/api/groq', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: groqMessages, model: modelName }),
+        signal: AbortSignal.timeout(25000)
+      });
+      if (proxyRes.ok) {
+        const data = await proxyRes.json();
+        const text = data.choices?.[0]?.message?.content;
+        if (text && text.trim().length >= 5) return text;
+      } else if (proxyRes.status !== 503) {
+        const err = await proxyRes.json().catch(() => ({}));
+        throw new Error(err.error?.message || `Groq proxy ${proxyRes.status}`);
+      }
+    } catch (e) {
+      console.warn('Groq proxy failed, trying direct:', e);
     }
 
-    const payload = {
-      model: modelName,
-      messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
-      temperature: 0.7,
-      max_tokens: 8000
-    };
+    // 2) Direct browser call fallback
+    const apiKey = import.meta.env.VITE_GROQ_API_KEY || propGroqKey || CONFIG.groq.apiKey;
+    if (!apiKey || apiKey.length < 10) {
+      throw new Error('Groq key missing — Server proxy aur browser dono me key nahi hai');
+    }
 
-    // SECURITY: no third-party CORS proxy fallback — never send API keys to external proxies
     const res = await fetch(CONFIG.groq.baseUrl, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ model: modelName, messages: groqMessages, temperature: 0.7, max_tokens: 8000 }),
       signal: AbortSignal.timeout(20000)
     });
 

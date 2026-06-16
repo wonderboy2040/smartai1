@@ -10,7 +10,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, TAX_PAIRS } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, TAVILY_API_KEY, TAX_PAIRS } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchCryptoPricesINR, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
 import { loadPortfolioFromCloud } from './cloud.mjs';
 import {
@@ -108,9 +108,52 @@ const distPath = path.join(__dirname, '../dist');
 app.use(express.static(distPath));
 
 // ========================================
-// API PROXY — Gemini & Claude (avoids CORS + browser key exposure)
-// Frontend calls /api/gemini or /api/claude → server uses env var keys
+// API PROXY — Groq, Gemini & Claude (avoids CORS + browser key exposure)
+// Frontend calls /api/groq, /api/gemini or /api/claude → server uses env var keys
 // ========================================
+
+// AI status endpoint — tells frontend which engines are available on server
+app.get('/api/ai-status', (req, res) => {
+  res.json({
+    groq: !!(GROQ_KEY && GROQ_KEY.length > 10),
+    gemini: !!(GEMINI_API_KEY && GEMINI_API_KEY.length > 10),
+    claude: !!(CLAUDE_API_KEY && CLAUDE_API_KEY.length > 10),
+    tavily: !!(TAVILY_API_KEY && TAVILY_API_KEY.length > 10)
+  });
+});
+
+app.post('/api/groq', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    if (!GROQ_KEY || GROQ_KEY.length < 10) {
+      return res.status(503).json({ error: 'Groq API key not configured on server' });
+    }
+    const { messages, model } = req.body;
+    const modelName = model || 'llama-3.3-70b-versatile';
+    const apiRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${GROQ_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: modelName,
+        messages,
+        temperature: 0.7,
+        max_completion_tokens: 8000
+      }),
+      signal: AbortSignal.timeout(25000)
+    });
+    const data = await apiRes.json();
+    if (!apiRes.ok) {
+      return res.status(apiRes.status).json(data);
+    }
+    res.json(data);
+  } catch (e) {
+    console.error('Groq proxy error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/gemini', express.json({ limit: '1mb' }), async (req, res) => {
   try {
     if (!GEMINI_API_KEY || GEMINI_API_KEY.length < 10) {
