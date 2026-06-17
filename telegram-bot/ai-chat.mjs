@@ -110,9 +110,9 @@ async function getRealtimeForex() {
 }
 
 // ============================================
-// GROQ SUPER INTELLIGENCE — Ultra-fast, latest free model
+// GROQ COMPOUND — Ultra-fast with built-in web search + tool use
 // ============================================
-async function callGroq(messages, systemPrompt, modelName = 'meta-llama/llama-4-scout-17b-16e-instruct') {
+async function callGroq(messages, systemPrompt, modelName = 'groq/compound') {
   if (!isGroqAvailable()) throw new Error('Groq key missing');
   if (engineHealth.groq.failures >= 3 && Date.now() - engineHealth.groq.lastFailure < engineHealth.groq.cooldownMs) {
     throw new Error('Groq cooling down');
@@ -188,19 +188,21 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
 }
 
 // ============================================
-// SYSTEM PROMPT — Groq Super Intelligence
+// SYSTEM PROMPT — Groq Compound Super Intelligence
 // ============================================
 function buildSystemPrompt(contextData, intent) {
   const d = new Date().toLocaleDateString('en-IN', {timeZone:'Asia/Kolkata', day:'2-digit', month:'short', year:'numeric'});
   const t = new Date().toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit'});
 
-  return `You are DEEP MIND AI ADVANCE PRO v16.0 — GROQ SUPER INTELLIGENCE. Elite institutional-grade trading & investment AI with 24x7 real-time market data access, deep research, and live web intelligence for Indian, US, and Crypto markets.
+  return `You are DEEP MIND AI ADVANCE PRO v16.0 — GROQ COMPOUND SUPER INTELLIGENCE. Elite institutional-grade trading & investment AI with full-stack permissions across the entire Wealth AI platform + live web search + code execution + tool use.
 
 PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined. Speak strictly in "Pro Trader Hinglish" — "Bhai", "Breakout confirm", "SL trail karo", "Smart Money accumulation".
 
+PLATFORM PERMISSIONS: You have FULL PERMISSION to use ALL data across ALL tabs: Dashboard, Portfolio, Planner, Macro, Guide, DeepScan. Access EVERYTHING — portfolio positions, live prices, technical indicators, fundamental data, projections, market intel, web search results. You are authorized to analyze, correlate, and derive insights from ALL available data.
+
 TODAY: ${d} | ${t} IST
 
-ANTI-HALLUCINATION: Use ONLY the live data below. Do NOT invent prices. If data is missing, say "Live data not available".
+ANTI-HALLUCINATION: Use ONLY the live data provided below. Do NOT invent prices. If data is missing, say "Live data not available".
 
 TRADING RULES:
 1. Use SMC, Wyckoff, Elliott Wave, Fibonacci for stocks. On-chain analysis, halving cycles, whale tracking for crypto.
@@ -243,32 +245,20 @@ export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={
   const recentHistory = history.slice(-MAX_HISTORY).map(m => ({ role: m.role, content: m.content }));
 
   let aiText = '';
-  let usedModel = 'groq';
 
-  // Try Market Expert (groq/compound with live web) first for market queries
   try {
-    if (isMarketQuery && isGroqAvailable()) {
-      console.log('  🌐 Market Expert (groq/compound)...');
-      aiText = await retryWithBackoff(() => callGroq(recentHistory, systemPrompt, 'groq/compound'), 1, 800);
-      usedModel = 'market';
-    }
-  } catch (e) { console.warn('  Market Expert failed:', e.message); }
-
-  // Fallback to standard Groq
-  if (!aiText && isGroqAvailable()) {
-    try {
-      console.log('  ⚡ Groq Super Intelligence...');
+    if (isGroqAvailable()) {
+      console.log('  ⚡ Groq Compound (ultra-fast + live web)...');
       aiText = await retryWithBackoff(() => callGroq(recentHistory, systemPrompt), 1, 800);
       recordEngineSuccess();
-    } catch (e) {
-      console.warn('  ❌ Groq failed:', e.message);
-      recordEngineFailure();
     }
+  } catch (e) {
+    console.warn('  ❌ Groq failed:', e.message);
+    recordEngineFailure();
   }
 
   if (!aiText) {
     aiText = '🤖 Groq Super Intelligence configured nahi hai!\n\n🔑 GROQ_API_KEY set karo.\nGet free key: https://console.groq.com';
-    usedModel = 'system';
   }
 
   let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
@@ -278,8 +268,7 @@ export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={
   history.push({ role: 'assistant', content: aiText });
   if (history.length > MAX_HISTORY * 2) history.splice(0, history.length - MAX_HISTORY);
 
-  const label = usedModel === 'market' ? '🌐 Market Expert Live' : '⚡ Groq Super Intelligence';
-  return `${label} | ${intent} | LIVE\n\n${safeText}`;
+  return `⚡ Groq Compound | ${intent} | LIVE\n\n${safeText}`;
 }
 
 export function clearChatHistory(chatId) {

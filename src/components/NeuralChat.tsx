@@ -6,8 +6,7 @@ const CONFIG = {
   groq: {
     apiKey: import.meta.env.VITE_GROQ_API_KEY || '',
     baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
-    model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-    marketModel: 'groq/compound'
+    model: 'groq/compound'
   }
 } as const;
 
@@ -279,9 +278,11 @@ export const NeuralChat = React.memo(({
 
     const portfolioCtx = portfolioContext || 'No portfolio data.';
 
-    const systemPrompt = `You are DEEP MIND AI ADVANCE PRO v16.0 — GROQ SUPER INTELLIGENCE. Elite Institutional-Grade Trading & Investment Intelligence with DEEP RESEARCH + DEEP MIND ANALYSIS for Indian, US markets AND Cryptocurrency with REAL-TIME LIVE data access 24x7.
+    const systemPrompt = `You are DEEP MIND AI ADVANCE PRO v16.0 — GROQ COMPOUND SUPER INTELLIGENCE. Elite Institutional-Grade Trading & Investment Intelligence with DEEP RESEARCH + DEEP MIND ANALYSIS for Indian, US markets AND Cryptocurrency with REAL-TIME LIVE data access 24x7. You have built-in web search, code execution, and tool use capabilities — use them as needed.
 
 PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined.
+
+PLATFORM PERMISSIONS: You have FULL PERMISSION to use ALL data across ALL tabs: Dashboard, Portfolio, Planner, Macro, Guide, DeepScan. Access EVERYTHING — portfolio positions, live prices, technical indicators, fundamental data, projections, market intel, web search results. You are authorized to analyze, correlate, and derive insights from ALL available data.
 
 CRITICAL ANTI-HALLUCINATION RULES:
 - ONLY use the REAL-TIME data provided below. Do NOT invent, guess, or use memorized old prices.
@@ -323,27 +324,13 @@ ${portfolioCtx}`;
       recentMessages.push({ role: 'user', content: userMessage });
     }
 
-    const isMarket = isNewsQuery;
-    let lastError = '';
-
-    if (isMarket) {
-      try {
-        const text = await rateLimitedFetch(() => callGroq(recentMessages, systemPrompt, CONFIG.groq.marketModel));
-        return { text, model: 'groq' as const };
-      } catch (e) {
-        lastError = e instanceof Error ? e.message : String(e);
-        console.warn('Market expert failed:', lastError);
-      }
-    }
-
     try {
       const text = await rateLimitedFetch(() => callGroq(recentMessages, systemPrompt));
       return { text, model: 'groq' as const };
     } catch (e) {
-      lastError = e instanceof Error ? e.message : String(e);
+      const lastError = e instanceof Error ? e.message : String(e);
+      return { text: `🤖 **Groq Offline**\n\nBhai, Groq respond nahi kar paya.\n\n${lastError}\n\nRender me VITE_GROQ_API_KEY set karo aur redeploy karo.`, model: 'system' as const };
     }
-
-    return { text: `🤖 **Groq Offline**\n\nBhai, Groq respond nahi kar paya.\n\n${lastError}\n\nRender me VITE_GROQ_API_KEY set karo aur redeploy karo.`, model: 'system' as const };
   };
 
   const sendMessage = async (userMessage: string) => {
@@ -410,8 +397,8 @@ ${portfolioCtx}`;
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="hidden sm:inline">Llama 4 Scout 17B | Live Market Data</span>
-                    <span className="sm:hidden">LIVE • Llama 4</span>
+                    <span className="hidden sm:inline">Groq Compound | Live Web + Data</span>
+                    <span className="sm:hidden">LIVE • Compound</span>
                   </div>
                 </div>
               </div>
@@ -510,7 +497,7 @@ ${portfolioCtx}`;
               </div>
               <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
                 <span className="text-[7px] sm:text-[8px] text-slate-500 font-mono">
-                  ⚡ Llama 4 Scout 17B
+                  ⚡ Groq Compound
                 </span>
                 <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
                   {chatMessages.length} messages
