@@ -3,7 +3,7 @@ import { useApp } from '../../hooks/AppContext';
 import { DeepScanStock } from '../../types';
 import { fetchDeepScanPrices, runDeepScan, getGeminiDeepAnalysis, formatDeepScanTelegram } from '../../utils/deepScanner';
 import { sendTelegramAlert } from '../../utils/api';
-import { TG_TOKEN, TG_CHAT_ID } from '../../utils/constants';
+import { secureStorage } from '../../utils/secureStorage';
 
 // Score color helper
 function sc(v: number): string {
@@ -36,7 +36,6 @@ export default React.memo(function DeepScanTab() {
   const [geminiLoading, setGeminiLoading] = useState(false);
   const [tgSending, setTgSending] = useState(false);
   const scanInterval = useRef<number | null>(null);
-  const tgInterval = useRef<number | null>(null);
 
   // Stable refs to avoid re-triggering scan on every price tick
   const livePricesRef = useRef(livePrices);
@@ -88,22 +87,28 @@ export default React.memo(function DeepScanTab() {
 
   // 24x7 Telegram alerts — every 6 hours
   useEffect(() => {
-    if (!TG_TOKEN || !TG_CHAT_ID || stocks.length === 0) return;
-    const sendAlert = async () => {
-      const msg = formatDeepScanTelegram(stocks, 'ALL');
-      await sendTelegramAlert(TG_TOKEN, TG_CHAT_ID, msg);
-    };
-    // Send initial after 2 min
-    const initTimeout = setTimeout(sendAlert, 120000);
-    tgInterval.current = window.setInterval(sendAlert, 7200000); // 2 hours — high-confidence picks alert
-    return () => { clearTimeout(initTimeout); if (tgInterval.current) clearInterval(tgInterval.current); };
+    let initTimeout: number | undefined;
+    let tgInt: number | undefined;
+    (async () => {
+      const [token, chatId] = await Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')]);
+      if (!token || !chatId || stocks.length === 0) return;
+      const sendAlert = async () => {
+        const msg = formatDeepScanTelegram(stocks, 'ALL');
+        await sendTelegramAlert(token, chatId, msg);
+      };
+      initTimeout = window.setTimeout(sendAlert, 120000);
+      tgInt = window.setInterval(sendAlert, 7200000);
+    })();
+    return () => { clearTimeout(initTimeout); if (tgInt) clearInterval(tgInt); };
   }, [stocks]);
 
   // Manual TG push
   const pushToTelegram = useCallback(async () => {
     setTgSending(true);
+    const [token, chatId] = await Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')]);
+    if (!token || !chatId) { setTgSending(false); return; }
     const msg = formatDeepScanTelegram(stocks, filter === 'ALL' ? 'ALL' : filter);
-    await sendTelegramAlert(TG_TOKEN, TG_CHAT_ID, msg);
+    await sendTelegramAlert(token, chatId, msg);
     setTgSending(false);
   }, [stocks, filter]);
 

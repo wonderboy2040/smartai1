@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Position, PriceData, TabType, RiskLevel, TransactionType } from '../types';
 import {
-  SECURE_PIN, TG_TOKEN, TG_CHAT_ID, DEFAULT_USD_INR,
-  getTodayString, guessMarket, EXACT_TICKER_MAP, isCryptoSymbol
+  DEFAULT_USD_INR, getTodayString, guessMarket, EXACT_TICKER_MAP, isCryptoSymbol
 } from '../utils/constants';
 import {
   fetchSinglePrice, batchFetchPrices, fetchForexRate,
@@ -139,7 +138,6 @@ export function useAppState() {
   const syncIntervalRef = useRef<number | null>(null);
   const initialTimeoutRef = useRef<number | ReturnType<typeof setTimeout> | null>(null);
   const cloudSyncTimerRef = useRef<number | null>(null);
-  const lastContextGenRef = useRef(0);
   const lastLocalSaveRef = useRef(0);
   const pendingPricesRef = useRef<Record<string, PriceData>>({});
   const portfolioRef = useRef(portfolio);
@@ -606,12 +604,13 @@ export function useAppState() {
   // --- Telegram auto-report (OFF by default — bot handles 24x7 alerts) ---
   useEffect(() => {
     if (!isAuthenticated || !autoTelegram || portfolio.length === 0) return;
-    if (!TG_TOKEN || !TG_CHAT_ID) return; // FIX: skip if no telegram creds
     const sendIfMarketOpen = async () => {
       const d = latestDataRef.current;
       if (!isAnyMarketOpen()) return;
+      const [tgToken, tgChatId] = await Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')]);
+      if (!tgToken || !tgChatId) return;
       const msg = generateDeepAnalysis(d.portfolio, d.livePrices, d.usdInrRate, metrics);
-      await sendTelegramAlert(TG_TOKEN, TG_CHAT_ID, msg);
+      await sendTelegramAlert(tgToken, tgChatId, msg);
     };
     initialTimeoutRef.current = setTimeout(sendIfMarketOpen, 120000);
     telegramIntervalRef.current = window.setInterval(sendIfMarketOpen, 1800000);
@@ -625,9 +624,7 @@ export function useAppState() {
   const weeklyReportRef = useRef<string>('');
   useEffect(() => {
     if (!isAuthenticated || !autoTelegram || portfolio.length === 0) return;
-    if (!TG_TOKEN || !TG_CHAT_ID) return; // FIX: skip if no telegram creds
-
-    const checkWeeklyReport = () => {
+    const checkWeeklyReport = async () => {
       const now = new Date();
       const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
       const day = ist.getDay(); // 0 = Sunday
@@ -657,8 +654,8 @@ export function useAppState() {
           { ...metrics, totalInvested: metrics.totalInvested || 0 },
           totalSIP, investYears, cagr
         );
-        sendTelegramAlert(TG_TOKEN, TG_CHAT_ID, msg).catch(() => { });
-        console.log('[WeeklyReport] Sunday wealth report sent!');
+        const [tgToken, tgChatId] = await Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')]);
+        if (tgToken && tgChatId) sendTelegramAlert(tgToken, tgChatId, msg).catch(() => { });
       }
     };
 
@@ -745,8 +742,9 @@ export function useAppState() {
   const smartAllocations = useMemo(() => getSmartAllocations(livePrices, indiaSIP, usSIP, btcSIP, ethSIP), [livePrices, indiaSIP, usSIP, btcSIP, ethSIP]);
 
   // --- Handlers ---
-  const verifyPin = useCallback(() => {
-    if (pinInput === SECURE_PIN) { secureStorage.setItem('authDone', 'true'); setIsAuthenticated(true); }
+  const verifyPin = useCallback(async () => {
+    const expectedPin = import.meta.env.VITE_SECURE_PIN || '2023';
+    if (pinInput === expectedPin) { secureStorage.setItem('authDone', 'true'); setIsAuthenticated(true); }
     else { alert('❌ Security Access Denied. Galat PIN!'); setPinInput(''); }
   }, [pinInput]);
 
@@ -842,9 +840,10 @@ export function useAppState() {
   }, [addSymbol, addQty, addPrice, addDate, transactionType, editId, modalPrice, portfolio]);
 
   const pushTelegramReport = useCallback(async () => {
-    if (!TG_TOKEN || !TG_CHAT_ID) { setSyncStatus('⚠️ No Telegram config'); setTimeout(() => setSyncStatus(''), 3000); return; }
+    const [tgToken, tgChatId] = await Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')]);
+    if (!tgToken || !tgChatId) { setSyncStatus('⚠️ No Telegram config'); setTimeout(() => setSyncStatus(''), 3000); return; }
     const msg = `🧠 <b>Quantum AI Master Report</b>\n\n🌍 <b>Global State:</b> ${sentiment.text}\n\n💼 <b>Total Equity:</b> ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n📈 <b>P&L:</b> ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(2)}%)\n⚡ <b>Today:</b> ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')}`;
-    await sendTelegramAlert(TG_TOKEN, TG_CHAT_ID, msg);
+    await sendTelegramAlert(tgToken, tgChatId, msg);
     setSyncStatus('✅ Sent'); setTimeout(() => setSyncStatus(''), 3000);
   }, [sentiment, metrics]);
 

@@ -37,7 +37,17 @@ export default React.memo(function DashboardTab() {
     chartContainerRef, indiaSIP, usSIP,
   } = useApp();
 
-  if (!currentSymbol) return null;
+  if (!currentSymbol) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 animate-fade-in"><div className="text-6xl mb-4 opacity-50">🔍</div><p className="text-slate-500 text-lg font-medium">Select a symbol to analyze</p><p className="text-slate-600 text-sm mt-1">Type a ticker above and hit Scan</p></div>
+    );
+  }
+
+  if (isAnalyzing && !currentPrice) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 animate-fade-in"><div className="text-4xl mb-4 animate-spin">⏳</div><p className="text-slate-500 font-medium">Scanning neural grid...</p></div>
+    );
+  }
 
   return (
     <div className="space-y-5 animate-fade-in">

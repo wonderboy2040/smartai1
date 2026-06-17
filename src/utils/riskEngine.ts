@@ -16,6 +16,7 @@ export interface StressTestScenario {
   impact: number;
   impactPct: number;
   description: string;
+  marketImpact?: { IN: number; US: number };
 }
 
 export interface ConcentrationRisk {
@@ -206,7 +207,7 @@ if (totalValue === 0 || positions.length === 0) return [];
         .filter(p => p.market === 'US')
         .reduce((sum, p) => sum + p.value * (s.impactPct / 100), 0))
     }
-  } as StressTestScenario & { marketImpact: { IN: number; US: number } }));
+  }));
 }
 
 /**

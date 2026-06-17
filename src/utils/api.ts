@@ -1,6 +1,19 @@
 import { PriceData, Position } from '../types';
-import { CORS_PROXIES, EXACT_TICKER_MAP, guessMarket, API_URL, DEFAULT_USD_INR, isCryptoSymbol } from './constants';
+import { EXACT_TICKER_MAP, guessMarket, API_URL, DEFAULT_USD_INR, isCryptoSymbol } from './constants';
 import { isAnyMarketOpen } from './telegram';
+interface CoinDcxTicker {
+  market: string;
+  last_price: string;
+  change_24_hour: string;
+  high: string;
+  low: string;
+  volume: string;
+}
+
+interface TvScannerItem {
+  s: string;
+  d: (string | number | null)[];
+}
 
 // ========================================
 // SMART CACHE with TTL
@@ -163,43 +176,6 @@ async function fetchWithStaleCheck(sym: string, retryAttempt: number): Promise<P
     }
   } catch (e) { console.warn('TradingView fetch failed:', e); }
 
-  // Fallback to Yahoo Finance
-  const yahooSymbol = isIndian ? `${cleanSym}.NS` : cleanSym;
-
-  for (const proxy of CORS_PROXIES) {
-    try {
-      const url = `${proxy}${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?interval=1d&range=1d`)}`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data?.chart?.result?.[0]) {
-          const meta = data.chart.result[0].meta;
-          const priceVal = parseFloat(meta.regularMarketPrice);
-          const prevClose = parseFloat(meta.chartPreviousClose || meta.previousClose);
-          const changeVal = prevClose ? ((priceVal - prevClose) / prevClose) * 100 : 0;
-
-          if (!isNaN(priceVal) && priceVal > 0) {
-            const result: PriceData = {
-              price: priceVal,
-              change: changeVal,
-              high: parseFloat(meta.regularMarketDayHigh) || priceVal,
-              low: parseFloat(meta.regularMarketDayLow) || priceVal,
-              volume: parseFloat(meta.regularMarketVolume) || 0,
-              rsi: Math.max(10, Math.min(90, 50 + (changeVal * 5))),
-              market: isIndian ? 'IN' : 'US',
-              tvExchange: isIndian ? 'NSE' : 'NASDAQ',
-              tvExactSymbol: yahooSymbol,
-              time: Date.now()
-            };
-            priceCache.set(sym, result, 5000);
-            return result;
-          }
-        }
-      }
-    } catch (e) { console.warn('Yahoo Finance fetch failed:', e); }
-  }
-
   // Retry with alternate symbol
   if (retryAttempt < 1 && !sym.includes('.NS') && guessMarket(sym) === 'IN') {
     return fetchSinglePrice(sym + '.NS', retryAttempt + 1);
@@ -234,21 +210,23 @@ async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean)
     if (res.ok) {
       const data = await res.json();
       if (data?.data?.length > 0) {
-        const item = data.data.find((x: any) => x.d && x.d[1] !== null) || data.data[0];
-        const priceVal = parseFloat(item.d[1]);
-        const changeVal = parseFloat(item.d[2]) || 0;
+        const items = data.data as TvScannerItem[];
+        const item = items.find(x => x.d && x.d[1] !== null) || items[0];
+        const f = (idx: number) => parseFloat(String(item.d![idx] ?? ''));
+        const priceVal = f(1);
+        const changeVal = f(2) || 0;
 
         if (!isNaN(priceVal) && priceVal > 0) {
           return {
             price: priceVal,
             change: changeVal,
-            high: parseFloat(item.d[3]) || priceVal,
-            low: parseFloat(item.d[4]) || priceVal,
-            volume: parseFloat(item.d[5]) || 0,
-            sma20: parseFloat(item.d[6]) || undefined,
-            sma50: parseFloat(item.d[7]) || undefined,
-            rsi: parseFloat(item.d[8]) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
-            macd: parseFloat(item.d[9]) || undefined,
+            high: f(3) || priceVal,
+            low: f(4) || priceVal,
+            volume: f(5) || 0,
+            sma20: f(6) || undefined,
+            sma50: f(7) || undefined,
+            rsi: f(8) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
+            macd: f(9) || undefined,
             market: isIndian ? 'IN' : 'US',
             tvExchange: item.s.split(':')[0],
             tvExactSymbol: item.s,
@@ -328,28 +306,29 @@ export async function batchFetchPrices(
       if (res.ok) {
         const data = await res.json();
         if (data?.data) {
-          data.data.forEach((item: any) => {
+          (data.data as TvScannerItem[]).forEach(item => {
             if (!item.d || item.d[1] === null) return;
 
-            const priceVal = parseFloat(item.d[1]);
+            const priceVal = parseFloat(item.d[1] as string);
             if (isNaN(priceVal) || priceVal <= 0) return;
 
             const key = tickerToKey[item.s];
             if (!key) return;
 
-            const changeVal = parseFloat(item.d[2]) || 0;
+            const changeVal = parseFloat(item.d[2] as string) || 0;
             const mkt = key.split('_')[0];
 
+            const dv = (idx: number) => item.d![idx] as number | string | undefined;
             onUpdate(key, {
               price: priceVal,
               change: changeVal,
-              high: parseFloat(item.d[3]) || priceVal,
-              low: parseFloat(item.d[4]) || priceVal,
-              volume: parseFloat(item.d[5]) || 0,
-              sma20: parseFloat(item.d[6]) || undefined,
-              sma50: parseFloat(item.d[7]) || undefined,
-              rsi: parseFloat(item.d[8]) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
-              macd: parseFloat(item.d[9]) || undefined,
+              high: parseFloat(String(dv(3) ?? '')) || priceVal,
+              low: parseFloat(String(dv(4) ?? '')) || priceVal,
+              volume: parseFloat(String(dv(5) ?? '')) || 0,
+              sma20: parseFloat(String(dv(6) ?? '')) || undefined,
+              sma50: parseFloat(String(dv(7) ?? '')) || undefined,
+              rsi: parseFloat(String(dv(8) ?? '')) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
+              macd: parseFloat(String(dv(9) ?? '')) || undefined,
               time: Date.now(),
               market: mkt,
               tvExchange: item.s.split(':')[0],
@@ -373,7 +352,7 @@ export async function batchFetchPrices(
         const tickers = await res.json();
         cryptoPositions.forEach(p => {
           const cleanSym = p.symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
-          const inrTicker = tickers.find((t: any) => t.market === `${cleanSym}INR`);
+        const inrTicker = (tickers as CoinDcxTicker[]).find(t => t.market === `${cleanSym}INR`);
           if (inrTicker && inrTicker.last_price) {
             const priceVal = parseFloat(inrTicker.last_price);
             const changeVal = parseFloat(inrTicker.change_24_hour) || 0;
@@ -409,25 +388,7 @@ export async function batchFetchPrices(
 }
 
 export async function fetchForexRate(): Promise<number> {
-  // Primary: Yahoo Finance (Hyper-accurate real-time & weekend fallback)
-  for (const proxy of CORS_PROXIES) {
-    try {
-      const url = `${proxy}${encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/INR=X?interval=1d&range=1d')}`;
-      const res = await fetch(url, {
-        signal: AbortSignal.timeout(5000),
-        cache: 'no-store'
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const price = parseFloat(data?.chart?.result?.[0]?.meta?.regularMarketPrice);
-        if (!isNaN(price) && price > 50 && price < 150) return price;
-      }
-    } catch (e) {
-      console.warn(`Forex proxy ${proxy} failed:`, e);
-    }
-  }
-
-  // Backup 1: AwesomeAPI (Real-time fallback)
+  // Primary: AwesomeAPI (free, no CORS issues)
   try {
     const res = await fetch(`https://economia.awesomeapi.com.br/json/last/USD-INR?t=${Date.now()}`, {
       signal: AbortSignal.timeout(4000)
@@ -469,7 +430,7 @@ export async function fetchCryptoUsdInrRate(): Promise<number> {
     });
     if (res.ok) {
       const data = await res.json();
-      const usdtTicker = data.find((t: any) => t.market === 'USDTINR');
+      const usdtTicker = (data as CoinDcxTicker[]).find(t => t.market === 'USDTINR');
       if (usdtTicker && usdtTicker.last_price) {
         const price = parseFloat(usdtTicker.last_price);
         if (!isNaN(price) && price > 60 && price < 150) return price;
@@ -508,7 +469,7 @@ export async function syncToCloud(portfolio: Position[], usdInr: number): Promis
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Auth-Token': 'WEALTH_AI_SECURE_SYNC_2026'
+        'X-Auth-Token': import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC'
       },
       body: JSON.stringify({ action: 'update', portfolio, timestamp: Date.now(), usdInr })
     });
@@ -575,7 +536,7 @@ export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Auth-Token': 'WEALTH_AI_SECURE_SYNC_2026'
+        'X-Auth-Token': import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC'
       },
       body: JSON.stringify({ groqKey: key, action: 'saveKey', timestamp: Date.now() })
     });
@@ -667,18 +628,18 @@ export async function fetchMarketIntelligence(): Promise<MarketIntelligence> {
           'AMEX:IWM': 'RUSSELL 2000', 'TVC:DXY': 'US DOLLAR', 'COMEX:GC1!': 'GOLD',
           'NYMEX:CL1!': 'CRUDE OIL', 'CBOE:VIX': 'VIX', 'NSE:INDIAVIX': 'INDIA VIX'
         };
-        data.data.forEach((item: any) => {
+        (data.data as TvScannerItem[]).forEach(item => {
+          const ri = (idx: number) => parseFloat(String(item.d![idx] ?? ''));
           if (item.d && item.d[1] !== null) {
             intelligence.globalIndices.push({
-              name: nameMap[item.s] || item.d[0],
-              price: parseFloat(item.d[1]) || 0,
-              change: parseFloat(item.d[2]) || 0
+              name: nameMap[item.s] || String(item.d[0] ?? ''),
+              price: ri(1) || 0,
+              change: ri(2) || 0
             });
-            // Extract key levels
-            if (item.s === 'NSE:NIFTY') intelligence.keyLevels.nifty = parseFloat(item.d[1]) || 0;
-            if (item.s === 'BSE:SENSEX') intelligence.keyLevels.sensex = parseFloat(item.d[1]) || 0;
-            if (item.s === 'AMEX:SPY') intelligence.keyLevels.spy = parseFloat(item.d[1]) || 0;
-            if (item.s === 'NASDAQ:QQQ') intelligence.keyLevels.qqq = parseFloat(item.d[1]) || 0;
+            if (item.s === 'NSE:NIFTY') intelligence.keyLevels.nifty = ri(1) || 0;
+            if (item.s === 'BSE:SENSEX') intelligence.keyLevels.sensex = ri(1) || 0;
+            if (item.s === 'AMEX:SPY') intelligence.keyLevels.spy = ri(1) || 0;
+            if (item.s === 'NASDAQ:QQQ') intelligence.keyLevels.qqq = ri(1) || 0;
           }
         });
       }
@@ -692,11 +653,11 @@ export async function fetchMarketIntelligence(): Promise<MarketIntelligence> {
           'AMEX:XLV': 'US Healthcare', 'AMEX:XLI': 'US Industrial',
           'NSE:CNXIT': 'IN IT', 'NSE:CNXFIN': 'IN Finance', 'NSE:CNXPHARMA': 'IN Pharma'
         };
-        data.data.forEach((item: any) => {
+        (data.data as TvScannerItem[]).forEach(item => {
           if (item.d && item.d[2] !== null) {
             intelligence.sectors.push({
-              name: sectorNameMap[item.s] || item.d[0],
-              change: parseFloat(item.d[2]) || 0
+              name: sectorNameMap[item.s] || String(item.d[0] ?? ''),
+              change: parseFloat(String(item.d[2] ?? '')) || 0
             });
           }
         });

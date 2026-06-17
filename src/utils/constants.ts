@@ -1,10 +1,7 @@
 import { ETFInfo } from '../types';
 
-export const SECURE_PIN = import.meta.env.VITE_SECURE_PIN || "2023";
 export const DEFAULT_USD_INR = 83.5;
 export const API_URL = import.meta.env.VITE_API_URL || "";
-export const TG_TOKEN = import.meta.env.VITE_TG_TOKEN || "";
-export const TG_CHAT_ID = import.meta.env.VITE_TG_CHAT_ID || "";
 
 export const TAX_PAIRS: Record<string, string> = {
   'ITBEES.NS': 'TATAIT.NS',
@@ -71,11 +68,6 @@ export const EXACT_TICKER_MAP: Record<string, string> = {
   'XRP': 'BINANCE:XRPUSDT'
 };
 
-export const CORS_PROXIES = [
-  'https://api.allorigins.win/raw?url=',
-  'https://corsproxy.io/?',
-  'https://r.jina.ai/http://'
-];
 
 export function getTodayString(): string {
   const t = new Date();

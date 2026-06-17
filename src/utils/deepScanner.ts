@@ -497,13 +497,8 @@ RULES:
             signal: AbortSignal.timeout(30000)
           });
         } catch (err) {
-          console.warn('Gemini scanner call failed (CORS/network). Retrying via proxy...');
-          res = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(30000)
-          });
+          console.warn('Gemini scanner call failed (CORS/network). No proxy fallback for security.');
+          return {};
         }
         if (res.ok) {
           const data = await res.json();
@@ -541,16 +536,8 @@ RULES:
             signal: AbortSignal.timeout(25000)
           });
         } catch (err) {
-          console.warn('Groq scanner call failed (CORS/network). Retrying via proxy...');
-          res = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${groqKey}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(25000)
-          });
+          console.warn('Groq scanner call failed (CORS/network). No proxy fallback for security.');
+          return {};
         }
         if (res.ok) {
           const data = await res.json();

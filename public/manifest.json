@@ -1,0 +1,11 @@
+{
+  "name": "Wealth AI Pro Trading Terminal",
+  "short_name": "Wealth AI",
+  "description": "AI-powered institutional-grade trading terminal for India & US markets",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "orientation": "portrait",
+  "icons": []
+}

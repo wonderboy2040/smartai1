@@ -1,6 +1,6 @@
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { TabType } from './types';
-import { TG_TOKEN, TG_CHAT_ID } from './utils/constants';
+import { secureStorage } from './utils/secureStorage';
 import { useAppState } from './hooks/useAppState';
 import { AppContext } from './hooks/AppContext';
 import { PortfolioHealthMonitor } from './components/PortfolioHealthMonitor';
@@ -37,6 +37,17 @@ const NeuralChat = lazyWithRetry(() => import('./components/NeuralChat').then(m 
 
 export default function App() {
   const state = useAppState();
+
+  const [tgToken, setTgToken] = useState('');
+  const [tgChatId, setTgChatId] = useState('');
+  const [formError, setFormError] = useState('');
+  useEffect(() => {
+    Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')])
+      .then(([token, chatId]) => {
+        if (token) setTgToken(token);
+        if (chatId) setTgChatId(chatId);
+      });
+  }, []);
 
   const {
     isAuthenticated, pinInput, setPinInput, verifyPin, logout,
@@ -184,7 +195,7 @@ export default function App() {
                 <div>
                   <label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Symbol</label>
                   <div className="flex gap-2">
-                    <input type="text" value={addSymbol} onChange={e => setAddSymbol(e.target.value.toUpperCase())} placeholder="e.g. AAPL, RELIANCE" className="flex-1 px-4 py-2.5 quantum-input rounded-xl uppercase font-bold text-white" />
+                    <input type="text" value={addSymbol} onChange={e => { setAddSymbol(e.target.value.toUpperCase()); setFormError(''); }} placeholder="e.g. AAPL, RELIANCE" className="flex-1 px-4 py-2.5 quantum-input rounded-xl uppercase font-bold text-white" />
                   </div>
                 </div>
                 {modalPrice && (
@@ -201,23 +212,31 @@ export default function App() {
                   <button onClick={() => setTransactionType('sell')} className={`flex-1 py-2 rounded-lg font-semibold text-sm transition-all ${transactionType === 'sell' ? 'bg-red-500/15 text-red-400 border border-red-500/20' : 'text-slate-500'}`}>📉 SELL</button>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div><label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Quantity</label><input type="number" value={addQty} onChange={e => setAddQty(e.target.value)} placeholder="0" className="w-full px-4 py-2.5 quantum-input rounded-xl font-bold text-lg text-white" /></div>
-                  <div><label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Price</label><input type="number" value={addPrice} onChange={e => setAddPrice(e.target.value)} placeholder="0.00" className="w-full px-4 py-2.5 quantum-input rounded-xl font-bold text-lg text-white" /></div>
+                  <div><label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Quantity</label><input type="number" value={addQty} onChange={e => { setAddQty(e.target.value); setFormError(''); }} placeholder="0" min="0" step="any" className="w-full px-4 py-2.5 quantum-input rounded-xl font-bold text-lg text-white" /></div>
+                  <div><label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Price</label><input type="number" value={addPrice} onChange={e => { setAddPrice(e.target.value); setFormError(''); }} placeholder="0.00" min="0" step="any" className="w-full px-4 py-2.5 quantum-input rounded-xl font-bold text-lg text-white" /></div>
                 </div>
                 <div>
                   <label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Date</label>
                   <input type="date" value={addDate} onChange={e => setAddDate(e.target.value)} className="w-full px-4 py-2.5 quantum-input rounded-xl text-slate-300" />
                 </div>
               </div>
+              {formError && <div className="px-5 pb-0"><p className="text-red-400 text-xs font-semibold bg-red-500/10 rounded-xl px-3 py-2">{formError}</p></div>}
               <div className="p-5 border-t border-white/5">
-                <button onClick={savePosition} className="quantum-btn-primary w-full py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-white">💾 Save</button>
+                <button onClick={() => {
+                  if (!addSymbol.trim()) { setFormError('Symbol required'); return; }
+                  const q = parseFloat(addQty); const p = parseFloat(addPrice);
+                  if (isNaN(q) || q <= 0) { setFormError('Invalid quantity'); return; }
+                  if (isNaN(p) || p <= 0) { setFormError('Invalid price'); return; }
+                  if (!addDate) { setFormError('Date required'); return; }
+                  setFormError(''); savePosition();
+                }} className="quantum-btn-primary w-full py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-white">💾 Save</button>
               </div>
             </div>
           </div>
         )}
 
         {/* Portfolio Health Monitor */}
-        <PortfolioHealthMonitor portfolio={portfolio} livePrices={livePrices} metrics={metrics} telegramConfig={{ token: TG_TOKEN, chatId: TG_CHAT_ID, enabled: autoTelegram }} />
+        <PortfolioHealthMonitor portfolio={portfolio} livePrices={livePrices} metrics={metrics} telegramConfig={{ token: tgToken, chatId: tgChatId, enabled: autoTelegram }} />
 
         {/* Neural Chat */}
         <Suspense fallback={<div className="fixed bottom-6 right-6 w-80 h-96 quantum-panel rounded-2xl flex items-center justify-center animate-pulse"><div className="text-center"><div className="text-4xl mb-2 animate-float">🧠</div><div className="text-sm text-slate-400 font-medium">Loading AI Engine...</div></div></div>}>

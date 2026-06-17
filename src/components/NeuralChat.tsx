@@ -202,7 +202,6 @@ export const NeuralChat = React.memo(({
   }, []);
 
   // ============ RATE LIMITER & RETRY HELPER ============
-  const requestQueueRef = useRef<Promise<any>>(Promise.resolve());
   const lastRequestTimeRef = useRef<number>(0);
   const MIN_REQUEST_INTERVAL = 2000;
 
@@ -245,8 +244,6 @@ export const NeuralChat = React.memo(({
   // ============ GROQ API (Ultra-Fast + Market Expert via groq/compound) ============
   const callGroq = async (messages: any[], systemPrompt: string, modelName: string = CONFIG.groq.model) => {
     const apiKey = import.meta.env.VITE_GROQ_API_KEY || propGroqKey || CONFIG.groq.apiKey;
-    console.log('[Groq] Using key from:', import.meta.env.VITE_GROQ_API_KEY ? 'env' : propGroqKey ? 'prop' : 'config');
-    console.log('[Groq] Key available:', !!apiKey, 'Key length:', apiKey?.length);
     if (!apiKey || apiKey.length < 10) {
       throw new Error('Groq API Key missing — Render me VITE_GROQ_API_KEY set karo aur redeploy karo');
     }
@@ -277,7 +274,6 @@ export const NeuralChat = React.memo(({
   // ============ GEMINI API (Real-time Intelligence) ============
   const callGemini = async (messages: any[], systemPrompt: string) => {
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY || propGeminiKey || CONFIG.gemini.apiKey;
-    console.log('[Gemini] Key available:', !!apiKey, 'Key length:', apiKey?.length);
     if (!apiKey || apiKey.length < 10) {
       throw new Error('Gemini API Key missing — Set VITE_GEMINI_API_KEY or add in Settings');
     }
@@ -354,7 +350,6 @@ export const NeuralChat = React.memo(({
   // ============ CLAUDE API (Deep Analysis) ============
   const callClaude = async (messages: any[], systemPrompt: string) => {
     const apiKey = import.meta.env.VITE_CLAUDE_API_KEY || propClaudeKey || CONFIG.claude.apiKey;
-    console.log('[Claude] Key available:', !!apiKey, 'Key length:', apiKey?.length);
     if (!apiKey || apiKey.length < 10) {
       throw new Error('Claude API Key missing — Set VITE_CLAUDE_API_KEY or add in Settings');
     }

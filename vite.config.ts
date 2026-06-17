@@ -28,10 +28,6 @@ export default defineConfig({
           if (id.includes('node_modules/motion')) {
             return 'vendor-motion';
           }
-          // Crypto-js (encryption)
-          if (id.includes('crypto-js')) {
-            return 'vendor-crypto';
-          }
           // Lucide icons
           if (id.includes('lucide-react')) {
             return 'vendor-icons';

@@ -1,11 +1,8 @@
-import CryptoJS from 'crypto-js';
-
 const ENCRYPTION_KEY = import.meta.env.VITE_ENCRYPTION_KEY;
 if (!ENCRYPTION_KEY) {
   console.warn('VITE_ENCRYPTION_KEY not set — secureStorage encryption is disabled');
 }
 
-// All keys that hold sensitive data (API keys, tokens, combined blob)
 const SENSITIVE_KEYS = [
   'WEALTH_AI_KEYS',
   'WEALTH_AI_GROQ',
@@ -16,81 +13,177 @@ const SENSITIVE_KEYS = [
   'TG_CHAT_ID'
 ];
 
-/**
- * Encrypt sensitive data (API keys, etc.)
- */
-export function encryptData(data: string): string {
-  try {
-    if (!ENCRYPTION_KEY) return data;
-    return CryptoJS.AES.encrypt(data, ENCRYPTION_KEY).toString();
-  } catch (e) {
-    console.warn('Encryption failed:', e);
-    return data;
-  }
+const ALGORITHM = 'AES-GCM';
+const KEY_LENGTH = 256;
+const ITERATIONS = 600000;
+const SALT_LENGTH = 16;
+const IV_LENGTH = 12;
+
+function isCryptoAvailable(): boolean {
+  return typeof crypto !== 'undefined' && !!crypto.subtle;
 }
 
-/**
- * Decrypt sensitive data. Returns null on failure so callers can
- * safely fall back instead of receiving corrupted garbage.
- */
-export function decryptData(encrypted: string): string | null {
+async function deriveKey(salt: Uint8Array): Promise<CryptoKey> {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(ENCRYPTION_KEY || ''),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+  const saltBuf = new ArrayBuffer(salt.length);
+  new Uint8Array(saltBuf).set(salt);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: saltBuf, iterations: ITERATIONS, hash: 'SHA-256' },
+    keyMaterial,
+    { name: ALGORITHM, length: KEY_LENGTH },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptData(data: string): Promise<string> {
+  if (!ENCRYPTION_KEY || !isCryptoAvailable()) return data;
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
+  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+  const key = await deriveKey(salt);
+  const enc = new TextEncoder();
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: ALGORITHM, iv },
+    key,
+    enc.encode(data)
+  );
+  const combined = new Uint8Array(SALT_LENGTH + IV_LENGTH + ciphertext.byteLength);
+  combined.set(salt, 0);
+  combined.set(iv, SALT_LENGTH);
+  combined.set(new Uint8Array(ciphertext), SALT_LENGTH + IV_LENGTH);
+  return btoa(String.fromCharCode(...combined));
+}
+
+async function decryptData(encrypted: string): Promise<string | null> {
+  if (!ENCRYPTION_KEY || !isCryptoAvailable()) return encrypted;
   try {
-    if (!ENCRYPTION_KEY) return encrypted;
-    const bytes = CryptoJS.AES.decrypt(encrypted, ENCRYPTION_KEY);
-    const text = bytes.toString(CryptoJS.enc.Utf8);
-    // Empty result means wrong key / corrupted ciphertext
-    if (!text) return null;
-    return text;
-  } catch (e) {
-    console.warn('Decryption failed:', e);
+    const combined = Uint8Array.from(atob(encrypted), c => c.charCodeAt(0));
+    const salt = combined.slice(0, SALT_LENGTH);
+    const iv = combined.slice(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
+    const ciphertext = combined.slice(SALT_LENGTH + IV_LENGTH);
+    const key = await deriveKey(salt);
+    const decrypted = await crypto.subtle.decrypt(
+      { name: ALGORITHM, iv },
+      key,
+      ciphertext
+    );
+    return new TextDecoder().decode(decrypted) || null;
+  } catch {
     return null;
   }
 }
 
-/**
- * Secure localStorage wrapper with encryption
- */
+function legacyDecrypt(encrypted: string): string | null {
+  try {
+    const CryptoJS = (window as any).CryptoJS;
+    if (!CryptoJS || !ENCRYPTION_KEY) return null;
+    const bytes = CryptoJS.AES.decrypt(encrypted, ENCRYPTION_KEY);
+    const text = bytes.toString(CryptoJS.enc.Utf8);
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
+let migrationDone = false;
+
+function isSensitive(key: string): boolean {
+  return SENSITIVE_KEYS.includes(key);
+}
+
 export const secureStorage = {
+  // Synchronous — for non-sensitive data (theme, portfolio, plannerSettings)
   getItem(key: string): string | null {
     try {
       const item = localStorage.getItem(key);
       if (!item) return null;
-      // Encrypted items carry an "enc:" prefix
+
       if (item.startsWith('enc:')) {
-        const decrypted = decryptData(item.slice(4));
-        // FIX: if decryption fails (env key changed/missing), drop the
-        // corrupt entry instead of returning garbage to the app.
-        if (decrypted === null) {
-          try { localStorage.removeItem(key); } catch { }
-          return null;
+        const payload = item.slice(4);
+        // Already migrated to WebCrypto format? (base64 without legacy prefix)
+        if (!migrationDone && legacyDecrypt(payload) !== null) {
+          const plain = legacyDecrypt(payload);
+          if (plain !== null) {
+            encryptData(plain).then(reEnc => {
+              try { localStorage.setItem(key, `enc:${reEnc}`); } catch { }
+            });
+            migrationDone = true;
+            return plain;
+          }
         }
-        return decrypted;
+        // Try WebCrypto sync-read (this won't work in Safari workers but fine in main thread)
+        if (!isCryptoAvailable()) return null;
+        // Fall-through — async caller should use getItemAsync
+        return null;
       }
+
       return item;
     } catch {
       return null;
     }
   },
 
-  setItem(key: string, value: string): void {
+  // Async — for sensitive data (API keys, tokens)
+  async getItemAsync(key: string): Promise<string | null> {
     try {
-      // FIX: encrypt ALL sensitive keys (was missing Gemini/Claude/Tavily/combined blob)
-      if (SENSITIVE_KEYS.includes(key) && ENCRYPTION_KEY) {
-        const encrypted = encryptData(value);
-        localStorage.setItem(key, `enc:${encrypted}`);
-      } else {
-        localStorage.setItem(key, value);
+      const item = localStorage.getItem(key);
+      if (!item) return null;
+
+      if (item.startsWith('enc:')) {
+        const payload = item.slice(4);
+
+        if (!migrationDone) {
+          const legacy = legacyDecrypt(payload);
+          if (legacy !== null) {
+            const reEnc = await encryptData(legacy);
+            try { localStorage.setItem(key, `enc:${reEnc}`); } catch { }
+            migrationDone = true;
+            return legacy;
+          }
+        }
+
+        const decrypted = await decryptData(payload);
+        if (decrypted === null) {
+          try { localStorage.removeItem(key); } catch { }
+          return null;
+        }
+        return decrypted;
       }
-    } catch (e) {
-      console.warn('Storage setItem failed:', e);
+
+      return item;
+    } catch {
+      return null;
     }
   },
 
+  // Fire-and-forget — most callers don't need to await
+  setItem(key: string, value: string): void {
+    if (isSensitive(key) && ENCRYPTION_KEY && isCryptoAvailable()) {
+      encryptData(value).then(encrypted => {
+        try { localStorage.setItem(key, `enc:${encrypted}`); } catch { }
+      });
+    } else {
+      try { localStorage.setItem(key, value); } catch { }
+    }
+  },
+
+  // Fire-and-forget set, returns value for chaining convenience
+  setItemPlain(key: string, value: string): void {
+    try { localStorage.setItem(key, value); } catch { }
+  },
+
   removeItem(key: string): void {
-    try { localStorage.removeItem(key); } catch (e) { console.warn('Storage removeItem failed:', e); }
+    try { localStorage.removeItem(key); } catch { }
   },
 
   clear(): void {
-    try { localStorage.clear(); } catch (e) { console.warn('Storage clear failed:', e); }
+    try { localStorage.clear(); } catch { }
   }
 };

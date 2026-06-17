@@ -18,6 +18,7 @@ const rawSymbolToKey: Map<string, string> = new Map();
 
 let pingInterval: number | null = null;
 let reconnectTimer: number | null = null;
+let healthCheckInterval: number | null = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 25;
 let isDestroyed = false;
@@ -220,6 +221,10 @@ export function disconnectPrices() {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+  if (healthCheckInterval) {
+    clearInterval(healthCheckInterval);
+    healthCheckInterval = null;
+  }
   if (ws) {
     ws.onclose = null;
     ws.close();
@@ -367,7 +372,8 @@ function connect() {
   };
 
   // Health check: if no messages received for 90s, force reconnect
-  const healthCheck = window.setInterval(() => {
+  if (healthCheckInterval) clearInterval(healthCheckInterval);
+  healthCheckInterval = window.setInterval(() => {
     if (ws?.readyState === WebSocket.OPEN) {
       const timeSinceLastMsg = Date.now() - lastSuccessfulMessage;
       if (timeSinceLastMsg > 90000) {
@@ -376,10 +382,6 @@ function connect() {
       }
     }
   }, 30000);
-  
-  return () => {
-    if (healthCheck) clearInterval(healthCheck);
-  };
 }
 
 function handleParsedMessage(parsed: Record<string, unknown>): void {
