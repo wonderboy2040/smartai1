@@ -23,6 +23,37 @@ const CONFIG = {
   }
 } as const;
 
+// --- Server API Proxy (same-origin → no CORS → uses server env vars) ---
+const PROXY_BASE = import.meta.env.VITE_API_PROXY || '';
+let _proxyStatus: Promise<{ groq: boolean; gemini: boolean; claude: boolean; tavily: boolean } | null> | null = null;
+
+async function getServerAIStatus() {
+  if (!_proxyStatus) {
+    _proxyStatus = (async () => {
+      try {
+        const res = await fetch(`${PROXY_BASE}/api/ai-status`, { signal: AbortSignal.timeout(3000) });
+        return res.ok ? await res.json() : null;
+      } catch { return null; }
+    })();
+  }
+  return _proxyStatus;
+}
+
+async function proxyFetch(engine: 'groq' | 'gemini' | 'claude', body: any): Promise<Response | null> {
+  const status = await getServerAIStatus();
+  if (!status?.[engine]) return null;
+  const res = await fetch(`${PROXY_BASE}/api/${engine}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(25000)
+  });
+  if (res.ok) return res;
+  if (res.status === 503) return null; // key not configured on server → fallback to direct
+  const err = await res.json().catch(() => ({}));
+  throw new Error(err?.error || err?.error?.message || `${engine} proxy error: ${res.status}`);
+}
+
 // Fetch real-time market snapshot for AI context
 async function fetchRealtimeSnapshot(): Promise<string> {
   try {
@@ -243,21 +274,28 @@ export const NeuralChat = React.memo(({
 
   // ============ GROQ API (Ultra-Fast + Market Expert via groq/compound) ============
   const callGroq = async (messages: any[], systemPrompt: string, modelName: string = CONFIG.groq.model) => {
+    const groqMessages = [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))];
+
+    const proxyRes = await proxyFetch('groq', { messages: groqMessages, model: modelName });
+    if (proxyRes) {
+      const data = await proxyRes.json();
+      const text = data.choices?.[0]?.message?.content;
+      if (!text || text.trim().length < 5) throw new Error('Groq returned empty response');
+      return text;
+    }
+
     const apiKey = import.meta.env.VITE_GROQ_API_KEY || propGroqKey || CONFIG.groq.apiKey;
     if (!apiKey || apiKey.length < 10) {
       throw new Error('Groq API Key missing — Render me VITE_GROQ_API_KEY set karo aur redeploy karo');
     }
 
-    const groqMessages = [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))];
-
-    const doFetch = async (): Promise<any> => {
+    const directFetch = async () => {
       const res = await fetch(CONFIG.groq.baseUrl, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: modelName, messages: groqMessages, temperature: 0.7, max_tokens: 8000 }),
         signal: AbortSignal.timeout(20000)
       });
-
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error?.message || `Groq Error: ${res.status}`);
@@ -265,7 +303,7 @@ export const NeuralChat = React.memo(({
       return res.json();
     };
 
-    const data = await rateLimitedFetch(doFetch);
+    const data = await rateLimitedFetch(directFetch);
     const text = data.choices?.[0]?.message?.content;
     if (!text || text.trim().length < 5) throw new Error('Groq returned empty response');
     return text;
@@ -273,11 +311,6 @@ export const NeuralChat = React.memo(({
 
   // ============ GEMINI API (Real-time Intelligence) ============
   const callGemini = async (messages: any[], systemPrompt: string) => {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || propGeminiKey || CONFIG.gemini.apiKey;
-    if (!apiKey || apiKey.length < 10) {
-      throw new Error('Gemini API Key missing — Set VITE_GEMINI_API_KEY or add in Settings');
-    }
-
     const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
     contents.push({ role: 'user', parts: [{ text: systemPrompt }] });
     contents.push({ role: 'model', parts: [{ text: 'Understood. DEEP MIND AI Pro Trader active. Ready for analysis in Pro Trader Hinglish.' }] });
@@ -296,20 +329,42 @@ export const NeuralChat = React.memo(({
       contents.push({ role: 'user', parts: [{ text: 'Please respond.' }] });
     }
 
+    const basePayload = {
+      contents,
+      generationConfig: { temperature: 0.7, maxOutputTokens: 8192, topP: 0.95, topK: 40 },
+      safetySettings: [
+        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
+        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
+        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
+        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
+      ]
+    };
+
     const modelOptions = ['gemini-2.0-flash', 'gemini-2.0-flash-lite'];
     let lastError: any = null;
 
     for (const modelName of modelOptions) {
-      const payload: Record<string, any> = {
-        contents,
-        generationConfig: { temperature: 0.7, maxOutputTokens: 8192, topP: 0.95, topK: 40 },
-        safetySettings: [
-          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
-          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
-          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
-        ]
-      };
+      // Try server proxy first
+      const proxyRes = await proxyFetch('gemini', { ...basePayload, model: modelName });
+      if (proxyRes) {
+        try {
+          const data = await proxyRes.json();
+          if (data.candidates?.[0]?.finishReason === 'SAFETY') throw new Error('Gemini blocked by safety filters');
+          const parts = data.candidates?.[0]?.content?.parts || [];
+          const text = parts.map((p: any) => p.text || '').join('');
+          if (!text || text.trim().length < 5) throw new Error('Gemini returned empty response');
+          return text;
+        } catch (e) {
+          lastError = e instanceof Error ? e : new Error(String(e));
+          if (lastError.message.includes('404') || lastError.message.includes('400')) continue;
+          throw lastError;
+        }
+      }
+
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || propGeminiKey || CONFIG.gemini.apiKey;
+      if (!apiKey || apiKey.length < 10) {
+        throw new Error('Gemini API Key missing — Set VITE_GEMINI_API_KEY or add in Settings');
+      }
 
       const targetUrl = `${CONFIG.gemini.baseUrl}/${modelName}:generateContent?key=${apiKey}`;
 
@@ -317,10 +372,9 @@ export const NeuralChat = React.memo(({
         const res = await fetch(targetUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(basePayload),
           signal: AbortSignal.timeout(20000)
         });
-
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           throw new Error(err.error?.message || `Gemini Error: ${res.status}`);
@@ -337,9 +391,7 @@ export const NeuralChat = React.memo(({
         return text;
       } catch (e) {
         lastError = e instanceof Error ? e : new Error(String(e));
-        if (lastError.message.includes('404') || lastError.message.includes('400')) {
-          continue;
-        }
+        if (lastError.message.includes('404') || lastError.message.includes('400')) continue;
         throw lastError;
       }
     }
@@ -349,11 +401,6 @@ export const NeuralChat = React.memo(({
 
   // ============ CLAUDE API (Deep Analysis) ============
   const callClaude = async (messages: any[], systemPrompt: string) => {
-    const apiKey = import.meta.env.VITE_CLAUDE_API_KEY || propClaudeKey || CONFIG.claude.apiKey;
-    if (!apiKey || apiKey.length < 10) {
-      throw new Error('Claude API Key missing — Set VITE_CLAUDE_API_KEY or add in Settings');
-    }
-
     const fixed: Array<{ role: string; content: string }> = [];
     let expectedRole = 'user';
     for (const m of messages) {
@@ -382,6 +429,25 @@ export const NeuralChat = React.memo(({
         messages: fixed
       };
 
+      // Try server proxy first
+      const proxyRes = await proxyFetch('claude', payload);
+      if (proxyRes) {
+        try {
+          const data = await proxyRes.json();
+          const text = data.content?.[0]?.text;
+          if (!text || text.trim().length < 5) throw new Error('Claude returned empty response');
+          return text;
+        } catch (e) {
+          lastError = e instanceof Error ? e : new Error(String(e));
+          continue;
+        }
+      }
+
+      const apiKey = import.meta.env.VITE_CLAUDE_API_KEY || propClaudeKey || CONFIG.claude.apiKey;
+      if (!apiKey || apiKey.length < 10) {
+        throw new Error('Claude API Key missing — Set VITE_CLAUDE_API_KEY or add in Settings');
+      }
+
       const doFetch = async (): Promise<any> => {
         const res = await fetch(CONFIG.claude.baseUrl, {
           method: 'POST',
@@ -394,7 +460,6 @@ export const NeuralChat = React.memo(({
           body: JSON.stringify(payload),
           signal: AbortSignal.timeout(30000)
         });
-
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           throw new Error(err.error?.message || `Claude Error: ${res.status}`);
