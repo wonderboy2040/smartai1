@@ -108,12 +108,14 @@ const distPath = path.join(__dirname, '../dist');
 app.use(express.static(distPath));
 
 // ========================================
-// API PROXY — Groq, Gemini & Claude (avoids CORS + browser key exposure)
+// API ROUTER — Groq, Gemini & Claude Proxy (avoids CORS + browser key exposure)
 // Frontend calls /api/groq, /api/gemini or /api/claude → server uses env var keys
+// Uses Express Router for clean path matching (works with Express 5)
 // ========================================
+const apiRouter = express.Router();
 
-// CORS for API routes — allows frontend from any origin to use the proxy
-app.use('/api', (req, res, next) => {
+// CORS for all API routes — allows frontend from any origin to use the proxy
+apiRouter.use((req, res, next) => {
   const origin = req.headers.origin || '*';
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -122,8 +124,19 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+// Server config — exposes API_URL to frontend at runtime (no VITE_ build-time needed)
+apiRouter.get('/config', (req, res) => {
+  res.json({
+    apiUrl: API_URL || '',
+    groq: !!(GROQ_KEY && GROQ_KEY.length > 10),
+    gemini: !!(GEMINI_API_KEY && GEMINI_API_KEY.length > 10),
+    claude: !!(CLAUDE_API_KEY && CLAUDE_API_KEY.length > 10),
+    tavily: !!(TAVILY_API_KEY && TAVILY_API_KEY.length > 10)
+  });
+});
+
 // AI status endpoint — tells frontend which engines are available on server
-app.get('/api/ai-status', (req, res) => {
+apiRouter.get('/ai-status', (req, res) => {
   res.json({
     groq: !!(GROQ_KEY && GROQ_KEY.length > 10),
     gemini: !!(GEMINI_API_KEY && GEMINI_API_KEY.length > 10),
@@ -132,7 +145,7 @@ app.get('/api/ai-status', (req, res) => {
   });
 });
 
-app.post('/api/groq', express.json({ limit: '1mb' }), async (req, res) => {
+apiRouter.post('/groq', express.json({ limit: '1mb' }), async (req, res) => {
   try {
     if (!GROQ_KEY || GROQ_KEY.length < 10) {
       return res.status(503).json({ error: 'Groq API key not configured on server' });
@@ -164,7 +177,7 @@ app.post('/api/groq', express.json({ limit: '1mb' }), async (req, res) => {
   }
 });
 
-app.post('/api/gemini', express.json({ limit: '1mb' }), async (req, res) => {
+apiRouter.post('/gemini', express.json({ limit: '1mb' }), async (req, res) => {
   try {
     if (!GEMINI_API_KEY || GEMINI_API_KEY.length < 10) {
       return res.status(503).json({ error: 'Gemini API key not configured on server' });
@@ -189,7 +202,7 @@ app.post('/api/gemini', express.json({ limit: '1mb' }), async (req, res) => {
   }
 });
 
-app.post('/api/claude', express.json({ limit: '1mb' }), async (req, res) => {
+apiRouter.post('/claude', express.json({ limit: '1mb' }), async (req, res) => {
   try {
     if (!CLAUDE_API_KEY || CLAUDE_API_KEY.length < 10) {
       return res.status(503).json({ error: 'Claude API key not configured on server' });
@@ -216,6 +229,12 @@ app.post('/api/claude', express.json({ limit: '1mb' }), async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// Mount the API router at /api
+app.use('/api', apiRouter);
+
+// Quick health check (no keys required) — proves Express routes work
+app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
 // Fallback to React Router or ping message
 // IMPORTANT: never fall back to index.html for asset requests — serving HTML for a

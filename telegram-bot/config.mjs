@@ -108,7 +108,7 @@ for (const name of explicitFallbacks[5]) { if (!CLAUDE_API_KEY && env[name]) CLA
 for (const name of explicitFallbacks[6]) { if (!TAVILY_API_KEY && env[name]) TAVILY_API_KEY = env[name]; }
 for (const name of explicitFallbacks[7]) { if (!TAVILY_API_KEY && env[name]) TAVILY_API_KEY = env[name]; }
 for (const name of explicitFallbacks[8]) {
-  if (!GROQ_KEY && env[name]) GROQ_KEY = env[name];
+  if (!GROQ_KEY && env[name] && name.includes('GROQ')) GROQ_KEY = env[name];
   if (!GEMINI_API_KEY && env[name] && name.includes('GEMINI')) GEMINI_API_KEY = env[name];
   if (!CLAUDE_API_KEY && env[name] && name.includes('CLAUDE')) CLAUDE_API_KEY = env[name];
   if (!TAVILY_API_KEY && env[name] && name.includes('TAVILY')) TAVILY_API_KEY = env[name];

@@ -1,5 +1,20 @@
 import { PriceData, Position } from '../types';
-import { EXACT_TICKER_MAP, guessMarket, API_URL, DEFAULT_USD_INR, isCryptoSymbol } from './constants';
+import { EXACT_TICKER_MAP, guessMarket, API_URL as VITE_API_URL, DEFAULT_USD_INR, isCryptoSymbol } from './constants';
+
+// Runtime API_URL — tries server config first, then VITE build-time env var
+let _runtimeApiUrl: string | null | undefined = undefined;
+async function getApiUrl(): Promise<string> {
+  if (_runtimeApiUrl !== undefined) return _runtimeApiUrl || VITE_API_URL;
+  try {
+    const res = await fetch('/api/config', { signal: AbortSignal.timeout(3000) });
+    if (res.ok) {
+      const cfg = await res.json();
+      if (cfg.apiUrl) { _runtimeApiUrl = cfg.apiUrl; return cfg.apiUrl; }
+    }
+  } catch { /* server not available */ }
+  _runtimeApiUrl = null;
+  return VITE_API_URL;
+}
 import { isAnyMarketOpen } from './telegram';
 interface CoinDcxTicker {
   market: string;
@@ -458,14 +473,15 @@ export async function fetchCryptoUsdInrRate(): Promise<number> {
 }
 
 export async function syncToCloud(portfolio: Position[], usdInr: number): Promise<boolean> {
-  if (!API_URL) return false;
+  const apiUrl = await getApiUrl();
+  if (!apiUrl) return false;
   if (!portfolio || portfolio.length === 0) {
     console.warn('☁️ Cloud Sync: Blocking sync because portfolio is empty to prevent accidental deletion.');
     return false;
   }
 
   try {
-    const res = await fetch(API_URL, {
+    const res = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -476,7 +492,7 @@ export async function syncToCloud(portfolio: Position[], usdInr: number): Promis
     return res.ok;
   } catch (e) {
     try {
-      await fetch(`${API_URL}?action=update&data=${encodeURIComponent(JSON.stringify({ portfolio, timestamp: Date.now(), usdInr }))}`, { mode: 'no-cors' });
+      await fetch(`${apiUrl}?action=update&data=${encodeURIComponent(JSON.stringify({ portfolio, timestamp: Date.now(), usdInr }))}`, { mode: 'no-cors' });
       return true;
     } catch (e) {
       return false;
@@ -485,10 +501,11 @@ export async function syncToCloud(portfolio: Position[], usdInr: number): Promis
 }
 
 export async function loadFromCloud(): Promise<Position[] | null> {
-  if (!API_URL) return null;
+  const apiUrl = await getApiUrl();
+  if (!apiUrl) return null;
 
   try {
-    const res = await fetch(`${API_URL}?action=load&t=${Date.now()}`);
+    const res = await fetch(`${apiUrl}?action=load&t=${Date.now()}`);
     if (!res.ok) return null;
 
     const text = await res.text();
@@ -530,9 +547,10 @@ export async function sendTelegramAlert(token: string, chatId: string, message: 
 // GROQ API KEY — CLOUD SYNC (FREE)
 // ========================================
 export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
-  if (!API_URL || !key) return false;
+  const apiUrl = await getApiUrl();
+  if (!apiUrl || !key) return false;
   try {
-    await fetch(API_URL, {
+    await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -547,9 +565,10 @@ export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
 }
 
 export async function loadGroqKeyFromCloud(): Promise<string | null> {
-  if (!API_URL) return null;
+  const apiUrl = await getApiUrl();
+  if (!apiUrl) return null;
   try {
-    const res = await fetch(`${API_URL}?action=loadKey&t=${Date.now()}`);
+    const res = await fetch(`${apiUrl}?action=loadKey&t=${Date.now()}`);
     if (!res.ok) return null;
     const text = await res.text();
     const match = text.match(/\{[\s\S]*\}/);
