@@ -6,7 +6,7 @@ const CONFIG = {
   groq: {
     apiKey: import.meta.env.VITE_GROQ_API_KEY || '',
     baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
-    model: 'meta-llama/llama-4-scout-17b-16e-instruct'
+    model: 'groq/compound'
   }
 } as const;
 
@@ -231,7 +231,7 @@ export const NeuralChat = React.memo(({
   const callGroq = async (messages: any[], systemPrompt: string, modelName: string = CONFIG.groq.model) => {
     const groqMessages = [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))];
 
-    const proxyRes = await proxyFetch({ messages: groqMessages, model: modelName });
+    const proxyRes = await proxyFetch({ messages: groqMessages, model: modelName, allowed_tools: ['web_search', 'code_interpreter'] });
     if (proxyRes) {
       const data = await proxyRes.json();
       const text = data.choices?.[0]?.message?.content;
@@ -248,8 +248,8 @@ export const NeuralChat = React.memo(({
       const res = await fetch(CONFIG.groq.baseUrl, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: modelName, messages: groqMessages, temperature: 0.7, max_tokens: 8000 }),
-        signal: AbortSignal.timeout(20000)
+        body: JSON.stringify({ model: modelName, messages: groqMessages, temperature: 0.7, max_tokens: 8000, allowed_tools: ['web_search', 'code_interpreter'] }),
+        signal: AbortSignal.timeout(30000)
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -278,7 +278,7 @@ export const NeuralChat = React.memo(({
 
     const portfolioCtx = portfolioContext || 'No portfolio data.';
 
-    const systemPrompt = `You are DEEP MIND AI ADVANCE PRO v22.0 — GROQ SUPER INTELLIGENCE (LLAMA 4 SCOUT 17B). Elite institutional-grade trading & investment AI for Indian, US, and Crypto markets with REAL-TIME LIVE data access 24x7. You have FULL ACCESS to the ENTIRE Wealth AI platform - every tab, every data point, every position in the portfolio. You MUST read and analyze ALL data provided below before responding.
+    const systemPrompt = `You are DEEP MIND AI ADVANCE PRO v22.0 — GROQ COMPOUND SUPER INTELLIGENCE. Elite institutional-grade trading & investment AI with BUILT-IN WEB SEARCH + CODE EXECUTION (via Groq Compound). You can search the web live for any data you need. For Indian, US, and Crypto markets with REAL-TIME LIVE data access 24x7. You have FULL ACCESS to the ENTIRE Wealth AI platform - every tab, every data point, every position in the portfolio. You MUST read and analyze ALL data provided below before responding.
 
 PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined. Speak strictly in "Pro Trader Hinglish" — "Bhai", "Breakout confirm", "SL trail karo", "Smart Money accumulation".
 
@@ -287,11 +287,13 @@ MANDATORY DATA USAGE RULES — FOLLOW STRICTLY:
 2. For EVERY response, reference at least 2-3 specific positions by name with their current price, RSI, and signal.
 3. If user asks about portfolio — analyze EVERY position one by one. Do NOT skip any.
 4. NEVER say "I don't have portfolio data" — the data is provided below. Read it.
-5. Cross-reference portfolio positions with live market data and web search results.
+5. Use your BUILT-IN WEB SEARCH to fetch any live data not provided — Nifty, Sensex, stock prices, crypto, news, forex. You have web_search tool available.
+6. Cross-reference portfolio positions with live market data and web search results.
 
 CRITICAL ANTI-HALLUCINATION RULES:
-- ONLY use the REAL-TIME data provided below. Do NOT invent, guess, or use memorized old prices.
-- If data is not available, say "Live data not available" — do NOT make up numbers.
+- Use the REAL-TIME data below FIRST. Use your BUILT-IN WEB SEARCH for anything missing.
+- Do NOT invent, guess, or use memorized old prices.
+- If even web search returns nothing, say "Live data not available" — do NOT make up numbers.
 - Today's date is ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}.
 - All prices, RSI, MACD values MUST come from the data below.
 
@@ -411,8 +413,8 @@ RESPONSE STRUCTURE:
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="hidden sm:inline">Llama 4 Scout 17B | Live Market Data</span>
-                    <span className="sm:hidden">LIVE • Llama 4</span>
+                    <span className="hidden sm:inline">Groq Compound | Built-in Web Search</span>
+                    <span className="sm:hidden">LIVE • Compound</span>
                   </div>
                 </div>
               </div>
@@ -511,7 +513,7 @@ RESPONSE STRUCTURE:
               </div>
               <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
                 <span className="text-[7px] sm:text-[8px] text-slate-500 font-mono">
-                  ⚡ Llama 4 Scout 17B
+                  ⚡ Groq Compound
                 </span>
                 <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
                   {chatMessages.length} messages

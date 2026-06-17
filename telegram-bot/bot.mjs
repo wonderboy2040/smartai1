@@ -145,7 +145,7 @@ apiRouter.post('/groq', express.json({ limit: '1mb' }), async (req, res) => {
       return res.status(503).json({ error: 'Groq API key not configured on server' });
     }
     const { messages, model } = req.body;
-    const modelName = model || 'meta-llama/llama-4-scout-17b-16e-instruct';
+    const modelName = model || 'groq/compound';
     const apiRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -156,9 +156,10 @@ apiRouter.post('/groq', express.json({ limit: '1mb' }), async (req, res) => {
         model: modelName,
         messages,
         temperature: 0.7,
-        max_completion_tokens: 8000
+        max_completion_tokens: 8000,
+        allowed_tools: ['web_search', 'code_interpreter']
       }),
-      signal: AbortSignal.timeout(25000)
+      signal: AbortSignal.timeout(30000)
     });
     const data = await apiRes.json();
     if (!apiRes.ok) {
