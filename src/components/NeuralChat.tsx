@@ -6,7 +6,7 @@ const CONFIG = {
   groq: {
     apiKey: import.meta.env.VITE_GROQ_API_KEY || '',
     baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
-    model: 'groq/compound'
+    model: 'meta-llama/llama-4-scout-17b-16e-instruct'
   }
 } as const;
 

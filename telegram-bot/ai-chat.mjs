@@ -112,7 +112,7 @@ async function getRealtimeForex() {
 // ============================================
 // GROQ COMPOUND — Ultra-fast with built-in web search + tool use
 // ============================================
-async function callGroq(messages, systemPrompt, modelName = 'groq/compound') {
+async function callGroq(messages, systemPrompt, modelName = 'meta-llama/llama-4-scout-17b-16e-instruct') {
   if (!isGroqAvailable()) throw new Error('Groq key missing');
   if (engineHealth.groq.failures >= 3 && Date.now() - engineHealth.groq.lastFailure < engineHealth.groq.cooldownMs) {
     throw new Error('Groq cooling down');
