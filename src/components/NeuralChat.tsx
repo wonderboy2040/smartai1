@@ -138,7 +138,7 @@ export const NeuralChat = React.memo(({
 }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
-    text: '🤖 **DEEP MIND AI ADVANCE PRO v22.0**\n\n**🔷 GEMINI FLASH + ⚡ GROQ LLAMA 3.3**\n• Dual Engine Auto-Failover\n• Real-Time Live Market Data\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\nAsk anything — I have LIVE market data 24x7!',
+    text: '🤖 **DEEP MIND AI ADVANCE PRO v22.0**\n\n**🔷 GEMINI FLASH + ⚡ GROQ LLAMA 3.3 + 🟣 CLAUDE SONNET**\n• Triple Engine Auto-Failover\n• Real-Time Live Market Data\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\nAsk anything — I have LIVE market data 24x7!',
     timestamp: Date.now(),
     model: 'system'
   }]);
@@ -171,7 +171,7 @@ export const NeuralChat = React.memo(({
   const clearChat = useCallback(() => {
     setChatMessages([{
       role: 'system',
-      text: '🧹 **Chat cleared!**\n\nReady for new analysis!',
+      text: '🧹 **Chat cleared!**\n\nReady for new analysis with Triple AI (Gemini→Groq→Claude)!',
       timestamp: Date.now(),
       model: 'system'
     }]);
@@ -254,7 +254,7 @@ export const NeuralChat = React.memo(({
 
     const portfolioCtx = portfolioContext || 'No portfolio data.';
 
-    const systemPrompt = `You are DEEP MIND AI ADVANCE PRO v22.0 — GROQ LLAMA 3.3 70B SUPER INTELLIGENCE. Elite institutional-grade trading & investment AI for Indian, US, and Crypto markets with REAL-TIME LIVE data access 24x7. You have FULL ACCESS to the ENTIRE Wealth AI platform - every tab, every data point, every position in the portfolio. You MUST read and analyze ALL data provided below before responding.
+    const systemPrompt = `You are DEEP MIND AI ADVANCE PRO v22.0 — TRIPLE AI ENGINE (Gemini Flash → Groq Llama 3.3 → Claude Sonnet). Elite institutional-grade trading & investment AI for Indian, US, and Crypto markets with REAL-TIME LIVE data access 24x7. You have FULL ACCESS to the ENTIRE Wealth AI platform - every tab, every data point, every position in the portfolio. You MUST read and analyze ALL data provided below before responding.
 
 PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined. Speak strictly in "Pro Trader Hinglish" — "Bhai", "Breakout confirm", "SL trail karo", "Smart Money accumulation".
 
@@ -390,16 +390,16 @@ RESPONSE STRUCTURE:
                   <BrainCircuit className="text-cyan-400" size={18} />
                 </div>
                 <div className="min-w-0">
-                  <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
-                    <span className="hidden xs:inline">Advance Pro v22</span>
-                    <span className="xs:hidden">AI v22</span>
-                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">GEMINI+GROQ</span>
-                  </h3>
-                  <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="hidden sm:inline">Gemini Flash + Groq Llama 3.3 | Live Data</span>
-                    <span className="sm:hidden">LIVE • Dual Engine</span>
-                  </div>
+                   <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
+                     <span className="hidden xs:inline">Advance Pro v22</span>
+                     <span className="xs:hidden">AI v22</span>
+                     <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">GEMINI+GROQ+CLAUDE</span>
+                   </h3>
+                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
+                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                     <span className="hidden sm:inline">Gemini Flash + Groq Llama 3.3 + Claude Sonnet | Live Data</span>
+                     <span className="sm:hidden">LIVE • Triple Engine</span>
+                   </div>
                 </div>
               </div>
               <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
@@ -497,7 +497,7 @@ RESPONSE STRUCTURE:
               </div>
               <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
                 <span className="text-[7px] sm:text-[8px] text-slate-500 font-mono">
-                  ⚡ Gemini + Groq
+                  ⚡ Gemini + Groq + Claude
                 </span>
                 <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
                   {chatMessages.length} messages

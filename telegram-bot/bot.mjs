@@ -10,7 +10,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_KEY, TAVILY_API_KEY, TAX_PAIRS } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_KEY, CLAUDE_KEY, TAVILY_API_KEY, TAX_PAIRS } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchCryptoPricesINR, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
 import { loadPortfolioFromCloud } from './cloud.mjs';
 import {
@@ -255,25 +255,6 @@ apiRouter.get('/debug-keys', (req, res) => {
   });
 });
 
-apiRouter.get('/config', (req, res) => {
-  res.json({
-    apiUrl: API_URL || '',
-    gemini: !!(GEMINI_KEY && GEMINI_KEY.length > 5),
-    groq: !!(GROQ_KEY && GROQ_KEY.length > 10),
-    claude: !!(CLAUDE_KEY && CLAUDE_KEY.length > 10),
-    tavily: !!(TAVILY_API_KEY && TAVILY_API_KEY.length > 10)
-  });
-});
-
-apiRouter.get('/ai-status', (req, res) => {
-  res.json({
-    gemini: !!(GEMINI_KEY && GEMINI_KEY.length > 5),
-    groq: !!(GROQ_KEY && GROQ_KEY.length > 10),
-    claude: !!(CLAUDE_KEY && CLAUDE_KEY.length > 10),
-    tavily: !!(TAVILY_API_KEY && TAVILY_API_KEY.length > 10)
-  });
-});
-
 // Mount the API router at /api
 app.use('/api', apiRouter);
 
@@ -302,11 +283,10 @@ app.listen(PORT, () => {
 // INITIALIZE BOT
 // ========================================
 console.log('');
-console.log('╔══════════════════════════════════════════════╗');
-console.log('║  🧠 DEEP MIND AI ADVANCE PRO v16.0       ║');
+console.log('╔═════════════════════════════════════════════╗');
+console.log('║  🧠 DEEP MIND AI ADVANCE PRO v22.0       ║');
 console.log('║  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ║');
-console.log('║  GROQ SUPER INTELLIGENCE                 ║');
-console.log('║  Single Engine: Llama 4 Scout 17B       ║');
+console.log('║  TRIPLE AI: Gemini → Groq → Claude      ║');
 console.log('║  Deep Research + Live Market 24x7        ║');
 console.log('╚══════════════════════════════════════════════╝');
 console.log('');
@@ -338,9 +318,11 @@ async function initializeData() {
   }
 
   // Step 2: Keys are loaded from environment variables only (no cloud sync)
-  // Ensure GROQ_KEY is set in Render env
+  // Ensure keys are set in Render env
   console.log('🔑 API keys loaded from environment variables (cloud sync disabled)');
-  console.log(`  ⚡ Groq: ${GROQ_KEY ? '✓ SET' : '✗ MISSING'}`);
+  console.log(`  🔷 Gemini: ${GEMINI_KEY ? '✓ SET' : '✗ MISSING'}`);
+  console.log(`  ⚡ Groq:   ${GROQ_KEY ? '✓ SET' : '✗ MISSING'}`);
+  console.log(`  🟣 Claude: ${CLAUDE_KEY ? '✓ SET' : '✗ MISSING'}`);
 
   // Step 3: Forex (non-blocking)
   try {
@@ -379,7 +361,9 @@ async function initializeData() {
   console.log('🟢 ════════════════════════════════════════');
   console.log(` BOT FULLY ONLINE — ${getISTTime()} IST`);
   console.log(` Portfolio: ${portfolio.length} positions`);
-  console.log(` Groq AI: ${GROQ_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
+  console.log(` 🔷 Gemini: ${GEMINI_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
+  console.log(` ⚡ Groq:   ${GROQ_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
+  console.log(` 🟣 Claude: ${CLAUDE_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
   console.log(` Market: ${getMarketStatus()}`);
   console.log('🟢 ════════════════════════════════════════');
   console.log('');
@@ -2590,7 +2574,7 @@ initializeData().then(() => {
   console.log(`   🟣 Claude: ${CLAUDE_KEY?.length > 10 ? 'ONLINE' : 'OFFLINE'}`);
   console.log('');
   // Send boot notification
-  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI ADVANCE PRO v16.0 ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🤖 AI: Groq Super Intelligence\n🔬 Deep Research: ACTIVE 24x7\n🧬 Deep Mind Analysis: ACTIVE\n\nType /help for commands.`).catch(() => { });
+  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI ADVANCE PRO v22.0 ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🤖 AI: Triple Engine (Gemini→Groq→Claude)\n🔬 Deep Research: ACTIVE 24x7\n🧬 Deep Mind Analysis: ACTIVE\n\nType /help for commands.`).catch(() => { });
 }).catch(err => {
   console.error('❌ Boot error (non-fatal):', err.message);
   console.log('⚡ Bot is STILL listening for commands with limited data...');
