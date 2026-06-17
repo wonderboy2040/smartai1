@@ -1,6 +1,6 @@
 // ============================================
 // AI CHAT ENGINE — GROQ SUPER INTELLIGENCE
-// Single Engine: Groq Llama 3.3 70B + Compound
+// Single Engine: Groq Llama 4 Scout 17B + Compound
 // Deep Research + Deep Mind Analysis + Live Alerts
 // ============================================
 import {
@@ -112,7 +112,7 @@ async function getRealtimeForex() {
 // ============================================
 // GROQ SUPER INTELLIGENCE — Ultra-fast, latest free model
 // ============================================
-async function callGroq(messages, systemPrompt, modelName = 'llama-3.3-70b-versatile') {
+async function callGroq(messages, systemPrompt, modelName = 'meta-llama/llama-4-scout-17b-16e-instruct') {
   if (!isGroqAvailable()) throw new Error('Groq key missing');
   if (engineHealth.groq.failures >= 3 && Date.now() - engineHealth.groq.lastFailure < engineHealth.groq.cooldownMs) {
     throw new Error('Groq cooling down');

@@ -43,7 +43,6 @@ let usdInrRate = 85.5;
 let marketIntel = null;
 let autoAlerts = true;
 let botReady = false;
-const userModels = new Map();
 
 // AI Rate Limiting
 const aiCallTimestamps = new Map();
@@ -146,7 +145,7 @@ apiRouter.post('/groq', express.json({ limit: '1mb' }), async (req, res) => {
       return res.status(503).json({ error: 'Groq API key not configured on server' });
     }
     const { messages, model } = req.body;
-    const modelName = model || 'llama-3.3-70b-versatile';
+    const modelName = model || 'meta-llama/llama-4-scout-17b-16e-instruct';
     const apiRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -206,7 +205,7 @@ console.log('╔═════════════════════�
 console.log('║  🧠 DEEP MIND AI ADVANCE PRO v16.0       ║');
 console.log('║  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ║');
 console.log('║  GROQ SUPER INTELLIGENCE                 ║');
-console.log('║  Single Engine: Llama-3.3 70B + Compound ║');
+console.log('║  Single Engine: Llama 4 Scout 17B       ║');
 console.log('║  Deep Research + Live Market 24x7        ║');
 console.log('╚══════════════════════════════════════════════╝');
 console.log('');
@@ -441,7 +440,7 @@ Nagraj Bhai, main tumhara ADVANCE PRO AI Trading assistant hoon! 🚀
 • VIX, Gold, Crude, DXY, Bitcoin, Bonds
 
 🤖 <b>GROQ SUPER INTELLIGENCE:</b>
-• ⚡ Llama-3.3 70B + Compound (Ultra-Fast + Live Market Data)
+• ⚡ Llama 4 Scout 17B (Latest Groq Model)
 • 🌐 Market Expert with Real-Time Web Search
 • 🧠 Deep Research + Deep Mind Analysis
 
@@ -472,7 +471,6 @@ Nagraj Bhai, main tumhara ADVANCE PRO AI Trading assistant hoon! 🚀
 🌍 /news — Market sentiment
 💼 /fundamental — Deep fundamentals
 🔔 /alert — Toggle auto alerts
-🧠 /model — Select AI Model (auto/groq/market)
 🧹 /clear — Clear AI memory
 
 🧠 <b>AI Chat Mode:</b>
@@ -607,9 +605,6 @@ Deep fundamental analysis using Graham framework.
 
 🔔 <b>/alert</b>
 Toggle scheduled auto-analysis ON/OFF.
-
-🧠 <b>/model &lt;NAME&gt;</b>
-Select AI model (auto, groq, market).
 
 🧹 <b>/clear</b>
 Chat history reset karo.
@@ -1132,7 +1127,7 @@ bot.onText(/^\/setkey(?:@\w+)?(?:\s+(\w+)\s+(.+))?$/i, async (msg, match) => {
     helpMsg += `• <code>/setkey tavily &lt;key&gt;</code>\n\n`;
     helpMsg += `<b>Current Status (Groq Super Intelligence):</b>\n`;
     const { isGroqAvailable, isTavilyAvailable } = await import('./config.mjs');
-    helpMsg += `⚡ Groq: ${isGroqAvailable() ? '🟢 Active' : '🔴 Missing'}\n`;
+    helpMsg += `⚡ Groq (Llama 4 Scout): ${isGroqAvailable() ? '🟢 Active' : '🔴 Missing'}\n`;
     helpMsg += `🔍 Tavily (Search): ${isTavilyAvailable() ? '🟢 Active' : '🔴 Missing'}\n\n`;
     helpMsg += `<i>Note: Settings automatically sync to Google Sheets and the website.</i>`;
     await safeSend(chatId, helpMsg);
@@ -1163,29 +1158,7 @@ bot.onText(/^\/setkey(?:@\w+)?(?:\s+(\w+)\s+(.+))?$/i, async (msg, match) => {
   }
 });
 
-// ========================================
-// COMMAND: /model (Set preferred AI model)
-// ========================================
-bot.onText(/^\/model(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
-  if (!isAuthorized(msg)) return;
-  const chatId = msg.chat.id;
-  const modelArg = match[1] ? match[1].trim().toLowerCase() : '';
 
-  if (!modelArg) {
-    const current = userModels.get(chatId) || 'auto';
-    await safeSend(chatId, `🧠 <b>Current AI Model:</b> <code>${current}</code>\n\n<b>Available models:</b>\n• <code>auto</code> (🤖 Smart intent routing — best engine auto-select)\n• <code>market</code> (🌐 Market Expert — Groq Compound, FREE realtime web search)\n• <code>groq</code> (⚡ Llama-3.3 70B - Ultra Fast, FREE)\n\nExample: <code>/model market</code>`);
-
-    return;
-  }
-
-  const validModels = ['auto', 'market', 'groq'];
-  if (validModels.includes(modelArg)) {
-    userModels.set(chatId, modelArg);
-    await safeSend(chatId, `✅ <b>AI Model updated to:</b> <code>${modelArg}</code>`);
-  } else {
-    await safeSend(chatId, `❌ Invalid model. Available:\n${validModels.join(', ')}`);
-  }
-});
 
 // API key commands are disabled - keys are pre-configured in environment
 

@@ -17,7 +17,7 @@ export let TAVILY_API_KEY = process.env.TAVILY_API_KEY || process.env.VITE_TAVIL
 
 // ============================================
 // GROQ SUPER INTELLIGENCE — Single Engine
-// Latest FREE model: llama-3.3-70b-versatile
+// Latest model: Llama 4 Scout 17B
 // Market Expert: groq/compound (live web search)
 // ============================================
 const env = process.env;

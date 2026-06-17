@@ -6,7 +6,7 @@ const CONFIG = {
   groq: {
     apiKey: import.meta.env.VITE_GROQ_API_KEY || '',
     baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
-    model: 'llama-3.3-70b-versatile',
+    model: 'meta-llama/llama-4-scout-17b-16e-instruct',
     marketModel: 'groq/compound'
   }
 } as const;
@@ -126,7 +126,7 @@ interface ChatMessage {
   role: 'user' | 'model' | 'system';
   text: string;
   timestamp: number;
-  model?: 'market' | 'groq' | 'system';
+  model?: 'groq' | 'system';
   sources?: Array<{ title: string; url: string }>;
 }
 
@@ -137,12 +137,6 @@ const QUICK_ACTIONS = [
   { label: 'Long-Term Strategy', query: 'Give me a 15-20 year wealth creation roadmap focusing on SIP step-up and compound growth', icon: '📈' },
   { label: 'ETF Allocation', query: 'Analyze ETF allocations including Momentum, Smallcap and SPCX ETFs with growth projections', icon: '🎯' }
 ];
-
-const MODEL_COLORS = {
-  market: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-  groq: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
-  system: 'bg-slate-500/10 text-slate-400 border-slate-500/20'
-};
 
 export interface NeuralChatProps {
   groqKey?: string;
@@ -157,7 +151,7 @@ export const NeuralChat = React.memo(({
 }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
-    text: '🤖 **DEEP MIND AI ADVANCE PRO v16.0**\n\n**⚡ GROQ SUPER INTELLIGENCE:**\n• Llama-3.3 70B + Compound (Ultra-Fast + Live Market Data)\n• Market Expert with Real-Time Web Search\n\n**🧬 ADVANCE PRO Features:**\n• Deep Mind Analysis (Macro + Micro)\n• Deep Research (24x7 Live)\n• Real-Time Global Market Monitor\n• Portfolio Alert System (Hinglish)\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\nAsk anything — I have LIVE market data 24x7!',
+    text: '🤖 **DEEP MIND AI ADVANCE PRO v16.0**\n\n**⚡ GROQ SUPER INTELLIGENCE**\n• Llama 4 Scout 17B (Latest Groq Model)\n• Market Expert with Real-Time Web Search\n\n**🧬 Featur**\n• Deep Mind Analysis (Macro + Micro)\n• Deep Research (24x7 Live)\n• Real-Time Global Market Monitor\n• Portfolio Alert System (Hinglish)\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\nAsk anything — I have LIVE market data 24x7!',
     timestamp: Date.now(),
     model: 'system'
   }]);
@@ -166,7 +160,6 @@ export const NeuralChat = React.memo(({
   const [isThinking, setIsThinking] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
-  const [selectedModel, setSelectedModel] = useState<'auto' | 'market' | 'groq'>('auto');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -180,10 +173,12 @@ export const NeuralChat = React.memo(({
   }, [chatMessages, showChat, scrollToBottom]);
 
   const copyToClipboard = useCallback((text: string, idx: number) => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopiedIdx(idx);
-      setTimeout(() => setCopiedIdx(null), 2000);
-    }).catch(() => { });
+    try {
+      navigator.clipboard.writeText(text).then(() => {
+        setCopiedIdx(idx);
+        setTimeout(() => setCopiedIdx(null), 2000);
+      }).catch(() => { });
+    } catch { }
   }, []);
 
   const clearChat = useCallback(() => {
@@ -270,7 +265,7 @@ export const NeuralChat = React.memo(({
     return text;
   };
 
-  const callAI = async (userMessage: string, model: string) => {
+  const callAI = async (userMessage: string) => {
     const isNewsQuery = /\b(news|market|nifty|sensex|fed|rbi|ipo|crude|gold|dollar|breaking|aaj|today|live|bitcoin|btc|crypto|halving|eth|blockchain|defi|altcoin|binance|coinbase|regulation|sec)\b/i.test(userMessage);
 
     const results = await Promise.allSettled([
@@ -290,55 +285,26 @@ PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/
 
 CRITICAL ANTI-HALLUCINATION RULES:
 - ONLY use the REAL-TIME data provided below. Do NOT invent, guess, or use memorized old prices.
-- STRICT RULE: You are strictly forbidden from referencing old, offline training data for market analysis. Only the LIVE data injected below is valid.
-- If data is not available for a symbol, say "Live data not available" — do NOT make up numbers.
+- If data is not available, say "Live data not available" — do NOT make up numbers.
 - Today's date is ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}.
-- All prices, RSI, MACD values MUST come from the data below. If missing, explicitly state it.
-- BTC/ETH trades 24/7 — ALWAYS use the live price from data below. NEVER use memorized/training prices for crypto.
-- For crypto, prices can move 5-10% daily — old prices are DANGEROUS. Only use what's provided.
+- All prices, RSI, MACD values MUST come from the data below.
+- BTC/ETH trades 24/7 — ALWAYS use live price.
 
-TRADING & INVESTMENT RULES:
-1. Speak in "Pro Trader Hinglish" — "Bhai", "Breakout confirm hua", "SL trail karo", "Smart Money accumulation".
-2. ALWAYS analyze EVERY asset from portfolio data. Do NOT skip any position including crypto.
-3. Use frameworks: SMC, Wyckoff, Elliott Wave, Fibonacci, Order Flow for stocks. For crypto: on-chain analysis, halving cycles, supply dynamics, whale tracking.
-4. Give SPECIFIC levels: Support, Resistance, SL, Target 1/2/3 with exact prices FROM THE DATA.
-5. Include conviction (1-10) and risk-reward ratios for all setups.
-6. For news: explain exact impact — "RBI cut = Bank Nifty 500pt rally expected", "ETH ETF inflows = bullish".
-7. Be comprehensive and detailed. Use **Bold** + emojis.
-8. End with VERDICT: 🟢 BUY / 🔴 SELL / 🟡 HOLD / ⏳ WAIT + levels.
-9. Emphasize LONG-TERM wealth creation (15-20 years), compounding, and SIP step-up magic. Mention crypto adoption (BTC/ETH) as moonshot allocation.
-10. USD/INR: ₹${forexRate.toFixed(4)} (LIVE). Convert US holdings to INR.
-11. Calculate actual P&L from provided data.
+TRADING RULES:
+1. Speak in "Pro Trader Hinglish".
+2. ALWAYS analyze EVERY asset from portfolio data.
+3. Give SPECIFIC levels: Support, Resistance, SL, Target 1/2/3 with exact prices.
+4. Include conviction (1-10) and risk-reward ratios.
+5. End with VERDICT: 🟢 BUY / 🔴 SELL / 🟡 HOLD / ⏳ WAIT + levels.
+6. Emphasize LONG-TERM wealth creation (15-20 years), compounding, SIP step-up.
+7. USD/INR: ₹${forexRate.toFixed(4)} (LIVE). Convert US holdings to INR.
 
-CRYPTO-SPECIFIC RULES (MANDATORY for BTC/crypto queries):
-- BTC Supply Cap: 21 million (scarcity thesis)
-- Halving Cycle: ~4 years. Historically, BTC rallies 12-18 months post-halving.
-- Key levels: All-time High, 200-week MA, realized price are critical for BTC.
-- Use crypto-specific metrics: MVRV ratio, NVT ratio, Exchange outflows, Whale accumulation.
-- For BTC portfolio analysis: Focus on DCA strategy, accumulation zones, and HODL thesis.
-- BTC RSI thresholds are wider than stocks: Oversold < 25, Overbought > 80.
-- Always mention BTC dominance trend if available.
+CRYPTO RULES:
+- BTC Supply Cap: 21 million, Halving Cycle: ~4 years.
+- Use on-chain metrics: MVRV, NVT, Exchange flows, Whale accumulation.
+- BTC RSI: Oversold < 25, Overbought > 80.
 
-LONG-TERM INVESTMENT PERSPECTIVE:
-- This is a LONG-TERM HODL & SIP portfolio. Focus on accumulation strategy, not day-trading.
-- For crypto: Emphasize DCA (Dollar-Cost Averaging) over timing the market.
-- For ETFs: Focus on CAGR projections, compound growth, and allocation rebalancing.
-- Always give a 3-5 year outlook alongside short-term analysis.
-- Calculate projected portfolio value at 10%, 15%, 20% CAGR over 5/10/15 years.
-
-REAL-TIME DATA PERMISSION (24x7 FULL ACCESS):
-You HAVE FULL PERMISSION to use live web search results and ALL injected real-time market data 24x7 for: exact BUY/SELL price points, entry zones, stop-loss and target levels, backtesting context, and long-term (15-20 year) investment analysis. ALWAYS give EXACT actionable price points from the live data.
-
-FUNDAMENTAL ANALYSIS PERMISSION:
-You HAVE full permission to provide deep fundamental analysis including:
-- On-chain metrics for crypto (supply, hash rate, active addresses, exchange flows)
-- PE ratios, PB ratios, ROE, ROCE for stocks
-- Intrinsic value calculations, DCF models, Graham Number
-- Sector analysis, competitive moat assessment
-- Dividend yield analysis, free cash flow analysis
-- BTC stock-to-flow model interpretation
-
-LIVE REAL-TIME DATA (USE ONLY THIS — DO NOT INVENT):
+LIVE REAL-TIME DATA (USE ONLY THIS):
 ${marketData}
 USD/INR: ₹${forexRate.toFixed(4)}
 ${webIntelData ? '\nLIVE NEWS:\n' + webIntelData : ''}
@@ -357,64 +323,39 @@ ${portfolioCtx}`;
       recentMessages.push({ role: 'user', content: userMessage });
     }
 
-    type Engine = 'market' | 'groq';
-    let chain: Engine[] = [];
+    const isMarket = isNewsQuery;
+    let lastError = '';
 
-    if (model === 'market') {
-      chain = ['market', 'groq'];
-    } else if (model === 'groq') {
-      chain = ['groq'];
-    } else {
-      chain = ['groq', 'market'];
-    }
-
-    const callers: Record<Engine, (msgs: any[], sp: string) => Promise<string>> = {
-      market: (msgs, sp) => callGroq(msgs, sp, CONFIG.groq.marketModel),
-      groq: callGroq
-    };
-
-    let fallbackError = '';
-    for (const eng of chain) {
+    if (isMarket) {
       try {
-        const text = await rateLimitedFetch(() => callers[eng](recentMessages, systemPrompt));
-        return { text, model: eng, fallbackError };
+        const text = await rateLimitedFetch(() => callGroq(recentMessages, systemPrompt, CONFIG.groq.marketModel));
+        return { text, model: 'groq' as const };
       } catch (e) {
-        const errMsg = e instanceof Error ? e.message : String(e);
-        console.warn(`${eng} failed:`, e);
-        fallbackError += `⚠️ ${eng.toUpperCase()}: ${errMsg}\n`;
-        continue;
+        lastError = e instanceof Error ? e.message : String(e);
+        console.warn('Market expert failed:', lastError);
       }
     }
 
-    return { text: `🤖 **Groq Offline**\n\nBhai, Groq engine respond nahi kar paya.\n\n**Possible reasons:**\n• API key missing ya invalid\n• Rate limit hit\n• Network connectivity issues\n\nRender me VITE_GROQ_API_KEY set karo aur redeploy karo.`, model: 'system' as const };
+    try {
+      const text = await rateLimitedFetch(() => callGroq(recentMessages, systemPrompt));
+      return { text, model: 'groq' as const };
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
+    }
+
+    return { text: `🤖 **Groq Offline**\n\nBhai, Groq respond nahi kar paya.\n\n${lastError}\n\nRender me VITE_GROQ_API_KEY set karo aur redeploy karo.`, model: 'system' as const };
   };
 
   const sendMessage = async (userMessage: string) => {
-    if (!userMessage.trim()) return;
-    if (isThinking) return;
+    if (!userMessage.trim() || isThinking) return;
     setIsThinking(true);
 
     setChatMessages(prev => [...prev, { role: 'user', text: userMessage, timestamp: Date.now() }]);
 
     try {
-      const q = userMessage.toLowerCase();
-      let selectedModelType = selectedModel;
-
-      if (selectedModel === 'auto') {
-        if (/\b(news|khabar|market|live|aaj|today|nifty|sensex|breaking|ipo|fii|dii|rbi|fed|crude|gold|dollar|vix|trend|intraday|pre.?market|global|sector|rally|crash|correction|bitcoin|btc|crypto|halving|eth|blockchain|defi|altcoin|binance|coinbase|regulation|sec)\b/i.test(q)) {
-          selectedModelType = 'market';
-        } else {
-          selectedModelType = 'groq';
-        }
-      }
-
-      const result = await callAI(userMessage, selectedModelType);
-      let finalText = result.text;
-      if (result.fallbackError && result.model !== selectedModelType) {
-        finalText = `⚠️ **Fallback:** ${selectedModelType.toUpperCase()} respond nahi kar paya. ${result.model.toUpperCase()} se answer aa raha hai.\n\n**Errors:**\n${result.fallbackError}\n---\n\n${result.text}`;
-      }
+      const result = await callAI(userMessage);
       setChatMessages(prev => [...prev, {
-        role: 'model', text: finalText, timestamp: Date.now(), model: result.model
+        role: 'model', text: result.text, timestamp: Date.now(), model: result.model
       } as ChatMessage]);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
@@ -469,8 +410,8 @@ ${portfolioCtx}`;
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="hidden sm:inline">Groq Llama-3.3 70B | Advance Pro</span>
-                    <span className="sm:hidden">LIVE • Advance Pro</span>
+                    <span className="hidden sm:inline">Llama 4 Scout 17B | Live Market Data</span>
+                    <span className="sm:hidden">LIVE • Llama 4</span>
                   </div>
                 </div>
               </div>
@@ -480,130 +421,102 @@ ${portfolioCtx}`;
               </div>
             </div>
 
-            <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-b border-cyan-500/10 flex gap-2 overflow-x-auto scrollbar-hide">
-              {(['auto', 'market', 'groq'] as const).map(m => (
-                <button
-                  key={m}
-                  onClick={() => setSelectedModel(m)}
-                  className={`px-2 sm:px-3 py-1 rounded-full text-[9px] sm:text-[10px] font-bold uppercase transition-all border whitespace-nowrap ${selectedModel === m
-                    ? 'bg-cyan-600 text-white border-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
-                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-cyan-500/50'
-                    }`}
-                >
-                  {m === 'auto' ? '🤖 Auto'
-                    : m === 'market' ? '🌐 Market Expert'
-                      : '⚡ Groq'}
-                </button>
+            <div ref={chatContainerRef} className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide">
+              {chatMessages.map((msg, i) => (
+                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
+                  <div className={`max-w-[85%] sm:max-w-[90%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
+                    ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-3 py-2.5 sm:px-4 sm:py-3'
+                    : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-3 py-2.5 sm:px-4 sm:py-3 group/msg'
+                    }`}>
+                    {msg.role === 'user' ? msg.text : (
+                      <>
+                        <span dangerouslySetInnerHTML={{
+                          __html: (() => {
+                            const escaped = msg.text
+                              .replace(/&/g, '&amp;')
+                              .replace(/</g, '&lt;')
+                              .replace(/>/g, '&gt;')
+                              .replace(/"/g, '&quot;');
+                            return escaped
+                              .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                              .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                              .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>');
+                          })()
+                        }} />
+                        <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                          <button onClick={() => copyToClipboard(msg.text, i)} className="text-[9px] text-slate-500 hover:text-cyan-400 flex items-center gap-1 transition-colors">
+                            {copiedIdx === i ? <><Check size={10} /> Copied!</> : <><Copy size={10} /> Copy</>}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                    <div className={`text-[9px] mt-1 font-mono ${msg.role === 'user' ? 'text-cyan-200/50' : 'text-slate-600'}`}>
+                      {new Date(msg.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </div>
+                </div>
               ))}
+
+              {isThinking && (
+                <div className="flex justify-start animate-message-in">
+                  <div className="bg-slate-900/90 px-4 py-3 rounded-2xl rounded-tl-none border border-white/5">
+                    <div className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
+                      <Sparkles size={12} className="animate-pulse" /> AI is thinking...
+                    </div>
+                    <div className="flex gap-1.5">
+                      <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
+                      <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '100ms' }} />
+                      <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '200ms' }} />
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
             </div>
 
-            <>
-                <div ref={chatContainerRef} className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide">
-                  {chatMessages.map((msg, i) => (
-                    <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
-                      <div className={`max-w-[85%] sm:max-w-[90%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
-                        ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-3 py-2.5 sm:px-4 sm:py-3'
-                        : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-3 py-2.5 sm:px-4 sm:py-3 group/msg'
-                        }`}>
-                        {msg.role === 'user' ? msg.text : (
-                          <>
-                            {msg.model && (
-                              <div className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase mb-2 border ${MODEL_COLORS[msg.model] || MODEL_COLORS.system}`}>
-                                {msg.model === 'market' ? '🌐 Market Expert Live'
-                                  : msg.model === 'groq' ? '⚡ Groq Super Intelligence'
-                                    : 'System'}
-                              </div>
-                            )}
-                            <span dangerouslySetInnerHTML={{
-                              __html: (() => {
-                                const escaped = msg.text
-                                  .replace(/&/g, '&amp;')
-                                  .replace(/</g, '&lt;')
-                                  .replace(/>/g, '&gt;')
-                                  .replace(/"/g, '&quot;');
-                                return escaped
-                                  .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                                  .replace(/\*(.+?)\*/g, '<em>$1</em>')
-                                  .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>');
-                              })()
-                            }} />
-                            <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
-                              <button onClick={() => copyToClipboard(msg.text, i)} className="text-[9px] text-slate-500 hover:text-cyan-400 flex items-center gap-1 transition-colors">
-                                {copiedIdx === i ? <><Check size={10} /> Copied!</> : <><Copy size={10} /> Copy</>}
-                              </button>
-                            </div>
-                          </>
-                        )}
-                        <div className={`text-[9px] mt-1 font-mono ${msg.role === 'user' ? 'text-cyan-200/50' : 'text-slate-600'}`}>
-                          {new Date(msg.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-
-                  {isThinking && (
-                    <div className="flex justify-start animate-message-in">
-                      <div className="bg-slate-900/90 px-4 py-3 rounded-2xl rounded-tl-none border border-white/5">
-                        <div className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
-                          <Sparkles size={12} className="animate-pulse" /> AI is thinking...
-                        </div>
-                        <div className="flex gap-1.5">
-                          <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
-                          <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '100ms' }} />
-                          <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '200ms' }} />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  <div ref={messagesEndRef} />
-                </div>
-
-                <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-t border-cyan-500/10">
-                  <div className="flex gap-2 overflow-x-auto scrollbar-hide">
-                    {QUICK_ACTIONS.map((action, i) => (
-                      <button
-                        key={i}
-                        onClick={() => { setChatInput(''); sendMessage(action.query); }}
-                        disabled={isThinking}
-                        className="flex items-center gap-1.5 whitespace-nowrap text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-slate-400 hover:text-white hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all disabled:opacity-30 shrink-0"
-                      >
-                        <span className="text-base">{action.icon}</span>
-                        {action.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="relative p-3 sm:p-4 bg-slate-950/95 border-t border-cyan-500/15 rounded-b-3xl">
-                  <div className="relative flex items-center">
-                    <input
-                      type="text"
-                      placeholder="Ask Deep Mind AI anything..."
-                      className="w-full bg-slate-900/60 border border-slate-700/80 rounded-xl sm:rounded-2xl py-2.5 sm:py-3 pl-3 sm:pl-4 pr-10 sm:pr-12 text-xs sm:text-sm text-white outline-none focus:border-cyan-500/60 transition-all font-medium placeholder:text-slate-600"
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleChat()}
-                    />
-                    <button
-                      onClick={handleChat}
-                      disabled={isThinking || !chatInput.trim()}
-                      className="absolute right-1 sm:right-1.5 p-1.5 sm:p-2 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-lg sm:rounded-xl disabled:opacity-30 transition-all"
-                    >
-                      <Send size={14} />
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
-                    <span className="text-[7px] sm:text-[8px] text-slate-600 font-mono truncate max-w-[60%]">
-                      Model: {selectedModel === 'auto' ? '🤖 Auto-Detect'
-                        : selectedModel === 'market' ? '🌐 Market Expert'
-                          : '⚡ Groq'}
-                    </span>
-                    <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
-                      {chatMessages.length} messages
-                    </span>
-                </div>
+            <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-t border-cyan-500/10">
+              <div className="flex gap-2 overflow-x-auto scrollbar-hide">
+                {QUICK_ACTIONS.map((action, i) => (
+                  <button
+                    key={i}
+                    onClick={() => { setChatInput(''); sendMessage(action.query); }}
+                    disabled={isThinking}
+                    className="flex items-center gap-1.5 whitespace-nowrap text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-slate-400 hover:text-white hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all disabled:opacity-30 shrink-0"
+                  >
+                    <span className="text-base">{action.icon}</span>
+                    {action.label}
+                  </button>
+                ))}
               </div>
-            </>
+            </div>
+
+            <div className="relative p-3 sm:p-4 bg-slate-950/95 border-t border-cyan-500/15 rounded-b-3xl">
+              <div className="relative flex items-center">
+                <input
+                  type="text"
+                  placeholder="Ask Deep Mind AI anything..."
+                  className="w-full bg-slate-900/60 border border-slate-700/80 rounded-xl sm:rounded-2xl py-2.5 sm:py-3 pl-3 sm:pl-4 pr-10 sm:pr-12 text-xs sm:text-sm text-white outline-none focus:border-cyan-500/60 transition-all font-medium placeholder:text-slate-600"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleChat()}
+                />
+                <button
+                  onClick={handleChat}
+                  disabled={isThinking || !chatInput.trim()}
+                  className="absolute right-1 sm:right-1.5 p-1.5 sm:p-2 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-lg sm:rounded-xl disabled:opacity-30 transition-all"
+                >
+                  <Send size={14} />
+                </button>
+              </div>
+              <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
+                <span className="text-[7px] sm:text-[8px] text-slate-500 font-mono">
+                  ⚡ Llama 4 Scout 17B
+                </span>
+                <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
+                  {chatMessages.length} messages
+                </span>
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
