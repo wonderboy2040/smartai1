@@ -112,6 +112,16 @@ app.use(express.static(distPath));
 // Frontend calls /api/groq, /api/gemini or /api/claude → server uses env var keys
 // ========================================
 
+// CORS for API routes — allows frontend from any origin to use the proxy
+app.use('/api', (req, res, next) => {
+  const origin = req.headers.origin || '*';
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 // AI status endpoint — tells frontend which engines are available on server
 app.get('/api/ai-status', (req, res) => {
   res.json({

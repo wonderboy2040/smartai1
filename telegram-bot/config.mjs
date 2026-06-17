@@ -26,18 +26,119 @@ export let TAVILY_API_KEY = process.env.TAVILY_API_KEY || process.env.VITE_TAVIL
 // ============================================
 const env = process.env;
 
-// Debug: Print available env keys
-console.log('🔍 [DEBUG] Checking System Environment Variables for AI Keys:');
-const foundKeys = Object.keys(env).filter(k => k.toUpperCase().includes('GROQ') || k.toUpperCase().includes('GEMINI') || k.toUpperCase().includes('CLAUDE'));
-if (foundKeys.length > 0) {
-  console.log(`🔍 [DEBUG] Found these potential key variables: ${foundKeys.join(', ')}`);
+// ============================================
+// SMART KEY DETECTION — Scans ALL env vars for any naming variation
+// Works with Render, Vercel, Netlify, Railway, local .env, any provider
+// ============================================
+console.log('🔍 [DEBUG] Scanning ALL environment variables for AI API keys...');
+const allEnvKeys = Object.keys(env);
+
+// Log all matching vars (case-insensitive) to help debug naming issues
+const matches = allEnvKeys.filter(k => {
+  const u = k.toUpperCase();
+  return u.includes('GROQ') || u.includes('GEMINI') || u.includes('CLAUDE') || u.includes('TAVILY');
+});
+if (matches.length > 0) {
+  console.log(`🔍 [DEBUG] Found ${matches.length} matching env var(s): ${matches.join(', ')}`);
 } else {
-  console.log('🔍 [DEBUG] NO matching environment variables found in process.env!');
+  console.log('🔍 [DEBUG] No GROQ/GEMINI/CLAUDE/TAVILY env vars found — checking process.env directly...');
+  // Fallback: dump a few to help debug
+  console.log(`🔍 [DEBUG] First 20 env var names: ${allEnvKeys.slice(0, 20).join(', ')}`);
 }
 
-export let GROQ_KEY = env.GROQ_KEY || env.GroqKey || env.VITE_GROQ_API_KEY || "";
-export let GEMINI_API_KEY = env.GEMINI_API_KEY || env.GeminiAPIKEY || env.GEMINI_KEY || env.VITE_GEMINI_API_KEY || "";
-export let CLAUDE_API_KEY = env.CLAUDE_API_KEY || env.ClaudeAPIKEY || env.CLAUDE_KEY || env.VITE_CLAUDE_API_KEY || "";
+// Default to empty (export let so bot.mjs gets live bindings)
+export let GROQ_KEY = "";
+export let GEMINI_API_KEY = "";
+export let CLAUDE_API_KEY = "";
+
+// --- Smart scan: iterate ALL env vars, use any that match ---
+for (const k of allEnvKeys) {
+  const v = (env[k] || '').toString().trim();
+  if (!v || v.length < 5) continue;
+  const u = k.toUpperCase();
+
+  // Groq: keys start with gsk_
+  if (u.includes('GROQ') && v.startsWith('gsk_') && v.length > 20) {
+    if (!GROQ_KEY) { GROQ_KEY = v; console.log(`  → Groq key loaded from env var: ${k}`); }
+  }
+
+  // Gemini: 20-200 char alphanumeric (no prefix), or any var named with GEMINI
+  if (u.includes('GEMINI') && v.length > 10 && v.length < 300) {
+    if (!GEMINI_API_KEY && !v.startsWith('gsk_') && !v.startsWith('sk-ant-') && !v.startsWith('tvly-')) {
+      GEMINI_API_KEY = v;
+      console.log(`  → Gemini key loaded from env var: ${k}`);
+    }
+  }
+
+  // Claude: keys start with sk-ant-
+  if (u.includes('CLAUDE') && v.startsWith('sk-ant-') && v.length > 20) {
+    if (!CLAUDE_API_KEY) { CLAUDE_API_KEY = v; console.log(`  → Claude key loaded from env var: ${k}`); }
+  }
+
+  // Tavily: keys start with tvly-
+  if (u.includes('TAVILY') && v.startsWith('tvly-') && v.length > 10) {
+    if (!TAVILY_API_KEY) { TAVILY_API_KEY = v; console.log(`  → Tavily key loaded from env var: ${k}`); }
+  }
+}
+
+// --- Explicit name fallbacks (exact names users commonly set) ---
+const explicitFallbacks = [
+  // Groq
+  ['GROQ_KEY', 'GROQ_API_KEY', 'GROQKEY', 'GROQ_KEY'],
+  ['GroqKey', 'GroqAPIKey', 'groq_key', 'groq_api_key'],
+  // Gemini
+  ['GEMINI_API_KEY', 'GEMINI_KEY', 'GEMINIAPIKEY', 'GEMINI_AI_KEY'],
+  ['GeminiAPIKey', 'GeminiKey', 'gemini_api_key', 'gemini_key'],
+  // Claude
+  ['CLAUDE_API_KEY', 'CLAUDE_KEY', 'CLAUDEAPIKEY', 'CLAUDE_AI_KEY'],
+  ['ClaudeAPIKey', 'ClaudeKey', 'claude_api_key', 'claude_key'],
+  // Tavily
+  ['TAVILY_API_KEY', 'TAVILY_KEY', 'TAVILYAPIKEY'],
+  ['TavilyApiKey', 'TavilyKey', 'tavily_api_key', 'tavily_key'],
+  // Vite prefixed (for frontend build, but also checked for bot)
+  ['VITE_GROQ_API_KEY', 'VITE_GEMINI_API_KEY', 'VITE_CLAUDE_API_KEY', 'VITE_TAVILY_API_KEY'],
+];
+
+for (const name of explicitFallbacks[0]) { if (!GROQ_KEY && env[name]) GROQ_KEY = env[name]; }
+for (const name of explicitFallbacks[1]) { if (!GROQ_KEY && env[name]) GROQ_KEY = env[name]; }
+for (const name of explicitFallbacks[2]) { if (!GEMINI_API_KEY && env[name]) GEMINI_API_KEY = env[name]; }
+for (const name of explicitFallbacks[3]) { if (!GEMINI_API_KEY && env[name]) GEMINI_API_KEY = env[name]; }
+for (const name of explicitFallbacks[4]) { if (!CLAUDE_API_KEY && env[name]) CLAUDE_API_KEY = env[name]; }
+for (const name of explicitFallbacks[5]) { if (!CLAUDE_API_KEY && env[name]) CLAUDE_API_KEY = env[name]; }
+for (const name of explicitFallbacks[6]) { if (!TAVILY_API_KEY && env[name]) TAVILY_API_KEY = env[name]; }
+for (const name of explicitFallbacks[7]) { if (!TAVILY_API_KEY && env[name]) TAVILY_API_KEY = env[name]; }
+for (const name of explicitFallbacks[8]) {
+  if (!GROQ_KEY && env[name]) GROQ_KEY = env[name];
+  if (!GEMINI_API_KEY && env[name] && name.includes('GEMINI')) GEMINI_API_KEY = env[name];
+  if (!CLAUDE_API_KEY && env[name] && name.includes('CLAUDE')) CLAUDE_API_KEY = env[name];
+  if (!TAVILY_API_KEY && env[name] && name.includes('TAVILY')) TAVILY_API_KEY = env[name];
+}
+
+// Clean keys (remove accidentally pasted quotes or spaces)
+if (GROQ_KEY) GROQ_KEY = GROQ_KEY.replace(/['"]/g, '').trim();
+if (GEMINI_API_KEY) GEMINI_API_KEY = GEMINI_API_KEY.replace(/['"]/g, '').trim();
+if (CLAUDE_API_KEY) CLAUDE_API_KEY = CLAUDE_API_KEY.replace(/['"]/g, '').trim();
+if (TAVILY_API_KEY) TAVILY_API_KEY = TAVILY_API_KEY.replace(/['"]/g, '').trim();
+
+// Final fallback: if any key looks like a recognized format, find it anywhere
+if (!GROQ_KEY) {
+  for (const v of Object.values(env)) {
+    if (typeof v === 'string' && v.startsWith('gsk_') && v.length > 20) {
+      GROQ_KEY = v.replace(/['"]/g, '').trim();
+      console.log(`  → Groq key auto-detected from unmatched env var`);
+      break;
+    }
+  }
+}
+if (!CLAUDE_API_KEY) {
+  for (const v of Object.values(env)) {
+    if (typeof v === 'string' && v.startsWith('sk-ant-') && v.length > 20) {
+      CLAUDE_API_KEY = v.replace(/['"]/g, '').trim();
+      console.log(`  → Claude key auto-detected from unmatched env var`);
+      break;
+    }
+  }
+}
 
 // Clean keys (remove accidentally pasted quotes or spaces)
 if (GROQ_KEY) GROQ_KEY = GROQ_KEY.replace(/['"]/g, '').trim();
