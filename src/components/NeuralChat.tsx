@@ -2,16 +2,8 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-const CONFIG = {
-  groq: {
-    apiKey: import.meta.env.VITE_GROQ_API_KEY || '',
-    baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
-    model: 'llama-3.3-70b-versatile'
-  }
-} as const;
-
 const PROXY_BASE = import.meta.env.VITE_API_PROXY || '';
-let _proxyStatus: Promise<{ groq: boolean; tavily: boolean } | null> | null = null;
+let _proxyStatus: Promise<{ gemini: boolean; groq: boolean; tavily: boolean } | null> | null = null;
 
 async function getServerAIStatus() {
   if (!_proxyStatus) {
@@ -25,19 +17,17 @@ async function getServerAIStatus() {
   return _proxyStatus;
 }
 
-async function proxyFetch(body: any): Promise<Response | null> {
-  const status = await getServerAIStatus();
-  if (!status?.groq) return null;
-  const res = await fetch(`${PROXY_BASE}/api/groq`, {
+async function callAIProxy(endpoint: string, body: any): Promise<Response | null> {
+  const res = await fetch(`${PROXY_BASE}/api/${endpoint}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(25000)
+    signal: AbortSignal.timeout(30000)
   });
   if (res.ok) return res;
   if (res.status === 503) return null;
   const err = await res.json().catch(() => ({}));
-  throw new Error(err?.error || err?.error?.message || `proxy error: ${res.status}`);
+  throw new Error(err?.error?.message || err?.error || `proxy error: ${res.status}`);
 }
 
 async function fetchRealtimeSnapshot(): Promise<string> {
@@ -138,19 +128,17 @@ const QUICK_ACTIONS = [
 ];
 
 export interface NeuralChatProps {
-  groqKey?: string;
   portfolioContext: string;
   usdInrRate?: number;
 }
 
 export const NeuralChat = React.memo(({
-  groqKey: propGroqKey,
   portfolioContext,
   usdInrRate: propUsdInrRate
 }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
-    text: '🤖 **DEEP MIND AI ADVANCE PRO v16.0**\n\n**⚡ GROQ SUPER INTELLIGENCE**\n• Llama 4 Scout 17B (Latest Groq Model)\n• Market Expert with Real-Time Web Search\n\n**🧬 Featur**\n• Deep Mind Analysis (Macro + Micro)\n• Deep Research (24x7 Live)\n• Real-Time Global Market Monitor\n• Portfolio Alert System (Hinglish)\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\nAsk anything — I have LIVE market data 24x7!',
+    text: '🤖 **DEEP MIND AI ADVANCE PRO v22.0**\n\n**🔷 GEMINI FLASH + ⚡ GROQ LLAMA 3.3**\n• Dual Engine Auto-Failover\n• Real-Time Live Market Data\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\nAsk anything — I have LIVE market data 24x7!',
     timestamp: Date.now(),
     model: 'system'
   }]);
@@ -228,40 +216,23 @@ export const NeuralChat = React.memo(({
     throw lastError;
   };
 
-  const callGroq = async (messages: any[], systemPrompt: string, modelName: string = CONFIG.groq.model) => {
-    const groqMessages = [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))];
-
-    const proxyRes = await proxyFetch({ messages: groqMessages, model: modelName });
-    if (proxyRes) {
-      const data = await proxyRes.json();
-      const text = data.choices?.[0]?.message?.content;
-      if (!text || text.trim().length < 5) throw new Error('Groq returned empty response');
+  const tryAIEngine = async (endpoint: string, modelName: string, messages: any[], systemPrompt: string) => {
+    const status = await getServerAIStatus();
+    if (!status || !(status as any)[endpoint]) return null;
+    const body = {
+      messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
+      model: modelName
+    };
+    const res = await callAIProxyRaw(endpoint, body);
+    if (!res) return null;
+    const data = await res.json();
+    if (endpoint === 'gemini') {
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text || text.trim().length < 5) return null;
       return text;
     }
-
-    const apiKey = import.meta.env.VITE_GROQ_API_KEY || propGroqKey || CONFIG.groq.apiKey;
-    if (!apiKey || apiKey.length < 10) {
-      throw new Error('Groq API Key missing — Render me VITE_GROQ_API_KEY set karo aur redeploy karo');
-    }
-
-    const directFetch = async () => {
-      const res = await fetch(CONFIG.groq.baseUrl, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: modelName, messages: groqMessages, temperature: 0.7, max_tokens: 8000 }),
-        signal: AbortSignal.timeout(30000)
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `Groq Error: ${res.status}`);
-      }
-      return res.json();
-    };
-
-    const data = await rateLimitedFetch(directFetch);
     const text = data.choices?.[0]?.message?.content;
-    if (!text || text.trim().length < 5) throw new Error('Groq returned empty response');
-    return text;
+    return text && text.trim().length >= 5 ? text : null;
   };
 
   const callAI = async (userMessage: string) => {
@@ -339,11 +310,15 @@ RESPONSE STRUCTURE:
     }
 
     try {
-      const text = await rateLimitedFetch(() => callGroq(recentMessages, systemPrompt));
-      return { text, model: 'groq' as const };
+      let text = await rateLimitedFetch(() => tryAIEngine('gemini', 'gemini-2.0-flash', recentMessages, systemPrompt));
+      if (!text) {
+        text = await rateLimitedFetch(() => tryAIEngine('groq', 'llama-3.3-70b-versatile', recentMessages, systemPrompt));
+      }
+      if (!text) throw new Error('Both AI engines unavailable');
+      return { text, model: text.includes('gemini') ? 'gemini' as const : 'groq' as const };
     } catch (e) {
       const lastError = e instanceof Error ? e.message : String(e);
-      return { text: `🤖 **Groq Offline**\n\nBhai, Groq respond nahi kar paya.\n\n${lastError}\n\nRender me VITE_GROQ_API_KEY set karo aur redeploy karo.`, model: 'system' as const };
+      return { text: `🤖 **AI Offline**\n\nBhai, AI respond nahi kar paya.\n\n${lastError}\n\nServer pe GEMINI_API_KEY ya GROQ_API_KEY set karo.\nBoth are free:\n🔑 Gemini: https://aistudio.google.com/apikey\n🔑 Groq: https://console.groq.com`, model: 'system' as const };
     }
   };
 
@@ -407,12 +382,12 @@ RESPONSE STRUCTURE:
                   <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
                     <span className="hidden xs:inline">Advance Pro v22</span>
                     <span className="xs:hidden">AI v22</span>
-                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">ADVANCE PRO v22</span>
+                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">GEMINI+GROQ</span>
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="hidden sm:inline">Llama 3.3 70B | Live Market Data</span>
-                    <span className="sm:hidden">LIVE • Llama 3.3</span>
+                    <span className="hidden sm:inline">Gemini Flash + Groq Llama 3.3 | Live Data</span>
+                    <span className="sm:hidden">LIVE • Dual Engine</span>
                   </div>
                 </div>
               </div>
@@ -511,7 +486,7 @@ RESPONSE STRUCTURE:
               </div>
               <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
                 <span className="text-[7px] sm:text-[8px] text-slate-500 font-mono">
-                  ⚡ Llama 3.3 70B
+                  ⚡ Gemini + Groq
                 </span>
                 <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
                   {chatMessages.length} messages

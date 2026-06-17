@@ -10,7 +10,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, TAVILY_API_KEY, TAX_PAIRS } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_KEY, TAVILY_API_KEY, TAX_PAIRS } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchCryptoPricesINR, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
 import { loadPortfolioFromCloud } from './cloud.mjs';
 import {
@@ -123,10 +123,11 @@ apiRouter.use((req, res, next) => {
   next();
 });
 
-// Server config — exposes API_URL to frontend at runtime (no VITE_ build-time needed)
+// Server config — exposes API_URL to frontend at runtime
 apiRouter.get('/config', (req, res) => {
   res.json({
     apiUrl: API_URL || '',
+    gemini: !!(GEMINI_KEY && GEMINI_KEY.length > 5),
     groq: !!(GROQ_KEY && GROQ_KEY.length > 10),
     tavily: !!(TAVILY_API_KEY && TAVILY_API_KEY.length > 10)
   });
@@ -134,9 +135,45 @@ apiRouter.get('/config', (req, res) => {
 
 apiRouter.get('/ai-status', (req, res) => {
   res.json({
+    gemini: !!(GEMINI_KEY && GEMINI_KEY.length > 5),
     groq: !!(GROQ_KEY && GROQ_KEY.length > 10),
     tavily: !!(TAVILY_API_KEY && TAVILY_API_KEY.length > 10)
   });
+});
+
+apiRouter.post('/gemini', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    if (!GEMINI_KEY || GEMINI_KEY.length < 5) {
+      return res.status(503).json({ error: 'Gemini API key not configured on server' });
+    }
+    const { messages, model } = req.body;
+    const modelName = model || 'gemini-2.0-flash';
+
+    const contents = messages.filter(m => m.role !== 'system').map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }]
+    }));
+    const systemMsg = messages.find(m => m.role === 'system');
+
+    const body = {
+      contents,
+      generationConfig: { temperature: 0.7, maxOutputTokens: 8000 }
+    };
+    if (systemMsg) body.systemInstruction = { parts: [{ text: systemMsg.content }] };
+
+    const apiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30000)
+    });
+    const data = await apiRes.json();
+    if (!apiRes.ok) return res.status(apiRes.status).json(data);
+    res.json(data);
+  } catch (e) {
+    console.error('Gemini proxy error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 apiRouter.post('/groq', express.json({ limit: '1mb' }), async (req, res) => {

@@ -1,11 +1,11 @@
 // ============================================
-// AI CHAT ENGINE — GROQ SUPER INTELLIGENCE
-// Single Engine: Llama 4 Scout 17B (multimodal, ~450 tps)
-// Advance Pro v22 — Deep Research + Deep Mind Analysis
+// AI CHAT ENGINE — DEEP MIND AI ADVANCE PRO v22
+// Primary: Google Gemini (1,500 req/day free)
+// Fallback: Groq Llama 3.3 70B (100K tokens/day free)
 // ============================================
 import {
-  GROQ_KEY, TAVILY_API_KEY,
-  isGroqAvailable, isTavilyAvailable,
+  GROQ_KEY, GEMINI_KEY, TAVILY_API_KEY,
+  isGroqAvailable, isGeminiAvailable, isTavilyAvailable,
   ALPHA_ETFS_IN, ALPHA_ETFS_US
 } from './config.mjs';
 import { fetchMarketIntelligence, fetchForexRate } from './market.mjs';
@@ -21,18 +21,21 @@ let cachedIntel = null;
 let intelTimestamp = 0;
 
 const engineHealth = {
-  groq: { failures: 0, lastFailure: 0, cooldownMs: 30000 }
+  groq: { failures: 0, lastFailure: 0, cooldownMs: 30000 },
+  gemini: { failures: 0, lastFailure: 0, cooldownMs: 15000 }
 };
 
-function recordEngineFailure() {
-  engineHealth.groq.failures++;
-  engineHealth.groq.lastFailure = Date.now();
+function recordEngineFailure(engine = 'groq') {
+  if (!engineHealth[engine]) return;
+  engineHealth[engine].failures++;
+  engineHealth[engine].lastFailure = Date.now();
 }
-function recordEngineSuccess() {
-  engineHealth.groq.failures = 0;
+function recordEngineSuccess(engine = 'groq') {
+  if (!engineHealth[engine]) return;
+  engineHealth[engine].failures = 0;
 }
 
-console.log(`🤖 Groq Super Intelligence: ${isGroqAvailable() ? '✓ Active' : '✗ Key Missing'}`);
+console.log(`🤖 Gemini: ${isGeminiAvailable() ? '✓ Active' : '✗ Key Missing'} | Groq: ${isGroqAvailable() ? '✓ Active' : '✗ Key Missing'}`);
 
 async function retryWithBackoff(fn, maxRetries = 2, baseDelay = 1000) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -133,6 +136,41 @@ async function callGroq(messages, systemPrompt, modelName = 'llama-3.3-70b-versa
   const data = await res.json();
   const text = data.choices?.[0]?.message?.content;
   if (!text || text.trim().length < 5) throw new Error('Groq empty response');
+  return text;
+}
+
+// ============================================
+// GOOGLE GEMINI — Primary engine (1,500 req/day free)
+// ============================================
+async function callGemini(messages, systemPrompt, modelName = 'gemini-2.0-flash') {
+  if (!isGeminiAvailable()) throw new Error('Gemini key missing');
+  if (engineHealth.gemini.failures >= 3 && Date.now() - engineHealth.gemini.lastFailure < engineHealth.gemini.cooldownMs) {
+    throw new Error('Gemini cooling down');
+  }
+
+  const contents = messages.map(m => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }]
+  }));
+
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents,
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      generationConfig: { temperature: 0.7, maxOutputTokens: 8000 }
+    }),
+    signal: AbortSignal.timeout(30000)
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(()=>({}));
+    throw new Error(`Gemini ${res.status}: ${err.error?.message || res.statusText}`);
+  }
+  const data = await res.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text || text.trim().length < 5) throw new Error('Gemini empty response');
   return text;
 }
 
@@ -240,7 +278,7 @@ RESPONSE STRUCTURE:
 }
 
 // ============================================
-// MAIN CHAT — Groq Super Intelligence
+// MAIN CHAT — Gemini Primary → Groq Fallback
 // ============================================
 export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={}, usdInrRate=83.5) {
   if (!chatHistory.has(chatId)) chatHistory.set(chatId, []);
@@ -260,20 +298,39 @@ export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={
   const recentHistory = history.slice(-MAX_HISTORY).map(m => ({ role: m.role, content: m.content }));
 
   let aiText = '';
+  let usedEngine = '';
 
+  // Try Gemini first (1,500 req/day free — most generous)
   try {
-    if (isGroqAvailable()) {
-      console.log('  ⚡ Groq Compound (ultra-fast + live web)...');
-      aiText = await retryWithBackoff(() => callGroq(recentHistory, systemPrompt), 1, 800);
-      recordEngineSuccess();
+    if (isGeminiAvailable()) {
+      console.log('  🔷 Gemini Super Intelligence...');
+      aiText = await retryWithBackoff(() => callGemini(recentHistory, systemPrompt), 1, 800);
+      recordEngineSuccess('gemini');
+      usedEngine = 'gemini';
     }
   } catch (e) {
-    console.warn('  ❌ Groq failed:', e.message);
-    recordEngineFailure();
+    console.warn('  ❌ Gemini failed:', e.message);
+    recordEngineFailure('gemini');
+  }
+
+  // Fallback to Groq
+  if (!aiText) {
+    try {
+      if (isGroqAvailable()) {
+        console.log('  ⚡ Groq Fallback...');
+        aiText = await retryWithBackoff(() => callGroq(recentHistory, systemPrompt), 1, 800);
+        recordEngineSuccess('groq');
+        usedEngine = 'groq';
+      }
+    } catch (e) {
+      console.warn('  ❌ Groq failed:', e.message);
+      recordEngineFailure('groq');
+    }
   }
 
   if (!aiText) {
-    aiText = '🤖 Groq Super Intelligence configured nahi hai!\n\n🔑 GROQ_API_KEY set karo.\nGet free key: https://console.groq.com';
+    aiText = '🤖 AI Engine unavailable!\n\nServer pe GEMINI_API_KEY ya GROQ_API_KEY set karo.\nBoth are free:\n🔑 Gemini: https://aistudio.google.com/apikey\n🔑 Groq: https://console.groq.com';
+    usedEngine = 'system';
   }
 
   let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
@@ -283,7 +340,8 @@ export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={
   history.push({ role: 'assistant', content: aiText });
   if (history.length > MAX_HISTORY * 2) history.splice(0, history.length - MAX_HISTORY);
 
-  return `⚡ Groq Compound | ${intent} | LIVE\n\n${safeText}`;
+  const label = usedEngine === 'gemini' ? '🔷 Gemini Flash' : usedEngine === 'groq' ? '⚡ Groq Llama 3.3' : '';
+  return `${label} | ${intent} | LIVE\n\n${safeText}`;
 }
 
 export function clearChatHistory(chatId) {
@@ -292,5 +350,8 @@ export function clearChatHistory(chatId) {
 }
 
 export function getAIHealthStatus() {
-  return { groq: { available: isGroqAvailable(), health: engineHealth.groq } };
+  return {
+    gemini: { available: isGeminiAvailable(), health: engineHealth.gemini },
+    groq: { available: isGroqAvailable(), health: engineHealth.groq }
+  };
 }

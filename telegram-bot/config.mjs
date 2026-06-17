@@ -88,6 +88,17 @@ const tavilyNames = ['TAVILY_API_KEY', 'TAVILY_KEY', 'VITE_TAVILY_API_KEY', 'Tav
 for (const name of tavilyNames) { if (!TAVILY_API_KEY && env[name]) TAVILY_API_KEY = env[name]; }
 if (TAVILY_API_KEY) TAVILY_API_KEY = TAVILY_API_KEY.replace(/['"]/g, '').trim();
 
+// ============================================
+// GOOGLE GEMINI — Most generous free tier (1,500 req/day)
+// ============================================
+export let GEMINI_KEY = process.env.GEMINI_API_KEY || process.env.GEMINI_KEY || "";
+if (GEMINI_KEY) GEMINI_KEY = GEMINI_KEY.replace(/['"]/g, '').trim();
+export function setGeminiKey(key) { GEMINI_KEY = key; }
+export function isGeminiAvailable() { return !!(GEMINI_KEY && GEMINI_KEY.length > 5); }
+
+// ============================================
+// GROQ FALLBACK — Free tier (100K tokens/day)
+// ============================================
 export function setGroqKey(key) { GROQ_KEY = key; }
 export function setTavilyKey(key) { TAVILY_API_KEY = key; }
 export function isGroqAvailable() { return !!(GROQ_KEY && GROQ_KEY.length > 10); }
