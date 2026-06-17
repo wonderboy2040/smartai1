@@ -104,6 +104,21 @@ export function setTavilyKey(key) { TAVILY_API_KEY = key; }
 export function isGroqAvailable() { return !!(GROQ_KEY && GROQ_KEY.length > 10); }
 export function isTavilyAvailable() { return !!(TAVILY_API_KEY && TAVILY_API_KEY.length > 10); }
 
+// ============================================
+// ANTHROPIC CLAUDE — Third fallback
+// ============================================
+export let CLAUDE_KEY = env.ANTHROPIC_API_KEY || env.CLAUDE_API_KEY || env.CLAUDE_KEY || env.ANTHROPIC_KEY || "";
+if (CLAUDE_KEY) CLAUDE_KEY = CLAUDE_KEY.replace(/['"]/g, '').trim();
+export function setClaudeKey(key) { CLAUDE_KEY = key; }
+export function isClaudeAvailable() { return !!(CLAUDE_KEY && CLAUDE_KEY.length > 10); }
+
+// Log all engine statuses at startup
+console.log(`\n🤖 AI Engine Status:`);
+console.log(`  🔷 Gemini: ${isGeminiAvailable() ? '✓ AVAILABLE' : '✗ Missing (set GEMINI_API_KEY)'}`);
+console.log(`  ⚡ Groq:   ${isGroqAvailable() ? '✓ AVAILABLE' : '✗ Missing (set GROQ_API_KEY)'}`);
+console.log(`  🟣 Claude: ${isClaudeAvailable() ? '✓ AVAILABLE' : '✗ Missing (set ANTHROPIC_API_KEY)'}`);
+console.log(`  🔍 Tavily: ${isTavilyAvailable() ? '✓ AVAILABLE' : '✗ Missing (set TAVILY_API_KEY)'}\n`);
+
 // SIP Defaults
 export const DEFAULT_INDIA_SIP = 10000;
 export const DEFAULT_US_SIP = 50;

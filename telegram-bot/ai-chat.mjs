@@ -4,8 +4,8 @@
 // Fallback: Groq Llama 3.3 70B (100K tokens/day free)
 // ============================================
 import {
-  GROQ_KEY, GEMINI_KEY, TAVILY_API_KEY,
-  isGroqAvailable, isGeminiAvailable, isTavilyAvailable,
+  GROQ_KEY, GEMINI_KEY, CLAUDE_KEY, TAVILY_API_KEY,
+  isGroqAvailable, isGeminiAvailable, isClaudeAvailable, isTavilyAvailable,
   ALPHA_ETFS_IN, ALPHA_ETFS_US
 } from './config.mjs';
 import { fetchMarketIntelligence, fetchForexRate } from './market.mjs';
@@ -22,7 +22,8 @@ let intelTimestamp = 0;
 
 const engineHealth = {
   groq: { failures: 0, lastFailure: 0, cooldownMs: 30000 },
-  gemini: { failures: 0, lastFailure: 0, cooldownMs: 15000 }
+  gemini: { failures: 0, lastFailure: 0, cooldownMs: 15000 },
+  claude: { failures: 0, lastFailure: 0, cooldownMs: 15000 }
 };
 
 function recordEngineFailure(engine = 'groq') {
@@ -175,6 +176,46 @@ async function callGemini(messages, systemPrompt, modelName = 'gemini-2.0-flash'
 }
 
 // ============================================
+// ANTHROPIC CLAUDE — Third fallback engine
+// ============================================
+async function callClaude(messages, systemPrompt, modelName = 'claude-sonnet-4-20250514') {
+  if (!isClaudeAvailable()) throw new Error('Claude key missing');
+  if (engineHealth.claude?.failures >= 3 && Date.now() - engineHealth.claude.lastFailure < (engineHealth.claude?.cooldownMs || 30000)) {
+    throw new Error('Claude cooling down');
+  }
+
+  const claudeMessages = messages.map(m => ({
+    role: m.role === 'assistant' ? 'assistant' : 'user',
+    content: m.content
+  }));
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': CLAUDE_KEY,
+      'anthropic-version': '2023-06-01',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: modelName,
+      max_tokens: 8000,
+      system: systemPrompt,
+      messages: claudeMessages
+    }),
+    signal: AbortSignal.timeout(30000)
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(()=>({}));
+    throw new Error(`Claude ${res.status}: ${err.error?.message || res.statusText}`);
+  }
+  const data = await res.json();
+  const text = data.content?.[0]?.text;
+  if (!text || text.trim().length < 5) throw new Error('Claude empty response');
+  return text;
+}
+
+// ============================================
 // BUILD CONTEXT — Real-Time Portfolio + Market + Web
 // ============================================
 async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
@@ -278,7 +319,7 @@ RESPONSE STRUCTURE:
 }
 
 // ============================================
-// MAIN CHAT — Gemini Primary → Groq Fallback
+// MAIN CHAT — Gemini → Groq → Claude (auto-failover)
 // ============================================
 export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={}, usdInrRate=83.5) {
   if (!chatHistory.has(chatId)) chatHistory.set(chatId, []);
@@ -303,7 +344,7 @@ export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={
   // Try Gemini first (1,500 req/day free — most generous)
   try {
     if (isGeminiAvailable()) {
-      console.log('  🔷 Gemini Super Intelligence...');
+      console.log('  🔷 Gemini Flash...');
       aiText = await retryWithBackoff(() => callGemini(recentHistory, systemPrompt), 1, 800);
       recordEngineSuccess('gemini');
       usedEngine = 'gemini';
@@ -317,7 +358,7 @@ export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={
   if (!aiText) {
     try {
       if (isGroqAvailable()) {
-        console.log('  ⚡ Groq Fallback...');
+        console.log('  ⚡ Groq Llama 3.3...');
         aiText = await retryWithBackoff(() => callGroq(recentHistory, systemPrompt), 1, 800);
         recordEngineSuccess('groq');
         usedEngine = 'groq';
@@ -328,8 +369,35 @@ export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={
     }
   }
 
+  // Fallback to Claude
   if (!aiText) {
-    aiText = '🤖 AI Engine unavailable!\n\nServer pe GEMINI_API_KEY ya GROQ_API_KEY set karo.\nBoth are free:\n🔑 Gemini: https://aistudio.google.com/apikey\n🔑 Groq: https://console.groq.com';
+    try {
+      if (isClaudeAvailable()) {
+        console.log('  🟣 Claude Sonnet...');
+        aiText = await retryWithBackoff(() => callClaude(recentHistory, systemPrompt), 1, 800);
+        recordEngineSuccess('claude');
+        usedEngine = 'claude';
+      }
+    } catch (e) {
+      console.warn('  ❌ Claude failed:', e.message);
+      recordEngineFailure('claude');
+    }
+  }
+
+  if (!aiText) {
+    const gemAvail = isGeminiAvailable();
+    const groqAvail = isGroqAvailable();
+    const claudeAvail = isClaudeAvailable();
+    aiText = `🤖 **AI Unavailable** — Sabhi engines respond nahi kar paye.
+
+🔷 Gemini: ${gemAvail ? '✓ Key set' : '✗ Key missing'}
+⚡ Groq: ${groqAvail ? '✓ Key set' : '✗ Key missing'}
+🟣 Claude: ${claudeAvail ? '✓ Key set' : '✗ Key missing'}
+
+Server pe free API key set karo (ek bhi kaafi hai):
+🔑 Gemini: https://aistudio.google.com/apikey (1,500 req/day)
+🔑 Groq: https://console.groq.com (100K tokens/day)
+🔑 Claude: https://console.anthropic.com (free tier)`;
     usedEngine = 'system';
   }
 
@@ -340,7 +408,7 @@ export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={
   history.push({ role: 'assistant', content: aiText });
   if (history.length > MAX_HISTORY * 2) history.splice(0, history.length - MAX_HISTORY);
 
-  const label = usedEngine === 'gemini' ? '🔷 Gemini Flash' : usedEngine === 'groq' ? '⚡ Groq Llama 3.3' : '';
+  const label = usedEngine === 'gemini' ? '🔷 Gemini Flash' : usedEngine === 'groq' ? '⚡ Groq Llama 3.3' : usedEngine === 'claude' ? '🟣 Claude Sonnet' : '';
   return `${label} | ${intent} | LIVE\n\n${safeText}`;
 }
 
@@ -352,6 +420,7 @@ export function clearChatHistory(chatId) {
 export function getAIHealthStatus() {
   return {
     gemini: { available: isGeminiAvailable(), health: engineHealth.gemini },
-    groq: { available: isGroqAvailable(), health: engineHealth.groq }
+    groq: { available: isGroqAvailable(), health: engineHealth.groq },
+    claude: { available: isClaudeAvailable(), health: engineHealth.claude }
   };
 }

@@ -208,7 +208,71 @@ apiRouter.post('/groq', express.json({ limit: '1mb' }), async (req, res) => {
   }
 });
 
+apiRouter.post('/claude', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    if (!CLAUDE_KEY || CLAUDE_KEY.length < 10) {
+      return res.status(503).json({ error: 'Claude API key not configured on server' });
+    }
+    const { messages, model } = req.body;
+    const modelName = model || 'claude-sonnet-4-20250514';
 
+    const systemMsg = messages.find(m => m.role === 'system');
+    const claudeMessages = messages.filter(m => m.role !== 'system').map(m => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: m.content
+    }));
+
+    const body = { model: modelName, max_tokens: 8000, messages: claudeMessages };
+    if (systemMsg) body.system = systemMsg.content;
+
+    const apiRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': CLAUDE_KEY,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30000)
+    });
+    const data = await apiRes.json();
+    if (!apiRes.ok) return res.status(apiRes.status).json(data);
+    res.json(data);
+  } catch (e) {
+    console.error('Claude proxy error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Diagnostic: show which keys are configured (without revealing values)
+apiRouter.get('/debug-keys', (req, res) => {
+  res.json({
+    gemini: { configured: !!(GEMINI_KEY?.length > 5), prefix: GEMINI_KEY ? GEMINI_KEY.substring(0, 4) + '...' : null },
+    groq: { configured: !!(GROQ_KEY?.length > 10), prefix: GROQ_KEY ? GROQ_KEY.substring(0, 4) + '...' : null },
+    claude: { configured: !!(CLAUDE_KEY?.length > 10), prefix: CLAUDE_KEY ? CLAUDE_KEY.substring(0, 4) + '...' : null },
+    tavily: { configured: !!(TAVILY_API_KEY?.length > 10) },
+    timestamp: new Date().toISOString()
+  });
+});
+
+apiRouter.get('/config', (req, res) => {
+  res.json({
+    apiUrl: API_URL || '',
+    gemini: !!(GEMINI_KEY && GEMINI_KEY.length > 5),
+    groq: !!(GROQ_KEY && GROQ_KEY.length > 10),
+    claude: !!(CLAUDE_KEY && CLAUDE_KEY.length > 10),
+    tavily: !!(TAVILY_API_KEY && TAVILY_API_KEY.length > 10)
+  });
+});
+
+apiRouter.get('/ai-status', (req, res) => {
+  res.json({
+    gemini: !!(GEMINI_KEY && GEMINI_KEY.length > 5),
+    groq: !!(GROQ_KEY && GROQ_KEY.length > 10),
+    claude: !!(CLAUDE_KEY && CLAUDE_KEY.length > 10),
+    tavily: !!(TAVILY_API_KEY && TAVILY_API_KEY.length > 10)
+  });
+});
 
 // Mount the API router at /api
 app.use('/api', apiRouter);
@@ -2521,7 +2585,9 @@ initializeData().then(() => {
   console.log(`📱 Chat ID: ${TG_CHAT_ID}`);
   console.log(`   Market Status: ${getMarketStatus()}`);
   console.log(`   Auto Alerts: ${autoAlerts ? 'ON' : 'OFF'}`);
-  console.log(`   Groq: ${GROQ_KEY ? 'ONLINE' : 'OFFLINE'}`);
+  console.log(`   🔷 Gemini: ${GEMINI_KEY?.length > 5 ? 'ONLINE' : 'OFFLINE'}`);
+  console.log(`   ⚡ Groq:   ${GROQ_KEY?.length > 10 ? 'ONLINE' : 'OFFLINE'}`);
+  console.log(`   🟣 Claude: ${CLAUDE_KEY?.length > 10 ? 'ONLINE' : 'OFFLINE'}`);
   console.log('');
   // Send boot notification
   safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI ADVANCE PRO v16.0 ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🤖 AI: Groq Super Intelligence\n🔬 Deep Research: ACTIVE 24x7\n🧬 Deep Mind Analysis: ACTIVE\n\nType /help for commands.`).catch(() => { });

@@ -216,21 +216,26 @@ export const NeuralChat = React.memo(({
     throw lastError;
   };
 
-  const tryAIEngine = async (endpoint: string, modelName: string, messages: any[], systemPrompt: string) => {
+  const tryAIEngine = async (endpoint: string, modelName: string, messages: any[], systemPrompt: string): Promise<string | null> => {
     const status = await getServerAIStatus();
     if (!status || !(status as any)[endpoint]) return null;
     const body = {
       messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
       model: modelName
     };
-    const res = await callAIProxyRaw(endpoint, body);
+    const res = await callAIProxy(endpoint, body);
     if (!res) return null;
     const data = await res.json();
+
     if (endpoint === 'gemini') {
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text || text.trim().length < 5) return null;
-      return text;
+      return text && text.trim().length >= 5 ? text : null;
     }
+    if (endpoint === 'claude') {
+      const text = data.content?.[0]?.text;
+      return text && text.trim().length >= 5 ? text : null;
+    }
+    // groq
     const text = data.choices?.[0]?.message?.content;
     return text && text.trim().length >= 5 ? text : null;
   };
@@ -311,14 +316,20 @@ RESPONSE STRUCTURE:
 
     try {
       let text = await rateLimitedFetch(() => tryAIEngine('gemini', 'gemini-2.0-flash', recentMessages, systemPrompt));
+      let usedEngine = 'gemini';
       if (!text) {
         text = await rateLimitedFetch(() => tryAIEngine('groq', 'llama-3.3-70b-versatile', recentMessages, systemPrompt));
+        usedEngine = 'groq';
       }
-      if (!text) throw new Error('Both AI engines unavailable');
-      return { text, model: text.includes('gemini') ? 'gemini' as const : 'groq' as const };
+      if (!text) {
+        text = await rateLimitedFetch(() => tryAIEngine('claude', 'claude-sonnet-4-20250514', recentMessages, systemPrompt));
+        usedEngine = 'claude';
+      }
+      if (!text) throw new Error('All AI engines unavailable');
+      return { text, model: usedEngine as 'gemini' | 'groq' | 'claude' };
     } catch (e) {
       const lastError = e instanceof Error ? e.message : String(e);
-      return { text: `🤖 **AI Offline**\n\nBhai, AI respond nahi kar paya.\n\n${lastError}\n\nServer pe GEMINI_API_KEY ya GROQ_API_KEY set karo.\nBoth are free:\n🔑 Gemini: https://aistudio.google.com/apikey\n🔑 Groq: https://console.groq.com`, model: 'system' as const };
+      return { text: `🤖 **AI Offline**\n\nBhai, AI respond nahi kar paya.\n\n${lastError}\n\nServer pe free API key set karo (ek bhi kaafi hai):\n🔑 Gemini: https://aistudio.google.com/apikey (1,500 req/day)\n🔑 Groq: https://console.groq.com (100K tokens/day)\n🔑 Claude: https://console.anthropic.com (free tier)`, model: 'system' as const };
     }
   };
 
