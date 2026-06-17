@@ -84,7 +84,7 @@ export interface DeepScanStock {
   sellTiming: string;
   // AI reasoning
   aiReasoning: string;
-  geminiAnalysis?: string; // Gemini 3.5 Flash deep analysis
+  aiAnalysis?: string; // Groq deep analysis
   // Deep Quantum AI — Enhanced fields
   bbUpper?: number;
   bbLower?: number;

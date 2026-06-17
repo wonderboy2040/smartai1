@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useApp } from '../../hooks/AppContext';
 import { DeepScanStock } from '../../types';
-import { fetchDeepScanPrices, runDeepScan, getGeminiDeepAnalysis, formatDeepScanTelegram } from '../../utils/deepScanner';
+import { fetchDeepScanPrices, runDeepScan, getGroqDeepAnalysis, formatDeepScanTelegram } from '../../utils/deepScanner';
 import { sendTelegramAlert } from '../../utils/api';
 import { secureStorage } from '../../utils/secureStorage';
 
@@ -33,7 +33,7 @@ export default React.memo(function DeepScanTab() {
   const [isScanning, setIsScanning] = useState(false);
   const [lastScan, setLastScan] = useState<string>('');
   const [expandedStock, setExpandedStock] = useState<string | null>(null);
-  const [geminiLoading, setGeminiLoading] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
   const [tgSending, setTgSending] = useState(false);
   const scanInterval = useRef<number | null>(null);
 
@@ -43,8 +43,7 @@ export default React.memo(function DeepScanTab() {
   const vixRef = useRef({ usVix, inVix });
   vixRef.current = { usVix, inVix };
 
-  // Persistent store for Gemini analyses — never lost on re-scan
-  const geminiCache = useRef<Record<string, string>>({});
+  const aiCache = useRef<Record<string, string>>({});
 
   // Run scan — stable callback, doesn't depend on livePrices directly
   const doScan = useCallback(async () => {
@@ -58,22 +57,19 @@ export default React.memo(function DeepScanTab() {
       }
       const result = runDeepScan(merged, vixRef.current.usVix, vixRef.current.inVix);
 
-      // Merge back any cached Gemini analyses so they persist across re-scans
       const resultWithAnalysis = result.map(s =>
-        geminiCache.current[s.symbol] ? { ...s, geminiAnalysis: geminiCache.current[s.symbol] } : s
+        aiCache.current[s.symbol] ? { ...s, aiAnalysis: aiCache.current[s.symbol] } : s
       );
       setStocks(resultWithAnalysis);
       setLastScan(new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit' }));
 
-      // Try Gemini 3.5 Flash analysis for top 5 (non-blocking)
-      setGeminiLoading(true);
-      getGeminiDeepAnalysis(result, 5).then(analyses => {
+      setAiLoading(true);
+      getGroqDeepAnalysis(result, 5).then(analyses => {
         if (Object.keys(analyses).length > 0) {
-          // Save to persistent cache
-          Object.assign(geminiCache.current, analyses);
-          setStocks(prev => prev.map(s => analyses[s.symbol] ? { ...s, geminiAnalysis: analyses[s.symbol] } : s));
+          Object.assign(aiCache.current, analyses);
+          setStocks(prev => prev.map(s => analyses[s.symbol] ? { ...s, aiAnalysis: analyses[s.symbol] } : s));
         }
-      }).catch(() => {}).finally(() => setGeminiLoading(false));
+      }).catch(() => {}).finally(() => setAiLoading(false));
     } catch (e) { console.warn('Deep scan failed:', e); }
     finally { setIsScanning(false); }
   }, []); // stable — no dependencies, uses refs
@@ -139,7 +135,7 @@ export default React.memo(function DeepScanTab() {
             <span className="text-[11px] text-slate-500 font-mono">
               {isScanning ? 'SCANNING...' : `Last: ${lastScan || '--'}`}
             </span>
-            {geminiLoading && <span className="text-[10px] text-cyan-400 animate-pulse">🧠 Advance Pro AI Analyzing...</span>}
+            {aiLoading && <span className="text-[10px] text-cyan-400 animate-pulse">🧠 Groq AI Analyzing...</span>}
           </div>
         </div>
         <div className="flex gap-2">
@@ -327,11 +323,10 @@ export default React.memo(function DeepScanTab() {
                   <div className="text-xs text-slate-300">{s.aiReasoning}</div>
                 </div>
 
-                {/* Upgraded Quantum Pro Deep Analysis */}
-                {s.geminiAnalysis && (
+                {s.aiAnalysis && (
                   <div className="bg-cyan-500/5 rounded-xl p-3 border border-cyan-500/20">
-                    <div className="text-[10px] text-cyan-400 font-bold uppercase mb-1">🧠 Deep Mind AI Advance Pro Analysis</div>
-                    <div className="text-xs text-cyan-200 whitespace-pre-line">{s.geminiAnalysis}</div>
+                    <div className="text-[10px] text-cyan-400 font-bold uppercase mb-1">🧠 Groq Deep Analysis</div>
+                    <div className="text-xs text-cyan-200 whitespace-pre-line">{s.aiAnalysis}</div>
                   </div>
                 )}
               </div>
@@ -366,7 +361,7 @@ export default React.memo(function DeepScanTab() {
           <span>🔥 ADX Trend Strength Meter</span>
         </div>
         <div className="mt-2 text-[9px] text-slate-600 font-mono">
-          Powered by TradingView Scanner + Gemini 3.5 + Claude + Groq (Advance Pro) | Auto-refresh: 5min | Telegram Alerts: 2hr Intervals
+          Powered by TradingView Scanner + Groq Super Intelligence | Auto-refresh: 5min | Telegram Alerts: 2hr Intervals
         </div>
       </div>
     </div>

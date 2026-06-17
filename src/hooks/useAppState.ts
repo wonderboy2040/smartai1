@@ -72,11 +72,8 @@ export function useAppState() {
   // --- Modal ---
   const [showAddModal, setShowAddModal] = useState(false);
 
-  // --- API Keys State ---
   const [aiKeys, setAiKeys] = useState<{
     groqKey: string;
-    geminiKey: string;
-    claudeKey: string;
     tavilyKey: string;
     tgToken: string;
     tgChatId: string;
@@ -87,8 +84,6 @@ export function useAppState() {
     } catch { }
     return {
       groqKey: secureStorage.getItem('WEALTH_AI_GROQ') || '',
-      geminiKey: secureStorage.getItem('WEALTH_AI_GEMINI') || '',
-      claudeKey: secureStorage.getItem('WEALTH_AI_CLAUDE') || '',
       tavilyKey: secureStorage.getItem('WEALTH_AI_TAVILY') || '',
       tgToken: secureStorage.getItem('TG_TOKEN') || '',
       tgChatId: secureStorage.getItem('TG_CHAT_ID') || ''
@@ -102,8 +97,6 @@ export function useAppState() {
       const updated = { ...prev, ...newKeys };
       secureStorage.setItem('WEALTH_AI_KEYS', JSON.stringify(updated));
       if (updated.groqKey) secureStorage.setItem('WEALTH_AI_GROQ', updated.groqKey);
-      if (updated.geminiKey) secureStorage.setItem('WEALTH_AI_GEMINI', updated.geminiKey);
-      if (updated.claudeKey) secureStorage.setItem('WEALTH_AI_CLAUDE', updated.claudeKey);
       if (updated.tavilyKey) secureStorage.setItem('WEALTH_AI_TAVILY', updated.tavilyKey);
       if (updated.tgToken) secureStorage.setItem('TG_TOKEN', updated.tgToken);
       if (updated.tgChatId) secureStorage.setItem('TG_CHAT_ID', updated.tgChatId);
@@ -201,8 +194,6 @@ export function useAppState() {
             setAiKeys(parsed);
             secureStorage.setItem('WEALTH_AI_KEYS', cloudKey);
             if (parsed.groqKey) secureStorage.setItem('WEALTH_AI_GROQ', parsed.groqKey);
-            if (parsed.geminiKey) secureStorage.setItem('WEALTH_AI_GEMINI', parsed.geminiKey);
-            if (parsed.claudeKey) secureStorage.setItem('WEALTH_AI_CLAUDE', parsed.claudeKey);
             if (parsed.tavilyKey) secureStorage.setItem('WEALTH_AI_TAVILY', parsed.tavilyKey);
             if (parsed.tgToken) secureStorage.setItem('TG_TOKEN', parsed.tgToken);
             if (parsed.tgChatId) secureStorage.setItem('TG_CHAT_ID', parsed.tgChatId);
@@ -231,8 +222,6 @@ export function useAppState() {
           if (oldGroq) {
             const initial = {
               groqKey: oldGroq,
-              geminiKey: secureStorage.getItem('WEALTH_AI_GEMINI') || '',
-              claudeKey: secureStorage.getItem('WEALTH_AI_CLAUDE') || '',
               tavilyKey: secureStorage.getItem('WEALTH_AI_TAVILY') || '',
               tgToken: secureStorage.getItem('TG_TOKEN') || '',
               tgChatId: secureStorage.getItem('TG_CHAT_ID') || ''
@@ -854,7 +843,7 @@ export function useAppState() {
 
   const flushCache = useCallback(() => {
     const preserveKeys = [
-      'WEALTH_AI_KEYS', 'WEALTH_AI_GROQ', 'WEALTH_AI_GEMINI', 'WEALTH_AI_CLAUDE',
+      'WEALTH_AI_KEYS', 'WEALTH_AI_GROQ',
       'WEALTH_AI_TAVILY', 'TG_TOKEN', 'TG_CHAT_ID',
       'theme', 'portfolio', 'plannerSettings', 'wealth_goals', 'authDone'
     ];

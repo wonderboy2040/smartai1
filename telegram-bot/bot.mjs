@@ -10,7 +10,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_API_KEY, CLAUDE_API_KEY, TAVILY_API_KEY, TAX_PAIRS } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, TAVILY_API_KEY, TAX_PAIRS } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchCryptoPricesINR, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
 import { loadPortfolioFromCloud } from './cloud.mjs';
 import {
@@ -108,8 +108,8 @@ const distPath = path.join(__dirname, '../dist');
 app.use(express.static(distPath));
 
 // ========================================
-// API ROUTER — Groq, Gemini & Claude Proxy (avoids CORS + browser key exposure)
-// Frontend calls /api/groq, /api/gemini or /api/claude → server uses env var keys
+// API ROUTER — Groq Proxy (avoids CORS + browser key exposure)
+// Frontend calls /api/groq → server uses env var keys
 // Uses Express Router for clean path matching (works with Express 5)
 // ========================================
 const apiRouter = express.Router();
@@ -129,18 +129,13 @@ apiRouter.get('/config', (req, res) => {
   res.json({
     apiUrl: API_URL || '',
     groq: !!(GROQ_KEY && GROQ_KEY.length > 10),
-    gemini: !!(GEMINI_API_KEY && GEMINI_API_KEY.length > 10),
-    claude: !!(CLAUDE_API_KEY && CLAUDE_API_KEY.length > 10),
     tavily: !!(TAVILY_API_KEY && TAVILY_API_KEY.length > 10)
   });
 });
 
-// AI status endpoint — tells frontend which engines are available on server
 apiRouter.get('/ai-status', (req, res) => {
   res.json({
     groq: !!(GROQ_KEY && GROQ_KEY.length > 10),
-    gemini: !!(GEMINI_API_KEY && GEMINI_API_KEY.length > 10),
-    claude: !!(CLAUDE_API_KEY && CLAUDE_API_KEY.length > 10),
     tavily: !!(TAVILY_API_KEY && TAVILY_API_KEY.length > 10)
   });
 });
@@ -177,58 +172,7 @@ apiRouter.post('/groq', express.json({ limit: '1mb' }), async (req, res) => {
   }
 });
 
-apiRouter.post('/gemini', express.json({ limit: '1mb' }), async (req, res) => {
-  try {
-    if (!GEMINI_API_KEY || GEMINI_API_KEY.length < 10) {
-      return res.status(503).json({ error: 'Gemini API key not configured on server' });
-    }
-    const { contents, generationConfig, safetySettings, model } = req.body;
-    const modelName = model || 'gemini-2.0-flash';
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`;
-    const apiRes = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents, generationConfig, safetySettings }),
-      signal: AbortSignal.timeout(25000)
-    });
-    const data = await apiRes.json();
-    if (!apiRes.ok) {
-      return res.status(apiRes.status).json(data);
-    }
-    res.json(data);
-  } catch (e) {
-    console.error('Gemini proxy error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
 
-apiRouter.post('/claude', express.json({ limit: '1mb' }), async (req, res) => {
-  try {
-    if (!CLAUDE_API_KEY || CLAUDE_API_KEY.length < 10) {
-      return res.status(503).json({ error: 'Claude API key not configured on server' });
-    }
-    const { model, max_tokens, system, messages } = req.body;
-    const modelName = model || 'claude-sonnet-4-5';
-    const apiRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': CLAUDE_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ model: modelName, max_tokens: max_tokens || 4096, system, messages }),
-      signal: AbortSignal.timeout(30000)
-    });
-    const data = await apiRes.json();
-    if (!apiRes.ok) {
-      return res.status(apiRes.status).json(data);
-    }
-    res.json(data);
-  } catch (e) {
-    console.error('Claude proxy error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
 
 // Mount the API router at /api
 app.use('/api', apiRouter);
@@ -261,8 +205,8 @@ console.log('');
 console.log('╔══════════════════════════════════════════════╗');
 console.log('║  🧠 DEEP MIND AI ADVANCE PRO v16.0       ║');
 console.log('║  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ║');
-console.log('║  3-Engine FREE AI Architecture           ║');
-console.log('║  Gemini + Claude + Groq                  ║');
+console.log('║  GROQ SUPER INTELLIGENCE                 ║');
+console.log('║  Single Engine: Llama-3.3 70B + Compound ║');
 console.log('║  Deep Research + Live Market 24x7        ║');
 console.log('╚══════════════════════════════════════════════╝');
 console.log('');
@@ -294,11 +238,9 @@ async function initializeData() {
   }
 
   // Step 2: Keys are loaded from environment variables only (no cloud sync)
-  // Ensure GEMINI_API_KEY, CLAUDE_API_KEY, GROQ_KEY are set in Render env
+  // Ensure GROQ_KEY is set in Render env
   console.log('🔑 API keys loaded from environment variables (cloud sync disabled)');
   console.log(`  ⚡ Groq: ${GROQ_KEY ? '✓ SET' : '✗ MISSING'}`);
-  console.log(`  🔵 Gemini: ${GEMINI_API_KEY ? '✓ SET' : '✗ MISSING'}`);
-  console.log(`  🟣 Claude: ${CLAUDE_API_KEY ? '✓ SET' : '✗ MISSING'}`);
 
   // Step 3: Forex (non-blocking)
   try {
@@ -338,8 +280,6 @@ async function initializeData() {
   console.log(` BOT FULLY ONLINE — ${getISTTime()} IST`);
   console.log(` Portfolio: ${portfolio.length} positions`);
   console.log(` Groq AI: ${GROQ_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
-  console.log(` Gemini AI: ${GEMINI_API_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
-  console.log(` Claude AI: ${CLAUDE_API_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
   console.log(` Market: ${getMarketStatus()}`);
   console.log('🟢 ════════════════════════════════════════');
   console.log('');
@@ -500,10 +440,10 @@ Nagraj Bhai, main tumhara ADVANCE PRO AI Trading assistant hoon! 🚀
 • Tavily Web Search (Breaking News)
 • VIX, Gold, Crude, DXY, Bitcoin, Bonds
 
-🤖 <b>3-Engine FREE AI Architecture:</b>
-• 🔵 Google Gemini 2.0 Flash (Real-Time Intel + Google Search)
-• 🟣 Claude Sonnet 4.5 (Deep Analysis + Strategy)
-• ⚡ Groq Llama-3.3 70B + Compound (Ultra-Fast + Live Search)
+🤖 <b>GROQ SUPER INTELLIGENCE:</b>
+• ⚡ Llama-3.3 70B + Compound (Ultra-Fast + Live Market Data)
+• 🌐 Market Expert with Real-Time Web Search
+• 🧠 Deep Research + Deep Mind Analysis
 
 📊 <b>Commands:</b>
 📊 /portfolio — Full portfolio + live P&L
@@ -532,7 +472,7 @@ Nagraj Bhai, main tumhara ADVANCE PRO AI Trading assistant hoon! 🚀
 🌍 /news — Market sentiment
 💼 /fundamental — Deep fundamentals
 🔔 /alert — Toggle auto alerts
-🧠 /model — Select AI Model (groq/gemini/claude/auto)
+🧠 /model — Select AI Model (auto/groq/market)
 🧹 /clear — Clear AI memory
 
 🧠 <b>AI Chat Mode:</b>
@@ -558,13 +498,8 @@ bot.onText(/^\/debug_env(@\w+)?$/i, async (msg) => {
 
   let report = '🔍 <b>ENVIRONMENT VARIABLE DEBUGGER</b>\n━━━━━━━━━━━━━━━━━━━━━━\n';
 
-  // Directly check the variables from config and process.env
   report += `<b>GROQ_KEY:</b> ${env.GROQ_KEY ? '✅ Found (' + env.GROQ_KEY.length + ' ch)' : '❌ MISSING'}\n`;
   report += `<b>VITE_GROQ_API_KEY:</b> ${env.VITE_GROQ_API_KEY ? '✅ Found (' + env.VITE_GROQ_API_KEY.length + ' ch)' : '❌ MISSING'}\n`;
-  report += `<b>GEMINI_API_KEY:</b> ${env.GEMINI_API_KEY ? '✅ Found (' + env.GEMINI_API_KEY.length + ' ch)' : '❌ MISSING'}\n`;
-  report += `<b>VITE_GEMINI_API_KEY:</b> ${env.VITE_GEMINI_API_KEY ? '✅ Found (' + env.VITE_GEMINI_API_KEY.length + ' ch)' : '❌ MISSING'}\n`;
-  report += `<b>CLAUDE_API_KEY:</b> ${env.CLAUDE_API_KEY ? '✅ Found (' + env.CLAUDE_API_KEY.length + ' ch)' : '❌ MISSING'}\n`;
-  report += `<b>VITE_CLAUDE_API_KEY:</b> ${env.VITE_CLAUDE_API_KEY ? '✅ Found (' + env.VITE_CLAUDE_API_KEY.length + ' ch)' : '❌ MISSING'}\n`;
   report += `<b>TG_TOKEN:</b> ${env.TG_TOKEN ? '✅ Found (' + env.TG_TOKEN.length + ' ch)' : '❌ MISSING'}\n`;
 
   report += '\n<b>SYSTEM ENV KEYS SCAN:</b>\n';
@@ -674,7 +609,7 @@ Deep fundamental analysis using Graham framework.
 Toggle scheduled auto-analysis ON/OFF.
 
 🧠 <b>/model &lt;NAME&gt;</b>
-Select specific AI model (auto, groq, gemini, claude).
+Select AI model (auto, groq, market).
 
 🧹 <b>/clear</b>
 Chat history reset karo.
@@ -696,7 +631,7 @@ bot.onText(/^\/news(@\w+)?$/i, async (msg) => {
   console.log(`📥 /news from ${msg.from?.first_name || chatId}`);
   try {
     await safeSend(chatId, '🌍 <i>Synthesizing latest global market news... extracting sentiment score...</i>\n\nThis is a Superintelligent Deep AI Feature.');
-    const response = await chatWithAI(chatId, '/news', portfolio, livePrices, usdInrRate, userModels.get(chatId) || 'auto');
+    const response = await chatWithAI(chatId, '/news', portfolio, livePrices, usdInrRate);
     await safeSend(chatId, response);
   } catch (e) {
     console.error('❌ /news error:', e.message);
@@ -713,7 +648,7 @@ bot.onText(/^\/fundamentals?(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
   console.log(`📥 /fundamental ${target} from ${msg.from?.first_name || chatId}`);
   try {
     await safeSend(chatId, `💼 <i>Executing Deep Fundamental Forensics for ${target}... running Graham framework...</i>\n\nThis is a Superintelligent Deep AI Feature.`);
-    const response = await chatWithAI(chatId, `Execute a deep fundamental forensic analysis for ${target}. Calculate Intrinsic Value based on PE ratio, Book Value, and ROE using Graham framework. Output in tabular format if possible.`, portfolio, livePrices, usdInrRate, userModels.get(chatId) || 'auto');
+    const response = await chatWithAI(chatId, `Execute a deep fundamental forensic analysis for ${target}. Calculate Intrinsic Value based on PE ratio, Book Value, and ROE using Graham framework. Output in tabular format if possible.`, portfolio, livePrices, usdInrRate);
     await safeSend(chatId, response);
   } catch (e) {
     console.error('❌ /fundamental error:', e.message);
@@ -1194,38 +1129,28 @@ bot.onText(/^\/setkey(?:@\w+)?(?:\s+(\w+)\s+(.+))?$/i, async (msg, match) => {
     helpMsg += `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
     helpMsg += `Tum in keys ko runtime me update kar sakte ho:\n`;
     helpMsg += `• <code>/setkey groq &lt;key&gt;</code>\n`;
-    helpMsg += `• <code>/setkey gemini &lt;key&gt;</code>\n`;
-    helpMsg += `• <code>/setkey claude &lt;key&gt;</code>\n`;
     helpMsg += `• <code>/setkey tavily &lt;key&gt;</code>\n\n`;
-    helpMsg += `<b>Current Status (3-Engine FREE):</b>\n`;
-    const { isGroqAvailable, isGeminiAvailable, isClaudeAvailable, isTavilyAvailable } = await import('./config.mjs');
+    helpMsg += `<b>Current Status (Groq Super Intelligence):</b>\n`;
+    const { isGroqAvailable, isTavilyAvailable } = await import('./config.mjs');
     helpMsg += `⚡ Groq: ${isGroqAvailable() ? '🟢 Active' : '🔴 Missing'}\n`;
-    helpMsg += `🔵 Gemini: ${isGeminiAvailable() ? '🟢 Active' : '🔴 Missing'}\n`;
-    helpMsg += `🟣 Claude: ${isClaudeAvailable() ? '🟢 Active' : '🔴 Missing'}\n`;
     helpMsg += `🔍 Tavily (Search): ${isTavilyAvailable() ? '🟢 Active' : '🔴 Missing'}\n\n`;
     helpMsg += `<i>Note: Settings automatically sync to Google Sheets and the website.</i>`;
     await safeSend(chatId, helpMsg);
     return;
   }
 
-  const { setGroqKey, setGeminiKey, setClaudeKey, setTavilyKey } = await import('./config.mjs');
+  const { setGroqKey, setTavilyKey } = await import('./config.mjs');
   const { saveAllKeysToCloud } = await import('./cloud.mjs');
 
   let parsedName = '';
   if (keyName === 'groq') {
     setGroqKey(keyValue);
     parsedName = 'Groq API Key';
-  } else if (keyName === 'gemini') {
-    setGeminiKey(keyValue);
-    parsedName = 'Gemini API Key';
-  } else if (keyName === 'claude') {
-    setClaudeKey(keyValue);
-    parsedName = 'Claude API Key';
   } else if (keyName === 'tavily') {
     setTavilyKey(keyValue);
     parsedName = 'Tavily API Key';
   } else {
-    await safeSend(chatId, `❌ Unknown key name: <b>${keyName}</b>. Use: groq, gemini, claude, or tavily.`);
+    await safeSend(chatId, `❌ Unknown key name: <b>${keyName}</b>. Use: groq or tavily.`);
     return;
   }
 
@@ -1248,12 +1173,12 @@ bot.onText(/^\/model(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
 
   if (!modelArg) {
     const current = userModels.get(chatId) || 'auto';
-    await safeSend(chatId, `🧠 <b>Current AI Model:</b> <code>${current}</code>\n\n<b>Available models:</b>\n• <code>auto</code> (🤖 Smart intent routing — best engine auto-select)\n• <code>market</code> (🌐 Market Expert — Groq Compound, FREE realtime web search)\n• <code>groq</code> (⚡ Llama-3.3 70B - Ultra Fast, FREE)\n• <code>gemini</code> (🔵 Gemini 2.0 Flash - Live Search Grounding, FREE)\n• <code>claude</code> (🟣 Claude Sonnet 4.5 - Deep Analysis)\n\nExample: <code>/model market</code>`);
+    await safeSend(chatId, `🧠 <b>Current AI Model:</b> <code>${current}</code>\n\n<b>Available models:</b>\n• <code>auto</code> (🤖 Smart intent routing — best engine auto-select)\n• <code>market</code> (🌐 Market Expert — Groq Compound, FREE realtime web search)\n• <code>groq</code> (⚡ Llama-3.3 70B - Ultra Fast, FREE)\n\nExample: <code>/model market</code>`);
 
     return;
   }
 
-  const validModels = ['auto', 'market', 'groq', 'gemini', 'claude'];
+  const validModels = ['auto', 'market', 'groq'];
   if (validModels.includes(modelArg)) {
     userModels.set(chatId, modelArg);
     await safeSend(chatId, `✅ <b>AI Model updated to:</b> <code>${modelArg}</code>`);
@@ -1278,7 +1203,7 @@ bot.onText(/^\/ai(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   try {
     await safeSend(chatId, '🧠 <i>Deep Mind analyzing...</i>');
     await refreshPrices();
-    const response = await chatWithAI(chatId, query, portfolio, livePrices, usdInrRate, userModels.get(chatId) || 'auto');
+    const response = await chatWithAI(chatId, query, portfolio, livePrices, usdInrRate);
     await safeSend(chatId, response);
   } catch (e) {
     console.error('❌ /ai error:', e.message);
@@ -1300,7 +1225,7 @@ bot.onText(/^\/chat(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   try {
     await safeSend(chatId, '🧠 <i>Deep Mind analyzing...</i>');
     await refreshPrices();
-    const response = await chatWithAI(chatId, query, portfolio, livePrices, usdInrRate, userModels.get(chatId) || 'auto');
+    const response = await chatWithAI(chatId, query, portfolio, livePrices, usdInrRate);
     await safeSend(chatId, response);
   } catch (e) {
     console.error('❌ /chat error:', e.message);
@@ -1928,7 +1853,7 @@ bot.on('message', async (msg) => {
   try {
     await safeSend(chatId, '🧠 <i>Deep Mind processing...</i>');
     await refreshPrices();
-    const response = await chatWithAI(chatId, text, portfolio, livePrices, usdInrRate, userModels.get(chatId) || 'auto');
+    const response = await chatWithAI(chatId, text, portfolio, livePrices, usdInrRate);
     await safeSend(chatId, response);
   } catch (e) {
     console.error('❌ AI chat error:', e.message);
@@ -2310,7 +2235,7 @@ bot.onText(/^\/premarket(@\w+)?$/i, async (msg) => {
   if (!isAuthorized(msg)) return;
   await safeSend(msg.chat.id, '🌅 <b>Generating Pre-market Intelligence...</b>', { parse_mode: 'HTML' });
   try {
-    const response = await chatWithAI(msg.chat.id, 'Generate a comprehensive pre-market briefing. Include global overnight summary, GIFT Nifty/US Futures, portfolio impact, and key events. Use real-time data.', portfolio, livePrices, usdInrRate, 'gemini');
+    const response = await chatWithAI(msg.chat.id, 'Generate a comprehensive pre-market briefing. Include global overnight summary, GIFT Nifty/US Futures, portfolio impact, and key events. Use real-time data.', portfolio, livePrices, usdInrRate);
     await safeSend(msg.chat.id, response);
   } catch (e) {
     await safeSend(msg.chat.id, `❌ Error: ${e.message}`);
@@ -2392,7 +2317,7 @@ cron.schedule('15 3 * * 1-5', async () => {
   if (!autoAlerts) return;
   console.log(`🌅 India Pre-Market triggered at ${getISTTime()} IST`);
   try {
-    const response = await chatWithAI(TG_CHAT_ID, 'Generate a comprehensive India pre-market briefing for 8:45 AM. Include global overnight summary, GIFT Nifty, portfolio impact, and key events. Use real-time data.', portfolio, livePrices, usdInrRate, 'gemini');
+    const response = await chatWithAI(TG_CHAT_ID, 'Generate a comprehensive India pre-market briefing for 8:45 AM. Include global overnight summary, GIFT Nifty, portfolio impact, and key events. Use real-time data.', portfolio, livePrices, usdInrRate);
     await safeSend(TG_CHAT_ID, `🔔 <b>INDIA PRE-MARKET BRIEFING</b>\n\n${response}`);
   } catch (e) {
     console.error('India Pre-Market failed:', e.message);
@@ -2404,7 +2329,7 @@ cron.schedule('0 13 * * 1-5', async () => {
   if (!autoAlerts) return;
   console.log(`🌆 US Pre-Market triggered at ${getISTTime()} IST`);
   try {
-    const response = await chatWithAI(TG_CHAT_ID, 'Generate a comprehensive US pre-market briefing for 6:30 PM IST. Include US Futures, Crypto movements, portfolio US holdings impact, and key events. Use real-time data.', portfolio, livePrices, usdInrRate, 'gemini');
+    const response = await chatWithAI(TG_CHAT_ID, 'Generate a comprehensive US pre-market briefing for 6:30 PM IST. Include US Futures, Crypto movements, portfolio US holdings impact, and key events. Use real-time data.', portfolio, livePrices, usdInrRate);
     await safeSend(TG_CHAT_ID, `🔔 <b>US PRE-MARKET BRIEFING</b>\n\n${response}`);
   } catch (e) {
     console.error('US Pre-Market failed:', e.message);
@@ -2586,12 +2511,10 @@ initializeData().then(() => {
   console.log(`📱 Chat ID: ${TG_CHAT_ID}`);
   console.log(`   Market Status: ${getMarketStatus()}`);
   console.log(`   Auto Alerts: ${autoAlerts ? 'ON' : 'OFF'}`);
-  console.log(`   Gemini: ${GEMINI_API_KEY ? 'ONLINE' : 'OFFLINE'}`);
-  console.log(`   Claude: ${CLAUDE_API_KEY ? 'ONLINE' : 'OFFLINE'}`);
   console.log(`   Groq: ${GROQ_KEY ? 'ONLINE' : 'OFFLINE'}`);
   console.log('');
   // Send boot notification
-  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI ADVANCE PRO v16.0 ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🤖 AI: 3-Engine (Gemini + Claude + Groq)\n🔬 Deep Research: ACTIVE 24x7\n🧬 Deep Mind Analysis: ACTIVE\n\nType /help for commands.`).catch(() => { });
+  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI ADVANCE PRO v16.0 ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🤖 AI: Groq Super Intelligence\n🔬 Deep Research: ACTIVE 24x7\n🧬 Deep Mind Analysis: ACTIVE\n\nType /help for commands.`).catch(() => { });
 }).catch(err => {
   console.error('❌ Boot error (non-fatal):', err.message);
   console.log('⚡ Bot is STILL listening for commands with limited data...');

@@ -437,16 +437,14 @@ export function runDeepScan(
   return results.sort((a, b) => b.aiScore - a.aiScore);
 }
 
-// ========== GEMINI 3.5 FLASH DEEP ANALYSIS — Advanced Pro Trader ==========
-export async function getGeminiDeepAnalysis(
+// ========== GROQ DEEP ANALYSIS — Super Intelligence ==========
+export async function getGroqDeepAnalysis(
   stocks: DeepScanStock[],
   top: number = 5
 ): Promise<Record<string, string>> {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
   const groqKey = import.meta.env.VITE_GROQ_API_KEY || '';
-  const claudeKey = import.meta.env.VITE_CLAUDE_API_KEY || '';
-  
-  if (!apiKey && !groqKey && !claudeKey) return {};
+
+  if (!groqKey || !groqKey.startsWith('gsk_')) return {};
 
   const topStocks = stocks.slice(0, top);
   const stockSummary = topStocks.map((s, i) =>
@@ -469,50 +467,7 @@ RULES:
   try {
     let text = '';
 
-    // 1. Try Gemini (Primary — FREE with Google Search grounding)
-    if (!text && apiKey && apiKey.length > 10) {
-      try {
-        const contents = [
-          { role: 'user', parts: [{ text: systemPrompt }] },
-          { role: 'model', parts: [{ text: 'Understood. DEEP MIND AI Pro Trader active. Ready for institutional-grade stock analysis.' }] },
-          { role: 'user', parts: [{ text: userPrompt }] }
-        ];
-        const payload = {
-          contents,
-          generationConfig: { temperature: 0.7, maxOutputTokens: 4096, topP: 0.95, topK: 40 },
-          safetySettings: [
-            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
-            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
-            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
-          ]
-        };
-        const targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-        let res;
-        try {
-          res = await fetch(targetUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(30000)
-          });
-        } catch (err) {
-          console.warn('Gemini scanner call failed (CORS/network). No proxy fallback for security.');
-          return {};
-        }
-        if (res.ok) {
-          const data = await res.json();
-          if (data.candidates?.[0]?.finishReason !== 'SAFETY') {
-            text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          }
-        }
-      } catch (e) {
-        console.warn('Gemini deep analysis fallback failed:', e);
-      }
-    }
-
-    // 2. Try Groq Fallback
-    if (!text && groqKey && groqKey.startsWith('gsk_')) {
+    if (groqKey && groqKey.startsWith('gsk_')) {
       try {
         const payload = {
           model: 'llama-3.3-70b-versatile',
@@ -536,7 +491,7 @@ RULES:
             signal: AbortSignal.timeout(25000)
           });
         } catch (err) {
-          console.warn('Groq scanner call failed (CORS/network). No proxy fallback for security.');
+          console.warn('Groq scanner call failed (CORS/network).');
           return {};
         }
         if (res.ok) {
@@ -544,7 +499,7 @@ RULES:
           text = data.choices?.[0]?.message?.content || '';
         }
       } catch (e) {
-        console.warn('Groq deep analysis fallback failed:', e);
+        console.warn('Groq deep analysis failed:', e);
       }
     }
 
@@ -592,7 +547,7 @@ export function formatDeepScanTelegram(stocks: DeepScanStock[], market?: 'IN' | 
     line += `  📈 1Y: <b>${cur}${s.target1Y}</b> (+${s.return1Y}%) | 2Y: <b>${cur}${s.target2Y}</b> (+${s.return2Y}%)\n`;
     line += `  🎯 Buy: <i>${s.buyTiming}</i>\n`;
     line += `  🛑 SL: ${cur}${s.stopLoss} | Sell: <i>${s.sellTiming}</i>\n`;
-    if (s.geminiAnalysis) line += `  🤖 <i>${s.geminiAnalysis.substring(0, 120)}</i>\n`;
+    if (s.aiAnalysis) line += `  🤖 <i>${s.aiAnalysis.substring(0, 120)}</i>\n`;
     return line;
   };
 

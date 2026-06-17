@@ -240,7 +240,7 @@ export default function App() {
 
         {/* Neural Chat */}
         <Suspense fallback={<div className="fixed bottom-6 right-6 w-80 h-96 quantum-panel rounded-2xl flex items-center justify-center animate-pulse"><div className="text-center"><div className="text-4xl mb-2 animate-float">🧠</div><div className="text-sm text-slate-400 font-medium">Loading AI Engine...</div></div></div>}>
-          <NeuralChat groqKey={groqKey} geminiKey={aiKeys?.geminiKey} claudeKey={aiKeys?.claudeKey} portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'} usdInrRate={usdInrRate} />
+          <NeuralChat groqKey={groqKey} portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'} usdInrRate={usdInrRate} />
         </Suspense>
       </div>
     </AppContext.Provider>

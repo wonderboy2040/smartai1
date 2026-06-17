@@ -2,30 +2,17 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-// AI Engine Configurations — Groq + Gemini (Free) + Claude (Paid fallback)
 const CONFIG = {
   groq: {
     apiKey: import.meta.env.VITE_GROQ_API_KEY || '',
     baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
     model: 'llama-3.3-70b-versatile',
-    // Groq Compound — FREE agentic model with built-in real-time web search (Market Expert)
     marketModel: 'groq/compound'
-  },
-  gemini: {
-    apiKey: import.meta.env.VITE_GEMINI_API_KEY || '',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
-    model: 'gemini-2.0-flash'
-  },
-  claude: {
-    apiKey: import.meta.env.VITE_CLAUDE_API_KEY || '',
-    baseUrl: 'https://api.anthropic.com/v1/messages',
-    model: 'claude-sonnet-4-5'
   }
 } as const;
 
-// --- Server API Proxy (same-origin → no CORS → uses server env vars) ---
 const PROXY_BASE = import.meta.env.VITE_API_PROXY || '';
-let _proxyStatus: Promise<{ groq: boolean; gemini: boolean; claude: boolean; tavily: boolean } | null> | null = null;
+let _proxyStatus: Promise<{ groq: boolean; tavily: boolean } | null> | null = null;
 
 async function getServerAIStatus() {
   if (!_proxyStatus) {
@@ -39,54 +26,42 @@ async function getServerAIStatus() {
   return _proxyStatus;
 }
 
-async function proxyFetch(engine: 'groq' | 'gemini' | 'claude', body: any): Promise<Response | null> {
+async function proxyFetch(body: any): Promise<Response | null> {
   const status = await getServerAIStatus();
-  if (!status?.[engine]) return null;
-  const res = await fetch(`${PROXY_BASE}/api/${engine}`, {
+  if (!status?.groq) return null;
+  const res = await fetch(`${PROXY_BASE}/api/groq`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(25000)
   });
   if (res.ok) return res;
-  if (res.status === 503) return null; // key not configured on server → fallback to direct
+  if (res.status === 503) return null;
   const err = await res.json().catch(() => ({}));
-  throw new Error(err?.error || err?.error?.message || `${engine} proxy error: ${res.status}`);
+  throw new Error(err?.error || err?.error?.message || `proxy error: ${res.status}`);
 }
 
-// Fetch real-time market snapshot for AI context
 async function fetchRealtimeSnapshot(): Promise<string> {
   try {
     const [idxRes, coindcxRes, bondRes] = await Promise.allSettled([
       fetch('https://scanner.tradingview.com/global/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-        body: JSON.stringify({
-          symbols: {
-            tickers: [
-              'NSE:NIFTY', 'BSE:SENSEX', 'NSE:BANKNIFTY',
-              'AMEX:SPY', 'NASDAQ:QQQ', 'CBOE:VIX', 'NSE:INDIAVIX',
-              'TVC:DXY', 'COMEX:GC1!', 'NYMEX:CL1!'
-            ]
-          }, columns: ['name', 'close', 'change']
-        }),
+        body: JSON.stringify({ symbols: { tickers: ['NSE:NIFTY','BSE:SENSEX','NSE:BANKNIFTY','AMEX:SPY','NASDAQ:QQQ','CBOE:VIX','NSE:INDIAVIX','TVC:DXY','COMEX:GC1!','NYMEX:CL1!'] }, columns: ['name','close','change'] }),
         signal: AbortSignal.timeout(5000)
       }),
-      fetch('https://api.coindcx.com/exchange/ticker', {
-        signal: AbortSignal.timeout(5000)
-      }),
+      fetch('https://api.coindcx.com/exchange/ticker', { signal: AbortSignal.timeout(5000) }),
       fetch('https://scanner.tradingview.com/bond/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-        body: JSON.stringify({ symbols: { tickers: ['TVC:US10Y', 'TVC:IN10Y'] }, columns: ['description', 'close', 'change'] }),
+        body: JSON.stringify({ symbols: { tickers: ['TVC:US10Y','TVC:IN10Y'] }, columns: ['description','close','change'] }),
         signal: AbortSignal.timeout(5000)
       })
     ]);
 
     let snap = 'REAL-TIME MARKET:\n';
-    const nameMap: Record<string, string> = { 'NSE:NIFTY': 'NIFTY50', 'BSE:SENSEX': 'SENSEX', 'NSE:BANKNIFTY': 'BANKNIFTY', 'AMEX:SPY': 'S&P500', 'NASDAQ:QQQ': 'NASDAQ100', 'CBOE:VIX': 'US_VIX', 'NSE:INDIAVIX': 'INDIA_VIX', 'TVC:DXY': 'DXY', 'COMEX:GC1!': 'GOLD', 'NYMEX:CL1!': 'CRUDE_OIL' };
+    const nameMap: Record<string, string> = { 'NSE:NIFTY':'NIFTY50','BSE:SENSEX':'SENSEX','NSE:BANKNIFTY':'BANKNIFTY','AMEX:SPY':'S&P500','NASDAQ:QQQ':'NASDAQ100','CBOE:VIX':'US_VIX','NSE:INDIAVIX':'INDIA_VIX','TVC:DXY':'DXY','COMEX:GC1!':'GOLD','NYMEX:CL1!':'CRUDE_OIL' };
 
-    // Indices
     if (idxRes.status === 'fulfilled' && idxRes.value.ok) {
       const data = await idxRes.value.json();
       for (const item of (data?.data || [])) {
@@ -97,8 +72,7 @@ async function fetchRealtimeSnapshot(): Promise<string> {
       }
     }
 
-    // Crypto (CoinDCX INR — matches user's exchange)
-    const coinDcxNameMap: Record<string, string> = { 'BTCINR': 'BTC', 'ETHINR': 'ETH', 'SOLINR': 'SOL' };
+    const coinDcxNameMap: Record<string, string> = { 'BTCINR':'BTC','ETHINR':'ETH','SOLINR':'SOL' };
     if (coindcxRes.status === 'fulfilled' && coindcxRes.value.ok) {
       const tickers = await coindcxRes.value.json();
       snap += '\nCRYPTO (CoinDCX INR):\n';
@@ -106,16 +80,12 @@ async function fetchRealtimeSnapshot(): Promise<string> {
         if (coinDcxNameMap[t.market]) {
           const p = parseFloat(t.last_price) || 0;
           const c = parseFloat(t.change_24_hour) || 0;
-          if (p > 0) {
-            const inrStr = p >= 1000 ? `₹${p.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}` : `₹${p.toFixed(2)}`;
-            snap += `${coinDcxNameMap[t.market]}: ${inrStr} (${c >= 0 ? '+' : ''}${c.toFixed(2)}%)\n`;
-          }
+          if (p > 0) snap += `${coinDcxNameMap[t.market]}: ₹${p >= 1000 ? p.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') : p.toFixed(2)} (${c >= 0 ? '+' : ''}${c.toFixed(2)}%)\n`;
         }
       }
     }
 
-    // Bond Yields
-    const bondMap: Record<string, string> = { 'TVC:US10Y': 'US_10Y_YIELD', 'TVC:IN10Y': 'INDIA_10Y_YIELD' };
+    const bondMap: Record<string, string> = { 'TVC:US10Y':'US_10Y_YIELD','TVC:IN10Y':'INDIA_10Y_YIELD' };
     if (bondRes.status === 'fulfilled' && bondRes.value.ok) {
       const data = await bondRes.value.json();
       snap += '\nBOND YIELDS:\n';
@@ -131,7 +101,6 @@ async function fetchRealtimeSnapshot(): Promise<string> {
   } catch { return ''; }
 }
 
-// Tavily web search for live news
 async function fetchWebIntel(query: string, tavilyKey: string): Promise<string> {
   const apiKey = tavilyKey || import.meta.env.VITE_TAVILY_API_KEY || '';
   if (!apiKey) return '';
@@ -157,44 +126,38 @@ interface ChatMessage {
   role: 'user' | 'model' | 'system';
   text: string;
   timestamp: number;
-  model?: 'market' | 'groq' | 'gemini' | 'claude' | 'system';
+  model?: 'market' | 'groq' | 'system';
   sources?: Array<{ title: string; url: string }>;
 }
 
 const QUICK_ACTIONS = [
-  { label: 'Market News', query: 'Latest Indian and US market news and analysis with key levels', icon: '📰', type: 'market' },
-  { label: 'Portfolio Analysis', query: 'Analyze my ENTIRE portfolio deeply - every single position including crypto. Show P&L, technicals, fundamentals, and give specific BUY/HOLD/SELL verdict for each asset.', icon: '💼', type: 'claude' },
-  { label: 'ETH Analysis', query: 'Deep analysis of my Ethereum (ETH) position with on-chain context, support/resistance levels, and long-term HODL thesis', icon: '🪙', type: 'gemini' },
-  { label: 'Long-Term Strategy', query: 'Give me a 15-20 year wealth creation roadmap focusing on SIP step-up and compound growth', icon: '📈', type: 'claude' },
-  { label: 'ETF Allocation', query: 'Analyze ETF allocations including Momentum, Smallcap and SPCX ETFs with growth projections', icon: '🎯', type: 'groq' }
+  { label: 'Market News', query: 'Latest Indian and US market news and analysis with key levels', icon: '📰' },
+  { label: 'Portfolio Analysis', query: 'Analyze my ENTIRE portfolio deeply - every single position including crypto. Show P&L, technicals, fundamentals, and give specific BUY/HOLD/SELL verdict for each asset.', icon: '💼' },
+  { label: 'ETH Analysis', query: 'Deep analysis of my Ethereum (ETH) position with on-chain context, support/resistance levels, and long-term HODL thesis', icon: '🪙' },
+  { label: 'Long-Term Strategy', query: 'Give me a 15-20 year wealth creation roadmap focusing on SIP step-up and compound growth', icon: '📈' },
+  { label: 'ETF Allocation', query: 'Analyze ETF allocations including Momentum, Smallcap and SPCX ETFs with growth projections', icon: '🎯' }
 ];
 
 const MODEL_COLORS = {
   market: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
   groq: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
-  gemini: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  claude: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
   system: 'bg-slate-500/10 text-slate-400 border-slate-500/20'
 };
 
 export interface NeuralChatProps {
   groqKey?: string;
-  geminiKey?: string;
-  claudeKey?: string;
   portfolioContext: string;
   usdInrRate?: number;
 }
 
 export const NeuralChat = React.memo(({
   groqKey: propGroqKey,
-  geminiKey: propGeminiKey,
-  claudeKey: propClaudeKey,
   portfolioContext,
   usdInrRate: propUsdInrRate
 }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
-    text: '🤖 **DEEP MIND AI ADVANCE PRO v16.0**\n\n**🔬 3-Engine AI Architecture:**\n🔵 **Google Gemini 2.0 Flash**: Real-time intel + Google Search grounding\n🟣 **Claude Sonnet 4.5**: Deep institutional analysis + strategy\n⚡ **Groq Llama-3.3 70B + Compound**: Ultra-fast + live web search\n🔍 **Tavily Search**: Live market news & web data\n\n**🧬 ADVANCE PRO Features:**\n• Deep Mind Analysis (Macro + Micro)\n• Deep Research (24x7 Live)\n• Real-Time Global Market Monitor\n• Portfolio Alert System (Hinglish)\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\nAsk anything — I have LIVE market data 24x7!',
+    text: '🤖 **DEEP MIND AI ADVANCE PRO v16.0**\n\n**⚡ GROQ SUPER INTELLIGENCE:**\n• Llama-3.3 70B + Compound (Ultra-Fast + Live Market Data)\n• Market Expert with Real-Time Web Search\n\n**🧬 ADVANCE PRO Features:**\n• Deep Mind Analysis (Macro + Micro)\n• Deep Research (24x7 Live)\n• Real-Time Global Market Monitor\n• Portfolio Alert System (Hinglish)\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\nAsk anything — I have LIVE market data 24x7!',
     timestamp: Date.now(),
     model: 'system'
   }]);
@@ -203,7 +166,7 @@ export const NeuralChat = React.memo(({
   const [isThinking, setIsThinking] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
-  const [selectedModel, setSelectedModel] = useState<'auto' | 'market' | 'groq' | 'gemini' | 'claude'>('auto');
+  const [selectedModel, setSelectedModel] = useState<'auto' | 'market' | 'groq'>('auto');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -232,32 +195,31 @@ export const NeuralChat = React.memo(({
     }]);
   }, []);
 
-  // ============ RATE LIMITER & RETRY HELPER ============
   const lastRequestTimeRef = useRef<number>(0);
   const MIN_REQUEST_INTERVAL = 2000;
 
   const rateLimitedFetch = async <T,>(fn: () => Promise<T>): Promise<T> => {
     const now = Date.now();
     const timeSinceLastRequest = now - lastRequestTimeRef.current;
-    
+
     if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
       const waitTime = MIN_REQUEST_INTERVAL - timeSinceLastRequest;
       await new Promise(r => setTimeout(r, waitTime));
     }
-    
+
     lastRequestTimeRef.current = Date.now();
-    
+
     let retries = 0;
     const maxRetries = 3;
     let lastError: Error | null = null;
-    
+
     while (retries <= maxRetries) {
       try {
         return await fn();
       } catch (e) {
         lastError = e instanceof Error ? e : new Error(String(e));
         const isRateLimit = lastError.message.includes('429') || lastError.message.includes('Too Many Requests');
-        
+
         if (isRateLimit && retries < maxRetries) {
           const delay = Math.pow(2, retries + 1) * 2000 + Math.random() * 1000;
           console.warn(`Rate limited, retrying in ${delay}ms (attempt ${retries + 1}/${maxRetries})`);
@@ -268,15 +230,14 @@ export const NeuralChat = React.memo(({
         throw lastError;
       }
     }
-    
+
     throw lastError;
   };
 
-  // ============ GROQ API (Ultra-Fast + Market Expert via groq/compound) ============
   const callGroq = async (messages: any[], systemPrompt: string, modelName: string = CONFIG.groq.model) => {
     const groqMessages = [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))];
 
-    const proxyRes = await proxyFetch('groq', { messages: groqMessages, model: modelName });
+    const proxyRes = await proxyFetch({ messages: groqMessages, model: modelName });
     if (proxyRes) {
       const data = await proxyRes.json();
       const text = data.choices?.[0]?.message?.content;
@@ -309,179 +270,6 @@ export const NeuralChat = React.memo(({
     return text;
   };
 
-  // ============ GEMINI API (Real-time Intelligence) ============
-  const callGemini = async (messages: any[], systemPrompt: string) => {
-    const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
-    contents.push({ role: 'user', parts: [{ text: systemPrompt }] });
-    contents.push({ role: 'model', parts: [{ text: 'Understood. DEEP MIND AI Pro Trader active. Ready for analysis in Pro Trader Hinglish.' }] });
-
-    let lastRole = 'model';
-    for (const m of messages) {
-      const gemRole = m.role === 'assistant' ? 'model' : 'user';
-      if (gemRole === lastRole) {
-        contents[contents.length - 1].parts[0].text += '\n\n' + m.content;
-      } else {
-        contents.push({ role: gemRole, parts: [{ text: m.content }] });
-        lastRole = gemRole;
-      }
-    }
-    if (lastRole === 'model' && contents.length > 2) {
-      contents.push({ role: 'user', parts: [{ text: 'Please respond.' }] });
-    }
-
-    const basePayload = {
-      contents,
-      generationConfig: { temperature: 0.7, maxOutputTokens: 8192, topP: 0.95, topK: 40 },
-      safetySettings: [
-        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
-        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
-        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' }
-      ]
-    };
-
-    const modelOptions = ['gemini-2.0-flash', 'gemini-2.0-flash-lite'];
-    let lastError: any = null;
-
-    for (const modelName of modelOptions) {
-      // Try server proxy first
-      const proxyRes = await proxyFetch('gemini', { ...basePayload, model: modelName });
-      if (proxyRes) {
-        try {
-          const data = await proxyRes.json();
-          if (data.candidates?.[0]?.finishReason === 'SAFETY') throw new Error('Gemini blocked by safety filters');
-          const parts = data.candidates?.[0]?.content?.parts || [];
-          const text = parts.map((p: any) => p.text || '').join('');
-          if (!text || text.trim().length < 5) throw new Error('Gemini returned empty response');
-          return text;
-        } catch (e) {
-          lastError = e instanceof Error ? e : new Error(String(e));
-          if (lastError.message.includes('404') || lastError.message.includes('400')) continue;
-          throw lastError;
-        }
-      }
-
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || propGeminiKey || CONFIG.gemini.apiKey;
-      if (!apiKey || apiKey.length < 10) {
-        throw new Error('Gemini API Key missing — Set VITE_GEMINI_API_KEY or add in Settings');
-      }
-
-      const targetUrl = `${CONFIG.gemini.baseUrl}/${modelName}:generateContent?key=${apiKey}`;
-
-      const doFetch = async (): Promise<any> => {
-        const res = await fetch(targetUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(basePayload),
-          signal: AbortSignal.timeout(20000)
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error?.message || `Gemini Error: ${res.status}`);
-        }
-        return res.json();
-      };
-
-      try {
-        const data = await rateLimitedFetch(doFetch);
-        if (data.candidates?.[0]?.finishReason === 'SAFETY') throw new Error('Gemini blocked by safety filters');
-        const parts = data.candidates?.[0]?.content?.parts || [];
-        const text = parts.map((p: any) => p.text || '').join('');
-        if (!text || text.trim().length < 5) throw new Error('Gemini returned empty response');
-        return text;
-      } catch (e) {
-        lastError = e instanceof Error ? e : new Error(String(e));
-        if (lastError.message.includes('404') || lastError.message.includes('400')) continue;
-        throw lastError;
-      }
-    }
-
-    throw lastError || new Error('All Gemini model fallbacks failed');
-  };
-
-  // ============ CLAUDE API (Deep Analysis) ============
-  const callClaude = async (messages: any[], systemPrompt: string) => {
-    const fixed: Array<{ role: string; content: string }> = [];
-    let expectedRole = 'user';
-    for (const m of messages) {
-      const role = m.role === 'assistant' ? 'assistant' : 'user';
-      if (role === expectedRole) {
-        fixed.push({ role, content: m.content });
-        expectedRole = expectedRole === 'user' ? 'assistant' : 'user';
-      } else if (role === 'user' && expectedRole === 'assistant') {
-        fixed.push({ role: 'assistant', content: 'Samjha. Continue karo.' });
-        fixed.push({ role: 'user', content: m.content });
-        expectedRole = 'assistant';
-      }
-    }
-    if (fixed.length === 0 || fixed[0].role !== 'user') {
-      fixed.unshift({ role: 'user', content: 'Hello' });
-    }
-
-    const modelOptions = ['claude-sonnet-4-5', 'claude-3-5-haiku-latest'];
-    let lastError: any = null;
-
-    for (const modelName of modelOptions) {
-      const payload = {
-        model: modelName,
-        max_tokens: 4096,
-        system: systemPrompt,
-        messages: fixed
-      };
-
-      // Try server proxy first
-      const proxyRes = await proxyFetch('claude', payload);
-      if (proxyRes) {
-        try {
-          const data = await proxyRes.json();
-          const text = data.content?.[0]?.text;
-          if (!text || text.trim().length < 5) throw new Error('Claude returned empty response');
-          return text;
-        } catch (e) {
-          lastError = e instanceof Error ? e : new Error(String(e));
-          continue;
-        }
-      }
-
-      const apiKey = import.meta.env.VITE_CLAUDE_API_KEY || propClaudeKey || CONFIG.claude.apiKey;
-      if (!apiKey || apiKey.length < 10) {
-        throw new Error('Claude API Key missing — Set VITE_CLAUDE_API_KEY or add in Settings');
-      }
-
-      const doFetch = async (): Promise<any> => {
-        const res = await fetch(CONFIG.claude.baseUrl, {
-          method: 'POST',
-          headers: {
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-            'anthropic-dangerous-direct-browser-access': 'true',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(30000)
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error?.message || `Claude Error: ${res.status}`);
-        }
-        return res.json();
-      };
-
-      try {
-        const data = await rateLimitedFetch(doFetch);
-        const text = data.content?.[0]?.text;
-        if (!text || text.trim().length < 5) throw new Error('Claude returned empty response');
-        return text;
-      } catch (e) {
-        lastError = e instanceof Error ? e : new Error(String(e));
-        continue;
-      }
-    }
-
-    throw lastError || new Error('All Claude model fallbacks failed');
-  };
-
-  // ============ MAIN AI ROUTER — Advanced Fallback Chain with Live Data ============
   const callAI = async (userMessage: string, model: string) => {
     const isNewsQuery = /\b(news|market|nifty|sensex|fed|rbi|ipo|crude|gold|dollar|breaking|aaj|today|live|bitcoin|btc|crypto|halving|eth|blockchain|defi|altcoin|binance|coinbase|regulation|sec)\b/i.test(userMessage);
 
@@ -496,7 +284,7 @@ export const NeuralChat = React.memo(({
 
     const portfolioCtx = portfolioContext || 'No portfolio data.';
 
-    const systemPrompt = `You are DEEP MIND AI ADVANCE PRO v16.0 — Elite Institutional-Grade Trading & Investment Intelligence with DEEP RESEARCH + DEEP MIND ANALYSIS for Indian, US markets AND Cryptocurrency with REAL-TIME LIVE data access 24x7.
+    const systemPrompt = `You are DEEP MIND AI ADVANCE PRO v16.0 — GROQ SUPER INTELLIGENCE. Elite Institutional-Grade Trading & Investment Intelligence with DEEP RESEARCH + DEEP MIND ANALYSIS for Indian, US markets AND Cryptocurrency with REAL-TIME LIVE data access 24x7.
 
 PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined.
 
@@ -558,10 +346,6 @@ ${webIntelData ? '\nLIVE NEWS:\n' + webIntelData : ''}
 PORTFOLIO CONTEXT:
 ${portfolioCtx}`;
 
-    // Filter out system messages, keep only user/assistant, limit to recent.
-    // NOTE: chatMessages state is stale inside this closure (setState is async),
-    // so the current user message MUST be appended explicitly — otherwise the AI
-    // only sees the previous question and answers the wrong thing.
     const recentMessages = chatMessages
       .filter(m => m.role === 'user' || m.role === 'model')
       .slice(-8)
@@ -573,31 +357,22 @@ ${portfolioCtx}`;
       recentMessages.push({ role: 'user', content: userMessage });
     }
 
-    // Build fallback chain: primary → fallback1 → fallback2...
-    type Engine = 'market' | 'groq' | 'gemini' | 'claude';
+    type Engine = 'market' | 'groq';
     let chain: Engine[] = [];
 
     if (model === 'market') {
-      chain = ['market', 'gemini', 'groq'];
-    } else if (model === 'gemini') {
-      chain = ['gemini', 'groq'];
-    } else if (model === 'claude') {
-      chain = ['claude', 'gemini', 'groq'];
+      chain = ['market', 'groq'];
     } else if (model === 'groq') {
-      chain = ['groq', 'gemini'];
+      chain = ['groq'];
     } else {
-      // auto — FREE engines first
-      chain = ['groq', 'market', 'gemini', 'claude'];
+      chain = ['groq', 'market'];
     }
 
     const callers: Record<Engine, (msgs: any[], sp: string) => Promise<string>> = {
       market: (msgs, sp) => callGroq(msgs, sp, CONFIG.groq.marketModel),
-      groq: callGroq,
-      gemini: callGemini,
-      claude: callClaude
+      groq: callGroq
     };
 
-    // Try each engine with rate limiting and retries
     let fallbackError = '';
     for (const eng of chain) {
       try {
@@ -611,7 +386,7 @@ ${portfolioCtx}`;
       }
     }
 
-    return { text: `🤖 **AI Engines Offline**\n\nBhai, Groq, Gemini aur Claude — sabhi engines fail ho gaye.\n\n**Possible reasons:**\n• API keys missing ya invalid\n• Rate limit hit\n• Network connectivity issues\n\nCheck .env file aur retry karo.`, model: 'system' as const };
+    return { text: `🤖 **Groq Offline**\n\nBhai, Groq engine respond nahi kar paya.\n\n**Possible reasons:**\n• API key missing ya invalid\n• Rate limit hit\n• Network connectivity issues\n\nRender me VITE_GROQ_API_KEY set karo aur redeploy karo.`, model: 'system' as const };
   };
 
   const sendMessage = async (userMessage: string) => {
@@ -628,8 +403,6 @@ ${portfolioCtx}`;
       if (selectedModel === 'auto') {
         if (/\b(news|khabar|market|live|aaj|today|nifty|sensex|breaking|ipo|fii|dii|rbi|fed|crude|gold|dollar|vix|trend|intraday|pre.?market|global|sector|rally|crash|correction|bitcoin|btc|crypto|halving|eth|blockchain|defi|altcoin|binance|coinbase|regulation|sec)\b/i.test(q)) {
           selectedModelType = 'market';
-        } else if (/\b(portfolio|analy[sz]|strategy|fundamental|backtest|risk|allocation|optimize|deep|comprehensive|options?|pcr|fibonacci|wyckoff|smc|elliott|valuation|dividend|dcf|compare|rebalance|hodl|dca|long.?term|cagr|projection|on.?chain|intrinsic)\b/i.test(q)) {
-          selectedModelType = 'claude';
         } else {
           selectedModelType = 'groq';
         }
@@ -637,7 +410,6 @@ ${portfolioCtx}`;
 
       const result = await callAI(userMessage, selectedModelType);
       let finalText = result.text;
-      // Show visible warning when engine fell back to a different model
       if (result.fallbackError && result.model !== selectedModelType) {
         finalText = `⚠️ **Fallback:** ${selectedModelType.toUpperCase()} respond nahi kar paya. ${result.model.toUpperCase()} se answer aa raha hai.\n\n**Errors:**\n${result.fallbackError}\n---\n\n${result.text}`;
       }
@@ -684,7 +456,6 @@ ${portfolioCtx}`;
           >
             <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-xl border border-cyan-500/20 rounded-3xl" />
 
-            {/* Header */}
             <div className="relative p-3 sm:p-4 border-b border-cyan-500/20 bg-gradient-to-r from-cyan-950/60 to-indigo-950/60 flex items-center justify-between rounded-t-3xl">
               <div className="flex items-center gap-2 sm:gap-3">
                 <div className="w-9 h-9 sm:w-10 sm:h-10 bg-gradient-to-br from-cyan-800/60 to-indigo-900/60 border border-cyan-500/30 rounded-xl flex items-center justify-center flex-shrink-0">
@@ -692,13 +463,13 @@ ${portfolioCtx}`;
                 </div>
                 <div className="min-w-0">
                   <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
-                    <span className="hidden xs:inline">Deep Mind AI</span>
-                    <span className="xs:hidden">AI Assistant</span>
+                    <span className="hidden xs:inline">Groq Super Intelligence</span>
+                    <span className="xs:hidden">Groq AI</span>
                     <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">ADVANCE PRO v16</span>
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="hidden sm:inline">Gemini 2.0 + Claude + Groq | Advance Pro</span>
+                    <span className="hidden sm:inline">Groq Llama-3.3 70B | Advance Pro</span>
                     <span className="sm:hidden">LIVE • Advance Pro</span>
                   </div>
                 </div>
@@ -709,9 +480,8 @@ ${portfolioCtx}`;
               </div>
             </div>
 
-            {/* Model Selector */}
             <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-b border-cyan-500/10 flex gap-2 overflow-x-auto scrollbar-hide">
-              {(['auto', 'market', 'groq', 'gemini', 'claude'] as const).map(m => (
+              {(['auto', 'market', 'groq'] as const).map(m => (
                 <button
                   key={m}
                   onClick={() => setSelectedModel(m)}
@@ -722,14 +492,11 @@ ${portfolioCtx}`;
                 >
                   {m === 'auto' ? '🤖 Auto'
                     : m === 'market' ? '🌐 Market Expert'
-                      : m === 'groq' ? '⚡ Groq'
-                        : m === 'gemini' ? '🔵 Gemini'
-                          : '🟣 Claude'}
+                      : '⚡ Groq'}
                 </button>
               ))}
             </div>
 
-            {/* Messages */}
             <>
                 <div ref={chatContainerRef} className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide">
                   {chatMessages.map((msg, i) => (
@@ -743,15 +510,12 @@ ${portfolioCtx}`;
                             {msg.model && (
                               <div className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-black uppercase mb-2 border ${MODEL_COLORS[msg.model] || MODEL_COLORS.system}`}>
                                 {msg.model === 'market' ? '🌐 Market Expert Live'
-                                  : msg.model === 'groq' ? '⚡ Groq'
-                                    : msg.model === 'gemini' ? '🔵 Gemini'
-                                      : msg.model === 'claude' ? '🟣 Claude'
-                                        : 'System'}
+                                  : msg.model === 'groq' ? '⚡ Groq Super Intelligence'
+                                    : 'System'}
                               </div>
                             )}
                             <span dangerouslySetInnerHTML={{
                               __html: (() => {
-                                // Escape HTML entities first to prevent XSS
                                 const escaped = msg.text
                                   .replace(/&/g, '&amp;')
                                   .replace(/</g, '&lt;')
@@ -794,7 +558,6 @@ ${portfolioCtx}`;
                   <div ref={messagesEndRef} />
                 </div>
 
-                {/* Quick Actions */}
                 <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-t border-cyan-500/10">
                   <div className="flex gap-2 overflow-x-auto scrollbar-hide">
                     {QUICK_ACTIONS.map((action, i) => (
@@ -811,7 +574,6 @@ ${portfolioCtx}`;
                   </div>
                 </div>
 
-                {/* Input */}
                 <div className="relative p-3 sm:p-4 bg-slate-950/95 border-t border-cyan-500/15 rounded-b-3xl">
                   <div className="relative flex items-center">
                     <input
@@ -834,9 +596,7 @@ ${portfolioCtx}`;
                     <span className="text-[7px] sm:text-[8px] text-slate-600 font-mono truncate max-w-[60%]">
                       Model: {selectedModel === 'auto' ? '🤖 Auto-Detect'
                         : selectedModel === 'market' ? '🌐 Market Expert'
-                          : selectedModel === 'groq' ? '⚡ Groq'
-                            : selectedModel === 'gemini' ? '🔵 Gemini'
-                              : '🟣 Claude'}
+                          : '⚡ Groq'}
                     </span>
                     <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
                       {chatMessages.length} messages
