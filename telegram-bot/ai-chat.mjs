@@ -110,9 +110,10 @@ async function getRealtimeForex() {
 }
 
 // ============================================
-// GROQ COMPOUND — Ultra-fast with built-in web search + tool use
+// GROQ LLAMA 3.3 70B — Fastest, most reliable Groq model
+// Advance Pro v22 — Deep Research + Live Market Data
 // ============================================
-async function callGroq(messages, systemPrompt, modelName = 'groq/compound') {
+async function callGroq(messages, systemPrompt, modelName = 'llama-3.3-70b-versatile') {
   if (!isGroqAvailable()) throw new Error('Groq key missing');
   if (engineHealth.groq.failures >= 3 && Date.now() - engineHealth.groq.lastFailure < engineHealth.groq.cooldownMs) {
     throw new Error('Groq cooling down');
@@ -121,7 +122,7 @@ async function callGroq(messages, systemPrompt, modelName = 'groq/compound') {
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: modelName, messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_completion_tokens: 8000, allowed_tools: ['web_search', 'code_interpreter'] }),
+    body: JSON.stringify({ model: modelName, messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_completion_tokens: 8000 }),
     signal: AbortSignal.timeout(30000)
   });
 
@@ -194,7 +195,7 @@ function buildSystemPrompt(contextData, intent) {
   const d = new Date().toLocaleDateString('en-IN', {timeZone:'Asia/Kolkata', day:'2-digit', month:'short', year:'numeric'});
   const t = new Date().toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit'});
 
-  return `You are DEEP MIND AI ADVANCE PRO v22.0 — GROQ COMPOUND SUPER INTELLIGENCE. Elite institutional-grade trading & investment AI with BUILT-IN WEB SEARCH + CODE EXECUTION (via Groq Compound). You can search the web live for any data you need — use it for live prices, news, market data. You have FULL ACCESS to the ENTIRE Wealth AI platform - every tab, every data point, every position in the portfolio. You MUST read and analyze ALL data provided below before responding.
+  return `You are DEEP MIND AI ADVANCE PRO v22.0 — GROQ LLAMA 3.3 70B SUPER INTELLIGENCE. Elite institutional-grade trading & investment AI with REAL-TIME live market data. You have FULL ACCESS to the ENTIRE Wealth AI platform - every tab, every data point, every position in the portfolio. You MUST read and analyze ALL data provided below before responding.
 
 PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined. Speak strictly in "Pro Trader Hinglish" — "Bhai", "Breakout confirm", "SL trail karo", "Smart Money accumulation".
 
@@ -203,12 +204,11 @@ MANDATORY DATA USAGE RULES — FOLLOW STRICTLY:
 2. For EVERY response, reference at least 2-3 specific positions by name with their current price, RSI, and signal.
 3. If user asks about portfolio — analyze EVERY position one by one. Do NOT skip any.
 4. NEVER say "I don't have portfolio data" — the data is provided below. Read it.
-5. Use your BUILT-IN WEB SEARCH to fetch any live data not provided — Nifty, Sensex, stock prices, crypto, news, forex. You have web_search tool available.
-6. Cross-reference portfolio positions with live market data and web search results.
+5. Cross-reference portfolio positions with the LIVE MARKET DATA provided below.
 
 TODAY: ${d} | ${t} IST
 
-ANTI-HALLUCINATION: Use the LIVE data provided below FIRST. Use your BUILT-IN WEB SEARCH for anything missing. Do NOT invent prices. If even web search returns nothing, say "Live data not available".
+ANTI-HALLUCINATION: You MUST use ONLY the live data provided below. Do NOT invent prices. If data is missing, say "Live data not available".
 
 ADVANCE PRO TRADING RULES:
 1. Use SMC (Smart Money Concepts), Wyckoff phases, Elliott Wave counts, Fibonacci retracements/extensions for stocks. On-chain analysis, MVRV-Z score, Puell Multiple, halving cycles, whale tracking for crypto.

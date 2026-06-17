@@ -16,8 +16,8 @@ export const API_URL = process.env.API_URL || "";
 export let TAVILY_API_KEY = process.env.TAVILY_API_KEY || process.env.VITE_TAVILY_API_KEY || "";
 
 // ============================================
-// GROQ COMPOUND — Single Super-Intelligence Engine
-// Default model: groq/compound (built-in web search + code execution)
+// GROQ SUPER INTELLIGENCE — Single Engine
+// Default model: llama-3.3-70b-versatile (fastest, 128K context, most reliable)
 // ============================================
 const env = process.env;
 
