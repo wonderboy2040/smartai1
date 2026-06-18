@@ -25,7 +25,7 @@ async function callAIProxy(endpoint: string, body: any): Promise<Response | null
     signal: AbortSignal.timeout(30000)
   });
   if (res.ok) return res;
-  if (res.status === 503) return null;
+  if (res.status === 503 || res.status === 429) return null;
   const err = await res.json().catch(() => ({}));
   throw new Error(err?.error?.message || err?.error || `proxy error: ${res.status}`);
 }
