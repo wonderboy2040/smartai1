@@ -345,13 +345,32 @@ export function useAppState() {
     sync();
     syncIntervalRef.current = window.setInterval(sync, getBatchInterval());
     let statusCounter = 0;
+    let lastFlushTime = 0;
+    let flushTimer: number | null = null;
+
+    const throttledFlush = () => {
+      const now = Date.now();
+      if (now - lastFlushTime >= 1000) {
+        lastFlushTime = now;
+        flushPricesToStorage();
+      } else if (!flushTimer) {
+        flushTimer = window.setTimeout(() => {
+          flushTimer = null;
+          lastFlushTime = Date.now();
+          flushPricesToStorage();
+        }, 1000 - (now - lastFlushTime));
+      }
+    };
+
     const unsubscribeTv = subscribeToPrices(symbolsToSub.map(s => s.split('_')[1]), (key, data) => {
       pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData;
       statusCounter++;
       if (statusCounter % 50 === 1) setLiveStatus('● TV SOCKET LIVE ⚡');
+      throttledFlush();
     });
     return () => {
       if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
+      if (flushTimer) clearTimeout(flushTimer);
       unsubscribeTv(); disconnectPrices();
       flushPricesToStorage();
     };

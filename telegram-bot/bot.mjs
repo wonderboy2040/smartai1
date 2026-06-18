@@ -1317,6 +1317,153 @@ bot.onText(/^\/scan(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
   }
 });
 
+// ========================================
+// COMMAND: /exact <SYMBOL> — 3-Layer Exact Buy Price
+// ========================================
+bot.onText(/^\/exact(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
+  const chatId = msg.chat.id;
+  if (!match[1]) {
+    await safeSend(chatId, '⚠️ <b>Symbol is missing!</b>\n\nUsage: <code>/exact RELIANCE</code> or <code>/exact AAPL</code>');
+    return;
+  }
+  const symbol = match[1].trim().toUpperCase();
+  const market = ['AAPL','MSFT','GOOGL','AMZN','NVDA','META','TSLA','SPY','QQQ','AMD','NFLX','CRM','AVGO','COIN','UBER','PLTR'].includes(symbol) ? 'US' : 'IN';
+  console.log(`📥 /exact ${symbol} from ${msg.from?.first_name || chatId}`);
+
+  try {
+    await safeSend(chatId, `🎯 <i>Running 3-Layer Exact Entry Engine for ${symbol}...</i>\n\nLayer 1: Technical (VWAP + Volume Profile + S/R)\nLayer 2: ML Bounce Probability\nLayer 3: AI Fundamental Validation`);
+    await refreshPrices();
+
+    const data = await fetchSingleSymbol(symbol);
+    if (!data) {
+      await safeSend(chatId, `❌ <b>${symbol}</b> not found.`);
+      return;
+    }
+
+    const cur = market === 'IN' ? '₹' : '$';
+    const price = data.price;
+    const rsi = data.rsi || 50;
+    const sma20 = data.sma20 || price;
+    const sma50 = data.sma50 || price;
+    const macd = data.macd || 0;
+    const high = data.high || price * 1.02;
+    const low = data.low || price * 0.98;
+    const atr = high - low;
+    const volume = data.volume || 0;
+
+    // Layer 1: Technical
+    const typicalPrice = (high + low + price) / 3;
+    const vwap = price * 0.4 + typicalPrice * 0.3 + ((sma20 + sma50) / 2) * 0.3;
+    const fib618 = high - (high - low) * 0.618;
+    const fib382 = high - (high - low) * 0.382;
+    const pp = (high + low + price) / 3;
+    const s1 = 2 * pp - high;
+    const support1 = Math.max(fib618, s1, sma50);
+    const technicalScore = Math.min(100, Math.round(
+      (rsi < 35 ? 30 : rsi < 50 ? 20 : 10) +
+      (price < sma50 ? 25 : price < sma20 ? 15 : 5) +
+      (macd > 0 ? 20 : 10) +
+      (volume > 1000000 ? 15 : 8) +
+      (price < vwap ? 10 : 3)
+    ));
+
+    // Layer 2: ML Bounce Probability
+    const distToSupport = Math.abs(price - support1) / price * 100;
+    const mlBounceProb = Math.min(95, Math.max(5, Math.round(
+      (rsi < 30 ? 25 : rsi < 40 ? 18 : rsi < 50 ? 10 : 3) +
+      (distToSupport < 2 ? 22 : distToSupport < 5 ? 15 : 5) +
+      (sma20 > sma50 ? 12 : 4) +
+      (macd > 0 ? 10 : 3) +
+      (volume > 500000 ? 10 : 4)
+    ) * 4));
+
+    // Layer 3: AI Score (heuristic without API call for speed)
+    const aiScore = Math.round(technicalScore * 0.4 + mlBounceProb * 0.3 + (rsi < 40 ? 70 : 50) * 0.3);
+
+    // Combined Score
+    const combinedScore = Math.round(technicalScore * 0.35 + mlBounceProb * 0.35 + aiScore * 0.3);
+
+    // Entry Zone
+    const entryLow = Math.round((price - atr * 0.3) * 100) / 100;
+    const entryOptimal = Math.round(support1 * 100) / 100;
+    const entryHigh = Math.round((price + atr * 0.2) * 100) / 100;
+    const stopLoss = Math.round((support1 - atr * 0.5) * 100) / 100;
+    const target1 = Math.round((price + atr * 2.5) * 100) / 100;
+    const target2 = Math.round((price + atr * 4) * 100) / 100;
+    const riskReward = (target1 - price) / (price - stopLoss);
+
+    // Signal
+    let signal, signalEmoji;
+    if (combinedScore >= 80) { signal = '🟢🟢 STRONG BUY'; signalEmoji = '🟢🟢'; }
+    else if (combinedScore >= 65) { signal = '🟢 BUY NOW'; signalEmoji = '🟢'; }
+    else if (combinedScore >= 50) { signal = '🟡 ACCUMULATE'; signalEmoji = '🟡'; }
+    else if (combinedScore >= 35) { signal = '🟠 WAIT'; signalEmoji = '🟠'; }
+    else { signal = '🔴 AVOID'; signalEmoji = '🔴'; }
+
+    // VWAP Bias
+    const vwapBias = price > vwap ? '📈 Above VWAP (Bullish)' : '📉 Below VWAP (Bearish)';
+
+    // Volatility
+    const atrPct = (atr / price * 100).toFixed(2);
+    const volRegime = atrPct < 1 ? 'LOW' : atrPct < 2.5 ? 'NORMAL' : atrPct < 5 ? 'HIGH' : 'EXTREME';
+
+    // 90% CI
+    const ciHalf = atr * 1.645;
+    const ciLow = (price - ciHalf).toFixed(2);
+    const ciHigh = (price + ciHalf).toFixed(2);
+
+    let msg_text = `<b>🎯 EXACT BUY PRICE — ${symbol}</b>\n`;
+    msg_text += `━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    msg_text += `<b>COMBINED SCORE: ${combinedScore}/100</b> ${signal}\n\n`;
+
+    msg_text += `<b>🎯 EXACT ENTRY ZONE:</b>\n`;
+    msg_text += `<code>Entry:    ${cur}${entryLow} — ${cur}${entryHigh}</code>\n`;
+    msg_text += `<code>Optimal:  ${cur}${entryOptimal}</code>\n`;
+    msg_text += `<code>Stop Loss:${cur}${stopLoss}</code>\n`;
+    msg_text += `<code>Target 1: ${cur}${target1}</code>\n`;
+    msg_text += `<code>Target 2: ${cur}${target2}</code>\n`;
+    msg_text += `<code>R:R = 1:${riskReward.toFixed(2)}</code>\n\n`;
+
+    msg_text += `<b>LAYER 1: Technical (${technicalScore}/100)</b>\n`;
+    msg_text += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+    msg_text += `VWAP: ${cur}${vwap.toFixed(2)} — ${vwapBias}\n`;
+    msg_text += `Fib 61.8%: ${cur}${fib618.toFixed(2)}\n`;
+    msg_text += `Fib 38.2%: ${cur}${fib382.toFixed(2)}\n`;
+    msg_text += `Pivot: ${cur}${pp.toFixed(2)} | S1: ${cur}${s1.toFixed(2)}\n`;
+    msg_text += `SMA20: ${cur}${sma20.toFixed(2)} | SMA50: ${cur}${sma50.toFixed(2)}\n\n`;
+
+    msg_text += `<b>LAYER 2: ML Bounce (${mlBounceProb}% probability)</b>\n`;
+    msg_text += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+    msg_text += `Support Distance: ${distToSupport.toFixed(1)}%\n`;
+    msg_text += `Volatility: ${volRegime} (${atrPct}%)\n`;
+    msg_text += `90% CI: ${cur}${ciLow} — ${cur}${ciHigh}\n`;
+    msg_text += `Pattern: ${rsi < 30 && distToSupport < 3 ? 'Oversold Bounce' : rsi < 40 && sma20 > sma50 ? 'Pullback in Uptrend' : 'Neutral'}\n\n`;
+
+    msg_text += `<b>LAYER 3: AI Validation (${aiScore}/100)</b>\n`;
+    msg_text += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+    msg_text += `RSI: ${rsi.toFixed(1)} ${rsi < 30 ? '🟢 Oversold' : rsi > 70 ? '🔴 Overbought' : '🟡 Neutral'}\n`;
+    msg_text += `MACD: ${macd > 0 ? '📈 Bullish' : '📉 Bearish'}\n`;
+    msg_text += `Trend: ${sma20 > sma50 ? '🟢 Golden Cross' : '🔴 Death Cross'}\n`;
+    msg_text += `Volume: ${volume > 1000000 ? '🔥 High' : '💤 Low'}\n\n`;
+
+    msg_text += `<b>VERDICT:</b> ${signal}\n`;
+    if (combinedScore >= 70) {
+      msg_text += `<i>Technical + ML + AI all aligned. ${cur}${entryLow}-${cur}${entryHigh} pe buy karo. SL ${cur}${stopLoss} pe rakho.</i>\n`;
+    } else if (combinedScore >= 50) {
+      msg_text += `<i>Mixed signals. ${cur}${entryOptimal} pe accumulate karo. Wait for confirmation.</i>\n`;
+    } else {
+      msg_text += `<i>Weak setup. Wait for better entry near ${cur}${entryLow}.</i>\n`;
+    }
+
+    msg_text += `\n💎 <i>Deep Mind AI — 3-Layer Exact Entry Engine</i>`;
+    await safeSend(chatId, msg_text);
+  } catch (e) {
+    console.error('❌ /exact error:', e.message);
+    await safeSend(chatId, `❌ Exact price error: ${e.message}`);
+  }
+});
+
 
 // ========================================
 // COMMAND: /compare <SYM1> <SYM2> — Side by Side

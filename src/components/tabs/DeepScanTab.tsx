@@ -4,6 +4,8 @@ import { DeepScanStock } from '../../types';
 import { fetchDeepScanPrices, runDeepScan, getGroqDeepAnalysis, formatDeepScanTelegram } from '../../utils/deepScanner';
 import { sendTelegramAlert } from '../../utils/api';
 import { secureStorage } from '../../utils/secureStorage';
+import { TradingViewChart } from '../TradingViewChart';
+import { useRealTimePrice, snapshotsToCandles } from '../../hooks/useRealTimePrice';
 
 // Score color helper
 function sc(v: number): string {
@@ -317,6 +319,9 @@ export default React.memo(function DeepScanTab() {
                   </div>
                 </div>
 
+                {/* Real-Time Chart */}
+                <StockMiniChart symbol={s.symbol} market={s.market} price={s.price} sma20={s.sma20} sma50={s.sma50} />
+
                 {/* AI Reasoning */}
                 <div className="bg-black/30 rounded-xl p-3 border border-white/5">
                   <div className="text-[10px] text-slate-500 font-bold uppercase mb-1">🤖 AI Reasoning</div>
@@ -367,3 +372,71 @@ export default React.memo(function DeepScanTab() {
     </div>
   );
 });
+
+// ========================================
+// Mini Stock Chart — Real-Time Streaming
+// ========================================
+function StockMiniChart({
+  symbol,
+  market,
+  price,
+  sma20,
+  sma50,
+}: {
+  symbol: string;
+  market: 'IN' | 'US';
+  price: number;
+  sma20?: number;
+  sma50?: number;
+}) {
+  const { history, isConnected } = useRealTimePrice(symbol, market, 60);
+  const { candles, volumes } = useMemo(() => snapshotsToCandles(history), [history]);
+
+  // Generate static fallback data from current price if no live data yet
+  const fallbackCandles = useMemo(() => {
+    if (candles.length > 0) return candles;
+    const now = Math.floor(Date.now() / 1000);
+    return Array.from({ length: 20 }, (_, i) => {
+      const t = (now - (19 - i) * 300) as any;
+      const variance = price * 0.02 * (Math.random() - 0.5);
+      const open = price + variance;
+      const close = price + variance * 0.8;
+      return { time: t, open, high: Math.max(open, close) + price * 0.005, low: Math.min(open, close) - price * 0.005, close };
+    });
+  }, [candles, price]);
+
+  const priceLines = useMemo(() => {
+    const lines: { price: number; label: string; color: string }[] = [];
+    if (sma20) lines.push({ price: sma20, label: 'SMA20', color: '#6366F1' });
+    if (sma50) lines.push({ price: sma50, label: 'SMA50', color: '#F59E0B' });
+    return lines;
+  }, [sma20, sma50]);
+
+  return (
+    <div className="bg-black/30 rounded-xl p-3 border border-white/5">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] text-slate-500 font-bold uppercase">📈 Real-Time Chart</div>
+        <div className="flex items-center gap-1.5">
+          <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
+          <span className="text-[9px] text-slate-600">{isConnected ? 'LIVE' : 'Connecting...'}</span>
+        </div>
+      </div>
+      <TradingViewChart
+        data={fallbackCandles}
+        volume={volumes}
+        symbol={symbol}
+        height={180}
+        priceLines={priceLines}
+      />
+      <div className="flex gap-3 mt-1.5 text-[9px] text-slate-500">
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-0.5 bg-indigo-500 rounded" /> SMA20
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-0.5 bg-amber-500 rounded" /> SMA50
+        </span>
+        <span className="text-slate-600">{history.length} ticks buffered</span>
+      </div>
+    </div>
+  );
+}

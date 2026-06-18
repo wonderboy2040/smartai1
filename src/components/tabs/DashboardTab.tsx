@@ -3,7 +3,8 @@ import { useApp } from '../../hooks/AppContext';
 import { formatPrice } from '../../utils/constants';
 import { isAnyMarketOpen, getMarketStatus } from '../../utils/telegram';
 import { DipIntelligence } from '../DipIntelligence';
-import { ScreenerPanel } from '../ScreenerPanel';
+import { ExactBuyPricePanel } from '../ExactBuyPricePanel';
+import { AIScreenerPanel } from '../AIScreenerPanel';
 
 const MemoAssetButton = React.memo(function MemoAssetButton({
   symbol, market, price, change, onClick
@@ -310,8 +311,11 @@ export default React.memo(function DashboardTab() {
         totalBudget={indiaSIP + usSIP}
       />
 
-      {/* Multi-Factor Screener */}
-      <ScreenerPanel
+      {/* EXACT BUY PRICE — 3-Layer Engine */}
+      <ExactBuyPricePanel />
+
+      {/* AI Stock Screener — Advanced Custom Filters */}
+      <AIScreenerPanel
         portfolio={portfolio}
         livePrices={livePrices}
       />
