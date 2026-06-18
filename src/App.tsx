@@ -54,7 +54,7 @@ export default function App() {
     activeTab, setActiveTab, portfolio, livePrices, metrics,
     theme, toggleTheme, flushCache, autoTelegram, setAutoTelegram,
     liveStatus,
-    showAddModal, setShowAddModal, aiKeys,
+    showAddModal, setShowAddModal,
     addSymbol, setAddSymbol, addQty, setAddQty, addPrice, setAddPrice,
     addDate, setAddDate,
     transactionType, setTransactionType, modalPrice,
