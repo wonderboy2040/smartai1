@@ -48,6 +48,40 @@ export type TabType = 'dashboard' | 'portfolio' | 'planner' | 'macro' | 'guide' 
 export type RiskLevel = 'low' | 'medium' | 'high';
 export type TransactionType = 'buy' | 'sell';
 
+// ========================================
+// TRANSACTION LEDGER (powers monthly analytics & return reports)
+// ========================================
+export interface Transaction {
+  id: string;
+  symbol: string;
+  market: 'IN' | 'US';
+  type: TransactionType;
+  qty: number;          // qty bought / sold
+  price: number;        // per-unit price in native currency
+  amount: number;       // qty * price (native currency)
+  date: string;         // YYYY-MM-DD (trade date)
+  ts: number;           // Date.now() when recorded
+  prevQty: number;      // holding qty BEFORE this txn
+  prevAvg: number;      // avg price BEFORE this txn
+  newQty: number;       // holding qty AFTER this txn
+  newAvg: number;       // avg price AFTER this txn
+  realizedPL?: number;  // realized P&L for sells (native currency)
+}
+
+// Aggregated month-wise analytics row (Planner Deep Data Analytics)
+export interface MonthlyAnalytics {
+  month: string;            // YYYY-MM
+  label: string;            // "Jun 2026"
+  buyQty: number;           // total qty bought in month
+  buyAmountINR: number;     // total invested in month (INR equivalent)
+  sellQty: number;          // total qty sold in month
+  sellAmountINR: number;    // total redeemed in month (INR equivalent)
+  netInvestedINR: number;   // buyAmount - sellAmount (INR)
+  realizedPLINR: number;    // realized P&L booked in month (INR)
+  txnCount: number;
+  symbols: string[];        // unique symbols transacted
+}
+
 export interface DeepScanStock {
   symbol: string;
   name: string;

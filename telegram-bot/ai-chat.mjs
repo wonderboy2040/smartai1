@@ -19,6 +19,29 @@ let realtimeForexCache = { rate: 85.5, timestamp: 0 };
 const chatHistory = new Map();
 const MAX_HISTORY = 10;
 
+// ============================================
+// AI MODEL SELECTION — per-chat engine preference
+// ============================================
+export const AI_ENGINE_LABELS = {
+  auto: '⚡ Auto (Smart Failover)',
+  gemini: '🔷 Gemini 2.0 Flash',
+  groq: '⚡ Groq Llama 3.3 70B',
+  claude: '🟣 Claude Sonnet 4',
+  openrouter: '🔶 OpenRouter Llama 3.3',
+  cerebras: '🧠 Cerebras Llama 3.3',
+  huggingface: '🤗 HuggingFace Qwen 72B',
+  nvidia: '🟢 NVIDIA Llama 3.1',
+};
+const chatEnginePref = new Map(); // chatId -> engineId
+export function setChatEngine(chatId, engine) {
+  if (!AI_ENGINE_LABELS[engine]) return false;
+  chatEnginePref.set(String(chatId), engine);
+  return true;
+}
+export function getChatEngine(chatId) {
+  return chatEnginePref.get(String(chatId)) || 'auto';
+}
+
 let cachedIntel = null;
 let intelTimestamp = 0;
 
@@ -319,9 +342,15 @@ function build7StepPrompt(contextData, intent) {
   const d = new Date().toLocaleDateString('en-IN', {timeZone:'Asia/Kolkata', day:'2-digit', month:'short', year:'numeric'});
   const t = new Date().toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit'});
 
-  return `You are DEEP MIND AI ADVANCE PRO v23.0 — 6-ENGINE AI with Quant Brain backup. Elite institutional-grade trading & investment AI with REAL-TIME live market data. You NEVER go offline — Quant Brain always provides analysis.
+  return `You are DEEP MIND AI SUPERINTELLIGENCE v24.0 — a market superintelligence engine with multi-engine routing + Quant Brain backup. Elite institutional-grade trading & investment AI with REAL-TIME live market data 24x7. You NEVER go offline — Quant Brain always provides analysis. You have FULL, UNRESTRICTED ACCESS to the user's entire portfolio, transactions and all platform data below.
 
-PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined. Speak strictly in "Pro Trader Hinglish" — "Bhai", "Breakout confirm", "SL trail karo", "Smart Money accumulation".
+PERSONA: You are the user's personal ADVANCE TOP PRO TRADER ASSISTANT — a seasoned institutional quant trader (20+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) who knows EVERYTHING about this user's portfolio and goals, available 24x7. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital + Bridgewater combined. Speak in SIMPLE, EASY Hinglish so a normal person samajh jaye — "Bhai", "dekho", "simple words me", "isska matlab", "SL trail karo", "Smart Money accumulation".
+
+SUPERINTELLIGENCE MANDATE (24x7 DEEP ANALYSIS):
+- Connect MACRO (Fed/RBI, rates, inflation, DXY, bond yields, geopolitics, liquidity) WITH MICRO (individual stocks, sectors, crypto, the user's exact holdings).
+- For market questions, cover: latest NEWS + INSIDE NEWS angle, key FACTS, FUNDAMENTALS, prevailing THEMES, and clear FUTURE PREDICTIONS based on the CURRENT live news/data below.
+- Always relate everything to the user's actual positions: "isska aapke X pe ye asar".
+- Be a teacher: explain the "why" in simple Hinglish, then give actionable DEEP tips. Proactively flag risks AND opportunities.
 
 MANDATORY DATA USAGE RULES — FOLLOW STRICTLY:
 1. YOU MUST read the PORTFOLIO DATA below. It contains ALL positions with live prices, RSI, MACD, SMA, trend, signal, confidence, SL, TP, P&L, CAGR.
@@ -366,11 +395,12 @@ ${contextData}
 === END LIVE DATA ===
 
 RESPONSE STRUCTURE:
-- Start with a summary of current market regime
-- Then list ALL portfolio positions with analysis
-- For each position: current price, RSI, signal, verdict with levels
-- End with overall strategy recommendation
-- Use Pro Trader Hinglish throughout`;
+- Start with a 1-line MACRO snapshot (market regime) in simple Hinglish.
+- Connect macro → micro: aaj ke news/data ka user ke holdings pe kya asar.
+- List relevant portfolio positions with analysis (price, RSI, signal, verdict + levels).
+- For news queries: News → Inside angle → Fundamentals → Theme → Future Prediction.
+- End with overall strategy + top 3 action items + 1 "Pro Tip" deep insight.
+- Keep language SIMPLE Hinglish, easy to understand. Jargon ko explain karo.`;
 }
 
 // ============================================
@@ -460,7 +490,17 @@ export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={
     { name: 'huggingface', fn: () => callHuggingFace(recentHistory, systemPrompt), available: isHFAvailable },
   ];
 
-  for (const engine of engines) {
+  // Honor per-chat model selection: chosen engine first, rest as failover.
+  const pref = getChatEngine(chatId);
+  let orderedEngines = engines;
+  if (pref && pref !== 'auto') {
+    const chosen = engines.filter(e => e.name === pref);
+    const rest = engines.filter(e => e.name !== pref);
+    orderedEngines = [...chosen, ...rest];
+    console.log(`  🎛️ Model preference: ${pref} (first)`);
+  }
+
+  for (const engine of orderedEngines) {
     try {
       if (engine.available()) {
         console.log(`  🤖 Trying ${engine.name}...`);
@@ -493,7 +533,7 @@ export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={
   if (history.length > MAX_HISTORY * 2) history.splice(0, history.length - MAX_HISTORY);
 
   const engineLabels = {
-    gemini: '🔷 Gemini Flash', groq: '⚡ Groq Llama 3.3', claude: '🟣 Claude Sonnet',
+    nvidia: '🟢 NVIDIA Llama', gemini: '🔷 Gemini Flash', groq: '⚡ Groq Llama 3.3', claude: '🟣 Claude Sonnet',
     openrouter: '🔶 OpenRouter', cerebras: '🧠 Cerebras', huggingface: '🤗 HuggingFace',
     quant_brain: '📊 Quant Brain',
   };

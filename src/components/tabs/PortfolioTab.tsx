@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { useApp } from '../../hooks/AppContext';
 import { getTodayString } from '../../utils/constants';
 import { calculatePortfolioXIRR } from '../../utils/wealthEngine';
+import { MonthlyReturnReport } from '../MonthlyReturnReport';
 
 const PortfolioTab = React.memo(function PortfolioTab() {
   const {
@@ -158,6 +159,9 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         </div>
       )}
 
+
+      {/* Monthly Return Report (month-wise booked + unrealized returns) */}
+      <MonthlyReturnReport />
 
       {/* Advance Pro Trader Portfolio Grid */}
       <div className="quantum-panel rounded-2xl overflow-hidden animate-fade-in-up delay-200 p-1">

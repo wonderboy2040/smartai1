@@ -5,6 +5,7 @@ import { formatCurrency } from '../../utils/constants';
 import { analyzeAsset } from '../../utils/telegram';
 import { SmartDipSizer } from '../SmartDipSizer';
 import { WhatIfSIPOptimizer } from '../WhatIfSIPOptimizer';
+import { MonthlyAnalyticsPanel } from '../MonthlyAnalyticsPanel';
 import {
   calculateWealthMilestones, compareSIPStepUps,
   analyzeGoals, analyzeRebalancing, calculatePortfolioXIRR,
@@ -87,6 +88,9 @@ export default React.memo(function PlannerTab() {
       <h2 className="text-2xl font-black gradient-text-cyan font-display">
         🎯 Wealth Planner
       </h2>
+
+      {/* ============ DEEP DATA ANALYTICS (monthly buy activity) ============ */}
+      <MonthlyAnalyticsPanel />
 
       {/* SIP Config */}
       <div className="quantum-panel rounded-2xl p-5 animate-fade-in-up">

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Position, PriceData, TabType, RiskLevel, TransactionType } from '../types';
+import { Position, PriceData, TabType, RiskLevel, TransactionType, Transaction } from '../types';
 import {
   DEFAULT_USD_INR, getTodayString, guessMarket, EXACT_TICKER_MAP, isCryptoSymbol
 } from '../utils/constants';
@@ -41,6 +41,10 @@ export function useAppState() {
   // --- Core State ---
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [portfolio, setPortfolio] = useState<Position[]>([]);
+  // --- Transaction ledger (buy/sell history → monthly analytics & return reports) ---
+  const [transactions, setTransactions] = useState<Transaction[]>(() => {
+    try { const s = secureStorage.getItem('txn_history'); return s ? JSON.parse(s) : []; } catch { return []; }
+  });
   const [livePrices, setLivePrices] = useState<Record<string, PriceData>>({});
   const [usdInrRate, setUsdInrRate] = useState(DEFAULT_USD_INR);
   const usdInrRateRef = useRef(DEFAULT_USD_INR);
@@ -135,10 +139,12 @@ export function useAppState() {
   const pendingPricesRef = useRef<Record<string, PriceData>>({});
   const portfolioRef = useRef(portfolio);
   const livePricesRef = useRef(livePrices);
+  const transactionsRef = useRef(transactions);
   const latestDataRef = useRef({ portfolio, livePrices, usdInrRate });
 
   useEffect(() => { portfolioRef.current = portfolio; }, [portfolio]);
   useEffect(() => { livePricesRef.current = livePrices; }, [livePrices]);
+  useEffect(() => { transactionsRef.current = transactions; }, [transactions]);
 
   const portfolioSymbolKey = useMemo(() => portfolio.map(p => p.symbol).sort().join(','), [portfolio]);
 
@@ -389,6 +395,11 @@ export function useAppState() {
     }
   }, [portfolio, currentSymbol]);
 
+  // --- Save transaction ledger ---
+  useEffect(() => {
+    try { secureStorage.setItem('txn_history', JSON.stringify(transactions)); } catch { }
+  }, [transactions]);
+
   // --- Cloud sync (debounced 5s) ---
   useEffect(() => {
     if (portfolio.length === 0) return;
@@ -601,6 +612,28 @@ export function useAppState() {
         ctx += `${idx + 1}. ${cleanSym} [${assetType}] | Price=${curPrice.toFixed(2)} | Chg=${change >= 0 ? '+' : ''}${change.toFixed(2)}% | RSI=${rsi.toFixed(0)} | MACD=${macd} | SMA20=${sma20} | SMA50=${sma50} | Trend=${trend} | Vol=${vol} | Signal=${sig.signal} | Confidence=${sig.confidence}% | SL=${slPrice.toFixed(2)} | TP=${tpPrice.toFixed(2)} | AvgBuy=${pos.avgPrice.toFixed(2)} | Qty=${pos.qty} | Invested=${invested.toFixed(0)} | CurVal=${curVal.toFixed(0)} | P&L=${plPct >= 0 ? '+' : ''}${plPct.toFixed(2)}% (${plAbs >= 0 ? '+' : ''}${plAbs.toFixed(0)}) | Holding=${holdingLabel} | CAGR=${cagrPct >= 0 ? '+' : ''}${cagrPct.toFixed(1)}%\n`;
       }
       ctx += `=== END ALL ${p.length} POSITIONS ===\n`;
+
+      // Monthly investment behaviour (last 6 months) — gives AI full picture of buying pattern
+      const txns = transactionsRef.current || [];
+      if (txns.length > 0) {
+        const byMonth: Record<string, { buyQty: number; investedINR: number; sells: number }> = {};
+        for (const t of txns) {
+          const mk = (t.date || '').slice(0, 7);
+          if (!mk) continue;
+          if (!byMonth[mk]) byMonth[mk] = { buyQty: 0, investedINR: 0, sells: 0 };
+          const amtINR = t.market === 'US' ? t.amount * rate : t.amount;
+          if (t.type === 'buy') { byMonth[mk].buyQty += t.qty; byMonth[mk].investedINR += amtINR; }
+          else byMonth[mk].sells += 1;
+        }
+        const months = Object.keys(byMonth).sort().reverse().slice(0, 6);
+        ctx += `\n=== MONTHLY INVESTMENT BEHAVIOUR (last ${months.length} months) ===\n`;
+        for (const mk of months) {
+          const r = byMonth[mk];
+          ctx += `${mk}: Bought Qty=${r.buyQty.toFixed(2)} | Invested=\u20b9${Math.round(r.investedINR).toLocaleString('en-IN')} | Sells=${r.sells}\n`;
+        }
+        ctx += `=== END MONTHLY BEHAVIOUR ===\n`;
+      }
+
       setPortfolioContextText(ctx);
     };
 
@@ -822,25 +855,49 @@ export function useAppState() {
     if (!addSymbol || isNaN(qty) || isNaN(price) || qty <= 0 || price <= 0) {
       alert('Neural Error: Quantity ya price sahi daalo bhai.'); return;
     }
-    const mkt = modalPrice?.market || guessMarket(addSymbol);
+    const mkt = (modalPrice?.market || guessMarket(addSymbol)) as 'IN' | 'US';
+
+    // Helper to append a transaction to the ledger (powers monthly analytics + return reports)
+    const recordTxn = (
+      type: TransactionType, prevQty: number, prevAvg: number,
+      newQty: number, newAvg: number, realizedPL?: number
+    ) => {
+      const txn: Transaction = {
+        id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        symbol: addSymbol, market: mkt, type, qty, price,
+        amount: qty * price, date: addDate || getTodayString(), ts: Date.now(),
+        prevQty, prevAvg, newQty, newAvg,
+        ...(realizedPL !== undefined ? { realizedPL } : {}),
+      };
+      setTransactions(prev => [...prev, txn]);
+    };
+
     if (transactionType === 'sell') {
       const idx = portfolio.findIndex(p => p.symbol === addSymbol && p.market === mkt);
       if (idx >= 0) {
-        const newQty = portfolio[idx].qty - qty;
+        const pos = portfolio[idx];
+        const newQty = pos.qty - qty;
+        const realizedPL = (price - pos.avgPrice) * qty; // booked profit/loss (native)
+        recordTxn('sell', pos.qty, pos.avgPrice, Math.max(0, newQty), pos.avgPrice, realizedPL);
         if (newQty <= 0) setPortfolio(prev => prev.filter((_, i) => i !== idx));
         else setPortfolio(prev => prev.map((p, i) => i === idx ? { ...p, qty: newQty } : p));
       }
     } else {
       if (editId) {
-        setPortfolio(prev => prev.map(p => p.id === editId ? { ...p, symbol: addSymbol, qty, avgPrice: price, leverage, dateAdded: addDate, market: mkt as 'IN' | 'US' } : p));
+        const pos = portfolio.find(p => p.id === editId);
+        recordTxn('buy', pos?.qty || 0, pos?.avgPrice || price, qty, price);
+        setPortfolio(prev => prev.map(p => p.id === editId ? { ...p, symbol: addSymbol, qty, avgPrice: price, leverage, dateAdded: addDate, market: mkt } : p));
       } else {
         const existing = portfolio.find(p => p.symbol === addSymbol && p.market === mkt);
         if (existing) {
           const totalQty = existing.qty + qty;
           const totalCost = (existing.qty * existing.avgPrice) + (qty * price);
-          setPortfolio(prev => prev.map(p => p.id === existing.id ? { ...p, qty: totalQty, avgPrice: totalCost / totalQty, leverage: Math.max(p.leverage, leverage) } : p));
+          const newAvg = totalCost / totalQty;
+          recordTxn('buy', existing.qty, existing.avgPrice, totalQty, newAvg);
+          setPortfolio(prev => prev.map(p => p.id === existing.id ? { ...p, qty: totalQty, avgPrice: newAvg, leverage: Math.max(p.leverage, leverage) } : p));
         } else {
-          setPortfolio(prev => [...prev, { id: Date.now().toString(), symbol: addSymbol, market: mkt as 'IN' | 'US', qty, avgPrice: price, leverage, dateAdded: addDate }]);
+          recordTxn('buy', 0, price, qty, price);
+          setPortfolio(prev => [...prev, { id: Date.now().toString(), symbol: addSymbol, market: mkt, qty, avgPrice: price, leverage, dateAdded: addDate }]);
         }
       }
     }
@@ -880,7 +937,7 @@ export function useAppState() {
     // Auth
     isAuthenticated, pinInput, setPinInput, verifyPin, logout,
     // Core
-    activeTab, setActiveTab, portfolio, setPortfolio, livePrices, usdInrRate, theme,
+    activeTab, setActiveTab, portfolio, setPortfolio, transactions, setTransactions, livePrices, usdInrRate, theme,
     currentSymbol, setCurrentSymbol, currentMarket, setCurrentMarket,
     symbolInput, setSymbolInput, isAnalyzing, chartInterval, setChartInterval,
     liveStatus, syncStatus,

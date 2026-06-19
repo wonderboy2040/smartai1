@@ -25,7 +25,7 @@ import {
 } from './analysis.mjs';
 
 
-import { chatWithAI, clearChatHistory } from './ai-chat.mjs';
+import { chatWithAI, clearChatHistory, setChatEngine, getChatEngine, AI_ENGINE_LABELS } from './ai-chat.mjs';
 import { backtestSignal, calculateBacktestMetrics } from './backtester.mjs';
 
 // Validate required environment variables
@@ -827,6 +827,9 @@ Deep fundamental analysis using Graham framework.
 🔔 <b>/alert</b>
 Toggle scheduled auto-analysis ON/OFF.
 
+🤖 <b>/model</b>
+AI model select karo (Gemini / Groq / Claude / Cerebras / Auto). Auto = best engine + failover.
+
 🧹 <b>/clear</b>
 Chat history reset karo.
 
@@ -1346,6 +1349,60 @@ bot.onText(/^\/clear(@\w+)?$/i, async (msg) => {
   clearChatHistory(chatId);
   console.log(`📥 /clear from ${msg.from?.first_name || chatId}`);
   await safeSend(chatId, '🧹 <b>Chat history cleared!</b>\n\nFresh start — ab naya sawaal pucho!');
+});
+
+// ========================================
+// COMMAND: /model — AI MODEL SELECTION
+// ========================================
+function buildModelKeyboard(currentId) {
+  const ids = Object.keys(AI_ENGINE_LABELS);
+  const rows = ids.map(id => ([{
+    text: `${currentId === id ? '✅ ' : ''}${AI_ENGINE_LABELS[id]}`,
+    callback_data: `setmodel:${id}`,
+  }]));
+  return { reply_markup: { inline_keyboard: rows } };
+}
+
+bot.onText(/^\/model(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  const current = getChatEngine(chatId);
+  await safeSend(
+    chatId,
+    `🤖 <b>AI Model Selection</b>\n\nAbhi active: <b>${AI_ENGINE_LABELS[current]}</b>\n\nNeeche se koi bhi model choose karo. "Auto" sabse safe hai — best engine khud pick karta hai aur fail hone pe doosre pe switch ho jaata hai.`,
+    buildModelKeyboard(current)
+  );
+});
+
+// Handle model selection button taps
+bot.on('callback_query', async (query) => {
+  try {
+    const data = query.data || '';
+    const chatId = query.message?.chat?.id;
+    if (!chatId) return;
+    if (!isAuthorized({ chat: { id: chatId }, from: query.from })) {
+      await bot.answerCallbackQuery(query.id, { text: 'Not authorized' });
+      return;
+    }
+    if (data.startsWith('setmodel:')) {
+      const engine = data.split(':')[1];
+      const ok = setChatEngine(chatId, engine);
+      if (ok) {
+        await bot.answerCallbackQuery(query.id, { text: `Model set: ${AI_ENGINE_LABELS[engine]}` });
+        try {
+          await bot.editMessageReplyMarkup(
+            buildModelKeyboard(engine).reply_markup,
+            { chat_id: chatId, message_id: query.message.message_id }
+          );
+        } catch { }
+        await safeSend(chatId, `✅ <b>AI Model switched to ${AI_ENGINE_LABELS[engine]}</b>\n\nAb saare jawaab isi model se aayenge. Failover backup hamesha on hai.`);
+      } else {
+        await bot.answerCallbackQuery(query.id, { text: 'Unknown model' });
+      }
+    }
+  } catch (e) {
+    console.error('callback_query error:', e.message);
+  }
 });
 
 // ========================================

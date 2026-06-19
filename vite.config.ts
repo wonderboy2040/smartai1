@@ -32,6 +32,12 @@ export default defineConfig({
           if (id.includes('lucide-react')) {
             return 'vendor-icons';
           }
+          // Charting library — heavy, load in its own chunk
+          if (id.includes('lightweight-charts')) {
+            return 'vendor-charts';
+          }
+          // Portfolio analytics (monthly analytics + return report)
+          if (id.includes('utils/portfolioAnalytics')) return 'utils-analytics';
           // Heavy utility modules — split for parallel loading
           if (id.includes('utils/telegram')) return 'utils-telegram';
           if (id.includes('utils/riskEngine') || id.includes('utils/screener') || id.includes('utils/dipEngine')) return 'utils-analysis';

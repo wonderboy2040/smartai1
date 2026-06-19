@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles } from 'lucide-react';
+import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles, Cpu, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 const PROXY_BASE = import.meta.env.VITE_API_PROXY || '';
@@ -122,8 +122,23 @@ interface ChatMessage {
   sources?: Array<{ title: string; url: string }>;
 }
 
+// ============================================================
+// AI MODEL SELECTION — user picks the engine (or Auto-Failover)
+// ============================================================
+interface EngineOption { id: string; label: string; model: string; endpoint: string; badge: string; }
+const ENGINE_OPTIONS: EngineOption[] = [
+  { id: 'auto',        label: 'Auto (Smart Failover)', model: '',                                       endpoint: 'auto',        badge: '⚡' },
+  { id: 'gemini',      label: 'Gemini 2.0 Flash',      model: 'gemini-2.0-flash',                        endpoint: 'gemini',      badge: '🔷' },
+  { id: 'groq',        label: 'Groq Llama 3.3 70B',    model: 'llama-3.3-70b-versatile',                 endpoint: 'groq',        badge: '⚡' },
+  { id: 'claude',      label: 'Claude Sonnet 4',       model: 'claude-sonnet-4-20250514',                endpoint: 'claude',      badge: '🟣' },
+  { id: 'openrouter',  label: 'OpenRouter Llama 3.3',  model: 'meta-llama/llama-3.3-70b-instruct:free',  endpoint: 'openrouter',  badge: '🔶' },
+  { id: 'cerebras',    label: 'Cerebras Llama 3.3',    model: 'llama-3.3-70b',                           endpoint: 'cerebras',    badge: '🧠' },
+  { id: 'huggingface', label: 'HuggingFace Qwen 72B',  model: 'Qwen/Qwen2.5-72B-Instruct',               endpoint: 'huggingface', badge: '🤗' },
+  { id: 'nvidia',      label: 'NVIDIA Llama 3.1',      model: 'meta/llama-3.1-8b-instruct',              endpoint: 'nvidia',      badge: '🟢' },
+];
+
 const QUICK_ACTIONS = [
-  { label: 'Market News', query: 'Latest Indian and US market news and analysis with key levels', icon: '📰' },
+  { label: 'Market News', query: 'Latest Indian, US and Crypto market news + inside news, key fundamentals, themes aur future predictions ke saath. Simple Hinglish me samjhao.', icon: '📰' },
   { label: 'Portfolio Analysis', query: 'Analyze my ENTIRE portfolio deeply - every single position including crypto. Show P&L, technicals, fundamentals, and give specific BUY/HOLD/SELL verdict for each asset.', icon: '💼' },
   { label: 'ETH Analysis', query: 'Deep analysis of my Ethereum (ETH) position with on-chain context, support/resistance levels, and long-term HODL thesis', icon: '🪙' },
   { label: 'Long-Term Strategy', query: 'Give me a 15-20 year wealth creation roadmap focusing on SIP step-up and compound growth', icon: '📈' },
@@ -150,6 +165,12 @@ export const NeuralChat = React.memo(({
   const [isThinking, setIsThinking] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  // AI model selection — persisted across sessions
+  const [selectedEngine, setSelectedEngine] = useState<string>(() => {
+    try { return localStorage.getItem('neural_engine') || 'auto'; } catch { return 'auto'; }
+  });
+  const [showEngineMenu, setShowEngineMenu] = useState(false);
+  useEffect(() => { try { localStorage.setItem('neural_engine', selectedEngine); } catch { } }, [selectedEngine]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -299,9 +320,16 @@ export const NeuralChat = React.memo(({
     const portfolioCtx = portfolioContext || 'No portfolio data.';
 
     // 7-Step Pro-Trader System Prompt
-    const systemPrompt = `You are DEEP MIND AI ADVANCE PRO v23.0 — 6-ENGINE AI with Quant Brain backup. Elite institutional-grade trading & investment AI for Indian, US, and Crypto markets with REAL-TIME LIVE data access 24x7. You NEVER go offline — Quant Brain always provides analysis. You have FULL ACCESS to the ENTIRE Wealth AI platform - every tab, every data point, every position in the portfolio. You MUST read and analyze ALL data provided below before responding.
+    const systemPrompt = `You are DEEP MIND AI SUPERINTELLIGENCE v24.0 — a market superintelligence engine with multi-engine routing + Quant Brain backup. Elite institutional-grade trading & investment AI for Indian, US, and Crypto markets with REAL-TIME LIVE data access 24x7. You NEVER go offline — Quant Brain always provides analysis. You have FULL, UNRESTRICTED ACCESS to the ENTIRE Wealth AI platform — every tab, every data point, every single position in the portfolio, every transaction. You MUST read and analyze ALL data provided below before responding.
 
-PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined. Speak strictly in "Pro Trader Hinglish" — "Bhai", "Breakout confirm", "SL trail karo", "Smart Money accumulation".
+PERSONA: You are the user's personal ADVANCE TOP PRO TRADER ASSISTANT — a seasoned institutional quant trader (20+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) who knows EVERYTHING about this user's portfolio and goals. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital + Bridgewater combined. You are always-on, proactive, and give deep knowledge, suggestions and tips like a 24x7 personal trading desk. Speak in SIMPLE, EASY-TO-UNDERSTAND Hinglish — explain complex concepts so a normal person samajh jaye. Use "Bhai", "dekho", "simple words me", "isska matlab", "Breakout confirm", "SL trail karo", "Smart Money accumulation".
+
+SUPERINTELLIGENCE MANDATE (24x7 DEEP ANALYSIS):
+- Continuously connect MACRO markets (Fed/RBI policy, rates, inflation, DXY, bond yields, geopolitics, liquidity) WITH MICRO markets (individual stocks, sectors, crypto, the user's exact holdings).
+- For market questions cover: latest NEWS + INSIDE NEWS angle, key FACTS, FUNDAMENTALS, prevailing THEMES, and clear FUTURE PREDICTIONS based on CURRENT live market news provided below.
+- Always relate everything back to the user's actual portfolio: "isska aapke X position pe ye asar padega".
+- Be a teacher: explain the "why" in simple Hinglish, then give actionable tips. Give DEEP knowledge, not surface-level.
+- Proactively flag risks AND opportunities even if not asked.
 
 MANDATORY DATA USAGE RULES — FOLLOW STRICTLY:
 1. YOU MUST read the PORTFOLIO CONTEXT below. It contains ALL positions with live prices, RSI, MACD, SMA, trend, signal, confidence, SL, TP, P&L, CAGR.
@@ -351,11 +379,12 @@ ${portfolioCtx}
 === END ALL DATA ===
 
 RESPONSE STRUCTURE:
-- Start with a summary of current market regime (bullish/bearish/volatile)
-- Then list ALL portfolio positions with individual analysis
-- For each position: current price, RSI, MACD signal, trend, conviction score, verdict with exact levels
-- End with overall portfolio strategy and top 3 action items
-- Use Pro Trader Hinglish throughout`;
+- Start with a 1-line MACRO snapshot (market regime: bullish/bearish/volatile) in simple Hinglish.
+- Connect macro → micro: what does today's news/data mean for the user's holdings.
+- List the relevant portfolio positions with individual analysis (price, RSI, MACD, trend, conviction, verdict + exact levels).
+- For news queries: News → Inside angle → Fundamentals → Theme → Future Prediction.
+- End with overall strategy + top 3 action items + 1 "Pro Tip" / deep insight.
+- Keep language SIMPLE Hinglish so it's easy to understand. Avoid heavy jargon without explaining it.`;
 
     const recentMessages = chatMessages
       .filter(m => m.role === 'user' || m.role === 'model')
@@ -369,15 +398,17 @@ RESPONSE STRUCTURE:
     }
 
     // 7-Engine Router + Quant Brain Fallback — NEVER shows "AI Offline"
-    const engines = [
-      { name: 'nvidia', model: 'meta/llama-3.1-8b-instruct', endpoint: 'nvidia' },
-      { name: 'gemini', model: 'gemini-2.0-flash', endpoint: 'gemini' },
-      { name: 'groq', model: 'llama-3.3-70b-versatile', endpoint: 'groq' },
-      { name: 'claude', model: 'claude-sonnet-4-20250514', endpoint: 'claude' },
-      { name: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct:free', endpoint: 'openrouter' },
-      { name: 'cerebras', model: 'llama-3.3-70b', endpoint: 'cerebras' },
-      { name: 'huggingface', model: 'Qwen/Qwen2.5-72B-Instruct', endpoint: 'huggingface' },
-    ];
+    const allEngines = ENGINE_OPTIONS
+      .filter(e => e.id !== 'auto')
+      .map(e => ({ name: e.id, model: e.model, endpoint: e.endpoint }));
+
+    // Honor the user's model selection: chosen engine first, rest as failover.
+    let engines = allEngines;
+    if (selectedEngine && selectedEngine !== 'auto') {
+      const chosen = allEngines.filter(e => e.name === selectedEngine);
+      const rest = allEngines.filter(e => e.name !== selectedEngine);
+      engines = [...chosen, ...rest];
+    }
 
     let text = null;
     let usedEngine = 'quant_brain';
@@ -473,6 +504,36 @@ RESPONSE STRUCTURE:
                 </div>
               </div>
               <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
+                {/* AI Model Selector */}
+                <div className="relative">
+                  <button
+                    onClick={() => setShowEngineMenu(v => !v)}
+                    className="flex items-center gap-1 text-[9px] sm:text-[10px] font-bold text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-lg px-1.5 sm:px-2 py-1 transition-colors"
+                    title="Select AI Model"
+                  >
+                    <Cpu size={12} />
+                    <span className="hidden xs:inline max-w-[70px] truncate">
+                      {ENGINE_OPTIONS.find(e => e.id === selectedEngine)?.label.split(' ')[0] || 'Auto'}
+                    </span>
+                    <ChevronDown size={10} />
+                  </button>
+                  {showEngineMenu && (
+                    <div className="absolute right-0 top-full mt-1 w-52 max-h-72 overflow-y-auto bg-slate-900 border border-cyan-500/30 rounded-xl shadow-2xl z-[70] p-1 scrollbar-hide">
+                      <div className="text-[8px] uppercase tracking-wider text-slate-500 font-bold px-2 py-1">AI Model</div>
+                      {ENGINE_OPTIONS.map(e => (
+                        <button
+                          key={e.id}
+                          onClick={() => { setSelectedEngine(e.id); setShowEngineMenu(false); }}
+                          className={`w-full flex items-center gap-2 text-left text-[11px] px-2 py-1.5 rounded-lg transition-colors ${selectedEngine === e.id ? 'bg-cyan-500/20 text-cyan-300 font-bold' : 'text-slate-300 hover:bg-white/5'}`}
+                        >
+                          <span>{e.badge}</span>
+                          <span className="flex-1 truncate">{e.label}</span>
+                          {selectedEngine === e.id && <Check size={12} className="text-cyan-400" />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <button onClick={clearChat} className="text-slate-500 hover:text-red-400 bg-white/5 rounded-full p-1.5 transition-colors" title="Clear Chat"><Trash2 size={14} /></button>
                 <button onClick={() => setShowChat(false)} className="text-slate-400 hover:text-white bg-white/5 rounded-full p-1.5 transition-colors"><X size={16} /></button>
               </div>
@@ -567,7 +628,7 @@ RESPONSE STRUCTURE:
               </div>
               <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
                 <span className="text-[7px] sm:text-[8px] text-slate-500 font-mono">
-                  ⚡ 6 Engines + Quant Brain (Always Online)
+                  {selectedEngine === 'auto' ? '⚡ Auto Failover + Quant Brain' : `${ENGINE_OPTIONS.find(e => e.id === selectedEngine)?.badge || ''} ${ENGINE_OPTIONS.find(e => e.id === selectedEngine)?.label || ''}`} (Always Online)
                 </span>
                 <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
                   {chatMessages.length} messages
