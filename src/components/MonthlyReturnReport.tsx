@@ -87,7 +87,10 @@ export const MonthlyReturnReport = React.memo(function MonthlyReturnReport() {
             <tbody>
               {rows.map(r => (
                 <tr key={r.month} className="text-[11px] border-b border-white/[0.03] hover:bg-white/[0.02]">
-                  <td className="py-2 pr-3 font-bold text-white whitespace-nowrap">{r.label}</td>
+                  <td className="py-2 pr-3 font-bold text-white whitespace-nowrap">
+                    {r.label}
+                    <div className="text-[8px] text-slate-500 font-normal font-mono">{r.rangeLabel}</div>
+                  </td>
                   <td className="py-2 px-3 text-right font-mono text-slate-300">{fmtINR(r.netInvestedINR)}</td>
                   <td className={`py-2 px-3 text-right font-mono font-bold ${r.realizedPLINR >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                     {r.realizedPLINR !== 0 ? `${r.realizedPLINR >= 0 ? '+' : ''}${fmtINR(r.realizedPLINR)}` : '—'}

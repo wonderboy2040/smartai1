@@ -83,8 +83,11 @@ export const MonthlyAnalyticsPanel = React.memo(function MonthlyAnalyticsPanel()
             {deltas.map(({ current: r, qtyDeltaPct, investedDeltaPct }) => (
               <div key={r.month} className="bg-black/20 rounded-xl p-3 border border-white/5 hover:border-cyan-500/20 transition-colors">
                 <div className="flex items-center justify-between mb-2">
-                  <div className="font-black text-white text-sm">{r.label}</div>
-                  <div className="text-[9px] text-slate-500 font-mono">{r.txnCount} txn{r.txnCount > 1 ? 's' : ''} · {r.symbols.slice(0, 4).join(', ')}{r.symbols.length > 4 ? '…' : ''}</div>
+                  <div>
+                    <div className="font-black text-white text-sm">{r.label}</div>
+                    <div className="text-[8px] text-slate-500 font-mono">{r.rangeLabel}</div>
+                  </div>
+                  <div className="text-[9px] text-slate-500 font-mono text-right">{r.txnCount} txn{r.txnCount > 1 ? 's' : ''} · {r.symbols.slice(0, 4).join(', ')}{r.symbols.length > 4 ? '…' : ''}</div>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <div>
@@ -106,6 +109,25 @@ export const MonthlyAnalyticsPanel = React.memo(function MonthlyAnalyticsPanel()
                     <div className={`text-sm font-bold font-mono ${r.realizedPLINR >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                       {r.realizedPLINR !== 0 ? `${r.realizedPLINR >= 0 ? '+' : ''}${fmtINR(r.realizedPLINR)}` : '—'}
                     </div>
+                  </div>
+                </div>
+
+                {/* Market-wise split: India / USA / Crypto */}
+                <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-white/5">
+                  <div className="text-center">
+                    <div className="text-[9px] font-bold text-orange-400">🇮🇳 India</div>
+                    <div className="text-[11px] font-mono text-white">{fmtINR(r.india.buyAmountINR)}</div>
+                    <div className="text-[8px] text-slate-500 font-mono">Qty {r.india.buyQty.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+                  </div>
+                  <div className="text-center border-x border-white/5">
+                    <div className="text-[9px] font-bold text-blue-400">🇺🇸 USA</div>
+                    <div className="text-[11px] font-mono text-white">${Math.round(r.usa.buyAmount).toLocaleString('en-US')}</div>
+                    <div className="text-[8px] text-slate-500 font-mono">Qty {r.usa.buyQty.toLocaleString('en-US', { maximumFractionDigits: 2 })}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-[9px] font-bold text-amber-400">🪙 Crypto</div>
+                    <div className="text-[11px] font-mono text-white">{fmtINR(r.crypto.buyAmountINR)}</div>
+                    <div className="text-[8px] text-slate-500 font-mono">Qty {r.crypto.buyQty.toLocaleString('en-IN', { maximumFractionDigits: 4 })}</div>
                   </div>
                 </div>
               </div>

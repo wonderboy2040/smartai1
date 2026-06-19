@@ -2267,7 +2267,9 @@ bot.on('message', async (msg) => {
   console.log(`💬 AI Chat: "${text.substring(0, 50)}..." from ${msg.from?.first_name || chatId}`);
   try {
     await safeSend(chatId, '🧠 <i>Deep Mind processing...</i>');
-    await refreshPrices();
+    // Refresh BOTH portfolio (all assets/ETFs) and live prices so AI sees the latest, complete data
+    await Promise.allSettled([refreshPortfolio(), refreshPrices()]);
+    await refreshPrices(); // re-fetch prices for any newly-added assets
     const response = await chatWithAI(chatId, text, portfolio, livePrices, usdInrRate);
     await safeSend(chatId, response);
   } catch (e) {
@@ -2727,25 +2729,27 @@ bot.onText(/^\/ipo(@\w+)?$/i, async (msg) => {
 // CRON JOBS — Scheduled Automation
 // ========================================
 
-// 🌅 8:45 AM IST India Pre-Market
+// 🌅 8:45 AM IST India Pre-Market — DEEP analysis, ~30 min before 9:15 open
 cron.schedule('15 3 * * 1-5', async () => {
-  if (!autoAlerts) return;
   console.log(`🌅 India Pre-Market triggered at ${getISTTime()} IST`);
   try {
-    const response = await chatWithAI(TG_CHAT_ID, 'Generate a comprehensive India pre-market briefing for 8:45 AM. Include global overnight summary, GIFT Nifty, portfolio impact, and key events. Use real-time data.', portfolio, livePrices, usdInrRate);
-    await safeSend(TG_CHAT_ID, `🔔 <b>INDIA PRE-MARKET BRIEFING</b>\n\n${response}`);
+    await Promise.allSettled([refreshPortfolio(), refreshPrices(), refreshIntel()]);
+    await refreshPrices();
+    const response = await chatWithAI(TG_CHAT_ID, 'INDIA PRE-MARKET DEEP ANALYSIS (8:45 AM, market 9:15 me khulega). Detail me do: (1) global/US overnight + Asian markets summary, (2) GIFT Nifty signal aur expected India open, (3) FII/DII flows + key macro events/news aaj ke, (4) mere portfolio ke har India position pe aaj ka impact + exact levels, (5) top 3 action items aur 1 Pro Tip. Simple Hinglish, real-time data use karo.', portfolio, livePrices, usdInrRate);
+    await safeSend(TG_CHAT_ID, `🔔 <b>INDIA PRE-MARKET DEEP ANALYSIS</b>\n🕐 ${getISTTime()} IST · Market opens 9:15 AM\n\n${response}`);
   } catch (e) {
     console.error('India Pre-Market failed:', e.message);
   }
 });
 
-// 🌆 6:30 PM IST US Pre-Market
+// 🌆 6:30 PM IST US Pre-Market — DEEP analysis, ~30 min before 7:00 PM IST (9:30 ET) open
 cron.schedule('0 13 * * 1-5', async () => {
-  if (!autoAlerts) return;
   console.log(`🌆 US Pre-Market triggered at ${getISTTime()} IST`);
   try {
-    const response = await chatWithAI(TG_CHAT_ID, 'Generate a comprehensive US pre-market briefing for 6:30 PM IST. Include US Futures, Crypto movements, portfolio US holdings impact, and key events. Use real-time data.', portfolio, livePrices, usdInrRate);
-    await safeSend(TG_CHAT_ID, `🔔 <b>US PRE-MARKET BRIEFING</b>\n\n${response}`);
+    await Promise.allSettled([refreshPortfolio(), refreshPrices(), refreshIntel()]);
+    await refreshPrices();
+    const response = await chatWithAI(TG_CHAT_ID, 'US PRE-MARKET DEEP ANALYSIS (6:30 PM IST, US market 7:00 PM IST/9:30 ET me khulega). Detail me do: (1) US futures (S&P/Nasdaq/Dow) + pre-market movers, (2) crypto (BTC/ETH) overnight move, (3) key US macro events/earnings/Fed news aaj ke, (4) mere portfolio ke har US holding pe expected impact + exact levels, (5) top 3 action items aur 1 Pro Tip. Simple Hinglish, real-time data use karo.', portfolio, livePrices, usdInrRate);
+    await safeSend(TG_CHAT_ID, `🔔 <b>US PRE-MARKET DEEP ANALYSIS</b>\n🕐 ${getISTTime()} IST · US opens 7:00 PM IST\n\n${response}`);
   } catch (e) {
     console.error('US Pre-Market failed:', e.message);
   }

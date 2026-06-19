@@ -69,9 +69,16 @@ export interface Transaction {
 }
 
 // Aggregated month-wise analytics row (Planner Deep Data Analytics)
+export interface MarketBreakdown {
+  buyQty: number;
+  buyAmount: number;   // native-summed but tagged; INR for IN/CRYPTO-INR, USD for US
+  buyAmountINR: number;
+  txnCount: number;
+}
 export interface MonthlyAnalytics {
   month: string;            // YYYY-MM
   label: string;            // "Jun 2026"
+  rangeLabel: string;       // "1 Jun – 30 Jun 2026"
   buyQty: number;           // total qty bought in month
   buyAmountINR: number;     // total invested in month (INR equivalent)
   sellQty: number;          // total qty sold in month
@@ -80,6 +87,10 @@ export interface MonthlyAnalytics {
   realizedPLINR: number;    // realized P&L booked in month (INR)
   txnCount: number;
   symbols: string[];        // unique symbols transacted
+  // market split: India, USA, Crypto
+  india: MarketBreakdown;
+  usa: MarketBreakdown;
+  crypto: MarketBreakdown;
 }
 
 export interface DeepScanStock {

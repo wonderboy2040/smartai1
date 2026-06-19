@@ -135,9 +135,8 @@ export default React.memo(function DeepScanTab() {
     setTgSending(true);
     try {
       const [token, chatId] = await Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')]);
-      if (!token || !chatId) { setTgSending(false); return; }
       const msg = formatDeepScanTelegram(stocks, filter === 'ALL' ? 'ALL' : filter);
-      await sendTelegramAlert(token, chatId, msg);
+      await sendTelegramAlert(token || '', chatId || '', msg);
     } catch (e) {
       console.warn('Telegram push failed:', e);
     } finally {

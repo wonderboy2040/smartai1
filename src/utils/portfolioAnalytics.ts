@@ -4,6 +4,7 @@
 // the transaction ledger. Pure functions — no side effects.
 // ============================================================
 import { Transaction, Position, PriceData, MonthlyAnalytics } from '../types';
+import { isCryptoSymbol } from './constants';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -16,6 +17,24 @@ function monthLabel(key: string): string {
   const [y, m] = key.split('-');
   const mi = Math.max(0, Math.min(11, parseInt(m, 10) - 1));
   return `${MONTHS[mi]} ${y}`;
+}
+
+// Full "1 Jun – 30 Jun 2026" range label (1st → last calendar day of the month)
+function monthRangeLabel(key: string): string {
+  const [y, m] = key.split('-').map(s => parseInt(s, 10));
+  const mi = Math.max(0, Math.min(11, m - 1));
+  const lastDay = new Date(y, m, 0).getDate(); // day 0 of next month = last day this month
+  return `1 ${MONTHS[mi]} – ${lastDay} ${MONTHS[mi]} ${y}`;
+}
+
+function emptyBreakdown() {
+  return { buyQty: 0, buyAmount: 0, buyAmountINR: 0, txnCount: 0 };
+}
+
+// Classify a transaction into India / USA / Crypto buckets
+function marketBucket(t: Transaction): 'india' | 'usa' | 'crypto' {
+  if (isCryptoSymbol(t.symbol)) return 'crypto';
+  return t.market === 'US' ? 'usa' : 'india';
 }
 
 // Convert a native-currency amount to INR
@@ -37,16 +56,22 @@ export function buildMonthlyAnalytics(
     const key = monthKey(t.date);
     if (!map.has(key)) {
       map.set(key, {
-        month: key, label: monthLabel(key),
+        month: key, label: monthLabel(key), rangeLabel: monthRangeLabel(key),
         buyQty: 0, buyAmountINR: 0, sellQty: 0, sellAmountINR: 0,
         netInvestedINR: 0, realizedPLINR: 0, txnCount: 0, symbols: [],
+        india: emptyBreakdown(), usa: emptyBreakdown(), crypto: emptyBreakdown(),
       });
     }
     const row = map.get(key)!;
     const amtINR = toINR(t.amount, t.market, usdInr);
+    const bucket = marketBucket(t);
     if (t.type === 'buy') {
       row.buyQty += t.qty;
       row.buyAmountINR += amtINR;
+      row[bucket].buyQty += t.qty;
+      row[bucket].buyAmount += t.amount;     // native (USD for usa, INR otherwise)
+      row[bucket].buyAmountINR += amtINR;
+      row[bucket].txnCount += 1;
     } else {
       row.sellQty += t.qty;
       row.sellAmountINR += amtINR;
@@ -94,6 +119,7 @@ export function withMonthlyDeltas(rows: MonthlyAnalytics[]): MonthlyDelta[] {
 export interface MonthlyReturn {
   month: string;
   label: string;
+  rangeLabel: string;         // "1 Jun – 30 Jun 2026"
   netInvestedINR: number;     // capital deployed this month (buy - sell value)
   realizedPLINR: number;      // booked profit/loss this month
   realizedReturnPct: number;  // realizedPL / cost-basis sold
@@ -116,7 +142,7 @@ export function buildMonthlyReturns(
     const costBasisSold = m.sellAmountINR - m.realizedPLINR;
     const realizedReturnPct = costBasisSold > 0 ? (m.realizedPLINR / costBasisSold) * 100 : 0;
     return {
-      month: m.month, label: m.label,
+      month: m.month, label: m.label, rangeLabel: m.rangeLabel,
       netInvestedINR: m.netInvestedINR,
       realizedPLINR: m.realizedPLINR,
       realizedReturnPct,

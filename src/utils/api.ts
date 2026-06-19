@@ -479,13 +479,33 @@ export async function loadFromCloud(): Promise<Position[] | null> {
 }
 
 export async function sendTelegramAlert(token: string, chatId: string, message: string): Promise<boolean> {
-  if (!token || !chatId) return false;
+  // 1) Try direct send if browser has local token + chatId
+  if (token && chatId) {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML' })
+      });
+      if (res.ok) return true;
+    } catch (e) {
+      // fall through to server proxy
+    }
+  }
+  // 2) Fallback to server proxy (uses bot's TG_TOKEN/TG_CHAT_ID env) so the
+  //    website can still notify even without local config. Fixes "No Telegram Config".
+  return sendTelegramViaServer(message, chatId || undefined);
+}
 
+// Server-side Telegram proxy fallback — uses the bot's configured token/chat.
+export async function sendTelegramViaServer(message: string, chatId?: string): Promise<boolean> {
+  const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
   try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const res = await fetch(`${proxyBase}/api/telegram`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML' })
+      body: JSON.stringify(chatId ? { message, chatId } : { message }),
+      signal: AbortSignal.timeout(10000),
     });
     return res.ok;
   } catch (e) {

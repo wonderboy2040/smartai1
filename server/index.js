@@ -43,6 +43,13 @@ const KEYS = {
   tavily:      process.env.TAVILY_API_KEY || '',
 };
 
+// Telegram bot credentials (server-side env) — used by the /api/telegram proxy
+// so the website can send notifications even if the browser has no local config.
+const TG = {
+  token:  process.env.TG_TOKEN || process.env.VITE_TG_TOKEN || '',
+  chatId: process.env.TG_CHAT_ID || process.env.VITE_TG_CHAT_ID || '',
+};
+
 // OpenAI-compatible providers — body is forwarded almost as-is.
 const OPENAI_COMPAT = {
   groq:        { url: 'https://api.groq.com/openai/v1/chat/completions', defModel: 'llama-3.3-70b-versatile' },
@@ -166,6 +173,36 @@ app.post('/api/claude', async (req, res) => {
   } catch (e) {
     return jsonError(res, 502, `claude upstream error: ${e?.message || e}`);
   }
+});
+
+// ------------------------------------------------------------
+// POST /api/telegram → send a Telegram message using the SERVER's
+// bot token + chat id (env). Lets the website push notifications
+// even when the browser has no local Telegram config saved.
+// Body: { message: string, chatId?: string }
+// ------------------------------------------------------------
+app.post('/api/telegram', async (req, res) => {
+  if (!TG.token) return jsonError(res, 503, 'telegram not configured on server');
+  const { message, chatId } = req.body || {};
+  const target = chatId || TG.chatId;
+  if (!message || !target) return jsonError(res, 400, 'message and chatId required');
+  try {
+    const upstream = await fetch(`https://api.telegram.org/bot${TG.token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: target, text: message, parse_mode: 'HTML', disable_web_page_preview: true }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const text = await upstream.text();
+    res.status(upstream.status).type('application/json').send(text || '{}');
+  } catch (e) {
+    return jsonError(res, 502, `telegram upstream error: ${e?.message || e}`);
+  }
+});
+
+// Tell the frontend whether server-side Telegram is available
+app.get('/api/telegram-status', (_req, res) => {
+  res.json({ configured: !!(TG.token && TG.chatId) });
 });
 
 // ------------------------------------------------------------

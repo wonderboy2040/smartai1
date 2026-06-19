@@ -359,7 +359,7 @@ ADVANCE PRO TRADING RULES:
 3. Conviction scores (1-10) with rationale. Risk-reward ratio mandatory.
 4. End with VERDICT: 🟢 STRONG BUY / 🟡 BUY / 🔴 STRONG SELL / ⚪ HOLD / ⏳ WAIT + exact entry price + 3 targets.
 5. Emphasize LONG-TERM wealth creation (15-20 years), compounding projections with specific ₹ amounts, SIP step-up.
-6. ALWAYS analyze EVERY position including crypto. No position should be ignored.
+6. ALWAYS analyze EVERY position — stocks, ETFs, AND crypto. Read each ETF (Momentum, Smallcap, Junior BeES, SMH, VGT, SPCX etc.) by name. No position should EVER be ignored or skipped.
 7. USD/INR: ₹${forexRate.toFixed(4)} (LIVE). Convert US holdings to INR.
 
 CRYPTO MASTER RULES: BTC supply cap 21M, halving cycle ~4yr, DCA strategy at -15% from ATH. Use MVRV Z-score (<0 = undervalued, >3 = overvalued), NVT ratio, exchange inflow/outflow, whale accumulation trends. BTC RSI: oversold<25, overbought>80.

@@ -58,7 +58,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
           <span className="text-sm font-medium text-slate-400">USD/INR</span>
           <span className="text-base font-black text-emerald-400 font-mono">₹{usdInrRate.toFixed(2)}</span>
         </div>
-        <span className="text-[10px] text-cyan-500/60 font-bold uppercase tracking-wider">Live Forex</span>
+        <span className="text-[10px] text-cyan-500/60 font-bold uppercase tracking-wider">Live Forex • 24×7 · 30s</span>
       </div>
 
       {/* Summary Cards */}

@@ -58,7 +58,6 @@ export function ExactBuyPricePanel() {
       secureStorage.getItemAsync('TG_TOKEN'),
       secureStorage.getItemAsync('TG_CHAT_ID')
     ]);
-    if (!token || !chatId) { setTgSending(false); return; }
 
     let msg = `<b>EXACT BUY PRICE REPORT: ${currentSymbol}</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
     if (entryResult) {
@@ -76,7 +75,7 @@ export function ExactBuyPricePanel() {
       msg += `<b>SENTIMENT:</b> ${sentiment.overall} (${sentiment.score}/100)\n\n`;
     }
 
-    await sendTelegramAlert(token, chatId, msg);
+    await sendTelegramAlert(token || '', chatId || '', msg);
     setTgSending(false);
   }, [entryResult, confluence, sentiment, currentSymbol, cur]);
 

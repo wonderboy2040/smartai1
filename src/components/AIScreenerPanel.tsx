@@ -69,10 +69,6 @@ export const AIScreenerPanel = React.memo(({ portfolio, livePrices }: AIScreener
     try {
       const token = await secureStorage.getItemAsync('TG_TOKEN');
       const chatId = await secureStorage.getItemAsync('TG_CHAT_ID');
-      if (!token || !chatId) {
-        alert('Telegram credentials not configured');
-        return;
-      }
       const lines = results.slice(0, 20).map(r => {
         const cur = r.market === 'IN' ? '₹' : '$';
         return `${r.signal === 'STRONG_BUY' ? '🟢' : r.signal === 'BUY' ? '🔵' : r.signal === 'HOLD' ? '🟡' : '🔴'} <b>${r.symbol}</b> — ${r.name}\nScore: ${r.alphaScore}/100 | Q:${r.qualityScore} M:${r.momentumScore} V:${r.valueScore}\n${cur}${r.price.toFixed(2)} | RSI: ${r.rsi.toFixed(0)} | CAGR: ${r.cagr}% | ${r.sector}\n${r.reason}\n`;
@@ -80,7 +76,7 @@ export const AIScreenerPanel = React.memo(({ portfolio, livePrices }: AIScreener
 
       const msg = `<b>📊 AI STOCK SCREENER</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n<i>${getFilterSummary(filters)}</i>\n\n${lines}\n━━━━━━━━━━━━━━━━━━━━━━━\n<i>Powered by Deep Mind AI</i>`;
 
-      await sendTelegramAlert(token, chatId, msg);
+      await sendTelegramAlert(token || '', chatId || '', msg);
       alert('Sent to Telegram!');
     } catch (e) {
       console.error('Telegram send error:', e);

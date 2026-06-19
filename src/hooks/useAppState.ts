@@ -410,13 +410,14 @@ export function useAppState() {
     return () => { if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current); };
   }, [portfolio, usdInrRate]);
 
-  // --- Forex refresh (180s) ---
+  // --- Forex refresh (realtime 24x7, every 30s) ---
   useEffect(() => {
     if (!isAuthenticated) return;
     const refreshForex = async () => {
       const rate = await fetchForexRate(); setUsdInrRate(rate);
     };
-    forexIntervalRef.current = window.setInterval(refreshForex, 180000);
+    refreshForex(); // immediate fetch on mount
+    forexIntervalRef.current = window.setInterval(refreshForex, 30000);
     return () => { if (forexIntervalRef.current) clearInterval(forexIntervalRef.current); };
   }, [isAuthenticated]);
 
@@ -638,9 +639,9 @@ export function useAppState() {
     };
 
     generateContext();
-    const interval = window.setInterval(generateContext, 120000); // 120 seconds
+    const interval = window.setInterval(generateContext, 45000); // 45s — keep AI context fresh with all assets + live data
     return () => { clearInterval(interval); };
-  }, [isAuthenticated, calculateMetrics]);
+  }, [isAuthenticated, calculateMetrics, portfolio]);
 
   // --- Telegram auto-report (OFF by default — bot handles 24x7 alerts) ---
   useEffect(() => {
@@ -906,10 +907,12 @@ export function useAppState() {
 
   const pushTelegramReport = useCallback(async () => {
     const [tgToken, tgChatId] = await Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')]);
-    if (!tgToken || !tgChatId) { setSyncStatus('⚠️ No Telegram config'); setTimeout(() => setSyncStatus(''), 3000); return; }
     const msg = `🧠 <b>Quantum AI Master Report</b>\n\n🌍 <b>Global State:</b> ${sentiment.text}\n\n💼 <b>Total Equity:</b> ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n📈 <b>P&L:</b> ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(2)}%)\n⚡ <b>Today:</b> ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')}`;
-    await sendTelegramAlert(tgToken, tgChatId, msg);
-    setSyncStatus('✅ Sent'); setTimeout(() => setSyncStatus(''), 3000);
+    setSyncStatus('📤 Sending…');
+    // sendTelegramAlert falls back to the server proxy (bot's token) when local config is missing
+    const ok = await sendTelegramAlert(tgToken || '', tgChatId || '', msg);
+    setSyncStatus(ok ? '✅ Sent' : '⚠️ Telegram not configured');
+    setTimeout(() => setSyncStatus(''), 3000);
   }, [sentiment, metrics]);
 
   const toggleTheme = useCallback(() => {
