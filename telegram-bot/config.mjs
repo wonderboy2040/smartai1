@@ -4,6 +4,10 @@
 // ============================================
 
 import 'dotenv/config';
+import dns from 'dns';
+
+// Fix for Node.js 18+ native fetch IPv6 timeout issues
+dns.setDefaultResultOrder('ipv4first');
 
 // Telegram Credentials
 export const TG_TOKEN = process.env.TG_TOKEN || process.env.VITE_TG_TOKEN || "";
