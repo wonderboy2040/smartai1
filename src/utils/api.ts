@@ -403,21 +403,9 @@ export async function batchFetchPrices(
 }
 
 export async function fetchForexRate(): Promise<number> {
-  // Primary: AwesomeAPI (free, no CORS issues)
-  try {
-    const res = await fetch(`https://economia.awesomeapi.com.br/json/last/USD-INR?t=${Date.now()}`, {
-      signal: AbortSignal.timeout(4000)
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.USDINR?.ask) {
-        const price = parseFloat(data.USDINR.ask);
-        if (!isNaN(price) && price > 50 && price < 150) return price;
-      }
-    }
-  } catch (e) { console.warn('AwesomeAPI forex fetch failed:', e); }
-
-  // Backup 2: Open ER-API (Daily updates)
+  // Primary: Open ER-API — CORS-friendly and reliable from the browser.
+  // (AwesomeAPI was removed: it does not send CORS headers, so the browser
+  //  always blocked it and it could never succeed client-side.)
   try {
     const res = await fetch(`https://open.er-api.com/v6/latest/USD?t=${Date.now()}`, {
       signal: AbortSignal.timeout(4000)
@@ -432,44 +420,6 @@ export async function fetchForexRate(): Promise<number> {
   } catch (e) { console.warn('Open ER-API forex fetch failed:', e); }
 
   return DEFAULT_USD_INR; // Default fallback
-}
-
-/**
- * @deprecated Kept for future crypto premium calculations or custom USDT/INR conversion screens
- */
-export async function fetchCryptoUsdInrRate(): Promise<number> {
-  // Primary: CoinDCX USDT/INR (matches user's exchange for accurate INR conversion)
-  try {
-    const res = await fetch(`https://api.coindcx.com/exchange/ticker`, {
-      signal: AbortSignal.timeout(5000)
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const usdtTicker = (data as CoinDcxTicker[]).find(t => t.market === 'USDTINR');
-      if (usdtTicker && usdtTicker.last_price) {
-        const price = parseFloat(usdtTicker.last_price);
-        if (!isNaN(price) && price > 60 && price < 150) return price;
-      }
-    }
-  } catch (e) { console.warn('CoinDCX USDT/INR fetch failed:', e); }
-
-  // Backup: WazirX USDT/INR
-  try {
-    const res = await fetch(`https://api.wazirx.com/sapi/v1/ticker/24hr?symbol=usdtinr`, {
-      signal: AbortSignal.timeout(4000)
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.lastPrice) {
-        const price = parseFloat(data.lastPrice);
-        if (!isNaN(price) && price > 60 && price < 150) return price;
-      }
-    }
-  } catch (e) { console.warn('WazirX USDT/INR fetch failed:', e); }
-
-  // Fallback to a fixed 5% premium over normal FOREX if all fails
-  const normalRate = await fetchForexRate();
-  return normalRate * 1.05;
 }
 
 export async function syncToCloud(portfolio: Position[], usdInr: number): Promise<boolean> {

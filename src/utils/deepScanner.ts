@@ -442,10 +442,6 @@ export async function getGroqDeepAnalysis(
   stocks: DeepScanStock[],
   top: number = 5
 ): Promise<Record<string, string>> {
-  const groqKey = import.meta.env.VITE_GROQ_API_KEY || '';
-
-  if (!groqKey || !groqKey.startsWith('gsk_')) return {};
-
   const topStocks = stocks.slice(0, top);
   const stockSummary = topStocks.map((s, i) =>
     `${i + 1}. ${s.symbol} (${s.market}) — ${s.market === 'IN' ? '₹' : '$'}${s.price.toFixed(2)} | AI Score: ${s.aiScore}/100 | RSI: ${s.rsi.toFixed(0)} | Signal: ${s.signal} | SMA20: ${s.sma20.toFixed(1)} | SMA50: ${s.sma50.toFixed(1)} | ADX: ${s.adx} | Phase: ${s.accDistPhase} | InstQuality: ${s.institutionalQuality}/100 | Fib Support: ${s.fibSupport?.toFixed(1)} | Fib Resistance: ${s.fibResistance?.toFixed(1)} | 1Y Target: ${s.market === 'IN' ? '₹' : '$'}${s.target1Y} (+${s.return1Y}%) | ${s.aiReasoning}`
@@ -467,9 +463,14 @@ RULES:
   try {
     let text = '';
 
-    if (groqKey && groqKey.startsWith('gsk_')) {
-      try {
-        const payload = {
+    // Route through the backend proxy (/api/groq) so the API key stays
+    // server-side and we avoid browser CORS restrictions.
+    try {
+      const PROXY_BASE = import.meta.env.VITE_API_PROXY || '';
+      const res = await fetch(`${PROXY_BASE}/api/groq`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           model: 'llama-3.3-70b-versatile',
           messages: [
             { role: 'system', content: systemPrompt },
@@ -477,30 +478,15 @@ RULES:
           ],
           temperature: 0.7,
           max_tokens: 3000
-        };
-        const targetUrl = 'https://api.groq.com/openai/v1/chat/completions';
-        let res;
-        try {
-          res = await fetch(targetUrl, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${groqKey}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(25000)
-          });
-        } catch (err) {
-          console.warn('Groq scanner call failed (CORS/network).');
-          return {};
-        }
-        if (res.ok) {
-          const data = await res.json();
-          text = data.choices?.[0]?.message?.content || '';
-        }
-      } catch (e) {
-        console.warn('Groq deep analysis failed:', e);
+        }),
+        signal: AbortSignal.timeout(25000)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        text = data.choices?.[0]?.message?.content || '';
       }
+    } catch (e) {
+      console.warn('Groq deep analysis failed:', e);
     }
 
     if (!text || text.trim().length < 5) return {};
