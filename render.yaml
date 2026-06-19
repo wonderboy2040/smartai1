@@ -1,0 +1,35 @@
+# Render Blueprint — deploy the frontend + AI proxy as ONE Web Service.
+# IMPORTANT: this must be a "Web Service" (runs Node), NOT a "Static Site".
+# Set the API keys below in the Render dashboard (Environment) — they are
+# kept server-side and never shipped to the browser.
+services:
+  - type: web
+    name: wealth-ai-pro
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: node server/index.js
+    healthCheckPath: /api/ai-status
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # ---- AI provider keys (set values in the Render dashboard) ----
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: HF_API_KEY
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      # Optional: Google Apps Script portfolio-sync URL
+      - key: API_URL
+        sync: false
