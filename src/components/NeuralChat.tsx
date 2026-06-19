@@ -368,8 +368,9 @@ RESPONSE STRUCTURE:
       recentMessages.push({ role: 'user', content: userMessage });
     }
 
-    // 6-Engine Router + Quant Brain Fallback — NEVER shows "AI Offline"
+    // 7-Engine Router + Quant Brain Fallback — NEVER shows "AI Offline"
     const engines = [
+      { name: 'nvidia', model: 'meta/llama-3.1-8b-instruct', endpoint: 'nvidia' },
       { name: 'gemini', model: 'gemini-2.0-flash', endpoint: 'gemini' },
       { name: 'groq', model: 'llama-3.3-70b-versatile', endpoint: 'groq' },
       { name: 'claude', model: 'claude-sonnet-4-20250514', endpoint: 'claude' },
@@ -462,12 +463,12 @@ RESPONSE STRUCTURE:
                    <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
                      <span className="hidden xs:inline">Advance Pro v23</span>
                      <span className="xs:hidden">AI v23</span>
-                     <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">6-ENGINE + QUANT BRAIN</span>
+                     <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">7-ENGINE + QUANT BRAIN</span>
                    </h3>
                    <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                     <span className="hidden sm:inline">Gemini + Groq + Claude + OpenRouter + Cerebras + HF | Always Online</span>
-                     <span className="sm:hidden">LIVE • 6 Engines</span>
+                     <span className="hidden sm:inline">NVIDIA + Gemini + Groq + Claude + OpenRouter + Cerebras + HF | Always Online</span>
+                     <span className="sm:hidden">LIVE • 7 Engines</span>
                    </div>
                 </div>
               </div>

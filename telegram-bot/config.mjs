@@ -135,8 +135,15 @@ export function isHFAvailable() { return !!(HF_KEY && HF_KEY.length > 10); }
 export const OLLAMA_URL = env.OLLAMA_URL || 'http://localhost:11434';
 export function isOllamaAvailable() { return false; } // Only if self-hosted
 
+// ============================================
+// NVIDIA Llama 3.1 70B (Primary Free Fallback)
+// ============================================
+export const NVIDIA_KEY = env.NVIDIA_API_KEY || "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";
+export function isNvidiaAvailable() { return true; }
+
 // Log all engine statuses at startup
 console.log(`\n🤖 AI Engine Status:`);
+console.log(`  🟢 NVIDIA: ✓ AVAILABLE (Primary Fallback)`);
 console.log(`  🔷 Gemini: ${isGeminiAvailable() ? '✓ AVAILABLE' : '✗ Missing (set GEMINI_API_KEY)'}`);
 console.log(`  ⚡ Groq:   ${isGroqAvailable() ? '✓ AVAILABLE' : '✗ Missing (set GROQ_API_KEY)'}`);
 console.log(`  🟣 Claude: ${isClaudeAvailable() ? '✓ AVAILABLE' : '✗ Missing (set ANTHROPIC_API_KEY)'}`);

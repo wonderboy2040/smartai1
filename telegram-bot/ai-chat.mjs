@@ -5,9 +5,9 @@
 // ============================================
 import {
   GROQ_KEY, GEMINI_KEY, CLAUDE_KEY, TAVILY_API_KEY,
-  OPENROUTER_KEY, CEREBRAS_KEY, HF_KEY,
+  OPENROUTER_KEY, CEREBRAS_KEY, HF_KEY, NVIDIA_KEY,
   isGroqAvailable, isGeminiAvailable, isClaudeAvailable, isTavilyAvailable,
-  isOpenRouterAvailable, isCerebrasAvailable, isHFAvailable,
+  isOpenRouterAvailable, isCerebrasAvailable, isHFAvailable, isNvidiaAvailable,
   ALPHA_ETFS_IN, ALPHA_ETFS_US
 } from './config.mjs';
 import { fetchMarketIntelligence, fetchForexRate } from './market.mjs';
@@ -26,6 +26,7 @@ let intelTimestamp = 0;
 // ENGINE HEALTH — 6 providers with cooldown
 // ============================================
 const engineHealth = {
+  nvidia: { failures: 0, lastFailure: 0, cooldownMs: 15000 },
   groq: { failures: 0, lastFailure: 0, cooldownMs: 30000 },
   gemini: { failures: 0, lastFailure: 0, cooldownMs: 15000 },
   claude: { failures: 0, lastFailure: 0, cooldownMs: 15000 },
@@ -124,6 +125,23 @@ async function getRealtimeForex() {
 // ============================================
 // LLM CALLERS — 6 Providers
 // ============================================
+
+// 0) NVIDIA (Primary Fallback out-of-the-box)
+async function callNvidia(messages, systemPrompt, modelName = 'meta/llama-3.1-8b-instruct') {
+  if (!isNvidiaAvailable()) throw new Error('NVIDIA key missing');
+  if (engineHealth.nvidia.failures >= 3 && Date.now() - engineHealth.nvidia.lastFailure < engineHealth.nvidia.cooldownMs) throw new Error('NVIDIA cooling down');
+  const res = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${NVIDIA_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: modelName, messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_tokens: 4000 }),
+    signal: AbortSignal.timeout(30000)
+  });
+  if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`NVIDIA ${res.status}: ${err.error?.message||res.statusText}`); }
+  const data = await res.json();
+  const text = data.choices?.[0]?.message?.content;
+  if (!text || text.trim().length < 5) throw new Error('NVIDIA empty response');
+  return text;
+}
 
 // 1) GOOGLE GEMINI
 async function callGemini(messages, systemPrompt, modelName = 'gemini-2.0-flash') {
@@ -431,8 +449,9 @@ export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={
   let aiText = '';
   let usedEngine = '';
 
-  // Try 6 engines in order: Gemini → Groq → Claude → OpenRouter → Cerebras → HuggingFace
+  // Try 7 engines in order: NVIDIA -> Gemini -> Groq -> Claude -> OpenRouter -> Cerebras -> HuggingFace
   const engines = [
+    { name: 'nvidia', fn: () => callNvidia(recentHistory, systemPrompt), available: isNvidiaAvailable },
     { name: 'gemini', fn: () => callGemini(recentHistory, systemPrompt), available: isGeminiAvailable },
     { name: 'groq', fn: () => callGroq(recentHistory, systemPrompt), available: isGroqAvailable },
     { name: 'claude', fn: () => callClaude(recentHistory, systemPrompt), available: isClaudeAvailable },

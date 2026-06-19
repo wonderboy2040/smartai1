@@ -10,7 +10,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_KEY, CLAUDE_KEY, TAVILY_API_KEY, TAX_PAIRS, OPENROUTER_KEY, CEREBRAS_KEY, HF_KEY } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_KEY, CLAUDE_KEY, TAVILY_API_KEY, TAX_PAIRS, OPENROUTER_KEY, CEREBRAS_KEY, HF_KEY, NVIDIA_KEY } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchCryptoPricesINR, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
 import { loadPortfolioFromCloud } from './cloud.mjs';
 import {
@@ -135,6 +135,7 @@ apiRouter.get('/config', (req, res) => {
 
 apiRouter.get('/ai-status', (req, res) => {
   res.json({
+    nvidia: true,
     gemini: !!(GEMINI_KEY && GEMINI_KEY.length > 5),
     groq: !!(GROQ_KEY && GROQ_KEY.length > 10),
     claude: !!(CLAUDE_KEY && CLAUDE_KEY.length > 10),
@@ -143,6 +144,37 @@ apiRouter.get('/ai-status', (req, res) => {
     huggingface: !!(HF_KEY && HF_KEY.length > 10),
     tavily: !!(TAVILY_API_KEY && TAVILY_API_KEY.length > 10)
   });
+});
+
+apiRouter.post('/nvidia', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    const { messages, model } = req.body;
+    const modelName = model || 'meta/llama-3.1-8b-instruct';
+    const formattedMessages = messages.map(m => ({ role: m.role, content: m.content }));
+    
+    const apiRes = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${NVIDIA_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: modelName,
+        messages: formattedMessages,
+        temperature: 0.7,
+        max_tokens: 4000
+      }),
+      signal: AbortSignal.timeout(30000)
+    });
+
+    const data = await apiRes.json();
+    if (!apiRes.ok) return res.status(apiRes.status).json(data);
+    
+    res.json(data);
+  } catch (error) {
+    console.error('[API] NVIDIA Error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 apiRouter.post('/gemini', express.json({ limit: '1mb' }), async (req, res) => {
