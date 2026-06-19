@@ -6,11 +6,11 @@
 import 'dotenv/config';
 
 // Telegram Credentials
-export const TG_TOKEN = process.env.TG_TOKEN || "";
-export const TG_CHAT_ID = process.env.TG_CHAT_ID || "";
+export const TG_TOKEN = process.env.TG_TOKEN || process.env.VITE_TG_TOKEN || "";
+export const TG_CHAT_ID = process.env.TG_CHAT_ID || process.env.VITE_TG_CHAT_ID || "";
 
 // Google Apps Script Cloud Sync
-export const API_URL = process.env.API_URL || "";
+export const API_URL = process.env.API_URL || process.env.VITE_API_URL || "";
 
 // Tavily Search API (Real-time Web Data)
 export let TAVILY_API_KEY = process.env.TAVILY_API_KEY || process.env.VITE_TAVILY_API_KEY || "";
@@ -91,7 +91,7 @@ if (TAVILY_API_KEY) TAVILY_API_KEY = TAVILY_API_KEY.replace(/['"]/g, '').trim();
 // ============================================
 // GOOGLE GEMINI — Most generous free tier (1,500 req/day)
 // ============================================
-export let GEMINI_KEY = process.env.GEMINI_API_KEY || process.env.GEMINI_KEY || "";
+export let GEMINI_KEY = process.env.GEMINI_API_KEY || process.env.GEMINI_KEY || process.env.VITE_GEMINI_API_KEY || "";
 if (GEMINI_KEY) GEMINI_KEY = GEMINI_KEY.replace(/['"]/g, '').trim();
 export function setGeminiKey(key) { GEMINI_KEY = key; }
 export function isGeminiAvailable() { return !!(GEMINI_KEY && GEMINI_KEY.length > 5); }
@@ -107,7 +107,7 @@ export function isTavilyAvailable() { return !!(TAVILY_API_KEY && TAVILY_API_KEY
 // ============================================
 // ANTHROPIC CLAUDE — Third fallback
 // ============================================
-export let CLAUDE_KEY = env.ANTHROPIC_API_KEY || env.CLAUDE_API_KEY || env.CLAUDE_KEY || env.ANTHROPIC_KEY || "";
+export let CLAUDE_KEY = env.ANTHROPIC_API_KEY || env.CLAUDE_API_KEY || env.CLAUDE_KEY || env.ANTHROPIC_KEY || env.VITE_CLAUDE_API_KEY || env.VITE_CLAUDE_KEY || "";
 if (CLAUDE_KEY) CLAUDE_KEY = CLAUDE_KEY.replace(/['"]/g, '').trim();
 export function setClaudeKey(key) { CLAUDE_KEY = key; }
 export function isClaudeAvailable() { return !!(CLAUDE_KEY && CLAUDE_KEY.length > 10); }
@@ -115,15 +115,15 @@ export function isClaudeAvailable() { return !!(CLAUDE_KEY && CLAUDE_KEY.length 
 // ============================================
 // ADDITIONAL LLM PROVIDERS (Free tiers, auto-failover)
 // ============================================
-export let OPENROUTER_KEY = env.OPENROUTER_API_KEY || env.OPENROUTER_KEY || "";
+export let OPENROUTER_KEY = env.OPENROUTER_API_KEY || env.OPENROUTER_KEY || env.VITE_OPENROUTER_API_KEY || env.VITE_OPENROUTER_KEY || "";
 if (OPENROUTER_KEY) OPENROUTER_KEY = OPENROUTER_KEY.replace(/['"]/g, '').trim();
 export function isOpenRouterAvailable() { return !!(OPENROUTER_KEY && OPENROUTER_KEY.length > 10); }
 
-export let CEREBRAS_KEY = env.CEREBRAS_API_KEY || env.CEREBRAS_KEY || "";
+export let CEREBRAS_KEY = env.CEREBRAS_API_KEY || env.CEREBRAS_KEY || env.VITE_CEREBRAS_API_KEY || env.VITE_CEREBRAS_KEY || "";
 if (CEREBRAS_KEY) CEREBRAS_KEY = CEREBRAS_KEY.replace(/['"]/g, '').trim();
 export function isCerebrasAvailable() { return !!(CEREBRAS_KEY && CEREBRAS_KEY.length > 10); }
 
-export let HF_KEY = env.HF_API_KEY || env.HUGGINGFACE_API_KEY || "";
+export let HF_KEY = env.HF_API_KEY || env.HUGGINGFACE_API_KEY || env.VITE_HF_API_KEY || env.VITE_HUGGINGFACE_API_KEY || "";
 if (HF_KEY) HF_KEY = HF_KEY.replace(/['"]/g, '').trim();
 export function isHFAvailable() { return !!(HF_KEY && HF_KEY.length > 10); }
 

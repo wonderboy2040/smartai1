@@ -10,7 +10,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_KEY, CLAUDE_KEY, TAVILY_API_KEY, TAX_PAIRS } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_KEY, CLAUDE_KEY, TAVILY_API_KEY, TAX_PAIRS, OPENROUTER_KEY, CEREBRAS_KEY, HF_KEY } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchCryptoPricesINR, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
 import { loadPortfolioFromCloud } from './cloud.mjs';
 import {
@@ -137,6 +137,10 @@ apiRouter.get('/ai-status', (req, res) => {
   res.json({
     gemini: !!(GEMINI_KEY && GEMINI_KEY.length > 5),
     groq: !!(GROQ_KEY && GROQ_KEY.length > 10),
+    claude: !!(CLAUDE_KEY && CLAUDE_KEY.length > 10),
+    openrouter: !!(OPENROUTER_KEY && OPENROUTER_KEY.length > 10),
+    cerebras: !!(CEREBRAS_KEY && CEREBRAS_KEY.length > 10),
+    huggingface: !!(HF_KEY && HF_KEY.length > 10),
     tavily: !!(TAVILY_API_KEY && TAVILY_API_KEY.length > 10)
   });
 });
@@ -244,12 +248,106 @@ apiRouter.post('/claude', express.json({ limit: '1mb' }), async (req, res) => {
   }
 });
 
+apiRouter.post('/openrouter', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    if (!OPENROUTER_KEY || OPENROUTER_KEY.length < 10) {
+      return res.status(503).json({ error: 'OpenRouter API key not configured on server' });
+    }
+    const { messages, model } = req.body;
+    const modelName = model || 'meta-llama/llama-3.3-70b-instruct:free';
+    const apiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENROUTER_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://smartai1.onrender.com'
+      },
+      body: JSON.stringify({
+        model: modelName,
+        messages,
+        temperature: 0.7,
+        max_tokens: 8000
+      }),
+      signal: AbortSignal.timeout(30000)
+    });
+    const data = await apiRes.json();
+    if (!apiRes.ok) return res.status(apiRes.status).json(data);
+    res.json(data);
+  } catch (e) {
+    console.error('OpenRouter proxy error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+apiRouter.post('/cerebras', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    if (!CEREBRAS_KEY || CEREBRAS_KEY.length < 10) {
+      return res.status(503).json({ error: 'Cerebras API key not configured on server' });
+    }
+    const { messages, model } = req.body;
+    const modelName = model || 'llama-3.3-70b';
+    const apiRes = await fetch('https://api.cerebras.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${CEREBRAS_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: modelName,
+        messages,
+        temperature: 0.7,
+        max_tokens: 8000
+      }),
+      signal: AbortSignal.timeout(30000)
+    });
+    const data = await apiRes.json();
+    if (!apiRes.ok) return res.status(apiRes.status).json(data);
+    res.json(data);
+  } catch (e) {
+    console.error('Cerebras proxy error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+apiRouter.post('/huggingface', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    if (!HF_KEY || HF_KEY.length < 10) {
+      return res.status(503).json({ error: 'HuggingFace API key not configured on server' });
+    }
+    const { messages, model } = req.body;
+    const modelName = model || 'Qwen/Qwen2.5-72B-Instruct';
+    const apiRes = await fetch('https://api-inference.huggingface.co/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${HF_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: modelName,
+        messages,
+        temperature: 0.7,
+        max_tokens: 4096
+      }),
+      signal: AbortSignal.timeout(60000)
+    });
+    const data = await apiRes.json();
+    if (!apiRes.ok) return res.status(apiRes.status).json(data);
+    res.json(data);
+  } catch (e) {
+    console.error('HuggingFace proxy error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Diagnostic: show which keys are configured (without revealing values)
 apiRouter.get('/debug-keys', (req, res) => {
   res.json({
     gemini: { configured: !!(GEMINI_KEY?.length > 5), prefix: GEMINI_KEY ? GEMINI_KEY.substring(0, 4) + '...' : null },
     groq: { configured: !!(GROQ_KEY?.length > 10), prefix: GROQ_KEY ? GROQ_KEY.substring(0, 4) + '...' : null },
     claude: { configured: !!(CLAUDE_KEY?.length > 10), prefix: CLAUDE_KEY ? CLAUDE_KEY.substring(0, 4) + '...' : null },
+    openrouter: { configured: !!(OPENROUTER_KEY?.length > 10), prefix: OPENROUTER_KEY ? OPENROUTER_KEY.substring(0, 4) + '...' : null },
+    cerebras: { configured: !!(CEREBRAS_KEY?.length > 10), prefix: CEREBRAS_KEY ? CEREBRAS_KEY.substring(0, 4) + '...' : null },
+    huggingface: { configured: !!(HF_KEY?.length > 10), prefix: HF_KEY ? HF_KEY.substring(0, 4) + '...' : null },
     tavily: { configured: !!(TAVILY_API_KEY?.length > 10) },
     timestamp: new Date().toISOString()
   });
@@ -323,6 +421,9 @@ async function initializeData() {
   console.log(`  🔷 Gemini: ${GEMINI_KEY ? '✓ SET' : '✗ MISSING'}`);
   console.log(`  ⚡ Groq:   ${GROQ_KEY ? '✓ SET' : '✗ MISSING'}`);
   console.log(`  🟣 Claude: ${CLAUDE_KEY ? '✓ SET' : '✗ MISSING'}`);
+  console.log(`  🔶 OpenRouter: ${OPENROUTER_KEY ? '✓ SET' : '✗ MISSING'}`);
+  console.log(`  🧠 Cerebras: ${CEREBRAS_KEY ? '✓ SET' : '✗ MISSING'}`);
+  console.log(`  🤗 HuggingFace: ${HF_KEY ? '✓ SET' : '✗ MISSING'}`);
 
   // Step 3: Forex (non-blocking)
   try {
@@ -364,6 +465,9 @@ async function initializeData() {
   console.log(` 🔷 Gemini: ${GEMINI_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
   console.log(` ⚡ Groq:   ${GROQ_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
   console.log(` 🟣 Claude: ${CLAUDE_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
+  console.log(` 🔶 OpenRouter: ${OPENROUTER_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
+  console.log(` 🧠 Cerebras: ${CEREBRAS_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
+  console.log(` 🤗 HuggingFace: ${HF_KEY ? 'ACTIVE ✅' : 'INACTIVE ❌'}`);
   console.log(` Market: ${getMarketStatus()}`);
   console.log('🟢 ════════════════════════════════════════');
   console.log('');
