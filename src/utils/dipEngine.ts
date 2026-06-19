@@ -6,6 +6,7 @@
 import { Position, PriceData, DipSignal, DipLevel } from '../types';
 import { getAssetCagrProxy } from './constants';
 import { analyzeAsset } from './telegram';
+import { fetchMLPrediction } from './mlApi';
 
 /**
  * Calculate dip depth for a single asset
@@ -85,6 +86,64 @@ export function calculateDipDepth(
     confidence,
     reason: reasons.join(' | ')
   };
+}
+
+/**
+ * Enhance dip signals with ML predictions from Python ML service
+ * Merges calibrated LightGBM confidence + ML entry/SL targets with existing dip detection
+ */
+export async function enhanceDipSignalWithML(
+  signal: DipSignal
+): Promise<DipSignal & { mlSignal?: string; mlConfidence?: number; mlEntry?: number; mlSL?: number; mlTP1?: number; mlRR?: number }> {
+  try {
+    const pred = await fetchMLPrediction(signal.symbol, signal.market);
+    if (!pred) return signal;
+
+    // Boost confidence if ML agrees with dip detection
+    let adjustedConfidence = signal.confidence;
+    const mlBullish = pred.signal?.includes('BUY');
+    const mlBearish = pred.signal?.includes('SELL');
+
+    if (mlBullish && (signal.dipDepth === 'DEEP' || signal.dipDepth === 'MILD')) {
+      // ML confirms dip is a buying opportunity — boost confidence
+      adjustedConfidence = Math.min(adjustedConfidence + pred.confidence * 0.15, 98);
+    } else if (mlBearish && signal.dipDepth !== 'DEEP') {
+      // ML says avoid — reduce confidence
+      adjustedConfidence = Math.max(adjustedConfidence - 10, 20);
+    }
+
+    // Use ML entry price if available and deeper than current target
+    const mlEntry = pred.price_points?.entry;
+    const mlSL = pred.price_points?.stop_loss;
+    const mlTP1 = pred.price_points?.tp1;
+    const mlRR = pred.price_points?.risk_reward;
+
+    return {
+      ...signal,
+      confidence: Math.round(adjustedConfidence),
+      entryTarget: mlEntry && mlEntry < signal.entryTarget ? mlEntry : signal.entryTarget,
+      mlSignal: pred.signal,
+      mlConfidence: pred.confidence,
+      mlEntry,
+      mlSL,
+      mlTP1,
+      mlRR,
+      reason: signal.reason + (mlBullish ? ' | ML confirms BUY' : mlBearish ? ' | ML warns SELL' : ''),
+    };
+  } catch {
+    // ML service may not be running — return original signal unchanged
+    return signal;
+  }
+}
+
+/**
+ * Enhance all portfolio dip signals with ML data (best-effort, non-blocking)
+ */
+export async function enhanceAllDipsWithML(
+  signals: DipSignal[]
+): Promise<(DipSignal & { mlSignal?: string; mlConfidence?: number; mlEntry?: number; mlSL?: number; mlTP1?: number; mlRR?: number })[]> {
+  const enhanced = await Promise.allSettled(signals.map(s => enhanceDipSignalWithML(s)));
+  return enhanced.map((r, i) => r.status === 'fulfilled' ? r.value : signals[i]);
 }
 
 /**

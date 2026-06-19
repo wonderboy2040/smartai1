@@ -1,11 +1,13 @@
 // ============================================
-// AI CHAT ENGINE — DEEP MIND AI ADVANCE PRO v22
-// Primary: Google Gemini (1,500 req/day free)
-// Fallback: Groq Llama 3.3 70B (100K tokens/day free)
+// AI CHAT ENGINE — DEEP MIND AI ADVANCE PRO v23
+// 6-Provider LLM Router + Quant Brain Fallback
+// NEVER shows "AI Offline" — Quant Brain always works
 // ============================================
 import {
   GROQ_KEY, GEMINI_KEY, CLAUDE_KEY, TAVILY_API_KEY,
+  OPENROUTER_KEY, CEREBRAS_KEY, HF_KEY,
   isGroqAvailable, isGeminiAvailable, isClaudeAvailable, isTavilyAvailable,
+  isOpenRouterAvailable, isCerebrasAvailable, isHFAvailable,
   ALPHA_ETFS_IN, ALPHA_ETFS_US
 } from './config.mjs';
 import { fetchMarketIntelligence, fetchForexRate } from './market.mjs';
@@ -20,10 +22,16 @@ const MAX_HISTORY = 10;
 let cachedIntel = null;
 let intelTimestamp = 0;
 
+// ============================================
+// ENGINE HEALTH — 6 providers with cooldown
+// ============================================
 const engineHealth = {
   groq: { failures: 0, lastFailure: 0, cooldownMs: 30000 },
   gemini: { failures: 0, lastFailure: 0, cooldownMs: 15000 },
-  claude: { failures: 0, lastFailure: 0, cooldownMs: 15000 }
+  claude: { failures: 0, lastFailure: 0, cooldownMs: 15000 },
+  openrouter: { failures: 0, lastFailure: 0, cooldownMs: 30000 },
+  cerebras: { failures: 0, lastFailure: 0, cooldownMs: 30000 },
+  huggingface: { failures: 0, lastFailure: 0, cooldownMs: 60000 },
 };
 
 function recordEngineFailure(engine = 'groq') {
@@ -36,7 +44,7 @@ function recordEngineSuccess(engine = 'groq') {
   engineHealth[engine].failures = 0;
 }
 
-console.log(`🤖 Gemini: ${isGeminiAvailable() ? '✓ Active' : '✗ Key Missing'} | Groq: ${isGroqAvailable() ? '✓ Active' : '✗ Key Missing'}`);
+console.log(`🤖 AI Engines: Gemini=${isGeminiAvailable()} Groq=${isGroqAvailable()} Claude=${isClaudeAvailable()} OpenRouter=${isOpenRouterAvailable()} Cerebras=${isCerebrasAvailable()} HF=${isHFAvailable()}`);
 
 async function retryWithBackoff(fn, maxRetries = 2, baseDelay = 1000) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -114,105 +122,237 @@ async function getRealtimeForex() {
 }
 
 // ============================================
-// GROQ LLAMA 3.3 70B — Fastest, most reliable Groq model
-// Advance Pro v22 — Deep Research + Live Market Data
+// LLM CALLERS — 6 Providers
 // ============================================
-async function callGroq(messages, systemPrompt, modelName = 'llama-3.3-70b-versatile') {
-  if (!isGroqAvailable()) throw new Error('Groq key missing');
-  if (engineHealth.groq.failures >= 3 && Date.now() - engineHealth.groq.lastFailure < engineHealth.groq.cooldownMs) {
-    throw new Error('Groq cooling down');
-  }
 
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: modelName, messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_completion_tokens: 8000 }),
-    signal: AbortSignal.timeout(30000)
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(()=>({}));
-    throw new Error(`Groq ${res.status}: ${err.error?.message || res.statusText}`);
-  }
-  const data = await res.json();
-  const text = data.choices?.[0]?.message?.content;
-  if (!text || text.trim().length < 5) throw new Error('Groq empty response');
-  return text;
-}
-
-// ============================================
-// GOOGLE GEMINI — Primary engine (1,500 req/day free)
-// ============================================
+// 1) GOOGLE GEMINI
 async function callGemini(messages, systemPrompt, modelName = 'gemini-2.0-flash') {
   if (!isGeminiAvailable()) throw new Error('Gemini key missing');
-  if (engineHealth.gemini.failures >= 3 && Date.now() - engineHealth.gemini.lastFailure < engineHealth.gemini.cooldownMs) {
-    throw new Error('Gemini cooling down');
-  }
-
-  const contents = messages.map(m => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }]
-  }));
-
+  if (engineHealth.gemini.failures >= 3 && Date.now() - engineHealth.gemini.lastFailure < engineHealth.gemini.cooldownMs) throw new Error('Gemini cooling down');
+  const contents = messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_KEY}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents,
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      generationConfig: { temperature: 0.7, maxOutputTokens: 8000 }
-    }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 8000 } }),
     signal: AbortSignal.timeout(30000)
   });
-
-  if (!res.ok) {
-    const err = await res.json().catch(()=>({}));
-    throw new Error(`Gemini ${res.status}: ${err.error?.message || res.statusText}`);
-  }
+  if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`Gemini ${res.status}: ${err.error?.message||res.statusText}`); }
   const data = await res.json();
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text || text.trim().length < 5) throw new Error('Gemini empty response');
   return text;
 }
 
-// ============================================
-// ANTHROPIC CLAUDE — Third fallback engine
-// ============================================
-async function callClaude(messages, systemPrompt, modelName = 'claude-sonnet-4-20250514') {
-  if (!isClaudeAvailable()) throw new Error('Claude key missing');
-  if (engineHealth.claude?.failures >= 3 && Date.now() - engineHealth.claude.lastFailure < (engineHealth.claude?.cooldownMs || 30000)) {
-    throw new Error('Claude cooling down');
-  }
-
-  const claudeMessages = messages.map(m => ({
-    role: m.role === 'assistant' ? 'assistant' : 'user',
-    content: m.content
-  }));
-
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': CLAUDE_KEY,
-      'anthropic-version': '2023-06-01',
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: modelName,
-      max_tokens: 8000,
-      system: systemPrompt,
-      messages: claudeMessages
-    }),
+// 2) GROQ LLAMA 3.3
+async function callGroq(messages, systemPrompt, modelName = 'llama-3.3-70b-versatile') {
+  if (!isGroqAvailable()) throw new Error('Groq key missing');
+  if (engineHealth.groq.failures >= 3 && Date.now() - engineHealth.groq.lastFailure < engineHealth.groq.cooldownMs) throw new Error('Groq cooling down');
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: modelName, messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_completion_tokens: 8000 }),
     signal: AbortSignal.timeout(30000)
   });
+  if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`Groq ${res.status}: ${err.error?.message||res.statusText}`); }
+  const data = await res.json();
+  const text = data.choices?.[0]?.message?.content;
+  if (!text || text.trim().length < 5) throw new Error('Groq empty response');
+  return text;
+}
 
-  if (!res.ok) {
-    const err = await res.json().catch(()=>({}));
-    throw new Error(`Claude ${res.status}: ${err.error?.message || res.statusText}`);
-  }
+// 3) ANTHROPIC CLAUDE
+async function callClaude(messages, systemPrompt, modelName = 'claude-sonnet-4-20250514') {
+  if (!isClaudeAvailable()) throw new Error('Claude key missing');
+  if (engineHealth.claude?.failures >= 3 && Date.now() - engineHealth.claude.lastFailure < (engineHealth.claude?.cooldownMs||30000)) throw new Error('Claude cooling down');
+  const claudeMessages = messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }));
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: modelName, max_tokens: 8000, system: systemPrompt, messages: claudeMessages }),
+    signal: AbortSignal.timeout(30000)
+  });
+  if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`Claude ${res.status}: ${err.error?.message||res.statusText}`); }
   const data = await res.json();
   const text = data.content?.[0]?.text;
   if (!text || text.trim().length < 5) throw new Error('Claude empty response');
   return text;
+}
+
+// 4) OPENROUTER (free models)
+async function callOpenRouter(messages, systemPrompt, modelName = 'meta-llama/llama-3.3-70b-instruct:free') {
+  if (!isOpenRouterAvailable()) throw new Error('OpenRouter key missing');
+  if (engineHealth.openrouter.failures >= 3 && Date.now() - engineHealth.openrouter.lastFailure < engineHealth.openrouter.cooldownMs) throw new Error('OpenRouter cooling down');
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://smartai1.onrender.com' },
+    body: JSON.stringify({ model: modelName, messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_tokens: 8000 }),
+    signal: AbortSignal.timeout(30000)
+  });
+  if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`OpenRouter ${res.status}: ${err.error?.message||res.statusText}`); }
+  const data = await res.json();
+  const text = data.choices?.[0]?.message?.content;
+  if (!text || text.trim().length < 5) throw new Error('OpenRouter empty response');
+  return text;
+}
+
+// 5) CEREBRAS
+async function callCerebras(messages, systemPrompt, modelName = 'llama-3.3-70b') {
+  if (!isCerebrasAvailable()) throw new Error('Cerebras key missing');
+  if (engineHealth.cerebras.failures >= 3 && Date.now() - engineHealth.cerebras.lastFailure < engineHealth.cerebras.cooldownMs) throw new Error('Cerebras cooling down');
+  const res = await fetch('https://api.cerebras.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${CEREBRAS_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: modelName, messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_tokens: 8000 }),
+    signal: AbortSignal.timeout(30000)
+  });
+  if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`Cerebras ${res.status}: ${err.error?.message||res.statusText}`); }
+  const data = await res.json();
+  const text = data.choices?.[0]?.message?.content;
+  if (!text || text.trim().length < 5) throw new Error('Cerebras empty response');
+  return text;
+}
+
+// 6) HUGGINGFACE INFERENCE
+async function callHuggingFace(messages, systemPrompt, modelName = 'Qwen/Qwen2.5-72B-Instruct') {
+  if (!isHFAvailable()) throw new Error('HF key missing');
+  if (engineHealth.huggingface.failures >= 3 && Date.now() - engineHealth.huggingface.lastFailure < engineHealth.huggingface.cooldownMs) throw new Error('HuggingFace cooling down');
+  const fullPrompt = `System: ${systemPrompt}\n\nUser: ${messages.map(m => m.content).join('\n')}`;
+  const res = await fetch(`https://api-inference.huggingface.co/models/${modelName}`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${HF_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ inputs: fullPrompt, parameters: { max_new_tokens: 4096, temperature: 0.7 } }),
+    signal: AbortSignal.timeout(60000)
+  });
+  if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`HF ${res.status}: ${JSON.stringify(err)}`); }
+  const data = await res.json();
+  const text = Array.isArray(data) && data[0] ? data[0].generated_text : data.generated_text || '';
+  if (!text || text.trim().length < 5) throw new Error('HuggingFace empty response');
+  return text;
+}
+
+// ============================================
+// QUANT BRAIN — Deterministic fallback (always works)
+// ============================================
+function quantBrainFallback(symbol, contextData) {
+  // Simple deterministic analysis from context — no LLM needed
+  const lines = contextData.split('\n');
+  let rsi = 50, price = 0, change = 0;
+  for (const line of lines) {
+    if (line.includes('RSI=')) {
+      const m = line.match(/RSI=(\d+\.?\d*)/);
+      if (m) rsi = parseFloat(m[1]);
+    }
+    if (line.includes(symbol) && line.includes(':')) {
+      const m = line.match(/:\s*(\d+\.?\d+)\s*\(([+-]?\d+\.?\d*)%\)/);
+      if (m) { price = parseFloat(m[1]); change = parseFloat(m[2]); }
+    }
+  }
+
+  let verdict = 'HOLD';
+  let confidence = 55;
+  let entry = price, sl = price * 0.95, tp1 = price * 1.05, tp2 = price * 1.10;
+
+  if (rsi < 30) { verdict = 'STRONG_BUY'; confidence = 85; entry = price; sl = price * 0.93; tp1 = price * 1.08; tp2 = price * 1.15; }
+  else if (rsi < 45) { verdict = 'BUY'; confidence = 70; entry = price; sl = price * 0.95; tp1 = price * 1.06; tp2 = price * 1.12; }
+  else if (rsi > 75) { verdict = 'WAIT'; confidence = 60; }
+  else if (rsi > 65) { verdict = 'HOLD'; confidence = 55; }
+
+  const rr = ((tp1 - entry) / (entry - sl)).toFixed(2);
+
+  return `📊 QUANT BRAIN — ${symbol} (Auto-Analysis)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Verdict: ${verdict} (${confidence}%)
+RSI: ${rsi} | Price: ₹${price.toFixed(2)} (${change >= 0 ? '+' : ''}${change.toFixed(2)}%)
+
+🎯 Entry: ₹${entry.toFixed(2)}
+🛑 Stop Loss: ₹${sl.toFixed(2)}
+✅ Target 1: ₹${tp1.toFixed(2)}
+✅ Target 2: ₹${tp2.toFixed(2)}
+📐 R:R: ${rr}
+
+💡 ${rsi < 30 ? 'Deeply oversold — strong buying opportunity' : rsi < 45 ? 'Approaching oversold zone — accumulate' : rsi > 75 ? 'Overbought — wait for pullback' : 'Neutral — hold current position'}
+
+⚡ LLM narration unavailable — Quant Brain always online`;
+}
+
+// ============================================
+// ANTI-HALLUCINATION GUARD
+// ============================================
+function antiHallucinationCheck(llmText, contextData) {
+  if (!llmText) return llmText;
+  // Extract numbers from LLM response
+  const numbersInText = (llmText.match(/\b\d+\.?\d*\b/g) || []);
+  // Extract numbers from context (prices, RSI, etc.)
+  const contextNumbers = (contextData.match(/\b\d+\.?\d*\b/g) || []);
+  const contextSet = new Set(contextNumbers);
+  // Flag suspicious numbers > 100 not in context
+  const suspicious = numbersInText.filter(n => {
+    const val = parseFloat(n);
+    return val > 100 && !contextSet.has(n);
+  });
+  if (suspicious.length > 5) {
+    console.warn(`  ⚠️ Anti-hallucination: ${suspicious.length} suspicious numbers`);
+  }
+  return llmText;
+}
+
+// ============================================
+// 7-STEP PRO-TRADER SYSTEM PROMPT
+// ============================================
+function build7StepPrompt(contextData, intent) {
+  const d = new Date().toLocaleDateString('en-IN', {timeZone:'Asia/Kolkata', day:'2-digit', month:'short', year:'numeric'});
+  const t = new Date().toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit'});
+
+  return `You are DEEP MIND AI ADVANCE PRO v23.0 — 6-ENGINE AI with Quant Brain backup. Elite institutional-grade trading & investment AI with REAL-TIME live market data. You NEVER go offline — Quant Brain always provides analysis.
+
+PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined. Speak strictly in "Pro Trader Hinglish" — "Bhai", "Breakout confirm", "SL trail karo", "Smart Money accumulation".
+
+MANDATORY DATA USAGE RULES — FOLLOW STRICTLY:
+1. YOU MUST read the PORTFOLIO DATA below. It contains ALL positions with live prices, RSI, MACD, SMA, trend, signal, confidence, SL, TP, P&L, CAGR.
+2. For EVERY response, reference at least 2-3 specific positions by name with their current price, RSI, and signal.
+3. If user asks about portfolio — analyze EVERY position one by one. Do NOT skip any.
+4. NEVER say "I don't have portfolio data" — the data is provided below. Read it.
+
+TODAY: ${d} | ${t} IST
+
+CRITICAL ANTI-HALLUCINATION RULES:
+- ONLY use the REAL-TIME data provided below. Do NOT invent, guess, or use memorized old prices.
+- If data is not available, say "Live data not available" — do NOT make up numbers.
+
+7-STEP ANALYSIS FRAMEWORK:
+1. Regime: Risk-On/Neutral/Risk-Off (use VIX, FII/DII)
+2. Trend: SMA50 vs SMA200 + ADX strength
+3. Momentum: RSI level + MACD
+4. Demand: Is price near demand zone / support?
+5. Risk: SL distance, R:R ratio
+6. Conviction: Map to STRONG_BUY / BUY / HOLD / WAIT
+7. Action: Exact entry, SL, TP1/TP2 + position-sizing hint
+
+ADVANCE PRO TRADING RULES:
+1. Use SMC (Smart Money Concepts), Wyckoff phases, Elliott Wave counts, Fibonacci retracements/extensions for stocks. On-chain analysis, MVRV-Z score, Puell Multiple, halving cycles, whale tracking for crypto.
+2. Give EXACT Support/Resistance/SL/Target 1/2/3 prices FROM THE PORTFOLIO DATA below.
+3. Conviction scores (1-10) with rationale. Risk-reward ratio mandatory.
+4. End with VERDICT: 🟢 STRONG BUY / 🟡 BUY / 🔴 STRONG SELL / ⚪ HOLD / ⏳ WAIT + exact entry price + 3 targets.
+5. Emphasize LONG-TERM wealth creation (15-20 years), SIP step-up with specific amounts, power of compounding projections.
+6. ALWAYS analyze EVERY position including crypto. No position should be ignored.
+
+CRYPTO MASTER RULES: BTC supply cap 21M, halving cycle ~4yr, DCA strategy at -15% from ATH. Use MVRV Z-score (<0 = undervalued, >3 = overvalued), NVT ratio, exchange inflow/outflow, whale accumulation trends. BTC RSI: oversold<25, overbought>80.
+
+ALPHA ETF UNIVERSE (use these CAGR/maxDD for wealth projections):
+India: ${ALPHA_ETFS_IN.map(e => `${e.sym}(${e.name}): CAGR ${e.cagr}%, MaxDD ${e.maxDD}%`).join(' | ')}
+US: ${ALPHA_ETFS_US.map(e => `${e.sym}(${e.name}): CAGR ${e.cagr}%, MaxDD ${e.maxDD}%`).join(' | ')}
+
+INTENT: ${intent}
+
+=== LIVE MARKET DATA (USE ONLY THIS) ===
+${contextData}
+
+=== END LIVE DATA ===
+
+RESPONSE STRUCTURE:
+- Start with a summary of current market regime
+- Then list ALL portfolio positions with analysis
+- For each position: current price, RSI, signal, verdict with levels
+- End with overall strategy recommendation
+- Use Pro Trader Hinglish throughout`;
 }
 
 // ============================================
@@ -268,58 +408,8 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
 }
 
 // ============================================
-// SYSTEM PROMPT — Groq Compound Super Intelligence
-// ============================================
-function buildSystemPrompt(contextData, intent) {
-  const d = new Date().toLocaleDateString('en-IN', {timeZone:'Asia/Kolkata', day:'2-digit', month:'short', year:'numeric'});
-  const t = new Date().toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit'});
-
-  return `You are DEEP MIND AI ADVANCE PRO v22.0 — GROQ LLAMA 3.3 70B SUPER INTELLIGENCE. Elite institutional-grade trading & investment AI with REAL-TIME live market data. You have FULL ACCESS to the ENTIRE Wealth AI platform - every tab, every data point, every position in the portfolio. You MUST read and analyze ALL data provided below before responding.
-
-PERSONA: Seasoned institutional quant trader (15+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) guiding Nagraj Bhai. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital combined. Speak strictly in "Pro Trader Hinglish" — "Bhai", "Breakout confirm", "SL trail karo", "Smart Money accumulation".
-
-MANDATORY DATA USAGE RULES — FOLLOW STRICTLY:
-1. YOU MUST read the PORTFOLIO DATA below. It contains ALL positions with live prices, RSI, MACD, SMA, trend, signal, confidence, SL, TP, P&L, CAGR.
-2. For EVERY response, reference at least 2-3 specific positions by name with their current price, RSI, and signal.
-3. If user asks about portfolio — analyze EVERY position one by one. Do NOT skip any.
-4. NEVER say "I don't have portfolio data" — the data is provided below. Read it.
-5. Cross-reference portfolio positions with the LIVE MARKET DATA provided below.
-
-TODAY: ${d} | ${t} IST
-
-ANTI-HALLUCINATION: You MUST use ONLY the live data provided below. Do NOT invent prices. If data is missing, say "Live data not available".
-
-ADVANCE PRO TRADING RULES:
-1. Use SMC (Smart Money Concepts), Wyckoff phases, Elliott Wave counts, Fibonacci retracements/extensions for stocks. On-chain analysis, MVRV-Z score, Puell Multiple, halving cycles, whale tracking for crypto.
-2. Give EXACT Support/Resistance/SL/Target 1/2/3 prices FROM THE PORTFOLIO DATA below.
-3. Conviction scores (1-10) with rationale. Risk-reward ratio mandatory.
-4. End with VERDICT: 🟢 STRONG BUY / 🟡 BUY / 🔴 STRONG SELL / ⚪ HOLD / ⏳ WAIT + exact entry price + 3 targets.
-5. Emphasize LONG-TERM wealth creation (15-20 years), SIP step-up with specific amounts, power of compounding projections.
-6. ALWAYS analyze EVERY position including crypto. No position should be ignored.
-
-CRYPTO MASTER RULES: BTC supply cap 21M, halving cycle ~4yr, DCA strategy at -15% from ATH. Use MVRV Z-score (<0 = undervalued, >3 = overvalued), NVT ratio, exchange inflow/outflow, whale accumulation trends. BTC RSI: oversold<25, overbought>80.
-
-ALPHA ETF UNIVERSE (use these CAGR/maxDD for wealth projections):
-India: ${ALPHA_ETFS_IN.map(e => `${e.sym}(${e.name}): CAGR ${e.cagr}%, MaxDD ${e.maxDD}%`).join(' | ')}
-US: ${ALPHA_ETFS_US.map(e => `${e.sym}(${e.name}): CAGR ${e.cagr}%, MaxDD ${e.maxDD}%`).join(' | ')}
-
-INTENT: ${intent}
-
-=== LIVE MARKET DATA (USE ONLY THIS) ===
-${contextData}
-
-=== END LIVE DATA ===
-
-RESPONSE STRUCTURE:
-- Start with a summary of current market regime
-- Then list ALL portfolio positions with analysis
-- For each position: current price, RSI, signal, verdict with levels
-- End with overall strategy recommendation
-- Use Pro Trader Hinglish throughout`;
-}
-
-// ============================================
-// MAIN CHAT — Gemini → Groq → Claude (auto-failover)
+// MAIN CHAT — 6-Engine Router + Quant Brain Fallback
+// NEVER shows "AI Offline" again
 // ============================================
 export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={}, usdInrRate=83.5) {
   if (!chatHistory.has(chatId)) chatHistory.set(chatId, []);
@@ -335,71 +425,46 @@ export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={
   try { contextData = await buildContext(portfolio, livePrices, usdInrRate, userMessage); }
   catch {}
 
-  const systemPrompt = buildSystemPrompt(contextData, intent);
+  const systemPrompt = build7StepPrompt(contextData, intent);
   const recentHistory = history.slice(-MAX_HISTORY).map(m => ({ role: m.role, content: m.content }));
 
   let aiText = '';
   let usedEngine = '';
 
-  // Try Gemini first (1,500 req/day free — most generous)
-  try {
-    if (isGeminiAvailable()) {
-      console.log('  🔷 Gemini Flash...');
-      aiText = await retryWithBackoff(() => callGemini(recentHistory, systemPrompt), 1, 800);
-      recordEngineSuccess('gemini');
-      usedEngine = 'gemini';
-    }
-  } catch (e) {
-    console.warn('  ❌ Gemini failed:', e.message);
-    recordEngineFailure('gemini');
-  }
+  // Try 6 engines in order: Gemini → Groq → Claude → OpenRouter → Cerebras → HuggingFace
+  const engines = [
+    { name: 'gemini', fn: () => callGemini(recentHistory, systemPrompt), available: isGeminiAvailable },
+    { name: 'groq', fn: () => callGroq(recentHistory, systemPrompt), available: isGroqAvailable },
+    { name: 'claude', fn: () => callClaude(recentHistory, systemPrompt), available: isClaudeAvailable },
+    { name: 'openrouter', fn: () => callOpenRouter(recentHistory, systemPrompt), available: isOpenRouterAvailable },
+    { name: 'cerebras', fn: () => callCerebras(recentHistory, systemPrompt), available: isCerebrasAvailable },
+    { name: 'huggingface', fn: () => callHuggingFace(recentHistory, systemPrompt), available: isHFAvailable },
+  ];
 
-  // Fallback to Groq
-  if (!aiText) {
+  for (const engine of engines) {
     try {
-      if (isGroqAvailable()) {
-        console.log('  ⚡ Groq Llama 3.3...');
-        aiText = await retryWithBackoff(() => callGroq(recentHistory, systemPrompt), 1, 800);
-        recordEngineSuccess('groq');
-        usedEngine = 'groq';
+      if (engine.available()) {
+        console.log(`  🤖 Trying ${engine.name}...`);
+        aiText = await retryWithBackoff(engine.fn, 1, 800);
+        recordEngineSuccess(engine.name);
+        usedEngine = engine.name;
+        break;
       }
     } catch (e) {
-      console.warn('  ❌ Groq failed:', e.message);
-      recordEngineFailure('groq');
+      console.warn(`  ❌ ${engine.name} failed: ${e.message}`);
+      recordEngineFailure(engine.name);
     }
   }
 
-  // Fallback to Claude
+  // QUANT BRAIN FALLBACK — NEVER show "AI Offline"
   if (!aiText) {
-    try {
-      if (isClaudeAvailable()) {
-        console.log('  🟣 Claude Sonnet...');
-        aiText = await retryWithBackoff(() => callClaude(recentHistory, systemPrompt), 1, 800);
-        recordEngineSuccess('claude');
-        usedEngine = 'claude';
-      }
-    } catch (e) {
-      console.warn('  ❌ Claude failed:', e.message);
-      recordEngineFailure('claude');
-    }
+    console.log('  🧠 All LLMs unavailable — using Quant Brain fallback');
+    aiText = quantBrainFallback('PORTFOLIO', contextData);
+    usedEngine = 'quant_brain';
   }
 
-  if (!aiText) {
-    const gemAvail = isGeminiAvailable();
-    const groqAvail = isGroqAvailable();
-    const claudeAvail = isClaudeAvailable();
-    aiText = `🤖 **AI Unavailable** — Sabhi engines respond nahi kar paye.
-
-🔷 Gemini: ${gemAvail ? '✓ Key set' : '✗ Key missing'}
-⚡ Groq: ${groqAvail ? '✓ Key set' : '✗ Key missing'}
-🟣 Claude: ${claudeAvail ? '✓ Key set' : '✗ Key missing'}
-
-Server pe free API key set karo (ek bhi kaafi hai):
-🔑 Gemini: https://aistudio.google.com/apikey (1,500 req/day)
-🔑 Groq: https://console.groq.com (100K tokens/day)
-🔑 Claude: https://console.anthropic.com (free tier)`;
-    usedEngine = 'system';
-  }
+  // Anti-hallucination check
+  aiText = antiHallucinationCheck(aiText, contextData);
 
   let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
   safeText = safeText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -408,7 +473,12 @@ Server pe free API key set karo (ek bhi kaafi hai):
   history.push({ role: 'assistant', content: aiText });
   if (history.length > MAX_HISTORY * 2) history.splice(0, history.length - MAX_HISTORY);
 
-  const label = usedEngine === 'gemini' ? '🔷 Gemini Flash' : usedEngine === 'groq' ? '⚡ Groq Llama 3.3' : usedEngine === 'claude' ? '🟣 Claude Sonnet' : '';
+  const engineLabels = {
+    gemini: '🔷 Gemini Flash', groq: '⚡ Groq Llama 3.3', claude: '🟣 Claude Sonnet',
+    openrouter: '🔶 OpenRouter', cerebras: '🧠 Cerebras', huggingface: '🤗 HuggingFace',
+    quant_brain: '📊 Quant Brain',
+  };
+  const label = engineLabels[usedEngine] || usedEngine;
   return `${label} | ${intent} | LIVE\n\n${safeText}`;
 }
 
@@ -421,6 +491,9 @@ export function getAIHealthStatus() {
   return {
     gemini: { available: isGeminiAvailable(), health: engineHealth.gemini },
     groq: { available: isGroqAvailable(), health: engineHealth.groq },
-    claude: { available: isClaudeAvailable(), health: engineHealth.claude }
+    claude: { available: isClaudeAvailable(), health: engineHealth.claude },
+    openrouter: { available: isOpenRouterAvailable(), health: engineHealth.openrouter },
+    cerebras: { available: isCerebrasAvailable(), health: engineHealth.cerebras },
+    huggingface: { available: isHFAvailable(), health: engineHealth.huggingface },
   };
 }

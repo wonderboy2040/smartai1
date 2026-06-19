@@ -6,6 +6,7 @@ import { sendTelegramAlert } from '../../utils/api';
 import { secureStorage } from '../../utils/secureStorage';
 import { TradingViewChart } from '../TradingViewChart';
 import { useRealTimePrice, snapshotsToCandles } from '../../hooks/useRealTimePrice';
+import { fetchAllMLSignals, type MLPrediction } from '../../utils/mlApi';
 
 // Score color helper
 function sc(v: number): string {
@@ -46,6 +47,9 @@ export default React.memo(function DeepScanTab() {
   vixRef.current = { usVix, inVix };
 
   const aiCache = useRef<Record<string, string>>({});
+  const mlCache = useRef<Record<string, MLPrediction>>({});
+  const stocksRef = useRef(stocks);
+  stocksRef.current = stocks;
 
   // Run scan — stable callback, doesn't depend on livePrices directly
   const doScan = useCallback(async () => {
@@ -72,6 +76,30 @@ export default React.memo(function DeepScanTab() {
           setStocks(prev => prev.map(s => analyses[s.symbol] ? { ...s, aiAnalysis: analyses[s.symbol] } : s));
         }
       }).catch(() => {}).finally(() => setAiLoading(false));
+
+      // Also fetch ML signals (best-effort, non-blocking)
+      fetchAllMLSignals().then(mlData => {
+        if (mlData?.signals) {
+          for (const sig of mlData.signals) {
+            mlCache.current[sig.symbol] = sig;
+          }
+          setStocks(prev => prev.map(s => {
+            const ml = mlCache.current[s.symbol];
+            if (ml) {
+              return {
+                ...s,
+                mlSignal: ml.signal,
+                mlConfidence: ml.confidence,
+                mlEntry: ml.price_points?.entry,
+                mlSL: ml.price_points?.stop_loss,
+                mlTP1: ml.price_points?.tp1,
+                mlRR: ml.price_points?.risk_reward,
+              };
+            }
+            return s;
+          }));
+        }
+      }).catch(() => {}); // ML service may not be running
     } catch (e) { console.warn('Deep scan failed:', e); }
     finally { setIsScanning(false); }
   }, []); // stable — no dependencies, uses refs
@@ -83,31 +111,38 @@ export default React.memo(function DeepScanTab() {
     return () => { if (scanInterval.current) clearInterval(scanInterval.current); };
   }, [doScan]);
 
-  // 24x7 Telegram alerts — every 6 hours
+  // 24x7 Telegram alerts — every 6 hours (runs once on mount)
   useEffect(() => {
     let initTimeout: number | undefined;
     let tgInt: number | undefined;
     (async () => {
       const [token, chatId] = await Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')]);
-      if (!token || !chatId || stocks.length === 0) return;
+      if (!token || !chatId) return;
       const sendAlert = async () => {
-        const msg = formatDeepScanTelegram(stocks, 'ALL');
+        const latestStocks = stocksRef.current;
+        if (latestStocks.length === 0) return;
+        const msg = formatDeepScanTelegram(latestStocks, 'ALL');
         await sendTelegramAlert(token, chatId, msg);
       };
       initTimeout = window.setTimeout(sendAlert, 120000);
       tgInt = window.setInterval(sendAlert, 7200000);
     })();
     return () => { clearTimeout(initTimeout); if (tgInt) clearInterval(tgInt); };
-  }, [stocks]);
+  }, []);
 
   // Manual TG push
   const pushToTelegram = useCallback(async () => {
     setTgSending(true);
-    const [token, chatId] = await Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')]);
-    if (!token || !chatId) { setTgSending(false); return; }
-    const msg = formatDeepScanTelegram(stocks, filter === 'ALL' ? 'ALL' : filter);
-    await sendTelegramAlert(token, chatId, msg);
-    setTgSending(false);
+    try {
+      const [token, chatId] = await Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')]);
+      if (!token || !chatId) { setTgSending(false); return; }
+      const msg = formatDeepScanTelegram(stocks, filter === 'ALL' ? 'ALL' : filter);
+      await sendTelegramAlert(token, chatId, msg);
+    } catch (e) {
+      console.warn('Telegram push failed:', e);
+    } finally {
+      setTgSending(false);
+    }
   }, [stocks, filter]);
 
   // Filtered stocks
@@ -332,6 +367,36 @@ export default React.memo(function DeepScanTab() {
                   <div className="bg-cyan-500/5 rounded-xl p-3 border border-cyan-500/20">
                     <div className="text-[10px] text-cyan-400 font-bold uppercase mb-1">🧠 Groq Deep Analysis</div>
                     <div className="text-xs text-cyan-200 whitespace-pre-line">{s.aiAnalysis}</div>
+                  </div>
+                )}
+
+                {/* ML Signal (from Python ML Service) */}
+                {s.mlSignal && (
+                  <div className="bg-purple-500/5 rounded-xl p-3 border border-purple-500/20">
+                    <div className="text-[10px] text-purple-400 font-bold uppercase mb-2">🤖 ML Signal (LightGBM + Calibration)</div>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-center">
+                      <div>
+                        <div className="text-[8px] text-slate-500">ML Signal</div>
+                        <div className={`text-xs font-black ${s.mlSignal.includes('BUY') ? 'text-emerald-400' : s.mlSignal.includes('SELL') ? 'text-red-400' : 'text-amber-400'}`}>{s.mlSignal}</div>
+                      </div>
+                      <div>
+                        <div className="text-[8px] text-slate-500">Confidence</div>
+                        <div className="text-xs font-bold text-cyan-400 font-mono">{s.mlConfidence?.toFixed(1)}%</div>
+                      </div>
+                      <div>
+                        <div className="text-[8px] text-slate-500">Entry</div>
+                        <div className="text-xs font-bold text-cyan-400 font-mono">{s.market === 'IN' ? '₹' : '$'}{s.mlEntry?.toFixed(1) || '--'}</div>
+                      </div>
+                      <div>
+                        <div className="text-[8px] text-slate-500">Stop Loss</div>
+                        <div className="text-xs font-bold text-red-400 font-mono">{s.market === 'IN' ? '₹' : '$'}{s.mlSL?.toFixed(1) || '--'}</div>
+                      </div>
+                      <div>
+                        <div className="text-[8px] text-slate-500">Target 1</div>
+                        <div className="text-xs font-bold text-emerald-400 font-mono">{s.market === 'IN' ? '₹' : '$'}{s.mlTP1?.toFixed(1) || '--'}</div>
+                      </div>
+                    </div>
+                    <div className="text-[9px] text-purple-300/60 mt-2">R:R {s.mlRR || '--'} | Calibrated confidence = real historical hit-rate</div>
                   </div>
                 )}
               </div>

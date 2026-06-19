@@ -4,6 +4,7 @@ import { RiskLevel } from '../../types';
 import { formatCurrency } from '../../utils/constants';
 import { analyzeAsset } from '../../utils/telegram';
 import { SmartDipSizer } from '../SmartDipSizer';
+import { WhatIfSIPOptimizer } from '../WhatIfSIPOptimizer';
 import {
   calculateWealthMilestones, compareSIPStepUps,
   analyzeGoals, analyzeRebalancing, calculatePortfolioXIRR,
@@ -193,6 +194,9 @@ export default React.memo(function PlannerTab() {
           <div className="text-xl font-black text-blue-300 font-mono">₹{Math.round(realFvMed).toLocaleString('en-IN')}</div>
         </div>
       </div>
+
+      {/* What-If SIP Optimizer — Regime-Aware */}
+      <WhatIfSIPOptimizer currentSIP={totalSIP} investYears={investYears} />
 
       {/* FIRE */}
       <div className="quantum-panel rounded-2xl p-5 border-orange-500/10 animate-fade-in-up delay-200">

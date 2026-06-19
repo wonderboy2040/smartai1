@@ -5,6 +5,10 @@ import { isAnyMarketOpen, getMarketStatus } from '../../utils/telegram';
 import { DipIntelligence } from '../DipIntelligence';
 import { ExactBuyPricePanel } from '../ExactBuyPricePanel';
 import { AIScreenerPanel } from '../AIScreenerPanel';
+import { MLSignalPanel } from '../MLSignalPanel';
+import { SignalTrackRecord } from '../SignalTrackRecord';
+import { CorrelationHeatmap } from '../CorrelationHeatmap';
+import { NewsSentimentFeed } from '../NewsSentimentFeed';
 
 const MemoAssetButton = React.memo(function MemoAssetButton({
   symbol, market, price, change, onClick
@@ -283,7 +287,7 @@ export default React.memo(function DashboardTab() {
                 <span className="text-xs font-mono text-red-400">{formatPrice(currentData?.high || currentPrice * 1.02, currentMarket === 'IN' ? '₹' : '$')}</span>
               </div>
               <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                <div className="bg-gradient-to-r from-emerald-500 to-cyan-500 h-full rounded-full" style={{ width: `${currentData?.high && currentData?.low ? ((currentPrice - currentData.low) / (currentData.high - currentData.low)) * 100 : 50}%` }} />
+                <div className="bg-gradient-to-r from-emerald-500 to-cyan-500 h-full rounded-full" style={{ width: `${currentData?.high && currentData?.low && currentData.high !== currentData.low ? ((currentPrice - currentData.low) / (currentData.high - currentData.low)) * 100 : 50}%` }} />
               </div>
               <div className="text-[10px] text-slate-600 mt-1">Position in range</div>
             </div>
@@ -304,6 +308,9 @@ export default React.memo(function DashboardTab() {
         </div>
       )}
 
+      {/* ML Signal Engine — Calibrated LightGBM + Quantile Targets */}
+      {currentSymbol && <MLSignalPanel symbol={currentSymbol} market={currentMarket || 'IN'} />}
+
       {/* Buy-the-Dip Intelligence */}
       <DipIntelligence
         portfolio={portfolio}
@@ -319,6 +326,15 @@ export default React.memo(function DashboardTab() {
         portfolio={portfolio}
         livePrices={livePrices}
       />
+
+      {/* Signal Track Record — Backtested Accuracy */}
+      <SignalTrackRecord />
+
+      {/* Correlation Heatmap — Concentration Risk */}
+      <CorrelationHeatmap portfolio={portfolio} livePrices={livePrices} />
+
+      {/* News & Earnings Sentiment — Groq LLM */}
+      <NewsSentimentFeed />
 
       {/* Quick Assets */}
       <div className="quantum-panel rounded-2xl p-5 border-cyan-500/10 animate-fade-in-up delay-300">

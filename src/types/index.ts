@@ -101,6 +101,13 @@ export interface DeepScanStock {
   fibResistance?: number;
   institutionalQuality?: number; // 0-100
   volumeProfile?: 'ABOVE_AVG' | 'NORMAL' | 'LOW';
+  // ML Signal fields (from Python ML service)
+  mlSignal?: string;
+  mlConfidence?: number;
+  mlEntry?: number;
+  mlSL?: number;
+  mlTP1?: number;
+  mlRR?: number;
 }
 
 

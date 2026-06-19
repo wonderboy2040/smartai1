@@ -695,9 +695,26 @@ Toggle scheduled auto-analysis ON/OFF.
 Chat history reset karo.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━
+🤖 <b>ML POWERED COMMANDS:</b>
+
+🤖 <b>/ml &lt;SYMBOL&gt;</b>
+ML signal — calibrated LightGBM prediction with confidence, price targets, entry/SL/TP.
+Example: <code>/ml RELIANCE</code>, <code>/ml AAPL</code>
+
+🧠 <b>/mlregime</b>
+ML regime detection — HMM-based market regime with SIP multiplier.
+
+🧪 <b>/mlbacktest &lt;SYMBOL&gt;</b>
+Walk-forward ML backtest — hit rate, return, drawdown, Sharpe.
+Example: <code>/mlbacktest INFY</code>
+
+🔄 <b>/rebalance</b>
+Regime-aware portfolio rebalancing — allocation guidance based on ML regime.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━
 💬 <b>Pro Tip:</b> Bina command ke koi bhi message likho = AI chat mode automatic activate hoga!
 
-💎 <i>Deep Mind AI Quantum Pro Terminal v15.0</i>`;
+💎 <i>Deep Mind AI Quantum Pro Terminal v23.0 — 6-Engine + Quant Brain</i>`;
 
   await safeSend(chatId, help);
 });
@@ -2708,6 +2725,222 @@ bot.onText(/^\/drawdown(@\w+)?$/i, async (msg) => {
 });
 
 
+// ────────────────────────────────────────
+// 🤖 ML SERVICE COMMANDS
+// ────────────────────────────────────────
+
+const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://localhost:8000';
+
+async function fetchMLSignal(symbol, market = 'IN') {
+  const res = await fetch(`${ML_SERVICE_URL}/predict?symbol=${symbol}&market=${market}`);
+  if (!res.ok) throw new Error(`ML service returned ${res.status}`);
+  return res.json();
+}
+
+async function fetchMLRegime() {
+  const res = await fetch(`${ML_SERVICE_URL}/regime`);
+  if (!res.ok) throw new Error(`ML regime service returned ${res.status}`);
+  return res.json();
+}
+
+async function fetchMLBacktest(symbol, market = 'IN') {
+  const res = await fetch(`${ML_SERVICE_URL}/backtest?symbol=${symbol}&market=${market}`);
+  if (!res.ok) throw new Error(`ML backtest service returned ${res.status}`);
+  return res.json();
+}
+
+// /ml — Get ML signal for a stock
+bot.onText(/^\/ml(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const input = (match[1] || '').trim().toUpperCase();
+  console.log(`📥 /ml ${input} from ${msg.from?.first_name || chatId}`);
+
+  try {
+    if (!input) {
+      await safeSend(chatId, '📋 <b>Usage:</b> /ml RELIANCE or /ml AAPL\n\nFetches ML signal (LightGBM calibrated prediction) for the stock.');
+      return;
+    }
+
+    await safeSend(chatId, `🤖 <i>Running ML prediction for ${input}...</i>`);
+
+    const market = ['RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'ICICIBANK', 'SBIN', 'ITC', 'WIPRO', 'TATAMOTORS', 'ADANIENT'].includes(input) ? 'IN' : 'US';
+    const pred = await fetchMLSignal(input, market);
+
+    const signalEmoji = pred.signal?.includes('BUY') ? '🟢' : pred.signal?.includes('SELL') ? '🔴' : '🟡';
+    const cur = market === 'IN' ? '₹' : '$';
+    const pts = pred.price_points || {};
+    const qt = pred.price_targets || {};
+
+    let report = `${signalEmoji} <b>ML SIGNAL — ${input}</b>\n`;
+    report += `━━━━━━━━━━━━━━━━━\n`;
+    report += `<b>Signal:</b> ${pred.signal?.replace('_', ' ')}\n`;
+    report += `<b>Confidence:</b> ${pred.confidence?.toFixed(1)}% (calibrated)\n\n`;
+
+    if (qt.P10 || qt.P50 || qt.P90) {
+      report += `📊 <b>90-Day Targets (Quantile):</b>\n`;
+      if (qt.P10) report += `  Bear: ${cur}${qt.P10.target_price?.toFixed(0)} (${qt.P10.expected_return}%) \n`;
+      if (qt.P50) report += `  Base: ${cur}${qt.P50.target_price?.toFixed(0)} (${qt.P50.expected_return}%) \n`;
+      if (qt.P90) report += `  Bull: ${cur}${qt.P90.target_price?.toFixed(0)} (${qt.P90.expected_return}%)\n\n`;
+    }
+
+    if (pts.entry) {
+      report += `🎯 <b>Entry / Risk:</b>\n`;
+      report += `  Entry: ${cur}${pts.entry}\n`;
+      report += `  Stop Loss: ${cur}${pts.stop_loss}\n`;
+      report += `  Target 1: ${cur}${pts.tp1}\n`;
+      report += `  Target 2: ${cur}${pts.tp2}\n`;
+      report += `  Target 3: ${cur}${pts.tp3}\n`;
+      report += `  R:R: ${pts.risk_reward}\n\n`;
+    }
+
+    if (pred.top_features?.length > 0) {
+      report += `🔑 Top Drivers: ${pred.top_features.map(f => f.feature).join(', ')}\n`;
+    }
+
+    report += `\n⏱️ ${pred.timestamp || new Date().toISOString()}`;
+
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /ml error:', e.message);
+    await safeSend(chatId, `❌ ML signal error: ${e.message}\n\nMake sure ML service is running (docker-compose up ml-service).`);
+  }
+});
+
+// /mlregime — Get ML regime detection
+bot.onText(/^\/mlregime(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /mlregime from ${msg.from?.first_name || chatId}`);
+
+  try {
+    await safeSend(chatId, '🤖 <i>Fetching ML regime detection...</i>');
+    const regime = await fetchMLRegime();
+
+    const regimeEmoji = { RISK_ON: '🟢', RISK_OFF: '🔴', STAGFLATION: '🟠', GOLDILOCKS: '💎' };
+
+    let report = `${regimeEmoji[regime.regime] || '⚪'} <b>ML REGIME DETECTION (HMM)</b>\n`;
+    report += `━━━━━━━━━━━━━━━━━\n`;
+    report += `<b>Regime:</b> ${regime.regime?.replace('_', ' ')}\n`;
+    report += `<b>Probability:</b> ${(regime.probability * 100).toFixed(1)}%\n\n`;
+
+    if (regime.sip_multiplier) {
+      report += `💰 <b>SIP Multiplier:</b> ${regime.sip_multiplier}x\n`;
+      if (regime.sip_multiplier > 1) report += `  → Increase SIP by ${((regime.sip_multiplier - 1) * 100).toFixed(0)}%\n`;
+      else if (regime.sip_multiplier < 1) report += `  → Reduce SIP by ${((1 - regime.sip_multiplier) * 100).toFixed(0)}%\n`;
+      else report += `  → Keep SIP at normal level\n\n`;
+    }
+
+    if (regime.state_sequence) {
+      report += `📈 Recent states: ${regime.state_sequence.slice(-5).join(' → ')}\n`;
+    }
+
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /mlregime error:', e.message);
+    await safeSend(chatId, `❌ ML regime error: ${e.message}`);
+  }
+});
+
+// /mlbacktest — Run ML backtest for a stock
+bot.onText(/^\/mlbacktest(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const input = (match[1] || '').trim().toUpperCase();
+  console.log(`📥 /mlbacktest ${input} from ${msg.from?.first_name || chatId}`);
+
+  try {
+    if (!input) {
+      await safeSend(chatId, '📋 <b>Usage:</b> /mlbacktest RELIANCE\n\nRuns walk-forward backtest on ML signal for the stock.');
+      return;
+    }
+
+    await safeSend(chatId, `🧪 <i>Running ML backtest for ${input} (walk-forward)...</i>`);
+
+    const market = ['RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'ICICIBANK', 'SBIN', 'ITC', 'WIPRO', 'TATAMOTORS', 'ADANIENT'].includes(input) ? 'IN' : 'US';
+    const bt = await fetchMLBacktest(input, market);
+
+    let report = `🧪 <b>ML BACKTEST — ${input}</b>\n`;
+    report += `━━━━━━━━━━━━━━━━━\n`;
+    report += `<b>Period:</b> ${bt.start_date} → ${bt.end_date}\n`;
+    report += `<b>Trades:</b> ${bt.total_trades}\n`;
+    report += `<b>Hit Rate:</b> ${bt.hit_rate}%\n`;
+    report += `<b>Total Return:</b> ${bt.total_return}%\n`;
+    report += `<b>Max Drawdown:</b> ${bt.max_drawdown}%\n`;
+    report += `<b>Avg Win:</b> ${bt.avg_win}%\n`;
+    report += `<b>Avg Loss:</b> ${bt.avg_loss}%\n`;
+    report += `<b>Sharpe:</b> ${bt.sharpe_ratio}\n`;
+
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /mlbacktest error:', e.message);
+    await safeSend(chatId, `❌ ML backtest error: ${e.message}`);
+  }
+});
+
+// /rebalance — Regime-aware portfolio rebalancing
+bot.onText(/^\/rebalance(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  console.log(`📥 /rebalance from ${msg.from?.first_name || chatId}`);
+
+  try {
+    if (portfolio.length === 0) { await safeSend(chatId, '⚠️ Portfolio empty hai.'); return; }
+    await refreshPrices();
+
+    // Get ML regime first, fallback to basic
+    let regime = 'RISK_ON';
+    let sipMultiplier = 1.0;
+    try {
+      const r = await fetchMLRegime();
+      regime = r.regime;
+      sipMultiplier = r.sip_multiplier;
+    } catch (e) { /* ML service may be down */ }
+
+    const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
+    const totalValue = metrics.totalInvested + metrics.totalPL;
+
+    // Regime-based allocation targets
+    const allocations = {
+      RISK_ON: { equity: 80, debt: 10, gold: 5, cash: 5 },
+      RISK_OFF: { equity: 40, debt: 30, gold: 20, cash: 10 },
+      GOLDILOCKS: { equity: 70, debt: 15, gold: 10, cash: 5 },
+      STAGFLATION: { equity: 45, debt: 25, gold: 20, cash: 10 },
+    };
+
+    const target = allocations[regime] || allocations['RISK_ON'];
+
+    let report = `🔄 <b>REGIME-AWARE REBALANCING</b>\n`;
+    report += `━━━━━━━━━━━━━━━━━\n`;
+    report += `<b>Current Regime:</b> ${regime.replace('_', ' ')}\n`;
+    report += `<b>SIP Multiplier:</b> ${sipMultiplier}x\n`;
+    report += `<b>Portfolio Value:</b> ₹${totalValue.toLocaleString('en-IN')}\n\n`;
+
+    report += `📊 <b>Target Allocation (${regime}):</b>\n`;
+    report += `  Equity: ${target.equity}%\n`;
+    report += `  Debt: ${target.debt}%\n`;
+    report += `  Gold: ${target.gold}%\n`;
+    report += `  Cash: ${target.cash}%\n\n`;
+
+    report += `💡 <b>Recommendations:</b>\n`;
+    if (regime === 'RISK_OFF') {
+      report += `  → Move ${10}% from equity to debt/gold\n`;
+      report += `  → Reduce SIP by ${((1 - sipMultiplier) * 100).toFixed(0)}%\n`;
+      report += `  → Focus on defensive sectors (Pharma, FMCG, IT)\n`;
+    } else if (regime === 'STAGFLATION') {
+      report += `  → Reduce equity, increase gold & commodities\n`;
+      report += `  → Avoid rate-sensitive sectors (Banks, Real Estate)\n`;
+    } else if (regime === 'RISK_ON') {
+      report += `  → Increase SIP by ${((sipMultiplier - 1) * 100).toFixed(0)}%\n`;
+      report += `  → Favor growth sectors (IT, Auto, Chemicals)\n`;
+    } else {
+      report += `  → Balanced approach, slight tilt to quality\n`;
+    }
+
+    report += `\n⚠️ This is guidance, not financial advice. Consult your advisor.`;
+    await safeSend(chatId, report);
+  } catch (e) {
+    console.error('❌ /rebalance error:', e.message);
+    await safeSend(chatId, `❌ Rebalance error: ${e.message}`);
+  }
+});
+
 // ========================================
 // BOOT UP
 // ========================================
@@ -2721,7 +2954,7 @@ initializeData().then(() => {
   console.log(`   🟣 Claude: ${CLAUDE_KEY?.length > 10 ? 'ONLINE' : 'OFFLINE'}`);
   console.log('');
   // Send boot notification
-  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI ADVANCE PRO v22.0 ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🤖 AI: Triple Engine (Gemini→Groq→Claude)\n🔬 Deep Research: ACTIVE 24x7\n🧬 Deep Mind Analysis: ACTIVE\n\nType /help for commands.`).catch(() => { });
+  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI ADVANCE PRO v23.0 SUPER INTELLIGENCE ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🤖 AI: 6-Engine Router (Gemini→Groq→Claude→OpenRouter→Cerebras→HF)\n🧠 Quant Brain: ALWAYS ONLINE (never offline)\n🔬 Deep Research: ACTIVE 24x7\n🧬 ML Service: ${ML_SERVICE_URL}\n\nType /help for commands.`).catch(() => { });
 }).catch(err => {
   console.error('❌ Boot error (non-fatal):', err.message);
   console.log('⚡ Bot is STILL listening for commands with limited data...');

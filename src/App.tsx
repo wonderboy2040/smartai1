@@ -4,6 +4,7 @@ import { secureStorage } from './utils/secureStorage';
 import { useAppState } from './hooks/useAppState';
 import { AppContext } from './hooks/AppContext';
 import { PortfolioHealthMonitor } from './components/PortfolioHealthMonitor';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Clock } from './components/Clock';
 
 // Lazy load with auto-recovery: after a fresh deploy the cached index.html can
@@ -173,13 +174,14 @@ export default function App() {
 
         <main className="container mx-auto px-4 py-6">
           <Suspense fallback={<div className="flex items-center justify-center py-20"><div className="text-center"><div className="text-4xl mb-3 animate-float">⚡</div><div className="text-sm text-slate-500 font-medium">Loading module...</div></div></div>}>
-            {activeTab === 'dashboard' && <DashboardTab />}
-
-            {activeTab === 'portfolio' && <PortfolioTab />}
-            {activeTab === 'deepmind' && <DeepScanTab />}
-            {activeTab === 'planner' && <PlannerTab />}
-            {activeTab === 'macro' && <MacroTab />}
-            {activeTab === 'guide' && <GuideTab />}
+            <ErrorBoundary fallback={<div className="quantum-panel rounded-2xl p-8 text-center border border-red-500/20"><div className="text-4xl mb-3">🚨</div><div className="text-red-400 font-bold mb-2">Tab crashed</div><div className="text-slate-500 text-sm">Reload or switch tabs</div></div>}>
+              {activeTab === 'dashboard' && <DashboardTab />}
+              {activeTab === 'portfolio' && <PortfolioTab />}
+              {activeTab === 'deepmind' && <DeepScanTab />}
+              {activeTab === 'planner' && <PlannerTab />}
+              {activeTab === 'macro' && <MacroTab />}
+              {activeTab === 'guide' && <GuideTab />}
+            </ErrorBoundary>
           </Suspense>
         </main>
 
@@ -239,9 +241,11 @@ export default function App() {
         <PortfolioHealthMonitor portfolio={portfolio} livePrices={livePrices} metrics={metrics} telegramConfig={{ token: tgToken, chatId: tgChatId, enabled: autoTelegram }} />
 
         {/* Neural Chat */}
-        <Suspense fallback={<div className="fixed bottom-6 right-6 w-80 h-96 quantum-panel rounded-2xl flex items-center justify-center animate-pulse"><div className="text-center"><div className="text-4xl mb-2 animate-float">🧠</div><div className="text-sm text-slate-400 font-medium">Loading AI Engine...</div></div></div>}>
-          <NeuralChat portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'} usdInrRate={usdInrRate} />
-        </Suspense>
+        <ErrorBoundary fallback={<div className="fixed bottom-6 right-6 w-14 h-14 bg-red-500/20 border border-red-500/30 rounded-2xl flex items-center justify-center text-red-400 z-[60]">⚠</div>}>
+          <Suspense fallback={<div className="fixed bottom-6 right-6 w-80 h-96 quantum-panel rounded-2xl flex items-center justify-center animate-pulse"><div className="text-center"><div className="text-4xl mb-2 animate-float">🧠</div><div className="text-sm text-slate-400 font-medium">Loading AI Engine...</div></div></div>}>
+            <NeuralChat portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'} usdInrRate={usdInrRate} />
+          </Suspense>
+        </ErrorBoundary>
       </div>
     </AppContext.Provider>
   );

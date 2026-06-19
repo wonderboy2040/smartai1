@@ -112,17 +112,42 @@ if (CLAUDE_KEY) CLAUDE_KEY = CLAUDE_KEY.replace(/['"]/g, '').trim();
 export function setClaudeKey(key) { CLAUDE_KEY = key; }
 export function isClaudeAvailable() { return !!(CLAUDE_KEY && CLAUDE_KEY.length > 10); }
 
+// ============================================
+// ADDITIONAL LLM PROVIDERS (Free tiers, auto-failover)
+// ============================================
+export let OPENROUTER_KEY = env.OPENROUTER_API_KEY || env.OPENROUTER_KEY || "";
+if (OPENROUTER_KEY) OPENROUTER_KEY = OPENROUTER_KEY.replace(/['"]/g, '').trim();
+export function isOpenRouterAvailable() { return !!(OPENROUTER_KEY && OPENROUTER_KEY.length > 10); }
+
+export let CEREBRAS_KEY = env.CEREBRAS_API_KEY || env.CEREBRAS_KEY || "";
+if (CEREBRAS_KEY) CEREBRAS_KEY = CEREBRAS_KEY.replace(/['"]/g, '').trim();
+export function isCerebrasAvailable() { return !!(CEREBRAS_KEY && CEREBRAS_KEY.length > 10); }
+
+export let HF_KEY = env.HF_API_KEY || env.HUGGINGFACE_API_KEY || "";
+if (HF_KEY) HF_KEY = HF_KEY.replace(/['"]/g, '').trim();
+export function isHFAvailable() { return !!(HF_KEY && HF_KEY.length > 10); }
+
+// Ollama (self-hosted, truly keyless)
+export const OLLAMA_URL = env.OLLAMA_URL || 'http://localhost:11434';
+export function isOllamaAvailable() { return false; } // Only if self-hosted
+
 // Log all engine statuses at startup
 console.log(`\n🤖 AI Engine Status:`);
 console.log(`  🔷 Gemini: ${isGeminiAvailable() ? '✓ AVAILABLE' : '✗ Missing (set GEMINI_API_KEY)'}`);
 console.log(`  ⚡ Groq:   ${isGroqAvailable() ? '✓ AVAILABLE' : '✗ Missing (set GROQ_API_KEY)'}`);
 console.log(`  🟣 Claude: ${isClaudeAvailable() ? '✓ AVAILABLE' : '✗ Missing (set ANTHROPIC_API_KEY)'}`);
+console.log(`  🔶 OpenRouter: ${isOpenRouterAvailable() ? '✓ AVAILABLE' : '✗ Missing (set OPENROUTER_API_KEY)'}`);
+console.log(`  🧠 Cerebras: ${isCerebrasAvailable() ? '✓ AVAILABLE' : '✗ Missing (set CEREBRAS_API_KEY)'}`);
+console.log(`  🤗 HuggingFace: ${isHFAvailable() ? '✓ AVAILABLE' : '✗ Missing (set HF_API_KEY)'}`);
 console.log(`  🔍 Tavily: ${isTavilyAvailable() ? '✓ AVAILABLE' : '✗ Missing (set TAVILY_API_KEY)'}\n`);
 
 // SIP Defaults
 export const DEFAULT_INDIA_SIP = 10000;
 export const DEFAULT_US_SIP = 50;
 export const DEFAULT_USD_INR = 85.5;
+
+// ML Service (Python FastAPI microservice)
+export const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://localhost:8000';
 
 export const CORS_PROXIES = [''];
 
