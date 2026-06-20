@@ -49,6 +49,22 @@ export type RiskLevel = 'low' | 'medium' | 'high';
 export type TransactionType = 'buy' | 'sell';
 
 // ========================================
+// PRICE ALERTS (target / stop-loss → Telegram)
+// ========================================
+export interface PriceAlert {
+  id: string;
+  symbol: string;
+  market: 'IN' | 'US';
+  target?: number | null;      // upper target price (notify when price >= target)
+  stopLoss?: number | null;    // lower stop-loss price (notify when price <= stopLoss)
+  note?: string;               // optional user note shown in the alert
+  enabled: boolean;
+  createdAt: number;
+  lastTriggered?: number;          // ts of last fired alert (cooldown)
+  triggeredType?: 'target' | 'stoploss' | null; // which threshold last fired
+}
+
+// ========================================
 // TRANSACTION LEDGER (powers monthly analytics & return reports)
 // ========================================
 export interface Transaction {

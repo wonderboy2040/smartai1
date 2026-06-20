@@ -56,7 +56,7 @@ const OPENAI_COMPAT = {
   openrouter:  { url: 'https://openrouter.ai/api/v1/chat/completions',   defModel: 'meta-llama/llama-3.3-70b-instruct:free' },
   cerebras:    { url: 'https://api.cerebras.ai/v1/chat/completions',     defModel: 'llama-3.3-70b' },
   huggingface: { url: 'https://router.huggingface.co/v1/chat/completions', defModel: 'Qwen/Qwen2.5-72B-Instruct' },
-  nvidia:      { url: 'https://integrate.api.nvidia.com/v1/chat/completions', defModel: 'meta/llama-3.1-8b-instruct' },
+  nvidia:      { url: 'https://integrate.api.nvidia.com/v1/chat/completions', defModel: 'meta/llama-3.3-70b-instruct' },
 };
 
 function jsonError(res, status, message) {
@@ -123,7 +123,7 @@ for (const [name, cfg] of Object.entries(OPENAI_COMPAT)) {
 app.post('/api/gemini', async (req, res) => {
   if (!KEYS.gemini) return jsonError(res, 503, 'gemini not configured');
   try {
-    const { messages = [], model = 'gemini-2.0-flash' } = req.body || {};
+    const { messages = [], model = 'gemini-2.5-flash' } = req.body || {};
     const systemText = messages.filter(m => m.role === 'system').map(m => m.content).join('\n').trim();
     const contents = messages
       .filter(m => m.role !== 'system')

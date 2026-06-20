@@ -24,13 +24,13 @@ const MAX_HISTORY = 10;
 // ============================================
 export const AI_ENGINE_LABELS = {
   auto: '⚡ Auto (Smart Failover)',
-  gemini: '🔷 Gemini 2.0 Flash',
+  gemini: '🔷 Gemini 2.5 Flash',
   groq: '⚡ Groq Llama 3.3 70B',
   claude: '🟣 Claude Sonnet 4',
   openrouter: '🔶 OpenRouter Llama 3.3',
   cerebras: '🧠 Cerebras Llama 3.3',
   huggingface: '🤗 HuggingFace Qwen 72B',
-  nvidia: '🟢 NVIDIA Llama 3.1',
+  nvidia: '🟢 NVIDIA Llama 3.3 70B',
 };
 const chatEnginePref = new Map(); // chatId -> engineId
 export function setChatEngine(chatId, engine) {
@@ -150,7 +150,7 @@ async function getRealtimeForex() {
 // ============================================
 
 // 0) NVIDIA (Primary Fallback out-of-the-box)
-async function callNvidia(messages, systemPrompt, modelName = 'meta/llama-3.1-8b-instruct') {
+async function callNvidia(messages, systemPrompt, modelName = 'meta/llama-3.3-70b-instruct') {
   if (!isNvidiaAvailable()) throw new Error('NVIDIA key missing');
   if (engineHealth.nvidia.failures >= 3 && Date.now() - engineHealth.nvidia.lastFailure < engineHealth.nvidia.cooldownMs) throw new Error('NVIDIA cooling down');
   const res = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
@@ -167,7 +167,7 @@ async function callNvidia(messages, systemPrompt, modelName = 'meta/llama-3.1-8b
 }
 
 // 1) GOOGLE GEMINI
-async function callGemini(messages, systemPrompt, modelName = 'gemini-2.0-flash') {
+async function callGemini(messages, systemPrompt, modelName = 'gemini-2.5-flash') {
   if (!isGeminiAvailable()) throw new Error('Gemini key missing');
   if (engineHealth.gemini.failures >= 3 && Date.now() - engineHealth.gemini.lastFailure < engineHealth.gemini.cooldownMs) throw new Error('Gemini cooling down');
   const contents = messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
@@ -414,7 +414,8 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
   ctx += `LIVE USD/INR: ₹${fx.toFixed(4)}\nTimestamp: ${new Date().toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata'})} IST\n\n`;
 
   const now = Date.now();
-  if (!cachedIntel || now - intelTimestamp > 120000) {
+  // Keep market intelligence fresh for 24x7 deep analysis (60s instead of 120s).
+  if (!cachedIntel || now - intelTimestamp > 60000) {
     try { cachedIntel = await fetchMarketIntelligence(); intelTimestamp = now; }
     catch {}
   }

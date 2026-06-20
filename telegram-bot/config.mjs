@@ -136,7 +136,7 @@ export const OLLAMA_URL = env.OLLAMA_URL || 'http://localhost:11434';
 export function isOllamaAvailable() { return false; } // Only if self-hosted
 
 // ============================================
-// NVIDIA Llama 3.1 8B (Primary Free Fallback)
+// NVIDIA Llama 3.3 70B (Primary Free Fallback)
 // ============================================
 export let NVIDIA_KEY = env.NVIDIA_API_KEY || env.VITE_NVIDIA_API_KEY || "";
 if (!NVIDIA_KEY || NVIDIA_KEY.includes('your-')) {

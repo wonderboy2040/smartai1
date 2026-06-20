@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles, Cpu, ChevronDown } from 'lucide-react';
+import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles, Cpu, ChevronDown, Mic } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 const PROXY_BASE = import.meta.env.VITE_API_PROXY || '';
@@ -128,13 +128,13 @@ interface ChatMessage {
 interface EngineOption { id: string; label: string; model: string; endpoint: string; badge: string; }
 const ENGINE_OPTIONS: EngineOption[] = [
   { id: 'auto',        label: 'Auto (Smart Failover)', model: '',                                       endpoint: 'auto',        badge: '⚡' },
-  { id: 'gemini',      label: 'Gemini 2.0 Flash',      model: 'gemini-2.0-flash',                        endpoint: 'gemini',      badge: '🔷' },
+  { id: 'gemini',      label: 'Gemini 2.5 Flash',      model: 'gemini-2.5-flash',                        endpoint: 'gemini',      badge: '🔷' },
   { id: 'groq',        label: 'Groq Llama 3.3 70B',    model: 'llama-3.3-70b-versatile',                 endpoint: 'groq',        badge: '⚡' },
   { id: 'claude',      label: 'Claude Sonnet 4',       model: 'claude-sonnet-4-20250514',                endpoint: 'claude',      badge: '🟣' },
   { id: 'openrouter',  label: 'OpenRouter Llama 3.3',  model: 'meta-llama/llama-3.3-70b-instruct:free',  endpoint: 'openrouter',  badge: '🔶' },
   { id: 'cerebras',    label: 'Cerebras Llama 3.3',    model: 'llama-3.3-70b',                           endpoint: 'cerebras',    badge: '🧠' },
   { id: 'huggingface', label: 'HuggingFace Qwen 72B',  model: 'Qwen/Qwen2.5-72B-Instruct',               endpoint: 'huggingface', badge: '🤗' },
-  { id: 'nvidia',      label: 'NVIDIA Llama 3.1',      model: 'meta/llama-3.1-8b-instruct',              endpoint: 'nvidia',      badge: '🟢' },
+  { id: 'nvidia',      label: 'NVIDIA Llama 3.3 70B',  model: 'meta/llama-3.3-70b-instruct',             endpoint: 'nvidia',      badge: '🟢' },
 ];
 
 const QUICK_ACTIONS = [
@@ -465,6 +465,46 @@ RESPONSE STRUCTURE:
     }
   };
 
+  // --- Voice input (Web Speech API, Hinglish) ---
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  const speechSupported = typeof window !== 'undefined' &&
+    ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+
+  const toggleVoiceInput = useCallback(() => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) { alert('Aapke browser me voice input support nahi hai. Chrome try karo.'); return; }
+
+    // Stop if already listening
+    if (recognitionRef.current && isListening) {
+      try { recognitionRef.current.stop(); } catch { }
+      return;
+    }
+
+    const recognition = new SR();
+    recognition.lang = 'hi-IN';        // Hinglish — Hindi + English mix
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => setIsListening(true);
+    recognition.onerror = () => setIsListening(false);
+    recognition.onend = () => { setIsListening(false); recognitionRef.current = null; };
+    recognition.onresult = (event: any) => {
+      let transcript = '';
+      for (let i = 0; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript;
+      }
+      setChatInput(transcript);
+    };
+
+    recognitionRef.current = recognition;
+    try { recognition.start(); } catch { setIsListening(false); }
+  }, [isListening]);
+
+  // Cleanup recognition on unmount
+  useEffect(() => () => { try { recognitionRef.current?.stop(); } catch { } }, []);
+
   return (
     <>
       <button
@@ -612,12 +652,21 @@ RESPONSE STRUCTURE:
               <div className="relative flex items-center">
                 <input
                   type="text"
-                  placeholder="Ask Deep Mind AI anything..."
-                  className="w-full bg-slate-900/60 border border-slate-700/80 rounded-xl sm:rounded-2xl py-2.5 sm:py-3 pl-3 sm:pl-4 pr-10 sm:pr-12 text-xs sm:text-sm text-white outline-none focus:border-cyan-500/60 transition-all font-medium placeholder:text-slate-600"
+                  placeholder={isListening ? '🎙️ Sun raha hoon… boliye' : 'Ask Deep Mind AI anything...'}
+                  className="w-full bg-slate-900/60 border border-slate-700/80 rounded-xl sm:rounded-2xl py-2.5 sm:py-3 pl-3 sm:pl-4 pr-[4.5rem] sm:pr-20 text-xs sm:text-sm text-white outline-none focus:border-cyan-500/60 transition-all font-medium placeholder:text-slate-600"
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleChat()}
                 />
+                {speechSupported && (
+                  <button
+                    onClick={toggleVoiceInput}
+                    title={isListening ? 'Stop listening' : 'Voice input (Hinglish)'}
+                    className={`absolute right-9 sm:right-11 p-1.5 sm:p-2 rounded-lg sm:rounded-xl transition-all ${isListening ? 'bg-red-500/80 text-white animate-pulse' : 'bg-slate-800/80 text-cyan-400 hover:bg-slate-700'}`}
+                  >
+                    <Mic size={14} />
+                  </button>
+                )}
                 <button
                   onClick={handleChat}
                   disabled={isThinking || !chatInput.trim()}

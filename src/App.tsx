@@ -6,6 +6,7 @@ import { AppContext } from './hooks/AppContext';
 import { PortfolioHealthMonitor } from './components/PortfolioHealthMonitor';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Clock } from './components/Clock';
+import { InstallPWA } from './components/InstallPWA';
 
 // Lazy load with auto-recovery: after a fresh deploy the cached index.html can
 // reference old hashed chunks that no longer exist ("Failed to fetch dynamically
@@ -60,6 +61,7 @@ export default function App() {
     addDate, setAddDate,
     transactionType, setTransactionType, modalPrice,
     savePosition, usdInrRate, portfolioContextText,
+    refreshAll, isRefreshing,
   } = state;
 
   // Keyboard Shortcuts for Tabs (1-7)
@@ -164,7 +166,7 @@ export default function App() {
               <div className="flex gap-2 relative">
                 <button onClick={() => setAutoTelegram(prev => !prev)} className={`quantum-btn-ghost p-2 rounded-xl text-lg transition-all ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`} title={autoTelegram ? 'Auto Alerts ON' : 'Auto Alerts OFF'}>🔔</button>
                 <button onClick={toggleTheme} className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>🌞</button>
-                <button onClick={() => window.location.reload()} className="quantum-btn-ghost p-2 rounded-xl text-lg" title="Refresh">🔄</button>
+                <button onClick={refreshAll} disabled={isRefreshing} className="quantum-btn-ghost p-2 rounded-xl text-lg disabled:opacity-50" title="Refresh All (prices + forex)"><span className={isRefreshing ? 'inline-block animate-spin' : ''}>🔄</span></button>
                 <button onClick={flushCache} className="quantum-btn-ghost p-2 rounded-xl text-lg" title="Flush Cache">🧹</button>
                 <button onClick={logout} className="quantum-btn-ghost p-2 rounded-xl text-lg" title="Logout">🔐</button>
               </div>
@@ -236,6 +238,9 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* PWA install prompt */}
+        <InstallPWA />
 
         {/* Portfolio Health Monitor */}
         <PortfolioHealthMonitor portfolio={portfolio} livePrices={livePrices} metrics={metrics} telegramConfig={{ token: tgToken, chatId: tgChatId, enabled: autoTelegram }} />

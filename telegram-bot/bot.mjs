@@ -149,7 +149,7 @@ apiRouter.get('/ai-status', (req, res) => {
 apiRouter.post('/nvidia', express.json({ limit: '1mb' }), async (req, res) => {
   try {
     const { messages, model } = req.body;
-    const modelName = model || 'meta/llama-3.1-8b-instruct';
+    const modelName = model || 'meta/llama-3.3-70b-instruct';
     const formattedMessages = messages.map(m => ({ role: m.role, content: m.content }));
     
     const apiRes = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
@@ -183,7 +183,7 @@ apiRouter.post('/gemini', express.json({ limit: '1mb' }), async (req, res) => {
       return res.status(503).json({ error: 'Gemini API key not configured on server' });
     }
     const { messages, model } = req.body;
-    const modelName = model || 'gemini-2.0-flash';
+    const modelName = model || 'gemini-2.5-flash';
 
     const contents = messages.filter(m => m.role !== 'system').map(m => ({
       role: m.role === 'assistant' ? 'model' : 'user',

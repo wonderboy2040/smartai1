@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Position, PriceData, TabType, RiskLevel, TransactionType, Transaction } from '../types';
+import { Position, PriceData, TabType, RiskLevel, TransactionType, Transaction, PriceAlert } from '../types';
 import {
   DEFAULT_USD_INR, getTodayString, guessMarket, EXACT_TICKER_MAP, isCryptoSymbol
 } from '../utils/constants';
@@ -45,6 +45,11 @@ export function useAppState() {
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
     try { const s = secureStorage.getItem('txn_history'); return s ? JSON.parse(s) : []; } catch { return []; }
   });
+  // --- Price alerts (target / stop-loss → Telegram) ---
+  const [priceAlerts, setPriceAlerts] = useState<PriceAlert[]>(() => {
+    try { const s = secureStorage.getItem('price_alerts'); return s ? JSON.parse(s) : []; } catch { return []; }
+  });
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [livePrices, setLivePrices] = useState<Record<string, PriceData>>({});
   const [usdInrRate, setUsdInrRate] = useState(DEFAULT_USD_INR);
   const usdInrRateRef = useRef(DEFAULT_USD_INR);
@@ -140,11 +145,13 @@ export function useAppState() {
   const portfolioRef = useRef(portfolio);
   const livePricesRef = useRef(livePrices);
   const transactionsRef = useRef(transactions);
+  const priceAlertsRef = useRef(priceAlerts);
   const latestDataRef = useRef({ portfolio, livePrices, usdInrRate });
 
   useEffect(() => { portfolioRef.current = portfolio; }, [portfolio]);
   useEffect(() => { livePricesRef.current = livePrices; }, [livePrices]);
   useEffect(() => { transactionsRef.current = transactions; }, [transactions]);
+  useEffect(() => { priceAlertsRef.current = priceAlerts; }, [priceAlerts]);
 
   const portfolioSymbolKey = useMemo(() => portfolio.map(p => p.symbol).sort().join(','), [portfolio]);
 
@@ -399,6 +406,62 @@ export function useAppState() {
   useEffect(() => {
     try { secureStorage.setItem('txn_history', JSON.stringify(transactions)); } catch { }
   }, [transactions]);
+
+  // --- Save price alerts ---
+  useEffect(() => {
+    try { secureStorage.setItem('price_alerts', JSON.stringify(priceAlerts)); } catch { }
+  }, [priceAlerts]);
+
+  // --- Price alert watcher (target / stop-loss hit → Telegram) ---
+  // Checks live prices against configured alerts every 20s. A 4-hour cooldown
+  // per alert prevents spamming the same notification repeatedly.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const ALERT_COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours
+    const checkAlerts = async () => {
+      const alerts = priceAlertsRef.current || [];
+      const active = alerts.filter(a => a.enabled && (a.target != null || a.stopLoss != null));
+      if (active.length === 0) return;
+      const prices = livePricesRef.current || {};
+      const now = Date.now();
+      const fired: { alert: PriceAlert; type: 'target' | 'stoploss'; price: number }[] = [];
+
+      for (const a of active) {
+        const data = prices[`${a.market}_${a.symbol}`];
+        const price = data?.price;
+        if (!price || price <= 0) continue;
+        if (a.lastTriggered && now - a.lastTriggered < ALERT_COOLDOWN_MS) continue;
+        if (a.target != null && price >= a.target) {
+          fired.push({ alert: a, type: 'target', price });
+        } else if (a.stopLoss != null && price <= a.stopLoss) {
+          fired.push({ alert: a, type: 'stoploss', price });
+        }
+      }
+      if (fired.length === 0) return;
+
+      const [tgToken, tgChatId] = await Promise.all([
+        secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID'),
+      ]);
+      for (const f of fired) {
+        const cur = f.alert.market === 'IN' ? '₹' : '$';
+        const sym = f.alert.symbol.replace('.NS', '').replace('.BO', '');
+        const isTarget = f.type === 'target';
+        const threshold = isTarget ? f.alert.target! : f.alert.stopLoss!;
+        const emoji = isTarget ? '🎯' : '🛑';
+        const title = isTarget ? 'TARGET HIT' : 'STOP-LOSS HIT';
+        const msg = `${emoji} <b>${title}</b>\n\n<b>${sym}</b> (${f.alert.market})\nLive: <b>${cur}${f.price.toFixed(2)}</b>\n${isTarget ? 'Target' : 'Stop-Loss'}: ${cur}${threshold.toFixed(2)}${f.alert.note ? `\n📝 ${f.alert.note}` : ''}\n\n— Wealth AI Alert`;
+        try { await sendTelegramAlert(tgToken || '', tgChatId || '', msg); } catch { }
+      }
+      // Mark fired alerts with cooldown timestamp + triggered type
+      const firedIds = new Map(fired.map(f => [f.alert.id, f.type] as const));
+      setPriceAlerts(prev => prev.map(a =>
+        firedIds.has(a.id) ? { ...a, lastTriggered: now, triggeredType: firedIds.get(a.id)! } : a
+      ));
+    };
+    const interval = window.setInterval(checkAlerts, 20000); // 20s
+    checkAlerts();
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
 
   // --- Cloud sync (debounced 5s) ---
   useEffect(() => {
@@ -905,6 +968,82 @@ export function useAppState() {
     setShowAddModal(false);
   }, [addSymbol, addQty, addPrice, addDate, transactionType, editId, modalPrice, portfolio]);
 
+  // --- Transaction ledger: manual delete / edit ---
+  const deleteTransaction = useCallback((id: string) => {
+    setTransactions(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  const editTransaction = useCallback((id: string, patch: Partial<Transaction>) => {
+    setTransactions(prev => prev.map(t => {
+      if (t.id !== id) return t;
+      const merged = { ...t, ...patch };
+      // keep amount consistent with qty * price
+      merged.amount = (merged.qty || 0) * (merged.price || 0);
+      return merged;
+    }));
+  }, []);
+
+  // --- Price alerts: add / update / delete / toggle ---
+  const addPriceAlert = useCallback((alert: Omit<PriceAlert, 'id' | 'createdAt' | 'enabled'> & { enabled?: boolean }) => {
+    const newAlert: PriceAlert = {
+      id: `alert_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      createdAt: Date.now(),
+      enabled: alert.enabled ?? true,
+      symbol: alert.symbol,
+      market: alert.market,
+      target: alert.target ?? null,
+      stopLoss: alert.stopLoss ?? null,
+      note: alert.note || '',
+      lastTriggered: undefined,
+      triggeredType: null,
+    };
+    setPriceAlerts(prev => [newAlert, ...prev]);
+  }, []);
+
+  const updatePriceAlert = useCallback((id: string, patch: Partial<PriceAlert>) => {
+    // reset cooldown when thresholds change so it can re-fire
+    setPriceAlerts(prev => prev.map(a => a.id === id
+      ? { ...a, ...patch, lastTriggered: undefined, triggeredType: null }
+      : a));
+  }, []);
+
+  const deletePriceAlert = useCallback((id: string) => {
+    setPriceAlerts(prev => prev.filter(a => a.id !== id));
+  }, []);
+
+  const togglePriceAlert = useCallback((id: string) => {
+    setPriceAlerts(prev => prev.map(a => a.id === id ? { ...a, enabled: !a.enabled } : a));
+  }, []);
+
+  // --- Force refresh everything: forex + live prices + cloud portfolio ---
+  const refreshAll = useCallback(async () => {
+    setIsRefreshing(true);
+    setSyncStatus('🔄 Refreshing…');
+    try {
+      // 1) Forex (24x7)
+      const ratePromise = fetchForexRate().then(rate => setUsdInrRate(rate)).catch(() => { });
+
+      // 2) Live prices for current portfolio + key indices
+      const cur = portfolioRef.current;
+      const defaults = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BTC', 'IN_ETH'];
+      const keys = [...new Set([...cur.map(p => `${p.market}_${p.symbol}`), ...defaults])];
+      const positions: Position[] = keys.map(k => {
+        const [market, sym] = k.split('_') as ['IN' | 'US', string];
+        return { id: `refresh-${k}`, symbol: sym, market, qty: 1, avgPrice: 1, leverage: 1, dateAdded: getTodayString() };
+      });
+      const pricePromise = batchFetchPrices(positions, (key, data) => { pendingPricesRef.current[key] = data; })
+        .then(() => flushPricesToStorage()).catch(() => { });
+
+      await Promise.all([ratePromise, pricePromise]);
+      setSyncStatus('✅ Refreshed');
+    } catch {
+      setSyncStatus('⚠️ Refresh failed');
+    } finally {
+      setIsRefreshing(false);
+      setTimeout(() => setSyncStatus(''), 2500);
+    }
+  }, [flushPricesToStorage]);
+
   const pushTelegramReport = useCallback(async () => {
     const [tgToken, tgChatId] = await Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')]);
     const msg = `🧠 <b>Quantum AI Master Report</b>\n\n🌍 <b>Global State:</b> ${sentiment.text}\n\n💼 <b>Total Equity:</b> ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n📈 <b>P&L:</b> ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(2)}%)\n⚡ <b>Today:</b> ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')}`;
@@ -941,6 +1080,12 @@ export function useAppState() {
     isAuthenticated, pinInput, setPinInput, verifyPin, logout,
     // Core
     activeTab, setActiveTab, portfolio, setPortfolio, transactions, setTransactions, livePrices, usdInrRate, theme,
+    // Transaction ledger helpers
+    deleteTransaction, editTransaction,
+    // Price alerts
+    priceAlerts, setPriceAlerts, addPriceAlert, updatePriceAlert, deletePriceAlert, togglePriceAlert,
+    // Refresh
+    refreshAll, isRefreshing,
     currentSymbol, setCurrentSymbol, currentMarket, setCurrentMarket,
     symbolInput, setSymbolInput, isAnalyzing, chartInterval, setChartInterval,
     liveStatus, syncStatus,

@@ -1,16 +1,28 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useApp } from '../../hooks/AppContext';
 import { getTodayString } from '../../utils/constants';
 import { calculatePortfolioXIRR } from '../../utils/wealthEngine';
 import { MonthlyReturnReport } from '../MonthlyReturnReport';
+import TransactionHistoryPanel from '../TransactionHistoryPanel';
+import PriceAlertsPanel from '../PriceAlertsPanel';
+import { exportTransactionsCSV, exportMonthlyReturnsCSV } from '../../utils/exportData';
+
+type SortKey = 'alloc' | 'pnl' | 'pnlPct' | 'xirr' | 'value' | 'name';
 
 const PortfolioTab = React.memo(function PortfolioTab() {
   const {
-    portfolio, livePrices, usdInrRate, metrics,
+    portfolio, livePrices, usdInrRate, metrics, transactions,
     openAddModal, pushTelegramReport, syncStatus, loadFromCloud, setPortfolio,
     setAddSymbol, setCurrentMarket, setAddQty, setAddPrice, setAddDate,
     setEditId, setTransactionType, setShowAddModal, setModalPrice,
+    refreshAll, isRefreshing,
   } = useApp();
+
+  // --- Search / filter / sort controls ---
+  const [search, setSearch] = useState('');
+  const [marketFilter, setMarketFilter] = useState<'all' | 'IN' | 'US'>('all');
+  const [sortKey, setSortKey] = useState<SortKey>('alloc');
+  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
 
   // --- XIRR Calculator ---
   const xirrData = useMemo(() =>
@@ -23,19 +35,82 @@ const PortfolioTab = React.memo(function PortfolioTab() {
     return map;
   }, [xirrData]);
 
+  // --- Filtered + sorted view of the portfolio grid ---
+  const visiblePortfolio = useMemo(() => {
+    const q = search.trim().toUpperCase();
+    const withMetrics = portfolio
+      .filter(p => marketFilter === 'all' || p.market === marketFilter)
+      .filter(p => !q || p.symbol.toUpperCase().includes(q))
+      .map(p => {
+        const key = `${p.market}_${p.symbol}`;
+        const data = livePrices[key];
+        const curPrice = data?.price || p.avgPrice;
+        const posSize = p.avgPrice * p.qty;
+        const inv = posSize / (p.leverage || 1);
+        const curVal = curPrice * p.qty;
+        const pl = curVal - posSize;
+        const plPct = inv > 0 ? (pl / inv) * 100 : 0;
+        const eqVal = inv + pl;
+        const allocPct = metrics.totalValue > 0 ? (eqVal * (p.market === 'US' ? usdInrRate : 1) / metrics.totalValue) * 100 : 0;
+        const valINR = eqVal * (p.market === 'US' ? usdInrRate : 1);
+        const plINR = pl * (p.market === 'US' ? usdInrRate : 1);
+        return { p, allocPct, pl, plPct, plINR, valINR, xirr: xirrMap[key] ?? null };
+      });
+    const dir = sortDir === 'desc' ? -1 : 1;
+    withMetrics.sort((a, b) => {
+      switch (sortKey) {
+        case 'name': return dir * a.p.symbol.localeCompare(b.p.symbol);
+        case 'pnl': return dir * (a.plINR - b.plINR);
+        case 'pnlPct': return dir * (a.plPct - b.plPct);
+        case 'xirr': return dir * ((a.xirr ?? -9999) - (b.xirr ?? -9999));
+        case 'value': return dir * (a.valINR - b.valINR);
+        case 'alloc':
+        default: return dir * (a.allocPct - b.allocPct);
+      }
+    });
+    return withMetrics.map(w => w.p);
+  }, [portfolio, livePrices, usdInrRate, metrics.totalValue, xirrMap, search, marketFilter, sortKey, sortDir]);
+
   return (
     <div className="space-y-5 animate-fade-in">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-2xl font-black gradient-text-cyan font-display">
           💼 Portfolio
         </h2>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={refreshAll}
+            disabled={isRefreshing}
+            className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm disabled:opacity-50"
+            title="Force-refresh prices + forex"
+          >
+            <span className={isRefreshing ? 'inline-block animate-spin' : ''}>🔄</span> Refresh All
+          </button>
           <button
             onClick={() => loadFromCloud().then(data => { if (data) setPortfolio(data); })}
             className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm"
           >
             📥 Sync
           </button>
+          <div className="relative group">
+            <button className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm text-emerald-300 border border-emerald-500/20">
+              ⬇️ Export
+            </button>
+            <div className="absolute right-0 mt-1 w-52 quantum-modal rounded-xl p-1 shadow-2xl z-30 hidden group-hover:block">
+              <button
+                onClick={() => exportTransactionsCSV(transactions)}
+                className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/5 text-xs font-semibold text-slate-300"
+              >
+                🧾 Transactions (CSV)
+              </button>
+              <button
+                onClick={() => exportMonthlyReturnsCSV(transactions, usdInrRate)}
+                className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/5 text-xs font-semibold text-slate-300"
+              >
+                📈 Return Report (CSV)
+              </button>
+            </div>
+          </div>
           <button
             onClick={() => openAddModal()}
             className="quantum-btn-primary px-5 py-2 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-sm text-white"
@@ -163,6 +238,47 @@ const PortfolioTab = React.memo(function PortfolioTab() {
       {/* Monthly Return Report (month-wise booked + unrealized returns) */}
       <MonthlyReturnReport />
 
+      {/* Price Alerts (target / stop-loss → Telegram) */}
+      <PriceAlertsPanel />
+
+      {/* Transaction History (full ledger with edit/delete) */}
+      <TransactionHistoryPanel />
+
+      {/* Search / Filter / Sort toolbar (helpful when assets pile up) */}
+      {portfolio.length > 0 && (
+        <div className="quantum-panel rounded-xl p-3 flex flex-wrap items-center gap-2">
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="🔍 Search asset…"
+            className="quantum-input rounded-lg px-3 py-1.5 text-xs text-white bg-slate-900/60 flex-1 min-w-[140px]"
+          />
+          <select value={marketFilter} onChange={e => setMarketFilter(e.target.value as 'all' | 'IN' | 'US')}
+            className="quantum-input rounded-lg px-2 py-1.5 text-xs text-white bg-slate-900/60">
+            <option value="all">All markets</option>
+            <option value="IN">🇮🇳 India</option>
+            <option value="US">🇺🇸 US</option>
+          </select>
+          <select value={sortKey} onChange={e => setSortKey(e.target.value as SortKey)}
+            className="quantum-input rounded-lg px-2 py-1.5 text-xs text-white bg-slate-900/60">
+            <option value="alloc">Allocation</option>
+            <option value="pnl">P&L (₹)</option>
+            <option value="pnlPct">P&L %</option>
+            <option value="xirr">XIRR</option>
+            <option value="value">Value</option>
+            <option value="name">Name</option>
+          </select>
+          <button
+            onClick={() => setSortDir(d => (d === 'desc' ? 'asc' : 'desc'))}
+            className="quantum-btn-ghost px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-300"
+            title="Toggle sort direction"
+          >
+            {sortDir === 'desc' ? '↓ Desc' : '↑ Asc'}
+          </button>
+          <span className="text-[10px] text-slate-500 font-mono">{visiblePortfolio.length}/{portfolio.length}</span>
+        </div>
+      )}
+
       {/* Advance Pro Trader Portfolio Grid */}
       <div className="quantum-panel rounded-2xl overflow-hidden animate-fade-in-up delay-200 p-1">
         {/* Desktop Header */}
@@ -176,7 +292,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         </div>
 
         <div className="divide-y divide-white/[0.03]">
-          {portfolio.map(p => {
+          {visiblePortfolio.map(p => {
             const key = `${p.market}_${p.symbol}`;
             const data = livePrices[key];
             const curPrice = data?.price || p.avgPrice;
@@ -340,6 +456,12 @@ const PortfolioTab = React.memo(function PortfolioTab() {
             <div className="text-6xl mb-4">🛰️</div>
             <p className="text-lg font-bold text-cyan-300/50 uppercase tracking-widest">Sensors Offline</p>
             <p className="text-sm mt-2">No assets detected in the neural grid.</p>
+          </div>
+        )}
+        {portfolio.length > 0 && visiblePortfolio.length === 0 && (
+          <div className="p-10 text-center text-slate-500">
+            <div className="text-4xl mb-3">🔍</div>
+            <p className="text-sm">No assets match your search / filter.</p>
           </div>
         )}
       </div>

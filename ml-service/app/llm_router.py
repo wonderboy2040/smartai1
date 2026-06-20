@@ -27,7 +27,7 @@ PROVIDERS = [
     {
         "name": "gemini",
         "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
-        "model": "gemini-2.0-flash",
+        "model": "gemini-2.5-flash",
         "env_key": "GEMINI_API_KEY",
         "format": "gemini",
     },

@@ -1,7 +1,7 @@
 // ============================================
 // DEEP MIND AI ADVANCE PRO STOCK SCANNER ENGINE
 // Scans Top Individual Stocks — India + USA
-// Multi-Factor AI Scoring with Gemini 3.5 Flash
+// Multi-Factor AI Scoring with Gemini 2.5 Flash
 // ============================================
 
 import { DeepScanStock, PriceData } from '../types';
@@ -555,7 +555,7 @@ export function formatDeepScanTelegram(stocks: DeepScanStock[], market?: 'IN' | 
   }
 
   msg += `\n━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `<i>🧠 Deep Mind AI Advance Pro (Gemini 3.5 + Claude + Groq) | Fundamental 30% + Technical 25% + Momentum 20% + Sentiment 15% + Value 10%</i>`;
+  msg += `<i>🧠 Deep Mind AI Advance Pro (Gemini 2.5 + Claude + Groq) | Fundamental 30% + Technical 25% + Momentum 20% + Sentiment 15% + Value 10%</i>`;
 
   return msg;
 }

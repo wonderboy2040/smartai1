@@ -6,6 +6,7 @@ import { analyzeAsset } from '../../utils/telegram';
 import { SmartDipSizer } from '../SmartDipSizer';
 import { WhatIfSIPOptimizer } from '../WhatIfSIPOptimizer';
 import { MonthlyAnalyticsPanel } from '../MonthlyAnalyticsPanel';
+import { exportMonthlyAnalyticsCSV } from '../../utils/exportData';
 import {
   calculateWealthMilestones, compareSIPStepUps,
   analyzeGoals, analyzeRebalancing, calculatePortfolioXIRR,
@@ -15,7 +16,7 @@ import {
 
 export default React.memo(function PlannerTab() {
   const {
-    portfolio, livePrices, usdInrRate, metrics,
+    portfolio, livePrices, usdInrRate, metrics, transactions,
     indiaSIP, setIndiaSIP, usSIP, setUsSIP, btcSIP, setBtcSIP, ethSIP, setEthSIP,
     emergencyFund, setEmergencyFund, investYears, setInvestYears, riskLevel, setRiskLevel,
     monthlyExpenses, setMonthlyExpenses, currentAge, setCurrentAge,
@@ -85,9 +86,18 @@ export default React.memo(function PlannerTab() {
 
   return (
     <div className="space-y-5 animate-fade-in">
-      <h2 className="text-2xl font-black gradient-text-cyan font-display">
-        🎯 Wealth Planner
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-2xl font-black gradient-text-cyan font-display">
+          🎯 Wealth Planner
+        </h2>
+        <button
+          onClick={() => exportMonthlyAnalyticsCSV(transactions, usdInrRate)}
+          className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm text-emerald-300 border border-emerald-500/20"
+          title="Export monthly investment analytics to CSV"
+        >
+          ⬇️ Export Analytics
+        </button>
+      </div>
 
       {/* ============ DEEP DATA ANALYTICS (monthly buy activity) ============ */}
       <MonthlyAnalyticsPanel />
