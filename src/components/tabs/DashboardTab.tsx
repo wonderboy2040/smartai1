@@ -1,7 +1,8 @@
 import React from 'react';
 import { useApp } from '../../hooks/AppContext';
-import { formatPrice } from '../../utils/constants';
+import { formatPrice, isCryptoSymbol } from '../../utils/constants';
 import { isAnyMarketOpen, getMarketStatus } from '../../utils/telegram';
+import { LiveCandleChart } from '../LiveCandleChart';
 import { DipIntelligence } from '../DipIntelligence';
 import { ExactBuyPricePanel } from '../ExactBuyPricePanel';
 import { AIScreenerPanel } from '../AIScreenerPanel';
@@ -39,7 +40,7 @@ export default React.memo(function DashboardTab() {
     usdInrRate, portfolio, livePrices, metrics,
     symbolInput, setSymbolInput, isAnalyzing, chartInterval, setChartInterval,
     analyzeSymbol, quickSelect, openAddModal, pushTelegramReport,
-    chartContainerRef, indiaSIP, usSIP,
+    chartContainerRef, indiaSIP, usSIP, theme,
   } = useApp();
 
   if (!currentSymbol) {
@@ -229,10 +230,35 @@ export default React.memo(function DashboardTab() {
             ))}
           </div>
         </div>
-        <div
-          ref={chartContainerRef}
-          className="h-[500px] rounded-xl bg-black/30 border border-white/5 overflow-hidden"
-        />
+        {(() => {
+          const isIndianEquity = currentMarket === 'IN' && !isCryptoSymbol(currentSymbol.replace('.NS', '').replace('.BO', ''));
+          // NSE/BSE ETFs & stocks can't load in the TradingView embed widget
+          // ("only available on TradingView"), so render our own realtime
+          // candlestick chart from /api/chart data instead.
+          if (isIndianEquity) {
+            const lp = livePrices[`${currentMarket}_${currentSymbol}`];
+            return (
+              <div className="h-[500px] rounded-xl bg-black/30 border border-white/5 overflow-hidden p-2">
+                <LiveCandleChart
+                  symbol={currentSymbol.replace('.NS', '').replace('.BO', '')}
+                  market={currentMarket}
+                  interval={chartInterval}
+                  livePrice={lp?.price}
+                  liveChange={lp?.change}
+                  theme={theme}
+                  height={484}
+                />
+              </div>
+            );
+          }
+          // US / crypto → keep the TradingView embed widget (works fine there).
+          return (
+            <div
+              ref={chartContainerRef}
+              className="h-[500px] rounded-xl bg-black/30 border border-white/5 overflow-hidden"
+            />
+          );
+        })()}
       </div>
 
       {/* Quantum Forensics Panel */}

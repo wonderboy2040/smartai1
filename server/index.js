@@ -71,6 +71,78 @@ app.get('/api/config', (_req, res) => {
 });
 
 // ------------------------------------------------------------
+// GET /api/chart  → real OHLC candles for ANY symbol (incl. NSE/BSE)
+// ------------------------------------------------------------
+// The embeddable TradingView widget shows "This symbol is only available on
+// TradingView" for NSE ETFs (e.g. NSE:JUNIORBEES) because their real-time data
+// isn't licensed for the public widget. This proxy fetches real candles from
+// Yahoo Finance server-side (no browser CORS issue) so the app can render the
+// NSE chart itself with lightweight-charts.
+// Query: ?symbol=JUNIORBEES&market=IN&interval=D   (interval: D | W | M)
+// ------------------------------------------------------------
+const YF_INDEX_MAP = {
+  // Indian indices → Yahoo tickers
+  NIFTY: '^NSEI', NIFTY50: '^NSEI', BANKNIFTY: '^NSEBANK', NIFTYBANK: '^NSEBANK',
+  SENSEX: '^BSESN', INDIAVIX: '^INDIAVIX', CNXIT: '^CNXIT',
+  // US indices
+  SPX: '^GSPC', NDX: '^NDX', DJI: '^DJI', RUT: '^RUT', VIX: '^VIX',
+};
+
+function toYahooSymbol(symbol, market) {
+  const clean = String(symbol || '').replace('.NS', '').replace('.BO', '').trim().toUpperCase();
+  if (YF_INDEX_MAP[clean]) return YF_INDEX_MAP[clean];
+  // Crypto → Yahoo uses e.g. BTC-USD
+  const crypto = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'];
+  if (crypto.includes(clean)) return `${clean}-USD`;
+  if ((market || '').toUpperCase() === 'IN') return `${clean}.NS`; // NSE listing on Yahoo
+  return clean; // US tickers are plain on Yahoo
+}
+
+app.get('/api/chart', async (req, res) => {
+  const { symbol = '', market = '', interval = 'D' } = req.query || {};
+  if (!symbol) return jsonError(res, 400, 'symbol required');
+
+  const ivMap = {
+    D: { interval: '1d', range: '6mo' },
+    W: { interval: '1wk', range: '2y' },
+    M: { interval: '1mo', range: '5y' },
+  };
+  const cfg = ivMap[String(interval).toUpperCase()] || ivMap.D;
+  const ysym = toYahooSymbol(symbol, market);
+
+  // Try NSE then BSE for Indian symbols (some ETFs only list on one).
+  const candidates = (String(market).toUpperCase() === 'IN' && !ysym.startsWith('^'))
+    ? [ysym, ysym.replace('.NS', '.BO')]
+    : [ysym];
+
+  for (const ys of candidates) {
+    try {
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ys)}?interval=${cfg.interval}&range=${cfg.range}`;
+      const upstream = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI chart proxy)' },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!upstream.ok) continue;
+      const json = await upstream.json();
+      const r = json?.chart?.result?.[0];
+      const ts = r?.timestamp;
+      const q = r?.indicators?.quote?.[0];
+      if (!Array.isArray(ts) || !q) continue;
+
+      const candles = [];
+      for (let i = 0; i < ts.length; i++) {
+        const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i], v = q.volume?.[i];
+        if (o == null || h == null || l == null || c == null) continue;
+        candles.push({ time: ts[i], open: o, high: h, low: l, close: c, volume: v || 0 });
+      }
+      if (candles.length === 0) continue;
+      return res.json({ symbol: ys, currency: r?.meta?.currency || '', candles });
+    } catch (e) { /* try next candidate */ }
+  }
+  return jsonError(res, 502, 'chart data unavailable');
+});
+
+// ------------------------------------------------------------
 // GET /api/ai-status → which providers have a key configured.
 // The frontend skips any engine that is false here.
 // ------------------------------------------------------------
