@@ -15,7 +15,7 @@ async function getApiUrl(): Promise<string> {
   _runtimeApiUrl = null;
   return VITE_API_URL;
 }
-import { isAnyMarketOpen } from './telegram';
+import { isAnyMarketOpen, isIndiaMarketOpen } from './telegram';
 interface CoinDcxTicker {
   market: string;
   last_price: string;
@@ -79,6 +79,107 @@ const pendingRequests = new Map<string, Promise<PriceData | null>>();
  */
 export function getBatchInterval(): number {
   return isAnyMarketOpen() ? 8000 : 60000;
+}
+
+/**
+ * Poll cadence for the dedicated NSE/BSE realtime streamer.
+ * Fast (3s) while the Indian market is open so holdings tick like a live feed,
+ * relaxed (30s) when closed to save bandwidth.
+ */
+export function getIndiaPollInterval(): number {
+  return isIndiaMarketOpen() ? 3000 : 30000;
+}
+
+/**
+ * REALTIME NSE / BSE STREAMING (HTTP)
+ * ------------------------------------------------------------------
+ * TradingView's anonymous WebSocket (`unauthorized_user_token`) only streams
+ * US exchanges (NASDAQ / NYSE / AMEX / CBOE) in real-time. NSE / BSE quotes are
+ * NOT pushed to unauthorized clients, which is exactly why Indian assets looked
+ * "frozen" while US assets ticked live.
+ *
+ * This dedicated fast poller hits the TradingView India scanner directly and
+ * feeds prices through the SAME callback pipeline as the WebSocket, so every
+ * NSE / BSE holding (stocks AND ETFs) updates in near-real-time just like the
+ * US holdings. ETFs are resolved against EXACT_TICKER_MAP first, then fall back
+ * to trying BOTH the NSE and BSE listings so either exchange resolves.
+ */
+export async function batchFetchIndianPrices(
+  positions: Position[],
+  onUpdate: (key: string, data: PriceData) => void
+): Promise<void> {
+  const inTickers: string[] = [];
+  const tickerToKey: Record<string, string> = {};
+
+  positions.forEach(p => {
+    if (!p?.symbol) return;
+    const mkt = (p.market || guessMarket(p.symbol)).toUpperCase();
+    if (mkt !== 'IN') return;
+    const cleanSym = p.symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
+    if (isCryptoSymbol(cleanSym)) return; // crypto handled by the CoinDCX poller
+    const key = `IN_${p.symbol.trim()}`;
+
+    if (EXACT_TICKER_MAP[cleanSym]) {
+      const t = EXACT_TICKER_MAP[cleanSym];
+      inTickers.push(t);
+      tickerToKey[t] = key;
+    } else {
+      // Try BOTH NSE and BSE so ETFs/stocks listed on either exchange resolve.
+      inTickers.push(`NSE:${cleanSym}`, `BSE:${cleanSym}`);
+      tickerToKey[`NSE:${cleanSym}`] = key;
+      tickerToKey[`BSE:${cleanSym}`] = key;
+    }
+  });
+
+  // Always include India VIX for the regime / fear-greed widgets.
+  inTickers.push('NSE:INDIAVIX');
+  tickerToKey['NSE:INDIAVIX'] = 'IN_INDIAVIX';
+
+  const uniqueTickers = [...new Set(inTickers)];
+  if (uniqueTickers.length === 0) return;
+
+  try {
+    const res = await fetch(`https://scanner.tradingview.com/india/scan?t=${Date.now()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({
+        symbols: { tickers: uniqueTickers },
+        columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
+      }),
+      signal: AbortSignal.timeout(6000)
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data?.data) return;
+
+    (data.data as TvScannerItem[]).forEach(item => {
+      if (!item.d || item.d[1] === null) return;
+      const priceVal = parseFloat(item.d[1] as string);
+      if (isNaN(priceVal) || priceVal <= 0) return;
+      const key = tickerToKey[item.s];
+      if (!key) return;
+
+      const changeVal = parseFloat(item.d[2] as string) || 0;
+      const dv = (idx: number) => item.d![idx] as number | string | undefined;
+      onUpdate(key, {
+        price: priceVal,
+        change: changeVal,
+        high: parseFloat(String(dv(3) ?? '')) || priceVal,
+        low: parseFloat(String(dv(4) ?? '')) || priceVal,
+        volume: parseFloat(String(dv(5) ?? '')) || 0,
+        sma20: parseFloat(String(dv(6) ?? '')) || undefined,
+        sma50: parseFloat(String(dv(7) ?? '')) || undefined,
+        rsi: parseFloat(String(dv(8) ?? '')) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
+        macd: parseFloat(String(dv(9) ?? '')) || undefined,
+        time: Date.now(),
+        market: 'IN',
+        tvExchange: item.s.split(':')[0],
+        tvExactSymbol: item.s
+      });
+    });
+  } catch (e) {
+    console.warn('NSE realtime poll failed');
+  }
 }
 
 export async function fetchSinglePrice(symbol: string, retryAttempt = 0): Promise<PriceData | null> {
@@ -430,21 +531,28 @@ export async function syncToCloud(portfolio: Position[], usdInr: number): Promis
     return false;
   }
 
+  const authToken = import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
   try {
+    // IMPORTANT: Google Apps Script web apps do NOT respond to CORS preflight
+    // (OPTIONS) requests. A custom header (X-Auth-Token) or an application/json
+    // body turns this into a "non-simple" request, triggering a preflight that
+    // Apps Script rejects -> the POST never reaches the script and the sheet
+    // never updates. We send a CORS "simple" request instead:
+    //   - Content-Type: text/plain  (no preflight)
+    //   - the auth token travels INSIDE the JSON body, not as a header
     const res = await fetch(apiUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Auth-Token': import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC'
-      },
-      body: JSON.stringify({ action: 'update', portfolio, timestamp: Date.now(), usdInr })
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      redirect: 'follow',
+      body: JSON.stringify({ action: 'update', authToken, portfolio, timestamp: Date.now(), usdInr })
     });
     return res.ok;
   } catch (e) {
+    // Last-resort fire-and-forget fallback (Apps Script doGet handles action=update).
     try {
-      await fetch(`${apiUrl}?action=update&data=${encodeURIComponent(JSON.stringify({ portfolio, timestamp: Date.now(), usdInr }))}`, { mode: 'no-cors' });
+      await fetch(`${apiUrl}?action=update&authToken=${encodeURIComponent(authToken)}&data=${encodeURIComponent(JSON.stringify({ portfolio, timestamp: Date.now(), usdInr }))}`, { mode: 'no-cors' });
       return true;
-    } catch (e) {
+    } catch (e2) {
       return false;
     }
   }
@@ -519,14 +627,15 @@ export async function sendTelegramViaServer(message: string, chatId?: string): P
 export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
   const apiUrl = await getApiUrl();
   if (!apiUrl || !key) return false;
+  const authToken = import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
   try {
+    // Same CORS-"simple" request rule as syncToCloud (see note there) so the
+    // Apps Script doPost actually receives the payload.
     await fetch(apiUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Auth-Token': import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC'
-      },
-      body: JSON.stringify({ groqKey: key, action: 'saveKey', timestamp: Date.now() })
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      redirect: 'follow',
+      body: JSON.stringify({ groqKey: key, action: 'saveKey', authToken, timestamp: Date.now() })
     });
     return true;
   } catch (e) {

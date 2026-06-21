@@ -4,13 +4,13 @@ import {
   DEFAULT_USD_INR, getTodayString, guessMarket, isCryptoSymbol, resolveTvChartSymbol
 } from '../utils/constants';
 import {
-  fetchSinglePrice, batchFetchPrices, fetchForexRate,
+  fetchSinglePrice, batchFetchPrices, batchFetchIndianPrices, getIndiaPollInterval, fetchForexRate,
   syncToCloud, loadFromCloud, sendTelegramAlert,
   syncGroqKeyToCloud, loadGroqKeyFromCloud, getBatchInterval, fetchMarketIntelligence
 } from '../utils/api';
 import { secureStorage } from '../utils/secureStorage';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from '../utils/tvWebsocket';
-import { isAnyMarketOpen, analyzeAsset, getSmartAllocations, generateDeepAnalysis } from '../utils/telegram';
+import { isAnyMarketOpen, isIndiaMarketOpen, analyzeAsset, getSmartAllocations, generateDeepAnalysis } from '../utils/telegram';
 import { generateWeeklyWealthReport } from '../utils/wealthEngine';
 
 function mergePriceData(existing: PriceData | undefined, incoming: Partial<PriceData>): PriceData {
@@ -335,6 +335,58 @@ export function useAppState() {
     const cryptoInterval = window.setInterval(pollCrypto, 10000); // 10s (balanced for performance)
     return () => { clearInterval(cryptoInterval); };
   }, [isAuthenticated, hasCrypto, flushPricesToStorage]);
+
+  // --- NSE / BSE Realtime Streaming (HTTP) -----------------------------------
+  // TradingView's anonymous WebSocket only pushes US exchanges in real-time, so
+  // Indian (NSE/BSE) holdings never streamed live. This dedicated fast poller
+  // (3s while NSE is open, 30s when closed) hits the TradingView India scanner
+  // and feeds the SAME price pipeline, so Indian stocks AND ETFs tick live just
+  // like the US assets do.
+  const hasIndianEquity = useMemo(() => {
+    if (portfolio.length === 0) return true; // default dashboard widgets (NIFTY etc.)
+    return portfolio.some(p => {
+      const clean = p.symbol.replace('.NS', '').replace('.BO', '');
+      return (p.market || guessMarket(p.symbol)) === 'IN' && !isCryptoSymbol(clean);
+    });
+  }, [portfolio]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !hasIndianEquity) return;
+
+    const buildIndianPositions = (): Position[] => {
+      const inPositions = portfolioRef.current.filter(p => {
+        const clean = p.symbol.replace('.NS', '').replace('.BO', '');
+        return (p.market || guessMarket(p.symbol)) === 'IN' && !isCryptoSymbol(clean);
+      });
+      if (inPositions.length > 0) return inPositions;
+      // Fallback so India indices stay live even with an empty portfolio.
+      return ['NIFTY', 'BANKNIFTY'].map(sym => ({
+        id: `temp-IN_${sym}`, symbol: sym, market: 'IN' as const,
+        qty: 1, avgPrice: 1, leverage: 1, dateAdded: getTodayString()
+      }));
+    };
+
+    let stopped = false;
+    let timer: number | null = null;
+
+    const pollIndia = async () => {
+      if (stopped) return;
+      try {
+        await batchFetchIndianPrices(buildIndianPositions(), (key, data) => {
+          pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData;
+        });
+        flushPricesToStorage();
+        if (isIndiaMarketOpen()) setLiveStatus('\u25cf \ud83c\uddee\ud83c\uddf3 NSE LIVE \u26a1');
+      } catch (e) {
+        console.warn('NSE realtime stream failed:', e);
+      } finally {
+        if (!stopped) timer = window.setTimeout(pollIndia, getIndiaPollInterval());
+      }
+    };
+
+    pollIndia();
+    return () => { stopped = true; if (timer) clearTimeout(timer); };
+  }, [isAuthenticated, hasIndianEquity, flushPricesToStorage]);
 
   // --- WebSocket + HTTP sync ---
   useEffect(() => {
