@@ -20,6 +20,22 @@ const PortfolioTab = React.memo(function PortfolioTab() {
 
   // --- Search / filter / sort controls ---
   const [search, setSearch] = useState('');
+  const [cloudMsg, setCloudMsg] = useState('');
+  const handleCloudSync = async () => {
+    setCloudMsg('📥 Loading…');
+    try {
+      const data = await loadFromCloud();
+      if (data && data.length > 0) {
+        setPortfolio(data);
+        setCloudMsg(`✅ Loaded ${data.length}`);
+      } else {
+        setCloudMsg('⚠️ Nothing in cloud');
+      }
+    } catch {
+      setCloudMsg('⚠️ Sync failed');
+    }
+    setTimeout(() => setCloudMsg(''), 2500);
+  };
   const [marketFilter, setMarketFilter] = useState<'all' | 'IN' | 'US'>('all');
   const [sortKey, setSortKey] = useState<SortKey>('alloc');
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
@@ -87,10 +103,11 @@ const PortfolioTab = React.memo(function PortfolioTab() {
             <span className={isRefreshing ? 'inline-block animate-spin' : ''}>🔄</span> Refresh All
           </button>
           <button
-            onClick={() => loadFromCloud().then(data => { if (data) setPortfolio(data); })}
+            onClick={handleCloudSync}
             className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm"
+            title="Load portfolio from Google Sheets cloud"
           >
-            📥 Sync
+            📥 {cloudMsg || 'Sync'}
           </button>
           <div className="relative group">
             <button className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm text-emerald-300 border border-emerald-500/20">

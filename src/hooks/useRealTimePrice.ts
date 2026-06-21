@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { PriceData } from '../types';
 import { subscribeToPrices } from '../utils/tvWebsocket';
+import { fetchSinglePrice } from '../utils/api';
 
 interface PriceSnapshot {
   price: number;
@@ -38,10 +39,10 @@ export function useRealTimePrice(
     if (!symbol || !market) return;
 
     setIsConnected(false);
+    let cancelled = false;
 
-    const onPriceUpdate = (updateKey: string, data: Partial<PriceData>) => {
-      if (updateKey !== key) return;
-
+    const pushSnapshot = (data: Partial<PriceData>) => {
+      if (cancelled) return;
       const snap: PriceSnapshot = {
         price: data.price ?? 0,
         change: data.change ?? 0,
@@ -51,6 +52,7 @@ export function useRealTimePrice(
         time: data.time ?? Date.now(),
         rsi: data.rsi ?? 50,
       };
+      if (snap.price <= 0) return;
 
       setSnapshot(snap);
       setIsConnected(true);
@@ -62,10 +64,34 @@ export function useRealTimePrice(
       setHistory([...historyRef.current]);
     };
 
+    const onPriceUpdate = (updateKey: string, data: Partial<PriceData>) => {
+      if (updateKey !== key) return;
+      pushSnapshot(data);
+    };
+
+    // TradingView WebSocket — real-time for US exchanges.
     const unsub = subscribeToPrices([symbol], onPriceUpdate);
 
+    // HTTP fallback poll — the WS feed does NOT stream NSE/BSE quotes, so this
+    // scanner poll is the primary realtime source for Indian symbols (and a
+    // safety net for everything else). 5s while markets are open, 30s when not.
+    let pollTimer: number | null = null;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetchSinglePrice(symbol);
+        if (res && res.price > 0) pushSnapshot(res);
+      } catch { /* ignore — WS may still deliver */ }
+      finally {
+        if (!cancelled) pollTimer = window.setTimeout(poll, 5000);
+      }
+    };
+    poll();
+
     return () => {
+      cancelled = true;
       unsub();
+      if (pollTimer) clearTimeout(pollTimer);
       setIsConnected(false);
     };
   }, [symbol, market, key, maxHistory]);
