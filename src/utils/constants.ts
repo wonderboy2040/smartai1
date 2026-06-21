@@ -81,6 +81,50 @@ export function isCryptoSymbol(sym: string): boolean {
   return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI', 'BITCOIN', 'ETHEREUM'].includes(clean);
 }
 
+// Real TradingView exchanges the price scanner can return. Used to decide
+// whether a resolved "EXCHANGE:SYMBOL" is safe to feed straight to the chart.
+const VALID_TV_EXCHANGES = new Set([
+  'NSE', 'BSE', 'NASDAQ', 'NYSE', 'AMEX', 'CBOE', 'SP', 'TVC', 'DJ',
+  'OANDA', 'FX_IDC', 'MCX', 'CME', 'NYMEX', 'COMEX',
+]);
+
+// ------------------------------------------------------------
+// Resolve the exact TradingView chart symbol for ANY asset.
+// Priority:
+//   1. Crypto  -> always a real TV crypto pair (COINDCX is NOT a TV exchange).
+//   2. The symbol the live-price engine already resolved (tvExactSymbol) on a
+//      real TV exchange -> guarantees the chart exists wherever the price does.
+//   3. Curated EXACT_TICKER_MAP.
+//   4. Last-resort guess by market (NSE: / NASDAQ:).
+// This fixes India ETFs (e.g. JUNIORBEES, MID150BEES) whose listing exchange
+// (NSE vs BSE) and exact ticker can't be guessed reliably.
+// ------------------------------------------------------------
+export function resolveTvChartSymbol(
+  symbol: string,
+  market: 'IN' | 'US' | string,
+  resolvedExact?: string
+): string {
+  const cleanSym = (symbol || '').replace('.NS', '').replace('.BO', '').toUpperCase();
+
+  // 1) Crypto — never use COINDCX (not a TradingView exchange)
+  if (isCryptoSymbol(cleanSym)) {
+    return EXACT_TICKER_MAP[cleanSym] || `BINANCE:${cleanSym}USDT`;
+  }
+
+  // 2) Use the exchange:symbol the scanner actually found live data on
+  if (resolvedExact && resolvedExact.includes(':')) {
+    const ex = resolvedExact.split(':')[0].toUpperCase();
+    if (VALID_TV_EXCHANGES.has(ex)) return resolvedExact;
+  }
+
+  // 3) Curated map
+  if (EXACT_TICKER_MAP[cleanSym]) return EXACT_TICKER_MAP[cleanSym];
+
+  // 4) Fallback guess
+  const isIndian = market === 'IN' || (symbol || '').includes('.NS') || (symbol || '').includes('.BO');
+  return isIndian ? `NSE:${cleanSym}` : `NASDAQ:${cleanSym}`;
+}
+
 export function guessMarket(sym: string): 'IN' | 'US' {
   sym = (sym || '').toUpperCase();
   if (sym.includes('.NS') || sym.includes('.BO')) return 'IN';

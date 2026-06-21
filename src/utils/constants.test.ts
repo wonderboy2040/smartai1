@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   getTodayString, isCryptoSymbol, guessMarket,
-  getAssetCagrProxy, formatCurrency, formatPrice,
+  getAssetCagrProxy, formatCurrency, formatPrice, resolveTvChartSymbol,
 } from './constants';
 
 describe('getTodayString', () => {
@@ -50,5 +50,34 @@ describe('formatPrice', () => {
   it('shows 6 decimals for sub-1 prices', () => {
     const result = formatPrice(0.123456, '$');
     expect(result.split('.')[1]?.length).toBe(6);
+  });
+});
+
+describe('resolveTvChartSymbol', () => {
+  it('prefers the live-resolved exact symbol for India ETFs (NSE)', () => {
+    expect(resolveTvChartSymbol('JUNIORBEES', 'IN', 'NSE:JUNIORBEES')).toBe('NSE:JUNIORBEES');
+  });
+
+  it('uses a BSE-resolved symbol when that is where data was found', () => {
+    expect(resolveTvChartSymbol('SOMEETF', 'IN', 'BSE:SOMEETF')).toBe('BSE:SOMEETF');
+  });
+
+  it('never feeds COINDCX to the chart — maps crypto to a Binance pair', () => {
+    expect(resolveTvChartSymbol('BTC', 'IN', 'COINDCX:BTCINR')).toBe('BINANCE:BTCUSDT');
+    expect(resolveTvChartSymbol('SOL', 'IN', 'COINDCX:SOLINR')).toBe('BINANCE:SOLUSDT');
+  });
+
+  it('falls back to the curated map when nothing is resolved', () => {
+    expect(resolveTvChartSymbol('SMH', 'US')).toBe('NASDAQ:SMH');
+    expect(resolveTvChartSymbol('VGT', 'US')).toBe('AMEX:VGT');
+  });
+
+  it('falls back to an NSE/NASDAQ guess for unknown symbols', () => {
+    expect(resolveTvChartSymbol('NEWETF', 'IN')).toBe('NSE:NEWETF');
+    expect(resolveTvChartSymbol('NEWCO', 'US')).toBe('NASDAQ:NEWCO');
+  });
+
+  it('ignores an unknown/invalid resolved exchange and uses the fallback', () => {
+    expect(resolveTvChartSymbol('FOO', 'IN', 'WEIRD:FOO')).toBe('NSE:FOO');
   });
 });

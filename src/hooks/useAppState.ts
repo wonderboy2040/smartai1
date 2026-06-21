@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Position, PriceData, TabType, RiskLevel, TransactionType, Transaction, PriceAlert } from '../types';
 import {
-  DEFAULT_USD_INR, getTodayString, guessMarket, EXACT_TICKER_MAP, isCryptoSymbol
+  DEFAULT_USD_INR, getTodayString, guessMarket, isCryptoSymbol, resolveTvChartSymbol
 } from '../utils/constants';
 import {
   fetchSinglePrice, batchFetchPrices, fetchForexRate,
@@ -485,15 +485,24 @@ export function useAppState() {
   }, [isAuthenticated]);
 
   // --- Load chart ---
+  // Resolved TV symbol — recomputes when the price engine resolves the exact
+  // exchange:symbol, so the chart reloads from a guessed symbol to the correct
+  // one (e.g. NSE:JUNIORBEES) as soon as live data confirms it.
+  const chartTvSymbol = useMemo(
+    () => resolveTvChartSymbol(
+      currentSymbol, currentMarket,
+      livePrices[`${currentMarket}_${currentSymbol}`]?.tvExactSymbol
+    ),
+    [currentSymbol, currentMarket, livePrices]
+  );
+
   const loadTradingViewChart = useCallback(() => {
     if (!chartContainerRef.current) return;
     chartContainerRef.current.innerHTML = '';
     tvWidgetRef.current = null;
-    const cleanSym = currentSymbol.replace('.NS', '').replace('.BO', '');
-    const isIndian = currentMarket === 'IN' || currentSymbol.includes('.NS');
-    let tvSymbol = EXACT_TICKER_MAP[cleanSym] || (isIndian ? `NSE:${cleanSym}` : `NASDAQ:${cleanSym}`);
-    const BSE_CHART_OVERRIDES = ['JUNIORBEES', 'MOMENTUM50', 'SMALLCAP', 'MID150BEES'];
-    if (BSE_CHART_OVERRIDES.includes(cleanSym)) tvSymbol = `BSE:${cleanSym}`;
+    // Use the exact symbol the live-price engine resolved (NSE vs BSE, exact ETF
+    // ticker, etc.) so the chart is guaranteed to exist wherever a price does.
+    const tvSymbol = chartTvSymbol;
     const containerId = `tv-chart-${Date.now()}`;
     const container = document.createElement('div');
     container.id = containerId; container.style.height = '100%'; container.style.width = '100%';
@@ -540,7 +549,7 @@ export function useAppState() {
       if ((window as any).TradingView) setTimeout(initWidget, 50);
       else tvScript.addEventListener('load', () => setTimeout(initWidget, 100));
     }
-  }, [currentSymbol, currentMarket, chartInterval, theme]);
+  }, [chartTvSymbol, chartInterval, theme]);
 
   useEffect(() => {
     if (!isAuthenticated || !chartContainerRef.current || !currentSymbol) return;
