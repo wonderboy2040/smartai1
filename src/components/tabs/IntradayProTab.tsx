@@ -149,7 +149,7 @@ const IntradayProTab = React.memo(function IntradayProTab() {
   };
 
   const selectSignal = (s: AlgoSignal) => {
-    setCurrentSymbol(s.market === 'IN' && !/^[A-Z]+USD/.test(s.symbol) ? s.symbol : s.symbol);
+    setCurrentSymbol(s.symbol);
     setCurrentMarket(s.market);
   };
 

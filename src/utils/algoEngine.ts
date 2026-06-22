@@ -12,7 +12,6 @@
 // ============================================================
 
 import { PriceData } from '../types';
-import { isCryptoSymbol } from './constants';
 
 export type AlgoDirection = 'LONG' | 'SHORT' | 'WAIT';
 export type AlgoStrategy =
@@ -269,9 +268,4 @@ export function formatAlgoAlert(sig: AlgoSignal): string {
   msg += `<i>${sig.reasoning}</i>\n`;
   msg += `<i>Advance Pro Algo · Super Intelligence v1.0</i>`;
   return msg;
-}
-
-export function isAlgoEligible(symbol: string): boolean {
-  // Everything tradable intraday; keep crypto in (24x7).
-  return !!symbol && (isCryptoSymbol(symbol.replace('.NS', '').replace('.BO', '')) || true);
 }
