@@ -27,6 +27,7 @@ import {
 
 import { chatWithAI, clearChatHistory, setChatEngine, getChatEngine, AI_ENGINE_LABELS } from './ai-chat.mjs';
 import { backtestSignal, calculateBacktestMetrics } from './backtester.mjs';
+import { scanAlgoSignals, formatAlgoAlert, algoWatchKeys } from './algo.mjs';
 
 // Validate required environment variables
 if (!TG_TOKEN) {
@@ -43,6 +44,10 @@ let usdInrRate = 85.5;
 let marketIntel = null;
 let autoAlerts = true;
 let botReady = false;
+
+// Intraday algo alert cooldown (per symbol) so we don't spam the same setup.
+const lastAlgoAlertAt = {};
+const ALGO_COOLDOWN_MS = 20 * 60 * 1000; // 20 min
 
 // AI Rate Limiting
 const aiCallTimestamps = new Map();
@@ -668,6 +673,7 @@ Nagraj Bhai, main tumhara ADVANCE PRO AI Trading assistant hoon! 🚀
 📊 <b>Commands:</b>
 📊 /portfolio — Full portfolio + live P&L
 🌍 /market — Global market snapshot
+⚡ /algo — Intraday Pro Algo (Super Intelligence)
 📡 /live — Real-time market sensor
 📈 /allocation — Smart SIP matrix
 🛡️ /risk — VIX risk assessment
@@ -2281,6 +2287,49 @@ bot.on('message', async (msg) => {
 // ========================================
 // SCHEDULED TASKS (via node-cron)
 // ========================================
+
+// ────────────────────────────────────────────────────────────
+// ⚡ INTRADAY PRO ALGO — Super Intelligence command + auto-alerts
+// ────────────────────────────────────────────────────────────
+bot.onText(/^\/algo(@\w+)?$/i, async (msg) => {
+  const chatId = msg.chat.id;
+  try {
+    if (portfolio.length === 0) { await refreshPortfolio().catch(() => {}); }
+    await refreshPrices();
+    const signals = scanAlgoSignals(algoWatchKeys(livePrices), livePrices);
+    const actionable = signals.filter(s => s.direction !== 'WAIT');
+    if (signals.length === 0) {
+      await safeSend(chatId, '⚡ <b>Intraday Pro Algo</b>\n\nNo live data yet. Add holdings in the web app or try again during market hours.');
+      return;
+    }
+    const picks = (actionable.length ? actionable : signals).slice(0, 5);
+    let header = `⚡ <b>INTRADAY PRO ALGO — Super Intelligence</b>\n${getMarketStatus()}\n`;
+    header += `Signals: ${signals.length} | Long: ${actionable.filter(s => s.direction === 'LONG').length} | Short: ${actionable.filter(s => s.direction === 'SHORT').length}\n\n`;
+    await safeSend(chatId, header);
+    for (const s of picks) await safeSend(chatId, formatAlgoAlert(s));
+  } catch (e) {
+    await safeSend(chatId, `⚠️ Algo error: ${e.message}`);
+  }
+});
+
+// Auto intraday algo alerts: every 10 min during market hours (high-conviction).
+cron.schedule('*/10 * * * *', async () => {
+  if (!autoAlerts || !isAnyMarketOpen()) return;
+  try {
+    await refreshPrices();
+    const hot = scanAlgoSignals(algoWatchKeys(livePrices), livePrices)
+      .filter(s => s.direction !== 'WAIT' && s.conviction >= 65)
+      .slice(0, 6);
+    const now = Date.now();
+    for (const s of hot) {
+      if (now - (lastAlgoAlertAt[s.symbol] || 0) < ALGO_COOLDOWN_MS) continue;
+      await safeSend(TG_CHAT_ID, formatAlgoAlert(s));
+      lastAlgoAlertAt[s.symbol] = now;
+    }
+  } catch (e) {
+    console.warn('⚠️ Intraday algo cron failed:', e.message);
+  }
+});
 
 // Price refresh: every 30 seconds
 cron.schedule('*/30 * * * * *', async () => {
