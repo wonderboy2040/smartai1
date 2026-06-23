@@ -6,6 +6,7 @@ import { MonthlyReturnReport } from '../MonthlyReturnReport';
 import TransactionHistoryPanel from '../TransactionHistoryPanel';
 import PriceAlertsPanel from '../PriceAlertsPanel';
 import { exportTransactionsCSV, exportMonthlyReturnsCSV } from '../../utils/exportData';
+import { LivePrice } from '../LivePrice';
 
 type SortKey = 'alloc' | 'pnl' | 'pnlPct' | 'xirr' | 'value' | 'name';
 
@@ -367,7 +368,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                 <div className="flex justify-between md:block py-2 border-t border-b md:border-0 border-white/5 md:py-0">
                   <div className="md:hidden text-[10px] text-slate-500 uppercase font-bold mb-1">LTP Range</div>
                   <div className={`font-black font-mono text-lg md:text-base tracking-tight flex items-center gap-2 ${change >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {cur}{curPrice.toFixed(2)}
+                    <LivePrice value={curPrice} prefix={cur} decimals={2} />
                     <div className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] ${change >= 0 ? 'bg-emerald-500/10' : 'bg-red-500/10'}`}>
                       {change >= 0 ? '▲' : '▼'} {Math.abs(change).toFixed(2)}%
                     </div>

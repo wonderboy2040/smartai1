@@ -14,7 +14,8 @@
 // Yahoo/Finnhub in index.js.
 // ============================================================
 import crypto from 'node:crypto';
-import { ensureSubscribed, getTick } from './angelStream.js';
+import { ensureSubscribed } from './angelStream.js';
+import { getTick as feedGetTick } from './liveFeed.js';
 
 const BASE = 'https://apiconnect.angelone.in';
 const LOGIN_URL  = `${BASE}/rest/auth/angelbroking/user/v1/loginByPassword`;
@@ -209,7 +210,7 @@ export async function getAngelOneQuotes(cleanSyms) {
     if (tokens.length === 0) return {};
 
     // Keep the websocket subscribed to everything we're asked about.
-    ensureSubscribed(tokens);
+    ensureSubscribed(tokens.map(t => ({ token: t, symbol: tokenToSym[t] })));
 
     const out = {};
     const now = Date.now();
@@ -219,15 +220,15 @@ export async function getAngelOneQuotes(cleanSyms) {
     //    A tick older than 30s (e.g. market closed) is treated as stale → REST.
     for (const tok of tokens) {
       const sym = tokenToSym[tok];
-      const tk = getTick(tok);
+      const tk = feedGetTick(`IN_${sym}`);
       if (tk && tk.price > 0 && (now - tk.time) < 30000) {
         out[sym] = {
           price: tk.price,
-          change: tk.prevClose ? ((tk.price - tk.prevClose) / tk.prevClose) * 100 : 0,
+          change: typeof tk.change === 'number' ? tk.change : 0,
           high: tk.high || tk.price,
           low: tk.low || tk.price,
           volume: tk.volume || 0,
-          prevClose: tk.prevClose || tk.price,
+          prevClose: tk.price,
           time: tk.time,
           source: 'angelone-stream',
         };

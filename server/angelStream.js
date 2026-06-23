@@ -25,6 +25,7 @@
 // ============================================================
 import WebSocket from 'ws';
 import { getSession, angelOneEnabled } from './angelone.js';
+import { setTick as feedSetTick } from './liveFeed.js';
 
 const WS_URL = 'wss://smartapisocket.angelone.in/smart-stream';
 const MODE_QUOTE = 2;
@@ -32,6 +33,7 @@ const EXCH_NSE_CM = 1;
 const PACKET_SIZE = { 1: 51, 2: 123, 3: 379 };
 
 const _ticks = new Map();        // token -> { price, high, low, volume, prevClose, time }
+const _tokenSymbol = new Map();  // token -> clean symbol (for liveFeed key IN_<symbol>)
 const _subscribed = new Set();   // tokens currently subscribed
 let _ws = null;
 let _connecting = false;
@@ -73,14 +75,24 @@ function parsePacket(buf, start) {
     prevClose = readInt64(buf, start + 115) / 100;
   }
   if (ltp > 0) {
-    _ticks.set(token, {
+    const tick = {
       price: ltp,
       high: high > 0 ? high : ltp,
       low: low > 0 ? low : ltp,
       volume: volume || 0,
       prevClose: prevClose > 0 ? prevClose : ltp,
       time: tsMs > 0 ? tsMs : Date.now(),
-    });
+    };
+    _ticks.set(token, tick);
+    // Push into the central live feed (keyed IN_<symbol>) for the SSE stream.
+    const sym = _tokenSymbol.get(token);
+    if (sym) {
+      feedSetTick(`IN_${sym}`, {
+        price: tick.price,
+        change: tick.prevClose ? ((tick.price - tick.prevClose) / tick.prevClose) * 100 : 0,
+        high: tick.high, low: tick.low, volume: tick.volume, time: tick.time,
+      }, 'angelone-stream');
+    }
   }
   return { size };
 }
@@ -157,13 +169,16 @@ async function connect() {
 
 /**
  * Ensure the websocket is connected and subscribed to these NSE tokens.
+ * Accepts an array of { token, symbol } pairs so ticks can be labelled with
+ * their clean symbol and pushed into the live feed as IN_<symbol>.
  * Call freely (e.g. on every /api/quote) — it's idempotent and cheap.
  */
-export function ensureSubscribed(tokens) {
+export function ensureSubscribed(pairs) {
   if (!streamEnabled()) return;
   const fresh = [];
-  for (const t of tokens || []) {
-    const tok = String(t);
+  for (const p of pairs || []) {
+    const tok = String(p.token ?? p);
+    if (p.symbol) _tokenSymbol.set(tok, String(p.symbol).toUpperCase());
     if (!_subscribed.has(tok)) { _subscribed.add(tok); fresh.push(tok); }
   }
   if (!_ws || _ws.readyState !== WebSocket.OPEN) {

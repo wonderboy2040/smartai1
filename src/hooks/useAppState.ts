@@ -11,6 +11,7 @@ import {
 } from '../utils/api';
 import { secureStorage } from '../utils/secureStorage';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from '../utils/tvWebsocket';
+import { connectLiveStream } from '../utils/liveStream';
 import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen, analyzeAsset, getSmartAllocations, generateDeepAnalysis } from '../utils/telegram';
 import { generateWeeklyWealthReport } from '../utils/wealthEngine';
 
@@ -63,6 +64,7 @@ export function useAppState() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [chartInterval, setChartInterval] = useState('D');
   const [liveStatus, setLiveStatus] = useState('Connecting...');
+  const [feedStatus, setFeedStatus] = useState<Record<string, boolean>>({});
   const [syncStatus, setSyncStatus] = useState('');
 
   // --- Planner ---
@@ -439,6 +441,58 @@ export function useAppState() {
     pollUS();
     return () => { stopped = true; if (timer) clearTimeout(timer); };
   }, [isAuthenticated, hasUSEquity, flushPricesToStorage]);
+
+  // --- Real-time SSE push (AngelOne NSE ws + Finnhub US ws + CoinDCX crypto) --
+  // The server pushes ticks the instant they happen and we feed them into the
+  // SAME price pipeline the pollers use. This makes prices tick live (no 2s
+  // wait). EventSource auto-reconnects; the pollers remain as a safety net.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const positions = portfolioRef.current;
+    const inSymbols: string[] = [];
+    const usSymbols: string[] = [];
+    const cryptoSymbols: string[] = [];
+    const cleanToKey: Record<string, string> = {}; // server key (IN_RELIANCE) -> app key
+
+    const add = (p: Position) => {
+      const clean = p.symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
+      const mkt = (p.market || guessMarket(p.symbol)).toUpperCase();
+      const fullKey = `${mkt}_${p.symbol.trim()}`;
+      if (isCryptoSymbol(clean)) { cryptoSymbols.push(clean); cleanToKey[`IN_${clean}`] = fullKey; }
+      else if (mkt === 'US') { usSymbols.push(clean); cleanToKey[`US_${clean}`] = fullKey; }
+      else { inSymbols.push(clean); cleanToKey[`IN_${clean}`] = fullKey; }
+    };
+    if (positions.length) positions.forEach(add);
+    else {
+      ['NIFTY', 'BANKNIFTY'].forEach(s => { inSymbols.push(s); cleanToKey[`IN_${s}`] = `IN_${s}`; });
+      ['SPY', 'QQQ'].forEach(s => { usSymbols.push(s); cleanToKey[`US_${s}`] = `US_${s}`; });
+    }
+    ['BTC', 'ETH'].forEach(s => { if (!cryptoSymbols.includes(s)) { cryptoSymbols.push(s); cleanToKey[`IN_${s}`] = `IN_${s}`; } });
+
+    let lastFlush = 0;
+    let flushTimer: number | null = null;
+    const throttledFlush = () => {
+      const now = Date.now();
+      if (now - lastFlush >= 800) { lastFlush = now; flushPricesToStorage(); }
+      else if (!flushTimer) {
+        flushTimer = window.setTimeout(() => { flushTimer = null; lastFlush = Date.now(); flushPricesToStorage(); }, 800 - (now - lastFlush));
+      }
+    };
+
+    const disconnect = connectLiveStream({
+      inSymbols: [...new Set(inSymbols)],
+      usSymbols: [...new Set(usSymbols)],
+      cryptoSymbols: [...new Set(cryptoSymbols)],
+      onTick: (serverKey, data) => {
+        const key = cleanToKey[serverKey] || serverKey;
+        pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData;
+        throttledFlush();
+      },
+      onStatus: (s) => setFeedStatus(s),
+    });
+
+    return () => { if (flushTimer) clearTimeout(flushTimer); disconnect(); };
+  }, [isAuthenticated, portfolioSymbolKey, flushPricesToStorage]);
 
   // --- WebSocket + HTTP sync ---
   useEffect(() => {
@@ -1201,7 +1255,7 @@ export function useAppState() {
     refreshAll, isRefreshing,
     currentSymbol, setCurrentSymbol, currentMarket, setCurrentMarket,
     symbolInput, setSymbolInput, isAnalyzing, chartInterval, setChartInterval,
-    liveStatus, syncStatus,
+    liveStatus, syncStatus, feedStatus,
     // Planner
     indiaSIP, setIndiaSIP, usSIP, setUsSIP, btcSIP, setBtcSIP, ethSIP, setEthSIP,
     emergencyFund, setEmergencyFund, investYears, setInvestYears, riskLevel, setRiskLevel,

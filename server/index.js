@@ -12,6 +12,9 @@
 // ============================================================
 import express from 'express';
 import { getAngelOneQuotes, angelOneEnabled } from './angelone.js';
+import { subscribe as feedSubscribe, snapshot as feedSnapshot, feedStatus } from './liveFeed.js';
+import { ensureUsSubscribed } from './usStream.js';
+import { ensureCryptoSubscribed } from './cryptoStream.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -291,6 +294,67 @@ app.get('/api/quote', async (req, res) => {
   // no-cache so polling always gets the freshest tick
   res.set('Cache-Control', 'no-store, max-age=0');
   return res.json({ quotes, ts: Date.now() });
+});
+
+// ------------------------------------------------------------
+// GET /api/stream  → Server-Sent Events: pushes live ticks to the browser.
+// Query: ?in=RELIANCE,NIFTYBEES&us=SMH,VGT&crypto=BTC,ETH
+// Events: `snapshot` (initial map), `tick` ({key,price,change,...}), `status`.
+// Replaces 2s polling with real-time push (AngelOne NSE ws, Finnhub US ws,
+// Binance crypto ws). Per-key throttle keeps the stream light.
+// ------------------------------------------------------------
+function parseSyms(v) {
+  return String(v || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 60);
+}
+
+app.get('/api/stream', (req, res) => {
+  const inSyms = parseSyms(req.query.in);
+  const usSyms = parseSyms(req.query.us);
+  const cryptoSyms = parseSyms(req.query.crypto);
+
+  const keys = new Set([
+    ...inSyms.map(s => `IN_${s}`),
+    ...usSyms.map(s => `US_${s}`),
+    ...cryptoSyms.map(s => `IN_${s}`),
+  ]);
+
+  // Kick off / refresh upstream subscriptions for the requested symbols.
+  if (inSyms.length && angelOneEnabled()) getAngelOneQuotes(inSyms).catch(() => {});
+  if (usSyms.length) ensureUsSubscribed(usSyms);
+  ensureCryptoSubscribed(cryptoSyms);
+
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-store, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  if (res.flushHeaders) res.flushHeaders();
+  res.write('retry: 3000\n\n');
+
+  const snap = feedSnapshot([...keys]);
+  if (Object.keys(snap).length) res.write(`event: snapshot\ndata: ${JSON.stringify(snap)}\n\n`);
+
+  const lastSent = {};
+  const unsub = feedSubscribe((key, tick) => {
+    if (!keys.has(key)) return;
+    const now = Date.now();
+    if (lastSent[key] && (now - lastSent[key]) < 400) return; // ≤2.5 updates/sec/symbol
+    lastSent[key] = now;
+    try { res.write(`event: tick\ndata: ${JSON.stringify({ key, ...tick })}\n\n`); } catch { /* client gone */ }
+  });
+
+  const keepalive = setInterval(() => {
+    try { res.write(`event: status\ndata: ${JSON.stringify(feedStatus())}\n\n`); } catch { /* noop */ }
+  }, 15000);
+
+  req.on('close', () => { clearInterval(keepalive); unsub(); try { res.end(); } catch { /* noop */ } });
+});
+
+// GET /api/feed-status → which real-time sources are live (for the UI dot).
+app.get('/api/feed-status', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(feedStatus());
 });
 
 // ------------------------------------------------------------
