@@ -83,11 +83,23 @@ export function getBatchInterval(): number {
 
 /**
  * Poll cadence for the dedicated NSE/BSE realtime streamer.
- * Fast (3s) while the Indian market is open so holdings tick like a live feed,
- * relaxed (30s) when closed to save bandwidth.
+ * Ultra-fast (2s) while the Indian market is open (9:15 AM - 3:30 PM IST) so
+ * holdings tick like a live feed, aggressive pre-market warm-up in the 15 min
+ * BEFORE open (9:00-9:15 AM IST) to catch the very first tick, relaxed (30s)
+ * when closed to save bandwidth. Mirrors getUSPollInterval exactly.
  */
 export function getIndiaPollInterval(): number {
-  return isIndiaMarketOpen() ? 3000 : 30000;
+  if (isIndiaMarketOpen()) return 2000; // ultra-fast 2s tick while NSE/BSE open
+  // Pre-market warm-up so prices render the instant NSE opens at 9:15 AM IST.
+  const now = new Date();
+  const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const day = ist.getDay();
+  if (day !== 0 && day !== 6) {
+    const mins = ist.getHours() * 60 + ist.getMinutes();
+    if (mins >= 540 && mins < 555) return 3000; // 9:00-9:15 AM IST pre-open warm-up
+    if (mins >= 525 && mins < 540) return 8000;  // 8:45-9:00 AM IST early warm-up
+  }
+  return 30000;
 }
 
 /**
