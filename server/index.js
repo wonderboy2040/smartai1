@@ -11,6 +11,7 @@
 //        NVIDIA_API_KEY, TAVILY_API_KEY, API_URL (optional)
 // ============================================================
 import express from 'express';
+import { getAngelOneQuotes, angelOneEnabled } from './angelone.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -253,7 +254,19 @@ app.get('/api/quote', async (req, res) => {
   if (symbols.length === 0) return jsonError(res, 400, 'symbols required');
 
   const quotes = {};
-  await Promise.allSettled(symbols.map(async (sym) => {
+
+  // 0) India PRIMARY → AngelOne SmartAPI (broker-grade exchange feed, batched).
+  //    Resolves most NSE holdings in a single call; anything it misses falls
+  //    through to the Groww/Yahoo per-symbol chain below.
+  if (market === 'IN' && angelOneEnabled()) {
+    try {
+      const angel = await getAngelOneQuotes(symbols);
+      Object.keys(angel).forEach(sym => { if (angel[sym]?.price > 0) quotes[sym] = angel[sym]; });
+    } catch { /* fall back below */ }
+  }
+
+  const remaining = symbols.filter(s => !quotes[s]);
+  await Promise.allSettled(remaining.map(async (sym) => {
     // 1a) India real-time → Groww NSE live feed (datacenter-friendly, ETF-safe).
     if (market === 'IN') {
       const gw = await fetchGrowwNseQuote(sym);
