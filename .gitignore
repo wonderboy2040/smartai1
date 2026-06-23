@@ -12,3 +12,8 @@ telegram-bot/streak-data.json
 __pycache__/
 *.pyc
 ml-service/**/__pycache__/
+
+# Python
+__pycache__/
+*.pyc
+ml-service/**/__pycache__/
