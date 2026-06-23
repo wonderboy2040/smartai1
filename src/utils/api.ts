@@ -97,14 +97,16 @@ export function getIndiaPollInterval(): number {
  * the very first tick, relaxed (30s) when closed.
  */
 export function getUSPollInterval(): number {
-  if (isUSMarketOpen()) return 3000;
-  // Pre-market window: 5 min before US open (9:25-9:30 AM ET) — poll aggressively
+  if (isUSMarketOpen()) return 2000; // ultra-fast 2s tick while US market open
+  // Pre-market warm-up: 15 min before US open (9:15-9:30 AM ET / 6:45-7:00 PM IST).
+  // Poll fast so the VERY FIRST trade at 9:30 AM ET (7:00 PM IST) renders instantly.
   const now = new Date();
   const est = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const day = est.getDay();
   if (day !== 0 && day !== 6) {
     const mins = est.getHours() * 60 + est.getMinutes();
-    if (mins >= 565 && mins < 570) return 5000; // 9:25-9:30 AM ET pre-market
+    if (mins >= 555 && mins < 570) return 3000; // 9:15-9:30 AM ET pre-open warm-up
+    if (mins >= 540 && mins < 555) return 8000;  // 9:00-9:15 AM ET early warm-up
   }
   return 30000;
 }

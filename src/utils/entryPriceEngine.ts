@@ -398,6 +398,70 @@ export async function validateWithAI(
 }
 
 // ========================================
+// UNIFIED ENTRY (SINGLE SOURCE OF TRUTH)
+// One coherent buy zone + optimal + SL + targets used by EVERY panel
+// (Exact Buy Price, Confluence, Dip Intelligence) so the numbers always agree.
+// ========================================
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+export interface UnifiedEntry {
+  buyZoneLow: number;   // bottom of accumulation zone (a real support)
+  buyZoneHigh: number;  // top of accumulation zone (just below / at price)
+  optimal: number;      // THE single price to trust = middle of the zone
+  stopLoss: number;     // below the zone
+  target1: number;
+  target2: number;
+  riskReward: number;
+  basis: string;        // plain-language reason for the anchor
+}
+
+/**
+ * Canonical entry-price calculation. Anchored on the nearest real support
+ * (S/R zone, SMA20, volume POC or session low) so the zone sits BELOW the
+ * current price and `optimal` is ALWAYS inside [buyZoneLow, buyZoneHigh].
+ * Every consumer must use this — never invent its own buy price.
+ */
+export function computeUnifiedEntry(priceData: PriceData): UnifiedEntry {
+  const price = priceData.price;
+  const high = priceData.high && priceData.high > 0 ? priceData.high : price * 1.02;
+  const low = priceData.low && priceData.low > 0 ? priceData.low : price * 0.98;
+  let atr = high - low;
+  if (!atr || atr <= 0) atr = price * 0.02;
+
+  // Collect candidate supports strictly below the current price.
+  const vp = calculateVolumeProfile(priceData);
+  const { supports } = calculateSupportResistance(priceData, vp);
+  const candidates = [
+    supports.find(s => s.price < price)?.price,
+    priceData.sma20,
+    vp.poc,
+    low,
+  ].filter((v): v is number => typeof v === 'number' && v > 0 && v < price);
+
+  // Anchor = the support CLOSEST to price (realistic accumulation, not a deep crash).
+  // Clamp so the zone is never more than ~1.2*ATR below price.
+  const floor = price - atr * 1.2;
+  const anchor = candidates.length
+    ? Math.max(Math.max(...candidates), floor)
+    : price - atr * 0.6;
+
+  const buyZoneLow = round2(Math.min(anchor, price - atr * 0.15));
+  const buyZoneHigh = round2(Math.max(buyZoneLow + atr * 0.1, Math.min(price, anchor + atr * 0.5)));
+  const optimal = round2((buyZoneLow + buyZoneHigh) / 2);
+  const stopLoss = round2(buyZoneLow - atr * 0.8);
+  const target1 = round2(price + atr * 2);
+  const target2 = round2(price + atr * 3.5);
+  const riskReward = round2((target1 - optimal) / Math.max(0.01, optimal - stopLoss));
+
+  let basis = 'ATR volatility band';
+  if (supports.find(s => s.price < price)) basis = `Support: ${supports.find(s => s.price < price)!.label}`;
+  else if (priceData.sma20 && priceData.sma20 < price) basis = 'SMA20 support';
+  else if (vp.poc < price) basis = 'Volume POC support';
+
+  return { buyZoneLow, buyZoneHigh, optimal, stopLoss, target1, target2, riskReward, basis };
+}
+
+// ========================================
 // MAIN: 3-Layer Combined Engine
 // ========================================
 export async function calculateExactEntryPrice(
@@ -432,17 +496,17 @@ export async function calculateExactEntryPrice(
     aiValidation = await validateWithAI(symbol, market, price, technicalScore, ml.mlScore, supports[0]?.price || price * 0.95, vwap.vwap, volumeProfile.poc);
   } catch { /* continue with defaults */ }
 
-  // Final: exact entry price
-  const atr = (priceData.high || price * 1.02) - (priceData.low || price * 0.98);
-  const entryLow = Math.round((price - atr * 0.3) * 100) / 100;
-  const entryHigh = Math.round((price + atr * 0.2) * 100) / 100;
-  const optimalEntry = Math.round(mathEntryZone.mid * 100) / 100;
+  // Final: exact entry price — SINGLE SOURCE OF TRUTH (shared with Confluence & Dip).
+  const unified = computeUnifiedEntry(priceData);
+  const entryLow = unified.buyZoneLow;
+  const entryHigh = unified.buyZoneHigh;
+  const optimalEntry = unified.optimal;
 
   const combinedScore = Math.round(technicalScore * 0.35 + ml.mlScore * 0.35 + aiValidation.aiScore * 0.3);
-  const stopLoss = Math.round((supports.length > 0 ? supports[0].price - atr * 0.5 : price - atr * 2) * 100) / 100;
-  const targetPrice1 = Math.round((price + atr * 2.5) * 100) / 100;
-  const targetPrice2 = Math.round((price + atr * 4) * 100) / 100;
-  const riskReward = (targetPrice1 - price) / (price - stopLoss);
+  const stopLoss = unified.stopLoss;
+  const targetPrice1 = unified.target1;
+  const targetPrice2 = unified.target2;
+  const riskReward = unified.riskReward;
 
   let signal: EntryPriceResult['signal'];
   if (combinedScore >= 80) signal = 'STRONG_BUY';

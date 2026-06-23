@@ -7,6 +7,7 @@ import { Position, PriceData, DipSignal, DipLevel } from '../types';
 import { getAssetCagrProxy } from './constants';
 import { analyzeAsset } from './telegram';
 import { fetchMLPrediction } from './mlApi';
+import { computeUnifiedEntry } from './entryPriceEngine';
 
 /**
  * Calculate dip depth for a single asset
@@ -43,9 +44,11 @@ export function calculateDipDepth(
   const fibSupport = low + range * 0.382;
   const fibResistance = low + range * 0.618;
 
-  // Entry target: below SMA20 or at fib support
-  const entryTarget = dipDepth === 'DEEP' || dipDepth === 'MILD'
-    ? Math.min(sma20 * 0.98, fibSupport)
+  // Entry target — SINGLE SOURCE OF TRUTH. Uses the same canonical optimal entry
+  // as the Exact Buy Price & Confluence panels so all "Entry" numbers agree.
+  // Falls back to current price when there is no live data to anchor on.
+  const entryTarget = priceData
+    ? computeUnifiedEntry(priceData).optimal
     : price;
 
   // Generate dip ladder

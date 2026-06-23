@@ -5,6 +5,7 @@
 // ============================================
 
 import { PriceData } from '../types';
+import { computeUnifiedEntry } from './entryPriceEngine';
 
 export interface TimeframeSignal {
   timeframe: 'DAILY' | 'WEEKLY' | 'MONTHLY';
@@ -203,18 +204,14 @@ export function calculateConfluence(
   // Institutional flow
   const institutionalFlow = detectInstitutionalFlow(priceData, confluenceScore);
 
-  // Exact entry
-  const price = priceData.price;
-  const high = priceData.high || price * 1.02;
-  const low = priceData.low || price * 0.98;
-  const atr = high - low;
-
-  const buyZoneLow = Math.round((price - atr * 0.3) * 100) / 100;
-  const buyZoneHigh = Math.round((price + atr * 0.2) * 100) / 100;
-  const stopLoss = Math.round((low - atr * 0.5) * 100) / 100;
-  const target1 = Math.round((price + atr * 2.5) * 100) / 100;
-  const target2 = Math.round((price + atr * 4) * 100) / 100;
-  const riskReward = (target1 - price) / (price - stopLoss);
+  // Exact entry — SINGLE SOURCE OF TRUTH (same numbers as Exact Buy Price & Dip panels)
+  const unified = computeUnifiedEntry(priceData);
+  const buyZoneLow = unified.buyZoneLow;
+  const buyZoneHigh = unified.buyZoneHigh;
+  const stopLoss = unified.stopLoss;
+  const target1 = unified.target1;
+  const target2 = unified.target2;
+  const riskReward = unified.riskReward;
 
   // Reasoning
   const reasons: string[] = [];

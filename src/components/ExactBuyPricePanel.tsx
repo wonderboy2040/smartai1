@@ -139,9 +139,12 @@ export function ExactBuyPricePanel() {
         <div className="space-y-3">
           {/* Exact Entry Zone */}
           <div className="quantum-panel rounded-2xl p-5 border border-emerald-500/10">
-            <h3 className="text-sm font-bold text-emerald-400 mb-3 flex items-center gap-2">
+            <h3 className="text-sm font-bold text-emerald-400 mb-1 flex items-center gap-2">
               {'\u{1F3AF}'} EXACT BUY ZONE
             </h3>
+            <div className="text-[10px] text-slate-500 mb-3 leading-snug">
+              {'\u{1F449}'} <span className="text-cyan-400 font-bold">Optimal Entry</span> is the single price to trust. Buy anywhere inside the zone; it&apos;s a suggested entry &mdash; <span className="text-slate-400">not your holding cost</span>. The same numbers show in Confluence &amp; Dip panels.
+            </div>
             <div className="grid grid-cols-3 gap-3 mb-4">
               <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3 text-center">
                 <div className="text-[9px] text-emerald-400/80 font-bold uppercase">Entry Low</div>

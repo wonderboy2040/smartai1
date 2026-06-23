@@ -133,11 +133,11 @@ function portfolioSymbolToTv(sym: string, market: 'IN' | 'US'): string {
     return `NSE:${cleanSym}`;
   }
 
-  // US market — try multiple exchanges in order of preference
-  // Use AMEX for ETFs often listed there, otherwise NASDAQ
-  if (cleanSym.endsWith('ETF') || cleanSym.includes('V') || cleanSym.includes('IWM')) {
-    return `AMEX:${cleanSym}`;
-  }
+  // US market — EXACT_TICKER_MAP above already resolves every known ETF/index to
+  // its real listing exchange. For anything unmapped, default to NASDAQ (the most
+  // common US listing); the HTTP scanner poller separately probes NYSE/AMEX/ARCA,
+  // so a wrong WS guess never blocks a quote. The old `includes('V')` heuristic
+  // mis-routed valid NASDAQ tickers (any symbol containing "V") to AMEX and froze them.
   return `NASDAQ:${cleanSym}`;
 }
 
