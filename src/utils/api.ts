@@ -124,6 +124,20 @@ export function getUSPollInterval(): number {
 }
 
 /**
+ * Pick the freshest valid price from a TradingView scanner row.
+ * Prefers real-time 'last' when the scanner serves it (zero delay), otherwise
+ * falls back to 'close' — which IS the live intraday price during market hours.
+ * TradingView's anonymous scanner frequently returns last=null; relying on it
+ * alone blanked every price and made the UI fall back to the buy price.
+ */
+function pickScannerPrice(closeVal: unknown, lastVal: unknown): number {
+  const last = parseFloat(String(lastVal ?? ''));
+  if (!isNaN(last) && last > 0) return last;
+  const close = parseFloat(String(closeVal ?? ''));
+  return !isNaN(close) && close > 0 ? close : 0;
+}
+
+/**
  * REALTIME NSE / BSE STREAMING (HTTP)
  * ------------------------------------------------------------------
  * TradingView's anonymous WebSocket (`unauthorized_user_token`) only streams
@@ -177,7 +191,7 @@ export async function batchFetchIndianPrices(
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify({
         symbols: { tickers: uniqueTickers },
-        columns: ['name', 'last', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
+        columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd', 'last']
       }),
       signal: AbortSignal.timeout(6000)
     });
@@ -186,9 +200,9 @@ export async function batchFetchIndianPrices(
     if (!data?.data) return;
 
     (data.data as TvScannerItem[]).forEach(item => {
-      if (!item.d || item.d[1] === null) return;
-      const priceVal = parseFloat(item.d[1] as string);
-      if (isNaN(priceVal) || priceVal <= 0) return;
+      if (!item.d) return;
+      const priceVal = pickScannerPrice(item.d[1], item.d[10]);
+      if (priceVal <= 0) return;
       const key = tickerToKey[item.s];
       if (!key) return;
 
@@ -222,10 +236,11 @@ export async function batchFetchIndianPrices(
  * The TradingView WebSocket *does* push US prices, but the scanner HTTP poller
  * provides richer data (SMA/RSI/MACD) and acts as a reliable secondary channel.
  *
- * CRITICAL FIX: Uses 'last' (last traded price) instead of 'close' (previous
- * day's close). The 'close' field takes ~15 minutes after market open to update,
- * which is why US ETF prices appeared delayed. 'last' updates INSTANTLY the
- * moment the first trade executes at 9:30 AM ET (7:00 PM IST).
+ * PRICE FIELD: requests BOTH 'close' and 'last' and uses pickScannerPrice() —
+ * prefers real-time 'last' when TradingView serves it, otherwise falls back to
+ * 'close' (the live intraday price during market hours). TradingView's anonymous
+ * scanner frequently returns last=null; relying on 'last' alone blanked every
+ * price and made the portfolio fall back to the buy price (0% change everywhere).
  *
  * Poll cadence: 3s during US market hours, 5s in pre-market (5 min before open),
  * 30s when closed — controlled by getUSPollInterval().
@@ -272,7 +287,7 @@ export async function batchFetchUSPrices(
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify({
         symbols: { tickers: uniqueTickers },
-        columns: ['name', 'last', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
+        columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd', 'last']
       }),
       signal: AbortSignal.timeout(6000)
     });
@@ -281,9 +296,9 @@ export async function batchFetchUSPrices(
     if (!data?.data) return;
 
     (data.data as TvScannerItem[]).forEach(item => {
-      if (!item.d || item.d[1] === null) return;
-      const priceVal = parseFloat(item.d[1] as string);
-      if (isNaN(priceVal) || priceVal <= 0) return;
+      if (!item.d) return;
+      const priceVal = pickScannerPrice(item.d[1], item.d[10]);
+      if (priceVal <= 0) return;
       const key = tickerToKey[item.s];
       if (!key) return;
 
@@ -446,7 +461,7 @@ async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean)
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify({
         symbols: { tickers: tvTickers },
-        columns: ['name', 'last', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
+        columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd', 'last']
       }),
       signal: AbortSignal.timeout(3000)
     });
@@ -455,9 +470,9 @@ async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean)
       const data = await res.json();
       if (data?.data?.length > 0) {
         const items = data.data as TvScannerItem[];
-        const item = items.find(x => x.d && x.d[1] !== null) || items[0];
+        const item = items.find(x => x.d && pickScannerPrice(x.d[1], x.d[10]) > 0) || items[0];
         const f = (idx: number) => parseFloat(String(item.d![idx] ?? ''));
-        const priceVal = f(1);
+        const priceVal = pickScannerPrice(item.d![1], item.d![10]);
         const changeVal = f(2) || 0;
 
         if (!isNaN(priceVal) && priceVal > 0) {
@@ -542,7 +557,7 @@ export async function batchFetchPrices(
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         body: JSON.stringify({
           symbols: { tickers: uniqueTickers },
-          columns: ['name', 'last', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
+          columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd', 'last']
         }),
         signal: AbortSignal.timeout(6000)
       });
@@ -551,10 +566,10 @@ export async function batchFetchPrices(
         const data = await res.json();
         if (data?.data) {
           (data.data as TvScannerItem[]).forEach(item => {
-            if (!item.d || item.d[1] === null) return;
+            if (!item.d) return;
 
-            const priceVal = parseFloat(item.d[1] as string);
-            if (isNaN(priceVal) || priceVal <= 0) return;
+            const priceVal = pickScannerPrice(item.d[1], item.d[10]);
+            if (priceVal <= 0) return;
 
             const key = tickerToKey[item.s];
             if (!key) return;
@@ -830,7 +845,7 @@ export async function fetchMarketIntelligence(): Promise<MarketIntelligence> {
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         body: JSON.stringify({
           symbols: { tickers: indexTickers },
-          columns: ['name', 'last', 'change', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
+          columns: ['name', 'close', 'change', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd', 'last']
         }),
         signal: AbortSignal.timeout(6000)
       }),
@@ -839,7 +854,7 @@ export async function fetchMarketIntelligence(): Promise<MarketIntelligence> {
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         body: JSON.stringify({
           symbols: { tickers: sectorTickers },
-          columns: ['name', 'last', 'change', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
+          columns: ['name', 'close', 'change', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd', 'last']
         }),
         signal: AbortSignal.timeout(6000)
       })
@@ -855,17 +870,19 @@ export async function fetchMarketIntelligence(): Promise<MarketIntelligence> {
           'NYMEX:CL1!': 'CRUDE OIL', 'CBOE:VIX': 'VIX', 'NSE:INDIAVIX': 'INDIA VIX'
         };
         (data.data as TvScannerItem[]).forEach(item => {
+          if (!item.d) return;
           const ri = (idx: number) => parseFloat(String(item.d![idx] ?? ''));
-          if (item.d && item.d[1] !== null) {
+          const px = pickScannerPrice(item.d[1], item.d[8]);
+          if (px > 0) {
             intelligence.globalIndices.push({
               name: nameMap[item.s] || String(item.d[0] ?? ''),
-              price: ri(1) || 0,
+              price: px,
               change: ri(2) || 0
             });
-            if (item.s === 'NSE:NIFTY') intelligence.keyLevels.nifty = ri(1) || 0;
-            if (item.s === 'BSE:SENSEX') intelligence.keyLevels.sensex = ri(1) || 0;
-            if (item.s === 'AMEX:SPY') intelligence.keyLevels.spy = ri(1) || 0;
-            if (item.s === 'NASDAQ:QQQ') intelligence.keyLevels.qqq = ri(1) || 0;
+            if (item.s === 'NSE:NIFTY') intelligence.keyLevels.nifty = px;
+            if (item.s === 'BSE:SENSEX') intelligence.keyLevels.sensex = px;
+            if (item.s === 'AMEX:SPY') intelligence.keyLevels.spy = px;
+            if (item.s === 'NASDAQ:QQQ') intelligence.keyLevels.qqq = px;
           }
         });
       }
