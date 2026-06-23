@@ -143,6 +143,144 @@ app.get('/api/chart', async (req, res) => {
 });
 
 // ------------------------------------------------------------
+// GET /api/quote  → REAL-TIME last-traded price for one or many symbols
+// ------------------------------------------------------------
+// THE FIX for "prices 15 minutes behind".
+// The frontend previously read US prices from TradingView's *anonymous*
+// scanner, which tags its feed `delayed_streaming_900` (= 900s / 15-min
+// delayed). Polling fast can't help when the SOURCE is delayed.
+//
+// This endpoint returns the genuine real-time last price:
+//   1. Finnhub  /quote   (if FINNHUB_API_KEY is set) — true real-time US trades
+//   2. Yahoo Finance v8 chart meta.regularMarketPrice — real-time (~1-2s),
+//      no API key required, server-side so there's no browser CORS issue.
+// Query: ?symbols=SMH,VGT,SPCX&market=US   (comma separated, max 50)
+// Resp:  { quotes: { SMH: {price,change,high,low,volume,prevClose,time,source}, ... } }
+// ------------------------------------------------------------
+async function fetchFinnhubQuote(plainSym) {
+  const key = process.env.FINNHUB_API_KEY || process.env.VITE_FINNHUB_API_KEY || '';
+  if (!key) return null;
+  try {
+    const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(plainSym)}&token=${key}`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return null;
+    const j = await r.json();
+    // c=current, d=change, dp=percent, h=high, l=low, pc=prevClose, t=epoch(s)
+    if (!j || typeof j.c !== 'number' || j.c <= 0) return null;
+    return {
+      price: j.c,
+      change: typeof j.dp === 'number' ? j.dp : (j.pc ? ((j.c - j.pc) / j.pc) * 100 : 0),
+      high: j.h || j.c,
+      low: j.l || j.c,
+      volume: 0,
+      prevClose: j.pc || j.c,
+      time: (j.t ? j.t * 1000 : Date.now()),
+      source: 'finnhub-realtime',
+    };
+  } catch { return null; }
+}
+
+// REAL-TIME NSE quote (the India equivalent of the US realtime fix).
+// NSE's own API blocks datacenter IPs (403), and Yahoo .NS is ~15-min delayed.
+// Groww's public live-price endpoint serves the genuine NSE last-traded price
+// (`ltp`, type LIVE_PRICE) for stocks AND ETFs, and works from cloud servers.
+async function fetchGrowwNseQuote(plainSym) {
+  const sym = String(plainSym || '').replace('.NS', '').replace('.BO', '').trim().toUpperCase();
+  if (!sym) return null;
+  try {
+    const url = `https://groww.in/v1/api/stocks_data/v1/tr_live_prices/exchange/NSE/segment/CASH/${encodeURIComponent(sym)}/latest`;
+    const r = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120 Safari/537.36',
+        'Accept': 'application/json',
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const price = (typeof j.ltp === 'number' && j.ltp > 0) ? j.ltp
+                : (typeof j.close === 'number' && j.close > 0) ? j.close : 0;
+    if (!price) return null;
+    return {
+      price,
+      change: typeof j.dayChangePerc === 'number' ? j.dayChangePerc : 0,
+      high: j.high || price,
+      low: j.low || price,
+      volume: j.volume || 0,
+      prevClose: (j.ltp && j.dayChange != null) ? (j.ltp - j.dayChange) : price,
+      time: (j.lastTradeTime ? j.lastTradeTime * 1000 : Date.now()),
+      source: 'groww-nse-realtime',
+    };
+  } catch { return null; }
+}
+
+async function fetchYahooQuote(ysym) {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ysym)}?interval=1m&range=1d`;
+    const r = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI quote proxy)' },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const result = j?.chart?.result?.[0];
+    const m = result?.meta;
+    if (!m) return null;
+    const price = m.regularMarketPrice;
+    if (typeof price !== 'number' || price <= 0) return null;
+    const prevClose = m.chartPreviousClose || m.previousClose || price;
+    return {
+      price,
+      change: prevClose ? ((price - prevClose) / prevClose) * 100 : 0,
+      high: m.regularMarketDayHigh || price,
+      low: m.regularMarketDayLow || price,
+      volume: m.regularMarketVolume || 0,
+      prevClose,
+      time: (m.regularMarketTime ? m.regularMarketTime * 1000 : Date.now()),
+      source: 'yahoo-realtime',
+    };
+  } catch { return null; }
+}
+
+app.get('/api/quote', async (req, res) => {
+  const raw = String(req.query.symbols || req.query.symbol || '').trim();
+  const market = String(req.query.market || '').toUpperCase();
+  if (!raw) return jsonError(res, 400, 'symbols required');
+
+  const symbols = [...new Set(
+    raw.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+  )].slice(0, 50);
+  if (symbols.length === 0) return jsonError(res, 400, 'symbols required');
+
+  const quotes = {};
+  await Promise.allSettled(symbols.map(async (sym) => {
+    // 1a) India real-time → Groww NSE live feed (datacenter-friendly, ETF-safe).
+    if (market === 'IN') {
+      const gw = await fetchGrowwNseQuote(sym);
+      if (gw) { quotes[sym] = gw; return; }
+    }
+    // 1b) Finnhub real-time (US only — Finnhub free tier is US equities/ETFs)
+    if (market !== 'IN') {
+      const fh = await fetchFinnhubQuote(sym.replace('.NS', '').replace('.BO', ''));
+      if (fh) { quotes[sym] = fh; return; }
+    }
+    // 2) Yahoo real-time (no key, ~1-2s). Try NSE then BSE for Indian symbols.
+    const ysym = toYahooSymbol(sym, market);
+    const candidates = (market === 'IN' && !ysym.startsWith('^'))
+      ? [ysym, ysym.replace('.NS', '.BO')]
+      : [ysym];
+    for (const ys of candidates) {
+      const yq = await fetchYahooQuote(ys);
+      if (yq) { quotes[sym] = yq; return; }
+    }
+  }));
+
+  // no-cache so polling always gets the freshest tick
+  res.set('Cache-Control', 'no-store, max-age=0');
+  return res.json({ quotes, ts: Date.now() });
+});
+
+// ------------------------------------------------------------
 // GET /api/ai-status → which providers have a key configured.
 // The frontend skips any engine that is false here.
 // ------------------------------------------------------------

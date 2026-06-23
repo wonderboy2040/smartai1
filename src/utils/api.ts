@@ -155,8 +155,15 @@ export async function batchFetchIndianPrices(
   positions: Position[],
   onUpdate: (key: string, data: PriceData) => void
 ): Promise<void> {
-  const inTickers: string[] = [];
-  const tickerToKey: Record<string, string> = {};
+  // ---- REAL-TIME NSE / BSE PRICES (the India 15-min-delay fix) ----------
+  // Price / change / high / low / volume come from the server's /api/quote
+  // proxy (Groww NSE live feed — genuine last-traded price — with Yahoo .NS as
+  // fallback). The old path read the TradingView India scanner, whose anonymous
+  // feed is delayed. SMA / RSI / MACD indicators are still merged from the
+  // TradingView India scanner (computed on daily bars, so delay is irrelevant).
+  const cleanToKey: Record<string, string> = {};   // RELIANCE -> IN_RELIANCE.NS
+  const tvTickers: string[] = [];                    // for indicator enrichment
+  const tvToClean: Record<string, string> = {};      // NSE:RELIANCE -> RELIANCE
 
   positions.forEach(p => {
     if (!p?.symbol) return;
@@ -164,69 +171,124 @@ export async function batchFetchIndianPrices(
     if (mkt !== 'IN') return;
     const cleanSym = p.symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
     if (isCryptoSymbol(cleanSym)) return; // crypto handled by the CoinDCX poller
-    const key = `IN_${p.symbol.trim()}`;
+    cleanToKey[cleanSym] = `IN_${p.symbol.trim()}`;
 
     if (EXACT_TICKER_MAP[cleanSym]) {
       const t = EXACT_TICKER_MAP[cleanSym];
-      inTickers.push(t);
-      tickerToKey[t] = key;
+      tvTickers.push(t);
+      tvToClean[t] = cleanSym;
     } else {
-      // Try BOTH NSE and BSE so ETFs/stocks listed on either exchange resolve.
-      inTickers.push(`NSE:${cleanSym}`, `BSE:${cleanSym}`);
-      tickerToKey[`NSE:${cleanSym}`] = key;
-      tickerToKey[`BSE:${cleanSym}`] = key;
+      [`NSE:${cleanSym}`, `BSE:${cleanSym}`].forEach(t => {
+        tvTickers.push(t);
+        tvToClean[t] = cleanSym;
+      });
     }
   });
 
   // Always include India VIX for the regime / fear-greed widgets.
-  inTickers.push('NSE:INDIAVIX');
-  tickerToKey['NSE:INDIAVIX'] = 'IN_INDIAVIX';
+  cleanToKey['INDIAVIX'] = 'IN_INDIAVIX';
+  tvTickers.push('NSE:INDIAVIX');
+  tvToClean['NSE:INDIAVIX'] = 'INDIAVIX';
 
-  const uniqueTickers = [...new Set(inTickers)];
-  if (uniqueTickers.length === 0) return;
+  const cleanSyms = Object.keys(cleanToKey);
+  if (cleanSyms.length === 0) return;
 
-  try {
-    const res = await fetch(`https://scanner.tradingview.com/india/scan?t=${Date.now()}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify({
-        symbols: { tickers: uniqueTickers },
-        columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd', 'last']
-      }),
-      signal: AbortSignal.timeout(6000)
-    });
-    if (!res.ok) return;
-    const data = await res.json();
-    if (!data?.data) return;
-
-    (data.data as TvScannerItem[]).forEach(item => {
-      if (!item.d) return;
-      const priceVal = pickScannerPrice(item.d[1], item.d[10]);
-      if (priceVal <= 0) return;
-      const key = tickerToKey[item.s];
-      if (!key) return;
-
-      const changeVal = parseFloat(item.d[2] as string) || 0;
-      const dv = (idx: number) => item.d![idx] as number | string | undefined;
-      onUpdate(key, {
-        price: priceVal,
-        change: changeVal,
-        high: parseFloat(String(dv(3) ?? '')) || priceVal,
-        low: parseFloat(String(dv(4) ?? '')) || priceVal,
-        volume: parseFloat(String(dv(5) ?? '')) || 0,
-        sma20: parseFloat(String(dv(6) ?? '')) || undefined,
-        sma50: parseFloat(String(dv(7) ?? '')) || undefined,
-        rsi: parseFloat(String(dv(8) ?? '')) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
-        macd: parseFloat(String(dv(9) ?? '')) || undefined,
-        time: Date.now(),
-        market: 'IN',
-        tvExchange: item.s.split(':')[0],
-        tvExactSymbol: item.s
+  const apiUrl = await getApiUrl();
+  const realtimeReq = (async (): Promise<Record<string, PriceData>> => {
+    const out: Record<string, PriceData> = {};
+    try {
+      const url = `${apiUrl}/api/quote?market=IN&symbols=${encodeURIComponent(cleanSyms.join(','))}&t=${Date.now()}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+      if (!res.ok) return out;
+      const json = await res.json();
+      const quotes = json?.quotes || {};
+      Object.keys(quotes).forEach(sym => {
+        const q = quotes[sym];
+        if (!q || !(q.price > 0)) return;
+        out[sym] = {
+          price: q.price,
+          change: typeof q.change === 'number' ? q.change : 0,
+          high: q.high || q.price,
+          low: q.low || q.price,
+          volume: q.volume || 0,
+          time: q.time || Date.now(),
+          market: 'IN',
+        } as PriceData;
       });
-    });
-  } catch (e) {
-    console.warn('NSE realtime poll failed');
-  }
+    } catch { /* fall back to TradingView below */ }
+    return out;
+  })();
+
+  const indicatorReq = (async (): Promise<Record<string, Partial<PriceData> & { tvExchange?: string; tvExactSymbol?: string }>> => {
+    const out: Record<string, Partial<PriceData> & { tvExchange?: string; tvExactSymbol?: string }> = {};
+    const uniqueTv = [...new Set(tvTickers)];
+    if (uniqueTv.length === 0) return out;
+    try {
+      const res = await fetch(`https://scanner.tradingview.com/india/scan?t=${Date.now()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({
+          symbols: { tickers: uniqueTv },
+          columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd', 'last']
+        }),
+        signal: AbortSignal.timeout(6000)
+      });
+      if (!res.ok) return out;
+      const data = await res.json();
+      if (!data?.data) return out;
+      (data.data as TvScannerItem[]).forEach(item => {
+        if (!item.d) return;
+        const clean = tvToClean[item.s];
+        if (!clean) return;
+        const dv = (idx: number) => item.d![idx] as number | string | undefined;
+        const changeVal = parseFloat(item.d[2] as string) || 0;
+        if (out[clean]) return; // first exchange that resolves wins
+        out[clean] = {
+          price: pickScannerPrice(item.d[1], item.d[10]) || undefined,
+          change: changeVal,
+          high: parseFloat(String(dv(3) ?? '')) || undefined,
+          low: parseFloat(String(dv(4) ?? '')) || undefined,
+          volume: parseFloat(String(dv(5) ?? '')) || undefined,
+          sma20: parseFloat(String(dv(6) ?? '')) || undefined,
+          sma50: parseFloat(String(dv(7) ?? '')) || undefined,
+          rsi: parseFloat(String(dv(8) ?? '')) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
+          macd: parseFloat(String(dv(9) ?? '')) || undefined,
+          tvExchange: item.s.split(':')[0],
+          tvExactSymbol: item.s,
+        };
+      });
+    } catch { console.warn('NSE indicator poll failed'); }
+    return out;
+  })();
+
+  const [realtime, indicators] = await Promise.all([realtimeReq, indicatorReq]);
+
+  cleanSyms.forEach(clean => {
+    const key = cleanToKey[clean];
+    const rt = realtime[clean];
+    const ind = indicators[clean];
+    if (!rt && !ind) return;
+
+    const price = rt?.price ?? ind?.price;
+    if (!price || price <= 0) return;
+
+    const usingRealtime = !!rt;
+    onUpdate(key, {
+      price,
+      change: usingRealtime ? (rt!.change ?? 0) : (ind?.change ?? 0),
+      high: rt?.high ?? ind?.high ?? price,
+      low: rt?.low ?? ind?.low ?? price,
+      volume: rt?.volume ?? ind?.volume ?? 0,
+      sma20: ind?.sma20,
+      sma50: ind?.sma50,
+      rsi: ind?.rsi ?? Math.max(10, Math.min(90, 50 + ((rt?.change ?? 0) * 5))),
+      macd: ind?.macd,
+      time: rt?.time ?? Date.now(),
+      market: 'IN',
+      tvExchange: ind?.tvExchange,
+      tvExactSymbol: ind?.tvExactSymbol,
+    } as PriceData);
+  });
 }
 
 /**
@@ -249,8 +311,15 @@ export async function batchFetchUSPrices(
   positions: Position[],
   onUpdate: (key: string, data: PriceData) => void
 ): Promise<void> {
-  const usTickers: string[] = [];
-  const tickerToKey: Record<string, string> = {};
+  // ---- REAL-TIME US PRICES (the 15-min-delay fix) ----------------------
+  // Price / change / high / low / volume come from the server's /api/quote
+  // proxy (Finnhub or Yahoo real-time — NOT the 15-min-delayed TradingView
+  // scanner). Technical indicators (SMA / RSI / MACD) are computed on daily
+  // bars, so a small delay there is irrelevant; we still grab them from the
+  // TradingView scanner in parallel and MERGE them onto the real-time price.
+  const cleanToKey: Record<string, string> = {};   // SMH -> US_SMH
+  const tvTickers: string[] = [];                    // for indicator enrichment
+  const tvToClean: Record<string, string> = {};      // NASDAQ:SMH -> SMH
 
   positions.forEach(p => {
     if (!p?.symbol) return;
@@ -258,71 +327,130 @@ export async function batchFetchUSPrices(
     if (mkt !== 'US') return;
     const cleanSym = p.symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
     if (isCryptoSymbol(cleanSym)) return; // crypto handled by CoinDCX poller
-    const key = `US_${p.symbol.trim()}`;
+    cleanToKey[cleanSym] = `US_${p.symbol.trim()}`;
 
     if (EXACT_TICKER_MAP[cleanSym]) {
       const t = EXACT_TICKER_MAP[cleanSym];
-      usTickers.push(t);
-      tickerToKey[t] = key;
+      tvTickers.push(t);
+      tvToClean[t] = cleanSym;
     } else {
-      // Try all major US exchanges for maximum coverage
-      usTickers.push(`NASDAQ:${cleanSym}`, `NYSE:${cleanSym}`, `AMEX:${cleanSym}`, `ARCA:${cleanSym}`);
-      tickerToKey[`NASDAQ:${cleanSym}`] = key;
-      tickerToKey[`NYSE:${cleanSym}`] = key;
-      tickerToKey[`AMEX:${cleanSym}`] = key;
-      tickerToKey[`ARCA:${cleanSym}`] = key;
+      [`NASDAQ:${cleanSym}`, `NYSE:${cleanSym}`, `AMEX:${cleanSym}`, `ARCA:${cleanSym}`].forEach(t => {
+        tvTickers.push(t);
+        tvToClean[t] = cleanSym;
+      });
     }
   });
 
-  // Always include US VIX for regime / fear-greed widgets
-  usTickers.push('CBOE:VIX');
-  tickerToKey['CBOE:VIX'] = 'US_VIX';
+  // Always include US VIX for the regime / fear-greed widgets.
+  cleanToKey['VIX'] = 'US_VIX';
+  tvTickers.push('CBOE:VIX');
+  tvToClean['CBOE:VIX'] = 'VIX';
 
-  const uniqueTickers = [...new Set(usTickers)];
-  if (uniqueTickers.length === 0) return;
+  const cleanSyms = Object.keys(cleanToKey);
+  if (cleanSyms.length === 0) return;
 
-  try {
-    const res = await fetch(`https://scanner.tradingview.com/america/scan?t=${Date.now()}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify({
-        symbols: { tickers: uniqueTickers },
-        columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd', 'last']
-      }),
-      signal: AbortSignal.timeout(6000)
-    });
-    if (!res.ok) return;
-    const data = await res.json();
-    if (!data?.data) return;
-
-    (data.data as TvScannerItem[]).forEach(item => {
-      if (!item.d) return;
-      const priceVal = pickScannerPrice(item.d[1], item.d[10]);
-      if (priceVal <= 0) return;
-      const key = tickerToKey[item.s];
-      if (!key) return;
-
-      const changeVal = parseFloat(item.d[2] as string) || 0;
-      const dv = (idx: number) => item.d![idx] as number | string | undefined;
-      onUpdate(key, {
-        price: priceVal,
-        change: changeVal,
-        high: parseFloat(String(dv(3) ?? '')) || priceVal,
-        low: parseFloat(String(dv(4) ?? '')) || priceVal,
-        volume: parseFloat(String(dv(5) ?? '')) || 0,
-        sma20: parseFloat(String(dv(6) ?? '')) || undefined,
-        sma50: parseFloat(String(dv(7) ?? '')) || undefined,
-        rsi: parseFloat(String(dv(8) ?? '')) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
-        macd: parseFloat(String(dv(9) ?? '')) || undefined,
-        time: Date.now(),
-        market: 'US',
-        tvExchange: item.s.split(':')[0],
-        tvExactSymbol: item.s
+  // Fire both requests in parallel: real-time quotes + delayed-but-fine indicators.
+  const apiUrl = await getApiUrl();
+  const realtimeReq = (async (): Promise<Record<string, PriceData>> => {
+    const out: Record<string, PriceData> = {};
+    try {
+      const url = `${apiUrl}/api/quote?market=US&symbols=${encodeURIComponent(cleanSyms.join(','))}&t=${Date.now()}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+      if (!res.ok) return out;
+      const json = await res.json();
+      const quotes = json?.quotes || {};
+      Object.keys(quotes).forEach(sym => {
+        const q = quotes[sym];
+        if (!q || !(q.price > 0)) return;
+        out[sym] = {
+          price: q.price,
+          change: typeof q.change === 'number' ? q.change : 0,
+          high: q.high || q.price,
+          low: q.low || q.price,
+          volume: q.volume || 0,
+          time: q.time || Date.now(),
+          market: 'US',
+        } as PriceData;
       });
-    });
-  } catch (e) {
-    console.warn('US realtime poll failed');
-  }
+    } catch { /* fall back to TradingView below */ }
+    return out;
+  })();
+
+  const indicatorReq = (async (): Promise<Record<string, Partial<PriceData> & { tvExchange?: string; tvExactSymbol?: string }>> => {
+    const out: Record<string, Partial<PriceData> & { tvExchange?: string; tvExactSymbol?: string }> = {};
+    const uniqueTv = [...new Set(tvTickers)];
+    if (uniqueTv.length === 0) return out;
+    try {
+      const res = await fetch(`https://scanner.tradingview.com/america/scan?t=${Date.now()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({
+          symbols: { tickers: uniqueTv },
+          columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd', 'last']
+        }),
+        signal: AbortSignal.timeout(6000)
+      });
+      if (!res.ok) return out;
+      const data = await res.json();
+      if (!data?.data) return out;
+      (data.data as TvScannerItem[]).forEach(item => {
+        if (!item.d) return;
+        const clean = tvToClean[item.s];
+        if (!clean) return;
+        const dv = (idx: number) => item.d![idx] as number | string | undefined;
+        const changeVal = parseFloat(item.d[2] as string) || 0;
+        // First exchange that resolves wins (don't overwrite with a later empty row).
+        if (out[clean]) return;
+        out[clean] = {
+          // delayed fallback price (only used if real-time quote missing)
+          price: pickScannerPrice(item.d[1], item.d[10]) || undefined,
+          change: changeVal,
+          high: parseFloat(String(dv(3) ?? '')) || undefined,
+          low: parseFloat(String(dv(4) ?? '')) || undefined,
+          volume: parseFloat(String(dv(5) ?? '')) || undefined,
+          sma20: parseFloat(String(dv(6) ?? '')) || undefined,
+          sma50: parseFloat(String(dv(7) ?? '')) || undefined,
+          rsi: parseFloat(String(dv(8) ?? '')) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
+          macd: parseFloat(String(dv(9) ?? '')) || undefined,
+          tvExchange: item.s.split(':')[0],
+          tvExactSymbol: item.s,
+        };
+      });
+    } catch { console.warn('US indicator poll failed'); }
+    return out;
+  })();
+
+  const [realtime, indicators] = await Promise.all([realtimeReq, indicatorReq]);
+
+  // Merge: real-time price wins; indicators enrich. Emit one update per holding.
+  cleanSyms.forEach(clean => {
+    const key = cleanToKey[clean];
+    const rt = realtime[clean];
+    const ind = indicators[clean];
+    if (!rt && !ind) return;
+
+    // Price source priority: real-time quote → delayed scanner close (fallback).
+    const price = rt?.price ?? ind?.price;
+    if (!price || price <= 0) return;
+
+    const usingRealtime = !!rt;
+    onUpdate(key, {
+      price,
+      // Prefer the change% that matches the price we're showing.
+      change: usingRealtime ? (rt!.change ?? 0) : (ind?.change ?? 0),
+      high: rt?.high ?? ind?.high ?? price,
+      low: rt?.low ?? ind?.low ?? price,
+      volume: rt?.volume ?? ind?.volume ?? 0,
+      sma20: ind?.sma20,
+      sma50: ind?.sma50,
+      rsi: ind?.rsi ?? Math.max(10, Math.min(90, 50 + ((rt?.change ?? 0) * 5))),
+      macd: ind?.macd,
+      time: rt?.time ?? Date.now(),
+      market: 'US',
+      tvExchange: ind?.tvExchange,
+      tvExactSymbol: ind?.tvExactSymbol,
+    } as PriceData);
+  });
 }
 
 export async function fetchSinglePrice(symbol: string, retryAttempt = 0): Promise<PriceData | null> {
