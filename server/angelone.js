@@ -14,6 +14,7 @@
 // Yahoo/Finnhub in index.js.
 // ============================================================
 import crypto from 'node:crypto';
+import { ensureSubscribed, getTick } from './angelStream.js';
 
 const BASE = 'https://apiconnect.angelone.in';
 const LOGIN_URL  = `${BASE}/rest/auth/angelbroking/user/v1/loginByPassword`;
@@ -73,6 +74,7 @@ function baseHeaders(extra = {}) {
 
 // ---------------- session (jwt) cache ----------------
 let _jwt = null;
+let _feedToken = null;
 let _jwtAt = 0;
 let _loginPromise = null;
 const SESSION_TTL = 6 * 60 * 60 * 1000; // re-login every 6h
@@ -93,6 +95,7 @@ async function login() {
       const jwt = j?.data?.jwtToken;
       if (!jwt) throw new Error(j?.message || 'AngelOne login failed');
       _jwt = jwt;
+      _feedToken = j?.data?.feedToken || null;
       _jwtAt = Date.now();
       return _jwt;
     } finally {
@@ -100,6 +103,12 @@ async function login() {
     }
   })();
   return _loginPromise;
+}
+
+// Expose the live session (jwt + feedToken + creds) for the websocket streamer.
+export async function getSession() {
+  const jwt = await login();
+  return { jwt, feedToken: _feedToken, apiKey: KEY, clientCode: CLIENT };
 }
 
 // ---------------- symbol -> NSE token cache ----------------
@@ -199,37 +208,66 @@ export async function getAngelOneQuotes(cleanSyms) {
     }
     if (tokens.length === 0) return {};
 
-    // AngelOne FULL quote: up to 50 tokens per call — chunk to be safe.
-    const out = {};
-    const chunks = [];
-    for (let i = 0; i < tokens.length; i += 50) chunks.push(tokens.slice(i, i + 50));
+    // Keep the websocket subscribed to everything we're asked about.
+    ensureSubscribed(tokens);
 
-    await Promise.allSettled(chunks.map(async (chunk) => {
-      const r = await fetch(QUOTE_URL, {
-        method: 'POST',
-        headers: baseHeaders({ Authorization: `Bearer ${jwt}` }),
-        body: JSON.stringify({ mode: 'FULL', exchangeTokens: { NSE: chunk } }),
-        signal: AbortSignal.timeout(8000),
-      });
-      const j = await r.json();
-      const fetched = j?.data?.fetched || [];
-      fetched.forEach((f) => {
-        const sym = tokenToSym[String(f.symbolToken)];
-        if (!sym) return;
-        const price = Number(f.ltp);
-        if (!(price > 0)) return;
+    const out = {};
+    const now = Date.now();
+    const missing = [];
+
+    // 1) Serve from the live tick stream first (millisecond-fresh, no REST call).
+    //    A tick older than 30s (e.g. market closed) is treated as stale → REST.
+    for (const tok of tokens) {
+      const sym = tokenToSym[tok];
+      const tk = getTick(tok);
+      if (tk && tk.price > 0 && (now - tk.time) < 30000) {
         out[sym] = {
-          price,
-          change: typeof f.percentChange === 'number' ? f.percentChange : 0,
-          high: f.high || price,
-          low: f.low || price,
-          volume: f.tradeVolume || 0,
-          prevClose: f.close || price,
-          time: parseFeedTime(f.exchFeedTime),
-          source: 'angelone-realtime',
+          price: tk.price,
+          change: tk.prevClose ? ((tk.price - tk.prevClose) / tk.prevClose) * 100 : 0,
+          high: tk.high || tk.price,
+          low: tk.low || tk.price,
+          volume: tk.volume || 0,
+          prevClose: tk.prevClose || tk.price,
+          time: tk.time,
+          source: 'angelone-stream',
         };
-      });
-    }));
+      } else {
+        missing.push(tok);
+      }
+    }
+
+    // 2) REST snapshot for whatever the stream hasn't delivered yet (warm-up /
+    //    off-hours). FULL quote, up to 50 tokens per call.
+    if (missing.length > 0) {
+      const chunks = [];
+      for (let i = 0; i < missing.length; i += 50) chunks.push(missing.slice(i, i + 50));
+      await Promise.allSettled(chunks.map(async (chunk) => {
+        const r = await fetch(QUOTE_URL, {
+          method: 'POST',
+          headers: baseHeaders({ Authorization: `Bearer ${jwt}` }),
+          body: JSON.stringify({ mode: 'FULL', exchangeTokens: { NSE: chunk } }),
+          signal: AbortSignal.timeout(8000),
+        });
+        const j = await r.json();
+        const fetched = j?.data?.fetched || [];
+        fetched.forEach((f) => {
+          const sym = tokenToSym[String(f.symbolToken)];
+          if (!sym) return;
+          const price = Number(f.ltp);
+          if (!(price > 0)) return;
+          out[sym] = {
+            price,
+            change: typeof f.percentChange === 'number' ? f.percentChange : 0,
+            high: f.high || price,
+            low: f.low || price,
+            volume: f.tradeVolume || 0,
+            prevClose: f.close || price,
+            time: parseFeedTime(f.exchFeedTime),
+            source: 'angelone-realtime',
+          };
+        });
+      }));
+    }
 
     if (Object.keys(out).length > 0) {
       _quoteCache = { key: cacheKey, at: Date.now(), data: out };
