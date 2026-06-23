@@ -4,13 +4,14 @@ import {
   DEFAULT_USD_INR, getTodayString, guessMarket, isCryptoSymbol, resolveTvChartSymbol
 } from '../utils/constants';
 import {
-  fetchSinglePrice, batchFetchPrices, batchFetchIndianPrices, getIndiaPollInterval, fetchForexRate,
+  fetchSinglePrice, batchFetchPrices, batchFetchIndianPrices, getIndiaPollInterval,
+  batchFetchUSPrices, getUSPollInterval, fetchForexRate,
   syncToCloud, loadFromCloud, sendTelegramAlert,
   syncGroqKeyToCloud, loadGroqKeyFromCloud, getBatchInterval, fetchMarketIntelligence
 } from '../utils/api';
 import { secureStorage } from '../utils/secureStorage';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from '../utils/tvWebsocket';
-import { isAnyMarketOpen, isIndiaMarketOpen, analyzeAsset, getSmartAllocations, generateDeepAnalysis } from '../utils/telegram';
+import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen, analyzeAsset, getSmartAllocations, generateDeepAnalysis } from '../utils/telegram';
 import { generateWeeklyWealthReport } from '../utils/wealthEngine';
 
 function mergePriceData(existing: PriceData | undefined, incoming: Partial<PriceData>): PriceData {
@@ -387,6 +388,57 @@ export function useAppState() {
     pollIndia();
     return () => { stopped = true; if (timer) clearTimeout(timer); };
   }, [isAuthenticated, hasIndianEquity, flushPricesToStorage]);
+
+  // --- US Market Realtime Streaming (HTTP) ------------------------------------
+  // Dedicated fast poller for US assets (ETFs: SMH, VGT, SPCX etc.).
+  // Uses 'last' (last traded price) instead of 'close' which was causing the
+  // ~15 minute delay after US market open (7:00 PM IST). Polls every 3s when
+  // US market is open, 5s in pre-market, 30s when closed.
+  const hasUSEquity = useMemo(() => {
+    if (portfolio.length === 0) return true; // default dashboard widgets (SPY, QQQ etc.)
+    return portfolio.some(p => {
+      const clean = p.symbol.replace('.NS', '').replace('.BO', '');
+      return (p.market || guessMarket(p.symbol)) === 'US' && !isCryptoSymbol(clean);
+    });
+  }, [portfolio]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !hasUSEquity) return;
+
+    const buildUSPositions = (): Position[] => {
+      const usPositions = portfolioRef.current.filter(p => {
+        const clean = p.symbol.replace('.NS', '').replace('.BO', '');
+        return (p.market || guessMarket(p.symbol)) === 'US' && !isCryptoSymbol(clean);
+      });
+      if (usPositions.length > 0) return usPositions;
+      // Fallback so US indices stay live even with an empty portfolio.
+      return ['SPY', 'QQQ'].map(sym => ({
+        id: `temp-US_${sym}`, symbol: sym, market: 'US' as const,
+        qty: 1, avgPrice: 1, leverage: 1, dateAdded: getTodayString()
+      }));
+    };
+
+    let stopped = false;
+    let timer: number | null = null;
+
+    const pollUS = async () => {
+      if (stopped) return;
+      try {
+        await batchFetchUSPrices(buildUSPositions(), (key, data) => {
+          pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData;
+        });
+        flushPricesToStorage();
+        if (isUSMarketOpen()) setLiveStatus('● 🇺🇸 US LIVE ⚡');
+      } catch (e) {
+        console.warn('US realtime stream failed:', e);
+      } finally {
+        if (!stopped) timer = window.setTimeout(pollUS, getUSPollInterval());
+      }
+    };
+
+    pollUS();
+    return () => { stopped = true; if (timer) clearTimeout(timer); };
+  }, [isAuthenticated, hasUSEquity, flushPricesToStorage]);
 
   // --- WebSocket + HTTP sync ---
   useEffect(() => {

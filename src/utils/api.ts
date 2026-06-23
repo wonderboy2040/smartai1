@@ -15,7 +15,7 @@ async function getApiUrl(): Promise<string> {
   _runtimeApiUrl = null;
   return VITE_API_URL;
 }
-import { isAnyMarketOpen, isIndiaMarketOpen } from './telegram';
+import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen } from './telegram';
 interface CoinDcxTicker {
   market: string;
   last_price: string;
@@ -91,6 +91,25 @@ export function getIndiaPollInterval(): number {
 }
 
 /**
+ * Poll cadence for the dedicated US market realtime streamer.
+ * Ultra-fast (3s) while the US market is open (7:00 PM IST / 9:30 AM ET),
+ * aggressive pre-market (5s) in the 15-minute window BEFORE open to catch
+ * the very first tick, relaxed (30s) when closed.
+ */
+export function getUSPollInterval(): number {
+  if (isUSMarketOpen()) return 3000;
+  // Pre-market window: 5 min before US open (9:25-9:30 AM ET) — poll aggressively
+  const now = new Date();
+  const est = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const day = est.getDay();
+  if (day !== 0 && day !== 6) {
+    const mins = est.getHours() * 60 + est.getMinutes();
+    if (mins >= 565 && mins < 570) return 5000; // 9:25-9:30 AM ET pre-market
+  }
+  return 30000;
+}
+
+/**
  * REALTIME NSE / BSE STREAMING (HTTP)
  * ------------------------------------------------------------------
  * TradingView's anonymous WebSocket (`unauthorized_user_token`) only streams
@@ -144,7 +163,7 @@ export async function batchFetchIndianPrices(
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify({
         symbols: { tickers: uniqueTickers },
-        columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
+        columns: ['name', 'last', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
       }),
       signal: AbortSignal.timeout(6000)
     });
@@ -179,6 +198,101 @@ export async function batchFetchIndianPrices(
     });
   } catch (e) {
     console.warn('NSE realtime poll failed');
+  }
+}
+
+/**
+ * REALTIME US MARKET STREAMING (HTTP)
+ * ------------------------------------------------------------------
+ * Mirror of batchFetchIndianPrices but for US assets (ETFs like SMH, VGT, SPCX).
+ * The TradingView WebSocket *does* push US prices, but the scanner HTTP poller
+ * provides richer data (SMA/RSI/MACD) and acts as a reliable secondary channel.
+ *
+ * CRITICAL FIX: Uses 'last' (last traded price) instead of 'close' (previous
+ * day's close). The 'close' field takes ~15 minutes after market open to update,
+ * which is why US ETF prices appeared delayed. 'last' updates INSTANTLY the
+ * moment the first trade executes at 9:30 AM ET (7:00 PM IST).
+ *
+ * Poll cadence: 3s during US market hours, 5s in pre-market (5 min before open),
+ * 30s when closed — controlled by getUSPollInterval().
+ */
+export async function batchFetchUSPrices(
+  positions: Position[],
+  onUpdate: (key: string, data: PriceData) => void
+): Promise<void> {
+  const usTickers: string[] = [];
+  const tickerToKey: Record<string, string> = {};
+
+  positions.forEach(p => {
+    if (!p?.symbol) return;
+    const mkt = (p.market || guessMarket(p.symbol)).toUpperCase();
+    if (mkt !== 'US') return;
+    const cleanSym = p.symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
+    if (isCryptoSymbol(cleanSym)) return; // crypto handled by CoinDCX poller
+    const key = `US_${p.symbol.trim()}`;
+
+    if (EXACT_TICKER_MAP[cleanSym]) {
+      const t = EXACT_TICKER_MAP[cleanSym];
+      usTickers.push(t);
+      tickerToKey[t] = key;
+    } else {
+      // Try all major US exchanges for maximum coverage
+      usTickers.push(`NASDAQ:${cleanSym}`, `NYSE:${cleanSym}`, `AMEX:${cleanSym}`, `ARCA:${cleanSym}`);
+      tickerToKey[`NASDAQ:${cleanSym}`] = key;
+      tickerToKey[`NYSE:${cleanSym}`] = key;
+      tickerToKey[`AMEX:${cleanSym}`] = key;
+      tickerToKey[`ARCA:${cleanSym}`] = key;
+    }
+  });
+
+  // Always include US VIX for regime / fear-greed widgets
+  usTickers.push('CBOE:VIX');
+  tickerToKey['CBOE:VIX'] = 'US_VIX';
+
+  const uniqueTickers = [...new Set(usTickers)];
+  if (uniqueTickers.length === 0) return;
+
+  try {
+    const res = await fetch(`https://scanner.tradingview.com/america/scan?t=${Date.now()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({
+        symbols: { tickers: uniqueTickers },
+        columns: ['name', 'last', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
+      }),
+      signal: AbortSignal.timeout(6000)
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data?.data) return;
+
+    (data.data as TvScannerItem[]).forEach(item => {
+      if (!item.d || item.d[1] === null) return;
+      const priceVal = parseFloat(item.d[1] as string);
+      if (isNaN(priceVal) || priceVal <= 0) return;
+      const key = tickerToKey[item.s];
+      if (!key) return;
+
+      const changeVal = parseFloat(item.d[2] as string) || 0;
+      const dv = (idx: number) => item.d![idx] as number | string | undefined;
+      onUpdate(key, {
+        price: priceVal,
+        change: changeVal,
+        high: parseFloat(String(dv(3) ?? '')) || priceVal,
+        low: parseFloat(String(dv(4) ?? '')) || priceVal,
+        volume: parseFloat(String(dv(5) ?? '')) || 0,
+        sma20: parseFloat(String(dv(6) ?? '')) || undefined,
+        sma50: parseFloat(String(dv(7) ?? '')) || undefined,
+        rsi: parseFloat(String(dv(8) ?? '')) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
+        macd: parseFloat(String(dv(9) ?? '')) || undefined,
+        time: Date.now(),
+        market: 'US',
+        tvExchange: item.s.split(':')[0],
+        tvExactSymbol: item.s
+      });
+    });
+  } catch (e) {
+    console.warn('US realtime poll failed');
   }
 }
 
@@ -318,7 +432,7 @@ async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean)
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify({
         symbols: { tickers: tvTickers },
-        columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
+        columns: ['name', 'last', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
       }),
       signal: AbortSignal.timeout(3000)
     });
@@ -414,7 +528,7 @@ export async function batchFetchPrices(
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         body: JSON.stringify({
           symbols: { tickers: uniqueTickers },
-          columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
+          columns: ['name', 'last', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
         }),
         signal: AbortSignal.timeout(6000)
       });
@@ -702,7 +816,7 @@ export async function fetchMarketIntelligence(): Promise<MarketIntelligence> {
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         body: JSON.stringify({
           symbols: { tickers: indexTickers },
-          columns: ['name', 'close', 'change', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
+          columns: ['name', 'last', 'change', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
         }),
         signal: AbortSignal.timeout(6000)
       }),
@@ -711,7 +825,7 @@ export async function fetchMarketIntelligence(): Promise<MarketIntelligence> {
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         body: JSON.stringify({
           symbols: { tickers: sectorTickers },
-          columns: ['name', 'close', 'change', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
+          columns: ['name', 'last', 'change', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd']
         }),
         signal: AbortSignal.timeout(6000)
       })
