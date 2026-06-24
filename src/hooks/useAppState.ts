@@ -285,6 +285,8 @@ export function useAppState() {
   }, [isAuthenticated, flushPricesToStorage]);
 
   // --- Crypto Fast Polling (CoinDCX INR prices updated every 10s) ---
+  // NOTE: CoinDCX's API does NOT serve CORS headers, so direct browser fetches
+  // are always blocked. We route through the server proxy at /api/crypto-prices.
   const hasCrypto = useMemo(() => {
     if (portfolio.length === 0) return true; // Default: poll for dashboard crypto widgets
     return portfolio.some(p => isCryptoSymbol(p.symbol.replace('.NS', '').replace('.BO', '')));
@@ -292,14 +294,16 @@ export function useAppState() {
 
   useEffect(() => {
     if (!isAuthenticated || !hasCrypto) return;
+    const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
 
     const pollCrypto = async () => {
       try {
-        const res = await fetch(`https://api.coindcx.com/exchange/ticker?t=${Date.now()}`, {
-          signal: AbortSignal.timeout(3000)
+        const res = await fetch(`${proxyBase}/api/crypto-prices?t=${Date.now()}`, {
+          signal: AbortSignal.timeout(5000)
         });
         if (res.ok) {
           const tickers = await res.json();
+          if (!Array.isArray(tickers)) return;
           let updated = false;
 
           const cryptoSymbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'];

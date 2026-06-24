@@ -42,7 +42,7 @@ async function fetchRealtimeSnapshot(): Promise<string> {
         body: JSON.stringify({ symbols: { tickers: ['NSE:NIFTY','BSE:SENSEX','NSE:BANKNIFTY','AMEX:SPY','NASDAQ:QQQ','CBOE:VIX','NSE:INDIAVIX','TVC:DXY','COMEX:GC1!','NYMEX:CL1!'] }, columns: ['name','close','change'] }),
         signal: AbortSignal.timeout(5000)
       }),
-      fetch('https://api.coindcx.com/exchange/ticker', { signal: AbortSignal.timeout(5000) }),
+      fetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, { signal: AbortSignal.timeout(5000) }),
       fetch('https://scanner.tradingview.com/bond/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },

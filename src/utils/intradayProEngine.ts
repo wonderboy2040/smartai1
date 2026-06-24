@@ -258,7 +258,9 @@ export async function fetchNseIntradayData(): Promise<IntradaySignal[]> {
 // ========== FETCH COINDCX FUTURES DATA ==========
 export async function fetchCoinDcxFutures(): Promise<IntradaySignal[]> {
   try {
-    const res = await fetch(`https://api.coindcx.com/exchange/ticker?t=${Date.now()}`, {
+    // Use server proxy — CoinDCX blocks browser CORS
+    const PROXY_BASE = (import.meta as any).env?.VITE_API_PROXY || '';
+    const res = await fetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, {
       signal: AbortSignal.timeout(6000)
     });
     if (!res.ok) return [];

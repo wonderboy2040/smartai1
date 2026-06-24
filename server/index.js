@@ -297,6 +297,37 @@ app.get('/api/quote', async (req, res) => {
 });
 
 // ------------------------------------------------------------
+// GET /api/crypto-prices → proxy CoinDCX ticker (CORS fix)
+// ------------------------------------------------------------
+// CoinDCX's public API does NOT serve Access-Control-Allow-Origin, so
+// the browser blocks every direct fetch from the frontend. This thin
+// server-side proxy fetches the ticker, caches it briefly (3s) to avoid
+// hammering upstream, and returns the full JSON array the frontend expects.
+// ------------------------------------------------------------
+let _coinDcxCache = { data: null, ts: 0 };
+const COINDCX_CACHE_MS = 3000;
+
+app.get('/api/crypto-prices', async (_req, res) => {
+  const now = Date.now();
+  if (_coinDcxCache.data && (now - _coinDcxCache.ts) < COINDCX_CACHE_MS) {
+    res.set('Cache-Control', 'no-store, max-age=0');
+    return res.json(_coinDcxCache.data);
+  }
+  try {
+    const upstream = await fetch(`https://api.coindcx.com/exchange/ticker?t=${now}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!upstream.ok) return jsonError(res, 502, 'CoinDCX upstream error');
+    const tickers = await upstream.json();
+    _coinDcxCache = { data: tickers, ts: now };
+    res.set('Cache-Control', 'no-store, max-age=0');
+    return res.json(tickers);
+  } catch (e) {
+    return jsonError(res, 502, `CoinDCX fetch failed: ${e?.message || e}`);
+  }
+});
+
+// ------------------------------------------------------------
 // GET /api/stream  → Server-Sent Events: pushes live ticks to the browser.
 // Query: ?in=RELIANCE,NIFTYBEES&us=SMH,VGT&crypto=BTC,ETH
 // Events: `snapshot` (initial map), `tick` ({key,price,change,...}), `status`.

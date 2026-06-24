@@ -16,6 +16,28 @@ async function getApiUrl(): Promise<string> {
   return VITE_API_URL;
 }
 import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen } from './telegram';
+
+// Proxy base for server API calls (same-origin on Render, or custom via VITE_API_PROXY)
+const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
+
+/**
+ * Fetch CoinDCX tickers through the server proxy.
+ * CoinDCX's public API does NOT serve Access-Control-Allow-Origin headers,
+ * so every direct browser fetch is blocked by CORS. The server's
+ * /api/crypto-prices endpoint proxies the call server-side.
+ */
+async function fetchCoinDcxTickers(): Promise<CoinDcxTicker[] | null> {
+  try {
+    const res = await fetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data) ? data : null;
+  } catch {
+    return null;
+  }
+}
 interface CoinDcxTicker {
   market: string;
   last_price: string;
@@ -486,14 +508,13 @@ async function fetchWithStaleCheck(sym: string, retryAttempt: number): Promise<P
   const cleanSym = sym.replace('.NS', '').replace('.BO', '');
   const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEES') || guessMarket(sym) === 'IN';
 
-  // Try CoinDCX first (direct INR price — matches user's exchange)
+  // Try CoinDCX first via server proxy (direct INR price — matches user's exchange)
+  // NOTE: CoinDCX's API does NOT serve CORS headers, so browser-side fetches
+  // are always blocked. We use the server proxy at /api/crypto-prices instead.
   if (isCryptoSymbol(cleanSym)) {
     try {
-      const res = await fetch(`https://api.coindcx.com/exchange/ticker`, {
-        signal: AbortSignal.timeout(5000)
-      });
-      if (res.ok) {
-        const tickers = await res.json();
+      const tickers = await fetchCoinDcxTickers();
+      if (tickers) {
         // CoinDCX markets: BTCINR, ETHINR, SOLINR, etc.
         const inrTicker = tickers.find((t: any) => t.market === `${cleanSym}INR`);
         if (inrTicker && inrTicker.last_price) {
@@ -732,14 +753,12 @@ export async function batchFetchPrices(
   const fetchCrypto = async () => {
     if (cryptoPositions.length === 0) return;
     try {
-      const res = await fetch(`https://api.coindcx.com/exchange/ticker?t=${Date.now()}`, {
-        signal: AbortSignal.timeout(5000)
-      });
-      if (res.ok) {
-        const tickers = await res.json();
+      // Use server proxy — CoinDCX blocks browser CORS
+      const tickers = await fetchCoinDcxTickers();
+      if (tickers) {
         cryptoPositions.forEach(p => {
           const cleanSym = p.symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
-        const inrTicker = (tickers as CoinDcxTicker[]).find(t => t.market === `${cleanSym}INR`);
+          const inrTicker = (tickers as CoinDcxTicker[]).find(t => t.market === `${cleanSym}INR`);
           if (inrTicker && inrTicker.last_price) {
             const priceVal = parseFloat(inrTicker.last_price);
             const changeVal = parseFloat(inrTicker.change_24_hour) || 0;
