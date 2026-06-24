@@ -790,6 +790,8 @@ export async function batchFetchPrices(
         const dv = (idx: number) => item.d![idx] as number | string | undefined;
         const changeVal = parseFloat(item.d[2] as string) || 0;
         out[clean] = {
+          // delayed fallback price (only used if real-time quote missing)
+          price: pickScannerPrice(item.d[1], item.d[10]) || undefined,
           change: changeVal,
           high: parseFloat(String(dv(3) ?? '')) || undefined,
           low: parseFloat(String(dv(4) ?? '')) || undefined,
