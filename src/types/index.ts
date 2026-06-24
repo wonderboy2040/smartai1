@@ -44,7 +44,7 @@ export interface ExpertInfo {
   border: string;
 }
 
-export type TabType = 'dashboard' | 'intraday' | 'portfolio' | 'planner' | 'macro' | 'guide' | 'deepmind' | 'algotrade';
+export type TabType = 'dashboard' | 'intraday' | 'portfolio' | 'planner' | 'macro' | 'guide' | 'algotrade';
 export type RiskLevel = 'low' | 'medium' | 'high';
 export type TransactionType = 'buy' | 'sell';
 
