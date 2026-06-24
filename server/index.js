@@ -13,6 +13,7 @@
 import express from 'express';
 import { getAngelOneQuotes, angelOneEnabled } from './angelone.js';
 import { placeOrder, cancelOrder, getOrderBook, getTradeBook, getHoldings, getPositions, getRMS } from './angelTrade.js';
+import { getAutoConfig, setAutoConfig, autoTick } from './autoTrader.js';
 import { subscribe as feedSubscribe, snapshot as feedSnapshot, feedStatus } from './liveFeed.js';
 import { ensureUsSubscribed } from './usStream.js';
 import { ensureCryptoSubscribed } from './cryptoStream.js';
@@ -603,6 +604,29 @@ app.get('/api/trade/wallet', async (_req, res) => {
 // Status: returns whether AngelOne ALGO trading is available
 app.get('/api/trade/status', (_req, res) => {
   res.json({ enabled: angelOneEnabled() });
+});
+
+// ------------------------------------------------------------
+// AUTO-TRADING — AI-driven entry/exit engine
+// ------------------------------------------------------------
+// The frontend drives the tick loop every ~30s during market hours.
+// Config and state are kept in-memory (resets on server restart).
+// ------------------------------------------------------------
+app.post('/api/trade/auto/config', async (req, res) => {
+  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
+  const result = setAutoConfig(req.body || {});
+  res.json(result);
+});
+
+app.get('/api/trade/auto/config', (_req, res) => {
+  res.json(getAutoConfig());
+});
+
+app.post('/api/trade/auto/tick', async (req, res) => {
+  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
+  const { signals } = req.body || {};
+  const result = await autoTick(signals || []);
+  res.json(result);
 });
 
 // ------------------------------------------------------------

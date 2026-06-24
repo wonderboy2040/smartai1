@@ -395,7 +395,7 @@ export function formatIntradayTelegram(signals: IntradaySignal[], category?: 'AL
   const time = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
 
   let msg = `⚡ <b>INTRADAY PRO TRADING SIGNALS</b>\n`;
-  msg += `🧠 <i>DeepMind AI Quantum Engine</i>\n`;
+  msg += `🧠 <i>Intraday Pro AI Engine</i>\n`;
   msg += `⏰ <i>${time} IST</i>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
   const buys = top.filter(s => s.signal === 'STRONG_BUY' || s.signal === 'BUY');
@@ -416,6 +416,6 @@ export function formatIntradayTelegram(signals: IntradaySignal[], category?: 'AL
   if (sells.length) { msg += `🔴 <b>SELL / AVOID</b>\n`; sells.forEach(s => { msg += fmt(s) + '\n'; }); }
 
   msg += `\n━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  msg += `<i>🧠 DeepMind AI Quantum | Intraday Pro Expert</i>`;
+  msg += `<i>🧠 Intraday Pro AI | Live Market Expert</i>`;
   return msg;
 }

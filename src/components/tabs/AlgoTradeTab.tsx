@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../hooks/AppContext';
 import { scanAlgoSignals, AlgoSignal } from '../../utils/algoEngine';
 import { TradeWallet, AngelOrder, AngelHolding, AngelPosition } from '../../types';
@@ -21,13 +21,10 @@ function statusColor(s: string) {
 }
 
 interface SmartPick {
-  sig: AlgoSignal;
-  maxQty: number;
-  cost: number;
-  expectedProfit: number;
-  expectedReturnPct: number;
-  score: number;
+  sig: AlgoSignal; maxQty: number; cost: number; expectedProfit: number; expectedReturnPct: number; score: number;
 }
+
+interface AutoTradeLog { time: number; type: string; symbol: string; qty?: number; pnl?: number; entry?: number; returnPct?: number; orderId: string; }
 
 const AlgoTradeTab = React.memo(function AlgoTradeTab() {
   const { portfolio, livePrices } = useApp();
@@ -39,7 +36,15 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
   const [placing, setPlacing] = useState<string | null>(null);
   const [placeMsg, setPlaceMsg] = useState('');
   const [msgType, setMsgType] = useState<'ok' | 'err'>('ok');
-  const [tab, setTab] = useState<'smart' | 'positions' | 'orders' | 'holdings'>('smart');
+  const [tab, setTab] = useState<'smart' | 'positions' | 'orders' | 'holdings' | 'auto'>('smart');
+
+  // Auto-trade state
+  const [autoCfg, setAutoCfg] = useState<any>(null);
+  const [autoBusy, setAutoBusy] = useState(false);
+  const [cfgMax, setCfgMax] = useState('');
+  const [cfgMinRet, setCfgMinRet] = useState('3');
+  const autoActive = autoCfg?.enabled;
+  const signalsRef = useRef<AlgoSignal[]>([]);
 
   const watchKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -49,6 +54,7 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
   }, [portfolio, livePrices]);
 
   const signals = useMemo(() => scanAlgoSignals(watchKeys, livePrices), [watchKeys, livePrices]);
+  signalsRef.current = signals;
 
   const cash = wallet ? parseFloat(wallet.availablecash || wallet.totalmargin || '0') : 0;
   const used = wallet ? parseFloat(wallet.utilisablemargin || '0') : 0;
@@ -72,37 +78,58 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
     return picks;
   }, [signals, cash]);
 
+  // Data fetch
   const fetchWallet = async () => {
-    try {
-      const r = await fetch(API('wallet')); const j = await r.json();
-      if (j && !j.error) setWallet(j);
-    } catch {}
+    try { const r = await fetch(API('wallet')); const j = await r.json(); if (j && !j.error) setWallet(j); } catch {}
   };
-
   const fetchOrders = async () => {
-    try {
-      const r = await fetch(API('orders')); const j = await r.json();
-      if (j?.orders) setOrders(j.orders);
-    } catch {}
+    try { const r = await fetch(API('orders')); const j = await r.json(); if (j?.orders) setOrders(j.orders); } catch {}
   };
-
   const fetchHoldings = async () => {
-    try {
-      const r = await fetch(API('holdings')); const j = await r.json();
-      if (j?.holdings) setHoldings(j.holdings);
-    } catch {}
+    try { const r = await fetch(API('holdings')); const j = await r.json(); if (j?.holdings) setHoldings(j.holdings); } catch {}
   };
-
   const fetchPositions = async () => {
-    try {
-      const r = await fetch(API('positions')); const j = await r.json();
-      if (j?.positions) setPositions(j.positions);
-    } catch {}
+    try { const r = await fetch(API('positions')); const j = await r.json(); if (j?.positions) setPositions(j.positions); } catch {}
   };
-
-  const fetchAll = () => { fetchWallet(); fetchOrders(); fetchHoldings(); fetchPositions(); };
+  const fetchAutoCfg = async () => {
+    try { const r = await fetch(API('auto/config')); const j = await r.json(); if (j && !j.error) { setAutoCfg(j); if (j.maxAmount > 0) setCfgMax(String(j.maxAmount)); setCfgMinRet(String(j.minReturnPct)); } } catch {}
+  };
+  const fetchAll = () => { fetchWallet(); fetchOrders(); fetchHoldings(); fetchPositions(); fetchAutoCfg(); };
 
   useEffect(() => { fetchAll(); const id = setInterval(fetchAll, 10000); return () => clearInterval(id); }, []);
+
+  // Auto tick — called every 30s
+  const runAutoTick = async () => {
+    if (autoBusy || !autoActive) return;
+    setAutoBusy(true);
+    try {
+      const r = await fetch(API('auto/tick'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signals: signalsRef.current }),
+      });
+      await r.json();
+      await fetchAutoCfg();
+      fetchWallet(); fetchPositions(); fetchOrders();
+    } catch {} finally { setAutoBusy(false); }
+  };
+
+  useEffect(() => {
+    if (!autoActive) return;
+    runAutoTick(); // immediate first tick
+    const id = setInterval(runAutoTick, 30000);
+    return () => clearInterval(id);
+  }, [autoActive]);
+
+  const toggleAuto = async (on: boolean) => {
+    try {
+      const body: any = { enabled: on, minReturnPct: parseFloat(cfgMinRet) || 3 };
+      const max = parseFloat(cfgMax);
+      if (max > 0) body.maxAmount = max;
+      const r = await fetch(API('auto/config'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await r.json();
+      if (j && !j.error) setAutoCfg(j);
+    } catch {}
+  };
 
   const executeTrade = async (sig: AlgoSignal, qty: number) => {
     if (placing || qty < 1) return;
@@ -132,6 +159,18 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
     } catch {}
   };
 
+  const autoLog: AutoTradeLog[] = autoCfg?.tradeLog || [];
+  const lastAction = autoCfg?.lastAction || '';
+  const autoState = autoCfg?.lastState || 'stopped';
+  const autoCurTrade = autoCfg?.currentTrade || null;
+
+  const stateLabel: Record<string, string> = {
+    stopped: 'STOPPED', disabled: 'DISABLED', no_angel: 'NO API',
+    market_closed: 'MARKET CLOSED', holding: '📊 HOLDING', entered: '✅ ENTERED',
+    exited: '🎯 EXITED', sl_hit: '🛑 SL HIT', scanning: '🔍 SCANNING',
+    waiting: '⏳ WAITING', error: '⚠️ ERROR',
+  };
+
   return (
     <div className="space-y-5 animate-fade-in">
       {/* Header + Wallet */}
@@ -140,7 +179,7 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
           <h2 className="text-2xl font-black gradient-text-cyan font-display flex items-center gap-2">
             🤖 ALGO Trade <span className="quantum-badge text-[10px]">ADVANCE PRO</span>
           </h2>
-          <p className="text-[11px] text-slate-500 mt-1">Smart Allocation · Wallet-Aware AI · Max Return</p>
+          <p className="text-[11px] text-slate-500 mt-1">Smart Allocation · Wallet-Aware · Fully Automatic</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="quantum-panel rounded-xl px-4 py-2 border border-cyan-500/20 text-center bg-cyan-500/5">
@@ -160,6 +199,7 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
       <div className="flex gap-2 border-b border-white/10 pb-2 overflow-x-auto">
         {([
           { k: 'smart', l: '🎯 Smart Allocation' },
+          { k: 'auto', l: '🤖 AUTO' },
           { k: 'positions', l: '📊 Positions' },
           { k: 'orders', l: '📋 Orders' },
           { k: 'holdings', l: '💎 Holdings' },
@@ -174,6 +214,129 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
       {placeMsg && (
         <div className={`px-4 py-2.5 rounded-xl text-xs font-semibold ${msgType === 'ok' ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20' : 'bg-red-500/10 text-red-300 border border-red-500/20'}`}>
           {placeMsg}
+        </div>
+      )}
+
+      {/* Auto status bar — shown on all tabs when auto is active */}
+      {autoActive && (
+        <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="font-bold text-emerald-300">AUTO TRADING</span>
+          <span className="text-slate-400">|</span>
+          <span className="text-emerald-200">{stateLabel[autoState] || autoState}</span>
+          {lastAction && (
+            <><span className="text-slate-400">|</span><span className="text-slate-300 truncate max-w-[300px]">{lastAction}</span></>
+          )}
+        </div>
+      )}
+
+      {/* === AUTO TRADE ENGINE TAB === */}
+      {tab === 'auto' && (
+        <div className="space-y-4">
+          {/* Status overview cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className={`quantum-panel rounded-xl p-3 text-center border ${autoActive ? 'border-emerald-500/30 bg-emerald-500/[0.03]' : 'border-white/10'}`}>
+              <div className="text-[10px] text-slate-500 uppercase font-bold">Engine</div>
+              <div className={`text-lg font-black mt-1 ${autoActive ? 'text-emerald-400' : 'text-slate-500'}`}>{autoActive ? '🟢 RUNNING' : '🔴 STOPPED'}</div>
+            </div>
+            <div className="quantum-panel rounded-xl p-3 text-center border border-white/10">
+              <div className="text-[10px] text-slate-500 uppercase font-bold">State</div>
+              <div className="text-lg font-black mt-1 text-slate-200">{stateLabel[autoState] || autoState}</div>
+            </div>
+            <div className="quantum-panel rounded-xl p-3 text-center border border-white/10">
+              <div className="text-[10px] text-slate-500 uppercase font-bold">Interval</div>
+              <div className="text-lg font-black mt-1 text-cyan-300">30s</div>
+            </div>
+            <div className="quantum-panel rounded-xl p-3 text-center border border-white/10">
+              <div className="text-[10px] text-slate-500 uppercase font-bold">Wallet</div>
+              <div className="text-lg font-black mt-1 text-slate-200">₹{cash.toLocaleString('en-IN')}</div>
+            </div>
+          </div>
+
+          {/* Current trade */}
+          {autoCurTrade && (
+            <div className="quantum-panel rounded-2xl p-4 border border-emerald-500/20 bg-emerald-500/[0.02]">
+              <div className="text-[10px] text-emerald-400/70 uppercase font-bold mb-2">ACTIVE TRADE</div>
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="font-black text-lg text-white">{autoCurTrade.symbol}</div>
+                <div className="text-xs text-slate-400">Qty: <span className="font-bold text-white">{autoCurTrade.qty}</span></div>
+                <div className="text-xs text-slate-400">Entry: <span className="font-bold text-cyan-300">₹{autoCurTrade.entry}</span></div>
+                {autoCurTrade.target && <div className="text-xs text-slate-400">Target: <span className="font-bold text-emerald-300">₹{autoCurTrade.target}</span></div>}
+                {autoCurTrade.stop && <div className="text-xs text-slate-400">Stop: <span className="font-bold text-red-300">₹{autoCurTrade.stop}</span></div>}
+              </div>
+            </div>
+          )}
+
+          {/* Config */}
+          <div className="quantum-panel rounded-2xl p-4 border border-white/10">
+            <h4 className="text-sm font-bold text-white mb-3">⚙️ Config</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+              <div>
+                <label className="text-[10px] text-slate-500 uppercase font-bold block mb-1">Max Amount (0 = wallet)</label>
+                <input type="number" value={cfgMax} onChange={e => setCfgMax(e.target.value)}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm font-mono text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50"
+                  placeholder="0 = full wallet" />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500 uppercase font-bold block mb-1">Min Return %</label>
+                <input type="number" step="0.5" value={cfgMinRet} onChange={e => setCfgMinRet(e.target.value)}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm font-mono text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50"
+                  placeholder="3" />
+              </div>
+              <div className="flex items-end gap-2">
+                <button onClick={() => toggleAuto(true)} disabled={autoActive}
+                  className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-all ${autoActive ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/20'}`}
+                >🟢 START AUTO</button>
+                <button onClick={() => toggleAuto(false)} disabled={!autoActive}
+                  className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-all ${!autoActive ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-500/20'}`}
+                >🔴 STOP</button>
+              </div>
+            </div>
+            {/* Manual tick */}
+            <div className="flex items-center gap-2">
+              <button onClick={runAutoTick} disabled={autoBusy || !autoActive}
+                className="px-4 py-2 rounded-xl bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-300 font-bold text-xs border border-cyan-500/30 transition-all disabled:opacity-30"
+              >{autoBusy ? '⏳ Ticking...' : '↻ Tick Now'}</button>
+              <span className="text-[10px] text-slate-500">Auto-tick har 30s hota hai</span>
+            </div>
+          </div>
+
+          {/* Last action */}
+          {lastAction && (
+            <div className={`quantum-panel rounded-2xl p-4 border ${lastAction.includes('✓') ? 'border-emerald-500/20 bg-emerald-500/[0.02]' : lastAction.includes('✗') || lastAction.includes('Error') ? 'border-red-500/20 bg-red-500/[0.02]' : 'border-white/10'}`}>
+              <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">LAST ACTION</div>
+              <div className="font-mono text-sm text-white">{lastAction}</div>
+            </div>
+          )}
+
+          {/* Trade log */}
+          {autoLog.length > 0 && (
+            <div className="quantum-panel rounded-2xl p-4 border border-white/10">
+              <h4 className="text-sm font-bold text-white mb-2">📜 Trade Log</h4>
+              <div className="space-y-1 max-h-60 overflow-y-auto">
+                {autoLog.toReversed().map((e: AutoTradeLog, i: number) => (
+                  <div key={i} className="flex items-center gap-2 text-xs py-1 border-b border-white/5 last:border-0">
+                    <span className="text-slate-500 font-mono w-12 shrink-0">{new Date(e.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
+                    <span className={`font-bold w-14 shrink-0 ${e.type === 'ENTER' ? 'text-emerald-400' : e.type === 'EXIT' ? 'text-emerald-300' : e.type === 'SL' ? 'text-red-400' : 'text-slate-400'}`}>{e.type}</span>
+                    <span className="font-bold text-white truncate">{e.symbol}</span>
+                    {e.qty && <span className="text-slate-400">x{e.qty}</span>}
+                    {e.entry && <span className="text-slate-500">@₹{e.entry}</span>}
+                    {e.pnl !== undefined && <span className={e.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>{e.pnl >= 0 ? '+' : ''}{e.pnl.toFixed(1)}%</span>}
+                    {e.orderId && <span className="text-slate-600 text-[9px] truncate max-w-[80px]">{e.orderId}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* No activity yet */}
+          {!lastAction && autoLog.length === 0 && (
+            <div className="quantum-panel rounded-2xl p-10 text-center border border-dashed border-white/10">
+              <div className="text-4xl mb-2">🤖</div>
+              <p className="text-slate-400 font-medium">Auto trade engine ready</p>
+              <p className="text-xs text-slate-600 mt-1">Config set karein aur START press karein — engine apne aap tick karega har 30s</p>
+            </div>
+          )}
         </div>
       )}
 
@@ -194,7 +357,6 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
             </div>
           ) : (
             <>
-              {/* Wallet summary bar */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="quantum-panel rounded-xl p-3 text-center border border-emerald-500/10 bg-emerald-500/[0.02]">
                   <div className="text-[10px] text-emerald-400/70 uppercase font-bold">Affordable Trades</div>
@@ -214,7 +376,6 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
                 </div>
               </div>
 
-              {/* Smart allocation picks */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-bold text-white">🎯 Smart Picks — Sorted by Max Return</h3>
@@ -225,7 +386,6 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
                   const isTop = i === 0;
                   return (
                     <div key={`${s.market}_${s.symbol}`} className={`quantum-panel rounded-2xl p-4 border transition-all ${isTop ? 'border-emerald-500/30 bg-emerald-500/[0.02]' : 'border-white/5 hover:border-white/10'}`}>
-                      {/* Rank + Symbol + Direction */}
                       <div className="flex items-start justify-between gap-2 mb-3">
                         <div className="flex items-center gap-2">
                           {isTop && <span className="text-emerald-400 text-lg">👑</span>}
@@ -237,22 +397,16 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
                         </div>
                         <span className={`px-3 py-1 rounded-lg text-xs font-black border ${dirStyle(s.direction)}`}>{s.direction}</span>
                       </div>
-
-                      {/* Return bar */}
                       <div className="mb-3">
                         <div className="flex items-center justify-between text-xs mb-1">
                           <span className="text-emerald-400 font-bold">+{pick.expectedReturnPct.toFixed(1)}% Expected</span>
                           <span className="text-slate-400">Profit: <strong className="text-emerald-300">₹{pick.expectedProfit.toFixed(0)}</strong></span>
                         </div>
                         <div className="w-full h-2 bg-black/40 rounded-full overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-300"
-                            style={{ width: `${Math.min(100, pick.expectedReturnPct * 2)}%` }}
-                          />
+                          <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-300"
+                            style={{ width: `${Math.min(100, pick.expectedReturnPct * 2)}%` }} />
                         </div>
                       </div>
-
-                      {/* Price points + quantity */}
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px] mb-3">
                         <div className="bg-black/30 rounded-lg px-2.5 py-2 border border-white/5">
                           <span className="text-slate-500 text-[9px]">Price</span>
@@ -275,26 +429,19 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
                           <div className="font-mono text-white font-bold">{pick.maxQty} × 1:{s.riskReward}</div>
                         </div>
                       </div>
-
-                      {/* Action */}
                       <div className="flex items-center gap-2">
                         <div className="text-[10px] text-slate-500 flex-1">
                           Cost: <strong className="text-slate-300">₹{pick.cost.toFixed(0)}</strong> · Remaining: <strong className="text-amber-300">₹{Math.max(0, cash - pick.cost).toFixed(0)}</strong>
                         </div>
-                        <button
-                          onClick={() => executeTrade(s, pick.maxQty)}
-                          disabled={!!placing}
+                        <button onClick={() => executeTrade(s, pick.maxQty)} disabled={!!placing}
                           className={`px-5 py-2 rounded-xl font-bold text-xs text-white transition-all ${placing === s.symbol ? 'bg-slate-600 cursor-wait opacity-60' : s.direction === 'LONG' ? 'bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-500/20' : 'bg-red-600 hover:bg-red-500 shadow-lg shadow-red-500/20'}`}
-                        >
-                          {placing === s.symbol ? '⏳' : `BUY ${pick.maxQty}`}
-                        </button>
+                        >{placing === s.symbol ? '⏳' : `BUY ${pick.maxQty}`}</button>
                       </div>
                     </div>
                   );
                 })}
               </div>
 
-              {/* Investment allocation tip */}
               {smartPicks.length > 1 && (
                 <div className="quantum-panel rounded-xl p-4 border border-cyan-500/10 bg-cyan-500/[0.02]">
                   <h4 className="text-xs font-bold text-cyan-300 mb-2">📊 Portfolio Allocation Suggestion</h4>
@@ -396,7 +543,7 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
       )}
 
       <p className="text-[10px] text-slate-600 text-center">
-        ⚠️ AI Smart Allocation · AngelOne SmartAPI · SL & TP use karein
+        ⚠️ AI Smart Allocation · AngelOne SmartAPI · Auto Mode HAR 30s Tick
       </p>
     </div>
   );

@@ -109,68 +109,6 @@ export interface MonthlyAnalytics {
   crypto: MarketBreakdown;
 }
 
-export interface DeepScanStock {
-  symbol: string;
-  name: string;
-  market: 'IN' | 'US';
-  sector: string;
-  price: number;
-  change: number;
-  rsi: number;
-  sma20: number;
-  sma50: number;
-  macd: number;
-  volume: number;
-  high: number;
-  low: number;
-  // Multi-factor AI scores (0-100)
-  fundamentalScore: number;
-  technicalScore: number;
-  momentumScore: number;
-  sentimentScore: number;
-  valueScore: number;
-  aiScore: number; // weighted composite
-  aiConfidence: number; // 90-95%
-  // Signal
-  signal: 'STRONG_BUY' | 'BUY' | 'HOLD' | 'SELL' | 'STRONG_SELL';
-  actionHindi: string; // "Abhi Buy Karo", etc.
-  // Targets
-  target1Y: number;
-  target2Y: number;
-  return1Y: number; // expected % return
-  return2Y: number;
-  stopLoss: number;
-  // Timing
-  buyTiming: string;
-  sellTiming: string;
-  // AI reasoning
-  aiReasoning: string;
-  aiAnalysis?: string; // Groq deep analysis
-  // Deep Quantum AI — Enhanced fields
-  bbUpper?: number;
-  bbLower?: number;
-  atr?: number;
-  adx?: number;
-  obv?: number;
-  ema10?: number;
-  ema20?: number;
-  ema50?: number;
-  ema200?: number;
-  sectorRank?: number; // 1-10 sector relative strength
-  accDistPhase?: 'ACCUMULATION' | 'DISTRIBUTION' | 'MARKUP' | 'MARKDOWN' | 'NEUTRAL';
-  fibSupport?: number;
-  fibResistance?: number;
-  institutionalQuality?: number; // 0-100
-  volumeProfile?: 'ABOVE_AVG' | 'NORMAL' | 'LOW';
-  // ML Signal fields (from Python ML service)
-  mlSignal?: string;
-  mlConfidence?: number;
-  mlEntry?: number;
-  mlSL?: number;
-  mlTP1?: number;
-  mlRR?: number;
-}
-
 
 
 // ========================================

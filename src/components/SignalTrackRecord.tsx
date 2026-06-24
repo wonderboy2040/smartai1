@@ -36,7 +36,7 @@ export function SignalTrackRecord() {
         <div className="text-center py-8">
           <div className="text-3xl mb-2">🧪</div>
           <div className="text-sm text-slate-400">{error || 'Train models first to see track record'}</div>
-          <div className="text-[10px] text-slate-600 mt-1">Go to DeepMind tab and click Train to generate backtest data</div>
+          <div className="text-[10px] text-slate-600 mt-1">Track record abhi generate nahi hua — phale signals train karein</div>
         </div>
       </div>
     );
