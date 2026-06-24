@@ -220,7 +220,32 @@ async function fetchGrowwNseQuote(plainSym) {
 
 async function fetchYahooQuote(ysym) {
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ysym)}?interval=1m&range=1d`;
+    // Try the dedicated quote endpoint first (simpler, faster) — v7 is still live
+    const qurl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ysym)}`;
+    const qr = await fetch(qurl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI quote proxy)' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (qr.ok) {
+      const qj = await qr.json();
+      const qr2 = qj?.quoteResponse?.result?.[0];
+      if (qr2 && typeof qr2.regularMarketPrice === 'number' && qr2.regularMarketPrice > 0) {
+        return {
+          price: qr2.regularMarketPrice,
+          change: qr2.regularMarketChangePercent ?? 0,
+          high: qr2.regularMarketDayHigh || qr2.regularMarketPrice,
+          low: qr2.regularMarketDayLow || qr2.regularMarketPrice,
+          volume: qr2.regularMarketVolume || 0,
+          prevClose: qr2.regularMarketPreviousClose || qr2.regularMarketPrice,
+          time: (qr2.regularMarketTime ? qr2.regularMarketTime * 1000 : Date.now()),
+          source: 'yahoo-realtime',
+        };
+      }
+    }
+  } catch { /* fall through to chart endpoint */ }
+
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ysym)}?interval=5m&range=1d`;
     const r = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI quote proxy)' },
       signal: AbortSignal.timeout(6000),

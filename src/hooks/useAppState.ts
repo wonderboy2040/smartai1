@@ -16,13 +16,18 @@ import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen, analyzeAsset, getSm
 import { generateWeeklyWealthReport } from '../utils/wealthEngine';
 
 function mergePriceData(existing: PriceData | undefined, incoming: Partial<PriceData>): PriceData {
+  const time = incoming.time ?? Date.now();
+  // FRESHNESS CHECK: reject stale data (>30s older than what we already have)
+  // This prevents 15-min-delayed TV data from overriding real-time server data.
+  if (existing && incoming.time && existing.time && incoming.time < existing.time - 2000) {
+    return existing;
+  }
   const price = incoming.price ?? existing?.price ?? 0;
   const change = incoming.change ?? existing?.change ?? 0;
   const high = incoming.high ?? existing?.high;
   const low = incoming.low ?? existing?.low;
   const volume = incoming.volume ?? existing?.volume;
   const rsi = incoming.rsi ?? existing?.rsi ?? 50;
-  const time = incoming.time ?? Date.now();
   const market = incoming.market ?? existing?.market ?? 'IN';
   const sma20 = incoming.sma20 ?? existing?.sma20;
   const sma50 = incoming.sma50 ?? existing?.sma50;

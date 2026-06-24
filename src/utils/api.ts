@@ -652,9 +652,11 @@ export async function batchFetchPrices(
   positions: Position[],
   onUpdate: (key: string, data: PriceData) => void
 ): Promise<void> {
-  const inTickers: string[] = [];
-  const usTickers: string[] = [];
-  const tickerToKey: Record<string, string> = {};
+  const inCleanSyms: string[] = [];
+  const usCleanSyms: string[] = [];
+  const cleanToKey: Record<string, string> = {};
+  const tvTickers: string[] = [];
+  const tvToClean: Record<string, string> = {};
   const cryptoPositions: Position[] = [];
 
   positions.forEach(p => {
@@ -668,92 +670,146 @@ export async function batchFetchPrices(
       return;
     }
 
-    if (EXACT_TICKER_MAP[cleanSym]) {
-      const t = EXACT_TICKER_MAP[cleanSym];
-      if (mkt === 'IN') {
-        inTickers.push(t);
-        tickerToKey[t] = key;
+    if (mkt === 'IN' || mkt === 'US') {
+      if (mkt === 'IN') inCleanSyms.push(cleanSym);
+      else usCleanSyms.push(cleanSym);
+      cleanToKey[cleanSym] = key;
+
+      if (EXACT_TICKER_MAP[cleanSym]) {
+        const t = EXACT_TICKER_MAP[cleanSym];
+        tvTickers.push(t);
+        tvToClean[t] = cleanSym;
+      } else if (mkt === 'IN') {
+        [`NSE:${cleanSym}`, `BSE:${cleanSym}`].forEach(t => {
+          tvTickers.push(t);
+          tvToClean[t] = cleanSym;
+        });
       } else {
-        usTickers.push(t);
-        tickerToKey[t] = key;
+        [`NASDAQ:${cleanSym}`, `NYSE:${cleanSym}`, `AMEX:${cleanSym}`, `ARCA:${cleanSym}`].forEach(t => {
+          tvTickers.push(t);
+          tvToClean[t] = cleanSym;
+        });
       }
-    } else if (mkt === 'IN') {
-      inTickers.push(`NSE:${cleanSym}`, `BSE:${cleanSym}`);
-      tickerToKey[`NSE:${cleanSym}`] = key;
-      tickerToKey[`BSE:${cleanSym}`] = key;
-    } else {
-      usTickers.push(`NASDAQ:${cleanSym}`, `NYSE:${cleanSym}`, `AMEX:${cleanSym}`);
-      tickerToKey[`NASDAQ:${cleanSym}`] = key;
-      tickerToKey[`NYSE:${cleanSym}`] = key;
-      tickerToKey[`AMEX:${cleanSym}`] = key;
     }
   });
 
   // Add VIX indices
-  inTickers.push('NSE:INDIAVIX');
-  tickerToKey['NSE:INDIAVIX'] = 'IN_INDIAVIX';
-  usTickers.push('CBOE:VIX');
-  tickerToKey['CBOE:VIX'] = 'US_VIX';
+  inCleanSyms.push('INDIAVIX');
+  cleanToKey['INDIAVIX'] = 'IN_INDIAVIX';
+  tvTickers.push('NSE:INDIAVIX');
+  tvToClean['NSE:INDIAVIX'] = 'INDIAVIX';
 
-  const scanBatch = async (endpoint: string, tickers: string[]) => {
-    if (tickers.length === 0) return;
+  usCleanSyms.push('VIX');
+  cleanToKey['VIX'] = 'US_VIX';
+  tvTickers.push('CBOE:VIX');
+  tvToClean['CBOE:VIX'] = 'VIX';
 
-    const uniqueTickers = [...new Set(tickers)];
+  const allInSyms = [...new Set(inCleanSyms)];
+  const allUsSyms = [...new Set(usCleanSyms)];
+  const apiUrl = await getApiUrl();
 
+  // 1) REAL-TIME PRICES from server /api/quote (never delayed — Yahoofinance/Finnhub/Groww)
+  const realtimeReq = (async (): Promise<Record<string, PriceData>> => {
+    const out: Record<string, PriceData> = {};
+    const tasks: Promise<void>[] = [];
+
+    if (allInSyms.length > 0) {
+      tasks.push((async () => {
+        try {
+          const url = `${apiUrl}/api/quote?market=IN&symbols=${encodeURIComponent(allInSyms.join(','))}&t=${Date.now()}`;
+          const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+          if (!res.ok) return;
+          const json = await res.json();
+          const quotes = json?.quotes || {};
+          Object.entries(quotes).forEach(([sym, q]: [string, any]) => {
+            if (!q || !(q.price > 0)) return;
+            out[sym] = {
+              price: q.price,
+              change: typeof q.change === 'number' ? q.change : 0,
+              high: q.high || q.price,
+              low: q.low || q.price,
+              volume: q.volume || 0,
+              time: q.time || Date.now(),
+              market: 'IN',
+            } as PriceData;
+          });
+        } catch { /* fallback */ }
+      })());
+    }
+
+    if (allUsSyms.length > 0) {
+      tasks.push((async () => {
+        try {
+          const url = `${apiUrl}/api/quote?market=US&symbols=${encodeURIComponent(allUsSyms.join(','))}&t=${Date.now()}`;
+          const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+          if (!res.ok) return;
+          const json = await res.json();
+          const quotes = json?.quotes || {};
+          Object.entries(quotes).forEach(([sym, q]: [string, any]) => {
+            if (!q || !(q.price > 0)) return;
+            out[sym] = {
+              price: q.price,
+              change: typeof q.change === 'number' ? q.change : 0,
+              high: q.high || q.price,
+              low: q.low || q.price,
+              volume: q.volume || 0,
+              time: q.time || Date.now(),
+              market: 'US',
+            } as PriceData;
+          });
+        } catch { /* fallback */ }
+      })());
+    }
+
+    await Promise.allSettled(tasks);
+    return out;
+  })();
+
+  // 2) TECHNICAL INDICATORS from TV scanner (SMA/RSI/MACD — computed on daily bars, delay irrelevant)
+  const indicatorReq = (async (): Promise<Record<string, Partial<PriceData> & { tvExchange?: string; tvExactSymbol?: string }>> => {
+    const out: Record<string, Partial<PriceData> & { tvExchange?: string; tvExactSymbol?: string }> = {};
+    const uniqueTv = [...new Set(tvTickers)];
+    if (uniqueTv.length === 0) return out;
     try {
-      const res = await fetch(`https://scanner.tradingview.com/${endpoint}/scan`, {
+      const res = await fetch(`https://scanner.tradingview.com/global/scan?t=${Date.now()}`, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         body: JSON.stringify({
-          symbols: { tickers: uniqueTickers },
+          symbols: { tickers: uniqueTv },
           columns: ['name', 'close', 'change', 'high', 'low', 'volume', 'SMA20', 'SMA50', 'RSI', 'MACD.macd', 'last']
         }),
         signal: AbortSignal.timeout(6000)
       });
+      if (!res.ok) return out;
+      const data = await res.json();
+      if (!data?.data) return out;
+      (data.data as TvScannerItem[]).forEach(item => {
+        if (!item.d) return;
+        const clean = tvToClean[item.s];
+        if (!clean || out[clean]) return;
+        const dv = (idx: number) => item.d![idx] as number | string | undefined;
+        const changeVal = parseFloat(item.d[2] as string) || 0;
+        out[clean] = {
+          change: changeVal,
+          high: parseFloat(String(dv(3) ?? '')) || undefined,
+          low: parseFloat(String(dv(4) ?? '')) || undefined,
+          volume: parseFloat(String(dv(5) ?? '')) || undefined,
+          sma20: parseFloat(String(dv(6) ?? '')) || undefined,
+          sma50: parseFloat(String(dv(7) ?? '')) || undefined,
+          rsi: parseFloat(String(dv(8) ?? '')) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
+          macd: parseFloat(String(dv(9) ?? '')) || undefined,
+          tvExchange: item.s.split(':')[0],
+          tvExactSymbol: item.s,
+        };
+      });
+    } catch { console.warn('TV indicator poll failed'); }
+    return out;
+  })();
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data?.data) {
-          (data.data as TvScannerItem[]).forEach(item => {
-            if (!item.d) return;
-
-            const priceVal = pickScannerPrice(item.d[1], item.d[10]);
-            if (priceVal <= 0) return;
-
-            const key = tickerToKey[item.s];
-            if (!key) return;
-
-            const changeVal = parseFloat(item.d[2] as string) || 0;
-            const mkt = key.split('_')[0];
-
-            const dv = (idx: number) => item.d![idx] as number | string | undefined;
-            onUpdate(key, {
-              price: priceVal,
-              change: changeVal,
-              high: parseFloat(String(dv(3) ?? '')) || priceVal,
-              low: parseFloat(String(dv(4) ?? '')) || priceVal,
-              volume: parseFloat(String(dv(5) ?? '')) || 0,
-              sma20: parseFloat(String(dv(6) ?? '')) || undefined,
-              sma50: parseFloat(String(dv(7) ?? '')) || undefined,
-              rsi: parseFloat(String(dv(8) ?? '')) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
-              macd: parseFloat(String(dv(9) ?? '')) || undefined,
-              time: Date.now(),
-              market: mkt,
-              tvExchange: item.s.split(':')[0],
-              tvExactSymbol: item.s
-            });
-          });
-        }
-      }
-    } catch (e) {
-      console.warn(`TV Scanner ${endpoint} failed`);
-    }
-  };
-
-  const fetchCrypto = async () => {
+  // 3) CRYPTO from CoinDCX via server proxy
+  const cryptoReq = (async (): Promise<void> => {
     if (cryptoPositions.length === 0) return;
     try {
-      // Use server proxy — CoinDCX blocks browser CORS
       const tickers = await fetchCoinDcxTickers();
       if (tickers) {
         cryptoPositions.forEach(p => {
@@ -762,8 +818,7 @@ export async function batchFetchPrices(
           if (inrTicker && inrTicker.last_price) {
             const priceVal = parseFloat(inrTicker.last_price);
             const changeVal = parseFloat(inrTicker.change_24_hour) || 0;
-            const mkt = 'IN';
-            const key = `${mkt}_${p.symbol.trim()}`;
+            const key = `IN_${p.symbol.trim()}`;
             if (!isNaN(priceVal) && priceVal > 0) {
               onUpdate(key, {
                 price: priceVal,
@@ -773,7 +828,7 @@ export async function batchFetchPrices(
                 volume: parseFloat(inrTicker.volume) || 0,
                 rsi: 50,
                 time: Date.now(),
-                market: mkt,
+                market: 'IN',
                 tvExchange: 'COINDCX',
                 tvExactSymbol: `${cleanSym}INR`
               });
@@ -781,16 +836,41 @@ export async function batchFetchPrices(
           }
         });
       }
-    } catch (e) {
-      console.warn('CoinDCX batch fetch failed:', e);
-    }
-  };
+    } catch { console.warn('CoinDCX batch fetch failed'); }
+  })();
 
-  await Promise.allSettled([
-    scanBatch('india', inTickers),
-    scanBatch('america', usTickers),
-    fetchCrypto()
-  ]);
+  const [realtime, indicators] = await Promise.all([realtimeReq, indicatorReq]);
+  await cryptoReq;
+
+  // 4) MERGE: real-time price wins, technical indicators enrich
+  const allSyms = [...new Set([...Object.keys(cleanToKey)])];
+  allSyms.forEach(sym => {
+    const key = cleanToKey[sym];
+    if (!key) return;
+    const rt = realtime[sym];
+    const ind = indicators[sym];
+    if (!rt && !ind) return;
+
+    const price = rt?.price ?? (ind as any)?.price;
+    if (!price || price <= 0) return;
+
+    const usingRealtime = !!rt;
+    onUpdate(key, {
+      price,
+      change: usingRealtime ? (rt!.change ?? 0) : (ind?.change ?? 0),
+      high: rt?.high ?? ind?.high ?? price,
+      low: rt?.low ?? ind?.low ?? price,
+      volume: rt?.volume ?? ind?.volume ?? 0,
+      sma20: ind?.sma20,
+      sma50: ind?.sma50,
+      rsi: ind?.rsi ?? Math.max(10, Math.min(90, 50 + ((rt?.change ?? 0) * 5))),
+      macd: ind?.macd,
+      time: rt?.time ?? Date.now(),
+      market: key.startsWith('IN_') ? 'IN' : 'US',
+      tvExchange: ind?.tvExchange,
+      tvExactSymbol: ind?.tvExactSymbol,
+    } as PriceData);
+  });
 }
 
 export async function fetchForexRate(): Promise<number> {
