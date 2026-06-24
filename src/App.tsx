@@ -35,6 +35,7 @@ const PlannerTab = lazyWithRetry(() => import('./components/tabs/PlannerTab'), '
 const MacroTab = lazyWithRetry(() => import('./components/tabs/MacroTab').then(m => ({ default: m.MacroTab })), 'macro');
 const GuideTab = lazyWithRetry(() => import('./components/tabs/GuideTab').then(m => ({ default: m.GuideTab })), 'guide');
 const DeepScanTab = lazyWithRetry(() => import('./components/tabs/DeepScanTab'), 'deepscan');
+const AlgoTradeTab = lazyWithRetry(() => import('./components/tabs/AlgoTradeTab'), 'algotrade');
 
 const NeuralChat = lazyWithRetry(() => import('./components/NeuralChat').then(m => ({ default: m.NeuralChat })), 'neuralchat');
 
@@ -72,9 +73,9 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if user is typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      const tabs: TabType[] = ['dashboard', 'intraday', 'portfolio', 'deepmind', 'planner', 'macro', 'guide'];
+      const tabs: TabType[] = ['dashboard', 'intraday', 'portfolio', 'deepmind', 'planner', 'macro', 'guide', 'algotrade'];
       const key = parseInt(e.key);
-      if (!isNaN(key) && key >= 1 && key <= 7) {
+      if (!isNaN(key) && key >= 1 && key <= tabs.length) {
         setActiveTab(tabs[key - 1]);
       }
     };
@@ -167,10 +168,10 @@ export default function App() {
 
               {/* Tabs */}
               <div className="flex gap-0.5 quantum-panel p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
-                {(['dashboard', 'intraday', 'portfolio', 'deepmind', 'planner', 'macro', 'guide'] as TabType[]).map(tab => (
+                {(['dashboard', 'intraday', 'portfolio', 'deepmind', 'planner', 'macro', 'guide', 'algotrade'] as TabType[]).map(tab => (
                   <button key={tab} onClick={() => setActiveTab(tab)} className={`quantum-tab px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${activeTab === tab ? 'active' : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'}`}>
-                    <span className="hidden sm:inline">{tab === 'dashboard' && '📊 Dashboard'}{tab === 'intraday' && '⚡ Intraday Pro'}{tab === 'portfolio' && '💼 Portfolio'}{tab === 'deepmind' && '🧠 DeepMind'}{tab === 'planner' && '🎯 Planner'}{tab === 'macro' && '🌍 Risk'}{tab === 'guide' && '📖 Guide'}</span>
-                    <span className="sm:hidden">{tab === 'dashboard' && '📊'}{tab === 'intraday' && '⚡'}{tab === 'portfolio' && '💼'}{tab === 'deepmind' && '🧠'}{tab === 'planner' && '🎯'}{tab === 'macro' && '🌍'}{tab === 'guide' && '📖'}</span>
+                    <span className="hidden sm:inline">{tab === 'dashboard' && '📊 Dashboard'}{tab === 'intraday' && '⚡ Intraday Pro'}{tab === 'portfolio' && '💼 Portfolio'}{tab === 'deepmind' && '🧠 DeepMind'}{tab === 'planner' && '🎯 Planner'}{tab === 'macro' && '🌍 Risk'}{tab === 'guide' && '📖 Guide'}{tab === 'algotrade' && '🤖 ALGO Trade'}</span>
+                    <span className="sm:hidden">{tab === 'dashboard' && '📊'}{tab === 'intraday' && '⚡'}{tab === 'portfolio' && '💼'}{tab === 'deepmind' && '🧠'}{tab === 'planner' && '🎯'}{tab === 'macro' && '🌍'}{tab === 'guide' && '📖'}{tab === 'algotrade' && '🤖'}</span>
                   </button>
                 ))}
               </div>
@@ -196,6 +197,7 @@ export default function App() {
               {activeTab === 'planner' && <PlannerTab />}
               {activeTab === 'macro' && <MacroTab />}
               {activeTab === 'guide' && <GuideTab />}
+              {activeTab === 'algotrade' && <AlgoTradeTab />}
             </ErrorBoundary>
           </Suspense>
         </main>

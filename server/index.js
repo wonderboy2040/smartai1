@@ -12,6 +12,7 @@
 // ============================================================
 import express from 'express';
 import { getAngelOneQuotes, angelOneEnabled } from './angelone.js';
+import { placeOrder, cancelOrder, getOrderBook, getTradeBook, getHoldings, getPositions, getRMS } from './angelTrade.js';
 import { subscribe as feedSubscribe, snapshot as feedSnapshot, feedStatus } from './liveFeed.js';
 import { ensureUsSubscribed } from './usStream.js';
 import { ensureCryptoSubscribed } from './cryptoStream.js';
@@ -546,6 +547,62 @@ app.post('/api/telegram', async (req, res) => {
 // Tell the frontend whether server-side Telegram is available
 app.get('/api/telegram-status', (_req, res) => {
   res.json({ configured: !!(TG.token && TG.chatId) });
+});
+
+// ------------------------------------------------------------
+// ALGO TRADING — AngelOne SmartAPI order placement
+// ------------------------------------------------------------
+// All endpoints require SMARTAPI_KEY, SMARTAPI_CLIENT_CODE,
+// SMARTAPI_MPIN, SMARTAPI_TOTP_SECRET env vars. Without them
+// every endpoint returns { error: 'AngelOne not configured' }.
+// ------------------------------------------------------------
+app.post('/api/trade/place', async (req, res) => {
+  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
+  const result = await placeOrder(req.body);
+  return res.json(result);
+});
+
+app.post('/api/trade/cancel', async (req, res) => {
+  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
+  const { orderId } = req.body || {};
+  if (!orderId) return jsonError(res, 400, 'orderId required');
+  const result = await cancelOrder(orderId);
+  return res.json(result);
+});
+
+app.get('/api/trade/orders', async (_req, res) => {
+  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
+  const result = await getOrderBook();
+  return res.json(result);
+});
+
+app.get('/api/trade/trades', async (_req, res) => {
+  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
+  const result = await getTradeBook();
+  return res.json(result);
+});
+
+app.get('/api/trade/holdings', async (_req, res) => {
+  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
+  const result = await getHoldings();
+  return res.json(result);
+});
+
+app.get('/api/trade/positions', async (_req, res) => {
+  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
+  const result = await getPositions();
+  return res.json(result);
+});
+
+app.get('/api/trade/wallet', async (_req, res) => {
+  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
+  const result = await getRMS();
+  return res.json(result);
+});
+
+// Status: returns whether AngelOne ALGO trading is available
+app.get('/api/trade/status', (_req, res) => {
+  res.json({ enabled: angelOneEnabled() });
 });
 
 // ------------------------------------------------------------
