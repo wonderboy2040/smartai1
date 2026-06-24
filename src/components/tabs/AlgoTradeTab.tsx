@@ -43,6 +43,7 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
   const [autoBusy, setAutoBusy] = useState(false);
   const [cfgMax, setCfgMax] = useState('');
   const [cfgMinRet, setCfgMinRet] = useState('3');
+  const [cfgDailyTrades, setCfgDailyTrades] = useState('3');
   const autoActive = autoCfg?.enabled;
   const signalsRef = useRef<AlgoSignal[]>([]);
 
@@ -92,7 +93,7 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
     try { const r = await fetch(API('positions')); const j = await r.json(); if (j?.positions) setPositions(j.positions); } catch {}
   };
   const fetchAutoCfg = async () => {
-    try { const r = await fetch(API('auto/config')); const j = await r.json(); if (j && !j.error) { setAutoCfg(j); if (j.maxAmount > 0) setCfgMax(String(j.maxAmount)); setCfgMinRet(String(j.minReturnPct)); } } catch {}
+    try { const r = await fetch(API('auto/config')); const j = await r.json(); if (j && !j.error) { setAutoCfg(j); if (j.maxAmount > 0) setCfgMax(String(j.maxAmount)); setCfgMinRet(String(j.minReturnPct)); setCfgDailyTrades(String(j.maxDailyTrades || 3)); } } catch {}
   };
   const fetchAll = () => { fetchWallet(); fetchOrders(); fetchHoldings(); fetchPositions(); fetchAutoCfg(); };
 
@@ -122,7 +123,7 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
 
   const toggleAuto = async (on: boolean) => {
     try {
-      const body: any = { enabled: on, minReturnPct: parseFloat(cfgMinRet) || 3 };
+      const body: any = { enabled: on, minReturnPct: parseFloat(cfgMinRet) || 3, maxDailyTrades: parseInt(cfgDailyTrades) || 3 };
       const max = parseFloat(cfgMax);
       if (max > 0) body.maxAmount = max;
       const r = await fetch(API('auto/config'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -248,6 +249,10 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
               <div className="text-lg font-black mt-1 text-cyan-300">30s</div>
             </div>
             <div className="quantum-panel rounded-xl p-3 text-center border border-white/10">
+              <div className="text-[10px] text-slate-500 uppercase font-bold">Daily Trades</div>
+              <div className="text-lg font-black mt-1 text-slate-200">{autoCfg?.dailyTradeCount || 0}/{autoCfg?.maxDailyTrades || 3}</div>
+            </div>
+            <div className="quantum-panel rounded-xl p-3 text-center border border-white/10">
               <div className="text-[10px] text-slate-500 uppercase font-bold">Wallet</div>
               <div className="text-lg font-black mt-1 text-slate-200">₹{cash.toLocaleString('en-IN')}</div>
             </div>
@@ -270,7 +275,7 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
           {/* Config */}
           <div className="quantum-panel rounded-2xl p-4 border border-white/10">
             <h4 className="text-sm font-bold text-white mb-3">⚙️ Config</h4>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
               <div>
                 <label className="text-[10px] text-slate-500 uppercase font-bold block mb-1">Max Amount (0 = wallet)</label>
                 <input type="number" value={cfgMax} onChange={e => setCfgMax(e.target.value)}
@@ -280,6 +285,12 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
               <div>
                 <label className="text-[10px] text-slate-500 uppercase font-bold block mb-1">Min Return %</label>
                 <input type="number" step="0.5" value={cfgMinRet} onChange={e => setCfgMinRet(e.target.value)}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm font-mono text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50"
+                  placeholder="3" />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500 uppercase font-bold block mb-1">Max Daily Trades</label>
+                <input type="number" min="1" max="10" value={cfgDailyTrades} onChange={e => setCfgDailyTrades(e.target.value)}
                   className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm font-mono text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50"
                   placeholder="3" />
               </div>
@@ -317,10 +328,10 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
                 {autoLog.toReversed().map((e: AutoTradeLog, i: number) => (
                   <div key={i} className="flex items-center gap-2 text-xs py-1 border-b border-white/5 last:border-0">
                     <span className="text-slate-500 font-mono w-12 shrink-0">{new Date(e.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
-                    <span className={`font-bold w-14 shrink-0 ${e.type === 'ENTER' ? 'text-emerald-400' : e.type === 'EXIT' ? 'text-emerald-300' : e.type === 'SL' ? 'text-red-400' : 'text-slate-400'}`}>{e.type}</span>
+                    <span className={`font-bold w-14 shrink-0 ${e.type === 'ENTER' ? 'text-emerald-400' : e.type === 'TP' ? 'text-emerald-300' : e.type === 'SL' ? 'text-red-400' : 'text-slate-400'}`}>{e.type}</span>
                     <span className="font-bold text-white truncate">{e.symbol}</span>
                     {e.qty && <span className="text-slate-400">x{e.qty}</span>}
-                    {e.entry && <span className="text-slate-500">@₹{e.entry}</span>}
+                    {(e.entry || e.price) && <span className="text-slate-500">@₹{(e.entry || e.price)}</span>}
                     {e.pnl !== undefined && <span className={e.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>{e.pnl >= 0 ? '+' : ''}{e.pnl.toFixed(1)}%</span>}
                     {e.orderId && <span className="text-slate-600 text-[9px] truncate max-w-[80px]">{e.orderId}</span>}
                   </div>

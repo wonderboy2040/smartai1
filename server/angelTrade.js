@@ -28,8 +28,12 @@ export async function placeOrder(params) {
       duration: 'DAY',
       price: params.price || 0,
       quantity: params.qty,
+      triggerprice: params.triggerPrice || 0,
       squareoff: params.target || 0,
       stoploss: params.stopLoss || 0,
+      ordertag: params.tag || '',
+      disclosedquantity: 0,
+      trailingstoploss: 0,
     };
     const r = await fetch(`${BASE}/rest/secure/angelbroking/order/v1/placeOrder`, {
       method: 'POST',
