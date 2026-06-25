@@ -29,6 +29,20 @@ async function refreshPrevClose(sym) {
     const j = await r.json();
     const out = { pc: j?.pc || 0, high: j?.h || 0, low: j?.l || 0, at: Date.now() };
     _prevClose.set(sym, out);
+    // Seed an immediate tick from the REST current price so the UI shows a live
+    // value the instant a symbol subscribes — no wait for the first WS trade.
+    const c = j?.c;
+    if (typeof c === 'number' && c > 0) {
+      const change = typeof j.dp === 'number' ? j.dp : (out.pc ? ((c - out.pc) / out.pc) * 100 : 0);
+      setTick(`US_${sym}`, {
+        price: c,
+        change,
+        high: out.high || c,
+        low: out.low || c,
+        volume: 0,
+        time: (j.t ? j.t * 1000 : Date.now()),
+      }, 'finnhub-stream');
+    }
     return out;
   } catch { return rec || { pc: 0, high: 0, low: 0, at: Date.now() }; }
 }
