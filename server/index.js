@@ -17,6 +17,7 @@ import { getAutoConfig, setAutoConfig, autoTick } from './autoTrader.js';
 import { subscribe as feedSubscribe, snapshot as feedSnapshot, feedStatus } from './liveFeed.js';
 import { ensureUsSubscribed } from './usStream.js';
 import { ensureCryptoSubscribed } from './cryptoStream.js';
+import { getPublicIp } from './resolveIp.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -601,9 +602,16 @@ app.get('/api/trade/wallet', async (_req, res) => {
   return res.json(result);
 });
 
-// Status: returns whether AngelOne ALGO trading is available
+// Status: AngelOne availability + the public IP orders go out from.
+// The UI uses `publicIp` to warn that SEBI requires this exact IP to be
+// registered (static) with AngelOne since Apr 1, 2026.
 app.get('/api/trade/status', (_req, res) => {
-  res.json({ enabled: angelOneEnabled() });
+  res.set('Cache-Control', 'no-store');
+  res.json({
+    enabled: angelOneEnabled(),
+    publicIp: getPublicIp(),
+    staticIpRegistered: !!process.env.SMARTAPI_PUBLIC_IP,
+  });
 });
 
 // ------------------------------------------------------------

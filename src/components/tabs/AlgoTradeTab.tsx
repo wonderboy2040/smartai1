@@ -3,6 +3,9 @@ import { useApp } from '../../hooks/AppContext';
 import { scanAlgoSignals, AlgoSignal } from '../../utils/algoEngine';
 import { TradeWallet, AngelOrder, AngelHolding, AngelPosition } from '../../types';
 import { isCryptoSymbol } from '../../utils/constants';
+import { isIndiaMarketOpen } from '../../utils/telegram';
+
+interface TradeStatus { enabled: boolean; publicIp: string; staticIpRegistered: boolean; }
 
 const API = (path: string) => `/api/trade/${path}`;
 
@@ -46,8 +49,16 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
   const [cfgMinRet, setCfgMinRet] = useState('3');
   const [cfgDailyTrades, setCfgDailyTrades] = useState('3');
   const [fetchError, setFetchError] = useState('');
+  const [status, setStatus] = useState<TradeStatus | null>(null);
+  const [marketOpen, setMarketOpen] = useState(isIndiaMarketOpen());
   const autoActive = autoCfg?.enabled;
   const signalsRef = useRef<AlgoSignal[]>([]);
+
+  // Live market clock — flips the OPEN/CLOSED pill in real time.
+  useEffect(() => {
+    const id = setInterval(() => setMarketOpen(isIndiaMarketOpen()), 15000);
+    return () => clearInterval(id);
+  }, []);
 
   const watchKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -105,7 +116,10 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
   const fetchAutoCfg = async () => {
     try { const r = await fetch(API('auto/config')); const j = await r.json(); if (j && !j.error) { setAutoCfg(j); if (j.maxAmount > 0) setCfgMax(String(j.maxAmount)); setCfgMinRet(String(j.minReturnPct)); setCfgDailyTrades(String(j.maxDailyTrades || 3)); setFetchError(''); } else if (j?.error) setFetchError('Auto config: ' + (typeof j.error === 'string' ? j.error : j.error.message)); } catch (e) { setFetchError('Auto config fetch failed'); }
   };
-  const fetchAll = () => { fetchWallet(); fetchOrders(); fetchHoldings(); fetchPositions(); fetchAutoCfg(); };
+  const fetchStatus = async () => {
+    try { const r = await fetch(API('status')); const j = await r.json(); if (j && typeof j.enabled === 'boolean') setStatus(j); } catch {}
+  };
+  const fetchAll = () => { fetchWallet(); fetchOrders(); fetchHoldings(); fetchPositions(); fetchAutoCfg(); fetchStatus(); };
 
   useEffect(() => { fetchAll(); const id = setInterval(fetchAll, 10000); return () => clearInterval(id); }, []);
 
@@ -175,6 +189,22 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
   const autoState = autoCfg?.lastState || 'stopped';
   const autoCurTrade = autoCfg?.currentTrade || null;
 
+  // === Live performance roll-up (positions + holdings + auto trade log) ===
+  const perf = useMemo(() => {
+    const posPnl = positions.reduce((a, p) => a + (parseFloat(p.pnl) || 0), 0);
+    const holdPnl = holdings.reduce((a, h) => a + (parseFloat(h.pnl) || 0), 0);
+    const holdVal = holdings.reduce((a, h) => a + (parseFloat(h.valuation) || 0), 0);
+    const openPos = positions.filter(p => parseInt(p.netqty) !== 0).length;
+    const closed = autoLog.filter(e => e.type === 'TP' || e.type === 'SL');
+    const wins = closed.filter(e => (e.pnl ?? 0) >= 0).length;
+    const winRate = closed.length ? (wins / closed.length) * 100 : 0;
+    const realizedPct = closed.reduce((a, e) => a + (e.pnl ?? 0), 0);
+    return { posPnl, holdPnl, holdVal, openPos, winRate, closedCount: closed.length, realizedPct };
+  }, [positions, holdings, autoLog]);
+
+  const ipRegistered = !!status?.staticIpRegistered;
+  const orderRejectedIp = msgType === 'err' && /ip|whitelist|static/i.test(placeMsg);
+
   const stateLabel: Record<string, string> = {
     stopped: 'STOPPED', disabled: 'DISABLED', no_angel: 'NO API',
     market_closed: 'MARKET CLOSED', holding: '📊 HOLDING', entered: '✅ ENTERED',
@@ -190,7 +220,18 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
           <h2 className="text-2xl font-black gradient-text-cyan font-display flex items-center gap-2">
             🤖 ALGO Trade <span className="quantum-badge text-[10px]">ADVANCE PRO</span>
           </h2>
-          <p className="text-[11px] text-slate-500 mt-1">Smart Allocation · Wallet-Aware · Fully Automatic</p>
+          <div className="flex flex-wrap items-center gap-2 mt-1.5">
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${marketOpen ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' : 'bg-slate-500/10 text-slate-400 border-white/10'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${marketOpen ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+              NSE {marketOpen ? 'OPEN' : 'CLOSED'}
+            </span>
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${status?.enabled ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30' : 'bg-red-500/10 text-red-300 border-red-500/30'}`}>
+              ⚡ AngelOne {status?.enabled ? 'LIVE' : 'OFF'}
+            </span>
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${ipRegistered ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' : 'bg-amber-500/10 text-amber-300 border-amber-500/30'}`}>
+              🛡️ Static IP {ipRegistered ? 'SET' : 'NOT SET'}
+            </span>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <div className="quantum-panel rounded-xl px-4 py-2 border border-cyan-500/20 text-center bg-cyan-500/5">
@@ -203,6 +244,40 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
               <div className="font-black font-mono text-yellow-300 text-lg">₹{used.toLocaleString('en-IN')}</div>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* SEBI static-IP advisory — explains the "IP not set" order rejection */}
+      {status?.enabled && !ipRegistered && (
+        <div className={`px-4 py-3 rounded-xl text-xs border ${orderRejectedIp ? 'bg-red-500/10 border-red-500/30 text-red-200' : 'bg-amber-500/[0.07] border-amber-500/25 text-amber-200/90'}`}>
+          <div className="font-bold mb-0.5">🛡️ Static IP required for live orders (SEBI, since Apr 1 2026)</div>
+          <div className="text-[11px] leading-relaxed opacity-90">
+            Orders go out from <span className="font-mono font-bold text-white">{status.publicIp}</span>. Register this exact IP in your AngelOne app — but Render's IP is <b>dynamic</b>, so it keeps changing. Permanent fix: VPS/proxy with a static IP, then set <span className="font-mono">SMARTAPI_PUBLIC_IP</span>. Until then order placement may be rejected.
+          </div>
+        </div>
+      )}
+
+      {/* Performance command center */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div className="quantum-panel rounded-xl p-3 border border-white/5">
+          <div className="text-[10px] text-slate-500 uppercase font-bold">Open P&L</div>
+          <div className={`text-lg font-black font-mono mt-0.5 ${perf.posPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{perf.posPnl >= 0 ? '+' : ''}₹{perf.posPnl.toFixed(0)}</div>
+        </div>
+        <div className="quantum-panel rounded-xl p-3 border border-white/5">
+          <div className="text-[10px] text-slate-500 uppercase font-bold">Holdings P&L</div>
+          <div className={`text-lg font-black font-mono mt-0.5 ${perf.holdPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{perf.holdPnl >= 0 ? '+' : ''}₹{perf.holdPnl.toFixed(0)}</div>
+        </div>
+        <div className="quantum-panel rounded-xl p-3 border border-white/5">
+          <div className="text-[10px] text-slate-500 uppercase font-bold">Open Positions</div>
+          <div className="text-lg font-black font-mono mt-0.5 text-slate-200">{perf.openPos}</div>
+        </div>
+        <div className="quantum-panel rounded-xl p-3 border border-white/5">
+          <div className="text-[10px] text-slate-500 uppercase font-bold">Auto Win Rate</div>
+          <div className={`text-lg font-black font-mono mt-0.5 ${perf.winRate >= 50 ? 'text-emerald-400' : perf.closedCount ? 'text-amber-400' : 'text-slate-500'}`}>{perf.closedCount ? `${perf.winRate.toFixed(0)}%` : '—'}<span className="text-[10px] text-slate-600 ml-1">{perf.closedCount ? `(${perf.closedCount})` : ''}</span></div>
+        </div>
+        <div className="quantum-panel rounded-xl p-3 border border-white/5">
+          <div className="text-[10px] text-slate-500 uppercase font-bold">Daily Trades</div>
+          <div className="text-lg font-black font-mono mt-0.5 text-slate-200">{autoCfg?.dailyTradeCount || 0}<span className="text-slate-600">/{autoCfg?.maxDailyTrades || 3}</span></div>
         </div>
       </div>
 
