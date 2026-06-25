@@ -16,6 +16,7 @@
 import crypto from 'node:crypto';
 import { ensureSubscribed } from './angelStream.js';
 import { getTick as feedGetTick } from './liveFeed.js';
+import { getPublicIp } from './resolveIp.js';
 
 const BASE = 'https://apiconnect.angelone.in';
 const LOGIN_URL  = `${BASE}/rest/auth/angelbroking/user/v1/loginByPassword`;
@@ -66,7 +67,7 @@ function baseHeaders(extra = {}) {
     'X-UserType': 'USER',
     'X-SourceID': 'WEB',
     'X-ClientLocalIP': '192.168.1.1',
-    'X-ClientPublicIP': '106.193.147.98',
+    'X-ClientPublicIP': getPublicIp(),
     'X-MACAddress': 'AA:BB:CC:DD:EE:FF',
     'X-PrivateKey': KEY,
     ...extra,

@@ -56,7 +56,8 @@ async function encryptData(data: string): Promise<string> {
   combined.set(salt, 0);
   combined.set(iv, SALT_LENGTH);
   combined.set(new Uint8Array(ciphertext), SALT_LENGTH + IV_LENGTH);
-  return btoa(String.fromCharCode(...combined));
+  let bin = ''; for (let i = 0; i < combined.length; i++) bin += String.fromCharCode(combined[i]);
+  return btoa(bin);
 }
 
 async function decryptData(encrypted: string): Promise<string | null> {

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../hooks/AppContext';
 import { scanAlgoSignals, AlgoSignal } from '../../utils/algoEngine';
 import { TradeWallet, AngelOrder, AngelHolding, AngelPosition } from '../../types';
+import { isCryptoSymbol } from '../../utils/constants';
 
 const API = (path: string) => `/api/trade/${path}`;
 
@@ -24,7 +25,7 @@ interface SmartPick {
   sig: AlgoSignal; maxQty: number; cost: number; expectedProfit: number; expectedReturnPct: number; score: number;
 }
 
-interface AutoTradeLog { time: number; type: string; symbol: string; qty?: number; pnl?: number; entry?: number; returnPct?: number; orderId: string; }
+interface AutoTradeLog { time: number; type: string; symbol: string; qty?: number; pnl?: number; entry?: number; price?: number; returnPct?: number; orderId: string; }
 
 const AlgoTradeTab = React.memo(function AlgoTradeTab() {
   const { portfolio, livePrices } = useApp();
@@ -52,7 +53,15 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
     const keys = new Set<string>();
     portfolio.forEach(p => keys.add(`${p.market}_${p.symbol}`));
     Object.keys(livePrices).forEach(k => keys.add(k));
-    return [...keys].filter(k => !/_(INDIAVIX|VIX)$/i.test(k));
+    return [...keys].filter(k => {
+      const parts = k.split('_');
+      if (parts.length < 2) return false;
+      const m = parts[0], sym = parts.slice(1).join('_');
+      if (m !== 'IN') return false;
+      if (/^(INDIAVIX|VIX|NIFTY|SENSEX|BANKNIFTY|CNXIT|GIFTNIFTY|SGXNIFTY)$/i.test(sym)) return false;
+      if (isCryptoSymbol(sym)) return false;
+      return true;
+    });
   }, [portfolio, livePrices]);
 
   const signals = useMemo(() => scanAlgoSignals(watchKeys, livePrices), [watchKeys, livePrices]);
