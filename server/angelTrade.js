@@ -8,6 +8,11 @@ function baseHeaders(jwt) {
     'Accept': 'application/json',
     'Authorization': `Bearer ${jwt}`,
     'X-PrivateKey': process.env.SMARTAPI_KEY || '',
+    'X-UserType': 'USER',
+    'X-SourceID': 'WEB',
+    'X-ClientLocalIP': '192.168.1.1',
+    'X-ClientPublicIP': '106.193.147.98',
+    'X-MACAddress': 'AA:BB:CC:DD:EE:FF',
   };
 }
 
@@ -152,7 +157,7 @@ export async function getRMS() {
     // Try GET first (standard), fallback to POST (alternative SmartAPI impl)
     let j;
     for (const method of ['GET', 'POST']) {
-      const r = await fetch(`${BASE}/rest/secure/angelbroking/portfolio/v1/getRMS`, {
+      const r = await fetch(`${BASE}/rest/secure/angelbroking/user/v1/getRMS`, {
         method,
         headers: baseHeaders(jwt),
         body: method === 'POST' ? JSON.stringify({}) : undefined,
