@@ -148,15 +148,36 @@ export async function getRMS() {
   try {
     const session = await getSession();
     const { jwt } = session;
-    const r = await fetch(`${BASE}/rest/secure/angelbroking/portfolio/v1/getRMS`, {
-      method: 'GET',
-      headers: baseHeaders(jwt),
-      signal: AbortSignal.timeout(8000),
-    });
-    const j = await r.json();
-    if (j?.status !== true) return {};
-    return j.data || {};
-  } catch {
+
+    // Try GET first (standard), fallback to POST (alternative SmartAPI impl)
+    let j;
+    for (const method of ['GET', 'POST']) {
+      const r = await fetch(`${BASE}/rest/secure/angelbroking/portfolio/v1/getRMS`, {
+        method,
+        headers: baseHeaders(jwt),
+        body: method === 'POST' ? JSON.stringify({}) : undefined,
+        signal: AbortSignal.timeout(8000),
+      });
+      j = await r.json();
+      if (j?.status === true && j?.data) break;
+    }
+
+    if (j?.status !== true) {
+      console.warn('[angelTrade] getRMS failed:', JSON.stringify(j).slice(0, 300));
+      return {};
+    }
+
+    const d = j.data || {};
+
+    // Normalize: provide fallback chains for critical fields
+    // AngelOne response may use: availablecash / totalmargin / net / notionalcash
+    const availablecash = d.availablecash || d.totalmargin || d.net || d.notionalcash || '0';
+    const totalmargin   = d.totalmargin || d.availablecash || d.net || d.notionalcash || '0';
+    const utilisablemargin = d.utilisablemargin || d.utilizabledeliverymargin || '0';
+
+    return { availablecash, totalmargin, utilisablemargin, ...d };
+  } catch (e) {
+    console.warn('[angelTrade] getRMS exception:', e?.message);
     return {};
   }
 }

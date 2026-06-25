@@ -43,7 +43,7 @@ function bestAffordable(signals, cash) {
   for (const s of signals) {
     if (s.direction !== 'LONG' || !(s.entry > 0)) continue;
     const entry = s.entry, qty = Math.floor(cash / entry);
-    if (qty < 10) continue;
+    if (qty < 1) continue;
     const targetReturnPct = ((s.target1 - entry) / entry) * 100;
     if (targetReturnPct < config.minReturnPct) continue;
     const score = targetReturnPct * s.conviction;
@@ -116,7 +116,7 @@ export async function autoTick(rawSignals) {
     }
 
     // ENTRY LOGIC
-    if (pendingOrders.length === 0 && cash >= 50) {
+    if (pendingOrders.length === 0 && cash >= 10) {
       const usedToday = getDailyCount();
       if (usedToday >= config.maxDailyTrades) {
         config.lastState = 'limit_reached';
@@ -144,7 +144,8 @@ export async function autoTick(rawSignals) {
     }
 
     config.lastState = 'waiting';
-    return { state: 'waiting', message: 'No action' };
+    const reason = !(pendingOrders.length === 0) ? 'pending orders' : `low cash ₹${cash}`;
+    return { state: 'waiting', message: `No action — ${reason}`, cash, pending: pendingOrders.length };
   } catch (e) {
     config.lastAction = `Error: ${e?.message || 'Unknown'}`;
     return { state: 'error', message: e?.message || 'Tick error' };

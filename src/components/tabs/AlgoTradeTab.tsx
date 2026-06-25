@@ -44,6 +44,7 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
   const [cfgMax, setCfgMax] = useState('');
   const [cfgMinRet, setCfgMinRet] = useState('3');
   const [cfgDailyTrades, setCfgDailyTrades] = useState('3');
+  const [fetchError, setFetchError] = useState('');
   const autoActive = autoCfg?.enabled;
   const signalsRef = useRef<AlgoSignal[]>([]);
 
@@ -57,8 +58,8 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
   const signals = useMemo(() => scanAlgoSignals(watchKeys, livePrices), [watchKeys, livePrices]);
   signalsRef.current = signals;
 
-  const cash = wallet ? parseFloat(wallet.availablecash || wallet.totalmargin || '0') : 0;
-  const used = wallet ? parseFloat(wallet.utilisablemargin || '0') : 0;
+  const cash = wallet ? parseFloat(wallet.availablecash || wallet.totalmargin || wallet.net || wallet.notionalcash || '0') : 0;
+  const used = wallet ? parseFloat(wallet.utilisablemargin || wallet.utilizabledeliverymargin || '0') : 0;
 
   const smartPicks = useMemo((): SmartPick[] => {
     if (!cash) return [];
@@ -81,7 +82,7 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
 
   // Data fetch
   const fetchWallet = async () => {
-    try { const r = await fetch(API('wallet')); const j = await r.json(); if (j && !j.error) setWallet(j); } catch {}
+    try { const r = await fetch(API('wallet')); const j = await r.json(); if (j && !j.error) { setWallet(j); setFetchError(''); } else if (j?.error) setFetchError('Wallet: ' + (typeof j.error === 'string' ? j.error : j.error.message)); } catch (e) { setFetchError('Wallet fetch failed'); }
   };
   const fetchOrders = async () => {
     try { const r = await fetch(API('orders')); const j = await r.json(); if (j?.orders) setOrders(j.orders); } catch {}
@@ -93,7 +94,7 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
     try { const r = await fetch(API('positions')); const j = await r.json(); if (j?.positions) setPositions(j.positions); } catch {}
   };
   const fetchAutoCfg = async () => {
-    try { const r = await fetch(API('auto/config')); const j = await r.json(); if (j && !j.error) { setAutoCfg(j); if (j.maxAmount > 0) setCfgMax(String(j.maxAmount)); setCfgMinRet(String(j.minReturnPct)); setCfgDailyTrades(String(j.maxDailyTrades || 3)); } } catch {}
+    try { const r = await fetch(API('auto/config')); const j = await r.json(); if (j && !j.error) { setAutoCfg(j); if (j.maxAmount > 0) setCfgMax(String(j.maxAmount)); setCfgMinRet(String(j.minReturnPct)); setCfgDailyTrades(String(j.maxDailyTrades || 3)); setFetchError(''); } else if (j?.error) setFetchError('Auto config: ' + (typeof j.error === 'string' ? j.error : j.error.message)); } catch (e) { setFetchError('Auto config fetch failed'); }
   };
   const fetchAll = () => { fetchWallet(); fetchOrders(); fetchHoldings(); fetchPositions(); fetchAutoCfg(); };
 
@@ -215,6 +216,12 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
       {placeMsg && (
         <div className={`px-4 py-2.5 rounded-xl text-xs font-semibold ${msgType === 'ok' ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20' : 'bg-red-500/10 text-red-300 border border-red-500/20'}`}>
           {placeMsg}
+        </div>
+      )}
+      {/* Fetch error */}
+      {fetchError && (
+        <div className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-red-500/10 text-red-300 border border-red-500/20">
+          ⚠️ {fetchError}
         </div>
       )}
 

@@ -200,6 +200,8 @@ export interface TradeWallet {
   availablecash?: string;
   utilisablemargin?: string;
   utilizabledeliverymargin?: string;
+  net?: string;
+  notionalcash?: string;
 }
 
 export interface AngelOrder {
