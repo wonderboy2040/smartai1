@@ -1,24 +1,35 @@
-// ============================================================
-// usStream — Finnhub WebSocket: TICK-BY-TICK real-time US trades
-// ------------------------------------------------------------
-// Requires FINNHUB_API_KEY. If unset, this module stays dormant and US prices
-// continue to come from the Yahoo real-time REST path in index.js.
-// Trade ticks give last price only, so previous-close (for % change) is pulled
-// from Finnhub's /quote once per symbol and refreshed every 5 min.
-// ============================================================
+// usStream — Finnhub WebSocket: real-time US trades
+// WebSocket connects ONLY when SSE clients are active.
+// Disconnects when last client leaves → server goes idle on Render free tier.
 import WebSocket from 'ws';
 import { setTick } from './liveFeed.js';
 
 const KEY = process.env.FINNHUB_API_KEY || process.env.VITE_FINNHUB_API_KEY || '';
 const WS_URL = KEY ? `wss://ws.finnhub.io?token=${KEY}` : '';
 
-const _subscribed = new Set();      // symbols
-const _prevClose = new Map();       // symbol -> { pc, high, low, at }
+const _subscribed = new Set();
+const _prevClose = new Map();
 let _ws = null;
 let _connecting = false;
 let _reconnectAt = 0;
+let _activeClients = 0;
 
 export function usStreamEnabled() { return !!KEY; }
+
+export function usClientUp() {
+  _activeClients++;
+  if (_subscribed.size > 0) _connect();
+}
+
+export function usClientDown() {
+  _activeClients = Math.max(0, _activeClients - 1);
+  if (_activeClients === 0) _disconnect();
+}
+
+function _disconnect() {
+  if (_ws) { try { _ws.close(); } catch { } _ws = null; }
+  _connecting = false;
+}
 
 async function refreshPrevClose(sym) {
   const rec = _prevClose.get(sym);
@@ -29,26 +40,22 @@ async function refreshPrevClose(sym) {
     const j = await r.json();
     const out = { pc: j?.pc || 0, high: j?.h || 0, low: j?.l || 0, at: Date.now() };
     _prevClose.set(sym, out);
-    // Seed an immediate tick from the REST current price so the UI shows a live
-    // value the instant a symbol subscribes — no wait for the first WS trade.
     const c = j?.c;
     if (typeof c === 'number' && c > 0) {
       const change = typeof j.dp === 'number' ? j.dp : (out.pc ? ((c - out.pc) / out.pc) * 100 : 0);
       setTick(`US_${sym}`, {
-        price: c,
-        change,
-        high: out.high || c,
-        low: out.low || c,
-        volume: 0,
-        time: (j.t ? j.t * 1000 : Date.now()),
+        price: c, change,
+        high: out.high || c, low: out.low || c,
+        volume: 0, time: (j.t ? j.t * 1000 : Date.now()),
       }, 'finnhub-stream');
     }
     return out;
   } catch { return rec || { pc: 0, high: 0, low: 0, at: Date.now() }; }
 }
 
-function connect() {
+function _connect() {
   if (!WS_URL || _connecting || (_ws && _ws.readyState === WebSocket.OPEN)) return;
+  if (_activeClients === 0) return; // don't connect if no clients
   if (Date.now() < _reconnectAt) return;
   _connecting = true;
   try {
@@ -61,7 +68,6 @@ function connect() {
     ws.on('message', async (raw) => {
       let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
       if (msg.type !== 'trade' || !Array.isArray(msg.data)) return;
-      // keep only the latest price per symbol in this batch
       const latest = {};
       for (const t of msg.data) latest[t.s] = t;
       for (const sym of Object.keys(latest)) {
@@ -71,17 +77,23 @@ function connect() {
         if (!(price > 0)) continue;
         const change = ref.pc ? ((price - ref.pc) / ref.pc) * 100 : 0;
         setTick(`US_${sym}`, {
-          price,
-          change,
+          price, change,
           high: Math.max(ref.high || price, price),
           low: ref.low && ref.low < price ? ref.low : price,
-          volume: 0,
-          time: t.t || Date.now(),
+          volume: 0, time: t.t || Date.now(),
         }, 'finnhub-stream');
       }
     });
-    ws.on('close', () => { _connecting = false; _reconnectAt = Date.now() + 3000; _ws = null; });
-    ws.on('error', () => { _connecting = false; try { ws.close(); } catch {} _reconnectAt = Date.now() + 5000; _ws = null; });
+    ws.on('close', () => {
+      _connecting = false; _ws = null;
+      // Only reconnect if clients still active
+      if (_activeClients > 0) _reconnectAt = Date.now() + 3000;
+    });
+    ws.on('error', () => {
+      _connecting = false; try { ws.close(); } catch { }
+      _ws = null;
+      if (_activeClients > 0) _reconnectAt = Date.now() + 5000;
+    });
   } catch { _connecting = false; _reconnectAt = Date.now() + 5000; }
 }
 
@@ -93,6 +105,9 @@ export function ensureUsSubscribed(symbols) {
     if (!sym) continue;
     if (!_subscribed.has(sym)) { _subscribed.add(sym); fresh.push(sym); refreshPrevClose(sym); }
   }
-  if (!_ws || _ws.readyState !== WebSocket.OPEN) connect();
-  else fresh.forEach(s => _ws.send(JSON.stringify({ type: 'subscribe', symbol: s })));
+  // Connect only if clients are already active
+  if (_activeClients > 0) {
+    if (!_ws || _ws.readyState !== WebSocket.OPEN) _connect();
+    else fresh.forEach(s => _ws.send(JSON.stringify({ type: 'subscribe', symbol: s })));
+  }
 }

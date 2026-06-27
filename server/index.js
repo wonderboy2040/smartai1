@@ -15,8 +15,8 @@ import { getAngelOneQuotes, angelOneEnabled } from './angelone.js';
 import { placeOrder, cancelOrder, getOrderBook, getTradeBook, getHoldings, getPositions, getRMS } from './angelTrade.js';
 import { getAutoConfig, setAutoConfig, autoTick } from './autoTrader.js';
 import { subscribe as feedSubscribe, snapshot as feedSnapshot, feedStatus } from './liveFeed.js';
-import { ensureUsSubscribed } from './usStream.js';
-import { ensureCryptoSubscribed } from './cryptoStream.js';
+import { ensureUsSubscribed, usClientUp, usClientDown } from './usStream.js';
+import { ensureCryptoSubscribed, cryptoClientUp, cryptoClientDown } from './cryptoStream.js';
 import { getPublicIp } from './resolveIp.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,30 +40,30 @@ app.use((req, res, next) => {
 // Provider key map (server-side env vars — NOT VITE_*)
 // ------------------------------------------------------------
 const KEYS = {
-  groq:        process.env.GROQ_API_KEY || '',
-  gemini:      process.env.GEMINI_API_KEY || '',
-  claude:      process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY || '',
-  openrouter:  process.env.OPENROUTER_API_KEY || '',
-  cerebras:    process.env.CEREBRAS_API_KEY || '',
+  groq: process.env.GROQ_API_KEY || '',
+  gemini: process.env.GEMINI_API_KEY || '',
+  claude: process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY || '',
+  openrouter: process.env.OPENROUTER_API_KEY || '',
+  cerebras: process.env.CEREBRAS_API_KEY || '',
   huggingface: process.env.HF_API_KEY || process.env.HUGGINGFACE_API_KEY || '',
-  nvidia:      process.env.NVIDIA_API_KEY || '',
-  tavily:      process.env.TAVILY_API_KEY || '',
+  nvidia: process.env.NVIDIA_API_KEY || '',
+  tavily: process.env.TAVILY_API_KEY || '',
 };
 
 // Telegram bot credentials (server-side env) — used by the /api/telegram proxy
 // so the website can send notifications even if the browser has no local config.
 const TG = {
-  token:  process.env.TG_TOKEN || process.env.VITE_TG_TOKEN || '',
+  token: process.env.TG_TOKEN || process.env.VITE_TG_TOKEN || '',
   chatId: process.env.TG_CHAT_ID || process.env.VITE_TG_CHAT_ID || '',
 };
 
 // OpenAI-compatible providers — body is forwarded almost as-is.
 const OPENAI_COMPAT = {
-  groq:        { url: 'https://api.groq.com/openai/v1/chat/completions', defModel: 'llama-3.3-70b-versatile' },
-  openrouter:  { url: 'https://openrouter.ai/api/v1/chat/completions',   defModel: 'meta-llama/llama-3.3-70b-instruct:free' },
-  cerebras:    { url: 'https://api.cerebras.ai/v1/chat/completions',     defModel: 'llama-3.3-70b' },
+  groq: { url: 'https://api.groq.com/openai/v1/chat/completions', defModel: 'llama-3.3-70b-versatile' },
+  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', defModel: 'meta-llama/llama-3.3-70b-instruct:free' },
+  cerebras: { url: 'https://api.cerebras.ai/v1/chat/completions', defModel: 'llama-3.3-70b' },
   huggingface: { url: 'https://router.huggingface.co/v1/chat/completions', defModel: 'Qwen/Qwen2.5-72B-Instruct' },
-  nvidia:      { url: 'https://integrate.api.nvidia.com/v1/chat/completions', defModel: 'meta/llama-3.3-70b-instruct' },
+  nvidia: { url: 'https://integrate.api.nvidia.com/v1/chat/completions', defModel: 'meta/llama-3.3-70b-instruct' },
 };
 
 function jsonError(res, status, message) {
@@ -206,7 +206,7 @@ async function fetchGrowwNseQuote(plainSym) {
     if (!r.ok) return null;
     const j = await r.json();
     const price = (typeof j.ltp === 'number' && j.ltp > 0) ? j.ltp
-                : (typeof j.close === 'number' && j.close > 0) ? j.close : 0;
+      : (typeof j.close === 'number' && j.close > 0) ? j.close : 0;
     if (!price) return null;
     return {
       price,
@@ -378,9 +378,13 @@ app.get('/api/stream', (req, res) => {
   ]);
 
   // Kick off / refresh upstream subscriptions for the requested symbols.
-  if (inSyms.length && angelOneEnabled()) getAngelOneQuotes(inSyms).catch(() => {});
+  if (inSyms.length && angelOneEnabled()) getAngelOneQuotes(inSyms).catch(() => { });
   if (usSyms.length) ensureUsSubscribed(usSyms);
   ensureCryptoSubscribed(cryptoSyms);
+
+  // Notify streams a client is now active — starts polling/WebSocket if idle
+  usClientUp();
+  cryptoClientUp();
 
   res.set({
     'Content-Type': 'text/event-stream',
@@ -407,7 +411,14 @@ app.get('/api/stream', (req, res) => {
     try { res.write(`event: status\ndata: ${JSON.stringify(feedStatus())}\n\n`); } catch { /* noop */ }
   }, 15000);
 
-  req.on('close', () => { clearInterval(keepalive); unsub(); try { res.end(); } catch { /* noop */ } });
+  req.on('close', () => {
+    clearInterval(keepalive);
+    unsub();
+    // Notify streams this client left — pauses polling when no clients remain
+    usClientDown();
+    cryptoClientDown();
+    try { res.end(); } catch { /* noop */ }
+  });
 });
 
 // GET /api/feed-status → which real-time sources are live (for the UI dot).
@@ -422,14 +433,14 @@ app.get('/api/feed-status', (_req, res) => {
 // ------------------------------------------------------------
 app.get('/api/ai-status', (_req, res) => {
   res.json({
-    gemini:      !!KEYS.gemini,
-    groq:        !!KEYS.groq,
-    claude:      !!KEYS.claude,
-    openrouter:  !!KEYS.openrouter,
-    cerebras:    !!KEYS.cerebras,
+    gemini: !!KEYS.gemini,
+    groq: !!KEYS.groq,
+    claude: !!KEYS.claude,
+    openrouter: !!KEYS.openrouter,
+    cerebras: !!KEYS.cerebras,
     huggingface: !!KEYS.huggingface,
-    nvidia:      !!KEYS.nvidia,
-    tavily:      !!KEYS.tavily,
+    nvidia: !!KEYS.nvidia,
+    tavily: !!KEYS.tavily,
   });
 });
 
@@ -638,6 +649,43 @@ app.post('/api/trade/auto/tick', async (req, res) => {
 });
 
 // ------------------------------------------------------------
+// ------------------------------------------------------------
+// /ml/* → ML service reverse proxy
+// ------------------------------------------------------------
+// LOCAL DEV:  VITE_ML_SERVICE_URL is not set, so mlApi.ts calls /ml/*.
+//             Vite dev server proxies /ml to this Node server (port 8080),
+//             and THIS route forwards to the Python FastAPI on port 8001.
+//
+// RENDER:     Set VITE_ML_SERVICE_URL=https://wealth-ai-ml.onrender.com
+//             so the browser calls the ML service directly (no proxy needed).
+//             But if VITE_ML_SERVICE_URL is NOT set on Render, this proxy
+//             also works as a fallback — though cross-service latency applies.
+//
+// ML service local port: 8001 (start with: uvicorn app.main:app --port 8001)
+// ------------------------------------------------------------
+const ML_UPSTREAM = process.env.ML_SERVICE_INTERNAL_URL || 'http://localhost:8001';
+
+app.all('/ml/*splat', async (req, res) => {
+  const targetPath = req.path.replace(/^\/ml/, '') || '/';
+  const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  const upstreamUrl = `${ML_UPSTREAM}${targetPath}${qs}`;
+  try {
+    const opts = {
+      method: req.method,
+      headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(35000),
+    };
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      opts.body = JSON.stringify(req.body);
+    }
+    const upstream = await fetch(upstreamUrl, opts);
+    const text = await upstream.text();
+    res.status(upstream.status).type('application/json').send(text || '{}');
+  } catch (e) {
+    res.status(502).json({ error: `ML service unreachable: ${e?.message || e}` });
+  }
+});
+
 // Static frontend (built by `vite build` → dist/)
 // ------------------------------------------------------------
 const distDir = path.resolve(__dirname, '..', 'dist');

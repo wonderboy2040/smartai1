@@ -1,4 +1,5 @@
 services:
+  # ── Main app: React frontend + Node API proxy ──────────────────────────────
   - type: web
     name: wealth-ai-pro
     runtime: node
@@ -9,6 +10,8 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+
+      # ── AI provider keys (set values in Render dashboard) ──────────────────
       - key: GROQ_API_KEY
         sync: false
       - key: GEMINI_API_KEY
@@ -25,11 +28,53 @@ services:
         sync: false
       - key: TAVILY_API_KEY
         sync: false
+
+      # ── Telegram alerts ────────────────────────────────────────────────────
+      - key: TG_TOKEN
+        sync: false
+      - key: TG_CHAT_ID
+        sync: false
+
+      # ── Google Apps Script portfolio sync ─────────────────────────────────
       - key: API_URL
         sync: false
+
+      # ── US real-time prices (Finnhub WebSocket, tick-by-tick) ─────────────
+      # Free key: https://finnhub.io/register → Dashboard → API key
+      - key: FINNHUB_API_KEY
+        sync: false
+
+      # ── India real-time prices (AngelOne SmartAPI, NSE exchange feed) ──────
+      # Without these 5 vars the app falls back to Groww → Yahoo (still works)
+      # Generate at: https://smartapi.angelbroking.com → Add App
+      - key: SMARTAPI_KEY
+        sync: false
+      - key: SMARTAPI_CLIENT_CODE
+        sync: false
+      - key: SMARTAPI_MPIN
+        sync: false
+      - key: SMARTAPI_TOTP_SECRET
+        sync: false
+      # Your static IP registered with AngelOne (required since Apr 1 2026)
+      - key: SMARTAPI_PUBLIC_IP
+        sync: false
+
+      # ── ML service URL ─────────────────────────────────────────────────────
+      # Set this to your wealth-ai-ml service URL after it deploys, e.g.:
+      # VITE_ML_SERVICE_URL=https://wealth-ai-ml.onrender.com
+      # If NOT set, the Node server proxies /ml/* to Python locally (free tier
+      # can't run both services together, so always set this on Render).
       - key: VITE_ML_SERVICE_URL
         sync: false
 
+      # ── Internal ML URL (used by Node /ml proxy when both run locally) ─────
+      # Leave blank on Render; only needed for local docker-compose setups.
+      - key: ML_SERVICE_INTERNAL_URL
+        sync: false
+
+  # ── ML service: Python FastAPI (LightGBM + HMM + LLM router) ──────────────
+  # Deploy THIS service first, then paste its URL into VITE_ML_SERVICE_URL above.
+  # After first deploy: call POST /train to build models (takes ~5-10 min).
   - type: web
     name: wealth-ai-ml
     runtime: python
@@ -41,6 +86,7 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11"
+      # AI keys for the LLM router inside the ML service
       - key: GROQ_API_KEY
         sync: false
       - key: GEMINI_API_KEY

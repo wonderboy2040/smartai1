@@ -1,25 +1,36 @@
-// ============================================================
 // cryptoStream — CoinDCX live INR crypto feed (server-side, pushed to SSE)
-// ------------------------------------------------------------
-// Binance's websocket is geo-blocked (HTTP 451) from most cloud datacenters,
-// and USD→INR conversion would mismatch the INR prices Indian users actually
-// see. CoinDCX's public ticker IS reachable server-side and is INR-native, so
-// we poll it fast (2s) and push every holding into the central live feed as
-// IN_<symbol>. The /api/stream SSE then pushes these to the browser in real
-// time — unified with the NSE/US streams.
-// ============================================================
+// Polls CoinDCX every 5s ONLY while at least one SSE client is connected.
+// When no clients → timer pauses → server goes idle → Render free tier happy.
 import { setTick } from './liveFeed.js';
 
 const DEFAULT_CRYPTOS = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'];
-const POLL_MS = 2000;
+const POLL_MS = 5000; // 5s — sufficient for crypto, saves CPU vs 2s
 
 const _subscribed = new Set();
 let _timer = null;
+let _activeClients = 0;
 
 export function cryptoStreamEnabled() { return true; }
 
+// Call when an SSE client connects / disconnects
+export function cryptoClientUp() { _activeClients++; _startIfNeeded(); }
+export function cryptoClientDown() { _activeClients = Math.max(0, _activeClients - 1); _stopIfIdle(); }
+
+function _startIfNeeded() {
+  if (_timer || _subscribed.size === 0) return;
+  pollOnce();
+  _timer = setInterval(pollOnce, POLL_MS);
+  if (_timer.unref) _timer.unref();
+}
+
+function _stopIfIdle() {
+  if (_activeClients > 0 || !_timer) return;
+  clearInterval(_timer);
+  _timer = null;
+}
+
 async function pollOnce() {
-  if (_subscribed.size === 0) return;
+  if (_subscribed.size === 0 || _activeClients === 0) return;
   try {
     const r = await fetch(`https://api.coindcx.com/exchange/ticker?t=${Date.now()}`, {
       signal: AbortSignal.timeout(4000),
@@ -52,9 +63,5 @@ export function ensureCryptoSubscribed(symbols) {
     const base = String(s).trim().toUpperCase();
     if (base) _subscribed.add(base);
   }
-  if (!_timer) {
-    pollOnce();
-    _timer = setInterval(pollOnce, POLL_MS);
-    if (_timer.unref) _timer.unref();
-  }
+  // Don't start timer here — only start when a client connects via cryptoClientUp()
 }

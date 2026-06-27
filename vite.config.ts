@@ -66,6 +66,12 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
+      // /ml/* → Node server (port 8080) which then forwards to Python ML service.
+      // This makes `npm run dev` work without setting VITE_ML_SERVICE_URL.
+      '/ml': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
     },
   },
   preview: {
