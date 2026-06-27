@@ -751,7 +751,6 @@ app.post('/api/ml/analyze', (req, res) => {
 
 // Market Intelligence — Snapshot of market regime, top picks, risk
 // ------------------------------------------------------------
-const { getRegime } = require('./mlEngine');
 const marketIntelligence = (() => {
   // Simple cache so we don't re-analyze every request
   let cache = { data: null, ts: 0 };
