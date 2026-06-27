@@ -2,6 +2,7 @@ import { PriceData, Position } from '../types';
 import { EXACT_TICKER_MAP, guessMarket, API_URL as VITE_API_URL, DEFAULT_USD_INR, isCryptoSymbol } from './constants';
 
 // Runtime API_URL — tries server config first, then VITE build-time env var
+// Used ONLY for Google Apps Script cloud sync, NOT for backend /api/* calls.
 let _runtimeApiUrl: string | null | undefined = undefined;
 async function getApiUrl(): Promise<string> {
   if (_runtimeApiUrl !== undefined) return _runtimeApiUrl || VITE_API_URL;
@@ -17,7 +18,8 @@ async function getApiUrl(): Promise<string> {
 }
 import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen } from './telegram';
 
-// Proxy base for server API calls (same-origin on Render, or custom via VITE_API_PROXY)
+// Proxy base for backend server API calls (same-origin on Render/Vite proxy,
+// or custom via VITE_API_PROXY for cross-origin setups).
 const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
 /**
@@ -215,11 +217,10 @@ export async function batchFetchIndianPrices(
   const cleanSyms = Object.keys(cleanToKey);
   if (cleanSyms.length === 0) return;
 
-  const apiUrl = await getApiUrl();
   const realtimeReq = (async (): Promise<Record<string, PriceData>> => {
     const out: Record<string, PriceData> = {};
     try {
-      const url = `${apiUrl}/api/quote?market=IN&symbols=${encodeURIComponent(cleanSyms.join(','))}&t=${Date.now()}`;
+      const url = `${PROXY_BASE}/api/quote?market=IN&symbols=${encodeURIComponent(cleanSyms.join(','))}&t=${Date.now()}`;
       const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
       if (!res.ok) return out;
       const json = await res.json();
@@ -372,11 +373,10 @@ export async function batchFetchUSPrices(
   if (cleanSyms.length === 0) return;
 
   // Fire both requests in parallel: real-time quotes + delayed-but-fine indicators.
-  const apiUrl = await getApiUrl();
   const realtimeReq = (async (): Promise<Record<string, PriceData>> => {
     const out: Record<string, PriceData> = {};
     try {
-      const url = `${apiUrl}/api/quote?market=US&symbols=${encodeURIComponent(cleanSyms.join(','))}&t=${Date.now()}`;
+      const url = `${PROXY_BASE}/api/quote?market=US&symbols=${encodeURIComponent(cleanSyms.join(','))}&t=${Date.now()}`;
       const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
       if (!res.ok) return out;
       const json = await res.json();
@@ -706,7 +706,6 @@ export async function batchFetchPrices(
 
   const allInSyms = [...new Set(inCleanSyms)];
   const allUsSyms = [...new Set(usCleanSyms)];
-  const apiUrl = await getApiUrl();
 
   // 1) REAL-TIME PRICES from server /api/quote (never delayed — Yahoofinance/Finnhub/Groww)
   const realtimeReq = (async (): Promise<Record<string, PriceData>> => {
@@ -716,7 +715,7 @@ export async function batchFetchPrices(
     if (allInSyms.length > 0) {
       tasks.push((async () => {
         try {
-          const url = `${apiUrl}/api/quote?market=IN&symbols=${encodeURIComponent(allInSyms.join(','))}&t=${Date.now()}`;
+          const url = `${PROXY_BASE}/api/quote?market=IN&symbols=${encodeURIComponent(allInSyms.join(','))}&t=${Date.now()}`;
           const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
           if (!res.ok) return;
           const json = await res.json();
@@ -740,7 +739,7 @@ export async function batchFetchPrices(
     if (allUsSyms.length > 0) {
       tasks.push((async () => {
         try {
-          const url = `${apiUrl}/api/quote?market=US&symbols=${encodeURIComponent(allUsSyms.join(','))}&t=${Date.now()}`;
+          const url = `${PROXY_BASE}/api/quote?market=US&symbols=${encodeURIComponent(allUsSyms.join(','))}&t=${Date.now()}`;
           const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
           if (!res.ok) return;
           const json = await res.json();

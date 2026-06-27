@@ -1,5 +1,4 @@
 import { PriceData } from '../types';
-import { API_URL as VITE_API_URL } from './constants';
 
 // ============================================================
 // liveStream — browser EventSource client for /api/stream (SSE)
@@ -10,20 +9,7 @@ import { API_URL as VITE_API_URL } from './constants';
 // auto-reconnects, and the existing pollers still run as a safety net.
 // ============================================================
 
-let _apiBase: string | null = null;
-async function resolveBase(): Promise<string> {
-  if (_apiBase !== null) return _apiBase;
-  let base = VITE_API_URL || '';
-  try {
-    const res = await fetch('/api/config', { signal: AbortSignal.timeout(3000) });
-    if (res.ok) {
-      const cfg = await res.json();
-      if (cfg.apiUrl) base = cfg.apiUrl;
-    }
-  } catch { /* same-origin */ }
-  _apiBase = base;
-  return base;
-}
+const SSE_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
 export interface LiveStreamOpts {
   inSymbols: string[];
@@ -49,7 +35,6 @@ export function connectLiveStream(opts: LiveStreamOpts): () => void {
   let closed = false;
 
   (async () => {
-    const base = await resolveBase();
     if (closed) return;
     const params = new URLSearchParams();
     if (opts.inSymbols.length) params.set('in', opts.inSymbols.join(','));
@@ -58,7 +43,7 @@ export function connectLiveStream(opts: LiveStreamOpts): () => void {
     if (![...params.keys()].length) return;
 
     try {
-      es = new EventSource(`${base}/api/stream?${params.toString()}`);
+      es = new EventSource(`${SSE_BASE}/api/stream?${params.toString()}`);
     } catch {
       return; // EventSource unsupported → pollers keep the app live
     }

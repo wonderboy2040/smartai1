@@ -1,7 +1,3 @@
-# Render Blueprint — deploy the frontend + AI proxy as ONE Web Service.
-# IMPORTANT: this must be a "Web Service" (runs Node), NOT a "Static Site".
-# Set the API keys below in the Render dashboard (Environment) — they are
-# kept server-side and never shipped to the browser.
 services:
   - type: web
     name: wealth-ai-pro
@@ -12,8 +8,7 @@ services:
     healthCheckPath: /api/ai-status
     envVars:
       - key: NODE_VERSION
-        value: "20"
-      # ---- AI provider keys (set values in the Render dashboard) ----
+        value: "22"
       - key: GROQ_API_KEY
         sync: false
       - key: GEMINI_API_KEY
@@ -30,16 +25,11 @@ services:
         sync: false
       - key: TAVILY_API_KEY
         sync: false
-      # Optional: Google Apps Script portfolio-sync URL
       - key: API_URL
         sync: false
-      # ML service URL — set this after the wealth-ai-ml service deploys below
       - key: VITE_ML_SERVICE_URL
         sync: false
 
-  # ---- ML Service (Python FastAPI) ----------------------------------------
-  # Hosts /predict, /signals, /train, /regime, /analyze, /health endpoints.
-  # Deploy wealth-ai-ml FIRST, then paste its URL into VITE_ML_SERVICE_URL above.
   - type: web
     name: wealth-ai-ml
     runtime: python

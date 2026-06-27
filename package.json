@@ -7,8 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "node server/index.js",
-    "serve": "node server/index.js",
+    "start": "node --env-file=.env server/index.js",
+    "serve": "node --env-file=.env server/index.js",
     "start:telegram": "node telegram-bot/bot.mjs",
     "test": "vitest run",
     "test:watch": "vitest"

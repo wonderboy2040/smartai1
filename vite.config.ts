@@ -56,10 +56,16 @@ export default defineConfig({
     include: ['react', 'react-dom', 'motion/react', 'lucide-react'],
   },
   server: {
-    // Faster HMR in dev
     hmr: { overlay: true },
     warmup: {
       clientFiles: ['./src/App.tsx', './src/main.tsx'],
+    },
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        ws: true,
+      },
     },
   },
   preview: {
