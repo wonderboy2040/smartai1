@@ -651,21 +651,4 @@ app.get(/^(?!\/api\/).*/, (_req, res) => {
 app.listen(PORT, () => {
   const ready = Object.entries(KEYS).filter(([, v]) => v).map(([k]) => k);
   console.log(`[wealth-ai] server on :${PORT} — providers ready: ${ready.join(', ') || 'NONE (set API keys!)'}`);
-
-  // --- Keep-alive (free-tier anti-spin-down) ---------------------------
-  // Render's free Web Service plan spins the instance down after ~15 min
-  // with no inbound traffic. On cold start the browser fires all asset
-  // requests at once and some 404 before the instance is up, which breaks
-  // the SPA (blank page). Self-pinging the public URL keeps the instance
-  // awake so it never cold-starts. Render injects RENDER_EXTERNAL_URL
-  // automatically; set KEEP_ALIVE=false to disable.
-  const selfUrl = process.env.RENDER_EXTERNAL_URL;
-  if (selfUrl && process.env.KEEP_ALIVE !== 'false') {
-    const PING_MS = 12 * 60 * 1000; // every 12 min (< Render's 15 min idle)
-    setInterval(() => {
-      fetch(`${selfUrl}/api/ai-status`, { signal: AbortSignal.timeout(8000) })
-        .catch(() => { /* ignore — best-effort keep-alive */ });
-    }, PING_MS).unref();
-    console.log(`[wealth-ai] keep-alive enabled → ${selfUrl}/api/ai-status every 12m`);
-  }
 });

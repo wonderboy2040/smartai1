@@ -46,12 +46,19 @@ class TrainRequest(BaseModel):
 
 @app.get("/health")
 async def health():
+    from app.llm_router import get_provider_status
+    providers = get_provider_status()
+    active = [p for p in providers if p["available"]]
     return {
         "status": "ok",
         "models_loaded": {
             "signal": SIGNAL_MODEL_PATH.exists(),
             "hmm": HMM_MODEL_PATH.exists(),
         },
+        "providers": providers,
+        "active_count": len(active),
+        "quant_brain": "always_online",
+        "version": "2.0.0",
     }
 
 
@@ -367,19 +374,6 @@ import hashlib as _hashlib
 
 _orch_cache = {}
 ORCH_CACHE_TTL = 60
-
-
-@app.get("/health")
-async def health():
-    providers = get_provider_status()
-    active = [p for p in providers if p["available"]]
-    return {
-        "status": "ok",
-        "providers": providers,
-        "active_count": len(active),
-        "quant_brain": "always_online",
-        "version": "2.0.0",
-    }
 
 
 @app.post("/analyze")
