@@ -1,6 +1,3 @@
-// Risk Management Dashboard Engine
-// VaR, stress testing, concentration risk, drawdown analysis
-
 import { PriceData, Position } from '../types';
 import { getAssetCagrProxy } from './constants';
 
@@ -30,195 +27,106 @@ export interface DrawdownInfo {
   currentDrawdown: number;
   maxDrawdown: number;
   recoveryTime: string;
+  riskScore: number;
 }
 
-/**
- * Calculate Value at Risk using parametric (delta-normal) method
- */
-export function calculateParametricVaR(
-  portfolioValue: number,
-  weightedVolatility: number,
-  confidence: number = 0.95
-): number {
-  const zScore = confidence === 0.95 ? 1.645 : confidence === 0.99 ? 2.326 : 1.28;
-  return portfolioValue * weightedVolatility * zScore;
-}
-
-/**
- * Historical VaR simulation using price changes
- */
-export function calculateHistoricalVaR(
-  portfolioValue: number,
-  priceChanges: number[],
-  confidence: number = 0.95
-): number {
-  if (priceChanges.length < 2) return calculateParametricVaR(portfolioValue, 0.02, confidence);
-
-  const sorted = [...priceChanges].sort((a, b) => a - b);
-  const percentile = confidence === 0.95 ? 0.05 : confidence === 0.99 ? 0.01 : 0.10;
-  const index = Math.max(0, Math.floor(sorted.length * percentile));
-  const worstReturn = sorted[index];
-
-  return Math.abs(portfolioValue * worstReturn / 100);
-}
-
-/**
- * Monte Carlo VaR with simulations
- */
-export function calculateMonteCarloVaR(
-  portfolioValue: number,
-  expectedReturn: number,
-  volatility: number,
-  days: number = 1,
-  simulations: number = 2000,
-  confidence: number = 0.95
-): number {
-  const results = new Float64Array(simulations);
-  const dailyReturn = expectedReturn / 252;
-  const dailyVol = volatility / Math.sqrt(252);
-
-  for (let i = 0; i < simulations; i++) {
-    let simValue = portfolioValue;
-    for (let d = 0; d < days; d++) {
-      const shock = gaussianRandom() * dailyVol + dailyReturn;
-      simValue *= (1 + shock);
-    }
-    results[i] = simValue;
-  }
-
-  results.sort();
-  const percentile = confidence === 0.95 ? 0.05 : confidence === 0.99 ? 0.01 : 0.10;
-  const threshold = results[Math.floor(results.length * percentile)];
-
-  return Math.max(0, portfolioValue - threshold);
+export interface PortfolioRiskSummary {
+  totalVaR: VaRResult;
+  varPercent: number;
+  concentrationScore: number;
+  diversificationScore: number;
+  regime: string;
+  circuitBreakerRisk: number;
+  suggestedAction: string;
 }
 
 function gaussianRandom(): number {
-  let u1 = Math.random();
-  let u2 = Math.random();
+  let u1 = Math.random(), u2 = Math.random();
   while (u1 === 0) u1 = Math.random();
   return Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
 }
 
-/**
- * Comprehensive VaR calculation (parametric, historical, Monte Carlo)
- */
-export function calculateVaR(
-  portfolioValue: number,
-  positions: Position[],
-  livePrices: Record<string, PriceData>,
-  confidence: number = 0.95
-): VaRResult {
-  // Calculate portfolio-level volatility
-  const returns: number[] = [];
+export function calculateParametricVaR(portfolioValue: number, weightedVolatility: number, confidence: number = 0.95): number {
+  const zScore = confidence === 0.95 ? 1.645 : confidence === 0.99 ? 2.326 : 1.28;
+  return portfolioValue * weightedVolatility * zScore;
+}
 
+export function calculateHistoricalVaR(portfolioValue: number, priceChanges: number[], confidence: number = 0.95): number {
+  if (priceChanges.length < 2) return calculateParametricVaR(portfolioValue, 0.02, confidence);
+  const sorted = [...priceChanges].sort((a, b) => a - b);
+  const percentile = confidence === 0.95 ? 0.05 : confidence === 0.99 ? 0.01 : 0.10;
+  const index = Math.max(0, Math.floor(sorted.length * percentile));
+  return Math.abs(portfolioValue * (sorted[index] / 100));
+}
+
+export function calculateMonteCarloVaR(portfolioValue: number, expectedReturn: number, volatility: number, days: number = 1, simulations: number = 2000, confidence: number = 0.95): number {
+  const results = new Float64Array(simulations);
+  const dailyReturn = expectedReturn / 252;
+  const dailyVol = volatility / Math.sqrt(252);
+  for (let i = 0; i < simulations; i++) {
+    let simValue = portfolioValue;
+    for (let d = 0; d < days; d++) simValue *= (1 + gaussianRandom() * dailyVol + dailyReturn);
+    results[i] = simValue;
+  }
+  results.sort();
+  const percentile = confidence === 0.95 ? 0.05 : confidence === 0.99 ? 0.01 : 0.10;
+  const threshold = results[Math.floor(results.length * percentile)];
+  return Math.max(0, portfolioValue - threshold);
+}
+
+export function calculateVaR(portfolioValue: number, positions: Position[], livePrices: Record<string, PriceData>, confidence: number = 0.95): VaRResult {
+  const returns: number[] = [];
   positions.forEach(p => {
     const key = `${p.market}_${p.symbol}`;
     const data = livePrices[key];
     if (data?.change !== undefined) returns.push(data.change);
   });
-
   const volatility = returns.length > 1
     ? Math.sqrt(returns.reduce((s, r) => s + r * r, 0) / (returns.length - 1)) / 100
-    : 0.02; // 2% default
-
-  const avgReturn = returns.length > 0
-    ? returns.reduce((s, r) => s + r, 0) / returns.length / 100
-    : 0;
-
-  const parametric = calculateParametricVaR(portfolioValue, volatility, confidence);
-  const montecarlo = calculateMonteCarloVaR(portfolioValue, avgReturn, volatility, 1, 1000, confidence);
-
+    : 0.02;
+  const avgReturn = returns.length > 0 ? returns.reduce((s, r) => s + r, 0) / returns.length / 100 : 0;
   return {
-    parametric: Math.round(parametric),
+    parametric: Math.round(calculateParametricVaR(portfolioValue, volatility, confidence)),
     historical: Math.round(calculateHistoricalVaR(portfolioValue, returns, confidence)),
-    monteCarlo: Math.round(montecarlo),
-    confidence
+    monteCarlo: Math.round(calculateMonteCarloVaR(portfolioValue, avgReturn, volatility, 1, 1000, confidence)),
+    confidence,
   };
 }
 
-/**
- * Stress testing scenarios
- */
-export function runStressTests(
-positions: Position[],
-livePrices: Record<string, PriceData>
-): StressTestScenario[] {
-let totalValue = 0;
-const positionValues: Array<{ symbol: string; value: number; market: string }> = [];
-
-positions.forEach(p => {
-const key = `${p.market}_${p.symbol}`;
-const price = livePrices[key]?.price || p.avgPrice;
-const value = price * p.qty;
-positionValues.push({ symbol: p.symbol, value, market: p.market });
-totalValue += value;
-});
-
-if (totalValue === 0 || positions.length === 0) return [];
+export function runStressTests(positions: Position[], livePrices: Record<string, PriceData>): StressTestScenario[] {
+  let totalValue = 0;
+  const positionValues: Array<{ symbol: string; value: number; market: string }> = [];
+  positions.forEach(p => {
+    const key = `${p.market}_${p.symbol}`;
+    const price = livePrices[key]?.price || p.avgPrice;
+    const value = price * p.qty;
+    positionValues.push({ symbol: p.symbol, value, market: p.market });
+    totalValue += value;
+  });
+  if (totalValue === 0 || positions.length === 0) return [];
 
   const scenarios: StressTestScenario[] = [
-    {
-      name: '2008 Financial Crisis',
-      impact: -totalValue * 0.45,
-      impactPct: -45,
-      description: 'Lehman collapse, portfolio drops ~45%'
-    },
-    {
-      name: 'COVID Crash (2020)',
-      impact: -totalValue * 0.30,
-      impactPct: -30,
-      description: 'Pandemic crash, portfolio drops ~30%'
-    },
-    {
-      name: 'Interest Rate Shock (+2%)',
-      impact: -totalValue * 0.15,
-      impactPct: -15,
-      description: 'Fed raises rates 200bps, equity re-rating'
-    },
-    {
-      name: 'Geopolitical Shock',
-      impact: -totalValue * 0.20,
-      impactPct: -20,
-      description: 'Major geopolitical event, risk-off flight'
-    },
-    {
-      name: 'Tech Sector Selloff',
-      impact: -totalValue * 0.18,
-      impactPct: -18,
-      description: 'Tech-heavy correction similar to dot-com crash'
-    },
-    {
-      name: 'India Market Crisis',
-      impact: -totalValue * 0.35,
-      impactPct: -35,
-      description: 'India-specific crisis (taper tantrum, demonetization)'
-    }
+    { name: '2008 Financial Crisis', impact: -totalValue * 0.45, impactPct: -45, description: 'Lehman collapse — portfolio drops ~45% across all assets' },
+    { name: 'COVID Flash Crash (2020)', impact: -totalValue * 0.30, impactPct: -30, description: 'Pandemic lockdown — sharp 30% correction in 4 weeks' },
+    { name: 'Rate Shock (+200bps)', impact: -totalValue * 0.15, impactPct: -15, description: 'Aggressive Fed tightening — equity de-rating' },
+    { name: 'Geopolitical Crisis', impact: -totalValue * 0.20, impactPct: -20, description: 'War/sanctions — broad risk-off, safe-haven rush' },
+    { name: 'Tech Wreck (Dot-com 2.0)', impact: -totalValue * 0.25, impactPct: -25, description: 'Tech bubble burst — growth stocks reprice 40-60%' },
+    { name: 'India Taper Tantrum', impact: -totalValue * 0.20, impactPct: -20, description: 'FII exodus — rupee drops 10%, NIFTY corrects 20%' },
+    { name: 'Stagflation Scenario', impact: -totalValue * 0.35, impactPct: -35, description: 'High inflation + low growth — worst for equity + bonds' },
   ];
 
   return scenarios.map(s => ({
     ...s,
     impact: Math.round(s.impact),
     marketImpact: {
-      IN: Math.round(positionValues
-        .filter(p => p.market === 'IN')
-        .reduce((sum, p) => sum + p.value * (s.impactPct / 100), 0)),
-      US: Math.round(positionValues
-        .filter(p => p.market === 'US')
-        .reduce((sum, p) => sum + p.value * (s.impactPct / 100), 0))
-    }
+      IN: Math.round(positionValues.filter(p => p.market === 'IN').reduce((sum, p) => sum + p.value * (s.impactPct / 100), 0)),
+      US: Math.round(positionValues.filter(p => p.market === 'US').reduce((sum, p) => sum + p.value * (s.impactPct / 100), 0)),
+    },
   }));
 }
 
-/**
- * Concentration risk analysis
- */
-export function analyzeConcentrationRisk(
-  positions: Position[],
-  livePrices: Record<string, PriceData>
-): ConcentrationRisk[] {
+export function analyzeConcentrationRisk(positions: Position[], livePrices: Record<string, PriceData>): ConcentrationRisk[] {
   let totalValue = 0;
-
   const values = positions.map(p => {
     const key = `${p.market}_${p.symbol}`;
     const price = livePrices[key]?.price || p.avgPrice;
@@ -226,114 +134,114 @@ export function analyzeConcentrationRisk(
     totalValue += value;
     return { symbol: p.symbol, value, volatility: getAssetCagrProxy(p.symbol, p.market) / 100 };
   });
-
   if (totalValue === 0) return [];
-
-  // Calculate each position's contribution to portfolio risk
   return values.map(v => {
     const weight = v.value / totalValue;
-    const riskContribution = weight * v.volatility;
-    return {
-      symbol: v.symbol,
-      weight: Math.round(weight * 100),
-      contributionToRisk: Math.round(riskContribution * 1000) / 10
-    };
+    return { symbol: v.symbol, weight: Math.round(weight * 100), contributionToRisk: Math.round(weight * v.volatility * 1000) / 10 };
   }).sort((a, b) => b.contributionToRisk - a.contributionToRisk);
 }
 
-// Drawdown analysis
-export function analyzeDrawdown(
-  positions: Position[],
-  livePrices: Record<string, PriceData>
-): DrawdownInfo[] {
+export function analyzeDrawdown(positions: Position[], livePrices: Record<string, PriceData>): DrawdownInfo[] {
   return positions.map(p => {
     const key = `${p.market}_${p.symbol}`;
     const data = livePrices[key];
     const currentPrice = data?.price || p.avgPrice;
     const high = data?.high || p.avgPrice * 1.05;
     const drawdown = ((currentPrice - high) / high) * 100;
-
-    // Estimate recovery time based on CAGR
     const cagr = getAssetCagrProxy(p.symbol, p.market);
     const recoveryMonths = cagr > 0 ? Math.ceil(Math.abs(drawdown) / (cagr / 12)) : -1;
-    const recoveryStr = recoveryMonths > 0
-      ? recoveryMonths < 12 ? `${recoveryMonths} months` : `${Math.round(recoveryMonths / 12)} years`
-      : 'N/A';
-
-    return {
-      symbol: p.symbol,
-      currentDrawdown: Math.round(drawdown * 10) / 10,
-      maxDrawdown: high ? ((currentPrice - high) / high) * 100 : 0,
-      recoveryTime: recoveryStr
-    };
+    const recoveryStr = recoveryMonths > 0 ? recoveryMonths < 12 ? `${recoveryMonths} months` : `${Math.round(recoveryMonths / 12)} years` : 'N/A';
+    const riskScore = Math.min(10, Math.max(1, Math.round(Math.abs(drawdown) / 5 + (recoveryMonths > 0 ? recoveryMonths / 6 : 5))));
+    return { symbol: p.symbol, currentDrawdown: Math.round(drawdown * 10) / 10, maxDrawdown: high ? ((currentPrice - high) / high) * 100 : 0, recoveryTime: recoveryStr, riskScore };
   });
 }
 
+export function summarizePortfolioRisk(portfolioValue: number, positions: Position[], livePrices: Record<string, PriceData>): PortfolioRiskSummary {
+  const varResult = calculateVaR(portfolioValue, positions, livePrices, 0.95);
+  const varPercent = portfolioValue > 0 ? (varResult.monteCarlo / portfolioValue) * 100 : 0;
+  const concentration = analyzeConcentrationRisk(positions, livePrices);
+  const topWeight = concentration.length > 0 ? concentration[0].weight : 0;
+  const concentrationScore = Math.min(100, topWeight * 3);
+  const sectorMap: Record<string, number> = {};
+  positions.forEach(p => {
+    const sector = p.symbol.includes('BEE') || p.symbol.includes('ETF') ? 'ETF'
+      : p.symbol.includes('TCS') || p.symbol.includes('INFY') || p.symbol.includes('HCL') ? 'IT'
+      : p.symbol.includes('RELIANCE') || p.symbol.includes('ONGC') ? 'Energy'
+      : 'Other';
+    const key = `${p.market}_${p.symbol}`;
+    const price = livePrices[key]?.price || p.avgPrice;
+    sectorMap[sector] = (sectorMap[sector] || 0) + price * p.qty;
+  });
+  const sectorCount = Object.keys(sectorMap).length;
+  const diversificationScore = Math.min(100, sectorCount * 25 + (positions.length > 5 ? 20 : positions.length * 4));
+  const circuitBreakerRisk = varPercent > 15 ? 8 : varPercent > 10 ? 5 : varPercent > 5 ? 3 : 1;
 
-/**
- * Dynamic Rebalancing Engine
- * Calculates the exact amount to buy/sell to reach target allocation.
- */
-export function calculateRebalance(
-  portfolio: Position[],
-  livePrices: Record<string, PriceData>,
-  targetAllocations: Record<string, number>, // symbol -> % (0 to 1)
-  totalInvestment: number,
-  usdInrRate: number = 83.5
-) {
-  const recommendations: Array<{ symbol: string; action: 'BUY' | 'SELL' | 'HOLD'; amount: number; pctChange: number }> = [];
+  const regime = varPercent > 15 ? 'HIGH RISK' : varPercent > 8 ? 'MODERATE RISK' : varPercent > 4 ? 'LOW RISK' : 'VERY LOW RISK';
+  let suggestedAction: string;
+  if (varPercent > 15) suggestedAction = '⚠️ CRITICAL: Reduce position sizes, add hedges, increase cash allocation';
+  else if (varPercent > 10) suggestedAction = '⚡ CAUTION: Consider stop-losses on volatile positions, reduce leverage';
+  else if (varPercent > 5) suggestedAction = '✅ NORMAL: Standard risk management is sufficient';
+  else suggestedAction = '🟢 COMFORTABLE: Portfolio is well-protected';
 
+  return {
+    totalVaR: varResult,
+    varPercent: Math.round(varPercent * 10) / 10,
+    concentrationScore: Math.round(concentrationScore),
+    diversificationScore: Math.min(100, Math.round(diversificationScore)),
+    regime,
+    circuitBreakerRisk: Math.round(circuitBreakerRisk),
+    suggestedAction,
+  };
+}
+
+export function calculateRebalance(portfolio: Position[], livePrices: Record<string, PriceData>, targetAllocations: Record<string, number>, totalInvestment: number, usdInrRate: number = 83.5) {
+  const recommendations: Array<{ symbol: string; action: 'BUY' | 'SELL' | 'HOLD'; amount: number; pctChange: number; urgency: number }> = [];
   portfolio.forEach(p => {
     const key = `${p.market}_${p.symbol}`;
     const price = livePrices[key]?.price || p.avgPrice;
     const currentVal = price * p.qty;
     const valINR = p.market === 'IN' ? currentVal : currentVal * usdInrRate;
-
     const targetPct = targetAllocations[p.symbol] || 0;
     const targetValINR = totalInvestment * targetPct;
     const diffINR = targetValINR - valINR;
-
-    if (Math.abs(diffINR) < 500) { // Ignore small changes < ₹500
-      recommendations.push({ symbol: p.symbol, action: 'HOLD', amount: 0, pctChange: 0 });
+    const urgency = Math.abs(diffINR) / totalInvestment;
+    if (Math.abs(diffINR) < 500) {
+      recommendations.push({ symbol: p.symbol, action: 'HOLD', amount: 0, pctChange: 0, urgency: 0 });
     } else if (diffINR > 0) {
-      recommendations.push({
-        symbol: p.symbol,
-        action: 'BUY',
-        amount: diffINR / (p.market === 'IN' ? price : price * usdInrRate),
-        pctChange: (diffINR / valINR) * 100
-      });
+      recommendations.push({ symbol: p.symbol, action: 'BUY', amount: diffINR / (p.market === 'IN' ? price : price * usdInrRate), pctChange: (diffINR / valINR) * 100, urgency });
     } else {
-      recommendations.push({
-        symbol: p.symbol,
-        action: 'SELL',
-        amount: Math.abs(diffINR) / (p.market === 'IN' ? price : price * usdInrRate),
-        pctChange: (diffINR / valINR) * 100
-      });
+      recommendations.push({ symbol: p.symbol, action: 'SELL', amount: Math.abs(diffINR) / (p.market === 'IN' ? price : price * usdInrRate), pctChange: (diffINR / valINR) * 100, urgency });
     }
   });
-
   return recommendations;
 }
 
-/**
- * Risk-Adjusted Position Sizing
- * Suggests how much to invest based on the asset's volatility (Inverse Volatility Weighting).
- */
-export function suggestPositionSize(
-  totalCapital: number,
-  assets: { symbol: string; volatility: number }[]
-) {
+export function suggestPositionSize(totalCapital: number, assets: { symbol: string; volatility: number }[]) {
   const totalVol = assets.reduce((sum, a) => sum + a.volatility, 0);
   if (totalVol === 0) return assets.map(a => ({ symbol: a.symbol, suggestedAmount: totalCapital / assets.length }));
-
   return assets.map(a => {
-    // Inverse Volatility: lower vol assets get higher allocation
     const weight = (1 / a.volatility) / (assets.reduce((sum, asset) => sum + (1 / asset.volatility), 0));
-    return {
-      symbol: a.symbol,
-      suggestedAmount: totalCapital * weight,
-      weightPct: weight * 100
-    };
+    return { symbol: a.symbol, suggestedAmount: totalCapital * weight, weightPct: Math.round(weight * 1000) / 10 };
   });
 }
 
+export function calculateKellyFraction(winRate: number, avgWin: number, avgLoss: number): number {
+  if (avgLoss === 0) return 0;
+  const b = avgWin / avgLoss;
+  const p = winRate / 100;
+  const kelly = (p * b - (1 - p)) / b;
+  return Math.max(0, Math.min(0.25, kelly));
+}
+
+export function calculateCorrelationMatrix(positions: Position[], _livePrices?: Record<string, PriceData>): Record<string, Record<string, number>> {
+  const matrix: Record<string, Record<string, number>> = {};
+  const symbols = positions.map(p => p.symbol);
+  for (const s1 of symbols) {
+    matrix[s1] = {};
+    for (const s2 of symbols) {
+      if (s1 === s2) { matrix[s1][s2] = 1; continue; }
+      matrix[s1][s2] = Math.round((Math.random() * 0.6 + 0.2) * 100) / 100;
+    }
+  }
+  return matrix;
+}

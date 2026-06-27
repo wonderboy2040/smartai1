@@ -49,8 +49,8 @@ export const ScreenerPanel = React.memo(({ portfolio, livePrices }: ScreenerPane
   return (
     <div className="quantum-panel p-4 mb-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-h2 text-on-surface">MULTI-FACTOR SCREENER</h3>
-        <span className="text-[10px] text-slate-500">Quality 40% + Momentum 30% + Value 30%</span>
+        <h3 className="text-sm font-h2 text-on-surface">SUPER SCREENER v3</h3>
+        <span className="text-[10px] text-slate-500">Q35% + M30% + V25% + S10%</span>
       </div>
 
       {/* Filter Tabs */}
@@ -91,7 +91,7 @@ export const ScreenerPanel = React.memo(({ portfolio, livePrices }: ScreenerPane
             </div>
 
             {/* Factor Bars */}
-            <div className="flex-1 grid grid-cols-3 gap-1">
+            <div className="flex-1 grid grid-cols-4 gap-1">
               <div>
                 <div className="flex items-center justify-between text-[8px] mb-0.5">
                   <span className="text-slate-500">Q</span>
@@ -119,6 +119,17 @@ export const ScreenerPanel = React.memo(({ portfolio, livePrices }: ScreenerPane
                   <div className="quantum-progress-fill bg-amber-500" style={{ width: `${r.valueScore}%` }} />
                 </div>
               </div>
+              <div>
+                <div className="flex items-center justify-between text-[8px] mb-0.5">
+                  <span className="text-slate-500">R</span>
+                  <span className={r.riskScore != null ? (r.riskScore > 60 ? 'text-red-400' : r.riskScore > 40 ? 'text-amber-400' : 'text-emerald-400') : 'text-slate-500'}>
+                    {r.riskScore ?? '—'}
+                  </span>
+                </div>
+                <div className="quantum-progress">
+                  <div className="quantum-progress-fill bg-red-500/70" style={{ width: `${r.riskScore || 0}%` }} />
+                </div>
+              </div>
             </div>
 
             {/* Key Metrics */}
@@ -143,8 +154,9 @@ export const ScreenerPanel = React.memo(({ portfolio, livePrices }: ScreenerPane
       {/* Legend */}
       <div className="mt-2 pt-2 border-t border-slate-700/50 flex items-center gap-4 text-[9px] text-slate-500">
         <span><span className="text-purple-400">Q</span> = Quality (CAGR, Drawdown)</span>
-        <span><span className="text-cyan-400">M</span> = Momentum (RSI, SMA, Trend)</span>
+        <span><span className="text-cyan-400">M</span> = Momentum (RSI, SMA, Trend, Volume)</span>
         <span><span className="text-amber-400">V</span> = Value (PEG, Discount)</span>
+        <span><span className="text-red-400">R</span> = Risk Score</span>
       </div>
     </div>
   );

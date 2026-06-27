@@ -1,37 +1,13 @@
 version: '3.9'
 
 services:
-  ml-service:
-    build:
-      context: ./ml-service
-      dockerfile: Dockerfile
-    ports:
-      - "8000:8000"
-    environment:
-      - ML_DATA_DIR=/app/data
-      - ML_MODEL_DIR=/app/models_store
-      - PYTHONUNBUFFERED=1
-    volumes:
-      - ml-data:/app/data
-      - ml-models:/app/models_store
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  frontend:
+  app:
     build:
       context: .
       dockerfile: Dockerfile.frontend
     ports:
       - "3000:80"
     environment:
-      - VITE_ML_SERVICE_URL=http://ml-service:8000
-    depends_on:
-      ml-service:
-        condition: service_healthy
-
-volumes:
-  ml-data:
-  ml-models:
+      - NODE_VERSION=22
+    # Single service: ML runs in-process in Node.js, no Python service needed
+    # Set env vars in Render dashboard or .env file

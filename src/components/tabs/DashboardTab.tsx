@@ -37,6 +37,7 @@ export default React.memo(function DashboardTab() {
   const {
     currentSymbol, currentMarket, currentPrice, currentChange, currentRsi,
     currentData, signalData, sentiment, avgVix,
+    sectorData,
     usdInrRate, portfolio, livePrices, metrics,
     symbolInput, setSymbolInput, isAnalyzing, chartInterval, setChartInterval,
     analyzeSymbol, quickSelect, openAddModal, pushTelegramReport,
@@ -161,6 +162,37 @@ export default React.memo(function DashboardTab() {
           <div className={`text-xs font-bold mt-1 ${metrics.totalPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
             {metrics.plPct >= 0 ? '+' : ''}{metrics.plPct.toFixed(1)}% total
           </div>
+        </div>
+      </div>
+
+      {/* AI Market Intel — Quick regime snapshot */}
+      <div className="quantum-panel rounded-2xl p-3 border border-cyan-500/10 animate-fade-in-up delay-120">
+        <div className="flex items-center gap-3 text-[11px]">
+          <span className="text-slate-500 font-medium">🧠 Market Intel</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-500">VIX:</span>
+            <span className={`font-bold font-mono ${avgVix > 22 ? 'text-red-400' : avgVix > 17 ? 'text-amber-400' : 'text-emerald-400'}`}>{avgVix.toFixed(1)}</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-500">Regime:</span>
+            <span className={`font-bold ${avgVix > 22 ? 'text-red-400' : avgVix > 17 ? 'text-amber-400' : 'text-emerald-400'}`}>
+              {avgVix > 22 ? 'BEARISH' : avgVix > 17 ? 'VOLATILE' : avgVix > 14 ? 'NEUTRAL' : 'BULLISH'}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-slate-500">Advice:</span>
+            <span className="font-bold text-cyan-400">
+              {avgVix > 22 ? '🔒 Cash heavy' : avgVix > 17 ? '⚖️ Hedge active' : '📈 SIP optimal'}
+            </span>
+          </div>
+          {sectorData.length > 0 && (
+            <div className="flex items-center gap-1.5 ml-auto">
+              <span className="text-slate-500">Sector:</span>
+              <span className={`font-bold font-mono ${sectorData[0]?.change >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                {sectorData[0]?.name}: {sectorData[0]?.change >= 0 ? '+' : ''}{sectorData[0]?.change.toFixed(1)}%
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -335,7 +367,7 @@ export default React.memo(function DashboardTab() {
       )}
 
       {/* ML Signal Engine — Calibrated LightGBM + Quantile Targets */}
-      {currentSymbol && <MLSignalPanel symbol={currentSymbol} market={currentMarket || 'IN'} />}
+      {currentSymbol && <MLSignalPanel symbol={currentSymbol} market={currentMarket || 'IN'} price={currentPrice} change={currentChange} />}
 
       {/* Buy-the-Dip Intelligence */}
       <DipIntelligence

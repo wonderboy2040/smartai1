@@ -3048,7 +3048,7 @@ bot.onText(/^\/ml(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
     await safeSend(chatId, report);
   } catch (e) {
     console.error('❌ /ml error:', e.message);
-    await safeSend(chatId, `❌ ML signal error: ${e.message}\n\nMake sure ML service is running (docker-compose up ml-service).`);
+    await safeSend(chatId, `❌ ML signal error: ${e.message}\n\nML engine runs in-process in the main server. Make sure /api/ml/* endpoints are available.`);
   }
 });
 

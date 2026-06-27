@@ -185,7 +185,9 @@ export interface ScreenerResult {
   sma50: number;
   aboveSma200: boolean;
   change: number;
+  volume?: number;
   valueScore: number;
+  riskScore?: number;
   pegRatio: number;
   alphaScore: number;
   signal: 'STRONG_BUY' | 'BUY' | 'HOLD' | 'AVOID';

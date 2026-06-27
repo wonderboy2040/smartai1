@@ -1,5 +1,7 @@
 services:
-  # ── Main app: React frontend + Node API proxy ──────────────────────────────
+  # ── Single service: React frontend + Node API + ML Engine ──
+  # CRITICAL: ML service merged into Node to stay within Render free tier
+  # (750 hrs/month single service, no Python overhead).
   - type: web
     name: wealth-ai-pro
     runtime: node
@@ -40,13 +42,10 @@ services:
         sync: false
 
       # ── US real-time prices (Finnhub WebSocket, tick-by-tick) ─────────────
-      # Free key: https://finnhub.io/register → Dashboard → API key
       - key: FINNHUB_API_KEY
         sync: false
 
       # ── India real-time prices (AngelOne SmartAPI, NSE exchange feed) ──────
-      # Without these 5 vars the app falls back to Groww → Yahoo (still works)
-      # Generate at: https://smartapi.angelbroking.com → Add App
       - key: SMARTAPI_KEY
         sync: false
       - key: SMARTAPI_CLIENT_CODE
@@ -55,43 +54,10 @@ services:
         sync: false
       - key: SMARTAPI_TOTP_SECRET
         sync: false
-      # Your static IP registered with AngelOne (required since Apr 1 2026)
       - key: SMARTAPI_PUBLIC_IP
         sync: false
 
-      # ── ML service URL ─────────────────────────────────────────────────────
-      # Set this to your wealth-ai-ml service URL after it deploys, e.g.:
-      # VITE_ML_SERVICE_URL=https://wealth-ai-ml.onrender.com
-      # If NOT set, the Node server proxies /ml/* to Python locally (free tier
-      # can't run both services together, so always set this on Render).
-      - key: VITE_ML_SERVICE_URL
-        sync: false
-
-      # ── Internal ML URL (used by Node /ml proxy when both run locally) ─────
-      # Leave blank on Render; only needed for local docker-compose setups.
-      - key: ML_SERVICE_INTERNAL_URL
-        sync: false
-
-  # ── ML service: Python FastAPI (LightGBM + HMM + LLM router) ──────────────
-  # Deploy THIS service first, then paste its URL into VITE_ML_SERVICE_URL above.
-  # After first deploy: call POST /train to build models (takes ~5-10 min).
-  - type: web
-    name: wealth-ai-ml
-    runtime: python
-    plan: free
-    rootDir: ml-service
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /health
-    envVars:
-      - key: PYTHON_VERSION
-        value: "3.11"
-      # AI keys for the LLM router inside the ML service
-      - key: GROQ_API_KEY
-        sync: false
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: CLAUDE_API_KEY
-        sync: false
-      - key: OPENROUTER_API_KEY
-        sync: false
+      # ── ML service ─────────────────────────────────────────────────────────
+      # VITE_ML_SERVICE_URL is NOT needed anymore — ML runs in-process.
+      # The /api/ml/* routes serve all ML predictions from the Node server.
+      # Remove this env var if you had it set.

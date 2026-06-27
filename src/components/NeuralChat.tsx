@@ -3,9 +3,9 @@ import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles, Cpu, ChevronDown,
 import { motion, AnimatePresence } from 'motion/react';
 
 const PROXY_BASE = import.meta.env.VITE_API_PROXY || '';
-let _proxyStatus: Promise<{ gemini: boolean; groq: boolean; tavily: boolean; openrouter: boolean; cerebras: boolean; huggingface: boolean } | null> | null = null;
+let _proxyStatus: Promise<any> | null = null;
 let _proxyStatusTs = 0;
-const PROXY_STATUS_TTL = 30000; // 30s cache
+const PROXY_STATUS_TTL = 30000;
 
 async function getServerAIStatus() {
   if (!_proxyStatus || Date.now() - _proxyStatusTs > PROXY_STATUS_TTL) {
@@ -25,7 +25,7 @@ async function callAIProxy(endpoint: string, body: any): Promise<Response | null
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30000)
+    signal: AbortSignal.timeout(60000)
   });
   if (res.ok) return res;
   if (res.status === 503 || res.status === 429) return null;
@@ -39,7 +39,7 @@ async function fetchRealtimeSnapshot(): Promise<string> {
       fetch('https://scanner.tradingview.com/global/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-        body: JSON.stringify({ symbols: { tickers: ['NSE:NIFTY','BSE:SENSEX','NSE:BANKNIFTY','AMEX:SPY','NASDAQ:QQQ','CBOE:VIX','NSE:INDIAVIX','TVC:DXY','COMEX:GC1!','NYMEX:CL1!'] }, columns: ['name','close','change'] }),
+        body: JSON.stringify({ symbols: { tickers: ['NSE:NIFTY','BSE:SENSEX','NSE:BANKNIFTY','AMEX:SPY','NASDAQ:QQQ','CBOE:VIX','NSE:INDIAVIX','TVC:DXY','COMEX:GC1!','NYMEX:CL1!'] }, columns: ['name','close','change','Recommend.All'] }),
         signal: AbortSignal.timeout(5000)
       }),
       fetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, { signal: AbortSignal.timeout(5000) }),
@@ -93,22 +93,17 @@ async function fetchRealtimeSnapshot(): Promise<string> {
   } catch { return ''; }
 }
 
-async function fetchWebIntel(query: string, tavilyKey: string): Promise<string> {
-  const apiKey = tavilyKey || import.meta.env.VITE_TAVILY_API_KEY || '';
-  if (!apiKey) return '';
+async function fetchWebIntel(query: string): Promise<string> {
   try {
-    const res = await fetch('https://api.tavily.com/search', {
+    const res = await fetch(`${PROXY_BASE}/api/tavily`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_key: apiKey, query: `${query} ${/news|stock|crypto|market|price/i.test(query) ? '' : 'latest market news'}`, search_depth: 'basic', include_answer: true, max_results: 3, topic: 'finance' }),
+      body: JSON.stringify({ messages: [{ role: 'user', content: `${query} latest market news 2026` }], model: '' }),
       signal: AbortSignal.timeout(6000)
     });
     if (res.ok) {
       const data = await res.json();
-      let ctx = '';
-      if (data.answer) ctx += `LIVE NEWS: ${data.answer}\n`;
-      for (const r of (data.results || []).slice(0, 2)) ctx += `• ${r.title}: ${r.content?.substring(0, 150)}\n`;
-      return ctx;
+      return data?.choices?.[0]?.message?.content?.substring(0, 1000) || '';
     }
   } catch { }
   return '';
@@ -118,13 +113,9 @@ interface ChatMessage {
   role: 'user' | 'model' | 'system';
   text: string;
   timestamp: number;
-  model?: 'groq' | 'system';
-  sources?: Array<{ title: string; url: string }>;
+  model?: string;
 }
 
-// ============================================================
-// AI MODEL SELECTION — user picks the engine (or Auto-Failover)
-// ============================================================
 interface EngineOption { id: string; label: string; model: string; endpoint: string; badge: string; }
 const ENGINE_OPTIONS: EngineOption[] = [
   { id: 'auto',        label: 'Auto (Smart Failover)', model: '',                                       endpoint: 'auto',        badge: '⚡' },
@@ -138,11 +129,11 @@ const ENGINE_OPTIONS: EngineOption[] = [
 ];
 
 const QUICK_ACTIONS = [
-  { label: 'Market News', query: 'Latest Indian, US and Crypto market news + inside news, key fundamentals, themes aur future predictions ke saath. Simple Hinglish me samjhao.', icon: '📰' },
-  { label: 'Portfolio Analysis', query: 'Analyze my ENTIRE portfolio deeply - every single position including crypto. Show P&L, technicals, fundamentals, and give specific BUY/HOLD/SELL verdict for each asset.', icon: '💼' },
-  { label: 'ETH Analysis', query: 'Deep analysis of my Ethereum (ETH) position with on-chain context, support/resistance levels, and long-term HODL thesis', icon: '🪙' },
-  { label: 'Long-Term Strategy', query: 'Give me a 15-20 year wealth creation roadmap focusing on SIP step-up and compound growth', icon: '📈' },
-  { label: 'ETF Allocation', query: 'Analyze ETF allocations including Momentum, Smallcap and SPCX ETFs with growth projections', icon: '🎯' }
+  { label: 'Market Intel', query: 'Market ka live snapshot do — NIFTY, SENSEX, BANKNIFTY, US markets, gold, crude, DXY. Current regime + top 3 actionable insights. Simple Hinglish.', icon: '📊' },
+  { label: 'Portfolio Deep Dive', query: 'Meri poori portfolio ka deep analysis karo — har position ka individual BUY/HOLD/SELL verdict do, target price, SL, RSI, MACD sab saath me. P&L bhi batao.', icon: '🔍' },
+  { label: 'AI Trade Signal', query: 'What should I trade today? Best intraday / swing setup with exact entry, stop loss, and targets. Use live market data.', icon: '🎯' },
+  { label: 'Risk Check', query: 'Meri portfolio ka risk analysis karo — VaR, concentration risk, sector exposure, drawdown. Suggestions do to reduce risk.', icon: '🛡️' },
+  { label: 'Wealth Plan', query: 'Mujhe 15 saal ka wealth creation plan do — monthly SIP, asset allocation, step-up strategy, expected corpus. Realistic numbers ke saath.', icon: '🚀' },
 ];
 
 export interface NeuralChatProps {
@@ -150,22 +141,35 @@ export interface NeuralChatProps {
   usdInrRate?: number;
 }
 
+const SYSTEM_WELCOME = `🤖 **SUPER INTELLIGENCE v3.0** • 7-Engine AI + Quant Brain
+
+**Capabilities:**
+• Real-time market data (NSE/BSE/NYSE/NASDAQ/Crypto)
+• Full portfolio analysis with technicals
+• Intraday/swing trading signals with exact levels
+• Risk analysis (VaR, drawdown, concentration)
+• Wealth planning & goal-based projections
+• Indian + US + Crypto markets
+
+**7 Engines:** Gemini | Groq | Claude | OpenRouter | Cerebras | HuggingFace | NVIDIA
+**Fallback:** Quant Brain (always works, no API key needed)
+
+Ask me anything about markets, your portfolio, trading, or wealth building!`;
+
 export const NeuralChat = React.memo(({
   portfolioContext,
   usdInrRate: propUsdInrRate
 }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
-    text: '🤖 **DEEP MIND AI ADVANCE PRO v23.0**\n\n**🔷 GEMINI + ⚡ GROQ + 🟣 CLAUDE + 🔶 OPENROUTER + 🧠 CEREBRAS + 🤗 HF**\n• 6-Engine Auto-Failover + Quant Brain Backup\n• Real-Time Live Market Data\n• NEVER Shows "AI Offline"\n\n**📊 Real-Time Live Data Feeds:**\n• TradingView Scanner (NSE/BSE/NYSE/NASDAQ)\n• CoinDCX Live Crypto Prices (INR)\n• Bond Yields (US 10Y, India 10Y)\n• Live USD/INR Exchange Rate\n• Portfolio P&L with live technicals\n\n**🧠 7-Step Pro-Trader Analysis Framework**\nRegime → Trend → Momentum → Demand → Risk → Conviction → Action\n\nAsk anything — I have LIVE market data 24x7!',
+    text: SYSTEM_WELCOME,
     timestamp: Date.now(),
     model: 'system'
   }]);
-
   const [chatInput, setChatInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
-  // AI model selection — persisted across sessions
   const [selectedEngine, setSelectedEngine] = useState<string>(() => {
     try { return localStorage.getItem('neural_engine') || 'auto'; } catch { return 'auto'; }
   });
@@ -173,15 +177,10 @@ export const NeuralChat = React.memo(({
   useEffect(() => { try { localStorage.setItem('neural_engine', selectedEngine); } catch { } }, [selectedEngine]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const chatContainerRef = useRef<HTMLDivElement>(null);
-
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
-
-  useEffect(() => {
-    if (showChat) scrollToBottom();
-  }, [chatMessages, showChat, scrollToBottom]);
+  useEffect(() => { if (showChat) scrollToBottom(); }, [chatMessages, showChat, scrollToBottom]);
 
   const copyToClipboard = useCallback((text: string, idx: number) => {
     try {
@@ -193,12 +192,7 @@ export const NeuralChat = React.memo(({
   }, []);
 
   const clearChat = useCallback(() => {
-    setChatMessages([{
-      role: 'system',
-      text: '🧹 **Chat cleared!**\n\nReady for new analysis with 6-Engine AI + Quant Brain (Always Online)!',
-      timestamp: Date.now(),
-      model: 'system'
-    }]);
+    setChatMessages([{ role: 'system', text: SYSTEM_WELCOME, timestamp: Date.now(), model: 'system' }]);
   }, []);
 
   const lastRequestTimeRef = useRef<number>(0);
@@ -207,36 +201,25 @@ export const NeuralChat = React.memo(({
   const rateLimitedFetch = async <T,>(fn: () => Promise<T>): Promise<T> => {
     const now = Date.now();
     const timeSinceLastRequest = now - lastRequestTimeRef.current;
-
     if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
-      const waitTime = MIN_REQUEST_INTERVAL - timeSinceLastRequest;
-      await new Promise(r => setTimeout(r, waitTime));
+      await new Promise(r => setTimeout(r, MIN_REQUEST_INTERVAL - timeSinceLastRequest));
     }
-
     lastRequestTimeRef.current = Date.now();
-
     let retries = 0;
-    const maxRetries = 3;
+    const maxRetries = 2;
     let lastError: Error | null = null;
-
     while (retries <= maxRetries) {
-      try {
-        return await fn();
-      } catch (e) {
+      try { return await fn(); }
+      catch (e) {
         lastError = e instanceof Error ? e : new Error(String(e));
-        const isRateLimit = lastError.message.includes('429') || lastError.message.includes('Too Many Requests');
-
-        if (isRateLimit && retries < maxRetries) {
-          const delay = Math.pow(2, retries + 1) * 2000 + Math.random() * 1000;
-          console.warn(`Rate limited, retrying in ${delay}ms (attempt ${retries + 1}/${maxRetries})`);
-          await new Promise(r => setTimeout(r, delay));
+        if (lastError.message.includes('429') && retries < maxRetries) {
+          await new Promise(r => setTimeout(r, Math.pow(2, retries + 1) * 2000 + Math.random() * 1000));
           retries++;
           continue;
         }
         throw lastError;
       }
     }
-
     throw lastError;
   };
 
@@ -245,12 +228,12 @@ export const NeuralChat = React.memo(({
     if (!status || !(status as any)[endpoint]) return null;
     const body = {
       messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
-      model: modelName
+      model: modelName,
+      max_tokens: 2048,
     };
     const res = await callAIProxy(endpoint, body);
     if (!res) return null;
     const data = await res.json();
-
     if (endpoint === 'gemini') {
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
       return text && text.trim().length >= 5 ? text : null;
@@ -259,150 +242,123 @@ export const NeuralChat = React.memo(({
       const text = data.content?.[0]?.text;
       return text && text.trim().length >= 5 ? text : null;
     }
-    // groq / openrouter / cerebras / huggingface (OpenAI-compatible)
     const text = data.choices?.[0]?.message?.content;
     return text && text.trim().length >= 5 ? text : null;
   };
 
-  // Quant Brain fallback — deterministic, always works, no LLM needed
-  const quantBrainFallback = (userMessage: string, marketData: string): string => {
-    // Extract RSI, prices from market data context
+  const quantBrainAnalysis = (userMessage: string, marketData: string, portfolioCtx: string): string => {
     const lines = marketData.split('\n');
-    let output = `📊 QUANT BRAIN — Auto-Analysis (No LLM needed)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-    output += `⏰ ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST\n`;
-    output += `🔍 Query: ${userMessage}\n\n`;
-
-    // Parse market data
     const assets: { name: string; price: number; change: number }[] = [];
     for (const line of lines) {
-      const m = line.match(/^([A-Z_]+):\s*(\d+\.?\d+)\s*\(([+-]?\d+\.?\d*)%\)/);
+      const m = line.match(/^([A-Z_]+):\s*(\d+\.?\d*)\s*\(([+-]?\d+\.?\d*)%\)/);
       if (m) assets.push({ name: m[1], price: parseFloat(m[2]), change: parseFloat(m[3]) });
     }
+    const positive = assets.filter(a => a.change > 0).length;
+    const negative = assets.filter(a => a.change < 0).length;
+    const regime = positive >= negative * 1.5 ? 'BULLISH' : negative >= positive * 1.5 ? 'BEARISH' : 'NEUTRAL';
+    const vixAsset = assets.find(a => a.name.includes('VIX'));
+    const vixLevel = vixAsset ? vixAsset.price : 15;
+    const isVolatile = vixLevel > 22;
 
+    let output = `🤖 **SUPER INTELLIGENCE QUANT BRAIN v3.0**
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⏰ ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
+🔍 Analysis: ${userMessage}\n
+📊 **MARKET REGIME: ${regime}**${isVolatile ? ' ⚠️ HIGH VOLATILITY' : ''}
+
+`;
     if (assets.length > 0) {
-      output += `LIVE MARKET DATA (from Quant Brain):\n`;
-      for (const a of assets.slice(0, 10)) {
-        output += `  ${a.name}: ₹${a.price.toFixed(2)} (${a.change >= 0 ? '+' : ''}${a.change.toFixed(2)}%)\n`;
+      output += '**LIVE MARKET SNAPSHOT:**\n';
+      for (const a of assets.slice(0, 12)) {
+        const icon = a.change > 0 ? '🟢' : a.change < 0 ? '🔴' : '⚪';
+        output += `${icon} ${a.name}: ${a.price.toFixed(2)} (${a.change >= 0 ? '+' : ''}${a.change.toFixed(2)}%)\n`;
       }
-      output += `\n`;
     }
 
-    output += `🎯 7-STEP ANALYSIS (Deterministic):\n`;
-    output += `1. Regime: Market data analyzed from live feeds\n`;
-    output += `2. Trend: Based on current price action\n`;
-    output += `3. Momentum: Derived from live changes\n`;
-    output += `4. Demand: Check support levels\n`;
-    output += `5. Risk: Calculate R:R from ATR\n`;
-    output += `6. Conviction: Based on data patterns\n`;
-    output += `7. Action: Refer to exact levels below\n\n`;
-    output += `💡 LLM narration unavailable — Quant Brain always provides analysis.\n`;
-    output += `⚡ Tip: Set any free API key for richer LLM narration:\n`;
-    output += `  🔷 Gemini: https://aistudio.google.com/apikey\n`;
-    output += `  ⚡ Groq: https://console.groq.com\n`;
-    output += `  🔶 OpenRouter: https://openrouter.ai\n`;
-    output += `  🧠 Cerebras: https://cerebras.ai\n`;
-    output += `  🤗 HuggingFace: https://huggingface.co`;
+    output += `\n**7-STEP PRO ANALYSIS:**
+1. Regime: **${regime}**${isVolatile ? ' — High VIX suggests caution' : ' — Normal conditions'}
+2. Trend: ${positive > negative ? 'Positive breadth, bullish bias' : 'Negative breadth, bearish bias'}
+3. Momentum: ${assets.some(a => Math.abs(a.change) > 2) ? 'Strong moves detected' : 'Moderate momentum'}
+4. Support/Demand: Key levels based on recent price action
+5. Risk: ${isVolatile ? '⚠️ Elevated — use smaller position sizes' : '✅ Normal — standard positioning'}
+6. Conviction: ${assets.filter(a => a.change > 1).length >= 2 ? 'Multiple strong signals detected' : 'Mixed signals — selective approach'}
+7. Action: ${regime === 'BULLISH' ? 'Look for buying opportunities on dips' : regime === 'BEARISH' ? 'Defensive — reduce risk, hold cash' : 'Selective — stock-specific approach'}
+
+${portfolioCtx ? `**PORTFOLIO CONTEXT AVAILABLE:** ${portfolioCtx.substring(0, 200)}...\n` : ''}
+
+**💡 NOTE:** LLM narration unavailable — Quant Brain provides deterministic analysis.
+_Sabhi API keys free hain — Gemini: aistudio.google.com , Groq: console.groq.com_`;
     return output;
   };
 
   const callAI = async (userMessage: string) => {
-    const isNewsQuery = /\b(news|market|nifty|sensex|fed|rbi|ipo|crude|gold|dollar|breaking|aaj|today|live|bitcoin|btc|crypto|halving|eth|blockchain|defi|altcoin|binance|coinbase|regulation|sec)\b/i.test(userMessage);
+    const isNewsQuery = /\b(news|market|nifty|sensex|fed|rbi|ipo|crude|gold|dollar|live|bitcoin|btc|crypto|eth|stock|price)\b/i.test(userMessage);
+    const isTradeQuery = /\b(trade|buy|sell|entry|signal|target|stop|intraday|swing)\b/i.test(userMessage);
+    const isPortfolioQuery = /\b(portfolio|position|holdings|my|meri|profit|pnl|return)\b/i.test(userMessage);
+    const isRiskQuery = /\b(risk|var|drawdown|loss|volatility|hedge|protect)\b/i.test(userMessage);
 
     const results = await Promise.allSettled([
       fetchRealtimeSnapshot(),
-      isNewsQuery ? fetchWebIntel(userMessage, '') : Promise.resolve('')
+      (isNewsQuery && false) ? fetchWebIntel(userMessage) : Promise.resolve('')
     ]);
-
     const marketData = results[0].status === 'fulfilled' ? results[0].value : '';
     const webIntelData = results[1].status === 'fulfilled' ? results[1].value : '';
     const forexRate = propUsdInrRate || 85.5;
+    const portfolioCtx = portfolioContext || 'No portfolio data available.';
 
-    const portfolioCtx = portfolioContext || 'No portfolio data.';
+    const systemPrompt = `You are SUPER INTELLIGENCE v3.0 — a market superintelligence with 7-engine failover + Quant Brain deterministic backup. You have REAL-TIME LIVE market data access and FULL portfolio context.
 
-    // 7-Step Pro-Trader System Prompt
-    const systemPrompt = `You are DEEP MIND AI SUPERINTELLIGENCE v24.0 — a market superintelligence engine with multi-engine routing + Quant Brain backup. Elite institutional-grade trading & investment AI for Indian, US, and Crypto markets with REAL-TIME LIVE data access 24x7. You NEVER go offline — Quant Brain always provides analysis. You have FULL, UNRESTRICTED ACCESS to the ENTIRE Wealth AI platform — every tab, every data point, every single position in the portfolio, every transaction. You MUST read and analyze ALL data provided below before responding.
+PERSONA: Expert institutional quant trader (20+ years NSE/BSE/NYSE/NASDAQ/Crypto). Think Goldman Sachs + Citadel + Renaissance + Pantera combined. Speak in SIMPLE Hinglish. Use "bhai", "dekho", "simple words me". Explain concepts clearly.
 
-PERSONA: You are the user's personal ADVANCE TOP PRO TRADER ASSISTANT — a seasoned institutional quant trader (20+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) who knows EVERYTHING about this user's portfolio and goals. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital + Bridgewater combined. You are always-on, proactive, and give deep knowledge, suggestions and tips like a 24x7 personal trading desk. Speak in SIMPLE, EASY-TO-UNDERSTAND Hinglish — explain complex concepts so a normal person samajh jaye. Use "Bhai", "dekho", "simple words me", "isska matlab", "Breakout confirm", "SL trail karo", "Smart Money accumulation".
+MANDATORY RULES:
+1. READ the portfolio context below — it contains ALL positions with live data
+2. Reference 2-3 specific positions by name with current price and signal
+3. NEVER say "I don't have portfolio data" — it's provided below
+4. ONLY use the REAL-TIME data below — do NOT invent prices
+5. Today: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}
+6. CRITICAL: If this is a trade query, give EXACT entry, SL, target prices. If portfolio query, analyze EVERY position. If risk query, calculate VaR and suggestions. If general, give market overview.
 
-SUPERINTELLIGENCE MANDATE (24x7 DEEP ANALYSIS):
-- Continuously connect MACRO markets (Fed/RBI policy, rates, inflation, DXY, bond yields, geopolitics, liquidity) WITH MICRO markets (individual stocks, sectors, crypto, the user's exact holdings).
-- For market questions cover: latest NEWS + INSIDE NEWS angle, key FACTS, FUNDAMENTALS, prevailing THEMES, and clear FUTURE PREDICTIONS based on CURRENT live market news provided below.
-- Always relate everything back to the user's actual portfolio: "isska aapke X position pe ye asar padega".
-- Be a teacher: explain the "why" in simple Hinglish, then give actionable tips. Give DEEP knowledge, not surface-level.
-- Proactively flag risks AND opportunities even if not asked.
+7-STEP FRAMEWORK:
+1. Regime: Risk-On/Neutral/Risk-Off (use VIX, breadth)
+2. Trend: Direction from SMA + price action
+3. Momentum: RSI + MACD analysis
+4. Support/Demand: Key price levels
+5. Risk: SL distance, R:R ratio, position sizing
+6. Conviction: STRONG_BUY / BUY / HOLD / WAIT / SELL
+7. Action: Exact entry, SL, targets, size
 
-MANDATORY DATA USAGE RULES — FOLLOW STRICTLY:
-1. YOU MUST read the PORTFOLIO CONTEXT below. It contains ALL positions with live prices, RSI, MACD, SMA, trend, signal, confidence, SL, TP, P&L, CAGR.
-2. For EVERY response, reference at least 2-3 specific positions by name with their current price, RSI, and signal.
-3. If user asks about portfolio — analyze EVERY position one by one. Do NOT skip any.
-4. NEVER say "I don't have portfolio data" — the data is provided below. Read it.
-5. Cross-reference portfolio positions with the LIVE MARKET DATA provided below.
+RESPONSE STRUCTURE:
+- 1-line macro snapshot in simple Hinglish
+- Connect macro → micro: what it means for user's holdings
+- ${isTradeQuery ? 'EXACT entry/SL/targets with R:R' : ''}
+- ${isPortfolioQuery ? 'Every position analyzed individually with verdict' : ''}
+- ${isRiskQuery ? 'VaR, drawdown, concentration risk, suggestions' : ''}
+- End with strategy + 3 action items + 1 pro tip
 
-CRITICAL ANTI-HALLUCINATION RULES:
-- ONLY use the REAL-TIME data provided below. Do NOT invent, guess, or use memorized old prices.
-- If data is not available, say "Live data not available" — do NOT make up numbers.
-- Today's date is ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}.
-- All prices, RSI, MACD values MUST come from the data below.
+USD/INR: ₹${forexRate.toFixed(4)}
 
-7-STEP PRO-TRADER ANALYSIS FRAMEWORK:
-1. Regime: Is market Risk-On/Neutral/Risk-Off? (use VIX, FII/DII)
-2. Trend: SMA50 vs SMA200 + ADX strength
-3. Momentum: RSI level + MACD
-4. Demand: Is price near the demand zone / support?
-5. Risk: SL distance, R:R ratio
-6. Conviction: Map to STRONG_BUY / BUY / HOLD / WAIT
-7. Action: Exact entry, SL, TP1/TP2 + position-sizing hint
-
-ADVANCE PRO TRADING RULES:
-1. Use SMC (Smart Money Concepts), Wyckoff phases, Elliott Wave counts, Fibonacci retracements/extensions for stocks. On-chain analysis, MVRV-Z score, Puell Multiple, halving cycles, whale tracking for crypto.
-2. Give EXACT Support/Resistance/SL/Target 1/2/3 prices FROM THE PORTFOLIO DATA below.
-3. Conviction scores (1-10) with rationale. Risk-reward ratio mandatory.
-4. End with VERDICT: 🟢 STRONG BUY / 🟡 BUY / 🔴 STRONG SELL / ⚪ HOLD / ⏳ WAIT + exact entry price + 3 targets.
-5. Emphasize LONG-TERM wealth creation (15-20 years), compounding projections with specific ₹ amounts, SIP step-up.
-6. ALWAYS analyze EVERY position — stocks, ETFs, AND crypto. Read each ETF (Momentum, Smallcap, Junior BeES, SMH, VGT, SPCX etc.) by name. No position should EVER be ignored or skipped.
-7. USD/INR: ₹${forexRate.toFixed(4)} (LIVE). Convert US holdings to INR.
-
-CRYPTO MASTER RULES: BTC supply cap 21M, halving cycle ~4yr, DCA strategy at -15% from ATH. Use MVRV Z-score (<0 = undervalued, >3 = overvalued), NVT ratio, exchange inflow/outflow, whale accumulation trends. BTC RSI: oversold<25, overbought>80.
-
-ALPHA ETF UNIVERSE (use these CAGR/maxDD for wealth projections):
-India: ${(() => { const e = [{sym:'JUNIORBEES',name:'Nippon India ETF Junior BeES',cagr:18.5,maxDD:30},{sym:'MOMENTUM50',name:'Motilal Oswal Nifty 500 Momentum 50',cagr:22.5,maxDD:30},{sym:'SMALLCAP',name:'Nippon India Nifty Smallcap 250',cagr:26.5,maxDD:40},{sym:'MID150BEES',name:'Nippon India Nifty Midcap 150',cagr:21.0,maxDD:35}]; return e.map(x => `${x.sym}(${x.name}): CAGR ${x.cagr}%, MaxDD ${x.maxDD}%`).join(' | '); })()}
-US: ${(() => { const e = [{sym:'SMH',name:'VanEck Semiconductor',cagr:28.5,maxDD:45},{sym:'VGT',name:'Vanguard Information Technology ETF',cagr:21.0,maxDD:33},{sym:'SPCX',name:'SPAC and New Issue ETF',cagr:15.0,maxDD:35}]; return e.map(x => `${x.sym}(${x.name}): CAGR ${x.cagr}%, MaxDD ${x.maxDD}%`).join(' | '); })()}
-
-=== LIVE MARKET DATA (USE ONLY THIS) ===
+=== LIVE MARKET DATA ===
 ${marketData}
 USD/INR: ₹${forexRate.toFixed(4)}
 ${webIntelData ? '\nLIVE NEWS:\n' + webIntelData : ''}
 
-=== PORTFOLIO CONTEXT (READ MANDATORY) ===
+=== PORTFOLIO CONTEXT ===
 ${portfolioCtx}
 
-=== END ALL DATA ===
+=== END DATA ===
 
-RESPONSE STRUCTURE:
-- Start with a 1-line MACRO snapshot (market regime: bullish/bearish/volatile) in simple Hinglish.
-- Connect macro → micro: what does today's news/data mean for the user's holdings.
-- List the relevant portfolio positions with individual analysis (price, RSI, MACD, trend, conviction, verdict + exact levels).
-- For news queries: News → Inside angle → Fundamentals → Theme → Future Prediction.
-- End with overall strategy + top 3 action items + 1 "Pro Tip" / deep insight.
-- Keep language SIMPLE Hinglish so it's easy to understand. Avoid heavy jargon without explaining it.`;
+RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bold for key numbers.`;
 
     const recentMessages = chatMessages
       .filter(m => m.role === 'user' || m.role === 'model')
-      .slice(-8)
-      .map(m => ({
-        role: m.role === 'model' ? 'assistant' : 'user',
-        content: m.text
-      }));
+      .slice(-6)
+      .map(m => ({ role: m.role === 'model' ? 'assistant' : 'user', content: m.text }));
     if (recentMessages.length === 0 || recentMessages[recentMessages.length - 1].content !== userMessage) {
       recentMessages.push({ role: 'user', content: userMessage });
     }
 
-    // 7-Engine Router + Quant Brain Fallback — NEVER shows "AI Offline"
-    const allEngines = ENGINE_OPTIONS
-      .filter(e => e.id !== 'auto')
-      .map(e => ({ name: e.id, model: e.model, endpoint: e.endpoint }));
-
-    // Honor the user's model selection: chosen engine first, rest as failover.
+    const allEngines = ENGINE_OPTIONS.filter(e => e.id !== 'auto').map(e => ({ name: e.id, model: e.model, endpoint: e.endpoint }));
     let engines = allEngines;
     if (selectedEngine && selectedEngine !== 'auto') {
       const chosen = allEngines.filter(e => e.name === selectedEngine);
@@ -412,22 +368,15 @@ RESPONSE STRUCTURE:
 
     let text = null;
     let usedEngine = 'quant_brain';
-
     for (const engine of engines) {
       try {
         text = await rateLimitedFetch(() => tryAIEngine(engine.endpoint, engine.model, recentMessages, systemPrompt));
-        if (text) {
-          usedEngine = engine.name;
-          break;
-        }
-      } catch {
-        continue;
-      }
+        if (text) { usedEngine = engine.name; break; }
+      } catch { continue; }
     }
 
-    // Quant Brain fallback — NEVER offline
     if (!text) {
-      text = quantBrainFallback(userMessage, marketData);
+      text = quantBrainAnalysis(userMessage, marketData, portfolioCtx);
       usedEngine = 'quant_brain';
     }
 
@@ -437,35 +386,22 @@ RESPONSE STRUCTURE:
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim() || isThinking) return;
     setIsThinking(true);
-
     setChatMessages(prev => [...prev, { role: 'user', text: userMessage, timestamp: Date.now() }]);
-
     try {
       const result = await callAI(userMessage);
-      setChatMessages(prev => [...prev, {
-        role: 'model', text: result.text, timestamp: Date.now(), model: result.model
-      } as ChatMessage]);
+      setChatMessages(prev => [...prev, { role: 'model', text: result.text, timestamp: Date.now(), model: result.model }]);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      setChatMessages(prev => [...prev, {
-        role: 'system',
-        text: `❌ **Error:** ${errorMsg}\n\nAPI keys check karo ya retry karo.`,
-        timestamp: Date.now(), model: 'system'
-      }]);
+      setChatMessages(prev => [...prev, { role: 'system', text: `❌ Error: ${errorMsg}\n\nTry again or switch engine.`, timestamp: Date.now(), model: 'system' }]);
     } finally {
       setIsThinking(false);
     }
   };
 
   const handleChat = () => {
-    if (chatInput.trim()) {
-      const msg = chatInput;
-      setChatInput('');
-      sendMessage(msg);
-    }
+    if (chatInput.trim()) { const msg = chatInput; setChatInput(''); sendMessage(msg); }
   };
 
-  // --- Voice input (Web Speech API, Hinglish) ---
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
   const speechSupported = typeof window !== 'undefined' &&
@@ -473,36 +409,25 @@ RESPONSE STRUCTURE:
 
   const toggleVoiceInput = useCallback(() => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) { alert('Aapke browser me voice input support nahi hai. Chrome try karo.'); return; }
-
-    // Stop if already listening
-    if (recognitionRef.current && isListening) {
-      try { recognitionRef.current.stop(); } catch { }
-      return;
-    }
-
+    if (!SR) { alert('Voice input not supported in this browser. Try Chrome.'); return; }
+    if (recognitionRef.current && isListening) { try { recognitionRef.current.stop(); } catch { } return; }
     const recognition = new SR();
-    recognition.lang = 'hi-IN';        // Hinglish — Hindi + English mix
+    recognition.lang = 'hi-IN';
     recognition.interimResults = true;
     recognition.continuous = false;
     recognition.maxAlternatives = 1;
-
     recognition.onstart = () => setIsListening(true);
     recognition.onerror = () => setIsListening(false);
     recognition.onend = () => { setIsListening(false); recognitionRef.current = null; };
     recognition.onresult = (event: any) => {
       let transcript = '';
-      for (let i = 0; i < event.results.length; i++) {
-        transcript += event.results[i][0].transcript;
-      }
+      for (let i = 0; i < event.results.length; i++) transcript += event.results[i][0].transcript;
       setChatInput(transcript);
     };
-
     recognitionRef.current = recognition;
     try { recognition.start(); } catch { setIsListening(false); }
   }, [isListening]);
 
-  // Cleanup recognition on unmount
   useEffect(() => () => { try { recognitionRef.current?.stop(); } catch { } }, []);
 
   return (
@@ -511,7 +436,7 @@ RESPONSE STRUCTURE:
         onClick={() => setShowChat(!showChat)}
         className="fab fixed bottom-6 right-6 w-14 h-14 bg-gradient-to-br from-cyan-600/90 via-blue-800/90 to-indigo-900/90 rounded-2xl flex items-center justify-center border border-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.4)] z-[60] overflow-hidden group hover:scale-110 transition-transform"
       >
-        {showChat ? <X className="text-white z-10" /> : <span className="text-2xl z-10">🧠</span>}
+        {showChat ? <X className="text-white z-10" /> : <BrainCircuit className="text-cyan-400 z-10" size={24} />}
         <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-400 rounded-full animate-pulse-dot z-10 border-2 border-slate-900" />
       </button>
 
@@ -521,7 +446,7 @@ RESPONSE STRUCTURE:
             initial={{ opacity: 0, y: 20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            className="fixed bottom-0 left-0 right-0 sm:bottom-24 sm:left-1/2 sm:right-auto sm:w-[520px] sm:-translate-x-1/2 h-[85vh] sm:h-[700px] max-h-[85vh] shadow-[0_0_50px_rgba(6,182,212,0.2)] z-[60] flex flex-col overflow-hidden sm:rounded-3xl border border-cyan-500/20"
+            className="fixed bottom-0 left-0 right-0 sm:bottom-24 sm:left-1/2 sm:right-auto sm:w-[600px] sm:-translate-x-1/2 h-[85vh] sm:h-[700px] max-h-[85vh] shadow-[0_0_50px_rgba(6,182,212,0.2)] z-[60] flex flex-col overflow-hidden sm:rounded-3xl border border-cyan-500/20"
           >
             <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-xl border border-cyan-500/20 rounded-3xl" />
 
@@ -531,20 +456,18 @@ RESPONSE STRUCTURE:
                   <BrainCircuit className="text-cyan-400" size={18} />
                 </div>
                 <div className="min-w-0">
-                   <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
-                     <span className="hidden xs:inline">Advance Pro v23</span>
-                     <span className="xs:hidden">AI v23</span>
-                     <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">7-ENGINE + QUANT BRAIN</span>
-                   </h3>
-                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
-                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                     <span className="hidden sm:inline">NVIDIA + Gemini + Groq + Claude + OpenRouter + Cerebras + HF | Always Online</span>
-                     <span className="sm:hidden">LIVE • 7 Engines</span>
-                   </div>
+                  <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
+                    Super Intelligence
+                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">v3.0</span>
+                  </h3>
+                  <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="hidden sm:inline">7-Engine AI + Quant Brain | Always Online</span>
+                    <span className="sm:hidden">LIVE</span>
+                  </div>
                 </div>
               </div>
               <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
-                {/* AI Model Selector */}
                 <div className="relative">
                   <button
                     onClick={() => setShowEngineMenu(v => !v)}
@@ -561,8 +484,7 @@ RESPONSE STRUCTURE:
                     <div className="absolute right-0 top-full mt-1 w-52 max-h-72 overflow-y-auto bg-slate-900 border border-cyan-500/30 rounded-xl shadow-2xl z-[70] p-1 scrollbar-hide">
                       <div className="text-[8px] uppercase tracking-wider text-slate-500 font-bold px-2 py-1">AI Model</div>
                       {ENGINE_OPTIONS.map(e => (
-                        <button
-                          key={e.id}
+                        <button key={e.id}
                           onClick={() => { setSelectedEngine(e.id); setShowEngineMenu(false); }}
                           className={`w-full flex items-center gap-2 text-left text-[11px] px-2 py-1.5 rounded-lg transition-colors ${selectedEngine === e.id ? 'bg-cyan-500/20 text-cyan-300 font-bold' : 'text-slate-300 hover:bg-white/5'}`}
                         >
@@ -579,33 +501,32 @@ RESPONSE STRUCTURE:
               </div>
             </div>
 
-            <div ref={chatContainerRef} className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide">
+            <div className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide">
               {chatMessages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
-                  <div className={`max-w-[85%] sm:max-w-[90%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
+                  <div className={`max-w-[85%] sm:max-w-[92%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
                     ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-3 py-2.5 sm:px-4 sm:py-3'
                     : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-3 py-2.5 sm:px-4 sm:py-3 group/msg'
-                    }`}>
+                  }`}>
                     {msg.role === 'user' ? msg.text : (
                       <>
                         <span dangerouslySetInnerHTML={{
-                          __html: (() => {
-                            const escaped = msg.text
-                              .replace(/&/g, '&amp;')
-                              .replace(/</g, '&lt;')
-                              .replace(/>/g, '&gt;')
-                              .replace(/"/g, '&quot;');
-                            return escaped
-                              .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                              .replace(/\*(.+?)\*/g, '<em>$1</em>')
-                              .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>');
-                          })()
+                          __html: msg.text
+                            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                            .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#22d3ee">$1</strong>')
+                            .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                            .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>')
                         }} />
-                        <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
-                          <button onClick={() => copyToClipboard(msg.text, i)} className="text-[9px] text-slate-500 hover:text-cyan-400 flex items-center gap-1 transition-colors">
-                            {copiedIdx === i ? <><Check size={10} /> Copied!</> : <><Copy size={10} /> Copy</>}
-                          </button>
-                        </div>
+                        {msg.model && msg.model !== 'system' && (
+                          <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                            <span className="text-[8px] text-slate-600 bg-slate-800/60 px-1.5 py-0.5 rounded">
+                              {msg.model === 'quant_brain' ? '🧠 Quant Brain' : `🔷 ${msg.model}`}
+                            </span>
+                            <button onClick={() => copyToClipboard(msg.text, i)} className="text-[9px] text-slate-500 hover:text-cyan-400 flex items-center gap-1 transition-colors">
+                              {copiedIdx === i ? <><Check size={10} /> Copied!</> : <><Copy size={10} /> Copy</>}
+                            </button>
+                          </div>
+                        )}
                       </>
                     )}
                     <div className={`text-[9px] mt-1 font-mono ${msg.role === 'user' ? 'text-cyan-200/50' : 'text-slate-600'}`}>
@@ -614,12 +535,11 @@ RESPONSE STRUCTURE:
                   </div>
                 </div>
               ))}
-
               {isThinking && (
                 <div className="flex justify-start animate-message-in">
                   <div className="bg-slate-900/90 px-4 py-3 rounded-2xl rounded-tl-none border border-white/5">
                     <div className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
-                      <Sparkles size={12} className="animate-pulse" /> AI is thinking...
+                      <Sparkles size={12} className="animate-pulse" /> Analyzing...
                     </div>
                     <div className="flex gap-1.5">
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
@@ -635,8 +555,7 @@ RESPONSE STRUCTURE:
             <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-t border-cyan-500/10">
               <div className="flex gap-2 overflow-x-auto scrollbar-hide">
                 {QUICK_ACTIONS.map((action, i) => (
-                  <button
-                    key={i}
+                  <button key={i}
                     onClick={() => { setChatInput(''); sendMessage(action.query); }}
                     disabled={isThinking}
                     className="flex items-center gap-1.5 whitespace-nowrap text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-slate-400 hover:text-white hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all disabled:opacity-30 shrink-0"
@@ -652,7 +571,7 @@ RESPONSE STRUCTURE:
               <div className="relative flex items-center">
                 <input
                   type="text"
-                  placeholder={isListening ? '🎙️ Sun raha hoon… boliye' : 'Ask Deep Mind AI anything...'}
+                  placeholder={isListening ? '🎙️ Listening... speak now' : 'Ask Super Intelligence about markets, portfolio, or trades...'}
                   className="w-full bg-slate-900/60 border border-slate-700/80 rounded-xl sm:rounded-2xl py-2.5 sm:py-3 pl-3 sm:pl-4 pr-[4.5rem] sm:pr-20 text-xs sm:text-sm text-white outline-none focus:border-cyan-500/60 transition-all font-medium placeholder:text-slate-600"
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
@@ -677,10 +596,10 @@ RESPONSE STRUCTURE:
               </div>
               <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
                 <span className="text-[7px] sm:text-[8px] text-slate-500 font-mono">
-                  {selectedEngine === 'auto' ? '⚡ Auto Failover + Quant Brain' : `${ENGINE_OPTIONS.find(e => e.id === selectedEngine)?.badge || ''} ${ENGINE_OPTIONS.find(e => e.id === selectedEngine)?.label || ''}`} (Always Online)
+                  {selectedEngine === 'auto' ? '⚡ Auto Failover + Quant Brain' : `${ENGINE_OPTIONS.find(e => e.id === selectedEngine)?.badge || ''} ${ENGINE_OPTIONS.find(e => e.id === selectedEngine)?.label || ''}`}
                 </span>
                 <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
-                  {chatMessages.length} messages
+                  {chatMessages.length} msgs
                 </span>
               </div>
             </div>

@@ -4,9 +4,11 @@ import { fetchMLPrediction, type MLPrediction } from '../utils/mlApi';
 interface Props {
   symbol: string;
   market: string;
+  price?: number;
+  change?: number;
 }
 
-export function MLSignalPanel({ symbol, market }: Props) {
+export function MLSignalPanel({ symbol, market, price, change }: Props) {
   const [data, setData] = useState<MLPrediction | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -16,7 +18,7 @@ export function MLSignalPanel({ symbol, market }: Props) {
     setLoading(true);
     setError('');
     try {
-      const pred = await fetchMLPrediction(symbol, market);
+      const pred = await fetchMLPrediction(symbol, market, price, change);
       setData(pred);
     } catch (e: any) {
       setError(e.message);

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Position, PriceData, PortfolioHealth } from '../types';
 import { computeHealthScore, checkAlertConditions, generateDailyDigest } from '../utils/portfolioMonitor';
+import { summarizePortfolioRisk } from '../utils/riskEngine';
 import { sendTelegramAlert } from '../utils/api';
 
 interface PortfolioHealthMonitorProps {
@@ -13,11 +14,12 @@ interface PortfolioHealthMonitorProps {
 export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metrics, telegramConfig }: PortfolioHealthMonitorProps) => {
   const [health, setHealth] = useState<PortfolioHealth | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [riskSummary, setRiskSummary] = useState<ReturnType<typeof summarizePortfolioRisk> | null>(null);
   const previousHighsRef = useRef<Record<string, number>>({});
   const lastDigestDateRef = useRef<string>('');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Compute health score — throttled to every 30s to avoid expensive recalculations
+  // Compute health score + risk summary — throttled to every 30s
   const lastHealthComputeRef = useRef(0);
   useEffect(() => {
     if (portfolio.length === 0) return;
@@ -26,6 +28,9 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
     lastHealthComputeRef.current = now;
     const computed = computeHealthScore(portfolio, livePrices, metrics);
     if (computed) setHealth(computed);
+    if (metrics.totalValue > 0) {
+      setRiskSummary(summarizePortfolioRisk(metrics.totalValue, portfolio, livePrices));
+    }
   }, [portfolio, livePrices, metrics]);
 
   // Keep latest state in refs to avoid resetting the interval on every price/portfolio change
@@ -131,6 +136,30 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
               </div>
             </div>
           </div>
+
+          {/* Risk Summary */}
+          {riskSummary && (
+            <div className="mb-2 p-2 bg-black/30 rounded-xl border border-white/5">
+              <div className="grid grid-cols-2 gap-2 text-[10px]">
+                <div>
+                  <span className="text-slate-500">VaR (95%): </span>
+                  <span className="text-red-400 font-bold">₹{(riskSummary.totalVaR.monteCarlo / 1000).toFixed(0)}K</span>
+                </div>
+                <div>
+                  <span className="text-slate-500">VaR%: </span>
+                  <span className={`font-bold ${riskSummary.varPercent > 10 ? 'text-red-400' : riskSummary.varPercent > 5 ? 'text-amber-400' : 'text-emerald-400'}`}>{riskSummary.varPercent}%</span>
+                </div>
+                <div>
+                  <span className="text-slate-500">Diversification: </span>
+                  <span className="text-cyan-400 font-bold">{riskSummary.diversificationScore}%</span>
+                </div>
+                <div>
+                  <span className="text-slate-500">Regime: </span>
+                  <span className="text-purple-400 font-bold">{riskSummary.regime}</span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Buy Opportunities */}
           {health.buyOpportunities.length > 0 && (
