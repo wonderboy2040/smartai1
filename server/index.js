@@ -478,6 +478,44 @@ for (const [name, cfg] of Object.entries(OPENAI_COMPAT)) {
 }
 
 // ------------------------------------------------------------
+// POST /api/tavily → Tavily web search (for NeuralChat live news)
+// Translates the OpenAI-style messages body into a Tavily search
+// and returns the result in OpenAI-compatible format.
+// ------------------------------------------------------------
+app.post('/api/tavily', async (req, res) => {
+  if (!KEYS.tavily) return jsonError(res, 503, 'tavily not configured');
+  try {
+    const { messages = [] } = req.body || {};
+    const userMsg = messages.filter(m => m.role === 'user').map(m => m.content).join(' ').trim();
+    if (!userMsg) return jsonError(res, 400, 'search query required');
+    const query = userMsg.substring(0, 400); // Tavily max query length
+    const upstream = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: KEYS.tavily,
+        query,
+        search_depth: 'basic',
+        max_results: 5,
+        include_answer: true,
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!upstream.ok) return jsonError(res, 502, 'tavily upstream error');
+    const data = await upstream.json();
+    // Package as OpenAI-compatible response so the frontend can consume it uniformly
+    const answer = data.answer || '';
+    const results = (data.results || []).map(r => `• ${r.title}: ${r.content?.substring(0, 200) || ''}`).join('\n');
+    const content = answer ? `${answer}\n\nSources:\n${results}` : results || 'No results found.';
+    res.json({
+      choices: [{ message: { role: 'assistant', content } }],
+    });
+  } catch (e) {
+    return jsonError(res, 502, `tavily upstream error: ${e?.message || e}`);
+  }
+});
+
+// ------------------------------------------------------------
 // POST /api/gemini → translate OpenAI-style messages → Gemini,
 // return Gemini's native shape (candidates[0].content.parts[0].text)
 // ------------------------------------------------------------

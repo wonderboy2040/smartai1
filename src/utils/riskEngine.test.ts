@@ -53,11 +53,11 @@ describe('calculateVaR', () => {
 });
 
 describe('runStressTests', () => {
-  it('returns 6 scenarios', () => {
+  it('returns 7 scenarios', () => {
     const positions: Position[] = [{ id: '1', symbol: 'SMH', qty: 10, avgPrice: 100, market: 'US', dateAdded: '2024-01-01', leverage: 1 }];
     const prices: Record<string, PriceData> = { 'US_SMH': { price: 110, change: 2, high: 115, low: 105, volume: 0, rsi: 55, market: 'US', tvExchange: 'NASDAQ', tvExactSymbol: 'SMH', time: Date.now() } };
     const result = runStressTests(positions, prices);
-    expect(result).toHaveLength(6);
+    expect(result).toHaveLength(7);
     expect(result[0].name).toBe('2008 Financial Crisis');
     expect(result[0].impactPct).toBe(-45);
   });
