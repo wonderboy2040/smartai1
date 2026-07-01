@@ -1,13 +1,17 @@
 import { PriceData, Position } from '../types';
 import { EXACT_TICKER_MAP, guessMarket, API_URL as VITE_API_URL, DEFAULT_USD_INR, isCryptoSymbol } from './constants';
 
+// Proxy base for backend server API calls (same-origin on Render/Vite proxy,
+// or custom via VITE_API_PROXY for cross-origin setups).
+const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
+
 // Runtime API_URL — tries server config first, then VITE build-time env var
 // Used ONLY for Google Apps Script cloud sync, NOT for backend /api/* calls.
 let _runtimeApiUrl: string | null | undefined = undefined;
 async function getApiUrl(): Promise<string> {
   if (_runtimeApiUrl !== undefined) return _runtimeApiUrl || VITE_API_URL;
   try {
-    const res = await fetch('/api/config', { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(`${PROXY_BASE}/api/config`, { signal: AbortSignal.timeout(3000) });
     if (res.ok) {
       const cfg = await res.json();
       if (cfg.apiUrl) { _runtimeApiUrl = cfg.apiUrl; return cfg.apiUrl; }
@@ -18,10 +22,7 @@ async function getApiUrl(): Promise<string> {
 }
 import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen } from './telegram';
 
-// Proxy base for backend server API calls (same-origin on Render/Vite proxy,
-// or custom via VITE_API_PROXY for cross-origin setups).
-const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
-
+// Proxy base for backend server API calls moved above getApiUrl
 /**
  * Fetch CoinDCX tickers through the server proxy.
  * CoinDCX's public API does NOT serve Access-Control-Allow-Origin headers,
