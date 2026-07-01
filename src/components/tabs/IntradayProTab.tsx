@@ -67,7 +67,7 @@ function SignalCard({ sig, onSelect }: { sig: AlgoSignal; onSelect: () => void }
       </div>
 
       <div className="flex flex-wrap gap-1">
-        {sig.factors.map((f, i) => <FactorChip key={i} {...f} />)}
+        {sig.factors.map(f => <FactorChip key={`${f.label}_${f.state}`} {...f} />)}
       </div>
     </button>
   );
@@ -135,11 +135,13 @@ const IntradayProTab = React.memo(function IntradayProTab() {
   };
 
   // Auto-alert loop: high-conviction signals only, with per-symbol cooldown.
+  const livePricesRef = useRef(livePrices);
+  livePricesRef.current = livePrices;
   useEffect(() => {
     if (!autoAlerts) return;
     const run = async () => {
       if (!isAnyMarketOpen()) return;
-      const hot = scanAlgoSignals(watchKeys, livePrices)
+      const hot = scanAlgoSignals(watchKeys, livePricesRef.current)
         .filter(s => s.direction !== 'WAIT' && s.conviction >= 65)
         .slice(0, 6);
       if (hot.length) await pushAlerts(hot, true);
@@ -148,7 +150,7 @@ const IntradayProTab = React.memo(function IntradayProTab() {
     const id = window.setInterval(run, 60000); // every 60s
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoAlerts, watchKeys, livePrices]);
+  }, [autoAlerts, watchKeys]);
 
   const toggleAuto = () => {
     setAutoAlerts(prev => {

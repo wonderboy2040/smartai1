@@ -117,7 +117,7 @@ export function runScreener(portfolio: Position[], livePrices: Record<string, Pr
     if (rsi < 35) reasons.push('Oversold');
     if (rsi > 70) reasons.push('Overbought');
     if (sma20 > sma50) reasons.push('Uptrend');
-    else reasons.push('Downtrend');
+    else if (sma20 < sma50) reasons.push('Downtrend');
     if (cagr > 20) reasons.push(`${cagr}% CAGR`);
     const etfInfo = [...ALPHA_ETFS_IN, ...ALPHA_ETFS_US].find(e => e.sym === pos.symbol);
     const name = etfInfo?.name || pos.symbol;
@@ -125,7 +125,7 @@ export function runScreener(portfolio: Position[], livePrices: Record<string, Pr
       symbol: pos.symbol, market: pos.market, name, price,
       qualityScore, cagr, maxDrawdown: maxDD,
       momentumScore, rsi, sma20, sma50,
-      aboveSma200: sma20 > sma50, change, volume,
+      aboveSma50: sma20 > sma50, change, volume,
       valueScore, riskScore,
       pegRatio: cagr > 0 ? +(rsi / cagr).toFixed(2) : 0,
       alphaScore, signal,
@@ -167,7 +167,7 @@ export function runScreener(portfolio: Position[], livePrices: Record<string, Pr
       symbol: etf.sym, market: mkt as 'IN' | 'US', name: etf.name, price,
       qualityScore, cagr: etf.cagr, maxDrawdown: etf.maxDD,
       momentumScore, rsi, sma20, sma50,
-      aboveSma200: sma20 > sma50, change, volume,
+      aboveSma50: sma20 > sma50, change, volume,
       valueScore, riskScore,
       pegRatio: etf.cagr > 0 ? +(rsi / etf.cagr).toFixed(2) : 0,
       alphaScore, signal,

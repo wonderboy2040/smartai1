@@ -236,11 +236,12 @@ export function calculateKellyFraction(winRate: number, avgWin: number, avgLoss:
 export function calculateCorrelationMatrix(positions: Position[], _livePrices?: Record<string, PriceData>): Record<string, Record<string, number>> {
   const matrix: Record<string, Record<string, number>> = {};
   const symbols = positions.map(p => p.symbol);
-  for (const s1 of symbols) {
-    matrix[s1] = {};
-    for (const s2 of symbols) {
-      if (s1 === s2) { matrix[s1][s2] = 1; continue; }
-      matrix[s1][s2] = Math.round((Math.random() * 0.6 + 0.2) * 100) / 100;
+  for (let i = 0; i < symbols.length; i++) {
+    matrix[symbols[i]] = {};
+    for (let j = 0; j < symbols.length; j++) {
+      if (i === j) { matrix[symbols[i]][symbols[j]] = 1; continue; }
+      if (j < i) { matrix[symbols[i]][symbols[j]] = matrix[symbols[j]][symbols[i]]; continue; }
+      matrix[symbols[i]][symbols[j]] = Math.round((Math.random() * 0.6 + 0.2) * 100) / 100;
     }
   }
   return matrix;

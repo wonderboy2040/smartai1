@@ -606,70 +606,94 @@ app.get('/api/telegram-status', (_req, res) => {
 
 // --- INDMoney / Tradetron endpoints ---
 app.post('/api/trade/place', async (req, res) => {
-  if (!indmoneyEnabled()) return jsonError(res, 503, 'INDMoney/Tradetron not configured');
-  const result = await executeTradetronSignal(req.body);
-  return res.json(result);
+  try {
+    if (!indmoneyEnabled()) return jsonError(res, 503, 'INDMoney/Tradetron not configured');
+    const result = await executeTradetronSignal(req.body);
+    return res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/trade/deploy', async (req, res) => {
-  const result = await deployStrategy(req.body || {});
-  return res.json(result);
+  try {
+    const result = await deployStrategy(req.body || {});
+    return res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/trade/toggle', async (req, res) => {
-  const { action } = req.body || {};
-  const result = await toggleStrategy(action || 'pause');
-  return res.json(result);
+  try {
+    const { action } = req.body || {};
+    const result = await toggleStrategy(action || 'pause');
+    return res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/trade/strategy-status', async (_req, res) => {
-  const result = await getStrategyStatus();
-  return res.json(result);
+  try {
+    const result = await getStrategyStatus();
+    return res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/trade/positions', async (_req, res) => {
-  const result = await getTradetronPositions();
-  return res.json(result);
+  try {
+    const result = await getTradetronPositions();
+    return res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/trade/history', async (_req, res) => {
-  const result = await getTradeHistory();
-  return res.json(result);
+  try {
+    const result = await getTradeHistory();
+    return res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // --- CoinDCX Futures endpoints ---
 app.post('/api/futures/place', async (req, res) => {
-  if (!coindcxEnabled()) return jsonError(res, 503, 'CoinDCX not configured — API key/secret required');
-  const result = await placeFuturesOrder(req.body);
-  return res.json(result);
+  try {
+    if (!coindcxEnabled()) return jsonError(res, 503, 'CoinDCX not configured — API key/secret required');
+    const result = await placeFuturesOrder(req.body);
+    return res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/futures/cancel', async (req, res) => {
-  if (!coindcxEnabled()) return jsonError(res, 503, 'CoinDCX not configured');
-  const { orderId } = req.body || {};
-  if (!orderId) return jsonError(res, 400, 'orderId required');
-  const result = await cancelFuturesOrder(orderId);
-  return res.json(result);
+  try {
+    if (!coindcxEnabled()) return jsonError(res, 503, 'CoinDCX not configured');
+    const { orderId } = req.body || {};
+    if (!orderId) return jsonError(res, 400, 'orderId required');
+    const result = await cancelFuturesOrder(orderId);
+    return res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/futures/orders', async (_req, res) => {
-  const result = await getFuturesOrders();
-  return res.json(result);
+  try {
+    const result = await getFuturesOrders();
+    return res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/futures/positions', async (_req, res) => {
-  const result = await getFuturesPositions();
-  return res.json(result);
+  try {
+    const result = await getFuturesPositions();
+    return res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/futures/balance', async (_req, res) => {
-  const result = await getFuturesBalance();
-  return res.json(result);
+  try {
+    const result = await getFuturesBalance();
+    return res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/futures/trades', async (_req, res) => {
-  const result = await getFuturesTradeHistory();
-  return res.json(result);
+  try {
+    const result = await getFuturesTradeHistory();
+    return res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Combined status: INDMoney + CoinDCX availability
@@ -690,18 +714,24 @@ app.get('/api/trade/status', (_req, res) => {
 // Config and state are kept in-memory.
 // ------------------------------------------------------------
 app.post('/api/trade/auto/config', async (req, res) => {
-  const result = setAutoConfig(req.body || {});
-  res.json(result);
+  try {
+    const result = setAutoConfig(req.body || {});
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/trade/auto/config', (_req, res) => {
-  res.json(getAutoConfig());
+  try {
+    res.json(getAutoConfig());
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/trade/auto/tick', async (req, res) => {
-  const { signals } = req.body || {};
-  const result = await autoTick(signals || []);
-  res.json(result);
+  try {
+    const { signals } = req.body || {};
+    const result = await autoTick(signals || []);
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ------------------------------------------------------------

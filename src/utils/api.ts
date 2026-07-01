@@ -621,9 +621,10 @@ async function tryTradingView(_sym: string, cleanSym: string, isIndian: boolean)
       const data = await res.json();
       if (data?.data?.length > 0) {
         const items = data.data as TvScannerItem[];
-        const item = items.find(x => x.d && pickScannerPrice(x.d[1], x.d[10]) > 0) || items[0];
+        const item = items.find(x => x.d && pickScannerPrice(x.d[1], x.d[10]) > 0) || items.find(x => x.d) || items[0];
+        if (!item?.d) return null;
         const f = (idx: number) => parseFloat(String(item.d![idx] ?? ''));
-        const priceVal = pickScannerPrice(item.d![1], item.d![10]);
+        const priceVal = pickScannerPrice(item.d[1], item.d[10]);
         const changeVal = f(2) || 0;
 
         if (!isNaN(priceVal) && priceVal > 0) {

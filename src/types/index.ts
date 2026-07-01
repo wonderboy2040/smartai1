@@ -184,7 +184,7 @@ export interface ScreenerResult {
   rsi: number;
   sma20: number;
   sma50: number;
-  aboveSma200: boolean;
+  aboveSma50: boolean;
   change: number;
   volume?: number;
   valueScore: number;

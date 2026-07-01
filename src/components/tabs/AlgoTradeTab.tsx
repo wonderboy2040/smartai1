@@ -129,11 +129,13 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
   const fetchTradetronData = async () => {
     try {
       const [posRes, histRes, statusRes] = await Promise.all([
-        fetch(API('trade/positions')),
-        fetch(API('trade/history')),
-        fetch(API('trade/strategy-status'))
+        fetch(API('trade/positions')).catch(() => null),
+        fetch(API('trade/history')).catch(() => null),
+        fetch(API('trade/strategy-status')).catch(() => null)
       ]);
-      const [pos, hist, stat] = await Promise.all([posRes.json(), histRes.json(), statusRes.json()]);
+      const pos = posRes?.ok ? await posRes.json() : null;
+      const hist = histRes?.ok ? await histRes.json() : null;
+      const stat = statusRes?.ok ? await statusRes.json() : null;
       if (pos?.positions) setTtPositions(pos.positions);
       if (hist?.trades) setTtHistory(hist.trades);
       if (stat && !stat.error) setStrategyStatus(stat);
@@ -144,12 +146,15 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
   const fetchCoinDcxData = async () => {
     try {
       const [posRes, ordRes, balRes, histRes] = await Promise.all([
-        fetch(API('futures/positions')),
-        fetch(API('futures/orders')),
-        fetch(API('futures/balance')),
-        fetch(API('futures/trades'))
+        fetch(API('futures/positions')).catch(() => null),
+        fetch(API('futures/orders')).catch(() => null),
+        fetch(API('futures/balance')).catch(() => null),
+        fetch(API('futures/trades')).catch(() => null)
       ]);
-      const [pos, ord, bal, hist] = await Promise.all([posRes.json(), ordRes.json(), balRes.json(), histRes.json()]);
+      const pos = posRes?.ok ? await posRes.json() : null;
+      const ord = ordRes?.ok ? await ordRes.json() : null;
+      const bal = balRes?.ok ? await balRes.json() : null;
+      const hist = histRes?.ok ? await histRes.json() : null;
       if (pos?.positions) setCdcxPositions(pos.positions);
       if (ord?.orders) setCdcxOrders(ord.orders);
       if (bal && !bal.error) setCdcxBalance(bal);

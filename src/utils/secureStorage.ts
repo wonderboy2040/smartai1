@@ -111,9 +111,8 @@ export const secureStorage = {
           const plain = legacyDecrypt(payload);
           if (plain !== null) {
             encryptData(plain).then(reEnc => {
-              try { localStorage.setItem(key, `enc:${reEnc}`); } catch { }
-            });
-            migrationDone = true;
+              try { localStorage.setItem(key, `enc:${reEnc}`); migrationDone = true; } catch { }
+            }).catch(() => {});
             return plain;
           }
         }
@@ -141,9 +140,11 @@ export const secureStorage = {
         if (!migrationDone) {
           const legacy = legacyDecrypt(payload);
           if (legacy !== null) {
-            const reEnc = await encryptData(legacy);
-            try { localStorage.setItem(key, `enc:${reEnc}`); } catch { }
-            migrationDone = true;
+            try {
+              const reEnc = await encryptData(legacy);
+              localStorage.setItem(key, `enc:${reEnc}`);
+              migrationDone = true;
+            } catch { }
             return legacy;
           }
         }

@@ -168,7 +168,7 @@ export function calculateConfluence(
   for (const tf of timeframes) {
     const w = weights[tf.timeframe];
     if (tf.trend === 'BULLISH') confluenceScore += (tf.strength * w);
-    else if (tf.trend === 'BEARISH') confluenceScore += ((100 - tf.strength) * w * -1);
+    else if (tf.trend === 'BEARISH') confluenceScore -= (tf.strength * w);
   }
 
   // Normalize: bullish trends give positive, bearish negative

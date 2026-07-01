@@ -330,7 +330,16 @@ function connect() {
 
       const jsonStr = data.substring(jsonStart, jsonEnd);
 
-      // Skip heartbeat responses
+      // Detect pong response for latency measurement
+      if (jsonStr.startsWith('~h~') && pingStartTime > 0) {
+        const latency = Date.now() - pingStartTime;
+        recordLatency(latency);
+        pingStartTime = 0;
+        offset = jsonEnd;
+        continue;
+      }
+
+      // Skip other heartbeat/numeric messages
       if (jsonStr.startsWith('~h~') || /^\d+$/.test(jsonStr.trim())) {
         offset = jsonEnd;
         continue;
@@ -340,12 +349,6 @@ function connect() {
         const parsed = JSON.parse(jsonStr);
         handleParsedMessage(parsed);
       } catch {
-        // Detect pong response for latency measurement
-        if (data.substring(jsonStart, jsonEnd).includes('~h~') && pingStartTime > 0) {
-          const latency = Date.now() - pingStartTime;
-          recordLatency(latency);
-          pingStartTime = 0;
-        }
         // Skip non-JSON messages
       }
 

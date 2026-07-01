@@ -4,24 +4,30 @@ import { ALPHA_ETFS_IN, ALPHA_ETFS_US, getAssetCagrProxy } from './constants';
 // ========================================
 // MARKET HOURS CHECK
 // ========================================
-export function isIndiaMarketOpen(): boolean {
+function getTimeInZone(tz: string): { h: number; m: number; day: number } {
   const now = new Date();
-  const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-  const day = ist.getDay();
-  if (day === 0 || day === 6) return false; // Weekend
-  const h = ist.getHours(), m = ist.getMinutes();
+  const tzStr = now.toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false, weekday: 'short' });
+  const parts = tzStr.split(', ');
+  const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const day = dayMap[parts[0]?.substring(0, 3)] ?? now.getDay();
+  const timeParts = (parts[1] || parts[0]).split(':');
+  const h = parseInt(timeParts[0], 10) || 0;
+  const m = parseInt(timeParts[1], 10) || 0;
+  return { h, m, day };
+}
+
+export function isIndiaMarketOpen(): boolean {
+  const { h, m, day } = getTimeInZone('Asia/Kolkata');
+  if (day === 0 || day === 6) return false;
   const mins = h * 60 + m;
-  return mins >= 555 && mins <= 930; // 9:15 AM - 3:30 PM IST
+  return mins >= 555 && mins <= 930;
 }
 
 export function isUSMarketOpen(): boolean {
-  const now = new Date();
-  const est = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const day = est.getDay();
+  const { h, m, day } = getTimeInZone('America/New_York');
   if (day === 0 || day === 6) return false;
-  const h = est.getHours(), m = est.getMinutes();
   const mins = h * 60 + m;
-  return mins >= 570 && mins <= 960; // 9:30 AM - 4:00 PM ET
+  return mins >= 570 && mins <= 960;
 }
 
 export function isAnyMarketOpen(): boolean {

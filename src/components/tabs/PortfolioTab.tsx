@@ -322,7 +322,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
             const pl = curVal - posSize;
             const plPct = inv > 0 ? (pl / inv) * 100 : 0;
             const eqVal = inv + pl;
-            const prevPrice = curPrice / (1 + (change / 100));
+            const prevPrice = change <= -100 ? curPrice * 2 : curPrice / (1 + (change / 100));
             const todayPL = (curPrice - prevPrice) * p.qty;
             const assetXirr = xirrMap[key];
 

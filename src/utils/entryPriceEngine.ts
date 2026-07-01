@@ -209,7 +209,7 @@ export function calculateSupportResistance(
     }
   }
 
-  supports.sort((a, b) => Math.abs(price - b.price) - Math.abs(price - a.price));
+  supports.sort((a, b) => Math.abs(price - a.price) - Math.abs(price - b.price));
   resistances.sort((a, b) => Math.abs(price - a.price) - Math.abs(price - b.price));
   return { supports: supports.slice(0, 5), resistances: resistances.slice(0, 5) };
 }

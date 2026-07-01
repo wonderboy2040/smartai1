@@ -201,6 +201,7 @@ export function runAdvancedScreener(
     if (valueScore > 70) reasons.push('Good value');
     if (rsi < 35) reasons.push('Oversold zone');
     if (sma20 > sma50) reasons.push('Uptrend');
+    else if (sma20 < sma50) reasons.push('Downtrend');
     if (cagr > 20) reasons.push(`${cagr}% CAGR`);
 
     const etfInfo = [...ALPHA_ETFS_IN, ...ALPHA_ETFS_US].find(e => e.sym === pos.symbol);
@@ -218,7 +219,7 @@ export function runAdvancedScreener(
       rsi,
       sma20,
       sma50,
-      aboveSma200: sma20 > sma50,
+      aboveSma50: sma20 > sma50,
       change,
       valueScore,
       pegRatio: cagr > 0 ? +(rsi / cagr).toFixed(2) : 0,
@@ -273,7 +274,7 @@ export function runAdvancedScreener(
       rsi,
       sma20,
       sma50,
-      aboveSma200: sma20 > sma50,
+      aboveSma50: sma20 > sma50,
       change,
       valueScore,
       pegRatio: etf.cagr > 0 ? +(rsi / etf.cagr).toFixed(2) : 0,

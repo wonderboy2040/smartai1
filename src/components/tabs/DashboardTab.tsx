@@ -409,12 +409,12 @@ export default React.memo(function DashboardTab() {
             </div>
           ) : (
             portfolio.map((p) => {
-              const key = `${p.market}_${p.symbol}`;
+              const key = `${(p.market || 'IN').toUpperCase()}_${p.symbol}`;
               const data = livePrices[key];
               const change = data?.change || 0;
               return (
                 <MemoAssetButton
-                  key={key}
+                  key={p.id}
                   symbol={p.symbol}
                   market={p.market}
                   price={data?.price || p.avgPrice}

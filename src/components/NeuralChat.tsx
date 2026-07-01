@@ -300,7 +300,7 @@ _Sabhi API keys free hain — Gemini: aistudio.google.com , Groq: console.groq.c
 
     const results = await Promise.allSettled([
       fetchRealtimeSnapshot(),
-      (isNewsQuery && false) ? fetchWebIntel(userMessage) : Promise.resolve('')
+      isNewsQuery ? fetchWebIntel(userMessage) : Promise.resolve('')
     ]);
     const marketData = results[0].status === 'fulfilled' ? results[0].value : '';
     const webIntelData = results[1].status === 'fulfilled' ? results[1].value : '';
@@ -502,8 +502,8 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
             </div>
 
             <div className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide">
-              {chatMessages.map((msg, i) => (
-                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
+              {chatMessages.map(msg => (
+                <div key={msg.timestamp} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
                   <div className={`max-w-[85%] sm:max-w-[92%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
                     ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-3 py-2.5 sm:px-4 sm:py-3'
                     : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-3 py-2.5 sm:px-4 sm:py-3 group/msg'
@@ -554,8 +554,8 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
 
             <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-t border-cyan-500/10">
               <div className="flex gap-2 overflow-x-auto scrollbar-hide">
-                {QUICK_ACTIONS.map((action, i) => (
-                  <button key={i}
+                {QUICK_ACTIONS.map(action => (
+                  <button key={action.label}
                     onClick={() => { setChatInput(''); sendMessage(action.query); }}
                     disabled={isThinking}
                     className="flex items-center gap-1.5 whitespace-nowrap text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-slate-400 hover:text-white hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all disabled:opacity-30 shrink-0"

@@ -530,7 +530,9 @@ export function useAppState() {
     if (!symbolsToSub.includes('IN_BTC')) symbolsToSub.push('IN_BTC');
     if (!symbolsToSub.includes('IN_ETH')) symbolsToSub.push('IN_ETH');
     const positionsToSub: Position[] = symbolsToSub.map(symbol => {
-      const [market, sym] = symbol.split('_') as ['IN' | 'US', string];
+      const idx = symbol.indexOf('_');
+      const market = symbol.substring(0, idx) as 'IN' | 'US';
+      const sym = symbol.substring(idx + 1);
       return { id: `temp-${symbol}`, symbol: sym, market, qty: 1, avgPrice: 1, leverage: 1, dateAdded: getTodayString() };
     });
     let statusThrottle = 0;
@@ -776,7 +778,7 @@ export function useAppState() {
         totalValueUSD += eqVal;
       }
 
-      const prevPrice = curPrice / (1 + (change / 100));
+      const prevPrice = change <= -100 ? curPrice * 2 : curPrice / (1 + (change / 100));
       const dayPL = (curPrice - prevPrice) * pos.qty;
       const dayPLINR = pos.market === 'IN' ? dayPL : dayPL * rate;
       todayPL += dayPLINR;
@@ -1222,7 +1224,9 @@ export function useAppState() {
       const defaults = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BTC', 'IN_ETH'];
       const keys = [...new Set([...cur.map(p => `${p.market}_${p.symbol}`), ...defaults])];
       const positions: Position[] = keys.map(k => {
-        const [market, sym] = k.split('_') as ['IN' | 'US', string];
+        const idx = k.indexOf('_');
+        const market = k.substring(0, idx) as 'IN' | 'US';
+        const sym = k.substring(idx + 1);
         return { id: `refresh-${k}`, symbol: sym, market, qty: 1, avgPrice: 1, leverage: 1, dateAdded: getTodayString() };
       });
       const pricePromise = batchFetchPrices(positions, (key, data) => { pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData; })

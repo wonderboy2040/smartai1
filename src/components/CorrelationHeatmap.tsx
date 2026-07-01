@@ -73,8 +73,8 @@ export function CorrelationHeatmap({ portfolio, livePrices }: Props) {
           {/* Header */}
           <div className="flex">
             <div className="w-16 flex-shrink-0" />
-            {symbols.map((s, i) => (
-              <div key={i} className="flex-1 min-w-[40px] text-center">
+            {symbols.map(s => (
+              <div key={s} className="flex-1 min-w-[40px] text-center">
                 <div className="text-[8px] text-slate-500 font-bold truncate px-0.5">{s}</div>
               </div>
             ))}
@@ -82,13 +82,13 @@ export function CorrelationHeatmap({ portfolio, livePrices }: Props) {
 
           {/* Matrix */}
           {correlationMatrix.map((row, i) => (
-            <div key={i} className="flex">
+            <div key={symbols[i]} className="flex">
               <div className="w-16 flex-shrink-0 flex items-center">
                 <div className="text-[8px] text-slate-400 font-bold truncate pr-1">{symbols[i]}</div>
               </div>
               {row.map((val, j) => (
                 <div
-                  key={j}
+                  key={`${symbols[i]}_${symbols[j]}`}
                   className={`flex-1 min-w-[40px] aspect-square flex items-center justify-center ${getColor(val)} border border-white/5 m-px rounded`}
                   title={`${symbols[i]} × ${symbols[j]}: ${val.toFixed(2)}`}
                 >

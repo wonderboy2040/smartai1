@@ -106,9 +106,9 @@ export function calculateSectorMomentum(
   return sectorData.map(s => {
     const relativeStrength = s.change - benchmarkChange;
     // Composite: 40% change + 30% relative strength + 30% direction
-    const directionScore = s.change > 0 ? 50 + s.change * 10 : 50 + s.change * 10;
+    const directionScore = s.change > 0 ? 50 + s.change * 10 : 50 + Math.abs(s.change) * 10;
     const compositeScore = Math.max(0, Math.min(100,
-      (Math.abs(s.change) * 20 + Math.abs(relativeStrength) * 30 + directionScore) / 1
+      (Math.abs(s.change) * 20 + Math.abs(relativeStrength) * 30 + directionScore) / 150
     ));
 
     let trend: SectorMomentum['trend'];

@@ -134,8 +134,8 @@ Return ONLY valid JSON, no markdown.`;
               Click "Groq Analyze" to fetch AI-powered news sentiment
             </div>
           )}
-          {news.map((item, i) => (
-            <div key={i} className="bg-black/30 rounded-xl p-3 border border-white/5">
+          {news.map(item => (
+            <div key={item.title} className="bg-black/30 rounded-xl p-3 border border-white/5">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1">
                   <div className="text-xs font-bold text-white mb-1">{item.title}</div>
@@ -169,8 +169,8 @@ Return ONLY valid JSON, no markdown.`;
               Click "Groq Analyze" to fetch earnings calendar & sentiment
             </div>
           )}
-          {earnings.map((e, i) => (
-            <div key={i} className="bg-black/30 rounded-xl p-3 border border-white/5">
+          {earnings.map(e => (
+            <div key={`${e.symbol}_${e.date}`} className="bg-black/30 rounded-xl p-3 border border-white/5">
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-xs font-bold text-white font-mono">{e.symbol}</span>

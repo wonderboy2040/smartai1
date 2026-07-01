@@ -165,7 +165,8 @@ function generateSignal(
 
   // Volume trend
   const recentVol = data[index]?.volume || 0;
-  const avgVol = data.slice(Math.max(0, index - 10), index + 1).reduce((s, d) => s + d.volume, 0) / 11;
+  const slice = data.slice(Math.max(0, index - 10), index + 1);
+  const avgVol = slice.reduce((s, d) => s + d.volume, 0) / slice.length;
 
   // Signal logic
   if (rsi < 30 && price < sma20 * 1.02) return 'BUY';
