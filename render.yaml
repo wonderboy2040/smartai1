@@ -61,3 +61,17 @@ services:
       # VITE_ML_SERVICE_URL is NOT needed anymore — ML runs in-process.
       # The /api/ml/* routes serve all ML predictions from the Node server.
       # Remove this env var if you had it set.
+
+      # ── Tradetron + INDMoney Algo Trading ───────────────────────────────
+      - key: TRADETRON_API_KEY
+        sync: false
+      - key: TRADETRON_STRATEGY_ID
+        sync: false
+      - key: INDMONEY_ACCESS_TOKEN
+        sync: false
+
+      # ── CoinDCX Futures Trading ─────────────────────────────────────────
+      - key: COINDCX_API_KEY
+        sync: false
+      - key: COINDCX_API_SECRET
+        sync: false

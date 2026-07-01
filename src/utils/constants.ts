@@ -18,14 +18,16 @@ export const ALPHA_ETFS_IN: ETFInfo[] = [
 export const ALPHA_ETFS_US: ETFInfo[] = [
   { sym: 'SMH', name: 'VanEck Semiconductor', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', aum: '$15B', vol: 'Extreme', fixedAlloc: 0.40 },
   { sym: 'VGT', name: 'Vanguard Information Technology ETF', cagr: 21.0, maxDD: 33, cat: 'Tech', aum: '$75B', vol: 'High', fixedAlloc: 0.35 },
-  { sym: 'SPCX', name: 'SPAC and New Issue ETF', cagr: 15.0, maxDD: 35, cat: 'SPAC/Growth', aum: '$100M', vol: 'High', fixedAlloc: 0.25 }
+  { sym: 'SPCX', name: 'SpaceX', cagr: 35.0, maxDD: 40, cat: 'Space/Tech', aum: '$350B', vol: 'High', fixedAlloc: 0.15 },
+  { sym: 'MU', name: 'Micron Technology Inc', cagr: 22.0, maxDD: 45, cat: 'Semiconductor', aum: '$120B', vol: 'High', fixedAlloc: 0.10 }
 ];
 
 export const EXACT_TICKER_MAP: Record<string, string> = {
   // US ETFs & Indices
   'SMH': 'NASDAQ:SMH',
   'VGT': 'AMEX:VGT',
-  'SPCX': 'NASDAQ:SPCX',
+  'SPCX': 'NYSE:SPCX',
+  'MU': 'NASDAQ:MU',
   'AVUV': 'AMEX:AVUV',
   'IWM': 'AMEX:IWM',
   'VEA': 'AMEX:VEA',

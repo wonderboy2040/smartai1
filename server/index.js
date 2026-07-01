@@ -166,7 +166,7 @@ app.get('/api/chart', async (req, res) => {
 //   1. Finnhub  /quote   (if FINNHUB_API_KEY is set) — true real-time US trades
 //   2. Yahoo Finance v8 chart meta.regularMarketPrice — real-time (~1-2s),
 //      no API key required, server-side so there's no browser CORS issue.
-// Query: ?symbols=SMH,VGT,SPCX&market=US   (comma separated, max 50)
+// Query: ?symbols=SMH,VGT,SPCX,MU&market=US   (comma separated, max 50)
 // Resp:  { quotes: { SMH: {price,change,high,low,volume,prevClose,time,source}, ... } }
 // ------------------------------------------------------------
 async function fetchFinnhubQuote(plainSym) {

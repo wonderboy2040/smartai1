@@ -401,7 +401,7 @@ export function useAppState() {
   }, [isAuthenticated, hasIndianEquity, flushPricesToStorage]);
 
   // --- US Market Realtime Streaming (HTTP) ------------------------------------
-  // Dedicated fast poller for US assets (ETFs: SMH, VGT, SPCX etc.).
+  // Dedicated fast poller for US assets (SMH, VGT, SPCX, MU etc.).
   // Uses 'last' (last traded price) instead of 'close' which was causing the
   // ~15 minute delay after US market open (7:00 PM IST). Polls every 3s when
   // US market is open, 5s in pre-market, 30s when closed.

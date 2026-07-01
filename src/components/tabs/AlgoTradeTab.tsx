@@ -557,6 +557,44 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
                 <div className="font-bold text-white mt-1">{status?.indmoney?.indmoneyLinked ? '✅ LINKED' : '❌ TOKEN EXPIRED/MISSING'}</div>
               </div>
             </div>
+
+            {/* Setup Guide — shown when Tradetron is NOT configured */}
+            {!status?.indmoney?.enabled && (
+              <div className="bg-gradient-to-br from-indigo-500/5 to-cyan-500/5 border border-indigo-500/20 rounded-xl p-5 space-y-3">
+                <h4 className="text-sm font-black text-indigo-300 flex items-center gap-2">🔧 Setup Guide — Tradetron × INDMoney ALGO Trading</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                  <div className="bg-black/30 rounded-lg p-3 border border-white/5 space-y-1.5">
+                    <div className="text-cyan-400 font-black text-sm">Step 1</div>
+                    <div className="text-white font-bold">Get Tradetron API Key</div>
+                    <div className="text-slate-400 text-[11px] leading-relaxed">
+                      Go to <span className="text-cyan-300 font-bold">tradetron.tech</span> → Sign up / Login → Profile → API Keys → Generate new key. Copy the API key.
+                    </div>
+                  </div>
+                  <div className="bg-black/30 rounded-lg p-3 border border-white/5 space-y-1.5">
+                    <div className="text-cyan-400 font-black text-sm">Step 2</div>
+                    <div className="text-white font-bold">Get Strategy ID</div>
+                    <div className="text-slate-400 text-[11px] leading-relaxed">
+                      Create or subscribe to a strategy on Tradetron → Open it → URL me <span className="text-cyan-300 font-bold">strategy_id</span> dikhai dega (e.g. /strategy/<span className="text-amber-300">12345</span>). Copy that number.
+                    </div>
+                  </div>
+                  <div className="bg-black/30 rounded-lg p-3 border border-white/5 space-y-1.5">
+                    <div className="text-cyan-400 font-black text-sm">Step 3</div>
+                    <div className="text-white font-bold">Link INDMoney Broker</div>
+                    <div className="text-slate-400 text-[11px] leading-relaxed">
+                      On Tradetron → Broker Settings → Connect <span className="text-cyan-300 font-bold">INDMoney</span> as your broker. INDMoney access token set karein environment variables me.
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-black/40 rounded-lg p-3 border border-amber-500/20">
+                  <div className="text-amber-400 text-[10px] font-bold uppercase tracking-wider mb-1">⚙️ Environment Variables Set Karein (Render Dashboard / .env)</div>
+                  <div className="font-mono text-[11px] text-slate-300 space-y-0.5">
+                    <div><span className="text-cyan-400">TRADETRON_API_KEY</span>=<span className="text-slate-500">your_api_key_here</span></div>
+                    <div><span className="text-cyan-400">TRADETRON_STRATEGY_ID</span>=<span className="text-slate-500">your_strategy_id_here</span></div>
+                    <div><span className="text-cyan-400">INDMONEY_ACCESS_TOKEN</span>=<span className="text-slate-500">your_indmoney_token_here</span></div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
