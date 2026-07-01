@@ -1,13 +1,24 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../hooks/AppContext';
 import { scanAlgoSignals, AlgoSignal } from '../../utils/algoEngine';
-import { TradeWallet, AngelOrder, AngelHolding, AngelPosition } from '../../types';
 import { isCryptoSymbol } from '../../utils/constants';
-import { isIndiaMarketOpen } from '../../utils/telegram';
 
-interface TradeStatus { enabled: boolean; publicIp: string; staticIpRegistered: boolean; }
+interface BrokerStatus {
+  indmoney: {
+    tradetronConnected: boolean;
+    strategyConfigured: boolean;
+    indmoneyLinked: boolean;
+    enabled: boolean;
+  };
+  coindcx: {
+    enabled: boolean;
+    hasKey: boolean;
+    hasSecret: boolean;
+  };
+  publicIp: string;
+}
 
-const API = (path: string) => `/api/trade/${path}`;
+const API = (path: string) => `/api/${path}`;
 
 function cur(m: string) { return m === 'IN' ? '₹' : '$'; }
 
@@ -17,78 +28,82 @@ function dirStyle(d: AlgoSignal['direction']) {
       : 'text-amber-400 bg-amber-500/10 border-amber-500/30';
 }
 
-function statusColor(s: string) {
-  if (s === 'complete' || s === 'filled') return 'text-emerald-400';
-  if (s === 'open' || s === 'pending') return 'text-yellow-400';
-  if (s === 'cancelled' || s === 'rejected') return 'text-red-400';
-  return 'text-slate-400';
-}
-
 interface SmartPick {
   sig: AlgoSignal; maxQty: number; cost: number; expectedProfit: number; expectedReturnPct: number; score: number;
 }
 
-interface AutoTradeLog { time: number; type: string; symbol: string; qty?: number; pnl?: number; entry?: number; price?: number; returnPct?: number; orderId: string; }
+interface AutoTradeLog {
+  time: number; type: string; symbol: string; qty?: number; pnl?: number; entry?: number; price?: number; returnPct?: number; orderId: string; broker?: string;
+}
 
 const AlgoTradeTab = React.memo(function AlgoTradeTab() {
   const { portfolio, livePrices } = useApp();
 
-  const [wallet, setWallet] = useState<TradeWallet | null>(null);
-  const [orders, setOrders] = useState<AngelOrder[]>([]);
-  const [holdings, setHoldings] = useState<AngelHolding[]>([]);
-  const [positions, setPositions] = useState<AngelPosition[]>([]);
+  const [status, setStatus] = useState<BrokerStatus | null>(null);
+  const [tab, setTab] = useState<'smart' | 'auto' | 'indmoney' | 'coindcx'>('smart');
+
+  // INDMoney (Tradetron) lists
+  const [ttPositions, setTtPositions] = useState<any[]>([]);
+  const [ttHistory, setTtHistory] = useState<any[]>([]);
+  const [strategyStatus, setStrategyStatus] = useState<any>(null);
+
+  // CoinDCX Futures lists
+  const [cdcxPositions, setCdcxPositions] = useState<any[]>([]);
+  const [cdcxOrders, setCdcxOrders] = useState<any[]>([]);
+  const [cdcxBalance, setCdcxBalance] = useState<any>(null);
+  const [cdcxHistory, setCdcxHistory] = useState<any[]>([]);
+
+  // Placement state
   const [placing, setPlacing] = useState<string | null>(null);
   const [placeMsg, setPlaceMsg] = useState('');
   const [msgType, setMsgType] = useState<'ok' | 'err'>('ok');
-  const [tab, setTab] = useState<'smart' | 'positions' | 'orders' | 'holdings' | 'auto'>('smart');
 
-  // Auto-trade state
+  // Auto config state
   const [autoCfg, setAutoCfg] = useState<any>(null);
   const [autoBusy, setAutoBusy] = useState(false);
+  const [cfgMode, setCfgMode] = useState<'equity' | 'crypto' | 'both'>('both');
   const [cfgMax, setCfgMax] = useState('');
   const [cfgMinRet, setCfgMinRet] = useState('3');
-  const [cfgDailyTrades, setCfgDailyTrades] = useState('3');
+  const [cfgDailyTrades, setCfgDailyTrades] = useState('5');
+  const [cfgLeverage, setCfgLeverage] = useState('5');
   const [fetchError, setFetchError] = useState('');
-  const [status, setStatus] = useState<TradeStatus | null>(null);
-  const [marketOpen, setMarketOpen] = useState(isIndiaMarketOpen());
+
   const autoActive = autoCfg?.enabled;
   const signalsRef = useRef<AlgoSignal[]>([]);
 
-  // Live market clock — flips the OPEN/CLOSED pill in real time.
-  useEffect(() => {
-    const id = setInterval(() => setMarketOpen(isIndiaMarketOpen()), 15000);
-    return () => clearInterval(id);
-  }, []);
-
+  // Watch keys (India stocks & Crypto only - no US)
   const watchKeys = useMemo(() => {
     const keys = new Set<string>();
-    portfolio.forEach(p => keys.add(`${p.market}_${p.symbol}`));
-    Object.keys(livePrices).forEach(k => keys.add(k));
-    return [...keys].filter(k => {
-      const parts = k.split('_');
-      if (parts.length < 2) return false;
-      const m = parts[0], sym = parts.slice(1).join('_');
-      if (m !== 'IN') return false;
-      if (/^(INDIAVIX|VIX|NIFTY|SENSEX|BANKNIFTY|CNXIT|GIFTNIFTY|SGXNIFTY)$/i.test(sym)) return false;
-      if (isCryptoSymbol(sym)) return false;
-      return true;
+    portfolio.forEach(p => {
+      if (p.market === 'IN' || isCryptoSymbol(p.symbol)) {
+        keys.add(`${p.market}_${p.symbol}`);
+      }
     });
+    Object.keys(livePrices).forEach(k => {
+      const parts = k.split('_');
+      if (parts[0] === 'IN' || (parts[1] && isCryptoSymbol(parts[1]))) {
+        keys.add(k);
+      }
+    });
+    return [...keys].filter(k => !/_(INDIAVIX|VIX)$/i.test(k));
   }, [portfolio, livePrices]);
 
   const signals = useMemo(() => scanAlgoSignals(watchKeys, livePrices), [watchKeys, livePrices]);
   signalsRef.current = signals;
 
-  const cash = wallet ? parseFloat(wallet.availablecash || wallet.totalmargin || wallet.net || wallet.notionalcash || '0') : 0;
-  const used = wallet ? parseFloat(wallet.utilisablemargin || wallet.utilizabledeliverymargin || '0') : 0;
+  // Wallet balances
+  const indmoneyCash = strategyStatus?.capital || 0; // or available balance
+  const coindcxCash = cdcxBalance?.balance?.usdt || 0;
 
   const smartPicks = useMemo((): SmartPick[] => {
-    if (!cash) return [];
     const actionable = signals.filter(s => s.direction !== 'WAIT' && s.entry > 0);
     const picks: SmartPick[] = [];
     for (const sig of actionable) {
+      const isCrypto = isCryptoSymbol(sig.symbol);
+      const limitCash = isCrypto ? (coindcxCash > 0 ? coindcxCash : 1000) : (indmoneyCash > 0 ? indmoneyCash : 100000);
       const entry = sig.entry;
       const target1 = sig.target1;
-      const maxQty = Math.floor(cash / entry);
+      const maxQty = Math.floor(limitCash / entry);
       if (maxQty < 1) continue;
       const cost = maxQty * entry;
       const expectedReturnPct = ((target1 - entry) / entry) * 100;
@@ -98,197 +113,240 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
     }
     picks.sort((a, b) => b.score - a.score);
     return picks;
-  }, [signals, cash]);
+  }, [signals, indmoneyCash, coindcxCash]);
 
-  // Data fetch
-  const fetchWallet = async () => {
-    try { const r = await fetch(API('wallet')); const j = await r.json(); if (j && !j.error) { setWallet(j); setFetchError(''); } else if (j?.error) setFetchError('Wallet: ' + (typeof j.error === 'string' ? j.error : j.error.message)); } catch (e) { setFetchError('Wallet fetch failed'); }
-  };
-  const fetchOrders = async () => {
-    try { const r = await fetch(API('orders')); const j = await r.json(); if (j?.orders) setOrders(j.orders); } catch {}
-  };
-  const fetchHoldings = async () => {
-    try { const r = await fetch(API('holdings')); const j = await r.json(); if (j?.holdings) setHoldings(j.holdings); } catch {}
-  };
-  const fetchPositions = async () => {
-    try { const r = await fetch(API('positions')); const j = await r.json(); if (j?.positions) setPositions(j.positions); } catch {}
-  };
-  const fetchAutoCfg = async () => {
-    try { const r = await fetch(API('auto/config')); const j = await r.json(); if (j && !j.error) { setAutoCfg(j); if (j.maxAmount > 0) setCfgMax(String(j.maxAmount)); setCfgMinRet(String(j.minReturnPct)); setCfgDailyTrades(String(j.maxDailyTrades || 3)); setFetchError(''); } else if (j?.error) setFetchError('Auto config: ' + (typeof j.error === 'string' ? j.error : j.error.message)); } catch (e) { setFetchError('Auto config fetch failed'); }
-  };
+  // Fetch status
   const fetchStatus = async () => {
-    try { const r = await fetch(API('status')); const j = await r.json(); if (j && typeof j.enabled === 'boolean') setStatus(j); } catch {}
+    try {
+      const r = await fetch(API('trade/status'));
+      const j = await r.json();
+      if (j && !j.error) setStatus(j);
+    } catch {}
   };
-  const fetchAll = () => { fetchWallet(); fetchOrders(); fetchHoldings(); fetchPositions(); fetchAutoCfg(); fetchStatus(); };
 
-  useEffect(() => { fetchAll(); const id = setInterval(fetchAll, 10000); return () => clearInterval(id); }, []);
+  // Fetch Tradetron (INDMoney)
+  const fetchTradetronData = async () => {
+    try {
+      const [posRes, histRes, statusRes] = await Promise.all([
+        fetch(API('trade/positions')),
+        fetch(API('trade/history')),
+        fetch(API('trade/strategy-status'))
+      ]);
+      const [pos, hist, stat] = await Promise.all([posRes.json(), histRes.json(), statusRes.json()]);
+      if (pos?.positions) setTtPositions(pos.positions);
+      if (hist?.trades) setTtHistory(hist.trades);
+      if (stat && !stat.error) setStrategyStatus(stat);
+    } catch {}
+  };
 
-  // Auto tick — called every 30s
+  // Fetch CoinDCX Futures
+  const fetchCoinDcxData = async () => {
+    try {
+      const [posRes, ordRes, balRes, histRes] = await Promise.all([
+        fetch(API('futures/positions')),
+        fetch(API('futures/orders')),
+        fetch(API('futures/balance')),
+        fetch(API('futures/trades'))
+      ]);
+      const [pos, ord, bal, hist] = await Promise.all([posRes.json(), ordRes.json(), balRes.json(), histRes.json()]);
+      if (pos?.positions) setCdcxPositions(pos.positions);
+      if (ord?.orders) setCdcxOrders(ord.orders);
+      if (bal && !bal.error) setCdcxBalance(bal);
+      if (hist?.trades) setCdcxHistory(hist.trades);
+    } catch {}
+  };
+
+  // Fetch auto trader config
+  const fetchAutoCfg = async () => {
+    try {
+      const r = await fetch(API('trade/auto/config'));
+      const j = await r.json();
+      if (j && !j.error) {
+        setAutoCfg(j);
+        setCfgMode(j.mode || 'both');
+        if (j.maxAmount > 0) setCfgMax(String(j.maxAmount));
+        setCfgMinRet(String(j.minReturnPct));
+        setCfgDailyTrades(String(j.maxDailyTrades || 5));
+        setCfgLeverage(String(j.cryptoLeverage || 5));
+        setFetchError('');
+      }
+    } catch {
+      setFetchError('Failed to fetch auto config');
+    }
+  };
+
+  const fetchAll = () => {
+    fetchStatus();
+    fetchAutoCfg();
+    fetchTradetronData();
+    fetchCoinDcxData();
+  };
+
+  useEffect(() => {
+    fetchAll();
+    const id = setInterval(fetchAll, 15000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Tick loop
   const runAutoTick = async () => {
     if (autoBusy || !autoActive) return;
     setAutoBusy(true);
     try {
-      const r = await fetch(API('auto/tick'), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      await fetch(API('trade/auto/tick'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ signals: signalsRef.current }),
       });
-      await r.json();
       await fetchAutoCfg();
-      fetchWallet(); fetchPositions(); fetchOrders();
-    } catch {} finally { setAutoBusy(false); }
+    } catch {} finally {
+      setAutoBusy(false);
+    }
   };
 
   useEffect(() => {
     if (!autoActive) return;
-    runAutoTick(); // immediate first tick
+    runAutoTick();
     const id = setInterval(runAutoTick, 30000);
     return () => clearInterval(id);
   }, [autoActive]);
 
   const toggleAuto = async (on: boolean) => {
     try {
-      const body: any = { enabled: on, minReturnPct: parseFloat(cfgMinRet) || 3, maxDailyTrades: parseInt(cfgDailyTrades) || 3 };
+      const body: any = {
+        enabled: on,
+        mode: cfgMode,
+        minReturnPct: parseFloat(cfgMinRet) || 3,
+        maxDailyTrades: parseInt(cfgDailyTrades) || 5,
+        cryptoLeverage: parseInt(cfgLeverage) || 5
+      };
       const max = parseFloat(cfgMax);
       if (max > 0) body.maxAmount = max;
-      const r = await fetch(API('auto/config'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch(API('trade/auto/config'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
       const j = await r.json();
       if (j && !j.error) setAutoCfg(j);
     } catch {}
   };
 
+  // Direct manual trade trigger
   const executeTrade = async (sig: AlgoSignal, qty: number) => {
-    if (placing || qty < 1) return;
-    setPlacing(sig.symbol); setPlaceMsg('');
+    const isCrypto = isCryptoSymbol(sig.symbol);
+    setPlacing(sig.symbol);
+    setPlaceMsg('');
     try {
-      const r = await fetch(API('place'), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          symbol: sig.symbol.includes('.NS') ? sig.symbol : `${sig.symbol}.NS`,
-          side: sig.direction === 'LONG' ? 'BUY' : 'SELL',
-          orderType: 'LIMIT', price: sig.entry, qty,
-          variety: 'NORMAL', productType: 'DELIVERY', exchange: 'NSE',
-        }),
+      const endpoint = isCrypto ? API('futures/place') : API('trade/place');
+      const payload = isCrypto ? {
+        market: `B-${sig.symbol}_USDT`,
+        side: sig.direction === 'LONG' ? 'buy' : 'sell',
+        qty: qty || 1,
+        price: sig.entry,
+        leverage: parseInt(cfgLeverage) || 5,
+        orderType: 'limit_order'
+      } : {
+        symbol: sig.symbol,
+        side: sig.direction === 'LONG' ? 'BUY' : 'SELL',
+        price: sig.entry,
+        qty,
+        exchange: 'NSE',
+        orderType: 'LIMIT',
+        productType: 'MIS'
+      };
+
+      const r = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
       const j = await r.json();
-      if (j.orderId) { setPlaceMsg(`✅ ${sig.symbol}: ${j.orderId}`); setMsgType('ok'); setTimeout(fetchAll, 2000); }
-      else { setPlaceMsg(`❌ ${j.error || 'Failed'}`); setMsgType('err'); }
-    } catch (e: any) { setPlaceMsg(`❌ ${e?.message || 'Network error'}`); setMsgType('err'); }
-    finally { setPlacing(null); setTimeout(() => setPlaceMsg(''), 4000); }
+      if (j.orderId || j.status === 'success') {
+        setPlaceMsg(`✅ Order placed: ${j.orderId || 'Success'}`);
+        setMsgType('ok');
+        setTimeout(fetchAll, 2000);
+      } else {
+        setPlaceMsg(`❌ Failed: ${j.error || 'Server error'}`);
+        setMsgType('err');
+      }
+    } catch (e: any) {
+      setPlaceMsg(`❌ Error: ${e?.message || 'Network error'}`);
+      setMsgType('err');
+    } finally {
+      setPlacing(null);
+      setTimeout(() => setPlaceMsg(''), 5000);
+    }
   };
 
-  const cancelOrder = async (orderId: string) => {
+  const cancelDcxOrder = async (orderId: string) => {
     try {
-      const r = await fetch(API('cancel'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId }) });
+      const r = await fetch(API('futures/cancel'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId }),
+      });
       const j = await r.json();
-      if (j.message) setTimeout(fetchAll, 1500);
+      if (j.message) {
+        setPlaceMsg('✅ Order cancelled successfully');
+        setMsgType('ok');
+        setTimeout(fetchAll, 1500);
+      }
     } catch {}
   };
 
   const autoLog: AutoTradeLog[] = autoCfg?.tradeLog || [];
   const lastAction = autoCfg?.lastAction || '';
   const autoState = autoCfg?.lastState || 'stopped';
-  const autoCurTrade = autoCfg?.currentTrade || null;
-
-  // === Live performance roll-up (positions + holdings + auto trade log) ===
-  const perf = useMemo(() => {
-    const posPnl = positions.reduce((a, p) => a + (parseFloat(p.pnl) || 0), 0);
-    const holdPnl = holdings.reduce((a, h) => a + (parseFloat(h.pnl) || 0), 0);
-    const holdVal = holdings.reduce((a, h) => a + (parseFloat(h.valuation) || 0), 0);
-    const openPos = positions.filter(p => parseInt(p.netqty) !== 0).length;
-    const closed = autoLog.filter(e => e.type === 'TP' || e.type === 'SL');
-    const wins = closed.filter(e => (e.pnl ?? 0) >= 0).length;
-    const winRate = closed.length ? (wins / closed.length) * 100 : 0;
-    const realizedPct = closed.reduce((a, e) => a + (e.pnl ?? 0), 0);
-    return { posPnl, holdPnl, holdVal, openPos, winRate, closedCount: closed.length, realizedPct };
-  }, [positions, holdings, autoLog]);
-
-  const ipRegistered = !!status?.staticIpRegistered;
-  const orderRejectedIp = msgType === 'err' && /ip|whitelist|static/i.test(placeMsg);
 
   const stateLabel: Record<string, string> = {
-    stopped: 'STOPPED', disabled: 'DISABLED', no_angel: 'NO API',
-    market_closed: 'MARKET CLOSED', holding: '📊 HOLDING', entered: '✅ ENTERED',
-    exited: '🎯 EXITED', sl_hit: '🛑 SL HIT', scanning: '🔍 SCANNING',
-    waiting: '⏳ WAITING', error: '⚠️ ERROR',
+    stopped: 'STOPPED',
+    disabled: 'DISABLED',
+    market_closed: 'CLOSED',
+    scanning: '🔍 SCANNING',
+    entered: '✅ ENTERED',
+    limit_reached: '⚠️ LIMIT REACHED',
+    error: '⚠️ ERROR'
   };
 
   return (
-    <div className="space-y-5 animate-fade-in">
-      {/* Header + Wallet */}
+    <div className="space-y-5 animate-fade-in text-slate-100">
+      {/* Header and Broker status */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-black gradient-text-cyan font-display flex items-center gap-2">
-            🤖 ALGO Trade <span className="quantum-badge text-[10px]">ADVANCE PRO</span>
+            🚀 SmartAI Algo trading <span className="quantum-badge text-[10px]">MULTIBROKER</span>
           </h2>
           <div className="flex flex-wrap items-center gap-2 mt-1.5">
-            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${marketOpen ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' : 'bg-slate-500/10 text-slate-400 border-white/10'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${marketOpen ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
-              NSE {marketOpen ? 'OPEN' : 'CLOSED'}
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${status?.indmoney?.enabled ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' : 'bg-red-500/10 text-red-300 border-red-500/30'}`}>
+              📈 INDMoney / Tradetron {status?.indmoney?.enabled ? 'CONNECTED' : 'OFF'}
             </span>
-            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${status?.enabled ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30' : 'bg-red-500/10 text-red-300 border-red-500/30'}`}>
-              ⚡ AngelOne {status?.enabled ? 'LIVE' : 'OFF'}
-            </span>
-            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${ipRegistered ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' : 'bg-amber-500/10 text-amber-300 border-amber-500/30'}`}>
-              🛡️ Static IP {ipRegistered ? 'SET' : 'NOT SET'}
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${status?.coindcx?.enabled ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30' : 'bg-amber-500/10 text-amber-300 border-amber-500/30'}`}>
+              🪙 CoinDCX Futures {status?.coindcx?.enabled ? 'ACTIVE' : 'KEYS MISSING'}
             </span>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <div className="quantum-panel rounded-xl px-4 py-2 border border-cyan-500/20 text-center bg-cyan-500/5">
-            <div className="text-[10px] text-cyan-400/70 uppercase tracking-wider font-bold">Available</div>
-            <div className="font-black text-2xl font-mono text-cyan-300">₹{cash.toLocaleString('en-IN')}</div>
-          </div>
-          {used > 0 && (
-            <div className="quantum-panel rounded-xl px-4 py-2 border border-yellow-500/20 text-center bg-yellow-500/5">
-              <div className="text-[10px] text-yellow-400/70 uppercase tracking-wider font-bold">Used</div>
-              <div className="font-black font-mono text-yellow-300 text-lg">₹{used.toLocaleString('en-IN')}</div>
+          {indmoneyCash > 0 && (
+            <div className="quantum-panel rounded-xl px-4 py-2 border border-emerald-500/20 text-center bg-emerald-500/5">
+              <div className="text-[10px] text-emerald-400 uppercase tracking-wider font-bold">INDMoney Capital</div>
+              <div className="font-black text-lg font-mono text-emerald-300">₹{indmoneyCash.toLocaleString('en-IN')}</div>
             </div>
           )}
-        </div>
-      </div>
-
-      {/* SEBI static-IP advisory — explains the "IP not set" order rejection */}
-      {status?.enabled && !ipRegistered && (
-        <div className={`px-4 py-3 rounded-xl text-xs border ${orderRejectedIp ? 'bg-red-500/10 border-red-500/30 text-red-200' : 'bg-amber-500/[0.07] border-amber-500/25 text-amber-200/90'}`}>
-          <div className="font-bold mb-0.5">🛡️ Static IP required for live orders (SEBI, since Apr 1 2026)</div>
-          <div className="text-[11px] leading-relaxed opacity-90">
-            Orders go out from <span className="font-mono font-bold text-white">{status.publicIp}</span>. Register this exact IP in your AngelOne app — but Render's IP is <b>dynamic</b>, so it keeps changing. Permanent fix: VPS/proxy with a static IP, then set <span className="font-mono">SMARTAPI_PUBLIC_IP</span>. Until then order placement may be rejected.
+          <div className="quantum-panel rounded-xl px-4 py-2 border border-cyan-500/20 text-center bg-cyan-500/5">
+            <div className="text-[10px] text-cyan-400 uppercase tracking-wider font-bold">CoinDCX USDT</div>
+            <div className="font-black text-lg font-mono text-cyan-300">${coindcxCash.toFixed(2)}</div>
           </div>
         </div>
-      )}
-
-      {/* Performance command center */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <div className="quantum-panel rounded-xl p-3 border border-white/5">
-          <div className="text-[10px] text-slate-500 uppercase font-bold">Open P&L</div>
-          <div className={`text-lg font-black font-mono mt-0.5 ${perf.posPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{perf.posPnl >= 0 ? '+' : ''}₹{perf.posPnl.toFixed(0)}</div>
-        </div>
-        <div className="quantum-panel rounded-xl p-3 border border-white/5">
-          <div className="text-[10px] text-slate-500 uppercase font-bold">Holdings P&L</div>
-          <div className={`text-lg font-black font-mono mt-0.5 ${perf.holdPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{perf.holdPnl >= 0 ? '+' : ''}₹{perf.holdPnl.toFixed(0)}</div>
-        </div>
-        <div className="quantum-panel rounded-xl p-3 border border-white/5">
-          <div className="text-[10px] text-slate-500 uppercase font-bold">Open Positions</div>
-          <div className="text-lg font-black font-mono mt-0.5 text-slate-200">{perf.openPos}</div>
-        </div>
-        <div className="quantum-panel rounded-xl p-3 border border-white/5">
-          <div className="text-[10px] text-slate-500 uppercase font-bold">Auto Win Rate</div>
-          <div className={`text-lg font-black font-mono mt-0.5 ${perf.winRate >= 50 ? 'text-emerald-400' : perf.closedCount ? 'text-amber-400' : 'text-slate-500'}`}>{perf.closedCount ? `${perf.winRate.toFixed(0)}%` : '—'}<span className="text-[10px] text-slate-600 ml-1">{perf.closedCount ? `(${perf.closedCount})` : ''}</span></div>
-        </div>
-        <div className="quantum-panel rounded-xl p-3 border border-white/5">
-          <div className="text-[10px] text-slate-500 uppercase font-bold">Daily Trades</div>
-          <div className="text-lg font-black font-mono mt-0.5 text-slate-200">{autoCfg?.dailyTradeCount || 0}<span className="text-slate-600">/{autoCfg?.maxDailyTrades || 3}</span></div>
-        </div>
       </div>
 
-      {/* Sub-tabs */}
+      {/* Tabs */}
       <div className="flex gap-2 border-b border-white/10 pb-2 overflow-x-auto">
-        {([
-          { k: 'smart', l: '🎯 Smart Allocation' },
-          { k: 'auto', l: '🤖 AUTO' },
-          { k: 'positions', l: '📊 Positions' },
-          { k: 'orders', l: '📋 Orders' },
-          { k: 'holdings', l: '💎 Holdings' },
+        {( [
+          { k: 'smart', l: '🎯 AI Smart Picks' },
+          { k: 'auto', l: '🤖 AUTO Trader Setup' },
+          { k: 'indmoney', l: '📈 Tradetron / INDstocks' },
+          { k: 'coindcx', l: '🪙 CoinDCX Futures' }
         ] as const).map(t => (
           <button key={t.k} onClick={() => setTab(t.k)}
             className={`px-4 py-2 rounded-xl font-semibold text-xs whitespace-nowrap transition-all ${tab === t.k ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30' : 'text-slate-500 hover:text-slate-300'}`}
@@ -296,356 +354,335 @@ const AlgoTradeTab = React.memo(function AlgoTradeTab() {
         ))}
       </div>
 
-      {/* Status message */}
+      {/* Notification Banner */}
       {placeMsg && (
         <div className={`px-4 py-2.5 rounded-xl text-xs font-semibold ${msgType === 'ok' ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20' : 'bg-red-500/10 text-red-300 border border-red-500/20'}`}>
           {placeMsg}
         </div>
       )}
-      {/* Fetch error */}
       {fetchError && (
         <div className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-red-500/10 text-red-300 border border-red-500/20">
           ⚠️ {fetchError}
         </div>
       )}
 
-      {/* Auto status bar — shown on all tabs when auto is active */}
-      {autoActive && (
-        <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="font-bold text-emerald-300">AUTO TRADING</span>
-          <span className="text-slate-400">|</span>
-          <span className="text-emerald-200">{stateLabel[autoState] || autoState}</span>
-          {lastAction && (
-            <><span className="text-slate-400">|</span><span className="text-slate-300 truncate max-w-[300px]">{lastAction}</span></>
+      {/* === 1. SMART PICKS TAB === */}
+      {tab === 'smart' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-white">🔥 Live AI signals (India Intraday & Crypto Futures)</h3>
+            <span className="text-xs text-slate-500">{signals.length} Signals scanned</span>
+          </div>
+
+          {smartPicks.length === 0 ? (
+            <div className="quantum-panel rounded-2xl p-10 text-center border border-dashed border-white/10">
+              <div className="text-4xl mb-2">📡</div>
+              <p className="text-slate-400 font-medium">Waiting for signals...</p>
+              <p className="text-xs text-slate-600 mt-1">Live price data triggers trading signals automatically.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {smartPicks.map((pick) => {
+                const s = pick.sig;
+                const isCrypto = isCryptoSymbol(s.symbol);
+                return (
+                  <div key={`${s.market}_${s.symbol}`} className="quantum-panel rounded-2xl p-4 border border-white/5 hover:border-white/10 transition-all flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <div className="font-black text-white text-base flex items-center gap-1.5">
+                            {isCrypto ? '🪙' : '🇮🇳'} {s.symbol}
+                            <span className="text-[10px] text-slate-500 font-normal">({isCrypto ? 'CoinDCX' : 'INDMoney'})</span>
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-semibold">{s.strategy}</div>
+                        </div>
+                        <div className="text-right">
+                          <span className={`px-2 py-0.5 rounded text-xs font-black border ${dirStyle(s.direction)}`}>{s.direction}</span>
+                          <div className="text-[10px] font-bold text-cyan-400 mt-1">🤖 AI {s.aiScore}/100</div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="font-mono text-sm text-slate-200">{cur(s.market)}{s.price}</span>
+                        <span className={`text-xs font-bold ${s.change >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {s.change >= 0 ? '+' : ''}{s.change}%
+                        </span>
+                        <span className="ml-auto text-[10px] text-slate-500">Conviction {s.conviction}% · R:R 1:{s.riskReward}</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1.5 text-[10px] mb-3 bg-black/20 p-2.5 rounded-lg border border-white/5">
+                        <div><span className="text-slate-500">Entry Target</span><div className="font-mono text-cyan-300 font-bold">{cur(s.market)}{s.entry}</div></div>
+                        <div><span className="text-slate-500">Stop Loss</span><div className="font-mono text-red-300 font-bold">{cur(s.market)}{s.stopLoss}</div></div>
+                        <div><span className="text-slate-500">Target 1</span><div className="font-mono text-emerald-300 font-bold">{cur(s.market)}{s.target1}</div></div>
+                        <div><span className="text-slate-500">Target 2</span><div className="font-mono text-emerald-300 font-bold">{cur(s.market)}{s.target2}</div></div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/5">
+                      <div className="text-[10px] text-slate-400">
+                        Est. Return: <span className="text-emerald-400 font-bold">+{pick.expectedReturnPct.toFixed(1)}%</span>
+                      </div>
+                      <button
+                        onClick={() => executeTrade(s, pick.maxQty)}
+                        disabled={!!placing}
+                        className={`px-4 py-1.5 rounded-xl font-bold text-xs text-white ${s.direction === 'LONG' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-red-600 hover:bg-red-500'}`}
+                      >
+                        {placing === s.symbol ? '⏳ Placing' : `EXECUTE (${pick.maxQty} Qty)`}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       )}
 
-      {/* === AUTO TRADE ENGINE TAB === */}
+      {/* === 2. AUTO TRADER SETUP TAB === */}
       {tab === 'auto' && (
         <div className="space-y-4">
-          {/* Status overview cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className={`quantum-panel rounded-xl p-3 text-center border ${autoActive ? 'border-emerald-500/30 bg-emerald-500/[0.03]' : 'border-white/10'}`}>
-              <div className="text-[10px] text-slate-500 uppercase font-bold">Engine</div>
+              <div className="text-[10px] text-slate-500 uppercase font-bold">Engine Status</div>
               <div className={`text-lg font-black mt-1 ${autoActive ? 'text-emerald-400' : 'text-slate-500'}`}>{autoActive ? '🟢 RUNNING' : '🔴 STOPPED'}</div>
             </div>
             <div className="quantum-panel rounded-xl p-3 text-center border border-white/10">
-              <div className="text-[10px] text-slate-500 uppercase font-bold">State</div>
+              <div className="text-[10px] text-slate-500 uppercase font-bold">Auto State</div>
               <div className="text-lg font-black mt-1 text-slate-200">{stateLabel[autoState] || autoState}</div>
             </div>
             <div className="quantum-panel rounded-xl p-3 text-center border border-white/10">
-              <div className="text-[10px] text-slate-500 uppercase font-bold">Interval</div>
-              <div className="text-lg font-black mt-1 text-cyan-300">30s</div>
+              <div className="text-[10px] text-slate-500 uppercase font-bold">Min Return</div>
+              <div className="text-lg font-black mt-1 text-cyan-300">{autoCfg?.minReturnPct || 3}%</div>
             </div>
             <div className="quantum-panel rounded-xl p-3 text-center border border-white/10">
               <div className="text-[10px] text-slate-500 uppercase font-bold">Daily Trades</div>
-              <div className="text-lg font-black mt-1 text-slate-200">{autoCfg?.dailyTradeCount || 0}/{autoCfg?.maxDailyTrades || 3}</div>
-            </div>
-            <div className="quantum-panel rounded-xl p-3 text-center border border-white/10">
-              <div className="text-[10px] text-slate-500 uppercase font-bold">Wallet</div>
-              <div className="text-lg font-black mt-1 text-slate-200">₹{cash.toLocaleString('en-IN')}</div>
+              <div className="text-lg font-black mt-1 text-slate-200">{autoCfg?.dailyTradeCount || 0}/{autoCfg?.maxDailyTrades || 5}</div>
             </div>
           </div>
 
-          {/* Current trade */}
-          {autoCurTrade && (
-            <div className="quantum-panel rounded-2xl p-4 border border-emerald-500/20 bg-emerald-500/[0.02]">
-              <div className="text-[10px] text-emerald-400/70 uppercase font-bold mb-2">ACTIVE TRADE</div>
-              <div className="flex flex-wrap items-center gap-4">
-                <div className="font-black text-lg text-white">{autoCurTrade.symbol}</div>
-                <div className="text-xs text-slate-400">Qty: <span className="font-bold text-white">{autoCurTrade.qty}</span></div>
-                <div className="text-xs text-slate-400">Entry: <span className="font-bold text-cyan-300">₹{autoCurTrade.entry}</span></div>
-                {autoCurTrade.target && <div className="text-xs text-slate-400">Target: <span className="font-bold text-emerald-300">₹{autoCurTrade.target}</span></div>}
-                {autoCurTrade.stop && <div className="text-xs text-slate-400">Stop: <span className="font-bold text-red-300">₹{autoCurTrade.stop}</span></div>}
-              </div>
-            </div>
-          )}
-
-          {/* Config */}
-          <div className="quantum-panel rounded-2xl p-4 border border-white/10">
-            <h4 className="text-sm font-bold text-white mb-3">⚙️ Config</h4>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+          <div className="quantum-panel rounded-2xl p-5 border border-white/10 space-y-4">
+            <h3 className="text-sm font-bold text-white flex items-center gap-1.5">⚙️ Trading Configuration</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
               <div>
-                <label className="text-[10px] text-slate-500 uppercase font-bold block mb-1">Max Amount (0 = wallet)</label>
+                <label className="text-[10px] text-slate-500 uppercase font-bold block mb-1">Trading Mode</label>
+                <select value={cfgMode} onChange={e => setCfgMode(e.target.value as any)}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500">
+                  <option value="both">Both (INDMoney + Crypto)</option>
+                  <option value="equity">India Intraday Only</option>
+                  <option value="crypto">CoinDCX Crypto Only</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500 uppercase font-bold block mb-1">Max Capital Allocation</label>
                 <input type="number" value={cfgMax} onChange={e => setCfgMax(e.target.value)}
-                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm font-mono text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50"
-                  placeholder="0 = full wallet" />
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500"
+                  placeholder="0 = Default" />
               </div>
               <div>
-                <label className="text-[10px] text-slate-500 uppercase font-bold block mb-1">Min Return %</label>
+                <label className="text-[10px] text-slate-500 uppercase font-bold block mb-1">Min Target Pct %</label>
                 <input type="number" step="0.5" value={cfgMinRet} onChange={e => setCfgMinRet(e.target.value)}
-                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm font-mono text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50"
-                  placeholder="3" />
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none" />
               </div>
               <div>
                 <label className="text-[10px] text-slate-500 uppercase font-bold block mb-1">Max Daily Trades</label>
-                <input type="number" min="1" max="10" value={cfgDailyTrades} onChange={e => setCfgDailyTrades(e.target.value)}
-                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm font-mono text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50"
-                  placeholder="3" />
+                <input type="number" value={cfgDailyTrades} onChange={e => setCfgDailyTrades(e.target.value)}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none" />
               </div>
-              <div className="flex items-end gap-2">
-                <button onClick={() => toggleAuto(true)} disabled={autoActive}
-                  className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-all ${autoActive ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/20'}`}
-                >🟢 START AUTO</button>
-                <button onClick={() => toggleAuto(false)} disabled={!autoActive}
-                  className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-all ${!autoActive ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-500/20'}`}
-                >🔴 STOP</button>
+              <div>
+                <label className="text-[10px] text-slate-500 uppercase font-bold block mb-1">Crypto Leverage (x)</label>
+                <input type="number" value={cfgLeverage} onChange={e => setCfgLeverage(e.target.value)}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none" />
               </div>
             </div>
-            {/* Manual tick */}
-            <div className="flex items-center gap-2">
+
+            <div className="flex items-center gap-2 pt-2">
+              <button onClick={() => toggleAuto(true)} disabled={autoActive}
+                className={`px-5 py-2 rounded-xl font-bold text-xs transition-all ${autoActive ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/20'}`}
+              >🟢 START ALGO TERMINAL</button>
+              <button onClick={() => toggleAuto(false)} disabled={!autoActive}
+                className={`px-5 py-2 rounded-xl font-bold text-xs transition-all ${!autoActive ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-500/20'}`}
+              >🔴 STOP ENGINE</button>
               <button onClick={runAutoTick} disabled={autoBusy || !autoActive}
-                className="px-4 py-2 rounded-xl bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-300 font-bold text-xs border border-cyan-500/30 transition-all disabled:opacity-30"
-              >{autoBusy ? '⏳ Ticking...' : '↻ Tick Now'}</button>
-              <span className="text-[10px] text-slate-500">Auto-tick har 30s hota hai</span>
+                className="ml-auto px-4 py-2 rounded-xl bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-300 font-bold text-xs border border-cyan-500/30 transition-all disabled:opacity-30"
+              >{autoBusy ? '⏳ Processing' : '↻ Force Tick Now'}</button>
             </div>
           </div>
 
-          {/* Last action */}
+          {/* Last actions log */}
           {lastAction && (
-            <div className={`quantum-panel rounded-2xl p-4 border ${lastAction.includes('✓') ? 'border-emerald-500/20 bg-emerald-500/[0.02]' : lastAction.includes('✗') || lastAction.includes('Error') ? 'border-red-500/20 bg-red-500/[0.02]' : 'border-white/10'}`}>
-              <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">LAST ACTION</div>
-              <div className="font-mono text-sm text-white">{lastAction}</div>
+            <div className="quantum-panel rounded-2xl p-4 border border-cyan-500/15 bg-cyan-500/[0.01]">
+              <div className="text-[10px] text-cyan-400 font-bold mb-1 uppercase tracking-wider">Engine status narrative</div>
+              <div className="font-mono text-xs text-white">{lastAction}</div>
             </div>
           )}
 
-          {/* Trade log */}
+          {/* Combined Trade Log */}
           {autoLog.length > 0 && (
             <div className="quantum-panel rounded-2xl p-4 border border-white/10">
-              <h4 className="text-sm font-bold text-white mb-2">📜 Trade Log</h4>
-              <div className="space-y-1 max-h-60 overflow-y-auto">
-                {autoLog.toReversed().map((e: AutoTradeLog, i: number) => (
-                  <div key={i} className="flex items-center gap-2 text-xs py-1 border-b border-white/5 last:border-0">
-                    <span className="text-slate-500 font-mono w-12 shrink-0">{new Date(e.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
-                    <span className={`font-bold w-14 shrink-0 ${e.type === 'ENTER' ? 'text-emerald-400' : e.type === 'TP' ? 'text-emerald-300' : e.type === 'SL' ? 'text-red-400' : 'text-slate-400'}`}>{e.type}</span>
-                    <span className="font-bold text-white truncate">{e.symbol}</span>
-                    {e.qty && <span className="text-slate-400">x{e.qty}</span>}
-                    {(e.entry || e.price) && <span className="text-slate-500">@₹{(e.entry || e.price)}</span>}
-                    {e.pnl !== undefined && <span className={e.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>{e.pnl >= 0 ? '+' : ''}{e.pnl.toFixed(1)}%</span>}
-                    {e.orderId && <span className="text-slate-600 text-[9px] truncate max-w-[80px]">{e.orderId}</span>}
+              <h4 className="text-sm font-bold text-white mb-2">📜 Auto Execution History</h4>
+              <div className="space-y-1.5 max-h-60 overflow-y-auto">
+                {autoLog.slice().reverse().map((e, idx) => (
+                  <div key={idx} className="flex items-center gap-2 text-xs py-1.5 border-b border-white/5 last:border-0">
+                    <span className="text-slate-500 font-mono w-12 shrink-0">{new Date(e.time).toLocaleTimeString()}</span>
+                    <span className={`font-bold w-16 shrink-0 ${e.type === 'ENTER' ? 'text-emerald-400' : 'text-red-400'}`}>{e.type}</span>
+                    <span className="font-bold text-white truncate flex-1">{e.symbol} <span className="text-[10px] text-slate-500 font-normal">({e.broker || 'generic'})</span></span>
+                    {e.qty && <span className="text-slate-400">Qty: {e.qty}</span>}
+                    {e.entry && <span className="text-slate-500 font-mono">Price: {cur(e.broker === 'coindcx' ? 'US' : 'IN')}{e.entry}</span>}
+                    {e.orderId && <span className="text-slate-600 font-mono text-[9px] truncate max-w-[80px]">{e.orderId}</span>}
                   </div>
                 ))}
               </div>
             </div>
           )}
-
-          {/* No activity yet */}
-          {!lastAction && autoLog.length === 0 && (
-            <div className="quantum-panel rounded-2xl p-10 text-center border border-dashed border-white/10">
-              <div className="text-4xl mb-2">🤖</div>
-              <p className="text-slate-400 font-medium">Auto trade engine ready</p>
-              <p className="text-xs text-slate-600 mt-1">Config set karein aur START press karein — engine apne aap tick karega har 30s</p>
-            </div>
-          )}
         </div>
       )}
 
-      {/* === SMART ALLOCATION TAB === */}
-      {tab === 'smart' && (
-        <>
-          {!cash ? (
-            <div className="quantum-panel rounded-2xl p-10 text-center border border-dashed border-white/10">
-              <div className="text-4xl mb-2">💰</div>
-              <p className="text-slate-400 font-medium">AngelOne wallet se connect nahi hua</p>
-              <p className="text-xs text-slate-600 mt-1">Wallet balance load ho raha hai...</p>
-            </div>
-          ) : smartPicks.length === 0 ? (
-            <div className="quantum-panel rounded-2xl p-10 text-center border border-dashed border-white/10">
-              <div className="text-4xl mb-2">📡</div>
-              <p className="text-slate-400 font-medium">Is wallet amount me koi affordable trade nahi mili</p>
-              <p className="text-xs text-slate-600 mt-1">₹{cash.toLocaleString('en-IN')} me koi bhi stock ka 1 share bhi afford nahi ho raha</p>
-            </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="quantum-panel rounded-xl p-3 text-center border border-emerald-500/10 bg-emerald-500/[0.02]">
-                  <div className="text-[10px] text-emerald-400/70 uppercase font-bold">Affordable Trades</div>
-                  <div className="text-2xl font-black text-emerald-400">{smartPicks.length}</div>
-                </div>
-                <div className="quantum-panel rounded-xl p-3 text-center border border-cyan-500/10 bg-cyan-500/[0.02]">
-                  <div className="text-[10px] text-cyan-400/70 uppercase font-bold">Best Return</div>
-                  <div className="text-lg font-black text-cyan-300">+{smartPicks[0]?.expectedReturnPct.toFixed(1) || 0}%</div>
-                </div>
-                <div className="quantum-panel rounded-xl p-3 text-center border border-emerald-500/10 bg-emerald-500/[0.02]">
-                  <div className="text-[10px] text-emerald-400/70 uppercase font-bold">Est. Profit</div>
-                  <div className="text-lg font-black text-emerald-300">₹{smartPicks[0]?.expectedProfit.toFixed(0) || 0}</div>
-                </div>
-                <div className="quantum-panel rounded-xl p-3 text-center border border-white/5">
-                  <div className="text-[10px] text-slate-500 uppercase font-bold">Cost</div>
-                  <div className="text-lg font-black text-slate-200">₹{smartPicks[0]?.cost.toLocaleString('en-IN') || 0}</div>
-                </div>
+      {/* === 3. TRADETRON / INDMONEY TAB === */}
+      {tab === 'indmoney' && (
+        <div className="space-y-4">
+          <div className="quantum-panel rounded-2xl p-5 border border-white/10 space-y-4">
+            <h3 className="text-base font-black text-white">📈 Tradetron Strategy Connection</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+              <div className="bg-black/25 p-3 rounded-xl border border-white/5">
+                <span className="text-slate-500">API Connection</span>
+                <div className="font-bold text-white mt-1">{status?.indmoney?.tradetronConnected ? '✅ CONNECTED' : '❌ NOT CONFIG'}</div>
               </div>
+              <div className="bg-black/25 p-3 rounded-xl border border-white/5">
+                <span className="text-slate-500">Strategy Deployment</span>
+                <div className="font-bold text-white mt-1">{status?.indmoney?.strategyConfigured ? '✅ CONFIGURED' : '❌ NO STRATEGY_ID'}</div>
+              </div>
+              <div className="bg-black/25 p-3 rounded-xl border border-white/5">
+                <span className="text-slate-500">INDMoney Broker Token</span>
+                <div className="font-bold text-white mt-1">{status?.indmoney?.indmoneyLinked ? '✅ LINKED' : '❌ TOKEN EXPIRED/MISSING'}</div>
+              </div>
+            </div>
+          </div>
 
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-white">🎯 Smart Picks — Sorted by Max Return</h3>
-                  <span className="text-[10px] text-slate-500">Wallet: ₹{cash.toLocaleString('en-IN')}</span>
-                </div>
-                {smartPicks.slice(0, 10).map((pick, i) => {
-                  const s = pick.sig;
-                  const isTop = i === 0;
-                  return (
-                    <div key={`${s.market}_${s.symbol}`} className={`quantum-panel rounded-2xl p-4 border transition-all ${isTop ? 'border-emerald-500/30 bg-emerald-500/[0.02]' : 'border-white/5 hover:border-white/10'}`}>
-                      <div className="flex items-start justify-between gap-2 mb-3">
-                        <div className="flex items-center gap-2">
-                          {isTop && <span className="text-emerald-400 text-lg">👑</span>}
-                          <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-black ${isTop ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/5 text-slate-500'}`}>#{i + 1}</span>
-                          <div>
-                            <div className="font-black text-white text-base">{s.symbol}</div>
-                            <div className="text-[10px] text-slate-500">{s.strategy} · AI {s.aiScore}</div>
-                          </div>
-                        </div>
-                        <span className={`px-3 py-1 rounded-lg text-xs font-black border ${dirStyle(s.direction)}`}>{s.direction}</span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="quantum-panel rounded-2xl p-4 border border-white/10">
+              <h4 className="text-sm font-bold text-white mb-2">📊 Current Portfolio Positions</h4>
+              {ttPositions.length === 0 ? (
+                <div className="p-8 text-center text-xs text-slate-500 border border-dashed border-white/5 rounded-xl">No open equity positions reported by Tradetron</div>
+              ) : (
+                <div className="space-y-2">
+                  {ttPositions.map((pos, idx) => (
+                    <div key={idx} className="flex justify-between items-center bg-black/20 p-2.5 rounded-lg text-xs">
+                      <div>
+                        <div className="font-bold text-white">{pos.instrument || pos.symbol}</div>
+                        <div className="text-slate-500 text-[10px]">Qty: {pos.qty} · Avg: ₹{pos.avgPrice}</div>
                       </div>
-                      <div className="mb-3">
-                        <div className="flex items-center justify-between text-xs mb-1">
-                          <span className="text-emerald-400 font-bold">+{pick.expectedReturnPct.toFixed(1)}% Expected</span>
-                          <span className="text-slate-400">Profit: <strong className="text-emerald-300">₹{pick.expectedProfit.toFixed(0)}</strong></span>
-                        </div>
-                        <div className="w-full h-2 bg-black/40 rounded-full overflow-hidden">
-                          <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-300"
-                            style={{ width: `${Math.min(100, pick.expectedReturnPct * 2)}%` }} />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px] mb-3">
-                        <div className="bg-black/30 rounded-lg px-2.5 py-2 border border-white/5">
-                          <span className="text-slate-500 text-[9px]">Price</span>
-                          <div className="font-mono text-white font-bold">{cur(s.market)}{s.price.toFixed(2)}</div>
-                        </div>
-                        <div className="bg-black/30 rounded-lg px-2.5 py-2 border border-white/5">
-                          <span className="text-slate-500 text-[9px]">Entry</span>
-                          <div className="font-mono text-cyan-300 font-bold">{cur(s.market)}{s.entry.toFixed(2)}</div>
-                        </div>
-                        <div className="bg-black/30 rounded-lg px-2.5 py-2 border border-white/5">
-                          <span className="text-slate-500 text-[9px]">Target</span>
-                          <div className="font-mono text-emerald-300 font-bold">{cur(s.market)}{s.target1.toFixed(2)}</div>
-                        </div>
-                        <div className="bg-black/30 rounded-lg px-2.5 py-2 border border-white/5">
-                          <span className="text-slate-500 text-[9px]">Stop</span>
-                          <div className="font-mono text-red-300 font-bold">{cur(s.market)}{s.stopLoss.toFixed(2)}</div>
-                        </div>
-                        <div className="bg-black/30 rounded-lg px-2.5 py-2 border border-cyan-500/10">
-                          <span className="text-slate-500 text-[9px]">Qty × R:R</span>
-                          <div className="font-mono text-white font-bold">{pick.maxQty} × 1:{s.riskReward}</div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="text-[10px] text-slate-500 flex-1">
-                          Cost: <strong className="text-slate-300">₹{pick.cost.toFixed(0)}</strong> · Remaining: <strong className="text-amber-300">₹{Math.max(0, cash - pick.cost).toFixed(0)}</strong>
-                        </div>
-                        <button onClick={() => executeTrade(s, pick.maxQty)} disabled={!!placing}
-                          className={`px-5 py-2 rounded-xl font-bold text-xs text-white transition-all ${placing === s.symbol ? 'bg-slate-600 cursor-wait opacity-60' : s.direction === 'LONG' ? 'bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-500/20' : 'bg-red-600 hover:bg-red-500 shadow-lg shadow-red-500/20'}`}
-                        >{placing === s.symbol ? '⏳' : `BUY ${pick.maxQty}`}</button>
+                      <div className="text-right">
+                        <div className={`font-bold ${pos.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>₹{pos.pnl || '0.00'}</div>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-
-              {smartPicks.length > 1 && (
-                <div className="quantum-panel rounded-xl p-4 border border-cyan-500/10 bg-cyan-500/[0.02]">
-                  <h4 className="text-xs font-bold text-cyan-300 mb-2">📊 Portfolio Allocation Suggestion</h4>
-                  <div className="space-y-1.5 text-[11px]">
-                    {smartPicks.slice(0, 3).map((pick, i) => {
-                      const pct = ((pick.cost / cash) * 100);
-                      return (
-                        <div key={i} className="flex items-center gap-2">
-                          <span className="w-16 font-bold text-white truncate">{pick.sig.symbol}</span>
-                          <div className="flex-1 h-3 bg-black/40 rounded-full overflow-hidden">
-                            <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400" style={{ width: `${pct}%` }} />
-                          </div>
-                          <span className="w-20 text-right font-mono text-slate-400">{pct.toFixed(0)}% · ₹{pick.cost.toFixed(0)}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
+                  ))}
                 </div>
               )}
-            </>
-          )}
-        </>
-      )}
+            </div>
 
-      {/* === POSITIONS TAB === */}
-      {tab === 'positions' && (
-        <div className="space-y-3">
-          {positions.length === 0
-            ? <div className="quantum-panel rounded-2xl p-8 text-center border border-dashed border-white/10"><p className="text-slate-500">No open positions</p></div>
-            : positions.filter(p => parseInt(p.netqty) !== 0).map(p => {
-                const net = parseInt(p.netqty);
-                const buyAvg = parseFloat(p.buyavgprice) || 0;
-                const ltp = parseFloat(p.ltp) || 0;
-                const pnl = parseFloat(p.pnl) || 0;
-                return (
-                  <div key={p.tradingsymbol} className="quantum-panel rounded-xl p-4 border border-white/5">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="font-bold text-white">{p.tradingsymbol}</div>
-                      <span className={`text-xs font-bold px-2 py-0.5 rounded ${net > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>{net > 0 ? 'LONG' : 'SHORT'} {Math.abs(net)}</span>
+            <div className="quantum-panel rounded-2xl p-4 border border-white/10">
+              <h4 className="text-sm font-bold text-white mb-2">📋 Orders & Trades Execution Log</h4>
+              {ttHistory.length === 0 ? (
+                <div className="p-8 text-center text-xs text-slate-500 border border-dashed border-white/5 rounded-xl">No trade logs found</div>
+              ) : (
+                <div className="space-y-2">
+                  {ttHistory.map((tr, idx) => (
+                    <div key={idx} className="flex justify-between items-center bg-black/20 p-2.5 rounded-lg text-xs">
+                      <div>
+                        <span className="font-bold text-white">{tr.instrument || tr.symbol}</span>
+                        <span className={`ml-2 px-1 py-0.5 rounded text-[9px] ${tr.type === 'BUY' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-red-500/10 text-red-300'}`}>{tr.type}</span>
+                      </div>
+                      <div className="text-right text-slate-400">
+                        Qty: {tr.qty} @ ₹{tr.price}
+                      </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 text-[11px]">
-                      <div><span className="text-slate-500">Avg</span><div className="font-mono text-white">₹{buyAvg.toFixed(2)}</div></div>
-                      <div><span className="text-slate-500">LTP</span><div className="font-mono text-cyan-300">₹{ltp.toFixed(2)}</div></div>
-                      <div><span className="text-slate-500">P&L</span><div className={`font-mono font-bold ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{pnl >= 0 ? '+' : ''}₹{pnl.toFixed(2)}</div></div>
-                    </div>
-                  </div>
-                );
-              })}
-          <button onClick={fetchPositions} className="text-xs text-slate-500 hover:text-slate-300">↻ Refresh</button>
-        </div>
-      )}
-
-      {/* === ORDERS TAB === */}
-      {tab === 'orders' && (
-        <div className="space-y-2">
-          {orders.length === 0
-            ? <div className="quantum-panel rounded-2xl p-8 text-center border border-dashed border-white/10"><p className="text-slate-500">No orders</p></div>
-            : orders.slice(0, 50).map(o => (
-                <div key={o.orderid} className="quantum-panel rounded-xl p-3 border border-white/5 flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div>
-                    <span className="font-bold text-white">{o.tradingsymbol}</span>
-                    <span className={`ml-2 font-semibold ${o.transactiontype === 'BUY' ? 'text-emerald-400' : 'text-red-400'}`}>{o.transactiontype}</span>
-                    <span className={`ml-2 ${statusColor(o.status)}`}>{o.status}</span>
-                  </div>
-                  <div className="text-slate-400">Qty: {o.quantity} @ {o.price || o.averageprice}</div>
-                  {(o.status === 'open' || o.status === 'pending') && (
-                    <button onClick={() => cancelOrder(o.orderid)} className="text-red-400 hover:text-red-300 font-semibold">✕ Cancel</button>
-                  )}
+                  ))}
                 </div>
-              ))}
-          <button onClick={fetchOrders} className="text-xs text-slate-500 hover:text-slate-300">↻ Refresh</button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
-      {/* === HOLDINGS TAB === */}
-      {tab === 'holdings' && (
-        <div className="space-y-2">
-          {holdings.length === 0
-            ? <div className="quantum-panel rounded-2xl p-8 text-center border border-dashed border-white/10"><p className="text-slate-500">No holdings</p></div>
-            : holdings.map(h => {
-                const pnl = parseFloat(h.pnl) || 0;
-                const val = parseFloat(h.valuation) || 0;
-                const qty = parseInt(h.quantity) || 0;
-                return (
-                  <div key={h.tradingsymbol} className="quantum-panel rounded-xl p-3 border border-white/5 flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <div>
-                      <span className="font-bold text-white">{h.tradingsymbol}</span>
-                      <span className="ml-2 text-slate-400">{qty} @ ₹{parseFloat(h.averageprice || '0').toFixed(2)}</span>
+      {/* === 4. COINDCX FUTURES TAB === */}
+      {tab === 'coindcx' && (
+        <div className="space-y-4">
+          <div className="quantum-panel rounded-2xl p-5 border border-white/10 space-y-4">
+            <h3 className="text-base font-black text-white">🪙 CoinDCX Futures Trading Hub</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+              <div className="bg-black/25 p-3 rounded-xl border border-white/5">
+                <span className="text-slate-500">API Status</span>
+                <div className="font-bold text-white mt-1">{status?.coindcx?.enabled ? '✅ KEYS LOADED' : '❌ NOT CONFIG'}</div>
+              </div>
+              <div className="bg-black/25 p-3 rounded-xl border border-white/5">
+                <span className="text-slate-500">Derivatives Balance</span>
+                <div className="font-bold text-cyan-300 mt-1">${coindcxCash.toFixed(2)} USDT</div>
+              </div>
+              <div className="bg-black/25 p-3 rounded-xl border border-white/5">
+                <span className="text-slate-500">Open Positions</span>
+                <div className="font-bold text-white mt-1">{cdcxPositions.length}</div>
+              </div>
+              <div className="bg-black/25 p-3 rounded-xl border border-white/5">
+                <span className="text-slate-500">Active Orders</span>
+                <div className="font-bold text-white mt-1">{cdcxOrders.length}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* CoinDCX Positions */}
+            <div className="quantum-panel rounded-2xl p-4 border border-white/10">
+              <h4 className="text-sm font-bold text-white mb-2">📊 Derivatives Positions (USDT-M)</h4>
+              {cdcxPositions.length === 0 ? (
+                <div className="p-8 text-center text-xs text-slate-500 border border-dashed border-white/5 rounded-xl">No active crypto futures positions</div>
+              ) : (
+                <div className="space-y-2">
+                  {cdcxPositions.map((pos, idx) => (
+                    <div key={idx} className="bg-black/20 p-2.5 rounded-lg text-xs space-y-1 border border-white/5">
+                      <div className="flex justify-between items-center">
+                        <span className="font-black text-white">{pos.market || pos.symbol}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${pos.side?.toUpperCase() === 'BUY' || pos.qty > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                          {pos.side?.toUpperCase() === 'BUY' || pos.qty > 0 ? 'LONG' : 'SHORT'} {pos.leverage || '5'}x
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-[10px] text-slate-500">
+                        <span>Size: {Math.abs(pos.qty || pos.quantity)}</span>
+                        <span>Entry: ${pos.entryPrice || pos.avgPrice}</span>
+                        <span>PNL: <strong className={parseFloat(pos.pnl) >= 0 ? 'text-emerald-400' : 'text-red-400'}>${pos.pnl || '0.00'}</strong></span>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-slate-300">₹{val.toFixed(2)}</div>
-                      <div className={`font-semibold ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{pnl >= 0 ? '+' : ''}₹{pnl.toFixed(2)}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* CoinDCX Active Orders */}
+            <div className="quantum-panel rounded-2xl p-4 border border-white/10">
+              <h4 className="text-sm font-bold text-white mb-2">📋 Active Limit & Trigger Orders</h4>
+              {cdcxOrders.length === 0 ? (
+                <div className="p-8 text-center text-xs text-slate-500 border border-dashed border-white/5 rounded-xl">No pending triggers</div>
+              ) : (
+                <div className="space-y-2">
+                  {cdcxOrders.map((ord, idx) => (
+                    <div key={idx} className="flex justify-between items-center bg-black/20 p-2.5 rounded-lg text-xs">
+                      <div>
+                        <div className="font-bold text-white">{ord.market}</div>
+                        <div className="text-[10px] text-slate-500">{ord.side?.toUpperCase()} · {ord.qty} Qty @ ${ord.price}</div>
+                      </div>
+                      <button onClick={() => cancelDcxOrder(ord.id)} className="text-red-400 hover:text-red-300 text-[10px] font-bold">
+                        CANCEL
+                      </button>
                     </div>
-                  </div>
-                );
-              })}
-          <button onClick={fetchHoldings} className="text-xs text-slate-500 hover:text-slate-300">↻ Refresh</button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
       <p className="text-[10px] text-slate-600 text-center">
-        ⚠️ AI Smart Allocation · AngelOne SmartAPI · Auto Mode HAR 30s Tick
+        ⚠️ Programmatic Trading via SmartAI Algo. Trading futures and intraday equities contains high financial risk.
       </p>
     </div>
   );

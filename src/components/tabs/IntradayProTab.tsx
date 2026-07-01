@@ -4,6 +4,7 @@ import { scanAlgoSignals, formatAlgoAlert, AlgoSignal } from '../../utils/algoEn
 import { sendTelegramAlert } from '../../utils/api';
 import { secureStorage } from '../../utils/secureStorage';
 import { isAnyMarketOpen, getMarketStatus } from '../../utils/telegram';
+import { isCryptoSymbol } from '../../utils/constants';
 
 const cur = (m: string) => (m === 'IN' ? '₹' : '$');
 const ALERT_COOLDOWN_MS = 15 * 60 * 1000; // 15 min per symbol
@@ -79,12 +80,21 @@ const IntradayProTab = React.memo(function IntradayProTab() {
   const [alertMsg, setAlertMsg] = useState('');
   const lastAlertRef = useRef<Record<string, number>>({});
 
-  // Build the intraday watchlist from everything we have live data for
-  // (portfolio + default subscribed indices/ETFs/crypto), excluding VIX.
+  // Build the intraday watchlist from everything we have live data for, strictly excluding USA assets.
   const watchKeys = useMemo(() => {
     const keys = new Set<string>();
-    portfolio.forEach(p => keys.add(`${p.market}_${p.symbol}`));
-    Object.keys(livePrices).forEach(k => keys.add(k));
+    portfolio.forEach(p => {
+      // Only include Indian assets or Cryptocurrencies (which we trade on CoinDCX)
+      if (p.market === 'IN' || isCryptoSymbol(p.symbol)) {
+        keys.add(`${p.market}_${p.symbol}`);
+      }
+    });
+    Object.keys(livePrices).forEach(k => {
+      const parts = k.split('_');
+      if (parts[0] === 'IN' || (parts[1] && isCryptoSymbol(parts[1]))) {
+        keys.add(k);
+      }
+    });
     return [...keys].filter(k => !/_(INDIAVIX|VIX)$/i.test(k));
   }, [portfolio, livePrices]);
 

@@ -11,8 +11,8 @@
 //        NVIDIA_API_KEY, TAVILY_API_KEY, API_URL (optional)
 // ============================================================
 import express from 'express';
-import { getAngelOneQuotes, angelOneEnabled } from './angelone.js';
-import { placeOrder, cancelOrder, getOrderBook, getTradeBook, getHoldings, getPositions, getRMS } from './angelTrade.js';
+import { indmoneyEnabled, getIndmoneyStatus, executeTradetronSignal, deployStrategy, toggleStrategy, getStrategyStatus, getTradeHistory, getPositions as getTradetronPositions } from './indmoneyTradetron.js';
+import { coindcxEnabled, getCoindcxStatus, placeFuturesOrder, cancelFuturesOrder, getFuturesOrders, getFuturesPositions, getFuturesBalance, getFuturesTradeHistory } from './coindcxFutures.js';
 import { getAutoConfig, setAutoConfig, autoTick } from './autoTrader.js';
 import { subscribe as feedSubscribe, snapshot as feedSnapshot, feedStatus } from './liveFeed.js';
 import { ensureUsSubscribed, usClientUp, usClientDown } from './usStream.js';
@@ -290,15 +290,7 @@ app.get('/api/quote', async (req, res) => {
 
   const quotes = {};
 
-  // 0) India PRIMARY → AngelOne SmartAPI (broker-grade exchange feed, batched).
-  //    Resolves most NSE holdings in a single call; anything it misses falls
-  //    through to the Groww/Yahoo per-symbol chain below.
-  if (market === 'IN' && angelOneEnabled()) {
-    try {
-      const angel = await getAngelOneQuotes(symbols);
-      Object.keys(angel).forEach(sym => { if (angel[sym]?.price > 0) quotes[sym] = angel[sym]; });
-    } catch { /* fall back below */ }
-  }
+  // India quotes — Groww NSE → Yahoo fallback (AngelOne removed)
 
   const remaining = symbols.filter(s => !quotes[s]);
   await Promise.allSettled(remaining.map(async (sym) => {
@@ -382,7 +374,6 @@ app.get('/api/stream', (req, res) => {
   ]);
 
   // Kick off / refresh upstream subscriptions for the requested symbols.
-  if (inSyms.length && angelOneEnabled()) getAngelOneQuotes(inSyms).catch(() => { });
   if (usSyms.length) ensureUsSubscribed(usSyms);
   ensureCryptoSubscribed(cryptoSyms);
 
@@ -605,76 +596,99 @@ app.get('/api/telegram-status', (_req, res) => {
 });
 
 // ------------------------------------------------------------
-// ALGO TRADING — AngelOne SmartAPI order placement
+// ALGO TRADING — INDMoney (Tradetron) + CoinDCX Futures
 // ------------------------------------------------------------
-// All endpoints require SMARTAPI_KEY, SMARTAPI_CLIENT_CODE,
-// SMARTAPI_MPIN, SMARTAPI_TOTP_SECRET env vars. Without them
-// every endpoint returns { error: 'AngelOne not configured' }.
+// INDMoney trades are routed via Tradetron webhook.
+// CoinDCX trades use direct HMAC-authenticated API.
+// No static IP required for either!
 // ------------------------------------------------------------
+
+// --- INDMoney / Tradetron endpoints ---
 app.post('/api/trade/place', async (req, res) => {
-  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
-  const result = await placeOrder(req.body);
+  if (!indmoneyEnabled()) return jsonError(res, 503, 'INDMoney/Tradetron not configured');
+  const result = await executeTradetronSignal(req.body);
   return res.json(result);
 });
 
-app.post('/api/trade/cancel', async (req, res) => {
-  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
-  const { orderId } = req.body || {};
-  if (!orderId) return jsonError(res, 400, 'orderId required');
-  const result = await cancelOrder(orderId);
+app.post('/api/trade/deploy', async (req, res) => {
+  const result = await deployStrategy(req.body || {});
   return res.json(result);
 });
 
-app.get('/api/trade/orders', async (_req, res) => {
-  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
-  const result = await getOrderBook();
+app.post('/api/trade/toggle', async (req, res) => {
+  const { action } = req.body || {};
+  const result = await toggleStrategy(action || 'pause');
   return res.json(result);
 });
 
-app.get('/api/trade/trades', async (_req, res) => {
-  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
-  const result = await getTradeBook();
-  return res.json(result);
-});
-
-app.get('/api/trade/holdings', async (_req, res) => {
-  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
-  const result = await getHoldings();
+app.get('/api/trade/strategy-status', async (_req, res) => {
+  const result = await getStrategyStatus();
   return res.json(result);
 });
 
 app.get('/api/trade/positions', async (_req, res) => {
-  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
-  const result = await getPositions();
+  const result = await getTradetronPositions();
   return res.json(result);
 });
 
-app.get('/api/trade/wallet', async (_req, res) => {
-  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
-  const result = await getRMS();
+app.get('/api/trade/history', async (_req, res) => {
+  const result = await getTradeHistory();
   return res.json(result);
 });
 
-// Status: AngelOne availability + the public IP orders go out from.
-// The UI uses `publicIp` to warn that SEBI requires this exact IP to be
-// registered (static) with AngelOne since Apr 1, 2026.
+// --- CoinDCX Futures endpoints ---
+app.post('/api/futures/place', async (req, res) => {
+  if (!coindcxEnabled()) return jsonError(res, 503, 'CoinDCX not configured — API key/secret required');
+  const result = await placeFuturesOrder(req.body);
+  return res.json(result);
+});
+
+app.post('/api/futures/cancel', async (req, res) => {
+  if (!coindcxEnabled()) return jsonError(res, 503, 'CoinDCX not configured');
+  const { orderId } = req.body || {};
+  if (!orderId) return jsonError(res, 400, 'orderId required');
+  const result = await cancelFuturesOrder(orderId);
+  return res.json(result);
+});
+
+app.get('/api/futures/orders', async (_req, res) => {
+  const result = await getFuturesOrders();
+  return res.json(result);
+});
+
+app.get('/api/futures/positions', async (_req, res) => {
+  const result = await getFuturesPositions();
+  return res.json(result);
+});
+
+app.get('/api/futures/balance', async (_req, res) => {
+  const result = await getFuturesBalance();
+  return res.json(result);
+});
+
+app.get('/api/futures/trades', async (_req, res) => {
+  const result = await getFuturesTradeHistory();
+  return res.json(result);
+});
+
+// Combined status: INDMoney + CoinDCX availability
 app.get('/api/trade/status', (_req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json({
-    enabled: angelOneEnabled(),
+    indmoney: getIndmoneyStatus(),
+    coindcx: getCoindcxStatus(),
     publicIp: getPublicIp(),
-    staticIpRegistered: !!process.env.SMARTAPI_PUBLIC_IP,
   });
 });
 
 // ------------------------------------------------------------
 // AUTO-TRADING — AI-driven entry/exit engine
 // ------------------------------------------------------------
-// The frontend drives the tick loop every ~30s during market hours.
-// Config and state are kept in-memory (resets on server restart).
+// Supports dual-broker: INDMoney (equity) + CoinDCX (crypto futures).
+// The frontend drives the tick loop every ~30s.
+// Config and state are kept in-memory.
 // ------------------------------------------------------------
 app.post('/api/trade/auto/config', async (req, res) => {
-  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
   const result = setAutoConfig(req.body || {});
   res.json(result);
 });
@@ -684,7 +698,6 @@ app.get('/api/trade/auto/config', (_req, res) => {
 });
 
 app.post('/api/trade/auto/tick', async (req, res) => {
-  if (!angelOneEnabled()) return jsonError(res, 503, 'AngelOne not configured');
   const { signals } = req.body || {};
   const result = await autoTick(signals || []);
   res.json(result);
