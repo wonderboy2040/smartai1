@@ -24,6 +24,7 @@ import {
 } from './mlEngine.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fork } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -841,4 +842,28 @@ app.get(/^(?!\/api\/).*/, (_req, res) => {
 app.listen(PORT, () => {
   const ready = Object.entries(KEYS).filter(([, v]) => v).map(([k]) => k);
   console.log(`[wealth-ai] server on :${PORT} — providers ready: ${ready.join(', ') || 'NONE (set API keys!)'}`);
+
+  // Start the Telegram bot as a background child process
+  if (TG.token) {
+    try {
+      const botPath = path.resolve(__dirname, '..', 'telegram-bot', 'bot.mjs');
+      console.log(`[wealth-ai] Starting Telegram Bot in background process: ${botPath}`);
+      const botProcess = fork(botPath, [], {
+        env: {
+          ...process.env,
+          BOT_ONLY: 'true'
+        }
+      });
+      botProcess.on('error', (err) => {
+        console.error('[wealth-ai] Telegram Bot process error:', err);
+      });
+      botProcess.on('exit', (code) => {
+        console.warn(`[wealth-ai] Telegram Bot process exited with code ${code}`);
+      });
+    } catch (e) {
+      console.error('[wealth-ai] Failed to start Telegram Bot process:', e);
+    }
+  } else {
+    console.log('[wealth-ai] TG_TOKEN not configured. Telegram Bot not started.');
+  }
 });

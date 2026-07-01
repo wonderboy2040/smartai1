@@ -68,10 +68,20 @@ function checkAIRateLimit(chatId) {
 // Authorization check — only allow the configured chat ID
 function isAuthorized(msg) {
   if (!TG_CHAT_ID) {
-    console.warn('TG_CHAT_ID not configured — rejecting all messages for security');
+    console.warn(`[TELEGRAM BOT] Rejecting message from ${msg.chat.id}: TG_CHAT_ID not configured`);
+    if (typeof bot !== 'undefined') {
+      bot.sendMessage(msg.chat.id, `🚫 <b>Unauthorized!</b>\nYour Chat ID is: <code>${msg.chat.id}</code>\n\nPlease add this ID to <b>TG_CHAT_ID</b> in your Render dashboard environment variables to enable the bot.`, { parse_mode: 'HTML' }).catch(() => {});
+    }
     return false;
   }
-  return String(msg.chat.id) === String(TG_CHAT_ID);
+  const match = String(msg.chat.id) === String(TG_CHAT_ID);
+  if (!match) {
+    console.warn(`[TELEGRAM BOT] Rejecting message from unauthorized chat ID: ${msg.chat.id}`);
+    if (typeof bot !== 'undefined') {
+      bot.sendMessage(msg.chat.id, `🚫 <b>Access Denied!</b>\nYour Chat ID (<code>${msg.chat.id}</code>) does not match the configured TG_CHAT_ID.\n\nPlease update <b>TG_CHAT_ID</b> in your Render dashboard environment variables.`, { parse_mode: 'HTML' }).catch(() => {});
+    }
+  }
+  return match;
 }
 
 // Performance streak tracking with file persistence
@@ -410,9 +420,13 @@ app.use((req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`🌐 Web Server running on port ${PORT} - Hosting Bot & Site!`);
-});
+if (process.env.BOT_ONLY !== 'true') {
+  app.listen(PORT, () => {
+    console.log(`🌐 Web Server running on port ${PORT} - Hosting Bot & Site!`);
+  });
+} else {
+  console.log('🤖 Telegram Bot running in background (Express port listener disabled).');
+}
 
 // ========================================
 // INITIALIZE BOT

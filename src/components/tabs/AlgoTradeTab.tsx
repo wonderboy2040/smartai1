@@ -18,7 +18,8 @@ interface BrokerStatus {
   publicIp: string;
 }
 
-const API = (path: string) => `/api/${path}`;
+const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
+const API = (path: string) => `${PROXY_BASE}/api/${path}`;
 
 function cur(m: string) { return m === 'IN' ? '₹' : '$'; }
 
