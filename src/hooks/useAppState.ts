@@ -17,11 +17,26 @@ import { generateWeeklyWealthReport } from '../utils/wealthEngine';
 
 function mergePriceData(existing: PriceData | undefined, incoming: Partial<PriceData>): PriceData {
   const time = incoming.time ?? Date.now();
-  // FRESHNESS CHECK: reject stale data (>30s older than what we already have)
-  // This prevents 15-min-delayed TV data from overriding real-time server data.
-  if (existing && incoming.time && existing.time && incoming.time < existing.time - 2000) {
-    return existing;
+  
+  // Real-time status
+  const existingRealtime = existing?.isRealtime ?? false;
+  const incomingRealtime = incoming.isRealtime ?? false;
+
+  // If existing is real-time, but incoming is NOT, reject incoming
+  if (existingRealtime && !incomingRealtime) {
+    return existing!;
   }
+
+  // If incoming is real-time, but existing is NOT, always accept incoming (skip freshness check)
+  if (incomingRealtime && !existingRealtime) {
+    // Accept incoming
+  } else {
+    // If both are same real-time status, apply freshness check
+    if (existing && incoming.time && existing.time && incoming.time < existing.time - 2000) {
+      return existing;
+    }
+  }
+
   const price = incoming.price ?? existing?.price ?? 0;
   const change = incoming.change ?? existing?.change ?? 0;
   const high = incoming.high ?? existing?.high;
@@ -34,10 +49,12 @@ function mergePriceData(existing: PriceData | undefined, incoming: Partial<Price
   const macd = incoming.macd ?? existing?.macd;
   const tvExchange = incoming.tvExchange ?? existing?.tvExchange;
   const tvExactSymbol = incoming.tvExactSymbol ?? existing?.tvExactSymbol;
-  if (existing && price > 0 && Math.abs(existing.price - price) / price < 0.00005 && existing.change === change && existing.rsi === rsi) {
+  const isRealtime = incomingRealtime || existingRealtime;
+
+  if (existing && price > 0 && Math.abs(existing.price - price) / price < 0.00005 && existing.change === change && existing.rsi === rsi && existing.isRealtime === isRealtime) {
     return existing;
   }
-  return { price, change, high, low, volume, rsi, time, market, sma20, sma50, macd, tvExchange, tvExactSymbol };
+  return { price, change, high, low, volume, rsi, time, market, sma20, sma50, macd, tvExchange, tvExactSymbol, isRealtime };
 }
 
 export function useAppState() {
@@ -330,7 +347,8 @@ export function useAppState() {
                   time: Date.now(),
                   market: 'IN',
                   tvExchange: 'COINDCX',
-                  tvExactSymbol: `${sym}INR`
+                  tvExactSymbol: `${sym}INR`,
+                  isRealtime: true
                 };
                 updated = true;
               }

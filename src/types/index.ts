@@ -22,6 +22,7 @@ export interface PriceData {
   sma20?: number;
   sma50?: number;
   macd?: number;
+  isRealtime?: boolean;
 }
 
 export interface ETFInfo {

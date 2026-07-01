@@ -27,6 +27,7 @@ function toPriceData(t: Record<string, unknown>): Partial<PriceData> {
     low: t.low != null ? Number(t.low) : undefined,
     volume: t.volume != null ? Number(t.volume) : undefined,
     time: Number(t.time) || Date.now(),
+    isRealtime: true,
   };
 }
 

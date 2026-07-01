@@ -311,6 +311,7 @@ export async function batchFetchIndianPrices(
       market: 'IN',
       tvExchange: ind?.tvExchange,
       tvExactSymbol: ind?.tvExactSymbol,
+      isRealtime: usingRealtime,
     } as PriceData);
   });
 }
@@ -459,7 +460,6 @@ export async function batchFetchUSPrices(
     const usingRealtime = !!rt;
     onUpdate(key, {
       price,
-      // Prefer the change% that matches the price we're showing.
       change: usingRealtime ? (rt!.change ?? 0) : (ind?.change ?? 0),
       high: rt?.high ?? ind?.high ?? price,
       low: rt?.low ?? ind?.low ?? price,
@@ -472,6 +472,7 @@ export async function batchFetchUSPrices(
       market: 'US',
       tvExchange: ind?.tvExchange,
       tvExactSymbol: ind?.tvExactSymbol,
+      isRealtime: usingRealtime,
     } as PriceData);
   });
 }
@@ -871,6 +872,7 @@ export async function batchFetchPrices(
       market: key.startsWith('IN_') ? 'IN' : 'US',
       tvExchange: ind?.tvExchange,
       tvExactSymbol: ind?.tvExactSymbol,
+      isRealtime: usingRealtime,
     } as PriceData);
   });
 }
