@@ -536,7 +536,7 @@ export function useAppState() {
     let statusThrottle = 0;
     const sync = async () => {
       if (statusThrottle < 3) { setLiveStatus('● SYNCING...'); statusThrottle++; }
-      await batchFetchPrices(positionsToSub, (key, data) => { pendingPricesRef.current[key] = data; });
+      await batchFetchPrices(positionsToSub, (key, data) => { pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData; });
       flushPricesToStorage();
       if (statusThrottle < 3) setLiveStatus('● QUANTUM LINK ACTIVE');
     };
@@ -1225,7 +1225,7 @@ export function useAppState() {
         const [market, sym] = k.split('_') as ['IN' | 'US', string];
         return { id: `refresh-${k}`, symbol: sym, market, qty: 1, avgPrice: 1, leverage: 1, dateAdded: getTodayString() };
       });
-      const pricePromise = batchFetchPrices(positions, (key, data) => { pendingPricesRef.current[key] = data; })
+      const pricePromise = batchFetchPrices(positions, (key, data) => { pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData; })
         .then(() => flushPricesToStorage()).catch(() => { });
 
       await Promise.all([ratePromise, pricePromise]);

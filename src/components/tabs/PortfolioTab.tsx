@@ -59,7 +59,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
       .filter(p => marketFilter === 'all' || p.market === marketFilter)
       .filter(p => !q || p.symbol.toUpperCase().includes(q))
       .map(p => {
-        const key = `${p.market}_${p.symbol}`;
+        const key = `${(p.market || 'IN').toUpperCase()}_${p.symbol}`;
         const data = livePrices[key];
         const curPrice = data?.price || p.avgPrice;
         const posSize = p.avgPrice * p.qty;
@@ -311,7 +311,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
 
         <div className="divide-y divide-white/[0.03]">
           {visiblePortfolio.map(p => {
-            const key = `${p.market}_${p.symbol}`;
+            const key = `${(p.market || 'IN').toUpperCase()}_${p.symbol}`;
             const data = livePrices[key];
             const curPrice = data?.price || p.avgPrice;
             const change = data?.change || 0;

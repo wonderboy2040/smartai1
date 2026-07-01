@@ -833,7 +833,8 @@ export async function batchFetchPrices(
                 time: Date.now(),
                 market: 'IN',
                 tvExchange: 'COINDCX',
-                tvExactSymbol: `${cleanSym}INR`
+                tvExactSymbol: `${cleanSym}INR`,
+                isRealtime: true
               });
             }
           }
