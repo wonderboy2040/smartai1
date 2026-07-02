@@ -153,18 +153,14 @@ app.get('/api/chart', async (req, res) => {
 // ------------------------------------------------------------
 // GET /api/quote  → REAL-TIME last-traded price for one or many symbols
 // ------------------------------------------------------------
-// THE FIX for "prices 15 minutes behind".
-// The frontend previously read US prices from TradingView's *anonymous*
-// scanner, which tags its feed `delayed_streaming_900` (= 900s / 15-min
-// delayed). Polling fast can't help when the SOURCE is delayed.
-//
-// This endpoint returns the genuine real-time last price:
-//   1. Finnhub  /quote   (if FINNHUB_API_KEY is set) — true real-time US trades
-//   2. Yahoo Finance v8 chart meta.regularMarketPrice — real-time (~1-2s),
-//      no API key required, server-side so there's no browser CORS issue.
-// Query: ?symbols=SMH,VGT,SPCX,MU&market=US   (comma separated, max 50)
+// Returns genuine real-time last prices via multiple sources:
+//   1. Finnhub /quote (US stocks/ETFs, if key set)
+//   2. Groww NSE live (India stocks/ETFs; SKIPPED for indices like NIFTY)
+//   3. Yahoo Finance v7/v8 (fallback for everything)
+// Query: ?symbols=SMH,SPCX,MU&market=US   (comma separated, max 50)
 // Resp:  { quotes: { SMH: {price,change,high,low,volume,prevClose,time,source}, ... } }
 // ------------------------------------------------------------
+const INDIAN_INDICES = new Set(['NIFTY','BANKNIFTY','SENSEX','INDIAVIX','CNXIT','NIFTY50','NIFTYBANK']);
 async function fetchFinnhubQuote(plainSym) {
   const key = process.env.FINNHUB_API_KEY || process.env.VITE_FINNHUB_API_KEY || '';
   if (!key) return null;
@@ -292,7 +288,8 @@ app.get('/api/quote', async (req, res) => {
   const remaining = symbols.filter(s => !quotes[s]);
   await Promise.allSettled(remaining.map(async (sym) => {
     // 1a) India real-time → Groww NSE live feed (datacenter-friendly, ETF-safe).
-    if (market === 'IN') {
+    // Indian indices (NIFTY etc.) skip Groww — Groww only has stock/ETF quotes
+    if (market === 'IN' && !INDIAN_INDICES.has(sym)) {
       const gw = await fetchGrowwNseQuote(sym);
       if (gw) { quotes[sym] = gw; return; }
     }

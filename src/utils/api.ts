@@ -293,10 +293,13 @@ export async function batchFetchIndianPrices(
     const ind = indicators[clean];
     if (!rt && !ind) return;
 
-    const price = rt?.price ?? ind?.price;
+    // Indian indices (NIFTY, BANKNIFTY etc.) → prefer TV scanner (live index data, more reliable than Yahoo ^NSEI)
+    const INDIAN_INDICES = new Set(['NIFTY','BANKNIFTY','SENSEX','INDIAVIX','CNXIT']);
+    const useTvPrice = INDIAN_INDICES.has(clean) && !!(ind as any)?.price;
+    const price = useTvPrice ? (ind as any).price : (rt?.price ?? (ind as any)?.price);
     if (!price || price <= 0) return;
 
-    const usingRealtime = !!rt;
+    const usingRealtime = !useTvPrice && !!rt;
     onUpdate(key, {
       price,
       change: usingRealtime ? (rt!.change ?? 0) : (ind?.change ?? 0),
@@ -856,10 +859,13 @@ export async function batchFetchPrices(
     const ind = indicators[sym];
     if (!rt && !ind) return;
 
-    const price = rt?.price ?? (ind as any)?.price;
+    // Indian indices (NIFTY, BANKNIFTY etc.) → prefer TV scanner (live index data, more reliable than Yahoo ^NSEI)
+    const INDIAN_INDICES = new Set(['NIFTY','BANKNIFTY','SENSEX','INDIAVIX','CNXIT']);
+    const useTvPrice = INDIAN_INDICES.has(sym) && !!(ind as any)?.price;
+    const price = useTvPrice ? (ind as any).price : (rt?.price ?? (ind as any)?.price);
     if (!price || price <= 0) return;
 
-    const usingRealtime = !!rt;
+    const usingRealtime = !useTvPrice && !!rt;
     onUpdate(key, {
       price,
       change: usingRealtime ? (rt!.change ?? 0) : (ind?.change ?? 0),

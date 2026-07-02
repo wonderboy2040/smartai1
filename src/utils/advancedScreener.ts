@@ -57,7 +57,7 @@ const SYMBOL_SECTOR_MAP: Record<string, string> = {
   'CVX': 'Energy', 'LLY': 'Healthcare', 'ABBV': 'Healthcare', 'CRM': 'Technology',
   'NFLX': 'Technology', 'AMD': 'Technology', 'AVGO': 'Technology', 'COST': 'Consumer',
   // ETFs
-  'SMH': 'Technology', 'VGT': 'Technology', 'QQQ': 'Technology', 'SPY': 'ETF',
+  'SMH': 'Technology', 'QQQ': 'Technology', 'SPY': 'ETF',
   'VTI': 'ETF', 'VOO': 'ETF', 'ARKK': 'Technology', 'IBIT': 'Crypto',
   'COIN': 'Crypto', 'MSTR': 'Technology', 'PLTR': 'Technology',
 };

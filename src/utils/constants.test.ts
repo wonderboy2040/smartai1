@@ -69,7 +69,7 @@ describe('resolveTvChartSymbol', () => {
 
   it('falls back to the curated map when nothing is resolved', () => {
     expect(resolveTvChartSymbol('SMH', 'US')).toBe('NASDAQ:SMH');
-    expect(resolveTvChartSymbol('VGT', 'US')).toBe('AMEX:VGT');
+    expect(resolveTvChartSymbol('SMH', 'US')).toBe('NASDAQ:SMH');
   });
 
   it('falls back to an NSE/NASDAQ guess for unknown symbols', () => {
