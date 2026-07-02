@@ -886,9 +886,21 @@ export async function batchFetchPrices(
 }
 
 export async function fetchForexRate(): Promise<number> {
-  // Primary: Open ER-API — CORS-friendly and reliable from the browser.
-  // (AwesomeAPI was removed: it does not send CORS headers, so the browser
-  //  always blocked it and it could never succeed client-side.)
+  // Primary: server-side proxy (cached, no CORS issues, fastest)
+  try {
+    const res = await fetch(`${PROXY_BASE}/api/forex?t=${Date.now()}`, {
+      signal: AbortSignal.timeout(4000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.usdInr) {
+        const price = parseFloat(data.usdInr);
+        if (!isNaN(price) && price > 50 && price < 150) return price;
+      }
+    }
+  } catch { /* fall through to direct APIs */ }
+
+  // Fallback 1: Open ER-API (CORS-friendly)
   try {
     const res = await fetch(`https://open.er-api.com/v6/latest/USD?t=${Date.now()}`, {
       signal: AbortSignal.timeout(4000)
@@ -901,6 +913,34 @@ export async function fetchForexRate(): Promise<number> {
       }
     }
   } catch (e) { console.warn('Open ER-API forex fetch failed:', e); }
+
+  // Fallback 2: Frankfurter API (free, CORS-friendly, no key)
+  try {
+    const res = await fetch(`https://api.frankfurter.app/latest?from=USD&to=INR&t=${Date.now()}`, {
+      signal: AbortSignal.timeout(4000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.rates?.INR) {
+        const price = parseFloat(data.rates.INR);
+        if (!isNaN(price) && price > 50 && price < 150) return price;
+      }
+    }
+  } catch (e) { console.warn('Frankfurter forex fallback failed:', e); }
+
+  // Fallback 3: ExchangeRate-API free tier
+  try {
+    const res = await fetch(`https://api.exchangerate-api.com/v4/latest/USD?t=${Date.now()}`, {
+      signal: AbortSignal.timeout(4000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.rates?.INR) {
+        const price = parseFloat(data.rates.INR);
+        if (!isNaN(price) && price > 50 && price < 150) return price;
+      }
+    }
+  } catch (e) { console.warn('ExchangeRate-API fallback failed:', e); }
 
   return DEFAULT_USD_INR; // Default fallback
 }

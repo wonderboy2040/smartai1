@@ -25,6 +25,7 @@ import { fork } from 'node:child_process';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 8080;
+const DEFAULT_USD_INR = 83.5;
 
 app.use(express.json({ limit: '1mb' }));
 
@@ -343,6 +344,46 @@ app.get('/api/crypto-prices', async (_req, res) => {
   } catch (e) {
     return jsonError(res, 502, `CoinDCX fetch failed: ${e?.message || e}`);
   }
+});
+
+// ------------------------------------------------------------
+// GET /api/forex → USD/INR rate proxy with server-side caching
+// ------------------------------------------------------------
+// Multiple upstream fallbacks so the rate is always available even if
+// one free API is down. Cached 10s server-side to reduce upstream load.
+// ------------------------------------------------------------
+let _forexCache = { rate: DEFAULT_USD_INR, ts: 0 };
+const FOREX_CACHE_MS = 10000;
+
+const FOREX_UPSTREAMS = [
+  'https://open.er-api.com/v6/latest/USD',
+  'https://api.frankfurter.app/latest?from=USD&to=INR',
+  'https://api.exchangerate-api.com/v4/latest/USD',
+];
+
+async function fetchForexUpstream() {
+  for (const url of FOREX_UPSTREAMS) {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const inr = j?.rates?.INR;
+      if (typeof inr === 'number' && inr > 50 && inr < 150) return inr;
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
+app.get('/api/forex', async (_req, res) => {
+  const now = Date.now();
+  if (_forexCache.rate && (now - _forexCache.ts) < FOREX_CACHE_MS) {
+    res.set('Cache-Control', 'no-store, max-age=0');
+    return res.json({ usdInr: _forexCache.rate, ts: _forexCache.ts });
+  }
+  const rate = await fetchForexUpstream();
+  if (rate) _forexCache = { rate, ts: now };
+  res.set('Cache-Control', 'no-store, max-age=0');
+  return res.json({ usdInr: rate || _forexCache.rate || DEFAULT_USD_INR, ts: Date.now() });
 });
 
 // ------------------------------------------------------------

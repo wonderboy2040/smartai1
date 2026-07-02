@@ -357,12 +357,45 @@ export function useAppState() {
           if (updated) flushPricesToStorage();
         }
       } catch (e) {
-        console.warn('Crypto fast poll failed:', e);
+        // CoinDCX failed — fallback to Binance USDT price converted to INR
+        console.warn('CoinDCX poll failed, trying Binance fallback:', e);
+        try {
+          const cryptoSymbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'];
+          const binanceResults = await Promise.allSettled(
+            cryptoSymbols.map(async (sym) => {
+              const r = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${sym}USDT`, {
+                signal: AbortSignal.timeout(4000)
+              });
+              if (!r.ok) return null;
+              const j = await r.json();
+              const price = parseFloat(j.lastPrice);
+              const change = parseFloat(j.priceChangePercent);
+              if (isNaN(price) || price <= 0) return null;
+              const rate = usdInrRateRef.current || DEFAULT_USD_INR;
+              return { sym, price: price * rate, change };
+            })
+          );
+          let updated = false;
+          for (const result of binanceResults) {
+            if (result.status !== 'fulfilled' || !result.value) continue;
+            const { sym, price, change } = result.value;
+            pendingPricesRef.current[`IN_${sym}`] = {
+              price, change, high: price, low: price, volume: 0,
+              rsi: 50, time: Date.now(), market: 'IN',
+              tvExchange: 'BINANCE', tvExactSymbol: `${sym}USDT`,
+              isRealtime: true
+            };
+            updated = true;
+          }
+          if (updated) flushPricesToStorage();
+        } catch (e2) {
+          console.warn('Binance crypto fallback also failed:', e2);
+        }
       }
     };
 
     pollCrypto();
-    const cryptoInterval = window.setInterval(pollCrypto, 10000); // 10s (balanced for performance)
+    const cryptoInterval = window.setInterval(pollCrypto, 5000); // 5s ultra-fast for real-time crypto
     return () => { clearInterval(cryptoInterval); };
   }, [isAuthenticated, hasCrypto, flushPricesToStorage]);
 
@@ -660,14 +693,14 @@ export function useAppState() {
     return () => { if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current); };
   }, [portfolio, usdInrRate]);
 
-  // --- Forex refresh (realtime 24x7, every 30s) ---
+  // --- Forex refresh (realtime 24x7, every 15s) ---
   useEffect(() => {
     if (!isAuthenticated) return;
     const refreshForex = async () => {
       const rate = await fetchForexRate(); setUsdInrRate(rate);
     };
     refreshForex(); // immediate fetch on mount
-    forexIntervalRef.current = window.setInterval(refreshForex, 30000);
+    forexIntervalRef.current = window.setInterval(refreshForex, 15000);
     return () => { if (forexIntervalRef.current) clearInterval(forexIntervalRef.current); };
   }, [isAuthenticated]);
 
