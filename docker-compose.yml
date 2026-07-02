@@ -1,13 +1,31 @@
-version: '3.9'
-
+# FIX H10 (docker): `version: '3.9'` is deprecated in modern Docker Compose
+# (logs a warning). Removed. Also added a `node-server` service so the nginx
+# `/api/` proxy target actually exists (previously 502'd on every API call).
 services:
+  node-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend  # reuse frontend Dockerfile (it runs npm build + node server)
+    # Override the entrypoint to run the Node API server (not the static
+    # nginx build). The same image contains both `dist/` (served by nginx)
+    # and `server/index.js` (served by Node on :8080).
+    command: ["node", "server/index.js"]
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=production
+      - PORT=8080
+      # Set real secrets via .env file or `docker compose` env override.
+    env_file:
+      - .env
+
   app:
     build:
       context: .
       dockerfile: Dockerfile.frontend
     ports:
       - "3000:80"
+    depends_on:
+      - node-server
     environment:
       - NODE_VERSION=22
-    # Single service: ML runs in-process in Node.js, no Python service needed
-    # Set env vars in Render dashboard or .env file

@@ -257,7 +257,10 @@ def get_provider_status() -> list:
 def anti_hallucination_check(llm_text: str, quant_data: dict) -> str:
     """
     Regex-scan LLM text for numbers NOT present in the quant_data dict.
-    If suspicious numbers found, return None (caller uses brain_to_text).
+    FIX M13: previously this only logged a warning and always returned the
+    LLM text — fabricated numbers flowed through to the user. Now return
+    None when too many suspicious numbers are detected so the caller can
+    fall back to `brain_to_text(quant_data)` (deterministic).
     """
     if not llm_text:
         return llm_text
@@ -287,10 +290,10 @@ def anti_hallucination_check(llm_text: str, quant_data: dict) -> str:
         except ValueError:
             pass
 
-    # If too many suspicious numbers, flag it
+    # If too many suspicious numbers, signal hallucination → return None so
+    # the caller (main.py /analyze) can fall back to brain_to_text().
     if len(suspicious) > 3:
-        logger.warning(f"  ⚠️ Anti-hallucination: {len(suspicious)} suspicious numbers found")
-        # Don't discard entirely — just log warning
-        # In production, you could return None here
+        logger.warning(f"  ⚠️ Anti-hallucination triggered: {len(suspicious)} suspicious numbers — returning None for fallback")
+        return None
 
     return llm_text

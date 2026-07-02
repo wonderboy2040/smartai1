@@ -106,8 +106,11 @@ function loadStreakData() {
 }
 
 function saveStreakData() {
+  // FIX H16: previously fs.writeFileSync — blocks the event loop on disk I/O,
+  // which interferes with concurrent Telegram message handling. Use async
+  // fs.promises.writeFile and swallow errors (called from cron / hot path).
   try {
-    fs.writeFileSync(STREAK_FILE, JSON.stringify({ dailyPLHistory, consecutiveStreak }), 'utf8');
+    fs.promises.writeFile(STREAK_FILE, JSON.stringify({ dailyPLHistory, consecutiveStreak }), 'utf8').catch(() => {});
   } catch (e) { }
 }
 
@@ -732,6 +735,7 @@ Bina / ke koi bhi message likho = ADVANCE PRO AI chat!
 // COMMAND: /debug_env (Hidden Diagnosis)
 // ========================================
 bot.onText(/^\/debug_env(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   const env = process.env;
 
@@ -883,6 +887,7 @@ Regime-aware portfolio rebalancing — allocation guidance based on ML regime.
 // COMMAND: /news — News Sentiment
 // ========================================
 bot.onText(/^\/news(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /news from ${msg.from?.first_name || chatId}`);
   try {
@@ -899,6 +904,7 @@ bot.onText(/^\/news(@\w+)?$/i, async (msg) => {
 // COMMAND: /fundamental — Deep Fundamentals
 // ========================================
 bot.onText(/^\/fundamentals?(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   const target = match[1] ? match[1].trim() : 'my top portfolio holding';
   console.log(`📥 /fundamental ${target} from ${msg.from?.first_name || chatId}`);
@@ -917,6 +923,7 @@ bot.onText(/^\/fundamentals?(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
 // COMMAND: /portfolio
 // ========================================
 bot.onText(/^\/portfolio(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /portfolio from ${msg.from?.first_name || chatId}`);
   try {
@@ -938,6 +945,7 @@ bot.onText(/^\/portfolio(@\w+)?$/i, async (msg) => {
 // COMMAND: /market
 // ========================================
 bot.onText(/^\/market(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /market from ${msg.from?.first_name || chatId}`);
   try {
@@ -956,6 +964,7 @@ bot.onText(/^\/market(@\w+)?$/i, async (msg) => {
 // COMMAND: /allocation
 // ========================================
 bot.onText(/^\/allocation(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /allocation from ${msg.from?.first_name || chatId}`);
   try {
@@ -973,6 +982,7 @@ bot.onText(/^\/allocation(@\w+)?$/i, async (msg) => {
 // COMMAND: /risk
 // ========================================
 bot.onText(/^\/risk(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /risk from ${msg.from?.first_name || chatId}`);
   try {
@@ -990,6 +1000,7 @@ bot.onText(/^\/risk(@\w+)?$/i, async (msg) => {
 // COMMAND: /dip — Buy-the-Dip Intelligence
 // ========================================
 bot.onText(/^\/dip(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /dip from ${msg.from?.first_name || chatId}`);
   try {
@@ -1061,6 +1072,7 @@ bot.onText(/^\/dip(@\w+)?$/i, async (msg) => {
 // COMMAND: /health — Portfolio Health Score
 // ========================================
 bot.onText(/^\/health(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /health from ${msg.from?.first_name || chatId}`);
   try {
@@ -1126,6 +1138,7 @@ bot.onText(/^\/health(@\w+)?$/i, async (msg) => {
 // COMMAND: /regime — Macro Regime Detector
 // ========================================
 bot.onText(/^\/regime(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /regime from ${msg.from?.first_name || chatId}`);
   try {
@@ -1186,6 +1199,7 @@ bot.onText(/^\/regime(@\w+)?$/i, async (msg) => {
 // COMMAND: /smartmoney — FII/DII Smart Money Flow
 // ========================================
 bot.onText(/^\/smartmoney(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /smartmoney from ${msg.from?.first_name || chatId}`);
   try {
@@ -1250,6 +1264,7 @@ bot.onText(/^\/smartmoney(@\w+)?$/i, async (msg) => {
 // COMMAND: /screener — Multi-Factor Stock Screener
 // ========================================
 bot.onText(/^\/screener(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /screener from ${msg.from?.first_name || chatId}`);
   try {
@@ -1324,6 +1339,7 @@ bot.onText(/^\/screener(@\w+)?$/i, async (msg) => {
 // COMMAND: /forex
 // ========================================
 bot.onText(/^\/forex(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /forex from ${msg.from?.first_name || chatId}`);
   try {
@@ -1349,6 +1365,7 @@ bot.onText(/^\/forex(@\w+)?$/i, async (msg) => {
 // COMMAND: /alert (toggle auto-alerts)
 // ========================================
 bot.onText(/^\/alert(?:@\w+)?(?:\s+(.*))?$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   const arg = (match[1] || '').trim().toLowerCase();
 
@@ -1481,6 +1498,7 @@ bot.onText(/^\/setkey(?:@\w+)?(?:\s+(\w+)\s+(.+))?$/i, async (msg, match) => {
 // COMMAND: /ai <message> — Explicit AI chat
 // ========================================
 bot.onText(/^\/ai(?:@\w+)?\s+(.+)/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   const query = match[1];
   console.log(`📥 /ai "${query.substring(0, 50)}..." from ${msg.from?.first_name || chatId}`);
@@ -1503,6 +1521,7 @@ bot.onText(/^\/ai(?:@\w+)?\s+(.+)/i, async (msg, match) => {
 // COMMAND: /chat <message> — Alias for /ai
 // ========================================
 bot.onText(/^\/chat(?:@\w+)?\s+(.+)/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   const query = match[1];
   console.log(`📥 /chat "${query.substring(0, 50)}..." from ${msg.from?.first_name || chatId}`);
@@ -1525,6 +1544,7 @@ bot.onText(/^\/chat(?:@\w+)?\s+(.+)/i, async (msg, match) => {
 // COMMAND: /scan <SYMBOL> — Deep Symbol Scan
 // ========================================
 bot.onText(/^\/scan(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   if (!match[1]) {
     await safeSend(chatId, '⚠️ <b>Symbol is missing!</b>\n\nCommand ke aage symbol likho. Example: <code>/scan RELIANCE</code> or <code>/scan AAPL</code>');
@@ -1551,6 +1571,7 @@ bot.onText(/^\/scan(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
 // COMMAND: /exact <SYMBOL> — 3-Layer Exact Buy Price
 // ========================================
 bot.onText(/^\/exact(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   if (!match[1]) {
     await safeSend(chatId, '⚠️ <b>Symbol is missing!</b>\n\nUsage: <code>/exact RELIANCE</code> or <code>/exact AAPL</code>');
@@ -1699,6 +1720,7 @@ bot.onText(/^\/exact(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
 // COMMAND: /compare <SYM1> <SYM2> — Side by Side
 // ========================================
 bot.onText(/^\/compare(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   if (!match[1]) {
     await safeSend(chatId, '⚠️ <b>Symbols missing!</b>\n\nDono symbols likho!\n\nExample: <code>/compare RELIANCE TCS</code> or <code>/compare SMH VGT</code>');
@@ -1734,6 +1756,7 @@ bot.onText(/^\/compare(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
 // COMMAND: /correlate — Portfolio Correlation Matrix
 // ========================================
 bot.onText(/^\/correlat(?:e|ion)?(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /correlate from ${msg.from?.first_name || chatId}`);
   try {
@@ -1787,6 +1810,7 @@ bot.onText(/^\/correlat(?:e|ion)?(@\w+)?$/i, async (msg) => {
 // COMMAND: /heatmap — Sector Heat Map
 // ========================================
 bot.onText(/^\/heatmap(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /heatmap from ${msg.from?.first_name || chatId}`);
   try {
@@ -1860,6 +1884,7 @@ bot.onText(/^\/heatmap(@\w+)?$/i, async (msg) => {
 // COMMAND: /streak — Performance Tracker
 // ========================================
 bot.onText(/^\/streak(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /streak from ${msg.from?.first_name || chatId}`);
   try {
@@ -1916,6 +1941,7 @@ bot.onText(/^\/streak(@\w+)?$/i, async (msg) => {
 // COMMAND: /backtest — AI Signal Accuracy
 // ========================================
 bot.onText(/^\/backtest(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /backtest from ${msg.from?.first_name || chatId}`);
   try {
@@ -1997,6 +2023,7 @@ bot.onText(/^\/backtest(@\w+)?$/i, async (msg) => {
 // COMMAND: /taxloss — Tax-Loss Harvesting
 // ========================================
 bot.onText(/^\/taxloss(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /taxloss from ${msg.from?.first_name || chatId}`);
   try {
@@ -2068,6 +2095,7 @@ bot.onText(/^\/taxloss(@\w+)?$/i, async (msg) => {
 // COMMAND: /trim or /rules — Trim + Re-Entry Rules
 // ========================================
 bot.onText(/^\/(trim|rules)(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /trim from ${msg.from?.first_name || chatId}`);
 
@@ -2306,6 +2334,7 @@ bot.on('message', async (msg) => {
 // ⚡ INTRADAY PRO ALGO — Super Intelligence command + auto-alerts
 // ────────────────────────────────────────────────────────────
 bot.onText(/^\/algo(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   try {
     if (portfolio.length === 0) { await refreshPortfolio().catch(() => {}); }
@@ -2347,6 +2376,7 @@ cron.schedule('*/10 * * * *', async () => {
 
 // Price refresh: every 30 seconds
 cron.schedule('*/30 * * * * *', async () => {
+  if (!TG_CHAT_ID) return;
   if (portfolio.length > 0) {
     await refreshPrices();
   }
@@ -2794,6 +2824,7 @@ bot.onText(/^\/ipo(@\w+)?$/i, async (msg) => {
 
 // 🌅 8:45 AM IST India Pre-Market — DEEP analysis, ~30 min before 9:15 open
 cron.schedule('15 3 * * 1-5', async () => {
+  if (!TG_CHAT_ID) return;
   console.log(`🌅 India Pre-Market triggered at ${getISTTime()} IST`);
   try {
     await Promise.allSettled([refreshPortfolio(), refreshPrices(), refreshIntel()]);
@@ -2807,6 +2838,7 @@ cron.schedule('15 3 * * 1-5', async () => {
 
 // 🌆 6:30 PM IST US Pre-Market — DEEP analysis, ~30 min before 7:00 PM IST (9:30 ET) open
 cron.schedule('0 13 * * 1-5', async () => {
+  if (!TG_CHAT_ID) return;
   console.log(`🌆 US Pre-Market triggered at ${getISTTime()} IST`);
   try {
     await Promise.allSettled([refreshPortfolio(), refreshPrices(), refreshIntel()]);
@@ -2820,6 +2852,7 @@ cron.schedule('0 13 * * 1-5', async () => {
 
 // 🌅 8:00 AM IST Daily Digest — Morning Brief
 cron.schedule('30 2 * * 1-5', async () => {
+  if (!TG_CHAT_ID) return;
   // 2:30 UTC = 8:00 AM IST
   console.log(`🌅 Daily Digest triggered at ${getISTTime()} IST`);
   try {
@@ -2876,6 +2909,7 @@ cron.schedule('15 10 * * 1-5', async () => {
 
 // Record daily P&L at India market close
 cron.schedule('10 10 * * 1-5', async () => {
+  if (!TG_CHAT_ID) return;
   if (portfolio.length === 0) return;
   await refreshPrices();
   const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
@@ -2937,6 +2971,7 @@ process.on('SIGTERM', () => {
 // COMMAND: /siptilt — Smart SIP Auto-Tilt
 // ========================================
 bot.onText(/^\/siptilt(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /siptilt from ${msg.from?.first_name || chatId}`);
   try {
@@ -2954,6 +2989,7 @@ bot.onText(/^\/siptilt(@\w+)?$/i, async (msg) => {
 // COMMAND: /taxplan — India Tax Optimizer
 // ========================================
 bot.onText(/^\/taxplan(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /taxplan from ${msg.from?.first_name || chatId}`);
   try {
@@ -2971,6 +3007,7 @@ bot.onText(/^\/taxplan(@\w+)?$/i, async (msg) => {
 // COMMAND: /drawdown — Drawdown Recovery Tracker
 // ========================================
 bot.onText(/^\/drawdown(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /drawdown from ${msg.from?.first_name || chatId}`);
   try {
@@ -3011,6 +3048,7 @@ async function fetchMLBacktest(symbol, market = 'IN') {
 
 // /ml — Get ML signal for a stock
 bot.onText(/^\/ml(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   const input = (match[1] || '').trim().toUpperCase();
   console.log(`📥 /ml ${input} from ${msg.from?.first_name || chatId}`);
@@ -3068,6 +3106,7 @@ bot.onText(/^\/ml(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
 
 // /mlregime — Get ML regime detection
 bot.onText(/^\/mlregime(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /mlregime from ${msg.from?.first_name || chatId}`);
 
@@ -3102,6 +3141,7 @@ bot.onText(/^\/mlregime(@\w+)?$/i, async (msg) => {
 
 // /mlbacktest — Run ML backtest for a stock
 bot.onText(/^\/mlbacktest(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   const input = (match[1] || '').trim().toUpperCase();
   console.log(`📥 /mlbacktest ${input} from ${msg.from?.first_name || chatId}`);
@@ -3137,6 +3177,7 @@ bot.onText(/^\/mlbacktest(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
 
 // /rebalance — Regime-aware portfolio rebalancing
 bot.onText(/^\/rebalance(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /rebalance from ${msg.from?.first_name || chatId}`);
 

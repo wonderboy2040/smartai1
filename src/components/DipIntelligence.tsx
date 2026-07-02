@@ -99,7 +99,7 @@ export const DipIntelligence = React.memo(({ portfolio, livePrices, totalBudget,
                     style={{ width: `${Math.min(a.allocationPct, 100)}%` }}
                   />
                 </div>
-                <span className="text-blue-400 w-16 text-right">₹{a.allocatedAmount.toLocaleString('en-IN')}</span>
+                <span className="text-blue-400 w-16 text-right">{formatPrice(a.allocatedAmount, (a as any).market || 'IN')}</span>
                 <span className="text-slate-500 w-10 text-right">{a.allocationPct}%</span>
                 {a.dipMultiplier > 1 && <span className="text-amber-400 text-[10px]">{a.dipMultiplier}x</span>}
               </div>
@@ -122,7 +122,7 @@ export const DipIntelligence = React.memo(({ portfolio, livePrices, totalBudget,
               <React.Fragment key={level.label}>
                 <div className="text-slate-300">{level.label}</div>
                 <div className="text-slate-300">{formatPrice(level.targetPrice, deepDips[0].market)}</div>
-                <div className="text-blue-400">₹{level.suggestedAmount.toLocaleString('en-IN')}</div>
+                <div className="text-blue-400">{formatPrice(level.suggestedAmount, deepDips[0].market)}</div>
                 <div className={level.triggered ? 'text-red-400' : 'text-slate-500'}>
                   {level.triggered ? 'TRIGGERED' : 'Waiting'}
                 </div>
@@ -191,7 +191,11 @@ function DipCard({ signal, onBuy }: { signal: DipSignal; onBuy?: (symbol: string
       </div>
       {onBuy && (signal.dipDepth === 'DEEP' || signal.dipDepth === 'MILD') && (
         <button
-          onClick={() => onBuy(signal.symbol, 0)}
+          // FIX H12: previously `onBuy(signal.symbol, 0)` passed 0 as the
+          // amount, which (if onBuy opens the buy modal pre-filled) shows 0
+          // or (if onBuy executes) attempts a 0-rupee purchase. Pass the
+          // entryTarget so the modal opens with a sensible default price.
+          onClick={() => onBuy(signal.symbol, signal.entryTarget)}
           className="mt-1.5 w-full text-center quantum-btn-ghost px-3 py-1.5 rounded-lg text-xs"
         >
           Buy This Dip

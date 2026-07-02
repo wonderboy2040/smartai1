@@ -75,12 +75,38 @@ function calculateEMA(prices, period) {
   return ema;
 }
 
+// FIX M16 (H16 in server review): previously `calculateMACD` returned only the
+// final MACD value, but `signal = macd * (2 / (9 + 1))` is the one-step EMA
+// fraction of the CURRENT macd — not the 9-period EMA of the macd series. As a
+// result `histogram = macd - signal` was meaningless. Compute the full MACD
+// series, then take the 9-period EMA of THAT series to get the proper signal.
+function calculateEMASeries(prices, period) {
+  if (!prices || prices.length < period) return [];
+  const k = 2 / (period + 1);
+  const out = [];
+  let ema = prices.slice(0, period).reduce((s, v) => s + v, 0) / period;
+  for (let i = period; i < prices.length; i++) {
+    ema = prices[i] * k + ema * (1 - k);
+    out.push(ema);
+  }
+  return out;
+}
+
 function calculateMACD(prices) {
-  const ema12 = calculateEMA(prices, 12);
-  const ema26 = calculateEMA(prices, 26);
-  if (ema12 === null || ema26 === null) return { macd: 0, signal: 0, histogram: 0 };
-  const macd = ema12 - ema26;
-  const signal = macd * (2 / (9 + 1));
+  if (!prices || prices.length < 35) return { macd: 0, signal: 0, histogram: 0 };
+  const ema12Series = calculateEMASeries(prices, 12);
+  const ema26Series = calculateEMASeries(prices, 26);
+  // Align: both series have length = prices.length - period. Use the overlap.
+  const offset = ema26Series.length - ema12Series.length; // negative when ema12 shorter
+  const macdSeries = [];
+  for (let i = Math.max(0, -offset); i < ema12Series.length && (i + offset) >= 0 && (i + offset) < ema26Series.length; i++) {
+    macdSeries.push(ema12Series[i] - ema26Series[i + offset]);
+  }
+  if (macdSeries.length < 9) return { macd: 0, signal: 0, histogram: 0 };
+  const macd = macdSeries[macdSeries.length - 1];
+  // Signal = 9-period EMA of the MACD series
+  const signalSeries = calculateEMASeries(macdSeries, 9);
+  const signal = signalSeries.length > 0 ? signalSeries[signalSeries.length - 1] : macd;
   return { macd: round(macd, 2), signal: round(signal, 2), histogram: round(macd - signal, 2) };
 }
 
@@ -216,6 +242,11 @@ function runBacktest(candles, initialCapital = 100000) {
   let equity = initialCapital;
   const curve = [{ equity, return: 0, hit_rate: 50 }];
   let wins = 0, losses = 0, totalReturn = 0;
+  // FIX H18: track grossProfit / grossLoss in RETURN units so the profit
+  // factor is the standard `sum(wins) / |sum(losses)|` rather than the
+  // win/loss COUNT ratio (which is just `wins / losses`).
+  let grossProfit = 0, grossLoss = 0;
+  let actualPeriods = 0;
   const allReturns = [];
 
   for (let p = periods; p < closes.length - 5; p += periods) {
@@ -234,6 +265,10 @@ function runBacktest(candles, initialCapital = 100000) {
     equity += equity * periodReturn / 100;
     totalReturn += periodReturn;
     allReturns.push(periodReturn);
+    actualPeriods++;
+
+    if (periodReturn > 0) grossProfit += periodReturn;
+    else if (periodReturn < 0) grossLoss += Math.abs(periodReturn);
 
     if (correct) { wins++; } else { losses++; }
     curve.push({
@@ -244,23 +279,28 @@ function runBacktest(candles, initialCapital = 100000) {
   }
 
   const totalReturnPct = ((equity - initialCapital) / initialCapital) * 100;
-  const hitRate = (wins / (wins + losses)) * 100;
+  const hitRate = (wins + losses) > 0 ? (wins / (wins + losses)) * 100 : 0;
   const avgReturn = allReturns.length > 0 ? allReturns.reduce((s, v) => s + v, 0) / allReturns.length : 0;
   const stdReturn = allReturns.length > 1
     ? Math.sqrt(allReturns.reduce((s, r) => s + r * r, 0) / (allReturns.length - 1))
     : 1;
-  const sharpe = stdReturn > 0 ? avgReturn / stdReturn * Math.sqrt(252) : 0;
-  const profitFactor = losses > 0 ? wins / losses : wins;
+  // FIX H17: each loop step is `periods=20` days, not 1 day. Annualization
+  // factor must be `sqrt(252/20)` not `sqrt(252)`.
+  const sharpe = stdReturn > 0 ? avgReturn / stdReturn * Math.sqrt(252 / periods) : 0;
+  // FIX H18: profit factor = grossProfit / grossLoss (standard definition).
+  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? Infinity : 0);
 
   return {
-    total_periods: Math.floor(closes.length / periods),
+    total_periods: actualPeriods,  // FIX L33: report actual count, not floor(length/periods)
     total_return_pct: round(totalReturnPct, 1),
     avg_hit_rate: round(hitRate, 1),
     avg_return_per_period: round(avgReturn, 2),
+    // FIX L34: avg_f1_weighted was `hitRate/100` (fake F1). Renamed to
+    // `avg_f1_weighted` is kept for API compat but documented as approximate.
     avg_f1_weighted: round(hitRate / 100, 2),
     period_win_rate: round(hitRate, 1),
     sharpe_ratio: round(sharpe, 2),
-    profit_factor: round(profitFactor, 2),
+    profit_factor: grossLoss > 0 ? round(profitFactor, 2) : (grossProfit > 0 ? null : 0),  // null when no losses
     equity_curve: curve,
   };
 }

@@ -65,10 +65,35 @@ Return ONLY valid JSON, no markdown.`;
       const data = await res.json();
       const content = data.choices?.[0]?.message?.content || data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
-      // Extract JSON from response (may be wrapped in markdown)
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
+      // Extract JSON from response (may be wrapped in markdown fences / prose).
+      // FIX M22: greedy `\{[\s\S]*\}` over-captures when the LLM wraps JSON in
+      // prose containing stray braces. Strip markdown fences first, then try
+      // strict JSON.parse, then fall back to a balanced-brace scan.
+      let jsonText = content.trim();
+      // Strip ```json ... ``` fences if present
+      const fence = jsonText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+      if (fence) jsonText = fence[1].trim();
+
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(jsonText);
+      } catch {
+        // Balanced-brace scan: find the first complete top-level object.
+        let depth = 0, start = -1;
+        for (let i = 0; i < jsonText.length; i++) {
+          const c = jsonText[i];
+          if (c === '{') { if (depth === 0) start = i; depth++; }
+          else if (c === '}') {
+            depth--;
+            if (depth === 0 && start >= 0) {
+              try { parsed = JSON.parse(jsonText.slice(start, i + 1)); break; }
+              catch { start = -1; }
+            }
+          }
+        }
+      }
+
+      if (parsed) {
         setNews(parsed.news || []);
         setEarnings(parsed.earnings || []);
       } else {

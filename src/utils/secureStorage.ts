@@ -91,7 +91,10 @@ function legacyDecrypt(encrypted: string): string | null {
   }
 }
 
-let migrationDone = false;
+// FIX C7: `migrationDone` was a single global flag shared across all keys, so
+// after the first key was migrated every subsequent key skipped the legacy
+// decrypt branch and silently returned null. Track per-key instead.
+const _migratedKeys = new Set<string>();
 
 function isSensitive(key: string): boolean {
   return SENSITIVE_KEYS.includes(key);
@@ -106,19 +109,23 @@ export const secureStorage = {
 
       if (item.startsWith('enc:')) {
         const payload = item.slice(4);
-        // Already migrated to WebCrypto format? (base64 without legacy prefix)
-        if (!migrationDone && legacyDecrypt(payload) !== null) {
+        // FIX C7: per-key migration flag + synchronous legacy decrypt only.
+        // WebCrypto cannot run synchronously, so encrypted values are returned
+        // as null here and callers must use getItemAsync() to read them.
+        if (!_migratedKeys.has(key)) {
           const plain = legacyDecrypt(payload);
           if (plain !== null) {
+            // Fire-and-forget re-encryption to WebCrypto format; mark migrated
+            // immediately so concurrent reads don't trigger a second re-encrypt.
+            _migratedKeys.add(key);
             encryptData(plain).then(reEnc => {
-              try { localStorage.setItem(key, `enc:${reEnc}`); migrationDone = true; } catch { }
-            }).catch(() => {});
+              try { localStorage.setItem(key, `enc:${reEnc}`); } catch { }
+            }).catch(() => { _migratedKeys.delete(key); });
             return plain;
           }
+          _migratedKeys.add(key); // not legacy either — skip on next call
         }
-        // Try WebCrypto sync-read (this won't work in Safari workers but fine in main thread)
-        if (!isCryptoAvailable()) return null;
-        // Fall-through — async caller should use getItemAsync
+        // WebCrypto AES-GCM is async-only; callers must use getItemAsync().
         return null;
       }
 
@@ -137,16 +144,19 @@ export const secureStorage = {
       if (item.startsWith('enc:')) {
         const payload = item.slice(4);
 
-        if (!migrationDone) {
+        // FIX C7: per-key migration flag — each key gets its own legacy-check
+        // pass so one migrated key doesn't block decryption of the others.
+        if (!_migratedKeys.has(key)) {
           const legacy = legacyDecrypt(payload);
           if (legacy !== null) {
+            _migratedKeys.add(key);
             try {
               const reEnc = await encryptData(legacy);
               localStorage.setItem(key, `enc:${reEnc}`);
-              migrationDone = true;
-            } catch { }
+            } catch { _migratedKeys.delete(key); }
             return legacy;
           }
+          _migratedKeys.add(key);
         }
 
         const decrypted = await decryptData(payload);

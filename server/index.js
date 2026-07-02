@@ -604,18 +604,34 @@ app.post('/api/claude', async (req, res) => {
 // POST /api/telegram → send a Telegram message using the SERVER's
 // bot token + chat id (env). Lets the website push notifications
 // even when the browser has no local Telegram config saved.
-// Body: { message: string, chatId?: string }
+// Body: { message: string }
+// FIX C11: Ignore any client-supplied chatId — otherwise any visitor could
+// make the bot spam arbitrary chats. Always send to the server-configured
+// TG_CHAT_ID. Simple per-IP rate limit (30 msgs / 10 min) prevents abuse.
 // ------------------------------------------------------------
+const _tgRateBucket = new Map(); // ip → [{ ts }]
+const TG_RATE_LIMIT = { windowMs: 10 * 60 * 1000, max: 30 };
+
+function tgRateCheck(ip) {
+  const now = Date.now();
+  const arr = (_tgRateBucket.get(ip) || []).filter(t => now - t < TG_RATE_LIMIT.windowMs);
+  if (arr.length >= TG_RATE_LIMIT.max) return false;
+  arr.push(now);
+  _tgRateBucket.set(ip, arr);
+  return true;
+}
+
 app.post('/api/telegram', async (req, res) => {
-  if (!TG.token) return jsonError(res, 503, 'telegram not configured on server');
-  const { message, chatId } = req.body || {};
-  const target = chatId || TG.chatId;
-  if (!message || !target) return jsonError(res, 400, 'message and chatId required');
+  if (!TG.token || !TG.chatId) return jsonError(res, 503, 'telegram not configured on server');
+  const { message } = req.body || {};
+  if (!message || typeof message !== 'string') return jsonError(res, 400, 'message required');
+  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim();
+  if (!tgRateCheck(ip)) return jsonError(res, 429, 'rate limit exceeded — try again later');
   try {
     const upstream = await fetch(`https://api.telegram.org/bot${TG.token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: target, text: message, parse_mode: 'HTML', disable_web_page_preview: true }),
+      body: JSON.stringify({ chat_id: TG.chatId, text: message.slice(0, 4096), parse_mode: 'HTML', disable_web_page_preview: true }),
       signal: AbortSignal.timeout(10000),
     });
     const text = await upstream.text();
@@ -760,8 +776,17 @@ function getMarketCondition(regime) {
 const distDir = path.resolve(__dirname, '..', 'dist');
 app.use(express.static(distDir));
 
-// SPA fallback for any non-/api route
-app.get(/^(?!\/api\/).*/, (_req, res) => {
+// SPA fallback for any non-/api route.
+// FIX C8: When a code-split chunk (e.g. /assets/vendor-charts-abc.js) is
+// missing after a redeploy, the previous catch-all served index.html for the
+// JS file, the browser tried to parse HTML as JS, and the entire app died
+// with "Failed to fetch dynamically imported module". Return a real 404 for
+// asset paths so the browser surfaces the error and the lazy-retry logic in
+// App.tsx (lazyWithRetry) can force a clean reload.
+app.get(/^(?!\/api\/).*/, (req, res) => {
+  const isAsset = req.path.startsWith('/assets/')
+    || /\.(js|mjs|css|map|ico|svg|png|jpe?g|webp|woff2?|ttf|otf|json|wasm)$/i.test(req.path);
+  if (isAsset) return res.status(404).send('Not found');
   res.sendFile(path.join(distDir, 'index.html'));
 });
 

@@ -82,7 +82,13 @@ export function calculatePortfolioXIRR(
     const invested = p.avgPrice * p.qty;
     const currentValue = curPrice * p.qty;
     const buyDate = new Date(p.dateAdded || '2024-01-01');
-    const holdingDays = Math.max(1, Math.round((today.getTime() - buyDate.getTime()) / (24 * 60 * 60 * 1000)));
+    // FIX H6: `new Date(badString)` returns Invalid Date → getTime() is NaN →
+    // Math.max(1, NaN) is NaN, which then poisoned the XIRR bisection and
+    // surfaced as "NaN days held" in the UI. Fall back to 1 day when invalid.
+    const buyMs = buyDate.getTime();
+    const holdingDays = Number.isFinite(buyMs)
+      ? Math.max(1, Math.round((today.getTime() - buyMs) / (24 * 60 * 60 * 1000)))
+      : 1;
 
     // Convert US assets to INR for overall XIRR
     const investedInr = p.market === 'US' ? invested * usdInrRate : invested;

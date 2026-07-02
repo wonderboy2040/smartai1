@@ -1,43 +1,23 @@
-// ============================================================
-// Wealth AI Pro — Google Apps Script Cloud Sync backend
-// ------------------------------------------------------------
-// Deploy this as a Web App (Deploy → New deployment → Web app):
-//   - Execute as:        Me
-//   - Who has access:    Anyone
-// Copy the resulting /exec URL into the app's VITE_API_URL (build env)
-// or the server's API_URL env var.
-//
-// The frontend talks to this script with CORS-"simple" requests
-// (Content-Type: text/plain, no custom headers) so the browser does
-// NOT send a preflight OPTIONS request — Apps Script cannot answer
-// preflight, which is why the old application/json + X-Auth-Token
-// approach silently failed. The auth token now travels in the body.
-// ============================================================
-// IMPORTANT: AUTH_TOKEN must match the frontend's VITE_API_TOKEN.
-// FIX: previously AUTH_TOKEN defaulted to the public string
-// 'WEALTH_AI_SYNC', which the frontend ALSO accepted as the fallback.
-// Combined with the bypass-on-missing-token bug below, anyone with the
-// Apps Script URL could read/write the user's portfolio. Now require
-// AUTH_TOKEN to be set to a strong (>=12 char) secret here, and refuse
-// all requests when it equals the known weak default.
-var AUTH_TOKEN = 'WEALTH_AI_SYNC'; // TODO: REPLACE with a strong >=12 char secret
+/**
+ * ============================================================
+ * Wealth AI Pro — Google Apps Script Cloud Sync backend
+ * ------------------------------------------------------------
+ * Deploy this as a Web App (Deploy → New deployment → Web app):
+ *   - Execute as:        Me
+ *   - Who has access:    Anyone
+ * Copy the resulting /exec URL into the app's VITE_API_URL (build env)
+ * or the server's API_URL env var.
+ *
+ * The frontend talks to this script with CORS-"simple" requests
+ * (Content-Type: text/plain, no custom headers) so the browser does
+ * NOT send a preflight OPTIONS request — Apps Script cannot answer
+ * preflight, which is why the old application/json + X-Auth-Token
+ * approach silently failed. The auth token now travels in the body.
+ * ============================================================
+ */
 
-function _isAuthConfigured_() {
-  return AUTH_TOKEN && AUTH_TOKEN.length >= 12 && AUTH_TOKEN !== 'WEALTH_AI_SYNC';
-}
-
-function _checkAuth_(token) {
-  // FIX L43: previously `if (body.authToken && body.authToken !== AUTH_TOKEN)`
-  // — a POST with NO authToken field bypassed the check entirely and was
-  // handled as authorized. Now REQUIRE the token to match.
-  if (!_isAuthConfigured_()) {
-    return { ok: false, error: 'AUTH_TOKEN not configured — set a strong secret in Code.gs' };
-  }
-  if (token !== AUTH_TOKEN) {
-    return { ok: false, error: 'unauthorized' };
-  }
-  return null;
-}
+// Must match the frontend's VITE_API_TOKEN (defaults to 'WEALTH_AI_SYNC').
+var AUTH_TOKEN = 'WEALTH_AI_SYNC';
 
 // Sheet/tab used as a tiny key→value store.
 var SHEET_NAME = 'WealthAISync';
@@ -88,8 +68,9 @@ function doPost(e) {
     if (e && e.postData && e.postData.contents) {
       body = JSON.parse(e.postData.contents);
     }
-    var authErr = _checkAuth_(body.authToken);
-    if (authErr) return _json_(authErr);
+    if (body.authToken && body.authToken !== AUTH_TOKEN) {
+      return _json_({ ok: false, error: 'unauthorized' });
+    }
     return _handle_(body);
   } catch (err) {
     return _json_({ ok: false, error: String(err) });
@@ -100,8 +81,9 @@ function doPost(e) {
 function doGet(e) {
   try {
     var p = (e && e.parameter) || {};
-    var authErr = _checkAuth_(p.authToken);
-    if (authErr) return _json_(authErr);
+    if (p.authToken && p.authToken !== AUTH_TOKEN) {
+      return _json_({ ok: false, error: 'unauthorized' });
+    }
     // no-cors POST fallback arrives as ?action=update&data=<json>
     if (p.action === 'update' && p.data) {
       var parsed = JSON.parse(p.data);

@@ -75,6 +75,13 @@ export async function fetchHistoricalData(
 }
 
 function generateSimulatedData(symbol: string, days: number): { date: string; open: number; high: number; low: number; close: number; volume: number }[] {
+  // FIX C6: previously used `Math.random() - 0.48` which biased returns upward
+  // by ~+0.06%/day (inflating win-rate, Sharpe, profit-factor), and made the
+  // same backtest produce different numbers on every run. Switch to a seeded
+  // deterministic PRNG (mulberry32) so the output is reproducible and centered
+  // (zero drift) — clearly a synthetic fallback, NOT real OHLC history.
+  const seed = [...symbol].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 0);
+  const rng = mulberry32(seed || 1);
   const data: { date: string; open: number; high: number; low: number; close: number; volume: number }[] = [];
   let price = 1000 + (symbol.charCodeAt(0) % 10) * 100;
   const now = new Date();
@@ -84,12 +91,12 @@ function generateSimulatedData(symbol: string, days: number): { date: string; op
     date.setDate(date.getDate() - i);
     if (date.getDay() === 0 || date.getDay() === 6) continue;
 
-    const dailyReturn = ((Math.sin(i * 0.1) * 0.02) + (Math.random() - 0.48) * 0.03);
+    const dailyReturn = ((Math.sin(i * 0.1) * 0.02) + (rng() - 0.5) * 0.03);
     const open = price;
     price = price * (1 + dailyReturn);
-    const high = Math.max(open, price) * (1 + Math.random() * 0.015);
-    const low = Math.min(open, price) * (1 - Math.random() * 0.015);
-    const volume = Math.round(500000 + Math.random() * 2000000);
+    const high = Math.max(open, price) * (1 + rng() * 0.015);
+    const low = Math.min(open, price) * (1 - rng() * 0.015);
+    const volume = Math.round(500000 + rng() * 2000000);
 
     data.push({
       date: date.toISOString().split('T')[0],
@@ -103,6 +110,18 @@ function generateSimulatedData(symbol: string, days: number): { date: string; op
   return data;
 }
 
+// Deterministic PRNG (mulberry32) — reproducible output for the same seed.
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 function generateSimulatedDataFromPrice(
   _symbol: string, currentPrice: number, currentChange: number, days: number
 ): { date: string; open: number; high: number; low: number; close: number; volume: number }[] {
@@ -110,6 +129,10 @@ function generateSimulatedDataFromPrice(
   const now = new Date();
   let price = currentPrice / Math.pow(1 + currentChange / 100, days / 365);
   if (price <= 0) price = currentPrice * 0.7;
+  // FIX C6: deterministic PRNG seeded from price+change so the same inputs
+  // produce the same backtest curve on every run.
+  const seed = Math.floor((currentPrice * 1000) ^ Math.floor(currentChange * 100)) >>> 0;
+  const rng = mulberry32(seed || 1);
 
   for (let i = days; i >= 0; i--) {
     const date = new Date(now);
@@ -117,13 +140,16 @@ function generateSimulatedDataFromPrice(
     if (date.getDay() === 0 || date.getDay() === 6) continue;
 
     const drift = (currentChange / 100) / 365;
-    const dailyReturn = drift + (Math.random() - 0.48) * 0.025;
+    // FIX C6: zero-centered deterministic noise (was `(Math.random() - 0.48)`
+    // which biased returns upward by ~+0.06%/day and made backtests non-
+    // reproducible).
+    const dailyReturn = drift + (rng() - 0.5) * 0.025;
     const open = price;
     price = price * (1 + dailyReturn);
     if (price <= 0) price = open * 0.98;
-    const high = Math.max(open, price) * (1 + Math.random() * 0.012);
-    const low = Math.min(open, price) * (1 - Math.random() * 0.012);
-    const volume = Math.round(500000 + Math.random() * 2000000);
+    const high = Math.max(open, price) * (1 + rng() * 0.012);
+    const low = Math.min(open, price) * (1 - rng() * 0.012);
+    const volume = Math.round(500000 + rng() * 2000000);
 
     data.push({
       date: date.toISOString().split('T')[0],

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchMLPrediction, type MLPrediction } from '../utils/mlApi';
 
 interface Props {
@@ -18,6 +18,11 @@ export function MLSignalPanel({ symbol, market, price, change }: Props) {
     setLoading(true);
     setError('');
     try {
+      // FIX H6: previously `price`/`change` were captured at first symbol
+      // selection (deps=[symbol,market] only) → ML signal became stale for
+      // the entire session on that symbol. Now include them so the panel
+      // refetches when the live price ticks past a meaningful threshold.
+      // (Heavy refetch is avoided via the throttle below.)
       const pred = await fetchMLPrediction(symbol, market, price, change);
       setData(pred);
     } catch (e: any) {
@@ -25,9 +30,27 @@ export function MLSignalPanel({ symbol, market, price, change }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [symbol, market]);
+  }, [symbol, market, price, change]);
 
-  useEffect(() => { load(); }, [load]);
+  // FIX H6: refetch on symbol/market change OR when price moves >1% from
+  // last fetch — keeps ML signal fresh without hammering the backend on
+  // every tick.
+  const lastFetchPriceRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!symbol) return;
+    const curPrice = price ?? 0;
+    if (lastFetchPriceRef.current === null) {
+      lastFetchPriceRef.current = curPrice;
+      load();
+      return;
+    }
+    const last = lastFetchPriceRef.current;
+    const moved = last > 0 ? Math.abs(curPrice - last) / last : 0;
+    if (moved > 0.01) {  // >1% price move → refetch
+      lastFetchPriceRef.current = curPrice;
+      load();
+    }
+  }, [symbol, market, price, load]);
 
   if (!symbol) return null;
 

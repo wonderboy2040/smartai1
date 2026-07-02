@@ -247,7 +247,12 @@ function generateAlerts(
   _usdInrRate: number
 ): RiskAlert[] {
   const alerts: RiskAlert[] = [];
-  const avgVix = (livePrices['US_VIX']?.price || 15 + livePrices['IN_INDIAVIX']?.price || 15) / 2;
+  // FIX C1: Operator precedence bug — `+` binds tighter than `||`, so the
+  // original `a || 15 + b || 15` evaluated as `a || (15 + b) || 15`. Use ?? so
+  // each VIX falls back to 15 independently, then average.
+  const usVix = livePrices['US_VIX']?.price ?? 15;
+  const inVix = livePrices['IN_INDIAVIX']?.price ?? 15;
+  const avgVix = (usVix + inVix) / 2;
 
   // VaR alert
   if (metrics.portfolioVaR.percent > 3) {

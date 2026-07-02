@@ -78,7 +78,11 @@ def walk_forward_backtest(
         if buy_mask.any():
             period_return = fwd_returns[buy_mask].mean()
         elif sell_mask.any():
-            period_return = -abs(fwd_returns[sell_mask].mean())
+            # FIX H5: previously `-abs(fwd_returns[sell_mask].mean())` always
+            # made sells lose money even when the asset actually fell (a
+            # correct short profits when fwd_return < 0). Use the negation of
+            # the forward return so a correct short call earns +|return|.
+            period_return = -fwd_returns[sell_mask].mean()
 
         equity *= (1 + period_return)
 

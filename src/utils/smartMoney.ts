@@ -41,23 +41,28 @@ export function estimateFIIDIIFromMarket(
   // Estimate FII behavior from market indicators
   // Low VIX + positive market = FII buying
   // High VIX + negative market = FII selling
+  // FIX C5: Previously this used Math.random() to inject ±500–1000 Cr figures
+  // into the FII/DII net numbers, which were then presented to users as real
+  // institutional flows. Replace the random component with a deterministic
+  // heuristic (clearly labelled as "estimated" in the description) so the
+  // same market state always produces the same flow estimate.
   const marketSentiment = niftyChange - (vixPrice - 18) * 0.3;
 
   let fiiNet: number;
   let diiNet: number;
 
   if (marketSentiment > 1) {
-    // Strong market = FII buying, DII may sell into strength
+    // Strong market = FII buying, DII may sell into strength (counter-cyclical).
     fiiNet = Math.round(2000 + marketSentiment * 800);
-    diiNet = Math.round(-500 + Math.random() * 1000);
+    diiNet = Math.round(-500 + marketSentiment * 50); // deterministic scaled-down mirror
   } else if (marketSentiment < -1) {
     // Weak market = FII selling, DII buying (counter-cyclical)
     fiiNet = Math.round(-3000 + marketSentiment * 600);
     diiNet = Math.round(2000 + Math.abs(marketSentiment) * 500);
   } else {
-    // Neutral
-    fiiNet = Math.round(-500 + Math.random() * 1000);
-    diiNet = Math.round(-300 + Math.random() * 600);
+    // Neutral — small directional bias from sentiment, no random component.
+    fiiNet = Math.round(marketSentiment * 400);
+    diiNet = Math.round(-marketSentiment * 200);
   }
 
   const fiiBuy = Math.max(0, 8000 + fiiNet / 2);
@@ -127,12 +132,14 @@ export function generateSmartMoneySignal(
   const daysInTrend = vix > 22 ? 5 : vix > 18 ? 3 : 1;
 
   // Description
-  const parts: string[] = [];
-  if (fiiTrend === 'BUYING') parts.push(`FII buying ₹${Math.abs(data.fiiNet).toLocaleString('en-IN')} Cr`);
-  else if (fiiTrend === 'SELLING') parts.push(`FII selling ₹${Math.abs(data.fiiNet).toLocaleString('en-IN')} Cr`);
+  // FIX C5: clearly label these figures as heuristic estimates derived from
+  // VIX + index momentum, not actual NSDL/CDSL FII/DII flow data.
+  const parts: string[] = ['(Estimated from VIX & index momentum — not actual flows)'];
+  if (fiiTrend === 'BUYING') parts.push(`FII buying ~₹${Math.abs(data.fiiNet).toLocaleString('en-IN')} Cr`);
+  else if (fiiTrend === 'SELLING') parts.push(`FII selling ~₹${Math.abs(data.fiiNet).toLocaleString('en-IN')} Cr`);
 
-  if (diiTrend === 'BUYING') parts.push(`DII buying ₹${Math.abs(data.diiNet).toLocaleString('en-IN')} Cr`);
-  else if (diiTrend === 'SELLING') parts.push(`DII selling ₹${Math.abs(data.diiNet).toLocaleString('en-IN')} Cr`);
+  if (diiTrend === 'BUYING') parts.push(`DII buying ~₹${Math.abs(data.diiNet).toLocaleString('en-IN')} Cr`);
+  else if (diiTrend === 'SELLING') parts.push(`DII selling ~₹${Math.abs(data.diiNet).toLocaleString('en-IN')} Cr`);
 
   if (fiiTrend === 'BUYING' && diiTrend === 'BUYING') parts.push('Both accumulating — STRONG BUY signal');
   else if (fiiTrend === 'SELLING' && diiTrend === 'SELLING') parts.push('Both distributing — CAUTION');

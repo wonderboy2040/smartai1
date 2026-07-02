@@ -209,8 +209,12 @@ export function guessMarket(sym) {
   sym = (sym || '').toUpperCase();
   if (sym.includes('.NS') || sym.includes('.BO')) return 'IN';
   if (sym === 'RELIANCE' || sym === 'NIFTY' || sym === 'SENSEX') return 'IN';
-  if (sym.includes('BEES')) return 'IN';
+  if (sym.endsWith('BEES')) return 'IN';  // FIX H11/M10: endswith, not includes — avoids classifying "BEESLY" etc.
   if (ALPHA_ETFS_IN.some(e => e.sym === sym.replace('.NS', ''))) return 'IN';
+  // FIX H11: crypto returns 'IN' here because CoinDCX returns INR pairs and
+  // the rest of the system keys crypto as IN_<SYMBOL>. This is intentional
+  // (downstream code uses IN_ prefix for crypto in the price map), but
+  // document it clearly so future maintainers don't "fix" it to 'CRYPTO'.
   if (isCryptoSymbol(sym)) return 'IN';
   return 'US';
 }

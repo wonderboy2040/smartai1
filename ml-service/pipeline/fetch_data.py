@@ -129,5 +129,10 @@ def load_ohlcv() -> Optional[pd.DataFrame]:
 if __name__ == "__main__":
     print("=== Fetching OHLCV Data ===")
     df = fetch_all_symbols()
+    # FIX: fetch_all_symbols can return None or empty DataFrame when
+    # yfinance/Binance are down — guard before accessing columns.
+    if df is None or df.empty or "symbol" not in df.columns:
+        print("No data fetched — upstream APIs may be down.")
+        raise SystemExit(1)
     print(f"\nDone: {df['symbol'].nunique()} symbols, {len(df)} rows total")
     print(f"Date range: {df['date'].min()} to {df['date'].max()}")

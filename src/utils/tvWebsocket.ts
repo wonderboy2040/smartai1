@@ -1,6 +1,8 @@
 import { PriceData } from '../types';
 import { EXACT_TICKER_MAP, guessMarket } from './constants';
-import { isAnyMarketOpen } from './telegram';
+// FIX M5: `isAnyMarketOpen` is no longer used here (replaced by per-symbol
+// `isUSMarketOpen` / `isIndiaMarketOpen` gating). Removed from import.
+import { isUSMarketOpen, isIndiaMarketOpen } from './telegram';
 
 // ========================================
 // STATE
@@ -79,12 +81,20 @@ function validatePrice(
   }
 
   // Check for stuck prices (no change for >60s) — only during market hours
-  // During closures, legitimate prices naturally don't change
+  // During closures, legitimate prices naturally don't change.
+  // FIX M5: previously gated on `isAnyMarketOpen()` which returns true if IN OR
+  // US is open. US symbols don't tick during India hours and got falsely flagged
+  // as "stuck" → ticks silently dropped. Gate per-symbol by that symbol's own
+  // market hours instead.
   const last = lastKnownPrices.get(key);
-  if (last && last.price === price && isAnyMarketOpen()) {
-    const age = Date.now() - last.time;
-    if (age > 60000) {
-      return { valid: false, reason: `Stuck price for ${Math.round(age / 1000)}s` };
+  if (last && last.price === price) {
+    const symbolMarket = key.startsWith('US_') ? 'US' : 'IN';
+    const marketOpen = symbolMarket === 'US' ? isUSMarketOpen() : isIndiaMarketOpen();
+    if (marketOpen) {
+      const age = Date.now() - last.time;
+      if (age > 60000) {
+        return { valid: false, reason: `Stuck price for ${Math.round(age / 1000)}s` };
+      }
     }
   }
 
@@ -431,7 +441,14 @@ function handleParsedMessage(parsed: Record<string, unknown>): void {
   // Derive market from the key
   update.market = key.startsWith('IN_') ? 'IN' : 'US';
 
-  if (Object.keys(update).length > 1) { // more than just 'time'
+  // FIX H5: previously the guard was `Object.keys(update).length > 1` which
+  // was always true because `update.time` and `update.market` were already
+  // set above. Empty-status ping packets therefore fired callbacks with no
+  // price data. Only fire when at least one actual market data field exists.
+  if (update.price !== undefined || update.change !== undefined || update.volume !== undefined
+      || update.high !== undefined || update.low !== undefined
+      || update.rsi !== undefined || update.sma20 !== undefined || update.sma50 !== undefined
+      || update.macd !== undefined) {
     callbacks.forEach(cb => cb(key, update));
   }
 }

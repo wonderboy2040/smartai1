@@ -255,7 +255,10 @@ async function callCerebras(messages, systemPrompt, modelName = 'llama-3.3-70b')
 async function callHuggingFace(messages, systemPrompt, modelName = 'Qwen/Qwen2.5-72B-Instruct') {
   if (!isHFAvailable()) throw new Error('HF key missing');
   if (engineHealth.huggingface.failures >= 3 && Date.now() - engineHealth.huggingface.lastFailure < engineHealth.huggingface.cooldownMs) throw new Error('HuggingFace cooling down');
-  const fullPrompt = `System: ${systemPrompt}\n\nUser: ${messages.map(m => m.content).join('\n')}`;
+  // FIX M25: previously all turns (user+assistant) joined as a single blob
+  // labeled "User:". Preserve turn structure so multi-turn context survives.
+  const convo = messages.map(m => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`).join('\n');
+  const fullPrompt = `System: ${systemPrompt}\n\n${convo}\nAssistant:`;
   const res = await fetch(`https://api-inference.huggingface.co/models/${modelName}`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${HF_KEY}`, 'Content-Type': 'application/json' },
@@ -296,7 +299,12 @@ function quantBrainFallback(symbol, contextData) {
   else if (rsi > 75) { verdict = 'WAIT'; confidence = 60; }
   else if (rsi > 65) { verdict = 'HOLD'; confidence = 55; }
 
-  const rr = ((tp1 - entry) / (entry - sl)).toFixed(2);
+  // FIX CRIT: when price=0 (no data matched in context), `entry - sl = 0` →
+  // R:R = NaN rendered as "R:R: NaN". Also `₹0.00` everywhere. Guard with a
+  // safe denominator and a "no data" notice.
+  const riskDenom = entry - sl;
+  const rr = riskDenom > 0 ? ((tp1 - entry) / riskDenom).toFixed(2) : 'N/A';
+  const noDataNote = price > 0 ? '' : '\n⚠️ No live price in context — values may be zero.';
 
   return `📊 QUANT BRAIN — ${symbol} (Auto-Analysis)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -307,7 +315,7 @@ RSI: ${rsi} | Price: ₹${price.toFixed(2)} (${change >= 0 ? '+' : ''}${change.t
 🛑 Stop Loss: ₹${sl.toFixed(2)}
 ✅ Target 1: ₹${tp1.toFixed(2)}
 ✅ Target 2: ₹${tp2.toFixed(2)}
-📐 R:R: ${rr}
+📐 R:R: ${rr}${noDataNote}
 
 💡 ${rsi < 30 ? 'Deeply oversold — strong buying opportunity' : rsi < 45 ? 'Approaching oversold zone — accumulate' : rsi > 75 ? 'Overbought — wait for pullback' : 'Neutral — hold current position'}
 
@@ -463,6 +471,20 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
 export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={}, usdInrRate=83.5) {
   if (!chatHistory.has(chatId)) chatHistory.set(chatId, []);
   const history = chatHistory.get(chatId);
+
+  // FIX H15: race condition — two concurrent /ai calls from the same chatId
+  // could interleave: both push `user` before either pushes `assistant`,
+  // producing [u1, u2, a1, a2] instead of [u1, a1, u2, a2]. Use a per-chat
+  // mutex (chain of promises) so chats serialize cleanly.
+  const prev = chatMutex.get(chatId) || Promise.resolve();
+  const next = prev.then(() => _chatWithAIInner(chatId, userMessage, history, portfolio, livePrices, usdInrRate));
+  chatMutex.set(chatId, next.catch(() => {}));  // never let a rejection break the chain
+  return next;
+}
+
+const chatMutex = new Map();
+
+async function _chatWithAIInner(chatId, userMessage, history, portfolio, livePrices, usdInrRate) {
   history.push({ role: 'user', content: userMessage });
 
   const q = userMessage.toLowerCase();

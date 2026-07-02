@@ -74,6 +74,9 @@ def train_target_models(all_symbols_df: pd.DataFrame = None) -> dict:
             "test_samples": len(actual),
             "mean_prediction": round(float(pred.mean()), 4),
             "mean_actual": round(float(actual.mean()), 4),
+            # FIX L31: coverage was computed but never returned. Surface it so
+            # callers can see quantile calibration quality.
+            "coverage": round(float(coverage), 3),
         }
 
     # Save feature columns

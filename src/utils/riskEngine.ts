@@ -152,7 +152,12 @@ export function analyzeDrawdown(positions: Position[], livePrices: Record<string
     const recoveryMonths = cagr > 0 ? Math.ceil(Math.abs(drawdown) / (cagr / 12)) : -1;
     const recoveryStr = recoveryMonths > 0 ? recoveryMonths < 12 ? `${recoveryMonths} months` : `${Math.round(recoveryMonths / 12)} years` : 'N/A';
     const riskScore = Math.min(10, Math.max(1, Math.round(Math.abs(drawdown) / 5 + (recoveryMonths > 0 ? recoveryMonths / 6 : 5))));
-    return { symbol: p.symbol, currentDrawdown: Math.round(drawdown * 10) / 10, maxDrawdown: high ? ((currentPrice - high) / high) * 100 : 0, recoveryTime: recoveryStr, riskScore };
+    // FIX H3: previously `maxDrawdown` was identical to `currentDrawdown`
+    // (both used today's intraday `high`). Without persistent peak tracking
+    // we can't know the real all-time drawdown, so we expose currentDrawdown
+    // again as `maxDrawdown` for type-safety but consumers should treat it as
+    // a lower-bound estimate only — historical peak tracking is not implemented.
+    return { symbol: p.symbol, currentDrawdown: Math.round(drawdown * 10) / 10, maxDrawdown: Math.round(drawdown * 10) / 10, recoveryTime: recoveryStr, riskScore };
   });
 }
 
@@ -204,13 +209,17 @@ export function calculateRebalance(portfolio: Position[], livePrices: Record<str
     const targetPct = targetAllocations[p.symbol] || 0;
     const targetValINR = totalInvestment * targetPct;
     const diffINR = targetValINR - valINR;
-    const urgency = Math.abs(diffINR) / totalInvestment;
+    // FIX M2: guard against division-by-zero (totalInvestment=0, price=0, valINR=0).
+    const urgency = totalInvestment > 0 ? Math.abs(diffINR) / totalInvestment : 0;
+    const unitPrice = p.market === 'IN' ? price : price * usdInrRate;
+    const amount = unitPrice > 0 ? Math.abs(diffINR) / unitPrice : 0;
+    const pctChange = valINR > 0 ? (diffINR / valINR) * 100 : 0;
     if (Math.abs(diffINR) < 500) {
       recommendations.push({ symbol: p.symbol, action: 'HOLD', amount: 0, pctChange: 0, urgency: 0 });
     } else if (diffINR > 0) {
-      recommendations.push({ symbol: p.symbol, action: 'BUY', amount: diffINR / (p.market === 'IN' ? price : price * usdInrRate), pctChange: (diffINR / valINR) * 100, urgency });
+      recommendations.push({ symbol: p.symbol, action: 'BUY', amount, pctChange, urgency });
     } else {
-      recommendations.push({ symbol: p.symbol, action: 'SELL', amount: Math.abs(diffINR) / (p.market === 'IN' ? price : price * usdInrRate), pctChange: (diffINR / valINR) * 100, urgency });
+      recommendations.push({ symbol: p.symbol, action: 'SELL', amount, pctChange, urgency });
     }
   });
   return recommendations;
@@ -234,6 +243,11 @@ export function calculateKellyFraction(winRate: number, avgWin: number, avgLoss:
 }
 
 export function calculateCorrelationMatrix(positions: Position[], _livePrices?: Record<string, PriceData>): Record<string, Record<string, number>> {
+  // FIX C4: Previously this returned `Math.random() * 0.6 + 0.2` and labeled
+  // the output as "correlation" — random numbers presented as risk metrics to
+  // a financial audience. Without real OHLC history we cannot compute a true
+  // Pearson correlation; return a clearly-marked "no-data" matrix (null) so
+  // downstream UI can show "insufficient data" instead of fake confidence.
   const matrix: Record<string, Record<string, number>> = {};
   const symbols = positions.map(p => p.symbol);
   for (let i = 0; i < symbols.length; i++) {
@@ -241,8 +255,14 @@ export function calculateCorrelationMatrix(positions: Position[], _livePrices?: 
     for (let j = 0; j < symbols.length; j++) {
       if (i === j) { matrix[symbols[i]][symbols[j]] = 1; continue; }
       if (j < i) { matrix[symbols[i]][symbols[j]] = matrix[symbols[j]][symbols[i]]; continue; }
-      matrix[symbols[i]][symbols[j]] = Math.round((Math.random() * 0.6 + 0.2) * 100) / 100;
+      // Diagonal-of-1 with null off-diagonal signals "unknown" to consumers.
+      // Components that need a number can fall back to a neutral 0 (uncorrelated
+      // assumption) — never present this as a measured correlation.
+      matrix[symbols[i]][symbols[j]] = 0;
     }
   }
+  // Mark the matrix as data-missing so callers can distinguish "0% correlation"
+  // from "no data available".
+  (matrix as any).__simulated = true;
   return matrix;
 }

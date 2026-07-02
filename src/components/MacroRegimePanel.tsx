@@ -29,8 +29,10 @@ const actionColors: Record<string, string> = {
 export const MacroRegimePanel = React.memo(({ livePrices }: MacroRegimePanelProps) => {
   const regime = useMemo(() => detectMacroRegime(livePrices), [livePrices]);
 
-  const color = regimeColors[regime.regime];
-  const icon = regimeIcons[regime.regime];
+  // FIX L38: if backend returns an unexpected regime string, the lookup is
+  // `undefined` → className interpolates as "undefined". Fall back to NEUTRAL.
+  const color = regimeColors[regime.regime] ?? regimeColors.NEUTRAL;
+  const icon = regimeIcons[regime.regime] ?? regimeIcons.NEUTRAL;
 
   return (
     <div className="quantum-panel p-4 mb-4">

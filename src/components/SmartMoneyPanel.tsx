@@ -34,8 +34,9 @@ export const SmartMoneyPanel = React.memo(({ livePrices }: SmartMoneyPanelProps)
     return { data: d, signal: s };
   }, [livePrices]);
 
-  const color = signalColors[signal.signal];
-  const icon = signalIcons[signal.signal];
+  // FIX L38: fall back to NEUTRAL for unexpected signal strings.
+  const color = signalColors[signal.signal] ?? signalColors.NEUTRAL;
+  const icon = signalIcons[signal.signal] ?? signalIcons.NEUTRAL;
 
   return (
     <div className="quantum-panel p-4 mb-4">

@@ -35,11 +35,15 @@ export function CorrelationHeatmap({ portfolio, livePrices }: Props) {
         } else if (markets[i] === markets[j]) {
           // Same market = moderate positive correlation
           const changeSim = 1 - Math.abs(changes[i] - changes[j]) / 10;
-          row.push(Math.round((0.5 + changeSim * 0.3) * 100) / 100);
+          // FIX L42: clamp to [0, 1] — `0.5 + changeSim*0.3` can go negative
+          // (or above 1) for very divergent day-change pairs.
+          const v = Math.max(0, Math.min(1, 0.5 + changeSim * 0.3));
+          row.push(Math.round(v * 100) / 100);
         } else {
           // Different market = lower correlation
           const changeSim = 1 - Math.abs(changes[i] - changes[j]) / 15;
-          row.push(Math.round((0.2 + changeSim * 0.2) * 100) / 100);
+          const v = Math.max(0, Math.min(1, 0.2 + changeSim * 0.2));
+          row.push(Math.round(v * 100) / 100);
         }
       }
       matrix.push(row);

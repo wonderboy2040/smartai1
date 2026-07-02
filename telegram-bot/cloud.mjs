@@ -18,17 +18,22 @@ export async function loadPortfolioFromCloud() {
     });
     if (!res.ok) return null;
 
-  const text = await res.text();
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match || match[0] === '{}') return null;
+    const text = await res.text();
+    // FIX: greedy `\{[\s\S]*\}` over-captures when Apps Script wraps JSON
+    // in HTML/prose. Try strict JSON.parse first, then non-greedy fallback.
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      const match = text.match(/\{[\s\S]*?\}/);
+      if (!match || match[0] === '{}') return null;
+      try { data = JSON.parse(match[0]); } catch { return null; }
+    }
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data); } catch { return null; }
+    }
 
-  let data;
-  try { data = JSON.parse(match[0]); } catch { return null; }
-  if (typeof data === 'string') {
-    try { data = JSON.parse(data); } catch { return null; }
-  }
-
-    if (data.portfolio && Array.isArray(data.portfolio)) {
+    if (data && data.portfolio && Array.isArray(data.portfolio)) {
       console.log(`☁️ Cloud Sync: Loaded ${data.portfolio.length} positions`);
       return data.portfolio;
     }
@@ -49,11 +54,15 @@ export async function loadGroqKeyFromCloud() {
     if (!res.ok) return null;
 
     const text = await res.text();
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-
+    // FIX: greedy regex replaced with strict JSON.parse + non-greedy fallback.
     let data;
-    try { data = JSON.parse(match[0]); } catch { return null; }
+    try {
+      data = JSON.parse(text);
+    } catch {
+      const match = text.match(/\{[\s\S]*?\}/);
+      if (!match) return null;
+      try { data = JSON.parse(match[0]); } catch { return null; }
+    }
     const key = data.groqKey;
     if (key && typeof key === 'string') {
       if (key.trim().startsWith('{')) {
@@ -68,7 +77,11 @@ export async function loadGroqKeyFromCloud() {
         }
       }
 
-      if (key.length > 10) {
+      // FIX CRIT: previously `key.length > 10` accepted any string — a user
+      // running `/setkey groq junkjunkjunk` would overwrite the working key
+      // with garbage and brick AI chat for everyone. Require the canonical
+      // `gsk_` prefix + minimum length.
+      if (key.startsWith('gsk_') && key.length > 20) {
         console.log('🔑 Groq API Key loaded from cloud (Legacy string)');
         setGroqKey(key);
         return key;
@@ -89,10 +102,12 @@ export async function saveAllKeysToCloud() {
   };
   const serialized = JSON.stringify(payload);
   try {
+    // FIX: no timeout previously → if Apps Script hangs, request hangs forever.
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ groqKey: serialized, action: 'saveKey', timestamp: Date.now() })
+      body: JSON.stringify({ groqKey: serialized, action: 'saveKey', timestamp: Date.now() }),
+      signal: AbortSignal.timeout(10000)
     });
     return res.ok;
   } catch (e) {
@@ -123,10 +138,12 @@ export async function syncPortfolioToCloud(portfolio, usdInr) {
   }
 
   try {
+    // FIX: no timeout previously.
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'update', portfolio, timestamp: Date.now(), usdInr })
+      body: JSON.stringify({ action: 'update', portfolio, timestamp: Date.now(), usdInr }),
+      signal: AbortSignal.timeout(10000)
     });
     return res.ok;
   } catch (e) {

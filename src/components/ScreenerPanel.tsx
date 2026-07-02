@@ -134,7 +134,8 @@ export const ScreenerPanel = React.memo(({ portfolio, livePrices }: ScreenerPane
 
             {/* Key Metrics */}
             <div className="w-24 text-right">
-              <div className="text-[10px] text-slate-400">₹{r.price.toFixed(2)}</div>
+              {/* FIX M19: hardcoded ₹ for US assets — use market-aware currency. */}
+              <div className="text-[10px] text-slate-400">{r.market === 'IN' ? '₹' : '$'}{r.price.toFixed(2)}</div>
               <div className="text-[9px] text-slate-500">RSI:{r.rsi.toFixed(0)} | CAGR:{r.cagr}%</div>
             </div>
           </div>

@@ -36,7 +36,11 @@ export default React.memo(function PlannerTab() {
   const [newGoalEmoji, setNewGoalEmoji] = useState('🎯');
 
   // Persist goals
-  React.useEffect(() => { localStorage.setItem('wealth_goals', JSON.stringify(goals)); }, [goals]);
+  // FIX M15: wrap in try/catch — Safari private mode / quota-exceeded throws
+  // on setItem, which would otherwise crash the effect.
+  React.useEffect(() => {
+    try { localStorage.setItem('wealth_goals', JSON.stringify(goals)); } catch { /* quota / private mode */ }
+  }, [goals]);
 
   // --- Computed: Wealth Milestones ---
   const milestones = useMemo(() =>
@@ -501,7 +505,11 @@ export default React.memo(function PlannerTab() {
                 <tbody className="text-slate-300">
                   {[5, 10, 15, 20].map(y => {
                     const inv = totalSIP * 12 * y;
-                    const calc = (rate: number) => totalSIP * 12 * ((Math.pow(1 + rate/100, y) - 1) / (rate/100));
+                    // FIX L37: division by `rate/100` → div by 0 when rate=0.
+                    // Currently only called with 15/20/25, but defensive.
+                    const calc = (rate: number) => rate === 0
+                      ? totalSIP * 12 * y
+                      : totalSIP * 12 * ((Math.pow(1 + rate/100, y) - 1) / (rate/100));
                     return (
                       <tr key={y} className="border-b border-white/5 last:border-0 hover:bg-white/5">
                         <td className="py-2 font-bold">{y} Years</td>

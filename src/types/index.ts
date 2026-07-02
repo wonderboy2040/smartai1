@@ -189,7 +189,7 @@ export interface ScreenerResult {
   volume?: number;
   valueScore: number;
   riskScore?: number;
-  pegRatio: number;
+  pegRatio: number;       // FIX H4: misleadingly named — actually RSI/CAGR ratio. Kept for type compat; consumers should treat as rsiCagrRatio, NOT a true PEG (P/E ÷ growth).
   alphaScore: number;
   signal: 'STRONG_BUY' | 'BUY' | 'HOLD' | 'AVOID';
   reason: string;

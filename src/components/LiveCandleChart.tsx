@@ -37,8 +37,14 @@ export const LiveCandleChart = React.memo(function LiveCandleChart({
   const lastCandleRef = useRef<Candle | null>(null);
 
   const [status, setStatus] = useState<'loading' | 'ok' | 'error'>('loading');
+  // FIX M23: when theme/height changes, the chart-build effect tears down and
+  // rebuilds the chart, but the data-load effect (deps [symbol,market,interval])
+  // does NOT re-run → the new series stays empty until the user changes symbol.
+  // Track a `chartVersion` that increments on every rebuild so the data-load
+  // effect re-fires too.
+  const [chartVersion, setChartVersion] = useState(0);
 
-  // --- Build chart once ---
+  // --- Build chart once + bump version on rebuild ---
   useEffect(() => {
     if (!containerRef.current) return;
     const dark = theme !== 'light';
@@ -71,6 +77,8 @@ export const LiveCandleChart = React.memo(function LiveCandleChart({
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volSeriesRef.current = volSeries;
+    // Signal to the data-load effect that a fresh chart is ready.
+    setChartVersion(v => v + 1);
 
     const ro = new ResizeObserver(entries => {
       for (const e of entries) chart.applyOptions({ width: e.contentRect.width });
@@ -86,9 +94,11 @@ export const LiveCandleChart = React.memo(function LiveCandleChart({
     };
   }, [height, theme]);
 
-  // --- Load candles on symbol/interval change ---
+  // --- Load candles on symbol/interval change OR chart rebuild ---
   useEffect(() => {
     let cancelled = false;
+    // Skip the very first invocation (chartVersion=0) — chart isn't built yet.
+    if (chartVersion === 0) return;
     setStatus('loading');
     const load = async () => {
       try {
@@ -120,7 +130,7 @@ export const LiveCandleChart = React.memo(function LiveCandleChart({
     };
     load();
     return () => { cancelled = true; };
-  }, [symbol, market, interval]);
+  }, [symbol, market, interval, chartVersion]);  // FIX M23: chartVersion added
 
   // --- Realtime: update last candle from the live price stream ---
   useEffect(() => {

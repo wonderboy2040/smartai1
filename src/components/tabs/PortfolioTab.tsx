@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { useApp } from '../../hooks/AppContext';
 import { getTodayString } from '../../utils/constants';
 import { calculatePortfolioXIRR } from '../../utils/wealthEngine';
@@ -35,8 +35,15 @@ const PortfolioTab = React.memo(function PortfolioTab() {
     } catch {
       setCloudMsg('⚠️ Sync failed');
     }
-    setTimeout(() => setCloudMsg(''), 2500);
+    // FIX L41: previously a bare setTimeout with no cleanup — if the user
+    // unmounted PortfolioTab within 2.5s, React logged an unmounted-setState
+    // warning. Store the timer and clear it on unmount.
+    if (cloudMsgTimerRef.current) clearTimeout(cloudMsgTimerRef.current);
+    cloudMsgTimerRef.current = setTimeout(() => { setCloudMsg(''); cloudMsgTimerRef.current = null; }, 2500);
   };
+  // (declared near top of component)
+  const cloudMsgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (cloudMsgTimerRef.current) clearTimeout(cloudMsgTimerRef.current); }, []);
   const [marketFilter, setMarketFilter] = useState<'all' | 'IN' | 'US'>('all');
   const [sortKey, setSortKey] = useState<SortKey>('alloc');
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');

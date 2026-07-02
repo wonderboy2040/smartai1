@@ -4,15 +4,24 @@ import { ALPHA_ETFS_IN, ALPHA_ETFS_US, getAssetCagrProxy } from './constants';
 // ========================================
 // MARKET HOURS CHECK
 // ========================================
+// FIX M16: previous implementation used `toLocaleString('en-US', ...)` and then
+// string-split the result, which is locale-implementation-dependent (weekday
+// could come second, include date, or use a different separator in some ICU
+// builds). Use `Intl.DateTimeFormat.formatToParts` and read weekday/hour/minute
+// explicitly so the parser is robust across Node/V8 versions.
 function getTimeInZone(tz: string): { h: number; m: number; day: number } {
   const now = new Date();
-  const tzStr = now.toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false, weekday: 'short' });
-  const parts = tzStr.split(', ');
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  const parts = fmt.formatToParts(now);
+  const get = (type: string) => parts.find(p => p.type === type)?.value || '';
   const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  const day = dayMap[parts[0]?.substring(0, 3)] ?? now.getDay();
-  const timeParts = (parts[1] || parts[0]).split(':');
-  const h = parseInt(timeParts[0], 10) || 0;
-  const m = parseInt(timeParts[1], 10) || 0;
+  const day = dayMap[get('weekday').substring(0, 3)] ?? now.getDay();
+  // hour can be "24" in some environments for midnight; normalize to 0.
+  let h = parseInt(get('hour'), 10);
+  if (isNaN(h) || h === 24) h = 0;
+  const m = parseInt(get('minute'), 10) || 0;
   return { h, m, day };
 }
 
@@ -1022,13 +1031,13 @@ totalCost += cost;
 msg += `\n📌 **${p.symbol}**:\n`;
 msg += `Qty: ${p.qty} | Avg: ${p.market === 'IN' ? '₹' : '$'}${p.avgPrice.toFixed(2)}\n`;
 msg += `Current: ${p.market === 'IN' ? '₹' : '$'}${price.toFixed(2)}\n`;
-msg += `P&L: ${value >= cost ? '+' : ''}${((value - cost) / cost * 100).toFixed(1)}%\n`;
+msg += `P&L: ${value >= cost ? '+' : ''}${(cost > 0 ? ((value - cost) / cost * 100) : 0).toFixed(1)}%\n`;
 });
 
 const totalPL = totalValue - totalCost;
 msg += `\n💰 **Summary:**\n`;
-msg += `Total Value: ${portfolio[0]?.market === 'IN' ? '₹' : '$'}${totalValue.toLocaleString('en-IN')}\n`;
-msg += `Total P&L: ${totalPL >= 0 ? '+' : ''}${(totalPL / totalCost * 100).toFixed(1)}%\n`;
+msg += `Total Value: ₹${totalValue.toLocaleString('en-IN')}\n`;  // FIX H8: always INR total (US already converted via usdInrRate upstream)
+msg += `Total P&L: ${totalPL >= 0 ? '+' : ''}${(totalCost > 0 ? (totalPL / totalCost * 100) : 0).toFixed(1)}%\n`;
 
 return msg;
 }
@@ -1071,10 +1080,10 @@ allocation[p.symbol] = value;
 
 let msg = `📊 **ASSET ALLOCATION**\n`;
 msg += `━━━━━━━━━━━━━━━━━━━━━━\n`;
-msg += `Total Value: ${portfolio[0]?.market === 'IN' ? '₹' : '$'}${totalValue.toLocaleString('en-IN')}\n\n`;
+msg += `Total Value: ₹${totalValue.toLocaleString('en-IN')}\n\n`;  // FIX H8: always INR
 
 Object.entries(allocation).forEach(([symbol, value]) => {
-const pct = (value / totalValue) * 100;
+const pct = totalValue > 0 ? (value / totalValue) * 100 : 0;  // FIX H7
 msg += `${symbol}: ${pct.toFixed(1)}%\n`;
 });
 

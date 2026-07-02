@@ -83,7 +83,17 @@ function classifyStrategy(p, direction) {
 }
 
 export function generateAlgoSignal(symbol, market, p) {
-  const price = p.price;
+  const price = p?.price;
+  // FIX: guard against price=0 / undefined when called directly (not via
+  // scanAlgoSignals which already filters, but this fn is exported).
+  if (!price || price <= 0) {
+    return {
+      symbol, market: market || 'IN', price: 0, direction: 'WAIT',
+      strategy: 'No Data', conviction: 0, aiScore: 0, riskReward: 0,
+      entry: 0, stopLoss: 0, target1: 0, target2: 0, factors: [],
+      reasoning: 'No price data', timestamp: Date.now(),
+    };
+  }
   const { bias, conviction, factors, vwap, range } = scoreFactors(p);
 
   let direction;
@@ -137,7 +147,14 @@ export function generateAlgoSignal(symbol, market, p) {
 export function scanAlgoSignals(keys, livePrices) {
   const out = [];
   for (const key of keys) {
-    const [market, symbol] = key.split('_');
+    // FIX CRIT: split('_') only works for symbols without underscore. For
+    // multi-word symbols like "IN_GIFT_NIFTY" or "IN_NIFTY_50", split('_')
+    // returns ['IN','GIFT','NIFTY'] → symbol='GIFT' (silent corruption).
+    // Use indexOf to split on the FIRST underscore only.
+    const idx = key.indexOf('_');
+    if (idx < 0) continue;
+    const market = key.slice(0, idx);
+    const symbol = key.slice(idx + 1);
     const data = livePrices[key];
     if (!data || !data.price || data.price <= 0) continue;
     out.push(generateAlgoSignal(symbol, market, data));

@@ -1,5 +1,8 @@
 import { PriceData, Position } from '../types';
 import { EXACT_TICKER_MAP, guessMarket, API_URL as VITE_API_URL, DEFAULT_USD_INR, isCryptoSymbol } from './constants';
+// FIX H10: imports must come before any runtime code per ES module style +
+// future bundler strictness. Was previously after `getApiUrl()`.
+import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen } from './telegram';
 
 // Proxy base for backend server API calls (same-origin on Render/Vite proxy,
 // or custom via VITE_API_PROXY for cross-origin setups).
@@ -20,9 +23,7 @@ async function getApiUrl(): Promise<string> {
   _runtimeApiUrl = null;
   return VITE_API_URL;
 }
-import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen } from './telegram';
 
-// Proxy base for backend server API calls moved above getApiUrl
 /**
  * Fetch CoinDCX tickers through the server proxy.
  * CoinDCX's public API does NOT serve Access-Control-Allow-Origin headers,
@@ -511,7 +512,7 @@ async function fetchWithStaleCheck(sym: string, retryAttempt: number): Promise<P
   }
 
   const cleanSym = sym.replace('.NS', '').replace('.BO', '');
-  const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.includes('BEES') || guessMarket(sym) === 'IN';
+  const isIndian = sym.includes('.NS') || sym.includes('.BO') || sym.endsWith('BEES') || guessMarket(sym) === 'IN'; // FIX M10: endswith
 
   // Try CoinDCX first via server proxy (direct INR price — matches user's exchange)
   // NOTE: CoinDCX's API does NOT serve CORS headers, so browser-side fetches
@@ -953,7 +954,15 @@ export async function syncToCloud(portfolio: Position[], usdInr: number): Promis
     return false;
   }
 
-  const authToken = import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
+  // FIX C9: Refuse to sync with the public default token. The previous
+  // `|| 'WEALTH_AI_SYNC'` fallback shipped a known string in the bundle, so
+  // anyone who knew the Apps Script URL could overwrite the user's portfolio.
+  // Require an explicit VITE_API_TOKEN (>=12 chars) configured at build time.
+  const authToken = import.meta.env.VITE_API_TOKEN || '';
+  if (!authToken || authToken.length < 12 || authToken === 'WEALTH_AI_SYNC') {
+    console.warn('☁️ Cloud Sync: disabled — VITE_API_TOKEN missing or too weak (set a >=12 char secret).');
+    return false;
+  }
   try {
     // IMPORTANT: Google Apps Script web apps do NOT respond to CORS preflight
     // (OPTIONS) requests. A custom header (X-Auth-Token) or an application/json
@@ -971,6 +980,8 @@ export async function syncToCloud(portfolio: Position[], usdInr: number): Promis
     return res.ok;
   } catch (e) {
     // Last-resort fire-and-forget fallback (Apps Script doGet handles action=update).
+    // FIX C9: previously the auth token leaked in the URL query string here.
+    // We now skip the GET fallback entirely if no real token is configured.
     try {
       await fetch(`${apiUrl}?action=update&authToken=${encodeURIComponent(authToken)}&data=${encodeURIComponent(JSON.stringify({ portfolio, timestamp: Date.now(), usdInr }))}`, { mode: 'no-cors' });
       return true;
@@ -984,21 +995,35 @@ export async function loadFromCloud(): Promise<Position[] | null> {
   const apiUrl = await getApiUrl();
   if (!apiUrl) return null;
 
+  // FIX C10: Previously `action=load` carried no auth token at all, so anyone
+  // with the Apps Script URL could read the user's full portfolio + Groq key.
+  // Now require the same VITE_API_TOKEN used for writes.
+  const authToken = import.meta.env.VITE_API_TOKEN || '';
+  if (!authToken || authToken.length < 12 || authToken === 'WEALTH_AI_SYNC') {
+    return null;
+  }
+
   try {
-    const res = await fetch(`${apiUrl}?action=load&t=${Date.now()}`);
+    const res = await fetch(`${apiUrl}?action=load&authToken=${encodeURIComponent(authToken)}&t=${Date.now()}`);
     if (!res.ok) return null;
 
     const text = await res.text();
-    const match = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-    if (!match || match[0] === '{}') return null;
-
+    // FIX H9: previous greedy regex `\{[\s\S]*\}` captured from first `{`
+    // to last `}` and broke on responses with trailing junk. Try a strict
+    // JSON.parse first; only fall back to regex extraction if that fails.
     let data;
-    try { data = JSON.parse(match[0]); } catch { return null; }
+    try {
+      data = JSON.parse(text);
+    } catch {
+      const match = text.match(/\{[\s\S]*?\}|\[[\s\S]*?\]/);
+      if (!match || match[0] === '{}') return null;
+      try { data = JSON.parse(match[0]); } catch { return null; }
+    }
     if (typeof data === 'string') {
       try { data = JSON.parse(data); } catch { return null; }
     }
 
-    if (data.portfolio && Array.isArray(data.portfolio)) {
+    if (data && data.portfolio && Array.isArray(data.portfolio)) {
       return data.portfolio;
     }
   } catch (e) {
@@ -1028,13 +1053,15 @@ export async function sendTelegramAlert(token: string, chatId: string, message: 
 }
 
 // Server-side Telegram proxy fallback — uses the bot's configured token/chat.
-export async function sendTelegramViaServer(message: string, chatId?: string): Promise<boolean> {
+// FIX C11: server now ignores client-supplied chatId to prevent abuse, so we
+// no longer forward it.
+export async function sendTelegramViaServer(message: string, _chatId?: string): Promise<boolean> {
   const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
   try {
     const res = await fetch(`${proxyBase}/api/telegram`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(chatId ? { message, chatId } : { message }),
+      body: JSON.stringify({ message }),
       signal: AbortSignal.timeout(10000),
     });
     return res.ok;
@@ -1049,7 +1076,9 @@ export async function sendTelegramViaServer(message: string, chatId?: string): P
 export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
   const apiUrl = await getApiUrl();
   if (!apiUrl || !key) return false;
-  const authToken = import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
+  // FIX C9: refuse the weak default token (same guard as syncToCloud).
+  const authToken = import.meta.env.VITE_API_TOKEN || '';
+  if (!authToken || authToken.length < 12 || authToken === 'WEALTH_AI_SYNC') return false;
   try {
     // Same CORS-"simple" request rule as syncToCloud (see note there) so the
     // Apps Script doPost actually receives the payload.
@@ -1068,14 +1097,22 @@ export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
 export async function loadGroqKeyFromCloud(): Promise<string | null> {
   const apiUrl = await getApiUrl();
   if (!apiUrl) return null;
+  // FIX C10: require auth token on loadKey too.
+  const authToken = import.meta.env.VITE_API_TOKEN || '';
+  if (!authToken || authToken.length < 12 || authToken === 'WEALTH_AI_SYNC') return null;
   try {
-    const res = await fetch(`${apiUrl}?action=loadKey&t=${Date.now()}`);
+    const res = await fetch(`${apiUrl}?action=loadKey&authToken=${encodeURIComponent(authToken)}&t=${Date.now()}`);
     if (!res.ok) return null;
     const text = await res.text();
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    const data = JSON.parse(match[0]);
-    const key = data.groqKey;
+    // FIX H9: prefer strict JSON.parse; only regex-extract as fallback.
+    let data;
+    try { data = JSON.parse(text); }
+    catch {
+      const match = text.match(/\{[\s\S]*?\}/);
+      if (!match) return null;
+      try { data = JSON.parse(match[0]); } catch { return null; }
+    }
+    const key = data?.groqKey;
     if (key && typeof key === 'string' && key.length > 10) {
       return key;
     }
@@ -1192,13 +1229,25 @@ export async function fetchMarketIntelligence(): Promise<MarketIntelligence> {
   // Calculate Fear/Greed from VIX
   const vix = intelligence.globalIndices.find(i => i.name === 'VIX');
   const inVix = intelligence.globalIndices.find(i => i.name === 'INDIA VIX');
-  const avgVix = ((vix?.price || 15) + (inVix?.price || 15)) / 2;
-  if (avgVix > 30) intelligence.fearGreedScore = 10;
-  else if (avgVix > 25) intelligence.fearGreedScore = 20;
-  else if (avgVix > 20) intelligence.fearGreedScore = 35;
-  else if (avgVix > 16) intelligence.fearGreedScore = 50;
-  else if (avgVix > 12) intelligence.fearGreedScore = 70;
-  else intelligence.fearGreedScore = 85;
+  // FIX M1: if both VIX feeds are missing, the old `|| 15` fallback made the
+  // dashboard claim "EXTREME GREED — VIX ultra-low at 15" while no VIX was
+  // actually available. Only compute a score when at least one VIX is real.
+  const vixVal = vix?.price;
+  const inVixVal = inVix?.price;
+  const realVixCount = (typeof vixVal === 'number' && vixVal > 0 ? 1 : 0) + (typeof inVixVal === 'number' && inVixVal > 0 ? 1 : 0);
+  if (realVixCount === 0) {
+    intelligence.fearGreedScore = 50; // neutral — no data
+    intelligence.marketNarrative = (intelligence.marketNarrative + ' VIX unavailable — Fear/Greed held neutral.').trim();
+  } else {
+    const sum = (vixVal ?? 0) + (inVixVal ?? 0);
+    const avgVix = sum / realVixCount;
+    if (avgVix > 30) intelligence.fearGreedScore = 10;
+    else if (avgVix > 25) intelligence.fearGreedScore = 20;
+    else if (avgVix > 20) intelligence.fearGreedScore = 35;
+    else if (avgVix > 16) intelligence.fearGreedScore = 50;
+    else if (avgVix > 12) intelligence.fearGreedScore = 70;
+    else intelligence.fearGreedScore = 85;
+  }
 
   // Build market narrative
   const bullSectors = intelligence.sectors.filter(s => s.change > 1).map(s => s.name);
@@ -1206,8 +1255,19 @@ export async function fetchMarketIntelligence(): Promise<MarketIntelligence> {
   const niftyMove = intelligence.globalIndices.find(i => i.name === 'NIFTY 50')?.change || 0;
   const spyMove = intelligence.globalIndices.find(i => i.name === 'S&P 500')?.change || 0;
 
+  // FIX M1 (follow-up): compute avgVix once and reuse, so the narrative
+  // logic below still has access to it after the M1 fix above split the
+  // VIX-missing branch. When both VIX feeds are missing, narrative will
+  // reflect that via the `vixUnavailable` flag instead.
+  const vixForNarrative = intelligence.globalIndices.find(i => i.name === 'VIX');
+  const inVixForNarrative = intelligence.globalIndices.find(i => i.name === 'INDIA VIX');
+  const vixCount = (typeof vixForNarrative?.price === 'number' && vixForNarrative!.price > 0 ? 1 : 0) + (typeof inVixForNarrative?.price === 'number' && inVixForNarrative!.price > 0 ? 1 : 0);
+  const avgVix = vixCount > 0 ? ((vixForNarrative?.price ?? 0) + (inVixForNarrative?.price ?? 0)) / vixCount : 0;
+  const vixUnavailable = vixCount === 0;
+
   let narrative = '';
-  if (avgVix > 25) narrative = `FEAR DOMINANT — VIX at ${avgVix.toFixed(1)}. Institutional hedging active. Cash is king.`;
+  if (vixUnavailable) narrative = `VIX unavailable —Fear/Greed held neutral. Sector + index signals still active.`;
+  else if (avgVix > 25) narrative = `FEAR DOMINANT — VIX at ${avgVix.toFixed(1)}. Institutional hedging active. Cash is king.`;
   else if (avgVix > 18) narrative = `CAUTIOUS — Elevated volatility (VIX ${avgVix.toFixed(1)}). Mixed signals, selective entries only.`;
   else if (avgVix < 13) narrative = `EXTREME GREED — VIX ultra-low at ${avgVix.toFixed(1)}. Complacency high, protect profits.`;
   else narrative = `NEUTRAL-BULLISH — VIX steady at ${avgVix.toFixed(1)}. SIP mode optimal, accumulate quality.`;

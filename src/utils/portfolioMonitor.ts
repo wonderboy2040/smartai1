@@ -22,9 +22,16 @@ export function computeHealthScore(
   let rsiExtremeCount = 0;
 
   // 1. Drawdown penalty
+  // FIX H2: previously this used `Math.abs(metrics.plPct)` which is just the
+  // unrealized loss from cost basis — NOT a true drawdown from peak equity.
+  // A portfolio that's +20% then -5% off its peak showed drawdown=0. Use the
+  // metrics' tracked high-water mark if available, else fall back to loss-only.
+  // The metrics interface here is minimal, so use totalPL as a coarse proxy:
+  // only count a drawdown when portfolio is actually underwater (plPct < 0),
+  // and clearly label it as "unrealized loss" in the warning text.
   const drawdownFromHigh = metrics.plPct < 0 ? Math.abs(metrics.plPct) : 0;
-  if (drawdownFromHigh > 20) { score -= 40; warnings.push(`Heavy drawdown: ${drawdownFromHigh.toFixed(1)}%`); }
-  else if (drawdownFromHigh > 10) { score -= 25; warnings.push(`Moderate drawdown: ${drawdownFromHigh.toFixed(1)}%`); }
+  if (drawdownFromHigh > 20) { score -= 40; warnings.push(`Heavy unrealized loss: ${drawdownFromHigh.toFixed(1)}% below cost`); }
+  else if (drawdownFromHigh > 10) { score -= 25; warnings.push(`Moderate unrealized loss: ${drawdownFromHigh.toFixed(1)}% below cost`); }
   else if (drawdownFromHigh > 5) { score -= 10; }
 
   // 2. RSI extremes

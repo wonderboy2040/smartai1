@@ -79,7 +79,9 @@ export const WhatIfSIPOptimizer = React.memo(({ currentSIP, investYears }: Props
     [scenarios]
   );
 
-  const maxFV = Math.max(...projections.map(p => p.fv));
+  // FIX L36: Math.max(...[]) returns -Infinity when projections is empty
+  // (defensive — shouldn't happen but avoids NaN-derived bar widths).
+  const maxFV = projections.length > 0 ? Math.max(...projections.map(p => p.fv)) : 0;
 
   const addCustom = () => {
     const sip = parseFloat(customSIP);
@@ -199,7 +201,7 @@ export const WhatIfSIPOptimizer = React.memo(({ currentSIP, investYears }: Props
               <div className="flex justify-between text-[9px]">
                 <span className="text-slate-500">Invested: <span className="text-white font-bold">₹{(p.invested / 100000).toFixed(1)}L</span></span>
                 <span className="text-slate-500">Gain: <span className="text-emerald-400 font-bold">₹{(p.wealthGain / 100000).toFixed(1)}L</span></span>
-                <span className="text-slate-500">x: <span className="text-cyan-400 font-bold">{(p.fv / p.invested).toFixed(1)}x</span></span>
+                <span className="text-slate-500">x: <span className="text-cyan-400 font-bold">{p.invested > 0 ? (p.fv / p.invested).toFixed(1) : '—'}x</span></span>
               </div>
             </div>
           );

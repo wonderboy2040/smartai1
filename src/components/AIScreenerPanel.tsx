@@ -76,10 +76,14 @@ export const AIScreenerPanel = React.memo(({ portfolio, livePrices }: AIScreener
 
       const msg = `<b>📊 AI STOCK SCREENER</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n<i>${getFilterSummary(filters)}</i>\n\n${lines}\n━━━━━━━━━━━━━━━━━━━━━━━\n<i>Powered by Deep Mind AI</i>`;
 
-      await sendTelegramAlert(token || '', chatId || '', msg);
-      alert('Sent to Telegram!');
+      // FIX H7: previously always showed "Sent to Telegram!" even when the
+      // server had no TG env vars or the request failed. Check the boolean
+      // return and surface the actual result.
+      const ok = await sendTelegramAlert(token || '', chatId || '', msg);
+      alert(ok ? '✅ Sent to Telegram!' : '⚠️ Send failed — Telegram not configured. Set TG_TOKEN + TG_CHAT_ID in server env.');
     } catch (e) {
       console.error('Telegram send error:', e);
+      alert('⚠️ Send failed — see console for details.');
     } finally {
       setSending(false);
     }

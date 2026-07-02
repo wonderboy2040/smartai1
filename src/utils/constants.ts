@@ -129,7 +129,7 @@ export function guessMarket(sym: string): 'IN' | 'US' {
   sym = (sym || '').toUpperCase();
   if (sym.includes('.NS') || sym.includes('.BO')) return 'IN';
   if (sym === 'RELIANCE' || sym === 'NIFTY' || sym === 'SENSEX') return 'IN';
-  if (sym.includes('BEES')) return 'IN';
+  if (sym.endsWith('BEES')) return 'IN';  // FIX M10: endswith, not includes
   if (ALPHA_ETFS_IN.some(e => e.sym.replace('.NS', '') === sym)) return 'IN';
   if (isCryptoSymbol(sym)) return 'IN'; // User buys via CoinDCX in INR
   return 'US';

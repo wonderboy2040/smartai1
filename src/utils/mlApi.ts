@@ -1,4 +1,7 @@
-const ML_SERVICE_URL = '/api/ml';
+// FIX M14: previously hardcoded `/api/ml` and ignored VITE_API_PROXY, so any
+// cross-origin deployment (frontend on a different host than the Node proxy)
+// got 404s for ML calls. Use the same PROXY_BASE convention as the rest of api.ts.
+const ML_SERVICE_URL = `${(import.meta.env.VITE_API_PROXY as string) || ''}/api/ml`;
 
 export interface MLPrediction {
   symbol: string;

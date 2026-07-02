@@ -13,8 +13,18 @@ async function getServerAIStatus() {
     _proxyStatus = (async () => {
       try {
         const res = await fetch(`${PROXY_BASE}/api/ai-status`, { signal: AbortSignal.timeout(3000) });
-        return res.ok ? await res.json() : null;
-      } catch { return null; }
+        if (!res.ok) {
+          // FIX L39: previously a failed fetch cached the rejected/null promise
+          // for 30s, so a server blip kept the chat showing "offline" even
+          // after recovery. Reset cache on failure so next call retries.
+          _proxyStatus = null;
+          return null;
+        }
+        return await res.json();
+      } catch {
+        _proxyStatus = null;
+        return null;
+      }
     })();
   }
   return _proxyStatus;
@@ -421,7 +431,12 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
     recognition.onend = () => { setIsListening(false); recognitionRef.current = null; };
     recognition.onresult = (event: any) => {
       let transcript = '';
-      for (let i = 0; i < event.results.length; i++) transcript += event.results[i][0].transcript;
+      // FIX M21: previously segments were concatenated without a separator,
+      // producing "helloworld" instead of "hello world". Insert a space
+      // between segments (but not before the first one).
+      for (let i = 0; i < event.results.length; i++) {
+        transcript += (i > 0 ? ' ' : '') + event.results[i][0].transcript;
+      }
       setChatInput(transcript);
     };
     recognitionRef.current = recognition;
@@ -503,7 +518,10 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
 
             <div className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide">
               {chatMessages.map((msg, i) => (
-                <div key={msg.timestamp} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
+                // FIX L6: `key={msg.timestamp}` collides when two messages
+                // land in the same ms (rapid quick-action clicks). Use index
+                // as a tiebreaker.
+                <div key={`${msg.timestamp}_${i}`} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
                   <div className={`max-w-[85%] sm:max-w-[92%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
                     ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-3 py-2.5 sm:px-4 sm:py-3'
                     : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-3 py-2.5 sm:px-4 sm:py-3 group/msg'

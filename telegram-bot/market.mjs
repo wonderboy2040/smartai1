@@ -7,21 +7,37 @@ import { EXACT_TICKER_MAP, guessMarket, DEFAULT_USD_INR } from './config.mjs';
 // ========================================
 // MARKET HOURS DETECTION
 // ========================================
-export function isIndiaMarketOpen() {
+// FIX H17: previously `new Date(now.toLocaleString('en-US', { timeZone: ... }))`
+// relied on the en-US locale producing a Date-parseable string. On non-English
+// servers or with different ICU builds, `new Date(string)` may return Invalid
+// Date → getDay() returns NaN → market hours never detected. Use
+// Intl.DateTimeFormat.formatToParts for robust parsing.
+function getTimeInZone(tz) {
   const now = new Date();
-  const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-  const day = ist.getDay();
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  const parts = fmt.formatToParts(now);
+  const get = (type) => parts.find(p => p.type === type)?.value || '';
+  const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const day = dayMap[get('weekday').substring(0, 3)] ?? now.getDay();
+  let h = parseInt(get('hour'), 10);
+  if (isNaN(h) || h === 24) h = 0;
+  const m = parseInt(get('minute'), 10) || 0;
+  return { day, h, m };
+}
+
+export function isIndiaMarketOpen() {
+  const { day, h, m } = getTimeInZone('Asia/Kolkata');
   if (day === 0 || day === 6) return false;
-  const mins = ist.getHours() * 60 + ist.getMinutes();
+  const mins = h * 60 + m;
   return mins >= 555 && mins <= 930; // 9:15 AM - 3:30 PM IST
 }
 
 export function isUSMarketOpen() {
-  const now = new Date();
-  const est = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const day = est.getDay();
+  const { day, h, m } = getTimeInZone('America/New_York');
   if (day === 0 || day === 6) return false;
-  const mins = est.getHours() * 60 + est.getMinutes();
+  const mins = h * 60 + m;
   return mins >= 570 && mins <= 960; // 9:30 AM - 4:00 PM ET
 }
 
@@ -111,10 +127,13 @@ export async function batchFetchPrices(positions) {
               high: parseFloat(item.d[3]) || priceVal,
               low: parseFloat(item.d[4]) || priceVal,
               volume: parseFloat(item.d[5]) || 0,
-              sma20: parseFloat(item.d[6]) || undefined,
-              sma50: parseFloat(item.d[7]) || undefined,
-              rsi: parseFloat(item.d[8]) || Math.max(10, Math.min(90, 50 + (changeVal * 5))),
-              macd: parseFloat(item.d[9]) || undefined,
+              // FIX H12: `parseFloat(x) || fallback` swallows legitimate 0 values
+              // (SMA20=0, MACD=0.0, RSI=0). Use nullish coalescing where the
+              // fallback is non-numeric (`undefined`).
+              sma20: (item.d[6] != null && !isNaN(parseFloat(item.d[6]))) ? parseFloat(item.d[6]) : undefined,
+              sma50: (item.d[7] != null && !isNaN(parseFloat(item.d[7]))) ? parseFloat(item.d[7]) : undefined,
+              rsi: (item.d[8] != null && !isNaN(parseFloat(item.d[8]))) ? parseFloat(item.d[8]) : Math.max(10, Math.min(90, 50 + (changeVal * 5))),
+              macd: (item.d[9] != null && !isNaN(parseFloat(item.d[9]))) ? parseFloat(item.d[9]) : undefined,
               time: Date.now(),
               market: mkt,
               tvExchange: item.s.split(':')[0],
@@ -179,10 +198,11 @@ export async function fetchSingleSymbol(symbol) {
           high: parseFloat(d[3]) || price,
           low: parseFloat(d[4]) || price,
           volume: parseFloat(d[5]) || 0,
-          sma20: parseFloat(d[6]) || undefined,
-          sma50: parseFloat(d[7]) || undefined,
-          rsi: parseFloat(d[8]) || 50,
-          macd: parseFloat(d[9]) || undefined,
+          // FIX H12: same as batch path — preserve legitimate 0 values.
+          sma20: (d[6] != null && !isNaN(parseFloat(d[6]))) ? parseFloat(d[6]) : undefined,
+          sma50: (d[7] != null && !isNaN(parseFloat(d[7]))) ? parseFloat(d[7]) : undefined,
+          rsi: (d[8] != null && !isNaN(parseFloat(d[8]))) ? parseFloat(d[8]) : 50,
+          macd: (d[9] != null && !isNaN(parseFloat(d[9]))) ? parseFloat(d[9]) : undefined,
           open: parseFloat(d[10]) || price,
           weekChange: parseFloat(d[11]) || 0,
           monthChange: parseFloat(d[12]) || 0,
@@ -208,8 +228,16 @@ export function trackVixChange(livePrices) {
   const inVix = livePrices['IN_INDIAVIX']?.price || 0;
   const now = Date.now();
 
-  if (lastVixSnapshot.time === 0 || usVix === 0) {
-    lastVixSnapshot = { usVix, inVix, time: now };
+  // FIX CRIT: previously when TV returned no VIX (usVix=0 OR inVix=0), the
+  // snapshot was still overwritten with zeros, so subsequent calls saw
+  // lastVixSnapshot.usVix=0 and the `lastVixSnapshot.usVix > 0` check (line 219)
+  // short-circuited → spike detection permanently disabled after one transient
+  // fetch failure. Skip the snapshot update entirely when either VIX is missing.
+  if (lastVixSnapshot.time === 0 || usVix === 0 || inVix === 0) {
+    if (usVix > 0 && inVix > 0) {
+      // First valid reading — record it but don't alert yet.
+      lastVixSnapshot = { usVix, inVix, time: now };
+    }
     return null;
   }
 
@@ -219,7 +247,10 @@ export function trackVixChange(livePrices) {
   const usChange = lastVixSnapshot.usVix > 0 ? ((usVix - lastVixSnapshot.usVix) / lastVixSnapshot.usVix) * 100 : 0;
   const inChange = lastVixSnapshot.inVix > 0 ? ((inVix - lastVixSnapshot.inVix) / lastVixSnapshot.inVix) * 100 : 0;
 
-  lastVixSnapshot = { usVix, inVix, time: now };
+  // Only update snapshot when both VIX values are valid (non-zero).
+  if (usVix > 0 && inVix > 0) {
+    lastVixSnapshot = { usVix, inVix, time: now };
+  }
 
   // Alert if VIX jumps > 5% in short period
   if (Math.abs(usChange) > 5 || Math.abs(inChange) > 5) {
@@ -529,7 +560,7 @@ export async function fetchIPOData(tavilyKey) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         api_key: tavilyKey,
-        query: 'upcoming IPO India 2026 open subscription GMP latest',
+        query: `upcoming IPO India ${new Date().getFullYear()} open subscription GMP latest`,
         search_depth: 'basic',
         include_answer: true,
         max_results: 4,

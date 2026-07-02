@@ -12,7 +12,19 @@ import { getISTTime, getMarketStatus, isIndiaMarketOpen, isUSMarketOpen } from '
 // ASSET SIGNAL ANALYSIS
 // ========================================
 export function analyzeAsset(position, priceData) {
-  const price = priceData?.price || position.avgPrice;
+  // FIX H9: when both `priceData.price` and `position.avgPrice` are undefined,
+  // `price` was undefined → NaN propagated through low/high/targetPrice.
+  const price = priceData?.price ?? position.avgPrice ?? 0;
+  if (!price || price <= 0) {
+    return {
+      symbol: position.symbol.replace('.NS', ''),
+      market: position.market,
+      signal: 'HOLD', action: 'HOLD', trend: 'flat',
+      rsi: 50, change: 0, price: 0, targetPrice: 0,
+      fibLow: 0, fibHigh: 0, confidence: 0,
+      reason: 'No price data available'
+    };
+  }
   const rsi = priceData?.rsi || 50;
   const change = priceData?.change || 0;
   const volume = priceData?.volume || 0;
@@ -59,16 +71,20 @@ export function analyzeAsset(position, priceData) {
     reason = `RSI ${rsi.toFixed(0)} oversold${isCrypto ? ' (crypto zone)' : ''} — institutional accumulation zone.`;
     if (instAccumulation) { confidence = 99; reason = `🔥 MAX CONVICTION: RSI ${rsi.toFixed(0)} + Volume Spike! Institutional buying detected.`; }
   } else if (rsi < oversoldThreshold + 10) {
-    signal = 'BUY'; confidence = 80; targetPrice = low;
+    // FIX H8: BUY targetPrice was set to `low` (below current price) — should
+    // be a resistance/upsider target above current price.
+    signal = 'BUY'; confidence = 80; targetPrice = resistanceLevel;
     reason = `RSI ${rsi.toFixed(0)} approaching oversold — good entry.`;
     if (isBullishTrend) { reason += ' Bullish momentum building.'; confidence += 5; }
     if (instAccumulation) { confidence += 10; reason += ' Volume confirming accumulation.'; }
   } else if (rsi > strongOverbought) {
-    signal = 'STRONG_SELL'; confidence = 90; targetPrice = resistanceLevel;
+    signal = 'STRONG_SELL'; confidence = 90; targetPrice = supportLevel;
     reason = `RSI ${rsi.toFixed(0)} overbought${isCrypto ? ' (crypto zone)' : ''} — distribution zone.`;
     if (instDistribution) { confidence = 98; reason = `🔥 MAX RISK: RSI ${rsi.toFixed(0)} + Volume Spike! Institutional distribution detected.`; }
   } else if (rsi > overboughtThreshold) {
-    signal = 'SELL'; confidence = 70; targetPrice = high;
+    // FIX H8: SELL targetPrice was set to `high` (above current price) — should
+    // be a support/downside target below current price.
+    signal = 'SELL'; confidence = 70; targetPrice = supportLevel;
     reason = `RSI ${rsi.toFixed(0)} elevated — consider partial booking.`;
     if (isBearishTrend) { reason += ' Bearish momentum detected.'; confidence += 5; }
     if (instDistribution) { confidence += 10; reason += ' Volume confirming distribution.'; }
@@ -112,7 +128,12 @@ export function calculateMetrics(portfolio, livePrices, usdInrRate) {
   let indPL = 0, usPL = 0, cryptoPL = 0;
 
   for (const p of portfolio) {
-    const key = `${p.market}_${p.symbol}`;
+    // FIX H7: portfolio data may have market in lowercase ('in' instead of
+    // 'IN'). livePrices is keyed with UPPERCASE market prefix (e.g. 'IN_RELIANCE').
+    // Without normalization, the lookup silently misses → metrics fall back to
+    // avgPrice and today's P&L is always 0.
+    const mkt = String(p.market || '').toUpperCase();
+    const key = `${mkt}_${p.symbol}`;
     const data = livePrices[key];
     const curPrice = data?.price || p.avgPrice;
     const change = data?.change || 0;
@@ -129,7 +150,10 @@ export function calculateMetrics(portfolio, livePrices, usdInrRate) {
     totalInvested += invINR;
     totalValue += valINR;
 
-    const prevPrice = curPrice / (1 + (change / 100));
+    // FIX M19: division-by-zero when change === -100 (1 + (-100/100) = 0).
+    // Treat as invalid data → 0 day P&L.
+    const denom = 1 + (change / 100);
+    const prevPrice = denom > 0 ? curPrice / denom : curPrice;
     const dayPL = (curPrice - prevPrice) * p.qty;
     const dayPLINR = p.market === 'IN' ? dayPL : dayPL * usdInrRate;
     todayPL += dayPLINR;
@@ -403,7 +427,7 @@ export function generateAutoReport(portfolio, livePrices, usdInrRate) {
 
   // Check for urgent signals
   const signals = portfolio.map(p => {
-    const key = `${p.market}_${p.symbol}`;
+    const key = `${String(p.market||"").toUpperCase()}_${p.symbol}`;
     return analyzeAsset(p, livePrices[key]);
   });
   const urgentBuys = signals.filter(s => s.signal === 'STRONG_BUY');
@@ -884,11 +908,11 @@ export function generateETFReport(portfolio, livePrices, usdInr) {
   const totalPL = totalVal - totalInvested;
   msg += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
   msg += `💼 <b>ETF Portfolio: ₹${Math.round(totalVal).toLocaleString('en-IN')}</b>\n`;
-  msg += `📈 P&L: ${totalPL >= 0 ? '+' : ''}₹${Math.round(totalPL).toLocaleString('en-IN')} (${((totalPL / totalInvested) * 100).toFixed(1)}%)\n\n`;
+  msg += `📈 P&L: ${totalPL >= 0 ? '+' : ''}₹${Math.round(totalPL).toLocaleString('en-IN')} (${(totalInvested > 0 ? ((totalPL / totalInvested) * 100) : 0).toFixed(1)}%)\n\n`;
 
   msg += `🥧 <b>Category Allocation:</b>\n`;
   for (const [cat, val] of Object.entries(catAlloc).sort((a, b) => b[1] - a[1])) {
-    const pct = ((val / totalVal) * 100).toFixed(1);
+    const pct = (totalVal > 0 ? ((val / totalVal) * 100) : 0).toFixed(1);
     msg += `  ${cat}: ${pct}% (₹${Math.round(val).toLocaleString('en-IN')})\n`;
   }
 
@@ -959,7 +983,7 @@ export function generateDigestReport(intel, cryptos, bonds, usdInr, portfolio, l
 
     // Top Movers
     const movers = portfolio.map(p => {
-      const key = `${p.market}_${p.symbol}`;
+      const key = `${String(p.market||"").toUpperCase()}_${p.symbol}`;
       return { symbol: p.symbol, change: livePrices[key]?.change || 0 };
     }).sort((a, b) => b.change - a.change);
 
@@ -1122,7 +1146,7 @@ export function generateSipTiltReport(portfolio, livePrices, usdInr) {
   // Portfolio average RSI (oversold = cheap = tilt up)
   let rsiSum = 0, rsiCount = 0;
   for (const p of portfolio) {
-    const d = livePrices[`${p.market}_${p.symbol}`];
+    const d = livePrices[`${String(p.market||"").toUpperCase()}_${p.symbol}`];
     if (d?.rsi) { rsiSum += d.rsi; rsiCount++; }
   }
   const avgRsi = rsiCount > 0 ? rsiSum / rsiCount : 50;
@@ -1195,7 +1219,7 @@ export function generateTaxPlanReport(portfolio, livePrices, usdInr) {
   const harvestable = [];
 
   for (const p of portfolio) {
-    const d = livePrices[`${p.market}_${p.symbol}`];
+    const d = livePrices[`${String(p.market||"").toUpperCase()}_${p.symbol}`];
     const price = d?.price || p.avgPrice;
     const plAbs = (price - p.avgPrice) * p.qty;
     const plINR = p.market === 'US' ? plAbs * usdInr : plAbs;
@@ -1281,7 +1305,7 @@ export function generateDrawdownReport(portfolio, livePrices, usdInr) {
 
   const positions = [];
   for (const p of portfolio) {
-    const d = livePrices[`${p.market}_${p.symbol}`];
+    const d = livePrices[`${String(p.market||"").toUpperCase()}_${p.symbol}`];
     const price = d?.price || p.avgPrice;
     const high = d?.high || price;
     const cleanSym = p.symbol.replace('.NS', '').replace('.BO', '');
@@ -1291,12 +1315,17 @@ export function generateDrawdownReport(portfolio, livePrices, usdInr) {
     const ddFromAvg = p.avgPrice > 0 ? ((price - p.avgPrice) / p.avgPrice) * 100 : 0;
     const cagr = getAssetCagrProxy(p.symbol, p.market);
 
-    // Recovery estimate: if underwater, time to regain avg cost at asset CAGR
+    // Recovery estimate: if underwater, time to regain avg cost at asset CAGR.
+    // FIX H10: when price > 2× avgPrice, gainNeeded < -1 → Math.log(negative)
+    // = NaN → recoveryMonths = NaN → "NaN mo" rendered to user. Guard with
+    // `gainNeeded > -1` so deeply-profitable positions show "0 mo (profitable)".
     let recoveryMonths = 0;
     if (ddFromAvg < 0) {
       const gainNeeded = (p.avgPrice / price) - 1; // fractional gain to break even
       const monthlyRate = Math.pow(1 + cagr / 100, 1 / 12) - 1;
-      recoveryMonths = monthlyRate > 0 ? Math.log(1 + gainNeeded) / Math.log(1 + monthlyRate) : 0;
+      if (gainNeeded > -1 && monthlyRate > 0) {
+        recoveryMonths = Math.log(1 + gainNeeded) / Math.log(1 + monthlyRate);
+      }
     }
 
     positions.push({ sym: cleanSym, cur, price, avg: p.avgPrice, ddFromAvg, recoveryMonths, cagr, underwater: ddFromAvg < 0 });

@@ -8,6 +8,7 @@ import joblib
 import time
 from pathlib import Path
 import sys
+import os
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from app.config import (
@@ -22,17 +23,45 @@ from models.backtest import walk_forward_backtest
 
 app = FastAPI(title="WealthAI ML Service", version="1.0.0")
 
+# FIX H12: `allow_origins=["*"]` + `allow_credentials=True` is rejected by
+# browsers (CORS spec). Use a safe default that allows any origin WITHOUT
+# credentials; if specific origins are needed, set ML_CORS_ORIGINS env var.
+_cors_origins = os.environ.get("ML_CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=False,  # safe with allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Cache for predictions
-prediction_cache = {}
+# Cache for predictions — FIX H12: previously unbounded (`{}` grew forever).
+# Use OrderedDict + max-size cap (LRU eviction) to prevent OOM in long-running
+# service. Each entry also has a TTL via the cached `ts` field.
+from collections import OrderedDict  # noqa: E402
+prediction_cache = OrderedDict()
 CACHE_TTL = 300  # 5 minutes
+CACHE_MAX = 256  # max entries — evict oldest when exceeded
+
+_orch_cache = OrderedDict()
+_ORCH_CACHE_MAX = 128
+
+def _cache_get(cache: OrderedDict, key: str, ttl: int):
+    if key not in cache:
+        return None
+    entry = cache[key]
+    if time.time() - entry["ts"] > ttl:
+        cache.pop(key, None)
+        return None
+    # LRU touch
+    cache.move_to_end(key)
+    return entry["data"]
+
+def _cache_set(cache: OrderedDict, key: str, data, max_size: int):
+    cache[key] = {"data": data, "ts": time.time()}
+    cache.move_to_end(key)
+    while len(cache) > max_size:
+        cache.popitem(last=False)
 
 
 class PredictionRequest(BaseModel):
@@ -65,18 +94,21 @@ async def health():
 @app.post("/predict")
 async def predict(req: PredictionRequest):
     cache_key = f"{req.symbol}_{req.market}"
-    if cache_key in prediction_cache:
-        cached = prediction_cache[cache_key]
-        if time.time() - cached["ts"] < CACHE_TTL:
-            return cached["data"]
+    # FIX H12: use LRU cache helpers instead of raw dict access.
+    cached = _cache_get(prediction_cache, cache_key, CACHE_TTL)
+    if cached is not None:
+        return cached
 
     ohlcv = load_ohlcv()
     if ohlcv is None:
         raise HTTPException(status_code=503, detail="No OHLCV data. Train models first via /train.")
 
     sym = req.symbol.replace(".NS", "").replace(".BO", "")
-    # Find matching symbol
-    sym_data = ohlcv[ohlcv["symbol"].str.contains(sym, case=False, na=False)]
+    # FIX L10: `.str.contains(sym)` was a substring match — querying `BTC`
+    # would also match `BTCUSD`, `BTCUSDT`, `ABTC`. Use exact match (case-
+    # insensitive) so only the requested symbol is returned.
+    sym_upper = sym.upper()
+    sym_data = ohlcv[ohlcv["symbol"].str.upper() == sym_upper]
     if sym_data.empty:
         raise HTTPException(status_code=404, detail=f"No data for {req.symbol}")
 
@@ -112,16 +144,30 @@ async def predict(req: PredictionRequest):
             }
 
             # Top features (SHAP-like via feature importance)
-            if hasattr(model, "estimators"):
+            # FIX H8: previously used `hasattr(model, "estimators")` but
+            # CalibratedClassifierCV exposes `calibrated_classifiers_`, not
+            # `estimators` → top_features was always []. Dig into the wrapped
+            # estimator inside the first calibrated classifier.
+            base_models = []
+            if hasattr(model, "calibrated_classifiers_"):
+                for cc in model.calibrated_classifiers_:
+                    inner = getattr(cc, "estimator", None)
+                    if inner is not None:
+                        base_models.append(inner)
+            elif hasattr(model, "estimators_"):
+                base_models = list(model.estimators_)
+            elif hasattr(model, "estimators"):
+                base_models = list(model.estimators)
+            for base_model in base_models[:1]:
                 try:
-                    base_model = model.estimators[0]
                     if hasattr(base_model, "feature_importances_"):
                         importances = base_model.feature_importances_
                         top_idx = np.argsort(importances)[::-1][:5]
                         signal_result["top_features"] = [
                             {"feature": feature_cols[i], "importance": round(float(importances[i]), 3)}
-                            for i in top_idx
+                            for i in top_idx if i < len(feature_cols)
                         ]
+                        break
                 except Exception:
                     pass
         except Exception as e:
@@ -152,14 +198,26 @@ async def predict(req: PredictionRequest):
     price_points = calculate_exact_entry(sym_df)
 
     # Current data
+    # FIX M14: NaN/inf values in RSI/volume/change leak into JSON response
+    # (FastAPI serialises NaN as bare `NaN` → JSON.parse fails in browser →
+    # whole /predict response unusable). Coerce to safe defaults.
+    def _safe_num(v, default=0):
+        try:
+            f = float(v)
+            if not np.isfinite(f):
+                return default
+            return f
+        except Exception:
+            return default
+
     last = sym_df.iloc[-1]
     current_data = {
         "symbol": req.symbol,
         "market": req.market,
-        "price": round(float(last["close"]), 2),
-        "change": round(float(sym_df["close"].pct_change().iloc[-1] * 100), 2) if len(sym_df) > 1 else 0,
-        "rsi": round(float(feat["rsi"].iloc[-1]), 1) if "rsi" in feat.columns else 50,
-        "volume": int(last.get("volume", 0)),
+        "price": round(_safe_num(last["close"]), 2),
+        "change": round(_safe_num(sym_df["close"].pct_change().iloc[-1] * 100, 0) if len(sym_df) > 1 else 0, 2),
+        "rsi": round(_safe_num(feat["rsi"].iloc[-1] if "rsi" in feat.columns else 50, 50), 1),
+        "volume": int(_safe_num(last.get("volume", 0), 0)),
     }
 
     result = {
@@ -170,7 +228,8 @@ async def predict(req: PredictionRequest):
         "timestamp": int(time.time() * 1000),
     }
 
-    prediction_cache[cache_key] = {"data": result, "ts": time.time()}
+    # FIX H12: use LRU cache setter (auto-evicts oldest when full).
+    _cache_set(prediction_cache, cache_key, result, CACHE_MAX)
     return result
 
 
@@ -180,16 +239,24 @@ async def get_all_signals(market: Optional[str] = None):
     if ohlcv is None:
         raise HTTPException(status_code=503, detail="No OHLCV data.")
 
-    symbols = ohlcv["symbol"].unique()
+    symbols = list(ohlcv["symbol"].unique())
+    # FIX CRIT (review #1): previous dict-based filter had `"US": None` which
+    # silently skipped filtering for US → returned ALL symbols. Replace with
+    # explicit per-market branches using exact substring tests.
     if market:
-        market_filter = {"IN": ".NS|BEES|NIFTY|SMALLCAP|MOMENTUM", "US": None, "CRYPTO": "USD"}
-        if market.upper() in market_filter and market_filter[market.upper()]:
-            symbols = [s for s in symbols if any(k in s for k in ["USD"] if market.upper() == "CRYPTO")
-                       or (market.upper() == "IN" and (".NS" in s or "BEES" in s or "NIFTY" in s or "SMALLCAP" in s or "MOMENTUM" in s))
-                       or (market.upper() == "US" and ".NS" not in s and "USD" not in s)]
+        mu = market.upper()
+        if mu == "IN":
+            symbols = [s for s in symbols if (".NS" in s or "BEES" in s or "NIFTY" in s
+                                              or "SMALLCAP" in s or "MOMENTUM" in s)]
+        elif mu == "US":
+            symbols = [s for s in symbols if (".NS" not in s and "USD" not in s
+                                              and "BEES" not in s and "NIFTY" not in s)]
+        elif mu == "CRYPTO":
+            symbols = [s for s in symbols if "USD" in s]
+        # else: no filter (return all)
 
     signals = []
-    for sym in list(symbols)[:50]:
+    for sym in symbols[:50]:
         try:
             req = PredictionRequest(symbol=sym, market=market or "IN")
             sig = await predict(req)
@@ -209,6 +276,10 @@ async def train_models(req: TrainRequest = None, background_tasks: BackgroundTas
     print("Fetching OHLCV data...")
     symbols = req.symbols if req and req.symbols else ALL_SYMBOLS
     ohlcv = fetch_all_symbols(symbols)
+    # FIX CRIT: fetch_all_symbols can return an empty DataFrame when yfinance/
+    # Binance fail. Accessing `ohlcv["symbol"]` then raises KeyError → 500.
+    if ohlcv is None or "symbol" not in ohlcv.columns or ohlcv.empty:
+        raise HTTPException(status_code=503, detail="No OHLCV data fetched — upstream APIs may be down.")
     results["fetch"] = {"symbols": int(ohlcv["symbol"].nunique()), "rows": len(ohlcv)}
 
     # Step 2: Train signal model
@@ -255,7 +326,7 @@ async def get_backtest(symbol: Optional[str] = None):
         raise HTTPException(status_code=503, detail="No data.")
 
     if symbol:
-        sym_data = ohlcv[ohlcv["symbol"].str.contains(symbol, case=False, na=False)]
+        sym_data = ohlcv[ohlcv["symbol"].str.upper() == symbol.upper()]  # FIX L10: exact match (was str.contains → substring)
         if sym_data.empty:
             raise HTTPException(status_code=404, detail=f"No data for {symbol}")
         ohlcv = sym_data
@@ -283,7 +354,7 @@ async def get_pricepoints(symbol: str):
     if ohlcv is None:
         raise HTTPException(status_code=503, detail="No data.")
 
-    sym_data = ohlcv[ohlcv["symbol"].str.contains(symbol, case=False, na=False)]
+    sym_data = ohlcv[ohlcv["symbol"].str.upper() == symbol.upper()]  # FIX L10: exact match (was str.contains → substring)
     if sym_data.empty:
         raise HTTPException(status_code=404, detail=f"No data for {symbol}")
 
@@ -336,8 +407,14 @@ async def get_regime():
         regime_data.append(feat)
 
     combined = pd.concat(regime_data, axis=1).dropna()
+    # FIX CRIT: if dropna removes all rows (sparse data), `X[-1:]` is empty
+    # → hmm.predict([]) raises ValueError. Guard explicitly.
+    if combined.empty:
+        raise HTTPException(status_code=503, detail="No regime data available after dropna().")
     X = combined[feature_cols].values
     X = np.nan_to_num(X, nan=0.0)
+    if len(X) == 0:
+        raise HTTPException(status_code=503, detail="No regime rows to predict on.")
 
     # Predict current regime (last row)
     current_state = int(hmm.predict(X[-1:])[0])
@@ -372,7 +449,9 @@ from app.prompts import get_7step_system_prompt, build_analysis_prompt, build_si
 import time as _time
 import hashlib as _hashlib
 
-_orch_cache = {}
+# FIX H12: `_orch_cache` was a plain unbounded dict — same OOM risk as
+# prediction_cache. Reuse the OrderedDict helpers defined near the top
+# (the second `_orch_cache = {}` declaration below has been removed).
 ORCH_CACHE_TTL = 60
 
 
@@ -380,8 +459,9 @@ ORCH_CACHE_TTL = 60
 async def analyze_symbol(req: PredictionRequest):
     """Full deep analysis: Quant Brain + LLM narration."""
     cache_key = _hashlib.md5(f"{req.symbol}:{_time.time() // ORCH_CACHE_TTL}".encode()).hexdigest()
-    if cache_key in _orch_cache:
-        cached = _orch_cache[cache_key]
+    cached = _cache_get(_orch_cache, cache_key, ORCH_CACHE_TTL)
+    if cached is not None:
+        cached = dict(cached)
         cached["from_cache"] = True
         return cached
 
@@ -401,8 +481,15 @@ async def analyze_symbol(req: PredictionRequest):
 
     used_provider = "none"
     if llm_text:
-        llm_text = anti_hallucination_check(llm_text, brain_result)
-        used_provider = "llm"
+        # FIX M13: anti_hallucination_check now returns None when too many
+        # suspicious numbers are detected. Fall back to brain_to_text in that case.
+        checked = anti_hallucination_check(llm_text, brain_result)
+        if checked is None:
+            llm_text = brain_to_text(brain_result)
+            used_provider = "quant_brain_hallucination_fallback"
+        else:
+            llm_text = checked
+            used_provider = "llm"
     else:
         llm_text = brain_to_text(brain_result)
         used_provider = "quant_brain"
@@ -414,7 +501,7 @@ async def analyze_symbol(req: PredictionRequest):
         "from_cache": False,
         "timestamp": _time.time(),
     }
-    _orch_cache[cache_key] = result
+    _cache_set(_orch_cache, cache_key, result, _ORCH_CACHE_MAX)
     return result
 
 
