@@ -1,8 +1,8 @@
 // ============================================================
 // liveFeed — central in-memory tick store + pub/sub for SSE
 // ------------------------------------------------------------
-// Every real-time source (AngelOne NSE ws, Finnhub US ws, Binance crypto ws)
-// writes the latest tick here, keyed exactly like the frontend price map:
+// Every real-time source (NSE, Finnhub US, Binance crypto) writes the latest
+// tick here, keyed exactly like the frontend price map:
 //   IN_<symbol>  US_<symbol>   (crypto is stored as IN_<symbol> too)
 // The /api/stream SSE endpoint reads/pushes from here.
 // ============================================================

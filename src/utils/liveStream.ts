@@ -3,8 +3,8 @@ import { PriceData } from '../types';
 // ============================================================
 // liveStream — browser EventSource client for /api/stream (SSE)
 // ------------------------------------------------------------
-// Receives server-pushed real-time ticks (AngelOne NSE ws, Finnhub US ws,
-// CoinDCX crypto) and feeds them into the SAME price pipeline the pollers use.
+// Receives server-pushed real-time ticks (SSE from server — NSE/Finnhub/CoinDCX)
+// and feeds them into the SAME price pipeline the pollers use.
 // This replaces 2-second polling with instant push. If SSE drops, EventSource
 // auto-reconnects, and the existing pollers still run as a safety net.
 // ============================================================

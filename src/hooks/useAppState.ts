@@ -469,7 +469,7 @@ export function useAppState() {
     return () => { stopped = true; if (timer) clearTimeout(timer); };
   }, [isAuthenticated, hasUSEquity, flushPricesToStorage]);
 
-  // --- Real-time SSE push (AngelOne NSE ws + Finnhub US ws + CoinDCX crypto) --
+  // --- Real-time SSE push (NSE ws + Finnhub US ws + CoinDCX crypto) --
   // The server pushes ticks the instant they happen and we feed them into the
   // SAME price pipeline the pollers use. This makes prices tick live (no 2s
   // wait). EventSource auto-reconnects; the pollers remain as a safety net.

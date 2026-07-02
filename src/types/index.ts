@@ -45,7 +45,7 @@ export interface ExpertInfo {
   border: string;
 }
 
-export type TabType = 'dashboard' | 'intraday' | 'portfolio' | 'planner' | 'macro' | 'guide' | 'algotrade';
+export type TabType = 'dashboard' | 'portfolio' | 'planner' | 'macro' | 'guide';
 export type RiskLevel = 'low' | 'medium' | 'high';
 export type TransactionType = 'buy' | 'sell';
 
@@ -195,62 +195,4 @@ export interface ScreenerResult {
   reason: string;
 }
 
-// ========================================
-// ALGO TRADING — AngelOne SmartAPI order types
-// ========================================
-export interface TradeWallet {
-  totalmargin?: string;
-  availablecash?: string;
-  utilisablemargin?: string;
-  utilizabledeliverymargin?: string;
-  net?: string;
-  notionalcash?: string;
-}
 
-export interface AngelOrder {
-  orderid: string;
-  tradingsymbol: string;
-  exchange: string;
-  transactiontype: 'BUY' | 'SELL';
-  ordertype: 'MARKET' | 'LIMIT' | 'STOPLOSS_LIMIT' | 'STOPLOSS_MARKET';
-  quantity: string;
-  price: string;
-  triggerprice: string;
-  tradedqty: string;
-  filledqty: string;
-  filledprice: string;
-  filledamount: string;
-  status: string;
-  updtime: string;
-  exchtime: string;
-  averageprice: string;
-  producttype: string;
-  variety: string;
-}
-
-export interface AngelHolding {
-  tradingsymbol: string;
-  exchange: string;
-  quantity: string;
-  averageprice: string;
-  ltp: string;
-  pnl: string;
-  valuation: string;
-  product: string;
-}
-
-export interface AngelPosition {
-  tradingsymbol: string;
-  exchange: string;
-  buyqty: string;
-  buyavgprice: string;
-  sellqty: string;
-  sellavgprice: string;
-  netqty: string;
-  daybuyqty: string;
-  daysellqty: string;
-  ltp: string;
-  pnl: string;
-  mtm: string;
-  product: string;
-}

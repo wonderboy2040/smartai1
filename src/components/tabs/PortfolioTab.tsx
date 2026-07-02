@@ -204,7 +204,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
               🇮🇳 IN: {metrics.indPL >= 0 ? '+' : ''}₹{Math.round(metrics.indPL).toLocaleString('en-IN')}
             </span>
             <span className={`text-[10px] px-1.5 py-0.5 rounded bg-black/20 font-bold ${metrics.usPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-              🦅 US: {metrics.usPL >= 0 ? '+' : ''}${Math.round(metrics.usPL / usdInrRate).toLocaleString('en-US')}
+              🦅 US: {metrics.usPL >= 0 ? '+' : ''}₹{Math.round(metrics.usPL).toLocaleString('en-IN')}
             </span>
             <span className={`text-[10px] px-1.5 py-0.5 rounded bg-black/20 font-bold ${metrics.cryptoPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
               🪙 Crypto: {metrics.cryptoPL >= 0 ? '+' : ''}₹{Math.round(metrics.cryptoPL).toLocaleString('en-IN')}

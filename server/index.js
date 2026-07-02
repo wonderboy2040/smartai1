@@ -11,13 +11,9 @@
 //        NVIDIA_API_KEY, TAVILY_API_KEY, API_URL (optional)
 // ============================================================
 import express from 'express';
-import { indmoneyEnabled, getIndmoneyStatus, executeTradetronSignal, deployStrategy, toggleStrategy, getStrategyStatus, getTradeHistory, getPositions as getTradetronPositions } from './indmoneyTradetron.js';
-import { coindcxEnabled, getCoindcxStatus, placeFuturesOrder, cancelFuturesOrder, getFuturesOrders, getFuturesPositions, getFuturesBalance, getFuturesTradeHistory } from './coindcxFutures.js';
-import { getAutoConfig, setAutoConfig, autoTick } from './autoTrader.js';
 import { subscribe as feedSubscribe, snapshot as feedSnapshot, feedStatus } from './liveFeed.js';
 import { ensureUsSubscribed, usClientUp, usClientDown } from './usStream.js';
 import { ensureCryptoSubscribed, cryptoClientUp, cryptoClientDown } from './cryptoStream.js';
-import { getPublicIp } from './resolveIp.js';
 import {
   getMLPrediction, getAllSignals, getRegime, getBacktest,
   getPricePoints, getHealth as mlHealth
@@ -291,7 +287,7 @@ app.get('/api/quote', async (req, res) => {
 
   const quotes = {};
 
-  // India quotes — Groww NSE → Yahoo fallback (AngelOne removed)
+  // India quotes — Groww NSE → Yahoo fallback
 
   const remaining = symbols.filter(s => !quotes[s]);
   await Promise.allSettled(remaining.map(async (sym) => {
@@ -356,8 +352,8 @@ app.get('/api/crypto-prices', async (_req, res) => {
 // GET /api/stream  → Server-Sent Events: pushes live ticks to the browser.
 // Query: ?in=RELIANCE,NIFTYBEES&us=SMH,VGT&crypto=BTC,ETH
 // Events: `snapshot` (initial map), `tick` ({key,price,change,...}), `status`.
-// Replaces 2s polling with real-time push (AngelOne NSE ws, Finnhub US ws,
-// Binance crypto ws). Per-key throttle keeps the stream light.
+// Replaces 2s polling with real-time push (NSE, Finnhub US, Binance crypto).
+// Per-key throttle keeps the stream light.
 // ------------------------------------------------------------
 function parseSyms(v) {
   return String(v || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 60);
@@ -594,144 +590,6 @@ app.post('/api/telegram', async (req, res) => {
 // Tell the frontend whether server-side Telegram is available
 app.get('/api/telegram-status', (_req, res) => {
   res.json({ configured: !!(TG.token && TG.chatId) });
-});
-
-// ------------------------------------------------------------
-// ALGO TRADING — INDMoney (Tradetron) + CoinDCX Futures
-// ------------------------------------------------------------
-// INDMoney trades are routed via Tradetron webhook.
-// CoinDCX trades use direct HMAC-authenticated API.
-// No static IP required for either!
-// ------------------------------------------------------------
-
-// --- INDMoney / Tradetron endpoints ---
-app.post('/api/trade/place', async (req, res) => {
-  try {
-    if (!indmoneyEnabled()) return jsonError(res, 503, 'INDMoney/Tradetron not configured');
-    const result = await executeTradetronSignal(req.body);
-    return res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/trade/deploy', async (req, res) => {
-  try {
-    const result = await deployStrategy(req.body || {});
-    return res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/trade/toggle', async (req, res) => {
-  try {
-    const { action } = req.body || {};
-    const result = await toggleStrategy(action || 'pause');
-    return res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/trade/strategy-status', async (_req, res) => {
-  try {
-    const result = await getStrategyStatus();
-    return res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/trade/positions', async (_req, res) => {
-  try {
-    const result = await getTradetronPositions();
-    return res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/trade/history', async (_req, res) => {
-  try {
-    const result = await getTradeHistory();
-    return res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// --- CoinDCX Futures endpoints ---
-app.post('/api/futures/place', async (req, res) => {
-  try {
-    if (!coindcxEnabled()) return jsonError(res, 503, 'CoinDCX not configured — API key/secret required');
-    const result = await placeFuturesOrder(req.body);
-    return res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/futures/cancel', async (req, res) => {
-  try {
-    if (!coindcxEnabled()) return jsonError(res, 503, 'CoinDCX not configured');
-    const { orderId } = req.body || {};
-    if (!orderId) return jsonError(res, 400, 'orderId required');
-    const result = await cancelFuturesOrder(orderId);
-    return res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/futures/orders', async (_req, res) => {
-  try {
-    const result = await getFuturesOrders();
-    return res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/futures/positions', async (_req, res) => {
-  try {
-    const result = await getFuturesPositions();
-    return res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/futures/balance', async (_req, res) => {
-  try {
-    const result = await getFuturesBalance();
-    return res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/futures/trades', async (_req, res) => {
-  try {
-    const result = await getFuturesTradeHistory();
-    return res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Combined status: INDMoney + CoinDCX availability
-app.get('/api/trade/status', (_req, res) => {
-  res.set('Cache-Control', 'no-store');
-  res.json({
-    indmoney: getIndmoneyStatus(),
-    coindcx: getCoindcxStatus(),
-    publicIp: getPublicIp(),
-  });
-});
-
-// ------------------------------------------------------------
-// AUTO-TRADING — AI-driven entry/exit engine
-// ------------------------------------------------------------
-// Supports dual-broker: INDMoney (equity) + CoinDCX (crypto futures).
-// The frontend drives the tick loop every ~30s.
-// Config and state are kept in-memory.
-// ------------------------------------------------------------
-app.post('/api/trade/auto/config', async (req, res) => {
-  try {
-    const result = setAutoConfig(req.body || {});
-    res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/trade/auto/config', (_req, res) => {
-  try {
-    res.json(getAutoConfig());
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/api/trade/auto/tick', async (req, res) => {
-  try {
-    const { signals } = req.body || {};
-    const result = await autoTick(signals || []);
-    res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ------------------------------------------------------------

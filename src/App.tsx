@@ -29,12 +29,10 @@ function lazyWithRetry(importFn: () => Promise<any>, name: string) {
 
 // Lazy load all tab components for faster initial load
 const DashboardTab = lazyWithRetry(() => import('./components/tabs/DashboardTab'), 'dashboard');
-const IntradayProTab = lazyWithRetry(() => import('./components/tabs/IntradayProTab'), 'intraday');
 const PortfolioTab = lazyWithRetry(() => import('./components/tabs/PortfolioTab'), 'portfolio');
 const PlannerTab = lazyWithRetry(() => import('./components/tabs/PlannerTab'), 'planner');
 const MacroTab = lazyWithRetry(() => import('./components/tabs/MacroTab').then(m => ({ default: m.MacroTab })), 'macro');
 const GuideTab = lazyWithRetry(() => import('./components/tabs/GuideTab').then(m => ({ default: m.GuideTab })), 'guide');
-const AlgoTradeTab = lazyWithRetry(() => import('./components/tabs/AlgoTradeTab'), 'algotrade');
 
 const NeuralChat = lazyWithRetry(() => import('./components/NeuralChat').then(m => ({ default: m.NeuralChat })), 'neuralchat');
 
@@ -66,13 +64,13 @@ export default function App() {
     refreshAll, isRefreshing,
   } = state;
 
-  // Keyboard Shortcuts for Tabs (1-7)
+  // Keyboard Shortcuts for Tabs (1-5)
   useEffect(() => {
     if (!isAuthenticated) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if user is typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      const tabs: TabType[] = ['dashboard', 'intraday', 'portfolio', 'planner', 'macro', 'guide', 'algotrade'];
+      const tabs: TabType[] = ['dashboard', 'portfolio', 'planner', 'macro', 'guide'];
       const key = parseInt(e.key);
       if (!isNaN(key) && key >= 1 && key <= tabs.length) {
         setActiveTab(tabs[key - 1]);
@@ -167,10 +165,10 @@ export default function App() {
 
               {/* Tabs */}
               <div className="flex gap-0.5 quantum-panel p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
-                {(['dashboard', 'intraday', 'portfolio', 'planner', 'macro', 'guide', 'algotrade'] as TabType[]).map(tab => (
+                {(['dashboard', 'portfolio', 'planner', 'macro', 'guide'] as TabType[]).map(tab => (
                   <button key={tab} onClick={() => setActiveTab(tab)} className={`quantum-tab px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${activeTab === tab ? 'active' : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'}`}>
-                    <span className="hidden sm:inline">{tab === 'dashboard' && '📊 Dashboard'}{tab === 'intraday' && '⚡ Intraday Pro'}{tab === 'portfolio' && '💼 Portfolio'}{tab === 'planner' && '🎯 Planner'}{tab === 'macro' && '🌍 Risk'}{tab === 'guide' && '📖 Guide'}{tab === 'algotrade' && '🤖 ALGO Trade'}</span>
-                    <span className="sm:hidden">{tab === 'dashboard' && '📊'}{tab === 'intraday' && '⚡'}{tab === 'portfolio' && '💼'}{tab === 'planner' && '🎯'}{tab === 'macro' && '🌍'}{tab === 'guide' && '📖'}{tab === 'algotrade' && '🤖'}</span>
+                    <span className="hidden sm:inline">{tab === 'dashboard' && '📊 Dashboard'}{tab === 'portfolio' && '💼 Portfolio'}{tab === 'planner' && '🎯 Planner'}{tab === 'macro' && '🌍 Risk'}{tab === 'guide' && '📖 Guide'}</span>
+                    <span className="sm:hidden">{tab === 'dashboard' && '📊'}{tab === 'portfolio' && '💼'}{tab === 'planner' && '🎯'}{tab === 'macro' && '🌍'}{tab === 'guide' && '📖'}</span>
                   </button>
                 ))}
               </div>
@@ -190,12 +188,10 @@ export default function App() {
           <Suspense fallback={<div className="flex items-center justify-center py-20"><div className="text-center"><div className="text-4xl mb-3 animate-float">⚡</div><div className="text-sm text-slate-500 font-medium">Loading module...</div></div></div>}>
             <ErrorBoundary fallback={<div className="quantum-panel rounded-2xl p-8 text-center border border-red-500/20"><div className="text-4xl mb-3">🚨</div><div className="text-red-400 font-bold mb-2">Tab crashed</div><div className="text-slate-500 text-sm">Reload or switch tabs</div></div>}>
               {activeTab === 'dashboard' && <DashboardTab />}
-              {activeTab === 'intraday' && <IntradayProTab />}
               {activeTab === 'portfolio' && <PortfolioTab />}
               {activeTab === 'planner' && <PlannerTab />}
               {activeTab === 'macro' && <MacroTab />}
               {activeTab === 'guide' && <GuideTab />}
-              {activeTab === 'algotrade' && <AlgoTradeTab />}
             </ErrorBoundary>
           </Suspense>
         </main>
