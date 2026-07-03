@@ -5,6 +5,9 @@ import { formatCurrency } from '../../utils/constants';
 import { analyzeAsset } from '../../utils/telegram';
 import { SmartDipSizer } from '../SmartDipSizer';
 import { WhatIfSIPOptimizer } from '../WhatIfSIPOptimizer';
+import { MonteCarloSimulator } from '../MonteCarloSimulator';
+import { TaxOptimizationSuite } from '../TaxOptimizationSuite';
+import { InflationAdjustedReturns } from '../InflationAdjustedReturns';
 import { MonthlyAnalyticsPanel } from '../MonthlyAnalyticsPanel';
 import { exportMonthlyAnalyticsCSV } from '../../utils/exportData';
 import {
@@ -213,8 +216,27 @@ export default React.memo(function PlannerTab() {
         </div>
       </div>
 
-      {/* What-If SIP Optimizer — Regime-Aware */}
+      {/* What-If SIP Optimizer — Regime-Aware (with Step-Up comparison + inflation) */}
       <WhatIfSIPOptimizer currentSIP={totalSIP} investYears={investYears} />
+
+      {/* FEATURE 1: Monte Carlo SIP Simulator — 10,000 simulation distribution */}
+      <MonteCarloSimulator currentSIP={totalSIP} investYears={investYears} />
+
+      {/* FEATURE 9: Inflation-Adjusted Real Returns widget */}
+      <InflationAdjustedReturns
+        portfolioValue={metrics.totalValue}
+        nominalCagr={cagr}
+        years={investYears}
+        monthlyExpense={monthlyExpenses}
+      />
+
+      {/* FEATURE 7: Tax Optimization Suite */}
+      <TaxOptimizationSuite
+        portfolio={portfolio}
+        transactions={transactions}
+        livePrices={livePrices}
+        usdInrRate={usdInrRate}
+      />
 
       {/* FIRE */}
       <div className="quantum-panel rounded-2xl p-5 border-orange-500/10 animate-fade-in-up delay-200">

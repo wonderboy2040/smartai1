@@ -920,6 +920,118 @@ bot.onText(/^\/fundamentals?(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
 
 
 // ========================================
+// COMMAND: /quality — Stock Quality Scorecard (long-term fundamental)
+// ========================================
+// Computes a 0-100 quality score using Piotroski F-Score, Altman Z-Score,
+// ROE trend, debt/equity, promoter holding, FCF yield, earnings consistency.
+bot.onText(/^\/quality(?:@\w+)?(?:\s+(\S+))(?:\s+(IN|US))?$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  const symbol = (match[1] || '').toUpperCase().replace('.NS', '').replace('.BO', '');
+  const market = (match[2] || 'IN').toUpperCase();
+  if (!symbol) {
+    await safeSend(chatId, 'Usage: <code>/quality RELIANCE</code> or <code>/quality AAPL US</code>');
+    return;
+  }
+  console.log(`📥 /quality ${symbol} (${market}) from ${msg.from?.first_name || chatId}`);
+  try {
+    await safeSend(chatId, `🔍 <i>Computing quality scorecard for ${symbol} (${market})...</i>`);
+    const serverBase = `http://localhost:${process.env.PORT || 8080}`;
+    const url = `${serverBase}/api/fundamentals/${encodeURIComponent(symbol)}?market=${market}`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) {
+      await safeSend(chatId, `❌ Could not fetch fundamentals for ${symbol} (HTTP ${r.status}). Yahoo may be rate-limited.`);
+      return;
+    }
+    const d = await r.json();
+    const toNum = v => (v == null ? 0 : typeof v === 'number' ? v : typeof v === 'object' && 'raw' in v ? v.raw : parseFloat(v) || 0);
+
+    // Piotroski F-Score
+    let fScore = 0;
+    const ni = (d.netIncome5yr || []).slice(-1)[0] || 0;
+    const ocf = toNum(d.operatingCashFlow);
+    if (ni > 0) fScore++;
+    if (ocf > 0) fScore++;
+    if (ocf > ni) fScore++;
+    const roa = d.totalAssets > 0 ? ni / d.totalAssets : 0;
+    if (roa > 0) fScore++;
+    const deNow = d.totalEquity > 0 ? d.totalDebt / d.totalEquity : 0;
+    if (deNow < 0.5) fScore++;
+    if (d.currentRatio && d.currentRatio > 1) fScore++;
+    if (d.totalEquity > 0) fScore++;
+    const revNow = (d.revenue5yr || []).slice(-1)[0] || d.salesOrRevenue || 0;
+    const revPrev = (d.revenue5yr || []).slice(-2, -1)[0] || 0;
+    if (revNow > revPrev) fScore++;
+    const at = d.totalAssets > 0 ? revNow / d.totalAssets : 0;
+    if (at > 0.5) fScore++;
+    const piotroskiScore = (fScore / 9) * 100;
+
+    // Altman Z-Score
+    let zScore = 0, zBand = 'N/A';
+    if (!d.isBank && d.totalAssets > 0 && d.totalLiabilities > 0) {
+      const x1 = d.workingCapital / d.totalAssets;
+      const x2 = d.retainedEarnings / d.totalAssets;
+      const x3 = d.ebit / d.totalAssets;
+      const x4 = d.marketCap / d.totalLiabilities;
+      const x5 = (d.salesOrRevenue || 0) / d.totalAssets;
+      zScore = 1.2 * x1 + 1.4 * x2 + 3.3 * x3 + 0.6 * x4 + 1.0 * x5;
+      zBand = zScore >= 2.99 ? 'Safe' : zScore >= 1.81 ? 'Grey zone' : '⚠️ Distress';
+    }
+    const zScoreScore = zScore >= 2.99 ? 90 : zScore >= 1.81 ? 60 : zScore > 0 && zScore < 1.81 ? 15 : 50;
+
+    const roe = d.roe || 0;
+    const roeScore = roe >= 20 ? 90 : roe >= 15 ? 75 : roe >= 10 ? 55 : roe >= 5 ? 35 : 15;
+    const deScore = d.isBank ? 70 : deNow < 0.5 ? 95 : deNow < 1 ? 80 : deNow < 2 ? 60 : deNow < 3 ? 35 : 10;
+    let promoScore = 70;
+    if (market === 'IN' && d.promoterHoldingPct != null) {
+      promoScore = d.promoterHoldingPct >= 60 ? 95 : d.promoterHoldingPct >= 50 ? 85 : d.promoterHoldingPct >= 40 ? 70 : d.promoterHoldingPct >= 30 ? 50 : 25;
+    }
+    const fcf = (d.operatingCashFlow || 0) - (d.capex || 0);
+    const fcfYield = d.marketCap > 0 ? (fcf / d.marketCap) * 100 : 0;
+    const fcfScore = fcfYield > 8 ? 95 : fcfYield > 5 ? 85 : fcfYield > 2 ? 70 : fcfYield > 0 ? 50 : 25;
+    const eps = (d.eps5yr || []).filter(v => v > 0);
+    let epsScore = 50;
+    if (eps.length >= 4) {
+      const mean = eps.reduce((a, b) => a + b, 0) / eps.length;
+      const variance = eps.reduce((s, v) => s + (v - mean) ** 2, 0) / eps.length;
+      const cv = mean > 0 ? Math.sqrt(variance) / mean : 1;
+      epsScore = cv < 0.15 ? 95 : cv < 0.3 ? 80 : cv < 0.5 ? 60 : cv < 0.7 ? 40 : 20;
+    }
+
+    const total = Math.round(
+      piotroskiScore * 0.25 + zScoreScore * 0.20 + roeScore * 0.15 + deScore * 0.15
+      + promoScore * 0.10 + fcfScore * 0.10 + epsScore * 0.05
+    );
+    const grade = total >= 90 ? 'A+' : total >= 80 ? 'A' : total >= 70 ? 'B+' : total >= 60 ? 'B' : total >= 45 ? 'C' : total >= 30 ? 'D' : 'F';
+    const emoji = total >= 80 ? '🟢' : total >= 65 ? '🟡' : total >= 45 ? '🟠' : '🔴';
+
+    let out = `${emoji} <b>QUALITY SCORECARD — ${symbol}</b> (${market})\n`;
+    out += `<code>━━━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+    out += `<b>Score:</b> ${total}/100  <b>Grade:</b> ${grade}\n\n`;
+    out += `<b>Factor Breakdown:</b>\n`;
+    out += `• <b>Piotroski F-Score</b> (25%): ${piotroskiScore.toFixed(0)}/100 — F=${fScore}/9\n`;
+    out += `• <b>Altman Z-Score</b> (20%): ${zScoreScore.toFixed(0)}/100 — Z=${zScore.toFixed(2)} (${zBand})\n`;
+    out += `• <b>ROE Trend</b> (15%): ${roeScore.toFixed(0)}/100 — ROE=${roe.toFixed(1)}%\n`;
+    out += `• <b>Debt/Equity</b> (15%): ${deScore.toFixed(0)}/100 — D/E=${deNow.toFixed(2)}\n`;
+    out += `• <b>Promoter Holding</b> (10%): ${promoScore.toFixed(0)}/100 — ${d.promoterHoldingPct != null ? d.promoterHoldingPct.toFixed(1) + '%' : 'N/A'}\n`;
+    out += `• <b>FCF Yield</b> (10%): ${fcfScore.toFixed(0)}/100 — ${fcfYield.toFixed(2)}%\n`;
+    out += `• <b>Earnings Consistency</b> (5%): ${epsScore.toFixed(0)}/100\n\n`;
+    if (zBand.includes('Distress') || deNow > 3 || roe < 0) {
+      out += `🚨 <b>Red Flags detected</b> — high bankruptcy / leverage / loss risk.\n\n`;
+    }
+    if (total >= 80) out += `<b>Verdict:</b> ✅ High-quality compounder — long-term core holding.`;
+    else if (total >= 65) out += `<b>Verdict:</b> 🟡 Decent quality — hold but monitor.`;
+    else if (total >= 45) out += `<b>Verdict:</b> 🟠 Marginal — consider trimming.`;
+    else out += `<b>Verdict:</b> 🚨 Low quality — exit on rallies.`;
+    await safeSend(chatId, out);
+  } catch (e) {
+    console.error('❌ /quality error:', e.message);
+    await safeSend(chatId, `❌ Quality scorecard failed: ${e.message}`);
+  }
+});
+
+
+// ========================================
 // COMMAND: /portfolio
 // ========================================
 bot.onText(/^\/portfolio(@\w+)?$/i, async (msg) => {

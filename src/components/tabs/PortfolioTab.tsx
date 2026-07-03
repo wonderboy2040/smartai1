@@ -5,6 +5,7 @@ import { calculatePortfolioXIRR } from '../../utils/wealthEngine';
 import { MonthlyReturnReport } from '../MonthlyReturnReport';
 import TransactionHistoryPanel from '../TransactionHistoryPanel';
 import PriceAlertsPanel from '../PriceAlertsPanel';
+import { QualityScorecard } from '../QualityScorecard';
 import { exportTransactionsCSV, exportMonthlyReturnsCSV } from '../../utils/exportData';
 import { LivePrice } from '../LivePrice';
 
@@ -18,6 +19,17 @@ const PortfolioTab = React.memo(function PortfolioTab() {
     setEditId, setTransactionType, setShowAddModal, setModalPrice,
     refreshAll, isRefreshing,
   } = useApp();
+
+  // FEATURE 3: Track which holding the user wants to score.
+  const [scorecardSymbol, setScorecardSymbol] = useState<string>('');
+  const [scorecardMarket, setScorecardMarket] = useState<'IN' | 'US'>('IN');
+  useEffect(() => {
+    // Default to first holding if user hasn't picked one.
+    if (!scorecardSymbol && portfolio.length > 0) {
+      setScorecardSymbol(portfolio[0].symbol);
+      setScorecardMarket(portfolio[0].market as 'IN' | 'US');
+    }
+  }, [portfolio, scorecardSymbol]);
 
   // --- Search / filter / sort controls ---
   const [search, setSearch] = useState('');
@@ -262,6 +274,35 @@ const PortfolioTab = React.memo(function PortfolioTab() {
 
       {/* Monthly Return Report (month-wise booked + unrealized returns) */}
       <MonthlyReturnReport />
+
+      {/* FEATURE 3: Stock Quality Scorecard — fundamental analysis */}
+      {portfolio.length > 0 && (
+        <div className="mt-4">
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <div className="text-[10px] text-cyan-500/70 font-bold uppercase tracking-wider">Pick a holding for fundamental analysis:</div>
+            <select
+              value={scorecardSymbol}
+              onChange={e => {
+                const pos = portfolio.find(p => p.symbol === e.target.value);
+                if (pos) {
+                  setScorecardSymbol(pos.symbol);
+                  setScorecardMarket(pos.market as 'IN' | 'US');
+                }
+              }}
+              className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-white outline-none"
+            >
+              {portfolio.map(p => (
+                <option key={`${p.market}_${p.symbol}`} value={p.symbol}>
+                  {p.symbol} ({p.market})
+                </option>
+              ))}
+            </select>
+          </div>
+          {scorecardSymbol && (
+            <QualityScorecard symbol={scorecardSymbol} market={scorecardMarket} />
+          )}
+        </div>
+      )}
 
       {/* Price Alerts (target / stop-loss → Telegram) */}
       <PriceAlertsPanel />

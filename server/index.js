@@ -743,6 +743,169 @@ app.post('/api/ml/analyze', (req, res) => {
   });
 });
 
+// ------------------------------------------------------------
+// GET /api/fundamentals/:symbol → fundamental data for Quality Scorecard
+// ------------------------------------------------------------
+// Proxies Yahoo Finance quoteSummary server-side (no CORS issue) and
+// normalises the response into the shape expected by qualityScorecard.ts.
+// Cached 24h because fundamentals change slowly.
+// ------------------------------------------------------------
+const _fundamentalsCache = new Map();  // symbol → { data, ts }
+const FUNDAMENTALS_TTL = 24 * 60 * 60 * 1000;
+
+app.get('/api/fundamentals/:symbol', async (req, res) => {
+  const rawSymbol = String(req.params.symbol || '').trim().toUpperCase();
+  if (!rawSymbol) return jsonError(res, 400, 'symbol required');
+  const market = String(req.query.market || '').toUpperCase();
+
+  const cached = _fundamentalsCache.get(rawSymbol);
+  if (cached && Date.now() - cached.ts < FUNDAMENTALS_TTL) {
+    return res.json(cached.data);
+  }
+
+  // Map to Yahoo ticker (same logic as /api/chart)
+  const ysym = toYahooSymbol(rawSymbol, market);
+
+  try {
+    // Yahoo quoteSummary endpoint — fetch multiple modules in one call.
+    const modules = 'incomeStatementHistory,balanceSheetHistory,defaultKeyStatistics,financialData,summaryDetail,price';
+    const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ysym)}?modules=${modules}`;
+    const r = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI fundamentals proxy)' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return jsonError(res, 502, `Yahoo upstream ${r.status}`);
+    const j = await r.json();
+    const qs = j?.quoteSummary?.result?.[0];
+    if (!qs) return jsonError(res, 502, 'No quoteSummary result');
+
+    // ---- Normalise into FundamentalData shape ----
+    const income = qs.incomeStatementHistory?.incomeStatementHistory || [];
+    const balance = qs.balanceSheetHistory?.balanceSheetStatements || [];
+    const fin = qs.financialData || {};
+    const ks = qs.defaultKeyStatistics || {};
+    const sd = qs.summaryDetail || {};
+    const px = qs.price || {};
+
+    const latest = income[0] || {};
+    const prev = income[1] || {};
+    const bs = balance[0] || {};
+
+    const toNum = (v) => {
+      if (v == null) return 0;
+      if (typeof v === 'number') return v;
+      if (typeof v === 'object' && 'raw' in v) return v.raw || 0;
+      return parseFloat(v) || 0;
+    };
+
+    const revenue5yr = income.map(i => toNum(i.totalRevenue)).reverse();
+    const netIncome5yr = income.map(i => toNum(i.netIncome)).reverse();
+    const eps5yr = (qs.incomeStatementHistory?.incomeStatementHistory || []).map(i => toNum(i.dilutedEPS)).reverse();
+
+    const totalAssets = toNum(bs.totalAssets);
+    const totalLiabilities = toNum(bs.totalLiab);
+    const totalEquity = toNum(bs.totalStockholderEquity);
+    const totalDebt = toNum(bs.totalDebt || bs.shortLongTermDebt);
+    const retainedEarnings = toNum(bs.retainedEarnings);
+    const currentAssets = toNum(bs.totalCurrentAssets);
+    const currentLiab = toNum(bs.totalCurrentLiabilities);
+    const workingCapital = currentAssets - currentLiab;
+    const ebit = toNum(latest.operatingIncome) || toNum(latest.ebit);
+    const marketCap = toNum(px.marketCap) || toNum(ks.marketCap);
+    const salesOrRevenue = toNum(latest.totalRevenue);
+    const operatingCashFlow = toNum(fin.operatingCashflow || fin.totalCashFromOperatingActivities);
+    const capex = Math.abs(toNum(fin.capex || fin.capitalExpenditures));
+    const bookValuePerShare = toNum(ks.bookValuePerShare);
+    const promoterHoldingPct = ks.heldPercentInsiders != null
+      ? ks.heldPercentInsiders * 100
+      : undefined;
+
+    const grossMargin = latest.grossProfit && latest.totalRevenue
+      ? (latest.grossProfit.raw / latest.totalRevenue.raw) * 100 : 0;
+    const netMargin = netIncome5yr[netIncome5yr.length - 1] && revenue5yr[revenue5yr.length - 1]
+      ? (netIncome5yr[netIncome5yr.length - 1] / revenue5yr[revenue5yr.length - 1]) * 100 : 0;
+    const roe = totalEquity > 0
+      ? (netIncome5yr[netIncome5yr.length - 1] / totalEquity) * 100 : 0;
+
+    // Heuristic: bank if balance sheet has no inventory AND no retained earnings flag typical of banks
+    const isBank = !bs.inventory || (ks.beta && sd.beta && ks.forwardPE == null && totalDebt > totalEquity * 5);
+
+    const data = {
+      symbol: rawSymbol,
+      market: market === 'IN' ? 'IN' : 'US',
+      revenue5yr,
+      netIncome5yr,
+      eps5yr,
+      totalAssets,
+      totalLiabilities,
+      totalEquity,
+      totalDebt,
+      retainedEarnings,
+      workingCapital,
+      ebit,
+      marketCap,
+      salesOrRevenue,
+      operatingCashFlow,
+      capex,
+      bookValuePerShare,
+      promoterHoldingPct,
+      grossMargin,
+      netMargin,
+      roe,
+      isBank,
+      currentRatio: currentLiab > 0 ? currentAssets / currentLiab : 1,
+    };
+
+    _fundamentalsCache.set(rawSymbol, { data, ts: Date.now() });
+    res.set('Cache-Control', 'public, max-age=86400');
+    return res.json(data);
+  } catch (e) {
+    return jsonError(res, 502, `fundamentals fetch failed: ${e?.message || e}`);
+  }
+});
+
+// ------------------------------------------------------------
+// GET /api/inflation → India CPI + US CPI for real-returns calc
+// ------------------------------------------------------------
+// Fetches India CPI YoY from World Bank API (free, no key) and US CPI
+// from BLS-style endpoint. Cached 24h because CPI is monthly.
+// ------------------------------------------------------------
+let _inflationCache = { data: null, ts: 0 };
+const INFLATION_TTL = 24 * 60 * 60 * 1000;
+
+app.get('/api/inflation', async (_req, res) => {
+  if (_inflationCache.data && Date.now() - _inflationCache.ts < INFLATION_TTL) {
+    return res.json(_inflationCache.data);
+  }
+  // World Bank API: indicator FP.CPI.TOTL.ZG (inflation, consumer prices %)
+  // Latest value per country. Returns array of observations.
+  async function fetchWB(country) {
+    try {
+      const url = `https://api.worldbank.org/v2/country/${country}/indicator/FP.CPI.TOTL.ZG?format=json&per_page=5&date=2023:2024`;
+      const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      if (!r.ok) return null;
+      const j = await r.json();
+      const obs = j?.[1];
+      if (Array.isArray(obs) && obs.length > 0) {
+        // First entry is most recent.
+        const v = obs[0]?.value;
+        if (typeof v === 'number' && v > -50 && v < 200) return v;
+      }
+    } catch { /* fall through */ }
+    return null;
+  }
+  const [india, us] = await Promise.all([fetchWB('IN'), fetchWB('US')]);
+  const data = {
+    india: india ?? 6,    // fallback to typical long-run avg
+    us: us ?? 3,
+    source: 'World Bank CPI (FP.CPI.TOTL.ZG)',
+    fetchedAt: new Date().toISOString(),
+  };
+  _inflationCache = { data, ts: Date.now() };
+  res.set('Cache-Control', 'public, max-age=86400');
+  return res.json(data);
+});
+
 // Market Intelligence — Snapshot of market regime, top picks, risk
 // ------------------------------------------------------------
 const marketIntelligence = (() => {
