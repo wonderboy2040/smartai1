@@ -14,6 +14,8 @@ import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from '../uti
 import { connectLiveStream } from '../utils/liveStream';
 import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen, analyzeAsset, getSmartAllocations, generateDeepAnalysis } from '../utils/telegram';
 import { generateWeeklyWealthReport } from '../utils/wealthEngine';
+import { applyPortfolioDiff } from '../utils/portfolioDiffEngine';
+import { recordDailyPL } from '../utils/dailyPLTracker';
 
 function mergePriceData(existing: PriceData | undefined, incoming: Partial<PriceData>): PriceData {
   const time = incoming.time ?? Date.now();
@@ -621,6 +623,45 @@ export function useAppState() {
       }
     }
   }, [portfolio, currentSymbol]);
+
+  // --- Auto-diff portfolio vs last-seen snapshot (Google Sheets sync) ---
+  // When the portfolio changes (e.g. user added a buy in Google Sheets →
+  // cloud sync replaces state), compute the diff and append synthetic
+  // transactions to the ledger so Monthly Plan Tracker + Return Report
+  // can see them. Skips the very first run (initial load) so we don't
+  // flood the ledger with all existing holdings.
+  const diffInitRef = useRef(false);
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (portfolio.length === 0) return;
+    // Skip the very first invocation (initial load) — just establish baseline.
+    if (!diffInitRef.current) {
+      diffInitRef.current = true;
+      applyPortfolioDiff(portfolio, transactionsRef.current, livePricesRef.current, usdInrRateRef.current);
+      return;
+    }
+    const { transactions: updated, added } = applyPortfolioDiff(
+      portfolio, transactionsRef.current, livePricesRef.current, usdInrRateRef.current
+    );
+    if (added > 0) {
+      console.log(`[diff-engine] ${added} new transaction(s) auto-recorded from portfolio change.`);
+      setTransactions(updated);
+    }
+  }, [portfolio, isAuthenticated]);
+
+  // --- Daily P&L snapshot ---
+  // Records today's portfolio value snapshot once per day (idempotent —
+  // multiple calls in one day just update the same entry). The daily
+  // P&L is the change vs yesterday's snapshot minus today's new capital.
+  useEffect(() => {
+    if (!isAuthenticated || portfolio.length === 0) return;
+    // Snapshot whenever portfolio value or live prices change meaningfully,
+    // but the function is idempotent for the same calendar day.
+    const t = setTimeout(() => {
+      recordDailyPL(portfolio, livePricesRef.current, usdInrRateRef.current, transactionsRef.current);
+    }, 2000);  // debounce 2s so we don't snapshot on every tick
+    return () => clearTimeout(t);
+  }, [portfolio, isAuthenticated, Object.keys(livePrices).length]);
 
   // --- Save transaction ledger ---
   useEffect(() => {

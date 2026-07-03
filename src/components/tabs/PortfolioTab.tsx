@@ -3,6 +3,8 @@ import { useApp } from '../../hooks/AppContext';
 import { getTodayString } from '../../utils/constants';
 import { calculatePortfolioXIRR } from '../../utils/wealthEngine';
 import { MonthlyReturnReport } from '../MonthlyReturnReport';
+import { MonthlyPlanTracker } from '../MonthlyPlanTracker';
+import { DailyPLTracker } from '../DailyPLTracker';
 import TransactionHistoryPanel from '../TransactionHistoryPanel';
 import PriceAlertsPanel from '../PriceAlertsPanel';
 import { QualityScorecard } from '../QualityScorecard';
@@ -271,6 +273,12 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         </div>
       )}
 
+
+      {/* FEATURE: Monthly Plan Tracker — planned vs actual per market */}
+      <MonthlyPlanTracker />
+
+      {/* FEATURE: Daily P&L Tracker — today + last 7 days + monthly report */}
+      <DailyPLTracker />
 
       {/* Monthly Return Report (month-wise booked + unrealized returns) */}
       <MonthlyReturnReport />
