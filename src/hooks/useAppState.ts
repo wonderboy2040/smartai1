@@ -644,7 +644,9 @@ export function useAppState() {
       portfolio, transactionsRef.current, livePricesRef.current, usdInrRateRef.current
     );
     if (added > 0) {
-      console.log(`[diff-engine] ${added} new transaction(s) auto-recorded from portfolio change.`);
+      // FIX #20: demoted debug log to console.debug so dev console isn't spammed
+      // on every portfolio sync. esbuild drops it in production.
+      console.debug(`[diff-engine] ${added} new transaction(s) auto-recorded from portfolio change.`);
       setTransactions(updated);
     }
   }, [portfolio, isAuthenticated]);
@@ -724,15 +726,19 @@ export function useAppState() {
     return () => clearInterval(interval);
   }, [isAuthenticated]);
 
-  // --- Cloud sync (debounced 5s) ---
+  // --- Cloud sync (debounced 5s on portfolio change only) ---
+  // FIX HIGH #9: previously `usdInrRate` was in deps, but forex updates every
+  // 15s → cloud sync POSTed every ~20s even when portfolio unchanged → risk of
+  // Apps Script quota exhaustion. Drop usdInrRate from deps; syncToCloud reads
+  // it at call time via the ref.
   useEffect(() => {
     if (portfolio.length === 0) return;
     if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
     cloudSyncTimerRef.current = window.setTimeout(() => {
-      syncToCloud(portfolio, usdInrRate);
+      syncToCloud(portfolio, usdInrRateRef.current);
     }, 5000);
     return () => { if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current); };
-  }, [portfolio, usdInrRate]);
+  }, [portfolio]);
 
   // --- Forex refresh (realtime 24x7, every 15s) ---
   useEffect(() => {
@@ -977,6 +983,10 @@ export function useAppState() {
   }, [isAuthenticated, calculateMetrics, portfolio]);
 
   // --- Telegram auto-report (OFF by default — bot handles 24x7 alerts) ---
+  // FIX HIGH #1: previously `metrics` was in deps, but `metrics` rebuilds on
+  // every live price tick → the 120s timeout + 30min interval were constantly
+  // cleared & re-scheduled, so NO auto-report ever fired. Drop `metrics` from
+  // deps; read fresh metrics inside the closure via `latestDataRef.current`.
   useEffect(() => {
     if (!isAuthenticated || !autoTelegram || portfolio.length === 0) return;
     const sendIfMarketOpen = async () => {
@@ -984,7 +994,9 @@ export function useAppState() {
       if (!isAnyMarketOpen()) return;
       const [tgToken, tgChatId] = await Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')]);
       if (!tgToken || !tgChatId) return;
-      const msg = generateDeepAnalysis(d.portfolio, d.livePrices, d.usdInrRate, metrics);
+      // Recompute metrics fresh inside the closure so we always send current state.
+      const currentMetrics = calculateMetrics();
+      const msg = generateDeepAnalysis(d.portfolio, d.livePrices, d.usdInrRate, currentMetrics);
       await sendTelegramAlert(tgToken, tgChatId, msg);
     };
     initialTimeoutRef.current = setTimeout(sendIfMarketOpen, 120000);
@@ -993,9 +1005,11 @@ export function useAppState() {
       if (initialTimeoutRef.current) clearTimeout(initialTimeoutRef.current);
       if (telegramIntervalRef.current) clearInterval(telegramIntervalRef.current);
     };
-  }, [isAuthenticated, autoTelegram, portfolio.length, metrics]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, autoTelegram, portfolio.length]);
 
   // --- Weekly Wealth Report (Sunday 9 AM IST) ---
+  // FIX HIGH #25: same root cause as #1 — drop `metrics` from deps.
   const weeklyReportRef = useRef<string>('');
   useEffect(() => {
     if (!isAuthenticated || !autoTelegram || portfolio.length === 0) return;
@@ -1009,6 +1023,7 @@ export function useAppState() {
       if (day === 0 && hour === 9 && weeklyReportRef.current !== todayStr) {
         weeklyReportRef.current = todayStr;
         const d = latestDataRef.current;
+        const currentMetrics = calculateMetrics();
         let weeklyTotalSIP = 16500;
         let weeklyInvestYears = 15;
         let weeklyCagr = 12;
@@ -1026,7 +1041,7 @@ export function useAppState() {
         const cagr = weeklyCagr;
         const msg = generateWeeklyWealthReport(
           d.portfolio, d.livePrices, d.usdInrRate,
-          { ...metrics, totalInvested: metrics.totalInvested || 0 },
+          { ...currentMetrics, totalInvested: currentMetrics.totalInvested || 0 },
           totalSIP, investYears, cagr
         );
         const [tgToken, tgChatId] = await Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')]);
@@ -1037,7 +1052,8 @@ export function useAppState() {
     const interval = setInterval(checkWeeklyReport, 600000); // every 10 min
     checkWeeklyReport();
     return () => clearInterval(interval);
-  }, [isAuthenticated, autoTelegram, portfolio.length, metrics]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, autoTelegram, portfolio.length]);
 
   // --- WS Latency (60s — cosmetic) ---
   useEffect(() => {
@@ -1114,7 +1130,7 @@ export function useAppState() {
   const fireProgress = fireNumber > 0 ? Math.min(100, (metrics.totalValue / fireNumber) * 100) : 0;
 
   // --- Smart allocations (memoized) ---
-  const smartAllocations = useMemo(() => getSmartAllocations(livePrices, indiaSIP, usSIP, btcSIP, ethSIP), [livePrices, indiaSIP, usSIP, btcSIP, ethSIP]);
+  const smartAllocations = useMemo(() => getSmartAllocations(livePrices, indiaSIP, usSIP, btcSIP, ethSIP, usdInrRate), [livePrices, indiaSIP, usSIP, btcSIP, ethSIP, usdInrRate]);
 
   // --- Handlers ---
   const verifyPin = useCallback(async () => {

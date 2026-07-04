@@ -30,8 +30,11 @@ function getScoreColor(score: number): string {
 }
 
 export const SectorRotationPanel = React.memo(({ portfolio, livePrices, sectorData }: SectorRotationPanelProps) => {
-  // Get benchmark change (NIFTY or SPY)
-  const benchmarkChange = livePrices['NSE:NIFTY']?.change || livePrices['AMEX:SPY']?.change || 0;
+  // FIX HIGH #7: livePrices is keyed by `${market}_${symbol}` (e.g. 'IN_NIFTY',
+  // 'US_SPY') — never by TradingView 'NSE:NIFTY' format. The previous lookup
+  // always returned 0, so all sector `relativeStrength = s.change - 0` and
+  // trend classification was benchmark-blind.
+  const benchmarkChange = livePrices['IN_NIFTY']?.change || livePrices['US_SPY']?.change || 0;
 
   const sectorMomentum = useMemo(() => {
     if (sectorData.length === 0) return [];

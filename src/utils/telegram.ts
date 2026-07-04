@@ -212,11 +212,16 @@ export interface AllocationRec {
 export function getSmartAllocations(
   livePrices: Record<string, PriceData>,
   indiaSIP: number = 10000,
-  usSIP: number = 200,
+  usSIP_INR: number = 16000,
   btcSIP: number = 1000,
-  ethSIP: number = 500
+  ethSIP: number = 500,
+  usdInrRate: number = 83.5
 ): AllocationRec[] {
   const recs: AllocationRec[] = [];
+  // FIX HIGH #2: previously `usSIP` was treated as native USD but the UI
+  // passes it in INR. Convert to USD here so the per-ETF allocation math
+  // produces sane dollar amounts.
+  const usSIP_USD = usdInrRate > 0 ? usSIP_INR / usdInrRate : usSIP_INR;
 
   // Global VIX for risk adjustment
   const usVix = livePrices['US_VIX']?.price || 15;
@@ -308,7 +313,7 @@ export function getSmartAllocations(
   const inTotal = inRecs.reduce((s, r) => s + r.allocPct, 0) || 1;
   const usTotal = usRecs.reduce((s, r) => s + r.allocPct, 0) || 1;
   inRecs.forEach(r => { r.allocPct = r.allocPct / inTotal; r.allocAmount = Math.round(indiaSIP * r.allocPct); });
-  usRecs.forEach(r => { r.allocPct = r.allocPct / usTotal; r.allocAmount = Math.round(usSIP * r.allocPct); });
+  usRecs.forEach(r => { r.allocPct = r.allocPct / usTotal; r.allocAmount = Math.round(usSIP_USD * r.allocPct); });
 
   // Add BTC allocation
   const btcData = livePrices['IN_BTC'] || livePrices['US_BTC'];

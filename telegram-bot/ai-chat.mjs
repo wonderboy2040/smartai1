@@ -325,6 +325,10 @@ RSI: ${rsi} | Price: ₹${price.toFixed(2)} (${change >= 0 ? '+' : ''}${change.t
 // ============================================
 // ANTI-HALLUCINATION GUARD
 // ============================================
+// FIX H9: previously this function only logged a warning and ALWAYS returned
+// the LLM text unchanged — fabricated numbers flowed through to the user.
+// Now returns `null` when too many suspicious numbers are detected so the
+// caller (chatWithAI) can fall back to Quant Brain.
 function antiHallucinationCheck(llmText, contextData) {
   if (!llmText) return llmText;
   // Extract numbers from LLM response
@@ -338,7 +342,8 @@ function antiHallucinationCheck(llmText, contextData) {
     return val > 100 && !contextSet.has(n);
   });
   if (suspicious.length > 5) {
-    console.warn(`  ⚠️ Anti-hallucination: ${suspicious.length} suspicious numbers`);
+    console.warn(`  ⚠️ Anti-hallucination triggered: ${suspicious.length} suspicious numbers — falling back to Quant Brain`);
+    return null;
   }
   return llmText;
 }
@@ -546,7 +551,17 @@ async function _chatWithAIInner(chatId, userMessage, history, portfolio, livePri
   }
 
   // Anti-hallucination check
-  aiText = antiHallucinationCheck(aiText, contextData);
+  // FIX H9: handle `null` return (hallucination detected) → fall back to
+  // Quant Brain so the user gets deterministic data instead of fabricated LLM
+  // numbers.
+  const checked = antiHallucinationCheck(aiText, contextData);
+  if (checked === null) {
+    console.log('  🧠 Anti-hallucination fallback → Quant Brain');
+    aiText = quantBrainFallback('PORTFOLIO', contextData);
+    usedEngine = 'quant_brain_hallucination_fallback';
+  } else {
+    aiText = checked;
+  }
 
   let safeText = aiText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
   safeText = safeText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   runMonteCarloSIP, VOLATILITY_PRESETS, summarizeMonteCarlo,
   type MonteCarloResult, type VolatilityPreset,
@@ -51,11 +51,14 @@ export const MonteCarloSimulator = React.memo(({ currentSIP, investYears }: Prop
     }
   }, [monthlySIP, years, cagr, volatility, stepUp, targetCorpus]);
 
-  // Auto-run on first mount so users see results immediately.
-  React.useEffect(() => {
-    runSim();
+  // Auto-run on mount AND when inputs change. FIX HIGH #10: previously only
+  // ran on mount → stale results when user adjusted sliders. Now re-runs with
+  // a 300ms debounce so slider dragging doesn't fire 10000 sims per frame.
+  useEffect(() => {
+    const t = setTimeout(() => { runSim(); }, 300);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [monthlySIP, years, preset, stepUp, targetCorpus]);
 
   const fmtINR = (n: number) => {
     if (n >= 10000000) return `₹${(n / 10000000).toFixed(2)} Cr`;

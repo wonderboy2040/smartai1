@@ -47,6 +47,12 @@ export interface DailyPLEntry {
   india: number;           // INR P&L for the day
   usa: number;             // INR P&L for the day
   crypto: number;          // INR P&L for the day
+  // FIX HIGH #8: per-market portfolio VALUES (INR) at end of day. Previously
+  // we stored only P&L, so intra-day recompute couldn't reconstruct yesterday's
+  // baseline values → USA/Crypto P&L cards showed wildly inflated numbers.
+  indiaValueINR: number;
+  usaValueINR: number;
+  cryptoValueINR: number;
   total: number;           // INR
   portfolioValueINR: number;
   investedINR: number;
@@ -212,13 +218,20 @@ export function recordDailyPL(
     if (yesterdayKey && log[yesterdayKey]) {
       const y = log[yesterdayKey];
       baselineValue = y.portfolioValueINR;
-      baselinePerMarket = {
-        india: y.portfolioValueINR > 0 ? (y.india / Math.max(1, y.india + y.usa + y.crypto)) * y.portfolioValueINR : 0,
-        // We stored per-market P&L but not per-market value — fall back to using
-        // the proportional split. (Good enough for intra-day recompute.)
-        usa: 0,
-        crypto: 0,
-      };
+      // FIX HIGH #8: prefer the per-market VALUES stored in the entry
+      // (added in this fix round). Fall back to proportional split only
+      // for legacy entries that don't have the new fields.
+      const yInd = (y as any).indiaValueINR;
+      const yUsa = (y as any).usaValueINR;
+      const yCrypto = (y as any).cryptoValueINR;
+      const haveValues = typeof yInd === 'number' && typeof yUsa === 'number' && typeof yCrypto === 'number';
+      baselinePerMarket = haveValues
+        ? { india: yInd, usa: yUsa, crypto: yCrypto }
+        : {
+            india: y.portfolioValueINR > 0 ? (y.india / Math.max(1, y.india + y.usa + y.crypto)) * y.portfolioValueINR : 0,
+            usa: y.portfolioValueINR > 0 ? (y.usa / Math.max(1, y.india + y.usa + y.crypto)) * y.portfolioValueINR : 0,
+            crypto: y.portfolioValueINR > 0 ? (y.crypto / Math.max(1, y.india + y.usa + y.crypto)) * y.portfolioValueINR : 0,
+          };
     }
   }
 
@@ -257,6 +270,11 @@ export function recordDailyPL(
     india: Math.round(indiaPL),
     usa: Math.round(usaPL),
     crypto: Math.round(cryptoPL),
+    // FIX HIGH #8: store per-market VALUES so intra-day recompute can
+    // reconstruct yesterday's baseline accurately.
+    indiaValueINR: Math.round(current.india),
+    usaValueINR: Math.round(current.usa),
+    cryptoValueINR: Math.round(current.crypto),
     total: Math.round(totalPL),
     portfolioValueINR: Math.round(current.total),
     investedINR: Math.round(current.invested),

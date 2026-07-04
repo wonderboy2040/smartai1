@@ -285,9 +285,10 @@ app.get('/api/quote', async (req, res) => {
   const quotes = {};
 
   // India quotes — Groww NSE → Yahoo fallback
-
-  const remaining = symbols.filter(s => !quotes[s]);
-  await Promise.allSettled(remaining.map(async (sym) => {
+  // FIX H12: previously `const remaining = symbols.filter(s => !quotes[s])`
+  // ran BEFORE any quotes were populated (quotes = {}) so `remaining ===
+  // symbols` always — dead filter. Just iterate `symbols` directly.
+  await Promise.allSettled(symbols.map(async (sym) => {
     // 1a) India real-time → Groww NSE live feed (datacenter-friendly, ETF-safe).
     // Indian indices (NIFTY etc.) skip Groww — Groww only has stock/ETF quotes
     if (market === 'IN' && !INDIAN_INDICES.has(sym)) {
@@ -663,26 +664,23 @@ app.post('/api/ml/predict', (req, res) => {
   res.json(result);
 });
 
-app.get('/api/ml/signals', (req, res) => {
-  const portfolio = []; // These come from the frontend via body in practice
-  const livePrices = {};
-  const result = getAllSignals(portfolio, livePrices);
-  res.json(result);
+// FIX H6/H7: removed misleading GET stubs for /api/ml/signals and /api/ml/regime
+// that returned empty/hardcoded data. POST routes below remain (frontend uses
+// those). GET /api/ml/regime is kept (defaults to safe regime for callers
+// that don't have live data).
+app.get('/api/ml/regime', (_req, res) => {
+  // Returns a default NEUTRAL regime — callers needing live data should POST.
+  const regime = getRegime(
+    { change: 0 }, { change: 0 },
+    { price: 15 }, 18, 104, { change: 0 }
+  );
+  res.json(regime);
 });
 
 app.post('/api/ml/signals', (req, res) => {
   const { portfolio, livePrices } = req.body || {};
   const result = getAllSignals(portfolio || [], livePrices || {});
   res.json(result);
-});
-
-app.get('/api/ml/regime', (_req, res) => {
-  // Uses best available market data for regime detection
-  const regime = getRegime(
-    { change: 0 }, { change: 0 },
-    { price: 15 }, 18, 104, { change: 0 }
-  );
-  res.json(regime);
 });
 
 app.post('/api/ml/regime', (req, res) => {

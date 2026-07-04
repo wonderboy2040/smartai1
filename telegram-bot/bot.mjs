@@ -10,7 +10,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_KEY, CLAUDE_KEY, TAVILY_API_KEY, TAX_PAIRS, OPENROUTER_KEY, CEREBRAS_KEY, HF_KEY, NVIDIA_KEY } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_KEY, CLAUDE_KEY, TAVILY_API_KEY, TAX_PAIRS, OPENROUTER_KEY, CEREBRAS_KEY, HF_KEY, NVIDIA_KEY, API_URL } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchCryptoPricesINR, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
 import { loadPortfolioFromCloud } from './cloud.mjs';
 import {

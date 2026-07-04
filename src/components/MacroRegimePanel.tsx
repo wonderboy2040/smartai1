@@ -11,6 +11,9 @@ const regimeColors: Record<string, string> = {
   RISK_OFF: 'text-red-400 bg-red-500/10 border-red-500/30',
   STAGFLATION: 'text-orange-400 bg-orange-500/10 border-orange-500/30',
   GOLDILOCKS: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/30',
+  // FIX #15: add NEUTRAL fallback so unexpected regime strings fall back to a
+  // defined style instead of `undefined`.
+  NEUTRAL: 'text-slate-400 bg-slate-500/10 border-slate-500/30',
 };
 
 const regimeIcons: Record<string, string> = {
@@ -18,6 +21,7 @@ const regimeIcons: Record<string, string> = {
   RISK_OFF: '🔴',
   STAGFLATION: '🟠',
   GOLDILOCKS: '💎',
+  NEUTRAL: '⚪',
 };
 
 const actionColors: Record<string, string> = {

@@ -128,8 +128,15 @@ async def analyze_symbol(req: AnalyzeRequest):
 
     used_provider = "none"
     if llm_text:
-        llm_text = anti_hallucination_check(llm_text, brain_result)
-        used_provider = "llm"
+        # FIX H4: anti_hallucination_check returns None on hallucination;
+        # fall back to brain_to_text instead of returning None to the caller.
+        checked = anti_hallucination_check(llm_text, brain_result)
+        if checked is None:
+            llm_text = brain_to_text(brain_result)
+            used_provider = "quant_brain_hallucination_fallback"
+        else:
+            llm_text = checked
+            used_provider = "llm"
     else:
         llm_text = brain_to_text(brain_result)
         used_provider = "quant_brain"

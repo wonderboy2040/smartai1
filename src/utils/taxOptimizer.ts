@@ -102,17 +102,21 @@ function holdingDays(dateAdded: string): number {
 
 // Compute realised gains for the current FY from the transaction ledger.
 function computeRealizedGains(transactions: Transaction[]): TaxSummary['realizedGains'] {
-  const fy = getFinancialYear();
-  const fyStart = fy.startsWith('FY')
-    ? new Date(`04-01-${parseInt(fy.slice(2, 4)) + 2000}`)
-    : new Date();
-  const fyStartTs = fyStart.getTime();
+  // FIX HIGH #3: previously parsed `fy.slice(2,4)` which for "FY2025-26"
+  // returns "20" → fyStart became April 1, 2020 → every historical sell was
+  // admitted into the current FY → tax liability wildly over-counted.
+  // Correct: extract the start year from the LAST 5 chars minus 3 ("25").
+  const now = new Date();
+  const fyStartYear = now.getMonth() >= 3
+    ? now.getFullYear()           // Apr-Dec: FY starts Apr of current year
+    : now.getFullYear() - 1;      // Jan-Mar: FY starts Apr of previous year
+  const fyStartTs = new Date(fyStartYear, 3, 1).getTime();  // April 1, 00:00 local
 
   const out = { equityLTCG: 0, equitySTCG: 0, debtLTCG: 0, debtSTCG: 0, crypto: 0 };
 
   for (const t of transactions) {
     if (t.type !== 'sell') continue;
-    if (t.ts < fyStartTs) continue;
+    if (!t.ts || t.ts < fyStartTs) continue;  // FIX #43: skip legacy txns with ts=0
     if (t.realizedPL == null) continue;
     const gain = t.realizedPL;
     const days = holdingDays(t.date);

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { TabType } from './types';
 import { secureStorage } from './utils/secureStorage';
 import { useAppState } from './hooks/useAppState';
@@ -79,6 +79,14 @@ export default function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isAuthenticated, setActiveTab]);
+
+  // FIX HIGH #6: memoise telegramConfig so PortfolioHealthMonitor's React.memo
+  // can short-circuit. Without this, a fresh object literal on every render
+  // forced the monitor to re-mount and churn its 60s alert interval.
+  const telegramConfigMemo = useMemo(
+    () => ({ token: tgToken, chatId: tgChatId, enabled: autoTelegram }),
+    [tgToken, tgChatId, autoTelegram]
+  );
 
   // Auth Screen
   if (!isAuthenticated) {
@@ -252,7 +260,14 @@ export default function App() {
         <InstallPWA />
 
         {/* Portfolio Health Monitor */}
-        <PortfolioHealthMonitor portfolio={portfolio} livePrices={livePrices} metrics={metrics} telegramConfig={{ token: tgToken, chatId: tgChatId, enabled: autoTelegram }} />
+        {/* FIX HIGH #6: telegramConfig is memoised via useMemo below App's
+            return so React.memo on the child actually short-circuits. */}
+        <PortfolioHealthMonitor
+          portfolio={portfolio}
+          livePrices={livePrices}
+          metrics={metrics}
+          telegramConfig={telegramConfigMemo}
+        />
 
         {/* Neural Chat */}
         <ErrorBoundary fallback={<div className="fixed bottom-6 right-6 w-14 h-14 bg-red-500/20 border border-red-500/30 rounded-2xl flex items-center justify-center text-red-400 z-[60]">⚠</div>}>

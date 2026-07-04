@@ -23,7 +23,12 @@ export function ExactBuyPricePanel() {
 
   const cur = currentMarket === 'IN' ? '\u20B9' : '$';
 
-  // Run all engines when symbol changes
+  // Run all engines when symbol changes.
+  // FIX HIGH #5: previously deps included `livePrices`, which ticks every 1-3s
+  // → all 5 engines (incl. Groq AI call + 1Y backtest) re-fired on every tick,
+  // spamming the Groq API + spiking CPU. Drop `livePrices` from deps; users
+  // click "Refresh" (button below) to re-run explicitly. MLSignalPanel uses
+  // the same pattern with a 1% price-move throttle — we apply the same here.
   const runAllEngines = useCallback(async () => {
     if (!currentSymbol || !currentData) return;
     setLoading(true);
@@ -47,7 +52,9 @@ export function ExactBuyPricePanel() {
       setEarnings(getUpcomingEarnings(currentMarket as 'IN' | 'US', 30));
     } catch (e) { console.warn('Engine error:', e); }
     finally { setLoading(false); }
-  }, [currentSymbol, currentMarket, currentData, portfolio, livePrices, usdInrRate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSymbol, currentMarket, currentData, portfolio, usdInrRate]);
+  // NOTE: livePrices deliberately omitted — read fresh at call-time via closure.
 
   useEffect(() => { runAllEngines(); }, [runAllEngines]);
 
