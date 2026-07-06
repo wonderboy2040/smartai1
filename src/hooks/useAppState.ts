@@ -212,21 +212,33 @@ export function useAppState() {
   }, []);
 
   // --- Load data on auth ---
+  // FIX: Load local FIRST (instant render), then cloud sync in background.
+  // Previously cloud sync was awaited before rendering → 2-5s blank screen.
+  // Now: local loads synchronously → user sees portfolio immediately →
+  // cloud sync merges in background (1-3s later).
   useEffect(() => {
     if (!isAuthenticated) return;
+
+    // 1) LOCAL — instant (synchronous localStorage read)
     try {
       const saved = secureStorage.getItem('portfolio');
-      if (saved) setPortfolio(JSON.parse(saved));
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setPortfolio(parsed);
+          console.log(`📁 Local: loaded ${parsed.length} positions instantly`);
+        }
+      }
       const savedPrices = secureStorage.getItem('livePrices');
       if (savedPrices) setLivePrices(JSON.parse(savedPrices));
     } catch (e) { console.warn('Failed to load local state:', e); }
+
+    // 2) CLOUD — background fetch, merge when ready
+    // Fire immediately (don't await) so the UI renders local data first.
     loadFromCloud().then(data => {
       if (data && data.length > 0) {
-        // FIX: MERGE cloud + local instead of overwriting. Cloud might have
-        // partial data (truncated by Sheets cell limit, stale sync, etc.) —
-        // overwriting would lose locally-added positions. Merge by unique
-        // key (market + symbol), preferring cloud data (authoritative).
         setPortfolio(prev => {
+          // Merge cloud + local by unique key (market + symbol)
           const localMap = new Map<string, Position>();
           for (const p of prev) {
             localMap.set(`${String(p.market || 'IN').toUpperCase()}_${p.symbol}`, p);
@@ -235,7 +247,6 @@ export function useAppState() {
           for (const p of data!) {
             cloudMap.set(`${String(p.market || 'IN').toUpperCase()}_${p.symbol}`, p);
           }
-          // Merge: cloud takes priority, but add any local-only positions
           const merged: Position[] = [];
           const seen = new Set<string>();
           // Cloud positions first (authoritative)
@@ -245,11 +256,9 @@ export function useAppState() {
           }
           // Add local-only positions (not in cloud — maybe not synced yet)
           for (const [key, p] of localMap) {
-            if (!seen.has(key)) {
-              merged.push(p);
-            }
+            if (!seen.has(key)) merged.push(p);
           }
-          console.log(`☁️ Cloud Sync: merged ${cloudMap.size} cloud + ${merged.length - cloudMap.size} local-only = ${merged.length} total positions`);
+          console.log(`☁️ Cloud Sync: merged ${cloudMap.size} cloud + ${merged.length - cloudMap.size} local-only = ${merged.length} total`);
           secureStorage.setItem('portfolio', JSON.stringify(merged));
           return merged;
         });

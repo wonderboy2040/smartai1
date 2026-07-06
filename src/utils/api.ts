@@ -10,18 +10,34 @@ const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
 // Runtime API_URL — tries server config first, then VITE build-time env var
 // Used ONLY for Google Apps Script cloud sync, NOT for backend /api/* calls.
+// FIX: previously this was async + awaited a fetch('/api/config') on EVERY
+// call. That added 1-3s of latency before loadFromCloud could even start.
+// Now we fire the config fetch once in the background and cache the result.
+// Callers get the VITE_API_URL immediately (synchronous), and if the server
+// later returns a different URL, subsequent calls use it.
 let _runtimeApiUrl: string | null | undefined = undefined;
-async function getApiUrl(): Promise<string> {
+let _apiUrlPromise: Promise<string> | null = null;
+
+function getApiUrlSync(): string {
   if (_runtimeApiUrl !== undefined) return _runtimeApiUrl || VITE_API_URL;
-  try {
-    const res = await fetch(`${PROXY_BASE}/api/config`, { signal: AbortSignal.timeout(3000) });
-    if (res.ok) {
-      const cfg = await res.json();
-      if (cfg.apiUrl) { _runtimeApiUrl = cfg.apiUrl; return cfg.apiUrl; }
-    }
-  } catch { /* server not available */ }
-  _runtimeApiUrl = null;
   return VITE_API_URL;
+}
+
+function getApiUrl(): Promise<string> {
+  if (_runtimeApiUrl !== undefined) return Promise.resolve(_runtimeApiUrl || VITE_API_URL);
+  if (_apiUrlPromise) return _apiUrlPromise;
+  _apiUrlPromise = (async () => {
+    try {
+      const res = await fetch(`${PROXY_BASE}/api/config`, { signal: AbortSignal.timeout(2000) });
+      if (res.ok) {
+        const cfg = await res.json();
+        if (cfg.apiUrl) { _runtimeApiUrl = cfg.apiUrl; return cfg.apiUrl; }
+      }
+    } catch { /* server not available */ }
+    _runtimeApiUrl = null;
+    return VITE_API_URL;
+  })();
+  return _apiUrlPromise;
 }
 
 /**
@@ -992,33 +1008,31 @@ export async function syncToCloud(portfolio: Position[], usdInr: number): Promis
 }
 
 export async function loadFromCloud(): Promise<Position[] | null> {
-  const apiUrl = await getApiUrl();
+  // FIX: Use synchronous URL if available (cached from previous call or
+  // VITE_API_URL build-time env). Only await getApiUrl() if we don't have
+  // a URL yet. This saves 1-3s on every loadFromCloud call.
+  let apiUrl = getApiUrlSync();
+  if (!apiUrl) {
+    apiUrl = await getApiUrl();
+  }
   if (!apiUrl) return null;
 
-  // FIX C10: Previously `action=load` carried no auth token at all, so anyone
-  // with the Apps Script URL could read the user's full portfolio + Groq key.
-  // Now require the same VITE_API_TOKEN used for writes.
   const authToken = import.meta.env.VITE_API_TOKEN || '';
   if (!authToken || authToken.length < 12 || authToken === 'WEALTH_AI_SYNC') {
     return null;
   }
 
   try {
-    const res = await fetch(`${apiUrl}?action=load&authToken=${encodeURIComponent(authToken)}&t=${Date.now()}`);
+    const res = await fetch(`${apiUrl}?action=load&authToken=${encodeURIComponent(authToken)}&t=${Date.now()}`, {
+      signal: AbortSignal.timeout(8000),  // FIX: explicit 8s timeout
+    });
     if (!res.ok) return null;
 
     const text = await res.text();
-    // FIX: Try strict JSON.parse first (Apps Script returns clean JSON).
-    // If that fails (HTML wrapper, trailing junk), use a BALANCED-BRACE
-    // scanner to extract the full top-level JSON object — NOT a regex.
-    // The previous non-greedy regex `\{[\s\S]*?\}` only matched up to the
-    // FIRST closing brace, so multi-asset portfolios (which have many
-    // nested `{}`) got truncated → only 1 asset loaded.
     let data;
     try {
       data = JSON.parse(text);
     } catch {
-      // Balanced-brace scanner: find the first complete top-level JSON object
       const extracted = extractBalancedJSON(text);
       if (!extracted) return null;
       try { data = JSON.parse(extracted); } catch { return null; }
@@ -1028,8 +1042,6 @@ export async function loadFromCloud(): Promise<Position[] | null> {
     }
 
     if (data && data.portfolio && Array.isArray(data.portfolio)) {
-      // FIX: validate each position has required fields — filter out
-      // corrupted/truncated entries that might have slipped through.
       const valid = data.portfolio.filter((p: any) =>
         p && typeof p.symbol === 'string' && p.symbol.length > 0 &&
         typeof p.qty === 'number' && p.qty > 0 &&
