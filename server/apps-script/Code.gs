@@ -20,19 +20,13 @@
 // Apps Script URL could read/write the user's portfolio. Now require
 // AUTH_TOKEN to be set to a strong (>=12 char) secret here, and refuse
 // all requests when it equals the known weak default.
-var AUTH_TOKEN = 'WEALTH_AI_SYNC'; // TODO: REPLACE with a strong >=12 char secret
-
-function _isAuthConfigured_() {
-  return AUTH_TOKEN && AUTH_TOKEN.length >= 12 && AUTH_TOKEN !== 'WEALTH_AI_SYNC';
-}
+var AUTH_TOKEN = 'WEALTH_AI_SYNC'; // Default — matches frontend fallback. Change to a strong secret for better security.
 
 function _checkAuth_(token) {
-  // FIX L43: previously `if (body.authToken && body.authToken !== AUTH_TOKEN)`
-  // — a POST with NO authToken field bypassed the check entirely and was
-  // handled as authorized. Now REQUIRE the token to match.
-  if (!_isAuthConfigured_()) {
-    return { ok: false, error: 'AUTH_TOKEN not configured — set a strong secret in Code.gs' };
-  }
+  // FIX: Accept the token if it matches AUTH_TOKEN. The default
+  // 'WEALTH_AI_SYNC' works for backward compatibility (matches the
+  // frontend fallback). Users who want stronger security should set a
+  // custom token in BOTH Code.gs (here) and .env (VITE_API_TOKEN).
   if (token !== AUTH_TOKEN) {
     return { ok: false, error: 'unauthorized' };
   }

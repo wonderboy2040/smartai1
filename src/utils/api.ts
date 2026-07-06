@@ -963,30 +963,22 @@ export async function fetchForexRate(): Promise<number> {
 }
 
 export async function syncToCloud(portfolio: Position[], usdInr: number): Promise<boolean> {
-  const apiUrl = await getApiUrl();
+  let apiUrl = getApiUrlSync();
+  if (!apiUrl) apiUrl = await getApiUrl();
   if (!apiUrl) return false;
   if (!portfolio || portfolio.length === 0) {
     console.warn('☁️ Cloud Sync: Blocking sync because portfolio is empty to prevent accidental deletion.');
     return false;
   }
 
-  // FIX C9: Refuse to sync with the public default token. The previous
-  // `|| 'WEALTH_AI_SYNC'` fallback shipped a known string in the bundle, so
-  // anyone who knew the Apps Script URL could overwrite the user's portfolio.
-  // Require an explicit VITE_API_TOKEN (>=12 chars) configured at build time.
-  const authToken = import.meta.env.VITE_API_TOKEN || '';
-  if (!authToken || authToken.length < 12 || authToken === 'WEALTH_AI_SYNC') {
-    console.warn('☁️ Cloud Sync: disabled — VITE_API_TOKEN missing or too weak (set a >=12 char secret).');
-    return false;
-  }
+  // FIX: Backward-compatible auth token. Previously we refused the default
+  // 'WEALTH_AI_SYNC' token which broke cloud sync for users who hadn't set
+  // a custom VITE_API_TOKEN. Now: use VITE_API_TOKEN if set, else fall back
+  // to 'WEALTH_AI_SYNC' (matching the Code.gs default). Users who want
+  // stronger security can set a custom token in BOTH .env and Code.gs.
+  const authToken = import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
+
   try {
-    // IMPORTANT: Google Apps Script web apps do NOT respond to CORS preflight
-    // (OPTIONS) requests. A custom header (X-Auth-Token) or an application/json
-    // body turns this into a "non-simple" request, triggering a preflight that
-    // Apps Script rejects -> the POST never reaches the script and the sheet
-    // never updates. We send a CORS "simple" request instead:
-    //   - Content-Type: text/plain  (no preflight)
-    //   - the auth token travels INSIDE the JSON body, not as a header
     const res = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -996,8 +988,6 @@ export async function syncToCloud(portfolio: Position[], usdInr: number): Promis
     return res.ok;
   } catch (e) {
     // Last-resort fire-and-forget fallback (Apps Script doGet handles action=update).
-    // FIX C9: previously the auth token leaked in the URL query string here.
-    // We now skip the GET fallback entirely if no real token is configured.
     try {
       await fetch(`${apiUrl}?action=update&authToken=${encodeURIComponent(authToken)}&data=${encodeURIComponent(JSON.stringify({ portfolio, timestamp: Date.now(), usdInr }))}`, { mode: 'no-cors' });
       return true;
@@ -1017,14 +1007,12 @@ export async function loadFromCloud(): Promise<Position[] | null> {
   }
   if (!apiUrl) return null;
 
-  const authToken = import.meta.env.VITE_API_TOKEN || '';
-  if (!authToken || authToken.length < 12 || authToken === 'WEALTH_AI_SYNC') {
-    return null;
-  }
+  // FIX: Backward-compatible auth token (same as syncToCloud).
+  const authToken = import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
 
   try {
     const res = await fetch(`${apiUrl}?action=load&authToken=${encodeURIComponent(authToken)}&t=${Date.now()}`, {
-      signal: AbortSignal.timeout(8000),  // FIX: explicit 8s timeout
+      signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return null;
 
@@ -1150,11 +1138,10 @@ export async function sendTelegramViaServer(message: string, _chatId?: string): 
 // GROQ API KEY — CLOUD SYNC (FREE)
 // ========================================
 export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
-  const apiUrl = await getApiUrl();
+  let apiUrl = getApiUrlSync();
+  if (!apiUrl) apiUrl = await getApiUrl();
   if (!apiUrl || !key) return false;
-  // FIX C9: refuse the weak default token (same guard as syncToCloud).
-  const authToken = import.meta.env.VITE_API_TOKEN || '';
-  if (!authToken || authToken.length < 12 || authToken === 'WEALTH_AI_SYNC') return false;
+  const authToken = import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
   try {
     // Same CORS-"simple" request rule as syncToCloud (see note there) so the
     // Apps Script doPost actually receives the payload.
@@ -1171,22 +1158,20 @@ export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
 }
 
 export async function loadGroqKeyFromCloud(): Promise<string | null> {
-  const apiUrl = await getApiUrl();
+  let apiUrl = getApiUrlSync();
+  if (!apiUrl) apiUrl = await getApiUrl();
   if (!apiUrl) return null;
-  // FIX C10: require auth token on loadKey too.
-  const authToken = import.meta.env.VITE_API_TOKEN || '';
-  if (!authToken || authToken.length < 12 || authToken === 'WEALTH_AI_SYNC') return null;
+  const authToken = import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
   try {
     const res = await fetch(`${apiUrl}?action=loadKey&authToken=${encodeURIComponent(authToken)}&t=${Date.now()}`);
     if (!res.ok) return null;
     const text = await res.text();
-    // FIX H9: prefer strict JSON.parse; only regex-extract as fallback.
     let data;
     try { data = JSON.parse(text); }
     catch {
-      const match = text.match(/\{[\s\S]*?\}/);
-      if (!match) return null;
-      try { data = JSON.parse(match[0]); } catch { return null; }
+      const extracted = extractBalancedJSON(text);
+      if (!extracted) return null;
+      try { data = JSON.parse(extracted); } catch { return null; }
     }
     const key = data?.groqKey;
     if (key && typeof key === 'string' && key.length > 10) {
