@@ -15,7 +15,7 @@ import { connectLiveStream } from '../utils/liveStream';
 import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen, analyzeAsset, getSmartAllocations, generateDeepAnalysis } from '../utils/telegram';
 import { generateWeeklyWealthReport } from '../utils/wealthEngine';
 import { applyPortfolioDiff } from '../utils/portfolioDiffEngine';
-import { recordDailyPL } from '../utils/dailyPLTracker';
+import { recordDailyPL, computeLiveDailyPL } from '../utils/dailyPLTracker';
 
 function mergePriceData(existing: PriceData | undefined, incoming: Partial<PriceData>): PriceData {
   const time = incoming.time ?? Date.now();
@@ -651,19 +651,17 @@ export function useAppState() {
     }
   }, [portfolio, isAuthenticated]);
 
-  // --- Daily P&L snapshot ---
-  // Records today's portfolio value snapshot once per day (idempotent —
-  // multiple calls in one day just update the same entry). The daily
-  // P&L is the change vs yesterday's snapshot minus today's new capital.
+  // --- Daily P&L snapshot (v2 — uses `change` field directly) ---
+  // Computes live daily P&L from the `change` field of each position
+  // (same as broker P&L: qty × price × change%). Freezes into log.
   useEffect(() => {
     if (!isAuthenticated || portfolio.length === 0) return;
-    // Snapshot whenever portfolio value or live prices change meaningfully,
-    // but the function is idempotent for the same calendar day.
     const t = setTimeout(() => {
-      recordDailyPL(portfolio, livePricesRef.current, usdInrRateRef.current, transactionsRef.current);
-    }, 2000);  // debounce 2s so we don't snapshot on every tick
+      const livePL = computeLiveDailyPL(portfolio, livePricesRef.current, usdInrRateRef.current);
+      recordDailyPL(livePL);
+    }, 3000);  // debounce 3s
     return () => clearTimeout(t);
-  }, [portfolio, isAuthenticated, Object.keys(livePrices).length]);
+  }, [portfolio, isAuthenticated, livePrices]);
 
   // --- Save transaction ledger ---
   useEffect(() => {
