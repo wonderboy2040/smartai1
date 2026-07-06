@@ -1008,28 +1008,92 @@ export async function loadFromCloud(): Promise<Position[] | null> {
     if (!res.ok) return null;
 
     const text = await res.text();
-    // FIX H9: previous greedy regex `\{[\s\S]*\}` captured from first `{`
-    // to last `}` and broke on responses with trailing junk. Try a strict
-    // JSON.parse first; only fall back to regex extraction if that fails.
+    // FIX: Try strict JSON.parse first (Apps Script returns clean JSON).
+    // If that fails (HTML wrapper, trailing junk), use a BALANCED-BRACE
+    // scanner to extract the full top-level JSON object — NOT a regex.
+    // The previous non-greedy regex `\{[\s\S]*?\}` only matched up to the
+    // FIRST closing brace, so multi-asset portfolios (which have many
+    // nested `{}`) got truncated → only 1 asset loaded.
     let data;
     try {
       data = JSON.parse(text);
     } catch {
-      const match = text.match(/\{[\s\S]*?\}|\[[\s\S]*?\]/);
-      if (!match || match[0] === '{}') return null;
-      try { data = JSON.parse(match[0]); } catch { return null; }
+      // Balanced-brace scanner: find the first complete top-level JSON object
+      const extracted = extractBalancedJSON(text);
+      if (!extracted) return null;
+      try { data = JSON.parse(extracted); } catch { return null; }
     }
     if (typeof data === 'string') {
       try { data = JSON.parse(data); } catch { return null; }
     }
 
     if (data && data.portfolio && Array.isArray(data.portfolio)) {
-      return data.portfolio;
+      // FIX: validate each position has required fields — filter out
+      // corrupted/truncated entries that might have slipped through.
+      const valid = data.portfolio.filter((p: any) =>
+        p && typeof p.symbol === 'string' && p.symbol.length > 0 &&
+        typeof p.qty === 'number' && p.qty > 0 &&
+        typeof p.avgPrice === 'number' && p.avgPrice > 0
+      );
+      if (valid.length === 0 && data.portfolio.length > 0) {
+        console.warn(`☁️ Cloud Sync: ${data.portfolio.length} positions loaded but 0 passed validation — data may be corrupted`);
+        return null;
+      }
+      if (valid.length < data.portfolio.length) {
+        console.warn(`☁️ Cloud Sync: ${data.portfolio.length - valid.length} positions failed validation and were filtered out`);
+      }
+      return valid as Position[];
     }
   } catch (e) {
     console.warn('Cloud load failed:', e);
   }
 
+  return null;
+}
+
+/**
+ * Extract the first complete top-level JSON object from a string that
+ * may contain trailing/leading junk (HTML, debug logs, etc.). Uses a
+ * balanced-brace scanner — correctly handles nested `{}` and `[]`.
+ */
+function extractBalancedJSON(text: string): string | null {
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+
+    if (c === '\\') {
+      escape = true;
+      continue;
+    }
+
+    if (c === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) {
+        return text.substring(start, i + 1);
+      }
+    }
+  }
+
+  // Unbalanced — return what we have
   return null;
 }
 

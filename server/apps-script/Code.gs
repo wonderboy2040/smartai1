@@ -44,6 +44,12 @@ var SHEET_NAME = 'WealthAISync';
 var PORTFOLIO_KEY = 'portfolio';
 var GROQ_KEY = 'groqKey';
 
+// FIX: Google Sheets cells have a 50,000 character limit. Large portfolios
+// (20+ positions) can exceed this → JSON gets silently truncated →
+// loadFromCloud fails to parse → assets lost. We chunk the portfolio JSON
+// across multiple rows: portfolio_0, portfolio_1, portfolio_2, etc.
+var CHUNK_SIZE = 40000; // 40K chars per chunk (safe margin below 50K limit)
+
 function _store_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sh = ss.getSheetByName(SHEET_NAME);
@@ -66,6 +72,18 @@ function _set_(key, value) {
   sh.appendRow([key, value]);
 }
 
+function _delete_(key) {
+  var sh = _store_();
+  var data = sh.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0] === key) {
+      sh.deleteRow(i + 1);
+      return true;
+    }
+  }
+  return false;
+}
+
 function _get_(key) {
   var sh = _store_();
   var data = sh.getDataRange().getValues();
@@ -73,6 +91,74 @@ function _get_(key) {
     if (data[i][0] === key) return data[i][1];
   }
   return '';
+}
+
+// ---- Chunked storage for large portfolio data ----
+// Splits the JSON string into chunks of CHUNK_SIZE and stores each
+// as portfolio_0, portfolio_1, portfolio_2, etc. Old chunks are
+// cleaned up before writing new ones.
+function _setChunked_(key, jsonString) {
+  var sh = _store_();
+  var data = sh.getDataRange().getValues();
+
+  // Delete old chunks for this key
+  var rowsToDelete = [];
+  for (var i = 1; i < data.length; i++) {
+    var k = data[i][0];
+    if (k === key || (k && k.indexOf(key + '_') === 0)) {
+      rowsToDelete.push(i + 1); // 1-indexed row number
+    }
+  }
+  // Delete from bottom up to not shift row indices
+  for (var j = rowsToDelete.length - 1; j >= 0; j--) {
+    sh.deleteRow(rowsToDelete[j]);
+  }
+
+  // If the string fits in one cell, just write it directly
+  if (jsonString.length <= CHUNK_SIZE) {
+    _set_(key, jsonString);
+    return;
+  }
+
+  // Split into chunks and write each as key_0, key_1, etc.
+  var numChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
+  for (var c = 0; c < numChunks; c++) {
+    var chunk = jsonString.substring(c * CHUNK_SIZE, (c + 1) * CHUNK_SIZE);
+    _set_(key + '_' + c, chunk);
+  }
+  // Store metadata: how many chunks
+  _set_(key + '_meta', String(numChunks));
+}
+
+// Read chunked data back and reassemble
+function _getChunked_(key) {
+  // Try single-cell read first (for small portfolios or legacy data)
+  var direct = _get_(key);
+  if (direct && direct.length > 0) {
+    // Check if there's also a _meta key (indicating chunked storage)
+    var meta = _get_(key + '_meta');
+    if (!meta) {
+      // Legacy single-cell storage — return as-is
+      return direct;
+    }
+  }
+
+  // Check for chunked storage
+  var meta = _get_(key + '_meta');
+  if (meta) {
+    var numChunks = parseInt(meta, 10);
+    if (numChunks > 0) {
+      var assembled = '';
+      for (var c = 0; c < numChunks; c++) {
+        var chunk = _get_(key + '_' + c);
+        if (chunk) assembled += chunk;
+      }
+      return assembled;
+    }
+  }
+
+  // Fall back to direct read (legacy)
+  return direct || '';
 }
 
 function _json_(obj) {
@@ -118,11 +204,13 @@ function _handle_(req) {
   var action = req.action || 'load';
 
   if (action === 'update') {
-    _set_(PORTFOLIO_KEY, JSON.stringify({
+    // FIX: Use chunked storage to handle portfolios >50K chars
+    var jsonStr = JSON.stringify({
       portfolio: req.portfolio || [],
       usdInr: req.usdInr || 0,
       timestamp: req.timestamp || Date.now()
-    }));
+    });
+    _setChunked_(PORTFOLIO_KEY, jsonStr);
     return _json_({ ok: true, saved: (req.portfolio || []).length });
   }
 
@@ -136,11 +224,12 @@ function _handle_(req) {
   }
 
   // default: load
-  var raw = _get_(PORTFOLIO_KEY);
+  var raw = _getChunked_(PORTFOLIO_KEY);
   if (!raw) return _json_({ portfolio: [] });
   try {
     return _json_(JSON.parse(raw));
   } catch (err) {
-    return _json_({ portfolio: [] });
+    // If JSON.parse fails, try to return whatever we have with an error flag
+    return _json_({ portfolio: [], error: 'Failed to parse portfolio data: ' + String(err) });
   }
 }

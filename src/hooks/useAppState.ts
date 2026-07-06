@@ -222,8 +222,39 @@ export function useAppState() {
     } catch (e) { console.warn('Failed to load local state:', e); }
     loadFromCloud().then(data => {
       if (data && data.length > 0) {
-        setPortfolio(data);
-        secureStorage.setItem('portfolio', JSON.stringify(data));
+        // FIX: MERGE cloud + local instead of overwriting. Cloud might have
+        // partial data (truncated by Sheets cell limit, stale sync, etc.) —
+        // overwriting would lose locally-added positions. Merge by unique
+        // key (market + symbol), preferring cloud data (authoritative).
+        setPortfolio(prev => {
+          const localMap = new Map<string, Position>();
+          for (const p of prev) {
+            localMap.set(`${String(p.market || 'IN').toUpperCase()}_${p.symbol}`, p);
+          }
+          const cloudMap = new Map<string, Position>();
+          for (const p of data!) {
+            cloudMap.set(`${String(p.market || 'IN').toUpperCase()}_${p.symbol}`, p);
+          }
+          // Merge: cloud takes priority, but add any local-only positions
+          const merged: Position[] = [];
+          const seen = new Set<string>();
+          // Cloud positions first (authoritative)
+          for (const [key, p] of cloudMap) {
+            merged.push(p);
+            seen.add(key);
+          }
+          // Add local-only positions (not in cloud — maybe not synced yet)
+          for (const [key, p] of localMap) {
+            if (!seen.has(key)) {
+              merged.push(p);
+            }
+          }
+          console.log(`☁️ Cloud Sync: merged ${cloudMap.size} cloud + ${merged.length - cloudMap.size} local-only = ${merged.length} total positions`);
+          secureStorage.setItem('portfolio', JSON.stringify(merged));
+          return merged;
+        });
+      } else {
+        console.log('☁️ Cloud Sync: no cloud data — keeping local portfolio');
       }
     }).catch(() => { });
     loadGroqKeyFromCloud().then(cloudKey => {
