@@ -863,6 +863,77 @@ app.get('/api/fundamentals/:symbol', async (req, res) => {
 });
 
 // ------------------------------------------------------------
+// POST /api/superintelligence/news → fetch portfolio-specific news
+// ------------------------------------------------------------
+// Calls Tavily with a portfolio-aware query (top holdings + macro),
+// returns classified news items the frontend can render.
+// Body: { symbols: string[], macroQuery?: string }
+// ------------------------------------------------------------
+app.post('/api/superintelligence/news', async (req, res) => {
+  if (!KEYS.tavily) return jsonError(res, 503, 'tavily not configured');
+  try {
+    const { symbols = [], macroQuery } = req.body || {};
+    const topSyms = (Array.isArray(symbols) ? symbols : []).slice(0, 5).map(s => String(s).replace('.NS', '').replace('.BO', ''));
+    const portfolioQuery = topSyms.length > 0
+      ? `${topSyms.join(' ')} stock news latest quarterly results insider trading institutional moves today`
+      : 'India stock market NIFTY today top news';
+    const macroQ = macroQuery || 'India NIFTY SENSEX US Fed RBI inflation crude oil gold market today';
+
+    const runTavily = async (query) => {
+      const upstream = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          api_key: KEYS.tavily,
+          query,
+          search_depth: 'basic',
+          max_results: 6,
+          include_answer: true,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!upstream.ok) return { answer: '', results: [] };
+      return await upstream.json();
+    };
+
+    const [pData, mData] = await Promise.all([runTavily(portfolioQuery), runTavily(macroQ)]);
+
+    const classify = (text) => {
+      const pos = /\b(beat|surge|rally|gain|profit|growth|upgrade|buy|bullish|record|high|jump|rise|boost|strong|outperform)\b/i;
+      const neg = /\b(miss|fall|drop|decline|loss|downgrade|sell|bearish|low|crash|plunge|weak|underperform|fraud|scam|investigation|default)\b/i;
+      if (pos.test(text) && !neg.test(text)) return 'positive';
+      if (neg.test(text) && !pos.test(text)) return 'negative';
+      return 'neutral';
+    };
+
+    const mapResults = (data, fallbackSymbol) => (data?.results || []).slice(0, 6).map(r => ({
+      symbol: fallbackSymbol,
+      headline: r.title || '',
+      summary: (r.content || '').substring(0, 250),
+      url: r.url,
+      publishedDate: r.published_date || new Date().toISOString().split('T')[0],
+      sentiment: classify(`${r.title || ''} ${r.content || ''}`),
+    }));
+
+    const portfolioNews = mapResults(pData, 'PORTFOLIO').map(n => {
+      // Try to tag with the matching holding symbol.
+      const match = topSyms.find(s => (n.headline + n.summary).toUpperCase().includes(s));
+      return { ...n, symbol: match || n.symbol };
+    });
+    const macroNews = mapResults(mData, 'MACRO');
+
+    res.json({
+      portfolioNews,
+      macroNews,
+      answer: pData.answer || '',
+      fetchedAt: Date.now(),
+    });
+  } catch (e) {
+    return jsonError(res, 502, `superintelligence news fetch failed: ${e?.message || e}`);
+  }
+});
+
+// ------------------------------------------------------------
 // GET /api/inflation → India CPI + US CPI for real-returns calc
 // ------------------------------------------------------------
 // Fetches India CPI YoY from World Bank API (free, no key) and US CPI

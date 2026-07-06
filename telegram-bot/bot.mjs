@@ -2750,6 +2750,80 @@ cron.schedule('*/15 * * * *', async () => {
       await safeSend(TG_CHAT_ID, msg);
       console.log(`🌪️ Sent VIX spike alert (${vixSpike.severity})`);
     }
+
+    // ===== SUPERINTELLIGENCE v4.0 — PORTFOLIO NEWS SCAN (hourly) =====
+    // Every hour, fetch portfolio-specific news for top 5 holdings and alert
+    // on any MATERIAL negative/positive catalysts. Dedupe by headline hash
+    // so the same story doesn't fire twice in 6h.
+    const lastNewsScanRef = globalThis._lastNewsScanTs || 0;
+    if (Date.now() - lastNewsScanRef >= 60 * 60 * 1000 && TAVILY_API_KEY) {
+      // FIX H4: don't set the throttle timestamp until the fetch SUCCEEDS —
+      // otherwise a transient Tavily outage causes a 1-hour blind window.
+      try {
+        const topHoldings = [...portfolio]
+          .sort((a, b) => ((livePrices[`${b.market}_${b.symbol}`]?.price || b.avgPrice) * b.qty) - ((livePrices[`${a.market}_${a.symbol}`]?.price || a.avgPrice) * a.qty))
+          .slice(0, 5)
+          .map(p => p.symbol.replace('.NS', '').replace('.BO', ''));
+        if (topHoldings.length > 0) {
+          const newsQuery = `${topHoldings.join(' ')} stock news latest breaking quarterly results insider institutional moves today`;
+          // Reuse the existing fetchRealtimeWebData from ai-chat.mjs via a tiny
+          // Tavily call here. We don't want to import the whole module, so do
+          // a direct fetch.
+          const tavilyRes = await fetch('https://api.tavily.com/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              api_key: TAVILY_API_KEY,
+              query: newsQuery,
+              search_depth: 'basic',
+              max_results: 5,
+              include_answer: false,
+            }),
+            signal: AbortSignal.timeout(10000),
+          });
+          if (tavilyRes.ok) {
+            const tData = await tavilyRes.json();
+            const seen = globalThis._seenNewsHeadlines || new Set();
+            const materialKeywords = /\b(beat|miss|surge|crash|plunge|record|downgrade|upgrade|fraud|scam|investigation|default|acquisition|merger|results|profit|loss|rally|breakout|breakdown)\b/i;
+            const newItems = (tData.results || []).filter(r => {
+              const h = (r.title || '').trim();
+              return h && !seen.has(h) && materialKeywords.test(r.title + ' ' + r.content);
+            });
+            if (newItems.length > 0) {
+              let newsMsg = `📰 <b>PORTFOLIO NEWS ALERT</b>\n⏰ <i>${getISTTime()} IST</i>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+              // FIX M1: escape HTML special chars in headlines/summaries so
+              // Telegram doesn't reject the message when titles contain <, &, >.
+              const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+              for (const n of newItems.slice(0, 3)) {
+                seen.add((n.title || '').trim());
+                const sentiment = /\b(beat|surge|rally|gain|profit|growth|upgrade|buy|bullish|record|high|jump|rise|boost|strong|outperform)\b/i.test(n.title + ' ' + n.content) ? '🟢'
+                  : /\b(miss|fall|drop|decline|loss|downgrade|sell|bearish|low|crash|plunge|weak|underperform|fraud|scam|investigation|default)\b/i.test(n.title + ' ' + n.content) ? '🔴'
+                  : '⚪';
+                newsMsg += `${sentiment} <b>${esc((n.title || '').substring(0, 90))}</b>\n`;
+                newsMsg += `   <i>${esc((n.content || '').substring(0, 150))}...</i>\n\n`;
+              }
+              newsMsg += `<i>Source: Tavily web search · top ${topHoldings.length} holdings scanned</i>`;
+              await safeSend(TG_CHAT_ID, newsMsg);
+              console.log(`📰 Sent portfolio news alert: ${newItems.length} material item(s)`);
+              // Prune seen set to last 100 headlines to bound memory.
+              if (seen.size > 100) {
+                const arr = Array.from(seen);
+                seen.clear();
+                arr.slice(-50).forEach(h => seen.add(h));
+              }
+              globalThis._seenNewsHeadlines = seen;
+            }
+          }
+        }
+        // FIX H4: only update the throttle timestamp after a successful fetch
+        // (regardless of whether alerts were sent). This way, a transient
+        // Tavily outage lets us retry on the next 15-min cron tick instead of
+        // waiting a full hour.
+        globalThis._lastNewsScanTs = Date.now();
+      } catch (e) {
+        console.warn('⚠️ Portfolio news scan failed (will retry next tick):', e.message);
+      }
+    }
   } catch (e) {
     console.warn('⚠️ Scanner error:', e.message);
   }

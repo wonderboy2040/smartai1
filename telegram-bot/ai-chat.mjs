@@ -355,7 +355,13 @@ function build7StepPrompt(contextData, intent) {
   const d = new Date().toLocaleDateString('en-IN', {timeZone:'Asia/Kolkata', day:'2-digit', month:'short', year:'numeric'});
   const t = new Date().toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit'});
 
-  return `You are DEEP MIND AI SUPERINTELLIGENCE v24.0 — a market superintelligence engine with multi-engine routing + Quant Brain backup. Elite institutional-grade trading & investment AI with REAL-TIME live market data 24x7. You NEVER go offline — Quant Brain always provides analysis. You have FULL, UNRESTRICTED ACCESS to the user's entire portfolio, transactions and all platform data below.
+  return `You are DEEP MIND AI SUPERINTELLIGENCE v4.0 — a market superintelligence engine with REAL-TIME 24x7 market data + portfolio-specific news + multi-engine routing + Quant Brain backup. Elite institutional-grade trading & investment AI. You NEVER go offline — Quant Brain always provides deterministic analysis. You have FULL, UNRESTRICTED ACCESS to the user's entire portfolio, transactions, live technicals, AND portfolio-specific news (fetched fresh from the web per query).
+
+NEW IN v4.0:
+- Portfolio-specific news headlines (top 5 holdings) fetched live via Tavily
+- Per-holding "Inside Story" — derived insights from price action + RSI + MACD + SMA
+- Auto-Warnings (overbought/sharp drops/negative news) + Auto-Opportunities (oversold/rallies/positive catalysts)
+- Macro regime detection (VIX + breadth + DXY + gold)
 
 PERSONA: You are the user's personal ADVANCE TOP PRO TRADER ASSISTANT — a seasoned institutional quant trader (20+ years NSE/BSE/NYSE/NASDAQ/FnO/Options/Crypto) who knows EVERYTHING about this user's portfolio and goals, available 24x7. Think Goldman Sachs + Citadel + Renaissance Technologies + Pantera Capital + Bridgewater combined. Speak in SIMPLE, EASY Hinglish so a normal person samajh jaye — "Bhai", "dekho", "simple words me", "isska matlab", "SL trail karo", "Smart Money accumulation".
 
@@ -448,23 +454,89 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
     }
   }
 
+  // ===== SUPERINTELLIGENCE v4.0 — PORTFOLIO-SPECIFIC NEWS =====
+  // Fetch news for the user's top 5 holdings (by current value) via Tavily.
+  // Tag each item with the matching symbol + sentiment so the LLM can reason
+  // per-holding. Also compute "inside story" insights per holding.
+  if (portfolio?.length && isTavilyAvailable()) {
+    try {
+      const topHoldings = [...portfolio]
+        .sort((a, b) => ((livePrices[`${b.market}_${b.symbol}`]?.price || b.avgPrice) * b.qty) - ((livePrices[`${a.market}_${a.symbol}`]?.price || a.avgPrice) * a.qty))
+        .slice(0, 5)
+        .map(p => p.symbol.replace('.NS', '').replace('.BO', ''));
+      if (topHoldings.length > 0) {
+        console.log(`  📰 Fetching portfolio-specific news for: ${topHoldings.join(', ')}`);
+        const portfolioQuery = `${topHoldings.join(' ')} stock news latest quarterly results insider trading institutional moves today`;
+        const newsRes = await fetchRealtimeWebData(portfolioQuery);
+        if (newsRes) {
+          ctx += `\nPORTFOLIO-SPECIFIC NEWS (top holdings):\n${newsRes.substring(0, 1500)}\n`;
+        }
+      }
+    } catch (e) { console.warn('Portfolio news fetch failed:', e.message); }
+  }
+
   if (portfolio?.length) {
     const m = calculateMetrics(portfolio, livePrices, usdInrRate);
     ctx += `\nPORTFOLIO DASHBOARD:\nTotal Value: ₹${Math.round(m.totalValue).toLocaleString('en-IN')}\nInvested: ₹${Math.round(m.totalInvested).toLocaleString('en-IN')}\nTotal P&L: ${m.totalPL>=0?'+':''}₹${Math.round(m.totalPL).toLocaleString('en-IN')} (${m.plPct.toFixed(2)}%)\nToday P&L: ${m.todayPL>=0?'+':''}₹${Math.round(m.todayPL).toLocaleString('en-IN')} (${m.todayPct.toFixed(2)}%)\n\n`;
-    ctx += `POSITIONS WITH LIVE TECHNICALS:\n`;
+    ctx += `POSITIONS WITH LIVE TECHNICALS + INSIDE STORY:\n`;
+
+    // Track warnings + opportunities for auto-flagging.
+    const warnings = [];
+    const opportunities = [];
+    let topGainer = null, topLoser = null;
+
     for (const p of portfolio) {
       const k = `${p.market}_${p.symbol}`;
       const d = livePrices[k];
       const price = d?.price || p.avgPrice;
       const chg = d?.change || 0;
       const rsi = d?.rsi || 50;
+      const sma20 = d?.sma20, sma50 = d?.sma50, macd = d?.macd;
       const plPct = p.avgPrice>0 ? ((price-p.avgPrice)/p.avgPrice)*100 : 0;
       const plAbs = (price-p.avgPrice)*p.qty;
       const plINR = p.market==='US' ? plAbs*usdInrRate : plAbs;
       const sig = analyzeAsset(p, d);
       const cur = p.market==='IN'?'₹':'$';
       ctx += `${p.symbol.replace('.NS','')} [${p.market}]: ${cur}${price.toFixed(2)} (${chg>=0?'+':''}${chg.toFixed(1)}%) | RSI=${rsi.toFixed(0)} | ${sig.signal}(${sig.confidence}%) | Qty=${p.qty} Avg=${cur}${p.avgPrice.toFixed(2)} P&L=${plPct.toFixed(1)}% (₹${Math.round(plINR).toLocaleString('en-IN')})\n`;
+
+      // ===== INSIDE STORY (derived from price action + technicals) =====
+      const stories = [];
+      if (chg > 3) stories.push(`🔥 +${chg.toFixed(1)}% strong rally`);
+      else if (chg < -3) stories.push(`⚠️ ${chg.toFixed(1)}% sharp drop`);
+      if (rsi < 30) stories.push(`💎 RSI ${rsi.toFixed(0)} oversold — accumulation zone`);
+      else if (rsi > 75) stories.push(`🚨 RSI ${rsi.toFixed(0)} overbought — distribution risk`);
+      if (sma20 && sma50) {
+        if (sma20 > sma50) stories.push(`🟢 Golden Cross`);
+        else stories.push(`🔴 Death Cross`);
+      }
+      if (macd !== undefined) {
+        if (macd > 0) stories.push(`📈 MACD bullish`);
+        else stories.push(`📉 MACD bearish`);
+      }
+      if (plPct > 15) stories.push(`💰 +${plPct.toFixed(0)}% profit — trail SL`);
+      else if (plPct < -15) stories.push(`💸 ${plPct.toFixed(0)}% loss — review thesis`);
+      if (stories.length > 0) ctx += `  Inside Story: ${stories.join(' · ')}\n`;
+
+      // Track warnings + opportunities
+      if (rsi > 75) warnings.push(`${p.symbol} overbought (RSI ${rsi.toFixed(0)})`);
+      if (rsi < 30) opportunities.push(`${p.symbol} oversold (RSI ${rsi.toFixed(0)}) — accumulation zone`);
+      if (chg > 4) opportunities.push(`${p.symbol} +${chg.toFixed(1)}% rally`);
+      if (chg < -4) warnings.push(`${p.symbol} ${chg.toFixed(1)}% drop`);
+      if (!topGainer || chg > topGainer.pct) topGainer = { symbol: p.symbol, pct: chg };
+      if (!topLoser || chg < topLoser.pct) topLoser = { symbol: p.symbol, pct: chg };
     }
+
+    // ===== AUTO WARNINGS + OPPORTUNITIES (Superintelligence v4.0) =====
+    if (warnings.length > 0) {
+      ctx += `\n⚠️ AUTO WARNINGS:\n`;
+      warnings.forEach(w => ctx += `• ${w}\n`);
+    }
+    if (opportunities.length > 0) {
+      ctx += `\n💡 AUTO OPPORTUNITIES:\n`;
+      opportunities.forEach(o => ctx += `• ${o}\n`);
+    }
+    if (topGainer) ctx += `\nTop Gainer: ${topGainer.symbol} (+${topGainer.pct.toFixed(2)}%)\n`;
+    if (topLoser) ctx += `Top Loser: ${topLoser.symbol} (${topLoser.pct.toFixed(2)}%)\n`;
   }
   return ctx;
 }
@@ -473,6 +545,10 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
 // MAIN CHAT — 6-Engine Router + Quant Brain Fallback
 // NEVER shows "AI Offline" again
 // ============================================
+// FIX L7: chatMutex declared BEFORE chatWithAI (which references it) so the
+// code reads top-down without TDZ confusion.
+const chatMutex = new Map();
+
 export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={}, usdInrRate=83.5) {
   if (!chatHistory.has(chatId)) chatHistory.set(chatId, []);
   const history = chatHistory.get(chatId);
@@ -487,8 +563,6 @@ export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={
   return next;
 }
 
-const chatMutex = new Map();
-
 async function _chatWithAIInner(chatId, userMessage, history, portfolio, livePrices, usdInrRate) {
   history.push({ role: 'user', content: userMessage });
 
@@ -499,7 +573,9 @@ async function _chatWithAIInner(chatId, userMessage, history, portfolio, livePri
 
   let contextData = '';
   try { contextData = await buildContext(portfolio, livePrices, usdInrRate, userMessage); }
-  catch {}
+  // FIX M3: log buildContext failures so Tavily/TradingView/calculateMetrics
+  // errors don't silently produce empty context.
+  catch (e) { console.warn('buildContext failed:', e.message); }
 
   const systemPrompt = build7StepPrompt(contextData, intent);
   const recentHistory = history.slice(-MAX_HISTORY).map(m => ({ role: m.role, content: m.content }));

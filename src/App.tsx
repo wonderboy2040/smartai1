@@ -272,7 +272,12 @@ export default function App() {
         {/* Neural Chat */}
         <ErrorBoundary fallback={<div className="fixed bottom-6 right-6 w-14 h-14 bg-red-500/20 border border-red-500/30 rounded-2xl flex items-center justify-center text-red-400 z-[60]">⚠</div>}>
           <Suspense fallback={<div className="fixed bottom-6 right-6 w-80 h-96 quantum-panel rounded-2xl flex items-center justify-center animate-pulse"><div className="text-center"><div className="text-4xl mb-2 animate-float">🧠</div><div className="text-sm text-slate-400 font-medium">Loading AI Engine...</div></div></div>}>
-            <NeuralChat portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'} usdInrRate={usdInrRate} />
+            <NeuralChat
+              portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'}
+              usdInrRate={usdInrRate}
+              portfolio={portfolio}
+              livePrices={livePrices}
+            />
           </Suspense>
         </ErrorBoundary>
       </div>

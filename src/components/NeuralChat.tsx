@@ -1,6 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles, Cpu, ChevronDown, Mic } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import {
+  buildSuperintelligenceContext, buildSuperintelligenceSystemPrompt,
+  quantBrainSuperintelligence, type SuperintelligenceContext,
+} from '../utils/superintelligenceEngine';
+import type { Position, PriceData } from '../types';
 
 const PROXY_BASE = import.meta.env.VITE_API_PROXY || '';
 let _proxyStatus: Promise<any> | null = null;
@@ -149,26 +154,33 @@ const QUICK_ACTIONS = [
 export interface NeuralChatProps {
   portfolioContext: string;
   usdInrRate?: number;
+  // FEATURE: Superintelligence v4.0 — pass live portfolio + prices so the
+  // engine can build per-holding signals + portfolio-specific news.
+  portfolio?: Position[];
+  livePrices?: Record<string, PriceData>;
 }
 
-const SYSTEM_WELCOME = `🤖 **SUPER INTELLIGENCE v3.0** • 7-Engine AI + Quant Brain
+const SYSTEM_WELCOME = `🤖 **SUPER INTELLIGENCE v4.0** • Real-time Market Data + Portfolio News + 7-Engine AI
 
-**Capabilities:**
-• Real-time market data (NSE/BSE/NYSE/NASDAQ/Crypto)
-• Full portfolio analysis with technicals
-• Intraday/swing trading signals with exact levels
-• Risk analysis (VaR, drawdown, concentration)
-• Wealth planning & goal-based projections
-• Indian + US + Crypto markets
+**24x7 LIVE DATA ACCESS:**
+• Real-time market prices (NSE/BSE/NYSE/NASDAQ/Crypto)
+• Portfolio-specific news (Tavily web search per holding)
+• Per-holding signals with "inside story" interpretation
+• Macro regime detection (VIX + breadth + DXY + gold)
+• Live P&L, RSI, MACD, SMA for every position
+• Auto-warnings (overbought/oversold/sharp moves/negative news)
+• Auto-opportunities (dip zones/positive catalysts)
 
-**7 Engines:** Gemini | Groq | Claude | OpenRouter | Cerebras | HuggingFace | NVIDIA
-**Fallback:** Quant Brain (always works, no API key needed)
+**7 LLM Engines:** Gemini | Groq | Claude | OpenRouter | Cerebras | HuggingFace | NVIDIA
+**Fallback:** Quant Brain v4.0 (deterministic, always works — no API key needed)
 
-Ask me anything about markets, your portfolio, trading, or wealth building!`;
+Ask me anything — markets, your portfolio, trading signals, or wealth building!`;
 
 export const NeuralChat = React.memo(({
   portfolioContext,
-  usdInrRate: propUsdInrRate
+  usdInrRate: propUsdInrRate,
+  portfolio = [],
+  livePrices = {},
 }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
     role: 'system',
@@ -308,49 +320,65 @@ _Sabhi API keys free hain — Gemini: aistudio.google.com , Groq: console.groq.c
     const isPortfolioQuery = /\b(portfolio|position|holdings|my|meri|profit|pnl|return)\b/i.test(userMessage);
     const isRiskQuery = /\b(risk|var|drawdown|loss|volatility|hedge|protect)\b/i.test(userMessage);
 
-    const results = await Promise.allSettled([
-      fetchRealtimeSnapshot(),
-      isNewsQuery ? fetchWebIntel(userMessage) : Promise.resolve('')
-    ]);
-    const marketData = results[0].status === 'fulfilled' ? results[0].value : '';
-    const webIntelData = results[1].status === 'fulfilled' ? results[1].value : '';
-    const forexRate = propUsdInrRate || 85.5;
+    // ===== SUPERINTELLIGENCE v4.0 =====
+    // Build unified real-time context: market snapshot + portfolio signals +
+    // portfolio-specific news + macro news + regime + warnings/opportunities.
+    // Falls back to the old fetchRealtimeSnapshot + fetchWebIntel path if the
+    // engine can't access portfolio/livePrices (e.g. zero holdings).
+    let superCtx: SuperintelligenceContext | null = null;
+    try {
+      if (portfolio.length > 0) {
+        superCtx = await buildSuperintelligenceContext(
+          portfolio, livePrices, propUsdInrRate || 85.5, portfolioContext
+        );
+      }
+    } catch (e) {
+      console.warn('Superintelligence context build failed:', e);
+    }
+
+    // Fallback: legacy snapshot path (no portfolio)
+    let marketData = '';
+    let webIntelData = '';
+    if (!superCtx) {
+      const results = await Promise.allSettled([
+        fetchRealtimeSnapshot(),
+        isNewsQuery ? fetchWebIntel(userMessage) : Promise.resolve('')
+      ]);
+      marketData = results[0].status === 'fulfilled' ? results[0].value : '';
+      webIntelData = results[1].status === 'fulfilled' ? results[1].value : '';
+    }
+    const forexRate = superCtx?.market.usdInr || propUsdInrRate || 85.5;
     const portfolioCtx = portfolioContext || 'No portfolio data available.';
 
-    const systemPrompt = `You are SUPER INTELLIGENCE v3.0 — a market superintelligence with 7-engine failover + Quant Brain deterministic backup. You have REAL-TIME LIVE market data access and FULL portfolio context.
+    // Build system prompt — prefer Superintelligence v4.0 context, else legacy.
+    let systemPrompt: string;
+    if (superCtx) {
+      systemPrompt = buildSuperintelligenceSystemPrompt(superCtx) + `
 
-PERSONA: Expert institutional quant trader (20+ years NSE/BSE/NYSE/NASDAQ/Crypto). Think Goldman Sachs + Citadel + Renaissance + Pantera combined. Speak in SIMPLE Hinglish. Use "bhai", "dekho", "simple words me". Explain concepts clearly.
+QUERY-SPECIFIC INSTRUCTIONS:
+${isTradeQuery ? '- This is a TRADE query → give EXACT entry, SL, 2 targets, R:R ratio. No vague "buy around X".' : ''}
+${isPortfolioQuery ? '- This is a PORTFOLIO query → analyze EVERY position with verdict (BUY/HOLD/SELL), reference current price + signal.' : ''}
+${isRiskQuery ? '- This is a RISK query → VaR, drawdown, concentration, hedge suggestions.' : ''}
+${isNewsQuery ? '- This is a NEWS query → cite the live portfolio news headlines above, give inside-story interpretation.' : ''}
+
+Today: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}`;
+    } else {
+      // Legacy prompt (no portfolio context available)
+      systemPrompt = `You are SUPER INTELLIGENCE v4.0 — market superintelligence with real-time data access.
+
+PERSONA: Elite institutional quant trader. Speak SIMPLE Hinglish — "bhai", "dekho".
 
 MANDATORY RULES:
-1. READ the portfolio context below — it contains ALL positions with live data
-2. Reference 2-3 specific positions by name with current price and signal
-3. NEVER say "I don't have portfolio data" — it's provided below
-4. ONLY use the REAL-TIME data below — do NOT invent prices
-5. Today: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}
-6. CRITICAL: If this is a trade query, give EXACT entry, SL, target prices. If portfolio query, analyze EVERY position. If risk query, calculate VaR and suggestions. If general, give market overview.
-
-7-STEP FRAMEWORK:
-1. Regime: Risk-On/Neutral/Risk-Off (use VIX, breadth)
-2. Trend: Direction from SMA + price action
-3. Momentum: RSI + MACD analysis
-4. Support/Demand: Key price levels
-5. Risk: SL distance, R:R ratio, position sizing
-6. Conviction: STRONG_BUY / BUY / HOLD / WAIT / SELL
-7. Action: Exact entry, SL, targets, size
-
-RESPONSE STRUCTURE:
-- 1-line macro snapshot in simple Hinglish
-- Connect macro → micro: what it means for user's holdings
-- ${isTradeQuery ? 'EXACT entry/SL/targets with R:R' : ''}
-- ${isPortfolioQuery ? 'Every position analyzed individually with verdict' : ''}
-- ${isRiskQuery ? 'VaR, drawdown, concentration risk, suggestions' : ''}
-- End with strategy + 3 action items + 1 pro tip
+1. ONLY use the REAL-TIME data below — do NOT invent prices
+2. Today: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}
+3. ${isTradeQuery ? 'EXACT entry/SL/targets with R:R' : ''}
+4. ${isPortfolioQuery ? 'Every position analyzed individually' : ''}
+5. ${isRiskQuery ? 'VaR, drawdown, concentration risk, suggestions' : ''}
 
 USD/INR: ₹${forexRate.toFixed(4)}
 
 === LIVE MARKET DATA ===
 ${marketData}
-USD/INR: ₹${forexRate.toFixed(4)}
 ${webIntelData ? '\nLIVE NEWS:\n' + webIntelData : ''}
 
 === PORTFOLIO CONTEXT ===
@@ -359,6 +387,7 @@ ${portfolioCtx}
 === END DATA ===
 
 RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bold for key numbers.`;
+    }
 
     const recentMessages = chatMessages
       .filter(m => m.role === 'user' || m.role === 'model')
@@ -382,12 +411,21 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
       try {
         text = await rateLimitedFetch(() => tryAIEngine(engine.endpoint, engine.model, recentMessages, systemPrompt));
         if (text) { usedEngine = engine.name; break; }
-      } catch { continue; }
+      } catch (e) {
+        // FIX M4: log why each engine failed so debugging "why did X not return" is possible.
+        console.warn(`[neural-chat] engine ${engine.name} failed:`, e instanceof Error ? e.message : e);
+        continue;
+      }
     }
 
     if (!text) {
-      text = quantBrainAnalysis(userMessage, marketData, portfolioCtx);
-      usedEngine = 'quant_brain';
+      // Quant Brain v4.0 — prefer the unified Superintelligence context.
+      if (superCtx) {
+        text = quantBrainSuperintelligence(userMessage, superCtx);
+      } else {
+        text = quantBrainAnalysis(userMessage, marketData, portfolioCtx);
+      }
+      usedEngine = 'quant_brain_v4';
     }
 
     return { text, model: usedEngine as any };
