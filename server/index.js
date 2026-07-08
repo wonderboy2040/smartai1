@@ -354,7 +354,9 @@ app.get('/api/crypto-prices', async (_req, res) => {
 // one free API is down. Cached 10s server-side to reduce upstream load.
 // ------------------------------------------------------------
 let _forexCache = { rate: DEFAULT_USD_INR, ts: 0 };
-const FOREX_CACHE_MS = 10000;
+// FIX OPT-6: increased from 10s to 30s — client polls at 60s+, so 10s
+// cache was cold on most hits and hammered upstream free-tier APIs.
+const FOREX_CACHE_MS = 30000;
 
 const FOREX_UPSTREAMS = [
   'https://open.er-api.com/v6/latest/USD',

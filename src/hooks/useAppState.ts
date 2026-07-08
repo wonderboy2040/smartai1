@@ -785,8 +785,18 @@ export function useAppState() {
       const rate = await fetchForexRate(); setUsdInrRate(rate);
     };
     refreshForex(); // immediate fetch on mount
-    forexIntervalRef.current = window.setInterval(refreshForex, 15000);
-    return () => { if (forexIntervalRef.current) clearInterval(forexIntervalRef.current); };
+    // FIX OPT-1: Forex rates change ~1x/day; 15s polling wastes bandwidth.
+    // Poll every 60s during market hours, every 5min when all markets closed.
+    const getForexInterval = () => isAnyMarketOpen() ? 60000 : 300000;
+    let forexTimer: number | null = null;
+    const scheduleNext = () => {
+      forexTimer = window.setTimeout(async () => {
+        await refreshForex();
+        scheduleNext();
+      }, getForexInterval());
+    };
+    scheduleNext();
+    return () => { if (forexTimer) clearTimeout(forexTimer); if (forexIntervalRef.current) clearInterval(forexIntervalRef.current); };
   }, [isAuthenticated]);
 
   // --- Load chart ---
@@ -1016,7 +1026,7 @@ export function useAppState() {
     };
 
     generateContext();
-    const interval = window.setInterval(generateContext, 45000); // 45s — keep AI context fresh with all assets + live data
+    const interval = window.setInterval(generateContext, 90000); // 90s — AI context refresh (45s was overkill, wasted CPU serializing portfolio)
     return () => { clearInterval(interval); };
   }, [isAuthenticated, calculateMetrics, portfolio]);
 
@@ -1096,7 +1106,8 @@ export function useAppState() {
   // --- WS Latency (60s — cosmetic) ---
   useEffect(() => {
     if (!isAuthenticated) return;
-    const interval = setInterval(() => { setWsLatency(getWebSocketLatency()); }, 60000);
+    // OPT-3: cosmetic latency readout — 120s is plenty (was 60s)
+    const interval = setInterval(() => { setWsLatency(getWebSocketLatency()); }, 120000);
     return () => clearInterval(interval);
   }, [isAuthenticated]);
 
@@ -1389,7 +1400,10 @@ export function useAppState() {
     const preserveKeys = [
       'WEALTH_AI_KEYS', 'WEALTH_AI_GROQ',
       'WEALTH_AI_TAVILY', 'TG_TOKEN', 'TG_CHAT_ID',
-      'theme', 'portfolio', 'plannerSettings', 'wealth_goals', 'authDone'
+      'theme', 'portfolio', 'plannerSettings', 'wealth_goals', 'authDone',
+      // FIX OPT-4: previously flushCache silently wiped all transaction
+      // history and price alerts — user lost their entire trade ledger.
+      'txn_history', 'price_alerts',
     ];
     const saved: Record<string, string> = {};
     for (const k of preserveKeys) {

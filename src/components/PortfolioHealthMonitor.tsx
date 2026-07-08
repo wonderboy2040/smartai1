@@ -19,19 +19,33 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
   const lastDigestDateRef = useRef<string>('');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Compute health score + risk summary — throttled to every 30s
-  const lastHealthComputeRef = useRef(0);
+  // Compute health score + risk summary — true 30s interval via timer.
+  // FIX OPT-5: previously this effect ran on every `livePrices` change (~2s)
+  // and checked Date.now() inside, but the effect body + hook overhead still
+  // executed each time. Use a dedicated interval that reads refs instead.
+  const portfolioRef = useRef(portfolio);
+  const livePricesRef = useRef(livePrices);
+  const metricsRef = useRef(metrics);
+  useEffect(() => { portfolioRef.current = portfolio; }, [portfolio]);
+  useEffect(() => { livePricesRef.current = livePrices; }, [livePrices]);
+  useEffect(() => { metricsRef.current = metrics; }, [metrics]);
+
   useEffect(() => {
     if (portfolio.length === 0) return;
-    const now = Date.now();
-    if (now - lastHealthComputeRef.current < 30000) return;
-    lastHealthComputeRef.current = now;
-    const computed = computeHealthScore(portfolio, livePrices, metrics);
-    if (computed) setHealth(computed);
-    if (metrics.totalValue > 0) {
-      setRiskSummary(summarizePortfolioRisk(metrics.totalValue, portfolio, livePrices));
-    }
-  }, [portfolio, livePrices, metrics]);
+    const compute = () => {
+      const p = portfolioRef.current;
+      const lp = livePricesRef.current;
+      const m = metricsRef.current;
+      const computed = computeHealthScore(p, lp, m);
+      if (computed) setHealth(computed);
+      if (m.totalValue > 0) {
+        setRiskSummary(summarizePortfolioRisk(m.totalValue, p, lp));
+      }
+    };
+    compute(); // immediate first run
+    const timer = setInterval(compute, 30000);
+    return () => clearInterval(timer);
+  }, [portfolio.length > 0]); // only restart when portfolio goes empty→non-empty or vice versa
 
   // Keep latest state in refs to avoid resetting the interval on every price/portfolio change
   const stateRef = useRef({ portfolio, livePrices, health, metrics });
