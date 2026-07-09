@@ -88,28 +88,27 @@ export default function App() {
     [tgToken, tgChatId, autoTelegram]
   );
 
-  // Auth Screen
+  // Auth Screen — Neumorphic
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen login-bg flex items-center justify-center p-4">
-        <div className="login-card quantum-modal rounded-3xl p-8 max-w-sm w-full animate-scale-in">
+        <div className="login-card rounded-3xl p-8 max-w-sm w-full animate-scale-in">
           <div className="text-center mb-8">
             <div className="relative inline-block">
               <div className="text-7xl mb-2 animate-float">💎</div>
-              <div className="absolute -inset-4 bg-cyan-500/10 rounded-full blur-xl pointer-events-none" />
             </div>
-            <h1 className="text-3xl font-black gradient-text-cyan font-display text-glow mt-4">Wealth AI</h1>
+            <h1 className="text-3xl font-black font-display mt-4" style={{color: 'var(--neu-text-strong)'}}>Wealth AI</h1>
             <div className="flex items-center justify-center gap-2 mt-2">
-              <span className="quantum-badge">QUANTUM TERMINAL</span>
+              <span className="quantum-badge">NEURAL TERMINAL</span>
             </div>
-            <p className="text-slate-500 text-sm mt-3">Secure PIN enter karein</p>
+            <p className="text-sm mt-3" style={{color: 'var(--neu-text-muted)'}}>Secure PIN enter karein</p>
           </div>
           <div className="relative z-10">
-            <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && verifyPin()} placeholder="••••" maxLength={4} className="w-full text-center px-4 py-5 quantum-input rounded-2xl text-3xl tracking-[0.5em] text-cyan-400 font-bold mb-5 font-mono placeholder-slate-700 relative z-10" />
+            <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && verifyPin()} placeholder="••••" maxLength={4} className="w-full text-center px-4 py-5 quantum-input rounded-2xl text-3xl tracking-[0.5em] font-bold mb-5 font-mono" />
           </div>
-          <button onClick={verifyPin} className="quantum-btn-primary w-full py-4 bg-gradient-to-r from-cyan-500 to-purple-600 animate-gradient rounded-2xl font-bold text-white text-lg relative z-10">🔓 Unlock Terminal</button>
+          <button onClick={verifyPin} className="quantum-btn-primary w-full py-4 rounded-2xl font-bold text-white text-lg relative z-10">🔓 Unlock Terminal</button>
           <div className="text-center mt-5 relative z-10">
-            <span className="text-[10px] text-slate-600 font-mono tracking-wider">ENCRYPTED • AES-256 • NEURAL LOCKED</span>
+            <span className="text-[10px] font-mono tracking-wider" style={{color: 'var(--neu-text-faint)'}}>ENCRYPTED • AES-256 • NEURAL LOCKED</span>
           </div>
         </div>
       </div>
@@ -118,7 +117,7 @@ export default function App() {
 
   return (
     <AppContext.Provider value={state}>
-      <div className={`min-h-screen bg-gradient-to-br from-slate-950 via-[#0a0f1e] to-slate-950 text-slate-200 ${theme}`}>
+      <div className={`min-h-screen neu-app ${theme}`} style={{background: 'var(--neu-bg)', color: 'var(--neu-text)'}}>
         {/* Header */}
         <header className="sticky top-0 z-40 quantum-appbar border-b border-white/5">
           {/* Ticker */}
@@ -144,7 +143,7 @@ export default function App() {
           <div className="container mx-auto px-4 py-2.5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500/20 to-indigo-500/20 flex items-center justify-center border border-cyan-500/20">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{background:'var(--neu-surface)', boxShadow:'var(--neu-shadow-sm)'}}>
                   <span className="text-xl">💎</span>
                 </div>
                 <div>
@@ -206,8 +205,8 @@ export default function App() {
 
         {/* Add/Edit Modal */}
         {showAddModal && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-xl z-50 flex items-center justify-center p-4 animate-fade-in">
-            <div className="quantum-modal rounded-2xl w-full max-w-md shadow-2xl animate-scale-in">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in" style={{background:'rgba(40,45,55,0.45)', backdropFilter:'blur(12px)'}}>
+            <div className="quantum-modal rounded-2xl w-full max-w-md animate-scale-in">
               <div className="p-5 border-b border-white/5 flex justify-between items-center">
                 <h3 className="text-lg font-bold text-white">{transactionType === 'sell' ? '📉 Sell Asset' : '➕ Add Asset'}</h3>
                 <button onClick={() => setShowAddModal(false)} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-red-500/20 flex items-center justify-center text-lg text-slate-400 hover:text-red-400 transition-all">✕</button>
@@ -250,7 +249,7 @@ export default function App() {
                   if (isNaN(p) || p <= 0) { setFormError('Invalid price'); return; }
                   if (!addDate) { setFormError('Date required'); return; }
                   setFormError(''); savePosition();
-                }} className="quantum-btn-primary w-full py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-white">💾 Save</button>
+                }} className="quantum-btn-primary w-full py-3 rounded-xl font-bold text-white">💾 Save</button>
               </div>
             </div>
           </div>
