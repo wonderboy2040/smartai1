@@ -1,1202 +1,171 @@
-/* ============================================================
-   WEALTH AI — NEUMORPHISM DESIGN SYSTEM v1.0
-   Soft UI • Extruded Plastic • Calm & Tactile • Fully Responsive
-   ============================================================ */
+/* ========================================
+   WEALTH AI — NEUMORPHISM DESIGN SYSTEM v5.0
+   Soft UI · Depth · Tactile · Premium
+   Mobile + Desktop Responsive
+   ======================================== */
 
+/* Fonts — loaded via index.html */
 @import "tailwindcss";
 
-/* ============================================================
-   TAILWIND THEME OVERRIDES
-   Remap the slate palette to neumorphic greys so existing
-   bg-slate-* / text-slate-* utilities automatically render
-   in a neumorphic light theme.
-   ============================================================ */
-@theme {
-  --color-slate-950: #e6ebf2;
-  --color-slate-900: #dde3ec;
-  --color-slate-800: #cfd7e3;
-  --color-slate-700: #b8c2d2;
-  --color-slate-600: #8a96aa;
-  --color-slate-500: #6b7689;
-  --color-slate-400: #56607a;
-  --color-slate-300: #475067;
-  --color-slate-200: #3a4256;
-  --color-slate-100: #2c3243;
-  --color-slate-50: #1f2433;
-
-  --font-sans: 'Inter', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
-}
-
-/* ============================================================
-   NEUMORPHIC DESIGN TOKENS
-   ============================================================ */
+/* ========================================
+   NEUMORPHISM COLOR PALETTE
+   ======================================== */
 :root {
-  /* Surfaces */
-  --neu-bg: #e6ebf2;
-  --neu-surface: #e6ebf2;
-  --neu-surface-raised: #eef2f8;
+  /* Neumorphic Surface — warm dark gray */
+  --neu-bg: #1a1a2e;
+  --neu-bg-light: #16213e;
+  --neu-surface: #1e1e32;
+  --neu-surface-raised: #232342;
 
-  /* Shadow colors (the heart of neumorphism) */
-  --neu-light: #ffffff;
-  --neu-dark: #b8c2d2;
+  /* Neumorphic Shadows */
+  --neu-shadow-dark: #0d0d1a;
+  --neu-shadow-light: #2d2d52;
+
+  /* Primary — Electric Cyan */
+  --primary: #00f2ff;
+  --primary-dim: #00dbe7;
+  --primary-container: rgba(0, 242, 255, 0.12);
+  --on-primary: #001a1c;
+
+  /* Secondary — Purple */
+  --secondary: #b600f8;
+  --secondary-dim: #c026d3;
+  --secondary-container: rgba(182, 0, 248, 0.1);
+
+  /* Accent Colors */
+  --emerald: #10b981;
+  --red: #ef4444;
+  --amber: #f59e0b;
+  --blue: #3b82f6;
 
   /* Text */
-  --neu-text: #475067;
-  --neu-text-strong: #2c3243;
-  --neu-text-muted: #8a96aa;
-  --neu-text-faint: #b0b9c9;
+  --text-primary: #e5e2e1;
+  --text-secondary: #a1a1b5;
+  --text-tertiary: #6b6b80;
+  --text-on-neu: #d4d4e0;
 
-  /* Accents */
-  --neu-accent: #6366f1;
-  --neu-accent-soft: #818cf8;
-  --neu-success: #10b981;
-  --neu-success-soft: #34d399;
-  --neu-danger: #ef4444;
-  --neu-danger-soft: #f87171;
-  --neu-warning: #f59e0b;
-  --neu-warning-soft: #fbbf24;
-  --neu-info: #0ea5e9;
-  --neu-purple: #a855f7;
+  /* Borders */
+  --neu-border: rgba(255, 255, 255, 0.06);
+  --neu-border-hover: rgba(0, 242, 255, 0.2);
 
-  /* Radii */
-  --neu-radius-xs: 8px;
-  --neu-radius-sm: 12px;
-  --neu-radius: 18px;
-  --neu-radius-lg: 24px;
-  --neu-radius-xl: 32px;
-  --neu-radius-pill: 999px;
-
-  /* Shadow presets (the neumorphic signature) */
-  --neu-light-rgba: rgba(255, 255, 255, 0.95);
-  --neu-dark-rgba: rgba(184, 194, 210, 0.55);
-
-  --neu-shadow-xs: 2px 2px 5px var(--neu-dark-rgba), -2px -2px 5px var(--neu-light-rgba);
-  --neu-shadow-sm: 4px 4px 9px var(--neu-dark-rgba), -4px -4px 9px var(--neu-light-rgba);
-  --neu-shadow: 6px 6px 13px var(--neu-dark-rgba), -6px -6px 13px var(--neu-light-rgba);
-  --neu-shadow-lg: 9px 9px 20px var(--neu-dark-rgba), -9px -9px 20px var(--neu-light-rgba);
-  --neu-shadow-xl: 14px 14px 30px var(--neu-dark-rgba), -14px -14px 30px var(--neu-light-rgba);
-
-  --neu-shadow-inset-xs: inset 2px 2px 5px var(--neu-dark-rgba), inset -2px -2px 5px var(--neu-light-rgba);
-  --neu-shadow-inset-sm: inset 3px 3px 6px var(--neu-dark-rgba), inset -3px -3px 6px var(--neu-light-rgba);
-  --neu-shadow-inset: inset 4px 4px 9px var(--neu-dark-rgba), inset -4px -4px 9px var(--neu-light-rgba);
-  --neu-shadow-inset-lg: inset 6px 6px 13px var(--neu-dark-rgba), inset -6px -6px 13px var(--neu-light-rgba);
-
-  /* Conic gradient variables kept for legacy compatibility */
-  --primary: #6366f1;
-  --primary-container: #818cf8;
-  --surface-tint: #6366f1;
+  /* Background */
+  --background: #1a1a2e;
+  --on-background: #e5e2e1;
 }
 
-/* ============================================================
-   DARK NEUMORPHISM
-   The app applies `.dark` or `.light` class on the root div.
-   Default (no class) = light neumorphism. `.dark` = dark variant.
-   ============================================================ */
-.dark {
-  --neu-bg: #2a2e38;
-  --neu-surface: #2a2e38;
-  --neu-surface-raised: #313641;
-  --neu-light: #353a46;
-  --neu-dark: #1c1f27;
-  --neu-text: #d1d5e0;
-  --neu-text-strong: #f1f3f8;
-  --neu-text-muted: #8a92a5;
-  --neu-text-faint: #6b7385;
-
-  --neu-light-rgba: rgba(53, 58, 70, 0.6);
-  --neu-dark-rgba: rgba(28, 31, 39, 0.7);
-}
-
-/* Keep `.light` as a no-op so the toggle still works */
-.light {
-  /* inherits default :root tokens */
-}
-
-/* ============================================================
-   BASE STYLES
-   ============================================================ */
+/* ========================================
+   BASE TYPOGRAPHY
+   ======================================== */
 * {
+  font-family: 'Inter', 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
   box-sizing: border-box;
-}
-
-html {
-  scroll-behavior: smooth;
-  -webkit-tap-highlight-color: transparent;
-}
-
-html, body {
-  margin: 0;
-  padding: 0;
-  min-height: 100vh;
-  background: var(--neu-bg);
-  color: var(--neu-text);
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  font-size: 14px;
-  line-height: 1.5;
+  text-rendering: optimizeSpeed;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  transition: background 0.3s ease, color 0.3s ease;
 }
 
-#root {
-  min-height: 100vh;
-  background: var(--neu-bg);
-}
-
-h1, h2, h3, h4, h5, h6 {
-  color: var(--neu-text-strong);
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
-
-/* ============================================================
-   UTILITY OVERRIDES — make legacy Tailwind dark utilities
-   render neumorphic. These are scoped via attribute selectors
-   so they cleanly override Tailwind utilities without `!important`.
-   ============================================================ */
-
-/* text-white should become neumorphic text-strong */
-.text-white {
-  color: var(--neu-text-strong) !important;
-}
-
-/* Slate text colors — already remapped via @theme, but reinforce */
-.text-slate-200 { color: var(--neu-text-strong); }
-.text-slate-300 { color: var(--neu-text); }
-.text-slate-400 { color: var(--neu-text-muted); }
-.text-slate-500 { color: var(--neu-text-muted); }
-.text-slate-600 { color: var(--neu-text-faint); }
-.text-slate-700 { color: var(--neu-text-faint); }
-
-/* Dark backdrop utilities → become soft recessed surfaces */
-.bg-black\/80 {
-  background: rgba(40, 45, 55, 0.55) !important;
-  backdrop-filter: blur(12px);
-}
-.bg-black\/60 { background: rgba(40, 45, 55, 0.4) !important; }
-.bg-black\/40 { background: rgba(40, 45, 55, 0.25) !important; }
-.bg-black\/30 { background: rgba(40, 45, 55, 0.18) !important; }
-.bg-black\/20 { background: rgba(40, 45, 55, 0.12) !important; }
-
-/* White-tint utilities → become soft light recessed surfaces */
-.bg-white\/5 { background: var(--neu-surface-raised) !important; }
-.bg-white\/10 { background: var(--neu-surface-raised) !important; }
-.bg-white\/\[0\.03\] { background: var(--neu-surface) !important; }
-
-/* Borders — subtle, neumorphic */
-.border-white\/5,
-.border-white\/10 {
-  border-color: rgba(184, 194, 210, 0.2) !important;
-}
-
-/* Gradient backgrounds → flat neumorphic */
-.bg-gradient-to-br,
-.bg-gradient-to-r,
-.bg-gradient-to-b,
-.bg-gradient-to-t {
-  background-image: none !important;
-  background-color: var(--neu-surface) !important;
-}
-
-/* from-slate-* / via-* / to-* gradient stops — neutralise */
-[class*="from-slate"],
-[class*="via-slate"],
-[class*="to-slate"],
-[class*="from-\["],
-[class*="to-\["],
-[class*="via-\["] {
-  background-color: var(--neu-surface);
-  --tw-gradient-from: transparent !important;
-  --tw-gradient-to: transparent !important;
-  --tw-gradient-via: transparent !important;
-}
-
-/* bg-slate-950 on body/root → neumorphic bg */
-.bg-slate-950,
-.bg-slate-900 {
-  background-color: var(--neu-bg) !important;
-}
-
-/* cyan / emerald / red / amber tinted backgrounds — soften */
-.bg-cyan-500\/10,
-.bg-cyan-500\/15,
-.bg-cyan-500\/20 {
-  background: linear-gradient(145deg, rgba(99, 102, 241, 0.12), rgba(99, 102, 241, 0.06)) !important;
-}
-.bg-emerald-500\/10,
-.bg-emerald-500\/15,
-.bg-emerald-500\/20,
-.bg-emerald-950\/20 {
-  background: linear-gradient(145deg, rgba(16, 185, 129, 0.12), rgba(16, 185, 129, 0.06)) !important;
-}
-.bg-red-500\/10,
-.bg-red-500\/15,
-.bg-red-500\/20,
-.bg-red-950\/20 {
-  background: linear-gradient(145deg, rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.06)) !important;
-}
-.bg-amber-500\/10,
-.bg-amber-500\/15 {
-  background: linear-gradient(145deg, rgba(245, 158, 11, 0.12), rgba(245, 158, 11, 0.06)) !important;
-}
-.bg-purple-500\/10,
-.bg-purple-500\/15,
-.bg-purple-500\/20 {
-  background: linear-gradient(145deg, rgba(168, 85, 247, 0.12), rgba(168, 85, 247, 0.06)) !important;
-}
-.bg-indigo-500\/10,
-.bg-indigo-500\/15,
-.bg-indigo-500\/20 {
-  background: linear-gradient(145deg, rgba(99, 102, 241, 0.12), rgba(99, 102, 241, 0.06)) !important;
-}
-
-/* Coloured text — keep them, just slightly tone down for neu */
-.text-cyan-400, .text-cyan-300 { color: #6366f1; }
-.text-emerald-400, .text-emerald-500, .text-emerald-300 { color: var(--neu-success); }
-.text-red-400, .text-red-500, .text-red-300 { color: var(--neu-danger); }
-.text-amber-400, .text-amber-500 { color: var(--neu-warning); }
-.text-purple-400, .text-purple-500 { color: var(--neu-purple); }
-.text-indigo-400, .text-indigo-500 { color: var(--neu-accent); }
-
-/* Coloured borders */
-.border-cyan-500\/20,
-.border-cyan-500\/30,
-.border-cyan-500\/40 { border-color: rgba(99, 102, 241, 0.3) !important; }
-.border-emerald-500\/20,
-.border-emerald-500\/30,
-.border-emerald-500\/40 { border-color: rgba(16, 185, 129, 0.3) !important; }
-.border-red-500\/20,
-.border-red-500\/30,
-.border-red-500\/40 { border-color: rgba(239, 68, 68, 0.3) !important; }
-.border-amber-500\/20,
-.border-amber-500\/30 { border-color: rgba(245, 158, 11, 0.3) !important; }
-.border-purple-500\/20,
-.border-purple-500\/30 { border-color: rgba(168, 85, 247, 0.3) !important; }
-
-/* ============================================================
-   FONT HELPERS (legacy)
-   ============================================================ */
-.font-mono { font-family: 'JetBrains Mono', monospace; }
-.font-display { font-family: 'Space Grotesk', 'Inter', sans-serif; letter-spacing: -0.02em; }
-.font-h1, .font-h2, .font-display { font-family: 'Space Grotesk', 'Inter', sans-serif; }
-.font-body-md, .font-body-lg, .font-label-caps { font-family: 'Inter', sans-serif; }
-.font-mono-data { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
-
-/* ============================================================
-   NEUMORPHIC CORE COMPONENTS
-   These replace the old "quantum-*" glassmorphism classes
-   with soft, extruded, tactile neumorphic equivalents.
-   ============================================================ */
-
-/* ---------- Panels ---------- */
-.quantum-panel,
-.glass-card,
-.glass-panel,
-.glass-ultra,
-.glass-premium,
-.glass-modal,
-.stat-card,
-.quantum-stat {
-  background: var(--neu-surface);
-  border: none !important;
-  border-radius: var(--neu-radius);
-  box-shadow: var(--neu-shadow);
-  position: relative;
-  transition: box-shadow 0.3s ease, transform 0.3s ease, background 0.3s ease;
-}
-
-.quantum-panel::before,
-.glass-card::before,
-.glass-panel::before {
-  display: none !important; /* remove old glassmorphic sheen */
-}
-
-.quantum-panel:hover,
-.glass-card:hover,
-.glass-panel:hover,
-.stat-card:hover {
-  box-shadow: var(--neu-shadow-lg);
-  transform: translateY(-1px);
-}
-
-.quantum-stat {
-  padding: 16px;
-  border-radius: var(--neu-radius);
-}
-
-.quantum-stat:hover {
-  box-shadow: var(--neu-shadow-lg);
-  transform: translateY(-2px);
-}
-
-/* ---------- Bento Grid ---------- */
-.bento-grid {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-}
-.bento-item {
-  background: var(--neu-surface);
-  border-radius: var(--neu-radius);
-  box-shadow: var(--neu-shadow);
-  padding: 18px;
-  transition: box-shadow 0.3s ease, transform 0.3s ease;
-}
-.bento-item::before { display: none !important; }
-.bento-item:hover {
-  box-shadow: var(--neu-shadow-lg);
-  transform: translateY(-2px);
-}
-
-/* ---------- Inputs ---------- */
-.quantum-input,
-.glass-input,
-.input-glow {
-  background: var(--neu-surface);
-  border: none !important;
-  border-radius: var(--neu-radius-sm);
-  box-shadow: var(--neu-shadow-inset-sm);
-  color: var(--neu-text-strong);
-  padding: 12px 16px;
-  transition: box-shadow 0.25s ease, color 0.25s ease;
-  outline: none;
-}
-
-.quantum-input::placeholder,
-.glass-input::placeholder {
-  color: var(--neu-text-faint);
-}
-
-.quantum-input:focus,
-.glass-input:focus,
-.input-glow:focus {
-  box-shadow: var(--neu-shadow-inset);
-  color: var(--neu-text-strong);
-  outline: none;
-}
-
-/* Placeholder color in inputs across the app */
-input::placeholder,
-textarea::placeholder {
-  color: var(--neu-text-faint) !important;
-  opacity: 1;
-}
-
-input,
-textarea,
-select {
-  color: var(--neu-text-strong) !important;
-}
-
-/* Date input picker icon */
-input[type="date"]::-webkit-calendar-picker-indicator {
-  filter: invert(0.5);
-  cursor: pointer;
-}
-
-/* ---------- Buttons ---------- */
-.quantum-btn-primary,
-.btn-primary,
-.gradient-btn {
-  background: linear-gradient(145deg, #6366f1, #4f46e5);
-  color: #ffffff !important;
-  border: none;
-  border-radius: var(--neu-radius-sm);
-  box-shadow: 4px 4px 10px var(--neu-dark-rgba), -4px -4px 10px var(--neu-light-rgba),
-              inset 1px 1px 2px rgba(255,255,255,0.18);
-  padding: 12px 20px;
-  font-weight: 700;
-  transition: all 0.25s ease;
-  cursor: pointer;
-  position: relative;
-  overflow: hidden;
-}
-
-.quantum-btn-primary::before,
-.btn-primary::before,
-.gradient-btn::before {
-  display: none !important; /* remove old sheen */
-}
-
-.quantum-btn-primary:hover,
-.btn-primary:hover,
-.gradient-btn:hover {
-  box-shadow: 6px 6px 14px var(--neu-dark-rgba), -6px -6px 14px var(--neu-light-rgba),
-              inset 1px 1px 2px rgba(255,255,255,0.25);
-  transform: translateY(-1px);
-}
-
-.quantum-btn-primary:active,
-.btn-primary:active,
-.gradient-btn:active {
-  box-shadow: inset 3px 3px 7px rgba(0,0,0,0.25), inset -3px -3px 7px rgba(255,255,255,0.12);
-  transform: translateY(0);
-}
-
-.quantum-btn-ghost,
-.btn-glass {
-  background: var(--neu-surface);
-  color: var(--neu-text);
-  border: none;
-  border-radius: var(--neu-radius-sm);
-  box-shadow: var(--neu-shadow-sm);
-  padding: 8px 14px;
-  font-weight: 600;
-  transition: all 0.25s ease;
-  cursor: pointer;
-}
-
-.quantum-btn-ghost::before,
-.btn-glass::before {
-  display: none !important;
-}
-
-.quantum-btn-ghost:hover,
-.btn-glass:hover {
-  box-shadow: var(--neu-shadow);
-  color: var(--neu-accent);
-}
-
-.quantum-btn-ghost:active,
-.btn-glass:active {
-  box-shadow: var(--neu-shadow-inset-sm);
-}
-
-/* Trade buttons */
-.btn-trade-buy,
-.signal-buy {
-  background: linear-gradient(145deg, #10b981, #059669);
-  color: #ffffff !important;
-  border: none;
-  box-shadow: 4px 4px 10px var(--neu-dark-rgba), -4px -4px 10px var(--neu-light-rgba);
-}
-.btn-trade-sell,
-.signal-sell {
-  background: linear-gradient(145deg, #ef4444, #dc2626);
-  color: #ffffff !important;
-  border: none;
-  box-shadow: 4px 4px 10px var(--neu-dark-rgba), -4px -4px 10px var(--neu-light-rgba);
-}
-.signal-hold {
-  background: linear-gradient(145deg, #f59e0b, #d97706);
-  color: #ffffff !important;
-  border: none;
-  box-shadow: 4px 4px 10px var(--neu-dark-rgba), -4px -4px 10px var(--neu-light-rgba);
-}
-
-/* ---------- Tabs ---------- */
-.quantum-tab,
-.tab-btn {
-  background: transparent;
-  color: var(--neu-text-muted);
-  border: none;
-  border-radius: var(--neu-radius-sm);
-  padding: 10px 16px;
-  font-weight: 600;
-  transition: all 0.25s ease;
-  cursor: pointer;
-  position: relative;
-}
-
-.quantum-tab::after,
-.tab-btn::after {
-  display: none !important;
-}
-
-.quantum-tab:hover,
-.tab-btn:hover {
-  color: var(--neu-text-strong);
-  background: var(--neu-surface);
-  box-shadow: var(--neu-shadow-xs);
-}
-
-.quantum-tab.active,
-.tab-btn.tab-active {
-  background: var(--neu-surface);
-  color: var(--neu-accent);
-  box-shadow: var(--neu-shadow-inset-sm);
-}
-
-/* The container that holds tabs — make it a neumorphic inset tray */
-.quantum-panel.p-1:has(.quantum-tab) {
-  background: var(--neu-surface) !important;
-  box-shadow: var(--neu-shadow-inset-sm) !important;
-  padding: 6px !important;
-  border-radius: var(--neu-radius-sm) !important;
-}
-
-/* ---------- Appbar / Header ---------- */
-.quantum-appbar {
-  background: var(--neu-bg);
-  backdrop-filter: blur(0px);
-  border-bottom: 1px solid rgba(184, 194, 210, 0.15);
-  box-shadow: 0 6px 14px rgba(184, 194, 210, 0.25);
-}
-
-.quantum-appbar::after {
-  display: none !important;
-}
-
-/* ---------- Sidenav ---------- */
-.quantum-sidenav {
-  background: var(--neu-bg);
-  border-right: 1px solid rgba(184, 194, 210, 0.15);
-  box-shadow: 6px 0 14px rgba(184, 194, 210, 0.2);
-}
-
-.quantum-sidenav::before {
-  display: none !important;
-}
-
-.quantum-nav-item {
-  background: transparent;
-  color: var(--neu-text-muted);
-  border-radius: var(--neu-radius-sm);
-  transition: all 0.25s ease;
-  position: relative;
-}
-
-.quantum-nav-item::before {
-  display: none !important;
-}
-
-.quantum-nav-item:hover {
-  background: var(--neu-surface);
-  color: var(--neu-text-strong);
-  box-shadow: var(--neu-shadow-xs);
-}
-
-.quantum-nav-item.active {
-  background: var(--neu-surface);
-  color: var(--neu-accent);
-  box-shadow: var(--neu-shadow-inset-xs);
-}
-
-/* ---------- Modal ---------- */
-.quantum-modal,
-.modal-pro,
-.modal-container {
-  background: var(--neu-surface);
-  border: none;
-  border-radius: var(--neu-radius-lg);
-  box-shadow: var(--neu-shadow-xl);
-  position: relative;
-}
-
-.quantum-modal::before,
-.modal-pro::before {
-  display: none !important;
-}
-
-.modal-backdrop {
-  background: rgba(40, 45, 55, 0.45) !important;
-  backdrop-filter: blur(10px);
-}
-
-.modal-header {
-  border-bottom: 1px solid rgba(184, 194, 210, 0.18);
-}
-
-.modal-close {
-  background: var(--neu-surface);
-  border: none;
-  border-radius: var(--neu-radius-xs);
-  box-shadow: var(--neu-shadow-xs);
-  transition: all 0.25s ease;
-}
-
-.modal-close:hover {
-  box-shadow: var(--neu-shadow-inset-xs);
-  color: var(--neu-danger);
-}
-
-/* ---------- Data Displays ---------- */
-.quantum-data {
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 700;
-  color: var(--neu-text-strong);
+.font-mono {
+  font-family: 'JetBrains Mono', 'Space Grotesk', monospace;
   font-variant-numeric: tabular-nums;
 }
 
-.quantum-data-lg {
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 800;
-  color: var(--neu-text-strong);
-  font-size: 1.5rem;
-  font-variant-numeric: tabular-nums;
+.font-display {
+  font-family: 'Space Grotesk', 'Outfit', 'Inter', sans-serif;
 }
 
-.quantum-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--neu-text-muted);
+.font-h1, .font-h2, .font-display {
+  font-family: 'Space Grotesk', sans-serif;
 }
 
-/* ---------- Section Headers ---------- */
-.quantum-section-header {
-  color: var(--neu-text-strong);
-  font-weight: 800;
-  font-family: 'Space Grotesk', 'Inter', sans-serif;
-  position: relative;
-  padding-left: 14px;
-}
+.text-h1 { font-size: 32px; line-height: 1.2; letter-spacing: -0.01em; font-weight: 600; }
+.text-h2 { font-size: 24px; line-height: 1.3; font-weight: 600; }
+.text-display { font-size: 48px; line-height: 1.1; letter-spacing: -0.02em; font-weight: 700; }
+.text-body-lg { font-size: 18px; line-height: 1.6; font-weight: 400; }
+.text-body-md { font-size: 16px; line-height: 1.5; font-weight: 400; }
+.text-label-caps { font-size: 12px; line-height: 1; letter-spacing: 0.1em; font-weight: 600; text-transform: uppercase; }
 
-.quantum-section-header::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 4px;
-  height: 18px;
-  background: var(--neu-accent);
-  border-radius: 2px;
-  box-shadow: 0 0 8px rgba(99, 102, 241, 0.4);
+/* ========================================
+   NEUMORPHIC SCROLLBAR
+   ======================================== */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--neu-bg); }
+::-webkit-scrollbar-thumb {
+  background: var(--neu-shadow-light);
+  border-radius: 3px;
 }
+::-webkit-scrollbar-thumb:hover { background: var(--primary-dim); }
 
-/* ---------- Charts ---------- */
-.quantum-chart {
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+
+/* ========================================
+   NEUMORPHIC CORE — The Heart of the Design
+   Two shadows: one dark (bottom-right), one light (top-left)
+   Creates the soft "pressed" / "raised" tactile effect
+   ======================================== */
+
+/* Raised surface (default — cards, panels, buttons) */
+.neu-raised {
   background: var(--neu-surface);
-  border-radius: var(--neu-radius);
-  box-shadow: var(--neu-shadow-inset-sm);
-  padding: 12px;
+  border-radius: 16px;
+  box-shadow:
+    8px 8px 16px var(--neu-shadow-dark),
+    -8px -8px 16px var(--neu-shadow-light);
+  border: 1px solid var(--neu-border);
 }
 
-.quantum-chart::before {
-  display: none !important;
-}
-
-/* ---------- Badges ---------- */
-.quantum-badge,
-.badge {
-  display: inline-flex;
-  align-items: center;
-  background: var(--neu-surface);
-  color: var(--neu-accent);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 3px 9px;
-  border-radius: var(--neu-radius-pill);
-  box-shadow: var(--neu-shadow-xs);
-  border: none;
-}
-
-.quantum-badge-purple {
-  color: var(--neu-purple);
-}
-
-/* ---------- Progress Bars ---------- */
-.quantum-progress,
-.progress-bar-animated,
-.progress-pro {
-  background: var(--neu-surface);
-  border-radius: var(--neu-radius-pill);
-  box-shadow: var(--neu-shadow-inset-xs);
-  overflow: hidden;
-  height: 8px;
-  position: relative;
-}
-
-.quantum-progress-fill,
-.progress-pro-fill,
-.progress-bar-animated::after {
-  background: linear-gradient(90deg, var(--neu-accent), var(--neu-accent-soft));
-  height: 100%;
-  border-radius: var(--neu-radius-pill);
-  transition: width 0.6s ease;
-  position: relative;
-}
-
-.progress-bar-animated::after {
-  content: '';
-  display: block;
-}
-
-/* ---------- Range / RSI Gauge ---------- */
-.quantum-range,
-.rsi-gauge {
-  background: var(--neu-surface);
-  border-radius: var(--neu-radius-pill);
-  box-shadow: var(--neu-shadow-inset-xs);
-  position: relative;
-  overflow: hidden;
-}
-
-.quantum-range-fill,
-.rsi-gauge-indicator {
-  background: linear-gradient(90deg, var(--neu-success), var(--neu-warning), var(--neu-danger));
-  height: 100%;
-  border-radius: var(--neu-radius-pill);
-}
-
-/* ---------- Signals ---------- */
-.quantum-signal,
-.signal-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: var(--neu-radius-pill);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  box-shadow: var(--neu-shadow-xs);
-  border: none;
-}
-
-.quantum-signal-buy,
-.signal-buy,
-.trade-badge-strong-long,
-.trade-badge-long {
-  background: linear-gradient(145deg, rgba(16, 185, 129, 0.18), rgba(16, 185, 129, 0.08));
-  color: var(--neu-success);
-}
-
-.quantum-signal-sell,
-.signal-sell,
-.trade-badge-strong-short,
-.trade-badge-short {
-  background: linear-gradient(145deg, rgba(239, 68, 68, 0.18), rgba(239, 68, 68, 0.08));
-  color: var(--neu-danger);
-}
-
-.quantum-signal-hold,
-.signal-hold {
-  background: linear-gradient(145deg, rgba(245, 158, 11, 0.18), rgba(245, 158, 11, 0.08));
-  color: var(--neu-warning);
-}
-
-/* ---------- Table Rows ---------- */
-.quantum-table-row,
-.portfolio-row,
-.portfolio-table tr {
-  background: var(--neu-surface);
-  border-radius: var(--neu-radius-sm);
-  transition: all 0.25s ease;
-  position: relative;
-}
-
-.quantum-table-row::before,
-.portfolio-row::before {
-  display: none !important;
-}
-
-.quantum-table-row:hover,
-.portfolio-row:hover,
-.portfolio-table tbody tr:hover {
-  box-shadow: var(--neu-shadow-sm);
-  transform: translateX(2px);
-}
-
-.portfolio-table tbody tr:nth-child(even) {
-  background: var(--neu-surface);
-}
-
-.row-actions {
-  opacity: 0.7;
-  transition: opacity 0.25s ease;
-}
-
-.portfolio-row:hover .row-actions,
-.quantum-table-row:hover .row-actions {
-  opacity: 1;
-}
-
-/* ---------- Divider ---------- */
-.quantum-divider {
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(184, 194, 210, 0.35), transparent);
-  border: none;
-}
-
-/* ---------- Chips / AI Chips ---------- */
-.quantum-chip,
-.quantum-ai-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--neu-surface);
-  color: var(--neu-text);
-  font-size: 11px;
-  font-weight: 600;
-  padding: 6px 12px;
-  border-radius: var(--neu-radius-pill);
-  box-shadow: var(--neu-shadow-xs);
-  border: none;
-}
-
-.quantum-ai-chip::before {
-  display: none !important;
-}
-
-.quantum-ai-chip span {
-  color: var(--neu-accent);
-}
-
-/* ---------- Live Indicators ---------- */
-.quantum-live {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--neu-danger);
-  font-weight: 700;
-  font-size: 11px;
-}
-
-.quantum-live-dot,
-.live-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--neu-danger);
-  box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6);
-  animation: neumorphic-pulse 1.8s infinite;
-}
-
-.live-dot-warning {
-  background: var(--neu-warning);
-  box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.6);
-  animation: neumorphic-pulse 1.8s infinite;
-}
-
-.live-dot-error {
-  background: var(--neu-danger);
-  box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6);
-  animation: neumorphic-pulse 1.2s infinite;
-}
-
-@keyframes neumorphic-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }
-  70% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-}
-
-/* ---------- Health Monitor ---------- */
-.quantum-health {
-  background: var(--neu-surface);
-  border-radius: var(--neu-radius);
-  box-shadow: var(--neu-shadow);
-  position: relative;
-  padding: 14px;
-}
-
-.quantum-health::before {
-  display: none !important;
-}
-
-.quantum-health-value {
-  font-weight: 800;
-  font-family: 'JetBrains Mono', monospace;
-  color: var(--neu-text-strong);
-}
-
-/* ---------- Scan effect (legacy, toned down) ---------- */
-.quantum-scan {
-  position: relative;
-  overflow: hidden;
-}
-
-.quantum-scan::after {
-  content: '';
-  position: absolute;
-  top: 0; left: -100%;
-  width: 50%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.15), transparent);
-  animation: scan-sweep 3s infinite;
-}
-
-@keyframes scan-sweep {
-  0% { left: -100%; }
-  100% { left: 200%; }
-}
-
-/* ---------- Tooltip ---------- */
-.quantum-tooltip {
-  position: relative;
-}
-
-.quantum-tooltip::after {
-  content: attr(data-tip);
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--neu-text-strong);
-  color: var(--neu-bg);
-  padding: 6px 10px;
-  border-radius: 6px;
-  font-size: 11px;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s;
-  z-index: 100;
-}
-
-.quantum-tooltip:hover::after {
-  opacity: 1;
-}
-
-/* ---------- Trading Zones ---------- */
-.trading-zone {
-  background: var(--neu-surface);
-  border-radius: var(--neu-radius-sm);
-  box-shadow: var(--neu-shadow-inset-xs);
-  padding: 10px 14px;
-}
-
-.trading-zone-buy {
-  background: linear-gradient(145deg, rgba(16, 185, 129, 0.12), rgba(16, 185, 129, 0.05));
-}
-
-.trading-zone-sell {
-  background: linear-gradient(145deg, rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.05));
-}
-
-/* ---------- Price Displays ---------- */
-.price-display {
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-}
-
-.price-up { color: var(--neu-success); }
-.price-down { color: var(--neu-danger); }
-.profit-display { color: var(--neu-success); font-weight: 700; }
-.loss-display { color: var(--neu-danger); font-weight: 700; }
-
-/* ---------- Allocation Bar ---------- */
-.allocation-bar {
-  background: var(--neu-surface);
-  border-radius: var(--neu-radius-pill);
-  box-shadow: var(--neu-shadow-inset-xs);
-  overflow: hidden;
-  height: 8px;
-}
-
-/* ---------- Glow / Neon (toned down for neu) ---------- */
-.glow-cyan, .neon-cyan { color: var(--neu-accent); text-shadow: 0 0 6px rgba(99, 102, 241, 0.2); }
-.glow-emerald, .neon-green { color: var(--neu-success); text-shadow: 0 0 6px rgba(16, 185, 129, 0.2); }
-.glow-red, .neon-red { color: var(--neu-danger); text-shadow: 0 0 6px rgba(239, 68, 68, 0.2); }
-.glow-purple { color: var(--neu-purple); text-shadow: 0 0 6px rgba(168, 85, 247, 0.2); }
-.glow-pro, .neon-gold { color: var(--neu-warning); text-shadow: 0 0 6px rgba(245, 158, 11, 0.2); }
-
-.neon-glow-cyan,
-.neon-glow-purple,
-.neon-glow,
-.neon-border,
-.text-glow,
-.ai-chip-border {
-  text-shadow: none !important;
-  box-shadow: none !important;
-}
-
-/* ---------- Gradient Text (replaced with solid neu accent) ---------- */
-.gradient-text-cyan,
-.gradient-text-green,
-.gradient-text-pro {
-  background: none !important;
-  -webkit-background-clip: unset !important;
-  background-clip: unset !important;
-  -webkit-text-fill-color: unset !important;
-  color: var(--neu-text-strong) !important;
-}
-
-/* ---------- Trade Signal Card ---------- */
-.trade-signal-card {
-  background: var(--neu-surface);
-  border: none;
-  border-radius: var(--neu-radius);
-  box-shadow: var(--neu-shadow);
-  padding: 16px;
-  transition: all 0.3s ease;
-  position: relative;
-}
-
-.trade-signal-card::before {
-  display: none !important;
-}
-
-.trade-signal-card:hover {
-  box-shadow: var(--neu-shadow-lg);
-  transform: translateY(-2px);
-}
-
-/* ---------- Login Screen ---------- */
-.login-bg {
+/* Pressed surface (inputs, active states) */
+.neu-pressed {
   background: var(--neu-bg);
-  position: relative;
-  overflow: hidden;
+  border-radius: 12px;
+  box-shadow:
+    inset 6px 6px 12px var(--neu-shadow-dark),
+    inset -6px -6px 12px var(--neu-shadow-light);
+  border: 1px solid var(--neu-border);
 }
 
-.login-bg::before {
-  content: '';
-  position: absolute;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
-  background:
-    radial-gradient(circle at 30% 30%, rgba(99, 102, 241, 0.06), transparent 50%),
-    radial-gradient(circle at 70% 70%, rgba(168, 85, 247, 0.05), transparent 50%);
-  pointer-events: none;
+/* Inset small (badges, chips) */
+.neu-inset {
+  background: var(--neu-bg);
+  border-radius: 8px;
+  box-shadow:
+    inset 3px 3px 6px var(--neu-shadow-dark),
+    inset -3px -3px 6px var(--neu-shadow-light);
 }
 
-.login-card {
+/* Flat surface (subtle, no depth) */
+.neu-flat {
   background: var(--neu-surface);
-  box-shadow: var(--neu-shadow-xl);
-  border: none !important;
-  position: relative;
-  z-index: 1;
+  border-radius: 12px;
+  border: 1px solid var(--neu-border);
 }
 
-.login-card::before {
-  display: none !important;
+/* ========================================
+   ANIMATIONS
+   ======================================== */
+@keyframes fade-in-up {
+  0% { opacity: 0; transform: translateY(20px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
-
-/* ---------- Ticker ---------- */
-.ticker-wrapper {
-  background: var(--neu-surface);
-  border-radius: 0;
-  box-shadow: var(--neu-shadow-inset-xs);
-  overflow: hidden;
-}
-
-.ticker-content {
-  display: inline-flex;
-  animation: ticker-scroll 40s linear infinite;
-}
-
-.ticker-content:hover {
-  animation-play-state: paused;
-}
-
-@keyframes ticker-scroll {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
-}
-
-/* ---------- Black Swan Alert ---------- */
-.black-swan-alert {
-  background: linear-gradient(145deg, rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.05)) !important;
-  box-shadow: var(--neu-shadow), 0 0 0 1px rgba(239, 68, 68, 0.2) !important;
-}
-
-/* ---------- Market HUD ---------- */
-.market-hud {
-  background: var(--neu-surface);
-  border-radius: var(--neu-radius);
-  box-shadow: var(--neu-shadow);
-  padding: 16px;
-}
-
-/* ---------- Neon Grid BG (removed) ---------- */
-.neon-grid-bg {
-  background: var(--neu-bg) !important;
-  background-image: none !important;
-}
-
-/* ---------- Ambient Orbs (toned down to subtle blobs) ---------- */
-.ambient-orb {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(60px);
-  opacity: 0.25;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.ambient-orb-cyan {
-  background: var(--neu-accent);
-}
-
-.ambient-orb-purple {
-  background: var(--neu-purple);
-}
-
-/* ---------- Selection ---------- */
-.quantum-selection::selection,
-::selection {
-  background: rgba(99, 102, 241, 0.25);
-  color: var(--neu-text-strong);
-}
-
-/* ---------- Container ---------- */
-.container-quantum {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 0 16px;
-}
-
-/* ---------- Spacing Helpers (legacy) ---------- */
-.spacing-xs { gap: 4px; }
-.spacing-sm { gap: 8px; }
-.spacing-md { gap: 16px; }
-.spacing-lg { gap: 24px; }
-.spacing-xl { gap: 40px; }
-.spacing-2xl { gap: 64px; }
-
-/* ---------- Mobile Nav ---------- */
-.quantum-mobile-nav {
-  background: var(--neu-surface);
-  box-shadow: 0 -4px 12px rgba(184, 194, 210, 0.3);
-  border-top: 1px solid rgba(184, 194, 210, 0.15);
-}
-
-.quantum-mobile-nav-item {
-  background: transparent;
-  color: var(--neu-text-muted);
-  border-radius: var(--neu-radius-sm);
-  transition: all 0.25s ease;
-}
-
-.quantum-mobile-nav-item.active {
-  background: var(--neu-surface);
-  color: var(--neu-accent);
-  box-shadow: var(--neu-shadow-inset-xs);
-}
-
-.quantum-mobile-nav-item span {
-  font-size: 10px;
-  font-weight: 600;
-}
-
-/* ---------- Animations (toned down for neumorphic calm) ---------- */
-@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes fade-in-up { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes scale-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: scale(1); } }
-@keyframes slide-up-modal { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes slide-right { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes fade-in { 0% { opacity: 0; } 100% { opacity: 1; } }
+@keyframes scale-in { 0% { opacity: 0; transform: scale(0.95); } 100% { opacity: 1; transform: scale(1); } }
 @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
-@keyframes gradient-shift { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
-@keyframes glow-pulse { 0%, 100% { opacity: 0.7; } 50% { opacity: 1; } }
-@keyframes float-glow { 0%, 100% { transform: translateY(0); opacity: 0.7; } 50% { transform: translateY(-4px); opacity: 1; } }
-@keyframes border-glow { 0%, 100% { box-shadow: var(--neu-shadow); } 50% { box-shadow: var(--neu-shadow-lg); } }
-@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+@keyframes pulse-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.8); } }
+@keyframes gradient-shift { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+@keyframes ticker-scroll { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
 @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
 
+.animate-fade-in-up { animation: fade-in-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
 .animate-fade-in { animation: fade-in 0.4s ease both; }
-.animate-fade-in-up { animation: fade-in-up 0.5s ease both; }
 .animate-scale-in { animation: scale-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both; }
-.animate-slide-up-modal { animation: slide-up-modal 0.4s cubic-bezier(0.16, 1, 0.3, 1) both; }
-.animate-slide-right { animation: slide-right 0.4s ease both; }
-.animate-float { animation: float 4s ease-in-out infinite; }
-.animate-gradient { background-size: 200% 200%; animation: gradient-shift 6s ease infinite; }
-.animate-border-glow { animation: border-glow 3s ease-in-out infinite; }
+.animate-float { animation: float 3s ease-in-out infinite; }
+.animate-gradient { background-size: 200% 200%; animation: gradient-shift 4s ease infinite; }
 .animate-pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
 .animate-shimmer {
-  background: linear-gradient(90deg, var(--neu-surface) 0%, var(--neu-surface-raised) 50%, var(--neu-surface) 100%);
+  background: linear-gradient(90deg, var(--neu-bg) 25%, var(--neu-surface-raised) 50%, var(--neu-bg) 75%);
   background-size: 200% 100%;
-  animation: shimmer 2s linear infinite;
+  animation: shimmer 1.5s infinite;
 }
-.animate-glow-pulse { animation: glow-pulse 3s ease-in-out infinite; }
-.animate-float-glow { animation: float-glow 4s ease-in-out infinite; }
 
 .delay-75 { animation-delay: 75ms; }
 .delay-100 { animation-delay: 100ms; }
@@ -1206,131 +175,779 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .delay-400 { animation-delay: 400ms; }
 .delay-500 { animation-delay: 500ms; }
 
-/* ---------- Scrollbar Styling ---------- */
-.scrollbar-hide {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-.scrollbar-hide::-webkit-scrollbar {
-  display: none;
-}
+/* ========================================
+   QUANTUM COMPONENT OVERRIDES → NEUMORPHIC
+   These replace the old glassmorphism styles
+   with neumorphic equivalents while keeping
+   the same class names so all components work.
+   ======================================== */
 
-/* Custom neumorphic scrollbar for visible scrollbars */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-::-webkit-scrollbar-track {
+/* Main Panel — raised neumorphic surface */
+.quantum-panel {
   background: var(--neu-surface);
-  border-radius: 10px;
-  box-shadow: var(--neu-shadow-inset-xs);
+  border-radius: 16px;
+  border: 1px solid var(--neu-border);
+  box-shadow:
+    6px 6px 14px var(--neu-shadow-dark),
+    -6px -6px 14px var(--neu-shadow-light);
+  position: relative;
+  overflow: hidden;
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
 }
 
-::-webkit-scrollbar-thumb {
+.quantum-panel::before { display: none; }
+
+.quantum-panel:hover {
+  border-color: var(--neu-border-hover);
+  box-shadow:
+    8px 8px 18px var(--neu-shadow-dark),
+    -8px -8px 18px var(--neu-shadow-light);
+}
+
+/* Stat Card */
+.quantum-stat {
+  position: relative;
   background: var(--neu-surface);
-  border-radius: 10px;
-  box-shadow: var(--neu-shadow-xs);
+  border: 1px solid var(--neu-border);
+  border-radius: 14px;
+  box-shadow:
+    5px 5px 12px var(--neu-shadow-dark),
+    -5px -5px 12px var(--neu-shadow-light);
+  overflow: hidden;
+  transition: all 0.3s ease;
 }
 
-::-webkit-scrollbar-thumb:hover {
+.quantum-stat:hover {
+  border-color: var(--neu-border-hover);
+  box-shadow:
+    7px 7px 14px var(--neu-shadow-dark),
+    -7px -7px 14px var(--neu-shadow-light);
+}
+
+/* Primary Button — raised, presses on click */
+.quantum-btn-primary {
+  position: relative;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+  border: none;
+  border-radius: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #000;
+  transition: all 0.25s ease;
+  overflow: hidden;
+  box-shadow:
+    4px 4px 10px var(--neu-shadow-dark),
+    -4px -4px 10px var(--neu-shadow-light);
+}
+
+.quantum-btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    6px 6px 14px var(--neu-shadow-dark),
+    -6px -6px 14px var(--neu-shadow-light);
+}
+
+.quantum-btn-primary:active {
+  transform: translateY(0);
+  box-shadow:
+    inset 3px 3px 8px rgba(0, 0, 0, 0.3),
+    inset -3px -3px 8px rgba(255, 255, 255, 0.1);
+}
+
+/* Ghost Button — flat with border */
+.quantum-btn-ghost {
+  position: relative;
+  background: var(--neu-surface);
+  border: 1px solid var(--neu-border);
+  border-radius: 10px;
+  color: var(--primary);
+  transition: all 0.25s ease;
+  box-shadow:
+    3px 3px 8px var(--neu-shadow-dark),
+    -3px -3px 8px var(--neu-shadow-light);
+}
+
+.quantum-btn-ghost:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  box-shadow:
+    5px 5px 12px var(--neu-shadow-dark),
+    -5px -5px 12px var(--neu-shadow-light);
+}
+
+.quantum-btn-ghost:active {
+  box-shadow:
+    inset 2px 2px 6px var(--neu-shadow-dark),
+    inset -2px -2px 6px var(--neu-shadow-light);
+}
+
+/* Input — pressed neumorphic */
+.quantum-input {
+  background: var(--neu-bg);
+  border: 1px solid var(--neu-border);
+  border-radius: 10px;
+  color: var(--text-primary);
+  transition: all 0.25s ease;
+  box-shadow:
+    inset 3px 3px 8px var(--neu-shadow-dark),
+    inset -3px -3px 8px var(--neu-shadow-light);
+}
+
+.quantum-input:focus {
+  border-color: var(--primary-dim);
+  box-shadow:
+    inset 3px 3px 8px var(--neu-shadow-dark),
+    inset -3px -3px 8px var(--neu-shadow-light),
+    0 0 0 2px rgba(0, 242, 255, 0.15);
+}
+
+.quantum-input::placeholder { color: var(--text-tertiary); }
+
+/* Badge — inset */
+.quantum-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.75rem;
+  background: var(--neu-bg);
+  border: 1px solid var(--neu-border);
+  border-radius: 9999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--primary);
+  box-shadow:
+    inset 2px 2px 5px var(--neu-shadow-dark),
+    inset -2px -2px 5px var(--neu-shadow-light);
+}
+
+.quantum-badge-purple {
+  color: var(--secondary-dim);
+  border-color: rgba(182, 0, 248, 0.15);
+}
+
+/* Progress Bar */
+.quantum-progress {
+  height: 6px;
+  background: var(--neu-bg);
+  border-radius: 3px;
+  overflow: hidden;
+  box-shadow:
+    inset 2px 2px 4px var(--neu-shadow-dark),
+    inset -2px -2px 4px var(--neu-shadow-light);
+}
+
+.quantum-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), var(--secondary));
+  border-radius: 3px;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 8px rgba(0, 242, 255, 0.3);
+}
+
+/* Tab Bar Container */
+.quantum-appbar {
+  background: var(--neu-bg);
+  border-bottom: 1px solid var(--neu-border);
+}
+
+.quantum-appbar::after { display: none; }
+
+/* Tab — neumorphic pill */
+.quantum-tab {
+  position: relative;
+  padding: 0.625rem 1.25rem;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  transition: all 0.25s ease;
+}
+
+.quantum-tab::after { display: none; }
+
+.quantum-tab:hover {
+  color: var(--text-primary);
+  background: var(--neu-surface);
+}
+
+.quantum-tab.active {
+  color: var(--primary);
+  background: var(--neu-surface);
+  box-shadow:
+    inset 3px 3px 8px var(--neu-shadow-dark),
+    inset -3px -3px 8px var(--neu-shadow-light);
+}
+
+/* Modal — large raised neumorphic */
+.quantum-modal {
+  position: relative;
+  background: var(--neu-surface);
+  border: 1px solid var(--neu-border);
+  border-radius: 20px;
+  box-shadow:
+    12px 12px 30px var(--neu-shadow-dark),
+    -12px -12px 30px var(--neu-shadow-light);
+}
+
+.quantum-modal::before { display: none; }
+
+/* Table Row */
+.quantum-table-row {
+  position: relative;
+  transition: all 0.2s ease;
+  border-bottom: 1px solid var(--neu-border);
+}
+
+.quantum-table-row::before { display: none; }
+
+.quantum-table-row:hover {
   background: var(--neu-surface-raised);
 }
 
-/* ---------- TradingView widget container ---------- */
-.tradingview-widget-container,
-.tradingview-widget-container__widget {
+/* Signal Indicators */
+.quantum-signal {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.quantum-signal-buy {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  color: var(--emerald);
+  box-shadow: inset 0 0 10px rgba(16, 185, 129, 0.05);
+}
+
+.quantum-signal-sell {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: var(--red);
+  box-shadow: inset 0 0 10px rgba(239, 68, 68, 0.05);
+}
+
+.quantum-signal-hold {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  color: var(--amber);
+  box-shadow: inset 0 0 10px rgba(245, 158, 11, 0.05);
+}
+
+/* Divider */
+.quantum-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--neu-border), transparent);
+  margin: 1.5rem 0;
+}
+
+/* Chip */
+.quantum-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  background: var(--neu-bg);
+  border: 1px solid var(--neu-border);
+  border-radius: 9999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--primary);
+  box-shadow:
+    inset 2px 2px 4px var(--neu-shadow-dark),
+    inset -2px -2px 4px var(--neu-shadow-light);
+}
+
+/* AI Chip */
+.quantum-ai-chip {
+  position: relative;
+  padding: 0.25rem 0.75rem;
+  background: linear-gradient(90deg, var(--primary), var(--secondary));
+  background-size: 200% 100%;
+  animation: gradient-shift 3s ease infinite;
+  border-radius: 9999px;
+}
+
+.quantum-ai-chip::before {
+  content: '';
+  position: absolute;
+  inset: 1px;
   background: var(--neu-surface);
-  border-radius: var(--neu-radius);
-  box-shadow: var(--neu-shadow-inset-sm);
+  border-radius: inherit;
 }
 
-/* ============================================================
-   RESPONSIVE TWEAKS
-   ============================================================ */
+.quantum-ai-chip span { position: relative; z-index: 1; }
 
-/* Tablet & below — soften shadows a touch for clarity */
-@media (max-width: 1024px) {
-  :root {
-    --neu-shadow: 5px 5px 11px var(--neu-dark-rgba), -5px -5px 11px var(--neu-light-rgba);
-    --neu-shadow-lg: 7px 7px 16px var(--neu-dark-rgba), -7px -7px 16px var(--neu-light-rgba);
-  }
+/* Live Indicator */
+.quantum-live { display: inline-flex; align-items: center; gap: 0.5rem; }
+
+.quantum-live-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--emerald);
+  border-radius: 50%;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+  animation: pulse-dot 1.5s ease-in-out infinite;
 }
 
-/* Mobile — flatten shadows slightly to save space & improve perf */
-@media (max-width: 640px) {
-  :root {
-    --neu-shadow: 4px 4px 9px var(--neu-dark-rgba), -4px -4px 9px var(--neu-light-rgba);
-    --neu-shadow-sm: 3px 3px 7px var(--neu-dark-rgba), -3px -3px 7px var(--neu-light-rgba);
-    --neu-shadow-lg: 6px 6px 13px var(--neu-dark-rgba), -6px -6px 13px var(--neu-light-rgba);
-    --neu-shadow-xl: 8px 8px 18px var(--neu-dark-rgba), -8px -8px 18px var(--neu-light-rgba);
-    --neu-radius: 14px;
-    --neu-radius-lg: 20px;
-  }
+/* Health Score Ring */
+.quantum-health {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    var(--health-color, var(--primary)) var(--health-score, 0%),
+    var(--neu-bg) 0%
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow:
+    4px 4px 10px var(--neu-shadow-dark),
+    -4px -4px 10px var(--neu-shadow-light);
+}
 
-  /* Compact typography on mobile */
-  body { font-size: 13px; }
+.quantum-health::before {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  background: var(--neu-surface);
+  border-radius: 50%;
+  box-shadow:
+    inset 2px 2px 6px var(--neu-shadow-dark),
+    inset -2px -2px 6px var(--neu-shadow-light);
+}
 
-  /* Panels get slightly tighter padding */
+.quantum-health-value {
+  position: relative;
+  z-index: 1;
+  font-family: 'Space Grotesk', monospace;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* Data Display */
+.quantum-data {
+  font-family: 'Space Grotesk', monospace;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
+}
+
+.quantum-data-lg {
+  font-family: 'Space Grotesk', monospace;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.quantum-label {
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* Section Header */
+.quantum-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--neu-border);
+  margin-bottom: 1.5rem;
+}
+
+.quantum-section-header::before {
+  content: '';
+  width: 4px;
+  height: 24px;
+  background: linear-gradient(180deg, var(--primary), var(--secondary));
+  border-radius: 2px;
+}
+
+/* Chart Container */
+.quantum-chart {
+  position: relative;
+  background: var(--neu-bg);
+  border: 1px solid var(--neu-border);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow:
+    inset 3px 3px 8px var(--neu-shadow-dark),
+    inset -3px -3px 8px var(--neu-shadow-light);
+}
+
+.quantum-chart::before { display: none; }
+
+/* Tooltip */
+.quantum-tooltip { position: relative; }
+
+.quantum-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(-8px);
+  padding: 0.5rem 0.75rem;
+  background: var(--neu-surface);
+  border: 1px solid var(--neu-border);
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.2s ease;
+  z-index: 100;
+  box-shadow: 4px 4px 10px var(--neu-shadow-dark);
+}
+
+.quantum-tooltip:hover::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(-4px);
+}
+
+/* ========================================
+   TEXT EFFECTS
+   ======================================== */
+.text-glow {
+  text-shadow: 0 0 20px rgba(0, 242, 255, 0.4), 0 0 40px rgba(0, 242, 255, 0.2);
+}
+
+.gradient-text-cyan {
+  background: linear-gradient(135deg, #00f2ff 0%, #b600f8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.text-on-surface { color: var(--text-primary); }
+
+/* ========================================
+   TICKER
+   ======================================== */
+.ticker-wrapper {
+  overflow: hidden;
+  position: relative;
+}
+
+.ticker-content {
+  display: inline-flex;
+  animation: ticker-scroll 40s linear infinite;
+  white-space: nowrap;
+}
+
+.ticker-content:hover { animation-play-state: paused; }
+
+/* ========================================
+   LOGIN SCREEN
+   ======================================== */
+.login-bg {
+  background: var(--neu-bg);
+  background-image: radial-gradient(circle at 20% 50%, rgba(0, 242, 255, 0.05), transparent 50%),
+                    radial-gradient(circle at 80% 50%, rgba(182, 0, 248, 0.05), transparent 50%);
+}
+
+.login-card {
+  background: var(--neu-surface);
+  border: 1px solid var(--neu-border);
+  border-radius: 24px;
+  box-shadow:
+    12px 12px 30px var(--neu-shadow-dark),
+    -12px -12px 30px var(--neu-shadow-light);
+}
+
+.login-card::before { display: none; }
+
+/* ========================================
+   GLASS OVERRIDES → NEUMORPHIC
+   ======================================== */
+.glass-card, .glass-panel, .glass-ultra, .glass-premium,
+.glass-input {
+  background: var(--neu-surface);
+  border: 1px solid var(--neu-border);
+  border-radius: 14px;
+  box-shadow:
+    5px 5px 12px var(--neu-shadow-dark),
+    -5px -5px 12px var(--neu-shadow-light);
+}
+
+.glass-card::before, .glass-panel::before { display: none; }
+.glass-card:hover, .glass-panel:hover { border-color: var(--neu-border-hover); }
+
+.neon-border {
+  box-shadow: 0 0 15px rgba(0, 242, 255, 0.15);
+  border: 1px solid rgba(0, 242, 255, 0.2);
+}
+
+/* Bento items → neumorphic */
+.bento-item {
+  background: var(--neu-surface);
+  contain: layout style paint;
+  border: 1px solid var(--neu-border);
+  border-radius: 16px;
+  position: relative;
+  overflow: hidden;
+  box-shadow:
+    5px 5px 12px var(--neu-shadow-dark),
+    -5px -5px 12px var(--neu-shadow-light);
+  transition: all 0.3s ease;
+}
+
+.bento-item::before { display: none; }
+
+.bento-item:hover {
+  border-color: var(--neu-border-hover);
+  transform: translateY(-2px);
+  box-shadow:
+    8px 8px 18px var(--neu-shadow-dark),
+    -8px -8px 18px var(--neu-shadow-light);
+}
+
+/* ========================================
+   MOBILE NAVIGATION
+   ======================================== */
+.quantum-mobile-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 64px;
+  background: var(--neu-bg);
+  border-top: 1px solid var(--neu-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  z-index: 50;
+  padding-bottom: env(safe-area-inset-bottom);
+  box-shadow: 0 -4px 12px var(--neu-shadow-dark);
+}
+
+.quantum-mobile-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 16px;
+  color: var(--text-tertiary);
+  transition: all 0.2s ease;
+}
+
+.quantum-mobile-nav-item.active { color: var(--primary); }
+.quantum-mobile-nav-item span { font-size: 10px; font-weight: 600; }
+
+/* ========================================
+   RESPONSIVE LAYOUTS
+   ======================================== */
+@media (max-width: 768px) {
+  .hide-mobile { display: none !important; }
+  .quantum-panel { border-radius: 12px; }
+  .quantum-stat { border-radius: 10px; }
+
+  /* Smaller neumorphic shadows on mobile for performance */
   .quantum-panel,
   .quantum-stat,
-  .stat-card,
-  .bento-item {
-    padding: 14px !important;
-  }
-
-  /* Buttons easier to tap */
+  .quantum-btn-primary,
   .quantum-btn-ghost,
-  .btn-glass {
-    padding: 10px 14px;
-    min-height: 40px;
+  .quantum-modal,
+  .bento-item,
+  .login-card {
+    box-shadow:
+      4px 4px 10px var(--neu-shadow-dark),
+      -4px -4px 10px var(--neu-shadow-light);
+  }
+
+  .quantum-input {
+    box-shadow:
+      inset 2px 2px 6px var(--neu-shadow-dark),
+      inset -2px -2px 6px var(--neu-shadow-light);
   }
 }
 
-/* Small phones */
-@media (max-width: 380px) {
-  :root {
-    --neu-radius: 12px;
-  }
-  .quantum-panel { padding: 12px !important; }
+@media (min-width: 769px) {
+  .hide-desktop { display: none !important; }
 }
 
-/* ---------- Touch-friendly active states ---------- */
-@media (hover: none) {
-  .quantum-panel:hover,
-  .quantum-stat:hover,
-  .bento-item:hover,
-  .stat-card:hover,
-  .trade-signal-card:hover {
-    transform: none;
-    box-shadow: var(--neu-shadow);
-  }
+/* ========================================
+   SPACING UTILITIES
+   ======================================== */
+.spacing-xs { gap: 4px; }
+.spacing-sm { gap: 8px; }
+.spacing-md { gap: 16px; }
+.spacing-lg { gap: 24px; }
+.spacing-xl { gap: 40px; }
+.spacing-2xl { gap: 64px; }
+
+.container-quantum { max-width: 1440px; margin: 0 auto; padding: 0 24px; }
+
+/* ========================================
+   AMBIENT EFFECTS (subtle)
+   ======================================== */
+.ambient-orb {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.15;
+  pointer-events: none;
+  z-index: 0;
 }
 
-/* ============================================================
-   PRINT (utility, kept light)
-   ============================================================ */
-@media print {
-  body { background: white; color: black; }
-  .quantum-panel, .quantum-stat, .stat-card { box-shadow: none; border: 1px solid #ddd; }
+.ambient-orb-cyan { background: var(--primary); }
+.ambient-orb-purple { background: var(--secondary); }
+
+/* Focus ring */
+.quantum-focus:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 242, 255, 0.4);
 }
 
-/* ============================================================
-   LEGACY DARK-MODE OVERRIDES
-   The app's old `.light` overrides targeted the old dark-glass
-   theme. They are now neutralised so both themes use neumorphism.
-   ============================================================ */
-.light .glass-card,
-.light .glass-ultra,
-.light .glass-modal,
-.light h1, .light h2, .light h3, .light .text-white,
-.light .text-slate-200, .light .text-slate-300, .light .text-slate-400,
-.light .text-slate-500, .light .text-slate-600,
-.light .bg-black\/40, .light .bg-black\/20, .light .bg-black\/30,
-.light .border-white\/5, .light .border-white\/10,
-.light .bg-white\/5, .light .hover\:bg-white\/10:hover,
-.light .glass-input {
+.quantum-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+.quantum-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.quantum-scrollbar::-webkit-scrollbar-thumb { background: var(--neu-shadow-light); border-radius: 2px; }
+
+/* Modal close */
+.modal-close:hover { background: rgba(239, 68, 68, 0.1); color: var(--red); }
+
+.modal-pro {
   background: var(--neu-surface);
-  color: var(--neu-text-strong);
-  border-color: rgba(184, 194, 210, 0.2);
+  border: 1px solid var(--neu-border);
+  box-shadow:
+    12px 12px 30px var(--neu-shadow-dark),
+    -12px -12px 30px var(--neu-shadow-light);
 }
+
+/* ========================================
+   TRADING SIGNAL BADGES
+   ======================================== */
+.trade-signal-long { background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.15); }
+.trade-signal-short { background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.15); }
+.trade-price-ladder { background: var(--neu-bg); border: 1px solid var(--neu-border); }
+.trade-conviction-gauge { background: radial-gradient(circle at center, rgba(0, 242, 255, 0.15), transparent 70%); }
+
+.trade-badge-strong-long { background: rgba(16, 185, 129, 0.12); color: var(--emerald); border-color: rgba(16, 185, 129, 0.25); }
+.trade-badge-long { background: rgba(16, 185, 129, 0.05); color: #34d399; border-color: rgba(16, 185, 129, 0.15); }
+.trade-badge-strong-short { background: rgba(239, 68, 68, 0.12); color: var(--red); border-color: rgba(239, 68, 68, 0.25); }
+.trade-badge-short { background: rgba(239, 68, 68, 0.05); color: #f87171; border-color: rgba(239, 68, 68, 0.15); }
+
+.trade-pnl-flash { animation: pnl-flash 1s ease-out forwards; }
+@keyframes pnl-flash { 0% { transform: scale(1.1); filter: brightness(1.5); } 100% { transform: scale(1); filter: brightness(1); } }
+
+.trade-leverage-chip { background: rgba(139, 92, 246, 0.08); border: 1px solid rgba(139, 92, 246, 0.15); color: #a78bfa; }
+
+.trade-card-hover { transition: all 0.3s ease; }
+.trade-card-hover:hover { transform: translateY(-2px); box-shadow: 0 8px 24px var(--neu-shadow-dark); }
+
+/* ========================================
+   QUANTUM NAV ITEMS
+   ======================================== */
+.quantum-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+  border-left: 2px solid transparent;
+}
+
+.quantum-nav-item:hover { background: rgba(0, 242, 255, 0.05); transform: translateX(4px); }
+.quantum-nav-item.active {
+  background: rgba(0, 242, 255, 0.08);
+  border-left: 2px solid var(--primary);
+}
+
+/* ========================================
+   LIGHT THEME OVERRIDES
+   ======================================== */
+.light {
+  --neu-bg: #e0e5ec;
+  --neu-bg-light: #e8edf4;
+  --neu-surface: #e0e5ec;
+  --neu-surface-raised: #eaedf2;
+  --neu-shadow-dark: #a3b1c6;
+  --neu-shadow-light: #ffffff;
+  --text-primary: #1a1a2e;
+  --text-secondary: #4a5568;
+  --text-tertiary: #718096;
+  --neu-border: rgba(0, 0, 0, 0.06);
+  --neu-border-hover: rgba(0, 122, 135, 0.3);
+  --background: #e0e5ec;
+}
+
+.light .quantum-panel,
+.light .quantum-stat {
+  background: var(--neu-surface) !important;
+  box-shadow:
+    6px 6px 12px var(--neu-shadow-dark),
+    -6px -6px 12px var(--neu-shadow-light) !important;
+  color: var(--text-primary) !important;
+}
+
+.light .quantum-panel::before { display: none !important; }
+
+.light .quantum-input {
+  background: var(--neu-bg) !important;
+  color: var(--text-primary) !important;
+  box-shadow:
+    inset 3px 3px 6px var(--neu-shadow-dark),
+    inset -3px -3px 6px var(--neu-shadow-light) !important;
+}
+
+.light .quantum-modal {
+  background: var(--neu-surface) !important;
+  color: var(--text-primary) !important;
+}
+
+.light .quantum-appbar {
+  background: var(--neu-bg) !important;
+}
+
+.light .quantum-tab { color: var(--text-secondary) !important; }
+.light .quantum-tab.active { color: #0891b2 !important; }
+
+.light .text-slate-100, .light .text-slate-200 { color: #1e293b !important; }
+.light .text-cyan-300\/50, .light .text-cyan-300\/80 { color: #0e7490 !important; }
+.light .bg-black\/10, .light .bg-black\/20, .light .bg-black\/30 { background: rgba(0, 0, 0, 0.04) !important; }
+
+.light.bg-gradient-to-br { background: #e0e5ec !important; }
+
+/* ========================================
+   LIVE PRICE FLASH
+   ======================================== */
+@keyframes flashUp { 0% { background: rgba(16, 185, 129, 0.3); } 100% { background: transparent; } }
+@keyframes flashDown { 0% { background: rgba(239, 68, 68, 0.3); } 100% { background: transparent; } }
+
+.live-price { border-radius: 4px; padding: 0 2px; transition: color 0.2s ease; }
+.live-price.flash-up { animation: flashUp 0.6s ease-out; }
+.live-price.flash-down { animation: flashDown 0.6s ease-out; }
+
+/* ========================================
+   SELECTION
+   ======================================== */
+::selection { background: rgba(0, 242, 255, 0.25); color: #fff; }
+
+/* ========================================
+   QUANTUM RANGE (slider)
+   ======================================== */
+.quantum-range { position: relative; height: 4px; background: var(--neu-bg); border-radius: 2px; box-shadow: inset 1px 1px 3px var(--neu-shadow-dark); }
+.quantum-range-indicator { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 14px; height: 14px; background: var(--primary); border-radius: 50%; box-shadow: 0 0 8px rgba(0, 242, 255, 0.4); cursor: grab; }
+.quantum-range-fill { position: absolute; left: 0; top: 0; height: 100%; background: linear-gradient(90deg, rgba(239, 68, 68, 0.4), rgba(16, 185, 129, 0.4)); border-radius: 2px; }
