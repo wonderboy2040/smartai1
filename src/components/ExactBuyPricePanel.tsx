@@ -166,7 +166,7 @@ export function ExactBuyPricePanel() {
                 <div className="text-lg font-black text-amber-400 font-mono">{cur}{entryResult.exactEntryPrice.high}</div>
               </div>
             </div>
-            <div className="grid grid-cols-4 gap-2 text-center">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
               <div className="bg-red-500/5 border border-red-500/15 rounded-lg p-2">
                 <div className="text-[9px] text-red-400/80 font-bold">STOP LOSS</div>
                 <div className="text-sm font-black text-red-400 font-mono">{cur}{entryResult.stopLoss}</div>
@@ -377,7 +377,7 @@ export function ExactBuyPricePanel() {
               <div className="text-lg font-black text-cyan-400 font-mono">{backtestResult.sharpeRatio}</div>
             </div>
           </div>
-          <div className="grid grid-cols-4 gap-2 text-center mb-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center mb-3">
             <div><div className="text-[9px] text-slate-500">Trades</div><div className="text-xs font-bold text-white">{backtestResult.totalTrades}</div></div>
             <div><div className="text-[9px] text-slate-500">Avg Return</div><div className="text-xs font-bold text-cyan-400">{backtestResult.avgReturn}%</div></div>
             <div><div className="text-[9px] text-slate-500">Max Win</div><div className="text-xs font-bold text-emerald-400">+{backtestResult.maxWin}%</div></div>

@@ -208,7 +208,7 @@ export const WhatIfSIPOptimizer = React.memo(({ currentSIP, investYears }: Props
           <span className="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">📊 Step-Up Power Comparison</span>
           <span className="text-[9px] text-slate-600">{fmtINR(currentSIP)}/mo × {investYears}yr @ 14%</span>
         </div>
-        <div className="grid grid-cols-5 gap-1.5">
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
           {stepUpComparison.map((s, i) => {
             const barH = Math.max(8, (s.fv / maxStepFV) * 60);
             const isBest = s.fv === maxStepFV;

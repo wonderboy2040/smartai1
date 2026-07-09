@@ -252,7 +252,7 @@ export const DailyPLTracker = React.memo(function DailyPLTracker() {
                   const isToday = i === recent.length - 1;
                   return (
                     <div key={e.date} className="flex-1 flex flex-col items-center justify-end group relative" title={`${e.date}: ${fmtINR(e.total)}`}>
-                      <div className={`text-[7px] font-mono mb-0.5 ${isProfit ? 'text-emerald-400' : 'text-red-400'} ${isToday ? 'font-bold' : ''}`}>
+                      <div className={`text-[9px] font-mono mb-0.5 ${isProfit ? 'text-emerald-400' : 'text-red-400'} ${isToday ? 'font-bold' : ''}`}>
                         {Math.abs(e.total) >= 1000 ? `${(e.total / 1000).toFixed(0)}K` : Math.abs(e.total)}
                       </div>
                       <div
@@ -263,7 +263,7 @@ export const DailyPLTracker = React.memo(function DailyPLTracker() {
                         } ${isToday ? 'ring-1 ring-cyan-400 ring-offset-1 ring-offset-black/40' : ''}`}
                         style={{ height: `${h}px` }}
                       />
-                      <div className={`text-[6px] mt-1 ${isToday ? 'text-cyan-400 font-bold' : 'text-slate-600'}`}>
+                      <div className={`text-[8px] mt-1 ${isToday ? 'text-cyan-400 font-bold' : 'text-slate-600'}`}>
                         {fmtDay(e.date).split(' ')[0].slice(0, 2)}
                       </div>
                     </div>

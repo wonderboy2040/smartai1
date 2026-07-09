@@ -112,7 +112,7 @@ export default React.memo(function PlannerTab() {
       {/* SIP Config */}
       <div className="quantum-panel rounded-2xl p-5 animate-fade-in-up">
         <div className="text-[10px] text-cyan-500/70 font-bold uppercase tracking-wider mb-4">Monthly SIP Configuration</div>
-        <div className="grid md:grid-cols-4 gap-3 mb-5">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
           <div className="bg-blue-500/5 border border-blue-500/15 p-4 rounded-xl">
             <div className="text-xs font-bold text-blue-400 mb-2">🇮🇳 India SIP</div>
             <div className="flex items-center gap-2 quantum-input p-2 rounded-lg">
@@ -483,7 +483,7 @@ export default React.memo(function PlannerTab() {
                           </div>
                         </div>
                         {/* Details Row */}
-                        <div className="grid grid-cols-4 gap-1 text-[9px] text-slate-500">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] text-slate-500">
                           <div>RSI: <span className="text-slate-300 font-mono">{a.rsi.toFixed(0)}</span></div>
                           <div>Entry: <span className="text-cyan-400 font-mono">{cur}{a.targetEntry.toFixed(1)}</span></div>
                           <div>Str: <span className={`font-bold ${a.strength > 65 ? 'text-emerald-400' : a.strength < 35 ? 'text-red-400' : 'text-amber-400'}`}>{a.strength}</span></div>
@@ -824,36 +824,36 @@ export default React.memo(function PlannerTab() {
 
           <div className="space-y-2">
             {rebalanceItems.map((r, i) => (
-              <div key={i} className={`rounded-xl p-3 border flex items-center gap-3 transition-all ${
+              <div key={i} className={`rounded-xl p-3 border flex flex-wrap items-center gap-2 sm:gap-3 transition-all ${
                 r.action === 'BUY_MORE' ? 'bg-emerald-500/5 border-emerald-500/15' :
                 r.action === 'TRIM' ? 'bg-red-500/5 border-red-500/15' :
                 'bg-black/20 border-white/5'
               }`}>
-                <div className="w-28">
+                <div className="w-full sm:w-28">
                   <div className="font-bold text-white text-sm">{r.symbol.replace('.NS', '')}</div>
                   <div className="text-[9px] text-slate-500">{r.market === 'IN' ? '🇮🇳' : '🦅'} {r.market}</div>
                 </div>
 
                 {/* Weight Bars */}
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[9px] text-slate-500 w-14">Current</span>
-                    <div className="flex-1 bg-slate-800/60 rounded-full h-1.5 overflow-hidden">
+                    <span className="text-[9px] text-slate-500 w-12 sm:w-14 flex-shrink-0">Current</span>
+                    <div className="flex-1 bg-slate-800/60 rounded-full h-1.5 overflow-hidden min-w-0">
                       <div className="bg-cyan-500 h-full rounded-full transition-all" style={{ width: `${Math.min(100, r.currentWeight)}%` }} />
                     </div>
-                    <span className="text-[10px] text-cyan-400 font-mono w-10 text-right">{r.currentWeight}%</span>
+                    <span className="text-[10px] text-cyan-400 font-mono w-10 text-right flex-shrink-0">{r.currentWeight}%</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-[9px] text-slate-500 w-14">Target</span>
-                    <div className="flex-1 bg-slate-800/60 rounded-full h-1.5 overflow-hidden">
+                    <span className="text-[9px] text-slate-500 w-12 sm:w-14 flex-shrink-0">Target</span>
+                    <div className="flex-1 bg-slate-800/60 rounded-full h-1.5 overflow-hidden min-w-0">
                       <div className="bg-amber-500/50 h-full rounded-full transition-all" style={{ width: `${Math.min(100, r.targetWeight)}%` }} />
                     </div>
-                    <span className="text-[10px] text-amber-400 font-mono w-10 text-right">{r.targetWeight}%</span>
+                    <span className="text-[10px] text-amber-400 font-mono w-10 text-right flex-shrink-0">{r.targetWeight}%</span>
                   </div>
                 </div>
 
                 {/* Drift */}
-                <div className="w-16 text-center">
+                <div className="w-12 sm:w-16 text-center flex-shrink-0">
                   <div className={`text-xs font-black font-mono ${
                     Math.abs(r.drift) > 5 ? (r.drift > 0 ? 'text-red-400' : 'text-emerald-400') : 'text-slate-400'
                   }`}>
@@ -863,7 +863,7 @@ export default React.memo(function PlannerTab() {
                 </div>
 
                 {/* Action */}
-                <div className="w-24 text-right">
+                <div className="w-full sm:w-24 sm:text-right">
                   {r.action !== 'OK' ? (
                     <>
                       <div className={`text-[10px] font-bold ${r.action === 'BUY_MORE' ? 'text-emerald-400' : 'text-red-400'}`}>

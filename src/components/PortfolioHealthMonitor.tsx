@@ -104,7 +104,7 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
     : 'bg-red-500/10 border-red-500/30';
 
   return (
-    <div className="fixed bottom-4 right-4 z-40">
+    <div className="fixed bottom-4 left-4 z-40">
       {/* Health Badge */}
       <button
         onClick={() => setExpanded(!expanded)}

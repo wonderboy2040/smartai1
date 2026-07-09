@@ -987,3 +987,79 @@
 
 /* ===== SELECTION ===== */
 ::selection { background: rgba(0, 242, 255, 0.25); color: #fff; }
+
+/* ========================================
+   MISSING ANIMATIONS + UTILITY CLASSES
+   ======================================== */
+
+/* Fix #13: message animation */
+@keyframes message-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.animate-message-in { animation: message-in 0.3s ease both; }
+
+/* Fix #14: undefined utility classes */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.stat-card {
+  background: var(--clay-surface, #1e1e2e);
+  border: 1px solid var(--clay-border, rgba(255,255,255,0.06));
+  border-radius: 16px;
+  padding: 1rem;
+}
+
+.black-swan-alert {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 14px;
+  padding: 0.75rem 1rem;
+}
+
+.alert-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Fix #15: bento-grid responsive */
+@media (max-width: 768px) {
+  .bento-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .bento-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Fix #16: Black swan alert wrap on mobile */
+@media (max-width: 480px) {
+  .black-swan-alert {
+    flex-wrap: wrap;
+  }
+}
+
+/* Fix #17: intermediate breakpoint for tight panels */
+@media (max-width: 640px) {
+  .quantum-panel { padding: 0.875rem !important; }
+  .quantum-tab { padding: 0.5rem 0.75rem !important; }
+}
+
+/* Selection */
+::selection { background: rgba(0, 242, 255, 0.25); color: #fff; }

@@ -173,7 +173,7 @@ export default function App() {
               </div>
 
               {/* Tabs */}
-              <div className="flex gap-0.5 quantum-panel p-1 rounded-2xl overflow-x-auto scrollbar-hide flex-shrink-0">
+              <div className="flex gap-0.5 quantum-panel p-1 rounded-2xl overflow-x-auto scrollbar-hide max-w-full">
                 {(['dashboard', 'portfolio', 'planner', 'macro', 'researchlab', 'guide'] as TabType[]).map(tab => (
                   <button key={tab} onClick={() => setActiveTab(tab)} className={`quantum-tab px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${activeTab === tab ? 'active' : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'}`}>
                     <span className="hidden sm:inline">{tab === 'dashboard' && '📊 Dashboard'}{tab === 'portfolio' && '💼 Portfolio'}{tab === 'planner' && '🎯 Planner'}{tab === 'macro' && '🌍 Risk'}{tab === 'researchlab' && '🔬 Research Lab'}{tab === 'guide' && '📖 Guide'}</span>
@@ -183,11 +183,11 @@ export default function App() {
               </div>
 
               <div className="flex gap-2 relative">
-                <button onClick={() => setAutoTelegram(prev => !prev)} className={`quantum-btn-ghost p-2 rounded-xl text-lg transition-all ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`} title={autoTelegram ? 'Auto Alerts ON' : 'Auto Alerts OFF'}>🔔</button>
-                <button onClick={toggleTheme} className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>🌞</button>
-                <button onClick={refreshAll} disabled={isRefreshing} className="quantum-btn-ghost p-2 rounded-xl text-lg disabled:opacity-50" title="Refresh All (prices + forex)"><span className={isRefreshing ? 'inline-block animate-spin' : ''}>🔄</span></button>
-                <button onClick={flushCache} className="quantum-btn-ghost p-2 rounded-xl text-lg" title="Flush Cache">🧹</button>
-                <button onClick={logout} className="quantum-btn-ghost p-2 rounded-xl text-lg" title="Logout">🔐</button>
+                <button onClick={() => setAutoTelegram(prev => !prev)} className={`quantum-btn-ghost p-2.5 rounded-xl text-lg transition-all min-w-[44px] min-h-[44px] flex items-center justify-center ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`} title={autoTelegram ? 'Auto Alerts ON' : 'Auto Alerts OFF'}>🔔</button>
+                <button onClick={toggleTheme} className="w-11 h-11 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>🌞</button>
+                <button onClick={refreshAll} disabled={isRefreshing} className="quantum-btn-ghost p-2.5 rounded-xl text-lg disabled:opacity-50 min-w-[44px] min-h-[44px] flex items-center justify-center" title="Refresh All (prices + forex)"><span className={isRefreshing ? 'inline-block animate-spin' : ''}>🔄</span></button>
+                <button onClick={flushCache} className="quantum-btn-ghost p-2.5 rounded-xl text-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title="Flush Cache">🧹</button>
+                <button onClick={logout} className="quantum-btn-ghost p-2.5 rounded-xl text-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title="Logout">🔐</button>
               </div>
             </div>
           </div>
@@ -209,7 +209,7 @@ export default function App() {
         {/* Add/Edit Modal */}
         {showAddModal && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-xl z-50 flex items-center justify-center p-4 animate-fade-in">
-            <div className="quantum-modal rounded-2xl w-full max-w-md shadow-2xl animate-scale-in">
+            <div className="quantum-modal rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto scrollbar-hide shadow-2xl animate-scale-in">
               <div className="p-5 border-b border-white/5 flex justify-between items-center">
                 <h3 className="text-lg font-bold text-white">{transactionType === 'sell' ? '📉 Sell Asset' : '➕ Add Asset'}</h3>
                 <button onClick={() => setShowAddModal(false)} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-red-500/20 flex items-center justify-center text-lg text-slate-400 hover:text-red-400 transition-all">✕</button>
