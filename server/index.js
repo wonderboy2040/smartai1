@@ -1024,6 +1024,431 @@ app.get(/^(?!\/api\/).*/, (req, res) => {
   res.sendFile(path.join(distDir, 'index.html'));
 });
 
+// ============================================================
+// DHAN + SHOONYA BROKER CONNECTORS (read-only, server-side)
+// ============================================================
+// Dhan API: https://dhanhq.co/docs/v2/ (REST, access token)
+// Shoonya API: https://shoonya.finvasia.com/ (REST + WebSocket, free)
+// Both are read-only here — no order placement (free tier safe).
+// ============================================================
+
+// GET /api/broker/status → which broker is configured
+app.get('/api/broker/status', (_req, res) => {
+  res.json({
+    dhan: !!(process.env.DHAN_CLIENT_ID && process.env.DHAN_ACCESS_TOKEN),
+    shoonya: !!(process.env.SHOONYA_USER_ID && process.env.SHOONYA_PASSWORD && process.env.SHOONYA_VENDOR_CODE),
+  });
+});
+
+// GET /api/broker/dhan/positions → live positions from Dhan
+app.get('/api/broker/dhan/positions', async (_req, res) => {
+  const clientId = process.env.DHAN_CLIENT_ID;
+  const token = process.env.DHAN_ACCESS_TOKEN;
+  if (!clientId || !token) return jsonError(res, 503, 'Dhan not configured');
+  try {
+    const r = await fetch('https://api.dhan.co/v2/positions', {
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'access-token': token,
+        'client-id': clientId,
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return jsonError(res, 502, `Dhan API error: ${r.status}`);
+    const data = await r.json();
+    res.json(data);
+  } catch (e) {
+    return jsonError(res, 502, `Dhan fetch failed: ${e?.message || e}`);
+  }
+});
+
+// GET /api/broker/dhan/holdings → long-term holdings from Dhan
+app.get('/api/broker/dhan/holdings', async (_req, res) => {
+  const clientId = process.env.DHAN_CLIENT_ID;
+  const token = process.env.DHAN_ACCESS_TOKEN;
+  if (!clientId || !token) return jsonError(res, 503, 'Dhan not configured');
+  try {
+    const r = await fetch('https://api.dhan.co/v2/holdings', {
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'access-token': token,
+        'client-id': clientId,
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return jsonError(res, 502, `Dhan API error: ${r.status}`);
+    const data = await r.json();
+    res.json(data);
+  } catch (e) {
+    return jsonError(res, 502, `Dhan fetch failed: ${e?.message || e}`);
+  }
+});
+
+// GET /api/broker/shoonya/holdings → holdings from Shoonya (Finvasia)
+// Shoonya uses a session-based API. For simplicity, we do a login + fetch
+// in one request. Token is cached for the session.
+let _shoonyaToken = null;
+let _shoonyaTokenTs = 0;
+const SHOONYA_TOKEN_TTL = 5 * 60 * 1000; // 5 min
+
+app.get('/api/broker/shoonya/holdings', async (_req, res) => {
+  const userId = process.env.SHOONYA_USER_ID;
+  const password = process.env.SHOONYA_PASSWORD;
+  const vendor = process.env.SHOONYA_VENDOR_CODE;
+  const apiKey = process.env.SHOONYA_API_KEY || '';
+  const imei = process.env.SHOONYA_IMEI || '100001';  // dummy IMEI
+
+  if (!userId || !password || !vendor) {
+    return jsonError(res, 503, 'Shoonya not configured');
+  }
+
+  try {
+    // Login if token is stale
+    if (!_shoonyaToken || Date.now() - _shoonyaTokenTs > SHOONYA_TOKEN_TTL) {
+      const loginRes = await fetch('https://api.shoonya.com/NorenWClientTP/QuickAuth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          source: 'API',
+          apiversion: '1.0.0',
+          imei,
+          uid: userId,
+          pwd: password,
+          factor2: apiKey,
+          vc: vendor,
+          appkey: Buffer.from(JSON.stringify({ appkey: apiKey, secret: 'shoonya' })).toString('base64'),
+        }),
+        signal: AbortSignal.timeout(6000),
+      });
+      const loginData = await loginRes.json();
+      if (loginData?.stat !== 'Ok') {
+        return jsonError(res, 401, `Shoonya login failed: ${loginData?.emsg || 'unknown'}`);
+      }
+      _shoonyaToken = loginData.susertoken;
+      _shoonyaTokenTs = Date.now();
+    }
+
+    // Fetch holdings
+    const holdRes = await fetch('https://api.shoonya.com/NorenWClientTP/Holdings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        uid: userId,
+        actid: userId,
+        token: _shoonyaToken,
+      }),
+      signal: AbortSignal.timeout(6000),
+    });
+    const holdData = await holdRes.json();
+    res.json({ holdings: Array.isArray(holdData) ? holdData : [], source: 'shoonya' });
+  } catch (e) {
+    _shoonyaToken = null;  // force re-login on next call
+    return jsonError(res, 502, `Shoonya fetch failed: ${e?.message || e}`);
+  }
+});
+
+// ============================================================
+// TRADE JOURNAL ANALYZER (server-side CSV parse + behavior diagnostics)
+// ============================================================
+// POST /api/journal/analyze → { trades: CSV rows } → { roundtrips, diagnostics }
+// ============================================================
+app.post('/api/journal/analyze', (req, res) => {
+  const { trades } = req.body || {};
+  if (!Array.isArray(trades) || trades.length === 0) {
+    return jsonError(res, 400, 'trades[] required');
+  }
+  try {
+    // FIFO pairing: match buys to sells per symbol
+    const bySymbol = {};
+    for (const t of trades) {
+      const sym = String(t.symbol || '').toUpperCase().trim();
+      if (!sym) continue;
+      if (!bySymbol[sym]) bySymbol[sym] = [];
+      bySymbol[sym].push(t);
+    }
+
+    const roundtrips = [];
+    for (const [sym, symTrades] of Object.entries(bySymbol)) {
+      // Sort by date
+      symTrades.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+      const buyQueue = [];
+      for (const t of symTrades) {
+        const qty = parseFloat(t.qty) || 0;
+        const price = parseFloat(t.price) || 0;
+        const type = (t.type || '').toLowerCase();
+        if (type === 'buy') {
+          buyQueue.push({ qty, price, date: t.date });
+        } else if (type === 'sell' && buyQueue.length > 0) {
+          let remaining = qty;
+          while (remaining > 0 && buyQueue.length > 0) {
+            const buy = buyQueue[0];
+            const matched = Math.min(remaining, buy.qty);
+            const pnl = (price - buy.price) * matched;
+            const holdDays = buy.date ?
+              Math.round((new Date(t.date) - new Date(buy.date)) / 86400000) : 0;
+            roundtrips.push({
+              symbol: sym,
+              buyDate: buy.date,
+              sellDate: t.date,
+              qty: matched,
+              buyPrice: buy.price,
+              sellPrice: price,
+              pnl,
+              pnlPct: buy.price > 0 ? (pnl / (buy.price * matched)) * 100 : 0,
+              holdDays,
+            });
+            buy.qty -= matched;
+            remaining -= matched;
+            if (buy.qty <= 0) buyQueue.shift();
+          }
+        }
+      }
+    }
+
+    // Behavior diagnostics
+    const wins = roundtrips.filter(r => r.pnl > 0);
+    const losses = roundtrips.filter(r => r.pnl < 0);
+    const winRate = roundtrips.length > 0 ? (wins.length / roundtrips.length) * 100 : 0;
+    const avgWinHold = wins.length > 0 ? wins.reduce((s, r) => s + r.holdDays, 0) / wins.length : 0;
+    const avgLossHold = losses.length > 0 ? losses.reduce((s, r) => s + r.holdDays, 0) / losses.length : 0;
+    const dispositionRatio = avgLossHold > 0 && avgWinHold > 0 ? avgLossHold / avgWinHold : 0;
+
+    // Disposition effect: holding losers longer than winners
+    let dispositionSeverity = 'none';
+    if (dispositionRatio > 1.5) dispositionSeverity = 'high';
+    else if (dispositionRatio > 1.2) dispositionSeverity = 'medium';
+
+    // Overtrading: trades per week
+    const tradesPerWeek = roundtrips.length > 0 && trades.length > 0 ?
+      roundtrips.length / Math.max(1, Math.ceil((new Date(trades[trades.length - 1].date) - new Date(trades[0].date)) / (7 * 86400000))) : 0;
+    let overtradingSeverity = 'none';
+    if (tradesPerWeek > 10) overtradingSeverity = 'high';
+    else if (tradesPerWeek > 5) overtradingSeverity = 'medium';
+
+    // Chasing momentum: buys after >3% run-up (approximated)
+    const chasingCount = trades.filter(t => {
+      const change = parseFloat(t.change || 0);
+      return t.type?.toLowerCase() === 'buy' && change > 3;
+    }).length;
+    const chasingPct = trades.length > 0 ? (chasingCount / trades.length) * 100 : 0;
+    let chasingSeverity = 'none';
+    if (chasingPct > 30) chasingSeverity = 'high';
+    else if (chasingPct > 15) chasingSeverity = 'medium';
+
+    res.json({
+      roundtrips: roundtrips.slice(-100),  // last 100
+      summary: {
+        totalTrades: trades.length,
+        totalRoundtrips: roundtrips.length,
+        winRate: Math.round(winRate * 10) / 10,
+        avgWinHoldDays: Math.round(avgWinHold),
+        avgLossHoldDays: Math.round(avgLossHold),
+        totalPnL: Math.round(roundtrips.reduce((s, r) => s + r.pnl, 0)),
+        tradesPerWeek: Math.round(tradesPerWeek * 10) / 10,
+      },
+      diagnostics: {
+        disposition: {
+          severity: dispositionSeverity,
+          ratio: Math.round(dispositionRatio * 100) / 100,
+          detail: `Losses held ${Math.round(avgLossHold)}d vs wins ${Math.round(avgWinHold)}d (${Math.round(dispositionRatio * 100) / 100}x)`,
+        },
+        overtrading: {
+          severity: overtradingSeverity,
+          tradesPerWeek: Math.round(tradesPerWeek * 10) / 10,
+          detail: `${Math.round(tradesPerWeek * 10) / 10} trades/week`,
+        },
+        chasing: {
+          severity: chasingSeverity,
+          pct: Math.round(chasingPct),
+          detail: `${chasingCount}/${trades.length} buys after >3% run-up`,
+        },
+      },
+    });
+  } catch (e) {
+    return jsonError(res, 500, `Journal analysis failed: ${e?.message || e}`);
+  }
+});
+
+// ============================================================
+// PATTERN RECOGNITION (server-side, pure JS)
+// ============================================================
+// POST /api/patterns/detect → { candles: OHLCV[] } → { patterns: [] }
+// ============================================================
+app.post('/api/patterns/detect', (req, res) => {
+  const { candles } = req.body || {};
+  if (!Array.isArray(candles) || candles.length < 10) {
+    return jsonError(res, 400, 'candles[] (min 10) required');
+  }
+  try {
+    const patterns = [];
+    const closes = candles.map(c => c.close);
+    const highs = candles.map(c => c.high);
+    const lows = candles.map(c => c.low);
+    const n = closes.length;
+
+    // 1. Support/Resistance (peak/valley clustering)
+    const peaks = [], valleys = [];
+    for (let i = 2; i < n - 2; i++) {
+      if (highs[i] > highs[i-1] && highs[i] > highs[i-2] && highs[i] > highs[i+1] && highs[i] > highs[i+2]) {
+        peaks.push({ idx: i, price: highs[i] });
+      }
+      if (lows[i] < lows[i-1] && lows[i] < lows[i-2] && lows[i] < lows[i+1] && lows[i] < lows[i+2]) {
+        valleys.push({ idx: i, price: lows[i] });
+      }
+    }
+    if (peaks.length >= 2) {
+      const resistance = peaks[peaks.length - 1].price;
+      patterns.push({ type: 'resistance', price: resistance, strength: peaks.length, note: `Resistance at ${resistance.toFixed(2)}` });
+    }
+    if (valleys.length >= 2) {
+      const support = valleys[valleys.length - 1].price;
+      patterns.push({ type: 'support', price: support, strength: valleys.length, note: `Support at ${support.toFixed(2)}` });
+    }
+
+    // 2. Double Top / Bottom (last 30 candles)
+    const recentPeaks = peaks.slice(-2);
+    if (recentPeaks.length === 2) {
+      const diff = Math.abs(recentPeaks[0].price - recentPeaks[1].price) / recentPeaks[0].price;
+      if (diff < 0.02) {
+        patterns.push({ type: 'double_top', price: recentPeaks[0].price, note: `Double top at ${recentPeaks[0].price.toFixed(2)} — bearish reversal signal` });
+      }
+    }
+    const recentValleys = valleys.slice(-2);
+    if (recentValleys.length === 2) {
+      const diff = Math.abs(recentValleys[0].price - recentValleys[1].price) / recentValleys[0].price;
+      if (diff < 0.02) {
+        patterns.push({ type: 'double_bottom', price: recentValleys[0].price, note: `Double bottom at ${recentValleys[0].price.toFixed(2)} — bullish reversal signal` });
+      }
+    }
+
+    // 3. Trend line slope (linear regression on last 20 closes)
+    if (n >= 20) {
+      const recent = closes.slice(-20);
+      const x = recent.map((_, i) => i);
+      const xMean = x.reduce((a, b) => a + b, 0) / x.length;
+      const yMean = recent.reduce((a, b) => a + b, 0) / recent.length;
+      const num = x.reduce((s, xi, i) => s + (xi - xMean) * (recent[i] - yMean), 0);
+      const den = x.reduce((s, xi) => s + (xi - xMean) ** 2, 0);
+      const slope = den !== 0 ? num / den : 0;
+      const slopePct = (slope / yMean) * 100;
+      if (slopePct > 0.5) {
+        patterns.push({ type: 'uptrend', slope: slopePct, note: `Strong uptrend (${slopePct.toFixed(2)}%/bar)` });
+      } else if (slopePct < -0.5) {
+        patterns.push({ type: 'downtrend', slope: slopePct, note: `Strong downtrend (${slopePct.toFixed(2)}%/bar)` });
+      }
+    }
+
+    // 4. Candlestick patterns (last candle)
+    const last = candles[n - 1];
+    const body = Math.abs(last.close - last.open);
+    const range = last.high - last.low;
+    const upperWick = last.high - Math.max(last.close, last.open);
+    const lowerWick = Math.min(last.close, last.open) - last.low;
+
+    if (range > 0 && body / range < 0.1) {
+      patterns.push({ type: 'doji', note: 'Doji — indecision, potential reversal' });
+    }
+    if (lowerWick > body * 2 && upperWick < body * 0.5) {
+      patterns.push({ type: 'hammer', note: 'Hammer — bullish reversal at support' });
+    }
+    if (upperWick > body * 2 && lowerWick < body * 0.5) {
+      patterns.push({ type: 'shooting_star', note: 'Shooting Star — bearish reversal at resistance' });
+    }
+
+    // 5. Head and Shoulders (last 60 bars)
+    if (peaks.length >= 3 && n >= 60) {
+      const last3 = peaks.slice(-3);
+      if (last3[1].price > last3[0].price && last3[1].price > last3[2].price &&
+          Math.abs(last3[0].price - last3[2].price) / last3[0].price < 0.03) {
+        patterns.push({ type: 'head_shoulders', note: 'Head & Shoulders — major bearish reversal pattern' });
+      }
+    }
+
+    res.json({ patterns, candleCount: n });
+  } catch (e) {
+    return jsonError(res, 500, `Pattern detection failed: ${e?.message || e}`);
+  }
+});
+
+// ============================================================
+// THESIS TRACKER (server-side, in-memory + localStorage on client)
+// ============================================================
+// POST /api/thesis → create/update thesis
+// GET /api/thesis → list theses
+// DELETE /api/thesis/:id → delete
+// ============================================================
+const _theses = new Map();  // id → thesis object
+
+app.get('/api/thesis', (_req, res) => {
+  const list = Array.from(_theses.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+  res.json(list);
+});
+
+app.post('/api/thesis', (req, res) => {
+  const { id, symbol, thesis, criteria, status, evidence } = req.body || {};
+  if (!symbol || !thesis) return jsonError(res, 400, 'symbol + thesis required');
+  const tid = id || `thesis_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const existing = _theses.get(tid) || {};
+  const updated = {
+    ...existing,
+    id: tid,
+    symbol: symbol.toUpperCase(),
+    thesis,
+    criteria: criteria || existing.criteria || [],
+    status: status || existing.status || 'active',
+    evidence: evidence || existing.evidence || [],
+    updatedAt: Date.now(),
+    createdAt: existing.createdAt || Date.now(),
+  };
+  _theses.set(tid, updated);
+  res.json(updated);
+});
+
+app.delete('/api/thesis/:id', (req, res) => {
+  _theses.delete(req.params.id);
+  res.json({ ok: true });
+});
+
+// ============================================================
+// SCHEDULED RESEARCH (server-side cron)
+// ============================================================
+// POST /api/schedule → create scheduled job
+// GET /api/schedule → list jobs
+// DELETE /api/schedule/:id → delete job
+// ============================================================
+// FIX: Render free tier has ephemeral filesystem — cron state is in-memory only.
+// Jobs must be re-created on each deploy. Client-side localStorage backup.
+const _scheduledJobs = new Map();
+
+app.get('/api/schedule', (_req, res) => {
+  const list = Array.from(_scheduledJobs.values());
+  res.json(list);
+});
+
+app.post('/api/schedule', (req, res) => {
+  const { id, prompt, cron, enabled } = req.body || {};
+  if (!prompt || !cron) return jsonError(res, 400, 'prompt + cron required');
+  const jid = id || `job_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const job = {
+    id: jid,
+    prompt,
+    cron,
+    enabled: enabled !== false,
+    createdAt: Date.now(),
+    lastRunAt: null,
+    nextRunAt: null,
+  };
+  _scheduledJobs.set(jid, job);
+  res.json(job);
+});
+
+app.delete('/api/schedule/:id', (req, res) => {
+  _scheduledJobs.delete(req.params.id);
+  res.json({ ok: true });
+});
+
 app.listen(PORT, () => {
   const ready = Object.entries(KEYS).filter(([, v]) => v).map(([k]) => k);
   console.log(`[wealth-ai] server on :${PORT} — providers ready: ${ready.join(', ') || 'NONE (set API keys!)'}`);

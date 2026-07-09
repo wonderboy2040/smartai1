@@ -1,60 +1,83 @@
 /* ========================================
-   WEALTH AI — NEUMORPHISM DESIGN SYSTEM v5.0
-   Soft UI · Depth · Tactile · Premium
-   Mobile + Desktop Responsive
-   ======================================== */
+   WEALTH AI - Premium Quantum Pro Design System v4.0
+   Advanced • Real-time • Pro Trading
+   Glassmorphism + High-Tech Futurism + Premium UI
+    ======================================== */
 
-/* Fonts — loaded via index.html */
+/* Fonts — loaded via index.html <link> to avoid render-blocking duplicate */
+
 @import "tailwindcss";
 
 /* ========================================
-   NEUMORPHISM COLOR PALETTE
+   QUANTUM NOIR COLOR PALETTE
    ======================================== */
 :root {
-  /* Neumorphic Surface — warm dark gray */
-  --neu-bg: #1a1a2e;
-  --neu-bg-light: #16213e;
-  --neu-surface: #1e1e32;
-  --neu-surface-raised: #232342;
+  /* Surface Colors */
+  --surface: #131313;
+  --surface-dim: #131313;
+  --surface-bright: #3a3939;
+  --surface-container-lowest: #0e0e0e;
+  --surface-container-low: #1c1b1b;
+  --surface-container: #201f1f;
+  --surface-container-high: #2a2a2a;
+  --surface-container-highest: #353534;
+  --surface-variant: #353534;
 
-  /* Neumorphic Shadows */
-  --neu-shadow-dark: #0d0d1a;
-  --neu-shadow-light: #2d2d52;
+  /* On Surface */
+  --on-surface: #e5e2e1;
+  --on-surface-variant: #b9cacb;
+  --inverse-surface: #e5e2e1;
+  --inverse-on-surface: #313030;
 
-  /* Primary — Electric Cyan */
-  --primary: #00f2ff;
-  --primary-dim: #00dbe7;
-  --primary-container: rgba(0, 242, 255, 0.12);
-  --on-primary: #001a1c;
+  /* Outline */
+  --outline: #849495;
+  --outline-variant: #3a494b;
+  --surface-tint: #00dbe7;
 
-  /* Secondary — Purple */
-  --secondary: #b600f8;
-  --secondary-dim: #c026d3;
-  --secondary-container: rgba(182, 0, 248, 0.1);
+  /* Primary Cyan */
+  --primary: #e1fdff;
+  --on-primary: #00363a;
+  --primary-container: #00f2ff;
+  --on-primary-container: #006a71;
+  --inverse-primary: #00696f;
+  --primary-fixed: #74f5ff;
+  --primary-fixed-dim: #00dbe7;
+  --on-primary-fixed: #002022;
+  --on-primary-fixed-variant: #004f54;
 
-  /* Accent Colors */
-  --emerald: #10b981;
-  --red: #ef4444;
-  --amber: #f59e0b;
-  --blue: #3b82f6;
+  /* Secondary Purple */
+  --secondary: #ebb2ff;
+  --on-secondary: #520072;
+  --secondary-container: #b600f8;
+  --on-secondary-container: #fff6fc;
+  --secondary-fixed: #f8d8ff;
+  --secondary-fixed-dim: #ebb2ff;
+  --on-secondary-fixed: #320047;
+  --on-secondary-fixed-variant: #74009f;
 
-  /* Text */
-  --text-primary: #e5e2e1;
-  --text-secondary: #a1a1b5;
-  --text-tertiary: #6b6b80;
-  --text-on-neu: #d4d4e0;
+  /* Tertiary */
+  --tertiary: #f6f7ff;
+  --on-tertiary: #233148;
+  --tertiary-container: #cddbf9;
+  --on-tertiary-container: #526079;
+  --tertiary-fixed: #d6e3ff;
+  --tertiary-fixed-dim: #b9c7e4;
+  --on-tertiary-fixed: #0d1c32;
+  --on-tertiary-fixed-variant: #39475f;
 
-  /* Borders */
-  --neu-border: rgba(255, 255, 255, 0.06);
-  --neu-border-hover: rgba(0, 242, 255, 0.2);
+  /* Error */
+  --error: #ffb4ab;
+  --on-error: #690005;
+  --error-container: #93000a;
+  --on-error-container: #ffdad6;
 
   /* Background */
-  --background: #1a1a2e;
+  --background: #131313;
   --on-background: #e5e2e1;
 }
 
 /* ========================================
-   BASE TYPOGRAPHY
+   ADVANCED TYPOGRAPHY
    ======================================== */
 * {
   font-family: 'Inter', 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -77,96 +100,247 @@
   font-family: 'Space Grotesk', sans-serif;
 }
 
-.text-h1 { font-size: 32px; line-height: 1.2; letter-spacing: -0.01em; font-weight: 600; }
-.text-h2 { font-size: 24px; line-height: 1.3; font-weight: 600; }
-.text-display { font-size: 48px; line-height: 1.1; letter-spacing: -0.02em; font-weight: 700; }
-.text-body-lg { font-size: 18px; line-height: 1.6; font-weight: 400; }
-.text-body-md { font-size: 16px; line-height: 1.5; font-weight: 400; }
-.text-label-caps { font-size: 12px; line-height: 1; letter-spacing: 0.1em; font-weight: 600; text-transform: uppercase; }
+.font-body-md, .font-body-lg, .font-label-caps {
+  font-family: 'Inter', sans-serif;
+}
+
+.font-mono-data {
+  font-family: 'Space Grotesk', monospace;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.05em;
+}
+
+/* Typography Sizes */
+.text-h1 {
+  font-size: 32px;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  font-weight: 600;
+}
+
+.text-h2 {
+  font-size: 24px;
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+.text-display {
+  font-size: 48px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+
+.text-body-lg {
+  font-size: 18px;
+  line-height: 1.6;
+  font-weight: 400;
+}
+
+.text-body-md {
+  font-size: 16px;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+.text-label-caps {
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.text-mono-data {
+  font-size: 14px;
+  line-height: 1;
+  letter-spacing: 0.05em;
+  font-weight: 500;
+}
 
 /* ========================================
-   NEUMORPHIC SCROLLBAR
+   ADVANCED SCROLLBAR - QUANTUM STYLE
    ======================================== */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--neu-bg); }
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #050505;
+}
+
 ::-webkit-scrollbar-thumb {
-  background: var(--neu-shadow-light);
+  background: linear-gradient(180deg, rgba(0, 242, 255, 0.4), rgba(182, 0, 248, 0.4));
   border-radius: 3px;
 }
-::-webkit-scrollbar-thumb:hover { background: var(--primary-dim); }
 
-.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-.scrollbar-hide::-webkit-scrollbar { display: none; }
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(0, 242, 255, 0.7), rgba(182, 0, 248, 0.7));
+}
 
 /* ========================================
-   NEUMORPHIC CORE — The Heart of the Design
-   Two shadows: one dark (bottom-right), one light (top-left)
-   Creates the soft "pressed" / "raised" tactile effect
+   PREMIUM BENTO GRID SYSTEM
    ======================================== */
+.bento-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 24px;
+}
 
-/* Raised surface (default — cards, panels, buttons) */
-.neu-raised {
-  background: var(--neu-surface);
+.bento-item {
+  background: rgba(10, 25, 47, 0.75);
+  contain: layout style paint;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 16px;
-  box-shadow:
-    8px 8px 16px var(--neu-shadow-dark),
-    -8px -8px 16px var(--neu-shadow-light);
-  border: 1px solid var(--neu-border);
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.2s ease, transform 0.2s ease;
 }
 
-/* Pressed surface (inputs, active states) */
-.neu-pressed {
-  background: var(--neu-bg);
-  border-radius: 12px;
-  box-shadow:
-    inset 6px 6px 12px var(--neu-shadow-dark),
-    inset -6px -6px 12px var(--neu-shadow-light);
-  border: 1px solid var(--neu-border);
+.bento-item::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(0, 242, 255, 0.05) 0%, transparent 50%, rgba(182, 0, 248, 0.03) 100%);
+  pointer-events: none;
 }
 
-/* Inset small (badges, chips) */
-.neu-inset {
-  background: var(--neu-bg);
-  border-radius: 8px;
-  box-shadow:
-    inset 3px 3px 6px var(--neu-shadow-dark),
-    inset -3px -3px 6px var(--neu-shadow-light);
-}
-
-/* Flat surface (subtle, no depth) */
-.neu-flat {
-  background: var(--neu-surface);
-  border-radius: 12px;
-  border: 1px solid var(--neu-border);
+.bento-item:hover {
+  border-color: rgba(0, 242, 255, 0.2);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0, 242, 255, 0.1), 0 0 60px rgba(0, 242, 255, 0.05);
 }
 
 /* ========================================
-   ANIMATIONS
+   ANIMATIONS - QUANTUM CORE
    ======================================== */
 @keyframes fade-in-up {
-  0% { opacity: 0; transform: translateY(20px); }
-  100% { opacity: 1; transform: translateY(0); }
+  0% { opacity: 0; transform: translateY(24px) scale(0.98); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
 }
-@keyframes fade-in { 0% { opacity: 0; } 100% { opacity: 1; } }
-@keyframes scale-in { 0% { opacity: 0; transform: scale(0.95); } 100% { opacity: 1; transform: scale(1); } }
-@keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
-@keyframes pulse-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.8); } }
-@keyframes gradient-shift { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
-@keyframes ticker-scroll { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
-@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
 
-.animate-fade-in-up { animation: fade-in-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
-.animate-fade-in { animation: fade-in 0.4s ease both; }
-.animate-scale-in { animation: scale-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both; }
-.animate-float { animation: float 3s ease-in-out infinite; }
-.animate-gradient { background-size: 200% 200%; animation: gradient-shift 4s ease infinite; }
-.animate-pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
+@keyframes fade-in {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+@keyframes scale-in {
+  0% { opacity: 0; transform: scale(0.9); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slide-up-modal {
+  0% { opacity: 0; transform: translateY(100px) scale(0.95); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes slide-in-right {
+  0% { opacity: 0; transform: translateX(30px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes gradient-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes border-glow-pulse {
+  0%, 100% { border-color: rgba(0, 242, 255, 0.3); box-shadow: 0 0 15px rgba(0, 242, 255, 0.1); }
+  50% { border-color: rgba(0, 242, 255, 0.6); box-shadow: 0 0 25px rgba(0, 242, 255, 0.2); }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes ticker-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+@keyframes spin-slow {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes price-flash-green {
+  0% { background-color: rgba(16, 185, 129, 0.4); }
+  100% { background-color: transparent; }
+}
+
+@keyframes price-flash-red {
+  0% { background-color: rgba(239, 68, 68, 0.4); }
+  100% { background-color: transparent; }
+}
+
+@keyframes ai-chip-rotate {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* ========================================
+   ANIMATION UTILITIES
+   ======================================== */
+.animate-fade-in-up {
+  animation: fade-in-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.4s ease both;
+}
+
+.animate-scale-in {
+  animation: scale-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-slide-up-modal {
+  animation: slide-up-modal 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-slide-right {
+  animation: slide-in-right 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-gradient {
+  background-size: 200% 200%;
+  animation: gradient-shift 4s ease infinite;
+}
+
+.animate-border-glow {
+  animation: border-glow-pulse 2s ease-in-out infinite;
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
 .animate-shimmer {
-  background: linear-gradient(90deg, var(--neu-bg) 25%, var(--neu-surface-raised) 50%, var(--neu-bg) 75%);
+  background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
 }
 
+/* Staggered animation delays */
 .delay-75 { animation-delay: 75ms; }
 .delay-100 { animation-delay: 100ms; }
 .delay-150 { animation-delay: 150ms; }
@@ -176,368 +350,1065 @@
 .delay-500 { animation-delay: 500ms; }
 
 /* ========================================
-   QUANTUM COMPONENT OVERRIDES → NEUMORPHIC
-   These replace the old glassmorphism styles
-   with neumorphic equivalents while keeping
-   the same class names so all components work.
+   QUANTUM GLASSMORPHISM
+   Glassmorphism with rim light effect
    ======================================== */
-
-/* Main Panel — raised neumorphic surface */
-.quantum-panel {
-  background: var(--neu-surface);
-  border-radius: 16px;
-  border: 1px solid var(--neu-border);
-  box-shadow:
-    6px 6px 14px var(--neu-shadow-dark),
-    -6px -6px 14px var(--neu-shadow-light);
+.glass-card, .glass-panel {
+  background: rgba(10, 25, 47, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   position: relative;
   overflow: hidden;
-  transition: box-shadow 0.3s ease, border-color 0.3s ease;
 }
 
-.quantum-panel::before { display: none; }
-
-.quantum-panel:hover {
-  border-color: var(--neu-border-hover);
-  box-shadow:
-    8px 8px 18px var(--neu-shadow-dark),
-    -8px -8px 18px var(--neu-shadow-light);
-}
-
-/* Stat Card */
-.quantum-stat {
-  position: relative;
-  background: var(--neu-surface);
-  border: 1px solid var(--neu-border);
-  border-radius: 14px;
-  box-shadow:
-    5px 5px 12px var(--neu-shadow-dark),
-    -5px -5px 12px var(--neu-shadow-light);
-  overflow: hidden;
-  transition: all 0.3s ease;
-}
-
-.quantum-stat:hover {
-  border-color: var(--neu-border-hover);
-  box-shadow:
-    7px 7px 14px var(--neu-shadow-dark),
-    -7px -7px 14px var(--neu-shadow-light);
-}
-
-/* Primary Button — raised, presses on click */
-.quantum-btn-primary {
-  position: relative;
-  background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
-  border: none;
-  border-radius: 12px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  color: #000;
-  transition: all 0.25s ease;
-  overflow: hidden;
-  box-shadow:
-    4px 4px 10px var(--neu-shadow-dark),
-    -4px -4px 10px var(--neu-shadow-light);
-}
-
-.quantum-btn-primary:hover {
-  transform: translateY(-1px);
-  box-shadow:
-    6px 6px 14px var(--neu-shadow-dark),
-    -6px -6px 14px var(--neu-shadow-light);
-}
-
-.quantum-btn-primary:active {
-  transform: translateY(0);
-  box-shadow:
-    inset 3px 3px 8px rgba(0, 0, 0, 0.3),
-    inset -3px -3px 8px rgba(255, 255, 255, 0.1);
-}
-
-/* Ghost Button — flat with border */
-.quantum-btn-ghost {
-  position: relative;
-  background: var(--neu-surface);
-  border: 1px solid var(--neu-border);
-  border-radius: 10px;
-  color: var(--primary);
-  transition: all 0.25s ease;
-  box-shadow:
-    3px 3px 8px var(--neu-shadow-dark),
-    -3px -3px 8px var(--neu-shadow-light);
-}
-
-.quantum-btn-ghost:hover {
-  border-color: var(--primary);
-  color: var(--primary);
-  box-shadow:
-    5px 5px 12px var(--neu-shadow-dark),
-    -5px -5px 12px var(--neu-shadow-light);
-}
-
-.quantum-btn-ghost:active {
-  box-shadow:
-    inset 2px 2px 6px var(--neu-shadow-dark),
-    inset -2px -2px 6px var(--neu-shadow-light);
-}
-
-/* Input — pressed neumorphic */
-.quantum-input {
-  background: var(--neu-bg);
-  border: 1px solid var(--neu-border);
-  border-radius: 10px;
-  color: var(--text-primary);
-  transition: all 0.25s ease;
-  box-shadow:
-    inset 3px 3px 8px var(--neu-shadow-dark),
-    inset -3px -3px 8px var(--neu-shadow-light);
-}
-
-.quantum-input:focus {
-  border-color: var(--primary-dim);
-  box-shadow:
-    inset 3px 3px 8px var(--neu-shadow-dark),
-    inset -3px -3px 8px var(--neu-shadow-light),
-    0 0 0 2px rgba(0, 242, 255, 0.15);
-}
-
-.quantum-input::placeholder { color: var(--text-tertiary); }
-
-/* Badge — inset */
-.quantum-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.25rem 0.75rem;
-  background: var(--neu-bg);
-  border: 1px solid var(--neu-border);
-  border-radius: 9999px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--primary);
-  box-shadow:
-    inset 2px 2px 5px var(--neu-shadow-dark),
-    inset -2px -2px 5px var(--neu-shadow-light);
-}
-
-.quantum-badge-purple {
-  color: var(--secondary-dim);
-  border-color: rgba(182, 0, 248, 0.15);
-}
-
-/* Progress Bar */
-.quantum-progress {
-  height: 6px;
-  background: var(--neu-bg);
-  border-radius: 3px;
-  overflow: hidden;
-  box-shadow:
-    inset 2px 2px 4px var(--neu-shadow-dark),
-    inset -2px -2px 4px var(--neu-shadow-light);
-}
-
-.quantum-progress-fill {
-  height: 100%;
-  background: linear-gradient(90deg, var(--primary), var(--secondary));
-  border-radius: 3px;
-  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 0 8px rgba(0, 242, 255, 0.3);
-}
-
-/* Tab Bar Container */
-.quantum-appbar {
-  background: var(--neu-bg);
-  border-bottom: 1px solid var(--neu-border);
-}
-
-.quantum-appbar::after { display: none; }
-
-/* Tab — neumorphic pill */
-.quantum-tab {
-  position: relative;
-  padding: 0.625rem 1.25rem;
-  background: transparent;
-  border: none;
-  border-radius: 10px;
-  color: var(--text-secondary);
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  transition: all 0.25s ease;
-}
-
-.quantum-tab::after { display: none; }
-
-.quantum-tab:hover {
-  color: var(--text-primary);
-  background: var(--neu-surface);
-}
-
-.quantum-tab.active {
-  color: var(--primary);
-  background: var(--neu-surface);
-  box-shadow:
-    inset 3px 3px 8px var(--neu-shadow-dark),
-    inset -3px -3px 8px var(--neu-shadow-light);
-}
-
-/* Modal — large raised neumorphic */
-.quantum-modal {
-  position: relative;
-  background: var(--neu-surface);
-  border: 1px solid var(--neu-border);
-  border-radius: 20px;
-  box-shadow:
-    12px 12px 30px var(--neu-shadow-dark),
-    -12px -12px 30px var(--neu-shadow-light);
-}
-
-.quantum-modal::before { display: none; }
-
-/* Table Row */
-.quantum-table-row {
-  position: relative;
-  transition: all 0.2s ease;
-  border-bottom: 1px solid var(--neu-border);
-}
-
-.quantum-table-row::before { display: none; }
-
-.quantum-table-row:hover {
-  background: var(--neu-surface-raised);
-}
-
-/* Signal Indicators */
-.quantum-signal {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.375rem 0.75rem;
-  border-radius: 8px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-}
-
-.quantum-signal-buy {
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.2);
-  color: var(--emerald);
-  box-shadow: inset 0 0 10px rgba(16, 185, 129, 0.05);
-}
-
-.quantum-signal-sell {
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.2);
-  color: var(--red);
-  box-shadow: inset 0 0 10px rgba(239, 68, 68, 0.05);
-}
-
-.quantum-signal-hold {
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.2);
-  color: var(--amber);
-  box-shadow: inset 0 0 10px rgba(245, 158, 11, 0.05);
-}
-
-/* Divider */
-.quantum-divider {
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--neu-border), transparent);
-  margin: 1.5rem 0;
-}
-
-/* Chip */
-.quantum-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.25rem 0.625rem;
-  background: var(--neu-bg);
-  border: 1px solid var(--neu-border);
-  border-radius: 9999px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  color: var(--primary);
-  box-shadow:
-    inset 2px 2px 4px var(--neu-shadow-dark),
-    inset -2px -2px 4px var(--neu-shadow-light);
-}
-
-/* AI Chip */
-.quantum-ai-chip {
-  position: relative;
-  padding: 0.25rem 0.75rem;
-  background: linear-gradient(90deg, var(--primary), var(--secondary));
-  background-size: 200% 100%;
-  animation: gradient-shift 3s ease infinite;
-  border-radius: 9999px;
-}
-
-.quantum-ai-chip::before {
+.glass-card::before, .glass-panel::before {
   content: '';
   position: absolute;
-  inset: 1px;
-  background: var(--neu-surface);
-  border-radius: inherit;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(0, 242, 255, 0.05) 0%, transparent 50%, rgba(182, 0, 248, 0.03) 100%);
+  pointer-events: none;
 }
 
-.quantum-ai-chip span { position: relative; z-index: 1; }
+.glass-card:hover, .glass-panel:hover {
+  border-top: 1px solid rgba(0, 242, 255, 0.2);
+  border-left: 1px solid rgba(0, 242, 255, 0.2);
+}
 
-/* Live Indicator */
-.quantum-live { display: inline-flex; align-items: center; gap: 0.5rem; }
+.glass-ultra {
+  background: rgba(15, 23, 42, 0.9);
+  contain: layout style paint;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
 
-.quantum-live-dot {
+/* Premium Cyber Panel */
+.glass-premium {
+  background: linear-gradient(135deg, rgba(10, 25, 47, 0.85) 0%, rgba(20, 35, 60, 0.8) 100%);
+  contain: layout style paint;
+  border: 1px solid rgba(0, 242, 255, 0.15);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+/* Neon Border Effect */
+.neon-border {
+  box-shadow: inset 0 0 20px rgba(0, 242, 255, 0.1), 0 0 20px rgba(0, 242, 255, 0.1);
+  border: 1px solid rgba(0, 242, 255, 0.2);
+}
+
+/* Premium Glass Input */
+.glass-input {
+  background: rgba(10, 25, 47, 0.85);
+  border: 1px solid rgba(0, 242, 255, 0.15);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.glass-input:focus {
+  border-color: rgba(0, 242, 255, 0.5);
+  box-shadow: 0 0 0 3px rgba(0, 242, 255, 0.1), 0 1px 0 rgba(0, 242, 255, 0.5);
+}
+
+.glass-modal {
+  background: rgba(10, 20, 40, 0.98);
+  border: 1px solid rgba(0, 242, 255, 0.25);
+}
+
+/* ========================================
+   AI CHIP - ROTATING GRADIENT BORDER
+   ======================================== */
+.ai-chip-border {
+  background: linear-gradient(90deg, #00f2ff, #b600f8);
+  padding: 1px;
+  border-radius: 9999px;
+}
+
+/* ========================================
+   NEON GLOW EFFECTS
+   ======================================== */
+.neon-glow-cyan {
+  text-shadow: 0 0 10px rgba(0, 242, 255, 0.6);
+}
+
+.neon-glow-purple {
+  text-shadow: 0 0 10px rgba(182, 0, 248, 0.6);
+}
+
+.neon-glow {
+  filter: drop-shadow(0 0 8px rgba(0, 242, 255, 0.5));
+}
+
+.text-glow {
+  text-shadow: 0 0 8px rgba(0, 242, 255, 0.3);
+}
+
+/* ========================================
+   PRO BUTTONS - QUANTUM STYLE
+   ======================================== */
+.btn-primary {
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  background: linear-gradient(135deg, rgba(0, 242, 255, 0.2) 0%, rgba(182, 0, 248, 0.2) 100%);
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 242, 255, 0.3), 0 0 40px rgba(0, 242, 255, 0.1);
+  background: linear-gradient(135deg, rgba(0, 242, 255, 0.3) 0%, rgba(182, 0, 248, 0.3) 100%);
+}
+
+.btn-glass {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(8px);
+  transition: all 0.25s ease;
+}
+
+.btn-glass:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
+}
+
+.gradient-btn {
+  background: linear-gradient(135deg, rgba(0, 242, 255, 0.8) 0%, rgba(182, 0, 248, 0.8) 100%);
+}
+
+.gradient-btn:hover {
+  box-shadow: 0 0 15px rgba(0, 242, 255, 0.3), 0 0 25px rgba(0, 242, 255, 0.5);
+}
+
+.btn-trade-buy {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(16, 185, 129, 0.1));
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #10b981;
+  transition: all 0.2s ease;
+}
+
+.btn-trade-buy:hover {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.3), rgba(16, 185, 129, 0.2));
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.3);
+  transform: translateY(-1px);
+}
+
+.btn-trade-sell {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(239, 68, 68, 0.1));
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+  transition: all 0.2s ease;
+}
+
+.btn-trade-sell:hover {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.3), rgba(239, 68, 68, 0.2));
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
+  transform: translateY(-1px);
+}
+
+/* ========================================
+   PRO STAT CARDS
+   ======================================== */
+.stat-card {
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.2s ease;
+  background: rgba(10, 25, 47, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  contain: layout style paint;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(0, 242, 255, 0.3);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 20px rgba(0, 242, 255, 0.08);
+}
+
+/* ========================================
+   PRO TABS
+   ======================================== */
+.tab-btn {
+  position: relative;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+
+.tab-btn::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #00f2ff, #b600f8);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: translateX(-50%);
+  border-radius: 2px;
+}
+
+.tab-btn.tab-active::after {
+  width: 60%;
+}
+
+.tab-btn.tab-active {
+  background: linear-gradient(135deg, rgba(0, 242, 255, 0.1) 0%, rgba(182, 0, 248, 0.08) 100%);
+  border-color: rgba(0, 242, 255, 0.2);
+}
+
+/* ========================================
+   PROGRESS & GAUGES
+   ======================================== */
+.progress-bar-animated {
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-bar-animated::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 20%, rgba(255,255,255,0.2) 50%, transparent 80%);
+  animation: shimmer 2s infinite;
+  background-size: 200% 100%;
+}
+
+.progress-pro {
+  height: 8px;
+  background: rgba(30, 41, 59, 0.8);
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.progress-pro-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.rsi-gauge {
+  position: relative;
+  height: 6px;
+  background: linear-gradient(90deg, #10b981 0%, #f59e0b 50%, #ef4444 100%);
+  border-radius: 3px;
+  overflow: visible;
+}
+
+.rsi-gauge-indicator {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 12px;
+  height: 12px;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.8), 0 0 20px rgba(255, 255, 255, 0.4);
+}
+
+/* ========================================
+   GLOW EFFECTS
+   ======================================== */
+.glow-cyan {
+  box-shadow: 0 0 20px rgba(0, 242, 255, 0.3), 0 0 60px rgba(0, 242, 255, 0.1);
+}
+
+.glow-emerald {
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.3), 0 0 60px rgba(16, 185, 129, 0.1);
+}
+
+.glow-red {
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.3), 0 0 60px rgba(239, 68, 68, 0.1);
+}
+
+.glow-purple {
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.3), 0 0 60px rgba(139, 92, 246, 0.1);
+}
+
+.glow-pro {
+  box-shadow: 0 0 30px rgba(0, 242, 255, 0.4), 0 0 60px rgba(0, 242, 255, 0.2), 0 0 100px rgba(0, 242, 255, 0.1);
+}
+
+/* ========================================
+   NEON TEXT
+   ======================================== */
+.neon-cyan {
+  text-shadow: 0 0 8px rgba(0, 242, 255, 0.8), 0 0 20px rgba(0, 242, 255, 0.4), 0 0 40px rgba(0, 242, 255, 0.2);
+}
+
+.neon-green {
+  text-shadow: 0 0 8px rgba(16, 185, 129, 0.8), 0 0 20px rgba(16, 185, 129, 0.4), 0 0 40px rgba(16, 185, 129, 0.2);
+}
+
+.neon-red {
+  text-shadow: 0 0 8px rgba(239, 68, 68, 0.8), 0 0 20px rgba(239, 68, 68, 0.4), 0 0 40px rgba(239, 68, 68, 0.2);
+}
+
+.neon-gold {
+  text-shadow: 0 0 8px rgba(245, 158, 11, 0.8), 0 0 20px rgba(245, 158, 11, 0.4), 0 0 40px rgba(245, 158, 11, 0.2);
+}
+
+/* ========================================
+   GRADIENT TEXT
+   ======================================== */
+.gradient-text-cyan {
+  background: linear-gradient(135deg, #00f2ff, #818cf8);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-text-green {
+  background: linear-gradient(135deg, #10b981, #06b6d4);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-text-pro {
+  background: linear-gradient(135deg, #00f2ff 0%, #b600f8 50%, #10b981 100%);
+  background-size: 200% 200%;
+  animation: gradient-shift 4s ease infinite;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ========================================
+   TICKER TAPE
+   ======================================== */
+.ticker-wrapper {
+  overflow: clip;
+  position: relative;
+  mask-image: linear-gradient(90deg, transparent, black 5%, black 95%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, black 5%, black 95%, transparent);
+}
+
+.ticker-content {
+  display: flex;
+  animation: ticker-scroll 60s linear infinite;
+  width: max-content;
+}
+
+.ticker-content:hover {
+  animation-play-state: paused;
+}
+
+/* ========================================
+   LIVE DATA INDICATORS
+   ======================================== */
+.live-dot {
   width: 8px;
   height: 8px;
-  background: var(--emerald);
   border-radius: 50%;
-  box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+  background: #10b981;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.6);
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
 
-/* Health Score Ring */
-.quantum-health {
+.live-dot-warning {
+  background: #f59e0b;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.6);
+}
+
+.live-dot-error {
+  background: #ef4444;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.6);
+}
+
+/* ========================================
+   TRADINGVIEW WIDGET
+   ======================================== */
+.tradingview-widget-container,
+.tradingview-widget-container__widget {
+  height: 100% !important;
+  width: 100% !important;
+}
+
+/* ========================================
+   LOGIN - QUANTUM TERMINAL
+   ======================================== */
+.login-bg {
+  background:
+    radial-gradient(ellipse at 20% 50%, rgba(0, 242, 255, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(182, 0, 248, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 80%, rgba(16, 185, 129, 0.06) 0%, transparent 50%),
+    linear-gradient(180deg, #050505 0%, #0a192f 50%, #050505 100%);
+}
+
+.login-card {
   position: relative;
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  background: conic-gradient(
-    from 0deg,
-    var(--health-color, var(--primary)) var(--health-score, 0%),
-    var(--neu-bg) 0%
-  );
+  background: rgba(10, 25, 47, 0.4);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(0, 242, 255, 0.2);
+}
+
+.login-card::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(0, 242, 255, 0.3), rgba(182, 0, 248, 0.1), rgba(16, 185, 129, 0.3));
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  animation: gradient-shift 4s ease infinite;
+  background-size: 200% 200%;
+}
+
+/* ========================================
+   BADGE
+   ======================================== */
+.badge {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+/* ========================================
+   SELECTION
+   ======================================== */
+::selection {
+  background: rgba(0, 242, 255, 0.25);
+}
+
+input:focus, select:focus, button:focus-visible {
+  outline: none;
+}
+
+button:focus-visible {
+  box-shadow: 0 0 0 2px rgba(0, 242, 255, 0.5);
+}
+
+button, [onclick] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+input[type="checkbox"], input[type="radio"] {
+  accent-color: #00f2ff;
+}
+
+/* ========================================
+   SCROLLBAR HIDE
+   ======================================== */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* ========================================
+   TRADING TAB — SIGNAL BADGES & CARDS
+   ======================================== */
+.trade-badge-strong-long {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  text-shadow: 0 0 8px rgba(16, 185, 129, 0.3);
+}
+
+.trade-badge-long {
+  background: rgba(6, 182, 212, 0.15);
+  color: #06b6d4;
+  border: 1px solid rgba(6, 182, 212, 0.3);
+}
+
+.trade-badge-strong-short {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  text-shadow: 0 0 8px rgba(239, 68, 68, 0.3);
+}
+
+.trade-badge-short {
+  background: rgba(249, 115, 22, 0.15);
+  color: #f97316;
+  border: 1px solid rgba(249, 115, 22, 0.3);
+}
+
+.trade-signal-card {
+  position: relative;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.trade-signal-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3px;
+  height: 100%;
+  border-radius: 3px 0 0 3px;
+  transition: opacity 0.25s ease;
+}
+
+.trade-signal-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 20px rgba(0, 242, 255, 0.05);
+}
+
+.trade-signal-card[class*="border-emerald"]::before {
+  background: linear-gradient(180deg, #10b981, #06b6d4);
+  opacity: 0.8;
+}
+
+.trade-signal-card[class*="border-red"]::before {
+  background: linear-gradient(180deg, #ef4444, #f97316);
+  opacity: 0.8;
+}
+
+
+/* ========================================
+   SELECT DROPDOWN DARK THEME
+   ======================================== */
+select option {
+  background: #0a192f;
+  color: #e2e8f0;
+}
+
+/* ========================================
+   MOBILE RESPONSIVE
+   ======================================== */
+@media (max-width: 768px) {
+  body {
+    font-size: 14px;
+  }
+
+  .container {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+}
+
+@media (max-width: 640px) {
+  table {
+    font-size: 12px;
+  }
+
+  th, td {
+    padding: 10px 8px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .stat-card {
+    padding: 12px;
+  }
+
+  .glass-card {
+    padding: 16px;
+  }
+
+  .badge {
+    font-size: 8px;
+    padding: 2px 6px;
+  }
+}
+
+/* ========================================
+   LIGHT THEME OVERRIDES
+   ======================================== */
+.light,
+.light.min-h-screen {
+  background: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+.light .glass-card,
+.light .glass-ultra,
+.light .glass-modal {
+  background: rgba(255, 255, 255, 0.8) !important;
+  backdrop-filter: blur(8px) !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+  color: #0f172a !important;
+}
+
+.light h1, .light h2, .light h3, .light .text-white {
+  color: #020617 !important;
+}
+
+.light .text-slate-200,
+.light .text-slate-300,
+.light .text-slate-400 {
+  color: #334155 !important;
+}
+
+.light .text-slate-500,
+.light .text-slate-600 {
+  color: #64748b !important;
+}
+
+.light .bg-black\/40,
+.light .bg-black\/20,
+.light .bg-black\/30 {
+  background: rgba(0, 0, 0, 0.03) !important;
+}
+
+.light .border-white\/5,
+.light .border-white\/10 {
+  border-color: rgba(0, 0, 0, 0.1) !important;
+}
+
+.light .bg-white\/5,
+.light .hover\:bg-white\/10:hover {
+  background: rgba(0, 0, 0, 0.05) !important;
+}
+
+.light .glass-input {
+  background: rgba(255, 255, 255, 0.9) !important;
+  border-color: rgba(0, 0, 0, 0.1) !important;
+  color: #0f172a !important;
+}
+
+/* ========================================
+   QUANTUM NOIR SPECIFIC STYLES
+   ======================================== */
+
+/* Neon Grid Background */
+.neon-grid-bg {
+  background-image:
+    linear-gradient(to right, rgba(0, 242, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 242, 255, 0.05) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Range Input Styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  width: 100%;
+  background: transparent;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 16px;
+  width: 8px;
+  border-radius: 2px;
+  background: #00f2ff;
+  cursor: pointer;
+  margin-top: -6px;
+  box-shadow: 0 0 8px rgba(0, 242, 255, 0.8);
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 4px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+/* Custom Focus Glow for Inputs */
+.input-glow:focus {
+  border-color: #00f2ff;
+  box-shadow: 0 0 0 3px rgba(0, 242, 255, 0.1), 0 1px 0 rgba(0, 242, 255, 0.5);
+}
+
+/* ========================================
+   BLACK SWAN ALERT ANIMATION
+   ======================================== */
+@keyframes swan-alert {
+  0%, 100% { box-shadow: 0 0 15px rgba(239,68,68,0.2); }
+  50% { box-shadow: 0 0 40px rgba(239,68,68,0.5); }
+}
+
+.black-swan-alert {
+  animation: swan-alert 1.5s ease-in-out infinite;
+}
+
+/* ========================================
+   MARKET HUD
+   ======================================== */
+.market-hud {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ========================================
+   GPU ACCELERATION
+   ======================================== */
+.animate-float {
+  will-change: transform;
+  transform: translateZ(0);
+}
+
+.animate-fade-in-up,
+.animate-fade-in,
+.animate-scale-in {
+  animation-fill-mode: both;
+  transform: translateZ(0);
+}
+
+.ticker-content {
+  will-change: transform;
+  transform: translate3d(0, 0, 0);
+}
+
+/* Content visibility for off-screen sections */
+.glass-card,
+.stat-card,
+.quantum-panel,
+.quantum-stat {
+  contain: layout style paint;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 150px;
+}
+
+/* ========================================
+   PRO TRADING UI
+   ======================================== */
+.trading-zone {
+  position: relative;
+  background: linear-gradient(135deg, rgba(0, 242, 255, 0.03) 0%, rgba(182, 0, 248, 0.02) 50%, rgba(16, 185, 129, 0.02) 100%);
+  border: 1px solid rgba(0, 242, 255, 0.08);
+}
+
+.trading-zone-buy {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.05) 0%, rgba(16, 185, 129, 0.02) 100%);
+  border-color: rgba(16, 185, 129, 0.15);
+}
+
+.trading-zone-sell {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.05) 0%, rgba(239, 68, 68, 0.02) 100%);
+  border-color: rgba(239, 68, 68, 0.15);
+}
+
+.price-display {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  letter-spacing: -0.02em;
+}
+
+.price-up {
+  color: #10b981;
+  text-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+}
+
+.price-down {
+  color: #ef4444;
+  text-shadow: 0 0 10px rgba(239, 68, 68, 0.3);
+}
+
+.profit-display {
+  color: #10b981;
+  text-shadow: 0 0 8px rgba(16, 185, 129, 0.2);
+}
+
+.loss-display {
+  color: #ef4444;
+  text-shadow: 0 0 8px rgba(239, 68, 68, 0.2);
+}
+
+.signal-badge {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 3px 10px;
+  border-radius: 6px;
+  text-transform: uppercase;
+}
+
+.signal-buy {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);
+}
+
+.signal-sell {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.2);
+}
+
+.signal-hold {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  box-shadow: 0 0 15px rgba(245, 158, 11, 0.2);
+}
+
+.allocation-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(0, 242, 255, 0.8), rgba(182, 0, 248, 0.8));
+  box-shadow: 0 0 10px rgba(0, 242, 255, 0.3);
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ========================================
+   TABLE
+   ======================================== */
+.portfolio-table tr {
+  transition: background-color 0.2s ease;
+}
+
+.portfolio-table tbody tr:hover {
+  background-color: rgba(0, 242, 255, 0.04);
+}
+
+.portfolio-table tbody tr:nth-child(even) {
+  background-color: rgba(255, 255, 255, 0.01);
+}
+
+.portfolio-row {
+  transition: all 0.2s ease;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.portfolio-row:hover {
+  background: rgba(0, 242, 255, 0.03);
+}
+
+.portfolio-row:hover .row-actions {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.row-actions {
+  opacity: 0;
+  transform: translateX(10px);
+  transition: all 0.2s ease;
+}
+
+@media (max-width: 768px) {
+  .row-actions {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ========================================
+   MODAL SYSTEM
+   ======================================== */
+.modal-backdrop {
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  background: rgba(2, 6, 23, 0.85);
+}
+
+.modal-container {
+  animation: slide-up-modal 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.modal-pro {
+  background: linear-gradient(135deg, rgba(10, 25, 47, 0.98) 0%, rgba(10, 25, 47, 0.92) 100%);
+  border: 1px solid rgba(0, 242, 255, 0.15);
+  box-shadow:
+    0 25px 80px rgba(0, 0, 0, 0.6),
+    0 0 100px rgba(0, 242, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.modal-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding-bottom: 16px;
+  margin-bottom: 20px;
+}
+
+.modal-close {
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow:
-    4px 4px 10px var(--neu-shadow-dark),
-    -4px -4px 10px var(--neu-shadow-light);
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  color: #64748b;
 }
 
-.quantum-health::before {
+/* ========================================
+   QUANTUM NOIR - ADVANCED PREMIUM STYLES v5.0
+   Enhanced Glassmorphism + High-Tech Futurism
+   ======================================== */
+
+/* Premium TopAppBar - Quantum Noir Style */
+.quantum-appbar {
+  background: rgba(5, 5, 5, 0.97);
+  border-bottom: 1px solid rgba(0, 242, 255, 0.1);
+}
+
+.quantum-appbar::after {
   content: '';
   position: absolute;
-  inset: 5px;
-  background: var(--neu-surface);
-  border-radius: 50%;
-  box-shadow:
-    inset 2px 2px 6px var(--neu-shadow-dark),
-    inset -2px -2px 6px var(--neu-shadow-light);
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0, 242, 255, 0.3), rgba(182, 0, 248, 0.2), transparent);
 }
 
-.quantum-health-value {
+/* Premium SideNav - Quantum Noir Style */
+.quantum-sidenav {
+  background: linear-gradient(180deg, rgba(5, 5, 5, 0.98) 0%, rgba(10, 10, 15, 0.95) 100%);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.3);
+}
+
+.quantum-sidenav::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 1px;
+  height: 100%;
+  background: linear-gradient(180deg, rgba(0, 242, 255, 0.2), transparent 50%);
+}
+
+/* Premium Nav Items */
+.quantum-nav-item {
   position: relative;
-  z-index: 1;
-  font-family: 'Space Grotesk', monospace;
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--text-primary);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 0.5rem;
 }
 
-/* Data Display */
+.quantum-nav-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 0;
+  background: linear-gradient(180deg, #00f2ff, #b600f8);
+  border-radius: 0 2px 2px 0;
+  transition: height 0.25s ease;
+}
+
+.quantum-nav-item:hover::before,
+.quantum-nav-item.active::before {
+  height: 60%;
+}
+
+.quantum-nav-item:hover {
+  background: rgba(0, 242, 255, 0.05);
+  transform: translateX(4px);
+}
+
+.quantum-nav-item.active {
+  background: linear-gradient(90deg, rgba(0, 242, 255, 0.12) 0%, rgba(182, 0, 248, 0.08) 100%);
+  border-left: 2px solid #00f2ff;
+}
+
+/* Premium Glass Panel - Enhanced */
+.quantum-panel {
+  background: linear-gradient(135deg, rgba(10, 25, 47, 0.85) 0%, rgba(15, 30, 55, 0.8) 100%);
+  contain: layout style paint;
+  border: 1px solid rgba(0, 242, 255, 0.1);
+  border-radius: 0.75rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.quantum-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(0, 242, 255, 0.2), transparent);
+  pointer-events: none;
+}
+
+.quantum-panel:hover {
+  border-color: rgba(0, 242, 255, 0.25);
+}
+
+/* Premium Stat Card - Enhanced */
+.quantum-stat {
+  position: relative;
+  background: rgba(10, 25, 47, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.quantum-stat:hover {
+  border-color: rgba(0, 242, 255, 0.3);
+}
+
+/* Premium Primary Button - Gradient */
+.quantum-btn-primary {
+  position: relative;
+  background: linear-gradient(135deg, rgba(0, 242, 255, 0.9) 0%, rgba(182, 0, 248, 0.9) 100%);
+  border: none;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #000;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+
+.quantum-btn-primary::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  transition: left 0.5s ease;
+}
+
+.quantum-btn-primary:hover::before {
+  left: 100%;
+}
+
+.quantum-btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 242, 255, 0.4), 0 0 40px rgba(0, 242, 255, 0.2);
+}
+
+/* Premium Ghost Button */
+.quantum-btn-ghost {
+  position: relative;
+  background: transparent;
+  border: 1px solid rgba(0, 242, 255, 0.3);
+  border-radius: 0.5rem;
+  color: #00f2ff;
+  transition: all 0.25s ease;
+  overflow: hidden;
+}
+
+.quantum-btn-ghost::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 242, 255, 0.1);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.quantum-btn-ghost:hover::before {
+  opacity: 1;
+}
+
+.quantum-btn-ghost:hover {
+  border-color: #00f2ff;
+  box-shadow: 0 0 20px rgba(0, 242, 255, 0.3), inset 0 0 20px rgba(0, 242, 255, 0.05);
+  transform: translateY(-1px);
+}
+
+/* Premium Data Display */
 .quantum-data {
   font-family: 'Space Grotesk', monospace;
   font-size: 14px;
@@ -554,22 +1425,23 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Premium Label */
 .quantum-label {
   font-family: 'Inter', sans-serif;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--text-tertiary);
+  color: #849495;
 }
 
-/* Section Header */
+/* Premium Section Header */
 .quantum-section-header {
   display: flex;
   align-items: center;
   gap: 0.75rem;
   padding-bottom: 1rem;
-  border-bottom: 1px solid var(--neu-border);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   margin-bottom: 1.5rem;
 }
 
@@ -577,26 +1449,91 @@
   content: '';
   width: 4px;
   height: 24px;
-  background: linear-gradient(180deg, var(--primary), var(--secondary));
+  background: linear-gradient(180deg, #00f2ff, #b600f8);
   border-radius: 2px;
 }
 
-/* Chart Container */
+/* Premium Chart Container */
 .quantum-chart {
   position: relative;
-  background: var(--neu-bg);
-  border: 1px solid var(--neu-border);
-  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.3) 0%, rgba(0, 0, 0, 0.1) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 0.75rem;
   overflow: hidden;
-  box-shadow:
-    inset 3px 3px 8px var(--neu-shadow-dark),
-    inset -3px -3px 8px var(--neu-shadow-light);
 }
 
-.quantum-chart::before { display: none; }
+.quantum-chart::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: 
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 20px 20px;
+  pointer-events: none;
+}
 
-/* Tooltip */
-.quantum-tooltip { position: relative; }
+/* Premium Input */
+.quantum-input {
+  background: rgba(10, 25, 47, 0.85);
+  border: 1px solid rgba(0, 242, 255, 0.15);
+  border-radius: 0.5rem;
+  color: #e5e2e1;
+  transition: border-color 0.2s ease;
+}
+
+.quantum-input:focus {
+  border-color: #00f2ff;
+  box-shadow: 0 0 0 3px rgba(0, 242, 255, 0.1), 0 0 20px rgba(0, 242, 255, 0.2);
+}
+
+.quantum-input::placeholder {
+  color: rgba(229, 226, 225, 0.3);
+}
+
+/* Premium Badge */
+.quantum-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.75rem;
+  background: rgba(0, 242, 255, 0.1);
+  border: 1px solid rgba(0, 242, 255, 0.2);
+  border-radius: 9999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #00f2ff;
+}
+
+.quantum-badge-purple {
+  background: rgba(182, 0, 248, 0.1);
+  border-color: rgba(182, 0, 248, 0.2);
+  color: #ebb2ff;
+}
+
+/* Premium Progress Bar */
+.quantum-progress {
+  height: 6px;
+  background: rgba(30, 41, 59, 0.6);
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.quantum-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00f2ff, #b600f8);
+  border-radius: 3px;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 10px rgba(0, 242, 255, 0.5);
+}
+
+/* Premium Tooltip */
+.quantum-tooltip {
+  position: relative;
+}
 
 .quantum-tooltip::after {
   content: attr(data-tooltip);
@@ -605,17 +1542,16 @@
   left: 50%;
   transform: translateX(-50%) translateY(-8px);
   padding: 0.5rem 0.75rem;
-  background: var(--neu-surface);
-  border: 1px solid var(--neu-border);
-  border-radius: 8px;
+  background: rgba(10, 25, 47, 0.95);
+  border: 1px solid rgba(0, 242, 255, 0.2);
+  border-radius: 0.375rem;
   font-size: 11px;
-  color: var(--text-primary);
+  color: #e5e2e1;
   white-space: nowrap;
   opacity: 0;
   visibility: hidden;
   transition: all 0.2s ease;
   z-index: 100;
-  box-shadow: 4px 4px 10px var(--neu-shadow-dark);
 }
 
 .quantum-tooltip:hover::after {
@@ -624,102 +1560,322 @@
   transform: translateX(-50%) translateY(-4px);
 }
 
-/* ========================================
-   TEXT EFFECTS
-   ======================================== */
-.text-glow {
-  text-shadow: 0 0 20px rgba(0, 242, 255, 0.4), 0 0 40px rgba(0, 242, 255, 0.2);
-}
-
-.gradient-text-cyan {
-  background: linear-gradient(135deg, #00f2ff 0%, #b600f8 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
-}
-
-.text-on-surface { color: var(--text-primary); }
-
-/* ========================================
-   TICKER
-   ======================================== */
-.ticker-wrapper {
-  overflow: hidden;
+/* Premium Range Scrubber */
+.quantum-range {
   position: relative;
+  height: 4px;
+  background: rgba(30, 41, 59, 0.8);
+  border-radius: 2px;
 }
 
-.ticker-content {
+.quantum-range-indicator {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 12px;
+  height: 16px;
+  background: #fff;
+  border-radius: 2px;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+  cursor: grab;
+}
+
+.quantum-range-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background: linear-gradient(90deg, rgba(239, 68, 68, 0.5), rgba(16, 185, 129, 0.5));
+  border-radius: 2px;
+}
+
+/* Premium Signal Indicator */
+.quantum-signal {
   display: inline-flex;
-  animation: ticker-scroll 40s linear infinite;
-  white-space: nowrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  border-radius: 0.375rem;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
 }
 
-.ticker-content:hover { animation-play-state: paused; }
-
-/* ========================================
-   LOGIN SCREEN
-   ======================================== */
-.login-bg {
-  background: var(--neu-bg);
-  background-image: radial-gradient(circle at 20% 50%, rgba(0, 242, 255, 0.05), transparent 50%),
-                    radial-gradient(circle at 80% 50%, rgba(182, 0, 248, 0.05), transparent 50%);
+.quantum-signal-buy {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #10b981;
+  box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);
 }
 
-.login-card {
-  background: var(--neu-surface);
-  border: 1px solid var(--neu-border);
-  border-radius: 24px;
-  box-shadow:
-    12px 12px 30px var(--neu-shadow-dark),
-    -12px -12px 30px var(--neu-shadow-light);
+.quantum-signal-sell {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.2);
 }
 
-.login-card::before { display: none; }
-
-/* ========================================
-   GLASS OVERRIDES → NEUMORPHIC
-   ======================================== */
-.glass-card, .glass-panel, .glass-ultra, .glass-premium,
-.glass-input {
-  background: var(--neu-surface);
-  border: 1px solid var(--neu-border);
-  border-radius: 14px;
-  box-shadow:
-    5px 5px 12px var(--neu-shadow-dark),
-    -5px -5px 12px var(--neu-shadow-light);
+.quantum-signal-hold {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #f59e0b;
+  box-shadow: 0 0 15px rgba(245, 158, 11, 0.2);
 }
 
-.glass-card::before, .glass-panel::before { display: none; }
-.glass-card:hover, .glass-panel:hover { border-color: var(--neu-border-hover); }
+/* Premium Table Row */
+.quantum-table-row {
+  position: relative;
+  transition: all 0.2s ease;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
 
-.neon-border {
-  box-shadow: 0 0 15px rgba(0, 242, 255, 0.15);
+.quantum-table-row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  background: linear-gradient(90deg, rgba(0, 242, 255, 0.1), transparent);
+  transition: width 0.2s ease;
+}
+
+.quantum-table-row:hover::before {
+  width: 100%;
+}
+
+.quantum-table-row:hover {
+  background: rgba(0, 242, 255, 0.03);
+}
+
+/* Premium Divider */
+.quantum-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0, 242, 255, 0.2), rgba(182, 0, 248, 0.1), transparent);
+  margin: 1.5rem 0;
+}
+
+/* Premium Modal */
+.quantum-modal {
+  position: relative;
+  background: rgba(10, 20, 40, 0.99);
   border: 1px solid rgba(0, 242, 255, 0.2);
+  border-radius: 1rem;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
 }
 
-/* Bento items → neumorphic */
-.bento-item {
-  background: var(--neu-surface);
-  contain: layout style paint;
-  border: 1px solid var(--neu-border);
-  border-radius: 16px;
+.quantum-modal::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #00f2ff, #b600f8, #00f2ff);
+  background-size: 200% 100%;
+  animation: gradient-shift 3s ease infinite;
+  border-radius: 1rem 1rem 0 0;
+}
+
+/* Premium Tab */
+.quantum-tab {
+  position: relative;
+  padding: 0.75rem 1.5rem;
+  background: transparent;
+  border: none;
+  border-radius: 0.5rem;
+  color: #849495;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  transition: all 0.25s ease;
+}
+
+.quantum-tab::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #00f2ff, #b600f8);
+  transition: width 0.25s ease;
+  border-radius: 2px;
+}
+
+.quantum-tab:hover {
+  color: #e5e2e1;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.quantum-tab.active {
+  color: #00f2ff;
+  background: rgba(0, 242, 255, 0.08);
+}
+
+.quantum-tab.active::after {
+  width: 60%;
+}
+
+/* Premium Chip */
+.quantum-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  background: rgba(0, 242, 255, 0.08);
+  border: 1px solid rgba(0, 242, 255, 0.15);
+  border-radius: 9999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: #74f5ff;
+}
+
+/* Premium AI Chip with rotating gradient border */
+.quantum-ai-chip {
+  position: relative;
+  padding: 0.25rem 0.75rem;
+  background: linear-gradient(90deg, #00f2ff, #b600f8);
+  background-size: 200% 100%;
+  animation: ai-chip-rotate 3s ease infinite;
+  border-radius: 9999px;
+}
+
+.quantum-ai-chip::before {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  background: rgba(10, 25, 47, 0.95);
+  border-radius: inherit;
+}
+
+.quantum-ai-chip span {
+  position: relative;
+  z-index: 1;
+}
+
+/* Premium Live Indicator */
+.quantum-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.quantum-live-dot {
+  width: 8px;
+  height: 8px;
+  background: #10b981;
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.6);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+/* Premium Health Score */
+.quantum-health {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    var(--health-color, #00f2ff) var(--health-score, 0%),
+    rgba(30, 41, 59, 0.8) 0%
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.quantum-health::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  background: rgba(10, 25, 47, 0.95);
+  border-radius: 50%;
+}
+
+.quantum-health-value {
+  position: relative;
+  z-index: 1;
+  font-family: 'Space Grotesk', monospace;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+/* ========================================
+   ADVANCED ANIMATIONS
+   ======================================== */
+@keyframes glow-pulse {
+  0%, 100% { 
+    box-shadow: 0 0 15px rgba(0, 242, 255, 0.3);
+    border-color: rgba(0, 242, 255, 0.3);
+  }
+  50% { 
+    box-shadow: 0 0 30px rgba(0, 242, 255, 0.5);
+    border-color: rgba(0, 242, 255, 0.6);
+  }
+}
+
+@keyframes float-glow {
+  0%, 100% { 
+    transform: translateY(0) scale(1);
+    filter: drop-shadow(0 0 8px rgba(0, 242, 255, 0.4));
+  }
+  50% { 
+    transform: translateY(-4px) scale(1.02);
+    filter: drop-shadow(0 0 16px rgba(0, 242, 255, 0.6));
+  }
+}
+
+@keyframes scan-line {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+.animate-glow-pulse {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+.animate-float-glow {
+  animation: float-glow 2s ease-in-out infinite;
+}
+
+/* Premium Scan Effect */
+.quantum-scan {
   position: relative;
   overflow: hidden;
-  box-shadow:
-    5px 5px 12px var(--neu-shadow-dark),
-    -5px -5px 12px var(--neu-shadow-light);
-  transition: all 0.3s ease;
 }
 
-.bento-item::before { display: none; }
+.quantum-scan::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #00f2ff, transparent);
+  animation: scan-line 3s linear infinite;
+  opacity: 0.5;
+}
 
-.bento-item:hover {
-  border-color: var(--neu-border-hover);
-  transform: translateY(-2px);
-  box-shadow:
-    8px 8px 18px var(--neu-shadow-dark),
-    -8px -8px 18px var(--neu-shadow-light);
+/* ========================================
+   SPACING UTILITIES - QUANTUM SCALE
+   ======================================== */
+.spacing-xs { gap: 4px; }
+.spacing-sm { gap: 8px; }
+.spacing-md { gap: 16px; }
+.spacing-lg { gap: 24px; }
+.spacing-xl { gap: 40px; }
+.spacing-2xl { gap: 64px; }
+
+/* ========================================
+   CONTAINER MAX WIDTH
+   ======================================== */
+.container-quantum {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0 24px;
 }
 
 /* ========================================
@@ -731,14 +1887,13 @@
   left: 0;
   right: 0;
   height: 64px;
-  background: var(--neu-bg);
-  border-top: 1px solid var(--neu-border);
+  background: rgba(5, 5, 5, 0.98);
+  border-top: 1px solid rgba(0, 242, 255, 0.1);
   display: flex;
   align-items: center;
   justify-content: space-around;
   z-index: 50;
   padding-bottom: env(safe-area-inset-bottom);
-  box-shadow: 0 -4px 12px var(--neu-shadow-dark);
 }
 
 .quantum-mobile-nav-item {
@@ -747,207 +1902,252 @@
   align-items: center;
   gap: 4px;
   padding: 8px 16px;
-  color: var(--text-tertiary);
+  color: #849495;
   transition: all 0.2s ease;
 }
 
-.quantum-mobile-nav-item.active { color: var(--primary); }
-.quantum-mobile-nav-item span { font-size: 10px; font-weight: 600; }
+.quantum-mobile-nav-item.active {
+  color: #00f2ff;
+}
+
+.quantum-mobile-nav-item span {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
 
 /* ========================================
-   RESPONSIVE LAYOUTS
+   ENHANCED RESPONSIVE
    ======================================== */
 @media (max-width: 768px) {
-  .hide-mobile { display: none !important; }
-  .quantum-panel { border-radius: 12px; }
-  .quantum-stat { border-radius: 10px; }
-
-  /* Smaller neumorphic shadows on mobile for performance */
-  .quantum-panel,
-  .quantum-stat,
-  .quantum-btn-primary,
-  .quantum-btn-ghost,
-  .quantum-modal,
-  .bento-item,
-  .login-card {
-    box-shadow:
-      4px 4px 10px var(--neu-shadow-dark),
-      -4px -4px 10px var(--neu-shadow-light);
+  .hide-mobile {
+    display: none !important;
   }
-
-  .quantum-input {
-    box-shadow:
-      inset 2px 2px 6px var(--neu-shadow-dark),
-      inset -2px -2px 6px var(--neu-shadow-light);
+  
+  .quantum-panel {
+    border-radius: 0.5rem;
+  }
+  
+  .quantum-stat {
+    border-radius: 0.5rem;
   }
 }
 
 @media (min-width: 769px) {
-  .hide-desktop { display: none !important; }
+  .hide-desktop {
+    display: none !important;
+  }
 }
 
 /* ========================================
-   SPACING UTILITIES
+   FINAL QUANTUM NOIR POLISH
    ======================================== */
-.spacing-xs { gap: 4px; }
-.spacing-sm { gap: 8px; }
-.spacing-md { gap: 16px; }
-.spacing-lg { gap: 24px; }
-.spacing-xl { gap: 40px; }
-.spacing-2xl { gap: 64px; }
 
-.container-quantum { max-width: 1440px; margin: 0 auto; padding: 0 24px; }
-
-/* ========================================
-   AMBIENT EFFECTS (subtle)
-   ======================================== */
+/* Ambient glow orbs */
 .ambient-orb {
   position: fixed;
   border-radius: 50%;
   filter: blur(80px);
-  opacity: 0.15;
+  opacity: 0.3;
   pointer-events: none;
   z-index: 0;
 }
 
-.ambient-orb-cyan { background: var(--primary); }
-.ambient-orb-purple { background: var(--secondary); }
+.ambient-orb-cyan {
+  background: #00f2ff;
+}
 
-/* Focus ring */
+.ambient-orb-purple {
+  background: #b600f8;
+}
+
+/* Selection styling */
+.quantum-selection::selection {
+  background: rgba(0, 242, 255, 0.3);
+  color: #fff;
+}
+
+/* Focus ring enhancement */
 .quantum-focus:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(0, 242, 255, 0.4);
+  box-shadow: 0 0 0 2px rgba(0, 242, 255, 0.5), 0 0 20px rgba(0, 242, 255, 0.3);
 }
 
-.quantum-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
-.quantum-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.quantum-scrollbar::-webkit-scrollbar-thumb { background: var(--neu-shadow-light); border-radius: 2px; }
+/* Premium scrollbar for specific containers */
+.quantum-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
 
-/* Modal close */
-.modal-close:hover { background: rgba(239, 68, 68, 0.1); color: var(--red); }
+.quantum-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.quantum-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(0, 242, 255, 0.4), rgba(182, 0, 248, 0.4));
+  border-radius: 2px;
+}
+
+/* Backdrop blur — disabled for performance. Opacity-based glassmorphism used instead. */
+
+.modal-close:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
 
 .modal-pro {
-  background: var(--neu-surface);
-  border: 1px solid var(--neu-border);
+  background: linear-gradient(135deg, rgba(10, 25, 47, 0.98) 0%, rgba(10, 25, 47, 0.92) 100%);
+  border: 1px solid rgba(0, 242, 255, 0.15);
   box-shadow:
-    12px 12px 30px var(--neu-shadow-dark),
-    -12px -12px 30px var(--neu-shadow-light);
+    0 25px 80px rgba(0, 0, 0, 0.6),
+    0 0 100px rgba(0, 242, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 /* ========================================
-   TRADING SIGNAL BADGES
+   TRADING TAB CUSTOM CLASSES
    ======================================== */
-.trade-signal-long { background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.15); }
-.trade-signal-short { background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.15); }
-.trade-price-ladder { background: var(--neu-bg); border: 1px solid var(--neu-border); }
-.trade-conviction-gauge { background: radial-gradient(circle at center, rgba(0, 242, 255, 0.15), transparent 70%); }
+.trade-signal-long {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(16, 185, 129, 0.02) 100%);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
 
-.trade-badge-strong-long { background: rgba(16, 185, 129, 0.12); color: var(--emerald); border-color: rgba(16, 185, 129, 0.25); }
-.trade-badge-long { background: rgba(16, 185, 129, 0.05); color: #34d399; border-color: rgba(16, 185, 129, 0.15); }
-.trade-badge-strong-short { background: rgba(239, 68, 68, 0.12); color: var(--red); border-color: rgba(239, 68, 68, 0.25); }
-.trade-badge-short { background: rgba(239, 68, 68, 0.05); color: #f87171; border-color: rgba(239, 68, 68, 0.15); }
+.trade-signal-short {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(239, 68, 68, 0.02) 100%);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
 
-.trade-pnl-flash { animation: pnl-flash 1s ease-out forwards; }
-@keyframes pnl-flash { 0% { transform: scale(1.1); filter: brightness(1.5); } 100% { transform: scale(1); filter: brightness(1); } }
+.trade-price-ladder {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
 
-.trade-leverage-chip { background: rgba(139, 92, 246, 0.08); border: 1px solid rgba(139, 92, 246, 0.15); color: #a78bfa; }
+.trade-conviction-gauge {
+  background: radial-gradient(circle at center, rgba(0, 242, 255, 0.2) 0%, transparent 70%);
+}
 
-.trade-card-hover { transition: all 0.3s ease; }
-.trade-card-hover:hover { transform: translateY(-2px); box-shadow: 0 8px 24px var(--neu-shadow-dark); }
+.trade-badge-strong-long {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.3);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.2);
+}
 
+.trade-badge-long {
+  background: rgba(16, 185, 129, 0.05);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.2);
+}
+
+.trade-badge-strong-short {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.3);
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
+}
+
+.trade-badge-short {
+  background: rgba(239, 68, 68, 0.05);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.trade-pnl-flash {
+  animation: pnl-flash 1s ease-out forwards;
+}
+
+@keyframes pnl-flash {
+  0% { transform: scale(1.1); filter: brightness(1.5); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+
+.trade-leverage-chip {
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  color: #a78bfa;
+}
+
+.trade-card-hover {
+  transition: all 0.3s ease;
+}
+
+.trade-card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
 /* ========================================
-   QUANTUM NAV ITEMS
+   LIGHT THEME — QUANTUM COMPONENT POLISH
+   The app uses .quantum-* classes (not .glass-*), so the original
+   light overrides missed them. These rules make light mode legible
+   and consistent across panels, inputs, modals, tabs and app bar.
    ======================================== */
-.quantum-nav-item {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  border-radius: 10px;
-  color: var(--text-secondary);
-  transition: all 0.2s ease;
-  border-left: 2px solid transparent;
-}
-
-.quantum-nav-item:hover { background: rgba(0, 242, 255, 0.05); transform: translateX(4px); }
-.quantum-nav-item.active {
-  background: rgba(0, 242, 255, 0.08);
-  border-left: 2px solid var(--primary);
-}
-
-/* ========================================
-   LIGHT THEME OVERRIDES
-   ======================================== */
-.light {
-  --neu-bg: #e0e5ec;
-  --neu-bg-light: #e8edf4;
-  --neu-surface: #e0e5ec;
-  --neu-surface-raised: #eaedf2;
-  --neu-shadow-dark: #a3b1c6;
-  --neu-shadow-light: #ffffff;
-  --text-primary: #1a1a2e;
-  --text-secondary: #4a5568;
-  --text-tertiary: #718096;
-  --neu-border: rgba(0, 0, 0, 0.06);
-  --neu-border-hover: rgba(0, 122, 135, 0.3);
-  --background: #e0e5ec;
-}
-
 .light .quantum-panel,
 .light .quantum-stat {
-  background: var(--neu-surface) !important;
-  box-shadow:
-    6px 6px 12px var(--neu-shadow-dark),
-    -6px -6px 12px var(--neu-shadow-light) !important;
-  color: var(--text-primary) !important;
+  background: rgba(255, 255, 255, 0.9) !important;
+  border: 1px solid rgba(15, 23, 42, 0.08) !important;
+  box-shadow: 0 2px 12px rgba(15, 23, 42, 0.04);
+  color: #0f172a !important;
 }
-
 .light .quantum-panel::before { display: none !important; }
-
-.light .quantum-input {
-  background: var(--neu-bg) !important;
-  color: var(--text-primary) !important;
-  box-shadow:
-    inset 3px 3px 6px var(--neu-shadow-dark),
-    inset -3px -3px 6px var(--neu-shadow-light) !important;
+.light .quantum-panel:hover,
+.light .quantum-stat:hover {
+  border-color: rgba(8, 145, 178, 0.35) !important;
 }
 
 .light .quantum-modal {
-  background: var(--neu-surface) !important;
-  color: var(--text-primary) !important;
+  background: #ffffff !important;
+  border: 1px solid rgba(15, 23, 42, 0.1) !important;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18) !important;
+  color: #0f172a !important;
 }
+
+.light .quantum-input,
+.light select.quantum-input,
+.light .bg-slate-900\/60,
+.light .bg-slate-900\/80 {
+  background: #ffffff !important;
+  border-color: rgba(15, 23, 42, 0.15) !important;
+  color: #0f172a !important;
+}
+.light .quantum-input::placeholder { color: rgba(15, 23, 42, 0.4) !important; }
 
 .light .quantum-appbar {
-  background: var(--neu-bg) !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08) !important;
 }
 
-.light .quantum-tab { color: var(--text-secondary) !important; }
+.light .quantum-tab { color: #475569 !important; }
+.light .quantum-tab:hover { color: #0f172a !important; }
 .light .quantum-tab.active { color: #0891b2 !important; }
 
-.light .text-slate-100, .light .text-slate-200 { color: #1e293b !important; }
-.light .text-cyan-300\/50, .light .text-cyan-300\/80 { color: #0e7490 !important; }
-.light .bg-black\/10, .light .bg-black\/20, .light .bg-black\/30 { background: rgba(0, 0, 0, 0.04) !important; }
+/* Extra text + surface normalisation */
+.light .text-slate-100,
+.light .text-slate-200 { color: #1e293b !important; }
+.light .text-cyan-300\/50,
+.light .text-cyan-300\/80 { color: #0e7490 !important; }
+.light .bg-black\/10,
+.light .bg-black\/30 { background: rgba(15, 23, 42, 0.04) !important; }
+.light .border-white\/\[0\.03\],
+.light .divide-white\/\[0\.03\] > * { border-color: rgba(15, 23, 42, 0.08) !important; }
 
-.light.bg-gradient-to-br { background: #e0e5ec !important; }
+/* Keep the page background light (root div carries the dark gradient utilities) */
+.light.bg-gradient-to-br {
+  background: #f1f5f9 !important;
+}
 
-/* ========================================
-   LIVE PRICE FLASH
-   ======================================== */
-@keyframes flashUp { 0% { background: rgba(16, 185, 129, 0.3); } 100% { background: transparent; } }
-@keyframes flashDown { 0% { background: rgba(239, 68, 68, 0.3); } 100% { background: transparent; } }
-
-.live-price { border-radius: 4px; padding: 0 2px; transition: color 0.2s ease; }
+/* --- Live price tick flash (real-time feel) --- */
+@keyframes flashUp {
+  0% { background: rgba(16, 185, 129, 0.35); }
+  100% { background: transparent; }
+}
+@keyframes flashDown {
+  0% { background: rgba(239, 68, 68, 0.35); }
+  100% { background: transparent; }
+}
+.live-price {
+  border-radius: 4px;
+  padding: 0 2px;
+  transition: color 0.2s ease;
+}
 .live-price.flash-up { animation: flashUp 0.6s ease-out; }
 .live-price.flash-down { animation: flashDown 0.6s ease-out; }
-
-/* ========================================
-   SELECTION
-   ======================================== */
-::selection { background: rgba(0, 242, 255, 0.25); color: #fff; }
-
-/* ========================================
-   QUANTUM RANGE (slider)
-   ======================================== */
-.quantum-range { position: relative; height: 4px; background: var(--neu-bg); border-radius: 2px; box-shadow: inset 1px 1px 3px var(--neu-shadow-dark); }
-.quantum-range-indicator { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 14px; height: 14px; background: var(--primary); border-radius: 50%; box-shadow: 0 0 8px rgba(0, 242, 255, 0.4); cursor: grab; }
-.quantum-range-fill { position: absolute; left: 0; top: 0; height: 100%; background: linear-gradient(90deg, rgba(239, 68, 68, 0.4), rgba(16, 185, 129, 0.4)); border-radius: 2px; }
