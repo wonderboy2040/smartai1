@@ -1058,7 +1058,7 @@ export function useAppState() {
 
   // --- Weekly Wealth Report (Sunday 9 AM IST) ---
   // FIX HIGH #25: same root cause as #1 — drop `metrics` from deps.
-  const weeklyReportRef = useRef<string>('');
+  // FIX H3: use secureStorage for dedup so page reload doesn't re-fire.
   useEffect(() => {
     if (!isAuthenticated || !autoTelegram || portfolio.length === 0) return;
     const checkWeeklyReport = async () => {
@@ -1068,8 +1068,10 @@ export function useAppState() {
       const hour = ist.getHours();
       const todayStr = ist.toISOString().split('T')[0];
 
-      if (day === 0 && hour === 9 && weeklyReportRef.current !== todayStr) {
-        weeklyReportRef.current = todayStr;
+      // FIX H3: check secureStorage instead of in-memory ref — survives reloads.
+      const alreadySent = secureStorage.getItem(`weekly_report_sent_${todayStr}`) === '1';
+      if (day === 0 && hour === 9 && !alreadySent) {
+        secureStorage.setItem(`weekly_report_sent_${todayStr}`, '1');
         const d = latestDataRef.current;
         const currentMetrics = calculateMetrics();
         let weeklyTotalSIP = 16500;

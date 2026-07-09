@@ -376,9 +376,11 @@ export function analyzeRebalancing(
     const currentWeight = (item.valueInr / totalValueInr) * 100;
 
     // Find target from ETF configs or use equal weight
+    // FIX H2: strip .NS/.BO suffix before lookup so JUNIORBEES.NS matches.
     let targetWeight = equalWeight;
-    const inETF = ALPHA_ETFS_IN.find(e => e.sym === item.symbol);
-    const usETF = ALPHA_ETFS_US.find(e => e.sym === item.symbol);
+    const cleanSym = item.symbol.replace('.NS', '').replace('.BO', '').toUpperCase();
+    const inETF = ALPHA_ETFS_IN.find(e => e.sym === cleanSym);
+    const usETF = ALPHA_ETFS_US.find(e => e.sym === cleanSym);
     if (inETF) targetWeight = inETF.fixedAlloc * 100;
     else if (usETF) targetWeight = usETF.fixedAlloc * 100;
 

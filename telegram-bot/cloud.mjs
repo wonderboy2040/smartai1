@@ -9,18 +9,21 @@ import {
   GROQ_KEY, TAVILY_API_KEY
 } from './config.mjs';
 
+// FIX C1: Bot was missing authToken in all cloud sync calls → Code.gs
+// returned "unauthorized" for every request → bot never loaded portfolio.
+// Now use the same token as the frontend (VITE_API_TOKEN env or default).
+const AUTH_TOKEN = process.env.API_TOKEN || process.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
+
 export async function loadPortfolioFromCloud() {
   if (!API_URL) return null;
 
   try {
-    const res = await fetch(`${API_URL}?action=load&t=${Date.now()}`, {
+    const res = await fetch(`${API_URL}?action=load&authToken=${encodeURIComponent(AUTH_TOKEN)}&t=${Date.now()}`, {
       signal: AbortSignal.timeout(10000)
     });
     if (!res.ok) return null;
 
     const text = await res.text();
-    // FIX: greedy `\{[\s\S]*\}` over-captures when Apps Script wraps JSON
-    // in HTML/prose. Try strict JSON.parse first, then non-greedy fallback.
     let data;
     try {
       data = JSON.parse(text);
@@ -48,13 +51,12 @@ export async function loadGroqKeyFromCloud() {
   if (!API_URL) return null;
 
   try {
-    const res = await fetch(`${API_URL}?action=loadKey&t=${Date.now()}`, {
+    const res = await fetch(`${API_URL}?action=loadKey&authToken=${encodeURIComponent(AUTH_TOKEN)}&t=${Date.now()}`, {
       signal: AbortSignal.timeout(8000)
     });
     if (!res.ok) return null;
 
     const text = await res.text();
-    // FIX: greedy regex replaced with strict JSON.parse + non-greedy fallback.
     let data;
     try {
       data = JSON.parse(text);
@@ -77,10 +79,6 @@ export async function loadGroqKeyFromCloud() {
         }
       }
 
-      // FIX CRIT: previously `key.length > 10` accepted any string — a user
-      // running `/setkey groq junkjunkjunk` would overwrite the working key
-      // with garbage and brick AI chat for everyone. Require the canonical
-      // `gsk_` prefix + minimum length.
       if (key.startsWith('gsk_') && key.length > 20) {
         console.log('🔑 Groq API Key loaded from cloud (Legacy string)');
         setGroqKey(key);
@@ -102,11 +100,10 @@ export async function saveAllKeysToCloud() {
   };
   const serialized = JSON.stringify(payload);
   try {
-    // FIX: no timeout previously → if Apps Script hangs, request hangs forever.
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ groqKey: serialized, action: 'saveKey', timestamp: Date.now() }),
+      body: JSON.stringify({ groqKey: serialized, action: 'saveKey', authToken: AUTH_TOKEN, timestamp: Date.now() }),
       signal: AbortSignal.timeout(10000)
     });
     return res.ok;
@@ -138,11 +135,10 @@ export async function syncPortfolioToCloud(portfolio, usdInr) {
   }
 
   try {
-    // FIX: no timeout previously.
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'update', portfolio, timestamp: Date.now(), usdInr }),
+      body: JSON.stringify({ action: 'update', authToken: AUTH_TOKEN, portfolio, timestamp: Date.now(), usdInr }),
       signal: AbortSignal.timeout(10000)
     });
     return res.ok;

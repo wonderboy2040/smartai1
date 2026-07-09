@@ -275,18 +275,31 @@ async function callHuggingFace(messages, systemPrompt, modelName = 'Qwen/Qwen2.5
 // ============================================
 // QUANT BRAIN — Deterministic fallback (always works)
 // ============================================
+// FIX H6: Previously searched for the literal string 'PORTFOLIO' in context
+// lines, which never matched any position line. Now: if symbol is 'PORTFOLIO'
+// (general query), extract the FIRST valid position line's price/change.
 function quantBrainFallback(symbol, contextData) {
-  // Simple deterministic analysis from context — no LLM needed
   const lines = contextData.split('\n');
   let rsi = 50, price = 0, change = 0;
+  let foundPosition = false;
+
   for (const line of lines) {
     if (line.includes('RSI=')) {
       const m = line.match(/RSI=(\d+\.?\d*)/);
       if (m) rsi = parseFloat(m[1]);
     }
-    if (line.includes(symbol) && line.includes(':')) {
+    // FIX H6: if symbol is 'PORTFOLIO' (general fallback), grab the FIRST
+    // position line that has a price pattern. Otherwise look for the specific
+    // symbol.
+    const shouldMatch = symbol === 'PORTFOLIO' ? !foundPosition : line.includes(symbol);
+    if (shouldMatch && line.includes(':')) {
       const m = line.match(/:\s*(\d+\.?\d+)\s*\(([+-]?\d+\.?\d*)%\)/);
-      if (m) { price = parseFloat(m[1]); change = parseFloat(m[2]); }
+      if (m) {
+        price = parseFloat(m[1]);
+        change = parseFloat(m[2]);
+        foundPosition = true;
+        if (symbol !== 'PORTFOLIO') break;  // found specific symbol, stop
+      }
     }
   }
 

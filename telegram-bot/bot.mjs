@@ -166,7 +166,14 @@ apiRouter.get('/ai-status', (req, res) => {
 
 apiRouter.post('/nvidia', express.json({ limit: '1mb' }), async (req, res) => {
   try {
-    const { messages, model } = req.body;
+    // FIX H4: add key + messages validation (other routes already have this).
+    if (!NVIDIA_KEY || NVIDIA_KEY.length < 10) {
+      return res.status(503).json({ error: 'NVIDIA key not configured' });
+    }
+    const { messages, model } = req.body || {};
+    if (!Array.isArray(messages)) {
+      return res.status(400).json({ error: 'messages[] required' });
+    }
     const modelName = model || 'meta/llama-3.3-70b-instruct';
     const formattedMessages = messages.map(m => ({ role: m.role, content: m.content }));
     
@@ -3211,23 +3218,35 @@ bot.onText(/^\/drawdown(@\w+)?$/i, async (msg) => {
 // ────────────────────────────────────────
 // 🤖 ML SERVICE COMMANDS
 // ────────────────────────────────────────
-
-const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://localhost:8000';
+// FIX C3: Previously pointed to dead Python service at localhost:8000.
+// Now points to the in-process Node.js ML engine at /api/ml/* on the
+// main Express server (port 8080 by default).
+const ML_SERVICE_URL = process.env.ML_SERVICE_URL || `http://localhost:${process.env.PORT || 8080}/api/ml`;
 
 async function fetchMLSignal(symbol, market = 'IN') {
-  const res = await fetch(`${ML_SERVICE_URL}/predict?symbol=${symbol}&market=${market}`);
+  const res = await fetch(`${ML_SERVICE_URL}/predict`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ symbol, market, price: 0, change: 0 }),
+    signal: AbortSignal.timeout(10000),
+  });
   if (!res.ok) throw new Error(`ML service returned ${res.status}`);
   return res.json();
 }
 
 async function fetchMLRegime() {
-  const res = await fetch(`${ML_SERVICE_URL}/regime`);
+  const res = await fetch(`${ML_SERVICE_URL}/regime`, { signal: AbortSignal.timeout(10000) });
   if (!res.ok) throw new Error(`ML regime service returned ${res.status}`);
   return res.json();
 }
 
 async function fetchMLBacktest(symbol, market = 'IN') {
-  const res = await fetch(`${ML_SERVICE_URL}/backtest?symbol=${symbol}&market=${market}`);
+  const res = await fetch(`${ML_SERVICE_URL}/backtest`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ symbol, candles: [] }),
+    signal: AbortSignal.timeout(10000),
+  });
   if (!res.ok) throw new Error(`ML backtest service returned ${res.status}`);
   return res.json();
 }

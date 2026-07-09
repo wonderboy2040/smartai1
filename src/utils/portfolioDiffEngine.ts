@@ -125,7 +125,9 @@ export function diffPortfolio(
         qty: qtyDelta,
         price: buyPrice,
         amount: buyAmount,
-        date: today,
+        // FIX H1: use the position's ORIGINAL dateAdded (not today) so
+        // taxOptimizer computes correct holding period (LTCG vs STCG).
+        date: prev.dateAdded || today,
         ts: now,
         prevQty: prev.qty,
         prevAvg: prev.avgPrice,
@@ -147,7 +149,8 @@ export function diffPortfolio(
         qty: sellQty,
         price: sellPrice,
         amount: sellQty * sellPrice,
-        date: today,
+        // FIX H1: use original dateAdded for correct holding period.
+        date: prev.dateAdded || today,
         ts: now,
         prevQty: prev.qty,
         prevAvg: prev.avgPrice,

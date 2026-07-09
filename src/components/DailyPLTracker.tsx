@@ -36,20 +36,24 @@ export const DailyPLTracker = React.memo(function DailyPLTracker() {
   const [showReport, setShowReport] = useState(false);
   const [showPositions, setShowPositions] = useState(false);
   const [autoReport, setAutoReport] = useState<MonthlyPLReport | null>(null);
-  const [refreshTick, setRefreshTick] = useState(0);
+  const [logRefreshTick, setLogRefreshTick] = useState(0);
 
   // ---- LIVE daily P&L (computed from `change` field) ----
+  // FIX C2: removed `logRefreshTick` from deps — it caused an infinite loop
+  // (logRefreshTick bump → livePL recompute → effect fires → setRefreshTick).
+  // livePL only depends on actual market data, not on log refresh state.
   const livePL: LiveDailyPL = useMemo(() => {
     return computeLiveDailyPL(portfolio, livePrices, usdInrRate);
-  }, [portfolio, livePrices, usdInrRate, refreshTick]);
+  }, [portfolio, livePrices, usdInrRate]);
 
   // ---- Freeze today's P&L into log (debounced) ----
+  // Updates the frozen log entry for today. Does NOT trigger livePL recompute.
   useEffect(() => {
     if (portfolio.length === 0) return;
     const t = setTimeout(() => {
       recordDailyPL(livePL);
-      setRefreshTick(t => t + 1);  // trigger re-read of frozen log
-    }, 3000);
+      setLogRefreshTick(t => t + 1);  // only re-read frozen log, not livePL
+    }, 5000);  // 5s debounce (was 3s — less aggressive)
     return () => clearTimeout(t);
   }, [livePL, portfolio.length]);
 
@@ -85,7 +89,7 @@ export const DailyPLTracker = React.memo(function DailyPLTracker() {
   // Recent days: frozen history + today live
   const recent: DailyPLEntry[] = useMemo(() => {
     return getRecentDailyPL(14, todayEntry);
-  }, [todayEntry, refreshTick]);
+  }, [todayEntry, logRefreshTick]);
 
   const yesterdayEntry = recent.length > 1 ? recent[recent.length - 2] : null;
 
@@ -94,12 +98,12 @@ export const DailyPLTracker = React.memo(function DailyPLTracker() {
     const now = new Date();
     const mk = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     return buildMonthlyPLReport(mk);
-  }, [refreshTick]);
+  }, [logRefreshTick]);
 
-  const prevMonthReport = useMemo(() => buildMonthlyPLReport(), [refreshTick]);
+  const prevMonthReport = useMemo(() => buildMonthlyPLReport(), [logRefreshTick]);
 
   // ---- 30-day trend for chart ----
-  const last30 = useMemo(() => getRecentDailyPL(30, todayEntry), [todayEntry, refreshTick]);
+  const last30 = useMemo(() => getRecentDailyPL(30, todayEntry), [todayEntry, logRefreshTick]);
 
   // ---- Telegram send ----
   const sendReportToTelegram = useCallback(async (report: MonthlyPLReport) => {
