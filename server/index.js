@@ -1453,6 +1453,20 @@ app.listen(PORT, () => {
   const ready = Object.entries(KEYS).filter(([, v]) => v).map(([k]) => k);
   console.log(`[wealth-ai] server on :${PORT} — providers ready: ${ready.join(', ') || 'NONE (set API keys!)'}`);
 
+  // Self-ping keepalive for Render free tier
+  const RENDER_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+  if (RENDER_URL) {
+    console.log(`[wealth-ai] Render Keepalive active: pinging ${RENDER_URL}/health every 14 minutes`);
+    setInterval(async () => {
+      try {
+        const res = await fetch(`${RENDER_URL}/health`, { signal: AbortSignal.timeout(10000) });
+        console.log(`[wealth-ai] Keepalive ping status: ${res.status}`);
+      } catch (e) {
+        console.warn('[wealth-ai] Keepalive ping failed:', e.message);
+      }
+    }, 14 * 60 * 1000);
+  }
+
   // Start the Telegram bot as a background child process
   if (TG.token) {
     try {

@@ -44,6 +44,7 @@ let usdInrRate = 85.5;
 let marketIntel = null;
 let autoAlerts = true;
 let botReady = false;
+let lastRefreshTime = 0;
 
 // Intraday algo alert cooldown (per symbol) so we don't spam the same setup.
 const lastAlgoAlertAt = {};
@@ -436,6 +437,20 @@ if (process.env.BOT_ONLY !== 'true') {
   });
 } else {
   console.log('🤖 Telegram Bot running in background (Express port listener disabled).');
+}
+
+// Self-ping keepalive for Render free tier (runs in both modes to be safe)
+const RENDER_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+if (RENDER_URL) {
+  console.log(`📡 Render Keepalive active: pinging ${RENDER_URL}/health every 14 minutes`);
+  setInterval(async () => {
+    try {
+      const res = await fetch(`${RENDER_URL}/health`, { signal: AbortSignal.timeout(10000) });
+      console.log(`🏓 Self-ping status: ${res.status} — Keeping service alive`);
+    } catch (e) {
+      console.warn('🏓 Self-ping failed:', e.message);
+    }
+  }, 14 * 60 * 1000);
 }
 
 // ========================================
@@ -2434,9 +2449,17 @@ bot.on('message', async (msg) => {
   console.log(`💬 AI Chat: "${text.substring(0, 50)}..." from ${msg.from?.first_name || chatId}`);
   try {
     await safeSend(chatId, '🧠 <i>Deep Mind processing...</i>');
-    // Refresh BOTH portfolio (all assets/ETFs) and live prices so AI sees the latest, complete data
-    await Promise.allSettled([refreshPortfolio(), refreshPrices()]);
-    await refreshPrices(); // re-fetch prices for any newly-added assets
+    
+    // Check freshness to avoid blocking sequential refreshes
+    const now = Date.now();
+    if (now - lastRefreshTime > 60000 || portfolio.length === 0 || Object.keys(livePrices).length === 0) {
+      console.log('🔄 Data stale or empty — running parallel refresh...');
+      await Promise.allSettled([refreshPortfolio(), refreshPrices()]);
+      lastRefreshTime = Date.now();
+    } else {
+      console.log('⚡ Using cached portfolio and prices (freshness OK)');
+    }
+    
     const response = await chatWithAI(chatId, text, portfolio, livePrices, usdInrRate);
     await safeSend(chatId, response);
   } catch (e) {
@@ -2493,8 +2516,8 @@ cron.schedule('*/10 * * * *', async () => {
   }
 });
 
-// Price refresh: every 30 seconds
-cron.schedule('*/30 * * * * *', async () => {
+// Price refresh: every 60 seconds
+cron.schedule('0 */1 * * * *', async () => {
   if (!TG_CHAT_ID) return;
   if (portfolio.length > 0) {
     await refreshPrices();

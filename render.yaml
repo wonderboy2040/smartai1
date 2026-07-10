@@ -40,6 +40,8 @@ services:
       # ── Google Apps Script portfolio sync ─────────────────────────────────
       - key: API_URL
         sync: false
+      - key: RENDER_EXTERNAL_URL
+        sync: false
 
       # ── US real-time prices (Finnhub WebSocket, tick-by-tick) ─────────────
       - key: FINNHUB_API_KEY

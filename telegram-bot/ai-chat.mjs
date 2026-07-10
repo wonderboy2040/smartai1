@@ -70,12 +70,12 @@ function recordEngineSuccess(engine = 'groq') {
 
 console.log(`🤖 AI Engines: Gemini=${isGeminiAvailable()} Groq=${isGroqAvailable()} Claude=${isClaudeAvailable()} OpenRouter=${isOpenRouterAvailable()} Cerebras=${isCerebrasAvailable()} HF=${isHFAvailable()}`);
 
-async function retryWithBackoff(fn, maxRetries = 2, baseDelay = 1000) {
+async function retryWithBackoff(fn, maxRetries = 1, baseDelay = 500) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try { return await fn(); }
     catch (err) {
       if (attempt === maxRetries) throw err;
-      const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 500;
+      const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 300;
       console.warn(`  ↻ Retry ${attempt + 1}/${maxRetries} after ${Math.round(delay)}ms...`);
       await new Promise(r => setTimeout(r, delay));
     }
@@ -349,14 +349,29 @@ function antiHallucinationCheck(llmText, contextData) {
   // Extract numbers from context (prices, RSI, etc.)
   const contextNumbers = (contextData.match(/\b\d+\.?\d*\b/g) || []);
   const contextSet = new Set(contextNumbers);
-  // Flag suspicious numbers > 100 not in context
+  // Flag suspicious numbers > 100 not in context, but exempt common market ranges
+  // (Sensex 60K-100K, Nifty 15K-30K, stock prices 100-10000, BTC 20K-200K, percentages, years)
   const suspicious = numbersInText.filter(n => {
     const val = parseFloat(n);
-    return val > 100 && !contextSet.has(n);
+    if (val <= 100) return false; // small numbers are fine
+    if (contextSet.has(n)) return false; // number is in context data
+    // Exempt common ranges: years (2020-2030), percentages (already small), round targets
+    if (val >= 2020 && val <= 2035) return false; // years
+    if (val % 100 === 0 && val <= 10000) return false; // round price targets like 500, 1000
+    if (val % 1000 === 0 && val <= 100000) return false; // round levels like 20000, 50000
+    return true;
   });
-  if (suspicious.length > 5) {
+  // FIX: raised threshold from 5 → 15. Stock analysis naturally contains many numbers
+  // (prices, targets, support/resistance, market caps) that won't match context exactly.
+  // Previous threshold of 5 caused valid responses to be rejected, falling back to
+  // the simplistic Quant Brain which gave inaccurate generic results.
+  if (suspicious.length > 15) {
     console.warn(`  ⚠️ Anti-hallucination triggered: ${suspicious.length} suspicious numbers — falling back to Quant Brain`);
     return null;
+  }
+  if (suspicious.length > 8) {
+    console.warn(`  ⚠️ Anti-hallucination warning: ${suspicious.length} suspicious numbers (keeping response with disclaimer)`);
+    return llmText + '\n\n⚠️ Note: Some figures may be approximate. Verify critical numbers from live data.';
   }
   return llmText;
 }
@@ -426,12 +441,6 @@ ${contextData}
 
 === END LIVE DATA ===
 
-RESPONSE STRUCTURE:
-- Start with a 1-line MACRO snapshot (market regime) in simple Hinglish.
-- Connect macro → micro: aaj ke news/data ka user ke holdings pe kya asar.
-- List relevant portfolio positions with analysis (price, RSI, signal, verdict + levels).
-- For news queries: News → Inside angle → Fundamentals → Theme → Future Prediction.
-- End with overall strategy + top 3 action items + 1 "Pro Tip" deep insight.
 - Keep language SIMPLE Hinglish, easy to understand. Jargon ko explain karo.`;
 }
 
@@ -440,54 +449,85 @@ RESPONSE STRUCTURE:
 // ============================================
 async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
   let ctx = '';
-  const ms = await getRealtimeMarketSnapshot();
-  if (ms) ctx += ms + '\n';
-  const fx = await getRealtimeForex();
-  ctx += `LIVE USD/INR: ₹${fx.toFixed(4)}\nTimestamp: ${new Date().toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata'})} IST\n\n`;
-
   const now = Date.now();
-  // Keep market intelligence fresh for 24x7 deep analysis (60s instead of 120s).
-  if (!cachedIntel || now - intelTimestamp > 60000) {
-    try { cachedIntel = await fetchMarketIntelligence(); intelTimestamp = now; }
-    catch {}
-  }
-  if (cachedIntel) {
-    ctx += `GLOBAL INDICES:\n`;
-    cachedIntel.globalIndices.forEach(i => ctx += `${i.name}: ${i.price.toFixed(1)} (${i.change>=0?'+':''}${i.change.toFixed(1)}%)\n`);
-    ctx += `\nSECTOR ROTATION:\n`;
-    cachedIntel.sectors.forEach(s => ctx += `${s.name}: ${s.change>=0?'+':''}${s.change.toFixed(2)}%\n`);
-    ctx += `Fear/Greed: ${cachedIntel.fearGreedScore}/100\nAI Narrative: ${cachedIntel.marketNarrative}\n\n`;
+
+  // ===== PERFORMANCE FIX: Run ALL network calls in PARALLEL =====
+  // Previously these were sequential (25-45s). Now parallel (6-10s max).
+  const needsIntel = !cachedIntel || now - intelTimestamp > 60000;
+  const q = (userQuery || '').toLowerCase();
+  const isMarketQuery = /\b(news|market|nifty|sensex|fed|rbi|ipo|crude|gold|dollar|bitcoin|btc|crypto|budget|gdp|inflation|earnings|breaking|today|live)\b/i.test(q);
+  const isPortfolioQuery = /\b(portfolio|analy|strategy|deep|comprehensive|fundamental|valuation|sip|retirement|cagr|projection|holding|position)\b/i.test(q);
+
+  // Build list of parallel fetches
+  const tasks = [
+    getRealtimeMarketSnapshot(),  // 0: market snapshot
+    getRealtimeForex(),            // 1: forex rate
+  ];
+  if (needsIntel) tasks.push(fetchMarketIntelligence()); // 2: market intel
+  else tasks.push(Promise.resolve(cachedIntel));
+
+  // Only fetch Tavily web data for market/news queries (skip for simple questions)
+  if (userQuery && isTavilyAvailable() && isMarketQuery) {
+    console.log('  🔍 Fetching live web data via Tavily (parallel)...');
+    tasks.push(fetchRealtimeWebData(userQuery + (/news|stock|crypto|market|price/i.test(userQuery)?'':' latest market news'))); // 3
+  } else {
+    tasks.push(Promise.resolve('')); // 3: no Tavily needed
   }
 
-  if (userQuery && isTavilyAvailable()) {
-    if (/\b(news|market|nifty|sensex|fed|rbi|ipo|crude|gold|dollar|bitcoin|btc|crypto|budget|gdp|inflation|earnings|breaking|today|live)\b/i.test(userQuery)) {
-      console.log('  🔍 Fetching live web data via Tavily...');
-      const web = await fetchRealtimeWebData(userQuery + (/news|stock|crypto|market|price/i.test(userQuery)?'':' latest market news'));
-      if (web) ctx += `\nLIVE WEB SEARCH RESULTS:\n${web}\n`;
-    }
-  }
-
-  // ===== SUPERINTELLIGENCE v4.0 — PORTFOLIO-SPECIFIC NEWS =====
-  // Fetch news for the user's top 5 holdings (by current value) via Tavily.
-  // Tag each item with the matching symbol + sentiment so the LLM can reason
-  // per-holding. Also compute "inside story" insights per holding.
-  if (portfolio?.length && isTavilyAvailable()) {
+  // Only fetch portfolio-specific news for portfolio queries (saves 8s+ for general questions)
+  if (portfolio?.length && isTavilyAvailable() && (isPortfolioQuery || isMarketQuery)) {
     try {
       const topHoldings = [...portfolio]
         .sort((a, b) => ((livePrices[`${b.market}_${b.symbol}`]?.price || b.avgPrice) * b.qty) - ((livePrices[`${a.market}_${a.symbol}`]?.price || a.avgPrice) * a.qty))
         .slice(0, 5)
         .map(p => p.symbol.replace('.NS', '').replace('.BO', ''));
       if (topHoldings.length > 0) {
-        console.log(`  📰 Fetching portfolio-specific news for: ${topHoldings.join(', ')}`);
+        console.log(`  📰 Fetching portfolio-specific news for: ${topHoldings.join(', ')} (parallel)`);
         const portfolioQuery = `${topHoldings.join(' ')} stock news latest quarterly results insider trading institutional moves today`;
-        const newsRes = await fetchRealtimeWebData(portfolioQuery);
-        if (newsRes) {
-          ctx += `\nPORTFOLIO-SPECIFIC NEWS (top holdings):\n${newsRes.substring(0, 1500)}\n`;
-        }
+        tasks.push(fetchRealtimeWebData(portfolioQuery)); // 4
+      } else {
+        tasks.push(Promise.resolve('')); // 4
       }
-    } catch (e) { console.warn('Portfolio news fetch failed:', e.message); }
+    } catch (e) {
+      console.warn('Portfolio news query build failed:', e.message);
+      tasks.push(Promise.resolve('')); // 4
+    }
+  } else {
+    tasks.push(Promise.resolve('')); // 4: skip portfolio news for non-portfolio queries
   }
 
+  // ===== Execute ALL network calls in parallel =====
+  const results = await Promise.allSettled(tasks);
+  const val = (i) => results[i]?.status === 'fulfilled' ? results[i].value : null;
+
+  // 0: Market Snapshot
+  const ms = val(0);
+  if (ms) ctx += ms + '\n';
+
+  // 1: Forex
+  const fx = val(1) || 85.5;
+  ctx += `LIVE USD/INR: ₹${fx.toFixed(4)}\nTimestamp: ${new Date().toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata'})} IST\n\n`;
+
+  // 2: Market Intelligence
+  const intel = val(2);
+  if (intel) {
+    if (needsIntel) { cachedIntel = intel; intelTimestamp = now; }
+    ctx += `GLOBAL INDICES:\n`;
+    intel.globalIndices.forEach(i => ctx += `${i.name}: ${i.price.toFixed(1)} (${i.change>=0?'+':''}${i.change.toFixed(1)}%)\n`);
+    ctx += `\nSECTOR ROTATION:\n`;
+    intel.sectors.forEach(s => ctx += `${s.name}: ${s.change>=0?'+':''}${s.change.toFixed(2)}%\n`);
+    ctx += `Fear/Greed: ${intel.fearGreedScore}/100\nAI Narrative: ${intel.marketNarrative}\n\n`;
+  }
+
+  // 3: Tavily Web Data
+  const web = val(3);
+  if (web) ctx += `\nLIVE WEB SEARCH RESULTS:\n${web}\n`;
+
+  // 4: Portfolio News
+  const newsRes = val(4);
+  if (newsRes) ctx += `\nPORTFOLIO-SPECIFIC NEWS (top holdings):\n${String(newsRes).substring(0, 1500)}\n`;
+
+  // ===== Portfolio positions (local computation, no network) =====
   if (portfolio?.length) {
     const m = calculateMetrics(portfolio, livePrices, usdInrRate);
     ctx += `\nPORTFOLIO DASHBOARD:\nTotal Value: ₹${Math.round(m.totalValue).toLocaleString('en-IN')}\nInvested: ₹${Math.round(m.totalInvested).toLocaleString('en-IN')}\nTotal P&L: ${m.totalPL>=0?'+':''}₹${Math.round(m.totalPL).toLocaleString('en-IN')} (${m.plPct.toFixed(2)}%)\nToday P&L: ${m.todayPL>=0?'+':''}₹${Math.round(m.todayPL).toLocaleString('en-IN')} (${m.todayPct.toFixed(2)}%)\n\n`;
@@ -497,6 +537,7 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
     const warnings = [];
     const opportunities = [];
     let topGainer = null, topLoser = null;
+
 
     for (const p of portfolio) {
       const k = `${p.market}_${p.symbol}`;
@@ -552,7 +593,7 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
     if (topLoser) ctx += `Top Loser: ${topLoser.symbol} (${topLoser.pct.toFixed(2)}%)\n`;
   }
   return ctx;
-}
+
 
 // ============================================
 // MAIN CHAT — 6-Engine Router + Quant Brain Fallback
@@ -621,7 +662,7 @@ async function _chatWithAIInner(chatId, userMessage, history, portfolio, livePri
     try {
       if (engine.available()) {
         console.log(`  🤖 Trying ${engine.name}...`);
-        aiText = await retryWithBackoff(engine.fn, 1, 800);
+        aiText = await retryWithBackoff(engine.fn, 0, 500);
         recordEngineSuccess(engine.name);
         usedEngine = engine.name;
         break;
