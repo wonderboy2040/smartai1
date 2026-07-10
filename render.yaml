@@ -1,14 +1,15 @@
 services:
-  # ── Single service: React frontend + Node API + ML Engine ──
-  # CRITICAL: ML service merged into Node to stay within Render free tier
-  # (750 hrs/month single service, no Python overhead).
+  # ── Single service: React frontend + Node API + ML Engine + Bot ──
+  # Render free tier: 750 hrs/month, 512MB RAM, auto-sleep after 15min idle.
+  # For 24x7: use UptimeRobot (external, free) to ping /health every 5 min.
+  # Do NOT self-ping — that violates Render ToS.
   - type: web
     name: wealth-ai-pro
     runtime: node
     plan: free
     buildCommand: npm install && npm run build
     startCommand: node server/index.js
-    healthCheckPath: /api/ai-status
+    healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
         value: "22"
@@ -40,27 +41,13 @@ services:
       # ── Google Apps Script portfolio sync ─────────────────────────────────
       - key: API_URL
         sync: false
-      - key: RENDER_EXTERNAL_URL
-        sync: false
 
       # ── US real-time prices (Finnhub WebSocket, tick-by-tick) ─────────────
       - key: FINNHUB_API_KEY
         sync: false
 
-      # ── India real-time prices (AngelOne SmartAPI, NSE exchange feed) ──────
-      - key: SMARTAPI_KEY
+      # ── Broker connectors (optional, read-only) ───────────────────────────
+      - key: DHAN_CLIENT_ID
         sync: false
-      - key: SMARTAPI_CLIENT_CODE
+      - key: DHAN_ACCESS_TOKEN
         sync: false
-      - key: SMARTAPI_MPIN
-        sync: false
-      - key: SMARTAPI_TOTP_SECRET
-        sync: false
-      - key: SMARTAPI_PUBLIC_IP
-        sync: false
-
-      # ── ML service ─────────────────────────────────────────────────────────
-      # VITE_ML_SERVICE_URL is NOT needed anymore — ML runs in-process.
-      # The /api/ml/* routes serve all ML predictions from the Node server.
-      # Remove this env var if you had it set.
-

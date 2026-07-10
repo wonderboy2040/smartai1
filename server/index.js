@@ -1449,45 +1449,66 @@ app.delete('/api/schedule/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// ============================================================
+// HEALTH ENDPOINT — used by Render health check + uptime monitors
+// ============================================================
+app.get('/health', (_req, res) => {
+  res.json({
+    ok: true,
+    uptime: process.uptime(),
+    botAlive: _botProcess && !_botProcess.killed,
+    providers: Object.entries(KEYS).filter(([, v]) => v).map(([k]) => k),
+    timestamp: Date.now(),
+  });
+});
+
+// ============================================================
+// START SERVER + BOT
+// ============================================================
+let _botProcess = null;
+let _botRestartTimer = null;
+
+function startBot() {
+  if (!TG.token) {
+    console.log('[wealth-ai] TG_TOKEN not configured. Telegram Bot not started.');
+    return;
+  }
+  try {
+    const botPath = path.resolve(__dirname, '..', 'telegram-bot', 'bot.mjs');
+    console.log(`[wealth-ai] Starting Telegram Bot: ${botPath}`);
+    _botProcess = fork(botPath, [], {
+      env: { ...process.env, BOT_ONLY: 'true' },
+    });
+    _botProcess.on('error', (err) => {
+      console.error('[wealth-ai] Bot process error:', err.message);
+    });
+    _botProcess.on('exit', (code) => {
+      console.warn(`[wealth-ai] Bot exited code=${code} — auto-restart in 5s`);
+      // FIX C2: auto-restart with backoff instead of silently dying
+      clearTimeout(_botRestartTimer);
+      _botRestartTimer = setTimeout(() => {
+        console.log('[wealth-ai] Restarting bot...');
+        startBot();
+      }, 5000);
+    });
+  } catch (e) {
+    console.error('[wealth-ai] Failed to start bot:', e.message);
+    // Retry after 10s on startup failure
+    clearTimeout(_botRestartTimer);
+    _botRestartTimer = setTimeout(startBot, 10000);
+  }
+}
+
 app.listen(PORT, () => {
   const ready = Object.entries(KEYS).filter(([, v]) => v).map(([k]) => k);
-  console.log(`[wealth-ai] server on :${PORT} — providers ready: ${ready.join(', ') || 'NONE (set API keys!)'}`);
+  console.log(`[wealth-ai] server on :${PORT} — providers: ${ready.join(', ') || 'NONE'}`);
 
-  // Self-ping keepalive for Render free tier
-  const RENDER_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
-  if (RENDER_URL) {
-    console.log(`[wealth-ai] Render Keepalive active: pinging ${RENDER_URL}/health every 14 minutes`);
-    setInterval(async () => {
-      try {
-        const res = await fetch(`${RENDER_URL}/health`, { signal: AbortSignal.timeout(10000) });
-        console.log(`[wealth-ai] Keepalive ping status: ${res.status}`);
-      } catch (e) {
-        console.warn('[wealth-ai] Keepalive ping failed:', e.message);
-      }
-    }, 14 * 60 * 1000);
-  }
+  // FIX M1: No self-ping keepalive (Render ToS violation).
+  // For 24x7 uptime on free tier, use an EXTERNAL uptime monitor
+  // (e.g. UptimeRobot) that pings /health every 5 min.
+  // Render will auto-wake on incoming HTTP requests within ~30s.
+  // For true 24x7, upgrade to Render paid tier ($7/mo).
 
-  // Start the Telegram bot as a background child process
-  if (TG.token) {
-    try {
-      const botPath = path.resolve(__dirname, '..', 'telegram-bot', 'bot.mjs');
-      console.log(`[wealth-ai] Starting Telegram Bot in background process: ${botPath}`);
-      const botProcess = fork(botPath, [], {
-        env: {
-          ...process.env,
-          BOT_ONLY: 'true'
-        }
-      });
-      botProcess.on('error', (err) => {
-        console.error('[wealth-ai] Telegram Bot process error:', err);
-      });
-      botProcess.on('exit', (code) => {
-        console.warn(`[wealth-ai] Telegram Bot process exited with code ${code}`);
-      });
-    } catch (e) {
-      console.error('[wealth-ai] Failed to start Telegram Bot process:', e);
-    }
-  } else {
-    console.log('[wealth-ai] TG_TOKEN not configured. Telegram Bot not started.');
-  }
+  // Start Telegram bot with auto-restart
+  startBot();
 });

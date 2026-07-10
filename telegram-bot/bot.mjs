@@ -46,6 +46,15 @@ let autoAlerts = true;
 let botReady = false;
 let lastRefreshTime = 0;
 
+// FIX H2: Smart refresh — only fetch fresh prices if >60s old.
+// Prevents every /ai command from blocking 8-10s on TradingView scan.
+async function smartRefreshPrices() {
+  if (Date.now() - lastRefreshTime > 60000 || Object.keys(livePrices).length === 0) {
+    await refreshPrices();
+    lastRefreshTime = Date.now();
+  }
+}
+
 // Intraday algo alert cooldown (per symbol) so we don't spam the same setup.
 const lastAlgoAlertAt = {};
 const ALGO_COOLDOWN_MS = 20 * 60 * 1000; // 20 min
@@ -1066,7 +1075,7 @@ bot.onText(/^\/portfolio(@\w+)?$/i, async (msg) => {
       return;
     }
     await safeSend(chatId, '📊 <i>Scanning portfolio... ek second...</i>');
-    await refreshPrices();
+    await smartRefreshPrices();
     const report = generatePortfolioReport(portfolio, livePrices, usdInrRate);
     await safeSend(chatId, report);
   } catch (e) {
@@ -1103,7 +1112,7 @@ bot.onText(/^\/allocation(@\w+)?$/i, async (msg) => {
   console.log(`📥 /allocation from ${msg.from?.first_name || chatId}`);
   try {
     await safeSend(chatId, '📈 <i>Calculating SIP matrix... ek second...</i>');
-    await refreshPrices();
+    await smartRefreshPrices();
     const report = generateAllocationReport(livePrices, usdInrRate);
     await safeSend(chatId, report);
   } catch (e) {
@@ -1139,7 +1148,7 @@ bot.onText(/^\/dip(@\w+)?$/i, async (msg) => {
   console.log(`📥 /dip from ${msg.from?.first_name || chatId}`);
   try {
     await safeSend(chatId, '🎯 <i>Scanning for dip opportunities...</i>');
-    await refreshPrices();
+    await smartRefreshPrices();
 
     if (portfolio.length === 0) {
       await safeSend(chatId, '📂 Portfolio khali hai. Pehle assets add karo.');
@@ -1210,7 +1219,7 @@ bot.onText(/^\/health(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /health from ${msg.from?.first_name || chatId}`);
   try {
-    await refreshPrices();
+    await smartRefreshPrices();
 
     if (portfolio.length === 0) {
       await safeSend(chatId, '📂 Portfolio khali hai.');
@@ -1337,7 +1346,7 @@ bot.onText(/^\/smartmoney(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /smartmoney from ${msg.from?.first_name || chatId}`);
   try {
-    await refreshPrices();
+    await smartRefreshPrices();
 
     const vixUS = livePrices['US_VIX']?.price || 18;
     const vixIN = livePrices['IN_INDIAVIX']?.price || 15;
@@ -1403,7 +1412,7 @@ bot.onText(/^\/screener(@\w+)?$/i, async (msg) => {
   console.log(`📥 /screener from ${msg.from?.first_name || chatId}`);
   try {
     await safeSend(chatId, '📊 <i>Running multi-factor screener...</i>');
-    await refreshPrices();
+    await smartRefreshPrices();
 
     if (portfolio.length === 0) {
       await safeSend(chatId, '📂 Portfolio khali hai. Assets add karo pehle.');
@@ -1642,7 +1651,7 @@ bot.onText(/^\/ai(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   }
   try {
     await safeSend(chatId, '🧠 <i>Deep Mind analyzing...</i>');
-    await refreshPrices();
+    await smartRefreshPrices();
     const response = await chatWithAI(chatId, query, portfolio, livePrices, usdInrRate);
     await safeSend(chatId, response);
   } catch (e) {
@@ -1665,7 +1674,7 @@ bot.onText(/^\/chat(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   }
   try {
     await safeSend(chatId, '🧠 <i>Deep Mind analyzing...</i>');
-    await refreshPrices();
+    await smartRefreshPrices();
     const response = await chatWithAI(chatId, query, portfolio, livePrices, usdInrRate);
     await safeSend(chatId, response);
   } catch (e) {
@@ -1717,7 +1726,7 @@ bot.onText(/^\/exact(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
 
   try {
     await safeSend(chatId, `🎯 <i>Running 3-Layer Exact Entry Engine for ${symbol}...</i>\n\nLayer 1: Technical (VWAP + Volume Profile + S/R)\nLayer 2: ML Bounce Probability\nLayer 3: AI Fundamental Validation`);
-    await refreshPrices();
+    await smartRefreshPrices();
 
     const data = await fetchSingleSymbol(symbol);
     if (!data) {
@@ -1899,7 +1908,7 @@ bot.onText(/^\/correlat(?:e|ion)?(@\w+)?$/i, async (msg) => {
       return;
     }
     await safeSend(chatId, '🔗 <i>Calculating correlation matrix...</i>');
-    await refreshPrices();
+    await smartRefreshPrices();
 
     const changes = portfolio.map(p => {
       const key = `${p.market}_${p.symbol}`;
@@ -2026,7 +2035,7 @@ bot.onText(/^\/streak(@\w+)?$/i, async (msg) => {
       await safeSend(chatId, '⚠️ Portfolio empty hai. Data collect hone do.');
       return;
     }
-    await refreshPrices();
+    await smartRefreshPrices();
     const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
 
     let report = `📈 <b>PERFORMANCE STREAK TRACKER</b>\n`;
@@ -2083,7 +2092,7 @@ bot.onText(/^\/backtest(@\w+)?$/i, async (msg) => {
       await safeSend(chatId, '⚠️ Portfolio empty hai.');
       return;
     }
-    await refreshPrices();
+    await smartRefreshPrices();
 
     let report = `🧪 <b>AI SIGNAL ACCURACY — Backtest Engine</b>\n`;
     report += `⏰ <i>${getISTTime()} IST</i>\n`;
@@ -2165,7 +2174,7 @@ bot.onText(/^\/taxloss(@\w+)?$/i, async (msg) => {
       await safeSend(chatId, '⚠️ Portfolio empty hai.');
       return;
     }
-    await refreshPrices();
+    await smartRefreshPrices();
 
     let report = `💸 <b>TAX-LOSS HARVESTING</b>\n`;
     report += `⏰ <i>${getISTTime()} IST</i>\n`;
@@ -2332,7 +2341,7 @@ bot.onText(/^\/fire(?:@\w+)?(?:\s+(\d+))?(?:\s+(\d+))?$/i, async (msg, match) =>
   const monthlySIP = parseInt(match?.[2]) || 25000;
   console.log(`📥 /fire from ${msg.from?.first_name || chatId}`);
   try {
-    await refreshPrices();
+    await smartRefreshPrices();
     const m = portfolio.length > 0 ? calculateMetrics(portfolio, livePrices, usdInrRate) : { totalValue: 0 };
     const current = m.totalValue || 0;
     const annual = monthlyExpenses * 12;
@@ -2382,7 +2391,7 @@ bot.onText(/^\/milestones?(?:@\w+)?(?:\s+(\d+))?$/i, async (msg, match) => {
   const monthlySIP = parseInt(match?.[1]) || 25000;
   console.log(`📥 /milestones from ${msg.from?.first_name || chatId}`);
   try {
-    await refreshPrices();
+    await smartRefreshPrices();
     const m = portfolio.length > 0 ? calculateMetrics(portfolio, livePrices, usdInrRate) : { totalValue: 0 };
     const current = m.totalValue || 0;
     const cagrMonthly = 0.15 / 12;
@@ -2480,7 +2489,7 @@ bot.onText(/^\/algo(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   try {
     if (portfolio.length === 0) { await refreshPortfolio().catch(() => {}); }
-    await refreshPrices();
+    await smartRefreshPrices();
     const signals = scanAlgoSignals(algoWatchKeys(livePrices), livePrices);
     const actionable = signals.filter(s => s.direction !== 'WAIT');
     if (signals.length === 0) {
@@ -2501,7 +2510,7 @@ bot.onText(/^\/algo(@\w+)?$/i, async (msg) => {
 cron.schedule('*/10 * * * *', async () => {
   if (!autoAlerts || !isAnyMarketOpen()) return;
   try {
-    await refreshPrices();
+    await smartRefreshPrices();
     const hot = scanAlgoSignals(algoWatchKeys(livePrices), livePrices)
       .filter(s => s.direction !== 'WAIT' && s.conviction >= 65)
       .slice(0, 6);
@@ -2520,7 +2529,7 @@ cron.schedule('*/10 * * * *', async () => {
 cron.schedule('0 */1 * * * *', async () => {
   if (!TG_CHAT_ID) return;
   if (portfolio.length > 0) {
-    await refreshPrices();
+    await smartRefreshPrices();
   }
 });
 
@@ -2541,7 +2550,7 @@ cron.schedule('*/3 * * * *', refreshIntel);
 cron.schedule('30 2 * * *', async () => {
   if (!autoAlerts || portfolio.length === 0) return;
   console.log('📨 Sending daily health digest...');
-  await refreshPrices();
+  await smartRefreshPrices();
 
   const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
   let score = 100;
@@ -2592,7 +2601,7 @@ cron.schedule('30 2 * * *', async () => {
 cron.schedule('30 3 * * 1-5', async () => {
   if (!autoAlerts) return;
   console.log('📨 Sending India pre-market briefing...');
-  await refreshPrices();
+  await smartRefreshPrices();
   await refreshIntel();
 
   let msg = `☀️ <b>GOOD MORNING — Pre-Market Briefing</b>\n`;
@@ -2620,7 +2629,7 @@ cron.schedule('30 3 * * 1-5', async () => {
 cron.schedule('50 3 * * 1-5', async () => {
   if (!autoAlerts || portfolio.length === 0) return;
   console.log('📨 India market open scan...');
-  await refreshPrices();
+  await smartRefreshPrices();
   const report = generateAutoReport(portfolio, livePrices, usdInrRate);
   await safeSend(TG_CHAT_ID, report);
 });
@@ -2630,7 +2639,7 @@ cron.schedule('30 6 * * 1-5', async () => {
   if (!autoAlerts || portfolio.length === 0) return;
   if (!isIndiaMarketOpen()) return;
   console.log('📨 India mid-day scan...');
-  await refreshPrices();
+  await smartRefreshPrices();
   const report = generateAutoReport(portfolio, livePrices, usdInrRate);
   await safeSend(TG_CHAT_ID, report);
 });
@@ -2639,7 +2648,7 @@ cron.schedule('30 6 * * 1-5', async () => {
 cron.schedule('5 10 * * 1-5', async () => {
   if (!autoAlerts || portfolio.length === 0) return;
   console.log('📨 India market close summary...');
-  await refreshPrices();
+  await smartRefreshPrices();
 
   const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
   let msg = `🔔 <b>MARKET CLOSE — Day Summary</b>\n`;
@@ -2665,7 +2674,7 @@ cron.schedule('35 13 * * 1-5', async () => {
   const hasUS = portfolio.some(p => p.market === 'US');
   if (!hasUS) return;
   console.log('📨 US market open scan...');
-  await refreshPrices();
+  await smartRefreshPrices();
 
   let msg = `🇺🇸 <b>US MARKET OPEN — Scan Report</b>\n`;
   msg += `⏰ <i>${getISTTime()} IST</i>\n\n`;
@@ -2698,7 +2707,7 @@ const lastMoveAlert = new Map();   // `${symbol}` → timestamp (3h dedupe)
 cron.schedule('*/15 * * * *', async () => {
   if (!autoAlerts || portfolio.length === 0 || !TG_CHAT_ID) return;
   try {
-    await refreshPrices();
+    await smartRefreshPrices();
     const now = Date.now();
     const alerts = [];
     const bigMoves = [];
@@ -2939,7 +2948,7 @@ bot.onText(/^\/longterm(@\w+)?$/i, async (msg) => {
 // ========================================
 bot.onText(/^\/strategy(@\w+)?$/i, async (msg) => {
   if (!isAuthorized(msg)) return;
-  await refreshPrices();
+  await smartRefreshPrices();
   const report = generateStrategyReport(portfolio, livePrices, usdInrRate);
   await safeSend(msg.chat.id, report);
 });
@@ -2949,7 +2958,7 @@ bot.onText(/^\/strategy(@\w+)?$/i, async (msg) => {
 // ========================================
 bot.onText(/^\/etf(@\w+)?$/i, async (msg) => {
   if (!isAuthorized(msg)) return;
-  await refreshPrices();
+  await smartRefreshPrices();
   const report = generateETFReport(portfolio, livePrices, usdInrRate);
   await safeSend(msg.chat.id, report);
 });
@@ -2975,7 +2984,7 @@ bot.onText(/^\/digest(@\w+)?$/i, async (msg) => {
   if (!isAuthorized(msg)) return;
   await safeSend(msg.chat.id, '🌅 <b>Generating daily digest...</b>', { parse_mode: 'HTML' });
   try {
-    await refreshPrices();
+    await smartRefreshPrices();
     const [intel, coindcx, bonds] = await Promise.allSettled([
       fetchMarketIntelligence(),
       fetchCryptoPricesINR(),
@@ -3044,7 +3053,7 @@ cron.schedule('15 3 * * 1-5', async () => {
   console.log(`🌅 India Pre-Market triggered at ${getISTTime()} IST`);
   try {
     await Promise.allSettled([refreshPortfolio(), refreshPrices(), refreshIntel()]);
-    await refreshPrices();
+    await smartRefreshPrices();
     const response = await chatWithAI(TG_CHAT_ID, 'INDIA PRE-MARKET DEEP ANALYSIS (8:45 AM, market 9:15 me khulega). Detail me do: (1) global/US overnight + Asian markets summary, (2) GIFT Nifty signal aur expected India open, (3) FII/DII flows + key macro events/news aaj ke, (4) mere portfolio ke har India position pe aaj ka impact + exact levels, (5) top 3 action items aur 1 Pro Tip. Simple Hinglish, real-time data use karo.', portfolio, livePrices, usdInrRate);
     await safeSend(TG_CHAT_ID, `🔔 <b>INDIA PRE-MARKET DEEP ANALYSIS</b>\n🕐 ${getISTTime()} IST · Market opens 9:15 AM\n\n${response}`);
   } catch (e) {
@@ -3058,7 +3067,7 @@ cron.schedule('0 13 * * 1-5', async () => {
   console.log(`🌆 US Pre-Market triggered at ${getISTTime()} IST`);
   try {
     await Promise.allSettled([refreshPortfolio(), refreshPrices(), refreshIntel()]);
-    await refreshPrices();
+    await smartRefreshPrices();
     const response = await chatWithAI(TG_CHAT_ID, 'US PRE-MARKET DEEP ANALYSIS (6:30 PM IST, US market 7:00 PM IST/9:30 ET me khulega). Detail me do: (1) US futures (S&P/Nasdaq/Dow) + pre-market movers, (2) crypto (BTC/ETH) overnight move, (3) key US macro events/earnings/Fed news aaj ke, (4) mere portfolio ke har US holding pe expected impact + exact levels, (5) top 3 action items aur 1 Pro Tip. Simple Hinglish, real-time data use karo.', portfolio, livePrices, usdInrRate);
     await safeSend(TG_CHAT_ID, `🔔 <b>US PRE-MARKET DEEP ANALYSIS</b>\n🕐 ${getISTTime()} IST · US opens 7:00 PM IST\n\n${response}`);
   } catch (e) {
@@ -3072,7 +3081,7 @@ cron.schedule('30 2 * * 1-5', async () => {
   // 2:30 UTC = 8:00 AM IST
   console.log(`🌅 Daily Digest triggered at ${getISTTime()} IST`);
   try {
-    await refreshPrices();
+    await smartRefreshPrices();
     const [intel, coindcx, bonds] = await Promise.allSettled([
       fetchMarketIntelligence(),
       fetchCryptoPricesINR(),
@@ -3107,7 +3116,7 @@ cron.schedule('15 10 * * 1-5', async () => {
   // 10:15 UTC = 3:45 PM IST (after India close)
   if (!autoAlerts || portfolio.length === 0) return;
   try {
-    await refreshPrices();
+    await smartRefreshPrices();
     const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
     let msg = `🔔 <b>MARKET CLOSE SUMMARY</b>\n`;
     msg += `⏰ India market closed\n\n`;
@@ -3127,7 +3136,7 @@ cron.schedule('15 10 * * 1-5', async () => {
 cron.schedule('10 10 * * 1-5', async () => {
   if (!TG_CHAT_ID) return;
   if (portfolio.length === 0) return;
-  await refreshPrices();
+  await smartRefreshPrices();
   const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
   const today = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short' });
 
@@ -3192,7 +3201,7 @@ bot.onText(/^\/siptilt(@\w+)?$/i, async (msg) => {
   console.log(`📥 /siptilt from ${msg.from?.first_name || chatId}`);
   try {
     if (portfolio.length === 0) { await safeSend(chatId, '⚠️ Portfolio empty hai. Pehle assets add karo.'); return; }
-    await refreshPrices();
+    await smartRefreshPrices();
     const report = generateSipTiltReport(portfolio, livePrices, usdInrRate);
     await safeSend(chatId, report);
   } catch (e) {
@@ -3210,7 +3219,7 @@ bot.onText(/^\/taxplan(@\w+)?$/i, async (msg) => {
   console.log(`📥 /taxplan from ${msg.from?.first_name || chatId}`);
   try {
     if (portfolio.length === 0) { await safeSend(chatId, '⚠️ Portfolio empty hai.'); return; }
-    await refreshPrices();
+    await smartRefreshPrices();
     const report = generateTaxPlanReport(portfolio, livePrices, usdInrRate);
     await safeSend(chatId, report);
   } catch (e) {
@@ -3228,7 +3237,7 @@ bot.onText(/^\/drawdown(@\w+)?$/i, async (msg) => {
   console.log(`📥 /drawdown from ${msg.from?.first_name || chatId}`);
   try {
     if (portfolio.length === 0) { await safeSend(chatId, '⚠️ Portfolio empty hai.'); return; }
-    await refreshPrices();
+    await smartRefreshPrices();
     const report = generateDrawdownReport(portfolio, livePrices, usdInrRate);
     await safeSend(chatId, report);
   } catch (e) {
@@ -3411,7 +3420,7 @@ bot.onText(/^\/rebalance(@\w+)?$/i, async (msg) => {
 
   try {
     if (portfolio.length === 0) { await safeSend(chatId, '⚠️ Portfolio empty hai.'); return; }
-    await refreshPrices();
+    await smartRefreshPrices();
 
     // Get ML regime first, fallback to basic
     let regime = 'RISK_ON';

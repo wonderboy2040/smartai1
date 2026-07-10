@@ -93,7 +93,7 @@ async function fetchRealtimeWebData(query) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         api_key: TAVILY_API_KEY, query,
-        search_depth: 'advanced', include_answer: true,
+        search_depth: 'basic', include_answer: true,
         max_results: 5, topic: 'finance'
       }),
       signal: AbortSignal.timeout(8000)
@@ -157,7 +157,7 @@ async function callNvidia(messages, systemPrompt, modelName = 'meta/llama-3.3-70
     method: 'POST',
     headers: { 'Authorization': `Bearer ${NVIDIA_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: modelName, messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_tokens: 4000 }),
-    signal: AbortSignal.timeout(30000)
+    signal: AbortSignal.timeout(10000)
   });
   if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`NVIDIA ${res.status}: ${err.error?.message||res.statusText}`); }
   const data = await res.json();
@@ -174,7 +174,7 @@ async function callGemini(messages, systemPrompt, modelName = 'gemini-2.5-flash'
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_KEY}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 8000 } }),
-    signal: AbortSignal.timeout(30000)
+    signal: AbortSignal.timeout(10000)
   });
   if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`Gemini ${res.status}: ${err.error?.message||res.statusText}`); }
   const data = await res.json();
@@ -190,7 +190,7 @@ async function callGroq(messages, systemPrompt, modelName = 'llama-3.3-70b-versa
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: modelName, messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_completion_tokens: 8000 }),
-    signal: AbortSignal.timeout(30000)
+    signal: AbortSignal.timeout(10000)
   });
   if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`Groq ${res.status}: ${err.error?.message||res.statusText}`); }
   const data = await res.json();
@@ -208,7 +208,7 @@ async function callClaude(messages, systemPrompt, modelName = 'claude-sonnet-4-2
     method: 'POST',
     headers: { 'x-api-key': CLAUDE_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: modelName, max_tokens: 8000, system: systemPrompt, messages: claudeMessages }),
-    signal: AbortSignal.timeout(30000)
+    signal: AbortSignal.timeout(10000)
   });
   if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`Claude ${res.status}: ${err.error?.message||res.statusText}`); }
   const data = await res.json();
@@ -225,7 +225,7 @@ async function callOpenRouter(messages, systemPrompt, modelName = 'meta-llama/ll
     method: 'POST',
     headers: { 'Authorization': `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://smartai1.onrender.com' },
     body: JSON.stringify({ model: modelName, messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_tokens: 8000 }),
-    signal: AbortSignal.timeout(30000)
+    signal: AbortSignal.timeout(10000)
   });
   if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`OpenRouter ${res.status}: ${err.error?.message||res.statusText}`); }
   const data = await res.json();
@@ -242,7 +242,7 @@ async function callCerebras(messages, systemPrompt, modelName = 'llama-3.3-70b')
     method: 'POST',
     headers: { 'Authorization': `Bearer ${CEREBRAS_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: modelName, messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_tokens: 8000 }),
-    signal: AbortSignal.timeout(30000)
+    signal: AbortSignal.timeout(10000)
   });
   if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`Cerebras ${res.status}: ${err.error?.message||res.statusText}`); }
   const data = await res.json();
@@ -263,7 +263,7 @@ async function callHuggingFace(messages, systemPrompt, modelName = 'Qwen/Qwen2.5
     method: 'POST',
     headers: { 'Authorization': `Bearer ${HF_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ inputs: fullPrompt, parameters: { max_new_tokens: 4096, temperature: 0.7 } }),
-    signal: AbortSignal.timeout(60000)
+    signal: AbortSignal.timeout(15000)
   });
   if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`HF ${res.status}: ${JSON.stringify(err)}`); }
   const data = await res.json();
@@ -365,7 +365,9 @@ function antiHallucinationCheck(llmText, contextData) {
   // (prices, targets, support/resistance, market caps) that won't match context exactly.
   // Previous threshold of 5 caused valid responses to be rejected, falling back to
   // the simplistic Quant Brain which gave inaccurate generic results.
-  if (suspicious.length > 15) {
+  // FIX H4: raised from 15→30 to avoid discarding accurate LLM output that
+  // contains support/resistance levels, market caps, percentages, etc.
+  if (suspicious.length > 30) {
     console.warn(`  ⚠️ Anti-hallucination triggered: ${suspicious.length} suspicious numbers — falling back to Quant Brain`);
     return null;
   }
@@ -593,7 +595,7 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
     if (topLoser) ctx += `Top Loser: ${topLoser.symbol} (${topLoser.pct.toFixed(2)}%)\n`;
   }
   return ctx;
-
+}
 
 // ============================================
 // MAIN CHAT — 6-Engine Router + Quant Brain Fallback

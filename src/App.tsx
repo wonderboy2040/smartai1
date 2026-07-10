@@ -33,7 +33,6 @@ const PortfolioTab = lazyWithRetry(() => import('./components/tabs/PortfolioTab'
 const PlannerTab = lazyWithRetry(() => import('./components/tabs/PlannerTab'), 'planner');
 const MacroTab = lazyWithRetry(() => import('./components/tabs/MacroTab').then(m => ({ default: m.MacroTab })), 'macro');
 const GuideTab = lazyWithRetry(() => import('./components/tabs/GuideTab').then(m => ({ default: m.GuideTab })), 'guide');
-const ResearchLabTab = lazyWithRetry(() => import('./components/tabs/ResearchLabTab'), 'researchlab');
 
 const NeuralChat = lazyWithRetry(() => import('./components/NeuralChat').then(m => ({ default: m.NeuralChat })), 'neuralchat');
 
@@ -71,7 +70,7 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if user is typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      const tabs: TabType[] = ['dashboard', 'portfolio', 'planner', 'macro', 'researchlab', 'guide'];
+      const tabs: TabType[] = ['dashboard', 'portfolio', 'planner', 'macro', 'guide'];
       const key = parseInt(e.key);
       if (!isNaN(key) && key >= 1 && key <= tabs.length) {
         setActiveTab(tabs[key - 1]);
@@ -174,10 +173,10 @@ export default function App() {
 
               {/* Tabs */}
               <div className="flex gap-0.5 quantum-panel p-1 rounded-2xl overflow-x-auto scrollbar-hide max-w-full">
-                {(['dashboard', 'portfolio', 'planner', 'macro', 'researchlab', 'guide'] as TabType[]).map(tab => (
+                {(['dashboard', 'portfolio', 'planner', 'macro', 'guide'] as TabType[]).map(tab => (
                   <button key={tab} onClick={() => setActiveTab(tab)} className={`quantum-tab px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${activeTab === tab ? 'active' : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'}`}>
-                    <span className="hidden sm:inline">{tab === 'dashboard' && '📊 Dashboard'}{tab === 'portfolio' && '💼 Portfolio'}{tab === 'planner' && '🎯 Planner'}{tab === 'macro' && '🌍 Risk'}{tab === 'researchlab' && '🔬 Research Lab'}{tab === 'guide' && '📖 Guide'}</span>
-                    <span className="sm:hidden">{tab === 'dashboard' && '📊'}{tab === 'portfolio' && '💼'}{tab === 'planner' && '🎯'}{tab === 'macro' && '🌍'}{tab === 'researchlab' && '🔬'}{tab === 'guide' && '📖'}</span>
+                    <span className="hidden sm:inline">{tab === 'dashboard' && '📊 Dashboard'}{tab === 'portfolio' && '💼 Portfolio'}{tab === 'planner' && '🎯 Planner'}{tab === 'macro' && '🌍 Risk'}{tab === 'guide' && '📖 Guide'}</span>
+                    <span className="sm:hidden">{tab === 'dashboard' && '📊'}{tab === 'portfolio' && '💼'}{tab === 'planner' && '🎯'}{tab === 'macro' && '🌍'}{tab === 'guide' && '📖'}</span>
                   </button>
                 ))}
               </div>
@@ -201,7 +200,6 @@ export default function App() {
               {activeTab === 'planner' && <PlannerTab />}
               {activeTab === 'macro' && <MacroTab />}
               {activeTab === 'guide' && <GuideTab />}
-              {activeTab === 'researchlab' && <ResearchLabTab />}
             </ErrorBoundary>
           </Suspense>
         </main>
