@@ -162,13 +162,14 @@ export async function fetchSingleSymbol(symbol) {
   const cleanSym = symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
   const mkt = guessMarket(cleanSym);
 
-  // Try multiple exchanges
+  // Try multiple exchanges — build a comprehensive ticker list
   let tickers;
   if (EXACT_TICKER_MAP[cleanSym]) {
     tickers = [EXACT_TICKER_MAP[cleanSym]];
   } else if (mkt === 'IN') {
     tickers = [`NSE:${cleanSym}`, `BSE:${cleanSym}`];
   } else {
+    // FIX: try ALL US exchanges + Yahoo fallback
     tickers = [`NASDAQ:${cleanSym}`, `NYSE:${cleanSym}`, `AMEX:${cleanSym}`];
   }
 
@@ -198,7 +199,6 @@ export async function fetchSingleSymbol(symbol) {
           high: parseFloat(d[3]) || price,
           low: parseFloat(d[4]) || price,
           volume: parseFloat(d[5]) || 0,
-          // FIX H12: same as batch path — preserve legitimate 0 values.
           sma20: (d[6] != null && !isNaN(parseFloat(d[6]))) ? parseFloat(d[6]) : undefined,
           sma50: (d[7] != null && !isNaN(parseFloat(d[7]))) ? parseFloat(d[7]) : undefined,
           rsi: (d[8] != null && !isNaN(parseFloat(d[8]))) ? parseFloat(d[8]) : 50,
@@ -215,6 +215,42 @@ export async function fetchSingleSymbol(symbol) {
   } catch (e) {
     console.warn(`Single symbol fetch failed for ${cleanSym}:`, e.message);
   }
+
+  // FIX: Yahoo Finance fallback for symbols TradingView can't find (SPCX, etc.)
+  try {
+    const ysym = mkt === 'IN' ? `${cleanSym}.NS` : cleanSym;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ysym)}?interval=1d&range=5d`;
+    const r = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI scan proxy)' },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (r.ok) {
+      const j = await r.json();
+      const meta = j?.chart?.result?.[0]?.meta;
+      if (meta && typeof meta.regularMarketPrice === 'number' && meta.regularMarketPrice > 0) {
+        const price = meta.regularMarketPrice;
+        const prevClose = meta.chartPreviousClose || meta.previousClose || price;
+        const change = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
+        return {
+          symbol: cleanSym,
+          name: cleanSym,
+          market: mkt,
+          price,
+          change,
+          high: meta.regularMarketDayHigh || price,
+          low: meta.regularMarketDayLow || price,
+          volume: meta.regularMarketVolume || 0,
+          rsi: 50,
+          time: Date.now(),
+          tvSymbol: ysym,
+          source: 'yahoo-fallback',
+        };
+      }
+    }
+  } catch (e) {
+    console.warn(`Yahoo fallback failed for ${cleanSym}:`, e.message);
+  }
+
   return null;
 }
 
