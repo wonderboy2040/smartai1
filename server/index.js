@@ -202,13 +202,13 @@ app.post('/api/auth/login', (req, res) => {
   _sessions.set(token, { lastSeen: Date.now() });
 
   // Cookie SameSite policy:
-  // - If ALLOWED_ORIGINS is set (cross-origin deployment like Vercel→Render),
-  //   use SameSite=None; Secure so the browser sends the cookie cross-origin.
-  // - If no allowlist (same-origin / dev), use SameSite=Strict for max security.
-  // Browsers REQUIRE Secure when SameSite=None, so we always set it in production.
-  const isCrossOrigin = !!process.env.ALLOWED_ORIGINS;
-  const sameSite = isCrossOrigin ? 'None' : 'Strict';
-  const secure = process.env.NODE_ENV === 'production' || isCrossOrigin ? '; Secure' : '';
+  // ALWAYS use SameSite=None; Secure in production. This is REQUIRED for
+  // cross-origin deployments (Vercel frontend → Render backend). If we use
+  // SameSite=Strict, the browser blocks the cookie on cross-origin requests
+  // and every API call after login returns 401.
+  // SameSite=None REQUIRES Secure, so we set it whenever SameSite=None.
+  const sameSite = 'None';
+  const secure = '; Secure'; // Always Secure (Render uses HTTPS)
   res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=${sameSite}; Path=/; Max-Age=${SESSION_TTL / 1000}${secure}`);
   return res.json({ ok: true, sessionToken: token }); // sessionToken used for EventSource ?session= param
 });
@@ -217,7 +217,7 @@ app.post('/api/auth/login', (req, res) => {
 app.post('/api/auth/logout', (req, res) => {
   const token = parseCookie(req.headers.cookie || '')[SESSION_COOKIE];
   if (token) _sessions.delete(token);
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=None; Path=/; Max-Age=0; Secure`);
   res.json({ ok: true });
 });
 
@@ -339,6 +339,7 @@ function toYahooSymbol(symbol, market) {
 app.get('/api/chart', async (req, res) => {
   const { symbol = '', market = '', interval = 'D' } = req.query || {};
   if (!symbol) return jsonError(res, 400, 'symbol required');
+  if (!isValidSymbol(symbol)) return jsonError(res, 400, 'invalid symbol format');
   // SECURITY: validate symbol format to prevent injection / open-proxy abuse.
   if (!isValidSymbol(symbol)) return jsonError(res, 400, 'invalid symbol format');
 
@@ -1841,9 +1842,20 @@ function startBot() {
 // Run env validation before binding the port.
 validateEnv();
 
+// Run env validation before binding the port.
+if (!APP_PIN) {
+  console.error('[wealth-ai] ERROR: APP_PIN is not set. Set APP_PIN in your environment variables.');
+  process.exit(1);
+}
+if (!!TG.token !== !!TG.chatId) {
+  console.error('[wealth-ai] ERROR: TG_TOKEN and TG_CHAT_ID must both be set (or both empty).');
+  process.exit(1);
+}
+
 app.listen(PORT, () => {
   const ready = Object.entries(KEYS).filter(([, v]) => v).map(([k]) => k);
   console.log(`[wealth-ai] server on :${PORT} — providers: ${ready.join(', ') || 'NONE'}`);
+  console.log('[wealth-ai] Authentication: enabled (server-side PIN + httpOnly session cookie)');
   console.log('[wealth-ai] Authentication: enabled (server-side PIN + httpOnly session cookie)');
 
   // No self-ping keepalive (Render ToS violation).

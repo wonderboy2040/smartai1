@@ -1,5 +1,6 @@
 import { PriceData } from '../types';
 import { getSessionToken } from './api';
+import { getSessionToken } from './api';
 
 // ============================================================
 // liveStream — browser EventSource client for /api/stream (SSE)
@@ -49,7 +50,6 @@ export function connectLiveStream(opts: LiveStreamOpts): () => void {
     // so the SSE stream authenticates correctly.
     const sessionToken = getSessionToken();
     if (sessionToken) params.set('session', sessionToken);
-
     if (![...params.keys()].length) return;
 
     try {

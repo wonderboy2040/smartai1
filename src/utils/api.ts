@@ -9,50 +9,20 @@ import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen } from './telegram';
 const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
 // ============================================================
-// Centralized API fetch helper — ALL /api/* calls must use this.
-// ------------------------------------------------------------
-// WHY: The server requires authentication via an httpOnly session cookie.
-// The browser only sends that cookie if `credentials: 'include'` is set on
-// the fetch call. Without it, every API call returns 401 and the app shows
-// no prices, no portfolio data, no AI responses.
-// This helper guarantees `credentials: 'include'` is always set, so no
-// future fetch call can accidentally forget it.
+// Centralized API fetch — ALWAYS sends credentials (httpOnly cookie)
 // ============================================================
-
-// The current session token (set after login). Used for EventSource SSE
-// streams, which can't send cookies reliably cross-origin.
 let _sessionToken: string | null = null;
-
 export function setSessionToken(token: string | null) {
   _sessionToken = token;
-  if (token) {
-    try { sessionStorage.setItem('wealthai_session_token', token); } catch { /* noop */ }
-  } else {
-    try { sessionStorage.removeItem('wealthai_session_token'); } catch { /* noop */ }
-  }
+  try { if (token) sessionStorage.setItem('wealthai_session_token', token); else sessionStorage.removeItem('wealthai_session_token'); } catch {}
 }
-
-// Restore session token on page load (for EventSource reconnects).
-try {
-  const t = sessionStorage.getItem('wealthai_session_token');
-  if (t) _sessionToken = t;
-} catch { /* noop */ }
+try { const t = sessionStorage.getItem('wealthai_session_token'); if (t) _sessionToken = t; } catch {}
 
 export function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const url = input.startsWith('http') || input.startsWith('/api') ? input : `${PROXY_BASE}${input}`;
-  return fetch(url, {
-    ...init,
-    credentials: 'include', // ALWAYS send the httpOnly session cookie
-    headers: {
-      ...(init.headers || {}),
-    },
-  });
+  return fetch(url, { ...init, credentials: 'include', headers: { ...(init.headers || {}) } });
 }
-
-// Get the session token for EventSource URL (SSE can't use cookies cross-origin).
-export function getSessionToken(): string | null {
-  return _sessionToken;
-}
+export function getSessionToken(): string | null { return _sessionToken; }
 
 // SECURITY: Cloud sync auth token. MUST be set via VITE_API_TOKEN at build
 // time. The weak public default 'WEALTH_AI_SYNC' is NO LONGER used.

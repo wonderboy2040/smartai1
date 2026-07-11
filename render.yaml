@@ -1,8 +1,4 @@
 services:
-  # ── Single service: React frontend + Node API + ML Engine + Bot ──
-  # Render free tier: 750 hrs/month, 512MB RAM, auto-sleep after 15min idle.
-  # For 24x7: use UptimeRobot (external, free) to ping /health every 5 min.
-  # Do NOT self-ping — that violates Render ToS.
   - type: web
     name: wealth-ai-pro
     runtime: node
@@ -13,16 +9,14 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
-
-      # ── Security (REQUIRED — no defaults) ─────────────────────────────────
       - key: APP_PIN
         sync: false
       - key: VITE_API_TOKEN
         sync: false
       - key: VITE_ENCRYPTION_KEY
         sync: false
-
-      # ── AI provider keys (set values in Render dashboard) ──────────────────
+      - key: ALLOWED_ORIGINS
+        sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: GEMINI_API_KEY
@@ -39,22 +33,14 @@ services:
         sync: false
       - key: TAVILY_API_KEY
         sync: false
-
-      # ── Telegram alerts ────────────────────────────────────────────────────
       - key: TG_TOKEN
         sync: false
       - key: TG_CHAT_ID
         sync: false
-
-      # ── Google Apps Script portfolio sync ─────────────────────────────────
       - key: API_URL
         sync: false
-
-      # ── US real-time prices (Finnhub WebSocket, tick-by-tick) ─────────────
       - key: FINNHUB_API_KEY
         sync: false
-
-      # ── Broker connectors (optional, read-only) ───────────────────────────
       - key: DHAN_CLIENT_ID
         sync: false
       - key: DHAN_ACCESS_TOKEN
