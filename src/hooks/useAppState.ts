@@ -1201,13 +1201,21 @@ export function useAppState() {
       if (res.ok) {
         secureStorage.setItem('authDone', 'true');
         setIsAuthenticated(true);
-      } else {
+      } else if (res.status === 401) {
         alert('❌ Security Access Denied. Galat PIN!');
+        setPinInput('');
+      } else {
+        alert(`⚠️ Login failed (HTTP ${res.status}). Check server logs.`);
         setPinInput('');
       }
     } catch (e) {
       console.warn('Login failed:', e);
-      alert('⚠️ Login failed. Is the server running?');
+      const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
+      if (!proxyBase) {
+        alert('⚠️ Login failed: VITE_API_PROXY is not set. If frontend and backend are on different domains, set VITE_API_PROXY to the backend URL (e.g. https://smartai1.onrender.com) in Vercel environment variables.');
+      } else {
+        alert(`⚠️ Cannot reach backend at ${proxyBase}. Check: 1) Backend is deployed and running, 2) ALLOWED_ORIGINS on backend includes this frontend URL, 3) Network/CORS settings.`);
+      }
       setPinInput('');
     }
   }, [pinInput]);

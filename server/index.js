@@ -124,12 +124,36 @@ function parseCookie(header) {
   return out;
 }
 
-// --- CORS (allow the SPA to call us from any origin) ---
+// --- CORS ---
+// When the frontend is on a DIFFERENT origin (e.g. Vercel frontend calling
+// Render backend), the browser sends `credentials: 'include'` for the session
+// cookie. Browsers REJECT `Access-Control-Allow-Origin: *` when credentials
+// are used — the server MUST echo the specific Origin header instead.
+// We allowlist origins via the ALLOWED_ORIGINS env var; if not set, we echo
+// any origin (safe for dev, restrict in production).
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+  ? new Set(process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()).filter(Boolean))
+  : null; // null = allow any (dev mode)
+
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.header('Access-Control-Allow-Credentials', 'true');
+  const origin = req.headers.origin;
+  if (origin) {
+    if (ALLOWED_ORIGINS) {
+      // Production allowlist — only echo if origin is allowed.
+      if (ALLOWED_ORIGINS.has(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+      }
+      // Disallowed origins get NO ACAO header — browser blocks the response.
+    } else {
+      // Dev mode — echo any origin (no allowlist set).
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
