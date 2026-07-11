@@ -1,4 +1,5 @@
 import { PriceData } from '../types';
+import { getSessionToken } from './api';
 
 // ============================================================
 // liveStream — browser EventSource client for /api/stream (SSE)
@@ -41,6 +42,14 @@ export function connectLiveStream(opts: LiveStreamOpts): () => void {
     if (opts.inSymbols.length) params.set('in', opts.inSymbols.join(','));
     if (opts.usSymbols.length) params.set('us', opts.usSymbols.join(','));
     if (opts.cryptoSymbols.length) params.set('crypto', opts.cryptoSymbols.join(','));
+
+    // SECURITY: EventSource (SSE) cannot reliably send cookies cross-origin
+    // (Vercel frontend → Render backend). The server's requireAuth middleware
+    // accepts a ?session=<token> query param as a fallback. We append it here
+    // so the SSE stream authenticates correctly.
+    const sessionToken = getSessionToken();
+    if (sessionToken) params.set('session', sessionToken);
+
     if (![...params.keys()].length) return;
 
     try {

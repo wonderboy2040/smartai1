@@ -8,6 +8,52 @@ import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen } from './telegram';
 // or custom via VITE_API_PROXY for cross-origin setups).
 const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
+// ============================================================
+// Centralized API fetch helper — ALL /api/* calls must use this.
+// ------------------------------------------------------------
+// WHY: The server requires authentication via an httpOnly session cookie.
+// The browser only sends that cookie if `credentials: 'include'` is set on
+// the fetch call. Without it, every API call returns 401 and the app shows
+// no prices, no portfolio data, no AI responses.
+// This helper guarantees `credentials: 'include'` is always set, so no
+// future fetch call can accidentally forget it.
+// ============================================================
+
+// The current session token (set after login). Used for EventSource SSE
+// streams, which can't send cookies reliably cross-origin.
+let _sessionToken: string | null = null;
+
+export function setSessionToken(token: string | null) {
+  _sessionToken = token;
+  if (token) {
+    try { sessionStorage.setItem('wealthai_session_token', token); } catch { /* noop */ }
+  } else {
+    try { sessionStorage.removeItem('wealthai_session_token'); } catch { /* noop */ }
+  }
+}
+
+// Restore session token on page load (for EventSource reconnects).
+try {
+  const t = sessionStorage.getItem('wealthai_session_token');
+  if (t) _sessionToken = t;
+} catch { /* noop */ }
+
+export function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const url = input.startsWith('http') || input.startsWith('/api') ? input : `${PROXY_BASE}${input}`;
+  return fetch(url, {
+    ...init,
+    credentials: 'include', // ALWAYS send the httpOnly session cookie
+    headers: {
+      ...(init.headers || {}),
+    },
+  });
+}
+
+// Get the session token for EventSource URL (SSE can't use cookies cross-origin).
+export function getSessionToken(): string | null {
+  return _sessionToken;
+}
+
 // SECURITY: Cloud sync auth token. MUST be set via VITE_API_TOKEN at build
 // time. The weak public default 'WEALTH_AI_SYNC' is NO LONGER used.
 function getCloudAuthToken(): string {
@@ -38,7 +84,7 @@ function getApiUrl(): Promise<string> {
   if (_apiUrlPromise) return _apiUrlPromise;
   _apiUrlPromise = (async () => {
     try {
-      const res = await fetch(`${PROXY_BASE}/api/config`, { signal: AbortSignal.timeout(2000) });
+      const res = await apiFetch(`${PROXY_BASE}/api/config`, { signal: AbortSignal.timeout(2000) });
       if (res.ok) {
         const cfg = await res.json();
         if (cfg.apiUrl) { _runtimeApiUrl = cfg.apiUrl; return cfg.apiUrl; }
@@ -58,7 +104,7 @@ function getApiUrl(): Promise<string> {
  */
 async function fetchCoinDcxTickers(): Promise<CoinDcxTicker[] | null> {
   try {
-    const res = await fetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, {
+    const res = await apiFetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, {
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;
@@ -915,7 +961,7 @@ export async function batchFetchPrices(
 export async function fetchForexRate(): Promise<number> {
   // Primary: server-side proxy (cached, no CORS issues, fastest)
   try {
-    const res = await fetch(`${PROXY_BASE}/api/forex?t=${Date.now()}`, {
+    const res = await apiFetch(`${PROXY_BASE}/api/forex?t=${Date.now()}`, {
       signal: AbortSignal.timeout(4000)
     });
     if (res.ok) {
@@ -1140,7 +1186,7 @@ export async function sendTelegramAlert(token: string, chatId: string, message: 
 export async function sendTelegramViaServer(message: string, _chatId?: string): Promise<boolean> {
   const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
   try {
-    const res = await fetch(`${proxyBase}/api/telegram`, {
+    const res = await apiFetch(`${proxyBase}/api/telegram`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message }),

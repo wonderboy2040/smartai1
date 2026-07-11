@@ -85,7 +85,9 @@ const PUBLIC_PATHS = new Set([
   '/api/feed-status',
 ]);
 
-// Auth middleware — checks for valid session cookie.
+// Auth middleware — checks for valid session cookie OR a ?session= query param.
+// The query-param fallback is needed for EventSource (SSE stream), which cannot
+// reliably send cookies in cross-origin mode (Vercel frontend → Render backend).
 function requireAuth(req, res, next) {
   // Public paths skip auth.
   if (PUBLIC_PATHS.has(req.path)) return next();
@@ -100,7 +102,15 @@ function requireAuth(req, res, next) {
     return next();
   }
 
-  const token = parseCookie(req.headers.cookie || '')[SESSION_COOKIE];
+  // Check session cookie first (primary mechanism for fetch + XHR).
+  let token = parseCookie(req.headers.cookie || '')[SESSION_COOKIE];
+
+  // Fallback: ?session=<token> query param (for EventSource SSE stream, which
+  // can't reliably send cookies cross-origin in some browsers).
+  if (!token && req.query && typeof req.query.session === 'string') {
+    token = req.query.session;
+  }
+
   if (!token || !_sessions.has(token)) {
     return res.status(401).json({ error: { message: 'Authentication required. Please log in.' } });
   }
@@ -191,8 +201,16 @@ app.post('/api/auth/login', (req, res) => {
   const token = crypto.randomUUID();
   _sessions.set(token, { lastSeen: Date.now() });
 
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL / 1000}${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
-  return res.json({ ok: true });
+  // Cookie SameSite policy:
+  // - If ALLOWED_ORIGINS is set (cross-origin deployment like Vercel→Render),
+  //   use SameSite=None; Secure so the browser sends the cookie cross-origin.
+  // - If no allowlist (same-origin / dev), use SameSite=Strict for max security.
+  // Browsers REQUIRE Secure when SameSite=None, so we always set it in production.
+  const isCrossOrigin = !!process.env.ALLOWED_ORIGINS;
+  const sameSite = isCrossOrigin ? 'None' : 'Strict';
+  const secure = process.env.NODE_ENV === 'production' || isCrossOrigin ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=${sameSite}; Path=/; Max-Age=${SESSION_TTL / 1000}${secure}`);
+  return res.json({ ok: true, sessionToken: token }); // sessionToken used for EventSource ?session= param
 });
 
 // POST /api/auth/logout → clears session cookie

@@ -9,6 +9,8 @@
 //   /api/broker/*        — Dhan + Shoonya connectors
 // ============================================================
 
+import { apiFetch } from './api';
+
 const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
 // ---- Trade Journal Analyzer ----
@@ -41,7 +43,7 @@ export interface JournalResult {
 
 export async function analyzeJournal(trades: JournalTrade[]): Promise<JournalResult | null> {
   try {
-    const res = await fetch(`${PROXY_BASE}/api/journal/analyze`, {
+    const res = await apiFetch(`${PROXY_BASE}/api/journal/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ trades }),
@@ -58,7 +60,7 @@ export interface PatternResult { patterns: { type: string; price?: number; note:
 
 export async function detectPatterns(candles: Candle[]): Promise<PatternResult | null> {
   try {
-    const res = await fetch(`${PROXY_BASE}/api/patterns/detect`, {
+    const res = await apiFetch(`${PROXY_BASE}/api/patterns/detect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ candles }),
@@ -83,7 +85,7 @@ export interface Thesis {
 
 export async function fetchTheses(): Promise<Thesis[]> {
   try {
-    const res = await fetch(`${PROXY_BASE}/api/thesis`, { signal: AbortSignal.timeout(5000) });
+    const res = await apiFetch(`${PROXY_BASE}/api/thesis`, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) return [];
     return await res.json();
   } catch { return []; }
@@ -91,7 +93,7 @@ export async function fetchTheses(): Promise<Thesis[]> {
 
 export async function saveThesis(t: Thesis): Promise<Thesis | null> {
   try {
-    const res = await fetch(`${PROXY_BASE}/api/thesis`, {
+    const res = await apiFetch(`${PROXY_BASE}/api/thesis`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(t),
@@ -104,7 +106,7 @@ export async function saveThesis(t: Thesis): Promise<Thesis | null> {
 
 export async function deleteThesis(id: string): Promise<boolean> {
   try {
-    const res = await fetch(`${PROXY_BASE}/api/thesis/${id}`, { method: 'DELETE' });
+    const res = await apiFetch(`${PROXY_BASE}/api/thesis/${id}`, { method: 'DELETE' });
     return res.ok;
   } catch { return false; }
 }
@@ -121,7 +123,7 @@ export interface ScheduledJob {
 
 export async function fetchScheduledJobs(): Promise<ScheduledJob[]> {
   try {
-    const res = await fetch(`${PROXY_BASE}/api/schedule`, { signal: AbortSignal.timeout(5000) });
+    const res = await apiFetch(`${PROXY_BASE}/api/schedule`, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) return [];
     return await res.json();
   } catch { return []; }
@@ -129,7 +131,7 @@ export async function fetchScheduledJobs(): Promise<ScheduledJob[]> {
 
 export async function saveScheduledJob(job: ScheduledJob): Promise<ScheduledJob | null> {
   try {
-    const res = await fetch(`${PROXY_BASE}/api/schedule`, {
+    const res = await apiFetch(`${PROXY_BASE}/api/schedule`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(job),
@@ -142,7 +144,7 @@ export async function saveScheduledJob(job: ScheduledJob): Promise<ScheduledJob 
 
 export async function deleteScheduledJob(id: string): Promise<boolean> {
   try {
-    const res = await fetch(`${PROXY_BASE}/api/schedule/${id}`, { method: 'DELETE' });
+    const res = await apiFetch(`${PROXY_BASE}/api/schedule/${id}`, { method: 'DELETE' });
     return res.ok;
   } catch { return false; }
 }
@@ -150,7 +152,7 @@ export async function deleteScheduledJob(id: string): Promise<boolean> {
 // ---- Broker Connectors ----
 export async function fetchBrokerStatus(): Promise<{ dhan: boolean; shoonya: boolean }> {
   try {
-    const res = await fetch(`${PROXY_BASE}/api/broker/status`, { signal: AbortSignal.timeout(3000) });
+    const res = await apiFetch(`${PROXY_BASE}/api/broker/status`, { signal: AbortSignal.timeout(3000) });
     if (!res.ok) return { dhan: false, shoonya: false };
     return await res.json();
   } catch { return { dhan: false, shoonya: false }; }
@@ -158,7 +160,7 @@ export async function fetchBrokerStatus(): Promise<{ dhan: boolean; shoonya: boo
 
 export async function fetchDhanHoldings(): Promise<any[] | null> {
   try {
-    const res = await fetch(`${PROXY_BASE}/api/broker/dhan/holdings`, { signal: AbortSignal.timeout(8000) });
+    const res = await apiFetch(`${PROXY_BASE}/api/broker/dhan/holdings`, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
     const data = await res.json();
     return Array.isArray(data) ? data : [];
@@ -167,7 +169,7 @@ export async function fetchDhanHoldings(): Promise<any[] | null> {
 
 export async function fetchShoonyaHoldings(): Promise<any[] | null> {
   try {
-    const res = await fetch(`${PROXY_BASE}/api/broker/shoonya/holdings`, { signal: AbortSignal.timeout(8000) });
+    const res = await apiFetch(`${PROXY_BASE}/api/broker/shoonya/holdings`, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
     const data = await res.json();
     return data?.holdings || [];
@@ -192,7 +194,7 @@ export async function runSwarmCommittee(
 ): Promise<SwarmResult | null> {
   const runAgent = async (role: string, systemPrompt: string) => {
     try {
-      const res = await fetch(`${PROXY_BASE}/api/${engine}`, {
+      const res = await apiFetch(`${PROXY_BASE}/api/${engine}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -7,7 +7,8 @@ import {
   fetchSinglePrice, batchFetchPrices, batchFetchIndianPrices, getIndiaPollInterval,
   batchFetchUSPrices, getUSPollInterval, fetchForexRate,
   syncToCloud, loadFromCloud, sendTelegramAlert,
-  syncGroqKeyToCloud, loadGroqKeyFromCloud, getBatchInterval, fetchMarketIntelligence
+  syncGroqKeyToCloud, loadGroqKeyFromCloud, getBatchInterval, fetchMarketIntelligence,
+  apiFetch, setSessionToken,
 } from '../utils/api';
 import { secureStorage } from '../utils/secureStorage';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from '../utils/tvWebsocket';
@@ -362,7 +363,7 @@ export function useAppState() {
 
     const pollCrypto = async () => {
       try {
-        const res = await fetch(`${proxyBase}/api/crypto-prices?t=${Date.now()}`, {
+        const res = await apiFetch(`${proxyBase}/api/crypto-prices?t=${Date.now()}`, {
           signal: AbortSignal.timeout(5000)
         });
         if (res.ok) {
@@ -1192,13 +1193,15 @@ export function useAppState() {
     if (!pinInput) return;
     try {
       const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
-      const res = await fetch(`${proxyBase}/api/auth/login`, {
+      const res = await apiFetch(`${proxyBase}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pin: pinInput }),
-        credentials: 'include',
       });
       if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        // Store the session token for EventSource (SSE can't use cookies cross-origin).
+        if (data.sessionToken) setSessionToken(data.sessionToken);
         secureStorage.setItem('authDone', 'true');
         setIsAuthenticated(true);
       } else if (res.status === 401) {
@@ -1224,9 +1227,10 @@ export function useAppState() {
     secureStorage.removeItem('authDone');
     setIsAuthenticated(false);
     setPinInput('');
+    setSessionToken(null);
     // Also invalidate the server-side session.
     const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
-    fetch(`${proxyBase}/api/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
+    apiFetch(`${proxyBase}/api/auth/logout`, { method: 'POST' }).catch(() => {});
   }, []);
 
   const analyzeSymbol = useCallback(async () => {
