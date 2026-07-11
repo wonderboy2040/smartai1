@@ -20,13 +20,16 @@
 // Apps Script URL could read/write the user's portfolio. Now require
 // AUTH_TOKEN to be set to a strong (>=12 char) secret here, and refuse
 // all requests when it equals the known weak default.
-var AUTH_TOKEN = 'WEALTH_AI_SYNC'; // Default — matches frontend fallback. Change to a strong secret for better security.
+var AUTH_TOKEN = ''; // <-- SET YOUR STRONG TOKEN HERE (min 12 chars). Generate with: openssl rand -hex 24
 
 function _checkAuth_(token) {
-  // FIX: Accept the token if it matches AUTH_TOKEN. The default
-  // 'WEALTH_AI_SYNC' works for backward compatibility (matches the
-  // frontend fallback). Users who want stronger security should set a
-  // custom token in BOTH Code.gs (here) and .env (VITE_API_TOKEN).
+  // Refuse if AUTH_TOKEN is not set, too short, or equals the known weak default.
+  if (!AUTH_TOKEN || AUTH_TOKEN.length < 12) {
+    return { ok: false, error: 'AUTH_TOKEN not configured. Set a strong (>=12 char) token in Code.gs.' };
+  }
+  if (AUTH_TOKEN === 'WEALTH_AI_SYNC') {
+    return { ok: false, error: 'Weak default token rejected. Set a strong custom token.' };
+  }
   if (token !== AUTH_TOKEN) {
     return { ok: false, error: 'unauthorized' };
   }

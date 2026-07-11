@@ -1184,14 +1184,41 @@ export function useAppState() {
   const smartAllocations = useMemo(() => getSmartAllocations(livePrices, indiaSIP, usSIP, btcSIP, ethSIP, usdInrRate), [livePrices, indiaSIP, usSIP, btcSIP, ethSIP, usdInrRate]);
 
   // --- Handlers ---
+  // SECURITY: PIN is verified SERVER-SIDE via /api/auth/login. The server
+  // compares the PIN against APP_PIN (server-side env var, never exposed to
+  // the browser) and sets an httpOnly session cookie. The previous client-side
+  // check (pinInput === VITE_SECURE_PIN || '2023') was trivially bypassable.
   const verifyPin = useCallback(async () => {
-    const expectedPin = import.meta.env.VITE_SECURE_PIN || '2023';
-    if (pinInput === expectedPin) { secureStorage.setItem('authDone', 'true'); setIsAuthenticated(true); }
-    else { alert('❌ Security Access Denied. Galat PIN!'); setPinInput(''); }
+    if (!pinInput) return;
+    try {
+      const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
+      const res = await fetch(`${proxyBase}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: pinInput }),
+        credentials: 'include',
+      });
+      if (res.ok) {
+        secureStorage.setItem('authDone', 'true');
+        setIsAuthenticated(true);
+      } else {
+        alert('❌ Security Access Denied. Galat PIN!');
+        setPinInput('');
+      }
+    } catch (e) {
+      console.warn('Login failed:', e);
+      alert('⚠️ Login failed. Is the server running?');
+      setPinInput('');
+    }
   }, [pinInput]);
 
   const logout = useCallback(() => {
-    secureStorage.removeItem('authDone'); setIsAuthenticated(false); setPinInput('');
+    secureStorage.removeItem('authDone');
+    setIsAuthenticated(false);
+    setPinInput('');
+    // Also invalidate the server-side session.
+    const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
+    fetch(`${proxyBase}/api/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
   }, []);
 
   const analyzeSymbol = useCallback(async () => {

@@ -9,99 +9,47 @@ import dns from 'dns';
 // Fix for Node.js 18+ native fetch IPv6 timeout issues
 dns.setDefaultResultOrder('ipv4first');
 
-// Telegram Credentials
-export const TG_TOKEN = process.env.TG_TOKEN || process.env.VITE_TG_TOKEN || "";
-export const TG_CHAT_ID = process.env.TG_CHAT_ID || process.env.VITE_TG_CHAT_ID || "";
+// Telegram Credentials (server-side env only — never fall back to VITE_*
+// vars, those are browser-exposed at build time and would leak the token).
+export const TG_TOKEN = process.env.TG_TOKEN || "";
+export const TG_CHAT_ID = process.env.TG_CHAT_ID || "";
 
 // Google Apps Script Cloud Sync
 export const API_URL = process.env.API_URL || process.env.VITE_API_URL || "";
 
 // Tavily Search API (Real-time Web Data)
-export let TAVILY_API_KEY = process.env.TAVILY_API_KEY || process.env.VITE_TAVILY_API_KEY || "";
+export let TAVILY_API_KEY = process.env.TAVILY_API_KEY || "";
 
 // ============================================
 // GROQ SUPER INTELLIGENCE — Single Engine
-// Default model: llama-3.3-70b-versatile (fastest, 128K context, most reliable)
 // ============================================
 const env = process.env;
 
-console.log('🔍 [DEBUG] Scanning env vars for GROQ API key...');
-const allEnvKeys = Object.keys(env);
-const groqMatches = allEnvKeys.filter(k => k.toUpperCase().includes('GROQ'));
-if (groqMatches.length > 0) {
-  console.log(`🔍 [DEBUG] Found GROQ env var(s): ${groqMatches.join(', ')}`);
-} else {
-  console.log('🔍 [DEBUG] No GROQ env vars found — scanning all env for gsk_ pattern...');
-}
+// Load Groq key from explicit env var names only. No env-var scanning.
+export let GROQ_KEY = env.GROQ_API_KEY || env.GROQ_KEY || '';
 
-export let GROQ_KEY = "";
-
-// Smart scan for Groq key (starts with gsk_)
-for (const k of allEnvKeys) {
-  const v = (env[k] || '').toString().trim();
-  if (!v || v.length < 5) continue;
-  if (v.startsWith('gsk_') && v.length > 20) {
-    if (!GROQ_KEY) { GROQ_KEY = v; console.log(`  → Groq key loaded from: ${k}`); }
-  }
-}
-
-// Explicit name fallbacks
-const groqNames = [
-  'GROQ_KEY', 'GROQ_API_KEY', 'GROQKEY',
-  'GroqKey', 'GroqAPIKey', 'groq_key', 'groq_api_key',
-  'VITE_GROQ_API_KEY'
-];
-for (const name of groqNames) {
-  if (!GROQ_KEY && env[name]) GROQ_KEY = env[name];
-}
-
-// Final fallback: any gsk_ value anywhere
-if (!GROQ_KEY) {
-  for (const v of Object.values(env)) {
-    if (typeof v === 'string' && v.startsWith('gsk_') && v.length > 20) {
-      GROQ_KEY = v.replace(/['"]/g, '').trim();
-      console.log(`  → Groq key auto-detected from env value`);
-      break;
-    }
-  }
-}
-
-// Clean key
 if (GROQ_KEY) GROQ_KEY = GROQ_KEY.replace(/['"]/g, '').trim();
 
-// Validate
 if (!GROQ_KEY || !GROQ_KEY.startsWith('gsk_')) {
-  console.warn('⚠️  GROQ_KEY is missing or invalid. AI chat will not work.');
-  console.warn('  Get a free key at https://console.groq.com');
-} else {
-  console.log(`✅ Groq key valid (${GROQ_KEY.substring(0, 8)}...)`);
+  console.warn('[config] GROQ_KEY is missing or invalid. AI chat will not work.');
+  console.warn('[config] Get a free key at https://console.groq.com');
 }
 
-// Tavily also scan for tvly- pattern
-if (!TAVILY_API_KEY) {
-  for (const k of allEnvKeys) {
-    const v = (env[k] || '').toString().trim();
-    if (v.startsWith('tvly-') && v.length > 10) {
-      TAVILY_API_KEY = v;
-      console.log(`  → Tavily key loaded from: ${k}`);
-      break;
-    }
-  }
-}
-const tavilyNames = ['TAVILY_API_KEY', 'TAVILY_KEY', 'VITE_TAVILY_API_KEY', 'TavilyApiKey', 'tavily_api_key'];
+// Tavily — explicit names only
+const tavilyNames = ['TAVILY_API_KEY', 'TAVILY_KEY'];
 for (const name of tavilyNames) { if (!TAVILY_API_KEY && env[name]) TAVILY_API_KEY = env[name]; }
 if (TAVILY_API_KEY) TAVILY_API_KEY = TAVILY_API_KEY.replace(/['"]/g, '').trim();
 
 // ============================================
-// GOOGLE GEMINI — Most generous free tier (1,500 req/day)
+// GOOGLE GEMINI
 // ============================================
-export let GEMINI_KEY = process.env.GEMINI_API_KEY || process.env.GEMINI_KEY || process.env.VITE_GEMINI_API_KEY || "";
+export let GEMINI_KEY = process.env.GEMINI_API_KEY || process.env.GEMINI_KEY || "";
 if (GEMINI_KEY) GEMINI_KEY = GEMINI_KEY.replace(/['"]/g, '').trim();
 export function setGeminiKey(key) { GEMINI_KEY = key; }
 export function isGeminiAvailable() { return !!(GEMINI_KEY && GEMINI_KEY.length > 5); }
 
 // ============================================
-// GROQ FALLBACK — Free tier (100K tokens/day)
+// GROQ FALLBACK
 // ============================================
 export function setGroqKey(key) { GROQ_KEY = key; }
 export function setTavilyKey(key) { TAVILY_API_KEY = key; }
@@ -109,57 +57,55 @@ export function isGroqAvailable() { return !!(GROQ_KEY && GROQ_KEY.length > 10);
 export function isTavilyAvailable() { return !!(TAVILY_API_KEY && TAVILY_API_KEY.length > 10); }
 
 // ============================================
-// ANTHROPIC CLAUDE — Third fallback
+// ANTHROPIC CLAUDE
 // ============================================
-export let CLAUDE_KEY = env.ANTHROPIC_API_KEY || env.CLAUDE_API_KEY || env.CLAUDE_KEY || env.ANTHROPIC_KEY || env.VITE_CLAUDE_API_KEY || env.VITE_CLAUDE_KEY || "";
+export let CLAUDE_KEY = env.ANTHROPIC_API_KEY || env.CLAUDE_API_KEY || env.CLAUDE_KEY || "";
 if (CLAUDE_KEY) CLAUDE_KEY = CLAUDE_KEY.replace(/['"]/g, '').trim();
 export function setClaudeKey(key) { CLAUDE_KEY = key; }
 export function isClaudeAvailable() { return !!(CLAUDE_KEY && CLAUDE_KEY.length > 10); }
 
 // ============================================
-// ADDITIONAL LLM PROVIDERS (Free tiers, auto-failover)
+// ADDITIONAL LLM PROVIDERS
 // ============================================
-export let OPENROUTER_KEY = env.OPENROUTER_API_KEY || env.OPENROUTER_KEY || env.VITE_OPENROUTER_API_KEY || env.VITE_OPENROUTER_KEY || "";
+export let OPENROUTER_KEY = env.OPENROUTER_API_KEY || env.OPENROUTER_KEY || "";
 if (OPENROUTER_KEY) OPENROUTER_KEY = OPENROUTER_KEY.replace(/['"]/g, '').trim();
 export function isOpenRouterAvailable() { return !!(OPENROUTER_KEY && OPENROUTER_KEY.length > 10); }
 
-export let CEREBRAS_KEY = env.CEREBRAS_API_KEY || env.CEREBRAS_KEY || env.VITE_CEREBRAS_API_KEY || env.VITE_CEREBRAS_KEY || "";
+export let CEREBRAS_KEY = env.CEREBRAS_API_KEY || env.CEREBRAS_KEY || "";
 if (CEREBRAS_KEY) CEREBRAS_KEY = CEREBRAS_KEY.replace(/['"]/g, '').trim();
 export function isCerebrasAvailable() { return !!(CEREBRAS_KEY && CEREBRAS_KEY.length > 10); }
 
-export let HF_KEY = env.HF_API_KEY || env.HUGGINGFACE_API_KEY || env.VITE_HF_API_KEY || env.VITE_HUGGINGFACE_API_KEY || "";
+export let HF_KEY = env.HF_API_KEY || env.HUGGINGFACE_API_KEY || "";
 if (HF_KEY) HF_KEY = HF_KEY.replace(/['"]/g, '').trim();
 export function isHFAvailable() { return !!(HF_KEY && HF_KEY.length > 10); }
 
 // Ollama (self-hosted, truly keyless)
 export const OLLAMA_URL = env.OLLAMA_URL || 'http://localhost:11434';
-export function isOllamaAvailable() { return false; } // Only if self-hosted
+export function isOllamaAvailable() { return false; }
 
 // ============================================
-// NVIDIA Llama 3.3 70B (Free Fallback)
+// NVIDIA Llama 3.3 70B
 // ============================================
-// Key comes ONLY from the environment (never hardcoded — avoids
-// leaking a secret in the repo). Set NVIDIA_API_KEY to enable.
-export let NVIDIA_KEY = env.NVIDIA_API_KEY || env.VITE_NVIDIA_API_KEY || "";
+export let NVIDIA_KEY = env.NVIDIA_API_KEY || "";
 export function isNvidiaAvailable() { return !!NVIDIA_KEY && !NVIDIA_KEY.includes('your-'); }
 
-// Log all engine statuses at startup
-console.log(`\n🤖 AI Engine Status:`);
-console.log(`  🟢 NVIDIA: ${isNvidiaAvailable() ? '✓ AVAILABLE' : '✗ Missing (set NVIDIA_API_KEY)'}`);
-console.log(`  🔷 Gemini: ${isGeminiAvailable() ? '✓ AVAILABLE' : '✗ Missing (set GEMINI_API_KEY)'}`);
-console.log(`  ⚡ Groq:   ${isGroqAvailable() ? '✓ AVAILABLE' : '✗ Missing (set GROQ_API_KEY)'}`);
-console.log(`  🟣 Claude: ${isClaudeAvailable() ? '✓ AVAILABLE' : '✗ Missing (set ANTHROPIC_API_KEY)'}`);
-console.log(`  🔶 OpenRouter: ${isOpenRouterAvailable() ? '✓ AVAILABLE' : '✗ Missing (set OPENROUTER_API_KEY)'}`);
-console.log(`  🧠 Cerebras: ${isCerebrasAvailable() ? '✓ AVAILABLE' : '✗ Missing (set CEREBRAS_API_KEY)'}`);
-console.log(`  🤗 HuggingFace: ${isHFAvailable() ? '✓ AVAILABLE' : '✗ Missing (set HF_API_KEY)'}`);
-console.log(`  🔍 Tavily: ${isTavilyAvailable() ? '✓ AVAILABLE' : '✗ Missing (set TAVILY_API_KEY)'}\n`);
+// Log engine availability at startup — boolean flags only, NEVER key prefixes.
+console.log('[config] AI engine availability:');
+console.log(`  NVIDIA: ${isNvidiaAvailable() ? 'available' : 'missing (set NVIDIA_API_KEY)'}`);
+console.log(`  Gemini: ${isGeminiAvailable() ? 'available' : 'missing (set GEMINI_API_KEY)'}`);
+console.log(`  Groq:   ${isGroqAvailable() ? 'available' : 'missing (set GROQ_API_KEY)'}`);
+console.log(`  Claude: ${isClaudeAvailable() ? 'available' : 'missing (set ANTHROPIC_API_KEY)'}`);
+console.log(`  OpenRouter: ${isOpenRouterAvailable() ? 'available' : 'missing (set OPENROUTER_API_KEY)'}`);
+console.log(`  Cerebras: ${isCerebrasAvailable() ? 'available' : 'missing (set CEREBRAS_API_KEY)'}`);
+console.log(`  HuggingFace: ${isHFAvailable() ? 'available' : 'missing (set HF_API_KEY)'}`);
+console.log(`  Tavily: ${isTavilyAvailable() ? 'available' : 'missing (set TAVILY_API_KEY)'}`);
 
 // SIP Defaults
 export const DEFAULT_INDIA_SIP = 10000;
 export const DEFAULT_US_SIP = 50;
 export const DEFAULT_USD_INR = 85.5;
 
-// ML Service (Python FastAPI microservice)
+// ML Service
 export const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://localhost:8000';
 
 export const CORS_PROXIES = [''];
@@ -209,12 +155,8 @@ export function guessMarket(sym) {
   sym = (sym || '').toUpperCase();
   if (sym.includes('.NS') || sym.includes('.BO')) return 'IN';
   if (sym === 'RELIANCE' || sym === 'NIFTY' || sym === 'SENSEX') return 'IN';
-  if (sym.endsWith('BEES')) return 'IN';  // FIX H11/M10: endswith, not includes — avoids classifying "BEESLY" etc.
+  if (sym.endsWith('BEES')) return 'IN';
   if (ALPHA_ETFS_IN.some(e => e.sym === sym.replace('.NS', ''))) return 'IN';
-  // FIX H11: crypto returns 'IN' here because CoinDCX returns INR pairs and
-  // the rest of the system keys crypto as IN_<SYMBOL>. This is intentional
-  // (downstream code uses IN_ prefix for crypto in the price map), but
-  // document it clearly so future maintainers don't "fix" it to 'CRYPTO'.
   if (isCryptoSymbol(sym)) return 'IN';
   return 'US';
 }

@@ -8,6 +8,16 @@ import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen } from './telegram';
 // or custom via VITE_API_PROXY for cross-origin setups).
 const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
+// SECURITY: Cloud sync auth token. MUST be set via VITE_API_TOKEN at build
+// time. The weak public default 'WEALTH_AI_SYNC' is NO LONGER used.
+function getCloudAuthToken(): string {
+  return (import.meta.env.VITE_API_TOKEN as string) || '';
+}
+
+function isCloudSyncConfigured(): boolean {
+  return !!getCloudAuthToken();
+}
+
 // Runtime API_URL — tries server config first, then VITE build-time env var
 // Used ONLY for Google Apps Script cloud sync, NOT for backend /api/* calls.
 // FIX: previously this was async + awaited a fetch('/api/config') on EVERY
@@ -976,7 +986,11 @@ export async function syncToCloud(portfolio: Position[], usdInr: number): Promis
   // a custom VITE_API_TOKEN. Now: use VITE_API_TOKEN if set, else fall back
   // to 'WEALTH_AI_SYNC' (matching the Code.gs default). Users who want
   // stronger security can set a custom token in BOTH .env and Code.gs.
-  const authToken = import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
+  const authToken = getCloudAuthToken();
+  if (!authToken) {
+    console.warn('Cloud Sync: VITE_API_TOKEN not set — sync disabled.');
+    return false;
+  }
 
   try {
     const res = await fetch(apiUrl, {
@@ -1008,7 +1022,11 @@ export async function loadFromCloud(): Promise<Position[] | null> {
   if (!apiUrl) return null;
 
   // FIX: Backward-compatible auth token (same as syncToCloud).
-  const authToken = import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
+  const authToken = getCloudAuthToken();
+  if (!authToken) {
+    console.warn('Cloud Sync: VITE_API_TOKEN not set — sync disabled.');
+    return false;
+  }
 
   try {
     const res = await fetch(`${apiUrl}?action=load&authToken=${encodeURIComponent(authToken)}&t=${Date.now()}`, {
@@ -1141,7 +1159,11 @@ export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
   let apiUrl = getApiUrlSync();
   if (!apiUrl) apiUrl = await getApiUrl();
   if (!apiUrl || !key) return false;
-  const authToken = import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
+  const authToken = getCloudAuthToken();
+  if (!authToken) {
+    console.warn('Cloud Sync: VITE_API_TOKEN not set — sync disabled.');
+    return false;
+  }
   try {
     // Same CORS-"simple" request rule as syncToCloud (see note there) so the
     // Apps Script doPost actually receives the payload.
@@ -1161,7 +1183,11 @@ export async function loadGroqKeyFromCloud(): Promise<string | null> {
   let apiUrl = getApiUrlSync();
   if (!apiUrl) apiUrl = await getApiUrl();
   if (!apiUrl) return null;
-  const authToken = import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
+  const authToken = getCloudAuthToken();
+  if (!authToken) {
+    console.warn('Cloud Sync: VITE_API_TOKEN not set — sync disabled.');
+    return false;
+  }
   try {
     const res = await fetch(`${apiUrl}?action=loadKey&authToken=${encodeURIComponent(authToken)}&t=${Date.now()}`);
     if (!res.ok) return null;

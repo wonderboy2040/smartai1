@@ -9,13 +9,20 @@ import {
   GROQ_KEY, TAVILY_API_KEY
 } from './config.mjs';
 
-// FIX C1: Bot was missing authToken in all cloud sync calls → Code.gs
-// returned "unauthorized" for every request → bot never loaded portfolio.
-// Now use the same token as the frontend (VITE_API_TOKEN env or default).
-const AUTH_TOKEN = process.env.API_TOKEN || process.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
+// SECURITY: Cloud sync auth token. MUST be set via API_TOKEN env var.
+// The weak public default 'WEALTH_AI_SYNC' is NO LONGER used.
+const AUTH_TOKEN = process.env.API_TOKEN || process.env.VITE_API_TOKEN || '';
+
+function isCloudSyncConfigured() {
+  return !!AUTH_TOKEN;
+}
 
 export async function loadPortfolioFromCloud() {
   if (!API_URL) return null;
+  if (!isCloudSyncConfigured()) {
+    console.warn('[cloud] API_TOKEN not set — cloud sync disabled.');
+    return null;
+  }
 
   try {
     const res = await fetch(`${API_URL}?action=load&authToken=${encodeURIComponent(AUTH_TOKEN)}&t=${Date.now()}`, {

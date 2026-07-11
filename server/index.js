@@ -21,6 +21,7 @@ import {
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fork } from 'node:child_process';
+import crypto from 'node:crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -29,13 +30,159 @@ const DEFAULT_USD_INR = 83.5;
 
 app.use(express.json({ limit: '1mb' }));
 
+// ============================================================
+// AUTHENTICATION — Server-side PIN + httpOnly session cookie
+// ============================================================
+// The app PIN is stored ONLY on the server (APP_PIN env var) and is
+// NEVER shipped to the browser. The frontend sends the user-entered
+// PIN to /api/auth/login; on match, the server generates a random
+// session token, stores it in an in-memory Set, and sets it as an
+// httpOnly + SameSite=Strict cookie. All sensitive endpoints require
+// this cookie via the requireAuth middleware.
+//
+// This replaces the previous client-side PIN check (which was trivially
+// bypassable by setting localStorage.setItem('authDone', 'true')).
+// ============================================================
+
+// Server-side PIN — REQUIRED. No default, no VITE_ fallback.
+const APP_PIN = process.env.APP_PIN || '';
+
+// In-memory session store (single-user app, no persistence needed).
+// Sessions expire after 24 hours of inactivity.
+const _sessions = new Map(); // token → { lastSeen: number }
+const SESSION_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+// Clean up expired sessions periodically.
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, info] of _sessions) {
+    if (now - info.lastSeen > SESSION_TTL) _sessions.delete(token);
+  }
+}, 60 * 60 * 1000).unref();
+
+// Login rate limiter — 5 attempts per minute per IP (brute-force protection).
+const _loginAttempts = new Map(); // ip → [timestamps]
+function loginRateCheck(ip) {
+  const now = Date.now();
+  const arr = (_loginAttempts.get(ip) || []).filter(t => now - t < 60 * 1000);
+  if (arr.length >= 5) return false;
+  arr.push(now);
+  _loginAttempts.set(ip, arr);
+  return true;
+}
+
+// Cookie name for the session token.
+const SESSION_COOKIE = 'wealthai_session';
+
+// Paths that do NOT require authentication.
+const PUBLIC_PATHS = new Set([
+  '/health',
+  '/api/auth/login',
+  '/api/auth/check',
+  '/api/config',
+  '/api/ai-status',
+  '/api/telegram-status',
+  '/api/feed-status',
+]);
+
+// Auth middleware — checks for valid session cookie.
+function requireAuth(req, res, next) {
+  // Public paths skip auth.
+  if (PUBLIC_PATHS.has(req.path)) return next();
+
+  // Static assets (served by express.static) are public.
+  if (req.path.startsWith('/assets/') || /\.(js|mjs|css|map|ico|svg|png|jpe?g|webp|woff2?|ttf|otf|json|wasm)$/i.test(req.path)) {
+    return next();
+  }
+
+  // SPA fallback (index.html) is public — the login screen must load.
+  if (req.method === 'GET' && !req.path.startsWith('/api/')) {
+    return next();
+  }
+
+  const token = parseCookie(req.headers.cookie || '')[SESSION_COOKIE];
+  if (!token || !_sessions.has(token)) {
+    return res.status(401).json({ error: { message: 'Authentication required. Please log in.' } });
+  }
+
+  // Refresh session activity.
+  _sessions.get(token).lastSeen = Date.now();
+  next();
+}
+
+// Simple cookie parser (avoids adding cookie-parser dependency).
+function parseCookie(header) {
+  const out = {};
+  if (!header) return out;
+  for (const pair of header.split(';')) {
+    const idx = pair.indexOf('=');
+    if (idx < 0) continue;
+    const key = pair.substring(0, idx).trim();
+    const val = pair.substring(idx + 1).trim();
+    if (key) out[key] = val;
+  }
+  return out;
+}
+
 // --- CORS (allow the SPA to call us from any origin) ---
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
+});
+
+// Apply auth middleware to ALL requests.
+app.use(requireAuth);
+
+// ============================================================
+// AUTH ENDPOINTS
+// ============================================================
+
+// POST /api/auth/login → { pin: string } → sets session cookie
+app.post('/api/auth/login', (req, res) => {
+  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim();
+  if (!loginRateCheck(ip)) {
+    return res.status(429).json({ error: { message: 'Too many login attempts. Please wait a minute.' } });
+  }
+
+  const { pin } = req.body || {};
+  if (!APP_PIN) {
+    return res.status(500).json({ error: { message: 'Server PIN not configured. Set APP_PIN env var.' } });
+  }
+  if (typeof pin !== 'string' || pin.length === 0) {
+    return res.status(400).json({ error: { message: 'PIN required.' } });
+  }
+
+  // Constant-time comparison to prevent timing attacks.
+  const a = Buffer.from(pin);
+  const b = Buffer.from(APP_PIN);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return res.status(401).json({ error: { message: 'Invalid PIN.' } });
+  }
+
+  // Generate session token and store it.
+  const token = crypto.randomUUID();
+  _sessions.set(token, { lastSeen: Date.now() });
+
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL / 1000}${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+  return res.json({ ok: true });
+});
+
+// POST /api/auth/logout → clears session cookie
+app.post('/api/auth/logout', (req, res) => {
+  const token = parseCookie(req.headers.cookie || '')[SESSION_COOKIE];
+  if (token) _sessions.delete(token);
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);
+  res.json({ ok: true });
+});
+
+// GET /api/auth/check → returns whether the caller is authenticated
+app.get('/api/auth/check', (req, res) => {
+  const token = parseCookie(req.headers.cookie || '')[SESSION_COOKIE];
+  res.json({ authenticated: !!(token && _sessions.has(token)) });
 });
 
 // ------------------------------------------------------------
@@ -52,11 +199,11 @@ const KEYS = {
   tavily: process.env.TAVILY_API_KEY || '',
 };
 
-// Telegram bot credentials (server-side env) — used by the /api/telegram proxy
-// so the website can send notifications even if the browser has no local config.
+// Telegram bot credentials (server-side env only).
+// NEVER fall back to VITE_* vars — those are browser-exposed at build time.
 const TG = {
-  token: process.env.TG_TOKEN || process.env.VITE_TG_TOKEN || '',
-  chatId: process.env.TG_CHAT_ID || process.env.VITE_TG_CHAT_ID || '',
+  token: process.env.TG_TOKEN || '',
+  chatId: process.env.TG_CHAT_ID || '',
 };
 
 // OpenAI-compatible providers — body is forwarded almost as-is.
@@ -68,8 +215,48 @@ const OPENAI_COMPAT = {
   nvidia: { url: 'https://integrate.api.nvidia.com/v1/chat/completions', defModel: 'meta/llama-3.3-70b-instruct' },
 };
 
-function jsonError(res, status, message) {
-  return res.status(status).json({ error: { message } });
+function jsonError(res, status, message, internalErr) {
+  const correlationId = crypto.randomUUID();
+  if (internalErr) {
+    console.error(`[corr=${correlationId}] ${status} ${message}`, internalErr?.message || internalErr);
+  }
+  return res.status(status).json({ error: { message, correlationId } });
+}
+
+// ------------------------------------------------------------
+// Input validation helpers
+// ------------------------------------------------------------
+
+// Validate a stock symbol: only letters, numbers, dots, hyphens, underscores.
+// Prevents injection of HTML/SQL/script content via symbol parameters.
+function isValidSymbol(sym) {
+  if (typeof sym !== 'string') return false;
+  const s = sym.trim().toUpperCase();
+  if (s.length === 0 || s.length > 20) return false;
+  return /^[A-Z0-9.\-_]+$/.test(s);
+}
+
+// Escape HTML special characters — used when forwarding user-controlled
+// content to Telegram (which uses parse_mode: 'HTML').
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Strip ALL HTML tags — for maximum safety when forwarding user content
+// to Telegram as HTML. Only plain text survives.
+function stripHtml(str) {
+  return String(str || '').replace(/<[^>]*>/g, '');
+}
+
+// Cap an array at a maximum length to prevent DoS via huge payloads.
+function capArray(arr, maxLen) {
+  if (!Array.isArray(arr)) return [];
+  return arr.slice(0, maxLen);
 }
 
 // ------------------------------------------------------------
@@ -110,6 +297,8 @@ function toYahooSymbol(symbol, market) {
 app.get('/api/chart', async (req, res) => {
   const { symbol = '', market = '', interval = 'D' } = req.query || {};
   if (!symbol) return jsonError(res, 400, 'symbol required');
+  // SECURITY: validate symbol format to prevent injection / open-proxy abuse.
+  if (!isValidSymbol(symbol)) return jsonError(res, 400, 'invalid symbol format');
 
   const ivMap = {
     D: { interval: '1d', range: '6mo' },
@@ -163,7 +352,7 @@ app.get('/api/chart', async (req, res) => {
 // ------------------------------------------------------------
 const INDIAN_INDICES = new Set(['NIFTY','BANKNIFTY','SENSEX','INDIAVIX','CNXIT','NIFTY50','NIFTYBANK']);
 async function fetchFinnhubQuote(plainSym) {
-  const key = process.env.FINNHUB_API_KEY || process.env.VITE_FINNHUB_API_KEY || '';
+  const key = process.env.FINNHUB_API_KEY || '';
   if (!key) return null;
   try {
     const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(plainSym)}&token=${key}`;
@@ -281,6 +470,10 @@ app.get('/api/quote', async (req, res) => {
     raw.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
   )].slice(0, 50);
   if (symbols.length === 0) return jsonError(res, 400, 'symbols required');
+  // SECURITY: validate ALL symbols to prevent injection.
+  for (const s of symbols) {
+    if (!isValidSymbol(s)) return jsonError(res, 400, `invalid symbol: ${s}`);
+  }
 
   const quotes = {};
 
@@ -343,7 +536,7 @@ app.get('/api/crypto-prices', async (_req, res) => {
     res.set('Cache-Control', 'no-store, max-age=0');
     return res.json(tickers);
   } catch (e) {
-    return jsonError(res, 502, `CoinDCX fetch failed: ${e?.message || e}`);
+    return jsonError(res, 502, 'Failed to fetch crypto prices.', e);
   }
 });
 
@@ -501,7 +694,7 @@ for (const [name, cfg] of Object.entries(OPENAI_COMPAT)) {
       const text = await upstream.text();
       res.status(upstream.status).type('application/json').send(text || '{}');
     } catch (e) {
-      return jsonError(res, 502, `${name} upstream error: ${e?.message || e}`);
+      return jsonError(res, 502, `${name} AI provider is temporarily unavailable.`, e);
     }
   });
 }
@@ -540,7 +733,7 @@ app.post('/api/tavily', async (req, res) => {
       choices: [{ message: { role: 'assistant', content } }],
     });
   } catch (e) {
-    return jsonError(res, 502, `tavily upstream error: ${e?.message || e}`);
+    return jsonError(res, 502, 'Search service is temporarily unavailable.', e);
   }
 });
 
@@ -568,7 +761,7 @@ app.post('/api/gemini', async (req, res) => {
     const text = await upstream.text();
     res.status(upstream.status).type('application/json').send(text || '{}');
   } catch (e) {
-    return jsonError(res, 502, `gemini upstream error: ${e?.message || e}`);
+    return jsonError(res, 502, 'Gemini AI provider is temporarily unavailable.', e);
   }
 });
 
@@ -599,7 +792,7 @@ app.post('/api/claude', async (req, res) => {
     const text = await upstream.text();
     res.status(upstream.status).type('application/json').send(text || '{}');
   } catch (e) {
-    return jsonError(res, 502, `claude upstream error: ${e?.message || e}`);
+    return jsonError(res, 502, 'Claude AI provider is temporarily unavailable.', e);
   }
 });
 
@@ -630,17 +823,26 @@ app.post('/api/telegram', async (req, res) => {
   if (!message || typeof message !== 'string') return jsonError(res, 400, 'message required');
   const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim();
   if (!tgRateCheck(ip)) return jsonError(res, 429, 'rate limit exceeded — try again later');
+
+  // SECURITY: strip ALL HTML tags from the client-supplied message.
+  // Without this, anyone who can call /api/telegram can inject arbitrary
+  // HTML (phishing links, fake system messages) into the user's Telegram
+  // chat. The message is forwarded with parse_mode: 'HTML', so any tags
+  // would be rendered. We also escape the remaining text so it displays
+  // as plain text even under HTML parse mode.
+  const safeMessage = escapeHtml(stripHtml(message)).slice(0, 4096);
+
   try {
     const upstream = await fetch(`https://api.telegram.org/bot${TG.token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: TG.chatId, text: message.slice(0, 4096), parse_mode: 'HTML', disable_web_page_preview: true }),
+      body: JSON.stringify({ chat_id: TG.chatId, text: safeMessage, parse_mode: 'HTML', disable_web_page_preview: true }),
       signal: AbortSignal.timeout(10000),
     });
     const text = await upstream.text();
     res.status(upstream.status).type('application/json').send(text || '{}');
   } catch (e) {
-    return jsonError(res, 502, `telegram upstream error: ${e?.message || e}`);
+    return jsonError(res, 502, 'telegram upstream error', e);
   }
 });
 
@@ -756,6 +958,8 @@ const FUNDAMENTALS_TTL = 24 * 60 * 60 * 1000;
 app.get('/api/fundamentals/:symbol', async (req, res) => {
   const rawSymbol = String(req.params.symbol || '').trim().toUpperCase();
   if (!rawSymbol) return jsonError(res, 400, 'symbol required');
+  // SECURITY: validate symbol format.
+  if (!isValidSymbol(rawSymbol)) return jsonError(res, 400, 'invalid symbol format');
   const market = String(req.query.market || '').toUpperCase();
 
   const cached = _fundamentalsCache.get(rawSymbol);
@@ -888,7 +1092,7 @@ app.get('/api/fundamentals/:symbol', async (req, res) => {
     res.set('Cache-Control', 'public, max-age=86400');
     return res.json(data);
   } catch (e) {
-    return jsonError(res, 502, `fundamentals fetch failed: ${e?.message || e}`);
+    return jsonError(res, 502, 'Failed to fetch fundamentals data.', e);
   }
 });
 
@@ -959,7 +1163,7 @@ app.post('/api/superintelligence/news', async (req, res) => {
       fetchedAt: Date.now(),
     });
   } catch (e) {
-    return jsonError(res, 502, `superintelligence news fetch failed: ${e?.message || e}`);
+    return jsonError(res, 502, 'Failed to fetch market news.', e);
   }
 });
 
@@ -1083,11 +1287,11 @@ app.get('/api/broker/dhan/positions', async (_req, res) => {
       },
       signal: AbortSignal.timeout(8000),
     });
-    if (!r.ok) return jsonError(res, 502, `Dhan API error: ${r.status}`);
+    if (!r.ok) return jsonError(res, 502, 'Broker API error.');
     const data = await r.json();
     res.json(data);
   } catch (e) {
-    return jsonError(res, 502, `Dhan fetch failed: ${e?.message || e}`);
+    return jsonError(res, 502, 'Failed to fetch broker positions.', e);
   }
 });
 
@@ -1106,11 +1310,11 @@ app.get('/api/broker/dhan/holdings', async (_req, res) => {
       },
       signal: AbortSignal.timeout(8000),
     });
-    if (!r.ok) return jsonError(res, 502, `Dhan API error: ${r.status}`);
+    if (!r.ok) return jsonError(res, 502, 'Broker API error.');
     const data = await r.json();
     res.json(data);
   } catch (e) {
-    return jsonError(res, 502, `Dhan fetch failed: ${e?.message || e}`);
+    return jsonError(res, 502, 'Failed to fetch broker positions.', e);
   }
 });
 
@@ -1146,13 +1350,13 @@ app.get('/api/broker/shoonya/holdings', async (_req, res) => {
           pwd: password,
           factor2: apiKey,
           vc: vendor,
-          appkey: Buffer.from(JSON.stringify({ appkey: apiKey, secret: 'shoonya' })).toString('base64'),
+          appkey: Buffer.from(JSON.stringify({ appkey: apiKey, secret: process.env.SHOONYA_API_KEY ? 'api' : 'shoonya' })).toString('base64'),
         }),
         signal: AbortSignal.timeout(6000),
       });
       const loginData = await loginRes.json();
       if (loginData?.stat !== 'Ok') {
-        return jsonError(res, 401, `Shoonya login failed: ${loginData?.emsg || 'unknown'}`);
+        return jsonError(res, 401, 'Broker authentication failed. Check credentials.');
       }
       _shoonyaToken = loginData.susertoken;
       _shoonyaTokenTs = Date.now();
@@ -1173,7 +1377,7 @@ app.get('/api/broker/shoonya/holdings', async (_req, res) => {
     res.json({ holdings: Array.isArray(holdData) ? holdData : [], source: 'shoonya' });
   } catch (e) {
     _shoonyaToken = null;  // force re-login on next call
-    return jsonError(res, 502, `Shoonya fetch failed: ${e?.message || e}`);
+    return jsonError(res, 502, 'Failed to fetch broker holdings.', e);
   }
 });
 
@@ -1187,11 +1391,14 @@ app.post('/api/journal/analyze', (req, res) => {
   if (!Array.isArray(trades) || trades.length === 0) {
     return jsonError(res, 400, 'trades[] required');
   }
+  // SECURITY: cap input size to prevent DoS via huge payloads.
+  const MAX_TRADES = 10000;
+  const cappedTrades = trades.slice(0, MAX_TRADES);
   try {
     // FIFO pairing: match buys to sells per symbol
     const bySymbol = {};
-    for (const t of trades) {
-      const sym = String(t.symbol || '').toUpperCase().trim();
+    for (const t of cappedTrades) {
+      const sym = String(t.symbol || '').toUpperCase().trim().slice(0, 20);
       if (!sym) continue;
       if (!bySymbol[sym]) bySymbol[sym] = [];
       bySymbol[sym].push(t);
@@ -1295,7 +1502,7 @@ app.post('/api/journal/analyze', (req, res) => {
       },
     });
   } catch (e) {
-    return jsonError(res, 500, `Journal analysis failed: ${e?.message || e}`);
+    return jsonError(res, 500, 'Journal analysis failed.', e);
   }
 });
 
@@ -1309,11 +1516,14 @@ app.post('/api/patterns/detect', (req, res) => {
   if (!Array.isArray(candles) || candles.length < 10) {
     return jsonError(res, 400, 'candles[] (min 10) required');
   }
+  // SECURITY: cap input size to prevent DoS via huge payloads.
+  const MAX_CANDLES = 5000;
+  const cappedCandles = candles.slice(0, MAX_CANDLES);
   try {
     const patterns = [];
-    const closes = candles.map(c => c.close);
-    const highs = candles.map(c => c.high);
-    const lows = candles.map(c => c.low);
+    const closes = cappedCandles.map(c => c.close);
+    const highs = cappedCandles.map(c => c.high);
+    const lows = cappedCandles.map(c => c.low);
     const n = closes.length;
 
     // 1. Support/Resistance (peak/valley clustering)
@@ -1396,7 +1606,7 @@ app.post('/api/patterns/detect', (req, res) => {
 
     res.json({ patterns, candleCount: n });
   } catch (e) {
-    return jsonError(res, 500, `Pattern detection failed: ${e?.message || e}`);
+    return jsonError(res, 500, 'Pattern detection failed.', e);
   }
 });
 
@@ -1415,20 +1625,41 @@ app.get('/api/thesis', (_req, res) => {
 });
 
 app.post('/api/thesis', (req, res) => {
-  const { id, symbol, thesis, criteria, status, evidence } = req.body || {};
+  const { symbol, thesis, criteria, status, evidence } = req.body || {};
   if (!symbol || !thesis) return jsonError(res, 400, 'symbol + thesis required');
-  const tid = id || `thesis_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-  const existing = _theses.get(tid) || {};
+
+  // SECURITY: IDOR fix — always generate a NEW server-side ID on create.
+  // The client can no longer supply an `id` to overwrite an existing thesis.
+  // To update an existing thesis, use PUT /api/thesis/:id (below).
+  const tid = `thesis_${Date.now()}_${crypto.randomBytes(5).toString('hex')}`;
+  const updated = {
+    id: tid,
+    symbol: String(symbol).toUpperCase().slice(0, 20),
+    thesis: String(thesis).slice(0, 10000),
+    criteria: Array.isArray(criteria) ? criteria.slice(0, 50) : [],
+    status: status || 'active',
+    evidence: Array.isArray(evidence) ? evidence.slice(0, 50) : [],
+    updatedAt: Date.now(),
+    createdAt: Date.now(),
+  };
+  _theses.set(tid, updated);
+  res.json(updated);
+});
+
+// PUT /api/thesis/:id → update an existing thesis (must exist)
+app.put('/api/thesis/:id', (req, res) => {
+  const tid = req.params.id;
+  const existing = _theses.get(tid);
+  if (!existing) return jsonError(res, 404, 'thesis not found');
+  const { symbol, thesis, criteria, status, evidence } = req.body || {};
   const updated = {
     ...existing,
-    id: tid,
-    symbol: symbol.toUpperCase(),
-    thesis,
-    criteria: criteria || existing.criteria || [],
-    status: status || existing.status || 'active',
-    evidence: evidence || existing.evidence || [],
+    symbol: symbol ? String(symbol).toUpperCase().slice(0, 20) : existing.symbol,
+    thesis: thesis ? String(thesis).slice(0, 10000) : existing.thesis,
+    criteria: Array.isArray(criteria) ? criteria.slice(0, 50) : existing.criteria,
+    status: status || existing.status,
+    evidence: Array.isArray(evidence) ? evidence.slice(0, 50) : existing.evidence,
     updatedAt: Date.now(),
-    createdAt: existing.createdAt || Date.now(),
   };
   _theses.set(tid, updated);
   res.json(updated);
@@ -1456,13 +1687,15 @@ app.get('/api/schedule', (_req, res) => {
 });
 
 app.post('/api/schedule', (req, res) => {
-  const { id, prompt, cron, enabled } = req.body || {};
+  const { prompt, cron, enabled } = req.body || {};
   if (!prompt || !cron) return jsonError(res, 400, 'prompt + cron required');
-  const jid = id || `job_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+  // SECURITY: IDOR fix — always generate a NEW server-side ID.
+  const jid = `job_${Date.now()}_${crypto.randomBytes(5).toString('hex')}`;
   const job = {
     id: jid,
-    prompt,
-    cron,
+    prompt: String(prompt).slice(0, 5000),
+    cron: String(cron).slice(0, 100),
     enabled: enabled !== false,
     createdAt: Date.now(),
     lastRunAt: null,
@@ -1496,6 +1729,44 @@ app.get('/health', (_req, res) => {
 let _botProcess = null;
 let _botRestartTimer = null;
 
+// ------------------------------------------------------------
+// Startup environment validation.
+// APP_PIN is REQUIRED — without it, the app has no authentication
+// and all endpoints are public. The server refuses to start.
+// ------------------------------------------------------------
+function validateEnv() {
+  const errors = [];
+  const warnings = [];
+
+  if (!APP_PIN) {
+    errors.push(
+      'APP_PIN is not set. The server requires a PIN for authentication. ' +
+      'Set APP_PIN in your environment variables (e.g. APP_PIN=1234).'
+    );
+  }
+
+  // TG_TOKEN + TG_CHAT_ID must be set TOGETHER (or both absent).
+  if (!!TG.token !== !!TG.chatId) {
+    errors.push(
+      `TG_TOKEN and TG_CHAT_ID must both be set (or both empty). ` +
+      `TG_TOKEN=${TG.token ? 'set' : 'empty'}, TG_CHAT_ID=${TG.chatId ? 'set' : 'empty'}.`
+    );
+  }
+
+  // Warn if no AI provider keys are set.
+  const anyAiKey = Object.values(KEYS).some(v => v);
+  if (!anyAiKey) {
+    warnings.push('No AI provider keys configured — NeuralChat and AI features will be unavailable.');
+  }
+
+  for (const w of warnings) console.warn(`[wealth-ai] WARNING: ${w}`);
+  for (const e of errors) console.error(`[wealth-ai] ERROR: ${e}`);
+  if (errors.length > 0) {
+    console.error('[wealth-ai] Refusing to start due to configuration errors.');
+    process.exit(1);
+  }
+}
+
 function startBot() {
   if (!TG.token) {
     console.log('[wealth-ai] TG_TOKEN not configured. Telegram Bot not started.');
@@ -1503,7 +1774,7 @@ function startBot() {
   }
   try {
     const botPath = path.resolve(__dirname, '..', 'telegram-bot', 'bot.mjs');
-    console.log(`[wealth-ai] Starting Telegram Bot: ${botPath}`);
+    console.log('[wealth-ai] Starting Telegram Bot (server-side child process).');
     _botProcess = fork(botPath, [], {
       env: { ...process.env, BOT_ONLY: 'true' },
     });
@@ -1512,7 +1783,6 @@ function startBot() {
     });
     _botProcess.on('exit', (code) => {
       console.warn(`[wealth-ai] Bot exited code=${code} — auto-restart in 5s`);
-      // FIX C2: auto-restart with backoff instead of silently dying
       clearTimeout(_botRestartTimer);
       _botRestartTimer = setTimeout(() => {
         console.log('[wealth-ai] Restarting bot...');
@@ -1521,21 +1791,22 @@ function startBot() {
     });
   } catch (e) {
     console.error('[wealth-ai] Failed to start bot:', e.message);
-    // Retry after 10s on startup failure
     clearTimeout(_botRestartTimer);
     _botRestartTimer = setTimeout(startBot, 10000);
   }
 }
 
+// Run env validation before binding the port.
+validateEnv();
+
 app.listen(PORT, () => {
   const ready = Object.entries(KEYS).filter(([, v]) => v).map(([k]) => k);
   console.log(`[wealth-ai] server on :${PORT} — providers: ${ready.join(', ') || 'NONE'}`);
+  console.log('[wealth-ai] Authentication: enabled (server-side PIN + httpOnly session cookie)');
 
-  // FIX M1: No self-ping keepalive (Render ToS violation).
+  // No self-ping keepalive (Render ToS violation).
   // For 24x7 uptime on free tier, use an EXTERNAL uptime monitor
   // (e.g. UptimeRobot) that pings /health every 5 min.
-  // Render will auto-wake on incoming HTTP requests within ~30s.
-  // For true 24x7, upgrade to Render paid tier ($7/mo).
 
   // Start Telegram bot with auto-restart
   startBot();
