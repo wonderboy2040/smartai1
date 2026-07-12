@@ -997,80 +997,41 @@ export async function fetchForexRate(): Promise<number> {
 }
 
 export async function syncToCloud(portfolio: Position[], usdInr: number): Promise<boolean> {
-  let apiUrl = getApiUrlSync();
-  if (!apiUrl) apiUrl = await getApiUrl();
-  if (!apiUrl) return false;
   if (!portfolio || portfolio.length === 0) {
-    console.warn('☁️ Cloud Sync: Blocking sync because portfolio is empty to prevent accidental deletion.');
+    console.warn('☁️ Cloud Sync: Blocking sync because portfolio is empty.');
     return false;
   }
 
-  // FIX: Backward-compatible auth token. Previously we refused the default
-  // 'WEALTH_AI_SYNC' token which broke cloud sync for users who hadn't set
-  // a custom VITE_API_TOKEN. Now: use VITE_API_TOKEN if set, else fall back
-  // to 'WEALTH_AI_SYNC' (matching the Code.gs default). Users who want
-  // stronger security can set a custom token in BOTH .env and Code.gs.
-  const authToken = getCloudAuthToken();
-  if (!authToken) {
-    console.warn('Cloud Sync: VITE_API_TOKEN not set — sync disabled.');
-    return false;
-  }
-
+  // Route through the backend proxy — works cross-origin (Vercel→Render)
+  // without needing VITE_API_URL or VITE_API_TOKEN at build time.
   try {
-    const res = await fetch(apiUrl, {
+    const res = await apiFetch(`${PROXY_BASE}/api/cloud/save`, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      redirect: 'follow',
-      body: JSON.stringify({ action: 'update', authToken, portfolio, timestamp: Date.now(), usdInr })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ portfolio, usdInr }),
+      signal: AbortSignal.timeout(10000),
     });
-    return res.ok;
-  } catch (e) {
-    // Last-resort fire-and-forget fallback (Apps Script doGet handles action=update).
-    try {
-      await fetch(`${apiUrl}?action=update&authToken=${encodeURIComponent(authToken)}&data=${encodeURIComponent(JSON.stringify({ portfolio, timestamp: Date.now(), usdInr }))}`, { mode: 'no-cors' });
-      return true;
-    } catch (e2) {
-      return false;
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return data.ok === true;
     }
+    return false;
+  } catch (e) {
+    console.warn('☁️ Cloud save failed:', e);
+    return false;
   }
 }
 
 export async function loadFromCloud(): Promise<Position[] | null> {
-  // FIX: Use synchronous URL if available (cached from previous call or
-  // VITE_API_URL build-time env). Only await getApiUrl() if we don't have
-  // a URL yet. This saves 1-3s on every loadFromCloud call.
-  let apiUrl = getApiUrlSync();
-  if (!apiUrl) {
-    apiUrl = await getApiUrl();
-  }
-  if (!apiUrl) return null;
-
-  // FIX: Backward-compatible auth token (same as syncToCloud).
-  const authToken = getCloudAuthToken();
-  if (!authToken) {
-    console.warn('Cloud Sync: VITE_API_TOKEN not set — sync disabled.');
-    return false;
-  }
-
+  // Route through the backend proxy — works cross-origin (Vercel→Render)
+  // without needing VITE_API_URL or VITE_API_TOKEN at build time.
   try {
-    const res = await fetch(`${apiUrl}?action=load&authToken=${encodeURIComponent(authToken)}&t=${Date.now()}`, {
-      signal: AbortSignal.timeout(8000),
+    const res = await apiFetch(`${PROXY_BASE}/api/cloud/load`, {
+      signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
 
-    const text = await res.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      const extracted = extractBalancedJSON(text);
-      if (!extracted) return null;
-      try { data = JSON.parse(extracted); } catch { return null; }
-    }
-    if (typeof data === 'string') {
-      try { data = JSON.parse(data); } catch { return null; }
-    }
-
+    const data = await res.json();
     if (data && data.portfolio && Array.isArray(data.portfolio)) {
       const valid = data.portfolio.filter((p: any) =>
         p && typeof p.symbol === 'string' && p.symbol.length > 0 &&
@@ -1078,16 +1039,13 @@ export async function loadFromCloud(): Promise<Position[] | null> {
         typeof p.avgPrice === 'number' && p.avgPrice > 0
       );
       if (valid.length === 0 && data.portfolio.length > 0) {
-        console.warn(`☁️ Cloud Sync: ${data.portfolio.length} positions loaded but 0 passed validation — data may be corrupted`);
+        console.warn(`☁️ Cloud Sync: ${data.portfolio.length} positions loaded but 0 passed validation.`);
         return null;
-      }
-      if (valid.length < data.portfolio.length) {
-        console.warn(`☁️ Cloud Sync: ${data.portfolio.length - valid.length} positions failed validation and were filtered out`);
       }
       return valid as Position[];
     }
   } catch (e) {
-    console.warn('Cloud load failed:', e);
+    console.warn('☁️ Cloud load failed:', e);
   }
 
   return null;
@@ -1177,52 +1135,30 @@ export async function sendTelegramViaServer(message: string, _chatId?: string): 
 }
 
 // ========================================
-// GROQ API KEY — CLOUD SYNC (FREE)
+// GROQ API KEY — CLOUD SYNC (via backend proxy)
 // ========================================
 export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
-  let apiUrl = getApiUrlSync();
-  if (!apiUrl) apiUrl = await getApiUrl();
-  if (!apiUrl || !key) return false;
-  const authToken = getCloudAuthToken();
-  if (!authToken) {
-    console.warn('Cloud Sync: VITE_API_TOKEN not set — sync disabled.');
-    return false;
-  }
+  if (!key) return false;
   try {
-    // Same CORS-"simple" request rule as syncToCloud (see note there) so the
-    // Apps Script doPost actually receives the payload.
-    await fetch(apiUrl, {
+    const res = await apiFetch(`${PROXY_BASE}/api/cloud/save-key`, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      redirect: 'follow',
-      body: JSON.stringify({ groqKey: key, action: 'saveKey', authToken, timestamp: Date.now() })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ groqKey: key }),
+      signal: AbortSignal.timeout(10000),
     });
-    return true;
+    return res.ok;
   } catch (e) {
     return false;
   }
 }
 
 export async function loadGroqKeyFromCloud(): Promise<string | null> {
-  let apiUrl = getApiUrlSync();
-  if (!apiUrl) apiUrl = await getApiUrl();
-  if (!apiUrl) return null;
-  const authToken = getCloudAuthToken();
-  if (!authToken) {
-    console.warn('Cloud Sync: VITE_API_TOKEN not set — sync disabled.');
-    return false;
-  }
   try {
-    const res = await fetch(`${apiUrl}?action=loadKey&authToken=${encodeURIComponent(authToken)}&t=${Date.now()}`);
+    const res = await apiFetch(`${PROXY_BASE}/api/cloud/load-key`, {
+      signal: AbortSignal.timeout(8000),
+    });
     if (!res.ok) return null;
-    const text = await res.text();
-    let data;
-    try { data = JSON.parse(text); }
-    catch {
-      const extracted = extractBalancedJSON(text);
-      if (!extracted) return null;
-      try { data = JSON.parse(extracted); } catch { return null; }
-    }
+    const data = await res.json();
     const key = data?.groqKey;
     if (key && typeof key === 'string' && key.length > 10) {
       return key;

@@ -1763,6 +1763,111 @@ app.delete('/api/schedule/:id', (req, res) => {
 });
 
 // ============================================================
+// CLOUD SYNC PROXY — routes Google Sheets sync through the backend
+// ============================================================
+// WHY: The frontend previously called Google Apps Script DIRECTLY,
+// which required VITE_API_URL and VITE_API_TOKEN as BUILD-TIME env vars
+// on Vercel. If those weren't set, cloud sync silently failed and the
+// portfolio was empty on Vercel (but worked on Render where the env
+// vars were available at build time).
+//
+// Now the frontend calls /api/cloud/load and /api/cloud/save (which are
+// authenticated via the session token). The server uses its own API_URL
+// and API_TOKEN env vars to call Google Apps Script. This eliminates the
+// build-time env var requirement and keeps the token server-side only.
+// ============================================================
+const CLOUD_API_URL = process.env.API_URL || process.env.VITE_API_URL || '';
+const CLOUD_AUTH_TOKEN = process.env.API_TOKEN || process.env.VITE_API_TOKEN || '';
+
+// GET /api/cloud/load → proxy to Google Apps Script ?action=load
+app.get('/api/cloud/load', async (req, res) => {
+  if (!CLOUD_API_URL) return jsonError(res, 503, 'Cloud sync not configured (API_URL not set).');
+  if (!CLOUD_AUTH_TOKEN) return jsonError(res, 503, 'Cloud sync not configured (API_TOKEN not set).');
+  try {
+    const url = `${CLOUD_API_URL}?action=load&authToken=${encodeURIComponent(CLOUD_AUTH_TOKEN)}&t=${Date.now()}`;
+    const upstream = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!upstream.ok) return jsonError(res, 502, 'Cloud sync upstream error.');
+    const text = await upstream.text();
+    let data;
+    try { data = JSON.parse(text); } catch {
+      // Apps Script sometimes wraps JSON in extra text — try to extract
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) return jsonError(res, 502, 'Cloud sync returned invalid data.');
+      try { data = JSON.parse(match[0]); } catch { return jsonError(res, 502, 'Cloud sync returned invalid JSON.'); }
+    }
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data); } catch { return jsonError(res, 502, 'Cloud sync returned invalid data.'); }
+    }
+    return res.json(data);
+  } catch (e) {
+    return jsonError(res, 502, 'Cloud sync failed.', e);
+  }
+});
+
+// POST /api/cloud/save → proxy to Google Apps Script (action=update)
+app.post('/api/cloud/save', async (req, res) => {
+  if (!CLOUD_API_URL) return jsonError(res, 503, 'Cloud sync not configured (API_URL not set).');
+  if (!CLOUD_AUTH_TOKEN) return jsonError(res, 503, 'Cloud sync not configured (API_TOKEN not set).');
+  const { portfolio, usdInr } = req.body || {};
+  if (!Array.isArray(portfolio) || portfolio.length === 0) {
+    return jsonError(res, 400, 'portfolio[] required (non-empty).');
+  }
+  try {
+    const upstream = await fetch(CLOUD_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      redirect: 'follow',
+      body: JSON.stringify({ action: 'update', authToken: CLOUD_AUTH_TOKEN, portfolio, timestamp: Date.now(), usdInr }),
+      signal: AbortSignal.timeout(10000),
+    });
+    return res.json({ ok: upstream.ok, saved: portfolio.length });
+  } catch (e) {
+    return jsonError(res, 502, 'Cloud sync save failed.', e);
+  }
+});
+
+// POST /api/cloud/save-key → proxy to Google Apps Script (action=saveKey)
+app.post('/api/cloud/save-key', async (req, res) => {
+  if (!CLOUD_API_URL) return jsonError(res, 503, 'Cloud sync not configured.');
+  if (!CLOUD_AUTH_TOKEN) return jsonError(res, 503, 'Cloud sync not configured.');
+  const { groqKey } = req.body || {};
+  if (!groqKey) return jsonError(res, 400, 'groqKey required.');
+  try {
+    const upstream = await fetch(CLOUD_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      redirect: 'follow',
+      body: JSON.stringify({ action: 'saveKey', authToken: CLOUD_AUTH_TOKEN, groqKey, timestamp: Date.now() }),
+      signal: AbortSignal.timeout(10000),
+    });
+    return res.json({ ok: upstream.ok });
+  } catch (e) {
+    return jsonError(res, 502, 'Cloud sync key save failed.', e);
+  }
+});
+
+// GET /api/cloud/load-key → proxy to Google Apps Script (action=loadKey)
+app.get('/api/cloud/load-key', async (req, res) => {
+  if (!CLOUD_API_URL) return jsonError(res, 503, 'Cloud sync not configured.');
+  if (!CLOUD_AUTH_TOKEN) return jsonError(res, 503, 'Cloud sync not configured.');
+  try {
+    const url = `${CLOUD_API_URL}?action=loadKey&authToken=${encodeURIComponent(CLOUD_AUTH_TOKEN)}&t=${Date.now()}`;
+    const upstream = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!upstream.ok) return jsonError(res, 502, 'Cloud sync key load error.');
+    const text = await upstream.text();
+    let data;
+    try { data = JSON.parse(text); } catch {
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) return res.json({ groqKey: '' });
+      try { data = JSON.parse(match[0]); } catch { return res.json({ groqKey: '' }); }
+    }
+    return res.json(data);
+  } catch (e) {
+    return jsonError(res, 502, 'Cloud sync key load failed.', e);
+  }
+});
+
+// ============================================================
 // HEALTH ENDPOINT — used by Render health check + uptime monitors
 // ============================================================
 app.get('/health', (_req, res) => {
