@@ -9,7 +9,9 @@ import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen } from './telegram';
 const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
 // ============================================================
-// Centralized API fetch — ALWAYS sends credentials (httpOnly cookie)
+// Centralized API fetch — sends auth token via Authorization header
+// (bulletproof for cross-origin: Vercel frontend → Render backend)
+// Also sends credentials (httpOnly cookie) as a fallback.
 // ============================================================
 let _sessionToken: string | null = null;
 export function setSessionToken(token: string | null) {
@@ -20,7 +22,13 @@ try { const t = sessionStorage.getItem('wealthai_session_token'); if (t) _sessio
 
 export function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const url = input.startsWith('http') || input.startsWith('/api') ? input : `${PROXY_BASE}${input}`;
-  return fetch(url, { ...init, credentials: 'include', headers: { ...(init.headers || {}) } });
+  const headers: Record<string, string> = { ...(init.headers as Record<string, string> || {}) };
+  // PRIMARY auth: Authorization Bearer token — works cross-origin ALWAYS,
+  // no SameSite/cookie/CORS-credential issues.
+  if (_sessionToken) {
+    headers['Authorization'] = `Bearer ${_sessionToken}`;
+  }
+  return fetch(url, { ...init, credentials: 'include', headers });
 }
 export function getSessionToken(): string | null { return _sessionToken; }
 

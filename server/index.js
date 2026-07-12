@@ -85,9 +85,10 @@ const PUBLIC_PATHS = new Set([
   '/api/feed-status',
 ]);
 
-// Auth middleware — checks for valid session cookie OR a ?session= query param.
-// The query-param fallback is needed for EventSource (SSE stream), which cannot
-// reliably send cookies in cross-origin mode (Vercel frontend → Render backend).
+// Auth middleware — checks multiple auth mechanisms in order:
+// 1. Authorization: Bearer <token> header (PRIMARY — bulletproof for cross-origin)
+// 2. httpOnly session cookie (fallback — same-origin only)
+// 3. ?session=<token> query param (fallback — for EventSource SSE)
 function requireAuth(req, res, next) {
   // Public paths skip auth.
   if (PUBLIC_PATHS.has(req.path)) return next();
@@ -102,11 +103,19 @@ function requireAuth(req, res, next) {
     return next();
   }
 
-  // Check session cookie first (primary mechanism for fetch + XHR).
-  let token = parseCookie(req.headers.cookie || '')[SESSION_COOKIE];
+  // 1. Authorization: Bearer <token> header (PRIMARY — works cross-origin always)
+  let token = null;
+  const authHeader = req.headers.authorization || '';
+  if (authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7).trim();
+  }
 
-  // Fallback: ?session=<token> query param (for EventSource SSE stream, which
-  // can't reliably send cookies cross-origin in some browsers).
+  // 2. httpOnly session cookie (fallback — same-origin or SameSite=None)
+  if (!token) {
+    token = parseCookie(req.headers.cookie || '')[SESSION_COOKIE];
+  }
+
+  // 3. ?session=<token> query param (fallback — for EventSource SSE)
   if (!token && req.query && typeof req.query.session === 'string') {
     token = req.query.session;
   }
