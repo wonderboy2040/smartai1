@@ -14,7 +14,6 @@
 // ============================================================
 
 import { DEFAULT_USD_INR } from './constants';
-import { apiFetch } from './api';
 
 const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
@@ -38,7 +37,7 @@ async function fetchIndiaQuote(symbol: string): Promise<QuoteResult | null> {
   const clean = symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
   // 1) Server proxy /api/quote (handles Groww + Yahoo fallback server-side)
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/quote?symbols=${encodeURIComponent(clean)}&market=IN`, {
+    const res = await fetch(`${PROXY_BASE}/api/quote?symbols=${encodeURIComponent(clean)}&market=IN`, {
       signal: AbortSignal.timeout(5000),
     });
     if (res.ok) {
@@ -60,7 +59,7 @@ async function fetchIndiaQuote(symbol: string): Promise<QuoteResult | null> {
 async function fetchUSQuote(symbol: string): Promise<QuoteResult | null> {
   const clean = symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/quote?symbols=${encodeURIComponent(clean)}&market=US`, {
+    const res = await fetch(`${PROXY_BASE}/api/quote?symbols=${encodeURIComponent(clean)}&market=US`, {
       signal: AbortSignal.timeout(5000),
     });
     if (res.ok) {
@@ -106,7 +105,7 @@ async function fetchCryptoQuote(symbol: string): Promise<QuoteResult | null> {
   const clean = symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
   // 1) CoinDCX via proxy
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, {
+    const res = await fetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, {
       signal: AbortSignal.timeout(5000),
     });
     if (res.ok) {
@@ -214,19 +213,19 @@ export async function checkSourceHealth(): Promise<Record<string, boolean>> {
   const checks: Promise<void>[] = [
     (async () => {
       try {
-        const r = await apiFetch(`${PROXY_BASE}/api/quote?symbols=RELIANCE&market=IN`, { signal: AbortSignal.timeout(3000) });
+        const r = await fetch(`${PROXY_BASE}/api/quote?symbols=RELIANCE&market=IN`, { signal: AbortSignal.timeout(3000) });
         health.india_proxy = r.ok;
       } catch { health.india_proxy = false; }
     })(),
     (async () => {
       try {
-        const r = await apiFetch(`${PROXY_BASE}/api/quote?symbols=AAPL&market=US`, { signal: AbortSignal.timeout(3000) });
+        const r = await fetch(`${PROXY_BASE}/api/quote?symbols=AAPL&market=US`, { signal: AbortSignal.timeout(3000) });
         health.us_proxy = r.ok;
       } catch { health.us_proxy = false; }
     })(),
     (async () => {
       try {
-        const r = await apiFetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, { signal: AbortSignal.timeout(3000) });
+        const r = await fetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, { signal: AbortSignal.timeout(3000) });
         health.crypto_coindcx = r.ok;
       } catch { health.crypto_coindcx = false; }
     })(),

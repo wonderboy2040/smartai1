@@ -6,7 +6,6 @@ import {
   quantBrainSuperintelligence, type SuperintelligenceContext,
 } from '../utils/superintelligenceEngine';
 import type { Position, PriceData } from '../types';
-import { apiFetch } from '../utils/api';
 
 const PROXY_BASE = import.meta.env.VITE_API_PROXY || '';
 let _proxyStatus: Promise<any> | null = null;
@@ -18,7 +17,7 @@ async function getServerAIStatus() {
     _proxyStatusTs = Date.now();
     _proxyStatus = (async () => {
       try {
-        const res = await apiFetch(`${PROXY_BASE}/api/ai-status`, { signal: AbortSignal.timeout(3000) });
+        const res = await fetch(`${PROXY_BASE}/api/ai-status`, { signal: AbortSignal.timeout(3000) });
         if (!res.ok) {
           // FIX L39: previously a failed fetch cached the rejected/null promise
           // for 30s, so a server blip kept the chat showing "offline" even
@@ -37,7 +36,7 @@ async function getServerAIStatus() {
 }
 
 async function callAIProxy(endpoint: string, body: any): Promise<Response | null> {
-  const res = await apiFetch(`${PROXY_BASE}/api/${endpoint}`, {
+  const res = await fetch(`${PROXY_BASE}/api/${endpoint}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -58,7 +57,7 @@ async function fetchRealtimeSnapshot(): Promise<string> {
         body: JSON.stringify({ symbols: { tickers: ['NSE:NIFTY','BSE:SENSEX','NSE:BANKNIFTY','AMEX:SPY','NASDAQ:QQQ','CBOE:VIX','NSE:INDIAVIX','TVC:DXY','COMEX:GC1!','NYMEX:CL1!'] }, columns: ['name','close','change','Recommend.All'] }),
         signal: AbortSignal.timeout(5000)
       }),
-      apiFetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, { signal: AbortSignal.timeout(5000) }),
+      fetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, { signal: AbortSignal.timeout(5000) }),
       fetch('https://scanner.tradingview.com/bond/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
@@ -111,7 +110,7 @@ async function fetchRealtimeSnapshot(): Promise<string> {
 
 async function fetchWebIntel(query: string): Promise<string> {
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/tavily`, {
+    const res = await fetch(`${PROXY_BASE}/api/tavily`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: [{ role: 'user', content: `${query} latest market news 2026` }], model: '' }),

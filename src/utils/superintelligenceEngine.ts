@@ -21,7 +21,6 @@
 
 import { Position, PriceData } from '../types';
 import { isCryptoSymbol } from './constants';
-import { apiFetch } from './api';
 
 const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
@@ -135,7 +134,7 @@ async function fetchMarketSnapshot(): Promise<MarketSnapshot> {
   // Crypto via server proxy
   tasks.push((async () => {
     try {
-      const r = await apiFetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, {
+      const r = await fetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, {
         signal: AbortSignal.timeout(5000),
       });
       if (r.ok) {
@@ -153,7 +152,7 @@ async function fetchMarketSnapshot(): Promise<MarketSnapshot> {
   // Forex
   tasks.push((async () => {
     try {
-      const r = await apiFetch(`${PROXY_BASE}/api/forex?t=${Date.now()}`, { signal: AbortSignal.timeout(4000) });
+      const r = await fetch(`${PROXY_BASE}/api/forex?t=${Date.now()}`, { signal: AbortSignal.timeout(4000) });
       if (r.ok) { const j = await r.json(); snap.usdInr = j.usdInr; }
     } catch { /* noop */ }
   })());
@@ -161,7 +160,7 @@ async function fetchMarketSnapshot(): Promise<MarketSnapshot> {
   // Inflation
   tasks.push((async () => {
     try {
-      const r = await apiFetch(`${PROXY_BASE}/api/inflation?t=${Date.now()}`, { signal: AbortSignal.timeout(4000) });
+      const r = await fetch(`${PROXY_BASE}/api/inflation?t=${Date.now()}`, { signal: AbortSignal.timeout(4000) });
       if (r.ok) {
         const j = await r.json();
         snap.indiaInflation = j.india;
@@ -343,7 +342,7 @@ async function fetchPortfolioNews(
 
 async function fetchTavilyNews(query: string): Promise<PortfolioNewsItem[]> {
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/tavily`, {
+    const res = await fetch(`${PROXY_BASE}/api/tavily`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: [{ role: 'user', content: query }] }),

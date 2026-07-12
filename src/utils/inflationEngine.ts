@@ -11,8 +11,6 @@
 //   real_value = nominal_value / (1 + inflation) ^ years
 // ============================================================
 
-import { apiFetch } from './api';
-
 const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
 let _cached: { india: number; us: number; ts: number } | null = null;
@@ -29,7 +27,7 @@ export async function fetchInflationRates(): Promise<{ india: number; us: number
 
   // Try our server-side endpoint (added below in server/index.js).
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/inflation?t=${Date.now()}`, {
+    const res = await fetch(`${PROXY_BASE}/api/inflation?t=${Date.now()}`, {
       signal: AbortSignal.timeout(5000),
     });
     if (res.ok) {

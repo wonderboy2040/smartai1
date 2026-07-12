@@ -6,7 +6,6 @@ import {
   fetchBrokerStatus, runSwarmCommittee,
   type JournalResult, type PatternResult, type Thesis, type ScheduledJob,
 } from '../../utils/researchLabApi';
-import { apiFetch } from '../../utils/api';
 
 // ============================================================
 // RESEARCH LAB TAB — Vibe-Trading inspired features
@@ -272,7 +271,7 @@ function PatternRecognition(_props: { portfolio: any[]; livePrices: any }) {
     // Fetch candles via /api/chart
     const PROXY = (import.meta.env.VITE_API_PROXY as string) || '';
     try {
-      const res = await apiFetch(`${PROXY}/api/chart?symbol=${encodeURIComponent(symbol)}&market=IN&interval=D`, { signal: AbortSignal.timeout(8000) });
+      const res = await fetch(`${PROXY}/api/chart?symbol=${encodeURIComponent(symbol)}&market=IN&interval=D`, { signal: AbortSignal.timeout(8000) });
       if (res.ok) {
         const data = await res.json();
         const candles = data?.candles || [];

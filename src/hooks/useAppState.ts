@@ -7,8 +7,7 @@ import {
   fetchSinglePrice, batchFetchPrices, batchFetchIndianPrices, getIndiaPollInterval,
   batchFetchUSPrices, getUSPollInterval, fetchForexRate,
   syncToCloud, loadFromCloud, sendTelegramAlert,
-  syncGroqKeyToCloud, loadGroqKeyFromCloud, getBatchInterval, fetchMarketIntelligence,
-  apiFetch, setSessionToken, ensureAuthenticated,
+  syncGroqKeyToCloud, loadGroqKeyFromCloud, getBatchInterval, fetchMarketIntelligence
 } from '../utils/api';
 import { secureStorage } from '../utils/secureStorage';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from '../utils/tvWebsocket';
@@ -207,45 +206,9 @@ export function useAppState() {
   }, []);
 
   // --- Initialize ---
-  // On page load, restore the session IMMEDIATELY (no async wait). If we have
-  // a token, set isAuthenticated=true right away so data loading starts
-  // instantly. Then verify in the background — if the token is expired, we'll
-  // gracefully logout. This fixes the "empty portfolio after refresh" bug
-  // where the async auth check blocked loadFromCloud() from running.
   useEffect(() => {
     const auth = secureStorage.getItem('authDone');
-    if (auth !== 'true') return;
-
-    // Restore token from sessionStorage OR localStorage.
-    const token = (() => {
-      try {
-        return sessionStorage.getItem('wealthai_session_token') || localStorage.getItem('wealthai_session_token');
-      } catch { return null; }
-    })();
-
-    if (!token) {
-      // No token — force re-login.
-      console.warn('🔒 Session token missing — forcing re-login.');
-      secureStorage.removeItem('authDone');
-      setIsAuthenticated(false);
-      return;
-    }
-
-    // We have a token — restore it and authenticate IMMEDIATELY (no await).
-    // This lets loadFromCloud() and price fetching start right away.
-    setSessionToken(token);
-    setIsAuthenticated(true);
-
-    // Verify in the background. If invalid, logout gracefully (but don't
-    // block the initial data load).
-    ensureAuthenticated().then(valid => {
-      if (!valid) {
-        console.warn('🔒 Session token expired — forcing re-login.');
-        secureStorage.removeItem('authDone');
-        setSessionToken(null);
-        setIsAuthenticated(false);
-      }
-    });
+    if (auth === 'true') setIsAuthenticated(true);
   }, []);
 
   // --- Load data on auth ---
@@ -399,7 +362,7 @@ export function useAppState() {
 
     const pollCrypto = async () => {
       try {
-        const res = await apiFetch(`${proxyBase}/api/crypto-prices?t=${Date.now()}`, {
+        const res = await fetch(`${proxyBase}/api/crypto-prices?t=${Date.now()}`, {
           signal: AbortSignal.timeout(5000)
         });
         if (res.ok) {
@@ -1221,52 +1184,14 @@ export function useAppState() {
   const smartAllocations = useMemo(() => getSmartAllocations(livePrices, indiaSIP, usSIP, btcSIP, ethSIP, usdInrRate), [livePrices, indiaSIP, usSIP, btcSIP, ethSIP, usdInrRate]);
 
   // --- Handlers ---
-  // SECURITY: PIN is verified SERVER-SIDE via /api/auth/login. The server
-  // compares the PIN against APP_PIN (server-side env var, never exposed to
-  // the browser) and sets an httpOnly session cookie. The previous client-side
-  // check (pinInput === VITE_SECURE_PIN || '2023') was trivially bypassable.
   const verifyPin = useCallback(async () => {
-    if (!pinInput) return;
-    try {
-      const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
-      const res = await apiFetch(`${proxyBase}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: pinInput }),
-      });
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        // Store the session token for EventSource (SSE can't use cookies cross-origin).
-        if (data.sessionToken) setSessionToken(data.sessionToken);
-        secureStorage.setItem('authDone', 'true');
-        setIsAuthenticated(true);
-      } else if (res.status === 401) {
-        alert('❌ Security Access Denied. Galat PIN!');
-        setPinInput('');
-      } else {
-        alert(`⚠️ Login failed (HTTP ${res.status}). Check server logs.`);
-        setPinInput('');
-      }
-    } catch (e) {
-      console.warn('Login failed:', e);
-      const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
-      if (!proxyBase) {
-        alert('⚠️ Login failed: VITE_API_PROXY is not set. If frontend and backend are on different domains, set VITE_API_PROXY to the backend URL (e.g. https://smartai1.onrender.com) in Vercel environment variables.');
-      } else {
-        alert(`⚠️ Cannot reach backend at ${proxyBase}. Check: 1) Backend is deployed and running, 2) ALLOWED_ORIGINS on backend includes this frontend URL, 3) Network/CORS settings.`);
-      }
-      setPinInput('');
-    }
+    const expectedPin = import.meta.env.VITE_SECURE_PIN || '2023';
+    if (pinInput === expectedPin) { secureStorage.setItem('authDone', 'true'); setIsAuthenticated(true); }
+    else { alert('❌ Security Access Denied. Galat PIN!'); setPinInput(''); }
   }, [pinInput]);
 
   const logout = useCallback(() => {
-    secureStorage.removeItem('authDone');
-    setIsAuthenticated(false);
-    setPinInput('');
-    setSessionToken(null);
-    // Also invalidate the server-side session.
-    const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
-    apiFetch(`${proxyBase}/api/auth/logout`, { method: 'POST' }).catch(() => {});
+    secureStorage.removeItem('authDone'); setIsAuthenticated(false); setPinInput('');
   }, []);
 
   const analyzeSymbol = useCallback(async () => {

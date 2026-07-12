@@ -80,7 +80,7 @@ function isAuthorized(msg) {
   if (!TG_CHAT_ID) {
     console.warn(`[TELEGRAM BOT] Rejecting message from ${msg.chat.id}: TG_CHAT_ID not configured`);
     if (typeof bot !== 'undefined') {
-      bot.sendMessage(msg.chat.id, `🚫 Unauthorized! Your Chat ID is: ${msg.chat.id}\n\nPlease add this ID to TG_CHAT_ID in your Render dashboard environment variables to enable the bot.`).catch(() => {});
+      bot.sendMessage(msg.chat.id, `🚫 <b>Unauthorized!</b>\nYour Chat ID is: <code>${msg.chat.id}</code>\n\nPlease add this ID to <b>TG_CHAT_ID</b> in your Render dashboard environment variables to enable the bot.`, { parse_mode: 'HTML' }).catch(() => {});
     }
     return false;
   }
@@ -88,23 +88,10 @@ function isAuthorized(msg) {
   if (!match) {
     console.warn(`[TELEGRAM BOT] Rejecting message from unauthorized chat ID: ${msg.chat.id}`);
     if (typeof bot !== 'undefined') {
-      bot.sendMessage(msg.chat.id, `🚫 Access Denied! Your Chat ID (${msg.chat.id}) does not match the configured TG_CHAT_ID.`).catch(() => {});
+      bot.sendMessage(msg.chat.id, `🚫 <b>Access Denied!</b>\nYour Chat ID (<code>${msg.chat.id}</code>) does not match the configured TG_CHAT_ID.\n\nPlease update <b>TG_CHAT_ID</b> in your Render dashboard environment variables.`, { parse_mode: 'HTML' }).catch(() => {});
     }
   }
   return match;
-}
-
-// SECURITY: escape HTML special characters in user-provided content before
-// inserting it into Telegram HTML messages. Without this, a user could
-// inject HTML tags (e.g., /scan <b>FAKE ALERT</b>) that get rendered as
-// formatted HTML in the chat.
-function escapeHtml(str) {
-  return String(str || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 // Performance streak tracking with file persistence
@@ -154,29 +141,12 @@ app.use(express.static(distPath));
 // ========================================
 const apiRouter = express.Router();
 
-// CORS for all API routes — allowlist only (never reflect arbitrary origins).
-const BOT_ALLOWED_ORIGINS = new Set(
-  (process.env.ALLOWED_ORIGINS || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean)
-    .concat([
-      'http://localhost:5173',
-      'http://127.0.0.1:5173',
-      'http://localhost:8080',
-      'http://127.0.0.1:8080',
-      'http://localhost:3000',
-      'http://127.0.0.1:3000',
-    ])
-);
+// CORS for all API routes — allows frontend from any origin to use the proxy
 apiRouter.use((req, res, next) => {
-  const origin = req.headers.origin || '';
-  if (origin && BOT_ALLOWED_ORIGINS.has(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Vary', 'Origin');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  }
+  const origin = req.headers.origin || '*';
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
@@ -193,7 +163,7 @@ apiRouter.get('/config', (req, res) => {
 
 apiRouter.get('/ai-status', (req, res) => {
   res.json({
-    nvidia: !!NVIDIA_KEY,
+    nvidia: true,
     gemini: !!(GEMINI_KEY && GEMINI_KEY.length > 5),
     groq: !!(GROQ_KEY && GROQ_KEY.length > 10),
     claude: !!(CLAUDE_KEY && CLAUDE_KEY.length > 10),
@@ -238,7 +208,7 @@ apiRouter.post('/nvidia', express.json({ limit: '1mb' }), async (req, res) => {
     res.json(data);
   } catch (error) {
     console.error('[API] NVIDIA Error:', error.message);
-    res.status(502).json({ error: 'NVIDIA AI provider is temporarily unavailable.' });
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -273,7 +243,7 @@ apiRouter.post('/gemini', express.json({ limit: '1mb' }), async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error('Gemini proxy error:', e.message);
-    res.status(502).json({ error: 'Gemini AI provider is temporarily unavailable.' });
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -305,7 +275,7 @@ apiRouter.post('/groq', express.json({ limit: '1mb' }), async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error('Groq proxy error:', e.message);
-    res.status(502).json({ error: 'Groq AI provider is temporarily unavailable.' });
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -341,7 +311,7 @@ apiRouter.post('/claude', express.json({ limit: '1mb' }), async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error('Claude proxy error:', e.message);
-    res.status(502).json({ error: 'Claude AI provider is temporarily unavailable.' });
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -372,7 +342,7 @@ apiRouter.post('/openrouter', express.json({ limit: '1mb' }), async (req, res) =
     res.json(data);
   } catch (e) {
     console.error('OpenRouter proxy error:', e.message);
-    res.status(502).json({ error: 'OpenRouter AI provider is temporarily unavailable.' });
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -402,7 +372,7 @@ apiRouter.post('/cerebras', express.json({ limit: '1mb' }), async (req, res) => 
     res.json(data);
   } catch (e) {
     console.error('Cerebras proxy error:', e.message);
-    res.status(502).json({ error: 'Cerebras AI provider is temporarily unavailable.' });
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -432,14 +402,23 @@ apiRouter.post('/huggingface', express.json({ limit: '1mb' }), async (req, res) 
     res.json(data);
   } catch (e) {
     console.error('HuggingFace proxy error:', e.message);
-    res.status(502).json({ error: 'HuggingFace AI provider is temporarily unavailable.' });
+    res.status(500).json({ error: e.message });
   }
 });
 
-// Diagnostic endpoint REMOVED (/debug-keys).
-// Exposing API key prefixes — even just 4 chars — helps attackers confirm
-// which credential is in use. Use the /api/ai-status endpoint (boolean flags
-// only) on the parent server instead.
+// Diagnostic: show which keys are configured (without revealing values)
+apiRouter.get('/debug-keys', (req, res) => {
+  res.json({
+    gemini: { configured: !!(GEMINI_KEY?.length > 5), prefix: GEMINI_KEY ? GEMINI_KEY.substring(0, 4) + '...' : null },
+    groq: { configured: !!(GROQ_KEY?.length > 10), prefix: GROQ_KEY ? GROQ_KEY.substring(0, 4) + '...' : null },
+    claude: { configured: !!(CLAUDE_KEY?.length > 10), prefix: CLAUDE_KEY ? CLAUDE_KEY.substring(0, 4) + '...' : null },
+    openrouter: { configured: !!(OPENROUTER_KEY?.length > 10), prefix: OPENROUTER_KEY ? OPENROUTER_KEY.substring(0, 4) + '...' : null },
+    cerebras: { configured: !!(CEREBRAS_KEY?.length > 10), prefix: CEREBRAS_KEY ? CEREBRAS_KEY.substring(0, 4) + '...' : null },
+    huggingface: { configured: !!(HF_KEY?.length > 10), prefix: HF_KEY ? HF_KEY.substring(0, 4) + '...' : null },
+    tavily: { configured: !!(TAVILY_API_KEY?.length > 10) },
+    timestamp: new Date().toISOString()
+  });
+});
 
 // Mount the API router at /api
 app.use('/api', apiRouter);
@@ -463,16 +442,25 @@ app.use((req, res) => {
 
 if (process.env.BOT_ONLY !== 'true') {
   app.listen(PORT, () => {
-    console.log(`Web Server running on port ${PORT} - Hosting Bot & Site!`);
+    console.log(`🌐 Web Server running on port ${PORT} - Hosting Bot & Site!`);
   });
 } else {
-  console.log('Telegram Bot running in background (Express port listener disabled).');
+  console.log('🤖 Telegram Bot running in background (Express port listener disabled).');
 }
 
-// NOTE: Self-ping keepalive REMOVED — it violates Render's Terms of Service.
-// When this bot runs as a forked child of server/index.js (BOT_ONLY=true),
-// the parent server's /health endpoint is what Render monitors. For 24x7
-// uptime on the free tier, use an EXTERNAL uptime monitor (e.g. UptimeRobot).
+// Self-ping keepalive for Render free tier (runs in both modes to be safe)
+const RENDER_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+if (RENDER_URL) {
+  console.log(`📡 Render Keepalive active: pinging ${RENDER_URL}/health every 14 minutes`);
+  setInterval(async () => {
+    try {
+      const res = await fetch(`${RENDER_URL}/health`, { signal: AbortSignal.timeout(10000) });
+      console.log(`🏓 Self-ping status: ${res.status} — Keeping service alive`);
+    } catch (e) {
+      console.warn('🏓 Self-ping failed:', e.message);
+    }
+  }, 14 * 60 * 1000);
+}
 
 // ========================================
 // INITIALIZE BOT
@@ -491,8 +479,8 @@ const bot = new TelegramBot(TG_TOKEN, {
     params: { timeout: 30, allowed_updates: ['message'] }
   }
 });
-console.log('Telegram Bot polling started.');
-// NOTE: never log the token or any prefix of it.
+console.log('📡 Telegram Bot polling started...');
+console.log(`🔑 Token: ${TG_TOKEN ? TG_TOKEN.substring(0, 10) + '...' : 'MISSING!'}`);
 
 // ========================================
 // INITIAL DATA LOAD
@@ -775,11 +763,33 @@ Bina / ke koi bhi message likho = ADVANCE PRO AI chat!
 });
 
 // ========================================
-// COMMAND: /debug_env — REMOVED
+// COMMAND: /debug_env (Hidden Diagnosis)
 // ========================================
-// The /debug_env command was removed for production safety. It listed
-// every env var name on the server, leaking the deployment's credential
-// topology. To diagnose missing env vars, check the server startup logs.
+bot.onText(/^\/debug_env(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  const env = process.env;
+
+  let report = '🔍 <b>ENVIRONMENT VARIABLE DEBUGGER</b>\n━━━━━━━━━━━━━━━━━━━━━━\n';
+
+  report += `<b>GROQ_KEY:</b> ${env.GROQ_KEY ? '✅ Found (' + env.GROQ_KEY.length + ' ch)' : '❌ MISSING'}\n`;
+  report += `<b>VITE_GROQ_API_KEY:</b> ${env.VITE_GROQ_API_KEY ? '✅ Found (' + env.VITE_GROQ_API_KEY.length + ' ch)' : '❌ MISSING'}\n`;
+  report += `<b>TG_TOKEN:</b> ${env.TG_TOKEN ? '✅ Found (' + env.TG_TOKEN.length + ' ch)' : '❌ MISSING'}\n`;
+
+  report += '\n<b>SYSTEM ENV KEYS SCAN:</b>\n';
+  const allKeys = Object.keys(env).filter(k => !k.startsWith('npm_') && !k.startsWith('Path')).sort();
+  for (const k of allKeys.slice(0, 30)) { // Limit to avoid hitting Telegram msg limits
+    if (k.includes('KEY') || k.includes('TOKEN') || k.includes('API') || k.includes('SECRET') || k.includes('URL')) {
+      report += `• ${k}: [REDACTED]\n`;
+    } else {
+      report += `• ${k}\n`;
+    }
+  }
+
+  report += '\n<i>Note: If variables are missing here, add them to your Hosting Dashboard (Render/Vercel) Environment Variables section.</i>';
+
+  await safeSend(chatId, report);
+});
 
 // ========================================
 // COMMAND: /help
@@ -1610,7 +1620,7 @@ bot.onText(/^\/setkey(?:@\w+)?(?:\s+(\w+)\s+(.+))?$/i, async (msg, match) => {
     setTavilyKey(keyValue);
     parsedName = 'Tavily API Key';
   } else {
-    await safeSend(chatId, `❌ Unknown key name: <b>${escapeHtml(keyName)}</b>. Use: groq or tavily.`);
+    await safeSend(chatId, `❌ Unknown key name: <b>${keyName}</b>. Use: groq or tavily.`);
     return;
   }
 
@@ -1686,17 +1696,17 @@ bot.onText(/^\/scan(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
   const symbol = match[1].trim().toUpperCase();
   console.log(`📥 /scan ${symbol} from ${msg.from?.first_name || chatId}`);
   try {
-    await safeSend(chatId, `🔍 <i>Deep scanning ${escapeHtml(symbol)}... ek second...</i>`);
+    await safeSend(chatId, `🔍 <i>Deep scanning ${symbol}... ek second...</i>`);
     const data = await fetchSingleSymbol(symbol);
     if (!data) {
-      await safeSend(chatId, `❌ <b>${escapeHtml(symbol)}</b> not found. Check symbol name and try again.\n\nExamples: <code>/scan RELIANCE</code>, <code>/scan AAPL</code>, <code>/scan SMH</code>`);
+      await safeSend(chatId, `❌ <b>${symbol}</b> not found. Check symbol name and try again.\n\nExamples: <code>/scan RELIANCE</code>, <code>/scan AAPL</code>, <code>/scan SMH</code>`);
       return;
     }
     const report = generateScanReport(data);
     await safeSend(chatId, report);
   } catch (e) {
     console.error('❌ /scan error:', e.message);
-    await safeSend(chatId, `❌ Scan me error aaya: ${escapeHtml(e.message)}\n\nPlease try again.`);
+    await safeSend(chatId, `❌ Scan me error aaya: ${e.message}\n\nPlease try again.`);
   }
 });
 
@@ -1715,12 +1725,12 @@ bot.onText(/^\/exact(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
   console.log(`📥 /exact ${symbol} from ${msg.from?.first_name || chatId}`);
 
   try {
-    await safeSend(chatId, `🎯 <i>Running 3-Layer Exact Entry Engine for ${escapeHtml(symbol)}...</i>\n\nLayer 1: Technical (VWAP + Volume Profile + S/R)\nLayer 2: ML Bounce Probability\nLayer 3: AI Fundamental Validation`);
+    await safeSend(chatId, `🎯 <i>Running 3-Layer Exact Entry Engine for ${symbol}...</i>\n\nLayer 1: Technical (VWAP + Volume Profile + S/R)\nLayer 2: ML Bounce Probability\nLayer 3: AI Fundamental Validation`);
     await smartRefreshPrices();
 
     const data = await fetchSingleSymbol(symbol);
     if (!data) {
-      await safeSend(chatId, `❌ <b>${escapeHtml(symbol)}</b> not found.`);
+      await safeSend(chatId, `❌ <b>${symbol}</b> not found.`);
       return;
     }
 
@@ -1866,21 +1876,21 @@ bot.onText(/^\/compare(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
       await safeSend(chatId, '⚠️ Dono symbols likho!\n\nExample: <code>/compare RELIANCE TCS</code> or <code>/compare SMH VGT</code>');
       return;
     }
-    await safeSend(chatId, `⚖️ <i>Comparing ${escapeHtml(args[0])} vs ${escapeHtml(args[1])}... ek second...</i>`);
+    await safeSend(chatId, `⚖️ <i>Comparing ${args[0]} vs ${args[1]}... ek second...</i>`);
     const [data1, data2] = await Promise.all([
       fetchSingleSymbol(args[0]),
       fetchSingleSymbol(args[1])
     ]);
     if (!data1 || !data2) {
       const missing = !data1 ? args[0] : args[1];
-      await safeSend(chatId, `❌ <b>${escapeHtml(missing)}</b> not found. Check symbol name.`);
+      await safeSend(chatId, `❌ <b>${missing}</b> not found. Check symbol name.`);
       return;
     }
     const report = generateCompareReport(data1, data2);
     await safeSend(chatId, report);
   } catch (e) {
     console.error('❌ /compare error:', e.message);
-    await safeSend(chatId, `❌ Compare me error aaya: ${escapeHtml(e.message)}\n\nPlease try again.`);
+    await safeSend(chatId, `❌ Compare me error aaya: ${e.message}\n\nPlease try again.`);
   }
 });
 

@@ -6,7 +6,6 @@
 // ============================================
 
 import { PriceData } from '../types';
-import { apiFetch } from './api';
 
 const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
@@ -365,7 +364,7 @@ export async function validateWithAI(
     const cur = market === 'IN' ? '\u20B9' : '$';
     const prompt = `Analyze ${symbol} (${market === 'IN' ? 'NSE/BSE' : 'NASDAQ/NYSE'}) for BUY entry:\nPrice: ${cur}${currentPrice.toFixed(2)}\nTechnical Score: ${technicalScore}/100\nML Bounce Score: ${mlScore}/100\nNearest Support: ${cur}${nearestSupport.toFixed(2)}\nVWAP: ${cur}${vwap.toFixed(2)}\nPOC: ${cur}${poc.toFixed(2)}\n\nReply in this exact JSON format only:\n{"fundamentalJustified":true/false,"sectorAlignment":true/false,"newsSentiment":"POSITIVE"/"NEGATIVE"/"NEUTRAL","aiVerdict":"2-line verdict","aiScore":0-100}`;
 
-    const res = await apiFetch(`${PROXY_BASE}/api/groq`, {
+    const res = await fetch(`${PROXY_BASE}/api/groq`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

@@ -8,86 +8,6 @@ import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen } from './telegram';
 // or custom via VITE_API_PROXY for cross-origin setups).
 const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
-// ============================================================
-// Centralized API fetch — sends auth token via Authorization header
-// (bulletproof for cross-origin: Vercel frontend → Render backend)
-// Also sends credentials (httpOnly cookie) as a fallback.
-// ============================================================
-let _sessionToken: string | null = null;
-export function setSessionToken(token: string | null) {
-  _sessionToken = token;
-  // Store in BOTH sessionStorage (per-tab) and localStorage (persists across
-  // browser restarts). This ensures the token survives page refresh, new tab,
-  // and browser restart — fixing the "401 after refresh" bug.
-  try {
-    if (token) {
-      sessionStorage.setItem('wealthai_session_token', token);
-      localStorage.setItem('wealthai_session_token', token);
-    } else {
-      sessionStorage.removeItem('wealthai_session_token');
-      localStorage.removeItem('wealthai_session_token');
-    }
-  } catch {}
-}
-// Restore token on module load — try sessionStorage first, then localStorage.
-try {
-  const t = sessionStorage.getItem('wealthai_session_token') || localStorage.getItem('wealthai_session_token');
-  if (t) _sessionToken = t;
-} catch {}
-
-// Track the in-flight auth check so we don't fire it multiple times.
-let _authCheckPromise: Promise<boolean> | null = null;
-
-// Check if the current session is valid. If the token is missing or
-// invalid, this returns false so the caller can force re-login.
-// The check is cached — only runs once per page load.
-export async function ensureAuthenticated(): Promise<boolean> {
-  // If we already have a token, verify it's still valid.
-  if (_sessionToken) {
-    if (_authCheckPromise) return _authCheckPromise;
-    _authCheckPromise = (async () => {
-      try {
-        const res = await apiFetch(`${PROXY_BASE}/api/auth/check`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.authenticated) return true;
-        }
-        // Token invalid — clear it.
-        setSessionToken(null);
-        return false;
-      } catch {
-        return false;
-      } finally {
-        _authCheckPromise = null;
-      }
-    })();
-    return _authCheckPromise;
-  }
-  return false;
-}
-
-export function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
-  const url = input.startsWith('http') || input.startsWith('/api') ? input : `${PROXY_BASE}${input}`;
-  const headers: Record<string, string> = { ...(init.headers as Record<string, string> || {}) };
-  // PRIMARY auth: Authorization Bearer token — works cross-origin ALWAYS,
-  // no SameSite/cookie/CORS-credential issues.
-  if (_sessionToken) {
-    headers['Authorization'] = `Bearer ${_sessionToken}`;
-  }
-  return fetch(url, { ...init, credentials: 'include', headers });
-}
-export function getSessionToken(): string | null { return _sessionToken; }
-
-// SECURITY: Cloud sync auth token. MUST be set via VITE_API_TOKEN at build
-// time. The weak public default 'WEALTH_AI_SYNC' is NO LONGER used.
-function getCloudAuthToken(): string {
-  return (import.meta.env.VITE_API_TOKEN as string) || '';
-}
-
-function isCloudSyncConfigured(): boolean {
-  return !!getCloudAuthToken();
-}
-
 // Runtime API_URL — tries server config first, then VITE build-time env var
 // Used ONLY for Google Apps Script cloud sync, NOT for backend /api/* calls.
 // FIX: previously this was async + awaited a fetch('/api/config') on EVERY
@@ -108,7 +28,7 @@ function getApiUrl(): Promise<string> {
   if (_apiUrlPromise) return _apiUrlPromise;
   _apiUrlPromise = (async () => {
     try {
-      const res = await apiFetch(`${PROXY_BASE}/api/config`, { signal: AbortSignal.timeout(2000) });
+      const res = await fetch(`${PROXY_BASE}/api/config`, { signal: AbortSignal.timeout(2000) });
       if (res.ok) {
         const cfg = await res.json();
         if (cfg.apiUrl) { _runtimeApiUrl = cfg.apiUrl; return cfg.apiUrl; }
@@ -128,7 +48,7 @@ function getApiUrl(): Promise<string> {
  */
 async function fetchCoinDcxTickers(): Promise<CoinDcxTicker[] | null> {
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, {
+    const res = await fetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, {
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;
@@ -985,7 +905,7 @@ export async function batchFetchPrices(
 export async function fetchForexRate(): Promise<number> {
   // Primary: server-side proxy (cached, no CORS issues, fastest)
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/forex?t=${Date.now()}`, {
+    const res = await fetch(`${PROXY_BASE}/api/forex?t=${Date.now()}`, {
       signal: AbortSignal.timeout(4000)
     });
     if (res.ok) {
@@ -1042,142 +962,54 @@ export async function fetchForexRate(): Promise<number> {
   return DEFAULT_USD_INR; // Default fallback
 }
 
-// ============================================================
-// CLOUD SYNC — Dual-mode: backend proxy first, direct fallback
-// ============================================================
-// Mode 1: Backend proxy (/api/cloud/load) — works cross-origin, keeps
-//         token server-side. Used when API_URL + API_TOKEN are set on
-//         the Render backend.
-// Mode 2: Direct Google Apps Script call — fallback when backend proxy
-//         is not configured (503) or unreachable. Uses VITE_API_URL +
-//         VITE_API_TOKEN (build-time env vars). This is the original
-//         mode that worked on Render.
-//
-// This dual-mode approach ensures cloud sync works in ALL deployment
-// scenarios: Render same-origin, Vercel cross-origin, and any mix of
-// env var configurations.
-// ============================================================
-
-// Extract the first complete top-level JSON object from a string.
-function extractBalancedJSON(text: string): string | null {
-  const start = text.indexOf('{');
-  if (start < 0) return null;
-  let depth = 0, inString = false, escape = false;
-  for (let i = start; i < text.length; i++) {
-    const c = text[i];
-    if (escape) { escape = false; continue; }
-    if (c === '\\') { escape = true; continue; }
-    if (c === '"') { inString = !inString; continue; }
-    if (inString) continue;
-    if (c === '{') depth++;
-    else if (c === '}') { depth--; if (depth === 0) return text.substring(start, i + 1); }
-  }
-  return null;
-}
-
-// Parse the response from Google Apps Script (which sometimes wraps JSON).
-function parseCloudResponse(text: string): any | null {
-  let data;
-  try { data = JSON.parse(text); }
-  catch {
-    const extracted = extractBalancedJSON(text);
-    if (!extracted) return null;
-    try { data = JSON.parse(extracted); } catch { return null; }
-  }
-  if (typeof data === 'string') {
-    try { data = JSON.parse(data); } catch { return null; }
-  }
-  return data;
-}
-
-// Validate and filter portfolio positions.
-function validatePortfolio(portfolio: any[]): Position[] {
-  if (!Array.isArray(portfolio)) return [];
-  return portfolio.filter((p: any) =>
-    p && typeof p.symbol === 'string' && p.symbol.length > 0 &&
-    typeof p.qty === 'number' && p.qty > 0 &&
-    typeof p.avgPrice === 'number' && p.avgPrice > 0
-  ) as Position[];
-}
-
 export async function syncToCloud(portfolio: Position[], usdInr: number): Promise<boolean> {
+  let apiUrl = getApiUrlSync();
+  if (!apiUrl) apiUrl = await getApiUrl();
+  if (!apiUrl) return false;
   if (!portfolio || portfolio.length === 0) {
-    console.warn('☁️ Cloud Sync: Blocking sync because portfolio is empty.');
+    console.warn('☁️ Cloud Sync: Blocking sync because portfolio is empty to prevent accidental deletion.');
     return false;
   }
 
-  // Mode 1: Backend proxy (preferred — cross-origin safe).
-  try {
-    const res = await apiFetch(`${PROXY_BASE}/api/cloud/save`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ portfolio, usdInr }),
-      signal: AbortSignal.timeout(10000),
-    });
-    if (res.ok) {
-      const data = await res.json().catch(() => ({}));
-      if (data.ok === true) return true;
-    }
-    // If proxy returned 503 (not configured), fall through to Mode 2.
-    if (res.status !== 503) {
-      console.warn('☁️ Cloud save via proxy failed:', res.status);
-    }
-  } catch (e) {
-    console.warn('☁️ Cloud save via proxy error:', e);
-  }
+  // FIX: Backward-compatible auth token. Previously we refused the default
+  // 'WEALTH_AI_SYNC' token which broke cloud sync for users who hadn't set
+  // a custom VITE_API_TOKEN. Now: use VITE_API_TOKEN if set, else fall back
+  // to 'WEALTH_AI_SYNC' (matching the Code.gs default). Users who want
+  // stronger security can set a custom token in BOTH .env and Code.gs.
+  const authToken = import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
 
-  // Mode 2: Direct Google Apps Script call (fallback).
-  const apiUrl = getApiUrlSync() || await getApiUrl();
-  const authToken = getCloudAuthToken();
-  if (!apiUrl || !authToken) {
-    console.warn('☁️ Cloud sync: no proxy, no direct config — cannot save.');
-    return false;
-  }
   try {
     const res = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       redirect: 'follow',
-      body: JSON.stringify({ action: 'update', authToken, portfolio, timestamp: Date.now(), usdInr }),
-      signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({ action: 'update', authToken, portfolio, timestamp: Date.now(), usdInr })
     });
     return res.ok;
   } catch (e) {
-    console.warn('☁️ Cloud save direct failed:', e);
-    return false;
+    // Last-resort fire-and-forget fallback (Apps Script doGet handles action=update).
+    try {
+      await fetch(`${apiUrl}?action=update&authToken=${encodeURIComponent(authToken)}&data=${encodeURIComponent(JSON.stringify({ portfolio, timestamp: Date.now(), usdInr }))}`, { mode: 'no-cors' });
+      return true;
+    } catch (e2) {
+      return false;
+    }
   }
 }
 
 export async function loadFromCloud(): Promise<Position[] | null> {
-  // Mode 1: Backend proxy (preferred — cross-origin safe).
-  try {
-    const res = await apiFetch(`${PROXY_BASE}/api/cloud/load`, {
-      signal: AbortSignal.timeout(10000),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.portfolio && Array.isArray(data.portfolio)) {
-        const valid = validatePortfolio(data.portfolio);
-        if (valid.length === 0 && data.portfolio.length > 0) {
-          console.warn(`☁️ Cloud Sync: ${data.portfolio.length} positions loaded but 0 passed validation.`);
-        }
-        return valid.length > 0 ? valid : (data.portfolio.length > 0 ? null : []);
-      }
-    } else if (res.status !== 503) {
-      console.warn('☁️ Cloud load via proxy failed:', res.status);
-    }
-    // If 503 (not configured) or no data, fall through to Mode 2.
-  } catch (e) {
-    console.warn('☁️ Cloud load via proxy error:', e);
+  // FIX: Use synchronous URL if available (cached from previous call or
+  // VITE_API_URL build-time env). Only await getApiUrl() if we don't have
+  // a URL yet. This saves 1-3s on every loadFromCloud call.
+  let apiUrl = getApiUrlSync();
+  if (!apiUrl) {
+    apiUrl = await getApiUrl();
   }
+  if (!apiUrl) return null;
 
-  // Mode 2: Direct Google Apps Script call (fallback).
-  const apiUrl = getApiUrlSync() || await getApiUrl();
-  const authToken = getCloudAuthToken();
-  if (!apiUrl || !authToken) {
-    console.warn('☁️ Cloud sync: no proxy, no direct config — cannot load.');
-    return null;
-  }
+  // FIX: Backward-compatible auth token (same as syncToCloud).
+  const authToken = import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
+
   try {
     const res = await fetch(`${apiUrl}?action=load&authToken=${encodeURIComponent(authToken)}&t=${Date.now()}`, {
       signal: AbortSignal.timeout(8000),
@@ -1185,17 +1017,35 @@ export async function loadFromCloud(): Promise<Position[] | null> {
     if (!res.ok) return null;
 
     const text = await res.text();
-    const data = parseCloudResponse(text);
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      const extracted = extractBalancedJSON(text);
+      if (!extracted) return null;
+      try { data = JSON.parse(extracted); } catch { return null; }
+    }
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data); } catch { return null; }
+    }
+
     if (data && data.portfolio && Array.isArray(data.portfolio)) {
-      const valid = validatePortfolio(data.portfolio);
+      const valid = data.portfolio.filter((p: any) =>
+        p && typeof p.symbol === 'string' && p.symbol.length > 0 &&
+        typeof p.qty === 'number' && p.qty > 0 &&
+        typeof p.avgPrice === 'number' && p.avgPrice > 0
+      );
       if (valid.length === 0 && data.portfolio.length > 0) {
-        console.warn(`☁️ Cloud Sync: ${data.portfolio.length} positions loaded but 0 passed validation.`);
+        console.warn(`☁️ Cloud Sync: ${data.portfolio.length} positions loaded but 0 passed validation — data may be corrupted`);
         return null;
       }
-      return valid;
+      if (valid.length < data.portfolio.length) {
+        console.warn(`☁️ Cloud Sync: ${data.portfolio.length - valid.length} positions failed validation and were filtered out`);
+      }
+      return valid as Position[];
     }
   } catch (e) {
-    console.warn('☁️ Cloud load direct failed:', e);
+    console.warn('Cloud load failed:', e);
   }
 
   return null;
@@ -1203,9 +1053,49 @@ export async function loadFromCloud(): Promise<Position[] | null> {
 
 /**
  * Extract the first complete top-level JSON object from a string that
- * may contain trailing/leading junk (HTML, debug logs, etc.).
- * (Defined above as extractBalancedJSON — kept here as a comment for context.)
+ * may contain trailing/leading junk (HTML, debug logs, etc.). Uses a
+ * balanced-brace scanner — correctly handles nested `{}` and `[]`.
  */
+function extractBalancedJSON(text: string): string | null {
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+
+    if (c === '\\') {
+      escape = true;
+      continue;
+    }
+
+    if (c === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) {
+        return text.substring(start, i + 1);
+      }
+    }
+  }
+
+  // Unbalanced — return what we have
+  return null;
+}
 
 export async function sendTelegramAlert(token: string, chatId: string, message: string): Promise<boolean> {
   // 1) Try direct send if browser has local token + chatId
@@ -1232,7 +1122,7 @@ export async function sendTelegramAlert(token: string, chatId: string, message: 
 export async function sendTelegramViaServer(message: string, _chatId?: string): Promise<boolean> {
   const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
   try {
-    const res = await apiFetch(`${proxyBase}/api/telegram`, {
+    const res = await fetch(`${proxyBase}/api/telegram`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message }),
@@ -1245,33 +1135,21 @@ export async function sendTelegramViaServer(message: string, _chatId?: string): 
 }
 
 // ========================================
-// GROQ API KEY — CLOUD SYNC (dual-mode: proxy first, direct fallback)
+// GROQ API KEY — CLOUD SYNC (FREE)
 // ========================================
 export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
-  if (!key) return false;
-
-  // Mode 1: Backend proxy.
+  let apiUrl = getApiUrlSync();
+  if (!apiUrl) apiUrl = await getApiUrl();
+  if (!apiUrl || !key) return false;
+  const authToken = import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/cloud/save-key`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ groqKey: key }),
-      signal: AbortSignal.timeout(10000),
-    });
-    if (res.ok) return true;
-  } catch (e) { /* fall through */ }
-
-  // Mode 2: Direct Google Apps Script call.
-  const apiUrl = getApiUrlSync() || await getApiUrl();
-  const authToken = getCloudAuthToken();
-  if (!apiUrl || !authToken) return false;
-  try {
+    // Same CORS-"simple" request rule as syncToCloud (see note there) so the
+    // Apps Script doPost actually receives the payload.
     await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       redirect: 'follow',
-      body: JSON.stringify({ groqKey: key, action: 'saveKey', authToken, timestamp: Date.now() }),
-      signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({ groqKey: key, action: 'saveKey', authToken, timestamp: Date.now() })
     });
     return true;
   } catch (e) {
@@ -1280,31 +1158,25 @@ export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
 }
 
 export async function loadGroqKeyFromCloud(): Promise<string | null> {
-  // Mode 1: Backend proxy.
+  let apiUrl = getApiUrlSync();
+  if (!apiUrl) apiUrl = await getApiUrl();
+  if (!apiUrl) return null;
+  const authToken = import.meta.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/cloud/load-key`, {
-      signal: AbortSignal.timeout(8000),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const key = data?.groqKey;
-      if (key && typeof key === 'string' && key.length > 10) return key;
-    }
-  } catch (e) { /* fall through */ }
-
-  // Mode 2: Direct Google Apps Script call.
-  const apiUrl = getApiUrlSync() || await getApiUrl();
-  const authToken = getCloudAuthToken();
-  if (!apiUrl || !authToken) return null;
-  try {
-    const res = await fetch(`${apiUrl}?action=loadKey&authToken=${encodeURIComponent(authToken)}&t=${Date.now()}`, {
-      signal: AbortSignal.timeout(8000),
-    });
+    const res = await fetch(`${apiUrl}?action=loadKey&authToken=${encodeURIComponent(authToken)}&t=${Date.now()}`);
     if (!res.ok) return null;
     const text = await res.text();
-    const data = parseCloudResponse(text);
+    let data;
+    try { data = JSON.parse(text); }
+    catch {
+      const extracted = extractBalancedJSON(text);
+      if (!extracted) return null;
+      try { data = JSON.parse(extracted); } catch { return null; }
+    }
     const key = data?.groqKey;
-    if (key && typeof key === 'string' && key.length > 10) return key;
+    if (key && typeof key === 'string' && key.length > 10) {
+      return key;
+    }
   } catch (e) { console.warn('Groq key cloud load failed:', e); }
   return null;
 }

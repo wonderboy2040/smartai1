@@ -3,8 +3,6 @@
 // Indian + US stock earnings tracking
 // ============================================
 
-import { apiFetch } from './api';
-
 const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
 export interface EarningsEvent {
@@ -129,7 +127,7 @@ Historical Beat Rate: ${beatRate}%
 Reply ONLY in JSON:
 {"direction":"BULLISH"/"BEARISH"/"NEUTRAL","expectedMovePct":number,"reasoning":"2 lines"}`;
 
-    const res = await apiFetch(`${PROXY_BASE}/api/groq`, {
+    const res = await fetch(`${PROXY_BASE}/api/groq`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
