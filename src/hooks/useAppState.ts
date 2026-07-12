@@ -207,16 +207,16 @@ export function useAppState() {
   }, []);
 
   // --- Initialize ---
-  // On page load, check if the user was previously authenticated. If so,
-  // verify the session token is still valid with the server. If the token
-  // is missing or expired, force re-login (clear authDone so the login
-  // screen shows). This fixes the "401 on every API call after refresh"
-  // bug where authDone='true' was set but the session token was lost.
+  // On page load, restore the session IMMEDIATELY (no async wait). If we have
+  // a token, set isAuthenticated=true right away so data loading starts
+  // instantly. Then verify in the background — if the token is expired, we'll
+  // gracefully logout. This fixes the "empty portfolio after refresh" bug
+  // where the async auth check blocked loadFromCloud() from running.
   useEffect(() => {
     const auth = secureStorage.getItem('authDone');
     if (auth !== 'true') return;
 
-    // Check if we have a valid session token (in sessionStorage OR localStorage).
+    // Restore token from sessionStorage OR localStorage.
     const token = (() => {
       try {
         return sessionStorage.getItem('wealthai_session_token') || localStorage.getItem('wealthai_session_token');
@@ -224,22 +224,23 @@ export function useAppState() {
     })();
 
     if (!token) {
-      // No token in sessionStorage — session was lost (new tab, browser
-      // restart, etc.). Force re-login.
+      // No token — force re-login.
       console.warn('🔒 Session token missing — forcing re-login.');
       secureStorage.removeItem('authDone');
       setIsAuthenticated(false);
       return;
     }
 
-    // We have a token — verify it with the server.
+    // We have a token — restore it and authenticate IMMEDIATELY (no await).
+    // This lets loadFromCloud() and price fetching start right away.
     setSessionToken(token);
+    setIsAuthenticated(true);
+
+    // Verify in the background. If invalid, logout gracefully (but don't
+    // block the initial data load).
     ensureAuthenticated().then(valid => {
-      if (valid) {
-        setIsAuthenticated(true);
-      } else {
-        // Token expired or invalid — force re-login.
-        console.warn('🔒 Session token invalid — forcing re-login.');
+      if (!valid) {
+        console.warn('🔒 Session token expired — forcing re-login.');
         secureStorage.removeItem('authDone');
         setSessionToken(null);
         setIsAuthenticated(false);
