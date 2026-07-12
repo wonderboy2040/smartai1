@@ -16,9 +16,55 @@ const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 let _sessionToken: string | null = null;
 export function setSessionToken(token: string | null) {
   _sessionToken = token;
-  try { if (token) sessionStorage.setItem('wealthai_session_token', token); else sessionStorage.removeItem('wealthai_session_token'); } catch {}
+  // Store in BOTH sessionStorage (per-tab) and localStorage (persists across
+  // browser restarts). This ensures the token survives page refresh, new tab,
+  // and browser restart — fixing the "401 after refresh" bug.
+  try {
+    if (token) {
+      sessionStorage.setItem('wealthai_session_token', token);
+      localStorage.setItem('wealthai_session_token', token);
+    } else {
+      sessionStorage.removeItem('wealthai_session_token');
+      localStorage.removeItem('wealthai_session_token');
+    }
+  } catch {}
 }
-try { const t = sessionStorage.getItem('wealthai_session_token'); if (t) _sessionToken = t; } catch {}
+// Restore token on module load — try sessionStorage first, then localStorage.
+try {
+  const t = sessionStorage.getItem('wealthai_session_token') || localStorage.getItem('wealthai_session_token');
+  if (t) _sessionToken = t;
+} catch {}
+
+// Track the in-flight auth check so we don't fire it multiple times.
+let _authCheckPromise: Promise<boolean> | null = null;
+
+// Check if the current session is valid. If the token is missing or
+// invalid, this returns false so the caller can force re-login.
+// The check is cached — only runs once per page load.
+export async function ensureAuthenticated(): Promise<boolean> {
+  // If we already have a token, verify it's still valid.
+  if (_sessionToken) {
+    if (_authCheckPromise) return _authCheckPromise;
+    _authCheckPromise = (async () => {
+      try {
+        const res = await apiFetch(`${PROXY_BASE}/api/auth/check`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.authenticated) return true;
+        }
+        // Token invalid — clear it.
+        setSessionToken(null);
+        return false;
+      } catch {
+        return false;
+      } finally {
+        _authCheckPromise = null;
+      }
+    })();
+    return _authCheckPromise;
+  }
+  return false;
+}
 
 export function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const url = input.startsWith('http') || input.startsWith('/api') ? input : `${PROXY_BASE}${input}`;

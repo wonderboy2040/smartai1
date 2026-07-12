@@ -8,7 +8,7 @@ import {
   batchFetchUSPrices, getUSPollInterval, fetchForexRate,
   syncToCloud, loadFromCloud, sendTelegramAlert,
   syncGroqKeyToCloud, loadGroqKeyFromCloud, getBatchInterval, fetchMarketIntelligence,
-  apiFetch, setSessionToken,
+  apiFetch, setSessionToken, ensureAuthenticated,
 } from '../utils/api';
 import { secureStorage } from '../utils/secureStorage';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from '../utils/tvWebsocket';
@@ -207,9 +207,44 @@ export function useAppState() {
   }, []);
 
   // --- Initialize ---
+  // On page load, check if the user was previously authenticated. If so,
+  // verify the session token is still valid with the server. If the token
+  // is missing or expired, force re-login (clear authDone so the login
+  // screen shows). This fixes the "401 on every API call after refresh"
+  // bug where authDone='true' was set but the session token was lost.
   useEffect(() => {
     const auth = secureStorage.getItem('authDone');
-    if (auth === 'true') setIsAuthenticated(true);
+    if (auth !== 'true') return;
+
+    // Check if we have a valid session token (in sessionStorage OR localStorage).
+    const token = (() => {
+      try {
+        return sessionStorage.getItem('wealthai_session_token') || localStorage.getItem('wealthai_session_token');
+      } catch { return null; }
+    })();
+
+    if (!token) {
+      // No token in sessionStorage — session was lost (new tab, browser
+      // restart, etc.). Force re-login.
+      console.warn('🔒 Session token missing — forcing re-login.');
+      secureStorage.removeItem('authDone');
+      setIsAuthenticated(false);
+      return;
+    }
+
+    // We have a token — verify it with the server.
+    setSessionToken(token);
+    ensureAuthenticated().then(valid => {
+      if (valid) {
+        setIsAuthenticated(true);
+      } else {
+        // Token expired or invalid — force re-login.
+        console.warn('🔒 Session token invalid — forcing re-login.');
+        secureStorage.removeItem('authDone');
+        setSessionToken(null);
+        setIsAuthenticated(false);
+      }
+    });
   }, []);
 
   // --- Load data on auth ---
