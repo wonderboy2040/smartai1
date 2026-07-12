@@ -83,6 +83,22 @@ const PUBLIC_PATHS = new Set([
   '/api/ai-status',
   '/api/telegram-status',
   '/api/feed-status',
+  // Cloud sync endpoints are PUBLIC — they use server-side API_TOKEN to
+  // call Google Sheets, not user auth. The PIN login protects the app UI.
+  '/api/cloud/load',
+  '/api/cloud/save',
+  '/api/cloud/load-key',
+  '/api/cloud/save-key',
+  // Market data endpoints are PUBLIC — they fetch public market prices,
+  // no private data. Making these public ensures prices always load.
+  '/api/quote',
+  '/api/chart',
+  '/api/crypto-prices',
+  '/api/forex',
+  '/api/feed-status',
+  '/api/inflation',
+  '/api/stream',
+  '/api/fundamentals',
 ]);
 
 // Auth middleware — checks multiple auth mechanisms in order:
@@ -90,8 +106,12 @@ const PUBLIC_PATHS = new Set([
 // 2. httpOnly session cookie (fallback — same-origin only)
 // 3. ?session=<token> query param (fallback — for EventSource SSE)
 function requireAuth(req, res, next) {
-  // Public paths skip auth.
+  // Public paths skip auth (exact match + prefix match for dynamic routes).
   if (PUBLIC_PATHS.has(req.path)) return next();
+  // /api/fundamentals/:symbol is public (dynamic segment).
+  if (req.path.startsWith('/api/fundamentals/')) return next();
+  // /api/ml/ endpoints are public (ML predictions, market data — not private).
+  if (req.path.startsWith('/api/ml/')) return next();
 
   // Static assets (served by express.static) are public.
   if (req.path.startsWith('/assets/') || /\.(js|mjs|css|map|ico|svg|png|jpe?g|webp|woff2?|ttf|otf|json|wasm)$/i.test(req.path)) {
