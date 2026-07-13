@@ -251,8 +251,22 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 // GET /api/auth/check → returns whether the caller is authenticated
+// Checks ALL auth mechanisms: Authorization header, cookie, query param.
 app.get('/api/auth/check', (req, res) => {
-  const token = parseCookie(req.headers.cookie || '')[SESSION_COOKIE];
+  // 1. Authorization: Bearer <token> header (primary — what frontend sends)
+  let token = null;
+  const authHeader = req.headers.authorization || '';
+  if (authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7).trim();
+  }
+  // 2. httpOnly session cookie (fallback)
+  if (!token) {
+    token = parseCookie(req.headers.cookie || '')[SESSION_COOKIE];
+  }
+  // 3. ?session=<token> query param (fallback)
+  if (!token && req.query && typeof req.query.session === 'string') {
+    token = req.query.session;
+  }
   res.json({ authenticated: !!(token && _sessions.has(token)) });
 });
 
