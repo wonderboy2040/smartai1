@@ -10,6 +10,7 @@ import PriceAlertsPanel from '../PriceAlertsPanel';
 import { QualityScorecard } from '../QualityScorecard';
 import { exportTransactionsCSV, exportMonthlyReturnsCSV } from '../../utils/exportData';
 import { LivePrice } from '../LivePrice';
+import { WidgetSetup } from '../WidgetSetup';
 
 type SortKey = 'alloc' | 'pnl' | 'pnlPct' | 'xirr' | 'value' | 'name';
 
@@ -162,6 +163,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
           >
             📲 TG {syncStatus}
           </button>
+          <WidgetSetup />
         </div>
       </div>
 

@@ -1,20 +1,46 @@
 {
   "name": "Wealth AI Pro Trading Terminal",
-  "short_name": "Wealth AI",
-  "description": "AI-powered institutional-grade trading terminal for India & US markets",
+  "short_name": "WealthAI",
+  "description": "AI-powered trading terminal with live portfolio widget — India, US & Crypto markets",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "background_color": "#020617",
   "theme_color": "#020617",
   "orientation": "portrait",
-  "categories": ["finance", "productivity"],
+  "categories": ["finance", "productivity", "business"],
+  "lang": "en",
+  "dir": "ltr",
   "icons": [
     {
       "src": "/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Portfolio",
+      "short_name": "Portfolio",
+      "description": "View your portfolio",
+      "url": "/?tab=portfolio",
+      "icons": [{ "src": "/icon.svg", "sizes": "any" }]
+    },
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "description": "Market overview",
+      "url": "/?tab=dashboard",
+      "icons": [{ "src": "/icon.svg", "sizes": "any" }]
+    },
+    {
+      "name": "Live Widget",
+      "short_name": "Widget",
+      "description": "Compact live price view",
+      "url": "/widget.html",
+      "icons": [{ "src": "/icon.svg", "sizes": "any" }]
     }
   ]
 }

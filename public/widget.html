@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#020617" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="WealthAI Widget" />
+  <title>Wealth AI — Live Widget</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" href="/icon.svg" />
+  <link rel="apple-touch-icon" href="/icon.svg" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body {
+      background: #020617;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+      padding: 8px;
+    }
+    .widget-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 8px 8px;
+      border-bottom: 1px solid rgba(34, 211, 238, 0.2);
+      margin-bottom: 8px;
+    }
+    .widget-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: #22d3ee;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .widget-time {
+      font-size: 10px;
+      color: #64748b;
+    }
+    .widget-time.live { color: #22c55e; }
+    .widget-time.live::before {
+      content: '●';
+      margin-right: 3px;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .summary-card {
+      background: linear-gradient(135deg, rgba(6, 182, 212, 0.1), rgba(59, 130, 246, 0.1));
+      border: 1px solid rgba(34, 211, 238, 0.3);
+      border-radius: 12px;
+      padding: 10px;
+      margin-bottom: 8px;
+    }
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+    .summary-row:last-child { margin-bottom: 0; }
+    .summary-label {
+      font-size: 10px;
+      color: #94a3b8;
+      text-transform: uppercase;
+    }
+    .summary-value {
+      font-size: 14px;
+      font-weight: 700;
+      color: #e2e8f0;
+    }
+    .summary-value.positive { color: #22c55e; }
+    .summary-value.negative { color: #ef4444; }
+    .assets-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .asset-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 8px;
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 8px;
+      border-left: 3px solid transparent;
+    }
+    .asset-row.in { border-left-color: #f59e0b; }
+    .asset-row.us { border-left-color: #3b82f6; }
+    .asset-row.crypto { border-left-color: #a855f7; }
+    .asset-info {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+    .asset-symbol {
+      font-size: 12px;
+      font-weight: 700;
+      color: #e2e8f0;
+    }
+    .asset-qty {
+      font-size: 9px;
+      color: #64748b;
+    }
+    .asset-price {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 1px;
+    }
+    .asset-price-value {
+      font-size: 12px;
+      font-weight: 600;
+      color: #e2e8f0;
+    }
+    .asset-price-change {
+      font-size: 10px;
+      font-weight: 600;
+    }
+    .asset-price-change.positive { color: #22c55e; }
+    .asset-price-change.negative { color: #ef4444; }
+    .market-badge {
+      font-size: 8px;
+      padding: 1px 4px;
+      border-radius: 4px;
+      margin-left: 4px;
+      font-weight: 700;
+    }
+    .market-badge.in { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .market-badge.us { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+    .market-badge.crypto { background: rgba(168, 85, 247, 0.2); color: #a855f7; }
+    .loading {
+      text-align: center;
+      padding: 40px 20px;
+      color: #64748b;
+      font-size: 12px;
+    }
+    .error {
+      text-align: center;
+      padding: 20px;
+      color: #ef4444;
+      font-size: 11px;
+    }
+    .refresh-btn {
+      display: block;
+      width: 100%;
+      padding: 8px;
+      margin-top: 8px;
+      background: rgba(34, 211, 238, 0.15);
+      border: 1px solid rgba(34, 211, 238, 0.3);
+      border-radius: 8px;
+      color: #22d3ee;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+    }
+    .refresh-btn:active { background: rgba(34, 211, 238, 0.3); }
+  </style>
+</head>
+<body>
+  <div class="widget-header">
+    <span class="widget-title">💎 Wealth AI</span>
+    <span class="widget-time" id="lastUpdate">Loading...</span>
+  </div>
+  <div id="widget-content">
+    <div class="loading">Fetching live prices...</div>
+  </div>
+  <button class="refresh-btn" onclick="refreshWidget()">↻ Refresh Now</button>
+
+  <script>
+    let authToken = null;
+    let refreshInterval = null;
+
+    // Get auth token from URL param, localStorage, or sessionStorage
+    function getAuthToken() {
+      // Try URL param first (for widget shortcut)
+      const urlParams = new URLSearchParams(window.location.search);
+      const tokenFromUrl = urlParams.get('token');
+      if (tokenFromUrl) {
+        authToken = tokenFromUrl;
+        localStorage.setItem('wealthai_session_token', tokenFromUrl);
+        return tokenFromUrl;
+      }
+      // Try localStorage / sessionStorage
+      const token = localStorage.getItem('wealthai_session_token') || sessionStorage.getItem('wealthai_session_token');
+      if (token) {
+        authToken = token;
+        return token;
+      }
+      return null;
+    }
+
+    function formatPrice(price, market) {
+      if (!price || price === 0) return '—';
+      if (market === 'US') return '$' + price.toLocaleString('en-US', { maximumFractionDigits: 2 });
+      return '₹' + price.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    }
+
+    function formatChange(change) {
+      if (change === 0 || change === undefined || change === null) return { text: '0.00%', class: '' };
+      const pct = change.toFixed(2);
+      return {
+        text: (change >= 0 ? '+' : '') + pct + '%',
+        class: change >= 0 ? 'positive' : 'negative'
+      };
+    }
+
+    function isCrypto(sym) {
+      return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'].includes(sym?.toUpperCase());
+    }
+
+    function getMarketClass(market, symbol) {
+      if (isCrypto(symbol)) return 'crypto';
+      if (market === 'US') return 'us';
+      return 'in';
+    }
+
+    function getMarketBadge(market, symbol) {
+      if (isCrypto(symbol)) return '<span class="market-badge crypto">CRYPTO</span>';
+      if (market === 'US') return '<span class="market-badge us">US</span>';
+      return '<span class="market-badge in">IN</span>';
+    }
+
+    function renderWidget(data) {
+      const content = document.getElementById('widget-content');
+      const lastUpdate = document.getElementById('lastUpdate');
+
+      if (!data || !data.summary) {
+        content.innerHTML = '<div class="error">No data. Open the app and login first.</div>';
+        lastUpdate.textContent = 'No data';
+        lastUpdate.classList.remove('live');
+        return;
+      }
+
+      const s = data.summary;
+      const plClass = s.todayPL >= 0 ? 'positive' : 'negative';
+      const plSign = s.todayPL >= 0 ? '+' : '';
+      const trend = s.todayPL >= 0 ? '📈' : '📉';
+
+      let html = `
+        <div class="summary-card">
+          <div class="summary-row">
+            <span class="summary-label">Equity</span>
+            <span class="summary-value">₹${s.totalValue?.toLocaleString('en-IN', { maximumFractionDigits: 0 }) || '0'}</span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">Today's P&L</span>
+            <span class="summary-value ${plClass}">${trend} ${plSign}₹${Math.abs(s.todayPL || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">Change</span>
+            <span class="summary-value ${plClass}">${plSign}${(s.todayPLPct || 0).toFixed(2)}%</span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">USD/INR</span>
+            <span class="summary-value">₹${(s.usdInr || 0).toFixed(2)}</span>
+          </div>
+        </div>
+        <div class="assets-list">
+      `;
+
+      if (data.portfolio && data.portfolio.length > 0) {
+        // Sort by value descending
+        const sorted = [...data.portfolio].sort((a, b) => (b.value || 0) - (a.value || 0));
+        for (const asset of sorted) {
+          const change = formatChange(asset.change);
+          const mc = getMarketClass(asset.market, asset.symbol);
+          const badge = getMarketBadge(asset.market, asset.symbol);
+          html += `
+            <div class="asset-row ${mc}">
+              <div class="asset-info">
+                <span class="asset-symbol">${asset.symbol}${badge}</span>
+                <span class="asset-qty">${asset.qty} @ ${formatPrice(asset.price, asset.market)}</span>
+              </div>
+              <div class="asset-price">
+                <span class="asset-price-value">${formatPrice(asset.price, asset.market)}</span>
+                <span class="asset-price-change ${change.class}">${change.text}</span>
+              </div>
+            </div>
+          `;
+        }
+      }
+
+      html += '</div>';
+      content.innerHTML = html;
+
+      const time = new Date(data.timestamp || Date.now());
+      lastUpdate.textContent = `Updated ${time.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`;
+      lastUpdate.classList.add('live');
+    }
+
+    async function fetchWidgetData() {
+      const token = getAuthToken();
+      if (!token) {
+        document.getElementById('widget-content').innerHTML =
+          '<div class="error">Not logged in. Open the main app and login with PIN first.</div>';
+        return;
+      }
+
+      const backendUrl = window.location.origin;
+
+      try {
+        // Fetch portfolio
+        const portfolioResp = await fetch(`${backendUrl}/api/cloud/load`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!portfolioResp.ok) throw new Error('Portfolio fetch failed');
+        const portfolioData = await portfolioResp.json();
+        const portfolio = portfolioData.portfolio || [];
+        if (portfolio.length === 0) {
+          document.getElementById('widget-content').innerHTML =
+            '<div class="error">No assets in portfolio.</div>';
+          return;
+        }
+
+        // Group symbols
+        const inSyms = [...new Set(portfolio.filter(p => p.market === 'IN' && !isCrypto(p.symbol)).map(p => p.symbol))].slice(0, 20);
+        const usSyms = [...new Set(portfolio.filter(p => p.market === 'US').map(p => p.symbol))].slice(0, 20);
+        const cryptoSyms = [...new Set(portfolio.filter(p => isCrypto(p.symbol)).map(p => p.symbol))];
+
+        // Fetch all prices in parallel
+        const [inResp, usResp, cryptoResp, forexResp] = await Promise.allSettled([
+          inSyms.length > 0 ? fetch(`${backendUrl}/api/quote?symbols=${inSyms.join(',')}&market=IN`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }) : Promise.resolve(null),
+          usSyms.length > 0 ? fetch(`${backendUrl}/api/quote?symbols=${usSyms.join(',')}&market=US`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }) : Promise.resolve(null),
+          fetch(`${backendUrl}/api/crypto-prices?t=${Date.now()}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          fetch(`${backendUrl}/api/forex?t=${Date.now()}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        ]);
+
+        const prices = {};
+        let usdInr = 85.5;
+
+        if (forexResp.status === 'fulfilled' && forexResp.value?.ok) {
+          const f = await forexResp.value.json();
+          usdInr = f.usdInr || usdInr;
+        }
+
+        if (inResp.status === 'fulfilled' && inResp.value?.ok) {
+          const d = await inResp.value.json();
+          if (d.quotes) {
+            for (const [sym, q] of Object.entries(d.quotes)) {
+              prices[`IN_${sym}`] = { price: q.price, change: q.change, prevClose: q.prevClose };
+            }
+          }
+        }
+
+        if (usResp.status === 'fulfilled' && usResp.value?.ok) {
+          const d = await usResp.value.json();
+          if (d.quotes) {
+            for (const [sym, q] of Object.entries(d.quotes)) {
+              prices[`US_${sym}`] = { price: q.price, change: q.change, prevClose: q.prevClose };
+            }
+          }
+        }
+
+        if (cryptoResp.status === 'fulfilled' && cryptoResp.value?.ok) {
+          const tickers = await cryptoResp.value.json();
+          if (Array.isArray(tickers)) {
+            for (const t of tickers) {
+              const sym = t.market?.replace('USDT', '').replace('INR', '');
+              if (cryptoSyms.includes(sym)) {
+                const price = parseFloat(t.last_price) * usdInr;
+                const change = parseFloat(t.change_24_hour) || 0;
+                prices[`IN_${sym}`] = { price, change, prevClose: price / (1 + change / 100) };
+              }
+            }
+          }
+        }
+
+        // Calculate summary
+        let totalValue = 0;
+        let totalPrevValue = 0;
+        let todayPL = 0;
+
+        const enrichedPortfolio = portfolio.map(p => {
+          const key = `${p.market}_${p.symbol}`;
+          const price = prices[key];
+          const value = (price?.price || p.avgPrice) * p.qty;
+          const prevValue = (price?.prevClose || p.avgPrice) * p.qty;
+          totalValue += value;
+          totalPrevValue += prevValue;
+          todayPL += value - prevValue;
+          return {
+            symbol: p.symbol,
+            market: p.market,
+            qty: p.qty,
+            price: price?.price || p.avgPrice,
+            change: price?.change || 0,
+            value,
+          };
+        });
+
+        const todayPLPct = totalPrevValue > 0 ? (todayPL / totalPrevValue) * 100 : 0;
+
+        const widgetData = {
+          portfolio: enrichedPortfolio,
+          summary: {
+            totalValue,
+            todayPL,
+            todayPLPct,
+            usdInr,
+            assetCount: portfolio.length,
+          },
+          timestamp: Date.now(),
+        };
+
+        renderWidget(widgetData);
+
+        // Cache for service worker
+        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage({
+            type: 'WIDGET_DATA_UPDATE',
+            payload: widgetData,
+          });
+        }
+      } catch (e) {
+        document.getElementById('widget-content').innerHTML =
+          `<div class="error">Error: ${e.message}</div>`;
+      }
+    }
+
+    function refreshWidget() {
+      document.getElementById('widget-content').innerHTML =
+        '<div class="loading">Refreshing...</div>';
+      fetchWidgetData();
+    }
+
+    // Listen for price updates from service worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data?.type === 'PRICE_UPDATE') {
+          renderWidget(event.data.data);
+        }
+        if (event.data?.type === 'GET_AUTH_TOKEN') {
+          const token = localStorage.getItem('wealthai_session_token') || sessionStorage.getItem('wealthai_session_token');
+          event.ports[0]?.postMessage({ token });
+        }
+      });
+    }
+
+    // Initial fetch
+    fetchWidgetData();
+
+    // Auto-refresh every 30 seconds when widget is visible
+    refreshInterval = setInterval(fetchWidgetData, 30000);
+
+    // Refresh when page becomes visible again
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        fetchWidgetData();
+      }
+    });
+  </script>
+</body>
+</html>
