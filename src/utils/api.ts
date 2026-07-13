@@ -84,7 +84,7 @@ function getCloudAuthToken(): string {
   return (import.meta.env.VITE_API_TOKEN as string) || '';
 }
 
-function isCloudSyncConfigured(): boolean {
+export function isCloudSyncConfigured(): boolean {
   return !!getCloudAuthToken();
 }
 

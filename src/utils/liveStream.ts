@@ -1,6 +1,5 @@
 import { PriceData } from '../types';
 import { getSessionToken } from './api';
-import { getSessionToken } from './api';
 
 // ============================================================
 // liveStream — browser EventSource client for /api/stream (SSE)
