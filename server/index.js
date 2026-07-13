@@ -831,13 +831,16 @@ app.post('/api/gemini', async (req, res) => {
   if (!KEYS.gemini) return jsonError(res, 503, 'gemini not configured');
   try {
     const { messages = [], model = 'gemini-2.5-flash' } = req.body || {};
+    if (!Array.isArray(messages)) return jsonError(res, 400, 'messages[] required');
+    // Validate model name — prevent path injection in the URL.
+    const safeModel = String(model).replace(/[^a-zA-Z0-9.\-]/g, '').slice(0, 50) || 'gemini-2.5-flash';
     const systemText = messages.filter(m => m.role === 'system').map(m => m.content).join('\n').trim();
     const contents = messages
       .filter(m => m.role !== 'system')
       .map(m => ({ role: m.role === 'assistant' || m.role === 'model' ? 'model' : 'user', parts: [{ text: String(m.content || '') }] }));
     const payload = { contents };
     if (systemText) payload.systemInstruction = { parts: [{ text: systemText }] };
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEYS.gemini}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${safeModel}:generateContent?key=${KEYS.gemini}`;
     const upstream = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -859,11 +862,15 @@ app.post('/api/claude', async (req, res) => {
   if (!KEYS.claude) return jsonError(res, 503, 'claude not configured');
   try {
     const { messages = [], model = 'claude-sonnet-4-20250514', max_tokens = 1024 } = req.body || {};
+    if (!Array.isArray(messages)) return jsonError(res, 400, 'messages[] required');
+    // Cap max_tokens to prevent quota abuse.
+    const safeMaxTokens = Math.min(Math.max(parseInt(max_tokens) || 1024, 1), 8192);
+    const safeModel = String(model).replace(/[^a-zA-Z0-9.\-]/g, '').slice(0, 50) || 'claude-sonnet-4-20250514';
     const system = messages.filter(m => m.role === 'system').map(m => m.content).join('\n').trim();
     const conv = messages
       .filter(m => m.role !== 'system')
       .map(m => ({ role: m.role === 'model' || m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '') }));
-    const payload = { model, max_tokens, messages: conv };
+    const payload = { model: safeModel, max_tokens: safeMaxTokens, messages: conv };
     if (system) payload.system = system;
     const upstream = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -1328,14 +1335,16 @@ function getMarketCondition(regime) {
 const distDir = path.resolve(__dirname, '..', 'dist');
 app.use(express.static(distDir));
 
-// SPA fallback for any non-/api route.
+// SPA fallback for any non-/api, non-/health route.
 // FIX C8: When a code-split chunk (e.g. /assets/vendor-charts-abc.js) is
 // missing after a redeploy, the previous catch-all served index.html for the
 // JS file, the browser tried to parse HTML as JS, and the entire app died
 // with "Failed to fetch dynamically imported module". Return a real 404 for
 // asset paths so the browser surfaces the error and the lazy-retry logic in
 // App.tsx (lazyWithRetry) can force a clean reload.
-app.get(/^(?!\/api\/).*/, (req, res) => {
+// FIX: Exclude /health from this catch-all so the health endpoint below
+// actually returns JSON (Render health check needs JSON, not HTML).
+app.get(/^(?!\/api\/|\/health).*/, (req, res) => {
   const isAsset = req.path.startsWith('/assets/')
     || /\.(js|mjs|css|map|ico|svg|png|jpe?g|webp|woff2?|ttf|otf|json|wasm)$/i.test(req.path);
   if (isAsset) return res.status(404).send('Not found');
@@ -1919,6 +1928,25 @@ app.get('/health', (_req, res) => {
 // ============================================================
 let _botProcess = null;
 let _botRestartTimer = null;
+
+// ------------------------------------------------------------
+// Process-level error handlers — prevent crashes from unhandled
+// promise rejections or uncaught exceptions. In Node 15+, an
+// unhandled rejection terminates the process. This is critical
+// for a single-instance Render free-tier server.
+// ------------------------------------------------------------
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[wealth-ai] Unhandled Promise Rejection:', reason?.message || reason);
+  // Don't exit — log and continue so the server stays up.
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[wealth-ai] Uncaught Exception:', err?.message || err, err?.stack || '');
+  // Don't exit — log and continue so the server stays up.
+  // If this fires repeatedly, the server may be in a bad state, but
+  // for a single-instance free-tier deployment, staying up is better
+  // than going down.
+});
 
 // ------------------------------------------------------------
 // Startup environment validation.
