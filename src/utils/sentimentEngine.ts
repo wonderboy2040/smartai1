@@ -4,6 +4,8 @@
 // Uses Groq/Claude API for NLP classification
 // ============================================
 
+import { apiFetch } from './api';
+
 const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
 export interface SentimentResult {
@@ -101,7 +103,7 @@ ${headlines}
 Reply ONLY in this JSON format:
 {"overall":"BULLISH"/"BEARISH"/"NEUTRAL","score":-100 to 100,"confidence":0-100,"keyFactors":["factor1","factor2"],"institutionalFlow":"buying"/"selling"/"neutral"}`;
 
-    const res = await fetch(`${PROXY_BASE}/api/groq`, {
+    const res = await apiFetch(`${PROXY_BASE}/api/groq`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
