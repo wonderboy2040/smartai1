@@ -2015,23 +2015,13 @@ function startBot() {
   }
 }
 
-// Run env validation before binding the port.
+// Validate once before binding the port. validateEnv() is the single source
+// of truth for startup requirements and refuses unsafe configurations.
 validateEnv();
-
-// Run env validation before binding the port.
-if (!APP_PIN) {
-  console.error('[wealth-ai] ERROR: APP_PIN is not set. Set APP_PIN in your environment variables.');
-  process.exit(1);
-}
-if (!!TG.token !== !!TG.chatId) {
-  console.error('[wealth-ai] ERROR: TG_TOKEN and TG_CHAT_ID must both be set (or both empty).');
-  process.exit(1);
-}
 
 app.listen(PORT, () => {
   const ready = Object.entries(KEYS).filter(([, v]) => v).map(([k]) => k);
   console.log(`[wealth-ai] server on :${PORT} — providers: ${ready.join(', ') || 'NONE'}`);
-  console.log('[wealth-ai] Authentication: enabled (server-side PIN + httpOnly session cookie)');
   console.log('[wealth-ai] Authentication: enabled (server-side PIN + httpOnly session cookie)');
 
   // No self-ping keepalive (Render ToS violation).

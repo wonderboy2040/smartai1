@@ -1,10 +1,15 @@
-node_modules
-dist
+# JavaScript dependencies and builds
+node_modules/
+dist/
+telegram-bot/node_modules/
+
+# Environment and secrets
 .env
 .env.local
 .env.production
-telegram-bot/node_modules
 telegram-bot/.env
+
+# Runtime data and logs
 telegram-bot/streak-data.json
 *.log
 
@@ -13,7 +18,6 @@ __pycache__/
 *.pyc
 ml-service/**/__pycache__/
 
-# Python
-__pycache__/
-*.pyc
-ml-service/**/__pycache__/
+# Editors / operating systems
+.DS_Store
+Thumbs.db

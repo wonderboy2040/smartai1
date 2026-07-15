@@ -5,10 +5,10 @@ services:
   node-server:
     build:
       context: .
-      dockerfile: Dockerfile.frontend  # reuse frontend Dockerfile (it runs npm build + node server)
-    # Override the entrypoint to run the Node API server (not the static
-    # nginx build). The same image contains both `dist/` (served by nginx)
-    # and `server/index.js` (served by Node on :8080).
+      dockerfile: Dockerfile.frontend
+      # The default/final stage is nginx and does not contain Node or the
+      # server source. Run the named Node build stage for the API service.
+      target: build
     command: ["node", "server/index.js"]
     ports:
       - "8080:8080"
