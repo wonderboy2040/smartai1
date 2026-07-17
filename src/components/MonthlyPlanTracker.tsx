@@ -1,8 +1,8 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { useApp } from '../hooks/AppContext';
 import {
   computeMonthlyPlan, formatMonthlyPlanForTelegram,
-  type MarketPlanRow,
+  type MarketPlanRow, type MarketBucket,
 } from '../utils/monthlyPlanTracker';
 import { secureStorage } from '../utils/secureStorage';
 import { sendTelegramAlert } from '../utils/api';
@@ -12,6 +12,7 @@ import { resetPortfolioSnapshot } from '../utils/portfolioDiffEngine';
 // MONTHLY PLAN TRACKER (Portfolio tab)
 // Planned vs Actual investment per market bucket for the
 // current calendar month.
+// Now FULLY EDITABLE: SIP amounts can be changed inline.
 // ============================================================
 
 const fmtINR = (n: number) => {
@@ -24,10 +25,15 @@ const fmtINR = (n: number) => {
 export const MonthlyPlanTracker = React.memo(function MonthlyPlanTracker() {
   const {
     portfolio, livePrices, usdInrRate, transactions,
-    indiaSIP, usSIP, btcSIP, ethSIP,
+    indiaSIP, setIndiaSIP, usSIP, setUsSIP, btcSIP, setBtcSIP, ethSIP, setEthSIP,
   } = useApp();
   const [sending, setSending] = useState(false);
   const [showSymbols, setShowSymbols] = useState<Record<string, boolean>>({});
+  const [editingBucket, setEditingBucket] = useState<MarketBucket | null>(null);
+  const [editValue, setEditValue] = useState('');
+  // For crypto, we need separate BTC and ETH editing
+  const [editBtcValue, setEditBtcValue] = useState('');
+  const [editEthValue, setEditEthValue] = useState('');
   const [usFrequency, setUsFrequency] = useState<'monthly' | 'quarterly'>(() => {
     try {
       const s = secureStorage.getItem('plan_tracker_us_freq');
@@ -68,6 +74,38 @@ export const MonthlyPlanTracker = React.memo(function MonthlyPlanTracker() {
     alert('✅ Memory reset. Reload the page to re-snapshot.');
   };
 
+  // --- Edit handlers ---
+  const startEdit = (bucket: MarketBucket) => {
+    setEditingBucket(bucket);
+    if (bucket === 'india') setEditValue(indiaSIP.toString());
+    else if (bucket === 'usa') setEditValue(usSIP.toString());
+    else if (bucket === 'crypto') {
+      setEditBtcValue(btcSIP.toString());
+      setEditEthValue(ethSIP.toString());
+    }
+  };
+
+  const saveEdit = () => {
+    if (!editingBucket) return;
+    if (editingBucket === 'india') {
+      const val = parseFloat(editValue);
+      if (!isNaN(val) && val >= 0) setIndiaSIP(val);
+    } else if (editingBucket === 'usa') {
+      const val = parseFloat(editValue);
+      if (!isNaN(val) && val >= 0) setUsSIP(val);
+    } else if (editingBucket === 'crypto') {
+      const btcVal = parseFloat(editBtcValue);
+      const ethVal = parseFloat(editEthValue);
+      if (!isNaN(btcVal) && btcVal >= 0) setBtcSIP(btcVal);
+      if (!isNaN(ethVal) && ethVal >= 0) setEthSIP(ethVal);
+    }
+    setEditingBucket(null);
+  };
+
+  const cancelEdit = () => {
+    setEditingBucket(null);
+  };
+
   return (
     <div className="quantum-panel rounded-2xl p-4 animate-fade-in-up">
       {/* Header */}
@@ -78,7 +116,7 @@ export const MonthlyPlanTracker = React.memo(function MonthlyPlanTracker() {
             <span className="text-[8px] bg-cyan-500/20 text-cyan-300 px-1.5 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider">{plan.monthLabel}</span>
           </h3>
           <p className="text-[11px] text-slate-500 mt-0.5">
-            Planned vs actual investment — planner SIP ke hisaab se.
+            Planned vs actual investment — click ✏️ to edit SIP amounts.
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -137,12 +175,24 @@ export const MonthlyPlanTracker = React.memo(function MonthlyPlanTracker() {
             onToggle={() => setShowSymbols(prev => ({ ...prev, [row.bucket]: !prev[row.bucket] }))}
             usFrequency={usFrequency}
             onToggleFreq={toggleFreq}
+            isEditing={editingBucket === row.bucket}
+            onStartEdit={() => startEdit(row.bucket)}
+            onSaveEdit={saveEdit}
+            onCancelEdit={cancelEdit}
+            editValue={editValue}
+            setEditValue={setEditValue}
+            editBtcValue={editBtcValue}
+            setEditBtcValue={setEditBtcValue}
+            editEthValue={editEthValue}
+            setEditEthValue={setEditEthValue}
+            btcSIP={btcSIP}
+            ethSIP={ethSIP}
           />
         ))}
       </div>
 
       <div className="text-[8px] text-slate-700 mt-3 leading-tight">
-        💡 Auto-tracks every portfolio change from Google Sheets. When you add a buy in sheets, it appears here automatically.
+        💡 Auto-tracks every portfolio change from Google Sheets. Click ✏️ on any market row to edit SIP amounts inline.
         Click 🇺🇸 row's "Monthly/Quarterly" badge to toggle USA frequency.
       </div>
     </div>
@@ -155,9 +205,41 @@ interface MarketRowProps {
   onToggle: () => void;
   usFrequency: 'monthly' | 'quarterly';
   onToggleFreq: () => void;
+  isEditing: boolean;
+  onStartEdit: () => void;
+  onSaveEdit: () => void;
+  onCancelEdit: () => void;
+  editValue: string;
+  setEditValue: (v: string) => void;
+  editBtcValue: string;
+  setEditBtcValue: (v: string) => void;
+  editEthValue: string;
+  setEditEthValue: (v: string) => void;
+  btcSIP: number;
+  ethSIP: number;
 }
 
-const MarketRow = React.memo(function MarketRow({ row, expanded, onToggle, usFrequency, onToggleFreq }: MarketRowProps) {
+const MarketRow = React.memo(function MarketRow({
+  row, expanded, onToggle, usFrequency, onToggleFreq,
+  isEditing, onStartEdit, onSaveEdit, onCancelEdit,
+  editValue, setEditValue,
+  editBtcValue, setEditBtcValue, editEthValue, setEditEthValue,
+  btcSIP, ethSIP,
+}: MarketRowProps) {
+  const editInputRef = useRef<HTMLInputElement>(null);
+  const btcInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus on edit mode
+  useEffect(() => {
+    if (isEditing) {
+      if (row.bucket === 'crypto') {
+        btcInputRef.current?.focus();
+      } else {
+        editInputRef.current?.focus();
+      }
+    }
+  }, [isEditing, row.bucket]);
+
   const progressColor = row.progressPct >= 100
     ? 'from-emerald-500 to-teal-400'
     : row.progressPct > 50
@@ -166,13 +248,19 @@ const MarketRow = React.memo(function MarketRow({ row, expanded, onToggle, usFre
     ? 'from-amber-500 to-orange-400'
     : 'from-slate-600 to-slate-500';
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') onSaveEdit();
+    if (e.key === 'Escape') onCancelEdit();
+  };
+
   return (
     <div className="bg-black/20 border border-white/5 rounded-xl overflow-hidden">
-      <button
-        onClick={onToggle}
-        className="w-full p-2.5 flex items-center justify-between hover:bg-white/[0.02] transition-colors text-left"
-      >
-        <div className="flex items-center gap-2">
+      {/* Header row */}
+      <div className="flex items-center justify-between p-2.5">
+        <button
+          onClick={onToggle}
+          className="flex-1 flex items-center gap-2 hover:bg-white/[0.02] transition-colors text-left"
+        >
           <span className="text-base">{row.emoji}</span>
           <div>
             <div className="text-[12px] font-bold text-white flex items-center gap-1.5">
@@ -189,18 +277,108 @@ const MarketRow = React.memo(function MarketRow({ row, expanded, onToggle, usFre
             </div>
             <div className="text-[9px] text-slate-500">{row.nextBuyNote}</div>
           </div>
-        </div>
-        <div className="text-right">
-          <div className="text-[11px] font-mono">
-            <span className="text-cyan-400 font-bold">{fmtINR(row.actualAmountINR)}</span>
-            <span className="text-slate-600"> / </span>
-            <span className="text-white">{fmtINR(row.plannedAmountINR)}</span>
+        </button>
+        <div className="flex items-center gap-2">
+          <div className="text-right">
+            <div className="text-[11px] font-mono">
+              <span className="text-cyan-400 font-bold">{fmtINR(row.actualAmountINR)}</span>
+              <span className="text-slate-600"> / </span>
+              <span className="text-white">{fmtINR(row.plannedAmountINR)}</span>
+            </div>
+            <div className="text-[9px] text-slate-500">
+              {row.actualQty.toFixed(2)} / {row.plannedQty.toFixed(2)} qty
+            </div>
           </div>
-          <div className="text-[9px] text-slate-500">
-            {row.actualQty.toFixed(2)} / {row.plannedQty.toFixed(2)} qty
+          {/* Edit button */}
+          <button
+            onClick={(e) => { e.stopPropagation(); onStartEdit(); }}
+            className="w-6 h-6 rounded-md bg-white/5 hover:bg-cyan-500/20 border border-white/10 hover:border-cyan-500/30 flex items-center justify-center transition-all text-[10px] text-slate-400 hover:text-cyan-400"
+            title={`Edit ${row.label} SIP amount`}
+          >
+            ✏️
+          </button>
+        </div>
+      </div>
+
+      {/* Inline Edit Panel */}
+      {isEditing && (
+        <div className="px-2.5 pb-2.5 animate-fade-in">
+          <div className="p-3 bg-cyan-500/5 border border-cyan-500/20 rounded-lg">
+            <div className="text-[9px] text-cyan-400 font-bold uppercase tracking-wider mb-2">
+              ✏️ Edit {row.label} SIP Amount
+            </div>
+            {row.bucket === 'crypto' ? (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-orange-400 font-bold w-10">₿ BTC</span>
+                  <div className="flex items-center gap-1 flex-1 bg-black/30 border border-white/10 rounded-lg px-2 py-1.5">
+                    <span className="text-[10px] text-slate-500">₹</span>
+                    <input
+                      ref={btcInputRef}
+                      type="number"
+                      value={editBtcValue}
+                      onChange={e => setEditBtcValue(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      className="flex-1 bg-transparent outline-none text-sm font-bold text-white font-mono w-full min-w-0"
+                      min="0"
+                      step="100"
+                    />
+                  </div>
+                  <span className="text-[8px] text-slate-600">was ₹{btcSIP.toLocaleString('en-IN')}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-indigo-400 font-bold w-10">🪙 ETH</span>
+                  <div className="flex items-center gap-1 flex-1 bg-black/30 border border-white/10 rounded-lg px-2 py-1.5">
+                    <span className="text-[10px] text-slate-500">₹</span>
+                    <input
+                      type="number"
+                      value={editEthValue}
+                      onChange={e => setEditEthValue(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      className="flex-1 bg-transparent outline-none text-sm font-bold text-white font-mono w-full min-w-0"
+                      min="0"
+                      step="100"
+                    />
+                  </div>
+                  <span className="text-[8px] text-slate-600">was ₹{ethSIP.toLocaleString('en-IN')}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1 flex-1 bg-black/30 border border-white/10 rounded-lg px-2 py-1.5">
+                  <span className="text-[10px] text-slate-500">₹</span>
+                  <input
+                    ref={editInputRef}
+                    type="number"
+                    value={editValue}
+                    onChange={e => setEditValue(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    className="flex-1 bg-transparent outline-none text-sm font-bold text-white font-mono w-full min-w-0"
+                    min="0"
+                    step="500"
+                  />
+                </div>
+                <span className="text-[8px] text-slate-600">/month</span>
+              </div>
+            )}
+            <div className="flex items-center gap-2 mt-2">
+              <button
+                onClick={onSaveEdit}
+                className="px-3 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 rounded-lg text-[10px] font-bold text-emerald-400 transition-all"
+              >
+                ✅ Save
+              </button>
+              <button
+                onClick={onCancelEdit}
+                className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[10px] font-bold text-slate-400 transition-all"
+              >
+                ✕ Cancel
+              </button>
+              <span className="text-[8px] text-slate-600 ml-auto">Enter = save, Esc = cancel</span>
+            </div>
           </div>
         </div>
-      </button>
+      )}
 
       {/* Progress bar */}
       <div className="px-2.5 pb-1">
