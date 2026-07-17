@@ -59,7 +59,7 @@ export default function App() {
     showAddModal, setShowAddModal,
     addSymbol, setAddSymbol, addQty, setAddQty, addPrice, setAddPrice,
     addDate, setAddDate,
-    transactionType, setTransactionType, modalPrice,
+    transactionType, setTransactionType, modalPrice, editId,
     savePosition, usdInrRate, portfolioContextText,
     refreshAll, isRefreshing,
   } = state;
@@ -209,7 +209,7 @@ export default function App() {
           <div className="fixed inset-0 bg-black/80 backdrop-blur-xl z-50 flex items-center justify-center p-4 animate-fade-in">
             <div className="quantum-modal rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto scrollbar-hide shadow-2xl animate-scale-in">
               <div className="p-5 border-b border-white/5 flex justify-between items-center">
-                <h3 className="text-lg font-bold text-white">{transactionType === 'sell' ? '📉 Sell Asset' : '➕ Add Asset'}</h3>
+                <h3 className="text-lg font-bold text-white">{editId ? '✏️ Edit Asset' : transactionType === 'sell' ? '📉 Sell Asset' : '➕ Add Asset'}</h3>
                 <button onClick={() => setShowAddModal(false)} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-red-500/20 flex items-center justify-center text-lg text-slate-400 hover:text-red-400 transition-all">✕</button>
               </div>
               <div className="p-5 space-y-4">
@@ -228,10 +228,12 @@ export default function App() {
                     </div>
                   </div>
                 )}
-                <div className="flex gap-1 bg-black/30 rounded-xl p-1">
-                  <button onClick={() => setTransactionType('buy')} className={`flex-1 py-2 rounded-lg font-semibold text-sm transition-all ${transactionType === 'buy' ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' : 'text-slate-500'}`}>📈 BUY</button>
-                  <button onClick={() => setTransactionType('sell')} className={`flex-1 py-2 rounded-lg font-semibold text-sm transition-all ${transactionType === 'sell' ? 'bg-red-500/15 text-red-400 border border-red-500/20' : 'text-slate-500'}`}>📉 SELL</button>
-                </div>
+                {!editId && (
+                  <div className="flex gap-1 bg-black/30 rounded-xl p-1">
+                    <button onClick={() => setTransactionType('buy')} className={`flex-1 py-2 rounded-lg font-semibold text-sm transition-all ${transactionType === 'buy' ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' : 'text-slate-500'}`}>📈 BUY</button>
+                    <button onClick={() => setTransactionType('sell')} className={`flex-1 py-2 rounded-lg font-semibold text-sm transition-all ${transactionType === 'sell' ? 'bg-red-500/15 text-red-400 border border-red-500/20' : 'text-slate-500'}`}>📉 SELL</button>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-3">
                   <div><label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Quantity</label><input type="number" value={addQty} onChange={e => { setAddQty(e.target.value); setFormError(''); }} placeholder="0" min="0" step="any" className="w-full px-4 py-2.5 quantum-input rounded-xl font-bold text-lg text-white" /></div>
                   <div><label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1.5 block">Price</label><input type="number" value={addPrice} onChange={e => { setAddPrice(e.target.value); setFormError(''); }} placeholder="0.00" min="0" step="any" className="w-full px-4 py-2.5 quantum-input rounded-xl font-bold text-lg text-white" /></div>

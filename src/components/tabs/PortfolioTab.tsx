@@ -520,6 +520,15 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                   >
                     <span className="md:hidden mr-1">Sell</span> S
                   </button>
+                  <button
+                    onClick={() => {
+                      openAddModal(p);
+                    }}
+                    className="px-3 py-1.5 md:w-8 md:h-8 md:p-0 flex items-center justify-center bg-amber-500/10 hover:bg-amber-500 w-full md:hover:scale-110 hover:shadow-[0_0_15px_rgba(245,158,11,0.4)] border border-amber-500/30 rounded-lg transition-all text-xs text-amber-400 hover:text-white font-bold uppercase tracking-wider"
+                    title="Edit Position details"
+                  >
+                    <span className="md:hidden mr-1">Edit</span> ✏️
+                  </button>
                 </div>
 
               </div>
