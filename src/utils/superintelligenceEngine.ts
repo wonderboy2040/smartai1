@@ -1,5 +1,5 @@
 // ============================================================
-// SUPERINTELLIGENCE ENGINE v5.0
+// SUPERINTELLIGENCE ENGINE v6.0 (composite SuperScore)
 // ------------------------------------------------------------
 // Aggregates real-time market data + portfolio-specific news +
 // live prices + macro context into a single context blob that
@@ -65,6 +65,13 @@ export interface PortfolioSignal {
   reason: string;
   // Derived "inside story" insights from price action + news
   insideStory: string;
+  // v6 SUPERSCORE: composite directional score 1-99 (>65 = buy-leaning, <35 = sell-leaning)
+  // Weights: RSI zone 35% | SMA20/50 divergence 25% | MACD 15% |
+  // day-range position 15% | anti-chasing momentum 10%
+  superScore?: number;
+  volume?: number;
+  // Where price sits inside today's high-low range (0 = day low, 1 = day high)
+  dayRangePos?: number;
 }
 
 export interface SuperintelligenceContext {
@@ -242,8 +249,25 @@ function computePortfolioSignals(
       }
     }
 
-    // "Inside story" — derive from price action + technicals
-    const insideStory = deriveInsideStory(p, price, change, rsi, sma20, sma50, macd);
+    // ---------- v6 SUPERSCORE (composite directional, 1-99) ----------
+    let score = 50;
+    score += rsi < 30 ? 20 : rsi < 40 ? 10 : rsi > 75 ? -20 : rsi > 65 ? -10 : 0;      // 35% zone
+    if (sma20 && sma50 && sma50 > 0) {                                                 // 25% trend
+      const divergencePct = ((sma20 - sma50) / sma50) * 100;
+      score += Math.max(-15, Math.min(15, divergencePct * 3));
+    }
+    if (macd !== undefined) score += macd > 0 ? 8 : -8;                                // 15% macd
+    const hi = d?.high ?? price;
+    const lo = d?.low ?? price;
+    const dayRangePos = hi > lo ? (price - lo) / (hi - lo) : 0.5;                      // 15% range seat
+    score += (0.5 - dayRangePos) * 12; // closer to day low = better entry
+    score += change > 4 ? -6 : change > 0 ? 2 : change > -4 ? 4 : 6;                   // 10% anti-chasing
+    const superScore = Math.max(1, Math.min(99, Math.round(score)));
+    const volume = d?.volume;
+
+    // "Inside story" — derive from price action + technicals + v6 score verdict
+    let insideStory = deriveInsideStory(p, price, change, rsi, sma20, sma50, macd);
+    insideStory += ` | ⚡SuperScore ${superScore}/99 ${superScore >= 65 ? '🔥 BUY-LEAN' : superScore <= 35 ? '⚠️ SELL-LEAN' : '⚪ NEUTRAL'}`;
 
     signals.push({
       symbol: p.symbol,
@@ -255,6 +279,9 @@ function computePortfolioSignals(
       confidence,
       reason,
       insideStory,
+      superScore,
+      volume,
+      dayRangePos,
     });
   }
   return signals;
@@ -468,6 +495,19 @@ function deriveWarningsAndOpportunities(
   const sharpDown = signals.filter(s => s.change < -4);
   if (sharpDown.length > 0) warnings.push(`⚠️ Sharp drop: ${sharpDown.map(s => `${s.symbol} ${s.change.toFixed(1)}%`).join(', ')}`);
 
+  // v6: VOLUME-BREAKOUT anomalies (big move + heavy volume = institutional footprint)
+  const volumeBreakouts = signals.filter(s => Math.abs(s.change) > 3 && (s.volume ?? 0) > 1_000_000);
+  for (const vb of volumeBreakouts.slice(0, 3)) {
+    if (vb.change > 0) opportunities.push(`💥 VOLUME BREAKOUT: ${vb.symbol} +${vb.change.toFixed(1)}% on heavy tape — institutions buying`);
+    else warnings.push(`💥 VOLUME SELL-OFF: ${vb.symbol} ${vb.change.toFixed(1)}% on heavy tape — distribution risk`);
+  }
+
+  // v6: SUPERSCORE extremes (5-factor alignment — rarer & more reliable than RSI alone)
+  const extremeBuy = signals.filter(s => (s.superScore ?? 50) >= 78);
+  if (extremeBuy.length > 0) opportunities.push(`⚡ SuperScore EXTREME-BUY: ${extremeBuy.map(s => `${s.symbol} (${s.superScore})`).join(', ')} — multi-factor alignment`);
+  const extremeSell = signals.filter(s => (s.superScore ?? 50) <= 22);
+  if (extremeSell.length > 0) warnings.push(`⚡ SuperScore EXTREME-SELL: ${extremeSell.map(s => `${s.symbol} (${s.superScore})`).join(', ')} — multi-factor breakdown`);
+
   return { warnings, opportunities };
 }
 
@@ -477,7 +517,7 @@ function formatContext(ctx: SuperintelligenceContext): string {
   const fmt = (n: number | undefined, digits = 2) => n != null ? n.toFixed(digits) : 'N/A';
   const fmtPct = (n: number | undefined) => n != null ? `${n >= 0 ? '+' : ''}${n.toFixed(2)}%` : 'N/A';
 
-  let out = `=== SUPERINTELLIGENCE LIVE CONTEXT v5.0 ===
+  let out = `=== SUPERINTELLIGENCE LIVE CONTEXT v6.0 ===
 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
 
 --- LIVE MARKET SNAPSHOT ---
@@ -517,7 +557,7 @@ ${ctx.portfolioSummary.topLoser ? `Top Loser: ${ctx.portfolioSummary.topLoser.sy
   const topSignals = [...ctx.portfolioSignals].sort((a, b) => b.confidence - a.confidence).slice(0, 10);
   for (const s of topSignals) {
     const cur = s.market === 'IN' ? '₹' : '$';
-    out += `• ${s.symbol} [${s.market}] — ${cur}${s.currentPrice.toFixed(2)} (${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)}%) | RSI ${s.rsi.toFixed(0)} | Signal: ${s.signal} (${s.confidence}% conf) | ${s.reason}\n`;
+    out += `• ${s.symbol} [${s.market}] — ${cur}${s.currentPrice.toFixed(2)} (${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)}%) | RSI ${s.rsi.toFixed(0)} | Signal: ${s.signal} (${s.confidence}% conf) | ⚡SuperScore: ${s.superScore ?? '—'}/99 | ${s.reason}\n`;
     out += `  Inside Story: ${s.insideStory}\n`;
   }
 
@@ -634,7 +674,7 @@ export function quantBrainSuperintelligence(
   const fmt = (n: number | undefined, digits = 2) => n != null ? n.toFixed(digits) : 'N/A';
   const fmtPct = (n: number | undefined) => n != null ? `${n >= 0 ? '+' : ''}${n.toFixed(2)}%` : 'N/A';
 
-  let out = `🧠 **SUPERINTELLIGENCE QUANT BRAIN v5.0**
+  let out = `🧠 **SUPERINTELLIGENCE QUANT BRAIN v6.0**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ⏰ ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
@@ -690,7 +730,7 @@ ${ctx.regimeReason}
 4. Risk: ${((m.usVix ?? 15) + (m.indiaVix ?? 15)) / 2 > 22 ? '⚠️ Elevated VIX — reduce size' : '✅ Normal'}
 5. Conviction: ${ctx.portfolioSignals.filter(s => s.confidence > 70).length} high-conviction signals
 6. Action: ${ctx.regime === 'RISK_ON' ? 'Aggressive — buy dips' : ctx.regime === 'RISK_OFF' ? 'Defensive — raise cash' : 'Selective — stock-specific'}
-7. Top pick: ${[...ctx.portfolioSignals].sort((a, b) => b.confidence - a.confidence)[0]?.symbol || 'N/A'}
+7. Top pick: ${[...ctx.portfolioSignals].sort((a, b) => (b.superScore ?? b.confidence) - (a.superScore ?? a.confidence))[0]?.symbol || 'N/A'} (⚡SuperScore ranked)
 
 ⚡ LLM narration unavailable — Quant Brain deterministic analysis. All API keys free: Gemini (aistudio.google.com), Groq (console.groq.com)`;
 
@@ -699,7 +739,7 @@ ${ctx.regimeReason}
 
 // ---------- System prompt builder for LLM ----------
 export function buildSuperintelligenceSystemPrompt(ctx: SuperintelligenceContext): string {
-  return `You are SUPERINTELLIGENCE v4.0 — a market superintelligence with REAL-TIME 24x7 market data + portfolio-specific news + live technicals. You have FULL access to the user's portfolio and live market data below.
+  return `You are SUPERINTELLIGENCE v6.0 — a market superintelligence with REAL-TIME 24x7 market data + portfolio-specific news + live technicals. You have FULL access to the user's portfolio and live market data below.
 
 PERSONA: Elite institutional quant trader (20+ years NSE/BSE/NYSE/NASDAQ/Crypto). Think Goldman Sachs + Citadel + Renaissance + Pantera combined. Speak SIMPLE Hinglish — "bhai", "dekho", "simple words me". Explain like talking to a smart friend.
 

@@ -178,7 +178,7 @@ export interface NeuralChatProps {
   livePrices?: Record<string, PriceData>;
 }
 
-const SYSTEM_WELCOME = `🤖 **SUPER INTELLIGENCE v5.0** • Real-time Market Data + Portfolio News + 7-Engine AI
+const SYSTEM_WELCOME = `🤖 **SUPER INTELLIGENCE v6.0** • Real-time Market Data + Portfolio News + 7-Engine AI + ⚡SuperScore
 
 **24x7 LIVE DATA ACCESS:**
 • Real-time market prices (NSE/BSE/NYSE/NASDAQ/Crypto)
@@ -189,7 +189,7 @@ const SYSTEM_WELCOME = `🤖 **SUPER INTELLIGENCE v5.0** • Real-time Market Da
 • Auto-warnings (overbought/oversold/sharp moves/negative news)
 • Auto-opportunities (dip zones/positive catalysts)
 
-**NEW IN v5.0:** Persistent chat memory • Stop/Drop response ki midway generation • Regenerate last answer • Engine latency display • Smart follow-ups
+**NEW IN v6.0:** ⚡SuperScore (5-factor composite per holding) • Volume-breakout anomaly alerts • Persistent chat memory • Stop/Regenerate • Engine latency display • Smart follow-ups
 
 **7 LLM Engines:** Gemini | Groq | Claude | OpenRouter | Cerebras | HuggingFace | NVIDIA
 **Fallback:** Quant Brain (deterministic, always works — no API key needed)
@@ -199,7 +199,7 @@ Ask me anything — markets, your portfolio, trading signals, or wealth building
 // ============================================================
 // v5.0 — Persistent chat memory (localStorage, capped)
 // ============================================================
-const CHAT_STORAGE_KEY = 'neural_chat_v5';
+const CHAT_STORAGE_KEY = 'neural_chat_v5'; // key name kept for backward compat (v5 chats migrate seamlessly)
 const MAX_STORED_MESSAGES = 60;
 
 function loadPersistedChat(): ChatMessage[] {
@@ -636,7 +636,7 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
                 <div className="min-w-0">
                   <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
                     Super Intelligence
-                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">v5.0</span>
+                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">v6.0</span>
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />

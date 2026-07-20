@@ -25,7 +25,7 @@ import {
 } from './analysis.mjs';
 
 
-import { chatWithAI, clearChatHistory, setChatEngine, getChatEngine, AI_ENGINE_LABELS } from './ai-chat.mjs';
+import { chatWithAI, clearChatHistory, setChatEngine, getChatEngine, AI_ENGINE_LABELS, getAIHealthStatus } from './ai-chat.mjs';
 import { backtestSignal, calculateBacktestMetrics } from './backtester.mjs';
 import { scanAlgoSignals, formatAlgoAlert, algoWatchKeys } from './algo.mjs';
 
@@ -916,8 +916,8 @@ Chat history reset karo.
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 🧠 <b>SUPERINTELLIGENCE v5.0:</b>
 
-🧠 <b>/super</b>
-One-shot deep brief — regime + portfolio pulse + top signals + warnings + opportunities. 100% deterministic, hamesha kaam karta hai.
+🧠 <b>/super</b> <i>(ya /super ai)</i>
+One-shot deep brief — deterministic mode hamesha kaam karta hai; <code>/super ai</code> LLM narrate karta hai. Inline buttons: Refresh / AI Narrate.
 
 🔬 <b>/insights &lt;SYMBOL&gt;</b>
 Portfolio-aware deep insight — your P&L + RSI + trend + AI verdict + conviction score.
@@ -1600,6 +1600,30 @@ bot.on('callback_query', async (query) => {
     if (!chatId) return;
     if (!isAuthorized({ chat: { id: chatId }, from: query.from })) {
       await bot.answerCallbackQuery(query.id, { text: 'Not authorized' });
+      return;
+    }
+    // v18: /super inline buttons — refresh brief or AI-narrate it
+    if (data.startsWith('sup:')) {
+      const action = data.split(':')[1];
+      await bot.answerCallbackQuery(query.id, { text: action === 'ai' ? '🧠 AI narrating...' : '🔁 Refreshing...' }).catch(() => {});
+      const brief = await buildSuperBriefText();
+      if (!brief) {
+        await safeSend(chatId, '📂 Portfolio khali hai.');
+        return;
+      }
+      if (action === 'ai') {
+        const stopTyping = startTyping(chatId);
+        try {
+          const narration = await narrateSuperBrief(chatId, brief);
+          await safeSend(chatId, `🧠 <b>SUPER BRIEF — AI NARRATED</b>\n\n${narration}`, superKeyboard());
+        } catch (e) {
+          await safeSend(chatId, brief + '\n\n<i>(AI narration unavailable — deterministic brief shown)</i>', superKeyboard());
+        } finally {
+          stopTyping();
+        }
+      } else {
+        await safeSend(chatId, brief, superKeyboard());
+      }
       return;
     }
     if (data.startsWith('setmodel:')) {
@@ -3528,108 +3552,144 @@ bot.onText(/^\/rebalance(@\w+)?$/i, async (msg) => {
 
 
 // ========================================
-// COMMAND: /super — SUPERINTELLIGENCE BRIEF v5.0 (one-shot deep report)
+// COMMAND: /super — SUPERINTELLIGENCE BRIEF v6.0 (one-shot deep report)
 // Regime + Portfolio P&L + Top signals + Warnings + Opportunities in ONE
-// message. 100% deterministic (uses existing analyzers) — works even if
-// every LLM key is down. Zero extra API calls beyond cached prices.
+// message. Deterministic core ALWAYS works (no LLM key needed); "/super ai"
+// re-narrates the same numbers via the best LLM engine. Inline buttons let
+// you refresh or narrate in one tap.
 // ========================================
-bot.onText(/^\/super(@\w+)?$/i, async (msg) => {
+
+// Shared builder — returns the brief text, or null when portfolio is empty.
+async function buildSuperBriefText() {
+  if (portfolio.length === 0) {
+    await refreshPortfolio().catch(() => {});
+  }
+  await smartRefreshPrices();
+  if (portfolio.length === 0) return null;
+
+  const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
+
+  // Regime from cached VIX (same heuristic as /health)
+  const vixUS = livePrices['US_VIX']?.price || 0;
+  const vixIN = livePrices['IN_INDIAVIX']?.price || 0;
+  const avgVix = (vixUS + vixIN) / 2 || null;
+  let regime = '🟢 RISK ON', regimeLine = 'Normal conditions — SIP continue karo.';
+  if (avgVix && avgVix > 30) { regime = '🔴🔴 RISK OFF (Panic)'; regimeLine = 'VIX spike! Cash bachao, sirf deep staged buys.'; }
+  else if (avgVix && avgVix > 22) { regime = '🟠 ELEVATED VOLATILITY'; regimeLine = 'Choppy market. Chhote sizes, quality names only.'; }
+  else if (avgVix && avgVix < 14) { regime = '💎 GOLDILOCKS'; regimeLine = 'Calm market — dips pe aggressively accumulate.'; }
+
+  // Score every holding
+  const signals = portfolio.map(p => {
+    const pd = livePrices[`${p.market}_${p.symbol}`];
+    return { pos: p, sig: analyzeAsset(p, pd) };
+  });
+
+  const buys = signals.filter(x => x.sig.action === 'BUY').sort((a, b) => b.sig.confidence - a.sig.confidence);
+  const sells = signals.filter(x => x.sig.action === 'SELL').sort((a, b) => b.sig.confidence - a.sig.confidence);
+  const strongBuys = buys.filter(x => x.sig.signal === 'STRONG_BUY');
+  const warnings = signals.filter(x => x.sig.rsi > 70 || x.sig.change < -4);
+  const opportunities = signals.filter(x => x.sig.rsi < 35 || (x.sig.action === 'BUY' && x.sig.confidence >= 80));
+
+  let r = `🧠 <b>SUPERINTELLIGENCE BRIEF v6.0</b>\n`;
+  r += `━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  r += `⏰ ${getISTTime()} IST | ${getMarketStatus()}\n\n`;
+
+  r += `<b>1️⃣ MARKET REGIME:</b> ${regime}\n`;
+  if (avgVix) r += `   VIX (US ${vixUS.toFixed(1)} / IN ${vixIN.toFixed(1)}) — ${regimeLine}\n\n`;
+  else r += `   ${regimeLine}\n\n`;
+
+  const plEmoji = metrics.totalPL >= 0 ? '📈' : '📉';
+  r += `<b>2️⃣ PORTFOLIO PULSE:</b>\n`;
+  r += `   💼 ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')} | ${plEmoji} ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(1)}%)\n`;
+  r += `   📊 Today: ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')} (${metrics.todayPct.toFixed(2)}%)\n`;
+  r += `   🟢 BUY:${buys.length} | 🔴 SELL:${sells.length} | 🟡 HOLD:${signals.length - buys.length - sells.length}\n\n`;
+
+  r += `<b>3️⃣ TOP SIGNALS:</b>\n`;
+  const top = [...buys, ...sells].sort((a, b) => b.sig.confidence - a.sig.confidence).slice(0, 3);
+  if (top.length === 0) {
+    r += `   ⚪ Sab neutral — don't force trades.\n`;
+  } else {
+    for (const t of top) {
+      const cur = t.pos.market === 'IN' ? '₹' : '$';
+      const icon = t.sig.action === 'BUY' ? '🟢' : '🔴';
+      r += `   ${icon} <b>${t.sig.symbol}</b> ${t.sig.signal.replace('_', ' ')} (${t.sig.confidence}%) — ${cur}${t.sig.price.toFixed(2)} → target ${cur}${(t.sig.targetPrice || 0).toFixed(2)}\n`;
+      r += `      💡 <i>${t.sig.reason}</i>\n`;
+    }
+  }
+  r += `\n`;
+
+  r += `<b>4️⃣ WARNINGS:</b>\n`;
+  if (warnings.length === 0 && strongBuys.length === 0) r += `   ✅ Koi red flag nahi.\n`;
+  for (const w of warnings.slice(0, 3)) {
+    r += `   ⚠️ ${w.sig.symbol}: RSI ${w.sig.rsi.toFixed(0)}, move ${w.sig.change.toFixed(1)}%\n`;
+  }
+  if (metrics.plPct < -15) r += `   ⚠️ Portfolio drawdown ${metrics.plPct.toFixed(1)}% — risk review recommended.\n`;
+  r += `\n`;
+
+  r += `<b>5️⃣ OPPORTUNITIES:</b>\n`;
+  if (opportunities.length === 0) r += `   💤 Koi deep-dip setup nahi — SIP is the play.\n`;
+  for (const o of opportunities.slice(0, 3)) {
+    const cur = o.pos.market === 'IN' ? '₹' : '$';
+    r += `   🎯 ${o.sig.symbol}: ${cur}${o.sig.price.toFixed(2)} | RSI ${o.sig.rsi.toFixed(0)} | ${o.sig.confidence}% conviction\n`;
+  }
+  r += `\n`;
+
+  let verdict;
+  if (avgVix && avgVix > 30) verdict = 'DEFENSE MODE — panic mat karo, par naya bada capital mat lagao.';
+  else if (strongBuys.length > 0) verdict = `AGGRESSIVE ACCUMULATION — ${strongBuys[0].sig.symbol} STRONG_BUY pe focus.`;
+  else if (sells.length > buys.length * 2) verdict = 'PARTIAL PROFIT BOOKING — overbought positions trim karo in parts.';
+  else verdict = 'STEADY — SIP chalu, noise ignore, discipline follow.';
+  r += `<b>6️⃣ ONE-LINE VERDICT:</b>\n   ${verdict}\n\n`;
+  r += `💎 <i>Deep Mind AI — Superintelligence Engine</i>`;
+  return r;
+}
+
+const superKeyboard = () => ({
+  reply_markup: {
+    inline_keyboard: [[
+      { text: '🔁 Refresh Brief', callback_data: 'sup:refresh' },
+      { text: '🧠 AI Narrate', callback_data: 'sup:ai' },
+    ]],
+  },
+});
+
+// Optional LLM narration — deterministically-computed numbers, LLM only
+// explains them (anti-hallucination guard in ai-chat double-checks).
+async function narrateSuperBrief(chatId, brief) {
+  const narrationPrompt = `Narrate this PRE-COMPUTED portfolio brief in natural Hinglish (bhai-tone, 8-10 lines max). DO NOT change any number — numbers are already computed deterministically. Add one original cross-market insight connecting regime to the top signal. Keep section emojis:\n\n${brief.replace(/<[^>]+>/g, '')}`;
+  // Hard cap 35s so /super ai never hangs the bot pipeline
+  const response = await Promise.race([
+    chatWithAI(chatId, narrationPrompt, portfolio, livePrices, usdInrRate),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('narration timeout')), 35000)),
+  ]);
+  return response;
+}
+
+bot.onText(/^\/super(?:@\w+)?(?:\s+(\w+))?$/i, async (msg, match) => {
   if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
-  console.log(`📥 /super from ${msg.from?.first_name || chatId}`);
+  const mode = (match?.[1] || '').toLowerCase();
+  console.log(`📥 /super ${mode || 'plain'} from ${msg.from?.first_name || chatId}`);
   try {
-    if (portfolio.length === 0) {
-      await refreshPortfolio().catch(() => {});
-    }
-    await smartRefreshPrices();
-    if (portfolio.length === 0) {
+    const brief = await buildSuperBriefText();
+    if (!brief) {
       await safeSend(chatId, '📂 Portfolio khali hai. Web app se assets add karo, phir /super chalao.');
       return;
     }
-
-    const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
-
-    // Regime from cached VIX (same heuristic as /health)
-    const vixUS = livePrices['US_VIX']?.price || 0;
-    const vixIN = livePrices['IN_INDIAVIX']?.price || 0;
-    const avgVix = (vixUS + vixIN) / 2 || null;
-    let regime = '🟢 RISK ON', regimeLine = 'Normal conditions — SIP continue karo.';
-    if (avgVix && avgVix > 30) { regime = '🔴🔴 RISK OFF (Panic)'; regimeLine = 'VIX spike! Cash bachao, sirf deep staged buys.'; }
-    else if (avgVix && avgVix > 22) { regime = '🟠 ELEVATED VOLATILITY'; regimeLine = 'Choppy market. Chhote sizes, quality names only.'; }
-    else if (avgVix && avgVix < 14) { regime = '💎 GOLDILOCKS'; regimeLine = 'Calm market — dips pe aggressively accumulate.'; }
-
-    // Score every holding
-    const signals = portfolio.map(p => {
-      const pd = livePrices[`${p.market}_${p.symbol}`];
-      return { pos: p, sig: analyzeAsset(p, pd) };
-    });
-
-    const buys = signals.filter(x => x.sig.action === 'BUY').sort((a, b) => b.sig.confidence - a.sig.confidence);
-    const sells = signals.filter(x => x.sig.action === 'SELL').sort((a, b) => b.sig.confidence - a.sig.confidence);
-    const strongBuys = buys.filter(x => x.sig.signal === 'STRONG_BUY');
-    const warnings = signals.filter(x => x.sig.rsi > 70 || x.sig.change < -4);
-    const opportunities = signals.filter(x => x.sig.rsi < 35 || (x.sig.action === 'BUY' && x.sig.confidence >= 80));
-
-    let r = `🧠 <b>SUPERINTELLIGENCE BRIEF v5.0</b>\n`;
-    r += `━━━━━━━━━━━━━━━━━━━━━━━\n`;
-    r += `⏰ ${getISTTime()} IST | ${getMarketStatus()}\n\n`;
-
-    // 1. Regime
-    r += `<b>1️⃣ MARKET REGIME:</b> ${regime}\n`;
-    if (avgVix) r += `   VIX (US ${vixUS.toFixed(1)} / IN ${vixIN.toFixed(1)}) — ${regimeLine}\n\n`;
-    else r += `   ${regimeLine}\n\n`;
-
-    // 2. Portfolio pulse
-    const plEmoji = metrics.totalPL >= 0 ? '📈' : '📉';
-    r += `<b>2️⃣ PORTFOLIO PULSE:</b>\n`;
-    r += `   💼 ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')} | ${plEmoji} ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(1)}%)\n`;
-    r += `   📊 Today: ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')} (${metrics.todayPct.toFixed(2)}%)\n`;
-    r += `   🟢 BUY:${buys.length} | 🔴 SELL:${sells.length} | 🟡 HOLD:${signals.length - buys.length - sells.length}\n\n`;
-
-    // 3. Top 3 actionable signals
-    r += `<b>3️⃣ TOP SIGNALS:</b>\n`;
-    const top = [...buys, ...sells].sort((a, b) => b.sig.confidence - a.sig.confidence).slice(0, 3);
-    if (top.length === 0) {
-      r += `   ⚪ Sab neutral — sabse bada signal yahi hai: don't force trades.\n`;
-    } else {
-      for (const t of top) {
-        const cur = t.pos.market === 'IN' ? '₹' : '$';
-        const icon = t.sig.action === 'BUY' ? '🟢' : '🔴';
-        r += `   ${icon} <b>${t.sig.symbol}</b> ${t.sig.signal.replace('_', ' ')} (${t.sig.confidence}%) — ${cur}${t.sig.price.toFixed(2)} → target ${cur}${(t.sig.targetPrice || 0).toFixed(2)}\n`;
-        r += `      💡 <i>${t.sig.reason}</i>\n`;
+    if (mode === 'ai') {
+      const stopTyping = startTyping(chatId);
+      try {
+        const narration = await narrateSuperBrief(chatId, brief);
+        await safeSend(chatId, `🧠 <b>SUPER BRIEF — AI NARRATED</b>\n\n${narration}`, superKeyboard());
+      } catch (e) {
+        console.warn('/super ai narration failed, deterministic fallback:', e.message);
+        await safeSend(chatId, brief + '\n\n<i>(AI narration unavailable — deterministic brief shown)</i>', superKeyboard());
+      } finally {
+        stopTyping();
       }
+      return;
     }
-    r += `\n`;
-
-    // 4. Warnings
-    r += `<b>4️⃣ WARNINGS:</b>\n`;
-    if (warnings.length === 0 && strongBuys.length === 0) r += `   ✅ Koi red flag nahi.\n`;
-    for (const w of warnings.slice(0, 3)) {
-      r += `   ⚠️ ${w.sig.symbol}: RSI ${w.sig.rsi.toFixed(0)}, move ${w.sig.change.toFixed(1)}%\n`;
-    }
-    if (metrics.plPct < -15) r += `   ⚠️ Portfolio drawdown ${metrics.plPct.toFixed(1)}% — risk review recommended.\n`;
-    r += `\n`;
-
-    // 5. Opportunities
-    r += `<b>5️⃣ OPPORTUNITIES:</b>\n`;
-    if (opportunities.length === 0) r += `   💤 Koi deep-dip setup nahi — SIP is the play.\n`;
-    for (const o of opportunities.slice(0, 3)) {
-      const cur = o.pos.market === 'IN' ? '₹' : '$';
-      r += `   🎯 ${o.sig.symbol}: ${cur}${o.sig.price.toFixed(2)} | RSI ${o.sig.rsi.toFixed(0)} | ${o.sig.confidence}% conviction\n`;
-    }
-    r += `\n`;
-
-    // 6. Verdict
-    let verdict;
-    if (avgVix && avgVix > 30) verdict = 'DEFENSE MODE — panic mat karo, par naya bada capital mat lagao.';
-    else if (strongBuys.length > 0) verdict = `AGGRESSIVE ACCUMULATION — ${strongBuys[0].sig.symbol} STRONG_BUY pe focus.`;
-    else if (sells.length > buys.length * 2) verdict = 'PARTIAL PROFIT BOOKING — overbought positions trim karo in parts.';
-    else verdict = 'STEADY — SIP chalu, noise ignore, discipline follow.';
-    r += `<b>6️⃣ ONE-LINE VERDICT:</b>\n   ${verdict}\n\n`;
-    r += `<i>/scan &lt;SYM&gt; for deep dive · /ai &lt;question&gt; for LLM narration · /dip for dip zones</i>\n`;
-    r += `💎 <i>Deep Mind AI — Superintelligence Engine</i>`;
-
-    await safeSend(chatId, r);
+    await safeSend(chatId, brief, superKeyboard());
   } catch (e) {
     console.error('❌ /super error:', e.message);
     await safeSend(chatId, `❌ Super brief error: ${e.message}`);
@@ -3744,6 +3804,23 @@ bot.onText(/^\/aitest(@\w+)?$/i, async (msg) => {
     r += `🟢 NVIDIA NIM         ${flag(cfg.isNvidiaAvailable())}\n`;
     r += `🔍 Tavily (search)    ${flag(cfg.isTavilyAvailable())}\n\n`;
     r += `🧠 Quant Brain fallback: 🟢 ALWAYS ARMED (no key needed)\n\n`;
+
+    // v18: smart-router telemetry (in-memory EWMA latency + failure counts)
+    try {
+      const health = getAIHealthStatus();
+      r += `⚡ <b>SMART ROUTER (auto mode):</b>\n`;
+      r += `<code>engine        latency fails state</code>\n`;
+      for (const [name, info] of Object.entries(health)) {
+        const lat = info.health?.latencyMs ? `${(info.health.latencyMs / 1000).toFixed(1)}s` : '—';
+        const fails = info.health?.failures || 0;
+        const cooling = !!(info.health && info.health.failures >= 3 && (Date.now() - info.health.lastFailure) < (info.health.cooldownMs || 30000));
+        const state = !info.available ? 'no key' : cooling ? '⏸ cool' : fails > 0 ? `⚠️ ${fails}` : '✅ ok';
+        const padded = (name + '          ').slice(0, 13);
+        r += `<code>${padded} ${String(lat).padEnd(7)} ${String(fails).padEnd(5)} ${state}</code>\n`;
+      }
+      r += `\n`;
+    } catch { /* telemetry optional */ }
+
     r += `<i>Change engine: /model · Add keys on server env vars.</i>`;
     await safeSend(chatId, r);
   } catch (e) {

@@ -1,4 +1,24 @@
 
+## v1.3.0 — SuperScore v6 + Smart Router v18 Deep Upgrade (2026-07-20)
+
+### superintelligenceEngine v6 (Site AI core)
+- ⚡ **SuperScore**: 5-factor composite directional score (1-99) per holding — RSI zone 35% + SMA20/50 divergence 25% + MACD 15% + day-range position 15% + anti-chasing momentum 10%. Injected into LLM prompt, inside-story, and Quant Brain top-pick ranking
+- 💥 **Volume-breakout anomaly alerts** (big move + heavy tape = institutional footprint)
+- ⚡ **SuperScore EXTREME-BUY/SELL** multi-factor alignment warnings (rarer & more reliable than RSI-only signals)
+
+### Telegram Bot v18
+- **Latency-aware Smart Router** (ai-chat): per-engine EWMA latency tracking; auto mode now prefers fastest healthy engine, cooldowns sink to bottom — measurable latency reduction in failover cascades
+- `/super ai` — LLM-narrated super brief (deterministic numbers + LLM explanation + anti-hallucination check, 35s hard cap, graceful fallback)
+- Inline keyboard on /super: 🔁 Refresh Brief + 🧠 AI Narrate buttons (callback_query wired)
+- `/aitest` — SMART ROUTER telemetry table (per-engine latency EWMA, failure count, cooling state)
+
+### Hang-proofing (bug fixes)
+- `apiFetch` default 30s timeout — previously fetch calls without an explicit AbortSignal could hang forever and stall the UI
+- `/api/config` + direct Telegram sendMessage now have 4s/8s caps (fast proxy fallback)
+
+### Validation
+- tsc clean ✅ · 41/41 tests ✅ · vite build ✅ · node --check all server+bot modules ✅
+
 ## v1.2.0 — Superintelligence v5.0 Upgrade (2026-07-20)
 
 ### NeuralChat v5.0 (Site AI)

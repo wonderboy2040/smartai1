@@ -74,6 +74,10 @@ export function apiFetch(input: string, init: RequestInit = {}): Promise<Respons
   if (_sessionToken) {
     headers['Authorization'] = `Bearer ${_sessionToken}`;
   }
+  // v1.3 THROTTLE-GUARD: default 30s timeout when the caller didn't supply
+  // its own AbortSignal. Prevents corner-case hung requests from stalling
+  // the UI indefinitely (all existing explicit timeouts still take priority).
+  if (!init.signal) init.signal = AbortSignal.timeout(30000);
   return fetch(url, { ...init, credentials: 'include', headers });
 }
 export function getSessionToken(): string | null { return _sessionToken; }
@@ -90,7 +94,7 @@ export function isCloudSyncConfigured(): boolean {
 
 // Runtime API_URL — tries server config first, then VITE build-time env var
 // Used ONLY for Google Apps Script cloud sync, NOT for backend /api/* calls.
-// FIX: previously this was async + awaited a fetch('/api/config') on EVERY
+// FIX: previously this was async + awaited a fetch('/api/config', { signal: AbortSignal.timeout(4000) }) on EVERY
 // call. That added 1-3s of latency before loadFromCloud could even start.
 // Now we fire the config fetch once in the background and cache the result.
 // Callers get the VITE_API_URL immediately (synchronous), and if the server
@@ -1214,7 +1218,8 @@ export async function sendTelegramAlert(token: string, chatId: string, message: 
       const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML' })
+        body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML' }),
+        signal: AbortSignal.timeout(8000) // v1.3: 8s cap → falls back to server proxy fast
       });
       if (res.ok) return true;
     } catch (e) {

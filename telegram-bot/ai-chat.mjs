@@ -1,5 +1,5 @@
 // ============================================
-// AI CHAT ENGINE — DEEP MIND AI ADVANCE PRO v23
+// AI CHAT ENGINE — DEEP MIND AI ADVANCE PRO v23 → v18 LATENCY-AWARE SMART ROUTER
 // 6-Provider LLM Router + Quant Brain Fallback
 // NEVER shows "AI Offline" — Quant Brain always works
 // ============================================
@@ -49,13 +49,13 @@ let intelTimestamp = 0;
 // ENGINE HEALTH — 6 providers with cooldown
 // ============================================
 const engineHealth = {
-  nvidia: { failures: 0, lastFailure: 0, cooldownMs: 15000 },
-  groq: { failures: 0, lastFailure: 0, cooldownMs: 30000 },
-  gemini: { failures: 0, lastFailure: 0, cooldownMs: 15000 },
-  claude: { failures: 0, lastFailure: 0, cooldownMs: 15000 },
-  openrouter: { failures: 0, lastFailure: 0, cooldownMs: 30000 },
-  cerebras: { failures: 0, lastFailure: 0, cooldownMs: 30000 },
-  huggingface: { failures: 0, lastFailure: 0, cooldownMs: 60000 },
+  nvidia: { failures: 0, lastFailure: 0, cooldownMs: 15000, latencyMs: 0 },
+  groq: { failures: 0, lastFailure: 0, cooldownMs: 30000, latencyMs: 0 },
+  gemini: { failures: 0, lastFailure: 0, cooldownMs: 15000, latencyMs: 0 },
+  claude: { failures: 0, lastFailure: 0, cooldownMs: 15000, latencyMs: 0 },
+  openrouter: { failures: 0, lastFailure: 0, cooldownMs: 30000, latencyMs: 0 },
+  cerebras: { failures: 0, lastFailure: 0, cooldownMs: 30000, latencyMs: 0 },
+  huggingface: { failures: 0, lastFailure: 0, cooldownMs: 60000, latencyMs: 0 },
 };
 
 function recordEngineFailure(engine = 'groq') {
@@ -63,9 +63,45 @@ function recordEngineFailure(engine = 'groq') {
   engineHealth[engine].failures++;
   engineHealth[engine].lastFailure = Date.now();
 }
-function recordEngineSuccess(engine = 'groq') {
+function recordEngineSuccess(engine = 'groq', latencyMs = 0) {
   if (!engineHealth[engine]) return;
   engineHealth[engine].failures = 0;
+  // v18: track EWMA latency per engine so the router can prefer the fastest
+  // healthy provider. 0.3 smoothing converges in ~3 samples.
+  if (latencyMs > 0) {
+    const prev = engineHealth[engine].latencyMs || latencyMs;
+    engineHealth[engine].latencyMs = Math.round(prev * 0.7 + latencyMs * 0.3);
+  }
+}
+
+// v18: LATENCY-AWARE SMART ROUTER — given the base engine list, return an
+// ordering that prefers healthy engines with proven low latency. Engines on
+// cooldown (3+ failures) sink to the bottom; untested engines keep original
+// order among themselves (fair exploration).
+function isEngineCooling(name) {
+  const h = engineHealth[name];
+  return !!h && h.failures >= 3 && (Date.now() - h.lastFailure) < h.cooldownMs;
+}
+function orderEnginesByHealth(engines) {
+  const withMeta = engines.map((e, idx) => {
+    const h = engineHealth[e.name] || {};
+    return {
+      ...e, _idx: idx,
+      _cooling: isEngineCooling(e.name),
+      _latency: h.latencyMs || 0,
+      _failures: h.failures || 0,
+    };
+  });
+  withMeta.sort((a, b) => {
+    if (a._cooling !== b._cooling) return a._cooling ? 1 : -1;
+    if (a._failures !== b._failures) return a._failures - b._failures;
+    const la = a._latency || 0, lb = b._latency || 0;
+    if (la > 0 && lb > 0 && la !== lb) return la - lb;      // both measured → fastest first
+    if (la > 0 && lb === 0) return 0 === 0 ? -1 : 0;         // measured first (proven)
+    if (la === 0 && lb > 0) return 1;
+    return a._idx - b._idx;                                  // original order (fair)
+  });
+  return withMeta;
 }
 
 console.log(`🤖 AI Engines: Gemini=${isGeminiAvailable()} Groq=${isGroqAvailable()} Claude=${isClaudeAvailable()} OpenRouter=${isOpenRouterAvailable()} Cerebras=${isCerebrasAvailable()} HF=${isHFAvailable()}`);
@@ -661,20 +697,24 @@ async function _chatWithAIInner(chatId, userMessage, history, portfolio, livePri
 
   // Honor per-chat model selection: chosen engine first, rest as failover.
   const pref = getChatEngine(chatId);
-  let orderedEngines = engines;
+  let orderedEngines;
   if (pref && pref !== 'auto') {
     const chosen = engines.filter(e => e.name === pref);
-    const rest = engines.filter(e => e.name !== pref);
+    const rest = orderEnginesByHealth(engines.filter(e => e.name !== pref));
     orderedEngines = [...chosen, ...rest];
     console.log(`  🎛️ Model preference: ${pref} (first)`);
+  } else {
+    // v18: automatic mode → latency-aware smart routing
+    orderedEngines = orderEnginesByHealth(engines);
   }
 
   for (const engine of orderedEngines) {
     try {
       if (engine.available()) {
         console.log(`  🤖 Trying ${engine.name}...`);
+        const t0 = Date.now();
         aiText = await retryWithBackoff(engine.fn, 0, 500);
-        recordEngineSuccess(engine.name);
+        recordEngineSuccess(engine.name, Date.now() - t0);
         usedEngine = engine.name;
         break;
       }
