@@ -1,3 +1,27 @@
+
+## v1.2.0 — Superintelligence v5.0 Upgrade (2026-07-20)
+
+### NeuralChat v5.0 (Site AI)
+- Persistent chat memory: conversation saved to localStorage (60 msgs cap, sanitized) — survives reloads
+- Stop button: AbortController cancels in-flight engine cascade mid-generation
+- Regenerate: one-tap retry of last answer with fresh live data
+- Engine latency badge on every response (e.g. "groq • 2.1s")
+- Smart follow-up chips after each response (context-aware heuristics)
+- New "Super Brief" quick action (parity with Telegram /super)
+- Version label unified (header/welcome/quant brain all v5.0 — fixed v3.0/v4.0 mismatch)
+
+### Telegram Bot v17.0
+- NEW /super — Superintelligence Brief (regime + portfolio pulse + top signals + warnings + opportunities + verdict, 100% deterministic — works without any LLM key)
+- NEW /insights <SYMBOL> — portfolio-aware deep insight (your P&L + RSI + trend + AI verdict + conviction score)
+- NEW /aitest — AI engine health dashboard (7 engines + Quant Brain status)
+- Typing indicator (sendChatAction keepalive) on /ai, /chat, free-text chat
+- Memory hygiene: aiCallTimestamps map pruning, algo-cooldown 24h sweep, ai-chat history capped at 20 chats
+- Telegram menu commands updated (/super, /insights, /aitest)
+
+### Site Infra
+- Service worker cache bump wealth-ai-v2 → wealth-ai-v5 (PWA auto-refresh after deploy)
+- Package version 1.1.0 → 1.2.0
+- Baseline verified: 41/41 tests pass, tsc clean, vite build clean, node --check clean on all bot modules
 # SmartAI1 — Bug Fix Changelog
 
 ## Round 1: Initial Deep Review (28+ bugs fixed in 17 files)

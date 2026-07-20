@@ -1,5 +1,5 @@
 // ============================================================
-// SUPERINTELLIGENCE ENGINE v4.0
+// SUPERINTELLIGENCE ENGINE v5.0
 // ------------------------------------------------------------
 // Aggregates real-time market data + portfolio-specific news +
 // live prices + macro context into a single context blob that
@@ -477,7 +477,7 @@ function formatContext(ctx: SuperintelligenceContext): string {
   const fmt = (n: number | undefined, digits = 2) => n != null ? n.toFixed(digits) : 'N/A';
   const fmtPct = (n: number | undefined) => n != null ? `${n >= 0 ? '+' : ''}${n.toFixed(2)}%` : 'N/A';
 
-  let out = `=== SUPERINTELLIGENCE LIVE CONTEXT v4.0 ===
+  let out = `=== SUPERINTELLIGENCE LIVE CONTEXT v5.0 ===
 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
 
 --- LIVE MARKET SNAPSHOT ---
@@ -634,7 +634,7 @@ export function quantBrainSuperintelligence(
   const fmt = (n: number | undefined, digits = 2) => n != null ? n.toFixed(digits) : 'N/A';
   const fmtPct = (n: number | undefined) => n != null ? `${n >= 0 ? '+' : ''}${n.toFixed(2)}%` : 'N/A';
 
-  let out = `🧠 **SUPERINTELLIGENCE QUANT BRAIN v4.0**
+  let out = `🧠 **SUPERINTELLIGENCE QUANT BRAIN v5.0**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ⏰ ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST

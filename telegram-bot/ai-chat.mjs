@@ -606,6 +606,15 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
 const chatMutex = new Map();
 
 export async function chatWithAI(chatId, userMessage, portfolio=[], livePrices={}, usdInrRate=83.5) {
+  // v17 FIX (memory hygiene): cap total tracked chats — on long dyno runs
+  // stray chatIds could grow this Map forever. Maps iterate in insertion
+  // order, so evict the oldest entries first.
+  const MAX_CHATS = 20;
+  if (!chatHistory.has(chatId) && chatHistory.size >= MAX_CHATS) {
+    const oldest = chatHistory.keys().next().value;
+    chatHistory.delete(oldest);
+    chatMutex.delete(oldest);
+  }
   if (!chatHistory.has(chatId)) chatHistory.set(chatId, []);
   const history = chatHistory.get(chatId);
 

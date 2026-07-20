@@ -59,6 +59,15 @@ async function smartRefreshPrices() {
 const lastAlgoAlertAt = {};
 const ALGO_COOLDOWN_MS = 20 * 60 * 1000; // 20 min
 
+// v17 FIX (memory hygiene): prune stale algo-cooldown entries hourly so the
+// map doesn't grow forever on long-running dynos.
+setInterval(() => {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  for (const key of Object.keys(lastAlgoAlertAt)) {
+    if ((lastAlgoAlertAt[key] || 0) < cutoff) delete lastAlgoAlertAt[key];
+  }
+}, 60 * 60 * 1000);
+
 // AI Rate Limiting
 const aiCallTimestamps = new Map();
 const AI_RATE_LIMIT_MS = 10000;
@@ -72,6 +81,13 @@ function checkAIRateLimit(chatId) {
   aiCallTimestamps.set(id, timestamps);
   if (timestamps.length >= AI_RATE_LIMIT_MAX) return false;
   timestamps.push(now);
+  // v17 FIX (memory hygiene): previously this Map could grow unbounded —
+  // stale entries were never removed, only filtered per-call. Prune fully.
+  if (aiCallTimestamps.size > 50) {
+    for (const [k, arr] of aiCallTimestamps) {
+      if (!arr.length || now - arr[arr.length - 1] > 10 * 60 * 1000) aiCallTimestamps.delete(k);
+    }
+  }
   return true;
 }
 
@@ -479,7 +495,7 @@ if (process.env.BOT_ONLY !== 'true') {
 // ========================================
 console.log('');
 console.log('╔═════════════════════════════════════════════╗');
-console.log('║  🧠 DEEP MIND AI ADVANCE PRO v22.0       ║');
+console.log('║  🧠 DEEP MIND AI SUPER INTELLIGENCE v17  ║');
 console.log('║  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ║');
 console.log('║  TRIPLE AI: Gemini → Groq → Claude      ║');
 console.log('║  Deep Research + Live Market 24x7        ║');
@@ -573,6 +589,9 @@ async function initializeData() {
   try {
     await bot.setMyCommands([
       { command: 'start', description: 'Main Menu & Overview' },
+      { command: 'super', description: '🧠 Superintelligence Brief' },
+      { command: 'insights', description: 'Deep insight on a symbol' },
+      { command: 'aitest', description: 'AI engine health check' },
       { command: 'portfolio', description: 'Full Portfolio Analysis' },
       { command: 'market', description: 'Global Market Snapshot' },
       { command: 'live', description: 'Live Market Sensor Data' },
@@ -701,13 +720,26 @@ async function safeSend(chatId, text, options = {}) {
 }
 
 // ========================================
+// v17 UPGRADE: Typing indicator keepalive
+// Telegram chat_action expires after ~5s, so refresh every 4s while a
+// slow AI/scan call is in flight. Returns a stop() function.
+// ========================================
+function startTyping(chatId) {
+  let active = true;
+  const send = () => { if (active) bot.sendChatAction(chatId, 'typing').catch(() => { }); };
+  send();
+  const timer = setInterval(send, 4000);
+  return () => { active = false; clearInterval(timer); };
+}
+
+// ========================================
 // COMMAND: /start
 // ========================================
 bot.onText(/^\/start(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /start from ${msg.from?.first_name || chatId}`);
 
-  const welcome = `🧠 <b>DEEP MIND AI ADVANCE PRO v16.0</b>
+  const welcome = `🧠 <b>DEEP MIND AI ADVANCE PRO v17.0</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Nagraj Bhai, main tumhara ADVANCE PRO AI Trading assistant hoon! 🚀
@@ -759,6 +791,9 @@ Nagraj Bhai, main tumhara ADVANCE PRO AI Trading assistant hoon! 🚀
 💼 /fundamental — Deep fundamentals
 🔔 /alert — Toggle auto alerts
 🧹 /clear — Clear AI memory
+🧠 /super — Superintelligence Brief
+🔬 /insights — Deep symbol insight
+🔧 /aitest — AI engine health
 
 🧠 <b>AI Chat Mode:</b>
 Bina / ke koi bhi message likho = ADVANCE PRO AI chat!
@@ -769,7 +804,7 @@ Bina / ke koi bhi message likho = ADVANCE PRO AI chat!
 🔔 Auto Alerts: <b>${autoAlerts ? 'ON ✅' : 'OFF ❌'}</b>
 💱 USD/INR: <b>₹${usdInrRate.toFixed(2)}</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-💎 <i>Powered by Deep Mind AI Advance Pro v16.0</i>`;
+💎 <i>Powered by Deep Mind AI v17.0 Super Intelligence</i>`;
 
   await safeSend(chatId, welcome);
 });
@@ -879,6 +914,19 @@ AI model select karo (Gemini / Groq / Claude / Cerebras / Auto). Auto = best eng
 Chat history reset karo.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━
+🧠 <b>SUPERINTELLIGENCE v5.0:</b>
+
+🧠 <b>/super</b>
+One-shot deep brief — regime + portfolio pulse + top signals + warnings + opportunities. 100% deterministic, hamesha kaam karta hai.
+
+🔬 <b>/insights &lt;SYMBOL&gt;</b>
+Portfolio-aware deep insight — your P&L + RSI + trend + AI verdict + conviction score.
+Example: <code>/insights RELIANCE</code>
+
+🔧 <b>/aitest</b>
+AI engine health dashboard — kaun se LLM keys live hain, kaun sa engine active hai.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━
 🤖 <b>ML POWERED COMMANDS:</b>
 
 🤖 <b>/ml &lt;SYMBOL&gt;</b>
@@ -898,7 +946,7 @@ Regime-aware portfolio rebalancing — allocation guidance based on ML regime.
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 💬 <b>Pro Tip:</b> Bina command ke koi bhi message likho = AI chat mode automatic activate hoga!
 
-💎 <i>Deep Mind AI Quantum Pro Terminal v23.0 — 6-Engine + Quant Brain</i>`;
+💎 <i>Deep Mind AI v17.0 — 7-Engine + Superintelligence + Quant Brain</i>`;
 
   await safeSend(chatId, help);
 });
@@ -1639,6 +1687,8 @@ bot.onText(/^\/ai(?:@\w+)?\s+(.+)/i, async (msg, match) => {
     await safeSend(chatId, '⏳ <b>Rate limit!</b> Thoda ruko, 1 min me retry karo.');
     return;
   }
+  // v17: typing indicator while engines run (no more redundant "...analyzing" ping)
+  const stopTypingAi = startTyping(chatId);
   try {
     await safeSend(chatId, '🧠 <i>Deep Mind analyzing...</i>');
     await smartRefreshPrices();
@@ -1647,6 +1697,8 @@ bot.onText(/^\/ai(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   } catch (e) {
     console.error('❌ /ai error:', e.message);
     await safeSend(chatId, `❌ AI me error aaya: ${e.message}\n\nRetry karo ya /clear karke phir try karo.`);
+  } finally {
+    stopTypingAi();
   }
 });
 
@@ -1662,6 +1714,7 @@ bot.onText(/^\/chat(?:@\w+)?\s+(.+)/i, async (msg, match) => {
     await safeSend(chatId, '⏳ <b>Rate limit!</b> Thoda ruko, 1 min me retry karo.');
     return;
   }
+  const stopTypingChat = startTyping(chatId);
   try {
     await safeSend(chatId, '🧠 <i>Deep Mind analyzing...</i>');
     await smartRefreshPrices();
@@ -1670,6 +1723,8 @@ bot.onText(/^\/chat(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   } catch (e) {
     console.error('❌ /chat error:', e.message);
     await safeSend(chatId, `❌ AI me error aaya: ${e.message}\n\nRetry karo ya /clear karke phir try karo.`);
+  } finally {
+    stopTypingChat();
   }
 });
 
@@ -2446,8 +2501,8 @@ bot.on('message', async (msg) => {
   }
 
   console.log(`💬 AI Chat: "${text.substring(0, 50)}..." from ${msg.from?.first_name || chatId}`);
+  const stopTypingMsg = startTyping(chatId);
   try {
-    await safeSend(chatId, '🧠 <i>Deep Mind processing...</i>');
     
     // Check freshness to avoid blocking sequential refreshes
     const now = Date.now();
@@ -2464,6 +2519,8 @@ bot.on('message', async (msg) => {
   } catch (e) {
     console.error('❌ AI chat error:', e.message);
     await safeSend(chatId, `❌ AI processing me error: ${e.message}\n\nRetry karo ya /clear karke phir try karo.`);
+  } finally {
+    stopTypingMsg();
   }
 });
 
@@ -3469,9 +3526,236 @@ bot.onText(/^\/rebalance(@\w+)?$/i, async (msg) => {
   }
 });
 
+
+// ========================================
+// COMMAND: /super — SUPERINTELLIGENCE BRIEF v5.0 (one-shot deep report)
+// Regime + Portfolio P&L + Top signals + Warnings + Opportunities in ONE
+// message. 100% deterministic (uses existing analyzers) — works even if
+// every LLM key is down. Zero extra API calls beyond cached prices.
+// ========================================
+bot.onText(/^\/super(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  console.log(`📥 /super from ${msg.from?.first_name || chatId}`);
+  try {
+    if (portfolio.length === 0) {
+      await refreshPortfolio().catch(() => {});
+    }
+    await smartRefreshPrices();
+    if (portfolio.length === 0) {
+      await safeSend(chatId, '📂 Portfolio khali hai. Web app se assets add karo, phir /super chalao.');
+      return;
+    }
+
+    const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
+
+    // Regime from cached VIX (same heuristic as /health)
+    const vixUS = livePrices['US_VIX']?.price || 0;
+    const vixIN = livePrices['IN_INDIAVIX']?.price || 0;
+    const avgVix = (vixUS + vixIN) / 2 || null;
+    let regime = '🟢 RISK ON', regimeLine = 'Normal conditions — SIP continue karo.';
+    if (avgVix && avgVix > 30) { regime = '🔴🔴 RISK OFF (Panic)'; regimeLine = 'VIX spike! Cash bachao, sirf deep staged buys.'; }
+    else if (avgVix && avgVix > 22) { regime = '🟠 ELEVATED VOLATILITY'; regimeLine = 'Choppy market. Chhote sizes, quality names only.'; }
+    else if (avgVix && avgVix < 14) { regime = '💎 GOLDILOCKS'; regimeLine = 'Calm market — dips pe aggressively accumulate.'; }
+
+    // Score every holding
+    const signals = portfolio.map(p => {
+      const pd = livePrices[`${p.market}_${p.symbol}`];
+      return { pos: p, sig: analyzeAsset(p, pd) };
+    });
+
+    const buys = signals.filter(x => x.sig.action === 'BUY').sort((a, b) => b.sig.confidence - a.sig.confidence);
+    const sells = signals.filter(x => x.sig.action === 'SELL').sort((a, b) => b.sig.confidence - a.sig.confidence);
+    const strongBuys = buys.filter(x => x.sig.signal === 'STRONG_BUY');
+    const warnings = signals.filter(x => x.sig.rsi > 70 || x.sig.change < -4);
+    const opportunities = signals.filter(x => x.sig.rsi < 35 || (x.sig.action === 'BUY' && x.sig.confidence >= 80));
+
+    let r = `🧠 <b>SUPERINTELLIGENCE BRIEF v5.0</b>\n`;
+    r += `━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    r += `⏰ ${getISTTime()} IST | ${getMarketStatus()}\n\n`;
+
+    // 1. Regime
+    r += `<b>1️⃣ MARKET REGIME:</b> ${regime}\n`;
+    if (avgVix) r += `   VIX (US ${vixUS.toFixed(1)} / IN ${vixIN.toFixed(1)}) — ${regimeLine}\n\n`;
+    else r += `   ${regimeLine}\n\n`;
+
+    // 2. Portfolio pulse
+    const plEmoji = metrics.totalPL >= 0 ? '📈' : '📉';
+    r += `<b>2️⃣ PORTFOLIO PULSE:</b>\n`;
+    r += `   💼 ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')} | ${plEmoji} ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(1)}%)\n`;
+    r += `   📊 Today: ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')} (${metrics.todayPct.toFixed(2)}%)\n`;
+    r += `   🟢 BUY:${buys.length} | 🔴 SELL:${sells.length} | 🟡 HOLD:${signals.length - buys.length - sells.length}\n\n`;
+
+    // 3. Top 3 actionable signals
+    r += `<b>3️⃣ TOP SIGNALS:</b>\n`;
+    const top = [...buys, ...sells].sort((a, b) => b.sig.confidence - a.sig.confidence).slice(0, 3);
+    if (top.length === 0) {
+      r += `   ⚪ Sab neutral — sabse bada signal yahi hai: don't force trades.\n`;
+    } else {
+      for (const t of top) {
+        const cur = t.pos.market === 'IN' ? '₹' : '$';
+        const icon = t.sig.action === 'BUY' ? '🟢' : '🔴';
+        r += `   ${icon} <b>${t.sig.symbol}</b> ${t.sig.signal.replace('_', ' ')} (${t.sig.confidence}%) — ${cur}${t.sig.price.toFixed(2)} → target ${cur}${(t.sig.targetPrice || 0).toFixed(2)}\n`;
+        r += `      💡 <i>${t.sig.reason}</i>\n`;
+      }
+    }
+    r += `\n`;
+
+    // 4. Warnings
+    r += `<b>4️⃣ WARNINGS:</b>\n`;
+    if (warnings.length === 0 && strongBuys.length === 0) r += `   ✅ Koi red flag nahi.\n`;
+    for (const w of warnings.slice(0, 3)) {
+      r += `   ⚠️ ${w.sig.symbol}: RSI ${w.sig.rsi.toFixed(0)}, move ${w.sig.change.toFixed(1)}%\n`;
+    }
+    if (metrics.plPct < -15) r += `   ⚠️ Portfolio drawdown ${metrics.plPct.toFixed(1)}% — risk review recommended.\n`;
+    r += `\n`;
+
+    // 5. Opportunities
+    r += `<b>5️⃣ OPPORTUNITIES:</b>\n`;
+    if (opportunities.length === 0) r += `   💤 Koi deep-dip setup nahi — SIP is the play.\n`;
+    for (const o of opportunities.slice(0, 3)) {
+      const cur = o.pos.market === 'IN' ? '₹' : '$';
+      r += `   🎯 ${o.sig.symbol}: ${cur}${o.sig.price.toFixed(2)} | RSI ${o.sig.rsi.toFixed(0)} | ${o.sig.confidence}% conviction\n`;
+    }
+    r += `\n`;
+
+    // 6. Verdict
+    let verdict;
+    if (avgVix && avgVix > 30) verdict = 'DEFENSE MODE — panic mat karo, par naya bada capital mat lagao.';
+    else if (strongBuys.length > 0) verdict = `AGGRESSIVE ACCUMULATION — ${strongBuys[0].sig.symbol} STRONG_BUY pe focus.`;
+    else if (sells.length > buys.length * 2) verdict = 'PARTIAL PROFIT BOOKING — overbought positions trim karo in parts.';
+    else verdict = 'STEADY — SIP chalu, noise ignore, discipline follow.';
+    r += `<b>6️⃣ ONE-LINE VERDICT:</b>\n   ${verdict}\n\n`;
+    r += `<i>/scan &lt;SYM&gt; for deep dive · /ai &lt;question&gt; for LLM narration · /dip for dip zones</i>\n`;
+    r += `💎 <i>Deep Mind AI — Superintelligence Engine</i>`;
+
+    await safeSend(chatId, r);
+  } catch (e) {
+    console.error('❌ /super error:', e.message);
+    await safeSend(chatId, `❌ Super brief error: ${e.message}`);
+  }
+});
+
+// ========================================
+// COMMAND: /insights <SYMBOL> — Deep Single-Holding Insight
+// Portfolio-aware: shows YOUR quantity, avg price, P&L + technical verdict.
+// Works for symbols outside the portfolio too (via live fetch).
+// ========================================
+bot.onText(/^\/insights?(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  if (!match[1]) {
+    await safeSend(chatId, '⚠️ <b>Usage:</b> <code>/insights RELIANCE</code> or <code>/insights AAPL</code>');
+    return;
+  }
+  const symbol = match[1].trim().toUpperCase().replace('.NS', '').replace('.BO', '');
+  console.log(`📥 /insights ${symbol} from ${msg.from?.first_name || chatId}`);
+  try {
+    await smartRefreshPrices();
+
+    // Is it a holding?
+    const holding = portfolio.find(p => p.symbol.replace('.NS', '').replace('.BO', '').toUpperCase() === symbol);
+    let pd = holding ? livePrices[`${holding.market}_${holding.symbol}`] : null;
+
+    if (!pd) {
+      const fresh = await fetchSingleSymbol(symbol);
+      if (!fresh) {
+        await safeSend(chatId, `❌ <b>${escapeHtml(symbol)}</b> not found. Try /scan or check the symbol.`);
+        return;
+      }
+      pd = fresh;
+    }
+
+    const price = pd.price || holding?.avgPrice || 0;
+    const rsi = pd.rsi || 50;
+    const change = pd.change || 0;
+    const sma20 = pd.sma20 || price;
+    const sma50 = pd.sma50 || price;
+    const cur = holding?.market === 'US' || (!holding && pd.market === 'US') ? '$' : '₹';
+
+    const sig = analyzeAsset(
+      holding || { symbol, market: cur === '$' ? 'US' : 'IN', qty: 0, avgPrice: price },
+      pd
+    );
+
+    // Composite conviction score (0-100): RSI zone + trend + momentum + position health
+    let conviction = 50;
+    conviction += rsi < 30 ? 20 : rsi < 40 ? 10 : rsi > 70 ? -15 : rsi > 60 ? -5 : 0;
+    conviction += sma20 > sma50 ? 12 : -8;
+    conviction += change > 0.5 ? 5 : change < -0.5 ? -5 : 0;
+    conviction += sig.action === 'BUY' ? 8 : sig.action === 'SELL' ? -8 : 0;
+    conviction = Math.max(5, Math.min(99, Math.round(conviction + sig.confidence * 0.2 - 10)));
+
+    const trend = sma20 > sma50 ? '🟢 UP (SMA20 > SMA50)' : '🔴 DOWN (SMA20 < SMA50)';
+    const rsiZone = rsi < 30 ? '🟢 OVERSOLD' : rsi < 40 ? '🟢 MILD DIP' : rsi > 70 ? '🔴 OVERBOUGHT' : rsi > 60 ? '🟠 ELEVATED' : '⚪ NEUTRAL';
+    const bar = '🟦'.repeat(Math.round(conviction / 10)) + '⬜'.repeat(10 - Math.round(conviction / 10));
+
+    let r = `🔬 <b>DEEP INSIGHT — ${symbol}</b>\n`;
+    r += `━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    r += `💰 Price: <b>${cur}${price.toFixed(2)}</b> (${change >= 0 ? '+' : ''}${change.toFixed(2)}% today)\n`;
+    r += `📈 RSI(14): ${rsi.toFixed(0)} — ${rsiZone}\n`;
+    r += `📊 Trend: ${trend}\n`;
+    r += `SMA20: ${cur}${sma20.toFixed(2)} | SMA50: ${cur}${sma50.toFixed(2)}\n\n`;
+
+    if (holding) {
+      const pl = (price - holding.avgPrice) * holding.qty;
+      const plPct = holding.avgPrice > 0 ? ((price - holding.avgPrice) / holding.avgPrice) * 100 : 0;
+      r += `💼 <b>YOUR POSITION:</b>\n`;
+      r += `   Qty: ${holding.qty} @ ${cur}${holding.avgPrice.toFixed(2)}\n`;
+      r += `   P&L: <b>${pl >= 0 ? '+' : ''}${cur}${Math.abs(pl).toFixed(2)}</b> (${plPct >= 0 ? '+' : ''}${plPct.toFixed(1)}%)\n\n`;
+    }
+
+    r += `🤖 <b>AI VERDICT: ${sig.signal.replace('_', ' ')}</b> (${sig.confidence}%)\n`;
+    r += `🎯 Entry zone: ${cur}${((sig.fibLow || price * 0.97)).toFixed(2)} | Target: ${cur}${(sig.targetPrice || price).toFixed(2)}\n`;
+    r += `<code>[${bar}] Conviction ${conviction}/100</code>\n`;
+    r += `💡 <i>${sig.reason}</i>\n\n`;
+    r += `<i>/ai ${symbol} pe detailed analysis do — LLM narration ke liye</i>`;
+
+    await safeSend(chatId, r);
+  } catch (e) {
+    console.error('❌ /insights error:', e.message);
+    await safeSend(chatId, `❌ Insights error: ${e.message}`);
+  }
+});
+
+// ========================================
+// COMMAND: /aitest — AI Engine Health Dashboard
+// Shows which LLM keys are configured, which engine is preferred, and
+// whether the deterministic Quant Brain fallback is armed.
+// ========================================
+bot.onText(/^\/aitest(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  console.log(`📥 /aitest from ${msg.from?.first_name || chatId}`);
+  try {
+    const cfg = await import('./config.mjs');
+    const current = getChatEngine(chatId);
+    const flag = b => b ? '🟢' : '🔴';
+
+    let r = `🔧 <b>AI ENGINE HEALTH</b>\n`;
+    r += `━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    r += `Active engine: <b>${AI_ENGINE_LABELS[current]}</b>\n\n`;
+    r += `🔷 Gemini 2.5 Flash   ${flag(cfg.isGeminiAvailable())}\n`;
+    r += `⚡ Groq Llama 3.3     ${flag(cfg.isGroqAvailable())}\n`;
+    r += `🟣 Claude Sonnet 4    ${flag(cfg.isClaudeAvailable())}\n`;
+    r += `🔶 OpenRouter         ${flag(cfg.isOpenRouterAvailable())}\n`;
+    r += `🧠 Cerebras           ${flag(cfg.isCerebrasAvailable())}\n`;
+    r += `🤗 HuggingFace        ${flag(cfg.isHFAvailable())}\n`;
+    r += `🟢 NVIDIA NIM         ${flag(cfg.isNvidiaAvailable())}\n`;
+    r += `🔍 Tavily (search)    ${flag(cfg.isTavilyAvailable())}\n\n`;
+    r += `🧠 Quant Brain fallback: 🟢 ALWAYS ARMED (no key needed)\n\n`;
+    r += `<i>Change engine: /model · Add keys on server env vars.</i>`;
+    await safeSend(chatId, r);
+  } catch (e) {
+    console.error('❌ /aitest error:', e.message);
+    await safeSend(chatId, `❌ Engine check error: ${e.message}`);
+  }
+});
+
 // ========================================
 // BOOT UP
 // ========================================
+
 initializeData().then(() => {
   console.log('🚀 All systems GO! Bot is listening for commands...');
   console.log(`📱 Chat ID: ${TG_CHAT_ID}`);
@@ -3482,7 +3766,7 @@ initializeData().then(() => {
   console.log(`   🟣 Claude: ${CLAUDE_KEY?.length > 10 ? 'ONLINE' : 'OFFLINE'}`);
   console.log('');
   // Send boot notification
-  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI ADVANCE PRO v23.0 SUPER INTELLIGENCE ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🤖 AI: 6-Engine Router (Gemini→Groq→Claude→OpenRouter→Cerebras→HF)\n🧠 Quant Brain: ALWAYS ONLINE (never offline)\n🔬 Deep Research: ACTIVE 24x7\n🧬 ML Service: ${ML_SERVICE_URL}\n\nType /help for commands.`).catch(() => { });
+  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI v17.0 SUPER INTELLIGENCE ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🤖 AI: 6-Engine Router (Gemini→Groq→Claude→OpenRouter→Cerebras→HF)\n🧠 Quant Brain: ALWAYS ONLINE (never offline)\n🔬 Deep Research: ACTIVE 24x7\n🧬 ML Service: ${ML_SERVICE_URL}\n\nType /help for commands.`).catch(() => { });
 }).catch(err => {
   console.error('❌ Boot error (non-fatal):', err.message);
   console.log('⚡ Bot is STILL listening for commands with limited data...');

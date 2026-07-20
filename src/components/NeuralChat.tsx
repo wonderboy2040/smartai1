@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles, Cpu, ChevronDown, Mic } from 'lucide-react';
+import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles, Cpu, ChevronDown, Mic, StopCircle, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   buildSuperintelligenceContext, buildSuperintelligenceSystemPrompt,
@@ -36,17 +36,32 @@ async function getServerAIStatus() {
   return _proxyStatus;
 }
 
-async function callAIProxy(endpoint: string, body: any): Promise<Response | null> {
-  const res = await apiFetch(`${PROXY_BASE}/api/${endpoint}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60000)
-  });
-  if (res.ok) return res;
-  if (res.status === 503 || res.status === 429) return null;
-  const err = await res.json().catch(() => ({}));
-  throw new Error(err?.error?.message || err?.error || `proxy error: ${res.status}`);
+async function callAIProxy(endpoint: string, body: any, outerSignal?: AbortSignal): Promise<Response | null> {
+  // v5.0: link the 60s safety timeout with the user-triggerable AbortController
+  // so the Stop button actually cancels in-flight engine calls.
+  const timeoutCtrl = new AbortController();
+  const timer = setTimeout(() => timeoutCtrl.abort(), 60000);
+  const signal = outerSignal ?? timeoutCtrl.signal;
+  if (outerSignal) {
+    const onOuterAbort = () => timeoutCtrl.abort();
+    if (outerSignal.aborted) timeoutCtrl.abort();
+    else outerSignal.addEventListener('abort', onOuterAbort, { once: true });
+  }
+  try {
+    const res = await apiFetch(`${PROXY_BASE}/api/${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: timeoutCtrl.signal,
+    });
+    if (res.ok) return res;
+    if (res.status === 503 || res.status === 429) return null;
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || err?.error || `proxy error: ${res.status}`);
+  } finally {
+    clearTimeout(timer);
+    void signal;
+  }
 }
 
 async function fetchRealtimeSnapshot(): Promise<string> {
@@ -130,6 +145,7 @@ interface ChatMessage {
   text: string;
   timestamp: number;
   model?: string;
+  latencyMs?: number; // v5.0: which engine answered & how fast
 }
 
 interface EngineOption { id: string; label: string; model: string; endpoint: string; badge: string; }
@@ -145,6 +161,7 @@ const ENGINE_OPTIONS: EngineOption[] = [
 ];
 
 const QUICK_ACTIONS = [
+  { label: '⚡ Super Brief', query: 'Super brief do ek message me — market regime, portfolio pulse, top 3 signals, warnings, opportunities aur one-line verdict. Structured 6-section format me.' },
   { label: 'Market Intel', query: 'Market ka live snapshot do — NIFTY, SENSEX, BANKNIFTY, US markets, gold, crude, DXY. Current regime + top 3 actionable insights. Simple Hinglish.', icon: '📊' },
   { label: 'Portfolio Deep Dive', query: 'Meri poori portfolio ka deep analysis karo — har position ka individual BUY/HOLD/SELL verdict do, target price, SL, RSI, MACD sab saath me. P&L bhi batao.', icon: '🔍' },
   { label: 'AI Trade Signal', query: 'What should I trade today? Best intraday / swing setup with exact entry, stop loss, and targets. Use live market data.', icon: '🎯' },
@@ -155,13 +172,13 @@ const QUICK_ACTIONS = [
 export interface NeuralChatProps {
   portfolioContext: string;
   usdInrRate?: number;
-  // FEATURE: Superintelligence v4.0 — pass live portfolio + prices so the
+  // FEATURE: Superintelligence — pass live portfolio + prices so the
   // engine can build per-holding signals + portfolio-specific news.
   portfolio?: Position[];
   livePrices?: Record<string, PriceData>;
 }
 
-const SYSTEM_WELCOME = `🤖 **SUPER INTELLIGENCE v4.0** • Real-time Market Data + Portfolio News + 7-Engine AI
+const SYSTEM_WELCOME = `🤖 **SUPER INTELLIGENCE v5.0** • Real-time Market Data + Portfolio News + 7-Engine AI
 
 **24x7 LIVE DATA ACCESS:**
 • Real-time market prices (NSE/BSE/NYSE/NASDAQ/Crypto)
@@ -172,10 +189,75 @@ const SYSTEM_WELCOME = `🤖 **SUPER INTELLIGENCE v4.0** • Real-time Market Da
 • Auto-warnings (overbought/oversold/sharp moves/negative news)
 • Auto-opportunities (dip zones/positive catalysts)
 
+**NEW IN v5.0:** Persistent chat memory • Stop/Drop response ki midway generation • Regenerate last answer • Engine latency display • Smart follow-ups
+
 **7 LLM Engines:** Gemini | Groq | Claude | OpenRouter | Cerebras | HuggingFace | NVIDIA
-**Fallback:** Quant Brain v4.0 (deterministic, always works — no API key needed)
+**Fallback:** Quant Brain (deterministic, always works — no API key needed)
 
 Ask me anything — markets, your portfolio, trading signals, or wealth building!`;
+
+// ============================================================
+// v5.0 — Persistent chat memory (localStorage, capped)
+// ============================================================
+const CHAT_STORAGE_KEY = 'neural_chat_v5';
+const MAX_STORED_MESSAGES = 60;
+
+function loadPersistedChat(): ChatMessage[] {
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) throw new Error('empty');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('invalid');
+    // Sanitize: only keep well-formed messages, drop empty text
+    const clean = parsed
+      .filter((m: any) => m && (m.role === 'user' || m.role === 'model' || m.role === 'system') && typeof m.text === 'string' && m.text.trim())
+      .map((m: any) => ({ role: m.role, text: String(m.text).slice(0, 12000), timestamp: Number(m.timestamp) || Date.now(), model: m.model, latencyMs: m.latencyMs }));
+    return clean.length > 0 ? clean.slice(-MAX_STORED_MESSAGES) : [{ role: 'system', text: SYSTEM_WELCOME, timestamp: Date.now(), model: 'system' }];
+  } catch {
+    return [{ role: 'system', text: SYSTEM_WELCOME, timestamp: Date.now(), model: 'system' }];
+  }
+}
+
+function persistChat(messages: ChatMessage[]) {
+  try {
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages.slice(-MAX_STORED_MESSAGES)));
+  } catch { /* storage full / private mode — non-fatal */ }
+}
+
+// ============================================================
+// v5.0 — Smart follow-up suggestions (deterministic heuristics)
+// ============================================================
+function getFollowUpChips(lastUserQuery: string): { label: string; query: string }[] {
+  const q = lastUserQuery.toLowerCase();
+  if (/\b(trade|buy|sell|entry|signal|target|stop|intraday|swing|crypto|btc|eth)\b/.test(q)) {
+    return [
+      { label: '🛡️ Risk check karo?', query: 'Is trade ka risk analysis karo — position size, VaR impact, aur hedge suggestion do.' },
+      { label: '📊 Market regime?', query: 'Abhi market regime kya hai? NIFTY VIX aur breadth ke basis pe batayo.' },
+    ];
+  }
+  if (/\b(portfolio|position|holdings|meri|profit|pnl|return)\b/.test(q)) {
+    return [
+      { label: '🎯 Aaj kya karun?', query: 'Aaj ke liye meri portfolio pe 3 concrete actions do — kya buy, kya hold, kya trim karna chahiye.' },
+      { label: '💸 Tax optimize?', query: 'Mera tax-loss harvesting scope batao — kaunsi positions me loss book kar sakta hoon.' },
+    ];
+  }
+  if (/\b(news|market|nifty|sensex|fed|rbi|gold|crude)\b/.test(q)) {
+    return [
+      { label: '📉 Portfolio impact?', query: 'In news ka meri portfolio pe impact batao — kaunse holdings affected honge?' },
+      { label: '🎯 Best setup?', query: 'Is market me aaj ka best swing trade setup do — exact entry, SL, targets.' },
+    ];
+  }
+  if (/\b(risk|var|drawdown|hedge)\b/.test(q)) {
+    return [
+      { label: '🔥 Dip list?', query: 'Meri portfolio me deep-dip opportunities scan karo — RSI oversold + support zone.' },
+      { label: '📉 Drawdown plan?', query: 'Agar market 10% aur gire to meri portfolio ka expected drawdown kya hoga? Recovery plan do.' },
+    ];
+  }
+  return [
+    { label: '📊 Market Intel', query: 'Market ka live snapshot do — NIFTY, SENSEX, US markets, gold, crude. Top 3 actionable insights.' },
+    { label: '🔍 Portfolio review', query: 'Meri portfolio ka quick health check karo — top risk aur top opportunity batao.' },
+  ];
+}
 
 export const NeuralChat = React.memo(({
   portfolioContext,
@@ -183,12 +265,7 @@ export const NeuralChat = React.memo(({
   portfolio = [],
   livePrices = {},
 }: NeuralChatProps) => {
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([{
-    role: 'system',
-    text: SYSTEM_WELCOME,
-    timestamp: Date.now(),
-    model: 'system'
-  }]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(loadPersistedChat);
   const [chatInput, setChatInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -198,6 +275,10 @@ export const NeuralChat = React.memo(({
   });
   const [showEngineMenu, setShowEngineMenu] = useState(false);
   useEffect(() => { try { localStorage.setItem('neural_engine', selectedEngine); } catch { } }, [selectedEngine]);
+
+  // v5.0: persist conversation + user-stop abort controller
+  useEffect(() => { persistChat(chatMessages); }, [chatMessages]);
+  const abortRef = useRef<AbortController | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollToBottom = useCallback(() => {
@@ -215,7 +296,18 @@ export const NeuralChat = React.memo(({
   }, []);
 
   const clearChat = useCallback(() => {
-    setChatMessages([{ role: 'system', text: SYSTEM_WELCOME, timestamp: Date.now(), model: 'system' }]);
+    // v5.0: cancel any in-flight generation before wiping state
+    try { abortRef.current?.abort(); } catch { }
+    abortRef.current = null;
+    setIsThinking(false);
+    const fresh = [{ role: 'system', text: SYSTEM_WELCOME, timestamp: Date.now(), model: 'system' } as ChatMessage];
+    setChatMessages(fresh);
+    persistChat(fresh);
+  }, []);
+
+  // v5.0: Stop button — aborts the in-flight engine cascade
+  const stopGeneration = useCallback(() => {
+    try { abortRef.current?.abort(); } catch { }
   }, []);
 
   const lastRequestTimeRef = useRef<number>(0);
@@ -235,6 +327,7 @@ export const NeuralChat = React.memo(({
       try { return await fn(); }
       catch (e) {
         lastError = e instanceof Error ? e : new Error(String(e));
+        if (lastError.name === 'AbortError') throw lastError; // v5.0: user stop — never retry
         if (lastError.message.includes('429') && retries < maxRetries) {
           await new Promise(r => setTimeout(r, Math.pow(2, retries + 1) * 2000 + Math.random() * 1000));
           retries++;
@@ -246,7 +339,7 @@ export const NeuralChat = React.memo(({
     throw lastError;
   };
 
-  const tryAIEngine = async (endpoint: string, modelName: string, messages: any[], systemPrompt: string): Promise<string | null> => {
+  const tryAIEngine = async (endpoint: string, modelName: string, messages: any[], systemPrompt: string, signal?: AbortSignal): Promise<string | null> => {
     const status = await getServerAIStatus();
     if (!status || !(status as any)[endpoint]) return null;
     const body = {
@@ -254,7 +347,7 @@ export const NeuralChat = React.memo(({
       model: modelName,
       max_tokens: 2048,
     };
-    const res = await callAIProxy(endpoint, body);
+    const res = await callAIProxy(endpoint, body, signal);
     if (!res) return null;
     const data = await res.json();
     if (endpoint === 'gemini') {
@@ -283,14 +376,11 @@ export const NeuralChat = React.memo(({
     const vixLevel = vixAsset ? vixAsset.price : 15;
     const isVolatile = vixLevel > 22;
 
-    let output = `🤖 **SUPER INTELLIGENCE QUANT BRAIN v3.0**
+    let output = `🤖 **SUPER INTELLIGENCE QUANT BRAIN v5.0**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ⏰ ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
-🔍 Analysis: ${userMessage}\n
-📊 **MARKET REGIME: ${regime}**${isVolatile ? ' ⚠️ HIGH VOLATILITY' : ''}
-
-`;
+🔍 Analysis: ${userMessage}\n\n📊 **MARKET REGIME: ${regime}**${isVolatile ? ' ⚠️ HIGH VOLATILITY' : ''}\n\n`;
     if (assets.length > 0) {
       output += '**LIVE MARKET SNAPSHOT:**\n';
       for (const a of assets.slice(0, 12)) {
@@ -315,13 +405,13 @@ _Sabhi API keys free hain — Gemini: aistudio.google.com , Groq: console.groq.c
     return output;
   };
 
-  const callAI = async (userMessage: string) => {
+  const callAI = async (userMessage: string, signal?: AbortSignal) => {
     const isNewsQuery = /\b(news|market|nifty|sensex|fed|rbi|ipo|crude|gold|dollar|live|bitcoin|btc|crypto|eth|stock|price)\b/i.test(userMessage);
     const isTradeQuery = /\b(trade|buy|sell|entry|signal|target|stop|intraday|swing)\b/i.test(userMessage);
     const isPortfolioQuery = /\b(portfolio|position|holdings|my|meri|profit|pnl|return)\b/i.test(userMessage);
     const isRiskQuery = /\b(risk|var|drawdown|loss|volatility|hedge|protect)\b/i.test(userMessage);
 
-    // ===== SUPERINTELLIGENCE v4.0 =====
+    // ===== SUPERINTELLIGENCE =====
     // Build unified real-time context: market snapshot + portfolio signals +
     // portfolio-specific news + macro news + regime + warnings/opportunities.
     // Falls back to the old fetchRealtimeSnapshot + fetchWebIntel path if the
@@ -336,6 +426,7 @@ _Sabhi API keys free hain — Gemini: aistudio.google.com , Groq: console.groq.c
     } catch (e) {
       console.warn('Superintelligence context build failed:', e);
     }
+    if (signal?.aborted) throw new DOMException('Stopped by user', 'AbortError');
 
     // Fallback: legacy snapshot path (no portfolio)
     let marketData = '';
@@ -351,7 +442,7 @@ _Sabhi API keys free hain — Gemini: aistudio.google.com , Groq: console.groq.c
     const forexRate = superCtx?.market.usdInr || propUsdInrRate || 85.5;
     const portfolioCtx = portfolioContext || 'No portfolio data available.';
 
-    // Build system prompt — prefer Superintelligence v4.0 context, else legacy.
+    // Build system prompt — prefer Superintelligence context, else legacy.
     let systemPrompt: string;
     if (superCtx) {
       systemPrompt = buildSuperintelligenceSystemPrompt(superCtx) + `
@@ -365,7 +456,7 @@ ${isNewsQuery ? '- This is a NEWS query → cite the live portfolio news headlin
 Today: ${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}`;
     } else {
       // Legacy prompt (no portfolio context available)
-      systemPrompt = `You are SUPER INTELLIGENCE v4.0 — market superintelligence with real-time data access.
+      systemPrompt = `You are SUPER INTELLIGENCE — market superintelligence with real-time data access.
 
 PERSONA: Elite institutional quant trader. Speak SIMPLE Hinglish — "bhai", "dekho".
 
@@ -408,44 +499,71 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
 
     let text = null;
     let usedEngine = 'quant_brain';
+    const startedAt = Date.now();
     for (const engine of engines) {
+      if (signal?.aborted) throw new DOMException('Stopped by user', 'AbortError');
       try {
-        text = await rateLimitedFetch(() => tryAIEngine(engine.endpoint, engine.model, recentMessages, systemPrompt));
+        text = await rateLimitedFetch(() => tryAIEngine(engine.endpoint, engine.model, recentMessages, systemPrompt, signal));
         if (text) { usedEngine = engine.name; break; }
       } catch (e) {
+        if ((e as Error).name === 'AbortError') throw e; // v5.0: user stopped
         // FIX M4: log why each engine failed so debugging "why did X not return" is possible.
         console.warn(`[neural-chat] engine ${engine.name} failed:`, e instanceof Error ? e.message : e);
         continue;
       }
     }
+    const latencyMs = Date.now() - startedAt;
 
     if (!text) {
-      // Quant Brain v4.0 — prefer the unified Superintelligence context.
+      // Quant Brain — prefer the unified Superintelligence context.
       if (superCtx) {
         text = quantBrainSuperintelligence(userMessage, superCtx);
       } else {
         text = quantBrainAnalysis(userMessage, marketData, portfolioCtx);
       }
-      usedEngine = 'quant_brain_v4';
+      usedEngine = 'quant_brain';
     }
 
-    return { text, model: usedEngine as any };
+    return { text, model: usedEngine, latencyMs };
   };
 
   const sendMessage = async (userMessage: string) => {
     if (!userMessage.trim() || isThinking) return;
     setIsThinking(true);
+    // v5.0: create a per-request abort controller so Stop works
+    const controller = new AbortController();
+    abortRef.current = controller;
     setChatMessages(prev => [...prev, { role: 'user', text: userMessage, timestamp: Date.now() }]);
     try {
-      const result = await callAI(userMessage);
-      setChatMessages(prev => [...prev, { role: 'model', text: result.text, timestamp: Date.now(), model: result.model }]);
+      const result = await callAI(userMessage, controller.signal);
+      setChatMessages(prev => [...prev, { role: 'model', text: result.text, timestamp: Date.now(), model: result.model, latencyMs: result.latencyMs }]);
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      setChatMessages(prev => [...prev, { role: 'system', text: `❌ Error: ${errorMsg}\n\nTry again or switch engine.`, timestamp: Date.now(), model: 'system' }]);
+      if ((error as Error).name === 'AbortError' || controller.signal.aborted) {
+        setChatMessages(prev => [...prev, { role: 'system', text: '⏹️ Generation stopped by user.', timestamp: Date.now(), model: 'system' }]);
+      } else {
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+        setChatMessages(prev => [...prev, { role: 'system', text: `❌ Error: ${errorMsg}\n\nTry again or switch engine.`, timestamp: Date.now(), model: 'system' }]);
+      }
     } finally {
       setIsThinking(false);
+      abortRef.current = null;
     }
   };
+
+  // v5.0: regenerate the last answer with fresh live context
+  const regenerateLast = useCallback(() => {
+    if (isThinking) return;
+    const lastUser = [...chatMessages].reverse().find(m => m.role === 'user');
+    if (!lastUser) return;
+    setChatMessages(prev => {
+      // Trim trailing error/system + model messages after the last user msg
+      let cut = prev.length - 1;
+      while (cut >= 0 && (prev[cut].role === 'model' || prev[cut].role === 'system')) cut--;
+      // cut now points at the last user message; drop it too, sendMessage re-adds
+      return prev.slice(0, Math.max(0, cut));
+    });
+    sendMessage(lastUser.text);
+  }, [chatMessages, isThinking]);
 
   const handleChat = () => {
     if (chatInput.trim()) { const msg = chatInput; setChatInput(''); sendMessage(msg); }
@@ -483,6 +601,12 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
   }, [isListening]);
 
   useEffect(() => () => { try { recognitionRef.current?.stop(); } catch { } }, []);
+  useEffect(() => () => { try { abortRef.current?.abort(); } catch { } }, []);
+
+  // v5.0: precompute follow-ups + last model index for regenerate button
+  const lastUserMsg = [...chatMessages].reverse().find(m => m.role === 'user');
+  const lastModelIdx = chatMessages.map((m, i) => m.role === 'model' ? i : -1).filter(i => i >= 0).pop() ?? -1;
+  const followUps = !isThinking && lastUserMsg ? getFollowUpChips(lastUserMsg.text) : [];
 
   return (
     <>
@@ -512,11 +636,11 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
                 <div className="min-w-0">
                   <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1">
                     Super Intelligence
-                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">v3.0</span>
+                    <span className="text-[7px] sm:text-[8px] bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 text-cyan-300 px-1 py-0.5 rounded-md border border-cyan-500/20 font-bold tracking-wider whitespace-nowrap">v5.0</span>
                   </h3>
                   <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="hidden sm:inline">7-Engine AI + Quant Brain | Always Online</span>
+                    <span className="hidden sm:inline">7-Engine AI + Quant Brain | Persistent Memory</span>
                     <span className="sm:hidden">LIVE</span>
                   </div>
                 </div>
@@ -578,10 +702,16 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
                           <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
                             <span className="text-[8px] text-slate-600 bg-slate-800/60 px-1.5 py-0.5 rounded">
                               {msg.model === 'quant_brain' ? '🧠 Quant Brain' : `🔷 ${msg.model}`}
+                              {typeof msg.latencyMs === 'number' ? ` • ${(msg.latencyMs / 1000).toFixed(1)}s` : ''}
                             </span>
                             <button onClick={() => copyToClipboard(msg.text, i)} className="text-[9px] text-slate-500 hover:text-cyan-400 flex items-center gap-1 transition-colors">
                               {copiedIdx === i ? <><Check size={10} /> Copied!</> : <><Copy size={10} /> Copy</>}
                             </button>
+                            {i === lastModelIdx && (
+                              <button onClick={regenerateLast} className="text-[9px] text-slate-500 hover:text-emerald-400 flex items-center gap-1 transition-colors" title="Regenerate with fresh live data">
+                                <RotateCcw size={10} /> Retry
+                              </button>
+                            )}
                           </div>
                         )}
                       </>
@@ -598,10 +728,17 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
                     <div className="flex items-center gap-2 text-[11px] text-cyan-400/70 mb-2 font-bold uppercase tracking-wider">
                       <Sparkles size={12} className="animate-pulse" /> Analyzing...
                     </div>
-                    <div className="flex gap-1.5">
+                    <div className="flex gap-1.5 items-center">
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '100ms' }} />
                       <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: '200ms' }} />
+                      <button
+                        onClick={stopGeneration}
+                        className="ml-2 flex items-center gap-1 text-[9px] font-bold text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg px-2 py-0.5 transition-colors"
+                        title="Stop generating"
+                      >
+                        <StopCircle size={11} /> Stop
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -611,13 +748,14 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
 
             <div className="relative px-3 sm:px-4 py-3 bg-slate-900/40 border-t border-cyan-500/10">
               <div className="flex gap-2 overflow-x-auto scrollbar-hide">
-                {QUICK_ACTIONS.map(action => (
+                {/* v5.0: smart follow-ups appear after a response; quick actions otherwise */}
+                {(followUps.length > 0 ? followUps.slice(0, 2) : QUICK_ACTIONS).map((action: any) => (
                   <button key={action.label}
                     onClick={() => { setChatInput(''); sendMessage(action.query); }}
                     disabled={isThinking}
                     className="flex items-center gap-1.5 whitespace-nowrap text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-slate-400 hover:text-white hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all disabled:opacity-30 shrink-0"
                   >
-                    <span className="text-base">{action.icon}</span>
+                    <span className="text-base">{action.icon || '💬'}</span>
                     {action.label}
                   </button>
                 ))}
@@ -656,7 +794,7 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
                   {selectedEngine === 'auto' ? '⚡ Auto Failover + Quant Brain' : `${ENGINE_OPTIONS.find(e => e.id === selectedEngine)?.badge || ''} ${ENGINE_OPTIONS.find(e => e.id === selectedEngine)?.label || ''}`}
                 </span>
                 <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
-                  {chatMessages.length} msgs
+                  {chatMessages.length} msgs • saved
                 </span>
               </div>
             </div>

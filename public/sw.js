@@ -11,7 +11,7 @@
  *  5. Widget data endpoint — cached prices for instant widget render
  * ============================================================ */
 
-const CACHE_VERSION = 'wealth-ai-v2';
+const CACHE_VERSION = 'wealth-ai-v5'; // v5.0 upgrade: NeuralChat persistence + bot parity
 const SHELL = ['/', '/index.html', '/manifest.json', '/icon.svg'];
 const WIDGET_CACHE = 'wealth-ai-widget-data';
 
