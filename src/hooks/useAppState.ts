@@ -674,7 +674,15 @@ export function useAppState() {
       }
     };
 
-    const unsubscribeTv = subscribeToPrices(symbolsToSub.map(s => s.split('_')[1]), (key, data) => {
+    // US holdings must use the dedicated Finnhub/Yahoo realtime pipeline only.
+    // TradingView's browser socket can be delayed and was making US prices
+    // oscillate between two different feeds (one tick up, next tick down).
+    // Keep TradingView enrichment for Indian assets; US indicators still come
+    // from the scanner inside batchFetchUSPrices without replacing the price.
+    const indiaTvSymbols = symbolsToSub
+      .filter(s => s.startsWith('IN_'))
+      .map(s => s.split('_')[1]);
+    const unsubscribeTv = subscribeToPrices(indiaTvSymbols, (key, data) => {
       pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData;
       statusCounter++;
       if (statusCounter % 50 === 1) setLiveStatus('● TV SOCKET LIVE ⚡');
