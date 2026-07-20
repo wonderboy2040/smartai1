@@ -7,6 +7,7 @@ import {
 } from '../utils/superintelligenceEngine';
 import type { Position, PriceData } from '../types';
 import { apiFetch } from '../utils/api';
+import { runSuperScoreBacktest, formatSuperScoreReport } from '../utils/superScoreBacktest';
 
 const PROXY_BASE = import.meta.env.VITE_API_PROXY || '';
 let _proxyStatus: Promise<any> | null = null;
@@ -191,6 +192,8 @@ const SYSTEM_WELCOME = `🤖 **SUPER INTELLIGENCE v6.0** • Real-time Market Da
 
 **NEW IN v6.0:** ⚡SuperScore (5-factor composite per holding) • Volume-breakout anomaly alerts • Persistent chat memory • Stop/Regenerate • Engine latency display • Smart follow-ups
 
+**LOCAL CMD:** /superscore RELIANCE — deterministic backtest (zero LLM cost)
+
 **7 LLM Engines:** Gemini | Groq | Claude | OpenRouter | Cerebras | HuggingFace | NVIDIA
 **Fallback:** Quant Brain (deterministic, always works — no API key needed)
 
@@ -227,7 +230,22 @@ function persistChat(messages: ChatMessage[]) {
 // ============================================================
 // v5.0 — Smart follow-up suggestions (deterministic heuristics)
 // ============================================================
-function getFollowUpChips(lastUserQuery: string): { label: string; query: string }[] {
+function getFollowUpChips(lastUserQuery: string, lastModelText?: string): { label: string; query: string }[] {
+  // v6 AI-GENERATED FOLLOW-UPS: if the model's answer contains explicit
+  // questions, surface them directly — these are the most relevant next steps.
+  if (lastModelText) {
+    const questions = lastModelText
+      .split('\n')
+      .map(l => l.replace(/^[#*•\-\d.\s]+/, '').replace(/\*\*/g, '').trim())
+      .filter(l => l.includes('?') && l.length > 15 && l.length < 90)
+      .slice(0, 2);
+    if (questions.length > 0) {
+      return questions.map(q => ({
+        label: '🤖 ' + (q.length > 42 ? q.slice(0, 42) + '…' : q),
+        query: q.replace(/^.*?\?/, '').trim() ? q : q,
+      }));
+    }
+  }
   const q = lastUserQuery.toLowerCase();
   if (/\b(trade|buy|sell|entry|signal|target|stop|intraday|swing|crypto|btc|eth)\b/.test(q)) {
     return [
@@ -534,6 +552,24 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
     const controller = new AbortController();
     abortRef.current = controller;
     setChatMessages(prev => [...prev, { role: 'user', text: userMessage, timestamp: Date.now() }]);
+
+    // v6 LOCAL COMMAND: /superscore <SYMBOL> — deterministic backtest, zero LLM cost
+    const ssMatch = userMessage.match(/^\s*\/superscore\s+([A-Za-z0-9.]+)\s*$/i);
+    if (ssMatch) {
+      try {
+        const sym = ssMatch[1].toUpperCase();
+        const holdings = portfolio.find(p => p.symbol.replace('.NS', '').replace('.BO', '').toUpperCase() === sym.replace('.NS', '').replace('.BO', ''));
+        const result = await runSuperScoreBacktest(sym, (holdings?.market as 'IN' | 'US') || 'IN');
+        setChatMessages(prev => [...prev, { role: 'model', text: formatSuperScoreReport(result), timestamp: Date.now(), model: 'superscore_backtest', latencyMs: 0 }]);
+      } catch (e) {
+        setChatMessages(prev => [...prev, { role: 'system', text: `❌ SuperScore backtest failed: ${e instanceof Error ? e.message : 'unknown error'}\n\nUsage: /superscore RELIANCE`, timestamp: Date.now(), model: 'system' }]);
+      } finally {
+        setIsThinking(false);
+        abortRef.current = null;
+      }
+      return;
+    }
+
     try {
       const result = await callAI(userMessage, controller.signal);
       setChatMessages(prev => [...prev, { role: 'model', text: result.text, timestamp: Date.now(), model: result.model, latencyMs: result.latencyMs }]);
@@ -605,8 +641,9 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
 
   // v5.0: precompute follow-ups + last model index for regenerate button
   const lastUserMsg = [...chatMessages].reverse().find(m => m.role === 'user');
+  const lastModelMsg = [...chatMessages].reverse().find(m => m.role === 'model');
   const lastModelIdx = chatMessages.map((m, i) => m.role === 'model' ? i : -1).filter(i => i >= 0).pop() ?? -1;
-  const followUps = !isThinking && lastUserMsg ? getFollowUpChips(lastUserMsg.text) : [];
+  const followUps = !isThinking && lastUserMsg ? getFollowUpChips(lastUserMsg.text, lastModelMsg?.text) : [];
 
   return (
     <>
@@ -701,7 +738,7 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
                         {msg.model && msg.model !== 'system' && (
                           <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
                             <span className="text-[8px] text-slate-600 bg-slate-800/60 px-1.5 py-0.5 rounded">
-                              {msg.model === 'quant_brain' ? '🧠 Quant Brain' : `🔷 ${msg.model}`}
+                              {msg.model === 'quant_brain' ? '🧠 Quant Brain' : msg.model === 'superscore_backtest' ? '📉 SuperScore Backtest' : `🔷 ${msg.model}`}
                               {typeof msg.latencyMs === 'number' ? ` • ${(msg.latencyMs / 1000).toFixed(1)}s` : ''}
                             </span>
                             <button onClick={() => copyToClipboard(msg.text, i)} className="text-[9px] text-slate-500 hover:text-cyan-400 flex items-center gap-1 transition-colors">

@@ -203,6 +203,35 @@ async function fetchMarketSnapshot(): Promise<MarketSnapshot> {
   return snap;
 }
 
+// ---------- 2a. SHARED SUPERSCORE MATH (v6) ----------
+// Single source of truth used by BOTH the live engine and the backtester.
+// Pure function — no I/O, deterministic. Keep in sync with docs in interface.
+export interface SuperScoreInputs {
+  rsi: number; price: number; change: number;
+  sma20?: number; sma50?: number; macd?: number;
+  high?: number; low?: number;
+}
+export function computeSuperScoreFromIndicators(o: SuperScoreInputs): number {
+  let score = 50;
+  // 35% RSI zone
+  score += o.rsi < 30 ? 20 : o.rsi < 40 ? 10 : o.rsi > 75 ? -20 : o.rsi > 65 ? -10 : 0;
+  // 25% trend divergence (SMA20 vs SMA50), capped ±15
+  if (o.sma20 && o.sma50 && o.sma50 > 0) {
+    const divergencePct = ((o.sma20 - o.sma50) / o.sma50) * 100;
+    score += Math.max(-15, Math.min(15, divergencePct * 3));
+  }
+  // 15% MACD direction
+  if (o.macd !== undefined) score += o.macd > 0 ? 8 : -8;
+  // 15% day-range seat (closer to day low = better entry)
+  const hi = o.high ?? o.price;
+  const lo = o.low ?? o.price;
+  const dayRangePos = hi > lo ? (o.price - lo) / (hi - lo) : 0.5;
+  score += (0.5 - dayRangePos) * 12;
+  // 10% anti-chasing momentum (sharp green day lowers buy score; sharp dip raises)
+  score += o.change > 4 ? -6 : o.change > 0 ? 2 : o.change > -4 ? 4 : 6;
+  return Math.max(1, Math.min(99, Math.round(score)));
+}
+
 // ---------- 2. Portfolio signals (per-holding) ----------
 function computePortfolioSignals(
   portfolio: Position[],
@@ -250,20 +279,15 @@ function computePortfolioSignals(
     }
 
     // ---------- v6 SUPERSCORE (composite directional, 1-99) ----------
-    let score = 50;
-    score += rsi < 30 ? 20 : rsi < 40 ? 10 : rsi > 75 ? -20 : rsi > 65 ? -10 : 0;      // 35% zone
-    if (sma20 && sma50 && sma50 > 0) {                                                 // 25% trend
-      const divergencePct = ((sma20 - sma50) / sma50) * 100;
-      score += Math.max(-15, Math.min(15, divergencePct * 3));
-    }
-    if (macd !== undefined) score += macd > 0 ? 8 : -8;                                // 15% macd
-    const hi = d?.high ?? price;
-    const lo = d?.low ?? price;
-    const dayRangePos = hi > lo ? (price - lo) / (hi - lo) : 0.5;                      // 15% range seat
-    score += (0.5 - dayRangePos) * 12; // closer to day low = better entry
-    score += change > 4 ? -6 : change > 0 ? 2 : change > -4 ? 4 : 6;                   // 10% anti-chasing
-    const superScore = Math.max(1, Math.min(99, Math.round(score)));
+    // Uses the SHARED pure function — identical math to the backtester.
+    const superScore = computeSuperScoreFromIndicators({
+      rsi, price, change, sma20, sma50, macd,
+      high: d?.high, low: d?.low,
+    });
     const volume = d?.volume;
+    const hiRange = d?.high ?? price;
+    const loRange = d?.low ?? price;
+    const dayRangePos = hiRange > loRange ? (price - loRange) / (hiRange - loRange) : 0.5;
 
     // "Inside story" — derive from price action + technicals + v6 score verdict
     let insideStory = deriveInsideStory(p, price, change, rsi, sma20, sma50, macd);

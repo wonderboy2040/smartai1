@@ -1,4 +1,18 @@
 
+## v1.4.0 — SuperScore Backtester + AI Follow-ups (2026-07-20)
+
+### New: SuperScore Backtester (site)
+- New util `src/utils/superScoreBacktest.ts` — replays daily candles with the SHARED production SuperScore math (extracted into `computeSuperScoreFromIndicators`, single source of truth, zero formula duplication)
+- Trade simulation: enter ≥65 BUY-LEAN, exit ≤40 or 20-day cap, next-open fills
+- **Score-band accuracy validation**: ≥78 / 65–77 / 35–64 / <35 buckets with 10-day forward-return hit rates — verifies the production EXTREME thresholds against history
+- NeuralChat local command: `/superscore RELIANCE` — deterministic, zero LLM cost, instant chat report with 📉 badge
+
+### New: AI-Generated Follow-ups (NeuralChat)
+- Follow-up chips first extract real '?' questions from the AI's own answer (most relevant next steps), falling back to deterministic heuristics
+
+### Tests
+- 13 new tests (SuperScore math bounds/direction/determinism + backtester arithmetic/bands/determinism) → **54/54 passing**
+
 ## v1.3.0 — SuperScore v6 + Smart Router v18 Deep Upgrade (2026-07-20)
 
 ### superintelligenceEngine v6 (Site AI core)
