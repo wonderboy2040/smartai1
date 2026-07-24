@@ -440,6 +440,7 @@ function handleParsedMessage(parsed: Record<string, unknown>): void {
 
   // Derive market from the key
   update.market = key.startsWith('IN_') ? 'IN' : 'US';
+  update.isRealtime = true;
 
   // FIX H5: previously the guard was `Object.keys(update).length > 1` which
   // was always true because `update.time` and `update.market` were already

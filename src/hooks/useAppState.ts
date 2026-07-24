@@ -19,44 +19,91 @@ import { applyPortfolioDiff } from '../utils/portfolioDiffEngine';
 import { recordDailyPL, computeLiveDailyPL } from '../utils/dailyPLTracker';
 
 function mergePriceData(existing: PriceData | undefined, incoming: Partial<PriceData>): PriceData {
-  const time = incoming.time ?? Date.now();
-  
-  // Real-time status
-  const existingRealtime = existing?.isRealtime ?? false;
-  const incomingRealtime = incoming.isRealtime ?? false;
+  if (!existing) {
+    return {
+      price: incoming.price ?? 0,
+      change: incoming.change ?? 0,
+      high: incoming.high,
+      low: incoming.low,
+      volume: incoming.volume,
+      rsi: incoming.rsi ?? 50,
+      time: incoming.time ?? Date.now(),
+      market: incoming.market ?? 'IN',
+      sma20: incoming.sma20,
+      sma50: incoming.sma50,
+      macd: incoming.macd,
+      tvExchange: incoming.tvExchange,
+      tvExactSymbol: incoming.tvExactSymbol,
+      isRealtime: incoming.isRealtime ?? false,
+    };
+  }
 
-  // If existing is real-time, but incoming is NOT, reject incoming
+  const existingRealtime = !!existing.isRealtime;
+  const incomingRealtime = !!incoming.isRealtime;
+  const incomingTime = incoming.time ?? Date.now();
+
+  // 1. If existing is real-time and incoming is NOT real-time:
+  // Keep existing real-time price & change, but merge incoming indicators/metadata.
   if (existingRealtime && !incomingRealtime) {
-    return existing!;
+    let changed = false;
+    const merged = { ...existing };
+    if (incoming.sma20 !== undefined && incoming.sma20 !== existing.sma20) { merged.sma20 = incoming.sma20; changed = true; }
+    if (incoming.sma50 !== undefined && incoming.sma50 !== existing.sma50) { merged.sma50 = incoming.sma50; changed = true; }
+    if (incoming.rsi !== undefined && incoming.rsi !== existing.rsi) { merged.rsi = incoming.rsi; changed = true; }
+    if (incoming.macd !== undefined && incoming.macd !== existing.macd) { merged.macd = incoming.macd; changed = true; }
+    if (incoming.tvExchange && incoming.tvExchange !== existing.tvExchange) { merged.tvExchange = incoming.tvExchange; changed = true; }
+    if (incoming.tvExactSymbol && incoming.tvExactSymbol !== existing.tvExactSymbol) { merged.tvExactSymbol = incoming.tvExactSymbol; changed = true; }
+    if (incoming.high !== undefined && (existing.high === undefined || incoming.high > existing.high)) { merged.high = incoming.high; changed = true; }
+    if (incoming.low !== undefined && (existing.low === undefined || incoming.low < existing.low)) { merged.low = incoming.low; changed = true; }
+    if (incoming.volume !== undefined && incoming.volume > (existing.volume || 0)) { merged.volume = incoming.volume; changed = true; }
+    return changed ? merged : existing;
   }
 
-  // If incoming is real-time, but existing is NOT, always accept incoming (skip freshness check)
-  if (incomingRealtime && !existingRealtime) {
-    // Accept incoming
-  } else {
-    // If both are same real-time status, apply freshness check
-    if (existing && incoming.time && existing.time && incoming.time < existing.time - 2000) {
-      return existing;
-    }
-  }
-
-  const price = incoming.price ?? existing?.price ?? 0;
-  const change = incoming.change ?? existing?.change ?? 0;
-  const high = incoming.high ?? existing?.high;
-  const low = incoming.low ?? existing?.low;
-  const volume = incoming.volume ?? existing?.volume;
-  const rsi = incoming.rsi ?? existing?.rsi ?? 50;
-  const market = incoming.market ?? existing?.market ?? 'IN';
-  const sma20 = incoming.sma20 ?? existing?.sma20;
-  const sma50 = incoming.sma50 ?? existing?.sma50;
-  const macd = incoming.macd ?? existing?.macd;
-  const tvExchange = incoming.tvExchange ?? existing?.tvExchange;
-  const tvExactSymbol = incoming.tvExactSymbol ?? existing?.tvExactSymbol;
-  const isRealtime = incomingRealtime || existingRealtime;
-
-  if (existing && price > 0 && Math.abs(existing.price - price) / price < 0.00005 && existing.change === change && existing.rsi === rsi && existing.isRealtime === isRealtime) {
+  // 2. Freshness check: Reject incoming if it's older than existing data (unless upgrading to real-time)
+  const isStale = existing.time && incomingTime < existing.time - 500;
+  if (isStale && !incomingRealtime) {
     return existing;
   }
+
+  // 3. Price & change updates
+  const price = (incoming.price !== undefined && incoming.price > 0 && (!isStale || incomingRealtime))
+    ? incoming.price
+    : existing.price;
+
+  const change = (incoming.change !== undefined && (!isStale || incomingRealtime))
+    ? incoming.change
+    : existing.change;
+
+  const time = Math.max(existing.time || 0, incomingTime);
+  const isRealtime = incomingRealtime || existingRealtime;
+
+  const rsi = incoming.rsi ?? existing.rsi ?? 50;
+  const sma20 = incoming.sma20 ?? existing.sma20;
+  const sma50 = incoming.sma50 ?? existing.sma50;
+  const macd = incoming.macd ?? existing.macd;
+  const high = incoming.high ?? existing.high;
+  const low = incoming.low ?? existing.low;
+  const volume = incoming.volume ?? existing.volume;
+  const tvExchange = incoming.tvExchange ?? existing.tvExchange;
+  const tvExactSymbol = incoming.tvExactSymbol ?? existing.tvExactSymbol;
+  const market = incoming.market ?? existing.market ?? 'IN';
+
+  // Equality check to avoid redundant re-renders
+  if (
+    existing.price === price &&
+    existing.change === change &&
+    existing.isRealtime === isRealtime &&
+    existing.rsi === rsi &&
+    existing.sma20 === sma20 &&
+    existing.sma50 === sma50 &&
+    existing.macd === macd &&
+    existing.high === high &&
+    existing.low === low &&
+    existing.volume === volume
+  ) {
+    return existing;
+  }
+
   return { price, change, high, low, volume, rsi, time, market, sma20, sma50, macd, tvExchange, tvExactSymbol, isRealtime };
 }
 
@@ -378,10 +425,10 @@ export function useAppState() {
     secureStorage.setItem('plannerSettings', JSON.stringify({ indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses }));
   }, [indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses, isAuthenticated]);
 
-  // --- Price flush interval (5s — WS gives real-time, throttled for performance) ---
+  // --- Price flush interval (250ms — WS & SSE give real-time ticks, flushed ultra fast for live feel) ---
   useEffect(() => {
     if (!isAuthenticated) return;
-    priceFlushRef.current = window.setInterval(() => { requestAnimationFrame(flushPricesToStorage); }, 5000);
+    priceFlushRef.current = window.setInterval(() => { requestAnimationFrame(flushPricesToStorage); }, 250);
     return () => { if (priceFlushRef.current) { clearInterval(priceFlushRef.current); priceFlushRef.current = null; } };
   }, [isAuthenticated, flushPricesToStorage]);
 
@@ -398,6 +445,7 @@ export function useAppState() {
     const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
 
     const pollCrypto = async () => {
+      if (document.hidden) return;
       try {
         const res = await apiFetch(`${proxyBase}/api/crypto-prices?t=${Date.now()}`, {
           signal: AbortSignal.timeout(5000)
@@ -474,7 +522,7 @@ export function useAppState() {
     };
 
     pollCrypto();
-    const cryptoInterval = window.setInterval(pollCrypto, 5000); // 5s ultra-fast for real-time crypto
+    const cryptoInterval = window.setInterval(pollCrypto, 2000); // 2s ultra-fast for real-time crypto
     return () => { clearInterval(cryptoInterval); };
   }, [isAuthenticated, hasCrypto, flushPricesToStorage]);
 
@@ -513,6 +561,10 @@ export function useAppState() {
 
     const pollIndia = async () => {
       if (stopped) return;
+      if (document.hidden) {
+        timer = window.setTimeout(pollIndia, 10000); // Slow down polling when tab hidden
+        return;
+      }
       try {
         await batchFetchIndianPrices(buildIndianPositions(), (key, data) => {
           pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData;
@@ -564,6 +616,10 @@ export function useAppState() {
 
     const pollUS = async () => {
       if (stopped) return;
+      if (document.hidden) {
+        timer = window.setTimeout(pollUS, 10000); // Slow down polling when tab hidden
+        return;
+      }
       try {
         await batchFetchUSPrices(buildUSPositions(), (key, data) => {
           pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData;
@@ -612,9 +668,9 @@ export function useAppState() {
     let flushTimer: number | null = null;
     const throttledFlush = () => {
       const now = Date.now();
-      if (now - lastFlush >= 800) { lastFlush = now; flushPricesToStorage(); }
+      if (now - lastFlush >= 200) { lastFlush = now; flushPricesToStorage(); }
       else if (!flushTimer) {
-        flushTimer = window.setTimeout(() => { flushTimer = null; lastFlush = Date.now(); flushPricesToStorage(); }, 800 - (now - lastFlush));
+        flushTimer = window.setTimeout(() => { flushTimer = null; lastFlush = Date.now(); flushPricesToStorage(); }, 200 - (now - lastFlush));
       }
     };
 
@@ -662,7 +718,7 @@ export function useAppState() {
 
     const throttledFlush = () => {
       const now = Date.now();
-      if (now - lastFlushTime >= 1000) {
+      if (now - lastFlushTime >= 200) {
         lastFlushTime = now;
         flushPricesToStorage();
       } else if (!flushTimer) {
@@ -670,17 +726,17 @@ export function useAppState() {
           flushTimer = null;
           lastFlushTime = Date.now();
           flushPricesToStorage();
-        }, 1000 - (now - lastFlushTime));
+        }, 200 - (now - lastFlushTime));
       }
     };
 
     // US holdings must use the dedicated Finnhub/Yahoo realtime pipeline only.
     // TradingView's browser socket can be delayed and was making US prices
     // oscillate between two different feeds (one tick up, next tick down).
-    // Keep TradingView enrichment for Indian assets; US indicators still come
-    // from the scanner inside batchFetchUSPrices without replacing the price.
+    // Keep TradingView enrichment for Indian equity/indices; exclude crypto symbols
+    // so raw USD Binance ticks don't pollute INR crypto keys.
     const indiaTvSymbols = symbolsToSub
-      .filter(s => s.startsWith('IN_'))
+      .filter(s => s.startsWith('IN_') && !isCryptoSymbol(s.split('_')[1]))
       .map(s => s.split('_')[1]);
     const unsubscribeTv = subscribeToPrices(indiaTvSymbols, (key, data) => {
       pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData;
@@ -1500,7 +1556,7 @@ export function useAppState() {
     window.location.reload();
   }, []);
 
-  return {
+  return useMemo(() => ({
     // Auth
     isAuthenticated, pinInput, setPinInput, verifyPin, logout,
     // Core
@@ -1544,5 +1600,31 @@ export function useAppState() {
     toggleTheme, flushCache, loadTradingViewChart,
     // Re-exports for tabs
     loadFromCloud,
-  };
+  }), [
+    isAuthenticated, pinInput, setPinInput, verifyPin, logout,
+    activeTab, setActiveTab, portfolio, transactions, livePrices, usdInrRate, theme,
+    deleteTransaction, editTransaction,
+    priceAlerts, addPriceAlert, updatePriceAlert, deletePriceAlert, togglePriceAlert,
+    refreshAll, isRefreshing,
+    currentSymbol, currentMarket,
+    symbolInput, isAnalyzing, chartInterval,
+    liveStatus, syncStatus, feedStatus,
+    indiaSIP, usSIP, btcSIP, ethSIP,
+    emergencyFund, investYears, riskLevel,
+    monthlyExpenses, currentAge,
+    sectorData,
+    showAddModal, groqKey, addSymbol, addQty,
+    addPrice, addDate,
+    aiKeys, updateAiKeys,
+    transactionType, modalPrice, editId,
+    autoTelegram,
+    wsLatency, portfolioContextText,
+    usVix, inVix, avgVix, sentiment, currentData, currentPrice, currentChange, currentRsi,
+    signalData, metrics,
+    totalSIP, cagr, months, totalInvestedPlanner, monthlyRate, fvMed, fvWorst, fvBest, multiplier,
+    fireNumber, yearsToFire, fireProgress,
+    smartAllocations,
+    analyzeSymbol, quickSelect, openAddModal, savePosition, pushTelegramReport,
+    toggleTheme, flushCache, loadTradingViewChart,
+  ]);
 }

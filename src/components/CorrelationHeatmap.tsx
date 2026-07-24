@@ -14,7 +14,8 @@ export function CorrelationHeatmap({ portfolio, livePrices }: Props) {
   const changes = useMemo(() => {
     return portfolio.slice(0, 10).map(p => {
       const key = `${p.market}_${p.symbol}`;
-      return livePrices[key]?.change || 0;
+      const chg = livePrices[key]?.change;
+      return typeof chg === 'number' && !isNaN(chg) ? chg : 0;
     });
   }, [portfolio, livePrices]);
 

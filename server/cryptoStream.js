@@ -4,7 +4,7 @@
 import { setTick } from './liveFeed.js';
 
 const DEFAULT_CRYPTOS = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'];
-const POLL_MS = 5000; // 5s — sufficient for crypto, saves CPU vs 2s
+const POLL_MS = 2000; // 2s ultra-fast crypto feed for SSE
 
 const _subscribed = new Set();
 let _timer = null;

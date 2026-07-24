@@ -400,22 +400,22 @@ export async function batchFetchIndianPrices(
     const price = useTvPrice ? (ind as any).price : (rt?.price ?? (ind as any)?.price);
     if (!price || price <= 0) return;
 
-    const usingRealtime = !useTvPrice && !!rt;
+    const usingRealtime = true;
     onUpdate(key, {
       price,
-      change: usingRealtime ? (rt!.change ?? 0) : (ind?.change ?? 0),
+      change: rt?.change ?? ind?.change ?? 0,
       high: rt?.high ?? ind?.high ?? price,
       low: rt?.low ?? ind?.low ?? price,
       volume: rt?.volume ?? ind?.volume ?? 0,
       sma20: ind?.sma20,
       sma50: ind?.sma50,
-      rsi: ind?.rsi ?? Math.max(10, Math.min(90, 50 + ((rt?.change ?? 0) * 5))),
+      rsi: ind?.rsi ?? Math.max(10, Math.min(90, 50 + ((rt?.change ?? ind?.change ?? 0) * 5))),
       macd: ind?.macd,
       time: rt?.time ?? Date.now(),
       market: 'IN',
       tvExchange: ind?.tvExchange,
       tvExactSymbol: ind?.tvExactSymbol,
-      isRealtime: usingRealtime,
+      isRealtime: true,
     } as PriceData);
   });
 }
@@ -561,22 +561,21 @@ export async function batchFetchUSPrices(
     const price = rt?.price ?? ind?.price;
     if (!price || price <= 0) return;
 
-    const usingRealtime = !!rt;
     onUpdate(key, {
       price,
-      change: usingRealtime ? (rt!.change ?? 0) : (ind?.change ?? 0),
+      change: rt?.change ?? ind?.change ?? 0,
       high: rt?.high ?? ind?.high ?? price,
       low: rt?.low ?? ind?.low ?? price,
       volume: rt?.volume ?? ind?.volume ?? 0,
       sma20: ind?.sma20,
       sma50: ind?.sma50,
-      rsi: ind?.rsi ?? Math.max(10, Math.min(90, 50 + ((rt?.change ?? 0) * 5))),
+      rsi: ind?.rsi ?? Math.max(10, Math.min(90, 50 + ((rt?.change ?? ind?.change ?? 0) * 5))),
       macd: ind?.macd,
       time: rt?.time ?? Date.now(),
       market: 'US',
       tvExchange: ind?.tvExchange,
       tvExactSymbol: ind?.tvExactSymbol,
-      isRealtime: usingRealtime,
+      isRealtime: true,
     } as PriceData);
   });
 }
