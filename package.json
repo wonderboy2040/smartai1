@@ -1,7 +1,7 @@
 {
-  "name": "smart-ai-pro",
+  "name": "advance-pro-intelligence",
   "private": true,
-  "version": "1.4.0",
+  "version": "18.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -43,7 +43,7 @@
     "vite": "^7.3.6",
     "vitest": "^4.1.9"
   },
-  "description": "AI-powered portfolio analytics, market intelligence, ML signals, and Telegram automation",
+  "description": "Advance Pro Intelligence v18 — Multi-Engine AI Portfolio Analytics, Market Intelligence, ML Signals, and Telegram Automation",
   "engines": {
     "node": ">=20"
   }

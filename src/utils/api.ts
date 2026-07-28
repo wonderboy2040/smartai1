@@ -400,7 +400,6 @@ export async function batchFetchIndianPrices(
     const price = useTvPrice ? (ind as any).price : (rt?.price ?? (ind as any)?.price);
     if (!price || price <= 0) return;
 
-    const usingRealtime = true;
     onUpdate(key, {
       price,
       change: rt?.change ?? ind?.change ?? 0,

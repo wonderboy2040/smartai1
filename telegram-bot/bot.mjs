@@ -1,7 +1,8 @@
 // ============================================
-// 🤖 DEEP MIND AI TRADING BOT — MAIN SERVER
+// 🤖 ADVANCE PRO INTELLIGENCE — MAIN SERVER v18.0
 // ============================================
 // Telegram Command System + AI Chat + Auto Analysis
+// Multi-Engine Smart Router (7 LLMs) + Quant Brain Fallback
 // ============================================
 
 import TelegramBot from 'node-telegram-bot-api';
@@ -10,7 +11,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_KEY, CLAUDE_KEY, TAVILY_API_KEY, TAX_PAIRS, OPENROUTER_KEY, CEREBRAS_KEY, HF_KEY, NVIDIA_KEY, API_URL } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_KEY, CLAUDE_KEY, TAVILY_API_KEY, TAX_PAIRS, OPENROUTER_KEY, CEREBRAS_KEY, HF_KEY, NVIDIA_KEY, API_URL, BOT_NAME, BOT_VERSION, BOT_TAGLINE, FUNDAMENTALS_API_URL } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchCryptoPricesINR, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
 import { loadPortfolioFromCloud } from './cloud.mjs';
 import {
@@ -472,7 +473,7 @@ app.use((req, res) => {
   }
   res.sendFile(path.join(distPath, 'index.html'), (err) => {
     if (err) {
-      res.send('Deep Mind AI Telegram Bot is ALIVE and RUNNING! 🚀 (Frontend not built)');
+      res.send(`${BOT_NAME} ${BOT_VERSION} Telegram Bot is ALIVE and RUNNING! 🚀 (Frontend not built)`);
     }
   });
 });
@@ -494,12 +495,12 @@ if (process.env.BOT_ONLY !== 'true') {
 // INITIALIZE BOT
 // ========================================
 console.log('');
-console.log('╔═════════════════════════════════════════════╗');
-console.log('║  🧠 DEEP MIND AI SUPER INTELLIGENCE v17  ║');
-console.log('║  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ║');
-console.log('║  TRIPLE AI: Gemini → Groq → Claude      ║');
-console.log('║  Deep Research + Live Market 24x7        ║');
-console.log('╚══════════════════════════════════════════════╝');
+console.log('╔════════════════════════════════════════════════╗');
+console.log(`║  🧠 ${BOT_NAME.toUpperCase()} ${BOT_VERSION.padEnd(20)}║`);
+console.log('║  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ║');
+console.log('║  7-Engine Smart Router + Quant Brain        ║');
+console.log('║  Multi-LLM + Real-time Market Intelligence  ║');
+console.log('╚════════════════════════════════════════════════╝');
 console.log('');
 
 const bot = new TelegramBot(TG_TOKEN, {
@@ -586,12 +587,28 @@ async function initializeData() {
   console.log('');
 
   // Step 6: Set Persistent Telegram Menu Commands
+  // v18: Added ALL implemented commands so users can discover them via the
+  // Telegram client's "/" autocomplete menu (previously 16 commands were
+  // missing from this list, including /ml, /quality, /algo, /sentiment etc.)
   try {
     await bot.setMyCommands([
+      // Flagship
       { command: 'start', description: 'Main Menu & Overview' },
-      { command: 'super', description: '🧠 Superintelligence Brief' },
+      { command: 'help', description: 'Full Command Reference' },
+      { command: 'pro', description: '🚀 Advance Pro Intelligence Dashboard' },
+      { command: 'super', description: '🧠 Super Brief (or /super ai)' },
       { command: 'insights', description: 'Deep insight on a symbol' },
       { command: 'aitest', description: 'AI engine health check' },
+      { command: 'algo', description: '⚡ Intraday Pro Algo Scanner' },
+      { command: 'dip', description: '🎯 Buy-the-Dip Intelligence' },
+      { command: 'quality', description: '📊 7-factor Quality Scorecard' },
+      { command: 'screener', description: 'Multi-factor stock screener' },
+      { command: 'smartmoney', description: '💰 Real FII/DII Smart Money' },
+      { command: 'regime', description: '📊 Macro Regime Detection' },
+      { command: 'sentiment', description: '🌍 Real-time Market Sentiment' },
+      { command: 'whale', description: '🐋 Whale Activity Tracker' },
+      { command: 'earnings', description: '📅 Upcoming Earnings Calendar' },
+      // Portfolio & Market
       { command: 'portfolio', description: 'Full Portfolio Analysis' },
       { command: 'market', description: 'Global Market Snapshot' },
       { command: 'live', description: 'Live Market Sensor Data' },
@@ -600,6 +617,7 @@ async function initializeData() {
       { command: 'trim', description: 'Trim + Re-Entry Rules Card' },
       { command: 'scan', description: 'Deep scan any symbol' },
       { command: 'compare', description: 'Head-to-head comparison' },
+      { command: 'exact', description: '3-Layer Exact Buy Price' },
       { command: 'correlate', description: 'Portfolio Correlation Matrix' },
       { command: 'heatmap', description: 'Sector Heat Map' },
       { command: 'taxloss', description: 'Tax-Loss Harvesting' },
@@ -608,26 +626,35 @@ async function initializeData() {
       { command: 'etf', description: 'ETF Portfolio Analysis' },
       { command: 'crypto', description: 'Crypto Market (BTC/ETH)' },
       { command: 'sip', description: 'SIP Calculator' },
+      // ML
+      { command: 'ml', description: '🤖 ML Signal (LightGBM)' },
+      { command: 'mlregime', description: '🧠 ML Regime Detection (HMM)' },
+      { command: 'mlbacktest', description: '🧪 ML Walk-forward Backtest' },
+      { command: 'rebalance', description: '🔄 Regime-aware Rebalancing' },
+      // Planning & Tax
       { command: 'longterm', description: '15-20yr Wealth Strategy' },
       { command: 'fire', description: 'FIRE / Early Retirement Calculator' },
       { command: 'milestones', description: 'Wealth Milestone Tracker' },
       { command: 'strategy', description: 'Institutional Asset Allocation' },
+      { command: 'siptilt', description: 'Smart SIP Auto-Tilt (VIX/RSI)' },
+      { command: 'taxplan', description: 'Tax Optimizer (LTCG + Crypto)' },
+      { command: 'drawdown', description: 'Drawdown Recovery Tracker' },
+      // Scheduled
       { command: 'premarket', description: 'Pre-market Intelligence' },
       { command: 'digest', description: 'Daily Market Digest' },
       { command: 'fiidii', description: 'FII/DII Flow Tracker' },
       { command: 'ipo', description: 'IPO Tracker' },
       { command: 'forex', description: 'Live Forex (USD/INR)' },
-      { command: 'news', description: 'Global Market Sentiment' },
+      { command: 'news', description: 'Real-time Market News (Tavily)' },
       { command: 'fundamental', description: 'Deep Fundamental Analysis' },
+      // AI & Settings
       { command: 'alert', description: 'Toggle auto alerts' },
       { command: 'model', description: 'Select AI model' },
-      { command: 'siptilt', description: 'Smart SIP Auto-Tilt (VIX/RSI)' },
-      { command: 'taxplan', description: 'Tax Optimizer (LTCG + Crypto)' },
-      { command: 'drawdown', description: 'Drawdown Recovery Tracker' },
-
-      { command: 'clear', description: 'Clear AI Memory' }
+      { command: 'setkey', description: 'Update runtime API keys' },
+      { command: 'ai', description: 'Explicit AI invocation' },
+      { command: 'clear', description: 'Clear AI Memory' },
     ]);
-    console.log('✅ Telegram Menu Commands Updated');
+    console.log('✅ Telegram Menu Commands Updated (v18 — 53 commands)');
   } catch (e) {
     console.warn('⚠️  Could not set Telegram commands:', e.message);
   }
@@ -739,64 +766,53 @@ bot.onText(/^\/start(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /start from ${msg.from?.first_name || chatId}`);
 
-  const welcome = `🧠 <b>DEEP MIND AI ADVANCE PRO v17.0</b>
+  const welcome = `🧠 <b>${BOT_NAME} ${BOT_VERSION}</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
+<i>${BOT_TAGLINE}</i>
 
-Nagraj Bhai, main tumhara ADVANCE PRO AI Trading assistant hoon! 🚀
+👋 Bhai, main tumhara Advance Pro Intelligence assistant hoon! 🚀
 
-🔬 <b>ADVANCE PRO Features:</b>
-• 🧬 Deep Mind Analysis (Macro + Micro)
-• 🔍 Deep Research (24x7 Live)
-• 📡 Real-Time Global Market Monitor
-• 🚨 Portfolio Alert System (Hinglish)
+🔬 <b>Core Capabilities:</b>
+• 🧠 Multi-Engine Smart Router (7 LLMs: Gemini / Groq / Claude / OpenRouter / Cerebras / HF / NVIDIA)
+• 📊 Quant Brain Fallback (always online, no key needed)
+• 📡 Real-time Market Monitor (TradingView + CoinDCX + Forex)
+• 🧬 Macro + Micro Analysis (regime, sectors, VIX, FII/DII)
+• 🤖 ML Signals (LightGBM + HMM regime)
+• 🎯 Portfolio-aware Deep Insights (your P&L + AI verdict)
+• 🔔 Automated Alerts (pre-market, intraday, close, overnight)
 
 ⚡ <b>Real-Time Data Feeds:</b>
-• TradingView Live Scanner (NSE/BSE/NYSE/NASDAQ)
-• CoinDCX Live Crypto (INR)
-• Live USD/INR Exchange Rate
-• Tavily Web Search (Breaking News)
-• VIX, Gold, Crude, DXY, Bitcoin, Bonds
+• TradingView Scanner (NSE / BSE / NYSE / NASDAQ)
+• CoinDCX Live Crypto (INR pairs)
+• Yahoo + AwesomeAPI + ER-API Forex (3-way fallback)
+• Tavily Web Search (breaking news + FII/DII + IPOs)
+• Bond yields, Gold, Crude, DXY, VIX (US + India)
 
-🤖 <b>GROQ SUPER INTELLIGENCE:</b>
-• ⚡ Llama 4 Scout 17B (Latest Groq Model)
-• 🌐 Market Expert with Real-Time Web Search
-• 🧠 Deep Research + Deep Mind Analysis
+📊 <b>Quick Commands:</b>
+📊 /portfolio · 🌍 /market · 📡 /live · 📈 /allocation
+🛡️ /risk · ✂️ /trim · 🔍 /scan &lt;SYM&gt; · ⚖️ /compare &lt;S1&gt; &lt;S2&gt;
+🔗 /correlate · 🔥 /heatmap · 🧪 /backtest · 💸 /taxloss
+📊 /streak · 📊 /etf · 🪙 /crypto · 💰 /sip &lt;AMT&gt;
+🌅 /longterm · 🎯 /strategy · 🌅 /premarket · 🌅 /digest
+🏛️ /fiidii · 🚀 /ipo · 💱 /forex · 🌍 /news
+💼 /fundamental &lt;SYM&gt; · 🎯 /quality &lt;SYM&gt; · 🔬 /insights &lt;SYM&gt;
+🔔 /alert · 🧹 /clear · 🤖 /model · 🔧 /aitest
 
-📊 <b>Commands:</b>
-📊 /portfolio — Full portfolio + live P&L
-🌍 /market — Global market snapshot
-⚡ /algo — Intraday Pro Algo (Super Intelligence)
-📡 /live — Real-time market sensor
-📈 /allocation — Smart SIP matrix
-🛡️ /risk — VIX risk assessment
-✂️ /trim — Trim rules card
-🔍 /scan &lt;SYM&gt; — Deep scan any symbol
-⚖️ /compare &lt;S1&gt; &lt;S2&gt; — Head-to-head
-🔗 /correlate — Correlation matrix
-🔥 /heatmap — Sector heat map
-🧪 /backtest — Signal accuracy
-💸 /taxloss — Tax-loss harvesting
-📊 /streak — Performance tracker
-📊 /etf — ETF portfolio analysis
-🪙 /crypto — Crypto market (BTC, ETH)
-💰 /sip — SIP calculator
-🌅 /longterm — 15-20yr wealth plan
-🎯 /strategy — Institutional asset strategy
-🌅 /premarket — Pre-market intelligence
-🌅 /digest — Daily digest
-🏛️ /fiidii — FII/DII flows
-🚀 /ipo — IPO tracker
-💱 /forex — Live USD/INR
-🌍 /news — Market sentiment
-💼 /fundamental — Deep fundamentals
-🔔 /alert — Toggle auto alerts
-🧹 /clear — Clear AI memory
-🧠 /super — Superintelligence Brief
-🔬 /insights — Deep symbol insight
-🔧 /aitest — AI engine health
+🧠 <b>Pro Intelligence Commands:</b>
+🧠 /super <i>(ya /super ai)</i> — One-shot deep brief
+🚀 /pro — Advance Pro Intelligence Dashboard
+⚡ /algo — Intraday Pro Algo Scanner
+🎯 /dip — Buy-the-Dip Intelligence
+📊 /screener — Multi-Factor Stock Screener
+💰 /smartmoney — Real FII/DII Smart Money Flow
+📊 /regime — Macro Regime Detection
+🤖 /ml &lt;SYM&gt; · 🧠 /mlregime · 🧪 /mlbacktest &lt;SYM&gt; · 🔄 /rebalance
+📈 /siptilt · 💰 /taxplan · 📉 /drawdown
+🔥 /fire &lt;EXP&gt; &lt;SIP&gt; · 🏆 /milestones &lt;SIP&gt;
+🌍 /sentiment · 🐋 /whale · 📅 /earnings
 
 🧠 <b>AI Chat Mode:</b>
-Bina / ke koi bhi message likho = ADVANCE PRO AI chat!
+Bina / ke koi bhi message likho = AI chat (7-engine auto failover + Quant Brain)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 📡 Status: <b>${getMarketStatus()}</b>
@@ -804,7 +820,7 @@ Bina / ke koi bhi message likho = ADVANCE PRO AI chat!
 🔔 Auto Alerts: <b>${autoAlerts ? 'ON ✅' : 'OFF ❌'}</b>
 💱 USD/INR: <b>₹${usdInrRate.toFixed(2)}</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-💎 <i>Powered by Deep Mind AI v17.0 Super Intelligence</i>`;
+💎 <i>${BOT_NAME} ${BOT_VERSION} · /help for full reference</i>`;
 
   await safeSend(chatId, welcome);
 });
@@ -823,149 +839,134 @@ bot.onText(/^\/help(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /help from ${msg.from?.first_name || chatId}`);
 
-  const help = `❓ <b>DEEP MIND AI — Command Reference</b>
+  const help = `❓ <b>${BOT_NAME} ${BOT_VERSION} — Command Reference</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 
-📊 <b>/portfolio</b>
-Full portfolio breakdown — har position ka live price, P&L, RSI status.
-
-🌍 <b>/market</b>
-Global market radar — NIFTY, S&P 500, VIX, Sectors, Fear/Greed Index.
-
-📡 <b>/live</b>
-Real-time market sensor — Indices, Crypto, Bonds, Forex, Sectors.
-
-📈 <b>/allocation</b>
-Smart SIP allocation matrix — kaha kitna paisa lagana hai.
-
-🛡️ <b>/risk</b>
-Risk command center — VIX analysis, drawdown estimates, safety check.
-
-✂️ <b>/trim</b>
-Trim + Re-Entry rules card — institutional-grade rebalancing rules.
-
-🔍 <b>/scan &lt;SYMBOL&gt;</b>
-Deep analysis of ANY symbol — RSI, MACD, SMA, Fib levels, performance.
-Example: <code>/scan RELIANCE</code>, <code>/scan AAPL</code>
-
-⚖️ <b>/compare &lt;SYM1&gt; &lt;SYM2&gt;</b>
-Head-to-head comparison of two symbols.
-Example: <code>/compare SMH VGT</code>, <code>/compare TCS INFY</code>
-
-🔗 <b>/correlate</b>
-Portfolio correlation matrix — diversification check.
-
-🔥 <b>/heatmap</b>
-Sector heat map — visualize winners and losers across global indices, sectors, and your portfolio.
-
-🧪 <b>/backtest</b>
-AI signal accuracy — check how well today's signals performed.
-
-💸 <b>/taxloss</b>
-Tax-loss harvesting — find losing positions with similar ETF pairs to book losses while maintaining exposure.
-
-📊 <b>/streak</b>
-Performance streak tracker — consecutive green/red days history.
-
-📊 <b>/etf</b>
-ETF portfolio analysis — categorization, P&L, allocation.
-
-🪙 <b>/crypto</b>
-Crypto market — BTC, ETH, SOL and more with INR conversion.
-
-💰 <b>/sip &lt;AMOUNT&gt;</b>
-SIP calculator — future value projections at various CAGRs.
-Example: <code>/sip 10000</code>
-
-📈 <b>/longterm</b>
-15-20 year wealth creation roadmap focusing on SIP step-up and compound growth.
-
-🎯 <b>/strategy</b>
-Institutional asset allocation strategy for your portfolio.
-
-🌅 <b>/premarket</b>
-Pre-market intelligence (India & US).
-
-🌅 <b>/digest</b>
-Daily market digest — comprehensive morning brief.
-
-🏛️ <b>/fiidii</b>
-FII/DII flow tracker — institutional money flows.
-
-🚀 <b>/ipo</b>
-IPO tracker — upcoming and recent IPOs.
-
-💱 <b>/forex</b>
-Live USD/INR conversion rate with trend analysis.
-
-🌍 <b>/news</b>
-Global market sentiment — AI-powered news synthesis.
-
-💼 <b>/fundamental &lt;SYMBOL&gt;</b>
-Deep fundamental analysis using Graham framework.
-
-🔔 <b>/alert</b>
-Toggle scheduled auto-analysis ON/OFF.
-
-🤖 <b>/model</b>
-AI model select karo (Gemini / Groq / Claude / Cerebras / Auto). Auto = best engine + failover.
-
-🧹 <b>/clear</b>
-Chat history reset karo.
+🚀 <b>FLAGSHIP — Pro Intelligence:</b>
+🚀 <b>/pro</b> — Advance Pro Intelligence Dashboard (everything in one)
+🧠 <b>/super</b> <i>(or /super ai)</i> — One-shot Super Brief with inline buttons
+⚡ <b>/algo</b> — Intraday Pro Algo Scanner (auto-alerts every 10 min)
+🔬 <b>/insights &lt;SYM&gt;</b> — Portfolio-aware deep insight + conviction
+🎯 <b>/quality &lt;SYM&gt; [IN|US]</b> — 7-factor Quality Scorecard
+📊 <b>/screener</b> — Multi-factor stock screener
+🎯 <b>/dip</b> — Buy-the-Dip Intelligence
+💰 <b>/smartmoney</b> — Real FII/DII Smart Money Flow
+📊 <b>/regime</b> — Macro Regime (VIX + bonds + breadth)
+🤖 <b>/ml &lt;SYM&gt;</b> — LightGBM ML signal
+🧠 <b>/mlregime</b> — HMM regime detection + SIP multiplier
+🧪 <b>/mlbacktest &lt;SYM&gt;</b> — Walk-forward ML backtest
+🔄 <b>/rebalance</b> — Regime-aware rebalancing
+🌍 <b>/sentiment</b> — Real-time market sentiment (Tavily news)
+🐋 <b>/whale</b> — Whale activity tracker (large trades + block deals)
+📅 <b>/earnings</b> — Upcoming earnings calendar
+🔧 <b>/aitest</b> — AI engine health dashboard
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-🧠 <b>SUPERINTELLIGENCE v5.0:</b>
-
-🧠 <b>/super</b> <i>(ya /super ai)</i>
-One-shot deep brief — deterministic mode hamesha kaam karta hai; <code>/super ai</code> LLM narrate karta hai. Inline buttons: Refresh / AI Narrate.
-
-🔬 <b>/insights &lt;SYMBOL&gt;</b>
-Portfolio-aware deep insight — your P&L + RSI + trend + AI verdict + conviction score.
-Example: <code>/insights RELIANCE</code>
-
-🔧 <b>/aitest</b>
-AI engine health dashboard — kaun se LLM keys live hain, kaun sa engine active hai.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━
-🤖 <b>ML POWERED COMMANDS:</b>
-
-🤖 <b>/ml &lt;SYMBOL&gt;</b>
-ML signal — calibrated LightGBM prediction with confidence, price targets, entry/SL/TP.
-Example: <code>/ml RELIANCE</code>, <code>/ml AAPL</code>
-
-🧠 <b>/mlregime</b>
-ML regime detection — HMM-based market regime with SIP multiplier.
-
-🧪 <b>/mlbacktest &lt;SYMBOL&gt;</b>
-Walk-forward ML backtest — hit rate, return, drawdown, Sharpe.
-Example: <code>/mlbacktest INFY</code>
-
-🔄 <b>/rebalance</b>
-Regime-aware portfolio rebalancing — allocation guidance based on ML regime.
+📊 <b>PORTFOLIO & MARKET:</b>
+📊 <b>/portfolio</b> — Full portfolio + live P&L
+🌍 <b>/market</b> — Global market radar (NIFTY/SPY/VIX/Sectors/F&G)
+📡 <b>/live</b> — Real-time indices, crypto, bonds, forex, sectors
+📈 <b>/allocation</b> — Smart SIP matrix
+🛡️ <b>/risk</b> — VIX analysis + drawdown estimates + safety check
+✂️ <b>/trim</b> — Trim + Re-Entry rules card
+🔍 <b>/scan &lt;SYM&gt;</b> — Deep symbol scan (RSI/MACD/SMA/Fib/perf)
+⚖️ <b>/compare &lt;S1&gt; &lt;S2&gt;</b> — Head-to-head comparison
+🔗 <b>/correlate</b> — Portfolio correlation matrix
+🔥 <b>/heatmap</b> — Sector heat map (global + portfolio)
+🧪 <b>/backtest</b> — AI signal accuracy check
+💸 <b>/taxloss</b> — Tax-loss harvesting (ETF pair swap)
+📊 <b>/streak</b> — Performance streak tracker
+📊 <b>/etf</b> — ETF portfolio analysis
+🪙 <b>/crypto</b> — Crypto market (BTC/ETH/SOL in INR)
+💰 <b>/sip &lt;AMT&gt;</b> — SIP future-value calculator
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-💬 <b>Pro Tip:</b> Bina command ke koi bhi message likho = AI chat mode automatic activate hoga!
+📈 <b>PLANNING & TAX:</b>
+🌅 <b>/longterm</b> — 15-20yr wealth creation roadmap
+🎯 <b>/strategy</b> — Institutional asset allocation
+📈 <b>/siptilt</b> — Smart SIP Auto-Tilt (VIX/RSI based)
+💰 <b>/taxplan</b> — India Tax Optimizer (LTCG + crypto)
+📉 <b>/drawdown</b> — Drawdown Recovery Tracker
+🔥 <b>/fire &lt;EXP&gt; &lt;SIP&gt;</b> — FIRE / Early Retirement Calculator
+🏆 <b>/milestones &lt;SIP&gt;</b> — Wealth Milestone Tracker
 
-💎 <i>Deep Mind AI v17.0 — 7-Engine + Superintelligence + Quant Brain</i>`;
+━━━━━━━━━━━━━━━━━━━━━━━━━
+🌅 <b>SCHEDULED REPORTS:</b>
+🌅 <b>/premarket</b> — Pre-market intelligence (India + US)
+🌅 <b>/digest</b> — Daily comprehensive morning brief
+🏛️ <b>/fiidii</b> — Real FII/DII flow tracker
+🚀 <b>/ipo</b> — IPO tracker (upcoming + recent)
+💱 <b>/forex</b> — Live USD/INR with trend analysis
+🌍 <b>/news</b> — Real-time news synthesis (Tavily)
+💼 <b>/fundamental &lt;SYM&gt;</b> — Graham framework fundamentals
+
+━━━━━━━━━━━━━━━━━━━━━━━━━
+⚙️ <b>AI & SETTINGS:</b>
+🤖 <b>/model</b> — Pick AI engine (Gemini/Groq/Claude/Cerebras/Auto)
+🔑 <b>/setkey groq|tavily &lt;key&gt;</b> — Update runtime API keys
+🤖 <b>/ai &lt;msg&gt;</b> · 🤖 <b>/chat &lt;msg&gt;</b> — Explicit AI invocation
+🧹 <b>/clear</b> — Reset chat history
+🔔 <b>/alert</b> — Toggle scheduled auto-analysis ON/OFF
+🎯 <b>/exact &lt;SYM&gt;</b> — 3-Layer Exact Buy Price
+
+━━━━━━━━━━━━━━━━━━━━━━━━━
+💬 <b>Pro Tip:</b> Bina command ke koi bhi message likho = AI chat mode auto-activate (7-engine failover + Quant Brain fallback)
+
+💎 <i>${BOT_NAME} ${BOT_VERSION} · ${BOT_TAGLINE}</i>`;
 
   await safeSend(chatId, help);
 });
 
 
 // ========================================
-// COMMAND: /news — News Sentiment
+// COMMAND: /news — Real-time News via Tavily + AI Sentiment
+// FIX (v18): Previously just forwarded "/news" to LLM which hallucinated.
+// Now actually fetches real news from Tavily, then asks AI to summarize.
 // ========================================
 bot.onText(/^\/news(@\w+)?$/i, async (msg) => {
   if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /news from ${msg.from?.first_name || chatId}`);
+  const stopTyping = startTyping(chatId);
   try {
-    await safeSend(chatId, '🌍 <i>Synthesizing latest global market news... extracting sentiment score...</i>\n\nThis is a Superintelligent Deep AI Feature.');
-    const response = await chatWithAI(chatId, '/news', portfolio, livePrices, usdInrRate);
-    await safeSend(chatId, response);
+    if (!isTavilyAvailable()) {
+      await safeSend(chatId, '🌍 <b>News unavailable</b> — Tavily API key not configured. Set <code>TAVILY_API_KEY</code> in env vars or use <code>/setkey tavily &lt;key&gt;</code>.');
+      return;
+    }
+    await safeSend(chatId, '🌍 <i>Fetching real-time market news via Tavily...</i>');
+
+    const res = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: TAVILY_API_KEY,
+        query: `India stock market NIFTY SENSEX today FII DII global market breaking news`,
+        search_depth: 'advanced',
+        include_answer: true,
+        max_results: 8,
+        topic: 'finance'
+      }),
+      signal: AbortSignal.timeout(12000)
+    });
+    if (!res.ok) throw new Error(`Tavily HTTP ${res.status}`);
+    const data = await res.json();
+    const answer = data.answer || '';
+    const headlines = (data.results || []).slice(0, 8).map((r, i) => `${i + 1}. <b>${escapeHtml(r.title || '')}</b>\n   ${escapeHtml((r.content || '').substring(0, 180))}…\n   🔗 ${escapeHtml(r.url || '')}`);
+
+    let out = `🌍 <b>REAL-TIME MARKET NEWS</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    if (answer) {
+      out += `<b>📰 AI Summary:</b>\n${escapeHtml(answer)}\n\n`;
+    }
+    if (headlines.length > 0) {
+      out += `<b>📚 Top Headlines:</b>\n\n${headlines.join('\n\n')}\n\n`;
+    }
+    out += `<i>Source: Tavily Real-time Web Search · ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</i>`;
+    await safeSend(chatId, out);
   } catch (e) {
     console.error('❌ /news error:', e.message);
-    await safeSend(chatId, `❌ /news fetch me error: ${e.message}\n\nPlease try again.`);
+    await safeSend(chatId, `❌ /news fetch failed: ${e.message}\n\nPlease try again later.`);
+  } finally {
+    stopTyping();
   }
 });
 
@@ -1005,7 +1006,7 @@ bot.onText(/^\/quality(?:@\w+)?(?:\s+(\S+))(?:\s+(IN|US))?$/i, async (msg, match
   console.log(`📥 /quality ${symbol} (${market}) from ${msg.from?.first_name || chatId}`);
   try {
     await safeSend(chatId, `🔍 <i>Computing quality scorecard for ${symbol} (${market})...</i>`);
-    const serverBase = `http://localhost:${process.env.PORT || 8080}`;
+    const serverBase = FUNDAMENTALS_API_URL;
     const url = `${serverBase}/api/fundamentals/${encodeURIComponent(symbol)}?market=${market}`;
     const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
     if (!r.ok) {
@@ -1216,6 +1217,7 @@ bot.onText(/^\/dip(@\w+)?$/i, async (msg) => {
       if (depth !== 'NEUTRAL') {
         dips.push({
           symbol: pos.symbol,
+          market: pos.market,
           price: price.toFixed(2),
           rsi: rsi.toFixed(0),
           sma20Dist: sma20Dist.toFixed(1),
@@ -1234,8 +1236,9 @@ bot.onText(/^\/dip(@\w+)?$/i, async (msg) => {
     } else {
       dips.sort((a, b) => parseFloat(a.rsi) - parseFloat(b.rsi));
       for (const d of dips) {
+        const cur = d.market === 'US' ? '$' : '₹';
         msg_text += `${d.depth}\n`;
-        msg_text += `  <b>${d.symbol}</b> | ₹${d.price}\n`;
+        msg_text += `  <b>${d.symbol}</b> | ${cur}${d.price}\n`;
         msg_text += `  RSI: ${d.rsi} | SMA20: ${d.sma20Dist}% | SMA50: ${d.sma50Dist}%\n`;
         msg_text += `  Signal: ${d.signal} (${d.confidence}%)\n\n`;
       }
@@ -1376,68 +1379,101 @@ bot.onText(/^\/regime(@\w+)?$/i, async (msg) => {
   }
 });
 
+
 // ========================================
-// COMMAND: /smartmoney — FII/DII Smart Money Flow
+// COMMAND: /smartmoney — FII/DII Smart Money Flow (REAL DATA)
+// FIX (v18): Previously generated FAKE random FII/DII numbers. Now actually
+// fetches real FII/DII data via Tavily, parses the answer for net figures,
+// and falls back gracefully if data is unavailable.
 // ========================================
 bot.onText(/^\/smartmoney(@\w+)?$/i, async (msg) => {
   if (!isAuthorized(msg)) return;
   const chatId = msg.chat.id;
   console.log(`📥 /smartmoney from ${msg.from?.first_name || chatId}`);
+  const stopTyping = startTyping(chatId);
   try {
     await smartRefreshPrices();
 
+    // 1. Fetch real FII/DII data from Tavily
+    const fiiData = await fetchFIIDIIData(TAVILY_API_KEY);
+    if (!fiiData) {
+      await safeSend(chatId,
+        `💰 <b>SMART MONEY FLOW — Real Data Mode</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `⚠️ <b>FII/DII data unavailable.</b>\n\n` +
+        `This command now fetches <b>real</b> institutional flow data via Tavily Search. ` +
+        `To enable:\n` +
+        `1. Set <code>TAVILY_API_KEY</code> in env vars\n` +
+        `   (or <code>/setkey tavily &lt;key&gt;</code>)\n` +
+        `2. Try during Indian market hours (9:15 AM – 3:30 PM IST)\n` +
+        `   for fresh cash-market figures.\n\n` +
+        `📊 <i>Also use <code>/fiidii</code> for the full Tavily report with sources.</i>`
+      );
+      return;
+    }
+
+    // 2. Try to parse net figures from the AI summary
+    const summary = fiiData.summary || '';
+    const fiiMatch = summary.match(/FII[^-]*?net[^-]*?(-?[\d,]+\.?\d*)\s*(?:Cr|crore)/i);
+    const diiMatch = summary.match(/DII[^-]*?net[^-]*?(-?[\d,]+\.?\d*)\s*(?:Cr|crore)/i);
+    let fiiNet = fiiMatch ? parseFloat(fiiMatch[1].replace(/,/g, '')) : null;
+    let diiNet = diiMatch ? parseFloat(diiMatch[1].replace(/,/g, '')) : null;
+
+    // 3. VIX context for signal interpretation
     const vixUS = livePrices['US_VIX']?.price || 18;
     const vixIN = livePrices['IN_INDIAVIX']?.price || 15;
     const avgVix = (vixUS + vixIN) / 2;
-    const niftyChange = livePrices['IN_NIFTY']?.change || 0;
-    const marketSentiment = niftyChange - (avgVix - 18) * 0.3;
-
-    let fiiNet, diiNet;
-    if (marketSentiment > 1) {
-      fiiNet = Math.round(2000 + marketSentiment * 800);
-      diiNet = Math.round(-500 + Math.random() * 1000);
-    } else if (marketSentiment < -1) {
-      fiiNet = Math.round(-3000 + marketSentiment * 600);
-      diiNet = Math.round(2000 + Math.abs(marketSentiment) * 500);
-    } else {
-      fiiNet = Math.round(-500 + Math.random() * 1000);
-      diiNet = Math.round(-300 + Math.random() * 600);
-    }
-
-    const fiiBuy = Math.max(0, 8000 + fiiNet / 2);
-    const fiiSell = fiiBuy - fiiNet;
-    const diiBuy = Math.max(0, 5000 + diiNet / 2);
-    const diiSell = diiBuy - diiNet;
 
     let signal, signalEmoji;
-    const combined = fiiNet > 1000 && diiNet > 0 ? 80 : fiiNet < -1000 && diiNet < 0 ? -80 : fiiNet > 0 ? 40 : -40;
-    if (combined > 50) { signal = 'STRONG ACCUMULATION'; signalEmoji = '🟢🟢'; }
-    else if (combined > 20) { signal = 'ACCUMULATION'; signalEmoji = '🟢'; }
-    else if (combined > -20) { signal = 'NEUTRAL'; signalEmoji = '⚪'; }
-    else if (combined > -50) { signal = 'DISTRIBUTION'; signalEmoji = '🟠'; }
-    else { signal = 'STRONG DISTRIBUTION'; signalEmoji = '🔴🔴'; }
+    if (fiiNet !== null && diiNet !== null) {
+      const combined = fiiNet > 500 && diiNet > 0 ? 80
+        : fiiNet < -500 && diiNet < 0 ? -80
+        : fiiNet > 0 ? 40 : -40;
+      if (combined > 50) { signal = 'STRONG ACCUMULATION'; signalEmoji = '🟢🟢'; }
+      else if (combined > 20) { signal = 'ACCUMULATION'; signalEmoji = '🟢'; }
+      else if (combined > -20) { signal = 'NEUTRAL'; signalEmoji = '⚪'; }
+      else if (combined > -50) { signal = 'DISTRIBUTION'; signalEmoji = '🟠'; }
+      else { signal = 'STRONG DISTRIBUTION'; signalEmoji = '🔴🔴'; }
+    } else {
+      signal = 'INCONCLUSIVE (see summary below)';
+      signalEmoji = '⚪';
+    }
 
-    const fiiEmoji = fiiNet > 0 ? '🟢' : '🔴';
-    const diiEmoji = diiNet > 0 ? '🟢' : '🔴';
+    let out = `💰 <b>SMART MONEY FLOW — REAL FII/DII DATA</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    out += `📊 VIX Context: US ${vixUS.toFixed(1)} / IN ${vixIN.toFixed(1)} (avg ${avgVix.toFixed(1)})\n\n`;
 
-    let msg_text = `<b>💰 SMART MONEY FLOW</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-    msg_text += `<b>FII (Foreign):</b>\n`;
-    msg_text += `  Buy: ₹${Math.round(fiiBuy).toLocaleString('en-IN')} Cr | Sell: ₹${Math.round(fiiSell).toLocaleString('en-IN')} Cr\n`;
-    msg_text += `  ${fiiEmoji} Net: <b>${fiiNet >= 0 ? '+' : ''}₹${fiiNet.toLocaleString('en-IN')} Cr</b>\n\n`;
-    msg_text += `<b>DII (Domestic):</b>\n`;
-    msg_text += `  Buy: ₹${Math.round(diiBuy).toLocaleString('en-IN')} Cr | Sell: ₹${Math.round(diiSell).toLocaleString('en-IN')} Cr\n`;
-    msg_text += `  ${diiEmoji} Net: <b>${diiNet >= 0 ? '+' : ''}₹${diiNet.toLocaleString('en-IN')} Cr</b>\n\n`;
-    msg_text += `<b>Signal:</b> ${signalEmoji} ${signal}\n\n`;
+    if (fiiNet !== null) {
+      const fiiEmoji = fiiNet > 0 ? '🟢' : '🔴';
+      out += `<b>FII (Foreign Institutions):</b>\n  ${fiiEmoji} Net: <b>${fiiNet >= 0 ? '+' : ''}₹${fiiNet.toLocaleString('en-IN')} Cr</b>\n\n`;
+    }
+    if (diiNet !== null) {
+      const diiEmoji = diiNet > 0 ? '🟢' : '🔴';
+      out += `<b>DII (Domestic Institutions):</b>\n  ${diiEmoji} Net: <b>${diiNet >= 0 ? '+' : ''}₹${diiNet.toLocaleString('en-IN')} Cr</b>\n\n`;
+    }
 
-    if (fiiNet > 0 && diiNet > 0) msg_text += `<i>🎯 Both accumulating — follow institutions, buy dips.</i>`;
-    else if (fiiNet < 0 && diiNet < 0) msg_text += `<i>⚠️ Both distributing — caution, only deep dips.</i>`;
-    else if (fiiNet < 0 && diiNet > 0) msg_text += `<i>🛡️ DII absorbing FII selling — support zone.</i>`;
-    else msg_text += `<i>⚪ Mixed signals — continue regular SIP.</i>`;
+    out += `<b>Signal:</b> ${signalEmoji} ${signal}\n\n`;
 
-    await safeSend(chatId, msg_text);
+    if (fiiNet !== null && diiNet !== null) {
+      if (fiiNet > 0 && diiNet > 0) out += `<i>🎯 Both accumulating — follow institutions, buy dips.</i>`;
+      else if (fiiNet < 0 && diiNet < 0) out += `<i>⚠️ Both distributing — caution, only deep dips.</i>`;
+      else if (fiiNet < 0 && diiNet > 0) out += `<i>🛡️ DII absorbing FII selling — support zone, SIP continue.</i>`;
+      else out += `<i>⚪ Mixed — continue regular SIP, no aggressive moves.</i>`;
+      out += `\n\n`;
+    }
+
+    out += `<b>📰 Tavily Summary:</b>\n${escapeHtml(summary)}\n\n`;
+    if (fiiData.sources && fiiData.sources.length > 0) {
+      out += `<b>🔗 Sources:</b>\n`;
+      for (const s of fiiData.sources) {
+        out += `• <a href="${escapeHtml(s.url)}">${escapeHtml(s.title)}</a>\n`;
+      }
+    }
+    out += `\n<i>Source: Tavily Real-time Web Search · ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</i>`;
+    await safeSend(chatId, out);
   } catch (e) {
     console.error('❌ /smartmoney error:', e.message);
     await safeSend(chatId, `❌ Smart money error: ${e.message}`);
+  } finally {
+    stopTyping();
   }
 });
 
@@ -1626,6 +1662,95 @@ bot.on('callback_query', async (query) => {
       }
       return;
     }
+    // v18: /pro inline buttons — re-run /pro with optional ai mode
+    if (data.startsWith('pro:')) {
+      const action = data.split(':')[1];
+      await bot.answerCallbackQuery(query.id, { text: action === 'ai' ? '🧠 AI verdict...' : '🔁 Refreshing...' }).catch(() => {});
+      // Trigger the /pro handler programmatically with the same chat
+      const fakeMsg = { chat: { id: chatId }, from: query.from };
+      // Re-dispatch by calling the same logic — simplest: emit a synthetic message
+      // But since we can't easily call the handler, just re-send the /pro command
+      try {
+        // Construct an inline invocation: run the same code as /pro
+        const stopTyping = startTyping(chatId);
+        try {
+          if (portfolio.length === 0) await refreshPortfolio().catch(() => {});
+          await Promise.allSettled([smartRefreshPrices(), refreshIntel(), refreshForex()]);
+
+          const vixUS = livePrices['US_VIX']?.price || 0;
+          const vixIN = livePrices['IN_INDIAVIX']?.price || 0;
+          const avgVix = (vixUS + vixIN) / 2 || null;
+          let regime = '🟢 RISK ON', regimeLine = 'Normal conditions — SIP continue karo.';
+          if (avgVix && avgVix > 30) { regime = '🔴🔴 RISK OFF (Panic)'; regimeLine = 'VIX spike! Cash bachao, sirf deep staged buys.'; }
+          else if (avgVix && avgVix > 22) { regime = '🟠 ELEVATED VOLATILITY'; regimeLine = 'Choppy market. Chhote sizes, quality names only.'; }
+          else if (avgVix && avgVix < 14) { regime = '💎 GOLDILOCKS'; regimeLine = 'Calm market — dips pe aggressively accumulate.'; }
+
+          let portfolioSection = '';
+          if (portfolio.length > 0) {
+            const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
+            const signals = portfolio.map(p => {
+              const pd = livePrices[`${p.market}_${p.symbol}`];
+              return { pos: p, sig: analyzeAsset(p, pd) };
+            });
+            const buys = signals.filter(x => x.sig.action === 'BUY');
+            const sells = signals.filter(x => x.sig.action === 'SELL');
+            const warnings = signals.filter(x => x.sig.rsi > 70 || x.sig.change < -4);
+            const opportunities = signals.filter(x => x.sig.rsi < 35 || (x.sig.action === 'BUY' && x.sig.confidence >= 80));
+            const plEmoji = metrics.totalPL >= 0 ? '📈' : '📉';
+            portfolioSection = `<b>💼 PORTFOLIO PULSE:</b>\n   Value: ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')} | ${plEmoji} ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(1)}%)\n   Today: ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')} (${metrics.todayPct.toFixed(2)}%)\n   🟢 BUY:${buys.length} | 🔴 SELL:${sells.length} | 🟡 HOLD:${signals.length - buys.length - sells.length}\n`;
+            if (warnings.length > 0) portfolioSection += `   ⚠️ Warnings: ${warnings.slice(0, 3).map(w => w.sig.symbol).join(', ')}\n`;
+            if (opportunities.length > 0) portfolioSection += `   🎯 Opportunities: ${opportunities.slice(0, 3).map(o => o.sig.symbol).join(', ')}\n`;
+          } else {
+            portfolioSection = `<b>💼 PORTFOLIO PULSE:</b> <i>Empty</i>\n`;
+          }
+          portfolioSection += `\n`;
+
+          let marketSection = `<b>🌍 MARKET SNAPSHOT:</b>\n`;
+          const nifty = livePrices['IN_NIFTY'];
+          const sensex = livePrices['IN_SENSEX'];
+          const spy = livePrices['US_SPY'];
+          const qqq = livePrices['US_QQQ'];
+          if (nifty) marketSection += `   🇮🇳 NIFTY: ${nifty.price?.toFixed(2)} (${nifty.change >= 0 ? '+' : ''}${nifty.change?.toFixed(2)}%)\n`;
+          if (sensex) marketSection += `   🇮🇳 SENSEX: ${sensex.price?.toFixed(2)} (${sensex.change >= 0 ? '+' : ''}${sensex.change?.toFixed(2)}%)\n`;
+          if (spy) marketSection += `   🇺🇸 S&P 500: ${spy.price?.toFixed(2)} (${spy.change >= 0 ? '+' : ''}${spy.change?.toFixed(2)}%)\n`;
+          if (qqq) marketSection += `   🇺🇸 NASDAQ: ${qqq.price?.toFixed(2)} (${qqq.change >= 0 ? '+' : ''}${qqq.change?.toFixed(2)}%)\n`;
+          if (avgVix) marketSection += `   📊 VIX: US ${vixUS.toFixed(1)} / IN ${vixIN.toFixed(1)} (avg ${avgVix.toFixed(1)})\n`;
+          marketSection += `   💱 USD/INR: ₹${usdInrRate.toFixed(2)}\n\n`;
+
+          let aiVerdict = '';
+          if (action === 'ai') {
+            try {
+              const prompt = `Based on this brief, give ONE actionable insight in 2 lines of Hinglish. Be specific, no fluff. Mention regime + portfolio stance.`;
+              aiVerdict = await Promise.race([
+                chatWithAI(chatId, prompt, portfolio, livePrices, usdInrRate),
+                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 25000)),
+              ]);
+              aiVerdict = `\n<b>🧠 AI VERDICT:</b>\n${aiVerdict}\n`;
+            } catch (e) {
+              aiVerdict = `\n<i>(AI verdict unavailable)</i>\n`;
+            }
+          }
+
+          let r = `🚀 <b>${BOT_NAME} DASHBOARD ${BOT_VERSION}</b> [refreshed]\n━━━━━━━━━━━━━━━━━━━━━━━━━\n⏰ ${getISTTime()} IST | ${getMarketStatus()}\n\n`;
+          r += `<b>1️⃣ MACRO REGIME:</b> ${regime}\n   ${regimeLine}\n\n`;
+          r += `2️⃣ ${marketSection}`;
+          r += `3️⃣ ${portfolioSection}`;
+          r += aiVerdict;
+          let verdict = avgVix && avgVix > 30 ? 'DEFENSE MODE' : portfolio.length === 0 ? 'SETUP MODE' : 'STEADY — SIP chalu, discipline follow.';
+          r += `\n<b>📌 ONE-LINE VERDICT:</b> ${verdict}\n\n💎 <i>${BOT_NAME} ${BOT_VERSION}</i>`;
+          await safeSend(chatId, r, {
+            reply_markup: { inline_keyboard: [[
+              { text: '🔁 Refresh', callback_data: 'pro:refresh' },
+              { text: '🧠 AI Verdict', callback_data: 'pro:ai' },
+              { text: '🧠 Full Super Brief', callback_data: 'sup:refresh' },
+            ]] }
+          });
+        } finally { stopTyping(); }
+      } catch (e) {
+        await safeSend(chatId, `❌ /pro refresh error: ${e.message}`);
+      }
+      return;
+    }
     if (data.startsWith('setmodel:')) {
       const engine = data.split(':')[1];
       const ok = setChatEngine(chatId, engine);
@@ -1666,7 +1791,7 @@ bot.onText(/^\/setkey(?:@\w+)?(?:\s+(\w+)\s+(.+))?$/i, async (msg, match) => {
     const { isGroqAvailable, isTavilyAvailable } = await import('./config.mjs');
     helpMsg += `⚡ Groq (Llama 4 Scout): ${isGroqAvailable() ? '🟢 Active' : '🔴 Missing'}\n`;
     helpMsg += `🔍 Tavily (Search): ${isTavilyAvailable() ? '🟢 Active' : '🔴 Missing'}\n\n`;
-    helpMsg += `<i>Note: Settings automatically sync to Google Sheets and the website.</i>`;
+    helpMsg += `<i>Note: Keys are saved in-memory for the current process. If API_URL is configured, they also sync to your Google Apps Script endpoint.</i>`;
     await safeSend(chatId, helpMsg);
     return;
   }
@@ -1711,10 +1836,10 @@ bot.onText(/^\/ai(?:@\w+)?\s+(.+)/i, async (msg, match) => {
     await safeSend(chatId, '⏳ <b>Rate limit!</b> Thoda ruko, 1 min me retry karo.');
     return;
   }
-  // v17: typing indicator while engines run (no more redundant "...analyzing" ping)
+  // v18: typing indicator alone (no redundant "...analyzing" ping that
+  // doubled message count and wasted Telegram API calls).
   const stopTypingAi = startTyping(chatId);
   try {
-    await safeSend(chatId, '🧠 <i>Deep Mind analyzing...</i>');
     await smartRefreshPrices();
     const response = await chatWithAI(chatId, query, portfolio, livePrices, usdInrRate);
     await safeSend(chatId, response);
@@ -1740,7 +1865,6 @@ bot.onText(/^\/chat(?:@\w+)?\s+(.+)/i, async (msg, match) => {
   }
   const stopTypingChat = startTyping(chatId);
   try {
-    await safeSend(chatId, '🧠 <i>Deep Mind analyzing...</i>');
     await smartRefreshPrices();
     const response = await chatWithAI(chatId, query, portfolio, livePrices, usdInrRate);
     await safeSend(chatId, response);
@@ -1919,7 +2043,7 @@ bot.onText(/^\/exact(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
       msg_text += `<i>Weak setup. Wait for better entry near ${cur}${entryLow}.</i>\n`;
     }
 
-    msg_text += `\n💎 <i>Deep Mind AI — 3-Layer Exact Entry Engine</i>`;
+    msg_text += `\n💎 <i> — 3-Layer Exact Entry Engine</i>`;
     await safeSend(chatId, msg_text);
   } catch (e) {
     console.error('❌ /exact error:', e.message);
@@ -2010,7 +2134,7 @@ bot.onText(/^\/correlat(?:e|ion)?(@\w+)?$/i, async (msg) => {
     else if (allNegative) report += `🔴 Sab neeche ja rahe — systematic risk HIGH. Hedge karo!`;
     else report += `🟡 Mixed movement — good diversification. Portfolio balanced hai.`;
 
-    report += `\n\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    report += `\n\n💎 <i> Pro Terminal</i>`;
     await safeSend(chatId, report);
   } catch (e) {
     console.error('❌ /correlate error:', e.message);
@@ -2084,7 +2208,7 @@ bot.onText(/^\/heatmap(@\w+)?$/i, async (msg) => {
       }
     }
 
-    report += `\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    report += `\n💎 <i> Pro Terminal</i>`;
     await safeSend(chatId, report);
   } catch (e) {
     console.error('❌ /heatmap error:', e.message);
@@ -2141,7 +2265,7 @@ bot.onText(/^\/streak(@\w+)?$/i, async (msg) => {
       report += `⚠️ <i>No historical data yet. Data is recorded at India market close.</i>\n`;
     }
 
-    report += `\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    report += `\n💎 <i> Pro Terminal</i>`;
     await safeSend(chatId, report);
   } catch (e) {
     console.error('❌ /streak error:', e.message);
@@ -2223,7 +2347,7 @@ bot.onText(/^\/backtest(@\w+)?$/i, async (msg) => {
     else report += `🔴 <b>Caution!</b> Low accuracy — market may be choppy. Reduce sizes.`;
 
     report += `\n\n<i>Engine: backtester.mjs | Past accuracy ≠ future guarantee.</i>`;
-    report += `\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    report += `\n💎 <i> Pro Terminal</i>`;
     await safeSend(chatId, report);
   } catch (e) {
     console.error('❌ /backtest error:', e.message);
@@ -2295,7 +2419,7 @@ bot.onText(/^\/taxloss(@\w+)?$/i, async (msg) => {
       report += `After 30 days, swap back if desired (avoid wash sale rule)\n`;
     }
 
-    report += `\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    report += `\n💎 <i> Pro Terminal</i>`;
     await safeSend(chatId, report);
   } catch (e) {
     console.error('❌ /taxloss error:', e.message);
@@ -2395,7 +2519,7 @@ bot.onText(/^\/(trim|rules)(@\w+)?$/i, async (msg) => {
   r3 += `🎯 <b>ONE RULE:</b>\n`;
   r3 += `<i>"Trim only when overweight + parabolic, Re-enter in 3 parts on dip, Continue SIP always, Review every 6 months, Ignore noise, follow rules."</i>\n\n`;
   r3 += `🎯 GOAL: 20%+ CAGR for 15-20 years\n`;
-  r3 += `💎 <i>Deep Mind AI Pro Terminal</i>`;
+  r3 += `💎 <i> Pro Terminal</i>`;
 
   await safeSend(chatId, r3);
 });
@@ -2443,7 +2567,7 @@ bot.onText(/^\/fire(?:@\w+)?(?:\s+(\d+))?(?:\s+(\d+))?$/i, async (msg, match) =>
     r += `⏳ Years to FIRE: <b>${yearsStr} years</b> <i>(12% CAGR, 6% inflation-adjusted)</i>\n`;
     r += `📊 Progress: <b>${progress.toFixed(1)}%</b>\n<code>[${bar}]</code>\n\n`;
     r += `🏖️ Passive income at FIRE: <b>₹${Math.round(fireNumber * 0.04 / 12).toLocaleString('en-IN')}/month</b>\n\n`;
-    r += `<i>Usage: /fire &lt;monthly_expenses&gt; &lt;monthly_sip&gt;</i>\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    r += `<i>Usage: /fire &lt;monthly_expenses&gt; &lt;monthly_sip&gt;</i>\n💎 <i> Pro Terminal</i>`;
     await safeSend(chatId, r);
   } catch (e) {
     console.error('❌ /fire error:', e.message);
@@ -2496,7 +2620,7 @@ bot.onText(/^\/milestones?(?:@\w+)?(?:\s+(\d+))?$/i, async (msg, match) => {
       r += `${ms.e} <b>${ms.label}</b>: ${prog.toFixed(0)}% | ETA <b>${eta}</b>\n`;
     }
 
-    r += `\n<i>Usage: /milestones &lt;monthly_sip&gt;</i>\n💎 <i>Deep Mind AI Pro Terminal</i>`;
+    r += `\n<i>Usage: /milestones &lt;monthly_sip&gt;</i>\n💎 <i> Pro Terminal</i>`;
     await safeSend(chatId, r);
   } catch (e) {
     console.error('❌ /milestones error:', e.message);
@@ -2691,7 +2815,7 @@ cron.schedule('30 3 * * 1-5', async () => {
   msg += `\n📊 US VIX: <b>${usVix.toFixed(1)}</b> ${usVix > 20 ? '🔴 Caution' : '🟢 Stable'}\n`;
   msg += `💱 USD/INR: <b>₹${usdInrRate.toFixed(2)}</b>\n`;
   msg += `\n<i>Market open hote hi full scan bhejunga!</i>\n`;
-  msg += `\n💎 <i>Deep Mind AI</i>`;
+  msg += `\n💎 <i>Advance Pro Intelligence</i>`;
 
   await safeSend(TG_CHAT_ID, msg);
 });
@@ -2735,7 +2859,7 @@ cron.schedule('5 10 * * 1-5', async () => {
     msg += `⚠️ <i>Aaj thoda down raha. Don't panic — SIP chalne do.</i>`;
   }
 
-  msg += `\n\n💎 <i>Deep Mind AI</i>`;
+  msg += `\n\n💎 <i>Advance Pro Intelligence</i>`;
   await safeSend(TG_CHAT_ID, msg);
 });
 
@@ -2763,7 +2887,7 @@ cron.schedule('35 13 * * 1-5', async () => {
     msg += `  RSI: ${rsi.toFixed(0)} | P&L: ${pl >= 0 ? '+' : ''}$${pl.toFixed(2)}\n`;
   }
 
-  msg += `\n💎 <i>Deep Mind AI</i>`;
+  msg += `\n💎 <i>Advance Pro Intelligence</i>`;
   await safeSend(TG_CHAT_ID, msg);
 });
 
@@ -3194,7 +3318,7 @@ cron.schedule('15 10 * * 1-5', async () => {
     msg += `💼 <b>Portfolio:</b> ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}\n`;
     msg += `📊 <b>Today:</b> ${metrics.todayPL >= 0 ? '🟢 +' : '🔴 '}₹${Math.round(Math.abs(metrics.todayPL)).toLocaleString('en-IN')} (${metrics.todayPct >= 0 ? '+' : ''}${metrics.todayPct.toFixed(2)}%)\n`;
     msg += `📈 <b>Overall:</b> ${metrics.totalPL >= 0 ? '🟢 +' : '🔴 '}₹${Math.round(Math.abs(metrics.totalPL)).toLocaleString('en-IN')}\n`;
-    msg += `\n💎 <i>Deep Mind AI • Closing Bell</i>`;
+    msg += `\n💎 <i> • Closing Bell</i>`;
     await safeSend(TG_CHAT_ID, msg);
   } catch (e) {
     console.error('Market close summary failed:', e.message);
@@ -3640,7 +3764,7 @@ async function buildSuperBriefText() {
   else if (sells.length > buys.length * 2) verdict = 'PARTIAL PROFIT BOOKING — overbought positions trim karo in parts.';
   else verdict = 'STEADY — SIP chalu, noise ignore, discipline follow.';
   r += `<b>6️⃣ ONE-LINE VERDICT:</b>\n   ${verdict}\n\n`;
-  r += `💎 <i>Deep Mind AI — Superintelligence Engine</i>`;
+  r += `💎 <i> — Superintelligence Engine</i>`;
   return r;
 }
 
@@ -3830,6 +3954,349 @@ bot.onText(/^\/aitest(@\w+)?$/i, async (msg) => {
 });
 
 // ========================================
+// COMMAND: /pro — 🚀 Advance Pro Intelligence Dashboard
+// v18 FLAGSHIP: One-shot aggregated dashboard that combines
+//   market regime + portfolio pulse + top signals + smart money + sentiment
+// into a single mega-brief. Deterministic core (no LLM needed) — uses the
+// same data layers as /super but adds macro + FII/DII + AI-sentiment.
+// ========================================
+bot.onText(/^\/pro(?:@\w+)?(?:\s+(ai|full|smart))??$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  const mode = (match?.[1] || '').toLowerCase();
+  console.log(`📥 /pro ${mode || 'plain'} from ${msg.from?.first_name || chatId}`);
+  const stopTyping = startTyping(chatId);
+  try {
+    if (portfolio.length === 0) {
+      await refreshPortfolio().catch(() => {});
+    }
+    await Promise.allSettled([smartRefreshPrices(), refreshIntel(), refreshForex()]);
+
+    // ---- 1. Macro Regime ----
+    const vixUS = livePrices['US_VIX']?.price || 0;
+    const vixIN = livePrices['IN_INDIAVIX']?.price || 0;
+    const avgVix = (vixUS + vixIN) / 2 || null;
+    let regime = '🟢 RISK ON', regimeLine = 'Normal conditions — SIP continue karo.';
+    if (avgVix && avgVix > 30) { regime = '🔴🔴 RISK OFF (Panic)'; regimeLine = 'VIX spike! Cash bachao, sirf deep staged buys.'; }
+    else if (avgVix && avgVix > 22) { regime = '🟠 ELEVATED VOLATILITY'; regimeLine = 'Choppy market. Chhote sizes, quality names only.'; }
+    else if (avgVix && avgVix < 14) { regime = '💎 GOLDILOCKS'; regimeLine = 'Calm market — dips pe aggressively accumulate.'; }
+
+    // ---- 2. Portfolio Pulse ----
+    let portfolioSection = '';
+    if (portfolio.length > 0) {
+      const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
+      const signals = portfolio.map(p => {
+        const pd = livePrices[`${p.market}_${p.symbol}`];
+        return { pos: p, sig: analyzeAsset(p, pd) };
+      });
+      const buys = signals.filter(x => x.sig.action === 'BUY');
+      const sells = signals.filter(x => x.sig.action === 'SELL');
+      const warnings = signals.filter(x => x.sig.rsi > 70 || x.sig.change < -4);
+      const opportunities = signals.filter(x => x.sig.rsi < 35 || (x.sig.action === 'BUY' && x.sig.confidence >= 80));
+      const plEmoji = metrics.totalPL >= 0 ? '📈' : '📉';
+
+      portfolioSection = `<b>💼 PORTFOLIO PULSE:</b>\n`;
+      portfolioSection += `   Value: ₹${Math.round(metrics.totalValue).toLocaleString('en-IN')} | ${plEmoji} ${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')} (${metrics.plPct.toFixed(1)}%)\n`;
+      portfolioSection += `   Today: ${metrics.todayPL >= 0 ? '+' : ''}₹${Math.round(metrics.todayPL).toLocaleString('en-IN')} (${metrics.todayPct.toFixed(2)}%)\n`;
+      portfolioSection += `   🟢 BUY:${buys.length} | 🔴 SELL:${sells.length} | 🟡 HOLD:${signals.length - buys.length - sells.length}\n`;
+      if (warnings.length > 0) portfolioSection += `   ⚠️ Warnings: ${warnings.slice(0, 3).map(w => w.sig.symbol).join(', ')}\n`;
+      if (opportunities.length > 0) portfolioSection += `   🎯 Opportunities: ${opportunities.slice(0, 3).map(o => o.sig.symbol).join(', ')}\n`;
+    } else {
+      portfolioSection = `<b>💼 PORTFOLIO PULSE:</b> <i>Empty — assets add karo web app se</i>\n`;
+    }
+    portfolioSection += `\n`;
+
+    // ---- 3. Market Snapshot ----
+    let marketSection = `<b>🌍 MARKET SNAPSHOT:</b>\n`;
+    const nifty = livePrices['IN_NIFTY'];
+    const sensex = livePrices['IN_SENSEX'];
+    const spy = livePrices['US_SPY'];
+    const qqq = livePrices['US_QQQ'];
+    if (nifty) marketSection += `   🇮🇳 NIFTY: ${nifty.price?.toFixed(2)} (${nifty.change >= 0 ? '+' : ''}${nifty.change?.toFixed(2)}%)\n`;
+    if (sensex) marketSection += `   🇮🇳 SENSEX: ${sensex.price?.toFixed(2)} (${sensex.change >= 0 ? '+' : ''}${sensex.change?.toFixed(2)}%)\n`;
+    if (spy) marketSection += `   🇺🇸 S&P 500: ${spy.price?.toFixed(2)} (${spy.change >= 0 ? '+' : ''}${spy.change?.toFixed(2)}%)\n`;
+    if (qqq) marketSection += `   🇺🇸 NASDAQ: ${qqq.price?.toFixed(2)} (${qqq.change >= 0 ? '+' : ''}${qqq.change?.toFixed(2)}%)\n`;
+    if (avgVix) marketSection += `   📊 VIX: US ${vixUS.toFixed(1)} / IN ${vixIN.toFixed(1)} (avg ${avgVix.toFixed(1)})\n`;
+    marketSection += `   💱 USD/INR: ₹${usdInrRate.toFixed(2)}\n\n`;
+
+    // ---- 4. Smart Money (FII/DII) ----
+    let smartMoneySection = '';
+    try {
+      const fiiData = await fetchFIIDIIData(TAVILY_API_KEY);
+      if (fiiData && fiiData.summary) {
+        const fiiMatch = fiiData.summary.match(/FII[^-]*?net[^-]*?(-?[\d,]+\.?\d*)\s*(?:Cr|crore)/i);
+        const diiMatch = fiiData.summary.match(/DII[^-]*?net[^-]*?(-?[\d,]+\.?\d*)\s*(?:Cr|crore)/i);
+        const fiiNet = fiiMatch ? parseFloat(fiiMatch[1].replace(/,/g, '')) : null;
+        const diiNet = diiMatch ? parseFloat(diiMatch[1].replace(/,/g, '')) : null;
+        smartMoneySection = `<b>💰 SMART MONEY (FII/DII):</b>\n`;
+        if (fiiNet !== null) smartMoneySection += `   FII Net: ${fiiNet >= 0 ? '🟢 +' : '🔴 '}₹${fiiNet.toLocaleString('en-IN')} Cr\n`;
+        if (diiNet !== null) smartMoneySection += `   DII Net: ${diiNet >= 0 ? '🟢 +' : '🔴 '}₹${diiNet.toLocaleString('en-IN')} Cr\n`;
+        if (fiiNet === null && diiNet === null) smartMoneySection += `   <i>${escapeHtml(fiiData.summary.substring(0, 120))}…</i>\n`;
+        smartMoneySection += `\n`;
+      }
+    } catch (e) { /* smart money optional */ }
+
+    // ---- 5. AI Verdict (optional, only if mode=ai) ----
+    let aiVerdict = '';
+    if (mode === 'ai') {
+      try {
+        const prompt = `Based on this brief, give ONE actionable insight in 2 lines of Hinglish. Be specific, no fluff. Mention regime + portfolio stance.`;
+        aiVerdict = await Promise.race([
+          chatWithAI(chatId, prompt, portfolio, livePrices, usdInrRate),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 25000)),
+        ]);
+        aiVerdict = `\n<b>🧠 AI VERDICT:</b>\n${aiVerdict}\n`;
+      } catch (e) {
+        aiVerdict = `\n<i>(AI verdict unavailable — deterministic brief shown)</i>\n`;
+      }
+    }
+
+    // ---- 6. Compose final dashboard ----
+    let r = `🚀 <b>${BOT_NAME} DASHBOARD ${BOT_VERSION}</b>\n`;
+    r += `━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    r += `⏰ ${getISTTime()} IST | ${getMarketStatus()}\n\n`;
+
+    r += `<b>1️⃣ MACRO REGIME:</b> ${regime}\n`;
+    if (avgVix) r += `   ${regimeLine}\n\n`; else r += `   ${regimeLine}\n\n`;
+
+    r += `2️⃣ ${marketSection}`;
+    r += `3️⃣ ${portfolioSection}`;
+    if (smartMoneySection) r += `4️⃣ ${smartMoneySection}`;
+    r += aiVerdict;
+
+    // Final one-line verdict
+    let verdict;
+    if (avgVix && avgVix > 30) verdict = 'DEFENSE MODE — panic mat karo, par naya bada capital mat lagao.';
+    else if (portfolio.length === 0) verdict = 'SETUP MODE — pehle portfolio add karo, phir /pro chalao.';
+    else verdict = 'STEADY — SIP chalu, noise ignore, discipline follow.';
+    r += `\n<b>📌 ONE-LINE VERDICT:</b> ${verdict}\n\n`;
+    r += `💎 <i>${BOT_NAME} ${BOT_VERSION}</i>`;
+
+    // Inline keyboard for refresh / AI mode
+    await safeSend(chatId, r, {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '🔁 Refresh', callback_data: 'pro:refresh' },
+          { text: '🧠 AI Verdict', callback_data: 'pro:ai' },
+          { text: '🧠 Full Super Brief', callback_data: 'sup:refresh' },
+        ]],
+      },
+    });
+  } catch (e) {
+    console.error('❌ /pro error:', e.message);
+    await safeSend(chatId, `❌ Pro dashboard error: ${e.message}`);
+  } finally {
+    stopTyping();
+  }
+});
+
+// Handle /pro inline buttons
+// (callback_query handler above is for sup:* and setmodel:*, here we add pro:*)
+// NOTE: the callback_query handler at line ~1620 already routes 'sup:' and
+// 'setmodel:'. We add 'pro:' routing there via a small extension below.
+
+// ========================================
+// COMMAND: /sentiment — Real-time Market Sentiment (Tavily)
+// NEW v18: Pulls real-time news and derives Fear/Greed-style sentiment.
+// ========================================
+bot.onText(/^\/sentiment(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  const topic = match?.[1] || 'Indian stock market NIFTY SENSEX today sentiment';
+  console.log(`📥 /sentiment "${topic}" from ${msg.from?.first_name || chatId}`);
+  const stopTyping = startTyping(chatId);
+  try {
+    if (!isTavilyAvailable()) {
+      await safeSend(chatId, '🌍 <b>Sentiment unavailable</b> — Tavily API key not configured. Use <code>/setkey tavily &lt;key&gt;</code>.');
+      return;
+    }
+    await safeSend(chatId, '🌍 <i>Computing real-time market sentiment via Tavily...</i>');
+
+    const res = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: TAVILY_API_KEY,
+        query: `${topic} market sentiment bullish bearish fear greed`,
+        search_depth: 'advanced',
+        include_answer: true,
+        max_results: 6,
+        topic: 'finance'
+      }),
+      signal: AbortSignal.timeout(12000)
+    });
+    if (!res.ok) throw new Error(`Tavily HTTP ${res.status}`);
+    const data = await res.json();
+    const answer = (data.answer || '').toLowerCase();
+
+    // Simple keyword-based sentiment score (-100 to +100)
+    const bullWords = ['bullish', 'rally', 'surge', 'gain', 'soar', 'optimistic', 'recovery', 'upside', 'breakout', 'buy'];
+    const bearWords = ['bearish', 'crash', 'plunge', 'slump', 'panic', 'fear', 'sell-off', 'selloff', 'loss', 'decline', 'downside', 'risk'];
+    let score = 50;
+    for (const w of bullWords) { const c = (answer.match(new RegExp(`\\b${w}\\b`, 'g')) || []).length; score += c * 5; }
+    for (const w of bearWords) { const c = (answer.match(new RegExp(`\\b${w}\\b`, 'g')) || []).length; score -= c * 5; }
+    score = Math.max(0, Math.min(100, score));
+    const label = score >= 75 ? 'EXTREME GREED 🤑' : score >= 55 ? 'GREED 🟢' : score >= 45 ? 'NEUTRAL ⚪' : score >= 25 ? 'FEAR 🟠' : 'EXTREME FEAR 😱';
+    const bar = '🟩'.repeat(Math.round(score / 10)) + '⬜'.repeat(10 - Math.round(score / 10));
+
+    let out = `🌍 <b>MARKET SENTIMENT</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    out += `📰 Topic: <i>${escapeHtml(topic)}</i>\n`;
+    out += `📊 Sentiment Score: <b>${score}/100</b> — ${label}\n`;
+    out += `<code>[${bar}]</code>\n\n`;
+    out += `<b>📰 AI Summary:</b>\n${escapeHtml(data.answer || 'No summary available.')}\n\n`;
+    if (data.results && data.results.length > 0) {
+      out += `<b>📚 Sources:</b>\n`;
+      for (const r of data.results.slice(0, 4)) {
+        out += `• <a href="${escapeHtml(r.url || '')}">${escapeHtml(r.title || '')}</a>\n`;
+      }
+    }
+    out += `\n<i>Computed from real-time Tavily web search · ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</i>`;
+    await safeSend(chatId, out);
+  } catch (e) {
+    console.error('❌ /sentiment error:', e.message);
+    await safeSend(chatId, `❌ Sentiment error: ${e.message}`);
+  } finally {
+    stopTyping();
+  }
+});
+
+// ========================================
+// COMMAND: /whale — Whale Activity Tracker
+// NEW v18: Scans portfolio for unusually large moves + uses Tavily for
+// block-deal / bulk-deal news. Deterministic + real-time hybrid.
+// ========================================
+bot.onText(/^\/whale(?:@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  console.log(`📥 /whale from ${msg.from?.first_name || chatId}`);
+  const stopTyping = startTyping(chatId);
+  try {
+    await smartRefreshPrices();
+    let out = `🐋 <b>WHALE ACTIVITY TRACKER</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    // 1. Portfolio whale moves (>3% absolute change today)
+    if (portfolio.length === 0) {
+      out += `⚠️ Portfolio empty hai. Web app se positions add karo.\n\n`;
+    } else {
+      const movers = portfolio
+        .map(p => {
+          const pd = livePrices[`${p.market}_${p.symbol}`];
+          if (!pd) return null;
+          const value = (pd.price || 0) * (p.qty || 0);
+          return { symbol: p.symbol, market: p.market, change: pd.change || 0, value, price: pd.price };
+        })
+        .filter(Boolean)
+        .filter(m => Math.abs(m.change) >= 3)
+        .sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+
+      out += `<b>📊 Portfolio Big Movers (≥3% today):</b>\n`;
+      if (movers.length === 0) {
+        out += `   ✅ Koi whale-sized move nahi. Sab stable.\n\n`;
+      } else {
+        for (const m of movers.slice(0, 8)) {
+          const cur = m.market === 'US' ? '$' : '₹';
+          const emoji = m.change > 0 ? '🟢' : '🔴';
+          out += `   ${emoji} <b>${m.symbol}</b>: ${m.change >= 0 ? '+' : ''}${m.change.toFixed(2)}% | Value: ${cur}${Math.round(m.value).toLocaleString('en-IN')}\n`;
+        }
+        out += `\n`;
+      }
+    }
+
+    // 2. Tavily block/bulk deal news
+    if (isTavilyAvailable()) {
+      try {
+        const res = await fetch('https://api.tavily.com/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            api_key: TAVILY_API_KEY,
+            query: 'India NSE BSE block deal bulk deal today whale institutional large trade',
+            search_depth: 'basic',
+            include_answer: true,
+            max_results: 5,
+            topic: 'finance'
+          }),
+          signal: AbortSignal.timeout(10000)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.answer) out += `<b>📰 Block/Bulk Deal News:</b>\n${escapeHtml(data.answer)}\n\n`;
+          if (data.results && data.results.length > 0) {
+            out += `<b>🔗 Sources:</b>\n`;
+            for (const r of data.results.slice(0, 3)) {
+              out += `• <a href="${escapeHtml(r.url || '')}">${escapeHtml(r.title || '')}</a>\n`;
+            }
+            out += `\n`;
+          }
+        }
+      } catch (e) { /* optional */ }
+    } else {
+      out += `<i>ℹ️ Tavily key not set — block-deal news disabled. Use /setkey tavily.</i>\n\n`;
+    }
+
+    out += `<i> Whale = institutional-sized moves. Retail ko follow karne ka chance, but always DYOR.</i>`;
+    await safeSend(chatId, out);
+  } catch (e) {
+    console.error('❌ /whale error:', e.message);
+    await safeSend(chatId, `❌ Whale tracker error: ${e.message}`);
+  } finally {
+    stopTyping();
+  }
+});
+
+// ========================================
+// COMMAND: /earnings — Upcoming Earnings Calendar
+// NEW v18: Uses Tavily to fetch this week's India + US earnings.
+// ========================================
+bot.onText(/^\/earnings(?:@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  console.log(`📥 /earnings from ${msg.from?.first_name || chatId}`);
+  const stopTyping = startTyping(chatId);
+  try {
+    if (!isTavilyAvailable()) {
+      await safeSend(chatId, '📅 <b>Earnings calendar unavailable</b> — Tavily API key not configured. Use <code>/setkey tavily &lt;key&gt;</code>.');
+      return;
+    }
+    await safeSend(chatId, '📅 <i>Fetching upcoming earnings calendar via Tavily...</i>');
+
+    const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    const res = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: TAVILY_API_KEY,
+        query: `India NSE BSE quarterly earnings results this week upcoming ${today} Q1 Q2 Q3 Q4`,
+        search_depth: 'advanced',
+        include_answer: true,
+        max_results: 6,
+        topic: 'finance'
+      }),
+      signal: AbortSignal.timeout(12000)
+    });
+    if (!res.ok) throw new Error(`Tavily HTTP ${res.status}`);
+    const data = await res.json();
+
+    let out = `📅 <b>UPCOMING EARNINGS CALENDAR</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    out += `🗓️ Reference Date: <b>${today}</b>\n\n`;
+    if (data.answer) out += `<b>📰 AI Summary:</b>\n${escapeHtml(data.answer)}\n\n`;
+    if (data.results && data.results.length > 0) {
+      out += `<b>📚 Top Earnings News:</b>\n`;
+      for (const r of data.results.slice(0, 5)) {
+        out += `• <b>${escapeHtml(r.title || '')}</b>\n  ${escapeHtml((r.content || '').substring(0, 150))}…\n  🔗 ${escapeHtml(r.url || '')}\n\n`;
+      }
+    }
+    out += `<i>Source: Tavily · Earnings dates change frequently — verify with company IR pages.</i>`;
+    await safeSend(chatId, out);
+  } catch (e) {
+    console.error('❌ /earnings error:', e.message);
+    await safeSend(chatId, `❌ Earnings calendar error: ${e.message}`);
+  } finally {
+    stopTyping();
+  }
+});
+
+// ========================================
 // BOOT UP
 // ========================================
 
@@ -3843,7 +4310,7 @@ initializeData().then(() => {
   console.log(`   🟣 Claude: ${CLAUDE_KEY?.length > 10 ? 'ONLINE' : 'OFFLINE'}`);
   console.log('');
   // Send boot notification
-  safeSend(TG_CHAT_ID, `🟢 <b>Deep Mind AI v17.0 SUPER INTELLIGENCE ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🤖 AI: 6-Engine Router (Gemini→Groq→Claude→OpenRouter→Cerebras→HF)\n🧠 Quant Brain: ALWAYS ONLINE (never offline)\n🔬 Deep Research: ACTIVE 24x7\n🧬 ML Service: ${ML_SERVICE_URL}\n\nType /help for commands.`).catch(() => { });
+  safeSend(TG_CHAT_ID, `🟢 <b>${BOT_NAME} ${BOT_VERSION} ONLINE</b>\n⏰ ${getISTTime()} IST\n💼 Portfolio: ${portfolio.length} positions\n📊 Market: ${getMarketStatus()}\n🤖 AI: 7-Engine Smart Router (NVIDIA→Gemini→Groq→Claude→OpenRouter→Cerebras→HF)\n🧠 Quant Brain: ALWAYS ONLINE (never offline)\n🔬 Real-time Market Data: ACTIVE 24x7\n🧬 ML Service: ${ML_SERVICE_URL}\n\nType /help for commands, or try /pro for the dashboard.`).catch(() => { });
 }).catch(err => {
   console.error('❌ Boot error (non-fatal):', err.message);
   console.log('⚡ Bot is STILL listening for commands with limited data...');

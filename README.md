@@ -1,8 +1,26 @@
-# Smart AI Pro
+# 🚀 Advance Pro Intelligence v18.0
 
-AI-powered portfolio dashboard for Indian and US markets, crypto tracking, risk analytics, ML signals, AI chat, cloud sync, broker connectors, and Telegram automation.
+**Multi-Engine AI Portfolio Dashboard + Telegram Trading Bot**
+
+AI-powered portfolio analytics for Indian and US markets, crypto tracking, risk analytics, ML signals, 7-engine AI chat with smart failover, cloud sync, broker connectors, and a full Telegram automation suite (53 commands).
 
 > **Financial disclaimer:** Signals, projections, and AI/ML output are informational only. They are not investment advice. Verify market data before trading.
+
+## What's New in v18.0 (Advance Pro Intelligence)
+
+- 🚀 **`/pro`** — Flagship Advance Pro Intelligence Dashboard (regime + portfolio + market + smart money + AI verdict in one)
+- 🌍 **`/sentiment`** — Real-time market sentiment via Tavily news (Fear/Greed score)
+- 🐋 **`/whale`** — Whale activity tracker (portfolio big movers + block/bulk deal news)
+- 📅 **`/earnings`** — Upcoming earnings calendar (India NSE/BSE)
+- 💰 **`/smartmoney` fixed** — Now fetches REAL FII/DII data (previously showed random numbers)
+- 📰 **`/news` fixed** — Now fetches REAL headlines from Tavily (previously hallucinated)
+- 🎯 **`/dip` fixed** — Proper $ vs ₹ currency for US positions
+- 🔧 **`/quality` fixed** — Env-based URL (no more localhost hardcode)
+- 📋 **Telegram menu** expanded from 37 → 53 commands (16 were missing)
+- 🧠 **Unified branding** — All version strings now consistent (`v18.0`)
+- ✅ **All checks pass** — TypeScript clean, 54/54 tests pass, build OK
+
+See [`UPGRADE_REPORT_v18.md`](UPGRADE_REPORT_v18.md) for the full audit & fix list.
 
 ## Requirements
 
