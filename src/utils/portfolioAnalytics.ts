@@ -115,6 +115,7 @@ export function withMonthlyDeltas(rows: MonthlyAnalytics[]): MonthlyDelta[] {
 // ------------------------------------------------------------
 // MONTHLY RETURN REPORT (Portfolio → month-wise returns)
 // Realized return booked each month from sells + capital deployed.
+// Enhanced with per-market split, txn count, and MoM delta.
 // ------------------------------------------------------------
 export interface MonthlyReturn {
   month: string;
@@ -124,6 +125,17 @@ export interface MonthlyReturn {
   realizedPLINR: number;      // booked profit/loss this month
   realizedReturnPct: number;  // realizedPL / cost-basis sold
   cumulativeInvestedINR: number; // running deployed capital up to & incl. this month
+  cumulativeRealizedINR: number; // running realized P&L up to & incl. this month
+  // Per-market investment split this month
+  indiaInvestedINR: number;
+  usaInvestedINR: number;
+  cryptoInvestedINR: number;
+  // Transaction count
+  txnCount: number;
+  buyCount: number;
+  sellCount: number;
+  // MoM delta
+  momDeltaPct: number | null;  // month-over-month change in net invested %
 }
 
 export function buildMonthlyReturns(
@@ -135,18 +147,36 @@ export function buildMonthlyReturns(
   const asc = [...analytics].sort((a, b) => a.month.localeCompare(b.month));
   let running = 0;
   let totalRealized = 0;
-  const rowsAsc: MonthlyReturn[] = asc.map(m => {
+  const rowsAsc: MonthlyReturn[] = asc.map((m, i) => {
     running += m.netInvestedINR;
     totalRealized += m.realizedPLINR;
     // cost basis of what was sold this month ≈ sellAmount - realizedPL
     const costBasisSold = m.sellAmountINR - m.realizedPLINR;
     const realizedReturnPct = costBasisSold > 0 ? (m.realizedPLINR / costBasisSold) * 100 : 0;
+    // MoM delta
+    const prev = i > 0 ? asc[i - 1] : null;
+    let momDeltaPct: number | null = null;
+    if (prev && Math.abs(prev.netInvestedINR) > 0) {
+      momDeltaPct = ((m.netInvestedINR - prev.netInvestedINR) / Math.abs(prev.netInvestedINR)) * 100;
+    }
+    // Count buys vs sells
+    const monthTxns = transactions.filter(t => (t.date || '').startsWith(m.month));
+    const buyCount = monthTxns.filter(t => t.type === 'buy').length;
+    const sellCount = monthTxns.filter(t => t.type === 'sell').length;
     return {
       month: m.month, label: m.label, rangeLabel: m.rangeLabel,
       netInvestedINR: m.netInvestedINR,
       realizedPLINR: m.realizedPLINR,
       realizedReturnPct,
       cumulativeInvestedINR: running,
+      cumulativeRealizedINR: totalRealized,
+      indiaInvestedINR: m.india.buyAmountINR,
+      usaInvestedINR: m.usa.buyAmountINR,
+      cryptoInvestedINR: m.crypto.buyAmountINR,
+      txnCount: m.txnCount,
+      buyCount,
+      sellCount,
+      momDeltaPct,
     };
   });
   return { rows: rowsAsc.reverse(), totalRealizedINR: totalRealized };
