@@ -215,6 +215,7 @@ export function useAppState() {
   const syncIntervalRef = useRef<number | null>(null);
   const initialTimeoutRef = useRef<number | ReturnType<typeof setTimeout> | null>(null);
   const cloudSyncTimerRef = useRef<number | null>(null);
+  const cloudLoadTimerRef = useRef<number | null>(null);
   const lastLocalSaveRef = useRef(0);
   const pendingPricesRef = useRef<Record<string, PriceData>>({});
   const portfolioRef = useRef(portfolio);
@@ -295,31 +296,10 @@ export function useAppState() {
     });
   }, []);
 
-  // --- Load data on auth ---
-  // FIX: Load local FIRST (instant render), then cloud sync in background.
-  // Previously cloud sync was awaited before rendering → 2-5s blank screen.
-  // Now: local loads synchronously → user sees portfolio immediately →
-  // cloud sync merges in background (1-3s later).
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    // 1) LOCAL — instant (synchronous localStorage read)
-    try {
-      const saved = secureStorage.getItem('portfolio');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setPortfolio(parsed);
-          console.log(`📁 Local: loaded ${parsed.length} positions instantly`);
-        }
-      }
-      const savedPrices = secureStorage.getItem('livePrices');
-      if (savedPrices) setLivePrices(JSON.parse(savedPrices));
-    } catch (e) { console.warn('Failed to load local state:', e); }
-
-    // 2) CLOUD — background fetch, merge when ready
-    // Fire immediately (don't await) so the UI renders local data first.
-    loadFromCloud().then(data => {
+  // --- Reusable cloud merge: pulls from Google Sheets and merges into state ---
+  // Extracted so it can be called on init, periodic timer, AND manual refresh.
+  const mergeCloudData = useCallback(() => {
+    return loadFromCloud().then(data => {
       if (data && data.length > 0) {
         setPortfolio(prev => {
           // Merge cloud + local by unique key (market + symbol)
@@ -346,10 +326,39 @@ export function useAppState() {
           secureStorage.setItem('portfolio', JSON.stringify(merged));
           return merged;
         });
+        return true;
       } else {
         console.log('☁️ Cloud Sync: no cloud data — keeping local portfolio');
+        return false;
       }
-    }).catch(() => { });
+    }).catch(() => false);
+  }, []);
+
+  // --- Load data on auth ---
+  // FIX: Load local FIRST (instant render), then cloud sync in background.
+  // Previously cloud sync was awaited before rendering → 2-5s blank screen.
+  // Now: local loads synchronously → user sees portfolio immediately →
+  // cloud sync merges in background (1-3s later).
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    // 1) LOCAL — instant (synchronous localStorage read)
+    try {
+      const saved = secureStorage.getItem('portfolio');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setPortfolio(parsed);
+          console.log(`📁 Local: loaded ${parsed.length} positions instantly`);
+        }
+      }
+      const savedPrices = secureStorage.getItem('livePrices');
+      if (savedPrices) setLivePrices(JSON.parse(savedPrices));
+    } catch (e) { console.warn('Failed to load local state:', e); }
+
+    // 2) CLOUD — background fetch, merge when ready
+    // Fire immediately (don't await) so the UI renders local data first.
+    mergeCloudData();
     loadGroqKeyFromCloud().then(cloudKey => {
       if (cloudKey) {
         if (cloudKey.startsWith('{') && cloudKey.endsWith('}')) {
@@ -879,6 +888,22 @@ export function useAppState() {
     return () => { if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current); };
   }, [portfolio]);
 
+  // --- Periodic cloud LOAD (pull from Google Sheets every 5 min) ---
+  // FIX: Previously cloud data was only loaded ONCE on page load. If the
+  // Google Sheet was updated directly (or from another device), the site
+  // never picked up the changes until manual sync. Now we poll every 5
+  // minutes so the portfolio stays in sync automatically.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    // Don't run immediately — the initial load already fired on auth.
+    // Start the first periodic check after 5 minutes.
+    cloudLoadTimerRef.current = window.setInterval(() => {
+      console.log('☁️ Cloud Sync: periodic auto-load from Google Sheets…');
+      mergeCloudData();
+    }, 5 * 60 * 1000); // 5 minutes
+    return () => { if (cloudLoadTimerRef.current) clearInterval(cloudLoadTimerRef.current); };
+  }, [isAuthenticated, mergeCloudData]);
+
   // --- Forex refresh (realtime 24x7, every 15s) ---
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -1233,6 +1258,7 @@ export function useAppState() {
       if (forexIntervalRef.current) clearInterval(forexIntervalRef.current);
       if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
       if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
+      if (cloudLoadTimerRef.current) clearInterval(cloudLoadTimerRef.current);
       if (initialTimeoutRef.current) clearTimeout(initialTimeoutRef.current);
     };
   }, []);
@@ -1499,7 +1525,10 @@ export function useAppState() {
       // 1) Forex (24x7)
       const ratePromise = fetchForexRate().then(rate => setUsdInrRate(rate)).catch(() => { });
 
-      // 2) Live prices for current portfolio + key indices
+      // 2) Cloud sync — pull latest portfolio from Google Sheets
+      const cloudPromise = mergeCloudData();
+
+      // 3) Live prices for current portfolio + key indices
       const cur = portfolioRef.current;
       const defaults = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BTC', 'IN_ETH'];
       const keys = [...new Set([...cur.map(p => `${p.market}_${p.symbol}`), ...defaults])];
@@ -1512,7 +1541,7 @@ export function useAppState() {
       const pricePromise = batchFetchPrices(positions, (key, data) => { pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData; })
         .then(() => flushPricesToStorage()).catch(() => { });
 
-      await Promise.all([ratePromise, pricePromise]);
+      await Promise.all([ratePromise, cloudPromise, pricePromise]);
       setSyncStatus('✅ Refreshed');
     } catch {
       setSyncStatus('⚠️ Refresh failed');
@@ -1520,7 +1549,7 @@ export function useAppState() {
       setIsRefreshing(false);
       setTimeout(() => setSyncStatus(''), 2500);
     }
-  }, [flushPricesToStorage]);
+  }, [flushPricesToStorage, mergeCloudData]);
 
   const pushTelegramReport = useCallback(async () => {
     const [tgToken, tgChatId] = await Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')]);
