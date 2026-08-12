@@ -270,6 +270,14 @@ app.get('/api/auth/check', (req, res) => {
   res.json({ authenticated: !!(token && _sessions.has(token)) });
 });
 
+// GET /api/config → returns runtime cloud sync configuration
+app.get('/api/config', (_req, res) => {
+  res.json({
+    apiUrl: process.env.API_URL || process.env.VITE_API_URL || '',
+    hasCloudSync: !!(process.env.API_URL || process.env.VITE_API_URL),
+  });
+});
+
 // ------------------------------------------------------------
 // Provider key map (server-side env vars — NOT VITE_*)
 // ------------------------------------------------------------
