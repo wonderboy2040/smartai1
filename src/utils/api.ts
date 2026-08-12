@@ -1162,30 +1162,57 @@ function parseNumeric(val: any): number {
   return parseFloat(cleaned);
 }
 
-// Validate and filter portfolio positions.
+// Validate and filter portfolio positions with ultra-flexible field mapping.
 function validatePortfolio(portfolio: any[]): Position[] {
   if (!Array.isArray(portfolio)) return [];
   const valid: Position[] = [];
+
+  const SYMBOL_ALIASES = ['symbol', 'ticker', 'stock', 'asset', 'company', 'companyname', 'stockname', 'assetname', 'name', 'scrip', 'scrips', 'instrument', 'particulars'];
+  const QTY_ALIASES = ['qty', 'quantity', 'shares', 'units', 'noofshares', 'numshares', 'totalqty', 'count', 'holding', 'holdings', 'nos', 'volume', 'noofunits'];
+  const PRICE_ALIASES = ['avgprice', 'buyprice', 'price', 'cost', 'avg', 'averageprice', 'buyingprice', 'purchaseprice', 'buyrate', 'rate', 'costprice', 'avgcost', 'entryprice', 'unitprice', 'buypriceinr', 'priceinr'];
+  const MARKET_ALIASES = ['market', 'exchange', 'type', 'segment', 'country'];
+  const LEVERAGE_ALIASES = ['leverage', 'leverageratio', 'lev'];
+  const DATE_ALIASES = ['dateadded', 'date', 'buydate', 'purchasedate', 'time', 'createdat'];
+
   portfolio.forEach((p: any, idx: number) => {
     if (!p || typeof p !== 'object') return;
 
-    // Flexible field alias lookup for symbol
-    const rawSym = (
-      typeof p.symbol === 'string' ? p.symbol :
-      typeof p.Symbol === 'string' ? p.Symbol :
-      typeof p.SYMBOL === 'string' ? p.SYMBOL :
-      typeof p.ticker === 'string' ? p.ticker :
-      typeof p.Ticker === 'string' ? p.Ticker :
-      typeof p.stock === 'string' ? p.stock :
-      typeof p.Stock === 'string' ? p.Stock :
-      typeof p.asset === 'string' ? p.asset :
-      typeof p.Asset === 'string' ? p.Asset : ''
-    ).trim();
+    // Build a map of normalized keys (lowercase, no non-alphanumeric chars)
+    const normObj: Record<string, any> = {};
+    Object.keys(p).forEach(k => {
+      const cleanKey = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (p[k] !== undefined && p[k] !== null && p[k] !== '') {
+        normObj[cleanKey] = p[k];
+      }
+    });
 
+    // Lookup symbol
+    let rawSym = '';
+    for (const alias of SYMBOL_ALIASES) {
+      if (normObj[alias] !== undefined) {
+        rawSym = String(normObj[alias]).trim();
+        if (rawSym) break;
+      }
+    }
     if (!rawSym) return;
 
-    const rawQtyVal = p.qty ?? p.Qty ?? p.QTY ?? p.quantity ?? p.Quantity ?? p.shares ?? p.Shares ?? p.units ?? p.Units;
-    const rawPriceVal = p.avgPrice ?? p.AvgPrice ?? p.avg_price ?? p.AVG_PRICE ?? p.buyPrice ?? p.BuyPrice ?? p.price ?? p.Price ?? p.cost ?? p.Cost;
+    // Lookup qty
+    let rawQtyVal: any = undefined;
+    for (const alias of QTY_ALIASES) {
+      if (normObj[alias] !== undefined) {
+        rawQtyVal = normObj[alias];
+        break;
+      }
+    }
+
+    // Lookup price
+    let rawPriceVal: any = undefined;
+    for (const alias of PRICE_ALIASES) {
+      if (normObj[alias] !== undefined) {
+        rawPriceVal = normObj[alias];
+        break;
+      }
+    }
 
     const qty = parseNumeric(rawQtyVal);
     const avgPrice = parseNumeric(rawPriceVal);
@@ -1193,13 +1220,37 @@ function validatePortfolio(portfolio: any[]): Position[] {
     if (isNaN(qty) || qty <= 0 || isNaN(avgPrice) || avgPrice <= 0) return;
 
     const cleanSym = rawSym.toUpperCase();
-    const rawMarket = p.market ?? p.Market ?? p.MARKET ?? p.exchange ?? p.Exchange;
+
+    // Lookup market
+    let rawMarket: any = undefined;
+    for (const alias of MARKET_ALIASES) {
+      if (normObj[alias] !== undefined) {
+        rawMarket = String(normObj[alias]).trim().toUpperCase();
+        break;
+      }
+    }
     const market = (rawMarket === 'US' || rawMarket === 'IN')
       ? rawMarket
       : (cleanSym.includes('.NS') || cleanSym.includes('.BO') ? 'IN' : guessMarket(cleanSym));
 
-    const rawLevVal = p.leverage ?? p.Leverage ?? p.leverageRatio ?? 1;
+    // Lookup leverage
+    let rawLevVal: any = 1;
+    for (const alias of LEVERAGE_ALIASES) {
+      if (normObj[alias] !== undefined) {
+        rawLevVal = normObj[alias];
+        break;
+      }
+    }
     const lev = parseNumeric(rawLevVal);
+
+    // Lookup date
+    let dateAdded = getTodayString();
+    for (const alias of DATE_ALIASES) {
+      if (normObj[alias] !== undefined) {
+        const dStr = String(normObj[alias]).trim();
+        if (dStr) { dateAdded = dStr; break; }
+      }
+    }
 
     valid.push({
       id: p.id || `cloud-${cleanSym.replace(/[^A-Z0-9]/g, '')}-${idx}-${Date.now()}`,
@@ -1208,7 +1259,7 @@ function validatePortfolio(portfolio: any[]): Position[] {
       qty,
       avgPrice,
       leverage: (isNaN(lev) || lev <= 0) ? 1 : lev,
-      dateAdded: p.dateAdded || p.DateAdded || p.date || p.Date || getTodayString(),
+      dateAdded,
     });
   });
   return valid;

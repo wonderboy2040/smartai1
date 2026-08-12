@@ -148,12 +148,12 @@ function _parseSheetRows_() {
       var symIdx = -1, qtyIdx = -1, priceIdx = -1, marketIdx = -1, dateIdx = -1;
 
       for (var col = 0; col < headerRow.length; col++) {
-        var h = String(headerRow[col] || '').toLowerCase().replace(/[^a-z]/g, '');
-        if (symIdx < 0 && (h === 'symbol' || h === 'ticker' || h === 'stock' || h === 'asset')) symIdx = col;
-        if (qtyIdx < 0 && (h === 'qty' || h === 'quantity' || h === 'shares' || h === 'units')) qtyIdx = col;
-        if (priceIdx < 0 && (h === 'avgprice' || h === 'buyprice' || h === 'price' || h === 'cost' || h === 'avg')) priceIdx = col;
-        if (marketIdx < 0 && (h === 'market' || h === 'exchange' || h === 'type')) marketIdx = col;
-        if (dateIdx < 0 && (h === 'dateadded' || h === 'date')) dateIdx = col;
+        var h = String(headerRow[col] || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (symIdx < 0 && (h === 'symbol' || h === 'ticker' || h === 'stock' || h === 'asset' || h === 'company' || h === 'companyname' || h === 'stockname' || h === 'assetname' || h === 'name' || h === 'scrip' || h === 'instrument' || h === 'particulars')) symIdx = col;
+        if (qtyIdx < 0 && (h === 'qty' || h === 'quantity' || h === 'shares' || h === 'units' || h === 'noofshares' || h === 'numshares' || h === 'totalqty' || h === 'count' || h === 'holding' || h === 'holdings' || h === 'nos' || h === 'volume')) qtyIdx = col;
+        if (priceIdx < 0 && (h === 'avgprice' || h === 'buyprice' || h === 'price' || h === 'cost' || h === 'avg' || h === 'averageprice' || h === 'buyingprice' || h === 'purchaseprice' || h === 'buyrate' || h === 'rate' || h === 'costprice' || h === 'avgcost' || h === 'entryprice' || h === 'unitprice')) priceIdx = col;
+        if (marketIdx < 0 && (h === 'market' || h === 'exchange' || h === 'type' || h === 'segment' || h === 'country')) marketIdx = col;
+        if (dateIdx < 0 && (h === 'dateadded' || h === 'date' || h === 'buydate' || h === 'purchasedate' || h === 'time')) dateIdx = col;
       }
 
       if (symIdx >= 0 && (qtyIdx >= 0 || priceIdx >= 0)) {

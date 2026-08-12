@@ -86,21 +86,24 @@ const PortfolioTab = React.memo(function PortfolioTab() {
   const handleCloudSync = async () => {
     setCloudMsg('📥 Loading…');
     try {
+      const config = getCustomCloudConfig();
       const data = await loadFromCloud();
       if (data && data.length > 0) {
         setPortfolio(data);
         setCloudMsg(`✅ Loaded ${data.length}`);
+      } else if (!config.cloudUrl && !config.backendUrl && !(import.meta.env.VITE_API_URL as string)) {
+        setCloudMsg('⚙️ Set Cloud URL');
+        setShowCloudConfigModal(true);
+      } else if (data && data.length === 0) {
+        setCloudMsg('⚠️ 0 items in cloud');
       } else {
         setCloudMsg('⚠️ Nothing in cloud');
       }
     } catch {
       setCloudMsg('⚠️ Sync failed');
     }
-    // FIX L41: previously a bare setTimeout with no cleanup — if the user
-    // unmounted PortfolioTab within 2.5s, React logged an unmounted-setState
-    // warning. Store the timer and clear it on unmount.
     if (cloudMsgTimerRef.current) clearTimeout(cloudMsgTimerRef.current);
-    cloudMsgTimerRef.current = setTimeout(() => { setCloudMsg(''); cloudMsgTimerRef.current = null; }, 2500);
+    cloudMsgTimerRef.current = setTimeout(() => { setCloudMsg(''); cloudMsgTimerRef.current = null; }, 3500);
   };
   // (declared near top of component)
   const cloudMsgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
