@@ -677,10 +677,26 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         })}
 
         {portfolio.length === 0 && (
-          <div className="quantum-panel rounded-2xl p-12 text-center text-slate-500">
-            <div className="text-6xl mb-4">🛰️</div>
-            <p className="text-lg font-bold text-cyan-300/50 uppercase tracking-widest">Sensors Offline</p>
-            <p className="text-sm mt-2">No assets detected in the neural grid.</p>
+          <div className="quantum-panel rounded-2xl p-10 text-center space-y-4">
+            <div className="text-6xl animate-bounce">📊</div>
+            <h3 className="text-xl font-black text-white font-display">No Portfolio Assets Loaded</h3>
+            <p className="text-sm text-slate-400 max-w-md mx-auto">
+              If your assets are in Google Sheets, link your Google Apps Script Web App URL below to fetch them automatically.
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+              <button
+                onClick={() => setShowCloudConfigModal(true)}
+                className="px-5 py-2.5 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white font-bold text-xs rounded-xl shadow-lg transition-all flex items-center gap-2"
+              >
+                ⚙️ Link Google Sheets URL
+              </button>
+              <button
+                onClick={() => openAddModal()}
+                className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs rounded-xl transition-all flex items-center gap-2"
+              >
+                + Add Asset Manually
+              </button>
+            </div>
           </div>
         )}
         {portfolio.length > 0 && totalVisible === 0 && (
