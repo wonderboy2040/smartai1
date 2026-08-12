@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { useApp } from '../../hooks/AppContext';
 import { getTodayString, isCryptoSymbol } from '../../utils/constants';
+import { getCustomCloudConfig, saveCustomCloudConfig } from '../../utils/api';
 import { calculatePortfolioXIRR } from '../../utils/wealthEngine';
 import { MonthlyReturnReport } from '../MonthlyReturnReport';
 import { MonthlyPlanTracker } from '../MonthlyPlanTracker';
@@ -70,6 +71,18 @@ const PortfolioTab = React.memo(function PortfolioTab() {
   // --- Search / filter / sort controls ---
   const [search, setSearch] = useState('');
   const [cloudMsg, setCloudMsg] = useState('');
+  const [showCloudConfigModal, setShowCloudConfigModal] = useState(false);
+  const [cfgCloudUrl, setCfgCloudUrl] = useState('');
+  const [cfgBackendUrl, setCfgBackendUrl] = useState('');
+  const [cfgCloudToken, setCfgCloudToken] = useState('');
+  const [savedMsg, setSavedMsg] = useState('');
+
+  useEffect(() => {
+    const c = getCustomCloudConfig();
+    setCfgCloudUrl(c.cloudUrl);
+    setCfgBackendUrl(c.backendUrl);
+    setCfgCloudToken(c.cloudToken);
+  }, []);
   const handleCloudSync = async () => {
     setCloudMsg('📥 Loading…');
     try {
@@ -204,6 +217,13 @@ const PortfolioTab = React.memo(function PortfolioTab() {
             title="Load portfolio from Google Sheets cloud"
           >
             📥 {cloudMsg || 'Sync'}
+          </button>
+          <button
+            onClick={() => setShowCloudConfigModal(true)}
+            className="quantum-btn-ghost px-3 py-2 rounded-xl font-semibold text-sm text-cyan-400 border border-cyan-500/20 hover:border-cyan-500/50"
+            title="Configure Cloud Sync & Backend URL"
+          >
+            ⚙️
           </button>
           <div className="relative group">
             <button className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm text-emerald-300 border border-emerald-500/20">
@@ -667,6 +687,100 @@ const PortfolioTab = React.memo(function PortfolioTab() {
           </div>
         )}
       </div>
+
+      {showCloudConfigModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700/60 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                ☁️ Cloud Sync & Backend Config
+              </h3>
+              <button
+                onClick={() => setShowCloudConfigModal(false)}
+                className="text-slate-400 hover:text-white text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400">
+              Configure your Google Apps Script Web App URL (`.../exec`) and Render Backend Proxy URL.
+            </p>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">
+                  Google Apps Script Web App URL (`.../exec`)
+                </label>
+                <input
+                  type="text"
+                  value={cfgCloudUrl}
+                  onChange={(e) => setCfgCloudUrl(e.target.value)}
+                  placeholder="https://script.google.com/macros/s/.../exec"
+                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">
+                  Backend Proxy Server URL
+                </label>
+                <input
+                  type="text"
+                  value={cfgBackendUrl}
+                  onChange={(e) => setCfgBackendUrl(e.target.value)}
+                  placeholder="https://smartai1.onrender.com"
+                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">
+                  Auth Token (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={cfgCloudToken}
+                  onChange={(e) => setCfgCloudToken(e.target.value)}
+                  placeholder="WEALTH_AI_SYNC (default)"
+                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => {
+                  saveCustomCloudConfig('', '', '');
+                  const c = getCustomCloudConfig();
+                  setCfgCloudUrl(c.cloudUrl);
+                  setCfgBackendUrl(c.backendUrl);
+                  setCfgCloudToken(c.cloudToken);
+                  setSavedMsg('Reset!');
+                  setTimeout(() => setSavedMsg(''), 1500);
+                }}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200"
+              >
+                Reset Defaults
+              </button>
+              <button
+                onClick={() => {
+                  saveCustomCloudConfig(cfgCloudUrl, cfgBackendUrl, cfgCloudToken);
+                  setSavedMsg('✅ Saved!');
+                  setTimeout(() => {
+                    setSavedMsg('');
+                    setShowCloudConfigModal(false);
+                    handleCloudSync();
+                  }, 600);
+                }}
+                className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg"
+              >
+                {savedMsg || 'Save & Sync'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });

@@ -4,9 +4,31 @@ import { EXACT_TICKER_MAP, guessMarket, API_URL as VITE_API_URL, DEFAULT_USD_INR
 // future bundler strictness. Was previously after `getApiUrl()`.
 import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen } from './telegram';
 
-// Proxy base for backend server API calls (same-origin on Render/Vite proxy,
-// or custom via VITE_API_PROXY for cross-origin setups).
-const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
+// Proxy base helper — resolves backend server URL dynamically
+// 1. Checks localStorage ('WEALTH_AI_BACKEND_URL')
+// 2. Checks build-time VITE_API_PROXY
+// 3. Defaults to production Render backend (https://smartai1.onrender.com) if hosted on Vercel/Netlify/GitHub Pages
+export function getProxyBase(): string {
+  try {
+    const custom = localStorage.getItem('WEALTH_AI_BACKEND_URL');
+    if (custom && custom.startsWith('http')) return custom.trim().replace(/\/$/, '');
+  } catch {}
+
+  const envProxy = (import.meta.env.VITE_API_PROXY as string) || '';
+  if (envProxy) return envProxy.replace(/\/$/, '');
+
+  if (typeof window !== 'undefined' && window.location) {
+    const host = window.location.hostname;
+    if (host.includes('.vercel.app') || host.includes('.github.io') || host.includes('.netlify.app')) {
+      return 'https://smartai1.onrender.com';
+    }
+  }
+
+  return '';
+}
+
+// Legacy PROXY_BASE constant for backwards compatibility
+const PROXY_BASE = getProxyBase();
 
 // ============================================================
 // Centralized API fetch — sends auth token via Authorization header
@@ -47,7 +69,7 @@ export async function ensureAuthenticated(): Promise<boolean> {
     if (_authCheckPromise) return _authCheckPromise;
     _authCheckPromise = (async () => {
       try {
-        const res = await apiFetch(`${PROXY_BASE}/api/auth/check`);
+        const res = await apiFetch(`/api/auth/check`);
         if (res.ok) {
           const data = await res.json();
           if (data.authenticated) return true;
@@ -67,7 +89,13 @@ export async function ensureAuthenticated(): Promise<boolean> {
 }
 
 export function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
-  const url = input.startsWith('http') || input.startsWith('/api') ? input : `${PROXY_BASE}${input}`;
+  const proxyBase = getProxyBase();
+  let url = input;
+  if (!input.startsWith('http')) {
+    const cleanPath = input.startsWith('/') ? input : `/${input}`;
+    url = `${proxyBase}${cleanPath}`;
+  }
+
   const headers: Record<string, string> = { ...(init.headers as Record<string, string> || {}) };
   // PRIMARY auth: Authorization Bearer token — works cross-origin ALWAYS,
   // no SameSite/cookie/CORS-credential issues.
@@ -82,9 +110,12 @@ export function apiFetch(input: string, init: RequestInit = {}): Promise<Respons
 }
 export function getSessionToken(): string | null { return _sessionToken; }
 
-// SECURITY: Cloud sync auth token. MUST be set via VITE_API_TOKEN at build
-// time. The weak public default 'WEALTH_AI_SYNC' is NO LONGER used.
+// SECURITY: Cloud sync auth token. Checks localStorage, then VITE_API_TOKEN, then fallback token.
 function getCloudAuthToken(): string {
+  try {
+    const customToken = localStorage.getItem('WEALTH_AI_CLOUD_TOKEN');
+    if (customToken) return customToken.trim();
+  } catch {}
   return (import.meta.env.VITE_API_TOKEN as string) || 'WEALTH_AI_SYNC';
 }
 
@@ -92,27 +123,29 @@ export function isCloudSyncConfigured(): boolean {
   return !!getCloudAuthToken();
 }
 
-// Runtime API_URL — tries server config first, then VITE build-time env var
-// Used ONLY for Google Apps Script cloud sync, NOT for backend /api/* calls.
-// FIX: previously this was async + awaited a fetch('/api/config', { signal: AbortSignal.timeout(4000) }) on EVERY
-// call. That added 1-3s of latency before loadFromCloud could even start.
-// Now we fire the config fetch once in the background and cache the result.
-// Callers get the VITE_API_URL immediately (synchronous), and if the server
-// later returns a different URL, subsequent calls use it.
+// Runtime API_URL — tries localStorage, server config, then VITE build-time env var
 let _runtimeApiUrl: string | null | undefined = undefined;
 let _apiUrlPromise: Promise<string> | null = null;
 
 function getApiUrlSync(): string {
-  if (_runtimeApiUrl !== undefined) return _runtimeApiUrl || VITE_API_URL;
+  try {
+    const custom = localStorage.getItem('WEALTH_AI_CLOUD_URL');
+    if (custom && custom.startsWith('http')) return custom.trim();
+  } catch {}
+  if (_runtimeApiUrl !== undefined && _runtimeApiUrl !== null) return _runtimeApiUrl || VITE_API_URL;
   return VITE_API_URL;
 }
 
 function getApiUrl(): Promise<string> {
-  if (_runtimeApiUrl !== undefined) return Promise.resolve(_runtimeApiUrl || VITE_API_URL);
+  try {
+    const custom = localStorage.getItem('WEALTH_AI_CLOUD_URL');
+    if (custom && custom.startsWith('http')) return Promise.resolve(custom.trim());
+  } catch {}
+  if (_runtimeApiUrl !== undefined && _runtimeApiUrl !== null) return Promise.resolve(_runtimeApiUrl || VITE_API_URL);
   if (_apiUrlPromise) return _apiUrlPromise;
   _apiUrlPromise = (async () => {
     try {
-      const res = await apiFetch(`${PROXY_BASE}/api/config`, { signal: AbortSignal.timeout(2000) });
+      const res = await apiFetch(`/api/config`, { signal: AbortSignal.timeout(3000) });
       if (res.ok) {
         const cfg = await res.json();
         if (cfg.apiUrl) { _runtimeApiUrl = cfg.apiUrl; return cfg.apiUrl; }
@@ -122,6 +155,34 @@ function getApiUrl(): Promise<string> {
     return VITE_API_URL;
   })();
   return _apiUrlPromise;
+}
+
+export function getCustomCloudConfig() {
+  try {
+    return {
+      cloudUrl: localStorage.getItem('WEALTH_AI_CLOUD_URL') || '',
+      backendUrl: localStorage.getItem('WEALTH_AI_BACKEND_URL') || '',
+      cloudToken: localStorage.getItem('WEALTH_AI_CLOUD_TOKEN') || '',
+    };
+  } catch {
+    return { cloudUrl: '', backendUrl: '', cloudToken: '' };
+  }
+}
+
+export function saveCustomCloudConfig(cloudUrl: string, backendUrl?: string, cloudToken?: string) {
+  try {
+    if (cloudUrl) localStorage.setItem('WEALTH_AI_CLOUD_URL', cloudUrl.trim());
+    else localStorage.removeItem('WEALTH_AI_CLOUD_URL');
+
+    if (backendUrl) localStorage.setItem('WEALTH_AI_BACKEND_URL', backendUrl.trim().replace(/\/$/, ''));
+    else localStorage.removeItem('WEALTH_AI_BACKEND_URL');
+
+    if (cloudToken) localStorage.setItem('WEALTH_AI_CLOUD_TOKEN', cloudToken.trim());
+    else localStorage.removeItem('WEALTH_AI_CLOUD_TOKEN');
+
+    _runtimeApiUrl = undefined;
+    _apiUrlPromise = null;
+  } catch {}
 }
 
 /**
@@ -1161,7 +1222,7 @@ export async function syncToCloud(portfolio: Position[], usdInr: number): Promis
 
   // Mode 1: Backend proxy (preferred — cross-origin safe).
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/cloud/save`, {
+    const res = await apiFetch(`/api/cloud/save`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ portfolio, usdInr }),
@@ -1204,7 +1265,7 @@ export async function syncToCloud(portfolio: Position[], usdInr: number): Promis
 export async function loadFromCloud(): Promise<Position[] | null> {
   // Mode 1: Backend proxy (preferred — cross-origin safe).
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/cloud/load`, {
+    const res = await apiFetch(`/api/cloud/load`, {
       signal: AbortSignal.timeout(10000),
     });
     if (res.ok) {
@@ -1284,9 +1345,8 @@ export async function sendTelegramAlert(token: string, chatId: string, message: 
 // FIX C11: server now ignores client-supplied chatId to prevent abuse, so we
 // no longer forward it.
 export async function sendTelegramViaServer(message: string, _chatId?: string): Promise<boolean> {
-  const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
   try {
-    const res = await apiFetch(`${proxyBase}/api/telegram`, {
+    const res = await apiFetch('/api/telegram', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message }),
@@ -1306,7 +1366,7 @@ export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
 
   // Mode 1: Backend proxy.
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/cloud/save-key`, {
+    const res = await apiFetch(`/api/cloud/save-key`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ groqKey: key }),
@@ -1336,7 +1396,7 @@ export async function syncGroqKeyToCloud(key: string): Promise<boolean> {
 export async function loadGroqKeyFromCloud(): Promise<string | null> {
   // Mode 1: Backend proxy.
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/cloud/load-key`, {
+    const res = await apiFetch(`/api/cloud/load-key`, {
       signal: AbortSignal.timeout(8000),
     });
     if (res.ok) {
