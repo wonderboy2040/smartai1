@@ -1153,6 +1153,62 @@ function parseCloudResponse(text: string): any | null {
   return data;
 }
 
+// Helper to extract portfolio items array from various response object shapes or top-level arrays
+function extractPortfolioList(data: any): any[] | null {
+  if (!data) return null;
+  if (Array.isArray(data)) return data;
+  if (typeof data === 'object') {
+    if (Array.isArray(data.portfolio)) return data.portfolio;
+    if (Array.isArray(data.positions)) return data.positions;
+    if (Array.isArray(data.data)) return data.data;
+    if (Array.isArray(data.assets)) return data.assets;
+    if (Array.isArray(data.items)) return data.items;
+    // Check if any top-level key contains an array of objects
+    for (const key of Object.keys(data)) {
+      if (Array.isArray(data[key]) && data[key].length > 0 && typeof data[key][0] === 'object') {
+        return data[key];
+      }
+    }
+  }
+  return null;
+}
+
+// Parse CSV output published directly from Google Sheets
+function parseCSVPortfolio(text: string): Position[] {
+  if (!text || typeof text !== 'string') return [];
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (lines.length < 2) return [];
+
+  const splitLine = (line: string): string[] => {
+    const res: string[] = [];
+    let cur = '';
+    let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { inQ = !inQ; }
+      else if (c === ',' && !inQ) { res.push(cur.trim()); cur = ''; }
+      else { cur += c; }
+    }
+    res.push(cur.trim());
+    return res;
+  };
+
+  const headers = splitLine(lines[0]);
+  const rows: Record<string, any>[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const vals = splitLine(lines[i]);
+    if (vals.length < 2) continue;
+    const row: Record<string, any> = {};
+    headers.forEach((h, idx) => {
+      if (vals[idx] !== undefined) row[h] = vals[idx];
+    });
+    rows.push(row);
+  }
+
+  return validatePortfolio(rows);
+}
+
 // Helper to parse numbers from strings containing currency symbols (₹, $, €, Rs) and commas (1,000)
 function parseNumeric(val: any): number {
   if (typeof val === 'number') return val;
@@ -1196,6 +1252,12 @@ function validatePortfolio(portfolio: any[]): Position[] {
     }
     if (!rawSym) return;
 
+    // Clean exchange prefix (NSE:RELIANCE -> RELIANCE)
+    const cleanSym = rawSym.toUpperCase()
+      .replace(/^(NSE|BSE|NASDAQ|AMEX|NYSE|TVC|SP|CBOE):/i, '')
+      .trim();
+    if (!cleanSym) return;
+
     // Lookup qty
     let rawQtyVal: any = undefined;
     for (const alias of QTY_ALIASES) {
@@ -1215,11 +1277,10 @@ function validatePortfolio(portfolio: any[]): Position[] {
     }
 
     const qty = parseNumeric(rawQtyVal);
-    const avgPrice = parseNumeric(rawPriceVal);
+    let avgPrice = parseNumeric(rawPriceVal);
 
-    if (isNaN(qty) || qty <= 0 || isNaN(avgPrice) || avgPrice <= 0) return;
-
-    const cleanSym = rawSym.toUpperCase();
+    if (isNaN(qty) || qty <= 0) return;
+    if (isNaN(avgPrice) || avgPrice < 0) avgPrice = 0;
 
     // Lookup market
     let rawMarket: any = undefined;
@@ -1277,7 +1338,7 @@ export async function syncToCloud(portfolio: Position[], usdInr: number): Promis
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ portfolio, usdInr }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(15000),
     });
     if (res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -1304,7 +1365,7 @@ export async function syncToCloud(portfolio: Position[], usdInr: number): Promis
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       redirect: 'follow',
       body: JSON.stringify({ action: 'update', authToken, portfolio, timestamp: Date.now(), usdInr }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(15000),
     });
     return res.ok;
   } catch (e) {
@@ -1317,16 +1378,14 @@ export async function loadFromCloud(): Promise<Position[] | null> {
   // Mode 1: Backend proxy (preferred — cross-origin safe).
   try {
     const res = await apiFetch(`/api/cloud/load`, {
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(15000),
     });
     if (res.ok) {
-      const data = await res.json();
-      if (data && data.portfolio && Array.isArray(data.portfolio)) {
-        const valid = validatePortfolio(data.portfolio);
-        if (valid.length === 0 && data.portfolio.length > 0) {
-          console.warn(`☁️ Cloud Sync: ${data.portfolio.length} positions loaded but 0 passed validation.`);
-        }
-        return valid.length > 0 ? valid : (data.portfolio.length > 0 ? null : []);
+      const data = await res.json().catch(() => null);
+      const list = extractPortfolioList(data);
+      if (list && list.length > 0) {
+        const valid = validatePortfolio(list);
+        if (valid.length > 0) return valid;
       }
     } else if (res.status !== 503) {
       console.warn('☁️ Cloud load via proxy failed:', res.status);
@@ -1336,28 +1395,49 @@ export async function loadFromCloud(): Promise<Position[] | null> {
     console.warn('☁️ Cloud load via proxy error:', e);
   }
 
-  // Mode 2: Direct Google Apps Script call (fallback).
+  // Mode 2: Direct Google Apps Script call or Published Sheet CSV (fallback).
   const apiUrl = getApiUrlSync() || await getApiUrl();
   const authToken = getCloudAuthToken();
-  if (!apiUrl || !authToken) {
+  if (!apiUrl) {
     console.warn('☁️ Cloud sync: no proxy, no direct config — cannot load.');
     return null;
   }
+
   try {
-    const res = await fetch(`${apiUrl}?action=load&authToken=${encodeURIComponent(authToken)}&t=${Date.now()}`, {
-      signal: AbortSignal.timeout(8000),
+    // 2a. Direct Google Sheet published CSV link check
+    if (apiUrl.includes('docs.google.com/spreadsheets') || apiUrl.includes('output=csv') || apiUrl.includes('format=csv')) {
+      const res = await fetch(apiUrl, { redirect: 'follow', signal: AbortSignal.timeout(12000) });
+      if (res.ok) {
+        const text = await res.text();
+        const csvValid = parseCSVPortfolio(text);
+        if (csvValid.length > 0) return csvValid;
+      }
+    }
+
+    // 2b. Google Apps Script Web App URL
+    const fetchUrl = apiUrl.includes('?')
+      ? `${apiUrl}&action=load&authToken=${encodeURIComponent(authToken || 'WEALTH_AI_SYNC')}&t=${Date.now()}`
+      : `${apiUrl}?action=load&authToken=${encodeURIComponent(authToken || 'WEALTH_AI_SYNC')}&t=${Date.now()}`;
+
+    const res = await fetch(fetchUrl, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) return null;
 
     const text = await res.text();
+
+    // Check if raw output is CSV
+    if (text.includes(',') && !text.trim().startsWith('{') && !text.trim().startsWith('[')) {
+      const csvValid = parseCSVPortfolio(text);
+      if (csvValid.length > 0) return csvValid;
+    }
+
     const data = parseCloudResponse(text);
-    if (data && data.portfolio && Array.isArray(data.portfolio)) {
-      const valid = validatePortfolio(data.portfolio);
-      if (valid.length === 0 && data.portfolio.length > 0) {
-        console.warn(`☁️ Cloud Sync: ${data.portfolio.length} positions loaded but 0 passed validation.`);
-        return null;
-      }
-      return valid;
+    const list = extractPortfolioList(data);
+    if (list && list.length > 0) {
+      const valid = validatePortfolio(list);
+      if (valid.length > 0) return valid;
     }
   } catch (e) {
     console.warn('☁️ Cloud load direct failed:', e);

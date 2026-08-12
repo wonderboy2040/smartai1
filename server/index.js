@@ -1830,19 +1830,30 @@ app.delete('/api/schedule/:id', (req, res) => {
 const CLOUD_API_URL = process.env.API_URL || process.env.VITE_API_URL || '';
 const CLOUD_AUTH_TOKEN = process.env.API_TOKEN || process.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
 
+// GET /api/config → returns runtime server config for frontend fallback
+app.get('/api/config', (_req, res) => {
+  res.json({
+    apiUrl: CLOUD_API_URL,
+    configured: !!(CLOUD_API_URL && CLOUD_AUTH_TOKEN),
+  });
+});
+
 // GET /api/cloud/load → proxy to Google Apps Script ?action=load
 app.get('/api/cloud/load', async (req, res) => {
   if (!CLOUD_API_URL) return jsonError(res, 503, 'Cloud sync not configured (API_URL not set).');
   if (!CLOUD_AUTH_TOKEN) return jsonError(res, 503, 'Cloud sync not configured (API_TOKEN not set).');
   try {
-    const url = `${CLOUD_API_URL}?action=load&authToken=${encodeURIComponent(CLOUD_AUTH_TOKEN)}&t=${Date.now()}`;
-    const upstream = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    const fetchUrl = CLOUD_API_URL.includes('?')
+      ? `${CLOUD_API_URL}&action=load&authToken=${encodeURIComponent(CLOUD_AUTH_TOKEN)}&t=${Date.now()}`
+      : `${CLOUD_API_URL}?action=load&authToken=${encodeURIComponent(CLOUD_AUTH_TOKEN)}&t=${Date.now()}`;
+
+    const upstream = await fetch(fetchUrl, { redirect: 'follow', signal: AbortSignal.timeout(15000) });
     if (!upstream.ok) return jsonError(res, 502, 'Cloud sync upstream error.');
     const text = await upstream.text();
     let data;
     try { data = JSON.parse(text); } catch {
-      // Apps Script sometimes wraps JSON in extra text — try to extract
-      const match = text.match(/\{[\s\S]*\}/);
+      // Apps Script sometimes wraps JSON in extra text — try to extract object or array
+      const match = text.match(/\{[\s\S]*\}/) || text.match(/\[[\s\S]*\]/);
       if (!match) return jsonError(res, 502, 'Cloud sync returned invalid data.');
       try { data = JSON.parse(match[0]); } catch { return jsonError(res, 502, 'Cloud sync returned invalid JSON.'); }
     }

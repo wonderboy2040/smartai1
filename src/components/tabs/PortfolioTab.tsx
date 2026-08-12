@@ -729,13 +729,13 @@ const PortfolioTab = React.memo(function PortfolioTab() {
             <div className="space-y-3 text-xs">
               <div>
                 <label className="block text-slate-300 font-semibold mb-1">
-                  Google Apps Script Web App URL (`.../exec`)
+                  Google Apps Script URL (`.../exec`) OR Published Google Sheet CSV URL
                 </label>
                 <input
                   type="text"
                   value={cfgCloudUrl}
                   onChange={(e) => setCfgCloudUrl(e.target.value)}
-                  placeholder="https://script.google.com/macros/s/.../exec"
+                  placeholder="https://script.google.com/macros/s/.../exec OR https://docs.google.com/spreadsheets/d/.../pub?output=csv"
                   className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-cyan-500"
                 />
               </div>

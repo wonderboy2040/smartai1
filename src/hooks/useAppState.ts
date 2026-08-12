@@ -339,7 +339,14 @@ export function useAppState() {
 
     // 2) CLOUD — background fetch, merge when ready
     // Fire immediately (don't await) so the UI renders local data first.
-    mergeCloudData();
+    mergeCloudData().then(success => {
+      if (!success) {
+        // Retry once after 3.5s in case backend server was waking up from cold sleep
+        setTimeout(() => {
+          mergeCloudData();
+        }, 3500);
+      }
+    });
     loadGroqKeyFromCloud().then(cloudKey => {
       if (cloudKey) {
         if (cloudKey.startsWith('{') && cloudKey.endsWith('}')) {
