@@ -7,7 +7,7 @@ import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen } from './telegram';
 // Proxy base helper — resolves backend server URL dynamically
 // 1. Checks localStorage ('WEALTH_AI_BACKEND_URL')
 // 2. Checks build-time VITE_API_PROXY
-// 3. Defaults to production Render backend (https://smartai1.onrender.com) if hosted on Vercel/Netlify/GitHub Pages
+// 3. Defaults to production Render backend (https://smartback-iyuq.onrender.com) if hosted on Vercel/Netlify/GitHub Pages
 export function getProxyBase(): string {
   try {
     const custom = localStorage.getItem('WEALTH_AI_BACKEND_URL');
@@ -20,7 +20,7 @@ export function getProxyBase(): string {
   if (typeof window !== 'undefined' && window.location) {
     const host = window.location.hostname;
     if (host.includes('.vercel.app') || host.includes('.github.io') || host.includes('.netlify.app')) {
-      return 'https://smartai1.onrender.com';
+      return 'https://smartback-iyuq.onrender.com';
     }
   }
 

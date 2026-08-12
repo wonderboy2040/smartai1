@@ -1340,7 +1340,7 @@ export function useAppState() {
       console.warn('Login failed:', e);
       const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
       if (!proxyBase) {
-        alert('⚠️ Login failed: VITE_API_PROXY is not set. If frontend and backend are on different domains, set VITE_API_PROXY to the backend URL (e.g. https://smartai1.onrender.com) in Vercel environment variables.');
+        alert('⚠️ Login failed: VITE_API_PROXY is not set. If frontend and backend are on different domains, set VITE_API_PROXY to the backend URL (e.g. https://smartback-iyuq.onrender.com) in Vercel environment variables.');
       } else {
         alert(`⚠️ Cannot reach backend at ${proxyBase}. Check: 1) Backend is deployed and running, 2) ALLOWED_ORIGINS on backend includes this frontend URL, 3) Network/CORS settings.`);
       }

@@ -748,7 +748,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                   type="text"
                   value={cfgBackendUrl}
                   onChange={(e) => setCfgBackendUrl(e.target.value)}
-                  placeholder="https://smartai1.onrender.com"
+                  placeholder="https://smartback-iyuq.onrender.com"
                   className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-cyan-500"
                 />
               </div>

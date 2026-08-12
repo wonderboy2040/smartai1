@@ -30,6 +30,29 @@ const DEFAULT_USD_INR = 83.5;
 
 app.use(express.json({ limit: '1mb' }));
 
+// CORS middleware for cross-origin requests (Vercel frontend -> Render backend)
+app.use((req, res, next) => {
+  const origin = req.headers.origin || '*';
+  const allowed = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
+    : null;
+
+  if (!allowed || allowed.includes(origin) || origin.includes('vercel.app') || origin.includes('localhost')) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', allowed[0] || '*');
+  }
+
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+  next();
+});
+
 // ============================================================
 // AUTHENTICATION — Server-side PIN + httpOnly session cookie
 // ============================================================
@@ -1847,8 +1870,9 @@ app.get('/api/cloud/load', async (req, res) => {
       ? `${CLOUD_API_URL}&action=load&authToken=${encodeURIComponent(CLOUD_AUTH_TOKEN)}&t=${Date.now()}`
       : `${CLOUD_API_URL}?action=load&authToken=${encodeURIComponent(CLOUD_AUTH_TOKEN)}&t=${Date.now()}`;
 
+    console.log(`☁️ Cloud load: fetching ${CLOUD_API_URL.substring(0, 60)}...`);
     const upstream = await fetch(fetchUrl, { redirect: 'follow', signal: AbortSignal.timeout(15000) });
-    if (!upstream.ok) return jsonError(res, 502, 'Cloud sync upstream error.');
+    if (!upstream.ok) return jsonError(res, 502, `Cloud sync upstream HTTP ${upstream.status}.`);
     const text = await upstream.text();
     let data;
     try { data = JSON.parse(text); } catch {
@@ -1860,8 +1884,15 @@ app.get('/api/cloud/load', async (req, res) => {
     if (typeof data === 'string') {
       try { data = JSON.parse(data); } catch { return jsonError(res, 502, 'Cloud sync returned invalid data.'); }
     }
+    // Detect Apps Script auth/error responses like {ok:false, error:"..."}
+    if (data && data.ok === false && data.error) {
+      console.warn(`☁️ Cloud load: Apps Script error: ${data.error}`);
+      return jsonError(res, 502, `Cloud sync error: ${data.error}`);
+    }
+    console.log(`☁️ Cloud load: success, portfolio items: ${data?.portfolio?.length ?? (Array.isArray(data) ? data.length : 'unknown')}`);
     return res.json(data);
   } catch (e) {
+    console.error('☁️ Cloud load fetch error:', e?.message || e);
     return jsonError(res, 502, 'Cloud sync failed.', e);
   }
 });
