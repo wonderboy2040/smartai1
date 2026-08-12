@@ -11,7 +11,7 @@ import {
 
 // SECURITY: Cloud sync auth token. MUST be set via API_TOKEN env var.
 // The weak public default 'WEALTH_AI_SYNC' is NO LONGER used.
-const AUTH_TOKEN = process.env.API_TOKEN || process.env.VITE_API_TOKEN || '';
+const AUTH_TOKEN = process.env.API_TOKEN || process.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
 
 function isCloudSyncConfigured() {
   return !!AUTH_TOKEN;

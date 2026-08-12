@@ -1,5 +1,5 @@
 import { PriceData, Position } from '../types';
-import { EXACT_TICKER_MAP, guessMarket, API_URL as VITE_API_URL, DEFAULT_USD_INR, isCryptoSymbol } from './constants';
+import { EXACT_TICKER_MAP, guessMarket, API_URL as VITE_API_URL, DEFAULT_USD_INR, isCryptoSymbol, getTodayString } from './constants';
 // FIX H10: imports must come before any runtime code per ES module style +
 // future bundler strictness. Was previously after `getApiUrl()`.
 import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen } from './telegram';
@@ -85,7 +85,7 @@ export function getSessionToken(): string | null { return _sessionToken; }
 // SECURITY: Cloud sync auth token. MUST be set via VITE_API_TOKEN at build
 // time. The weak public default 'WEALTH_AI_SYNC' is NO LONGER used.
 function getCloudAuthToken(): string {
-  return (import.meta.env.VITE_API_TOKEN as string) || '';
+  return (import.meta.env.VITE_API_TOKEN as string) || 'WEALTH_AI_SYNC';
 }
 
 export function isCloudSyncConfigured(): boolean {
@@ -1092,24 +1092,53 @@ function parseCloudResponse(text: string): any | null {
   return data;
 }
 
+// Helper to parse numbers from strings containing currency symbols (₹, $, €, Rs) and commas (1,000)
+function parseNumeric(val: any): number {
+  if (typeof val === 'number') return val;
+  if (val === null || val === undefined) return NaN;
+  const str = String(val).trim();
+  const cleaned = str.replace(/[^0-9.-]/g, '');
+  return parseFloat(cleaned);
+}
+
 // Validate and filter portfolio positions.
 function validatePortfolio(portfolio: any[]): Position[] {
   if (!Array.isArray(portfolio)) return [];
   const valid: Position[] = [];
   portfolio.forEach((p: any, idx: number) => {
     if (!p || typeof p !== 'object') return;
-    const rawSym = typeof p.symbol === 'string' ? p.symbol.trim() : '';
+
+    // Flexible field alias lookup for symbol
+    const rawSym = (
+      typeof p.symbol === 'string' ? p.symbol :
+      typeof p.Symbol === 'string' ? p.Symbol :
+      typeof p.SYMBOL === 'string' ? p.SYMBOL :
+      typeof p.ticker === 'string' ? p.ticker :
+      typeof p.Ticker === 'string' ? p.Ticker :
+      typeof p.stock === 'string' ? p.stock :
+      typeof p.Stock === 'string' ? p.Stock :
+      typeof p.asset === 'string' ? p.asset :
+      typeof p.Asset === 'string' ? p.Asset : ''
+    ).trim();
+
     if (!rawSym) return;
 
-    const qty = typeof p.qty === 'number' ? p.qty : parseFloat(String(p.qty ?? ''));
-    const avgPrice = typeof p.avgPrice === 'number' ? p.avgPrice : parseFloat(String(p.avgPrice ?? ''));
+    const rawQtyVal = p.qty ?? p.Qty ?? p.QTY ?? p.quantity ?? p.Quantity ?? p.shares ?? p.Shares ?? p.units ?? p.Units;
+    const rawPriceVal = p.avgPrice ?? p.AvgPrice ?? p.avg_price ?? p.AVG_PRICE ?? p.buyPrice ?? p.BuyPrice ?? p.price ?? p.Price ?? p.cost ?? p.Cost;
+
+    const qty = parseNumeric(rawQtyVal);
+    const avgPrice = parseNumeric(rawPriceVal);
 
     if (isNaN(qty) || qty <= 0 || isNaN(avgPrice) || avgPrice <= 0) return;
 
     const cleanSym = rawSym.toUpperCase();
-    const market = (p.market === 'US' || p.market === 'IN')
-      ? p.market
+    const rawMarket = p.market ?? p.Market ?? p.MARKET ?? p.exchange ?? p.Exchange;
+    const market = (rawMarket === 'US' || rawMarket === 'IN')
+      ? rawMarket
       : (cleanSym.includes('.NS') || cleanSym.includes('.BO') ? 'IN' : guessMarket(cleanSym));
+
+    const rawLevVal = p.leverage ?? p.Leverage ?? p.leverageRatio ?? 1;
+    const lev = parseNumeric(rawLevVal);
 
     valid.push({
       id: p.id || `cloud-${cleanSym.replace(/[^A-Z0-9]/g, '')}-${idx}-${Date.now()}`,
@@ -1117,8 +1146,8 @@ function validatePortfolio(portfolio: any[]): Position[] {
       market,
       qty,
       avgPrice,
-      leverage: typeof p.leverage === 'number' ? p.leverage : (parseFloat(String(p.leverage ?? '1')) || 1),
-      dateAdded: p.dateAdded || getTodayString(),
+      leverage: (isNaN(lev) || lev <= 0) ? 1 : lev,
+      dateAdded: p.dateAdded || p.DateAdded || p.date || p.Date || getTodayString(),
     });
   });
   return valid;

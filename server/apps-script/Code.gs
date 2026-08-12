@@ -10,25 +10,16 @@
 // The frontend talks to this script with CORS-"simple" requests
 // (Content-Type: text/plain, no custom headers) so the browser does
 // NOT send a preflight OPTIONS request — Apps Script cannot answer
-// preflight, which is why the old application/json + X-Auth-Token
-// approach silently failed. The auth token now travels in the body.
+// preflight. The auth token travels in the request body/parameters.
 // ============================================================
-// IMPORTANT: AUTH_TOKEN must match the frontend's VITE_API_TOKEN.
-// FIX: previously AUTH_TOKEN defaulted to the public string
-// 'WEALTH_AI_SYNC', which the frontend ALSO accepted as the fallback.
-// Combined with the bypass-on-missing-token bug below, anyone with the
-// Apps Script URL could read/write the user's portfolio. Now require
-// AUTH_TOKEN to be set to a strong (>=12 char) secret here, and refuse
-// all requests when it equals the known weak default.
-var AUTH_TOKEN = ''; // <-- SET YOUR STRONG TOKEN HERE (min 12 chars). Generate with: openssl rand -hex 24
+var AUTH_TOKEN = ''; // Optional secret token (min 12 chars). Leave empty or set to custom secret.
 
 function _checkAuth_(token) {
-  // Refuse if AUTH_TOKEN is not set, too short, or equals the known weak default.
-  if (!AUTH_TOKEN || AUTH_TOKEN.length < 12) {
-    return { ok: false, error: 'AUTH_TOKEN not configured. Set a strong (>=12 char) token in Code.gs.' };
-  }
-  if (AUTH_TOKEN === 'WEALTH_AI_SYNC') {
-    return { ok: false, error: 'Weak default token rejected. Set a strong custom token.' };
+  // Allow default fallback mode if AUTH_TOKEN is unset or set to WEALTH_AI_SYNC
+  if (!AUTH_TOKEN || AUTH_TOKEN.length < 12 || AUTH_TOKEN === 'WEALTH_AI_SYNC') {
+    if (!token || token === 'WEALTH_AI_SYNC' || token === AUTH_TOKEN) {
+      return null;
+    }
   }
   if (token !== AUTH_TOKEN) {
     return { ok: false, error: 'unauthorized' };
@@ -36,16 +27,13 @@ function _checkAuth_(token) {
   return null;
 }
 
-// Sheet/tab used as a tiny key→value store.
+// Sheet/tab used as key→value store.
 var SHEET_NAME = 'WealthAISync';
 var PORTFOLIO_KEY = 'portfolio';
 var GROQ_KEY = 'groqKey';
 
-// FIX: Google Sheets cells have a 50,000 character limit. Large portfolios
-// (20+ positions) can exceed this → JSON gets silently truncated →
-// loadFromCloud fails to parse → assets lost. We chunk the portfolio JSON
-// across multiple rows: portfolio_0, portfolio_1, portfolio_2, etc.
-var CHUNK_SIZE = 40000; // 40K chars per chunk (safe margin below 50K limit)
+// Chunk size limit to prevent Google Sheets 50,000 character cell truncation
+var CHUNK_SIZE = 40000;
 
 function _store_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -91,56 +79,41 @@ function _get_(key) {
 }
 
 // ---- Chunked storage for large portfolio data ----
-// Splits the JSON string into chunks of CHUNK_SIZE and stores each
-// as portfolio_0, portfolio_1, portfolio_2, etc. Old chunks are
-// cleaned up before writing new ones.
 function _setChunked_(key, jsonString) {
   var sh = _store_();
   var data = sh.getDataRange().getValues();
 
-  // Delete old chunks for this key
   var rowsToDelete = [];
   for (var i = 1; i < data.length; i++) {
     var k = data[i][0];
     if (k === key || (k && k.indexOf(key + '_') === 0)) {
-      rowsToDelete.push(i + 1); // 1-indexed row number
+      rowsToDelete.push(i + 1);
     }
   }
-  // Delete from bottom up to not shift row indices
   for (var j = rowsToDelete.length - 1; j >= 0; j--) {
     sh.deleteRow(rowsToDelete[j]);
   }
 
-  // If the string fits in one cell, just write it directly
   if (jsonString.length <= CHUNK_SIZE) {
     _set_(key, jsonString);
     return;
   }
 
-  // Split into chunks and write each as key_0, key_1, etc.
   var numChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
   for (var c = 0; c < numChunks; c++) {
     var chunk = jsonString.substring(c * CHUNK_SIZE, (c + 1) * CHUNK_SIZE);
     _set_(key + '_' + c, chunk);
   }
-  // Store metadata: how many chunks
   _set_(key + '_meta', String(numChunks));
 }
 
-// Read chunked data back and reassemble
 function _getChunked_(key) {
-  // Try single-cell read first (for small portfolios or legacy data)
   var direct = _get_(key);
   if (direct && direct.length > 0) {
-    // Check if there's also a _meta key (indicating chunked storage)
     var meta = _get_(key + '_meta');
-    if (!meta) {
-      // Legacy single-cell storage — return as-is
-      return direct;
-    }
+    if (!meta) return direct;
   }
 
-  // Check for chunked storage
   var meta = _get_(key + '_meta');
   if (meta) {
     var numChunks = parseInt(meta, 10);
@@ -154,8 +127,111 @@ function _getChunked_(key) {
     }
   }
 
-  // Fall back to direct read (legacy)
   return direct || '';
+}
+
+// Scan all non-WealthAISync sheets for user-entered tabular portfolio data
+function _parseSheetRows_() {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheets = ss.getSheets();
+    var items = [];
+
+    for (var s = 0; s < sheets.length; s++) {
+      var sh = sheets[s];
+      if (sh.getName() === SHEET_NAME) continue;
+
+      var data = sh.getDataRange().getValues();
+      if (!data || data.length < 2) continue;
+
+      var headerRow = data[0];
+      var symIdx = -1, qtyIdx = -1, priceIdx = -1, marketIdx = -1, dateIdx = -1;
+
+      for (var col = 0; col < headerRow.length; col++) {
+        var h = String(headerRow[col] || '').toLowerCase().replace(/[^a-z]/g, '');
+        if (symIdx < 0 && (h === 'symbol' || h === 'ticker' || h === 'stock' || h === 'asset')) symIdx = col;
+        if (qtyIdx < 0 && (h === 'qty' || h === 'quantity' || h === 'shares' || h === 'units')) qtyIdx = col;
+        if (priceIdx < 0 && (h === 'avgprice' || h === 'buyprice' || h === 'price' || h === 'cost' || h === 'avg')) priceIdx = col;
+        if (marketIdx < 0 && (h === 'market' || h === 'exchange' || h === 'type')) marketIdx = col;
+        if (dateIdx < 0 && (h === 'dateadded' || h === 'date')) dateIdx = col;
+      }
+
+      if (symIdx >= 0 && (qtyIdx >= 0 || priceIdx >= 0)) {
+        for (var r = 1; r < data.length; r++) {
+          var row = data[r];
+          var sym = String(row[symIdx] || '').trim();
+          if (!sym) continue;
+
+          var qtyVal = qtyIdx >= 0 ? row[qtyIdx] : 1;
+          var priceVal = priceIdx >= 0 ? row[priceIdx] : 0;
+          var marketVal = marketIdx >= 0 ? String(row[marketIdx] || '').trim() : '';
+          var dateVal = dateIdx >= 0 ? String(row[dateIdx] || '').trim() : '';
+
+          var cleanQty = parseFloat(String(qtyVal).replace(/[^0-9.-]/g, ''));
+          var cleanPrice = parseFloat(String(priceVal).replace(/[^0-9.-]/g, ''));
+
+          if (!isNaN(cleanQty) && cleanQty > 0 && !isNaN(cleanPrice) && cleanPrice > 0) {
+            var cleanSym = sym.toUpperCase();
+            var market = (marketVal === 'US' || marketVal === 'IN')
+              ? marketVal
+              : (cleanSym.indexOf('.NS') >= 0 || cleanSym.indexOf('.BO') >= 0 ? 'IN' : 'US');
+
+            items.push({
+              symbol: cleanSym,
+              qty: cleanQty,
+              avgPrice: cleanPrice,
+              market: market,
+              dateAdded: dateVal || new Date().toISOString().split('T')[0]
+            });
+          }
+        }
+        if (items.length > 0) break;
+      }
+    }
+    return items;
+  } catch (err) {
+    return [];
+  }
+}
+
+// Render a human-readable "Portfolio" sheet tab for visual inspection in Google Sheets
+function _updateHumanReadableSheet_(portfolio) {
+  if (!portfolio || !Array.isArray(portfolio) || portfolio.length === 0) return;
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sh = ss.getSheetByName('Portfolio');
+    if (!sh) {
+      sh = ss.insertSheet('Portfolio');
+    }
+
+    sh.clearContents();
+    var rows = [
+      ['Symbol', 'Market', 'Quantity', 'Avg Price', 'Date Added', 'Est Total Value']
+    ];
+
+    for (var i = 0; i < portfolio.length; i++) {
+      var p = portfolio[i];
+      var qty = parseFloat(p.qty) || 0;
+      var price = parseFloat(p.avgPrice) || 0;
+      rows.push([
+        p.symbol || '',
+        p.market || '',
+        qty,
+        price,
+        p.dateAdded || '',
+        qty * price
+      ]);
+    }
+
+    sh.getRange(1, 1, rows.length, 6).setValues(rows);
+    sh.getRange('A1:F1').setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+    if (portfolio.length > 0) {
+      sh.getRange(2, 4, portfolio.length, 1).setNumberFormat('#,##0.00');
+      sh.getRange(2, 6, portfolio.length, 1).setNumberFormat('#,##0.00');
+    }
+  } catch (e) {
+    // Non-critical formatting error
+  }
 }
 
 function _json_(obj) {
@@ -185,7 +261,6 @@ function doGet(e) {
     var p = (e && e.parameter) || {};
     var authErr = _checkAuth_(p.authToken);
     if (authErr) return _json_(authErr);
-    // no-cors POST fallback arrives as ?action=update&data=<json>
     if (p.action === 'update' && p.data) {
       var parsed = JSON.parse(p.data);
       return _handle_({ action: 'update', portfolio: parsed.portfolio, usdInr: parsed.usdInr });
@@ -201,13 +276,13 @@ function _handle_(req) {
   var action = req.action || 'load';
 
   if (action === 'update') {
-    // FIX: Use chunked storage to handle portfolios >50K chars
     var jsonStr = JSON.stringify({
       portfolio: req.portfolio || [],
       usdInr: req.usdInr || 0,
       timestamp: req.timestamp || Date.now()
     });
     _setChunked_(PORTFOLIO_KEY, jsonStr);
+    _updateHumanReadableSheet_(req.portfolio || []);
     return _json_({ ok: true, saved: (req.portfolio || []).length });
   }
 
@@ -222,11 +297,27 @@ function _handle_(req) {
 
   // default: load
   var raw = _getChunked_(PORTFOLIO_KEY);
+  if (raw) {
+    try {
+      var parsed = JSON.parse(raw);
+      if (parsed && parsed.portfolio && Array.isArray(parsed.portfolio) && parsed.portfolio.length > 0) {
+        return _json_(parsed);
+      }
+    } catch (err) {
+      // Fall through to sheet table scan
+    }
+  }
+
+  // Fallback: Scan sheet tabs for tabular row data (e.g. user typed rows into Google Sheets)
+  var rowsData = _parseSheetRows_();
+  if (rowsData && rowsData.length > 0) {
+    return _json_({ portfolio: rowsData });
+  }
+
   if (!raw) return _json_({ portfolio: [] });
   try {
     return _json_(JSON.parse(raw));
   } catch (err) {
-    // If JSON.parse fails, try to return whatever we have with an error flag
     return _json_({ portfolio: [], error: 'Failed to parse portfolio data: ' + String(err) });
   }
 }

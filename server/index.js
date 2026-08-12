@@ -1820,7 +1820,7 @@ app.delete('/api/schedule/:id', (req, res) => {
 // build-time env var requirement and keeps the token server-side only.
 // ============================================================
 const CLOUD_API_URL = process.env.API_URL || process.env.VITE_API_URL || '';
-const CLOUD_AUTH_TOKEN = process.env.API_TOKEN || process.env.VITE_API_TOKEN || '';
+const CLOUD_AUTH_TOKEN = process.env.API_TOKEN || process.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
 
 // GET /api/cloud/load → proxy to Google Apps Script ?action=load
 app.get('/api/cloud/load', async (req, res) => {

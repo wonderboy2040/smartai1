@@ -495,9 +495,6 @@ const MarketRow = React.memo(function MarketRow({
           <div className="space-y-1.5">
             {row.symbols.map(s => {
               const cur2 = s.market === 'IN' ? '₹' : '$';
-              const symbolPct = row.plannedAmountINR > 0 && s.livePrice
-                ? (s.actualAmountINR / (row.plannedAmountINR * (row.symbols.length > 0 ? 1 / row.symbols.length : 1))) * 100
-                : 0;
               const symbolDone = s.plannedQty > 0 ? (s.actualQty / s.plannedQty) * 100 : 0;
               return (
                 <div key={s.symbol} className="flex items-center justify-between gap-2 text-[10px]">

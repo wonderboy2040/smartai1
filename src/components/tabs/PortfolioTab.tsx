@@ -483,7 +483,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                   </div>
 
                   <div className="divide-y divide-white/[0.03]">
-                    {group.assets.map(({ p, allocPct, pl, plPct, valINR }) => {
+                    {group.assets.map(({ p, allocPct, pl, plPct }) => {
                       const key = `${(p.market || 'IN').toUpperCase()}_${p.symbol}`;
                       const data = livePrices[key];
                       const curPrice = data?.price || p.avgPrice;
