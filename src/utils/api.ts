@@ -116,7 +116,7 @@ function getCloudAuthToken(): string {
     const customToken = localStorage.getItem('WEALTH_AI_CLOUD_TOKEN');
     if (customToken) return customToken.trim();
   } catch {}
-  return (import.meta.env.VITE_API_TOKEN as string) || 'WEALTH_AI_SYNC';
+  return (import.meta.env.VITE_API_TOKEN as string) || 'f53613451dc3ecb5ce1b0119d82fe48007d41b9df165d1ec';
 }
 
 export function isCloudSyncConfigured(): boolean {

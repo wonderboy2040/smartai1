@@ -1851,7 +1851,7 @@ app.delete('/api/schedule/:id', (req, res) => {
 // build-time env var requirement and keeps the token server-side only.
 // ============================================================
 const CLOUD_API_URL = process.env.API_URL || process.env.VITE_API_URL || '';
-const CLOUD_AUTH_TOKEN = process.env.API_TOKEN || process.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
+const CLOUD_AUTH_TOKEN = process.env.API_TOKEN || process.env.VITE_API_TOKEN || 'f53613451dc3ecb5ce1b0119d82fe48007d41b9df165d1ec';
 
 // GET /api/config → returns runtime server config for frontend fallback
 app.get('/api/config', (_req, res) => {
