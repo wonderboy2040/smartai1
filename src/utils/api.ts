@@ -1374,6 +1374,20 @@ export async function syncToCloud(portfolio: Position[], usdInr: number): Promis
   }
 }
 
+// Helper to convert any standard Google Sheet URL (editing/sharing link) into a direct CSV export URL
+function toGoogleSheetCsvUrl(url: string): string | null {
+  if (!url || typeof url !== 'string') return null;
+  if (url.includes('output=csv') || url.includes('format=csv')) return url;
+  const match = url.match(/docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (match && match[1]) {
+    const sheetId = match[1];
+    const gidMatch = url.match(/[?&#]gid=([0-9]+)/);
+    const gidParam = gidMatch ? `&gid=${gidMatch[1]}` : '';
+    return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv${gidParam}`;
+  }
+  return null;
+}
+
 export async function loadFromCloud(): Promise<Position[] | null> {
   // Mode 1: Backend proxy (preferred — cross-origin safe).
   try {
@@ -1404,13 +1418,18 @@ export async function loadFromCloud(): Promise<Position[] | null> {
   }
 
   try {
-    // 2a. Direct Google Sheet published CSV link check
-    if (apiUrl.includes('docs.google.com/spreadsheets') || apiUrl.includes('output=csv') || apiUrl.includes('format=csv')) {
-      const res = await fetch(apiUrl, { redirect: 'follow', signal: AbortSignal.timeout(12000) });
-      if (res.ok) {
-        const text = await res.text();
-        const csvValid = parseCSVPortfolio(text);
-        if (csvValid.length > 0) return csvValid;
+    // 2a. Direct Google Sheet link check (supports sharing URLs & published CSV links)
+    const directCsvUrl = toGoogleSheetCsvUrl(apiUrl);
+    if (directCsvUrl) {
+      try {
+        const res = await fetch(directCsvUrl, { redirect: 'follow', signal: AbortSignal.timeout(12000) });
+        if (res.ok) {
+          const text = await res.text();
+          const csvValid = parseCSVPortfolio(text);
+          if (csvValid.length > 0) return csvValid;
+        }
+      } catch (err) {
+        console.warn('Direct Google Sheet CSV fetch failed, trying Apps Script endpoint:', err);
       }
     }
 

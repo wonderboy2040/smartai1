@@ -15,11 +15,9 @@
 var AUTH_TOKEN = ''; // Optional secret token (min 12 chars). Leave empty or set to custom secret.
 
 function _checkAuth_(token) {
-  // Allow default fallback mode if AUTH_TOKEN is unset or set to WEALTH_AI_SYNC
-  if (!AUTH_TOKEN || AUTH_TOKEN.length < 12 || AUTH_TOKEN === 'WEALTH_AI_SYNC') {
-    if (!token || token === 'WEALTH_AI_SYNC' || token === AUTH_TOKEN) {
-      return null;
-    }
+  // Allow default mode if AUTH_TOKEN is empty or WEALTH_AI_SYNC
+  if (!AUTH_TOKEN || AUTH_TOKEN.length === 0 || AUTH_TOKEN === 'WEALTH_AI_SYNC') {
+    return null;
   }
   if (token !== AUTH_TOKEN) {
     return { ok: false, error: 'unauthorized' };
