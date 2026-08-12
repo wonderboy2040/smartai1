@@ -296,36 +296,17 @@ export function useAppState() {
     });
   }, []);
 
-  // --- Reusable cloud merge: pulls from Google Sheets and merges into state ---
-  // Extracted so it can be called on init, periodic timer, AND manual refresh.
+  const skipNextCloudSaveRef = useRef(false);
+
+  // --- Reusable cloud load: pulls from Google Sheets and updates state ---
+  // Sets skipNextCloudSaveRef to true so loading FROM cloud doesn't trigger auto-save BACK to cloud.
   const mergeCloudData = useCallback(() => {
     return loadFromCloud().then(data => {
       if (data && data.length > 0) {
-        setPortfolio(prev => {
-          // Merge cloud + local by unique key (market + symbol)
-          const localMap = new Map<string, Position>();
-          for (const p of prev) {
-            localMap.set(`${String(p.market || 'IN').toUpperCase()}_${p.symbol}`, p);
-          }
-          const cloudMap = new Map<string, Position>();
-          for (const p of data!) {
-            cloudMap.set(`${String(p.market || 'IN').toUpperCase()}_${p.symbol}`, p);
-          }
-          const merged: Position[] = [];
-          const seen = new Set<string>();
-          // Cloud positions first (authoritative)
-          for (const [key, p] of cloudMap) {
-            merged.push(p);
-            seen.add(key);
-          }
-          // Add local-only positions (not in cloud — maybe not synced yet)
-          for (const [key, p] of localMap) {
-            if (!seen.has(key)) merged.push(p);
-          }
-          console.log(`☁️ Cloud Sync: merged ${cloudMap.size} cloud + ${merged.length - cloudMap.size} local-only = ${merged.length} total`);
-          secureStorage.setItem('portfolio', JSON.stringify(merged));
-          return merged;
-        });
+        skipNextCloudSaveRef.current = true;
+        setPortfolio(data);
+        try { secureStorage.setItem('portfolio', JSON.stringify(data)); } catch { }
+        console.log(`☁️ Cloud Sync: loaded ${data.length} positions directly from Google Sheets`);
         return true;
       } else {
         console.log('☁️ Cloud Sync: no cloud data — keeping local portfolio');
@@ -875,12 +856,14 @@ export function useAppState() {
   }, [isAuthenticated]);
 
   // --- Cloud sync (debounced 5s on portfolio change only) ---
-  // FIX HIGH #9: previously `usdInrRate` was in deps, but forex updates every
-  // 15s → cloud sync POSTed every ~20s even when portfolio unchanged → risk of
-  // Apps Script quota exhaustion. Drop usdInrRate from deps; syncToCloud reads
-  // it at call time via the ref.
+  // Skips saving if portfolio was just loaded FROM cloud (prevents circular overwrite).
   useEffect(() => {
     if (portfolio.length === 0) return;
+    if (skipNextCloudSaveRef.current) {
+      skipNextCloudSaveRef.current = false;
+      console.log('☁️ Cloud Sync: skipped auto-save because portfolio was just loaded from Google Sheets');
+      return;
+    }
     if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
     cloudSyncTimerRef.current = window.setTimeout(() => {
       syncToCloud(portfolio, usdInrRateRef.current);
@@ -888,20 +871,29 @@ export function useAppState() {
     return () => { if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current); };
   }, [portfolio]);
 
-  // --- Periodic cloud LOAD (pull from Google Sheets every 5 min) ---
-  // FIX: Previously cloud data was only loaded ONCE on page load. If the
-  // Google Sheet was updated directly (or from another device), the site
-  // never picked up the changes until manual sync. Now we poll every 5
-  // minutes so the portfolio stays in sync automatically.
+  // --- Periodic cloud LOAD (pull from Google Sheets every 30s when tab active) ---
   useEffect(() => {
     if (!isAuthenticated) return;
-    // Don't run immediately — the initial load already fired on auth.
-    // Start the first periodic check after 5 minutes.
     cloudLoadTimerRef.current = window.setInterval(() => {
-      console.log('☁️ Cloud Sync: periodic auto-load from Google Sheets…');
-      mergeCloudData();
-    }, 5 * 60 * 1000); // 5 minutes
+      if (document.visibilityState === 'visible') {
+        console.log('☁️ Cloud Sync: periodic auto-load from Google Sheets…');
+        mergeCloudData();
+      }
+    }, 30000); // 30 seconds
     return () => { if (cloudLoadTimerRef.current) clearInterval(cloudLoadTimerRef.current); };
+  }, [isAuthenticated, mergeCloudData]);
+
+  // --- Tab Visibility Auto-Sync (fetch from Google Sheets when user returns to tab) ---
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('👁️ Tab active: fetching latest portfolio from Google Sheets…');
+        mergeCloudData();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [isAuthenticated, mergeCloudData]);
 
   // --- Forex refresh (realtime 24x7, every 15s) ---

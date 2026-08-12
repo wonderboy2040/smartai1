@@ -1095,11 +1095,33 @@ function parseCloudResponse(text: string): any | null {
 // Validate and filter portfolio positions.
 function validatePortfolio(portfolio: any[]): Position[] {
   if (!Array.isArray(portfolio)) return [];
-  return portfolio.filter((p: any) =>
-    p && typeof p.symbol === 'string' && p.symbol.length > 0 &&
-    typeof p.qty === 'number' && p.qty > 0 &&
-    typeof p.avgPrice === 'number' && p.avgPrice > 0
-  ) as Position[];
+  const valid: Position[] = [];
+  portfolio.forEach((p: any, idx: number) => {
+    if (!p || typeof p !== 'object') return;
+    const rawSym = typeof p.symbol === 'string' ? p.symbol.trim() : '';
+    if (!rawSym) return;
+
+    const qty = typeof p.qty === 'number' ? p.qty : parseFloat(String(p.qty ?? ''));
+    const avgPrice = typeof p.avgPrice === 'number' ? p.avgPrice : parseFloat(String(p.avgPrice ?? ''));
+
+    if (isNaN(qty) || qty <= 0 || isNaN(avgPrice) || avgPrice <= 0) return;
+
+    const cleanSym = rawSym.toUpperCase();
+    const market = (p.market === 'US' || p.market === 'IN')
+      ? p.market
+      : (cleanSym.includes('.NS') || cleanSym.includes('.BO') ? 'IN' : guessMarket(cleanSym));
+
+    valid.push({
+      id: p.id || `cloud-${cleanSym.replace(/[^A-Z0-9]/g, '')}-${idx}-${Date.now()}`,
+      symbol: cleanSym,
+      market,
+      qty,
+      avgPrice,
+      leverage: typeof p.leverage === 'number' ? p.leverage : (parseFloat(String(p.leverage ?? '1')) || 1),
+      dateAdded: p.dateAdded || getTodayString(),
+    });
+  });
+  return valid;
 }
 
 export async function syncToCloud(portfolio: Position[], usdInr: number): Promise<boolean> {
