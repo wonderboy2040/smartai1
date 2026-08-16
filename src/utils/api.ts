@@ -193,7 +193,7 @@ export function saveCustomCloudConfig(cloudUrl: string, backendUrl?: string, clo
  */
 async function fetchCoinDcxTickers(): Promise<CoinDcxTicker[] | null> {
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, {
+    const res = await apiFetch(`/api/crypto-prices?t=${Date.now()}`, {
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;
@@ -383,8 +383,8 @@ export async function batchFetchIndianPrices(
   const realtimeReq = (async (): Promise<Record<string, PriceData>> => {
     const out: Record<string, PriceData> = {};
     try {
-      const url = `${PROXY_BASE}/api/quote?market=IN&symbols=${encodeURIComponent(cleanSyms.join(','))}&t=${Date.now()}`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+      const url = `/api/quote?market=IN&symbols=${encodeURIComponent(cleanSyms.join(','))}&t=${Date.now()}`;
+      const res = await apiFetch(url, { signal: AbortSignal.timeout(6000) });
       if (!res.ok) return out;
       const json = await res.json();
       const quotes = json?.quotes || {};
@@ -542,8 +542,8 @@ export async function batchFetchUSPrices(
   const realtimeReq = (async (): Promise<Record<string, PriceData>> => {
     const out: Record<string, PriceData> = {};
     try {
-      const url = `${PROXY_BASE}/api/quote?market=US&symbols=${encodeURIComponent(cleanSyms.join(','))}&t=${Date.now()}`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+      const url = `/api/quote?market=US&symbols=${encodeURIComponent(cleanSyms.join(','))}&t=${Date.now()}`;
+      const res = await apiFetch(url, { signal: AbortSignal.timeout(6000) });
       if (!res.ok) return out;
       const json = await res.json();
       const quotes = json?.quotes || {};
@@ -1048,7 +1048,7 @@ export async function batchFetchPrices(
 export async function fetchForexRate(): Promise<number> {
   // Primary: server-side proxy (cached, no CORS issues, fastest)
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/forex?t=${Date.now()}`, {
+    const res = await apiFetch(`/api/forex?t=${Date.now()}`, {
       signal: AbortSignal.timeout(4000)
     });
     if (res.ok) {

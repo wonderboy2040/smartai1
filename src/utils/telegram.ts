@@ -92,9 +92,11 @@ export function analyzeAsset(
   let isBearishTrend = change < -0.5;
   
   if (sma20 && sma50) {
-    // Golden Cross / Death Cross proximity
-    isBullishTrend = sma20 > sma50 || (macd !== undefined && macd > 0);
-    isBearishTrend = sma50 > sma20 || (macd !== undefined && macd < 0);
+    // Golden Cross / Death Cross — mutually exclusive conditions
+    const smaBullish = sma20 > sma50;
+    const smaBearish = sma50 > sma20;
+    isBullishTrend = smaBullish && (macd === undefined || macd >= 0);
+    isBearishTrend = smaBearish && (macd === undefined || macd <= 0);
   }
 
   // Calculate support/target levels
@@ -142,7 +144,7 @@ export function analyzeAsset(
     if (isBullishTrend && rsi < 55) {
       signal = 'BUY';
       confidence = 75;
-      targetPrice = sma20 || price * 0.98;
+      targetPrice = resistanceLevel || high || price * 1.02;
       reason = `Golden Cross / Bullish MACD detected. Accumulate on dips.`;
     } else if (isBearishTrend && rsi > 55) {
       signal = 'SELL';

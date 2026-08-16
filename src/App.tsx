@@ -183,7 +183,7 @@ export default function App() {
 
               <div className="flex gap-2 relative">
                 <button onClick={() => setAutoTelegram(prev => !prev)} className={`quantum-btn-ghost p-2.5 rounded-xl text-lg transition-all min-w-[44px] min-h-[44px] flex items-center justify-center ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`} title={autoTelegram ? 'Auto Alerts ON' : 'Auto Alerts OFF'}>🔔</button>
-                <button onClick={toggleTheme} className="w-11 h-11 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>🌞</button>
+                <button onClick={toggleTheme} className="w-11 h-11 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>{theme === 'dark' ? '🌞' : '🌙'}</button>
                 <button onClick={refreshAll} disabled={isRefreshing} className="quantum-btn-ghost p-2.5 rounded-xl text-lg disabled:opacity-50 min-w-[44px] min-h-[44px] flex items-center justify-center" title="Refresh All (prices + forex)"><span className={isRefreshing ? 'inline-block animate-spin' : ''}>🔄</span></button>
                 <button onClick={flushCache} className="quantum-btn-ghost p-2.5 rounded-xl text-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title="Flush Cache">🧹</button>
                 <button onClick={logout} className="quantum-btn-ghost p-2.5 rounded-xl text-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title="Logout">🔐</button>
