@@ -51,8 +51,11 @@ export function analyzeAsset(position, priceData) {
   let isBearishTrend = change < -0.5;
 
   if (sma20 && sma50) {
-    isBullishTrend = sma20 > sma50 || (macd !== undefined && macd > 0);
-    isBearishTrend = sma50 > sma20 || (macd !== undefined && macd < 0);
+    // Mutually exclusive — both can't be true at the same time
+    const smaBullish = sma20 > sma50;
+    const smaBearish = sma50 > sma20;
+    isBullishTrend = smaBullish && (macd === undefined || macd >= 0);
+    isBearishTrend = smaBearish && (macd === undefined || macd <= 0);
   }
 
   const low = priceData?.low || price * 0.98;
@@ -67,7 +70,7 @@ export function analyzeAsset(position, priceData) {
   let targetPrice = price;
 
   if (rsi < strongOversold) {
-    signal = 'STRONG_BUY'; confidence = 95; targetPrice = supportLevel;
+    signal = 'STRONG_BUY'; confidence = 95; targetPrice = resistanceLevel;
     reason = `RSI ${rsi.toFixed(0)} oversold${isCrypto ? ' (crypto zone)' : ''} — institutional accumulation zone.`;
     if (instAccumulation) { confidence = 99; reason = `🔥 MAX CONVICTION: RSI ${rsi.toFixed(0)} + Volume Spike! Institutional buying detected.`; }
   } else if (rsi < oversoldThreshold + 10) {
@@ -90,16 +93,16 @@ export function analyzeAsset(position, priceData) {
     if (instDistribution) { confidence += 10; reason += ' Volume confirming distribution.'; }
   } else {
     if (isBullishTrend && rsi < 55) {
-      signal = 'BUY'; confidence = 75; targetPrice = sma20 || price * 0.98;
+      signal = 'BUY'; confidence = 75; targetPrice = resistanceLevel || high || price * 1.02;
       reason = `Golden Cross / Bullish MACD detected. Accumulate on dips.`;
     } else if (isBearishTrend && rsi > 55) {
-      signal = 'SELL'; confidence = 65; targetPrice = sma20 || price * 1.02;
+      signal = 'SELL'; confidence = 65; targetPrice = supportLevel || low || price * 0.98;
       reason = `Death Cross / Bearish MACD momentum. Book partials.`;
     } else if (change < -3) {
-      signal = 'BUY'; confidence = 75; targetPrice = price * 0.98;
+      signal = 'BUY'; confidence = 75; targetPrice = resistanceLevel || price * 1.03;
       reason = `Sharp dip ${change.toFixed(1)}% — potential reversal.`;
     } else if (change > 3) {
-      signal = 'SELL'; confidence = 65; targetPrice = price * 1.02;
+      signal = 'SELL'; confidence = 65; targetPrice = supportLevel || price * 0.97;
       reason = `Strong rally ${change.toFixed(1)}% — book partial profits.`;
     }
   }

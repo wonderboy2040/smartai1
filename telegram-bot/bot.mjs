@@ -2741,8 +2741,9 @@ cron.schedule('*/3 * * * *', refreshIntel);
 // AUTO ALERTS — Market Hours Only
 // ────────────────────────────────────────
 
-// Daily Health Digest: 8:00 AM IST (2:30 UTC) — Every day
-cron.schedule('30 2 * * *', async () => {
+// Daily Health Digest: 8:00 AM IST (2:30 UTC) — Weekends only
+// Weekdays: the comprehensive Daily Digest (~line 3274) already fires at 30 2 * * 1-5
+cron.schedule('30 2 * * 0,6', async () => {
   if (!autoAlerts || portfolio.length === 0) return;
   console.log('📨 Sending daily health digest...');
   await smartRefreshPrices();
@@ -2840,28 +2841,8 @@ cron.schedule('30 6 * * 1-5', async () => {
 });
 
 // India Market Close Summary: 3:35 PM IST (10:05 UTC)
-cron.schedule('5 10 * * 1-5', async () => {
-  if (!autoAlerts || portfolio.length === 0) return;
-  console.log('📨 India market close summary...');
-  await smartRefreshPrices();
-
-  const metrics = calculateMetrics(portfolio, livePrices, usdInrRate);
-  let msg = `🔔 <b>MARKET CLOSE — Day Summary</b>\n`;
-  msg += `⏰ <i>${getISTTime()} IST</i>\n\n`;
-  msg += `India market band ho gaya. Aaj ka report:\n\n`;
-  msg += `💼 Portfolio: <b>₹${Math.round(metrics.totalValue).toLocaleString('en-IN')}</b>\n`;
-  msg += `📊 Today P&L: <b>${metrics.todayPL >= 0 ? '📈 +' : '📉 '}₹${Math.round(Math.abs(metrics.todayPL)).toLocaleString('en-IN')}</b> (${metrics.todayPct.toFixed(2)}%)\n`;
-  msg += `📈 Total P&L: <b>${metrics.totalPL >= 0 ? '+' : ''}₹${Math.round(metrics.totalPL).toLocaleString('en-IN')}</b> (${metrics.plPct.toFixed(2)}%)\n\n`;
-
-  if (metrics.todayPL >= 0) {
-    msg += `✅ <i>Aaj achha raha! Profits run karne do.</i>`;
-  } else {
-    msg += `⚠️ <i>Aaj thoda down raha. Don't panic — SIP chalne do.</i>`;
-  }
-
-  msg += `\n\n💎 <i>Advance Pro Intelligence</i>`;
-  await safeSend(TG_CHAT_ID, msg);
-});
+// NOTE: Duplicate removed — a richer close summary already fires at 10:15 UTC (3:45 PM IST).
+// Only the P&L recording cron below remains at this time slot.
 
 // US Market Open Scan: 7:05 PM IST (13:35 UTC)
 cron.schedule('35 13 * * 1-5', async () => {
@@ -3493,7 +3474,8 @@ bot.onText(/^\/ml(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
 
     await safeSend(chatId, `🤖 <i>Running ML prediction for ${input}...</i>`);
 
-    const market = ['RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'ICICIBANK', 'SBIN', 'ITC', 'WIPRO', 'TATAMOTORS', 'ADANIENT'].includes(input) ? 'IN' : 'US';
+    const { guessMarket: guessMarketML } = await import('./config.mjs');
+    const market = guessMarketML(input);
     const pred = await fetchMLSignal(input, market);
 
     const signalEmoji = pred.signal?.includes('BUY') ? '🟢' : pred.signal?.includes('SELL') ? '🔴' : '🟡';
@@ -3586,7 +3568,8 @@ bot.onText(/^\/mlbacktest(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
 
     await safeSend(chatId, `🧪 <i>Running ML backtest for ${input} (walk-forward)...</i>`);
 
-    const market = ['RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'ICICIBANK', 'SBIN', 'ITC', 'WIPRO', 'TATAMOTORS', 'ADANIENT'].includes(input) ? 'IN' : 'US';
+    const { guessMarket: guessMarketBT } = await import('./config.mjs');
+    const market = guessMarketBT(input);
     const bt = await fetchMLBacktest(input, market);
 
     let report = `🧪 <b>ML BACKTEST — ${input}</b>\n`;

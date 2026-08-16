@@ -12,7 +12,8 @@ export const ALPHA_ETFS_IN: ETFInfo[] = [
   { sym: 'JUNIORBEES', name: 'Nippon India ETF Junior BeES', cagr: 18.5, maxDD: 30, cat: 'Next 50', aum: '₹2.5k Cr', vol: 'High', fixedAlloc: 0.12 },
   { sym: 'MOMENTUM50', name: 'Motilal Oswal Nifty 500 Momentum 50', cagr: 22.5, maxDD: 30, cat: 'Smart Beta', aum: '₹3k Cr', vol: 'Moderate', fixedAlloc: 0.40 },
   { sym: 'SMALLCAP', name: 'Nippon India Nifty Smallcap 250', cagr: 26.5, maxDD: 40, cat: 'Growth', aum: '₹1k Cr', vol: 'Moderate', fixedAlloc: 0.28 },
-  { sym: 'MID150BEES', name: 'Nippon India Nifty Midcap 150', cagr: 21.0, maxDD: 35, cat: 'Growth', aum: '₹2.8k Cr', vol: 'High', fixedAlloc: 0.20 }
+  { sym: 'MID150BEES', name: 'Nippon India Nifty Midcap 150', cagr: 21.0, maxDD: 35, cat: 'Growth', aum: '₹2.8k Cr', vol: 'High', fixedAlloc: 0.20 },
+  { sym: 'SETFNIF50', name: 'SBI ETF Nifty 50', cagr: 14.0, maxDD: 30, cat: 'Large Cap', aum: '₹2.2k Cr', vol: 'High', fixedAlloc: 0.0 }
 ];
 
 export const ALPHA_ETFS_US: ETFInfo[] = [
@@ -51,6 +52,7 @@ export const EXACT_TICKER_MAP: Record<string, string> = {
   'MOMENTUM50': 'NSE:MOMENTUM50',
   'SMALLCAP': 'NSE:SMALLCAP',
   'MID150BEES': 'NSE:MID150BEES',
+  'SETFNIF50': 'NSE:SETFNIF50',
 
   // Additional US symbols
   'QQQ': 'NASDAQ:QQQ',
