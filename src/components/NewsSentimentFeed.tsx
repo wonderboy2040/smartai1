@@ -57,7 +57,7 @@ Return ONLY valid JSON, no markdown.`;
             { role: 'system', content: 'You are a financial news analyst. Return JSON only, no markdown formatting.' },
             { role: 'user', content: prompt },
           ],
-          model: 'llama-4-scout-17b-16e-instruct',
+          model: 'llama-3.3-70b-versatile',
         }),
         signal: AbortSignal.timeout(30000),
       });
@@ -217,7 +217,7 @@ Return ONLY valid JSON, no markdown.`;
       )}
 
       <div className="mt-3 text-[9px] text-slate-600">
-        Powered by Groq LLM (llama-4-scout). News sentiment is AI-processed, not investment advice.
+        Powered by Groq LLM (llama-3.3-70b). News sentiment is AI-processed, not investment advice.
       </div>
     </div>
   );

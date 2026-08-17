@@ -133,7 +133,7 @@ Reply ONLY in JSON:
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'llama-4-scout-17b-16e-instruct',
+        model: 'llama-3.3-70b-versatile',
         messages: [
           { role: 'system', content: 'You are an earnings analyst. Reply ONLY with valid JSON.' },
           { role: 'user', content: prompt }
