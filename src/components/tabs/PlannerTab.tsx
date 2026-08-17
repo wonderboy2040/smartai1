@@ -486,8 +486,12 @@ export default React.memo(function PlannerTab() {
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] text-slate-500">
                           <div>RSI: <span className="text-slate-300 font-mono">{a.rsi.toFixed(0)}</span></div>
                           <div>Entry: <span className="text-cyan-400 font-mono">{cur}{a.targetEntry.toFixed(1)}</span></div>
+                          <div>SL: <span className="text-red-400 font-mono">{cur}{a.stopLoss.toFixed(1)}</span></div>
+                          <div>T1: <span className="text-emerald-400 font-mono">{cur}{a.takeProfit.toFixed(1)}</span></div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-500 mt-1">
                           <div>Str: <span className={`font-bold ${a.strength > 65 ? 'text-emerald-400' : a.strength < 35 ? 'text-red-400' : 'text-amber-400'}`}>{a.strength}</span></div>
-                          <div>R:R <span className="text-cyan-300 font-mono">{a.riskReward.toFixed(1)}</span></div>
+                          <div>R:R <span className={`font-mono font-bold ${a.riskReward >= 2 ? 'text-emerald-400' : a.riskReward >= 1.5 ? 'text-amber-400' : 'text-red-400'}`}>1:{a.riskReward.toFixed(1)}</span></div>
                         </div>
                         {/* Reason */}
                         <div className="text-[9px] text-slate-600 mt-1.5 italic leading-snug">{a.reason}</div>
@@ -583,15 +587,17 @@ export default React.memo(function PlannerTab() {
             <div className="space-y-2">
               {(() => {
                 const r = 0.15; // 15% CAGR
-                const step = 0.10; // 10% Step-Up
+                const monthlyRate = Math.pow(1 + r, 1 / 12) - 1; // monthly compounding
+                const step = 0.10; // 10% annual step-up
                 const y = investYears;
                 let currentSip = totalSIP;
                 let wealth = 0;
                 let totalInv = 0;
-                for(let i=1; i<=y; i++) {
-                  const yearlySip = currentSip * 12;
-                  totalInv += yearlySip;
-                  wealth = (wealth + yearlySip) * (1 + r);
+                for (let yr = 1; yr <= y; yr++) {
+                  for (let m = 0; m < 12; m++) {
+                    wealth = (wealth + currentSip) * (1 + monthlyRate);
+                    totalInv += currentSip;
+                  }
                   currentSip *= (1 + step);
                 }
                 return (

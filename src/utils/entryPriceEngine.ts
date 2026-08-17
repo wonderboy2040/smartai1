@@ -431,33 +431,45 @@ export function computeUnifiedEntry(priceData: PriceData): UnifiedEntry {
   let atr = high - low;
   if (!atr || atr <= 0) atr = price * 0.02;
 
-  // Collect candidate supports strictly below the current price.
   const vp = calculateVolumeProfile(priceData);
-  const { supports } = calculateSupportResistance(priceData, vp);
+  const { supports, resistances } = calculateSupportResistance(priceData, vp);
+
+  // Collect support candidates strictly below current price
   const candidates = [
     supports.find(s => s.price < price)?.price,
-    priceData.sma20,
-    vp.poc,
+    priceData.sma20 && priceData.sma20 < price ? priceData.sma20 : undefined,
+    vp.poc && vp.poc < price ? vp.poc : undefined,
     low,
   ].filter((v): v is number => typeof v === 'number' && v > 0 && v < price);
 
-  // Anchor = the support CLOSEST to price (realistic accumulation, not a deep crash).
-  // Clamp so the zone is never more than ~1.2*ATR below price.
+  // Anchor = support closest to price, clamped to max 1.2×ATR below price
   const floor = price - atr * 1.2;
   const anchor = candidates.length
     ? Math.max(Math.max(...candidates), floor)
     : price - atr * 0.6;
 
-  const buyZoneLow = round2(Math.min(anchor, price - atr * 0.15));
+  const buyZoneLow  = round2(Math.min(anchor, price - atr * 0.15));
   const buyZoneHigh = round2(Math.max(buyZoneLow + atr * 0.1, Math.min(price, anchor + atr * 0.5)));
-  const optimal = round2((buyZoneLow + buyZoneHigh) / 2);
-  const stopLoss = round2(buyZoneLow - atr * 0.8);
-  const target1 = round2(price + atr * 2);
-  const target2 = round2(price + atr * 3.5);
+  const optimal     = round2((buyZoneLow + buyZoneHigh) / 2);
+
+  // Stop loss: tight — just below buy zone floor (0.4×ATR vs old 0.8×ATR → better R:R)
+  const stopLoss = round2(buyZoneLow - atr * 0.4);
+
+  // Targets: use real resistance levels above price when within range
+  const aboveR = resistances.filter(r => r.price > price).sort((a, b) => a.price - b.price);
+  const r1 = aboveR.find(r => r.price <= price + atr * 4);
+  const r2 = aboveR.find(r => r.price > (r1?.price ?? price) && r.price <= price + atr * 8);
+
+  // Target 1: nearest resistance (if close enough), else 2.2×ATR
+  const target1 = round2(r1 ? Math.max(r1.price, price + atr * 1.5) : price + atr * 2.2);
+  // Target 2: second resistance (if present), else 4.5×ATR
+  const target2 = round2(r2 ? Math.max(r2.price, price + atr * 3.5) : price + atr * 4.5);
+
   const riskReward = round2((target1 - optimal) / Math.max(0.01, optimal - stopLoss));
 
   let basis = 'ATR volatility band';
-  if (supports.find(s => s.price < price)) basis = `Support: ${supports.find(s => s.price < price)!.label}`;
+  const nearSupport = supports.find(s => s.price < price);
+  if (nearSupport) basis = `Support: ${nearSupport.label}`;
   else if (priceData.sma20 && priceData.sma20 < price) basis = 'SMA20 support';
   else if (vp.poc < price) basis = 'Volume POC support';
 

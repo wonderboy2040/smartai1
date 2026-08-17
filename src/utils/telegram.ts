@@ -1,5 +1,6 @@
 import { Position, PriceData } from '../types';
 import { ALPHA_ETFS_IN, ALPHA_ETFS_US, getAssetCagrProxy } from './constants';
+import { computeUnifiedEntry } from './entryPriceEngine';
 
 // ========================================
 // MARKET HOURS CHECK
@@ -264,11 +265,13 @@ export function getSmartAllocations(
     else if (avgVix > 22) strength -= 10;
     strength = Math.max(5, Math.min(99, strength));
 
-    // === STOP LOSS & TAKE PROFIT ===
-    const atr = (high - low) || price * 0.02;
-    const stopLoss = price > 0 ? price - (atr * 1.5) : 0;
-    const takeProfit = price > 0 ? price + (atr * 2.5) : 0;
-    const riskReward = price > 0 && (price - stopLoss) > 0 ? (takeProfit - price) / (price - stopLoss) : 0;
+    // === ENTRY / STOP LOSS / TAKE PROFIT — use canonical unified engine ===
+    const unified = price > 0 && data ? computeUnifiedEntry(data) : null;
+    const targetEntry = unified ? unified.optimal : (rsi < 40 ? low : price * 0.99);
+    const stopLoss    = unified ? unified.stopLoss : (price > 0 ? price - atr * 1.5 : 0);
+    const takeProfit  = unified ? unified.target1  : (price > 0 ? price + atr * 2.5 : 0);
+    const riskReward  = unified ? unified.riskReward
+      : (price > 0 && (price - stopLoss) > 0 ? (takeProfit - price) / (price - stopLoss) : 0);
 
     // === TREND STRENGTH ===
     let trendStrength: AllocationRec['trendStrength'] = 'WEAK';
@@ -285,7 +288,6 @@ export function getSmartAllocations(
     // === DYNAMIC ALLOCATION DISABLED (Fixed Allocations based on User Request) ===
     let allocMult = 1.0;
 
-    const targetEntry = rsi < 40 ? low : price * 0.99;
     const discount = price > 0 ? ((price - targetEntry) / price) * 100 : 0;
 
     // === SIGNAL + REASON ===

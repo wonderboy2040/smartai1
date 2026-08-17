@@ -2,6 +2,7 @@ import React from 'react';
 import { useApp } from '../../hooks/AppContext';
 import { formatPrice, isCryptoSymbol } from '../../utils/constants';
 import { isAnyMarketOpen, getMarketStatus } from '../../utils/telegram';
+import { computeUnifiedEntry } from '../../utils/entryPriceEngine';
 import { LiveCandleChart } from '../LiveCandleChart';
 import { DipIntelligence } from '../DipIntelligence';
 import { ExactBuyPricePanel } from '../ExactBuyPricePanel';
@@ -43,6 +44,17 @@ export default React.memo(function DashboardTab() {
     analyzeSymbol, quickSelect, openAddModal, pushTelegramReport,
     chartContainerRef, indiaSIP, usSIP, theme,
   } = useApp();
+
+  // Compute unified entry whenever currentData is available
+  const entry = currentData && currentPrice > 0 ? computeUnifiedEntry(currentData) : null;
+  const cur = currentMarket === 'IN' ? '₹' : '$';
+  const monthlyBudget = indiaSIP + usSIP;
+  // Suggested invest amount: scale by signal confidence (Kelly-inspired)
+  const investPct = signalData.signal.includes('STRONG') ? 0.30
+    : signalData.signal.includes('BUY') ? 0.20
+    : signalData.signal.includes('ACCUMULATE') ? 0.12
+    : 0.05;
+  const suggestedInvest = Math.round(monthlyBudget * investPct);
 
   if (!currentSymbol) {
     return (
@@ -196,35 +208,131 @@ export default React.memo(function DashboardTab() {
         </div>
       </div>
 
-      {/* Value Zones */}
+      {/* Value Zones — Exact Entry, Amount, Hold Signal */}
       <div className="quantum-panel rounded-2xl p-5 border-cyan-500/10 animate-fade-in-up delay-150">
         <h2 className="text-base font-bold text-white mb-4 flex items-center gap-2">
           <span className="w-7 h-7 rounded-lg bg-cyan-500/10 flex items-center justify-center text-sm">🎯</span>
-          Value Zones
+          Exact Entry Intelligence
+          <span className="ml-auto badge bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 text-[10px]">LIVE CALC</span>
         </h2>
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-4 text-center">
-            <div className="text-emerald-400/80 text-[10px] font-bold uppercase tracking-wider mb-2">Deep Value</div>
-            <div className="text-xl font-black text-emerald-400 font-mono">
-              {currentPrice > 0 ? formatPrice(currentPrice * 0.95, currentMarket === 'IN' ? '₹' : '$') : '--'}
+
+        {entry ? (
+          <>
+            {/* Row 1: Buy Zone + Optimal Entry */}
+            <div className="grid grid-cols-3 gap-3 mb-3">
+              <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3 text-center">
+                <div className="text-emerald-400/80 text-[10px] font-bold uppercase tracking-wider mb-1">🟢 Zone Low</div>
+                <div className="text-lg font-black text-emerald-400 font-mono">{formatPrice(entry.buyZoneLow, cur)}</div>
+                <div className="text-[10px] text-emerald-500/60 mt-1">Accumulate here</div>
+              </div>
+              <div className="bg-cyan-500/8 border-2 border-cyan-500/30 rounded-xl p-3 text-center">
+                <div className="text-cyan-400/80 text-[10px] font-bold uppercase tracking-wider mb-1">⚡ OPTIMAL ENTRY</div>
+                <div className="text-xl font-black text-cyan-400 font-mono">{formatPrice(entry.optimal, cur)}</div>
+                <div className="text-[10px] text-cyan-500/70 mt-1 font-semibold">{entry.basis}</div>
+              </div>
+              <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-3 text-center">
+                <div className="text-blue-400/80 text-[10px] font-bold uppercase tracking-wider mb-1">🔵 Zone High</div>
+                <div className="text-lg font-black text-blue-400 font-mono">{formatPrice(entry.buyZoneHigh, cur)}</div>
+                <div className="text-[10px] text-blue-500/60 mt-1">Max entry limit</div>
+              </div>
             </div>
-            <div className="text-[10px] text-emerald-500/60 mt-1">-5% from CMP</div>
-          </div>
-          <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 text-center">
-            <div className="text-amber-400/80 text-[10px] font-bold uppercase tracking-wider mb-2">Fair Price</div>
-            <div className="text-xl font-black text-amber-400 font-mono">
-              {currentPrice > 0 ? formatPrice(currentPrice, currentMarket === 'IN' ? '₹' : '$') : '--'}
+
+            {/* Row 2: SL + CMP + T1 + T2 */}
+            <div className="grid grid-cols-4 gap-2 mb-3">
+              <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-3 text-center">
+                <div className="text-red-400/70 text-[9px] font-bold uppercase tracking-wider mb-1">🛑 Stop Loss</div>
+                <div className="text-sm font-black text-red-400 font-mono">{formatPrice(entry.stopLoss, cur)}</div>
+                <div className="text-[9px] text-red-500/50 mt-1">Exit if breaks</div>
+              </div>
+              <div className="bg-slate-500/5 border border-slate-500/20 rounded-xl p-3 text-center">
+                <div className="text-slate-400/70 text-[9px] font-bold uppercase tracking-wider mb-1">📍 CMP</div>
+                <div className="text-sm font-black text-white font-mono">{formatPrice(currentPrice, cur)}</div>
+                <div className={`text-[9px] mt-1 font-bold ${currentChange >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{currentChange >= 0 ? '+' : ''}{currentChange.toFixed(2)}%</div>
+              </div>
+              <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-3 text-center">
+                <div className="text-amber-400/70 text-[9px] font-bold uppercase tracking-wider mb-1">🎯 Target 1</div>
+                <div className="text-sm font-black text-amber-400 font-mono">{formatPrice(entry.target1, cur)}</div>
+                <div className="text-[9px] text-amber-500/50 mt-1">Book 50% here</div>
+              </div>
+              <div className="bg-purple-500/5 border border-purple-500/20 rounded-xl p-3 text-center">
+                <div className="text-purple-400/70 text-[9px] font-bold uppercase tracking-wider mb-1">🚀 Target 2</div>
+                <div className="text-sm font-black text-purple-400 font-mono">{formatPrice(entry.target2, cur)}</div>
+                <div className="text-[9px] text-purple-500/50 mt-1">Full exit zone</div>
+              </div>
             </div>
-            <div className="text-[10px] text-amber-500/60 mt-1">Current Market</div>
-          </div>
-          <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-4 text-center">
-            <div className="text-red-400/80 text-[10px] font-bold uppercase tracking-wider mb-2">Overheated</div>
-            <div className="text-xl font-black text-red-400 font-mono">
-              {currentPrice > 0 ? formatPrice(currentPrice * 1.15, currentMarket === 'IN' ? '₹' : '$') : '--'}
+
+            {/* Row 3: R:R + Invest Amount + Hold Signal */}
+            <div className="grid grid-cols-3 gap-3 mb-3">
+              <div className="bg-black/30 rounded-xl p-3 text-center border border-white/5">
+                <div className="text-slate-500 text-[9px] font-bold uppercase tracking-wider mb-1">Risk:Reward</div>
+                <div className={`text-lg font-black font-mono ${entry.riskReward >= 2 ? 'text-emerald-400' : entry.riskReward >= 1.5 ? 'text-amber-400' : 'text-red-400'}`}>
+                  1:{entry.riskReward.toFixed(1)}
+                </div>
+                <div className="text-[9px] text-slate-600 mt-1">{entry.riskReward >= 2 ? '✅ Excellent' : entry.riskReward >= 1.5 ? '⚡ Good' : '⚠️ Risky'}</div>
+              </div>
+              <div className={`rounded-xl p-3 text-center border ${suggestedInvest > 0 ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-black/30 border-white/5'}`}>
+                <div className="text-slate-500 text-[9px] font-bold uppercase tracking-wider mb-1">💰 Invest Now</div>
+                <div className={`text-lg font-black font-mono ${suggestedInvest > 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
+                  {suggestedInvest > 0 ? `₹${suggestedInvest.toLocaleString('en-IN')}` : '—'}
+                </div>
+                <div className="text-[9px] text-slate-600 mt-1">{Math.round(investPct * 100)}% of monthly SIP</div>
+              </div>
+              <div className={`rounded-xl p-3 text-center border ${
+                currentPrice >= entry.buyZoneLow && currentPrice <= entry.buyZoneHigh ? 'bg-emerald-500/10 border-emerald-500/30' :
+                currentPrice > entry.target1 ? 'bg-amber-500/10 border-amber-500/30' :
+                currentPrice < entry.stopLoss ? 'bg-red-500/10 border-red-500/30' :
+                'bg-cyan-500/5 border-cyan-500/20'
+              }`}>
+                <div className="text-slate-500 text-[9px] font-bold uppercase tracking-wider mb-1">📋 Action</div>
+                <div className={`text-sm font-black ${
+                  currentPrice >= entry.buyZoneLow && currentPrice <= entry.buyZoneHigh ? 'text-emerald-400' :
+                  currentPrice > entry.target1 ? 'text-amber-400' :
+                  currentPrice < entry.stopLoss ? 'text-red-400' :
+                  'text-cyan-400'
+                }`}>
+                  {currentPrice >= entry.buyZoneLow && currentPrice <= entry.buyZoneHigh ? '🟢 BUY NOW' :
+                   currentPrice < entry.buyZoneLow && currentPrice > entry.stopLoss ? '⏳ WAIT DIP' :
+                   currentPrice > entry.target1 && currentPrice < entry.target2 ? '📤 BOOK 50%' :
+                   currentPrice >= entry.target2 ? '🔴 FULL EXIT' :
+                   currentPrice <= entry.stopLoss ? '🛑 CUT LOSS' :
+                   '🔵 HOLD'}
+                </div>
+                <div className="text-[9px] text-slate-600 mt-1">
+                  {currentPrice >= entry.buyZoneLow && currentPrice <= entry.buyZoneHigh ? 'In buy zone' :
+                   currentPrice < entry.buyZoneLow ? `${((entry.buyZoneLow - currentPrice) / currentPrice * 100).toFixed(1)}% to zone` :
+                   currentPrice > entry.target1 ? 'Above T1 — trim' : 'Between zone & T1'}
+                </div>
+              </div>
             </div>
-            <div className="text-[10px] text-red-500/60 mt-1">+15% from CMP</div>
+          </>
+        ) : (
+          /* Fallback: static zones when no live data */
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-4 text-center">
+              <div className="text-emerald-400/80 text-[10px] font-bold uppercase tracking-wider mb-2">Deep Value</div>
+              <div className="text-xl font-black text-emerald-400 font-mono">
+                {currentPrice > 0 ? formatPrice(currentPrice * 0.95, cur) : '--'}
+              </div>
+              <div className="text-[10px] text-emerald-500/60 mt-1">-5% from CMP</div>
+            </div>
+            <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 text-center">
+              <div className="text-amber-400/80 text-[10px] font-bold uppercase tracking-wider mb-2">Current</div>
+              <div className="text-xl font-black text-amber-400 font-mono">
+                {currentPrice > 0 ? formatPrice(currentPrice, cur) : '--'}
+              </div>
+              <div className="text-[10px] text-amber-500/60 mt-1">Market Price</div>
+            </div>
+            <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-4 text-center">
+              <div className="text-red-400/80 text-[10px] font-bold uppercase tracking-wider mb-2">Overheated</div>
+              <div className="text-xl font-black text-red-400 font-mono">
+                {currentPrice > 0 ? formatPrice(currentPrice * 1.15, cur) : '--'}
+              </div>
+              <div className="text-[10px] text-red-500/60 mt-1">+15% from CMP</div>
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* AI Verdict row */}
         <div className={`p-4 rounded-xl border flex items-center justify-between gap-4 ${currentRsi < 45 ? 'bg-emerald-500/5 border-emerald-500/20' : currentRsi > 65 ? 'bg-red-500/5 border-red-500/20' : 'bg-cyan-500/5 border-cyan-500/20'}`}>
           <div>
             <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">AI Verdict</div>
@@ -233,6 +341,7 @@ export default React.memo(function DashboardTab() {
                 currentRsi > 65 ? `📉 DISTRIBUTION: Book partial profits` :
                   `📊 NEUTRAL: Trading at fair valuation`}
             </div>
+            {entry && <div className="text-[10px] text-slate-500 mt-0.5">Hold above {formatPrice(entry.stopLoss, cur)} · Target {formatPrice(entry.target1, cur)}</div>}
           </div>
           <button
             onClick={() => openAddModal()}
