@@ -152,7 +152,7 @@ interface ChatMessage {
 interface EngineOption { id: string; label: string; model: string; endpoint: string; badge: string; }
 const ENGINE_OPTIONS: EngineOption[] = [
   { id: 'auto',        label: 'Auto (Smart Failover)', model: '',                                       endpoint: 'auto',        badge: '⚡' },
-  { id: 'gemini',      label: 'Gemini 2.5 Flash',      model: 'gemini-2.5-flash',                        endpoint: 'gemini',      badge: '🔷' },
+  { id: 'gemini',      label: 'Gemini 3.7 Flash',      model: 'gemini-3.7-flash',                        endpoint: 'gemini',      badge: '🔷' },
   { id: 'groq',        label: 'Groq Llama 3.3 70B',    model: 'llama-3.3-70b-versatile',                 endpoint: 'groq',        badge: '⚡' },
   { id: 'claude',      label: 'Claude Sonnet 4',       model: 'claude-sonnet-4-20250514',                endpoint: 'claude',      badge: '🟣' },
   { id: 'openrouter',  label: 'OpenRouter Llama 3.3',  model: 'meta-llama/llama-3.3-70b-instruct:free',  endpoint: 'openrouter',  badge: '🔶' },

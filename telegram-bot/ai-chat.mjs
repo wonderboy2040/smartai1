@@ -31,6 +31,7 @@ export const AI_ENGINE_LABELS = {
   cerebras: '🧠 Cerebras Llama 3.3',
   huggingface: '🤗 HuggingFace Qwen 72B',
   nvidia: '🟢 NVIDIA Llama 3.3 70B',
+  gemini: '🔷 Gemini 3.7 Flash',
 };
 const chatEnginePref = new Map(); // chatId -> engineId
 export function setChatEngine(chatId, engine) {
@@ -203,7 +204,7 @@ async function callNvidia(messages, systemPrompt, modelName = 'meta/llama-3.3-70
 }
 
 // 1) GOOGLE GEMINI
-async function callGemini(messages, systemPrompt, modelName = 'gemini-2.5-flash') {
+async function callGemini(messages, systemPrompt, modelName = 'gemini-3.7-flash') {
   if (!isGeminiAvailable()) throw new Error('Gemini key missing');
   if (engineHealth.gemini.failures >= 3 && Date.now() - engineHealth.gemini.lastFailure < engineHealth.gemini.cooldownMs) throw new Error('Gemini cooling down');
   const contents = messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
