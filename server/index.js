@@ -324,11 +324,11 @@ const TG = {
 
 // OpenAI-compatible providers — body is forwarded almost as-is.
 const OPENAI_COMPAT = {
-  groq: { url: 'https://api.groq.com/openai/v1/chat/completions', defModel: 'llama-3.3-70b-versatile' },
-  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', defModel: 'meta-llama/llama-3.3-70b-instruct:free' },
-  cerebras: { url: 'https://api.cerebras.ai/v1/chat/completions', defModel: 'llama-3.3-70b' },
+  groq: { url: 'https://api.groq.com/openai/v1/chat/completions', defModel: 'llama-4-scout-17b-16e-instruct' },
+  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', defModel: 'meta-llama/llama-4-scout:free' },
+  cerebras: { url: 'https://api.cerebras.ai/v1/chat/completions', defModel: 'llama-4-scout' },
   huggingface: { url: 'https://router.huggingface.co/v1/chat/completions', defModel: 'Qwen/Qwen2.5-72B-Instruct' },
-  nvidia: { url: 'https://integrate.api.nvidia.com/v1/chat/completions', defModel: 'meta/llama-3.3-70b-instruct' },
+  nvidia: { url: 'https://integrate.api.nvidia.com/v1/chat/completions', defModel: 'meta/llama-4-scout-17b-16e-instruct' },
 };
 
 function jsonError(res, status, message, internalErr) {
@@ -892,11 +892,11 @@ app.post('/api/gemini', async (req, res) => {
 app.post('/api/claude', async (req, res) => {
   if (!KEYS.claude) return jsonError(res, 503, 'claude not configured');
   try {
-    const { messages = [], model = 'claude-sonnet-4-20250514', max_tokens = 1024 } = req.body || {};
+    const { messages = [], model = 'claude-sonnet-5', max_tokens = 1024 } = req.body || {};
     if (!Array.isArray(messages)) return jsonError(res, 400, 'messages[] required');
     // Cap max_tokens to prevent quota abuse.
     const safeMaxTokens = Math.min(Math.max(parseInt(max_tokens) || 1024, 1), 8192);
-    const safeModel = String(model).replace(/[^a-zA-Z0-9.\-]/g, '').slice(0, 50) || 'claude-sonnet-4-20250514';
+    const safeModel = String(model).replace(/[^a-zA-Z0-9.\-]/g, '').slice(0, 50) || 'claude-sonnet-5';
     const system = messages.filter(m => m.role === 'system').map(m => m.content).join('\n').trim();
     const conv = messages
       .filter(m => m.role !== 'system')

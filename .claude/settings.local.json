@@ -23,7 +23,10 @@
       "Bash(npm install *)",
       "Bash(Select-Object -First 30)",
       "Bash(curl -s http://localhost:5173)",
-      "Bash(npm test *)"
+      "Bash(npm test *)",
+      "WebSearch",
+      "Read(//mnt/**)",
+      "Bash(ls /drives/)"
     ]
   }
 }
