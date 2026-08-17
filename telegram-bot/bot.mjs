@@ -231,7 +231,7 @@ apiRouter.post('/nvidia', express.json({ limit: '1mb' }), async (req, res) => {
     if (!Array.isArray(messages)) {
       return res.status(400).json({ error: 'messages[] required' });
     }
-    const modelName = model || 'meta/llama-3.3-70b-instruct';
+    const modelName = model || 'meta/llama-3.1-70b-instruct';
     const formattedMessages = messages.map(m => ({ role: m.role, content: m.content }));
     
     const apiRes = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
@@ -300,7 +300,7 @@ apiRouter.post('/groq', express.json({ limit: '1mb' }), async (req, res) => {
       return res.status(503).json({ error: 'Groq API key not configured on server' });
     }
     const { messages, model } = req.body;
-    const modelName = model || 'llama-3.3-70b-versatile';
+    const modelName = model || 'llama-3.2-90b-text-preview';
     const apiRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -368,7 +368,7 @@ apiRouter.post('/openrouter', express.json({ limit: '1mb' }), async (req, res) =
       return res.status(503).json({ error: 'OpenRouter API key not configured on server' });
     }
     const { messages, model } = req.body;
-    const modelName = model || 'meta-llama/llama-3.3-70b-instruct:free';
+    const modelName = model || 'meta-llama/llama-3.2-3b-instruct:free';
     const apiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -399,7 +399,7 @@ apiRouter.post('/cerebras', express.json({ limit: '1mb' }), async (req, res) => 
       return res.status(503).json({ error: 'Cerebras API key not configured on server' });
     }
     const { messages, model } = req.body;
-    const modelName = model || 'llama-3.3-70b';
+    const modelName = model || 'llama3.3-70b';
     const apiRes = await fetch('https://api.cerebras.ai/v1/chat/completions', {
       method: 'POST',
       headers: {

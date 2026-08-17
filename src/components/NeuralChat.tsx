@@ -153,12 +153,12 @@ interface EngineOption { id: string; label: string; model: string; endpoint: str
 const ENGINE_OPTIONS: EngineOption[] = [
   { id: 'auto',        label: 'Auto (Smart Failover)', model: '',                                       endpoint: 'auto',        badge: '⚡' },
   { id: 'gemini',      label: 'Gemini 3.7 Flash',      model: 'gemini-3.7-flash',                        endpoint: 'gemini',      badge: '🔷' },
-  { id: 'groq',        label: 'Groq Llama 3.3 70B',    model: 'llama-3.3-70b-versatile',                 endpoint: 'groq',        badge: '⚡' },
+  { id: 'groq',        label: 'Groq Llama 3.2 90B',    model: 'llama-3.2-90b-text-preview',              endpoint: 'groq',        badge: '⚡' },
   { id: 'claude',      label: 'Claude Sonnet 4',       model: 'claude-sonnet-4-20250514',                endpoint: 'claude',      badge: '🟣' },
-  { id: 'openrouter',  label: 'OpenRouter Llama 3.3',  model: 'meta-llama/llama-3.3-70b-instruct:free',  endpoint: 'openrouter',  badge: '🔶' },
-  { id: 'cerebras',    label: 'Cerebras Llama 3.3',    model: 'llama-3.3-70b',                           endpoint: 'cerebras',    badge: '🧠' },
+  { id: 'openrouter',  label: 'OpenRouter Llama 3.2',  model: 'meta-llama/llama-3.2-3b-instruct:free',   endpoint: 'openrouter',  badge: '🔶' },
+  { id: 'cerebras',    label: 'Cerebras Llama 3.3',    model: 'llama3.3-70b',                            endpoint: 'cerebras',    badge: '🧠' },
   { id: 'huggingface', label: 'HuggingFace Qwen 72B',  model: 'Qwen/Qwen2.5-72B-Instruct',               endpoint: 'huggingface', badge: '🤗' },
-  { id: 'nvidia',      label: 'NVIDIA Llama 3.3 70B',  model: 'meta/llama-3.3-70b-instruct',             endpoint: 'nvidia',      badge: '🟢' },
+  { id: 'nvidia',      label: 'NVIDIA Llama 3.1 70B',  model: 'meta/llama-3.1-70b-instruct',             endpoint: 'nvidia',      badge: '🟢' },
 ];
 
 const QUICK_ACTIONS = [

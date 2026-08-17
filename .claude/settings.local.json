@@ -28,7 +28,9 @@
       "Read(//mnt/**)",
       "Bash(ls /drives/)",
       "WebFetch(domain:ai.google.dev)",
-      "WebFetch(domain:console.groq.com)"
+      "WebFetch(domain:console.groq.com)",
+      "Bash(curl -s https://smartback-iyuq.onrender.com/api/ai-status)",
+      "Bash(curl *)"
     ]
   }
 }

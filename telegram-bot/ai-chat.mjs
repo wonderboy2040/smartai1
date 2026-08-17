@@ -24,14 +24,13 @@ const MAX_HISTORY = 10;
 // ============================================
 export const AI_ENGINE_LABELS = {
   auto: '⚡ Auto (Smart Failover)',
-  gemini: '🔷 Gemini 2.5 Flash',
-  groq: '⚡ Groq Llama 3.3 70B',
+  gemini: '🔷 Gemini 3.7 Flash',
+  groq: '⚡ Groq Llama 3.2 90B',
   claude: '🟣 Claude Sonnet 4',
-  openrouter: '🔶 OpenRouter Llama 3.3',
+  openrouter: '🔶 OpenRouter Llama 3.2',
   cerebras: '🧠 Cerebras Llama 3.3',
   huggingface: '🤗 HuggingFace Qwen 72B',
-  nvidia: '🟢 NVIDIA Llama 3.3 70B',
-  gemini: '🔷 Gemini 3.7 Flash',
+  nvidia: '🟢 NVIDIA Llama 3.1 70B',
 };
 const chatEnginePref = new Map(); // chatId -> engineId
 export function setChatEngine(chatId, engine) {
@@ -187,7 +186,7 @@ async function getRealtimeForex() {
 // ============================================
 
 // 0) NVIDIA (Primary Fallback out-of-the-box)
-async function callNvidia(messages, systemPrompt, modelName = 'meta/llama-3.3-70b-instruct') {
+async function callNvidia(messages, systemPrompt, modelName = 'meta/llama-3.1-70b-instruct') {
   if (!isNvidiaAvailable()) throw new Error('NVIDIA key missing');
   if (engineHealth.nvidia.failures >= 3 && Date.now() - engineHealth.nvidia.lastFailure < engineHealth.nvidia.cooldownMs) throw new Error('NVIDIA cooling down');
   const res = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
@@ -220,8 +219,8 @@ async function callGemini(messages, systemPrompt, modelName = 'gemini-3.7-flash'
   return text;
 }
 
-// 2) GROQ LLAMA 3.3
-async function callGroq(messages, systemPrompt, modelName = 'llama-3.3-70b-versatile') {
+// 2) GROQ LLAMA 3.2
+async function callGroq(messages, systemPrompt, modelName = 'llama-3.2-90b-text-preview') {
   if (!isGroqAvailable()) throw new Error('Groq key missing');
   if (engineHealth.groq.failures >= 3 && Date.now() - engineHealth.groq.lastFailure < engineHealth.groq.cooldownMs) throw new Error('Groq cooling down');
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -255,7 +254,7 @@ async function callClaude(messages, systemPrompt, modelName = 'claude-sonnet-4-2
 }
 
 // 4) OPENROUTER (free models)
-async function callOpenRouter(messages, systemPrompt, modelName = 'meta-llama/llama-3.3-70b-instruct:free') {
+async function callOpenRouter(messages, systemPrompt, modelName = 'meta-llama/llama-3.2-3b-instruct:free') {
   if (!isOpenRouterAvailable()) throw new Error('OpenRouter key missing');
   if (engineHealth.openrouter.failures >= 3 && Date.now() - engineHealth.openrouter.lastFailure < engineHealth.openrouter.cooldownMs) throw new Error('OpenRouter cooling down');
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -272,7 +271,7 @@ async function callOpenRouter(messages, systemPrompt, modelName = 'meta-llama/ll
 }
 
 // 5) CEREBRAS
-async function callCerebras(messages, systemPrompt, modelName = 'llama-3.3-70b') {
+async function callCerebras(messages, systemPrompt, modelName = 'llama3.3-70b') {
   if (!isCerebrasAvailable()) throw new Error('Cerebras key missing');
   if (engineHealth.cerebras.failures >= 3 && Date.now() - engineHealth.cerebras.lastFailure < engineHealth.cerebras.cooldownMs) throw new Error('Cerebras cooling down');
   const res = await fetch('https://api.cerebras.ai/v1/chat/completions', {
@@ -753,8 +752,8 @@ async function _chatWithAIInner(chatId, userMessage, history, portfolio, livePri
   if (history.length > MAX_HISTORY * 2) history.splice(0, history.length - MAX_HISTORY);
 
   const engineLabels = {
-    nvidia: '🟢 NVIDIA Llama 4', gemini: '🔷 Gemini 2.5', groq: '⚡ Groq Llama 4', claude: '🟣 Claude Sonnet 5',
-    openrouter: '🔶 OpenRouter Llama 4', cerebras: '🧠 Cerebras Llama 4', huggingface: '🤗 HuggingFace',
+    nvidia: '🟢 NVIDIA Llama 3.1', gemini: '🔷 Gemini 3.7', groq: '⚡ Groq Llama 3.2', claude: '🟣 Claude Sonnet 4',
+    openrouter: '🔶 OpenRouter Llama 3.2', cerebras: '🧠 Cerebras Llama 3.3', huggingface: '🤗 HuggingFace',
     quant_brain: '📊 Quant Brain',
   };
   const label = engineLabels[usedEngine] || usedEngine;
