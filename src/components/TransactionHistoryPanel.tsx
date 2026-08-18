@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useApp } from '../hooks/AppContext';
 import { Transaction, TransactionType } from '../types';
 import { exportTransactionsCSV } from '../utils/exportData';
+import { VirtualList } from './VirtualList';
 
 // ============================================================
 // TRANSACTION HISTORY PANEL
@@ -167,64 +168,109 @@ const TransactionHistoryPanel = React.memo(function TransactionHistoryPanel() {
           </div>
 
           {/* List */}
-          <div className="max-h-[420px] overflow-y-auto rounded-xl border border-white/5 divide-y divide-white/[0.03]">
-            {filtered.length === 0 && (
+          <div className="rounded-xl border border-white/5 overflow-hidden">
+            {filtered.length === 0 ? (
               <div className="p-8 text-center text-slate-500 text-sm">No transactions match the filters.</div>
-            )}
-            {filtered.map(t => {
-              const c = cur(t.market);
-              const isEditing = editingId === t.id;
-              return (
-                <div key={t.id} className="p-3 hover:bg-white/[0.02] transition-colors">
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${t.type === 'buy' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
-                        {t.type}
-                      </span>
-                      <span className="font-bold text-white text-sm">{t.symbol.replace('.NS', '')}</span>
-                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${t.market === 'IN' ? 'bg-orange-500/10 text-orange-400' : 'bg-blue-500/10 text-blue-400'}`}>
-                        {t.market === 'IN' ? 'NSE' : 'US'}
-                      </span>
-                      <span className="text-[10px] text-slate-500 font-mono">{t.date}</span>
-                    </div>
-                    {!isEditing && (
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono text-slate-300">{t.qty} @ {c}{t.price.toFixed(2)}</span>
-                        <span className="text-xs font-mono font-bold text-white">= {c}{t.amount.toFixed(2)}</span>
-                        {typeof t.realizedPL === 'number' && (
-                          <span className={`text-[10px] font-mono font-bold ${t.realizedPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                            P&L {t.realizedPL >= 0 ? '+' : ''}{c}{t.realizedPL.toFixed(2)}
+            ) : filtered.length > 8 ? (
+              <VirtualList
+                items={filtered}
+                itemHeight={64}
+                height={Math.min(420, filtered.length * 64)}
+                keyExtractor={(t) => t.id}
+                renderItem={(t) => {
+                  const c = cur(t.market);
+                  const isEditing = editingId === t.id;
+                  return (
+                    <div className="p-3 border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors h-full flex flex-col justify-center">
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${t.type === 'buy' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
+                            {t.type}
                           </span>
+                          <span className="font-bold text-white text-sm">{t.symbol.replace('.NS', '')}</span>
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${t.market === 'IN' ? 'bg-orange-500/10 text-orange-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                            {t.market === 'IN' ? 'NSE' : 'US'}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-mono">{t.date}</span>
+                        </div>
+                        {!isEditing && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono text-slate-300">{t.qty} @ {c}{t.price.toFixed(2)}</span>
+                            <span className="text-xs font-mono font-bold text-white">= {c}{t.amount.toFixed(2)}</span>
+                            {typeof t.realizedPL === 'number' && (
+                              <span className={`text-[10px] font-mono font-bold ${t.realizedPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                P&L {t.realizedPL >= 0 ? '+' : ''}{c}{t.realizedPL.toFixed(2)}
+                              </span>
+                            )}
+                            <button onClick={() => startEdit(t)} className="px-2 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 text-[10px] font-bold text-cyan-400" title="Edit">✏️</button>
+                            <button
+                              onClick={() => { if (confirm(`Delete this ${t.type} of ${t.symbol.replace('.NS', '')}? (Position holdings stay unchanged.)`)) deleteTransaction(t.id); }}
+                              className="px-2 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-[10px] font-bold text-red-400" title="Delete">🗑️</button>
+                          </div>
                         )}
-                        <button onClick={() => startEdit(t)} className="px-2 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 text-[10px] font-bold text-cyan-400" title="Edit">✏️</button>
-                        <button
-                          onClick={() => { if (confirm(`Delete this ${t.type} of ${t.symbol.replace('.NS', '')}? (Position holdings stay unchanged.)`)) deleteTransaction(t.id); }}
-                          className="px-2 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-[10px] font-bold text-red-400" title="Delete">🗑️</button>
                       </div>
-                    )}
-                  </div>
-
-                  {isEditing && (
-                    <div className="flex flex-wrap items-end gap-2 mt-2">
-                      <div className="flex flex-col">
-                        <label className="text-[9px] text-slate-500 uppercase font-bold mb-1">Qty</label>
-                        <input type="number" value={editQty} onChange={e => setEditQty(e.target.value)} className="quantum-input rounded-lg px-2 py-1 text-xs text-white w-20 bg-slate-900/60" />
-                      </div>
-                      <div className="flex flex-col">
-                        <label className="text-[9px] text-slate-500 uppercase font-bold mb-1">Price</label>
-                        <input type="number" value={editPrice} onChange={e => setEditPrice(e.target.value)} className="quantum-input rounded-lg px-2 py-1 text-xs text-white w-24 bg-slate-900/60" />
-                      </div>
-                      <div className="flex flex-col">
-                        <label className="text-[9px] text-slate-500 uppercase font-bold mb-1">Date</label>
-                        <input type="date" value={editDate} onChange={e => setEditDate(e.target.value)} className="quantum-input rounded-lg px-2 py-1 text-xs text-slate-300 bg-slate-900/60" />
-                      </div>
-                      <button onClick={() => saveEdit(t)} className="px-3 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-xs font-bold text-emerald-400">Save</button>
-                      <button onClick={() => setEditingId(null)} className="px-3 py-1.5 rounded-lg bg-white/5 text-xs font-bold text-slate-400">Cancel</button>
                     </div>
-                  )}
-                </div>
-              );
-            })}
+                  );
+                }}
+              />
+            ) : (
+              <div className="divide-y divide-white/[0.03]">
+                {filtered.map(t => {
+                  const c = cur(t.market);
+                  const isEditing = editingId === t.id;
+                  return (
+                    <div key={t.id} className="p-3 hover:bg-white/[0.02] transition-colors">
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${t.type === 'buy' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
+                            {t.type}
+                          </span>
+                          <span className="font-bold text-white text-sm">{t.symbol.replace('.NS', '')}</span>
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${t.market === 'IN' ? 'bg-orange-500/10 text-orange-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                            {t.market === 'IN' ? 'NSE' : 'US'}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-mono">{t.date}</span>
+                        </div>
+                        {!isEditing && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono text-slate-300">{t.qty} @ {c}{t.price.toFixed(2)}</span>
+                            <span className="text-xs font-mono font-bold text-white">= {c}{t.amount.toFixed(2)}</span>
+                            {typeof t.realizedPL === 'number' && (
+                              <span className={`text-[10px] font-mono font-bold ${t.realizedPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                P&L {t.realizedPL >= 0 ? '+' : ''}{c}{t.realizedPL.toFixed(2)}
+                              </span>
+                            )}
+                            <button onClick={() => startEdit(t)} className="px-2 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 text-[10px] font-bold text-cyan-400" title="Edit">✏️</button>
+                            <button
+                              onClick={() => { if (confirm(`Delete this ${t.type} of ${t.symbol.replace('.NS', '')}? (Position holdings stay unchanged.)`)) deleteTransaction(t.id); }}
+                              className="px-2 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-[10px] font-bold text-red-400" title="Delete">🗑️</button>
+                          </div>
+                        )}
+                      </div>
+
+                      {isEditing && (
+                        <div className="flex flex-wrap items-end gap-2 mt-2">
+                          <div className="flex flex-col">
+                            <label className="text-[9px] text-slate-500 uppercase font-bold mb-1">Qty</label>
+                            <input type="number" value={editQty} onChange={e => setEditQty(e.target.value)} className="quantum-input rounded-lg px-2 py-1 text-xs text-white w-20 bg-slate-900/60" />
+                          </div>
+                          <div className="flex flex-col">
+                            <label className="text-[9px] text-slate-500 uppercase font-bold mb-1">Price</label>
+                            <input type="number" value={editPrice} onChange={e => setEditPrice(e.target.value)} className="quantum-input rounded-lg px-2 py-1 text-xs text-white w-24 bg-slate-900/60" />
+                          </div>
+                          <div className="flex flex-col">
+                            <label className="text-[9px] text-slate-500 uppercase font-bold mb-1">Date</label>
+                            <input type="date" value={editDate} onChange={e => setEditDate(e.target.value)} className="quantum-input rounded-lg px-2 py-1 text-xs text-slate-300 bg-slate-900/60" />
+                          </div>
+                          <button onClick={() => saveEdit(t)} className="px-3 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-xs font-bold text-emerald-400">Save</button>
+                          <button onClick={() => setEditingId(null)} className="px-3 py-1.5 rounded-lg bg-white/5 text-xs font-bold text-slate-400">Cancel</button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
           <p className="text-[9px] text-slate-600 mt-2">
             Note: editing/deleting a ledger entry adjusts your reports &amp; analytics. Current portfolio holdings are not recalculated.

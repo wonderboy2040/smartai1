@@ -11,9 +11,10 @@
  *  5. Widget data endpoint — cached prices for instant widget render
  * ============================================================ */
 
-const CACHE_VERSION = 'wealth-ai-v5'; // v5.0 upgrade: NeuralChat persistence + bot parity
+const CACHE_VERSION = 'wealth-ai-v18'; // v18.0 upgrade: Full offline caching & API resilience
 const SHELL = ['/', '/index.html', '/manifest.json', '/icon.svg'];
 const WIDGET_CACHE = 'wealth-ai-widget-data';
+const API_CACHE = 'wealth-ai-api-cache-v18';
 
 // ============================================================
 // INSTALL — cache app shell
@@ -33,7 +34,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) =>
       Promise.all(
         keys
-          .filter((k) => k !== CACHE_VERSION && k !== WIDGET_CACHE)
+          .filter((k) => k !== CACHE_VERSION && k !== WIDGET_CACHE && k !== API_CACHE)
           .map((k) => caches.delete(k))
       )
     ).then(() => self.clients.claim())
@@ -70,6 +71,29 @@ self.addEventListener('fetch', (event) => {
         const cached = await cache.match('/widget-data.json');
         return cached || new Response('{}', { headers: { 'Content-Type': 'application/json' } });
       })
+    );
+    return;
+  }
+
+  // API endpoints — Network-first, fallback to cached API response if offline
+  if (req.url.includes('/api/')) {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res.ok) {
+            const clone = res.clone();
+            caches.open(API_CACHE).then((cache) => cache.put(req, clone)).catch(() => {});
+          }
+          return res;
+        })
+        .catch(async () => {
+          const cached = await caches.match(req);
+          if (cached) return cached;
+          return new Response(JSON.stringify({ offline: true, error: 'Offline mode active' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        })
     );
     return;
   }

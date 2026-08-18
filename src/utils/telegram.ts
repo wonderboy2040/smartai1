@@ -239,6 +239,7 @@ export function getSmartAllocations(
     const rsi = data?.rsi || 50;
     const low = data?.low || price * 0.98;
     const high = data?.high || price * 1.02;
+    const atr = (high - low) > 0 ? (high - low) : price * 0.02;
     const volume = data?.volume || 0;
     const sma20 = data?.sma20;
     const sma50 = data?.sma50;

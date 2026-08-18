@@ -7,6 +7,10 @@ import { PortfolioHealthMonitor } from './components/PortfolioHealthMonitor';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Clock } from './components/Clock';
 import { InstallPWA } from './components/InstallPWA';
+import { usePrefetch } from './hooks/usePrefetch';
+import { useAppShortcuts } from './hooks/useKeyboardShortcuts';
+import { appDB } from './utils/db';
+import { WifiOff } from 'lucide-react';
 
 // Lazy load with auto-recovery: after a fresh deploy the cached index.html can
 // reference old hashed chunks that no longer exist ("Failed to fetch dynamically
@@ -42,6 +46,19 @@ export default function App() {
   const [tgToken, setTgToken] = useState('');
   const [tgChatId, setTgChatId] = useState('');
   const [formError, setFormError] = useState('');
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   useEffect(() => {
     Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')])
       .then(([token, chatId]) => {
@@ -63,6 +80,33 @@ export default function App() {
     savePosition, usdInrRate, portfolioContextText,
     refreshAll, isRefreshing,
   } = state;
+
+  // Predictive prefetching for active tab and portfolio holdings
+  usePrefetch(activeTab, portfolio);
+
+  // Global keyboard shortcuts
+  useAppShortcuts({
+    refresh: refreshAll,
+    openDashboard: () => setActiveTab('dashboard'),
+    openPortfolio: () => setActiveTab('portfolio'),
+    openPlanner: () => setActiveTab('planner'),
+    toggleTheme: toggleTheme,
+  });
+
+  // Save portfolio snapshot to IndexedDB whenever portfolio or metrics update
+  useEffect(() => {
+    if (isAuthenticated && portfolio.length > 0) {
+      appDB.savePortfolioSnapshot({
+        date: new Date().toISOString().split('T')[0],
+        totalValue: metrics.totalValue || 0,
+        totalInvested: metrics.totalInvested || 0,
+        totalProfit: metrics.totalPL || 0,
+        profitPercent: metrics.plPct || 0,
+        holdingsCount: portfolio.length,
+        timestamp: Date.now()
+      }).catch(() => {});
+    }
+  }, [isAuthenticated, portfolio.length, metrics.totalValue, metrics.totalPL]);
 
   // Keyboard Shortcuts for Tabs (1-5)
   useEffect(() => {
@@ -153,11 +197,18 @@ export default function App() {
                     <span className="quantum-badge">v14.0 LTI</span>
                   </div>
                   <div className="flex items-center gap-2 text-[11px]">
-                    <span className={`w-1.5 h-1.5 rounded-full ${/ACTIVE|LIVE/i.test(liveStatus) ? 'bg-cyan-400 animate-pulse-dot' : 'bg-amber-500 animate-pulse'}`} />
-                    <span className={`font-medium ${/ACTIVE|LIVE/i.test(liveStatus) ? 'text-cyan-500/80' : 'text-amber-400/80'}`}>{/ACTIVE|LIVE/i.test(liveStatus) ? 'LIVE' : 'SYNCING'}</span>
+                    <span className={`w-1.5 h-1.5 rounded-full ${!isOnline ? 'bg-red-400 animate-pulse' : /ACTIVE|LIVE/i.test(liveStatus) ? 'bg-cyan-400 animate-pulse-dot' : 'bg-amber-500 animate-pulse'}`} />
+                    <span className={`font-medium ${!isOnline ? 'text-red-400' : /ACTIVE|LIVE/i.test(liveStatus) ? 'text-cyan-500/80' : 'text-amber-400/80'}`}>
+                      {!isOnline ? 'OFFLINE (Cached Mode)' : /ACTIVE|LIVE/i.test(liveStatus) ? 'LIVE' : 'SYNCING'}
+                    </span>
                     <span className="text-slate-700">•</span>
                     <Clock />
-                    {feedStatus && Object.values(feedStatus).some(Boolean) && (
+                    {!isOnline && (
+                      <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-500/15 text-red-400 text-[9px] font-bold">
+                        <WifiOff size={10} /> IndexedDB Active
+                      </span>
+                    )}
+                    {isOnline && feedStatus && Object.values(feedStatus).some(Boolean) && (
                       <>
                         <span className="text-slate-700">•</span>
                         <span className="flex items-center gap-1" title="Live real-time feeds active">

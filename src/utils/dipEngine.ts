@@ -247,6 +247,7 @@ export function allocateDipBudget(
 
     // Kelly: use trade-level expected win/loss (not nonsensical daily rates)
     // Deep dip: expect ~12% gain, risk ~5% SL. Mild: ~8% gain, risk ~4% SL.
+    const winRate = d.dipDepth === 'DEEP' ? 0.65 : 0.55;
     const avgWin  = d.dipDepth === 'DEEP' ? 0.12 : 0.08;
     const avgLoss = d.dipDepth === 'DEEP' ? 0.05 : 0.04;
     const kelly = kellyCriterion(winRate, avgWin, avgLoss);

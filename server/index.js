@@ -10,6 +10,7 @@
 //        OPENROUTER_API_KEY, CEREBRAS_API_KEY, HF_API_KEY,
 //        NVIDIA_API_KEY, TAVILY_API_KEY, API_URL (optional)
 // ============================================================
+import 'dotenv/config';
 import express from 'express';
 import { subscribe as feedSubscribe, snapshot as feedSnapshot, feedStatus } from './liveFeed.js';
 import { ensureUsSubscribed, usClientUp, usClientDown } from './usStream.js';
@@ -305,14 +306,14 @@ app.get('/api/config', (_req, res) => {
 // Provider key map (server-side env vars — NOT VITE_*)
 // ------------------------------------------------------------
 const KEYS = {
-  groq: process.env.GROQ_API_KEY || '',
-  gemini: process.env.GEMINI_API_KEY || '',
-  claude: process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY || '',
-  openrouter: process.env.OPENROUTER_API_KEY || '',
-  cerebras: process.env.CEREBRAS_API_KEY || '',
-  huggingface: process.env.HF_API_KEY || process.env.HUGGINGFACE_API_KEY || '',
-  nvidia: process.env.NVIDIA_API_KEY || '',
-  tavily: process.env.TAVILY_API_KEY || '',
+  groq: (process.env.GROQ_API_KEY || process.env.GROQ_KEY || '').replace(/['"]/g, '').trim(),
+  gemini: (process.env.GEMINI_API_KEY || process.env.GEMINI_KEY || '').replace(/['"]/g, '').trim(),
+  claude: (process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_KEY || '').replace(/['"]/g, '').trim(),
+  openrouter: (process.env.OPENROUTER_API_KEY || process.env.OPENROUTER_KEY || '').replace(/['"]/g, '').trim(),
+  cerebras: (process.env.CEREBRAS_API_KEY || process.env.CEREBRAS_KEY || '').replace(/['"]/g, '').trim(),
+  huggingface: (process.env.HF_API_KEY || process.env.HUGGINGFACE_API_KEY || process.env.HF_KEY || '').replace(/['"]/g, '').trim(),
+  nvidia: (process.env.NVIDIA_API_KEY || process.env.NVIDIA_KEY || '').replace(/['"]/g, '').trim(),
+  tavily: (process.env.TAVILY_API_KEY || process.env.TAVILY_KEY || '').replace(/['"]/g, '').trim(),
 };
 
 // Telegram bot credentials (server-side env only).
@@ -796,9 +797,15 @@ for (const [name, cfg] of Object.entries(OPENAI_COMPAT)) {
     if (!key) return jsonError(res, 503, `${name} not configured`);
     try {
       const body = { ...req.body };
-      if (!body.model) body.model = cfg.defModel;
+      // Auto-correct deprecated models (e.g. decommissioned preview models)
+      if (name === 'groq' && (!body.model || body.model.includes('llama-3.2-90b') || body.model.includes('preview'))) {
+        body.model = 'llama-3.3-70b-versatile';
+      } else if (!body.model) {
+        body.model = cfg.defModel;
+      }
       if (!Array.isArray(body.messages)) return jsonError(res, 400, 'messages[] required');
-      const upstream = await fetch(cfg.url, {
+
+      let upstream = await fetch(cfg.url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -808,6 +815,21 @@ for (const [name, cfg] of Object.entries(OPENAI_COMPAT)) {
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(30000),
       });
+
+      // If Groq fails due to model error, retry with llama-3.1-8b-instant fallback
+      if (!upstream.ok && name === 'groq' && (upstream.status === 400 || upstream.status === 404)) {
+        body.model = 'llama-3.1-8b-instant';
+        upstream = await fetch(cfg.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${key}`,
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(30000),
+        });
+      }
+
       const text = await upstream.text();
       res.status(upstream.status).type('application/json').send(text || '{}');
     } catch (e) {
@@ -861,23 +883,42 @@ app.post('/api/tavily', async (req, res) => {
 app.post('/api/gemini', async (req, res) => {
   if (!KEYS.gemini) return jsonError(res, 503, 'gemini not configured');
   try {
-    const { messages = [], model = 'gemini-2.5-flash' } = req.body || {};
+    const { messages = [], model } = req.body || {};
     if (!Array.isArray(messages)) return jsonError(res, 400, 'messages[] required');
-    // Validate model name — prevent path injection in the URL.
-    const safeModel = String(model).replace(/[^a-zA-Z0-9.\-]/g, '').slice(0, 50) || 'gemini-2.5-flash';
+
+    // Normalize model name (gemini-2.0-flash / gemini-1.5-flash)
+    let requestedModel = model;
+    if (!requestedModel || requestedModel.includes('3.7') || requestedModel.includes('2.5')) {
+      requestedModel = 'gemini-2.0-flash';
+    }
+    const safeModel = String(requestedModel).replace(/[^a-zA-Z0-9.\-]/g, '').slice(0, 50) || 'gemini-2.0-flash';
+
     const systemText = messages.filter(m => m.role === 'system').map(m => m.content).join('\n').trim();
     const contents = messages
       .filter(m => m.role !== 'system')
       .map(m => ({ role: m.role === 'assistant' || m.role === 'model' ? 'model' : 'user', parts: [{ text: String(m.content || '') }] }));
     const payload = { contents };
     if (systemText) payload.systemInstruction = { parts: [{ text: systemText }] };
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${safeModel}:generateContent?key=${KEYS.gemini}`;
-    const upstream = await fetch(url, {
+
+    let url = `https://generativelanguage.googleapis.com/v1beta/models/${safeModel}:generateContent?key=${KEYS.gemini}`;
+    let upstream = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(30000),
     });
+
+    // If candidate model returns 404 (model not found), fallback to gemini-1.5-flash
+    if (!upstream.ok && upstream.status === 404 && safeModel !== 'gemini-1.5-flash') {
+      url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${KEYS.gemini}`;
+      upstream = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(30000),
+      });
+    }
+
     const text = await upstream.text();
     res.status(upstream.status).type('application/json').send(text || '{}');
   } catch (e) {
@@ -918,6 +959,337 @@ app.post('/api/claude', async (req, res) => {
   } catch (e) {
     return jsonError(res, 502, 'Claude AI provider is temporarily unavailable.', e);
   }
+});
+
+// ------------------------------------------------------------
+// POST /api/chat/stream → SSE Real-Time AI Token Streaming
+// Streams tokens chunk by chunk from Gemini, Groq, Cerebras, OpenRouter
+// ------------------------------------------------------------
+app.post('/api/chat/stream', async (req, res) => {
+  const { messages = [], engine = 'gemini', model = '' } = req.body || {};
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return jsonError(res, 400, 'messages[] required');
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (res.flushHeaders) res.flushHeaders();
+
+  // 1. Gemini Streaming
+  if (engine === 'gemini' && KEYS.gemini) {
+    try {
+      let requestedModel = model;
+      if (!requestedModel || requestedModel.includes('3.7') || requestedModel.includes('2.5')) {
+        requestedModel = 'gemini-2.0-flash';
+      }
+      const safeModel = String(requestedModel).replace(/[^a-zA-Z0-9.\-]/g, '').slice(0, 50) || 'gemini-2.0-flash';
+      const systemText = messages.filter(m => m.role === 'system').map(m => m.content).join('\n').trim();
+      const contents = messages
+        .filter(m => m.role !== 'system')
+        .map(m => ({ role: m.role === 'assistant' || m.role === 'model' ? 'model' : 'user', parts: [{ text: String(m.content || '') }] }));
+      const payload = { contents };
+      if (systemText) payload.systemInstruction = { parts: [{ text: systemText }] };
+
+      let url = `https://generativelanguage.googleapis.com/v1beta/models/${safeModel}:streamGenerateContent?alt=sse&key=${KEYS.gemini}`;
+      let upstream = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(60000),
+      });
+
+      if (!upstream.ok && upstream.status === 404 && safeModel !== 'gemini-1.5-flash') {
+        url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?alt=sse&key=${KEYS.gemini}`;
+        upstream = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(60000),
+        });
+      }
+
+      if (!upstream.ok || !upstream.body) {
+        res.write(`data: ${JSON.stringify({ error: `Gemini stream error ${upstream.status}` })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+
+      const reader = upstream.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const dataStr = line.slice(6).trim();
+            if (!dataStr) continue;
+            try {
+              const parsed = JSON.parse(dataStr);
+              const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (text) {
+                res.write(`data: ${JSON.stringify({ content: text })}\n\n`);
+              }
+            } catch {}
+          }
+        }
+      }
+      res.write('data: [DONE]\n\n');
+      return res.end();
+    } catch (err) {
+      res.write(`data: ${JSON.stringify({ error: err?.message || 'Stream error' })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      return res.end();
+    }
+  }
+
+  // 2. OpenAI-compatible streaming (Groq, Cerebras, OpenRouter, NVIDIA, HuggingFace)
+  const compatCfg = OPENAI_COMPAT[engine] || OPENAI_COMPAT.groq;
+  const apiKey = KEYS[engine] || KEYS.groq;
+
+  if (!apiKey) {
+    res.write(`data: ${JSON.stringify({ error: `API key for ${engine} not configured on server` })}\n\n`);
+    res.write('data: [DONE]\n\n');
+    return res.end();
+  }
+
+  try {
+    let streamModel = model || compatCfg.defModel;
+    if (engine === 'groq' && (streamModel.includes('llama-3.2-90b') || streamModel.includes('preview'))) {
+      streamModel = 'llama-3.3-70b-versatile';
+    }
+
+    const upstream = await fetch(compatCfg.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: streamModel,
+        messages,
+        stream: true,
+        max_tokens: 2048,
+      }),
+      signal: AbortSignal.timeout(60000),
+    });
+
+    if (!upstream.ok || !upstream.body) {
+      res.write(`data: ${JSON.stringify({ error: `Upstream error ${upstream.status}` })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      return res.end();
+    }
+
+    const reader = upstream.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const dataStr = line.slice(6).trim();
+          if (dataStr === '[DONE]') {
+            res.write('data: [DONE]\n\n');
+            continue;
+          }
+          try {
+            const parsed = JSON.parse(dataStr);
+            const content = parsed?.choices?.[0]?.delta?.content;
+            if (content) {
+              res.write(`data: ${JSON.stringify({ content })}\n\n`);
+            }
+          } catch {}
+        }
+      }
+    }
+    res.write('data: [DONE]\n\n');
+    return res.end();
+  } catch (err) {
+    res.write(`data: ${JSON.stringify({ error: err?.message || 'Streaming failed' })}\n\n`);
+    res.write('data: [DONE]\n\n');
+    return res.end();
+  }
+});
+
+// ------------------------------------------------------------
+// POST /api/vision-analysis → Gemini Vision Chart & Screenshot AI
+// Analyzes technical charts, candlestick setups, support/resistance
+// ------------------------------------------------------------
+app.post('/api/vision-analysis', async (req, res) => {
+  if (!KEYS.gemini) return jsonError(res, 503, 'Gemini Vision not configured on server');
+  try {
+    const { image, query, mimeType = 'image/jpeg' } = req.body || {};
+    if (!image) return jsonError(res, 400, 'Base64 image payload required');
+
+    // Clean base64 string
+    const base64Data = image.includes(',') ? image.split(',')[1] : image;
+    const prompt = query || 'Analyze this financial trading chart in detail. Identify the asset symbol, price trend, key support and resistance zones, candlestick patterns, technical indicator signals, and provide an actionable setup with exact Entry, Stop-Loss, and Target 1/Target 2 levels with Risk-to-Reward ratio in crisp Hinglish.';
+
+    const payload = {
+      contents: [{
+        parts: [
+          { text: prompt },
+          { inlineData: { mimeType, data: base64Data } }
+        ]
+      }]
+    };
+
+    let url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${KEYS.gemini}`;
+    let upstream = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(45000),
+    });
+
+    if (!upstream.ok && upstream.status === 404) {
+      url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${KEYS.gemini}`;
+      upstream = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(45000),
+      });
+    }
+
+    if (!upstream.ok) {
+      const errText = await upstream.text();
+      return jsonError(res, 502, `Gemini Vision error: ${upstream.status} - ${errText}`);
+    }
+
+    const data = await upstream.json();
+    const analysisText = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'No analysis generated from image.';
+
+    res.json({
+      ok: true,
+      analysis: analysisText,
+      engine: 'gemini-vision-2.0',
+      timestamp: Date.now()
+    });
+  } catch (err) {
+    return jsonError(res, 502, 'Vision analysis failed', err);
+  }
+});
+
+// ------------------------------------------------------------
+// POST /api/ai-consensus → Multi-Engine AI Voting & Consensus
+// Queries Gemini, Groq, and Cerebras/Claude in parallel to build consensus
+// ------------------------------------------------------------
+app.post('/api/ai-consensus', async (req, res) => {
+  const { query, context = '' } = req.body || {};
+  if (!query) return jsonError(res, 400, 'query string required');
+
+  const models = [
+    { name: 'Gemini 2.0', endpoint: 'gemini', model: 'gemini-2.0-flash' },
+    { name: 'Groq Llama 70B', endpoint: 'groq', model: 'llama-3.3-70b-versatile' },
+    { name: 'Cerebras Llama 70B', endpoint: 'cerebras', model: 'llama-3.3-70b' },
+  ];
+
+  const systemPrompt = `You are an elite quantitative consensus engine.
+Context: ${context || 'General Market'}
+Task: Analyze the user request. Provide a definitive stance (BULLISH / BEARISH / NEUTRAL), specific price levels/targets, key technical reason, and risk parameters in concise Hinglish.`;
+
+  const results = await Promise.allSettled(
+    models.map(async (m) => {
+      const start = Date.now();
+      let responseText = null;
+
+      if (m.endpoint === 'gemini' && KEYS.gemini) {
+        const payload = {
+          contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\nQuery: ${query}` }] }]
+        };
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m.model}:generateContent?key=${KEYS.gemini}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(20000),
+        });
+        if (r.ok) {
+          const j = await r.json();
+          responseText = j?.candidates?.[0]?.content?.parts?.[0]?.text;
+        }
+      } else if (KEYS[m.endpoint]) {
+        const cfg = OPENAI_COMPAT[m.endpoint];
+        const r = await fetch(cfg.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${KEYS[m.endpoint]}` },
+          body: JSON.stringify({
+            model: m.model,
+            messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: query }],
+            max_tokens: 1024,
+          }),
+          signal: AbortSignal.timeout(20000),
+        });
+        if (r.ok) {
+          const j = await r.json();
+          responseText = j?.choices?.[0]?.message?.content;
+        }
+      }
+
+      if (!responseText) throw new Error(`${m.name} unavailable`);
+
+      const lower = responseText.toLowerCase();
+      let stance = 'NEUTRAL';
+      if (lower.includes('bullish') || lower.includes('buy') || lower.includes('accumulate')) stance = 'BULLISH';
+      else if (lower.includes('bearish') || lower.includes('sell') || lower.includes('avoid')) stance = 'BEARISH';
+
+      return {
+        model: m.name,
+        stance,
+        response: responseText,
+        latencyMs: Date.now() - start
+      };
+    })
+  );
+
+  const successful = results
+    .filter(r => r.status === 'fulfilled')
+    .map(r => r.value);
+
+  if (successful.length === 0) {
+    return jsonError(res, 502, 'Consensus engines unavailable');
+  }
+
+  // Calculate consensus
+  const stanceCounts = { BULLISH: 0, BEARISH: 0, NEUTRAL: 0 };
+  for (const s of successful) stanceCounts[s.stance] = (stanceCounts[s.stance] || 0) + 1;
+
+  let consensusStance = 'NEUTRAL';
+  let maxCount = 0;
+  for (const [st, cnt] of Object.entries(stanceCounts)) {
+    if (cnt > maxCount) {
+      maxCount = cnt;
+      consensusStance = st;
+    }
+  }
+
+  const agreementPct = Math.round((maxCount / successful.length) * 100);
+
+  // Synthesize top response
+  const primaryResponse = successful[0]?.response || '';
+
+  res.json({
+    ok: true,
+    consensusStance,
+    agreementPct,
+    modelsCount: successful.length,
+    models: successful.map(s => ({ name: s.model, stance: s.stance, latencyMs: s.latencyMs })),
+    synthesizedResponse: `🤝 **MULTI-ENGINE CONSENSUS: ${consensusStance} (${agreementPct}% Agreement across ${successful.length} Models)**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n${primaryResponse}`,
+    timestamp: Date.now()
+  });
 });
 
 // ------------------------------------------------------------

@@ -26,7 +26,7 @@ import {
 } from './analysis.mjs';
 
 
-import { chatWithAI, clearChatHistory, setChatEngine, getChatEngine, AI_ENGINE_LABELS, getAIHealthStatus } from './ai-chat.mjs';
+import { chatWithAI, chatWithConsensus, analyzeChartImage, clearChatHistory, setChatEngine, getChatEngine, AI_ENGINE_LABELS, getAIHealthStatus } from './ai-chat.mjs';
 import { backtestSignal, calculateBacktestMetrics } from './backtester.mjs';
 import { scanAlgoSignals, formatAlgoAlert, algoWatchKeys } from './algo.mjs';
 
@@ -265,7 +265,10 @@ apiRouter.post('/gemini', express.json({ limit: '1mb' }), async (req, res) => {
       return res.status(503).json({ error: 'Gemini API key not configured on server' });
     }
     const { messages, model } = req.body;
-    const modelName = model || 'gemini-2.5-flash';
+    let modelName = model;
+    if (!modelName || modelName.includes('3.7') || modelName.includes('2.5')) {
+      modelName = 'gemini-2.0-flash';
+    }
 
     const contents = messages.filter(m => m.role !== 'system').map(m => ({
       role: m.role === 'assistant' ? 'model' : 'user',
@@ -279,12 +282,22 @@ apiRouter.post('/gemini', express.json({ limit: '1mb' }), async (req, res) => {
     };
     if (systemMsg) body.systemInstruction = { parts: [{ text: systemMsg.content }] };
 
-    const apiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_KEY}`, {
+    let apiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_KEY}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(30000)
     });
+
+    if (!apiRes.ok && apiRes.status === 404 && modelName !== 'gemini-1.5-flash') {
+      apiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30000)
+      });
+    }
+
     const data = await apiRes.json();
     if (!apiRes.ok) return res.status(apiRes.status).json(data);
     res.json(data);
@@ -300,8 +313,12 @@ apiRouter.post('/groq', express.json({ limit: '1mb' }), async (req, res) => {
       return res.status(503).json({ error: 'Groq API key not configured on server' });
     }
     const { messages, model } = req.body;
-    const modelName = model || 'llama-3.2-90b-text-preview';
-    const apiRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    let modelName = model;
+    if (!modelName || modelName.includes('3.2-90b') || modelName.includes('preview')) {
+      modelName = 'llama-3.3-70b-versatile';
+    }
+
+    let apiRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${GROQ_KEY}`,
@@ -315,6 +332,24 @@ apiRouter.post('/groq', express.json({ limit: '1mb' }), async (req, res) => {
       }),
       signal: AbortSignal.timeout(30000)
     });
+
+    if (!apiRes.ok && (apiRes.status === 400 || apiRes.status === 404)) {
+      apiRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'llama-3.1-8b-instant',
+          messages,
+          temperature: 0.7,
+          max_completion_tokens: 8000
+        }),
+        signal: AbortSignal.timeout(30000)
+      });
+    }
+
     const data = await apiRes.json();
     if (!apiRes.ok) {
       return res.status(apiRes.status).json(data);
@@ -4274,6 +4309,63 @@ bot.onText(/^\/earnings(?:@\w+)?$/i, async (msg) => {
   } catch (e) {
     console.error('❌ /earnings error:', e.message);
     await safeSend(chatId, `❌ Earnings calendar error: ${e.message}`);
+  } finally {
+    stopTyping();
+  }
+});
+
+// ========================================
+// COMMAND: /consensus <QUERY> — Multi-Model Consensus Voting
+// ========================================
+bot.onText(/^\/consensus(?:\s+(.+))?$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  const query = match[1]?.trim();
+  if (!query) {
+    await safeSend(chatId, '🤝 <b>Usage:</b> <code>/consensus &lt;stock or query&gt;</code>\n\n<i>Example:</i> <code>/consensus RELIANCE target and entry</code>\n<i>Queries 3 models in parallel to build multi-engine consensus.</i>');
+    return;
+  }
+  console.log(`📥 /consensus from ${msg.from?.first_name || chatId}: ${query}`);
+  const stopTyping = startTyping(chatId);
+  try {
+    await smartRefreshPrices();
+    const result = await chatWithConsensus(chatId, query, portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, result);
+  } catch (e) {
+    console.error('❌ /consensus error:', e.message);
+    await safeSend(chatId, `❌ Consensus engine error: ${e.message}`);
+  } finally {
+    stopTyping();
+  }
+});
+
+// ========================================
+// PHOTO LISTENER: Multi-Modal Chart Technical Analysis
+// ========================================
+bot.on('photo', async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  console.log(`📥 Photo received from ${msg.from?.first_name || chatId}`);
+  const stopTyping = startTyping(chatId);
+  try {
+    const photo = msg.photo[msg.photo.length - 1]; // highest resolution photo
+    const file = await bot.getFile(photo.file_id);
+    const fileUrl = `https://api.telegram.org/file/bot${TG_TOKEN}/${file.file_path}`;
+
+    // Download image to buffer
+    const imgRes = await fetch(fileUrl);
+    if (!imgRes.ok) throw new Error('Could not download chart photo');
+    const arrayBuffer = await imgRes.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+
+    const caption = msg.caption || 'Analyze this chart screenshot in detail. Identify trend, support/resistance, candlestick patterns, and give exact Entry, SL, and Target 1/2.';
+    await safeSend(chatId, '📸 <i>Analyzing chart with Gemini Vision AI...</i>');
+
+    const analysis = await analyzeChartImage(base64, caption, 'image/jpeg');
+    await safeSend(chatId, analysis);
+  } catch (e) {
+    console.error('❌ Chart vision error:', e.message);
+    await safeSend(chatId, `❌ Chart analysis error: ${e.message}\n\n<i>Ensure Gemini API key is configured.</i>`);
   } finally {
     stopTyping();
   }

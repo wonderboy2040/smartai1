@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles, Cpu, ChevronDown, Mic, StopCircle, RotateCcw } from 'lucide-react';
+import { Send, BrainCircuit, X, Trash2, Copy, Check, Sparkles, Cpu, ChevronDown, Mic, StopCircle, RotateCcw, Image as ImageIcon, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   buildSuperintelligenceContext, buildSuperintelligenceSystemPrompt,
@@ -8,6 +8,8 @@ import {
 import type { Position, PriceData } from '../types';
 import { apiFetch } from '../utils/api';
 import { runSuperScoreBacktest, formatSuperScoreReport } from '../utils/superScoreBacktest';
+import { analyzeAIResponse } from '../utils/sentimentAnalysis';
+import { appDB } from '../utils/db';
 
 const PROXY_BASE = import.meta.env.VITE_API_PROXY || '';
 let _proxyStatus: Promise<any> | null = null;
@@ -21,9 +23,6 @@ async function getServerAIStatus() {
       try {
         const res = await apiFetch(`${PROXY_BASE}/api/ai-status`, { signal: AbortSignal.timeout(3000) });
         if (!res.ok) {
-          // FIX L39: previously a failed fetch cached the rejected/null promise
-          // for 30s, so a server blip kept the chat showing "offline" even
-          // after recovery. Reset cache on failure so next call retries.
           _proxyStatus = null;
           return null;
         }
@@ -38,8 +37,6 @@ async function getServerAIStatus() {
 }
 
 async function callAIProxy(endpoint: string, body: any, outerSignal?: AbortSignal): Promise<Response | null> {
-  // v5.0: link the 60s safety timeout with the user-triggerable AbortController
-  // so the Stop button actually cancels in-flight engine calls.
   const timeoutCtrl = new AbortController();
   const timer = setTimeout(() => timeoutCtrl.abort(), 60000);
   const signal = outerSignal ?? timeoutCtrl.signal;
@@ -146,14 +143,16 @@ interface ChatMessage {
   text: string;
   timestamp: number;
   model?: string;
-  latencyMs?: number; // v5.0: which engine answered & how fast
+  latencyMs?: number;
+  image?: string;
 }
 
 interface EngineOption { id: string; label: string; model: string; endpoint: string; badge: string; }
 const ENGINE_OPTIONS: EngineOption[] = [
   { id: 'auto',        label: 'Auto (Smart Failover)', model: '',                                       endpoint: 'auto',        badge: '⚡' },
-  { id: 'gemini',      label: 'Gemini 3.7 Flash',      model: 'gemini-3.7-flash',                        endpoint: 'gemini',      badge: '🔷' },
-  { id: 'groq',        label: 'Groq Llama 3.2 90B',    model: 'llama-3.2-90b-text-preview',              endpoint: 'groq',        badge: '⚡' },
+  { id: 'consensus',   label: 'Consensus (Multi-Engine)', model: '',                                   endpoint: 'consensus',   badge: '🤝' },
+  { id: 'gemini',      label: 'Gemini 2.0 Flash',      model: 'gemini-2.0-flash',                        endpoint: 'gemini',      badge: '🔷' },
+  { id: 'groq',        label: 'Groq Llama 3.3 70B',    model: 'llama-3.3-70b-versatile',                 endpoint: 'groq',        badge: '⚡' },
   { id: 'claude',      label: 'Claude Sonnet 4',       model: 'claude-sonnet-4-20250514',                endpoint: 'claude',      badge: '🟣' },
   { id: 'openrouter',  label: 'OpenRouter Llama 3.2',  model: 'meta-llama/llama-3.2-3b-instruct:free',   endpoint: 'openrouter',  badge: '🔶' },
   { id: 'cerebras',    label: 'Cerebras Llama 3.3',    model: 'llama3.3-70b',                            endpoint: 'cerebras',    badge: '🧠' },
@@ -285,6 +284,7 @@ export const NeuralChat = React.memo(({
 }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(loadPersistedChat);
   const [chatInput, setChatInput] = useState('');
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isThinking, setIsThinking] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
@@ -292,11 +292,76 @@ export const NeuralChat = React.memo(({
     try { return localStorage.getItem('neural_engine') || 'auto'; } catch { return 'auto'; }
   });
   const [showEngineMenu, setShowEngineMenu] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => { try { localStorage.setItem('neural_engine', selectedEngine); } catch { } }, [selectedEngine]);
 
-  // v5.0: persist conversation + user-stop abort controller
-  useEffect(() => { persistChat(chatMessages); }, [chatMessages]);
+  // Load IndexedDB history on mount
+  useEffect(() => {
+    appDB.getChatHistory(60).then(saved => {
+      if (saved && saved.length > 0) {
+        setChatMessages(saved.map(s => ({
+          role: s.role,
+          text: s.text,
+          timestamp: s.timestamp,
+          model: s.model,
+          latencyMs: s.latencyMs
+        })));
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Persist conversation to localStorage and IndexedDB
+  const prevMsgCountRef = useRef<number>(chatMessages.length);
+  useEffect(() => {
+    persistChat(chatMessages);
+    // Only save to IndexedDB when a NEW message is added (count increases),
+    // not during streaming updates that modify the last message's text.
+    if (chatMessages.length > prevMsgCountRef.current) {
+      const lastMsg = chatMessages[chatMessages.length - 1];
+      if (lastMsg) {
+        appDB.saveChatMessage({
+          id: `chat_${lastMsg.timestamp}_${lastMsg.role}`,
+          role: lastMsg.role,
+          text: lastMsg.text,
+          timestamp: lastMsg.timestamp,
+          model: lastMsg.model,
+          latencyMs: lastMsg.latencyMs
+        }).catch(() => {});
+      }
+    }
+    prevMsgCountRef.current = chatMessages.length;
+  }, [chatMessages]);
+
   const abortRef = useRef<AbortController | null>(null);
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setSelectedImage(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        const blob = items[i].getAsFile();
+        if (blob) {
+          const reader = new FileReader();
+          reader.onload = () => {
+            setSelectedImage(reader.result as string);
+          };
+          reader.readAsDataURL(blob);
+          break;
+        }
+      }
+    }
+  };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollToBottom = useCallback(() => {
@@ -314,13 +379,14 @@ export const NeuralChat = React.memo(({
   }, []);
 
   const clearChat = useCallback(() => {
-    // v5.0: cancel any in-flight generation before wiping state
     try { abortRef.current?.abort(); } catch { }
     abortRef.current = null;
     setIsThinking(false);
+    setSelectedImage(null);
     const fresh = [{ role: 'system', text: SYSTEM_WELCOME, timestamp: Date.now(), model: 'system' } as ChatMessage];
     setChatMessages(fresh);
     persistChat(fresh);
+    appDB.clearChatHistory().catch(() => {});
   }, []);
 
   // v5.0: Stop button — aborts the in-flight engine cascade
@@ -546,12 +612,84 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
   };
 
   const sendMessage = async (userMessage: string) => {
-    if (!userMessage.trim() || isThinking) return;
+    if ((!userMessage.trim() && !selectedImage) || isThinking) return;
     setIsThinking(true);
-    // v5.0: create a per-request abort controller so Stop works
     const controller = new AbortController();
     abortRef.current = controller;
-    setChatMessages(prev => [...prev, { role: 'user', text: userMessage, timestamp: Date.now() }]);
+
+    const currentImg = selectedImage;
+    setSelectedImage(null);
+
+    setChatMessages(prev => [...prev, {
+      role: 'user',
+      text: userMessage || (currentImg ? 'Analyze this chart screenshot' : ''),
+      timestamp: Date.now(),
+      image: currentImg || undefined
+    }]);
+
+    // Vision Analysis Dispatch
+    if (currentImg) {
+      try {
+        const res = await apiFetch(`${PROXY_BASE}/api/vision-analysis`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: currentImg, query: userMessage }),
+          signal: controller.signal
+        });
+        if (!res.ok) throw new Error(`Vision API error ${res.status}`);
+        const data = await res.json();
+        setChatMessages(prev => [...prev, {
+          role: 'model',
+          text: data.analysis || 'Analysis complete.',
+          timestamp: Date.now(),
+          model: 'gemini_vision'
+        }]);
+      } catch (err: any) {
+        setChatMessages(prev => [...prev, {
+          role: 'system',
+          text: `❌ Vision Analysis error: ${err?.message || 'Failed to analyze chart'}\n\nMake sure Gemini API key is active.`,
+          timestamp: Date.now(),
+          model: 'system'
+        }]);
+      } finally {
+        setIsThinking(false);
+        abortRef.current = null;
+      }
+      return;
+    }
+
+    // Consensus Engine Dispatch
+    if (selectedEngine === 'consensus') {
+      try {
+        const start = Date.now();
+        const res = await apiFetch(`${PROXY_BASE}/api/ai-consensus`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: userMessage, context: portfolioContext }),
+          signal: controller.signal
+        });
+        if (!res.ok) throw new Error(`Consensus API error ${res.status}`);
+        const data = await res.json();
+        setChatMessages(prev => [...prev, {
+          role: 'model',
+          text: data.synthesizedResponse || 'Consensus analysis complete.',
+          timestamp: Date.now(),
+          model: `consensus_${data.consensusStance}`,
+          latencyMs: Date.now() - start
+        }]);
+      } catch (err: any) {
+        setChatMessages(prev => [...prev, {
+          role: 'system',
+          text: `❌ Multi-Engine Consensus error: ${err?.message || 'Failed'}\n\nFalling back to Auto failover.`,
+          timestamp: Date.now(),
+          model: 'system'
+        }]);
+      } finally {
+        setIsThinking(false);
+        abortRef.current = null;
+      }
+      return;
+    }
 
     // v6 LOCAL COMMAND: /superscore <SYMBOL> — deterministic backtest, zero LLM cost
     const ssMatch = userMessage.match(/^\s*\/superscore\s+([A-Za-z0-9.]+)\s*$/i);
@@ -718,14 +856,41 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
 
             <div className="relative flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-hide">
               {chatMessages.map((msg, i) => (
-                // FIX L6: `key={msg.timestamp}` collides when two messages
-                // land in the same ms (rapid quick-action clicks). Use index
-                // as a tiebreaker.
                 <div key={`${msg.timestamp}_${i}`} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-message-in`}>
                   <div className={`max-w-[85%] sm:max-w-[92%] rounded-2xl text-[12px] sm:text-[13px] leading-relaxed whitespace-pre-line ${msg.role === 'user'
                     ? 'bg-gradient-to-br from-cyan-600/90 to-blue-700/90 text-white rounded-br-none border border-cyan-500/30 px-3 py-2.5 sm:px-4 sm:py-3'
                     : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-white/5 px-3 py-2.5 sm:px-4 sm:py-3 group/msg'
                   }`}>
+                    {/* User Image Attachment */}
+                    {msg.image && (
+                      <div className="mb-2 overflow-hidden rounded-xl border border-white/20 max-w-[200px]">
+                        <img src={msg.image} alt="Uploaded chart" className="w-full h-auto object-cover" />
+                      </div>
+                    )}
+
+                    {/* AI Confidence Badge */}
+                    {msg.role === 'model' && msg.model !== 'system' && msg.model !== 'superscore_backtest' && (
+                      <div className="mb-2">
+                        {(() => {
+                          const conf = analyzeAIResponse(msg.text);
+                          return (
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border text-[9px] font-bold shadow-sm backdrop-blur-md"
+                              style={{
+                                backgroundColor: conf.level === 'HIGH' ? 'rgba(16, 185, 129, 0.15)' : conf.level === 'CAUTIOUS' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(6, 182, 212, 0.15)',
+                                borderColor: conf.level === 'HIGH' ? 'rgba(16, 185, 129, 0.4)' : conf.level === 'CAUTIOUS' ? 'rgba(245, 158, 11, 0.4)' : 'rgba(6, 182, 212, 0.4)',
+                                color: conf.level === 'HIGH' ? '#6ee7b7' : conf.level === 'CAUTIOUS' ? '#fcd34d' : '#67e8f9'
+                              }}
+                              title={conf.factors.length > 0 ? conf.factors.join(' • ') : conf.verdictSummary}
+                            >
+                              <ShieldCheck size={11} />
+                              <span>{conf.badgeText}</span>
+                              <span className="text-[7px] opacity-70">• {conf.sentiment}</span>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+
                     {msg.role === 'user' ? msg.text : (
                       <>
                         <span dangerouslySetInnerHTML={{
@@ -736,9 +901,9 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
                             .replace(/`(.+?)`/g, '<code style="background:rgba(6,182,212,0.15);padding:1px 5px;border-radius:4px;font-size:0.85em">$1</code>')
                         }} />
                         {msg.model && msg.model !== 'system' && (
-                          <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                          <div className="flex items-center gap-2 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity flex-wrap">
                             <span className="text-[8px] text-slate-600 bg-slate-800/60 px-1.5 py-0.5 rounded">
-                              {msg.model === 'quant_brain' ? '🧠 Quant Brain' : msg.model === 'superscore_backtest' ? '📉 SuperScore Backtest' : `🔷 ${msg.model}`}
+                              {msg.model === 'quant_brain' ? '🧠 Quant Brain' : msg.model === 'gemini_vision' ? '📸 Vision AI' : msg.model.startsWith('consensus') ? '🤝 Multi-Engine Consensus' : msg.model === 'superscore_backtest' ? '📉 SuperScore Backtest' : `🔷 ${msg.model}`}
                               {typeof msg.latencyMs === 'number' ? ` • ${(msg.latencyMs / 1000).toFixed(1)}s` : ''}
                             </span>
                             <button onClick={() => copyToClipboard(msg.text, i)} className="text-[9px] text-slate-500 hover:text-cyan-400 flex items-center gap-1 transition-colors">
@@ -799,39 +964,70 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
               </div>
             </div>
 
+            {/* Input Bar with Image Attachment */}
             <div className="relative p-3 sm:p-4 bg-slate-950/95 border-t border-cyan-500/15 rounded-b-3xl">
+              {/* Selected Image Preview Chip */}
+              {selectedImage && (
+                <div className="flex items-center gap-2 mb-2 px-3 py-1.5 bg-cyan-950/70 border border-cyan-500/30 rounded-xl max-w-fit">
+                  <img src={selectedImage} alt="Chart preview" className="w-8 h-8 rounded-lg object-cover" />
+                  <span className="text-[10px] font-bold text-cyan-300">Chart Attached (Vision AI Ready)</span>
+                  <button onClick={() => setSelectedImage(null)} className="text-slate-400 hover:text-red-400 p-0.5">✕</button>
+                </div>
+              )}
+
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept="image/*"
+                onChange={handleImageUpload}
+                className="hidden"
+              />
+
               <div className="relative flex items-center">
                 <input
                   type="text"
-                  placeholder={isListening ? '🎙️ Listening... speak now' : 'Ask Super Intelligence about markets, portfolio, or trades...'}
-                  className="w-full bg-slate-900/60 border border-slate-700/80 rounded-xl sm:rounded-2xl py-2.5 sm:py-3 pl-3 sm:pl-4 pr-[4.5rem] sm:pr-20 text-xs sm:text-sm text-white outline-none focus:border-cyan-500/60 transition-all font-medium placeholder:text-slate-600"
+                  placeholder={isListening ? '🎙️ Listening... speak now' : 'Ask Super Intelligence, or paste a chart screenshot...'}
+                  className="w-full bg-slate-900/60 border border-slate-700/80 rounded-xl sm:rounded-2xl py-2.5 sm:py-3 pl-3 sm:pl-4 pr-[6rem] sm:pr-28 text-xs sm:text-sm text-white outline-none focus:border-cyan-500/60 transition-all font-medium placeholder:text-slate-600"
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleChat()}
+                  onPaste={handlePaste}
                 />
-                {speechSupported && (
+
+                <div className="absolute right-1.5 sm:right-2 flex items-center gap-1 sm:gap-1.5">
                   <button
-                    onClick={toggleVoiceInput}
-                    title={isListening ? 'Stop listening' : 'Voice input (Hinglish)'}
-                    className={`absolute right-9 sm:right-11 p-1.5 sm:p-2 rounded-lg sm:rounded-xl transition-all ${isListening ? 'bg-red-500/80 text-white animate-pulse' : 'bg-slate-800/80 text-cyan-400 hover:bg-slate-700'}`}
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Upload Chart Screenshot / Image"
+                    className="p-1.5 sm:p-2 rounded-lg sm:rounded-xl bg-slate-800/80 text-cyan-400 hover:bg-slate-700 transition-all"
                   >
-                    <Mic size={14} />
+                    <ImageIcon size={14} />
                   </button>
-                )}
-                <button
-                  onClick={handleChat}
-                  disabled={isThinking || !chatInput.trim()}
-                  className="absolute right-1 sm:right-1.5 p-1.5 sm:p-2 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-lg sm:rounded-xl disabled:opacity-30 transition-all"
-                >
-                  <Send size={14} />
-                </button>
+
+                  {speechSupported && (
+                    <button
+                      onClick={toggleVoiceInput}
+                      title={isListening ? 'Stop listening' : 'Voice input (Hinglish)'}
+                      className={`p-1.5 sm:p-2 rounded-lg sm:rounded-xl transition-all ${isListening ? 'bg-red-500/80 text-white animate-pulse' : 'bg-slate-800/80 text-cyan-400 hover:bg-slate-700'}`}
+                    >
+                      <Mic size={14} />
+                    </button>
+                  )}
+
+                  <button
+                    onClick={handleChat}
+                    disabled={isThinking || (!chatInput.trim() && !selectedImage)}
+                    className="p-1.5 sm:p-2 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-lg sm:rounded-xl disabled:opacity-30 transition-all"
+                  >
+                    <Send size={14} />
+                  </button>
+                </div>
               </div>
               <div className="flex items-center justify-between mt-1.5 sm:mt-2 px-1">
                 <span className="text-[7px] sm:text-[8px] text-slate-500 font-mono">
                   {selectedEngine === 'auto' ? '⚡ Auto Failover + Quant Brain' : `${ENGINE_OPTIONS.find(e => e.id === selectedEngine)?.badge || ''} ${ENGINE_OPTIONS.find(e => e.id === selectedEngine)?.label || ''}`}
                 </span>
                 <span className="text-[7px] sm:text-[8px] text-slate-600 flex-shrink-0">
-                  {chatMessages.length} msgs • saved
+                  {chatMessages.length} msgs • IndexedDB
                 </span>
               </div>
             </div>

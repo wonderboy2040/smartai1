@@ -3,6 +3,7 @@ import { Position, PriceData } from '../types';
 import { runAdvancedScreener, ScreenerFilters, DEFAULT_FILTERS, SECTORS, getFilterSummary, ScreenerResultEx } from '../utils/advancedScreener';
 import { sendTelegramAlert } from '../utils/api';
 import { secureStorage } from '../utils/secureStorage';
+import { VirtualList } from './VirtualList';
 
 interface AIScreenerPanelProps {
   portfolio: Position[];
@@ -257,11 +258,25 @@ export const AIScreenerPanel = React.memo(({ portfolio, livePrices }: AIScreener
       </div>
 
       {/* Results */}
-      <div className="space-y-1.5">
-        {displayed.map(r => (
-          <ScreenerRow key={r.symbol} r={r} />
-        ))}
-      </div>
+      {showAll && results.length > 15 ? (
+        <VirtualList
+          items={results}
+          itemHeight={60}
+          height={Math.min(520, results.length * 60)}
+          keyExtractor={(r) => r.symbol}
+          renderItem={(r) => (
+            <div className="pb-1.5 h-full">
+              <ScreenerRow r={r} />
+            </div>
+          )}
+        />
+      ) : (
+        <div className="space-y-1.5">
+          {displayed.map(r => (
+            <ScreenerRow key={r.symbol} r={r} />
+          ))}
+        </div>
+      )}
 
       {/* Show More */}
       {results.length > 12 && (

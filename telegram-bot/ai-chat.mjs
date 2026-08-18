@@ -24,8 +24,8 @@ const MAX_HISTORY = 10;
 // ============================================
 export const AI_ENGINE_LABELS = {
   auto: '⚡ Auto (Smart Failover)',
-  gemini: '🔷 Gemini 3.7 Flash',
-  groq: '⚡ Groq Llama 3.2 90B',
+  gemini: '🔷 Gemini 2.0 Flash',
+  groq: '⚡ Groq Llama 3.3 70B',
   claude: '🟣 Claude Sonnet 4',
   openrouter: '🔶 OpenRouter Llama 3.2',
   cerebras: '🧠 Cerebras Llama 3.3',
@@ -203,15 +203,33 @@ async function callNvidia(messages, systemPrompt, modelName = 'meta/llama-3.1-70
 }
 
 // 1) GOOGLE GEMINI
-async function callGemini(messages, systemPrompt, modelName = 'gemini-3.7-flash') {
+async function callGemini(messages, systemPrompt, modelName = 'gemini-2.0-flash') {
   if (!isGeminiAvailable()) throw new Error('Gemini key missing');
   if (engineHealth.gemini.failures >= 3 && Date.now() - engineHealth.gemini.lastFailure < engineHealth.gemini.cooldownMs) throw new Error('Gemini cooling down');
+  
+  let targetModel = modelName;
+  if (!targetModel || targetModel.includes('3.7') || targetModel.includes('2.5')) {
+    targetModel = 'gemini-2.0-flash';
+  }
+
   const contents = messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_KEY}`, {
+  const payload = { contents, systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 8000 } };
+  
+  let res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${GEMINI_KEY}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contents, systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 8000 } }),
-    signal: AbortSignal.timeout(10000)
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(12000)
   });
+
+  // Fallback to gemini-1.5-flash if 404 (model not available on this API version)
+  if (!res.ok && res.status === 404 && targetModel !== 'gemini-1.5-flash') {
+    res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(12000)
+    });
+  }
+
   if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`Gemini ${res.status}: ${err.error?.message||res.statusText}`); }
   const data = await res.json();
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -219,15 +237,31 @@ async function callGemini(messages, systemPrompt, modelName = 'gemini-3.7-flash'
   return text;
 }
 
-// 2) GROQ LLAMA 3.2
-async function callGroq(messages, systemPrompt, modelName = 'llama-3.2-90b-text-preview') {
+// 2) GROQ LLAMA 3.3 70B
+async function callGroq(messages, systemPrompt, modelName = 'llama-3.3-70b-versatile') {
   if (!isGroqAvailable()) throw new Error('Groq key missing');
   if (engineHealth.groq.failures >= 3 && Date.now() - engineHealth.groq.lastFailure < engineHealth.groq.cooldownMs) throw new Error('Groq cooling down');
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  
+  let targetModel = modelName;
+  if (!targetModel || targetModel.includes('3.2-90b') || targetModel.includes('preview')) {
+    targetModel = 'llama-3.3-70b-versatile';
+  }
+
+  let res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: modelName, messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_completion_tokens: 8000 }),
-    signal: AbortSignal.timeout(10000)
+    body: JSON.stringify({ model: targetModel, messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_completion_tokens: 8000 }),
+    signal: AbortSignal.timeout(12000)
   });
+
+  // Fallback to llama-3.1-8b-instant if primary model fails with 400/404
+  if (!res.ok && (res.status === 400 || res.status === 404)) {
+    res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'llama-3.1-8b-instant', messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_completion_tokens: 8000 }),
+      signal: AbortSignal.timeout(12000)
+    });
+  }
+
   if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`Groq ${res.status}: ${err.error?.message||res.statusText}`); }
   const data = await res.json();
   const text = data.choices?.[0]?.message?.content;
@@ -752,12 +786,149 @@ async function _chatWithAIInner(chatId, userMessage, history, portfolio, livePri
   if (history.length > MAX_HISTORY * 2) history.splice(0, history.length - MAX_HISTORY);
 
   const engineLabels = {
-    nvidia: '🟢 NVIDIA Llama 3.1', gemini: '🔷 Gemini 3.7', groq: '⚡ Groq Llama 3.2', claude: '🟣 Claude Sonnet 4',
+    nvidia: '🟢 NVIDIA Llama 3.1', gemini: '🔷 Gemini 2.0', groq: '⚡ Groq Llama 3.3', claude: '🟣 Claude Sonnet 4',
     openrouter: '🔶 OpenRouter Llama 3.2', cerebras: '🧠 Cerebras Llama 3.3', huggingface: '🤗 HuggingFace',
     quant_brain: '📊 Quant Brain',
   };
   const label = engineLabels[usedEngine] || usedEngine;
   return `${label} | ${intent} | LIVE\n\n${safeText}`;
+}
+
+// ============================================
+// MULTI-MODEL AI CONSENSUS VOTING
+// Queries 3 models in parallel, calculates agreement %, synthesizes output
+// ============================================
+export async function chatWithConsensus(chatId, userMessage, portfolio, livePrices, usdInrRate) {
+  let contextData = '';
+  try { contextData = await buildContext(portfolio, livePrices, usdInrRate, userMessage); }
+  catch {}
+
+  const systemPrompt = `You are an elite quantitative consensus engine.
+Context: ${contextData.substring(0, 3000)}
+Task: Give a definitive stance (BULLISH / BEARISH / NEUTRAL), specific price levels/targets, key technical reason, and risk parameters in concise Hinglish.`;
+
+  const models = [
+    { name: 'Gemini 2.0', fn: () => callGemini([{ role: 'user', content: userMessage }], systemPrompt), available: isGeminiAvailable },
+    { name: 'Groq Llama 70B', fn: () => callGroq([{ role: 'user', content: userMessage }], systemPrompt), available: isGroqAvailable },
+    { name: 'Cerebras Llama 70B', fn: () => callCerebras([{ role: 'user', content: userMessage }], systemPrompt), available: isCerebrasAvailable },
+    { name: 'Claude Sonnet', fn: () => callClaude([{ role: 'user', content: userMessage }], systemPrompt), available: isClaudeAvailable },
+  ];
+
+  const results = await Promise.allSettled(
+    models.map(async (m) => {
+      if (!m.available()) throw new Error(`${m.name} unavailable`);
+      const start = Date.now();
+      const text = await m.fn();
+      if (!text) throw new Error(`${m.name} empty response`);
+
+      const lower = text.toLowerCase();
+      let stance = 'NEUTRAL';
+      if (lower.includes('bullish') || lower.includes('buy') || lower.includes('accumulate')) stance = 'BULLISH';
+      else if (lower.includes('bearish') || lower.includes('sell') || lower.includes('avoid')) stance = 'BEARISH';
+
+      return {
+        model: m.name,
+        stance,
+        response: text,
+        latencyMs: Date.now() - start
+      };
+    })
+  );
+
+  const successful = results
+    .filter(r => r.status === 'fulfilled')
+    .map(r => r.value);
+
+  if (successful.length === 0) {
+    return `⚠️ Consensus engines unavailable — falling back to single AI:\n\n` + (await chatWithAI(chatId, userMessage, portfolio, livePrices, usdInrRate));
+  }
+
+  const stanceCounts = { BULLISH: 0, BEARISH: 0, NEUTRAL: 0 };
+  for (const s of successful) stanceCounts[s.stance] = (stanceCounts[s.stance] || 0) + 1;
+
+  let consensusStance = 'NEUTRAL';
+  let maxCount = 0;
+  for (const [st, cnt] of Object.entries(stanceCounts)) {
+    if (cnt > maxCount) {
+      maxCount = cnt;
+      consensusStance = st;
+    }
+  }
+
+  const agreementPct = Math.round((maxCount / successful.length) * 100);
+  const stanceEmoji = consensusStance === 'BULLISH' ? '🟢' : consensusStance === 'BEARISH' ? '🔴' : '🟡';
+
+  let safeText = (successful[0]?.response || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  safeText = safeText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  safeText = safeText.replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\*(.+?)\*/g,'<i>$1</i>').replace(/`(.+?)`/g,'<code>$1</code>');
+
+  const modelsList = successful.map(s => `• <b>${s.model}</b>: ${s.stance === 'BULLISH' ? '🟢 Bullish' : s.stance === 'BEARISH' ? '🔴 Bearish' : '🟡 Neutral'} (${s.latencyMs}ms)`).join('\n');
+
+  return `🤝 <b>AI MULTI-MODEL CONSENSUS: ${stanceEmoji} ${consensusStance}</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 <b>Agreement:</b> ${agreementPct}% (${maxCount}/${successful.length} Engines Agree)
+👥 <b>Voting Engines:</b>
+${modelsList}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+<b>Synthesized Analysis:</b>
+${safeText}`;
+}
+
+// ============================================
+// MULTI-MODAL VISION: Chart / Screenshot Technical Analysis
+// ============================================
+export async function analyzeChartImage(base64Image, caption = '', mimeType = 'image/jpeg') {
+  if (!isGeminiAvailable()) {
+    throw new Error('Gemini Vision API key is not configured');
+  }
+
+  const prompt = caption || 'Analyze this financial trading chart in detail. Identify the symbol/asset, current trend direction, key horizontal support and resistance zones, candlestick price action patterns, technical indicators, and provide an actionable setup with exact Entry, Stop Loss, and Target 1 & Target 2 with Risk-to-Reward ratio in simple Hinglish.';
+
+  const payload = {
+    contents: [{
+      parts: [
+        { text: prompt },
+        { inlineData: { mimeType, data: base64Image } }
+      ]
+    }]
+  };
+
+  let url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`;
+  let res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(45000)
+  });
+
+  if (!res.ok && res.status === 404) {
+    url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`;
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(45000)
+    });
+  }
+
+  if (!res.ok) {
+    throw new Error(`Gemini Vision API error (${res.status})`);
+  }
+
+  const data = await res.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error('No analysis generated from image');
+
+  let safeText = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  safeText = safeText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  safeText = safeText.replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\*(.+?)\*/g,'<i>$1</i>').replace(/`(.+?)`/g,'<code>$1</code>');
+
+  return `📸 <b>CHART VISION TECHNICAL ANALYSIS</b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+<i>Gemini 2.0 Multi-Modal Vision</i>
+
+${safeText}`;
 }
 
 export function clearChatHistory(chatId) {
