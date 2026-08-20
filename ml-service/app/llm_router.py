@@ -34,7 +34,7 @@ PROVIDERS = [
     {
         "name": "groq",
         "url": "https://api.groq.com/openai/v1/chat/completions",
-        "model": "llama-3.3-70b-versatile",
+        "model": "meta-llama/llama-4-scout-17b-16e-instruct",
         "env_key": "GROQ_API_KEY",
         "format": "openai",
     },
@@ -48,16 +48,16 @@ PROVIDERS = [
     {
         "name": "cerebras",
         "url": "https://api.cerebras.ai/v1/chat/completions",
-        "model": "llama-3.3-70b",
+        "model": "gpt-oss-120b",
         "env_key": "CEREBRAS_API_KEY",
         "format": "openai",
     },
     {
         "name": "huggingface",
-        "url": "https://api-inference.huggingface.co/models/{model}",
-        "model": "Qwen/Qwen2.5-72B-Instruct",
+        "url": "https://router.huggingface.co/v1/chat/completions",
+        "model": "Qwen/Qwen3-32B",
         "env_key": "HF_API_KEY",
-        "format": "hf",
+        "format": "openai",
     },
     {
         "name": "ollama",

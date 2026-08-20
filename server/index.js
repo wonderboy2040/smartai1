@@ -325,10 +325,10 @@ const TG = {
 
 // OpenAI-compatible providers — body is forwarded almost as-is.
 const OPENAI_COMPAT = {
-  groq: { url: 'https://api.groq.com/openai/v1/chat/completions', defModel: 'llama-3.3-70b-versatile' },
+  groq: { url: 'https://api.groq.com/openai/v1/chat/completions', defModel: 'meta-llama/llama-4-scout-17b-16e-instruct' },
   openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', defModel: 'meta-llama/llama-3.3-70b-instruct:free' },
-  cerebras: { url: 'https://api.cerebras.ai/v1/chat/completions', defModel: 'llama-3.3-70b' },
-  huggingface: { url: 'https://router.huggingface.co/v1/chat/completions', defModel: 'Qwen/Qwen2.5-72B-Instruct' },
+  cerebras: { url: 'https://api.cerebras.ai/v1/chat/completions', defModel: 'gpt-oss-120b' },
+  huggingface: { url: 'https://router.huggingface.co/v1/chat/completions', defModel: 'Qwen/Qwen3-32B' },
   nvidia: { url: 'https://integrate.api.nvidia.com/v1/chat/completions', defModel: 'meta/llama-3.3-70b-instruct' },
 };
 
@@ -797,9 +797,9 @@ for (const [name, cfg] of Object.entries(OPENAI_COMPAT)) {
     if (!key) return jsonError(res, 503, `${name} not configured`);
     try {
       const body = { ...req.body };
-      // Auto-correct deprecated models (e.g. decommissioned preview models)
-      if (name === 'groq' && (!body.model || body.model.includes('llama-3.2-90b') || body.model.includes('preview'))) {
-        body.model = 'llama-3.3-70b-versatile';
+      // Auto-correct deprecated models (e.g. decommissioned Llama 3.3/3.2/3.1)
+      if (name === 'groq' && (!body.model || body.model.includes('llama-3.3') || body.model.includes('llama-3.2-90b') || body.model.includes('llama-3.1') || body.model.includes('preview'))) {
+        body.model = 'meta-llama/llama-4-scout-17b-16e-instruct';
       } else if (!body.model) {
         body.model = cfg.defModel;
       }
@@ -816,9 +816,9 @@ for (const [name, cfg] of Object.entries(OPENAI_COMPAT)) {
         signal: AbortSignal.timeout(30000),
       });
 
-      // If Groq fails due to model error, retry with llama-3.1-8b-instant fallback
+      // If Groq fails due to model error, retry with qwen/qwen3-32b fallback
       if (!upstream.ok && name === 'groq' && (upstream.status === 400 || upstream.status === 404)) {
-        body.model = 'llama-3.1-8b-instant';
+        body.model = 'qwen/qwen3-32b';
         upstream = await fetch(cfg.url, {
           method: 'POST',
           headers: {
@@ -886,12 +886,12 @@ app.post('/api/gemini', async (req, res) => {
     const { messages = [], model } = req.body || {};
     if (!Array.isArray(messages)) return jsonError(res, 400, 'messages[] required');
 
-    // Normalize model name (gemini-2.0-flash / gemini-1.5-flash)
+    // Normalize model name (gemini-2.5-flash / gemini-2.0-flash / gemini-1.5-flash)
     let requestedModel = model;
-    if (!requestedModel || requestedModel.includes('3.7') || requestedModel.includes('2.5')) {
-      requestedModel = 'gemini-2.0-flash';
+    if (!requestedModel || requestedModel.includes('2.0') || requestedModel.includes('1.5')) {
+      requestedModel = 'gemini-2.5-flash';
     }
-    const safeModel = String(requestedModel).replace(/[^a-zA-Z0-9.\-]/g, '').slice(0, 50) || 'gemini-2.0-flash';
+    const safeModel = String(requestedModel).replace(/[^a-zA-Z0-9.\-]/g, '').slice(0, 50) || 'gemini-2.5-flash';
 
     const systemText = messages.filter(m => m.role === 'system').map(m => m.content).join('\n').trim();
     const contents = messages
@@ -908,8 +908,17 @@ app.post('/api/gemini', async (req, res) => {
       signal: AbortSignal.timeout(30000),
     });
 
-    // If candidate model returns 404 (model not found), fallback to gemini-1.5-flash
-    if (!upstream.ok && upstream.status === 404 && safeModel !== 'gemini-1.5-flash') {
+    // If candidate model returns 404 (model not found), try gemini-2.0-flash then gemini-1.5-flash
+    if (!upstream.ok && upstream.status === 404 && safeModel !== 'gemini-2.0-flash' && safeModel !== 'gemini-1.5-flash') {
+      url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${KEYS.gemini}`;
+      upstream = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(30000),
+      });
+    }
+    if (!upstream.ok && upstream.status === 404) {
       url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${KEYS.gemini}`;
       upstream = await fetch(url, {
         method: 'POST',
@@ -981,10 +990,10 @@ app.post('/api/chat/stream', async (req, res) => {
   if (engine === 'gemini' && KEYS.gemini) {
     try {
       let requestedModel = model;
-      if (!requestedModel || requestedModel.includes('3.7') || requestedModel.includes('2.5')) {
-        requestedModel = 'gemini-2.0-flash';
+      if (!requestedModel || requestedModel.includes('2.0') || requestedModel.includes('1.5')) {
+        requestedModel = 'gemini-2.5-flash';
       }
-      const safeModel = String(requestedModel).replace(/[^a-zA-Z0-9.\-]/g, '').slice(0, 50) || 'gemini-2.0-flash';
+      const safeModel = String(requestedModel).replace(/[^a-zA-Z0-9.\-]/g, '').slice(0, 50) || 'gemini-2.5-flash';
       const systemText = messages.filter(m => m.role === 'system').map(m => m.content).join('\n').trim();
       const contents = messages
         .filter(m => m.role !== 'system')
@@ -1000,7 +1009,17 @@ app.post('/api/chat/stream', async (req, res) => {
         signal: AbortSignal.timeout(60000),
       });
 
-      if (!upstream.ok && upstream.status === 404 && safeModel !== 'gemini-1.5-flash') {
+      if (!upstream.ok && upstream.status === 404 && safeModel !== 'gemini-2.0-flash' && safeModel !== 'gemini-1.5-flash') {
+        url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=${KEYS.gemini}`;
+        upstream = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(60000),
+        });
+      }
+
+      if (!upstream.ok && upstream.status === 404) {
         url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?alt=sse&key=${KEYS.gemini}`;
         upstream = await fetch(url, {
           method: 'POST',
@@ -1062,8 +1081,8 @@ app.post('/api/chat/stream', async (req, res) => {
 
   try {
     let streamModel = model || compatCfg.defModel;
-    if (engine === 'groq' && (streamModel.includes('llama-3.2-90b') || streamModel.includes('preview'))) {
-      streamModel = 'llama-3.3-70b-versatile';
+    if (engine === 'groq' && (streamModel.includes('llama-3.3') || streamModel.includes('llama-3.2-90b') || streamModel.includes('llama-3.1') || streamModel.includes('preview'))) {
+      streamModel = 'meta-llama/llama-4-scout-17b-16e-instruct';
     }
 
     const upstream = await fetch(compatCfg.url, {
@@ -1147,13 +1166,23 @@ app.post('/api/vision-analysis', async (req, res) => {
       }]
     };
 
-    let url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${KEYS.gemini}`;
+    let url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${KEYS.gemini}`;
     let upstream = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(45000),
     });
+
+    if (!upstream.ok && upstream.status === 404) {
+      url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${KEYS.gemini}`;
+      upstream = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(45000),
+      });
+    }
 
     if (!upstream.ok && upstream.status === 404) {
       url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${KEYS.gemini}`;
@@ -1176,7 +1205,7 @@ app.post('/api/vision-analysis', async (req, res) => {
     res.json({
       ok: true,
       analysis: analysisText,
-      engine: 'gemini-vision-2.0',
+      engine: 'gemini-vision-2.5',
       timestamp: Date.now()
     });
   } catch (err) {
@@ -1193,9 +1222,9 @@ app.post('/api/ai-consensus', async (req, res) => {
   if (!query) return jsonError(res, 400, 'query string required');
 
   const models = [
-    { name: 'Gemini 2.0', endpoint: 'gemini', model: 'gemini-2.0-flash' },
-    { name: 'Groq Llama 70B', endpoint: 'groq', model: 'llama-3.3-70b-versatile' },
-    { name: 'Cerebras Llama 70B', endpoint: 'cerebras', model: 'llama-3.3-70b' },
+    { name: 'Gemini 2.5', endpoint: 'gemini', model: 'gemini-2.5-flash' },
+    { name: 'Groq Llama 4 Scout', endpoint: 'groq', model: 'meta-llama/llama-4-scout-17b-16e-instruct' },
+    { name: 'Cerebras GPT-OSS 120B', endpoint: 'cerebras', model: 'gpt-oss-120b' },
   ];
 
   const systemPrompt = `You are an elite quantitative consensus engine.

@@ -92,7 +92,7 @@ export const OLLAMA_URL = env.OLLAMA_URL || 'http://localhost:11434';
 export function isOllamaAvailable() { return false; }
 
 // ============================================
-// NVIDIA Llama 3.3 70B
+// NVIDIA Llama 3.3 70B / Nemotron
 // ============================================
 export let NVIDIA_KEY = env.NVIDIA_API_KEY || "";
 export function isNvidiaAvailable() { return !!NVIDIA_KEY && !NVIDIA_KEY.includes('your-'); }

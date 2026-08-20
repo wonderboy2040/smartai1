@@ -57,7 +57,7 @@ Return ONLY valid JSON, no markdown.`;
             { role: 'system', content: 'You are a financial news analyst. Return JSON only, no markdown formatting.' },
             { role: 'user', content: prompt },
           ],
-          model: 'llama-3.3-70b-versatile',
+          model: 'meta-llama/llama-4-scout-17b-16e-instruct',
         }),
         signal: AbortSignal.timeout(30000),
       });

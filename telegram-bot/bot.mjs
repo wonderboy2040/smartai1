@@ -11,7 +11,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_KEY, CLAUDE_KEY, TAVILY_API_KEY, TAX_PAIRS, OPENROUTER_KEY, CEREBRAS_KEY, HF_KEY, NVIDIA_KEY, API_URL, BOT_NAME, BOT_VERSION, BOT_TAGLINE, FUNDAMENTALS_API_URL } from './config.mjs';
+import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_KEY, CLAUDE_KEY, TAVILY_API_KEY, TAX_PAIRS, OPENROUTER_KEY, CEREBRAS_KEY, HF_KEY, NVIDIA_KEY, API_URL, BOT_NAME, BOT_VERSION, BOT_TAGLINE, FUNDAMENTALS_API_URL, isTavilyAvailable } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchCryptoPricesINR, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
 import { loadPortfolioFromCloud } from './cloud.mjs';
 import {
@@ -231,7 +231,7 @@ apiRouter.post('/nvidia', express.json({ limit: '1mb' }), async (req, res) => {
     if (!Array.isArray(messages)) {
       return res.status(400).json({ error: 'messages[] required' });
     }
-    const modelName = model || 'meta/llama-3.1-70b-instruct';
+    const modelName = model || 'meta/llama-3.3-70b-instruct';
     const formattedMessages = messages.map(m => ({ role: m.role, content: m.content }));
     
     const apiRes = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
@@ -266,8 +266,8 @@ apiRouter.post('/gemini', express.json({ limit: '1mb' }), async (req, res) => {
     }
     const { messages, model } = req.body;
     let modelName = model;
-    if (!modelName || modelName.includes('3.7') || modelName.includes('2.5')) {
-      modelName = 'gemini-2.0-flash';
+    if (!modelName || modelName.includes('2.0') || modelName.includes('1.5')) {
+      modelName = 'gemini-2.5-flash';
     }
 
     const contents = messages.filter(m => m.role !== 'system').map(m => ({
@@ -314,8 +314,8 @@ apiRouter.post('/groq', express.json({ limit: '1mb' }), async (req, res) => {
     }
     const { messages, model } = req.body;
     let modelName = model;
-    if (!modelName || modelName.includes('3.2-90b') || modelName.includes('preview')) {
-      modelName = 'llama-3.3-70b-versatile';
+    if (!modelName || modelName.includes('3.3') || modelName.includes('3.2-90b') || modelName.includes('3.1') || modelName.includes('preview')) {
+      modelName = 'meta-llama/llama-4-scout-17b-16e-instruct';
     }
 
     let apiRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -341,7 +341,7 @@ apiRouter.post('/groq', express.json({ limit: '1mb' }), async (req, res) => {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'llama-3.1-8b-instant',
+          model: 'qwen/qwen3-32b',
           messages,
           temperature: 0.7,
           max_completion_tokens: 8000
@@ -403,7 +403,7 @@ apiRouter.post('/openrouter', express.json({ limit: '1mb' }), async (req, res) =
       return res.status(503).json({ error: 'OpenRouter API key not configured on server' });
     }
     const { messages, model } = req.body;
-    const modelName = model || 'meta-llama/llama-3.2-3b-instruct:free';
+    const modelName = model || 'meta-llama/llama-3.3-70b-instruct:free';
     const apiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -434,7 +434,7 @@ apiRouter.post('/cerebras', express.json({ limit: '1mb' }), async (req, res) => 
       return res.status(503).json({ error: 'Cerebras API key not configured on server' });
     }
     const { messages, model } = req.body;
-    const modelName = model || 'llama3.3-70b';
+    const modelName = model || 'gpt-oss-120b';
     const apiRes = await fetch('https://api.cerebras.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -464,8 +464,8 @@ apiRouter.post('/huggingface', express.json({ limit: '1mb' }), async (req, res) 
       return res.status(503).json({ error: 'HuggingFace API key not configured on server' });
     }
     const { messages, model } = req.body;
-    const modelName = model || 'Qwen/Qwen2.5-72B-Instruct';
-    const apiRes = await fetch('https://api-inference.huggingface.co/v1/chat/completions', {
+    const modelName = model || 'Qwen/Qwen3-32B';
+    const apiRes = await fetch('https://router.huggingface.co/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${HF_KEY}`,
@@ -3938,11 +3938,11 @@ bot.onText(/^\/aitest(@\w+)?$/i, async (msg) => {
     r += `━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
     r += `Active engine: <b>${AI_ENGINE_LABELS[current]}</b>\n\n`;
     r += `🔷 Gemini 2.5 Flash   ${flag(cfg.isGeminiAvailable())}\n`;
-    r += `⚡ Groq Llama 3.3     ${flag(cfg.isGroqAvailable())}\n`;
+    r += `⚡ Groq Llama 4 Scout  ${flag(cfg.isGroqAvailable())}\n`;
     r += `🟣 Claude Sonnet 4    ${flag(cfg.isClaudeAvailable())}\n`;
-    r += `🔶 OpenRouter         ${flag(cfg.isOpenRouterAvailable())}\n`;
-    r += `🧠 Cerebras           ${flag(cfg.isCerebrasAvailable())}\n`;
-    r += `🤗 HuggingFace        ${flag(cfg.isHFAvailable())}\n`;
+    r += `🔶 OpenRouter 3.3 70B ${flag(cfg.isOpenRouterAvailable())}\n`;
+    r += `🧠 Cerebras GPT-OSS   ${flag(cfg.isCerebrasAvailable())}\n`;
+    r += `🤗 HuggingFace Qwen3  ${flag(cfg.isHFAvailable())}\n`;
     r += `🟢 NVIDIA NIM         ${flag(cfg.isNvidiaAvailable())}\n`;
     r += `🔍 Tavily (search)    ${flag(cfg.isTavilyAvailable())}\n\n`;
     r += `🧠 Quant Brain fallback: 🟢 ALWAYS ARMED (no key needed)\n\n`;
