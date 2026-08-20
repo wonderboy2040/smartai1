@@ -430,6 +430,8 @@ export const NeuralChat = React.memo(({
         messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
         engine: 'gemini',
         model: modelName,
+        portfolio,
+        livePrices,
       };
       const res = await callAIProxy('chat/mcp', body, signal);
       if (!res) return null;

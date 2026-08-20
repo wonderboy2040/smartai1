@@ -1149,7 +1149,7 @@ app.post('/api/chat/stream', async (req, res) => {
 // Autonomously executes real-time market data tools with Gemini / Groq
 // ------------------------------------------------------------
 app.post('/api/chat/mcp', async (req, res) => {
-  const { messages = [], engine = 'gemini', model = '' } = req.body || {};
+  const { messages = [], engine = 'gemini', model = '', portfolio = [], livePrices = {} } = req.body || {};
   if (!Array.isArray(messages) || messages.length === 0) {
     return jsonError(res, 400, 'messages[] required');
   }
@@ -1157,6 +1157,7 @@ app.post('/api/chat/mcp', async (req, res) => {
   const systemText = messages.filter(m => m.role === 'system').map(m => m.content).join('\n').trim();
   const userConvo = messages.filter(m => m.role !== 'system');
   const usedTools = [];
+  const toolContext = { tavilyKey: KEYS.tavily, portfolio, livePrices };
 
   // 1. Gemini Agentic Tool Calling
   if ((engine === 'gemini' || engine === 'auto') && KEYS.gemini) {
@@ -1191,7 +1192,7 @@ app.post('/api/chat/mcp', async (req, res) => {
         loopCount++;
         const fn = candidate.functionCall;
         usedTools.push(fn.name);
-        const toolResult = await executeServerMCPTool(fn.name, fn.args, { tavilyKey: KEYS.tavily });
+        const toolResult = await executeServerMCPTool(fn.name, fn.args, toolContext);
 
         contents.push({ role: 'model', parts: [{ functionCall: fn }] });
         contents.push({
@@ -1260,7 +1261,7 @@ app.post('/api/chat/mcp', async (req, res) => {
           let args = {};
           try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
           usedTools.push(tc.function.name);
-          const toolResult = await executeServerMCPTool(tc.function.name, args, { tavilyKey: KEYS.tavily });
+          const toolResult = await executeServerMCPTool(tc.function.name, args, toolContext);
           reqMessages.push({
             role: 'tool',
             tool_call_id: tc.id,
