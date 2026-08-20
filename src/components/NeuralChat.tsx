@@ -150,6 +150,7 @@ interface ChatMessage {
 interface EngineOption { id: string; label: string; model: string; endpoint: string; badge: string; }
 const ENGINE_OPTIONS: EngineOption[] = [
   { id: 'auto',        label: 'Auto (Smart Failover)', model: '',                                       endpoint: 'auto',        badge: '⚡' },
+  { id: 'mcp',         label: 'MCP Agent (Realtime Tools)', model: 'gemini-2.5-flash',                   endpoint: 'chat/mcp',    badge: '🛠️' },
   { id: 'consensus',   label: 'Consensus (Multi-Engine)', model: '',                                   endpoint: 'consensus',   badge: '🤝' },
   { id: 'gemini',      label: 'Gemini 2.5 Flash',      model: 'gemini-2.5-flash',                        endpoint: 'gemini',      badge: '🔷' },
   { id: 'groq',        label: 'Groq Llama 4 Scout',    model: 'meta-llama/llama-4-scout-17b-16e-instruct', endpoint: 'groq',      badge: '⚡' },
@@ -424,6 +425,25 @@ export const NeuralChat = React.memo(({
   };
 
   const tryAIEngine = async (endpoint: string, modelName: string, messages: any[], systemPrompt: string, signal?: AbortSignal): Promise<string | null> => {
+    if (endpoint === 'chat/mcp') {
+      const body = {
+        messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
+        engine: 'gemini',
+        model: modelName,
+      };
+      const res = await callAIProxy('chat/mcp', body, signal);
+      if (!res) return null;
+      const data = await res.json();
+      const text = data?.text;
+      if (text && text.trim().length >= 5) {
+        const toolsUsed = Array.isArray(data.usedTools) && data.usedTools.length > 0
+          ? `\n\n🛠️ _Real-Time MCP Tools Used: ${data.usedTools.join(', ')}_`
+          : '';
+        return text + toolsUsed;
+      }
+      return null;
+    }
+
     const status = await getServerAIStatus();
     if (!status || !(status as any)[endpoint]) return null;
     const body = {

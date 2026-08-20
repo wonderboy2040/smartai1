@@ -19,6 +19,7 @@ import {
   getMLPrediction, getAllSignals, getRegime, getBacktest,
   getPricePoints, getHealth as mlHealth
 } from './mlEngine.js';
+import { SERVER_MCP_TOOLS_OPENAI, SERVER_MCP_TOOLS_GEMINI, executeServerMCPTool } from './mcpTools.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fork } from 'node:child_process';
@@ -1141,6 +1142,161 @@ app.post('/api/chat/stream', async (req, res) => {
     res.write('data: [DONE]\n\n');
     return res.end();
   }
+});
+
+// ------------------------------------------------------------
+// POST /api/chat/mcp → Agentic Tool Calling Router
+// Autonomously executes real-time market data tools with Gemini / Groq
+// ------------------------------------------------------------
+app.post('/api/chat/mcp', async (req, res) => {
+  const { messages = [], engine = 'gemini', model = '' } = req.body || {};
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return jsonError(res, 400, 'messages[] required');
+  }
+
+  const systemText = messages.filter(m => m.role === 'system').map(m => m.content).join('\n').trim();
+  const userConvo = messages.filter(m => m.role !== 'system');
+  const usedTools = [];
+
+  // 1. Gemini Agentic Tool Calling
+  if ((engine === 'gemini' || engine === 'auto') && KEYS.gemini) {
+    try {
+      const targetModel = model && !model.includes('2.0') && !model.includes('1.5') ? model : 'gemini-2.5-flash';
+      const contents = userConvo.map(m => ({
+        role: m.role === 'assistant' || m.role === 'model' ? 'model' : 'user',
+        parts: [{ text: String(m.content || '') }]
+      }));
+
+      const payload = {
+        contents,
+        systemInstruction: systemText ? { parts: [{ text: systemText }] } : undefined,
+        tools: SERVER_MCP_TOOLS_GEMINI,
+        generationConfig: { temperature: 0.7, maxOutputTokens: 4000 }
+      };
+
+      let upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${KEYS.gemini}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(20000)
+      });
+
+      if (!upstream.ok) throw new Error(`Gemini upstream error ${upstream.status}`);
+      let data = await upstream.json();
+      let candidate = data.candidates?.[0]?.content?.parts?.[0];
+
+      // Tool loop (up to 2 calls)
+      let loopCount = 0;
+      while (candidate?.functionCall && loopCount < 2) {
+        loopCount++;
+        const fn = candidate.functionCall;
+        usedTools.push(fn.name);
+        const toolResult = await executeServerMCPTool(fn.name, fn.args, { tavilyKey: KEYS.tavily });
+
+        contents.push({ role: 'model', parts: [{ functionCall: fn }] });
+        contents.push({
+          role: 'user',
+          parts: [{ functionResponse: { name: fn.name, response: { result: toolResult } } }]
+        });
+
+        const followUp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${KEYS.gemini}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(20000)
+        });
+
+        if (followUp.ok) {
+          data = await followUp.json();
+          candidate = data.candidates?.[0]?.content?.parts?.[0];
+        } else {
+          break;
+        }
+      }
+
+      const text = data.candidates?.[0]?.content?.parts?.map(p => p.text).filter(Boolean).join('\n') || '';
+      return res.json({
+        text,
+        usedEngine: 'gemini-2.5-flash',
+        usedTools,
+        isMCP: true
+      });
+    } catch (e) {
+      console.warn('[MCP Server] Gemini tool call failed, attempting Groq fallback:', e.message);
+    }
+  }
+
+  // 2. Groq / OpenAI Compatible Agentic Tool Calling
+  const groqKey = KEYS.groq;
+  if (groqKey) {
+    try {
+      const targetModel = 'meta-llama/llama-4-scout-17b-16e-instruct';
+      const reqMessages = systemText ? [{ role: 'system', content: systemText }, ...userConvo] : [...userConvo];
+
+      let upstream = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: targetModel,
+          messages: reqMessages,
+          tools: SERVER_MCP_TOOLS_OPENAI,
+          temperature: 0.7,
+          max_completion_tokens: 4000
+        }),
+        signal: AbortSignal.timeout(20000)
+      });
+
+      if (!upstream.ok) throw new Error(`Groq upstream error ${upstream.status}`);
+      let data = await upstream.json();
+      let choice = data.choices?.[0];
+
+      // Tool loop (up to 2 calls)
+      let loopCount = 0;
+      while (choice?.message?.tool_calls && choice.message.tool_calls.length > 0 && loopCount < 2) {
+        loopCount++;
+        reqMessages.push(choice.message);
+
+        for (const tc of choice.message.tool_calls) {
+          let args = {};
+          try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
+          usedTools.push(tc.function.name);
+          const toolResult = await executeServerMCPTool(tc.function.name, args, { tavilyKey: KEYS.tavily });
+          reqMessages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            name: tc.function.name,
+            content: JSON.stringify(toolResult)
+          });
+        }
+
+        const followUp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: targetModel, messages: reqMessages, temperature: 0.7, max_completion_tokens: 4000 }),
+          signal: AbortSignal.timeout(20000)
+        });
+
+        if (followUp.ok) {
+          data = await followUp.json();
+          choice = data.choices?.[0];
+        } else {
+          break;
+        }
+      }
+
+      const text = choice?.message?.content || '';
+      return res.json({
+        text,
+        usedEngine: 'groq-llama-4',
+        usedTools,
+        isMCP: true
+      });
+    } catch (e) {
+      console.warn('[MCP Server] Groq tool call failed:', e.message);
+    }
+  }
+
+  return jsonError(res, 502, 'MCP Tool Execution unavailable');
 });
 
 // ------------------------------------------------------------

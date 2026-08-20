@@ -12,6 +12,7 @@ import {
 } from './config.mjs';
 import { fetchMarketIntelligence, fetchForexRate } from './market.mjs';
 import { calculateMetrics, analyzeAsset } from './analysis.mjs';
+import { MCP_TOOLS_OPENAI, MCP_TOOLS_GEMINI, executeMCPTool } from './mcp-tools.mjs';
 
 let realtimeMarketCache = { data: null, timestamp: 0 };
 let realtimeForexCache = { rate: 85.5, timestamp: 0 };
@@ -211,78 +212,158 @@ async function callNvidia(messages, systemPrompt, modelName = 'meta/llama-3.3-70
   return text;
 }
 
-// 1) GOOGLE GEMINI
-async function callGemini(messages, systemPrompt, modelName = 'gemini-2.5-flash') {
+// 1) GOOGLE GEMINI (with MCP Function Calling)
+async function callGemini(messages, systemPrompt, modelName = 'gemini-2.5-flash', toolContext = {}) {
   if (!isGeminiAvailable()) throw new Error('Gemini key missing');
   if (engineHealth.gemini.failures >= 3 && Date.now() - engineHealth.gemini.lastFailure < engineHealth.gemini.cooldownMs) throw new Error('Gemini cooling down');
   
   let targetModel = modelName;
-  // Auto-correct deprecated model names to latest stable
   if (!targetModel || targetModel.includes('2.0') || targetModel.includes('1.5')) {
     targetModel = 'gemini-2.5-flash';
   }
 
   const contents = messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
-  const payload = { contents, systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { temperature: 0.7, maxOutputTokens: 8000 } };
+  const payload = {
+    contents,
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    tools: MCP_TOOLS_GEMINI,
+    generationConfig: { temperature: 0.7, maxOutputTokens: 8000 }
+  };
   
   let res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${GEMINI_KEY}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(12000)
+    signal: AbortSignal.timeout(15000)
   });
 
-  // Fallback chain: try gemini-2.0-flash then gemini-1.5-flash if 404
   if (!res.ok && res.status === 404 && targetModel !== 'gemini-2.0-flash') {
     res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(12000)
+      signal: AbortSignal.timeout(15000)
     });
   }
   if (!res.ok && res.status === 404) {
     res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(12000)
+      signal: AbortSignal.timeout(15000)
     });
   }
 
   if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`Gemini ${res.status}: ${err.error?.message||res.statusText}`); }
-  const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  let data = await res.json();
+  let candidate = data.candidates?.[0]?.content?.parts?.[0];
+
+  // Tool calling execution loop (up to 2 iterations)
+  let loopCount = 0;
+  while (candidate?.functionCall && loopCount < 2) {
+    loopCount++;
+    const fn = candidate.functionCall;
+    console.log(`  🔧 [MCP] Gemini called tool: ${fn.name}`, fn.args);
+    const result = await executeMCPTool(fn.name, fn.args, toolContext);
+
+    contents.push({ role: 'model', parts: [{ functionCall: fn }] });
+    contents.push({
+      role: 'user',
+      parts: [{
+        functionResponse: {
+          name: fn.name,
+          response: { result }
+        }
+      }]
+    });
+
+    const followUpRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${GEMINI_KEY}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000)
+    });
+
+    if (followUpRes.ok) {
+      data = await followUpRes.json();
+      candidate = data.candidates?.[0]?.content?.parts?.[0];
+    } else {
+      break;
+    }
+  }
+
+  const text = data.candidates?.[0]?.content?.parts?.map(p => p.text).filter(Boolean).join('\n');
   if (!text || text.trim().length < 5) throw new Error('Gemini empty response');
   return text;
 }
 
-// 2) GROQ LLAMA 3.3 70B
-async function callGroq(messages, systemPrompt, modelName = 'meta-llama/llama-4-scout-17b-16e-instruct') {
+// 2) GROQ LLAMA 4 SCOUT (with MCP Tool Calling)
+async function callGroq(messages, systemPrompt, modelName = 'meta-llama/llama-4-scout-17b-16e-instruct', toolContext = {}) {
   if (!isGroqAvailable()) throw new Error('Groq key missing');
   if (engineHealth.groq.failures >= 3 && Date.now() - engineHealth.groq.lastFailure < engineHealth.groq.cooldownMs) throw new Error('Groq cooling down');
   
   let targetModel = modelName;
-  // Auto-correct deprecated models to latest active ones
   if (!targetModel || targetModel.includes('3.3-70b') || targetModel.includes('3.2-90b') || targetModel.includes('preview') || targetModel.includes('3.1-8b')) {
     targetModel = 'meta-llama/llama-4-scout-17b-16e-instruct';
   }
 
+  const reqMessages = [{ role: 'system', content: systemPrompt }, ...messages];
   let res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: targetModel, messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_completion_tokens: 8000 }),
-    signal: AbortSignal.timeout(12000)
+    body: JSON.stringify({
+      model: targetModel,
+      messages: reqMessages,
+      tools: MCP_TOOLS_OPENAI,
+      temperature: 0.7,
+      max_completion_tokens: 8000
+    }),
+    signal: AbortSignal.timeout(15000)
   });
 
-  // Fallback to qwen/qwen3-32b if primary model fails with 400/404
+  // Fallback to qwen/qwen3-32b if primary fails
   if (!res.ok && (res.status === 400 || res.status === 404)) {
+    targetModel = 'qwen/qwen3-32b';
     res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'qwen/qwen3-32b', messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_completion_tokens: 8000 }),
-      signal: AbortSignal.timeout(12000)
+      body: JSON.stringify({ model: targetModel, messages: reqMessages, tools: MCP_TOOLS_OPENAI, temperature: 0.7, max_completion_tokens: 8000 }),
+      signal: AbortSignal.timeout(15000)
     });
   }
 
   if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`Groq ${res.status}: ${err.error?.message||res.statusText}`); }
-  const data = await res.json();
-  const text = data.choices?.[0]?.message?.content;
+  let data = await res.json();
+  let choice = data.choices?.[0];
+
+  // Tool calling execution loop
+  let loopCount = 0;
+  while (choice?.message?.tool_calls && choice.message.tool_calls.length > 0 && loopCount < 2) {
+    loopCount++;
+    reqMessages.push(choice.message);
+
+    for (const toolCall of choice.message.tool_calls) {
+      let args = {};
+      try { args = JSON.parse(toolCall.function.arguments || '{}'); } catch {}
+      console.log(`  🔧 [MCP] Groq called tool: ${toolCall.function.name}`, args);
+      const result = await executeMCPTool(toolCall.function.name, args, toolContext);
+      reqMessages.push({
+        role: 'tool',
+        tool_call_id: toolCall.id,
+        name: toolCall.function.name,
+        content: JSON.stringify(result)
+      });
+    }
+
+    const followUpRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: targetModel, messages: reqMessages, temperature: 0.7, max_completion_tokens: 8000 }),
+      signal: AbortSignal.timeout(15000)
+    });
+
+    if (followUpRes.ok) {
+      data = await followUpRes.json();
+      choice = data.choices?.[0];
+    } else {
+      break;
+    }
+  }
+
+  const text = choice?.message?.content;
   if (!text || text.trim().length < 5) throw new Error('Groq empty response');
   return text;
 }
@@ -305,19 +386,56 @@ async function callClaude(messages, systemPrompt, modelName = 'claude-sonnet-4-2
   return text;
 }
 
-// 4) OPENROUTER (free models)
-async function callOpenRouter(messages, systemPrompt, modelName = 'meta-llama/llama-3.3-70b-instruct:free') {
+// 4) OPENROUTER (free models with MCP Tool Calling)
+async function callOpenRouter(messages, systemPrompt, modelName = 'meta-llama/llama-3.3-70b-instruct:free', toolContext = {}) {
   if (!isOpenRouterAvailable()) throw new Error('OpenRouter key missing');
   if (engineHealth.openrouter.failures >= 3 && Date.now() - engineHealth.openrouter.lastFailure < engineHealth.openrouter.cooldownMs) throw new Error('OpenRouter cooling down');
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  const reqMessages = [{ role: 'system', content: systemPrompt }, ...messages];
+  let res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://smartai1.onrender.com' },
-    body: JSON.stringify({ model: modelName, messages: [{ role: 'system', content: systemPrompt }, ...messages], temperature: 0.7, max_tokens: 8000 }),
-    signal: AbortSignal.timeout(10000)
+    body: JSON.stringify({ model: modelName, messages: reqMessages, tools: MCP_TOOLS_OPENAI, temperature: 0.7, max_tokens: 8000 }),
+    signal: AbortSignal.timeout(12000)
   });
   if (!res.ok) { const err = await res.json().catch(()=>({})); throw new Error(`OpenRouter ${res.status}: ${err.error?.message||res.statusText}`); }
-  const data = await res.json();
-  const text = data.choices?.[0]?.message?.content;
+  let data = await res.json();
+  let choice = data.choices?.[0];
+
+  // Tool calling execution loop
+  let loopCount = 0;
+  while (choice?.message?.tool_calls && choice.message.tool_calls.length > 0 && loopCount < 2) {
+    loopCount++;
+    reqMessages.push(choice.message);
+
+    for (const toolCall of choice.message.tool_calls) {
+      let args = {};
+      try { args = JSON.parse(toolCall.function.arguments || '{}'); } catch {}
+      console.log(`  🔧 [MCP] OpenRouter called tool: ${toolCall.function.name}`, args);
+      const result = await executeMCPTool(toolCall.function.name, args, toolContext);
+      reqMessages.push({
+        role: 'tool',
+        tool_call_id: toolCall.id,
+        name: toolCall.function.name,
+        content: JSON.stringify(result)
+      });
+    }
+
+    const followUpRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://smartai1.onrender.com' },
+      body: JSON.stringify({ model: modelName, messages: reqMessages, temperature: 0.7, max_tokens: 8000 }),
+      signal: AbortSignal.timeout(12000)
+    });
+
+    if (followUpRes.ok) {
+      data = await followUpRes.json();
+      choice = data.choices?.[0];
+    } else {
+      break;
+    }
+  }
+
+  const text = choice?.message?.content;
   if (!text || text.trim().length < 5) throw new Error('OpenRouter empty response');
   return text;
 }
@@ -734,13 +852,15 @@ async function _chatWithAIInner(chatId, userMessage, history, portfolio, livePri
   let aiText = '';
   let usedEngine = '';
 
+  const toolContext = { portfolio, livePrices, usdInrRate };
+
   // Try 7 engines in order: NVIDIA -> Gemini -> Groq -> Claude -> OpenRouter -> Cerebras -> HuggingFace
   const engines = [
     { name: 'nvidia', fn: () => callNvidia(recentHistory, systemPrompt), available: isNvidiaAvailable },
-    { name: 'gemini', fn: () => callGemini(recentHistory, systemPrompt), available: isGeminiAvailable },
-    { name: 'groq', fn: () => callGroq(recentHistory, systemPrompt), available: isGroqAvailable },
+    { name: 'gemini', fn: () => callGemini(recentHistory, systemPrompt, 'gemini-2.5-flash', toolContext), available: isGeminiAvailable },
+    { name: 'groq', fn: () => callGroq(recentHistory, systemPrompt, 'meta-llama/llama-4-scout-17b-16e-instruct', toolContext), available: isGroqAvailable },
     { name: 'claude', fn: () => callClaude(recentHistory, systemPrompt), available: isClaudeAvailable },
-    { name: 'openrouter', fn: () => callOpenRouter(recentHistory, systemPrompt), available: isOpenRouterAvailable },
+    { name: 'openrouter', fn: () => callOpenRouter(recentHistory, systemPrompt, 'meta-llama/llama-3.3-70b-instruct:free', toolContext), available: isOpenRouterAvailable },
     { name: 'cerebras', fn: () => callCerebras(recentHistory, systemPrompt), available: isCerebrasAvailable },
     { name: 'huggingface', fn: () => callHuggingFace(recentHistory, systemPrompt), available: isHFAvailable },
   ];
