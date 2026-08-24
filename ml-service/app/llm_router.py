@@ -41,7 +41,7 @@ PROVIDERS = [
     {
         "name": "openrouter",
         "url": "https://openrouter.ai/api/v1/chat/completions",
-        "model": "deepseek/deepseek-chat-v3.1:free",
+        "model": "z-ai/glm-5.2:free",
         "env_key": "OPENROUTER_API_KEY",
         "format": "openai",
     },

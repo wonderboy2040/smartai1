@@ -327,7 +327,7 @@ const TG = {
 // OpenAI-compatible providers — body is forwarded almost as-is.
 const OPENAI_COMPAT = {
   groq: { url: 'https://api.groq.com/openai/v1/chat/completions', defModel: 'openai/gpt-oss-120b' },
-  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', defModel: 'deepseek/deepseek-chat-v3.1:free' },
+  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', defModel: 'z-ai/glm-5.2:free' },
   cerebras: { url: 'https://api.cerebras.ai/v1/chat/completions', defModel: 'gpt-oss-120b' },
   huggingface: { url: 'https://router.huggingface.co/v1/chat/completions', defModel: 'Qwen/Qwen3-235B-A22B-Instruct-2507' },
   nvidia: { url: 'https://integrate.api.nvidia.com/v1/chat/completions', defModel: 'openai/gpt-oss-120b' },

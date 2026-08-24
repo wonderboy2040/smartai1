@@ -28,7 +28,7 @@ export const AI_ENGINE_LABELS = {
   gemini: '🔷 Gemini 3.5 Flash',
   groq: '🧠 Groq GPT-OSS 120B',
   claude: '🟣 Claude Sonnet 5',
-  openrouter: '🔶 OpenRouter DeepSeek V3.1',
+  openrouter: '🔶 OpenRouter GLM-5.2',
   cerebras: '🧠 Cerebras GPT-OSS 120B',
   huggingface: '🤗 HuggingFace Qwen3 235B',
   nvidia: '🟢 NVIDIA GPT-OSS 120B',
@@ -387,7 +387,7 @@ async function callClaude(messages, systemPrompt, modelName = 'claude-sonnet-5')
 }
 
 // 4) OPENROUTER (free models with MCP Tool Calling)
-async function callOpenRouter(messages, systemPrompt, modelName = 'deepseek/deepseek-chat-v3.1:free', toolContext = {}) {
+async function callOpenRouter(messages, systemPrompt, modelName = 'z-ai/glm-5.2:free', toolContext = {}) {
   if (!isOpenRouterAvailable()) throw new Error('OpenRouter key missing');
   if (engineHealth.openrouter.failures >= 3 && Date.now() - engineHealth.openrouter.lastFailure < engineHealth.openrouter.cooldownMs) throw new Error('OpenRouter cooling down');
   const reqMessages = [{ role: 'system', content: systemPrompt }, ...messages];
@@ -836,7 +836,7 @@ async function _chatWithAIInner(chatId, userMessage, history, portfolio, livePri
     { name: 'gemini', fn: () => callGemini(recentHistory, systemPrompt, 'gemini-3.5-flash', toolContext), available: isGeminiAvailable },
     { name: 'groq', fn: () => callGroq(recentHistory, systemPrompt, 'openai/gpt-oss-120b', toolContext), available: isGroqAvailable },
     { name: 'claude', fn: () => callClaude(recentHistory, systemPrompt), available: isClaudeAvailable },
-    { name: 'openrouter', fn: () => callOpenRouter(recentHistory, systemPrompt, 'deepseek/deepseek-chat-v3.1:free', toolContext), available: isOpenRouterAvailable },
+    { name: 'openrouter', fn: () => callOpenRouter(recentHistory, systemPrompt, 'z-ai/glm-5.2:free', toolContext), available: isOpenRouterAvailable },
     { name: 'cerebras', fn: () => callCerebras(recentHistory, systemPrompt), available: isCerebrasAvailable },
     { name: 'huggingface', fn: () => callHuggingFace(recentHistory, systemPrompt), available: isHFAvailable },
   ];
@@ -899,7 +899,7 @@ async function _chatWithAIInner(chatId, userMessage, history, portfolio, livePri
 
   const engineLabels = {
     nvidia: '🟢 NVIDIA GPT-OSS 120B', gemini: '🔷 Gemini 3.5 Flash', groq: '🧠 Groq GPT-OSS 120B', claude: '🟣 Claude Sonnet 5',
-    openrouter: '🔶 OpenRouter DeepSeek V3.1', cerebras: '🧠 Cerebras GPT-OSS 120B', huggingface: '🤗 HuggingFace Qwen3 235B',
+    openrouter: '🔶 OpenRouter GLM-5.2', cerebras: '🧠 Cerebras GPT-OSS 120B', huggingface: '🤗 HuggingFace Qwen3 235B',
     quant_brain: '📊 Quant Brain',
   };
   const label = engineLabels[usedEngine] || usedEngine;

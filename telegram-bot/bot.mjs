@@ -403,7 +403,7 @@ apiRouter.post('/openrouter', express.json({ limit: '1mb' }), async (req, res) =
       return res.status(503).json({ error: 'OpenRouter API key not configured on server' });
     }
     const { messages, model } = req.body;
-    const modelName = model || 'deepseek/deepseek-chat-v3.1:free';
+    const modelName = model || 'z-ai/glm-5.2:free';
     const apiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -3940,7 +3940,7 @@ bot.onText(/^\/aitest(@\w+)?$/i, async (msg) => {
     r += `🔷 Gemini 3.5 Flash   ${flag(cfg.isGeminiAvailable())}\n`;
     r += `⚡ Groq GPT-OSS 120B   ${flag(cfg.isGroqAvailable())}\n`;
     r += `🟣 Claude Sonnet 5    ${flag(cfg.isClaudeAvailable())}\n`;
-    r += `🔶 DeepSeek V3.1      ${flag(cfg.isOpenRouterAvailable())}\n`;
+    r += `🔶 OpenRouter GLM-5.2 ${flag(cfg.isOpenRouterAvailable())}\n`;
     r += `🧠 Cerebras GPT-OSS   ${flag(cfg.isCerebrasAvailable())}\n`;
     r += `🤗 HuggingFace Qwen3  ${flag(cfg.isHFAvailable())}\n`;
     r += `🟢 NVIDIA NIM         ${flag(cfg.isNvidiaAvailable())}\n`;

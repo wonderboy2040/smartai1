@@ -155,7 +155,7 @@ const ENGINE_OPTIONS: EngineOption[] = [
   { id: 'gemini',      label: 'Gemini 3.5 Flash',      model: 'gemini-3.5-flash',                        endpoint: 'gemini',      badge: '🔷' },
   { id: 'groq',        label: 'Groq GPT-OSS 120B',     model: 'openai/gpt-oss-120b',                     endpoint: 'groq',        badge: '⚡' },
   { id: 'claude',      label: 'Claude Sonnet 5',       model: 'claude-sonnet-5',                         endpoint: 'claude',      badge: '🟣' },
-  { id: 'openrouter',  label: 'OpenRouter DeepSeek V3.1', model: 'deepseek/deepseek-chat-v3.1:free',     endpoint: 'openrouter',  badge: '🔶' },
+  { id: 'openrouter',  label: 'OpenRouter GLM-5.2',  model: 'z-ai/glm-5.2:free',                        endpoint: 'openrouter',  badge: '🔶' },
   { id: 'cerebras',    label: 'Cerebras GPT-OSS 120B', model: 'gpt-oss-120b',                            endpoint: 'cerebras',    badge: '🧠' },
   { id: 'huggingface', label: 'HuggingFace Qwen3 235B', model: 'Qwen/Qwen3-235B-A22B-Instruct-2507',     endpoint: 'huggingface', badge: '🤗' },
   { id: 'nvidia',      label: 'NVIDIA GPT-OSS 120B',   model: 'openai/gpt-oss-120b',                     endpoint: 'nvidia',      badge: '🟢' },
