@@ -1,5 +1,5 @@
-// ============================================================
-// Wealth AI Pro — Backend API Proxy Server
+﻿// ============================================================
+// Wealth AI Pro â€” Backend API Proxy Server
 // ------------------------------------------------------------
 // Serves the built frontend (dist/) AND the /api/* proxy
 // endpoints that the frontend expects. All AI provider API
@@ -32,31 +32,14 @@ const DEFAULT_USD_INR = 83.5;
 
 app.use(express.json({ limit: '1mb' }));
 
-// CORS middleware for cross-origin requests (Vercel frontend -> Render backend)
-app.use((req, res, next) => {
-  const origin = req.headers.origin || '*';
-  const allowed = process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
-    : null;
-
-  if (!allowed || allowed.includes(origin) || origin.includes('vercel.app') || origin.includes('localhost')) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', allowed[0] || '*');
-  }
-
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(204).end();
-  }
-  next();
-});
+// NOTE: CORS is handled by a single strict middleware further down
+// (ALLOWED_ORIGINS allowlist + Vary: Origin). A previous looser
+// substring-matching CORS layer here was removed — it could echo
+// attacker origins like `evil-vercel.app.example.com` and could not be
+// overridden by the stricter middleware that ran after it.
 
 // ============================================================
-// AUTHENTICATION — Server-side PIN + httpOnly session cookie
+// AUTHENTICATION â€” Server-side PIN + httpOnly session cookie
 // ============================================================
 // The app PIN is stored ONLY on the server (APP_PIN env var) and is
 // NEVER shipped to the browser. The frontend sends the user-entered
@@ -69,12 +52,12 @@ app.use((req, res, next) => {
 // bypassable by setting localStorage.setItem('authDone', 'true')).
 // ============================================================
 
-// Server-side PIN — REQUIRED. No default, no VITE_ fallback.
+// Server-side PIN â€” REQUIRED. No default, no VITE_ fallback.
 const APP_PIN = process.env.APP_PIN || '';
 
 // In-memory session store (single-user app, no persistence needed).
 // Sessions expire after 24 hours of inactivity.
-const _sessions = new Map(); // token → { lastSeen: number }
+const _sessions = new Map(); // token â†’ { lastSeen: number }
 const SESSION_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
 // Clean up expired sessions periodically.
@@ -85,10 +68,16 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000).unref();
 
-// Login rate limiter — 5 attempts per minute per IP (brute-force protection).
-const _loginAttempts = new Map(); // ip → [timestamps]
+// Login rate limiter â€” 5 attempts per minute per IP (brute-force protection).
+const _loginAttempts = new Map(); // ip â†’ [timestamps]
 function loginRateCheck(ip) {
   const now = Date.now();
+  // Prune stale IPs so the map cannot grow unbounded on a public endpoint.
+  if (_loginAttempts.size > 1000) {
+    for (const [k, v] of _loginAttempts) {
+      if (!v.length || now - v[v.length - 1] > 10 * 60 * 1000) _loginAttempts.delete(k);
+    }
+  }
   const arr = (_loginAttempts.get(ip) || []).filter(t => now - t < 60 * 1000);
   if (arr.length >= 5) return false;
   arr.push(now);
@@ -108,13 +97,10 @@ const PUBLIC_PATHS = new Set([
   '/api/ai-status',
   '/api/telegram-status',
   '/api/feed-status',
-  // Cloud sync endpoints are PUBLIC — they use server-side API_TOKEN to
-  // call Google Sheets, not user auth. The PIN login protects the app UI.
-  '/api/cloud/load',
-  '/api/cloud/save',
-  '/api/cloud/load-key',
-  '/api/cloud/save-key',
-  // Market data endpoints are PUBLIC — they fetch public market prices,
+  // Cloud sync endpoints REQUIRE AUTH â€” they proxy portfolio data and
+  // stored API keys; exposing them publicly would leak private data.
+  '/api/auth/logout',
+  // Market data endpoints are PUBLIC â€” they fetch public market prices,
   // no private data. Making these public ensures prices always load.
   '/api/quote',
   '/api/chart',
@@ -126,16 +112,16 @@ const PUBLIC_PATHS = new Set([
   '/api/fundamentals',
 ]);
 
-// Auth middleware — checks multiple auth mechanisms in order:
-// 1. Authorization: Bearer <token> header (PRIMARY — bulletproof for cross-origin)
-// 2. httpOnly session cookie (fallback — same-origin only)
-// 3. ?session=<token> query param (fallback — for EventSource SSE)
+// Auth middleware â€” checks multiple auth mechanisms in order:
+// 1. Authorization: Bearer <token> header (PRIMARY â€” bulletproof for cross-origin)
+// 2. httpOnly session cookie (fallback â€” same-origin only)
+// 3. ?session=<token> query param (fallback â€” for EventSource SSE)
 function requireAuth(req, res, next) {
   // Public paths skip auth (exact match + prefix match for dynamic routes).
   if (PUBLIC_PATHS.has(req.path)) return next();
   // /api/fundamentals/:symbol is public (dynamic segment).
   if (req.path.startsWith('/api/fundamentals/')) return next();
-  // /api/ml/ endpoints are public (ML predictions, market data — not private).
+  // /api/ml/ endpoints are public (ML predictions, market data â€” not private).
   if (req.path.startsWith('/api/ml/')) return next();
 
   // Static assets (served by express.static) are public.
@@ -143,24 +129,24 @@ function requireAuth(req, res, next) {
     return next();
   }
 
-  // SPA fallback (index.html) is public — the login screen must load.
+  // SPA fallback (index.html) is public â€” the login screen must load.
   if (req.method === 'GET' && !req.path.startsWith('/api/')) {
     return next();
   }
 
-  // 1. Authorization: Bearer <token> header (PRIMARY — works cross-origin always)
+  // 1. Authorization: Bearer <token> header (PRIMARY â€” works cross-origin always)
   let token = null;
   const authHeader = req.headers.authorization || '';
   if (authHeader.startsWith('Bearer ')) {
     token = authHeader.substring(7).trim();
   }
 
-  // 2. httpOnly session cookie (fallback — same-origin or SameSite=None)
+  // 2. httpOnly session cookie (fallback â€” same-origin or SameSite=None)
   if (!token) {
     token = parseCookie(req.headers.cookie || '')[SESSION_COOKIE];
   }
 
-  // 3. ?session=<token> query param (fallback — for EventSource SSE)
+  // 3. ?session=<token> query param (fallback â€” for EventSource SSE)
   if (!token && req.query && typeof req.query.session === 'string') {
     token = req.query.session;
   }
@@ -192,7 +178,7 @@ function parseCookie(header) {
 // When the frontend is on a DIFFERENT origin (e.g. Vercel frontend calling
 // Render backend), the browser sends `credentials: 'include'` for the session
 // cookie. Browsers REJECT `Access-Control-Allow-Origin: *` when credentials
-// are used — the server MUST echo the specific Origin header instead.
+// are used â€” the server MUST echo the specific Origin header instead.
 // We allowlist origins via the ALLOWED_ORIGINS env var; if not set, we echo
 // any origin (safe for dev, restrict in production).
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
@@ -203,14 +189,14 @@ app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin) {
     if (ALLOWED_ORIGINS) {
-      // Production allowlist — only echo if origin is allowed.
+      // Production allowlist â€” only echo if origin is allowed.
       if (ALLOWED_ORIGINS.has(origin)) {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Vary', 'Origin');
       }
-      // Disallowed origins get NO ACAO header — browser blocks the response.
+      // Disallowed origins get NO ACAO header â€” browser blocks the response.
     } else {
-      // Dev mode — echo any origin (no allowlist set).
+      // Dev mode â€” echo any origin (no allowlist set).
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin');
     }
@@ -229,9 +215,9 @@ app.use(requireAuth);
 // AUTH ENDPOINTS
 // ============================================================
 
-// POST /api/auth/login → { pin: string } → sets session cookie
+// POST /api/auth/login â†’ { pin: string } â†’ sets session cookie
 app.post('/api/auth/login', (req, res) => {
-  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim();
+  const xff = (req.headers['x-forwarded-for'] || '').toString().split(',').map(s => s.trim()).filter(Boolean); const ip = xff[xff.length - 1] || req.socket.remoteAddress || 'unknown';
   if (!loginRateCheck(ip)) {
     return res.status(429).json({ error: { message: 'Too many login attempts. Please wait a minute.' } });
   }
@@ -245,9 +231,10 @@ app.post('/api/auth/login', (req, res) => {
   }
 
   // Constant-time comparison to prevent timing attacks.
-  const a = Buffer.from(pin);
-  const b = Buffer.from(APP_PIN);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+  // Hash both sides first so a length mismatch cannot leak the PIN length.
+  const a = crypto.createHash('sha256').update(String(pin)).digest();
+  const b = crypto.createHash('sha256').update(APP_PIN).digest();
+  if (!crypto.timingSafeEqual(a, b)) {
     return res.status(401).json({ error: { message: 'Invalid PIN.' } });
   }
 
@@ -257,7 +244,7 @@ app.post('/api/auth/login', (req, res) => {
 
   // Cookie SameSite policy:
   // ALWAYS use SameSite=None; Secure in production. This is REQUIRED for
-  // cross-origin deployments (Vercel frontend → Render backend). If we use
+  // cross-origin deployments (Vercel frontend â†’ Render backend). If we use
   // SameSite=Strict, the browser blocks the cookie on cross-origin requests
   // and every API call after login returns 401.
   // SameSite=None REQUIRES Secure, so we set it whenever SameSite=None.
@@ -267,7 +254,7 @@ app.post('/api/auth/login', (req, res) => {
   return res.json({ ok: true, sessionToken: token }); // sessionToken used for EventSource ?session= param
 });
 
-// POST /api/auth/logout → clears session cookie
+// POST /api/auth/logout â†’ clears session cookie
 app.post('/api/auth/logout', (req, res) => {
   const token = parseCookie(req.headers.cookie || '')[SESSION_COOKIE];
   if (token) _sessions.delete(token);
@@ -275,10 +262,10 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-// GET /api/auth/check → returns whether the caller is authenticated
+// GET /api/auth/check â†’ returns whether the caller is authenticated
 // Checks ALL auth mechanisms: Authorization header, cookie, query param.
 app.get('/api/auth/check', (req, res) => {
-  // 1. Authorization: Bearer <token> header (primary — what frontend sends)
+  // 1. Authorization: Bearer <token> header (primary â€” what frontend sends)
   let token = null;
   const authHeader = req.headers.authorization || '';
   if (authHeader.startsWith('Bearer ')) {
@@ -295,7 +282,7 @@ app.get('/api/auth/check', (req, res) => {
   res.json({ authenticated: !!(token && _sessions.has(token)) });
 });
 
-// GET /api/config → returns runtime cloud sync configuration
+// GET /api/config â†’ returns runtime cloud sync configuration
 app.get('/api/config', (_req, res) => {
   res.json({
     apiUrl: process.env.API_URL || process.env.VITE_API_URL || '',
@@ -304,7 +291,7 @@ app.get('/api/config', (_req, res) => {
 });
 
 // ------------------------------------------------------------
-// Provider key map (server-side env vars — NOT VITE_*)
+// Provider key map (server-side env vars â€” NOT VITE_*)
 // ------------------------------------------------------------
 const KEYS = {
   groq: (process.env.GROQ_API_KEY || process.env.GROQ_KEY || '').replace(/['"]/g, '').trim(),
@@ -318,13 +305,13 @@ const KEYS = {
 };
 
 // Telegram bot credentials (server-side env only).
-// NEVER fall back to VITE_* vars — those are browser-exposed at build time.
+// NEVER fall back to VITE_* vars â€” those are browser-exposed at build time.
 const TG = {
   token: process.env.TG_TOKEN || '',
   chatId: process.env.TG_CHAT_ID || '',
 };
 
-// OpenAI-compatible providers — body is forwarded almost as-is.
+// OpenAI-compatible providers â€” body is forwarded almost as-is.
 const OPENAI_COMPAT = {
   groq: { url: 'https://api.groq.com/openai/v1/chat/completions', defModel: 'openai/gpt-oss-120b' },
   openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', defModel: 'z-ai/glm-5.2:free' },
@@ -354,7 +341,7 @@ function isValidSymbol(sym) {
   return /^[A-Z0-9.\-_]+$/.test(s);
 }
 
-// Escape HTML special characters — used when forwarding user-controlled
+// Escape HTML special characters â€” used when forwarding user-controlled
 // content to Telegram (which uses parse_mode: 'HTML').
 function escapeHtml(str) {
   return String(str || '')
@@ -365,7 +352,7 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
-// Strip ALL HTML tags — for maximum safety when forwarding user content
+// Strip ALL HTML tags â€” for maximum safety when forwarding user content
 // to Telegram as HTML. Only plain text survives.
 function stripHtml(str) {
   return String(str || '').replace(/<[^>]*>/g, '');
@@ -378,14 +365,7 @@ function capArray(arr, maxLen) {
 }
 
 // ------------------------------------------------------------
-// GET /api/config  → optional runtime config for the frontend
-// ------------------------------------------------------------
-app.get('/api/config', (_req, res) => {
-  res.json(process.env.API_URL ? { apiUrl: process.env.API_URL } : {});
-});
-
-// ------------------------------------------------------------
-// GET /api/chart  → real OHLC candles for ANY symbol (incl. NSE/BSE)
+// GET /api/chart  â†’ real OHLC candles for ANY symbol (incl. NSE/BSE)
 // ------------------------------------------------------------
 // The embeddable TradingView widget shows "This symbol is only available on
 // TradingView" for NSE ETFs (e.g. NSE:JUNIORBEES) because their real-time data
@@ -395,7 +375,7 @@ app.get('/api/config', (_req, res) => {
 // Query: ?symbol=JUNIORBEES&market=IN&interval=D   (interval: D | W | M)
 // ------------------------------------------------------------
 const YF_INDEX_MAP = {
-  // Indian indices → Yahoo tickers
+  // Indian indices â†’ Yahoo tickers
   NIFTY: '^NSEI', NIFTY50: '^NSEI', BANKNIFTY: '^NSEBANK', NIFTYBANK: '^NSEBANK',
   SENSEX: '^BSESN', INDIAVIX: '^INDIAVIX', CNXIT: '^CNXIT',
   // US indices
@@ -405,7 +385,7 @@ const YF_INDEX_MAP = {
 function toYahooSymbol(symbol, market) {
   const clean = String(symbol || '').replace('.NS', '').replace('.BO', '').trim().toUpperCase();
   if (YF_INDEX_MAP[clean]) return YF_INDEX_MAP[clean];
-  // Crypto → Yahoo uses e.g. BTC-USD
+  // Crypto â†’ Yahoo uses e.g. BTC-USD
   const crypto = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'];
   if (crypto.includes(clean)) return `${clean}-USD`;
   if ((market || '').toUpperCase() === 'IN') return `${clean}.NS`; // NSE listing on Yahoo
@@ -460,7 +440,7 @@ app.get('/api/chart', async (req, res) => {
 });
 
 // ------------------------------------------------------------
-// GET /api/quote  → REAL-TIME last-traded price for one or many symbols
+// GET /api/quote  â†’ REAL-TIME last-traded price for one or many symbols
 // ------------------------------------------------------------
 // Returns genuine real-time last prices via multiple sources:
 //   1. Finnhub /quote (US stocks/ETFs, if key set)
@@ -529,7 +509,7 @@ async function fetchGrowwNseQuote(plainSym) {
 
 async function fetchYahooQuote(ysym) {
   try {
-    // Try the dedicated quote endpoint first (simpler, faster) — v7 is still live
+    // Try the dedicated quote endpoint first (simpler, faster) â€” v7 is still live
     const qurl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ysym)}`;
     const qr = await fetch(qurl, {
       headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI quote proxy)' },
@@ -596,18 +576,18 @@ app.get('/api/quote', async (req, res) => {
 
   const quotes = {};
 
-  // India quotes — Groww NSE → Yahoo fallback
+  // India quotes â€” Groww NSE â†’ Yahoo fallback
   // FIX H12: previously `const remaining = symbols.filter(s => !quotes[s])`
   // ran BEFORE any quotes were populated (quotes = {}) so `remaining ===
-  // symbols` always — dead filter. Just iterate `symbols` directly.
+  // symbols` always â€” dead filter. Just iterate `symbols` directly.
   await Promise.allSettled(symbols.map(async (sym) => {
-    // 1a) India real-time → Groww NSE live feed (datacenter-friendly, ETF-safe).
-    // Indian indices (NIFTY etc.) skip Groww — Groww only has stock/ETF quotes
+    // 1a) India real-time â†’ Groww NSE live feed (datacenter-friendly, ETF-safe).
+    // Indian indices (NIFTY etc.) skip Groww â€” Groww only has stock/ETF quotes
     if (market === 'IN' && !INDIAN_INDICES.has(sym)) {
       const gw = await fetchGrowwNseQuote(sym);
       if (gw) { quotes[sym] = gw; return; }
     }
-    // 1b) Finnhub real-time (US only — Finnhub free tier is US equities/ETFs)
+    // 1b) Finnhub real-time (US only â€” Finnhub free tier is US equities/ETFs)
     if (market !== 'IN') {
       const fh = await fetchFinnhubQuote(sym.replace('.NS', '').replace('.BO', ''));
       if (fh) { quotes[sym] = fh; return; }
@@ -629,7 +609,7 @@ app.get('/api/quote', async (req, res) => {
 });
 
 // ------------------------------------------------------------
-// GET /api/crypto-prices → proxy CoinDCX ticker (CORS fix)
+// GET /api/crypto-prices â†’ proxy CoinDCX ticker (CORS fix)
 // ------------------------------------------------------------
 // CoinDCX's public API does NOT serve Access-Control-Allow-Origin, so
 // the browser blocks every direct fetch from the frontend. This thin
@@ -660,13 +640,13 @@ app.get('/api/crypto-prices', async (_req, res) => {
 });
 
 // ------------------------------------------------------------
-// GET /api/forex → USD/INR rate proxy with server-side caching
+// GET /api/forex â†’ USD/INR rate proxy with server-side caching
 // ------------------------------------------------------------
 // Multiple upstream fallbacks so the rate is always available even if
 // one free API is down. Cached 10s server-side to reduce upstream load.
 // ------------------------------------------------------------
 let _forexCache = { rate: DEFAULT_USD_INR, ts: 0 };
-// FIX OPT-6: increased from 10s to 30s — client polls at 60s+, so 10s
+// FIX OPT-6: increased from 10s to 30s â€” client polls at 60s+, so 10s
 // cache was cold on most hits and hammered upstream free-tier APIs.
 const FOREX_CACHE_MS = 30000;
 
@@ -702,7 +682,7 @@ app.get('/api/forex', async (_req, res) => {
 });
 
 // ------------------------------------------------------------
-// GET /api/stream  → Server-Sent Events: pushes live ticks to the browser.
+// GET /api/stream  â†’ Server-Sent Events: pushes live ticks to the browser.
 // Query: ?in=RELIANCE,NIFTYBEES&us=SMH,VGT&crypto=BTC,ETH
 // Events: `snapshot` (initial map), `tick` ({key,price,change,...}), `status`.
 // Replaces 2s polling with real-time push (NSE, Finnhub US, Binance crypto).
@@ -727,7 +707,7 @@ app.get('/api/stream', (req, res) => {
   if (usSyms.length) ensureUsSubscribed(usSyms);
   ensureCryptoSubscribed(cryptoSyms);
 
-  // Notify streams a client is now active — starts polling/WebSocket if idle
+  // Notify streams a client is now active â€” starts polling/WebSocket if idle
   usClientUp();
   cryptoClientUp();
 
@@ -747,7 +727,7 @@ app.get('/api/stream', (req, res) => {
   const unsub = feedSubscribe((key, tick) => {
     if (!keys.has(key)) return;
     const now = Date.now();
-    if (lastSent[key] && (now - lastSent[key]) < 400) return; // ≤2.5 updates/sec/symbol
+    if (lastSent[key] && (now - lastSent[key]) < 400) return; // â‰¤2.5 updates/sec/symbol
     lastSent[key] = now;
     try { res.write(`event: tick\ndata: ${JSON.stringify({ key, ...tick })}\n\n`); } catch { /* client gone */ }
   });
@@ -759,21 +739,21 @@ app.get('/api/stream', (req, res) => {
   req.on('close', () => {
     clearInterval(keepalive);
     unsub();
-    // Notify streams this client left — pauses polling when no clients remain
+    // Notify streams this client left â€” pauses polling when no clients remain
     usClientDown();
     cryptoClientDown();
     try { res.end(); } catch { /* noop */ }
   });
 });
 
-// GET /api/feed-status → which real-time sources are live (for the UI dot).
+// GET /api/feed-status â†’ which real-time sources are live (for the UI dot).
 app.get('/api/feed-status', (_req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json(feedStatus());
 });
 
 // ------------------------------------------------------------
-// GET /api/ai-status → which providers have a key configured.
+// GET /api/ai-status â†’ which providers have a key configured.
 // The frontend skips any engine that is false here.
 // ------------------------------------------------------------
 app.get('/api/ai-status', (_req, res) => {
@@ -804,7 +784,7 @@ for (const [name, cfg] of Object.entries(OPENAI_COMPAT)) {
       } else if (!body.model) {
         body.model = cfg.defModel;
       }
-      // Auto-correct retired HuggingFace Qwen3-32B → 235B flagship
+      // Auto-correct retired HuggingFace Qwen3-32B â†’ 235B flagship
       if (name === 'huggingface' && body.model && body.model.includes('Qwen3-32B')) {
         body.model = cfg.defModel;
       }
@@ -844,7 +824,7 @@ for (const [name, cfg] of Object.entries(OPENAI_COMPAT)) {
 }
 
 // ------------------------------------------------------------
-// POST /api/tavily → Tavily web search (for NeuralChat live news)
+// POST /api/tavily â†’ Tavily web search (for NeuralChat live news)
 // Translates the OpenAI-style messages body into a Tavily search
 // and returns the result in OpenAI-compatible format.
 // ------------------------------------------------------------
@@ -871,7 +851,7 @@ app.post('/api/tavily', async (req, res) => {
     const data = await upstream.json();
     // Package as OpenAI-compatible response so the frontend can consume it uniformly
     const answer = data.answer || '';
-    const results = (data.results || []).map(r => `• ${r.title}: ${r.content?.substring(0, 200) || ''}`).join('\n');
+    const results = (data.results || []).map(r => `â€¢ ${r.title}: ${r.content?.substring(0, 200) || ''}`).join('\n');
     const content = answer ? `${answer}\n\nSources:\n${results}` : results || 'No results found.';
     res.json({
       choices: [{ message: { role: 'assistant', content } }],
@@ -882,7 +862,7 @@ app.post('/api/tavily', async (req, res) => {
 });
 
 // ------------------------------------------------------------
-// POST /api/gemini → translate OpenAI-style messages → Gemini,
+// POST /api/gemini â†’ translate OpenAI-style messages â†’ Gemini,
 // return Gemini's native shape (candidates[0].content.parts[0].text)
 // ------------------------------------------------------------
 app.post('/api/gemini', async (req, res) => {
@@ -913,7 +893,7 @@ app.post('/api/gemini', async (req, res) => {
       signal: AbortSignal.timeout(30000),
     });
 
-    // If candidate model returns 404 (model not found): 3.5 → 2.5 → 2.0 → 1.5
+    // If candidate model returns 404 (model not found): 3.5 â†’ 2.5 â†’ 2.0 â†’ 1.5
     if (!upstream.ok && upstream.status === 404 && safeModel !== 'gemini-2.5-flash') {
       url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${KEYS.gemini}`;
       upstream = await fetch(url, {
@@ -950,7 +930,7 @@ app.post('/api/gemini', async (req, res) => {
 });
 
 // ------------------------------------------------------------
-// POST /api/claude → Anthropic Messages API,
+// POST /api/claude â†’ Anthropic Messages API,
 // return native shape (content[0].text)
 // ------------------------------------------------------------
 app.post('/api/claude', async (req, res) => {
@@ -985,7 +965,7 @@ app.post('/api/claude', async (req, res) => {
 });
 
 // ------------------------------------------------------------
-// POST /api/chat/stream → SSE Real-Time AI Token Streaming
+// POST /api/chat/stream â†’ SSE Real-Time AI Token Streaming
 // Streams tokens chunk by chunk from Gemini, Groq, Cerebras, OpenRouter
 // ------------------------------------------------------------
 app.post('/api/chat/stream', async (req, res) => {
@@ -1054,6 +1034,8 @@ app.post('/api/chat/stream', async (req, res) => {
       let buffer = '';
 
       while (true) {
+        // Stop burning upstream tokens if the browser disconnected mid-stream.
+        if (res.destroyed) { try { await reader.cancel(); } catch {} break; }
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -1084,10 +1066,12 @@ app.post('/api/chat/stream', async (req, res) => {
   }
 
   // 2. OpenAI-compatible streaming (Groq, Cerebras, OpenRouter, NVIDIA, HuggingFace)
-  const compatCfg = OPENAI_COMPAT[engine] || OPENAI_COMPAT.groq;
-  const apiKey = KEYS[engine] || KEYS.groq;
+  // SECURITY/consistency: config and key MUST come from the SAME engine —
+  // never send one provider's key to another provider's URL.
+  const compatCfg = OPENAI_COMPAT[engine];
+  const apiKey = KEYS[engine];
 
-  if (!apiKey) {
+  if (!compatCfg || !apiKey) {
     res.write(`data: ${JSON.stringify({ error: `API key for ${engine} not configured on server` })}\n\n`);
     res.write('data: [DONE]\n\n');
     return res.end();
@@ -1125,6 +1109,8 @@ app.post('/api/chat/stream', async (req, res) => {
     let buffer = '';
 
     while (true) {
+      // Stop burning upstream tokens if the browser disconnected mid-stream.
+      if (res.destroyed) { try { await reader.cancel(); } catch {} break; }
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
@@ -1158,7 +1144,7 @@ app.post('/api/chat/stream', async (req, res) => {
 });
 
 // ------------------------------------------------------------
-// POST /api/chat/mcp → Agentic Tool Calling Router
+// POST /api/chat/mcp â†’ Agentic Tool Calling Router
 // Autonomously executes real-time market data tools with Gemini / Groq
 // ------------------------------------------------------------
 app.post('/api/chat/mcp', async (req, res) => {
@@ -1314,7 +1300,7 @@ app.post('/api/chat/mcp', async (req, res) => {
 });
 
 // ------------------------------------------------------------
-// POST /api/vision-analysis → Gemini Vision Chart & Screenshot AI
+// POST /api/vision-analysis â†’ Gemini Vision Chart & Screenshot AI
 // Analyzes technical charts, candlestick setups, support/resistance
 // ------------------------------------------------------------
 app.post('/api/vision-analysis', async (req, res) => {
@@ -1384,7 +1370,7 @@ app.post('/api/vision-analysis', async (req, res) => {
 });
 
 // ------------------------------------------------------------
-// POST /api/ai-consensus → Multi-Engine AI Voting & Consensus
+// POST /api/ai-consensus â†’ Multi-Engine AI Voting & Consensus
 // Queries Gemini, Groq, and Cerebras/Claude in parallel to build consensus
 // ------------------------------------------------------------
 app.post('/api/ai-consensus', async (req, res) => {
@@ -1486,25 +1472,31 @@ Task: Analyze the user request. Provide a definitive stance (BULLISH / BEARISH /
     agreementPct,
     modelsCount: successful.length,
     models: successful.map(s => ({ name: s.model, stance: s.stance, latencyMs: s.latencyMs })),
-    synthesizedResponse: `🤝 **MULTI-ENGINE CONSENSUS: ${consensusStance} (${agreementPct}% Agreement across ${successful.length} Models)**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n${primaryResponse}`,
+    synthesizedResponse: `ðŸ¤ **MULTI-ENGINE CONSENSUS: ${consensusStance} (${agreementPct}% Agreement across ${successful.length} Models)**\nâ”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n\n${primaryResponse}`,
     timestamp: Date.now()
   });
 });
 
 // ------------------------------------------------------------
-// POST /api/telegram → send a Telegram message using the SERVER's
+// POST /api/telegram â†’ send a Telegram message using the SERVER's
 // bot token + chat id (env). Lets the website push notifications
 // even when the browser has no local Telegram config saved.
 // Body: { message: string }
-// FIX C11: Ignore any client-supplied chatId — otherwise any visitor could
+// FIX C11: Ignore any client-supplied chatId â€” otherwise any visitor could
 // make the bot spam arbitrary chats. Always send to the server-configured
 // TG_CHAT_ID. Simple per-IP rate limit (30 msgs / 10 min) prevents abuse.
 // ------------------------------------------------------------
-const _tgRateBucket = new Map(); // ip → [{ ts }]
+const _tgRateBucket = new Map(); // ip â†’ [{ ts }]
 const TG_RATE_LIMIT = { windowMs: 10 * 60 * 1000, max: 30 };
 
 function tgRateCheck(ip) {
   const now = Date.now();
+  // Prune stale IPs so the map cannot grow unbounded on a public endpoint.
+  if (_tgRateBucket.size > 1000) {
+    for (const [k, v] of _tgRateBucket) {
+      if (!v.length || now - v[v.length - 1] > TG_RATE_LIMIT.windowMs * 2) _tgRateBucket.delete(k);
+    }
+  }
   const arr = (_tgRateBucket.get(ip) || []).filter(t => now - t < TG_RATE_LIMIT.windowMs);
   if (arr.length >= TG_RATE_LIMIT.max) return false;
   arr.push(now);
@@ -1516,8 +1508,8 @@ app.post('/api/telegram', async (req, res) => {
   if (!TG.token || !TG.chatId) return jsonError(res, 503, 'telegram not configured on server');
   const { message } = req.body || {};
   if (!message || typeof message !== 'string') return jsonError(res, 400, 'message required');
-  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim();
-  if (!tgRateCheck(ip)) return jsonError(res, 429, 'rate limit exceeded — try again later');
+  const xff = (req.headers['x-forwarded-for'] || '').toString().split(',').map(s => s.trim()).filter(Boolean); const ip = xff[xff.length - 1] || req.socket.remoteAddress || 'unknown';
+  if (!tgRateCheck(ip)) return jsonError(res, 429, 'rate limit exceeded â€” try again later');
 
   // SECURITY: strip ALL HTML tags from the client-supplied message.
   // Without this, anyone who can call /api/telegram can inject arbitrary
@@ -1547,10 +1539,10 @@ app.get('/api/telegram-status', (_req, res) => {
 });
 
 // ------------------------------------------------------------
-// SUPER INTELLIGENCE ML ENGINE (Pure JS — No Python service)
+// SUPER INTELLIGENCE ML ENGINE (Pure JS â€” No Python service)
 // ------------------------------------------------------------
 // Replaces the Python FastAPI ML service entirely. All ML
-// inference runs IN-PROCESS in this Node.js server — no extra
+// inference runs IN-PROCESS in this Node.js server â€” no extra
 // service needed. This is critical for Render free tier since
 // 2 services would exceed 750 hrs/month limit.
 // ------------------------------------------------------------
@@ -1568,7 +1560,7 @@ app.post('/api/ml/predict', (req, res) => {
 // those). GET /api/ml/regime is kept (defaults to safe regime for callers
 // that don't have live data).
 app.get('/api/ml/regime', (_req, res) => {
-  // Returns a default NEUTRAL regime — callers needing live data should POST.
+  // Returns a default NEUTRAL regime â€” callers needing live data should POST.
   const regime = getRegime(
     { change: 0 }, { change: 0 },
     { price: 15 }, 18, 104, { change: 0 }
@@ -1608,7 +1600,7 @@ app.get('/api/ml/pricepoints/:symbol', (req, res) => {
 });
 
 app.post('/api/ml/train', (_req, res) => {
-  res.json({ status: 'ok', message: 'Training simulated — pure JS engine uses instant inference' });
+  res.json({ status: 'ok', message: 'Training simulated â€” pure JS engine uses instant inference' });
 });
 
 app.post('/api/ml/refresh', (_req, res) => {
@@ -1641,13 +1633,13 @@ app.post('/api/ml/analyze', (req, res) => {
 });
 
 // ------------------------------------------------------------
-// GET /api/fundamentals/:symbol → fundamental data for Quality Scorecard
+// GET /api/fundamentals/:symbol â†’ fundamental data for Quality Scorecard
 // ------------------------------------------------------------
 // Proxies Yahoo Finance quoteSummary server-side (no CORS issue) and
 // normalises the response into the shape expected by qualityScorecard.ts.
 // Cached 24h because fundamentals change slowly.
 // ------------------------------------------------------------
-const _fundamentalsCache = new Map();  // symbol → { data, ts }
+const _fundamentalsCache = new Map();  // symbol â†’ { data, ts }
 const FUNDAMENTALS_TTL = 24 * 60 * 60 * 1000;
 
 app.get('/api/fundamentals/:symbol', async (req, res) => {
@@ -1693,7 +1685,7 @@ app.get('/api/fundamentals/:symbol', async (req, res) => {
         const qsJ = await qsR.json();
         qs = qsJ?.quoteSummary?.result?.[0];
       }
-    } catch { /* v10 failed — use chart data only */ }
+    } catch { /* v10 failed â€” use chart data only */ }
 
     // ---- Build FundamentalData from whatever we have ----
     const toNum = (v) => {
@@ -1792,7 +1784,7 @@ app.get('/api/fundamentals/:symbol', async (req, res) => {
 });
 
 // ------------------------------------------------------------
-// POST /api/superintelligence/news → fetch portfolio-specific news
+// POST /api/superintelligence/news â†’ fetch portfolio-specific news
 // ------------------------------------------------------------
 // Calls Tavily with a portfolio-aware query (top holdings + macro),
 // returns classified news items the frontend can render.
@@ -1863,7 +1855,7 @@ app.post('/api/superintelligence/news', async (req, res) => {
 });
 
 // ------------------------------------------------------------
-// GET /api/inflation → India CPI + US CPI for real-returns calc
+// GET /api/inflation â†’ India CPI + US CPI for real-returns calc
 // ------------------------------------------------------------
 // Fetches India CPI YoY from World Bank API (free, no key) and US CPI
 // from BLS-style endpoint. Cached 24h because CPI is monthly.
@@ -1904,7 +1896,7 @@ app.get('/api/inflation', async (_req, res) => {
   return res.json(data);
 });
 
-// Market Intelligence — Snapshot of market regime, top picks, risk
+// Market Intelligence â€” Snapshot of market regime, top picks, risk
 // ------------------------------------------------------------
 const marketIntelligence = (() => {
   // Simple cache so we don't re-analyze every request
@@ -1928,11 +1920,11 @@ const marketIntelligence = (() => {
 app.get('/api/ml/market-intelligence', marketIntelligence);
 
 function getMarketCondition(regime) {
-  const map = { bullish: 'Bull market — favorable for long positions', bearish: 'Bear market — favor cash or hedges', volatile: 'High volatility — reduce position size', sideways: 'Range-bound — trade the edges' };
+  const map = { bullish: 'Bull market â€” favorable for long positions', bearish: 'Bear market â€” favor cash or hedges', volatile: 'High volatility â€” reduce position size', sideways: 'Range-bound â€” trade the edges' };
   return map[regime] || 'Neutral market';
 }
 
-// Static frontend (built by `vite build` → dist/)
+// Static frontend (built by `vite build` â†’ dist/)
 // ------------------------------------------------------------
 const distDir = path.resolve(__dirname, '..', 'dist');
 app.use(express.static(distDir));
@@ -1958,10 +1950,10 @@ app.get(/^(?!\/api\/|\/health).*/, (req, res) => {
 // ============================================================
 // Dhan API: https://dhanhq.co/docs/v2/ (REST, access token)
 // Shoonya API: https://shoonya.finvasia.com/ (REST + WebSocket, free)
-// Both are read-only here — no order placement (free tier safe).
+// Both are read-only here â€” no order placement (free tier safe).
 // ============================================================
 
-// GET /api/broker/status → which broker is configured
+// GET /api/broker/status â†’ which broker is configured
 app.get('/api/broker/status', (_req, res) => {
   res.json({
     dhan: !!(process.env.DHAN_CLIENT_ID && process.env.DHAN_ACCESS_TOKEN),
@@ -1969,7 +1961,7 @@ app.get('/api/broker/status', (_req, res) => {
   });
 });
 
-// GET /api/broker/dhan/positions → live positions from Dhan
+// GET /api/broker/dhan/positions â†’ live positions from Dhan
 app.get('/api/broker/dhan/positions', async (_req, res) => {
   const clientId = process.env.DHAN_CLIENT_ID;
   const token = process.env.DHAN_ACCESS_TOKEN;
@@ -1992,7 +1984,7 @@ app.get('/api/broker/dhan/positions', async (_req, res) => {
   }
 });
 
-// GET /api/broker/dhan/holdings → long-term holdings from Dhan
+// GET /api/broker/dhan/holdings â†’ long-term holdings from Dhan
 app.get('/api/broker/dhan/holdings', async (_req, res) => {
   const clientId = process.env.DHAN_CLIENT_ID;
   const token = process.env.DHAN_ACCESS_TOKEN;
@@ -2015,7 +2007,7 @@ app.get('/api/broker/dhan/holdings', async (_req, res) => {
   }
 });
 
-// GET /api/broker/shoonya/holdings → holdings from Shoonya (Finvasia)
+// GET /api/broker/shoonya/holdings â†’ holdings from Shoonya (Finvasia)
 // Shoonya uses a session-based API. For simplicity, we do a login + fetch
 // in one request. Token is cached for the session.
 let _shoonyaToken = null;
@@ -2081,7 +2073,7 @@ app.get('/api/broker/shoonya/holdings', async (_req, res) => {
 // ============================================================
 // TRADE JOURNAL ANALYZER (server-side CSV parse + behavior diagnostics)
 // ============================================================
-// POST /api/journal/analyze → { trades: CSV rows } → { roundtrips, diagnostics }
+// POST /api/journal/analyze â†’ { trades: CSV rows } â†’ { roundtrips, diagnostics }
 // ============================================================
 app.post('/api/journal/analyze', (req, res) => {
   const { trades } = req.body || {};
@@ -2206,7 +2198,7 @@ app.post('/api/journal/analyze', (req, res) => {
 // ============================================================
 // PATTERN RECOGNITION (server-side, pure JS)
 // ============================================================
-// POST /api/patterns/detect → { candles: OHLCV[] } → { patterns: [] }
+// POST /api/patterns/detect â†’ { candles: OHLCV[] } â†’ { patterns: [] }
 // ============================================================
 app.post('/api/patterns/detect', (req, res) => {
   const { candles } = req.body || {};
@@ -2214,8 +2206,9 @@ app.post('/api/patterns/detect', (req, res) => {
     return jsonError(res, 400, 'candles[] (min 10) required');
   }
   // SECURITY: cap input size to prevent DoS via huge payloads.
+  // Keep the MOST RECENT candles — time-series order matters for patterns.
   const MAX_CANDLES = 5000;
-  const cappedCandles = candles.slice(0, MAX_CANDLES);
+  const cappedCandles = candles.slice(-MAX_CANDLES);
   try {
     const patterns = [];
     const closes = cappedCandles.map(c => c.close);
@@ -2247,14 +2240,14 @@ app.post('/api/patterns/detect', (req, res) => {
     if (recentPeaks.length === 2) {
       const diff = Math.abs(recentPeaks[0].price - recentPeaks[1].price) / recentPeaks[0].price;
       if (diff < 0.02) {
-        patterns.push({ type: 'double_top', price: recentPeaks[0].price, note: `Double top at ${recentPeaks[0].price.toFixed(2)} — bearish reversal signal` });
+        patterns.push({ type: 'double_top', price: recentPeaks[0].price, note: `Double top at ${recentPeaks[0].price.toFixed(2)} â€” bearish reversal signal` });
       }
     }
     const recentValleys = valleys.slice(-2);
     if (recentValleys.length === 2) {
       const diff = Math.abs(recentValleys[0].price - recentValleys[1].price) / recentValleys[0].price;
       if (diff < 0.02) {
-        patterns.push({ type: 'double_bottom', price: recentValleys[0].price, note: `Double bottom at ${recentValleys[0].price.toFixed(2)} — bullish reversal signal` });
+        patterns.push({ type: 'double_bottom', price: recentValleys[0].price, note: `Double bottom at ${recentValleys[0].price.toFixed(2)} â€” bullish reversal signal` });
       }
     }
 
@@ -2276,20 +2269,20 @@ app.post('/api/patterns/detect', (req, res) => {
     }
 
     // 4. Candlestick patterns (last candle)
-    const last = candles[n - 1];
+    const last = cappedCandles[n - 1];
     const body = Math.abs(last.close - last.open);
     const range = last.high - last.low;
     const upperWick = last.high - Math.max(last.close, last.open);
     const lowerWick = Math.min(last.close, last.open) - last.low;
 
     if (range > 0 && body / range < 0.1) {
-      patterns.push({ type: 'doji', note: 'Doji — indecision, potential reversal' });
+      patterns.push({ type: 'doji', note: 'Doji â€” indecision, potential reversal' });
     }
     if (lowerWick > body * 2 && upperWick < body * 0.5) {
-      patterns.push({ type: 'hammer', note: 'Hammer — bullish reversal at support' });
+      patterns.push({ type: 'hammer', note: 'Hammer â€” bullish reversal at support' });
     }
     if (upperWick > body * 2 && lowerWick < body * 0.5) {
-      patterns.push({ type: 'shooting_star', note: 'Shooting Star — bearish reversal at resistance' });
+      patterns.push({ type: 'shooting_star', note: 'Shooting Star â€” bearish reversal at resistance' });
     }
 
     // 5. Head and Shoulders (last 60 bars)
@@ -2297,7 +2290,7 @@ app.post('/api/patterns/detect', (req, res) => {
       const last3 = peaks.slice(-3);
       if (last3[1].price > last3[0].price && last3[1].price > last3[2].price &&
           Math.abs(last3[0].price - last3[2].price) / last3[0].price < 0.03) {
-        patterns.push({ type: 'head_shoulders', note: 'Head & Shoulders — major bearish reversal pattern' });
+        patterns.push({ type: 'head_shoulders', note: 'Head & Shoulders â€” major bearish reversal pattern' });
       }
     }
 
@@ -2310,11 +2303,11 @@ app.post('/api/patterns/detect', (req, res) => {
 // ============================================================
 // THESIS TRACKER (server-side, in-memory + localStorage on client)
 // ============================================================
-// POST /api/thesis → create/update thesis
-// GET /api/thesis → list theses
-// DELETE /api/thesis/:id → delete
+// POST /api/thesis â†’ create/update thesis
+// GET /api/thesis â†’ list theses
+// DELETE /api/thesis/:id â†’ delete
 // ============================================================
-const _theses = new Map();  // id → thesis object
+const _theses = new Map();  // id â†’ thesis object
 
 app.get('/api/thesis', (_req, res) => {
   const list = Array.from(_theses.values()).sort((a, b) => b.updatedAt - a.updatedAt);
@@ -2325,7 +2318,7 @@ app.post('/api/thesis', (req, res) => {
   const { symbol, thesis, criteria, status, evidence } = req.body || {};
   if (!symbol || !thesis) return jsonError(res, 400, 'symbol + thesis required');
 
-  // SECURITY: IDOR fix — always generate a NEW server-side ID on create.
+  // SECURITY: IDOR fix â€” always generate a NEW server-side ID on create.
   // The client can no longer supply an `id` to overwrite an existing thesis.
   // To update an existing thesis, use PUT /api/thesis/:id (below).
   const tid = `thesis_${Date.now()}_${crypto.randomBytes(5).toString('hex')}`;
@@ -2343,7 +2336,7 @@ app.post('/api/thesis', (req, res) => {
   res.json(updated);
 });
 
-// PUT /api/thesis/:id → update an existing thesis (must exist)
+// PUT /api/thesis/:id â†’ update an existing thesis (must exist)
 app.put('/api/thesis/:id', (req, res) => {
   const tid = req.params.id;
   const existing = _theses.get(tid);
@@ -2370,11 +2363,11 @@ app.delete('/api/thesis/:id', (req, res) => {
 // ============================================================
 // SCHEDULED RESEARCH (server-side cron)
 // ============================================================
-// POST /api/schedule → create scheduled job
-// GET /api/schedule → list jobs
-// DELETE /api/schedule/:id → delete job
+// POST /api/schedule â†’ create scheduled job
+// GET /api/schedule â†’ list jobs
+// DELETE /api/schedule/:id â†’ delete job
 // ============================================================
-// FIX: Render free tier has ephemeral filesystem — cron state is in-memory only.
+// FIX: Render free tier has ephemeral filesystem â€” cron state is in-memory only.
 // Jobs must be re-created on each deploy. Client-side localStorage backup.
 const _scheduledJobs = new Map();
 
@@ -2387,7 +2380,7 @@ app.post('/api/schedule', (req, res) => {
   const { prompt, cron, enabled } = req.body || {};
   if (!prompt || !cron) return jsonError(res, 400, 'prompt + cron required');
 
-  // SECURITY: IDOR fix — always generate a NEW server-side ID.
+  // SECURITY: IDOR fix â€” always generate a NEW server-side ID.
   const jid = `job_${Date.now()}_${crypto.randomBytes(5).toString('hex')}`;
   const job = {
     id: jid,
@@ -2408,7 +2401,7 @@ app.delete('/api/schedule/:id', (req, res) => {
 });
 
 // ============================================================
-// CLOUD SYNC PROXY — routes Google Sheets sync through the backend
+// CLOUD SYNC PROXY â€” routes Google Sheets sync through the backend
 // ============================================================
 // WHY: The frontend previously called Google Apps Script DIRECTLY,
 // which required VITE_API_URL and VITE_API_TOKEN as BUILD-TIME env vars
@@ -2422,17 +2415,10 @@ app.delete('/api/schedule/:id', (req, res) => {
 // build-time env var requirement and keeps the token server-side only.
 // ============================================================
 const CLOUD_API_URL = process.env.API_URL || process.env.VITE_API_URL || '';
-const CLOUD_AUTH_TOKEN = process.env.API_TOKEN || process.env.VITE_API_TOKEN || 'f53613451dc3ecb5ce1b0119d82fe48007d41b9df165d1ec';
+// SECURITY: no hardcoded fallback — a baked-in token defeats the env-var design.
+const CLOUD_AUTH_TOKEN = process.env.API_TOKEN || '';
 
-// GET /api/config → returns runtime server config for frontend fallback
-app.get('/api/config', (_req, res) => {
-  res.json({
-    apiUrl: CLOUD_API_URL,
-    configured: !!(CLOUD_API_URL && CLOUD_AUTH_TOKEN),
-  });
-});
-
-// GET /api/cloud/load → proxy to Google Apps Script ?action=load
+// GET /api/cloud/load â†’ proxy to Google Apps Script ?action=load
 app.get('/api/cloud/load', async (req, res) => {
   if (!CLOUD_API_URL) return jsonError(res, 503, 'Cloud sync not configured (API_URL not set).');
   if (!CLOUD_AUTH_TOKEN) return jsonError(res, 503, 'Cloud sync not configured (API_TOKEN not set).');
@@ -2441,13 +2427,13 @@ app.get('/api/cloud/load', async (req, res) => {
       ? `${CLOUD_API_URL}&action=load&authToken=${encodeURIComponent(CLOUD_AUTH_TOKEN)}&t=${Date.now()}`
       : `${CLOUD_API_URL}?action=load&authToken=${encodeURIComponent(CLOUD_AUTH_TOKEN)}&t=${Date.now()}`;
 
-    console.log(`☁️ Cloud load: fetching ${CLOUD_API_URL.substring(0, 60)}...`);
+    console.log(`â˜ï¸ Cloud load: fetching ${CLOUD_API_URL.substring(0, 60)}...`);
     const upstream = await fetch(fetchUrl, { redirect: 'follow', signal: AbortSignal.timeout(15000) });
     if (!upstream.ok) return jsonError(res, 502, `Cloud sync upstream HTTP ${upstream.status}.`);
     const text = await upstream.text();
     let data;
     try { data = JSON.parse(text); } catch {
-      // Apps Script sometimes wraps JSON in extra text — try to extract object or array
+      // Apps Script sometimes wraps JSON in extra text â€” try to extract object or array
       const match = text.match(/\{[\s\S]*\}/) || text.match(/\[[\s\S]*\]/);
       if (!match) return jsonError(res, 502, 'Cloud sync returned invalid data.');
       try { data = JSON.parse(match[0]); } catch { return jsonError(res, 502, 'Cloud sync returned invalid JSON.'); }
@@ -2457,18 +2443,18 @@ app.get('/api/cloud/load', async (req, res) => {
     }
     // Detect Apps Script auth/error responses like {ok:false, error:"..."}
     if (data && data.ok === false && data.error) {
-      console.warn(`☁️ Cloud load: Apps Script error: ${data.error}`);
+      console.warn(`â˜ï¸ Cloud load: Apps Script error: ${data.error}`);
       return jsonError(res, 502, `Cloud sync error: ${data.error}`);
     }
-    console.log(`☁️ Cloud load: success, portfolio items: ${data?.portfolio?.length ?? (Array.isArray(data) ? data.length : 'unknown')}`);
+    console.log(`â˜ï¸ Cloud load: success, portfolio items: ${data?.portfolio?.length ?? (Array.isArray(data) ? data.length : 'unknown')}`);
     return res.json(data);
   } catch (e) {
-    console.error('☁️ Cloud load fetch error:', e?.message || e);
+    console.error('â˜ï¸ Cloud load fetch error:', e?.message || e);
     return jsonError(res, 502, 'Cloud sync failed.', e);
   }
 });
 
-// POST /api/cloud/save → proxy to Google Apps Script (action=update)
+// POST /api/cloud/save â†’ proxy to Google Apps Script (action=update)
 app.post('/api/cloud/save', async (req, res) => {
   if (!CLOUD_API_URL) return jsonError(res, 503, 'Cloud sync not configured (API_URL not set).');
   if (!CLOUD_AUTH_TOKEN) return jsonError(res, 503, 'Cloud sync not configured (API_TOKEN not set).');
@@ -2484,13 +2470,21 @@ app.post('/api/cloud/save', async (req, res) => {
       body: JSON.stringify({ action: 'update', authToken: CLOUD_AUTH_TOKEN, portfolio, timestamp: Date.now(), usdInr }),
       signal: AbortSignal.timeout(10000),
     });
-    return res.json({ ok: upstream.ok, saved: portfolio.length });
+    // Verify the Apps Script actually accepted the save — it can return
+    // HTTP 200 with { ok:false, error } (silent data loss if we trust status alone).
+    let body = null;
+    try { body = await upstream.json(); } catch { try { body = JSON.parse(await upstream.text()); } catch {} }
+    const savedOk = upstream.ok && !(body && body.ok === false);
+    if (!savedOk) {
+      console.warn(`☁️ Cloud save: upstream rejected — HTTP ${upstream.status}, body: ${JSON.stringify(body).slice(0, 200)}`);
+    }
+    return res.json({ ok: savedOk, saved: portfolio.length, error: savedOk ? undefined : (body?.error || `HTTP ${upstream.status}`) });
   } catch (e) {
     return jsonError(res, 502, 'Cloud sync save failed.', e);
   }
 });
 
-// POST /api/cloud/save-key → proxy to Google Apps Script (action=saveKey)
+// POST /api/cloud/save-key â†’ proxy to Google Apps Script (action=saveKey)
 app.post('/api/cloud/save-key', async (req, res) => {
   if (!CLOUD_API_URL) return jsonError(res, 503, 'Cloud sync not configured.');
   if (!CLOUD_AUTH_TOKEN) return jsonError(res, 503, 'Cloud sync not configured.');
@@ -2510,7 +2504,7 @@ app.post('/api/cloud/save-key', async (req, res) => {
   }
 });
 
-// GET /api/cloud/load-key → proxy to Google Apps Script (action=loadKey)
+// GET /api/cloud/load-key â†’ proxy to Google Apps Script (action=loadKey)
 app.get('/api/cloud/load-key', async (req, res) => {
   if (!CLOUD_API_URL) return jsonError(res, 503, 'Cloud sync not configured.');
   if (!CLOUD_AUTH_TOKEN) return jsonError(res, 503, 'Cloud sync not configured.');
@@ -2532,7 +2526,7 @@ app.get('/api/cloud/load-key', async (req, res) => {
 });
 
 // ============================================================
-// HEALTH ENDPOINT — used by Render health check + uptime monitors
+// HEALTH ENDPOINT â€” used by Render health check + uptime monitors
 // ============================================================
 app.get('/health', (_req, res) => {
   res.json({
@@ -2551,19 +2545,19 @@ let _botProcess = null;
 let _botRestartTimer = null;
 
 // ------------------------------------------------------------
-// Process-level error handlers — prevent crashes from unhandled
+// Process-level error handlers â€” prevent crashes from unhandled
 // promise rejections or uncaught exceptions. In Node 15+, an
 // unhandled rejection terminates the process. This is critical
 // for a single-instance Render free-tier server.
 // ------------------------------------------------------------
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[wealth-ai] Unhandled Promise Rejection:', reason?.message || reason);
-  // Don't exit — log and continue so the server stays up.
+  // Don't exit â€” log and continue so the server stays up.
 });
 
 process.on('uncaughtException', (err) => {
   console.error('[wealth-ai] Uncaught Exception:', err?.message || err, err?.stack || '');
-  // Don't exit — log and continue so the server stays up.
+  // Don't exit â€” log and continue so the server stays up.
   // If this fires repeatedly, the server may be in a bad state, but
   // for a single-instance free-tier deployment, staying up is better
   // than going down.
@@ -2571,7 +2565,7 @@ process.on('uncaughtException', (err) => {
 
 // ------------------------------------------------------------
 // Startup environment validation.
-// APP_PIN is REQUIRED — without it, the app has no authentication
+// APP_PIN is REQUIRED â€” without it, the app has no authentication
 // and all endpoints are public. The server refuses to start.
 // ------------------------------------------------------------
 function validateEnv() {
@@ -2596,7 +2590,7 @@ function validateEnv() {
   // Warn if no AI provider keys are set.
   const anyAiKey = Object.values(KEYS).some(v => v);
   if (!anyAiKey) {
-    warnings.push('No AI provider keys configured — NeuralChat and AI features will be unavailable.');
+    warnings.push('No AI provider keys configured â€” NeuralChat and AI features will be unavailable.');
   }
 
   for (const w of warnings) console.warn(`[wealth-ai] WARNING: ${w}`);
@@ -2622,7 +2616,7 @@ function startBot() {
       console.error('[wealth-ai] Bot process error:', err.message);
     });
     _botProcess.on('exit', (code) => {
-      console.warn(`[wealth-ai] Bot exited code=${code} — auto-restart in 5s`);
+      console.warn(`[wealth-ai] Bot exited code=${code} â€” auto-restart in 5s`);
       clearTimeout(_botRestartTimer);
       _botRestartTimer = setTimeout(() => {
         console.log('[wealth-ai] Restarting bot...');
@@ -2642,7 +2636,7 @@ validateEnv();
 
 app.listen(PORT, () => {
   const ready = Object.entries(KEYS).filter(([, v]) => v).map(([k]) => k);
-  console.log(`[wealth-ai] server on :${PORT} — providers: ${ready.join(', ') || 'NONE'}`);
+  console.log(`[wealth-ai] server on :${PORT} â€” providers: ${ready.join(', ') || 'NONE'}`);
   console.log('[wealth-ai] Authentication: enabled (server-side PIN + httpOnly session cookie)');
 
   // No self-ping keepalive (Render ToS violation).
