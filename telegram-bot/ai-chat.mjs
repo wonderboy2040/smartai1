@@ -25,13 +25,13 @@ const MAX_HISTORY = 10;
 // ============================================
 export const AI_ENGINE_LABELS = {
   auto: '⚡ Auto (Smart Failover)',
-  gemini: '🔷 Gemini 2.5 Flash',
-  groq: '⚡ Groq Llama 4 Scout',
-  claude: '🟣 Claude Sonnet 4',
-  openrouter: '🔶 OpenRouter Llama 3.3 70B',
+  gemini: '🔷 Gemini 3.5 Flash',
+  groq: '🧠 Groq GPT-OSS 120B',
+  claude: '🟣 Claude Sonnet 5',
+  openrouter: '🔶 OpenRouter DeepSeek V3.1',
   cerebras: '🧠 Cerebras GPT-OSS 120B',
-  huggingface: '🤗 HuggingFace Qwen3 32B',
-  nvidia: '🟢 NVIDIA Llama 3.3 70B',
+  huggingface: '🤗 HuggingFace Qwen3 235B',
+  nvidia: '🟢 NVIDIA GPT-OSS 120B',
 };
 const chatEnginePref = new Map(); // chatId -> engineId
 export function setChatEngine(chatId, engine) {
@@ -187,7 +187,7 @@ async function getRealtimeForex() {
 // ============================================
 
 // 0) NVIDIA (Primary Fallback out-of-the-box)
-async function callNvidia(messages, systemPrompt, modelName = 'meta/llama-3.3-70b-instruct') {
+async function callNvidia(messages, systemPrompt, modelName = 'openai/gpt-oss-120b') {
   if (!isNvidiaAvailable()) throw new Error('NVIDIA key missing');
   if (engineHealth.nvidia.failures >= 3 && Date.now() - engineHealth.nvidia.lastFailure < engineHealth.nvidia.cooldownMs) throw new Error('NVIDIA cooling down');
   let res = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
@@ -213,13 +213,13 @@ async function callNvidia(messages, systemPrompt, modelName = 'meta/llama-3.3-70
 }
 
 // 1) GOOGLE GEMINI (with MCP Function Calling)
-async function callGemini(messages, systemPrompt, modelName = 'gemini-2.5-flash', toolContext = {}) {
+async function callGemini(messages, systemPrompt, modelName = 'gemini-3.5-flash', toolContext = {}) {
   if (!isGeminiAvailable()) throw new Error('Gemini key missing');
   if (engineHealth.gemini.failures >= 3 && Date.now() - engineHealth.gemini.lastFailure < engineHealth.gemini.cooldownMs) throw new Error('Gemini cooling down');
   
   let targetModel = modelName;
   if (!targetModel || targetModel.includes('2.0') || targetModel.includes('1.5')) {
-    targetModel = 'gemini-2.5-flash';
+    targetModel = 'gemini-3.5-flash';
   }
 
   const contents = messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
@@ -236,15 +236,15 @@ async function callGemini(messages, systemPrompt, modelName = 'gemini-2.5-flash'
     signal: AbortSignal.timeout(15000)
   });
 
-  if (!res.ok && res.status === 404 && targetModel !== 'gemini-2.0-flash') {
-    res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
+  if (!res.ok && res.status === 404 && targetModel !== 'gemini-2.5-flash') {
+    res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(15000)
     });
   }
   if (!res.ok && res.status === 404) {
-    res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`, {
+    res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(15000)
@@ -293,14 +293,14 @@ async function callGemini(messages, systemPrompt, modelName = 'gemini-2.5-flash'
   return text;
 }
 
-// 2) GROQ LLAMA 4 SCOUT (with MCP Tool Calling)
-async function callGroq(messages, systemPrompt, modelName = 'meta-llama/llama-4-scout-17b-16e-instruct', toolContext = {}) {
+// 2) GROQ GPT-OSS 120B (with MCP Tool Calling)
+async function callGroq(messages, systemPrompt, modelName = 'openai/gpt-oss-120b', toolContext = {}) {
   if (!isGroqAvailable()) throw new Error('Groq key missing');
   if (engineHealth.groq.failures >= 3 && Date.now() - engineHealth.groq.lastFailure < engineHealth.groq.cooldownMs) throw new Error('Groq cooling down');
   
   let targetModel = modelName;
-  if (!targetModel || targetModel.includes('3.3-70b') || targetModel.includes('3.2-90b') || targetModel.includes('preview') || targetModel.includes('3.1-8b')) {
-    targetModel = 'meta-llama/llama-4-scout-17b-16e-instruct';
+  if (!targetModel || targetModel.includes('3.3-70b') || targetModel.includes('3.2-90b') || targetModel.includes('llama-4-scout') || targetModel.includes('3.1-8b')) {
+    targetModel = 'openai/gpt-oss-120b';
   }
 
   const reqMessages = [{ role: 'system', content: systemPrompt }, ...messages];
@@ -368,8 +368,8 @@ async function callGroq(messages, systemPrompt, modelName = 'meta-llama/llama-4-
   return text;
 }
 
-// 3) ANTHROPIC CLAUDE SONNET 4
-async function callClaude(messages, systemPrompt, modelName = 'claude-sonnet-4-20250514') {
+// 3) ANTHROPIC CLAUDE SONNET 5
+async function callClaude(messages, systemPrompt, modelName = 'claude-sonnet-5') {
   if (!isClaudeAvailable()) throw new Error('Claude key missing');
   if (engineHealth.claude?.failures >= 3 && Date.now() - engineHealth.claude.lastFailure < (engineHealth.claude?.cooldownMs||30000)) throw new Error('Claude cooling down');
   const claudeMessages = messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }));
@@ -387,7 +387,7 @@ async function callClaude(messages, systemPrompt, modelName = 'claude-sonnet-4-2
 }
 
 // 4) OPENROUTER (free models with MCP Tool Calling)
-async function callOpenRouter(messages, systemPrompt, modelName = 'meta-llama/llama-3.3-70b-instruct:free', toolContext = {}) {
+async function callOpenRouter(messages, systemPrompt, modelName = 'deepseek/deepseek-chat-v3.1:free', toolContext = {}) {
   if (!isOpenRouterAvailable()) throw new Error('OpenRouter key missing');
   if (engineHealth.openrouter.failures >= 3 && Date.now() - engineHealth.openrouter.lastFailure < engineHealth.openrouter.cooldownMs) throw new Error('OpenRouter cooling down');
   const reqMessages = [{ role: 'system', content: systemPrompt }, ...messages];
@@ -458,7 +458,7 @@ async function callCerebras(messages, systemPrompt, modelName = 'gpt-oss-120b') 
 }
 
 // 6) HUGGINGFACE INFERENCE
-async function callHuggingFace(messages, systemPrompt, modelName = 'Qwen/Qwen3-32B') {
+async function callHuggingFace(messages, systemPrompt, modelName = 'Qwen/Qwen3-235B-A22B-Instruct-2507') {
   if (!isHFAvailable()) throw new Error('HF key missing');
   if (engineHealth.huggingface.failures >= 3 && Date.now() - engineHealth.huggingface.lastFailure < engineHealth.huggingface.cooldownMs) throw new Error('HuggingFace cooling down');
   // Use HF Inference Providers (OpenAI-compatible chat completions via router)
@@ -833,10 +833,10 @@ async function _chatWithAIInner(chatId, userMessage, history, portfolio, livePri
   // Try 7 engines in order: NVIDIA -> Gemini -> Groq -> Claude -> OpenRouter -> Cerebras -> HuggingFace
   const engines = [
     { name: 'nvidia', fn: () => callNvidia(recentHistory, systemPrompt), available: isNvidiaAvailable },
-    { name: 'gemini', fn: () => callGemini(recentHistory, systemPrompt, 'gemini-2.5-flash', toolContext), available: isGeminiAvailable },
-    { name: 'groq', fn: () => callGroq(recentHistory, systemPrompt, 'meta-llama/llama-4-scout-17b-16e-instruct', toolContext), available: isGroqAvailable },
+    { name: 'gemini', fn: () => callGemini(recentHistory, systemPrompt, 'gemini-3.5-flash', toolContext), available: isGeminiAvailable },
+    { name: 'groq', fn: () => callGroq(recentHistory, systemPrompt, 'openai/gpt-oss-120b', toolContext), available: isGroqAvailable },
     { name: 'claude', fn: () => callClaude(recentHistory, systemPrompt), available: isClaudeAvailable },
-    { name: 'openrouter', fn: () => callOpenRouter(recentHistory, systemPrompt, 'meta-llama/llama-3.3-70b-instruct:free', toolContext), available: isOpenRouterAvailable },
+    { name: 'openrouter', fn: () => callOpenRouter(recentHistory, systemPrompt, 'deepseek/deepseek-chat-v3.1:free', toolContext), available: isOpenRouterAvailable },
     { name: 'cerebras', fn: () => callCerebras(recentHistory, systemPrompt), available: isCerebrasAvailable },
     { name: 'huggingface', fn: () => callHuggingFace(recentHistory, systemPrompt), available: isHFAvailable },
   ];
@@ -898,8 +898,8 @@ async function _chatWithAIInner(chatId, userMessage, history, portfolio, livePri
   if (history.length > MAX_HISTORY * 2) history.splice(0, history.length - MAX_HISTORY);
 
   const engineLabels = {
-    nvidia: '🟢 NVIDIA Llama 3.3', gemini: '🔷 Gemini 2.5', groq: '⚡ Groq Llama 4 Scout', claude: '🟣 Claude Sonnet 4',
-    openrouter: '🔶 OpenRouter Llama 3.3', cerebras: '🧠 Cerebras GPT-OSS', huggingface: '🤗 HuggingFace Qwen3',
+    nvidia: '🟢 NVIDIA GPT-OSS 120B', gemini: '🔷 Gemini 3.5 Flash', groq: '🧠 Groq GPT-OSS 120B', claude: '🟣 Claude Sonnet 5',
+    openrouter: '🔶 OpenRouter DeepSeek V3.1', cerebras: '🧠 Cerebras GPT-OSS 120B', huggingface: '🤗 HuggingFace Qwen3 235B',
     quant_brain: '📊 Quant Brain',
   };
   const label = engineLabels[usedEngine] || usedEngine;
@@ -920,10 +920,10 @@ Context: ${contextData.substring(0, 3000)}
 Task: Give a definitive stance (BULLISH / BEARISH / NEUTRAL), specific price levels/targets, key technical reason, and risk parameters in concise Hinglish.`;
 
   const models = [
-    { name: 'Gemini 2.0', fn: () => callGemini([{ role: 'user', content: userMessage }], systemPrompt), available: isGeminiAvailable },
-    { name: 'Groq Llama 70B', fn: () => callGroq([{ role: 'user', content: userMessage }], systemPrompt), available: isGroqAvailable },
-    { name: 'Cerebras Llama 70B', fn: () => callCerebras([{ role: 'user', content: userMessage }], systemPrompt), available: isCerebrasAvailable },
-    { name: 'Claude Sonnet', fn: () => callClaude([{ role: 'user', content: userMessage }], systemPrompt), available: isClaudeAvailable },
+    { name: 'Gemini 3.5 Flash', fn: () => callGemini([{ role: 'user', content: userMessage }], systemPrompt), available: isGeminiAvailable },
+    { name: 'Groq GPT-OSS 120B', fn: () => callGroq([{ role: 'user', content: userMessage }], systemPrompt), available: isGroqAvailable },
+    { name: 'Cerebras GPT-OSS 120B', fn: () => callCerebras([{ role: 'user', content: userMessage }], systemPrompt), available: isCerebrasAvailable },
+    { name: 'Claude Sonnet 5', fn: () => callClaude([{ role: 'user', content: userMessage }], systemPrompt), available: isClaudeAvailable },
   ];
 
   const results = await Promise.allSettled(
@@ -1006,7 +1006,7 @@ export async function analyzeChartImage(base64Image, caption = '', mimeType = 'i
     }]
   };
 
-  let url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`;
+  let url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_KEY}`;
   let res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1015,7 +1015,7 @@ export async function analyzeChartImage(base64Image, caption = '', mimeType = 'i
   });
 
   if (!res.ok && res.status === 404) {
-    url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`;
+    url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`;
     res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1038,7 +1038,7 @@ export async function analyzeChartImage(base64Image, caption = '', mimeType = 'i
 
   return `📸 <b>CHART VISION TECHNICAL ANALYSIS</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-<i>Gemini 2.0 Multi-Modal Vision</i>
+<i>Gemini 3.5 Multi-Modal Vision</i>
 
 ${safeText}`;
 }

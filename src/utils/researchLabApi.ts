@@ -202,7 +202,7 @@ export async function runSwarmCommittee(
             { role: 'system', content: systemPrompt },
             { role: 'user', content: `${query}\n\nPORTFOLIO CONTEXT:\n${portfolioContext}` },
           ],
-          model: engine === 'groq' ? 'meta-llama/llama-4-scout-17b-16e-instruct' : engine === 'gemini' ? 'gemini-2.5-flash' : 'claude-sonnet-4-20250514',
+          model: engine === 'groq' ? 'openai/gpt-oss-120b' : engine === 'gemini' ? 'gemini-3.5-flash' : 'claude-sonnet-5',
           max_tokens: 1000,
         }),
         signal: AbortSignal.timeout(30000),

@@ -231,7 +231,7 @@ apiRouter.post('/nvidia', express.json({ limit: '1mb' }), async (req, res) => {
     if (!Array.isArray(messages)) {
       return res.status(400).json({ error: 'messages[] required' });
     }
-    const modelName = model || 'meta/llama-3.3-70b-instruct';
+    const modelName = model || 'openai/gpt-oss-120b';
     const formattedMessages = messages.map(m => ({ role: m.role, content: m.content }));
     
     const apiRes = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
@@ -267,7 +267,7 @@ apiRouter.post('/gemini', express.json({ limit: '1mb' }), async (req, res) => {
     const { messages, model } = req.body;
     let modelName = model;
     if (!modelName || modelName.includes('2.0') || modelName.includes('1.5')) {
-      modelName = 'gemini-2.5-flash';
+      modelName = 'gemini-3.5-flash';
     }
 
     const contents = messages.filter(m => m.role !== 'system').map(m => ({
@@ -289,8 +289,8 @@ apiRouter.post('/gemini', express.json({ limit: '1mb' }), async (req, res) => {
       signal: AbortSignal.timeout(30000)
     });
 
-    if (!apiRes.ok && apiRes.status === 404 && modelName !== 'gemini-1.5-flash') {
-      apiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`, {
+    if (!apiRes.ok && apiRes.status === 404 && modelName !== 'gemini-2.5-flash') {
+      apiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -314,8 +314,8 @@ apiRouter.post('/groq', express.json({ limit: '1mb' }), async (req, res) => {
     }
     const { messages, model } = req.body;
     let modelName = model;
-    if (!modelName || modelName.includes('3.3') || modelName.includes('3.2-90b') || modelName.includes('3.1') || modelName.includes('preview')) {
-      modelName = 'meta-llama/llama-4-scout-17b-16e-instruct';
+    if (!modelName || modelName.includes('3.3') || modelName.includes('3.2-90b') || modelName.includes('3.1') || modelName.includes('llama-4-scout')) {
+      modelName = 'openai/gpt-oss-120b';
     }
 
     let apiRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -367,7 +367,7 @@ apiRouter.post('/claude', express.json({ limit: '1mb' }), async (req, res) => {
       return res.status(503).json({ error: 'Claude API key not configured on server' });
     }
     const { messages, model } = req.body;
-    const modelName = model || 'claude-sonnet-4-20250514';
+    const modelName = model || 'claude-sonnet-5';
 
     const systemMsg = messages.find(m => m.role === 'system');
     const claudeMessages = messages.filter(m => m.role !== 'system').map(m => ({
@@ -403,7 +403,7 @@ apiRouter.post('/openrouter', express.json({ limit: '1mb' }), async (req, res) =
       return res.status(503).json({ error: 'OpenRouter API key not configured on server' });
     }
     const { messages, model } = req.body;
-    const modelName = model || 'meta-llama/llama-3.3-70b-instruct:free';
+    const modelName = model || 'deepseek/deepseek-chat-v3.1:free';
     const apiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -464,7 +464,7 @@ apiRouter.post('/huggingface', express.json({ limit: '1mb' }), async (req, res) 
       return res.status(503).json({ error: 'HuggingFace API key not configured on server' });
     }
     const { messages, model } = req.body;
-    const modelName = model || 'Qwen/Qwen3-32B';
+    const modelName = model || 'Qwen/Qwen3-235B-A22B-Instruct-2507';
     const apiRes = await fetch('https://router.huggingface.co/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -1824,7 +1824,7 @@ bot.onText(/^\/setkey(?:@\w+)?(?:\s+(\w+)\s+(.+))?$/i, async (msg, match) => {
     helpMsg += `• <code>/setkey tavily &lt;key&gt;</code>\n\n`;
     helpMsg += `<b>Current Status (Groq Super Intelligence):</b>\n`;
     const { isGroqAvailable, isTavilyAvailable } = await import('./config.mjs');
-    helpMsg += `⚡ Groq (Llama 4 Scout): ${isGroqAvailable() ? '🟢 Active' : '🔴 Missing'}\n`;
+    helpMsg += `⚡ Groq (GPT-OSS 120B): ${isGroqAvailable() ? '🟢 Active' : '🔴 Missing'}\n`;
     helpMsg += `🔍 Tavily (Search): ${isTavilyAvailable() ? '🟢 Active' : '🔴 Missing'}\n\n`;
     helpMsg += `<i>Note: Keys are saved in-memory for the current process. If API_URL is configured, they also sync to your Google Apps Script endpoint.</i>`;
     await safeSend(chatId, helpMsg);
@@ -3937,10 +3937,10 @@ bot.onText(/^\/aitest(@\w+)?$/i, async (msg) => {
     let r = `🔧 <b>AI ENGINE HEALTH</b>\n`;
     r += `━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
     r += `Active engine: <b>${AI_ENGINE_LABELS[current]}</b>\n\n`;
-    r += `🔷 Gemini 2.5 Flash   ${flag(cfg.isGeminiAvailable())}\n`;
-    r += `⚡ Groq Llama 4 Scout  ${flag(cfg.isGroqAvailable())}\n`;
-    r += `🟣 Claude Sonnet 4    ${flag(cfg.isClaudeAvailable())}\n`;
-    r += `🔶 OpenRouter 3.3 70B ${flag(cfg.isOpenRouterAvailable())}\n`;
+    r += `🔷 Gemini 3.5 Flash   ${flag(cfg.isGeminiAvailable())}\n`;
+    r += `⚡ Groq GPT-OSS 120B   ${flag(cfg.isGroqAvailable())}\n`;
+    r += `🟣 Claude Sonnet 5    ${flag(cfg.isClaudeAvailable())}\n`;
+    r += `🔶 DeepSeek V3.1      ${flag(cfg.isOpenRouterAvailable())}\n`;
     r += `🧠 Cerebras GPT-OSS   ${flag(cfg.isCerebrasAvailable())}\n`;
     r += `🤗 HuggingFace Qwen3  ${flag(cfg.isHFAvailable())}\n`;
     r += `🟢 NVIDIA NIM         ${flag(cfg.isNvidiaAvailable())}\n`;

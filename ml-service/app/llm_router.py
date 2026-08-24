@@ -27,21 +27,21 @@ PROVIDERS = [
     {
         "name": "gemini",
         "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3.5-flash",
         "env_key": "GEMINI_API_KEY",
         "format": "gemini",
     },
     {
         "name": "groq",
         "url": "https://api.groq.com/openai/v1/chat/completions",
-        "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+        "model": "openai/gpt-oss-120b",
         "env_key": "GROQ_API_KEY",
         "format": "openai",
     },
     {
         "name": "openrouter",
         "url": "https://openrouter.ai/api/v1/chat/completions",
-        "model": "meta-llama/llama-3.3-70b-instruct:free",
+        "model": "deepseek/deepseek-chat-v3.1:free",
         "env_key": "OPENROUTER_API_KEY",
         "format": "openai",
     },
@@ -55,7 +55,7 @@ PROVIDERS = [
     {
         "name": "huggingface",
         "url": "https://router.huggingface.co/v1/chat/completions",
-        "model": "Qwen/Qwen3-32B",
+        "model": "Qwen/Qwen3-235B-A22B-Instruct-2507",
         "env_key": "HF_API_KEY",
         "format": "openai",
     },

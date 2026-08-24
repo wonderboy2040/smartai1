@@ -150,15 +150,15 @@ interface ChatMessage {
 interface EngineOption { id: string; label: string; model: string; endpoint: string; badge: string; }
 const ENGINE_OPTIONS: EngineOption[] = [
   { id: 'auto',        label: 'Auto (Smart Failover)', model: '',                                       endpoint: 'auto',        badge: '⚡' },
-  { id: 'mcp',         label: 'MCP Agent (Realtime Tools)', model: 'gemini-2.5-flash',                   endpoint: 'chat/mcp',    badge: '🛠️' },
+  { id: 'mcp',         label: 'MCP Agent (Realtime Tools)', model: 'gemini-3.5-flash',                   endpoint: 'chat/mcp',    badge: '🛠️' },
   { id: 'consensus',   label: 'Consensus (Multi-Engine)', model: '',                                   endpoint: 'consensus',   badge: '🤝' },
-  { id: 'gemini',      label: 'Gemini 2.5 Flash',      model: 'gemini-2.5-flash',                        endpoint: 'gemini',      badge: '🔷' },
-  { id: 'groq',        label: 'Groq Llama 4 Scout',    model: 'meta-llama/llama-4-scout-17b-16e-instruct', endpoint: 'groq',      badge: '⚡' },
-  { id: 'claude',      label: 'Claude Sonnet 4',       model: 'claude-sonnet-4-20250514',                endpoint: 'claude',      badge: '🟣' },
-  { id: 'openrouter',  label: 'OpenRouter Llama 3.3 70B', model: 'meta-llama/llama-3.3-70b-instruct:free', endpoint: 'openrouter', badge: '🔶' },
+  { id: 'gemini',      label: 'Gemini 3.5 Flash',      model: 'gemini-3.5-flash',                        endpoint: 'gemini',      badge: '🔷' },
+  { id: 'groq',        label: 'Groq GPT-OSS 120B',     model: 'openai/gpt-oss-120b',                     endpoint: 'groq',        badge: '⚡' },
+  { id: 'claude',      label: 'Claude Sonnet 5',       model: 'claude-sonnet-5',                         endpoint: 'claude',      badge: '🟣' },
+  { id: 'openrouter',  label: 'OpenRouter DeepSeek V3.1', model: 'deepseek/deepseek-chat-v3.1:free',     endpoint: 'openrouter',  badge: '🔶' },
   { id: 'cerebras',    label: 'Cerebras GPT-OSS 120B', model: 'gpt-oss-120b',                            endpoint: 'cerebras',    badge: '🧠' },
-  { id: 'huggingface', label: 'HuggingFace Qwen3 32B', model: 'Qwen/Qwen3-32B',                          endpoint: 'huggingface', badge: '🤗' },
-  { id: 'nvidia',      label: 'NVIDIA Llama 3.3 70B',  model: 'meta/llama-3.3-70b-instruct',             endpoint: 'nvidia',      badge: '🟢' },
+  { id: 'huggingface', label: 'HuggingFace Qwen3 235B', model: 'Qwen/Qwen3-235B-A22B-Instruct-2507',     endpoint: 'huggingface', badge: '🤗' },
+  { id: 'nvidia',      label: 'NVIDIA GPT-OSS 120B',   model: 'openai/gpt-oss-120b',                     endpoint: 'nvidia',      badge: '🟢' },
 ];
 
 const QUICK_ACTIONS = [
