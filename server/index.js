@@ -457,7 +457,8 @@ app.get('/api/chart', async (req, res) => {
 // ============================================================
 
 const INTRADAY_UNIVERSE = [
-  // Nifty 50 liquid F&O names — deep liquidity + tight spreads for intraday
+  // NSE + BSE liquid F&O / high-volume names — deep liquidity + tight spreads.
+  // Candles resolve via .NS first, .BO fallback (some names list on one exchange only).
   'RELIANCE', 'HDFCBANK', 'ICICIBANK', 'INFY', 'TCS', 'SBIN', 'BHARTIARTL',
   'ITC', 'LT', 'KOTAKBANK', 'AXISBANK', 'HINDUNILVR', 'BAJFINANCE', 'ASIANPAINT',
   'MARUTI', 'TITAN', 'SUNPHARMA', 'ULTRACEMCO', 'WIPRO', 'ONGC', 'NTPC',
@@ -465,6 +466,14 @@ const INTRADAY_UNIVERSE = [
   'ADANIENT', 'ADANIPORTS', 'COALINDIA', 'GRASIM', 'HINDALCO', 'NESTLEIND',
   'CIPLA', 'DRREDDY', 'BRITANNIA', 'EICHERMOT', 'HEROMOTOCO', 'M&M',
   'INDUSINDBK', 'BPCL', 'IOC', 'DLF', 'VEDL', 'CANBK', 'PNB', 'BEL', 'HAL',
+  // Extended NSE + BSE coverage (banks, PSUs, auto, pharma, infra, new-age)
+  'BANKBARODA', 'UNIONBANK', 'FEDERALBNK', 'IDFCFIRSTB', 'AUBANK',
+  'SBILIFE', 'HDFCLIFE', 'ICICIPRULI', 'SHRIRAMFIN', 'CHOLAFIN', 'BAJAJFINSV',
+  'TATAPOWER', 'ADANIGREEN', 'ADANIPOWER', 'JIOFIN', 'LICI', 'IRFC',
+  'TRENT', 'ZOMATO', 'NYKAA', 'POLICYBZR', 'PAYTM',
+  'TATAELXSI', 'PERSISTENT', 'COFORGE', 'LTIM', 'MPHASIS',
+  'PIDILITIND', 'HAVELLS', 'DIVISLAB', 'APOLLOHOSP', 'LUPIN', 'AUROPHARMA',
+  'GAIL', 'PETRONET', 'IDEA', 'YESBANK', 'SUZLON', 'IREDA',
 ];
 const INTRADAY_MIN_CONFIDENCE = 90;
 const INTRADAY_TOP_N = 5;
@@ -520,26 +529,33 @@ function atrValue(candles, period = 14) {
 }
 
 async function fetchIntradayCandles(sym) {
-  const ysym = `${sym}.NS`;
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ysym)}?interval=5m&range=5d&includePrePost=false`;
-  const upstream = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI intraday scanner)' },
-    signal: AbortSignal.timeout(7000),
-  });
-  if (!upstream.ok) throw new Error(`yahoo ${upstream.status}`);
-  const json = await upstream.json();
-  const r = json?.chart?.result?.[0];
-  const ts = r?.timestamp;
-  const q = r?.indicators?.quote?.[0];
-  if (!Array.isArray(ts) || !q) throw new Error('no data');
-  const candles = [];
-  for (let i = 0; i < ts.length; i++) {
-    const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i], v = q.volume?.[i];
-    if (o == null || h == null || l == null || c == null) continue;
-    candles.push({ time: ts[i], open: o, high: h, low: l, close: c, volume: v || 0 });
+  // NSE first (.NS), BSE fallback (.BO) — mirrors the /api/chart strategy.
+  const candidates = [`${sym}.NS`, `${sym}.BO`];
+  let lastErr = null;
+  for (const ysym of candidates) {
+    try {
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ysym)}?interval=5m&range=5d&includePrePost=false`;
+      const upstream = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI intraday scanner)' },
+        signal: AbortSignal.timeout(7000),
+      });
+      if (!upstream.ok) { lastErr = new Error(`yahoo ${upstream.status}`); continue; }
+      const json = await upstream.json();
+      const r = json?.chart?.result?.[0];
+      const ts = r?.timestamp;
+      const q = r?.indicators?.quote?.[0];
+      if (!Array.isArray(ts) || !q) { lastErr = new Error('no data'); continue; }
+      const candles = [];
+      for (let i = 0; i < ts.length; i++) {
+        const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i], v = q.volume?.[i];
+        if (o == null || h == null || l == null || c == null) continue;
+        candles.push({ time: ts[i], open: o, high: h, low: l, close: c, volume: v || 0 });
+      }
+      if (candles.length < 40) { lastErr = new Error('thin data'); continue; }
+      return { candles, exchange: ysym.endsWith('.BO') ? 'BSE' : 'NSE' };
+    } catch (e) { lastErr = e; }
   }
-  if (candles.length < 40) throw new Error('thin data');
-  return candles;
+  throw lastErr || new Error('no listing');
 }
 
 // Group a multi-day 5m candle series by IST calendar date (YYYY-MM-DD).
@@ -553,7 +569,7 @@ function groupByDay(candles) {
   return days; // insertion order = chronological
 }
 
-function analyzeIntradaySymbol(symbol, allCandles) {
+function analyzeIntradaySymbol(symbol, allCandles, exchange) {
   const dayMap = groupByDay(allCandles);
   const dayKeys = Array.from(dayMap.keys());
   if (dayKeys.length < 2) return null;
@@ -654,25 +670,30 @@ function analyzeIntradaySymbol(symbol, allCandles) {
   return {
     symbol, ltp: +ltp.toFixed(2), changePct: +changePct.toFixed(2),
     direction, quantConfidence,
+    exchange: exchange === 'BSE' ? 'BSE' : 'NSE',
     entry: +entry.toFixed(2), stopLoss: +stopLoss.toFixed(2),
     target1: +target1.toFixed(2), target2: +target2.toFixed(2),
     rr: +rr.toFixed(2), atr: +atr.toFixed(2),
     vwap: +vwap.toFixed(2), rsi: +rsi.toFixed(1), volumeRatio: +volRatio.toFixed(2),
     reasons,
     _rrOk: rr >= 1.25,
+    _momentumPct: momentumPct,
   };
 }
 
-// MCP AI verification: one batched call through Gemini (Groq fallback).
+// MCP AI verification — MULTI-MODEL CONSENSUS layer.
+// Runs independent model calls in parallel (Gemini + Groq) and merges
+// verdicts: agreement boosts conviction, disagreement penalizes heavily.
 async function aiVerifySignals(candidates) {
-  if (!candidates.length) return {};
+  if (!candidates.length) return null;
   const compact = candidates.map(c => ({
-    sym: c.symbol, dir: c.direction, q: c.quantConfidence,
+    sym: c.symbol, exch: c.exchange || 'NSE', dir: c.direction, q: c.quantConfidence,
     chg: c.changePct, rsi: c.rsi, vr: c.volumeRatio, rr: c.rr,
-    vw: c.ltp > c.vwap ? 'above' : 'below',
+    vwapDist: +((((c.ltp - c.vwap) / c.vwap) * 100)).toFixed(2),
+    mom: c._momentumPct != null ? +c._momentumPct.toFixed(2) : undefined,
   }));
-  const systemPrompt = `You are an elite NSE intraday trading desk analyst. You receive pre-scored setups from a quantitative engine (EMA/VWAP/ORB/CPR/volume factors). Verify each setup strictly. Penalize: RSI exhaustion (>75/<25), poor RR (<1.25), counter-VWAP direction, low relative volume. Boost only high-conviction confluence. Respond with STRICT JSON only, no markdown:\n{"verdicts":{"SYMBOL":{"verdict":"LONG"|"SHORT"|"AVOID","confidence":0-100,"note":"max 12 words"}}}`;
-  const userPrompt = `Setups (q = engine confidence):\n${JSON.stringify(compact)}`;
+  const systemPrompt = `You are an elite NSE/BSE intraday trading desk analyst running as an MCP verification tool. You receive pre-scored setups from a quantitative engine (EMA/VWAP/ORB/CPR/volume/momentum factors). Verify each setup strictly. Penalize: RSI exhaustion (>75/<25), poor RR (<1.25), counter-VWAP direction, low relative volume, overextended moves far from VWAP (>1.5%). Boost only high-conviction confluence. Respond with STRICT JSON only, no markdown:\n{"verdicts":{"SYMBOL":{"verdict":"LONG"|"SHORT"|"AVOID","confidence":0-100,"note":"max 12 words"}}}`;
+  const userPrompt = `Setups (q = engine confidence, vwapDist % = price vs VWAP):\n${JSON.stringify(compact)}`;
 
   const parseVerdicts = (text) => {
     try {
@@ -683,54 +704,195 @@ async function aiVerifySignals(candidates) {
     } catch { return null; }
   };
 
-  // 1) Gemini first
-  if (KEYS.gemini) {
-    for (const model of ['gemini-3.5-flash', 'gemini-2.5-flash']) {
-      try {
-        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEYS.gemini}`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
-            generationConfig: { temperature: 0.2, maxOutputTokens: 2000 },
-          }),
-          signal: AbortSignal.timeout(20000),
-        });
-        if (!r.ok) continue;
-        const j = await r.json();
-        const text = j?.candidates?.[0]?.content?.parts?.map(p => p.text).filter(Boolean).join('\n') || '';
-        const verdicts = parseVerdicts(text);
-        if (verdicts) return { verdicts, model };
-      } catch { /* next */ }
+  async function askGemini(model) {
+    if (!KEYS.gemini) return null;
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEYS.gemini}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
+        generationConfig: { temperature: 0.2, maxOutputTokens: 2000 },
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!r.ok) throw new Error(`gemini ${r.status}`);
+    const j = await r.json();
+    const text = j?.candidates?.[0]?.content?.parts?.map(p => p.text).filter(Boolean).join('\n') || '';
+    return parseVerdicts(text);
+  }
+
+  async function askOpenAICompat(provider) {
+    if (!KEYS[provider]) return null;
+    const p = OPENAI_COMPAT[provider];
+    const r = await fetch(p.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${KEYS[provider]}` },
+      body: JSON.stringify({
+        model: p.defModel,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: 0.2, max_completion_tokens: 2000,
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!r.ok) throw new Error(`${provider} ${r.status}`);
+    const j = await r.json();
+    const text = j?.choices?.[0]?.message?.content || '';
+    return parseVerdicts(text);
+  }
+
+  // Parallel consensus across all available engines.
+  const settled = await Promise.allSettled([
+    askGemini('gemini-3.5-flash').catch(() => askGemini('gemini-2.5-flash')),
+    askOpenAICompat('groq'),
+    askOpenAICompat('cerebras'),
+  ]);
+  const responses = [];
+  for (let i = 0; i < settled.length; i++) {
+    const s = settled[i];
+    if (s.status === 'fulfilled' && s.value && typeof s.value === 'object') {
+      responses.push({ model: ['gemini', 'groq', 'cerebras'][i], verdicts: s.value });
     }
   }
-  // 2) Groq fallback
-  if (KEYS.groq) {
-    try {
-      const r = await fetch(OPENAI_COMPAT.groq.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${KEYS.groq}` },
-        body: JSON.stringify({
-          model: OPENAI_COMPAT.groq.defModel,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-          temperature: 0.2, max_completion_tokens: 2000,
-        }),
-        signal: AbortSignal.timeout(20000),
-      });
-      if (r.ok) {
-        const j = await r.json();
-        const text = j?.choices?.[0]?.message?.content || '';
-        const verdicts = parseVerdicts(text);
-        if (verdicts) return { verdicts, model: 'groq' };
+  if (responses.length === 0) return null;
+
+  // Merge: majority direction wins; confidence = blend of engine score(s).
+  const merged = {};
+  for (const c of candidates) {
+    const votes = [];
+    for (const resp of responses) {
+      const v = resp.verdicts[c.symbol];
+      if (v && v.verdict && typeof v.confidence === 'number') {
+        votes.push({ verdict: String(v.verdict).toUpperCase(), confidence: v.confidence, note: v.note || '', model: resp.model });
       }
-    } catch { /* ignore */ }
+    }
+    if (votes.length === 0) continue;
+    const tradeVotes = votes.filter(v => v.verdict === 'LONG' || v.verdict === 'SHORT');
+    if (tradeVotes.length === 0) {
+      merged[c.symbol] = { verdict: 'AVOID', confidence: Math.round(votes[0].confidence * 0.5), note: votes[0].note || 'AI avoid', models: votes.map(v => v.model) };
+      continue;
+    }
+    // Dominant direction among trade votes.
+    const counts = {};
+    for (const v of tradeVotes) counts[v.verdict] = (counts[v.verdict] || 0) + 1;
+    const dominant = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+    const agree = tradeVotes.filter(v => v.verdict === dominant);
+    const avgConf = agree.reduce((s, v) => s + v.confidence, 0) / agree.length;
+    merged[c.symbol] = {
+      verdict: dominant,
+      confidence: Math.round(avgConf),
+      note: agree[0].note,
+      models: [...new Set(votes.map(v => v.model))],
+      dissent: tradeVotes.length - agree.length, // opposing AI votes
+    };
   }
-  return null;
+  return { verdicts: merged, models: responses.map(r => r.model) };
 }
 
 let _intradayCache = { data: null, ts: 0, inflight: null };
+
+// ============================================================
+// INTRADAY ALGO ALERTS → TELEGRAM
+// ------------------------------------------------------------
+// After every scan cycle, new / reversed high-confidence setups are
+// pushed to the owner's Telegram chat automatically.
+// Rules: per-symbol 30-min cooldown, direction-flip always alerts,
+// confidence upgrade needs +2 pts, hard cap 20 alerts/day.
+// Toggle via GET/POST /api/intraday-alerts {enabled}.
+// ============================================================
+const _intradayAlerts = {
+  enabled: true,
+  sentBySymbol: new Map(),   // symbol → { dir, conf, ts }
+  dayKey: '',                // YYYY-MM-DD (IST)
+  sentToday: 0,
+};
+const ALERT_COOLDOWN_MS = 30 * 60 * 1000;
+const ALERT_MAX_PER_DAY = 20;
+const ALERT_CONF_UPGRADE = 2;
+
+function istDayKey() {
+  return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' });
+}
+
+async function sendTelegramRaw(html) {
+  if (!TG.token || !TG.chatId) return false;
+  const r = await fetch(`https://api.telegram.org/bot${TG.token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: TG.chatId, text: html, parse_mode: 'HTML', disable_web_page_preview: true }),
+    signal: AbortSignal.timeout(10000),
+  });
+  return r.ok;
+}
+
+async function dispatchIntradayAlerts(signals) {
+  if (!signals?.length) return;
+  if (!_intradayAlerts.enabled || !TG.token || !TG.chatId) return;
+
+  // Daily counter reset (IST midnight).
+  const today = istDayKey();
+  if (_intradayAlerts.dayKey !== today) {
+    _intradayAlerts.dayKey = today;
+    _intradayAlerts.sentToday = 0;
+  }
+  if (_intradayAlerts.sentToday >= ALERT_MAX_PER_DAY) return;
+
+  const now = Date.now();
+  const fresh = [];
+  for (const s of signals) {
+    const prev = _intradayAlerts.sentBySymbol.get(s.symbol);
+    const isFlip = prev && prev.dir !== s.direction;
+    const isNew = !prev;
+    const isUpgrade = prev && prev.dir === s.direction
+      && now - prev.ts >= ALERT_COOLDOWN_MS
+      && s.confidence >= prev.conf + ALERT_CONF_UPGRADE;
+    if (isNew || isFlip || isUpgrade) {
+      fresh.push({ s, isNew, isFlip });
+      if (_intradayAlerts.sentToday + fresh.length > ALERT_MAX_PER_DAY) break;
+    }
+  }
+  if (fresh.length === 0) return;
+
+  const fmtINR = n => `₹${n.toFixed(2)}`;
+  let msg = `<b>⚡ SUPER INTELLIGENCE ALGO ALERT</b>\n<b>NSE + BSE Deep Scan</b> • MCP AI Consensus\n<code>━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  for (const { s, isFlip } of fresh) {
+    const arrow = s.direction === 'LONG' ? '🟢' : '🔴';
+    msg += `\n${arrow} <b>${escapeHtml(s.symbol)}</b> (${s.exchange}) — <b>${s.direction}</b>${isFlip ? ' ⚠️ REVERSAL' : ''}\n`;
+    msg += `Confidence: <b>${s.confidence}%</b> | LTP ${fmtINR(s.ltp)} (${s.changePct >= 0 ? '+' : ''}${s.changePct.toFixed(2)}%)\n`;
+    msg += `Entry ${fmtINR(s.entry)} | SL ${fmtINR(s.stopLoss)} | T1 ${fmtINR(s.target1)} | T2 ${fmtINR(s.target2)}\n`;
+    msg += `RR 1:${s.rr.toFixed(2)} • VWAP ${fmtINR(s.vwap)} • RSI ${s.rsi} • Vol ${s.volumeRatio.toFixed(1)}x\n`;
+    if (s.aiModel) msg += `🤖 AI: ${escapeHtml(String(s.aiModel).slice(0, 40))}${s.aiNote ? ` — ${escapeHtml(s.aiNote.slice(0, 60))}` : ''}\n`;
+  }
+  msg += `\n<code>━━━━━━━━━━━━━━━━━━━━━</code>\n⏰ ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST • Auto-generated — not investment advice.`;
+
+  const ok = await sendTelegramRaw(msg);
+  if (ok) {
+    for (const { s } of fresh) {
+      _intradayAlerts.sentBySymbol.set(s.symbol, { dir: s.direction, conf: s.confidence, ts: now });
+    }
+    _intradayAlerts.sentToday += fresh.length;
+    console.log(`⚡ Intraday alerts: pushed ${fresh.length} setup(s) to Telegram (${_intradayAlerts.sentToday}/${ALERT_MAX_PER_DAY} today)`);
+  }
+}
+
+app.get('/api/intraday-alerts', (_req, res) => {
+  res.json({
+    enabled: _intradayAlerts.enabled,
+    telegramConfigured: !!(TG.token && TG.chatId),
+    cooldownMinutes: ALERT_COOLDOWN_MS / 60000,
+    maxPerDay: ALERT_MAX_PER_DAY,
+    sentToday: _intradayAlerts.sentToday,
+    trackedSymbols: _intradayAlerts.sentBySymbol.size,
+  });
+});
+
+app.post('/api/intraday-alerts', (req, res) => {
+  const { enabled } = req.body || {};
+  if (typeof enabled !== 'boolean') return jsonError(res, 400, 'boolean "enabled" required.');
+  _intradayAlerts.enabled = enabled;
+  res.json({ ok: true, enabled: _intradayAlerts.enabled });
+});
 
 app.get('/api/intraday-scanner', async (_req, res) => {
   // Market-hours gate — hard requirement for this feature.
@@ -760,7 +922,10 @@ app.get('/api/intraday-scanner', async (_req, res) => {
       for (let i = 0; i < INTRADAY_UNIVERSE.length; i += 8) {
         const batch = INTRADAY_UNIVERSE.slice(i, i + 8);
         const settled = await Promise.allSettled(
-          batch.map(async (sym) => analyzeIntradaySymbol(sym, await fetchIntradayCandles(sym)))
+          batch.map(async (sym) => {
+            const { candles, exchange } = await fetchIntradayCandles(sym);
+            return analyzeIntradaySymbol(sym, candles, exchange);
+          })
         );
         for (const r of settled) if (r.status === 'fulfilled' && r.value) results.push(r.value);
       }
@@ -773,24 +938,32 @@ app.get('/api/intraday-scanner', async (_req, res) => {
       if (pool.length === 0) pool = results.sort((a, b) => b.quantConfidence - a.quantConfidence).slice(0, 8);
       pool = pool.sort((a, b) => b.quantConfidence - a.quantConfidence).slice(0, 10);
 
-      // MCP AI verification layer.
+      // MCP AI verification layer — multi-model consensus.
       const ai = await aiVerifySignals(pool);
       let signals = pool.map(c => {
         let aiConfidence = null, aiNote = '', aiModel = '';
         const v = ai?.verdicts?.[c.symbol];
         if (v && typeof v.confidence === 'number') {
-          if (v.verdict === 'AVOID' || (v.verdict && v.verdict.toUpperCase() !== c.direction)) {
+          const multiModel = (v.models?.length || 1) >= 2;
+          if (v.verdict === 'AVOID') {
+            aiConfidence = Math.round(v.confidence * 0.5);
+            aiNote = v.note || 'AI avoid';
+          } else if (v.verdict !== c.direction) {
             aiConfidence = Math.round(v.confidence * 0.5); // disagreement → heavy penalty
             aiNote = v.note || 'AI disagrees with direction';
           } else {
-            aiConfidence = Math.round(c.quantConfidence * 0.45 + v.confidence * 0.55);
+            // Agreement: blend engine + AI. More weight to AI when multiple models concur.
+            const aiW = multiModel ? 0.6 : 0.55;
+            aiConfidence = Math.round(c.quantConfidence * (1 - aiW) + v.confidence * aiW);
+            // Dissenting AI vote caps conviction.
+            if ((v.dissent || 0) > 0) aiConfidence -= 4;
             aiNote = v.note || '';
           }
-          aiModel = ai.model || '';
+          aiModel = (v.models || []).join('+') || (ai.models || []).join('+');
         }
-        const confidence = aiConfidence != null ? aiConfidence : (c._rrOk ? c.quantConfidence : c.quantConfidence - 12);
-        const { _rrOk, ...clean } = c;
-        return { ...clean, aiConfidence, aiModel, aiNote, confidence: Math.max(0, Math.min(100, confidence)) };
+        const confidence = aiConfidence != null ? Math.max(0, Math.min(100, aiConfidence)) : (c._rrOk ? c.quantConfidence : c.quantConfidence - 12);
+        const { _rrOk, _momentumPct, ...clean } = c;
+        return { ...clean, aiConfidence, aiModel, aiNote, confidence };
       });
 
       signals = signals
@@ -802,14 +975,19 @@ app.get('/api/intraday-scanner', async (_req, res) => {
         marketOpen: true,
         asOf: new Date().toISOString(),
         scanned: results.length,
+        universe: INTRADAY_UNIVERSE.length,
         minConfidence: INTRADAY_MIN_CONFIDENCE,
         aiVerified: !!ai,
-        aiModel: ai?.model || '',
+        aiModel: (ai?.models || []).join('+'),
+        aiConsensus: (ai?.models || []).length > 1 ? 'multi-model' : ((ai?.models || [])[0] || ''),
         signals,
         disclaimer: 'Educational analysis only — not investment advice. Intraday trading me capital loss ka risk hai.',
       };
       _intradayCache.data = payload;
       _intradayCache.ts = Date.now();
+      // ALGO ALERT ENGINE — push new/reversed setups to Telegram.
+      dispatchIntradayAlerts(payload.signals).catch(e =>
+        console.warn('[intraday-alerts]', e?.message || e));
       return payload;
     } catch (e) {
       console.error('[intraday-scanner]', e?.message || e);

@@ -13,6 +13,7 @@ interface IntradaySignal {
   aiConfidence: number | null;
   aiModel: string;
   aiNote: string;
+  exchange?: 'NSE' | 'BSE';
   entry: number;
   stopLoss: number;
   target1: number;
@@ -25,15 +26,25 @@ interface IntradaySignal {
   reasons: string[];
 }
 
+interface IntradayAlertsStatus {
+  enabled: boolean;
+  telegramConfigured: boolean;
+  cooldownMinutes: number;
+  maxPerDay: number;
+  sentToday: number;
+}
+
 interface ScannerResponse {
   marketOpen: boolean;
   istTime?: string;
   weekday?: string;
   asOf?: string;
   scanned?: number;
+  universe?: number;
   minConfidence?: number;
   aiVerified?: boolean;
   aiModel?: string;
+  aiConsensus?: string;
   signals: IntradaySignal[];
   message?: string;
   error?: string;
@@ -71,12 +82,17 @@ function SignalCard({ s }: { s: IntradaySignal }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-base font-black text-white tracking-wide">{s.symbol}</span>
+            {s.exchange && (
+              <span className={`px-1.5 py-0.5 rounded-md text-[9px] font-black font-mono border ${s.exchange === 'BSE' ? 'bg-amber-500/10 text-amber-300 border-amber-500/25' : 'bg-sky-500/10 text-sky-300 border-sky-500/25'}`}>
+                {s.exchange}
+              </span>
+            )}
             <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black font-mono ${long ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/25' : 'bg-red-500/15 text-red-400 border border-red-500/25'}`}>
               {long ? 'LONG' : 'SHORT'}
             </span>
             {s.aiConfidence != null && (
-              <span className="px-2 py-0.5 rounded-lg text-[9px] font-bold bg-purple-500/15 text-purple-300 border border-purple-500/25" title={`Verified by ${s.aiModel}`}>
-                MCP AI VERIFIED
+              <span className="px-2 py-0.5 rounded-lg text-[9px] font-bold bg-purple-500/15 text-purple-300 border border-purple-500/25" title={`Verified by ${s.aiModel || 'MCP consensus'}`}>
+                MCP AI{s.aiModel?.includes('+') ? ' CONSENSUS' : ''} VERIFIED
               </span>
             )}
           </div>
@@ -140,6 +156,7 @@ export const IntradayTab = () => {
   const [data, setData] = useState<ScannerResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastFetch, setLastFetch] = useState<number>(0);
+  const [alertStatus, setAlertStatus] = useState<IntradayAlertsStatus | null>(null);
   const timerRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
 
@@ -159,9 +176,33 @@ export const IntradayTab = () => {
     }
   }, []);
 
+  const fetchAlertStatus = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${PROXY_BASE}/api/intraday-alerts`, { signal: AbortSignal.timeout(8000) });
+      if (mountedRef.current && res.ok) setAlertStatus(await res.json());
+    } catch { /* noop */ }
+  }, []);
+
+  const toggleAlerts = useCallback(async () => {
+    const next = !(alertStatus?.enabled ?? true);
+    setAlertStatus(prev => prev ? { ...prev, enabled: next } : prev); // optimistic
+    try {
+      const res = await apiFetch(`${PROXY_BASE}/api/intraday-alerts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) throw new Error('toggle failed');
+    } catch {
+      setAlertStatus(prev => prev ? { ...prev, enabled: !next } : prev); // rollback
+    }
+  }, [alertStatus?.enabled]);
+
   useEffect(() => {
     mountedRef.current = true;
     fetchSignals();
+    fetchAlertStatus();
     // Poll every 60s while tab visible — scanner itself caches server-side.
     timerRef.current = window.setInterval(() => {
       if (document.visibilityState === 'visible') fetchSignals(true);
@@ -170,7 +211,7 @@ export const IntradayTab = () => {
       mountedRef.current = false;
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [fetchSignals]);
+  }, [fetchSignals, fetchAlertStatus]);
 
   const marketClosed = data && !data.marketOpen;
 
@@ -183,18 +224,33 @@ export const IntradayTab = () => {
           <div>
             <h1 className="text-xl font-black gradient-text-cyan font-display text-glow flex items-center gap-2">
               ⚡ Super Intelligence Intraday
-              <span className="quantum-badge text-[9px]">NSE DEEP SCAN</span>
+              <span className="quantum-badge text-[9px]">NSE + BSE DEEP SCAN</span>
             </h1>
             <p className="text-xs text-slate-500 mt-1">
-              Top 5 high-confidence setups • VWAP + ORB-15 + EMA stack + CPR + Volume • MCP AI verified • Win-rate filter 90%+
+              Top 5 high-confidence setups • VWAP + ORB-15 + EMA stack + CPR + Volume • MCP multi-model AI consensus • Win-rate filter 90%+
             </p>
           </div>
           <div className="flex items-center gap-2">
             {data?.aiVerified && (
-              <span className="px-2 py-1 rounded-lg bg-purple-500/10 border border-purple-500/25 text-purple-300 text-[9px] font-bold font-mono">
-                AI: {data.aiModel || 'MCP'}
+              <span className="px-2 py-1 rounded-lg bg-purple-500/10 border border-purple-500/25 text-purple-300 text-[9px] font-bold font-mono" title={data.aiModel}>
+                🤖 {data.aiConsensus === 'multi-model' ? 'MCP CONSENSUS' : `AI: ${data.aiModel || 'MCP'}`}
               </span>
             )}
+            {/* Algo Telegram alert toggle */}
+            <button
+              onClick={toggleAlerts}
+              disabled={!alertStatus?.telegramConfigured}
+              className={`px-2.5 py-1.5 rounded-xl text-[10px] font-black border transition-all disabled:opacity-40 ${alertStatus?.enabled
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                : 'bg-white/5 border-white/10 text-slate-400 hover:text-slate-300'}`}
+              title={!alertStatus?.telegramConfigured
+                ? 'Telegram server pe configure nahi hai (TG_TOKEN/TG_CHAT_ID)'
+                : alertStatus?.enabled
+                  ? `Algo alerts ON — new/reversed setups auto-push to Telegram (${alertStatus?.sentToday ?? 0}/${alertStatus?.maxPerDay ?? 20} today, ${alertStatus?.cooldownMinutes ?? 30}m cooldown)`
+                  : 'Algo alerts OFF — click to enable'}
+            >
+              🔔 ALGO {alertStatus?.enabled ? 'ON' : 'OFF'}
+            </button>
             {marketClosed ? (
               <span className="px-3 py-1.5 rounded-xl bg-red-500/10 border border-red-500/25 text-red-400 text-[11px] font-black">🔴 MARKET CLOSED</span>
             ) : (
@@ -210,7 +266,7 @@ export const IntradayTab = () => {
         )}
         {data?.asOf && !marketClosed && (
           <p className="text-[11px] text-slate-500 mt-2 font-mono">
-            Scan: {new Date(data.asOf).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST • Universe scanned: {data.scanned} stocks • Auto-refresh 60s
+            Scan: {new Date(data.asOf).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST • Universe: {data.scanned}/{data.universe ?? '~90'} NSE+BSE stocks live-resolved • Auto-refresh 60s
           </p>
         )}
       </div>
