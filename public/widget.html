@@ -15,287 +15,405 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     body {
-      background: #020617;
+      background: radial-gradient(120% 90% at 20% 0%, #0b1530 0%, #020617 55%) fixed;
       color: #e2e8f0;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       min-height: 100vh;
       overflow-x: hidden;
-      padding: 8px;
+      padding: 10px;
     }
+    /* ---------- Header ---------- */
     .widget-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 4px 8px 8px;
-      border-bottom: 1px solid rgba(34, 211, 238, 0.2);
-      margin-bottom: 8px;
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 6px 10px 10px;
+      border-bottom: 1px solid rgba(34, 211, 238, 0.18);
+      margin-bottom: 10px;
     }
     .widget-title {
-      font-size: 11px;
-      font-weight: 700;
-      color: #22d3ee;
-      text-transform: uppercase;
-      letter-spacing: 1px;
+      font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase;
+      background: linear-gradient(90deg, #22d3ee, #a855f7);
+      -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
     }
-    .widget-time {
-      font-size: 10px;
-      color: #64748b;
+    .hdr-right { display: flex; align-items: center; gap: 6px; }
+    .market-chip {
+      font-size: 8px; font-weight: 800; padding: 2px 6px; border-radius: 6px; letter-spacing: 0.4px;
     }
+    .chip-open { background: rgba(34,197,94,.15); color: #22c55e; }
+    .chip-closed { background: rgba(100,116,139,.15); color: #64748b; }
+    .widget-time { font-size: 9px; color: #64748b; display: flex; align-items: center; gap: 3px; }
     .widget-time.live { color: #22c55e; }
-    .widget-time.live::before {
-      content: '●';
-      margin-right: 3px;
-      animation: pulse 2s infinite;
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.3; }
-    }
-    .summary-card {
-      background: linear-gradient(135deg, rgba(6, 182, 212, 0.1), rgba(59, 130, 246, 0.1));
-      border: 1px solid rgba(34, 211, 238, 0.3);
-      border-radius: 12px;
-      padding: 10px;
+    .widget-time.stale { color: #f59e0b; }
+    .live-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+    /* ---------- Hero: equity + P&L ring ---------- */
+    .hero {
+      position: relative;
+      background: linear-gradient(135deg, rgba(34,211,238,.09), rgba(168,85,247,.09));
+      border: 1px solid rgba(34, 211, 238, 0.25);
+      border-radius: 16px;
+      padding: 12px;
       margin-bottom: 8px;
+      overflow: hidden;
     }
-    .summary-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 4px;
+    .hero::before {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(120deg, transparent 30%, rgba(255,255,255,.05) 50%, transparent 70%);
+      transform: translateX(-100%);
+      animation: sheen 6s ease infinite;
     }
-    .summary-row:last-child { margin-bottom: 0; }
-    .summary-label {
-      font-size: 10px;
-      color: #94a3b8;
-      text-transform: uppercase;
+    @keyframes sheen { 0%,60% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+    .hero-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .equity-label { font-size: 9px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; }
+    .equity-value {
+      font-size: 26px; font-weight: 800; color: #67e8f9; margin-top: 2px;
+      font-variant-numeric: tabular-nums; letter-spacing: -0.5px;
     }
-    .summary-value {
-      font-size: 14px;
-      font-weight: 700;
-      color: #e2e8f0;
+    .pl-line { display: flex; align-items: baseline; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+    .pl-abs { font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .pl-pct-badge {
+      font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 999px;
+      font-variant-numeric: tabular-nums;
     }
-    .summary-value.positive { color: #22c55e; }
-    .summary-value.negative { color: #ef4444; }
-    .assets-list {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
+    .pos { color: #22c55e; }
+    .neg { color: #ef4444; }
+    .pos .pl-pct-badge, .pl-pct-badge.pos { background: rgba(34,197,94,.12); color: #22c55e; }
+    .neg .pl-pct-badge, .pl-pct-badge.neg { background: rgba(239,68,68,.12); color: #ef4444; }
+    /* Donut */
+    .donut-wrap { position: relative; width: 64px; height: 64px; flex-shrink: 0; }
+    .donut-wrap svg { transform: rotate(-90deg); }
+    .donut-track { stroke: rgba(148,163,184,.12); }
+    .donut-val {
+      fill: #e2e8f0; font-size: 13px; font-weight: 800;
+      transform: rotate(90deg); transform-origin: center;
     }
+    .donut-center-label { font-size: 6px; fill: #64748b; font-weight: 700; letter-spacing: .5px; }
+    .usdinr-row {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-top: 8px; padding-top: 8px; border-top: 1px dashed rgba(148,163,184,.15);
+    }
+    .usdinr-row span:first-child { font-size: 9px; color: #64748b; font-weight: 700; letter-spacing: .8px; }
+    .usdinr-val { font-size: 11px; font-weight: 700; color: #34d399; font-variant-numeric: tabular-nums; }
+
+    /* ---------- Market split ---------- */
+    .market-split { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 8px; }
+    .mcard {
+      border-radius: 12px; padding: 7px 4px; text-align: center;
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid rgba(148,163,184,.08);
+      transition: border-color .3s ease;
+    }
+    .mcard.pos { border-color: rgba(34,197,94,.25); background: rgba(34,197,94,.06); }
+    .mcard.neg { border-color: rgba(239,68,68,.25); background: rgba(239,68,68,.06); }
+    .mcard-flag { font-size: 11px; }
+    .mcard-pl { font-size: 11px; font-weight: 800; margin-top: 2px; font-variant-numeric: tabular-nums; }
+    .mcard-pct { font-size: 8px; color: #64748b; font-weight: 600; }
+
+    /* ---------- Gainer / Loser chips ---------- */
+    .gl-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+    .gl-chip {
+      display: flex; align-items: center; justify-content: space-between; gap: 6px;
+      border-radius: 10px; padding: 6px 9px; font-size: 10px;
+      background: rgba(15,23,42,.65);
+    }
+    .gl-chip.gain { border: 1px solid rgba(34,197,94,.25); }
+    .gl-chip.lose { border: 1px solid rgba(239,68,68,.25); }
+    .gl-sym { font-weight: 800; color: #e2e8f0; }
+    .gl-tag { font-size: 7px; font-weight: 800; letter-spacing: .6px; display: block; }
+    .gain .gl-tag { color: #22c55e; }
+    .lose .gl-tag { color: #ef4444; }
+    .gl-val { font-weight: 800; font-variant-numeric: tabular-nums; }
+    .gain .gl-val { color: #22c55e; }
+    .lose .gl-val { color: #ef4444; }
+
+    /* ---------- Assets ---------- */
+    .section-label { font-size: 9px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; margin: 0 2px 5px; }
+    .assets-list { display: flex; flex-direction: column; gap: 4px; }
     .asset-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 6px 8px;
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 7px 9px;
       background: rgba(15, 23, 42, 0.6);
-      border-radius: 8px;
+      border-radius: 10px;
       border-left: 3px solid transparent;
+      transition: transform .12s ease;
     }
+    .asset-row:active { transform: scale(.985); }
     .asset-row.in { border-left-color: #f59e0b; }
     .asset-row.us { border-left-color: #3b82f6; }
     .asset-row.crypto { border-left-color: #a855f7; }
-    .asset-info {
-      display: flex;
-      flex-direction: column;
-      gap: 1px;
-    }
-    .asset-symbol {
-      font-size: 12px;
-      font-weight: 700;
-      color: #e2e8f0;
-    }
-    .asset-qty {
-      font-size: 9px;
-      color: #64748b;
-    }
-    .asset-price {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-      gap: 1px;
-    }
-    .asset-price-value {
-      font-size: 12px;
-      font-weight: 600;
-      color: #e2e8f0;
-    }
-    .asset-price-change {
-      font-size: 10px;
-      font-weight: 600;
-    }
-    .asset-price-change.positive { color: #22c55e; }
-    .asset-price-change.negative { color: #ef4444; }
-    .market-badge {
-      font-size: 8px;
-      padding: 1px 4px;
-      border-radius: 4px;
-      margin-left: 4px;
-      font-weight: 700;
-    }
-    .market-badge.in { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
-    .market-badge.us { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
-    .market-badge.crypto { background: rgba(168, 85, 247, 0.2); color: #a855f7; }
-    .loading {
-      text-align: center;
-      padding: 40px 20px;
-      color: #64748b;
-      font-size: 12px;
-    }
-    .error {
-      text-align: center;
-      padding: 20px;
-      color: #ef4444;
-      font-size: 11px;
-    }
+    .asset-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .asset-symbol { font-size: 12px; font-weight: 800; color: #e2e8f0; display: flex; align-items: center; }
+    .asset-pl-inline { font-size: 9px; font-weight: 700; margin-left: 6px; font-variant-numeric: tabular-nums; }
+    .asset-qty { font-size: 9px; color: #64748b; font-variant-numeric: tabular-nums; }
+    .asset-price { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+    .asset-price-value { font-size: 12px; font-weight: 700; color: #e2e8f0; font-variant-numeric: tabular-nums; border-radius: 4px; padding: 0 3px; }
+    .asset-price-change { font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .positive { color: #22c55e; }
+    .negative { color: #ef4444; }
+    /* Price flash */
+    @keyframes flashUp { 0% { background: rgba(34,197,94,.35); } 100% { background: transparent; } }
+    @keyframes flashDown { 0% { background: rgba(239,68,68,.35); } 100% { background: transparent; } }
+    .flash-up { animation: flashUp .8s ease-out; }
+    .flash-down { animation: flashDown .8s ease-out; }
+
+    .market-badge { font-size: 8px; padding: 1px 4px; border-radius: 4px; margin-left: 4px; font-weight: 800; }
+    .market-badge.in { background: rgba(245,158,11,.18); color: #f59e0b; }
+    .market-badge.us { background: rgba(59,130,246,.18); color: #3b82f6; }
+    .market-badge.crypto { background: rgba(168,85,247,.18); color: #a855f7; }
+
+    .loading { text-align: center; padding: 40px 20px; color: #64748b; font-size: 12px; }
+    .error { text-align: center; padding: 20px; color: #ef4444; font-size: 11px; }
+
+    /* ---------- Refresh with countdown ring ---------- */
     .refresh-btn {
-      display: block;
-      width: 100%;
-      padding: 8px;
-      margin-top: 8px;
-      background: rgba(34, 211, 238, 0.15);
+      display: flex; align-items: center; justify-content: center; gap: 7px;
+      width: 100%; padding: 9px; margin-top: 10px;
+      background: rgba(34, 211, 238, 0.12);
       border: 1px solid rgba(34, 211, 238, 0.3);
-      border-radius: 8px;
-      color: #22d3ee;
-      font-size: 11px;
-      font-weight: 600;
-      cursor: pointer;
-      text-align: center;
+      border-radius: 10px; color: #22d3ee;
+      font-size: 11px; font-weight: 700; cursor: pointer;
+      transition: background .15s ease, transform .12s ease;
     }
-    .refresh-btn:active { background: rgba(34, 211, 238, 0.3); }
+    .refresh-btn:active { background: rgba(34, 211, 238, 0.28); transform: scale(.98); }
+    .count-ring { width: 14px; height: 14px; }
+    .count-ring circle { fill: none; stroke-width: 3; }
+    .count-ring .bg { stroke: rgba(34,211,238,.18); }
+    .count-ring .fg { stroke: #22d3ee; stroke-linecap: round; transform: rotate(-90deg); transform-origin: center; }
   </style>
 </head>
 <body>
   <div class="widget-header">
     <span class="widget-title">💎 Wealth AI</span>
-    <span class="widget-time" id="lastUpdate">Loading...</span>
+    <div class="hdr-right">
+      <span class="market-chip" id="nseChip">NSE —</span>
+      <span class="market-chip" id="usChip">US —</span>
+    </div>
+  </div>
+  <div style="text-align:right;margin:-6px 2px 6px;">
+    <span class="widget-time" id="lastUpdate"><span class="live-dot"></span>Loading…</span>
   </div>
   <div id="widget-content">
     <div class="loading">Fetching live prices...</div>
   </div>
-  <button class="refresh-btn" onclick="refreshWidget()">↻ Refresh Now</button>
+  <button class="refresh-btn" onclick="manualRefresh()">
+    <svg class="count-ring" viewBox="0 0 36 36" aria-hidden="true">
+      <circle class="bg" cx="18" cy="18" r="16"></circle>
+      <circle class="fg" cx="18" cy="18" r="16" stroke-dasharray="100.5" stroke-dashoffset="0" id="countArc"></circle>
+    </svg>
+    <span id="refreshLabel">Refresh · 30s</span>
+  </button>
 
   <script>
+    'use strict';
+    const REFRESH_SEC = 30;
     let authToken = null;
-    let refreshInterval = null;
+    let prevPrices = {};        // key → price (for flash detection)
+    let lastDataTs = 0;
+    let countdown = REFRESH_SEC;
 
-    // Get auth token from URL param, localStorage, or sessionStorage
+    // ---------- Auth ----------
     function getAuthToken() {
-      // Try URL param first (for widget shortcut)
       const urlParams = new URLSearchParams(window.location.search);
       const tokenFromUrl = urlParams.get('token');
       if (tokenFromUrl) {
         authToken = tokenFromUrl;
-        localStorage.setItem('wealthai_session_token', tokenFromUrl);
+        try { localStorage.setItem('wealthai_session_token', tokenFromUrl); } catch (e) {}
         return tokenFromUrl;
       }
-      // Try localStorage / sessionStorage
-      const token = localStorage.getItem('wealthai_session_token') || sessionStorage.getItem('wealthai_session_token');
-      if (token) {
-        authToken = token;
-        return token;
-      }
+      try {
+        const token = localStorage.getItem('wealthai_session_token') || sessionStorage.getItem('wealthai_session_token');
+        if (token) { authToken = token; return token; }
+      } catch (e) {}
       return null;
     }
 
+    // ---------- Formatters ----------
+    function fmtINR(n) {
+      const sign = n >= 0 ? '+' : '−';
+      const a = Math.abs(n);
+      if (a >= 1e7) return sign + '₹' + (a / 1e7).toFixed(2) + 'Cr';
+      if (a >= 1e5) return sign + '₹' + (a / 1e5).toFixed(2) + 'L';
+      return sign + '₹' + Math.round(a).toLocaleString('en-IN');
+    }
     function formatPrice(price, market) {
       if (!price || price === 0) return '—';
       if (market === 'US') return '$' + price.toLocaleString('en-US', { maximumFractionDigits: 2 });
       return '₹' + price.toLocaleString('en-IN', { maximumFractionDigits: 2 });
     }
-
-    function formatChange(change) {
-      if (change === 0 || change === undefined || change === null) return { text: '0.00%', class: '' };
-      const pct = change.toFixed(2);
-      return {
-        text: (change >= 0 ? '+' : '') + pct + '%',
-        class: change >= 0 ? 'positive' : 'negative'
-      };
+    function fmtChange(change) {
+      if (change === undefined || change === null) return { text: '—', cls: '' };
+      return { text: (change >= 0 ? '+' : '') + change.toFixed(2) + '%', cls: change >= 0 ? 'positive' : 'negative' };
     }
-
     function isCrypto(sym) {
-      return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'].includes(sym?.toUpperCase());
+      return ['BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','DOT','MATIC','LINK','UNI'].includes((sym || '').toUpperCase());
     }
-
-    function getMarketClass(market, symbol) {
-      if (isCrypto(symbol)) return 'crypto';
-      if (market === 'US') return 'us';
-      return 'in';
-    }
-
-    function getMarketBadge(market, symbol) {
-      if (isCrypto(symbol)) return '<span class="market-badge crypto">CRYPTO</span>';
+    function mktClass(market, symbol) { return isCrypto(symbol) ? 'crypto' : market === 'US' ? 'us' : 'in'; }
+    function mktBadge(market, symbol) {
+      if (isCrypto(symbol)) return '<span class="market-badge crypto">C</span>';
       if (market === 'US') return '<span class="market-badge us">US</span>';
       return '<span class="market-badge in">IN</span>';
     }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
+    // ---------- Market hours (IST) ----------
+    function istNow() {
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Kolkata', hour12: false, hour: '2-digit', minute: '2-digit', weekday: 'short',
+      }).formatToParts(new Date());
+      const get = t => (parts.find(p => p.type === t) || {}).value || '';
+      const h = parseInt(get('hour'), 10) % 24;
+      const m = parseInt(get('minute'), 10);
+      return { mins: h * 60 + m, wd: get('weekday') };
+    }
+    function updateMarketChips() {
+      const { mins, wd } = istNow();
+      const weekday = wd !== 'Sat' && wd !== 'Sun';
+      // NSE: 09:15–15:30 IST Mon–Fri
+      const nseOpen = weekday && mins >= 555 && mins <= 930;
+      // US cash session ≈ 19:30–02:00 IST. Session spans midnight, so the
+      // "trading date" rolls over: after 00:00 IST it belongs to the previous
+      // calendar day's US session (Mon evening IST → Tue 2 AM etc.).
+      const effWd = mins < 120
+        ? new Date(Date.now() - 864e5).toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata', weekday: 'short' })
+        : wd;
+      const effWeekday = effWd !== 'Sat' && effWd !== 'Sun';
+      const inSession = mins >= 1170 || mins < 120; // ≥19:30 or <02:00
+      const setChip = (el, open, label) => {
+        el.textContent = label + ' ' + (open ? 'OPEN' : 'CLOSED');
+        el.className = 'market-chip ' + (open ? 'chip-open' : 'chip-closed');
+      };
+      setChip(document.getElementById('nseChip'), nseOpen, 'NSE');
+      setChip(document.getElementById('usChip'), effWeekday && inSession, 'US');
+    }
+
+    // ---------- Flash helpers ----------
+    function flashCls(key, price) {
+      const prev = prevPrices[key];
+      prevPrices[key] = price;
+      if (prev == null || prev === price) return '';
+      return price > prev ? 'flash-up' : 'flash-down';
+    }
+
+    // ---------- Render ----------
     function renderWidget(data) {
       const content = document.getElementById('widget-content');
       const lastUpdate = document.getElementById('lastUpdate');
-
-      if (!data || !data.summary) {
-        content.innerHTML = '<div class="error">No data. Open the app and login first.</div>';
-        lastUpdate.textContent = 'No data';
-        lastUpdate.classList.remove('live');
+      if (!data || !data.summary || !(data.portfolio || []).length) {
+        content.innerHTML = '<div class="error">' + (data && data.summary ? 'No assets in portfolio.' : 'No data. Open the app and login first.') + '</div>';
         return;
       }
-
       const s = data.summary;
-      const plClass = s.todayPL >= 0 ? 'positive' : 'negative';
-      const plSign = s.todayPL >= 0 ? '+' : '';
-      const trend = s.todayPL >= 0 ? '📈' : '📉';
+      const pos = s.todayPL >= 0;
+      const trend = pos ? '📈' : '📉';
+
+      // Per-market aggregation + gainer/loser
+      const agg = { IN: { pl: 0, val: 0 }, US: { pl: 0, val: 0 }, CRYPTO: { pl: 0, val: 0 } };
+      let best = null, worst = null;
+      const enriched = data.portfolio.map(a => {
+        const pl = a.value - (a.prevValue != null ? a.prevValue : a.value / (1 + (a.change || 0) / 100));
+        const bucket = isCrypto(a.symbol) ? 'CRYPTO' : a.market === 'US' ? 'US' : 'IN';
+        agg[bucket].pl += pl;
+        agg[bucket].val += a.value;
+        if (!best || pl > best.pl) best = { sym: a.symbol, pl };
+        if (!worst || pl < worst.pl) worst = { sym: a.symbol, pl };
+        return Object.assign({}, a, { dayPL: pl });
+      });
+
+      const R = 26, CIRC = 2 * Math.PI * R;
+      const pctClamp = Math.max(-99, Math.min(99, s.todayPLPct || 0));
+      const dash = CIRC * Math.min(100, Math.abs(pctClamp)) / 100;
 
       let html = `
-        <div class="summary-card">
-          <div class="summary-row">
-            <span class="summary-label">Equity</span>
-            <span class="summary-value">₹${s.totalValue?.toLocaleString('en-IN', { maximumFractionDigits: 0 }) || '0'}</span>
-          </div>
-          <div class="summary-row">
-            <span class="summary-label">Today's P&L</span>
-            <span class="summary-value ${plClass}">${trend} ${plSign}₹${Math.abs(s.todayPL || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
-          </div>
-          <div class="summary-row">
-            <span class="summary-label">Change</span>
-            <span class="summary-value ${plClass}">${plSign}${(s.todayPLPct || 0).toFixed(2)}%</span>
-          </div>
-          <div class="summary-row">
-            <span class="summary-label">USD/INR</span>
-            <span class="summary-value">₹${(s.usdInr || 0).toFixed(2)}</span>
-          </div>
-        </div>
-        <div class="assets-list">
-      `;
-
-      if (data.portfolio && data.portfolio.length > 0) {
-        // Sort by value descending
-        const sorted = [...data.portfolio].sort((a, b) => (b.value || 0) - (a.value || 0));
-        for (const asset of sorted) {
-          const change = formatChange(asset.change);
-          const mc = getMarketClass(asset.market, asset.symbol);
-          const badge = getMarketBadge(asset.market, asset.symbol);
-          html += `
-            <div class="asset-row ${mc}">
-              <div class="asset-info">
-                <span class="asset-symbol">${asset.symbol}${badge}</span>
-                <span class="asset-qty">${asset.qty} @ ${formatPrice(asset.price, asset.market)}</span>
-              </div>
-              <div class="asset-price">
-                <span class="asset-price-value">${formatPrice(asset.price, asset.market)}</span>
-                <span class="asset-price-change ${change.class}">${change.text}</span>
+        <div class="hero">
+          <div class="hero-top">
+            <div>
+              <div class="equity-label">Total Equity</div>
+              <div class="equity-value">₹${Math.round(s.totalValue || 0).toLocaleString('en-IN')}</div>
+              <div class="pl-line ${pos ? 'pos' : 'neg'}">
+                <span class="pl-abs">${trend} ${fmtINR(s.todayPL || 0)}</span>
+                <span class="pl-pct-badge ${pos ? '' : 'neg'}">${pos ? '+' : ''}${(s.todayPLPct || 0).toFixed(2)}%</span>
               </div>
             </div>
-          `;
-        }
-      }
+            <div class="donut-wrap">
+              <svg width="64" height="64" viewBox="0 0 64 64">
+                <circle class="donut-track" cx="32" cy="32" r="${R}" stroke-width="6" fill="none"></circle>
+                <circle cx="32" cy="32" r="${R}" stroke-width="6" fill="none"
+                  stroke="${pos ? '#22c55e' : '#ef4444'}" stroke-linecap="round"
+                  stroke-dasharray="${dash} ${CIRC}"></circle>
+                <text class="donut-val" x="32" y="35" text-anchor="middle">${Math.abs(Math.round(s.todayPLPct || 0))}%</text>
+                <text class="donut-center-label" x="32" y="44" text-anchor="middle">TODAY</text>
+              </svg>
+            </div>
+          </div>
+          <div class="usdinr-row">
+            <span>USD/INR</span>
+            <span class="usdinr-val">₹${(s.usdInr || 0).toFixed(2)}</span>
+          </div>
+        </div>
 
-      html += '</div>';
+        <div class="market-split">
+          ${['IN', 'US', 'CRYPTO'].map(k => {
+            const m = agg[k], p = m.pl >= 0;
+            const flag = k === 'IN' ? '🇮🇳' : k === 'US' ? '🇺🇸' : '🪙';
+            const pct = m.val > 0 ? ((m.pl / m.val) * 100).toFixed(2) : '0.00';
+            return `<div class="mcard ${p ? 'pos' : 'neg'}">
+              <div class="mcard-flag">${flag}</div>
+              <div class="mcard-pl ${p ? 'positive' : 'negative'}">${fmtINR(m.pl)}</div>
+              <div class="mcard-pct">${p ? '+' : ''}${pct}%</div>
+            </div>`;
+          }).join('')}
+        </div>
+
+        ${best && worst && best.sym !== worst.sym ? `
+        <div class="gl-row">
+          <div class="gl-chip gain"><div><span class="gl-tag">🏆 TOP GAINER</span><span class="gl-sym">${esc(best.sym)}</span></div><span class="gl-val">${fmtINR(best.pl)}</span></div>
+          <div class="gl-chip lose"><div><span class="gl-tag">📉 TOP LOSER</span><span class="gl-sym">${esc(worst.sym)}</span></div><span class="gl-val">${fmtINR(worst.pl)}</span></div>
+        </div>` : ''}
+
+        <div class="section-label">Holdings (${data.portfolio.length})</div>
+        <div class="assets-list">
+          ${[...enriched].sort((a, b) => (b.value || 0) - (a.value || 0)).map(a => {
+            const chg = fmtChange(a.change);
+            const mc = mktClass(a.market, a.symbol);
+            const fl = flashCls(a.market + '_' + a.symbol, a.price);
+            return `
+            <div class="asset-row ${mc}">
+              <div class="asset-info">
+                <span class="asset-symbol">${esc(a.symbol)}${mktBadge(a.market, a.symbol)}
+                  <span class="asset-pl-inline ${a.dayPL >= 0 ? 'positive' : 'negative'}">${fmtINR(a.dayPL)}</span>
+                </span>
+                <span class="asset-qty">${a.qty} × ${formatPrice(a.price, a.market)}</span>
+              </div>
+              <div class="asset-price">
+                <span class="asset-price-value ${fl}">${formatPrice(a.price, a.market)}</span>
+                <span class="asset-price-change ${chg.cls}">${chg.text}</span>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>`;
+
       content.innerHTML = html;
 
-      const time = new Date(data.timestamp || Date.now());
-      lastUpdate.textContent = `Updated ${time.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`;
-      lastUpdate.classList.add('live');
+      // Timestamp state
+      const age = Date.now() - (data.timestamp || Date.now());
+      lastUpdate.classList.remove('stale');
+      if (age > 120000) {
+        lastUpdate.innerHTML = '<span class="live-dot"></span>Stale · retrying';
+        lastUpdate.classList.add('stale');
+      } else {
+        const t = new Date(data.timestamp || Date.now());
+        lastUpdate.innerHTML = '<span class="live-dot"></span>LIVE · ' + t.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) + ' IST';
+      }
+      lastDataTs = data.timestamp || Date.now();
+
+      // Feed service worker cache
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'WIDGET_DATA_UPDATE', payload: data });
+      }
+      try { localStorage.setItem('wa_widget_last', JSON.stringify(data)); } catch (e) {}
     }
 
+    // ---------- Data pipeline (unchanged protocol) ----------
     async function fetchWidgetData() {
       const token = getAuthToken();
       if (!token) {
@@ -303,167 +421,149 @@
           '<div class="error">Not logged in. Open the main app and login with PIN first.</div>';
         return;
       }
-
       const backendUrl = window.location.origin;
-
       try {
-        // Fetch portfolio
-        const portfolioResp = await fetch(`${backendUrl}/api/cloud/load`, {
-          headers: { Authorization: `Bearer ${token}` },
+        const portfolioResp = await fetch(backendUrl + '/api/cloud/load', {
+          headers: { Authorization: 'Bearer ' + token },
         });
         if (!portfolioResp.ok) throw new Error('Portfolio fetch failed');
         const portfolioData = await portfolioResp.json();
         const portfolio = portfolioData.portfolio || [];
         if (portfolio.length === 0) {
-          document.getElementById('widget-content').innerHTML =
-            '<div class="error">No assets in portfolio.</div>';
+          document.getElementById('widget-content').innerHTML = '<div class="error">No assets in portfolio.</div>';
           return;
         }
 
-        // Group symbols
         const inSyms = [...new Set(portfolio.filter(p => p.market === 'IN' && !isCrypto(p.symbol)).map(p => p.symbol))].slice(0, 20);
         const usSyms = [...new Set(portfolio.filter(p => p.market === 'US').map(p => p.symbol))].slice(0, 20);
         const cryptoSyms = [...new Set(portfolio.filter(p => isCrypto(p.symbol)).map(p => p.symbol))];
 
-        // Fetch all prices in parallel
         const [inResp, usResp, cryptoResp, forexResp] = await Promise.allSettled([
-          inSyms.length > 0 ? fetch(`${backendUrl}/api/quote?symbols=${inSyms.join(',')}&market=IN`, {
-            headers: { Authorization: `Bearer ${token}` },
-          }) : Promise.resolve(null),
-          usSyms.length > 0 ? fetch(`${backendUrl}/api/quote?symbols=${usSyms.join(',')}&market=US`, {
-            headers: { Authorization: `Bearer ${token}` },
-          }) : Promise.resolve(null),
-          fetch(`${backendUrl}/api/crypto-prices?t=${Date.now()}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-          fetch(`${backendUrl}/api/forex?t=${Date.now()}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
+          inSyms.length > 0 ? fetch(backendUrl + '/api/quote?symbols=' + inSyms.join(',') + '&market=IN', { headers: { Authorization: 'Bearer ' + token } }) : Promise.resolve(null),
+          usSyms.length > 0 ? fetch(backendUrl + '/api/quote?symbols=' + usSyms.join(',') + '&market=US', { headers: { Authorization: 'Bearer ' + token } }) : Promise.resolve(null),
+          fetch(backendUrl + '/api/crypto-prices?t=' + Date.now(), { headers: { Authorization: 'Bearer ' + token } }),
+          fetch(backendUrl + '/api/forex?t=' + Date.now(), { headers: { Authorization: 'Bearer ' + token } }),
         ]);
 
         const prices = {};
         let usdInr = 85.5;
 
-        if (forexResp.status === 'fulfilled' && forexResp.value?.ok) {
+        if (forexResp.status === 'fulfilled' && forexResp.value && forexResp.value.ok) {
           const f = await forexResp.value.json();
           usdInr = f.usdInr || usdInr;
         }
-
-        if (inResp.status === 'fulfilled' && inResp.value?.ok) {
+        if (inResp.status === 'fulfilled' && inResp.value && inResp.value.ok) {
           const d = await inResp.value.json();
-          if (d.quotes) {
-            for (const [sym, q] of Object.entries(d.quotes)) {
-              prices[`IN_${sym}`] = { price: q.price, change: q.change, prevClose: q.prevClose };
-            }
+          if (d.quotes) for (const [sym, q] of Object.entries(d.quotes)) {
+            prices['IN_' + sym] = { price: q.price, change: q.change, prevClose: q.prevClose };
           }
         }
-
-        if (usResp.status === 'fulfilled' && usResp.value?.ok) {
+        if (usResp.status === 'fulfilled' && usResp.value && usResp.value.ok) {
           const d = await usResp.value.json();
-          if (d.quotes) {
-            for (const [sym, q] of Object.entries(d.quotes)) {
-              prices[`US_${sym}`] = { price: q.price, change: q.change, prevClose: q.prevClose };
-            }
+          if (d.quotes) for (const [sym, q] of Object.entries(d.quotes)) {
+            prices['US_' + sym] = { price: q.price, change: q.change, prevClose: q.prevClose };
           }
         }
-
-        if (cryptoResp.status === 'fulfilled' && cryptoResp.value?.ok) {
+        if (cryptoResp.status === 'fulfilled' && cryptoResp.value && cryptoResp.value.ok) {
           const tickers = await cryptoResp.value.json();
           if (Array.isArray(tickers)) {
             for (const t of tickers) {
-              const sym = t.market?.replace('USDT', '').replace('INR', '');
+              const sym = (t.market || '').replace('USDT', '').replace('INR', '');
               if (cryptoSyms.includes(sym)) {
                 const price = parseFloat(t.last_price) * usdInr;
                 const change = parseFloat(t.change_24_hour) || 0;
-                prices[`IN_${sym}`] = { price, change, prevClose: price / (1 + change / 100) };
+                prices['IN_' + sym] = { price, change, prevClose: price / (1 + change / 100) };
               }
             }
           }
         }
 
-        // Calculate summary
-        let totalValue = 0;
-        let totalPrevValue = 0;
-        let todayPL = 0;
-
+        let totalValue = 0, totalPrevValue = 0, todayPL = 0;
         const enrichedPortfolio = portfolio.map(p => {
-          const key = `${p.market}_${p.symbol}`;
-          const price = prices[key];
-          const value = (price?.price || p.avgPrice) * p.qty;
-          const prevValue = (price?.prevClose || p.avgPrice) * p.qty;
+          const key = p.market + '_' + p.symbol;
+          const pr = prices[key];
+          const value = (pr && pr.price ? pr.price : p.avgPrice) * p.qty;
+          const prevRef = pr && pr.prevClose ? pr.prevClose : p.avgPrice;
+          const prevValue = prevRef * p.qty;
           totalValue += value;
           totalPrevValue += prevValue;
           todayPL += value - prevValue;
           return {
-            symbol: p.symbol,
-            market: p.market,
-            qty: p.qty,
-            price: price?.price || p.avgPrice,
-            change: price?.change || 0,
-            value,
+            symbol: p.symbol, market: p.market, qty: p.qty,
+            price: pr && pr.price ? pr.price : p.avgPrice,
+            change: pr ? pr.change : 0,
+            value, prevValue,
           };
         });
 
-        const todayPLPct = totalPrevValue > 0 ? (todayPL / totalPrevValue) * 100 : 0;
-
-        const widgetData = {
+        renderWidget({
           portfolio: enrichedPortfolio,
           summary: {
             totalValue,
             todayPL,
-            todayPLPct,
+            todayPLPct: totalPrevValue > 0 ? (todayPL / totalPrevValue) * 100 : 0,
             usdInr,
             assetCount: portfolio.length,
           },
           timestamp: Date.now(),
-        };
-
-        renderWidget(widgetData);
-
-        // Cache for service worker
-        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-          navigator.serviceWorker.controller.postMessage({
-            type: 'WIDGET_DATA_UPDATE',
-            payload: widgetData,
-          });
-        }
+        });
       } catch (e) {
-        document.getElementById('widget-content').innerHTML =
-          `<div class="error">Error: ${e.message}</div>`;
+        // Offline fallback: show last good cached data
+        let restored = false;
+        try {
+          const last = localStorage.getItem('wa_widget_last');
+          if (last) { renderWidget(JSON.parse(last)); restored = true; }
+        } catch (e2) {}
+        if (!restored) {
+          document.getElementById('widget-content').innerHTML = '<div class="error">Error: ' + esc(e.message) + '</div>';
+        }
       }
     }
 
-    function refreshWidget() {
-      document.getElementById('widget-content').innerHTML =
-        '<div class="loading">Refreshing...</div>';
+    // ---------- Countdown + refresh ----------
+    function manualRefresh() {
+      countdown = REFRESH_SEC;
       fetchWidgetData();
     }
+    setInterval(() => {
+      countdown--;
+      if (countdown <= 0) countdown = REFRESH_SEC;
+      const frac = 1 - countdown / REFRESH_SEC;
+      const arc = document.getElementById('countArc');
+      if (arc) arc.setAttribute('stroke-dashoffset', String(100.5 * frac));
+      const lbl = document.getElementById('refreshLabel');
+      if (lbl) lbl.textContent = 'Refresh · ' + countdown + 's';
+      updateMarketChips();
+    }, 1000);
 
-    // Listen for price updates from service worker
+    // SW push updates
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.addEventListener('message', (event) => {
-        if (event.data?.type === 'PRICE_UPDATE') {
-          renderWidget(event.data.data);
-        }
-        if (event.data?.type === 'GET_AUTH_TOKEN') {
-          const token = localStorage.getItem('wealthai_session_token') || sessionStorage.getItem('wealthai_session_token');
-          event.ports[0]?.postMessage({ token });
+        if (event.data && event.data.type === 'PRICE_UPDATE') renderWidget(event.data.data);
+        if (event.data && event.data.type === 'GET_AUTH_TOKEN') {
+          const token = getAuthToken();
+          if (event.ports && event.ports[0]) event.ports[0].postMessage({ token });
         }
       });
     }
 
-    // Initial fetch
-    fetchWidgetData();
+    // Instant stale-while-revalidate boot: cached widget-data.json → paint, then network.
+    (async () => {
+      try {
+        const cached = await caches.match('/widget-data.json');
+        if (cached) {
+          const j = await cached.json();
+          if (j && j.summary) renderWidget(j);
+        }
+      } catch (e) {}
+      fetchWidgetData();
+    })();
 
-    // Auto-refresh every 30 seconds when widget is visible
-    refreshInterval = setInterval(fetchWidgetData, 30000);
-
-    // Refresh when page becomes visible again
+    setInterval(fetchWidgetData, REFRESH_SEC * 1000);
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
-        fetchWidgetData();
-      }
+      if (document.visibilityState === 'visible') { countdown = REFRESH_SEC; fetchWidgetData(); }
     });
+    updateMarketChips();
   </script>
 </body>
 </html>

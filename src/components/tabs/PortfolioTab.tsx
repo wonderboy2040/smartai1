@@ -48,6 +48,21 @@ function classifyAsset(symbol: string, market: string): AssetGroup {
   return market === 'US' ? 'usa' : 'india';
 }
 
+// Green/red flash when a live value ticks up/down (uses global flashUp/flashDown keyframes).
+function useValueFlash(value: number): string {
+  const prevRef = useRef(value);
+  const [flash, setFlash] = useState('');
+  useEffect(() => {
+    if (value === prevRef.current) return;
+    const dir = value > prevRef.current ? 'flash-up' : 'flash-down';
+    prevRef.current = value;
+    setFlash(dir);
+    const t = setTimeout(() => setFlash(''), 850);
+    return () => clearTimeout(t);
+  }, [value]);
+  return flash;
+}
+
 const PortfolioTab = React.memo(function PortfolioTab() {
   const {
     portfolio, livePrices, usdInrRate, metrics, transactions,
@@ -76,6 +91,9 @@ const PortfolioTab = React.memo(function PortfolioTab() {
   const [cfgBackendUrl, setCfgBackendUrl] = useState('');
   const [cfgCloudToken, setCfgCloudToken] = useState('');
   const [savedMsg, setSavedMsg] = useState('');
+
+  // Live flash for the Today's P&L hero value.
+  const todayPlFlash = useValueFlash(Math.round(metrics.todayPL));
 
   useEffect(() => {
     const c = getCustomCloudConfig();
@@ -314,9 +332,21 @@ const PortfolioTab = React.memo(function PortfolioTab() {
           </div>
         </div>
         <div className="quantum-stat rounded-2xl p-4 animate-fade-in-up delay-200">
-          <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Today's P&L</div>
-          <div className={`text-xl font-black font-mono mt-1 ${metrics.todayPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+          <div className="flex items-center justify-between">
+            <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Today's P&L</div>
+            <span className="flex items-center gap-1 text-[8px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 rounded px-1 py-0.5" title="Live — updates with every market tick">
+              <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse-dot" />
+              LIVE
+            </span>
+          </div>
+          <div
+            className={`text-xl font-black font-mono mt-1 live-price ${todayPlFlash} ${metrics.todayPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
+            title={`${metrics.todayPct >= 0 ? '+' : ''}${metrics.todayPct.toFixed(2)}% vs yesterday's close`}
+          >
             {metrics.todayPL >= 0 ? '+' : ''}₹{Math.round(metrics.todayPL).toLocaleString('en-IN')}
+            <span className={`text-xs font-bold ml-2 ${metrics.todayPct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+              {metrics.todayPct >= 0 ? '+' : ''}{metrics.todayPct.toFixed(2)}%
+            </span>
           </div>
           <div className="flex flex-wrap gap-2 mt-1.5">
             <span className={`text-[10px] px-1.5 py-0.5 rounded bg-black/20 font-bold ${metrics.indPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
