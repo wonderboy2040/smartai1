@@ -68,6 +68,7 @@ export const MonthlyPlanTracker = React.memo(function MonthlyPlanTracker() {
   const {
     portfolio, livePrices, usdInrRate, transactions,
     indiaSIP, setIndiaSIP, usSIP, setUsSIP, btcSIP, setBtcSIP, ethSIP, setEthSIP,
+    usFrequency, setUsFrequency, stateSyncStatus,
   } = useApp();
   const [sending, setSending] = useState(false);
   const [showSymbols, setShowSymbols] = useState<Record<string, boolean>>({});
@@ -76,12 +77,6 @@ export const MonthlyPlanTracker = React.memo(function MonthlyPlanTracker() {
   // For crypto, we need separate BTC and ETH editing
   const [editBtcValue, setEditBtcValue] = useState('');
   const [editEthValue, setEditEthValue] = useState('');
-  const [usFrequency, setUsFrequency] = useState<'monthly' | 'quarterly'>(() => {
-    try {
-      const s = secureStorage.getItem('plan_tracker_us_freq');
-      return s === 'quarterly' ? 'quarterly' : 'monthly';
-    } catch { return 'monthly'; }
-  });
 
   const plan = useMemo(() =>
     computeMonthlyPlan(
@@ -107,9 +102,7 @@ export const MonthlyPlanTracker = React.memo(function MonthlyPlanTracker() {
   }, [plan]);
 
   const toggleFreq = () => {
-    const next = usFrequency === 'monthly' ? 'quarterly' : 'monthly';
-    setUsFrequency(next);
-    try { secureStorage.setItem('plan_tracker_us_freq', next); } catch { /* noop */ }
+    setUsFrequency(usFrequency === 'monthly' ? 'quarterly' : 'monthly');
   };
 
   const resetMemory = () => {
@@ -171,6 +164,12 @@ export const MonthlyPlanTracker = React.memo(function MonthlyPlanTracker() {
           </p>
         </div>
         <div className="flex items-center gap-1">
+          {/* Cloud sync status — SIP plan + settings survive cache clears */}
+          {stateSyncStatus && (
+            <div className="px-2 py-1 bg-cyan-500/10 border border-cyan-500/20 rounded text-[9px] font-bold text-cyan-300" title="Plan settings auto-saved to Google Sheets cloud">
+              {stateSyncStatus}
+            </div>
+          )}
           {/* Days left badge */}
           <div className="px-2 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded text-[9px] font-bold text-indigo-400">
             ⏰ {daysLeft}d left
@@ -257,8 +256,8 @@ export const MonthlyPlanTracker = React.memo(function MonthlyPlanTracker() {
       </div>
 
       <div className="text-[8px] text-slate-700 mt-3 leading-tight">
-        💡 Auto-tracks every portfolio change from Google Sheets. Click ✏️ on any market row to edit SIP amounts inline.
-        Click 🇺🇸 row's "Monthly/Quarterly" badge to toggle USA frequency.
+        ☁️ SIP amounts, transactions & alerts auto-save to Google Sheets cloud — browser cache/cookies clear karne par bhi data safe rahega.
+        Click ✏️ on any market row to edit SIP amounts inline. Click 🇺🇸 row's "Monthly/Quarterly" badge to toggle USA frequency.
       </div>
     </div>
   );

@@ -1326,6 +1326,60 @@ function validatePortfolio(portfolio: any[]): Position[] {
   return valid;
 }
 
+// ============================================================
+// APP STATE CLOUD SYNC — planner settings, transaction ledger,
+// price alerts. Survives browser cache/cookie clears (stored in
+// Google Sheets via the backend proxy).
+// ============================================================
+export interface CloudAppState {
+  v?: number;
+  savedAt?: number;
+  plannerSettings?: Record<string, unknown>;
+  usFrequency?: 'monthly' | 'quarterly';
+  transactions?: unknown[];
+  priceAlerts?: unknown[];
+}
+
+/** Push the full app-state blob to cloud storage (debounce upstream). */
+export async function syncStateToCloud(state: CloudAppState): Promise<boolean> {
+  try {
+    const res = await apiFetch(`/api/state/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return data?.ok === true;
+    }
+    console.warn('☁️ State save via proxy failed:', res.status);
+    return false;
+  } catch (e) {
+    console.warn('☁️ State save via proxy error:', e);
+    return false;
+  }
+}
+
+/**
+ * Pull the app-state blob from cloud. Uses the same /api/cloud/load
+ * payload which now carries `appState` alongside the portfolio.
+ * Returns null when cloud has no state (first run / not configured).
+ */
+export async function loadAppStateFromCloud(): Promise<CloudAppState | null> {
+  try {
+    const res = await apiFetch(`/api/cloud/load`, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    const s = data?.appState;
+    if (s && typeof s === 'object' && !Array.isArray(s)) return s as CloudAppState;
+    return null;
+  } catch (e) {
+    console.warn('☁️ State load via proxy error:', e);
+    return null;
+  }
+}
+
 export async function syncToCloud(portfolio: Position[], usdInr: number): Promise<boolean> {
   if (!portfolio || portfolio.length === 0) {
     console.warn('☁️ Cloud Sync: Blocking sync because portfolio is empty.');

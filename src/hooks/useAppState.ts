@@ -8,6 +8,7 @@ import {
   batchFetchUSPrices, getUSPollInterval, fetchForexRate,
   syncToCloud, loadFromCloud, sendTelegramAlert,
   syncGroqKeyToCloud, loadGroqKeyFromCloud, getBatchInterval, fetchMarketIntelligence,
+  syncStateToCloud, loadAppStateFromCloud, CloudAppState,
   apiFetch, setSessionToken, ensureAuthenticated,
 } from '../utils/api';
 import { secureStorage } from '../utils/secureStorage';
@@ -149,6 +150,20 @@ export function useAppState() {
   const [riskLevel, setRiskLevel] = useState<RiskLevel>('medium');
   const [monthlyExpenses, setMonthlyExpenses] = useState(50000);
   const [currentAge, setCurrentAge] = useState(30);
+  // USA SIP frequency (monthly/quarterly) — lives here (not in the widget)
+  // so it participates in cloud-state sync and survives cache clears.
+  const [usFrequency, setUsFrequencyState] = useState<'monthly' | 'quarterly'>(() => {
+    try {
+      const s = secureStorage.getItem('plan_tracker_us_freq');
+      return s === 'quarterly' ? 'quarterly' : 'monthly';
+    } catch { return 'monthly'; }
+  });
+  const setUsFrequency = useCallback((f: 'monthly' | 'quarterly') => {
+    setUsFrequencyState(f);
+    try { secureStorage.setItem('plan_tracker_us_freq', f); } catch { /* noop */ }
+  }, []);
+  // Cloud app-state sync status ("☁️ Saved" / "Syncing…" etc.)
+  const [stateSyncStatus, setStateSyncStatus] = useState('');
 
   // --- Sector ---
   const [sectorData, setSectorData] = useState<{ name: string; change: number }[]>([]);
@@ -421,6 +436,119 @@ export function useAppState() {
     if (!isAuthenticated) return;
     secureStorage.setItem('plannerSettings', JSON.stringify({ indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses }));
   }, [indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses, isAuthenticated]);
+
+  // ============================================================
+  // CLOUD APP-STATE SYNC
+  // ------------------------------------------------------------
+  // Everything the Monthly Plan Tracker + Planner needs survives a
+  // browser cache/cookie clear: SIP settings, USA frequency,
+  // transaction ledger and price alerts are pushed to Google Sheets
+  // via /api/state/save and restored on login when cloud is newer.
+  // ============================================================
+  const cloudSaveTimerRef = useRef<number | null>(null);
+  const lastSavedStateJsonRef = useRef('');
+  const skipNextStateSaveRef = useRef(false);
+
+  const buildCloudState = useCallback((): CloudAppState => ({
+    v: 1,
+    savedAt: Date.now(),
+    plannerSettings: { indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses },
+    usFrequency,
+    transactions,
+    priceAlerts,
+  }), [indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses, usFrequency, transactions, priceAlerts]);
+
+  const applyCloudState = useCallback((s: CloudAppState) => {
+    const p = s.plannerSettings as Record<string, number | string> | undefined;
+    if (p) {
+      if (typeof p.indiaSIP === 'number' && p.indiaSIP > 0) setIndiaSIP(p.indiaSIP);
+      if (typeof p.usSIP === 'number' && p.usSIP > 0) setUsSIP(p.usSIP);
+      if (typeof p.btcSIP === 'number' && p.btcSIP > 0) setBtcSIP(p.btcSIP);
+      if (typeof p.ethSIP === 'number' && p.ethSIP > 0) setEthSIP(p.ethSIP);
+      if (typeof p.investYears === 'number' && p.investYears > 0) setInvestYears(p.investYears);
+      if (p.riskLevel === 'low' || p.riskLevel === 'medium' || p.riskLevel === 'high') setRiskLevel(p.riskLevel);
+      if (typeof p.emergencyFund === 'number' && p.emergencyFund > 0) setEmergencyFund(p.emergencyFund);
+      if (typeof p.currentAge === 'number' && p.currentAge > 0) setCurrentAge(p.currentAge);
+      if (typeof p.monthlyExpenses === 'number' && p.monthlyExpenses > 0) setMonthlyExpenses(p.monthlyExpenses);
+    }
+    if (s.usFrequency === 'monthly' || s.usFrequency === 'quarterly') setUsFrequency(s.usFrequency);
+    if (Array.isArray(s.transactions)) setTransactions(s.transactions as Transaction[]);
+    if (Array.isArray(s.priceAlerts)) setPriceAlerts(s.priceAlerts as PriceAlert[]);
+  }, [setUsFrequency]);
+
+  // Restore from cloud on login — only when cloud is NEWER than what we
+  // last applied locally (tracked via 'cloud_state_ts'). After a cache
+  // clear the local ts is gone → cloud always wins → nothing is lost.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    loadAppStateFromCloud().then(cloud => {
+      if (cancelled || !cloud) return;
+      let localTs = 0;
+      try { localTs = parseInt(secureStorage.getItem('cloud_state_ts') || '0', 10) || 0; } catch { /* noop */ }
+      const cloudTs = cloud.savedAt || 0;
+      if (cloudTs > localTs) {
+        skipNextStateSaveRef.current = true; // don't echo the restore back up
+        applyCloudState(cloud);
+        try { secureStorage.setItem('cloud_state_ts', String(cloudTs)); } catch { /* noop */ }
+        console.log(`☁️ State Sync: restored app state from Google Sheets (saved ${new Date(cloudTs).toLocaleString()})`);
+      }
+      // Seed the dedupe baseline so the first debounced save doesn't fire
+      // needlessly when nothing changed.
+      lastSavedStateJsonRef.current = JSON.stringify(buildCloudState());
+    }).catch(() => { /* offline — local data stays */ });
+    return () => { cancelled = true; };
+    // buildCloudState intentionally excluded — baseline seeding only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, applyCloudState]);
+
+  // Debounced auto-save (4s) whenever any tracked piece changes.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (skipNextStateSaveRef.current) {
+      skipNextStateSaveRef.current = false;
+      return;
+    }
+    if (cloudSaveTimerRef.current) clearTimeout(cloudSaveTimerRef.current);
+    cloudSaveTimerRef.current = window.setTimeout(async () => {
+      const state = buildCloudState();
+      const json = JSON.stringify(state);
+      if (json === lastSavedStateJsonRef.current) return; // nothing changed
+      setStateSyncStatus('☁️ Syncing…');
+      const ok = await syncStateToCloud(state);
+      if (ok) {
+        lastSavedStateJsonRef.current = json;
+        try { secureStorage.setItem('cloud_state_ts', String(state.savedAt)); } catch { /* noop */ }
+        setStateSyncStatus('☁️ Saved');
+      } else {
+        setStateSyncStatus('⚠️ Cloud offline');
+      }
+      setTimeout(() => setStateSyncStatus(''), 2500);
+    }, 4000);
+    return () => { if (cloudSaveTimerRef.current) clearTimeout(cloudSaveTimerRef.current); };
+  }, [isAuthenticated, buildCloudState]);
+
+  // Safety flush on tab hide/close so a quick edit never gets lost.
+  useEffect(() => {
+    const flush = () => {
+      if (document.visibilityState !== 'hidden') return;
+      const state = buildCloudState();
+      const json = JSON.stringify(state);
+      if (json === lastSavedStateJsonRef.current) return;
+      syncStateToCloud(state).then(ok => {
+        if (ok) {
+          lastSavedStateJsonRef.current = json;
+          try { secureStorage.setItem('cloud_state_ts', String(state.savedAt)); } catch { /* noop */ }
+        }
+      }).catch(() => { });
+    };
+    document.addEventListener('visibilitychange', flush);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', flush);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, [buildCloudState]);
 
   // --- Price flush interval (250ms — WS & SSE give real-time ticks, flushed ultra fast for live feel) ---
   useEffect(() => {
@@ -1573,6 +1701,8 @@ export function useAppState() {
       // FIX OPT-4: previously flushCache silently wiped all transaction
       // history and price alerts — user lost their entire trade ledger.
       'txn_history', 'price_alerts',
+      // Cloud-state sync keys (SIP frequency + last cloud timestamp)
+      'plan_tracker_us_freq', 'cloud_state_ts',
     ];
     const saved: Record<string, string> = {};
     for (const k of preserveKeys) {
@@ -1602,6 +1732,7 @@ export function useAppState() {
     indiaSIP, setIndiaSIP, usSIP, setUsSIP, btcSIP, setBtcSIP, ethSIP, setEthSIP,
     emergencyFund, setEmergencyFund, investYears, setInvestYears, riskLevel, setRiskLevel,
     monthlyExpenses, setMonthlyExpenses, currentAge, setCurrentAge,
+    usFrequency, setUsFrequency, stateSyncStatus,
     // Sector
     sectorData,
     // Modal
@@ -1640,6 +1771,7 @@ export function useAppState() {
     indiaSIP, usSIP, btcSIP, ethSIP,
     emergencyFund, investYears, riskLevel,
     monthlyExpenses, currentAge,
+    usFrequency, stateSyncStatus,
     sectorData,
     showAddModal, groqKey, addSymbol, addQty,
     addPrice, addDate,

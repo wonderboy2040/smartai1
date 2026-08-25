@@ -26,6 +26,9 @@ function _checkAuth_(token) {
 var SHEET_NAME = 'WealthAISync';
 var PORTFOLIO_KEY = 'portfolio';
 var GROQ_KEY = 'groqKey';
+// Full app state (planner settings, transactions, price alerts, SIP
+// frequency) — survives browser cache/cookie clears.
+var APP_STATE_KEY = 'appState';
 
 // Chunk size limit to prevent Google Sheets 50,000 character cell truncation
 var CHUNK_SIZE = 40000;
@@ -277,8 +280,18 @@ function _handle_(req) {
       timestamp: req.timestamp || Date.now()
     });
     _setChunked_(PORTFOLIO_KEY, jsonStr);
+    // Persist optional full app state (planner/txn/alerts) piggybacked on saves.
+    if (req.state && typeof req.state === 'object' && Object.keys(req.state).length > 0) {
+      _setChunked_(APP_STATE_KEY, JSON.stringify(req.state));
+    }
     _updateHumanReadableSheet_(req.portfolio || []);
     return _json_({ ok: true, saved: (req.portfolio || []).length });
+  }
+
+  if (action === 'saveState') {
+    var stateStr = typeof req.state === 'string' ? req.state : JSON.stringify(req.state || {});
+    _setChunked_(APP_STATE_KEY, stateStr);
+    return _json_({ ok: true });
   }
 
   if (action === 'saveKey') {
@@ -292,10 +305,16 @@ function _handle_(req) {
 
   // default: load
   var raw = _getChunked_(PORTFOLIO_KEY);
+  var stateRaw = _getChunked_(APP_STATE_KEY);
+  var appState = null;
+  if (stateRaw) {
+    try { appState = JSON.parse(stateRaw); } catch (err) { appState = null; }
+  }
   if (raw) {
     try {
       var parsed = JSON.parse(raw);
       if (parsed && parsed.portfolio && Array.isArray(parsed.portfolio) && parsed.portfolio.length > 0) {
+        parsed.appState = appState;
         return _json_(parsed);
       }
     } catch (err) {
@@ -306,13 +325,15 @@ function _handle_(req) {
   // Fallback: Scan sheet tabs for tabular row data (e.g. user typed rows into Google Sheets)
   var rowsData = _parseSheetRows_();
   if (rowsData && rowsData.length > 0) {
-    return _json_({ portfolio: rowsData });
+    return _json_({ portfolio: rowsData, appState: appState });
   }
 
-  if (!raw) return _json_({ portfolio: [] });
+  if (!raw) return _json_({ portfolio: [], appState: appState });
   try {
-    return _json_(JSON.parse(raw));
+    var fallback = JSON.parse(raw);
+    fallback.appState = appState;
+    return _json_(fallback);
   } catch (err) {
-    return _json_({ portfolio: [], error: 'Failed to parse portfolio data: ' + String(err) });
+    return _json_({ portfolio: [], appState: appState, error: 'Failed to parse portfolio data: ' + String(err) });
   }
 }

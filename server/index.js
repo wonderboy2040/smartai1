@@ -2841,7 +2841,7 @@ app.get('/api/cloud/load', async (req, res) => {
 app.post('/api/cloud/save', async (req, res) => {
   if (!CLOUD_API_URL) return jsonError(res, 503, 'Cloud sync not configured (API_URL not set).');
   if (!CLOUD_AUTH_TOKEN) return jsonError(res, 503, 'Cloud sync not configured (API_TOKEN not set).');
-  const { portfolio, usdInr } = req.body || {};
+  const { portfolio, usdInr, state } = req.body || {};
   if (!Array.isArray(portfolio) || portfolio.length === 0) {
     return jsonError(res, 400, 'portfolio[] required (non-empty).');
   }
@@ -2850,7 +2850,7 @@ app.post('/api/cloud/save', async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       redirect: 'follow',
-      body: JSON.stringify({ action: 'update', authToken: CLOUD_AUTH_TOKEN, portfolio, timestamp: Date.now(), usdInr }),
+      body: JSON.stringify({ action: 'update', authToken: CLOUD_AUTH_TOKEN, portfolio, timestamp: Date.now(), usdInr, state: state ?? null }),
       signal: AbortSignal.timeout(10000),
     });
     // Verify the Apps Script actually accepted the save — it can return
@@ -2909,7 +2909,35 @@ app.get('/api/cloud/load-key', async (req, res) => {
 });
 
 // ============================================================
-// HEALTH ENDPOINT â€” used by Render health check + uptime monitors
+// APP STATE SYNC — planner settings, transaction ledger, price
+// alerts, SIP frequency. Survives browser cache/cookie clears.
+// Stored in Google Sheets via Apps Script (action=saveState).
+// ============================================================
+// POST /api/state/save { state: {...} } â†’ chunked key-value store
+app.post('/api/state/save', async (req, res) => {
+  if (!CLOUD_API_URL) return jsonError(res, 503, 'Cloud sync not configured (API_URL not set).');
+  if (!CLOUD_AUTH_TOKEN) return jsonError(res, 503, 'Cloud sync not configured (API_TOKEN not set).');
+  const state = req.body?.state;
+  if (!state || typeof state !== 'object') return jsonError(res, 400, 'state object required.');
+  try {
+    const upstream = await fetch(CLOUD_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      redirect: 'follow',
+      body: JSON.stringify({ action: 'saveState', authToken: CLOUD_AUTH_TOKEN, state, timestamp: Date.now() }),
+      signal: AbortSignal.timeout(10000),
+    });
+    let body = null;
+    try { body = await upstream.json(); } catch { /* non-JSON */ }
+    const ok = upstream.ok && !(body && body.ok === false);
+    return res.json({ ok, error: ok ? undefined : (body?.error || `HTTP ${upstream.status}`) });
+  } catch (e) {
+    return jsonError(res, 502, 'App state save failed.', e);
+  }
+});
+
+// ============================================================
+// HEALTH ENDPOINT — used by Render health check + uptime monitors
 // ============================================================
 app.get('/health', (_req, res) => {
   res.json({
