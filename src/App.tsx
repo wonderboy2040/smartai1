@@ -40,6 +40,16 @@ const MacroTab = lazyWithRetry(() => import('./components/tabs/MacroTab').then(m
 
 const NeuralChat = lazyWithRetry(() => import('./components/NeuralChat').then(m => ({ default: m.NeuralChat })), 'neuralchat');
 
+// Shared tab metadata — desktop pills, mobile bottom nav, shortcut hints.
+const TAB_META: Record<TabType, { emoji: string; label: string }> = {
+  dashboard: { emoji: '📊', label: 'Dashboard' },
+  intraday: { emoji: '⚡', label: 'Intraday' },
+  portfolio: { emoji: '💼', label: 'Portfolio' },
+  planner: { emoji: '🎯', label: 'Planner' },
+  macro: { emoji: '🌍', label: 'Risk' },
+};
+const TAB_ORDER: TabType[] = ['dashboard', 'intraday', 'portfolio', 'planner', 'macro'];
+
 export default function App() {
   const state = useAppState();
 
@@ -114,7 +124,7 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if user is typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      const tabs: TabType[] = ['dashboard', 'intraday', 'portfolio', 'planner', 'macro'];
+      const tabs = TAB_ORDER;
       const key = parseInt(e.key);
       if (!isNaN(key) && key >= 1 && key <= tabs.length) {
         setActiveTab(tabs[key - 1]);
@@ -223,27 +233,29 @@ export default function App() {
               </div>
 
               {/* Tabs */}
-              <div className="flex gap-0.5 quantum-panel p-1 rounded-2xl overflow-x-auto scrollbar-hide max-w-full">
-                {(['dashboard', 'intraday', 'portfolio', 'planner', 'macro'] as TabType[]).map(tab => (
-                  <button key={tab} onClick={() => setActiveTab(tab)} className={`quantum-tab px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${activeTab === tab ? 'active' : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'}`}>
+              <div className="flex gap-0.5 quantum-panel p-1 rounded-2xl overflow-x-auto scrollbar-hide max-w-full" role="tablist" aria-label="Sections">
+                {TAB_ORDER.map((tab, i) => (
+                  <button key={tab} onClick={() => setActiveTab(tab)} role="tab" aria-selected={activeTab === tab}
+                    title={`${TAB_META[tab].label} — press ${i + 1}`}
+                    className={`quantum-tab px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${activeTab === tab ? 'active' : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'}`}>
                     <span className="hidden sm:inline">{tab === 'dashboard' && '📊 Dashboard'}{tab === 'intraday' && '⚡ Intraday'}{tab === 'portfolio' && '💼 Portfolio'}{tab === 'planner' && '🎯 Planner'}{tab === 'macro' && '🌍 Risk'}</span>
-                    <span className="sm:hidden">{tab === 'dashboard' && '📊'}{tab === 'intraday' && '⚡'}{tab === 'portfolio' && '💼'}{tab === 'planner' && '🎯'}{tab === 'macro' && '🌍'}</span>
+                    <span className="sm:hidden">{TAB_META[tab].emoji}</span>
                   </button>
                 ))}
               </div>
 
               <div className="flex gap-2 relative">
-                <button onClick={() => setAutoTelegram(prev => !prev)} className={`quantum-btn-ghost p-2.5 rounded-xl text-lg transition-all min-w-[44px] min-h-[44px] flex items-center justify-center ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`} title={autoTelegram ? 'Auto Alerts ON' : 'Auto Alerts OFF'}>🔔</button>
-                <button onClick={toggleTheme} className="w-11 h-11 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>{theme === 'dark' ? '🌞' : '🌙'}</button>
-                <button onClick={refreshAll} disabled={isRefreshing} className="quantum-btn-ghost p-2.5 rounded-xl text-lg disabled:opacity-50 min-w-[44px] min-h-[44px] flex items-center justify-center" title="Refresh All (prices + forex)"><span className={isRefreshing ? 'inline-block animate-spin' : ''}>🔄</span></button>
-                <button onClick={flushCache} className="quantum-btn-ghost p-2.5 rounded-xl text-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title="Flush Cache">🧹</button>
-                <button onClick={logout} className="quantum-btn-ghost p-2.5 rounded-xl text-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title="Logout">🔐</button>
+                <button onClick={() => setAutoTelegram(prev => !prev)} aria-label="Toggle auto Telegram alerts" className={`quantum-btn-ghost p-2.5 rounded-xl text-lg transition-all min-w-[44px] min-h-[44px] flex items-center justify-center ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`} title={autoTelegram ? 'Auto Alerts ON' : 'Auto Alerts OFF'}>🔔</button>
+                <button onClick={toggleTheme} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} className="w-11 h-11 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>{theme === 'dark' ? '🌞' : '🌙'}</button>
+                <button onClick={refreshAll} disabled={isRefreshing} aria-label="Refresh prices and forex" className="quantum-btn-ghost p-2.5 rounded-xl text-lg disabled:opacity-50 min-w-[44px] min-h-[44px] flex items-center justify-center" title="Refresh All (prices + forex)"><span className={isRefreshing ? 'inline-block animate-spin' : ''}>🔄</span></button>
+                <button onClick={flushCache} aria-label="Flush cache" className="quantum-btn-ghost p-2.5 rounded-xl text-lg min-w-[44px] min-h-[44px] flex items-center justify-center hidden sm:flex" title="Flush Cache">🧹</button>
+                <button onClick={logout} aria-label="Logout" className="quantum-btn-ghost p-2.5 rounded-xl text-lg min-w-[44px] min-h-[44px] flex items-center justify-center" title="Logout">🔐</button>
               </div>
             </div>
           </div>
         </header>
 
-        <main className="container mx-auto px-4 py-6">
+        <main className="container mx-auto px-4 py-6 pb-24 md:pb-6">
           <Suspense fallback={<div className="flex items-center justify-center py-20"><div className="text-center"><div className="text-4xl mb-3 animate-float">⚡</div><div className="text-sm text-slate-500 font-medium">Loading module...</div></div></div>}>
             <ErrorBoundary fallback={<div className="quantum-panel rounded-2xl p-8 text-center border border-red-500/20"><div className="text-4xl mb-3">🚨</div><div className="text-red-400 font-bold mb-2">Tab crashed</div><div className="text-slate-500 text-sm">Reload or switch tabs</div></div>}>
               {activeTab === 'dashboard' && <DashboardTab />}
@@ -254,6 +266,22 @@ export default function App() {
             </ErrorBoundary>
           </Suspense>
         </main>
+
+        {/* Mobile Bottom Navigation — thumb-reach primary nav (desktop uses top pills) */}
+        <nav className="quantum-mobile-nav md:hidden" aria-label="Primary">
+          {TAB_ORDER.map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              aria-label={TAB_META[tab].label}
+              aria-current={activeTab === tab ? 'page' : undefined}
+              className={`quantum-mobile-nav-item ${activeTab === tab ? 'active' : ''}`}
+            >
+              <span className="nav-ico" aria-hidden="true">{TAB_META[tab].emoji}</span>
+              <span>{TAB_META[tab].label}</span>
+            </button>
+          ))}
+        </nav>
 
         {/* Add/Edit Modal */}
         {showAddModal && (
