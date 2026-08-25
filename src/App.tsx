@@ -197,14 +197,14 @@ export default function App() {
 
           <div className="container mx-auto px-4 py-2.5">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500/20 to-indigo-500/20 flex items-center justify-center border border-cyan-500/20">
+              <div className="flex items-center gap-3 order-1 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500/20 to-indigo-500/20 flex items-center justify-center border border-cyan-500/20 flex-shrink-0">
                   <span className="text-xl">💎</span>
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
                     <h1 className="text-lg font-black gradient-text-cyan font-display uppercase tracking-wider text-glow">WEALTH AI</h1>
-                    <span className="quantum-badge">v14.0 LTI</span>
+                    <span className="quantum-badge hidden sm:inline-flex">v14.0 LTI</span>
                   </div>
                   <div className="flex items-center gap-2 text-[11px]">
                     <span className={`w-1.5 h-1.5 rounded-full ${!isOnline ? 'bg-red-400 animate-pulse' : /ACTIVE|LIVE/i.test(liveStatus) ? 'bg-cyan-400 animate-pulse-dot' : 'bg-amber-500 animate-pulse'}`} />
@@ -232,19 +232,19 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Tabs */}
-              <div className="flex gap-0.5 quantum-panel p-1 rounded-2xl overflow-x-auto scrollbar-hide max-w-full" role="tablist" aria-label="Sections">
+              {/* Tabs — full-width equal grid on mobile, inline pills on desktop */}
+              <div className="order-3 sm:order-2 w-full sm:w-auto flex gap-0.5 quantum-panel p-1 rounded-2xl overflow-x-auto scrollbar-hide max-w-full" role="tablist" aria-label="Sections">
                 {TAB_ORDER.map((tab, i) => (
                   <button key={tab} onClick={() => setActiveTab(tab)} role="tab" aria-selected={activeTab === tab}
                     title={`${TAB_META[tab].label} — press ${i + 1}`}
-                    className={`quantum-tab px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${activeTab === tab ? 'active' : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'}`}>
+                    className={`quantum-tab flex-1 sm:flex-none px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm whitespace-nowrap flex items-center justify-center ${activeTab === tab ? 'active' : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'}`}>
                     <span className="hidden sm:inline">{tab === 'dashboard' && '📊 Dashboard'}{tab === 'intraday' && '⚡ Intraday'}{tab === 'portfolio' && '💼 Portfolio'}{tab === 'planner' && '🎯 Planner'}{tab === 'macro' && '🌍 Risk'}</span>
                     <span className="sm:hidden">{TAB_META[tab].emoji}</span>
                   </button>
                 ))}
               </div>
 
-              <div className="flex gap-2 relative">
+              <div className="flex gap-2 relative order-2 sm:order-3 shrink-0">
                 <button onClick={() => setAutoTelegram(prev => !prev)} aria-label="Toggle auto Telegram alerts" className={`quantum-btn-ghost p-2.5 rounded-xl text-lg transition-all min-w-[44px] min-h-[44px] flex items-center justify-center ${autoTelegram ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}`} title={autoTelegram ? 'Auto Alerts ON' : 'Auto Alerts OFF'}>🔔</button>
                 <button onClick={toggleTheme} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} className="w-11 h-11 rounded-xl flex items-center justify-center hover:bg-white/10 transition-colors text-lg" title={`Toggle ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}>{theme === 'dark' ? '🌞' : '🌙'}</button>
                 <button onClick={refreshAll} disabled={isRefreshing} aria-label="Refresh prices and forex" className="quantum-btn-ghost p-2.5 rounded-xl text-lg disabled:opacity-50 min-w-[44px] min-h-[44px] flex items-center justify-center" title="Refresh All (prices + forex)"><span className={isRefreshing ? 'inline-block animate-spin' : ''}>🔄</span></button>
@@ -255,7 +255,7 @@ export default function App() {
           </div>
         </header>
 
-        <main className="container mx-auto px-4 py-6 pb-24 md:pb-6">
+        <main className="container mx-auto px-4 py-6">
           <Suspense fallback={<div className="flex items-center justify-center py-20"><div className="text-center"><div className="text-4xl mb-3 animate-float">⚡</div><div className="text-sm text-slate-500 font-medium">Loading module...</div></div></div>}>
             <ErrorBoundary fallback={<div className="quantum-panel rounded-2xl p-8 text-center border border-red-500/20"><div className="text-4xl mb-3">🚨</div><div className="text-red-400 font-bold mb-2">Tab crashed</div><div className="text-slate-500 text-sm">Reload or switch tabs</div></div>}>
               {activeTab === 'dashboard' && <DashboardTab />}
@@ -266,22 +266,6 @@ export default function App() {
             </ErrorBoundary>
           </Suspense>
         </main>
-
-        {/* Mobile Bottom Navigation — thumb-reach primary nav (desktop uses top pills) */}
-        <nav className="quantum-mobile-nav md:hidden" aria-label="Primary">
-          {TAB_ORDER.map(tab => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              aria-label={TAB_META[tab].label}
-              aria-current={activeTab === tab ? 'page' : undefined}
-              className={`quantum-mobile-nav-item ${activeTab === tab ? 'active' : ''}`}
-            >
-              <span className="nav-ico" aria-hidden="true">{TAB_META[tab].emoji}</span>
-              <span>{TAB_META[tab].label}</span>
-            </button>
-          ))}
-        </nav>
 
         {/* Add/Edit Modal */}
         {showAddModal && (

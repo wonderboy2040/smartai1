@@ -812,52 +812,6 @@ textarea:focus-visible,
     inset 0 1px 0 var(--clay-highlight);
 }
 
-/* ===== MOBILE NAV ===== */
-.quantum-mobile-nav {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: calc(64px + env(safe-area-inset-bottom));
-  background: color-mix(in srgb, var(--clay-bg) 88%, transparent);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border-top: 1px solid var(--clay-border);
-  display: flex;
-  align-items: center;
-  justify-content: space-around;
-  z-index: 50;
-  padding-bottom: env(safe-area-inset-bottom);
-  box-shadow: 0 -4px 16px var(--clay-shadow-dark);
-}
-
-.quantum-mobile-nav-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  min-width: 56px;
-  min-height: 48px;
-  padding: 6px 12px;
-  border-radius: 14px;
-  color: var(--text-tertiary);
-  background: transparent;
-  border: none;
-  transition: all 0.2s ease;
-}
-
-.quantum-mobile-nav-item:active { transform: scale(0.94); }
-.quantum-mobile-nav-item.active {
-  color: var(--primary);
-  background: linear-gradient(135deg, rgba(0, 242, 255, 0.10), rgba(182, 0, 248, 0.10));
-  box-shadow:
-    inset 0 1px 0 var(--clay-highlight),
-    0 0 14px rgba(0, 242, 255, 0.08);
-}
-.quantum-mobile-nav-item span { font-size: 9px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-.quantum-mobile-nav-item .nav-ico { font-size: 17px; line-height: 1; }
-
 /* ===== NAV ITEMS ===== */
 .quantum-nav-item {
   display: flex;
@@ -1069,7 +1023,6 @@ textarea:focus-visible,
 .light .border-white\/5, .light .border-white\/10 { border-color: rgba(15, 23, 42, 0.08) !important; }
 .light .border-white\/\[0\.03\], .light .divide-white\/\[0\.03\] > * { border-color: rgba(0, 0, 0, 0.08) !important; }
 .light.bg-gradient-to-br { background: #f0f0f5 !important; }
-.light .quantum-mobile-nav { background: rgba(240, 240, 245, 0.9) !important; }
 
 /* ===== LIVE PRICE FLASH ===== */
 .live-price { border-radius: 4px; padding: 0 2px; transition: color 0.2s ease; }
