@@ -446,7 +446,7 @@ export function useAppState() {
   // via /api/state/save and restored on login when cloud is newer.
   // ============================================================
   const cloudSaveTimerRef = useRef<number | null>(null);
-  const lastSavedStateJsonRef = useRef('');
+  const lastSavedFingerprintRef = useRef('');
   const skipNextStateSaveRef = useRef(false);
 
   const buildCloudState = useCallback((): CloudAppState => ({
@@ -457,6 +457,15 @@ export function useAppState() {
     transactions,
     priceAlerts,
   }), [indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses, usFrequency, transactions, priceAlerts]);
+
+  // Change-detection fingerprint — EXCLUDES savedAt (fresh Date.now() per
+  // build would otherwise make every comparison differ → redundant saves
+  // on every tab hide / debounce tick).
+  const cloudStateFingerprint = useCallback((s: CloudAppState): string => {
+    const { savedAt, ...rest } = s;
+    void savedAt;
+    return JSON.stringify(rest);
+  }, []);
 
   const applyCloudState = useCallback((s: CloudAppState) => {
     const p = s.plannerSettings as Record<string, number | string> | undefined;
@@ -493,31 +502,35 @@ export function useAppState() {
         try { secureStorage.setItem('cloud_state_ts', String(cloudTs)); } catch { /* noop */ }
         console.log(`☁️ State Sync: restored app state from Google Sheets (saved ${new Date(cloudTs).toLocaleString()})`);
       }
-      // Seed the dedupe baseline so the first debounced save doesn't fire
+      // Seed the dedupe fingerprint so the first debounced save doesn't fire
       // needlessly when nothing changed.
-      lastSavedStateJsonRef.current = JSON.stringify(buildCloudState());
+      lastSavedFingerprintRef.current = cloudStateFingerprint(buildCloudState());
     }).catch(() => { /* offline — local data stays */ });
     return () => { cancelled = true; };
     // buildCloudState intentionally excluded — baseline seeding only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, applyCloudState]);
+  }, [isAuthenticated, applyCloudState, cloudStateFingerprint]);
 
   // Debounced auto-save (4s) whenever any tracked piece changes.
   useEffect(() => {
     if (!isAuthenticated) return;
     if (skipNextStateSaveRef.current) {
       skipNextStateSaveRef.current = false;
+      // Refresh dedupe fingerprint with post-restore values — the closure
+      // that seeded it above captured pre-restore state (stale baseline
+      // would cause a redundant echo-save right after every restore).
+      lastSavedFingerprintRef.current = cloudStateFingerprint(buildCloudState());
       return;
     }
     if (cloudSaveTimerRef.current) clearTimeout(cloudSaveTimerRef.current);
     cloudSaveTimerRef.current = window.setTimeout(async () => {
       const state = buildCloudState();
-      const json = JSON.stringify(state);
-      if (json === lastSavedStateJsonRef.current) return; // nothing changed
+      const fingerprint = cloudStateFingerprint(state);
+      if (fingerprint === lastSavedFingerprintRef.current) return; // nothing changed
       setStateSyncStatus('☁️ Syncing…');
       const ok = await syncStateToCloud(state);
       if (ok) {
-        lastSavedStateJsonRef.current = json;
+        lastSavedFingerprintRef.current = fingerprint;
         try { secureStorage.setItem('cloud_state_ts', String(state.savedAt)); } catch { /* noop */ }
         setStateSyncStatus('☁️ Saved');
       } else {
@@ -526,18 +539,18 @@ export function useAppState() {
       setTimeout(() => setStateSyncStatus(''), 2500);
     }, 4000);
     return () => { if (cloudSaveTimerRef.current) clearTimeout(cloudSaveTimerRef.current); };
-  }, [isAuthenticated, buildCloudState]);
+  }, [isAuthenticated, buildCloudState, cloudStateFingerprint]);
 
   // Safety flush on tab hide/close so a quick edit never gets lost.
   useEffect(() => {
     const flush = () => {
       if (document.visibilityState !== 'hidden') return;
       const state = buildCloudState();
-      const json = JSON.stringify(state);
-      if (json === lastSavedStateJsonRef.current) return;
+      const fingerprint = cloudStateFingerprint(state);
+      if (fingerprint === lastSavedFingerprintRef.current) return;
       syncStateToCloud(state).then(ok => {
         if (ok) {
-          lastSavedStateJsonRef.current = json;
+          lastSavedFingerprintRef.current = fingerprint;
           try { secureStorage.setItem('cloud_state_ts', String(state.savedAt)); } catch { /* noop */ }
         }
       }).catch(() => { });
@@ -548,7 +561,7 @@ export function useAppState() {
       document.removeEventListener('visibilitychange', flush);
       window.removeEventListener('pagehide', flush);
     };
-  }, [buildCloudState]);
+  }, [buildCloudState, cloudStateFingerprint]);
 
   // --- Price flush interval (250ms — WS & SSE give real-time ticks, flushed ultra fast for live feel) ---
   useEffect(() => {

@@ -1353,7 +1353,9 @@ export async function syncStateToCloud(state: CloudAppState): Promise<boolean> {
       const data = await res.json().catch(() => ({}));
       return data?.ok === true;
     }
-    console.warn('☁️ State save via proxy failed:', res.status);
+    // 503 = cloud sync not configured on server — expected for local
+    // setups; stay quiet (local secureStorage remains the fallback).
+    if (res.status !== 503) console.warn('☁️ State save via proxy failed:', res.status);
     return false;
   } catch (e) {
     console.warn('☁️ State save via proxy error:', e);
