@@ -104,6 +104,7 @@ const PUBLIC_PATHS = new Set([
   // no private data. Making these public ensures prices always load.
   '/api/quote',
   '/api/chart',
+  '/api/intraday-scanner',
   '/api/crypto-prices',
   '/api/forex',
   '/api/feed-status',
@@ -437,6 +438,388 @@ app.get('/api/chart', async (req, res) => {
     } catch (e) { /* try next candidate */ }
   }
   return jsonError(res, 502, 'chart data unavailable');
+});
+
+// ============================================================
+// SUPER INTELLIGENCE — NSE INTRADAY SCANNER (Deep Analysis)
+// ============================================================
+// GET /api/intraday-scanner
+// Scans a liquid NSE universe on 5-minute candles and returns the
+// TOP 5 highest-confidence intraday setups. Only signals scoring
+// >= INTRADAY_MIN_CONFIDENCE are returned.
+//
+// Pro techniques used:
+//   - VWAP institutional bias          - ORB-15 (Opening Range Breakout)
+//   - EMA9/EMA21 momentum stack        - 5m RSI(14) sweet zones
+//   - Relative volume surge            - CPR (Central Pivot Range) bias
+//   - ATR(14)-based Entry/SL/Targets   - MCP AI model verification
+// Serves ONLY during NSE hours 09:15-15:30 IST, Mon-Fri.
+// ============================================================
+
+const INTRADAY_UNIVERSE = [
+  // Nifty 50 liquid F&O names — deep liquidity + tight spreads for intraday
+  'RELIANCE', 'HDFCBANK', 'ICICIBANK', 'INFY', 'TCS', 'SBIN', 'BHARTIARTL',
+  'ITC', 'LT', 'KOTAKBANK', 'AXISBANK', 'HINDUNILVR', 'BAJFINANCE', 'ASIANPAINT',
+  'MARUTI', 'TITAN', 'SUNPHARMA', 'ULTRACEMCO', 'WIPRO', 'ONGC', 'NTPC',
+  'POWERGRID', 'TATAMOTORS', 'TATASTEEL', 'JSWSTEEL', 'HCLTECH', 'TECHM',
+  'ADANIENT', 'ADANIPORTS', 'COALINDIA', 'GRASIM', 'HINDALCO', 'NESTLEIND',
+  'CIPLA', 'DRREDDY', 'BRITANNIA', 'EICHERMOT', 'HEROMOTOCO', 'M&M',
+  'INDUSINDBK', 'BPCL', 'IOC', 'DLF', 'VEDL', 'CANBK', 'PNB', 'BEL', 'HAL',
+];
+const INTRADAY_MIN_CONFIDENCE = 90;
+const INTRADAY_TOP_N = 5;
+
+function getISTParts(date = new Date()) {
+  const fmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata', hour12: false,
+    weekday: 'short', hour: '2-digit', minute: '2-digit',
+  }).formatToParts(date);
+  const get = t => fmt.find(p => p.type === t)?.value || '';
+  const hour = parseInt(get('hour'), 10) % 24;
+  const minute = parseInt(get('minute'), 10);
+  const wd = get('weekday');
+  return { hour, minute, weekday: wd };
+}
+
+function isNseMarketOpen() {
+  const { hour, minute, weekday } = getISTParts();
+  if (weekday === 'Sat' || weekday === 'Sun') return false;
+  const mins = hour * 60 + minute;
+  return mins >= 9 * 60 + 15 && mins <= 15 * 60 + 30; // 09:15 - 15:30 IST
+}
+
+// --- indicator helpers (pure) ---
+function emaSeries(values, period) {
+  if (!values.length || period <= 0) return [];
+  const k = 2 / (period + 1);
+  const out = [values[0]];
+  for (let i = 1; i < values.length; i++) out.push(values[i] * k + out[i - 1] * (1 - k));
+  return out;
+}
+
+function rsiValue(closes, period = 14) {
+  if (closes.length < period + 1) return 50;
+  let gain = 0, loss = 0;
+  for (let i = closes.length - period; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1];
+    if (d >= 0) gain += d; else loss -= d;
+  }
+  if (loss === 0) return 100;
+  const rs = gain / loss;
+  return 100 - 100 / (1 + rs);
+}
+
+function atrValue(candles, period = 14) {
+  if (candles.length < period + 1) return 0;
+  let sum = 0;
+  for (let i = candles.length - period; i < candles.length; i++) {
+    const c = candles[i], p = candles[i - 1];
+    sum += Math.max(c.high - c.low, Math.abs(c.high - p.close), Math.abs(c.low - p.close));
+  }
+  return sum / period;
+}
+
+async function fetchIntradayCandles(sym) {
+  const ysym = `${sym}.NS`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ysym)}?interval=5m&range=5d&includePrePost=false`;
+  const upstream = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI intraday scanner)' },
+    signal: AbortSignal.timeout(7000),
+  });
+  if (!upstream.ok) throw new Error(`yahoo ${upstream.status}`);
+  const json = await upstream.json();
+  const r = json?.chart?.result?.[0];
+  const ts = r?.timestamp;
+  const q = r?.indicators?.quote?.[0];
+  if (!Array.isArray(ts) || !q) throw new Error('no data');
+  const candles = [];
+  for (let i = 0; i < ts.length; i++) {
+    const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i], v = q.volume?.[i];
+    if (o == null || h == null || l == null || c == null) continue;
+    candles.push({ time: ts[i], open: o, high: h, low: l, close: c, volume: v || 0 });
+  }
+  if (candles.length < 40) throw new Error('thin data');
+  return candles;
+}
+
+// Group a multi-day 5m candle series by IST calendar date (YYYY-MM-DD).
+function groupByDay(candles) {
+  const days = new Map();
+  for (const c of candles) {
+    const d = new Date(c.time * 1000).toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' });
+    if (!days.has(d)) days.set(d, []);
+    days.get(d).push(c);
+  }
+  return days; // insertion order = chronological
+}
+
+function analyzeIntradaySymbol(symbol, allCandles) {
+  const dayMap = groupByDay(allCandles);
+  const dayKeys = Array.from(dayMap.keys());
+  if (dayKeys.length < 2) return null;
+  const todayKey = dayKeys[dayKeys.length - 1];
+  const prevKey = dayKeys[dayKeys.length - 2];
+  const today = dayMap.get(todayKey);
+  const prev = dayMap.get(prevKey);
+  if (!today?.length || !prev?.length) return null;
+
+  const closes = allCandles.map(c => c.close);
+  const ltp = today[today.length - 1].close;
+  const prevClose = prev[prev.length - 1].close;
+  const changePct = ((ltp - prevClose) / prevClose) * 100;
+  if (!(ltp > 0)) return null;
+
+  // Indicators on full 5-day 5m series (stable warm values)
+  const ema9 = emaSeries(closes, 9), ema21 = emaSeries(closes, 21);
+  const e9 = ema9[ema9.length - 1], e21 = ema21[ema21.length - 1];
+  const rsi = rsiValue(closes, 14);
+  const atr = atrValue(today.length >= 15 ? today : allCandles, 14);
+  if (!(atr > 0)) return null;
+
+  // VWAP (today)
+  let pv = 0, vv = 0;
+  for (const c of today) { const tp = (c.high + c.low + c.close) / 3; pv += tp * c.volume; vv += c.volume; }
+  const vwap = vv > 0 ? pv / vv : ltp;
+
+  // ORB-15: first three 5m candles of today
+  const orb = today.slice(0, 3);
+  const orHigh = Math.max(...orb.map(c => c.high));
+  const orLow = Math.min(...orb.map(c => c.low));
+  const orMid = (orHigh + orLow) / 2;
+
+  // Relative volume: last 3 candles vs 20-candle average
+  const volWindow = today.slice(-23, -3);
+  const avgVol = volWindow.reduce((s, c) => s + c.volume, 0) / Math.max(1, volWindow.length);
+  const recentVol = today.slice(-3).reduce((s, c) => s + c.volume, 0) / 3;
+  const volRatio = avgVol > 0 ? recentVol / avgVol : 1;
+
+  // CPR from previous day H/L/C
+  const pH = Math.max(...prev.map(c => c.high)), pL = Math.min(...prev.map(c => c.low));
+  const pivot = (pH + pL + prevClose) / 3;
+  const bc = (pH + pL) / 2;
+  const tc = 2 * pivot - bc;
+  const cprTop = Math.max(bc, tc), cprBottom = Math.min(bc, tc);
+
+  // 30-minute momentum
+  const momRef = today[Math.max(0, today.length - 7)].close;
+  const momentumPct = ((ltp - momRef) / momRef) * 100;
+
+  function scoreSide(dir) {
+    let s = 0; const reasons = [];
+    // EMA stack — 22
+    if (dir === 'LONG' ? (ltp > e9 && e9 > e21) : (ltp < e9 && e9 < e21)) { s += 22; reasons.push(`EMA9/21 ${dir === 'LONG' ? 'bullish' : 'bearish'} stack`); }
+    else if (dir === 'LONG' ? (ltp > e9 || e9 > e21) : (ltp < e9 || e9 < e21)) { s += 11; }
+    // VWAP — 18
+    const vwapDist = ((ltp - vwap) / vwap) * 100;
+    if (dir === 'LONG' ? vwapDist > 0.05 : vwapDist < -0.05) { s += 18; reasons.push(dir === 'LONG' ? 'Price above VWAP' : 'Price below VWAP'); }
+    else if (Math.abs(vwapDist) <= 0.15) { s += 8; reasons.push('At VWAP control zone'); }
+    // ORB-15 — 18
+    if (dir === 'LONG' ? ltp > orHigh : ltp < orLow) { s += 18; reasons.push('ORB-15 breakout'); }
+    else if (dir === 'LONG' ? ltp > orMid : ltp < orMid) { s += 9; reasons.push('Above/Below OR mid'); }
+    // Volume surge — 8
+    if (volRatio >= 2) { s += 8; reasons.push(`Volume ${volRatio.toFixed(1)}x surge`); }
+    else if (volRatio >= 1.4) { s += 5; reasons.push(`Volume ${volRatio.toFixed(1)}x`); }
+    // CPR bias — 8
+    if (dir === 'LONG' ? ltp > cprTop : ltp < cprBottom) { s += 8; reasons.push('CPR breakout bias'); }
+    else if (ltp >= cprBottom && ltp <= cprTop) { s += 4; }
+    // RSI sweet zone — 8 (momentum, not exhausted)
+    if (dir === 'LONG' ? (rsi >= 52 && rsi <= 70) : (rsi >= 30 && rsi <= 48)) { s += 8; reasons.push(`RSI ${Math.round(rsi)} momentum zone`); }
+    else if (dir === 'LONG' ? (rsi >= 45 && rsi < 52) : (rsi > 48 && rsi <= 55)) { s += 5; }
+    // Momentum — 18 (scaled)
+    const mScore = Math.max(0, Math.min(1, Math.abs(momentumPct) / 0.6)) * 18;
+    if (mScore >= 9 && ((dir === 'LONG' && momentumPct > 0) || (dir === 'SHORT' && momentumPct < 0))) { s += mScore; reasons.push(`${momentumPct >= 0 ? '+' : ''}${momentumPct.toFixed(2)}% 30m momentum`); }
+
+    return Math.round(Math.min(100, s));
+  }
+
+  const longScore = scoreSide('LONG');
+  const shortScore = scoreSide('SHORT');
+  const direction = longScore >= shortScore ? 'LONG' : 'SHORT';
+  const quantConfidence = Math.max(longScore, shortScore);
+
+  // ATR-based pro risk levels (1.1R stop, 1.6R / 2.6R targets)
+  let entry = ltp, stopLoss, target1, target2;
+  if (direction === 'LONG') {
+    stopLoss = entry - 1.1 * atr;
+    target1 = entry + 1.6 * atr;
+    target2 = entry + 2.6 * atr;
+  } else {
+    stopLoss = entry + 1.1 * atr;
+    target1 = entry - 1.6 * atr;
+    target2 = entry - 2.6 * atr;
+  }
+  const risk = Math.abs(entry - stopLoss);
+  const rr = risk > 0 ? Math.abs(target1 - entry) / risk : 0;
+
+  return {
+    symbol, ltp: +ltp.toFixed(2), changePct: +changePct.toFixed(2),
+    direction, quantConfidence,
+    entry: +entry.toFixed(2), stopLoss: +stopLoss.toFixed(2),
+    target1: +target1.toFixed(2), target2: +target2.toFixed(2),
+    rr: +rr.toFixed(2), atr: +atr.toFixed(2),
+    vwap: +vwap.toFixed(2), rsi: +rsi.toFixed(1), volumeRatio: +volRatio.toFixed(2),
+    reasons,
+    _rrOk: rr >= 1.25,
+  };
+}
+
+// MCP AI verification: one batched call through Gemini (Groq fallback).
+async function aiVerifySignals(candidates) {
+  if (!candidates.length) return {};
+  const compact = candidates.map(c => ({
+    sym: c.symbol, dir: c.direction, q: c.quantConfidence,
+    chg: c.changePct, rsi: c.rsi, vr: c.volumeRatio, rr: c.rr,
+    vw: c.ltp > c.vwap ? 'above' : 'below',
+  }));
+  const systemPrompt = `You are an elite NSE intraday trading desk analyst. You receive pre-scored setups from a quantitative engine (EMA/VWAP/ORB/CPR/volume factors). Verify each setup strictly. Penalize: RSI exhaustion (>75/<25), poor RR (<1.25), counter-VWAP direction, low relative volume. Boost only high-conviction confluence. Respond with STRICT JSON only, no markdown:\n{"verdicts":{"SYMBOL":{"verdict":"LONG"|"SHORT"|"AVOID","confidence":0-100,"note":"max 12 words"}}}`;
+  const userPrompt = `Setups (q = engine confidence):\n${JSON.stringify(compact)}`;
+
+  const parseVerdicts = (text) => {
+    try {
+      const m = text.match(/\{[\s\S]*\}/);
+      if (!m) return null;
+      const parsed = JSON.parse(m[0]);
+      return parsed?.verdicts || null;
+    } catch { return null; }
+  };
+
+  // 1) Gemini first
+  if (KEYS.gemini) {
+    for (const model of ['gemini-3.5-flash', 'gemini-2.5-flash']) {
+      try {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${KEYS.gemini}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
+            generationConfig: { temperature: 0.2, maxOutputTokens: 2000 },
+          }),
+          signal: AbortSignal.timeout(20000),
+        });
+        if (!r.ok) continue;
+        const j = await r.json();
+        const text = j?.candidates?.[0]?.content?.parts?.map(p => p.text).filter(Boolean).join('\n') || '';
+        const verdicts = parseVerdicts(text);
+        if (verdicts) return { verdicts, model };
+      } catch { /* next */ }
+    }
+  }
+  // 2) Groq fallback
+  if (KEYS.groq) {
+    try {
+      const r = await fetch(OPENAI_COMPAT.groq.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${KEYS.groq}` },
+        body: JSON.stringify({
+          model: OPENAI_COMPAT.groq.defModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.2, max_completion_tokens: 2000,
+        }),
+        signal: AbortSignal.timeout(20000),
+      });
+      if (r.ok) {
+        const j = await r.json();
+        const text = j?.choices?.[0]?.message?.content || '';
+        const verdicts = parseVerdicts(text);
+        if (verdicts) return { verdicts, model: 'groq' };
+      }
+    } catch { /* ignore */ }
+  }
+  return null;
+}
+
+let _intradayCache = { data: null, ts: 0, inflight: null };
+
+app.get('/api/intraday-scanner', async (_req, res) => {
+  // Market-hours gate — hard requirement for this feature.
+  // INTRADAY_DEBUG=1 (owner-only env var) bypasses the gate for pipeline testing.
+  const debugForce = process.env.INTRADAY_DEBUG === '1';
+  if (!isNseMarketOpen() && !debugForce) {
+    const { hour, minute, weekday } = getISTParts();
+    return res.json({
+      marketOpen: false,
+      istTime: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} IST`,
+      weekday,
+      signals: [],
+      message: 'NSE market band hai. Scanner sirf 09:15 - 15:30 IST (Mon-Fri) active rehta hai.',
+    });
+  }
+
+  // 60s cache + in-flight dedupe so multiple clients share one scan.
+  if (_intradayCache.data && Date.now() - _intradayCache.ts < 60 * 1000) {
+    return res.json(_intradayCache.data);
+  }
+  if (_intradayCache.inflight) return res.json(await _intradayCache.inflight);
+
+  _intradayCache.inflight = (async () => {
+    try {
+      // Batched concurrent scans (8 at a time to stay polite with Yahoo).
+      const results = [];
+      for (let i = 0; i < INTRADAY_UNIVERSE.length; i += 8) {
+        const batch = INTRADAY_UNIVERSE.slice(i, i + 8);
+        const settled = await Promise.allSettled(
+          batch.map(async (sym) => analyzeIntradaySymbol(sym, await fetchIntradayCandles(sym)))
+        );
+        for (const r of settled) if (r.status === 'fulfilled' && r.value) results.push(r.value);
+      }
+      if (results.length < 10) {
+        return { marketOpen: true, signals: [], scanned: results.length, error: 'Market data thin — thodi der baad retry karein.' };
+      }
+
+      // Quant pre-filter: strong setups only go to AI verification.
+      let pool = results.filter(r => r.quantConfidence >= 80);
+      if (pool.length === 0) pool = results.sort((a, b) => b.quantConfidence - a.quantConfidence).slice(0, 8);
+      pool = pool.sort((a, b) => b.quantConfidence - a.quantConfidence).slice(0, 10);
+
+      // MCP AI verification layer.
+      const ai = await aiVerifySignals(pool);
+      let signals = pool.map(c => {
+        let aiConfidence = null, aiNote = '', aiModel = '';
+        const v = ai?.verdicts?.[c.symbol];
+        if (v && typeof v.confidence === 'number') {
+          if (v.verdict === 'AVOID' || (v.verdict && v.verdict.toUpperCase() !== c.direction)) {
+            aiConfidence = Math.round(v.confidence * 0.5); // disagreement → heavy penalty
+            aiNote = v.note || 'AI disagrees with direction';
+          } else {
+            aiConfidence = Math.round(c.quantConfidence * 0.45 + v.confidence * 0.55);
+            aiNote = v.note || '';
+          }
+          aiModel = ai.model || '';
+        }
+        const confidence = aiConfidence != null ? aiConfidence : (c._rrOk ? c.quantConfidence : c.quantConfidence - 12);
+        const { _rrOk, ...clean } = c;
+        return { ...clean, aiConfidence, aiModel, aiNote, confidence: Math.max(0, Math.min(100, confidence)) };
+      });
+
+      signals = signals
+        .filter(s => s.confidence >= INTRADAY_MIN_CONFIDENCE)
+        .sort((a, b) => b.confidence - a.confidence)
+        .slice(0, INTRADAY_TOP_N);
+
+      const payload = {
+        marketOpen: true,
+        asOf: new Date().toISOString(),
+        scanned: results.length,
+        minConfidence: INTRADAY_MIN_CONFIDENCE,
+        aiVerified: !!ai,
+        aiModel: ai?.model || '',
+        signals,
+        disclaimer: 'Educational analysis only — not investment advice. Intraday trading me capital loss ka risk hai.',
+      };
+      _intradayCache.data = payload;
+      _intradayCache.ts = Date.now();
+      return payload;
+    } catch (e) {
+      console.error('[intraday-scanner]', e?.message || e);
+      return { marketOpen: true, signals: [], error: 'Scanner temporarily unavailable.' };
+    } finally {
+      _intradayCache.inflight = null;
+    }
+  })();
+
+  return res.json(await _intradayCache.inflight);
 });
 
 // ------------------------------------------------------------
