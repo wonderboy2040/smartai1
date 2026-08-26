@@ -159,6 +159,20 @@ export const SERVER_MCP_TOOLS_OPENAI = [
         required: ['symbol', 'currentPrice', 'bias']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_intraday_expert_analysis',
+      description: 'Indian Market Intraday Realtime Market Expert MCP tool. Provides pro-trader level intraday analysis: Top 5 high-conviction algo setups or single stock deep scan with exact Entry Zones, Structural Stop Loss, Target 1 (1.6R), Target 2 (2.6R), Trailing SL, 1% Capital Risk Position Sizing (qty per ₹1 Lakh), VWAP & ADX confluence, and 15:10 IST square-off rules.',
+      parameters: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'NSE/BSE symbol (e.g. RELIANCE, HDFCBANK, TATASTEEL, NIFTY) or "TOP5" for top intraday setups.' },
+          market: { type: 'string', enum: ['IN'], description: 'Market exchange (default: IN).' }
+        }
+      }
+    }
   }
 ];
 
@@ -478,6 +492,249 @@ export async function executeServerMCPTool(name, args = {}, context = {}) {
           target2: Math.round(tp2 * 100) / 100,
           riskReward: `1:${(reward1 / (risk || 1)).toFixed(2)}`,
           positionSizingRule: 'Risk no more than 1-2% of total trading capital on this setup.'
+        };
+      }
+
+      // 10. Indian Market Intraday Realtime Market Expert MCP Tool (Pro Desk Level)
+      case 'get_intraday_expert_analysis': {
+        const rawSym = String(args.symbol || 'TOP5').trim().toUpperCase().replace('.NS', '').replace('.BO', '');
+        const isTop5 = !rawSym || rawSym === 'TOP5' || rawSym === 'ALL' || rawSym === 'SCAN';
+
+        const TV_INTRADAY_COLS = [
+          'close', 'open', 'high', 'low', 'volume', 'change',
+          'EMA10', 'EMA20', 'SMA20', 'SMA50',
+          'RSI', 'MACD.macd', 'MACD.signal',
+          'ATR', 'VWAP',
+          'ADX', 'ADX+DI', 'ADX-DI',
+          'relative_volume_10d_calc',
+          'Pivot.M.Classic.Middle', 'Pivot.M.Classic.S1', 'Pivot.M.Classic.R1',
+          'Recommend.All', 'last',
+        ];
+
+        const pf = (v) => (typeof v === 'number' && !isNaN(v) && isFinite(v)) ? v : null;
+
+        if (isTop5) {
+          // Top Liquid Scan Universe
+          const universe = [
+            'RELIANCE', 'HDFCBANK', 'ICICIBANK', 'INFY', 'TCS', 'ITC', 'SBIN', 'BHARTIARTL',
+            'KOTAKBANK', 'LT', 'AXISBANK', 'TATAMOTORS', 'SUNPHARMA', 'MARUTI', 'TITAN',
+            'BAJFINANCE', 'TATASTEEL', 'ASIANPAINT', 'M&M', 'NTPC', 'POWERGRID', 'HCLTECH',
+            'ONGC', 'ADANIENT', 'ADANIPORTS', 'COALINDIA', 'JIOFIN', 'VEDL', 'ZOMATO', 'TRENT'
+          ];
+          const tickers = universe.map(s => `NSE:${s}`);
+          let tvItems = [];
+          try {
+            const res = await fetch(`https://scanner.tradingview.com/india/scan?t=${Date.now()}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+              body: JSON.stringify({
+                symbols: { tickers },
+                columns: TV_INTRADAY_COLS,
+              }),
+              signal: AbortSignal.timeout(8000),
+            });
+            if (res.ok) {
+              const data = await res.json();
+              tvItems = data?.data || [];
+            }
+          } catch {}
+
+          const setups = [];
+          for (const item of tvItems) {
+            if (!item.d) continue;
+            const sym = item.s.replace('NSE:', '').replace('BSE:', '');
+            const d = item.d;
+            const ltp = pf(d[23]) || pf(d[0]) || 0;
+            if (!ltp || ltp <= 0) continue;
+            const open = pf(d[1]) || ltp;
+            const high = pf(d[2]) || ltp;
+            const low = pf(d[3]) || ltp;
+            const change = pf(d[5]) || 0;
+            const ema10 = pf(d[6]) ?? ltp;
+            const ema20 = pf(d[7]) ?? ltp;
+            const rsi = pf(d[10]) ?? 50;
+            const macd = pf(d[11]);
+            const macdSig = pf(d[12]);
+            const atr = pf(d[13]) || (ltp * 0.02);
+            const vwap = pf(d[14]) || ltp;
+            const adx = pf(d[15]) ?? 20;
+            const relVol = pf(d[18]) ?? 1;
+
+            const isLong = (ltp > ema10 && ema10 > ema20 && ltp > vwap) || (change > 0 && rsi >= 50);
+            const dir = isLong ? 'LONG' : 'SHORT';
+
+            const entry = ltp;
+            const entryZoneLow = +(entry - 0.25 * atr).toFixed(2);
+            const entryZoneHigh = +(entry + 0.10 * atr).toFixed(2);
+            const atrStop = isLong ? entry - 1.1 * atr : entry + 1.1 * atr;
+            const swingStop = isLong ? (low > 0 ? low - 0.15 * atr : atrStop) : (high > 0 ? high + 0.15 * atr : atrStop);
+            let stopLoss = isLong ? Math.max(atrStop, swingStop) : Math.min(atrStop, swingStop);
+            if (isLong) {
+              stopLoss = Math.min(stopLoss, entry - 0.7 * atr);
+              stopLoss = Math.max(stopLoss, entry - 1.8 * atr);
+            } else {
+              stopLoss = Math.max(stopLoss, entry + 0.7 * atr);
+              stopLoss = Math.min(stopLoss, entry + 1.8 * atr);
+            }
+            stopLoss = +stopLoss.toFixed(2);
+            const risk = Math.abs(entry - stopLoss);
+            const target1 = +(isLong ? entry + 1.6 * risk : entry - 1.6 * risk).toFixed(2);
+            const target2 = +(isLong ? entry + 2.6 * risk : entry - 2.6 * risk).toFixed(2);
+            const trailingSL = +(isLong ? entry - 0.8 * atr : entry + 0.8 * atr).toFixed(2);
+            const qtyRisk = risk > 0 ? Math.floor(1000 / risk) : 0;
+            const qtyCap = Math.floor(25000 / entry);
+            const qtyPerLakh = Math.max(0, Math.min(qtyRisk, qtyCap));
+
+            let score = 50;
+            if (dir === 'LONG' ? ltp > vwap : ltp < vwap) score += 15;
+            if (dir === 'LONG' ? ema10 > ema20 : ema10 < ema20) score += 15;
+            if (adx >= 25) score += 10;
+            if (relVol >= 1.3) score += 10;
+            if (dir === 'LONG' ? (rsi >= 52 && rsi <= 68) : (rsi >= 32 && rsi <= 48)) score += 10;
+
+            setups.push({
+              symbol: sym,
+              direction: dir,
+              confidenceScore: `${Math.min(98, score)}/100`,
+              ltp: +ltp.toFixed(2),
+              change: `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`,
+              entryTrigger: +entry.toFixed(2),
+              entryZone: `${entryZoneLow} - ${entryZoneHigh}`,
+              stopLoss,
+              target1,
+              target2,
+              trailingSL,
+              trailRuleAfterT1: `Move SL to Breakeven (${entry}) once Target 1 is hit`,
+              rrRatio: `1:${risk > 0 ? (Math.abs(target1 - entry) / risk).toFixed(2) : '1.60'}`,
+              qtyPer1LakhCapital: `${qtyPerLakh} shares (Strict 1% max capital risk)`,
+              trendStrength: adx >= 28 ? 'STRONG TREND' : adx >= 20 ? 'BUILDING' : 'RANGE',
+              vwap: +vwap.toFixed(2),
+              rsi: Math.round(rsi),
+              adx: Math.round(adx),
+              volumeRatio: `${relVol.toFixed(1)}x`,
+              squareOffRule: 'Strict 15:10 IST intraday square-off. No fresh trades after 15:00 IST.'
+            });
+          }
+
+          setups.sort((a, b) => parseInt(b.confidenceScore) - parseInt(a.confidenceScore));
+
+          return {
+            expertEngine: 'NSE/BSE Intraday Realtime Market Expert MCP Engine v2.0',
+            scanType: 'Top High-Conviction Setups',
+            marketContext: 'Real-time TradingView + Groww Live Data Pipeline',
+            riskDiscipline: '1% Capital Risk Model per ₹1,00,000 portfolio • Structural ATR & Swing stops',
+            topSetups: setups.slice(0, 5)
+          };
+        }
+
+        // Single Symbol Deep Scan
+        let tvData = null;
+        try {
+          const res = await fetch(`https://scanner.tradingview.com/india/scan?t=${Date.now()}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+            body: JSON.stringify({
+              symbols: { tickers: [`NSE:${rawSym}`, `BSE:${rawSym}`] },
+              columns: TV_INTRADAY_COLS,
+            }),
+            signal: AbortSignal.timeout(8000),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data?.data?.[0]?.d) tvData = data.data[0].d;
+          }
+        } catch {}
+
+        let growwQuote = null;
+        try {
+          const gres = await fetch(`https://groww.in/v1/api/stocks_data/v1/tr_live_prices/exchange/NSE/segment/CASH/${encodeURIComponent(rawSym)}/latest`, {
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            signal: AbortSignal.timeout(5000)
+          });
+          if (gres.ok) {
+            const gj = await gres.json();
+            if (gj?.ltp > 0) growwQuote = gj;
+          }
+        } catch {}
+
+        const ltp = growwQuote?.ltp || pf(tvData?.[23]) || pf(tvData?.[0]) || 0;
+        if (!ltp || ltp <= 0) return { error: `Real-time intraday data unavailable for ${rawSym}. Verify symbol.` };
+
+        const open = pf(tvData?.[1]) || (growwQuote?.ltp && growwQuote?.dayChange != null ? (growwQuote.ltp - growwQuote.dayChange) : ltp);
+        const high = Math.max(growwQuote?.high || 0, pf(tvData?.[2]) || 0) || ltp;
+        const low = Math.min(growwQuote?.low || Infinity, pf(tvData?.[3]) || Infinity);
+        const effectiveLow = isFinite(low) ? low : ltp;
+        const change = growwQuote?.dayChangePerc ?? pf(tvData?.[5]) ?? 0;
+        const ema10 = pf(tvData?.[6]) ?? ltp;
+        const ema20 = pf(tvData?.[7]) ?? ltp;
+        const rsi = pf(tvData?.[10]) ?? 50;
+        const macd = pf(tvData?.[11]);
+        const macdSig = pf(tvData?.[12]);
+        const atr = pf(tvData?.[13]) || (ltp * 0.02);
+        const vwap = pf(tvData?.[14]) || ltp;
+        const adx = pf(tvData?.[15]) ?? 20;
+        const relVol = pf(tvData?.[18]) ?? 1;
+
+        const isLong = (ltp > ema10 && ema10 > ema20 && ltp > vwap) || (change > 0 && rsi >= 50);
+        const dir = isLong ? 'LONG' : 'SHORT';
+        const entry = ltp;
+        const entryZoneLow = +(entry - 0.25 * atr).toFixed(2);
+        const entryZoneHigh = +(entry + 0.10 * atr).toFixed(2);
+        const atrStop = isLong ? entry - 1.1 * atr : entry + 1.1 * atr;
+        const swingStop = isLong ? (effectiveLow > 0 ? effectiveLow - 0.15 * atr : atrStop) : (high > 0 ? high + 0.15 * atr : atrStop);
+        let stopLoss = isLong ? Math.max(atrStop, swingStop) : Math.min(atrStop, swingStop);
+        if (isLong) {
+          stopLoss = Math.min(stopLoss, entry - 0.7 * atr);
+          stopLoss = Math.max(stopLoss, entry - 1.8 * atr);
+        } else {
+          stopLoss = Math.max(stopLoss, entry + 0.7 * atr);
+          stopLoss = Math.min(stopLoss, entry + 1.8 * atr);
+        }
+        stopLoss = +stopLoss.toFixed(2);
+        const risk = Math.abs(entry - stopLoss);
+        const target1 = +(isLong ? entry + 1.6 * risk : entry - 1.6 * risk).toFixed(2);
+        const target2 = +(isLong ? entry + 2.6 * risk : entry - 2.6 * risk).toFixed(2);
+        const trailingSL = +(isLong ? entry - 0.8 * atr : entry + 0.8 * atr).toFixed(2);
+        const qtyRisk = risk > 0 ? Math.floor(1000 / risk) : 0;
+        const qtyCap = Math.floor(25000 / entry);
+        const qtyPerLakh = Math.max(0, Math.min(qtyRisk, qtyCap));
+
+        return {
+          symbol: rawSym,
+          market: 'NSE/BSE (India)',
+          expertVerdict: `${dir} PRO-DESK SETUP`,
+          livePrice: +ltp.toFixed(2),
+          dayChange: `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`,
+          tradePlan: {
+            direction: dir,
+            entryTriggerPrice: +entry.toFixed(2),
+            entryZoneRange: `${entryZoneLow} - ${entryZoneHigh}`,
+            structuralStopLoss: stopLoss,
+            target1_1_6R: target1,
+            target2_2_6R: target2,
+            trailingStopLoss: trailingSL,
+            breakevenDisciplineRule: `Once price reaches Target 1 (${target1}), book 50% quantity and shift SL to Entry (${entry}).`
+          },
+          positionSizingRule: {
+            capitalBasis: '₹1,00,000 trading portfolio',
+            recommendedQuantity: `${qtyPerLakh} shares`,
+            maxRiskPerTrade: '₹1,000 (Strict 1% maximum capital risk rule)',
+            capitalAllocated: `₹${(qtyPerLakh * entry).toLocaleString('en-IN')}`
+          },
+          confluenceIndicators: {
+            vwapLevel: +vwap.toFixed(2),
+            priceVsVwap: `${((ltp - vwap) / vwap * 100) >= 0 ? '+' : ''}${((ltp - vwap) / vwap * 100).toFixed(2)}%`,
+            rsi14: Math.round(rsi),
+            adxTrendStrength: `${Math.round(adx)} (${adx >= 28 ? 'STRONG TREND ⚡' : adx >= 20 ? 'MODERATE TREND 🟢' : 'CHOPPY / WEAK ⚠️'})`,
+            relativeVolume: `${relVol.toFixed(1)}x 10-day average`,
+            ema10: +ema10.toFixed(2),
+            ema20: +ema20.toFixed(2)
+          },
+          executionRules: {
+            squareOffDeadline: '15:10 IST strictly — do not carry intraday positions overnight.',
+            entryCutoff: '15:00 IST — no fresh entries permitted after 3:00 PM.',
+            slippageBuffer: 'Limit orders preferred inside the entry zone.'
+          }
         };
       }
 

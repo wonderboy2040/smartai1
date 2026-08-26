@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // Wealth AI Pro â€” Backend API Proxy Server
 // ------------------------------------------------------------
 // Serves the built frontend (dist/) AND the /api/* proxy
@@ -681,6 +681,266 @@ function analyzeIntradaySymbol(symbol, allCandles, exchange) {
   };
 }
 
+// ============================================================
+// INTRADAY DUAL-SOURCE ENGINE (TradingView Scanner + Groww NSE)
+// ============================================================
+// Uses the SAME sources as the portfolio's realtime price pipeline:
+//   1. TradingView India Scanner → All indicators in ONE request (instant)
+//   2. Groww NSE Live → genuine LTP, high, low, volume, prevClose
+// No Yahoo 5m candle dependency = works INSTANTLY at 09:15 AM IST.
+// Eliminates the "Market data thin" error completely.
+// ============================================================
+
+const TV_INTRADAY_COLUMNS = [
+  'close', 'open', 'high', 'low', 'volume', 'change',
+  'EMA10', 'EMA20', 'SMA20', 'SMA50',
+  'RSI', 'MACD.macd', 'MACD.signal',
+  'ATR', 'VWAP',
+  'ADX', 'ADX+DI', 'ADX-DI',
+  'relative_volume_10d_calc',
+  'Pivot.M.Classic.Middle', 'Pivot.M.Classic.S1', 'Pivot.M.Classic.R1',
+  'Recommend.All', 'last',
+];
+
+async function fetchIntradayDataBatch(symbols) {
+  // Build TV tickers: NSE:SYM + BSE:SYM for each
+  const tvTickers = [];
+  const tvToClean = {};
+  symbols.forEach(sym => {
+    [`NSE:${sym}`, `BSE:${sym}`].forEach(t => {
+      tvTickers.push(t);
+      tvToClean[t] = sym;
+    });
+  });
+
+  // 1) TradingView India Scanner — ONE request for ALL symbols with rich columns
+  //    Retry up to 3 times with exponential backoff.
+  const tvPromise = (async () => {
+    const out = {};
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await fetch(`https://scanner.tradingview.com/india/scan?t=${Date.now()}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+          body: JSON.stringify({
+            symbols: { tickers: [...new Set(tvTickers)] },
+            columns: TV_INTRADAY_COLUMNS,
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!res.ok) {
+          if (attempt < 2) { await new Promise(r => setTimeout(r, 2000 * (attempt + 1))); continue; }
+          return out;
+        }
+        const data = await res.json();
+        if (!data?.data) return out;
+        for (const item of data.data) {
+          if (!item.d) continue;
+          const clean = tvToClean[item.s];
+          if (!clean || out[clean]) continue; // first exchange that resolves wins
+          const d = item.d;
+          const pf = (v) => (typeof v === 'number' && !isNaN(v) && isFinite(v)) ? v : null;
+          out[clean] = {
+            close: pf(d[0]) || 0, open: pf(d[1]) || 0,
+            high: pf(d[2]) || 0, low: pf(d[3]) || 0,
+            volume: pf(d[4]) || 0, change: pf(d[5]) || 0,
+            ema10: pf(d[6]), ema20: pf(d[7]),
+            sma20: pf(d[8]), sma50: pf(d[9]),
+            rsi: pf(d[10]), macd: pf(d[11]), macdSignal: pf(d[12]),
+            atr: pf(d[13]), vwap: pf(d[14]),
+            adx: pf(d[15]), adxPlus: pf(d[16]), adxMinus: pf(d[17]),
+            relVolume: pf(d[18]),
+            pivotMiddle: pf(d[19]), pivotS1: pf(d[20]), pivotR1: pf(d[21]),
+            recommend: pf(d[22]), last: pf(d[23]),
+            exchange: item.s.split(':')[0],
+          };
+        }
+        break; // success — stop retrying
+      } catch (e) {
+        console.warn(`[intraday-scanner] TV scanner attempt ${attempt + 1}/3 failed:`, e?.message);
+        if (attempt < 2) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+      }
+    }
+    return out;
+  })();
+
+  // 2) Groww NSE Live — batch 12 at a time (same source as portfolio prices)
+  const growwPromise = (async () => {
+    const out = {};
+    for (let i = 0; i < symbols.length; i += 12) {
+      const batch = symbols.slice(i, i + 12);
+      await Promise.allSettled(batch.map(async (sym) => {
+        try {
+          const gw = await fetchGrowwNseQuote(sym);
+          if (gw) out[sym] = gw;
+        } catch { /* skip */ }
+      }));
+    }
+    return out;
+  })();
+
+  return Promise.all([tvPromise, growwPromise]);
+}
+
+function analyzeIntradayFromScanner(symbol, tv, groww) {
+  // Merge Groww real-time LTP with TradingView pre-computed indicators
+  const ltp = groww?.price || (tv?.last > 0 ? tv.last : tv?.close) || 0;
+  if (!(ltp > 0)) return null;
+
+  const prevClose = groww?.prevClose || (tv?.change != null && tv.change !== 0
+    ? ltp / (1 + tv.change / 100) : ltp);
+  const changePct = groww?.change || tv?.change || 0;
+  const open = tv?.open || ltp;
+  const high = Math.max(groww?.high || 0, tv?.high || 0) || ltp;
+  const low = Math.min(
+    (groww?.low > 0 ? groww.low : Infinity),
+    (tv?.low > 0 ? tv.low : Infinity)
+  );
+  const effectiveLow = isFinite(low) ? low : ltp;
+  const volume = groww?.volume || tv?.volume || 0;
+
+  // Pre-computed indicators from TradingView (instant — no candle count needed)
+  const ema10 = tv?.ema10 ?? ltp;
+  const ema20 = tv?.ema20 ?? ltp;
+  const rsi = tv?.rsi ?? 50;
+  const macdVal = tv?.macd;
+  const macdSig = tv?.macdSignal;
+  const atr = (tv?.atr > 0) ? tv.atr : ltp * 0.02;
+  const vwap = (tv?.vwap > 0) ? tv.vwap : ltp;
+  const adx = tv?.adx ?? 20;
+  const adxPlus = tv?.adxPlus ?? 15;
+  const adxMinus = tv?.adxMinus ?? 15;
+  const relVolume = tv?.relVolume ?? 1;
+  const pivot = tv?.pivotMiddle ?? ltp;
+  const pivotS1 = tv?.pivotS1 ?? (ltp * 0.98);
+  const pivotR1 = tv?.pivotR1 ?? (ltp * 1.02);
+
+  // Derived metrics
+  const gapPct = prevClose > 0 ? ((open - prevClose) / prevClose) * 100 : 0;
+  const dayRange = high > effectiveLow ? (ltp - effectiveLow) / (high - effectiveLow) : 0.5;
+  const vwapDist = vwap > 0 ? ((ltp - vwap) / vwap) * 100 : 0;
+
+  function scoreSide(dir) {
+    let s = 0; const reasons = [];
+    // EMA Stack — 20pts
+    if (dir === 'LONG' ? (ltp > ema10 && ema10 > ema20) : (ltp < ema10 && ema10 < ema20)) {
+      s += 20; reasons.push(`EMA10/20 ${dir === 'LONG' ? 'bullish' : 'bearish'} stack`);
+    } else if (dir === 'LONG' ? (ltp > ema10 || ema10 > ema20) : (ltp < ema10 || ema10 < ema20)) { s += 10; }
+    // VWAP Bias — 18pts
+    if (dir === 'LONG' ? vwapDist > 0.1 : vwapDist < -0.1) {
+      s += 18; reasons.push(dir === 'LONG' ? `Above VWAP +${vwapDist.toFixed(1)}%` : `Below VWAP ${vwapDist.toFixed(1)}%`);
+    } else if (Math.abs(vwapDist) <= 0.2) { s += 8; reasons.push('At VWAP control zone'); }
+    // RSI Sweet Zone — 12pts
+    if (dir === 'LONG' ? (rsi >= 52 && rsi <= 70) : (rsi >= 30 && rsi <= 48)) {
+      s += 12; reasons.push(`RSI ${Math.round(rsi)} momentum`);
+    } else if (dir === 'LONG' ? (rsi >= 45 && rsi < 52) : (rsi > 48 && rsi <= 55)) { s += 7; }
+    if (dir === 'LONG' && rsi > 75) s -= 5;
+    if (dir === 'SHORT' && rsi < 25) s -= 5;
+    // Relative Volume — 10pts
+    if (relVolume >= 2) { s += 10; reasons.push(`Volume ${relVolume.toFixed(1)}x surge`); }
+    else if (relVolume >= 1.4) { s += 7; reasons.push(`Volume ${relVolume.toFixed(1)}x`); }
+    else if (relVolume >= 1.1) { s += 3; }
+    // MACD — 10pts
+    if (macdVal != null && macdSig != null) {
+      if (dir === 'LONG' ? macdVal > macdSig : macdVal < macdSig) {
+        s += 10; reasons.push(`MACD ${dir === 'LONG' ? 'bullish' : 'bearish'} cross`);
+      } else if (dir === 'LONG' ? macdVal > 0 : macdVal < 0) { s += 5; }
+    }
+    // Pivot/CPR — 8pts
+    if (dir === 'LONG' ? ltp > pivotR1 : ltp < pivotS1) {
+      s += 8; reasons.push(dir === 'LONG' ? 'Above R1 breakout' : 'Below S1 breakdown');
+    } else if (dir === 'LONG' ? ltp > pivot : ltp < pivot) {
+      s += 4; reasons.push(dir === 'LONG' ? 'Above pivot' : 'Below pivot');
+    }
+    // ADX Trend Strength — 8pts
+    if (adx > 25) { s += 8; reasons.push(`ADX ${Math.round(adx)} strong trend`); }
+    else if (adx > 20) { s += 4; }
+    if (dir === 'LONG' ? adxPlus > adxMinus : adxMinus > adxPlus) s += 2;
+    // Gap Analysis — 7pts
+    if (dir === 'LONG' ? (gapPct > 0.3 && gapPct < 2.5) : (gapPct < -0.3 && gapPct > -2.5)) {
+      s += 7; reasons.push(`Gap ${gapPct > 0 ? '+' : ''}${gapPct.toFixed(1)}%`);
+    }
+    if (dir === 'LONG' && gapPct > 3) s -= 3;
+    if (dir === 'SHORT' && gapPct < -3) s -= 3;
+    // Day Range Position — 7pts
+    if (dir === 'LONG' ? dayRange < 0.35 : dayRange > 0.65) {
+      s += 7; reasons.push(dir === 'LONG' ? 'Near day low entry' : 'Near day high short');
+    } else if (dir === 'LONG' ? dayRange < 0.5 : dayRange > 0.5) { s += 3; }
+    return { score: Math.round(Math.max(0, Math.min(100, s))), reasons };
+  }
+
+  const longR = scoreSide('LONG'), shortR = scoreSide('SHORT');
+  const direction = longR.score >= shortR.score ? 'LONG' : 'SHORT';
+  const quantConfidence = Math.max(longR.score, shortR.score);
+  const reasons = direction === 'LONG' ? longR.reasons : shortR.reasons;
+
+  // ---------- PRO-DESK RISK ARCHITECTURE (advance level) ----------
+  // Entry = live LTP trigger; ZONE = limit-fill band (pullback↔breakout side).
+  const entry = ltp;
+  const entryZoneLow = +(entry - 0.25 * atr).toFixed(2);  // VWAP/pullback-side fill
+  const entryZoneHigh = +(entry + 0.10 * atr).toFixed(2); // momentum/breakout-side fill
+  const isLong = direction === 'LONG';
+
+  // Structural stop: tighter of (1.1×ATR, day-swing ± 0.15×ATR buffer),
+  // clamped 0.7×ATR (noise floor) ↔ 1.8×ATR (max risk cap) — pro standard.
+  const atrStop = isLong ? entry - 1.1 * atr : entry + 1.1 * atr;
+  const swingStop = isLong
+    ? (effectiveLow > 0 ? effectiveLow - 0.15 * atr : atrStop)
+    : (high > 0 ? high + 0.15 * atr : atrStop);
+  let stopLoss = isLong ? Math.max(atrStop, swingStop) : Math.min(atrStop, swingStop);
+  if (isLong) {
+    stopLoss = Math.min(stopLoss, entry - 0.7 * atr); // never tighter than 0.7 ATR
+    stopLoss = Math.max(stopLoss, entry - 1.8 * atr); // never wider than 1.8 ATR
+  } else {
+    stopLoss = Math.max(stopLoss, entry + 0.7 * atr);
+    stopLoss = Math.min(stopLoss, entry + 1.8 * atr);
+  }
+  stopLoss = +stopLoss.toFixed(2);
+
+  // R-multiple targets off ACTUAL risk (targets scale with the real stop).
+  const risk = Math.abs(entry - stopLoss);
+  const target1 = +(isLong ? entry + 1.6 * risk : entry - 1.6 * risk).toFixed(2);
+  const target2 = +(isLong ? entry + 2.6 * risk : entry - 2.6 * risk).toFixed(2);
+  const trailingSL = +(isLong ? entry - 0.8 * atr : entry + 0.8 * atr).toFixed(2);
+  const trailAfterT1 = +entry.toFixed(2); // breakeven lock once T1 books — discipline rule
+  const rr = risk > 0 ? Math.abs(target1 - entry) / risk : 0;
+
+  // Position sizing — 1% RISK RULE per ₹1,00,000 capital, capped at 25% capital deployed.
+  const qtyRisk = risk > 0 ? Math.floor(1000 / risk) : 0;
+  const qtyCap = Math.floor(25000 / entry);
+  const qtyPerLakh = Math.max(0, Math.min(qtyRisk, qtyCap));
+
+  // ADX regime label
+  const trendStrength = adx >= 28 ? 'STRONG' : adx >= 20 ? 'BUILDING' : 'WEAK-RANGE';
+
+  // Market phase — cap confidence in early session (first 30 min)
+  const { hour, minute } = getISTParts();
+  const istMins = hour * 60 + minute;
+  let marketPhase = 'full';
+  if (istMins >= 9 * 60 + 15 && istMins < 9 * 60 + 45) marketPhase = 'early';
+  else if (istMins >= 14 * 60 + 30) marketPhase = 'power-hour';
+  const freshEntriesAllowed = istMins < 15 * 60; // 15:00 IST — no fresh intraday entries after
+
+  return {
+    symbol, ltp: +ltp.toFixed(2), changePct: +changePct.toFixed(2),
+    direction, quantConfidence: marketPhase === 'early' ? Math.min(quantConfidence, 88) : quantConfidence,
+    exchange: tv?.exchange || 'NSE',
+    entry: +entry.toFixed(2), stopLoss,
+    entryZoneLow, entryZoneHigh,
+    target1: +target1.toFixed(2), target2: +target2.toFixed(2),
+    trailingSL, trailAfterT1,
+    qtyPerLakh, trendStrength,
+    freshEntriesAllowed, sqOffBy: '15:10 IST',
+    rr: +rr.toFixed(2), atr: +atr.toFixed(2),
+    vwap: +vwap.toFixed(2), rsi: +rsi.toFixed(1), volumeRatio: +relVolume.toFixed(2),
+    adx: +(adx).toFixed(1), gapPct: +gapPct.toFixed(2), vwapDist: +vwapDist.toFixed(2),
+    marketPhase,
+    reasons,
+    _rrOk: rr >= 1.25,
+    _momentumPct: changePct,
+  };
+}
+
 // MCP AI verification — MULTI-MODEL CONSENSUS layer.
 // Runs independent model calls in parallel (Gemini + Groq) and merges
 // verdicts: agreement boosts conviction, disagreement penalizes heavily.
@@ -689,10 +949,11 @@ async function aiVerifySignals(candidates) {
   const compact = candidates.map(c => ({
     sym: c.symbol, exch: c.exchange || 'NSE', dir: c.direction, q: c.quantConfidence,
     chg: c.changePct, rsi: c.rsi, vr: c.volumeRatio, rr: c.rr,
-    vwapDist: +((((c.ltp - c.vwap) / c.vwap) * 100)).toFixed(2),
+    vwapDist: c.vwapDist ?? +((((c.ltp - c.vwap) / c.vwap) * 100)).toFixed(2),
+    adx: c.adx ?? 20, gap: c.gapPct ?? 0, phase: c.marketPhase || 'full',
     mom: c._momentumPct != null ? +c._momentumPct.toFixed(2) : undefined,
   }));
-  const systemPrompt = `You are an elite NSE/BSE intraday trading desk analyst running as an MCP verification tool. You receive pre-scored setups from a quantitative engine (EMA/VWAP/ORB/CPR/volume/momentum factors). Verify each setup strictly. Penalize: RSI exhaustion (>75/<25), poor RR (<1.25), counter-VWAP direction, low relative volume, overextended moves far from VWAP (>1.5%). Boost only high-conviction confluence. Respond with STRICT JSON only, no markdown:\n{"verdicts":{"SYMBOL":{"verdict":"LONG"|"SHORT"|"AVOID","confidence":0-100,"note":"max 12 words"}}}`;
+  const systemPrompt = `You are an elite NSE/BSE intraday trading desk analyst running as an MCP verification tool. You receive pre-scored setups from a quantitative engine (EMA/VWAP/ORB/CPR/ADX/Pivot/volume/momentum/gap factors). Verify each setup strictly. Penalize: RSI exhaustion (>75/<25), poor RR (<1.25), counter-VWAP direction, low relative volume (<1.1x), overextended moves far from VWAP (>1.5%), weak ADX (<18), extreme gap (>3%). In early market phase (9:15-9:45 IST), reduce confidence by 5-10 pts as data stabilizes. Boost only high-conviction confluence with strong ADX (>25) and volume surge (>1.5x). Respond with STRICT JSON only, no markdown:\n{"verdicts":{"SYMBOL":{"verdict":"LONG"|"SHORT"|"AVOID","confidence":0-100,"note":"max 15 words"}}}`;
   const userPrompt = `Setups (q = engine confidence, vwapDist % = price vs VWAP):\n${JSON.stringify(compact)}`;
 
   const parseVerdicts = (text) => {
@@ -712,7 +973,7 @@ async function aiVerifySignals(candidates) {
         contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
         generationConfig: { temperature: 0.2, maxOutputTokens: 2000 },
       }),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(12000),
     });
     if (!r.ok) throw new Error(`gemini ${r.status}`);
     const j = await r.json();
@@ -734,7 +995,7 @@ async function aiVerifySignals(candidates) {
         ],
         temperature: 0.2, max_completion_tokens: 2000,
       }),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(12000),
     });
     if (!r.ok) throw new Error(`${provider} ${r.status}`);
     const j = await r.json();
@@ -860,8 +1121,8 @@ async function dispatchIntradayAlerts(signals) {
     const arrow = s.direction === 'LONG' ? '🟢' : '🔴';
     msg += `\n${arrow} <b>${escapeHtml(s.symbol)}</b> (${s.exchange}) — <b>${s.direction}</b>${isFlip ? ' ⚠️ REVERSAL' : ''}\n`;
     msg += `Confidence: <b>${s.confidence}%</b> | LTP ${fmtINR(s.ltp)} (${s.changePct >= 0 ? '+' : ''}${s.changePct.toFixed(2)}%)\n`;
-    msg += `Entry ${fmtINR(s.entry)} | SL ${fmtINR(s.stopLoss)} | T1 ${fmtINR(s.target1)} | T2 ${fmtINR(s.target2)}\n`;
-    msg += `RR 1:${s.rr.toFixed(2)} • VWAP ${fmtINR(s.vwap)} • RSI ${s.rsi} • Vol ${s.volumeRatio.toFixed(1)}x\n`;
+    msg += `Entry zone ${fmtINR(s.entryZoneLow ?? s.entry)}–${fmtINR(s.entryZoneHigh ?? s.entry)} (trig ${fmtINR(s.entry)}) | SL ${fmtINR(s.stopLoss)} | T1 ${fmtINR(s.target1)} | T2 ${fmtINR(s.target2)}\n`;
+    msg += `RR 1:${s.rr.toFixed(2)} • Qty/₹1L ${s.qtyPerLakh ?? '—'} • ${s.trendStrength || ''} trend • VWAP ${fmtINR(s.vwap)} • RSI ${s.rsi} • Vol ${s.volumeRatio.toFixed(1)}x • Exit ${s.sqOffBy || '15:10 IST'}\n`;
     if (s.aiModel) msg += `🤖 AI: ${escapeHtml(String(s.aiModel).slice(0, 40))}${s.aiNote ? ` — ${escapeHtml(s.aiNote.slice(0, 60))}` : ''}\n`;
   }
   msg += `\n<code>━━━━━━━━━━━━━━━━━━━━━</code>\n⏰ ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST • Auto-generated — not investment advice.`;
@@ -917,20 +1178,36 @@ app.get('/api/intraday-scanner', async (_req, res) => {
 
   _intradayCache.inflight = (async () => {
     try {
-      // Batched concurrent scans (8 at a time to stay polite with Yahoo).
+      // DUAL-SOURCE BATCH: TradingView Scanner + Groww NSE Live
+      // Uses the SAME sources as portfolio realtime prices — works INSTANTLY at 09:15 AM IST.
+      const [tvData, growwData] = await fetchIntradayDataBatch(INTRADAY_UNIVERSE);
+      const tvCount = Object.keys(tvData).length;
+      const gwCount = Object.keys(growwData).length;
+      console.log(`[intraday-scanner] Data: TV=${tvCount} symbols, Groww=${gwCount} symbols`);
       const results = [];
-      for (let i = 0; i < INTRADAY_UNIVERSE.length; i += 8) {
-        const batch = INTRADAY_UNIVERSE.slice(i, i + 8);
-        const settled = await Promise.allSettled(
-          batch.map(async (sym) => {
-            const { candles, exchange } = await fetchIntradayCandles(sym);
-            return analyzeIntradaySymbol(sym, candles, exchange);
-          })
-        );
-        for (const r of settled) if (r.status === 'fulfilled' && r.value) results.push(r.value);
+      for (const sym of INTRADAY_UNIVERSE) {
+        const r = analyzeIntradayFromScanner(sym, tvData[sym], growwData[sym]);
+        if (r) results.push(r);
       }
-      if (results.length < 10) {
-        return { marketOpen: true, signals: [], scanned: results.length, error: 'Market data thin — thodi der baad retry karein.' };
+      console.log(`[intraday-scanner] Analyzed ${results.length}/${INTRADAY_UNIVERSE.length} symbols`);
+
+      // Zero results → SMART DIAGNOSTICS, not a dead-end error wall.
+      // 09:15 ke turant baad feeds warm-up me hote hain — ye NORMAL hai.
+      // Ye payload cache NahI hota (cache sirf success pe seta hai), so the
+      // next request re-scans automatically. UI 30s fast-poll dikha raha hai.
+      if (results.length === 0) {
+        const feedsCold = tvCount === 0 && gwCount === 0;
+        return {
+          marketOpen: true,
+          signals: [],
+          scanned: 0,
+          universe: INTRADAY_UNIVERSE.length,
+          sources: { tradingView: tvCount, groww: gwCount },
+          retryAfterSeconds: 30,
+          error: feedsCold
+            ? 'Live feeds connect ho rahe hain (market open ke turant baad ye normal hai) — 30s me auto re-scan chalega, page refresh ki zarurat nahi.'
+            : 'Data warm-up me hai — scanner LIVE hai, 30s me auto re-scan se top setups yahin aa jayenge.',
+        };
       }
 
       // Quant pre-filter: strong setups only go to AI verification.
@@ -966,8 +1243,17 @@ app.get('/api/intraday-scanner', async (_req, res) => {
         return { ...clean, aiConfidence, aiModel, aiNote, confidence };
       });
 
+      // Adaptive threshold: opening 30 min me quant engine cap 88 hota hai,
+      // isliye min confidence 85 pe relax hota hai — pro desks opening-range
+      // setups reduced size ke saath lete hain. Rest of the day STRICT 90.
+      const { hour: _ih, minute: _im } = getISTParts();
+      const _istMins = _ih * 60 + _im;
+      const minConf = (_istMins >= 9 * 60 + 15 && _istMins < 9 * 60 + 45)
+        ? Math.min(85, INTRADAY_MIN_CONFIDENCE)
+        : INTRADAY_MIN_CONFIDENCE;
+
       signals = signals
-        .filter(s => s.confidence >= INTRADAY_MIN_CONFIDENCE)
+        .filter(s => s.confidence >= minConf)
         .sort((a, b) => b.confidence - a.confidence)
         .slice(0, INTRADAY_TOP_N);
 
@@ -976,10 +1262,13 @@ app.get('/api/intraday-scanner', async (_req, res) => {
         asOf: new Date().toISOString(),
         scanned: results.length,
         universe: INTRADAY_UNIVERSE.length,
-        minConfidence: INTRADAY_MIN_CONFIDENCE,
+        minConfidence: minConf,
         aiVerified: !!ai,
         aiModel: (ai?.models || []).join('+'),
         aiConsensus: (ai?.models || []).length > 1 ? 'multi-model' : ((ai?.models || [])[0] || ''),
+        aiEngine: 'NSE Intraday Realtime Market Expert (MCP)',
+        engine: 'SUPER INTELLIGENCE INTRADAY v2 — TradingView+Groww dual live feed • MCP expert consensus',
+        sources: { tradingView: tvCount, groww: gwCount },
         signals,
         disclaimer: 'Educational analysis only — not investment advice. Intraday trading me capital loss ka risk hai.',
       };
