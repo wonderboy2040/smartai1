@@ -29,3 +29,6 @@ ml-service/**/__pycache__/
 # Editors / operating systems
 .DS_Store
 Thumbs.db
+
+# Intraday runtime state (tracked signals, paper trades, watchlist)
+server/data/

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  createChart, IChartApi, ISeriesApi,
-  CandlestickSeries, HistogramSeries, CandlestickData, UTCTimestamp,
+  createChart, IChartApi, ISeriesApi, IPriceLine,
+  CandlestickSeries, HistogramSeries, CandlestickData, UTCTimestamp, LineStyle,
 } from 'lightweight-charts';
 
 interface Candle {
@@ -9,14 +9,23 @@ interface Candle {
   open: number; high: number; low: number; close: number; volume: number;
 }
 
+export interface ChartPriceLine {
+  price: number;
+  color: string;
+  title: string;
+  dashed?: boolean;
+}
+
 interface LiveCandleChartProps {
   symbol: string;            // raw symbol, e.g. JUNIORBEES
   market: 'IN' | 'US' | string;
-  interval: string;          // 'D' | 'W' | 'M'
+  interval: string;          // 'D' | 'W' | 'M' | '5M' (intraday 5-min)
   livePrice?: number;        // latest streamed price (realtime last-candle update)
   liveChange?: number;
   theme?: 'dark' | 'light';
   height?: number;
+  priceLines?: ChartPriceLine[]; // horizontal level overlays (Entry/SL/T1/T2…)
+  showTime?: boolean;            // show HH:MM on the time axis (intraday)
 }
 
 const PROXY = (import.meta.env.VITE_API_PROXY as string) || '';
@@ -29,12 +38,14 @@ const PROXY = (import.meta.env.VITE_API_PROXY as string) || '';
  */
 export const LiveCandleChart = React.memo(function LiveCandleChart({
   symbol, market, interval, livePrice, theme = 'dark', height = 500,
+  priceLines, showTime = false,
 }: LiveCandleChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const lastCandleRef = useRef<Candle | null>(null);
+  const priceLinesRef = useRef<IPriceLine[]>([]);
 
   const [status, setStatus] = useState<'loading' | 'ok' | 'error'>('loading');
   // FIX M23: when theme/height changes, the chart-build effect tears down and
@@ -61,7 +72,7 @@ export const LiveCandleChart = React.memo(function LiveCandleChart({
         horzLines: { color: dark ? 'rgba(75,85,99,0.18)' : 'rgba(0,0,0,0.06)' },
       },
       crosshair: { mode: 0 },
-      timeScale: { timeVisible: false, secondsVisible: false, borderColor: 'rgba(75,85,99,0.3)' },
+      timeScale: { timeVisible: showTime, secondsVisible: false, borderColor: 'rgba(75,85,99,0.3)' },
       rightPriceScale: { borderColor: 'rgba(75,85,99,0.3)' },
     });
     const candleSeries = chart.addSeries(CandlestickSeries, {
@@ -131,6 +142,30 @@ export const LiveCandleChart = React.memo(function LiveCandleChart({
     load();
     return () => { cancelled = true; };
   }, [symbol, market, interval, chartVersion]);  // FIX M23: chartVersion added
+
+  // --- Horizontal price-level overlays (Entry / SL / T1 / T2 …) ---
+  useEffect(() => {
+    const series = candleSeriesRef.current;
+    if (!series) return;
+    // Remove previous lines first (idempotent redraw).
+    for (const line of priceLinesRef.current) {
+      try { series.removePriceLine(line); } catch { /* chart rebuilt */ }
+    }
+    priceLinesRef.current = [];
+    for (const pl of priceLines || []) {
+      if (typeof pl?.price !== 'number' || !isFinite(pl.price) || pl.price <= 0) continue;
+      try {
+        priceLinesRef.current.push(series.createPriceLine({
+          price: pl.price,
+          color: pl.color,
+          lineWidth: 1,
+          lineStyle: pl.dashed === false ? LineStyle.Solid : LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: pl.title,
+        }));
+      } catch { /* series not ready */ }
+    }
+  }, [priceLines, chartVersion]);
 
   // --- Realtime: update last candle from the live price stream ---
   useEffect(() => {
