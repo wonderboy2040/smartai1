@@ -100,6 +100,49 @@ function holdingDays(dateAdded: string): number {
   return Math.max(0, Math.round((Date.now() - t) / (24 * 60 * 60 * 1000)));
 }
 
+// Days BETWEEN two YYYY-MM-DD dates (a - b).
+function daysBetween(dateA: string, dateB: string): number {
+  const a = new Date(dateA).getTime();
+  const b = new Date(dateB).getTime();
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+  return Math.max(0, Math.round((a - b) / (24 * 60 * 60 * 1000)));
+}
+
+// FIX (audit C2): previously the realized-gains holding period was computed
+// from the SELL date (`holdingDays(t.date)` = days since the sale), so a stock
+// bought in 2019 and sold last month was taxed as STCG @20% instead of LTCG
+// @12.5%. Rebuild a FIFO lot ledger per symbol to recover each sell's actual
+// acquisition date (oldest lot consumed by that sell).
+function buildAcquisitionDates(transactions: Transaction[]): Map<string, { date: string; ts: number }> {
+  const acqByTxnId = new Map<string, { date: string; ts: number }>();
+  const lots = new Map<string, Array<{ date: string; ts: number; qty: number }>>();
+  const sorted = [...transactions].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  const EPS = 1e-9;
+  for (const t of sorted) {
+    const key = `${t.market}_${t.symbol}`;
+    if (t.type === 'buy') {
+      const q = lots.get(key) || [];
+      q.push({ date: t.date, ts: t.ts, qty: t.qty });
+      lots.set(key, q);
+    } else if (t.type === 'sell') {
+      const q = lots.get(key) || [];
+      let remaining = t.qty;
+      let oldest: { date: string; ts: number } | null = null;
+      while (remaining > EPS && q.length > 0) {
+        const lot = q[0];
+        if (oldest === null) oldest = { date: lot.date, ts: lot.ts };
+        const take = Math.min(lot.qty, remaining);
+        lot.qty -= take;
+        remaining -= take;
+        if (lot.qty <= EPS) q.shift();
+      }
+      if (oldest) acqByTxnId.set(t.id, oldest);
+      lots.set(key, q);
+    }
+  }
+  return acqByTxnId;
+}
+
 // Compute realised gains for the current FY from the transaction ledger.
 function computeRealizedGains(transactions: Transaction[]): TaxSummary['realizedGains'] {
   // FIX HIGH #3: previously parsed `fy.slice(2,4)` which for "FY2025-26"
@@ -114,12 +157,17 @@ function computeRealizedGains(transactions: Transaction[]): TaxSummary['realized
 
   const out = { equityLTCG: 0, equitySTCG: 0, debtLTCG: 0, debtSTCG: 0, crypto: 0 };
 
+  // FIX (audit C2): FIFO acquisition dates for correct holding-period terms.
+  const acqDates = buildAcquisitionDates(transactions);
+
   for (const t of transactions) {
     if (t.type !== 'sell') continue;
     if (!t.ts || t.ts < fyStartTs) continue;  // FIX #43: skip legacy txns with ts=0
     if (t.realizedPL == null) continue;
     const gain = t.realizedPL;
-    const days = holdingDays(t.date);
+    // Holding period = sell date - FIFO acquisition date (NOT days since sale).
+    const acq = acqDates.get(t.id);
+    const days = acq ? daysBetween(t.date, acq.date) : holdingDays(t.date);
 
     if (isCrypto(t.symbol)) {
       out.crypto += gain;
@@ -206,24 +254,51 @@ export function scanTaxOpportunities(
     if (h.gainINR >= 0) continue;
     const lossAmount = Math.abs(h.gainINR);
 
-    // Loss can offset same-category gains (equity loss → equity gain).
-    // Crypto losses can NOT offset non-crypto gains (post-Budget 2022).
-    let offsettableGains = 0;
+    // FIX (audit C3): Indian set-off rules (Sec 70/74):
+    //   - STCL offsets STCG first, then LTCG
+    //   - LTCL offsets ONLY LTCG
+    //   - Crypto losses cannot offset non-crypto gains (post-Budget 2022)
+    // The tax saving must be computed at the rate of the GAIN being offset
+    // (offsetting STCG saves 20%, LTCG saves 12.5%) — previously it used the
+    // term of the LOSS holding and pooled LTCG+STCG for every equity loss,
+    // overstating savings and encouraging pointless sell/rebuy churn.
+    let offsetable = 0;
+    let taxSaving = 0;
     if (h.isCryptoAsset) {
-      offsettableGains = Math.max(0, realizedCryptoGains);
+      const pool = Math.max(0, realizedCryptoGains);
+      offsetable = Math.min(lossAmount, pool);
+      taxSaving = offsetable * CRYPTO_RATE;
     } else if (h.isDebt) {
-      offsettableGains = Math.max(0, realized.debtLTCG + realized.debtSTCG);
+      const stcgPool = Math.max(0, realized.debtSTCG);
+      const ltcgPool = Math.max(0, realized.debtLTCG);
+      if (h.isLongTerm) {
+        // LTCL offsets only LTCG
+        offsetable = Math.min(lossAmount, ltcgPool);
+        taxSaving = offsetable * DEBT_LTCG_RATE;
+      } else {
+        // STCL offsets STCG first (higher rate), then LTCG
+        const fromStcg = Math.min(lossAmount, stcgPool);
+        const fromLtcg = Math.min(lossAmount - fromStcg, ltcgPool);
+        offsetable = fromStcg + fromLtcg;
+        taxSaving = fromStcg * DEBT_STCG_RATE + fromLtcg * DEBT_LTCG_RATE;
+      }
     } else {
-      offsettableGains = Math.max(0, realized.equityLTCG + realized.equitySTCG);
+      const stcgPool = Math.max(0, realized.equitySTCG);
+      const ltcgPool = Math.max(0, realized.equityLTCG);
+      if (h.isLongTerm) {
+        // LTCL offsets only LTCG
+        offsetable = Math.min(lossAmount, ltcgPool);
+        taxSaving = offsetable * LTCG_EQUITY_RATE;
+      } else {
+        // STCL offsets STCG first (20%), then LTCG (12.5%)
+        const fromStcg = Math.min(lossAmount, stcgPool);
+        const fromLtcg = Math.min(lossAmount - fromStcg, ltcgPool);
+        offsetable = fromStcg + fromLtcg;
+        taxSaving = fromStcg * STCG_EQUITY_RATE + fromLtcg * LTCG_EQUITY_RATE;
+      }
     }
 
-    if (offsettableGains <= 0) continue;
-
-    // Effective tax saving = min(loss, offsettable gains) × applicable rate
-    const offsetable = Math.min(lossAmount, offsettableGains);
-    const rate = h.isCryptoAsset ? CRYPTO_RATE
-      : (h.isLongTerm ? LTCG_EQUITY_RATE : STCG_EQUITY_RATE);
-    const taxSaving = offsetable * rate;
+    if (offsetable <= 0) continue;
 
     if (taxSaving > 500) {  // skip tiny opportunities
       opportunities.push({

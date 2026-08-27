@@ -7,7 +7,15 @@ telegram-bot/node_modules/
 .env
 .env.local
 .env.production
+.env.*
+!.env.example
 telegram-bot/.env
+
+# Local agent/IDE settings (audit M-6: settings.local.json was committed and
+# leaked the deployed backend URL + internal paths)
+.claude/settings.local.json
+.vscode/
+.idea/
 
 # Runtime data and logs
 telegram-bot/streak-data.json

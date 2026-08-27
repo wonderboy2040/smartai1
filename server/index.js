@@ -126,7 +126,13 @@ function requireAuth(req, res, next) {
   if (req.path.startsWith('/api/ml/')) return next();
 
   // Static assets (served by express.static) are public.
-  if (req.path.startsWith('/assets/') || /\.(js|mjs|css|map|ico|svg|png|jpe?g|webp|woff2?|ttf|otf|json|wasm)$/i.test(req.path)) {
+  // SECURITY FIX (audit M-1): extension bypass is now restricted to safe
+  // methods (GET/HEAD) on NON-API paths only. Previously any method (POST/
+  // PUT/DELETE) on a path merely ending in .json (etc.) skipped auth -- a
+  // latent auth-bypass footgun for future /api routes with trailing params.
+  if ((req.method === 'GET' || req.method === 'HEAD')
+    && !req.path.startsWith('/api/')
+    && (req.path.startsWith('/assets/') || /\.(js|mjs|css|map|ico|svg|png|jpe?g|webp|woff2?|ttf|otf|json|wasm)$/i.test(req.path))) {
     return next();
   }
 
@@ -184,11 +190,24 @@ function parseCookie(header) {
 // any origin (safe for dev, restrict in production).
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? new Set(process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()).filter(Boolean))
-  : null; // null = allow any (dev mode)
+  : null; // null = allow any (dev mode ONLY)
+
+// SECURITY FIX (audit C-1): fail closed. When NODE_ENV=production and no
+// ALLOWED_ORIGINS allowlist is configured, do NOT reflect arbitrary origins
+// alongside `Access-Control-Allow-Credentials: true` -- the session cookie is
+// SameSite=None, so reflecting any origin equals full cross-origin account
+// takeover (portfolio reads, cloud-state overwrites, AI-key burn).
+const _corsFailClosed = !ALLOWED_ORIGINS
+  && String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+if (_corsFailClosed) {
+  console.warn('[wealth-ai] SECURITY: ALLOWED_ORIGINS is not set in production. ' +
+    'CORS is FAIL-CLOSED -- no cross-origin requests will be authorized. ' +
+    'Set ALLOWED_ORIGINS to your frontend origin(s), comma-separated.');
+}
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin) {
+  if (origin && !_corsFailClosed) {
     if (ALLOWED_ORIGINS) {
       // Production allowlist â€” only echo if origin is allowed.
       if (ALLOWED_ORIGINS.has(origin)) {
@@ -396,7 +415,6 @@ function toYahooSymbol(symbol, market) {
 app.get('/api/chart', async (req, res) => {
   const { symbol = '', market = '', interval = 'D' } = req.query || {};
   if (!symbol) return jsonError(res, 400, 'symbol required');
-  if (!isValidSymbol(symbol)) return jsonError(res, 400, 'invalid symbol format');
   // SECURITY: validate symbol format to prevent injection / open-proxy abuse.
   if (!isValidSymbol(symbol)) return jsonError(res, 400, 'invalid symbol format');
 
@@ -498,188 +516,11 @@ function isNseMarketOpen() {
 }
 
 // --- indicator helpers (pure) ---
-function emaSeries(values, period) {
-  if (!values.length || period <= 0) return [];
-  const k = 2 / (period + 1);
-  const out = [values[0]];
-  for (let i = 1; i < values.length; i++) out.push(values[i] * k + out[i - 1] * (1 - k));
-  return out;
-}
-
-function rsiValue(closes, period = 14) {
-  if (closes.length < period + 1) return 50;
-  let gain = 0, loss = 0;
-  for (let i = closes.length - period; i < closes.length; i++) {
-    const d = closes[i] - closes[i - 1];
-    if (d >= 0) gain += d; else loss -= d;
-  }
-  if (loss === 0) return 100;
-  const rs = gain / loss;
-  return 100 - 100 / (1 + rs);
-}
-
-function atrValue(candles, period = 14) {
-  if (candles.length < period + 1) return 0;
-  let sum = 0;
-  for (let i = candles.length - period; i < candles.length; i++) {
-    const c = candles[i], p = candles[i - 1];
-    sum += Math.max(c.high - c.low, Math.abs(c.high - p.close), Math.abs(c.low - p.close));
-  }
-  return sum / period;
-}
-
-async function fetchIntradayCandles(sym) {
-  // NSE first (.NS), BSE fallback (.BO) — mirrors the /api/chart strategy.
-  const candidates = [`${sym}.NS`, `${sym}.BO`];
-  let lastErr = null;
-  for (const ysym of candidates) {
-    try {
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ysym)}?interval=5m&range=5d&includePrePost=false`;
-      const upstream = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI intraday scanner)' },
-        signal: AbortSignal.timeout(7000),
-      });
-      if (!upstream.ok) { lastErr = new Error(`yahoo ${upstream.status}`); continue; }
-      const json = await upstream.json();
-      const r = json?.chart?.result?.[0];
-      const ts = r?.timestamp;
-      const q = r?.indicators?.quote?.[0];
-      if (!Array.isArray(ts) || !q) { lastErr = new Error('no data'); continue; }
-      const candles = [];
-      for (let i = 0; i < ts.length; i++) {
-        const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i], v = q.volume?.[i];
-        if (o == null || h == null || l == null || c == null) continue;
-        candles.push({ time: ts[i], open: o, high: h, low: l, close: c, volume: v || 0 });
-      }
-      if (candles.length < 40) { lastErr = new Error('thin data'); continue; }
-      return { candles, exchange: ysym.endsWith('.BO') ? 'BSE' : 'NSE' };
-    } catch (e) { lastErr = e; }
-  }
-  throw lastErr || new Error('no listing');
-}
-
-// Group a multi-day 5m candle series by IST calendar date (YYYY-MM-DD).
-function groupByDay(candles) {
-  const days = new Map();
-  for (const c of candles) {
-    const d = new Date(c.time * 1000).toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' });
-    if (!days.has(d)) days.set(d, []);
-    days.get(d).push(c);
-  }
-  return days; // insertion order = chronological
-}
-
-function analyzeIntradaySymbol(symbol, allCandles, exchange) {
-  const dayMap = groupByDay(allCandles);
-  const dayKeys = Array.from(dayMap.keys());
-  if (dayKeys.length < 2) return null;
-  const todayKey = dayKeys[dayKeys.length - 1];
-  const prevKey = dayKeys[dayKeys.length - 2];
-  const today = dayMap.get(todayKey);
-  const prev = dayMap.get(prevKey);
-  if (!today?.length || !prev?.length) return null;
-
-  const closes = allCandles.map(c => c.close);
-  const ltp = today[today.length - 1].close;
-  const prevClose = prev[prev.length - 1].close;
-  const changePct = ((ltp - prevClose) / prevClose) * 100;
-  if (!(ltp > 0)) return null;
-
-  // Indicators on full 5-day 5m series (stable warm values)
-  const ema9 = emaSeries(closes, 9), ema21 = emaSeries(closes, 21);
-  const e9 = ema9[ema9.length - 1], e21 = ema21[ema21.length - 1];
-  const rsi = rsiValue(closes, 14);
-  const atr = atrValue(today.length >= 15 ? today : allCandles, 14);
-  if (!(atr > 0)) return null;
-
-  // VWAP (today)
-  let pv = 0, vv = 0;
-  for (const c of today) { const tp = (c.high + c.low + c.close) / 3; pv += tp * c.volume; vv += c.volume; }
-  const vwap = vv > 0 ? pv / vv : ltp;
-
-  // ORB-15: first three 5m candles of today
-  const orb = today.slice(0, 3);
-  const orHigh = Math.max(...orb.map(c => c.high));
-  const orLow = Math.min(...orb.map(c => c.low));
-  const orMid = (orHigh + orLow) / 2;
-
-  // Relative volume: last 3 candles vs 20-candle average
-  const volWindow = today.slice(-23, -3);
-  const avgVol = volWindow.reduce((s, c) => s + c.volume, 0) / Math.max(1, volWindow.length);
-  const recentVol = today.slice(-3).reduce((s, c) => s + c.volume, 0) / 3;
-  const volRatio = avgVol > 0 ? recentVol / avgVol : 1;
-
-  // CPR from previous day H/L/C
-  const pH = Math.max(...prev.map(c => c.high)), pL = Math.min(...prev.map(c => c.low));
-  const pivot = (pH + pL + prevClose) / 3;
-  const bc = (pH + pL) / 2;
-  const tc = 2 * pivot - bc;
-  const cprTop = Math.max(bc, tc), cprBottom = Math.min(bc, tc);
-
-  // 30-minute momentum
-  const momRef = today[Math.max(0, today.length - 7)].close;
-  const momentumPct = ((ltp - momRef) / momRef) * 100;
-
-  function scoreSide(dir) {
-    let s = 0; const reasons = [];
-    // EMA stack — 22
-    if (dir === 'LONG' ? (ltp > e9 && e9 > e21) : (ltp < e9 && e9 < e21)) { s += 22; reasons.push(`EMA9/21 ${dir === 'LONG' ? 'bullish' : 'bearish'} stack`); }
-    else if (dir === 'LONG' ? (ltp > e9 || e9 > e21) : (ltp < e9 || e9 < e21)) { s += 11; }
-    // VWAP — 18
-    const vwapDist = ((ltp - vwap) / vwap) * 100;
-    if (dir === 'LONG' ? vwapDist > 0.05 : vwapDist < -0.05) { s += 18; reasons.push(dir === 'LONG' ? 'Price above VWAP' : 'Price below VWAP'); }
-    else if (Math.abs(vwapDist) <= 0.15) { s += 8; reasons.push('At VWAP control zone'); }
-    // ORB-15 — 18
-    if (dir === 'LONG' ? ltp > orHigh : ltp < orLow) { s += 18; reasons.push('ORB-15 breakout'); }
-    else if (dir === 'LONG' ? ltp > orMid : ltp < orMid) { s += 9; reasons.push('Above/Below OR mid'); }
-    // Volume surge — 8
-    if (volRatio >= 2) { s += 8; reasons.push(`Volume ${volRatio.toFixed(1)}x surge`); }
-    else if (volRatio >= 1.4) { s += 5; reasons.push(`Volume ${volRatio.toFixed(1)}x`); }
-    // CPR bias — 8
-    if (dir === 'LONG' ? ltp > cprTop : ltp < cprBottom) { s += 8; reasons.push('CPR breakout bias'); }
-    else if (ltp >= cprBottom && ltp <= cprTop) { s += 4; }
-    // RSI sweet zone — 8 (momentum, not exhausted)
-    if (dir === 'LONG' ? (rsi >= 52 && rsi <= 70) : (rsi >= 30 && rsi <= 48)) { s += 8; reasons.push(`RSI ${Math.round(rsi)} momentum zone`); }
-    else if (dir === 'LONG' ? (rsi >= 45 && rsi < 52) : (rsi > 48 && rsi <= 55)) { s += 5; }
-    // Momentum — 18 (scaled)
-    const mScore = Math.max(0, Math.min(1, Math.abs(momentumPct) / 0.6)) * 18;
-    if (mScore >= 9 && ((dir === 'LONG' && momentumPct > 0) || (dir === 'SHORT' && momentumPct < 0))) { s += mScore; reasons.push(`${momentumPct >= 0 ? '+' : ''}${momentumPct.toFixed(2)}% 30m momentum`); }
-
-    return Math.round(Math.min(100, s));
-  }
-
-  const longScore = scoreSide('LONG');
-  const shortScore = scoreSide('SHORT');
-  const direction = longScore >= shortScore ? 'LONG' : 'SHORT';
-  const quantConfidence = Math.max(longScore, shortScore);
-
-  // ATR-based pro risk levels (1.1R stop, 1.6R / 2.6R targets)
-  let entry = ltp, stopLoss, target1, target2;
-  if (direction === 'LONG') {
-    stopLoss = entry - 1.1 * atr;
-    target1 = entry + 1.6 * atr;
-    target2 = entry + 2.6 * atr;
-  } else {
-    stopLoss = entry + 1.1 * atr;
-    target1 = entry - 1.6 * atr;
-    target2 = entry - 2.6 * atr;
-  }
-  const risk = Math.abs(entry - stopLoss);
-  const rr = risk > 0 ? Math.abs(target1 - entry) / risk : 0;
-
-  return {
-    symbol, ltp: +ltp.toFixed(2), changePct: +changePct.toFixed(2),
-    direction, quantConfidence,
-    exchange: exchange === 'BSE' ? 'BSE' : 'NSE',
-    entry: +entry.toFixed(2), stopLoss: +stopLoss.toFixed(2),
-    target1: +target1.toFixed(2), target2: +target2.toFixed(2),
-    rr: +rr.toFixed(2), atr: +atr.toFixed(2),
-    vwap: +vwap.toFixed(2), rsi: +rsi.toFixed(1), volumeRatio: +volRatio.toFixed(2),
-    reasons,
-    _rrOk: rr >= 1.25,
-    _momentumPct: momentumPct,
-  };
-}
+// NOTE: The dead functions `fetchIntradayCandles` / `analyzeIntradaySymbol` /
+// `groupByDay` / `emaSeries` / `rsiValue` / `atrValue` were removed during the
+// 2026 audit. They were never called (the intraday scanner uses the dual-source
+// TradingView+Groww engine below), and `analyzeIntradaySymbol` referenced an
+// out-of-scope `reasons` variable — a guaranteed ReferenceError if revived.
 
 // ============================================================
 // INTRADAY DUAL-SOURCE ENGINE (TradingView Scanner + Groww NSE)
@@ -2022,7 +1863,13 @@ app.post('/api/chat/mcp', async (req, res) => {
   // 1. Gemini Agentic Tool Calling
   if ((engine === 'gemini' || engine === 'auto') && KEYS.gemini) {
     try {
-      const targetModel = model && !model.includes('2.0') && !model.includes('1.5') ? model : 'gemini-3.5-flash';
+      // SECURITY FIX (audit M-6): sanitize the client-supplied model name the
+      // same way /api/gemini does -- previously the raw string was interpolated
+      // into the upstream URL, allowing path/query injection vs the Gemini host.
+      const targetModel = (() => {
+        const raw = model && !model.includes('2.0') && !model.includes('1.5') ? model : 'gemini-3.5-flash';
+        return String(raw).replace(/[^a-zA-Z0-9.\-]/g, '').slice(0, 64) || 'gemini-3.5-flash';
+      })();
       const contents = userConvo.map(m => ({
         role: m.role === 'assistant' || m.role === 'model' ? 'model' : 'user',
         parts: [{ text: String(m.content || '') }]
@@ -2060,10 +1907,14 @@ app.post('/api/chat/mcp', async (req, res) => {
           parts: [{ functionResponse: { name: fn.name, response: { result: toolResult } } }]
         });
 
+        // BUG FIX (audit): the follow-up request previously re-sent the ORIGINAL
+        // `payload` -- the tool result appended to `contents` was never actually
+        // transmitted, so the model never saw its tool outputs.
+        const followUpPayload = { ...payload, contents: contents.map(c => ({ ...c })) };
         const followUp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${KEYS.gemini}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(followUpPayload),
           signal: AbortSignal.timeout(30000) // FIX Bug 4: increased from 20s to 30s
         });
 
@@ -3440,7 +3291,9 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     uptime: process.uptime(),
-    botAlive: _botProcess && !_botProcess.killed,
+    // FIX (audit L-3): `killed` is only true after an explicit .kill(); after a
+    // crash-exit it stays false, so health wrongly reported a dead bot as alive.
+    botAlive: !!(_botProcess && _botProcess.exitCode === null && !_botProcess.killed),
     providers: Object.entries(KEYS).filter(([, v]) => v).map(([k]) => k),
     timestamp: Date.now(),
   });
@@ -3451,6 +3304,12 @@ app.get('/health', (_req, res) => {
 // ============================================================
 let _botProcess = null;
 let _botRestartTimer = null;
+// FIX (audit L-4): exponential backoff for bot auto-restart. A bot that crashes
+// on boot previously restarted every 5s forever (infinite fork/exit loop, log
+// spam + CPU churn). Backoff doubles per crash up to 5 minutes and resets after
+// 10 minutes of stable uptime.
+let _botRestartDelay = 5000;
+let _botStartedAt = 0;
 
 // ------------------------------------------------------------
 // Process-level error handlers â€” prevent crashes from unhandled
@@ -3520,16 +3379,21 @@ function startBot() {
     _botProcess = fork(botPath, [], {
       env: { ...process.env, BOT_ONLY: 'true' },
     });
+    _botStartedAt = Date.now();
     _botProcess.on('error', (err) => {
       console.error('[wealth-ai] Bot process error:', err.message);
     });
     _botProcess.on('exit', (code) => {
-      console.warn(`[wealth-ai] Bot exited code=${code} â€” auto-restart in 5s`);
+      // Reset backoff if the bot stayed up for a while (stable run).
+      if (Date.now() - _botStartedAt > 10 * 60 * 1000) _botRestartDelay = 5000;
+      const delay = Math.min(_botRestartDelay, 5 * 60 * 1000);
+      _botRestartDelay = Math.min(_botRestartDelay * 2, 5 * 60 * 1000);
+      console.warn(`[wealth-ai] Bot exited code=${code} - auto-restart in ${Math.round(delay / 1000)}s`);
       clearTimeout(_botRestartTimer);
       _botRestartTimer = setTimeout(() => {
         console.log('[wealth-ai] Restarting bot...');
         startBot();
-      }, 5000);
+      }, delay);
     });
   } catch (e) {
     console.error('[wealth-ai] Failed to start bot:', e.message);

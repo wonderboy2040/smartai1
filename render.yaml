@@ -11,6 +11,12 @@ services:
         value: "22"
       - key: APP_PIN
         sync: false
+      # FIX (audit H-4): API_TOKEN was missing from the blueprint while the
+      # server REQUIRES it for /api/cloud/* — every cloud-sync call returned
+      # 503 out of the box and the frontend silently fell back to the
+      # (leaked, now removed) client-side hardcoded token.
+      - key: API_TOKEN
+        sync: false
       - key: VITE_API_TOKEN
         sync: false
       - key: VITE_ENCRYPTION_KEY

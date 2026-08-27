@@ -198,6 +198,51 @@ apiRouter.use((req, res, next) => {
   next();
 });
 
+// ============================================================
+// SECURITY (audit H-1): the LLM relay routes (/api/groq, /api/gemini,
+// /api/claude, ...) burn the owner's paid API keys. CORS does NOT stop
+// non-browser clients — anyone could `curl -X POST` this server and use
+// the keys as a free relay. Two protections:
+//   1. If BOT_API_SECRET is set → Bearer token required on all relay routes.
+//   2. Per-IP rate limit (30 req/min) always applies as a backstop.
+// Public read-only routes (/config, /ai-status) are exempt.
+// ============================================================
+const BOT_API_SECRET = process.env.BOT_API_SECRET || '';
+const _relayAttempts = new Map(); // ip → [timestamps]
+function relayRateCheck(ip) {
+  const now = Date.now();
+  if (_relayAttempts.size > 1000) {
+    for (const [k, v] of _relayAttempts) {
+      if (!v.length || now - v[v.length - 1] > 60_000) _relayAttempts.delete(k);
+    }
+  }
+  const arr = (_relayAttempts.get(ip) || []).filter(t => now - t < 60_000);
+  if (arr.length >= 30) return false;
+  arr.push(now);
+  _relayAttempts.set(ip, arr);
+  return true;
+}
+apiRouter.use((req, res, next) => {
+  // Public read-only endpoints stay open.
+  if (req.path === '/config' || req.path === '/ai-status' || req.method === 'OPTIONS') return next();
+  // Rate limit every relay call per IP.
+  const xff = (req.headers['x-forwarded-for'] || '').toString().split(',').map(s => s.trim()).filter(Boolean);
+  const ip = xff[xff.length - 1] || req.socket.remoteAddress || 'unknown';
+  if (!relayRateCheck(ip)) {
+    return res.status(429).json({ error: 'Rate limit exceeded. Max 30 requests/minute.' });
+  }
+  // When a shared secret is configured, require it.
+  if (BOT_API_SECRET) {
+    const auth = (req.headers.authorization || '').startsWith('Bearer ')
+      ? req.headers.authorization.slice(7).trim()
+      : '';
+    if (auth !== BOT_API_SECRET) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+  }
+  next();
+});
+
 // Server config — exposes API_URL to frontend at runtime
 apiRouter.get('/config', (req, res) => {
   res.json({

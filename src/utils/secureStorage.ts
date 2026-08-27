@@ -17,11 +17,25 @@ const ITERATIONS = 600000;
 const SALT_LENGTH = 16;
 const IV_LENGTH = 12;
 
+// FIX (audit M9): PBKDF2 with 600k iterations takes ~100-300ms of CPU on
+// mobile. Previously EVERY getItemAsync/setItem re-derived the AES key from
+// scratch (the alert watcher reads 2 keys every 20s; updateAiKeys writes 5).
+// Cache derived CryptoKeys keyed by the salt bytes instead.
+const _keyCache = new Map<string, CryptoKey>();
+
+function saltCacheKey(salt: Uint8Array): string {
+  let s = ''; for (let i = 0; i < salt.length; i++) s += salt[i].toString(16).padStart(2, '0');
+  return s;
+}
+
 function isCryptoAvailable(): boolean {
   return typeof crypto !== 'undefined' && !!crypto.subtle;
 }
 
 async function deriveKey(salt: Uint8Array): Promise<CryptoKey> {
+  const cacheKey = saltCacheKey(salt);
+  const cached = _keyCache.get(cacheKey);
+  if (cached) return cached;
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
@@ -32,13 +46,18 @@ async function deriveKey(salt: Uint8Array): Promise<CryptoKey> {
   );
   const saltBuf = new ArrayBuffer(salt.length);
   new Uint8Array(saltBuf).set(salt);
-  return crypto.subtle.deriveKey(
+  const key = await crypto.subtle.deriveKey(
     { name: 'PBKDF2', salt: saltBuf, iterations: ITERATIONS, hash: 'SHA-256' },
     keyMaterial,
     { name: ALGORITHM, length: KEY_LENGTH },
     false,
     ['encrypt', 'decrypt']
   );
+  // Bound the cache — a long session with many writes could otherwise grow it
+  // indefinitely (each setItem generates a fresh random salt).
+  if (_keyCache.size > 32) _keyCache.clear();
+  _keyCache.set(cacheKey, key);
+  return key;
 }
 
 async function encryptData(data: string): Promise<string> {
@@ -161,7 +180,19 @@ export const secureStorage = {
 
         const decrypted = await decryptData(payload);
         if (decrypted === null) {
-          try { localStorage.removeItem(key); } catch { }
+          // FIX (audit C3): previously an undecryptable value was DELETED from
+          // localStorage. Combined with the never-loaded CryptoJS legacy path,
+          // users upgrading builds silently lost their API keys / Telegram
+          // credentials on the first failed read. Preserve the ciphertext under
+          // a side key so it can be recovered later (e.g. after re-entering the
+          // correct encryption key) instead of destroying it.
+          try {
+            const backupKey = `${key}_undecryptable`;
+            if (!localStorage.getItem(backupKey)) {
+              localStorage.setItem(backupKey, item);
+            }
+            localStorage.removeItem(key);
+          } catch { }
           return null;
         }
         return decrypted;

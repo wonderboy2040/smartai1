@@ -18,14 +18,18 @@ export const ALPHA_ETFS_IN: ETFInfo[] = [
 
 export const ALPHA_ETFS_US: ETFInfo[] = [
   { sym: 'SMH', name: 'VanEck Semiconductor', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', aum: '$15B', vol: 'Extreme', fixedAlloc: 0.40 },
-  { sym: 'SPCX', name: 'SpaceX', cagr: 35.0, maxDD: 40, cat: 'Space/Tech', aum: '$350B', vol: 'High', fixedAlloc: 0.15 },
+  // FIX (audit H8): 'SPCX / SpaceX' was FICTIONAL — SpaceX is not publicly
+  // traded and the SPCX ticker (Morgan Stanley SPAC ETF) was delisted in 2013.
+  // The fabricated record (CAGR 35%, AUM "$350B") fed the screener's STRONG_BUY
+  // ranking, rebalancing targets (15% allocation!) and quality scores. Replaced
+  // with a real, liquid, tradable ETF: Invesco Nasdaq-100 (QQQ).
+  { sym: 'QQQ', name: 'Invesco Nasdaq-100 ETF', cagr: 18.0, maxDD: 35, cat: 'Tech Growth', aum: '$320B', vol: 'High', fixedAlloc: 0.15 },
   { sym: 'MU', name: 'Micron Technology Inc', cagr: 22.0, maxDD: 45, cat: 'Semiconductor', aum: '$120B', vol: 'High', fixedAlloc: 0.10 }
 ];
 
 export const EXACT_TICKER_MAP: Record<string, string> = {
   // US ETFs & Indices
   'SMH': 'NASDAQ:SMH',
-  'SPCX': 'NYSE:SPCX',
   'MU': 'NASDAQ:MU',
   'AVUV': 'AMEX:AVUV',
   'IWM': 'AMEX:IWM',

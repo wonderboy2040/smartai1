@@ -1,0 +1,32 @@
+# FIX (audit H-4): Docker builds used `COPY . .` with NO .dockerignore —
+# a real .env (with live API keys) existed locally at build time, so every
+# image built from this repo baked ALL secrets into an image layer.
+node_modules
+npm-debug.log
+dist
+dist-*
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+.github
+.claude
+CLAUDE.md
+*.md
+!README.md
+.venv
+__pycache__
+*.pyc
+ml-service/store
+ml-service/models/*.pkl
+ml-service/models/*.joblib
+telegram-bot/node_modules
+telegram-bot/package-lock.json
+*.log
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+coverage
+.vitest

@@ -1,7 +1,8 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
+import secrets
 import pandas as pd
 import numpy as np
 import joblib
@@ -34,6 +35,35 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ============================================================
+# SECURITY FIX (audit H-3): zero authentication previously — anyone who
+# could reach port 8000 could trigger hours-long /train runs (CPU/memory
+# DoS), scrape predictions, and burn LLM quota via /analyze. When
+# ML_API_TOKEN is set, every route (except /health) now requires it via
+# the `X-API-Key` header or `Authorization: Bearer <token>`.
+# ============================================================
+ML_API_TOKEN = os.environ.get("ML_API_TOKEN", "").strip()
+if not ML_API_TOKEN:
+    print("[ml-service] WARNING: ML_API_TOKEN is not set — all endpoints are "
+          "UNAUTHENTICATED. Set ML_API_TOKEN before exposing this service beyond "
+          "localhost.")
+
+
+@app.middleware("http")
+async def require_api_token(request: Request, call_next):
+    # Health stays open for orchestrators/uptime checks.
+    if request.url.path in ("/health", "/") or request.method == "OPTIONS":
+        return await call_next(request)
+    if ML_API_TOKEN:
+        provided = request.headers.get("x-api-key", "")
+        if not provided:
+            auth = request.headers.get("authorization", "")
+            if auth.lower().startswith("bearer "):
+                provided = auth[7:].strip()
+        if not provided or not secrets.compare_digest(provided, ML_API_TOKEN):
+            raise HTTPException(status_code=401, detail="Unauthorized — invalid or missing API token")
+    return await call_next(request)
 
 # Cache for predictions — FIX H12: previously unbounded (`{}` grew forever).
 # Use OrderedDict + max-size cap (LRU eviction) to prevent OOM in long-running

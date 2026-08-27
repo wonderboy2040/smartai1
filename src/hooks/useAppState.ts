@@ -5,7 +5,7 @@ import {
 } from '../utils/constants';
 import {
   fetchSinglePrice, batchFetchPrices, batchFetchIndianPrices, getIndiaPollInterval,
-  batchFetchUSPrices, getUSPollInterval, fetchForexRate,
+  batchFetchUSPrices, getUSPollInterval, fetchForexRateOrNull,
   syncToCloud, loadFromCloud, sendTelegramAlert,
   syncGroqKeyToCloud, loadGroqKeyFromCloud, getBatchInterval, fetchMarketIntelligence,
   syncStateToCloud, loadAppStateFromCloud, CloudAppState,
@@ -412,7 +412,11 @@ export function useAppState() {
         if (saved) setAiKeys(JSON.parse(saved));
       } catch { }
     });
-    fetchForexRate().then(rate => setUsdInrRate(rate));
+  // FIX (audit M6): on total forex failure, fetchForexRate returns the stale
+    // DEFAULT_USD_INR (83.5) — writing that into state would overwrite the last
+    // good rate and skew all USD→INR math. Use the null-variant and keep the
+    // current rate when no source responds.
+    fetchForexRateOrNull().then(rate => { if (rate != null) setUsdInrRate(rate); });
 
     try {
       const p = secureStorage.getItem('plannerSettings');
@@ -582,80 +586,110 @@ export function useAppState() {
     if (!isAuthenticated || !hasCrypto) return;
     const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
 
+    // FIX (audit H4): in-flight guard + Binance fallback circuit breaker.
+    // The 2s interval is shorter than the 5s request timeout — when the proxy
+    // is slow, requests previously piled up (memory/sockets). And Binance is
+    // geo-blocked in India (HTTP 451) — the app's primary market — so the
+    // fallback previously fired 12 parallel requests every 2s into a dead
+    // endpoint. The breaker disables the fallback after 3 consecutive
+    // failures and re-probes every 10 minutes.
+    let inFlight = false;
+    let binanceFailures = 0;
+    let lastBinanceAttempt = 0;
+
     const pollCrypto = async () => {
       if (document.hidden) return;
+      if (inFlight) return;
+      inFlight = true;
       try {
-        const res = await apiFetch(`${proxyBase}/api/crypto-prices?t=${Date.now()}`, {
-          signal: AbortSignal.timeout(5000)
-        });
-        if (res.ok) {
-          const tickers = await res.json();
-          if (!Array.isArray(tickers)) return;
-          let updated = false;
-
-          const cryptoSymbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'];
-
-          cryptoSymbols.forEach(sym => {
-            const ticker = tickers.find((t: any) => t.market === `${sym}INR`);
-            if (ticker && ticker.last_price) {
-              const priceVal = parseFloat(ticker.last_price);
-              const changeVal = parseFloat(ticker.change_24_hour) || 0;
-              if (!isNaN(priceVal) && priceVal > 0) {
-                const key = `IN_${sym}`;
-                pendingPricesRef.current[key] = {
-                  price: priceVal,
-                  change: changeVal,
-                  high: parseFloat(ticker.high) || priceVal,
-                  low: parseFloat(ticker.low) || priceVal,
-                  volume: parseFloat(ticker.volume) || 0,
-                  rsi: 50,
-                  time: Date.now(),
-                  market: 'IN',
-                  tvExchange: 'COINDCX',
-                  tvExactSymbol: `${sym}INR`,
-                  isRealtime: true
-                };
-                updated = true;
-              }
-            }
-          });
-          if (updated) flushPricesToStorage();
-        }
-      } catch (e) {
-        // CoinDCX failed — fallback to Binance USDT price converted to INR
-        console.warn('CoinDCX poll failed, trying Binance fallback:', e);
         try {
-          const cryptoSymbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'];
-          const binanceResults = await Promise.allSettled(
-            cryptoSymbols.map(async (sym) => {
-              const r = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${sym}USDT`, {
-                signal: AbortSignal.timeout(4000)
+          const res = await apiFetch(`${proxyBase}/api/crypto-prices?t=${Date.now()}`, {
+            signal: AbortSignal.timeout(5000)
+          });
+          if (res.ok) {
+            const tickers = await res.json();
+            if (Array.isArray(tickers)) {
+              let updated = false;
+
+              const cryptoSymbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'];
+
+              cryptoSymbols.forEach(sym => {
+                const ticker = tickers.find((t: any) => t.market === `${sym}INR`);
+                if (ticker && ticker.last_price) {
+                  const priceVal = parseFloat(ticker.last_price);
+                  const changeVal = parseFloat(ticker.change_24_hour) || 0;
+                  if (!isNaN(priceVal) && priceVal > 0) {
+                    const key = `IN_${sym}`;
+                    pendingPricesRef.current[key] = {
+                      price: priceVal,
+                      change: changeVal,
+                      high: parseFloat(ticker.high) || priceVal,
+                      low: parseFloat(ticker.low) || priceVal,
+                      volume: parseFloat(ticker.volume) || 0,
+                      rsi: 50,
+                      time: Date.now(),
+                      market: 'IN',
+                      tvExchange: 'COINDCX',
+                      tvExactSymbol: `${sym}INR`,
+                      isRealtime: true
+                    };
+                    updated = true;
+                  }
+                }
               });
-              if (!r.ok) return null;
-              const j = await r.json();
-              const price = parseFloat(j.lastPrice);
-              const change = parseFloat(j.priceChangePercent);
-              if (isNaN(price) || price <= 0) return null;
-              const rate = usdInrRateRef.current || DEFAULT_USD_INR;
-              return { sym, price: price * rate, change };
-            })
-          );
-          let updated = false;
-          for (const result of binanceResults) {
-            if (result.status !== 'fulfilled' || !result.value) continue;
-            const { sym, price, change } = result.value;
-            pendingPricesRef.current[`IN_${sym}`] = {
-              price, change, high: price, low: price, volume: 0,
-              rsi: 50, time: Date.now(), market: 'IN',
-              tvExchange: 'BINANCE', tvExactSymbol: `${sym}USDT`,
-              isRealtime: true
-            };
-            updated = true;
+              if (updated) flushPricesToStorage();
+            }
           }
-          if (updated) flushPricesToStorage();
-        } catch (e2) {
-          console.warn('Binance crypto fallback also failed:', e2);
+        } catch (e) {
+          // CoinDCX failed — fallback to Binance USDT price converted to INR.
+          if (binanceFailures >= 3) {
+            if (Date.now() - lastBinanceAttempt > 10 * 60 * 1000) {
+              binanceFailures = 0; // allow one probe after the cooldown
+            } else {
+              return;
+            }
+          }
+          lastBinanceAttempt = Date.now();
+          console.warn('CoinDCX poll failed, trying Binance fallback:', e);
+          try {
+            const cryptoSymbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'];
+            const binanceResults = await Promise.allSettled(
+              cryptoSymbols.map(async (sym) => {
+                const r = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${sym}USDT`, {
+                  signal: AbortSignal.timeout(4000)
+                });
+                if (!r.ok) return null;
+                const j = await r.json();
+                const price = parseFloat(j.lastPrice);
+                const change = parseFloat(j.priceChangePercent);
+                if (isNaN(price) || price <= 0) return null;
+                const rate = usdInrRateRef.current || DEFAULT_USD_INR;
+                return { sym, price: price * rate, change };
+              })
+            );
+            let updated = false;
+            let anySuccess = false;
+            for (const result of binanceResults) {
+              if (result.status !== 'fulfilled' || !result.value) continue;
+              anySuccess = true;
+              const { sym, price, change } = result.value;
+              pendingPricesRef.current[`IN_${sym}`] = {
+                price, change, high: price, low: price, volume: 0,
+                rsi: 50, time: Date.now(), market: 'IN',
+                tvExchange: 'BINANCE', tvExactSymbol: `${sym}USDT`,
+                isRealtime: true
+              };
+              updated = true;
+            }
+            binanceFailures = anySuccess ? 0 : binanceFailures + 1;
+            if (updated) flushPricesToStorage();
+          } catch (e2) {
+            binanceFailures++;
+            console.warn('Binance crypto fallback also failed:', e2);
+          }
         }
+      } finally {
+        inFlight = false;
       }
     };
 
@@ -931,16 +965,28 @@ export function useAppState() {
   }, [portfolio, isAuthenticated]);
 
   // --- Daily P&L snapshot (v2 — uses `change` field directly) ---
-  // Computes live daily P&L from the `change` field of each position
-  // (same as broker P&L: qty × price × change%). Freezes into log.
+  // Computes live daily P&L from the `change` field of each position and
+  // freezes it into the log.
+  // FIX (audit H1): was a 3s DEBOUNCE keyed on `livePrices` — every price tick
+  // (crypto polls 24/7 every 2s; NSE/US tick every 1-3s) reset the timer, so
+  // during market hours the snapshot almost NEVER fired — exactly when it
+  // matters. Switched to a 60s THROTTLE: record immediately on mount/portfolio
+  // change, then at most once per minute (reading live prices from the ref).
   useEffect(() => {
     if (!isAuthenticated || portfolio.length === 0) return;
-    const t = setTimeout(() => {
-      const livePL = computeLiveDailyPL(portfolio, livePricesRef.current, usdInrRateRef.current);
+    let lastRecord = 0;
+    const record = () => {
+      const now = Date.now();
+      if (now - lastRecord < 60_000) return;
+      lastRecord = now;
+      const livePL = computeLiveDailyPL(portfolioRef.current, livePricesRef.current, usdInrRateRef.current);
       recordDailyPL(livePL);
-    }, 3000);  // debounce 3s
-    return () => clearTimeout(t);
-  }, [portfolio, isAuthenticated, livePrices]);
+    };
+    // First snapshot 3s after portfolio becomes non-empty (lets prices land).
+    const initial = setTimeout(record, 3000);
+    const interval = window.setInterval(record, 60_000); // throttle: 1/min
+    return () => { clearTimeout(initial); clearInterval(interval); };
+  }, [portfolio.length, isAuthenticated]);
 
   // --- Save transaction ledger ---
   useEffect(() => {
@@ -1048,7 +1094,10 @@ export function useAppState() {
   useEffect(() => {
     if (!isAuthenticated) return;
     const refreshForex = async () => {
-      const rate = await fetchForexRate(); setUsdInrRate(rate);
+      // FIX (audit M6): don't clobber a good rate with the hardcoded default
+      // when every forex source fails (offline / rate-limited).
+      const rate = await fetchForexRateOrNull();
+      if (rate != null) setUsdInrRate(rate);
     };
     refreshForex(); // immediate fetch on mount
     // FIX OPT-1: Forex rates change ~1x/day; 15s polling wastes bandwidth.
@@ -1662,8 +1711,8 @@ export function useAppState() {
     setIsRefreshing(true);
     setSyncStatus('🔄 Refreshing…');
     try {
-      // 1) Forex (24x7)
-      const ratePromise = fetchForexRate().then(rate => setUsdInrRate(rate)).catch(() => { });
+      // 1) Forex (24x7) — keep last good rate on failure (audit M6)
+      const ratePromise = fetchForexRateOrNull().then(rate => { if (rate != null) setUsdInrRate(rate); }).catch(() => { });
 
       // 2) Cloud sync — pull latest portfolio from Google Sheets
       const cloudPromise = mergeCloudData();
@@ -1706,7 +1755,13 @@ export function useAppState() {
     setTheme(newTheme); secureStorage.setItem('theme', newTheme);
   }, [theme]);
 
-  const flushCache = useCallback(() => {
+  // FIX (audit C2): flushCache previously read sensitive keys with the SYNC
+  // getItem(), which always returns null for `enc:` values (WebCrypto is
+  // async-only). The preserve-list therefore captured nothing for API keys /
+  // Telegram credentials and localStorage.clear() silently destroyed them.
+  // Now async: sensitive keys are read with getItemAsync and written back
+  // (re-encrypted) after the clear.
+  const flushCache = useCallback(async () => {
     const preserveKeys = [
       'WEALTH_AI_KEYS', 'WEALTH_AI_GROQ',
       'WEALTH_AI_TAVILY', 'TG_TOKEN', 'TG_CHAT_ID',
@@ -1717,13 +1772,26 @@ export function useAppState() {
       // Cloud-state sync keys (SIP frequency + last cloud timestamp)
       'plan_tracker_us_freq', 'cloud_state_ts',
     ];
+    const sensitive = new Set(['WEALTH_AI_KEYS', 'WEALTH_AI_GROQ', 'WEALTH_AI_TAVILY', 'TG_TOKEN', 'TG_CHAT_ID']);
     const saved: Record<string, string> = {};
+    // Phase 1 — read everything BEFORE clearing (sensitive keys via async path).
     for (const k of preserveKeys) {
-      const v = secureStorage.getItem(k);
+      const v = sensitive.has(k)
+        ? await secureStorage.getItemAsync(k)
+        : secureStorage.getItem(k);
       if (v) saved[k] = v;
+      // Preserve undecryptable-ciphertext backups too (audit C3 recovery path).
+      try {
+        const bak = localStorage.getItem(`${k}_undecryptable`);
+        if (bak) saved[`${k}_undecryptable`] = bak;
+      } catch { /* ignore */ }
     }
+    // Phase 2 — wipe, then restore.
     secureStorage.clear();
-    for (const [k, v] of Object.entries(saved)) secureStorage.setItem(k, v);
+    for (const [k, v] of Object.entries(saved)) {
+      if (k.endsWith('_undecryptable')) secureStorage.setItemPlain(k, v);
+      else secureStorage.setItem(k, v);
+    }
     window.location.reload();
   }, []);
 

@@ -291,20 +291,31 @@ export function analyzeGoals(
     const yearsLeft = Math.max(0, goal.targetYear - currentYear);
     const monthsLeft = yearsLeft * 12;
 
-    // Monthly SIP needed to reach this goal from scratch
-    let monthlyNeeded = 0;
-    if (monthsLeft > 0 && monthlyRate > 0) {
-      // FV = PMT * ((1+r)^n - 1) / r * (1+r) → PMT = FV * r / ((1+r)^n - 1) / (1+r)
-      const factor = (Math.pow(1 + monthlyRate, monthsLeft) - 1) / monthlyRate * (1 + monthlyRate);
-      monthlyNeeded = factor > 0 ? goal.targetAmount / factor : goal.targetAmount;
-    } else {
-      monthlyNeeded = goal.targetAmount;
+    // FIX (audit C4): previously `monthlyNeeded` was computed "from scratch"
+    // (ignoring the existing corpus) and `projectedWealth` was EITHER the SIP
+    // future value OR today's portfolio value — never both. A user with ₹50L
+    // already saved was told to massively raise their SIP, and goals were
+    // flagged AT_RISK for anyone with existing savings. Correct model:
+    //   projectedWealth = corpus×(1+r)^n  +  SIP-FV(annuity-due)
+    //   monthlyNeeded   = (target − corpus×(1+r)^n) / annuityDueFactor  (≥0)
+    const corpusFV = currentPortfolioValue * Math.pow(1 + monthlyRate, monthsLeft);
+    let annuityDueFactor = 0;
+    if (monthlyRate > 0 && monthsLeft > 0) {
+      // FV of ₹1/month annuity-due: ((1+r)^n - 1) / r × (1+r)
+      annuityDueFactor = (Math.pow(1 + monthlyRate, monthsLeft) - 1) / monthlyRate * (1 + monthlyRate);
     }
+    const sipFV = monthlySIP * annuityDueFactor;
+    const projectedWealth = corpusFV + sipFV;
 
-    // What current SIP will produce in yearsLeft
-    const projectedWealth = monthlySIP > 0 && monthsLeft > 0
-      ? monthlySIP * (Math.pow(1 + monthlyRate, monthsLeft) - 1) / monthlyRate * (1 + monthlyRate)
-      : currentPortfolioValue;
+    const remainingNeed = Math.max(0, goal.targetAmount - corpusFV);
+    let monthlyNeeded: number;
+    if (monthsLeft <= 0) {
+      monthlyNeeded = remainingNeed; // due now — nothing left to amortize
+    } else if (annuityDueFactor > 0) {
+      monthlyNeeded = remainingNeed / annuityDueFactor;
+    } else {
+      monthlyNeeded = remainingNeed / monthsLeft; // r=0 fallback: simple split
+    }
 
     const progress = Math.min(100, (projectedWealth / goal.targetAmount) * 100);
     const gap = Math.max(0, monthlyNeeded - monthlySIP);

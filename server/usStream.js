@@ -4,7 +4,9 @@
 import WebSocket from 'ws';
 import { setTick } from './liveFeed.js';
 
-const KEY = process.env.FINNHUB_API_KEY || process.env.VITE_FINNHUB_API_KEY || '';
+// FIX (audit L-1): do NOT fall back to VITE_* vars — those are browser-exposed
+// at build time. Server-side processes must read server-side names only.
+const KEY = process.env.FINNHUB_API_KEY || '';
 const WS_URL = KEY ? `wss://ws.finnhub.io?token=${KEY}` : '';
 
 const _subscribed = new Set();
@@ -13,6 +15,21 @@ let _ws = null;
 let _connecting = false;
 let _reconnectAt = 0;
 let _activeClients = 0;
+let _reconnectTimer = null;
+
+// FIX (audit M-2): schedule the reconnect when the socket drops while clients
+// are still active. Previously only `_reconnectAt` was set and NOTHING ever
+// called `_connect()` again — existing SSE clients kept their keepalives but
+// received zero US ticks until some NEW client opened a fresh /api/stream.
+function _scheduleReconnect(delayMs) {
+  clearTimeout(_reconnectTimer);
+  _reconnectAt = Date.now() + delayMs;
+  _reconnectTimer = setTimeout(() => {
+    _reconnectTimer = null;
+    if (_activeClients > 0) _connect();
+  }, delayMs);
+  if (typeof _reconnectTimer.unref === 'function') _reconnectTimer.unref();
+}
 
 export function usStreamEnabled() { return !!KEY; }
 
@@ -29,6 +46,8 @@ export function usClientDown() {
 function _disconnect() {
   if (_ws) { try { _ws.close(); } catch { } _ws = null; }
   _connecting = false;
+  clearTimeout(_reconnectTimer);
+  _reconnectTimer = null;
 }
 
 async function refreshPrevClose(sym) {
@@ -86,15 +105,15 @@ function _connect() {
     });
     ws.on('close', () => {
       _connecting = false; _ws = null;
-      // Only reconnect if clients still active
-      if (_activeClients > 0) _reconnectAt = Date.now() + 3000;
+      // Only reconnect if clients still active (FIX audit M-2: actually schedule it).
+      if (_activeClients > 0) _scheduleReconnect(3000);
     });
     ws.on('error', () => {
       _connecting = false; try { ws.close(); } catch { }
       _ws = null;
-      if (_activeClients > 0) _reconnectAt = Date.now() + 5000;
+      if (_activeClients > 0) _scheduleReconnect(5000);
     });
-  } catch { _connecting = false; _reconnectAt = Date.now() + 5000; }
+  } catch { _connecting = false; _scheduleReconnect(5000); }
 }
 
 export function ensureUsSubscribed(symbols) {

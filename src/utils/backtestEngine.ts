@@ -30,16 +30,31 @@ export interface BacktestResult {
   trades: BacktestTrade[];
   equityCurve: { date: string; value: number }[];
   timestamp: number;
+  // FIX (audit C1): provenance flag — true when the backtest ran on synthetic
+  // data (no real OHLC history was available). Callers MUST surface this.
+  isSimulated?: boolean;
 }
 
 // ========================================
-// HISTORICAL DATA FETCH (via TradingView)
+// HISTORICAL DATA FETCH
 // ========================================
+// FIX (audit C1): the previous implementation ONLY used the TradingView
+// scanner endpoint, which returns a single current snapshot (price/RSI/SMA) —
+// it has NO historical OHLC. Every "backtest" therefore ran on synthetic
+// random-walk data synthesized backwards from today's price, while the UI and
+// Telegram presented win-rate/Sharpe/profit-factor as a real historical
+// backtest. Now we FIRST fetch real candles from our own /api/chart proxy
+// (Yahoo Finance OHLC — the same source LiveCandleChart uses), and only fall
+// back to simulation when that fails, flagging the result as simulated.
 export async function fetchHistoricalData(
   symbol: string,
   market: 'IN' | 'US',
   period: '3M' | '6M' | '1Y' | '2Y' = '1Y'
 ): Promise<{ date: string; open: number; high: number; low: number; close: number; volume: number }[]> {
+  const real = await fetchRealOHLC(symbol, market, period);
+  if (real && real.length >= 40) return real;
+
+  // Fallback: TradingView snapshot → seeded synthetic series (deterministic).
   const endpoint = market === 'IN' ? 'india' : 'america';
   const tvSymbol = market === 'IN' ? `NSE:${symbol}` : `NASDAQ:${symbol}`;
 
@@ -47,7 +62,6 @@ export async function fetchHistoricalData(
   const days = periodDays[period];
 
   try {
-    // Use TradingView scan for historical approximation
     const res = await fetch(`https://scanner.tradingview.com/${endpoint}/scan`, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
@@ -67,10 +81,52 @@ export async function fetchHistoricalData(
     const price = parseFloat(current[1]) || 100;
     const change = parseFloat(current[2]) || 0;
 
-    // Generate synthetic historical data based on current price + volatility
     return generateSimulatedDataFromPrice(symbol, price, change, days);
   } catch {
     return generateSimulatedData(symbol, days);
+  }
+}
+
+// Real OHLC via our /api/chart proxy (Yahoo Finance). Returns null when the
+// backend is unreachable or returns no candles, so callers can fall back.
+async function fetchRealOHLC(
+  symbol: string,
+  market: 'IN' | 'US',
+  period: '3M' | '6M' | '1Y' | '2Y'
+): Promise<{ date: string; open: number; high: number; low: number; close: number; volume: number }[] | null> {
+  try {
+    // Server ranges: D → 6mo daily, W → 2y weekly, M → 5y monthly.
+    // 3M/6M → daily bars; 1Y/2Y → weekly bars (daily only covers 6mo).
+    const interval = (period === '3M' || period === '6M') ? 'D' : 'W';
+    let base = '';
+    try {
+      const custom = localStorage.getItem('WEALTH_AI_BACKEND_URL');
+      if (custom && custom.startsWith('http')) base = custom.trim().replace(/\/$/, '');
+    } catch { /* no localStorage */ }
+    if (!base) {
+      const envProxy = (import.meta.env.VITE_API_PROXY as string) || '';
+      if (envProxy) base = envProxy.replace(/\/$/, '');
+    }
+    const url = `${base}/api/chart?symbol=${encodeURIComponent(symbol)}&market=${encodeURIComponent(market)}&interval=${interval}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const candles: Array<{ time: number; open: number; high: number; low: number; close: number; volume: number }> = json?.candles || [];
+    if (!Array.isArray(candles) || candles.length === 0) return null;
+
+    const cutoffDays: Record<string, number> = { '3M': 95, '6M': 185, '1Y': 370, '2Y': 740 };
+    const cutoff = Date.now() - (cutoffDays[period] || 370) * 24 * 60 * 60 * 1000;
+
+    const out = candles
+      .filter(c => c && typeof c.time === 'number' && c.time * 1000 >= cutoff)
+      .map(c => ({
+        date: new Date(c.time * 1000).toISOString().split('T')[0],
+        open: c.open, high: c.high, low: c.low, close: c.close,
+        volume: c.volume || 0,
+      }));
+    return out.length >= 40 ? out : null;
+  } catch {
+    return null;
   }
 }
 
@@ -212,7 +268,12 @@ export async function runBacktest(
   period: '3M' | '6M' | '1Y' | '2Y' = '1Y',
   holdDays: number = 15
 ): Promise<BacktestResult> {
-  const data = await fetchHistoricalData(symbol, market, period);
+  // FIX (audit C1): detect whether we got real OHLC or synthetic data by
+  // checking the source BEFORE the fallback fires. fetchRealOHLC is the real
+  // source; if it fails, fetchHistoricalData silently simulates.
+  const real = await fetchRealOHLC(symbol, market, period);
+  const data = real && real.length >= 40 ? real : await fetchHistoricalData(symbol, market, period);
+  const isSimulated = !(real && real.length >= 40);
 
   const trades: BacktestTrade[] = [];
   let inPosition = false;
@@ -221,6 +282,22 @@ export async function runBacktest(
   let entryIndex = 0;
   let equity = 100000;
   const equityCurve: { date: string; value: number }[] = [];
+
+  const closeTrade = (exitPrice: number, exitDate: string, daysHeld: number) => {
+    const returnPct = ((exitPrice - entryPrice) / entryPrice) * 100;
+    equity = equity * (1 + returnPct / 100);
+    trades.push({
+      symbol,
+      entryDate,
+      entryPrice: Math.round(entryPrice * 100) / 100,
+      exitDate,
+      exitPrice: Math.round(exitPrice * 100) / 100,
+      returnPct: Math.round(returnPct * 100) / 100,
+      holdingDays: daysHeld,
+      signal: 'RSI+SMA Signal',
+      result: returnPct > 0.5 ? 'WIN' : returnPct < -0.5 ? 'LOSS' : 'BREAKEVEN'
+    });
+  };
 
   for (let i = 0; i < data.length; i++) {
     const d = data[i];
@@ -245,27 +322,22 @@ export async function runBacktest(
         generateSignal(data, i) === 'SELL';
 
       if (shouldExit) {
-        const exitPrice = d.close;
-        const returnPct = ((exitPrice - entryPrice) / entryPrice) * 100;
-        equity = equity * (1 + returnPct / 100);
-
-        trades.push({
-          symbol,
-          entryDate,
-          entryPrice: Math.round(entryPrice * 100) / 100,
-          exitDate: d.date,
-          exitPrice: Math.round(exitPrice * 100) / 100,
-          returnPct: Math.round(returnPct * 100) / 100,
-          holdingDays: daysHeld,
-          signal: 'RSI+SMA Signal',
-          result: returnPct > 0.5 ? 'WIN' : returnPct < -0.5 ? 'LOSS' : 'BREAKEVEN'
-        });
-
+        closeTrade(d.close, d.date, daysHeld);
         inPosition = false;
       }
     }
 
     equityCurve.push({ date: d.date, value: Math.round(equity) });
+  }
+
+  // FIX (audit M12): close any position still open at the last bar — the open
+  // trade was previously dropped entirely, understating the equity curve and
+  // trade count.
+  if (inPosition && data.length > 0) {
+    const last = data[data.length - 1];
+    closeTrade(last.close, last.date, data.length - 1 - entryIndex);
+    inPosition = false;
+    equityCurve[equityCurve.length - 1] = { date: last.date, value: Math.round(equity) };
   }
 
   // Calculate metrics
@@ -303,7 +375,8 @@ export async function runBacktest(
     avgHoldingDays: Math.round(avgHolding),
     trades: trades.slice(-20),
     equityCurve,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    isSimulated
   };
 }
 
@@ -315,6 +388,11 @@ export function formatBacktestForTelegram(result: BacktestResult, _market: 'IN' 
 
   let msg = `<b>BACKTEST: ${result.symbol}</b>\n`;
   msg += `Period: ${result.period} | Strategy: RSI + SMA Crossover\n\n`;
+  // FIX (audit C1): synthetic-data backtests must NEVER be presented as real
+  // historical results. Label unconditionally when simulated.
+  if (result.isSimulated) {
+    msg += `\u26A0\uFE0F <b>SIMULATED DATA</b> — no real OHLC history was available; these numbers are synthetic and must NOT be used for decisions.\n\n`;
+  }
   msg += `Total Trades: <b>${result.totalTrades}</b>\n`;
   msg += `Win Rate: <b>${emoji} ${result.winRate}%</b>\n`;
   msg += `Avg Return: <b>${result.avgReturn >= 0 ? '+' : ''}${result.avgReturn}%</b>/trade\n`;

@@ -1,15 +1,17 @@
 # FIX H10 (docker): `version: '3.9'` is deprecated in modern Docker Compose
 # (logs a warning). Removed. Also added a `node-server` service so the nginx
 # `/api/` proxy target actually exists (previously 502'd on every API call).
+# FIX (audit H-4): node-server now uses the dedicated non-root `server` stage
+# (previously `target: build`, which contains the full source tree, dev
+# toolchain and — before .dockerignore — the local .env with live API keys).
+# Restart policies added so containers recover from transient crashes.
 services:
   node-server:
     build:
       context: .
       dockerfile: Dockerfile.frontend
-      # The default/final stage is nginx and does not contain Node or the
-      # server source. Run the named Node build stage for the API service.
-      target: build
-    command: ["node", "server/index.js"]
+      target: server
+    restart: unless-stopped
     ports:
       - "8080:8080"
     environment:
@@ -23,9 +25,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.frontend
+    restart: unless-stopped
     ports:
       - "3000:80"
     depends_on:
       - node-server
-    environment:
-      - NODE_VERSION=22

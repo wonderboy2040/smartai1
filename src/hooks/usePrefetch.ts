@@ -76,11 +76,18 @@ export function usePrefetch(
     // 2. If user is on Portfolio -> prefetch screener & ML signal models
     if (activeTab === 'portfolio') {
       if (shouldPrefetch('ml_signals')) {
+        // FIX (audit M-9): was GET /api/ml/signals — the server only exposes
+        // POST (it takes the portfolio/livePrices payload). The prefetch
+        // silently 404'd every time.
         queuedFetch(
           () =>
             cachedFetch(
               generateCacheKey('/api/ml/signals'),
-              () => apiFetch('/api/ml/signals').then(r => r.json()).catch(() => null),
+              () => apiFetch('/api/ml/signals', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ portfolio: [], livePrices: {} }),
+              }).then(r => r.json()).catch(() => null),
               5 * 60 * 1000
             ),
           Priority.LOW,
@@ -91,11 +98,13 @@ export function usePrefetch(
 
     // 3. If user is inspecting a specific symbol -> prefetch fundamentals
     if (currentSymbol && shouldPrefetch(`symbol_${currentSymbol}`)) {
+      // FIX (audit M-9): was /api/fundamentals?symbol=X — the server route is
+      // /api/fundamentals/:symbol (path segment, not query param).
       queuedFetch(
         () =>
           cachedFetch(
             generateCacheKey('/api/fundamentals', { symbol: currentSymbol }),
-            () => apiFetch(`/api/fundamentals?symbol=${encodeURIComponent(currentSymbol)}`).then(r => r.json()).catch(() => null),
+            () => apiFetch(`/api/fundamentals/${encodeURIComponent(currentSymbol)}`).then(r => r.json()).catch(() => null),
             15 * 60 * 1000
           ),
         Priority.LOW,

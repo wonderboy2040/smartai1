@@ -23,7 +23,9 @@ export const TG_TOKEN = process.env.TG_TOKEN || "";
 export const TG_CHAT_ID = process.env.TG_CHAT_ID || "";
 
 // Google Apps Script Cloud Sync
-export const API_URL = process.env.API_URL || process.env.VITE_API_URL || "";
+// FIX (audit M-5): VITE_API_URL fallback removed — VITE_* vars are
+// browser-exposed at build time and must never authorize a server process.
+export const API_URL = process.env.API_URL || "";
 
 // Tavily Search API (Real-time Web Data)
 export let TAVILY_API_KEY = process.env.TAVILY_API_KEY || "";

@@ -11,12 +11,23 @@
 // (Content-Type: text/plain, no custom headers) so the browser does
 // NOT send a preflight OPTIONS request — Apps Script cannot answer
 // preflight. The auth token travels in the request body/parameters.
+//
+// SECURITY FIX (audit C-3): the previous token accepted a universal public
+// backdoor value ('WEALTH_AI_SYNC') and allowed an EMPTY AUTH_TOKEN to
+// authenticate everyone. Combined with a leaked /exec URL this let ANYONE
+// read the portfolio, read synced API keys (action=loadKey) and overwrite
+// the stored state. The bypasses are removed: a strong token is now
+// MANDATORY. The old token below is BURNED (it was committed to a public
+// repo and shipped in every browser bundle) — replace it with a fresh
+// random secret (e.g. `openssl rand -hex 24`) BEFORE redeploying, and keep
+// it ONLY in server env / user localStorage — never in this repo.
 // ============================================================
-var AUTH_TOKEN = 'f53613451dc3ecb5ce1b0119d82fe48007d41b9df165d1ec'; // Optional secret token (min 12 chars). Leave empty or set to custom secret.
+var AUTH_TOKEN = 'REPLACE_WITH_NEW_RANDOM_SECRET_MIN_24_CHARS'; // REQUIRED — generate with: openssl rand -hex 24
 
 function _checkAuth_(token) {
-  // Allow default mode if AUTH_TOKEN is empty, WEALTH_AI_SYNC, or token matches
-  if (!AUTH_TOKEN || AUTH_TOKEN.length === 0 || AUTH_TOKEN === 'WEALTH_AI_SYNC' || token === 'WEALTH_AI_SYNC' || token === AUTH_TOKEN) {
+  // Token is MANDATORY and must match exactly. No empty-token mode, no
+  // 'WEALTH_AI_SYNC' public backdoor, no silent defaults.
+  if (AUTH_TOKEN && AUTH_TOKEN.length >= 12 && AUTH_TOKEN.indexOf('REPLACE_WITH') !== 0 && token === AUTH_TOKEN) {
     return null;
   }
   return { ok: false, error: 'unauthorized' };

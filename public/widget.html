@@ -212,14 +212,24 @@
     let countdown = REFRESH_SEC;
 
     // ---------- Auth ----------
+    // FIX (audit M-3): session tokens must NOT travel in the URL query string
+    // (they leak into browser history, shared links, referrer headers and
+    // server access logs) NOR be persisted to localStorage from a GET param.
+    // Read from the URL FRAGMENT (#token=...) instead and purge it from the
+    // address bar immediately; otherwise fall back to existing storage.
     function getAuthToken() {
-      const urlParams = new URLSearchParams(window.location.search);
-      const tokenFromUrl = urlParams.get('token');
-      if (tokenFromUrl) {
-        authToken = tokenFromUrl;
-        try { localStorage.setItem('wealthai_session_token', tokenFromUrl); } catch (e) {}
-        return tokenFromUrl;
-      }
+      try {
+        const hash = window.location.hash || '';
+        const m = hash.match(/[#&]token=([^&]+)/);
+        if (m) {
+          const tokenFromHash = decodeURIComponent(m[1]);
+          authToken = tokenFromHash;
+          // Strip the token from the visible URL immediately.
+          const cleanHash = hash.replace(/[#&]token=[^&]*/, '');
+          history.replaceState(null, '', window.location.pathname + window.location.search + cleanHash);
+          return tokenFromHash;
+        }
+      } catch (e) {}
       try {
         const token = localStorage.getItem('wealthai_session_token') || sessionStorage.getItem('wealthai_session_token');
         if (token) { authToken = token; return token; }

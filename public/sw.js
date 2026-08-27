@@ -11,10 +11,18 @@
  *  5. Widget data endpoint — cached prices for instant widget render
  * ============================================================ */
 
-const CACHE_VERSION = 'wealth-ai-v18'; // v18.0 upgrade: Full offline caching & API resilience
+const CACHE_VERSION = 'wealth-ai-v18.1'; // v18.1: SW security/caching fixes (see fetch handler notes)
 const SHELL = ['/', '/index.html', '/manifest.json', '/icon.svg'];
 const WIDGET_CACHE = 'wealth-ai-widget-data';
 const API_CACHE = 'wealth-ai-api-cache-v18';
+
+// FIX (audit M-2): private/sensitive API paths must NEVER be written to
+// CacheStorage (unencrypted, readable by any XSS on the origin, persists
+// across SW updates): cloud state, auth, telegram, broker data.
+const SENSITIVE_API = /\/api\/(cloud|auth|telegram|broker|state|vision|chat)\b/;
+// Never-ending SSE stream — cloning + cache.put() on it buffers forever
+// (backpressure breaker) and it can never be replayed from cache anyway.
+const STREAM_API = /\/api\/stream\b/;
 
 // ============================================================
 // INSTALL — cache app shell
@@ -45,12 +53,16 @@ self.addEventListener('message', (event) => {
   if (event.data === 'SKIP_WAITING') self.skipWaiting();
   if (event.data?.type === 'WIDGET_DATA_UPDATE') {
     // Store widget data for the widget page to read
-    caches.open(WIDGET_CACHE).then((cache) => {
-      const resp = new Response(JSON.stringify(event.data.payload), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-      cache.put('/widget-data.json', resp);
-    });
+    // FIX (audit M-2): wrap in event.waitUntil so the SW stays alive until
+    // the cache write settles (previously a racy fire-and-forget promise).
+    event.waitUntil(
+      caches.open(WIDGET_CACHE).then((cache) => {
+        const resp = new Response(JSON.stringify(event.data.payload), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+        return cache.put('/widget-data.json', resp);
+      })
+    );
   }
 });
 
@@ -75,22 +87,36 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // API endpoints — Network-first, fallback to cached API response if offline
+  // API endpoints — network-first with an offline cache for PUBLIC data only.
+  // FIX (audit M-2):
+  //   - /api/stream (SSE) is passed straight through — never intercepted,
+  //     never cloned/cached (tee-buffering breaks the stream).
+  //   - Sensitive endpoints (cloud/auth/telegram/...) are network-only.
+  //   - Cache keys are normalized (query string stripped) so `?session=`
+  //     tokens don't persist in cache keys.
+  //   - Offline fallback is now 503 + JSON — previously a fake 200 made
+  //     stale data indistinguishable from live data in the UI.
   if (req.url.includes('/api/')) {
+    if (STREAM_API.test(url.pathname)) return; // pass through untouched
+    if (SENSITIVE_API.test(url.pathname)) {
+      event.respondWith(fetch(req));
+      return;
+    }
+    const cacheKey = new Request(url.origin + url.pathname);
     event.respondWith(
       fetch(req)
         .then((res) => {
           if (res.ok) {
             const clone = res.clone();
-            caches.open(API_CACHE).then((cache) => cache.put(req, clone)).catch(() => {});
+            caches.open(API_CACHE).then((cache) => cache.put(cacheKey, clone)).catch(() => {});
           }
           return res;
         })
         .catch(async () => {
-          const cached = await caches.match(req);
+          const cached = await caches.match(cacheKey);
           if (cached) return cached;
-          return new Response(JSON.stringify({ offline: true, error: 'Offline mode active' }), {
-            status: 200,
+          return new Response(JSON.stringify({ offline: true, error: 'Offline — no cached data for this request' }), {
+            status: 503,
             headers: { 'Content-Type': 'application/json' }
           });
         })
@@ -157,16 +183,10 @@ async function fetchPortfolioPricesInBackground() {
       if (authToken) break;
     }
 
-    if (!authToken) {
-      // Try to get token from cache
-      const cache = await caches.open(WIDGET_CACHE);
-      const tokenResp = await cache.match('/auth-token');
-      if (tokenResp) {
-        authToken = await tokenResp.text();
-      }
-    }
-
     if (!authToken) return;
+    // FIX (audit M-2): the previous `/auth-token` CacheStorage fallback kept a
+    // long-lived plaintext bearer token in a web cache — removed. Auth tokens
+    // are obtained live from an open client via the MessageChannel above.
 
     // Determine the backend URL
     const backendUrl = self.location.origin;

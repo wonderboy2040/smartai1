@@ -791,7 +791,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                   type="text"
                   value={cfgCloudToken}
                   onChange={(e) => setCfgCloudToken(e.target.value)}
-                  placeholder="WEALTH_AI_SYNC (default)"
+                  placeholder="Paste your API_TOKEN secret (required — no default)"
                   className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-cyan-500"
                 />
               </div>

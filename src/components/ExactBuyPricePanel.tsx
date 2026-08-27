@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp } from '../hooks/AppContext';
 import { calculateExactEntryPrice, EntryPriceResult } from '../utils/entryPriceEngine';
 import { calculateConfluence, ConfluenceResult } from '../utils/confluenceEngine';
@@ -23,40 +23,69 @@ export function ExactBuyPricePanel() {
 
   const cur = currentMarket === 'IN' ? '\u20B9' : '$';
 
-  // Run all engines when symbol changes.
-  // FIX HIGH #5: previously deps included `livePrices`, which ticks every 1-3s
-  // → all 5 engines (incl. Groq AI call + 1Y backtest) re-fired on every tick,
-  // spamming the Groq API + spiking CPU. Drop `livePrices` from deps; users
-  // click "Refresh" (button below) to re-run explicitly. MLSignalPanel uses
-  // the same pattern with a 1% price-move throttle — we apply the same here.
+  // FIX (audit H5): `currentData` IS `livePrices[key]` — mergePriceData returns
+  // a NEW object on every accepted tick (1-3s during market hours), so having
+  // it in the deps re-fired ALL 5 engines (Groq AI call, 1Y backtest, news
+  // fetch…) on every tick — API spam, rate-limit burn, CPU spikes. Read the
+  // volatile inputs from refs at call time; re-run only on symbol/market
+  // change (or explicit Refresh). A 2% price-move re-trigger is kept for the
+  // entry engine so levels stay meaningful on big moves.
+  const currentDataRef = useRef(currentData);
+  currentDataRef.current = currentData;
+  const portfolioRef = useRef(portfolio);
+  portfolioRef.current = portfolio;
+  const livePricesRef = useRef(livePrices);
+  livePricesRef.current = livePrices;
+  const usdInrRateRef = useRef(usdInrRate);
+  usdInrRateRef.current = usdInrRate;
+  const lastRunPriceRef = useRef<number | null>(null);
+  const runSeqRef = useRef(0);
+
   const runAllEngines = useCallback(async () => {
-    if (!currentSymbol || !currentData) return;
+    const sym = currentSymbol;
+    const mkt = currentMarket as 'IN' | 'US';
+    const data = currentDataRef.current;
+    if (!sym || !data) return;
+    const seq = ++runSeqRef.current;
+    lastRunPriceRef.current = data.price;
     setLoading(true);
     try {
       const [entry, conf, sent, risk, bt] = await Promise.allSettled([
-        calculateExactEntryPrice(currentSymbol, currentMarket as 'IN' | 'US', currentData),
-        Promise.resolve(calculateConfluence(currentSymbol, currentMarket as 'IN' | 'US', currentData)),
-        fetchStockNews(currentSymbol, currentMarket as 'IN' | 'US').then(news =>
-          analyzeSentimentWithAI(currentSymbol, currentMarket as 'IN' | 'US', news)
+        calculateExactEntryPrice(sym, mkt, data),
+        Promise.resolve(calculateConfluence(sym, mkt, data)),
+        fetchStockNews(sym, mkt).then(news =>
+          analyzeSentimentWithAI(sym, mkt, news)
         ),
-        Promise.resolve(calculatePortfolioRisk(portfolio, livePrices, usdInrRate)),
-        runBacktest(currentSymbol, currentMarket as 'IN' | 'US', '1Y', 15)
+        Promise.resolve(calculatePortfolioRisk(portfolioRef.current, livePricesRef.current, usdInrRateRef.current)),
+        runBacktest(sym, mkt, '1Y', 15)
       ]);
 
+      if (seq !== runSeqRef.current) return; // stale run — a newer one took over
       if (entry.status === 'fulfilled') setEntryResult(entry.value);
       if (conf.status === 'fulfilled') setConfluence(conf.value);
       if (sent.status === 'fulfilled') setSentiment(sent.value);
       if (risk.status === 'fulfilled') setRiskMetrics(risk.value);
       if (bt.status === 'fulfilled') setBacktestResult(bt.value);
 
-      setEarnings(getUpcomingEarnings(currentMarket as 'IN' | 'US', 30));
+      setEarnings(getUpcomingEarnings(mkt, 30));
     } catch (e) { console.warn('Engine error:', e); }
-    finally { setLoading(false); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSymbol, currentMarket, currentData, portfolio, usdInrRate]);
-  // NOTE: livePrices deliberately omitted — read fresh at call-time via closure.
+    finally { if (seq === runSeqRef.current) setLoading(false); }
+  }, [currentSymbol, currentMarket]);
 
-  useEffect(() => { runAllEngines(); }, [runAllEngines]);
+  useEffect(() => {
+    lastRunPriceRef.current = null;
+    runAllEngines();
+  }, [runAllEngines]);
+
+  // Re-trigger ONLY on a significant (>2%) price move from the last run — not
+  // on every tick.
+  useEffect(() => {
+    if (!currentData || lastRunPriceRef.current == null) return;
+    const last = lastRunPriceRef.current;
+    if (last > 0 && Math.abs((currentData.price - last) / last) >= 0.02) {
+      runAllEngines();
+    }
+  }, [currentData, runAllEngines]);
 
   // Push to Telegram
   const pushToTg = useCallback(async () => {
@@ -96,8 +125,17 @@ export function ExactBuyPricePanel() {
     );
   }
 
+  // FIX (audit H6): sentiment.score spans [-100, +100] while the other two
+  // components are [0, 100]. Feeding it raw (×0.3 = ±30) plus a constant +50
+  // produced a "combined" score in ~[20, 150] — a mediocre setup scored 85 and
+  // the >=70 / >=45 thresholds were meaningless. Map sentiment to [0, 100],
+  // drop the +50 offset, and clamp the result to [0, 100].
   const combinedScore = entryResult && confluence && sentiment
-    ? Math.round(entryResult.entryConfidence * 0.35 + confluence.confluenceScore * 0.35 + sentiment.score * 0.3 + 50)
+    ? Math.max(0, Math.min(100, Math.round(
+        entryResult.entryConfidence * 0.35
+        + confluence.confluenceScore * 0.35
+        + (sentiment.score + 100) / 2 * 0.3
+      )))
     : 0;
 
   return (

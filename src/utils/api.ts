@@ -110,13 +110,17 @@ export function apiFetch(input: string, init: RequestInit = {}): Promise<Respons
 }
 export function getSessionToken(): string | null { return _sessionToken; }
 
-// SECURITY: Cloud sync auth token. Checks localStorage, then VITE_API_TOKEN, then fallback token.
+// SECURITY FIX (audit C1): Cloud sync auth token. Previously a hardcoded shared
+// token was shipped to EVERY browser bundle (and it also sits in the public repo
+// inside server/apps-script/Code.gs), letting anyone read/overwrite the user's
+// cloud-synced portfolio and synced API keys. The fallback literal is removed —
+// cloud sync now requires an explicit token from localStorage or build config.
 function getCloudAuthToken(): string {
   try {
     const customToken = localStorage.getItem('WEALTH_AI_CLOUD_TOKEN');
     if (customToken) return customToken.trim();
   } catch {}
-  return (import.meta.env.VITE_API_TOKEN as string) || 'f53613451dc3ecb5ce1b0119d82fe48007d41b9df165d1ec';
+  return ((import.meta.env.VITE_API_TOKEN as string) || '').trim();
 }
 
 export function isCloudSyncConfigured(): boolean {
@@ -1105,6 +1109,25 @@ export async function fetchForexRate(): Promise<number> {
   return DEFAULT_USD_INR; // Default fallback
 }
 
+// FIX (audit M6): fetchForexRate() returns the hardcoded DEFAULT_USD_INR
+// (83.5) when ALL sources fail — callers that blindly setUsdInrRate(rate)
+// then overwrite a good, previously-fetched rate with the stale default,
+// silently skewing every USD→INR conversion (metrics, planner, ledger).
+// This variant returns null on failure so callers can keep the last good rate.
+export async function fetchForexRateOrNull(): Promise<number | null> {
+  try {
+    const rate = await fetchForexRate();
+    // fetchForexRate returns exactly DEFAULT_USD_INR on total failure. Treat
+    // an exact-default hit as "no data" ONLY when it also matches the
+    // well-known fallback constant; a genuine live rate equal to the default
+    // is astronomically unlikely (and harmless to skip for one cycle).
+    if (rate === DEFAULT_USD_INR) return null;
+    return rate;
+  } catch {
+    return null;
+  }
+}
+
 // ============================================================
 // CLOUD SYNC — Dual-mode: backend proxy first, direct fallback
 // ============================================================
@@ -1489,10 +1512,14 @@ export async function loadFromCloud(): Promise<Position[] | null> {
       }
     }
 
-    // 2b. Google Apps Script Web App URL
+    // SECURITY FIX (audit): the universal public backdoor token 'WEALTH_AI_SYNC'
+    // was removed — it authenticated ANYONE to the Apps Script backend. If no
+    // real token is configured, direct cloud mode is skipped entirely (the
+    // authenticated /api/cloud/* server proxy remains the supported path).
+    if (!authToken) return null;
     const fetchUrl = apiUrl.includes('?')
-      ? `${apiUrl}&action=load&authToken=${encodeURIComponent(authToken || 'WEALTH_AI_SYNC')}&t=${Date.now()}`
-      : `${apiUrl}?action=load&authToken=${encodeURIComponent(authToken || 'WEALTH_AI_SYNC')}&t=${Date.now()}`;
+      ? `${apiUrl}&action=load&authToken=${encodeURIComponent(authToken)}&t=${Date.now()}`
+      : `${apiUrl}?action=load&authToken=${encodeURIComponent(authToken)}&t=${Date.now()}`;
 
     const res = await fetch(fetchUrl, {
       redirect: 'follow',

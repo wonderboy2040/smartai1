@@ -138,7 +138,8 @@ export function saveDailyPLLog(log: DailyPLLog): void {
 
 // ---------- CORE: Compute live daily P&L from `change` field ----------
 // This is the REAL daily P&L — same as what brokers show.
-// Formula: PL = qty × currentPrice × (change% / 100)
+// Formula: PL = qty × (price − prevClose), where prevClose is derived
+// from price and change% (see inline FIX note below).
 export function computeLiveDailyPL(
   portfolio: Position[],
   livePrices: Record<string, PriceData>,
@@ -158,9 +159,15 @@ export function computeLiveDailyPL(
     const price = d.price;
     const qty = p.qty;
 
-    // Daily P&L = qty × price × (change% / 100)
-    // This IS the market daily movement — what the stock moved today.
-    const plNative = qty * price * (change / 100);
+    // FIX (audit H9): Daily P&L = qty × (price − prevClose).
+    // `change` = (price − prevClose)/prevClose × 100, so
+    //   price − prevClose = price × (change/100) / (1 + change/100)
+    // The previous formula qty × price × (change/100) overstated the daily move
+    // by exactly (1 + change/100): +5% day → P&L 5% too large; a −20% crypto
+    // day → loss overstated ~25% relative. Guard change > −100 (prevClose
+    // would be ≤ 0 / undefined).
+    const prevClose = (change > -100) ? price / (1 + change / 100) : price;
+    const plNative = qty * (price - prevClose);
 
     const isUS = String(p.market || 'IN').toUpperCase() === 'US';
     const isCrypto = isCryptoSymbol(p.symbol);

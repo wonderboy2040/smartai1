@@ -141,7 +141,10 @@ export function usePWAWidget() {
   // Open widget page
   const openWidget = useCallback(() => {
     const token = localStorage.getItem('wealthai_session_token') || sessionStorage.getItem('wealthai_session_token');
-    const url = token ? `/widget.html?token=${token}` : '/widget.html';
+    // FIX (audit M-3): pass the token via the URL FRAGMENT — fragments are not
+    // sent to servers (no access-log/referrer leakage) and widget.html strips
+    // it from the address bar immediately.
+    const url = token ? `/widget.html#token=${encodeURIComponent(token)}` : '/widget.html';
     window.open(url, '_blank', 'width=400,height=600,noopener,noreferrer');
   }, []);
 

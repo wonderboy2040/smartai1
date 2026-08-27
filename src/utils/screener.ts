@@ -194,7 +194,9 @@ export function formatScreenerMessage(results: ScreenerResult[]): string {
     msg += `<b>🟢 STRONG BUY (Alpha 75+):</b>\n`;
     strongBuys.forEach(r => {
       msg += `• <b>${r.symbol}</b> — Score: ${r.alphaScore} | Q:${r.qualityScore} M:${r.momentumScore} V:${r.valueScore} R:${r.riskScore}\n`;
-      msg += `  ₹${r.price.toFixed(2)} | RSI: ${r.rsi.toFixed(0)} | CAGR: ${r.cagr}%\n`;
+      // FIX (audit H7): US ETFs were printed with a ₹ symbol — a $248 price
+      // displayed as ₹248 (~83x understatement for Indian users).
+      msg += `  ${r.market === 'US' ? '$' : '₹'}${r.price.toFixed(2)} | RSI: ${r.rsi.toFixed(0)} | CAGR: ${r.cagr}%\n`;
       msg += `  ${r.reason}\n\n`;
     });
   }
@@ -202,7 +204,7 @@ export function formatScreenerMessage(results: ScreenerResult[]): string {
     msg += `<b>🔵 BUY (Alpha 55+):</b>\n`;
     buys.slice(0, 5).forEach(r => {
       msg += `• <b>${r.symbol}</b> — Score: ${r.alphaScore} | Q:${r.qualityScore} M:${r.momentumScore}\n`;
-      msg += `  ₹${r.price.toFixed(2)} | RSI: ${r.rsi.toFixed(0)}\n\n`;
+      msg += `  ${r.market === 'US' ? '$' : '₹'}${r.price.toFixed(2)} | RSI: ${r.rsi.toFixed(0)}\n\n`;
     });
   }
   const avoids = results.filter(r => r.signal === 'AVOID');

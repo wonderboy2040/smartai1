@@ -9,12 +9,14 @@ import {
   GROQ_KEY, TAVILY_API_KEY
 } from './config.mjs';
 
-// SECURITY: Cloud sync auth token. MUST be set via API_TOKEN env var.
-// The weak public default 'WEALTH_AI_SYNC' is NO LONGER used.
-const AUTH_TOKEN = process.env.API_TOKEN || process.env.VITE_API_TOKEN || 'WEALTH_AI_SYNC';
+// SECURITY (audit H-2 fix): Cloud sync auth token MUST come from the
+// server-side API_TOKEN env var. The VITE_* fallback (browser-exposed at
+// build time) and the weak public default 'WEALTH_AI_SYNC' are removed —
+// both previously authorized anyone to read/overwrite the synced state.
+const AUTH_TOKEN = process.env.API_TOKEN || '';
 
 function isCloudSyncConfigured() {
-  return !!AUTH_TOKEN;
+  return AUTH_TOKEN.length >= 12;
 }
 
 export async function loadPortfolioFromCloud() {
