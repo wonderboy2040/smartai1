@@ -68,8 +68,8 @@ interface ScannerResponse {
 }
 
 function ConfidenceRing({ value }: { value: number }) {
-  const color = value >= 95 ? 'text-emerald-400' : value >= 88 ? 'text-cyan-400' : 'text-amber-400';
-  const stroke = value >= 95 ? '#34d399' : value >= 88 ? '#22d3ee' : '#fbbf24';
+  const color = value >= 85 ? 'text-emerald-400' : value >= 75 ? 'text-cyan-400' : 'text-amber-400';
+  const stroke = value >= 85 ? '#34d399' : value >= 75 ? '#22d3ee' : '#fbbf24';
   const circ = 2 * Math.PI * 26;
   return (
     <div className="relative w-16 h-16 flex-shrink-0">
@@ -393,7 +393,7 @@ export const IntradayTab = () => {
               )}
             </div>
             <div className="text-slate-500">
-              Min Confidence: <b className="text-slate-300">{data.minConfidence ?? 90}%</b> • Auto-refresh 60s
+              Min Confidence: <b className="text-slate-300">{data.minConfidence ?? 75}%</b> • Auto-refresh 60s
             </div>
           </div>
         )}
@@ -476,7 +476,7 @@ export const IntradayTab = () => {
         <div className="quantum-panel rounded-2xl p-10 text-center border border-white/5">
           <div className="text-4xl mb-3">🎯</div>
           <div className="text-base font-black text-slate-200 mb-1">
-            {filterDir !== 'ALL' ? `Koi ${filterDir} setup nahi mila` : `Abhi koi ${data?.minConfidence ?? 90}%+ high-conviction setup nahi mila`}
+            {filterDir !== 'ALL' ? `Koi ${filterDir} setup nahi mila` : `Abhi koi ${data?.minConfidence ?? 75}%+ high-conviction setup nahi mila`}
           </div>
           <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
             Capital preservation hi pro-trader ka pehla rule hai — choppy market me random trade lene se bachein. Scanner har 60s baad auto re-scan karta hai.

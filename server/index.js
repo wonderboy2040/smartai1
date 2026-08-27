@@ -475,7 +475,7 @@ const INTRADAY_UNIVERSE = [
   'PIDILITIND', 'HAVELLS', 'DIVISLAB', 'APOLLOHOSP', 'LUPIN', 'AUROPHARMA',
   'GAIL', 'PETRONET', 'IDEA', 'YESBANK', 'SUZLON', 'IREDA',
 ];
-const INTRADAY_MIN_CONFIDENCE = 90;
+const INTRADAY_MIN_CONFIDENCE = 75;
 const INTRADAY_TOP_N = 5;
 
 function getISTParts(date = new Date()) {
@@ -822,50 +822,50 @@ function analyzeIntradayFromScanner(symbol, tv, groww) {
 
   function scoreSide(dir) {
     let s = 0; const reasons = [];
-    // EMA Stack — 20pts
+    // EMA Stack — 22pts
     if (dir === 'LONG' ? (ltp > ema10 && ema10 > ema20) : (ltp < ema10 && ema10 < ema20)) {
-      s += 20; reasons.push(`EMA10/20 ${dir === 'LONG' ? 'bullish' : 'bearish'} stack`);
-    } else if (dir === 'LONG' ? (ltp > ema10 || ema10 > ema20) : (ltp < ema10 || ema10 < ema20)) { s += 10; }
-    // VWAP Bias — 18pts
-    if (dir === 'LONG' ? vwapDist > 0.1 : vwapDist < -0.1) {
-      s += 18; reasons.push(dir === 'LONG' ? `Above VWAP +${vwapDist.toFixed(1)}%` : `Below VWAP ${vwapDist.toFixed(1)}%`);
-    } else if (Math.abs(vwapDist) <= 0.2) { s += 8; reasons.push('At VWAP control zone'); }
-    // RSI Sweet Zone — 12pts
-    if (dir === 'LONG' ? (rsi >= 52 && rsi <= 70) : (rsi >= 30 && rsi <= 48)) {
-      s += 12; reasons.push(`RSI ${Math.round(rsi)} momentum`);
-    } else if (dir === 'LONG' ? (rsi >= 45 && rsi < 52) : (rsi > 48 && rsi <= 55)) { s += 7; }
-    if (dir === 'LONG' && rsi > 75) s -= 5;
-    if (dir === 'SHORT' && rsi < 25) s -= 5;
-    // Relative Volume — 10pts
-    if (relVolume >= 2) { s += 10; reasons.push(`Volume ${relVolume.toFixed(1)}x surge`); }
-    else if (relVolume >= 1.4) { s += 7; reasons.push(`Volume ${relVolume.toFixed(1)}x`); }
-    else if (relVolume >= 1.1) { s += 3; }
-    // MACD — 10pts
+      s += 22; reasons.push(`EMA10/20 ${dir === 'LONG' ? 'bullish' : 'bearish'} stack`);
+    } else if (dir === 'LONG' ? (ltp > ema10 || ema10 > ema20) : (ltp < ema10 || ema10 < ema20)) { s += 12; }
+    // VWAP Bias — 20pts
+    if (dir === 'LONG' ? vwapDist > 0.05 : vwapDist < -0.05) {
+      s += 20; reasons.push(dir === 'LONG' ? `Above VWAP +${vwapDist.toFixed(1)}%` : `Below VWAP ${vwapDist.toFixed(1)}%`);
+    } else if (Math.abs(vwapDist) <= 0.25) { s += 10; reasons.push('At VWAP control zone'); }
+    // RSI Sweet Zone — 14pts
+    if (dir === 'LONG' ? (rsi >= 50 && rsi <= 72) : (rsi >= 28 && rsi <= 50)) {
+      s += 14; reasons.push(`RSI ${Math.round(rsi)} momentum`);
+    } else if (dir === 'LONG' ? (rsi >= 44 && rsi < 50) : (rsi > 50 && rsi <= 56)) { s += 8; }
+    if (dir === 'LONG' && rsi > 78) s -= 6;
+    if (dir === 'SHORT' && rsi < 22) s -= 6;
+    // Relative Volume — 12pts
+    if (relVolume >= 1.5) { s += 12; reasons.push(`Volume ${relVolume.toFixed(1)}x surge`); }
+    else if (relVolume >= 1.1) { s += 8; reasons.push(`Volume ${relVolume.toFixed(1)}x`); }
+    else if (relVolume >= 0.8) { s += 4; }
+    // MACD — 12pts
     if (macdVal != null && macdSig != null) {
       if (dir === 'LONG' ? macdVal > macdSig : macdVal < macdSig) {
-        s += 10; reasons.push(`MACD ${dir === 'LONG' ? 'bullish' : 'bearish'} cross`);
-      } else if (dir === 'LONG' ? macdVal > 0 : macdVal < 0) { s += 5; }
+        s += 12; reasons.push(`MACD ${dir === 'LONG' ? 'bullish' : 'bearish'} cross`);
+      } else if (dir === 'LONG' ? macdVal > 0 : macdVal < 0) { s += 6; }
     }
-    // Pivot/CPR — 8pts
+    // Pivot/CPR — 10pts
     if (dir === 'LONG' ? ltp > pivotR1 : ltp < pivotS1) {
-      s += 8; reasons.push(dir === 'LONG' ? 'Above R1 breakout' : 'Below S1 breakdown');
+      s += 10; reasons.push(dir === 'LONG' ? 'Above R1 breakout' : 'Below S1 breakdown');
     } else if (dir === 'LONG' ? ltp > pivot : ltp < pivot) {
-      s += 4; reasons.push(dir === 'LONG' ? 'Above pivot' : 'Below pivot');
+      s += 6; reasons.push(dir === 'LONG' ? 'Above pivot' : 'Below pivot');
     }
-    // ADX Trend Strength — 8pts
-    if (adx > 25) { s += 8; reasons.push(`ADX ${Math.round(adx)} strong trend`); }
-    else if (adx > 20) { s += 4; }
+    // ADX Trend Strength — 10pts
+    if (adx > 22) { s += 8; reasons.push(`ADX ${Math.round(adx)} strong trend`); }
+    else if (adx > 16) { s += 4; }
     if (dir === 'LONG' ? adxPlus > adxMinus : adxMinus > adxPlus) s += 2;
-    // Gap Analysis — 7pts
-    if (dir === 'LONG' ? (gapPct > 0.3 && gapPct < 2.5) : (gapPct < -0.3 && gapPct > -2.5)) {
-      s += 7; reasons.push(`Gap ${gapPct > 0 ? '+' : ''}${gapPct.toFixed(1)}%`);
+    // Gap Analysis — 8pts
+    if (dir === 'LONG' ? (gapPct > 0.2 && gapPct < 3.0) : (gapPct < -0.2 && gapPct > -3.0)) {
+      s += 8; reasons.push(`Gap ${gapPct > 0 ? '+' : ''}${gapPct.toFixed(1)}%`);
     }
-    if (dir === 'LONG' && gapPct > 3) s -= 3;
-    if (dir === 'SHORT' && gapPct < -3) s -= 3;
-    // Day Range Position — 7pts
-    if (dir === 'LONG' ? dayRange < 0.35 : dayRange > 0.65) {
-      s += 7; reasons.push(dir === 'LONG' ? 'Near day low entry' : 'Near day high short');
-    } else if (dir === 'LONG' ? dayRange < 0.5 : dayRange > 0.5) { s += 3; }
+    if (dir === 'LONG' && gapPct > 3.5) s -= 4;
+    if (dir === 'SHORT' && gapPct < -3.5) s -= 4;
+    // Day Range Position — 8pts
+    if (dir === 'LONG' ? dayRange < 0.45 : dayRange > 0.55) {
+      s += 8; reasons.push(dir === 'LONG' ? 'Near day low entry' : 'Near day high short');
+    } else if (dir === 'LONG' ? dayRange < 0.6 : dayRange > 0.4) { s += 4; }
     return { score: Math.round(Math.max(0, Math.min(100, s))), reasons };
   }
 
@@ -1215,7 +1215,7 @@ app.get('/api/intraday-scanner', async (_req, res) => {
       }
 
       // Quant pre-filter: strong setups only go to AI verification.
-      let pool = results.filter(r => r.quantConfidence >= 80);
+      let pool = results.filter(r => r.quantConfidence >= 70);
       if (pool.length === 0) pool = results.sort((a, b) => b.quantConfidence - a.quantConfidence).slice(0, 8);
       pool = pool.sort((a, b) => b.quantConfidence - a.quantConfidence).slice(0, 10);
 
@@ -1248,18 +1248,25 @@ app.get('/api/intraday-scanner', async (_req, res) => {
       });
 
       // Adaptive threshold: opening 30 min me quant engine cap 88 hota hai,
-      // isliye min confidence 85 pe relax hota hai — pro desks opening-range
-      // setups reduced size ke saath lete hain. Rest of the day STRICT 90.
+      // isliye min confidence 70 pe relax hota hai. Rest of the day 75.
       const { hour: _ih, minute: _im } = getISTParts();
       const _istMins = _ih * 60 + _im;
       const minConf = (_istMins >= 9 * 60 + 15 && _istMins < 9 * 60 + 45)
-        ? Math.min(85, INTRADAY_MIN_CONFIDENCE)
+        ? Math.min(70, INTRADAY_MIN_CONFIDENCE)
         : INTRADAY_MIN_CONFIDENCE;
 
-      signals = signals
+      let filteredSignals = signals
         .filter(s => s.confidence >= minConf)
-        .sort((a, b) => b.confidence - a.confidence)
-        .slice(0, INTRADAY_TOP_N);
+        .sort((a, b) => b.confidence - a.confidence);
+
+      // If market is choppy and rigid filter yields 0, pick top best setups (confidence >= 65)
+      if (filteredSignals.length === 0 && signals.length > 0) {
+        filteredSignals = signals
+          .filter(s => s.confidence >= 65)
+          .sort((a, b) => b.confidence - a.confidence);
+      }
+
+      signals = filteredSignals.slice(0, INTRADAY_TOP_N);
 
       const payload = {
         marketOpen: true,
