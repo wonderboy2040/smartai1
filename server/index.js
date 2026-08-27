@@ -958,7 +958,11 @@ async function aiVerifySignals(candidates) {
 
   const parseVerdicts = (text) => {
     try {
-      const m = text.match(/\{[\s\S]*\}/);
+      // FIX Bug 6: Strip <think>...</think> blocks BEFORE extracting JSON.
+      // Gemini 3.5 Flash and some Groq models include thinking blocks that
+      // contain JSON-like content, causing the regex to match wrong JSON.
+      const cleanText = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+      const m = cleanText.match(/\{[\s\S]*\}/);
       if (!m) return null;
       const parsed = JSON.parse(m[0]);
       return parsed?.verdicts || null;
@@ -2028,7 +2032,7 @@ app.post('/api/chat/mcp', async (req, res) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(20000)
+        signal: AbortSignal.timeout(30000) // FIX Bug 4: increased from 20s to 30s for tool execution chains
       });
 
       if (!upstream.ok) throw new Error(`Gemini upstream error ${upstream.status}`);
@@ -2053,7 +2057,7 @@ app.post('/api/chat/mcp', async (req, res) => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(20000)
+          signal: AbortSignal.timeout(30000) // FIX Bug 4: increased from 20s to 30s
         });
 
         if (followUp.ok) {
@@ -2093,8 +2097,27 @@ app.post('/api/chat/mcp', async (req, res) => {
           temperature: 0.7,
           max_completion_tokens: 4000
         }),
-        signal: AbortSignal.timeout(20000)
+        signal: AbortSignal.timeout(30000) // FIX Bug 4: increased from 20s to 30s
       });
+
+      // FIX Bug 3: If primary model fails (400/404 = model doesn't support tools),
+      // fallback to llama-3.3-70b-versatile which has native tool calling support.
+      if (!upstream.ok && (upstream.status === 400 || upstream.status === 404 || upstream.status === 422)) {
+        console.warn(`[MCP Server] Groq ${targetModel} failed (${upstream.status}), trying llama-3.3-70b-versatile...`);
+        const fallbackModel = 'llama-3.3-70b-versatile';
+        upstream = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: fallbackModel,
+            messages: reqMessages,
+            tools: SERVER_MCP_TOOLS_OPENAI,
+            temperature: 0.7,
+            max_completion_tokens: 4000
+          }),
+          signal: AbortSignal.timeout(30000)
+        });
+      }
 
       if (!upstream.ok) throw new Error(`Groq upstream error ${upstream.status}`);
       let data = await upstream.json();
@@ -2123,7 +2146,7 @@ app.post('/api/chat/mcp', async (req, res) => {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ model: targetModel, messages: reqMessages, temperature: 0.7, max_completion_tokens: 4000 }),
-          signal: AbortSignal.timeout(20000)
+          signal: AbortSignal.timeout(30000) // FIX Bug 4: increased from 20s to 30s
         });
 
         if (followUp.ok) {

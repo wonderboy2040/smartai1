@@ -316,8 +316,19 @@ async function callGroq(messages, systemPrompt, modelName = 'openai/gpt-oss-120b
     signal: AbortSignal.timeout(15000)
   });
 
-  // Fallback to qwen/qwen3-32b if primary fails
-  if (!res.ok && (res.status === 400 || res.status === 404)) {
+  // FIX Bug 5: Robust multi-model fallback chain for Groq tool calling.
+  // Primary (openai/gpt-oss-120b) → llama-3.3-70b-versatile → qwen/qwen3-32b
+  if (!res.ok && (res.status === 400 || res.status === 404 || res.status === 422)) {
+    console.warn(`  ⚠️ Groq ${targetModel} failed (${res.status}), trying llama-3.3-70b-versatile...`);
+    targetModel = 'llama-3.3-70b-versatile';
+    res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: targetModel, messages: reqMessages, tools: MCP_TOOLS_OPENAI, temperature: 0.7, max_completion_tokens: 8000 }),
+      signal: AbortSignal.timeout(15000)
+    });
+  }
+  if (!res.ok && (res.status === 400 || res.status === 404 || res.status === 422)) {
+    console.warn(`  ⚠️ Groq ${targetModel} failed (${res.status}), trying qwen/qwen3-32b...`);
     targetModel = 'qwen/qwen3-32b';
     res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },

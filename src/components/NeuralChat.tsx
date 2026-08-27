@@ -24,11 +24,13 @@ async function getServerAIStatus() {
         const res = await apiFetch(`${PROXY_BASE}/api/ai-status`, { signal: AbortSignal.timeout(3000) });
         if (!res.ok) {
           _proxyStatus = null;
+          _proxyStatusTs = 0; // FIX: reset timestamp so next call retries immediately
           return null;
         }
         return await res.json();
       } catch {
         _proxyStatus = null;
+        _proxyStatusTs = 0; // FIX: reset timestamp so next call retries immediately
         return null;
       }
     })();
@@ -37,13 +39,13 @@ async function getServerAIStatus() {
 }
 
 async function callAIProxy(endpoint: string, body: any, outerSignal?: AbortSignal): Promise<Response | null> {
+  // FIX Bug 7: Use a single combined AbortController that aborts on EITHER
+  // the outer signal (user Stop button) OR the 60s timeout — whichever fires first.
   const timeoutCtrl = new AbortController();
   const timer = setTimeout(() => timeoutCtrl.abort(), 60000);
-  const signal = outerSignal ?? timeoutCtrl.signal;
   if (outerSignal) {
-    const onOuterAbort = () => timeoutCtrl.abort();
     if (outerSignal.aborted) timeoutCtrl.abort();
-    else outerSignal.addEventListener('abort', onOuterAbort, { once: true });
+    else outerSignal.addEventListener('abort', () => timeoutCtrl.abort(), { once: true });
   }
   try {
     const res = await apiFetch(`${PROXY_BASE}/api/${endpoint}`, {
@@ -58,7 +60,6 @@ async function callAIProxy(endpoint: string, body: any, outerSignal?: AbortSigna
     throw new Error(err?.error?.message || err?.error || `proxy error: ${res.status}`);
   } finally {
     clearTimeout(timer);
-    void signal;
   }
 }
 
@@ -447,7 +448,9 @@ export const NeuralChat = React.memo(({
     }
 
     const status = await getServerAIStatus();
-    if (!status || !(status as any)[endpoint]) return null;
+    // FIX Bug 1: If ai-status fetch failed (null), assume all engines available
+    // and let each engine's own error handling (503/429) manage unavailability.
+    if (status && !(status as any)[endpoint]) return null;
     const body = {
       messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
       model: modelName,
@@ -457,7 +460,9 @@ export const NeuralChat = React.memo(({
     if (!res) return null;
     const data = await res.json();
     if (endpoint === 'gemini') {
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      // FIX Bug 2: Extract text from ALL parts, not just parts[0] — multi-part
+      // responses after tool calls have the text in a later part.
+      const text = data.candidates?.[0]?.content?.parts?.map((p: any) => p.text).filter(Boolean).join('\n');
       return text && text.trim().length >= 5 ? text : null;
     }
     if (endpoint === 'claude') {
