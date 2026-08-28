@@ -51,7 +51,14 @@ function makeSender(sendTelegramRaw, escapeHtml) {
   };
 }
 
-export function dispatchIntradayAlerts(signals, deps) {
+// ASYNC by contract: callers chain `.catch()` on the return value, so EVERY
+// code path (including the early exits below) MUST resolve to a Promise.
+// A plain `return;` here previously yielded `undefined`, and
+// `dispatchIntradayAlerts(...).catch(...)` in routes.js threw
+// `TypeError: Cannot read properties of undefined (reading 'catch')`
+// SYNCHRONOUSLY — collapsing the whole /api/intraday-scanner response to
+// "Scanner temporarily unavailable" on every cooldown-window re-scan.
+export async function dispatchIntradayAlerts(signals, deps) {
   const { sendTelegramRaw, escapeHtml } = deps || {};
   if (!signals?.length) return;
   if (!_intradayAlerts.enabled || typeof sendTelegramRaw !== 'function') return;

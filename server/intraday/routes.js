@@ -299,7 +299,11 @@ export function registerIntradayRoutes(app, deps) {
         setScanSymbols(payload.signals.map(s => s.symbol));
 
         // ALGO ALERT ENGINE — push new/reversed setups to Telegram.
-        dispatchIntradayAlerts(payload.signals, { sendTelegramRaw, escapeHtml }).catch(e =>
+        // Promise.resolve() wrapper = defense in depth: even if the dispatch
+        // helper ever regresses to a non-async function (which can return
+        // undefined on its early-exit paths), the scan response can never be
+        // destroyed by a synchronous TypeError again.
+        Promise.resolve(dispatchIntradayAlerts(payload.signals, { sendTelegramRaw, escapeHtml })).catch(e =>
           console.warn('[intraday-alerts]', e?.message || e));
         return payload;
       } catch (e) {
