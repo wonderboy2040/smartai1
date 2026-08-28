@@ -694,7 +694,11 @@ export function useAppState() {
     };
 
     pollCrypto();
-    const cryptoInterval = window.setInterval(pollCrypto, 2000); // 2s ultra-fast for real-time crypto
+    // PERF (2026 lag audit): 2s → 10s. Crypto dashboard prices don't change
+    // meaningfully within 2s, but at 2s this poller was firing 30 server
+    // requests/minute per tab (CoinDCX proxy) — a major share of the request
+    // flood that made the app feel laggy. 10s still reads as "live".
+    const cryptoInterval = window.setInterval(pollCrypto, 10000);
     return () => { clearInterval(cryptoInterval); };
   }, [isAuthenticated, hasCrypto, flushPricesToStorage]);
 

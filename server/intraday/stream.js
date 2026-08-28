@@ -61,8 +61,11 @@ export function getLatestQuotes() {
 async function _fetchQuotes(symbols) {
   const out = {};
   if (!symbols.length || typeof _deps.fetchGrowwNseQuote !== 'function') return out;
-  for (let i = 0; i < symbols.length; i += 12) {
-    const batch = symbols.slice(i, i + 12);
+  // ≤24 watcher symbols in ONE parallel round (12→24). The server-side Groww
+  // micro-cache de-dupes these against the /api/quote poll flood, so a single
+  // round is both faster and cheaper than two sequential batches.
+  for (let i = 0; i < symbols.length; i += 24) {
+    const batch = symbols.slice(i, i + 24);
     await Promise.allSettled(batch.map(async (sym) => {
       try {
         const q = await _deps.fetchGrowwNseQuote(sym);

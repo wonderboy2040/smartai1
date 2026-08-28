@@ -119,12 +119,15 @@ export async function fetchIntradayDataBatch(symbols, fetchGrowwNseQuote) {
     return out;
   })();
 
-  // Groww NSE Live — batch 12 at a time (same source as portfolio prices).
+  // Groww NSE Live — batch 20 at a time (same source as portfolio prices).
+  // PERF (2026 lag audit): 12 → 20 = fewer sequential rounds for the 87-symbol
+  // universe (8 rounds → 5), shaving seconds off every scan. Upstream calls
+  // are de-duplicated by the server-side Groww micro-cache anyway.
   const growwPromise = (async () => {
     const out = {};
     if (typeof fetchGrowwNseQuote !== 'function') return out;
-    for (let i = 0; i < symbols.length; i += 12) {
-      const batch = symbols.slice(i, i + 12);
+    for (let i = 0; i < symbols.length; i += 20) {
+      const batch = symbols.slice(i, i + 20);
       await Promise.allSettled(batch.map(async (sym) => {
         try {
           const gw = await fetchGrowwNseQuote(sym);

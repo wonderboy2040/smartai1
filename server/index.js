@@ -496,9 +496,25 @@ registerIntradayRoutes(app, {
 // Resp:  { quotes: { SMH: {price,change,high,low,volume,prevClose,time,source}, ... } }
 // ------------------------------------------------------------
 const INDIAN_INDICES = new Set(['NIFTY','BANKNIFTY','SENSEX','INDIAVIX','CNXIT','NIFTY50','NIFTYBANK']);
+// PERF (2026 lag audit): 3s micro-cache + in-flight sharing for the US quote
+// path — same rationale as the Groww/Yahoo caches below.
+const _finnhubMicroCache = new Map(); // sym -> { ts, promise }
+const FINNHUB_CACHE_MS = 3000;
 async function fetchFinnhubQuote(plainSym) {
   const key = process.env.FINNHUB_API_KEY || '';
-  if (!key) return null;
+  if (!key || !plainSym) return null;
+  const sym = String(plainSym).toUpperCase();
+  const hit = _finnhubMicroCache.get(sym);
+  if (hit && Date.now() - hit.ts < FINNHUB_CACHE_MS) return hit.promise;
+  const promise = _fetchFinnhubQuoteUncached(sym, key);
+  _finnhubMicroCache.set(sym, { ts: Date.now(), promise });
+  if (_finnhubMicroCache.size > 500) {
+    const cutoff = Date.now() - FINNHUB_CACHE_MS * 2;
+    for (const [k, v] of _finnhubMicroCache) if (v.ts < cutoff) _finnhubMicroCache.delete(k);
+  }
+  return promise;
+}
+async function _fetchFinnhubQuoteUncached(plainSym, key) {
   try {
     const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(plainSym)}&token=${key}`;
     const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
@@ -523,9 +539,32 @@ async function fetchFinnhubQuote(plainSym) {
 // NSE's own API blocks datacenter IPs (403), and Yahoo .NS is ~15-min delayed.
 // Groww's public live-price endpoint serves the genuine NSE last-traded price
 // (`ltp`, type LIVE_PRICE) for stocks AND ETFs, and works from cloud servers.
+//
+// PERF (2026 lag audit): this function is called by FOUR concurrent consumers —
+// /api/quote (browser polls ~every 2-5s per tab), the intraday scanner
+// (87 symbols/scan), the SSE quote watcher (24 symbols/5s) and the WS
+// broadcaster (3s). With no shared cache that was hundreds of upstream Groww
+// requests per minute from ONE browser tab, starving the Render free-tier CPU
+// and making EVERY endpoint (scanner, AI, Telegram) sluggish. A 3s
+// micro-cache with in-flight promise sharing cuts upstream traffic ~95%
+// while keeping LTP freshness at or below every caller's own poll cadence.
+const _growwMicroCache = new Map(); // sym -> { ts, promise }
+const GROWW_CACHE_MS = 3000;
 async function fetchGrowwNseQuote(plainSym) {
   const sym = String(plainSym || '').replace('.NS', '').replace('.BO', '').trim().toUpperCase();
   if (!sym) return null;
+  const hit = _growwMicroCache.get(sym);
+  if (hit && Date.now() - hit.ts < GROWW_CACHE_MS) return hit.promise; // fresh OR still in-flight
+  const promise = _fetchGrowwNseQuoteUncached(sym); // never throws — resolves null on failure
+  _growwMicroCache.set(sym, { ts: Date.now(), promise });
+  // Opportunistic cleanup so the map cannot grow unbounded with custom watchlists.
+  if (_growwMicroCache.size > 500) {
+    const cutoff = Date.now() - GROWW_CACHE_MS * 2;
+    for (const [k, v] of _growwMicroCache) if (v.ts < cutoff) _growwMicroCache.delete(k);
+  }
+  return promise;
+}
+async function _fetchGrowwNseQuoteUncached(sym) {
   try {
     const url = `https://groww.in/v1/api/stocks_data/v1/tr_live_prices/exchange/NSE/segment/CASH/${encodeURIComponent(sym)}/latest`;
     const r = await fetch(url, {
@@ -553,7 +592,26 @@ async function fetchGrowwNseQuote(plainSym) {
   } catch { return null; }
 }
 
+// PERF (2026 lag audit): same 3s micro-cache + in-flight sharing as the Groww
+// fetcher above. fetchYahooQuote serves the Indian INDICES (NIFTY, BANKNIFTY,
+// INDIAVIX — Groww has no index quotes) and the US fallback path; the browser
+// polls them every few seconds, and without a cache each poll meant a fresh
+// Yahoo round-trip per index per client.
+const _yahooMicroCache = new Map(); // ysym -> { ts, promise }
+const YAHOO_CACHE_MS = 3000;
 async function fetchYahooQuote(ysym) {
+  if (!ysym) return null;
+  const hit = _yahooMicroCache.get(ysym);
+  if (hit && Date.now() - hit.ts < YAHOO_CACHE_MS) return hit.promise;
+  const promise = _fetchYahooQuoteUncached(ysym); // never throws — resolves null
+  _yahooMicroCache.set(ysym, { ts: Date.now(), promise });
+  if (_yahooMicroCache.size > 500) {
+    const cutoff = Date.now() - YAHOO_CACHE_MS * 2;
+    for (const [k, v] of _yahooMicroCache) if (v.ts < cutoff) _yahooMicroCache.delete(k);
+  }
+  return promise;
+}
+async function _fetchYahooQuoteUncached(ysym) {
   try {
     // Try the dedicated quote endpoint first (simpler, faster) â€” v7 is still live
     const qurl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ysym)}`;
