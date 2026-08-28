@@ -75,14 +75,21 @@ function parseVotes(text) {
 let _cache = { data: null, ts: 0, inflight: null };
 
 export async function runCommitteeDebate(deps) {
-  const { getLastScan, getMarketRegime, KEYS, OPENAI_COMPAT } = deps || {};
+  const { getLastScan, triggerScan, getMarketRegime, KEYS, OPENAI_COMPAT } = deps || {};
   if (_cache.data && Date.now() - _cache.ts < 10 * 60 * 1000) return _cache.data;
   if (_cache.inflight) return _cache.inflight;
 
   _cache.inflight = (async () => {
     try {
-      const scan = getLastScan?.();
-      const setups = (scan?.signals || []).slice(0, 3);
+      let scan = getLastScan?.();
+      let setups = (scan?.signals || []).slice(0, 3);
+      // Stale/empty cache (60s TTL) → trigger a fresh scan, same as agent &
+      // briefing paths. Without this the committee returns "no setups" on
+      // the first request after every cache expiry / server restart.
+      if (setups.length === 0) {
+        try { scan = (await triggerScan?.()) || scan; } catch { /* optional */ }
+        setups = (scan?.signals || []).slice(0, 3);
+      }
       if (setups.length === 0) {
         return { ok: false, error: 'Live setups nahi mil rahe — pehle scan complete hone dein (market hours me auto hota hai).' };
       }

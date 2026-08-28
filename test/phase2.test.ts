@@ -77,9 +77,20 @@ describe('runCommitteeDebate', () => {
   beforeEach(() => clearCommitteeCache());
 
   it('fails honestly when no setups exist', async () => {
-    const r = await runCommitteeDebate({ ...depsNoAI, getLastScan: () => ({ signals: [] }) });
+    const r = await runCommitteeDebate({ ...depsNoAI, getLastScan: () => ({ signals: [] }), triggerScan: async () => ({ signals: [] }) });
     expect(r.ok).toBe(false);
     expect(r.error).toBeDefined();
+  });
+
+  it('auto-triggers a fresh scan when cache is stale/empty (regression: committee "no setups" bug)', async () => {
+    // Cache returns nothing first (60s TTL expired), triggerScan rescues it.
+    const triggerScan = vi.fn(async () => mockScan);
+    const r = await runCommitteeDebate({ ...depsNoAI, getLastScan: () => null, triggerScan });
+    expect(triggerScan).toHaveBeenCalledTimes(1);
+    // With setups recovered, debate proceeds past the setups check —
+    // fails on AI-unavailable (no keys), NOT on "no setups".
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain('AI engines unavailable');
   });
 
   it('fails honestly when AI engines unavailable (no keys)', async () => {
