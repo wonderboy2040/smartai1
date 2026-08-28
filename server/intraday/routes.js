@@ -13,11 +13,19 @@
 //   POST /api/intraday-paper/close    close a virtual trade at LTP
 //   GET  /api/intraday-universe       base + custom watchlist
 //   POST /api/intraday-universe       { add: [], remove: [], restore: [] }
+//   POST /api/intraday-agent          PRO TRADER MCP AGENT chat
+//                                     (agentic tool loop — 8 intraday
+//                                     tools, Gemini→Groq→Cerebras chain)
 // ============================================================
 import {
   BASE_UNIVERSE, INTRADAY_MIN_CONFIDENCE, INTRADAY_TOP_N,
   fetchIntradayDataBatch, analyzeIntradayFromScanner, aiVerifySignals,
 } from './engine.js';
+import { runProTraderAgent } from './agent.js';
+import { runCommitteeDebate, clearCommitteeCache } from './committee.js';
+import { generateDailyBriefing, pushMorningBriefingToTelegram, getLastBriefing } from './briefing.js';
+import { getJournal, runEodReview, runWeeklyReport, initJournal } from './journal.js';
+import cron from 'node-cron';
 import { istMinutes, getISTParts, isNseMarketOpen } from './time.js';
 import { getMarketRegime, freshEntriesAllowedNow } from './regime.js';
 import { dispatchIntradayAlerts, dispatchOutcomeAlert, alertsStatus, setAlertsEnabled } from './alerts.js';
@@ -81,6 +89,50 @@ export function registerIntradayRoutes(app, deps) {
   initTrackRecord();
   initPaperTrading();
   initIntradayStream({ fetchGrowwNseQuote, sendTelegramRaw, escapeHtml, dispatchOutcomeAlert });
+  initJournal();
+
+  // ----------------------------------------------------------
+  // SCHEDULED AI FEATURES (node-cron, Asia/Kolkata timezone):
+  //   • 09:10 Mon-Fri — Morning desk briefing → Telegram
+  //   • 15:45 Mon-Fri — EOD journal AI review (auto, stored)
+  //   • Fri 16:30     — Weekly improvement report (stored)
+  // Crons are guards-wrapped: no AI keys / no TG → silent skip.
+  // ----------------------------------------------------------
+  const agentDeps = () => ({
+    KEYS, OPENAI_COMPAT,
+    getLastScan: () => _intradayCache.data,
+    triggerScan: async () => (isNseMarketOpen() ? runScanner(process.env.INTRADAY_DEBUG === '1') : _intradayCache.data),
+    getMarketRegime,
+    getTrackRecord,
+    getPaperSummary,
+  });
+
+  try {
+    const tz = { timezone: 'Asia/Kolkata' };
+
+    // 09:10 IST Mon-Fri — morning briefing push.
+    cron.schedule('10 9 * * 1-5', async () => {
+      if (!TG?.token || !TG?.chatId) return;
+      try { await pushMorningBriefingToTelegram({ ...agentDeps(), sendTelegramRaw, escapeHtml }); }
+      catch (e) { console.warn('[cron-briefing]', e?.message); }
+    }, tz);
+
+    // 15:45 IST Mon-Fri — EOD journal review (batched, ONE AI call).
+    cron.schedule('45 15 * * 1-5', async () => {
+      try { await runEodReview(agentDeps()); }
+      catch (e) { console.warn('[cron-eod-review]', e?.message); }
+    }, tz);
+
+    // Fri 16:30 IST — weekly improvement report.
+    cron.schedule('30 16 * * 5', async () => {
+      try { await runWeeklyReport(agentDeps()); }
+      catch (e) { console.warn('[cron-weekly]', e?.message); }
+    }, tz);
+
+    console.log('[intraday-cron] Briefing 09:10 • EOD review 15:45 • Weekly Fri 16:30 (IST) scheduled');
+  } catch (e) {
+    console.warn('[intraday-cron] node-cron unavailable — scheduled AI features disabled:', e?.message);
+  }
 
   // ---------------- Alerts status / toggle ----------------
   app.get('/api/intraday-alerts', (_req, res) => {
@@ -163,29 +215,10 @@ export function registerIntradayRoutes(app, deps) {
   // ---------------- MAIN SCANNER ----------------
   let _intradayCache = { data: null, ts: 0, inflight: null };
 
-  app.get('/api/intraday-scanner', async (_req, res) => {
-    // Market-hours gate — hard requirement for this feature.
-    // INTRADAY_DEBUG=1 (owner-only env var) bypasses the gate for pipeline testing.
-    const debugForce = process.env.INTRADAY_DEBUG === '1';
-    if (!isNseMarketOpen() && !debugForce) {
-      const { hour, minute, weekday } = getISTParts();
-      return res.json({
-        marketOpen: false,
-        istTime: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} IST`,
-        weekday,
-        signals: [],
-        message: 'NSE market band hai. Scanner sirf 09:15 - 15:30 IST (Mon-Fri) active rehta hai.',
-      });
-    }
-
-    // 60s cache + in-flight dedupe so multiple clients share one scan.
-    if (_intradayCache.data && Date.now() - _intradayCache.ts < 60 * 1000) {
-      return res.json(_intradayCache.data);
-    }
-    if (_intradayCache.inflight) return res.json(await _intradayCache.inflight);
-
-    _intradayCache.inflight = (async () => {
-      try {
+  // Core scan execution — shared by the GET route AND the Pro Trader
+  // Agent's get_live_intraday_signals tool (single code path, single cache).
+  const executeScan = async (debugForce) => {
+    try {
         const universe = effectiveUniverse();
 
         // Regime + market data in parallel (regime gates every analysis).
@@ -312,8 +345,149 @@ export function registerIntradayRoutes(app, deps) {
       } finally {
         _intradayCache.inflight = null;
       }
-    })();
+  };
 
-    return res.json(await _intradayCache.inflight);
+  // 60s cache + in-flight dedupe so multiple clients share one scan.
+  const runScanner = async (debugForce) => {
+    if (_intradayCache.data && Date.now() - _intradayCache.ts < 60 * 1000) {
+      return _intradayCache.data;
+    }
+    if (_intradayCache.inflight) return _intradayCache.inflight;
+    _intradayCache.inflight = executeScan(debugForce);
+    return _intradayCache.inflight;
+  };
+
+  app.get('/api/intraday-scanner', async (_req, res) => {
+    // Market-hours gate — hard requirement for this feature.
+    // INTRADAY_DEBUG=1 (owner-only env var) bypasses the gate for pipeline testing.
+    const debugForce = process.env.INTRADAY_DEBUG === '1';
+    if (!isNseMarketOpen() && !debugForce) {
+      const { hour, minute, weekday } = getISTParts();
+      return res.json({
+        marketOpen: false,
+        istTime: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} IST`,
+        weekday,
+        signals: [],
+        message: 'NSE market band hai. Scanner sirf 09:15 - 15:30 IST (Mon-Fri) active rehta hai.',
+      });
+    }
+
+    return res.json(await runScanner(debugForce));
+  });
+
+  // ----------------------------------------------------------
+  // PRO TRADER MCP AGENT — POST /api/intraday-agent
+  // Agentic chat with live tool access (auth required — AI cost).
+  // ----------------------------------------------------------
+  const debugScan = () => process.env.INTRADAY_DEBUG === '1';
+
+  const analyzeSymbol = async (symbol) => {
+    try {
+      const [tvData, growwData] = await fetchIntradayDataBatch([symbol], fetchGrowwNseQuote);
+      if (!tvData[symbol] && !growwData[symbol]) return null;
+      let regime = null;
+      try { regime = await getMarketRegime(debugScan()); } catch { /* regime optional */ }
+      return analyzeIntradayFromScanner(symbol, tvData[symbol], growwData[symbol], { regime });
+    } catch {
+      return null;
+    }
+  };
+
+  app.post('/api/intraday-agent', async (req, res) => {
+    const { messages = [] } = req.body || {};
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return jsonError(res, 400, 'messages[] required');
+    }
+    // Bound token cost: last 24 turns, 6k chars per message.
+    const trimmed = messages.slice(-24).map(m => ({
+      role: ['user', 'assistant', 'system'].includes(m?.role) ? m.role : 'user',
+      content: String(m?.content || '').slice(0, 6000),
+    }));
+
+    const result = await runProTraderAgent(trimmed, {
+      KEYS,
+      OPENAI_COMPAT,
+      fetchGrowwNseQuote,
+      getLastScan: () => _intradayCache.data,
+      triggerScan: async () => {
+        // Respect market hours — outside the session serve the last scan
+        // (stale context is still useful: "last scan was 14:55 IST").
+        if (!isNseMarketOpen() && !debugScan()) return _intradayCache.data;
+        return runScanner(debugScan());
+      },
+      getTrackRecord,
+      getPaperSummary,
+      analyzeSymbol,
+      getMarketRegime,
+    });
+
+    if (!result.ok) return jsonError(res, 502, result.error);
+    res.set('Cache-Control', 'no-store');
+    res.json(result);
+  });
+
+  // ----------------------------------------------------------
+  // COMMITTEE DEBATE — POST /api/intraday-committee
+  // 3 persona debate (Scalper/Momentum/Risk Guardian) + judge
+  // synthesis on the current top setups. 10-min cached.
+  // ----------------------------------------------------------
+  app.post('/api/intraday-committee', async (_req, res) => {
+    const result = await runCommitteeDebate(agentDeps());
+    if (!result.ok) return jsonError(res, 400, result.error);
+    res.set('Cache-Control', 'no-store');
+    res.json(result);
+  });
+
+  // ----------------------------------------------------------
+  // DAILY BRIEFING — GET /api/intraday-briefing
+  // ?fresh=1 forces regeneration; else today's cached briefing
+  // is served if present. Powers the in-app VOICE briefing.
+  // ----------------------------------------------------------
+  app.get('/api/intraday-briefing', async (req, res) => {
+    const fresh = req.query.fresh === '1';
+    if (!fresh) {
+      const last = getLastBriefing();
+      if (last?.fresh) return res.set('Cache-Control', 'no-store').json({ ok: true, briefing: last, cached: true });
+    }
+    const result = await generateDailyBriefing(agentDeps());
+    if (!result.ok) {
+      // Fall back to the last stored briefing (even if stale).
+      const last = getLastBriefing();
+      if (last) return res.json({ ok: true, briefing: last, cached: true, stale: true });
+      return jsonError(res, 502, result.error);
+    }
+    res.set('Cache-Control', 'no-store');
+    res.json({ ...result, cached: false });
+  });
+
+  // Manual Telegram push of the briefing (owner action).
+  app.post('/api/intraday-briefing/push', async (_req, res) => {
+    if (!TG?.token || !TG?.chatId) return jsonError(res, 503, 'Telegram not configured on server');
+    const ok = await pushMorningBriefingToTelegram({ ...agentDeps(), sendTelegramRaw, escapeHtml });
+    if (!ok) return jsonError(res, 502, 'Briefing push failed — AI engines ya Telegram unavailable.');
+    res.json({ ok: true });
+  });
+
+  // ----------------------------------------------------------
+  // TRADE JOURNAL — GET /api/intraday-journal (?days=14)
+  // POST /api/intraday-journal/eod    → run EOD AI review NOW
+  // POST /api/intraday-journal/weekly → run weekly report NOW
+  // ----------------------------------------------------------
+  app.get('/api/intraday-journal', (req, res) => {
+    const days = Math.max(1, Math.min(90, parseInt(req.query.days, 10) || 14));
+    res.set('Cache-Control', 'no-store');
+    res.json(getJournal(days));
+  });
+
+  app.post('/api/intraday-journal/eod', async (_req, res) => {
+    const result = await runEodReview(agentDeps());
+    if (!result.ok) return jsonError(res, 400, result.error);
+    res.json(result);
+  });
+
+  app.post('/api/intraday-journal/weekly', async (_req, res) => {
+    const result = await runWeeklyReport(agentDeps());
+    if (!result.ok) return jsonError(res, 400, result.error);
+    res.json(result);
   });
 }

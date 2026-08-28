@@ -91,6 +91,11 @@ export async function dispatchIntradayAlerts(signals, deps) {
     msg += `Entry zone ${fmtINR(s.entryZoneLow ?? s.entry)}–${fmtINR(s.entryZoneHigh ?? s.entry)} (trig ${fmtINR(s.entry)}) | SL ${fmtINR(s.stopLoss)} | T1 ${fmtINR(s.target1)} | T2 ${fmtINR(s.target2)}\n`;
     msg += `RR 1:${s.rr.toFixed(2)} • Qty/₹1L ${s.qtyPerLakh ?? '—'} • ${s.trendStrength || ''} trend • VWAP ${fmtINR(s.vwap)} • RSI ${s.rsi} • Vol ${s.volumeRatio.toFixed(1)}x • Exit ${s.sqOffBy || '15:10 IST'}\n`;
     if (s.counterTrend) msg += `⚠️ Counter-regime setup (NIFTY filter penalty applied)\n`;
+    // WHY-REASONING — top 2 engine reasons so the trader knows the
+    // setup ka logic, sirf levels nahi (Pro Trader Agent style).
+    if (Array.isArray(s.reasons) && s.reasons.length > 0) {
+      msg += `💡 Why: ${esc(s.reasons.slice(0, 2).join(' • ').slice(0, 90))}\n`;
+    }
     if (s.aiModel) msg += `🤖 AI: ${esc(String(s.aiModel).slice(0, 40))}${s.aiNote ? ` — ${esc(String(s.aiNote).slice(0, 60))}` : ''}\n`;
   }
   msg += `\n<code>━━━━━━━━━━━━━━━━━━━━━</code>\n⏰ ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST • Auto-generated — not investment advice.`;

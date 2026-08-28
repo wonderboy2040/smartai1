@@ -14,6 +14,7 @@
 // ============================================================
 import { loadJSON, saveJSON } from './store.js';
 import { istDayKey, istMinutes } from './time.js';
+import { recordTradeClose } from './journal.js';
 
 const FILE = 'paper-trades.json';
 const MAX_TRADES = 500;
@@ -105,6 +106,10 @@ function _closePart(trade, qty, price, reason) {
     trade.closedAt = Date.now();
     trade.closeReason = reason;
     trade.unrealizedPnl = 0;
+    // AUTO TRADE JOURNAL — every close path (SL/T1/T2/trail/EOD/
+    // manual/stale) lands here exactly once. Pure data capture;
+    // the AI review runs later (EOD cron / on-demand endpoint).
+    try { recordTradeClose(trade); } catch { /* journal optional */ }
   }
 }
 

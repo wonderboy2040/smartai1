@@ -21,6 +21,9 @@ import { IntradayChartModal } from '../intraday/IntradayChartModal';
 import { PaperTradePanel, openPaperTrade } from '../intraday/PaperTradePanel';
 import { TrackRecordPanel } from '../intraday/TrackRecordPanel';
 import { UniverseEditor } from '../intraday/UniverseEditor';
+import { ProTraderAgentPanel } from '../intraday/ProTraderAgentPanel';
+import { CommitteePanel } from '../intraday/CommitteePanel';
+import { JournalPanel } from '../intraday/JournalPanel';
 import { useIntradayStream } from '../intraday/useIntradayStream';
 import { sectorConcentration } from '../intraday/sectorMap';
 import type {
@@ -468,6 +471,12 @@ export const IntradayTab = () => {
         )}
       </div>
 
+      {/* ===== PRO TRADER MCP AGENT — agentic chat with live tool access ===== */}
+      <ProTraderAgentPanel />
+
+      {/* ===== TRADER COMMITTEE DEBATE — 3 persona + head-of-desk verdict ===== */}
+      <CommitteePanel />
+
       {/* ===== Fresh-entry ban warning ===== */}
       {!marketClosed && !freshAllowed && (
         <div className="rounded-2xl border border-red-500/30 bg-red-500/[0.06] px-4 py-3 flex items-center gap-3">
@@ -625,6 +634,9 @@ export const IntradayTab = () => {
 
       {/* ===== Signal track record ===== */}
       <TrackRecordPanel refreshKey={trackRefresh} />
+
+      {/* ===== AUTO TRADE JOURNAL — AI-reviewed virtual trade log ===== */}
+      <JournalPanel refreshKey={paperRefresh} />
 
       {/* ===== Pro Trader Execution Rules & Disclaimer ===== */}
       <div className="quantum-panel rounded-2xl p-4 border border-white/5 space-y-2 bg-black/40">
