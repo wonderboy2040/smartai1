@@ -13,7 +13,8 @@
 import 'dotenv/config';
 import express from 'express';
 import { subscribe as feedSubscribe, snapshot as feedSnapshot, feedStatus } from './liveFeed.js';
-import { ensureUsSubscribed, usClientUp, usClientDown } from './usStream.js';
+import { ensureUsSubscribed, usClientUp, usClientDown, usMarketOpen, isStaleUsQuote, getUsSessionQuote } from './usStream.js';
+import { initInStream, ensureInSubscribed, inClientUp, inClientDown } from './inStream.js';
 import { ensureCryptoSubscribed, cryptoClientUp, cryptoClientDown } from './cryptoStream.js';
 import {
   getMLPrediction, getAllSignals, getRegime, getBacktest,
@@ -522,6 +523,12 @@ async function _fetchFinnhubQuoteUncached(plainSym, key) {
     const j = await r.json();
     // c=current, d=change, dp=percent, h=high, l=low, pc=prevClose, t=epoch(s)
     if (!j || typeof j.c !== 'number' || j.c <= 0) return null;
+    // 2026 realtime audit (RC1): Finnhub free-tier REST /quote returns the
+    // PREVIOUS SESSION CLOSE (t = last close, e.g. Friday 4pm ET) while the
+    // US market is OPEN — verified live: REST said QQQ 716.47 (Friday close)
+    // while Yahoo + the WS trade stream said 713.36/713.68. Rejecting the
+    // stale quote here lets /api/quote fall through to the live Yahoo path.
+    if (isStaleUsQuote(j.t ? j.t * 1000 : 0, Date.now(), usMarketOpen())) return null;
     return {
       price: j.c,
       change: typeof j.dp === 'number' ? j.dp : (j.pc ? ((j.c - j.pc) / j.pc) * 100 : 0),
@@ -691,6 +698,14 @@ app.get('/api/quote', async (req, res) => {
       const gw = await fetchGrowwNseQuote(sym);
       if (gw) { quotes[sym] = gw; return; }
     }
+    // 1b-0) Shared realtime-stream session (2026 audit): freshest-known US
+    // price from the live SSE stream (Finnhub WS trades, else the Yahoo
+    // fallback poller). Serving /api/quote from here means ONE upstream
+    // round-trip feeds BOTH the SSE clients and the browser pollers.
+    if (market !== 'IN') {
+      const ses = getUsSessionQuote(sym.replace('.NS', '').replace('.BO', ''));
+      if (ses) { quotes[sym] = ses; return; }
+    }
     // 1b) Finnhub real-time (US only â€” Finnhub free tier is US equities/ETFs)
     if (market !== 'IN') {
       const fh = await fetchFinnhubQuote(sym.replace('.NS', '').replace('.BO', ''));
@@ -796,6 +811,13 @@ function parseSyms(v) {
   return String(v || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 60);
 }
 
+// ------------------------------------------------------------
+// India server-side stream init (2026 realtime audit RC5) — injects the
+// 3s-micro-cached quote fetchers so the 5s inStream poll shares upstream
+// round-trips with /api/quote, the intraday scanner and the SSE watcher.
+// ------------------------------------------------------------
+initInStream({ fetchGrowwNseQuote, fetchYahooQuote, toYahooSymbol });
+
 app.get('/api/stream', (req, res) => {
   const inSyms = parseSyms(req.query.in);
   const usSyms = parseSyms(req.query.us);
@@ -808,10 +830,15 @@ app.get('/api/stream', (req, res) => {
   ]);
 
   // Kick off / refresh upstream subscriptions for the requested symbols.
+  // 2026 realtime audit (RC5): Indian equities now get a server-side push
+  // stream too (Groww NSE during market hours + Yahoo indices fallback) —
+  // previously only US (Finnhub) and crypto (CoinDCX) had SSE sources.
+  ensureInSubscribed(inSyms);
   if (usSyms.length) ensureUsSubscribed(usSyms);
   ensureCryptoSubscribed(cryptoSyms);
 
-  // Notify streams a client is now active â€” starts polling/WebSocket if idle
+  // Notify streams a client is now active — starts polling/WebSocket if idle
+  inClientUp();
   usClientUp();
   cryptoClientUp();
 
@@ -826,6 +853,20 @@ app.get('/api/stream', (req, res) => {
 
   const snap = feedSnapshot([...keys]);
   if (Object.keys(snap).length) res.write(`event: snapshot\ndata: ${JSON.stringify(snap)}\n\n`);
+  else {
+    // 2026 realtime audit: fresh symbols were JUST subscribed — their live
+    // bootstrap (Yahoo US / Groww India) is still in flight. Send a deferred
+    // snapshot (~1.2s) so a freshly-loaded site paints correct prices
+    // instantly instead of waiting for the first pushed tick.
+    const late = setTimeout(() => {
+      try {
+        const s2 = feedSnapshot([...keys]);
+        if (Object.keys(s2).length) res.write(`event: snapshot\ndata: ${JSON.stringify(s2)}\n\n`);
+      } catch { /* client gone */ }
+    }, 1200);
+    if (typeof late.unref === 'function') late.unref();
+    req.on('close', () => clearTimeout(late));
+  }
 
   const lastSent = {};
   const unsub = feedSubscribe((key, tick) => {
@@ -844,6 +885,7 @@ app.get('/api/stream', (req, res) => {
     clearInterval(keepalive);
     unsub();
     // Notify streams this client left â€” pauses polling when no clients remain
+    inClientDown();
     usClientDown();
     cryptoClientDown();
     try { res.end(); } catch { /* noop */ }

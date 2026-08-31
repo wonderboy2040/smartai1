@@ -1,0 +1,192 @@
+// ============================================================
+// inStream — server-side INDIA equity/ETF push into liveFeed (/api/stream)
+// ------------------------------------------------------------
+// 2026 realtime audit (RC5): the main SSE stream previously had ZERO
+// server-side sources for Indian equities — only US_ (Finnhub) and crypto
+// IN_ (CoinDCX) ticks were written to liveFeed. India realtime relied
+// entirely on the browser TradingView WebSocket, which is blocked on many
+// office/campus networks → "India prices not streaming" in those conditions.
+//
+// This module closes that gap with the same self-managing lifecycle as
+// cryptoStream: polls Groww NSE live quotes every 5s ONLY while SSE clients
+// are connected AND the NSE window is open (09:15–15:40 IST). Indices
+// (NIFTY/BANKNIFTY/… — Groww has no index quotes) fall back to Yahoo.
+// Outside NSE hours a one-shot refresh per newly-subscribed symbol still
+// seeds the SSE snapshot so a freshly-loaded site paints India prices.
+//
+// All upstream calls go through the injected deps from index.js, which are
+// 3s micro-cached there — the 5s poll is shared with the browser pollers,
+// so N SSE clients still cost ONE upstream round-trip per symbol.
+// ============================================================
+import { setTick } from './liveFeed.js';
+
+const POLL_MS = 5000;
+const BACKOFF_MS = 30000;
+const FAILURE_STREAK_LIMIT = 3;
+const BATCH = 24;
+
+// Crypto bases are owned by cryptoStream (IN_BTC etc.) — never poll them here.
+const CRYPTO_BASES = new Set(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI']);
+
+let _deps = null;               // { fetchGrowwNseQuote, fetchYahooQuote, toYahooSymbol }
+const _subscribed = new Set();  // clean NSE symbols (RELIANCE, NIFTY, …)
+let _timer = null;
+let _activeClients = 0;
+let _failureStreak = 0;
+
+// ---------------------------------------------------------------
+// Pure helpers (exported for unit tests)
+// ---------------------------------------------------------------
+
+/** NSE session window (with 15:40 reconcile grace), IST, Mon-Fri. */
+export function nseWindow(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata', weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false,
+  }).formatToParts(date);
+  const get = (t) => parts.find(p => p.type === t)?.value || '';
+  const weekday = get('weekday').substring(0, 3);
+  if (weekday === 'Sat' || weekday === 'Sun') return false;
+  let h = parseInt(get('hour'), 10);
+  if (isNaN(h) || h === 24) h = 0;
+  const m = parseInt(get('minute'), 10) || 0;
+  const mins = h * 60 + m;
+  return mins >= 9 * 60 + 15 && mins <= 15 * 60 + 40;
+}
+
+// Test hooks
+export function _resetInStreamForTest() {
+  _stop();
+  _subscribed.clear();
+  _activeClients = 0; _failureStreak = 0;
+}
+export function inDebugState() {
+  return { activeClients: _activeClients, subscribed: [..._subscribed], timer: !!_timer, failureStreak: _failureStreak };
+}
+
+export function initInStream(deps) {
+  _deps = deps || {};
+}
+
+// ---------------------------------------------------------------
+// Quote fetch: Groww first (genuine NSE LTP, stocks + ETFs), Yahoo for
+// indices / Groww misses. Both are micro-cached in index.js (3s shared).
+// ---------------------------------------------------------------
+async function _fetchInQuote(sym) {
+  if (typeof _deps?.fetchGrowwNseQuote === 'function') {
+    try {
+      const q = await _deps.fetchGrowwNseQuote(sym);
+      if (q && q.price > 0) return { q, source: 'groww-in-stream' };
+    } catch { /* fall through */ }
+  }
+  if (typeof _deps?.fetchYahooQuote === 'function' && typeof _deps?.toYahooSymbol === 'function') {
+    try {
+      const ysym = _deps.toYahooSymbol(sym, 'IN');
+      const q = await _deps.fetchYahooQuote(ysym);
+      if (q && q.price > 0) return { q, source: 'yahoo-in-stream' };
+    } catch { /* give up this round */ }
+  }
+  return null;
+}
+
+function _pushTick(sym, q, source) {
+  setTick(`IN_${sym}`, {
+    price: q.price,
+    change: typeof q.change === 'number' ? q.change : 0,
+    high: q.high || q.price,
+    low: q.low || q.price,
+    volume: q.volume || 0,
+    time: q.time || Date.now(),
+  }, source);
+}
+
+/** One-shot refresh — used for fresh subscriptions (incl. after-hours snapshot). */
+async function _refreshSymbol(sym) {
+  const got = await _fetchInQuote(sym);
+  if (got) _pushTick(sym, got.q, got.source);
+  return !!got;
+}
+
+// ---------------------------------------------------------------
+// Client lifecycle (called from /api/stream)
+// ---------------------------------------------------------------
+export function inClientUp() {
+  _activeClients++;
+  _startIfNeeded();
+}
+export function inClientDown() {
+  _activeClients = Math.max(0, _activeClients - 1);
+  if (_activeClients === 0) _stop();
+}
+
+function _startIfNeeded() {
+  if (_timer || _subscribed.size === 0) return;
+  if (!nseWindow()) return; // outside NSE hours the one-shot refreshes own the snapshot
+  _timer = setInterval(_tick, POLL_MS);
+  if (typeof _timer.unref === 'function') _timer.unref();
+  _tick(); // immediate first round
+}
+
+function _stop() {
+  if (_timer) { clearInterval(_timer); _timer = null; }
+  _failureStreak = 0;
+}
+
+// ---------------------------------------------------------------
+// Poll loop
+// ---------------------------------------------------------------
+async function _tick() {
+  try {
+    if (_activeClients === 0 || _subscribed.size === 0) return;
+    if (!nseWindow()) { _stop(); return; }
+
+    const symbols = [..._subscribed];
+    let got = 0;
+    for (let i = 0; i < symbols.length; i += BATCH) {
+      const batch = symbols.slice(i, i + BATCH);
+      const results = await Promise.allSettled(batch.map(s => _fetchInQuote(s)));
+      results.forEach((r, idx) => {
+        if (r.status === 'fulfilled' && r.value) {
+          _pushTick(batch[idx], r.value.q, r.value.source);
+          got++;
+        }
+      });
+    }
+
+    if (got === 0) {
+      _failureStreak++;
+      if (_failureStreak >= FAILURE_STREAK_LIMIT && _timer) {
+        clearInterval(_timer);
+        _timer = setInterval(_tick, BACKOFF_MS);
+        if (typeof _timer.unref === 'function') _timer.unref();
+      }
+      return;
+    }
+    if (_failureStreak >= FAILURE_STREAK_LIMIT && _timer) {
+      // Recovered — restore fast cadence.
+      clearInterval(_timer);
+      _timer = setInterval(_tick, POLL_MS);
+      if (typeof _timer.unref === 'function') _timer.unref();
+    }
+    _failureStreak = 0;
+  } catch (e) {
+    console.warn('[in-stream] tick error:', e?.message);
+  }
+}
+
+// ---------------------------------------------------------------
+// Subscription API (called from /api/stream with the `in` symbols)
+// ---------------------------------------------------------------
+export function ensureInSubscribed(symbols) {
+  const fresh = [];
+  for (const s of symbols || []) {
+    const sym = String(s).replace('.NS', '').replace('.BO', '').trim().toUpperCase();
+    if (!sym || CRYPTO_BASES.has(sym)) continue; // cryptoStream owns crypto keys
+    if (!_subscribed.has(sym)) { _subscribed.add(sym); fresh.push(sym); }
+  }
+  // One-shot snapshot for fresh symbols (works even outside NSE hours —
+  // Groww/Yahoo serve the last traded price, which is correct when closed).
+  fresh.forEach(sym => { _refreshSymbol(sym).catch(() => { }); });
+  // If clients are already connected and the NSE window is open, ensure the
+  // 5s loop covers the new symbols too.
+  if (_activeClients > 0 && _subscribed.size > 0) _startIfNeeded();
+}
