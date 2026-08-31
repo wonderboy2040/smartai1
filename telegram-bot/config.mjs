@@ -122,31 +122,31 @@ export const CORS_PROXIES = [''];
 
 // ETF Configurations
 export const ALPHA_ETFS_IN = [
-  { sym: 'JUNIORBEES', name: 'Nippon India ETF Junior BeES', cagr: 18.5, maxDD: 30, cat: 'Next 50', fixedAlloc: 0.12 },
-  { sym: 'MOMENTUM50', name: 'Motilal Oswal Nifty 500 Momentum 50', cagr: 22.5, maxDD: 30, cat: 'Smart Beta', fixedAlloc: 0.40 },
-  { sym: 'SMALLCAP', name: 'Nippon India Nifty Smallcap 250', cagr: 26.5, maxDD: 40, cat: 'Growth', fixedAlloc: 0.28 },
+  { sym: 'MOMENTUM50', name: 'Motilal Oswal Nifty 500 Momentum 50', cagr: 22.5, maxDD: 30, cat: 'Smart Beta', fixedAlloc: 0.30 },
+  { sym: 'SMALLCAP', name: 'Nippon India Nifty Smallcap 250', cagr: 24.5, maxDD: 40, cat: 'Growth', fixedAlloc: 0.25 },
   { sym: 'MID150BEES', name: 'Nippon India Nifty Midcap 150', cagr: 21.0, maxDD: 35, cat: 'Growth', fixedAlloc: 0.20 },
-  { sym: 'SETFNIF50', name: 'SBI ETF Nifty 50', cagr: 14.0, maxDD: 30, cat: 'Large Cap', fixedAlloc: 0.0 }
+  { sym: 'JUNIORBEES', name: 'Nippon India ETF Junior BeES', cagr: 18.5, maxDD: 30, cat: 'Next 50', fixedAlloc: 0.15 },
+  { sym: 'SETFNIF50', name: 'SBI ETF Nifty 50', cagr: 14.0, maxDD: 25, cat: 'Large Cap', fixedAlloc: 0.10 }
 ];
 
 export const ALPHA_ETFS_US = [
-  { sym: 'SMH', name: 'VanEck Semiconductor', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', fixedAlloc: 0.40 },
-  { sym: 'VGT', name: 'Vanguard Information Technology ETF', cagr: 21.0, maxDD: 33, cat: 'Tech', fixedAlloc: 0.33 },
-  { sym: 'SPCX', name: 'SPAC and New Issue ETF', cagr: 15.0, maxDD: 35, cat: 'SPAC/Growth', fixedAlloc: 0.27 }
+  { sym: 'SMH', name: 'VanEck Semiconductor ETF', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', fixedAlloc: 0.30 },
+  { sym: 'VOOG', name: 'Vanguard S&P 500 Growth ETF', cagr: 18.5, maxDD: 32, cat: 'US Mega Growth', fixedAlloc: 0.25 },
+  { sym: 'MU', name: 'Micron Technology Inc', cagr: 24.0, maxDD: 45, cat: 'Semiconductor / AI', fixedAlloc: 0.15 },
+  { sym: 'SPCX', name: 'The SPAC and New Issue ETF', cagr: 18.0, maxDD: 38, cat: 'SPAC/Growth', fixedAlloc: 0.10 },
+  { sym: 'VGT', name: 'Vanguard Information Technology ETF', cagr: 21.5, maxDD: 35, cat: 'Tech', fixedAlloc: 0.20 }
 ];
 
 export const EXACT_TICKER_MAP = {
-  'SMH': 'NASDAQ:SMH', 'VGT': 'AMEX:VGT', 'AVUV': 'AMEX:AVUV', 'IWM': 'AMEX:IWM',
-  'VEA': 'AMEX:VEA', 'SPY': 'AMEX:SPY', 'DIA': 'AMEX:DIA', 'XLV': 'AMEX:XLV',
+  'SMH': 'NASDAQ:SMH', 'VOOG': 'AMEX:VOOG', 'MU': 'NASDAQ:MU', 'SPCX': 'AMEX:SPCX', 'VGT': 'AMEX:VGT',
+  'AVUV': 'AMEX:AVUV', 'IWM': 'AMEX:IWM', 'VEA': 'AMEX:VEA', 'SPY': 'AMEX:SPY', 'DIA': 'AMEX:DIA', 'XLV': 'AMEX:XLV',
   'VIX': 'CBOE:VIX', 'SPX': 'SP:SPX', 'NDX': 'NASDAQ:NDX', 'IWY': 'AMEX:IWY',
-  'SPCX': 'NASDAQ:SPCX', 'QQQ': 'NASDAQ:QQQ',
   'AAPL': 'NASDAQ:AAPL', 'MSFT': 'NASDAQ:MSFT', 'GOOGL': 'NASDAQ:GOOGL',
   'AMZN': 'NASDAQ:AMZN', 'META': 'NASDAQ:META', 'NVDA': 'NASDAQ:NVDA', 'TSLA': 'NASDAQ:TSLA',
   'NIFTY': 'NSE:NIFTY', 'SENSEX': 'BSE:SENSEX', 'BANKNIFTY': 'NSE:BANKNIFTY',
   'NIFTY50': 'NSE:NIFTY', 'INDIAVIX': 'NSE:INDIAVIX', 'GIFT_NIFTY': 'NSE:GIFT_NIFTY',
-  'JUNIORBEES': 'NSE:JUNIORBEES', 'MOMENTUM50': 'NSE:MOMENTUM50',
-  'SMALLCAP': 'NSE:SMALLCAP', 'MID150BEES': 'NSE:MID150BEES',
-  'SETFNIF50': 'NSE:SETFNIF50',
+  'MOMENTUM50': 'NSE:MOMENTUM50', 'SMALLCAP': 'NSE:SMALLCAP', 'MID150BEES': 'NSE:MID150BEES',
+  'JUNIORBEES': 'NSE:JUNIORBEES', 'SETFNIF50': 'NSE:SETFNIF50',
   'BTC': 'BINANCE:BTCUSDT', 'ETH': 'BINANCE:ETHUSDT', 'SOL': 'BINANCE:SOLUSDT',
   'BNB': 'BINANCE:BNBUSDT', 'XRP': 'BINANCE:XRPUSDT'
 };

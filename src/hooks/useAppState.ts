@@ -835,8 +835,8 @@ export function useAppState() {
     };
     if (positions.length) positions.forEach(add);
     else {
-      ['NIFTY', 'BANKNIFTY'].forEach(s => { inSymbols.push(s); cleanToKey[`IN_${s}`] = `IN_${s}`; });
-      ['SPY', 'QQQ'].forEach(s => { usSymbols.push(s); cleanToKey[`US_${s}`] = `US_${s}`; });
+      ['NIFTY', 'BANKNIFTY', 'MOMENTUM50', 'SMALLCAP', 'MID150BEES', 'JUNIORBEES', 'SETFNIF50'].forEach(s => { inSymbols.push(s); cleanToKey[`IN_${s}`] = `IN_${s}`; });
+      ['SPY', 'SMH', 'VOOG', 'MU', 'SPCX', 'VGT'].forEach(s => { usSymbols.push(s); cleanToKey[`US_${s}`] = `US_${s}`; });
     }
     ['BTC', 'ETH'].forEach(s => { if (!cryptoSymbols.includes(s)) { cryptoSymbols.push(s); cleanToKey[`IN_${s}`] = `IN_${s}`; } });
 
@@ -869,8 +869,12 @@ export function useAppState() {
   useEffect(() => {
     if (!isAuthenticated) return;
     const currentPortfolio = portfolioRef.current;
-    const defaultSymbols = ['IN_NIFTY', 'US_SPY', 'US_QQQ', 'IN_BANKNIFTY', 'US_AAPL', 'US_TSLA', 'IN_INDIAVIX', 'US_VIX', 'IN_BTC', 'IN_ETH'];
-    let symbolsToSub = currentPortfolio.length > 0 ? [...new Set(currentPortfolio.map(p => `${p.market}_${p.symbol}`))] : defaultSymbols;
+    const defaultSymbols = [
+      'IN_NIFTY', 'IN_BANKNIFTY', 'IN_MOMENTUM50', 'IN_SMALLCAP', 'IN_MID150BEES', 'IN_JUNIORBEES', 'IN_SETFNIF50',
+      'US_SPY', 'US_SMH', 'US_VOOG', 'US_MU', 'US_SPCX', 'US_VGT',
+      'IN_INDIAVIX', 'US_VIX', 'IN_BTC', 'IN_ETH'
+    ];
+    let symbolsToSub = currentPortfolio.length > 0 ? [...new Set([...currentPortfolio.map(p => `${p.market}_${p.symbol}`), ...defaultSymbols])] : defaultSymbols;
     if (!symbolsToSub.includes('IN_BTC')) symbolsToSub.push('IN_BTC');
     if (!symbolsToSub.includes('IN_ETH')) symbolsToSub.push('IN_ETH');
     const positionsToSub: Position[] = symbolsToSub.map(symbol => {

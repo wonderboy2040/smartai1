@@ -286,8 +286,12 @@ export function getSmartAllocations(
     else if (volume > 500000) volumeSignal = '📊 Active';
     else if (volume > 100000) volumeSignal = '⚡ Normal';
 
-    // === DYNAMIC ALLOCATION DISABLED (Fixed Allocations based on User Request) ===
+    // === DYNAMIC REAL-TIME MARKET CONDITION ALLOCATION ===
     let allocMult = 1.0;
+    if (rsi < 35 || strength >= 70) allocMult = 1.35;
+    else if (rsi < 45 || strength >= 60) allocMult = 1.15;
+    else if (rsi > 70 || strength <= 35) allocMult = 0.65;
+    else if (rsi > 65) allocMult = 0.85;
 
     const discount = price > 0 ? ((price - targetEntry) / price) * 100 : 0;
 

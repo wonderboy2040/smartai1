@@ -24,7 +24,7 @@
 // ============================================================
 
 import { Transaction, Position, PriceData } from '../types';
-import { isCryptoSymbol } from './constants';
+import { isCryptoSymbol, ALPHA_ETFS_IN, ALPHA_ETFS_US } from './constants';
 
 export type MarketBucket = 'india' | 'usa' | 'crypto';
 export type SIPFrequency = 'monthly' | 'quarterly';
@@ -153,7 +153,7 @@ export function computeMonthlyPlan(
   // Per-symbol planned qty: distribute indiaPlanned across existing holdings
   // proportional to current value (so the dominant holding gets more SIP).
   const indiaSymbols = buildSymbolPlanRows(
-    holdingsByBucket.india, indiaBuys, livePrices, usdInrRate, indiaPlanned
+    holdingsByBucket.india, indiaBuys, livePrices, usdInrRate, indiaPlanned, 'india'
   );
   const indiaPlannedQty = indiaSymbols.reduce((s, r) => s + r.plannedQty, 0);
 
@@ -166,7 +166,7 @@ export function computeMonthlyPlan(
     s + (t.market === 'US' ? t.amount * usdInrRate : t.amount), 0);
   const usActualQty = usBuys.reduce((s, t) => s + t.qty, 0);
   const usSymbols = buildSymbolPlanRows(
-    holdingsByBucket.usa, usBuys, livePrices, usdInrRate, usPlanned
+    holdingsByBucket.usa, usBuys, livePrices, usdInrRate, usPlanned, 'usa'
   );
   const usPlannedQty = usSymbols.reduce((s, r) => s + r.plannedQty, 0);
   const usNextNote = usFrequency === 'monthly'
@@ -182,7 +182,7 @@ export function computeMonthlyPlan(
     s + (t.market === 'US' ? t.amount * usdInrRate : t.amount), 0);
   const cryptoActualQty = cryptoBuys.reduce((s, t) => s + t.qty, 0);
   const cryptoSymbols = buildSymbolPlanRows(
-    holdingsByBucket.crypto, cryptoBuys, livePrices, usdInrRate, cryptoPlanned
+    holdingsByBucket.crypto, cryptoBuys, livePrices, usdInrRate, cryptoPlanned, 'crypto'
   );
   const cryptoPlannedQty = cryptoSymbols.reduce((s, r) => s + r.plannedQty, 0);
 
@@ -262,9 +262,9 @@ function buildSymbolPlanRows(
   buys: Transaction[],
   livePrices: Record<string, PriceData>,
   usdInrRate: number,
-  plannedAmountINR: number
+  plannedAmountINR: number,
+  bucket?: MarketBucket
 ): SymbolPlanRow[] {
-  if (holdings.length === 0 && buys.length === 0) return [];
   if (plannedAmountINR <= 0) return [];
 
   // Use holdings if present, else symbols from this month's buys.
@@ -272,35 +272,59 @@ function buildSymbolPlanRows(
   for (const p of holdings) symbolSet.add(`${p.market}_${p.symbol}`);
   for (const t of buys) symbolSet.add(`${t.market}_${t.symbol}`);
 
-  // Weight by current portfolio value (in INR).
+  // If no holdings or buys yet, populate with curated Alpha ETF universe
+  if (symbolSet.size === 0 && bucket) {
+    if (bucket === 'india') {
+      ALPHA_ETFS_IN.forEach(e => symbolSet.add(`IN_${e.sym}`));
+    } else if (bucket === 'usa') {
+      ALPHA_ETFS_US.forEach(e => symbolSet.add(`US_${e.sym}`));
+    } else if (bucket === 'crypto') {
+      symbolSet.add('IN_BTC');
+      symbolSet.add('IN_ETH');
+    }
+  }
+
+  if (symbolSet.size === 0) return [];
+
+  // Weight by current portfolio value (in INR) or base allocation weight.
   const weights = new Map<string, number>();
   let totalWeight = 0;
   for (const k of symbolSet) {
     const p = holdings.find(h => `${h.market}_${h.symbol}` === k);
     const t = buys.find(b => `${b.market}_${b.symbol}` === k);
-    const lp = livePrices[k];
+    const [market, symbol] = k.split('_');
+    const lp = livePrices[k] || livePrices[`${market}_${symbol}.NS`];
     const qty = p?.qty ?? t?.qty ?? 0;
     const price = lp?.price ?? p?.avgPrice ?? t?.price ?? 0;
-    const inrPrice = (p?.market ?? t?.market) === 'US' ? price * usdInrRate : price;
-    const w = qty * inrPrice;
+    const inrPrice = market === 'US' ? price * usdInrRate : price;
+    let w = qty * inrPrice;
+
+    if (w === 0) {
+      const inETF = ALPHA_ETFS_IN.find(e => e.sym === symbol);
+      const usETF = ALPHA_ETFS_US.find(e => e.sym === symbol);
+      if (inETF) w = inETF.fixedAlloc * 100;
+      else if (usETF) w = usETF.fixedAlloc * 100;
+      else if (symbol === 'BTC') w = 65;
+      else if (symbol === 'ETH') w = 35;
+      else w = 1;
+    }
+
     weights.set(k, w);
     totalWeight += w;
   }
 
-  // If totalWeight is 0 (no holdings + no live price), distribute equally.
-  const symbols = Array.from(symbolSet).sort();
+  const symbols = Array.from(symbolSet);
   const out: SymbolPlanRow[] = [];
   for (const k of symbols) {
     const [market, symbol] = k.split('_');
     const mkt = (market as 'IN' | 'US');
-    const lp = livePrices[k];
+    const lp = livePrices[k] || livePrices[`${market}_${symbol}.NS`];
     const livePrice = lp?.price ?? null;
     const weight = totalWeight > 0 ? (weights.get(k) || 0) / totalWeight : 1 / symbols.length;
     const allocatedAmountINR = plannedAmountINR * weight;
+    
     // Planned qty uses live price (in native currency for that market).
-    const nativePrice = livePrice != null
-      ? (mkt === 'US' ? livePrice : livePrice)
-      : null;
+    const nativePrice = livePrice != null && livePrice > 0 ? livePrice : null;
     const plannedQty = nativePrice != null && nativePrice > 0
       ? (mkt === 'US' ? allocatedAmountINR / usdInrRate : allocatedAmountINR) / nativePrice
       : 0;

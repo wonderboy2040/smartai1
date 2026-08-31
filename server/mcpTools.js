@@ -173,6 +173,23 @@ export const SERVER_MCP_TOOLS_OPENAI = [
         }
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_planner_ai_allocation',
+      description: 'Wealth Planner MCP AI Agent tool. Calculates optimal investment distribution for any investment amount across curated Indian Alpha ETFs (MOMENTUM50, SMALLCAP, MID150BEES, JUNIORBEES, SETFNIF50), USA Alpha ETFs (SMH, VOOG, MU, SPCX, VGT), and Crypto (BTC, ETH) based on real-time market prices, SuperScore v6.0, RSI momentum, and 4 AI Agent models (Quantum Alpha, Balanced Parity, Aggressive Momentum, Deep Dip Hunter).',
+      parameters: {
+        type: 'object',
+        properties: {
+          investmentAmount: { type: 'number', description: 'Total investment amount in INR (e.g. 25000, 50000, 100000).' },
+          agentModel: { type: 'string', enum: ['QUANTUM_ALPHA', 'BALANCED_PARITY', 'AGGRESSIVE_MOMENTUM', 'DEEP_DIP_HUNTER'], description: 'AI Agent model strategy (default: QUANTUM_ALPHA).' },
+          investmentType: { type: 'string', enum: ['SIP', 'LUMPSUM'], description: 'Investment mode: SIP or LUMPSUM.' },
+          marketFocus: { type: 'string', enum: ['ALL', 'IN', 'US', 'CRYPTO'], description: 'Market selection (default: ALL).' }
+        },
+        required: ['investmentAmount']
+      }
+    }
   }
 ];
 
@@ -735,6 +752,128 @@ export async function executeServerMCPTool(name, args = {}, context = {}) {
             entryCutoff: '15:00 IST — no fresh entries permitted after 3:00 PM.',
             slippageBuffer: 'Limit orders preferred inside the entry zone.'
           }
+        };
+      }
+
+      // 11. Wealth Planner MCP AI Agent Allocation Tool
+      case 'get_planner_ai_allocation': {
+        const invAmount = parseFloat(args.investmentAmount) || 25000;
+        const agentModel = String(args.agentModel || 'QUANTUM_ALPHA').toUpperCase();
+        const invType = String(args.investmentType || 'SIP').toUpperCase();
+        const marketFocus = String(args.marketFocus || 'ALL').toUpperCase();
+
+        const assetList = [
+          // India
+          { sym: 'MOMENTUM50', name: 'Motilal Oswal Nifty 500 Momentum 50', mkt: 'IN', baseWeight: 0.28, cagr: 22.5 },
+          { sym: 'SMALLCAP', name: 'Nippon India Nifty Smallcap 250', mkt: 'IN', baseWeight: 0.22, cagr: 24.5 },
+          { sym: 'MID150BEES', name: 'Nippon India Nifty Midcap 150', mkt: 'IN', baseWeight: 0.20, cagr: 21.0 },
+          { sym: 'JUNIORBEES', name: 'Nippon India ETF Junior BeES', mkt: 'IN', baseWeight: 0.18, cagr: 18.5 },
+          { sym: 'SETFNIF50', name: 'SBI ETF Nifty 50', mkt: 'IN', baseWeight: 0.12, cagr: 14.0 },
+          // USA
+          { sym: 'SMH', name: 'VanEck Semiconductor ETF', mkt: 'US', baseWeight: 0.30, cagr: 28.5 },
+          { sym: 'VOOG', name: 'Vanguard S&P 500 Growth ETF', mkt: 'US', baseWeight: 0.25, cagr: 18.5 },
+          { sym: 'MU', name: 'Micron Technology Inc', mkt: 'US', baseWeight: 0.15, cagr: 24.0 },
+          { sym: 'SPCX', name: 'The SPAC and New Issue ETF', mkt: 'US', baseWeight: 0.10, cagr: 18.0 },
+          { sym: 'VGT', name: 'Vanguard Information Technology ETF', mkt: 'US', baseWeight: 0.20, cagr: 21.5 },
+          // Crypto
+          { sym: 'BTC', name: 'Bitcoin (Digital Gold)', mkt: 'IN', baseWeight: 0.65, cagr: 50.0 },
+          { sym: 'ETH', name: 'Ethereum (Web3 Ecosystem)', mkt: 'IN', baseWeight: 0.35, cagr: 42.0 }
+        ];
+
+        let filtered = assetList;
+        if (marketFocus === 'IN') filtered = assetList.filter(a => a.mkt === 'IN' && !['BTC', 'ETH'].includes(a.sym));
+        else if (marketFocus === 'US') filtered = assetList.filter(a => a.mkt === 'US');
+        else if (marketFocus === 'CRYPTO') filtered = assetList.filter(a => ['BTC', 'ETH'].includes(a.sym));
+
+        const computed = [];
+        for (const spec of filtered) {
+          const key = `${spec.mkt}_${spec.sym}`;
+          const altKey = `${spec.mkt}_${spec.sym}.NS`;
+          const pd = livePrices[key] || livePrices[altKey] || {};
+          let price = pd.price || 0;
+          if (!price || price <= 0) {
+            if (spec.sym === 'MOMENTUM50') price = 68.5;
+            else if (spec.sym === 'SMALLCAP') price = 185.0;
+            else if (spec.sym === 'MID150BEES') price = 22.4;
+            else if (spec.sym === 'JUNIORBEES') price = 685.0;
+            else if (spec.sym === 'SETFNIF50') price = 265.0;
+            else if (spec.sym === 'SMH') price = 280.0;
+            else if (spec.sym === 'VOOG') price = 365.0;
+            else if (spec.sym === 'MU') price = 125.0;
+            else if (spec.sym === 'SPCX') price = 32.0;
+            else if (spec.sym === 'VGT') price = 590.0;
+            else if (spec.sym === 'BTC') price = 7800000;
+            else if (spec.sym === 'ETH') price = 280000;
+          }
+          const rsi = pd.rsi || 50;
+          const superScore = computeServerSuperScore({ rsi, price, change: pd.change || 0, sma20: pd.sma20, sma50: pd.sma50, macd: pd.macd });
+
+          let multiplier = 1.0;
+          if (agentModel === 'QUANTUM_ALPHA') {
+            multiplier = superScore >= 68 ? 1.4 : superScore <= 35 ? 0.6 : 1.0;
+          } else if (agentModel === 'AGGRESSIVE_MOMENTUM') {
+            multiplier = ['MOMENTUM50', 'SMH', 'MU', 'VGT'].includes(spec.sym) ? 1.5 : 0.8;
+          } else if (agentModel === 'DEEP_DIP_HUNTER') {
+            multiplier = rsi < 38 ? 1.7 : rsi > 65 ? 0.5 : 0.9;
+          }
+
+          const dynamicWeight = spec.baseWeight * multiplier;
+          computed.push({
+            symbol: spec.sym,
+            name: spec.name,
+            market: spec.mkt,
+            currentPrice: price,
+            currency: spec.mkt === 'IN' ? 'INR' : 'USD',
+            superScore: `${superScore}/99`,
+            rsi: Math.round(rsi),
+            dynamicWeight,
+            signal: superScore >= 68 ? '💎 STRONG BUY' : superScore >= 52 ? '🟢 ACCUMULATE' : '🟡 WAIT / DIP',
+            stopLoss: Math.round(price * 0.91),
+            target1: Math.round(price * 1.10),
+            target3Yr: Math.round(price * Math.pow(1 + spec.cagr / 100, 3))
+          });
+        }
+
+        const totalWeight = computed.reduce((s, a) => s + a.dynamicWeight, 0) || 1;
+        const allocations = computed.map(a => {
+          const allocPct = a.dynamicWeight / totalWeight;
+          const allocAmountINR = Math.round(invAmount * allocPct);
+          const allocNative = a.market === 'US' ? Math.round(allocAmountINR / usdInrRate) : allocAmountINR;
+          const targetUnits = a.market === 'US'
+            ? +(allocNative / a.currentPrice).toFixed(2)
+            : ['BTC', 'ETH'].includes(a.symbol)
+            ? +(allocAmountINR / a.currentPrice).toFixed(6)
+            : Math.max(1, Math.floor(allocAmountINR / a.currentPrice));
+
+          return {
+            symbol: a.symbol,
+            name: a.name,
+            market: a.market,
+            currentPrice: a.currentPrice,
+            currency: a.currency,
+            superScore: a.superScore,
+            rsi: a.rsi,
+            signal: a.signal,
+            allocationPercentage: `${(allocPct * 100).toFixed(1)}%`,
+            allocatedAmountINR: `₹${allocAmountINR.toLocaleString('en-IN')}`,
+            allocatedNative: a.market === 'US' ? `$${allocNative.toLocaleString('en-US')}` : `₹${allocAmountINR.toLocaleString('en-IN')}`,
+            recommendedUnits: `${targetUnits} ${a.market === 'US' ? 'shares' : 'units'}`,
+            stopLoss: a.stopLoss,
+            target1: a.target1,
+            target3Yr: a.target3Yr
+          };
+        });
+
+        allocations.sort((a, b) => parseInt(b.allocatedAmountINR.replace(/[^0-9]/g, '')) - parseInt(a.allocatedAmountINR.replace(/[^0-9]/g, '')));
+
+        return {
+          agentEngine: `SmartAI MCP Planner Engine (${agentModel})`,
+          investmentAmount: `₹${invAmount.toLocaleString('en-IN')}`,
+          investmentType: invType,
+          marketFocus,
+          totalAllocatedAssets: allocations.length,
+          executionAdvice: 'Deploy into designated entry zones with structural stop losses.',
+          allocations
         };
       }
 

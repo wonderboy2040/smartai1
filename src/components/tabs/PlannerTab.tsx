@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useApp } from '../../hooks/AppContext';
 import { RiskLevel } from '../../types';
 import { formatCurrency } from '../../utils/constants';
-import { analyzeAsset } from '../../utils/telegram';
+import { MCPAgentAllocationPanel } from '../MCPAgentAllocationPanel';
 import { SmartDipSizer } from '../SmartDipSizer';
 import { WhatIfSIPOptimizer } from '../WhatIfSIPOptimizer';
 import { MonteCarloSimulator } from '../MonteCarloSimulator';
@@ -25,7 +25,6 @@ export default React.memo(function PlannerTab() {
     monthlyExpenses, setMonthlyExpenses, currentAge, setCurrentAge,
     totalSIP, cagr, totalInvestedPlanner, fvMed, fvWorst, fvBest, multiplier,
     fireNumber, yearsToFire, fireProgress,
-    smartAllocations,
   } = useApp();
 
   // --- Goals State (localStorage persisted) ---
@@ -168,6 +167,9 @@ export default React.memo(function PlannerTab() {
           </div>
         </div>
       </div>
+
+      {/* ============ MCP AI AGENT WEALTH ALLOCATION ENGINE ============ */}
+      <MCPAgentAllocationPanel />
 
       {/* Monte Carlo */}
       <div className="quantum-panel rounded-2xl p-5 animate-fade-in-up delay-100">
@@ -370,145 +372,14 @@ export default React.memo(function PlannerTab() {
         </div>
       )}
 
-      {/* Smart AI Allocations */}
-      {portfolio.length > 0 && (
-        <div className="quantum-panel rounded-2xl p-5 border-purple-500/10 animate-fade-in-up delay-300">
-          <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
-            <span className="w-7 h-7 rounded-lg bg-purple-500/10 flex items-center justify-center text-sm">🤖</span>
-            Smart AI Allocation Engine
-            <span className="ml-auto badge bg-purple-500/10 text-purple-400 border border-purple-500/20 text-[10px]">PRO ENGINE</span>
-          </h3>
-
-          {/* Per-Asset Analysis Cards */}
-          <div className="grid md:grid-cols-2 gap-3 mb-4">
-            {portfolio.slice(0, 8).map(p => {
-              const key = `${p.market}_${p.symbol}`;
-              const signal = analyzeAsset(p, livePrices[key]);
-              const signalColors: Record<string, { bg: string; text: string; border: string }> = {
-                'BUY': { bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/20' },
-                'SELL': { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20' },
-                'HOLD': { bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/20' },
-              };
-              const sc = signalColors[signal.action] || signalColors['HOLD'];
-              const cur = p.market === 'IN' ? '₹' : '$';
-
-              return (
-                <div key={p.id} className={`bg-black/20 rounded-xl p-4 border ${sc.border}`}>
-                  <div className="flex justify-between items-start mb-3">
-                    <div>
-                      <div className="font-bold text-white text-sm">{p.symbol.replace('.NS', '')}</div>
-                      <div className="text-[10px] text-slate-500">{p.market === 'IN' ? '🇮🇳 India' : '🦅 USA'}</div>
-                    </div>
-                    <span className={`${sc.bg} ${sc.text} px-2.5 py-1 rounded-lg text-[10px] font-black border ${sc.border}`}>
-                      {signal.action === 'BUY' ? '🟢' : signal.action === 'SELL' ? '🔴' : '🟡'} {signal.action}
-                    </span>
-                  </div>
-                  {/* Metrics Grid */}
-                  <div className="grid grid-cols-4 gap-1.5 text-center mb-3">
-                    <div className="bg-black/30 rounded-lg p-1.5">
-                      <div className="text-[8px] text-slate-600 uppercase">RSI</div>
-                      <div className={`text-xs font-bold font-mono ${signal.rsi < 35 ? 'text-emerald-400' : signal.rsi > 65 ? 'text-red-400' : 'text-amber-400'}`}>{signal.rsi.toFixed(0)}</div>
-                    </div>
-                    <div className="bg-black/30 rounded-lg p-1.5">
-                      <div className="text-[8px] text-slate-600 uppercase">Trend</div>
-                      <div className="text-xs font-bold">{signal.trend === 'up' ? '📈' : signal.trend === 'down' ? '📉' : '↔'}</div>
-                    </div>
-                    <div className="bg-black/30 rounded-lg p-1.5">
-                      <div className="text-[8px] text-slate-600 uppercase">Price</div>
-                      <div className="text-xs font-bold text-cyan-400 font-mono">{cur}{signal.price.toFixed(2)}</div>
-                    </div>
-                    <div className="bg-black/30 rounded-lg p-1.5">
-                      <div className="text-[8px] text-slate-600 uppercase">Score</div>
-                      <div className={`text-xs font-bold font-mono ${sc.text}`}>{signal.confidence}</div>
-                    </div>
-                  </div>
-                  {/* Strength Bar */}
-                  <div className="mb-2">
-                    <div className="w-full bg-slate-800/60 rounded-full h-1.5">
-                      <div className={`h-full rounded-full transition-all ${signal.confidence > 75 ? 'bg-gradient-to-r from-emerald-500 to-cyan-400' : signal.confidence > 50 ? 'bg-gradient-to-r from-amber-500 to-yellow-400' : 'bg-gradient-to-r from-red-500 to-orange-400'}`} style={{ width: `${signal.confidence}%` }} />
-                    </div>
-                  </div>
-                  {/* Fib S/R */}
-                  <div className="flex items-center gap-2 text-[10px] text-slate-500">
-                    <span>SL: <span className="text-red-400 font-mono">{cur}{(signal.fibLow || 0).toFixed(1)}</span></span>
-                    <span className="text-slate-700">→</span>
-                    <span>TP: <span className="text-emerald-400 font-mono">{cur}{(signal.fibHigh || 0).toFixed(1)}</span></span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Allocation Recommendations */}
-          {(() => {
-            const allocs = smartAllocations;
-            return (
-              <div className="bg-black/20 rounded-xl p-4 border border-purple-500/15">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="text-[10px] text-purple-400 font-bold uppercase tracking-wider">
-                    💰 Monthly SIP Allocation
-                  </div>
-                  <div className="text-[10px] text-slate-500 font-mono">
-                    ₹{Math.round(indiaSIP).toLocaleString()} IN + ₹{usSIP.toLocaleString()} US + ₹{(btcSIP + ethSIP).toLocaleString()} Crypto
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  {allocs.map((a, i) => {
-                    const cur = a.market === 'IN' ? '₹' : '$';
-                    const isGreen = a.signal.includes('BUY') || a.signal.includes('ACCUMULATE') || a.signal.includes('STRONG');
-                    const isRed = a.signal.includes('AVOID') || a.signal.includes('DISTRIBUTE');
-                    return (
-                      <div key={i} className="bg-black/20 rounded-xl p-3 border border-white/5 hover:border-cyan-500/20 transition-all">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm">{a.market === 'IN' ? '🇮🇳' : '🦅'}</span>
-                            <div>
-                              <span className="font-bold text-white text-sm">{a.symbol.replace('.NS', '')}</span>
-                              <div className="text-[9px] text-slate-600 truncate max-w-[160px]">{a.name}</div>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="font-black text-cyan-400 font-mono text-sm">₹{a.allocAmount.toLocaleString()}</div>
-                            <div className="text-[9px] text-slate-600">{(a.allocPct * 100).toFixed(0)}% of SIP</div>
-                          </div>
-                        </div>
-                        {/* Signal + Allocation Bar */}
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border ${isGreen ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                            isRed ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                              'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                            }`}>{a.signal}</span>
-                          <div className="flex-1 bg-slate-800/60 rounded-full h-1.5">
-                            <div className={`h-full rounded-full transition-all ${isGreen ? 'bg-emerald-500' : isRed ? 'bg-red-500' : 'bg-amber-500'}`} style={{ width: `${a.allocPct * 100}%` }} />
-                          </div>
-                        </div>
-                        {/* Details Row */}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] text-slate-500">
-                          <div>RSI: <span className="text-slate-300 font-mono">{a.rsi.toFixed(0)}</span></div>
-                          <div>Entry: <span className="text-cyan-400 font-mono">{cur}{a.targetEntry.toFixed(1)}</span></div>
-                          <div>SL: <span className="text-red-400 font-mono">{cur}{a.stopLoss.toFixed(1)}</span></div>
-                          <div>T1: <span className="text-emerald-400 font-mono">{cur}{a.takeProfit.toFixed(1)}</span></div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-500 mt-1">
-                          <div>Str: <span className={`font-bold ${a.strength > 65 ? 'text-emerald-400' : a.strength < 35 ? 'text-red-400' : 'text-amber-400'}`}>{a.strength}</span></div>
-                          <div>R:R <span className={`font-mono font-bold ${a.riskReward >= 2 ? 'text-emerald-400' : a.riskReward >= 1.5 ? 'text-amber-400' : 'text-red-400'}`}>1:{a.riskReward.toFixed(1)}</span></div>
-                        </div>
-                        {/* Reason */}
-                        <div className="text-[9px] text-slate-600 mt-1.5 italic leading-snug">{a.reason}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Smart Buy-on-Dip Position Sizing */}
-          <SmartDipSizer
-            portfolio={portfolio}
-            livePrices={livePrices}
-            monthlyBudget={indiaSIP + usSIP}
-          />
+      {/* Smart Buy-on-Dip Position Sizing */}
+      <div className="quantum-panel rounded-2xl p-5 border-emerald-500/15 animate-fade-in-up">
+        <SmartDipSizer
+          portfolio={portfolio}
+          livePrices={livePrices}
+          monthlyBudget={indiaSIP + usSIP}
+        />
+      </div>
 
           {/* Quantum Compound Growth Projection Panel */}
           <div className="bg-black/20 rounded-xl p-4 border border-blue-500/15 col-span-1 md:col-span-2 mt-4">
@@ -614,10 +485,7 @@ export default React.memo(function PlannerTab() {
                 );
               })()}
             </div>
-           </div>
-
-         </div>
-       )}
+          </div>
 
       {/* ============ WEALTH MILESTONE TRACKER ============ */}
       <div className="quantum-panel rounded-2xl p-5 border-amber-500/10 animate-fade-in-up">

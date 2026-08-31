@@ -9,28 +9,28 @@ export const TAX_PAIRS: Record<string, string> = {
 };
 
 export const ALPHA_ETFS_IN: ETFInfo[] = [
-  { sym: 'JUNIORBEES', name: 'Nippon India ETF Junior BeES', cagr: 18.5, maxDD: 30, cat: 'Next 50', aum: '₹2.5k Cr', vol: 'High', fixedAlloc: 0.12 },
-  { sym: 'MOMENTUM50', name: 'Motilal Oswal Nifty 500 Momentum 50', cagr: 22.5, maxDD: 30, cat: 'Smart Beta', aum: '₹3k Cr', vol: 'Moderate', fixedAlloc: 0.40 },
-  { sym: 'SMALLCAP', name: 'Nippon India Nifty Smallcap 250', cagr: 26.5, maxDD: 40, cat: 'Growth', aum: '₹1k Cr', vol: 'Moderate', fixedAlloc: 0.28 },
-  { sym: 'MID150BEES', name: 'Nippon India Nifty Midcap 150', cagr: 21.0, maxDD: 35, cat: 'Growth', aum: '₹2.8k Cr', vol: 'High', fixedAlloc: 0.20 },
-  { sym: 'SETFNIF50', name: 'SBI ETF Nifty 50', cagr: 14.0, maxDD: 30, cat: 'Large Cap', aum: '₹2.2k Cr', vol: 'High', fixedAlloc: 0.0 }
+  { sym: 'MOMENTUM50', name: 'Motilal Oswal Nifty 500 Momentum 50', cagr: 22.5, maxDD: 30, cat: 'Smart Beta', aum: '₹3k Cr', vol: 'Moderate', fixedAlloc: 0.30 },
+  { sym: 'SMALLCAP', name: 'Nippon India Nifty Smallcap 250', cagr: 24.5, maxDD: 40, cat: 'Growth', aum: '₹1.5k Cr', vol: 'High', fixedAlloc: 0.25 },
+  { sym: 'MID150BEES', name: 'Nippon India Nifty Midcap 150', cagr: 21.0, maxDD: 35, cat: 'Growth', aum: '₹2.8k Cr', vol: 'Moderate', fixedAlloc: 0.20 },
+  { sym: 'JUNIORBEES', name: 'Nippon India ETF Junior BeES', cagr: 18.5, maxDD: 30, cat: 'Next 50', aum: '₹4.5k Cr', vol: 'Moderate', fixedAlloc: 0.15 },
+  { sym: 'SETFNIF50', name: 'SBI ETF Nifty 50', cagr: 14.0, maxDD: 25, cat: 'Large Cap', aum: '₹180k Cr', vol: 'Low', fixedAlloc: 0.10 }
 ];
 
 export const ALPHA_ETFS_US: ETFInfo[] = [
-  { sym: 'SMH', name: 'VanEck Semiconductor', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', aum: '$15B', vol: 'Extreme', fixedAlloc: 0.40 },
-  // FIX (audit H8): 'SPCX / SpaceX' was FICTIONAL — SpaceX is not publicly
-  // traded and the SPCX ticker (Morgan Stanley SPAC ETF) was delisted in 2013.
-  // The fabricated record (CAGR 35%, AUM "$350B") fed the screener's STRONG_BUY
-  // ranking, rebalancing targets (15% allocation!) and quality scores. Replaced
-  // with a real, liquid, tradable ETF: Invesco Nasdaq-100 (QQQ).
-  { sym: 'QQQ', name: 'Invesco Nasdaq-100 ETF', cagr: 18.0, maxDD: 35, cat: 'Tech Growth', aum: '$320B', vol: 'High', fixedAlloc: 0.15 },
-  { sym: 'MU', name: 'Micron Technology Inc', cagr: 22.0, maxDD: 45, cat: 'Semiconductor', aum: '$120B', vol: 'High', fixedAlloc: 0.10 }
+  { sym: 'SMH', name: 'VanEck Semiconductor ETF', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', aum: '$22B', vol: 'Extreme', fixedAlloc: 0.30 },
+  { sym: 'VOOG', name: 'Vanguard S&P 500 Growth ETF', cagr: 18.5, maxDD: 32, cat: 'US Mega Growth', aum: '$14B', vol: 'Moderate', fixedAlloc: 0.25 },
+  { sym: 'MU', name: 'Micron Technology Inc', cagr: 24.0, maxDD: 45, cat: 'Semiconductor / AI', aum: '$130B', vol: 'High', fixedAlloc: 0.15 },
+  { sym: 'SPCX', name: 'The SPAC and New Issue ETF', cagr: 18.0, maxDD: 38, cat: 'SPAC / Growth', aum: '$5B', vol: 'High', fixedAlloc: 0.10 },
+  { sym: 'VGT', name: 'Vanguard Information Technology ETF', cagr: 21.5, maxDD: 35, cat: 'Tech Broad Alpha', aum: '$75B', vol: 'High', fixedAlloc: 0.20 }
 ];
 
 export const EXACT_TICKER_MAP: Record<string, string> = {
-  // US ETFs & Indices
+  // US ETFs & Stocks
   'SMH': 'NASDAQ:SMH',
+  'VOOG': 'AMEX:VOOG',
   'MU': 'NASDAQ:MU',
+  'SPCX': 'AMEX:SPCX',
+  'VGT': 'AMEX:VGT',
   'AVUV': 'AMEX:AVUV',
   'IWM': 'AMEX:IWM',
   'VEA': 'AMEX:VEA',
@@ -43,7 +43,7 @@ export const EXACT_TICKER_MAP: Record<string, string> = {
   'DJI': 'TVC:DJI',
   'RUT': 'AMEX:RUT',
 
-  // Indian ETFs & Indices (already have NSE: prefix in code, but explicit mapping for accuracy)
+  // Indian ETFs & Indices
   'NIFTY': 'NSE:NIFTY',
   'SENSEX': 'BSE:SENSEX',
   'BANKNIFTY': 'NSE:BANKNIFTY',
@@ -51,15 +51,14 @@ export const EXACT_TICKER_MAP: Record<string, string> = {
   'NIFTYBANK': 'NSE:BANKNIFTY',
   'INDIAVIX': 'NSE:INDIAVIX',
 
-  // Common Indian ETFs from ALPHA_ETFS_IN
-  'JUNIORBEES': 'NSE:JUNIORBEES',
+  // Indian Planner Alpha ETFs
   'MOMENTUM50': 'NSE:MOMENTUM50',
   'SMALLCAP': 'NSE:SMALLCAP',
   'MID150BEES': 'NSE:MID150BEES',
+  'JUNIORBEES': 'NSE:JUNIORBEES',
   'SETFNIF50': 'NSE:SETFNIF50',
 
-  // Additional US symbols
-  'QQQ': 'NASDAQ:QQQ',
+  // Additional US & Crypto symbols
   'AAPL': 'NASDAQ:AAPL',
   'MSFT': 'NASDAQ:MSFT',
   'GOOGL': 'NASDAQ:GOOGL',
