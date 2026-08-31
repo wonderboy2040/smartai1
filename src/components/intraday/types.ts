@@ -113,6 +113,7 @@ export interface PaperTrade {
   target2: number | null;
   status: 'OPEN' | 'PARTIAL' | 'CLOSED';
   t1Hit: boolean;
+  dayKey?: string;
   openedAt: number;
   closedAt: number | null;
   closeReason: string | null;
@@ -134,6 +135,34 @@ export interface PaperSummary {
     wins: number;
     losses: number;
   };
+}
+
+export interface PaperDayStats {
+  dayKey: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  realizedPnl: number;
+}
+
+export interface PaperHistory {
+  days: number;
+  totalClosed: number;
+  groups: PaperDayStats[];
+  overall: {
+    totalTrades: number;
+    wins: number;
+    losses: number;
+    winRate: number;
+    avgWin: number;
+    avgLoss: number;
+    profitFactor: number | null;
+    totalPnl: number;
+    bestDay: { dayKey: string; pnl: number } | null;
+    worstDay: { dayKey: string; pnl: number } | null;
+  };
+  trades: PaperTrade[];
 }
 
 export interface TrackRecordData {

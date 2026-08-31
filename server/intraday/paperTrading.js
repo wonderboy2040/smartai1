@@ -15,6 +15,7 @@
 import { loadJSON, saveJSON } from './store.js';
 import { istDayKey, istMinutes } from './time.js';
 import { recordTradeClose } from './journal.js';
+import { scheduleBackup, restoreBackup, backupConfigured } from './backup.js';
 
 const FILE = 'paper-trades.json';
 const MAX_TRADES = 500;
@@ -28,6 +29,10 @@ function _persist() {
   _saveTimer = setTimeout(() => {
     _saveTimer = null;
     saveJSON(FILE, _state);
+    // DURABLE HISTORY: Render's free plan wipes server/data/ on every
+    // restart — mirror the state to the GitHub backup branch so the
+    // paper-trading track record survives (see backup.js).
+    try { scheduleBackup(FILE, _state); } catch { /* backup optional */ }
   }, 1000);
   if (typeof _saveTimer.unref === 'function') _saveTimer.unref();
 }
@@ -231,7 +236,7 @@ function _publicTrade(t) {
     id: t.id, symbol: t.symbol, direction: t.direction,
     entry: t.entry, qty: t.qty, remainingQty: t.remainingQty,
     stopLoss: t.stopLoss, target1: t.target1, target2: t.target2,
-    status: t.status, t1Hit: t.t1Hit,
+    status: t.status, t1Hit: t.t1Hit, dayKey: t.dayKey,
     openedAt: t.openedAt, closedAt: t.closedAt, closeReason: t.closeReason,
     lastPrice: t.lastPrice, realizedPnl: +(+t.realizedPnl).toFixed(2),
     unrealizedPnl: +(+t.unrealizedPnl).toFixed(2),
@@ -251,5 +256,210 @@ export function initPaperTrading() {
     }
   }
   _persist();
+
+  // DURABLE HISTORY — Render free plan wipes server/data/ on restart.
+  // If local state came up empty, pull the last remote backup and
+  // merge it back BEFORE the first client sees a wiped history.
+  if (_state.trades.length === 0 && backupConfigured()) {
+    _bootRestore();
+  }
   return events;
+}
+
+let _bootRestoring = false;
+async function _bootRestore() {
+  if (_bootRestoring) return;
+  _bootRestoring = true;
+  try {
+    const remote = await restoreBackup(FILE);
+    const remoteTrades = Array.isArray(remote?.trades) ? remote.trades : [];
+    if (remoteTrades.length > _state.trades.length) {
+      _mergeRestoredState(remote);
+      _persist();
+      console.log(`[paper] boot-restore: recovered ${remoteTrades.length} trades from remote backup`);
+    }
+  } catch (e) {
+    console.warn('[paper] boot-restore failed:', e?.message || e);
+  } finally {
+    _bootRestoring = false;
+  }
+}
+
+// ------------------------------------------------------------
+// HISTORY — full cross-day track record for the accuracy audit.
+// Day-grouped closed trades + win-rate stats, so the user can see
+// whether the paper-trading signal testing was actually accurate.
+// ------------------------------------------------------------
+export function getPaperHistory(days = 90) {
+  const windowDays = Math.max(1, Math.min(365, Math.floor(days) || 90));
+  const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+
+  const closed = _state.trades
+    .filter(t => t.status === 'CLOSED' && (t.closedAt || t.openedAt) >= cutoff)
+    .sort((a, b) => (b.closedAt || b.openedAt) - (a.closedAt || a.openedAt));
+
+  // Day buckets (newest first).
+  const byDay = new Map();
+  for (const t of closed) {
+    const key = t.dayKey || istDayKey(new Date(t.openedAt || Date.now()));
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(t);
+  }
+
+  const groups = [...byDay.entries()].map(([dayKey, list]) => {
+    const wins = list.filter(t => t.realizedPnl > 0).length;
+    const losses = list.filter(t => t.realizedPnl < 0).length;
+    return {
+      dayKey,
+      trades: list.length,
+      wins, losses,
+      winRate: list.length ? +((wins / list.length) * 100).toFixed(1) : 0,
+      realizedPnl: +list.reduce((s, t) => s + (t.realizedPnl || 0), 0).toFixed(2),
+    };
+  }).sort((a, b) => (a.dayKey < b.dayKey ? 1 : -1));
+
+  const wins = closed.filter(t => t.realizedPnl > 0);
+  const losses = closed.filter(t => t.realizedPnl < 0);
+  const grossWin = wins.reduce((s, t) => s + t.realizedPnl, 0);
+  const grossLoss = Math.abs(losses.reduce((s, t) => s + t.realizedPnl, 0));
+  const totalPnl = +(grossWin - grossLoss).toFixed(2);
+
+  let bestDay = null, worstDay = null;
+  for (const g of groups) {
+    if (!bestDay || g.realizedPnl > bestDay.pnl) bestDay = { dayKey: g.dayKey, pnl: g.realizedPnl };
+    if (!worstDay || g.realizedPnl < worstDay.pnl) worstDay = { dayKey: g.dayKey, pnl: g.realizedPnl };
+  }
+
+  return {
+    days: windowDays,
+    totalClosed: closed.length,
+    groups,
+    overall: {
+      totalTrades: closed.length,
+      wins: wins.length,
+      losses: losses.length,
+      winRate: closed.length ? +((wins.length / closed.length) * 100).toFixed(1) : 0,
+      avgWin: wins.length ? +(grossWin / wins.length).toFixed(2) : 0,
+      avgLoss: losses.length ? +(-grossLoss / losses.length).toFixed(2) : 0,
+      profitFactor: grossLoss > 0 ? +(grossWin / grossLoss).toFixed(2) : (grossWin > 0 ? null : 0),
+      totalPnl,
+      bestDay, worstDay,
+    },
+    // Full closed-trade list (newest first) — the client mirrors this
+    // into IndexedDB so a wiped server can be auto-restored from it.
+    trades: closed.map(_publicTrade),
+  };
+}
+
+// ------------------------------------------------------------
+// RESTORE — rebuild state after a server filesystem wipe, from the
+// client's device mirror (POST /api/intraday-paper/restore) or the
+// remote GitHub backup (boot path). Merge-by-id keeps any trades
+// the still-running instance already knows about.
+// ------------------------------------------------------------
+function _num(v, fallback = 0) {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function _sanitizeRestoredTrade(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = Number.isInteger(raw.id) ? raw.id : parseInt(raw.id, 10);
+  if (!Number.isInteger(id) || id < 1 || id > 1e9) return null;
+  const symbol = typeof raw.symbol === 'string' ? raw.symbol.trim().toUpperCase() : '';
+  if (!/^[A-Z0-9&\-]{2,15}$/.test(symbol)) return null;
+  const direction = raw.direction === 'SHORT' ? 'SHORT' : 'LONG';
+  const entry = _num(raw.entry); if (!(entry > 0)) return null;
+  const qty = Math.floor(_num(raw.qty)); if (!(qty >= 1) || qty > 100000) return null;
+  const status = ['OPEN', 'PARTIAL', 'CLOSED'].includes(raw.status) ? raw.status : 'CLOSED';
+  const openedAt = _num(raw.openedAt, Date.now());
+  const parts = Array.isArray(raw.parts)
+    ? raw.parts.slice(0, 20).map(p => ({
+        qty: Math.max(1, Math.floor(_num(p?.qty, 1))),
+        exitPrice: +_num(p?.exitPrice, entry).toFixed(2),
+        ts: _num(p?.ts, openedAt),
+        reason: String(p?.reason || 'RESTORE').slice(0, 20),
+      }))
+    : [];
+  const remainingQty = status === 'CLOSED'
+    ? 0
+    : Math.max(0, Math.min(qty, Math.floor(_num(raw.remainingQty, qty))));
+  const realizedPnl = +_num(raw.realizedPnl).toFixed(2);
+  return {
+    id, symbol, direction,
+    entry: +entry.toFixed(2), qty,
+    stopLoss: +_num(raw.stopLoss, entry).toFixed(2),
+    target1: _num(raw.target1) > 0 ? +_num(raw.target1).toFixed(2) : null,
+    target2: _num(raw.target2) > 0 ? +_num(raw.target2).toFixed(2) : null,
+    remainingQty,
+    t1Hit: !!raw.t1Hit,
+    status,
+    openedAt,
+    closedAt: status === 'CLOSED' ? _num(raw.closedAt, openedAt) : null,
+    closeReason: status === 'CLOSED' ? String(raw.closeReason || 'RESTORED').slice(0, 20) : null,
+    realizedPnl,
+    unrealizedPnl: status === 'CLOSED' ? 0 : +_num(raw.unrealizedPnl).toFixed(2),
+    lastPrice: +_num(raw.lastPrice, entry).toFixed(2),
+    parts,
+    dayKey: /^\d{4}-\d{2}-\d{2}$/.test(String(raw.dayKey)) ? raw.dayKey : istDayKey(new Date(openedAt)),
+    capital: +_num(raw.capital, qty * entry).toFixed(2),
+  };
+}
+
+function _mergeRestoredState(remote) {
+  const incoming = (Array.isArray(remote?.trades) ? remote.trades : [])
+    .map(_sanitizeRestoredTrade)
+    .filter(Boolean)
+    .sort((a, b) => a.openedAt - b.openedAt)
+    .slice(0, MAX_TRADES);
+
+  const known = new Map(_state.trades.map(t => [t.id, t])); // server copy wins
+  let restored = 0;
+  for (const t of incoming) {
+    if (!known.has(t.id)) { known.set(t.id, t); restored++; }
+  }
+  _state.trades = [...known.values()].sort((a, b) => a.openedAt - b.openedAt);
+  if (_state.trades.length > MAX_TRADES) {
+    _state.trades = _state.trades.slice(_state.trades.length - MAX_TRADES);
+  }
+  const maxId = _state.trades.reduce((m, t) => Math.max(m, t.id), 0);
+  _state.nextId = Math.max(_state.nextId || 1, maxId + 1);
+  return restored;
+}
+
+export function restorePaperTrades(input) {
+  const incoming = Array.isArray(input?.trades) ? input.trades : [];
+  if (incoming.length === 0) return { error: 'trades[] required (device mirror payload).' };
+  if (incoming.length > MAX_TRADES + 100) return { error: `Too many trades (max ${MAX_TRADES}).` };
+
+  // Nothing to do? A wiped-and-restarted server should accept, but a
+  // server that already knows MORE than the mirror is the source of
+  // truth — ignore stale mirrors (idempotent client retry safety).
+  const knownIds = new Set(_state.trades.map(t => t.id));
+  const missing = incoming.filter(t => {
+    const id = Number.isInteger(t?.id) ? t.id : parseInt(t?.id, 10);
+    return Number.isInteger(id) && !knownIds.has(id);
+  });
+  if (missing.length === 0) {
+    return { ok: true, restored: 0, alreadyKnown: _state.trades.length, summary: getPaperSummary() };
+  }
+
+  const restored = _mergeRestoredState({ trades: incoming });
+
+  // Restored trades left "open" from a PREVIOUS day are stale by the
+  // same rule as boot-time — square them off at their last price.
+  const today = istDayKey();
+  for (const t of _state.trades) {
+    if (t.dayKey !== today && t.status !== 'CLOSED') {
+      _closePart(t, t.remainingQty, t.lastPrice || t.entry, 'STALE_SQOFF');
+    }
+  }
+  _persist();
+  return { ok: true, restored, summary: getPaperSummary() };
+}
+
+// Test-only: swap in a clean/seeded state (vitest).
+export function _resetForTests(seed) {
+  if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+  _state = structuredClone(seed || { trades: [], nextId: 1, dayKey: istDayKey() });
 }

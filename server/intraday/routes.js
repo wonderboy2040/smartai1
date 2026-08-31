@@ -11,6 +11,10 @@
 //   GET  /api/intraday-paper          virtual-trade summary
 //   POST /api/intraday-paper          open a virtual trade
 //   POST /api/intraday-paper/close    close a virtual trade at LTP
+//   GET  /api/intraday-paper/history  cross-day closed-trade history
+//                                     + win-rate accuracy stats (?days=90)
+//   POST /api/intraday-paper/restore  rebuild wiped history from the
+//                                     client's device mirror
 //   GET  /api/intraday-universe       base + custom watchlist
 //   POST /api/intraday-universe       { add: [], remove: [], restore: [] }
 //   POST /api/intraday-agent          PRO TRADER MCP AGENT chat
@@ -30,7 +34,7 @@ import { istMinutes, getISTParts, isNseMarketOpen } from './time.js';
 import { getMarketRegime, freshEntriesAllowedNow } from './regime.js';
 import { dispatchIntradayAlerts, dispatchOutcomeAlert, alertsStatus, setAlertsEnabled } from './alerts.js';
 import { recordSignals, getTrackRecord, initTrackRecord } from './trackRecord.js';
-import { openPaperTrade, closePaperTrade, getPaperSummary, initPaperTrading } from './paperTrading.js';
+import { openPaperTrade, closePaperTrade, getPaperSummary, getPaperHistory, restorePaperTrades, initPaperTrading } from './paperTrading.js';
 import { initIntradayStream, intradayStreamHandler, setScanSymbols, getLatestQuotes } from './stream.js';
 import { loadJSON, saveJSON } from './store.js';
 
@@ -177,6 +181,24 @@ export function registerIntradayRoutes(app, deps) {
     const result = closePaperTrade(id, getLatestQuotes().data);
     if (result.error) return jsonError(res, 400, result.error);
     res.json({ ok: true, trade: result.trade });
+  });
+
+  // Full cross-day history + accuracy stats. Survives server restarts
+  // via the GitHub durable backup + client device-mirror auto-restore.
+  app.get('/api/intraday-paper/history', (req, res) => {
+    const days = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 90));
+    res.set('Cache-Control', 'no-store');
+    res.json(getPaperHistory(days));
+  });
+
+  // Device-mirror restore: the browser keeps a full copy of the trade
+  // history in IndexedDB; when a Render restart wipes server/data/, the
+  // client POSTs its mirror back here and the engine merges it in.
+  app.post('/api/intraday-paper/restore', (req, res) => {
+    const result = restorePaperTrades(req.body || {});
+    if (result.error) return jsonError(res, 400, result.error);
+    res.set('Cache-Control', 'no-store');
+    res.json(result);
   });
 
   // ---------------- Universe / watchlist ----------------

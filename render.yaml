@@ -45,6 +45,16 @@ services:
         sync: false
       - key: API_URL
         sync: false
+      # DURABLE PAPER-TRADE HISTORY (optional but recommended on the
+      # free plan): Render wipes server/data/ on every restart, so the
+      # engine mirrors paper-trades.json to this GitHub repo/branch.
+      # Fine-grained PAT with Contents: Read+Write on the repo.
+      - key: GITHUB_BACKUP_TOKEN
+        sync: false
+      - key: GITHUB_BACKUP_REPO
+        sync: false
+      - key: GITHUB_BACKUP_BRANCH
+        sync: false
       - key: FINNHUB_API_KEY
         sync: false
       - key: DHAN_CLIENT_ID
