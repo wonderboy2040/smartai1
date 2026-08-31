@@ -109,9 +109,14 @@ export const MonthlyReturnReport = React.memo(function MonthlyReturnReport() {
     [transactions, usdInrRate]
   );
 
+  // 2026 perf audit (M1): snapshot-key pattern.
+  const livePriceKey = useMemo(() =>
+    portfolio.map(p => (livePrices[`${p.market}_${p.symbol}`]?.price ?? 0).toFixed(2)).join('|') + `@${usdInrRate.toFixed(2)}`,
+    [portfolio, livePrices, usdInrRate]);
   const live = useMemo(
     () => currentUnrealizedINR(portfolio, livePrices, usdInrRate),
-    [portfolio, livePrices, usdInrRate]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [portfolio, livePriceKey]
   );
 
   const totalReturnINR = totalRealizedINR + live.unrealizedINR;

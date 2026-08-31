@@ -29,10 +29,16 @@ function formatPrice(price: number, market: string): string {
 }
 
 export const DipIntelligence = React.memo(({ portfolio, livePrices, totalBudget, onBuyAsset }: DipIntelligenceProps) => {
+  // 2026 perf audit (M1): snapshot-key pattern — dip signals + budget
+  // allocation only recompute when a relevant price changes.
+  const dipPriceKey = useMemo(() =>
+    portfolio.map(p => (livePrices[`${p.market}_${p.symbol}`]?.price ?? 0).toFixed(2)).join('|'),
+    [portfolio, livePrices]);
   const dipSignals = useMemo(() => {
     if (portfolio.length === 0) return [];
     return computePortfolioDipSignals(portfolio, livePrices, totalBudget);
-  }, [portfolio, livePrices, totalBudget]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portfolio, dipPriceKey, totalBudget]);
 
   const allocations = useMemo(() => {
     if (dipSignals.length === 0) return [];

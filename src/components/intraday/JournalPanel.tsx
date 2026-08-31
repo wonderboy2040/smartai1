@@ -6,7 +6,7 @@
 // improvement report (Fri 16:30 cron / on-demand) yahan dikhte
 // hain. Panel trade log + AI coaching dono dikhata hai.
 // ============================================================
-import { useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../../utils/api';
 import { ChevronDown, Loader2, BookOpen, Sparkles, CalendarDays } from 'lucide-react';
 
@@ -54,7 +54,9 @@ function renderAiText(text: string) {
   });
 }
 
-export function JournalPanel({ refreshKey }: { refreshKey: number }) {
+// 2026 perf audit (M4): memoized — only re-renders when refreshKey changes,
+// not on every IntradayTab SSE quote tick.
+export const JournalPanel = memo(function JournalPanel({ refreshKey }: { refreshKey: number }) {
   const [data, setData] = useState<JournalData | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState<'eod' | 'weekly' | null>(null);
@@ -206,4 +208,4 @@ export function JournalPanel({ refreshKey }: { refreshKey: number }) {
       )}
     </div>
   );
-}
+});

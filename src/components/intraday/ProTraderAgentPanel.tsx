@@ -6,7 +6,7 @@
 // paper positions, news, position sizing). Shows the tool-call
 // trace so the user sees exactly which live data the agent used.
 // ============================================================
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../utils/api';
 import { Send, Bot, User, Wrench, ChevronDown, Loader2, Trash2, Sparkles, Volume2, Square } from 'lucide-react';
 
@@ -63,7 +63,10 @@ const TOOL_LABEL: Record<string, string> = {
   calculate_position_size: '🧮 Sizing',
 };
 
-export function ProTraderAgentPanel({ onOpen }: { onOpen?: () => void }) {
+// 2026 perf audit (M4): memoized — IntradayTab re-renders on every SSE quote
+// tick (~5s); this panel takes no changing props so memo short-circuits the
+// full conversation re-render + markdown re-parse.
+export const ProTraderAgentPanel = memo(function ProTraderAgentPanel({ onOpen }: { onOpen?: () => void }) {
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -327,4 +330,4 @@ export function ProTraderAgentPanel({ onOpen }: { onOpen?: () => void }) {
       )}
     </div>
   );
-}
+});

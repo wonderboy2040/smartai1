@@ -5,7 +5,7 @@
 // analyse the current top setups in parallel, then a Head-of-Desk
 // judge issues the FINAL verdict. 10-min server cache.
 // ============================================================
-import { useCallback, useState } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { apiFetch } from '../../utils/api';
 import { ChevronDown, Loader2, RefreshCw, Gavel } from 'lucide-react';
 
@@ -57,7 +57,9 @@ function renderTake(text: string) {
   });
 }
 
-export function CommitteePanel() {
+// 2026 perf audit (M4): memoized — IntradayTab re-renders on every SSE tick;
+// this panel manages its own state so memo short-circuits needless re-renders.
+export const CommitteePanel = memo(function CommitteePanel() {
   const [data, setData] = useState<CommitteeData | null>(null);
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -191,4 +193,4 @@ export function CommitteePanel() {
       )}
     </div>
   );
-}
+});

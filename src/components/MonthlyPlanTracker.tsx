@@ -78,12 +78,18 @@ export const MonthlyPlanTracker = React.memo(function MonthlyPlanTracker() {
   const [editBtcValue, setEditBtcValue] = useState('');
   const [editEthValue, setEditEthValue] = useState('');
 
+  // 2026 perf audit (M1): snapshot-key — recomputes only when a price it
+  // reads actually changes (not when livePrices identity changes per flush).
+  const planPriceKey = useMemo(() =>
+    portfolio.map(p => (livePrices[`${p.market}_${p.symbol}`]?.price ?? 0).toFixed(2)).join('|') + `@${usdInrRate.toFixed(2)}`,
+    [portfolio, livePrices, usdInrRate]);
   const plan = useMemo(() =>
     computeMonthlyPlan(
       { indiaSIP, usSIP, btcSIP, ethSIP, usFrequency },
       transactions, portfolio, livePrices, usdInrRate
     ),
-    [indiaSIP, usSIP, btcSIP, ethSIP, usFrequency, transactions, portfolio, livePrices, usdInrRate]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [indiaSIP, usSIP, btcSIP, ethSIP, usFrequency, transactions, portfolio, planPriceKey]
   );
 
   const daysLeft = useMemo(() => getDaysLeftInMonth(), []);

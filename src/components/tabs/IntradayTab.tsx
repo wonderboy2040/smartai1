@@ -218,7 +218,13 @@ export const IntradayTab = () => {
   const toastIdRef = useRef(0);
 
   // ---------- Data fetching (60s poll, as before) ----------
+  // 2026 perf audit (M7): in-flight guard — the 60s interval + a slow scan
+  // (45s timeout) could start overlapping requests whose responses then
+  // landed out of order (an older scan overwriting a newer one on setData).
+  const inFlightRef = useRef(false);
   const fetchSignals = useCallback(async (silent = false) => {
+    if (inFlightRef.current) return; // a scan is already running
+    inFlightRef.current = true;
     if (!silent) setLoading(true);
     try {
       const res = await apiFetch(`${PROXY_BASE}/api/intraday-scanner`, { signal: AbortSignal.timeout(45000) });
@@ -235,6 +241,7 @@ export const IntradayTab = () => {
         setData(prev => prev || { marketOpen: true, signals: [], error: 'Scanner live data reconnecting — auto re-scan chal raha hai.' });
       }
     } finally {
+      inFlightRef.current = false;
       if (mountedRef.current) setLoading(false);
     }
   }, []);

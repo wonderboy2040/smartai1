@@ -30,6 +30,8 @@ const CRYPTO_BASES = new Set(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 
 
 let _deps = null;               // { fetchGrowwNseQuote, fetchYahooQuote, toYahooSymbol }
 const _subscribed = new Set();  // clean NSE symbols (RELIANCE, NIFTY, …)
+const _refcounts = new Map();   // sym -> interested SSE clients (2026 perf audit M2)
+const _evictTimers = new Map(); // sym -> pending unsubscribe timer
 let _timer = null;
 let _activeClients = 0;
 let _failureStreak = 0;
@@ -38,11 +40,15 @@ let _failureStreak = 0;
 // Pure helpers (exported for unit tests)
 // ---------------------------------------------------------------
 
+// 2026 perf audit (L2): hoisted stateless formatter — was rebuilt on every
+// nseWindow() call (10-30/s on the hot poll path).
+const _istFmt = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Kolkata', weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false,
+});
+
 /** NSE session window (with 15:40 reconcile grace), IST, Mon-Fri. */
 export function nseWindow(date = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Kolkata', weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false,
-  }).formatToParts(date);
+  const parts = _istFmt.formatToParts(date);
   const get = (t) => parts.find(p => p.type === t)?.value || '';
   const weekday = get('weekday').substring(0, 3);
   if (weekday === 'Sat' || weekday === 'Sun') return false;
@@ -57,6 +63,9 @@ export function nseWindow(date = new Date()) {
 export function _resetInStreamForTest() {
   _stop();
   _subscribed.clear();
+  _refcounts.clear();
+  for (const t of _evictTimers.values()) clearTimeout(t);
+  _evictTimers.clear();
   _activeClients = 0; _failureStreak = 0;
 }
 export function inDebugState() {
@@ -181,6 +190,12 @@ export function ensureInSubscribed(symbols) {
   for (const s of symbols || []) {
     const sym = String(s).replace('.NS', '').replace('.BO', '').trim().toUpperCase();
     if (!sym || CRYPTO_BASES.has(sym)) continue; // cryptoStream owns crypto keys
+    // Refcount up + cancel pending eviction (2026 perf audit M2).
+    if (_evictTimers.has(sym)) {
+      clearTimeout(_evictTimers.get(sym));
+      _evictTimers.delete(sym);
+    }
+    _refcounts.set(sym, (_refcounts.get(sym) || 0) + 1);
     if (!_subscribed.has(sym)) { _subscribed.add(sym); fresh.push(sym); }
   }
   // One-shot snapshot for fresh symbols (works even outside NSE hours —
@@ -189,4 +204,28 @@ export function ensureInSubscribed(symbols) {
   // If clients are already connected and the NSE window is open, ensure the
   // 5s loop covers the new symbols too.
   if (_activeClients > 0 && _subscribed.size > 0) _startIfNeeded();
+}
+
+/**
+ * Refcount release (2026 perf audit M2) — mirrors usStream/cryptoStream: the
+ * NSE symbol set used to grow for the whole process lifetime; now the last
+ * interested client leaving schedules a graceful unsubscribe (survives
+ * EventSource auto-reconnect blips).
+ */
+export function releaseInSubscribed(symbols) {
+  for (const s of symbols || []) {
+    const sym = String(s).replace('.NS', '').replace('.BO', '').trim().toUpperCase();
+    if (!sym || CRYPTO_BASES.has(sym)) continue;
+    const n = (_refcounts.get(sym) || 1) - 1;
+    if (n > 0) { _refcounts.set(sym, n); continue; }
+    _refcounts.delete(sym);
+    if (_evictTimers.has(sym)) continue;
+    const t = setTimeout(() => {
+      _evictTimers.delete(sym);
+      if (_refcounts.has(sym)) return; // re-subscribed meanwhile
+      _subscribed.delete(sym);
+    }, 90 * 1000);
+    if (typeof t.unref === 'function') t.unref();
+    _evictTimers.set(sym, t);
+  }
 }

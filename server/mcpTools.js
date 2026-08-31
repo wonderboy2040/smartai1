@@ -322,6 +322,28 @@ export async function executeServerMCPTool(name, args = {}, context = {}) {
         const market = (args.market || (rawSym.endsWith('.NS') || rawSym === 'RELIANCE' || rawSym === 'NIFTY' ? 'IN' : 'US')).toUpperCase();
         
         if (market === 'IN') {
+          // 2026 perf audit (M3): use the injected 3s-micro-cached Groww fetcher
+          // (shared with the scanner + SSE watcher + /api/quote) before
+          // falling back to a direct upstream call.
+          if (typeof context?.fetchGrowwNseQuote === 'function') {
+            try {
+              const clean = rawSym.replace('.NS', '').replace('.BO', '');
+              const q = await context.fetchGrowwNseQuote(clean);
+              if (q && q.price > 0) {
+                return {
+                  symbol: clean,
+                  market: 'IN',
+                  price: q.price,
+                  change: q.change || 0,
+                  high: q.high || q.price,
+                  low: q.low || q.price,
+                  volume: q.volume || 0,
+                  currency: 'INR',
+                  source: q.source || 'groww-cached',
+                };
+              }
+            } catch {}
+          }
           try {
             const clean = rawSym.replace('.NS', '').replace('.BO', '');
             const growwRes = await fetch(`https://groww.in/v1/api/stocks_data/v1/tr_live_prices/exchange/NSE/segment/CASH/${encodeURIComponent(clean)}/latest`, {
@@ -349,6 +371,26 @@ export async function executeServerMCPTool(name, args = {}, context = {}) {
 
         try {
           const ysym = market === 'IN' && !rawSym.includes('.') && !rawSym.startsWith('^') ? `${rawSym}.NS` : rawSym;
+          // 2026 perf audit (M3): injected cached fetcher first (shares the
+          // 3s micro-cache with everything else on the server).
+          if (typeof context?.fetchYahooQuote === 'function') {
+            try {
+              const q = await context.fetchYahooQuote(ysym);
+              if (q && q.price > 0) {
+                return {
+                  symbol: rawSym,
+                  market,
+                  price: q.price,
+                  change: q.change || 0,
+                  high: q.high || q.price,
+                  low: q.low || q.price,
+                  volume: q.volume || 0,
+                  currency: q.currency || (market === 'US' ? 'USD' : 'INR'),
+                  source: q.source || 'yahoo-cached',
+                };
+              }
+            } catch {}
+          }
           const yRes = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ysym)}`, {
             headers: { 'User-Agent': 'Mozilla/5.0' },
             signal: AbortSignal.timeout(5000)

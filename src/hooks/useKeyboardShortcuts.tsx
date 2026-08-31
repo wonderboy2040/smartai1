@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 type KeyHandler = (event: KeyboardEvent) => void;
 type KeyCombo = string; // e.g., 'ctrl+k', 'cmd+shift+p'
@@ -134,17 +134,29 @@ export function useKeyboardShortcut(
 
 // React hook for multiple shortcuts
 export function useKeyboardShortcuts(shortcuts: ShortcutConfig[]): void {
-  const ids = shortcuts.map(() => `shortcut_${Math.random().toString(36).slice(2, 9)}`);
+  // 2026 perf audit (M2): stable ids + latest-config ref — previously fresh
+  // random ids per render re-registered every shortcut on EVERY parent
+  // render (which during market hours is ~4x/sec).
+  const idsRef = useRef<string[] | null>(null);
+  if (idsRef.current === null) {
+    idsRef.current = shortcuts.map(() => `shortcut_${Math.random().toString(36).slice(2, 9)}`);
+  }
+  const ids = idsRef.current;
+  const latestRef = useRef(shortcuts);
+  latestRef.current = shortcuts;
 
+  // Key on a stable signature: key+description+enabled of each shortcut.
+  const sig = shortcuts.map(s => `${s.key}|${s.description}|${s.enabled ? 1 : 0}`).join(',');
   useEffect(() => {
-    shortcuts.forEach((config, i) => {
+    const current = latestRef.current;
+    current.forEach((config, i) => {
       shortcutsRegistry.register(ids[i], config);
     });
-
     return () => {
       ids.forEach(id => shortcutsRegistry.unregister(id));
     };
-  }, [shortcuts]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sig]);
 }
 
 // Shortcuts help modal component
@@ -285,5 +297,7 @@ export function useAppShortcuts(callbacks: {
     }
   ];
 
-  useKeyboardShortcuts(shortcuts.filter(s => s.enabled));
+  // 2026 perf audit (M2): pass the FULL array (stable length — ids stay
+  // valid across renders); the registry itself respects the `enabled` flag.
+  useKeyboardShortcuts(shortcuts);
 }

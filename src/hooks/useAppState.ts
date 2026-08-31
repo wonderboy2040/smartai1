@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Position, PriceData, TabType, RiskLevel, TransactionType, Transaction, PriceAlert } from '../types';
 import {
-  DEFAULT_USD_INR, getTodayString, guessMarket, isCryptoSymbol, resolveTvChartSymbol
+  DEFAULT_USD_INR, getTodayString, guessMarket, isCryptoSymbol, resolveTvChartSymbol,
+  ALPHA_ETFS_IN, ALPHA_ETFS_US,
 } from '../utils/constants';
 import {
   fetchSinglePrice, batchFetchPrices, batchFetchIndianPrices, getIndiaPollInterval,
@@ -138,6 +139,13 @@ export function useAppState() {
   const [chartInterval, setChartInterval] = useState('D');
   const [liveStatus, setLiveStatus] = useState('Connecting...');
   const [feedStatus, setFeedStatus] = useState<Record<string, boolean>>({});
+  // 2026 perf audit (H4): ref mirror so the sync loop can check SSE health
+  // without re-arming on every status update.
+  const feedStatusRef = useRef<Record<string, boolean>>({});
+  const setFeedStatusTracked = useCallback((s: Record<string, boolean>) => {
+    feedStatusRef.current = s;
+    setFeedStatus(s);
+  }, []);
   const [syncStatus, setSyncStatus] = useState('');
 
   // --- Planner ---
@@ -859,7 +867,7 @@ export function useAppState() {
         pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData;
         throttledFlush();
       },
-      onStatus: (s) => setFeedStatus(s),
+      onStatus: (s) => setFeedStatusTracked(s),
     });
 
     return () => { if (flushTimer) clearTimeout(flushTimer); disconnect(); };
@@ -884,14 +892,35 @@ export function useAppState() {
       return { id: `temp-${symbol}`, symbol: sym, market, qty: 1, avgPrice: 1, leverage: 1, dateAdded: getTodayString() };
     });
     let statusThrottle = 0;
+    let syncTimer: number | null = null;
+    let syncStopped = false;
     const sync = async () => {
+      // 2026 perf audit (H4): skip the redundant re-fetch when the SSE push
+      // stream is healthy — the dedicated 5s pollers + SSE already cover
+      // these exact symbols, so this 15s loop was pure duplicate traffic
+      // (~3 requests/15s per client against the same upstream). If the SSE
+      // sources go dark ({} = none live) the pollers resume automatically.
+      const feeds = feedStatusRef.current;
+      const anySseLive = Object.values(feeds).some(Boolean);
+      if (anySseLive) {
+        // Still keep the TV-enrichment + storage flush path warm.
+        flushPricesToStorage();
+        return;
+      }
       if (statusThrottle < 3) { setLiveStatus('● SYNCING...'); statusThrottle++; }
       await batchFetchPrices(positionsToSub, (key, data) => { pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData; });
       flushPricesToStorage();
       if (statusThrottle < 3) setLiveStatus('● QUANTUM LINK ACTIVE');
     };
     sync();
-    syncIntervalRef.current = window.setInterval(sync, getBatchInterval());
+    // 2026 perf audit (L1): self-rescheduling timer — the interval was fixed
+    // at whatever getBatchInterval() returned when the effect ran, so an app
+    // left open across market open/close never adapted its cadence.
+    const scheduleSync = () => {
+      if (syncStopped) return;
+      syncTimer = window.setTimeout(() => { sync().finally(scheduleSync); }, getBatchInterval());
+    };
+    scheduleSync();
     let statusCounter = 0;
     let lastFlushTime = 0;
     let flushTimer: number | null = null;
@@ -925,6 +954,8 @@ export function useAppState() {
       throttledFlush();
     });
     return () => {
+      syncStopped = true;
+      if (syncTimer) clearTimeout(syncTimer);
       if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
       if (flushTimer) clearTimeout(flushTimer);
       unsubscribeTv(); disconnectPrices();
@@ -1505,7 +1536,24 @@ export function useAppState() {
   const fireProgress = fireNumber > 0 ? Math.min(100, (metrics.totalValue / fireNumber) * 100) : 0;
 
   // --- Smart allocations (memoized) ---
-  const smartAllocations = useMemo(() => getSmartAllocations(livePrices, indiaSIP, usSIP, btcSIP, ethSIP, usdInrRate), [livePrices, indiaSIP, usSIP, btcSIP, ethSIP, usdInrRate]);
+  // 2026 perf audit (M1): keyed on the exact symbols + fields
+  // getSmartAllocations reads (the ALPHA ETF lists + VIX + BTC/ETH), not the
+  // whole livePrices object (whose identity changes on EVERY flush).
+  const smartAllocFeedKey = useMemo(() => {
+    const syms = [
+      ...ALPHA_ETFS_IN.map(e => `IN_${e.sym}`),
+      ...ALPHA_ETFS_US.map(e => `US_${e.sym}`),
+      'IN_BTC', 'IN_ETH', 'US_VIX', 'IN_INDIAVIX',
+    ];
+    return syms.map(k => {
+      const d = livePrices[k];
+      if (!d) return '0';
+      return `${(d.price ?? 0).toFixed(2)}:${(d.rsi ?? 0).toFixed(0)}:${(d.low ?? 0).toFixed(2)}:${(d.high ?? 0).toFixed(2)}:${(d.sma20 ?? 0).toFixed(1)}:${(d.sma50 ?? 0).toFixed(1)}`;
+    }).join('|');
+  }, [livePrices]);
+  const smartAllocations = useMemo(() => getSmartAllocations(livePrices, indiaSIP, usSIP, btcSIP, ethSIP, usdInrRate),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [smartAllocFeedKey, indiaSIP, usSIP, btcSIP, ethSIP, usdInrRate]);
 
   // --- Handlers ---
   // SECURITY: PIN is verified SERVER-SIDE via /api/auth/login. The server

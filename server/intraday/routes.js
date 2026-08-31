@@ -394,6 +394,7 @@ export function registerIntradayRoutes(app, deps) {
   };
 
   app.post('/api/intraday-agent', async (req, res) => {
+    try {
     const { messages = [] } = req.body || {};
     if (!Array.isArray(messages) || messages.length === 0) {
       return jsonError(res, 400, 'messages[] required');
@@ -424,6 +425,12 @@ export function registerIntradayRoutes(app, deps) {
     if (!result.ok) return jsonError(res, 502, result.error);
     res.set('Cache-Control', 'no-store');
     res.json(result);
+    } catch (e) {
+      // 2026 perf audit (L3): Express 4 does not route async rejections to
+      // the terminal error middleware — without this a future regression
+      // would hang the socket forever (silent spinner, leaked connection).
+      return jsonError(res, 500, 'agent route error', e);
+    }
   });
 
   // ----------------------------------------------------------
@@ -432,10 +439,14 @@ export function registerIntradayRoutes(app, deps) {
   // synthesis on the current top setups. 10-min cached.
   // ----------------------------------------------------------
   app.post('/api/intraday-committee', async (_req, res) => {
-    const result = await runCommitteeDebate(agentDeps());
-    if (!result.ok) return jsonError(res, 400, result.error);
-    res.set('Cache-Control', 'no-store');
-    res.json(result);
+    try {
+      const result = await runCommitteeDebate(agentDeps());
+      if (!result.ok) return jsonError(res, 400, result.error);
+      res.set('Cache-Control', 'no-store');
+      res.json(result);
+    } catch (e) {
+      return jsonError(res, 500, 'committee route error', e);
+    }
   });
 
   // ----------------------------------------------------------

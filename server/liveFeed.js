@@ -52,3 +52,15 @@ export function feedStatus() {
   }
   return live;
 }
+
+// Housekeeping (2026 perf audit M2): _ticks previously grew forever — every
+// key ever ticked stayed in the map for the whole process lifetime. Snapshots
+// only ever ask for keys an active client cares about, so anything stale
+// (>30 min without an update, map larger than 300) is safely evictable.
+setInterval(() => {
+  if (_ticks.size <= 300) return;
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  for (const [k, t] of _ticks) {
+    if ((t.time || 0) < cutoff) _ticks.delete(k);
+  }
+}, 5 * 60 * 1000).unref?.();

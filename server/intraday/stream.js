@@ -14,7 +14,7 @@
 // even with ZERO connected browser clients. SSE clients simply
 // attach to the broadcast; N clients still cost ONE poller.
 // ============================================================
-import { istMinutes, getISTParts } from './time.js';
+import { istMinutes, getISTParts, istDayKey } from './time.js';
 import { evaluateTracked, watcherSymbols as trackedSymbols } from './trackRecord.js';
 import { evaluatePaper, paperSymbolsForWatcher } from './paperTrading.js';
 import { getMarketRegime } from './regime.js';
@@ -25,7 +25,7 @@ const FAILURE_STREAK_LIMIT = 3;
 
 let _deps = null;               // { fetchGrowwNseQuote, sendTelegramRaw, escapeHtml, dispatchOutcomeAlert }
 let _scanSymbols = new Set();   // latest scan's published signal symbols
-let _latestQuotes = { data: {}, ts: 0 };
+let _latestQuotes = { data: {}, ts: 0, day: '' };
 let _clients = new Set();       // SSE response writers
 let _timer = null;
 let _failureStreak = 0;
@@ -106,7 +106,15 @@ async function _tick() {
     }
     _failureStreak = 0;
 
-    _latestQuotes = { data: { ..._latestQuotes.data, ...quotes }, ts: Date.now() };
+    // 2026 perf audit (M2): _latestQuotes.data used to accumulate the union of
+    // every symbol EVER watched (scans + tracked + paper) for the process
+    // lifetime and serialize it wholesale to every new client. Reset at the
+    // IST day boundary — a new session starts with a clean, live-only map.
+    const today = istDayKey();
+    if (_latestQuotes.day !== today) {
+      _latestQuotes = { data: {}, ts: 0, day: today };
+    }
+    _latestQuotes = { data: { ..._latestQuotes.data, ...quotes }, ts: Date.now(), day: today };
 
     // Outcome evaluation (tracked signals + paper trades).
     const events = [];
@@ -154,7 +162,20 @@ export function intradayStreamHandler(req, res) {
   if (res.flushHeaders) res.flushHeaders();
   res.write('retry: 3000\n\n');
 
-  const write = (payload) => res.write(payload);
+  const write = (payload) => {
+    // 2026 perf audit (H1): backpressure guard — a stalled client (phone
+    // sleep / zero-window TCP) makes Node buffer every SSE write forever.
+    // Kill the connection once the socket buffer exceeds 128KB; the browser
+    // EventSource auto-reconnects when it wakes.
+    try {
+      const ok = res.write(payload);
+      if (ok || !res.socket || res.socket.writableLength <= 128 * 1024) return true;
+      try { _clients.delete(write); res.destroy(); } catch { /* noop */ }
+      return false;
+    } catch {
+      return false;
+    }
+  };
   _clients.add(write);
 
   // Initial snapshot so a fresh client paints instantly.

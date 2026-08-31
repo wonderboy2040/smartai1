@@ -32,6 +32,8 @@ const KEY = process.env.FINNHUB_API_KEY || '';
 const WS_URL = KEY ? `wss://ws.finnhub.io?token=${KEY}` : '';
 
 const _subscribed = new Set();      // plain US tickers (SPY, QQQ, ...)
+const _refcounts = new Map();       // sym -> interested SSE clients (2026 perf audit M2)
+const _evictTimers = new Map();     // sym -> pending unsubscribe timer
 const _session = new Map();         // sym -> { pc, high, low, vol, price, at, wsAt?, inFlight }
 const _lastWsTick = new Map();      // sym -> epoch ms of last WS trade
 let _ws = null;
@@ -51,16 +53,23 @@ const SESSION_FRESH_OPEN_MS = 4000;      // market open: re-fetch if older than 
 const SESSION_FRESH_CLOSED_MS = 60 * 1000; // market closed: re-fetch if older than 60s
 const YAHOO_TIMEOUT_MS = 5000;
 const MAX_FALLBACK_BATCH = 12;      // per-cycle round-robin cap (Yahoo rate safety)
+const EVICT_GRACE_MS = 90 * 1000;   // refcount-0 symbols unsubscribe after this
+const BOOT_CONCURRENCY = 6;         // fresh-symbol Yahoo bootstrap semaphore
 
 // ---------------------------------------------------------------
 // Pure helpers (exported for unit tests + reuse in index.js)
 // ---------------------------------------------------------------
 
+// 2026 perf audit (L2): the formatter is stateless — hoist it to module scope
+// instead of rebuilding a new Intl.DateTimeFormat on every call (10-30/s on
+// the hot poll path).
+const _etFmt = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false,
+});
+
 /** US regular-session hours, America/New_York, Mon-Fri 9:30-16:00. */
 export function usMarketOpen(date = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false,
-  }).formatToParts(date);
+  const parts = _etFmt.formatToParts(date);
   const get = (t) => parts.find(p => p.type === t)?.value || '';
   const weekday = get('weekday').substring(0, 3);
   if (weekday === 'Sat' || weekday === 'Sun') return false;
@@ -90,6 +99,9 @@ export function _setWsFactoryForTest(fn) { _wsFactory = fn; }
 export function _setUsFetchForTest(fn) { _fetchImpl = fn; }
 export function _resetUsStreamForTest() {
   _subscribed.clear(); _session.clear(); _lastWsTick.clear();
+  _refcounts.clear();
+  for (const t of _evictTimers.values()) clearTimeout(t);
+  _evictTimers.clear();
   _ws = null; _connecting = false; _reconnectAt = 0; _activeClients = 0;
   clearTimeout(_reconnectTimer); _reconnectTimer = null;
   clearInterval(_fallbackTimer); _fallbackTimer = null;
@@ -373,11 +385,17 @@ function _connect() {
       }
     });
     ws.on('close', () => {
+      // 2026 perf audit (M1): stale-handler guard. Race: last client leaves →
+      // _disconnect() closes socket A (handshake takes ms) → new client →
+      // _connect() sets _ws = B → A's 'close' finally fires → without this
+      // guard it would null out B (leaked OPEN socket + duplicate trades).
+      if (_ws !== ws) return;
       _connecting = false; _ws = null;
       // Only reconnect if clients still active (FIX audit M-2: actually schedule it).
       if (_activeClients > 0) _scheduleReconnect(3000);
     });
     ws.on('error', () => {
+      if (_ws !== ws) return; // stale handler from a replaced socket (M1)
       _connecting = false; try { ws.close(); } catch { }
       _ws = null;
       if (_activeClients > 0) _scheduleReconnect(5000);
@@ -388,15 +406,42 @@ function _connect() {
 // ---------------------------------------------------------------
 // Subscription API (called from /api/stream)
 // ---------------------------------------------------------------
+
+/** FIFO semaphore (2026 perf audit M4): a big watchlist first-subscribing
+ *  60 symbols used to fire 60 PARALLEL Yahoo chart fetches (burst CPU +
+ *  rate-limit exposure exactly at page-load). Bounded here instead. */
+const _bootSem = { active: 0, queue: [] };
+function _enqueueBootstrap(sym) {
+  const run = () => {
+    _bootstrapSymbol(sym)
+      .catch(() => { })
+      .finally(() => {
+        _bootSem.active--;
+        while (_bootSem.queue.length && _bootSem.active < BOOT_CONCURRENCY) {
+          _bootSem.active++;
+          _bootSem.queue.shift()();
+        }
+      });
+  };
+  if (_bootSem.active < BOOT_CONCURRENCY) { _bootSem.active++; run(); }
+  else _bootSem.queue.push(run);
+}
+
 export function ensureUsSubscribed(symbols) {
   const fresh = [];
   for (const s of symbols || []) {
     const sym = String(s).replace('.NS', '').replace('.BO', '').trim().toUpperCase();
     if (!sym) continue;
+    // Refcount up + cancel any pending eviction (2026 perf audit M2).
+    if (_evictTimers.has(sym)) {
+      clearTimeout(_evictTimers.get(sym));
+      _evictTimers.delete(sym);
+    }
+    _refcounts.set(sym, (_refcounts.get(sym) || 0) + 1);
     if (!_subscribed.has(sym)) {
       _subscribed.add(sym);
       fresh.push(sym);
-      _bootstrapSymbol(sym); // instant live Yahoo snapshot (RC3 fix)
+      _enqueueBootstrap(sym); // instant live Yahoo snapshot (RC3 fix), bounded
     }
   }
   // (Re)connect / subscribe on the live socket when clients are already active.
@@ -406,6 +451,36 @@ export function ensureUsSubscribed(symbols) {
     if (_ws && _ws.readyState === WebSocket.OPEN && fresh.length) {
       fresh.forEach(s => { try { _ws.send(JSON.stringify({ type: 'subscribe', symbol: s })); } catch { /* reconnect will resubscribe */ } });
     }
+  }
+}
+
+// ---------------------------------------------------------------
+// Refcount release (2026 perf audit M2) — the subscribed set used to grow
+// forever: every US symbol ever requested stayed WS-subscribed + Yahoo-
+// polled for the whole process lifetime. Now the LAST interested client
+// leaving schedules a graceful unsubscribe (long enough for an EventSource
+// auto-reconnect to re-claim the symbol on a blip).
+// ---------------------------------------------------------------
+export function releaseUsSubscribed(symbols) {
+  for (const s of symbols || []) {
+    const sym = String(s).replace('.NS', '').replace('.BO', '').trim().toUpperCase();
+    if (!sym) continue;
+    const n = (_refcounts.get(sym) || 1) - 1;
+    if (n > 0) { _refcounts.set(sym, n); continue; }
+    _refcounts.delete(sym);
+    if (_evictTimers.has(sym)) continue;
+    const t = setTimeout(() => {
+      _evictTimers.delete(sym);
+      if (_refcounts.has(sym)) return; // re-subscribed meanwhile
+      _subscribed.delete(sym);
+      _lastWsTick.delete(sym);
+      _session.delete(sym);
+      if (_ws && _ws.readyState === WebSocket.OPEN) {
+        try { _ws.send(JSON.stringify({ type: 'unsubscribe', symbol: sym })); } catch { /* reconnect will resync */ }
+      }
+    }, EVICT_GRACE_MS);
+    if (typeof t.unref === 'function') t.unref();
+    _evictTimers.set(sym, t);
   }
 }
 

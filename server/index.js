@@ -13,9 +13,9 @@
 import 'dotenv/config';
 import express from 'express';
 import { subscribe as feedSubscribe, snapshot as feedSnapshot, feedStatus } from './liveFeed.js';
-import { ensureUsSubscribed, usClientUp, usClientDown, usMarketOpen, isStaleUsQuote, getUsSessionQuote } from './usStream.js';
-import { initInStream, ensureInSubscribed, inClientUp, inClientDown } from './inStream.js';
-import { ensureCryptoSubscribed, cryptoClientUp, cryptoClientDown } from './cryptoStream.js';
+import { ensureUsSubscribed, usClientUp, usClientDown, usMarketOpen, isStaleUsQuote, getUsSessionQuote, releaseUsSubscribed } from './usStream.js';
+import { initInStream, ensureInSubscribed, inClientUp, inClientDown, releaseInSubscribed } from './inStream.js';
+import { ensureCryptoSubscribed, cryptoClientUp, cryptoClientDown, releaseCryptoSubscribed, fetchCoinDcxTickers } from './cryptoStream.js';
 import {
   getMLPrediction, getAllSignals, getRegime, getBacktest,
   getPricePoints, getHealth as mlHealth
@@ -735,23 +735,20 @@ app.get('/api/quote', async (req, res) => {
 // server-side proxy fetches the ticker, caches it briefly (3s) to avoid
 // hammering upstream, and returns the full JSON array the frontend expects.
 // ------------------------------------------------------------
-let _coinDcxCache = { data: null, ts: 0 };
-const COINDCX_CACHE_MS = 3000;
-
+// ------------------------------------------------------------
+// GET /api/crypto-prices → proxy CoinDCX ticker (CORS fix)
+// ------------------------------------------------------------
+// CoinDCX's public API does NOT serve Access-Control-Allow-Origin, so
+// the browser blocks every direct fetch from the frontend. This thin
+// server-side proxy fetches the ticker and returns the full JSON array.
+// 2026 perf audit (H2): now shares ONE cached in-flight-deduped round-trip
+// with the cryptoStream SSE poller — previously both polled the full
+// ~0.5-1MB upstream independently (double CPU + GC churn).
+// ------------------------------------------------------------
 app.get('/api/crypto-prices', async (_req, res) => {
-  const now = Date.now();
-  if (_coinDcxCache.data && (now - _coinDcxCache.ts) < COINDCX_CACHE_MS) {
-    res.set('Cache-Control', 'no-store, max-age=0');
-    return res.json(_coinDcxCache.data);
-  }
+  res.set('Cache-Control', 'no-store, max-age=0');
   try {
-    const upstream = await fetch(`https://api.coindcx.com/exchange/ticker?t=${now}`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!upstream.ok) return jsonError(res, 502, 'CoinDCX upstream error');
-    const tickers = await upstream.json();
-    _coinDcxCache = { data: tickers, ts: now };
-    res.set('Cache-Control', 'no-store, max-age=0');
+    const tickers = await fetchCoinDcxTickers();
     return res.json(tickers);
   } catch (e) {
     return jsonError(res, 502, 'Failed to fetch crypto prices.', e);
@@ -851,8 +848,31 @@ app.get('/api/stream', (req, res) => {
   if (res.flushHeaders) res.flushHeaders();
   res.write('retry: 3000\n\n');
 
+  // ---- 2026 perf audit (H1): SSE backpressure guard ----
+  // A stalled client (phone sleep / TCP zero-window) makes Node buffer every
+  // SSE write in memory indefinitely — no drain handler, no cap. If write()
+  // returns false AND the socket buffer exceeds 128KB we kill the connection
+  // (the browser EventSource auto-reconnects when it wakes up). Without this,
+  // 2-3 black-holed clients could eat ~36MB/hour each on a 512MB box.
+  let _dead = false;
+  const _sseWrite = (payload) => {
+    if (_dead) return false;
+    try {
+      const ok = res.write(payload);
+      if (!ok && res.socket && res.socket.writableLength > 128 * 1024) {
+        _dead = true;
+        try { res.destroy(); } catch { /* noop */ }
+        return false;
+      }
+      return true;
+    } catch {
+      _dead = true;
+      return false;
+    }
+  };
+
   const snap = feedSnapshot([...keys]);
-  if (Object.keys(snap).length) res.write(`event: snapshot\ndata: ${JSON.stringify(snap)}\n\n`);
+  if (Object.keys(snap).length) _sseWrite(`event: snapshot\ndata: ${JSON.stringify(snap)}\n\n`);
   else {
     // 2026 realtime audit: fresh symbols were JUST subscribed — their live
     // bootstrap (Yahoo US / Groww India) is still in flight. Send a deferred
@@ -861,7 +881,7 @@ app.get('/api/stream', (req, res) => {
     const late = setTimeout(() => {
       try {
         const s2 = feedSnapshot([...keys]);
-        if (Object.keys(s2).length) res.write(`event: snapshot\ndata: ${JSON.stringify(s2)}\n\n`);
+        if (Object.keys(s2).length) _sseWrite(`event: snapshot\ndata: ${JSON.stringify(s2)}\n\n`);
       } catch { /* client gone */ }
     }, 1200);
     if (typeof late.unref === 'function') late.unref();
@@ -870,16 +890,17 @@ app.get('/api/stream', (req, res) => {
 
   const lastSent = {};
   const unsub = feedSubscribe((key, tick) => {
-    if (!keys.has(key)) return;
+    if (_dead || !keys.has(key)) return;
     const now = Date.now();
     if (lastSent[key] && (now - lastSent[key]) < 400) return; // â‰¤2.5 updates/sec/symbol
     lastSent[key] = now;
-    try { res.write(`event: tick\ndata: ${JSON.stringify({ key, ...tick })}\n\n`); } catch { /* client gone */ }
+    _sseWrite(`event: tick\ndata: ${JSON.stringify({ key, ...tick })}\n\n`);
   });
 
   const keepalive = setInterval(() => {
-    try { res.write(`event: status\ndata: ${JSON.stringify(feedStatus())}\n\n`); } catch { /* noop */ }
+    _sseWrite(`event: status\ndata: ${JSON.stringify(feedStatus())}\n\n`);
   }, 15000);
+  if (typeof keepalive.unref === 'function') keepalive.unref();
 
   req.on('close', () => {
     clearInterval(keepalive);
@@ -888,6 +909,12 @@ app.get('/api/stream', (req, res) => {
     inClientDown();
     usClientDown();
     cryptoClientDown();
+    // Refcount release (2026 perf audit M2): the LAST client that wanted a
+    // symbol schedules its graceful unsubscribe - subscribed sets no longer
+    // grow for the whole process lifetime.
+    releaseInSubscribed(inSyms);
+    releaseUsSubscribed(usSyms);
+    releaseCryptoSubscribed(cryptoSyms);
     try { res.end(); } catch { /* noop */ }
   });
 });
@@ -1302,7 +1329,11 @@ app.post('/api/chat/mcp', async (req, res) => {
   const systemText = messages.filter(m => m.role === 'system').map(m => m.content).join('\n').trim();
   const userConvo = messages.filter(m => m.role !== 'system');
   const usedTools = [];
-  const toolContext = { tavilyKey: KEYS.tavily, portfolio, livePrices };
+  // 2026 perf audit (M3): inject the 3s-micro-cached quote fetchers so the
+  // MCP tool layer shares ONE upstream round-trip with the scanner, the SSE
+  // watcher and /api/quote — previously get_live_quote re-implemented direct
+  // Groww/Yahoo fetches (uncached, unbatched) on every agentic chat round.
+  const toolContext = { tavilyKey: KEYS.tavily, portfolio, livePrices, fetchGrowwNseQuote, fetchYahooQuote };
 
   // 1. Gemini Agentic Tool Calling
   if ((engine === 'gemini' || engine === 'auto') && KEYS.gemini) {
@@ -1950,6 +1981,14 @@ app.get('/api/fundamentals/:symbol', async (req, res) => {
       source: qs ? 'yahoo-v10+v8' : 'yahoo-v8-only',
     };
 
+    // 2026 perf audit (M2): cap the cache at 200 entries (the endpoint is
+    // public — distinct-symbol enumeration could grow this Map without
+    // limit; the 24h TTL only refetches, never evicts). LRU: Map preserves
+    // insertion order, so evict the oldest key.
+    if (_fundamentalsCache.size >= 200) {
+      const oldest = _fundamentalsCache.keys().next().value;
+      if (oldest !== undefined) _fundamentalsCache.delete(oldest);
+    }
     _fundamentalsCache.set(rawSymbol, { data, ts: Date.now() });
     res.set('Cache-Control', 'public, max-age=86400');
     return res.json(data);

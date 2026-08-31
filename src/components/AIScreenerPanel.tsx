@@ -41,9 +41,15 @@ export const AIScreenerPanel = React.memo(({ portfolio, livePrices }: AIScreener
   const [showAll, setShowAll] = useState(false);
   const [sending, setSending] = useState(false);
 
+  // 2026 perf audit (M1): snapshot-key pattern — full-portfolio screener
+  // run only re-executes when a price it reads actually changes.
+  const priceKey = useMemo(() =>
+    portfolio.map(p => (livePrices[`${p.market}_${p.symbol}`]?.price ?? 0).toFixed(2)).join('|'),
+    [portfolio, livePrices]);
   const results = useMemo(() => {
     return runAdvancedScreener(portfolio, livePrices, filters);
-  }, [portfolio, livePrices, filters]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portfolio, priceKey, filters]);
 
   const displayed = useMemo(() => {
     return showAll ? results : results.slice(0, 12);

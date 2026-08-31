@@ -174,10 +174,13 @@ const QUICK_ACTIONS = [
 export interface NeuralChatProps {
   portfolioContext: string;
   usdInrRate?: number;
-  // FEATURE: Superintelligence — pass live portfolio + prices so the
-  // engine can build per-holding signals + portfolio-specific news.
-  portfolio?: Position[];
-  livePrices?: Record<string, PriceData>;
+  // FEATURE: Superintelligence — live portfolio + prices so the engine can
+  // build per-holding signals + portfolio-specific news.
+  // 2026 perf audit (M5): passed as a stable GETTER (read at send time)
+  // instead of reactive props — the props changed identity on every price
+  // flush, breaking React.memo and re-rendering the whole message list
+  // (~4x/sec) for zero visual change.
+  getContextData?: () => { portfolio?: Position[]; livePrices?: Record<string, PriceData> };
 }
 
 const SYSTEM_WELCOME = `🤖 **SUPER INTELLIGENCE v6.0** • Real-time Market Data + Portfolio News + 7-Engine AI + ⚡SuperScore
@@ -281,8 +284,7 @@ function getFollowUpChips(lastUserQuery: string, lastModelText?: string): { labe
 export const NeuralChat = React.memo(({
   portfolioContext,
   usdInrRate: propUsdInrRate,
-  portfolio = [],
-  livePrices = {},
+  getContextData,
 }: NeuralChatProps) => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(loadPersistedChat);
   const [chatInput, setChatInput] = useState('');
@@ -425,8 +427,13 @@ export const NeuralChat = React.memo(({
     throw lastError;
   };
 
+  // 2026 perf audit (M5): portfolio/prices read fresh at CALL time via the
+  // stable getter (no reactive props → memo holds).
+  const getPortfolioData = () => getContextData?.() || {};
+
   const tryAIEngine = async (endpoint: string, modelName: string, messages: any[], systemPrompt: string, signal?: AbortSignal): Promise<string | null> => {
     if (endpoint === 'chat/mcp') {
+      const { portfolio = [], livePrices = {} } = getPortfolioData();
       const body = {
         messages: [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.role, content: m.content }))],
         engine: 'gemini',
@@ -529,6 +536,7 @@ _Sabhi API keys free hain — Gemini: aistudio.google.com , Groq: console.groq.c
     // engine can't access portfolio/livePrices (e.g. zero holdings).
     let superCtx: SuperintelligenceContext | null = null;
     try {
+      const { portfolio = [], livePrices = {} } = getPortfolioData();
       if (portfolio.length > 0) {
         superCtx = await buildSuperintelligenceContext(
           portfolio, livePrices, propUsdInrRate || 85.5, portfolioContext
@@ -723,6 +731,7 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
     if (ssMatch) {
       try {
         const sym = ssMatch[1].toUpperCase();
+        const { portfolio = [] } = getPortfolioData();
         const holdings = portfolio.find(p => p.symbol.replace('.NS', '').replace('.BO', '').toUpperCase() === sym.replace('.NS', '').replace('.BO', ''));
         const result = await runSuperScoreBacktest(sym, (holdings?.market as 'IN' | 'US') || 'IN');
         setChatMessages(prev => [...prev, { role: 'model', text: formatSuperScoreReport(result), timestamp: Date.now(), model: 'superscore_backtest', latencyMs: 0 }]);

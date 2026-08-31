@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { TabType } from './types';
 import { secureStorage } from './utils/secureStorage';
 import { useAppState } from './hooks/useAppState';
@@ -103,19 +103,33 @@ export default function App() {
     toggleTheme: toggleTheme,
   });
 
+  // 2026 perf audit (M5): stable getter for NeuralChat — the chat only needs
+  // portfolio/livePrices at SEND time; passing them as reactive props broke
+  // its React.memo and re-rendered the whole message list on every flush.
+  const neuralCtxRef = useRef({ portfolio, livePrices });
+  neuralCtxRef.current = { portfolio, livePrices };
+  const neuralContextGetter = useCallback(() => neuralCtxRef.current, []);
+
   // Save portfolio snapshot to IndexedDB whenever portfolio or metrics update
+  // 2026 perf audit (H1): this effect used to fire on EVERY price flush
+  // (metrics.totalValue changes ~4x/sec while markets move) — an IndexedDB
+  // transaction commit per tick for the same-day row. Throttled to 1/min;
+  // same-day rows are updated in place by db.ts anyway.
+  const lastSnapRef = useRef(0);
   useEffect(() => {
-    if (isAuthenticated && portfolio.length > 0) {
-      appDB.savePortfolioSnapshot({
-        date: new Date().toISOString().split('T')[0],
-        totalValue: metrics.totalValue || 0,
-        totalInvested: metrics.totalInvested || 0,
-        totalProfit: metrics.totalPL || 0,
-        profitPercent: metrics.plPct || 0,
-        holdingsCount: portfolio.length,
-        timestamp: Date.now()
-      }).catch(() => {});
-    }
+    if (!isAuthenticated || portfolio.length === 0) return;
+    const now = Date.now();
+    if (now - lastSnapRef.current < 60_000) return;
+    lastSnapRef.current = now;
+    appDB.savePortfolioSnapshot({
+      date: new Date().toISOString().split('T')[0],
+      totalValue: metrics.totalValue || 0,
+      totalInvested: metrics.totalInvested || 0,
+      totalProfit: metrics.totalPL || 0,
+      profitPercent: metrics.plPct || 0,
+      holdingsCount: portfolio.length,
+      timestamp: Date.now()
+    }).catch(() => {});
   }, [isAuthenticated, portfolio.length, metrics.totalValue, metrics.totalPL]);
 
   // Keyboard Shortcuts for Tabs (1-5)
@@ -340,8 +354,7 @@ export default function App() {
             <NeuralChat
               portfolioContext={portfolioContextText || 'System initialized. Awaiting data...'}
               usdInrRate={usdInrRate}
-              portfolio={portfolio}
-              livePrices={livePrices}
+              getContextData={neuralContextGetter}
             />
           </Suspense>
         </ErrorBoundary>

@@ -25,9 +25,14 @@ export const ScreenerPanel = React.memo(({ portfolio, livePrices }: ScreenerPane
   const [showAll, setShowAll] = useState(false);
   const [filter, setFilter] = useState<'ALL' | 'STRONG_BUY' | 'BUY' | 'HOLD' | 'AVOID'>('ALL');
 
+  // 2026 perf audit (M1): snapshot-key pattern.
+  const screenPriceKey = useMemo(() =>
+    portfolio.map(p => (livePrices[`${p.market}_${p.symbol}`]?.price ?? 0).toFixed(2)).join('|'),
+    [portfolio, livePrices]);
   const results = useMemo(() => {
     return runScreener(portfolio, livePrices);
-  }, [portfolio, livePrices]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portfolio, screenPriceKey]);
 
   const filtered = useMemo(() => {
     let list = results;

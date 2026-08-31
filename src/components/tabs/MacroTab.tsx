@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useApp } from '../../hooks/AppContext';
 import { getAssetCagrProxy } from '../../utils/constants';
 import { calculateVaR, runStressTests, analyzeConcentrationRisk } from '../../utils/riskEngine';
@@ -12,6 +12,28 @@ export const MacroTab = React.memo(function MacroTab() {
     portfolio, livePrices, metrics,
     sentiment, avgVix, usVix, inVix, wsLatency, sectorData,
   } = useApp();
+
+  // 2026 perf audit (H2): these three risk computations (Monte-Carlo VaR =
+  // 1000 simulated portfolio paths, stress scenarios, concentration) were
+  // run as render-body IIFEs — re-executed on EVERY price flush (~4x/sec
+  // while markets move) ≈ 4000 simulated paths/sec of pure waste. Memoized
+  // on a price-snapshot key so they only recompute when a price actually
+  // changes, and cheaply skip when nothing moved.
+  const riskPriceKey = useMemo(() =>
+    portfolio.map(p => (livePrices[`${p.market}_${p.symbol}`]?.price ?? 0).toFixed(2)).join('|'),
+    [portfolio, livePrices]);
+  const varResult = useMemo(
+    () => (portfolio.length ? calculateVaR(metrics.totalValue, portfolio, livePrices) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [portfolio, metrics.totalValue, riskPriceKey]);
+  const stressResults = useMemo(
+    () => (portfolio.length ? runStressTests(portfolio, livePrices) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [portfolio, riskPriceKey]);
+  const concRisk = useMemo(
+    () => (portfolio.length ? analyzeConcentrationRisk(portfolio, livePrices) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [portfolio, riskPriceKey]);
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -95,23 +117,22 @@ export const MacroTab = React.memo(function MacroTab() {
             <span className="ml-auto badge bg-red-500/10 text-red-400 border border-red-500/20 text-[10px]">ADVANCED</span>
           </h3>
           {(() => {
-            const varResult = calculateVaR(metrics.totalValue, portfolio, livePrices);
             return (
               <div className="grid grid-cols-3 gap-3">
                 <div className="bg-red-500/5 border border-red-500/15 p-4 rounded-xl text-center">
                   <div className="text-[10px] text-red-400/80 font-bold uppercase tracking-wider mb-1">Parametric</div>
-                  <div className="text-lg font-black text-red-400 font-mono">Rs.{varResult.parametric.toLocaleString('en-IN')}</div>
+                  <div className="text-lg font-black text-red-400 font-mono">Rs.{varResult!.parametric.toLocaleString('en-IN')}</div>
                 </div>
                 <div className="bg-amber-500/5 border border-amber-500/15 p-4 rounded-xl text-center">
                   <div className="text-[10px] text-amber-400/80 font-bold uppercase tracking-wider mb-1">Historical</div>
-                  <div className="text-lg font-black text-amber-400 font-mono">Rs.{varResult.historical.toLocaleString('en-IN')}</div>
+                  <div className="text-lg font-black text-amber-400 font-mono">Rs.{varResult!.historical.toLocaleString('en-IN')}</div>
                 </div>
                 <div className="bg-orange-500/5 border border-orange-500/15 p-4 rounded-xl text-center">
                   <div className="text-[10px] text-orange-400/80 font-bold uppercase tracking-wider mb-1">Monte Carlo</div>
-                  <div className="text-lg font-black text-orange-400 font-mono">Rs.{varResult.monteCarlo.toLocaleString('en-IN')}</div>
+                  <div className="text-lg font-black text-orange-400 font-mono">Rs.{varResult!.monteCarlo.toLocaleString('en-IN')}</div>
                 </div>
                 <div className="col-span-3 text-center mt-2">
-                  <span className="text-[10px] text-slate-400">Confidence: {varResult.confidence * 100}% — Max daily loss estimate</span>
+                  <span className="text-[10px] text-slate-400">Confidence: {varResult!.confidence * 100}% — Max daily loss estimate</span>
                 </div>
               </div>
             );
@@ -126,7 +147,6 @@ export const MacroTab = React.memo(function MacroTab() {
             Stress Testing
           </h3>
           {(() => {
-            const stressResults = runStressTests(portfolio, livePrices);
             return (
               <div className="space-y-2">
                 {stressResults.map((s, i) => (
@@ -154,7 +174,6 @@ export const MacroTab = React.memo(function MacroTab() {
             Concentration Risk
           </h3>
           {(() => {
-            const concRisk = analyzeConcentrationRisk(portfolio, livePrices);
             return (
               <div className="space-y-2">
                 {concRisk.map((c, i) => (

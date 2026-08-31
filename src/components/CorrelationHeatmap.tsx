@@ -11,13 +11,17 @@ export function CorrelationHeatmap({ portfolio, livePrices }: Props) {
     return portfolio.slice(0, 10).map(p => p.symbol.replace('.NS', ''));
   }, [portfolio]);
 
+  // 2026 perf audit (M1): key on the change VALUES so the 10x10 matrix only
+  // recomputes when a change% actually moves (previously: new array identity
+  // every flush → full matrix + ~100 DOM cells re-diffed per tick).
   const changes = useMemo(() => {
     return portfolio.slice(0, 10).map(p => {
       const key = `${p.market}_${p.symbol}`;
       const chg = livePrices[key]?.change;
       return typeof chg === 'number' && !isNaN(chg) ? chg : 0;
     });
-  }, [portfolio, livePrices]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portfolio, portfolio.slice(0, 10).map(p => livePrices[`${p.market}_${p.symbol}`]?.change ?? 0).join(',')]);
 
   // Simplified correlation matrix based on sector/market similarity
   const correlationMatrix = useMemo(() => {

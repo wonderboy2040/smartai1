@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { useApp } from '../hooks/AppContext';
 import {
   computeLiveDailyPL, recordDailyPL, buildMonthlyPLReport,
@@ -40,20 +40,30 @@ export const DailyPLTracker = React.memo(function DailyPLTracker() {
   const [autoReport, setAutoReport] = useState<MonthlyPLReport | null>(null);
   const [logRefreshTick, setLogRefreshTick] = useState(0);
 
+  // Always-fresh prices for the 60s recorder interval (stable ref so the
+  // interval doesn't re-arm on every flush).
+  const livePricesRef = useRef(livePrices);
+  livePricesRef.current = livePrices;
+
   // ---- LIVE daily P&L (computed from `change` field) ----
   const livePL: LiveDailyPL = useMemo(() => {
     return computeLiveDailyPL(portfolio, livePrices, usdInrRate);
   }, [portfolio, livePrices, usdInrRate]);
 
-  // ---- Freeze today's P&L into log (debounced) ----
+  // ---- Freeze today's P&L into log ----
+  // 2026 perf audit (M3): the old 5s debounce re-armed on EVERY price flush
+  // (livePL is a new object each time) so it NEVER fired while prices were
+  // moving — the hook's own 60s recorder (useAppState) was the only thing
+  // actually saving data. A plain 60s interval records reliably and the
+  // "recent" table refreshes on the same cadence.
   useEffect(() => {
     if (portfolio.length === 0) return;
-    const t = setTimeout(() => {
-      recordDailyPL(livePL);
-      setLogRefreshTick(t => t + 1);
-    }, 5000);
-    return () => clearTimeout(t);
-  }, [livePL, portfolio.length]);
+    const t = setInterval(() => {
+      recordDailyPL(computeLiveDailyPL(portfolio, livePricesRef.current, usdInrRate));
+      setLogRefreshTick(k => k + 1);
+    }, 60_000);
+    return () => clearInterval(t);
+  }, [portfolio, usdInrRate]);
 
   // ---- Auto-generate previous month's report on 1st ----
   useEffect(() => {

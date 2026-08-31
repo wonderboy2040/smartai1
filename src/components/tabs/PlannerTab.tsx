@@ -63,16 +63,24 @@ export default React.memo(function PlannerTab() {
   );
 
   // --- Computed: Rebalancing ---
+  // 2026 perf audit (H3/M1): snapshot-key memo pattern — recompute only
+  // when a relevant price changes, not when the livePrices object identity
+  // changes on every flush.
+  const plannerPriceKey = useMemo(() =>
+    portfolio.map(p => (livePrices[`${p.market}_${p.symbol}`]?.price ?? 0).toFixed(2)).join('|') + `@${usdInrRate.toFixed(2)}`,
+    [portfolio, livePrices, usdInrRate]);
   const rebalanceItems = useMemo(() =>
     analyzeRebalancing(portfolio, livePrices, usdInrRate),
-    [portfolio, livePrices, usdInrRate]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [portfolio, plannerPriceKey]
   );
   const needsRebalance = rebalanceItems.filter(r => r.action !== 'OK');
 
   // --- Computed: XIRR / Real Returns / FIRE Variants / Crypto DCA ---
   const xirrData = useMemo(() =>
     calculatePortfolioXIRR(portfolio, livePrices, usdInrRate),
-    [portfolio, livePrices, usdInrRate]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [portfolio, plannerPriceKey]
   );
   const realFvMed = useMemo(() => adjustForInflation(fvMed, investYears), [fvMed, investYears]);
   const fireVariants = useMemo(() =>

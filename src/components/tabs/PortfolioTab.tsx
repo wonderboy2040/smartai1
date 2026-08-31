@@ -131,9 +131,17 @@ const PortfolioTab = React.memo(function PortfolioTab() {
   const [collapsedGroups, setCollapsedGroups] = useState<Record<AssetGroup, boolean>>({ india: false, usa: false, crypto: false });
 
   // --- XIRR Calculator ---
+  // 2026 perf audit (H3): XIRR runs a Newton-Raphson + bisection solve per
+  // asset (N+1 numerical solves) — keying on the price-snapshot string
+  // instead of the livePrices object identity so it only re-solves when a
+  // RELEVANT price actually changed, not when any unrelated symbol ticked.
+  const xirrPriceKey = useMemo(() =>
+    portfolio.map(p => (livePrices[`${p.market}_${p.symbol}`]?.price ?? 0).toFixed(2)).join('|') + `@${usdInrRate.toFixed(2)}`,
+    [portfolio, livePrices, usdInrRate]);
   const xirrData = useMemo(() =>
     calculatePortfolioXIRR(portfolio, livePrices, usdInrRate),
-    [portfolio, livePrices, usdInrRate]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [portfolio, xirrPriceKey]
   );
   const xirrMap = useMemo(() => {
     const map: Record<string, number | null> = {};
