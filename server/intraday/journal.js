@@ -87,10 +87,19 @@ export function _todayEntries(dayKey) {
 }
 
 export async function runEodReview(deps, dayKeyOverride) {
-  const { KEYS, OPENAI_COMPAT } = deps || {};
   const dayKey = dayKeyOverride || istDayKey();
   if (_state.reviews[dayKey]) return { ok: true, review: _state.reviews[dayKey], cached: true };
+  // In-flight dedup: 15:45 cron + manual POST can fire at the same second —
+  // without this both spend an LLM call on the identical review.
+  if (_eodInflight) return _eodInflight;
+  _eodInflight = _runEodReview(deps, dayKey).finally(() => { _eodInflight = null; });
+  return _eodInflight;
+}
 
+let _eodInflight = null;
+
+async function _runEodReview(deps, dayKey) {
+  const { KEYS, OPENAI_COMPAT } = deps || {};
   const trades = _state.entries.filter(e => e.dayKey === dayKey);
   if (trades.length === 0) {
     return { ok: false, error: 'Aaj koi trade close nahi hua — journal review ke liye kuch nahi.' };
@@ -155,9 +164,18 @@ export function getWeekKey(date = new Date()) {
 }
 
 export async function runWeeklyReport(deps, weekKeyOverride) {
-  const { KEYS, OPENAI_COMPAT } = deps || {};
   const weekKey = weekKeyOverride || getWeekKey();
   if (_state.weekly[weekKey]) return { ok: true, report: _state.weekly[weekKey], cached: true };
+  // In-flight dedup (same pattern as EOD): Fri 16:30 cron + manual POST race.
+  if (_weeklyInflight) return _weeklyInflight;
+  _weeklyInflight = _runWeeklyReport(deps, weekKey).finally(() => { _weeklyInflight = null; });
+  return _weeklyInflight;
+}
+
+let _weeklyInflight = null;
+
+async function _runWeeklyReport(deps, weekKey) {
+  const { KEYS, OPENAI_COMPAT } = deps || {};
 
   // Trades from this week's dayKeys (Mon..now).
   const trades = _state.entries.filter(e => e.dayKey >= weekKey);

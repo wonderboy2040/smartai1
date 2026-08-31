@@ -492,7 +492,7 @@ registerIntradayRoutes(app, {
 //   1. Finnhub /quote (US stocks/ETFs, if key set)
 //   2. Groww NSE live (India stocks/ETFs; SKIPPED for indices like NIFTY)
 //   3. Yahoo Finance v7/v8 (fallback for everything)
-// Query: ?symbols=SMH,SPCX,MU&market=US   (comma separated, max 50)
+// Query: ?symbols=SMH,QQQ,MU&market=US   (comma separated, max 50)
 // Resp:  { quotes: { SMH: {price,change,high,low,volume,prevClose,time,source}, ... } }
 // ------------------------------------------------------------
 const INDIAN_INDICES = new Set(['NIFTY','BANKNIFTY','SENSEX','INDIAVIX','CNXIT','NIFTY50','NIFTYBANK']);
@@ -2807,6 +2807,19 @@ function startBot() {
 // Validate once before binding the port. validateEnv() is the single source
 // of truth for startup requirements and refuses unsafe configurations.
 validateEnv();
+
+// ------------------------------------------------------------
+// Terminal error middleware (Express 4 does NOT catch async rejections).
+// Any route handler that ever throws asynchronously would otherwise leave
+// the socket hanging with no response. This converts those into a clean
+// 500 JSON error instead.
+// ------------------------------------------------------------
+app.use((err, _req, res, _next) => {
+  console.error('[wealth-ai] Unhandled route error:', err?.message || err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: { message: 'Internal server error.', detail: String(err?.message || err).slice(0, 200) } });
+  }
+});
 
 app.listen(PORT, () => {
   const ready = Object.entries(KEYS).filter(([, v]) => v).map(([k]) => k);

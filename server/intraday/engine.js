@@ -353,10 +353,22 @@ export async function aiVerifySignals(candidates, deps) {
     try {
       // Strip <think>...</think> blocks BEFORE extracting JSON.
       const cleanText = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-      const m = cleanText.match(/\{[\s\S]*\}/);
-      if (!m) return null;
-      const parsed = JSON.parse(m[0]);
-      return parsed?.verdicts || null;
+      // Progressive extraction: the old greedy /\{[\s\S]*\}/ spanned from the
+      // FIRST '{' to the LAST '}' — trailing prose with a stray '}' (or a
+      // second JSON blob) poisoned the parse and silently dropped the whole
+      // multi-model consensus layer. Try progressively shorter spans instead.
+      const start = cleanText.indexOf('{');
+      if (start === -1) return null;
+      let end = cleanText.lastIndexOf('}');
+      while (end > start) {
+        try {
+          const parsed = JSON.parse(cleanText.slice(start, end + 1));
+          if (parsed?.verdicts) return parsed.verdicts;
+          if (parsed && typeof parsed === 'object' && Object.keys(parsed).length) return parsed.verdicts || parsed;
+        } catch { /* shrink window and retry */ }
+        end = cleanText.lastIndexOf('}', end - 1);
+      }
+      return null;
     } catch { return null; }
   };
 

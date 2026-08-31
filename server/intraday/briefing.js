@@ -9,7 +9,7 @@
 // • Cron (node-cron): 09:10 IST Mon-Fri → Telegram briefing.
 // ============================================================
 import { askLLM } from './agent.js';
-import { getISTParts, marketPhase, isNseMarketOpen } from './time.js';
+import { getISTParts, marketPhase, isNseMarketOpen, istDayKey } from './time.js';
 import { loadJSON, saveJSON } from './store.js';
 
 const BRIEFING_FILE = 'last-briefing.json';
@@ -34,16 +34,34 @@ const VOICE_SYSTEM = `Convert the desk briefing into a SPOKEN voice briefing for
 - Plain text only, ready for speechSynthesis.`;
 
 export function getLastBriefing() {
-  return _last && _last.text ? { ..._last, fresh: _last.dayKey === new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' }) } : null;
+  return _last && _last.text ? { ..._last, fresh: _last.dayKey === istDayKey() } : null;
 }
 
+// In-flight dedup: cron + manual endpoints can hit the generator at the same
+// second (09:10 cron vs ?fresh=1 vs /push) — without this guard every
+// concurrent call fires its own 2 LLM calls (duplicate cost + TG pushes).
+let _inflight = null;
+
 export async function generateDailyBriefing(deps) {
+  if (_inflight) return _inflight;
+  _inflight = _generateBriefing(deps).finally(() => { _inflight = null; });
+  return _inflight;
+}
+
+async function _generateBriefing(deps) {
   const { getLastScan, getMarketRegime, getTrackRecord, KEYS, OPENAI_COMPAT } = deps || {};
   try {
     let scan = getLastScan?.();
     if (!scan || !scan.signals?.length) {
       scan = (await deps?.triggerScan?.()) || scan;
     }
+
+    // CRITICAL (financial correctness): never present a stale (yesterday's)
+    // scan as TODAY'S setups. At 09:10 pre-open the 60s cache can still hold
+    // the previous session's scan — day-old LTPs/levels would be briefed as
+    // live and stored as today's briefing all day.
+    const scanIsToday = !!(scan?.asOf && istDayKey(new Date(scan.asOf)) === istDayKey());
+    const signals = scanIsToday ? (scan?.signals || []).slice(0, 5) : [];
 
     let regime = scan?.marketRegime || null;
     if (!regime) {
@@ -62,27 +80,34 @@ export async function generateDailyBriefing(deps) {
     } catch { /* optional */ }
 
     const { hour, minute, weekday } = getISTParts();
-    const signals = (scan?.signals || []).slice(0, 5);
     const dataBlock = `DATE: ${weekday} ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} IST | Market: ${isNseMarketOpen() ? 'OPEN' : 'PRE-OPEN/CLOSED'}
 REGIME: ${regime ? `NIFTY ${regime.regime} ${regime.niftyChange >= 0 ? '+' : ''}${regime.niftyChange}% | VIX ${regime.vix ?? 'n/a'} (${regime.vixLevel ?? 'n/a'})` : 'unavailable — say regime data pending, trade light'}
 ${perf ? `TRACK RECORD (7d): win-rate ${perf.winRate?.toFixed(1) ?? 'n/a'}%, avg ${perf.avgR != null ? (perf.avgR >= 0 ? '+' : '') + perf.avgR + 'R' : 'n/a'}, ${perf.resolved}/${perf.totalTracked} resolved, P&L/₹1L ₹${perf.disciplinedPnlPerLakh?.toFixed(0) ?? 0}` : 'TRACK RECORD: no data yet'}
-${signals.length ? `LIVE TOP SETUPS:\n${signals.map(s => `${s.symbol} ${s.direction} conf ${s.confidence}% | LTP ${s.ltp} | entry ${s.entryZoneLow ?? s.entry}-${s.entryZoneHigh ?? s.entry} | SL ${s.stopLoss} | T1 ${s.target1} | T2 ${s.target2} | RR 1:${s.rr} | ${s.reasons?.slice(0, 2).join(', ') || ''}`).join('\n')}` : 'LIVE SETUPS: scanner warm-up me hai — desk ko bolo first 15 min observation only'}`;
+${signals.length ? `LIVE TOP SETUPS (today's scan):\n${signals.map(s => `${s.symbol} ${s.direction} conf ${s.confidence}% | LTP ${s.ltp} | entry ${s.entryZoneLow ?? s.entry}-${s.entryZoneHigh ?? s.entry} | SL ${s.stopLoss} | T1 ${s.target1} | T2 ${s.target2} | RR 1:${s.rr} | ${s.reasons?.slice(0, 2).join(', ') || ''}`).join('\n')}` : 'LIVE SETUPS: scanner warm-up me hai (pre-open / stale cache cleared) — desk ko bolo first 15 min observation only'}`;
 
     const r = await askLLM(BRIEFING_SYSTEM, dataBlock, { KEYS, OPENAI_COMPAT }, { temperature: 0.4, maxTokens: 1600 });
     if (!r) return { ok: false, error: 'AI engines unavailable — briefing generate nahi ho payi.' };
 
-    // Voice version (short, spoken-word) — best-effort, non-blocking on failure.
+    // Voice version (short, spoken-word) — best-effort, time-boxed so a slow
+    // provider can never block the briefing route/cron (was: fully awaited
+    // in the critical path adding up to 20-30s).
     let voiceText = null;
-    const v = await askLLM(VOICE_SYSTEM, r.text, { KEYS, OPENAI_COMPAT }, { temperature: 0.4, maxTokens: 500, timeout: 20000 });
-    if (v) voiceText = v.text;
+    try {
+      const v = await Promise.race([
+        askLLM(VOICE_SYSTEM, r.text, { KEYS, OPENAI_COMPAT }, { temperature: 0.4, maxTokens: 500, timeout: 20000 }),
+        new Promise(resolve => setTimeout(() => resolve(null), 22000)),
+      ]);
+      if (v) voiceText = v.text;
+    } catch { /* voice is optional */ }
 
     _last = {
       text: r.text,
       voiceText,
-      dayKey: new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' }),
+      dayKey: istDayKey(),
       ts: Date.now(),
       engine: r.engine,
       regime, perf,
+      setupsUsed: signals.length,
     };
     saveJSON(BRIEFING_FILE, _last);
     return { ok: true, briefing: _last };

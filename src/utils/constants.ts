@@ -20,7 +20,9 @@ export const ALPHA_ETFS_US: ETFInfo[] = [
   { sym: 'SMH', name: 'VanEck Semiconductor ETF', cagr: 28.5, maxDD: 45, cat: 'Tech Alpha', aum: '$22B', vol: 'Extreme', fixedAlloc: 0.30 },
   { sym: 'VOOG', name: 'Vanguard S&P 500 Growth ETF', cagr: 18.5, maxDD: 32, cat: 'US Mega Growth', aum: '$14B', vol: 'Moderate', fixedAlloc: 0.25 },
   { sym: 'MU', name: 'Micron Technology Inc', cagr: 24.0, maxDD: 45, cat: 'Semiconductor / AI', aum: '$130B', vol: 'High', fixedAlloc: 0.15 },
-  { sym: 'SPCX', name: 'The SPAC and New Issue ETF', cagr: 18.0, maxDD: 38, cat: 'SPAC / Growth', aum: '$5B', vol: 'High', fixedAlloc: 0.10 },
+  // FIX (re-regression): SPCX ticker (Tuttle/Morgan Stanley SPAC ETF) is
+  // delisted & effectively un-investable — reverted to QQQ (audit H8 fix).
+  { sym: 'QQQ', name: 'Invesco Nasdaq-100 ETF', cagr: 18.0, maxDD: 35, cat: 'US Mega Growth', aum: '$320B', vol: 'High', fixedAlloc: 0.10 },
   { sym: 'VGT', name: 'Vanguard Information Technology ETF', cagr: 21.5, maxDD: 35, cat: 'Tech Broad Alpha', aum: '$75B', vol: 'High', fixedAlloc: 0.20 }
 ];
 
@@ -29,7 +31,7 @@ export const EXACT_TICKER_MAP: Record<string, string> = {
   'SMH': 'NASDAQ:SMH',
   'VOOG': 'AMEX:VOOG',
   'MU': 'NASDAQ:MU',
-  'SPCX': 'AMEX:SPCX',
+  'QQQ': 'NASDAQ:QQQ',
   'VGT': 'AMEX:VGT',
   'AVUV': 'AMEX:AVUV',
   'IWM': 'AMEX:IWM',

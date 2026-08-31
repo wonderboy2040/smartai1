@@ -480,14 +480,22 @@ export function registerIntradayRoutes(app, deps) {
   });
 
   app.post('/api/intraday-journal/eod', async (_req, res) => {
-    const result = await runEodReview(agentDeps());
-    if (!result.ok) return jsonError(res, 400, result.error);
-    res.json(result);
+    try {
+      const result = await runEodReview(agentDeps());
+      if (!result.ok) return jsonError(res, 400, result.error);
+      res.json(result);
+    } catch (e) {
+      return jsonError(res, 500, 'EOD review failed unexpectedly.', e);
+    }
   });
 
   app.post('/api/intraday-journal/weekly', async (_req, res) => {
-    const result = await runWeeklyReport(agentDeps());
-    if (!result.ok) return jsonError(res, 400, result.error);
-    res.json(result);
+    try {
+      const result = await runWeeklyReport(agentDeps());
+      if (!result.ok) return jsonError(res, 400, result.error);
+      res.json(result);
+    } catch (e) {
+      return jsonError(res, 500, 'Weekly report failed unexpectedly.', e);
+    }
   });
 }

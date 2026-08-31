@@ -36,7 +36,14 @@ export function loadJSON(filename, fallback) {
     // when reading a file written by an older build.
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       && fallback && typeof fallback === 'object' && !Array.isArray(fallback)) {
-      return { ...structuredClone(fallback), ...parsed };
+      const merged = { ...structuredClone(fallback), ...parsed };
+      // Hardening: a state file containing explicit `null` (manual edit /
+      // older-bug artifact) would override the fallback array and crash
+      // every `.filter()` consumer in that module. Normalize arrays back.
+      for (const k of Object.keys(fallback)) {
+        if (Array.isArray(fallback[k]) && !Array.isArray(merged[k])) merged[k] = structuredClone(fallback[k]);
+      }
+      return merged;
     }
     return parsed;
   } catch {

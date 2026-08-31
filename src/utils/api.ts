@@ -498,7 +498,7 @@ export async function batchFetchIndianPrices(
 /**
  * REALTIME US MARKET STREAMING (HTTP)
  * ------------------------------------------------------------------
- * Mirror of batchFetchIndianPrices but for US assets (SMH, VGT, SPCX, MU etc.).
+ * Mirror of batchFetchIndianPrices but for US assets (SMH, VGT, QQQ, MU etc.).
  * The TradingView WebSocket *does* push US prices, but the scanner HTTP poller
  * provides richer data (SMA/RSI/MACD) and acts as a reliable secondary channel.
  *

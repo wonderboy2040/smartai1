@@ -58,7 +58,7 @@ const SYMBOL_SECTOR_MAP: Record<string, string> = {
   'NFLX': 'Technology', 'AMD': 'Technology', 'AVGO': 'Technology', 'COST': 'Consumer',
   // ETFs & Stocks
   'SMH': 'Technology', 'VOOG': 'Mega Growth', 'MU': 'Technology',
-  'SPCX': 'Growth', 'VGT': 'Technology', 'SPY': 'ETF',
+  'QQQ': 'Mega Growth', 'VGT': 'Technology', 'SPY': 'ETF',
   'MOMENTUM50': 'Smart Beta', 'SMALLCAP': 'Small Cap', 'MID150BEES': 'Mid Cap',
   'JUNIORBEES': 'Next 50', 'SETFNIF50': 'Large Cap',
   'VTI': 'ETF', 'VOO': 'ETF', 'ARKK': 'Technology', 'IBIT': 'Crypto',

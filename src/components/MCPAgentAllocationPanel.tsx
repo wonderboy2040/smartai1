@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useApp } from '../hooks/AppContext';
 import {
   computeMCPPlannerAllocations,
@@ -7,7 +7,7 @@ import {
   MCP_AGENT_MODELS,
   type MCPPlannerAgentModel,
 } from '../utils/mcpPlannerEngine';
-import { formatCurrency, formatPrice } from '../utils/constants';
+import { formatCurrency, formatPrice, DEFAULT_USD_INR } from '../utils/constants';
 import { sendTelegramAlert } from '../utils/api';
 import { secureStorage } from '../utils/secureStorage';
 
@@ -40,24 +40,53 @@ export const MCPAgentAllocationPanel = React.memo(function MCPAgentAllocationPan
 
   const numericAmount = Math.max(1000, parseFloat(customAmount) || 25000);
 
+  // Perf: livePrices gets a fresh object identity on every tick flush (~5/s).
+  // Keying the memo on a compact price snapshot of the 12 planner symbols
+  // only recomputes the (heavy) allocation engine when a relevant price
+  // actually changes — not on every unrelated tick.
+  const PLANNER_SYMBOL_KEYS = [
+    'IN_MOMENTUM50', 'IN_SMALLCAP', 'IN_MID150BEES', 'IN_JUNIORBEES', 'IN_SETFNIF50',
+    'US_SMH', 'US_VOOG', 'US_MU', 'US_QQQ', 'US_VGT', 'IN_BTC', 'IN_ETH',
+  ];
+  const plannerPriceKey = useMemo(
+    () => PLANNER_SYMBOL_KEYS.map(k => (livePrices[k]?.price ?? 0).toFixed(2)).join('|'),
+    [livePrices]
+  );
+  const stablePricesRef = useRef(livePrices);
+  stablePricesRef.current = livePrices;
+
   // Compute live MCP allocation plan
   const plan = useMemo(
     () =>
-      computeMCPPlannerAllocations(livePrices, numericAmount, {
+      computeMCPPlannerAllocations(stablePricesRef.current, numericAmount, {
         agentModel,
         investmentType,
         marketFocus,
-        usdInrRate: usdInrRate || 85.5,
+        usdInrRate: usdInrRate || DEFAULT_USD_INR,
       }),
-    [livePrices, numericAmount, agentModel, investmentType, marketFocus, usdInrRate]
+    [plannerPriceKey, numericAmount, agentModel, investmentType, marketFocus, usdInrRate]
   );
 
-  // Copy broker order sheet to clipboard
-  const handleCopyOrderSheet = useCallback(() => {
-    const text = formatBrokerOrderSheet(plan);
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
+  // Timer cleanup — setState after unmount guard (was: raw setTimeouts).
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const appliedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    if (appliedTimerRef.current) clearTimeout(appliedTimerRef.current);
+  }, []);
+
+  // Copy broker order sheet to clipboard (was: un-awaited + un-caught —
+  // crashed on HTTP origins where navigator.clipboard is undefined).
+  const handleCopyOrderSheet = useCallback(async () => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(formatBrokerOrderSheet(plan));
+      setCopied(true);
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => setCopied(false), 2500);
+    } catch {
+      alert('⚠️ Clipboard unavailable (HTTPS required). Order sheet manually copy karein.');
+    }
   }, [plan]);
 
   // Send plan to Telegram
@@ -94,7 +123,8 @@ export const MCPAgentAllocationPanel = React.memo(function MCPAgentAllocationPan
     if (ethAlloc > 0) setEthSIP(ethAlloc);
 
     setAppliedMsg(true);
-    setTimeout(() => setAppliedMsg(false), 3000);
+    if (appliedTimerRef.current) clearTimeout(appliedTimerRef.current);
+    appliedTimerRef.current = setTimeout(() => setAppliedMsg(false), 3000);
   }, [plan, setIndiaSIP, setUsSIP, setBtcSIP, setEthSIP]);
 
   const PRESET_AMOUNTS = [10000, 25000, 50000, 100000, 250000, 500000];
@@ -114,7 +144,7 @@ export const MCPAgentAllocationPanel = React.memo(function MCPAgentAllocationPan
             </span>
           </div>
           <p className="text-[11px] text-slate-400 mt-0.5">
-            Real-time multi-asset investment distribution for India (MOMENTUM50, SMALLCAP, MID150BEES, JUNIORBEES, SETFNIF50), USA (SMH, VOOG, MU, SPCX, VGT) & Crypto based on live prices and SuperScore.
+            Real-time multi-asset investment distribution for India (MOMENTUM50, SMALLCAP, MID150BEES, JUNIORBEES, SETFNIF50), USA (SMH, VOOG, MU, QQQ, VGT) & Crypto based on live prices and SuperScore.
           </p>
         </div>
 
@@ -368,7 +398,9 @@ export const MCPAgentAllocationPanel = React.memo(function MCPAgentAllocationPan
                     </span>
                   </div>
                   <div className="text-[10px] font-mono font-bold text-emerald-400 mt-0.5">
-                    🎯 Buy {a.targetUnits} {a.market === 'US' ? 'shares' : ['BTC', 'ETH'].includes(a.symbol) ? a.symbol : 'units'}
+                    {a.targetUnits >= 1 || ['BTC', 'ETH'].includes(a.symbol) || a.market === 'US'
+                      ? <>🎯 Buy {a.targetUnits} {a.market === 'US' ? 'shares' : ['BTC', 'ETH'].includes(a.symbol) ? a.symbol : 'units'}</>
+                      : <span className="text-amber-400/80">⚠️ allocation unit ke liye choti hai</span>}
                   </div>
                 </div>
               </div>

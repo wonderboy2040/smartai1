@@ -7,7 +7,7 @@
 //
 // Curated Assets Universe:
 //   INDIA: MOMENTUM50, SMALLCAP, MID150BEES, JUNIORBEES, SETFNIF50
-//   USA:   SMH, VOOG, MU, SPCX, VGT
+//   USA:   SMH, VOOG, MU, QQQ, VGT
 //   CRYPTO: BTC, ETH
 // ============================================================
 
@@ -223,7 +223,7 @@ export function computeMCPPlannerAllocations(
     { symbol: 'SMH', name: 'VanEck Semiconductor ETF', market: 'US', category: 'Semiconductor / AI Alpha', emoji: '🇺🇸', baseWeight: 0.30, cagr: 28.5, maxDD: 45 },
     { symbol: 'VOOG', name: 'Vanguard S&P 500 Growth ETF', market: 'US', category: 'US Mega Cap Growth', emoji: '🇺🇸', baseWeight: 0.25, cagr: 18.5, maxDD: 32 },
     { symbol: 'MU', name: 'Micron Technology Inc', market: 'US', category: 'AI Memory & Chip Alpha', emoji: '🇺🇸', baseWeight: 0.15, cagr: 24.0, maxDD: 45 },
-    { symbol: 'SPCX', name: 'The SPAC and New Issue ETF', market: 'US', category: 'Tech Alpha & Innovation', emoji: '🇺🇸', baseWeight: 0.10, cagr: 18.0, maxDD: 38 },
+    { symbol: 'QQQ', name: 'Invesco Nasdaq-100 ETF', market: 'US', category: 'US Mega Growth', emoji: '🇺🇸', baseWeight: 0.10, cagr: 18.0, maxDD: 35 },
     { symbol: 'VGT', name: 'Vanguard Information Technology ETF', market: 'US', category: 'Broad Tech Powerhouse', emoji: '🇺🇸', baseWeight: 0.20, cagr: 21.5, maxDD: 35 },
 
     // 🪙 CRYPTO (Digital Gold & Smart Contracts)
@@ -259,7 +259,7 @@ export function computeMCPPlannerAllocations(
       else if (spec.symbol === 'SMH') price = 280.0;
       else if (spec.symbol === 'VOOG') price = 365.0;
       else if (spec.symbol === 'MU') price = 125.0;
-      else if (spec.symbol === 'SPCX') price = 32.0;
+      else if (spec.symbol === 'QQQ') price = 485.0;
       else if (spec.symbol === 'VGT') price = 590.0;
       else if (spec.symbol === 'BTC') price = 7800000;
       else if (spec.symbol === 'ETH') price = 280000;
@@ -425,13 +425,15 @@ export function computeMCPPlannerAllocations(
           ? +(a.allocAmountINR / usdInrRate).toFixed(2)
           : a.allocAmountINR;
         
-        // Exact unit sizing
+        // Exact unit sizing — floor WITHOUT forcing min 1 unit: the old
+        // Math.max(1, ...) made a ₹1000 plan buy 1 unit of SMALLCAP (₹185)
+        // against a ₹50 allocation — 3.7x over budget, breaking reconciliation.
         if (a.market === 'US') {
           a.targetUnits = +(a.allocAmountNative / (a.currentPrice || 1)).toFixed(2);
         } else if (['BTC', 'ETH'].includes(a.symbol)) {
           a.targetUnits = +(a.allocAmountINR / (a.priceINR || 1)).toFixed(6);
         } else {
-          a.targetUnits = Math.max(1, Math.floor(a.allocAmountINR / (a.currentPrice || 1)));
+          a.targetUnits = Math.floor(a.allocAmountINR / (a.currentPrice || 1));
         }
       });
     };
@@ -458,7 +460,7 @@ export function computeMCPPlannerAllocations(
       } else if (['BTC', 'ETH'].includes(a.symbol)) {
         a.targetUnits = +(a.allocAmountINR / (a.priceINR || 1)).toFixed(6);
       } else {
-        a.targetUnits = Math.max(1, Math.floor(a.allocAmountINR / (a.currentPrice || 1)));
+        a.targetUnits = Math.floor(a.allocAmountINR / (a.currentPrice || 1));
       }
     });
   }

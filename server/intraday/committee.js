@@ -72,11 +72,13 @@ function parseVotes(text) {
 }
 
 // Cache: debate is expensive — serve the same result for 10 min.
-let _cache = { data: null, ts: 0, inflight: null };
+// Failed debates are negatively cached for 90s (anti retry-storm).
+let _cache = { data: null, ts: 0, inflight: null, failTs: 0, failResult: null };
 
 export async function runCommitteeDebate(deps) {
   const { getLastScan, triggerScan, getMarketRegime, KEYS, OPENAI_COMPAT } = deps || {};
   if (_cache.data && Date.now() - _cache.ts < 10 * 60 * 1000) return _cache.data;
+  if (_cache.failResult && Date.now() - _cache.failTs < 90 * 1000) return _cache.failResult;
   if (_cache.inflight) return _cache.inflight;
 
   _cache.inflight = (async () => {
@@ -146,9 +148,15 @@ export async function runCommitteeDebate(deps) {
       };
       _cache.data = result;
       _cache.ts = Date.now();
+      _cache.failTs = 0; _cache.failResult = null;
       return result;
     } catch (e) {
-      return { ok: false, error: `Committee debate failed: ${e?.message || e}` };
+      // Negative cache: a failed debate (AI down, etc.) must not trigger a
+      // retry storm — each retry costs up to 3 persona + 1 judge LLM calls.
+      // Cache the failure for 90s so polling clients back off naturally.
+      _cache.failTs = Date.now();
+      _cache.failResult = { ok: false, error: `Committee debate failed: ${e?.message || e}` };
+      return _cache.failResult;
     } finally {
       _cache.inflight = null;
     }
@@ -158,5 +166,5 @@ export async function runCommitteeDebate(deps) {
 }
 
 export function clearCommitteeCache() {
-  _cache = { data: null, ts: 0, inflight: null };
+  _cache = { data: null, ts: 0, inflight: null, failTs: 0, failResult: null };
 }

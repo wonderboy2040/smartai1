@@ -759,7 +759,7 @@ export function useAppState() {
   }, [isAuthenticated, hasIndianEquity, flushPricesToStorage]);
 
   // --- US Market Realtime Streaming (HTTP) ------------------------------------
-  // Dedicated fast poller for US assets (SMH, VGT, SPCX, MU etc.).
+  // Dedicated fast poller for US assets (SMH, VGT, QQQ, MU etc.).
   // Uses 'last' (last traded price) instead of 'close' which was causing the
   // ~15 minute delay after US market open (7:00 PM IST). Polls every 3s when
   // US market is open, 5s in pre-market, 30s when closed.
@@ -836,7 +836,7 @@ export function useAppState() {
     if (positions.length) positions.forEach(add);
     else {
       ['NIFTY', 'BANKNIFTY', 'MOMENTUM50', 'SMALLCAP', 'MID150BEES', 'JUNIORBEES', 'SETFNIF50'].forEach(s => { inSymbols.push(s); cleanToKey[`IN_${s}`] = `IN_${s}`; });
-      ['SPY', 'SMH', 'VOOG', 'MU', 'SPCX', 'VGT'].forEach(s => { usSymbols.push(s); cleanToKey[`US_${s}`] = `US_${s}`; });
+      ['SPY', 'SMH', 'VOOG', 'MU', 'QQQ', 'VGT'].forEach(s => { usSymbols.push(s); cleanToKey[`US_${s}`] = `US_${s}`; });
     }
     ['BTC', 'ETH'].forEach(s => { if (!cryptoSymbols.includes(s)) { cryptoSymbols.push(s); cleanToKey[`IN_${s}`] = `IN_${s}`; } });
 
@@ -871,7 +871,7 @@ export function useAppState() {
     const currentPortfolio = portfolioRef.current;
     const defaultSymbols = [
       'IN_NIFTY', 'IN_BANKNIFTY', 'IN_MOMENTUM50', 'IN_SMALLCAP', 'IN_MID150BEES', 'IN_JUNIORBEES', 'IN_SETFNIF50',
-      'US_SPY', 'US_SMH', 'US_VOOG', 'US_MU', 'US_SPCX', 'US_VGT',
+      'US_SPY', 'US_SMH', 'US_VOOG', 'US_MU', 'US_QQQ', 'US_VGT',
       'IN_INDIAVIX', 'US_VIX', 'IN_BTC', 'IN_ETH'
     ];
     let symbolsToSub = currentPortfolio.length > 0 ? [...new Set([...currentPortfolio.map(p => `${p.market}_${p.symbol}`), ...defaultSymbols])] : defaultSymbols;

@@ -178,7 +178,7 @@ export const SERVER_MCP_TOOLS_OPENAI = [
     type: 'function',
     function: {
       name: 'get_planner_ai_allocation',
-      description: 'Wealth Planner MCP AI Agent tool. Calculates optimal investment distribution for any investment amount across curated Indian Alpha ETFs (MOMENTUM50, SMALLCAP, MID150BEES, JUNIORBEES, SETFNIF50), USA Alpha ETFs (SMH, VOOG, MU, SPCX, VGT), and Crypto (BTC, ETH) based on real-time market prices, SuperScore v6.0, RSI momentum, and 4 AI Agent models (Quantum Alpha, Balanced Parity, Aggressive Momentum, Deep Dip Hunter).',
+      description: 'Wealth Planner MCP AI Agent tool. Calculates optimal investment distribution for any investment amount across curated Indian Alpha ETFs (MOMENTUM50, SMALLCAP, MID150BEES, JUNIORBEES, SETFNIF50), USA Alpha ETFs (SMH, VOOG, MU, QQQ, VGT), and Crypto (BTC, ETH) based on real-time market prices, SuperScore v6.0, RSI momentum, and 4 AI Agent models (Quantum Alpha, Balanced Parity, Aggressive Momentum, Deep Dip Hunter).',
       parameters: {
         type: 'object',
         properties: {
@@ -773,7 +773,7 @@ export async function executeServerMCPTool(name, args = {}, context = {}) {
           { sym: 'SMH', name: 'VanEck Semiconductor ETF', mkt: 'US', baseWeight: 0.30, cagr: 28.5 },
           { sym: 'VOOG', name: 'Vanguard S&P 500 Growth ETF', mkt: 'US', baseWeight: 0.25, cagr: 18.5 },
           { sym: 'MU', name: 'Micron Technology Inc', mkt: 'US', baseWeight: 0.15, cagr: 24.0 },
-          { sym: 'SPCX', name: 'The SPAC and New Issue ETF', mkt: 'US', baseWeight: 0.10, cagr: 18.0 },
+          { sym: 'QQQ', name: 'Invesco Nasdaq-100 ETF', mkt: 'US', baseWeight: 0.10, cagr: 18.0 },
           { sym: 'VGT', name: 'Vanguard Information Technology ETF', mkt: 'US', baseWeight: 0.20, cagr: 21.5 },
           // Crypto
           { sym: 'BTC', name: 'Bitcoin (Digital Gold)', mkt: 'IN', baseWeight: 0.65, cagr: 50.0 },
@@ -800,7 +800,7 @@ export async function executeServerMCPTool(name, args = {}, context = {}) {
             else if (spec.sym === 'SMH') price = 280.0;
             else if (spec.sym === 'VOOG') price = 365.0;
             else if (spec.sym === 'MU') price = 125.0;
-            else if (spec.sym === 'SPCX') price = 32.0;
+            else if (spec.sym === 'QQQ') price = 485.0;
             else if (spec.sym === 'VGT') price = 590.0;
             else if (spec.sym === 'BTC') price = 7800000;
             else if (spec.sym === 'ETH') price = 280000;
@@ -843,7 +843,7 @@ export async function executeServerMCPTool(name, args = {}, context = {}) {
             ? +(allocNative / a.currentPrice).toFixed(2)
             : ['BTC', 'ETH'].includes(a.symbol)
             ? +(allocAmountINR / a.currentPrice).toFixed(6)
-            : Math.max(1, Math.floor(allocAmountINR / a.currentPrice));
+            : Math.floor(allocAmountINR / a.currentPrice);
 
           return {
             symbol: a.symbol,
