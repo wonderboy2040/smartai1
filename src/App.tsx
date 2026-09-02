@@ -11,6 +11,7 @@ import { usePrefetch } from './hooks/usePrefetch';
 import { useAppShortcuts } from './hooks/useKeyboardShortcuts';
 import { appDB } from './utils/db';
 import { WifiOff } from 'lucide-react';
+import { StaticMirrorBanner } from './components/StaticMirrorBanner';
 
 // Lazy load with auto-recovery: after a fresh deploy the cached index.html can
 // reference old hashed chunks that no longer exist ("Failed to fetch dynamically
@@ -171,6 +172,7 @@ export default function App() {
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen login-bg flex items-center justify-center p-4">
+        <StaticMirrorBanner />
         <div className="login-card quantum-modal rounded-3xl p-8 max-w-sm w-full animate-scale-in">
           <div className="text-center mb-8">
             <div className="relative inline-block">
@@ -198,6 +200,7 @@ export default function App() {
   return (
     <AppContext.Provider value={state}>
       <div className={`min-h-screen bg-gradient-to-br from-slate-950 via-[#0a0f1e] to-slate-950 text-slate-200 ${theme}`}>
+        <StaticMirrorBanner />
         {/* Header */}
         <header className="sticky top-0 z-40 quantum-appbar border-b border-white/5">
           {/* Ticker */}

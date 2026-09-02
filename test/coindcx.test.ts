@@ -218,6 +218,56 @@ describe('coindcxPrivate (HMAC-SHA256 request signing)', () => {
 });
 
 // ============================================================
+// fetchBalancesSigned — docs-exact string params + pagination
+// ============================================================
+describe('fetchBalancesSigned (paginated balances)', () => {
+  it('sends STRING page/size (docs format) and stops after a short page', async () => {
+    const calls = [];
+    vi.stubGlobal('fetch', async (url, init = {}) => {
+      if (String(url) === CDCX_BALANCES_URL) {
+        const body = JSON.parse(String(init.body));
+        calls.push(body);
+        if (body.page === '1') return jsonRes(Array.from({ length: 100 }, (_, i) => bal(`C${i}`, 1)));
+        return jsonRes([bal('ETH', 2)]);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const out = await coindcx.__fetchBalancesSignedForTests()('k', 's');
+    expect(out).toHaveLength(101);          // 100 from page 1 + 1 from page 2
+    expect(calls).toHaveLength(2);          // short page 2 → loop terminated
+    expect(calls[0].page).toBe('1');        // STRING params (CoinDCX docs)
+    expect(calls[0].size).toBe('100');
+    expect(calls[1].page).toBe('2');
+    expect(typeof calls[0].timestamp).toBe('number');
+  });
+
+  it('single short page → exactly one upstream call', async () => {
+    let callCount = 0;
+    vi.stubGlobal('fetch', async (url) => {
+      if (String(url) === CDCX_BALANCES_URL) { callCount++; return jsonRes([bal('BTC', 1)]); }
+      throw new Error(`unexpected ${url}`);
+    });
+    const out = await coindcx.__fetchBalancesSignedForTests()('k', 's');
+    expect(out).toHaveLength(1);
+    expect(callCount).toBe(1);
+  });
+
+  it('caps pagination at 5 pages even if pages stay full', async () => {
+    let callCount = 0;
+    vi.stubGlobal('fetch', async (url) => {
+      if (String(url) === CDCX_BALANCES_URL) {
+        callCount++;
+        return jsonRes(Array.from({ length: 100 }, (_, i) => bal(`X${callCount}_${i}`, 1)));
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const out = await coindcx.__fetchBalancesSignedForTests()('k', 's');
+    expect(callCount).toBe(5);
+    expect(out).toHaveLength(500);
+  });
+});
+
+// ============================================================
 // coindcxConnect — validate BEFORE persist
 // ============================================================
 describe('coindcxConnect', () => {

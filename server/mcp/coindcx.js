@@ -84,11 +84,34 @@ export async function coindcxPrivate(path, apiKey, secret, body = {}) {
   try { json = JSON.parse(text); } catch { /* error body may be plain */ }
   if (!r.ok) {
     const msg = (json && (json.message || json.error || json.error_description)) || `CoinDCX API ${r.status}`;
-    const err = new Error(String(msg).slice(0, 200));
+    // Status prefix so a 404/401 is unmistakable in user-facing errors
+    // ("[404] ..." = CoinDCX endpoint, vs a body-less route 404 = the app
+    // is running on a static mirror — see StaticMirrorBanner).
+    const err = new Error(`[${r.status}] ${String(msg).slice(0, 180)}`);
     err.status = r.status;
     throw err;
   }
   return json;
+}
+
+// ---------------- balances fetch with pagination ----------------
+// CoinDCX docs use STRING page/size values; one page holds at most
+// `size` records. Loop until a short page arrives (max 5 pages —
+// far beyond any real wallet's distinct-currency count).
+export async function fetchBalancesSigned(apiKey, secret) {
+  const PAGE_SIZE = 100;
+  const MAX_PAGES = 5;
+  let merged = [];
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const raw = await coindcxPrivate(BALANCES_PATH, apiKey, secret, {
+      page: String(page),
+      size: String(PAGE_SIZE),
+    });
+    const list = Array.isArray(raw) ? raw : [];
+    merged = merged.concat(list);
+    if (list.length < PAGE_SIZE) break; // last page reached
+  }
+  return merged;
 }
 
 // ---------------- balances (defensive normalizer) ----------------
@@ -136,7 +159,7 @@ export async function coindcxConnect(apiKey, secret) {
     throw err;
   }
   // Validate BEFORE persisting — a bad pair must never be stored.
-  const raw = await coindcxPrivate(BALANCES_PATH, apiKey.trim(), secret.trim(), { page: 1, size: 200 });
+  const raw = await fetchBalancesSigned(apiKey.trim(), secret.trim());
   const balances = normalizeBalances(raw);
   saveCreds({
     apiKey: apiKey.trim(),
@@ -235,7 +258,7 @@ export async function fetchCoinDcxAssets(usdInr) {
   const creds = loadCreds();
   if (!creds?.apiKey || !creds?.secret) return null; // not connected
   const [raw, tickers] = await Promise.all([
-    coindcxPrivate(BALANCES_PATH, creds.apiKey, creds.secret, { page: 1, size: 200 }),
+    fetchBalancesSigned(creds.apiKey, creds.secret),
     fetchCoinDcxTickers(),
   ]);
   const balances = normalizeBalances(raw);
@@ -257,3 +280,4 @@ export function __setCredsForTests(apiKey, secret, extra = {}) {
   saveCreds({ apiKey, secret, connectedAt: Date.now(), ...extra });
 }
 export function __coindcxPrivateForTests() { return coindcxPrivate; }
+export function __fetchBalancesSignedForTests() { return fetchBalancesSigned; }

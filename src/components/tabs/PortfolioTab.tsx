@@ -593,6 +593,22 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                       const high = data?.high || curPrice * 1.02;
                       const rangePct = Math.max(0, Math.min(100, ((curPrice - low) / (high - low)) * 100)) || 50;
 
+                      // ---- TICKER-FIRST LABELS (arrangement fix) ----
+                      // Primary label = the exchange TICKER (BTC, AAPL,
+                      // MID150BEES…). The long full name moves to a small,
+                      // CSS-truncated secondary line so it can never blow out
+                      // the row grid. NAV-only rows (MF/FD/bonds) have no real
+                      // ticker — their pseudo-symbol is an internal key, so a
+                      // trimmed name stays primary for those.
+                      const ticker = (p.symbol || '').replace('.NS', '').trim();
+                      const cleanName = p.name
+                        ? p.name.replace(/\s*\(CoinDCX\)\s*$/i, '').trim()
+                        : '';
+                      const showTicker = !p.noLive && !!ticker;
+                      const primaryLabel = showTicker ? ticker : (cleanName || ticker || 'ASSET');
+                      const secondaryName = showTicker ? cleanName : '';
+                      const isCryptoRow = group.key === 'crypto';
+
                       return (
                         <div key={p.id} className="p-4 hover:bg-white/[0.02] transition-colors group relative lg:grid lg:grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto] lg:items-center lg:gap-4">
 
@@ -600,11 +616,11 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                           <div>
                             <div className="flex items-center justify-between md:justify-start gap-3">
                               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-800 to-slate-900 border border-white/10 shadow-inner flex items-center justify-center font-black text-xs text-white shrink-0">
-                                {(p.symbol || p.name || 'A').substring(0, 2).toUpperCase()}
+                                {(ticker || cleanName || 'A').substring(0, 2).toUpperCase()}
                               </div>
                               <div className="flex-1 min-w-0">
                                 <div className="font-black text-white text-base tracking-tight flex items-center gap-2 truncate">
-                                  <span className="truncate" title={p.name || p.symbol}>{(p.name || p.symbol.replace('.NS', ''))}</span>
+                                  <span className="truncate" title={cleanName || primaryLabel}>{primaryLabel}</span>
                                   {p.leverage > 1 && <span className="bg-indigo-500/20 text-indigo-400 text-[9px] px-1.5 py-0.5 rounded border border-indigo-500/20 shrink-0">{p.leverage}x</span>}
                                   {!indmActive && assetXirr !== null && assetXirr !== undefined && <span className={`text-[9px] px-1.5 py-0.5 rounded border font-bold font-mono shrink-0 ${assetXirr >= 15 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : assetXirr >= 0 ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}>XIRR {assetXirr >= 0 ? '+' : ''}{assetXirr.toFixed(0)}%</span>}
                                   {indmActive && p.noLive && (
@@ -616,12 +632,14 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                                     </span>
                                   )}
                                 </div>
-                                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${p.market === 'IN' ? 'bg-orange-500/10 text-orange-400' : 'bg-blue-500/10 text-blue-400'}`}>
-                                    {p.market === 'IN' ? 'NSE' : 'US'}
+                                <div className="flex items-center gap-2 mt-0.5 min-w-0">
+                                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 ${isCryptoRow ? 'bg-amber-500/10 text-amber-400' : p.market === 'IN' ? 'bg-orange-500/10 text-orange-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                                    {isCryptoRow ? 'CRYPTO' : (p.market === 'IN' ? 'NSE' : 'US')}
                                   </span>
-                                  <span className="text-[10px] text-slate-500 font-mono truncate">{p.name ? p.symbol.replace('.NS', '') : `Qty: ${p.qty} @ ${cur}${p.avgPrice.toFixed(2)}`}</span>
-                                  {p.name && <span className="text-[10px] text-slate-500 font-mono hidden sm:inline">Qty: {p.qty} @ {cur}{p.avgPrice.toFixed(2)}</span>}
+                                  {secondaryName && (
+                                    <span className="text-[10px] text-slate-500 truncate max-w-[120px] sm:max-w-[240px]" title={secondaryName}>{secondaryName}</span>
+                                  )}
+                                  <span className="text-[10px] text-slate-500 font-mono shrink-0 hidden sm:inline">Qty: {p.qty} @ {cur}{p.avgPrice.toFixed(2)}</span>
                                 </div>
                               </div>
                             </div>
