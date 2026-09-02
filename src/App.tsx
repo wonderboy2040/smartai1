@@ -94,6 +94,17 @@ export default function App() {
   // Predictive prefetching for active tab and portfolio holdings
   usePrefetch(activeTab, portfolio);
 
+  // Deep-link support: /?tab=portfolio (used by the INDMoney OAuth callback
+  // redirect) opens the requested tab once on mount.
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const t = params.get('tab');
+      if (t && (TAB_ORDER as string[]).includes(t)) setActiveTab(t as TabType);
+    } catch { /* non-fatal */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Global keyboard shortcuts
   useAppShortcuts({
     refresh: refreshAll,

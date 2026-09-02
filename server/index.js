@@ -22,6 +22,7 @@ import {
 } from './mlEngine.js';
 import { SERVER_MCP_TOOLS_OPENAI, SERVER_MCP_TOOLS_GEMINI, executeServerMCPTool } from './mcpTools.js';
 import { registerIntradayRoutes } from './intraday/routes.js';
+import indmMcpRoutes from './mcp/routes.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fork } from 'node:child_process';
@@ -485,6 +486,13 @@ registerIntradayRoutes(app, {
   escapeHtml,
   jsonError,
 });
+
+// ============================================================
+// INDMONEY PORTFOLIO MCP (server/mcp/*)
+// OAuth 2.0 + PKCE connect flow + MCP streamable-HTTP client.
+// Tokens stay server-side (server/data/mcp-indmoney.json).
+// ============================================================
+app.use(indmMcpRoutes);
 
 // ------------------------------------------------------------
 // GET /api/quote  â†’ REAL-TIME last-traded price for one or many symbols

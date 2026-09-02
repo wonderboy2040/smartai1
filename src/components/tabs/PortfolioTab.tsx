@@ -12,6 +12,7 @@ import { QualityScorecard } from '../QualityScorecard';
 import { exportTransactionsCSV, exportMonthlyReturnsCSV } from '../../utils/exportData';
 import { LivePrice } from '../LivePrice';
 import { WidgetSetup } from '../WidgetSetup';
+import { INDMoneyPanel } from '../INDMoneyPanel';
 
 type SortKey = 'alloc' | 'pnl' | 'pnlPct' | 'xirr' | 'value' | 'name';
 type AssetGroup = 'india' | 'usa' | 'crypto';
@@ -227,6 +228,8 @@ const PortfolioTab = React.memo(function PortfolioTab() {
 
   return (
     <div className="space-y-5 animate-fade-in">
+      {/* INDMoney official MCP integration — real portfolio read-only view */}
+      <INDMoneyPanel />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-2xl font-black gradient-text-cyan font-display">
           💼 Portfolio

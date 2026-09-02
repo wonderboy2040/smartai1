@@ -32,3 +32,6 @@ Thumbs.db
 
 # Intraday runtime state (tracked signals, paper trades, watchlist)
 server/data/
+
+# INDMoney MCP OAuth tokens (secrets — never commit)
+server/data/mcp-indmoney.json

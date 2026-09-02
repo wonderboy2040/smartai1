@@ -145,9 +145,13 @@ describe('analyzeIntradayFromScanner — v4 factors', () => {
     expect(r).not.toBeNull();
     expect(r._deadZone).toBe(true);
     expect(r.reasons.join(' | ')).toContain('Dead-zone');
-    vi.useRealTimers();
+    // Deterministic non-dead-zone check: keep FAKE timers and pin a morning
+    // time. (Using real timers here made the test time-of-day flaky — it
+    // failed whenever the suite ran between 14:30-15:00 IST.)
+    vi.setSystemTime(new Date('2026-01-05T05:00:00Z')); // 10:30 IST
     const normal = analyzeIntradayFromScanner('SBIN', bullTv, bullGroww, {});
     expect(normal._deadZone).toBe(false);
+    vi.useRealTimers();
   });
 });
 
