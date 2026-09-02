@@ -28,6 +28,7 @@
 import crypto from 'node:crypto';
 import { loadJSON, saveJSON } from '../intraday/store.js';
 import { fetchCoinDcxTickers } from '../cryptoStream.js';
+import { durablePut } from './durable.js';
 
 const CREDS_FILE = 'mcp-coindcx.json';
 const API_BASE = 'https://api.coindcx.com';
@@ -41,7 +42,11 @@ function loadCreds() {
   return loadJSON(CREDS_FILE, null);
 }
 function saveCreds(creds) {
-  return saveJSON(CREDS_FILE, creds);
+  saveJSON(CREDS_FILE, creds);
+  // Durable (encrypted GitHub) write-through — API keys survive Render's
+  // ephemeral-disk restarts. Best-effort, never throws.
+  try { durablePut(CREDS_FILE, creds); } catch { /* optional */ }
+  return creds;
 }
 export function coindcxConnected() {
   const c = loadCreds();

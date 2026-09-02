@@ -108,6 +108,7 @@ function _pushTick(sym, q, source) {
     low: q.low || q.price,
     volume: q.volume || 0,
     time: q.time || Date.now(),
+    prevClose: q.prevClose, // Groww: ltp - dayChange; Yahoo: previousClose
   }, source);
 }
 

@@ -27,6 +27,8 @@ interface IndmStatus {
   scope: string | null;
   hasRefreshToken: boolean;
   toolCount: number;
+  /** Durable (encrypted GitHub) credential backup status — restart-safe? */
+  durable?: { configured: boolean; keySource: string };
 }
 
 const fmtINR = (n: number | null | undefined, decimals = 0): string => {
@@ -262,7 +264,7 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
 
       {/* Sync schedule / status strip */}
       {connected && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-center">
           <div className="quantum-panel rounded-xl px-3 py-2">
             <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Last Sync</div>
             <div className="text-xs font-black text-white font-mono mt-0.5" title={indmMeta?.syncedAt ? new Date(indmMeta.syncedAt).toLocaleString('en-IN') : ''}>
@@ -287,6 +289,28 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
               {counts ? `${counts.assets} (${counts.live} live)` : portfolio.length || '—'}
             </div>
           </div>
+          <div className="quantum-panel rounded-xl px-3 py-2">
+            <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Restart-Safe</div>
+            <div className="text-xs font-black font-mono mt-0.5 flex items-center justify-center gap-1" title={
+              status?.durable?.configured
+                ? `Credentials auto-restore after server restarts (encrypted GitHub backup, key: ${status?.durable?.keySource})`
+                : 'Server restart par re-connect padega — Render env me GITHUB_BACKUP_TOKEN + GITHUB_BACKUP_REPO set karein (zero-config key: APP_PIN + API_TOKEN already derive hota hai)'
+            }>
+              {status?.durable?.configured ? (
+                <span className="text-emerald-300">ON</span>
+              ) : (
+                <span className="text-amber-300" title="Backup not configured">OFF</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {(connected || cryptoOnly) && !status?.durable?.configured && (
+        <div className="text-[10px] text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-1.5 leading-relaxed">
+          ⚠️ Credentials Render ke ephemeral disk par hain — server restart hone par dobara connect karna padega.
+          Render env me <b>GITHUB_BACKUP_TOKEN</b> + <b>GITHUB_BACKUP_REPO</b> (private repo) set karein — taaki login bina
+          reboot-proof ho jaye (encryption key APP_PIN + API_TOKEN se auto-derive hota hai).
         </div>
       )}
 

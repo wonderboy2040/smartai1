@@ -33,6 +33,7 @@ import { resolveSymbolsForHoldings } from './symbols.js';
 import {
   coindcxConnected, coindcxStatus, fetchCoinDcxAssets,
 } from './coindcx.js';
+import { durablePut } from './durable.js';
 
 const SNAPSHOT_FILE = 'mcp-portfolio.json';
 const FOREX_CACHE_MS = 10 * 60 * 1000;
@@ -200,6 +201,9 @@ export function getAssetsSnapshot() {
 }
 function writeSnapshot(snap) {
   saveJSON(SNAPSHOT_FILE, snap);
+  // Durable (encrypted GitHub) write-through — the asset rows + hidden
+  // keys survive Render's ephemeral-disk restarts. Best-effort.
+  try { durablePut(SNAPSHOT_FILE, snap); } catch { /* optional */ }
   return snap;
 }
 

@@ -130,11 +130,23 @@ https://github.com/settings/personal-access-tokens/new
 GITHUB_BACKUP_TOKEN=github_pat_xxxxxxxxxxxxxxxx
 GITHUB_BACKUP_REPO=YOUR_GITHUB_USERNAME/smartai1
 GITHUB_BACKUP_BRANCH=data-backup
+# OPTIONAL (recommended) dedicated encryption key — if unset, the key is
+# auto-derived from APP_PIN + API_TOKEN (already in your env, zero setup):
+# DURABLE_KEY=any-random-string-of-16+-chars
 ```
 
 ⚠️ **IMPORTANT**: `GITHUB_BACKUP_BRANCH` MUST be different from your deploy
 branch (`live-sync`) — pushes to the deploy branch trigger auto-deploys and
 would restart the server on every trade close. `data-backup` is safe.
+
+🔑 **SAME VARS NOW ALSO PROTECT YOUR CREDENTIALS**: the INDMoney OAuth
+tokens, CoinDCX API keys, the asset-table snapshot and the symbol cache are
+pushed to the same branch **AES-256-GCM encrypted** and auto-restored on
+boot — so Render restarts/redeploys no longer wipe your connections
+(`[mcp/durable] boot restore complete: ...` in the logs). Portfolio tab →
+INDMoney panel shows a **Restart-Safe: ON** tile when active. NOTE: rotating
+`APP_PIN`/`API_TOKEN` (when no `DURABLE_KEY` is set) invalidates old
+encrypted backups — re-connect once after rotating.
 
 ### Step 3 — Save + Manual Redeploy
 Deploy latest commit → on boot, logs show `[backup]` only when pushing/restoring.

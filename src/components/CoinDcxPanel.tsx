@@ -240,7 +240,7 @@ export const CoinDcxPanel = React.memo(function CoinDcxPanel() {
 
       {/* Connected status strip */}
       {connected && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-center">
           <div className="quantum-panel rounded-xl px-3 py-2">
             <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Crypto Rows</div>
             <div className="text-xs font-black text-amber-300 font-mono mt-0.5">{coindcxRows}</div>
@@ -258,6 +258,16 @@ export const CoinDcxPanel = React.memo(function CoinDcxPanel() {
           <div className="quantum-panel rounded-xl px-3 py-2">
             <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Live Prices</div>
             <div className="text-xs font-black text-emerald-400 font-mono mt-0.5">CoinDCX feed</div>
+          </div>
+          <div className="quantum-panel rounded-xl px-3 py-2">
+            <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Restart-Safe</div>
+            <div className="text-xs font-black font-mono mt-0.5" title={
+              status?.durable?.configured
+                ? 'API keys auto-restore after server restarts (encrypted GitHub backup)'
+                : 'Server restart par keys dobara daalni padengi — GITHUB_BACKUP_TOKEN + GITHUB_BACKUP_REPO set karein'
+            }>
+              {status?.durable?.configured ? <span className="text-emerald-300">ON</span> : <span className="text-amber-300">OFF</span>}
+            </div>
           </div>
         </div>
       )}

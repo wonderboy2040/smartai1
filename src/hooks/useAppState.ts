@@ -401,6 +401,10 @@ export function useAppState() {
           noLive: a.noLive,
           indmKey: a.key,
           source: a.source === 'coindcx' ? 'coindcx' : (a.source ? 'indmoney' : undefined),
+          // Ground-truth INR invested from the sync snapshot — the metrics use
+          // this so US rows never mix sync-time FX with live FX (the deep P&L
+          // mismatch fix: Capital Deployed / Total P&L now stay coherent).
+          indmInvestedINR: typeof a.invested === 'number' ? a.invested : undefined,
         }));
         setPortfolio(positions);
         try { secureStorage.setItem('portfolio', JSON.stringify(positions)); } catch { /* quota */ }
@@ -412,11 +416,16 @@ export function useAppState() {
         assets.forEach((a, i) => {
           const p = positions[i];
           if (a.lastPrice == null || !(a.lastPrice > 0)) return;
+          const seedChange = a.oneDayChangePct ?? 0;
           seeds[`${p.market}_${p.symbol}`] = {
             price: a.lastPrice,
-            change: a.oneDayChangePct ?? 0,
+            change: seedChange,
             high: a.lastPrice, low: a.lastPrice, volume: 0,
             rsi: 50, time: Date.now(), market: p.market, isRealtime: false,
+            // Seed day baseline from INDMoney's 1-day change % so NAV rows
+            // (and live rows during the seconds before the first tick) still
+            // show a meaningful Today's P&L.
+            prevClose: seedChange > -100 ? a.lastPrice / (1 + seedChange / 100) : undefined,
           };
         });
         if (Object.keys(seeds).length > 0) {
@@ -1412,8 +1421,17 @@ export function useAppState() {
   }, [currentSymbol, chartInterval, isAuthenticated, loadTradingViewChart]);
 
   // --- Metrics (pure with optional args; refs only for interval callers) ---
-  // FIX: indPL/usPL/cryptoPL ab sab INR-normalized hain (consistent currency),
-  // taaki dashboard pe split buckets compare/add karte waqt mismatch na ho.
+  // 2026 deep P&L accuracy pass (the "prices mismatch" fix):
+  //   1. Today's P&L uses the REAL previous close (prevClose) when the quote
+  //      source provides one — (price - prevClose) * qty exactly — instead of
+  //      back-computing from the rounded change % (which drifted a few bps
+  //      per row and compounded across the summary).
+  //   2. US "Capital Deployed" uses the sync's ground-truth INR invested
+  //      (indmInvestedINR) converted at the CURRENT live FX — same rate the
+  //      equity side uses — so USD buckets and INR buckets always agree
+  //      (the old code baked the sync-time FX into avgPrice and the two
+  //      sides silently disagreed as the rupee moved).
+  //   3. indPL/usPL/cryptoPL stay INR-normalized (consistent buckets).
   const calculateMetrics = useCallback((
     p: Position[] = portfolioRef.current,
     lp: Record<string, PriceData> = livePricesRef.current,
@@ -1434,19 +1452,36 @@ export function useAppState() {
       const inv = posSize / lev;
       const curVal = curPrice * pos.qty;
       const eqVal = inv + (curVal - posSize);
-      const invINR = pos.market === 'IN' ? inv : inv * rate;
+
+      // Ground-truth INR invested (sync snapshot) when present; else derive
+      // from the position's own numbers. This is the FX-consistent base for
+      // BOTH the INR headline and the USD sub-bucket.
+      const investedINR = (typeof pos.indmInvestedINR === 'number' && pos.indmInvestedINR > 0)
+        ? pos.indmInvestedINR
+        : (pos.market === 'IN' ? inv : inv * rate);
+      // US bucket invested in USD: sync-truth INR at the CURRENT rate
+      // (indm rows), or the user-entered USD cost (manual rows).
+      const investedUSD = pos.market === 'IN' ? 0
+        : ((typeof pos.indmInvestedINR === 'number' && pos.indmInvestedINR > 0)
+          ? pos.indmInvestedINR / rate
+          : inv);
+
       const valINR = pos.market === 'IN' ? eqVal : eqVal * rate;
-      totalInvested += invINR; totalValue += valINR;
+      totalInvested += investedINR; totalValue += valINR;
 
       if (pos.market === 'IN') {
         totalInvestedINR += inv;
         totalValueINR += eqVal;
       } else {
-        totalInvestedUSD += inv;
+        totalInvestedUSD += investedUSD;
         totalValueUSD += eqVal;
       }
 
-      const prevPrice = change <= -100 ? curPrice * 2 : curPrice / (1 + (change / 100));
+      // Exact day baseline: REAL previous close when the quote source served
+      // one (Groww/Yahoo/Finnhub/TV-batch all do now); else back-compute.
+      const prevPrice = (data?.prevClose && data.prevClose > 0)
+        ? data.prevClose
+        : (change <= -100 ? curPrice * 2 : curPrice / (1 + (change / 100)));
       const dayPL = (curPrice - prevPrice) * pos.qty;
       const dayPLINR = pos.market === 'IN' ? dayPL : dayPL * rate;
       todayPL += dayPLINR;

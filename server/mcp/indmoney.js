@@ -27,6 +27,7 @@
 // ============================================================
 import crypto from 'node:crypto';
 import { loadJSON, saveJSON } from '../intraday/store.js';
+import { durablePut } from './durable.js';
 
 // ---------------- INDMoney endpoints (fixed) ----------------
 export const INDM = {
@@ -74,7 +75,18 @@ function state() {
   if (!_state.mcp || typeof _state.mcp !== 'object') _state.mcp = { sessionId: null, serverInfo: null, tools: null, toolsAt: 0 };
   return _state;
 }
-function persist() { saveJSON(STORE_FILE, _state); }
+function persist() {
+  saveJSON(STORE_FILE, _state);
+  // Durable (encrypted GitHub) write-through — credentials survive
+  // Render's ephemeral-disk restarts. Best-effort, never throws.
+  try { durablePut(STORE_FILE, _state); } catch { /* optional */ }
+}
+
+// Durable boot-restore hook: after mcp-indmoney.json is re-hydrated from
+// the encrypted backup, drop the in-memory copy so the next state() call
+// re-reads the disk file (tokens/clients are then live again with zero
+// user action). Safe at boot; also exported for tests.
+export function __dropInMemoryStateForBoot() { _state = null; }
 
 // Test hook: wipe in-memory + on-disk state between test cases.
 export function __resetForTests() {

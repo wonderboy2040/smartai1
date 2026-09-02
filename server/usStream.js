@@ -328,6 +328,7 @@ async function _bootstrapSymbol(sym) {
       low: s.low || s.price,
       volume: s.vol || 0,
       time: s.t || Date.now(),
+      prevClose: s.pc || undefined,
     }, source);
   }
 }
@@ -406,6 +407,7 @@ function _publishFallbackQuote(sym, s, source) {
     low: s.low || s.price,
     volume: s.vol || 0,
     time: s.t || Date.now(),
+    prevClose: s.pc || undefined,
   }, source);
   // Keep the shared session fresh for /api/quote — but never stomp a
   // fresher WS-updated session entry.
@@ -500,6 +502,7 @@ function _connect() {
           low: (ref?.low && ref.low < price) ? ref.low : price,
           volume: (typeof t.v === 'number' && t.v > 0) ? t.v : 0,
           time: t.t || Date.now(),
+          prevClose: pc || undefined,
         }, 'finnhub-stream');
         // Track the session running high/low + freshest price so they don't
         // go stale (getUsSessionQuote serves /api/quote from this).

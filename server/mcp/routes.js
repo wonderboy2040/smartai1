@@ -37,6 +37,7 @@ import {
 import {
   coindcxConnect, coindcxDisconnect, coindcxStatus,
 } from './coindcx.js';
+import { durableStatus } from './durable.js';
 
 const router = Router();
 
@@ -82,7 +83,7 @@ function requestOrigin(req) {
 // ------------------------------------------------------------
 router.get('/api/mcp/indmoney/status', (_req, res) => {
   try {
-    res.json({ ok: true, ...getStatus() });
+    res.json({ ok: true, ...getStatus(), durable: durableStatus() });
   } catch (err) { return fail(res, err); }
 });
 
@@ -279,7 +280,7 @@ router.post('/api/mcp/indmoney/sync', async (req, res) => {
 // ------------------------------------------------------------
 router.get('/api/mcp/coindcx/status', (_req, res) => {
   try {
-    res.json({ ok: true, ...coindcxStatus() });
+    res.json({ ok: true, ...coindcxStatus(), durable: durableStatus() });
   } catch (err) { return fail(res, err); }
 });
 

@@ -1,0 +1,215 @@
+// ============================================================
+// server/mcp/durable.js — restart-safe persistence for MCP state
+// ------------------------------------------------------------
+// PROBLEM (user-reported): INDMoney OAuth tokens + CoinDCX API
+// keys + the synced portfolio snapshot live in server/data/*.json
+// — and Render's free tier ships an EPHEMERAL filesystem. Every
+// spin-down / restart / redeploy wipes those files, so the user
+// has to re-connect INDMoney and re-paste CoinDCX keys again and
+// again (deleting browser cookies only forces a PIN re-entry, but
+// Render restarts silently destroy the SERVER-side credentials).
+//
+// FIX: mirror the state files to GitHub (same durable mechanism
+// paper-trading already uses — backup.js pushes to a non-deploy
+// `data-backup` branch) with ONE addition: the payload is
+// ENCRYPTED with AES-256-GCM before it leaves the machine, so a
+// public repo backup branch can never leak keys or holdings.
+//
+// Key resolution (first that works):
+//   1. DURABLE_KEY env (recommended, >=16 chars)
+//   2. scrypt(APP_PIN + ':' + API_TOKEN) — both already exist in
+//      the Render env, so durable storage works with ZERO extra
+//      setup on the live deployment.
+//   3. disabled (module is a silent no-op).
+//
+// API:
+//   durablePut(file, data)      — encrypt + schedule remote push
+//   durableBootRestore(file)    — pull + decrypt + hydrate local
+//                                 file when missing/older
+//   durableBootRestoreAll()     — boot wiring for ALL mcp files
+//   durableStatus()             — for the connection panels
+// Every path is best-effort and never throws into a route.
+// ============================================================
+import crypto from 'node:crypto';
+import { scheduleBackup, restoreBackup, backupConfigured } from '../intraday/backup.js';
+import { loadJSON, saveJSON } from '../intraday/store.js';
+
+const KEY_MIN_LEN = 16;
+const _log = (msg) => console.log(`[mcp/durable] ${msg}`);
+
+// ---------------- key material ----------------
+let _keyCache = null; // Buffer(32) | false (disabled)
+function durableKey() {
+  if (_keyCache !== null) return _keyCache;
+  const explicit = process.env.DURABLE_KEY;
+  if (explicit && explicit.length >= KEY_MIN_LEN) {
+    _keyCache = crypto.scryptSync(explicit, 'smartai-durable-v1', 32);
+    return _keyCache;
+  }
+  const pin = process.env.APP_PIN || '';
+  const svc = process.env.API_TOKEN || '';
+  if (pin && svc && (pin + svc).length >= KEY_MIN_LEN) {
+    // Derived from two existing server-side secrets — zero-config.
+    _keyCache = crypto.scryptSync(`${pin}:${svc}`, 'smartai-durable-v1', 32);
+    return _keyCache;
+  }
+  _keyCache = false; // disabled
+  return _keyCache;
+}
+
+export function durableConfigured() {
+  return backupConfigured() && !!durableKey();
+}
+
+export function durableStatus() {
+  const key = durableKey();
+  return {
+    configured: !!(backupConfigured() && key),
+    keySource: process.env.DURABLE_KEY ? 'DURABLE_KEY' : (key ? 'derived(APP_PIN+API_TOKEN)' : 'none'),
+  };
+}
+
+// ---------------- AES-256-GCM envelope ----------------
+export function encryptJSON(obj) { // exported for tests
+  const key = durableKey();
+  if (!key) return null;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const pt = Buffer.from(JSON.stringify(obj), 'utf8');
+  const ct = Buffer.concat([cipher.update(pt), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return {
+    v: 1,
+    alg: 'aes-256-gcm',
+    iv: iv.toString('base64'),
+    tag: tag.toString('base64'),
+    ct: ct.toString('base64'),
+    ts: Date.now(),
+  };
+}
+
+export function decryptJSON(env) { // exported for tests
+  const key = durableKey();
+  if (!key || !env || env.alg !== 'aes-256-gcm' || !env.iv || !env.tag || !env.ct) return null;
+  try {
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(env.iv, 'base64'));
+    decipher.setAuthTag(Buffer.from(env.tag, 'base64'));
+    const pt = Buffer.concat([decipher.update(Buffer.from(env.ct, 'base64')), decipher.final()]);
+    return JSON.parse(pt.toString('utf8'));
+  } catch { return null; } // wrong key / tampered — treat as missing
+}
+
+// ---------------- push (write-through) ----------------
+export function durablePut(file, data) {
+  try {
+    if (!durableConfigured()) return false;
+    const envelope = encryptJSON(data);
+    if (!envelope) return false;
+    scheduleBackup(file, envelope);
+    return true;
+  } catch (e) {
+    _log(`put ${file} failed: ${e?.message || e}`);
+    return false;
+  }
+}
+
+// ---------------- boot restore ----------------
+const _restoring = new Set();
+/**
+ * Pull the encrypted backup for `file`, decrypt, and hydrate the LOCAL
+ * file when it is missing, empty, or older than the remote copy.
+ * Returns the restored object or null. Concurrent calls coalesce.
+ */
+export async function durableBootRestore(file, opts = {}) {
+  try {
+    if (!durableConfigured()) return null;
+    if (_restoring.has(file)) return null;
+    _restoring.add(file);
+    const local = loadJSON(file, null);
+    const localTs = opts.localTs ? opts.localTs(local) : 0;
+    const localUsable = opts.isUsable ? opts.isUsable(local) : !!local;
+
+    const remote = await restoreBackup(file);
+    if (!remote) return null;
+    const plain = decryptJSON(remote);
+    if (!plain) {
+      _log(`restore ${file}: remote blob undecryptable (key change?) — ignoring`);
+      return null;
+    }
+    const remoteTs = opts.remoteTs ? opts.remoteTs(plain) : (remote.ts || 0);
+    if (localUsable && localTs >= remoteTs) return null; // local is fine
+    saveJSON(file, plain);
+    _log(`restored ${file} from durable backup`);
+    return plain;
+  } catch (e) {
+    _log(`restore ${file} failed: ${e?.message || e}`);
+    return null;
+  } finally {
+    _restoring.delete(file);
+  }
+}
+
+/**
+ * Boot wiring for every MCP state file. Credentials first (they gate
+ * every sync), then the asset snapshot, then the symbol cache.
+ * Fire-and-forget from index.js — GitHub round-trip is ~500ms-2s and
+ * the first authenticated /assets hit lands after hydration anyway.
+ */
+export async function durableBootRestoreAll() {
+  if (!durableConfigured()) {
+    _log(!backupConfigured()
+      ? 'NOT configured — set GITHUB_BACKUP_TOKEN + GITHUB_BACKUP_REPO (optionally DURABLE_KEY) to make credentials restart-safe'
+      : 'backup repo configured but no encryption key (DURABLE_KEY or APP_PIN+API_TOKEN) — disabled');
+    return {};
+  }
+  const restored = {};
+  // 1) INDMoney OAuth tokens.
+  const indm = await durableBootRestore('mcp-indmoney.json', {
+    isUsable: (s) => !!(s && s.tokens && s.tokens.accessToken),
+    localTs: (s) => s?.tokens?.obtainedAt || s?.connectedAt || 0,
+    remoteTs: (s) => s?.tokens?.obtainedAt || s?.connectedAt || 0,
+  });
+  if (indm) {
+    restored.indmoney = true;
+    try {
+      // Drop any in-memory copy so the next state() re-reads the disk file.
+      const mod = await import('./indmoney.js');
+      if (typeof mod.__dropInMemoryStateForBoot === 'function') mod.__dropInMemoryStateForBoot();
+    } catch { /* non-fatal */ }
+  }
+  // 2) CoinDCX API credentials (read fresh from disk on every call —
+  //    restoring the file is sufficient, no in-memory copy exists).
+  const cdcx = await durableBootRestore('mcp-coindcx.json', {
+    isUsable: (s) => !!(s && s.apiKey && s.secret),
+    localTs: (s) => s?.connectedAt || 0,
+    remoteTs: (s) => s?.connectedAt || 0,
+  });
+  if (cdcx) restored.coindcx = true;
+  // 3) The asset-table snapshot (rows + hidden keys survive restarts).
+  const pf = await durableBootRestore('mcp-portfolio.json', {
+    isUsable: (s) => !!(s && Array.isArray(s.assets) && s.assets.length),
+    localTs: (s) => s?.syncedAt || 0,
+    remoteTs: (s) => s?.syncedAt || 0,
+  });
+  if (pf) restored.portfolio = true;
+  // 4) Symbol-resolution cache (kills re-lookup latency after boot).
+  const syms = await durableBootRestore('mcp-symbol-cache.json', {
+    isUsable: (s) => !!(s && s.map && Object.keys(s.map).length),
+  });
+  if (syms) {
+    restored.symbols = true;
+    try {
+      const mod = await import('./symbols.js');
+      if (typeof mod.__dropSymbolCacheForBoot === 'function') mod.__dropSymbolCacheForBoot();
+    } catch { /* non-fatal */ }
+  }
+  const keys = Object.keys(restored);
+  if (keys.length) _log(`boot restore complete: ${keys.join(', ')}`);
+  return restored;
+}
+
+// ---------------- test hooks ----------------
+export function __resetDurableForTests() {
+  _keyCache = null;
+  _restoring.clear();
+}

@@ -24,6 +24,7 @@ import { SERVER_MCP_TOOLS_OPENAI, SERVER_MCP_TOOLS_GEMINI, executeServerMCPTool 
 import { registerIntradayRoutes } from './intraday/routes.js';
 import indmMcpRoutes from './mcp/routes.js';
 import { startScheduler as startIndmPortfolioScheduler } from './mcp/portfolioSync.js';
+import { durableBootRestoreAll } from './mcp/durable.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fork } from 'node:child_process';
@@ -60,9 +61,12 @@ app.use(express.json({ limit: '1mb' }));
 const APP_PIN = process.env.APP_PIN || '';
 
 // In-memory session store (single-user app, no persistence needed).
-// Sessions expire after 24 hours of inactivity.
+// 2026 persistence pass: 24h → 30 days — the app is single-user; a
+// month-long session cookie dramatically cuts re-login frequency (the PIN
+// is only re-entered if cookies are explicitly cleared or after a month
+// away).
 const _sessions = new Map(); // token â†’ { lastSeen: number }
-const SESSION_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const SESSION_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 // Clean up expired sessions periodically.
 setInterval(() => {
@@ -643,31 +647,11 @@ async function fetchYahooQuote(ysym) {
   return promise;
 }
 async function _fetchYahooQuoteUncached(ysym) {
-  try {
-    // Try the dedicated quote endpoint first (simpler, faster) â€” v7 is still live
-    const qurl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ysym)}`;
-    const qr = await fetch(qurl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI quote proxy)' },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (qr.ok) {
-      const qj = await qr.json();
-      const qr2 = qj?.quoteResponse?.result?.[0];
-      if (qr2 && typeof qr2.regularMarketPrice === 'number' && qr2.regularMarketPrice > 0) {
-        return {
-          price: qr2.regularMarketPrice,
-          change: qr2.regularMarketChangePercent ?? 0,
-          high: qr2.regularMarketDayHigh || qr2.regularMarketPrice,
-          low: qr2.regularMarketDayLow || qr2.regularMarketPrice,
-          volume: qr2.regularMarketVolume || 0,
-          prevClose: qr2.regularMarketPreviousClose || qr2.regularMarketPrice,
-          time: (qr2.regularMarketTime ? qr2.regularMarketTime * 1000 : Date.now()),
-          source: 'yahoo-realtime',
-        };
-      }
-    }
-  } catch { /* fall through to chart endpoint */ }
-
+  // 2026 realtime audit: v8 chart FIRST — it reliably answers from every IP
+  // (verified live for NSE listings, US stocks/ETFs incl. newly-listed names
+  // like SPCX). The v7 quote endpoint intermittently 401s without a crumb
+  // from datacenter IPs, so every cold symbol used to pay a WASTED v7
+  // round-trip before the v8 fallback kicked in.
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ysym)}?interval=5m&range=1d`;
     const r = await fetch(url, {
@@ -693,8 +677,33 @@ async function _fetchYahooQuoteUncached(ysym) {
       source: 'yahoo-realtime',
     };
   } catch { return null; }
-}
 
+  // v7 fallback (occasionally serves fresher batch quotes)
+  try {
+    const qurl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ysym)}`;
+    const qr = await fetch(qurl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI quote proxy)' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (qr.ok) {
+      const qj = await qr.json();
+      const qr2 = qj?.quoteResponse?.result?.[0];
+      if (qr2 && typeof qr2.regularMarketPrice === 'number' && qr2.regularMarketPrice > 0) {
+        return {
+          price: qr2.regularMarketPrice,
+          change: qr2.regularMarketChangePercent ?? 0,
+          high: qr2.regularMarketDayHigh || qr2.regularMarketPrice,
+          low: qr2.regularMarketDayLow || qr2.regularMarketPrice,
+          volume: qr2.regularMarketVolume || 0,
+          prevClose: qr2.regularMarketPreviousClose || qr2.regularMarketPrice,
+          time: (qr2.regularMarketTime ? qr2.regularMarketTime * 1000 : Date.now()),
+          source: 'yahoo-realtime',
+        };
+      }
+    }
+  } catch { /* fall through */ }
+  return null;
+}
 app.get('/api/quote', async (req, res) => {
   const raw = String(req.query.symbols || req.query.symbol || '').trim();
   const market = String(req.query.market || '').toUpperCase();
@@ -2936,6 +2945,13 @@ app.listen(PORT, () => {
   // No self-ping keepalive (Render ToS violation).
   // For 24x7 uptime on free tier, use an EXTERNAL uptime monitor
   // (e.g. UptimeRobot) that pings /health every 5 min.
+
+  // Durable MCP state boot-restore (INDMoney tokens + CoinDCX keys + the
+  // asset snapshot + symbol cache re-hydrated from the encrypted GitHub
+  // backup) — fire-and-forget; it lands within a second or two, well before
+  // the first authenticated /assets request. This is what makes credentials
+  // survive Render's ephemeral-disk restarts without re-entering anything.
+  durableBootRestoreAll().catch((e) => console.warn('[mcp/durable] boot restore error:', e?.message || e));
 
   // Start Telegram bot with auto-restart
   startBot();

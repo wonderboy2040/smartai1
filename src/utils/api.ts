@@ -415,6 +415,7 @@ export async function batchFetchIndianPrices(
           low: q.low || q.price,
           volume: q.volume || 0,
           time: q.time || Date.now(),
+          prevClose: (typeof q.prevClose === 'number' && q.prevClose > 0) ? q.prevClose : undefined,
           market: 'IN',
         } as PriceData;
       });
@@ -478,17 +479,23 @@ export async function batchFetchIndianPrices(
     const price = useTvPrice ? (ind as any).price : (rt?.price ?? (ind as any)?.price);
     if (!price || price <= 0) return;
 
+    // Exact day baseline: real previous close from the quote source when
+    // available; else derive from the day-change % (rounded — small drift).
+    const dayChange = rt?.change ?? ind?.change ?? 0;
+    const derivedPrev = dayChange > -100 ? price / (1 + dayChange / 100) : undefined;
+
     onUpdate(key, {
       price,
-      change: rt?.change ?? ind?.change ?? 0,
+      change: dayChange,
       high: rt?.high ?? ind?.high ?? price,
       low: rt?.low ?? ind?.low ?? price,
       volume: rt?.volume ?? ind?.volume ?? 0,
       sma20: ind?.sma20,
       sma50: ind?.sma50,
-      rsi: ind?.rsi ?? Math.max(10, Math.min(90, 50 + ((rt?.change ?? ind?.change ?? 0) * 5))),
+      rsi: ind?.rsi ?? Math.max(10, Math.min(90, 50 + (dayChange * 5))),
       macd: ind?.macd,
       time: rt?.time ?? Date.now(),
+      prevClose: rt?.prevClose ?? derivedPrev,
       market: 'IN',
       tvExchange: ind?.tvExchange,
       tvExactSymbol: ind?.tvExactSymbol,
@@ -574,6 +581,7 @@ export async function batchFetchUSPrices(
           low: q.low || q.price,
           volume: q.volume || 0,
           time: q.time || Date.now(),
+          prevClose: (typeof q.prevClose === 'number' && q.prevClose > 0) ? q.prevClose : undefined,
           market: 'US',
         } as PriceData;
       });
@@ -638,17 +646,23 @@ export async function batchFetchUSPrices(
     const price = rt?.price ?? ind?.price;
     if (!price || price <= 0) return;
 
+    // Exact day baseline: real previous close when the quote source served
+    // one; else derive from the day-change % (rounded — small drift).
+    const dayChange = rt?.change ?? ind?.change ?? 0;
+    const derivedPrev = dayChange > -100 ? price / (1 + dayChange / 100) : undefined;
+
     onUpdate(key, {
       price,
-      change: rt?.change ?? ind?.change ?? 0,
+      change: dayChange,
       high: rt?.high ?? ind?.high ?? price,
       low: rt?.low ?? ind?.low ?? price,
       volume: rt?.volume ?? ind?.volume ?? 0,
       sma20: ind?.sma20,
       sma50: ind?.sma50,
-      rsi: ind?.rsi ?? Math.max(10, Math.min(90, 50 + ((rt?.change ?? ind?.change ?? 0) * 5))),
+      rsi: ind?.rsi ?? Math.max(10, Math.min(90, 50 + (dayChange * 5))),
       macd: ind?.macd,
       time: rt?.time ?? Date.now(),
+      prevClose: rt?.prevClose ?? derivedPrev,
       market: 'US',
       tvExchange: ind?.tvExchange,
       tvExactSymbol: ind?.tvExactSymbol,
@@ -1887,6 +1901,8 @@ export interface CoinDcxInfo {
   lastSyncAt: number | null;
   balanceCount: number;
   lastError: string | null;
+  /** Durable (encrypted GitHub) credential backup status — restart-safe? */
+  durable?: { configured: boolean; keySource: string };
 }
 
 export interface IndmAssetsResponse {

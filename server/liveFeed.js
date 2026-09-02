@@ -20,6 +20,10 @@ export function setTick(key, data, source) {
     volume: data.volume ?? 0,
     time: data.time ?? Date.now(),
     source: source || data.source || 'live',
+    // 2026 P&L accuracy pass: the REAL previous close (when the source
+    // provides it) so Today's P&L = (price - prevClose) * qty exactly —
+    // no more back-computing from the rounded change % (which drifts).
+    prevClose: (typeof data.prevClose === 'number' && data.prevClose > 0) ? data.prevClose : undefined,
   };
   _ticks.set(key, tick);
   if (source) _sourceSeen[source] = Date.now();

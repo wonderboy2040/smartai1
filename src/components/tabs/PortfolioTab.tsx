@@ -584,14 +584,30 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                       const inv = posSize / (p.leverage || 1);
                       const curVal = curPrice * p.qty;
                       const eqVal = inv + (curVal - posSize);
-                      const prevPrice = change <= -100 ? curPrice * 2 : curPrice / (1 + (change / 100));
+                      // Exact day baseline: REAL previous close when the quote
+                      // source served one (2026 P&L accuracy pass) — else the
+                      // old change% back-computation.
+                      const prevPrice = (data?.prevClose && data.prevClose > 0)
+                        ? data.prevClose
+                        : (change <= -100 ? curPrice * 2 : curPrice / (1 + (change / 100)));
                       const todayPL = (curPrice - prevPrice) * p.qty;
                       const assetXirr = xirrMap[key];
 
-                      // Pro UI Calculations
-                      const low = data?.low || curPrice * 0.98;
-                      const high = data?.high || curPrice * 1.02;
-                      const rangePct = Math.max(0, Math.min(100, ((curPrice - low) / (high - low)) * 100)) || 50;
+                      // Quote-liveness honesty (deep-analysis fix): the LIVE
+                      // badge now reflects an actually-fresh quote; a row whose
+                      // feed is dark shows SYNC (last sync's price) instead of
+                      // pretending to be live with a stale number.
+                      const quoteFresh = !!(data && (data.isRealtime || (Date.now() - (data.time || 0) < 5 * 60_000)));
+
+                      // Pro UI Calculations — the 24h range is drawn ONLY when
+                      // the source actually served one (no fake ±2% band on
+                      // rows whose feed is dark).
+                      const low = data?.low;
+                      const high = data?.high;
+                      const hasRange = !!(low && high && high > low);
+                      const rangePct = hasRange
+                        ? Math.max(0, Math.min(100, ((curPrice - low!) / (high! - low!)) * 100))
+                        : 50;
 
                       // ---- TICKER-FIRST LABELS (arrangement fix) ----
                       // Primary label = the exchange TICKER (BTC, AAPL,
@@ -626,10 +642,13 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                                   {indmActive && p.noLive && (
                                     <span className="bg-sky-500/10 text-sky-300 text-[8px] px-1.5 py-0.5 rounded border border-sky-500/20 shrink-0" title="INDMoney NAV-priced (mutual fund / fixed income) — refreshes on each sync">NAV</span>
                                   )}
-                                  {indmActive && !p.noLive && (
+                                  {indmActive && !p.noLive && quoteFresh && (
                                     <span className="bg-emerald-500/10 text-emerald-400 text-[8px] px-1.5 py-0.5 rounded border border-emerald-500/20 shrink-0 inline-flex items-center gap-1" title="Live exchange price (ticks in real-time)">
                                       <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse-dot" />LIVE
                                     </span>
+                                  )}
+                                  {indmActive && !p.noLive && !quoteFresh && (
+                                    <span className="bg-slate-500/10 text-slate-400 text-[8px] px-1.5 py-0.5 rounded border border-slate-500/20 shrink-0" title="Live feed dark — showing the last synced price; the quote will resume when its source ticks">SYNC</span>
                                   )}
                                 </div>
                                 <div className="flex items-center gap-2 mt-0.5 min-w-0">
@@ -661,15 +680,21 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                                 {change >= 0 ? '▲' : '▼'} {Math.abs(change).toFixed(2)}%
                               </div>
                             </div>
-                            {/* 24H Scrubber */}
-                            <div className="mt-2 text-[9px] text-slate-500 flex items-center justify-between xl:w-4/5 font-mono">
-                              <span>L</span>
-                              <div className="flex-1 mx-2 h-1 bg-slate-800 rounded-full relative">
-                                <div className="absolute top-1/2 -translate-y-1/2 w-1.5 h-2.5 bg-white rounded-sm shadow-[0_0_5px_rgba(255,255,255,0.5)] transition-all z-10" style={{ left: `${rangePct}%` }} />
-                                <div className="absolute top-0 bottom-0 left-0 bg-gradient-to-r from-red-500/30 to-emerald-500/30 rounded-full" style={{ width: `100%` }} />
+                            {/* 24H Scrubber — only with a REAL served range */}
+                            {hasRange ? (
+                              <div className="mt-2 text-[9px] text-slate-500 flex items-center justify-between xl:w-4/5 font-mono">
+                                <span>L</span>
+                                <div className="flex-1 mx-2 h-1 bg-slate-800 rounded-full relative">
+                                  <div className="absolute top-1/2 -translate-y-1/2 w-1.5 h-2.5 bg-white rounded-sm shadow-[0_0_5px_rgba(255,255,255,0.5)] transition-all z-10" style={{ left: `${rangePct}%` }} />
+                                  <div className="absolute top-0 bottom-0 left-0 bg-gradient-to-r from-red-500/30 to-emerald-500/30 rounded-full" style={{ width: `100%` }} />
+                                </div>
+                                <span>H</span>
                               </div>
-                              <span>H</span>
-                            </div>
+                            ) : (
+                              <div className="mt-2 text-[9px] text-slate-600 font-mono flex items-center gap-1" title="Range will appear once the live feed serves this symbol">
+                                <span className="w-1 h-1 rounded-full bg-slate-500 animate-pulse" />awaiting quote
+                              </div>
+                            )}
                           </div>
 
                           {/* 3. TODAY'S P&L */}

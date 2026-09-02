@@ -139,13 +139,16 @@ async function pollOnce() {
       // Re-anchor the Binance→INR projection ratio.
       const b = _binanceLast.get(base);
       if (b && b.price > 0 && price > 0) _anchorRatio.set(base, price / b.price);
+      const chg = parseFloat(t.change_24_hour) || 0;
       setTick(`IN_${base}`, {
         price,
-        change: parseFloat(t.change_24_hour) || 0,
+        change: chg,
         high: parseFloat(t.high) || price,
         low: parseFloat(t.low) || price,
         volume: parseFloat(t.volume) || 0,
         time: Date.now(),
+        // 24h-ago price (crypto "today" = rolling 24h window)
+        prevClose: (chg > -100) ? price / (1 + chg / 100) : undefined,
       }, 'coindcx-live');
     }
   } catch { /* transient — retry next tick */ }
@@ -288,13 +291,15 @@ function _projectTick(base, usdt) {
   const price = usdt * ratio;
   if (!(price > 0)) return;
   const deltaPct = anchor.price > 0 ? (price / anchor.price - 1) * 100 : 0;
+  const chg = (anchor.change || 0) + deltaPct;
   setTick(`IN_${base}`, {
     price,
-    change: (anchor.change || 0) + deltaPct,
+    change: chg,
     high: Math.max(anchor.high || price, price),
     low: Math.min(anchor.low || price, price),
     volume: anchor.volume || 0,
     time: Date.now(),
+    prevClose: (chg > -100) ? price / (1 + chg / 100) : undefined,
   }, 'binance-crypto-ws');
 }
 

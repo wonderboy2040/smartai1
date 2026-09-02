@@ -139,25 +139,154 @@ describe('resolveCryptoSymbol', () => {
   });
 });
 
-describe('resolveUsSymbol', () => {
-  it('uses a payload ticker directly when US-ticker-shaped', async () => {
-    __setFetchForTests(async () => { throw new Error('network must not be hit'); });
-    expect(await resolveUsSymbol('Apple Inc.', 'AAPL')).toBe('AAPL');
-  });
-  it('falls back to the static mega-cap map, then TV scanner', async () => {
+describe('resolveUsSymbol (v2 verified engine)', () => {
+  // The v2 engine verifies every candidate with a real Yahoo chart quote
+  // before accepting it, so the mocks must serve that endpoint.
+  const yahooOk = (sym) => jsonRes({ chart: { result: [{ meta: { regularMarketPrice: 100 + sym.length } }] } });
+
+  it('uses a payload ticker when it verifies on Yahoo', async () => {
     const tried = [];
     __setFetchForTests(async (url) => {
-      tried.push(url);
-      if (String(url).includes('scanner.tradingview.com')) {
-        return jsonRes({ data: [{ s: 'NYSE:ZS', d: ['ZS', 'Zscaler'] }] });
+      tried.push(String(url));
+      if (String(url).includes('query1.finance.yahoo.com/v8/finance/chart/AAPL')) return yahooOk('AAPL');
+      throw new Error('unexpected url');
+    });
+    expect(await resolveUsSymbol('Apple Inc.', 'AAPL')).toBe('AAPL');
+    expect(tried.some(u => u.includes('/chart/AAPL'))).toBe(true); // verification happened
+  });
+
+  it('keeps a high-confidence candidate when Yahoo itself is unreachable', async () => {
+    __setFetchForTests(async () => { throw new Error('network down'); });
+    // Yahoo blip → tentative keep (old behaviour preserved, never a silent NAV row)
+    expect(await resolveUsSymbol('Apple Inc.', 'AAPL')).toBe('AAPL');
+    expect(await resolveUsSymbol('Apple Inc.', null)).toBe('AAPL'); // static map, tentative
+  });
+
+  it('rejects a company short-name masquerading as a ticker (the SPCX bug)', async () => {
+    // INDMoney sent the company short-name "SPACEX" in the symbol field.
+    // Old engine: accepted it → LIVE row that never quotes. v2: 404 from
+    // Yahoo → fall to the Yahoo search tier → real ticker SPCX.
+    __setFetchForTests(async (url) => {
+      const u = String(url);
+      if (u.includes('/v8/finance/chart/SPACEX')) return jsonRes({ chart: { result: [] } }, { status: 404 });
+      if (u.includes('/v1/finance/search')) {
+        return jsonRes({ quotes: [{ symbol: 'SPCX', shortname: 'Space Exploration Technologies', quoteType: 'EQUITY', exchange: 'NMS' }] });
       }
+      if (u.includes('/v8/finance/chart/SPCX')) return jsonRes({ chart: { result: [{ meta: { regularMarketPrice: 140.5 } }] } });
+      throw new Error(`unexpected url ${u}`);
+    });
+    expect(await resolveUsSymbol('SpaceX', 'SPACEX')).toBe('SPCX');
+  });
+
+  it('resolves comma-drifted names via Yahoo search (the MU bug)', async () => {
+    // TV's description is "Micron Technology, Inc." — the description-EQUAL
+    // filter never matched "Micron Technology Inc.". Yahoo search does.
+    __setFetchForTests(async (url) => {
+      const u = String(url);
+      if (u.includes('/v1/finance/search')) {
+        return jsonRes({ quotes: [
+          { symbol: 'MU', shortname: 'Micron Technology, Inc.', quoteType: 'EQUITY', exchange: 'NMS' },
+        ] });
+      }
+      if (u.includes('/v8/finance/chart/MU')) return jsonRes({ chart: { result: [{ meta: { regularMarketPrice: 942 } }] } });
+      if (u.includes('scanner.tradingview.com')) return jsonRes({ data: [] }); // old tier: no match
+      throw new Error(`unexpected url ${u}`);
+    });
+    expect(await resolveUsSymbol('Micron Technology Inc.', null)).toBe('MU');
+  });
+
+  it('paren-ticker in the name wins after verification', async () => {
+    __setFetchForTests(async (url) => {
+      if (String(url).includes('/v8/finance/chart/SPCX')) return jsonRes({ chart: { result: [{ meta: { regularMarketPrice: 140.5 } }] } });
+      throw new Error('unexpected url');
+    });
+    expect(await resolveUsSymbol('SpaceX (SPCX)', null)).toBe('SPCX');
+  });
+
+  it('static map → TV scanner fallback still works (last tier)', async () => {
+    // 'Zyllo Energy Corp' is deliberately NOT in the static map and Yahoo
+    // search returns nothing → the TV description-equal tier must rescue it.
+    const tried = [];
+    __setFetchForTests(async (url) => {
+      tried.push(String(url));
+      const u = String(url);
+      if (u.includes('scanner.tradingview.com')) {
+        return jsonRes({ data: [{ s: 'NYSE:ZYL', d: ['ZYL', 'Zyllo Energy Corp'] }] });
+      }
+      if (u.includes('/v8/finance/chart/')) return jsonRes({ chart: { result: [{ meta: { regularMarketPrice: 200 } }] } });
+      if (u.includes('/v1/finance/search')) return jsonRes({ quotes: [] });
       return groww([]);
     });
-    expect(await resolveUsSymbol('Apple Inc.', null)).toBe('AAPL');   // static map
-    expect(await resolveUsSymbol('Zscaler', 'ZSCALER-X')).toBe('ZS'); // TV fallback (long symbol not US-shaped)
-    expect(tried.some(u => String(u).includes('scanner.tradingview.com'))).toBe(true);
+    expect(await resolveUsSymbol('Apple Inc.', null)).toBe('AAPL');        // static map (verified)
+    expect(await resolveUsSymbol('Zyllo Energy Corp', 'ZYLLO9')).toBe('ZYL'); // TV fallback
+    expect(tried.some(u => u.includes('scanner.tradingview.com'))).toBe(true);
   });
 });
+
+describe('US resolution pure helpers (v2 engine)', () => {
+  it('extractTickerToken handles plain, composite and exchange forms', () => {
+    const { extractTickerToken } = symbolsMod;
+    expect(extractTickerToken('MU')).toBe('MU');
+    expect(extractTickerToken('mu')).toBe('MU');
+    expect(extractTickerToken('NASDAQ:MU')).toBe('MU');   // exchange-prefixed
+    expect(extractTickerToken('MU:NSDQ')).toBe('MU');     // exchange-suffixed
+    expect(extractTickerToken('US45208C2827')).toBeNull(); // ISIN — not a ticker
+    expect(extractTickerToken('ZSCALER-X')).toBeNull();   // 9 chars — not US-shaped
+    expect(extractTickerToken('')).toBeNull();
+    expect(extractTickerToken(null)).toBeNull();
+  });
+
+  it('extractParenTicker pulls the ticker out of "(SPCX)" style names', () => {
+    const { extractParenTicker } = symbolsMod;
+    expect(extractParenTicker('SpaceX (SPCX)')).toBe('SPCX');
+    expect(extractParenTicker('Micron Technology Inc. (MU)')).toBe('MU');
+    expect(extractParenTicker('Some Fund (LONGNAME)')).toBeNull(); // not ticker-shaped
+    expect(extractParenTicker('No parens here')).toBeNull();
+    expect(extractParenTicker(null)).toBeNull();
+  });
+
+  it('pickYahooSearchMatch scores exact/overlap matches and filters non-US', () => {
+    const { pickYahooSearchMatch } = symbolsMod;
+    // Exact shortname match wins
+    expect(pickYahooSearchMatch(
+      [{ symbol: 'MU', shortname: 'Micron Technology, Inc.', quoteType: 'EQUITY', exchange: 'NMS' }],
+      'Micron Technology Inc.'
+    )).toBe('MU');
+    // Token overlap path
+    expect(pickYahooSearchMatch(
+      [{ symbol: 'AMD', shortname: 'Advanced Micro Devices', quoteType: 'EQUITY', exchange: 'NMS' }],
+      'Advanced Micro Devices Inc'
+    )).toBe('AMD');
+    // FUTURES / non-US exchanges are filtered out
+    expect(pickYahooSearchMatch(
+      [{ symbol: 'SSPCX=F', shortname: 'Space X Futures', quoteType: 'FUTURE', exchange: 'CME' }],
+      'SpaceX'
+    )).toBeNull();
+    // Distinctive single-word query → first US equity accepted (the SpaceX case)
+    expect(pickYahooSearchMatch(
+      [
+        { symbol: 'SSPCX=F', shortname: 'Space X Futures', quoteType: 'FUTURE', exchange: 'CME' },
+        { symbol: 'SPCX', shortname: 'Space Exploration Technologies', quoteType: 'EQUITY', exchange: 'NMS' },
+      ],
+      'SpaceX'
+    )).toBe('SPCX');
+    // Empty / garbage input
+    expect(pickYahooSearchMatch(null, 'X')).toBeNull();
+    expect(pickYahooSearchMatch([], 'X')).toBeNull();
+    expect(pickYahooSearchMatch([{ symbol: 'MU' }], '')).toBeNull();
+  });
+  it('static US map has the micron / spacex entries (the reported rows)', async () => {
+    // Verified live: Yahoo chart serves SPCX (SpaceX, Nasdaq) and MU.
+    __setFetchForTests(async (url) => {
+      const u = String(url);
+      if (u.includes('/v8/finance/chart/')) {
+        return jsonRes({ chart: { result: [{ meta: { regularMarketPrice: 100 } }] } });
+      }
+      throw new Error(`unexpected url ${u}`);
+    });
+    expect(await resolveUsSymbol('Micron Technology Inc.', null)).toBe('MU');
+    expect(await resolveUsSymbol('SpaceX', null)).toBe('SPCX');
+  });});
 
 describe('classifyHolding (enum → market/kind/live decision)', () => {
   it('routes every INDMoney enum correctly', () => {

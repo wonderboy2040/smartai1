@@ -17,6 +17,11 @@ export interface Position {
   /** Sync source: 'indmoney' (MCP holdings) | 'coindcx' (exchange balances).
    *  Absent for manually-added rows. */
   source?: 'indmoney' | 'coindcx';
+  /** Ground-truth INR invested amount from the INDMoney/CoinDCX sync (server
+   *  snapshot `invested` field). US assets: their USD avgPrice is an FX
+   *  approximation (sync-time rate), but this INR number is exact — the P&L
+   *  metrics use it so USD buckets convert at ONE consistent live rate. */
+  indmInvestedINR?: number;
 }
 
 export interface PriceData {
@@ -34,6 +39,10 @@ export interface PriceData {
   sma50?: number;
   macd?: number;
   isRealtime?: boolean;
+  /** REAL previous close from the quote source (not back-computed from the
+   *  rounded change %). Present on Groww/Yahoo/Finnhub/TV-batch sourced
+   *  ticks — used for exact Today's P&L: (price - prevClose) * qty. */
+  prevClose?: number;
 }
 
 export interface ETFInfo {
