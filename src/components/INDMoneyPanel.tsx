@@ -1,17 +1,21 @@
 // ============================================================
-// INDMoneyPanel — real portfolio via INDMoney's official MCP server
+// INDMoneyPanel — sync control hub for the INDMoney-driven
+// ASSET TABLE (the manual table + Google Sheets are REPLACED).
 // ------------------------------------------------------------
 // • "Connect INDMoney" → full-page OAuth (PKCE) redirect handled by
-//   the server (/api/mcp/indmoney/connect). INDMoney asks the user
-//   to log in & approve `portfolio:read` — then we're redirected back
-//   to /?tab=portfolio&indm=ok.
-// • Once connected, this panel polls /api/mcp/indmoney/portfolio and
-//   renders a normalized holdings view (stocks / MFs / FDs / gold…).
+//   the server (/api/mcp/indmoney/connect).
+// • While connected, the server syncs the portfolio 2× DAILY
+//   (09:30 & 21:30 IST default — env INDM_SYNC_TIMES) and the
+//   synced assets drive the grouped INDIA / USA / Crypto table
+//   below with live exchange prices (stocks/ETFs/crypto tick in
+//   real-time; MF/FD/bond assets show INDMoney's NAV value).
+// • "Sync Now" forces an immediate sync (POST /api/mcp/indmoney/sync).
 // • Tokens never touch the browser — everything is proxied through
 //   our authed server routes.
 // ============================================================
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../utils/api';
+import { useApp } from '../hooks/AppContext';
 
 interface IndmStatus {
   ok?: boolean;
@@ -25,92 +29,36 @@ interface IndmStatus {
   toolCount: number;
 }
 
-interface IndmHolding {
-  name: string;
-  symbol: string | null;
-  qty: number | null;
-  avgPrice: number | null;
-  currentPrice: number | null;
-  value: number | null;
-  invested: number | null;
-  pnl: number | null;
-  pnlPct: number | null;
-  assetType: string;
-}
-
-interface IndmSummary {
-  totalValue: number;
-  totalInvested: number | null;
-  totalPnl: number | null;
-  totalPnlPct: number | null;
-  holdingCount?: number;
-  oneDayChange?: number | null;
-  oneDayChangePct?: number | null;
-}
-
-interface IndmPosition {
-  name: string;
-  symbol: string | null;
-  kind: string;
-  qty: number | null;
-  avgPrice: number | null;
-  invested: number | null;
-  realisedPnl: number | null;
-  t1Qty: number;
-  positionId: string | null;
-}
-
-interface IndmCallInfo {
-  tool: string;
-  args?: Record<string, unknown>;
-}
-
-interface IndmPortfolio {
-  ok: boolean;
-  reason?: string | null;
-  holdings: IndmHolding[];
-  summary: IndmSummary | null;
-  calls?: IndmCallInfo[];
-  failures?: { tool: string; args?: Record<string, unknown>; error: string }[];
-  positions?: IndmPosition[];
-  officialSummary?: boolean;
-  fetchedAt?: number;
-  cached?: boolean;
-  tools?: { name: string; description?: string | null }[];
-  payloadPreview?: string | null;
-}
-
 const fmtINR = (n: number | null | undefined, decimals = 0): string => {
   if (n == null || !Number.isFinite(n)) return '—';
   return n.toLocaleString('en-IN', { maximumFractionDigits: decimals, minimumFractionDigits: 0 });
 };
 
-const TYPE_STYLES: Record<string, { emoji: string; cls: string }> = {
-  Stock: { emoji: '📈', cls: 'text-cyan-300 bg-cyan-500/10 border-cyan-500/20' },
-  'Mutual Fund': { emoji: '🪙', cls: 'text-amber-300 bg-amber-500/10 border-amber-500/20' },
-  ETF: { emoji: '🔗', cls: 'text-violet-300 bg-violet-500/10 border-violet-500/20' },
-  'Fixed Income / Gold': { emoji: '🛡️', cls: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' },
-  'Fixed Income': { emoji: '🛡️', cls: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' },
-  Gold: { emoji: '🟡', cls: 'text-yellow-300 bg-yellow-500/10 border-yellow-500/20' },
-  Bonds: { emoji: '📜', cls: 'text-teal-300 bg-teal-500/10 border-teal-500/20' },
-  Retirement: { emoji: '🏦', cls: 'text-sky-300 bg-sky-500/10 border-sky-500/20' },
-  Crypto: { emoji: '🪙', cls: 'text-orange-300 bg-orange-500/10 border-orange-500/20' },
-  'Real Estate': { emoji: '🏠', cls: 'text-rose-300 bg-rose-500/10 border-rose-500/20' },
-  Savings: { emoji: '💰', cls: 'text-lime-300 bg-lime-500/10 border-lime-500/20' },
-  Insurance: { emoji: '📋', cls: 'text-indigo-300 bg-indigo-500/10 border-indigo-500/20' },
-  Vehicle: { emoji: '🚗', cls: 'text-fuchsia-300 bg-fuchsia-500/10 border-fuchsia-500/20' },
-  Other: { emoji: '📦', cls: 'text-slate-300 bg-white/5 border-white/10' },
+const timeAgo = (ts: number | null | undefined): string => {
+  if (!ts) return '—';
+  const mins = Math.floor((Date.now() - ts) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+};
+
+const clockTime = (ts: number | null | undefined): string => {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 };
 
 export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
+  const { indmSource, indmMeta, indmSyncing, loadIndmAssets, portfolio } = useApp();
   const [status, setStatus] = useState<IndmStatus | null>(null);
-  const [portfolio, setPortfolio] = useState<IndmPortfolio | null>(null);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [showTools, setShowTools] = useState(false);
+  const [error, setError] = useState('');
+  const [, forceTick] = useState(0); // minute-tick so "next sync" countdowns refresh
   const mountedRef = useRef(true);
+
+  const indmActive = indmSource === 'indmoney';
 
   const refreshStatus = useCallback(async (): Promise<IndmStatus | null> => {
     try {
@@ -124,39 +72,19 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
     }
   }, []);
 
-  const loadPortfolio = useCallback(async (force = false) => {
-    setSyncing(true);
-    setError('');
-    try {
-      const res = await apiFetch('/api/mcp/indmoney/portfolio', {
-        method: force ? 'POST' : 'GET',
-        headers: force ? { 'Content-Type': 'application/json' } : undefined,
-        body: force ? '{}' : undefined,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data?.error?.message || 'Portfolio fetch failed');
-        setPortfolio(null);
-      } else {
-        setPortfolio(data as IndmPortfolio);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Network error');
-    } finally {
-      if (mountedRef.current) setSyncing(false);
-    }
-  }, []);
-
-  // Mount: read OAuth redirect result + initial status + auto portfolio.
+  // Mount: OAuth redirect result + status + (assets load is triggered by
+  // useAppState itself on auth — we only refresh it here after connect).
   useEffect(() => {
     mountedRef.current = true;
     (async () => {
-      // ?tab=portfolio&indm=ok|error (set by the OAuth callback redirect).
+      let connectedNow = false;
       try {
         const params = new URLSearchParams(window.location.search);
         const indm = params.get('indm');
         if (indm === 'ok') {
-          setNotice('✅ INDMoney connected successfully!');
+          connectedNow = true;
+          setNotice('✅ INDMoney connected — syncing your portfolio…');
+          void loadIndmAssets(true); // first sync right after connect
         } else if (indm === 'error') {
           setError(`INDMoney connect failed: ${params.get('reason') || 'unknown error'}`);
         }
@@ -169,16 +97,44 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
         }
       } catch { /* non-fatal */ }
 
-      const st = await refreshStatus();
+      await refreshStatus();
       setLoading(false);
-      if (st?.connected) {
-        void loadPortfolio(false);
-        // Auto-dismiss the success notice.
-        setTimeout(() => { if (mountedRef.current) setNotice(''); }, 6000);
-      }
+      if (connectedNow) setTimeout(() => { if (mountedRef.current) setNotice(''); }, 8000);
     })();
     return () => { mountedRef.current = false; };
-  }, [refreshStatus, loadPortfolio]);
+  }, [refreshStatus, loadIndmAssets]);
+
+  // Minute tick: keeps "2h ago" / "next sync in …" fresh while the tab is open.
+  useEffect(() => {
+    const t = setInterval(() => { if (document.visibilityState === 'visible') forceTick(n => n + 1); }, 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  // First-sync watcher: while connected but no assets rendered yet, re-pull
+  // the snapshot every 20s (GET /assets fires a server-side background sync
+  // when stale). Gives up after ~5 minutes; manual "Sync Now" still works.
+  useEffect(() => {
+    if (!status?.connected || indmActive) return;
+    let tries = 0;
+    const t = setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      if (++tries > 15) return;
+      void loadIndmAssets();
+    }, 20_000);
+    return () => clearInterval(t);
+  }, [status?.connected, indmActive, loadIndmAssets]);
+
+  // Tab focus: re-pull the (cheap) snapshot so scheduled server-side syncs appear.
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshStatus();
+        void loadIndmAssets();
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [refreshStatus, loadIndmAssets]);
 
   const handleConnect = () => {
     // Full-page navigation — the server 302s to INDMoney's OAuth page.
@@ -186,40 +142,25 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
   };
 
   const handleDisconnect = async () => {
-    if (!window.confirm('Disconnect INDMoney? Your tokens will be revoked and portfolio view removed.')) return;
-    setSyncing(true);
+    if (!window.confirm('Disconnect INDMoney? The synced asset table will be cleared (Google Sheets stays disconnected).')) return;
     try {
       await apiFetch('/api/mcp/indmoney/disconnect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
       });
-      setPortfolio(null);
-      setNotice('Disconnected from INDMoney.');
+      setNotice('Disconnected from INDMoney — asset table now manual.');
       await refreshStatus();
+      await loadIndmAssets(); // picks up cleared snapshot → manual mode
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Disconnect failed');
-    } finally {
-      if (mountedRef.current) setSyncing(false);
     }
   };
 
-  const grouped = useMemo(() => {
-    if (!portfolio?.holdings?.length) return [] as { type: string; items: IndmHolding[]; value: number }[];
-    const map = new Map<string, IndmHolding[]>();
-    for (const h of portfolio.holdings) {
-      const arr = map.get(h.assetType) || [];
-      arr.push(h);
-      map.set(h.assetType, arr);
-    }
-    return [...map.entries()]
-      .map(([type, items]) => ({
-        type,
-        items: [...items].sort((a, b) => (b.value ?? 0) - (a.value ?? 0)),
-        value: items.reduce((a, h) => a + (h.value ?? 0), 0),
-      }))
-      .sort((a, b) => b.value - a.value);
-  }, [portfolio]);
+  const summary = indmMeta?.summary || null;
+  const positions = useMemo(() => indmMeta?.positions || [], [indmMeta]);
+  const nextSync = indmMeta?.nextSyncAt ?? null;
+  const counts = indmMeta?.counts || null;
 
   // -------------------- render --------------------
   if (loading) {
@@ -242,12 +183,19 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
           </div>
           <div>
             <h3 className="text-base sm:text-lg font-black gradient-text-cyan font-display leading-tight">
-              INDMoney Portfolio <span className="text-[10px] font-bold text-violet-400 border border-violet-500/30 bg-violet-500/10 rounded-md px-1.5 py-0.5 align-middle ml-1">MCP</span>
+              INDMoney Auto-Sync <span className="text-[10px] font-bold text-violet-400 border border-violet-500/30 bg-violet-500/10 rounded-md px-1.5 py-0.5 align-middle ml-1">MCP</span>
+              {indmActive && (
+                <span className="ml-2 text-[9px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 rounded px-1.5 py-0.5 align-middle inline-flex items-center gap-1">
+                  <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse-dot" /> ASSET SOURCE
+                </span>
+              )}
             </h3>
             <p className="text-[11px] text-slate-500">
-              {connected
-                ? `Live sync via official MCP • last: ${status?.lastSyncAt ? new Date(status.lastSyncAt).toLocaleTimeString('en-IN') : 'pending'}`
-                : 'Connect your INDMoney account via official MCP server (read-only)'}
+              {indmActive
+                ? `Asset table = INDMoney portfolio • ${counts?.live ?? 0} live-priced • ${counts?.noLive ?? 0} NAV-priced • Google Sheets disconnected`
+                : connected
+                  ? 'Connected — waiting for first sync…'
+                  : 'Connect your INDMoney account — assets table auto-syncs (manual entry retired)'}
             </p>
           </div>
         </div>
@@ -255,16 +203,16 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
           {connected ? (
             <>
               <button
-                onClick={() => void loadPortfolio(true)}
-                disabled={syncing}
+                onClick={() => void loadIndmAssets(true)}
+                disabled={indmSyncing}
                 className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm disabled:opacity-50"
-                title="Force re-sync from INDMoney MCP"
+                title="Force sync now (server → INDMoney MCP)"
               >
-                <span className={syncing ? 'inline-block animate-spin' : ''}>🔄</span> Sync
+                <span className={indmSyncing ? 'inline-block animate-spin' : ''}>🔄</span> {indmSyncing ? 'Syncing…' : 'Sync Now'}
               </button>
               <button
                 onClick={() => void handleDisconnect()}
-                disabled={syncing}
+                disabled={indmSyncing}
                 className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm text-red-400 border border-red-500/20 hover:border-red-500/50 disabled:opacity-50"
               >
                 Disconnect
@@ -300,7 +248,7 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
           <p>
             <b className="text-slate-300">How it works:</b> Connect karte hi INDMoney ka official{' '}
             <span className="text-violet-300 font-mono">mcp.indmoney.com</span> server se aapka <b>real portfolio</b>{' '}
-            (stocks, mutual funds, FDs, gold) read-only mode me yahan dikhega — manual entry ki zaroorat khatam.
+            (India stocks/ETF/MF, US stocks, crypto) 2× daily auto-sync hoga — aur yahi data Assets Table me dikhega.
           </p>
           <p className="text-slate-500">
             🔒 Secure OAuth login • read-only <span className="font-mono">portfolio:read</span> scope • tokens sirf server pe store hote hain.
@@ -308,145 +256,95 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
         </div>
       )}
 
-      {/* Summary cards */}
-      {connected && portfolio?.summary && (
+      {/* Sync schedule / status strip */}
+      {connected && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
+          <div className="quantum-panel rounded-xl px-3 py-2">
+            <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Last Sync</div>
+            <div className="text-xs font-black text-white font-mono mt-0.5" title={indmMeta?.syncedAt ? new Date(indmMeta.syncedAt).toLocaleString('en-IN') : ''}>
+              {timeAgo(indmMeta?.syncedAt)}
+            </div>
+          </div>
+          <div className="quantum-panel rounded-xl px-3 py-2">
+            <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Next Auto-Sync</div>
+            <div className="text-xs font-black text-violet-300 font-mono mt-0.5" title={nextSync ? new Date(nextSync).toLocaleString('en-IN') : ''}>
+              {nextSync ? clockTime(nextSync) : '—'}
+            </div>
+          </div>
+          <div className="quantum-panel rounded-xl px-3 py-2">
+            <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Sync Slots (IST)</div>
+            <div className="text-xs font-black text-slate-300 font-mono mt-0.5">
+              {(indmMeta?.slots || ['09:30', '21:30']).join(' • ')}
+            </div>
+          </div>
+          <div className="quantum-panel rounded-xl px-3 py-2">
+            <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Assets Synced</div>
+            <div className="text-xs font-black text-cyan-300 font-mono mt-0.5">
+              {counts ? `${counts.assets} (${counts.live} live)` : portfolio.length || '—'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Official INDMoney summary (server's own numbers) */}
+      {indmActive && summary && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
           <div className="quantum-panel rounded-xl p-3">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Current Value</div>
-            <div className="text-lg sm:text-xl font-black text-cyan-400 font-mono">₹{fmtINR(portfolio.summary.totalValue)}</div>
-            {portfolio.summary.oneDayChange != null && (
-              <div className={`text-[10px] font-mono font-bold ${portfolio.summary.oneDayChange >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                1D: {portfolio.summary.oneDayChange >= 0 ? '+' : ''}₹{fmtINR(portfolio.summary.oneDayChange)}
-                {portfolio.summary.oneDayChangePct != null && ` (${portfolio.summary.oneDayChangePct >= 0 ? '+' : ''}${portfolio.summary.oneDayChangePct.toFixed(2)}%)`}
+            <div className="text-lg sm:text-xl font-black text-cyan-400 font-mono">₹{fmtINR(summary.totalValue)}</div>
+            {summary.oneDayChange != null && (
+              <div className={`text-[10px] font-mono font-bold ${summary.oneDayChange >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                1D: {summary.oneDayChange >= 0 ? '+' : ''}₹{fmtINR(summary.oneDayChange)}
+                {summary.oneDayChangePct != null && ` (${summary.oneDayChangePct >= 0 ? '+' : ''}${summary.oneDayChangePct.toFixed(2)}%)`}
               </div>
             )}
           </div>
           <div className="quantum-panel rounded-xl p-3">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Invested</div>
-            <div className="text-lg sm:text-xl font-black text-white font-mono">₹{fmtINR(portfolio.summary.totalInvested)}</div>
+            <div className="text-lg sm:text-xl font-black text-white font-mono">₹{fmtINR(summary.totalInvested)}</div>
           </div>
           <div className="quantum-panel rounded-xl p-3">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Total P&L</div>
-            <div className={`text-lg sm:text-xl font-black font-mono ${(portfolio.summary.totalPnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-              {(portfolio.summary.totalPnl ?? 0) >= 0 ? '+' : ''}₹{fmtINR(portfolio.summary.totalPnl)}
+            <div className={`text-lg sm:text-xl font-black font-mono ${(summary.totalPnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              {(summary.totalPnl ?? 0) >= 0 ? '+' : ''}₹{fmtINR(summary.totalPnl)}
             </div>
-            {portfolio.officialSummary && <div className="text-[9px] text-slate-600 font-bold">INDMoney official</div>}
           </div>
           <div className="quantum-panel rounded-xl p-3">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Returns</div>
-            <div className={`text-lg sm:text-xl font-black font-mono ${(portfolio.summary.totalPnlPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-              {portfolio.summary.totalPnlPct != null ? `${portfolio.summary.totalPnlPct >= 0 ? '+' : ''}${portfolio.summary.totalPnlPct}%` : '—'}
+            <div className={`text-lg sm:text-xl font-black font-mono ${(summary.totalPnlPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              {summary.totalPnlPct != null ? `${summary.totalPnlPct >= 0 ? '+' : ''}${summary.totalPnlPct}%` : '—'}
             </div>
           </div>
         </div>
       )}
 
-      {/* Syncing shimmer */}
-      {connected && syncing && !portfolio && (
-        <div className="quantum-panel rounded-xl p-4 flex items-center gap-3 text-slate-400 text-sm">
-          <span className="inline-block animate-spin">⏳</span> Fetching portfolio from INDMoney MCP…
-        </div>
-      )}
-
-      {/* Portfolio tool unavailable */}
-      {connected && portfolio && !portfolio.ok && (
-        <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 px-4 py-3 text-sm text-amber-300 space-y-2">
+      {/* Sync failure diagnostics — degraded-tolerant: stale-but-usable
+          assets keep rendering; the banner explains the last failure */}
+      {connected && indmMeta?.lastError && (
+        <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 px-4 py-3 text-sm text-amber-300">
           <p className="font-semibold">
-            {portfolio.reason === 'no-holdings-found'
-              ? 'Connected ✅ — tools call ho gaye lekin responses me koi holding detect nahi hui.'
-              : <>Connected ✅ — lekin portfolio tool auto-detect nahi hua (reason: <span className="font-mono">{portfolio.reason}</span>).</>}
+            Last sync failed — showing the previous snapshot. Reason: <span className="font-mono text-xs">{indmMeta.lastError}</span>
           </p>
-          {portfolio.calls && portfolio.calls.length > 0 && (
-            <p className="text-xs text-amber-200/80">
-              Tried: {portfolio.calls.map(c => c.args?.asset_type ? `${c.tool}(${String(c.args.asset_type)})` : c.tool).join(', ')}
-            </p>
-          )}
-          {portfolio.failures && portfolio.failures.length > 0 && (
-            <details className="text-xs">
-              <summary className="cursor-pointer text-amber-200/80">{portfolio.failures.length} call(s) failed — details</summary>
-              <div className="mt-1 space-y-1">
-                {portfolio.failures.map((f, i) => (
-                  <div key={i} className="font-mono text-[10px] text-amber-200/60 break-words">
-                    {f.tool}({f.args?.asset_type ? String(f.args.asset_type) : ''}): {f.error.slice(0, 120)}
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
-          {portfolio.tools && portfolio.tools.length > 0 && (
-            <p className="text-xs text-amber-200/80">
-              Available tools: {portfolio.tools.map(t => t.name).join(', ')}
-            </p>
-          )}
-          {portfolio.payloadPreview && (
-            <details className="text-xs">
-              <summary className="cursor-pointer text-amber-200/80">Raw response (debug)</summary>
-              <pre className="mt-2 p-2 rounded-lg bg-black/30 overflow-x-auto text-[10px] text-slate-400 whitespace-pre-wrap">{portfolio.payloadPreview}</pre>
-            </details>
-          )}
+          <p className="text-xs text-amber-200/80 mt-1">Auto-retry next scheduled slot, or hit “Sync Now”. INDMoney token may need a reconnect if this persists.</p>
+        </div>
+      )}
+      {connected && indmMeta?.reason && !indmActive && indmMeta.reason !== 'not-connected' && indmMeta.reason !== 'no-snapshot' && (
+        <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 px-4 py-3 text-sm text-amber-300">
+          <p className="font-semibold">Snapshot not available yet (reason: <span className="font-mono text-xs">{indmMeta.reason}</span>).</p>
+          <p className="text-xs text-amber-200/80 mt-1">Hit “Sync Now” to pull your portfolio from INDMoney MCP.</p>
         </div>
       )}
 
-      {/* Holdings by asset type */}
-      {grouped.map(({ type, items, value }) => {
-        const st = TYPE_STYLES[type] || TYPE_STYLES.Other;
-        return (
-          <div key={type} className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className={`inline-flex items-center gap-1.5 text-xs font-bold rounded-lg border px-2.5 py-1 ${st.cls}`}>
-                {st.emoji} {type} <span className="opacity-60">({items.length})</span>
-              </div>
-              <div className="text-xs font-mono font-bold text-slate-400">₹{fmtINR(value)}</div>
-            </div>
-            <div className="quantum-panel rounded-xl overflow-hidden">
-              <div className="overflow-x-auto scrollbar-hide">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-slate-500 text-[10px] uppercase tracking-wider border-b border-white/5">
-                      <th className="text-left px-3 py-2.5 font-bold">Name</th>
-                      <th className="text-right px-3 py-2.5 font-bold">Qty</th>
-                      <th className="text-right px-3 py-2.5 font-bold hidden sm:table-cell">Avg</th>
-                      <th className="text-right px-3 py-2.5 font-bold hidden sm:table-cell">Price</th>
-                      <th className="text-right px-3 py-2.5 font-bold">Value</th>
-                      <th className="text-right px-3 py-2.5 font-bold">P&L</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((h, i) => {
-                      const pnlPos = (h.pnl ?? 0) >= 0;
-                      return (
-                        <tr key={`${h.name}-${i}`} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
-                          <td className="px-3 py-2.5 max-w-[180px] sm:max-w-[260px]">
-                            <div className="font-semibold text-slate-200 truncate" title={h.name}>{h.name}</div>
-                            {h.symbol && <div className="text-[10px] text-slate-500 font-mono">{h.symbol}</div>}
-                          </td>
-                          <td className="px-3 py-2.5 text-right font-mono text-slate-300">{h.qty != null ? fmtINR(h.qty, 2) : '—'}</td>
-                          <td className="px-3 py-2.5 text-right font-mono text-slate-400 hidden sm:table-cell">{h.avgPrice != null ? `₹${fmtINR(h.avgPrice, 2)}` : '—'}</td>
-                          <td className="px-3 py-2.5 text-right font-mono text-slate-400 hidden sm:table-cell">{h.currentPrice != null ? `₹${fmtINR(h.currentPrice, 2)}` : '—'}</td>
-                          <td className="px-3 py-2.5 text-right font-mono text-white font-bold">{h.value != null ? `₹${fmtINR(h.value)}` : '—'}</td>
-                          <td className={`px-3 py-2.5 text-right font-mono font-bold ${pnlPos ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {h.pnl != null ? `${pnlPos ? '+' : ''}₹${fmtINR(h.pnl)}` : '—'}
-                            {h.pnlPct != null && <div className="text-[10px] opacity-70">{pnlPos ? '+' : ''}{h.pnlPct}%</div>}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-
-      {/* Trading positions (MTF / delivery / intraday) */}
-      {connected && portfolio?.positions && portfolio.positions.length > 0 && (
+      {/* Trading positions (MTF / delivery / intraday) — informative extra
+          (already included in the synced holdings values, shown separately
+          by INDMoney too) */}
+      {indmActive && positions.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
             <div className="inline-flex items-center gap-1.5 text-xs font-bold rounded-lg border px-2.5 py-1 text-amber-300 bg-amber-500/10 border-amber-500/20">
-              ⚡ Trading Positions <span className="opacity-60">({portfolio.positions.length})</span>
+              ⚡ Trading Positions <span className="opacity-60">({positions.length})</span>
             </div>
-            <div className="text-xs font-mono font-bold text-slate-400">₹{fmtINR(portfolio.positions.reduce((a, p) => a + (p.invested || 0), 0))}</div>
+            <div className="text-xs font-mono font-bold text-slate-400">₹{fmtINR(positions.reduce((a, p) => a + (p.invested || 0), 0))}</div>
           </div>
           <div className="quantum-panel rounded-xl overflow-hidden">
             <div className="overflow-x-auto scrollbar-hide">
@@ -462,7 +360,7 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {portfolio.positions.map((p, i) => (
+                  {positions.map((p, i) => (
                     <tr key={`${p.positionId ?? p.name}-${i}`} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
                       <td className="px-3 py-2.5 max-w-[200px] sm:max-w-[280px]">
                         <div className="font-semibold text-slate-200 truncate" title={p.name}>{p.name}</div>
@@ -484,36 +382,13 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
         </div>
       )}
 
-      {/* Tool badge / meta footer */}
-      {connected && portfolio?.ok && (
+      {/* Footer meta */}
+      {indmActive && (
         <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-500">
           <span>
-            source: <span className="font-mono text-violet-400">{[...new Set((portfolio.calls ?? []).map(c => c.tool))].join(' + ') || 'mcp'}</span>
-            {portfolio.calls && portfolio.calls.length > 1 && <> • {portfolio.calls.length} calls</>}
-            {portfolio.fetchedAt && <> • synced {new Date(portfolio.fetchedAt).toLocaleString('en-IN')}</>}
+            🇮🇳 India · 🦅 USA · 🪙 Crypto assets in the table below · prices tick live during market hours · NAV assets refresh on each sync
           </span>
-          <button onClick={() => setShowTools(v => !v)} className="hover:text-slate-300 underline underline-offset-2">
-            {showTools ? 'hide' : 'view'} MCP tools ({status?.toolCount ?? 0})
-          </button>
-        </div>
-      )}
-      {connected && portfolio?.ok && portfolio.failures && portfolio.failures.length > 0 && (
-        <p className="text-[10px] text-slate-600" title={portfolio.failures.map(f => f.error).join('\n')}>
-          {portfolio.failures.length} unsupported asset type(s) skipped: {portfolio.failures.map(f => (f.args?.asset_type ? String(f.args.asset_type) : f.tool)).slice(0, 8).join(', ')}
-        </p>
-      )}
-      {showTools && (
-        <div className="quantum-panel rounded-xl p-3 text-[11px] space-y-1.5 max-h-48 overflow-y-auto">
-          {portfolio?.tools?.length ? portfolio.tools.map(t => (
-            <div key={t.name} className="flex gap-2">
-              <span className="font-mono text-violet-400 shrink-0">{t.name}</span>
-              <span className="text-slate-500 truncate" title={t.description ?? ''}>{t.description}</span>
-            </div>
-          )) : (
-            <p className="text-slate-500">
-              Tool list cached server-side. <button className="underline" onClick={() => void loadPortfolio(true)}>Re-sync</button> to refresh.
-            </p>
-          )}
+          {status?.expiresAt && <span title="Token auto-refreshes server-side">MCP session active</span>}
         </div>
       )}
     </div>

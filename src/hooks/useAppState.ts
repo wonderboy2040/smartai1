@@ -11,6 +11,7 @@ import {
   syncGroqKeyToCloud, loadGroqKeyFromCloud, getBatchInterval, fetchMarketIntelligence,
   syncStateToCloud, loadAppStateFromCloud, CloudAppState,
   apiFetch, setSessionToken, ensureAuthenticated,
+  fetchIndmAssets, forceIndmSync, IndmAssetsResponse,
 } from '../utils/api';
 import { secureStorage } from '../utils/secureStorage';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from '../utils/tvWebsocket';
@@ -107,6 +108,27 @@ function mergePriceData(existing: PriceData | undefined, incoming: Partial<Price
   }
 
   return { price, change, high, low, volume, rsi, time, market, sma20, sma50, macd, tvExchange, tvExactSymbol, isRealtime };
+}
+
+type IndmSyncMeta = Omit<IndmAssetsResponse, 'assets'>;
+
+// Default crypto universe (dashboard widgets) — the poller unions this with
+// any crypto symbols present in the synced portfolio (dynamic INDMoney coins).
+const DEFAULT_CRYPTO_SYMBOLS = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'];
+
+// Stable pseudo-symbol for INDMoney assets without an exchange symbol
+// (mutual funds, FDs, bonds…). Used as the livePrices key + table badge;
+// those assets are `noLive` (NAV-priced by INDMoney, not exchange-quoted).
+function indmPseudoSymbol(name: string, used: Set<string>): string {
+  const STOP = new Set(['LTD', 'LIMITED', 'THE', 'OF', 'AND', 'INC', 'PLC', 'COMPANY', 'INDIA']);
+  const words = String(name || 'ASSET').replace(/[^A-Za-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+  const meaningful = words.filter(w => !STOP.has(w.toUpperCase()));
+  let base = (meaningful.length ? meaningful : words).map(w => w.toUpperCase()).join('').slice(0, 10) || 'ASSET';
+  if (!/^[A-Z]/.test(base)) base = `A${base.slice(0, 9)}`;
+  let out = base; let n = 1;
+  while (used.has(out)) out = `${base.slice(0, 8)}${n++}`;
+  used.add(out);
+  return out;
 }
 
 export function useAppState() {
@@ -321,10 +343,103 @@ export function useAppState() {
 
   const skipNextCloudSaveRef = useRef(false);
 
+  // ============================================================
+  // INDMoney synced ASSET TABLE (the portfolio's source of truth)
+  // ------------------------------------------------------------
+  // The manual assets table + Google Sheets sync are REPLACED by the
+  // server-side 2×-daily INDMoney MCP sync while connected:
+  //   • assets  → Position[] (the grouped INDIA / USA / Crypto table)
+  //   • prices  → live exchange quotes for stock/ETF/crypto assets; MF/
+  //     FD/bond assets keep INDMoney's own unit price (NAV), seeded here
+  //     and refreshed on each scheduled sync.
+  //   • Google Sheets cloud sync (load AND save) is fully disconnected
+  //     while INDMoney is active — the Sheet can never overwrite or
+  //     pollute the synced portfolio.
+  // ============================================================
+  const [indmSource, setIndmSource] = useState<'unknown' | 'indmoney' | 'manual'>('unknown');
+  const [indmMeta, setIndmMeta] = useState<IndmSyncMeta | null>(null);
+  const [indmSyncing, setIndmSyncing] = useState(false);
+  const indmActiveRef = useRef(false);
+  const indmBusyRef = useRef(false);
+
+  const loadIndmAssets = useCallback(async (force = false): Promise<boolean> => {
+    if (indmBusyRef.current) return false;
+    indmBusyRef.current = true;
+    setIndmSyncing(true);
+    try {
+      const data = force ? await forceIndmSync() : await fetchIndmAssets();
+      if (!data) {
+        // Network/server error — keep current state; only resolve unknown.
+        setIndmSource(prev => (prev === 'unknown' ? 'manual' : prev));
+        return false;
+      }
+      const { assets, ...meta } = data;
+      setIndmMeta(meta as IndmSyncMeta);
+      if (data.ok && Array.isArray(assets) && assets.length > 0) {
+        indmActiveRef.current = true;
+        setIndmSource('indmoney');
+
+        const used = new Set<string>();
+        const positions: Position[] = assets.map(a => ({
+          id: a.id,
+          symbol: a.symbol || indmPseudoSymbol(a.name, used),
+          market: a.market === 'US' ? ('US' as const) : ('IN' as const),
+          qty: a.qty > 0 ? a.qty : 1,
+          avgPrice: a.avgPrice ?? a.lastPrice ?? 0,
+          leverage: 1,
+          dateAdded: data.syncedAt ? new Date(data.syncedAt).toISOString().slice(0, 10) : getTodayString(),
+          name: a.name,
+          noLive: a.noLive,
+        }));
+        setPortfolio(positions);
+        try { secureStorage.setItem('portfolio', JSON.stringify(positions)); } catch { /* quota */ }
+
+        // Seed prices so values render instantly; the live pollers/SSE take
+        // over within seconds for exchange-listed assets. A seed NEVER
+        // overwrites a live quote and refreshes stale seeds (older sync).
+        const seeds: Record<string, PriceData> = {};
+        assets.forEach((a, i) => {
+          const p = positions[i];
+          if (a.lastPrice == null || !(a.lastPrice > 0)) return;
+          seeds[`${p.market}_${p.symbol}`] = {
+            price: a.lastPrice,
+            change: a.oneDayChangePct ?? 0,
+            high: a.lastPrice, low: a.lastPrice, volume: 0,
+            rsi: 50, time: Date.now(), market: p.market, isRealtime: false,
+          };
+        });
+        if (Object.keys(seeds).length > 0) {
+          setLivePrices(prev => {
+            const next = { ...prev };
+            let changed = false;
+            for (const [k, v] of Object.entries(seeds)) {
+              const ex = next[k];
+              if (!ex || (!ex.isRealtime && Date.now() - (ex.time || 0) > 5 * 60_000)) { next[k] = v; changed = true; }
+            }
+            return changed ? next : prev;
+          });
+        }
+        console.log(`🏦 INDMoney assets: ${positions.length} loaded (${data.counts?.live ?? 0} live-priced, ${data.counts?.noLive ?? 0} NAV-priced)`);
+        return true;
+      }
+      // Not connected / empty → manual mode (Sheets paths may resume).
+      indmActiveRef.current = false;
+      if (data.reason === 'not-connected') setIndmSource('manual');
+      return false;
+    } finally {
+      indmBusyRef.current = false;
+      setIndmSyncing(false);
+    }
+  }, []);
+
   // --- Reusable cloud load: pulls from Google Sheets and updates state ---
   // Sets skipNextCloudSaveRef to true so loading FROM cloud doesn't trigger auto-save BACK to cloud.
+  // DISCONNECTED while INDMoney is the portfolio source (ref guard also covers
+  // the race where synced assets land mid-flight).
   const mergeCloudData = useCallback(() => {
+    if (indmActiveRef.current) return Promise.resolve(false);
     return loadFromCloud().then(data => {
+      if (indmActiveRef.current) return false; // INDMoney assets landed — Sheets must not overwrite
       if (data && data.length > 0) {
         skipNextCloudSaveRef.current = true;
         setPortfolio(data);
@@ -360,7 +475,12 @@ export function useAppState() {
       if (savedPrices) setLivePrices(JSON.parse(savedPrices));
     } catch (e) { console.warn('Failed to load local state:', e); }
 
-    // 2) CLOUD — background fetch, merge when ready
+    // 1.5) INDMoney — the ASSET TABLE source of truth. Kicked off BEFORE
+    // the Sheets fallback so synced assets win the race; the cloud merge
+    // self-cancels (ref guard) if assets land mid-flight.
+    void loadIndmAssets();
+
+    // 2) CLOUD — background fetch, merge when ready (manual mode only)
     // Fire immediately (don't await) so the UI renders local data first.
     mergeCloudData().then(success => {
       if (!success) {
@@ -500,8 +620,9 @@ export function useAppState() {
   // Restore from cloud on login — only when cloud is NEWER than what we
   // last applied locally (tracked via 'cloud_state_ts'). After a cache
   // clear the local ts is gone → cloud always wins → nothing is lost.
+  // Google Sheets is DISCONNECTED while INDMoney drives the asset table.
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || indmSource === 'unknown' || indmSource === 'indmoney') return;
     let cancelled = false;
     loadAppStateFromCloud().then(cloud => {
       if (cancelled || !cloud) return;
@@ -521,11 +642,13 @@ export function useAppState() {
     return () => { cancelled = true; };
     // buildCloudState intentionally excluded — baseline seeding only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, applyCloudState, cloudStateFingerprint]);
+  }, [isAuthenticated, indmSource, applyCloudState, cloudStateFingerprint]);
 
   // Debounced auto-save (4s) whenever any tracked piece changes.
+  // OFF while INDMoney is the portfolio source (Sheets disconnected).
   useEffect(() => {
     if (!isAuthenticated) return;
+    if (indmActiveRef.current) return;
     if (skipNextStateSaveRef.current) {
       skipNextStateSaveRef.current = false;
       // Refresh dedupe fingerprint with post-restore values — the closure
@@ -536,6 +659,7 @@ export function useAppState() {
     }
     if (cloudSaveTimerRef.current) clearTimeout(cloudSaveTimerRef.current);
     cloudSaveTimerRef.current = window.setTimeout(async () => {
+      if (indmActiveRef.current) return; // INDMoney active — Sheets disconnected
       const state = buildCloudState();
       const fingerprint = cloudStateFingerprint(state);
       if (fingerprint === lastSavedFingerprintRef.current) return; // nothing changed
@@ -557,6 +681,7 @@ export function useAppState() {
   useEffect(() => {
     const flush = () => {
       if (document.visibilityState !== 'hidden') return;
+      if (indmActiveRef.current) return; // Sheets disconnected
       const state = buildCloudState();
       const fingerprint = cloudStateFingerprint(state);
       if (fingerprint === lastSavedFingerprintRef.current) return;
@@ -610,6 +735,14 @@ export function useAppState() {
       if (inFlight) return;
       inFlight = true;
       try {
+        // Dynamic universe: dashboard defaults + crypto assets synced from
+        // INDMoney (resolved exchange symbols like BTC / SOL / DOGE).
+        const cryptoSymbols = [...new Set([
+          ...DEFAULT_CRYPTO_SYMBOLS,
+          ...(portfolioRef.current || [])
+            .map(p => p.symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase())
+            .filter(s => isCryptoSymbol(s)),
+        ])];
         try {
           const res = await apiFetch(`${proxyBase}/api/crypto-prices?t=${Date.now()}`, {
             signal: AbortSignal.timeout(5000)
@@ -618,8 +751,6 @@ export function useAppState() {
             const tickers = await res.json();
             if (Array.isArray(tickers)) {
               let updated = false;
-
-              const cryptoSymbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'];
 
               cryptoSymbols.forEach(sym => {
                 const ticker = tickers.find((t: any) => t.market === `${sym}INR`);
@@ -660,7 +791,6 @@ export function useAppState() {
           lastBinanceAttempt = Date.now();
           console.warn('CoinDCX poll failed, trying Binance fallback:', e);
           try {
-            const cryptoSymbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI'];
             const binanceResults = await Promise.allSettled(
               cryptoSymbols.map(async (sym) => {
                 const r = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${sym}USDT`, {
@@ -730,7 +860,8 @@ export function useAppState() {
     const buildIndianPositions = (): Position[] => {
       const inPositions = portfolioRef.current.filter(p => {
         const clean = p.symbol.replace('.NS', '').replace('.BO', '');
-        return (p.market || guessMarket(p.symbol)) === 'IN' && !isCryptoSymbol(clean);
+        // noLive = INDMoney NAV-priced assets (MF/FD/bond) — no exchange quote.
+        return !p.noLive && (p.market || guessMarket(p.symbol)) === 'IN' && !isCryptoSymbol(clean);
       });
       if (inPositions.length > 0) return inPositions;
       // Fallback so India indices stay live even with an empty portfolio.
@@ -785,7 +916,8 @@ export function useAppState() {
     const buildUSPositions = (): Position[] => {
       const usPositions = portfolioRef.current.filter(p => {
         const clean = p.symbol.replace('.NS', '').replace('.BO', '');
-        return (p.market || guessMarket(p.symbol)) === 'US' && !isCryptoSymbol(clean);
+        // noLive = INDMoney NAV-priced assets — no exchange quote to poll.
+        return !p.noLive && (p.market || guessMarket(p.symbol)) === 'US' && !isCryptoSymbol(clean);
       });
       if (usPositions.length > 0) return usPositions;
       // Fallback so US indices stay live even with an empty portfolio.
@@ -834,6 +966,7 @@ export function useAppState() {
     const cleanToKey: Record<string, string> = {}; // server key (IN_RELIANCE) -> app key
 
     const add = (p: Position) => {
+      if (p.noLive) return; // INDMoney NAV assets (MF/FD) — no live feed to stream
       const clean = p.symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
       const mkt = (p.market || guessMarket(p.symbol)).toUpperCase();
       const fullKey = `${mkt}_${p.symbol.trim()}`;
@@ -882,7 +1015,9 @@ export function useAppState() {
       'US_SPY', 'US_SMH', 'US_VOOG', 'US_MU', 'US_QQQ', 'US_VGT',
       'IN_INDIAVIX', 'US_VIX', 'IN_BTC', 'IN_ETH'
     ];
-    let symbolsToSub = currentPortfolio.length > 0 ? [...new Set([...currentPortfolio.map(p => `${p.market}_${p.symbol}`), ...defaultSymbols])] : defaultSymbols;
+    let symbolsToSub = currentPortfolio.length > 0
+      ? [...new Set([...currentPortfolio.filter(p => !p.noLive).map(p => `${p.market}_${p.symbol}`), ...defaultSymbols])]
+      : defaultSymbols;
     if (!symbolsToSub.includes('IN_BTC')) symbolsToSub.push('IN_BTC');
     if (!symbolsToSub.includes('IN_ETH')) symbolsToSub.push('IN_ETH');
     const positionsToSub: Position[] = symbolsToSub.map(symbol => {
@@ -1090,8 +1225,11 @@ export function useAppState() {
 
   // --- Cloud sync (debounced 5s on portfolio change only) ---
   // Skips saving if portfolio was just loaded FROM cloud (prevents circular overwrite).
+  // OFF while INDMoney drives the portfolio — synced assets must never be
+  // pushed into the user's Google Sheet.
   useEffect(() => {
     if (portfolio.length === 0) return;
+    if (indmActiveRef.current) return;
     if (skipNextCloudSaveRef.current) {
       skipNextCloudSaveRef.current = false;
       console.log('☁️ Cloud Sync: skipped auto-save because portfolio was just loaded from Google Sheets');
@@ -1104,11 +1242,12 @@ export function useAppState() {
     return () => { if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current); };
   }, [portfolio]);
 
-  // --- Periodic cloud LOAD (pull from Google Sheets every 30s when tab active) ---
+  // --- Periodic cloud LOAD (manual mode only — Google Sheets is
+  // disconnected while INDMoney is the asset source) ---
   useEffect(() => {
     if (!isAuthenticated) return;
     cloudLoadTimerRef.current = window.setInterval(() => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && !indmActiveRef.current) {
         console.log('☁️ Cloud Sync: periodic auto-load from Google Sheets…');
         mergeCloudData();
       }
@@ -1116,11 +1255,11 @@ export function useAppState() {
     return () => { if (cloudLoadTimerRef.current) clearInterval(cloudLoadTimerRef.current); };
   }, [isAuthenticated, mergeCloudData]);
 
-  // --- Tab Visibility Auto-Sync (fetch from Google Sheets when user returns to tab) ---
+  // --- Tab Visibility Auto-Sync (manual mode only) ---
   useEffect(() => {
     if (!isAuthenticated) return;
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && !indmActiveRef.current) {
         console.log('👁️ Tab active: fetching latest portfolio from Google Sheets…');
         mergeCloudData();
       }
@@ -1770,8 +1909,9 @@ export function useAppState() {
       // 1) Forex (24x7) — keep last good rate on failure (audit M6)
       const ratePromise = fetchForexRateOrNull().then(rate => { if (rate != null) setUsdInrRate(rate); }).catch(() => { });
 
-      // 2) Cloud sync — pull latest portfolio from Google Sheets
-      const cloudPromise = mergeCloudData();
+      // 2) Portfolio source refresh — INDMoney snapshot when active
+      //    (Google Sheets is disconnected in that mode).
+      const cloudPromise = indmActiveRef.current ? loadIndmAssets() : mergeCloudData();
 
       // 3) Live prices for current portfolio + key indices
       const cur = portfolioRef.current;
@@ -1794,7 +1934,7 @@ export function useAppState() {
       setIsRefreshing(false);
       setTimeout(() => setSyncStatus(''), 2500);
     }
-  }, [flushPricesToStorage, mergeCloudData]);
+  }, [flushPricesToStorage, mergeCloudData, loadIndmAssets]);
 
   const pushTelegramReport = useCallback(async () => {
     const [tgToken, tgChatId] = await Promise.all([secureStorage.getItemAsync('TG_TOKEN'), secureStorage.getItemAsync('TG_CHAT_ID')]);
@@ -1896,6 +2036,8 @@ export function useAppState() {
     toggleTheme, flushCache, loadTradingViewChart,
     // Re-exports for tabs
     loadFromCloud,
+    // INDMoney synced asset table (source of truth when connected)
+    indmSource, indmMeta, indmSyncing, loadIndmAssets,
   }), [
     isAuthenticated, pinInput, setPinInput, verifyPin, logout,
     activeTab, setActiveTab, portfolio, transactions, livePrices, usdInrRate, theme,
@@ -1923,5 +2065,6 @@ export function useAppState() {
     smartAllocations,
     analyzeSymbol, quickSelect, openAddModal, savePosition, pushTelegramReport,
     toggleTheme, flushCache, loadTradingViewChart,
+    indmSource, indmMeta, indmSyncing, loadIndmAssets,
   ]);
 }

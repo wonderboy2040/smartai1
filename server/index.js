@@ -23,6 +23,7 @@ import {
 import { SERVER_MCP_TOOLS_OPENAI, SERVER_MCP_TOOLS_GEMINI, executeServerMCPTool } from './mcpTools.js';
 import { registerIntradayRoutes } from './intraday/routes.js';
 import indmMcpRoutes from './mcp/routes.js';
+import { startScheduler as startIndmPortfolioScheduler } from './mcp/portfolioSync.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fork } from 'node:child_process';
@@ -491,8 +492,12 @@ registerIntradayRoutes(app, {
 // INDMONEY PORTFOLIO MCP (server/mcp/*)
 // OAuth 2.0 + PKCE connect flow + MCP streamable-HTTP client.
 // Tokens stay server-side (server/data/mcp-indmoney.json).
+// portfolioSync drives the ASSET TABLE (INDMoney = source of truth):
+// 2×-daily auto-sync (09:30 & 21:30 IST by default) + boot catch-up
+// for slots missed while the dyno slept (Render free tier).
 // ============================================================
 app.use(indmMcpRoutes);
+try { startIndmPortfolioScheduler(); } catch (e) { console.warn('[mcp/portfolioSync] scheduler failed to start:', e?.message || e); }
 
 // ------------------------------------------------------------
 // GET /api/quote  â†’ REAL-TIME last-traded price for one or many symbols

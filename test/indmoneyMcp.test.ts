@@ -452,6 +452,20 @@ describe('normalizePortfolio / collectHoldings', () => {
     expect(out[0].currentPrice).toBeCloseTo(500.5, 2);
   });
 
+  it('parses INDMoney per-holding one-day change % (one_day_change_percentage)', () => {
+    const out = collectHoldings([{
+      investment: 'Motilal Oswal Nifty 500 Momentum 50 ETF',
+      total_units: 1990, unit_price: 54.08, invested_amount: 103380.5,
+      market_value: 107619.2, one_day_change_percentage: -0.39,
+    }]);
+    expect(out[0].oneDayChangePct).toBe(-0.39);
+  });
+
+  it('plain "change" fields are NOT misread as 1-day % (ambiguous key)', () => {
+    const out = collectHoldings([{ name: 'X', qty: 1, change: 12.5, invested: 100, market_value: 110 }]);
+    expect(out[0].oneDayChangePct).toBeNull();
+  });
+
   it('flags unknown/empty payloads gracefully', () => {
     expect(normalizePortfolio(null).ok).toBe(false);
     expect(normalizePortfolio('some text').reason).toBe('text-only');
@@ -904,6 +918,9 @@ describe('OAuth + MCP flow (mocked fetch)', () => {
     expect(pf.holdings.find(h => h.name === 'HDFC Flexi Cap Fund').assetType).toBe('Mutual Fund');
     // ETFs keep their own classification (name wins over arg stamp)
     expect(pf.holdings.find(h => h.name.includes('Motilal')).assetType).toBe('ETF');
+    // assetEnum stamp: the raw enum rides along for the portfolio-sync mapper
+    expect(pf.holdings.find(h => h.name.includes('Motilal')).assetEnum).toBe('IND_STOCK');
+    expect(pf.holdings.find(h => h.name === 'HDFC Flexi Cap Fund').assetEnum).toBe('MF');
   });
 
   it('tool 1 yields no holdings → sequential fallback to tool 2', async () => {

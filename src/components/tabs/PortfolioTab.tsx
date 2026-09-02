@@ -71,7 +71,11 @@ const PortfolioTab = React.memo(function PortfolioTab() {
     setAddSymbol, setCurrentMarket, setAddQty, setAddPrice, setAddDate,
     setEditId, setTransactionType, setShowAddModal, setModalPrice,
     refreshAll, isRefreshing,
+    indmSource, indmMeta,
   } = useApp();
+
+  // INDMoney drives the asset table → manual entry + Google Sheets UI retired.
+  const indmActive = indmSource === 'indmoney';
 
   // FEATURE 3: Track which holding the user wants to score.
   const [scorecardSymbol, setScorecardSymbol] = useState<string>('');
@@ -239,24 +243,28 @@ const PortfolioTab = React.memo(function PortfolioTab() {
             onClick={refreshAll}
             disabled={isRefreshing}
             className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm disabled:opacity-50"
-            title="Force-refresh prices + forex"
+            title={indmActive ? 'Re-fetch INDMoney snapshot + refresh prices + forex' : 'Force-refresh prices + forex'}
           >
             <span className={isRefreshing ? 'inline-block animate-spin' : ''}>🔄</span> Refresh All
           </button>
-          <button
-            onClick={handleCloudSync}
-            className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm"
-            title="Load portfolio from Google Sheets cloud"
-          >
-            📥 {cloudMsg || 'Sync'}
-          </button>
-          <button
-            onClick={() => setShowCloudConfigModal(true)}
-            className="quantum-btn-ghost px-3 py-2 rounded-xl font-semibold text-sm text-cyan-400 border border-cyan-500/20 hover:border-cyan-500/50"
-            title="Configure Cloud Sync & Backend URL"
-          >
-            ⚙️
-          </button>
+          {!indmActive && (
+            <>
+              <button
+                onClick={handleCloudSync}
+                className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm"
+                title="Load portfolio from Google Sheets cloud"
+              >
+                📥 {cloudMsg || 'Sync'}
+              </button>
+              <button
+                onClick={() => setShowCloudConfigModal(true)}
+                className="quantum-btn-ghost px-3 py-2 rounded-xl font-semibold text-sm text-cyan-400 border border-cyan-500/20 hover:border-cyan-500/50"
+                title="Configure Cloud Sync & Backend URL"
+              >
+                ⚙️
+              </button>
+            </>
+          )}
           <div className="relative group">
             <button className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm text-emerald-300 border border-emerald-500/20">
               ⬇️ Export
@@ -276,12 +284,14 @@ const PortfolioTab = React.memo(function PortfolioTab() {
               </button>
             </div>
           </div>
-          <button
-            onClick={() => openAddModal()}
-            className="quantum-btn-primary px-5 py-2 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-sm text-white"
-          >
-            + Add Asset
-          </button>
+          {!indmActive && (
+            <button
+              onClick={() => openAddModal()}
+              className="quantum-btn-primary px-5 py-2 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-sm text-white"
+            >
+              + Add Asset
+            </button>
+          )}
           <button
             onClick={pushTelegramReport}
             className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm text-indigo-300 border-indigo-500/20"
@@ -373,8 +383,9 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         </div>
       </div>
 
-      {/* XIRR + Portfolio Intelligence */}
-      {portfolio.length > 0 && (
+      {/* XIRR + Portfolio Intelligence (manual mode only — INDMoney syncs
+          don't carry per-asset buy dates, so XIRR would be meaningless) */}
+      {portfolio.length > 0 && !indmActive && (
         <div className="quantum-panel rounded-xl p-4 animate-fade-in-up delay-200">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -454,8 +465,8 @@ const PortfolioTab = React.memo(function PortfolioTab() {
       {/* Price Alerts (target / stop-loss → Telegram) */}
       <PriceAlertsPanel />
 
-      {/* Transaction History (full ledger with edit/delete) */}
-      <TransactionHistoryPanel />
+      {/* Transaction History (manual ledger — retired while INDMoney drives the table) */}
+      {!indmActive && <TransactionHistoryPanel />}
 
       {/* Search / Sort toolbar */}
       {portfolio.length > 0 && (
@@ -543,7 +554,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                     <div className="text-right">Today's P&L</div>
                     <div className="text-right">Value (Eq)</div>
                     <div className="text-right">Unrealized P&L</div>
-                    <div className="text-center w-20">Trade</div>
+                    <div className="text-center w-20">{indmActive ? 'Source' : 'Trade'}</div>
                   </div>
 
                   <div className="divide-y divide-white/[0.03]">
@@ -572,20 +583,29 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                           {/* 1. ASSET & ALLOCATION */}
                           <div>
                             <div className="flex items-center justify-between md:justify-start gap-3">
-                              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-800 to-slate-900 border border-white/10 shadow-inner flex items-center justify-center font-black text-xs text-white">
-                                {p.symbol.substring(0, 2).toUpperCase()}
+                              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-800 to-slate-900 border border-white/10 shadow-inner flex items-center justify-center font-black text-xs text-white shrink-0">
+                                {(p.symbol || p.name || 'A').substring(0, 2).toUpperCase()}
                               </div>
-                              <div className="flex-1">
-                                <div className="font-black text-white text-base tracking-tight flex items-center gap-2">
-                                  {p.symbol.replace('.NS', '')}
-                                  {p.leverage > 1 && <span className="bg-indigo-500/20 text-indigo-400 text-[9px] px-1.5 py-0.5 rounded border border-indigo-500/20">{p.leverage}x</span>}
-                                  {assetXirr !== null && assetXirr !== undefined && <span className={`text-[9px] px-1.5 py-0.5 rounded border font-bold font-mono ${assetXirr >= 15 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : assetXirr >= 0 ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}>XIRR {assetXirr >= 0 ? '+' : ''}{assetXirr.toFixed(0)}%</span>}
+                              <div className="flex-1 min-w-0">
+                                <div className="font-black text-white text-base tracking-tight flex items-center gap-2 truncate">
+                                  <span className="truncate" title={p.name || p.symbol}>{(p.name || p.symbol.replace('.NS', ''))}</span>
+                                  {p.leverage > 1 && <span className="bg-indigo-500/20 text-indigo-400 text-[9px] px-1.5 py-0.5 rounded border border-indigo-500/20 shrink-0">{p.leverage}x</span>}
+                                  {!indmActive && assetXirr !== null && assetXirr !== undefined && <span className={`text-[9px] px-1.5 py-0.5 rounded border font-bold font-mono shrink-0 ${assetXirr >= 15 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : assetXirr >= 0 ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}>XIRR {assetXirr >= 0 ? '+' : ''}{assetXirr.toFixed(0)}%</span>}
+                                  {indmActive && p.noLive && (
+                                    <span className="bg-sky-500/10 text-sky-300 text-[8px] px-1.5 py-0.5 rounded border border-sky-500/20 shrink-0" title="INDMoney NAV-priced (mutual fund / fixed income) — refreshes on each sync">NAV</span>
+                                  )}
+                                  {indmActive && !p.noLive && (
+                                    <span className="bg-emerald-500/10 text-emerald-400 text-[8px] px-1.5 py-0.5 rounded border border-emerald-500/20 shrink-0 inline-flex items-center gap-1" title="Live exchange price (ticks in real-time)">
+                                      <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse-dot" />LIVE
+                                    </span>
+                                  )}
                                 </div>
-                                <div className="flex items-center gap-2 mt-0.5">
+                                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                                   <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${p.market === 'IN' ? 'bg-orange-500/10 text-orange-400' : 'bg-blue-500/10 text-blue-400'}`}>
                                     {p.market === 'IN' ? 'NSE' : 'US'}
                                   </span>
-                                  <span className="text-[10px] text-slate-500 font-mono">Qty: {p.qty} @ {cur}{p.avgPrice.toFixed(2)}</span>
+                                  <span className="text-[10px] text-slate-500 font-mono truncate">{p.name ? p.symbol.replace('.NS', '') : `Qty: ${p.qty} @ ${cur}${p.avgPrice.toFixed(2)}`}</span>
+                                  {p.name && <span className="text-[10px] text-slate-500 font-mono hidden sm:inline">Qty: {p.qty} @ {cur}{p.avgPrice.toFixed(2)}</span>}
                                 </div>
                               </div>
                             </div>
@@ -658,53 +678,62 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                             </div>
                           </div>
 
-                          {/* 6. ACTIONS */}
+                          {/* 6. ACTIONS — manual trade buttons in manual mode;
+                              INDMoney mode shows the sync source badge instead */}
                           <div className="pt-2 md:pt-0 mt-3 border-t border-white/5 md:border-0 md:mt-0 flex justify-end gap-2 md:justify-center">
-                            <button
-                              onClick={() => {
-                                setAddSymbol(p.symbol);
-                                setCurrentMarket(p.market);
-                                setAddQty('');
-                                setAddPrice(data?.price?.toString() || p.avgPrice.toString());
-                                setAddDate(getTodayString());
+                            {indmActive ? (
+                              <div className="flex items-center gap-1.5 text-[9px] text-slate-500 font-bold" title={indmMeta?.syncedAt ? `INDMoney synced ${new Date(indmMeta.syncedAt).toLocaleString('en-IN')}` : 'INDMoney synced'}>
+                                🏦 {indmMeta?.syncedAt ? new Date(indmMeta.syncedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'sync'}
+                              </div>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => {
+                                    setAddSymbol(p.symbol);
+                                    setCurrentMarket(p.market);
+                                    setAddQty('');
+                                    setAddPrice(data?.price?.toString() || p.avgPrice.toString());
+                                    setAddDate(getTodayString());
 
-                                setEditId(null);
-                                setTransactionType('buy');
-                                setShowAddModal(true);
-                                setModalPrice(data ? { price: data.price, change: data.change, market: data.market } : null);
-                              }}
-                              className="px-3 py-1.5 md:w-8 md:h-8 md:p-0 flex items-center justify-center bg-cyan-500/10 hover:bg-cyan-500 w-full md:hover:rotate-12 hover:shadow-[0_0_15px_rgba(6,182,212,0.4)] border border-cyan-500/30 rounded-lg transition-all text-xs text-cyan-400 hover:text-white font-bold uppercase tracking-wider"
-                              title="Buy / Accumulate"
-                            >
-                              <span className="md:hidden mr-1">Buy</span> B
-                            </button>
-                            <button
-                              onClick={() => {
-                                setAddSymbol(p.symbol);
-                                setCurrentMarket(p.market);
-                                setAddQty(p.qty.toString());
-                                setAddPrice(data?.price?.toString() || p.avgPrice.toString());
-                                setAddDate(p.dateAdded);
+                                    setEditId(null);
+                                    setTransactionType('buy');
+                                    setShowAddModal(true);
+                                    setModalPrice(data ? { price: data.price, change: data.change, market: data.market } : null);
+                                  }}
+                                  className="px-3 py-1.5 md:w-8 md:h-8 md:p-0 flex items-center justify-center bg-cyan-500/10 hover:bg-cyan-500 w-full md:hover:rotate-12 hover:shadow-[0_0_15px_rgba(6,182,212,0.4)] border border-cyan-500/30 rounded-lg transition-all text-xs text-cyan-400 hover:text-white font-bold uppercase tracking-wider"
+                                  title="Buy / Accumulate"
+                                >
+                                  <span className="md:hidden mr-1">Buy</span> B
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setAddSymbol(p.symbol);
+                                    setCurrentMarket(p.market);
+                                    setAddQty(p.qty.toString());
+                                    setAddPrice(data?.price?.toString() || p.avgPrice.toString());
+                                    setAddDate(p.dateAdded);
 
-                                setEditId(p.id);
-                                setTransactionType('sell');
-                                setShowAddModal(true);
-                                setModalPrice(data ? { price: data.price, change: data.change, market: data.market } : null);
-                              }}
-                              className="px-3 py-1.5 md:w-8 md:h-8 md:p-0 flex items-center justify-center bg-red-500/10 hover:bg-red-500 w-full md:hover:-rotate-12 hover:shadow-[0_0_15px_rgba(239,68,68,0.4)] border border-red-500/30 rounded-lg transition-all text-xs text-red-400 hover:text-white font-bold uppercase tracking-wider"
-                              title="Sell / Distribute"
-                            >
-                              <span className="md:hidden mr-1">Sell</span> S
-                            </button>
-                            <button
-                              onClick={() => {
-                                openAddModal(p);
-                              }}
-                              className="px-3 py-1.5 md:w-8 md:h-8 md:p-0 flex items-center justify-center bg-amber-500/10 hover:bg-amber-500 w-full md:hover:scale-110 hover:shadow-[0_0_15px_rgba(245,158,11,0.4)] border border-amber-500/30 rounded-lg transition-all text-xs text-amber-400 hover:text-white font-bold uppercase tracking-wider"
-                              title="Edit Position details"
-                            >
-                              <span className="md:hidden mr-1">Edit</span> ✏️
-                            </button>
+                                    setEditId(p.id);
+                                    setTransactionType('sell');
+                                    setShowAddModal(true);
+                                    setModalPrice(data ? { price: data.price, change: data.change, market: data.market } : null);
+                                  }}
+                                  className="px-3 py-1.5 md:w-8 md:h-8 md:p-0 flex items-center justify-center bg-red-500/10 hover:bg-red-500 w-full md:hover:-rotate-12 hover:shadow-[0_0_15px_rgba(239,68,68,0.4)] border border-red-500/30 rounded-lg transition-all text-xs text-red-400 hover:text-white font-bold uppercase tracking-wider"
+                                  title="Sell / Distribute"
+                                >
+                                  <span className="md:hidden mr-1">Sell</span> S
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    openAddModal(p);
+                                  }}
+                                  className="px-3 py-1.5 md:w-8 md:h-8 md:p-0 flex items-center justify-center bg-amber-500/10 hover:bg-amber-500 w-full md:hover:scale-110 hover:shadow-[0_0_15px_rgba(245,158,11,0.4)] border border-amber-500/30 rounded-lg transition-all text-xs text-amber-400 hover:text-white font-bold uppercase tracking-wider"
+                                  title="Edit Position details"
+                                >
+                                  <span className="md:hidden mr-1">Edit</span> ✏️
+                                </button>
+                              </>
+                            )}
                           </div>
 
                         </div>
@@ -720,24 +749,30 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         {portfolio.length === 0 && (
           <div className="quantum-panel rounded-2xl p-10 text-center space-y-4">
             <div className="text-6xl animate-bounce">📊</div>
-            <h3 className="text-xl font-black text-white font-display">No Portfolio Assets Loaded</h3>
+            <h3 className="text-xl font-black text-white font-display">
+              {indmActive || indmSource === 'unknown' ? 'Waiting for INDMoney Sync…' : 'No Portfolio Assets Loaded'}
+            </h3>
             <p className="text-sm text-slate-400 max-w-md mx-auto">
-              If your assets are in Google Sheets, link your Google Apps Script Web App URL below to fetch them automatically.
+              {indmActive || indmSource === 'unknown'
+                ? 'INDMoney connected — the first portfolio sync is running. Your INDIA / USA / Crypto assets will appear here automatically (2× daily thereafter).'
+                : 'If your assets are in Google Sheets, link your Google Apps Script Web App URL below to fetch them automatically.'}
             </p>
-            <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-              <button
-                onClick={() => setShowCloudConfigModal(true)}
-                className="px-5 py-2.5 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white font-bold text-xs rounded-xl shadow-lg transition-all flex items-center gap-2"
-              >
-                ⚙️ Link Google Sheets URL
-              </button>
-              <button
-                onClick={() => openAddModal()}
-                className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs rounded-xl transition-all flex items-center gap-2"
-              >
-                + Add Asset Manually
-              </button>
-            </div>
+            {!(indmActive || indmSource === 'unknown') && (
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                <button
+                  onClick={() => setShowCloudConfigModal(true)}
+                  className="px-5 py-2.5 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white font-bold text-xs rounded-xl shadow-lg transition-all flex items-center gap-2"
+                >
+                  ⚙️ Link Google Sheets URL
+                </button>
+                <button
+                  onClick={() => openAddModal()}
+                  className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs rounded-xl transition-all flex items-center gap-2"
+                >
+                  + Add Asset Manually
+                </button>
+              </div>
+            )}
           </div>
         )}
         {portfolio.length > 0 && totalVisible === 0 && (

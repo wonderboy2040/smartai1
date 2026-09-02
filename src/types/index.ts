@@ -6,6 +6,11 @@ export interface Position {
   avgPrice: number;
   leverage: number;
   dateAdded: string;
+  /** Full display name (INDMoney-synced assets carry fund/company names). */
+  name?: string;
+  /** true = no live exchange price exists (MF/FD/bond/EPF…) — the price
+   *  shown is INDMoney's own unit value (NAV), refreshed on each sync. */
+  noLive?: boolean;
 }
 
 export interface PriceData {

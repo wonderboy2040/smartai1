@@ -11,6 +11,10 @@
 //   GET  /api/mcp/indmoney/portfolio   → normalized portfolio
 //   POST /api/mcp/indmoney/portfolio   → force re-sync (bypass cache)
 //   POST /api/mcp/indmoney/call        → generic MCP tool call (debug)
+//   GET  /api/mcp/indmoney/assets      → synced asset TABLE snapshot
+//                                      (2×-daily scheduler; triggers a
+//                                      background refresh when stale)
+//   POST /api/mcp/indmoney/sync        → force asset-table sync now
 // ============================================================
 import { Router } from 'express';
 import {
@@ -18,6 +22,7 @@ import {
   listTools, callTool, fetchPortfolio, extractToolPayload,
   getPendingOrigin, IndmError,
 } from './indmoney.js';
+import { syncNow, syncInfo, getAssetsSnapshot, maybeBackgroundSync, clearSnapshot } from './portfolioSync.js';
 
 const router = Router();
 
@@ -107,10 +112,13 @@ router.get('/api/mcp/indmoney/callback', async (req, res) => {
 
 // ------------------------------------------------------------
 // POST /disconnect — revoke tokens + clear stored state.
+// Also clears the synced asset-table snapshot: INDMoney IS the
+// asset source now, so disconnecting removes the assets too.
 // ------------------------------------------------------------
 router.post('/api/mcp/indmoney/disconnect', async (_req, res) => {
   try {
     const out = await disconnect();
+    try { clearSnapshot(); } catch { /* non-fatal */ }
     return res.json(out);
   } catch (err) { return fail(res, err); }
 });
@@ -148,6 +156,53 @@ async function handlePortfolio(req, res) {
     return res.json({ ok: true, ...data });
   } catch (err) { return fail(res, err); }
 }
+
+// ------------------------------------------------------------
+// GET/POST /assets — the synced ASSET TABLE (INDMoney is the
+// source of truth for the app's portfolio). Returns the persisted
+// snapshot + scheduler info; when the snapshot is stale (>6h) and
+// the MCP is connected, a background refresh is fired (deduped,
+// rate-limited) so the next poll gets fresh data without this
+// request blocking on a full MCP round-trip.
+// ------------------------------------------------------------
+router.get('/api/mcp/indmoney/assets', (_req, res) => {
+  try {
+    maybeBackgroundSync();
+    const snap = getAssetsSnapshot();
+    const info = syncInfo();
+    // Degraded-tolerant: a FAILED sync keeps the last good assets — they
+    // stay usable (ok) with lastError/stale flags explaining the state.
+    // Only "not connected" or "no assets at all" make the table unusable.
+    const assets = Array.isArray(snap?.assets) ? snap.assets : [];
+    const usable = !!info.connected && assets.length > 0;
+    return res.json({
+      ok: usable,
+      reason: !info.connected ? 'not-connected' : (assets.length === 0 ? (snap?.lastError || 'no-snapshot') : null),
+      assets,
+      counts: snap?.counts || null,
+      summary: snap?.summary || null,
+      positions: Array.isArray(snap?.positions) ? snap.positions : [],
+      syncedAt: snap?.syncedAt || null,
+      stale: info.stale,
+      slots: info.slots,
+      lastRuns: info.lastRuns,
+      nextSyncAt: info.nextSyncAt,
+      lastError: snap?.lastError || null,
+    });
+  } catch (err) { return fail(res, err); }
+});
+
+// ------------------------------------------------------------
+// POST /sync — force the asset-table sync NOW (manual button).
+// Rate-limited; returns the fresh snapshot info.
+// ------------------------------------------------------------
+router.post('/api/mcp/indmoney/sync', async (req, res) => {
+  try {
+    if (rateLimited('sync')) throw new IndmError('Too many requests — try again shortly', 429, 'RATE_LIMITED');
+    const out = await syncNow({ force: true, reason: 'manual' });
+    return res.json({ ok: !!out.ok, ...out });
+  } catch (err) { return fail(res, err); }
+});
 
 // ------------------------------------------------------------
 // POST /call — generic MCP tool invocation (debug/power use).

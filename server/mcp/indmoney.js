@@ -608,6 +608,9 @@ const NAME_KEYS = ['name', 'stockname', 'stock', 'companyname', 'symbolname', 's
 const SYM_KEYS = ['symbol', 'ticker', 'stocksymbol', 'tradingsymbol', 'scrip', 'shortname', 'isin', 'isincode', 'isin_code'];
 const PNL_KEYS = ['pnl', 'total_pnl', 'totalpnl', 'profit', 'profitandloss', 'pl', 'gain', 'returns', 'unrealised', 'unrealized'];
 const PNL_PCT_KEYS = ['pnl_per', 'pnlper', 'pnl_percentage', 'pnlpercentage', 'returnspercentage', 'gainpct'];
+// Per-holding 1-day change % (INDMoney: one_day_change_percentage).
+// NOT plain "change" — that key is ambiguous (abs ₹ vs %) across providers.
+const ONE_DAY_PCT_KEYS = ['one_day_change_percentage', 'onedaychangepercentage', 'day_change_percentage', 'daychangepercentage', 'd1_change_percentage', 'onedaypnlpercentage'];
 const TYPE_HINTS = [
   [/mutual|\bmf\b|scheme|fund(?!am)/i, 'Mutual Fund'],
   [/fixed.?deposit|\bfd\b|ppf|nps|sovereign|gold(?: bond)?|bond/i, 'Fixed Income / Gold'],
@@ -658,12 +661,14 @@ function normalizeHolding(raw) {
   const invested = toNum(pick(raw, INVESTED_KEYS)) ?? (avg != null && qty != null ? avg * qty : null);
   const pnlRaw = toNum(pick(raw, PNL_KEYS));
   const pnlPctRaw = toNum(pick(raw, PNL_PCT_KEYS));
+  const oneDayPctRaw = toNum(pick(raw, ONE_DAY_PCT_KEYS));
   const pnl = (value != null && invested != null) ? value - invested : pnlRaw;
   const pnlPct = pnlPctRaw ?? (pnl != null && invested ? (pnl / invested) * 100 : null);
   return {
     name, symbol, qty, avgPrice: avg, currentPrice: price, value, invested,
     pnl: pnl != null ? Math.round(pnl * 100) / 100 : null,
     pnlPct: pnlPct != null ? Math.round(pnlPct * 100) / 100 : null,
+    oneDayChangePct: oneDayPctRaw != null ? Math.round(oneDayPctRaw * 100) / 100 : null,
     assetType: classifyType(raw, name),
   };
 }
@@ -885,9 +890,13 @@ export async function fetchPortfolio({ force = false } = {}) {
 
       // Stamp the asset type implied by the argument, but only where the
       // holding itself doesn't already classify (ETF/MF names win over the arg).
+      // assetEnum keeps the raw enum (IND_STOCK/US_STOCK/CRYPTO/…) — the
+      // portfolio-sync mapper uses it to pick the market & symbol resolver.
       const label = assetTypeLabel(args?.asset_type ?? args?.assetType);
+      const enumv = args?.asset_type ?? args?.assetType ?? null;
       for (const h of collectHoldings(payload)) {
         if (label && (!h.assetType || h.assetType === 'Other')) h.assetType = label;
+        if (enumv) h.assetEnum = String(enumv);
         holdings.push(h);
         toolHoldings++;
       }

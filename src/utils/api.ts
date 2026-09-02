@@ -1844,3 +1844,69 @@ export function formatMarketIntelligenceForAI(intel: MarketIntelligence): string
 
   return ctx;
 }
+
+// ============================================================
+// INDMoney synced ASSET TABLE (server: 2×-daily scheduled sync).
+// GET  /api/mcp/indmoney/assets → persisted snapshot (+scheduler info)
+// POST /api/mcp/indmoney/sync   → force sync NOW (manual button)
+// ============================================================
+export interface IndmAsset {
+  id: string;
+  name: string;
+  symbol: string | null;
+  market: 'IN' | 'US';
+  kind: string;
+  qty: number;
+  avgPrice: number;
+  lastPrice: number | null;
+  value: number | null;
+  invested: number | null;
+  pnl: number | null;
+  pnlPct: number | null;
+  oneDayChangePct: number | null;
+  assetType: string;
+  assetEnum: string | null;
+  noLive: boolean;
+}
+
+export interface IndmAssetsResponse {
+  ok: boolean;
+  reason?: string | null;
+  assets: IndmAsset[];
+  counts?: { assets: number; live: number; noLive: number; resolved: number } | null;
+  summary?: {
+    totalValue: number; totalInvested: number | null; totalPnl: number | null;
+    totalPnlPct: number | null; holdingCount?: number;
+    oneDayChange?: number | null; oneDayChangePct?: number | null;
+  } | null;
+  positions?: { name: string; symbol: string | null; kind: string; qty: number | null; avgPrice: number | null; invested: number | null; realisedPnl: number | null; t1Qty: number; positionId: string | null }[];
+  syncedAt: number | null;
+  stale?: boolean;
+  slots?: string[];
+  lastRuns?: Record<string, number>;
+  nextSyncAt?: number | null;
+  lastError?: string | null;
+}
+
+export async function fetchIndmAssets(): Promise<IndmAssetsResponse | null> {
+  try {
+    const res = await apiFetch('/api/mcp/indmoney/assets', { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    return (await res.json()) as IndmAssetsResponse;
+  } catch { return null; }
+}
+
+export async function forceIndmSync(): Promise<IndmAssetsResponse | null> {
+  try {
+    const res = await apiFetch('/api/mcp/indmoney/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+      // A full sync = up to 12 MCP tool calls + first-time symbol resolution
+      // (Groww lookups) — 120s ceiling; later syncs are much faster (cached).
+      signal: AbortSignal.timeout(120000),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as IndmAssetsResponse;
+  } catch { return null; }
+}
