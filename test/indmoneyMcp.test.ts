@@ -18,7 +18,7 @@ const {
   pkceGenerate, pkceChallengeFrom, buildAuthorizeUrl, detectPortfolioTool,
   normalizePortfolio, collectHoldings, extractToolPayload, parseSSEOrJSON,
   startConnect, completeConnect, getStatus, disconnect, listTools,
-  fetchPortfolio, __resetForTests, IndmError, INDM,
+  fetchPortfolio, refreshAccessToken, __resetForTests, IndmError, INDM,
 } = await import('../server/mcp/indmoney.js');
 
 // ---------------- helpers ----------------
@@ -267,14 +267,65 @@ describe('OAuth + MCP flow (mocked fetch)', () => {
     try { fs.rmSync(STORE_PATH, { force: true }); } catch { /* ignore */ }
   });
 
+  function parseStubBody(init) {
+    if (!init.body) return null;
+    const ct = String(
+      (init.headers && (init.headers['Content-Type'] || init.headers['content-type'])) || ''
+    );
+    if (ct.includes('application/x-www-form-urlencoded')) {
+      return Object.fromEntries(new URLSearchParams(String(init.body)));
+    }
+    try { return JSON.parse(init.body); } catch { return null; }
+  }
+
   function stubFetch(handler) {
     vi.stubGlobal('fetch', async (url, init = {}) => {
-      const body = init.body ? JSON.parse(init.body) : null;
+      const body = parseStubBody(init);
       calls.push({ url: String(url), body, headers: init.headers || {} });
       if (process.env.DEBUG_INDM) console.log('[stub]', String(url), body?.method, 'calls=', calls.length);
       return handler(String(url), body, init);
     });
   }
+
+  it('token / refresh / revoke endpoints receive form-urlencoded bodies (RFC 6749)', async () => {
+    stubFetch((url) => {
+      if (url === INDM.REGISTER_URL) return jsonRes({ client_id: 'client-form-1' });
+      if (url === INDM.TOKEN_URL) return jsonRes({ access_token: 'AT-F', refresh_token: 'RT-F', expires_in: 3600 });
+      if (url === INDM.REVOKE_URL) return jsonRes({});
+      throw new Error(`unexpected url ${url}`);
+    });
+
+    const { state } = await startConnect(ORIGIN);
+    await completeConnect({ code: 'c-form', state });
+    await refreshAccessToken();
+    await disconnect();
+
+    const tokenCalls = calls.filter(c => c.url === INDM.TOKEN_URL);
+    expect(tokenCalls).toHaveLength(2); // authorization_code + refresh_token
+    for (const c of tokenCalls) {
+      const ct = String(c.headers['Content-Type'] || c.headers['content-type'] || '');
+      expect(ct).toContain('application/x-www-form-urlencoded');
+      expect(ct).not.toContain('json');
+      // body must carry the OAuth params in form encoding
+      expect(c.body.grant_type).toBeTruthy();
+      expect(c.body.client_id).toBe('client-form-1');
+    }
+    expect(tokenCalls[0].body.code).toBe('c-form');
+    expect(tokenCalls[0].body.code_verifier).toBeTruthy();
+    expect(tokenCalls[1].body.refresh_token).toBe('RT-F');
+
+    const revokeCalls = calls.filter(c => c.url === INDM.REVOKE_URL);
+    expect(revokeCalls).toHaveLength(1);
+    const rct = String(revokeCalls[0].headers['Content-Type'] || revokeCalls[0].headers['content-type'] || '');
+    expect(rct).toContain('application/x-www-form-urlencoded');
+    expect(revokeCalls[0].body.token).toBe('AT-F');
+
+    // registration endpoint stays JSON (RFC 7591)
+    const regCalls = calls.filter(c => c.url === INDM.REGISTER_URL);
+    expect(regCalls).toHaveLength(1);
+    const jct = String(regCalls[0].headers['Content-Type'] || regCalls[0].headers['content-type'] || '');
+    expect(jct).toContain('application/json');
+  });
 
   it('register → authorize URL → token exchange → connected status', async () => {
     stubFetch((url, body) => {

@@ -112,6 +112,29 @@ async function postJSON(url, body, headers = {}) {
   return { res, json, text };
 }
 
+// OAuth 2.0 token-style endpoints (RFC 6749 §4.1.3, RFC 7009) REQUIRE
+// application/x-www-form-urlencoded request bodies. Sending JSON here makes
+// strict authorization servers (like INDMoney's) see an EMPTY body → they
+// reply "Missing client_id" and the token exchange fails.
+// (Dynamic Registration RFC 7591 and the MCP endpoint itself DO use JSON,
+// which is why register + authorize worked but the code→token exchange died.)
+async function postForm(url, params) {
+  const body = Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== null)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+    .join('&');
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+    signal: AbortSignal.timeout(MCP_TIMEOUT),
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = text ? JSON.parse(text) : null; } catch { /* non-JSON body */ }
+  return { res, json, text };
+}
+
 // ============================================================
 // PKCE (RFC 7636, S256)
 // ============================================================
@@ -210,7 +233,7 @@ export async function completeConnect({ code, state: st, error, errorDescription
   delete s.pending[st]; // single-use
   persist();
 
-  const { res, json } = await postJSON(INDM.TOKEN_URL, {
+  const { res, json } = await postForm(INDM.TOKEN_URL, {
     grant_type: 'authorization_code',
     code,
     redirect_uri: pending.redirectUri,
@@ -245,7 +268,7 @@ export async function refreshAccessToken() {
   const clientId = s.clients[Object.keys(s.clients)[0]]?.clientId;
   if (!clientId) throw new IndmError('Stored client registration missing', 500, 'NO_CLIENT');
 
-  const { res, json } = await postJSON(INDM.TOKEN_URL, {
+  const { res, json } = await postForm(INDM.TOKEN_URL, {
     grant_type: 'refresh_token',
     refresh_token: s.tokens.refreshToken,
     client_id: clientId,
@@ -272,7 +295,7 @@ export async function disconnect() {
   const s = state();
   if (s.tokens?.accessToken) {
     try {
-      await postJSON(INDM.REVOKE_URL, { token: s.tokens.accessToken });
+      await postForm(INDM.REVOKE_URL, { token: s.tokens.accessToken });
     } catch { /* best effort */ }
   }
   s.tokens = null;
