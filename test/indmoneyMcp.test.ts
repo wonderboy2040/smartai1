@@ -17,7 +17,7 @@ const STORE_PATH = path.join(__dirname, '..', 'server', 'data', 'mcp-indmoney.js
 const {
   pkceGenerate, pkceChallengeFrom, buildAuthorizeUrl, detectPortfolioTool,
   normalizePortfolio, summarizeHoldings, collectHoldings, extractToolPayload, parseSSEOrJSON,
-  buildToolArgSets, assetTypeLabel,
+  buildToolArgSets, assetTypeLabel, buildCodeMap, extractPositions, readAssetSummary,
   startConnect, completeConnect, getStatus, disconnect, listTools,
   fetchPortfolio, refreshAccessToken, __resetForTests, IndmError, INDM,
 } = await import('../server/mcp/indmoney.js');
@@ -166,8 +166,9 @@ describe('buildToolArgSets (inputSchema → argument sets)', () => {
     expect(r.argSets.length).toBeGreaterThan(4);
     expect(r.argSets.length).toBeLessThanOrEqual(12);
     expect(r.argSets.every(a => typeof a.asset_type === 'string' && a.asset_type)).toBe(true);
-    expect(r.argSets.map(a => a.asset_type)).toContain('stocks');
-    expect(r.argSets.map(a => a.asset_type)).toContain('mutual_funds');
+    // real INDMoney tokens (observed live)
+    expect(r.argSets.map(a => a.asset_type)).toContain('IND_STOCK');
+    expect(r.argSets.map(a => a.asset_type)).toContain('MF');
   });
 
   it('required field with a default → uses the default', () => {
@@ -219,17 +220,27 @@ describe('buildToolArgSets (inputSchema → argument sets)', () => {
 describe('assetTypeLabel', () => {
   it('maps INDMoney asset tokens to display labels', () => {
     expect(assetTypeLabel('stocks')).toBe('Stock');
+    expect(assetTypeLabel('IND_STOCK')).toBe('Stock');
+    expect(assetTypeLabel('US_STOCK')).toBe('Stock');
     expect(assetTypeLabel('mutual_funds')).toBe('Mutual Fund');
+    expect(assetTypeLabel('MF')).toBe('Mutual Fund');
     expect(assetTypeLabel('mf')).toBe('Mutual Fund');
     expect(assetTypeLabel('etf')).toBe('ETF');
     expect(assetTypeLabel('fd')).toBe('Fixed Income');
     expect(assetTypeLabel('fixed_deposit')).toBe('Fixed Income');
     expect(assetTypeLabel('gold')).toBe('Gold');
     expect(assetTypeLabel('bonds')).toBe('Bonds');
+    expect(assetTypeLabel('BOND')).toBe('Bonds');
     expect(assetTypeLabel('nps')).toBe('Retirement');
+    expect(assetTypeLabel('EPF')).toBe('Retirement');
     expect(assetTypeLabel('ppf')).toBe('Retirement');
     expect(assetTypeLabel('cryptocurrency')).toBe('Crypto');
+    expect(assetTypeLabel('CRYPTO')).toBe('Crypto');
     expect(assetTypeLabel('real_estate')).toBe('Real Estate');
+    expect(assetTypeLabel('RE')).toBe('Real Estate');
+    expect(assetTypeLabel('SA')).toBe('Savings');
+    expect(assetTypeLabel('INSURANCE')).toBe('Insurance');
+    expect(assetTypeLabel('VEHICLE')).toBe('Vehicle');
     expect(assetTypeLabel('others')).toBe('Other');
   });
   it('all / unknown / null → null (keep per-holding classification)', () => {
@@ -258,6 +269,95 @@ describe('summarizeHoldings (dedup + aggregate)', () => {
     expect(r.ok).toBe(false);
     expect(r.reason).toBe('no-holdings-found');
     expect(r.summary).toBeNull();
+  });
+});
+
+// ---------------- INDMoney real-schema (observed live) ----------------
+describe('real INDMoney payload schema (user-reported live response)', () => {
+  const REAL_PAYLOAD = {
+    is_cached_response: false,
+    positions: null,
+    intra_day_positions: null,
+    mtf_positions: [
+      { ind_stock_id: 'INDS18666', isin_code: 'INF200KA1FS1', quantity: 45, avg_price: 260.57, buy_val: 11725.65, realised_gains: 0, t1_qty: 10, position_id: '92966827' },
+      { ind_stock_id: 'INDS19602', isin_code: 'INF204KB1V68', quantity: 10, avg_price: 240.39, buy_val: 2403.9, realised_gains: 0, t1_qty: 10, position_id: '92966842' },
+    ],
+    asset_summary: { total_value: 328618.18, invested: 304979.08, one_day_change: -1824.69, one_day_change_percentage: -0.55 },
+    holdings: [
+      { investment_code: 'INDS33035', investment: 'Motilal Oswal Nifty 500 Momentum 50 ETF', asset_type: 'STOCK', invested_amount: 103380.5, market_value: 107619.2, total_pnl: 4238.7, pnl_per: 4.1, total_units: 1990, unit_price: 54.08 },
+      { investment_code: 'INDS29513', investment: 'Mirae Asset Nifty Smallcap 250 Momen.Quali. 100ETF', asset_type: 'STOCK', invested_amount: 74986.98, market_value: 85985.78, total_pnl: 10998.8, pnl_per: 14.67, total_units: 1774, unit_price: 48.47 },
+      { investment_code: 'INDS19602', investment: 'Nippon India ETF Nifty Midcap 150', asset_type: 'STOCK', invested_amount: 73056.7, market_value: 78893.1, total_pnl: 5836.4, pnl_per: 7.99, total_units: 330, unit_price: 239.07 },
+    ],
+  };
+
+  it('collectHoldings detects holdings[] via investment/total_units keys — and SKIPS mtf_positions', () => {
+    const hs = collectHoldings(REAL_PAYLOAD);
+    // THE user-reported bug: 0 holdings detected. Now: all 3, no MTF dupes.
+    expect(hs).toHaveLength(3);
+    expect(hs.map(h => h.name)).toEqual([
+      'Motilal Oswal Nifty 500 Momentum 50 ETF',
+      'Mirae Asset Nifty Smallcap 250 Momen.Quali. 100ETF',
+      'Nippon India ETF Nifty Midcap 150',
+    ]);
+    // no MTF positions leaked into holdings (no ISINs / INDS codes)
+    expect(hs.some(h => /INF|INDS/.test(h.name))).toBe(false);
+    const mo = hs[0];
+    expect(mo.qty).toBe(1990);
+    expect(mo.value).toBe(107619.2);
+    expect(mo.invested).toBe(103380.5);
+    expect(mo.pnl).toBe(4238.7);
+    expect(mo.pnlPct).toBe(4.1);
+    expect(mo.currentPrice).toBe(54.08);
+    expect(mo.assetType).toBe('ETF'); // name-based classification beats arg stamp
+  });
+
+  it('buildCodeMap + extractPositions: MTF positions get human names, never double-counted', () => {
+    const map = buildCodeMap(REAL_PAYLOAD);
+    expect(map.get('INDS19602')).toBe('Nippon India ETF Nifty Midcap 150');
+    const ps = extractPositions(REAL_PAYLOAD, map);
+    expect(ps).toHaveLength(2);
+    expect(ps.every(p => p.kind === 'MTF')).toBe(true);
+    expect(ps[1].name).toBe('Nippon India ETF Nifty Midcap 150'); // resolved via codeMap
+    expect(ps[0].name).toBe('INF200KA1FS1'); // unknown code → isin fallback
+    expect(ps[0].qty).toBe(45);
+    expect(ps[0].avgPrice).toBe(260.57);
+    expect(ps[0].invested).toBe(11725.65);
+    expect(ps[0].t1Qty).toBe(10);
+  });
+
+  it('readAssetSummary parses asset_summary totals incl. one-day change', () => {
+    const s = readAssetSummary(REAL_PAYLOAD);
+    expect(s).toEqual({
+      totalValue: 328618.18,
+      totalInvested: 304979.08,
+      totalPnl: 23639.1,
+      totalPnlPct: 7.75,
+      oneDayChange: -1824.69,
+      oneDayChangePct: -0.55,
+    });
+    expect(readAssetSummary({})).toBeNull();
+    expect(readAssetSummary(null)).toBeNull();
+    expect(readAssetSummary({ asset_summary: { invested: 1 } })).toBeNull(); // no total_value
+  });
+
+  it('normalizePortfolio on the real payload: ok, 3 holdings, computed summary', () => {
+    const r = normalizePortfolio(REAL_PAYLOAD);
+    expect(r.ok).toBe(true);
+    expect(r.holdings).toHaveLength(3);
+    expect(r.summary.totalValue).toBeCloseTo(107619.2 + 85985.78 + 78893.1, 2);
+    expect(r.summary.totalInvested).toBeCloseTo(103380.5 + 74986.98 + 73056.7, 2);
+  });
+});
+
+describe('portfolio tool ranking', () => {
+  it('personal networth_holdings ranks above family-wide tools', () => {
+    const tools = [
+      { name: 'get_family_asset_holdings', description: 'Family asset holdings across members' },
+      { name: 'networth_holdings', description: 'User net worth holdings by asset type' },
+      { name: 'get_family_portfolio', description: 'Family portfolio' },
+      { name: 'networth_snapshot', description: 'Net worth snapshot' },
+    ];
+    expect(detectPortfolioTool(tools).name).toBe('networth_holdings');
   });
 });
 
@@ -664,7 +764,7 @@ describe('OAuth + MCP flow (mocked fetch)', () => {
   });
 
   it('asset_type WITHOUT enum → known-value fallback calls; only supported values yield data', async () => {
-    const supported = new Set(['stocks', 'mutual_funds']);
+    const supported = new Set(['IND_STOCK', 'MF']);
     stubFetch((url, body) => {
       if (url === INDM.REGISTER_URL) return jsonRes({ client_id: 'client-noenum' });
       if (url === INDM.TOKEN_URL) return jsonRes({ access_token: 'AT-NE', refresh_token: 'RT-NE', expires_in: 3600 });
@@ -687,7 +787,7 @@ describe('OAuth + MCP flow (mocked fetch)', () => {
           if (!supported.has(at)) {
             return jsonRes({ jsonrpc: '2.0', id: body.id, result: { isError: true, content: [{ type: 'text', text: 'invalid asset type' }] } });
           }
-          return jsonRes({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify({ holdings: at === 'stocks' ? [{ stockName: 'WIPRO', quantity: 50, avgPrice: 400, currentPrice: 450 }] : [{ scheme_name: 'SBI Bluechip', units: 10, avgPrice: 100, currentPrice: 120 }] }) }] } });
+          return jsonRes({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify({ holdings: at === 'IND_STOCK' ? [{ stockName: 'WIPRO', quantity: 50, avgPrice: 400, currentPrice: 450 }] : [{ scheme_name: 'SBI Bluechip', units: 10, avgPrice: 100, currentPrice: 120 }] }) }] } });
         }
         throw new Error(`unexpected MCP method ${body.method}`);
       }
@@ -700,7 +800,7 @@ describe('OAuth + MCP flow (mocked fetch)', () => {
     const pf = await fetchPortfolio({ force: true });
     expect(pf.ok).toBe(true);
     expect(pf.holdings.map(h => h.name).sort()).toEqual(['SBI Bluechip', 'WIPRO']);
-    expect(pf.calls).toHaveLength(2); // only stocks + mutual_funds succeeded
+    expect(pf.calls).toHaveLength(2); // only IND_STOCK + MF succeeded
     expect(pf.failures.length).toBeGreaterThanOrEqual(8); // the rest were skipped
     // never exceeded the call budget
     const allToolCalls = calls.filter(c => c.url === INDM.MCP_URL && c.body.method === 'tools/call');
@@ -733,6 +833,116 @@ describe('OAuth + MCP flow (mocked fetch)', () => {
     await completeConnect({ code: 'af', state });
 
     await expect(fetchPortfolio({ force: true })).rejects.toMatchObject({ code: 'TOOL_ERROR' });
+  });
+
+  it('real payload e2e: enum sweep + official summary + positions + no double-count', async () => {
+    const ENUM = ['IND_STOCK', 'MF'];
+    const RESPONSES = {
+      IND_STOCK: {
+        is_cached_response: false,
+        positions: null,
+        mtf_positions: [{ ind_stock_id: 'INDS18666', isin_code: 'INF200KA1FS1', quantity: 45, avg_price: 260.57, buy_val: 11725.65, realised_gains: 0, t1_qty: 10, position_id: '92966827' }],
+        asset_summary: { total_value: 328618.18, invested: 304979.08, one_day_change: -1824.69, one_day_change_percentage: -0.55 },
+        holdings: [
+          { investment_code: 'INDS33035', investment: 'Motilal Oswal Nifty 500 Momentum 50 ETF', asset_type: 'STOCK', invested_amount: 103380.5, market_value: 107619.2, total_pnl: 4238.7, pnl_per: 4.1, total_units: 1990, unit_price: 54.08 },
+          { investment_code: 'INDS19602', investment: 'Nippon India ETF Nifty Midcap 150', asset_type: 'STOCK', invested_amount: 73056.7, market_value: 78893.1, total_pnl: 5836.4, pnl_per: 7.99, total_units: 330, unit_price: 239.07 },
+        ],
+      },
+      MF: {
+        positions: null,
+        mtf_positions: null,
+        asset_summary: { total_value: 328618.18, invested: 304979.08, one_day_change: -1824.69, one_day_change_percentage: -0.55 },
+        holdings: [
+          { investment_code: 'INDS41001', investment: 'HDFC Flexi Cap Fund', asset_type: 'MF', invested_amount: 50000, market_value: 55000, total_pnl: 5000, pnl_per: 10, total_units: 100, unit_price: 550 },
+        ],
+      },
+    };
+    const called = [];
+    stubFetch((url, body) => {
+      if (url === INDM.REGISTER_URL) return jsonRes({ client_id: 'client-real' });
+      if (url === INDM.TOKEN_URL) return jsonRes({ access_token: 'AT-REAL', refresh_token: 'RT-REAL', expires_in: 3600 });
+      if (url === INDM.MCP_URL) {
+        if (body.method === 'initialize') return jsonRes({ jsonrpc: '2.0', id: body.id, result: { serverInfo: { name: 'indmoney' } } }, { headers: { 'mcp-session-id': 'real-1' } });
+        if (body.method === 'notifications/initialized') return jsonRes('', { status: 202 });
+        if (body.method === 'tools/list') {
+          return jsonRes({ jsonrpc: '2.0', id: body.id, result: { tools: [{
+            name: 'networth_holdings',
+            description: 'Get user net worth holdings by asset type',
+            inputSchema: { type: 'object', properties: { asset_type: { type: 'string', enum: ENUM } }, required: ['asset_type'] },
+          }] } });
+        }
+        if (body.method === 'tools/call') {
+          const at = body.params.arguments.asset_type;
+          called.push(at);
+          return jsonRes({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify(RESPONSES[at]) }] } });
+        }
+        throw new Error(`unexpected MCP method ${body.method}`);
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+
+    const { state } = await startConnect(ORIGIN);
+    await completeConnect({ code: 'real', state });
+
+    const pf = await fetchPortfolio({ force: true });
+    expect(pf.ok).toBe(true);
+    expect(called.sort()).toEqual(['IND_STOCK', 'MF']);
+    // 3 holdings total: 2 from IND_STOCK + 1 from MF — MTF NOT counted
+    expect(pf.holdings).toHaveLength(3);
+    expect(pf.holdings.map(h => h.name)).toContain('HDFC Flexi Cap Fund');
+    // official summary wins (consistent across both calls) + holdingCount
+    expect(pf.officialSummary).toBe(true);
+    expect(pf.summary.totalValue).toBe(328618.18);
+    expect(pf.summary.totalInvested).toBe(304979.08);
+    expect(pf.summary.oneDayChange).toBe(-1824.69);
+    expect(pf.summary.holdingCount).toBe(3);
+    // MTF position extracted separately, resolved via codeMap
+    expect(pf.positions).toHaveLength(1);
+    expect(pf.positions[0].kind).toBe('MTF');
+    expect(pf.positions[0].qty).toBe(45);
+    // HDFC (from MF arg, unclassifiable name) gets the arg-stamped type
+    expect(pf.holdings.find(h => h.name === 'HDFC Flexi Cap Fund').assetType).toBe('Mutual Fund');
+    // ETFs keep their own classification (name wins over arg stamp)
+    expect(pf.holdings.find(h => h.name.includes('Motilal')).assetType).toBe('ETF');
+  });
+
+  it('tool 1 yields no holdings → sequential fallback to tool 2', async () => {
+    stubFetch((url, body) => {
+      if (url === INDM.REGISTER_URL) return jsonRes({ client_id: 'client-seq' });
+      if (url === INDM.TOKEN_URL) return jsonRes({ access_token: 'AT-SEQ', refresh_token: 'RT-SEQ', expires_in: 3600 });
+      if (url === INDM.MCP_URL) {
+        if (body.method === 'initialize') return jsonRes({ jsonrpc: '2.0', id: body.id, result: { serverInfo: { name: 'x' } } }, { headers: { 'mcp-session-id': 'seq-1' } });
+        if (body.method === 'notifications/initialized') return jsonRes('', { status: 202 });
+        if (body.method === 'tools/list') {
+          // tool 1 out-ranks tool 2 (portfolio 10 + summary 2 > holdings 8)
+          return jsonRes({ jsonrpc: '2.0', id: body.id, result: { tools: [
+            { name: 'portfolio_summary_snapshot', description: 'Portfolio summary snapshot overview', inputSchema: { type: 'object', properties: {}, required: [] } },
+            { name: 'get_holdings', description: 'User holdings', inputSchema: { type: 'object', properties: {}, required: [] } },
+          ] } });
+        }
+        if (body.method === 'tools/call') {
+          if (body.params.name === 'portfolio_summary_snapshot') {
+            // summary-only tool: no holdings, but a valid asset_summary
+            return jsonRes({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify({ asset_summary: { total_value: 100, invested: 90 } }) }] } });
+          }
+          return jsonRes({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify({ holdings: [{ stockName: 'TATA POWER', quantity: 20, avgPrice: 250, currentPrice: 280 }] }) }] } });
+        }
+        throw new Error(`unexpected MCP method ${body.method}`);
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+
+    const { state } = await startConnect(ORIGIN);
+    await completeConnect({ code: 'seq', state });
+
+    const pf = await fetchPortfolio({ force: true });
+    expect(pf.ok).toBe(true);
+    expect(pf.holdings[0].name).toBe('TATA POWER');
+    // both tools were called (tool 1 first, then fallback) — but holdings came only from tool 2
+    expect(pf.calls.map(c => c.tool)).toEqual(['portfolio_summary_snapshot', 'get_holdings']);
+    // official summary from the snapshot tool is still honored
+    expect(pf.officialSummary).toBe(true);
+    expect(pf.summary.totalValue).toBe(100);
   });
 
   it('unsatisfiable required arg (symbol) → legacy empty-args attempt kept', async () => {

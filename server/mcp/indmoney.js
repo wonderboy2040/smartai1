@@ -457,6 +457,7 @@ function portfolioScore(t) {
   if (/summary|overview|detail/.test(hay)) s += 2;
   if (/stock|equit|mutual|fund/.test(hay)) s += 2;
   if (/transaction|order|history|price|quote|news|market|watchlist/.test(hay)) s -= 5; // clearly not portfolio
+  if (/family/.test(hay)) s -= 6; // family-wide views rank below personal holdings
   return s;
 }
 export function detectPortfolioTool(tools) {
@@ -486,9 +487,12 @@ function rankPortfolioTools(tools, cap = 4) {
 // inputSchema: enum values are enumerated exactly; a required asset_type
 // without an enum falls back to INDMoney's known asset-type tokens.
 const MAX_TOOL_CALLS = 12; // total tools/call budget per portfolio fetch
+// Real INDMoney asset_type enum (observed live from networth_holdings schema):
+// IND_STOCK, MF, US_STOCK, BOND, EPF, NPS, SA, FD, CRYPTO, INSURANCE, VEHICLE, RE.
+// Used when a required asset_type arrives WITHOUT an enum in the schema.
 const KNOWN_ASSET_TYPES = [
-  'stocks', 'mutual_funds', 'etf', 'etfs', 'fd', 'fixed_deposit', 'gold',
-  'bonds', 'nps', 'ppf', 'crypto', 'cryptocurrency', 'real_estate', 'others',
+  'IND_STOCK', 'MF', 'US_STOCK', 'BOND', 'EPF', 'NPS', 'SA', 'FD',
+  'CRYPTO', 'INSURANCE', 'VEHICLE', 'RE',
 ];
 const ASSET_TYPE_LABELS = [
   [/mutual|(^|[\s_-])mf([\s_-]|$)/i, 'Mutual Fund'],
@@ -498,7 +502,10 @@ const ASSET_TYPE_LABELS = [
   [/nps|ppf|epf|pension|provident/i, 'Retirement'],
   [/bond/i, 'Bonds'],
   [/crypto|bitcoin/i, 'Crypto'],
-  [/real.?estate|property/i, 'Real Estate'],
+  [/real.?estate|property|(^|[\s_-])re([\s_-]|$)/i, 'Real Estate'],
+  [/insur/i, 'Insurance'],
+  [/vehicle|\bcar\b/i, 'Vehicle'],
+  [/(^|[\s_-])sa([\s_-]|$)|saving/i, 'Savings'],
   [/stock|equit|share/i, 'Stock'],
   [/other/i, 'Other'],
 ];
@@ -588,13 +595,19 @@ export function extractToolPayload(result) {
 }
 
 // ---- schema-agnostic normalizer -----------------------------------------
-const QTY_KEYS = ['qty', 'quantity', 'units', 'shares', 'noofshares', 'holdingqty'];
-const AVG_KEYS = ['avgprice', 'averageprice', 'avg_cost', 'avgcost', 'buyprice', 'investedprice', 'purchaseprice', 'buyavgprice'];
-const PRICE_KEYS = ['currentprice', 'lastprice', 'ltp', 'price', 'marketprice', 'nav', 'currprice'];
-const VALUE_KEYS = ['currentvalue', 'value', 'marketvalue', 'totalvalue', 'worth', 'presentvalue'];
+// Key lists cover both casing conventions AND INDMoney's REAL field names
+// (observed live): holdings[] → investment, investment_code, isin_code,
+// total_units, unit_price, invested_amount, market_value, total_pnl, pnl_per;
+// positions[] → quantity, avg_price, buy_val, realised_gains, t1_qty.
+const QTY_KEYS = ['qty', 'quantity', 'units', 'totalunits', 'total_units', 'shares', 'noofshares', 'holdingqty'];
+const AVG_KEYS = ['avgprice', 'averageprice', 'avg_cost', 'avgcost', 'buyprice', 'investedprice', 'purchaseprice', 'buyavgprice', 'unitprice'];
+const PRICE_KEYS = ['currentprice', 'lastprice', 'ltp', 'price', 'marketprice', 'nav', 'currprice', 'unitprice', 'unit_price'];
+const VALUE_KEYS = ['currentvalue', 'value', 'marketvalue', 'totalvalue', 'worth', 'presentvalue', 'buyval'];
 const INVESTED_KEYS = ['invested', 'investedamount', 'investedvalue', 'totalinvested', 'cost', 'buyvalue', 'amountinvested'];
-const NAME_KEYS = ['name', 'stockname', 'stock', 'companyname', 'symbolname', 'securityname', 'assetname', 'instrumentname', 'title', 'label', 'scheme_name', 'fundname'];
-const SYM_KEYS = ['symbol', 'ticker', 'stocksymbol', 'tradingsymbol', 'scrip', 'shortname'];
+const NAME_KEYS = ['name', 'stockname', 'stock', 'companyname', 'symbolname', 'securityname', 'assetname', 'instrumentname', 'title', 'label', 'scheme_name', 'fundname', 'investment', 'investmentname'];
+const SYM_KEYS = ['symbol', 'ticker', 'stocksymbol', 'tradingsymbol', 'scrip', 'shortname', 'isin', 'isincode', 'isin_code'];
+const PNL_KEYS = ['pnl', 'total_pnl', 'totalpnl', 'profit', 'profitandloss', 'pl', 'gain', 'returns', 'unrealised', 'unrealized'];
+const PNL_PCT_KEYS = ['pnl_per', 'pnlper', 'pnl_percentage', 'pnlpercentage', 'returnspercentage', 'gainpct'];
 const TYPE_HINTS = [
   [/mutual|\bmf\b|scheme|fund(?!am)/i, 'Mutual Fund'],
   [/fixed.?deposit|\bfd\b|ppf|nps|sovereign|gold(?: bond)?|bond/i, 'Fixed Income / Gold'],
@@ -643,9 +656,10 @@ function normalizeHolding(raw) {
   const price = toNum(pick(raw, PRICE_KEYS));
   const value = toNum(pick(raw, VALUE_KEYS)) ?? (price != null && qty != null ? price * qty : null);
   const invested = toNum(pick(raw, INVESTED_KEYS)) ?? (avg != null && qty != null ? avg * qty : null);
-  const pnlRaw = toNum(raw.pnl ?? raw.profit ?? raw.profitAndLoss ?? raw.pl ?? raw.gain ?? raw.returns);
+  const pnlRaw = toNum(pick(raw, PNL_KEYS));
+  const pnlPctRaw = toNum(pick(raw, PNL_PCT_KEYS));
   const pnl = (value != null && invested != null) ? value - invested : pnlRaw;
-  const pnlPct = pnl != null && invested ? (pnl / invested) * 100 : null;
+  const pnlPct = pnlPctRaw ?? (pnl != null && invested ? (pnl / invested) * 100 : null);
   return {
     name, symbol, qty, avgPrice: avg, currentPrice: price, value, invested,
     pnl: pnl != null ? Math.round(pnl * 100) / 100 : null,
@@ -655,6 +669,14 @@ function normalizeHolding(raw) {
 }
 
 // Walk an arbitrary JSON tree; collect objects that look like holdings.
+// Position containers are SKIPPED — trading positions are extracted
+// separately (they overlap settled holdings and would double-count).
+const SKIP_KEYS = new Set([
+  'mtf_positions', 'positions', 'intra_day_positions', 'derivative_positions',
+  'drv_intra_day_positions', 'commodity_positions', 'commodity_intra_day_positions',
+  'strategy_positions', 'open_orders', 'open_derivative_orders',
+  'open_commodity_orders', 'open_gtt_commodity_orders', 'asset_summary', 'meta_info',
+]);
 export function collectHoldings(node, out = [], depth = 0) {
   if (depth > 8 || out.length > 2000) return out; // depth/size guard
   if (Array.isArray(node)) {
@@ -663,7 +685,10 @@ export function collectHoldings(node, out = [], depth = 0) {
   }
   if (node && typeof node === 'object') {
     if (looksLikeHolding(node)) { out.push(normalizeHolding(node)); return out; }
-    for (const v of Object.values(node)) collectHoldings(v, out, depth + 1);
+    for (const [k, v] of Object.entries(node)) {
+      if (SKIP_KEYS.has(k)) continue;
+      collectHoldings(v, out, depth + 1);
+    }
   }
   return out;
 }
@@ -708,18 +733,102 @@ export function summarizeHoldings(holdings) {
   };
 }
 
+// ============================================================
+// INDMoney real-schema extras: positions, code map, official summary
+// ============================================================
+
+// investment_code/ind_stock_id → human name map (built from holdings[] of
+// the same response — positions[] carries only opaque INDS codes).
+export function buildCodeMap(payload, map = new Map()) {
+  const arr = payload?.holdings;
+  if (Array.isArray(arr)) {
+    for (const h of arr) {
+      if (!h || typeof h !== 'object') continue;
+      const code = h.investment_code ?? h.investmentcode ?? h.ind_stock_id;
+      const name = h.investment ?? pick(h, NAME_KEYS);
+      if (code != null && name != null) map.set(String(code), String(name));
+    }
+  }
+  return map;
+}
+
+// Trading positions (MTF / delivery / intraday) — NOT merged into holdings
+// (they overlap settled holdings; INDMoney shows them separately too).
+export function extractPositions(payload, codeMap = new Map()) {
+  const out = [];
+  if (!payload || typeof payload !== 'object') return out;
+  const sections = [
+    ['MTF', payload.mtf_positions],
+    ['POSITION', payload.positions],
+    ['INTRADAY', payload.intra_day_positions],
+  ];
+  for (const [kind, arr] of sections) {
+    if (!Array.isArray(arr)) continue;
+    for (const raw of arr) {
+      if (!raw || typeof raw !== 'object') continue;
+      const code = raw.ind_stock_id ?? raw.investment_code ?? raw.instrument_id;
+      const name = code != null && codeMap.has(String(code))
+        ? codeMap.get(String(code))
+        : (pick(raw, NAME_KEYS) ?? pick(raw, SYM_KEYS) ?? code ?? 'Unknown');
+      out.push({
+        name: String(name),
+        symbol: pick(raw, SYM_KEYS) != null ? String(pick(raw, SYM_KEYS)) : null,
+        kind,
+        qty: toNum(pick(raw, QTY_KEYS)),
+        avgPrice: toNum(pick(raw, AVG_KEYS)),
+        invested: toNum(pick(raw, VALUE_KEYS)), // buy_val
+        realisedPnl: toNum(raw.realised_gains ?? raw.realised_gains ?? raw.realisedpnl),
+        t1Qty: toNum(raw.t1_qty ?? raw.t1qty) ?? 0,
+        positionId: raw.position_id ?? raw.positionid ?? null,
+      });
+    }
+  }
+  return out;
+}
+
+// INDMoney's own account-level totals (asset_summary) — used as the summary
+// when every successful call reports the SAME numbers (i.e. it is
+// account-wide, not scoped to the requested asset_type).
+export function readAssetSummary(payload) {
+  const a = payload?.asset_summary;
+  if (!a || typeof a !== 'object') return null;
+  const totalValue = toNum(a.total_value ?? a.totalvalue ?? a.value);
+  if (totalValue == null) return null;
+  const invested = toNum(a.invested ?? a.invested_amount ?? a.investedamount);
+  const pnl = invested != null ? totalValue - invested : null;
+  return {
+    totalValue: Math.round(totalValue * 100) / 100,
+    totalInvested: invested != null ? Math.round(invested * 100) / 100 : null,
+    totalPnl: pnl != null ? Math.round(pnl * 100) / 100 : null,
+    totalPnlPct: pnl != null && invested ? Math.round((pnl / invested) * 10000) / 100 : null,
+    oneDayChange: toNum(a.one_day_change ?? a.onedaychange),
+    oneDayChangePct: toNum(a.one_day_change_percentage ?? a.onedaychangepercentage),
+  };
+}
+
+function consistentSummary(summaries) {
+  if (!summaries.length) return null;
+  const first = summaries[0];
+  const same = summaries.every(s =>
+    s.totalValue === first.totalValue && s.totalInvested === first.totalInvested);
+  return same ? first : null;
+}
+
 // Main entry: fetch the user's portfolio via MCP.
 //
 // INDMoney's portfolio tools declare REQUIRED arguments (e.g.
 // networth_holdings needs asset_type), so a single empty-args call fails
 // validation. Strategy:
-//   1. Rank portfolio-ish tools; synthesize argument sets from each tool's
-//      inputSchema (enums enumerated exactly, asset_type → known values).
-//   2. Call every (tool, argSet) pair within a small budget; a failing pair
-//      (e.g. an asset type the account/server doesn't support) is skipped,
-//      not fatal.
-//   3. Merge + dedup + stamp the asset type implied by the argument.
-//   4. Only when EVERY call fails do we surface the underlying error.
+//   1. Rank portfolio-ish tools (personal holdings above family-wide views);
+//      synthesize argument sets from each tool's inputSchema.
+//   2. SEQUENTIAL per-tool sweeps: run the best tool's full argument sweep;
+//      the moment a tool yields holdings we STOP — never mixing other
+//      tools' views (family portfolio would double-count).
+//   3. Per-call failure tolerance: an unsupported asset type is skipped, not
+//      fatal; only when EVERY call fails do we surface the underlying error.
+//   4. asset_summary is promoted to the official summary when all successful
+//      calls agree (account-wide); otherwise totals are computed from holdings.
+//   5. mtf/positions arrays are extracted separately (never into holdings).
 export async function fetchPortfolio({ force = false } = {}) {
   const s = state();
   if (!s.tokens) throw new IndmError('INDMoney not connected', 401, 'NOT_CONNECTED');
@@ -736,53 +845,103 @@ export async function fetchPortfolio({ force = false } = {}) {
     };
   }
 
-  // Build the call plan: satisfiable tools with synthesized args first.
-  const plan = [];
-  for (const tool of ranked) {
-    const { argSets, satisfiable } = buildToolArgSets(tool);
-    if (!satisfiable) continue;
-    for (const args of argSets) plan.push({ tool, args });
-  }
-  // Fallback: nothing satisfiable → try the top tools with {} (server-side
-  // defaults may still exist; keeps the legacy single-shot behavior).
-  if (plan.length === 0) {
-    for (const tool of ranked.slice(0, 3)) plan.push({ tool, args: {} });
-  }
-
   const holdings = [];
+  const positions = [];
+  const summaries = [];
   const calls = [];        // successful (tool, args) pairs — diagnostics
   const failures = [];     // skipped pairs with their error text
+  const codeMap = new Map();
   let firstPayload = null;
   let firstError = null;
+  let callsUsed = 0;
+  let satisfiableTool = false; // any tool had a synthesizable schema?
 
-  for (const { tool, args } of plan.slice(0, MAX_TOOL_CALLS)) {
-    let payload;
-    try {
-      const result = await callTool(tool.name, args);
-      payload = extractToolPayload(result);
-    } catch (err) {
-      if (!firstError) firstError = err;
-      failures.push({ tool: tool.name, args, error: String(err?.message || err).slice(0, 200) });
-      continue; // one bad asset type must not kill the whole sync
+  for (const tool of ranked) {
+    if (callsUsed >= MAX_TOOL_CALLS) break;
+    const { argSets, satisfiable } = buildToolArgSets(tool);
+    if (!satisfiable) continue;
+    satisfiableTool = true;
+    let toolHoldings = 0;
+
+    for (const args of argSets.slice(0, MAX_TOOL_CALLS)) {
+      if (callsUsed >= MAX_TOOL_CALLS) break;
+      callsUsed++;
+      let payload;
+      try {
+        const result = await callTool(tool.name, args);
+        payload = extractToolPayload(result);
+      } catch (err) {
+        if (!firstError) firstError = err;
+        failures.push({ tool: tool.name, args, error: String(err?.message || err).slice(0, 200) });
+        continue; // one bad asset type must not kill the whole sync
+      }
+      calls.push({ tool: tool.name, args });
+      if (firstPayload === null) firstPayload = payload;
+
+      const sum = readAssetSummary(payload);
+      if (sum) summaries.push(sum);
+      buildCodeMap(payload, codeMap);
+      for (const p of extractPositions(payload, codeMap)) positions.push(p);
+
+      // Stamp the asset type implied by the argument, but only where the
+      // holding itself doesn't already classify (ETF/MF names win over the arg).
+      const label = assetTypeLabel(args?.asset_type ?? args?.assetType);
+      for (const h of collectHoldings(payload)) {
+        if (label && (!h.assetType || h.assetType === 'Other')) h.assetType = label;
+        holdings.push(h);
+        toolHoldings++;
+      }
     }
-    calls.push({ tool: tool.name, args });
-    if (firstPayload === null) firstPayload = payload;
 
-    // Stamp the asset type implied by the argument onto holdings from this
-    // call (a networth_holdings(mutual_funds) response is all mutual funds).
-    const label = assetTypeLabel(args?.asset_type ?? args?.assetType);
-    for (const h of collectHoldings(payload)) {
-      if (label) h.assetType = label;
-      holdings.push(h);
+    // This tool delivered holdings → stop; do not mix other tools' views.
+    if (toolHoldings > 0) break;
+  }
+
+  // No tool had a satisfiable schema → legacy empty-args attempt on top tools.
+  if (!satisfiableTool && callsUsed === 0) {
+    for (const tool of ranked.slice(0, 3)) {
+      let payload;
+      try {
+        const result = await callTool(tool.name, {});
+        payload = extractToolPayload(result);
+      } catch (err) {
+        if (!firstError) firstError = err;
+        failures.push({ tool: tool.name, args: {}, error: String(err?.message || err).slice(0, 200) });
+        continue;
+      }
+      calls.push({ tool: tool.name, args: {} });
+      if (firstPayload === null) firstPayload = payload;
+      const sum = readAssetSummary(payload);
+      if (sum) summaries.push(sum);
+      buildCodeMap(payload, codeMap);
+      for (const p of extractPositions(payload, codeMap)) positions.push(p);
+      for (const h of collectHoldings(payload)) holdings.push(h);
     }
   }
 
   // Every single call failed → surface the real error (as before).
   if (calls.length === 0 && firstError) throw firstError;
 
+  // Dedup positions by positionId (or name|qty|kind).
+  const seenPos = new Set();
+  const uniqPos = positions.filter(p => {
+    const key = p.positionId ?? `${p.name}|${p.qty}|${p.kind}`;
+    if (seenPos.has(key)) return false;
+    seenPos.add(key);
+    return true;
+  });
+
   const normalized = summarizeHoldings(holdings);
+  const official = consistentSummary(summaries);
+  const summary = normalized.ok && official
+    ? { ...official, holdingCount: normalized.summary.holdingCount }
+    : normalized.summary;
+
   const out = {
     ...normalized,
+    summary,
+    officialSummary: !!official,
+    positions: uniqPos.length ? uniqPos : undefined,
     tools: ranked.map(t => ({ name: t.name })),
     calls,
     failures: failures.length ? failures : undefined,

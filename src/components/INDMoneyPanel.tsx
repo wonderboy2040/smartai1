@@ -40,10 +40,24 @@ interface IndmHolding {
 
 interface IndmSummary {
   totalValue: number;
-  totalInvested: number;
-  totalPnl: number;
+  totalInvested: number | null;
+  totalPnl: number | null;
   totalPnlPct: number | null;
-  holdingCount: number;
+  holdingCount?: number;
+  oneDayChange?: number | null;
+  oneDayChangePct?: number | null;
+}
+
+interface IndmPosition {
+  name: string;
+  symbol: string | null;
+  kind: string;
+  qty: number | null;
+  avgPrice: number | null;
+  invested: number | null;
+  realisedPnl: number | null;
+  t1Qty: number;
+  positionId: string | null;
 }
 
 interface IndmCallInfo {
@@ -58,6 +72,8 @@ interface IndmPortfolio {
   summary: IndmSummary | null;
   calls?: IndmCallInfo[];
   failures?: { tool: string; args?: Record<string, unknown>; error: string }[];
+  positions?: IndmPosition[];
+  officialSummary?: boolean;
   fetchedAt?: number;
   cached?: boolean;
   tools?: { name: string; description?: string | null }[];
@@ -80,6 +96,9 @@ const TYPE_STYLES: Record<string, { emoji: string; cls: string }> = {
   Retirement: { emoji: '🏦', cls: 'text-sky-300 bg-sky-500/10 border-sky-500/20' },
   Crypto: { emoji: '🪙', cls: 'text-orange-300 bg-orange-500/10 border-orange-500/20' },
   'Real Estate': { emoji: '🏠', cls: 'text-rose-300 bg-rose-500/10 border-rose-500/20' },
+  Savings: { emoji: '💰', cls: 'text-lime-300 bg-lime-500/10 border-lime-500/20' },
+  Insurance: { emoji: '📋', cls: 'text-indigo-300 bg-indigo-500/10 border-indigo-500/20' },
+  Vehicle: { emoji: '🚗', cls: 'text-fuchsia-300 bg-fuchsia-500/10 border-fuchsia-500/20' },
   Other: { emoji: '📦', cls: 'text-slate-300 bg-white/5 border-white/10' },
 };
 
@@ -295,6 +314,12 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
           <div className="quantum-panel rounded-xl p-3">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Current Value</div>
             <div className="text-lg sm:text-xl font-black text-cyan-400 font-mono">₹{fmtINR(portfolio.summary.totalValue)}</div>
+            {portfolio.summary.oneDayChange != null && (
+              <div className={`text-[10px] font-mono font-bold ${portfolio.summary.oneDayChange >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                1D: {portfolio.summary.oneDayChange >= 0 ? '+' : ''}₹{fmtINR(portfolio.summary.oneDayChange)}
+                {portfolio.summary.oneDayChangePct != null && ` (${portfolio.summary.oneDayChangePct >= 0 ? '+' : ''}${portfolio.summary.oneDayChangePct.toFixed(2)}%)`}
+              </div>
+            )}
           </div>
           <div className="quantum-panel rounded-xl p-3">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Invested</div>
@@ -305,6 +330,7 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
             <div className={`text-lg sm:text-xl font-black font-mono ${(portfolio.summary.totalPnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
               {(portfolio.summary.totalPnl ?? 0) >= 0 ? '+' : ''}₹{fmtINR(portfolio.summary.totalPnl)}
             </div>
+            {portfolio.officialSummary && <div className="text-[9px] text-slate-600 font-bold">INDMoney official</div>}
           </div>
           <div className="quantum-panel rounded-xl p-3">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Returns</div>
@@ -412,6 +438,51 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
           </div>
         );
       })}
+
+      {/* Trading positions (MTF / delivery / intraday) */}
+      {connected && portfolio?.positions && portfolio.positions.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="inline-flex items-center gap-1.5 text-xs font-bold rounded-lg border px-2.5 py-1 text-amber-300 bg-amber-500/10 border-amber-500/20">
+              ⚡ Trading Positions <span className="opacity-60">({portfolio.positions.length})</span>
+            </div>
+            <div className="text-xs font-mono font-bold text-slate-400">₹{fmtINR(portfolio.positions.reduce((a, p) => a + (p.invested || 0), 0))}</div>
+          </div>
+          <div className="quantum-panel rounded-xl overflow-hidden">
+            <div className="overflow-x-auto scrollbar-hide">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-slate-500 text-[10px] uppercase tracking-wider border-b border-white/5">
+                    <th className="text-left px-3 py-2.5 font-bold">Instrument</th>
+                    <th className="text-left px-3 py-2.5 font-bold">Type</th>
+                    <th className="text-right px-3 py-2.5 font-bold">Qty</th>
+                    <th className="text-right px-3 py-2.5 font-bold hidden sm:table-cell">Avg</th>
+                    <th className="text-right px-3 py-2.5 font-bold">Value</th>
+                    <th className="text-right px-3 py-2.5 font-bold hidden sm:table-cell">T+1</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {portfolio.positions.map((p, i) => (
+                    <tr key={`${p.positionId ?? p.name}-${i}`} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+                      <td className="px-3 py-2.5 max-w-[200px] sm:max-w-[280px]">
+                        <div className="font-semibold text-slate-200 truncate" title={p.name}>{p.name}</div>
+                        {p.symbol && <div className="text-[10px] text-slate-500 font-mono">{p.symbol}</div>}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <span className="text-[10px] font-bold rounded border px-1.5 py-0.5 text-amber-300 bg-amber-500/10 border-amber-500/20">{p.kind}</span>
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono text-slate-300">{p.qty != null ? fmtINR(p.qty, 2) : '—'}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-slate-400 hidden sm:table-cell">{p.avgPrice != null ? `₹${fmtINR(p.avgPrice, 2)}` : '—'}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-white font-bold">{p.invested != null ? `₹${fmtINR(p.invested)}` : '—'}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-slate-500 hidden sm:table-cell">{p.t1Qty > 0 ? fmtINR(p.t1Qty, 0) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tool badge / meta footer */}
       {connected && portfolio?.ok && (
