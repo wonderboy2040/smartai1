@@ -2,11 +2,13 @@
 // intraday/useIntradayStream — SSE live-quote/outcome stream hook
 // ------------------------------------------------------------
 // Connects to the public GET /api/intraday-stream SSE endpoint
-// (server pushes every ~5s during NSE hours):
-//   event: quotes  → { SYMBOL: { price, change, ts } }
-//   event: outcome → { type, symbol, price, pnl, ... }
-//   event: regime  → { regime, vix, vixLevel, ... }
-//   event: status  → watcher heartbeat (keepalive)
+// (server pushes every ~5s during NSE hours, 24/7 while crypto
+// symbols are in the watch set):
+//   event: quotes        → { SYMBOL: { price, change, ts } }
+//   event: outcome       → { type, symbol, price, pnl, ... }
+//   event: regime        → NIFTY/VIX regime (India market)
+//   event: crypto-regime → BTC regime (crypto market)
+//   event: status        → watcher heartbeat (keepalive)
 // Auto-reconnects (native EventSource). Falls back silently when
 // the stream is unavailable — the tab still works via 60s polling.
 // ============================================================
@@ -18,6 +20,7 @@ const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 export interface StreamState {
   livePrices: Record<string, LiveQuote>;
   regime: MarketRegime | null;
+  cryptoRegime: MarketRegime | null;
   outcomes: OutcomeEvent[];
   connected: boolean;
   lastQuoteAt: number;
@@ -26,6 +29,7 @@ export interface StreamState {
 export function useIntradayStream(enabled: boolean, onOutcome?: (ev: OutcomeEvent) => void): StreamState {
   const [livePrices, setLivePrices] = useState<Record<string, LiveQuote>>({});
   const [regime, setRegime] = useState<MarketRegime | null>(null);
+  const [cryptoRegime, setCryptoRegime] = useState<MarketRegime | null>(null);
   const [outcomes, setOutcomes] = useState<OutcomeEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const [lastQuoteAt, setLastQuoteAt] = useState(0);
@@ -65,6 +69,13 @@ export function useIntradayStream(enabled: boolean, onOutcome?: (ev: OutcomeEven
       } catch { /* malformed frame */ }
     });
 
+    src.addEventListener('crypto-regime', (e) => {
+      if (closed) return;
+      try {
+        setCryptoRegime(JSON.parse((e as MessageEvent).data) as MarketRegime);
+      } catch { /* malformed frame */ }
+    });
+
     src.addEventListener('outcome', (e) => {
       if (closed) return;
       try {
@@ -88,5 +99,5 @@ export function useIntradayStream(enabled: boolean, onOutcome?: (ev: OutcomeEven
     };
   }, [enabled]);
 
-  return { livePrices, regime, outcomes, connected, lastQuoteAt };
+  return { livePrices, regime, cryptoRegime, outcomes, connected, lastQuoteAt };
 }

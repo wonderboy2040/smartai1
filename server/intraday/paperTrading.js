@@ -13,13 +13,31 @@
 // server/data/paper-trades.json with realized + unrealized P&L.
 // ============================================================
 import { loadJSON, saveJSON } from './store.js';
-import { istDayKey, istMinutes } from './time.js';
+import { istDayKey, istMinutes, dayKeyFor } from './time.js';
+import { isCryptoSymbolBase } from './engine.js';
 import { recordTradeClose } from './journal.js';
 import { scheduleBackup, restoreBackup, backupConfigured } from './backup.js';
 
 const FILE = 'paper-trades.json';
 const MAX_TRADES = 500;
-const PAPER_SQOFF_MIN = 15 * 60 + 10; // 15:10 IST hard square-off
+const PAPER_SQOFF_MIN = 15 * 60 + 10; // 15:10 IST hard square-off (NSE only)
+
+// Per-trade market: CRYPTO trades 24/7 with fractional units (0.0027 BTC);
+// INDIA stays whole-share with the 15:10 IST square-off.
+const _marketOfTrade = (t) => {
+  const m = String(t?.market || '').toUpperCase();
+  if (m === 'CRYPTO') return 'CRYPTO';
+  if (m === 'INDIA') return 'INDIA';
+  return isCryptoSymbolBase(t?.symbol) ? 'CRYPTO' : 'INDIA';
+};
+
+// Fractional-safe qty normalizer: INDIA → integer shares; CRYPTO → 4dp units.
+function _normQty(raw, market) {
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (market === 'CRYPTO') return +n.toFixed(4);
+  return Math.floor(n);
+}
 
 let _state = loadJSON(FILE, { trades: [], nextId: 1, dayKey: '' });
 let _saveTimer = null;
@@ -44,17 +62,25 @@ function _validateSym(sym) {
 export function openPaperTrade(input) {
   const {
     symbol, direction, entry, qty,
-    stopLoss, target1, target2,
+    stopLoss, target1, target2, market,
   } = input || {};
 
   if (!_validateSym(symbol)) return { error: 'Invalid symbol format.' };
   const sym = symbol.trim().toUpperCase();
+  const mkt = (['INDIA', 'CRYPTO'].includes(String(market || '').toUpperCase())
+    ? String(market).toUpperCase()
+    : (isCryptoSymbolBase(sym) ? 'CRYPTO' : 'INDIA'));
   const dir = direction === 'SHORT' ? 'SHORT' : 'LONG';
   const n = (v) => (typeof v === 'number' && isFinite(v) && v > 0) ? v : null;
-  const e = n(entry), q = Math.floor(n(qty) || 0), sl = n(stopLoss);
+  const e = n(entry), sl = n(stopLoss);
   const t1 = n(target1), t2 = n(target2);
+  const q = _normQty(n(qty) || 0, mkt);
   if (!e) return { error: 'Valid entry price required.' };
-  if (!q || q < 1 || q > 100000) return { error: 'Qty must be 1..100000.' };
+  if (!q || q < (mkt === 'CRYPTO' ? 0.0001 : 1) || q > 100000) {
+    return { error: mkt === 'CRYPTO'
+      ? 'Qty must be ≥0.0001 (max 100000, 4dp).' 
+      : 'Qty must be 1..100000.' };
+  }
   if (!sl) return { error: 'Valid stop-loss required.' };
   // Level sanity — direction-consistent ordering.
   if (dir === 'LONG' && (sl >= e || (t1 && t1 <= e) || (t2 && t2 <= e))) {
@@ -63,18 +89,18 @@ export function openPaperTrade(input) {
   if (dir === 'SHORT' && (sl <= e || (t1 && t1 >= e) || (t2 && t2 >= e))) {
     return { error: 'SHORT levels must satisfy SL > entry > T1 > T2.' };
   }
-  // Risk guard: max 1 lakh shares / trade and max 10 concurrent open trades.
-  const today = istDayKey();
+  // Risk guard: max 1 lakh units / trade and max 10 concurrent open trades.
+  const today = dayKeyFor(mkt);
   if (_state.dayKey !== today) _state.dayKey = today;
   const openNow = _state.trades.filter(t => t.status === 'OPEN' || t.status === 'PARTIAL');
   if (openNow.length >= 10) return { error: 'Max 10 open paper trades.' };
-  if (openNow.some(t => t.symbol === sym && t.direction === dir)) {
+  if (openNow.some(t => t.symbol === sym && t.direction === dir && _marketOfTrade(t) === mkt)) {
     return { error: `Paper trade already open for ${sym} ${dir}.` };
   }
 
   const trade = {
     id: _state.nextId++,
-    symbol: sym, direction: dir,
+    symbol: sym, market: mkt, direction: dir,
     entry: +e.toFixed(2), qty: q,
     stopLoss: +sl.toFixed(2),
     target1: t1 ? +t1.toFixed(2) : null,
@@ -123,11 +149,14 @@ function _closePart(trade, qty, price, reason) {
 // ------------------------------------------------------------
 export function evaluatePaper(quotes, events) {
   const m = istMinutes();
-  const afterSqOff = m >= PAPER_SQOFF_MIN;
   let changed = false;
 
   for (const t of _state.trades) {
     if (t.status === 'CLOSED') continue;
+    const mkt = _marketOfTrade(t);
+    // NSE hard square-off 15:10 IST — crypto is 24/7, no EOD (it rolls
+    // at the UTC day boundary via the boot/restore stale checks).
+    const afterSqOff = mkt !== 'CRYPTO' && m >= PAPER_SQOFF_MIN;
     const q = quotes[t.symbol];
     const price = q?.price;
     if (price > 0) t.lastPrice = +price.toFixed(2);
@@ -152,7 +181,11 @@ export function evaluatePaper(quotes, events) {
       }
       if (hitT1) {
         t.t1Hit = true;
-        _closePart(t, Math.ceil(t.qty / 2), t.target1, 'T1_BOOK');
+        // Fractional-safe T1 booking: half the position (4dp for crypto).
+        const half = _marketOfTrade(t) === 'CRYPTO'
+          ? +((t.qty / 2).toFixed(4))
+          : Math.ceil(t.qty / 2);
+        _closePart(t, half, t.target1, 'T1_BOOK');
         if (t.status !== 'CLOSED') t.status = 'PARTIAL';
         events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.target1, pnl: t.realizedPnl, note: 'Paper: booked 50% at T1, trail to entry' });
         changed = true; continue;
@@ -210,6 +243,18 @@ export function paperSymbolsForWatcher() {
   )];
 }
 
+// 2026-09 multi-market: watch set classified per market so the watcher
+// routes INDIA → Groww and CRYPTO → CoinDCX quotes.
+export function paperSymbolsByMarket() {
+  const india = [];
+  const crypto = [];
+  for (const t of _state.trades) {
+    if (t.status !== 'OPEN' && t.status !== 'PARTIAL') continue;
+    (_marketOfTrade(t) === 'CRYPTO' ? crypto : india).push(t.symbol);
+  }
+  return { india: [...new Set(india)], crypto: [...new Set(crypto)] };
+}
+
 export function getPaperSummary() {
   const today = istDayKey();
   const open = _state.trades.filter(t => t.status === 'OPEN' || t.status === 'PARTIAL');
@@ -233,7 +278,7 @@ export function getPaperSummary() {
 
 function _publicTrade(t) {
   return {
-    id: t.id, symbol: t.symbol, direction: t.direction,
+    id: t.id, symbol: t.symbol, market: _marketOfTrade(t), direction: t.direction,
     entry: t.entry, qty: t.qty, remainingQty: t.remainingQty,
     stopLoss: t.stopLoss, target1: t.target1, target2: t.target2,
     status: t.status, t1Hit: t.t1Hit, dayKey: t.dayKey,
@@ -244,13 +289,13 @@ function _publicTrade(t) {
   };
 }
 
-// Boot-time cleanup: anything left open from a previous day gets
-// squared off at its last known price (market was closed meanwhile).
+// Boot-time cleanup: anything left open from a previous day (per-market
+// day key) gets squared off at its last known price. Crypto rolls at
+// UTC midnight; NSE at IST midnight.
 export function initPaperTrading() {
-  const today = istDayKey();
   const events = [];
   for (const t of _state.trades) {
-    if (t.dayKey !== today && t.status !== 'CLOSED') {
+    if (t.dayKey !== dayKeyFor(_marketOfTrade(t)) && t.status !== 'CLOSED') {
       _closePart(t, t.remainingQty, t.lastPrice || t.entry, 'STALE_SQOFF');
       events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.lastPrice || t.entry, pnl: t.realizedPnl, note: 'Stale paper trade squared off on restart' });
     }
@@ -369,13 +414,16 @@ function _sanitizeRestoredTrade(raw) {
   const symbol = typeof raw.symbol === 'string' ? raw.symbol.trim().toUpperCase() : '';
   if (!/^[A-Z0-9&\-]{2,15}$/.test(symbol)) return null;
   const direction = raw.direction === 'SHORT' ? 'SHORT' : 'LONG';
+  const market = (['INDIA', 'CRYPTO'].includes(String(raw.market || '').toUpperCase())
+    ? String(raw.market).toUpperCase()
+    : (isCryptoSymbolBase(symbol) ? 'CRYPTO' : 'INDIA'));
   const entry = _num(raw.entry); if (!(entry > 0)) return null;
-  const qty = Math.floor(_num(raw.qty)); if (!(qty >= 1) || qty > 100000) return null;
+  const qty = _normQty(_num(raw.qty), market); if (!(qty >= (market === 'CRYPTO' ? 0.0001 : 1)) || qty > 100000) return null;
   const status = ['OPEN', 'PARTIAL', 'CLOSED'].includes(raw.status) ? raw.status : 'CLOSED';
   const openedAt = _num(raw.openedAt, Date.now());
   const parts = Array.isArray(raw.parts)
     ? raw.parts.slice(0, 20).map(p => ({
-        qty: Math.max(1, Math.floor(_num(p?.qty, 1))),
+        qty: _normQty(_num(p?.qty, 1), market) || (market === 'CRYPTO' ? 0.0001 : 1),
         exitPrice: +_num(p?.exitPrice, entry).toFixed(2),
         ts: _num(p?.ts, openedAt),
         reason: String(p?.reason || 'RESTORE').slice(0, 20),
@@ -383,10 +431,10 @@ function _sanitizeRestoredTrade(raw) {
     : [];
   const remainingQty = status === 'CLOSED'
     ? 0
-    : Math.max(0, Math.min(qty, Math.floor(_num(raw.remainingQty, qty))));
+    : Math.min(qty, _normQty(_num(raw.remainingQty, qty), market));
   const realizedPnl = +_num(raw.realizedPnl).toFixed(2);
   return {
-    id, symbol, direction,
+    id, symbol, market, direction,
     entry: +entry.toFixed(2), qty,
     stopLoss: +_num(raw.stopLoss, entry).toFixed(2),
     target1: _num(raw.target1) > 0 ? +_num(raw.target1).toFixed(2) : null,
@@ -401,7 +449,7 @@ function _sanitizeRestoredTrade(raw) {
     unrealizedPnl: status === 'CLOSED' ? 0 : +_num(raw.unrealizedPnl).toFixed(2),
     lastPrice: +_num(raw.lastPrice, entry).toFixed(2),
     parts,
-    dayKey: /^\d{4}-\d{2}-\d{2}$/.test(String(raw.dayKey)) ? raw.dayKey : istDayKey(new Date(openedAt)),
+    dayKey: /^\d{4}-\d{2}-\d{2}$/.test(String(raw.dayKey)) ? raw.dayKey : dayKeyFor(market, new Date(openedAt)),
     capital: +_num(raw.capital, qty * entry).toFixed(2),
   };
 }
@@ -447,10 +495,9 @@ export function restorePaperTrades(input) {
   const restored = _mergeRestoredState({ trades: incoming });
 
   // Restored trades left "open" from a PREVIOUS day are stale by the
-  // same rule as boot-time — square them off at their last price.
-  const today = istDayKey();
+  // same per-market rule as boot-time — square them off at last price.
   for (const t of _state.trades) {
-    if (t.dayKey !== today && t.status !== 'CLOSED') {
+    if (t.dayKey !== dayKeyFor(_marketOfTrade(t)) && t.status !== 'CLOSED') {
       _closePart(t, t.remainingQty, t.lastPrice || t.entry, 'STALE_SQOFF');
     }
   }

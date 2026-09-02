@@ -31,7 +31,7 @@
 //     hard-gated in routes + -15 in scoring.
 //   • Signal GRADES: A+ / A / B (watch-only) via gradeSignal().
 // ============================================================
-import { istMinutes, marketPhase } from './time.js';
+import { istMinutes, marketPhaseFor } from './time.js';
 
 export const INTRADAY_MIN_CONFIDENCE = 75;
 export const INTRADAY_TOP_N = 5;
@@ -39,6 +39,9 @@ export const INTRADAY_TOP_N = 5;
 // (entry fills worse + exit fills worse). Conservative but realistic for
 // market-order fills on liquid large-caps.
 export const SLIPPAGE_BPS = 7;
+// Crypto spot INR pairs: spread + taker fee + impact — wider than the
+// tight NSE F&O fills, so the R:R math stays honest on BTC/ETH signals.
+export const CRYPTO_SLIPPAGE_BPS = 12;
 // v4 quality gates
 export const MIN_REL_VOLUME = 1.2;   // hard floor (only when relVolume is KNOWN)
 export const HIGH_CONV_RR_FLOOR = 1.5; // grade-A minimum R:R
@@ -69,6 +72,18 @@ export const BASE_UNIVERSE = [
   'GAIL', 'PETRONET', 'IDEA', 'YESBANK', 'SUZLON', 'IREDA',
 ];
 
+// 2026-09 multi-market pass — CRYPTO universe (CoinDCX INR pairs, TV crypto
+// scanner indicators off BINANCE:SYM USDT). Liquid majors only: intraday
+// signals need tight spreads + deep books; thin alts generate noise.
+export const CRYPTO_UNIVERSE = [
+  'BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'LINK', 'UNI', 'MATIC',
+];
+
+/** Is this bare symbol a crypto base (used to route quotes per market)? */
+export function isCryptoSymbolBase(sym) {
+  return CRYPTO_UNIVERSE.includes(String(sym || '').trim().toUpperCase());
+}
+
 export const TV_INTRADAY_COLUMNS = [
   'close', 'open', 'high', 'low', 'volume', 'change',
   'EMA10', 'EMA20', 'SMA20', 'SMA50',
@@ -85,8 +100,19 @@ export const TV_INTRADAY_COLUMNS = [
 // for all symbols with rich pre-computed indicators) + Groww NSE
 // live quotes (genuine LTP). No Yahoo 5m candle dependency.
 // Returns [tvData, growwData] — same shape the old monolith used.
+//
+// 2026-09 multi-market pass: opts.market='CRYPTO' switches the batch to
+// TV *crypto* scanner (BINANCE:SYMUSDT indicators, USD) + CoinDCX INR
+// LTP (injected fetchCoinDcxTickers — shared 2s cache with the live
+// price stream). TV USD indicators are re-scaled into INR with the
+// per-symbol anchor (coindcxINR / binanceUSDT) so the whole engine
+// runs in ONE currency — INR — exactly like the NSE path.
 // ------------------------------------------------------------
-export async function fetchIntradayDataBatch(symbols, fetchGrowwNseQuote) {
+export async function fetchIntradayDataBatch(symbols, fetchGrowwNseQuote, opts = {}) {
+  const market = String(opts.market || 'INDIA').toUpperCase();
+  if (market === 'CRYPTO') {
+    return fetchCryptoIntradayDataBatch(symbols, opts.fetchCoinDcxTickers);
+  }
   const tvTickers = [];
   const tvToClean = {};
   symbols.forEach(sym => {
@@ -168,11 +194,140 @@ export async function fetchIntradayDataBatch(symbols, fetchGrowwNseQuote) {
 }
 
 // ------------------------------------------------------------
+// CRYPTO batch — TV crypto scanner (BINANCE:SYMUSDT) + CoinDCX INR
+// LTP + USD→INR re-scaling via the per-symbol anchor ratio.
+// ------------------------------------------------------------
+async function fetchCryptoIntradayDataBatch(symbols, fetchCoinDcxTickers) {
+  const tvToSym = {};
+  const tvTickers = symbols.map(sym => {
+    const t = `BINANCE:${sym}USDT`;
+    tvToSym[t] = sym;
+    return t;
+  });
+
+  const tvPromise = (async () => {
+    const out = {};
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(`https://scanner.tradingview.com/crypto/scan?t=${Date.now()}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+          body: JSON.stringify({
+            symbols: { tickers: [...new Set(tvTickers)] },
+            columns: TV_INTRADAY_COLUMNS,
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!res.ok) {
+          if (attempt < 1) { await new Promise(r => setTimeout(r, 1500)); continue; }
+          return out;
+        }
+        const data = await res.json();
+        if (!data?.data) return out;
+        for (const item of data.data) {
+          if (!item.d) continue;
+          const sym = tvToSym[item.s];
+          if (!sym || out[sym]) continue; // first listing that resolves wins
+          const d = item.d;
+          const pf = (v) => (typeof v === 'number' && !isNaN(v) && isFinite(v)) ? v : null;
+          out[sym] = {
+            close: pf(d[0]) || 0, open: pf(d[1]) || 0,
+            high: pf(d[2]) || 0, low: pf(d[3]) || 0,
+            volume: pf(d[4]) || 0, change: pf(d[5]) || 0,
+            ema10: pf(d[6]), ema20: pf(d[7]),
+            sma20: pf(d[8]), sma50: pf(d[9]),
+            rsi: pf(d[10]), macd: pf(d[11]), macdSignal: pf(d[12]),
+            atr: pf(d[13]), vwap: pf(d[14]),
+            adx: pf(d[15]), adxPlus: pf(d[16]), adxMinus: pf(d[17]),
+            relVolume: pf(d[18]),
+            pivotMiddle: pf(d[19]), pivotS1: pf(d[20]), pivotR1: pf(d[21]),
+            recommend: pf(d[22]), last: pf(d[23]),
+            exchange: item.s.split(':')[0],
+            _currency: 'USD',
+          };
+        }
+        break; // success — stop retrying
+      } catch (e) {
+        console.warn(`[intraday-crypto] TV crypto scanner attempt ${attempt + 1}/2 failed:`, e?.message);
+        if (attempt < 1) await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+    return out;
+  })();
+
+  // CoinDCX INR live LTP — one shared (2s-cached) ticker round-trip.
+  const cdcxPromise = (async () => {
+    const out = {};
+    if (typeof fetchCoinDcxTickers !== 'function') return out;
+    try {
+      const tickers = await fetchCoinDcxTickers();
+      const byMarket = new Map();
+      for (const t of tickers) byMarket.set(t.market, t);
+      for (const sym of symbols) {
+        const t = byMarket.get(`${sym}INR`);
+        if (!t) continue;
+        const price = parseFloat(t.last_price);
+        if (!(price > 0)) continue;
+        const change = parseFloat(t.change_24_hour) || 0;
+        out[sym] = {
+          price,
+          change,
+          high: parseFloat(t.high) || price,
+          low: parseFloat(t.low) || price,
+          volume: parseFloat(t.volume) || 0,
+          prevClose: (change > -99 && change < 99) ? price / (1 + change / 100) : price,
+        };
+      }
+    } catch { /* CoinDCX transient — TV-only analysis still proceeds */ }
+    return out;
+  })();
+
+  const [tvData, cdcxData] = await Promise.all([tvPromise, cdcxPromise]);
+
+  // Re-scale every TV USD price field into INR via the per-symbol anchor
+  // (coindcxINR / binanceUSDT — captures USD/INR + India premium exactly).
+  // RSI / MACD relations / relVolume / ADX are scale-invariant; all absolute
+  // price fields (EMA/SMA/ATR/VWAP/pivots/OHLC) are linear → ×scale.
+  // A symbol WITHOUT a CoinDCX INR anchor is DROPPED — emitting its raw USD
+  // TV price would mislabel dollars as ₹ (wrong entry/SL/targets for users).
+  for (const sym of symbols) {
+    const tv = tvData[sym];
+    const cd = cdcxData[sym];
+    if (!tv || !cd || !(cd.price > 0)) {
+      if (tv && (!cd || !(cd.price > 0))) delete tvData[sym];
+      continue;
+    }
+    const usdRef = (tv.last > 0) ? tv.last : tv.close;
+    if (!(usdRef > 0)) continue;
+    const scale = cd.price / usdRef;
+    const px = (v) => (typeof v === 'number' && isFinite(v) && v > 0) ? +(v * scale) : null;
+    tvData[sym] = {
+      ...tv,
+      close: px(tv.close) || cd.price,
+      open: px(tv.open) || cd.price,
+      high: px(tv.high) || cd.high,
+      low: px(tv.low) || cd.low,
+      ema10: px(tv.ema10), ema20: px(tv.ema20),
+      sma20: px(tv.sma20), sma50: px(tv.sma50),
+      atr: px(tv.atr), vwap: px(tv.vwap),
+      pivotMiddle: px(tv.pivotMiddle), pivotS1: px(tv.pivotS1), pivotR1: px(tv.pivotR1),
+      _currency: 'INR',
+    };
+  }
+  return [tvData, cdcxData];
+}
+
+// ------------------------------------------------------------
 // Analyze ONE symbol from merged TV+Groww snapshot.
-// opts: { regime?: { regime, vixLevel } | null }
+// opts: { regime?: { regime, vixLevel } | null, market?: 'INDIA' | 'CRYPTO' }
+// CRYPTO: 24/7 session (no IST ORB window / dead zone / fresh-entry
+// ban / EOD sq-off), fractional position sizing (BTC ≠ whole shares),
+// and a wider slippage model (spot taker fees on INR pairs).
 // ------------------------------------------------------------
 export function analyzeIntradayFromScanner(symbol, tv, groww, opts = {}) {
-  // Merge Groww real-time LTP with TradingView pre-computed indicators
+  const isCrypto = String(opts.market || 'INDIA').toUpperCase() === 'CRYPTO';
+  const SLIP_BPS = isCrypto ? CRYPTO_SLIPPAGE_BPS : SLIPPAGE_BPS;
+  // Merge Groww/CoinDCX real-time LTP with TradingView pre-computed indicators
   const ltp = groww?.price || (tv?.last > 0 ? tv.last : tv?.close) || 0;
   if (!(ltp > 0)) return null;
 
@@ -221,8 +376,10 @@ export function analyzeIntradayFromScanner(symbol, tv, groww, opts = {}) {
   // opening range. After that window we cannot reconstruct the exact range
   // from daily OHLC alone, so we use an honest ATR-proxy band around the
   // open (labelled PROXY in the payload — never presented as exact).
+  // CRYPTO 24/7: there IS no session open — the ATR-proxy band is the only
+  // honest form (never a LIVE session range).
   const _istMins = istMinutes();
-  const inOrbWindow = _istMins >= 9 * 60 + 15 && _istMins < 9 * 60 + 45;
+  const inOrbWindow = !isCrypto && _istMins >= 9 * 60 + 15 && _istMins < 9 * 60 + 45;
   const orbHigh = inOrbWindow ? high : open + 0.55 * atr;
   const orbLow = inOrbWindow ? effectiveLow : open - 0.55 * atr;
   const orbMode = inOrbWindow ? 'LIVE' : 'PROXY';
@@ -322,7 +479,8 @@ export function analyzeIntradayFromScanner(symbol, tv, groww, opts = {}) {
 
   // ---------- v4: DEAD-ZONE (14:30–15:00 IST) ----------
   // Statistically weak window — heavy penalty here, hard gate in routes.
-  const deadZone = inDeadZone(_istMins);
+  // CRYPTO 24/7: N/A.
+  const deadZone = !isCrypto && inDeadZone(_istMins);
   if (deadZone) { quantConfidence -= 15; reasons.push('Dead-zone timing (14:30-15:00)'); }
   quantConfidence = Math.max(0, Math.min(100, quantConfidence));
 
@@ -356,34 +514,40 @@ export function analyzeIntradayFromScanner(symbol, tv, groww, opts = {}) {
   const trailAfterT1 = +entry.toFixed(2); // breakeven lock once T1 books — discipline rule
   const rr = risk > 0 ? Math.abs(target1 - entry) / risk : 0;
 
-  // ---------- SLIPPAGE MODEL (±7bps per side) ----------
-  const slippage = +(entry * SLIPPAGE_BPS / 10000).toFixed(2);
+  // ---------- SLIPPAGE MODEL (±7bps NSE / ±12bps crypto per side) ----------
+  const slippage = +(entry * SLIP_BPS / 10000).toFixed(2);
   const effRisk = risk + 2 * slippage;                 // slip hurts entry AND exit
   const effReward1 = Math.abs(target1 - entry) - 2 * slippage;
   const effRR = effRisk > 0 ? +(effReward1 / effRisk).toFixed(2) : 0;
 
   // Position sizing — 1% RISK RULE per ₹1,00,000 capital, capped at 25%
   // capital deployed. Quantity uses slip-adjusted risk (conservative).
+  // CRYPTO: fractional units (you can buy 0.0027 BTC) — round to 4 dp;
+  // NSE equities stay whole-share (integer floor).
   const qtyRisk = effRisk > 0 ? Math.floor(1000 / effRisk) : 0;
   const qtyCap = Math.floor(25000 / entry);
-  const qtyPerLakh = Math.max(0, Math.min(qtyRisk, qtyCap));
+  const qtyRaw = Math.max(0, Math.min(qtyRisk, qtyCap));
+  const qtyPerLakh = isCrypto
+    ? (qtyRaw >= 1 ? Math.floor(qtyRaw) : Math.max(0.0001, +qtyRaw.toFixed(4)))
+    : qtyRaw;
 
   // ADX regime label
   const trendStrength = adx >= 28 ? 'STRONG' : adx >= 20 ? 'BUILDING' : 'WEAK-RANGE';
 
-  const phase = marketPhase();
-  const freshEntriesAllowed = _istMins < 15 * 60; // 15:00 IST — no fresh intraday entries after
+  const phase = marketPhaseFor(isCrypto ? 'CRYPTO' : 'INDIA');
+  const freshEntriesAllowed = isCrypto ? true : (_istMins < 15 * 60); // crypto: 24/7, no entry cutoff
 
   return {
     symbol, ltp: +ltp.toFixed(2), changePct: +changePct.toFixed(2),
     direction, quantConfidence: phase === 'early' ? Math.min(quantConfidence, 88) : quantConfidence,
-    exchange: tv?.exchange || 'NSE',
+    market: isCrypto ? 'CRYPTO' : 'INDIA',
+    exchange: isCrypto ? (tv?.exchange || 'BINANCE') : (tv?.exchange || 'NSE'),
     entry: +entry.toFixed(2), stopLoss,
     entryZoneLow, entryZoneHigh,
     target1, target2,
     trailingSL, trailAfterT1,
     qtyPerLakh, trendStrength,
-    freshEntriesAllowed, sqOffBy: '15:10 IST',
+    freshEntriesAllowed, sqOffBy: isCrypto ? '24/7 (no EOD sq-off)' : '15:10 IST',
     rr: +rr.toFixed(2), atr: +atr.toFixed(2),
     vwap: +vwap.toFixed(2), rsi: +rsi.toFixed(1), volumeRatio: +relVolume.toFixed(2),
     adx: +(adx).toFixed(1), gapPct: +gapPct.toFixed(2), vwapDist: +vwapDist.toFixed(2),
@@ -435,6 +599,7 @@ export function gradeSignal(s) {
 export async function aiVerifySignals(candidates, deps) {
   if (!candidates.length) return null;
   const { KEYS, OPENAI_COMPAT } = deps || {};
+  const isCryptoMkt = String(deps?.market || 'INDIA').toUpperCase() === 'CRYPTO';
   const compact = candidates.map(c => ({
     sym: c.symbol, exch: c.exchange || 'NSE', dir: c.direction, q: c.quantConfidence,
     ltp: c.ltp, chg: c.changePct, rsi: c.rsi, vr: c.volumeRatio, rr: c.rr,
@@ -444,7 +609,25 @@ export async function aiVerifySignals(candidates, deps) {
     atr: c.atr,
     mom: c._momentumPct != null ? +c._momentumPct.toFixed(2) : undefined,
   }));
-  const systemPrompt = `You are an elite NSE/BSE intraday EXPERT analyst (15+ yrs prop-desk) running as an MCP verification tool. You receive pre-scored setups from a v4 quantitative engine (EMA/VWAP/Supertrend/ORB/CPR/ADX/SMA50-confluence/pivot/volume/momentum/gap factors). Analyze each setup IN DEPTH and verify strictly.
+  const systemPrompt = isCryptoMkt
+    ? `You are an elite CRYPTO intraday EXPERT analyst (15+ yrs prop-desk, Binance/CoinDCX spot & perp scalping) running as an MCP verification tool. All prices are INR (CoinDCX) with 24/7 continuous sessions. You receive pre-scored setups from a v4 quantitative engine (EMA/VWAP/Supertrend/ORB-proxy/CPR/ADX/SMA50-confluence/pivot/volume/momentum factors). Analyze each setup IN DEPTH and verify strictly.
+
+PENALIZE: RSI exhaustion (>75/<25), poor RR (<1.5), counter-VWAP direction, low relative volume (<1.2x), overextension far from VWAP (>2%), weak ADX (<18), extreme 24h move (>6%), counter-regime setups when BTC is strongly bearish (LONG) or bullish (SHORT), weekend liquidity thinning. Boost only high-conviction confluence: ADX >25, volume >1.5x, VWAP-aligned, BTC-regime-aligned.
+
+For EVERY symbol respond with a STRUCTURED expert analysis (STRICT JSON only, no markdown):
+{"verdicts":{"SYMBOL":{
+  "verdict":"LONG"|"SHORT"|"AVOID",
+  "confidence":0-100,
+  "note":"max 15 words",
+  "analysis":"2-3 sentences: indicator state, entry timing quality, momentum/catalyst read — your reasoning chain",
+  "riskFactors":["risk 1","risk 2"],
+  "entryQuality":1-10,
+  "tradeType":"SCALP"|"MOMENTUM"|"SWING",
+  "slAdjust":null-or-tighter-stop-price,
+  "entryAdjust":null-or-better-entry-price
+}}}
+slAdjust/entryAdjust: only suggest when clearly better than the engine plan (tighter risk / superior entry). Use null otherwise.`
+    : `You are an elite NSE/BSE intraday EXPERT analyst (15+ yrs prop-desk) running as an MCP verification tool. You receive pre-scored setups from a v4 quantitative engine (EMA/VWAP/Supertrend/ORB/CPR/ADX/SMA50-confluence/pivot/volume/momentum/gap factors). Analyze each setup IN DEPTH and verify strictly.
 
 PENALIZE: RSI exhaustion (>75/<25), poor RR (<1.5), counter-VWAP direction, low relative volume (<1.2x), overextension far from VWAP (>1.5%), weak ADX (<18), extreme gap (>2.5%), counter-regime setups when NIFTY is strongly bearish (LONG) or bullish (SHORT). In early phase (9:15-9:45 IST) reduce confidence by 5-10 pts. Boost only high-conviction confluence: ADX >25, volume >1.5x, VWAP-aligned.
 

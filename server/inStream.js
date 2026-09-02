@@ -8,19 +8,22 @@
 // office/campus networks → "India prices not streaming" in those conditions.
 //
 // This module closes that gap with the same self-managing lifecycle as
-// cryptoStream: polls Groww NSE live quotes every 5s ONLY while SSE clients
+// cryptoStream: polls Groww NSE live quotes every 3s ONLY while SSE clients
 // are connected AND the NSE window is open (09:15–15:40 IST). Indices
 // (NIFTY/BANKNIFTY/… — Groww has no index quotes) fall back to Yahoo.
 // Outside NSE hours a one-shot refresh per newly-subscribed symbol still
 // seeds the SSE snapshot so a freshly-loaded site paints India prices.
 //
 // All upstream calls go through the injected deps from index.js, which are
-// 3s micro-cached there — the 5s poll is shared with the browser pollers,
+// 3s micro-cached there — the 3s poll is shared with the browser pollers,
 // so N SSE clients still cost ONE upstream round-trip per symbol.
 // ============================================================
 import { setTick } from './liveFeed.js';
 
-const POLL_MS = 5000;
+// 2026-09 ultra-fast pass: 5s → 3s — India ticks at the same cadence as the
+// US TV-batch stream. Upstream cost is absorbed by the shared 3s Groww
+// micro-cache in index.js, so N SSE clients still cost ONE round-trip/symbol.
+const POLL_MS = 3000;
 const BACKOFF_MS = 30000;
 const FAILURE_STREAK_LIMIT = 3;
 const BATCH = 24;
@@ -202,7 +205,7 @@ export function ensureInSubscribed(symbols) {
   // Groww/Yahoo serve the last traded price, which is correct when closed).
   fresh.forEach(sym => { _refreshSymbol(sym).catch(() => { }); });
   // If clients are already connected and the NSE window is open, ensure the
-  // 5s loop covers the new symbols too.
+  // 3s loop covers the new symbols too.
   if (_activeClients > 0 && _subscribed.size > 0) _startIfNeeded();
 }
 

@@ -22,7 +22,7 @@
 //                                     tools, Gemini→Groq→Cerebras chain)
 // ============================================================
 import {
-  BASE_UNIVERSE, INTRADAY_MIN_CONFIDENCE, INTRADAY_TOP_N, gradeSignal, inDeadZone,
+  BASE_UNIVERSE, CRYPTO_UNIVERSE, INTRADAY_MIN_CONFIDENCE, INTRADAY_TOP_N, gradeSignal, inDeadZone,
   fetchIntradayDataBatch, analyzeIntradayFromScanner, aiVerifySignals,
 } from './engine.js';
 import { runProTraderAgent } from './agent.js';
@@ -30,8 +30,8 @@ import { runCommitteeDebate, clearCommitteeCache } from './committee.js';
 import { generateDailyBriefing, pushMorningBriefingToTelegram, getLastBriefing } from './briefing.js';
 import { getJournal, runEodReview, runWeeklyReport, initJournal } from './journal.js';
 import cron from 'node-cron';
-import { istMinutes, getISTParts, isNseMarketOpen } from './time.js';
-import { getMarketRegime, freshEntriesAllowedNow } from './regime.js';
+import { istMinutes, getISTParts, isNseMarketOpen, isMarketOpenFor, freshEntriesAllowedFor } from './time.js';
+import { getMarketRegime, getCryptoRegime, freshEntriesAllowedNow } from './regime.js';
 import { dispatchIntradayAlerts, dispatchOutcomeAlert, alertsStatus, setAlertsEnabled } from './alerts.js';
 import { recordSignals, getTrackRecord, initTrackRecord } from './trackRecord.js';
 import { openPaperTrade, closePaperTrade, getPaperSummary, getPaperHistory, restorePaperTrades, initPaperTrading } from './paperTrading.js';
@@ -39,31 +39,52 @@ import { initIntradayStream, intradayStreamHandler, setScanSymbols, getLatestQuo
 import { loadJSON, saveJSON } from './store.js';
 
 // ------------------------------------------------------------
-// Custom universe / watchlist (persisted).
+// Custom universe / watchlist (persisted) — PER MARKET (2026-09):
+//   INDIA  → intraday-universe.json      (NSE BASE_UNIVERSE)
+//   CRYPTO → intraday-universe-crypto.json (CRYPTO_UNIVERSE)
 // effective = (BASE − removedBase) + custom   (cap: +50 custom)
 // ------------------------------------------------------------
 const UNIVERSE_FILE = 'intraday-universe.json';
+const UNIVERSE_CRYPTO_FILE = 'intraday-universe-crypto.json';
 const UNIVERSE_CUSTOM_MAX = 50;
 let _universe = loadJSON(UNIVERSE_FILE, { removedBase: [], custom: [] });
+let _cryptoUniverse = loadJSON(UNIVERSE_CRYPTO_FILE, { removedBase: [], custom: [] });
 
 function _validCustomSym(s) {
   return typeof s === 'string' && /^[A-Z0-9&\-]{2,15}$/.test(s.trim().toUpperCase());
 }
 
-function effectiveUniverse() {
-  const removed = new Set(_universe.removedBase || []);
-  const custom = (_universe.custom || []).filter(_validCustomSym);
-  return [...new Set([...BASE_UNIVERSE.filter(s => !removed.has(s)), ...custom])];
+const _normMarket = (m) => (String(m || '').toUpperCase() === 'CRYPTO' ? 'CRYPTO' : 'INDIA');
+
+function _universeStateFor(market) {
+  return market === 'CRYPTO' ? _cryptoUniverse : _universe;
+}
+function _baseUniverseFor(market) {
+  return market === 'CRYPTO' ? CRYPTO_UNIVERSE : BASE_UNIVERSE;
 }
 
-function _saveUniverse() { saveJSON(UNIVERSE_FILE, _universe); }
+function effectiveUniverse(market = 'INDIA') {
+  const mkt = _normMarket(market);
+  const state = _universeStateFor(mkt);
+  const removed = new Set(state.removedBase || []);
+  const custom = (state.custom || []).filter(_validCustomSym);
+  return [...new Set([..._baseUniverseFor(mkt).filter(s => !removed.has(s)), ...custom])];
+}
 
-export function getUniverseInfo() {
-  const eff = effectiveUniverse();
+function _saveUniverse(market) {
+  saveJSON(market === 'CRYPTO' ? UNIVERSE_CRYPTO_FILE : UNIVERSE_FILE, _universeStateFor(market));
+}
+
+export function getUniverseInfo(market = 'INDIA') {
+  const mkt = _normMarket(market);
+  const state = _universeStateFor(mkt);
+  const base = _baseUniverseFor(mkt);
+  const eff = effectiveUniverse(mkt);
   return {
-    baseCount: BASE_UNIVERSE.length,
-    removedBase: _universe.removedBase || [],
-    custom: _universe.custom || [],
+    market: mkt,
+    baseCount: base.length,
+    removedBase: state.removedBase || [],
+    custom: state.custom || [],
     effectiveCount: eff.length,
     effective: eff,
   };
@@ -74,7 +95,7 @@ export function getUniverseInfo() {
 // ------------------------------------------------------------
 export function registerIntradayRoutes(app, deps) {
   const {
-    fetchGrowwNseQuote, KEYS, OPENAI_COMPAT, TG, escapeHtml, jsonError,
+    fetchGrowwNseQuote, fetchCoinDcxTickers, KEYS, OPENAI_COMPAT, TG, escapeHtml, jsonError,
   } = deps;
 
   // Telegram raw sender (from TG env — server-side only).
@@ -89,10 +110,12 @@ export function registerIntradayRoutes(app, deps) {
     return r.ok;
   };
 
-  // Boot the watcher + reconcile stale persisted state.
+  // Boot the watcher + reconcile stale persisted state. The watcher gets
+  // BOTH quote sources (Groww NSE + CoinDCX INR) so it serves India and
+  // crypto symbols 24/7.
   initTrackRecord();
   initPaperTrading();
-  initIntradayStream({ fetchGrowwNseQuote, sendTelegramRaw, escapeHtml, dispatchOutcomeAlert });
+  initIntradayStream({ fetchGrowwNseQuote, fetchCoinDcxTickers, sendTelegramRaw, escapeHtml, dispatchOutcomeAlert });
   initJournal();
 
   // ----------------------------------------------------------
@@ -202,11 +225,14 @@ export function registerIntradayRoutes(app, deps) {
   });
 
   // ---------------- Universe / watchlist ----------------
-  app.get('/api/intraday-universe', (_req, res) => {
-    res.json(getUniverseInfo());
+  app.get('/api/intraday-universe', (req, res) => {
+    res.json(getUniverseInfo(_normMarket(req.query.market)));
   });
 
   app.post('/api/intraday-universe', (req, res) => {
+    const market = _normMarket(req.query.market);
+    const state = _universeStateFor(market);
+    const base = _baseUniverseFor(market);
     const { add = [], remove = [], restore = [] } = req.body || {};
     if (!Array.isArray(add) || !Array.isArray(remove) || !Array.isArray(restore)) {
       return jsonError(res, 400, 'add/remove/restore must be arrays.');
@@ -216,66 +242,76 @@ export function registerIntradayRoutes(app, deps) {
     // ADD custom symbols (validated, capped).
     for (const sym of norm(add).slice(0, 20)) {
       if (!_validCustomSym(sym)) continue;
-      if (_universe.custom.length >= UNIVERSE_CUSTOM_MAX) break;
-      if (!BASE_UNIVERSE.includes(sym) && !_universe.custom.includes(sym)) _universe.custom.push(sym);
+      if (state.custom.length >= UNIVERSE_CUSTOM_MAX) break;
+      if (!base.includes(sym) && !state.custom.includes(sym)) state.custom.push(sym);
     }
     // REMOVE — either a custom add or a base symbol.
     for (const sym of norm(remove).slice(0, 20)) {
-      _universe.custom = _universe.custom.filter(s => s !== sym);
-      if (BASE_UNIVERSE.includes(sym) && !_universe.removedBase.includes(sym)) {
-        _universe.removedBase.push(sym);
+      state.custom = state.custom.filter(s => s !== sym);
+      if (base.includes(sym) && !state.removedBase.includes(sym)) {
+        state.removedBase.push(sym);
       }
     }
     // RESTORE base symbols that were removed earlier.
     for (const sym of norm(restore).slice(0, 20)) {
-      _universe.removedBase = _universe.removedBase.filter(s => s !== sym);
+      state.removedBase = state.removedBase.filter(s => s !== sym);
     }
-    _saveUniverse();
-    res.json({ ok: true, ...getUniverseInfo() });
+    _saveUniverse(market);
+    res.json({ ok: true, ...getUniverseInfo(market) });
   });
 
-  // ---------------- MAIN SCANNER ----------------
-  let _intradayCache = { data: null, ts: 0, inflight: null };
+  // ---------------- MAIN SCANNER (per-market) ----------------
+  const _intradayCache = { data: null, ts: 0, inflight: null };      // INDIA
+  const _cryptoCache = { data: null, ts: 0, inflight: null };        // CRYPTO
+  const _cacheFor = (market) => (market === 'CRYPTO' ? _cryptoCache : _intradayCache);
 
   // Core scan execution — shared by the GET route AND the Pro Trader
-  // Agent's get_live_intraday_signals tool (single code path, single cache).
-  const executeScan = async (debugForce) => {
+  // Agent's get_live_intraday_signals tool (single code path, single cache
+  // PER MARKET: NSE and CRYPTO never share cache entries).
+  const executeScan = async (debugForce, market = 'INDIA') => {
+    const mkt = _normMarket(market);
+    const cache = _cacheFor(mkt);
     try {
-        const universe = effectiveUniverse();
+        const universe = effectiveUniverse(mkt);
+        const isCrypto = mkt === 'CRYPTO';
 
         // Regime + market data in parallel (regime gates every analysis).
-        const [regime, [tvData, growwData]] = await Promise.all([
-          getMarketRegime(debugForce),
-          fetchIntradayDataBatch(universe, fetchGrowwNseQuote),
+        // CRYPTO regime = BTC-based (getCryptoRegime).
+        const [regime, [tvData, quoteData]] = await Promise.all([
+          isCrypto ? getCryptoRegime(debugForce) : getMarketRegime(debugForce),
+          isCrypto
+            ? fetchIntradayDataBatch(universe, fetchGrowwNseQuote, { market: 'CRYPTO', fetchCoinDcxTickers })
+            : fetchIntradayDataBatch(universe, fetchGrowwNseQuote),
         ]);
         const tvCount = Object.keys(tvData).length;
-        const gwCount = Object.keys(growwData).length;
-        console.log(`[intraday-scanner] Data: TV=${tvCount} symbols, Groww=${gwCount} symbols, regime=${regime?.regime || 'n/a'}`);
+        const gwCount = Object.keys(quoteData).length;
+        console.log(`[intraday-scanner:${mkt}] Data: TV=${tvCount} symbols, ${isCrypto ? 'CoinDCX' : 'Groww'}=${gwCount} symbols, regime=${regime?.regime || 'n/a'}`);
 
         const results = [];
         for (const sym of universe) {
-          const r = analyzeIntradayFromScanner(sym, tvData[sym], growwData[sym], { regime });
+          const r = analyzeIntradayFromScanner(sym, tvData[sym], quoteData[sym], { regime, market: mkt });
           if (r) results.push(r);
         }
-        console.log(`[intraday-scanner] Analyzed ${results.length}/${universe.length} symbols`);
+        console.log(`[intraday-scanner:${mkt}] Analyzed ${results.length}/${universe.length} symbols`);
 
         // v4: dead-zone hard gate — 14:30–15:00 IST setups are statistically
         // weak; nothing new is published in that window (open positions still
-        // auto-manage normally).
-        const deadZone = inDeadZone();
+        // auto-manage normally). N/A for CRYPTO (24/7).
+        const deadZone = !isCrypto && inDeadZone();
 
         // Zero results → SMART DIAGNOSTICS, not a dead-end error wall.
         if (results.length === 0) {
           const feedsCold = tvCount === 0 && gwCount === 0;
           return {
+            market: mkt,
             marketOpen: true,
             signals: [],
             scanned: 0,
             universe: universe.length,
-            sources: { tradingView: tvCount, groww: gwCount },
+            sources: { tradingView: tvCount, [isCrypto ? 'coindcx' : 'groww']: gwCount },
             retryAfterSeconds: 30,
             error: feedsCold
-              ? 'Live feeds connect ho rahe hain (market open ke turant baad ye normal hai) — 30s me auto re-scan chalega, page refresh ki zarurat nahi.'
+              ? 'Live feeds connect ho rahe hain (scanner warm-up) — 30s me auto re-scan chalega, page refresh ki zarurat nahi.'
               : 'Data warm-up me hai — scanner LIVE hai, 30s me auto re-scan se top setups yahin aa jayenge.',
           };
         }
@@ -286,8 +322,9 @@ export function registerIntradayRoutes(app, deps) {
         if (pool.length === 0 && !deadZone) pool = results.sort((a, b) => b.quantConfidence - a.quantConfidence).slice(0, 8);
         pool = pool.sort((a, b) => b.quantConfidence - a.quantConfidence).slice(0, 10);
 
-        // MCP AI verification layer — v4 structured dual-expert consensus.
-        const ai = pool.length > 0 ? await aiVerifySignals(pool, { KEYS, OPENAI_COMPAT }) : null;
+        // MCP AI verification layer — v4 structured dual-expert consensus
+        // (crypto scans get the crypto-expert system prompt).
+        const ai = pool.length > 0 ? await aiVerifySignals(pool, { KEYS, OPENAI_COMPAT, market: mkt }) : null;
 
         // v4: merge AI-adjusted levels into the engine plan (tighter SL,
         // better entry) and rebuild the R-geometry off the new risk.
@@ -311,11 +348,14 @@ export function registerIntradayRoutes(app, deps) {
                 sig.target2 = +(isLong ? sig.entry + 2.6 * risk : sig.entry - 2.6 * risk).toFixed(2);
                 sig.trailingSL = +(isLong ? sig.entry - 0.8 * atr : sig.entry + 0.8 * atr).toFixed(2);
                 sig.rr = +((Math.abs(sig.target1 - sig.entry) / risk)).toFixed(2);
-                const slip = sig.entry * 0.07 / 100; // SLIPPAGE_BPS = 7
+                const slip = sig.entry * (isCrypto ? 0.12 : 0.07) / 100; // CRYPTO 12bps / NSE 7bps
                 sig.effRR = +(((Math.abs(sig.target1 - sig.entry) - 2 * slip) / (risk + 2 * slip))).toFixed(2);
                 const qtyRisk = Math.floor(1000 / (risk + 2 * slip));
                 const qtyCap = Math.floor(25000 / sig.entry);
-                sig.qtyPerLakh = Math.max(0, Math.min(qtyRisk, qtyCap));
+                const qtyRaw = Math.max(0, Math.min(qtyRisk, qtyCap));
+                sig.qtyPerLakh = isCrypto
+                  ? (qtyRaw >= 1 ? Math.floor(qtyRaw) : Math.max(0.0001, +qtyRaw.toFixed(4)))
+                  : qtyRaw;
               }
             }
           }
@@ -373,8 +413,9 @@ export function registerIntradayRoutes(app, deps) {
 
         // Adaptive threshold: opening 30 min me quant engine cap 88 hota hai,
         // isliye min confidence 70 pe relax hota hai. Rest of the day 75.
+        // CRYPTO: no IST opening window — always the standard threshold.
         const _istMins = istMinutes();
-        const minConf = (_istMins >= 9 * 60 + 15 && _istMins < 9 * 60 + 45)
+        const minConf = !isCrypto && (_istMins >= 9 * 60 + 15 && _istMins < 9 * 60 + 45)
           ? Math.min(70, INTRADAY_MIN_CONFIDENCE)
           : INTRADAY_MIN_CONFIDENCE;
 
@@ -394,6 +435,7 @@ export function registerIntradayRoutes(app, deps) {
           .map(s => ({ ...s, grade: gradeSignal(s) }));
 
         const payload = {
+          market: mkt,
           marketOpen: true,
           asOf: new Date().toISOString(),
           scanned: results.length,
@@ -402,22 +444,24 @@ export function registerIntradayRoutes(app, deps) {
           aiVerified: !!ai,
           aiModel: (ai?.models || []).join('+'),
           aiConsensus: (ai?.models || []).length > 1 ? 'multi-model' : ((ai?.models || [])[0] || ''),
-          aiEngine: 'NSE Intraday Realtime Market Expert (MCP)',
-          engine: 'SUPER INTELLIGENCE INTRADAY v4 — DUAL-AI EXPERT (Gemini+Groq) • Supertrend/POC/SMA50 confluence • ORB-15 • NIFTY/VIX regime gate • A+/A/B signal grading',
-          sources: { tradingView: tvCount, groww: gwCount },
+          aiEngine: isCrypto ? 'Crypto Intraday Realtime Market Expert (MCP)' : 'NSE Intraday Realtime Market Expert (MCP)',
+          engine: isCrypto
+            ? 'SUPER INTELLIGENCE INTRADAY v4 CRYPTO — DUAL-AI EXPERT (Gemini+Groq) • Supertrend/POC/SMA50 confluence • BTC regime gate • CoinDCX INR pricing • 24/7 session • A+/A/B grading'
+            : 'SUPER INTELLIGENCE INTRADAY v4 — DUAL-AI EXPERT (Gemini+Groq) • Supertrend/POC/SMA50 confluence • ORB-15 • NIFTY/VIX regime gate • A+/A/B signal grading',
+          sources: { tradingView: tvCount, [isCrypto ? 'coindcx' : 'groww']: gwCount },
           marketRegime: regime,
-          freshEntriesAllowed: freshEntriesAllowedNow(),
+          freshEntriesAllowed: isCrypto ? true : freshEntriesAllowedNow(),
           deadZone,
           signals,
-          disclaimer: 'Educational analysis only — not investment advice. Intraday trading me capital loss ka risk hai.',
+          disclaimer: 'Educational analysis only — not investment advice. Crypto 24/7 me volatility risk rehta hai.'
         };
-        _intradayCache.data = payload;
-        _intradayCache.ts = Date.now();
+        cache.data = payload;
+        cache.ts = Date.now();
 
         // OUTCOME ACCOUNTABILITY: persist + track the published signals,
         // and let the live watcher follow them to T1/T2/SL/EOD.
         try { recordSignals(payload.signals); } catch (e) { console.warn('[track-record]', e?.message); }
-        setScanSymbols(payload.signals.map(s => s.symbol));
+        setScanSymbols(payload.signals.map(s => s.symbol), mkt);
 
         // ALGO ALERT ENGINE — push new/reversed setups to Telegram.
         // Promise.resolve() wrapper = defense in depth: even if the dispatch
@@ -428,30 +472,35 @@ export function registerIntradayRoutes(app, deps) {
           console.warn('[intraday-alerts]', e?.message || e));
         return payload;
       } catch (e) {
-        console.error('[intraday-scanner]', e?.message || e);
-        return { marketOpen: true, signals: [], error: 'Scanner temporarily unavailable.' };
+        console.error(`[intraday-scanner:${_normMarket(market)}]`, e?.message || e);
+        return { market: _normMarket(market), marketOpen: true, signals: [], error: 'Scanner temporarily unavailable.' };
       } finally {
-        _intradayCache.inflight = null;
+        cache.inflight = null;
       }
   };
 
-  // 60s cache + in-flight dedupe so multiple clients share one scan.
-  const runScanner = async (debugForce) => {
-    if (_intradayCache.data && Date.now() - _intradayCache.ts < 60 * 1000) {
-      return _intradayCache.data;
+  // 60s cache + in-flight dedupe so multiple clients share one scan
+  // (per market).
+  const runScanner = async (debugForce, market = 'INDIA') => {
+    const cache = _cacheFor(_normMarket(market));
+    if (cache.data && Date.now() - cache.ts < 60 * 1000) {
+      return cache.data;
     }
-    if (_intradayCache.inflight) return _intradayCache.inflight;
-    _intradayCache.inflight = executeScan(debugForce);
-    return _intradayCache.inflight;
+    if (cache.inflight) return cache.inflight;
+    cache.inflight = executeScan(debugForce, market);
+    return cache.inflight;
   };
 
-  app.get('/api/intraday-scanner', async (_req, res) => {
-    // Market-hours gate — hard requirement for this feature.
-    // INTRADAY_DEBUG=1 (owner-only env var) bypasses the gate for pipeline testing.
+  app.get('/api/intraday-scanner', async (req, res) => {
+    const market = _normMarket(req.query.market);
     const debugForce = process.env.INTRADAY_DEBUG === '1';
-    if (!isNseMarketOpen() && !debugForce) {
+    // Market-hours gate — hard requirement for the NSE feature.
+    // CRYPTO trades 24/7 — its scanner is always live.
+    // INTRADAY_DEBUG=1 (owner-only env var) bypasses the gate for pipeline testing.
+    if (!isMarketOpenFor(market) && !debugForce) {
       const { hour, minute, weekday } = getISTParts();
       return res.json({
+        market,
         marketOpen: false,
         istTime: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} IST`,
         weekday,
@@ -460,7 +509,7 @@ export function registerIntradayRoutes(app, deps) {
       });
     }
 
-    return res.json(await runScanner(debugForce));
+    return res.json(await runScanner(debugForce, market));
   });
 
   // ----------------------------------------------------------
@@ -470,8 +519,10 @@ export function registerIntradayRoutes(app, deps) {
   // ----------------------------------------------------------
   app.get('/api/intraday-signal-detail/:symbol', (req, res) => {
     const sym = String(req.params.symbol || '').trim().toUpperCase();
-    if (!/^[A-Z0-9&\-]{2,15}$/.test(sym)) return jsonError(res, 400, 'Valid NSE symbol required.');
-    const scan = _intradayCache.data;
+    if (!/^[A-Z0-9&\-]{2,15}$/.test(sym)) return jsonError(res, 400, 'Valid symbol required.');
+    const scan = _intradayCache.data?.signals?.find(x => x.symbol === sym)
+      ? _intradayCache.data
+      : _cryptoCache.data;
     const s = scan?.signals?.find(x => x.symbol === sym);
     if (!s) {
       return jsonError(res, 404, `No live signal for ${sym} — scanner cache me nahi hai (market band / filtered out ho sakta hai).`);

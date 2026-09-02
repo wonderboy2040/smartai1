@@ -12,7 +12,8 @@ export interface IntradaySignal {
   aiConfidence: number | null;
   aiModel: string;
   aiNote: string;
-  exchange?: 'NSE' | 'BSE';
+  market?: 'INDIA' | 'CRYPTO';
+  exchange?: 'NSE' | 'BSE' | 'BINANCE' | 'COINDCX';
   entry: number;
   entryZoneLow?: number;
   entryZoneHigh?: number;
@@ -53,12 +54,17 @@ export interface IntradaySignal {
 }
 
 export interface MarketRegime {
+  market?: 'INDIA' | 'CRYPTO';
   regime: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   vix: number | null;
   vixLevel: 'LOW' | 'ELEVATED' | 'HIGH' | null;
   niftyChange: number;
   niftyVwapDist: number;
   niftyRsi?: number | null;
+  // CRYPTO regime payload (BTC-based) — mirrored keys.
+  btcChange?: number;
+  btcVwapDist?: number;
+  btcRsi?: number | null;
   asOf?: string;
 }
 
@@ -71,6 +77,7 @@ export interface IntradayAlertsStatus {
 }
 
 export interface ScannerResponse {
+  market?: 'INDIA' | 'CRYPTO';
   marketOpen: boolean;
   istTime?: string;
   weekday?: string;
@@ -83,7 +90,7 @@ export interface ScannerResponse {
   aiConsensus?: string;
   aiEngine?: string;
   engine?: string;
-  sources?: { tradingView?: number; groww?: number };
+  sources?: { tradingView?: number; groww?: number; coindcx?: number };
   marketRegime?: MarketRegime | null;
   freshEntriesAllowed?: boolean;
   deadZone?: boolean;
@@ -115,6 +122,7 @@ export interface OutcomeEvent {
 export interface PaperTrade {
   id: number;
   symbol: string;
+  market?: 'INDIA' | 'CRYPTO';
   direction: 'LONG' | 'SHORT';
   entry: number;
   qty: number;
@@ -201,6 +209,7 @@ export interface TrackRecordData {
 }
 
 export interface UniverseInfo {
+  market?: 'INDIA' | 'CRYPTO';
   baseCount: number;
   removedBase: string[];
   custom: string[];

@@ -365,6 +365,10 @@ export function useAppState() {
   const [indmSyncing, setIndmSyncing] = useState(false);
   const indmActiveRef = useRef(false);
   const indmBusyRef = useRef(false);
+  // Mirror for the 90s AI-context generator (it runs in an interval closure
+  // that must see the LATEST sync status without re-subscribing).
+  const indmMetaRef = useRef<IndmSyncMeta | null>(null);
+  useEffect(() => { indmMetaRef.current = indmMeta; }, [indmMeta]);
 
   const loadIndmAssets = useCallback(async (force = false): Promise<boolean> => {
     if (indmBusyRef.current) return false;
@@ -396,6 +400,7 @@ export function useAppState() {
           name: a.name,
           noLive: a.noLive,
           indmKey: a.key,
+          source: a.source === 'coindcx' ? 'coindcx' : (a.source ? 'indmoney' : undefined),
         }));
         setPortfolio(positions);
         try { secureStorage.setItem('portfolio', JSON.stringify(positions)); } catch { /* quota */ }
@@ -873,11 +878,11 @@ export function useAppState() {
     };
 
     pollCrypto();
-    // PERF (2026 lag audit): 2s → 10s. Crypto dashboard prices don't change
-    // meaningfully within 2s, but at 2s this poller was firing 30 server
-    // requests/minute per tab (CoinDCX proxy) — a major share of the request
-    // flood that made the app feel laggy. 10s still reads as "live".
-    const cryptoInterval = window.setInterval(pollCrypto, 10000);
+    // 2026-09 ultra-fast pass: 10s → 3s. The SSE stream pushes CoinDCX+
+    // Binance-projected ticks every ~1-2s; this HTTP poller is only the
+    // safety net (in-flight guard + Binance geo-block breaker below keep
+    // it cheap — 20 requests/minute through the shared server cache).
+    const cryptoInterval = window.setInterval(pollCrypto, 3000);
     return () => { clearInterval(cryptoInterval); };
   }, [isAuthenticated, hasCrypto, flushPricesToStorage]);
 
@@ -1071,15 +1076,16 @@ export function useAppState() {
     let syncTimer: number | null = null;
     let syncStopped = false;
     const sync = async () => {
-      // 2026 perf audit (H4): skip the redundant re-fetch when the SSE push
-      // stream is healthy — the dedicated 5s pollers + SSE already cover
-      // these exact symbols, so this 15s loop was pure duplicate traffic
-      // (~3 requests/15s per client against the same upstream). If the SSE
-      // sources go dark ({} = none live) the pollers resume automatically.
+      // 2026-09 ultra-fast pass: the crypto SSE source ticks 24/7 every 1-2s,
+      // which previously masked the WHOLE batch loop (anySseLive → skip) —
+      // even when the US or India feed specifically was dark. Gate PER
+      // MARKET now: the batch loop only sleeps while BOTH the India and US
+      // SSE sources are healthy (the crypto poller covers its own market).
       const feeds = feedStatusRef.current;
-      const anySseLive = Object.values(feeds).some(Boolean);
-      if (anySseLive) {
-        // Still keep the TV-enrichment + storage flush path warm.
+      const inSseLive = Object.keys(feeds).some(s => feeds[s] && /in-stream|groww/.test(s));
+      const usSseLive = Object.keys(feeds).some(s => feeds[s] && /finnhub|us-fallback|tv-us-batch/.test(s));
+      if (inSseLive && usSseLive) {
+        // Still keep the storage flush path warm.
         flushPricesToStorage();
         return;
       }
@@ -1502,6 +1508,18 @@ export function useAppState() {
       ctx += `Total P&L: ${currentMetrics.totalPL >= 0 ? '+' : ''}₹${Math.round(currentMetrics.totalPL).toLocaleString('en-IN')} (${currentMetrics.plPct.toFixed(2)}%)\n`;
       ctx += `Today P&L: ${currentMetrics.todayPL >= 0 ? '+' : ''}₹${Math.round(currentMetrics.todayPL).toLocaleString('en-IN')}\n`;
       ctx += `Total Assets: ${p.length}\n\n`;
+      // 2026-09 site integration: portfolio source + freshness header so the
+      // AI knows WHERE the portfolio comes from (INDMoney MCP / CoinDCX
+      // exchange) and how fresh the NAV rows are.
+      const im = indmMetaRef.current;
+      if (im && (im.counts?.assets ?? 0) > 0) {
+        const c = im.counts!;
+        ctx += `=== PORTFOLIO SOURCE (site-synced) ===\n`;
+        ctx += `Sources: INDMoney=${(c.assets ?? 0) - (c.coindcx ?? 0)} · CoinDCX=${c.coindcx ?? 0} · Live-priced=${c.live ?? 0} · NAV-priced=${c.noLive ?? 0}\n`;
+        ctx += `Last sync: ${im.syncedAt ? new Date(im.syncedAt).toISOString() : 'unknown'}${im.stale ? ' (STALE — NAV values may be outdated)' : ''}\n`;
+        if (im.nextSyncAt) ctx += `Next auto-sync: ${new Date(im.nextSyncAt).toISOString()} (2× daily 09:30/21:30 IST)\n`;
+        ctx += `\n`;
+      }
       ctx += `=== ALL ${p.length} PORTFOLIO POSITIONS WITH LIVE TECHNICALS ===\n`;
       for (let idx = 0; idx < p.length; idx++) {
         const pos = p[idx];
@@ -1531,7 +1549,16 @@ export function useAppState() {
         const isCryptoAsset = isCryptoSymbol(cleanSym);
         const assetType = isCryptoAsset ? 'CRYPTO' : pos.market;
         const trend = (data?.sma20 && data?.sma50) ? (data.sma20 > data.sma50 ? 'BULL' : 'BEAR') : (change > 0.5 ? 'BULL' : change < -0.5 ? 'BEAR' : 'FLAT');
-        ctx += `${idx + 1}. ${cleanSym} [${assetType}] | Price=${curPrice.toFixed(2)} | Chg=${change >= 0 ? '+' : ''}${change.toFixed(2)}% | RSI=${rsi.toFixed(0)} | MACD=${macd} | SMA20=${sma20} | SMA50=${sma50} | Trend=${trend} | Vol=${vol} | Signal=${sig.signal} | Confidence=${sig.confidence}% | SL=${slPrice.toFixed(2)} | TP=${tpPrice.toFixed(2)} | AvgBuy=${pos.avgPrice.toFixed(2)} | Qty=${pos.qty} | Invested=${invested.toFixed(0)} | CurVal=${curVal.toFixed(0)} | P&L=${plPct >= 0 ? '+' : ''}${plPct.toFixed(2)}% (${plAbs >= 0 ? '+' : ''}${plAbs.toFixed(0)}) | Holding=${holdingLabel} | CAGR=${cagrPct >= 0 ? '+' : ''}${cagrPct.toFixed(1)}%\n`;
+        // 2026-09: source tag (INDMONEY/COINDCX/MANUAL) + full name + NAV
+        // awareness — NAV rows (MF/FD/bond) have NO technicals; the AI must
+        // treat their price as the sync-time unit value, not a live quote.
+        const srcTag = pos.source === 'coindcx' ? 'COINDCX' : (pos.source === 'indmoney' ? 'INDMONEY' : 'MANUAL');
+        const nameTag = pos.name && pos.name !== cleanSym ? ` | Name="${String(pos.name).slice(0, 40)}"` : '';
+        if (pos.noLive) {
+          ctx += `${idx + 1}. ${cleanSym} [${assetType}/NAV·${srcTag}]${nameTag} | Price=₹${curPrice.toFixed(2)} (sync value, NAV) | Chg=${change >= 0 ? '+' : ''}${change.toFixed(2)}% (sync) | AvgBuy=${pos.avgPrice.toFixed(2)} | Qty=${pos.qty} | Invested=${invested.toFixed(0)} | CurVal=${curVal.toFixed(0)} | P&L=${plPct >= 0 ? '+' : ''}${plPct.toFixed(2)}% (${plAbs >= 0 ? '+' : ''}${plAbs.toFixed(0)}) | Holding=${holdingLabel} | CAGR=${cagrPct >= 0 ? '+' : ''}${cagrPct.toFixed(1)}% | NOTE: no live exchange quote — fund/NAV asset, technicals N/A\n`;
+        } else {
+          ctx += `${idx + 1}. ${cleanSym} [${assetType}/${srcTag}]${nameTag} | Price=${curPrice.toFixed(2)} | Chg=${change >= 0 ? '+' : ''}${change.toFixed(2)}% | RSI=${rsi.toFixed(0)} | MACD=${macd} | SMA20=${sma20} | SMA50=${sma50} | Trend=${trend} | Vol=${vol} | Signal=${sig.signal} | Confidence=${sig.confidence}% | SL=${slPrice.toFixed(2)} | TP=${tpPrice.toFixed(2)} | AvgBuy=${pos.avgPrice.toFixed(2)} | Qty=${pos.qty} | Invested=${invested.toFixed(0)} | CurVal=${curVal.toFixed(0)} | P&L=${plPct >= 0 ? '+' : ''}${plPct.toFixed(2)}% (${plAbs >= 0 ? '+' : ''}${plAbs.toFixed(0)}) | Holding=${holdingLabel} | CAGR=${cagrPct >= 0 ? '+' : ''}${cagrPct.toFixed(1)}%\n`;
+        }
       }
       ctx += `=== END ALL ${p.length} POSITIONS ===\n`;
 

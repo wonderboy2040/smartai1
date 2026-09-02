@@ -211,7 +211,7 @@ export const SignalCard = memo(function SignalCard({
               <GradeBadge grade={s.grade} />
               <span className="text-lg font-black text-white tracking-wide">{s.symbol}</span>
               {s.exchange && (
-                <span className={`px-1.5 py-0.5 rounded-md text-[9px] font-black font-mono border ${s.exchange === 'BSE' ? 'bg-amber-500/10 text-amber-300 border-amber-500/25' : 'bg-sky-500/10 text-sky-300 border-sky-500/25'}`}>
+                <span className={`px-1.5 py-0.5 rounded-md text-[9px] font-black font-mono border ${s.market === 'CRYPTO' ? 'bg-amber-500/10 text-amber-300 border-amber-500/25' : s.exchange === 'BSE' ? 'bg-amber-500/10 text-amber-300 border-amber-500/25' : 'bg-sky-500/10 text-sky-300 border-sky-500/25'}`}>
                   {s.exchange}
                 </span>
               )}
@@ -228,7 +228,7 @@ export const SignalCard = memo(function SignalCard({
                 {sector}
               </span>
               {s.counterTrend && (
-                <span className="px-1.5 py-0.5 rounded-md text-[9px] font-bold font-mono bg-orange-500/15 text-orange-300 border border-orange-500/30" title="NIFTY regime ke against setup — confidence penalty applied">
+                <span className="px-1.5 py-0.5 rounded-md text-[9px] font-bold font-mono bg-orange-500/15 text-orange-300 border border-orange-500/30" title={`${s.market === 'CRYPTO' ? 'BTC' : 'NIFTY'} regime ke against setup — confidence penalty applied`}>
                   ⚠ Counter-regime
                 </span>
               )}
@@ -331,7 +331,7 @@ export const SignalCard = memo(function SignalCard({
         <div className="rounded-xl bg-black/40 border border-white/5 p-2.5 space-y-1.5 text-[10px] font-mono">
           <div className="flex items-center justify-between text-slate-300">
             <span className="text-slate-400">💼 Position Sizing (₹1L Cap):</span>
-            <b className="text-cyan-300 font-bold">{s.qtyPerLakh ? `${s.qtyPerLakh} shares` : '—'} (1% Max Risk)</b>
+            <b className="text-cyan-300 font-bold">{s.qtyPerLakh ? `${s.qtyPerLakh} ${s.market === 'CRYPTO' ? 'units' : 'shares'}` : '—'} (1% Max Risk)</b>
           </div>
           <div className="flex items-center justify-between text-slate-300">
             <span className="text-slate-400">🛡️ Trailing SL Rule:</span>

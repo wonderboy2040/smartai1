@@ -70,9 +70,16 @@ function readPref(key: string, fallback: boolean): boolean {
   catch { return fallback; }
 }
 
-// ---------- Regime banner (v4: + volatility regime + optimal trade window) ----------
-function RegimeBanner({ regime, phase }: { regime: MarketRegime | null; phase?: string }) {
+// ---------- Market type ----------
+type IntradayMarket = 'INDIA' | 'CRYPTO';
+
+// ---------- Regime banner (v4: + volatility regime + optimal trade window; 2026-09: crypto BTC variant) ----------
+function RegimeBanner({ regime, phase, market }: { regime: MarketRegime | null; phase?: string; market?: IntradayMarket }) {
   if (!regime) return null;
+  const isCrypto = market === 'CRYPTO';
+  const change = isCrypto ? (regime.btcChange ?? 0) : regime.niftyChange;
+  const vwapDist = isCrypto ? (regime.btcVwapDist ?? 0) : regime.niftyVwapDist;
+  const baseLabel = isCrypto ? 'BTC' : 'NIFTY';
   const conf = {
     BULLISH: 'bg-emerald-500/10 border-emerald-500/25 text-emerald-300',
     BEARISH: 'bg-red-500/10 border-red-500/25 text-red-300',
@@ -93,17 +100,22 @@ function RegimeBanner({ regime, phase }: { regime: MarketRegime | null; phase?: 
   return (
     <div className="flex items-center gap-2 flex-wrap text-[10px] font-mono">
       <span className={`px-2.5 py-1 rounded-xl border font-black ${conf}`}>
-        NIFTY {regime.regime} {regime.niftyChange >= 0 ? '▲' : '▼'}{Math.abs(regime.niftyChange).toFixed(2)}%
-        <span className="ml-1 font-normal opacity-70">(VWAP {regime.niftyVwapDist >= 0 ? '+' : ''}{regime.niftyVwapDist.toFixed(2)}%)</span>
+        {baseLabel} {regime.regime} {change >= 0 ? '▲' : '▼'}{Math.abs(change).toFixed(2)}%
+        <span className="ml-1 font-normal opacity-70">(VWAP {vwapDist >= 0 ? '+' : ''}{vwapDist.toFixed(2)}%)</span>
       </span>
       {regime.vix != null && (
-        <span className={`px-2.5 py-1 rounded-xl border font-black ${vixConf}`} title="INDIA VIX">
-          VIX {regime.vix.toFixed(1)} · {volRegime}
+        <span className={`px-2.5 py-1 rounded-xl border font-black ${vixConf}`} title={isCrypto ? 'BTC 24h volatility' : 'INDIA VIX'}>
+          {isCrypto ? '24h' : 'VIX'} {regime.vix.toFixed(1)} · {volRegime}
         </span>
       )}
-      {phase && (
+      {phase && !isCrypto && (
         <span className={`px-2.5 py-1 rounded-xl border font-bold ${windowInfo.cls}`} title={windowInfo.tip}>
           ⏱ {windowInfo.label}
+        </span>
+      )}
+      {isCrypto && (
+        <span className="px-2.5 py-1 rounded-xl border font-bold bg-purple-500/10 border-purple-500/25 text-purple-300">
+          ⚡ 24/7 SESSION — no EOD square-off
         </span>
       )}
       <span className="text-slate-500 hidden sm:inline">Counter-regime setups auto-penalized (v4: -10)</span>
@@ -286,13 +298,17 @@ function SignalDetailModal({ signal, onClose }: {
 function PaperTradeModal({ signal, onClose, onDone }: {
   signal: IntradaySignal | null; onClose: () => void; onDone: (ok: boolean, error?: string) => void;
 }) {
-  const [qty, setQty] = useState<number>(signal?.qtyPerLakh ?? 10);
+  const isCrypto = signal?.market === 'CRYPTO';
+  const defaultQty = signal?.qtyPerLakh ?? (isCrypto ? 0.01 : 10);
+  const [qty, setQty] = useState<number>(defaultQty);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setQty(signal?.qtyPerLakh ?? 10); }, [signal]);
+  useEffect(() => { setQty(signal?.qtyPerLakh ?? (signal?.market === 'CRYPTO' ? 0.01 : 10)); }, [signal]);
   if (!signal) return null;
 
   const risk = Math.abs(signal.entry - signal.stopLoss) * qty;
   const long = signal.direction === 'LONG';
+  const qtyStep = isCrypto ? 0.0001 : 1;
+  const fmtQty = (v: number) => isCrypto ? v.toFixed(4) : String(Math.floor(v));
 
   const go = async () => {
     setBusy(true);
@@ -320,16 +336,21 @@ function PaperTradeModal({ signal, onClose, onDone }: {
         </div>
 
         <div>
-          <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Quantity (shares)</label>
+          <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+            Quantity ({isCrypto ? 'crypto units — fractional OK' : 'shares'})
+          </label>
           <input
-            type="number" min={1} max={100000} value={qty}
-            onChange={(e) => setQty(Math.max(1, Math.min(100000, Math.floor(Number(e.target.value) || 1))))}
+            type="number" min={isCrypto ? 0.0001 : 1} max={100000} step={qtyStep} value={qty}
+            onChange={(e) => {
+              const v = Number(e.target.value) || (isCrypto ? 0.0001 : 1);
+              setQty(Math.max(isCrypto ? 0.0001 : 1, Math.min(100000, isCrypto ? +v.toFixed(4) : Math.floor(v))));
+            }}
             className="w-full mt-1 bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm font-mono text-slate-200 focus:border-purple-500/50 focus:outline-none"
             disabled={busy}
           />
           <div className="flex justify-between text-[10px] font-mono text-slate-500 mt-1">
             <span>Risk @ SL: <b className="text-red-400">₹{risk.toFixed(0)}</b></span>
-            <span>Capital: <b className="text-slate-300">₹{(qty * signal.entry).toFixed(0)}</b></span>
+            <span>Capital: <b className="text-slate-300">₹{(qty * signal.entry).toFixed(0)}</b>{isCrypto && <span className="ml-1 text-purple-300">({fmtQty(qty)} u)</span>}</span>
           </div>
         </div>
 
@@ -337,7 +358,9 @@ function PaperTradeModal({ signal, onClose, onDone }: {
           {busy ? 'OPENING…' : `OPEN VIRTUAL ${long ? 'LONG' : 'SHORT'} ⚡`}
         </button>
         <p className="text-[9px] text-slate-600 font-mono text-center">
-          Auto-managed: T1 → 50% book + breakeven trail • SL/T2 → close • 15:10 IST square-off
+          {isCrypto
+            ? 'Auto-managed: T1 → 50% book + breakeven trail • SL/T2 → close • 24/7 session (no EOD square-off)'
+            : 'Auto-managed: T1 → 50% book + breakeven trail • SL/T2 → close • 15:10 IST square-off'}
         </p>
       </div>
     </div>
@@ -380,6 +403,8 @@ export const IntradayTab = () => {
   const [data, setData] = useState<ScannerResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastFetch, setLastFetch] = useState<number>(0);
+  const [market, setMarket] = useState<IntradayMarket>(() =>
+    (localStorage.getItem('intraday_market') === 'CRYPTO' ? 'CRYPTO' : 'INDIA'));
   const [alertStatus, setAlertStatus] = useState<IntradayAlertsStatus | null>(null);
   const [filterDir, setFilterDir] = useState<'ALL' | 'LONG' | 'SHORT'>('ALL');
   const [filterGrade, setFilterGrade] = useState<'A' | 'A+' | 'ALL'>('A'); // v4: default A & A+
@@ -407,14 +432,19 @@ export const IntradayTab = () => {
   // (45s timeout) could start overlapping requests whose responses then
   // landed out of order (an older scan overwriting a newer one on setData).
   const inFlightRef = useRef(false);
+  const marketRef = useRef<IntradayMarket>(market);
+  marketRef.current = market;
   const fetchSignals = useCallback(async (silent = false) => {
     if (inFlightRef.current) return; // a scan is already running
     inFlightRef.current = true;
     if (!silent) setLoading(true);
     try {
-      const res = await apiFetch(`${PROXY_BASE}/api/intraday-scanner`, { signal: AbortSignal.timeout(45000) });
+      const res = await apiFetch(`${PROXY_BASE}/api/intraday-scanner?market=${marketRef.current}`, { signal: AbortSignal.timeout(45000) });
       const json: ScannerResponse = await res.json();
-      if (mountedRef.current) {
+      // Stale-response guard: a market switch mid-flight must not paint the
+      // other market's payload (classic race → wrong-universe signals).
+      const responseMarket: IntradayMarket = json?.market === 'CRYPTO' ? 'CRYPTO' : 'INDIA';
+      if (mountedRef.current && responseMarket === marketRef.current) {
         setData(json);
         setLastFetch(Date.now());
         if (json.retryAfterSeconds && json.signals.length === 0) {
@@ -429,7 +459,7 @@ export const IntradayTab = () => {
       inFlightRef.current = false;
       if (mountedRef.current) setLoading(false);
     }
-  }, []);
+  }, [market]);
 
   const fetchAlertStatus = useCallback(async () => {
     try {
@@ -463,6 +493,7 @@ export const IntradayTab = () => {
   }, [alertStatus?.enabled]);
 
   // ---------- SSE live stream ----------
+  const isCryptoMode = market === 'CRYPTO';
   const streamEnabled = !!data && data.marketOpen !== false;
   const handleOutcome = useCallback((ev: OutcomeEvent) => {
     const id = ++toastIdRef.current;
@@ -474,7 +505,10 @@ export const IntradayTab = () => {
   const stream = useIntradayStream(streamEnabled, handleOutcome);
 
   // Effective regime: prefer the live SSE push, fall back to scan payload.
-  const regime = stream.regime ?? data?.marketRegime ?? null;
+  // Crypto mode uses the BTC regime frame; India mode the NIFTY one.
+  const regime = isCryptoMode
+    ? (stream.cryptoRegime ?? (data?.market === 'CRYPTO' ? data.marketRegime : null))
+    : (stream.regime ?? (data && data.market !== 'CRYPTO' ? data.marketRegime : null));
 
   // ---------- New-signal detection → notification + sound ----------
   useEffect(() => {
@@ -530,13 +564,25 @@ export const IntradayTab = () => {
     };
   }, [fetchSignals, fetchAlertStatus, fetchTrackStats]);
 
+  // 2026-09 multi-market: switching market resets the scan (crypto and NSE
+  // never share payloads) and persists the choice.
+  const switchMarket = useCallback((m: IntradayMarket) => {
+    if (m === market) return;
+    try { localStorage.setItem('intraday_market', m); } catch { /* noop */ }
+    setMarket(m);
+    setData(null);
+    setLastFetch(0);
+    prevSignalsRef.current = new Map();
+    setLoading(true);
+  }, [market]);
+
   // v4: refresh win-rate strip when track-record outcomes change.
   useEffect(() => { fetchTrackStats(); }, [trackRefresh, fetchTrackStats]);
 
   // ---------- Derived state ----------
-  const marketClosed = data && !data.marketOpen;
-  const freshAllowed = data?.freshEntriesAllowed ?? true;
-  const inDeadZone = !!data?.deadZone;
+  const marketClosed = data && !data.marketOpen; // only possible in INDIA mode (crypto is 24/7)
+  const freshAllowed = isCryptoMode ? true : (data?.freshEntriesAllowed ?? true);
+  const inDeadZone = !isCryptoMode && !!data?.deadZone;
   // Live session phase (from first signal or fallback).
   const sessionPhase = data?.signals?.[0]?.marketPhase || undefined;
   const gradeMatch = useCallback((s: IntradaySignal) => {
@@ -650,8 +696,27 @@ export const IntradayTab = () => {
             >
               <span>🔔</span> ALGO {alertStatus?.enabled ? 'ON' : 'OFF'}
             </button>
+            <div className="flex items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/10" title="Market: NSE (09:15–15:30 IST) ya CRYPTO (24/7 CoinDCX INR)">
+              <button
+                onClick={() => switchMarket('INDIA')}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-black font-mono transition-all ${market === 'INDIA' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                🇮🇳 NSE
+              </button>
+              <button
+                onClick={() => switchMarket('CRYPTO')}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-black font-mono transition-all ${market === 'CRYPTO' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                ₿ CRYPTO
+              </button>
+            </div>
             {marketClosed ? (
               <span className="px-3 py-1.5 rounded-xl bg-red-500/15 border border-red-500/30 text-red-400 text-[11px] font-black">🔴 MARKET CLOSED</span>
+            ) : isCryptoMode ? (
+              <span className="px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] font-black animate-pulse-dot flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping inline-block" />
+                ₿ CRYPTO 24/7
+              </span>
             ) : (
               <span className="px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[11px] font-black animate-pulse-dot flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
@@ -667,15 +732,15 @@ export const IntradayTab = () => {
           </div>
         </div>
 
-        {/* Regime banner + win-rate strip (v4) */}
+        {/* Regime banner + win-rate strip (v4) — market-aware */}
         {regime && !marketClosed && (
           <div className="mt-3 pt-2.5 border-t border-white/5 space-y-2.5">
-            <RegimeBanner regime={regime} phase={sessionPhase} />
+            <RegimeBanner regime={regime} phase={sessionPhase} market={market} />
             <WinRateStrip track={trackStats} todayCount={data?.signals?.length ?? 0} todayAPlus={todayAPlus} />
           </div>
         )}
 
-        {/* v4: dead-zone banner (14:30–15:00 IST) */}
+        {/* v4: dead-zone banner (14:30–15:00 IST) — NSE only */}
         {inDeadZone && !marketClosed && (
           <div className="rounded-2xl border border-rose-500/25 bg-rose-500/[0.05] px-4 py-2.5 flex items-center gap-3 mt-3">
             <span className="text-xl">⏸</span>
@@ -691,10 +756,10 @@ export const IntradayTab = () => {
           <div className="flex items-center justify-between gap-2 mt-2.5 pt-2.5 border-t border-white/5 text-[11px] font-mono text-slate-400 flex-wrap">
             <div>
               Scan: <b className="text-slate-200">{new Date(data.asOf).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST</b>
-              {' '}• Resolved: <b className="text-cyan-300">{data.scanned}/{data.universe ?? '~90'}</b> stocks
+              {' '}• Resolved: <b className="text-cyan-300">{data.scanned}/{data.universe ?? '~90'}</b> {isCryptoMode ? 'coins' : 'stocks'}
               {data.sources && (
                 <span className="text-slate-500 ml-2">
-                  (TV: {data.sources.tradingView ?? 0}, Groww: {data.sources.groww ?? 0})
+                  (TV: {data.sources.tradingView ?? 0}, {isCryptoMode ? 'CoinDCX' : 'Groww'}: {(isCryptoMode ? data.sources.coindcx : data.sources.groww) ?? 0})
                 </span>
               )}
             </div>
@@ -705,11 +770,13 @@ export const IntradayTab = () => {
         )}
       </div>
 
-      {/* ===== PRO TRADER MCP AGENT — agentic chat with live tool access ===== */}
-      <ProTraderAgentPanel />
-
-      {/* ===== TRADER COMMITTEE DEBATE — 3 persona + head-of-desk verdict ===== */}
-      <CommitteePanel />
+      {/* ===== PRO TRADER MCP AGENT + COMMITTEE — NSE desk tools (India mode) ===== */}
+      {!isCryptoMode && (
+        <>
+          <ProTraderAgentPanel />
+          <CommitteePanel />
+        </>
+      )}
 
       {/* ===== Fresh-entry ban warning ===== */}
       {!marketClosed && !freshAllowed && (
@@ -805,10 +872,14 @@ export const IntradayTab = () => {
       {/* ===== Main Body ===== */}
       {loading && !data ? (
         <div className="quantum-panel rounded-2xl p-12 text-center border border-white/5">
-          <div className="text-4xl mb-3 animate-float">⚡</div>
-          <div className="text-base font-bold text-slate-200 mb-1">NSE Intraday Pro-Desk Scanner Running…</div>
+          <div className="text-4xl mb-3 animate-float">{isCryptoMode ? '₿' : '⚡'}</div>
+          <div className="text-base font-bold text-slate-200 mb-1">
+            {isCryptoMode ? 'Crypto Intraday Pro-Desk Scanner Running…' : 'NSE Intraday Pro-Desk Scanner Running…'}
+          </div>
           <div className="text-xs text-slate-400 font-medium max-w-md mx-auto">
-            TradingView + Groww live feeds se real-time indicators, NIFTY/VIX regime check aur MCP AI consensus verify ho raha hai…
+            {isCryptoMode
+              ? 'TradingView crypto indicators + CoinDCX INR live prices se setups, BTC regime check aur MCP AI consensus verify ho raha hai…'
+              : 'TradingView + Groww live feeds se real-time indicators, NIFTY/VIX regime check aur MCP AI consensus verify ho raha hai…'}
           </div>
         </div>
       ) : marketClosed ? (
@@ -885,7 +956,7 @@ export const IntradayTab = () => {
         </div>
       )}
 
-      {/* ===== Paper trading simulator ===== */}
+      {/* ===== Paper trading simulator (both markets — rows carry market badges) ===== */}
       {!marketClosed && (
         <PaperTradePanel livePrices={stream.livePrices} refreshKey={paperRefresh} />
       )}
@@ -926,6 +997,7 @@ export const IntradayTab = () => {
 
       <IntradayChartModal
         signal={chartSignal}
+        market={market}
         live={chartSignal ? stream.livePrices[chartSignal.symbol] : undefined}
         onClose={() => setChartSignal(null)}
       />
@@ -953,7 +1025,7 @@ export const IntradayTab = () => {
       />
 
       {universeOpen && (
-        <UniverseEditor onClose={() => setUniverseOpen(false)} onChanged={() => fetchSignals(true)} />
+        <UniverseEditor market={market} onClose={() => setUniverseOpen(false)} onChanged={() => fetchSignals(true)} />
       )}
     </div>
   );

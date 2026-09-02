@@ -1,15 +1,19 @@
 // ============================================================
 // intraday/UniverseEditor — custom scanner watchlist manager
 // ------------------------------------------------------------
-// Add extra NSE symbols to the scan universe (max 50), remove any
-// base symbol you never want scanned, restore removed ones.
-// Persisted server-side (survives restarts).
+// Add extra symbols to the scan universe (max 50), remove any base
+// symbol you never want scanned, restore removed ones. Persisted
+// server-side per MARKET (NSE / CRYPTO) — survives restarts.
 // ============================================================
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../../utils/api';
 import type { UniverseInfo } from './types';
 
-export function UniverseEditor({ onClose, onChanged }: { onClose: () => void; onChanged: () => void }) {
+export function UniverseEditor({ market, onClose, onChanged }: {
+  market?: 'INDIA' | 'CRYPTO'; onClose: () => void; onChanged: () => void;
+}) {
+  const mkt = market === 'CRYPTO' ? 'CRYPTO' : 'INDIA';
+  const query = mkt === 'CRYPTO' ? '?market=CRYPTO' : '';
   const [info, setInfo] = useState<UniverseInfo | null>(null);
   const [input, setInput] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -17,17 +21,17 @@ export function UniverseEditor({ onClose, onChanged }: { onClose: () => void; on
 
   const load = useCallback(async () => {
     try {
-      const res = await apiFetch(`/api/intraday-universe`, { signal: AbortSignal.timeout(8000) });
+      const res = await apiFetch(`/api/intraday-universe${query}`, { signal: AbortSignal.timeout(8000) });
       if (res.ok) setInfo(await res.json());
     } catch { /* offline */ }
-  }, []);
+  }, [query]);
 
   useEffect(() => { load(); }, [load]);
 
   const mutate = async (body: Record<string, unknown>) => {
     setBusy(true);
     try {
-      const res = await apiFetch(`/api/intraday-universe`, {
+      const res = await apiFetch(`/api/intraday-universe${query}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -63,7 +67,9 @@ export function UniverseEditor({ onClose, onChanged }: { onClose: () => void; on
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-black/30">
           <div>
-            <div className="text-sm font-black text-white">⚙ Scanner Universe</div>
+            <div className="text-sm font-black text-white">
+              ⚙ Scanner Universe {mkt === 'CRYPTO' && <span className="text-amber-300">· CRYPTO</span>}
+            </div>
             <div className="text-[10px] font-mono text-slate-500">
               {info ? `${info.effectiveCount} symbols scanned (${info.baseCount} base + ${info.custom.length} custom${info.removedBase.length ? `, ${info.removedBase.length} removed` : ''})` : 'loading…'}
             </div>
@@ -80,7 +86,7 @@ export function UniverseEditor({ onClose, onChanged }: { onClose: () => void; on
                 value={input}
                 onChange={(e) => setInput(e.target.value.toUpperCase())}
                 onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
-                placeholder="e.g. TATAPOWER, DMART, PNB…"
+                placeholder={mkt === 'CRYPTO' ? 'e.g. LTC, TRX, ATOM…' : 'e.g. TATAPOWER, DMART, PNB…'}
                 className="flex-1 bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 placeholder:text-slate-600 focus:border-cyan-500/50 focus:outline-none"
                 disabled={busy}
               />
@@ -88,7 +94,11 @@ export function UniverseEditor({ onClose, onChanged }: { onClose: () => void; on
                 ADD
               </button>
             </div>
-            <p className="text-[9px] text-slate-600 mt-1 font-mono">NSE cash symbols only (A-Z, 0-9, & , -). Next scan se include honge.</p>
+            <p className="text-[9px] text-slate-600 mt-1 font-mono">
+              {mkt === 'CRYPTO'
+                ? 'CoinDCX INR pair symbols only (A-Z, 0-9, & , -). Next scan se include honge.'
+                : 'NSE cash symbols only (A-Z, 0-9, & , -). Next scan se include honge.'}
+            </p>
           </div>
 
           {/* Custom list */}

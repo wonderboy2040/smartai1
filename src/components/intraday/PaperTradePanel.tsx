@@ -53,6 +53,7 @@ export async function openPaperTrade(s: IntradaySignal, qty: number): Promise<{ 
       body: JSON.stringify({
         symbol: s.symbol, direction: s.direction, entry: s.entry, qty,
         stopLoss: s.stopLoss, target1: s.target1, target2: s.target2,
+        market: s.market || (['BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','DOT','LINK','UNI','MATIC'].includes(s.symbol) ? 'CRYPTO' : 'INDIA'),
       }),
       signal: AbortSignal.timeout(8000),
     });
@@ -87,6 +88,9 @@ function TradeRow({ t, live, onClose, closing }: {
     <tr className="border-b border-white/5 hover:bg-white/[0.03]">
       <td className="px-2 py-1.5">
         <span className="font-black text-white">{t.symbol}</span>
+        {t.market === 'CRYPTO' && (
+          <span className="ml-1 px-1 py-0.5 rounded text-[8px] font-black font-mono bg-amber-500/15 text-amber-300 border border-amber-500/25" title="Crypto market · CoinDCX INR · 24/7">₿</span>
+        )}
         <span className={`ml-1 text-[9px] font-black ${t.direction === 'LONG' ? 'text-emerald-400' : 'text-red-400'}`}>
           {t.direction === 'LONG' ? 'L' : 'S'}
         </span>

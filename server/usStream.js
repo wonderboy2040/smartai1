@@ -1,18 +1,27 @@
 // usStream — multi-source self-healing real-time US equity feed
 // ---------------------------------------------------------------
-// ARCHITECTURE (2026 realtime audit — fixes the "US prices not streaming" bug):
+// ARCHITECTURE (2026-09 ultra-fast pass — fixes "US stocks (non-ETF) not
+// realtime while ETFs are"):
+//   Priority 0: TradingView america/scan BATCH — ONE POST covers EVERY
+//               gap symbol (stocks AND ETFs) with live 'last'/'close'
+//               prices. This is the cadence equalizer: previously the
+//               Yahoo fallback served only 12 symbols per 5s cycle
+//               (round-robin), so symbols late in the list (portfolio
+//               US stocks resolved from INDMoney) refreshed every 15-30s
+//               while early-list symbols (default ETFs SPY/QQQ) refreshed
+//               every 5s — exactly the ETF-vs-stock asymmetry the user
+//               reported. One batch request = every US symbol ticks at
+//               the SAME ~3s cadence.
 //   Priority 1: Finnhub WebSocket trade stream — instant push for the symbols
 //               the key actually covers (empirically: NVDA/QQQ/AAPL/MU tick,
 //               SPY/SMH/VGT/VOOG receive ZERO trades on the free tier).
-//   Priority 2: Yahoo session fallback poller (5s) — fills the WS gaps. Every
+//   Priority 2: Yahoo session fallback poller (per-symbol round-robin) —
+//               fills the symbols TV's scanner didn't return. Every
 //               subscribed symbol that has not seen a WS trade in the last
-//               10s is polled from Yahoo's live chart endpoint, so SPY/SMH/
-//               VGT/VOOG stream at a solid ~5s cadence with source
-//               'yahoo-us-fallback'. Works EVEN WITH NO FINNHUB KEY.
+//               10s is eligible. Works EVEN WITH NO FINNHUB KEY.
 //   Priority 3: Yahoo session bootstrap — one instant live snapshot per symbol
 //               the moment it is subscribed, so a freshly-loaded site paints
-//               correct US prices immediately (the old code seeded Friday's
-//               STALE Finnhub REST close here — RC3 of the audit).
+//               correct US prices immediately.
 //   Priority 4: Finnhub REST quote — LAST RESORT only (Yahoo down). Empirically
 //               returns the PREVIOUS session close while the market is open,
 //               so it is freshness-gated (see isStaleUsQuote + index.js gate).
@@ -44,15 +53,25 @@ let _reconnectTimer = null;
 let _fallbackTimer = null;
 let _wsFactory = null;              // test injection
 let _fetchImpl = null;              // test injection
+let _tvFailStreak = 0;              // TV batch circuit breaker
+let _tvDisabledUntil = 0;
+let _lastClosedRefresh = 0;         // closed-market refresh throttle
 
-// Poll tuning. Market open: gap symbols refreshed every 5s (maxAge 4s).
-// Market closed: prices are static — a 60s refresh is plenty (1 call/min/sym).
-const FALLBACK_POLL_MS = 5000;
-const WS_GAP_MS = 10 * 1000;        // no WS trade for 10s → Yahoo fallback owns the symbol
+// Poll tuning. Market open: gap symbols refreshed every 3s — the TV
+// america/scan batch covers ALL of them in ONE request (ultra-fast pass),
+// Yahoo per-symbol round-robin mops up the TV misses. Market closed:
+// prices are static — a 30s refresh is plenty.
+const FALLBACK_POLL_MS = 3000;
+const CLOSED_REFRESH_MS = 30 * 1000;   // market closed: full refresh cadence
+const WS_GAP_MS = 10 * 1000;        // no WS trade for 10s → fallback owns the symbol
 const SESSION_FRESH_OPEN_MS = 4000;      // market open: re-fetch if older than 4s
 const SESSION_FRESH_CLOSED_MS = 60 * 1000; // market closed: re-fetch if older than 60s
 const YAHOO_TIMEOUT_MS = 5000;
-const MAX_FALLBACK_BATCH = 12;      // per-cycle round-robin cap (Yahoo rate safety)
+const MAX_FALLBACK_BATCH = 12;      // per-cycle Yahoo round-robin cap (rate safety)
+const TV_BATCH_CAP = 60;            // max gap symbols per TV batch request
+const TV_TIMEOUT_MS = 4500;
+const TV_FAIL_LIMIT = 5;            // circuit breaker: consecutive TV failures
+const TV_COOLDOWN_MS = 10 * 60 * 1000; // then stop calling TV for 10 minutes
 const EVICT_GRACE_MS = 90 * 1000;   // refcount-0 symbols unsubscribe after this
 const BOOT_CONCURRENCY = 6;         // fresh-symbol Yahoo bootstrap semaphore
 
@@ -105,6 +124,7 @@ export function _resetUsStreamForTest() {
   _ws = null; _connecting = false; _reconnectAt = 0; _activeClients = 0;
   clearTimeout(_reconnectTimer); _reconnectTimer = null;
   clearInterval(_fallbackTimer); _fallbackTimer = null;
+  _tvFailStreak = 0; _tvDisabledUntil = 0; _lastClosedRefresh = 0;
 }
 export function usDebugState() {
   return {
@@ -183,6 +203,7 @@ function _fetchYahooSession(sym) {
   if (cached && cached.inFlight) return cached.inFlight;
 
   const prev = cached ? { ...cached } : null; // clean snapshot (cached is a value here)
+  const fetchStartAt = Date.now();
   const p = (async () => {
     let out = null;
     try {
@@ -218,6 +239,24 @@ function _fetchYahooSession(sym) {
       result = { ...prev, at: Date.now() - maxAge + 5000 };
     } else {
       result = { price: 0, pc: 0, high: 0, low: 0, vol: 0, t: 0, at: Date.now() };
+    }
+    // RACE FIX (2026 ultra-fast pass): while this Yahoo fetch was in flight,
+    // the Finnhub WS trade handler may have mutated the inFlight wrapper with
+    // a FRESHER trade price (ref.price/wsAt). Overwriting the wrapper with the
+    // (now older) Yahoo snapshot made the price visibly flip back at bootstrap
+    // time. Merge instead: keep WS price/t/high/low when the WS tick is newer
+    // than the fetch start, take pc/vol from Yahoo.
+    const cur = _session.get(sym);
+    if (cur && cur.inFlight === p && cur.wsAt && cur.wsAt >= fetchStartAt && cur.price > 0) {
+      result = {
+        ...result,
+        price: cur.price,
+        t: cur.t || result.t,
+        high: Math.max(result.high || 0, cur.high || 0) || cur.price,
+        low: (result.low > 0 && cur.low > 0) ? Math.min(result.low, cur.low) : (result.low || cur.low || cur.price),
+        wsAt: cur.wsAt,
+        at: Date.now(),
+      };
     }
     _session.set(sym, result); // clean value — replaces the inFlight wrapper
     return result;
@@ -294,7 +333,90 @@ async function _bootstrapSymbol(sym) {
 }
 
 // ---------------------------------------------------------------
-// WS-gap fallback poller — the SPY/SMH/VGT/VOGH lifesaver (RC2)
+// TradingView america/scan BATCH (Priority 0) — ONE POST for all gap
+// symbols. TV's anonymous scanner serves live 'last'/'close' prices for
+// US stocks AND ETFs; the 4-exchange probe (NASDAQ/NYSE/AMEX/ARCA) means
+// a wrong-exchange guess never blocks a symbol (first resolve wins).
+// Circuit breaker: 5 consecutive failures → 10-minute cooldown, so a
+// blocked/rate-limited scanner can never wedge the fallback path.
+// ---------------------------------------------------------------
+const TV_BATCH_COLUMNS = ['close', 'change', 'high', 'low', 'volume', 'last'];
+
+async function _fetchTvUsBatch(symbols) {
+  if (!symbols.length) return {};
+  if (_tvFailStreak >= TV_FAIL_LIMIT) {
+    if (Date.now() < _tvDisabledUntil) return {};
+    _tvFailStreak = 0; // cooldown elapsed — one probe to re-qualify
+  }
+  try {
+    const tickers = [];
+    for (const sym of symbols) {
+      tickers.push(`NASDAQ:${sym}`, `NYSE:${sym}`, `AMEX:${sym}`, `ARCA:${sym}`);
+    }
+    const r = await _fetch('https://scanner.tradingview.com/america/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8', 'User-Agent': 'Mozilla/5.0 (WealthAI US batch stream)' },
+      body: JSON.stringify({ symbols: { tickers }, columns: TV_BATCH_COLUMNS }),
+      signal: AbortSignal.timeout(TV_TIMEOUT_MS),
+    });
+    if (!r.ok) throw new Error(`scan ${r.status}`);
+    const j = await r.json();
+    const rows = j?.data;
+    if (!Array.isArray(rows)) throw new Error('bad payload');
+    const out = {};
+    for (const row of rows) {
+      if (!row || !Array.isArray(row.d)) continue;
+      const rawSym = String(row.s || '').split(':')[1];
+      if (!rawSym) continue;
+      const sym = rawSym.toUpperCase();
+      if (out[sym]) continue; // first exchange that resolves wins
+      const last = parseFloat(row.d[5]);
+      const close = parseFloat(row.d[0]);
+      const price = (last > 0) ? last : (close > 0 ? close : 0);
+      if (!(price > 0)) continue;
+      const changePct = parseFloat(row.d[1]) || 0; // TV 'change' = percent
+      const pc = (changePct !== 0 && isFinite(changePct)) ? price / (1 + changePct / 100) : price;
+      out[sym] = {
+        price, pc: pc > 0 ? pc : price,
+        change: changePct,
+        high: parseFloat(row.d[2]) || price,
+        low: parseFloat(row.d[3]) || price,
+        vol: parseFloat(row.d[4]) || 0,
+        t: Date.now(),
+        at: Date.now(),
+      };
+    }
+    _tvFailStreak = 0;
+    return out;
+  } catch {
+    _tvFailStreak++;
+    if (_tvFailStreak >= TV_FAIL_LIMIT) _tvDisabledUntil = Date.now() + TV_COOLDOWN_MS;
+    return {};
+  }
+}
+
+/** Publish a fallback-sourced quote as a tick + session entry (no WS stomp). */
+function _publishFallbackQuote(sym, s, source) {
+  const lastWs = _lastWsTick.get(sym) || 0;
+  if (lastWs > (s.at || 0)) return; // fresher WS tick arrived mid-fetch
+  setTick(`US_${sym}`, {
+    price: s.price,
+    change: s.pc ? ((s.price - s.pc) / s.pc) * 100 : (s.change || 0),
+    high: s.high || s.price,
+    low: s.low || s.price,
+    volume: s.vol || 0,
+    time: s.t || Date.now(),
+  }, source);
+  // Keep the shared session fresh for /api/quote — but never stomp a
+  // fresher WS-updated session entry.
+  const cur = _session.get(sym);
+  if (!cur || !cur.wsAt || (s.at || 0) >= (cur.wsAt || 0)) {
+    _session.set(sym, { ...s });
+  }
+}
+
+// ---------------------------------------------------------------
+// WS-gap fallback poller — TV batch first, Yahoo round-robin second
 // ---------------------------------------------------------------
 function _startFallbackPoller() {
   if (_fallbackTimer || _subscribed.size === 0) return;
@@ -307,32 +429,38 @@ async function _fallbackPoll() {
   try {
     if (_activeClients === 0 || _subscribed.size === 0) return;
 
-    // Symbols the WS has NOT ticked recently → Yahoo owns them.
+    // Closed market: prices are static — one full refresh per 30s is plenty
+    // (the 3s timer keeps ticking but skips the upstream work).
+    if (!usMarketOpen()) {
+      if (Date.now() - _lastClosedRefresh < CLOSED_REFRESH_MS) return;
+      _lastClosedRefresh = Date.now();
+    }
+
+    // Symbols the WS has NOT ticked recently → fallback owns them.
     const now = Date.now();
     const gaps = [..._subscribed].filter(sym => (now - (_lastWsTick.get(sym) || 0)) > WS_GAP_MS);
     if (gaps.length === 0) return;
 
-    // Round-robin cap keeps upstream load bounded for big watchlists.
-    const batch = [];
-    for (let i = 0; i < Math.min(gaps.length, MAX_FALLBACK_BATCH); i++) {
-      batch.push(gaps[(_fbCursor + i) % gaps.length]);
+    // ---- Priority 0: TV america/scan batch (ONE request, ALL symbols) ----
+    const tvBatch = await _fetchTvUsBatch(gaps.slice(0, TV_BATCH_CAP));
+    for (const [sym, s] of Object.entries(tvBatch)) {
+      _publishFallbackQuote(sym, s, 'tv-us-batch');
     }
-    _fbCursor = ( _fbCursor + batch.length) % Math.max(1, gaps.length);
+
+    // ---- Priority 2: Yahoo per-symbol round-robin for TV misses ----
+    // (also the ONLY path when TV is circuit-broken / unreachable)
+    const leftovers = gaps.filter(sym => !tvBatch[sym]);
+    if (leftovers.length === 0) return;
+    const batch = [];
+    for (let i = 0; i < Math.min(leftovers.length, MAX_FALLBACK_BATCH); i++) {
+      batch.push(leftovers[(_fbCursor + i) % leftovers.length]);
+    }
+    _fbCursor = (_fbCursor + batch.length) % Math.max(1, leftovers.length);
 
     await Promise.allSettled(batch.map(async (sym) => {
       const s = await _fetchYahooSession(sym);
       if (!(s.price > 0)) return;
-      // Don't stomp a fresher WS tick that arrived while we were fetching.
-      const lastWs = _lastWsTick.get(sym) || 0;
-      if (lastWs > (s.at || 0)) return;
-      setTick(`US_${sym}`, {
-        price: s.price,
-        change: s.pc ? ((s.price - s.pc) / s.pc) * 100 : 0,
-        high: s.high || s.price,
-        low: s.low || s.price,
-        volume: s.vol || 0,
-        time: s.t || Date.now(),
-      }, 'yahoo-us-fallback');
+      _publishFallbackQuote(sym, s, 'yahoo-us-fallback');
     }));
   } catch { /* transient — retry next cycle */ }
 }

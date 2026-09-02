@@ -83,14 +83,16 @@ export async function dispatchIntradayAlerts(signals, deps) {
 
   const esc = escapeHtml || (x => String(x));
   const fmtINR = n => `₹${(+n).toFixed(2)}`;
-  let msg = `<b>⚡ SUPER INTELLIGENCE ALGO ALERT</b>\n<b>NSE + BSE Deep Scan</b> • MCP AI Consensus\n<code>━━━━━━━━━━━━━━━━━━━━━</code>\n`;
+  const isCryptoScan = signals.some(s => String(s.market || '').toUpperCase() === 'CRYPTO');
+  let msg = `<b>⚡ SUPER INTELLIGENCE ALGO ALERT</b>\n<b>${isCryptoScan ? 'CRYPTO 24/7 Deep Scan' : 'NSE + BSE Deep Scan'}</b> • MCP AI Consensus\n<code>━━━━━━━━━━━━━━━━━━━━━</code>\n`;
   for (const { s, isFlip } of fresh) {
     const arrow = s.direction === 'LONG' ? '🟢' : '🔴';
     msg += `\n${arrow} <b>${esc(s.symbol)}</b> (${s.exchange}) — <b>${s.direction}</b>${isFlip ? ' ⚠️ REVERSAL' : ''}\n`;
     msg += `Confidence: <b>${s.confidence}%</b> | LTP ${fmtINR(s.ltp)} (${s.changePct >= 0 ? '+' : ''}${s.changePct.toFixed(2)}%)\n`;
     msg += `Entry zone ${fmtINR(s.entryZoneLow ?? s.entry)}–${fmtINR(s.entryZoneHigh ?? s.entry)} (trig ${fmtINR(s.entry)}) | SL ${fmtINR(s.stopLoss)} | T1 ${fmtINR(s.target1)} | T2 ${fmtINR(s.target2)}\n`;
-    msg += `RR 1:${s.rr.toFixed(2)} • Qty/₹1L ${s.qtyPerLakh ?? '—'} • ${s.trendStrength || ''} trend • VWAP ${fmtINR(s.vwap)} • RSI ${s.rsi} • Vol ${s.volumeRatio.toFixed(1)}x • Exit ${s.sqOffBy || '15:10 IST'}\n`;
-    if (s.counterTrend) msg += `⚠️ Counter-regime setup (NIFTY filter penalty applied)\n`;
+    const isCryptoSig = String(s.market || '').toUpperCase() === 'CRYPTO';
+    msg += `RR 1:${s.rr.toFixed(2)} • Qty/₹1L ${s.qtyPerLakh ?? '—'} • ${s.trendStrength || ''} trend • VWAP ${fmtINR(s.vwap)} • RSI ${s.rsi} • Vol ${s.volumeRatio.toFixed(1)}x • Exit ${s.sqOffBy || (isCryptoSig ? '24/7' : '15:10 IST')}\n`;
+    if (s.counterTrend) msg += `⚠️ Counter-regime setup (${isCryptoSig ? 'BTC' : 'NIFTY'} filter penalty applied)\n`;
     // WHY-REASONING — top 2 engine reasons so the trader knows the
     // setup ka logic, sirf levels nahi (Pro Trader Agent style).
     if (Array.isArray(s.reasons) && s.reasons.length > 0) {

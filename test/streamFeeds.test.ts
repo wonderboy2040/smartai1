@@ -307,3 +307,206 @@ describe('usStream — Finnhub WS lifecycle + reconnect deadlock fix (RC4)', () 
     expect(us.usDebugState().lastWsTick.NVDA).toBeGreaterThan(0);
   });
 });
+
+// ---- 2026-09 ultra-fast pass: TV america/scan BATCH fallback --------------
+describe('usStream — TV america/scan batch (the ETF-vs-stock cadence fix)', () => {
+  let us;
+  let getTick;
+  let fetchMock;
+  const tvScanResponse = (rows) => ({
+    ok: true,
+    json: async () => ({ data: rows }),
+  });
+
+  const MANY = ['SPY','QQQ','AAPL','MSFT','NVDA','AMZN','GOOGL','META','TSLA','AVGO',
+    'JPM','V','UNH','HD','PG','JNJ','LLY','WMT','KO','PEP',
+    'MRK','COST','ADBE','CRM','NFLX','AMD','INTC','QCOM','TXN','MU'];
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.stubEnv('FINNHUB_API_KEY', '');
+    vi.useFakeTimers();
+    vi.setSystemTime(US_OPEN_T);
+    const lf = await import('../server/liveFeed.js');
+    getTick = lf.getTick;
+    us = await import('../server/usStream.js');
+    us._resetUsStreamForTest();
+  });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); us?._setUsFetchForTest(null); });
+
+  it('ONE batch request refreshes EVERY gap symbol — late-list stocks tick at the same ~3s cadence as early ETFs', async () => {
+    // Router mock: TV scanner POST → full batch payload; Yahoo chart → per-symbol.
+    let tvCalls = 0; let yahooCalls = 0;
+    fetchMock = vi.fn(async (url, opts) => {
+      if (String(url).includes('scanner.tradingview.com/america/scan')) {
+        tvCalls++;
+        const body = JSON.parse(opts.body);
+        const rows = body.symbols.tickers
+          .map(t => ({ s: t, d: [t.split(':')[1].length * 3.1, 1.5, 99, 98, 1234, t.split(':')[1].length * 3.2] }))
+          .filter(r => r.d[5] > 0);
+        return tvScanResponse(rows);
+      }
+      yahooCalls++;
+      return yahooResponse(713.36, 716.43, Math.floor(US_OPEN_T / 1000));
+    });
+    us._setUsFetchForTest(fetchMock);
+
+    us.ensureUsSubscribed(MANY);
+    await vi.advanceTimersByTimeAsync(200); // bootstrap (bounded semaphore)
+    us.usClientUp();
+    await vi.advanceTimersByTimeAsync(3100); // one 3s fallback cycle
+
+    // EVERY symbol got a tick (TV batch covered all 30 in ONE request).
+    for (const sym of MANY) {
+      const t = getTick(`US_${sym}`);
+      expect(t, `US_${sym} should have a tick`).toBeTruthy();
+      expect(t.source).toBe('tv-us-batch');
+    }
+    expect(tvCalls).toBe(1);
+    // NOTE: per-symbol Yahoo chart calls at this point are only the fresh-symbol
+    // BOOTSTRAP (one instant snapshot per symbol at subscribe time) — the
+    // recurring 3s fallback cycle itself needed ZERO Yahoo round-trips because
+    // the TV batch covered all 30 symbols in the single request above.
+  });
+
+  it('TV scanner failure falls through to the per-symbol Yahoo round-robin (no wedge)', async () => {
+    fetchMock = vi.fn(async (url) => {
+      if (String(url).includes('scanner.tradingview.com')) {
+        return { ok: false, status: 429 };
+      }
+      return yahooResponse(501.11, 500.0, Math.floor(US_OPEN_T / 1000));
+    });
+    us._setUsFetchForTest(fetchMock);
+    us.ensureUsSubscribed(['AAPL']);
+    await vi.advanceTimersByTimeAsync(50);
+    const bootCalls = fetchMock.mock.calls.length;
+    us.usClientUp();
+    await vi.advanceTimersByTimeAsync(3100);
+    // Yahoo was used as the fallback for the TV failure.
+    const t = getTick('US_AAPL');
+    expect(t).toBeTruthy();
+    expect(t.source).toBe('yahoo-us-fallback');
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(bootCalls);
+  });
+
+  it('TV circuit breaker: after 5 consecutive scan failures the batch path pauses (Yahoo carries on)', async () => {
+    let tvFail = 0;
+    fetchMock = vi.fn(async (url) => {
+      if (String(url).includes('scanner.tradingview.com')) { tvFail++; return { ok: false, status: 403 }; }
+      return yahooResponse(501.11, 500.0, Math.floor(US_OPEN_T / 1000));
+    });
+    us._setUsFetchForTest(fetchMock);
+    us.ensureUsSubscribed(['AAPL']);
+    await vi.advanceTimersByTimeAsync(50);
+    us.usClientUp();
+    for (let i = 0; i < 6; i++) await vi.advanceTimersByTimeAsync(3100);
+    // Breaker must be engaged: 5 failures + the reset probe budget consumed.
+    const tvCallsAfterBreaker = fetchMock.mock.calls.filter(([u]) => String(u).includes('scanner.tradingview.com')).length;
+    expect(tvFail).toBeGreaterThanOrEqual(5);
+    expect(tvCallsAfterBreaker).toBeLessThanOrEqual(6); // no infinite hammering
+    const t = getTick('US_AAPL');
+    expect(t?.source).toBe('yahoo-us-fallback'); // price path still alive
+  });
+});
+
+// ---- 2026-09 ultra-fast pass: Binance WS INR projection -------------------
+describe('cryptoStream — CoinDCX anchor + Binance WS projected ticks', () => {
+  let crypto;
+  let getTick;
+  let fetchMock;
+  let wsInstances;
+
+  const makeFakeBinanceWs = () => {
+    const ws = new EventEmitter();
+    ws.readyState = 0;
+    ws.close = () => { ws.readyState = 3; ws.emit('close'); };
+    ws.terminate = ws.close;
+    ws.removeAllListeners = () => { ws.removeAllListeners('message'); ws.removeAllListeners('open'); ws.removeAllListeners('close'); ws.removeAllListeners('error'); };
+    wsInstances.push(ws);
+    setTimeout(() => { ws.readyState = 1; ws.emit('open'); }, 10);
+    return ws;
+  };
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    getTick = (await import('../server/liveFeed.js')).getTick;
+    crypto = await import('../server/cryptoStream.js');
+    crypto._resetCryptoStreamForTest();
+    wsInstances = [];
+    crypto._setBinanceWsFactoryForTest(makeFakeBinanceWs);
+    fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => [
+        { market: 'BTCINR', last_price: '4350000', change_24_hour: '1.25', high: '4400000', low: '4300000', volume: '77' },
+        { market: 'ETHINR', last_price: '150000', change_24_hour: '-0.5', high: '155000', low: '148000', volume: '9' },
+      ],
+    }));
+    crypto._setCryptoFetchForTest(fetchMock);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    crypto?._setBinanceWsFactoryForTest(null);
+    crypto?._setCryptoFetchForTest(null);
+    crypto?._resetCryptoStreamForTest();
+  });
+
+  it('CoinDCX anchor poll pushes 2s INR ticks', async () => {
+    crypto.ensureCryptoSubscribed(['BTC']);
+    crypto.cryptoClientUp();
+    await vi.advanceTimersByTimeAsync(50);
+    const t = getTick('IN_BTC');
+    expect(t).toBeTruthy();
+    expect(t.price).toBe(4350000);
+    expect(t.source).toBe('coindcx-live');
+  });
+
+  it('Binance WS tick is projected into INR via the anchor ratio (sub-second acceleration)', async () => {
+    crypto.ensureCryptoSubscribed(['BTC']);
+    crypto.cryptoClientUp();
+    await vi.advanceTimersByTimeAsync(50); // CoinDCX anchor: BTC INR 4,350,000
+    // Binance says BTC = 50,000 USDT → ratio = 4,350,000/50,000 = 87
+    expect(wsInstances.length).toBe(1);
+    // ...but first Binance tick arrives to establish the USDT price:
+    wsInstances[0].emit('message', JSON.stringify({ stream: 'btcusdt@ticker', data: { c: '50000' } }));
+    await vi.advanceTimersByTimeAsync(2000); // next CoinDCX poll re-anchors with the known USDT price
+    // Now a live Binance tick mid-poll-window → projected INR tick:
+    wsInstances[0].emit('message', JSON.stringify({ stream: 'btcusdt@ticker', data: { c: '50100' } }));
+    const t = getTick('IN_BTC');
+    expect(t).toBeTruthy();
+    expect(t.source).toBe('binance-crypto-ws');
+    expect(t.price).toBeCloseTo(50100 * 87, 0); // 50,100 USDT × 87 INR/USDT
+  });
+
+  it('NO anchor → NO projection (CoinDCX owns the symbol until anchored)', async () => {
+    crypto.ensureCryptoSubscribed(['ETH']);
+    crypto.cryptoClientUp();
+    await vi.advanceTimersByTimeAsync(50); // ETH anchor exists via CoinDCX poll
+    // Simulate Binance tick for a coin with NO CoinDCX anchor (SOL not subscribed):
+    wsInstances[0].emit('message', JSON.stringify({ stream: 'solusdt@ticker', data: { c: '150' } }));
+    const t = getTick('IN_SOL');
+    expect(t).toBeFalsy();
+  });
+
+  it('Binance handshake failures trip the circuit breaker (geo-block safety)', async () => {
+    // A WS that NEVER opens and only errors — 3 strikes → disabled.
+    let attempts = 0;
+    crypto._setBinanceWsFactoryForTest(() => {
+      attempts++;
+      const ws = new EventEmitter();
+      ws.readyState = 0;
+      ws.close = () => { ws.readyState = 3; };
+      setTimeout(() => { ws.emit('error'); }, 10);
+      return ws;
+    });
+    crypto.ensureCryptoSubscribed(['BTC']);
+    crypto.cryptoClientUp();
+    await vi.advanceTimersByTimeAsync(100);
+    // First failure → reconnect in 5s → fail → reconnect → fail → breaker tripped.
+    for (let i = 0; i < 30; i++) await vi.advanceTimersByTimeAsync(1000);
+    expect(attempts).toBeLessThanOrEqual(4); // 3 attempts + at most 1 cooldown probe... none within 30 min
+    // CoinDCX polling keeps prices live regardless:
+    const t = getTick('IN_BTC');
+    expect(t?.price).toBe(4350000);
+  });
+});

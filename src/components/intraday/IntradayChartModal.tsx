@@ -12,11 +12,13 @@ import type { IntradaySignal, LiveQuote } from './types';
 
 interface IntradayChartModalProps {
   signal: IntradaySignal | null;
+  market?: 'INDIA' | 'CRYPTO';
   live?: LiveQuote;
   onClose: () => void;
 }
 
-export function IntradayChartModal({ signal, live, onClose }: IntradayChartModalProps) {
+export function IntradayChartModal({ signal, market, live, onClose }: IntradayChartModalProps) {
+  const isCrypto = market === 'CRYPTO' || signal?.market === 'CRYPTO';
   // Esc closes.
   useEffect(() => {
     if (!signal) return;
@@ -83,14 +85,14 @@ export function IntradayChartModal({ signal, live, onClose }: IntradayChartModal
               SL {distToSL >= 0 ? `${distToSL.toFixed(2)}% above` : `${Math.abs(distToSL).toFixed(2)}% BREACHED`}
             </span>
           )}
-          <span className="text-slate-500 ml-auto hidden sm:block">5-min candles • Yahoo NSE feed • levels overlaid</span>
+          <span className="text-slate-500 ml-auto hidden sm:block">{isCrypto ? '5-min candles • Yahoo BTC-USD feed • levels overlaid (₹ INR)' : '5-min candles • Yahoo NSE feed • levels overlaid'}</span>
         </div>
 
         {/* Chart */}
         <div className="flex-1 min-h-[380px] p-2">
           <LiveCandleChart
             symbol={signal.symbol}
-            market="IN"
+            market={isCrypto ? 'CRYPTO' : 'IN'}
             interval="5M"
             livePrice={livePrice}
             priceLines={priceLines}
@@ -107,7 +109,7 @@ export function IntradayChartModal({ signal, live, onClose }: IntradayChartModal
             <span className="text-emerald-400">-- T1 ₹{signal.target1.toFixed(2)}</span>
             <span className="text-emerald-300">-- T2 ₹{signal.target2.toFixed(2)}</span>
           </div>
-          <span className="text-slate-500">T1 hit → book 50%, trail to entry • Sq-off 15:10 IST</span>
+          <span className="text-slate-500">{isCrypto ? 'T1 hit → book 50%, trail to entry • 24/7 session' : 'T1 hit → book 50%, trail to entry • Sq-off 15:10 IST'}</span>
         </div>
       </div>
     </div>

@@ -277,27 +277,27 @@ export function getBatchInterval(): number {
 
 /**
  * Poll cadence for the dedicated NSE/BSE realtime streamer.
- * Ultra-fast (2s) while the Indian market is open (9:15 AM - 3:30 PM IST) so
+ * Ultra-fast (3s) while the Indian market is open (9:15 AM - 3:30 PM IST) so
  * holdings tick like a live feed, aggressive pre-market warm-up in the 15 min
  * BEFORE open (9:00-9:15 AM IST) to catch the very first tick, relaxed (30s)
  * when closed to save bandwidth. Mirrors getUSPollInterval exactly.
  */
 export function getIndiaPollInterval(): number {
-  // PERF (2026 lag audit): 2s → 5s while NSE is open. Real-time ticks still
-  // arrive instantly via the TradingView WebSocket (subscribeToPrices) and
-  // the server SSE stream — this HTTP poller is only the enrichment/fallback
-  // path, and at 2s it was issuing ~90 requests/minute per browser tab
-  // (server /api/quote + TradingView india/scan), starving the Render free
-  // tier and making the whole app feel laggy.
-  if (isIndiaMarketOpen()) return 5000;
+  // 2026-09 ultra-fast pass: 5s → 3s — the server /api/quote path is
+  // 3s-micro-cached, so a 3s client poll aligns exactly with the cache
+  // cadence (zero extra upstream load) while visible freshness doubles.
+  // Real-time ticks still arrive instantly via the TradingView WebSocket
+  // (subscribeToPrices) and the server SSE stream — this HTTP poller is
+  // only the enrichment/fallback path.
+  if (isIndiaMarketOpen()) return 3000;
   // Pre-market warm-up so prices render the instant NSE opens at 9:15 AM IST.
   const now = new Date();
   const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
   const day = ist.getDay();
   if (day !== 0 && day !== 6) {
     const mins = ist.getHours() * 60 + ist.getMinutes();
-    if (mins >= 540 && mins < 555) return 5000; // 9:00-9:15 AM IST pre-open warm-up
-    if (mins >= 525 && mins < 540) return 8000;  // 8:45-9:00 AM IST early warm-up
+    if (mins >= 540 && mins < 555) return 3000; // 9:00-9:15 AM IST pre-open warm-up
+    if (mins >= 525 && mins < 540) return 5000;  // 8:45-9:00 AM IST early warm-up
   }
   return 30000;
 }
@@ -305,13 +305,15 @@ export function getIndiaPollInterval(): number {
 /**
  * Poll cadence for the dedicated US market realtime streamer.
  * Ultra-fast (3s) while the US market is open (7:00 PM IST / 9:30 AM ET),
- * aggressive pre-market (5s) in the 15-minute window BEFORE open to catch
+ * aggressive pre-market (3s) in the 15-minute window BEFORE open to catch
  * the very first tick, relaxed (30s) when closed.
  */
 export function getUSPollInterval(): number {
-  // PERF (2026 lag audit): 2s → 5s while the US market is open — same
-  // rationale as getIndiaPollInterval (WebSocket carries the real-time load).
-  if (isUSMarketOpen()) return 5000;
+  // 2026-09 ultra-fast pass: 5s → 3s — the server /api/quote path serves
+  // from the live usStream session (Finnhub WS trades + TV america/scan
+  // batch, both fresher than 3s), so a 3s poll aligns with the server
+  // cadence instead of re-fetching upstream.
+  if (isUSMarketOpen()) return 3000;
   // Pre-market warm-up: 15 min before US open (9:15-9:30 AM ET / 6:45-7:00 PM IST).
   // Poll fast so the VERY FIRST trade at 9:30 AM ET (7:00 PM IST) renders instantly.
   const now = new Date();
@@ -320,7 +322,7 @@ export function getUSPollInterval(): number {
   if (day !== 0 && day !== 6) {
     const mins = est.getHours() * 60 + est.getMinutes();
     if (mins >= 555 && mins < 570) return 3000; // 9:15-9:30 AM ET pre-open warm-up
-    if (mins >= 540 && mins < 555) return 8000;  // 9:00-9:15 AM ET early warm-up
+    if (mins >= 540 && mins < 555) return 5000;  // 9:00-9:15 AM ET early warm-up
   }
   return 30000;
 }

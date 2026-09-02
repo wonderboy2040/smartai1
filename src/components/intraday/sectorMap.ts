@@ -42,6 +42,12 @@ export const SECTOR_MAP: Record<string, string> = {
   ASIANPAINT: 'Chemicals', PIDILITIND: 'Chemicals', HAVELLS: 'Consumer Durables',
   // Conglomerate
   RELIANCE: 'Conglomerate',
+  // CRYPTO (2026-09 intraday crypto market) — sub-sectors so the
+  // concentration warning stays meaningful (3 Layer-1 LONGs = risk).
+  BTC: 'Layer 1', ETH: 'Layer 1', SOL: 'Layer 1', ADA: 'Layer 1',
+  AVAX: 'Layer 1', DOT: 'Layer 1', MATIC: 'Layer 2',
+  BNB: 'Exchange', UNI: 'DeFi', LINK: 'DeFi',
+  XRP: 'Payments', DOGE: 'Meme',
 };
 
 export function sectorOf(symbol: string): string {

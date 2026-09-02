@@ -72,6 +72,11 @@ export interface PortfolioSignal {
   volume?: number;
   // Where price sits inside today's high-low range (0 = day low, 1 = day high)
   dayRangePos?: number;
+  // 2026-09 site integration: synced-asset metadata so the AI (and the
+  // formatted context) can distinguish INDMoney NAV rows from live rows.
+  name?: string;
+  source?: 'indmoney' | 'coindcx' | 'manual';
+  noLive?: boolean;
 }
 
 export interface SuperintelligenceContext {
@@ -89,6 +94,22 @@ export interface SuperintelligenceContext {
     topGainer?: { symbol: string; pct: number };
     topLoser?: { symbol: string; pct: number };
   };
+  // 2026-09: portfolio provenance — which site sources feed the holdings.
+  portfolioSources?: {
+    indmoney: number;
+    coindcx: number;
+    manual: number;
+    live: number;
+    nav: number;
+  };
+  // 2026-09: live intraday desk signals (NSE + CRYPTO scanners — public
+  // endpoints, 60s server cache) so the AI can reference the same setups
+  // the site's Intraday tab is showing right now.
+  intraday?: {
+    market: 'INDIA' | 'CRYPTO';
+    marketOpen: boolean;
+    signals: { symbol: string; direction: string; confidence: number; grade?: string; entry: number; stopLoss: number; target1: number }[];
+  }[];
   regime: 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF' | 'GOLDILOCKS' | 'STAGFLATION';
   regimeReason: string;
   warnings: string[];
@@ -249,6 +270,27 @@ function computePortfolioSignals(
     const sma50 = d?.sma50;
     const macd = d?.macd;
 
+    // 2026-09: NAV-priced synced rows (MF/FD/bond) have no live technicals —
+    // emit a clean HOLD with the sync provenance instead of a misleading
+    // RSI-50 'neutral' signal computed from nothing.
+    if (p.noLive) {
+      signals.push({
+        symbol: p.symbol,
+        market: p.market,
+        currentPrice: price,
+        change,
+        rsi: 50,
+        signal: 'HOLD',
+        confidence: 50,
+        reason: 'NAV-priced asset (INDMoney sync value) — no live exchange quote',
+        insideStory: `🧾 ${p.name || p.symbol} — fund/NAV asset priced at each INDMoney sync (2× daily). Treat P&L as sync-time, not live.`,
+        name: p.name,
+        source: p.source || 'indmoney',
+        noLive: true,
+      });
+      continue;
+    }
+
     // Signal
     let signal: PortfolioSignal['signal'] = 'HOLD';
     let confidence = 50;
@@ -306,6 +348,9 @@ function computePortfolioSignals(
       superScore,
       volume,
       dayRangePos,
+      name: p.name,
+      source: p.source || 'manual',
+      noLive: false,
     });
   }
   return signals;
@@ -570,6 +615,7 @@ Total Invested: ₹${Math.round(ctx.portfolioSummary.totalInvestedINR).toLocaleS
 Total P&L: ${ctx.portfolioSummary.totalPLINR >= 0 ? '+' : ''}₹${Math.round(ctx.portfolioSummary.totalPLINR).toLocaleString('en-IN')} (${ctx.portfolioSummary.totalPLPct.toFixed(2)}%)
 Today P&L: ${ctx.portfolioSummary.todayPLINR >= 0 ? '+' : ''}₹${Math.round(ctx.portfolioSummary.todayPLINR).toLocaleString('en-IN')}
 Positions: ${ctx.portfolioSummary.positionCount}
+${ctx.portfolioSources && (ctx.portfolioSources.indmoney + ctx.portfolioSources.coindcx) > 0 ? `Sources: INDMoney=${ctx.portfolioSources.indmoney} · CoinDCX=${ctx.portfolioSources.coindcx} · Live-priced=${ctx.portfolioSources.live} · NAV-priced=${ctx.portfolioSources.nav} (auto-sync 2× daily 09:30/21:30 IST)` : ''}
 ${ctx.portfolioSummary.topGainer ? `Top Gainer: ${ctx.portfolioSummary.topGainer.symbol} (+${ctx.portfolioSummary.topGainer.pct.toFixed(2)}%)` : ''}
 ${ctx.portfolioSummary.topLoser ? `Top Loser: ${ctx.portfolioSummary.topLoser.symbol} (${ctx.portfolioSummary.topLoser.pct.toFixed(2)}%)` : ''}
 
@@ -581,7 +627,11 @@ ${ctx.portfolioSummary.topLoser ? `Top Loser: ${ctx.portfolioSummary.topLoser.sy
   const topSignals = [...ctx.portfolioSignals].sort((a, b) => b.confidence - a.confidence).slice(0, 10);
   for (const s of topSignals) {
     const cur = s.market === 'IN' ? '₹' : '$';
-    out += `• ${s.symbol} [${s.market}] — ${cur}${s.currentPrice.toFixed(2)} (${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)}%) | RSI ${s.rsi.toFixed(0)} | Signal: ${s.signal} (${s.confidence}% conf) | ⚡SuperScore: ${s.superScore ?? '—'}/99 | ${s.reason}\n`;
+    // 2026-09: source tag + full name — ticker-first with the fund/company
+    // name secondary (parity with the site's ticker-first asset table).
+    const srcTag = s.source === 'coindcx' ? ' [COINDCX]' : s.source === 'indmoney' ? ' [INDMONEY]' : '';
+    const nameTag = s.name && s.name !== s.symbol ? ` "${String(s.name).slice(0, 30)}"` : '';
+    out += `• ${s.symbol}${srcTag}${nameTag} [${s.market}${s.noLive ? '/NAV' : ''}] — ${cur}${s.currentPrice.toFixed(2)} (${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)}%) | RSI ${s.rsi.toFixed(0)} | Signal: ${s.signal} (${s.confidence}% conf) | ⚡SuperScore: ${s.superScore ?? '—'}/99 | ${s.reason}\n`;
     out += `  Inside Story: ${s.insideStory}\n`;
   }
 
@@ -599,6 +649,21 @@ ${ctx.portfolioSummary.topLoser ? `Top Loser: ${ctx.portfolioSummary.topLoser.sy
     }
   }
 
+  // 2026-09: live intraday desk signals — the same setups the site's
+  // Intraday tab is showing (NSE during market hours, CRYPTO 24/7).
+  const liveIntraday = (ctx.intraday || []).filter(i => i.marketOpen && i.signals.length > 0);
+  if (liveIntraday.length > 0) {
+    out += `\n--- LIVE INTRADAY DESK SIGNALS (site scanner, dual-AI graded) ---\n`;
+    for (const desk of liveIntraday) {
+      const label = desk.market === 'CRYPTO' ? 'CRYPTO (24/7, CoinDCX INR)' : 'NSE';
+      out += `[${label}]\n`;
+      for (const s of desk.signals) {
+        out += `• ${s.symbol} ${s.direction} (${s.confidence}%${s.grade ? `, ${s.grade} grade` : ''}) — Entry ₹${s.entry} SL ₹${s.stopLoss} T1 ₹${s.target1}\n`;
+      }
+    }
+    out += `NOTE: intraday signals expire fast — verify on the site's Intraday tab before acting.\n`;
+  }
+
   if (ctx.warnings.length > 0) {
     out += `\n--- ⚠️ WARNINGS ---\n`;
     for (const w of ctx.warnings) out += `${w}\n`;
@@ -613,6 +678,36 @@ ${ctx.portfolioSummary.topLoser ? `Top Loser: ${ctx.portfolioSummary.topLoser.sy
   return out;
 }
 
+// ---------- 1b. Live intraday desk signals (public, 60s server cache) ----------
+async function fetchIntradaySignals(): Promise<NonNullable<SuperintelligenceContext['intraday']>> {
+  const out: NonNullable<SuperintelligenceContext['intraday']> = [];
+  const markets: ('INDIA' | 'CRYPTO')[] = ['INDIA', 'CRYPTO'];
+  await Promise.allSettled(markets.map(async (mkt) => {
+    try {
+      const r = await apiFetch(`${PROXY_BASE}/api/intraday-scanner?market=${mkt}&t=${Date.now()}`, {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!r.ok) return;
+      const j = await r.json();
+      const sigs = Array.isArray(j?.signals) ? j.signals : [];
+      out.push({
+        market: mkt,
+        marketOpen: j?.marketOpen !== false,
+        signals: sigs.slice(0, 5).map((s: any) => ({
+          symbol: String(s.symbol || ''),
+          direction: String(s.direction || ''),
+          confidence: Number(s.confidence) || 0,
+          grade: s.grade || undefined,
+          entry: Number(s.entry) || 0,
+          stopLoss: Number(s.stopLoss) || 0,
+          target1: Number(s.target1) || 0,
+        })).filter((s: any) => s.symbol),
+      });
+    } catch { /* scanner gated/unavailable — skip */ }
+  }));
+  return out;
+}
+
 // ---------- Main entry: build full Superintelligence context ----------
 export async function buildSuperintelligenceContext(
   portfolio: Position[],
@@ -620,10 +715,11 @@ export async function buildSuperintelligenceContext(
   usdInrRate: number,
   _portfolioContextText: string
 ): Promise<SuperintelligenceContext> {
-  // Fire all data fetches in parallel.
-  const [market, newsResult] = await Promise.all([
+  // Fire all data fetches in parallel (market + news + intraday desk).
+  const [market, newsResult, intraday] = await Promise.all([
     fetchMarketSnapshot(),
     fetchPortfolioNews(portfolio, usdInrRate),
+    fetchIntradaySignals(),
   ]);
 
   // FIX L4: `??` only catches null/undefined, not 0. If /api/forex ever
@@ -667,6 +763,14 @@ export async function buildSuperintelligenceContext(
     portfolioSignals: signals,
     portfolioNews: newsResult.portfolioNews,
     macroNews: newsResult.macroNews,
+    portfolioSources: {
+      indmoney: portfolio.filter(p => p.source === 'indmoney').length,
+      coindcx: portfolio.filter(p => p.source === 'coindcx').length,
+      manual: portfolio.filter(p => !p.source).length,
+      live: portfolio.filter(p => !p.noLive).length,
+      nav: portfolio.filter(p => p.noLive).length,
+    },
+    intraday,
     portfolioSummary: {
       totalValueINR: totalValue,
       totalInvestedINR: totalInvested,
@@ -763,17 +867,18 @@ ${ctx.regimeReason}
 
 // ---------- System prompt builder for LLM ----------
 export function buildSuperintelligenceSystemPrompt(ctx: SuperintelligenceContext): string {
-  return `You are SUPERINTELLIGENCE v6.0 — a market superintelligence with REAL-TIME 24x7 market data + portfolio-specific news + live technicals. You have FULL access to the user's portfolio and live market data below.
+  return `You are SUPERINTELLIGENCE v6.0 — a market superintelligence with REAL-TIME 24x7 market data + portfolio-specific news + live technicals. You have FULL access to the user's SITE-SYNCED portfolio (INDMoney MCP + CoinDCX; NAV rows = sync-time values, live rows = exchange quotes) and live market data below.
 
 PERSONA: Elite institutional quant trader (20+ years NSE/BSE/NYSE/NASDAQ/Crypto). Think Goldman Sachs + Citadel + Renaissance + Pantera combined. Speak SIMPLE Hinglish — "bhai", "dekho", "simple words me". Explain like talking to a smart friend.
 
 SUPERINTELLIGENCE MANDATE (24x7):
 1. READ the live market data + portfolio context below — it's REAL-TIME, use it
-2. For EVERY portfolio query, reference 2-3 specific positions with current price + signal
+2. For EVERY portfolio query, reference 2-3 specific positions with current price + signal (mention the source tag — [INDMONEY]/[COINDCX] — and treat NAV rows as sync-priced, not live)
 3. For EVERY market query, use the live snapshot (NIFTY/SPY/VIX/etc.) — NOT stale memory
-4. For portfolio-specific news, mention the headline + your "inside story" interpretation
-5. NEVER say "I don't have data" — it's ALL provided below
-6. Connect MACRO (Fed/RBI/rates/inflation/DXY) WITH MICRO (user's holdings)
+4. For intraday queries, use the LIVE INTRADAY DESK SIGNALS section (the site's own scanner output)
+5. For portfolio-specific news, mention the headline + your "inside story" interpretation
+6. NEVER say "I don't have data" — it's ALL provided below
+7. Connect MACRO (Fed/RBI/rates/inflation/DXY) WITH MICRO (user's holdings)
 
 7-STEP FRAMEWORK (use for every analysis):
 1. Regime: Risk-On / Neutral / Risk-Off (use VIX + breadth)

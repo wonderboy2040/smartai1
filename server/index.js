@@ -163,6 +163,16 @@ function requireAuth(req, res, next) {
     token = req.query.session;
   }
 
+  // 0. SERVICE AUTH (2026-09 bot integration): the Telegram bot process is
+  // forked from THIS server and shares its env. API_TOKEN (server-only,
+  // never exposed to the browser bundle) authorizes loopback service calls
+  // (portfolio sync trigger, asset hide/unhide) without a browser session.
+  // Browser sessions are random UUIDs — they can never collide with this.
+  const SERVICE_TOKEN = process.env.API_TOKEN || '';
+  if (token && SERVICE_TOKEN.length >= 12 && token === SERVICE_TOKEN) {
+    return next();
+  }
+
   if (!token || !_sessions.has(token)) {
     return res.status(401).json({ error: { message: 'Authentication required. Please log in.' } });
   }
@@ -481,6 +491,7 @@ app.get('/api/chart', async (req, res) => {
 // ============================================================
 registerIntradayRoutes(app, {
   fetchGrowwNseQuote,   // hoisted function declaration below
+  fetchCoinDcxTickers,  // shared 2s-cached CoinDCX ticker (crypto intraday + watcher)
   KEYS,
   OPENAI_COMPAT,
   TG,
@@ -561,9 +572,9 @@ async function _fetchFinnhubQuoteUncached(plainSym, key) {
 // (`ltp`, type LIVE_PRICE) for stocks AND ETFs, and works from cloud servers.
 //
 // PERF (2026 lag audit): this function is called by FOUR concurrent consumers —
-// /api/quote (browser polls ~every 2-5s per tab), the intraday scanner
-// (87 symbols/scan), the SSE quote watcher (24 symbols/5s) and the WS
-// broadcaster (3s). With no shared cache that was hundreds of upstream Groww
+// /api/quote (browser polls ~every 3s per tab), the intraday scanner
+// (87 symbols/scan), the SSE quote watcher (24 symbols/5s) and the India
+// inStream poller (3s). With no shared cache that was hundreds of upstream Groww
 // requests per minute from ONE browser tab, starving the Render free-tier CPU
 // and making EVERY endpoint (scanner, AI, Telegram) sluggish. A 3s
 // micro-cache with in-flight promise sharing cuts upstream traffic ~95%
@@ -814,8 +825,10 @@ app.get('/api/forex', async (_req, res) => {
 // GET /api/stream  â†’ Server-Sent Events: pushes live ticks to the browser.
 // Query: ?in=RELIANCE,NIFTYBEES&us=SMH,VGT&crypto=BTC,ETH
 // Events: `snapshot` (initial map), `tick` ({key,price,change,...}), `status`.
-// Replaces 2s polling with real-time push (NSE, Finnhub US, Binance crypto).
-// Per-key throttle keeps the stream light.
+// Ultra-fast realtime push: India (Groww 3s + TV browser WS), US (Finnhub WS
+// trades + TV america/scan 3s batch + Yahoo fallback), crypto (CoinDCX 2s
+// anchor + Binance WS ~1s projected ticks). Per-key throttle keeps the
+// stream light.
 // ------------------------------------------------------------
 function parseSyms(v) {
   return String(v || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 60);

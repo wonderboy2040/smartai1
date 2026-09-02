@@ -13,6 +13,7 @@ import {
 import { fetchMarketIntelligence, fetchForexRate } from './market.mjs';
 import { calculateMetrics, analyzeAsset } from './analysis.mjs';
 import { MCP_TOOLS_OPENAI, MCP_TOOLS_GEMINI, executeMCPTool } from './mcp-tools.mjs';
+import { loadSyncMeta } from './siteSync.mjs';
 
 let realtimeMarketCache = { data: null, timestamp: 0 };
 let realtimeForexCache = { rate: 85.5, timestamp: 0 };
@@ -723,7 +724,15 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
   // ===== Portfolio positions (local computation, no network) =====
   if (portfolio?.length) {
     const m = calculateMetrics(portfolio, livePrices, usdInrRate);
-    ctx += `\nPORTFOLIO DASHBOARD:\nTotal Value: ₹${Math.round(m.totalValue).toLocaleString('en-IN')}\nInvested: ₹${Math.round(m.totalInvested).toLocaleString('en-IN')}\nTotal P&L: ${m.totalPL>=0?'+':''}₹${Math.round(m.totalPL).toLocaleString('en-IN')} (${m.plPct.toFixed(2)}%)\nToday P&L: ${m.todayPL>=0?'+':''}₹${Math.round(m.todayPL).toLocaleString('en-IN')} (${m.todayPct.toFixed(2)}%)\n\n`;
+    // 2026-09 site integration: header shows which sources feed this
+    // portfolio + freshness, and each position line carries its source tag
+    // (🏦 INDMoney / 🪙 CoinDCX) + LIVE/NAV status so the AI reasons about
+    // NAV-priced rows (MF/FD/bond — no intraday quote) correctly.
+    const syncHeader = loadSyncMeta();
+    const srcLine = syncHeader && syncHeader.counts?.visible > 0
+      ? `Sources: 🏦 INDMoney (${syncHeader.counts.indmoney}) + 🪙 CoinDCX (${syncHeader.counts.coindcx}) · last sync ${syncHeader.syncedAt ? new Date(syncHeader.syncedAt).toISOString() : 'never'}${syncHeader.stale ? ' (STALE)' : ''} · auto-sync 2x daily 09:30/21:30 IST\n`
+      : '';
+    ctx += `\nPORTFOLIO DASHBOARD (site-synced — INDMoney MCP + CoinDCX):\n${srcLine}Total Value: ₹${Math.round(m.totalValue).toLocaleString('en-IN')}\nInvested: ₹${Math.round(m.totalInvested).toLocaleString('en-IN')}\nTotal P&L: ${m.totalPL>=0?'+':''}₹${Math.round(m.totalPL).toLocaleString('en-IN')} (${m.plPct.toFixed(2)}%)\nToday P&L: ${m.todayPL>=0?'+':''}₹${Math.round(m.todayPL).toLocaleString('en-IN')} (${m.todayPct.toFixed(2)}%)\n\n`;
     ctx += `POSITIONS WITH LIVE TECHNICALS + INSIDE STORY:\n`;
 
     // Track warnings + opportunities for auto-flagging.
@@ -735,8 +744,8 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
     for (const p of portfolio) {
       const k = `${p.market}_${p.symbol}`;
       const d = livePrices[k];
-      const price = d?.price || p.avgPrice;
-      const chg = d?.change || 0;
+      const price = d?.price || p.lastSyncPrice || p.avgPrice;
+      const chg = d?.change ?? p.lastSyncPnlPct ?? 0;
       const rsi = d?.rsi || 50;
       const sma20 = d?.sma20, sma50 = d?.sma50, macd = d?.macd;
       const plPct = p.avgPrice>0 ? ((price-p.avgPrice)/p.avgPrice)*100 : 0;
@@ -744,7 +753,10 @@ async function buildContext(portfolio, livePrices, usdInrRate, userQuery = '') {
       const plINR = p.market==='US' ? plAbs*usdInrRate : plAbs;
       const sig = analyzeAsset(p, d);
       const cur = p.market==='IN'?'₹':'$';
-      ctx += `${p.symbol.replace('.NS','')} [${p.market}]: ${cur}${price.toFixed(2)} (${chg>=0?'+':''}${chg.toFixed(1)}%) | RSI=${rsi.toFixed(0)} | ${sig.signal}(${sig.confidence}%) | Qty=${p.qty} Avg=${cur}${p.avgPrice.toFixed(2)} P&L=${plPct.toFixed(1)}% (₹${Math.round(plINR).toLocaleString('en-IN')})\n`;
+      const srcTag = p.source === 'coindcx' ? '🪙' : (p.source === 'indmoney' ? '🏦' : '');
+      const priceTag = p.noLive ? 'NAV' : (d?.price ? 'LIVE' : '');
+      const nameTag = p.name && p.name !== p.symbol ? ` "${String(p.name).slice(0, 28)}"` : '';
+      ctx += `${srcTag}${p.symbol.replace('.NS','')} [${p.market}${priceTag ? '/' + priceTag : ''}]${nameTag}: ${cur}${price.toFixed(2)} (${chg>=0?'+':''}${chg.toFixed(1)}%) | RSI=${p.noLive ? 'n/a' : rsi.toFixed(0)} | ${p.noLive ? `Type=${p.assetType || 'NAV asset'} | Sync P&L=${plPct.toFixed(1)}%` : `${sig.signal}(${sig.confidence}%)`} | Qty=${p.qty} Avg=${cur}${p.avgPrice.toFixed(2)} P&L=${plPct.toFixed(1)}% (₹${Math.round(plINR).toLocaleString('en-IN')})${p.assetType ? ` · ${p.assetType}` : ''}\n`;
 
       // ===== INSIDE STORY (derived from price action + technicals) =====
       const stories = [];

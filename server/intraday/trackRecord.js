@@ -19,12 +19,21 @@
 // reconciled on boot.
 // ============================================================
 import { loadJSON, saveJSON } from './store.js';
-import { istDayKey, istMinutes, isNseMarketOpen } from './time.js';
+import { istDayKey, istMinutes, isNseMarketOpen, dayKeyFor } from './time.js';
+import { isCryptoSymbolBase } from './engine.js';
 
 const FILE = 'tracked-signals.json';
 const MAX_ROWS = 800;          // ~40/day × 20 days of history
 const MAX_PER_DAY = 40;
 const EOD_SQOFF_MIN = 15 * 60 + 25; // 15:25 IST — reconcile & close
+
+const _marketOf = (rowOrSig) => {
+  const m = String(rowOrSig?.market || '').toUpperCase();
+  if (m === 'CRYPTO') return 'CRYPTO';
+  if (m === 'INDIA') return 'INDIA';
+  // Legacy rows / engine payloads without the field: base-symbol heuristic.
+  return isCryptoSymbolBase(rowOrSig?.symbol) ? 'CRYPTO' : 'INDIA';
+};
 
 let _state = loadJSON(FILE, { signals: [] });
 let _saveTimer = null;
@@ -39,11 +48,11 @@ function _persist() {
   if (typeof _saveTimer.unref === 'function') _saveTimer.unref();
 }
 
-function _id(symbol) { return `${symbol}:${_state.dayKey || istDayKey()}`; }
+function _id(symbol, market = 'INDIA') { return `${symbol}:${dayKeyFor(market)}`; }
 
 export function trackedSymbolsForToday() {
-  const today = istDayKey();
-  return _state.signals.filter(s => s.dayKey === today && s.status === 'OPEN')
+  return _state.signals
+    .filter(s => s.status === 'OPEN' && s.dayKey === dayKeyFor(_marketOf(s)))
     .map(s => s.symbol);
 }
 
@@ -51,6 +60,19 @@ export function trackedSymbolsForToday() {
 // signals only (paper trades are handled by their own module).
 export function watcherSymbols() {
   return [...new Set(trackedSymbolsForToday())];
+}
+
+// 2026-09 multi-market: same watch set, classified per market so the
+// watcher routes INDIA → Groww and CRYPTO → CoinDCX.
+export function watcherSymbolsByMarket() {
+  const india = [];
+  const crypto = [];
+  for (const s of _state.signals) {
+    if (s.status !== 'OPEN' && s.status !== 'PARTIAL') continue;
+    if (s.dayKey !== dayKeyFor(_marketOf(s))) continue; // stale rows handled by reconcile
+    (_marketOf(s) === 'CRYPTO' ? crypto : india).push(s.symbol);
+  }
+  return { india: [...new Set(india)], crypto: [...new Set(crypto)] };
 }
 
 // ------------------------------------------------------------
@@ -67,18 +89,20 @@ export function recordSignals(signals) {
   const events = [];
   if (_state.dayKey !== today) _state.dayKey = today;
 
-  const todayRows = _state.signals.filter(s => s.dayKey === today);
+  const todayRows = _state.signals.filter(s => s.dayKey === dayKeyFor(_marketOf(s)));
   if (todayRows.filter(s => s.status === 'OPEN').length >= MAX_PER_DAY) return [];
 
   for (const sig of signals) {
+    const market = _marketOf(sig);
+    const sigDay = dayKeyFor(market);
     const existing = _state.signals.find(
-      s => s.symbol === sig.symbol && s.dayKey === today && s.status === 'OPEN'
+      s => s.symbol === sig.symbol && s.dayKey === sigDay && s.status === 'OPEN'
     );
     if (existing) {
       if (existing.direction !== sig.direction) {
         // Direction flip — close the old row at current LTP, open a fresh one.
         _closeRow(existing, sig.ltp, 'FLIP', events);
-        _openRow(sig, today, events, true);
+        _openRow(sig, sigDay, events, true);
       } else {
         // Refresh levels so the tracker follows the engine's latest plan.
         existing.entry = sig.entry; existing.stopLoss = sig.stopLoss;
@@ -88,7 +112,7 @@ export function recordSignals(signals) {
         existing.lastPrice = sig.ltp;
       }
     } else {
-      _openRow(sig, today, events, false);
+      _openRow(sig, sigDay, events, false);
     }
   }
 
@@ -103,9 +127,11 @@ export function recordSignals(signals) {
 }
 
 function _openRow(sig, today, events, isFlip) {
+  const market = _marketOf(sig);
   const row = {
-    id: _id(sig.symbol),
-    symbol: sig.symbol, exchange: sig.exchange || 'NSE',
+    id: _id(sig.symbol, market),
+    symbol: sig.symbol, exchange: sig.exchange || (market === 'CRYPTO' ? 'BINANCE' : 'NSE'),
+    market,
     direction: sig.direction,
     entry: sig.entry, stopLoss: sig.stopLoss,
     target1: sig.target1, target2: sig.target2,
@@ -123,10 +149,12 @@ function _openRow(sig, today, events, isFlip) {
     events: [{ ts: Date.now(), type: 'OPEN', price: sig.ltp }],
     exitPrice: null, closedAt: null,
     realizedPnlPerLakh: null, disciplinedPnlPerLakh: null, rMultiple: null,
-    lateEntry: istMinutes() >= 15 * 60,
+    // CRYPTO is 24/7 — there is no 15:00 IST fresh-entry cutoff.
+    lateEntry: market === 'CRYPTO' ? false : istMinutes() >= 15 * 60,
   };
   _state.signals.push(row);
-  events.push({ type: isFlip ? 'FLIP' : 'OPEN', symbol: row.symbol, direction: row.direction, price: row.entry, confidence: row.confidence });
+  events.push({ type: isFlip ? 'FLIP' : 'OPEN', symbol: row.symbol, direction: row.direction, price: row.entry, confidence: row.confidence, market });
+  return row;
 }
 
 function _closeRow(row, exitPrice, reason, events) {
@@ -169,13 +197,14 @@ function _computePnl(row) {
 // below the day low by construction — dayLow would false-trigger.
 // ------------------------------------------------------------
 export function evaluateTracked(quotes, events) {
-  const today = istDayKey();
   const m = istMinutes();
-  const afterEod = m >= EOD_SQOFF_MIN || !isNseMarketOpen();
 
   for (const row of _state.signals) {
     if (row.status !== 'OPEN' && row.status !== 'PARTIAL') continue;
-    if (row.dayKey !== today) continue; // stale rows handled by reconcile
+    const market = _marketOf(row);
+    // Per-market day key: IST for NSE, UTC for crypto. Stale rows are
+    // handled by reconcile — never mid-session here.
+    if (row.dayKey !== dayKeyFor(market)) continue;
     const q = quotes[row.symbol];
     const price = q?.price;
     if (!(price > 0)) continue;
@@ -192,7 +221,7 @@ export function evaluateTracked(quotes, events) {
       if (hitT1) {
         row.t1Hit = true; row.status = 'PARTIAL';
         row.events.push({ ts: Date.now(), type: 'T1_HIT', price: row.target1 });
-        events.push({ type: 'T1_HIT', symbol: row.symbol, direction: row.direction, price: row.target1, note: 'Book 50% • trail SL to entry' });
+        events.push({ type: 'T1_HIT', symbol: row.symbol, direction: row.direction, price: row.target1, note: 'Book 50% • trail SL to entry', market });
         continue;
       }
     } else if (row.status === 'PARTIAL') {
@@ -203,18 +232,20 @@ export function evaluateTracked(quotes, events) {
       if (hitTrail) { _closeRow(row, row.entry, 'BE_TRAIL_EXIT', events); continue; }
     }
 
-    // EOD square-off for anything still open.
+    // EOD square-off for anything still open — NSE only (crypto is 24/7
+    // and rolls at the UTC day boundary via reconcile).
+    const afterEod = market !== 'CRYPTO' && (m >= EOD_SQOFF_MIN || !isNseMarketOpen());
     if (afterEod) { _closeRow(row, price, 'EOD_EXIT', events); }
   }
   if (events.length) _persist();
 }
 
 // Close stale OPEN rows from previous sessions (server restart etc.).
+// CRYPTO rows roll at the UTC day boundary (the natural crypto session).
 export function reconcileStale(events = []) {
-  const today = istDayKey();
   let changed = false;
   for (const row of _state.signals) {
-    if (row.dayKey !== today && (row.status === 'OPEN' || row.status === 'PARTIAL')) {
+    if (row.dayKey !== dayKeyFor(_marketOf(row)) && (row.status === 'OPEN' || row.status === 'PARTIAL')) {
       _closeRow(row, row.lastPrice || row.entry, 'EOD_EXIT', events);
       changed = true;
     }
@@ -256,13 +287,13 @@ export function getTrackRecord(days = 30) {
     disciplinedPnlPerLakh: +pnlSum.toFixed(2),
     byStatus,
     open: open.map(s => ({
-      symbol: s.symbol, direction: s.direction, entry: s.entry,
+      symbol: s.symbol, market: s.market, direction: s.direction, entry: s.entry,
       stopLoss: s.stopLoss, target1: s.target1, target2: s.target2,
       status: s.status, lastPrice: s.lastPrice, confidence: s.confidence,
       openedAt: s.openedAt, t1Hit: s.t1Hit,
     })),
     history: rows.slice(0, 40).map(s => ({
-      symbol: s.symbol, direction: s.direction, dayKey: s.dayKey,
+      symbol: s.symbol, market: s.market, direction: s.direction, dayKey: s.dayKey,
       entry: s.entry, exitPrice: s.exitPrice, status: s.status,
       confidence: s.confidence, t1Hit: s.t1Hit,
       pnl: s.disciplinedPnlPerLakh, rMultiple: s.rMultiple,

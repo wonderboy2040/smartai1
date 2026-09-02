@@ -1,8 +1,10 @@
 // ============================================================
-// intraday/time — IST market-clock helpers (NSE hours)
+// intraday/time — IST market-clock helpers (NSE hours) + market-aware
+// session/dayKey/phase for the multi-market intraday engine
+// (2026-09: CRYPTO joins NSE — it trades 24/7 on UTC days).
 // ============================================================
 // Single source of truth for "what time is it in IST" and
-// "is the NSE cash session open". Every intraday module imports
+// "is the market session open". Every intraday module imports
 // from here so the session definition can never drift apart.
 // ============================================================
 
@@ -42,4 +44,42 @@ export function marketPhase(date = new Date()) {
   if (m >= 9 * 60 + 15 && m < 9 * 60 + 45) return 'early';
   if (m >= 14 * 60 + 30) return 'power-hour';
   return 'full';
+}
+
+// ------------------------------------------------------------
+// MARKET-AWARE HELPERS (2026-09 multi-market pass)
+// market: 'INDIA' (default — NSE cash session) | 'CRYPTO' (24/7)
+// ------------------------------------------------------------
+
+/** Crypto trades 24×7 — the scanner/watcher never close for it. */
+export function isCryptoMarketOpen() { return true; }
+
+/** Market-keyed session gate: INDIA → NSE hours, CRYPTO → always. */
+export function isMarketOpenFor(market = 'INDIA', date = new Date()) {
+  if (String(market).toUpperCase() === 'CRYPTO') return isCryptoMarketOpen();
+  return isNseMarketOpen(date);
+}
+
+/**
+ * Day bucket per market: INDIA → IST calendar day (matches the NSE
+ * session), CRYPTO → UTC calendar day (matches the Binance/UTC
+ * candle day — avoids an IST-midnight "new day" reset mid-session).
+ */
+export function dayKeyFor(market = 'INDIA', date = new Date()) {
+  if (String(market).toUpperCase() === 'CRYPTO') {
+    return new Date(date).toLocaleDateString('sv-SE', { timeZone: 'UTC' });
+  }
+  return istDayKey(date);
+}
+
+/** Market-keyed session phase: crypto has no early/power-hour. */
+export function marketPhaseFor(market = 'INDIA', date = new Date()) {
+  if (String(market).toUpperCase() === 'CRYPTO') return 'full';
+  return marketPhase(date);
+}
+
+/** Market-keyed fresh-entry window: crypto never blocks new entries. */
+export function freshEntriesAllowedFor(market = 'INDIA') {
+  if (String(market).toUpperCase() === 'CRYPTO') return true;
+  return istMinutes() < 15 * 60;
 }

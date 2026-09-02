@@ -14,6 +14,9 @@ export interface Position {
   /** Synced-asset removal key (INDMoney or CoinDCX source) — the row's
    *  identity for hide/restore, stable across syncs. */
   indmKey?: string;
+  /** Sync source: 'indmoney' (MCP holdings) | 'coindcx' (exchange balances).
+   *  Absent for manually-added rows. */
+  source?: 'indmoney' | 'coindcx';
 }
 
 export interface PriceData {

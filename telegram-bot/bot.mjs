@@ -13,7 +13,10 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { TG_TOKEN, TG_CHAT_ID, GROQ_KEY, GEMINI_KEY, CLAUDE_KEY, TAVILY_API_KEY, TAX_PAIRS, OPENROUTER_KEY, CEREBRAS_KEY, HF_KEY, NVIDIA_KEY, API_URL, BOT_NAME, BOT_VERSION, BOT_TAGLINE, FUNDAMENTALS_API_URL, isTavilyAvailable } from './config.mjs';
 import { batchFetchPrices, fetchForexRate, fetchMarketIntelligence, fetchSingleSymbol, trackVixChange, isAnyMarketOpen, getMarketStatus, getISTTime, isIndiaMarketOpen, isUSMarketOpen, fetchCryptoPrices, fetchCryptoPricesINR, fetchBondYields, fetchFIIDIIData, fetchIPOData } from './market.mjs';
-import { loadPortfolioFromCloud } from './cloud.mjs';
+import {
+  loadPortfolioFromCloud, loadSyncMeta, listHiddenAssets,
+  triggerSiteSync, unhideSiteAsset, unhideAllSiteAssets, siteApiConfigured,
+} from './siteSync.mjs';
 import {
   generatePortfolioReport, generateMarketReport,
   generateAllocationReport, generateRiskReport, generateAutoReport,
@@ -595,15 +598,19 @@ console.log('Telegram Bot polling started.');
 // INITIAL DATA LOAD
 // ========================================
 async function initializeData() {
-  // Step 1: Portfolio (non-blocking)
+  // Step 1: Portfolio — the site's INDMoney/CoinDCX synced snapshot, read
+  // directly from server/data/mcp-portfolio.json (the bot is forked from the
+  // same server, so the file is shared state — always in sync with the web
+  // app's Portfolio tab). The old Google-Sheets cloud sync was retired when
+  // the site moved to INDMoney MCP.
   try {
-    console.log('☁️  Loading portfolio from cloud...');
-    const cloudPortfolio = await loadPortfolioFromCloud();
-    if (cloudPortfolio && cloudPortfolio.length > 0) {
-      portfolio = cloudPortfolio;
-      console.log(`✅ Portfolio loaded: ${portfolio.length} positions`);
+    console.log('🏦  Loading portfolio from site snapshot (INDMoney/CoinDCX)...');
+    const syncedPortfolio = await loadPortfolioFromCloud();
+    if (syncedPortfolio && syncedPortfolio.length > 0) {
+      portfolio = syncedPortfolio;
+      console.log(`✅ Portfolio loaded: ${portfolio.length} synced assets`);
     } else {
-      console.log('⚠️  No portfolio data found in cloud');
+      console.log('⚠️  No site snapshot yet — web app pe INDMoney/CoinDCX connect karo (Portfolio tab)');
     }
   } catch (e) {
     console.error('❌ Portfolio load failed:', e.message);
@@ -689,7 +696,7 @@ async function initializeData() {
       { command: 'whale', description: '🐋 Whale Activity Tracker' },
       { command: 'earnings', description: '📅 Upcoming Earnings Calendar' },
       // Portfolio & Market
-      { command: 'portfolio', description: 'Full Portfolio Analysis' },
+      { command: 'portfolio', description: 'Full portfolio + live P&L (site-synced)' },
       { command: 'market', description: 'Global Market Snapshot' },
       { command: 'live', description: 'Live Market Sensor Data' },
       { command: 'allocation', description: 'Smart SIP Matrix' },
@@ -727,6 +734,12 @@ async function initializeData() {
       { command: 'forex', description: 'Live Forex (USD/INR)' },
       { command: 'news', description: 'Real-time Market News (Tavily)' },
       { command: 'fundamental', description: 'Deep Fundamental Analysis' },
+      // Site sync (2026-09 — INDMoney/CoinDCX portfolio integration)
+      { command: 'sync', description: '🔄 Sync portfolio now (INDMoney+CoinDCX)' },
+      { command: 'syncstatus', description: '🩺 Sync health + sources + next slot' },
+      { command: 'coindcx', description: '🪙 CoinDCX account status' },
+      { command: 'hidden', description: '🚫 Removed (hidden) assets list' },
+      { command: 'unhide', description: '↺ Restore asset: /unhide KEY|all' },
       // AI & Settings
       { command: 'alert', description: 'Toggle auto alerts' },
       { command: 'model', description: 'Select AI model' },
@@ -734,7 +747,7 @@ async function initializeData() {
       { command: 'ai', description: 'Explicit AI invocation' },
       { command: 'clear', description: 'Clear AI Memory' },
     ]);
-    console.log('✅ Telegram Menu Commands Updated (v18 — 53 commands)');
+    console.log('✅ Telegram Menu Commands Updated (v18.1 — 59 commands, site-sync suite added)');
   } catch (e) {
     console.warn('⚠️  Could not set Telegram commands:', e.message);
   }
@@ -765,6 +778,16 @@ async function refreshPortfolio() {
       portfolio = fresh;
     }
   } catch (e) { }
+}
+
+// Relative-time helper for sync status lines.
+function relTime(ts) {
+  if (!ts) return 'never';
+  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
 }
 
 async function refreshIntel() {
@@ -894,9 +917,13 @@ bot.onText(/^\/start(@\w+)?$/i, async (msg) => {
 🧠 <b>AI Chat Mode:</b>
 Bina / ke koi bhi message likho = AI chat (7-engine auto failover + Quant Brain)
 
+🔗 <b>Site Sync Commands (naya):</b>
+🔄 /sync — portfolio abhi sync karo (INDMoney + CoinDCX)
+🩺 /syncstatus · 🪙 /coindcx · 🚫 /hidden · ↺ /unhide
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━
 📡 Status: <b>${getMarketStatus()}</b>
-💼 Portfolio: <b>${portfolio.length} positions</b>
+💼 Portfolio: <b>${portfolio.length} positions</b>${(() => { const m = loadSyncMeta(); return m && m.counts.visible > 0 ? ` (🏦 ${m.counts.indmoney} INDMoney · 🪙 ${m.counts.coindcx} CoinDCX · ${relTime(m.syncedAt)})` : ''; })()}
 🔔 Auto Alerts: <b>${autoAlerts ? 'ON ✅' : 'OFF ❌'}</b>
 💱 USD/INR: <b>₹${usdInrRate.toFixed(2)}</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1190,17 +1217,144 @@ bot.onText(/^\/portfolio(@\w+)?$/i, async (msg) => {
   console.log(`📥 /portfolio from ${msg.from?.first_name || chatId}`);
   try {
     if (portfolio.length === 0) {
-      await safeSend(chatId, '⚠️ Portfolio empty hai. Web app se positions add karo — automatic cloud sync hoga.');
+      await safeSend(chatId, '⚠️ Portfolio empty hai. Web app ke Portfolio tab me INDMoney/CoinDCX connect karo — assets yahan auto-sync ho jayenge (ya /sync chalao).');
       return;
     }
     await safeSend(chatId, '📊 <i>Scanning portfolio... ek second...</i>');
     await smartRefreshPrices();
     const report = generatePortfolioReport(portfolio, livePrices, usdInrRate);
-    await safeSend(chatId, report);
+    // Site-sync header: which sources feed this portfolio + freshness.
+    const meta = loadSyncMeta();
+    let header = '';
+    if (meta && meta.counts.visible > 0) {
+      const c = meta.counts;
+      header = `🏦 <b>Site-Synced Portfolio</b> — ${c.visible} assets (🏦 ${c.indmoney} INDMoney · 🪙 ${c.coindcx} CoinDCX) · ${c.live} LIVE / ${c.nav} NAV\n` +
+        `⏱ Last sync: ${relTime(meta.syncedAt)}${meta.stale ? ' ⚠️ <b>STALE</b>' : ''}${c.hidden ? ` · 🚫 ${c.hidden} hidden` : ''}\n` +
+        `${meta.nextSyncAt ? `⏭ Next auto-sync: ${relTime(meta.nextSyncAt).replace(' ago', ' baad')}` : ''}\n\n`;
+    } else {
+      header = `⚠️ <i>Site snapshot khali hai — web app ke Portfolio tab se INDMoney/CoinDCX connect karo, phir /sync chalega.</i>\n\n`;
+    }
+    await safeSend(chatId, header + report);
   } catch (e) {
     console.error('❌ /portfolio error:', e.message);
     await safeSend(chatId, `❌ Portfolio report me error aaya: ${e.message}\n\nPlease try again.`);
   }
+});
+
+// ========================================
+// COMMAND: /sync — trigger a fresh site portfolio sync
+// (INDMoney MCP 12-call round-trip + CoinDCX balances → new snapshot)
+// ========================================
+bot.onText(/^\/sync(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  console.log(`📥 /sync from ${msg.from?.first_name || chatId}`);
+  if (!siteApiConfigured()) {
+    return safeSend(chatId, '❌ <b>/sync unavailable</b> — server pe <code>API_TOKEN</code> set nahi hai (min 12 chars). Render env me add karo.');
+  }
+  await safeSend(chatId, '🔄 <i>Sync chal raha hai — INDMoney MCP (12 calls) + CoinDCX balances… 1-2 min lag sakta hai.</i>');
+  const r = await triggerSiteSync();
+  if (!r.ok) {
+    return safeSend(chatId, `❌ <b>Sync failed</b>: ${r.error}\n\nAgar persist kare to Portfolio tab me INDMoney/CoinDCX connection check karo.`);
+  }
+  await refreshPortfolio();
+  const meta = loadSyncMeta();
+  const c = meta?.counts || {};
+  await safeSend(chatId,
+    `✅ <b>Portfolio synced</b>\n` +
+    `🏦 ${c.visible || 0} assets (LIVE ${c.live || 0} · NAV ${c.nav || 0})\n` +
+    `⏱ Synced: ${relTime(meta?.syncedAt)}\n` +
+    (meta?.lastError ? `⚠️ Last error: ${meta.lastError}\n` : '') +
+    `\n/portfolio se fresh report dekho.`);
+});
+
+// ========================================
+// COMMAND: /syncstatus — sync health + sources
+// ========================================
+bot.onText(/^\/syncstatus(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  const meta = loadSyncMeta();
+  if (!meta || meta.counts.visible === 0 && !meta.syncedAt) {
+    return safeSend(chatId, '⚠️ Koi sync nahi hua abhi — web app Portfolio tab se INDMoney/CoinDCX connect karo, ya /sync chalao.');
+  }
+  const c = meta.counts;
+  const slots = Object.entries(meta.slots || {})
+    .map(([k, v]) => `${k}: ${v ? relTime(typeof v === 'number' ? v : Date.parse(v) || 0) : 'never'}`)
+    .join(' · ');
+  await safeSend(chatId,
+    `🩺 <b>Portfolio Sync Status</b>\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `Status: ${meta.ok ? '✅ OK' : '⚠️ DEGRADED'}${meta.stale ? ' · <b>STALE</b>' : ''}\n` +
+    `Last sync: ${relTime(meta.syncedAt)}\n` +
+    `${meta.nextSyncAt ? `Next auto-sync: ${relTime(meta.nextSyncAt).replace(' ago', ' baad')}\n` : ''}` +
+    `Sources: 🏦 INDMoney · 🪙 CoinDCX\n` +
+    `Assets: ${c.visible} visible · ${c.hidden} hidden · ${c.live} LIVE · ${c.nav} NAV\n` +
+    (slots ? `Slots: ${slots}\n` : '') +
+    (meta.lastError ? `⚠️ Last error: ${meta.lastError}\n` : '') +
+    `\nAuto-sync 2× daily (09:30 + 21:30 IST) + /sync manual.`);
+});
+
+// ========================================
+// COMMAND: /coindcx — CoinDCX account connection status
+// ========================================
+bot.onText(/^\/coindcx(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  const meta = loadSyncMeta();
+  const cdcx = meta?.coindcx;
+  if (!cdcx) {
+    return safeSend(chatId, '⚠️ CoinDCX account data nahi mila — pehle web app (Portfolio → CoinDCX) se connect karo.');
+  }
+  const cryptoCount = meta?.counts?.coindcx || 0;
+  await safeSend(chatId,
+    `🪙 <b>CoinDCX Account</b>\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `Status: ${cdcx.connected ? '✅ CONNECTED' : '❌ DISCONNECTED'}\n` +
+    `${cdcx.connectedAt ? `Connected: ${relTime(Date.parse(cdcx.connectedAt) || cdcx.connectedAt)}\n` : ''}` +
+    `${cdcx.lastSyncAt ? `Balances synced: ${relTime(Date.parse(cdcx.lastSyncAt) || cdcx.lastSyncAt)}\n` : ''}` +
+    `Assets in portfolio: ${cryptoCount}\n` +
+    `${cdcx.balanceCount != null ? `Balances found: ${cdcx.balanceCount}\n` : ''}` +
+    (cdcx.lastError ? `⚠️ Last error: ${cdcx.lastError}\n` : '') +
+    `\nLive crypto prices: CoinDCX INR + Binance stream (web + /crypto).`);
+});
+
+// ========================================
+// COMMAND: /hidden — list removed (hidden) portfolio assets
+// ========================================
+bot.onText(/^\/hidden(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  const rows = listHiddenAssets();
+  if (!rows.length) {
+    return safeSend(chatId, '✅ Koi hidden asset nahi hai — saare synced assets portfolio me active hain.');
+  }
+  let text = `🚫 <b>Hidden Assets (${rows.length})</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  for (const r of rows.slice(0, 25)) {
+    const tag = r.source === 'coindcx' ? '🪙' : '🏦';
+    text += `${tag} <code>${r.key}</code> — ${r.symbol || r.name}${r.value != null ? ` · ₹${Math.round(r.value).toLocaleString('en-IN')}` : ''}\n`;
+  }
+  if (rows.length > 25) text += `… +${rows.length - 25} more\n`;
+  text += `\nRestore: <code>/unhide KEY</code> ya sab ke liye <code>/unhide all</code>`;
+  await safeSend(chatId, text);
+});
+
+// ========================================
+// COMMAND: /unhide KEY|all — restore hidden portfolio assets
+// ========================================
+bot.onText(/^\/unhide(?:@\w+)?\s+([\w:.-]+|all)$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  const arg = (match?.[1] || '').trim();
+  if (!siteApiConfigured()) {
+    return safeSend(chatId, '❌ <code>API_TOKEN</code> server pe set nahi — restore unavailable.');
+  }
+  const r = arg.toLowerCase() === 'all'
+    ? await unhideAllSiteAssets()
+    : await unhideSiteAsset(arg);
+  if (!r.ok) return safeSend(chatId, `❌ Restore failed: ${r.error}`);
+  await refreshPortfolio();
+  await safeSend(chatId, `✅ ${arg.toLowerCase() === 'all' ? 'Sab hidden assets restore ho gaye' : `<code>${arg}</code> restore ho gaya`} — ab syncs me bhi dikhega. /portfolio dekho.`);
 });
 
 // ========================================
@@ -1871,13 +2025,12 @@ bot.onText(/^\/setkey(?:@\w+)?(?:\s+(\w+)\s+(.+))?$/i, async (msg, match) => {
     const { isGroqAvailable, isTavilyAvailable } = await import('./config.mjs');
     helpMsg += `⚡ Groq (GPT-OSS 120B): ${isGroqAvailable() ? '🟢 Active' : '🔴 Missing'}\n`;
     helpMsg += `🔍 Tavily (Search): ${isTavilyAvailable() ? '🟢 Active' : '🔴 Missing'}\n\n`;
-    helpMsg += `<i>Note: Keys are saved in-memory for the current process. If API_URL is configured, they also sync to your Google Apps Script endpoint.</i>`;
+    helpMsg += `<i>Note: Keys in-memory me save hote hain (current process). Permanent setup ke liye Render env vars use karo.</i>`;
     await safeSend(chatId, helpMsg);
     return;
   }
 
   const { setGroqKey, setTavilyKey } = await import('./config.mjs');
-  const { saveAllKeysToCloud } = await import('./cloud.mjs');
 
   let parsedName = '';
   if (keyName === 'groq') {
@@ -1891,13 +2044,10 @@ bot.onText(/^\/setkey(?:@\w+)?(?:\s+(\w+)\s+(.+))?$/i, async (msg, match) => {
     return;
   }
 
-  await safeSend(chatId, `⏳ Saving <b>${parsedName}</b> and syncing to Google Sheets...`);
-  const success = await saveAllKeysToCloud();
-  if (success) {
-    await safeSend(chatId, `✅ <b>${parsedName}</b> successfully saved and synchronized!`);
-  } else {
-    await safeSend(chatId, `⚠️ <b>${parsedName}</b> saved in-memory, but cloud sync failed. Check your API_URL.`);
-  }
+  // 2026-09: the old Google-Sheets key sync was retired with the Apps-Script
+  // cloud module — keys persist in-memory for this process; permanent keys
+  // live in the Render environment (the documented setup path).
+  await safeSend(chatId, `✅ <b>${parsedName}</b> saved in-memory for this process.\n⚠️ Permanent keys Render ke env vars me set karo — restart pe in-memory keys wipe ho jate hain.`);
 });
 
 
@@ -4239,7 +4389,7 @@ bot.onText(/^\/whale(?:@\w+)?$/i, async (msg) => {
 
     // 1. Portfolio whale moves (>3% absolute change today)
     if (portfolio.length === 0) {
-      out += `⚠️ Portfolio empty hai. Web app se positions add karo.\n\n`;
+      out += `⚠️ Portfolio empty hai. Web app ke Portfolio tab me INDMoney/CoinDCX connect karo — phir /sync chalega.\n\n`;
     } else {
       const movers = portfolio
         .map(p => {
