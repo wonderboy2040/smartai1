@@ -1,5 +1,5 @@
 // ============================================================
-// intraday/SignalTable — pro-desk dense table view (v3)
+// intraday/SignalTable — pro-desk dense table view (v4)
 // ------------------------------------------------------------
 // TradingView-style sortable grid for traders who prefer density
 // over cards. Click any header to sort; click a row to open the
@@ -13,7 +13,9 @@ type SortKey = 'symbol' | 'confidence' | 'ltp' | 'changePct' | 'rr' | 'volumeRat
 
 const COLUMNS: { key: SortKey | null; label: string; align?: string; title?: string }[] = [
   { key: 'symbol', label: 'Symbol', align: 'text-left' },
+  { key: null, label: 'Grade', title: 'Signal quality grade (A+/A/B)' },
   { key: null, label: 'Dir' },
+  { key: null, label: 'Type', title: 'Trade type (SCALP/MOMENTUM/SWING)' },
   { key: 'ltp', label: 'LTP ▉', title: 'Live price (SSE stream)' },
   { key: 'changePct', label: 'Chg%' },
   { key: 'confidence', label: 'Conf' },
@@ -88,10 +90,16 @@ export function SignalTable({ signals, livePrices, freshEntriesAllowed, onChart,
             const chg = live?.change ?? s.changePct;
             const long = s.direction === 'LONG';
             const noFresh = !freshEntriesAllowed || s.freshEntriesAllowed === false;
+            const gradeConf = {
+              'A+': 'text-amber-300 font-black',
+              'A': 'text-slate-200 font-bold',
+              'B': 'text-slate-500',
+            }[s.grade || 'B'] || 'text-slate-500';
+            const typeIcon = { SCALP: '⚡', MOMENTUM: '🚀', SWING: '🌊' }[s.tradeType || ''] || '';
             return (
               <tr
                 key={s.symbol}
-                className="border-b border-white/5 hover:bg-white/[0.03] transition-colors cursor-pointer"
+                className={`border-b border-white/5 hover:bg-white/[0.03] transition-colors cursor-pointer ${s.grade === 'B' ? 'opacity-60' : ''}`}
                 onClick={() => onChart(s)}
               >
                 <td className="px-2.5 py-2 text-left">
@@ -100,10 +108,18 @@ export function SignalTable({ signals, livePrices, freshEntriesAllowed, onChart,
                   {s.counterTrend && <span className="ml-1 text-[9px]" title="Counter-regime">⚠</span>}
                 </td>
                 <td className="px-2.5 py-2 text-center">
+                  <span className={`px-1.5 py-0.5 rounded text-[9px] ${gradeConf}`}>
+                    {s.grade === 'A+' ? '⭐A+' : s.grade || 'B'}
+                  </span>
+                </td>
+                <td className="px-2.5 py-2 text-center">
                   <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${long ? 'bg-emerald-500/15 text-emerald-300' : 'bg-red-500/15 text-red-300'}`}>
                     {long ? 'L' : 'S'}
                   </span>
                   {noFresh && <span className="ml-1 text-red-400" title="No fresh entry after 15:00">⛔</span>}
+                </td>
+                <td className="px-2.5 py-2 text-center text-[9px] text-slate-400">
+                  {typeIcon} {s.tradeType || '—'}
                 </td>
                 <td className={`px-2.5 py-2 text-center font-bold ${live ? 'text-cyan-200' : 'text-slate-200'}`}>
                   ₹{ltp.toFixed(2)}

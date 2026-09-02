@@ -40,6 +40,16 @@ export interface IntradaySignal {
   counterTrend?: boolean;
   slippage?: number;
   effRR?: number;
+  // v4 additions — dual-AI expert upgrade
+  grade?: 'A+' | 'A' | 'B';
+  tradeType?: 'SCALP' | 'MOMENTUM' | 'SWING' | null;
+  entryQuality?: number; // 1-10
+  aiReasoning?: string; // Full AI analysis text from Gemini+Groq
+  geminiVerdict?: { confidence: number; note: string } | null;
+  groqVerdict?: { confidence: number; note: string } | null;
+  aiAdjustedSL?: number;
+  aiAdjustedEntry?: number;
+  riskFactors?: string[];
 }
 
 export interface MarketRegime {

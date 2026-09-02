@@ -280,32 +280,79 @@ export function registerIntradayRoutes(app, deps) {
         if (pool.length === 0) pool = results.sort((a, b) => b.quantConfidence - a.quantConfidence).slice(0, 8);
         pool = pool.sort((a, b) => b.quantConfidence - a.quantConfidence).slice(0, 10);
 
-        // MCP AI verification layer — multi-model consensus.
+        // MCP AI verification layer — v4 DUAL-EXPERT multi-model consensus.
         const ai = await aiVerifySignals(pool, { KEYS, OPENAI_COMPAT });
         let signals = pool.map(c => {
           let aiConfidence = null, aiNote = '', aiModel = '';
+          let aiReasoning = '', geminiVerdict = null, groqVerdict = null;
+          let aiAdjustedSL = null, aiAdjustedEntry = null;
+          let aiRiskFactors = c.riskFactors || [];
+          let aiEntryQuality = c.entryQuality;
+          let aiTradeType = c.tradeType;
           const v = ai?.verdicts?.[c.symbol];
           if (v && typeof v.confidence === 'number') {
             const multiModel = (v.models?.length || 1) >= 2;
             if (v.verdict === 'AVOID') {
-              aiConfidence = Math.round(v.confidence * 0.5);
-              aiNote = v.note || 'AI avoid';
+              aiConfidence = Math.round(v.confidence * 0.4); // v4: heavier AVOID penalty
+              aiNote = v.note || 'AI AVOID — weak setup';
             } else if (v.verdict !== c.direction) {
-              aiConfidence = Math.round(v.confidence * 0.5); // disagreement → heavy penalty
+              aiConfidence = Math.round(v.confidence * 0.4); // disagreement → heavy penalty
               aiNote = v.note || 'AI disagrees with direction';
             } else {
-              // Agreement: blend engine + AI. More weight to AI when multiple models concur.
-              const aiW = multiModel ? 0.6 : 0.55;
+              // Agreement: blend engine + AI. v4: More weight to AI consensus
+              const aiW = multiModel ? 0.65 : 0.55;
               aiConfidence = Math.round(c.quantConfidence * (1 - aiW) + v.confidence * aiW);
+              // v4: Agreement bonus when both models concur
+              if (multiModel && (v.dissent || 0) === 0) aiConfidence += 3;
               // Dissenting AI vote caps conviction.
-              if ((v.dissent || 0) > 0) aiConfidence -= 4;
+              if ((v.dissent || 0) > 0) aiConfidence -= 6;
               aiNote = v.note || '';
             }
             aiModel = (v.models || []).join('+') || (ai.models || []).join('+');
+            // v4: Preserve reasoning chain
+            aiReasoning = v.reasoning || '';
+            // v4: Per-model verdicts for frontend display
+            if (v.perModel) {
+              geminiVerdict = v.perModel.gemini || null;
+              groqVerdict = v.perModel.groq || null;
+            }
+            // v4: AI-adjusted levels
+            if (v.adjustedSL != null) aiAdjustedSL = v.adjustedSL;
+            if (v.adjustedEntry != null) aiAdjustedEntry = v.adjustedEntry;
+            // v4: Merge risk factors from AI
+            if (Array.isArray(v.riskFactors) && v.riskFactors.length > 0) {
+              aiRiskFactors = [...new Set([...(c.riskFactors || []), ...v.riskFactors])];
+            }
+            // v4: AI expert entry quality and trade type
+            if (v.entryQuality != null) aiEntryQuality = Math.round((c.entryQuality + v.entryQuality) / 2);
+            if (v.tradeType) aiTradeType = v.tradeType;
           }
           const confidence = aiConfidence != null ? Math.max(0, Math.min(100, aiConfidence)) : (c._rrOk ? c.quantConfidence : c.quantConfidence - 12);
           const { _rrOk, _momentumPct, ...clean } = c;
-          return { ...clean, aiConfidence, aiModel, aiNote, confidence };
+
+          // v4: Re-grade after AI verification (final grade)
+          let finalGrade = clean.grade;
+          if (confidence >= 85 && clean.rr >= 1.8 && clean.volumeRatio >= 1.4 && !clean.counterTrend && aiEntryQuality >= 7) {
+            finalGrade = 'A+';
+          } else if (confidence >= 78 && clean.rr >= 1.5 && clean.volumeRatio >= 1.2 && !clean.counterTrend) {
+            finalGrade = 'A';
+          } else {
+            finalGrade = 'B';
+          }
+
+          return {
+            ...clean, aiConfidence, aiModel, aiNote, confidence,
+            // v4 fields
+            grade: finalGrade,
+            tradeType: aiTradeType,
+            entryQuality: aiEntryQuality,
+            aiReasoning,
+            geminiVerdict,
+            groqVerdict,
+            aiAdjustedSL,
+            aiAdjustedEntry,
+            riskFactors: aiRiskFactors,
+          };
         });
 
         // Adaptive threshold: opening 30 min me quant engine cap 88 hota hai,
@@ -337,8 +384,8 @@ export function registerIntradayRoutes(app, deps) {
           aiVerified: !!ai,
           aiModel: (ai?.models || []).join('+'),
           aiConsensus: (ai?.models || []).length > 1 ? 'multi-model' : ((ai?.models || [])[0] || ''),
-          aiEngine: 'NSE Intraday Realtime Market Expert (MCP)',
-          engine: 'SUPER INTELLIGENCE INTRADAY v3 — TradingView+Groww dual feed • ORB-15 • NIFTY/VIX regime gate • MCP expert consensus',
+          aiEngine: 'NSE Intraday Realtime Market Expert v4 — Dual AI (GEMINI+GROQ)',
+          engine: 'SUPER INTELLIGENCE INTRADAY v4 — TradingView+Groww dual feed • Supertrend+ORB-15 • Multi-TF EMA • NIFTY/VIX regime gate • DUAL AI expert consensus (Gemini+Groq)',
           sources: { tradingView: tvCount, groww: gwCount },
           marketRegime: regime,
           freshEntriesAllowed: freshEntriesAllowedNow(),
