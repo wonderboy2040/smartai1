@@ -22,7 +22,7 @@
 //                                     tools, Gemini→Groq→Cerebras chain)
 // ============================================================
 import {
-  BASE_UNIVERSE, INTRADAY_MIN_CONFIDENCE, INTRADAY_TOP_N,
+  BASE_UNIVERSE, INTRADAY_MIN_CONFIDENCE, INTRADAY_TOP_N, gradeSignal, inDeadZone,
   fetchIntradayDataBatch, analyzeIntradayFromScanner, aiVerifySignals,
 } from './engine.js';
 import { runProTraderAgent } from './agent.js';
@@ -259,6 +259,11 @@ export function registerIntradayRoutes(app, deps) {
         }
         console.log(`[intraday-scanner] Analyzed ${results.length}/${universe.length} symbols`);
 
+        // v4: dead-zone hard gate — 14:30–15:00 IST setups are statistically
+        // weak; nothing new is published in that window (open positions still
+        // auto-manage normally).
+        const deadZone = inDeadZone();
+
         // Zero results → SMART DIAGNOSTICS, not a dead-end error wall.
         if (results.length === 0) {
           const feedsCold = tvCount === 0 && gwCount === 0;
@@ -276,84 +281,95 @@ export function registerIntradayRoutes(app, deps) {
         }
 
         // Quant pre-filter: strong setups only go to AI verification.
-        let pool = results.filter(r => r.quantConfidence >= 70);
-        if (pool.length === 0) pool = results.sort((a, b) => b.quantConfidence - a.quantConfidence).slice(0, 8);
+        // (v4: dead-zone signals never reach the AI — saves tokens too.)
+        let pool = (!deadZone ? results : []).filter(r => r.quantConfidence >= 70);
+        if (pool.length === 0 && !deadZone) pool = results.sort((a, b) => b.quantConfidence - a.quantConfidence).slice(0, 8);
         pool = pool.sort((a, b) => b.quantConfidence - a.quantConfidence).slice(0, 10);
 
-        // MCP AI verification layer — v4 DUAL-EXPERT multi-model consensus.
-        const ai = await aiVerifySignals(pool, { KEYS, OPENAI_COMPAT });
+        // MCP AI verification layer — v4 structured dual-expert consensus.
+        const ai = pool.length > 0 ? await aiVerifySignals(pool, { KEYS, OPENAI_COMPAT }) : null;
+
+        // v4: merge AI-adjusted levels into the engine plan (tighter SL,
+        // better entry) and rebuild the R-geometry off the new risk.
+        const applyAiLevels = (sig, v) => {
+          const isLong = sig.direction === 'LONG';
+          const atr = sig.atr > 0 ? sig.atr : Math.abs(sig.entry - sig.stopLoss);
+          // SL bounds: engine discipline 0.7–1.8 ATR from entry, and only
+          // TIGHTER than the engine stop (never widen risk).
+          const aiSl = typeof v?.slAdjust === 'number' && isFinite(v.slAdjust) ? +v.slAdjust.toFixed(2) : null;
+          if (aiSl != null) {
+            const lo = isLong ? sig.entry - 1.3 * atr : sig.entry + 0.7 * atr;
+            const hi = isLong ? sig.entry - 0.7 * atr : sig.entry + 1.3 * atr;
+            const valid = isLong ? (aiSl > lo && aiSl < hi && aiSl > sig.stopLoss) : (aiSl > lo && aiSl < hi && aiSl < sig.stopLoss);
+            if (valid) {
+              sig.aiAdjustedSL = aiSl;
+              sig.stopLoss = aiSl;
+              // Rebuild R-geometry: same 1.6R/2.6R discipline on the new risk.
+              const risk = Math.abs(sig.entry - sig.stopLoss);
+              if (risk > 0) {
+                sig.target1 = +(isLong ? sig.entry + 1.6 * risk : sig.entry - 1.6 * risk).toFixed(2);
+                sig.target2 = +(isLong ? sig.entry + 2.6 * risk : sig.entry - 2.6 * risk).toFixed(2);
+                sig.trailingSL = +(isLong ? sig.entry - 0.8 * atr : sig.entry + 0.8 * atr).toFixed(2);
+                sig.rr = +((Math.abs(sig.target1 - sig.entry) / risk)).toFixed(2);
+                const slip = sig.entry * 0.07 / 100; // SLIPPAGE_BPS = 7
+                sig.effRR = +(((Math.abs(sig.target1 - sig.entry) - 2 * slip) / (risk + 2 * slip))).toFixed(2);
+                const qtyRisk = Math.floor(1000 / (risk + 2 * slip));
+                const qtyCap = Math.floor(25000 / sig.entry);
+                sig.qtyPerLakh = Math.max(0, Math.min(qtyRisk, qtyCap));
+              }
+            }
+          }
+          // Entry adjustment: only within the engine entry zone ± 0.35 ATR.
+          const aiEntry = typeof v?.entryAdjust === 'number' && isFinite(v.entryAdjust) ? +v.entryAdjust.toFixed(2) : null;
+          if (aiEntry != null) {
+            const lo = (sig.entryZoneLow ?? sig.entry) - 0.35 * atr;
+            const hi = (sig.entryZoneHigh ?? sig.entry) + 0.35 * atr;
+            if (aiEntry > lo && aiEntry < hi && aiEntry > 0) {
+              sig.aiAdjustedEntry = aiEntry;
+            }
+          }
+          return sig;
+        };
+
         let signals = pool.map(c => {
           let aiConfidence = null, aiNote = '', aiModel = '';
-          let aiReasoning = '', geminiVerdict = null, groqVerdict = null;
-          let aiAdjustedSL = null, aiAdjustedEntry = null;
-          let aiRiskFactors = c.riskFactors || [];
-          let aiEntryQuality = c.entryQuality;
-          let aiTradeType = c.tradeType;
           const v = ai?.verdicts?.[c.symbol];
           if (v && typeof v.confidence === 'number') {
             const multiModel = (v.models?.length || 1) >= 2;
             if (v.verdict === 'AVOID') {
-              aiConfidence = Math.round(v.confidence * 0.4); // v4: heavier AVOID penalty
-              aiNote = v.note || 'AI AVOID — weak setup';
+              // v4 STRICT: AI-rejected setups never publish (was: halved conf).
+              return null;
             } else if (v.verdict !== c.direction) {
-              aiConfidence = Math.round(v.confidence * 0.4); // disagreement → heavy penalty
+              // Single-model disagreement — halve confidence (multi-model
+              // conflicts were already rejected inside aiVerifySignals).
+              aiConfidence = Math.round(v.confidence * 0.5);
               aiNote = v.note || 'AI disagrees with direction';
             } else {
-              // Agreement: blend engine + AI. v4: More weight to AI consensus
-              const aiW = multiModel ? 0.65 : 0.55;
+              // Agreement: blend engine + AI. More weight to AI when multiple models concur.
+              const aiW = multiModel ? 0.6 : 0.55;
               aiConfidence = Math.round(c.quantConfidence * (1 - aiW) + v.confidence * aiW);
-              // v4: Agreement bonus when both models concur
-              if (multiModel && (v.dissent || 0) === 0) aiConfidence += 3;
               // Dissenting AI vote caps conviction.
-              if ((v.dissent || 0) > 0) aiConfidence -= 6;
+              if ((v.dissent || 0) > 0) aiConfidence -= 4;
               aiNote = v.note || '';
+              // v4: merge structured expert fields + adjusted levels.
+              applyAiLevels(c, v);
             }
             aiModel = (v.models || []).join('+') || (ai.models || []).join('+');
-            // v4: Preserve reasoning chain
-            aiReasoning = v.reasoning || '';
-            // v4: Per-model verdicts for frontend display
-            if (v.perModel) {
-              geminiVerdict = v.perModel.gemini || null;
-              groqVerdict = v.perModel.groq || null;
-            }
-            // v4: AI-adjusted levels
-            if (v.adjustedSL != null) aiAdjustedSL = v.adjustedSL;
-            if (v.adjustedEntry != null) aiAdjustedEntry = v.adjustedEntry;
-            // v4: Merge risk factors from AI
-            if (Array.isArray(v.riskFactors) && v.riskFactors.length > 0) {
-              aiRiskFactors = [...new Set([...(c.riskFactors || []), ...v.riskFactors])];
-            }
-            // v4: AI expert entry quality and trade type
-            if (v.entryQuality != null) aiEntryQuality = Math.round((c.entryQuality + v.entryQuality) / 2);
-            if (v.tradeType) aiTradeType = v.tradeType;
           }
           const confidence = aiConfidence != null ? Math.max(0, Math.min(100, aiConfidence)) : (c._rrOk ? c.quantConfidence : c.quantConfidence - 12);
-          const { _rrOk, _momentumPct, ...clean } = c;
-
-          // v4: Re-grade after AI verification (final grade)
-          let finalGrade = clean.grade;
-          if (confidence >= 85 && clean.rr >= 1.8 && clean.volumeRatio >= 1.4 && !clean.counterTrend && aiEntryQuality >= 7) {
-            finalGrade = 'A+';
-          } else if (confidence >= 78 && clean.rr >= 1.5 && clean.volumeRatio >= 1.2 && !clean.counterTrend) {
-            finalGrade = 'A';
-          } else {
-            finalGrade = 'B';
-          }
-
+          const { _rrOk, _momentumPct, _deadZone, ...clean } = c;
+          const v2 = ai?.verdicts?.[c.symbol];
           return {
             ...clean, aiConfidence, aiModel, aiNote, confidence,
-            // v4 fields
-            grade: finalGrade,
-            tradeType: aiTradeType,
-            entryQuality: aiEntryQuality,
-            aiReasoning,
-            geminiVerdict,
-            groqVerdict,
-            aiAdjustedSL,
-            aiAdjustedEntry,
-            riskFactors: aiRiskFactors,
+            // v4 dual-expert fields
+            tradeType: v2?.tradeType || null,
+            entryQuality: v2?.entryQuality ?? null,
+            aiReasoning: v2?.analysis || '',
+            riskFactors: v2?.riskFactors || [],
+            geminiVerdict: v2?.perModel?.gemini ? { confidence: v2.perModel.gemini.confidence, note: v2.perModel.gemini.note } : null,
+            groqVerdict: v2?.perModel?.groq ? { confidence: v2.perModel.groq.confidence, note: v2.perModel.groq.note } : null,
           };
-        });
+        }).filter(Boolean); // v4: drop AVOID-rejected setups
 
         // Adaptive threshold: opening 30 min me quant engine cap 88 hota hai,
         // isliye min confidence 70 pe relax hota hai. Rest of the day 75.
@@ -373,7 +389,9 @@ export function registerIntradayRoutes(app, deps) {
             .sort((a, b) => b.confidence - a.confidence);
         }
 
-        signals = filteredSignals.slice(0, INTRADAY_TOP_N);
+        signals = filteredSignals.slice(0, INTRADAY_TOP_N)
+          // v4: quality grade (A+/A/B) — B is watch-only (frontend flags it)
+          .map(s => ({ ...s, grade: gradeSignal(s) }));
 
         const payload = {
           marketOpen: true,
@@ -384,11 +402,12 @@ export function registerIntradayRoutes(app, deps) {
           aiVerified: !!ai,
           aiModel: (ai?.models || []).join('+'),
           aiConsensus: (ai?.models || []).length > 1 ? 'multi-model' : ((ai?.models || [])[0] || ''),
-          aiEngine: 'NSE Intraday Realtime Market Expert v4 — Dual AI (GEMINI+GROQ)',
-          engine: 'SUPER INTELLIGENCE INTRADAY v4 — TradingView+Groww dual feed • Supertrend+ORB-15 • Multi-TF EMA • NIFTY/VIX regime gate • DUAL AI expert consensus (Gemini+Groq)',
+          aiEngine: 'NSE Intraday Realtime Market Expert (MCP)',
+          engine: 'SUPER INTELLIGENCE INTRADAY v4 — DUAL-AI EXPERT (Gemini+Groq) • Supertrend/POC/SMA50 confluence • ORB-15 • NIFTY/VIX regime gate • A+/A/B signal grading',
           sources: { tradingView: tvCount, groww: gwCount },
           marketRegime: regime,
           freshEntriesAllowed: freshEntriesAllowedNow(),
+          deadZone,
           signals,
           disclaimer: 'Educational analysis only — not investment advice. Intraday trading me capital loss ka risk hai.',
         };
@@ -442,6 +461,43 @@ export function registerIntradayRoutes(app, deps) {
     }
 
     return res.json(await runScanner(debugForce));
+  });
+
+  // ----------------------------------------------------------
+  // v4 — SIGNAL DETAIL: full dual-expert analysis for one symbol.
+  // Serves the last scan's structured AI reasoning (Gemini + Groq),
+  // grade, entry-quality, risk factors and adjusted levels.
+  // ----------------------------------------------------------
+  app.get('/api/intraday-signal-detail/:symbol', (req, res) => {
+    const sym = String(req.params.symbol || '').trim().toUpperCase();
+    if (!/^[A-Z0-9&\-]{2,15}$/.test(sym)) return jsonError(res, 400, 'Valid NSE symbol required.');
+    const scan = _intradayCache.data;
+    const s = scan?.signals?.find(x => x.symbol === sym);
+    if (!s) {
+      return jsonError(res, 404, `No live signal for ${sym} — scanner cache me nahi hai (market band / filtered out ho sakta hai).`);
+    }
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      ok: true,
+      asOf: scan.asOf,
+      signal: {
+        symbol: s.symbol, direction: s.direction, grade: s.grade,
+        confidence: s.confidence, quantConfidence: s.quantConfidence,
+        aiConfidence: s.aiConfidence, aiModel: s.aiModel, aiNote: s.aiNote,
+        tradeType: s.tradeType ?? null,
+        entryQuality: s.entryQuality ?? null,
+        aiReasoning: s.aiReasoning || '',
+        riskFactors: s.riskFactors || [],
+        geminiVerdict: s.geminiVerdict ?? null,
+        groqVerdict: s.groqVerdict ?? null,
+        entry: s.entry, stopLoss: s.stopLoss, target1: s.target1, target2: s.target2,
+        aiAdjustedSL: s.aiAdjustedSL ?? null,
+        aiAdjustedEntry: s.aiAdjustedEntry ?? null,
+        rr: s.rr, effRR: s.effRR, adx: s.adx, rsi: s.rsi,
+        volumeRatio: s.volumeRatio, vwapDist: s.vwapDist,
+        counterTrend: !!s.counterTrend, reasons: s.reasons || [],
+      },
+    });
   });
 
   // ----------------------------------------------------------

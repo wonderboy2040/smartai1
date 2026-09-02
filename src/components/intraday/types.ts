@@ -40,16 +40,16 @@ export interface IntradaySignal {
   counterTrend?: boolean;
   slippage?: number;
   effRR?: number;
-  // v4 additions — dual-AI expert upgrade
+  // v4 DUAL-AI EXPERT additions
   grade?: 'A+' | 'A' | 'B';
   tradeType?: 'SCALP' | 'MOMENTUM' | 'SWING' | null;
-  entryQuality?: number; // 1-10
-  aiReasoning?: string; // Full AI analysis text from Gemini+Groq
+  entryQuality?: number | null; // 1-10 AI entry-timing score
+  aiReasoning?: string;         // full Gemini+Groq reasoning chain
+  riskFactors?: string[];
   geminiVerdict?: { confidence: number; note: string } | null;
   groqVerdict?: { confidence: number; note: string } | null;
-  aiAdjustedSL?: number;
-  aiAdjustedEntry?: number;
-  riskFactors?: string[];
+  aiAdjustedSL?: number | null;
+  aiAdjustedEntry?: number | null;
 }
 
 export interface MarketRegime {
@@ -86,6 +86,7 @@ export interface ScannerResponse {
   sources?: { tradingView?: number; groww?: number };
   marketRegime?: MarketRegime | null;
   freshEntriesAllowed?: boolean;
+  deadZone?: boolean;
   signals: IntradaySignal[];
   message?: string;
   error?: string;

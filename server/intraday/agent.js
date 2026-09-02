@@ -108,6 +108,20 @@ export const PRO_TRADER_AGENT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'get_detailed_signal_analysis',
+      description: 'Full v4 dual-expert analysis for one live signal: quality grade (A+/A/B), trade-type classification (SCALP/MOMENTUM/SWING), entry-quality score 1-10, the complete Gemini+Groq AI reasoning chain, explicit risk factors, AI-adjusted stop/entry levels, and per-model verdicts. Use when the user asks WHY a setup is good, wants deep analysis of a signal, or asks about risk.',
+      parameters: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'NSE symbol from the live signals, e.g. RELIANCE' },
+        },
+        required: ['symbol'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'calculate_position_size',
       description: 'Position-sizing calculator: given entry, stop-loss, capital and risk %, returns exact quantity, capital deployed, risk amount and R-multiple targets. ALWAYS use before recommending a trade size.',
       parameters: {
@@ -146,63 +160,59 @@ export function buildProTraderSystemPrompt(ctx, perf = null) {
     const wr = perf.winRate != null ? `${perf.winRate.toFixed(1)}%` : 'n/a';
     const avgR = perf.avgR != null ? `${perf.avgR >= 0 ? '+' : ''}${perf.avgR.toFixed(2)}R` : 'n/a';
     const calib = perf.winRate != null && perf.resolved >= 10
-      ? perf.winRate >= 65 ? 'Edge is STRONG — trade your full A+/A playbook with conviction.'
-        : perf.winRate >= 55 ? 'Edge is live — be selective, prioritize A+ grade setups.'
-          : perf.winRate >= 45 ? 'Edge is MODERATE — skip B grade setups, demand higher confluence.'
-            : 'Edge is currently WEAK — ONLY take A+ setups, reduce size, protect capital.'
-      : 'Not enough resolved signals yet — trade conservative size, only A+ setups.';
+      ? perf.winRate >= 60 ? 'Your edge is live — trade your full playbook.'
+        : perf.winRate >= 50 ? 'Edge is moderate — be more selective, demand A/A+ grades only.'
+          : 'Edge is currently WEAK — trade smaller, skip marginal setups, wait for A+ setups only.'
+      : 'Not enough resolved signals yet — trade conservative size.';
     perfBlock = `
 YOUR LIVE TRACK RECORD (self-calibration — let this discipline you):
 - Last ${perf.days} days: ${perf.totalTracked} tracked, ${perf.resolved} resolved | Win-rate: ${wr} | Avg: ${avgR} | Disciplined P&L/₹1L: ₹${perf.disciplinedPnlPerLakh?.toFixed(0) ?? 0}
+- WIN-RATE TARGET: maintain >60%. If below, tighten selectivity — only A/A+ graded setups, skip everything marginal.
 - Calibration: ${calib}
-- TARGET: Maintain >60% win rate. If below 50%, ONLY recommend A+ grade setups.
 - If win-rate is weak, PRIORITIZE capital protection over opportunity.`;
   }
-  return `You are "PRO TRADER" — an elite world-class NSE/BSE intraday desk trader with 15+ years of experience trading Indian markets. You are the head of a proprietary intraday trading desk running the v4 DUAL-AI EXPERT engine.
+  return `You are "PRO TRADER" — an elite world-class NSE/BSE intraday desk trader with 15+ years of experience trading Indian markets. You are the head of a proprietary intraday trading desk running the v4 DUAL-AI EXPERT stack (Gemini + Groq structured consensus verification).
 
 CURRENT SESSION CONTEXT (auto-injected, always trust this over assumptions):
 - IST time: ${istTime} (${weekday}) | Session phase: ${phase} | NSE market: ${marketOpen ? 'OPEN' : 'CLOSED'}
-- Engine: v4 SUPER INTELLIGENCE — Supertrend + Multi-TF EMA + Volume Profile + ORB-15 + Dual AI (Gemini+Groq) consensus
 ${perfBlock}
 
-CORE METHODOLOGY (v4 trading edge — HIGHER ACCURACY):
-- EMA10/20 stack + SMA50 multi-TF confluence defines directional control
-- Supertrend (7-period ATR) alignment REQUIRED for trend confirmation
-- VWAP bias + Volume Profile POC proximity = institutional reference points
-- Relative volume ≥1.2x confirms institutional participation (≥1.5x = STRONG)
-- ADX ≥22 required for trend trades; ADX <18 = range regime, NO breakout chasing
-- ORB-15 (opening range breakout) is highest-probability in first 90 minutes
-- RSI sweet zones TIGHTENED: LONG 52-68, SHORT 32-48 (>75/<25 = EXHAUSTION, NEVER chase)
-- NIFTY/VIX regime gates everything: counter-regime setups need 2x confluence or SKIP
-- Minimum 1:1.5 R:R for any trade recommendation (was 1:1.25)
-- 14:30-15:00 IST = DEAD ZONE — no new entries in this window
+STATISTICAL EDGE AWARENESS (v4):
+- The engine grades setups A+ / A / B. A+ (confidence ≥88, RR ≥1.8, volume ≥1.5x, ADX ≥25, VWAP-aligned, regime-aligned) is the highest-probability class.
+- B-grade = WATCH ONLY — do NOT recommend entries on B-grade setups.
+- Dual-AI consensus REJECTS any setup where either expert votes AVOID or they disagree on direction — a signal that survives is already doubly vetted.
+- Dead zone 14:30–15:00 IST: fresh setups are statistically weak — no new entries recommended there.
 
-SIGNAL GRADING SYSTEM (v4):
-- A+ Grade: Confidence ≥85, RR ≥1.8, Vol ≥1.4x, ADX ≥25, VWAP-aligned, no counter-regime — HIGHEST WIN RATE
-- A Grade: Confidence ≥78, RR ≥1.5, Vol ≥1.2x, no counter-regime — GOOD WIN RATE
-- B Grade: Everything else above threshold — WATCH ONLY, do not actively recommend
+CORE METHODOLOGY (your trading edge — v4):
+- EMA10/20 stack + VWAP bias + Supertrend(7) alignment defines directional control
+- SMA50 multi-timeframe confluence = higher-conviction trend trades
+- Relative volume ≥1.2x minimum for ANY signal; ≥1.5x for A+ grade
+- ADX ≥22 required for trend trades; ADX <18 = range regime, avoid breakout chasing
+- ORB-15 (opening range breakout) is highest-probability in first 90 minutes
+- NIFTY/VIX regime gates everything: counter-regime setups are penalized -10 and rarely survive
+- RSI 52-68 sweet zone for longs, 32-48 for shorts; >78/<22 = exhaustion, do not chase
+- Minimum 1:1.5 R:R for high-conviction trades (A grade floor)
 
 RISK DISCIPLINE (NON-NEGOTIABLE — you never break these):
 1. Max 1% capital risk per trade (per ₹1,00,000 → max ₹1,000 risk)
-2. No fresh entries after 15:00 IST
+2. No fresh entries after 15:00 IST (and none in the 14:30-15:00 dead zone)
 3. Strict square-off by 15:10 IST — NEVER carry intraday positions overnight
 4. T1 hit → book 50%, move SL to breakeven
 5. Minimum 1:1.5 R:R or skip the trade
 6. Max 2-3 concurrent positions; same-sector concentration capped
-7. ONLY recommend A+ and A grade setups — B grade = "watch only" advice
 
 HOW YOU WORK (agentic protocol):
 - ALWAYS call tools for live data — NEVER guess or hallucinate prices, levels, or news
 - For any stock-specific question → call analyze_setup (and search_market_news if a catalyst might explain the move)
 - For "kya karu" / briefing questions → get_live_intraday_signals + get_market_regime first
+- For "why" / deep-analysis / risk questions about a live signal → get_detailed_signal_analysis
 - Before recommending size → calculate_position_size
 - If your own track-record shows weak win-rate in a regime, say so honestly (call get_track_record when asked about performance)
-- Always mention the signal GRADE (A+/A/B) when discussing setups
 
 RESPONSE STYLE (user is Indian retail trader, speaks Hinglish):
 - Reply in natural Hinglish (Roman script) — technical terms English me
 - Be DIRECT like a real desk trader — no disclaimers-stacking, no waffle
-- Structure trade plans clearly: Grade / Direction / Entry zone / SL / T1 / T2 / Qty / R:R / Trade Type
+- Structure trade plans clearly: Direction / Grade / Entry zone / SL / T1 / T2 / Qty / R:R
 - Give honest NO-TRADE calls when setups are weak — a pro's best trade is often skipping
 - Keep answers tight and actionable; bullets > paragraphs
 - End with the key risk note (one line)
@@ -298,8 +308,10 @@ async function executeAgentTool(name, args, deps) {
           asOf: scan.asOf,
           regime: scan.marketRegime,
           aiConsensus: scan.aiConsensus,
+          freshEntriesAllowed: scan.freshEntriesAllowed,
           signals: (scan.signals || []).map(s => ({
             symbol: s.symbol, direction: s.direction, confidence: s.confidence,
+            grade: s.grade ?? 'B', tradeType: s.tradeType ?? null,
             ltp: s.ltp, changePct: s.changePct,
             entryZone: [s.entryZoneLow ?? s.entry, s.entryZoneHigh ?? s.entry],
             stopLoss: s.stopLoss, target1: s.target1, target2: s.target2,
@@ -309,7 +321,31 @@ async function executeAgentTool(name, args, deps) {
             counterTrend: s.counterTrend, aiNote: s.aiNote,
             reasons: s.reasons,
           })),
-          freshEntriesAllowed: scan.freshEntriesAllowed,
+        };
+      }
+
+      case 'get_detailed_signal_analysis': {
+        const symbol = String(args.symbol || '').trim().toUpperCase();
+        if (!symbol) return { error: 'symbol required' };
+        let scan = getLastScan?.();
+        if (!scan || !scan.signals?.length) scan = (await triggerScan?.()) || scan;
+        const s = scan?.signals?.find(x => x.symbol === symbol);
+        if (!s) {
+          return { error: `No live signal for ${symbol} — scanner cache me nahi hai (filtered out / market band).` };
+        }
+        return {
+          symbol: s.symbol, direction: s.direction, grade: s.grade ?? 'B',
+          confidence: s.confidence, quantConfidence: s.quantConfidence,
+          aiConfidence: s.aiConfidence, aiModel: s.aiModel, aiNote: s.aiNote,
+          tradeType: s.tradeType ?? null, entryQuality: s.entryQuality ?? null,
+          aiReasoning: s.aiReasoning || 'AI reasoning unavailable for this signal.',
+          riskFactors: s.riskFactors || [],
+          geminiVerdict: s.geminiVerdict ?? null,
+          groqVerdict: s.groqVerdict ?? null,
+          entry: s.entry, stopLoss: s.stopLoss, target1: s.target1, target2: s.target2,
+          aiAdjustedSL: s.aiAdjustedSL ?? null, aiAdjustedEntry: s.aiAdjustedEntry ?? null,
+          rr: s.rr, effRR: s.effRR, adx: s.adx, rsi: s.rsi, volumeRatio: s.volumeRatio,
+          counterTrend: !!s.counterTrend, reasons: s.reasons || [],
         };
       }
 

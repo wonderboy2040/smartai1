@@ -34,12 +34,13 @@ const baseDeps = {
 };
 
 describe('PRO_TRADER_AGENT_TOOLS', () => {
-  it('has all 8 intraday tools with unique names', () => {
+  it('has all 9 intraday tools with unique names (v4: +get_detailed_signal_analysis)', () => {
     const names = PRO_TRADER_AGENT_TOOLS.map(t => t.function.name);
-    expect(names).toHaveLength(8);
-    expect(new Set(names).size).toBe(8);
+    expect(names).toHaveLength(9);
+    expect(new Set(names).size).toBe(9);
     expect(names).toContain('get_live_intraday_signals');
     expect(names).toContain('analyze_setup');
+    expect(names).toContain('get_detailed_signal_analysis');
     expect(names).toContain('calculate_position_size');
   });
 

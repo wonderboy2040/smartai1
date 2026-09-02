@@ -1,15 +1,16 @@
 // ============================================================
 // IntradayTab — SUPER INTELLIGENCE INTRADAY PRO-DESK (v4)
 // ------------------------------------------------------------
-// v4 MEGA UPGRADE — ACCURATE SIGNALS + HIGH WIN RATE:
-//   • DUAL AI EXPERT: Gemini + Groq structured analysis
-//   • Signal grading: A+ / A / B quality classification
-//   • Enhanced quant engine: Supertrend + Multi-TF EMA + Volume Profile
-//   • Win-rate dashboard strip with live stats
-//   • Grade filter (A+ ONLY / A & A+ / ALL)
-//   • AI reasoning preview per signal
-//   • Entry quality meter (1-10)
-//   • Trade type classification (SCALP/MOMENTUM/SWING)
+// v4 MEGA upgrades (dual-AI expert desk):
+//   • v4 DUAL-AI EXPERT branding (Gemini + Groq structured consensus)
+//   • Signal GRADE filter: A+ ONLY / A & A+ / ALL (default A & A+)
+//   • Win-rate dashboard strip — live hit-rate, 7-day win-rate, avg R
+//   • AI ANALYSIS modal — full Gemini+Groq reasoning per signal
+//   • Market-conditions bar — volatility regime + optimal trade window
+//   • Dead-zone (14:30–15:00) banner — fresh signals gated
+// v3 keeps: SSE live stream, regime banner, fresh-entry ban, chart
+//   modal, paper trading, track-record, table+card views, sector
+//   concentration warnings, notifications + sound, universe editor.
 // ============================================================
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../../utils/api';
@@ -25,7 +26,7 @@ import { JournalPanel } from '../intraday/JournalPanel';
 import { useIntradayStream } from '../intraday/useIntradayStream';
 import { sectorConcentration } from '../intraday/sectorMap';
 import type {
-  IntradaySignal, IntradayAlertsStatus, ScannerResponse, OutcomeEvent, MarketRegime,
+  IntradaySignal, IntradayAlertsStatus, ScannerResponse, OutcomeEvent, MarketRegime, TrackRecordData,
 } from '../intraday/types';
 
 const PROXY_BASE = import.meta.env.VITE_API_PROXY || '';
@@ -69,8 +70,8 @@ function readPref(key: string, fallback: boolean): boolean {
   catch { return fallback; }
 }
 
-// ---------- Regime banner ----------
-function RegimeBanner({ regime }: { regime: MarketRegime | null }) {
+// ---------- Regime banner (v4: + volatility regime + optimal trade window) ----------
+function RegimeBanner({ regime, phase }: { regime: MarketRegime | null; phase?: string }) {
   if (!regime) return null;
   const conf = {
     BULLISH: 'bg-emerald-500/10 border-emerald-500/25 text-emerald-300',
@@ -82,6 +83,13 @@ function RegimeBanner({ regime }: { regime: MarketRegime | null }) {
     : regime.vixLevel === 'ELEVATED'
       ? 'bg-amber-500/10 border-amber-500/25 text-amber-300'
       : 'bg-white/5 border-white/10 text-slate-400';
+  const volRegime = regime.vixLevel === 'HIGH' ? 'HIGH-VOL ⚠' : regime.vixLevel === 'ELEVATED' ? 'ELEVATED-VOL' : 'CALM';
+  // Optimal trade window by session phase (v4 desk heuristic)
+  const windowInfo = {
+    early: { label: 'OPTIMAL WINDOW — ORB window', cls: 'bg-cyan-500/10 border-cyan-500/25 text-cyan-300', tip: '09:15–09:45 opening-range window — highest-probability ORB breakouts' },
+    full: { label: 'STANDARD WINDOW', cls: 'bg-white/5 border-white/10 text-slate-400', tip: 'Mid-session — trade only A/A+ graded setups' },
+    'power-hour': { label: 'POWER HOUR', cls: 'bg-rose-500/10 border-rose-500/25 text-rose-300', tip: '14:30+ — momentum moves, but fresh entries gated after 14:30 dead-zone rule' },
+  }[phase || 'full'] || { label: 'STANDARD WINDOW', cls: 'bg-white/5 border-white/10 text-slate-400', tip: '' };
   return (
     <div className="flex items-center gap-2 flex-wrap text-[10px] font-mono">
       <span className={`px-2.5 py-1 rounded-xl border font-black ${conf}`}>
@@ -90,10 +98,186 @@ function RegimeBanner({ regime }: { regime: MarketRegime | null }) {
       </span>
       {regime.vix != null && (
         <span className={`px-2.5 py-1 rounded-xl border font-black ${vixConf}`} title="INDIA VIX">
-          VIX {regime.vix.toFixed(1)} {regime.vixLevel === 'HIGH' ? '⚠' : ''}
+          VIX {regime.vix.toFixed(1)} · {volRegime}
         </span>
       )}
-      <span className="text-slate-500 hidden sm:inline">Counter-regime setups auto-penalized</span>
+      {phase && (
+        <span className={`px-2.5 py-1 rounded-xl border font-bold ${windowInfo.cls}`} title={windowInfo.tip}>
+          ⏱ {windowInfo.label}
+        </span>
+      )}
+      <span className="text-slate-500 hidden sm:inline">Counter-regime setups auto-penalized (v4: -10)</span>
+    </div>
+  );
+}
+
+// ---------- v4: Win-rate dashboard strip ----------
+function WinRateStrip({ track, todayCount, todayAPlus }: {
+  track: TrackRecordData | null; todayCount: number; todayAPlus: number;
+}) {
+  const wr = track?.winRate;
+  const avgR = track?.avgR;
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="rounded-xl bg-black/40 border border-white/5 px-3 py-2">
+        <div className="text-[8px] uppercase font-bold text-slate-500 tracking-wider">Today Signals</div>
+        <div className="text-sm font-black font-mono text-cyan-300">{todayCount}
+          {todayAPlus > 0 && <span className="ml-1.5 text-[9px] text-amber-300 font-bold">★ {todayAPlus} A+</span>}
+        </div>
+      </div>
+      <div className="rounded-xl bg-black/40 border border-white/5 px-3 py-2">
+        <div className="text-[8px] uppercase font-bold text-slate-500 tracking-wider">7-Day Win Rate</div>
+        <div className={`text-sm font-black font-mono ${(wr ?? 0) >= 60 ? 'text-emerald-400' : (wr ?? 0) >= 50 ? 'text-amber-400' : wr == null ? 'text-slate-500' : 'text-red-400'}`}>
+          {wr != null ? `${wr.toFixed(1)}%` : '—'}
+          <span className="ml-1 text-[8px] font-normal text-slate-500">target &gt;60%</span>
+        </div>
+      </div>
+      <div className="rounded-xl bg-black/40 border border-white/5 px-3 py-2">
+        <div className="text-[8px] uppercase font-bold text-slate-500 tracking-wider">Avg R (7d)</div>
+        <div className={`text-sm font-black font-mono ${(avgR ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+          {avgR != null ? `${avgR >= 0 ? '+' : ''}${avgR.toFixed(2)}R` : '—'}
+        </div>
+      </div>
+      <div className="rounded-xl bg-black/40 border border-white/5 px-3 py-2">
+        <div className="text-[8px] uppercase font-bold text-slate-500 tracking-wider">Resolved (7d)</div>
+        <div className="text-sm font-black font-mono text-slate-200">
+          {track ? `${track.resolved}/${track.totalTracked}` : '—'}
+          <span className="ml-1 text-[8px] font-normal text-slate-500">tracked</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- v4: Signal detail modal — full dual-expert analysis ----------
+function SignalDetailModal({ signal, onClose }: {
+  signal: IntradaySignal | null; onClose: () => void;
+}) {
+  if (!signal) return null;
+  const s = signal;
+  const long = s.direction === 'LONG';
+  const gradeConf = {
+    'A+': 'bg-amber-400/15 text-amber-300 border-amber-400/40',
+    'A': 'bg-slate-400/15 text-slate-200 border-slate-300/40',
+    'B': 'bg-white/5 text-slate-400 border-white/10',
+  }[s.grade || 'B'];
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>
+      <div className="quantum-panel rounded-2xl border border-purple-500/25 w-full max-w-lg p-5 space-y-4 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-base font-black text-white">{s.symbol}</span>
+            <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black font-mono border ${long ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-red-500/15 text-red-300 border-red-500/30'}`}>
+              {s.direction}
+            </span>
+            <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black font-mono border ${gradeConf}`}>
+              {s.grade || 'B'} GRADE{s.grade === 'B' ? ' · WATCH ONLY' : ''}
+            </span>
+            {s.tradeType && (
+              <span className="px-2 py-0.5 rounded-lg text-[9px] font-black font-mono border bg-cyan-500/10 text-cyan-300 border-cyan-500/25">{s.tradeType}</span>
+            )}
+          </div>
+          <button onClick={onClose} className="quantum-btn-ghost px-2.5 py-1 rounded-lg text-xs font-black">✕</button>
+        </div>
+
+        {/* Dual confidence breakdown */}
+        <div className="grid grid-cols-3 gap-2">
+          <div className="rounded-xl bg-black/40 border border-white/5 px-3 py-2 text-center">
+            <div className="text-[8px] uppercase font-bold text-slate-500 tracking-wider">Quant Engine</div>
+            <div className="text-lg font-black font-mono text-cyan-300">{s.quantConfidence}%</div>
+          </div>
+          <div className="rounded-xl bg-black/40 border border-white/5 px-3 py-2 text-center">
+            <div className="text-[8px] uppercase font-bold text-slate-500 tracking-wider">AI Consensus</div>
+            <div className="text-lg font-black font-mono text-purple-300">{s.aiConfidence != null ? `${s.aiConfidence}%` : '—'}</div>
+          </div>
+          <div className="rounded-xl bg-black/40 border border-white/5 px-3 py-2 text-center">
+            <div className="text-[8px] uppercase font-bold text-slate-500 tracking-wider">Final</div>
+            <div className="text-lg font-black font-mono text-emerald-300">{s.confidence}%</div>
+          </div>
+        </div>
+
+        {/* Per-model verdicts */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-xl bg-blue-500/[0.06] border border-blue-500/20 px-3 py-2">
+            <div className="text-[9px] uppercase font-bold text-blue-300/80 tracking-wider">🧠 Gemini Expert</div>
+            {s.geminiVerdict ? (
+              <>
+                <div className="text-sm font-black font-mono text-blue-200">{s.geminiVerdict.confidence}%</div>
+                <p className="text-[10px] text-blue-200/70 font-mono mt-0.5">{s.geminiVerdict.note || '—'}</p>
+              </>
+            ) : <p className="text-[10px] text-slate-500 font-mono mt-1">Not available (single-model scan)</p>}
+          </div>
+          <div className="rounded-xl bg-orange-500/[0.06] border border-orange-500/20 px-3 py-2">
+            <div className="text-[9px] uppercase font-bold text-orange-300/80 tracking-wider">⚡ Groq Expert</div>
+            {s.groqVerdict ? (
+              <>
+                <div className="text-sm font-black font-mono text-orange-200">{s.groqVerdict.confidence}%</div>
+                <p className="text-[10px] text-orange-200/70 font-mono mt-0.5">{s.groqVerdict.note || '—'}</p>
+              </>
+            ) : <p className="text-[10px] text-slate-500 font-mono mt-1">Not available (single-model scan)</p>}
+          </div>
+        </div>
+
+        {/* Entry quality */}
+        {s.entryQuality != null && (
+          <div className="rounded-xl bg-black/40 border border-white/5 px-3 py-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Entry Timing Quality</span>
+              <span className="text-sm font-black font-mono text-slate-200">{s.entryQuality}/10</span>
+            </div>
+            <div className="mt-1.5 h-2 rounded-full bg-white/5 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${s.entryQuality >= 8 ? 'bg-emerald-400' : s.entryQuality >= 6 ? 'bg-cyan-400' : s.entryQuality >= 4 ? 'bg-amber-400' : 'bg-red-400'}`}
+                style={{ width: `${s.entryQuality * 10}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Full reasoning chain */}
+        {s.aiReasoning && (
+          <div className="rounded-xl bg-purple-500/[0.06] border border-purple-500/20 px-3 py-3">
+            <div className="text-[10px] uppercase font-bold text-purple-300/80 tracking-wider mb-1.5">🧠 Full AI Reasoning Chain</div>
+            <p className="text-[11px] text-purple-100/80 leading-relaxed font-mono whitespace-pre-line">{s.aiReasoning}</p>
+          </div>
+        )}
+
+        {/* Risk factors */}
+        {s.riskFactors && s.riskFactors.length > 0 && (
+          <div className="rounded-xl bg-red-500/[0.05] border border-red-500/20 px-3 py-2">
+            <div className="text-[10px] uppercase font-bold text-red-300/80 tracking-wider mb-1">⚠ Risk Factors (AI-identified)</div>
+            <div className="flex flex-wrap gap-1">
+              {s.riskFactors.map((r, i) => (
+                <span key={i} className="px-1.5 py-0.5 rounded-md bg-red-500/10 border border-red-500/20 text-red-300 text-[9px] font-semibold">{r}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Levels + adjusted */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center font-mono">
+          <div className="rounded-xl bg-white/[0.03] border border-white/5 px-2 py-2">
+            <div className="text-[8px] uppercase font-bold text-slate-500">Entry {s.aiAdjustedEntry != null && <span className="text-teal-300">(AI)</span>}</div>
+            <div className="text-xs font-black text-cyan-200">₹{(s.aiAdjustedEntry ?? s.entry).toFixed(2)}</div>
+          </div>
+          <div className="rounded-xl bg-red-500/[0.06] border border-red-500/15 px-2 py-2">
+            <div className="text-[8px] uppercase font-bold text-slate-500">Stop {s.aiAdjustedSL != null && <span className="text-teal-300">(AI-tight)</span>}</div>
+            <div className="text-xs font-black text-red-300">₹{s.stopLoss.toFixed(2)}</div>
+          </div>
+          <div className="rounded-xl bg-emerald-500/[0.06] border border-emerald-500/15 px-2 py-2">
+            <div className="text-[8px] uppercase font-bold text-slate-500">T1</div>
+            <div className="text-xs font-black text-emerald-300">₹{s.target1.toFixed(2)}</div>
+          </div>
+          <div className="rounded-xl bg-emerald-500/[0.08] border border-emerald-500/20 px-2 py-2">
+            <div className="text-[8px] uppercase font-bold text-slate-500">T2</div>
+            <div className="text-xs font-black text-emerald-300">₹{s.target2.toFixed(2)}</div>
+          </div>
+        </div>
+
+        <p className="text-[9px] text-slate-600 font-mono text-center">
+          Dual-expert analysis (Gemini + Groq) · scan {new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST
+        </p>
+      </div>
     </div>
   );
 }
@@ -198,11 +382,13 @@ export const IntradayTab = () => {
   const [lastFetch, setLastFetch] = useState<number>(0);
   const [alertStatus, setAlertStatus] = useState<IntradayAlertsStatus | null>(null);
   const [filterDir, setFilterDir] = useState<'ALL' | 'LONG' | 'SHORT'>('ALL');
-  const [filterGrade, setFilterGrade] = useState<'ALL' | 'A+' | 'A+A'>('A+A'); // v4: default to A+/A only
+  const [filterGrade, setFilterGrade] = useState<'A' | 'A+' | 'ALL'>('A'); // v4: default A & A+
   const [view, setView] = useState<'cards' | 'table'>('cards');
   const [countdown, setCountdown] = useState<number>(0);
   const [chartSignal, setChartSignal] = useState<IntradaySignal | null>(null);
   const [paperSignal, setPaperSignal] = useState<IntradaySignal | null>(null);
+  const [detailSignal, setDetailSignal] = useState<IntradaySignal | null>(null); // v4 AI-analysis modal
+  const [trackStats, setTrackStats] = useState<TrackRecordData | null>(null); // v4 win-rate strip
   const [universeOpen, setUniverseOpen] = useState(false);
   const [paperRefresh, setPaperRefresh] = useState(0);
   const [trackRefresh, setTrackRefresh] = useState(0);
@@ -250,6 +436,14 @@ export const IntradayTab = () => {
       const res = await apiFetch(`${PROXY_BASE}/api/intraday-alerts`, { signal: AbortSignal.timeout(8000) });
       if (mountedRef.current && res.ok) setAlertStatus(await res.json());
     } catch { /* noop */ }
+  }, []);
+
+  // v4: win-rate strip data — 7-day track record (refreshed on scan updates).
+  const fetchTrackStats = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${PROXY_BASE}/api/intraday-track-record?days=7`, { signal: AbortSignal.timeout(8000) });
+      if (mountedRef.current && res.ok) setTrackStats(await res.json());
+    } catch { /* strip shows '—' */ }
   }, []);
 
   const toggleAlerts = useCallback(async () => {
@@ -326,6 +520,7 @@ export const IntradayTab = () => {
     mountedRef.current = true;
     fetchSignals();
     fetchAlertStatus();
+    fetchTrackStats();
     timerRef.current = window.setInterval(() => {
       if (document.visibilityState === 'visible') fetchSignals(true);
     }, 60000);
@@ -333,31 +528,30 @@ export const IntradayTab = () => {
       mountedRef.current = false;
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [fetchSignals, fetchAlertStatus]);
+  }, [fetchSignals, fetchAlertStatus, fetchTrackStats]);
+
+  // v4: refresh win-rate strip when track-record outcomes change.
+  useEffect(() => { fetchTrackStats(); }, [trackRefresh, fetchTrackStats]);
 
   // ---------- Derived state ----------
   const marketClosed = data && !data.marketOpen;
   const freshAllowed = data?.freshEntriesAllowed ?? true;
+  const inDeadZone = !!data?.deadZone;
+  // Live session phase (from first signal or fallback).
+  const sessionPhase = data?.signals?.[0]?.marketPhase || undefined;
+  const gradeMatch = useCallback((s: IntradaySignal) => {
+    if (filterGrade === 'ALL') return true;
+    if (filterGrade === 'A+') return s.grade === 'A+';
+    return s.grade === 'A+' || s.grade === 'A'; // 'A' → A & A+
+  }, [filterGrade]);
   const filteredSignals = useMemo(
-    () => (data?.signals || []).filter(s => {
-      if (filterDir !== 'ALL' && s.direction !== filterDir) return false;
-      // v4: Grade filter
-      if (filterGrade === 'A+' && s.grade !== 'A+') return false;
-      if (filterGrade === 'A+A' && s.grade !== 'A+' && s.grade !== 'A') return false;
-      return true;
-    }),
-    [data?.signals, filterDir, filterGrade],
+    () => (data?.signals || []).filter(s => (filterDir === 'ALL' || s.direction === filterDir) && gradeMatch(s)),
+    [data?.signals, filterDir, gradeMatch],
   );
-  // v4: Count by grade for filter tabs
-  const gradeCounts = useMemo(() => {
-    const sigs = (data?.signals || []).filter(s => filterDir === 'ALL' || s.direction === filterDir);
-    return {
-      'A+': sigs.filter(s => s.grade === 'A+').length,
-      'A': sigs.filter(s => s.grade === 'A').length,
-      'B': sigs.filter(s => s.grade === 'B').length,
-      total: sigs.length,
-    };
-  }, [data?.signals, filterDir]);
+  const todayAPlus = useMemo(
+    () => (data?.signals || []).filter(s => s.grade === 'A+').length,
+    [data?.signals],
+  );
   const sectorWarnings = useMemo(
     () => sectorConcentration((data?.signals || []).map(s => s.symbol), 3),
     [data?.signals],
@@ -381,6 +575,7 @@ export const IntradayTab = () => {
 
   const openPaperFromCard = useCallback((s: IntradaySignal) => setPaperSignal(s), []);
   const openChart = useCallback((s: IntradaySignal) => setChartSignal(s), []);
+  const openDetail = useCallback((s: IntradaySignal) => setDetailSignal(s), []);
   const closeToast = useCallback((id: number) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
@@ -396,21 +591,24 @@ export const IntradayTab = () => {
               <h1 className="text-xl font-black gradient-text-cyan font-display text-glow flex items-center gap-2">
                 ⚡ Super Intelligence Intraday
               </h1>
-              <span className="quantum-badge text-[9px] bg-gradient-to-r from-cyan-500/20 to-purple-500/20 text-cyan-300 border border-cyan-500/30">
-                PRO-DESK v4 DUAL-AI ENGINE
+              <span className="quantum-badge text-[9px] bg-cyan-500/10 text-cyan-300 border border-cyan-500/30">
+                PRO-DESK ALGO ENGINE v4
               </span>
               <span className="px-2 py-0.5 rounded-lg text-[9px] font-mono font-bold bg-purple-500/15 text-purple-300 border border-purple-500/25">
-                🧠 GEMINI + ⚡ GROQ EXPERT
+                DUAL-AI EXPERT · GEMINI + GROQ
+              </span>
+              <span className="px-2 py-0.5 rounded-lg text-[9px] font-mono font-bold bg-amber-500/10 text-amber-300 border border-amber-500/25" title="Signals graded A+ / A / B — B is watch-only. AI-rejected setups never publish.">
+                A+/A/B GRADED
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-1">
-              Graded A+/A/B Signals • Supertrend + Multi-TF EMA + ORB-15 • Dual AI Expert Consensus • 1% Risk Sizing • Live Win-Rate Tracking
+              Top 5 High-Conviction Graded Setups • Dual-AI Expert Consensus (Gemini + Groq) • Supertrend/POC/SMA50 Confluence • NIFTY/VIX Regime Gate • 1% Risk Sizing • Live Outcome Tracking
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {data?.aiVerified && (
-              <span className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-purple-500/15 to-blue-500/15 border border-purple-500/30 text-purple-300 text-[10px] font-bold font-mono" title={data.aiModel}>
-                🤖 {data.aiConsensus === 'multi-model' ? '🧠 GEMINI + ⚡ GROQ DUAL EXPERT' : `AI: ${data.aiModel || 'MCP'}`}
+              <span className="px-2.5 py-1 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300 text-[10px] font-bold font-mono" title={data.aiModel}>
+                🤖 {data.aiConsensus === 'multi-model' ? 'DUAL-AI CONSENSUS LIVE' : `AI: ${data.aiModel || 'MCP'}`}
               </span>
             )}
             {streamEnabled && (
@@ -469,10 +667,24 @@ export const IntradayTab = () => {
           </div>
         </div>
 
-        {/* Regime banner + scan metadata row */}
+        {/* Regime banner + win-rate strip (v4) */}
         {regime && !marketClosed && (
-          <div className="mt-3 pt-2.5 border-t border-white/5">
-            <RegimeBanner regime={regime} />
+          <div className="mt-3 pt-2.5 border-t border-white/5 space-y-2.5">
+            <RegimeBanner regime={regime} phase={sessionPhase} />
+            <WinRateStrip track={trackStats} todayCount={data?.signals?.length ?? 0} todayAPlus={todayAPlus} />
+          </div>
+        )}
+
+        {/* v4: dead-zone banner (14:30–15:00 IST) */}
+        {inDeadZone && !marketClosed && (
+          <div className="rounded-2xl border border-rose-500/25 bg-rose-500/[0.05] px-4 py-2.5 flex items-center gap-3 mt-3">
+            <span className="text-xl">⏸</span>
+            <div className="text-[11px] font-mono">
+              <b className="text-rose-300">DEAD ZONE (14:30–15:00 IST) — fresh signals gated</b>
+              <span className="text-slate-400 block mt-0.5">
+                Is window me setups statistically weak hote hain — isliye naye signals publish nahi hote. Open positions normally manage hote rahenge (T1/trail/SL/15:10 sq-off).
+              </span>
+            </div>
           </div>
         )}
         {data?.asOf && !marketClosed && (
@@ -524,51 +736,25 @@ export const IntradayTab = () => {
         </div>
       )}
 
-      {/* ===== v4: Win Rate Dashboard Strip ===== */}
-      {!loading && !marketClosed && data?.signals && data.signals.length > 0 && (
-        <div className="rounded-2xl border border-purple-500/20 bg-gradient-to-r from-purple-950/10 via-slate-900/40 to-cyan-950/10 px-4 py-2.5 flex items-center gap-4 flex-wrap text-[10px] font-mono">
-          <div className="flex items-center gap-1.5">
-            <span className="text-slate-500">Signals:</span>
-            <span className="text-slate-200 font-bold">{data.signals.length}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-amber-400">⭐ A+:</span>
-            <span className="text-amber-200 font-bold">{data.signals.filter(s => s.grade === 'A+').length}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-slate-400">A:</span>
-            <span className="text-slate-200 font-bold">{data.signals.filter(s => s.grade === 'A').length}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-slate-500">B:</span>
-            <span className="text-slate-400 font-bold">{data.signals.filter(s => s.grade === 'B').length}</span>
-          </div>
-          <div className="h-4 w-px bg-white/10" />
-          <div className="flex items-center gap-1.5">
-            <span className="text-emerald-400">🎯 Avg RR:</span>
-            <span className="text-emerald-300 font-bold">
-              1:{data.signals.length > 0 ? (data.signals.reduce((s, sig) => s + sig.rr, 0) / data.signals.length).toFixed(2) : '0'}
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-cyan-400">📊 Avg Confidence:</span>
-            <span className="text-cyan-300 font-bold">
-              {data.signals.length > 0 ? Math.round(data.signals.reduce((s, sig) => s + sig.confidence, 0) / data.signals.length) : 0}%
-            </span>
-          </div>
-          {data.aiConsensus === 'multi-model' && (
-            <span className="ml-auto px-2 py-0.5 rounded-lg bg-purple-500/10 border border-purple-500/25 text-purple-300 text-[9px] font-bold">
-              ✓ DUAL AI VERIFIED
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* ===== Filter Tabs + Grade Filter + View Toggle ===== */}
+      {/* ===== Filter Tabs + View Toggle ===== */}
       {!loading && !marketClosed && (data?.signals?.length ?? 0) > 0 && (
         <div className="flex items-center justify-between gap-2 px-1 flex-wrap">
-          <div className="flex items-center gap-3 flex-wrap">
-            {/* Direction filter */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1 bg-black/40 p-1 rounded-xl border border-amber-500/15" title="Signal quality grade filter (v4)">
+              {([
+                ['A', 'A & A+', 'bg-amber-500/20 text-amber-300 border border-amber-500/30'],
+                ['A+', '★ A+ ONLY', 'bg-amber-400/25 text-amber-200 border border-amber-400/50'],
+                ['ALL', 'ALL', 'bg-white/5 text-slate-400 border border-white/10'],
+              ] as const).map(([g, label, cls]) => (
+                <button
+                  key={g}
+                  onClick={() => setFilterGrade(g as 'A' | 'A+' | 'ALL')}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black font-mono transition-all ${filterGrade === g ? cls : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <div className="flex items-center gap-1.5 bg-black/40 p-1 rounded-xl border border-white/5">
               <button
                 onClick={() => setFilterDir('ALL')}
@@ -587,27 +773,6 @@ export const IntradayTab = () => {
                 className={`px-3 py-1 rounded-lg text-xs font-bold font-mono transition-all ${filterDir === 'SHORT' ? 'bg-red-500/20 text-red-300 border border-red-500/30' : 'text-slate-400 hover:text-slate-200'}`}
               >
                 🔴 Short ({data!.signals.filter(s => s.direction === 'SHORT').length})
-              </button>
-            </div>
-            {/* v4: Grade filter */}
-            <div className="flex items-center gap-1.5 bg-black/40 p-1 rounded-xl border border-amber-500/10">
-              <button
-                onClick={() => setFilterGrade('A+')}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-black font-mono transition-all ${filterGrade === 'A+' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'text-slate-400 hover:text-amber-300/70'}`}
-              >
-                ⭐ A+ ONLY ({gradeCounts['A+']})
-              </button>
-              <button
-                onClick={() => setFilterGrade('A+A')}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-black font-mono transition-all ${filterGrade === 'A+A' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:text-cyan-300/70'}`}
-              >
-                A+ & A ({gradeCounts['A+'] + gradeCounts['A']})
-              </button>
-              <button
-                onClick={() => setFilterGrade('ALL')}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-black font-mono transition-all ${filterGrade === 'ALL' ? 'bg-slate-500/20 text-slate-300 border border-slate-500/30' : 'text-slate-500 hover:text-slate-300'}`}
-              >
-                ALL ({gradeCounts.total})
               </button>
             </div>
           </div>
@@ -641,9 +806,9 @@ export const IntradayTab = () => {
       {loading && !data ? (
         <div className="quantum-panel rounded-2xl p-12 text-center border border-white/5">
           <div className="text-4xl mb-3 animate-float">⚡</div>
-          <div className="text-base font-bold text-slate-200 mb-1">NSE Intraday v4 Pro-Desk Scanner Running…</div>
+          <div className="text-base font-bold text-slate-200 mb-1">NSE Intraday Pro-Desk Scanner Running…</div>
           <div className="text-xs text-slate-400 font-medium max-w-md mx-auto">
-            TradingView + Groww live feeds se Supertrend, Multi-TF EMA, Volume Profile, NIFTY/VIX regime check aur Gemini+Groq DUAL AI expert consensus verify ho raha hai…
+            TradingView + Groww live feeds se real-time indicators, NIFTY/VIX regime check aur MCP AI consensus verify ho raha hai…
           </div>
         </div>
       ) : marketClosed ? (
@@ -708,6 +873,7 @@ export const IntradayTab = () => {
               paperOpenForSymbol={paperOpenSymbols.has(s.symbol)}
               onChart={openChart}
               onPaper={openPaperFromCard}
+              onDetail={openDetail}
             />
           ))}
         </div>
@@ -756,6 +922,12 @@ export const IntradayTab = () => {
         signal={chartSignal}
         live={chartSignal ? stream.livePrices[chartSignal.symbol] : undefined}
         onClose={() => setChartSignal(null)}
+      />
+
+      {/* v4: full dual-expert AI analysis modal */}
+      <SignalDetailModal
+        signal={detailSignal}
+        onClose={() => setDetailSignal(null)}
       />
 
       <PaperTradeModal
