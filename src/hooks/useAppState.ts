@@ -11,7 +11,7 @@ import {
   syncGroqKeyToCloud, loadGroqKeyFromCloud, getBatchInterval, fetchMarketIntelligence,
   syncStateToCloud, loadAppStateFromCloud, CloudAppState,
   apiFetch, setSessionToken, ensureAuthenticated,
-  fetchIndmAssets, forceIndmSync, IndmAssetsResponse,
+  fetchIndmAssets, forceIndmSync, hideIndmAsset, unhideIndmAsset, IndmAssetsResponse,
 } from '../utils/api';
 import { secureStorage } from '../utils/secureStorage';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from '../utils/tvWebsocket';
@@ -353,10 +353,14 @@ export function useAppState() {
   //     FD/bond assets keep INDMoney's own unit price (NAV), seeded here
   //     and refreshed on each scheduled sync.
   //   • Google Sheets cloud sync (load AND save) is fully disconnected
-  //     while INDMoney is active — the Sheet can never overwrite or
+  //     while a sync source is active — the Sheet can never overwrite or
   //     pollute the synced portfolio.
   // ============================================================
-  const [indmSource, setIndmSource] = useState<'unknown' | 'indmoney' | 'manual'>('unknown');
+  // indmSource: which engine drives the ASSET TABLE — 'indmoney' (MCP
+  // holdings, INDMoney connected), 'coindcx' (only the crypto exchange
+  // account is connected), 'manual' (no source — manual/Sheets mode),
+  // 'unknown' (first probe still running).
+  const [indmSource, setIndmSource] = useState<'unknown' | 'indmoney' | 'coindcx' | 'manual'>('unknown');
   const [indmMeta, setIndmMeta] = useState<IndmSyncMeta | null>(null);
   const [indmSyncing, setIndmSyncing] = useState(false);
   const indmActiveRef = useRef(false);
@@ -377,7 +381,8 @@ export function useAppState() {
       setIndmMeta(meta as IndmSyncMeta);
       if (data.ok && Array.isArray(assets) && assets.length > 0) {
         indmActiveRef.current = true;
-        setIndmSource('indmoney');
+        // Full power = INDMoney MCP; crypto-only = CoinDCX exchange account.
+        setIndmSource(data.sources?.indmoney ? 'indmoney' : 'coindcx');
 
         const used = new Set<string>();
         const positions: Position[] = assets.map(a => ({
@@ -390,6 +395,7 @@ export function useAppState() {
           dateAdded: data.syncedAt ? new Date(data.syncedAt).toISOString().slice(0, 10) : getTodayString(),
           name: a.name,
           noLive: a.noLive,
+          indmKey: a.key,
         }));
         setPortfolio(positions);
         try { secureStorage.setItem('portfolio', JSON.stringify(positions)); } catch { /* quota */ }
@@ -419,11 +425,21 @@ export function useAppState() {
             return changed ? next : prev;
           });
         }
-        console.log(`🏦 INDMoney assets: ${positions.length} loaded (${data.counts?.live ?? 0} live-priced, ${data.counts?.noLive ?? 0} NAV-priced)`);
+        console.log(`🏦 Synced assets: ${positions.length} loaded (${data.counts?.live ?? 0} live-priced, ${data.counts?.noLive ?? 0} NAV-priced${data.counts?.coindcx ? `, ${data.counts.coindcx} CoinDCX` : ''}${data.hiddenCount ? `, ${data.hiddenCount} removed` : ''})`);
         return true;
       }
       // Not connected / empty → manual mode (Sheets paths may resume).
+      // EXCEPTION: all rows removed by the user ('all-hidden') — a source
+      // is still connected, so the table stays in synced mode (empty table
+      // + restore bar) instead of falling back to manual entry.
       indmActiveRef.current = false;
+      if (data.reason === 'all-hidden' && (data.sources?.indmoney || data.sources?.coindcx)) {
+        indmActiveRef.current = true;
+        setIndmSource(data.sources?.indmoney ? 'indmoney' : 'coindcx');
+        setPortfolio([]);
+        try { secureStorage.setItem('portfolio', '[]'); } catch { /* quota */ }
+        return false;
+      }
       if (data.reason === 'not-connected') setIndmSource('manual');
       return false;
     } finally {
@@ -431,6 +447,31 @@ export function useAppState() {
       setIndmSyncing(false);
     }
   }, []);
+
+  // --- REMOVE a synced asset row (INDIA / USA / Crypto — any source) ---
+  // Server marks the key hidden (persists across 2×-daily syncs); the
+  // frontend optimistically drops the row so the UI never waits on the
+  // re-fetch. Restore is always available while the row still exists.
+  const removeIndmAsset = useCallback(async (key: string | undefined): Promise<boolean> => {
+    if (!key) return false;
+    const ok = await hideIndmAsset(key);
+    if (ok) {
+      setPortfolio(prev => prev.filter(p => p.indmKey !== key));
+      setIndmMeta(prev => (prev ? { ...prev, hiddenCount: (prev.hiddenCount || 0) + 1 } : prev));
+      // Cheap GET refresh so the RESTORE bar (hiddenAssets list) appears
+      // immediately — the server already persisted the hidden key.
+      void loadIndmAssets();
+    }
+    return ok;
+  }, [loadIndmAssets]);
+
+  // --- Restore a removed synced asset row (single key, or all). ---
+  const restoreIndmAsset = useCallback(async (key?: string, all = false): Promise<boolean> => {
+    if (!key && !all) return false;
+    const ok = await unhideIndmAsset(key || '', all);
+    if (ok) await loadIndmAssets(); // cheap GET — server returns the visible set
+    return ok;
+  }, [loadIndmAssets]);
 
   // --- Reusable cloud load: pulls from Google Sheets and updates state ---
   // Sets skipNextCloudSaveRef to true so loading FROM cloud doesn't trigger auto-save BACK to cloud.
@@ -620,9 +661,9 @@ export function useAppState() {
   // Restore from cloud on login — only when cloud is NEWER than what we
   // last applied locally (tracked via 'cloud_state_ts'). After a cache
   // clear the local ts is gone → cloud always wins → nothing is lost.
-  // Google Sheets is DISCONNECTED while INDMoney drives the asset table.
+  // Google Sheets is DISCONNECTED while a sync source drives the asset table.
   useEffect(() => {
-    if (!isAuthenticated || indmSource === 'unknown' || indmSource === 'indmoney') return;
+    if (!isAuthenticated || indmSource === 'unknown' || indmSource === 'indmoney' || indmSource === 'coindcx') return;
     let cancelled = false;
     loadAppStateFromCloud().then(cloud => {
       if (cancelled || !cloud) return;
@@ -2038,6 +2079,7 @@ export function useAppState() {
     loadFromCloud,
     // INDMoney synced asset table (source of truth when connected)
     indmSource, indmMeta, indmSyncing, loadIndmAssets,
+    removeIndmAsset, restoreIndmAsset,
   }), [
     isAuthenticated, pinInput, setPinInput, verifyPin, logout,
     activeTab, setActiveTab, portfolio, transactions, livePrices, usdInrRate, theme,
@@ -2066,5 +2108,6 @@ export function useAppState() {
     analyzeSymbol, quickSelect, openAddModal, savePosition, pushTelegramReport,
     toggleTheme, flushCache, loadTradingViewChart,
     indmSource, indmMeta, indmSyncing, loadIndmAssets,
+    removeIndmAsset, restoreIndmAsset,
   ]);
 }

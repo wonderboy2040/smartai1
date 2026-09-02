@@ -59,6 +59,7 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
   const mountedRef = useRef(true);
 
   const indmActive = indmSource === 'indmoney';
+  const cryptoOnly = indmSource === 'coindcx';
 
   const refreshStatus = useCallback(async (): Promise<IndmStatus | null> => {
     try {
@@ -192,10 +193,12 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
             </h3>
             <p className="text-[11px] text-slate-500">
               {indmActive
-                ? `Asset table = INDMoney portfolio • ${counts?.live ?? 0} live-priced • ${counts?.noLive ?? 0} NAV-priced • Google Sheets disconnected`
+                ? `Asset table = INDMoney + CoinDCX sources • ${counts?.live ?? 0} live-priced • ${counts?.noLive ?? 0} NAV-priced • Google Sheets disconnected`
                 : connected
                   ? 'Connected — waiting for first sync…'
-                  : 'Connect your INDMoney account — assets table auto-syncs (manual entry retired)'}
+                  : cryptoOnly
+                    ? 'CoinDCX crypto source active — INDMoney bhi connect karke INDIA/USA assets add karo'
+                    : 'Connect your INDMoney account — assets table auto-syncs (manual entry retired)'}
             </p>
           </div>
         </div>
@@ -252,6 +255,7 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
           </p>
           <p className="text-slate-500">
             🔒 Secure OAuth login • read-only <span className="font-mono">portfolio:read</span> scope • tokens sirf server pe store hote hain.
+            {cryptoOnly && ' 🪙 Abhi CoinDCX crypto source active hai — India/USA assets ke liye INDMoney connect karo.'}
           </p>
         </div>
       )}

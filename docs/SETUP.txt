@@ -1,0 +1,107 @@
+============================================================
+SMART AI PRO — LOCAL SETUP GUIDE (Render Alternative)
+============================================================
+Date: 27 Jun 2026
+Author: Setup by Claude
+
+============================================================
+ISSUES FIXED
+============================================================
+1. REMOVED: Render ToS-violating keep-alive self-ping from
+   server/index.js (cause of suspension)
+2. FIXED: Duplicate /health endpoint in ml-service/app/main.py
+   (would cause Render health check failures)
+3. ADDED: All API keys to .env file for local use
+
+============================================================
+YOUR STATIC PUBLIC IP
+============================================================
+103.2.234.170
+
+LOCAL NETWORK IP: 192.168.0.104
+
+============================================================
+HOW TO START SERVER
+============================================================
+
+[Option A] — No Console Window (background)
+  Double-click: start_server.vbs
+
+[Option B] — With Console Window
+  Command Prompt:
+    node --env-file=.env server/index.js
+
+[Option C] — Different Port (if 8080 blocked)
+    set PORT=80 && node --env-file=.env server/index.js
+
+============================================================
+ACCESS URLS
+============================================================
+Local:      http://localhost:8080
+LAN:        http://192.168.0.104:8080
+Internet*:  http://103.2.234.170:8080
+
+* Internet access requires PORT FORWARDING (see below)
+
+============================================================
+PORT FORWARDING SETUP (REQUIRED FOR EXTERNAL ACCESS)
+============================================================
+Step 1: Open browser → go to http://192.168.1.1 (router login)
+Step 2: Login (admin/admin or as set on router sticker)
+Step 3: Find "Port Forwarding" or "Virtual Server"
+Step 4: Add rule:
+  - External Port: 8080
+  - Internal IP:   192.168.0.104
+  - Internal Port: 8080
+  - Protocol:      TCP
+Step 5: Save & Apply
+
+After this, ANY device anywhere can open:
+  http://103.2.234.170:8080
+
+============================================================
+ALTERNATIVE — CLOUDFLARE TUNNEL (NO PORT FORWARDING)
+============================================================
+If router setup is not possible:
+  1. Download cloudflared from cloudflare.com
+  2. Run: cloudflared tunnel --url http://localhost:8080
+  3. You get a https://xxxx.trycloudflare.com URL
+  4. That URL works anywhere, no port forwarding needed
+
+============================================================
+AI PROVIDERS STATUS
+============================================================
+All 8 providers configured & working:
+  ✅ Groq        (llama-3.3-70b)
+  ✅ Gemini      (gemini-2.5-flash)
+  ✅ Claude      (claude-sonnet-4)
+  ✅ OpenRouter  (meta-llama/llama-3.3-70b)
+  ✅ Cerebras    (llama-3.3-70b)
+  ✅ HuggingFace (Qwen/Qwen2.5-72B)
+  ✅ NVIDIA      (meta/llama-3.3-70b)
+  ✅ Tavily      (web search)
+
+============================================================
+API KEYS STORED IN .env
+============================================================
+All keys from your Render dashboard are now in .env
+(.env is gitignored — safe from accidental commit)
+
+============================================================
+IMPORTANT NOTES
+============================================================
+1. VITE_ML_SERVICE_URL still points to smartai11.onrender.com
+   (Render ML service) — replace if you run ML service locally
+
+2. Server auto-restart nahi hota — agar crash ho:
+   Double-click start_server.vbs again
+
+3. Computer ON rehna chahiye 24/7 for "anytime anywhere"
+   access. Sleep mode off karo.
+
+4. ISP IP change ho sakta hai agar static plan nahi hai.
+   Static IP confirm karne ke liye ISP se contact karo.
+
+============================================================
+END OF SETUP GUIDE
+============================================================

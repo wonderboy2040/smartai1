@@ -20,7 +20,7 @@ AI-powered portfolio analytics for Indian and US markets, crypto tracking, risk 
 - 🧠 **Unified branding** — All version strings now consistent (`v18.0`)
 - ✅ **All checks pass** — TypeScript clean, 54/54 tests pass, build OK
 
-See [`UPGRADE_REPORT_v18.md`](UPGRADE_REPORT_v18.md) for the full audit & fix list.
+See [`docs/UPGRADE_REPORT_v18.md`](docs/UPGRADE_REPORT_v18.md) for the full audit & fix list.
 
 ## Requirements
 
@@ -117,4 +117,4 @@ npm run start:telegram
 
 ## Upgrade status
 
-See [`UPGRADE_REPORT.md`](UPGRADE_REPORT.md) for the checks performed, fixes applied, dependency/security status, and known environment-dependent limitations.
+See [`docs/UPGRADE_REPORT.md`](docs/UPGRADE_REPORT.md) for the checks performed, fixes applied, dependency/security status, and known environment-dependent limitations.

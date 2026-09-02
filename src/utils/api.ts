@@ -1849,10 +1849,20 @@ export function formatMarketIntelligenceForAI(intel: MarketIntelligence): string
 // INDMoney synced ASSET TABLE (server: 2×-daily scheduled sync).
 // GET  /api/mcp/indmoney/assets → persisted snapshot (+scheduler info)
 // POST /api/mcp/indmoney/sync   → force sync NOW (manual button)
+// POST /api/mcp/indmoney/assets/hide   → REMOVE an asset row (restore-able)
+// POST /api/mcp/indmoney/assets/unhide → restore removed row(s)
+// CoinDCX (crypto source, server-side API keys):
+// GET  /api/mcp/coindcx/status     → connection + last balance sync
+// POST /api/mcp/coindcx/connect    → validate + save API key/secret
+// POST /api/mcp/coindcx/disconnect → forget keys + drop crypto rows
 // ============================================================
 export interface IndmAsset {
   id: string;
+  /** Stable removal key — survives index shifts between syncs. */
+  key: string;
   name: string;
+  /** Which sync source owns this row: 'indmoney' (MCP) | 'coindcx' (exchange). */
+  source: 'indmoney' | 'coindcx';
   symbol: string | null;
   market: 'IN' | 'US';
   kind: string;
@@ -1869,17 +1879,30 @@ export interface IndmAsset {
   noLive: boolean;
 }
 
+export interface CoinDcxInfo {
+  connected: boolean;
+  connectedAt: number | null;
+  lastSyncAt: number | null;
+  balanceCount: number;
+  lastError: string | null;
+}
+
 export interface IndmAssetsResponse {
   ok: boolean;
   reason?: string | null;
   assets: IndmAsset[];
-  counts?: { assets: number; live: number; noLive: number; resolved: number } | null;
+  /** Rows the user REMOVED (restore-able via unhideIndmAsset). */
+  hiddenAssets?: IndmAsset[];
+  hiddenCount?: number;
+  counts?: { assets: number; live: number; noLive: number; resolved: number; coindcx?: number } | null;
   summary?: {
     totalValue: number; totalInvested: number | null; totalPnl: number | null;
     totalPnlPct: number | null; holdingCount?: number;
     oneDayChange?: number | null; oneDayChangePct?: number | null;
   } | null;
   positions?: { name: string; symbol: string | null; kind: string; qty: number | null; avgPrice: number | null; invested: number | null; realisedPnl: number | null; t1Qty: number; positionId: string | null }[];
+  sources?: { indmoney: boolean; coindcx: boolean };
+  coindcx?: CoinDcxInfo | null;
   syncedAt: number | null;
   stale?: boolean;
   slots?: string[];
@@ -1902,11 +1925,77 @@ export async function forceIndmSync(): Promise<IndmAssetsResponse | null> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
-      // A full sync = up to 12 MCP tool calls + first-time symbol resolution
-      // (Groww lookups) — 120s ceiling; later syncs are much faster (cached).
+      // A full sync = up to 12 MCP tool calls + CoinDCX balances + first-time
+      // symbol resolution (Groww lookups) — 120s ceiling; later syncs are
+      // much faster (cached).
       signal: AbortSignal.timeout(120000),
     });
     if (!res.ok) return null;
     return (await res.json()) as IndmAssetsResponse;
   } catch { return null; }
+}
+
+/** REMOVE an asset row from the synced table (stays restorable server-side). */
+export async function hideIndmAsset(key: string): Promise<boolean> {
+  try {
+    const res = await apiFetch('/api/mcp/indmoney/assets/hide', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key }),
+      signal: AbortSignal.timeout(10000),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
+/** Restore a removed asset row (or ALL rows when all=true). */
+export async function unhideIndmAsset(key: string, all = false): Promise<boolean> {
+  try {
+    const res = await apiFetch('/api/mcp/indmoney/assets/unhide', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(all ? { all: true } : { key }),
+      signal: AbortSignal.timeout(10000),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
+export async function fetchCoinDcxStatus(): Promise<CoinDcxInfo | null> {
+  try {
+    const res = await apiFetch('/api/mcp/coindcx/status', { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    return (await res.json()) as CoinDcxInfo;
+  } catch { return null; }
+}
+
+/** Connect the user's CoinDCX account — validated server-side with a real
+ *  balances call before the keys are ever stored. Never throws; returns
+ *  { ok, error? }. */
+export async function connectCoinDcx(apiKey: string, secret: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await apiFetch('/api/mcp/coindcx/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey, secret }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (res.ok) return { ok: true };
+    const data = await res.json().catch(() => null);
+    return { ok: false, error: data?.error?.message || `Connect failed (${res.status})` };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Connect failed' };
+  }
+}
+
+export async function disconnectCoinDcx(): Promise<boolean> {
+  try {
+    const res = await apiFetch('/api/mcp/coindcx/disconnect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(10000),
+    });
+    return res.ok;
+  } catch { return false; }
 }

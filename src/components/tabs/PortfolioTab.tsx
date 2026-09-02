@@ -13,6 +13,7 @@ import { exportTransactionsCSV, exportMonthlyReturnsCSV } from '../../utils/expo
 import { LivePrice } from '../LivePrice';
 import { WidgetSetup } from '../WidgetSetup';
 import { INDMoneyPanel } from '../INDMoneyPanel';
+import { CoinDcxPanel } from '../CoinDcxPanel';
 
 type SortKey = 'alloc' | 'pnl' | 'pnlPct' | 'xirr' | 'value' | 'name';
 type AssetGroup = 'india' | 'usa' | 'crypto';
@@ -71,11 +72,24 @@ const PortfolioTab = React.memo(function PortfolioTab() {
     setAddSymbol, setCurrentMarket, setAddQty, setAddPrice, setAddDate,
     setEditId, setTransactionType, setShowAddModal, setModalPrice,
     refreshAll, isRefreshing,
-    indmSource, indmMeta,
+    indmSource, indmMeta, removeIndmAsset, restoreIndmAsset,
   } = useApp();
 
-  // INDMoney drives the asset table → manual entry + Google Sheets UI retired.
-  const indmActive = indmSource === 'indmoney';
+  // A sync source (INDMoney MCP and/or CoinDCX) drives the asset table
+  // → manual entry + Google Sheets UI retired while synced.
+  const indmActive = indmSource === 'indmoney' || indmSource === 'coindcx';
+  const hiddenAssets = indmMeta?.hiddenAssets || [];
+  const [showHidden, setShowHidden] = useState(false);
+  const [hidingKeys, setHidingKeys] = useState<Set<string>>(new Set());
+
+  const handleRemoveAsset = (p: (typeof portfolio)[number]) => {
+    if (!p.indmKey) return;
+    if (!window.confirm(`Remove "${p.name || p.symbol}" from the asset list?\n(Ye syncs ke saath hidden rahega — Restore option ke saath wapas laa sakte ho.)`)) return;
+    setHidingKeys(prev => new Set(prev).add(p.indmKey!));
+    void removeIndmAsset(p.indmKey).finally(() => {
+      setHidingKeys(prev => { const n = new Set(prev); n.delete(p.indmKey!); return n; });
+    });
+  };
 
   // FEATURE 3: Track which holding the user wants to score.
   const [scorecardSymbol, setScorecardSymbol] = useState<string>('');
@@ -234,6 +248,8 @@ const PortfolioTab = React.memo(function PortfolioTab() {
     <div className="space-y-5 animate-fade-in">
       {/* INDMoney official MCP integration — real portfolio read-only view */}
       <INDMoneyPanel />
+      {/* CoinDCX crypto exchange account — balances in the same table */}
+      <CoinDcxPanel />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-2xl font-black gradient-text-cyan font-display">
           💼 Portfolio
@@ -679,11 +695,29 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                           </div>
 
                           {/* 6. ACTIONS — manual trade buttons in manual mode;
-                              INDMoney mode shows the sync source badge instead */}
+                              synced mode shows the source badge + REMOVE button */}
                           <div className="pt-2 md:pt-0 mt-3 border-t border-white/5 md:border-0 md:mt-0 flex justify-end gap-2 md:justify-center">
                             {indmActive ? (
-                              <div className="flex items-center gap-1.5 text-[9px] text-slate-500 font-bold" title={indmMeta?.syncedAt ? `INDMoney synced ${new Date(indmMeta.syncedAt).toLocaleString('en-IN')}` : 'INDMoney synced'}>
-                                🏦 {indmMeta?.syncedAt ? new Date(indmMeta.syncedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'sync'}
+                              <div className="flex items-center gap-2">
+                                <div
+                                  className="flex items-center gap-1.5 text-[9px] text-slate-500 font-bold"
+                                  title={p.indmKey?.startsWith('cdcx:')
+                                    ? `CoinDCX balance synced${indmMeta?.coindcx?.lastSyncAt ? ' ' + new Date(indmMeta.coindcx.lastSyncAt).toLocaleString('en-IN') : ''}`
+                                    : indmMeta?.syncedAt ? `INDMoney synced ${new Date(indmMeta.syncedAt).toLocaleString('en-IN')}` : 'INDMoney synced'}
+                                >
+                                  {p.indmKey?.startsWith('cdcx:') ? '🪙' : '🏦'}{' '}
+                                  {p.indmKey?.startsWith('cdcx:')
+                                    ? (indmMeta?.coindcx?.lastSyncAt ? new Date(indmMeta.coindcx.lastSyncAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'sync')
+                                    : (indmMeta?.syncedAt ? new Date(indmMeta.syncedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'sync')}
+                                </div>
+                                <button
+                                  onClick={() => handleRemoveAsset(p)}
+                                  disabled={hidingKeys.has(p.indmKey || '')}
+                                  className="w-7 h-7 flex items-center justify-center bg-red-500/10 hover:bg-red-500 border border-red-500/30 hover:border-red-500/60 rounded-lg transition-all text-[11px] text-red-400 hover:text-white font-black disabled:opacity-40"
+                                  title="Remove this asset from the list (Restore kar sakte ho)"
+                                >
+                                  ✕
+                                </button>
                               </div>
                             ) : (
                               <>
@@ -745,6 +779,56 @@ const PortfolioTab = React.memo(function PortfolioTab() {
             </div>
           );
         })}
+
+        {/* Removed assets — restore bar (user hid rows via the ✕ button) */}
+        {indmActive && hiddenAssets.length > 0 && (
+          <div className="quantum-panel rounded-2xl border border-red-500/15 overflow-hidden">
+            <button
+              onClick={() => setShowHidden(v => !v)}
+              className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-white/[0.02] transition-colors"
+            >
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-300">
+                <span className="text-red-400">✕</span>
+                {hiddenAssets.length} asset{hiddenAssets.length > 1 ? 's' : ''} removed from the list
+                <span className="text-[10px] text-slate-500 font-medium">(syncs me hidden rehte hain)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={(e) => { e.stopPropagation(); void restoreIndmAsset(undefined, true); }}
+                  className="px-3 py-1.5 rounded-lg text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 hover:bg-emerald-500/20 transition-all"
+                  title="Sab removed assets wapas laao"
+                >
+                  ↺ Restore All
+                </button>
+                <span className={`text-slate-500 transition-transform ${showHidden ? 'rotate-180' : ''}`}>▼</span>
+              </div>
+            </button>
+            {showHidden && (
+              <div className="divide-y divide-white/[0.03] border-t border-white/5">
+                {hiddenAssets.map(h => (
+                  <div key={h.key} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-[10px]">{h.source === 'coindcx' ? '🪙' : '🏦'}</span>
+                      <span className="text-xs font-semibold text-slate-300 truncate" title={h.name}>{h.name}</span>
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 ${h.market === 'IN' ? 'bg-orange-500/10 text-orange-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                        {h.assetType}
+                      </span>
+                      {h.value != null && (
+                        <span className="text-[10px] text-slate-500 font-mono shrink-0">₹{Math.round(h.value).toLocaleString('en-IN')}</span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => void restoreIndmAsset(h.key)}
+                      className="px-3 py-1.5 rounded-lg text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 hover:bg-emerald-500/20 transition-all shrink-0"
+                    >
+                      ↺ Restore
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {portfolio.length === 0 && (
           <div className="quantum-panel rounded-2xl p-10 text-center space-y-4">

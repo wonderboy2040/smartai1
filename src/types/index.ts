@@ -11,6 +11,9 @@ export interface Position {
   /** true = no live exchange price exists (MF/FD/bond/EPF…) — the price
    *  shown is INDMoney's own unit value (NAV), refreshed on each sync. */
   noLive?: boolean;
+  /** Synced-asset removal key (INDMoney or CoinDCX source) — the row's
+   *  identity for hide/restore, stable across syncs. */
+  indmKey?: string;
 }
 
 export interface PriceData {

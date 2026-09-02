@@ -1,11 +1,13 @@
 // ============================================================
-// server/mcp/portfolioSync.js — INDMoney → SmartAI assets pipeline
+// server/mcp/portfolioSync.js — INDMoney + CoinDCX → SmartAI assets
 // ------------------------------------------------------------
-// Turns the INDMoney MCP holdings snapshot into the app's ASSET
-// TABLE source of truth:
-//   1. syncNow()      — fetchPortfolio (MCP) → resolveSymbols →
-//                       map to unified assets → persist snapshot
-//                       (server/data/mcp-portfolio.json).
+// Turns the synced portfolio sources into the app's ASSET TABLE
+// source of truth:
+//   1. syncNow()      — fetchPortfolio (INDMoney MCP) + CoinDCX
+//                       balances → resolveSymbols → map to unified
+//                       assets → persist snapshot (server/data/
+//                       mcp-portfolio.json). Either source can drive
+//                       the table alone; both merge cleanly.
 //   2. Scheduler      — auto-sync 2× daily (default 09:30 & 21:30
 //                       IST; env INDM_SYNC_TIMES="HH:MM,HH:MM"),
 //                       with boot catch-up for missed slots (Render
@@ -17,13 +19,20 @@
 //                       MF/FD/bond/gold/EPF/NPS assets keep
 //                       INDMoney's own unit price (NAV) and are
 //                       refreshed on each scheduled sync.
+//   4. Hidden assets  — the user can REMOVE any row (INDIA/USA/
+//                       crypto). Hidden keys persist across syncs
+//                       (a re-synced holding stays hidden) until
+//                       restored or its source is disconnected.
 //
-// A failed sync NEVER wipes the last good snapshot — the previous
-// assets stay visible with a stale marker.
+// A failed source sync NEVER wipes the last good snapshot — the
+// previous assets stay visible with a stale marker.
 // ============================================================
 import { loadJSON, saveJSON } from '../intraday/store.js';
 import { fetchPortfolio, getStatus } from './indmoney.js';
 import { resolveSymbolsForHoldings } from './symbols.js';
+import {
+  coindcxConnected, coindcxStatus, fetchCoinDcxAssets,
+} from './coindcx.js';
 
 const SNAPSHOT_FILE = 'mcp-portfolio.json';
 const FOREX_CACHE_MS = 10 * 60 * 1000;
@@ -126,6 +135,7 @@ export function mapHoldingsToAssets(holdings, resolutions, usdInr = DEFAULT_USD_
   const rate = (typeof usdInr === 'number' && usdInr > 50 && usdInr < 150) ? usdInr : DEFAULT_USD_INR;
   const assets = [];
   const seenIds = new Set();
+  const seenKeys = new Map(); // slug-base → occurrence count (stable dedupe keys)
   for (let i = 0; i < (holdings || []).length; i++) {
     const h = holdings[i];
     const r = resolutions[i] || { market: 'IN', kind: 'other', symbol: null, noLive: true };
@@ -147,9 +157,18 @@ export function mapHoldingsToAssets(holdings, resolutions, usdInr = DEFAULT_USD_
     while (seenIds.has(id)) id += 'x';
     seenIds.add(id);
 
+    // Stable removal key (survives index shifts between syncs):
+    // name-based, with deterministic ordinals for same-name duplicates.
+    const keyBase = `indm:${slug(h.name)}`;
+    const n = (seenKeys.get(keyBase) || 0) + 1;
+    seenKeys.set(keyBase, n);
+    const key = n === 1 ? keyBase : `${keyBase}:${n}`;
+
     assets.push({
       id,
+      key,
       name: String(h.name || 'Unknown'),
+      source: 'indmoney',
       symbol: r.symbol || null,          // tradeable exchange symbol or null
       market: isUS ? 'US' : 'IN',
       kind: r.kind,                      // stock|etf|mf|crypto|bond|gold|retirement|fixed|other
@@ -189,6 +208,9 @@ export function syncInfo() {
   const snap = getAssetsSnapshot();
   const slots = syncSlots();
   const lastRuns = snap?.slots || {};
+  const assets = Array.isArray(snap?.assets) ? snap.assets : [];
+  const hidden = Array.isArray(snap?.hidden) ? snap.hidden : [];
+  const visibleAssets = assets.filter(a => !hidden.includes(a.key));
   return {
     connected: getStatus().connected,
     ok: !!snap?.ok,
@@ -197,79 +219,187 @@ export function syncInfo() {
     slots,
     lastRuns,
     nextSyncAt: nextSlotTs(),
-    assetCount: Array.isArray(snap?.assets) ? snap.assets.length : 0,
-    liveCount: Array.isArray(snap?.assets) ? snap.assets.filter(a => !a.noLive).length : 0,
+    assetCount: visibleAssets.length,
+    liveCount: visibleAssets.filter(a => !a.noLive).length,
+    hiddenCount: assets.length - visibleAssets.length,
+    sources: {
+      indmoney: getStatus().connected,
+      coindcx: coindcxConnected(),
+    },
+    coindcx: coindcxStatus(),
     lastError: snap?.lastError || null,
   };
+}
+
+// ---------------- hidden assets (user-removed rows) ----------------
+// Removal is a HIDE, not a delete: the next sync re-adds the holding
+// (INDMoney/CoinDCX still report it) but it stays hidden until restored.
+function persistHiddenUpdate(mutate) {
+  const snap = getAssetsSnapshot() || {};
+  const hidden = new Set(Array.isArray(snap.hidden) ? snap.hidden : []);
+  const changed = mutate(hidden, snap);
+  if (!changed) return false;
+  const out = { ...snap, hidden: [...hidden] };
+  saveJSON(SNAPSHOT_FILE, out);
+  return true;
+}
+
+export function hideAsset(key) {
+  if (typeof key !== 'string' || !key) return false;
+  const snap = getAssetsSnapshot();
+  const assets = Array.isArray(snap?.assets) ? snap.assets : [];
+  if (!assets.some(a => a.key === key)) return false; // unknown asset
+  return persistHiddenUpdate(hidden => {
+    if (hidden.has(key)) return false;
+    hidden.add(key);
+    return true;
+  });
+}
+
+export function unhideAsset(key) {
+  if (typeof key !== 'string' || !key) return false;
+  return persistHiddenUpdate(hidden => {
+    if (!hidden.has(key)) return false;
+    hidden.delete(key);
+    return true;
+  });
+}
+
+export function unhideAll() {
+  return persistHiddenUpdate(hidden => {
+    if (hidden.size === 0) return false;
+    hidden.clear();
+    return true;
+  });
 }
 
 // ---------------- the sync engine ----------------
 let _inFlight = false;
 let _lastBgAttempt = 0;
 
-export async function syncNow({ force = true, reason = 'manual' } = {}) {
+// Sources: 'indmoney' (MCP holdings) + 'coindcx' (exchange balances).
+// `sources` option limits a run (e.g. the CoinDCX connect flow syncs
+// ONLY coindcx so the user sees balances immediately, without a full
+// 12-call INDMoney round-trip); the other source keeps its previous
+// assets in the merged snapshot.
+export async function syncNow({ force = true, reason = 'manual', sources } = {}) {
   if (_inFlight) return { ...syncInfo(), busy: true };
-  if (!getStatus().connected) {
+  const wantIndm = sources == null || sources.includes('indmoney');
+  const wantCdcx = sources == null || sources.includes('coindcx');
+  const indmConnected = getStatus().connected;
+  const cdcxConnected = coindcxConnected();
+  if ((wantIndm && indmConnected) || (wantCdcx && cdcxConnected)) {
+    // at least one requested source is connected — proceed
+  } else {
     const info = syncInfo();
     return { ...info, ok: false, reason: 'not-connected', assets: [] };
   }
   _inFlight = true;
   try {
-    let pf;
-    try {
-      pf = await fetchPortfolio({ force });
-    } catch (err) {
-      // hard failure (network / token revoked) — keep last good assets
-      const prev = getAssetsSnapshot() || {};
-      writeSnapshot({
-        ...prev,
-        ok: false,
-        lastError: String(err?.message || err).slice(0, 200),
-        failedAt: Date.now(),
-        slots: prev.slots || {},
-      });
-      return { ...syncInfo(), ok: false, error: String(err?.message || err) };
-    }
-    if (!pf.ok) {
-      const prev = getAssetsSnapshot() || {};
-      writeSnapshot({
-        ...prev,
-        ok: false,
-        lastError: `no holdings (${pf.reason || 'unknown'})`,
-        failedAt: Date.now(),
-        slots: prev.slots || {},
-      });
-      return { ...syncInfo(), ok: false, error: `no holdings (${pf.reason})` };
-    }
-
-    const usdInr = await fetchUsdInr();
-    const resolutions = await resolveSymbolsForHoldings(pf.holdings);
-    const assets = mapHoldingsToAssets(pf.holdings, resolutions, usdInr);
-
     const prev = getAssetsSnapshot() || {};
+    const prevAssets = Array.isArray(prev.assets) ? prev.assets : [];
+
+    // ---------------- INDMoney leg ----------------
+    // state: 'ok' fresh assets | 'fail' keep previous assets (stale) |
+    // 'skip' source not requested | 'off' source disconnected → assets dropped
+    let indmAssets = [];
+    let indmSummary = prev.summary || null;
+    let indmOfficial = !!prev.officialSummary;
+    let indmPositions = Array.isArray(prev.positions) ? prev.positions : [];
+    let indmError = null;
+    if (wantIndm && indmConnected) {
+      try {
+        const pf = await fetchPortfolio({ force });
+        if (pf.ok) {
+          const usdInr = await fetchUsdInr();
+          const resolutions = await resolveSymbolsForHoldings(pf.holdings);
+          indmAssets = mapHoldingsToAssets(pf.holdings, resolutions, usdInr);
+          indmSummary = pf.summary || null;
+          indmOfficial = !!pf.officialSummary;
+          indmPositions = pf.positions || [];
+        } else {
+          indmAssets = prevAssets.filter(a => (a.source || 'indmoney') === 'indmoney');
+          indmError = `no holdings (${pf.reason || 'unknown'})`;
+        }
+      } catch (err) {
+        // hard failure (network / token revoked) — keep last good assets
+        indmAssets = prevAssets.filter(a => (a.source || 'indmoney') === 'indmoney');
+        indmError = String(err?.message || err).slice(0, 200);
+      }
+    } else if (wantIndm && !indmConnected) {
+      indmError = null; // disconnected is not an error — assets simply gone
+    }
+
+    // ---------------- CoinDCX leg ----------------
+    let cdcxAssets = [];
+    let cdcxInfo = prev.coindcx || null;
+    let cdcxError = null;
+    if (wantCdcx && cdcxConnected) {
+      try {
+        const usdInr = await fetchUsdInr();
+        const out = await fetchCoinDcxAssets(usdInr);
+        cdcxAssets = out?.assets || [];
+        cdcxInfo = {
+          syncedAt: Date.now(),
+          balanceCount: out?.balanceCount ?? 0,
+          lastError: null,
+        };
+      } catch (err) {
+        // bad creds / API down — keep the previous CoinDCX assets (stale)
+        cdcxAssets = prevAssets.filter(a => a.source === 'coindcx');
+        cdcxError = String(err?.message || err).slice(0, 200);
+        cdcxInfo = { ...(prev.coindcx || {}), lastError: cdcxError };
+      }
+    }
+
+    // ---------------- merge + persist ----------------
+    const assets = [...indmAssets, ...cdcxAssets];
+    const anyError = indmError || cdcxError;
+    const anyFresh = (wantIndm && indmConnected && !indmError) || (wantCdcx && cdcxConnected && !cdcxError);
+    const anyUsable = assets.length > 0;
+
+    // Hidden keys carry forward verbatim (a removed asset stays removed
+    // across syncs). Entries for dropped sources are cleaned below via
+    // clearSourceAssets(); here we keep everything that still matches an
+    // asset so the UI list stays honest.
+    const hidden = Array.isArray(prev.hidden)
+      ? prev.hidden.filter(k => assets.some(a => a.key === k))
+      : [];
+
     // Mark scheduler slots as run (scheduler passes its slot; manual marks none).
     let slots = prev.slots || {};
     if (reason && reason !== 'manual') slots = { ...slots, [reason]: Date.now() };
 
     writeSnapshot({
-      ok: true,
-      source: 'indmoney',
-      syncedAt: Date.now(),
+      // ok = fresh, error-free data. A failed leg keeps the previous
+      // assets in the snapshot but marks it NOT ok (stale) — the /assets
+      // ROUTE separately decides usability (degraded-tolerant there).
+      ok: anyUsable && !anyError,
+      source: 'indmoney+coindcx',
+      // syncedAt only advances on FRESH data — a failed sync must keep the
+      // previous timestamp so "stale" stays honest.
+      syncedAt: anyFresh ? Date.now() : (prev.syncedAt || null),
       assets,
-      summary: pf.summary || null,
-      officialSummary: !!pf.officialSummary,
-      positions: pf.positions || [],
+      summary: indmSummary,
+      officialSummary: indmOfficial,
+      positions: indmPositions,
+      coindcx: cdcxInfo,
+      hidden,
       counts: {
         assets: assets.length,
         live: assets.filter(a => !a.noLive).length,
         noLive: assets.filter(a => a.noLive).length,
         resolved: assets.filter(a => a.symbol).length,
+        coindcx: cdcxAssets.length,
       },
-      lastError: null,
-      failedAt: null,
+      lastError: indmError || cdcxError || null,
+      failedAt: indmError || cdcxError ? Date.now() : null,
       slots,
     });
-    return syncInfo();
+    const info = syncInfo();
+    if (anyError) return { ...info, ok: false, error: String(anyError) };
+    if (!anyUsable) return { ...info, ok: false, error: 'no holdings from any source' };
+    return info;
   } finally {
     _inFlight = false;
   }
@@ -277,7 +407,7 @@ export async function syncNow({ force = true, reason = 'manual' } = {}) {
 
 // Background sync guard used by GET /assets: fire-and-forget when stale.
 export function maybeBackgroundSync() {
-  if (!getStatus().connected) return false;
+  if (!getStatus().connected && !coindcxConnected()) return false;
   if (Date.now() - _lastBgAttempt < BG_MIN_GAP) return false;
   const snap = getAssetsSnapshot();
   const stale = !snap?.ok || !snap?.syncedAt || Date.now() - snap.syncedAt > STALE_BG_MS;
@@ -295,7 +425,7 @@ export function startScheduler() {
   if (_schedTimer) return _schedTimer;
   const tick = () => {
     try {
-      if (!getStatus().connected) return;
+      if (!getStatus().connected && !coindcxConnected()) return;
       const snap = getAssetsSnapshot() || {};
       const due = computeDueSlots(Date.now(), snap.slots || {});
       if (due.length === 0) return;
@@ -316,10 +446,38 @@ export function __stopSchedulerForTests() {
   _lastSchedFail = 0;
 }
 
-// Disconnect must drop the synced assets with it.
+// Disconnect must drop the synced assets of THAT source with it —
+// the other source's assets survive (e.g. disconnecting INDMoney
+// keeps the CoinDCX crypto rows, and vice-versa).
+export function clearSourceAssets(source) {
+  const snap = getAssetsSnapshot() || {};
+  const keep = (Array.isArray(snap.assets) ? snap.assets : [])
+    .filter(a => (a.source || 'indmoney') !== source);
+  const hidden = (Array.isArray(snap.hidden) ? snap.hidden : [])
+    .filter(k => keep.some(a => a.key === k));
+  writeSnapshot({
+    ...snap,
+    ok: keep.length > 0,
+    assets: keep,
+    hidden,
+    counts: keep.length ? {
+      assets: keep.length,
+      live: keep.filter(a => !a.noLive).length,
+      noLive: keep.filter(a => a.noLive).length,
+      resolved: keep.filter(a => a.symbol).length,
+      coindcx: keep.filter(a => a.source === 'coindcx').length,
+    } : null,
+    // source-specific residue is dropped along with its assets
+    ...(source === 'indmoney' ? { summary: null, officialSummary: false, positions: [], lastError: null } : {}),
+    ...(source === 'coindcx' ? { coindcx: null } : {}),
+    clearedAt: Date.now(),
+  });
+}
+
+// Full wipe (legacy path + tests): nothing survives.
 export function clearSnapshot() {
   writeSnapshot({
-    ok: false, source: 'indmoney', syncedAt: null, assets: [], slots: {},
+    ok: false, source: 'indmoney', syncedAt: null, assets: [], slots: {}, hidden: [],
     clearedAt: Date.now(),
   });
 }

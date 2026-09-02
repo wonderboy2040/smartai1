@@ -1,7 +1,8 @@
 // ============================================================
-// server/mcp/routes.js — Express routes for the INDMoney MCP
-// portfolio integration. All routes sit behind the global
-// requireAuth middleware (Bearer token / session cookie).
+// server/mcp/routes.js — Express routes for the INDMoney MCP +
+// CoinDCX portfolio integrations (the ASSET TABLE sources).
+// All routes sit behind the global requireAuth middleware
+// (Bearer token / session cookie).
 //
 //   GET  /api/mcp/indmoney/status      → connection status
 //   GET  /api/mcp/indmoney/connect     → 302 → INDMoney OAuth (PKCE)
@@ -12,9 +13,16 @@
 //   POST /api/mcp/indmoney/portfolio   → force re-sync (bypass cache)
 //   POST /api/mcp/indmoney/call        → generic MCP tool call (debug)
 //   GET  /api/mcp/indmoney/assets      → synced asset TABLE snapshot
-//                                      (2×-daily scheduler; triggers a
-//                                      background refresh when stale)
+//                                      (hidden rows filtered out;
+//                                      triggers a background refresh
+//                                      when stale)
 //   POST /api/mcp/indmoney/sync        → force asset-table sync now
+//                                      (INDMoney + CoinDCX both)
+//   POST /api/mcp/indmoney/assets/hide    → remove an asset row (hide)
+//   POST /api/mcp/indmoney/assets/unhide  → restore removed row(s)
+//   POST /api/mcp/coindcx/connect      → save + validate API keys
+//   POST /api/mcp/coindcx/disconnect   → forget keys + drop assets
+//   GET  /api/mcp/coindcx/status       → connection + last balance sync
 // ============================================================
 import { Router } from 'express';
 import {
@@ -22,7 +30,13 @@ import {
   listTools, callTool, fetchPortfolio, extractToolPayload,
   getPendingOrigin, IndmError,
 } from './indmoney.js';
-import { syncNow, syncInfo, getAssetsSnapshot, maybeBackgroundSync, clearSnapshot } from './portfolioSync.js';
+import {
+  syncNow, syncInfo, getAssetsSnapshot, maybeBackgroundSync,
+  clearSourceAssets, hideAsset, unhideAsset, unhideAll,
+} from './portfolioSync.js';
+import {
+  coindcxConnect, coindcxDisconnect, coindcxStatus,
+} from './coindcx.js';
 
 const router = Router();
 
@@ -112,13 +126,14 @@ router.get('/api/mcp/indmoney/callback', async (req, res) => {
 
 // ------------------------------------------------------------
 // POST /disconnect — revoke tokens + clear stored state.
-// Also clears the synced asset-table snapshot: INDMoney IS the
-// asset source now, so disconnecting removes the assets too.
+// Also clears the INDMoney-sourced asset rows: INDMoney IS an
+// asset source, so disconnecting removes its rows — but CoinDCX
+// crypto rows (the other source) survive.
 // ------------------------------------------------------------
 router.post('/api/mcp/indmoney/disconnect', async (_req, res) => {
   try {
     const out = await disconnect();
-    try { clearSnapshot(); } catch { /* non-fatal */ }
+    try { clearSourceAssets('indmoney'); } catch { /* non-fatal */ }
     return res.json(out);
   } catch (err) { return fail(res, err); }
 });
@@ -158,12 +173,13 @@ async function handlePortfolio(req, res) {
 }
 
 // ------------------------------------------------------------
-// GET/POST /assets — the synced ASSET TABLE (INDMoney is the
-// source of truth for the app's portfolio). Returns the persisted
-// snapshot + scheduler info; when the snapshot is stale (>6h) and
-// the MCP is connected, a background refresh is fired (deduped,
-// rate-limited) so the next poll gets fresh data without this
-// request blocking on a full MCP round-trip.
+// GET/POST /assets — the synced ASSET TABLE (INDMoney + CoinDCX
+// are the sources of truth for the app's portfolio). Returns the
+// persisted snapshot + scheduler info; rows the user REMOVED are
+// filtered out (they stay restorable). When the snapshot is stale
+// (>6h) and a source is connected, a background refresh is fired
+// (deduped, rate-limited) so the next poll gets fresh data without
+// this request blocking on a full round-trip.
 // ------------------------------------------------------------
 router.get('/api/mcp/indmoney/assets', (_req, res) => {
   try {
@@ -172,16 +188,25 @@ router.get('/api/mcp/indmoney/assets', (_req, res) => {
     const info = syncInfo();
     // Degraded-tolerant: a FAILED sync keeps the last good assets — they
     // stay usable (ok) with lastError/stale flags explaining the state.
-    // Only "not connected" or "no assets at all" make the table unusable.
-    const assets = Array.isArray(snap?.assets) ? snap.assets : [];
-    const usable = !!info.connected && assets.length > 0;
+    // Only "no source connected" or "no assets at all" make the table
+    // unusable.
+    const allAssets = Array.isArray(snap?.assets) ? snap.assets : [];
+    const hidden = Array.isArray(snap?.hidden) ? snap.hidden : [];
+    const assets = allAssets.filter(a => !hidden.includes(a.key));
+    const hiddenAssets = allAssets.filter(a => hidden.includes(a.key));
+    const anySource = info.sources?.indmoney || info.sources?.coindcx;
+    const usable = !!anySource && assets.length > 0;
     return res.json({
       ok: usable,
-      reason: !info.connected ? 'not-connected' : (assets.length === 0 ? (snap?.lastError || 'no-snapshot') : null),
+      reason: !anySource ? 'not-connected' : (assets.length === 0 && hiddenAssets.length === 0 ? (snap?.lastError || 'no-snapshot') : (assets.length === 0 ? 'all-hidden' : null)),
       assets,
+      hiddenAssets,
+      hiddenCount: hiddenAssets.length,
       counts: snap?.counts || null,
       summary: snap?.summary || null,
       positions: Array.isArray(snap?.positions) ? snap.positions : [],
+      sources: info.sources,
+      coindcx: info.coindcx,
       syncedAt: snap?.syncedAt || null,
       stale: info.stale,
       slots: info.slots,
@@ -193,7 +218,49 @@ router.get('/api/mcp/indmoney/assets', (_req, res) => {
 });
 
 // ------------------------------------------------------------
+// POST /assets/hide — REMOVE an asset row (India/USA/crypto, any
+// source). Removal persists across syncs; restore via /unhide.
+// Body: { key: string }
+// ------------------------------------------------------------
+router.post('/api/mcp/indmoney/assets/hide', (req, res) => {
+  try {
+    const { key } = req.body || {};
+    if (typeof key !== 'string' || !key) {
+      throw new IndmError('`key` (string) is required', 400, 'BAD_REQUEST');
+    }
+    const changed = hideAsset(key);
+    if (!changed) {
+      throw new IndmError('Asset not found or already removed', 404, 'NOT_FOUND');
+    }
+    return res.json({ ok: true, key, ...syncInfo() });
+  } catch (err) { return fail(res, err); }
+});
+
+// ------------------------------------------------------------
+// POST /assets/unhide — restore a removed row.
+// Body: { key: string } OR { all: true }
+// ------------------------------------------------------------
+router.post('/api/mcp/indmoney/assets/unhide', (req, res) => {
+  try {
+    const { key, all } = req.body || {};
+    let changed = false;
+    if (all === true) {
+      changed = unhideAll();
+    } else if (typeof key === 'string' && key) {
+      changed = unhideAsset(key);
+    } else {
+      throw new IndmError('`key` (string) or `all: true` is required', 400, 'BAD_REQUEST');
+    }
+    if (!changed) {
+      throw new IndmError('Nothing to restore', 404, 'NOT_FOUND');
+    }
+    return res.json({ ok: true, ...(all === true ? {} : { key }), ...syncInfo() });
+  } catch (err) { return fail(res, err); }
+});
+
+// ------------------------------------------------------------
 // POST /sync — force the asset-table sync NOW (manual button).
+// Syncs BOTH sources (INDMoney MCP + CoinDCX balances).
 // Rate-limited; returns the fresh snapshot info.
 // ------------------------------------------------------------
 router.post('/api/mcp/indmoney/sync', async (req, res) => {
@@ -201,6 +268,43 @@ router.post('/api/mcp/indmoney/sync', async (req, res) => {
     if (rateLimited('sync')) throw new IndmError('Too many requests — try again shortly', 429, 'RATE_LIMITED');
     const out = await syncNow({ force: true, reason: 'manual' });
     return res.json({ ok: !!out.ok, ...out });
+  } catch (err) { return fail(res, err); }
+});
+
+// ------------------------------------------------------------
+// CoinDCX — crypto exchange account (API key + secret, stored
+// ONLY server-side). Connect validates the pair with a real
+// balances call, then triggers a coindcx-only quick sync so the
+// crypto rows land immediately.
+// ------------------------------------------------------------
+router.get('/api/mcp/coindcx/status', (_req, res) => {
+  try {
+    res.json({ ok: true, ...coindcxStatus() });
+  } catch (err) { return fail(res, err); }
+});
+
+router.post('/api/mcp/coindcx/connect', async (req, res) => {
+  try {
+    if (rateLimited('coindcx')) throw new IndmError('Too many requests — try again shortly', 429, 'RATE_LIMITED');
+    const { apiKey, secret } = req.body || {};
+    let out;
+    try {
+      out = await coindcxConnect(apiKey, secret);
+    } catch (err) {
+      throw new IndmError(`CoinDCX connect failed: ${err?.message || 'invalid API key/secret'}`, 401, 'CDCX_AUTH');
+    }
+    // Quick coindcx-only sync so the user sees balances immediately
+    // (a full 12-call INDMoney round-trip would add 30-60s here).
+    try { await syncNow({ force: true, reason: 'manual', sources: ['coindcx'] }); } catch { /* non-fatal — scheduled sync will pick it up */ }
+    return res.json({ ok: true, ...out, ...syncInfo() });
+  } catch (err) { return fail(res, err); }
+});
+
+router.post('/api/mcp/coindcx/disconnect', (_req, res) => {
+  try {
+    const out = coindcxDisconnect();
+    try { clearSourceAssets('coindcx'); } catch { /* non-fatal */ }
+    return res.json({ ok: true, ...out });
   } catch (err) { return fail(res, err); }
 });
 

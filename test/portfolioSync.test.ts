@@ -406,9 +406,9 @@ describe('syncNow e2e (mocked OAuth + MCP + Groww + forex)', () => {
 
     const snap = getAssetsSnapshot();
     expect(snap.ok).toBe(true);
-    expect(snap.source).toBe('indmoney');
+    expect(snap.source).toBe('indmoney+coindcx');
     expect(snap.assets).toHaveLength(3);
-    expect(snap.counts).toEqual({ assets: 3, live: 2, noLive: 1, resolved: 2 });
+    expect(snap.counts).toEqual({ assets: 3, live: 2, noLive: 1, resolved: 2, coindcx: 0 });
     expect(snap.slots['09:30']).toBeTruthy(); // slot marked as run
 
     // ETF 1: resolved symbol, live-priced, correct numbers
