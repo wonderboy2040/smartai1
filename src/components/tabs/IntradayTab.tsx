@@ -848,10 +848,16 @@ export const IntradayTab = () => {
         <div className="quantum-panel rounded-2xl p-10 text-center border border-white/5">
           <div className="text-4xl mb-3">🎯</div>
           <div className="text-base font-black text-slate-200 mb-1">
-            {filterDir !== 'ALL' ? `Koi ${filterDir} setup nahi mila` : `Abhi koi ${data?.minConfidence ?? 75}%+ high-conviction setup nahi mila`}
+            {(data?.signals?.length ?? 0) > 0 && filterGrade === 'A+'
+              ? 'Koi A+ ELITE grade signal abhi nahi hai'
+              : (data?.signals?.length ?? 0) > 0 && filterGrade === 'A'
+                ? 'Koi A/A+ grade signal nahi mila — jo hain wo B-grade (watch-only) hain'
+                : filterDir !== 'ALL' ? `Koi ${filterDir} setup nahi mila` : `Abhi koi ${data?.minConfidence ?? 75}%+ high-conviction setup nahi mila`}
           </div>
           <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
-            Capital preservation hi pro-trader ka pehla rule hai — choppy market me random trade lene se bachein. Scanner har 60s baad auto re-scan karta hai.
+            {(data?.signals?.length ?? 0) > 0 && filterGrade !== 'ALL'
+              ? 'Grade filter ALL karke saare setups dekh sakte hain — ya scanner 60s me auto re-scan karega.'
+              : 'Capital preservation hi pro-trader ka pehla rule hai — choppy market me random trade lene se bachein. Scanner har 60s baad auto re-scan karta hai.'}
           </p>
         </div>
       ) : view === 'table' ? (

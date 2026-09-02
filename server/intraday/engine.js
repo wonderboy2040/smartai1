@@ -548,13 +548,21 @@ slAdjust/entryAdjust: only suggest when clearly better than the engine plan (tig
     : [];
 
   const merged = {};
+  const VALID_VERDICTS = new Set(['LONG', 'SHORT', 'AVOID']);
   for (const c of candidates) {
     const votes = [];
     for (const resp of responses) {
       const v = resp.verdicts[c.symbol];
       if (v && v.verdict && typeof v.confidence === 'number') {
+        const verdict = String(v.verdict).toUpperCase().trim();
+        // v4.1 robustness: a model that drifts off the whitelist ("WAIT",
+        // "NEUTRAL", "HOLD", …) must never poison the consensus loop —
+        // unknown verdicts are discarded here (not counted as votes).
+        // Previously: all-drift votes left tradeVotes empty and
+        // `tradeVotes[0].verdict` threw, killing the WHOLE scan.
+        if (!VALID_VERDICTS.has(verdict)) continue;
         votes.push({
-          verdict: String(v.verdict).toUpperCase(),
+          verdict,
           confidence: Math.max(0, Math.min(100, v.confidence)),
           note: String(v.note || '').slice(0, 120),
           analysis: String(v.analysis || '').slice(0, 700).trim(),

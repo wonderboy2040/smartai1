@@ -256,4 +256,41 @@ describe('aiVerifySignals — v4 structured consensus', () => {
     expect(await aiVerifySignals([cand()], { KEYS: {}, OPENAI_COMPAT: {} })).toBeNull();
     expect(await aiVerifySignals([], DEPS)).toBeNull();
   });
+
+  // v4.1 regression: models that drift off the verdict whitelist ("WAIT",
+  // "NEUTRAL", "HOLD") must be discarded — NOT crash the consensus loop.
+  it('non-standard verdicts are discarded; the valid expert vote still decides (no crash)', async () => {
+    stubFetch(
+      { SBIN: V({ verdict: 'WAIT', confidence: 60 }) },
+      { SBIN: V({ verdict: 'NEUTRAL', confidence: 55 }) },
+    );
+    const out = await aiVerifySignals([cand()], DEPS);
+    // Both votes drifted → no consensus entry for the symbol, no throw.
+    expect(out).not.toBeNull();
+    expect(out.verdicts.SBIN).toBeUndefined();
+  });
+
+  it('mixed valid + drifted verdicts → only the valid one counts (single-model consensus)', async () => {
+    stubFetch(
+      { SBIN: V({ verdict: 'WAIT', confidence: 90 }) },
+      { SBIN: V({ verdict: 'LONG', confidence: 84 }) },
+    );
+    const out = await aiVerifySignals([cand()], DEPS);
+    const v = out.verdicts.SBIN;
+    expect(v.verdict).toBe('LONG');
+    expect(v.confidence).toBe(84); // single valid vote, no agreement bonus
+    expect(v.models).toEqual(['groq']);
+    expect(v.perModel.gemini).toBeUndefined();
+  });
+
+  it('lowercase / padded verdicts normalize to the whitelist', async () => {
+    stubFetch(
+      { SBIN: V({ verdict: 'long ', confidence: 81 }) },
+      { SBIN: V({ verdict: 'Long', confidence: 83 }) },
+    );
+    const out = await aiVerifySignals([cand()], DEPS);
+    const v = out.verdicts.SBIN;
+    expect(v.verdict).toBe('LONG');
+    expect(v.confidence).toBe(Math.round((81 + 83) / 2 + 5)); // normalized → both counted, +5 consensus
+  });
 });
