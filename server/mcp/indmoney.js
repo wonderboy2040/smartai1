@@ -446,23 +446,117 @@ export async function callTool(name, args = {}) {
 
 // Pick the most portfolio-ish tool from tools/list.
 // INDMoney's exact tool names are not published; detect robustly.
+function portfolioScore(t) {
+  const hay = `${t.name || ''} ${t.description || ''}`.toLowerCase();
+  if (!hay.trim()) return -1;
+  let s = 0;
+  if (/portfolio/.test(hay)) s += 10;
+  if (/holding/.test(hay)) s += 8;
+  if (/position/.test(hay)) s += 6;
+  if (/net.?worth|wealth|asset|investment/.test(hay)) s += 4;
+  if (/summary|overview|detail/.test(hay)) s += 2;
+  if (/stock|equit|mutual|fund/.test(hay)) s += 2;
+  if (/transaction|order|history|price|quote|news|market|watchlist/.test(hay)) s -= 5; // clearly not portfolio
+  return s;
+}
 export function detectPortfolioTool(tools) {
   if (!Array.isArray(tools) || tools.length === 0) return null;
-  const score = (t) => {
-    const hay = `${t.name || ''} ${t.description || ''}`.toLowerCase();
-    if (!hay.trim()) return -1;
-    let s = 0;
-    if (/portfolio/.test(hay)) s += 10;
-    if (/holding/.test(hay)) s += 8;
-    if (/position/.test(hay)) s += 6;
-    if (/net.?worth|wealth|asset|investment/.test(hay)) s += 4;
-    if (/summary|overview|detail/.test(hay)) s += 2;
-    if (/stock|equit|mutual|fund/.test(hay)) s += 2;
-    if (/transaction|order|history|price|quote|news|market|watchlist/.test(hay)) s -= 5; // clearly not portfolio
-    return s;
-  };
-  const ranked = tools.map(t => ({ t, s: score(t) })).sort((a, b) => b.s - a.s);
+  const ranked = tools.map(t => ({ t, s: portfolioScore(t) })).sort((a, b) => b.s - a.s);
   return ranked[0] && ranked[0].s > 0 ? ranked[0].t : null;
+}
+
+// Ranked portfolio-ish tool candidates (score > 0, best first, capped).
+function rankPortfolioTools(tools, cap = 4) {
+  if (!Array.isArray(tools)) return [];
+  return tools
+    .map(t => ({ t, s: portfolioScore(t) }))
+    .filter(x => x.s > 0)
+    .sort((a, b) => b.s - a.s)
+    .slice(0, cap)
+    .map(x => x.t);
+}
+
+// ============================================================
+// Schema-driven tool arguments
+// ============================================================
+// INDMoney tools declare Pydantic models — e.g. networth_holdings REQUIRES
+// an `asset_type` argument. Calling with {} fails server-side validation:
+//   "1 validation error for networth_holdingsArguments asset_type Field required"
+// So before calling a tool we synthesize argument sets from its MCP
+// inputSchema: enum values are enumerated exactly; a required asset_type
+// without an enum falls back to INDMoney's known asset-type tokens.
+const MAX_TOOL_CALLS = 12; // total tools/call budget per portfolio fetch
+const KNOWN_ASSET_TYPES = [
+  'stocks', 'mutual_funds', 'etf', 'etfs', 'fd', 'fixed_deposit', 'gold',
+  'bonds', 'nps', 'ppf', 'crypto', 'cryptocurrency', 'real_estate', 'others',
+];
+const ASSET_TYPE_LABELS = [
+  [/mutual|(^|[\s_-])mf([\s_-]|$)/i, 'Mutual Fund'],
+  [/etf/i, 'ETF'],
+  [/fixed|(^|[\s_-])fd([\s_-]|$)|deposit/i, 'Fixed Income'],
+  [/gold/i, 'Gold'],
+  [/nps|ppf|epf|pension|provident/i, 'Retirement'],
+  [/bond/i, 'Bonds'],
+  [/crypto|bitcoin/i, 'Crypto'],
+  [/real.?estate|property/i, 'Real Estate'],
+  [/stock|equit|share/i, 'Stock'],
+  [/other/i, 'Other'],
+];
+
+export function assetTypeLabel(v) {
+  if (v == null) return null;
+  const s = String(v);
+  if (!s || /^all$/i.test(s)) return null; // mixed payload → keep per-holding types
+  for (const [re, label] of ASSET_TYPE_LABELS) if (re.test(s)) return label;
+  return null;
+}
+
+// Build the argument sets a tool should be called with, from inputSchema.
+// Returns { argSets, satisfiable } — argSets is always a non-empty array
+// (falls back to [{}] when nothing can be synthesized).
+export function buildToolArgSets(tool) {
+  const schema = tool && tool.inputSchema && typeof tool.inputSchema === 'object'
+    ? tool.inputSchema : null;
+  const required = Array.isArray(schema?.required) ? schema.required : [];
+  const props = schema && schema.properties && typeof schema.properties === 'object'
+    ? schema.properties : {};
+  if (required.length === 0) return { argSets: [{}], satisfiable: true };
+
+  const perField = [];
+  for (const name of required) {
+    const p = (props[name] && typeof props[name] === 'object') ? props[name] : {};
+    let values = null;
+    if (Array.isArray(p.enum) && p.enum.length > 0) {
+      values = p.enum.map(v => String(v));
+    } else if (p.default !== undefined && p.default !== null) {
+      values = [p.default];
+    } else if (/asset_?types?/i.test(name)) {
+      values = KNOWN_ASSET_TYPES;
+    } else if (p.type === 'boolean') {
+      values = [true];
+    } else if (p.type === 'integer' || p.type === 'number') {
+      values = null; // cannot infer a meaningful number
+    } else {
+      values = null;
+    }
+    if (!values) return { argSets: [{}], satisfiable: false };
+    perField.push(values.map(v => ({ name, value: v })));
+  }
+
+  // Cartesian product across required fields, capped to the call budget.
+  let combos = [{}];
+  for (const options of perField) {
+    const next = [];
+    for (const base of combos) {
+      for (const o of options) {
+        if (next.length >= MAX_TOOL_CALLS) break;
+        next.push({ ...base, [o.name]: o.value });
+      }
+      if (next.length >= MAX_TOOL_CALLS) break;
+    }
+    combos = next;
+  }
+  return { argSets: combos.slice(0, MAX_TOOL_CALLS), satisfiable: true };
 }
 
 // ============================================================
@@ -577,11 +671,16 @@ export function collectHoldings(node, out = [], depth = 0) {
 export function normalizePortfolio(payload) {
   if (payload == null) return { ok: false, reason: 'empty', holdings: [], summary: null };
   if (typeof payload === 'string') return { ok: false, reason: 'text-only', holdings: [], summary: null };
+  return summarizeHoldings(collectHoldings(payload));
+}
 
-  const holdings = collectHoldings(payload);
+// Dedup + aggregate already-normalized holdings (shared by the single-payload
+// path and the multi-call fetch path).
+export function summarizeHoldings(holdings) {
+  const list = Array.isArray(holdings) ? holdings : [];
   // Dedup by name (nested repeats across summary/detail sections).
   const seen = new Set();
-  const uniq = holdings.filter(h => {
+  const uniq = list.filter(h => {
     const key = `${h.name}|${h.qty}`;
     if (seen.has(key)) return false;
     seen.add(key);
@@ -610,6 +709,17 @@ export function normalizePortfolio(payload) {
 }
 
 // Main entry: fetch the user's portfolio via MCP.
+//
+// INDMoney's portfolio tools declare REQUIRED arguments (e.g.
+// networth_holdings needs asset_type), so a single empty-args call fails
+// validation. Strategy:
+//   1. Rank portfolio-ish tools; synthesize argument sets from each tool's
+//      inputSchema (enums enumerated exactly, asset_type → known values).
+//   2. Call every (tool, argSet) pair within a small budget; a failing pair
+//      (e.g. an asset type the account/server doesn't support) is skipped,
+//      not fatal.
+//   3. Merge + dedup + stamp the asset type implied by the argument.
+//   4. Only when EVERY call fails do we surface the underlying error.
 export async function fetchPortfolio({ force = false } = {}) {
   const s = state();
   if (!s.tokens) throw new IndmError('INDMoney not connected', 401, 'NOT_CONNECTED');
@@ -617,24 +727,68 @@ export async function fetchPortfolio({ force = false } = {}) {
     return { ..._portfolioCache.data, cached: true };
   }
   const { tools } = await listTools({ force });
-  const tool = detectPortfolioTool(tools);
-  if (!tool) {
+  const ranked = rankPortfolioTools(tools);
+  if (ranked.length === 0) {
     return {
       ok: false, reason: 'no-portfolio-tool', summary: null, holdings: [],
       tools: (tools || []).map(t => ({ name: t.name, description: (t.description || '').slice(0, 120) })),
       fetchedAt: nowMs(), cached: false,
     };
   }
-  const result = await callTool(tool.name, {});
-  const payload = extractToolPayload(result);
-  const normalized = normalizePortfolio(payload);
+
+  // Build the call plan: satisfiable tools with synthesized args first.
+  const plan = [];
+  for (const tool of ranked) {
+    const { argSets, satisfiable } = buildToolArgSets(tool);
+    if (!satisfiable) continue;
+    for (const args of argSets) plan.push({ tool, args });
+  }
+  // Fallback: nothing satisfiable → try the top tools with {} (server-side
+  // defaults may still exist; keeps the legacy single-shot behavior).
+  if (plan.length === 0) {
+    for (const tool of ranked.slice(0, 3)) plan.push({ tool, args: {} });
+  }
+
+  const holdings = [];
+  const calls = [];        // successful (tool, args) pairs — diagnostics
+  const failures = [];     // skipped pairs with their error text
+  let firstPayload = null;
+  let firstError = null;
+
+  for (const { tool, args } of plan.slice(0, MAX_TOOL_CALLS)) {
+    let payload;
+    try {
+      const result = await callTool(tool.name, args);
+      payload = extractToolPayload(result);
+    } catch (err) {
+      if (!firstError) firstError = err;
+      failures.push({ tool: tool.name, args, error: String(err?.message || err).slice(0, 200) });
+      continue; // one bad asset type must not kill the whole sync
+    }
+    calls.push({ tool: tool.name, args });
+    if (firstPayload === null) firstPayload = payload;
+
+    // Stamp the asset type implied by the argument onto holdings from this
+    // call (a networth_holdings(mutual_funds) response is all mutual funds).
+    const label = assetTypeLabel(args?.asset_type ?? args?.assetType);
+    for (const h of collectHoldings(payload)) {
+      if (label) h.assetType = label;
+      holdings.push(h);
+    }
+  }
+
+  // Every single call failed → surface the real error (as before).
+  if (calls.length === 0 && firstError) throw firstError;
+
+  const normalized = summarizeHoldings(holdings);
   const out = {
     ...normalized,
-    tool: tool.name,
-    toolDescription: (tool.description || '').slice(0, 200) || null,
+    tools: ranked.map(t => ({ name: t.name })),
+    calls,
+    failures: failures.length ? failures : undefined,
     fetchedAt: nowMs(),
     cached: false,
-    payloadPreview: normalized.ok ? null : safePreview(payload),
+    payloadPreview: normalized.ok ? null : safePreview(firstPayload),
   };
   if (normalized.ok) {
     _portfolioCache = { data: out, fetchedAt: out.fetchedAt };

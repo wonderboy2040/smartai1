@@ -16,7 +16,8 @@ const STORE_PATH = path.join(__dirname, '..', 'server', 'data', 'mcp-indmoney.js
 
 const {
   pkceGenerate, pkceChallengeFrom, buildAuthorizeUrl, detectPortfolioTool,
-  normalizePortfolio, collectHoldings, extractToolPayload, parseSSEOrJSON,
+  normalizePortfolio, summarizeHoldings, collectHoldings, extractToolPayload, parseSSEOrJSON,
+  buildToolArgSets, assetTypeLabel,
   startConnect, completeConnect, getStatus, disconnect, listTools,
   fetchPortfolio, refreshAccessToken, __resetForTests, IndmError, INDM,
 } = await import('../server/mcp/indmoney.js');
@@ -117,6 +118,146 @@ describe('buildAuthorizeUrl', () => {
   it('defaults scope when omitted', () => {
     const url = buildAuthorizeUrl({ clientId: 'x', redirectUri: 'https://a/cb', state: 's', codeChallenge: 'c' });
     expect(new URL(url).searchParams.get('scope')).toBe(INDM.SCOPES);
+  });
+});
+
+// ---------------- schema-driven tool arguments ----------------
+describe('buildToolArgSets (inputSchema → argument sets)', () => {
+  it('no required fields → single empty arg-set, satisfiable', () => {
+    const r = buildToolArgSets({ name: 'get_portfolio', inputSchema: { type: 'object', properties: { x: { type: 'string' } } } });
+    expect(r.argSets).toEqual([{}]);
+    expect(r.satisfiable).toBe(true);
+  });
+
+  it('missing/absent schema → empty arg-set (legacy behavior)', () => {
+    expect(buildToolArgSets({ name: 't' }).argSets).toEqual([{}]);
+    expect(buildToolArgSets({ name: 't', inputSchema: null }).satisfiable).toBe(true);
+  });
+
+  it('required enum field → one arg-set per enum value (the exact networth_holdings fix)', () => {
+    const tool = {
+      name: 'networth_holdings',
+      inputSchema: {
+        type: 'object',
+        properties: { asset_type: { type: 'string', enum: ['stocks', 'mutual_funds', 'fd'] } },
+        required: ['asset_type'],
+      },
+    };
+    const r = buildToolArgSets(tool);
+    expect(r.satisfiable).toBe(true);
+    expect(r.argSets).toEqual([
+      { asset_type: 'stocks' },
+      { asset_type: 'mutual_funds' },
+      { asset_type: 'fd' },
+    ]);
+  });
+
+  it('required asset_type WITHOUT enum → known INDMoney asset-type fallbacks', () => {
+    const tool = {
+      name: 'networth_holdings',
+      inputSchema: {
+        type: 'object',
+        properties: { asset_type: { type: 'string', description: 'Asset type filter' } },
+        required: ['asset_type'],
+      },
+    };
+    const r = buildToolArgSets(tool);
+    expect(r.satisfiable).toBe(true);
+    expect(r.argSets.length).toBeGreaterThan(4);
+    expect(r.argSets.length).toBeLessThanOrEqual(12);
+    expect(r.argSets.every(a => typeof a.asset_type === 'string' && a.asset_type)).toBe(true);
+    expect(r.argSets.map(a => a.asset_type)).toContain('stocks');
+    expect(r.argSets.map(a => a.asset_type)).toContain('mutual_funds');
+  });
+
+  it('required field with a default → uses the default', () => {
+    const tool = {
+      name: 't',
+      inputSchema: {
+        type: 'object',
+        properties: { mode: { type: 'string', default: 'full' } },
+        required: ['mode'],
+      },
+    };
+    expect(buildToolArgSets(tool).argSets).toEqual([{ mode: 'full' }]);
+  });
+
+  it('required boolean → [true]; required unknown string → unsatisfiable', () => {
+    const boolTool = {
+      name: 't',
+      inputSchema: { type: 'object', properties: { detailed: { type: 'boolean' } }, required: ['detailed'] },
+    };
+    expect(buildToolArgSets(boolTool).argSets).toEqual([{ detailed: true }]);
+
+    const strTool = {
+      name: 't',
+      inputSchema: { type: 'object', properties: { symbol: { type: 'string' } }, required: ['symbol'] },
+    };
+    const r = buildToolArgSets(strTool);
+    expect(r.satisfiable).toBe(false);
+    expect(r.argSets).toEqual([{}]);
+  });
+
+  it('multiple required fields → cartesian product, capped at 12', () => {
+    const tool = {
+      name: 't',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          a: { type: 'string', enum: ['1', '2', '3', '4', '5'] },
+          b: { type: 'string', enum: ['x', 'y', 'z'] },
+        },
+        required: ['a', 'b'],
+      },
+    };
+    const r = buildToolArgSets(tool);
+    expect(r.argSets).toHaveLength(12); // 15 combos → capped
+    expect(r.argSets[0]).toEqual({ a: '1', b: 'x' });
+  });
+});
+
+describe('assetTypeLabel', () => {
+  it('maps INDMoney asset tokens to display labels', () => {
+    expect(assetTypeLabel('stocks')).toBe('Stock');
+    expect(assetTypeLabel('mutual_funds')).toBe('Mutual Fund');
+    expect(assetTypeLabel('mf')).toBe('Mutual Fund');
+    expect(assetTypeLabel('etf')).toBe('ETF');
+    expect(assetTypeLabel('fd')).toBe('Fixed Income');
+    expect(assetTypeLabel('fixed_deposit')).toBe('Fixed Income');
+    expect(assetTypeLabel('gold')).toBe('Gold');
+    expect(assetTypeLabel('bonds')).toBe('Bonds');
+    expect(assetTypeLabel('nps')).toBe('Retirement');
+    expect(assetTypeLabel('ppf')).toBe('Retirement');
+    expect(assetTypeLabel('cryptocurrency')).toBe('Crypto');
+    expect(assetTypeLabel('real_estate')).toBe('Real Estate');
+    expect(assetTypeLabel('others')).toBe('Other');
+  });
+  it('all / unknown / null → null (keep per-holding classification)', () => {
+    expect(assetTypeLabel('all')).toBeNull();
+    expect(assetTypeLabel('ALL')).toBeNull();
+    expect(assetTypeLabel(null)).toBeNull();
+    expect(assetTypeLabel('xyzzy')).toBeNull();
+  });
+});
+
+describe('summarizeHoldings (dedup + aggregate)', () => {
+  it('dedups by name|qty and aggregates totals', () => {
+    const r = summarizeHoldings([
+      { name: 'IRFC', qty: 100, value: 15000, invested: 10000, pnl: 5000, assetType: 'Stock' },
+      { name: 'IRFC', qty: 100, value: 15000, invested: 10000, pnl: 5000, assetType: 'Stock' },
+      { name: 'HDFC Flexi', qty: 2, value: 5000, invested: 4800, pnl: 200, assetType: 'Mutual Fund' },
+    ]);
+    expect(r.ok).toBe(true);
+    expect(r.holdings).toHaveLength(2);
+    expect(r.summary.totalValue).toBe(20000);
+    expect(r.summary.totalInvested).toBe(14800);
+    expect(r.summary.totalPnl).toBe(5200);
+  });
+  it('empty list → not ok, no-holdings-found', () => {
+    const r = summarizeHoldings([]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('no-holdings-found');
+    expect(r.summary).toBeNull();
   });
 });
 
@@ -400,7 +541,8 @@ describe('OAuth + MCP flow (mocked fetch)', () => {
 
     const pf = await fetchPortfolio({ force: true });
     expect(pf.ok).toBe(true);
-    expect(pf.tool).toBe('get_portfolio');
+    expect(pf.calls).toHaveLength(1);
+    expect(pf.calls[0].tool).toBe('get_portfolio');
     expect(pf.holdings[0].name).toBe('IRFC');
     expect(pf.holdings[0].pnl).toBe(5000);
     expect(pf.summary.totalValue).toBe(15000);
@@ -422,6 +564,208 @@ describe('OAuth + MCP flow (mocked fetch)', () => {
 
     await disconnect();
     expect(getStatus().connected).toBe(false);
+  });
+
+  it('networth_holdings(asset_type) — required enum arg: called per value, merged + stamped (THE user-reported bug)', async () => {
+    const enumValues = ['stocks', 'mutual_funds'];
+    const payloads = {
+      stocks: { data: { holdings: [{ stockName: 'IRFC', quantity: 100, avgPrice: 100, currentPrice: 150 }] } },
+      mutual_funds: { data: { holdings: [{ scheme_name: 'HDFC Flexi Cap', units: 200, avgPrice: 50, currentPrice: 55 }] } },
+    };
+    stubFetch((url, body) => {
+      if (url === INDM.REGISTER_URL) return jsonRes({ client_id: 'client-nw' });
+      if (url === INDM.TOKEN_URL) return jsonRes({ access_token: 'AT-NW', refresh_token: 'RT-NW', expires_in: 3600 });
+      if (url === INDM.MCP_URL) {
+        if (body.method === 'initialize') return jsonRes({ jsonrpc: '2.0', id: body.id, result: { serverInfo: { name: 'indmoney' } } }, { headers: { 'mcp-session-id': 'nw-1' } });
+        if (body.method === 'notifications/initialized') return jsonRes('', { status: 202 });
+        if (body.method === 'tools/list') {
+          return jsonRes({ jsonrpc: '2.0', id: body.id, result: { tools: [{
+            name: 'networth_holdings',
+            description: 'Get user net worth holdings by asset type',
+            inputSchema: {
+              type: 'object',
+              properties: { asset_type: { type: 'string', enum: enumValues } },
+              required: ['asset_type'],
+            },
+          }] } });
+        }
+        if (body.method === 'tools/call') {
+          // THE FIX: the tool must now be called WITH asset_type, never {}
+          expect(body.params.name).toBe('networth_holdings');
+          expect(enumValues).toContain(body.params.arguments.asset_type);
+          return jsonRes({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify(payloads[body.params.arguments.asset_type]) }] } });
+        }
+        throw new Error(`unexpected MCP method ${body.method}`);
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+
+    const { state } = await startConnect(ORIGIN);
+    await completeConnect({ code: 'nw', state });
+
+    const pf = await fetchPortfolio({ force: true });
+    expect(pf.ok).toBe(true);
+    // both enum values were called exactly once
+    expect(pf.calls).toHaveLength(2);
+    expect(pf.calls.map(c => c.args.asset_type).sort()).toEqual(['mutual_funds', 'stocks']);
+    // holdings from both calls, merged + deduped
+    expect(pf.holdings).toHaveLength(2);
+    // asset types stamped from the argument value
+    const irfc = pf.holdings.find(h => h.name === 'IRFC');
+    expect(irfc.assetType).toBe('Stock');
+    const hdfc = pf.holdings.find(h => h.name === 'HDFC Flexi Cap');
+    expect(hdfc.assetType).toBe('Mutual Fund');
+    expect(pf.summary.totalValue).toBe(15000 + 11000);
+    // no empty-args call was ever made
+    const emptyCalls = calls.filter(c => c.url === INDM.MCP_URL && c.body.method === 'tools/call' && (!c.body.params.arguments || Object.keys(c.body.params.arguments).length === 0));
+    expect(emptyCalls).toHaveLength(0);
+  });
+
+  it('one failing asset type is skipped — others still sync (partial failure tolerance)', async () => {
+    stubFetch((url, body) => {
+      if (url === INDM.REGISTER_URL) return jsonRes({ client_id: 'client-pf' });
+      if (url === INDM.TOKEN_URL) return jsonRes({ access_token: 'AT-PF', refresh_token: 'RT-PF', expires_in: 3600 });
+      if (url === INDM.MCP_URL) {
+        if (body.method === 'initialize') return jsonRes({ jsonrpc: '2.0', id: body.id, result: { serverInfo: { name: 'indmoney' } } }, { headers: { 'mcp-session-id': 'pf-1' } });
+        if (body.method === 'notifications/initialized') return jsonRes('', { status: 202 });
+        if (body.method === 'tools/list') {
+          return jsonRes({ jsonrpc: '2.0', id: body.id, result: { tools: [{
+            name: 'networth_holdings',
+            description: 'holdings by asset type',
+            inputSchema: {
+              type: 'object',
+              properties: { asset_type: { type: 'string', enum: ['stocks', 'crypto'] } },
+              required: ['asset_type'],
+            },
+          }] } });
+        }
+        if (body.method === 'tools/call') {
+          if (body.params.arguments.asset_type === 'crypto') {
+            // server-side validation style failure for this asset type
+            return jsonRes({ jsonrpc: '2.0', id: body.id, result: { isError: true, content: [{ type: 'text', text: 'Error executing tool networth_holdings: unsupported asset type crypto' }] } });
+          }
+          return jsonRes({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify({ holdings: [{ stockName: 'TCS', quantity: 10, avgPrice: 3500, currentPrice: 4000 }] }) }] } });
+        }
+        throw new Error(`unexpected MCP method ${body.method}`);
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+
+    const { state } = await startConnect(ORIGIN);
+    await completeConnect({ code: 'pf', state });
+
+    const pf = await fetchPortfolio({ force: true });
+    // stocks succeeded, crypto failed → partial sync, NOT a thrown error
+    expect(pf.ok).toBe(true);
+    expect(pf.holdings[0].name).toBe('TCS');
+    expect(pf.failures).toHaveLength(1);
+    expect(pf.failures[0].args.asset_type).toBe('crypto');
+    expect(pf.failures[0].error).toContain('unsupported asset type');
+  });
+
+  it('asset_type WITHOUT enum → known-value fallback calls; only supported values yield data', async () => {
+    const supported = new Set(['stocks', 'mutual_funds']);
+    stubFetch((url, body) => {
+      if (url === INDM.REGISTER_URL) return jsonRes({ client_id: 'client-noenum' });
+      if (url === INDM.TOKEN_URL) return jsonRes({ access_token: 'AT-NE', refresh_token: 'RT-NE', expires_in: 3600 });
+      if (url === INDM.MCP_URL) {
+        if (body.method === 'initialize') return jsonRes({ jsonrpc: '2.0', id: body.id, result: { serverInfo: { name: 'indmoney' } } }, { headers: { 'mcp-session-id': 'ne-1' } });
+        if (body.method === 'notifications/initialized') return jsonRes('', { status: 202 });
+        if (body.method === 'tools/list') {
+          return jsonRes({ jsonrpc: '2.0', id: body.id, result: { tools: [{
+            name: 'networth_holdings',
+            description: 'holdings by asset type',
+            inputSchema: {
+              type: 'object',
+              properties: { asset_type: { type: 'string', description: 'filter' } },
+              required: ['asset_type'],
+            },
+          }] } });
+        }
+        if (body.method === 'tools/call') {
+          const at = body.params.arguments.asset_type;
+          if (!supported.has(at)) {
+            return jsonRes({ jsonrpc: '2.0', id: body.id, result: { isError: true, content: [{ type: 'text', text: 'invalid asset type' }] } });
+          }
+          return jsonRes({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify({ holdings: at === 'stocks' ? [{ stockName: 'WIPRO', quantity: 50, avgPrice: 400, currentPrice: 450 }] : [{ scheme_name: 'SBI Bluechip', units: 10, avgPrice: 100, currentPrice: 120 }] }) }] } });
+        }
+        throw new Error(`unexpected MCP method ${body.method}`);
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+
+    const { state } = await startConnect(ORIGIN);
+    await completeConnect({ code: 'ne', state });
+
+    const pf = await fetchPortfolio({ force: true });
+    expect(pf.ok).toBe(true);
+    expect(pf.holdings.map(h => h.name).sort()).toEqual(['SBI Bluechip', 'WIPRO']);
+    expect(pf.calls).toHaveLength(2); // only stocks + mutual_funds succeeded
+    expect(pf.failures.length).toBeGreaterThanOrEqual(8); // the rest were skipped
+    // never exceeded the call budget
+    const allToolCalls = calls.filter(c => c.url === INDM.MCP_URL && c.body.method === 'tools/call');
+    expect(allToolCalls.length).toBeLessThanOrEqual(12);
+  });
+
+  it('every call fails → the underlying tool error is thrown (error surfacing preserved)', async () => {
+    stubFetch((url, body) => {
+      if (url === INDM.REGISTER_URL) return jsonRes({ client_id: 'client-allfail' });
+      if (url === INDM.TOKEN_URL) return jsonRes({ access_token: 'AT-AF', refresh_token: 'RT-AF', expires_in: 3600 });
+      if (url === INDM.MCP_URL) {
+        if (body.method === 'initialize') return jsonRes({ jsonrpc: '2.0', id: body.id, result: { serverInfo: { name: 'indmoney' } } }, { headers: { 'mcp-session-id': 'af-1' } });
+        if (body.method === 'notifications/initialized') return jsonRes('', { status: 202 });
+        if (body.method === 'tools/list') {
+          return jsonRes({ jsonrpc: '2.0', id: body.id, result: { tools: [{
+            name: 'networth_holdings',
+            description: 'holdings',
+            inputSchema: { type: 'object', properties: { asset_type: { type: 'string', enum: ['stocks'] } }, required: ['asset_type'] },
+          }] } });
+        }
+        if (body.method === 'tools/call') {
+          return jsonRes({ jsonrpc: '2.0', id: body.id, result: { isError: true, content: [{ type: 'text', text: 'Error executing tool networth_holdings: 1 validation error for networth_holdingsArguments asset_type Field required' }] } });
+        }
+        throw new Error(`unexpected MCP method ${body.method}`);
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+
+    const { state } = await startConnect(ORIGIN);
+    await completeConnect({ code: 'af', state });
+
+    await expect(fetchPortfolio({ force: true })).rejects.toMatchObject({ code: 'TOOL_ERROR' });
+  });
+
+  it('unsatisfiable required arg (symbol) → legacy empty-args attempt kept', async () => {
+    stubFetch((url, body) => {
+      if (url === INDM.REGISTER_URL) return jsonRes({ client_id: 'client-sym' });
+      if (url === INDM.TOKEN_URL) return jsonRes({ access_token: 'AT-SY', refresh_token: 'RT-SY', expires_in: 3600 });
+      if (url === INDM.MCP_URL) {
+        if (body.method === 'initialize') return jsonRes({ jsonrpc: '2.0', id: body.id, result: { serverInfo: { name: 'x' } } }, { headers: { 'mcp-session-id': 'sy-1' } });
+        if (body.method === 'notifications/initialized') return jsonRes('', { status: 202 });
+        if (body.method === 'tools/list') {
+          return jsonRes({ jsonrpc: '2.0', id: body.id, result: { tools: [{
+            name: 'portfolio_details',
+            description: 'Portfolio holdings and positions',
+            inputSchema: { type: 'object', properties: { symbol: { type: 'string' } }, required: ['symbol'] },
+          }] } });
+        }
+        if (body.method === 'tools/call') {
+          // server actually tolerates missing symbol (has a default)
+          return jsonRes({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify({ holdings: [{ stockName: 'INFY', quantity: 5, avgPrice: 1500, currentPrice: 1600 }] }) }] } });
+        }
+        throw new Error(`unexpected MCP method ${body.method}`);
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+
+    const { state } = await startConnect(ORIGIN);
+    await completeConnect({ code: 'sy', state });
+
+    const pf = await fetchPortfolio({ force: true });
+    expect(pf.ok).toBe(true);
+    expect(pf.holdings[0].name).toBe('INFY');
+    expect(pf.calls).toHaveLength(1);
+    expect(pf.calls[0].args).toEqual({});
   });
 
   it('401 mid-session triggers one refresh + retry, then succeeds', async () => {

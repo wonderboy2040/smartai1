@@ -46,16 +46,21 @@ interface IndmSummary {
   holdingCount: number;
 }
 
+interface IndmCallInfo {
+  tool: string;
+  args?: Record<string, unknown>;
+}
+
 interface IndmPortfolio {
   ok: boolean;
   reason?: string | null;
   holdings: IndmHolding[];
   summary: IndmSummary | null;
-  tool?: string | null;
-  toolDescription?: string | null;
+  calls?: IndmCallInfo[];
+  failures?: { tool: string; args?: Record<string, unknown>; error: string }[];
   fetchedAt?: number;
   cached?: boolean;
-  tools?: { name: string; description: string | null }[];
+  tools?: { name: string; description?: string | null }[];
   payloadPreview?: string | null;
 }
 
@@ -69,6 +74,12 @@ const TYPE_STYLES: Record<string, { emoji: string; cls: string }> = {
   'Mutual Fund': { emoji: '🪙', cls: 'text-amber-300 bg-amber-500/10 border-amber-500/20' },
   ETF: { emoji: '🔗', cls: 'text-violet-300 bg-violet-500/10 border-violet-500/20' },
   'Fixed Income / Gold': { emoji: '🛡️', cls: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' },
+  'Fixed Income': { emoji: '🛡️', cls: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' },
+  Gold: { emoji: '🟡', cls: 'text-yellow-300 bg-yellow-500/10 border-yellow-500/20' },
+  Bonds: { emoji: '📜', cls: 'text-teal-300 bg-teal-500/10 border-teal-500/20' },
+  Retirement: { emoji: '🏦', cls: 'text-sky-300 bg-sky-500/10 border-sky-500/20' },
+  Crypto: { emoji: '🪙', cls: 'text-orange-300 bg-orange-500/10 border-orange-500/20' },
+  'Real Estate': { emoji: '🏠', cls: 'text-rose-300 bg-rose-500/10 border-rose-500/20' },
   Other: { emoji: '📦', cls: 'text-slate-300 bg-white/5 border-white/10' },
 };
 
@@ -315,8 +326,27 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
       {connected && portfolio && !portfolio.ok && (
         <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 px-4 py-3 text-sm text-amber-300 space-y-2">
           <p className="font-semibold">
-            Connected ✅ — lekin portfolio tool auto-detect nahi hua (reason: <span className="font-mono">{portfolio.reason}</span>).
+            {portfolio.reason === 'no-holdings-found'
+              ? 'Connected ✅ — tools call ho gaye lekin responses me koi holding detect nahi hui.'
+              : <>Connected ✅ — lekin portfolio tool auto-detect nahi hua (reason: <span className="font-mono">{portfolio.reason}</span>).</>}
           </p>
+          {portfolio.calls && portfolio.calls.length > 0 && (
+            <p className="text-xs text-amber-200/80">
+              Tried: {portfolio.calls.map(c => c.args?.asset_type ? `${c.tool}(${String(c.args.asset_type)})` : c.tool).join(', ')}
+            </p>
+          )}
+          {portfolio.failures && portfolio.failures.length > 0 && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-amber-200/80">{portfolio.failures.length} call(s) failed — details</summary>
+              <div className="mt-1 space-y-1">
+                {portfolio.failures.map((f, i) => (
+                  <div key={i} className="font-mono text-[10px] text-amber-200/60 break-words">
+                    {f.tool}({f.args?.asset_type ? String(f.args.asset_type) : ''}): {f.error.slice(0, 120)}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
           {portfolio.tools && portfolio.tools.length > 0 && (
             <p className="text-xs text-amber-200/80">
               Available tools: {portfolio.tools.map(t => t.name).join(', ')}
@@ -387,13 +417,19 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
       {connected && portfolio?.ok && (
         <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-500">
           <span>
-            source: <span className="font-mono text-violet-400">{portfolio.tool}</span>
+            source: <span className="font-mono text-violet-400">{[...new Set((portfolio.calls ?? []).map(c => c.tool))].join(' + ') || 'mcp'}</span>
+            {portfolio.calls && portfolio.calls.length > 1 && <> • {portfolio.calls.length} calls</>}
             {portfolio.fetchedAt && <> • synced {new Date(portfolio.fetchedAt).toLocaleString('en-IN')}</>}
           </span>
           <button onClick={() => setShowTools(v => !v)} className="hover:text-slate-300 underline underline-offset-2">
             {showTools ? 'hide' : 'view'} MCP tools ({status?.toolCount ?? 0})
           </button>
         </div>
+      )}
+      {connected && portfolio?.ok && portfolio.failures && portfolio.failures.length > 0 && (
+        <p className="text-[10px] text-slate-600" title={portfolio.failures.map(f => f.error).join('\n')}>
+          {portfolio.failures.length} unsupported asset type(s) skipped: {portfolio.failures.map(f => (f.args?.asset_type ? String(f.args.asset_type) : f.tool)).slice(0, 8).join(', ')}
+        </p>
       )}
       {showTools && (
         <div className="quantum-panel rounded-xl p-3 text-[11px] space-y-1.5 max-h-48 overflow-y-auto">
