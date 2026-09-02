@@ -20,6 +20,7 @@ import { IntradayChartModal } from '../intraday/IntradayChartModal';
 import { PaperTradePanel, openPaperTrade } from '../intraday/PaperTradePanel';
 import { TrackRecordPanel } from '../intraday/TrackRecordPanel';
 import { UniverseEditor } from '../intraday/UniverseEditor';
+import { TrendingMovers } from '../intraday/TrendingMovers';
 import { ProTraderAgentPanel } from '../intraday/ProTraderAgentPanel';
 import { CommitteePanel } from '../intraday/CommitteePanel';
 import { JournalPanel } from '../intraday/JournalPanel';
@@ -769,6 +770,12 @@ export const IntradayTab = () => {
           </div>
         )}
       </div>
+
+      {/* ===== TRENDING MOVERS (2026-09) — top up/down list + deep analysis
+            for BOTH markets (India NSE today / Crypto 24h). v4.5: index
+            pulse, sector heat, most-active view + per-row chart/paper-trade
+            bridge into this tab's existing modals. ===== */}
+      <TrendingMovers key={market} market={market} onChart={openChart} onPaper={openPaperFromCard} />
 
       {/* ===== PRO TRADER MCP AGENT + COMMITTEE — NSE desk tools (India mode) ===== */}
       {!isCryptoMode && (

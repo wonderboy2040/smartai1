@@ -36,6 +36,7 @@ import { dispatchIntradayAlerts, dispatchOutcomeAlert, alertsStatus, setAlertsEn
 import { recordSignals, getTrackRecord, initTrackRecord } from './trackRecord.js';
 import { openPaperTrade, closePaperTrade, getPaperSummary, getPaperHistory, restorePaperTrades, initPaperTrading } from './paperTrading.js';
 import { initIntradayStream, intradayStreamHandler, setScanSymbols, getLatestQuotes } from './stream.js';
+import { buildMoversRows } from './movers.js';
 import { loadJSON, saveJSON } from './store.js';
 
 // ------------------------------------------------------------
@@ -258,6 +259,100 @@ export function registerIntradayRoutes(app, deps) {
     }
     _saveUniverse(market);
     res.json({ ok: true, ...getUniverseInfo(market) });
+  });
+
+  // ---------------- Trending Movers (India + Crypto, 2026-09) ----------------
+  // Top gainers / losers + MOST-ACTIVE + sector pulse + index pulse +
+  // per-row deep analysis off the SAME indicator batch the scanner uses
+  // (TV + Groww/CoinDCX). 60s cache per market; public (market data only).
+  // NOT market-hours gated: after NSE hours the list shows the session's
+  // final movers (marked marketOpen).
+
+  // INDIA index pulse (v4.5): one extra TV request per 60s cache window →
+  // NIFTY 50 / BANK NIFTY / SENSEX / INDIA VIX snapshot chips. Fully
+  // degradable (absent on any upstream failure — never blocks movers).
+  const _INDEX_TV = { 'NSE:NIFTY': 'NIFTY 50', 'NSE:BANKNIFTY': 'BANK NIFTY', 'BSE:SENSEX': 'SENSEX', 'NSE:INDIAVIX': 'INDIA VIX' };
+  let _idxCache = { data: null, ts: 0 };
+  async function fetchIndiaIndexPulse() {
+    if (_idxCache.data && Date.now() - _idxCache.ts < 60 * 1000) return _idxCache.data;
+    try {
+      const res = await fetch(`https://scanner.tradingview.com/india/scan?t=${Date.now()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({
+          symbols: { tickers: Object.keys(_INDEX_TV) },
+          columns: ['close', 'change', 'VWAP', 'RSI'],
+        }),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return _idxCache.data || [];
+      const data = await res.json();
+      const pf = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+      const indices = [];
+      for (const item of data?.data || []) {
+        const name = _INDEX_TV[item.s];
+        if (!name || !item.d) continue;
+        const close = pf(item.d[0]);
+        if (!(close > 0)) continue;
+        const vwap = pf(item.d[2]);
+        indices.push({
+          symbol: item.s.split(':')[1],
+          name,
+          ltp: Math.round(close * 100) / 100,
+          changePct: pf(item.d[1]) ?? 0,
+          vwapDist: vwap > 0 ? Math.round(((close - vwap) / vwap * 100) * 100) / 100 : null,
+          rsi: pf(item.d[3]) != null ? Math.round(pf(item.d[3])) : null,
+        });
+      }
+      // Preserve the canonical display order (NIFTY, BANKNIFTY, SENSEX, VIX).
+      const order = Object.keys(_INDEX_TV);
+      indices.sort((a, b) => order.indexOf(order.find(k => k.endsWith(`:${a.symbol}`)) ?? '') - order.indexOf(order.find(k => k.endsWith(`:${b.symbol}`)) ?? ''));
+      _idxCache = { data: indices, ts: Date.now() };
+      return indices;
+    } catch {
+      return _idxCache.data || [];
+    }
+  }
+
+  const _moversCache = { INDIA: { data: null, ts: 0, inflight: null }, CRYPTO: { data: null, ts: 0, inflight: null } };
+  app.get('/api/intraday-movers', async (req, res) => {
+    try {
+      const mkt = _normMarket(req.query.market);
+      const cache = _moversCache[mkt];
+      res.set('Cache-Control', 'no-store');
+      if (cache.data && Date.now() - cache.ts < 60 * 1000) {
+        return res.json(cache.data);
+      }
+      if (cache.inflight) return res.json(await cache.inflight);
+      cache.inflight = (async () => {
+        try {
+          const universe = effectiveUniverse(mkt);
+          const [tvData, quoteData] = mkt === 'CRYPTO'
+            ? await fetchIntradayDataBatch(universe, fetchGrowwNseQuote, { market: 'CRYPTO', fetchCoinDcxTickers })
+            : await fetchIntradayDataBatch(universe, fetchGrowwNseQuote);
+          const built = buildMoversRows(universe, tvData, quoteData, mkt);
+          const payload = {
+            ok: true,
+            market: mkt,
+            asOf: new Date().toISOString(),
+            marketOpen: isMarketOpenFor(mkt),
+            ...built,
+            // INDIA: NIFTY/BANKNIFTY/SENSEX/VIX chips; CRYPTO: BTC/ETH already
+            // in built.indices — merge whichever is non-empty.
+            indices: (built.indices && built.indices.length) ? built.indices : (mkt === 'INDIA' ? await fetchIndiaIndexPulse() : []),
+          };
+          cache.data = payload;
+          cache.ts = Date.now();
+          return payload;
+        } finally {
+          cache.inflight = null;
+        }
+      })();
+      return res.json(await cache.inflight);
+    } catch (e) {
+      console.warn('[intraday-movers]', e?.message || e);
+      return res.json({ ok: false, market: _normMarket(req.query.market), gainers: [], losers: [], mostActive: [], sectors: [], indices: [], breadth: null, error: 'Movers feed temporarily unavailable.' });
+    }
   });
 
   // ---------------- MAIN SCANNER (per-market) ----------------

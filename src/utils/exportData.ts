@@ -117,3 +117,58 @@ export function exportMonthlyReturnsCSV(transactions: Transaction[], usdInr: num
   body.push(['TOTAL', '', '', totalRealizedINR.toFixed(0), '', '']);
   downloadFile(`monthly_returns_${stamp()}.csv`, toCSV(headers, body));
 }
+
+// ------------------------------------------------------------
+// 4) ASSETS SNAPSHOT → CSV (v4.5 — the live assets-table view)
+// One row per holding with live LTP, cost basis, value, unrealized
+// P&L and today's P&L — the exact sync-truth numbers the Portfolio
+// TAB renders (assetPnl engine), frozen to a spreadsheet.
+// ------------------------------------------------------------
+export interface AssetSnapshotRow {
+  symbol: string;
+  name?: string;
+  market: string;           // IN | US | CRYPTO
+  qty: number;
+  avgPrice: number;         // native currency
+  ltp: number;              // native currency
+  changePct: number;        // day change %
+  investedNative: number;   // cost basis, native currency
+  valueNative: number;      // live equity value, native currency
+  pnlNative: number;        // unrealized P&L, native currency
+  pnlPct: number | null;    // unrealized P&L % (null = no cost basis)
+  todayPLNative: number;    // today's P&L, native currency
+  valueINR: number;         // FX-consistent INR value
+}
+
+export function buildAssetsSnapshotCSV(rows: AssetSnapshotRow[], usdInr: number): string {
+  const headers = [
+    'Symbol', 'Name', 'Market', 'Qty', 'Avg Price (native)', 'LTP (native)', 'Day Change %',
+    'Cost (native)', 'Value (native)', 'Unrealized P&L (native)', 'P&L %',
+    "Today's P&L (native)", 'Value (INR)',
+  ];
+  const body: (unknown[])[] = rows.map(a => [
+    a.symbol.replace('.NS', '').replace('.BO', ''),
+    a.name || '',
+    a.market,
+    a.qty,
+    a.avgPrice.toFixed(2),
+    a.ltp.toFixed(2),
+    a.changePct.toFixed(2),
+    a.investedNative.toFixed(2),
+    a.valueNative.toFixed(2),
+    a.pnlNative.toFixed(2),
+    a.pnlPct != null ? a.pnlPct.toFixed(2) : '',
+    a.todayPLNative.toFixed(2),
+    a.valueINR.toFixed(0),
+  ]);
+  // totals footer (INR bucket — FX-consistent)
+  const totValINR = rows.reduce((s, r) => s + r.valueINR, 0);
+  body.push(['TOTAL', '', '', '', '', '', '', '', '', '', '', '', totValINR.toFixed(0)]);
+  const csv = toCSV(headers, body);
+  // (usdInr recorded in a trailing comment row for audit)
+  return `${csv}\r\n# USD/INR at export: ${usdInr.toFixed(2)}`;
+}
+
+export function exportAssetsSnapshotCSV(rows: AssetSnapshotRow[], usdInr: number) {
+  downloadFile(`assets_snapshot_${stamp()}.csv`, buildAssetsSnapshotCSV(rows, usdInr));
+}

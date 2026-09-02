@@ -114,6 +114,7 @@ const PUBLIC_PATHS = new Set([
   '/api/chart',
   '/api/intraday-scanner',
   '/api/intraday-stream',
+  '/api/intraday-movers',
   '/api/crypto-prices',
   '/api/forex',
   '/api/feed-status',

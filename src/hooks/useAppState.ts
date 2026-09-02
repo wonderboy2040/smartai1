@@ -20,6 +20,7 @@ import { isAnyMarketOpen, isIndiaMarketOpen, isUSMarketOpen, analyzeAsset, getSm
 import { generateWeeklyWealthReport } from '../utils/wealthEngine';
 import { applyPortfolioDiff } from '../utils/portfolioDiffEngine';
 import { recordDailyPL, computeLiveDailyPL } from '../utils/dailyPLTracker';
+import { syncedAssetPnl } from '../utils/assetPnl';
 
 function mergePriceData(existing: PriceData | undefined, incoming: Partial<PriceData>): PriceData {
   if (!existing) {
@@ -405,6 +406,13 @@ export function useAppState() {
           // this so US rows never mix sync-time FX with live FX (the deep P&L
           // mismatch fix: Capital Deployed / Total P&L now stay coherent).
           indmInvestedINR: typeof a.invested === 'number' ? a.invested : undefined,
+          // EXACT-MATCH P&L anchors (v4.4): INDMoney's own pnl/pnlPct + the
+          // per-unit sync price. assetPnl.ts grounds every row's P&L on
+          // these + the live-tick delta, so Total P&L / Unrealized P&L match
+          // the INDMoney app (USA $ / India ₹) exactly right after a sync.
+          indmPnlINR: typeof a.pnl === 'number' ? a.pnl : undefined,
+          indmPnlPct: typeof a.pnlPct === 'number' ? a.pnlPct : undefined,
+          indmLastPrice: typeof a.lastPrice === 'number' && a.lastPrice > 0 ? a.lastPrice : undefined,
         }));
         setPortfolio(positions);
         try { secureStorage.setItem('portfolio', JSON.stringify(positions)); } catch { /* quota */ }
@@ -1447,34 +1455,25 @@ export function useAppState() {
       const data = lp[key];
       const curPrice = data?.price || pos.avgPrice;
       const change = data?.change || 0;
-      const lev = pos.leverage || 1;
-      const posSize = pos.avgPrice * pos.qty;
-      const inv = posSize / lev;
-      const curVal = curPrice * pos.qty;
-      const eqVal = inv + (curVal - posSize);
 
-      // Ground-truth INR invested (sync snapshot) when present; else derive
-      // from the position's own numbers. This is the FX-consistent base for
-      // BOTH the INR headline and the USD sub-bucket.
-      const investedINR = (typeof pos.indmInvestedINR === 'number' && pos.indmInvestedINR > 0)
-        ? pos.indmInvestedINR
-        : (pos.market === 'IN' ? inv : inv * rate);
-      // US bucket invested in USD: sync-truth INR at the CURRENT rate
-      // (indm rows), or the user-entered USD cost (manual rows).
-      const investedUSD = pos.market === 'IN' ? 0
-        : ((typeof pos.indmInvestedINR === 'number' && pos.indmInvestedINR > 0)
-          ? pos.indmInvestedINR / rate
-          : inv);
+      // ---- EXACT-MATCH P&L (v4.4) --------------------------------------
+      // Synced rows: INDMoney's own snapshot P&L + live-tick delta since the
+      // sync (assetPnl.ts). This is what makes Total P&L / the India & USA
+      // sub-buckets match the INDMoney app right after a sync (they used to
+      // overshoot because the old math re-derived value from a different
+      // price/FX world: live quote × qty vs INR snapshot cost).
+      // Manual rows: legacy leverage-aware math, unchanged.
+      const pnlTruth = syncedAssetPnl(pos, curPrice, rate);
 
-      const valINR = pos.market === 'IN' ? eqVal : eqVal * rate;
-      totalInvested += investedINR; totalValue += valINR;
+      totalInvested += pnlTruth.investedINR;
+      totalValue += pnlTruth.valueINR;
 
       if (pos.market === 'IN') {
-        totalInvestedINR += inv;
-        totalValueINR += eqVal;
+        totalInvestedINR += pnlTruth.invested;
+        totalValueINR += pnlTruth.value;
       } else {
-        totalInvestedUSD += investedUSD;
-        totalValueUSD += eqVal;
+        totalInvestedUSD += pnlTruth.invested;
+        totalValueUSD += pnlTruth.value;
       }
 
       // Exact day baseline: REAL previous close when the quote source served

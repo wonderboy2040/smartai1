@@ -22,6 +22,17 @@ export interface Position {
    *  approximation (sync-time rate), but this INR number is exact — the P&L
    *  metrics use it so USD buckets convert at ONE consistent live rate. */
   indmInvestedINR?: number;
+  /** INDMoney's own unrealized P&L for the holding, in INR (snapshot `pnl`).
+   *  The exact-match P&L engine (assetPnl.ts) anchors every synced row's
+   *  Unrealized P&L / Total P&L to THIS number + live-tick delta, so the site
+   *  matches the INDMoney app (USA $ / India ₹) instead of recomputing from
+   *  a different price world. */
+  indmPnlINR?: number;
+  /** INDMoney's own P&L % (snapshot `pnlPct`) — fallback when no cost basis. */
+  indmPnlPct?: number;
+  /** Per-unit price at the LAST sync, in the row's NATIVE currency (server
+   *  converts US rows to USD). The live-delta anchor: (live − this) × qty. */
+  indmLastPrice?: number;
 }
 
 export interface PriceData {

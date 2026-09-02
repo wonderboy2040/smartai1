@@ -106,7 +106,25 @@ export function apiFetch(input: string, init: RequestInit = {}): Promise<Respons
   // its own AbortSignal. Prevents corner-case hung requests from stalling
   // the UI indefinitely (all existing explicit timeouts still take priority).
   if (!init.signal) init.signal = AbortSignal.timeout(30000);
-  return fetch(url, { ...init, credentials: 'include', headers });
+  return fetch(url, { ...init, credentials: 'include', headers })
+    .then(res => {
+      // MIRROR-BANNER FIX (v4.4): any successful API round-trip is proof the
+      // Express backend is alive (the /health probe can false-negative on a
+      // cold free-tier boot >9s). Throttled global event — StaticMirrorBanner
+      // listens and hides itself the moment real traffic succeeds.
+      if (res.ok) notifyBackendOnline();
+      return res;
+    });
+}
+
+let _lastOnlinePing = 0;
+function notifyBackendOnline() {
+  try {
+    if (typeof window === 'undefined' || !window.dispatchEvent) return;
+    if (Date.now() - _lastOnlinePing < 5000) return; // throttle event spam
+    _lastOnlinePing = Date.now();
+    window.dispatchEvent(new CustomEvent('backend-online'));
+  } catch { /* non-browser env */ }
 }
 export function getSessionToken(): string | null { return _sessionToken; }
 

@@ -3,19 +3,22 @@ import { useApp } from '../../hooks/AppContext';
 import { getTodayString, isCryptoSymbol } from '../../utils/constants';
 import { getCustomCloudConfig, saveCustomCloudConfig } from '../../utils/api';
 import { calculatePortfolioXIRR } from '../../utils/wealthEngine';
+import { syncedAssetPnl } from '../../utils/assetPnl';
+import { PortfolioInsights, type InsightsPanelAsset } from '../portfolio/PortfolioInsights';
+import { AssetChartModal, type AssetChartTarget } from '../portfolio/AssetChartModal';
 import { MonthlyReturnReport } from '../MonthlyReturnReport';
 import { MonthlyPlanTracker } from '../MonthlyPlanTracker';
 import { DailyPLTracker } from '../DailyPLTracker';
 import TransactionHistoryPanel from '../TransactionHistoryPanel';
 import PriceAlertsPanel from '../PriceAlertsPanel';
 import { QualityScorecard } from '../QualityScorecard';
-import { exportTransactionsCSV, exportMonthlyReturnsCSV } from '../../utils/exportData';
+import { exportTransactionsCSV, exportMonthlyReturnsCSV, exportAssetsSnapshotCSV, type AssetSnapshotRow } from '../../utils/exportData';
 import { LivePrice } from '../LivePrice';
 import { WidgetSetup } from '../WidgetSetup';
 import { INDMoneyPanel } from '../INDMoneyPanel';
 import { CoinDcxPanel } from '../CoinDcxPanel';
 
-type SortKey = 'alloc' | 'pnl' | 'pnlPct' | 'xirr' | 'value' | 'name';
+type SortKey = 'alloc' | 'pnl' | 'pnlPct' | 'xirr' | 'value' | 'name' | 'today' | 'invested';
 type AssetGroup = 'india' | 'usa' | 'crypto';
 
 interface GroupedAsset {
@@ -25,6 +28,15 @@ interface GroupedAsset {
   plPct: number;
   plINR: number;
   valINR: number;
+  invINR: number;
+  /** Native-currency current value (sync-truth + live delta). */
+  eqVal: number;
+  /** Native-currency cost basis (sync-truth invested ÷ — per-row cost). */
+  invNative: number;
+  /** Today's P&L in native currency ((live − prevClose) × qty). */
+  todayPL: number;
+  /** Live LTP in native currency (falls back to avg price). */
+  ltp: number;
   xirr: number | null;
   group: AssetGroup;
 }
@@ -177,17 +189,29 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         const key = `${(p.market || 'IN').toUpperCase()}_${p.symbol}`;
         const data = livePrices[key];
         const curPrice = data?.price || p.avgPrice;
-        const posSize = p.avgPrice * p.qty;
-        const inv = posSize / (p.leverage || 1);
-        const curVal = curPrice * p.qty;
-        const pl = curVal - posSize;
-        const plPct = inv > 0 ? (pl / inv) * 100 : 0;
-        const eqVal = inv + pl;
-        const allocPct = metrics.totalValue > 0 ? (eqVal * (p.market === 'US' ? usdInrRate : 1) / metrics.totalValue) * 100 : 0;
-        const valINR = eqVal * (p.market === 'US' ? usdInrRate : 1);
-        const plINR = pl * (p.market === 'US' ? usdInrRate : 1);
+        // EXACT-MATCH P&L (v4.4): synced rows ground in INDMoney's own
+        // snapshot pnl + live-tick delta (assetPnl.ts) — rows + group
+        // totals now match the INDMoney app; manual rows keep legacy math.
+        const pnlTruth = syncedAssetPnl(p, curPrice, usdInrRate);
+        const eqVal = pnlTruth.value;
+        const pl = pnlTruth.pnl;
+        const plPct = pnlTruth.pnlPct ?? 0;
+        const allocPct = metrics.totalValue > 0 ? (pnlTruth.valueINR / metrics.totalValue) * 100 : 0;
+        const valINR = pnlTruth.valueINR;
+        const plINR = pnlTruth.pnlINR;
+        const invINR = pnlTruth.investedINR;
+        // v4.5: per-row cost + today P&L computed ONCE here (row render,
+        // insights, sorting and CSV export all reuse the same numbers).
+        const invNative = p.market === 'US'
+          ? (p.indmInvestedINR != null ? p.indmInvestedINR / (usdInrRate || 1) : p.avgPrice * p.qty)
+          : (p.indmInvestedINR != null ? p.indmInvestedINR : p.avgPrice * p.qty);
+        const change = data?.change || 0;
+        const prevPrice = (data?.prevClose && data.prevClose > 0)
+          ? data.prevClose
+          : (change <= -100 ? curPrice * 2 : curPrice / (1 + (change / 100)));
+        const todayPL = (curPrice - prevPrice) * p.qty;
         const group = classifyAsset(p.symbol, p.market);
-        return { p, allocPct, pl, plPct, plINR, valINR, xirr: xirrMap[key] ?? null, group };
+        return { p, allocPct, pl, plPct, plINR, valINR, invINR, eqVal, invNative, todayPL, ltp: curPrice, xirr: xirrMap[key] ?? null, group };
       });
 
     // Sort within groups
@@ -199,6 +223,8 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         case 'pnlPct': return dir * (a.plPct - b.plPct);
         case 'xirr': return dir * ((a.xirr ?? -9999) - (b.xirr ?? -9999));
         case 'value': return dir * (a.valINR - b.valINR);
+        case 'today': return dir * (a.todayPL - b.todayPL);
+        case 'invested': return dir * (a.invINR - b.invINR);
         case 'alloc':
         default: return dir * (a.allocPct - b.allocPct);
       }
@@ -229,16 +255,66 @@ const PortfolioTab = React.memo(function PortfolioTab() {
       group.totalValueINR += asset.valINR;
       group.totalPLINR += asset.plINR;
       group.allocPct += asset.allocPct;
-      // Invested
-      const posSize = asset.p.avgPrice * asset.p.qty;
-      const inv = posSize / (asset.p.leverage || 1);
-      group.totalInvestedINR += inv * (asset.p.market === 'US' ? usdInrRate : 1);
+      // Invested — sync-truth native → INR (v4.4 exact-match pass).
+      group.totalInvestedINR += asset.invINR;
     }
 
     return groups.filter(g => g.assets.length > 0);
   }, [portfolio, livePrices, usdInrRate, metrics.totalValue, xirrMap, search, sortKey, sortDir]);
 
   const totalVisible = groupedPortfolio.reduce((s, g) => s + g.assets.length, 0);
+
+  // --- v4.5: Insights feed (all groups flattened, same sync-truth rows) ---
+  const insightAssets = useMemo<InsightsPanelAsset[]>(() =>
+    groupedPortfolio.flatMap(g => g.assets.map(a => ({
+      label: (a.p.symbol || '').replace('.NS', '').trim() || (a.p.name || 'ASSET'),
+      group: a.group,
+      pl: a.pl,
+      plPct: a.plPct,
+      todayPL: a.todayPL,
+      valINR: a.valINR,
+    }))),
+    [groupedPortfolio]);
+
+  // --- v4.5: per-row chart modal target ---
+  const [chartTarget, setChartTarget] = useState<AssetChartTarget | null>(null);
+  const openAssetChart = (p: GroupedAsset['p'], invNative: number) => {
+    const key = `${(p.market || 'IN').toUpperCase()}_${p.symbol}`;
+    const data = livePrices[key];
+    setChartTarget({
+      symbol: p.symbol,
+      name: p.name,
+      market: p.market === 'US' ? 'US' : 'IN',
+      avgPrice: invNative > 0 ? invNative / (p.qty || 1) : p.avgPrice,
+      qty: p.qty,
+      livePrice: data?.price,
+      change: data?.change,
+    });
+  };
+
+  // --- v4.5: assets snapshot CSV (the exact table view frozen to a file) ---
+  const handleExportSnapshot = () => {
+    const rows: AssetSnapshotRow[] = groupedPortfolio.flatMap(g => g.assets.map(a => {
+      const key = `${(a.p.market || 'IN').toUpperCase()}_${a.p.symbol}`;
+      const data = livePrices[key];
+      return {
+        symbol: a.p.symbol,
+        name: a.p.name,
+        market: g.key === 'crypto' ? 'CRYPTO' : (a.p.market === 'US' ? 'US' : 'IN'),
+        qty: a.p.qty,
+        avgPrice: a.p.avgPrice,
+        ltp: a.ltp,
+        changePct: data?.change ?? 0,
+        investedNative: a.invNative,
+        valueNative: a.eqVal,
+        pnlNative: a.pl,
+        pnlPct: a.plPct,
+        todayPLNative: a.todayPL,
+        valueINR: a.valINR,
+      };
+    }));
+    exportAssetsSnapshotCSV(rows, usdInrRate);
+  };
 
   const toggleGroup = (key: AssetGroup) => {
     setCollapsedGroups(prev => ({ ...prev, [key]: !prev[key] }));
@@ -297,6 +373,13 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                 className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/5 text-xs font-semibold text-slate-300"
               >
                 📈 Return Report (CSV)
+              </button>
+              <button
+                onClick={handleExportSnapshot}
+                className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/5 text-xs font-semibold text-cyan-300"
+                title="Live assets-table view — LTP, cost, unrealized P&L, today's P&L, INR values"
+              >
+                📸 Assets Snapshot (CSV)
               </button>
             </div>
           </div>
@@ -399,6 +482,12 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         </div>
       </div>
 
+      {/* v4.5: PORTFOLIO INSIGHTS — live X-ray (today's movers, all-time
+          performers, diversification health, market split) */}
+      {insightAssets.length > 0 && (
+        <PortfolioInsights assets={insightAssets} totalValueINR={metrics.totalValue} />
+      )}
+
       {/* XIRR + Portfolio Intelligence (manual mode only — INDMoney syncs
           don't carry per-asset buy dates, so XIRR would be meaningless) */}
       {portfolio.length > 0 && !indmActive && (
@@ -498,6 +587,8 @@ const PortfolioTab = React.memo(function PortfolioTab() {
             <option value="alloc">Allocation</option>
             <option value="pnl">P&L (₹)</option>
             <option value="pnlPct">P&L %</option>
+            <option value="today">Today's P&L</option>
+            <option value="invested">Cost / Invested</option>
             <option value="xirr">XIRR</option>
             <option value="value">Value</option>
             <option value="name">Name</option>
@@ -563,35 +654,35 @@ const PortfolioTab = React.memo(function PortfolioTab() {
               {/* ===== Group Assets ===== */}
               {!isCollapsed && (
                 <>
-                  {/* Desktop Header */}
-                  <div className="hidden lg:grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto] gap-4 px-6 py-2 bg-black/40 border-b border-white/5 text-[10px] uppercase tracking-wider text-slate-500 font-bold">
+                  {/* Desktop Header — FIXED 9.5rem actions track + matching px-4
+                      padding so every column lines up with the rows (v4.5: widened
+                      from 7rem — manual rows now carry a 4th CHART button; the
+                      track must hold 4×32px + gaps WITHOUT per-row 'auto'
+                      sizing, which shifted every fr column — the v4.4 lesson). */}
+                  <div className="hidden lg:grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr_9.5rem] gap-4 px-4 py-2 bg-black/40 border-b border-white/5 text-[10px] uppercase tracking-wider text-slate-500 font-bold">
                     <div>Asset & Allocation</div>
                     <div>LTP & 24H Range</div>
                     <div className="text-right">Today's P&L</div>
                     <div className="text-right">Value (Eq)</div>
                     <div className="text-right">Unrealized P&L</div>
-                    <div className="text-center w-20">{indmActive ? 'Source' : 'Trade'}</div>
+                    <div className="text-center">{indmActive ? 'Source' : 'Trade'}</div>
                   </div>
 
                   <div className="divide-y divide-white/[0.03]">
-                    {group.assets.map(({ p, allocPct, pl, plPct }) => {
+                    {group.assets.map(({ p, allocPct, pl, plPct, eqVal, invNative, todayPL }) => {
                       const key = `${(p.market || 'IN').toUpperCase()}_${p.symbol}`;
                       const data = livePrices[key];
                       const curPrice = data?.price || p.avgPrice;
                       const change = data?.change || 0;
                       const cur = p.market === 'IN' ? '₹' : '$';
-                      const posSize = p.avgPrice * p.qty;
-                      const inv = posSize / (p.leverage || 1);
-                      const curVal = curPrice * p.qty;
-                      const eqVal = inv + (curVal - posSize);
-                      // Exact day baseline: REAL previous close when the quote
-                      // source served one (2026 P&L accuracy pass) — else the
-                      // old change% back-computation.
-                      const prevPrice = (data?.prevClose && data.prevClose > 0)
-                        ? data.prevClose
-                        : (change <= -100 ? curPrice * 2 : curPrice / (1 + (change / 100)));
-                      const todayPL = (curPrice - prevPrice) * p.qty;
+                      // v4.5: todayPL + invNative come pre-computed from the
+                      // groupedPortfolio memo (ONE source of truth for row,
+                      // insights, sorting and the snapshot CSV export).
                       const assetXirr = xirrMap[key];
+                      const showCost = invNative > 0;
+                      // Chart-able = live IN/US equity row (crypto/NAV rows
+                      // have no daily-candle source on the chart proxy).
+                      const chartable = !p.noLive && group.key !== 'crypto';
 
                       // Quote-liveness honesty (deep-analysis fix): the LIVE
                       // badge now reflects an actually-fresh quote; a row whose
@@ -626,7 +717,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                       const isCryptoRow = group.key === 'crypto';
 
                       return (
-                        <div key={p.id} className="p-4 hover:bg-white/[0.02] transition-colors group relative lg:grid lg:grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto] lg:items-center lg:gap-4">
+                        <div key={p.id} className="p-4 hover:bg-white/[0.02] transition-colors group relative lg:grid lg:grid-cols-[1.5fr_1fr_1fr_1fr_1fr_9.5rem] lg:items-center lg:gap-4">
 
                           {/* 1. ASSET & ALLOCATION */}
                           <div>
@@ -719,26 +810,36 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                             <div className="font-bold font-mono text-base text-white tracking-tight">
                               {cur}{eqVal.toFixed(2)}
                             </div>
-                            <div className="text-[9px] text-slate-500 mt-1 font-mono hidden md:block">
-                              Eq Value
-                            </div>
+                            {/* v4.5: cost basis (sync-truth invested native) */}
+                            {showCost ? (
+                              <div className="text-[9px] text-slate-500 mt-1 font-mono hidden md:block" title="Cost basis — invested amount (sync-truth)">
+                                Cost {cur}{invNative.toFixed(0)}
+                              </div>
+                            ) : (
+                              <div className="text-[9px] text-slate-600 mt-1 font-mono hidden md:block">Eq Value</div>
+                            )}
                           </div>
 
-                          {/* 5. UNREALIZED P&L */}
+                          {/* 5. UNREALIZED P&L — sync-truth (INDMoney's own
+                              pnl + live delta) for synced rows; every row now
+                              shows a real Unrealized P&L, NAV rows included. */}
                           <div className="flex justify-between md:block md:text-right">
-                            <div className="md:hidden text-[10px] text-slate-500 uppercase font-bold">Total P&L</div>
+                            <div className="md:hidden text-[10px] text-slate-500 uppercase font-bold">Unrealized P&L</div>
                             <div>
                               <div className={`font-black font-mono text-base tracking-tight ${pl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                                 {pl >= 0 ? '+' : ''}{cur}{pl.toFixed(2)}
                               </div>
-                              <div className={`text-[10px] font-bold mt-0.5 ${plPct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                                ({plPct >= 0 ? '+' : ''}{plPct.toFixed(2)}%)
-                              </div>
+                              {plPct != null && (
+                                <div className={`text-[10px] font-bold mt-0.5 ${plPct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                  ({plPct >= 0 ? '+' : ''}{plPct.toFixed(2)}%)
+                                </div>
+                              )}
                             </div>
                           </div>
 
                           {/* 6. ACTIONS — manual trade buttons in manual mode;
-                              synced mode shows the source badge + REMOVE button */}
+                              synced mode shows the source badge + REMOVE button.
+                              Fixed-width cell keeps the grid columns aligned. */}
                           <div className="pt-2 md:pt-0 mt-3 border-t border-white/5 md:border-0 md:mt-0 flex justify-end gap-2 md:justify-center">
                             {indmActive ? (
                               <div className="flex items-center gap-2">
@@ -753,6 +854,15 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                                     ? (indmMeta?.coindcx?.lastSyncAt ? new Date(indmMeta.coindcx.lastSyncAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'sync')
                                     : (indmMeta?.syncedAt ? new Date(indmMeta.syncedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'sync')}
                                 </div>
+                                {chartable && (
+                                  <button
+                                    onClick={() => openAssetChart(p, invNative)}
+                                    className="w-7 h-7 flex items-center justify-center bg-cyan-500/10 hover:bg-cyan-500 border border-cyan-500/30 hover:border-cyan-500/60 rounded-lg transition-all text-[11px] text-cyan-400 hover:text-white font-black"
+                                    title={`Chart — ${p.symbol} (6M daily candles, COST vs LIVE overlay)`}
+                                  >
+                                    📈
+                                  </button>
+                                )}
                                 <button
                                   onClick={() => handleRemoveAsset(p)}
                                   disabled={hidingKeys.has(p.indmKey || '')}
@@ -809,6 +919,15 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                                 >
                                   <span className="md:hidden mr-1">Edit</span> ✏️
                                 </button>
+                                {chartable && (
+                                  <button
+                                    onClick={() => openAssetChart(p, invNative)}
+                                    className="px-3 py-1.5 md:w-8 md:h-8 md:p-0 flex items-center justify-center bg-cyan-500/10 hover:bg-cyan-500 w-full md:hover:rotate-6 hover:shadow-[0_0_15px_rgba(6,182,212,0.4)] border border-cyan-500/30 rounded-lg transition-all text-xs text-cyan-400 hover:text-white font-bold"
+                                    title={`Chart — ${p.symbol} (6M daily candles, COST vs LIVE overlay)`}
+                                  >
+                                    <span className="md:hidden mr-1">Chart</span> 📈
+                                  </button>
+                                )}
                               </>
                             )}
                           </div>
@@ -1003,6 +1122,9 @@ const PortfolioTab = React.memo(function PortfolioTab() {
           </div>
         </div>
       )}
+
+      {/* v4.5: per-asset daily-candle chart modal (COST vs LIVE overlays) */}
+      <AssetChartModal target={chartTarget} onClose={() => setChartTarget(null)} />
     </div>
   );
 });
