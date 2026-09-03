@@ -14,6 +14,16 @@ const {
   gradeSignal, analyzeIntradayFromScanner, aiVerifySignals, inDeadZone,
   MIN_REL_VOLUME, HIGH_CONV_RR_FLOOR,
 } = await import('../server/intraday/engine.js');
+const { paceRelVolume, sessionElapsedShare } = await import('../server/intraday/time.js');
+
+// Deterministic clocks for the session-pace volume math (2026-09 fix).
+// SAT_NOON_IST: outside the NSE session → share 1 → pace == raw (the
+// shipped end-of-day floor semantics the original tests were written
+// against). Weekday session times exercise the pace normalization.
+const SAT_NOON_IST = new Date('2026-08-29T06:30:00Z');   // Sat 12:00 IST
+const MON_1015_IST = new Date('2026-08-31T04:45:00Z');   // Mon 10:15 IST (60 min in)
+const MON_1100_IST = new Date('2026-08-31T05:30:00Z');   // Mon 11:00 IST (105 min in)
+const MON_2000_IST = new Date('2026-08-31T14:30:00Z');   // Mon 20:00 IST (post-close)
 
 // ---- shared synthetic TV snapshot (bullish, A+-capable) ----
 const bullTv = {
@@ -80,13 +90,68 @@ describe('gradeSignal — v4 A+/A/B boundaries', () => {
 // ---------------- analyzeIntradayFromScanner ----------------
 describe('analyzeIntradayFromScanner — v4 factors', () => {
   it('rejects on KNOWN low relative volume (< 1.2x hard floor)', () => {
+    // Post-close clock → pace == raw → 1.0 < 1.2 floor → rejected
+    // (deterministic: the raw value semantics the floor was written for).
+    vi.setSystemTime(SAT_NOON_IST);
     const r = analyzeIntradayFromScanner('SBIN', { ...bullTv, relVolume: 1.0 }, bullGroww, {});
     expect(r).toBeNull();
+    vi.useRealTimers();
   });
 
   it('does NOT reject when relVolume is unknown (null feed value)', () => {
+    vi.setSystemTime(SAT_NOON_IST);
     const r = analyzeIntradayFromScanner('SBIN', { ...bullTv, relVolume: null }, bullGroww, {});
     expect(r).not.toBeNull();
+    vi.useRealTimers();
+  });
+
+  it('SESSION-PACE fix: morning raw 0.3 (≈1.4× pace) is NOT blanket-rejected', () => {
+    // Verified live: 13% into the session TV raw relVol reads 0.13–0.41
+    // for NORMAL names (cumulative ÷ FULL-day avg, NOT time-adjusted).
+    // At 10:15 IST (60 min in) share = (60/375)*1.3 = 0.208 →
+    // 0.30 raw = 1.44 pace → clears the 1.2 pace floor.
+    const r = analyzeIntradayFromScanner('SBIN', { ...bullTv, relVolume: 0.30 }, bullGroww, { now: MON_1015_IST });
+    expect(r).not.toBeNull();
+    expect(r.volumeRatio).toBeGreaterThan(1.2); // pace stored, not raw
+  });
+
+  it('SESSION-PACE fix: genuinely dead morning name (0.05 raw ≈ 0.24 pace) IS rejected', () => {
+    const r = analyzeIntradayFromScanner('SBIN', { ...bullTv, relVolume: 0.05 }, bullGroww, { now: MON_1015_IST });
+    expect(r).toBeNull();
+  });
+
+  it('SESSION-PACE fix: volumeRatio is the pace value (1.8 raw @ 11:00 → 1.8/0.364 ≈ 4.95)', () => {
+    const r = analyzeIntradayFromScanner('SBIN', { ...bullTv, relVolume: 1.8 }, bullGroww, { now: MON_1100_IST });
+    expect(r).not.toBeNull();
+    expect(r.volumeRatio).toBeCloseTo(1.8 / ((105 / 375) * 1.3), 1);
+  });
+
+  it('SESSION-PACE fix: post-close clock → pace == raw (shipped end-of-day behavior preserved)', () => {
+    const r = analyzeIntradayFromScanner('SBIN', { ...bullTv, relVolume: 1.8 }, bullGroww, { now: MON_2000_IST });
+    expect(r.volumeRatio).toBe(1.8);
+    const slow = analyzeIntradayFromScanner('SBIN', { ...bullTv, relVolume: 1.0 }, bullGroww, { now: MON_2000_IST });
+    expect(slow).toBeNull();
+  });
+
+  it('SESSION-PACE fix: CRYPTO raw stands (24/7 rolling window, no session share)', () => {
+    const r = analyzeIntradayFromScanner('BTC', {
+      ...bullTv, relVolume: 1.8, exchange: 'BINANCE',
+    }, { price: 812, prevClose: 800, change: 1.5, high: 816, low: 795, volume: 5e6 }, { market: 'CRYPTO', now: MON_1015_IST });
+    expect(r.volumeRatio).toBe(1.8); // crypto pace == raw at any clock
+  });
+
+  it('paceRelVolume / sessionElapsedShare unit math', () => {
+    // share boundaries
+    expect(sessionElapsedShare('INDIA', MON_1015_IST)).toBeCloseTo(0.208, 2);
+    expect(sessionElapsedShare('INDIA', new Date('2026-08-31T03:50:00Z'))).toBe(0.12); // 09:20 IST — floored
+    expect(sessionElapsedShare('INDIA', MON_2000_IST)).toBe(1);      // post-close
+    expect(sessionElapsedShare('INDIA', SAT_NOON_IST)).toBe(1);      // weekend
+    expect(sessionElapsedShare('CRYPTO', MON_1015_IST)).toBe(1);     // crypto always full
+    // pace math + unknown-value semantics
+    expect(paceRelVolume(0.22, 'INDIA', MON_1015_IST)).toBeCloseTo(0.22 / 0.208, 2);
+    expect(paceRelVolume(null, 'INDIA', MON_1015_IST)).toBe(null);
+    expect(paceRelVolume(1.8, 'CRYPTO', MON_1015_IST)).toBe(1.8);
+    expect(paceRelVolume(1.8, 'INDIA', SAT_NOON_IST)).toBe(1.8);
   });
 
   it('emits v4 reasons: Supertrend proxy, SMA50 confluence (price near VWAP → POC)', () => {

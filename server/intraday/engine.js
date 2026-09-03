@@ -25,13 +25,16 @@
 //     (+10) — higher-conviction trend alignment.
 //   • Tighter RSI sweet zones: LONG 52-68, SHORT 32-48; exhaustion
 //     penalty doubled (-12).
-//   • Hard volume floor: known relVolume < 1.2x disqualifies.
+//   • Hard volume floor: known SESSION-PACE relVolume < 1.2x
+//     disqualifies (2026-09 audit fix: TV's raw relVol is cumulative
+//     vs FULL-DAY average — a flat floor nuked the whole market every
+//     morning; pace = raw ÷ expected session share, post-close == raw).
 //   • RR floor 1.5 for high-conviction (grade-A requirement).
 //   • Dead zone 14:30–15:00 IST — statistically weak window,
 //     hard-gated in routes + -15 in scoring.
 //   • Signal GRADES: A+ / A / B (watch-only) via gradeSignal().
 // ============================================================
-import { istMinutes, marketPhaseFor } from './time.js';
+import { istMinutes, marketPhaseFor, paceRelVolume } from './time.js';
 
 export const INTRADAY_MIN_CONFIDENCE = 75;
 export const INTRADAY_TOP_N = 5;
@@ -326,6 +329,10 @@ async function fetchCryptoIntradayDataBatch(symbols, fetchCoinDcxTickers) {
 // ------------------------------------------------------------
 export function analyzeIntradayFromScanner(symbol, tv, groww, opts = {}) {
   const isCrypto = String(opts.market || 'INDIA').toUpperCase() === 'CRYPTO';
+  // Injectable clock (tests pass fixed timestamps; live calls default to
+  // now) — the session-pace volume math below depends on the scan time.
+  const now = opts.now instanceof Date ? opts.now
+    : (typeof opts.now === 'number' ? new Date(opts.now) : new Date());
   const SLIP_BPS = isCrypto ? CRYPTO_SLIPPAGE_BPS : SLIPPAGE_BPS;
   // Merge Groww/CoinDCX real-time LTP with TradingView pre-computed indicators
   const ltp = groww?.price || (tv?.last > 0 ? tv.last : tv?.close) || 0;
@@ -354,8 +361,21 @@ export function analyzeIntradayFromScanner(symbol, tv, groww, opts = {}) {
   const adx = tv?.adx ?? 20;
   const adxPlus = tv?.adxPlus ?? 15;
   const adxMinus = tv?.adxMinus ?? 15;
-  const relVolume = tv?.relVolume ?? 1;
-  const relVolumeKnown = typeof tv?.relVolume === 'number' && tv.relVolume > 0;
+  // SESSION-PACE relative volume (2026-09 audit fix): TV's
+  // relative_volume_10d_calc = today's CUMULATIVE volume ÷ 10-day
+  // FULL-DAY average — verified live NOT time-of-day adjusted (13%
+  // into the session, normal large-caps read 0.13–0.41). Divide by the
+  // expected cumulative share of the session so the floor, the scoring
+  // tiers and the displayed VOL× all mean "vs average daily pace at this
+  // time" — morning signals stop being blanket-rejected. Post-close /
+  // pre-open / weekend → share = 1 → pace == raw (shipped behavior
+  // preserved). CRYPTO: 24/7 rolling window → raw stands unchanged.
+  const rawRelVolume = (typeof tv?.relVolume === 'number' && Number.isFinite(tv.relVolume) && tv.relVolume > 0)
+    ? tv.relVolume : null;
+  const relVolumeKnown = rawRelVolume !== null;
+  const relVolume = relVolumeKnown
+    ? (paceRelVolume(rawRelVolume, isCrypto ? 'CRYPTO' : 'INDIA', now) ?? rawRelVolume)
+    : 1;
   const pivot = tv?.pivotMiddle ?? ltp;
   const pivotS1 = tv?.pivotS1 ?? (ltp * 0.98);
   const pivotR1 = tv?.pivotR1 ?? (ltp * 1.02);

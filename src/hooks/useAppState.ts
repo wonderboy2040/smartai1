@@ -1910,13 +1910,15 @@ export function useAppState() {
     const mkt = (modalPrice?.market || guessMarket(addSymbol)) as 'IN' | 'US';
 
     // Helper to append a transaction to the ledger (powers monthly analytics + return reports)
+    // txnMarket override keeps the ledger honest when the sell resolves to a
+    // position whose recorded market differs from the modal's market guess.
     const recordTxn = (
       type: TransactionType, prevQty: number, prevAvg: number,
-      newQty: number, newAvg: number, realizedPL?: number
+      newQty: number, newAvg: number, realizedPL?: number, txnMarket?: 'IN' | 'US'
     ) => {
       const txn: Transaction = {
         id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        symbol: addSymbol, market: mkt, type, qty, price,
+        symbol: addSymbol, market: txnMarket || mkt, type, qty, price,
         amount: qty * price, date: addDate || getTodayString(), ts: Date.now(),
         prevQty, prevAvg, newQty, newAvg,
         ...(realizedPL !== undefined ? { realizedPL } : {}),
@@ -1925,12 +1927,20 @@ export function useAppState() {
     };
 
     if (transactionType === 'sell') {
-      const idx = portfolio.findIndex(p => p.symbol === addSymbol && p.market === mkt);
+      // 2026-09 audit fix (silent sell no-op): the position lookup used
+      // symbol+market where market came from the ADD-time modal price —
+      // which can differ from what guessMarket() now returns for the same
+      // symbol (e.g. stale live-price fetch vs a fresh guess). When the
+      // exact match misses, fall back to symbol-only: the user clicked
+      // SELL on a specific row, the symbol identifies it, and a silent
+      // no-op (no txn, no removal, no error) is the worst outcome.
+      let idx = portfolio.findIndex(p => p.symbol === addSymbol && p.market === mkt);
+      if (idx < 0) idx = portfolio.findIndex(p => p.symbol === addSymbol);
       if (idx >= 0) {
         const pos = portfolio[idx];
         const newQty = pos.qty - qty;
         const realizedPL = (price - pos.avgPrice) * qty; // booked profit/loss (native)
-        recordTxn('sell', pos.qty, pos.avgPrice, Math.max(0, newQty), pos.avgPrice, realizedPL);
+        recordTxn('sell', pos.qty, pos.avgPrice, Math.max(0, newQty), pos.avgPrice, realizedPL, pos.market);
         if (newQty <= 0) setPortfolio(prev => prev.filter((_, i) => i !== idx));
         else setPortfolio(prev => prev.map((p, i) => i === idx ? { ...p, qty: newQty } : p));
       }

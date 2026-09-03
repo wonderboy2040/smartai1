@@ -19,6 +19,8 @@
 // cover the math without network mocks.
 // ============================================================
 
+import { paceRelVolume } from './time.js';
+
 const MOVERS_TOP_N = 8;
 
 /** Round to 2dp, null-safe. */
@@ -191,7 +193,7 @@ export function moversAnalysis(row, market) {
  *   the scanner uses — INDIA: TV indicators + Groww quotes; CRYPTO:
  *   TV(INR-rescaled) + CoinDCX INR quotes)
  */
-export function buildMoversRows(universe, tvData, quoteData, market = 'INDIA') {
+export function buildMoversRows(universe, tvData, quoteData, market = 'INDIA', date = new Date()) {
   const isCrypto = String(market).toUpperCase() === 'CRYPTO';
   const rows = [];
   for (const sym of universe || []) {
@@ -212,7 +214,14 @@ export function buildMoversRows(universe, tvData, quoteData, market = 'INDIA') {
       high: (q && q.high > 0) ? r2(q.high) : (tv ? r2(tv.high) : null),
       low: (q && q.low > 0) ? r2(q.low) : (tv ? r2(tv.low) : null),
       volume: (q && q.volume > 0) ? q.volume : (tv ? tv.volume : null),
-      relVolume: tv ? r2(tv.relVolume) : null,
+      // SESSION-PACE relVol (2026-09 audit fix — same as engine.js):
+      // TV raw relVol is cumulative vs FULL-DAY avg, so mornings read
+      // 0.1–0.4 across the board. Pace = raw ÷ expected session share →
+      // the VOL× chips and thin-volume verdicts mean "vs avg daily
+      // pace at this time". Post-close/weekend → pace == raw. Crypto raw.
+      relVolume: (tv && typeof tv.relVolume === 'number' && tv.relVolume > 0)
+        ? r2(paceRelVolume(tv.relVolume, market, date) ?? tv.relVolume)
+        : (tv ? r2(tv.relVolume) : null),
       rsi: tv ? r2(tv.rsi) : null,
       adx: tv ? r2(tv.adx) : null,
       vwap: tv ? r2(tv.vwap) : null,
