@@ -17,7 +17,7 @@
 // All remote lookups are cached in server/data/mcp-symbol-cache.json
 // (name→symbol mappings are stable; cache TTL is generous).
 // ============================================================
-import { loadJSON, saveJSON } from '../intraday/store.js';
+import { loadJSON, saveJSON } from '../lib/store.js';
 import { durablePut } from './durable.js';
 
 const SYMBOL_CACHE_FILE = 'mcp-symbol-cache.json';

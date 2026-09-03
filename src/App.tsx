@@ -34,7 +34,7 @@ function lazyWithRetry(importFn: () => Promise<any>, name: string) {
 
 // Lazy load all tab components for faster initial load
 const DashboardTab = lazyWithRetry(() => import('./components/tabs/DashboardTab'), 'dashboard');
-const IntradayTab = lazyWithRetry(() => import('./components/tabs/IntradayTab').then(m => ({ default: m.IntradayTab })), 'intraday');
+const AITradingTab = lazyWithRetry(() => import('./components/tabs/AITradingTab'), 'aitrading');
 const PortfolioTab = lazyWithRetry(() => import('./components/tabs/PortfolioTab'), 'portfolio');
 const PlannerTab = lazyWithRetry(() => import('./components/tabs/PlannerTab'), 'planner');
 const MacroTab = lazyWithRetry(() => import('./components/tabs/MacroTab').then(m => ({ default: m.MacroTab })), 'macro');
@@ -44,12 +44,12 @@ const NeuralChat = lazyWithRetry(() => import('./components/NeuralChat').then(m 
 // Shared tab metadata — desktop pills, mobile bottom nav, shortcut hints.
 const TAB_META: Record<TabType, { emoji: string; label: string }> = {
   dashboard: { emoji: '📊', label: 'Dashboard' },
-  intraday: { emoji: '⚡', label: 'Intraday' },
+  trading: { emoji: '🤖', label: 'AI Trading' },
   portfolio: { emoji: '💼', label: 'Portfolio' },
   planner: { emoji: '🎯', label: 'Planner' },
   macro: { emoji: '🌍', label: 'Risk' },
 };
-const TAB_ORDER: TabType[] = ['dashboard', 'intraday', 'portfolio', 'planner', 'macro'];
+const TAB_ORDER: TabType[] = ['dashboard', 'trading', 'portfolio', 'planner', 'macro'];
 
 export default function App() {
   const state = useAppState();
@@ -266,7 +266,7 @@ export default function App() {
                   <button key={tab} onClick={() => setActiveTab(tab)} role="tab" aria-selected={activeTab === tab}
                     title={`${TAB_META[tab].label} — press ${i + 1}`}
                     className={`quantum-tab flex-1 sm:flex-none px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm whitespace-nowrap flex items-center justify-center ${activeTab === tab ? 'active' : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'}`}>
-                    <span className="hidden sm:inline">{tab === 'dashboard' && '📊 Dashboard'}{tab === 'intraday' && '⚡ Intraday'}{tab === 'portfolio' && '💼 Portfolio'}{tab === 'planner' && '🎯 Planner'}{tab === 'macro' && '🌍 Risk'}</span>
+                    <span className="hidden sm:inline">{tab === 'dashboard' && '📊 Dashboard'}{tab === 'trading' && '🤖 AI Trading'}{tab === 'portfolio' && '💼 Portfolio'}{tab === 'planner' && '🎯 Planner'}{tab === 'macro' && '🌍 Risk'}</span>
                     <span className="sm:hidden">{TAB_META[tab].emoji}</span>
                   </button>
                 ))}
@@ -287,7 +287,7 @@ export default function App() {
           <Suspense fallback={<div className="flex items-center justify-center py-20"><div className="text-center"><div className="text-4xl mb-3 animate-float">⚡</div><div className="text-sm text-slate-500 font-medium">Loading module...</div></div></div>}>
             <ErrorBoundary fallback={<div className="quantum-panel rounded-2xl p-8 text-center border border-red-500/20"><div className="text-4xl mb-3">🚨</div><div className="text-red-400 font-bold mb-2">Tab crashed</div><div className="text-slate-500 text-sm">Reload or switch tabs</div></div>}>
               {activeTab === 'dashboard' && <DashboardTab />}
-              {activeTab === 'intraday' && <IntradayTab />}
+              {activeTab === 'trading' && <AITradingTab />}
               {activeTab === 'portfolio' && <PortfolioTab />}
               {activeTab === 'planner' && <PlannerTab />}
               {activeTab === 'macro' && <MacroTab />}

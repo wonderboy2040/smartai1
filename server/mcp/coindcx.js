@@ -26,7 +26,7 @@
 // view/balance (read-only) permissions — we never place orders.
 // ============================================================
 import crypto from 'node:crypto';
-import { loadJSON, saveJSON } from '../intraday/store.js';
+import { loadJSON, saveJSON } from '../lib/store.js';
 import { fetchCoinDcxTickers } from '../cryptoStream.js';
 import { durablePut } from './durable.js';
 

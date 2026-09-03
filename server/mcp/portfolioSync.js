@@ -27,7 +27,7 @@
 // A failed source sync NEVER wipes the last good snapshot — the
 // previous assets stay visible with a stale marker.
 // ============================================================
-import { loadJSON, saveJSON } from '../intraday/store.js';
+import { loadJSON, saveJSON } from '../lib/store.js';
 import { fetchPortfolio, getStatus } from './indmoney.js';
 import { resolveSymbolsForHoldings } from './symbols.js';
 import {

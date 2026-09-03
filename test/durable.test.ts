@@ -17,7 +17,7 @@ const DATA = path.join(__dirname, '..', 'server', 'data');
 // ---- mock the GitHub backup layer BEFORE durable.js loads ----
 const pushMock = vi.fn();
 const restoreMock = vi.fn();
-vi.mock('../server/intraday/backup.js', () => ({
+vi.mock('../server/lib/backup.js', () => ({
   scheduleBackup: (...args) => pushMock(...args),
   restoreBackup: (...args) => restoreMock(...args),
   backupConfigured: () => !!(process.env.GITHUB_BACKUP_TOKEN && process.env.GITHUB_BACKUP_REPO),

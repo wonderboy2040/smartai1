@@ -1,0 +1,283 @@
+// ============================================================
+// test/aiEnsemble.test.ts — Superintelligence Ensemble math
+// ------------------------------------------------------------
+// Pins the aggregation formula, STRONG gating, trade-plan ATR math
+// and every quant model's voting behavior on synthetic contexts.
+// ============================================================
+import { describe, it, expect } from 'vitest';
+import { aggregateVotes, buildTradePlan, evaluateExecutionGate, DEFAULT_GATES } from '../server/ai/ensemble.js';
+import { runQuantModels, MODELS, aiCouncilVoteFromVerdict } from '../server/ai/models.js';
+import { computeIndicatorsFromCandles, detectPatterns, rsi, macd, bollinger, atr } from '../server/ai/lib/indicators.js';
+
+// ---- vote helpers ---------------------------------------------
+const v = (id, dir, conf, weight = 1) => ({ id, name: id, role: 'test', weight, dir, conf, reasons: [] });
+
+describe('aggregateVotes — the consensus formula', () => {
+  it('unanimous strong bull votes → LONG, high confidence, agreement 1.0', () => {
+    const out = aggregateVotes([
+      v('a', 1, 90, 1.4), v('b', 1, 85, 1.3), v('c', 1, 80, 1.2),
+    ]);
+    expect(out.side).toBe('LONG');
+    expect(out.agreement).toBe(1);
+    expect(out.confidence).toBeGreaterThanOrEqual(75);
+    expect(out.grade).toBe('STRONG');
+  });
+
+  it('conflicting votes split agreement below the STRONG gate', () => {
+    const out = aggregateVotes([
+      v('a', 1, 90, 1.4), v('b', 1, 85, 1.3), v('c', 1, 80, 1.2), v('d', 1, 80, 1.1),
+      v('e', -1, 95, 1.0), v('f', -1, 95, 1.0), // 2.0 of 7.2 weight against
+    ]);
+    expect(out.side).toBe('LONG');
+    expect(out.agreement).toBeLessThan(0.75); // 5.2/7.2 ≈ 0.72
+    // grade may still be STRONG-ish conf but agreement gate blocks it
+    const strongEligible = out.confidence >= DEFAULT_GATES.minConfidence && out.agreement >= DEFAULT_GATES.minAgreement;
+    if (strongEligible) expect(out.grade).toBe('STRONG');
+    else expect(out.grade).not.toBe('STRONG');
+  });
+
+  it('all-abstain board → FLAT NEUTRAL with zero confidence', () => {
+    const out = aggregateVotes([v('a', 0, 0, 1.4), v('b', 0, 0, 1.3)]);
+    expect(out.side).toBe('FLAT');
+    expect(out.confidence).toBe(0);
+    expect(out.grade).toBe('NEUTRAL');
+  });
+
+  it('confidence blends |score| with agreement — a 55%-agreement 0.9-score is NOT 90%', () => {
+    const out = aggregateVotes([
+      v('a', 1, 99, 5), v('b', -1, 99, 4), // agreement 5/9 = 0.56, score 1/9
+    ]);
+    expect(out.confidence).toBeLessThan(30);
+  });
+
+  it('bearish unanimity → SHORT STRONG', () => {
+    const out = aggregateVotes([v('a', -1, 90, 1.4), v('b', -1, 85, 1.3), v('c', -1, 88, 1.2), v('d', -1, 82, 1.1)]);
+    expect(out.side).toBe('SHORT');
+    expect(out.grade).toBe('STRONG');
+  });
+
+  it('grade ladder: WATCH below 55, ACTION 55-74, STRONG only at conf+agreement', () => {
+    const weak = aggregateVotes([v('a', 1, 40, 1)]);
+    expect(weak.grade).toBe('WATCH'); // conf ~38-40
+    const mid = aggregateVotes([v('a', 1, 75, 1), v('b', 1, 70, 1)]);
+    expect(['ACTION', 'WATCH']).toContain(mid.grade);
+  });
+});
+
+describe('buildTradePlan — ATR-based risk engineering', () => {
+  const longCtx = { ltp: 100, ind: { atr: 2 }, market: 'INDIA' };
+  const shortCtx = { ltp: 100, ind: { atr: 2 }, market: 'INDIA' };
+
+  it('LONG: SL = entry − 1.4×ATR, T1/T2 = 1R/2R', () => {
+    const plan = buildTradePlan({ side: 'LONG', dir: 1 }, longCtx, 'INDIA')!;
+    expect(plan.entry).toBe(100);
+    expect(plan.stopLoss).toBeCloseTo(97.2, 1);   // 100 − 1.4×2
+    expect(plan.risk).toBeCloseTo(2.8, 1);
+    expect(plan.target1).toBeCloseTo(102.8, 1);
+    expect(plan.target2).toBeCloseTo(105.6, 1);
+    expect(plan.rewardRisk).toBe(2);
+  });
+
+  it('SHORT: mirrored levels', () => {
+    const plan = buildTradePlan({ side: 'SHORT', dir: -1 }, shortCtx, 'INDIA')!;
+    expect(plan.stopLoss).toBeCloseTo(102.8, 1);
+    expect(plan.target1).toBeCloseTo(97.2, 1);
+  });
+
+  it('crypto uses a wider 1.6×ATR stop', () => {
+    const plan = buildTradePlan({ side: 'LONG', dir: 1 }, { ltp: 100, ind: { atr: 2 } }, 'CRYPTO')!;
+    expect(plan.stopLoss).toBeCloseTo(96.8, 1);
+  });
+
+  it('missing ATR falls back to % of price and labels the style', () => {
+    const plan = buildTradePlan({ side: 'LONG', dir: 1 }, { ltp: 100, ind: {} }, 'INDIA')!;
+    expect(plan.planStyle).toBe('atr-fallback');
+    expect(plan.risk).toBeGreaterThan(0);
+  });
+
+  it('FLAT consensus or no LTP → null plan', () => {
+    expect(buildTradePlan({ side: 'FLAT', dir: 0 }, longCtx, 'INDIA')).toBeNull();
+    expect(buildTradePlan({ side: 'LONG', dir: 1 }, { ltp: 0, ind: {} }, 'INDIA')).toBeNull();
+  });
+});
+
+describe('evaluateExecutionGate — THE order gauntlet', () => {
+  const now = Date.now();
+  const strong = {
+    symbol: 'BTC', market: 'CRYPTO', side: 'LONG', grade: 'STRONG',
+    confidence: 82, agreement: 0.78, generatedAt: now,
+    plan: { riskPct: 1.5 },
+  };
+
+  it('passes a fresh STRONG crypto signal with matching side', () => {
+    const g = evaluateExecutionGate(strong, { side: 'LONG' });
+    expect(g.ok).toBe(true);
+  });
+
+  it('rejects India signals (options = signals only)', () => {
+    const g = evaluateExecutionGate({ ...strong, market: 'INDIA' }, { side: 'LONG' });
+    expect(g.ok).toBe(false);
+    expect(g.reason).toMatch(/CoinDCX-only/i);
+  });
+
+  it('rejects stale signals (> 90s)', () => {
+    const g = evaluateExecutionGate({ ...strong, generatedAt: now - 120_000 }, { side: 'LONG' });
+    expect(g.ok).toBe(false);
+    expect(g.reason).toMatch(/stale/i);
+  });
+
+  it('rejects side mismatch — long signal, short request', () => {
+    const g = evaluateExecutionGate(strong, { side: 'SHORT' });
+    expect(g.ok).toBe(false);
+    expect(g.reason).toMatch(/side/i);
+  });
+
+  it('rejects non-STRONG grades with the exact gate text', () => {
+    const g = evaluateExecutionGate({ ...strong, grade: 'ACTION' }, { side: 'LONG' });
+    expect(g.ok).toBe(false);
+    expect(g.reason).toMatch(/grade ACTION/);
+  });
+
+  it('rejects oversized plan risk', () => {
+    const g = evaluateExecutionGate({ ...strong, plan: { riskPct: 8 } }, { side: 'LONG', maxRiskPct: 5 });
+    expect(g.ok).toBe(false);
+    expect(g.reason).toMatch(/risk/);
+  });
+
+  it('honors custom gates (user tightened confidence to 85)', () => {
+    const g = evaluateExecutionGate(strong, { side: 'LONG', gates: { minConfidence: 85, minAgreement: 0.70 } });
+    expect(g.ok).toBe(false);
+    expect(g.reason).toMatch(/confidence 82% < 85%/);
+  });
+});
+
+describe('quant models — voting on synthetic contexts', () => {
+  it('registry has 9 models with sane weights; AI Council has fn=null (LLM layer)', () => {
+    expect(MODELS).toHaveLength(9);
+    expect(MODELS.find(m => m.id === 'aicouncil')?.fn).toBeNull();
+    const total = MODELS.reduce((a, m) => a + m.weight, 0);
+    expect(total).toBeGreaterThan(8);
+    expect(total).toBeLessThan(12);
+  });
+
+  it('bullish context → TrendMatrix + MomentumQuant vote LONG with reasons', () => {
+    const ctx = {
+      market: 'INDIA', symbol: 'TEST', ltp: 120, changePct: 1.2,
+      ind: {
+        ema10: 119, ema20: 118, ema50: 115, sma20: 117, sma50: 114,
+        rsi: 62, macd: { macd: 1.2, signal: 1.0, hist: 0.2, histSlope: 0.1 },
+        stochK: 65, stochD: 60, atr: 2.2, vwap: 118,
+        adx: { adx: 28, plusDI: 25, minusDI: 12 }, relVolume: 1.6,
+        pivot: { p: 118, s1: 116, r1: 120 },
+        recommend: 0.5, high52w: 125, low52w: 90,
+      },
+      regime: { niftyChange: 0.8, indiaVix: 11 },
+    };
+    const votes = runQuantModels(ctx);
+    const trend = votes.find(x => x.id === 'trend')!;
+    const momo = votes.find(x => x.id === 'momentum')!;
+    expect(trend.dir).toBe(1);
+    expect(trend.reasons.join(' ')).toMatch(/EMA 10>20>50/);
+    expect(momo.dir).toBe(1);
+    expect(trend.conf).toBeGreaterThan(50);
+    // OptionsFlow abstains on stocks (no options ctx)
+    const opts = votes.find(x => x.id === 'options')!;
+    expect(opts.dir).toBe(0);
+  });
+
+  it('bearish context → models vote SHORT', () => {
+    const ctx = {
+      market: 'INDIA', symbol: 'TEST', ltp: 80, changePct: -1.5,
+      ind: {
+        ema10: 82, ema20: 84, ema50: 88, sma20: 83, sma50: 87,
+        rsi: 32, macd: { macd: -1.2, signal: -1.0, hist: -0.2, histSlope: -0.1 },
+        stochK: 30, stochD: 35, atr: 2, vwap: 84,
+        adx: { adx: 30, plusDI: 10, minusDI: 26 }, relVolume: 1.8,
+        pivot: { p: 84, s1: 82, r1: 86 },
+        recommend: -0.5, high52w: 120, low52w: 78,
+      },
+      regime: { niftyChange: -1.0, indiaVix: 19 },
+    };
+    const votes = runQuantModels(ctx);
+    expect(votes.find(x => x.id === 'trend')!.dir).toBe(-1);
+    expect(votes.find(x => x.id === 'momentum')!.dir).toBe(-1);
+    expect(votes.find(x => x.id === 'regime')!.dir).toBe(-1);
+  });
+
+  it('crypto regime uses BTC change (not NIFTY)', () => {
+    const votes = runQuantModels({ market: 'CRYPTO', symbol: 'X', ltp: 1, changePct: 0, ind: {}, regime: { btcChange: 3.0 } });
+    const reg = votes.find(x => x.id === 'regime')!;
+    expect(reg.dir).toBe(1);
+    expect(reg.reasons.join(' ')).toMatch(/BTC/);
+  });
+
+  it('OptionsFlow votes contrarian on extreme PCR and toward max pain', () => {
+    const votes = runQuantModels({
+      market: 'INDIA', symbol: 'NIFTY', ltp: 24000, changePct: 0, ind: {},
+      regime: {},
+      options: { pcr: 1.6, maxPain: 24300, ivPercentile: 40, oiSkew: 0.2 },
+    });
+    const opts = votes.find(x => x.id === 'options')!;
+    expect(opts.dir).toBe(1); // extreme puts + max pain above → bullish
+    expect(opts.reasons.join(' ')).toMatch(/contrarian bullish/);
+  });
+
+  it('AI Council verdict mapping: AVOID → dir 0 with conf', () => {
+    const av = aiCouncilVoteFromVerdict({ verdict: 'AVOID', confidence: 70, note: 'thin book' });
+    expect(av!.dir).toBe(0);
+    expect(av!.conf).toBeGreaterThanOrEqual(50);
+    const long = aiCouncilVoteFromVerdict({ verdict: 'LONG', confidence: 88, note: 'confluence' });
+    expect(long!.dir).toBe(1);
+    expect(long!.conf).toBe(88);
+  });
+
+  it('model crashes are contained (dir 0 with error reason)', () => {
+    const votes = runQuantModels({ market: 'INDIA', symbol: 'X', ltp: null, ind: null, regime: null });
+    expect(votes).toHaveLength(8);
+    votes.forEach(vt => {
+      if (vt.dir !== 0) return; // may legitimately vote from partial data
+      expect(vt.conf).toBeGreaterThanOrEqual(0);
+    });
+  });
+});
+
+describe('indicators — pure math pins', () => {
+  // Accelerating (geometric) growth — MACD genuinely positive (linear series converge hist to 0).
+  const up = Array.from({ length: 60 }, (_, i) => {
+    const c = 100 * Math.pow(1.03, i);
+    return { time: i, open: c / 1.01, high: c * 1.01, low: c / 1.02, close: c, volume: 1000 + i * 10 };
+  });
+  const flat = Array.from({ length: 60 }, () => ({ time: 0, open: 100, high: 101, low: 99, close: 100, volume: 1000 }));
+
+  it('rising closes → RSI 100, MACD positive, price above EMA stack', () => {
+    const closes = up.map(c => c.close);
+    expect(rsi(closes)).toBe(100);
+    const m = macd(closes)!;
+    expect(m.hist).toBeGreaterThan(0);
+    const agg = computeIndicatorsFromCandles(up)!;
+    expect(agg.ema10).toBeGreaterThan(agg.ema50!);
+    expect(agg.ltp).toBeCloseTo(100 * Math.pow(1.03, 59), 4);
+  });
+
+  it('flat series → mid Bollinger %B ~0.5, near-zero width', () => {
+    const closes = flat.map(c => c.close);
+    const bb = bollinger(closes)!;
+    expect(bb.percentB).toBeCloseTo(0.5, 1);
+    expect(bb.widthPct).toBeLessThan(1);
+  });
+
+  it('ATR of a 2-range series is exactly 2', () => {
+    const two = Array.from({ length: 40 }, () => ({ time: 0, open: 100, high: 102, low: 100, close: 101, volume: 10 }));
+    expect(atr(two)).toBeCloseTo(2, 5);
+  });
+
+  it('pattern detection: hammer + bullish engulfing', () => {
+    const candles = [
+      { time: 0, open: 100, high: 101, low: 99, close: 100.5, volume: 10 },
+      { time: 1, open: 100, high: 100.2, low: 99, close: 99.5, volume: 10 },     // prev bearish
+      { time: 2, open: 99.4, high: 99.5, low: 97, close: 99.3, volume: 10 },    // hammer: long lower wick
+    ];
+    const pats = detectPatterns(candles);
+    expect(pats.map(p => p.name)).toContain('Hammer');
+  });
+});

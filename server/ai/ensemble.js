@@ -1,0 +1,175 @@
+// ============================================================
+// server/ai/ensemble.js — weighted consensus + STRONG gating
+// ------------------------------------------------------------
+// PURE aggregation: turns N model votes into ONE consensus signal.
+// The STRONG grade here is THE execution gate — the order layer
+// (coindcxOrders.js) re-checks it server-side before any live order.
+//
+//   confidence = |weighted score| blended with agreement ratio
+//   agreement   = share of voting weight on the winning side
+//   grade       = STRONG (≥ minConfidence AND agreement ≥ minAgreement)
+//                 ACTION / WATCH / NEUTRAL below that
+// ============================================================
+
+export const DEFAULT_GATES = {
+  minConfidence: 75,   // ensemble confidence ≥ this → STRONG-eligible
+  minAgreement: 0.70,  // ≥ 70% of voting weight on the winning side
+};
+
+const clamp = (v, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, v));
+const r2 = (v) => Math.round(v * 100) / 100;
+const r1 = (v) => Math.round(v * 10) / 10;
+
+/**
+ * Aggregate model votes into a consensus.
+ * @param {{id,name,weight,dir,conf,reasons}[]} votes
+ * @param {object} gates { minConfidence, minAgreement }
+ */
+export function aggregateVotes(votes, gates = DEFAULT_GATES) {
+  const valid = (votes || []).filter(v => v && typeof v.dir === 'number' && v.dir !== 0 && (v.conf || 0) > 0 && (v.weight || 0) > 0);
+  const votingWeight = valid.reduce((a, v) => a + v.weight, 0);
+  const allWeight = (votes || []).filter(v => (v.weight || 0) > 0).reduce((a, v) => a + v.weight, 0);
+
+  if (votingWeight <= 0) {
+    return {
+      side: 'FLAT', dir: 0, confidence: 0, agreement: 0,
+      grade: 'NEUTRAL', participating: 0, totalModels: (votes || []).length,
+      summary: 'No model found a tradeable edge',
+    };
+  }
+
+  const bull = valid.filter(v => v.dir > 0).reduce((a, v) => a + v.weight, 0);
+  const bear = valid.filter(v => v.dir < 0).reduce((a, v) => a + v.weight, 0);
+  const side = bull >= bear ? 'LONG' : 'SHORT';
+  const dir = side === 'LONG' ? 1 : -1;
+  const winWeight = Math.max(bull, bear);
+  const loseWeight = Math.min(bull, bear);
+
+  // Agreement: winning weight / voting weight (abstaining models don't count against).
+  const agreement = winWeight / votingWeight;
+
+  // Weighted score: Σ(dir × weight × conf/100) over ALL models — opposing
+  // votes subtract — normalized by total model weight (incl. abstainers
+  // diluting, which is honest: silence is a weak signal too).
+  const norm = allWeight > 0 ? allWeight : votingWeight;
+  const raw = (votes || []).reduce((a, v) => a + (v.dir || 0) * (v.weight || 0) * ((v.conf || 0) / 100), 0);
+  const signed = raw / norm; // -1..+1
+
+  // Confidence = 100 × |signed| × (0.55 + 0.45 × agreement)
+  // Rationale: a 0.9 raw score with 55% agreement is NOT a 90% signal.
+  const confidence = Math.round(clamp(Math.abs(signed) * 100 * (0.55 + 0.45 * agreement)));
+
+  let grade;
+  if (confidence >= gates.minConfidence && agreement >= gates.minAgreement) grade = 'STRONG';
+  else if (confidence >= 55) grade = 'ACTION';
+  else if (confidence >= 35) grade = 'WATCH';
+  else grade = 'NEUTRAL';
+
+  return {
+    side, dir, confidence, agreement: Math.round(agreement * 100) / 100,
+    grade,
+    participating: valid.length,
+    totalModels: (votes || []).length,
+    bullWeight: r2(bull), bearWeight: r2(bear),
+    summary: `${side} ${confidence}% · ${valid.length}/${(votes || []).length} models voting · ${Math.round(agreement * 100)}% agreement`,
+  };
+}
+
+/**
+ * Build the full trade plan (entry / SL / targets / R:R) from the
+ * consensus + the symbol's live context. ATR-based, engine-style:
+ *   SL   = entry ∓ 1.4 × ATR      (crypto: 1.6 × ATR — 24/7 noise)
+ *   T1   = entry ± 1.0 × R
+ *   T2   = entry ± 2.0 × R
+ */
+export function buildTradePlan(consensus, ctx, market) {
+  const ltp = ctx?.ltp;
+  if (!consensus || consensus.dir === 0 || !(ltp > 0)) {
+    return null;
+  }
+  const atr = ctx?.ind?.atr ?? (ctx?.indicators?.atr) ?? null;
+  const atrFallback = ltp * (market === 'CRYPTO' ? 0.012 : 0.008);
+  const a = atr != null && atr > 0 ? atr : atrFallback;
+  const slMult = market === 'CRYPTO' ? 1.6 : 1.4;
+  const long = consensus.dir > 0;
+  const stopLoss = long ? ltp - slMult * a : ltp + slMult * a;
+  const risk = Math.abs(ltp - stopLoss);
+  const target1 = long ? ltp + risk : ltp - risk;
+  const target2 = long ? ltp + 2 * risk : ltp - 2 * risk;
+  const rr = risk > 0 ? Math.abs(target2 - ltp) / risk : 0;
+  return {
+    entry: r2(ltp),
+    stopLoss: r2(stopLoss),
+    target1: r2(target1),
+    target2: r2(target2),
+    risk: r2(risk),
+    riskPct: r2((risk / ltp) * 100),
+    rewardRisk: r2(rr),
+    atrUsed: r2(a),
+    planStyle: atr != null ? 'atr-based' : 'atr-fallback',
+  };
+}
+
+/**
+ * Assemble the final signal object (what the API serves).
+ */
+export function buildSignal({ symbol, market, ctx, votes, consensus, plan, aiNote }) {
+  const changePct = ctx?.changePct ?? null;
+  return {
+    symbol,
+    market,
+    side: consensus.side,
+    grade: consensus.grade,
+    confidence: consensus.confidence,
+    agreement: consensus.agreement,
+    participating: consensus.participating,
+    totalModels: consensus.totalModels,
+    bullWeight: consensus.bullWeight ?? null,
+    bearWeight: consensus.bearWeight ?? null,
+    ltp: r2(ctx?.ltp ?? null),
+    changePct: r1(changePct),
+    plan,
+    votes: (votes || []).map(v => ({
+      id: v.id, name: v.name, role: v.role, weight: v.weight,
+      dir: v.dir, conf: v.conf, reasons: v.reasons || [],
+    })),
+    summary: consensus.summary,
+    aiNote: aiNote || null,
+    executable: market === 'CRYPTO' && consensus.grade === 'STRONG' && !!plan,
+    generatedAt: Date.now(),
+  };
+}
+
+/**
+ * THE EXECUTION GATE — used by the order layer (and tests).
+ * A LIVE order may ONLY pass when ALL conditions hold:
+ *   1. fresh ensemble run (age ≤ maxAgeMs)
+ *   2. market is CRYPTO (execution venue = CoinDCX)
+ *   3. side matches the requested side
+ *   4. grade STRONG: confidence ≥ gates.minConfidence
+ *      AND agreement ≥ gates.minAgreement
+ *   5. plan exists with a sane risk (≤ maxRiskPct)
+ *   6. AI Council (when online) did NOT veto (its vote is already
+ *      inside the ensemble — a veto drops agreement/confidence).
+ * PAPER mode (practice money) uses requireStrong:false with a
+ * longer freshness window — the gauntlet is for REAL money.
+ */
+export function evaluateExecutionGate(signal, { side, gates = DEFAULT_GATES, maxAgeMs = 90_000, maxRiskPct = 5, requireStrong = true } = {}) {
+  if (!signal) return { ok: false, reason: 'no signal' };
+  if (Date.now() - (signal.generatedAt || 0) > maxAgeMs) return { ok: false, reason: `signal stale (age > ${Math.round(maxAgeMs / 1000)}s) — re-run ensemble` };
+  if (signal.market !== 'CRYPTO') return { ok: false, reason: 'live execution is CoinDCX-only (India = options signals)' };
+  const wantSide = String(side || signal.side).toUpperCase();
+  if (signal.side !== wantSide) return { ok: false, reason: `signal side is ${signal.side}, requested ${wantSide}` };
+  if (signal.side === 'FLAT' || !signal.plan) return { ok: false, reason: 'no tradeable side/plan in the current consensus' };
+  if (requireStrong) {
+    if (signal.grade !== 'STRONG') return { ok: false, reason: `grade ${signal.grade} — live orders need STRONG (${gates.minConfidence}% conf + ${Math.round(gates.minAgreement * 100)}% agreement)` };
+    if ((signal.confidence ?? 0) < gates.minConfidence) return { ok: false, reason: `confidence ${signal.confidence}% < ${gates.minConfidence}% gate` };
+    if ((signal.agreement ?? 0) < gates.minAgreement) return { ok: false, reason: `agreement ${Math.round((signal.agreement || 0) * 100)}% < ${Math.round(gates.minAgreement * 100)}% gate` };
+  }
+  const riskPct = signal.plan.riskPct ?? 0;
+  if (!(riskPct > 0)) return { ok: false, reason: 'no risk plan' };
+  if (riskPct > maxRiskPct) return { ok: false, reason: `plan risk ${riskPct}% > ${maxRiskPct}% max` };
+  return { ok: true, reason: requireStrong
+    ? `STRONG ${signal.side} · ${signal.confidence}% conf · ${Math.round(signal.agreement * 100)}% agreement`
+    : `PAPER ${signal.side} · ${signal.confidence}% conf (practice — STRONG gate applies to LIVE only)` };
+}

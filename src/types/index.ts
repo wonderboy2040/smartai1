@@ -76,7 +76,7 @@ export interface ExpertInfo {
   border: string;
 }
 
-export type TabType = 'dashboard' | 'intraday' | 'portfolio' | 'planner' | 'macro';
+export type TabType = 'dashboard' | 'trading' | 'portfolio' | 'planner' | 'macro';
 export type RiskLevel = 'low' | 'medium' | 'high';
 export type TransactionType = 'buy' | 'sell';
 

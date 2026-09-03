@@ -404,11 +404,11 @@ router.get('/api/mcp/tapetide/callback', async (req, res) => {
     if (saved) origin = saved;
     if (!origin) throw new IndmError('Missing site origin for redirect', 400, 'NO_ORIGIN');
     await tapetide.completeConnect({ code, state, error, errorDescription: errDesc });
-    return res.redirect(302, `${origin}/?tab=intraday&tpt=ok`);
+    return res.redirect(302, `${origin}/?tab=trading&tpt=ok`);
   } catch (err) {
     const reason = encodeURIComponent(String(err?.message || err?.code || 'unknown_error'));
     const base = origin || '';
-    return res.redirect(302, `${base}/?tab=intraday&tpt=error&reason=${reason}`);
+    return res.redirect(302, `${base}/?tab=trading&tpt=error&reason=${reason}`);
   }
 });
 

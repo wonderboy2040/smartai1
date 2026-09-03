@@ -1,4 +1,40 @@
 
+## v6.0.0 — INTRADAY REMOVED · SUPERINTELLIGENCE AI TRADING TERMINAL (2026-09-03)
+
+### Removed: Intraday TAB (complete)
+- The old ⚡ Intraday tab is GONE: `src/components/tabs/IntradayTab.tsx`, all 14 `src/components/intraday/*` components, `server/intraday/*` (14 modules), 8 intraday tests, `/api/intraday-*` routes + PUBLIC_PATHS entries — replaced by the new AI Trading Terminal.
+- Shared infra rescued to `server/lib/`: `store.js` (JSON persistence used by ALL mcp modules) + `backup.js` (GitHub durable backup — API keys survive Render restarts).
+- `superintelligenceEngine.ts` (NeuralChat context) now pulls the NEW `/api/ai/signals` ensemble board; the external whale-intel panel retired with the tab.
+
+### New: 9-Model Superintelligence Ensemble (server/ai/)
+- **MODEL BUS**: TrendMatrix (w1.4) · MomentumQuant (1.3) · VolatilityScope (0.9) · VolumeFlow (1.2) · PatternNeural (1.0) · SRMatrix (1.1) · OptionsFlow (1.0, PCR/max-pain/IV contrarian) · MacroRegime (0.8) · **AI Council (1.5, LLM: Gemini→Groq→Cerebras→OpenRouter chain, honest OFFLINE without keys)**.
+- Aggregation: weighted score + agreement ratio → confidence 0-100 → grade **STRONG / ACTION / WATCH / NEUTRAL**. STRONG = confidence ≥ 75 AND ≥70% model-weight agreement.
+- Data: TV India scanner (44 liquid NSE names + NIFTY/BANKNIFTY via 6mo daily candles), TV crypto scanner (12 majors) + CoinDCX INR tickers + 1h candles, Yahoo indices/VIX/FX. Everything null-safe — an unreachable source degrades, never crashes.
+- Trade plans: ATR-based entry/SL/T1/T2 with 1.4×ATR (India) / 1.6×ATR (crypto) stops.
+
+### New: India OPTIONS DESK (NSE indices)
+- Real NSE option-chain (cookie bootstrap) with a **Black-Scholes synthetic fallback** (spot from live Yahoo + IV anchored to India VIX + volatility smile) — clearly labeled "BS MODEL CHAIN" when NSE blocks datacenter IPs.
+- Analytics: PCR, **max pain** (writer-payout minimization), OI walls, ATM IV, IV percentile, OI-change skew — fed INTO the ensemble's OptionsFlow model.
+- **Strategy builder** driven by the index consensus: Bull Call Spread / Bear Put Spread / Long Call-Put / **Iron Condor** (neutral) — every card with legs, premiums, Greeks, max profit/loss, breakevens, per-lot values, exit plans. P&L identities exact (debit+credit = width, BE = strike ± debit).
+- BS engine: price + full Greeks (delta/gamma/theta-per-day/vega-per-vol-point/rho) + Newton-Raphson IV solver with bisection fallback.
+
+### New: CoinDCX LIVE ORDER EXECUTION (the gauntlet)
+- `server/ai/coindcxOrders.js` — REAL orders via signed `/exchange/v1/orders/create` (HMAC-SHA256), cancel, cancel-all, list.
+- **GATES (server-side, client never trusted)**: ① kill switch ② auto-policy ③ CoinDCX connection ④ fresh STRONG consensus (re-run ≤90s, conf ≥ gate, agreement ≥ gate) ⑤ risk limits (max ₹/order, daily trade cap, daily loss cap, one-position-per-pair, stop-distance ≤ maxRiskPct) ⑥ venue = crypto-only.
+- LIVE mode requires typed phrase `LIVE` + connected key; PAPER (default) = practice money with relaxed gates + practice-plan synthesis at live price.
+- **Auto-executor** (90s loop): only in LIVE + allowAuto, only STRONG + executable signals, TG alert on every fill.
+- **Position watcher** (60s loop): SL/TP enforcement — closes live (market order) + paper positions on breach, journals everything.
+- Durable-backed audit journal: every attempt (FILLED/SUBMITTED/REJECTED/FAILED/CLOSED) with the signal snapshot that caused it.
+- CoinDCX key needs **trade permission** for LIVE (view-only keys still work for Portfolio sync).
+
+### New: AI TRADING TERMINAL (frontend tab 🤖)
+- Command bar (engine status, regime chips, NSE⇄CRYPTO desk switcher) → **01 Signal Board** (cards: radial confidence gauge, grade badge, plan strip, expandable per-model votes with reasons, AI Council note, gated Execute buttons) → **02 Options Desk** (index selector, metrics strip, OI chain with heat bars + Greeks, strategy cards) → **03 Execution Console** (kill switch, daily risk meters, mode arming, config editor, positions with live uPnL + SL/TP, audit journal) → **04 Model Registry** (9 models + AI Council status).
+- Signals auto-refresh 30s (active tab only), positions 45s, state 60s — zero background-tab cost.
+
+### Tests & verification
+- 41 new tests (ensemble aggregation/gating/plans, model voting incl. contrarian OptionsFlow, BS parity/Greeks/IV round-trip, strategy P&L identities, the full execution gauntlet incl. LIVE signing + risk caps + watcher) → **367/367 passing, stable across 3 consecutive full runs**.
+- tsc 0 errors · vite build clean · server boot clean · browser E2E **30/30** (login PIN → tab swap → signal boards both markets → options desk → console → registry → old endpoints 404 → zero JS errors) · paper-flow E2E 3/3 with honest risk-gate reasons.
+
 ## v1.4.0 — SuperScore Backtester + AI Follow-ups (2026-07-20)
 
 ### New: SuperScore Backtester (site)

@@ -26,7 +26,7 @@
 // authed /api/mcp/indmoney/* endpoints.
 // ============================================================
 import crypto from 'node:crypto';
-import { loadJSON, saveJSON } from '../intraday/store.js';
+import { loadJSON, saveJSON } from '../lib/store.js';
 import { durablePut } from './durable.js';
 
 // ---------------- INDMoney endpoints (fixed) ----------------

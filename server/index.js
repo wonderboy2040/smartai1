@@ -21,8 +21,8 @@ import {
   getHealth as mlHealth,
 } from './mlEngine.js';
 import { SERVER_MCP_TOOLS_OPENAI, SERVER_MCP_TOOLS_GEMINI, executeServerMCPTool } from './mcpTools.js';
-import { registerIntradayRoutes } from './intraday/routes.js';
 import indmMcpRoutes from './mcp/routes.js';
+import { registerAITradingRoutes } from './ai/routes.js';
 import { startScheduler as startIndmPortfolioScheduler } from './mcp/portfolioSync.js';
 import { durableBootRestoreAll } from './mcp/durable.js';
 import path from 'node:path';
@@ -112,10 +112,6 @@ const PUBLIC_PATHS = new Set([
   // no private data. Making these public ensures prices always load.
   '/api/quote',
   '/api/chart',
-  '/api/intraday-scanner',
-  '/api/intraday-stream',
-  '/api/intraday-movers',
-  '/api/intraday-intel',
   '/api/crypto-prices',
   '/api/forex',
   '/api/feed-status',
@@ -483,25 +479,22 @@ app.get('/api/chart', async (req, res) => {
 });
 
 // ============================================================
-// SUPER INTELLIGENCE — NSE INTRADAY PRO-DESK (v3)
+// SUPER INTELLIGENCE — AI TRADING TERMINAL (v6)
 // ------------------------------------------------------------
-// Full engine lives in ./intraday/* (modular split — 2026 audit):
-//   time.js         IST clock + market-hours gates
-//   engine.js       dual-source quant scoring + ORB-15 + slippage
-//   regime.js       NIFTY/VIX market-regime filter
-//   alerts.js       Telegram signal + OUTCOME alert engine
-//   trackRecord.js  signal persistence → win-rate accountability
-//   paperTrading.js virtual-trade simulator
-//   stream.js       SSE live-quote watcher + broadcaster
-//   routes.js       endpoint registration (below)
+// Full engine lives in ./ai/* (replaced the v3 intraday desk):
+//   lib/indicators.js    pure TA math (EMA/RSI/MACD/BB/ATR/Stoch/ADX…)
+//   lib/blackScholes.js  option pricing + Greeks + IV solver
+//   data.js              TV scanner / CoinDCX candles / NSE chain
+//   models.js            9-model Superintelligence ensemble
+//   ensemble.js          weighted consensus → STRONG gating
+//   optionsDesk.js       India options chain + strategy builder
+//   coindcxOrders.js     LIVE order execution + safety gates
+//   routes.js            endpoint registration (below)
 // ============================================================
-registerIntradayRoutes(app, {
-  fetchGrowwNseQuote,   // hoisted function declaration below
-  fetchCoinDcxTickers,  // shared 2s-cached CoinDCX ticker (crypto intraday + watcher)
+registerAITradingRoutes(app, {
   KEYS,
   OPENAI_COMPAT,
   TG,
-  escapeHtml,
   jsonError,
 });
 

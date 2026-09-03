@@ -31,8 +31,8 @@
 // Every path is best-effort and never throws into a route.
 // ============================================================
 import crypto from 'node:crypto';
-import { scheduleBackup, restoreBackup, backupConfigured } from '../intraday/backup.js';
-import { loadJSON, saveJSON } from '../intraday/store.js';
+import { scheduleBackup, restoreBackup, backupConfigured } from '../lib/backup.js';
+import { loadJSON, saveJSON } from '../lib/store.js';
 
 const KEY_MIN_LEN = 16;
 const _log = (msg) => console.log(`[mcp/durable] ${msg}`);

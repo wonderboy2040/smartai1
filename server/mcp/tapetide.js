@@ -32,7 +32,7 @@
 // authed /api/mcp/tapetide/* endpoints.
 // ============================================================
 import crypto from 'node:crypto';
-import { loadJSON, saveJSON } from '../intraday/store.js';
+import { loadJSON, saveJSON } from '../lib/store.js';
 import { durablePut } from './durable.js';
 
 // ---------------- Tapetide endpoints (fixed) ----------------

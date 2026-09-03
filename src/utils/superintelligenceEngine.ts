@@ -102,26 +102,14 @@ export interface SuperintelligenceContext {
     live: number;
     nav: number;
   };
-  // 2026-09: live intraday desk signals (NSE + CRYPTO scanners — public
-  // endpoints, 60s server cache) so the AI can reference the same setups
-  // the site's Intraday tab is showing right now.
+  // 2026-09 v6: live AI-TRADING ensemble signals (9-model superintelligence
+  // consensus — public endpoints, server cache) so the AI can reference the
+  // same setups the site's AI Trading tab is showing right now.
   intraday?: {
     market: 'INDIA' | 'CRYPTO';
     marketOpen: boolean;
     signals: { symbol: string; direction: string; confidence: number; grade?: string; entry: number; stopLoss: number; target1: number }[];
   }[];
-  // 2026-09 v4.6: external free keyless crypto intel (CoinLobster whale
-  // flows + CoinGecko trending + Fear&Greed) — the same panel the
-  // Intraday tab shows, so NeuralChat reasons with whale context.
-  marketIntel?: {
-    fearGreed: { value: number; label: string } | null;
-    whaleNetUsd: number | null;
-    whaleDirection: string | null;
-    topWhaleBuyers: string[];
-    topWhaleSellers: string[];
-    liquidationSkew: string | null;
-    bias: string;
-  };
   regime: 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF' | 'GOLDILOCKS' | 'STAGFLATION';
   regimeReason: string;
   warnings: string[];
@@ -661,11 +649,12 @@ ${ctx.portfolioSummary.topLoser ? `Top Loser: ${ctx.portfolioSummary.topLoser.sy
     }
   }
 
-  // 2026-09: live intraday desk signals — the same setups the site's
-  // Intraday tab is showing (NSE during market hours, CRYPTO 24/7).
+  // 2026-09 v6: live AI-TRADING ensemble signals — the same consensus
+  // setups the site's AI Trading tab is showing (NSE during market hours,
+  // CRYPTO 24/7).
   const liveIntraday = (ctx.intraday || []).filter(i => i.marketOpen && i.signals.length > 0);
   if (liveIntraday.length > 0) {
-    out += `\n--- LIVE INTRADAY DESK SIGNALS (site scanner, dual-AI graded) ---\n`;
+    out += `\n--- LIVE AI-TRADING ENSEMBLE SIGNALS (9-model superintelligence consensus) ---\n`;
     for (const desk of liveIntraday) {
       const label = desk.market === 'CRYPTO' ? 'CRYPTO (24/7, CoinDCX INR)' : 'NSE';
       out += `[${label}]\n`;
@@ -673,21 +662,7 @@ ${ctx.portfolioSummary.topLoser ? `Top Loser: ${ctx.portfolioSummary.topLoser.sy
         out += `• ${s.symbol} ${s.direction} (${s.confidence}%${s.grade ? `, ${s.grade} grade` : ''}) — Entry ₹${s.entry} SL ₹${s.stopLoss} T1 ₹${s.target1}\n`;
       }
     }
-    out += `NOTE: intraday signals expire fast — verify on the site's Intraday tab before acting.\n`;
-  }
-
-  // 2026-09 v4.6: external whale/sentiment intel — cross-check the desk
-  // signals against what the whales and the crowd are doing.
-  if (ctx.marketIntel) {
-    const mi = ctx.marketIntel;
-    out += `\n--- GLOBAL CRYPTO INTEL (external free sources — whales / sentiment) ---\n`;
-    if (mi.fearGreed) out += `• Fear&Greed: ${mi.fearGreed.label} (${mi.fearGreed.value}/100)\n`;
-    if (mi.whaleDirection) {
-      const netM = mi.whaleNetUsd != null ? `$${(mi.whaleNetUsd / 1e6).toFixed(1)}M` : 'n/a';
-      out += `• Whales 24h: ${mi.whaleDirection} (net ${netM}) — buyers: ${mi.topWhaleBuyers.join(', ') || '—'} · sellers: ${mi.topWhaleSellers.join(', ') || '—'}\n`;
-    }
-    if (mi.liquidationSkew) out += `• Liquidations 24h: ${mi.liquidationSkew}\n`;
-    out += `• External intel bias: ${mi.bias} — crypto entries/exits me isko factor karo.\n`;
+    out += `NOTE: trading signals expire fast — verify on the site's AI Trading tab before acting.\n`;
   }
 
   if (ctx.warnings.length > 0) {
@@ -704,14 +679,14 @@ ${ctx.portfolioSummary.topLoser ? `Top Loser: ${ctx.portfolioSummary.topLoser.sy
   return out;
 }
 
-// ---------- 1b. Live intraday desk signals (public, 60s server cache) ----------
+// ---------- 1b. Live AI-TRADING ensemble signals (auth-gated, server cache) ----------
 async function fetchIntradaySignals(): Promise<NonNullable<SuperintelligenceContext['intraday']>> {
   const out: NonNullable<SuperintelligenceContext['intraday']> = [];
   const markets: ('INDIA' | 'CRYPTO')[] = ['INDIA', 'CRYPTO'];
   await Promise.allSettled(markets.map(async (mkt) => {
     try {
-      const r = await apiFetch(`${PROXY_BASE}/api/intraday-scanner?market=${mkt}&t=${Date.now()}`, {
-        signal: AbortSignal.timeout(8000),
+      const r = await apiFetch(`${PROXY_BASE}/api/ai/signals?market=${mkt}&limit=5&t=${Date.now()}`, {
+        signal: AbortSignal.timeout(15000),
       });
       if (!r.ok) return;
       const j = await r.json();
@@ -721,7 +696,7 @@ async function fetchIntradaySignals(): Promise<NonNullable<SuperintelligenceCont
         marketOpen: j?.marketOpen !== false,
         signals: sigs.slice(0, 5).map((s: any) => ({
           symbol: String(s.symbol || ''),
-          direction: String(s.direction || ''),
+          direction: String(s.side || s.direction || ''),
           confidence: Number(s.confidence) || 0,
           grade: s.grade || undefined,
           entry: Number(s.entry) || 0,
@@ -734,36 +709,8 @@ async function fetchIntradaySignals(): Promise<NonNullable<SuperintelligenceCont
   return out;
 }
 
-// ---------- 1c. External market intel brief (public, 60s server cache) ----------
-async function fetchMarketIntelBrief(): Promise<SuperintelligenceContext['marketIntel'] | undefined> {
-  try {
-    const r = await apiFetch(`${PROXY_BASE}/api/intraday-intel?t=${Date.now()}`, {
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!r.ok) return undefined;
-    const j = await r.json();
-    if (!j?.ok) return undefined;
-    const liq = j.digest?.liqLongUsd != null || j.digest?.liqShortUsd != null
-      ? (() => {
-          const l = j.digest.liqLongUsd ?? 0, s = j.digest.liqShortUsd ?? 0;
-          const tot = l + s;
-          if (tot <= 0) return null;
-          const lp = Math.round((l / tot) * 100);
-          return `${lp}% long-side ($${(l / 1e6).toFixed(0)}M) / ${100 - lp}% short-side — ${lp >= 65 ? 'long flush ho chuka (bounce fuel)' : lp <= 35 ? 'short squeeze chal raha' : 'balanced'}`;
-        })()
-      : null;
-    return {
-      fearGreed: j.fearGreed ? { value: Number(j.fearGreed.value) || 0, label: String(j.fearGreed.rawLabel || j.fearGreed.label || '') } : null,
-      whaleNetUsd: j.analysis?.whales?.netUsd != null ? Number(j.analysis.whales.netUsd) : null,
-      whaleDirection: j.analysis?.whales?.direction ? String(j.analysis.whales.direction) : null,
-      topWhaleBuyers: (j.digest?.buyers || []).slice(0, 3).map((b: any) => String(b.coin || '')).filter(Boolean),
-      topWhaleSellers: (j.digest?.sellers || []).slice(0, 3).map((b: any) => String(b.coin || '')).filter(Boolean),
-      liquidationSkew: liq,
-      bias: String(j.analysis?.bias || 'NEUTRAL'),
-    };
-  } catch { /* intel gated/unavailable — skip */ }
-  return undefined;
-}
+// (2026-09 v6: external whale/sentiment intel panel retired with the
+//  Intraday tab — the 9-model ensemble now carries the full signal load.)
 
 // ---------- Main entry: build full Superintelligence context ----------
 export async function buildSuperintelligenceContext(
@@ -772,12 +719,11 @@ export async function buildSuperintelligenceContext(
   usdInrRate: number,
   _portfolioContextText: string
 ): Promise<SuperintelligenceContext> {
-  // Fire all data fetches in parallel (market + news + intraday desk + intel).
-  const [market, newsResult, intraday, marketIntel] = await Promise.all([
+  // Fire all data fetches in parallel (market + news + ensemble signals).
+  const [market, newsResult, intraday] = await Promise.all([
     fetchMarketSnapshot(),
     fetchPortfolioNews(portfolio, usdInrRate),
     fetchIntradaySignals(),
-    fetchMarketIntelBrief(),
   ]);
 
   // FIX L4: `??` only catches null/undefined, not 0. If /api/forex ever
@@ -829,7 +775,6 @@ export async function buildSuperintelligenceContext(
       nav: portfolio.filter(p => p.noLive).length,
     },
     intraday,
-    marketIntel,
     portfolioSummary: {
       totalValueINR: totalValue,
       totalInvestedINR: totalInvested,
@@ -934,7 +879,7 @@ SUPERINTELLIGENCE MANDATE (24x7):
 1. READ the live market data + portfolio context below — it's REAL-TIME, use it
 2. For EVERY portfolio query, reference 2-3 specific positions with current price + signal (mention the source tag — [INDMONEY]/[COINDCX] — and treat NAV rows as sync-priced, not live)
 3. For EVERY market query, use the live snapshot (NIFTY/SPY/VIX/etc.) — NOT stale memory
-4. For intraday queries, use the LIVE INTRADAY DESK SIGNALS section (the site's own scanner output)
+4. For trade-signal queries, use the LIVE AI-TRADING ENSEMBLE SIGNALS section (the site's 9-model consensus output)
 5. For portfolio-specific news, mention the headline + your "inside story" interpretation
 6. NEVER say "I don't have data" — it's ALL provided below
 7. Connect MACRO (Fed/RBI/rates/inflation/DXY) WITH MICRO (user's holdings)
