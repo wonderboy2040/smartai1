@@ -42,13 +42,22 @@ const DUST_INR = 10;
 // trade ledger, not the balances endpoint. We try the documented trade /
 // order-history endpoints (whichever the API key's permission allows) and
 // compute an avg-cost basis. A view-only key without trade permission
-// simply yields no basis → the row honestly shows P&L n/a.
+// simply yields no basis → the row honestly shows P&L n/a (the user can
+// then enter a manual basis from the app's coin pages — see below).
+//
+// v5.2 endpoint fix: the DOCUMENTED trade-history endpoint is
+// POST /exchange/v1/orders/trade_history (limit max 5000, from_id cursor).
+// The previously-tried paths are kept as fallbacks — /exchange/v1/trades is
+// the PUBLIC market-trades endpoint (signed calls fail), which is why
+// basis never resolved with a valid key.
 const TRADES_PATHS = [
+  '/exchange/v1/orders/trade_history',         // DOCUMENTED: user's executed trades
   '/exchange/v1/trades',                        // list executed trades (page/size)
   '/exchange/v1/users/trades',                  // older docs variant
   '/exchange/v1/orders/fetch_order_history',    // order history (filled orders)
 ];
 const TRADES_MAX_PAGES = 10; // 10 × 100 = 1000 trades — plenty for a real wallet
+const TRADES_PAGE_LIMIT = 2000; // per-call limit for the documented endpoint
 
 // ---------------- credential store (server-side only) ----------------
 function loadCreds() {
@@ -60,6 +69,52 @@ function saveCreds(creds) {
   // ephemeral-disk restarts. Best-effort, never throws.
   try { durablePut(CREDS_FILE, creds); } catch { /* optional */ }
   return creds;
+}
+
+// ---------------- manual cost basis (fallback store) ----------------
+// When the API key has no trade-history permission, the trade-ledger basis
+// is unavailable. The user can enter per-coin invested amounts ONCE (from
+// the CoinDCX app's coin pages) — they persist across syncs and server
+// restarts, and are used ONLY when the ledger basis is missing. Rows then
+// show app-parity Invested / Avg Price / P&L.
+const MANUAL_BASIS_FILE = 'mcp-coindcx-basis.json';
+function loadManualBasis() {
+  return loadJSON(MANUAL_BASIS_FILE, {}) || {};
+}
+function saveManualBasis(basis) {
+  saveJSON(MANUAL_BASIS_FILE, basis);
+  try { durablePut(MANUAL_BASIS_FILE, basis); } catch { /* optional */ }
+  return basis;
+}
+/** Set (or clear, when invested == null) one coin's manual invested amount. */
+export function setManualBasis(coin, invested) {
+  const key = String(coin || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!key) throw Object.assign(new Error('coin is required'), { status: 400, code: 'BAD_REQUEST' });
+  const basis = loadManualBasis();
+  if (invested == null || !(Number(invested) > 0)) delete basis[key];
+  else basis[key] = Math.round(Number(invested) * 100) / 100;
+  saveManualBasis(basis);
+  return basis;
+}
+/** Clear one coin (or the whole store when coin is omitted). */
+export function clearManualBasis(coin) {
+  if (!coin) { saveManualBasis({}); return {}; }
+  return setManualBasis(coin, null);
+}
+export function getManualBasis() {
+  return loadManualBasis();
+}
+// Merge rule: trade-ledger basis wins per coin; manual basis fills the
+// coins the ledger couldn't price (or the whole set when there's no ledger).
+function mergeBasis(ledgerBasis, manualBasis) {
+  if (!ledgerBasis && !manualBasis) return null;
+  const out = { ...(ledgerBasis || {}) };
+  for (const [coin, inv] of Object.entries(manualBasis || {})) {
+    if (typeof inv !== 'number' || !(inv > 0)) continue;
+    const led = out[coin];
+    if (!led || !(led.invested > 0)) out[coin] = { qty: null, invested: inv, avgPrice: null, manual: true };
+  }
+  return Object.keys(out).length ? out : null;
 }
 export function coindcxConnected() {
   const c = loadCreds();
@@ -76,6 +131,11 @@ export function coindcxStatus() {
     lastSyncAt: c.lastSyncAt || null,
     balanceCount: typeof c.balanceCount === 'number' ? c.balanceCount : 0,
     lastError: c.lastError || null,
+    // v5.2 diagnostics: WHY is crypto P&L n/a? costBasis = trade-ledger
+    // result (source endpoint + trades count); manualBasis = user-entered
+    // per-coin invested (the view-only-key fallback).
+    costBasis: c.costBasis || null,
+    manualBasis: loadManualBasis(),
   };
 }
 
@@ -232,6 +292,8 @@ export function mapBalancesToAssets(balances, tickers, usdInr = 84, basis = null
     if (value < DUST_INR) continue; // dust filter
 
     const binfo = basis && basis[b.base] && basis[b.base].invested > 0 ? basis[b.base] : null;
+    // avg price: ledger avg when present; manual basis → invested/qty.
+    const bAvg = binfo ? (binfo.avgPrice ?? (binfo.qty > 0 ? binfo.invested / binfo.qty : binfo.invested / b.qty)) : null;
 
     assets.push({
       id: `cdcx-${b.base}`,
@@ -242,7 +304,7 @@ export function mapBalancesToAssets(balances, tickers, usdInr = 84, basis = null
       kind: 'crypto',
       source: 'coindcx',
       qty: b.qty,
-      avgPrice: binfo ? round2(binfo.avgPrice) : null, // avg INR cost per unit
+      avgPrice: binfo ? round2(bAvg) : null, // avg INR cost per unit
       lastPrice: round2(price),
       value: round2(value),
       invested: binfo ? round2(binfo.invested) : null, // INR cost basis (trade ledger)
@@ -251,6 +313,7 @@ export function mapBalancesToAssets(balances, tickers, usdInr = 84, basis = null
       oneDayChangePct: pair && inrT ? (parseFloat(inrT.change_24_hour) || 0) : null,
       assetType: 'Crypto',
       assetEnum: 'CRYPTO',
+      basisSource: binfo ? (binfo.manual ? 'manual' : 'ledger') : null,
       noLive: false,              // crypto ticks live via SSE/poller
     });
   }
@@ -285,7 +348,7 @@ export function normalizeTrades(raw) {
       ? t.quantity
       : numOrNull(t.filled_quantity ?? t.quantity);
     let qty = filledQty;
-    let price = numOrNull(t.price ?? t.average_price ?? t.avg_price);
+    let price = numOrNull(t.price ?? t.price_per_unit ?? t.average_price ?? t.avg_price ?? t.avgPrice);
     if (qty == null && typeof t.total_quantity === 'number') {
       // order-history: filled = total − remaining
       const rem = numOrNull(t.remaining_quantity) ?? 0;
@@ -350,23 +413,45 @@ export async function fetchCoinDcxTrades(apiKey, secret) {
   for (const path of TRADES_PATHS) {
     try {
       const merged = [];
-      for (let page = 1; page <= TRADES_MAX_PAGES; page++) {
-        const raw = await coindcxPrivate(path, apiKey, secret, {
-          page: String(page),
-          size: '100',
-        });
-        const list = Array.isArray(raw) ? raw
-          : (Array.isArray(raw?.orders) ? raw.orders
-            : (Array.isArray(raw?.data) ? raw.data : []));
-        merged.push(...list);
-        if (!Array.isArray(list) || list.length < 100) break; // last page
+      if (path === '/exchange/v1/orders/trade_history') {
+        // Documented endpoint: cursor pagination via from_id (older-than),
+        // limit max 5000. Loop until a short page arrives.
+        let fromId = null;
+        for (let i = 0; i < TRADES_MAX_PAGES; i++) {
+          const body = { limit: String(TRADES_PAGE_LIMIT) };
+          if (fromId != null) body.from_id = String(fromId);
+          const raw = await coindcxPrivate(path, apiKey, secret, body);
+          const list = Array.isArray(raw) ? raw
+            : (Array.isArray(raw?.orders) ? raw.orders
+              : (Array.isArray(raw?.data) ? raw.data : []));
+          if (!Array.isArray(list) || list.length === 0) break;
+          merged.push(...list);
+          // Cursor = the smallest numeric id in this batch (responses are
+          // newest-first); stop when the page is short or no ids exist.
+          const ids = list.map(t => Number(t?.id)).filter(n => Number.isFinite(n) && n > 0);
+          if (list.length < TRADES_PAGE_LIMIT || ids.length === 0) break;
+          fromId = Math.min(...ids);
+        }
+      } else {
+        // Legacy endpoints: classic page/size pagination.
+        for (let page = 1; page <= TRADES_MAX_PAGES; page++) {
+          const raw = await coindcxPrivate(path, apiKey, secret, {
+            page: String(page),
+            size: '100',
+          });
+          const list = Array.isArray(raw) ? raw
+            : (Array.isArray(raw?.orders) ? raw.orders
+              : (Array.isArray(raw?.data) ? raw.data : []));
+          merged.push(...list);
+          if (!Array.isArray(list) || list.length < 100) break; // last page
+        }
       }
       // An endpoint that answers with a list we can parse wins — even an
       // empty one (a wallet funded by transfers, not trades).
       return { trades: normalizeTrades(merged), endpoint: path };
     } catch (err) {
       const status = err?.status;
-      if (status === 401 || status === 403 || status === 404) continue; // not allowed here → next
+      if (status === 401 || status === 403 || status === 404 || status === 400) continue; // not allowed here → next
       throw err; // network/auth-level failure — let the caller degrade
     }
   }
@@ -404,7 +489,9 @@ export async function fetchCoinDcxAssets(usdInr) {
     fetchCoinDcxTrades(creds.apiKey, creds.secret).catch(() => null),
   ]);
   const balances = normalizeBalances(raw);
-  const basis = tradesOut ? computeCostBasis(tradesOut.trades, usdInr) : null;
+  const ledgerBasis = tradesOut ? computeCostBasis(tradesOut.trades, usdInr) : null;
+  const manualBasis = loadManualBasis();
+  const basis = mergeBasis(ledgerBasis, manualBasis);
   const assets = mapBalancesToAssets(balances, tickers, usdInr, basis);
   saveCreds({
     ...creds,
@@ -414,7 +501,8 @@ export async function fetchCoinDcxAssets(usdInr) {
     costBasis: {
       source: tradesOut?.endpoint || null,
       trades: tradesOut?.trades?.length ?? 0,
-      coins: basis ? Object.keys(basis) : [],
+      coins: ledgerBasis ? Object.keys(ledgerBasis) : [],
+      manualCoins: Object.keys(manualBasis || {}),
       computedAt: Date.now(),
     },
   });

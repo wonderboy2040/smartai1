@@ -64,12 +64,14 @@ describe('syncedAssetPnl — US rows (USD native + INR conversion)', () => {
 
   it('snapshot pnl converts INR→USD at the live rate (FX cancels)', () => {
     // INDMoney reports INR: invested ₹87,000, pnl ₹6,021 (= their $69.21 at 87)
+    // v5.2: US value = qty × price (value-consistent lastPrice fixture —
+    // (invested+pnl)/qty/rate, exactly how the server derives it).
     const p = pos({
       symbol: 'MU', market: 'US', qty: 10, avgPrice: 100, // avgPrice USD (sync-converted)
       indmInvestedINR: 87000, indmPnlINR: 6021, indmPnlPct: 6.92,
-      indmLastPrice: 93.021, source: 'indmoney', // USD per unit (server-converted)
+      indmLastPrice: 93021 / 10 / 87, source: 'indmoney', // USD per unit (server-converted)
     });
-    const r = syncedAssetPnl(p, 93.021, RATE); // no tick yet
+    const r = syncedAssetPnl(p, 93021 / 10 / 87, RATE); // no tick yet
     expect(r.synced).toBe(true);
     expect(r.invested).toBeCloseTo(1000, 1);      // ₹87,000 / 87
     expect(r.pnl).toBeCloseTo(6021 / 87, 3);      // ₹6,021 / 87 ≈ $69.21 bucket
@@ -78,13 +80,35 @@ describe('syncedAssetPnl — US rows (USD native + INR conversion)', () => {
   });
 
   it('live delta in USD layers on top of the converted snapshot pnl', () => {
+    // sync price = (17400+870)/20/87 = $10.5; live 10.735 → +0.235 × 20 = $4.70
     const p = pos({
       symbol: 'SPCX', market: 'US', qty: 20, avgPrice: 10,
-      indmInvestedINR: 17400, indmPnlINR: 870, indmLastPrice: 9.565, source: 'indmoney',
+      indmInvestedINR: 17400, indmPnlINR: 870, indmLastPrice: 18270 / 20 / 87, source: 'indmoney',
     });
-    // live 9.8 vs sync 9.565 → delta = 0.235 × 20 = $4.70
-    const r = syncedAssetPnl(p, 9.8, RATE);
+    const r = syncedAssetPnl(p, 10.735, RATE);
     expect(r.pnl).toBeCloseTo(870 / 87 + 4.7, 3); // $10 + $4.70
+  });
+
+  it('v5.2 APP-PARITY: invested converts at the calibrated app rate, value stays live — the 🦅 $118 vs app $60.31 bug', () => {
+    // THE user case (live-verified numbers): INDMoney reports INR invested
+    // ₹86,631.66 for SMH. Their app shows USD invested at ITS internal rate
+    // (~92.0, buy-time FX) — NOT the live rate (94.89). The old code divided
+    // by live FX → USD invested understated → the 🦅 P&L chip overstated by
+    // the FX gain (~$50 on a $1,600 portfolio). With investedRate = the
+    // calibrated rate, invested/pnl match the app; value stays live USD.
+    const p = pos({
+      symbol: 'SMH', market: 'US', qty: 1.9241956, avgPrice: 474.46,
+      indmInvestedINR: 86631.66, indmPnlINR: 12782.95, indmLastPrice: 544.46, source: 'indmoney',
+    });
+    const r = syncedAssetPnl(p, 544.46, 94.892, 92.0006);
+    expect(r.invested).toBeCloseTo(86631.66 / 92.0006, 2);   // ≈ $941.64 (app world)
+    expect(r.value).toBeCloseTo(544.46 * 1.9241956, 2);      // live USD value
+    expect(r.investedINR).toBeCloseTo(86631.66, 2);          // EXACT INDMoney INR mirror
+    expect(r.pnl).toBeCloseTo(544.46 * 1.9241956 - 86631.66 / 92.0006, 2); // stock-only, app-style
+    // and WITHOUT calibration the old FX-mixed behavior is preserved:
+    const r2 = syncedAssetPnl(p, 544.46, 94.892);
+    expect(r2.invested).toBeCloseTo(86631.66 / 94.892, 2);   // live-FX invested (legacy)
+    expect(r2.pnl).toBeCloseTo(544.46 * 1.9241956 - 86631.66 / 94.892, 2);
   });
 });
 

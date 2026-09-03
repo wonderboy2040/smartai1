@@ -1997,6 +1997,33 @@ export async function unhideIndmAsset(key: string, all = false): Promise<boolean
   } catch { return false; }
 }
 
+// v5.2 — CoinDCX manual cost basis (the view-only-key fallback so crypto
+// rows show the app's Invested / P&L). Server persists per-coin amounts
+// and merges them ONLY where the trade-ledger basis is missing.
+export async function setCoindcxManualBasis(coin: string, invested: number): Promise<boolean> {
+  try {
+    const res = await apiFetch('/api/mcp/coindcx/basis', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ coin, invested }),
+      signal: AbortSignal.timeout(30000),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
+export async function clearCoindcxManualBasis(coin?: string): Promise<boolean> {
+  try {
+    const res = await apiFetch('/api/mcp/coindcx/basis/clear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(coin ? { coin } : {}),
+      signal: AbortSignal.timeout(30000),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
 export async function fetchCoinDcxStatus(): Promise<CoinDcxInfo | null> {
   try {
     const res = await apiFetch('/api/mcp/coindcx/status', { signal: AbortSignal.timeout(10000) });

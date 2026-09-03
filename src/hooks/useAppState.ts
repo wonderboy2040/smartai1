@@ -154,6 +154,29 @@ export function useAppState() {
   const usdInrRateRef = useRef(DEFAULT_USD_INR);
   useEffect(() => { usdInrRateRef.current = usdInrRate; }, [usdInrRate]);
 
+  // v5.2 APP-PARITY FX: INDMoney's app shows the US Invested in USD at ITS
+  // own internal rate (~buy-time FX), not the live rate — so the site's 🦅
+  // invested/P&L can differ from the app purely by FX-rate choice. The user
+  // calibrates ONCE ("Match App": enters the app's USD invested → the implied
+  // rate is stored here); null = live rate (legacy behavior). Persisted in
+  // localStorage so it survives reloads.
+  const [usdAppRate, setUsdAppRateState] = useState<number | null>(() => {
+    const raw = secureStorage.getItem('usdAppRate');
+    const n = Number(raw);
+    return raw != null && Number.isFinite(n) && n > 50 && n < 150 ? n : null;
+  });
+  const usdAppRateRef = useRef<number | null>(usdAppRate);
+  useEffect(() => { usdAppRateRef.current = usdAppRate; }, [usdAppRate]);
+  const setUsdAppRate = useCallback((v: number | null) => {
+    const safe = v != null && Number.isFinite(v) && v > 50 && v < 150 ? v : null;
+    usdAppRateRef.current = safe;
+    setUsdAppRateState(safe);
+    try {
+      if (safe == null) secureStorage.removeItem('usdAppRate');
+      else secureStorage.setItem('usdAppRate', String(safe));
+    } catch { /* quota */ }
+  }, []);
+
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (secureStorage.getItem('theme') as 'dark' | 'light') || 'dark');
   const [currentSymbol, setCurrentSymbol] = useState('');
   const [currentMarket, setCurrentMarket] = useState<'IN' | 'US'>('IN');
@@ -1524,7 +1547,8 @@ export function useAppState() {
   const calculateMetrics = useCallback((
     p: Position[] = portfolioRef.current,
     lp: Record<string, PriceData> = livePricesRef.current,
-    rate: number = usdInrRateRef.current
+    rate: number = usdInrRateRef.current,
+    appRate: number | null | undefined = usdAppRateRef.current
   ) => {
     let totalInvested = 0, totalValue = 0, todayPL = 0;
     let indPL = 0, usPL = 0, cryptoPL = 0;
@@ -1551,7 +1575,9 @@ export function useAppState() {
       // overshoot because the old math re-derived value from a different
       // price/FX world: live quote × qty vs INR snapshot cost).
       // Manual rows: legacy leverage-aware math, unchanged.
-      const pnlTruth = syncedAssetPnl(pos, curPrice, rate);
+      // v5.2: `appRate` calibrates the US invested side to INDMoney's
+      // internal FX — the 🦅 section then matches the app's USD numbers.
+      const pnlTruth = syncedAssetPnl(pos, curPrice, rate, appRate ?? undefined);
 
       totalInvested += pnlTruth.investedINR;
       totalValue += pnlTruth.valueINR;
@@ -1599,6 +1625,15 @@ export function useAppState() {
     });
     const plPct = totalInvested > 0 ? (totalPL / totalInvested) * 100 : 0;
     const todayPct = (totalValue - todayPL) > 0 ? (todayPL / (totalValue - todayPL)) * 100 : 0;
+    // v5.2 APP-PARITY section metrics — the three cards mirror the official
+    // apps' sections exactly:
+    //   🇮🇳 India: INR-native invested/value/returns (INDMoney exact)
+    //   🦅 USA: USD invested at the calibrated rate, USD value at live,
+    //         unrealized = value − invested (app-style, stock-only)
+    //   🪙 Crypto: invested from trade-ledger/manual basis, live value
+    const usPnlUSD = totalValueUSD - totalInvestedUSD;
+    const cryptoPct = totalInvestedCRYPTO > 0 ? (totalPLCRYPTO / totalInvestedCRYPTO) * 100 : null;
+    const indiaPct = totalInvestedINR > 0 ? ((totalValueINR - totalInvestedINR) / totalInvestedINR) * 100 : 0;
     return {
       totalInvested,
       totalValue,
@@ -1615,11 +1650,15 @@ export function useAppState() {
       totalValueUSD,
       totalInvestedCRYPTO,
       totalValueCRYPTO,
-      totalPLCRYPTO
+      totalPLCRYPTO,
+      // v5.2 sections (app-parity)
+      usPnlUSD,
+      cryptoPct,
+      indiaPct,
     };
   }, []);
 
-  const metrics = useMemo(() => calculateMetrics(portfolio, livePrices, usdInrRate), [calculateMetrics, portfolio, livePrices, usdInrRate]);
+  const metrics = useMemo(() => calculateMetrics(portfolio, livePrices, usdInrRate, usdAppRate), [calculateMetrics, portfolio, livePrices, usdInrRate, usdAppRate]);
 
   // Update latestDataRef for telegram interval
   useEffect(() => { latestDataRef.current = { portfolio, livePrices, usdInrRate }; }, [portfolio, livePrices, usdInrRate]);
@@ -2219,7 +2258,7 @@ export function useAppState() {
     // Auth
     isAuthenticated, pinInput, setPinInput, verifyPin, logout,
     // Core
-    activeTab, setActiveTab, portfolio, setPortfolio, transactions, setTransactions, livePrices, usdInrRate, theme,
+    activeTab, setActiveTab, portfolio, setPortfolio, transactions, setTransactions, livePrices, usdInrRate, usdAppRate, setUsdAppRate, theme,
     // Transaction ledger helpers
     deleteTransaction, editTransaction,
     // Price alerts

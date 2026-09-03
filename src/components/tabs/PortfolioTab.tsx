@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { useApp } from '../../hooks/AppContext';
 import { getTodayString, isCryptoSymbol } from '../../utils/constants';
-import { getCustomCloudConfig, saveCustomCloudConfig } from '../../utils/api';
+import { getCustomCloudConfig, saveCustomCloudConfig, setCoindcxManualBasis, clearCoindcxManualBasis } from '../../utils/api';
 import { calculatePortfolioXIRR } from '../../utils/wealthEngine';
 import { syncedAssetPnl } from '../../utils/assetPnl';
 import { PortfolioInsights, type InsightsPanelAsset } from '../portfolio/PortfolioInsights';
@@ -85,11 +85,11 @@ function useValueFlash(value: number): string {
 
 const PortfolioTab = React.memo(function PortfolioTab() {
   const {
-    portfolio, livePrices, usdInrRate, metrics, transactions,
+    portfolio, livePrices, usdInrRate, usdAppRate, setUsdAppRate, metrics, transactions,
     openAddModal, pushTelegramReport, syncStatus, loadFromCloud, setPortfolio,
     setAddSymbol, setCurrentMarket, setAddQty, setAddPrice, setAddDate,
     setEditId, setTransactionType, setShowAddModal, setModalPrice,
-    refreshAll, isRefreshing,
+    refreshAll, isRefreshing, loadIndmAssets,
     indmSource, indmMeta, removeIndmAsset, restoreIndmAsset,
   } = useApp();
 
@@ -99,6 +99,19 @@ const PortfolioTab = React.memo(function PortfolioTab() {
   const hiddenAssets = indmMeta?.hiddenAssets || [];
   const [showHidden, setShowHidden] = useState(false);
   const [hidingKeys, setHidingKeys] = useState<Set<string>>(new Set());
+
+  // --- v5.2 APP-PARITY calibration UI state ---
+  // "Match App" (USA): INDMoney's app shows USD invested at ITS internal FX
+  // (~buy-time rate); the site defaults to the live rate. The user enters
+  // the app's $invested ONCE → the implied rate is stored → all 🦅 numbers
+  // (invested / avg price / unrealized) match the app exactly.
+  const [showMatchApp, setShowMatchApp] = useState(false);
+  const [appUsdInput, setAppUsdInput] = useState('');
+  // Crypto basis modal (CoinDCX): per-coin invested from the app's coin
+  // pages, for keys without trade-history permission.
+  const [showBasisModal, setShowBasisModal] = useState(false);
+  const [basisInputs, setBasisInputs] = useState<Record<string, string>>({});
+  const [basisSaving, setBasisSaving] = useState(false);
 
   const handleRemoveAsset = (p: (typeof portfolio)[number]) => {
     if (!p.indmKey) return;
@@ -198,7 +211,9 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         // EXACT-MATCH P&L (v4.4): synced rows ground in INDMoney's own
         // snapshot pnl + live-tick delta (assetPnl.ts) — rows + group
         // totals now match the INDMoney app; manual rows keep legacy math.
-        const pnlTruth = syncedAssetPnl(p, curPrice, usdInrRate);
+        // v5.2: usdAppRate calibrates US rows' invested side to INDMoney's
+        // internal FX → the 🦅 avg price / invested / pnl match the app.
+        const pnlTruth = syncedAssetPnl(p, curPrice, usdInrRate, usdAppRate);
         const eqVal = pnlTruth.value;
         const pl = pnlTruth.pnl;
         const plPct = pnlTruth.pnlPct ?? 0;
@@ -208,8 +223,12 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         const invINR = pnlTruth.investedINR;
         // v4.5: per-row cost + today P&L computed ONCE here (row render,
         // insights, sorting and CSV export all reuse the same numbers).
+        // v5.2: US rows convert INR invested at the CALIBRATED rate when
+        // set — that is what the app's Avg. Price column shows (the old
+        // live-FX conversion was the per-row avg mismatch).
+        const usRate = usdAppRate ?? (usdInrRate || 1);
         const invNative = p.market === 'US'
-          ? (p.indmInvestedINR != null ? p.indmInvestedINR / (usdInrRate || 1) : p.avgPrice * p.qty)
+          ? (p.indmInvestedINR != null ? p.indmInvestedINR / usRate : p.avgPrice * p.qty)
           : (p.indmInvestedINR != null ? p.indmInvestedINR : p.avgPrice * p.qty);
         const change = data?.change || 0;
         const prevPrice = (data?.prevClose && data.prevClose > 0)
@@ -270,9 +289,40 @@ const PortfolioTab = React.memo(function PortfolioTab() {
     }
 
     return groups.filter(g => g.assets.length > 0);
-  }, [portfolio, livePrices, usdInrRate, metrics.totalValue, xirrMap, search, sortKey, sortDir]);
+  }, [portfolio, livePrices, usdInrRate, usdAppRate, metrics.totalValue, xirrMap, search, sortKey, sortDir]);
 
   const totalVisible = groupedPortfolio.reduce((s, g) => s + g.assets.length, 0);
+
+  // --- v5.2: raw US INR invested (Σ INDMoney's INR aggregates) — the
+  // "Match App" flow divides this by the app's $invested to derive the
+  // internal FX rate. ---
+  const usInrInvested = useMemo(() => portfolio
+    .filter(p => p.market === 'US' && typeof p.indmInvestedINR === 'number')
+    .reduce((s, p) => s + (p.indmInvestedINR || 0), 0), [portfolio]);
+
+  // --- v5.2: crypto rows for the manual-basis modal (CoinDCX) ---
+  const cryptoRows = useMemo(() => portfolio
+    .filter(p => p.source === 'coindcx')
+    .map(p => ({ symbol: p.symbol, qty: p.qty, valINR: (p.indmInvestedINR != null ? undefined : p.qty * (p.indmLastPrice || p.avgPrice || 0)) }))
+    .filter(r => !!r.symbol), [portfolio]);
+
+  // --- v5.2: save the crypto manual basis (per-coin invested) ---
+  const handleSaveBasis = async () => {
+    setBasisSaving(true);
+    try {
+      let any = false;
+      for (const [coin, val] of Object.entries(basisInputs)) {
+        const n = Number(val);
+        if (val.trim() === '' || !Number.isFinite(n)) continue;
+        if (n > 0) { const ok = await setCoindcxManualBasis(coin, n); any = any || ok; }
+        else { await clearCoindcxManualBasis(coin); any = true; }
+      }
+      if (any) await loadIndmAssets(true); // pull the refreshed rows
+      setShowBasisModal(false);
+    } finally {
+      setBasisSaving(false);
+    }
+  };
 
   // --- v4.5: Insights feed (all groups flattened, same sync-truth rows) ---
   const insightAssets = useMemo<InsightsPanelAsset[]>(() =>
@@ -421,58 +471,195 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         <span className="text-[10px] text-cyan-500/60 font-bold uppercase tracking-wider">Live Forex • 24×7 · 30s</span>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="quantum-stat rounded-2xl p-4 animate-fade-in-up">
-          <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Capital Deployed</div>
-          <div className="text-xl font-black text-white font-mono mt-1">₹{Math.round(metrics.totalInvested).toLocaleString('en-IN')}</div>
-          <div className="text-[10px] text-slate-400 mt-1 font-mono flex items-center gap-1 flex-wrap">
-            <span>🇮🇳 ₹{Math.round(metrics.totalInvestedINR || 0).toLocaleString('en-IN')}</span>
-            <span className="text-slate-600 font-bold">•</span>
-            <span>🦅 ${Math.round(metrics.totalInvestedUSD || 0).toLocaleString('en-US')}</span>
-          </div>
+      {/* v5.2 APP-PARITY SUMMARY — each card mirrors the OFFICIAL app's
+          section exactly (the numbers the user cross-checks daily):
+          🇮🇳 INDMoney INDIA (INR native, app-exact to the paisa) ·
+          🦅 INDMoney USA (USD — invested at the app's internal FX via the
+          one-time "Match App" calibration) · 🪙 CoinDCX crypto (invested
+          from the trade ledger, or the manual basis fallback).
+          The old mixed-level cards (all-market headline + India sub-lines)
+          read as "Total Returns 35,372" against the app's INDIA 25,376 —
+          the gap was the US pnl's FX gain sitting inside an all-market
+          number. Now every number sits at its own clearly-labeled level. */}
+      <div className="quantum-panel rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">All Markets</span>
+          <span className="text-sm font-black text-white font-mono">₹{Math.round(metrics.totalValue).toLocaleString('en-IN')}</span>
+          <span className="text-[10px] text-slate-500 font-mono">inv ₹{Math.round(metrics.totalInvested).toLocaleString('en-IN')}</span>
         </div>
-        <div className="quantum-stat rounded-2xl p-4 border-cyan-500/15 animate-fade-in-up delay-75">
-          <div className="text-cyan-500/80 text-[10px] font-bold uppercase tracking-wider">Current Equity</div>
-          <div className="text-xl font-black text-cyan-400 font-mono mt-1">₹{Math.round(metrics.totalValue).toLocaleString('en-IN')}</div>
-          <div className="text-[10px] text-slate-400 mt-1 font-mono flex items-center gap-1 flex-wrap">
-            <span>🇮🇳 ₹{Math.round(metrics.totalValueINR || 0).toLocaleString('en-IN')}</span>
-            <span className="text-slate-600 font-bold">•</span>
-            <span>🦅 ${Math.round(metrics.totalValueUSD || 0).toLocaleString('en-US')}</span>
-          </div>
-        </div>
-        <div className="quantum-stat rounded-2xl p-4 animate-fade-in-up delay-150">
-          <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Total P&L</div>
-          <div className={`text-xl font-black font-mono mt-1 ${metrics.totalPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={`text-sm font-black font-mono ${metrics.totalPL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
+            title={`Whole-portfolio P&L in INR. 🦅 contribution uses app-parity (stock-only) math; INDMoney's own INR-native total (US pnl incl. FX gains) would be a few % higher on the US leg when the rupee has moved.`}>
             {metrics.totalPL >= 0 ? '+' : ''}₹{Math.round(metrics.totalPL).toLocaleString('en-IN')}
+            <span className={`text-[10px] ml-1 ${metrics.plPct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>({metrics.plPct >= 0 ? '+' : ''}{metrics.plPct.toFixed(2)}%)</span>
+          </span>
+          <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1.5 flex-wrap">
+            <span className={metrics.totalValueINR - metrics.totalInvestedINR >= 0 ? 'text-emerald-500/80' : 'text-red-500/80'}>🇮🇳 {metrics.totalValueINR - metrics.totalInvestedINR >= 0 ? '+' : ''}₹{Math.round(metrics.totalValueINR - metrics.totalInvestedINR).toLocaleString('en-IN')}</span>
+            <span className="text-slate-600 font-bold">•</span>
+            <span className={metrics.usPnlUSD >= 0 ? 'text-emerald-500/80' : 'text-red-500/80'}>🦅 {metrics.usPnlUSD >= 0 ? '+' : ''}${Math.round(metrics.usPnlUSD).toLocaleString('en-US')}</span>
+            {metrics.totalValueCRYPTO > 0 && (
+              <>
+                <span className="text-slate-600 font-bold">•</span>
+                <span className={metrics.totalInvestedCRYPTO > 0 ? (metrics.totalPLCRYPTO >= 0 ? 'text-emerald-500/80' : 'text-red-500/80') : 'text-slate-500'}>
+                  🪙 {metrics.totalInvestedCRYPTO > 0 ? `${metrics.totalPLCRYPTO >= 0 ? '+' : ''}₹${Math.round(metrics.totalPLCRYPTO).toLocaleString('en-IN')}` : 'P&L n/a'}
+                </span>
+              </>
+            )}
+          </span>
+        </div>
+      </div>
+
+      {/* SECTION CARDS — one per official app section */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+        {/* 🇮🇳 INDIA — INDMoney app's INDIA section, INR native, app-exact */}
+        <div className="quantum-stat rounded-2xl p-4 border border-orange-500/20 bg-orange-500/[0.03] animate-fade-in-up">
+          <div className="flex items-center justify-between">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-orange-400/90">🇮🇳 India · INDMoney</div>
+            <span className="text-[8px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 rounded px-1.5 py-0.5" title="Invested/Value/Returns match the INDMoney app's INDIA section exactly (same INR numbers, sync-time truth + live ticks)">
+              APP EXACT
+            </span>
           </div>
-          <div className="flex flex-col gap-0.5 mt-1">
-            <div className={`text-xs font-bold ${metrics.totalPL >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-              {metrics.plPct >= 0 ? '+' : ''}{metrics.plPct.toFixed(2)}%
+          <div className="mt-2.5 space-y-1.5 font-mono">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Invested</span>
+              <span className="text-sm font-black text-white">₹{(metrics.totalInvestedINR || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             </div>
-            {/* v5.1: market sub-lines now bucket EXACTLY like the grouped
-                table (crypto is its own 🪙 bucket — never inside India).
-                Basis-less crypto rows show value but P&L n/a, never a fake
-                number, so 🇮🇳 equals the INDMoney app's INDIA section. */}
-            <div className="text-[9px] text-slate-400 font-mono flex items-center gap-1 flex-wrap mt-0.5">
-              <span className={metrics.totalValueINR - metrics.totalInvestedINR >= 0 ? 'text-emerald-500/80' : 'text-red-500/80'} title="India equity only — matches the INDMoney app's INDIA section (INR native)">
-                🇮🇳 {metrics.totalValueINR - metrics.totalInvestedINR >= 0 ? '+' : ''}₹{Math.round(metrics.totalValueINR - metrics.totalInvestedINR).toLocaleString('en-IN')}
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Current Value</span>
+              <span className="text-sm font-black text-cyan-300">₹{(metrics.totalValueINR || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            <div className="flex items-baseline justify-between gap-2 pt-1 border-t border-white/5">
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Total Returns</span>
+              <span className={`text-base font-black ${metrics.totalValueINR - metrics.totalInvestedINR >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                {metrics.totalValueINR - metrics.totalInvestedINR >= 0 ? '+' : ''}₹{(metrics.totalValueINR - metrics.totalInvestedINR).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span className={`text-[10px] ml-1 ${metrics.indiaPct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>({metrics.indiaPct >= 0 ? '+' : ''}{metrics.indiaPct.toFixed(2)}%)</span>
               </span>
-              <span className="text-slate-600 font-bold">•</span>
-              <span className={metrics.totalValueUSD - metrics.totalInvestedUSD >= 0 ? 'text-emerald-500/80' : 'text-red-500/80'} title="USD at live FX rate — INDMoney's app converts at its own internal rate, so USD figures can differ ~2-3%. The INR side matches exactly.">
-                🦅 {metrics.totalValueUSD - metrics.totalInvestedUSD >= 0 ? '+' : ''}${Math.round(metrics.totalValueUSD - metrics.totalInvestedUSD).toLocaleString('en-US')}
+            </div>
+          </div>
+          <div className="text-[9px] text-slate-500 mt-2">= app ke INDIA section wale numbers (INR)</div>
+        </div>
+
+        {/* 🦅 USA — INDMoney app's USA section, USD native */}
+        <div className="quantum-stat rounded-2xl p-4 border border-blue-500/20 bg-blue-500/[0.03] animate-fade-in-up delay-75">
+          <div className="flex items-center justify-between">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-blue-400/90">🦅 USA · INDMoney</div>
+            {usdAppRate ? (
+              <button
+                onClick={() => { setAppUsdInput(''); setShowMatchApp(v => !v); }}
+                className="text-[8px] font-black text-cyan-300 bg-cyan-500/10 border border-cyan-500/25 rounded px-1.5 py-0.5 hover:bg-cyan-500/20"
+                title={`App-parity FX ₹${usdAppRate.toFixed(2)} set hai — click karke update/reset karo`}
+              >
+                APP FX ₹{usdAppRate.toFixed(2)} ✏️
+              </button>
+            ) : (
+              <button
+                onClick={() => { setAppUsdInput(''); setShowMatchApp(v => !v); }}
+                className="text-[8px] font-black text-amber-300 bg-amber-500/10 border border-amber-500/25 rounded px-1.5 py-0.5 hover:bg-amber-500/20"
+                title="INDMoney app apne USD invested ko apne internal FX rate se convert karta hai (live se nahi). Ek baar app ka $invested daalo — site baaki sab match kar degi."
+              >
+                ✏️ Match App
+              </button>
+            )}
+          </div>
+          <div className="mt-2.5 space-y-1.5 font-mono">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Invested</span>
+              <span className="text-sm font-black text-white">${(metrics.totalInvestedUSD || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Current Value</span>
+              <span className="text-sm font-black text-cyan-300">${(metrics.totalValueUSD || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            <div className="flex items-baseline justify-between gap-2 pt-1 border-t border-white/5">
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Unrealized</span>
+              <span className={`text-base font-black ${metrics.usPnlUSD >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                {metrics.usPnlUSD >= 0 ? '+' : ''}${metrics.usPnlUSD.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
-              {(metrics.totalValueCRYPTO > 0) && (
-                <>
-                  <span className="text-slate-600 font-bold">•</span>
-                  <span className={metrics.totalPLCRYPTO >= 0 ? 'text-emerald-500/80' : 'text-red-500/80'} title={metrics.totalInvestedCRYPTO > 0 ? 'CoinDCX cost basis from your trade ledger — matches the CoinDCX app' : 'Cost basis unknown (API key has no trade-history permission) — value counts in equity, P&L shown as n/a'}>
-                    🪙 {metrics.totalInvestedCRYPTO > 0 ? `${metrics.totalPLCRYPTO >= 0 ? '+' : ''}₹${Math.round(metrics.totalPLCRYPTO).toLocaleString('en-IN')}` : 'P&L n/a'}
-                  </span>
-                </>
+            </div>
+          </div>
+          <div className="text-[9px] text-slate-500 mt-2" title="Invested USD apne app-parity rate se; Value live USD price se">
+            invested @ {usdAppRate ? `app ₹${usdAppRate.toFixed(2)}` : `live ₹${usdInrRate.toFixed(2)}`} · value @ live USD
+          </div>
+          {/* Match App inline popover */}
+          {showMatchApp && (
+            <div className="mt-2 rounded-xl bg-black/30 border border-blue-500/20 p-2.5 space-y-2">
+              <div className="text-[10px] text-slate-300 leading-relaxed">
+                App ka USA <b>Invested ($)</b> daalo — site INDMoney ke internal FX rate se match kar legi
+                <span className="block text-slate-500 mt-0.5">Site INR invested: ₹{Math.round(usInrInvested).toLocaleString('en-IN')} {usdAppRate ? `· current app-rate ₹${usdAppRate.toFixed(2)}` : `· live rate se $${(usInrInvested / (usdInrRate || 1)).toFixed(2)}`}</span>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  value={appUsdInput}
+                  onChange={e => setAppUsdInput(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="1631.97"
+                  className="quantum-input rounded-lg px-2.5 py-1.5 text-xs text-white font-mono flex-1 min-w-0 bg-slate-900/60"
+                />
+                <button
+                  onClick={() => {
+                    const appUsd = Number(appUsdInput);
+                    if (!(appUsd > 0) || !(usInrInvested > 0)) return;
+                    const rate = usInrInvested / appUsd;
+                    setUsdAppRate(rate);
+                    setShowMatchApp(false);
+                  }}
+                  className="quantum-btn-primary px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-600 to-indigo-600 text-white text-xs font-bold shrink-0"
+                >
+                  Save
+                </button>
+              </div>
+              {usdAppRate && (
+                <button onClick={() => { setUsdAppRate(null); setShowMatchApp(false); }} className="text-[10px] text-slate-400 hover:text-slate-200 underline">
+                  Reset — live FX use karo
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 🪙 CRYPTO — CoinDCX app's crypto section */}
+        <div className="quantum-stat rounded-2xl p-4 border border-purple-500/20 bg-purple-500/[0.03] animate-fade-in-up delay-150">
+          <div className="flex items-center justify-between">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-purple-400/90">🪙 Crypto · CoinDCX</div>
+            {indmActive && (
+              <button
+                onClick={() => { setBasisInputs({}); setShowBasisModal(true); }}
+                className="text-[8px] font-black text-purple-300 bg-purple-500/10 border border-purple-500/25 rounded px-1.5 py-0.5 hover:bg-purple-500/20"
+                title="CoinDCX app ke coin pages se per-coin Invested ₹ daalo (view-only API key ke liye). Trade-history permission wali key par ye automatic aa jata hai."
+              >
+                ✏️ Set Basis
+              </button>
+            )}
+          </div>
+          <div className="mt-2.5 space-y-1.5 font-mono">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Invested</span>
+              {metrics.totalInvestedCRYPTO > 0 ? (
+                <span className="text-sm font-black text-white">₹{metrics.totalInvestedCRYPTO.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              ) : (
+                <span className="text-sm font-black text-slate-500" title="Cost basis unknown — API key me trade-history permission nahi hai, ya basis abhi set nahi hua. 'Set Basis' se app ke numbers daalo.">n/a</span>
+              )}
+            </div>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Current Value</span>
+              <span className="text-sm font-black text-cyan-300">₹{(metrics.totalValueCRYPTO || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            <div className="flex items-baseline justify-between gap-2 pt-1 border-t border-white/5">
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Total P&L</span>
+              {metrics.totalInvestedCRYPTO > 0 ? (
+                <span className={`text-base font-black ${metrics.totalPLCRYPTO >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {metrics.totalPLCRYPTO >= 0 ? '+' : ''}₹{metrics.totalPLCRYPTO.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <span className={`text-[10px] ml-1 ${metrics.cryptoPct != null && metrics.cryptoPct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>({metrics.cryptoPct != null ? `${metrics.cryptoPct >= 0 ? '+' : ''}${metrics.cryptoPct.toFixed(2)}` : '—'}%)</span>
+                </span>
+              ) : (
+                <span className="text-base font-black text-slate-500" title="'Set Basis' par click karke CoinDCX app ke per-coin invested amounts daalo">P&L n/a</span>
               )}
             </div>
           </div>
+          <div className="text-[9px] text-slate-500 mt-2">= app ke Crypto section wale numbers (basis ke saath)</div>
         </div>
+
+        {/* TODAY — live day P&L (unchanged card) */}
         <div className="quantum-stat rounded-2xl p-4 animate-fade-in-up delay-200">
           <div className="flex items-center justify-between">
             <div className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Today's P&L</div>
@@ -782,7 +969,23 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                                   {secondaryName && (
                                     <span className="text-[10px] text-slate-500 truncate max-w-[120px] sm:max-w-[240px]" title={secondaryName}>{secondaryName}</span>
                                   )}
-                                  <span className="text-[10px] text-slate-500 font-mono shrink-0 hidden sm:inline">Qty: {p.qty} @ {cur}{p.avgPrice.toFixed(2)}</span>
+                                  {/* v5.2: app-parity Qty @ Avg — avg price
+                                      comes from the row's ACTUAL cost basis
+                                      (sync-truth invested ÷ qty; US rows at
+                                      the calibrated app FX when set), NOT the
+                                      server's live-FX snapshot avg (that was
+                                      the per-row Avg. Price mismatch). Qty
+                                      keeps app-level precision (4dp for
+                                      shares ≥1, 8dp for micro crypto amounts
+                                      — rounding 0.000736 to "0.0007" was the
+                                      crypto Quantity mismatch); the exact
+                                      value stays in the title tooltip. */}
+                                  <span
+                                    className="text-[10px] text-slate-500 font-mono shrink-0 hidden sm:inline"
+                                    title={`Qty: ${p.qty} @ ${cur}${(invNative > 0 ? invNative / (p.qty || 1) : p.avgPrice).toFixed(2)}`}
+                                  >
+                                    Qty: {p.qty.toLocaleString('en-IN', { maximumFractionDigits: p.qty >= 1 ? 4 : 8 })} @ {cur}{showCost && (p.qty || 0) > 0 ? (invNative / p.qty).toFixed(2) : p.avgPrice.toFixed(2)}
+                                  </span>
                                 </div>
                               </div>
                             </div>
@@ -1168,6 +1371,78 @@ const PortfolioTab = React.memo(function PortfolioTab() {
 
       {/* v4.5: per-asset daily-candle chart modal (COST vs LIVE overlays) */}
       <AssetChartModal target={chartTarget} onClose={() => setChartTarget(null)} />
+
+      {/* v5.2: CoinDCX manual cost-basis modal — per-coin invested amounts
+          from the official app (fallback for view-only API keys). */}
+      {showBasisModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+          onClick={() => !basisSaving && setShowBasisModal(false)}
+        >
+          <div
+            className="quantum-modal rounded-2xl p-5 w-full max-w-md space-y-4"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-lg font-black gradient-text-cyan font-display">🪙 Crypto Cost Basis</div>
+                <div className="text-[11px] text-slate-400 mt-0.5">CoinDCX app ke coin pages se per-coin <b>Invested ₹</b> daalo</div>
+              </div>
+              <button
+                onClick={() => !basisSaving && setShowBasisModal(false)}
+                className="text-slate-400 hover:text-white text-xl font-bold leading-none px-2"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 px-3 py-2 text-[11px] text-amber-200/90 leading-relaxed">
+              Agar API key me <b>trade-history permission</b> hai to invested automatic aata hai (Match App ki zaroorat nahi).
+              View-only key ke liye ye amounts ek baar daal do — syncs ke saath persist rahenge.
+            </div>
+
+            {cryptoRows.length === 0 ? (
+              <div className="text-xs text-slate-400">Koi CoinDCX row nahi mili — pehle CoinDCX connect karo.</div>
+            ) : (
+              <div className="space-y-2.5">
+                {cryptoRows.map(r => (
+                  <div key={r.symbol} className="flex items-center gap-3">
+                    <span className="w-16 text-sm font-black text-white font-mono shrink-0">{r.symbol}</span>
+                    <span className="text-[10px] text-slate-500 font-mono shrink-0">
+                      {r.valINR != null ? `≈₹${Math.round(r.valINR).toLocaleString('en-IN')}` : ''}
+                    </span>
+                    <input
+                      value={basisInputs[r.symbol] ?? ''}
+                      onChange={e => setBasisInputs(prev => ({ ...prev, [r.symbol]: e.target.value }))}
+                      inputMode="decimal"
+                      placeholder={`Invested ₹ (${r.symbol})`}
+                      className="quantum-input rounded-lg px-3 py-2 text-sm text-white font-mono flex-1 min-w-0 bg-slate-900/60"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <button
+                onClick={async () => { await clearCoindcxManualBasis(); await loadIndmAssets(true); setShowBasisModal(false); }}
+                disabled={basisSaving}
+                className="text-[11px] text-slate-400 hover:text-red-300 underline"
+              >
+                Clear all
+              </button>
+              <button
+                onClick={handleSaveBasis}
+                disabled={basisSaving || cryptoRows.length === 0}
+                className="px-5 py-2 bg-gradient-to-r from-cyan-600 to-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg disabled:opacity-50"
+              >
+                {basisSaving ? 'Saving…' : 'Save & Refresh'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });

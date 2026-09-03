@@ -314,9 +314,17 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
         </div>
       )}
 
-      {/* Official INDMoney summary (server's own numbers) */}
+      {/* Official INDMoney summary (server's own numbers) — v5.2 relabel:
+          this is the INDMoney-ledger TOTAL across markets in INR (US pnl
+          includes FX movement). The per-section app-parity cards live in
+          the summary strip below (India / USA / Crypto). */}
       {indmActive && summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
+        <div className="space-y-1.5">
+          <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+            <span>INDMoney Ledger · All Markets (INR)</span>
+            <span className="text-slate-600 normal-case font-medium" title="US leg ka INR pnl me FX movement bhi hota hai (INDMoney ka apna INR accounting). App-parity section cards neeche summary strip me hain.">— FX incl.</span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
           <div className="quantum-panel rounded-xl p-3">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Current Value</div>
             <div className="text-lg sm:text-xl font-black text-cyan-400 font-mono">₹{fmtINR(summary.totalValue)}</div>
@@ -342,6 +350,7 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
             <div className={`text-lg sm:text-xl font-black font-mono ${(summary.totalPnlPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
               {summary.totalPnlPct != null ? `${summary.totalPnlPct >= 0 ? '+' : ''}${summary.totalPnlPct}%` : '—'}
             </div>
+          </div>
           </div>
         </div>
       )}

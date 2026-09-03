@@ -196,6 +196,128 @@ describe('mapBalancesToAssets (cost basis)', () => {
 });
 
 // ============================================================
+// 3b) v5.2 MANUAL cost basis (view-only-key fallback) + merge rule
+// ============================================================
+describe('manual cost basis (v5.2 fallback)', () => {
+  const tickers = [
+    { market: 'BTCINR', last_price: '7749225', change_24_hour: '0.53' },
+    { market: 'ETHINR', last_price: '239431.2', change_24_hour: '-0.27' },
+  ];
+  const balances = [
+    { base: 'BTC', qty: 0.000736, free: 0.000736, locked: 0 },
+    { base: 'ETH', qty: 0.01794521012936, free: 0.01794521012936, locked: 0 },
+  ];
+
+  it('mapBalancesToAssets: MANUAL basis rows get invested/pnl + avg = invested/qty + basisSource manual', () => {
+    const basis = { BTC: { qty: null, invested: 5259.07, avgPrice: null, manual: true } };
+    const assets = mapBalancesToAssets([balances[0]], tickers, 94.9, basis);
+    expect(assets[0].invested).toBeCloseTo(5259.07, 2);
+    expect(assets[0].avgPrice).toBeCloseTo(5259.07 / 0.000736, 0);
+    expect(assets[0].basisSource).toBe('manual');
+    expect(assets[0].pnl).toBeCloseTo(7749225 * 0.000736 - 5259.07, 1);
+  });
+
+  it('setManualBasis persists per-coin invested (normalized symbol); clearManualBasis removes', async () => {
+    const { setManualBasis, getManualBasis, clearManualBasis } = await import('../server/mcp/coindcx.js');
+    setManualBasis('btc', 5259.07);   // lower-case → normalized to BTC
+    setManualBasis('ETH', 3226);
+    expect(getManualBasis()).toEqual({ BTC: 5259.07, ETH: 3226 });
+    clearManualBasis('BTC');
+    expect(getManualBasis()).toEqual({ ETH: 3226 });
+    clearManualBasis();
+    expect(getManualBasis()).toEqual({});
+  });
+});
+
+describe('manual basis merge (ledger wins per coin, manual fills the gaps)', () => {
+  const BAL = 'https://api.coindcx.com/exchange/v1/users/balances';
+  const TH = 'https://api.coindcx.com/exchange/v1/orders/trade_history';
+  const TIC = 'https://api.coindcx.com/exchange/ticker';
+  const realFetch = globalThis.fetch;
+
+  function res2(json: any, status = 200) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      headers: new Map(),
+      text: async () => JSON.stringify(json),
+      json: async () => json,
+    };
+  }
+
+  beforeEach(async () => {
+    const m = await import('../server/mcp/coindcx.js');
+    (m as any).clearManualBasis();
+    __resetCoinDcxForTests();
+  });
+  afterEach(() => { globalThis.fetch = realFetch; });
+
+  it('fetchCoinDcxAssets e2e: ledger BTC beats manual BTC; manual ETH fills the gap', async () => {
+    const { fetchCoinDcxAssets, __setCredsForTests, setManualBasis } = await import('../server/mcp/coindcx.js');
+    __setCredsForTests('key', 'secret');
+    // user entered BOTH coins manually, but the (fixed) trade_history endpoint
+    // serves BTC trades → ledger wins for BTC, manual fills ETH only.
+    setManualBasis('BTC', 999);
+    setManualBasis('ETH', 3226);
+    globalThis.fetch = (async (url: string) => {
+      const u = String(url);
+      if (u === BAL) return res2([
+        { currency_short_name: 'BTC', balance: 0.000736 },
+        { currency_short_name: 'ETH', balance: 0.01794521012936 },
+      ]);
+      if (u.startsWith(TIC)) return res2([
+        { market: 'BTCINR', last_price: '7749225', change_24_hour: '0.53' },
+        { market: 'ETHINR', last_price: '239431.2', change_24_hour: '-0.27' },
+      ]);
+      if (u === TH) return res2([
+        { id: 1, side: 'buy', market: 'BTCINR', quantity: 0.0005, price: 9000000, fee: 10, timestamp: 1 },
+        { id: 2, side: 'buy', market: 'BTCINR', quantity: 0.000236, price: 8000000, fee: 6, timestamp: 2 },
+      ]);
+      return res2([], 403); // other endpoints denied → fallback safe
+    }) as any;
+
+    const out = await fetchCoinDcxAssets(94.9);
+    const btc = out.assets.find((a: any) => a.symbol === 'BTC')!;
+    const eth = out.assets.find((a: any) => a.symbol === 'ETH')!;
+    expect(btc.invested).toBeCloseTo(6404, 1);        // ledger basis wins over manual 999
+    expect(btc.basisSource).toBe('ledger');
+    expect(eth.invested).toBeCloseTo(3226, 1);        // manual fills the ledger gap
+    expect(eth.basisSource).toBe('manual');
+    expect(eth.avgPrice).toBeCloseTo(3226 / 0.01794521012936, 0);
+    expect(eth.pnl).toBeCloseTo(239431.2 * 0.01794521012936 - 3226, 1);
+  });
+
+  it('fetchCoinDcxAssets e2e: ALL endpoints denied + manual basis → rows still get the app numbers (the view-only-key path)', async () => {
+    const { fetchCoinDcxAssets, __setCredsForTests, setManualBasis } = await import('../server/mcp/coindcx.js');
+    __setCredsForTests('key', 'secret');
+    setManualBasis('BTC', 5259.07);
+    setManualBasis('ETH', 3226.0);
+    globalThis.fetch = (async (url: string) => {
+      const u = String(url);
+      if (u === BAL) return res2([
+        { currency_short_name: 'BTC', balance: 0.000736 },
+        { currency_short_name: 'ETH', balance: 0.01794521012936 },
+      ]);
+      if (u.startsWith(TIC)) return res2([
+        { market: 'BTCINR', last_price: '7749225', change_24_hour: '0.53' },
+        { market: 'ETHINR', last_price: '239431.2', change_24_hour: '-0.27' },
+      ]);
+      return res2({ message: 'denied' }, 403); // every trades endpoint denied
+    }) as any;
+
+    const out = await fetchCoinDcxAssets(94.9);
+    // the user's app numbers: invested ₹8,485, value ≈ ₹9,999, PNL ≈ ₹1,513
+    const totalInv = out.assets.reduce((s: number, a: any) => s + (a.invested || 0), 0);
+    const totalVal = out.assets.reduce((s: number, a: any) => s + a.value, 0);
+    const totalPnl = out.assets.reduce((s: number, a: any) => s + (a.pnl || 0), 0);
+    expect(totalInv).toBeCloseTo(8485.07, 1);
+    expect(totalVal).toBeCloseTo(10000.07, 1);
+    expect(totalPnl).toBeCloseTo(1515.0, 1);
+    for (const a of out.assets) expect(a.basisSource).toBe('manual');
+  });
+});
+
+// ============================================================
 // 4) assetPnl hasBasis semantics (the core regression)
 // ============================================================
 describe('syncedAssetPnl hasBasis', () => {
@@ -295,6 +417,7 @@ describe('syncedAssetPnl hasBasis', () => {
 //    trades merge into basis-carrying asset rows)
 // ============================================================
 describe('fetchCoinDcxTrades / fetchCoinDcxAssets (mocked REST)', () => {
+  const TH = 'https://api.coindcx.com/exchange/v1/orders/trade_history'; // v5.2: DOCUMENTED endpoint (first)
   const TR = 'https://api.coindcx.com/exchange/v1/trades';
   const UT = 'https://api.coindcx.com/exchange/v1/users/trades';
   const BAL = 'https://api.coindcx.com/exchange/v1/users/balances';
@@ -313,10 +436,58 @@ describe('fetchCoinDcxTrades / fetchCoinDcxAssets (mocked REST)', () => {
     };
   }
 
+  it('v5.2: the DOCUMENTED /orders/trade_history endpoint is tried FIRST (limit + from_id cursor)', async () => {
+    const calls: { url: string; body: any }[] = [];
+    globalThis.fetch = (async (url: string, init: any) => {
+      calls.push({ url: String(url), body: JSON.parse(init?.body || '{}') });
+      if (String(url) === TH) return res([
+        // newest-first, CoinDCX trade_history shape (price_per_unit + id)
+        { id: 28475, side: 'buy', market: 'BTCINR', quantity: 0.0004, price_per_unit: 9000000, fee_amount: 9, timestamp: 2 },
+        { id: 28474, side: 'buy', market: 'BTCINR', quantity: 0.000336, price_per_unit: 8800000, fee_amount: 7, timestamp: 1 },
+      ]);
+      throw new Error('unexpected url ' + url);
+    }) as any;
+    const { __fetchCoinDcxTradesForTests } = await import('../server/mcp/coindcx.js');
+    const out = await __fetchCoinDcxTradesForTests()('k', 's');
+    expect(out.endpoint).toBe('/exchange/v1/orders/trade_history');
+    expect(out.trades).toHaveLength(2);
+    expect(out.trades[0]).toMatchObject({ base: 'BTC', qty: 0.0004, price: 9000000, fee: 9 });
+    expect(out.trades[1]).toMatchObject({ qty: 0.000336, price: 8800000 });
+    // signed body carries limit (+ from_id cursor when paginating)
+    expect(calls[0].body.limit).toBeTypeOf('string');
+    expect(Number(calls[0].body.limit)).toBeGreaterThan(0);
+    expect(typeof calls[0].body.timestamp).toBe('number');
+  });
+
+  it('v5.2: from_id cursor paginates until a SHORT page arrives (smallest id → next)', async () => {
+    const seenCursors: (string | undefined)[] = [];
+    globalThis.fetch = (async (url: string, init: any) => {
+      if (String(url) !== TH) throw new Error('unexpected url ' + url);
+      const body = JSON.parse(init?.body || '{}');
+      seenCursors.push(body.from_id);
+      if (body.from_id == null) {
+        const page = Array.from({ length: 2000 }, (_, i) => ({
+          id: 30000 - i, side: 'buy', market: 'ETHINR', quantity: 0.001, price: 200000, timestamp: i,
+        }));
+        return res(page); // FULL page → must request the next cursor
+      }
+      // cursor = 28001 (min id of page 1) → short page → stop
+      return res([{ id: 27999, side: 'buy', market: 'ETHINR', quantity: 0.001, price: 200000, timestamp: 1 }]);
+    }) as any;
+    const { __fetchCoinDcxTradesForTests } = await import('../server/mcp/coindcx.js');
+    const out = await __fetchCoinDcxTradesForTests()('k', 's');
+    expect(out.endpoint).toBe('/exchange/v1/orders/trade_history');
+    expect(out.trades).toHaveLength(2001);
+    expect(seenCursors[0]).toBeUndefined();
+    expect(seenCursors[1]).toBe(String(28001));
+    expect(seenCursors).toHaveLength(2); // short page stopped the loop
+  });
+
   it('falls back to the next endpoint when the first is permission-denied (403)', async () => {
     const calls: string[] = [];
     globalThis.fetch = (async (url: string) => {
       calls.push(String(url));
+      if (String(url) === TH) return res({ message: 'permission denied' }, 403);
       if (String(url) === TR) return res({ message: 'permission denied' }, 403);
       if (String(url) === UT) return res([
         { side: 'buy', market: 'BTCINR', quantity: 0.000736, price: 9000000, fee: 10, timestamp: 1 },
@@ -328,8 +499,9 @@ describe('fetchCoinDcxTrades / fetchCoinDcxAssets (mocked REST)', () => {
     expect(out.endpoint).toBe(UT.replace('https://api.coindcx.com', ''));
     expect(out.trades).toHaveLength(1);
     expect(out.trades[0]).toMatchObject({ base: 'BTC', qty: 0.000736, price: 9000000 });
-    expect(calls[0]).toBe(TR);
-    expect(calls[1]).toBe(UT);
+    expect(calls[0]).toBe(TH);
+    expect(calls[1]).toBe(TR);
+    expect(calls[2]).toBe(UT);
   });
 
   it('returns null when every endpoint is denied (view-only key) — basis honestly absent', async () => {

@@ -33,7 +33,7 @@
 import { Router } from 'express';
 import {
   startConnect, completeConnect, disconnect, getStatus,
-  getPendingOrigin, IndmError,
+  getPendingOrigin, IndmError, listTools, callTool, extractToolPayload,
 } from './indmoney.js';
 import {
   syncNow, syncInfo, getAssetsSnapshot, maybeBackgroundSync,
@@ -41,6 +41,7 @@ import {
 } from './portfolioSync.js';
 import {
   coindcxConnect, coindcxDisconnect, coindcxStatus,
+  setManualBasis, clearManualBasis, getManualBasis,
 } from './coindcx.js';
 import { durableStatus } from './durable.js';
 import * as tapetide from './tapetide.js';
@@ -311,6 +312,48 @@ router.post('/api/mcp/coindcx/disconnect', (_req, res) => {
     const out = coindcxDisconnect();
     try { clearSourceAssets('coindcx'); } catch { /* non-fatal */ }
     return res.json({ ok: true, ...out });
+  } catch (err) { return fail(res, err); }
+});
+
+// ------------------------------------------------------------
+// MANUAL COST BASIS (v5.2) — the CoinDCX app's "Invested ₹X" comes
+// from its trade ledger; a view-only API key cannot see it. These
+// routes let the user enter per-coin invested amounts ONCE (from the
+// app's coin pages). They persist across syncs (durable-backed) and
+// are used ONLY when the ledger basis is missing for that coin.
+// ------------------------------------------------------------
+router.get('/api/mcp/coindcx/basis', (_req, res) => {
+  try {
+    return res.json({ ok: true, basis: getManualBasis() });
+  } catch (err) { return fail(res, err); }
+});
+
+router.post('/api/mcp/coindcx/basis', async (req, res) => {
+  try {
+    const { coin, invested } = req.body || {};
+    if (!coin || typeof coin !== 'string') {
+      throw new IndmError('`coin` (string) is required — e.g. "BTC"', 400, 'BAD_REQUEST');
+    }
+    const num = Number(invested);
+    if (invested == null || !Number.isFinite(num) || num < 0) {
+      throw new IndmError('`invested` (number ≥ 0) is required — the app\'s invested amount for this coin', 400, 'BAD_REQUEST');
+    }
+    const basis = setManualBasis(coin, num > 0 ? num : null);
+    // Refresh rows immediately (coindcx-only quick sync).
+    try { await syncNow({ force: true, reason: 'manual', sources: ['coindcx'] }); } catch { /* non-fatal */ }
+    return res.json({ ok: true, basis, ...coindcxStatus() });
+  } catch (err) { return fail(res, err); }
+});
+
+router.post('/api/mcp/coindcx/basis/clear', async (req, res) => {
+  try {
+    const coin = req.body?.coin;
+    if (coin != null && typeof coin !== 'string') {
+      throw new IndmError('`coin` must be a string when provided', 400, 'BAD_REQUEST');
+    }
+    const basis = clearManualBasis(coin || undefined);
+    try { await syncNow({ force: true, reason: 'manual', sources: ['coindcx'] }); } catch { /* non-fatal */ }
+    return res.json({ ok: true, basis, ...coindcxStatus() });
   } catch (err) { return fail(res, err); }
 });
 
