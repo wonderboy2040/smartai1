@@ -185,6 +185,23 @@ export async function durableBootRestoreAll() {
     remoteTs: (s) => s?.connectedAt || 0,
   });
   if (cdcx) restored.coindcx = true;
+  // 2.5) CoinDCX manual cost basis (v6.1 FIX — user-reported): the
+  // per-coin invested amounts were durablePut'd on save but were
+  // MISSING from this boot list, so a Render restart/redeploy wiped
+  // the ephemeral file and the crypto P&L silently reverted to
+  // "n/a" — looking exactly like "Set Basis saved nahi hua".
+  // Restored BEFORE the portfolio snapshot (rows embed the basis at
+  // sync time). File shape: { basis: {...}, updatedAt } (legacy flat
+  // { BTC: 123 } backups from <= v6.0 are normalized on load).
+  const cdBasis = await durableBootRestore('mcp-coindcx-basis.json', {
+    isUsable: (s) => {
+      const coins = (s && typeof s === 'object' && s.basis && typeof s.basis === 'object') ? s.basis : s;
+      return !!(coins && typeof coins === 'object' && Object.keys(coins).length);
+    },
+    localTs: (s) => s?.updatedAt || 0,
+    remoteTs: (s) => s?.updatedAt || 0,
+  });
+  if (cdBasis) restored.coindcxBasis = true;
   // 3) The asset-table snapshot (rows + hidden keys survive restarts).
   const pf = await durableBootRestore('mcp-portfolio.json', {
     isUsable: (s) => !!(s && Array.isArray(s.assets) && s.assets.length),
@@ -216,6 +233,16 @@ export async function durableBootRestoreAll() {
       if (typeof mod.__dropInMemoryStateForBoot === 'function') mod.__dropInMemoryStateForBoot();
     } catch { /* non-fatal */ }
   }
+  // 6) App settings (v6.1 — the multi-device fix): the Portfolio tab's
+  // server-side calibrations (usdAppRate "Match App" FX etc.). Without
+  // this restore a restart would drop the user back to live-FX numbers
+  // on every device — the exact "price alag" regression reported.
+  const st = await durableBootRestore('mcp-settings.json', {
+    isUsable: (s) => !!(s && s.settings && typeof s.settings === 'object' && Object.keys(s.settings).length),
+    localTs: (s) => s?.updatedAt || 0,
+    remoteTs: (s) => s?.updatedAt || 0,
+  });
+  if (st) restored.settings = true;
   const keys = Object.keys(restored);
   if (keys.length) _log(`boot restore complete: ${keys.join(', ')}`);
   return restored;

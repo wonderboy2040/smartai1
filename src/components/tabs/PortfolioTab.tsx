@@ -578,7 +578,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
             </div>
           </div>
           <div className="text-[9px] text-slate-500 mt-2" title="Invested USD apne app-parity rate se; Value live USD price se">
-            invested @ {usdAppRate ? `app ₹${usdAppRate.toFixed(2)}` : `live ₹${usdInrRate.toFixed(2)}`} · value @ live USD
+            invested @ {usdAppRate ? `app ₹${usdAppRate.toFixed(2)}` : `live ₹${usdInrRate.toFixed(2)}`} · value @ live USD · ☁ server-synced (sab devices)
           </div>
           {/* Match App inline popover */}
           {showMatchApp && (
@@ -586,6 +586,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
               <div className="text-[10px] text-slate-300 leading-relaxed">
                 App ka USA <b>Invested ($)</b> daalo — site INDMoney ke internal FX rate se match kar legi
                 <span className="block text-slate-500 mt-0.5">Site INR invested: ₹{Math.round(usInrInvested).toLocaleString('en-IN')} {usdAppRate ? `· current app-rate ₹${usdAppRate.toFixed(2)}` : `· live rate se $${(usInrInvested / (usdInrRate || 1)).toFixed(2)}`}</span>
+                <span className="block text-emerald-400/80 mt-0.5">☁ Server par save hota hai — sab devices par same, cookies/cache clear hone par bhi safe</span>
               </div>
               <div className="flex gap-2">
                 <input
@@ -1400,6 +1401,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
             <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 px-3 py-2 text-[11px] text-amber-200/90 leading-relaxed">
               Agar API key me <b>trade-history permission</b> hai to invested automatic aata hai (Match App ki zaroorat nahi).
               View-only key ke liye ye amounts ek baar daal do — syncs ke saath persist rahenge.
+              <span className="block text-emerald-400/80 mt-1">☁ Server par encrypted backup ke saath save hota hai — sab devices par same, site restart hone par bhi safe</span>
             </div>
 
             {cryptoRows.length === 0 ? (

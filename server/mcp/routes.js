@@ -43,6 +43,7 @@ import {
   coindcxConnect, coindcxDisconnect, coindcxStatus,
   setManualBasis, clearManualBasis, getManualBasis,
 } from './coindcx.js';
+import { getSettings, setSetting } from './settings.js';
 import { durableStatus } from './durable.js';
 import * as tapetide from './tapetide.js';
 
@@ -354,6 +355,33 @@ router.post('/api/mcp/coindcx/basis/clear', async (req, res) => {
     const basis = clearManualBasis(coin || undefined);
     try { await syncNow({ force: true, reason: 'manual', sources: ['coindcx'] }); } catch { /* non-fatal */ }
     return res.json({ ok: true, basis, ...coindcxStatus() });
+  } catch (err) { return fail(res, err); }
+});
+
+// ------------------------------------------------------------
+// APP SETTINGS (v6.1) — server-side, durable-backed user
+// calibrations so they survive multi-device logins, cookie/cache
+// wipes, and Render restarts. Currently known key:
+//   usdAppRate — INDMoney's internal USD-INR rate implied by the
+//   app's USD Invested ("Match App", 🦅 USA card). null = live FX.
+// The store is encrypted before it hits the GitHub durable backup,
+// exactly like the MCP credentials.
+// ------------------------------------------------------------
+router.get('/api/mcp/settings', (_req, res) => {
+  try {
+    return res.json({ ok: true, settings: getSettings(), durable: durableStatus() });
+  } catch (err) { return fail(res, err); }
+});
+
+router.post('/api/mcp/settings', (req, res) => {
+  try {
+    const { key, value } = req.body || {};
+    if (!key || typeof key !== 'string') {
+      throw new IndmError('`key` (string) is required — e.g. "usdAppRate"', 400, 'BAD_REQUEST');
+    }
+    // null / missing value CLEARS the setting (reset-to-live-FX etc.).
+    const settings = setSetting(key, value == null ? null : value);
+    return res.json({ ok: true, settings, durable: durableStatus() });
   } catch (err) { return fail(res, err); }
 });
 

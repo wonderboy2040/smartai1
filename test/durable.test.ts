@@ -34,6 +34,8 @@ const CREDS_PATH = path.join(DATA, 'mcp-coindcx.json');
 const INDM_PATH = path.join(DATA, 'mcp-indmoney.json');
 const SNAP_PATH = path.join(DATA, 'mcp-portfolio.json');
 const SYM_PATH = path.join(DATA, 'mcp-symbol-cache.json');
+const BASIS_PATH = path.join(DATA, 'mcp-coindcx-basis.json');
+const SETTINGS_PATH = path.join(DATA, 'mcp-settings.json');
 
 function setDurableEnv() {
   process.env.GITHUB_BACKUP_TOKEN = 'ghp_testtoken';
@@ -44,7 +46,7 @@ function setDurableEnv() {
 beforeEach(() => {
   __resetDurableForTests();
   setDurableEnv();
-  for (const p of [CREDS_PATH, INDM_PATH, SNAP_PATH, SYM_PATH]) {
+  for (const p of [CREDS_PATH, INDM_PATH, SNAP_PATH, SYM_PATH, BASIS_PATH, SETTINGS_PATH]) {
     try { fs.rmSync(p, { force: true }); } catch { /* ignore */ }
   }
 });
@@ -206,6 +208,46 @@ describe('durableBootRestoreAll', () => {
     // restoreBackup called once per state file, in credential-first order
     const files = restoreMock.mock.calls.map((c) => c[0]);
     expect(files.indexOf('mcp-indmoney.json')).toBeLessThan(files.indexOf('mcp-portfolio.json'));
+  });
+
+  it('v6.1: restores the coindcx manual basis + app settings (the multi-device fix)', async () => {
+    restoreMock.mockImplementation(async (file) => {
+      if (file === 'mcp-coindcx-basis.json') {
+        return encryptJSON({ basis: { BTC: 5259.07, ETH: 3226 }, updatedAt: 42 });
+      }
+      if (file === 'mcp-settings.json') {
+        return encryptJSON({ settings: { usdAppRate: { value: 92.0006, updatedAt: 42 } }, updatedAt: 42 });
+      }
+      return null;
+    });
+
+    const restored = await durableBootRestoreAll();
+    expect(restored).toMatchObject({ coindcxBasis: true, settings: true });
+    expect(JSON.parse(fs.readFileSync(BASIS_PATH, 'utf8')).basis).toEqual({ BTC: 5259.07, ETH: 3226 });
+    expect(JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8')).settings.usdAppRate.value).toBe(92.0006);
+  });
+
+  it('v6.1: restores a LEGACY flat basis backup (<= v6.0 shape) verbatim', async () => {
+    restoreMock.mockImplementation(async (file) => {
+      if (file === 'mcp-coindcx-basis.json') return encryptJSON({ BTC: 1234.5 });
+      return null;
+    });
+    const restored = await durableBootRestoreAll();
+    expect(restored).toMatchObject({ coindcxBasis: true });
+    expect(JSON.parse(fs.readFileSync(BASIS_PATH, 'utf8'))).toEqual({ BTC: 1234.5 });
+  });
+
+  it('v6.1: basis restore is skipped when local is FRESHER (recent save survived)', async () => {
+    fs.writeFileSync(BASIS_PATH, JSON.stringify({ basis: { BTC: 999 }, updatedAt: Date.now() }));
+    restoreMock.mockImplementation(async (file) => {
+      if (file === 'mcp-coindcx-basis.json') {
+        return encryptJSON({ basis: { BTC: 111 }, updatedAt: 1000 });
+      }
+      return null;
+    });
+    const restored = await durableBootRestoreAll();
+    expect(restored.coindcxBasis).toBeUndefined();
+    expect(JSON.parse(fs.readFileSync(BASIS_PATH, 'utf8')).basis).toEqual({ BTC: 999 });
   });
 
   it('logs a setup hint (and returns {}) when not configured', async () => {

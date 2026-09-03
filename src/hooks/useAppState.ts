@@ -12,6 +12,7 @@ import {
   syncStateToCloud, loadAppStateFromCloud, CloudAppState,
   apiFetch, setSessionToken, ensureAuthenticated,
   fetchIndmAssets, forceIndmSync, hideIndmAsset, unhideIndmAsset, IndmAssetsResponse,
+  fetchServerSettings, saveServerSetting,
 } from '../utils/api';
 import { secureStorage } from '../utils/secureStorage';
 import { subscribeToPrices, disconnectPrices, getWebSocketLatency } from '../utils/tvWebsocket';
@@ -158,8 +159,16 @@ export function useAppState() {
   // own internal rate (~buy-time FX), not the live rate — so the site's 🦅
   // invested/P&L can differ from the app purely by FX-rate choice. The user
   // calibrates ONCE ("Match App": enters the app's USD invested → the implied
-  // rate is stored here); null = live rate (legacy behavior). Persisted in
-  // localStorage so it survives reloads.
+  // rate is stored here); null = live rate (legacy behavior).
+  // v6.1 MULTI-DEVICE FIX: the value now lives SERVER-side (durable-backed
+  // /api/mcp/settings — same encrypted GitHub pipeline as the MCP creds).
+  // localStorage is only an instant-render cache / offline fallback:
+  //   • boot: GET /api/mcp/settings → server value WINS (updates state +
+  //     local cache) — so a cache wipe or a second device gets the same
+  //     calibration and the 🦅 numbers never silently drift to live-FX.
+  //   • set: write-through — state + local cache + POST to the server.
+  //   • migration: a device that still has ONLY the old localStorage value
+  //     (pre-v6.1) pushes it up once when the server has none.
   const [usdAppRate, setUsdAppRateState] = useState<number | null>(() => {
     const raw = secureStorage.getItem('usdAppRate');
     const n = Number(raw);
@@ -167,7 +176,7 @@ export function useAppState() {
   });
   const usdAppRateRef = useRef<number | null>(usdAppRate);
   useEffect(() => { usdAppRateRef.current = usdAppRate; }, [usdAppRate]);
-  const setUsdAppRate = useCallback((v: number | null) => {
+  const setUsdAppRate = useCallback((v: number | null, opts?: { skipServer?: boolean }) => {
     const safe = v != null && Number.isFinite(v) && v > 50 && v < 150 ? v : null;
     usdAppRateRef.current = safe;
     setUsdAppRateState(safe);
@@ -175,6 +184,14 @@ export function useAppState() {
       if (safe == null) secureStorage.removeItem('usdAppRate');
       else secureStorage.setItem('usdAppRate', String(safe));
     } catch { /* quota */ }
+    // Server write-through (skipServer = the value CAME from the server).
+    // Failure is non-fatal: the local cache keeps the UI correct for THIS
+    // device and the boot-sync retries on the next session.
+    if (!opts?.skipServer) {
+      void saveServerSetting('usdAppRate', safe).then(ok => {
+        if (!ok) console.warn('⚠️ usdAppRate server sync failed — local only (retry on next boot)');
+      });
+    }
   }, []);
 
   const [theme, setTheme] = useState<'dark' | 'light'>(() => (secureStorage.getItem('theme') as 'dark' | 'light') || 'dark');
@@ -619,6 +636,22 @@ export function useAppState() {
     // the Sheets fallback so synced assets win the race; the cloud merge
     // self-cancels (ref guard) if assets land mid-flight.
     void loadIndmAssets();
+
+    // 1.6) SERVER SETTINGS (v6.1) — multi-device / cache-clear-proof
+    // calibrations (usdAppRate "Match App"). Server value wins; a device
+    // that still has only the OLD localStorage value migrates it up once.
+    // Runs off refs → no re-subscription, no extra effect deps.
+    void fetchServerSettings().then(settings => {
+      if (!settings) return; // offline / server error — local cache stands
+      const srv = typeof settings.usdAppRate === 'number' ? settings.usdAppRate : null;
+      if (srv != null && srv > 50 && srv < 150) {
+        if (srv !== usdAppRateRef.current) setUsdAppRate(srv, { skipServer: true });
+      } else if (usdAppRateRef.current != null) {
+        // One-time migration: pre-v6.1 local-only value → server (so every
+        // other device + future cache wipes see the same calibration).
+        void saveServerSetting('usdAppRate', usdAppRateRef.current);
+      }
+    }).catch(() => { /* non-fatal */ });
 
     // 2) CLOUD — background fetch, merge when ready (manual mode only)
     // Fire immediately (don't await) so the UI renders local data first.

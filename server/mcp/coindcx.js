@@ -78,12 +78,25 @@ function saveCreds(creds) {
 // restarts, and are used ONLY when the ledger basis is missing. Rows then
 // show app-parity Invested / Avg Price / P&L.
 const MANUAL_BASIS_FILE = 'mcp-coindcx-basis.json';
+// v6.1: the FILE shape is now { basis: {BTC: 123}, updatedAt } so the
+// durable boot-restore can compare freshness (a legacy flat file/backup
+// from <= v6.0 is normalized on load). The module's API (flat maps in/out)
+// is unchanged — callers and tests are unaffected.
 function loadManualBasis() {
-  return loadJSON(MANUAL_BASIS_FILE, {}) || {};
+  const raw = loadJSON(MANUAL_BASIS_FILE, {});
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  if (raw.basis && typeof raw.basis === 'object' && !Array.isArray(raw.basis)) {
+    return raw.basis;
+  }
+  // Legacy flat shape { BTC: 123 } (pre-v6.1 file or durable backup) —
+  // the whole object IS the basis map.
+  const { updatedAt, ...coins } = raw;
+  return coins;
 }
 function saveManualBasis(basis) {
-  saveJSON(MANUAL_BASIS_FILE, basis);
-  try { durablePut(MANUAL_BASIS_FILE, basis); } catch { /* optional */ }
+  const store = { basis, updatedAt: Date.now() };
+  saveJSON(MANUAL_BASIS_FILE, store);
+  try { durablePut(MANUAL_BASIS_FILE, store); } catch { /* optional */ }
   return basis;
 }
 /** Set (or clear, when invested == null) one coin's manual invested amount. */

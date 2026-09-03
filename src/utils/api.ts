@@ -2024,6 +2024,35 @@ export async function clearCoindcxManualBasis(coin?: string): Promise<boolean> {
   } catch { return false; }
 }
 
+// v6.1 — SERVER-side app settings (multi-device + cache-clear proof).
+// The Portfolio tab's user calibrations (e.g. usdAppRate from the
+// "Match App" flow) now live on the server (durable-backed, same
+// encrypted GitHub pipeline as the MCP credentials) so every device
+// that logs in with the PIN sees the SAME numbers. localStorage stays
+// only as an instant-render cache / offline fallback.
+export type ServerSettings = { usdAppRate?: number };
+
+export async function fetchServerSettings(): Promise<ServerSettings | null> {
+  try {
+    const res = await apiFetch('/api/mcp/settings', { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data && typeof data === 'object' && data.settings) ? (data.settings as ServerSettings) : {};
+  } catch { return null; }
+}
+
+export async function saveServerSetting(key: string, value: number | null): Promise<boolean> {
+  try {
+    const res = await apiFetch('/api/mcp/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value }),
+      signal: AbortSignal.timeout(15000),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
 export async function fetchCoinDcxStatus(): Promise<CoinDcxInfo | null> {
   try {
     const res = await apiFetch('/api/mcp/coindcx/status', { signal: AbortSignal.timeout(10000) });
