@@ -11,6 +11,9 @@ export function useServerSentEvents(url: string | null, options: SSEOptions = {}
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
   const [data, setData] = useState<any>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  // Ref for options to avoid identity instability (inline objects change every render).
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   const connect = useCallback(() => {
     if (!url) return;
@@ -29,34 +32,34 @@ export function useServerSentEvents(url: string | null, options: SSEOptions = {}
     eventSource.onopen = () => {
       console.log('[SSE] Connected');
       setStatus('connected');
-      options.onOpen?.();
+      optionsRef.current.onOpen?.();
     };
 
     eventSource.onmessage = (event) => {
       try {
         const parsedData = JSON.parse(event.data);
         setData(parsedData);
-        options.onMessage?.(parsedData);
+        optionsRef.current.onMessage?.(parsedData);
       } catch {
         // If not JSON, use raw data
         setData(event.data);
-        options.onMessage?.(event.data);
+        optionsRef.current.onMessage?.(event.data);
       }
     };
 
     eventSource.onerror = (error) => {
       console.error('[SSE] Error:', error);
       setStatus('error');
-      options.onError?.(error);
+      optionsRef.current.onError?.(error);
 
       // EventSource will auto-reconnect
     };
 
     return () => {
       eventSource.close();
-      options.onClose?.();
+      optionsRef.current.onClose?.();
     };
-  }, [url, options]);
+  }, [url]);
 
   const disconnect = useCallback(() => {
     if (eventSourceRef.current) {
@@ -193,100 +196,6 @@ export function useStreamingAI() {
     stopStreaming
   };
 }
-
-// Backend SSE streaming endpoint example
-export const SSEBackendExample = `
-// server/routes/chat.js
-import express from 'express';
-
-const router = express.Router();
-
-router.post('/api/chat/stream', async (req, res) => {
-  const { messages } = req.body;
-
-  // Set SSE headers
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-
-  try {
-    // Example: OpenAI streaming
-    const stream = await openai.chat.completions.create({
-      model: 'gpt-4',
-      messages,
-      stream: true
-    });
-
-    for await (const chunk of stream) {
-      const content = chunk.choices[0]?.delta?.content;
-
-      if (content) {
-        // Send SSE formatted data
-        res.write(\`data: \${JSON.stringify({ content })}\\n\\n\`);
-      }
-    }
-
-    // Send completion signal
-    res.write('data: [DONE]\\n\\n');
-    res.end();
-
-  } catch (error) {
-    console.error('Stream error:', error);
-    res.write(\`data: \${JSON.stringify({ error: error.message })}\\n\\n\`);
-    res.end();
-  }
-});
-
-export default router;
-`;
-
-// React component example
-export const StreamingChatExample = `
-import { useStreamingAI } from '../hooks/useServerSentEvents';
-
-function StreamingChat() {
-  const { streamedText, isStreaming, streamChat, stopStreaming } = useStreamingAI();
-  const [input, setInput] = useState('');
-
-  const handleSend = async () => {
-    const messages = [
-      { role: 'user', content: input }
-    ];
-
-    try {
-      await streamChat(messages);
-    } catch (error) {
-      console.error('Streaming error:', error);
-    }
-  };
-
-  return (
-    <div>
-      <div className="chat-messages">
-        {streamedText && (
-          <div className="message">
-            {streamedText}
-            {isStreaming && <span className="cursor">|</span>}
-          </div>
-        )}
-      </div>
-
-      <div className="input-area">
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          disabled={isStreaming}
-        />
-        {isStreaming ? (
-          <button onClick={stopStreaming}>Stop</button>
-        ) : (
-          <button onClick={handleSend}>Send</button>
-        )}
-      </div>
-    </div>
-  );
-}
-`;
 
 // Live updates hook using SSE
 export function useLiveUpdates(endpoint: string | null) {

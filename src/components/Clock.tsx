@@ -1,11 +1,23 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export function Clock() {
   const [currentTime, setCurrentTime] = useState(new Date());
+  const intervalRef = useRef<number | null>(null);
 
   useEffect(() => {
-    const interval = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(interval);
+    const start = () => {
+      if (intervalRef.current) return;
+      setCurrentTime(new Date()); // immediate sync on resume
+      intervalRef.current = window.setInterval(() => setCurrentTime(new Date()), 1000);
+    };
+    const stop = () => {
+      if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+    };
+    const onVisibility = () => { document.hidden ? stop() : start(); };
+
+    start();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => { stop(); document.removeEventListener('visibilitychange', onVisibility); };
   }, []);
 
   return (
