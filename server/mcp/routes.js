@@ -23,6 +23,14 @@
 //   POST /api/mcp/coindcx/connect      → save + validate API keys
 //   POST /api/mcp/coindcx/disconnect   → forget keys + drop assets
 //   GET  /api/mcp/coindcx/status       → connection + last balance sync
+//
+//   Tapetide (India stock-research MCP, v4.7):
+//   GET  /api/mcp/tapetide/status      → connection + tools catalog state
+//   GET  /api/mcp/tapetide/connect     → 302 → Tapetide OAuth (PKCE)
+//   GET  /api/mcp/tapetide/callback    → OAuth redirect target
+//   POST /api/mcp/tapetide/disconnect  → forget tokens
+//   GET  /api/mcp/tapetide/tools       → tools list (categorized)
+//   POST /api/mcp/tapetide/call        → generic MCP tool call
 // ============================================================
 import { Router } from 'express';
 import {
@@ -38,6 +46,7 @@ import {
   coindcxConnect, coindcxDisconnect, coindcxStatus,
 } from './coindcx.js';
 import { durableStatus } from './durable.js';
+import * as tapetide from './tapetide.js';
 
 const router = Router();
 
@@ -62,12 +71,17 @@ if (typeof setInterval === 'function') {
 }
 
 // Uniform error mapping → JSON shape used across this codebase.
+// Handles IndmError AND TptError (tapetide.js) — both carry
+// { status, code } (duck-typing keeps the modules decoupled).
 function fail(res, err) {
   if (err instanceof IndmError) {
     return res.status(err.status).json({ error: { message: err.message, code: err.code } });
   }
-  console.error('[mcp/indmoney] Unexpected error:', err?.message || err);
-  return res.status(500).json({ error: { message: 'INDMoney MCP internal error', code: 'INTERNAL' } });
+  if (err && typeof err.status === 'number' && err.code) {
+    return res.status(err.status).json({ error: { message: err.message, code: err.code } });
+  }
+  console.error('[mcp/routes] Unexpected error:', err?.message || err);
+  return res.status(500).json({ error: { message: 'MCP internal error', code: 'INTERNAL' } });
 }
 
 // Derive the public origin of THIS deployment (Render proxy aware).
@@ -323,6 +337,89 @@ router.post('/api/mcp/indmoney/call', async (req, res) => {
     const safeArgs = (args && typeof args === 'object' && !Array.isArray(args)) ? args : {};
     const result = await callTool(tool, safeArgs);
     return res.json({ ok: true, tool, payload: extractToolPayload(result) ?? result });
+  } catch (err) { return fail(res, err); }
+});
+
+// ------------------------------------------------------------
+// TAPETIDE — India stock-research MCP (OAuth account login =
+// the "API key"). v4.7. Same flow shape as INDMoney above.
+// ------------------------------------------------------------
+router.get('/api/mcp/tapetide/status', (_req, res) => {
+  try {
+    res.json({ ok: true, ...tapetide.getStatus(), durable: durableStatus() });
+  } catch (err) { return fail(res, err); }
+});
+
+router.get('/api/mcp/tapetide/connect', async (req, res) => {
+  try {
+    const origin = requestOrigin(req);
+    if (!origin) throw new IndmError('Could not determine site origin', 400, 'NO_ORIGIN');
+    const { authorizeUrl } = await tapetide.startConnect(origin);
+    return res.redirect(302, authorizeUrl);
+  } catch (err) { return fail(res, err); }
+});
+
+// Callback: top-level navigation → session cookie auths it (same
+// as INDMoney callback). Redirects back to the INTRADAY tab (the
+// Tapetide research desk lives there).
+router.get('/api/mcp/tapetide/callback', async (req, res) => {
+  const { code, state, error, error_description: errDesc } = req.query;
+  let origin = requestOrigin(req);
+  try {
+    const saved = typeof state === 'string' ? tapetide.getPendingOrigin(state) : null;
+    if (saved) origin = saved;
+    if (!origin) throw new IndmError('Missing site origin for redirect', 400, 'NO_ORIGIN');
+    await tapetide.completeConnect({ code, state, error, errorDescription: errDesc });
+    return res.redirect(302, `${origin}/?tab=intraday&tpt=ok`);
+  } catch (err) {
+    const reason = encodeURIComponent(String(err?.message || err?.code || 'unknown_error'));
+    const base = origin || '';
+    return res.redirect(302, `${base}/?tab=intraday&tpt=error&reason=${reason}`);
+  }
+});
+
+router.post('/api/mcp/tapetide/disconnect', async (_req, res) => {
+  try {
+    const out = await tapetide.disconnect();
+    return res.json(out);
+  } catch (err) { return fail(res, err); }
+});
+
+// GET /tools — the connected account's tool surface, bucketed
+// into a catalog (analysis / quotes / screener / fundamentals / …).
+router.get('/api/mcp/tapetide/tools', async (req, res) => {
+  try {
+    if (rateLimited('tapetide-tools')) throw new IndmError('Too many requests — try again shortly', 429, 'RATE_LIMITED');
+    const force = req.query.force === '1' || req.query.force === 'true';
+    const { tools, cached } = await tapetide.listTools({ force });
+    const catalog = tapetide.buildCatalog(tools);
+    return res.json({
+      ok: true, cached,
+      count: (tools || []).length,
+      catalog: catalog.map(cat => ({
+        key: cat.key, label: cat.label, count: cat.tools.length,
+        tools: cat.tools.map(t => ({
+          name: t.name,
+          description: t.description || null,
+          inputSchema: t.inputSchema ? { type: t.inputSchema.type, properties: Object.keys(t.inputSchema.properties || {}) } : null,
+        })),
+      })),
+    });
+  } catch (err) { return fail(res, err); }
+});
+
+// POST /call — generic MCP tool invocation (research desk).
+// Body: { tool: string, args?: object }
+router.post('/api/mcp/tapetide/call', async (req, res) => {
+  try {
+    if (rateLimited('tapetide-call')) throw new IndmError('Too many requests — try again shortly', 429, 'RATE_LIMITED');
+    const { tool, args } = req.body || {};
+    if (!tool || typeof tool !== 'string') {
+      throw new IndmError('`tool` (string) is required', 400, 'BAD_REQUEST');
+    }
+    const safeArgs = (args && typeof args === 'object' && !Array.isArray(args)) ? args : {};
+    const result = await tapetide.callTool(tool, safeArgs);
+    return res.json({ ok: true, tool, payload: tapetide.extractToolPayload(result) ?? result });
   } catch (err) { return fail(res, err); }
 });
 

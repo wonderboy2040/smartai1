@@ -203,6 +203,19 @@ export async function durableBootRestoreAll() {
       if (typeof mod.__dropSymbolCacheForBoot === 'function') mod.__dropSymbolCacheForBoot();
     } catch { /* non-fatal */ }
   }
+  // 5) Tapetide OAuth tokens (v4.7 — India research desk).
+  const tpt = await durableBootRestore('mcp-tapetide.json', {
+    isUsable: (s) => !!(s && s.tokens && s.tokens.accessToken),
+    localTs: (s) => s?.tokens?.obtainedAt || s?.connectedAt || 0,
+    remoteTs: (s) => s?.tokens?.obtainedAt || s?.connectedAt || 0,
+  });
+  if (tpt) {
+    restored.tapetide = true;
+    try {
+      const mod = await import('./tapetide.js');
+      if (typeof mod.__dropInMemoryStateForBoot === 'function') mod.__dropInMemoryStateForBoot();
+    } catch { /* non-fatal */ }
+  }
   const keys = Object.keys(restored);
   if (keys.length) _log(`boot restore complete: ${keys.join(', ')}`);
   return restored;

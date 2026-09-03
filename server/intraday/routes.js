@@ -37,6 +37,7 @@ import { recordSignals, getTrackRecord, initTrackRecord } from './trackRecord.js
 import { openPaperTrade, closePaperTrade, getPaperSummary, getPaperHistory, restorePaperTrades, initPaperTrading } from './paperTrading.js';
 import { initIntradayStream, intradayStreamHandler, setScanSymbols, getLatestQuotes } from './stream.js';
 import { buildMoversRows } from './movers.js';
+import { buildCryptoIntel } from './intel.js';
 import { loadJSON, saveJSON } from './store.js';
 
 // ------------------------------------------------------------
@@ -352,6 +353,36 @@ export function registerIntradayRoutes(app, deps) {
     } catch (e) {
       console.warn('[intraday-movers]', e?.message || e);
       return res.json({ ok: false, market: _normMarket(req.query.market), gainers: [], losers: [], mostActive: [], sectors: [], indices: [], breadth: null, error: 'Movers feed temporarily unavailable.' });
+    }
+  });
+
+  // ---------------- EXTERNAL MARKET INTEL (v4.6) ----------------
+  // GET /api/intraday-intel — keyless verified external sources
+  // (CoinLobster whales/liquidations/movers + CoinGecko trending +
+  // Fear&Greed) with 60s cache, single-flight, circuit breakers.
+  // Public like the movers feed (no auth, no-store).
+  const _intelCache = { data: null, ts: 0, inflight: null };
+  app.get('/api/intraday-intel', async (req, res) => {
+    try {
+      res.set('Cache-Control', 'no-store');
+      if (_intelCache.data && Date.now() - _intelCache.ts < 60 * 1000) {
+        return res.json(_intelCache.data);
+      }
+      if (_intelCache.inflight) return res.json(await _intelCache.inflight);
+      _intelCache.inflight = (async () => {
+        try {
+          const payload = await buildCryptoIntel();
+          _intelCache.data = payload;
+          _intelCache.ts = Date.now();
+          return payload;
+        } finally {
+          _intelCache.inflight = null;
+        }
+      })();
+      return res.json(await _intelCache.inflight);
+    } catch (e) {
+      console.warn('[intraday-intel]', e?.message || e);
+      return res.json({ ok: false, sources: [], analysis: null, error: 'Intel feed temporarily unavailable.' });
     }
   });
 

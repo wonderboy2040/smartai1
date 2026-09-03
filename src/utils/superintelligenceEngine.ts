@@ -110,6 +110,18 @@ export interface SuperintelligenceContext {
     marketOpen: boolean;
     signals: { symbol: string; direction: string; confidence: number; grade?: string; entry: number; stopLoss: number; target1: number }[];
   }[];
+  // 2026-09 v4.6: external free keyless crypto intel (CoinLobster whale
+  // flows + CoinGecko trending + Fear&Greed) — the same panel the
+  // Intraday tab shows, so NeuralChat reasons with whale context.
+  marketIntel?: {
+    fearGreed: { value: number; label: string } | null;
+    whaleNetUsd: number | null;
+    whaleDirection: string | null;
+    topWhaleBuyers: string[];
+    topWhaleSellers: string[];
+    liquidationSkew: string | null;
+    bias: string;
+  };
   regime: 'RISK_ON' | 'NEUTRAL' | 'RISK_OFF' | 'GOLDILOCKS' | 'STAGFLATION';
   regimeReason: string;
   warnings: string[];
@@ -664,6 +676,20 @@ ${ctx.portfolioSummary.topLoser ? `Top Loser: ${ctx.portfolioSummary.topLoser.sy
     out += `NOTE: intraday signals expire fast — verify on the site's Intraday tab before acting.\n`;
   }
 
+  // 2026-09 v4.6: external whale/sentiment intel — cross-check the desk
+  // signals against what the whales and the crowd are doing.
+  if (ctx.marketIntel) {
+    const mi = ctx.marketIntel;
+    out += `\n--- GLOBAL CRYPTO INTEL (external free sources — whales / sentiment) ---\n`;
+    if (mi.fearGreed) out += `• Fear&Greed: ${mi.fearGreed.label} (${mi.fearGreed.value}/100)\n`;
+    if (mi.whaleDirection) {
+      const netM = mi.whaleNetUsd != null ? `$${(mi.whaleNetUsd / 1e6).toFixed(1)}M` : 'n/a';
+      out += `• Whales 24h: ${mi.whaleDirection} (net ${netM}) — buyers: ${mi.topWhaleBuyers.join(', ') || '—'} · sellers: ${mi.topWhaleSellers.join(', ') || '—'}\n`;
+    }
+    if (mi.liquidationSkew) out += `• Liquidations 24h: ${mi.liquidationSkew}\n`;
+    out += `• External intel bias: ${mi.bias} — crypto entries/exits me isko factor karo.\n`;
+  }
+
   if (ctx.warnings.length > 0) {
     out += `\n--- ⚠️ WARNINGS ---\n`;
     for (const w of ctx.warnings) out += `${w}\n`;
@@ -708,6 +734,37 @@ async function fetchIntradaySignals(): Promise<NonNullable<SuperintelligenceCont
   return out;
 }
 
+// ---------- 1c. External market intel brief (public, 60s server cache) ----------
+async function fetchMarketIntelBrief(): Promise<SuperintelligenceContext['marketIntel'] | undefined> {
+  try {
+    const r = await apiFetch(`${PROXY_BASE}/api/intraday-intel?t=${Date.now()}`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!r.ok) return undefined;
+    const j = await r.json();
+    if (!j?.ok) return undefined;
+    const liq = j.digest?.liqLongUsd != null || j.digest?.liqShortUsd != null
+      ? (() => {
+          const l = j.digest.liqLongUsd ?? 0, s = j.digest.liqShortUsd ?? 0;
+          const tot = l + s;
+          if (tot <= 0) return null;
+          const lp = Math.round((l / tot) * 100);
+          return `${lp}% long-side ($${(l / 1e6).toFixed(0)}M) / ${100 - lp}% short-side — ${lp >= 65 ? 'long flush ho chuka (bounce fuel)' : lp <= 35 ? 'short squeeze chal raha' : 'balanced'}`;
+        })()
+      : null;
+    return {
+      fearGreed: j.fearGreed ? { value: Number(j.fearGreed.value) || 0, label: String(j.fearGreed.rawLabel || j.fearGreed.label || '') } : null,
+      whaleNetUsd: j.analysis?.whales?.netUsd != null ? Number(j.analysis.whales.netUsd) : null,
+      whaleDirection: j.analysis?.whales?.direction ? String(j.analysis.whales.direction) : null,
+      topWhaleBuyers: (j.digest?.buyers || []).slice(0, 3).map((b: any) => String(b.coin || '')).filter(Boolean),
+      topWhaleSellers: (j.digest?.sellers || []).slice(0, 3).map((b: any) => String(b.coin || '')).filter(Boolean),
+      liquidationSkew: liq,
+      bias: String(j.analysis?.bias || 'NEUTRAL'),
+    };
+  } catch { /* intel gated/unavailable — skip */ }
+  return undefined;
+}
+
 // ---------- Main entry: build full Superintelligence context ----------
 export async function buildSuperintelligenceContext(
   portfolio: Position[],
@@ -715,11 +772,12 @@ export async function buildSuperintelligenceContext(
   usdInrRate: number,
   _portfolioContextText: string
 ): Promise<SuperintelligenceContext> {
-  // Fire all data fetches in parallel (market + news + intraday desk).
-  const [market, newsResult, intraday] = await Promise.all([
+  // Fire all data fetches in parallel (market + news + intraday desk + intel).
+  const [market, newsResult, intraday, marketIntel] = await Promise.all([
     fetchMarketSnapshot(),
     fetchPortfolioNews(portfolio, usdInrRate),
     fetchIntradaySignals(),
+    fetchMarketIntelBrief(),
   ]);
 
   // FIX L4: `??` only catches null/undefined, not 0. If /api/forex ever
@@ -771,6 +829,7 @@ export async function buildSuperintelligenceContext(
       nav: portfolio.filter(p => p.noLive).length,
     },
     intraday,
+    marketIntel,
     portfolioSummary: {
       totalValueINR: totalValue,
       totalInvestedINR: totalInvested,

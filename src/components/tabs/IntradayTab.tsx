@@ -21,6 +21,8 @@ import { PaperTradePanel, openPaperTrade } from '../intraday/PaperTradePanel';
 import { TrackRecordPanel } from '../intraday/TrackRecordPanel';
 import { UniverseEditor } from '../intraday/UniverseEditor';
 import { TrendingMovers } from '../intraday/TrendingMovers';
+import { MarketIntelPanel } from '../intraday/MarketIntelPanel';
+import { TapetidePanel } from '../TapetidePanel';
 import { ProTraderAgentPanel } from '../intraday/ProTraderAgentPanel';
 import { CommitteePanel } from '../intraday/CommitteePanel';
 import { JournalPanel } from '../intraday/JournalPanel';
@@ -776,6 +778,20 @@ export const IntradayTab = () => {
             pulse, sector heat, most-active view + per-row chart/paper-trade
             bridge into this tab's existing modals. ===== */}
       <TrendingMovers key={market} market={market} onChart={openChart} onPaper={openPaperFromCard} />
+
+      {/* ===== GLOBAL CRYPTO INTEL (2026-09 v4.6) — external free
+            keyless sources: CoinLobster whale flows + liquidations,
+            CoinGecko trending, Fear & Greed. Global crypto context —
+            dono markets (NSE + CRYPTO desk) par useful. ===== */}
+      <MarketIntelPanel />
+
+      {/* ===== TAPETIDE INDIA RESEARCH DESK (2026-09 v4.7) —
+            India's AI-first stock research MCP (NSE/BSE): OAuth
+            account login, auto-discovered tool catalog (analysis /
+            quotes / screeners / fundamentals / news), run-any-tool
+            desk. NSE desk only — crypto desk ke liye relevant
+            nahi. ===== */}
+      {!isCryptoMode && <TapetidePanel />}
 
       {/* ===== PRO TRADER MCP AGENT + COMMITTEE — NSE desk tools (India mode) ===== */}
       {!isCryptoMode && (
