@@ -26,10 +26,13 @@ export function usePWAWidget() {
 
   useEffect(() => {
     const checkSupport = async () => {
-      const swReg = await navigator.serviceWorker?.getRegistration?.();
+      const swReg = await navigator.serviceWorker?.getRegistration?.().catch(() => undefined);
 
       const newStatus: WidgetStatus = {
-        periodicSyncSupported: 'serviceWorker' in navigator && 'periodicSync' in swReg!,
+        // v5.1 null-guard: getRegistration() returns undefined when no SW is
+        // registered yet (first visit / SW blocked / non-secure context) —
+        // `'periodicSync' in undefined` used to CRASH the page here.
+        periodicSyncSupported: !!swReg && 'periodicSync' in swReg,
         notificationsSupported: 'Notification' in window,
         badgeSupported: 'setAppBadge' in navigator,
         notificationsPermission: Notification.permission,

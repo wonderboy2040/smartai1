@@ -37,7 +37,7 @@ import {
 } from './indmoney.js';
 import {
   syncNow, syncInfo, getAssetsSnapshot, maybeBackgroundSync,
-  clearSourceAssets, hideAsset, unhideAsset, unhideAll,
+  clearSourceAssets, hideAsset, unhideAsset, unhideAll, summarizeAssets,
 } from './portfolioSync.js';
 import {
   coindcxConnect, coindcxDisconnect, coindcxStatus,
@@ -193,14 +193,23 @@ router.get('/api/mcp/indmoney/assets', (_req, res) => {
     const hiddenAssets = allAssets.filter(a => hidden.includes(a.key));
     const anySource = info.sources?.indmoney || info.sources?.coindcx;
     const usable = !!anySource && assets.length > 0;
+    // v5.1: the panel's INVESTED / CURRENT VALUE / TOTAL P&L card is the
+    // summary over the VISIBLE rows (what the table shows) — the raw
+    // INDMoney-leg summary (hidden rows included) moves to summaryAll.
+    // counts.assets is likewise visible-only; hiddenCount carries the rest.
     return res.json({
       ok: usable,
       reason: !anySource ? 'not-connected' : (assets.length === 0 && hiddenAssets.length === 0 ? (snap?.lastError || 'no-snapshot') : (assets.length === 0 ? 'all-hidden' : null)),
       assets,
       hiddenAssets,
       hiddenCount: hiddenAssets.length,
-      counts: snap?.counts || null,
-      summary: snap?.summary || null,
+      counts: snap?.counts ? {
+        ...snap.counts,
+        assets: assets.length,
+        hidden: hiddenAssets.length,
+      } : null,
+      summary: summarizeAssets(assets),
+      summaryAll: snap?.summary || null,
       positions: Array.isArray(snap?.positions) ? snap.positions : [],
       sources: info.sources,
       coindcx: info.coindcx,

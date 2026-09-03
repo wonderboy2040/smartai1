@@ -420,7 +420,17 @@ function PaperTradeModal({ signal, onClose, onDone }: {
   const defaultQty = signal?.qtyPerLakh ?? (isCrypto ? 0.01 : 10);
   const [qty, setQty] = useState<number>(defaultQty);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setQty(signal?.qtyPerLakh ?? (signal?.market === 'CRYPTO' ? 0.01 : 10)); }, [signal]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { setQty(signal?.qtyPerLakh ?? (signal?.market === 'CRYPTO' ? 0.01 : 10)); setError(null); }, [signal]);
+  // v5.1: Escape closes the modal (standard behavior — every other modal
+  // in the app does; a failed submit used to leave this one stuck until
+  // the user found the tiny ✕).
+  useEffect(() => {
+    if (!signal) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !busy) onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [signal, busy, onClose]);
   if (!signal) return null;
 
   const risk = Math.abs((signal.entry ?? 0) - (signal.stopLoss ?? 0)) * qty;
@@ -430,10 +440,12 @@ function PaperTradeModal({ signal, onClose, onDone }: {
 
   const go = async () => {
     setBusy(true);
+    setError(null);
     const r = await openPaperTrade(signal, qty);
     setBusy(false);
     onDone(r.ok, r.error);
     if (r.ok) onClose();
+    else setError(r.error || 'Open failed — check open positions (duplicate blocked?)');
   };
 
   return (
@@ -475,6 +487,11 @@ function PaperTradeModal({ signal, onClose, onDone }: {
         <button onClick={go} disabled={busy} className="quantum-btn w-full py-2.5 rounded-xl text-xs font-black disabled:opacity-50">
           {busy ? 'OPENING…' : `OPEN VIRTUAL ${long ? 'LONG' : 'SHORT'} ⚡`}
         </button>
+        {error && (
+          <div className="rounded-lg bg-red-500/10 border border-red-500/25 px-3 py-2 text-[10px] font-bold text-red-300 font-mono">
+            ⚠ {error}
+          </div>
+        )}
         <p className="text-[9px] text-slate-600 font-mono text-center">
           {isCrypto
             ? 'Auto-managed: T1 → 50% book + breakeven trail • SL/T2 → close • 24/7 session (no EOD square-off)'
@@ -1092,10 +1109,11 @@ export const IntradayTab = () => {
       {/* ===== v4.9 · 04 — EXECUTION & RECORDS: paper desk → tracking → journal ===== */}
       <SectionLabel n="04" icon="📋" title="Execution & Records" sub="paper desk · track record · AI journal" />
 
-      {/* Paper trading simulator (both markets — rows carry market badges) */}
-      {!marketClosed && (
-        <PaperTradePanel livePrices={stream.livePrices} refreshKey={paperRefresh} />
-      )}
+      {/* Paper trading simulator (both markets — rows carry market badges).
+          v5.1: marketClosed gate removed — post-market the desk still shows
+          open positions (closeable), closedToday + stats. The panel's own
+          empty-state handles the no-trades case. */}
+      <PaperTradePanel livePrices={stream.livePrices} refreshKey={paperRefresh} />
 
       {/* ===== Signal track record ===== */}
       <TrackRecordPanel refreshKey={trackRefresh} />

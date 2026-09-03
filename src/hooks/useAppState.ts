@@ -1530,6 +1530,13 @@ export function useAppState() {
     let indPL = 0, usPL = 0, cryptoPL = 0;
     let totalInvestedINR = 0, totalValueINR = 0;
     let totalInvestedUSD = 0, totalValueUSD = 0;
+    let totalInvestedCRYPTO = 0, totalValueCRYPTO = 0, totalPLCRYPTO = 0;
+    // v5.1 P&L truth fix: totalPL now sums ONLY rows with a real cost
+    // basis (hasBasis). A basis-less crypto row's VALUE still counts in
+    // Current Equity (the user owns it) but its value must NEVER leak
+    // into P&L — that was the "+₹10k crypto value shown as India
+    // Returns" bug (site 35,372 vs app 25,376).
+    let totalPL = 0;
 
     p.forEach(pos => {
       const key = `${pos.market}_${pos.symbol}`;
@@ -1549,12 +1556,27 @@ export function useAppState() {
       totalInvested += pnlTruth.investedINR;
       totalValue += pnlTruth.valueINR;
 
-      if (pos.market === 'IN') {
+      // v5.1 bucketing fix: CoinDCX rows carry market 'IN' (INR pairs) but
+      // they are CRYPTO, not India equity — bucket them with
+      // isCryptoSymbol (same classification the grouped table + insights
+      // use) so the 🇮🇳 sub-lines equal the INDMoney app's INDIA section.
+      const cleanSym = pos.symbol.replace('.NS', '').replace('.BO', '');
+      const isCrypto = isCryptoSymbol(cleanSym);
+      if (isCrypto) {
+        totalInvestedCRYPTO += pnlTruth.investedINR;
+        totalValueCRYPTO += pnlTruth.valueINR;
+      } else if (pos.market === 'IN') {
         totalInvestedINR += pnlTruth.invested;
         totalValueINR += pnlTruth.value;
       } else {
         totalInvestedUSD += pnlTruth.invested;
         totalValueUSD += pnlTruth.value;
+      }
+
+      // P&L totals: basis-known rows ONLY (see comment above).
+      if (pnlTruth.hasBasis) {
+        totalPL += pnlTruth.pnlINR;
+        if (isCrypto) totalPLCRYPTO += pnlTruth.pnlINR;
       }
 
       // Exact day baseline: REAL previous close when the quote source served
@@ -1567,8 +1589,7 @@ export function useAppState() {
       todayPL += dayPLINR;
 
       // FIX: All P&L buckets in INR for consistent comparison/aggregation.
-      const cleanSym = pos.symbol.replace('.NS', '').replace('.BO', '');
-      if (isCryptoSymbol(cleanSym)) {
+      if (isCrypto) {
         cryptoPL += dayPLINR;
       } else if (pos.market === 'IN') {
         indPL += dayPLINR;
@@ -1576,7 +1597,6 @@ export function useAppState() {
         usPL += dayPLINR; // INR-normalized (was USD native before)
       }
     });
-    const totalPL = totalValue - totalInvested;
     const plPct = totalInvested > 0 ? (totalPL / totalInvested) * 100 : 0;
     const todayPct = (totalValue - todayPL) > 0 ? (todayPL / (totalValue - todayPL)) * 100 : 0;
     return {
@@ -1592,7 +1612,10 @@ export function useAppState() {
       totalInvestedINR,
       totalValueINR,
       totalInvestedUSD,
-      totalValueUSD
+      totalValueUSD,
+      totalInvestedCRYPTO,
+      totalValueCRYPTO,
+      totalPLCRYPTO
     };
   }, []);
 

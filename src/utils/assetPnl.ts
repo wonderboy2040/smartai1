@@ -35,6 +35,11 @@ export interface PnlBreakdown {
   pnlPct: number | null;
   /** true = grounded in the sync snapshot (INDMoney/CoinDCX truth). */
   synced: boolean;
+  /** true = a real cost basis exists → the pnl is a genuine unrealized
+   *  number. false (CoinDCX rows without trade-history basis) means pnl
+   *  is only sync-drift — it must NEVER be counted into portfolio P&L
+   *  totals (that bug showed +₹10k of crypto VALUE as India RETURNS). */
+  hasBasis: boolean;
   /** INR value of the position (native × live FX for US rows). */
   valueINR: number;
   /** INR unrealized P&L (native × live FX for US rows). */
@@ -63,6 +68,8 @@ export function syncedAssetPnl(pos: Position, curPrice: number, rate: number): P
     // INDMoney reports INR natively; US rows' snapshot fields were already
     // unit-converted server-side (per-unit prices in USD, INR aggregates).
     // `indmPnlINR`/`indmInvestedINR` are INR aggregates → convert to native.
+    // CoinDCX rows WITH a trade-history basis flow through here too (their
+    // invested/pnl/lastPrice are set server-side, market = IN).
     const basePnl = hasSyncPnl ? (pos.indmPnlINR as number) / fx : null;
     const invested = hasSyncInvested ? (pos.indmInvestedINR as number) / fx : null;
     const syncPrice = pos.indmLastPrice; // native per-unit price at sync
@@ -76,15 +83,20 @@ export function syncedAssetPnl(pos: Position, curPrice: number, rate: number): P
     const pnlPct = invested != null && invested > 0 ? (pnl / invested) * 100 : (pos.indmPnlPct != null ? pos.indmPnlPct : null);
     return {
       pnl, invested: invested ?? 0, value, pnlPct, synced: true,
+      hasBasis: hasSyncInvested || hasSyncPnl,
       pnlINR: pnl * fx, investedINR: (invested ?? 0) * fx, valueINR: value * fx,
     };
   }
 
-  // ---- CoinDCX rows (no cost basis): pure live delta from sync price ----
+  // ---- CoinDCX rows (no cost basis): drift-only, NEVER counted as P&L ----
+  // pnl here is just movement since the sync snapshot — with no trade
+  // history there is no cost basis, so portfolio P&L totals must skip it
+  // (hasBasis: false) and the UI shows "P&L n/a" instead of a fake number.
   if (pos.source === 'coindcx' && typeof pos.indmLastPrice === 'number' && pos.indmLastPrice > 0) {
     const delta = (curPrice - pos.indmLastPrice) * qty;
     return {
       pnl: delta, invested: 0, value: curPrice * qty, pnlPct: null, synced: true,
+      hasBasis: false,
       pnlINR: delta, investedINR: 0, valueINR: curPrice * qty, // IN market (INR pairs)
     };
   }
@@ -98,6 +110,7 @@ export function syncedAssetPnl(pos: Position, curPrice: number, rate: number): P
   return {
     pnl: pl, invested: inv, value: eqVal,
     pnlPct: inv > 0 ? (pl / inv) * 100 : 0, synced: false,
+    hasBasis: posSize > 0,
     pnlINR: pl * fx, investedINR: inv * fx, valueINR: eqVal * fx,
   };
 }

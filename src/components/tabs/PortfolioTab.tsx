@@ -39,6 +39,10 @@ interface GroupedAsset {
   ltp: number;
   xirr: number | null;
   group: AssetGroup;
+  /** v5.1: true = genuine cost basis exists (sync-truth / trade ledger /
+   *  manual avg) → pl is a real unrealized number. false = CoinDCX row
+   *  without trade history → pl is drift-only, excluded from P&L totals. */
+  hasBasis: boolean;
 }
 
 interface GroupInfo {
@@ -54,6 +58,8 @@ interface GroupInfo {
   totalPLINR: number;
   totalInvestedINR: number;
   allocPct: number;
+  /** rows without a cost basis (crypto without trade history) */
+  noBasisCount: number;
 }
 
 function classifyAsset(symbol: string, market: string): AssetGroup {
@@ -211,7 +217,8 @@ const PortfolioTab = React.memo(function PortfolioTab() {
           : (change <= -100 ? curPrice * 2 : curPrice / (1 + (change / 100)));
         const todayPL = (curPrice - prevPrice) * p.qty;
         const group = classifyAsset(p.symbol, p.market);
-        return { p, allocPct, pl, plPct, plINR, valINR, invINR, eqVal, invNative, todayPL, ltp: curPrice, xirr: xirrMap[key] ?? null, group };
+        const hasBasis = pnlTruth.hasBasis;
+        return { p, allocPct, pl, plPct, plINR, valINR, invINR, eqVal, invNative, todayPL, ltp: curPrice, xirr: xirrMap[key] ?? null, group, hasBasis };
       });
 
     // Sort within groups
@@ -235,17 +242,17 @@ const PortfolioTab = React.memo(function PortfolioTab() {
       {
         key: 'india', emoji: '🇮🇳', label: 'India', flag: 'NSE/BSE',
         color: 'text-orange-400', borderColor: 'border-orange-500/20', bgColor: 'bg-orange-500/5',
-        assets: [], totalValueINR: 0, totalPLINR: 0, totalInvestedINR: 0, allocPct: 0,
+        assets: [], totalValueINR: 0, totalPLINR: 0, totalInvestedINR: 0, allocPct: 0, noBasisCount: 0,
       },
       {
         key: 'usa', emoji: '🇺🇸', label: 'USA', flag: 'NASDAQ/NYSE',
         color: 'text-blue-400', borderColor: 'border-blue-500/20', bgColor: 'bg-blue-500/5',
-        assets: [], totalValueINR: 0, totalPLINR: 0, totalInvestedINR: 0, allocPct: 0,
+        assets: [], totalValueINR: 0, totalPLINR: 0, totalInvestedINR: 0, allocPct: 0, noBasisCount: 0,
       },
       {
         key: 'crypto', emoji: '🪙', label: 'Crypto', flag: 'BTC/ETH',
         color: 'text-purple-400', borderColor: 'border-purple-500/20', bgColor: 'bg-purple-500/5',
-        assets: [], totalValueINR: 0, totalPLINR: 0, totalInvestedINR: 0, allocPct: 0,
+        assets: [], totalValueINR: 0, totalPLINR: 0, totalInvestedINR: 0, allocPct: 0, noBasisCount: 0,
       },
     ];
 
@@ -253,7 +260,10 @@ const PortfolioTab = React.memo(function PortfolioTab() {
       const group = groups.find(g => g.key === asset.group)!;
       group.assets.push(asset);
       group.totalValueINR += asset.valINR;
-      group.totalPLINR += asset.plINR;
+      // v5.1: P&L sums count basis-known rows ONLY — a basis-less row's
+      // value must never masquerade as returns (the India +₹10k bug).
+      if (asset.hasBasis) group.totalPLINR += asset.plINR;
+      else group.noBasisCount += 1;
       group.allocPct += asset.allocPct;
       // Invested — sync-truth native → INR (v4.4 exact-match pass).
       group.totalInvestedINR += asset.invINR;
@@ -440,14 +450,26 @@ const PortfolioTab = React.memo(function PortfolioTab() {
             <div className={`text-xs font-bold ${metrics.totalPL >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
               {metrics.plPct >= 0 ? '+' : ''}{metrics.plPct.toFixed(2)}%
             </div>
+            {/* v5.1: market sub-lines now bucket EXACTLY like the grouped
+                table (crypto is its own 🪙 bucket — never inside India).
+                Basis-less crypto rows show value but P&L n/a, never a fake
+                number, so 🇮🇳 equals the INDMoney app's INDIA section. */}
             <div className="text-[9px] text-slate-400 font-mono flex items-center gap-1 flex-wrap mt-0.5">
-              <span className={metrics.totalValueINR - metrics.totalInvestedINR >= 0 ? 'text-emerald-500/80' : 'text-red-500/80'}>
+              <span className={metrics.totalValueINR - metrics.totalInvestedINR >= 0 ? 'text-emerald-500/80' : 'text-red-500/80'} title="India equity only — matches the INDMoney app's INDIA section (INR native)">
                 🇮🇳 {metrics.totalValueINR - metrics.totalInvestedINR >= 0 ? '+' : ''}₹{Math.round(metrics.totalValueINR - metrics.totalInvestedINR).toLocaleString('en-IN')}
               </span>
               <span className="text-slate-600 font-bold">•</span>
-              <span className={metrics.totalValueUSD - metrics.totalInvestedUSD >= 0 ? 'text-emerald-500/80' : 'text-red-500/80'}>
+              <span className={metrics.totalValueUSD - metrics.totalInvestedUSD >= 0 ? 'text-emerald-500/80' : 'text-red-500/80'} title="USD at live FX rate — INDMoney's app converts at its own internal rate, so USD figures can differ ~2-3%. The INR side matches exactly.">
                 🦅 {metrics.totalValueUSD - metrics.totalInvestedUSD >= 0 ? '+' : ''}${Math.round(metrics.totalValueUSD - metrics.totalInvestedUSD).toLocaleString('en-US')}
               </span>
+              {(metrics.totalValueCRYPTO > 0) && (
+                <>
+                  <span className="text-slate-600 font-bold">•</span>
+                  <span className={metrics.totalPLCRYPTO >= 0 ? 'text-emerald-500/80' : 'text-red-500/80'} title={metrics.totalInvestedCRYPTO > 0 ? 'CoinDCX cost basis from your trade ledger — matches the CoinDCX app' : 'Cost basis unknown (API key has no trade-history permission) — value counts in equity, P&L shown as n/a'}>
+                    🪙 {metrics.totalInvestedCRYPTO > 0 ? `${metrics.totalPLCRYPTO >= 0 ? '+' : ''}₹${Math.round(metrics.totalPLCRYPTO).toLocaleString('en-IN')}` : 'P&L n/a'}
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -634,10 +656,21 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                 <div className="flex items-center gap-4">
                   <div className="text-right">
                     <div className="text-sm font-black font-mono text-white">₹{Math.round(group.totalValueINR).toLocaleString('en-IN')}</div>
-                    <div className={`text-[10px] font-bold font-mono ${group.totalPLINR >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {group.totalPLINR >= 0 ? '+' : ''}₹{Math.round(group.totalPLINR).toLocaleString('en-IN')}
-                      <span className="ml-1">({plPct >= 0 ? '+' : ''}{plPct.toFixed(1)}%)</span>
-                    </div>
+                    {/* v5.1: no-basis rows (crypto without trade history) show
+                        an honest P&L n/a instead of a fake zero/drift number. */}
+                    {group.noBasisCount === group.assets.length ? (
+                      <div className="text-[10px] font-bold font-mono text-slate-500" title="Cost basis unknown (no trade-history permission on the API key) — value shown, P&L n/a">
+                        P&L n/a · basis?
+                      </div>
+                    ) : (
+                      <div className={`text-[10px] font-bold font-mono ${group.totalPLINR >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {group.totalPLINR >= 0 ? '+' : ''}₹{Math.round(group.totalPLINR).toLocaleString('en-IN')}
+                        <span className="ml-1">({plPct >= 0 ? '+' : ''}{plPct.toFixed(1)}%)</span>
+                        {group.noBasisCount > 0 && (
+                          <span className="ml-1 text-slate-500" title={`${group.noBasisCount} row(s) without cost basis — excluded from P&L`}>·{group.noBasisCount}n/b</span>
+                        )}
+                      </div>
+                    )}
                   </div>
                   {/* Alloc bar */}
                   <div className="hidden md:flex flex-col items-center gap-0.5 w-12">
@@ -669,7 +702,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                   </div>
 
                   <div className="divide-y divide-white/[0.03]">
-                    {group.assets.map(({ p, allocPct, pl, plPct, eqVal, invNative, todayPL }) => {
+                    {group.assets.map(({ p, allocPct, pl, plPct, eqVal, invNative, todayPL, hasBasis }) => {
                       const key = `${(p.market || 'IN').toUpperCase()}_${p.symbol}`;
                       const data = livePrices[key];
                       const curPrice = data?.price || p.avgPrice;
@@ -822,17 +855,27 @@ const PortfolioTab = React.memo(function PortfolioTab() {
 
                           {/* 5. UNREALIZED P&L — sync-truth (INDMoney's own
                               pnl + live delta) for synced rows; every row now
-                              shows a real Unrealized P&L, NAV rows included. */}
+                              shows a real Unrealized P&L, NAV rows included.
+                              v5.1: basis-less CoinDCX rows show an honest n/a
+                              (drift-since-sync is NOT unrealized P&L). */}
                           <div className="flex justify-between md:block md:text-right">
                             <div className="md:hidden text-[10px] text-slate-500 uppercase font-bold">Unrealized P&L</div>
                             <div>
-                              <div className={`font-black font-mono text-base tracking-tight ${pl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                {pl >= 0 ? '+' : ''}{cur}{pl.toFixed(2)}
-                              </div>
-                              {plPct != null && (
-                                <div className={`text-[10px] font-bold mt-0.5 ${plPct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                                  ({plPct >= 0 ? '+' : ''}{plPct.toFixed(2)}%)
+                              {!hasBasis ? (
+                                <div className="text-[10px] font-bold font-mono text-slate-500 mt-1" title="Cost basis unknown — API key me trade-history permission nahi hai. Value live hai, P&L n/a (CoinDCX app ka Invested sirf unke trade ledger se aata hai).">
+                                  P&L n/a · no cost basis
                                 </div>
+                              ) : (
+                                <>
+                                  <div className={`font-black font-mono text-base tracking-tight ${pl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {pl >= 0 ? '+' : ''}{cur}{pl.toFixed(2)}
+                                  </div>
+                                  {plPct != null && (
+                                    <div className={`text-[10px] font-bold mt-0.5 ${plPct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                      ({plPct >= 0 ? '+' : ''}{plPct.toFixed(2)}%)
+                                    </div>
+                                  )}
+                                </>
                               )}
                             </div>
                           </div>

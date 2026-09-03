@@ -37,6 +37,19 @@ const REQUEST_TIMEOUT_MS = 10000;
 // Assets below this INR value are exchange dust — not portfolio rows.
 const DUST_INR = 10;
 
+// ---------------- trade history (cost basis) ----------------
+// CoinDCX's app shows "Invested ₹X" per coin — that comes from the user's
+// trade ledger, not the balances endpoint. We try the documented trade /
+// order-history endpoints (whichever the API key's permission allows) and
+// compute an avg-cost basis. A view-only key without trade permission
+// simply yields no basis → the row honestly shows P&L n/a.
+const TRADES_PATHS = [
+  '/exchange/v1/trades',                        // list executed trades (page/size)
+  '/exchange/v1/users/trades',                  // older docs variant
+  '/exchange/v1/orders/fetch_order_history',    // order history (filled orders)
+];
+const TRADES_MAX_PAGES = 10; // 10 × 100 = 1000 trades — plenty for a real wallet
+
 // ---------------- credential store (server-side only) ----------------
 function loadCreds() {
   return loadJSON(CREDS_FILE, null);
@@ -188,7 +201,11 @@ export function coindcxDisconnect() {
 // tickers: raw CoinDCX /exchange/ticker array (shared upstream).
 // usdInr: used only when a coin has no INR pair but does have a
 // USDT pair.
-export function mapBalancesToAssets(balances, tickers, usdInr = 84) {
+// basis: { BTC: { qty, invested, avgPrice }, ... } from the trade
+// ledger (computeCostBasis). Rows with a basis get invested/pnl/pnlPct
+// exactly like the CoinDCX app shows; without one they stay null and
+// the frontend marks them P&L n/a (never fake a number).
+export function mapBalancesToAssets(balances, tickers, usdInr = 84, basis = null) {
   const byMarket = new Map();
   for (const t of (Array.isArray(tickers) ? tickers : [])) {
     if (t && typeof t.market === 'string') byMarket.set(t.market, t);
@@ -214,6 +231,8 @@ export function mapBalancesToAssets(balances, tickers, usdInr = 84) {
     const value = price * b.qty;
     if (value < DUST_INR) continue; // dust filter
 
+    const binfo = basis && basis[b.base] && basis[b.base].invested > 0 ? basis[b.base] : null;
+
     assets.push({
       id: `cdcx-${b.base}`,
       key: `cdcx:${b.base}`,
@@ -223,12 +242,12 @@ export function mapBalancesToAssets(balances, tickers, usdInr = 84) {
       kind: 'crypto',
       source: 'coindcx',
       qty: b.qty,
-      avgPrice: null,             // no trade history pulled — P&L stays null
+      avgPrice: binfo ? round2(binfo.avgPrice) : null, // avg INR cost per unit
       lastPrice: round2(price),
       value: round2(value),
-      invested: null,
-      pnl: null,
-      pnlPct: null,
+      invested: binfo ? round2(binfo.invested) : null, // INR cost basis (trade ledger)
+      pnl: binfo ? round2(value - binfo.invested) : null,
+      pnlPct: binfo ? round2(((value - binfo.invested) / binfo.invested) * 100) : null,
       oneDayChangePct: pair && inrT ? (parseFloat(inrT.change_24_hour) || 0) : null,
       assetType: 'Crypto',
       assetEnum: 'CRYPTO',
@@ -236,6 +255,122 @@ export function mapBalancesToAssets(balances, tickers, usdInr = 84) {
     });
   }
   return assets;
+}
+
+// ---------------- trade history → avg-cost basis (PURE) ----------------
+// Normalize either shape (executed trades list OR order history):
+//   trades:   { side, market, quantity, price, fee, timestamp }
+//   orders:   { side, market, total_quantity, remaining_quantity,
+//               price, average_price, fee, status, timestamp }
+// Only FILLED quantity counts (order history mixes open/cancelled).
+export function normalizeTrades(raw) {
+  const list = Array.isArray(raw) ? raw
+    : (Array.isArray(raw?.orders) ? raw.orders
+      : (Array.isArray(raw?.data) ? raw.data : []));
+  const out = [];
+  for (const t of list) {
+    if (!t || typeof t !== 'object') continue;
+    const side = String(t.side || '').toLowerCase();
+    if (side !== 'buy' && side !== 'sell') continue;
+    const market = String(t.market || t.pair || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!market || market.length < 5) continue;
+    // Base = market minus quote suffix (BTCINR → BTC).
+    const quote = market.endsWith('USDT') ? 'USDT'
+      : (market.endsWith('INR') ? 'INR' : null);
+    if (!quote) continue; // unknown quote currency — skip rather than guess
+    const base = market.slice(0, market.length - quote.length);
+    if (!base || base === 'INR' || base === 'USDT') continue;
+
+    const filledQty = typeof t.quantity === 'number'
+      ? t.quantity
+      : numOrNull(t.filled_quantity ?? t.quantity);
+    let qty = filledQty;
+    let price = numOrNull(t.price ?? t.average_price ?? t.avg_price);
+    if (qty == null && typeof t.total_quantity === 'number') {
+      // order-history: filled = total − remaining
+      const rem = numOrNull(t.remaining_quantity) ?? 0;
+      qty = Math.max(0, t.total_quantity - rem);
+      price = price ?? numOrNull(t.average_price);
+    }
+    if (qty == null || !(qty > 0)) continue;
+
+    // Order history: skip anything not (partially) filled.
+    const status = String(t.status || '').toLowerCase();
+    if (status && !/fill|complete|partial|execut/.test(status)) continue;
+
+    if (!(price > 0)) continue;
+    const fee = numOrNull(t.fee ?? t.fees ?? t.fee_amount) ?? 0;
+    const ts = numOrNull(t.timestamp ?? t.created_at ?? t.time) ?? 0;
+    out.push({ side, base, quote, qty, price, fee, ts });
+  }
+  return out;
+}
+
+// Avg-cost walk over the ledger:
+//   buy  → qty += q, cost += q·price + fee   (fees are part of cost)
+//   sell → qty −= q at avg cost (realized)   (sell fees hit realized, not basis)
+// Result: per-coin { qty, invested, avgPrice } for the REMAINING balance.
+// USDT-quote trades are converted at the CURRENT usdInr (approximation —
+// historical per-trade FX is not exposed by the API).
+export function computeCostBasis(trades, usdInr = 84) {
+  const rate = (typeof usdInr === 'number' && usdInr > 50 && usdInr < 150) ? usdInr : 84;
+  const coins = new Map(); // base → { qty, cost }
+  const sorted = [...(Array.isArray(trades) ? trades : [])].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  for (const t of sorted) {
+    if (!t || typeof t !== 'object') continue;
+    const fx = t.quote === 'USDT' ? rate : 1; // INR-quote trades are native
+    const c = coins.get(t.base) || { qty: 0, cost: 0 };
+    const q = Math.abs(Number(t.qty) || 0);
+    if (!(q > 0)) continue;
+    if (t.side === 'buy') {
+      c.qty += q;
+      c.cost += q * (Number(t.price) || 0) * fx + (Number(t.fee) || 0) * fx;
+    } else { // sell at average cost
+      const avg = c.qty > 0 ? c.cost / c.qty : 0;
+      const sold = Math.min(q, c.qty);
+      c.qty -= sold;
+      c.cost -= avg * sold;
+      if (c.qty <= 1e-10) { c.qty = 0; c.cost = 0; } // fully closed → reset
+    }
+    coins.set(t.base, c);
+  }
+  const out = {};
+  for (const [base, c] of coins) {
+    if (c.qty > 0 && c.cost > 0) {
+      out[base] = { qty: c.qty, invested: c.cost, avgPrice: c.cost / c.qty };
+    }
+  }
+  return out;
+}
+
+// Try each trades endpoint with the user's key; return { trades, endpoint }
+// or null when none is reachable/allowed (view-only key without trade
+// permission is a legitimate outcome — the caller then runs basis-less).
+export async function fetchCoinDcxTrades(apiKey, secret) {
+  for (const path of TRADES_PATHS) {
+    try {
+      const merged = [];
+      for (let page = 1; page <= TRADES_MAX_PAGES; page++) {
+        const raw = await coindcxPrivate(path, apiKey, secret, {
+          page: String(page),
+          size: '100',
+        });
+        const list = Array.isArray(raw) ? raw
+          : (Array.isArray(raw?.orders) ? raw.orders
+            : (Array.isArray(raw?.data) ? raw.data : []));
+        merged.push(...list);
+        if (!Array.isArray(list) || list.length < 100) break; // last page
+      }
+      // An endpoint that answers with a list we can parse wins — even an
+      // empty one (a wallet funded by transfers, not trades).
+      return { trades: normalizeTrades(merged), endpoint: path };
+    } catch (err) {
+      const status = err?.status;
+      if (status === 401 || status === 403 || status === 404) continue; // not allowed here → next
+      throw err; // network/auth-level failure — let the caller degrade
+    }
+  }
+  return null;
 }
 
 const COIN_NAMES = new Map(Object.entries({
@@ -258,23 +393,32 @@ function round2(n) { return Math.round(n * 100) / 100; }
 // ---------------- fetch + record one balance sync ----------------
 // Called from portfolioSync.syncNow(). Throws on hard failure (creds
 // invalid / API unreachable) so the sync engine can keep the previous
-// CoinDCX assets (degraded-tolerant).
+// CoinDCX assets (degraded-tolerant). Trade-history fetch is best-effort:
+// a key without trade permission simply leaves rows basis-less (honest).
 export async function fetchCoinDcxAssets(usdInr) {
   const creds = loadCreds();
   if (!creds?.apiKey || !creds?.secret) return null; // not connected
-  const [raw, tickers] = await Promise.all([
+  const [raw, tickers, tradesOut] = await Promise.all([
     fetchBalancesSigned(creds.apiKey, creds.secret),
     fetchCoinDcxTickers(),
+    fetchCoinDcxTrades(creds.apiKey, creds.secret).catch(() => null),
   ]);
   const balances = normalizeBalances(raw);
-  const assets = mapBalancesToAssets(balances, tickers, usdInr);
+  const basis = tradesOut ? computeCostBasis(tradesOut.trades, usdInr) : null;
+  const assets = mapBalancesToAssets(balances, tickers, usdInr, basis);
   saveCreds({
     ...creds,
     lastSyncAt: Date.now(),
     balanceCount: balances.length,
     lastError: null,
+    costBasis: {
+      source: tradesOut?.endpoint || null,
+      trades: tradesOut?.trades?.length ?? 0,
+      coins: basis ? Object.keys(basis) : [],
+      computedAt: Date.now(),
+    },
   });
-  return { assets, balanceCount: balances.length };
+  return { assets, balanceCount: balances.length, basis };
 }
 
 // ---------------- test hooks ----------------
@@ -286,3 +430,4 @@ export function __setCredsForTests(apiKey, secret, extra = {}) {
 }
 export function __coindcxPrivateForTests() { return coindcxPrivate; }
 export function __fetchBalancesSignedForTests() { return fetchBalancesSigned; }
+export function __fetchCoinDcxTradesForTests() { return (...args) => fetchCoinDcxTrades(...args); }

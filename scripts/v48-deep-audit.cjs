@@ -62,11 +62,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // -- A1: signal desk --
   const t1 = await bt();
-  check('A1a Intraday tab opens with signal desk', t1.includes('super intelligence') || t1.includes('signal') || t1.includes('scan:'));
+  check('A1a Intraday tab opens with signal desk', t1.includes('super intelligence') || t1.includes('signal') || t1.includes('scan:') || t1.includes('market band'));
+  // v5.1: market-hours aware — outside 09:15-15:30 IST (Mon-Fri) the desk
+  // honestly shows the closed-market notice instead of scan data; both
+  // states are valid. (The marketOpen flag mirrors the scanner API.)
+  const marketClosedNow = /market band|closed|band hai/i.test(t1) && !/Scan:\s*[\d:]/.test(t1);
   const scanLine = (await bodyText()).match(/Scan:\s*([\d:]+)/);
-  check('A1b scan timestamp rendered', !!scanLine, scanLine ? scanLine[0] : 'not found');
+  check('A1b scan timestamp rendered (or honest closed-market notice)', !!scanLine || marketClosedNow, scanLine ? scanLine[0] : (marketClosedNow ? 'NSE closed — notice shown' : 'not found'));
   const minConf = (await bodyText()).match(/Min Confidence:\s*(\d+)%/);
-  check('A1c min-confidence footer', !!minConf, minConf ? minConf[0] : 'not found');
+  check('A1c min-confidence footer (market-hours only)', !!minConf || marketClosedNow, minConf ? minConf[0] : (marketClosedNow ? 'NSE closed' : 'not found'));
 
   // -- A2: signal rows — switch to dense TABLE view + grade filter ALL
   //    (default = cards view with grade 'A' filter; today's setups may be
@@ -77,7 +81,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (await allChip.count()) { await allChip.click(); await sleep(1200); }
   const tradeBtns = page.locator('button[title="Open virtual trade"], button[title*="WATCH ONLY"]');
   const tradeCount = await tradeBtns.count();
-  check('A2a signal rows rendered in table view (grade ALL)', tradeCount > 0, `${tradeCount} rows`);
+  check('A2a signal rows rendered in table view (grade ALL)', tradeCount > 0 || marketClosedNow, tradeCount > 0 ? `${tradeCount} rows` : (marketClosedNow ? 'NSE closed — no rows by design' : '0 rows'));
   // B-grade rows must be gated (disabled) — parity with cards view
   if (tradeCount > 0) {
     const watchOnly = page.locator('button[title*="WATCH ONLY"]');
@@ -131,13 +135,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       await sleep(1600);
       paperOpened = true;
       check('A4b trade submitted from modal', true);
-      // close any leftover modal surface
+      // close any leftover modal surface (v5.1: a FAILED submit — e.g. the
+      // server's duplicate-position block on a re-run — keeps the modal
+      // open by design; Escape + the ✕ button both close it now)
       await page.keyboard.press('Escape');
       await sleep(600);
       if (!(await overlayGone())) {
-        const escB = page.locator('button', { hasText: /✕\s*ESC/i }).first();
+        const escB = page.locator('button', { hasText: /^✕$/ }).first();
         if (await escB.count()) { await escB.click().catch(() => {}); await sleep(600); }
       }
+      if (!(await overlayGone())) {
+        // last resort: backdrop click (onClose handler)
+        await page.mouse.click(30, 30);
+        await sleep(700);
+      }
+      check('A4c paper modal closes after submit (ok or shown error)', await overlayGone());
     } else {
       check('A4b trade submit button found', false, 'no confirm button in modal');
     }

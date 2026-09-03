@@ -190,6 +190,42 @@ export function mapHoldingsToAssets(holdings, resolutions, usdInr = DEFAULT_USD_
 }
 
 function round2(n) { return Math.round(n * 100) / 100; }
+
+// Summary over the VISIBLE asset rows (null-safe: basis-less crypto rows
+// contribute value but NOT pnl — same honesty rule as the frontend).
+// The INDMoney panel + snapshot cards use this so "INVESTED / CURRENT
+// VALUE / TOTAL P&L" always match what the table actually shows — the
+// raw INDMoney-leg summary (hidden rows included) stays available as
+// `summaryAll` for debugging.
+export function summarizeAssets(assets) {
+  const list = Array.isArray(assets) ? assets : [];
+  let totalValue = 0, totalInvested = 0, totalPnl = 0, withBasis = 0, oneDayChange = 0, oneDayCount = 0;
+  for (const a of list) {
+    if (!a || typeof a !== 'object') continue;
+    if (typeof a.value === 'number' && Number.isFinite(a.value)) totalValue += a.value;
+    if (typeof a.oneDayChangePct === 'number' && Number.isFinite(a.oneDayChangePct)
+      && typeof a.value === 'number' && Number.isFinite(a.value)) {
+      oneDayChange += a.value * (a.oneDayChangePct / 100);
+      oneDayCount++;
+    }
+    if (typeof a.invested === 'number' && Number.isFinite(a.invested)) {
+      totalInvested += a.invested;
+      if (typeof a.pnl === 'number' && Number.isFinite(a.pnl)) totalPnl += a.pnl;
+      else if (typeof a.value === 'number' && Number.isFinite(a.value)) totalPnl += a.value - a.invested;
+      withBasis++;
+    }
+  }
+  return {
+    totalValue: round2(totalValue),
+    totalInvested: round2(totalInvested),
+    totalPnl: round2(totalPnl),
+    totalPnlPct: totalInvested > 0 ? round2((totalPnl / totalInvested) * 100) : null,
+    oneDayChange: oneDayCount ? round2(oneDayChange) : null,
+    oneDayChangePct: oneDayCount && totalValue > 0 ? round2((oneDayChange / totalValue) * 100) : null,
+    holdingCount: list.length,
+    withBasis,
+  };
+}
 function slug(name) {
   const s = String(name || 'asset').replace(/[^A-Za-z0-9]+/g, '').toUpperCase();
   return (s.slice(0, 12) || 'ASSET');
