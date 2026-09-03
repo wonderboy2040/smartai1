@@ -5,7 +5,7 @@
 // (Greeks per strike) · ensemble-driven strategy cards with full
 // P&L math. Clearly labels bs-model vs live NSE data.
 // ============================================================
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { fetchOptionsDesk } from './useAITrading';
 import type { OptionsDesk, Strategy } from './types';
 
@@ -75,10 +75,17 @@ export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
   const [symbol, setSymbol] = useState('NIFTY');
   const [desk, setDesk] = useState<OptionsDesk | null>(null);
   const [loading, setLoading] = useState(true);
+  const seqRef = useRef(0);
 
   const load = useCallback(async (sym: string, force = false) => {
+    // v6.2: sequence guard — rapid NIFTY→BANKNIFTY switching leaves two
+    // fetches in flight and the LAST-RESOLVED response used to win,
+    // painting NIFTY's (up to 30s-uncached) chain under a BANKNIFTY-
+    // highlighted selector. Only the CURRENT request's response applies.
+    const seq = ++seqRef.current;
     setLoading(true);
     const d = await fetchOptionsDesk(sym, force);
+    if (seq !== seqRef.current) return; // stale response for a previous index — discard
     setDesk(d);
     setLoading(false);
   }, []);

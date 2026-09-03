@@ -220,6 +220,23 @@ export const secureStorage = {
     try { localStorage.setItem(key, value); } catch { }
   },
 
+  // Awaitable set — for flushCache-style rewrites where the page RELOADS
+  // right after the writes: a fire-and-forget encryptData().then() can
+  // lose the race against window.location.reload() (the clear() already
+  // wiped the old value) and destroy the very keys being preserved.
+  async setItemAsync(key: string, value: string): Promise<void> {
+    if (isSensitive(key) && ENCRYPTION_KEY && isCryptoAvailable()) {
+      try {
+        const encrypted = await encryptData(value);
+        localStorage.setItem(key, `enc:${encrypted}`);
+      } catch {
+        try { localStorage.setItem(key, value); } catch { }
+      }
+    } else {
+      try { localStorage.setItem(key, value); } catch { }
+    }
+  },
+
   removeItem(key: string): void {
     try { localStorage.removeItem(key); } catch { }
   },

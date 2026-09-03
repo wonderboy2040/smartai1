@@ -100,14 +100,32 @@ export function saveJournal(j) {
   return j;
 }
 
+// ---------------- journal lock (serialize ALL writers) ----------------
+// Every journal mutation path (executeSignal / watchPositions /
+// closePosition) does load → await network → mutate → save. Node is
+// single-threaded but the awaits yield to concurrent writers: two
+// overlapping writers hold independent deep copies and the LAST save
+// silently reverts the other (double market-sells of the same position,
+// lost closures, live orders with no journal record). All mutating
+// sections run through this promise queue; anything read BEFORE taking
+// the lock must be re-loaded inside it.
+let _journalChain = Promise.resolve();
+export function withJournalLock(fn) {
+  const run = _journalChain.then(fn);
+  _journalChain = run.then(() => {}, () => {}); // chain never rejects
+  return run;
+}
+
 function pushEntry(j, entry) {
   j.entries.push({ id: crypto.randomUUID(), ts: Date.now(), ...entry });
 }
 
 function todayIST() {
-  const now = new Date();
-  const ist = new Date(now.getTime() + (330 + now.getTimezoneOffset()) * 60000);
-  return ist.toISOString().slice(0, 10);
+  // Daily caps reset at IST midnight REGARDLESS of the server's TZ
+  // (Render is UTC, but docker/self-host deployments may not be — the
+  // offset-arithmetic trick double-corrects on non-UTC servers).
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date()); }
+  catch { return new Date().toISOString().slice(0, 10); }
 }
 
 function dailyStats(j) {
@@ -184,17 +202,22 @@ export async function executeSignal(opts) {
     symbol, side, mode, qtyINR, getFreshSignal, wantAuto = false, source = 'manual',
   } = opts || {};
   const cfg = loadConfig();
-  const j = loadJournal();
   const pair = `${String(symbol || '').toUpperCase()}INR`;
   const wantMode = mode === 'live' ? 'live' : 'paper';
   const day = todayIST();
   const entry = { kind: 'ORDER', day, symbol: pair, side, mode: wantMode, source };
 
+  // Rejections are journal writes too — run them under the lock so they
+  // can never clobber a concurrent watcher/manual-close save.
+  const reject = (reason, error, extra = {}) => withJournalLock(() => {
+    const j = loadJournal();
+    pushEntry(j, { ...entry, status: 'REJECTED', reason, ...extra });
+    saveJournal(j);
+  }).then(() => ({ ok: false, error: error || reason }));
+
   // --- gate 1: kill switch ---
   if (cfg.killSwitch) {
-    pushEntry(j, { ...entry, status: 'REJECTED', reason: 'Kill switch ON — execution disabled' });
-    saveJournal(j);
-    return { ok: false, error: 'Kill switch ON — execution disabled' };
+    return reject('Kill switch ON — execution disabled');
   }
 
   // --- gate 2: auto-mode policy ---
@@ -205,19 +228,24 @@ export async function executeSignal(opts) {
     return { ok: false, error: 'Auto-execution only runs in LIVE mode' };
   }
 
-  // --- gate 3: connection (live) ---
-  if (wantMode === 'live' && !coindcxConnected()) {
-    pushEntry(j, { ...entry, status: 'REJECTED', reason: 'CoinDCX not connected' });
-    saveJournal(j);
-    return { ok: false, error: 'CoinDCX not connected' };
+  // --- gate 3: MODE gate (live) ---
+  // A LIVE order additionally requires the account to be ARMED for live
+  // (typed "LIVE" confirmation in Risk settings). The request body's
+  // mode field alone must NEVER be enough to move real money — the UI
+  // toggle is not an enforcement layer.
+  if (wantMode === 'live' && cfg.mode !== 'live') {
+    return reject('LIVE mode is not enabled — type LIVE in Risk settings first');
   }
 
-  // --- gate 4: fresh STRONG signal (server-side, never client-trusted) ---
+  // --- gate 4: connection (live) ---
+  if (wantMode === 'live' && !coindcxConnected()) {
+    return reject('CoinDCX not connected');
+  }
+
+  // --- gate 5: fresh STRONG signal (server-side, never client-trusted) ---
   const signal = await getFreshSignal(pair);
   if (!signal) {
-    pushEntry(j, { ...entry, status: 'REJECTED', reason: 'No fresh ensemble signal available' });
-    saveJournal(j);
-    return { ok: false, error: 'No fresh ensemble signal available for this pair' };
+    return reject('No fresh ensemble signal available for this pair');
   }
   const gates = { minConfidence: cfg.minConfidence, minAgreement: cfg.minAgreement };
   const { evaluateExecutionGate, buildTradePlan } = await import('./ensemble.js');
@@ -250,30 +278,14 @@ export async function executeSignal(opts) {
     maxRiskPct: cfg.maxRiskPct || 5,
   });
   if (!verdict.ok) {
-    pushEntry(j, { ...entry, status: 'REJECTED', reason: verdict.reason, signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement } });
-    saveJournal(j);
-    return { ok: false, error: `Signal gate: ${verdict.reason}` };
+    return reject(verdict.reason, `Signal gate: ${verdict.reason}`, {
+      signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
+    });
   }
 
-  // --- gate 5: risk limits ---
-  const stats = dailyStats(j);
-  if (stats.tradesCount >= cfg.dailyMaxTrades) {
-    pushEntry(j, { ...entry, status: 'REJECTED', reason: `Daily trade cap (${cfg.dailyMaxTrades}) hit` });
-    saveJournal(j);
-    return { ok: false, error: `Daily trade cap (${cfg.dailyMaxTrades}) reached — resets at IST midnight` };
-  }
-  if (stats.realizedPnlINR <= -cfg.dailyMaxLossINR) {
-    pushEntry(j, { ...entry, status: 'REJECTED', reason: `Daily loss cap (₹${cfg.dailyMaxLossINR}) hit` });
-    saveJournal(j);
-    return { ok: false, error: `Daily loss cap (₹${cfg.dailyMaxLossINR}) breached — trading paused for today` };
-  }
-  if (cfg.onePositionPerPair && j.positions.some(p => p.pair === pair && p.status === 'OPEN')) {
-    pushEntry(j, { ...entry, status: 'REJECTED', reason: 'Position already open for this pair' });
-    saveJournal(j);
-    return { ok: false, error: `An open position already exists for ${pair} (one-per-pair rule)` };
-  }
-
-  // --- sizing ---
+  // --- sizing (exchange minimums included when products metadata is
+  // reachable — rejecting locally is a clean REJECT instead of a FAILED
+  // live round-trip that burns a daily-cap slot) ---
   const price = effectiveSignal.ltp;
   if (!(price > 0)) {
     return { ok: false, error: 'No live price for sizing' };
@@ -288,135 +300,267 @@ export async function executeSignal(opts) {
     return { ok: false, error: `Quantity rounds to 0 at ${pair} precision (${meta.qtyPrecision}dp) — increase order size` };
   }
   const notional = qty * price;
-
-  // --- paper execution ---
-  if (wantMode === 'paper') {
-    const position = {
-      id: crypto.randomUUID(), pair, side: effectiveSignal.side, mode: 'paper',
-      qty, entryPrice: price, notionalINR: r2(notional),
-      sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
-      signal: { grade: signal.grade, confidence: signal.confidence, agreement: signal.agreement, summary: synthNote || signal.summary },
-      openedAt: Date.now(), status: 'OPEN',
-    };
-    j.positions.push(position);
-    pushEntry(j, {
-      ...entry, status: 'FILLED', qty, price: r2(price), notionalINR: r2(notional),
-      signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
-      reason: synthNote ? `${verdict.reason} · ${synthNote}` : verdict.reason,
-    });
-    saveJournal(j);
-    return { ok: true, mode: 'paper', position, filled: { qty, price: r2(price), notionalINR: r2(notional) } };
+  if (meta.minQty > 0 && qty < meta.minQty) {
+    return { ok: false, error: `Quantity ${qty} is below the exchange minimum (${meta.minQty}) for ${pair}` };
+  }
+  if (meta.minNotional > 0 && notional < meta.minNotional) {
+    return { ok: false, error: `Order ₹${Math.round(notional)} is below the exchange minimum (₹${meta.minNotional}) for ${pair}` };
   }
 
-  // --- LIVE execution: signed order to CoinDCX ---
+  // --- FINAL MUTATION — under the journal lock with a FRESH copy ---
+  // The caps + one-per-pair checks live HERE (not before the signal run,
+  // which can take seconds) so a fill that lands while another writer
+  // mutated the journal can never stack onto a breached day/pair state.
+  // The LIVE order send is also inside the lock: a concurrent manual
+  // close of the same pair cannot interleave with the send.
+  return withJournalLock(async () => {
+    const j = loadJournal(); // fresh copy under the lock
+    const stats = dailyStats(j);
+    if (stats.tradesCount >= cfg.dailyMaxTrades) {
+      pushEntry(j, { ...entry, status: 'REJECTED', reason: `Daily trade cap (${cfg.dailyMaxTrades}) hit` });
+      saveJournal(j);
+      return { ok: false, error: `Daily trade cap (${cfg.dailyMaxTrades}) reached — resets at IST midnight` };
+    }
+    if (stats.realizedPnlINR <= -cfg.dailyMaxLossINR) {
+      pushEntry(j, { ...entry, status: 'REJECTED', reason: `Daily loss cap (₹${cfg.dailyMaxLossINR}) hit` });
+      saveJournal(j);
+      return { ok: false, error: `Daily loss cap (₹${cfg.dailyMaxLossINR}) breached — trading paused for today` };
+    }
+    if (cfg.onePositionPerPair && j.positions.some(p => p.pair === pair && p.status === 'OPEN')) {
+      pushEntry(j, { ...entry, status: 'REJECTED', reason: 'Position already open for this pair' });
+      saveJournal(j);
+      return { ok: false, error: `An open position already exists for ${pair} (one-per-pair rule)` };
+    }
+
+    // --- paper execution ---
+    if (wantMode === 'paper') {
+      const position = {
+        id: crypto.randomUUID(), pair, side: effectiveSignal.side, mode: 'paper', source,
+        qty, entryPrice: price, notionalINR: r2(notional),
+        sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
+        signal: { grade: signal.grade, confidence: signal.confidence, agreement: signal.agreement, summary: synthNote || signal.summary },
+        openedAt: Date.now(), status: 'OPEN',
+      };
+      j.positions.push(position);
+      pushEntry(j, {
+        ...entry, status: 'FILLED', qty, price: r2(price), notionalINR: r2(notional),
+        signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
+        reason: synthNote ? `${verdict.reason} · ${synthNote}` : verdict.reason,
+      });
+      saveJournal(j);
+      return { ok: true, mode: 'paper', position, filled: { qty, price: r2(price), notionalINR: r2(notional) } };
+    }
+
+    // --- LIVE execution: signed order to CoinDCX ---
+    try {
+      const creds = loadCredsForOrder();
+      if (!creds?.apiKey || !creds?.secret) return { ok: false, error: 'CoinDCX credentials unreadable' };
+      const body = {
+        side: effectiveSignal.side === 'SHORT' ? 'sell' : 'buy',
+        pair,
+        order_type: 'market',
+        total_quantity: String(qty),
+        hidden: true,
+      };
+      const resp = await coindcxPrivate('/exchange/v1/orders/create', creds.apiKey, creds.secret, body);
+      const orderId = resp?.orders?.[0]?.id || resp?.order?.id || null;
+      // CoinDCX market orders report avg fill in list/status — entry price
+      // starts at the signal LTP and the watcher reconciles UNKNOWN/
+      // fill data on its next pass (see reconcileLivePosition).
+      const position = {
+        id: crypto.randomUUID(), pair, side: effectiveSignal.side, mode: 'live', source, exchangeOrderId: orderId,
+        qty, entryPrice: price, notionalINR: r2(notional),
+        sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
+        signal: { grade: signal.grade, confidence: signal.confidence, agreement: signal.agreement, summary: signal.summary },
+        openedAt: Date.now(), status: orderId ? 'OPEN' : 'UNKNOWN',
+      };
+      j.positions.push(position);
+      pushEntry(j, {
+        ...entry, status: orderId ? 'SUBMITTED' : 'SUBMITTED_UNKNOWN', qty, price: r2(price),
+        notionalINR: r2(notional), exchangeOrderId: orderId,
+        signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
+        reason: verdict.reason,
+      });
+      saveJournal(j);
+      return { ok: true, mode: 'live', orderId, position, filled: { qty, price: r2(price), notionalINR: r2(notional) } };
+    } catch (e) {
+      pushEntry(j, { ...entry, status: 'FAILED', reason: String(e?.message || e).slice(0, 200) });
+      saveJournal(j);
+      return { ok: false, error: `CoinDCX order failed: ${e?.message || e}` };
+    }
+  });
+}
+
+// ---------------- live-fill reconciliation ----------------
+/**
+ * Resolves a live position whose create response carried no orderId/
+ * fill data (status UNKNOWN) by asking the exchange what happened to the
+ * order. Best-effort — any parse/network failure returns null and the
+ * watcher retries on its next pass. Defensive about CoinDCX's response
+ * shapes (object | array | {orders:[...]}, average_price | avg_price,
+ * filled_quantity | quantity).
+ */
+function mapOrderToPositionState(o) {
+  const st = String(o?.status || '').toLowerCase();
+  const avg = Number(o?.average_price ?? o?.avg_price ?? o?.averagePrice ?? NaN);
+  const filled = Number(o?.filled_quantity ?? o?.filledQuantity ?? o?.quantity ?? NaN);
+  const dead = ['cancelled', 'canceled', 'rejected', 'expired'];
+  const alive = ['open', 'partially', 'filled', 'complete', 'init', 'active'];
+  return {
+    status: dead.some(d => st.includes(d)) ? 'CANCELLED'
+      : alive.some(l => st.includes(l)) ? 'OPEN' : 'UNKNOWN',
+    entryPrice: Number.isFinite(avg) && avg > 0 ? avg : null,
+    qty: Number.isFinite(filled) && filled > 0 ? filled : null,
+    raw: st || 'unknown',
+  };
+}
+
+async function reconcileLivePosition(p) {
+  const creds = loadCredsForOrder();
+  if (!creds || !p?.exchangeOrderId) return null;
+  const id = String(p.exchangeOrderId);
+  const find = (resp) => {
+    if (Array.isArray(resp)) return resp.find(o => String(o?.id) === id) || null;
+    if (Array.isArray(resp?.orders)) return resp.orders.find(o => String(o?.id) === id) || null;
+    return resp && String(resp.id) === id ? resp : null;
+  };
   try {
-    const creds = loadCredsForOrder();
-    if (!creds?.apiKey || !creds?.secret) return { ok: false, error: 'CoinDCX credentials unreadable' };
-    const body = {
-      side: effectiveSignal.side === 'SHORT' ? 'sell' : 'buy',
-      pair,
-      order_type: 'market',
-      total_quantity: String(qty),
-      hidden: true,
-    };
-    const resp = await coindcxPrivate('/exchange/v1/orders/create', creds.apiKey, creds.secret, body);
-    const orderId = resp?.orders?.[0]?.id || resp?.order?.id || null;
-    // CoinDCX market orders report avg fill in list/status — approximate with LTP now, corrected on next poll.
-    const position = {
-      id: crypto.randomUUID(), pair, side: effectiveSignal.side, mode: 'live', exchangeOrderId: orderId,
-      qty, entryPrice: price, notionalINR: r2(notional),
-      sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
-      signal: { grade: signal.grade, confidence: signal.confidence, agreement: signal.agreement, summary: signal.summary },
-      openedAt: Date.now(), status: orderId ? 'OPEN' : 'UNKNOWN',
-    };
-    j.positions.push(position);
-    pushEntry(j, {
-      ...entry, status: orderId ? 'SUBMITTED' : 'SUBMITTED_UNKNOWN', qty, price: r2(price),
-      notionalINR: r2(notional), exchangeOrderId: orderId,
-      signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
-      reason: verdict.reason,
+    const resp = await coindcxPrivate('/exchange/v1/orders/status', creds.apiKey, creds.secret, { id });
+    const order = find(resp);
+    if (order) return mapOrderToPositionState(order);
+  } catch { /* fall through to the list endpoint */ }
+  try {
+    const resp = await coindcxPrivate('/exchange/v1/orders/list', creds.apiKey, creds.secret, {
+      page: '1', size: '50', statuses: ['open', 'partially_filled', 'filled', 'complete', 'cancelled', 'rejected'],
     });
-    saveJournal(j);
-    return { ok: true, mode: 'live', orderId, position, filled: { qty, price: r2(price), notionalINR: r2(notional) } };
-  } catch (e) {
-    pushEntry(j, { ...entry, status: 'FAILED', reason: String(e?.message || e).slice(0, 200) });
-    saveJournal(j);
-    return { ok: false, error: `CoinDCX order failed: ${e?.message || e}` };
-  }
+    const order = find(resp);
+    if (order) return mapOrderToPositionState(order);
+  } catch { /* give up this pass — retry on the next tick */ }
+  return null;
 }
 
 // ---------------- position watcher (SL/TP enforcement) ----------------
 /**
- * Checks every OPEN position against live CoinDCX tickers:
+ * Runs under the journal lock. First reconciles UNKNOWN live positions
+ * (so real exchange fills get SL/TP enforcement and true entry prices),
+ * then checks every OPEN position against live CoinDCX tickers:
  *   • price ≤ SL (LONG) / ≥ SL (SHORT) → close, record loss
  *   • price ≥ TP2 → close (runner), record win
  *   • TP1 → alert only (let winners run to TP2)
  * Live positions close via market order; paper closes simulated.
+ * Watch errors are PERSISTED (a failing stop-loss must never be
+ * indistinguishable from a healthy position) and alerted on Telegram.
  * Returns the list of closures for logging/alerting.
  */
 export async function watchPositions({ sendTelegram } = {}) {
-  const j = loadJournal();
-  const open = j.positions.filter(p => p.status === 'OPEN');
-  if (open.length === 0) return [];
-  const tickers = await fetchCoinDcxTickers().catch(() => []);
-  const byPair = new Map((Array.isArray(tickers) ? tickers : []).map(t => [t.market, parseFloat(t.last_price)]));
-  const closures = [];
-  const cfg = loadConfig();
+  return withJournalLock(async () => {
+    const j = loadJournal();
+    const closures = [];
+    const watchErrors = [];
+    let dirty = false;
+    const cfg = loadConfig();
 
-  for (const p of open) {
-    const price = byPair.get(p.pair);
-    if (!(price > 0)) continue;
-    const long = p.side === 'LONG';
-    let close = null;
-    if (p.sl != null && (long ? price <= p.sl : price >= p.sl)) close = { reason: 'STOP-LOSS hit', price, kind: 'SL' };
-    else if (p.tp2 != null && (long ? price >= p.tp2 : price <= p.tp2)) close = { reason: 'TARGET-2 hit', price, kind: 'TP2' };
-    if (!close) continue;
-
-    let closed = false;
-    if (p.mode === 'live' && coindcxConnected()) {
-      try {
-        const creds = loadCredsForOrder();
-        if (creds) {
-          await coindcxPrivate('/exchange/v1/orders/create', creds.apiKey, creds.secret, {
-            side: long ? 'sell' : 'buy',
-            pair: p.pair,
-            order_type: 'market',
-            total_quantity: String(p.qty),
-            hidden: true,
-          });
-          closed = true;
-        }
-      } catch (e) {
-        // Close failed — keep position open, try again next tick.
-        pushEntry(j, { kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair, reason: String(e?.message || e).slice(0, 200) });
-        continue;
+    // --- reconcile UNKNOWN live positions ---
+    for (const p of j.positions) {
+      if (p.status !== 'UNKNOWN' || p.mode !== 'live' || !p.exchangeOrderId) continue;
+      if (cfg.killSwitch) break; // no exchange calls while killed
+      const rec = await reconcileLivePosition(p).catch(() => null);
+      if (!rec) continue;
+      if (rec.status === 'OPEN') {
+        if (rec.entryPrice != null && rec.entryPrice !== p.entryPrice) p.entryPrice = rec.entryPrice;
+        if (rec.qty != null && rec.qty !== p.qty) p.qty = rec.qty;
+        p.status = 'OPEN';
+        p.reconciledAt = Date.now();
+        dirty = true;
+        pushEntry(j, {
+          kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair,
+          reason: `Order ${p.exchangeOrderId} reconciled: ${rec.raw} @ ${rec.entryPrice ?? p.entryPrice} — position now tracked`,
+        });
+      } else if (rec.status === 'CANCELLED') {
+        p.status = 'CANCELLED';
+        p.closedAt = Date.now();
+        p.closeReason = `Exchange reports order ${rec.raw}`;
+        dirty = true;
+        pushEntry(j, {
+          kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair,
+          reason: `Order ${p.exchangeOrderId} ${rec.raw} — live position reconciled to CANCELLED (no coins moved)`,
+        });
+        watchErrors.push({ pair: p.pair, reason: `order ${rec.raw}` });
       }
-    } else {
-      closed = true; // paper close is always executable
+      // rec.status UNKNOWN → keep trying next pass
     }
-    if (!closed) continue;
 
-    const pnlINR = (long ? price - p.entryPrice : p.entryPrice - price) * p.qty;
-    p.status = 'CLOSED';
-    p.closedAt = Date.now();
-    p.closePrice = price;
-    p.pnlINR = r2(pnlINR);
-    p.closeReason = close.reason;
-    pushEntry(j, {
-      kind: 'CLOSE', day: todayIST(), pair: p.pair, mode: p.mode,
-      qty: p.qty, entryPrice: p.entryPrice, closePrice: price, pnlINR: r2(pnlINR), reason: close.reason,
-    });
-    closures.push({ pair: p.pair, mode: p.mode, pnlINR: p.pnlINR, reason: close.reason });
-  }
-  if (closures.length > 0) {
-    saveJournal(j);
-    if (typeof sendTelegram === 'function') {
-      try {
-        await sendTelegram(`🤖 <b>AI Trading</b> — position closed\n${closures.map(c => `• ${c.pair} (${c.mode}) — ${c.reason}: ₹${c.pnlINR > 0 ? '+' : ''}${c.pnlINR}`).join('\n')}`);
-      } catch { /* best-effort */ }
+    const open = j.positions.filter(p => p.status === 'OPEN');
+    if (open.length > 0) {
+      const tickers = await fetchCoinDcxTickers().catch(() => []);
+      const byPair = new Map((Array.isArray(tickers) ? tickers : []).map(t => [t.market, parseFloat(t.last_price)]));
+
+      for (const p of open) {
+        const price = byPair.get(p.pair);
+        if (!(price > 0)) continue;
+        const long = p.side === 'LONG';
+        let close = null;
+        if (p.sl != null && (long ? price <= p.sl : price >= p.sl)) close = { reason: 'STOP-LOSS hit', price, kind: 'SL' };
+        else if (p.tp2 != null && (long ? price >= p.tp2 : price <= p.tp2)) close = { reason: 'TARGET-2 hit', price, kind: 'TP2' };
+        if (!close) continue;
+
+        let closed = false;
+        if (p.mode === 'live' && coindcxConnected()) {
+          try {
+            const creds = loadCredsForOrder();
+            if (creds) {
+              await coindcxPrivate('/exchange/v1/orders/create', creds.apiKey, creds.secret, {
+                side: long ? 'sell' : 'buy',
+                pair: p.pair,
+                order_type: 'market',
+                total_quantity: String(p.qty),
+                hidden: true,
+              });
+              closed = true;
+            }
+          } catch (e) {
+            // Close failed — keep position open, try again next tick.
+            // Persist the failure: a dead stop-loss must never look healthy.
+            pushEntry(j, { kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair, reason: String(e?.message || e).slice(0, 200) });
+            dirty = true;
+            watchErrors.push({ pair: p.pair, reason: String(e?.message || e).slice(0, 120) });
+            continue;
+          }
+        } else {
+          closed = true; // paper close is always executable
+        }
+        if (!closed) continue;
+
+        const pnlINR = (long ? price - p.entryPrice : p.entryPrice - price) * p.qty;
+        p.status = 'CLOSED';
+        p.closedAt = Date.now();
+        p.closePrice = price;
+        p.pnlINR = r2(pnlINR);
+        p.closeReason = close.reason;
+        dirty = true;
+        pushEntry(j, {
+          kind: 'CLOSE', day: todayIST(), pair: p.pair, mode: p.mode,
+          qty: p.qty, entryPrice: p.entryPrice, closePrice: price, pnlINR: r2(pnlINR), reason: close.reason,
+        });
+        closures.push({ pair: p.pair, mode: p.mode, pnlINR: p.pnlINR, reason: close.reason });
+      }
     }
-  }
-  return closures;
+
+    if (dirty) saveJournal(j); // WATCH_ERROR entries + reconciliations persist too
+    if (typeof sendTelegram === 'function') {
+      if (closures.length > 0) {
+        try {
+          await sendTelegram(`🤖 <b>AI Trading</b> — position closed\n${closures.map(c => `• ${c.pair} (${c.mode}) — ${c.reason}: ₹${c.pnlINR > 0 ? '+' : ''}${c.pnlINR}`).join('\n')}`);
+        } catch { /* best-effort */ }
+      }
+      if (watchErrors.length > 0) {
+        try {
+          await sendTelegram(`🤖 ⚠️ <b>AI Trading</b> — close/reconcile FAILED (will retry in 60s)\n${watchErrors.map(c => `• ${c.pair} — ${c.reason}`).join('\n')}\nCheck CoinDCX keys/balance — SL/TP cannot execute while this fails.`);
+        } catch { /* best-effort */ }
+      }
+    }
+    return closures;
+  });
 }
 
 function loadCredsForOrder() {
@@ -426,33 +570,38 @@ function loadCredsForOrder() {
 
 // ---------------- manual close + cancel ----------------
 export async function closePosition(positionId) {
-  const j = loadJournal();
-  const p = j.positions.find(x => x.id === positionId || x.exchangeOrderId === positionId);
-  if (!p || p.status !== 'OPEN') return { ok: false, error: 'Position not found / already closed' };
-  const tickers = await fetchCoinDcxTickers().catch(() => []);
-  const price = (Array.isArray(tickers) ? tickers : []).find(t => t.market === p.pair);
-  const ltp = price ? parseFloat(price.last_price) : p.entryPrice;
-  if (p.mode === 'live' && coindcxConnected()) {
-    try {
-      const creds = loadCredsForOrder();
-      await coindcxPrivate('/exchange/v1/orders/create', creds.apiKey, creds.secret, {
-        side: p.side === 'LONG' ? 'sell' : 'buy',
-        pair: p.pair, order_type: 'market', total_quantity: String(p.qty), hidden: true,
-      });
-    } catch (e) {
-      return { ok: false, error: `Exchange close failed: ${e?.message || e}` };
+  // Under the journal lock: a watcher pass closing the same position at
+  // the same moment must not double-sell it (both writers re-load the
+  // journal inside the lock; the loser sees status CLOSED and no-ops).
+  return withJournalLock(async () => {
+    const j = loadJournal();
+    const p = j.positions.find(x => x.id === positionId || x.exchangeOrderId === positionId);
+    if (!p || (p.status !== 'OPEN' && p.status !== 'UNKNOWN')) return { ok: false, error: 'Position not found / already closed' };
+    const tickers = await fetchCoinDcxTickers().catch(() => []);
+    const price = (Array.isArray(tickers) ? tickers : []).find(t => t.market === p.pair);
+    const ltp = price ? parseFloat(price.last_price) : p.entryPrice;
+    if (p.mode === 'live' && coindcxConnected()) {
+      try {
+        const creds = loadCredsForOrder();
+        await coindcxPrivate('/exchange/v1/orders/create', creds.apiKey, creds.secret, {
+          side: p.side === 'LONG' ? 'sell' : 'buy',
+          pair: p.pair, order_type: 'market', total_quantity: String(p.qty), hidden: true,
+        });
+      } catch (e) {
+        return { ok: false, error: `Exchange close failed: ${e?.message || e}` };
+      }
     }
-  }
-  const long = p.side === 'LONG';
-  const pnlINR = (long ? ltp - p.entryPrice : p.entryPrice - ltp) * p.qty;
-  p.status = 'CLOSED';
-  p.closedAt = Date.now();
-  p.closePrice = ltp;
-  p.pnlINR = r2(pnlINR);
-  p.closeReason = 'Manual close';
-  pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, mode: p.mode, qty: p.qty, entryPrice: p.entryPrice, closePrice: ltp, pnlINR: r2(pnlINR), reason: 'Manual close' });
-  saveJournal(j);
-  return { ok: true, position: p };
+    const long = p.side === 'LONG';
+    const pnlINR = (long ? ltp - p.entryPrice : p.entryPrice - ltp) * p.qty;
+    p.status = 'CLOSED';
+    p.closedAt = Date.now();
+    p.closePrice = ltp;
+    p.pnlINR = r2(pnlINR);
+    p.closeReason = 'Manual close';
+    pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, mode: p.mode, qty: p.qty, entryPrice: p.entryPrice, closePrice: ltp, pnlINR: r2(pnlINR), reason: 'Manual close' });
+    saveJournal(j);
+    return { ok: true, position: p };
+  });
 }
 
 export async function listExchangeOrders(statuses = ['open']) {

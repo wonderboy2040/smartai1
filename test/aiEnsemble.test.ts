@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { aggregateVotes, buildTradePlan, evaluateExecutionGate, DEFAULT_GATES } from '../server/ai/ensemble.js';
 import { runQuantModels, MODELS, aiCouncilVoteFromVerdict } from '../server/ai/models.js';
 import { computeIndicatorsFromCandles, detectPatterns, rsi, macd, bollinger, atr } from '../server/ai/lib/indicators.js';
+import { toCouncilCandidate } from '../server/ai/signals.js';
 
 // ---- vote helpers ---------------------------------------------
 const v = (id, dir, conf, weight = 1) => ({ id, name: id, role: 'test', weight, dir, conf, reasons: [] });
@@ -279,5 +280,43 @@ describe('indicators — pure math pins', () => {
     ];
     const pats = detectPatterns(candles);
     expect(pats.map(p => p.name)).toContain('Hammer');
+  });
+});
+
+describe('toCouncilCandidate — the 9th-model prompt normalization', () => {
+  it('flattens the BOARD candidate shape ({ctx, votes, consensus, plan})', () => {
+    const c = toCouncilCandidate({
+      ctx: { symbol: 'RELIANCE', ltp: 1290.5, changePct: 1.2, ind: { rsi: 61, adx: { adx: 28 } } },
+      votes: [v('trend', 1, 80, 1.2)],
+      consensus: { side: 'LONG', confidence: 78 },
+      plan: { entry: 1290, stopLoss: 1250, target1: 1330, target2: 1370 },
+    });
+    expect(c.symbol).toBe('RELIANCE');
+    expect(c.side).toBe('LONG');
+    expect(c.confidence).toBe(78);
+    expect(c.ltp).toBe(1290.5);
+    expect(c.changePct).toBe(1.2);
+    expect(c.ind?.rsi).toBe(61);
+    expect(c.plan?.stopLoss).toBe(1250);
+    expect(c.votes).toHaveLength(1);
+  });
+
+  it('passes the FLAT/deep-path shape through (symbol/side/confidence on the candidate)', () => {
+    const c = toCouncilCandidate({
+      symbol: 'BTC', side: 'LONG', confidence: 55,
+      ltp: 100, changePct: 2, ind: { rsi: 58 }, plan: null, votes: [v('x', 1, 70, 1)],
+    });
+    expect(c.symbol).toBe('BTC');
+    expect(c.side).toBe('LONG');
+    expect(c.confidence).toBe(55);
+    expect(c.plan).toBeNull();
+  });
+
+  it('deep-path candidate with only {symbol, ctx, votes} resolves side/conf from ctx+defaults', () => {
+    const c = toCouncilCandidate({ symbol: 'NIFTY', ctx: { symbol: 'NIFTY', ltp: 23800, changePct: -0.4, ind: {} }, votes: [] });
+    expect(c.symbol).toBe('NIFTY');
+    expect(c.ltp).toBe(23800);
+    expect(c.side).toBeUndefined(); // honest: no consensus available
+    expect(c.plan).toBeNull();
   });
 });

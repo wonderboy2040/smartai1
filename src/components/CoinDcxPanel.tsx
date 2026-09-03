@@ -64,7 +64,9 @@ export const CoinDcxPanel = React.memo(function CoinDcxPanel() {
     let tries = 0;
     const t = setInterval(() => {
       if (document.visibilityState !== 'visible') return;
-      if (++tries > 12) return;
+      // v6.2: actually STOP the interval after giving up — it kept firing
+      // as a no-op every 5s until unmount.
+      if (++tries > 12) { clearInterval(t); return; }
       void loadIndmAssets();
     }, 5000);
     return () => clearInterval(t);

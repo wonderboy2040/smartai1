@@ -1,5 +1,5 @@
 import { PriceData } from '../types';
-import { getSessionToken } from './api';
+import { getSessionToken, getProxyBase } from './api';
 
 // ============================================================
 // liveStream — browser EventSource client for /api/stream (SSE)
@@ -10,7 +10,11 @@ import { getSessionToken } from './api';
 // auto-reconnects, and the existing pollers still run as a safety net.
 // ============================================================
 
-const SSE_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
+// v6.2: resolve the backend the SAME way apiFetch does (localStorage
+// WEALTH_AI_BACKEND_URL override → env → mirror-host detection). The raw
+// env-only read could point SSE at a different backend than every REST
+// call (custom backend → 404 reconnect loop, no live ticks).
+const SSE_BASE = getProxyBase();
 
 export interface LiveStreamOpts {
   inSymbols: string[];

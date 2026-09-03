@@ -150,7 +150,17 @@ export function useKeyboardShortcuts(shortcuts: ShortcutConfig[]): void {
   useEffect(() => {
     const current = latestRef.current;
     current.forEach((config, i) => {
-      shortcutsRegistry.register(ids[i], config);
+      // v6.2: register a STABLE dispatch wrapper reading the CURRENT
+      // handler through the ref at keypress time (index-aligned: the sig
+      // re-runs this effect whenever the shortcut LIST changes). The old
+      // code bound the handler closure at registration and the effect only
+      // re-ran on the key/description/enabled signature — a handler whose
+      // identity changes (e.g. toggleTheme capturing `theme`) went
+      // permanently stale: ctrl+shift+t broke after the first theme change.
+      shortcutsRegistry.register(ids[i], { ...config, handler: (event: KeyboardEvent) => {
+        const live = latestRef.current?.[i];
+        if (typeof live?.handler === 'function') live.handler(event);
+      } });
     });
     return () => {
       ids.forEach(id => shortcutsRegistry.unregister(id));

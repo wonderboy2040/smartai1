@@ -23,12 +23,22 @@ const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 
 // ---------------- caches ----------------
 const _cache = new Map(); // key → { at, payload }
+const MAX_CACHE_KEYS = 80; // keys are user-influenced (deep/:symbol) — bound the map
 function cacheGet(key, ttlMs) {
   const hit = _cache.get(key);
   if (hit && Date.now() - hit.at < ttlMs) return hit.payload;
   return null;
 }
-function cacheSet(key, payload) { _cache.set(key, { at: Date.now(), payload }); }
+function cacheSet(key, payload) {
+  _cache.set(key, { at: Date.now(), payload });
+  // Evict the oldest inserted entry (Map preserves insertion order) so
+  // repeated distinct deep-symbols can't grow the cache unboundedly.
+  while (_cache.size > MAX_CACHE_KEYS) {
+    const oldest = _cache.keys().next().value;
+    if (oldest === undefined) break;
+    _cache.delete(oldest);
+  }
+}
 
 // ---------------- Yahoo daily candles (for index/spot TA) ----------------
 const YF_TICKER = {
@@ -221,13 +231,42 @@ function tryParseJson(text) {
 }
 
 /**
+ * Normalize a council candidate to the FLAT shape the prompt builder
+ * reads (symbol/side/confidence/ltp/changePct/ind/plan/votes). Both
+ * call sites feed it differently:
+ *   • the BOARD passes {ctx, votes, consensus, plan} — symbol/side/conf
+ *     live on ctx/consensus, NOT on the candidate itself
+ *   • the DEEP path passes {symbol, side, ctx, votes, ...}
+ * Without this normalization the LLM was being prompted with
+ * undefined symbol/side/ltp/indicators — the 9th model never actually
+ * voted and its verdicts could never match a symbol key.
+ */
+export function toCouncilCandidate(c) {
+  if (!c) return null;
+  const ctx = c.ctx || {};
+  const cons = c.consensus || {};
+  return {
+    symbol: c.symbol ?? ctx.symbol,
+    side: c.side ?? cons.side,
+    confidence: c.confidence ?? cons.confidence,
+    ltp: c.ltp ?? ctx.ltp,
+    changePct: c.changePct ?? ctx.changePct,
+    ind: c.ind ?? ctx.ind,
+    plan: c.plan ?? null,
+    votes: c.votes || [],
+  };
+}
+
+/**
  * AI Council: verify top candidates via LLM (Gemini → Groq → Cerebras
  * → OpenRouter). Returns { verdicts: {symbol: {verdict, confidence,
  * note, analysis}}, model: provider | null }.
  */
 export async function aiCouncilVerify(candidates, deps, market) {
   if (!candidates?.length || !aiKeysPresent(deps?.KEYS)) return { verdicts: {}, model: null, online: false };
-  const compact = candidates.map(c => ({
+  const norm = candidates.map(toCouncilCandidate).filter(c => c && c.symbol);
+  if (norm.length === 0) return { verdicts: {}, model: null, online: false };
+  const compact = norm.map(c => ({
     sym: c.symbol, side: c.side, conf: c.confidence, ltp: r2(c.ltp),
     chg: c.changePct, rsi: r2(c.ind?.rsi), adx: r2(c.ind?.adx?.adx),
     relVol: r2(c.ind?.relVolume), vwapDist: c.ind?.vwap && c.ltp ? r2(((c.ltp - c.ind.vwap) / c.ind.vwap) * 100) : null,
@@ -333,10 +372,12 @@ export async function getSignals(market, deps, opts = {}) {
   }
   candidates.sort((a, b) => b.consensus.confidence - a.consensus.confidence);
 
-  // AI Council on the top candidates.
+  // AI Council on the top candidates (toCouncilCandidate normalizes the
+  // {ctx, votes, consensus, plan} board shape into the flat candidate
+  // shape — symbol/side/confidence/ltp/indicators/plan).
   const top = candidates.slice(0, 6);
   let council = { verdicts: {}, model: null, online: false };
-  try { council = await aiCouncilVerify(top.map(c => ({ ...c, votes: c.votes })), depsSafe, mkt); } catch { /* offline */ }
+  try { council = await aiCouncilVerify(top, depsSafe, mkt); } catch { /* offline */ }
 
   // Merge AI Council as the 9th vote + final signals.
   const signals = [];
@@ -355,7 +396,10 @@ export async function getSignals(market, deps, opts = {}) {
       }
     }
     const consensus2 = aggregateVotes(votes, gatesFor(depsSafe));
-    const plan2 = c.plan;
+    // Rebuild the plan from the POST-council consensus: the council vote
+    // can flip the final side, and a SHORT signal carrying a long-style
+    // plan (SL below entry, TP2 above) would invert every alert level.
+    const plan2 = buildTradePlan(consensus2, c.ctx, mkt) ?? c.plan;
     signals.push(buildSignal({
       symbol: c.ctx.symbol, market: mkt, ctx: c.ctx, votes, consensus: consensus2, plan: plan2, aiNote,
     }));
@@ -432,7 +476,10 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
   const mkt = String(market || 'INDIA').toUpperCase() === 'CRYPTO' ? 'CRYPTO' : 'INDIA';
   const sym = String(symbol || '').toUpperCase().replace(/[^A-Z0-9\-]/g, '');
   if (!sym) return { ok: false, reason: 'symbol required' };
-  const cacheKey = `deep:${mkt}:${sym}`;
+  // optionsCtx changes which models participate (OptionsFlow) — cache
+  // the two flavors separately so /api/ai/options doesn't serve the
+  // board flavor's consensus (or vice versa) within the 30s TTL.
+  const cacheKey = `deep:${mkt}:${sym}${opts?.optionsCtx ? ':opt' : ''}`;
   const cached = cacheGet(cacheKey, 30_000);
   if (cached) return cached;
 
@@ -473,7 +520,21 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
   }
 
   const votes = runQuantModels(ctx);
-  const council = await aiCouncilVerify([{ symbol: sym, side: 'PENDING', confidence: 0, ctx, votes }], deps, mkt).catch(() => ({ verdicts: {}, online: false }));
+  // Pre-council consensus: the deep path feeds the council the same flat
+  // candidate shape as the board path (side/confidence/ltp/ind/plan) so
+  // the LLM actually sees the symbol, price and indicator state it is
+  // being asked to verify — 'PENDING'/conf 0 starved the prompt.
+  const preConsensus = aggregateVotes(votes, gatesFor(deps));
+  const council = await aiCouncilVerify([{
+    symbol: sym,
+    side: preConsensus.side,
+    confidence: preConsensus.confidence,
+    ltp: ctx.ltp,
+    changePct: ctx.changePct,
+    ind: ctx.ind,
+    plan: buildTradePlan(preConsensus, ctx, mkt),
+    votes,
+  }], deps, mkt).catch(() => ({ verdicts: {}, online: false }));
   const verdict = council?.verdicts?.[sym];
   if (verdict) {
     const av = aiCouncilVoteFromVerdict(verdict);

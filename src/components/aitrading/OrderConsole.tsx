@@ -5,7 +5,7 @@
 // daily risk meters, config editor (LIVE arming with typed
 // confirmation), kill switch, and the full audit journal.
 // ============================================================
-import { memo, useState } from 'react';
+import { memo, useState, useEffect } from 'react';
 import type { JournalEntry, JournalPosition, TradingConfig, TradingState } from './types';
 
 const fmt = (n: number | null | undefined): string => {
@@ -51,6 +51,18 @@ function ConfigEditor({ config, busy, onSave, state }: {
   const [maxStop, setMaxStop] = useState(String(config.maxRiskPct ?? 5));
   const [phrase, setPhrase] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // v6.2: resync the number boxes whenever the SERVER config changes (60s
+  // state poll, kill-switch auto-disarm, another device's SET) — the boxes
+  // were initialized once and then showed stale values while the badges
+  // above showed the real ones; clicking SET pushed the stale box back.
+  useEffect(() => {
+    setMinConf(String(config.minConfidence));
+    setMaxOrder(String(config.maxOrderINR));
+    setDailyTrades(String(config.dailyMaxTrades));
+    setDailyLoss(String(config.dailyMaxLossINR));
+    setMaxStop(String(config.maxRiskPct ?? 5));
+  }, [config]);
 
   const save = async (patch: Record<string, unknown>) => {
     const r = await onSave(patch);

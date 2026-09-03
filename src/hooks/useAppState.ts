@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Position, PriceData, TabType, RiskLevel, TransactionType, Transaction, PriceAlert } from '../types';
 import {
-  DEFAULT_USD_INR, getTodayString, guessMarket, isCryptoSymbol, resolveTvChartSymbol,
+  DEFAULT_USD_INR, getTodayString, guessMarket, isCryptoSymbol, isCryptoPosition, resolveTvChartSymbol,
   ALPHA_ETFS_IN, ALPHA_ETFS_US,
 } from '../utils/constants';
 import {
@@ -31,6 +31,7 @@ function mergePriceData(existing: PriceData | undefined, incoming: Partial<Price
       high: incoming.high,
       low: incoming.low,
       volume: incoming.volume,
+      prevClose: incoming.prevClose,
       rsi: incoming.rsi ?? 50,
       time: incoming.time ?? Date.now(),
       market: incoming.market ?? 'IN',
@@ -58,6 +59,7 @@ function mergePriceData(existing: PriceData | undefined, incoming: Partial<Price
     if (incoming.macd !== undefined && incoming.macd !== existing.macd) { merged.macd = incoming.macd; changed = true; }
     if (incoming.tvExchange && incoming.tvExchange !== existing.tvExchange) { merged.tvExchange = incoming.tvExchange; changed = true; }
     if (incoming.tvExactSymbol && incoming.tvExactSymbol !== existing.tvExactSymbol) { merged.tvExactSymbol = incoming.tvExactSymbol; changed = true; }
+    if (incoming.prevClose !== undefined && incoming.prevClose !== existing.prevClose) { merged.prevClose = incoming.prevClose; changed = true; }
     if (incoming.high !== undefined && (existing.high === undefined || incoming.high > existing.high)) { merged.high = incoming.high; changed = true; }
     if (incoming.low !== undefined && (existing.low === undefined || incoming.low < existing.low)) { merged.low = incoming.low; changed = true; }
     if (incoming.volume !== undefined && incoming.volume > (existing.volume || 0)) { merged.volume = incoming.volume; changed = true; }
@@ -89,6 +91,7 @@ function mergePriceData(existing: PriceData | undefined, incoming: Partial<Price
   const high = incoming.high ?? existing.high;
   const low = incoming.low ?? existing.low;
   const volume = incoming.volume ?? existing.volume;
+  const prevClose = incoming.prevClose ?? existing.prevClose;
   const tvExchange = incoming.tvExchange ?? existing.tvExchange;
   const tvExactSymbol = incoming.tvExactSymbol ?? existing.tvExactSymbol;
   const market = incoming.market ?? existing.market ?? 'IN';
@@ -104,12 +107,16 @@ function mergePriceData(existing: PriceData | undefined, incoming: Partial<Price
     existing.macd === macd &&
     existing.high === high &&
     existing.low === low &&
-    existing.volume === volume
+    existing.volume === volume &&
+    existing.prevClose === prevClose
   ) {
     return existing;
   }
 
-  return { price, change, high, low, volume, rsi, time, market, sma20, sma50, macd, tvExchange, tvExactSymbol, isRealtime };
+  // prevClose MUST survive every merge: the exact Today's-P&L path
+  // (cur − prevClose) × qty reverts to the rounded-%-back-compute
+  // approximation the moment it's dropped — the P&L drift bug class.
+  return { price, change, high, low, volume, prevClose, rsi, time, market, sma20, sma50, macd, tvExchange, tvExactSymbol, isRealtime };
 }
 
 type IndmSyncMeta = Omit<IndmAssetsResponse, 'assets'>;
@@ -176,10 +183,15 @@ export function useAppState() {
   });
   const usdAppRateRef = useRef<number | null>(usdAppRate);
   useEffect(() => { usdAppRateRef.current = usdAppRate; }, [usdAppRate]);
+  // v6.2: timestamp of the last LOCAL user edit — the auth-boot server
+  // fetch can land AFTER a fresh user calibration (cold-server wake) and
+  // must not overwrite it with the stale pre-edit server value.
+  const usdAppRateEditedAtRef = useRef(0);
   const setUsdAppRate = useCallback((v: number | null, opts?: { skipServer?: boolean }) => {
     const safe = v != null && Number.isFinite(v) && v > 50 && v < 150 ? v : null;
     usdAppRateRef.current = safe;
     setUsdAppRateState(safe);
+    if (!opts?.skipServer) usdAppRateEditedAtRef.current = Date.now();
     try {
       if (safe == null) secureStorage.removeItem('usdAppRate');
       else secureStorage.setItem('usdAppRate', String(safe));
@@ -638,19 +650,44 @@ export function useAppState() {
     void loadIndmAssets();
 
     // 1.6) SERVER SETTINGS (v6.1) — multi-device / cache-clear-proof
-    // calibrations (usdAppRate "Match App"). Server value wins; a device
-    // that still has only the OLD localStorage value migrates it up once.
+    // calibrations (usdAppRate "Match App"). Server value wins UNLESS the
+    // user calibrated locally while this fetch was in flight (cold-server
+    // wake can take 30s+); a device that still has only the OLD
+    // localStorage value migrates it up ONCE (persisted flag — without it,
+    // a cleared calibration kept getting resurrected by other devices).
     // Runs off refs → no re-subscription, no extra effect deps.
+    const settingsFetchStartedAt = Date.now();
     void fetchServerSettings().then(settings => {
       if (!settings) return; // offline / server error — local cache stands
       const srv = typeof settings.usdAppRate === 'number' ? settings.usdAppRate : null;
       if (srv != null && srv > 50 && srv < 150) {
+        // Skip the reseed if the user edited locally after the fetch began —
+        // their write-through POST has already superseded the server copy.
+        if (usdAppRateEditedAtRef.current > settingsFetchStartedAt) return;
         if (srv !== usdAppRateRef.current) setUsdAppRate(srv, { skipServer: true });
-      } else if (usdAppRateRef.current != null) {
-        // One-time migration: pre-v6.1 local-only value → server (so every
-        // other device + future cache wipes see the same calibration).
-        void saveServerSetting('usdAppRate', usdAppRateRef.current);
+      } else if (usdAppRateRef.current != null && !secureStorage.getItem('usdAppRate_migrated')) {
+        // One-time migration (flagged): pre-v6.1 local-only value → server.
+        // The flag stops a device with a stale local cache from pushing an
+        // OLD value back up AFTER the user cleared the calibration on
+        // another device (clear-on-B, resurrect-by-A loop).
+        void saveServerSetting('usdAppRate', usdAppRateRef.current).then(ok => {
+          if (ok) { try { secureStorage.setItem('usdAppRate_migrated', '1'); } catch { /* quota */ } }
+        });
       }
+    }).catch(() => { /* non-fatal */ });
+
+    // 1.7) AI KEYS async hydration (v6.2): with VITE_ENCRYPTION_KEY set the
+    // sensitive keys are stored as enc: ciphertext — the SYNC getItem used
+    // in the initial useState returns null for those, so on every boot the
+    // keys sat encrypted-but-unreadable on disk and vanished from the UI
+    // until the cloud proxy answered (offline → gone entirely). Hydrate
+    // them asynchronously; cloud still wins when it answers with a key.
+    void secureStorage.getItemAsync('WEALTH_AI_KEYS').then(saved => {
+      if (!saved) return;
+      try {
+        const parsed = JSON.parse(saved);
+        setAiKeys(prev => (prev.groqKey || prev.tavilyKey || prev.tgToken ? prev : parsed));
+      } catch { /* corrupt JSON — leave defaults */ }
     }).catch(() => { /* non-fatal */ });
 
     // 2) CLOUD — background fetch, merge when ready (manual mode only)
@@ -691,10 +728,14 @@ export function useAppState() {
           });
         }
       } else {
-        const localKeys = secureStorage.getItem('WEALTH_AI_KEYS');
-        if (localKeys) {
-          syncGroqKeyToCloud(localKeys).catch(() => { });
-        } else {
+        // Cloud has no key — hydrate the locally-encrypted keys ASYNC (the
+        // sync getItem returns null for enc: values) and push them up so
+        // other devices can share them.
+        void secureStorage.getItemAsync('WEALTH_AI_KEYS').then(localKeys => {
+          if (localKeys) {
+            syncGroqKeyToCloud(localKeys).catch(() => { });
+            return;
+          }
           const oldGroq = secureStorage.getItem('WEALTH_AI_GROQ');
           if (oldGroq) {
             const initial = {
@@ -705,7 +746,7 @@ export function useAppState() {
             };
             syncGroqKeyToCloud(JSON.stringify(initial)).catch(() => { });
           }
-        }
+        }).catch(() => { /* non-fatal */ });
       }
     }).catch(() => {
       try {
@@ -904,7 +945,7 @@ export function useAppState() {
   // are always blocked. We route through the server proxy at /api/crypto-prices.
   const hasCrypto = useMemo(() => {
     if (portfolio.length === 0) return true; // Default: poll for dashboard crypto widgets
-    return portfolio.some(p => isCryptoSymbol(p.symbol.replace('.NS', '').replace('.BO', '')));
+    return portfolio.some(p => isCryptoPosition(p));
   }, [portfolio]);
 
   useEffect(() => {
@@ -932,8 +973,8 @@ export function useAppState() {
         const cryptoSymbols = [...new Set([
           ...DEFAULT_CRYPTO_SYMBOLS,
           ...(portfolioRef.current || [])
-            .map(p => p.symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase())
-            .filter(s => isCryptoSymbol(s)),
+            .filter(p => isCryptoPosition(p))
+            .map(p => p.symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase()),
         ])];
         try {
           const res = await apiFetch(`${proxyBase}/api/crypto-prices?t=${Date.now()}`, {
@@ -1049,8 +1090,7 @@ export function useAppState() {
   const hasIndianEquity = useMemo(() => {
     if (portfolio.length === 0) return true; // default dashboard widgets (NIFTY etc.)
     return portfolio.some(p => {
-      const clean = p.symbol.replace('.NS', '').replace('.BO', '');
-      return (p.market || guessMarket(p.symbol)) === 'IN' && !isCryptoSymbol(clean);
+      return (p.market || guessMarket(p.symbol)) === 'IN' && !isCryptoPosition(p);
     });
   }, [portfolio]);
 
@@ -1059,9 +1099,8 @@ export function useAppState() {
 
     const buildIndianPositions = (): Position[] => {
       const inPositions = portfolioRef.current.filter(p => {
-        const clean = p.symbol.replace('.NS', '').replace('.BO', '');
         // noLive = INDMoney NAV-priced assets (MF/FD/bond) — no exchange quote.
-        return !p.noLive && (p.market || guessMarket(p.symbol)) === 'IN' && !isCryptoSymbol(clean);
+        return !p.noLive && (p.market || guessMarket(p.symbol)) === 'IN' && !isCryptoPosition(p);
       });
       if (inPositions.length > 0) return inPositions;
       // Fallback so India indices stay live even with an empty portfolio.
@@ -1105,8 +1144,7 @@ export function useAppState() {
   const hasUSEquity = useMemo(() => {
     if (portfolio.length === 0) return true; // default dashboard widgets (SPY, QQQ etc.)
     return portfolio.some(p => {
-      const clean = p.symbol.replace('.NS', '').replace('.BO', '');
-      return (p.market || guessMarket(p.symbol)) === 'US' && !isCryptoSymbol(clean);
+      return (p.market || guessMarket(p.symbol)) === 'US' && !isCryptoPosition(p);
     });
   }, [portfolio]);
 
@@ -1115,9 +1153,8 @@ export function useAppState() {
 
     const buildUSPositions = (): Position[] => {
       const usPositions = portfolioRef.current.filter(p => {
-        const clean = p.symbol.replace('.NS', '').replace('.BO', '');
         // noLive = INDMoney NAV-priced assets — no exchange quote to poll.
-        return !p.noLive && (p.market || guessMarket(p.symbol)) === 'US' && !isCryptoSymbol(clean);
+        return !p.noLive && (p.market || guessMarket(p.symbol)) === 'US' && !isCryptoPosition(p);
       });
       if (usPositions.length > 0) return usPositions;
       // Fallback so US indices stay live even with an empty portfolio.
@@ -1170,7 +1207,7 @@ export function useAppState() {
       const clean = p.symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase();
       const mkt = (p.market || guessMarket(p.symbol)).toUpperCase();
       const fullKey = `${mkt}_${p.symbol.trim()}`;
-      if (isCryptoSymbol(clean)) { cryptoSymbols.push(clean); cleanToKey[`IN_${clean}`] = fullKey; }
+      if (isCryptoPosition(p)) { cryptoSymbols.push(clean); cleanToKey[`IN_${clean}`] = fullKey; }
       else if (mkt === 'US') { usSymbols.push(clean); cleanToKey[`US_${clean}`] = fullKey; }
       else { inSymbols.push(clean); cleanToKey[`IN_${clean}`] = fullKey; }
     };
@@ -1615,12 +1652,11 @@ export function useAppState() {
       totalInvested += pnlTruth.investedINR;
       totalValue += pnlTruth.valueINR;
 
-      // v5.1 bucketing fix: CoinDCX rows carry market 'IN' (INR pairs) but
-      // they are CRYPTO, not India equity — bucket them with
-      // isCryptoSymbol (same classification the grouped table + insights
-      // use) so the 🇮🇳 sub-lines equal the INDMoney app's INDIA section.
-      const cleanSym = pos.symbol.replace('.NS', '').replace('.BO', '');
-      const isCrypto = isCryptoSymbol(cleanSym);
+      // v5.1→v6.2 bucketing: CoinDCX rows carry market 'IN' (INR pairs) but
+      // they are CRYPTO, not India equity — classify by POSITION (source →
+      // name) so non-major coins (SHIB/PEPE/…) bucket correctly too; the
+      // 🇮🇳 sub-lines stay equal to the INDMoney app's INDIA section.
+      const isCrypto = isCryptoPosition(pos);
       if (isCrypto) {
         totalInvestedCRYPTO += pnlTruth.investedINR;
         totalValueCRYPTO += pnlTruth.valueINR;
@@ -1759,7 +1795,7 @@ export function useAppState() {
         const holdingLabel = holdingDays > 365 ? `${(holdingDays / 365).toFixed(1)}Y` : `${holdingDays}D`;
         const years = holdingDays / 365;
         const cagrPct = (years > 0.1 && pos.avgPrice > 0) ? ((Math.pow(curPrice / pos.avgPrice, 1 / years) - 1) * 100) : plPct;
-        const isCryptoAsset = isCryptoSymbol(cleanSym);
+        const isCryptoAsset = isCryptoPosition(pos);
         const assetType = isCryptoAsset ? 'CRYPTO' : pos.market;
         const trend = (data?.sma20 && data?.sma50) ? (data.sma20 > data.sma50 ? 'BULL' : 'BEAR') : (change > 0.5 ? 'BULL' : change < -0.5 ? 'BEAR' : 'FLAT');
         // 2026-09: source tag (INDMONEY/COINDCX/MANUAL) + full name + NAV
@@ -2025,6 +2061,22 @@ export function useAppState() {
     apiFetch(`${proxyBase}/api/auth/logout`, { method: 'POST' }).catch(() => {});
   }, []);
 
+  // v6.2: fetchSinglePrice's Binance fallback returns a USD price under
+  // market 'IN' — scale it by the live FX rate so ₹-labeled crypto rows
+  // aren't ~83× off until the next CoinDCX tick (the Add-modal path always
+  // did this conversion; the scan paths didn't).
+  const normalizeScanPrice = useCallback((sym: string, result: PriceData): PriceData => {
+    if (isCryptoSymbol(sym.replace('.NS', '').replace('.BO', '')) && result.market === 'IN' && result.tvExchange === 'BINANCE') {
+      const fx = usdInrRateRef.current || 1;
+      return {
+        ...result,
+        price: result.price * fx,
+        prevClose: result.prevClose != null ? result.prevClose * fx : result.prevClose,
+      };
+    }
+    return result;
+  }, []);
+
   const analyzeSymbol = useCallback(async () => {
     if (isAnalyzing || !symbolInput.trim()) return;
     setIsAnalyzing(true);
@@ -2032,15 +2084,16 @@ export function useAppState() {
     try {
       const result = await fetchSinglePrice(sym);
       if (result && result.price > 0) {
-        setCurrentSymbol(sym); setCurrentMarket(result.market as 'IN' | 'US');
-        const key = `${result.market}_${sym}`;
+        const normalized = normalizeScanPrice(sym, result);
+        setCurrentSymbol(sym); setCurrentMarket(normalized.market as 'IN' | 'US');
+        const key = `${normalized.market}_${sym}`;
         // v5.0: ref-first write (rare, user-initiated → sync immediately).
-        livePricesRef.current = { ...(livePricesRef.current || {}), [key]: result };
+        livePricesRef.current = { ...(livePricesRef.current || {}), [key]: normalized };
         setLivePrices(livePricesRef.current);
       }
     } catch (e) { console.warn('Analyze error:', e); }
     finally { setIsAnalyzing(false); }
-  }, [isAnalyzing, symbolInput]);
+  }, [isAnalyzing, symbolInput, normalizeScanPrice]);
 
   const quickSelect = useCallback((sym: string) => {
     const fullSym = sym.toUpperCase().trim();
@@ -2050,28 +2103,43 @@ export function useAppState() {
       try {
         const result = await fetchSinglePrice(fullSym);
         if (result && result.price > 0) {
-          setCurrentSymbol(fullSym); setCurrentMarket(result.market as 'IN' | 'US');
-          const key = `${result.market}_${fullSym}`;
+          const normalized = normalizeScanPrice(fullSym, result);
+          setCurrentSymbol(fullSym); setCurrentMarket(normalized.market as 'IN' | 'US');
+          const key = `${normalized.market}_${fullSym}`;
           // v5.0: ref-first write (rare, user-initiated → sync immediately).
-          livePricesRef.current = { ...(livePricesRef.current || {}), [key]: result };
+          livePricesRef.current = { ...(livePricesRef.current || {}), [key]: normalized };
           setLivePrices(livePricesRef.current);
         }
       } catch (e) { console.warn('Symbol analysis failed:', e); }
       finally { setIsAnalyzing(false); }
     })();
-  }, []);
+  }, [normalizeScanPrice]);
 
+  // v6.2: invalidates in-flight modal price fetches — a stale fetch for a
+  // DIFFERENT symbol (global currentSymbol set by any Dashboard scan) used
+  // to resolve ~1s after the modal opened and overwrite the form.
+  const modalFetchEpochRef = useRef(0);
   const openAddModal = useCallback((position?: Position) => {
+    const epoch = ++modalFetchEpochRef.current;
+    // Reset leftover modal-price state from ANY previous modal session: a
+    // stale modalPrice.market leaked into savePosition and could silently
+    // rewrite an edited row's MARKET (₹/$ corruption).
+    setModalPrice(null);
     if (position) {
       setAddSymbol(position.symbol); setAddQty(position.qty.toString()); setAddPrice(position.avgPrice.toString());
       setAddDate(position.dateAdded); setEditId(position.id);
-    } else {
-      setAddSymbol(currentSymbol || ''); setAddQty(''); setAddPrice('');
-      setAddDate(getTodayString()); setEditId(null);
+      setTransactionType('buy'); setShowAddModal(true);
+      // EDIT mode: NO live-price fetch — the row's own avg price is the
+      // truth, the global currentSymbol is unrelated to this row, and a
+      // late-resolving fetch would clobber the user's edits mid-typing.
+      return;
     }
+    setAddSymbol(currentSymbol || ''); setAddQty(''); setAddPrice('');
+    setAddDate(getTodayString()); setEditId(null);
     setTransactionType('buy'); setShowAddModal(true);
     if (currentSymbol) {
       fetchSinglePrice(currentSymbol).then(result => {
+        if (epoch !== modalFetchEpochRef.current) return; // stale fetch — discard
         if (result) {
           let finalPrice = result.price;
           if (isCryptoSymbol(currentSymbol.replace('.NS', '').replace('.BO', '')) && result.market === 'IN' && result.tvExchange === 'BINANCE') {
@@ -2091,19 +2159,24 @@ export function useAppState() {
     if (!addSymbol || isNaN(qty) || isNaN(price) || qty <= 0 || price <= 0) {
       alert('Neural Error: Quantity ya price sahi daalo bhai.'); return;
     }
-    const mkt = (modalPrice?.market || guessMarket(addSymbol)) as 'IN' | 'US';
+    // v6.2: an EDIT keeps the row's own market — a leftover/foreign
+    // modalPrice.market (stale fetch, other symbol) previously rewrote the
+    // edited row's market and every ₹/$ metric with it.
+    const editedPos = editId ? portfolio.find(p => p.id === editId) : undefined;
+    const mkt = (editedPos?.market || modalPrice?.market || guessMarket(addSymbol)) as 'IN' | 'US';
 
     // Helper to append a transaction to the ledger (powers monthly analytics + return reports)
     // txnMarket override keeps the ledger honest when the sell resolves to a
     // position whose recorded market differs from the modal's market guess.
     const recordTxn = (
       type: TransactionType, prevQty: number, prevAvg: number,
-      newQty: number, newAvg: number, realizedPL?: number, txnMarket?: 'IN' | 'US'
+      newQty: number, newAvg: number, realizedPL?: number, txnMarket?: 'IN' | 'US', qtyOverride?: number
     ) => {
+      const effQty = qtyOverride ?? qty;
       const txn: Transaction = {
         id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        symbol: addSymbol, market: txnMarket || mkt, type, qty, price,
-        amount: qty * price, date: addDate || getTodayString(), ts: Date.now(),
+        symbol: addSymbol, market: txnMarket || mkt, type, qty: effQty, price,
+        amount: effQty * price, date: addDate || getTodayString(), ts: Date.now(),
         prevQty, prevAvg, newQty, newAvg,
         ...(realizedPL !== undefined ? { realizedPL } : {}),
       };
@@ -2122,16 +2195,24 @@ export function useAppState() {
       if (idx < 0) idx = portfolio.findIndex(p => p.symbol === addSymbol);
       if (idx >= 0) {
         const pos = portfolio[idx];
-        const newQty = pos.qty - qty;
-        const realizedPL = (price - pos.avgPrice) * qty; // booked profit/loss (native)
-        recordTxn('sell', pos.qty, pos.avgPrice, Math.max(0, newQty), pos.avgPrice, realizedPL, pos.market);
+        // v6.2: clamp to the held quantity — selling MORE than held used
+        // to remove the row but book realized P&L on the full typed qty.
+        const sellQty = Math.min(qty, pos.qty);
+        const newQty = pos.qty - sellQty;
+        const realizedPL = (price - pos.avgPrice) * sellQty; // booked profit/loss (native)
+        recordTxn('sell', pos.qty, pos.avgPrice, Math.max(0, newQty), pos.avgPrice, realizedPL, pos.market, sellQty);
         if (newQty <= 0) setPortfolio(prev => prev.filter((_, i) => i !== idx));
         else setPortfolio(prev => prev.map((p, i) => i === idx ? { ...p, qty: newQty } : p));
       }
     } else {
       if (editId) {
         const pos = portfolio.find(p => p.id === editId);
-        recordTxn('buy', pos?.qty || 0, pos?.avgPrice || price, qty, price);
+        // v6.2: an EDIT is a correction, not a fresh buy — the old phantom
+        // full-qty BUY double-counted the entire position as fresh invested
+        // capital in monthly analytics after a mere typo fix. Record only
+        // the NET quantity increase (if any).
+        const deltaQty = Math.max(0, qty - (pos?.qty || 0));
+        if (deltaQty > 0) recordTxn('buy', pos?.qty || 0, pos?.avgPrice || price, qty, price, undefined, pos?.market, deltaQty);
         setPortfolio(prev => prev.map(p => p.id === editId ? { ...p, symbol: addSymbol, qty, avgPrice: price, leverage, dateAdded: addDate, market: mkt } : p));
       } else {
         const existing = portfolio.find(p => p.symbol === addSymbol && p.market === mkt);
@@ -2278,12 +2359,16 @@ export function useAppState() {
         if (bak) saved[`${k}_undecryptable`] = bak;
       } catch { /* ignore */ }
     }
-    // Phase 2 — wipe, then restore.
+    // Phase 2 — wipe, then restore. Sensitive keys MUST be awaited: their
+    // setItem() re-encrypts via async WebCrypto in a .then(); reloading
+    // before those promises land would destroy the very keys this cache
+    // flush is preserving (the clear() already wiped the old values).
     secureStorage.clear();
-    for (const [k, v] of Object.entries(saved)) {
-      if (k.endsWith('_undecryptable')) secureStorage.setItemPlain(k, v);
-      else secureStorage.setItem(k, v);
-    }
+    await Promise.all(Object.entries(saved).map(([k, v]) =>
+      k.endsWith('_undecryptable')
+        ? secureStorage.setItemPlain(k, v)
+        : secureStorage.setItemAsync(k, v),
+    ));
     window.location.reload();
   }, []);
 
@@ -2337,7 +2422,7 @@ export function useAppState() {
     removeIndmAsset, restoreIndmAsset,
   }), [
     isAuthenticated, pinInput, setPinInput, verifyPin, logout,
-    activeTab, setActiveTab, portfolio, transactions, livePrices, usdInrRate, theme,
+    activeTab, setActiveTab, portfolio, transactions, livePrices, usdInrRate, usdAppRate, theme,
     deleteTransaction, editTransaction,
     priceAlerts, addPriceAlert, updatePriceAlert, deletePriceAlert, togglePriceAlert,
     refreshAll, isRefreshing,

@@ -107,8 +107,13 @@ export async function getOptionsDesk(symbol = 'NIFTY') {
 
   let chain = null, analytics = null;
   if (nse && spot) {
-    // Pick the nearest weekly expiry from NSE's own list.
-    const today = new Date().toISOString().slice(0, 10);
+    // Pick the nearest weekly expiry from NSE's own list. Compare against
+    // the IST calendar date (before 05:30 IST the UTC date is yesterday —
+    // an already-passed expiry would otherwise still be selectable).
+    const today = (() => {
+      try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date()); }
+      catch { return new Date().toISOString().slice(0, 10); }
+    })();
     const exp = (nse.expiryDates || []).map(d => String(d))
       .filter(d => d >= today).sort()[0]
       || nextWeeklyExpiry(new Date(), sym === 'NIFTY' ? 2 : 4);

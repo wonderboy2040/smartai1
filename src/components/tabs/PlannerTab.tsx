@@ -25,6 +25,7 @@ export default React.memo(function PlannerTab() {
     monthlyExpenses, setMonthlyExpenses, currentAge, setCurrentAge,
     totalSIP, cagr,
     fireNumber, yearsToFire, fireProgress,
+    indmSource,
   } = useApp();
 
   // v5.0 dedupe: fvMed/fvWorst/fvBest/multiplier/totalInvestedPlanner (the
@@ -280,7 +281,12 @@ export default React.memo(function PlannerTab() {
       </div>
 
       {/* ============ PORTFOLIO XIRR (TRUE ANNUALIZED RETURN) ============ */}
-      {portfolio.length > 0 && (
+      {/* v6.2: hide for synced portfolios — INDMoney syncs carry no
+          per-asset buy dates (dateAdded = the SYNC date), so XIRR treated
+          every position as bought TODAY at live-FX prices and a +0.5% move
+          annualized to absurd percentages presented as a "PRO METRIC".
+          The Portfolio tab already guards its XIRR the same way. */}
+      {portfolio.length > 0 && indmSource !== 'indmoney' && indmSource !== 'coindcx' && (
         <div className="quantum-panel rounded-2xl p-5 border-emerald-500/10 animate-fade-in-up">
           <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
             <span className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center text-sm">📐</span>

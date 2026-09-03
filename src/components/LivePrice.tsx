@@ -30,7 +30,7 @@ export function LivePrice({
   }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const text = Number.isFinite(value)
-    ? value.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+    ? value.toLocaleString(prefix === '$' ? 'en-US' : undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
     : '--';
 
   return (

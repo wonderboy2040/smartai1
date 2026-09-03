@@ -171,7 +171,7 @@ function requireAuth(req, res, next) {
   // (portfolio sync trigger, asset hide/unhide) without a browser session.
   // Browser sessions are random UUIDs — they can never collide with this.
   const SERVICE_TOKEN = process.env.API_TOKEN || '';
-  if (token && SERVICE_TOKEN.length >= 12 && token === SERVICE_TOKEN) {
+  if (token && SERVICE_TOKEN.length >= 12 && _constEq(token, SERVICE_TOKEN)) {
     return next();
   }
 
@@ -196,6 +196,18 @@ function parseCookie(header) {
     if (key) out[key] = val;
   }
   return out;
+}
+
+// Constant-time comparison for long-lived bearer secrets (digest both
+// sides to fixed-length SHA-256 buffers — also neutralizes length leaks).
+// Same pattern as the PIN check in /api/auth/login: a plain === on the
+// service token would leak bytes through response timing.
+function _constEq(a, b) {
+  try {
+    const ha = crypto.createHash('sha256').update(String(a)).digest();
+    const hb = crypto.createHash('sha256').update(String(b)).digest();
+    return crypto.timingSafeEqual(ha, hb);
+  } catch { return false; }
 }
 
 // --- CORS ---
@@ -293,8 +305,36 @@ app.post('/api/auth/login', (req, res) => {
 
 // POST /api/auth/logout â†’ clears session cookie
 app.post('/api/auth/logout', (req, res) => {
+  // CSRF guard (2026-09 audit): logout is a state-changing PUBLIC POST and
+  // the session cookie is SameSite=None — a third-party page posting a
+  // cross-site form to this URL is a "simple request" (no preflight) and
+  // the cookie rides along. Repeated forced logouts = session DoS.
+  // DISCRIMINATOR: a cross-site <form> can NEVER set an Authorization
+  // header, while the app's own cross-origin logout (Vercel → Render,
+  // also Sec-Fetch-Site: cross-site) always sends the Bearer token via
+  // apiFetch. Bearer-authenticated cross-site logouts are therefore
+  // allowed; headerless cross-site requests are rejected.
+  const secFetchSite = String(req.headers['sec-fetch-site'] || '').toLowerCase();
+  const hasBearer = /^Bearer\s+\S+/i.test(String(req.headers.authorization || ''));
+  if (secFetchSite === 'cross-site' && !hasBearer) {
+    return res.status(403).json({ ok: false, error: 'Cross-site logout blocked.' });
+  }
+  // Legacy browsers (no Sec-Fetch-Site): Origin allowlist, Bearer-exempt.
+  const origin = req.headers.origin;
+  if (origin && !secFetchSite && !hasBearer) {
+    let allowed = false;
+    try { allowed = !!req.headers.host && new URL(String(origin)).host === String(req.headers.host); } catch { /* parse fail */ }
+    if (!allowed && ALLOWED_ORIGINS) allowed = ALLOWED_ORIGINS.has(String(origin));
+    if (!allowed && _corsFailClosed) {
+      return res.status(403).json({ ok: false, error: 'Cross-site logout blocked.' });
+    }
+  }
   const token = parseCookie(req.headers.cookie || '')[SESSION_COOKIE];
   if (token) _sessions.delete(token);
+  // Bearer-token logout: the token itself may be the session — invalidate
+  // it too (belt and braces for cookie-less cross-origin sessions).
+  const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  if (bearer) _sessions.delete(bearer);
   res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=None; Path=/; Max-Age=0; Secure`);
   res.json({ ok: true });
 });
@@ -647,33 +687,42 @@ async function _fetchYahooQuoteUncached(ysym) {
   // like SPCX). The v7 quote endpoint intermittently 401s without a crumb
   // from datacenter IPs, so every cold symbol used to pay a WASTED v7
   // round-trip before the v8 fallback kicked in.
+  let quote = null;
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ysym)}?interval=5m&range=1d`;
     const r = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI quote proxy)' },
       signal: AbortSignal.timeout(6000),
     });
-    if (!r.ok) return null;
-    const j = await r.json();
-    const result = j?.chart?.result?.[0];
-    const m = result?.meta;
-    if (!m) return null;
-    const price = m.regularMarketPrice;
-    if (typeof price !== 'number' || price <= 0) return null;
-    const prevClose = m.chartPreviousClose || m.previousClose || price;
-    return {
-      price,
-      change: prevClose ? ((price - prevClose) / prevClose) * 100 : 0,
-      high: m.regularMarketDayHigh || price,
-      low: m.regularMarketDayLow || price,
-      volume: m.regularMarketVolume || 0,
-      prevClose,
-      time: (m.regularMarketTime ? m.regularMarketTime * 1000 : Date.now()),
-      source: 'yahoo-realtime',
-    };
-  } catch { return null; }
+    if (r.ok) {
+      const j = await r.json();
+      const result = j?.chart?.result?.[0];
+      const m = result?.meta;
+      if (m) {
+        const price = m.regularMarketPrice;
+        if (typeof price === 'number' && price > 0) {
+          const prevClose = m.chartPreviousClose || m.previousClose || price;
+          quote = {
+            price,
+            change: prevClose ? ((price - prevClose) / prevClose) * 100 : 0,
+            high: m.regularMarketDayHigh || price,
+            low: m.regularMarketDayLow || price,
+            volume: m.regularMarketVolume || 0,
+            prevClose,
+            time: (m.regularMarketTime ? m.regularMarketTime * 1000 : Date.now()),
+            source: 'yahoo-realtime',
+          };
+        }
+      }
+    }
+  } catch { /* fall through to v7 */ }
+  if (quote) return quote;
 
-  // v7 fallback (occasionally serves fresher batch quotes)
+  // v7 fallback (occasionally serves fresher batch quotes). Reachable ONLY
+  // when v8 4xx/5xx'd, timed out, or returned an unusable body — every v8
+  // failure path used to `return null` directly, making this designed
+  // fallback unreachable dead code (no price for the symbol even though
+  // v7 would have answered).
   try {
     const qurl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ysym)}`;
     const qr = await fetch(qurl, {
@@ -1266,6 +1315,10 @@ app.post('/api/chat/mcp', async (req, res) => {
   if (groqKey) {
     try {
       const targetModel = 'openai/gpt-oss-120b';
+      // Follow-up tool-result requests must use the model that ACTUALLY
+      // answered the first call: re-sending a failed primary model 400s
+      // again on the follow-up and the user gets an empty MCP answer.
+      let activeModel = targetModel;
       const reqMessages = systemText ? [{ role: 'system', content: systemText }, ...userConvo] : [...userConvo];
 
       let upstream = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -1286,6 +1339,7 @@ app.post('/api/chat/mcp', async (req, res) => {
       if (!upstream.ok && (upstream.status === 400 || upstream.status === 404 || upstream.status === 422)) {
         console.warn(`[MCP Server] Groq ${targetModel} failed (${upstream.status}), trying llama-3.3-70b-versatile...`);
         const fallbackModel = 'llama-3.3-70b-versatile';
+        activeModel = fallbackModel;
         upstream = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
@@ -1326,7 +1380,7 @@ app.post('/api/chat/mcp', async (req, res) => {
         const followUp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: targetModel, messages: reqMessages, temperature: 0.7, max_completion_tokens: 4000 }),
+          body: JSON.stringify({ model: activeModel, messages: reqMessages, temperature: 0.7, max_completion_tokens: 4000 }),
           signal: AbortSignal.timeout(30000) // FIX Bug 4: increased from 20s to 30s
         });
 
@@ -1932,9 +1986,18 @@ app.post('/api/cloud/save', async (req, res) => {
       signal: AbortSignal.timeout(10000),
     });
     // Verify the Apps Script actually accepted the save — it can return
-    // HTTP 200 with { ok:false, error } (silent data loss if we trust status alone).
+    // HTTP 200 with { ok:false, error } (silent data loss if we trust status
+    // alone). Read the body ONCE as text then parse: upstream.json() consumes
+    // the stream, so the old json()→text() fallback could never run (an HTML
+    // error page with HTTP 200 was reported as savedOk:true).
     let body = null;
-    try { body = await upstream.json(); } catch { try { body = JSON.parse(await upstream.text()); } catch {} }
+    try {
+      const text = await upstream.text();
+      try { body = JSON.parse(text); } catch {
+        const match = text.match(/\{[\s\S]*\}/);
+        if (match) { try { body = JSON.parse(match[0]); } catch { /* not JSON */ } }
+      }
+    } catch { /* unreadable body */ }
     const savedOk = upstream.ok && !(body && body.ok === false);
     if (!savedOk) {
       console.warn(`☁️ Cloud save: upstream rejected — HTTP ${upstream.status}, body: ${JSON.stringify(body).slice(0, 200)}`);

@@ -506,19 +506,28 @@ export async function fetchCoinDcxAssets(usdInr) {
   const manualBasis = loadManualBasis();
   const basis = mergeBasis(ledgerBasis, manualBasis);
   const assets = mapBalancesToAssets(balances, tickers, usdInr, basis);
-  saveCreds({
-    ...creds,
-    lastSyncAt: Date.now(),
-    balanceCount: balances.length,
-    lastError: null,
-    costBasis: {
-      source: tradesOut?.endpoint || null,
-      trades: tradesOut?.trades?.length ?? 0,
-      coins: ledgerBasis ? Object.keys(ledgerBasis) : [],
-      manualCoins: Object.keys(manualBasis || {}),
-      computedAt: Date.now(),
-    },
-  });
+  // Write-back: merge the sync metadata onto the CURRENT creds file. The
+  // awaits above can span a concurrent reconnect (user rotating keys via
+  // /connect) — spreading the STALE `creds` snapshot here would silently
+  // revert the fresh keys (and durable-back the dead ones), killing every
+  // later sync with [401] until the next manual reconnect. If the keys
+  // changed mid-flight, skip the write-back entirely.
+  const freshCreds = loadCreds();
+  if (freshCreds?.apiKey === creds.apiKey && freshCreds?.secret === creds.secret) {
+    saveCreds({
+      ...freshCreds,
+      lastSyncAt: Date.now(),
+      balanceCount: balances.length,
+      lastError: null,
+      costBasis: {
+        source: tradesOut?.endpoint || null,
+        trades: tradesOut?.trades?.length ?? 0,
+        coins: ledgerBasis ? Object.keys(ledgerBasis) : [],
+        manualCoins: Object.keys(manualBasis || {}),
+        computedAt: Date.now(),
+      },
+    });
+  }
   return { assets, balanceCount: balances.length, basis };
 }
 

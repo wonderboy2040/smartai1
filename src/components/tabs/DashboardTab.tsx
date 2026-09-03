@@ -50,9 +50,14 @@ export default React.memo(function DashboardTab() {
   const cur = currentMarket === 'IN' ? '₹' : '$';
   const monthlyBudget = indiaSIP + usSIP;
   // Suggested invest amount: scale by signal confidence (Kelly-inspired)
-  const investPct = signalData.signal.includes('STRONG') ? 0.30
-    : signalData.signal.includes('BUY') ? 0.20
-    : signalData.signal.includes('ACCUMULATE') ? 0.12
+  // v6.2: map the ACTUAL signal vocabulary (🔥 MAX BUY / 🟢 ACCUMULATE /
+  // 🟡 MAINTAIN / 🟠 THROTTLE / 🚨 DISTRIBUTE) — the old substring match
+  // ('STRONG'/'BUY') never fired, and DISTRIBUTE still suggested a BUY.
+  const sig = String(signalData?.signal || '');
+  const investPct = sig.includes('MAX BUY') ? 0.30
+    : sig.includes('ACCUMULATE') ? 0.12
+    : sig.includes('MAINTAIN') ? 0.05
+    : sig.includes('THROTTLE') || sig.includes('DISTRIBUTE') ? 0
     : 0.05;
   const suggestedInvest = Math.round(monthlyBudget * investPct);
 

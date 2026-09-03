@@ -235,6 +235,11 @@ export async function fetchCryptoSnapshot(base) {
 const YF_MAP = {
   NIFTY: '^NSEI', BANKNIFTY: '^NSEBANK', FINNIFTY: 'NIFTY_FIN_SERVICE.NS',
   SENSEX: '^BSESN', INDIAVIX: '^INDIAVIX', USDINR: 'USDINR=X', BTC: 'BTC-USD',
+  // NSE sector indices + global risk proxies (MCP market tools). Each key
+  // is fetched independently — a dead ticker is simply skipped.
+  IT: '^CNXIT', AUTO: '^CNXAUTO', PHARMA: '^CNXPHARMA', FMCG: '^CNXFMCG',
+  METAL: '^CNXMETAL', REALTY: '^CNXREALTY',
+  USVIX: '^VIX', DXY: 'DX-Y.NYB', GOLD: 'GC=F', CRUDE: 'CL=F',
 };
 
 export async function fetchYahooQuotes(keys) {

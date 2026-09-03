@@ -554,7 +554,9 @@ describe('summarizeAssets', () => {
     expect(s.holdingCount).toBe(3);
     expect(s.withBasis).toBe(2);
     expect(s.oneDayChange).toBeCloseTo(1 + 0.2, 2);   // 100×1% + 10×2%
-    expect(s.oneDayChangePct).toBeCloseTo(1.2 / 160 * 100, 2);
+    // weighted over rows WITH day data (110 = 100 + 10; the ₹50 row
+    // reports none — including it understated the portfolio "today %")
+    expect(s.oneDayChangePct).toBeCloseTo(1.2 / 110 * 100, 2);
   });
 
   it('empty / null-safe', () => {

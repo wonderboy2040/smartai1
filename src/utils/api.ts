@@ -943,6 +943,7 @@ export async function batchFetchPrices(
               high: q.high || q.price,
               low: q.low || q.price,
               volume: q.volume || 0,
+              prevClose: (typeof q.prevClose === 'number' && q.prevClose > 0) ? q.prevClose : undefined,
               time: q.time || Date.now(),
               market: 'IN',
             } as PriceData;
@@ -967,6 +968,7 @@ export async function batchFetchPrices(
               high: q.high || q.price,
               low: q.low || q.price,
               volume: q.volume || 0,
+              prevClose: (typeof q.prevClose === 'number' && q.prevClose > 0) ? q.prevClose : undefined,
               time: q.time || Date.now(),
               market: 'US',
             } as PriceData;

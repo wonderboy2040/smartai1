@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { useApp } from '../../hooks/AppContext';
-import { getTodayString, isCryptoSymbol } from '../../utils/constants';
+import type { Position } from '../../types';
+import { getTodayString, isCryptoPosition } from '../../utils/constants';
 import { getCustomCloudConfig, saveCustomCloudConfig, setCoindcxManualBasis, clearCoindcxManualBasis } from '../../utils/api';
 import { calculatePortfolioXIRR } from '../../utils/wealthEngine';
 import { syncedAssetPnl } from '../../utils/assetPnl';
@@ -62,10 +63,12 @@ interface GroupInfo {
   noBasisCount: number;
 }
 
-function classifyAsset(symbol: string, market: string): AssetGroup {
-  const clean = symbol.replace('.NS', '').replace('.BO', '');
-  if (isCryptoSymbol(clean)) return 'crypto';
-  return market === 'US' ? 'usa' : 'india';
+function classifyAsset(p: Position): AssetGroup {
+  // v6.2: classify by POSITION (source → name). The symbol name list
+  // alone put every non-major coin (SHIB, PEPE, TRX, NEAR, …) in the INDIA
+  // group with an NSE badge and polluted the "APP EXACT" 🇮🇳 card.
+  if (isCryptoPosition(p)) return 'crypto';
+  return p.market === 'US' ? 'usa' : 'india';
 }
 
 // Green/red flash when a live value ticks up/down (uses global flashUp/flashDown keyframes).
@@ -199,12 +202,13 @@ const PortfolioTab = React.memo(function PortfolioTab() {
     return map;
   }, [xirrData]);
 
-  // --- Grouped & sorted portfolio ---
-  const groupedPortfolio = useMemo(() => {
-    const q = search.trim().toUpperCase();
-    const withMetrics: GroupedAsset[] = portfolio
-      .filter(p => !q || p.symbol.toUpperCase().includes(q))
-      .map(p => {
+  // --- v4.5/v6.2: per-row metrics over the FULL portfolio ---
+  // Computed unfiltered ONCE: the table search filters a COPY for display,
+  // while the insights X-ray needs the whole portfolio (feeding it the
+  // search-filtered subset against the full-portfolio denominator made
+  // HHI / top-weight / market-split silently mutate while typing).
+  const portfolioMetrics = useMemo<GroupedAsset[]>(() => portfolio
+    .map(p => {
         const key = `${(p.market || 'IN').toUpperCase()}_${p.symbol}`;
         const data = livePrices[key];
         const curPrice = data?.price || p.avgPrice;
@@ -235,10 +239,17 @@ const PortfolioTab = React.memo(function PortfolioTab() {
           ? data.prevClose
           : (change <= -100 ? curPrice * 2 : curPrice / (1 + (change / 100)));
         const todayPL = (curPrice - prevPrice) * p.qty;
-        const group = classifyAsset(p.symbol, p.market);
+        const group = classifyAsset(p);
         const hasBasis = pnlTruth.hasBasis;
         return { p, allocPct, pl, plPct, plINR, valINR, invINR, eqVal, invNative, todayPL, ltp: curPrice, xirr: xirrMap[key] ?? null, group, hasBasis };
-      });
+    }), [portfolio, livePrices, usdInrRate, usdAppRate, metrics.totalValue, xirrMap]);
+
+  // --- Grouped & sorted (search-filtered) table ---
+  const groupedPortfolio = useMemo(() => {
+    const q = search.trim().toUpperCase();
+    const withMetrics: GroupedAsset[] = q
+      ? portfolioMetrics.filter(a => a.p.symbol.toUpperCase().includes(q))
+      : portfolioMetrics;
 
     // Sort within groups
     const dir = sortDir === 'desc' ? -1 : 1;
@@ -289,7 +300,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
     }
 
     return groups.filter(g => g.assets.length > 0);
-  }, [portfolio, livePrices, usdInrRate, usdAppRate, metrics.totalValue, xirrMap, search, sortKey, sortDir]);
+  }, [portfolioMetrics, search, sortKey, sortDir]);
 
   const totalVisible = groupedPortfolio.reduce((s, g) => s + g.assets.length, 0);
 
@@ -306,16 +317,30 @@ const PortfolioTab = React.memo(function PortfolioTab() {
     .map(p => ({ symbol: p.symbol, qty: p.qty, valINR: (p.indmInvestedINR != null ? undefined : p.qty * (p.indmLastPrice || p.avgPrice || 0)) }))
     .filter(r => !!r.symbol), [portfolio]);
 
-  // --- v5.2: save the crypto manual basis (per-coin invested) ---
+  // --- v4.5: save the crypto manual basis (per-coin invested) ---
   const handleSaveBasis = async () => {
     setBasisSaving(true);
     try {
       let any = false;
+      let failed = 0;
       for (const [coin, val] of Object.entries(basisInputs)) {
-        const n = Number(val);
-        if (val.trim() === '' || !Number.isFinite(n)) continue;
-        if (n > 0) { const ok = await setCoindcxManualBasis(coin, n); any = any || ok; }
+        // v6.2: Indian number format ("1,23,456") is common — strip the
+        // separators instead of silently discarding the row (the old NaN
+        // skip closed the modal looking saved while nothing was written).
+        const n = Number(String(val).replace(/,/g, '').trim());
+        if (String(val).trim() === '' || !Number.isFinite(n)) continue;
+        if (n > 0) {
+          const ok = await setCoindcxManualBasis(coin, n);
+          any = any || ok;
+          if (!ok) failed++;
+        }
         else { await clearCoindcxManualBasis(coin); any = true; }
+      }
+      if (failed > 0) {
+        // v6.2: a rejected save (401 / network) must not close the modal
+        // silently — the entered amounts would be lost.
+        alert(`${failed} coin ka basis save FAIL hua (session/server issue). Modal open hai — Save dobara dabao.`);
+        return;
       }
       if (any) await loadIndmAssets(true); // pull the refreshed rows
       setShowBasisModal(false);
@@ -324,17 +349,19 @@ const PortfolioTab = React.memo(function PortfolioTab() {
     }
   };
 
-  // --- v4.5: Insights feed (all groups flattened, same sync-truth rows) ---
+  // --- v4.5: Insights feed (FULL portfolio, same sync-truth rows) ---
   const insightAssets = useMemo<InsightsPanelAsset[]>(() =>
-    groupedPortfolio.flatMap(g => g.assets.map(a => ({
+    portfolioMetrics.map(a => ({
       label: (a.p.symbol || '').replace('.NS', '').trim() || (a.p.name || 'ASSET'),
       group: a.group,
       pl: a.pl,
       plPct: a.plPct,
-      todayPL: a.todayPL,
+      // v6.2: ₹-normalize before ranking/display — a US row's native $ P&L
+      // ranked ~85× too low against ₹ rows in Today's Winners/Losers.
+      todayPL: a.p.market === 'US' ? a.todayPL * (usdInrRate || 1) : a.todayPL,
       valINR: a.valINR,
-    }))),
-    [groupedPortfolio]);
+    })),
+    [portfolioMetrics, usdInrRate]);
 
   // --- v4.5: per-row chart modal target ---
   const [chartTarget, setChartTarget] = useState<AssetChartTarget | null>(null);
@@ -598,9 +625,20 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                 />
                 <button
                   onClick={() => {
-                    const appUsd = Number(appUsdInput);
-                    if (!(appUsd > 0) || !(usInrInvested > 0)) return;
+                    // v6.2: strip Indian comma formats; validate the derived
+                    // rate BEFORE saving — out-of-range values used to be
+                    // silently coerced to null ("calibrated" look, live-FX
+                    // reality) with the popover closing as if saved.
+                    const appUsd = Number(String(appUsdInput).replace(/,/g, '').trim());
+                    if (!(appUsd > 0) || !(usInrInvested > 0)) {
+                      alert('App ka USD invested value daalo (sirf numbers).');
+                      return;
+                    }
                     const rate = usInrInvested / appUsd;
+                    if (!(rate > 50 && rate < 150)) {
+                      alert(`Derived rate ₹${rate.toFixed(2)} valid range (50–150) se bahar hai — app value check karke dobara try karo.`);
+                      return;
+                    }
                     setUsdAppRate(rate);
                     setShowMatchApp(false);
                   }}

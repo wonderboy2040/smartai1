@@ -255,6 +255,7 @@ export async function completeConnect({ code, state: st, error, errorDescription
     expiresAt: json.expires_in ? nowMs() + json.expires_in * 1000 : null,
     scope: json.scope || TPT.SCOPES,
     obtainedAt: nowMs(),
+    clientId: pending.clientId || null, // the client that ISSUED this token
   };
   s.mcp = { sessionId: null, serverInfo: null, tools: null, toolsAt: 0 };
   s.connectedAt = nowMs();
@@ -269,7 +270,13 @@ export async function refreshAccessToken() {
   if (!s.tokens || !s.tokens.refreshToken) {
     throw new TptError('Not connected (no refresh token)', 401, 'NOT_CONNECTED');
   }
-  const clientId = s.clients[Object.keys(s.clients)[0]]?.clientId;
+  // Prefer the client that ISSUED this token (persisted at connect time);
+  // object-insertion order of s.clients is not a valid signal (a stale
+  // first-registered origin would send the wrong client_id and kill the
+  // connection with invalid_grant). Legacy tokens fall back to the first
+  // registered client.
+  const clientId = s.tokens.clientId
+    || s.clients[Object.keys(s.clients)[0]]?.clientId;
   if (!clientId) throw new TptError('Stored client registration missing', 500, 'NO_CLIENT');
 
   const { res, json } = await postForm(TPT.TOKEN_URL, {
@@ -287,6 +294,7 @@ export async function refreshAccessToken() {
     expiresAt: json.expires_in ? nowMs() + json.expires_in * 1000 : null,
     scope: json.scope || s.tokens.scope,
     obtainedAt: nowMs(),
+    clientId: s.tokens.clientId || null,
   };
   s.mcp = { sessionId: null, serverInfo: null, tools: null, toolsAt: 0 };
   persist();

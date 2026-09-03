@@ -62,7 +62,27 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
               
               <button
                 onClick={() => {
-                  localStorage.clear();
+                  // v6.2: selective clear — a raw localStorage.clear() here
+                  // destroyed the exact keys flushCache carefully preserves
+                  // (WEALTH_AI_KEYS, TG creds, portfolio, txn_history,
+                  // price_alerts…). enc: ciphertext blobs survive verbatim
+                  // (raw string round-trip, no decryption involved).
+                  try {
+                    const KEEP = ['WEALTH_AI_KEYS', 'WEALTH_AI_GROQ', 'WEALTH_AI_TAVILY', 'TG_TOKEN', 'TG_CHAT_ID',
+                      'theme', 'portfolio', 'plannerSettings', 'wealth_goals', 'authDone', 'txn_history',
+                      'price_alerts', 'plan_tracker_us_freq', 'cloud_state_ts', 'usdAppRate', 'usdAppRate_migrated'];
+                    const saved: Record<string, string> = {};
+                    for (const k of KEEP) {
+                      const v = localStorage.getItem(k);
+                      if (v != null) saved[k] = v;
+                      const b = localStorage.getItem(`${k}_undecryptable`);
+                      if (b != null) saved[`${k}_undecryptable`] = b;
+                    }
+                    localStorage.clear();
+                    for (const [k, v] of Object.entries(saved)) {
+                      try { localStorage.setItem(k, v); } catch { /* quota */ }
+                    }
+                  } catch { /* ignore */ }
                   this.handleRetry();
                 }}
                 className="w-full py-3 bg-slate-800 hover:bg-slate-700 rounded-xl font-bold text-slate-300 text-sm transition-colors"

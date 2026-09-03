@@ -199,13 +199,14 @@ function round2(n) { return Math.round(n * 100) / 100; }
 // `summaryAll` for debugging.
 export function summarizeAssets(assets) {
   const list = Array.isArray(assets) ? assets : [];
-  let totalValue = 0, totalInvested = 0, totalPnl = 0, withBasis = 0, oneDayChange = 0, oneDayCount = 0;
+  let totalValue = 0, totalInvested = 0, totalPnl = 0, withBasis = 0, oneDayChange = 0, oneDayCount = 0, oneDayValue = 0;
   for (const a of list) {
     if (!a || typeof a !== 'object') continue;
     if (typeof a.value === 'number' && Number.isFinite(a.value)) totalValue += a.value;
     if (typeof a.oneDayChangePct === 'number' && Number.isFinite(a.oneDayChangePct)
       && typeof a.value === 'number' && Number.isFinite(a.value)) {
       oneDayChange += a.value * (a.oneDayChangePct / 100);
+      oneDayValue += a.value; // denominator = ONLY rows with day data
       oneDayCount++;
     }
     if (typeof a.invested === 'number' && Number.isFinite(a.invested)) {
@@ -221,7 +222,10 @@ export function summarizeAssets(assets) {
     totalPnl: round2(totalPnl),
     totalPnlPct: totalInvested > 0 ? round2((totalPnl / totalInvested) * 100) : null,
     oneDayChange: oneDayCount ? round2(oneDayChange) : null,
-    oneDayChangePct: oneDayCount && totalValue > 0 ? round2((oneDayChange / totalValue) * 100) : null,
+    // Weighted avg over the rows that HAVE day data — mixing in basis-less
+    // rows (MFs/FDs, which report no oneDayChangePct) understated the
+    // portfolio's "today %" whenever part of the table lacked day data.
+    oneDayChangePct: oneDayCount && oneDayValue > 0 ? round2((oneDayChange / oneDayValue) * 100) : null,
     holdingCount: list.length,
     withBasis,
   };
@@ -368,6 +372,14 @@ export async function syncNow({ force = true, reason = 'manual', sources } = {})
       }
     } else if (wantIndm && !indmConnected) {
       indmError = null; // disconnected is not an error — assets simply gone
+    } else if (!wantIndm && indmConnected) {
+      // Not requested this run (e.g. the CoinDCX connect / Set-Basis quick
+      // sync) — PRESERVE the previous INDMoney rows per the documented
+      // merge contract. Without this branch a crypto-only sync wrote a
+      // crypto-only snapshot: the whole India/USA table vanished (hidden
+      // flags with it) and the gutted snapshot was durable-backed,
+      // surviving restarts. Recovery needed a manual full sync.
+      indmAssets = prevAssets.filter(a => (a.source || 'indmoney') === 'indmoney');
     }
 
     // ---------------- CoinDCX leg ----------------
@@ -390,6 +402,11 @@ export async function syncNow({ force = true, reason = 'manual', sources } = {})
         cdcxError = String(err?.message || err).slice(0, 200);
         cdcxInfo = { ...(prev.coindcx || {}), lastError: cdcxError };
       }
+    } else if (!wantCdcx && cdcxConnected) {
+      // Not requested this run — keep the previous crypto rows (mirror of
+      // the INDMoney preserve branch: never drop a connected source's
+      // assets just because it wasn't part of THIS run).
+      cdcxAssets = prevAssets.filter(a => a.source === 'coindcx');
     }
 
     // ---------------- merge + persist ----------------
@@ -398,13 +415,17 @@ export async function syncNow({ force = true, reason = 'manual', sources } = {})
     const anyFresh = (wantIndm && indmConnected && !indmError) || (wantCdcx && cdcxConnected && !cdcxError);
     const anyUsable = assets.length > 0;
 
+    // Re-read hidden RIGHT BEFORE the merge write: a hide/unhide landing
+    // during this sync's 30-60s of awaits must not be silently reverted
+    // by the `prev` captured at sync start (no awaits between this read
+    // and the write — the race window is effectively closed).
+    const nowSnap = getAssetsSnapshot() || {};
+    const hiddenNow = Array.isArray(nowSnap.hidden) ? nowSnap.hidden : [];
     // Hidden keys carry forward verbatim (a removed asset stays removed
-    // across syncs). Entries for dropped sources are cleaned below via
+    // across syncs). Keys for dropped sources are cleaned below via
     // clearSourceAssets(); here we keep everything that still matches an
     // asset so the UI list stays honest.
-    const hidden = Array.isArray(prev.hidden)
-      ? prev.hidden.filter(k => assets.some(a => a.key === k))
-      : [];
+    const hidden = hiddenNow.filter(k => assets.some(a => a.key === k));
 
     // Mark scheduler slots as run (scheduler passes its slot; manual marks none).
     let slots = prev.slots || {};

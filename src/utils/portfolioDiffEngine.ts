@@ -125,9 +125,12 @@ export function diffPortfolio(
         qty: qtyDelta,
         price: buyPrice,
         amount: buyAmount,
-        // FIX H1: use the position's ORIGINAL dateAdded (not today) so
-        // taxOptimizer computes correct holding period (LTCG vs STCG).
-        date: prev.dateAdded || today,
+        // v6.2: diff-detected events are dated at DETECTION time (today).
+        // Back-dating to prev.dateAdded booked invested capital into the
+        // ORIGINAL month in monthly analytics and inflated tax holding
+        // periods; the sell branch already used today — now consistent.
+        // prevQty/prevAvg (kept below) preserve the pre-diff state.
+        date: today,
         ts: now,
         prevQty: prev.qty,
         prevAvg: prev.avgPrice,
@@ -149,8 +152,9 @@ export function diffPortfolio(
         qty: sellQty,
         price: sellPrice,
         amount: sellQty * sellPrice,
-        // FIX H1: use original dateAdded for correct holding period.
-        date: prev.dateAdded || today,
+        // v6.2: detection-time dating (same as the buy branch) — realized
+        // P&L lands in the month the diff was detected, not the BUY month.
+        date: today,
         ts: now,
         prevQty: prev.qty,
         prevAvg: prev.avgPrice,

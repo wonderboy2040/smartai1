@@ -210,8 +210,24 @@ export async function durableBootRestoreAll() {
   });
   if (pf) restored.portfolio = true;
   // 4) Symbol-resolution cache (kills re-lookup latency after boot).
+  // Freshness via the max per-entry ts — without it this slot was the
+  // ONLY restore without a timestamp comparison, so a usable local
+  // cache was unconditionally overwritten by the (possibly older)
+  // remote copy on same-disk restarts, reverting resolutions made
+  // after the last backup push.
+  const symMaxTs = (s) => {
+    if (!s?.map || typeof s.map !== 'object') return 0;
+    let m = 0;
+    for (const v of Object.values(s.map)) {
+      const t = v?.ts || 0;
+      if (t > m) m = t;
+    }
+    return m;
+  };
   const syms = await durableBootRestore('mcp-symbol-cache.json', {
     isUsable: (s) => !!(s && s.map && Object.keys(s.map).length),
+    localTs: symMaxTs,
+    remoteTs: symMaxTs,
   });
   if (syms) {
     restored.symbols = true;

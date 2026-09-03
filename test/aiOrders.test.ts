@@ -25,7 +25,7 @@ vi.mock('../server/cryptoStream.js', () => ({
 
 import {
   executeSignal, __resetForTests, __setConfigForTests, __setJournalForTests,
-  loadJournal, updateConfig, getRiskState, watchPositions, loadConfig,
+  loadJournal, updateConfig, getRiskState, watchPositions, loadConfig, closePosition,
 } from '../server/ai/coindcxOrders.js';
 import { saveJSON, loadJSON as loadJSONOrig } from '../server/lib/store.js';
 
@@ -84,6 +84,7 @@ describe('paper execution — the happy path', () => {
   });
 
   it('LIVE rejects when the ensemble is only ACTION grade', async () => {
+    __setConfigForTests({ mode: 'live', liveConfirmedAt: Date.now() }); // armed (mode gate)
     const out = await executeSignal({
       symbol: 'BTC', mode: 'live',
       getFreshSignal: async () => ({ ...STRONG, grade: 'ACTION', confidence: 60 }),
@@ -104,21 +105,36 @@ describe('paper execution — the happy path', () => {
   });
 
   it('rejects stale ensemble runs for LIVE (> 90s) — paper gets 10 min', async () => {
+    __setConfigForTests({ mode: 'live', liveConfirmedAt: Date.now() }); // armed (mode gate)
     const stale = { ...STRONG, generatedAt: Date.now() - 200_000 };
     const live = await executeSignal({ symbol: 'BTC', mode: 'live', getFreshSignal: async () => stale });
     expect(live.ok).toBe(false);
     expect(live.error).toMatch(/stale/i);
+    __setConfigForTests({}); // back to paper default for the paper assertion
     const paper = await executeSignal({ symbol: 'BTC', mode: 'paper', getFreshSignal: async () => stale });
     expect(paper.ok).toBe(true); // 200s < 10min practice window
   });
 
   it('LIVE rejects when agreement is below the gate (paper still allows practice)', async () => {
+    __setConfigForTests({ mode: 'live', liveConfirmedAt: Date.now() }); // armed (mode gate)
     const live = await executeSignal({
       symbol: 'BTC', mode: 'live',
       getFreshSignal: async () => ({ ...STRONG, agreement: 0.55 }),
     });
     expect(live.ok).toBe(false);
     expect(live.error).toMatch(/agreement/i);
+  });
+
+  it('MODE GATE: mode:"live" while the account is in PAPER is rejected server-side', async () => {
+    // The request body's mode field alone must NEVER move real money —
+    // arming requires the typed "LIVE" confirmation in Risk settings.
+    const out = await executeSignal({ symbol: 'BTC', mode: 'live', getFreshSignal: freshSignal });
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/LIVE mode is not enabled/);
+    expect(mockPrivate).not.toHaveBeenCalled(); // no exchange call even attempted
+    const j = loadJournal();
+    expect(j.entries.at(-1)!.status).toBe('REJECTED');
+    expect(j.positions).toHaveLength(0);
   });
 });
 
@@ -141,8 +157,9 @@ describe('risk-limit gates', () => {
 
   it('daily loss cap blocks trading after the realized-loss breach', async () => {
     const j = loadJournal();
+    const istDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
     j.entries.push({
-      id: 'e1', ts: Date.now(), kind: 'CLOSE', day: new Date().toISOString().slice(0, 10),
+      id: 'e1', ts: Date.now(), kind: 'CLOSE', day: istDay,
       pair: 'BTCINR', status: 'CLOSED', pnlINR: -700,
     });
     __setJournalForTests(j);
@@ -166,7 +183,11 @@ describe('risk-limit gates', () => {
 });
 
 describe('LIVE execution — signed order path', () => {
+  // All LIVE-path tests arm the account first: the server-side MODE GATE
+  // rejects mode:'live' while the config is in PAPER regardless of what
+  // the request claims.
   it('submits a market order to CoinDCX with the exact body shape', async () => {
+    __setConfigForTests({ mode: 'live', liveConfirmedAt: Date.now() });
     const out = await executeSignal({ symbol: 'BTC', mode: 'live', getFreshSignal: freshSignal });
     expect(out.ok).toBe(true);
     expect(out.mode).toBe('live');
@@ -183,9 +204,11 @@ describe('LIVE execution — signed order path', () => {
     const j = loadJournal();
     expect(j.entries.at(-1)!.status).toBe('SUBMITTED');
     expect(j.entries.at(-1)!.exchangeOrderId).toBe('order-123');
+    expect(j.positions[0].source).toBe('manual'); // auto-executor guard reads this
   });
 
   it('SHORT signal sends a sell order', async () => {
+    __setConfigForTests({ mode: 'live', liveConfirmedAt: Date.now() });
     const out = await executeSignal({
       symbol: 'BTC', mode: 'live',
       getFreshSignal: async () => ({ ...STRONG, side: 'SHORT', plan: { ...STRONG.plan, riskPct: 3 } }),
@@ -195,6 +218,7 @@ describe('LIVE execution — signed order path', () => {
   });
 
   it('API failure → FAILED journal entry, no position created', async () => {
+    __setConfigForTests({ mode: 'live', liveConfirmedAt: Date.now() });
     mockPrivate.mockRejectedValueOnce(new Error('[401] invalid key'));
     const out = await executeSignal({ symbol: 'BTC', mode: 'live', getFreshSignal: freshSignal });
     expect(out.ok).toBe(false);
@@ -202,6 +226,43 @@ describe('LIVE execution — signed order path', () => {
     const j = loadJournal();
     expect(j.entries.at(-1)!.status).toBe('FAILED');
     expect(j.positions.filter(p => p.mode === 'live')).toHaveLength(0);
+  });
+});
+
+describe('journal write serialization — the mutex (double-sell guard)', () => {
+  it('a manual close racing the SL watcher closes the position EXACTLY once', async () => {
+    __setConfigForTests({ mode: 'live', liveConfirmedAt: Date.now() });
+    const out = await executeSignal({ symbol: 'BTC', mode: 'live', getFreshSignal: freshSignal });
+    expect(out.ok).toBe(true);
+    const j = loadJournal();
+    j.positions[0].sl = 101; // breached at mocked ticker price 100
+    __setJournalForTests(j);
+    const id = j.positions[0].id;
+    // Both writers start together; pre-mutex both held stale OPEN copies
+    // and sent TWO market sells for the same tracked position.
+    const [, manual] = await Promise.all([
+      watchPositions({}),
+      closePosition(id),
+    ]);
+    const after = loadJournal();
+    const closes = after.entries.filter(e => e.kind === 'CLOSE');
+    expect(closes).toHaveLength(1);          // exactly one close, one P&L booking
+    expect(after.positions[0].status).toBe('CLOSED');
+    expect([true, false]).toContain(manual.ok); // loser no-ops gracefully
+  });
+
+  it('concurrent duplicate executions cannot stack on a full journal (fresh re-check under lock)', async () => {
+    __setConfigForTests({ dailyMaxTrades: 1 });
+    const [a, b] = await Promise.all([
+      executeSignal({ symbol: 'BTC', mode: 'paper', getFreshSignal: freshSignal }),
+      executeSignal({ symbol: 'ETH', mode: 'paper', getFreshSignal: freshSignal }),
+    ]);
+    const after = loadJournal();
+    // Both passed the pre-signal gates; the locked final section must
+    // re-check the daily cap on the FRESH journal and reject the second.
+    expect((a.ok ? 1 : 0) + (b.ok ? 1 : 0)).toBe(1);
+    expect(after.positions).toHaveLength(1);
+    expect(after.entries.filter(e => e.kind === 'ORDER' && e.status === 'REJECTED')).toHaveLength(1);
   });
 });
 
@@ -271,6 +332,7 @@ describe('PAPER practice-plan synthesis (FLAT fresh consensus)', () => {
   });
 
   it('LIVE never synthesizes — FLAT consensus is a hard reject', async () => {
+    __setConfigForTests({ mode: 'live', liveConfirmedAt: Date.now() }); // armed (mode gate)
     const out = await executeSignal({
       symbol: 'BTC', mode: 'live', side: 'LONG',
       getFreshSignal: async () => ({ ...STRONG, side: 'FLAT', grade: 'NEUTRAL', confidence: 20, plan: null, dir: 0 }),

@@ -33,9 +33,12 @@ export function usePWAWidget() {
         // registered yet (first visit / SW blocked / non-secure context) —
         // `'periodicSync' in undefined` used to CRASH the page here.
         periodicSyncSupported: !!swReg && 'periodicSync' in swReg,
+        // v6.2: guard the ACCESS too — iOS Safari < 16.4 and some webviews
+        // have NO Notification constructor ('Notification' in window is
+        // false, so reading Notification.permission below threw).
         notificationsSupported: 'Notification' in window,
         badgeSupported: 'setAppBadge' in navigator,
-        notificationsPermission: Notification.permission,
+        notificationsPermission: 'Notification' in window ? Notification.permission : 'default',
         periodicSyncRegistered: false,
       };
 
@@ -49,7 +52,7 @@ export function usePWAWidget() {
       setStatus(newStatus);
     };
 
-    checkSupport();
+    checkSupport().catch(() => { /* v6.2: async env probing must never reject unhandled */ });
 
     // Listen for beforeinstallprompt
     const handleBeforeInstallPrompt = (e: Event) => {

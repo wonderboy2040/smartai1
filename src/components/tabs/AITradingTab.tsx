@@ -171,7 +171,7 @@ export default memo(function AITradingTab() {
               <div className="text-[11px] text-slate-500 mt-1">Will auto-retry every 30s</div>
             </div>
           )}
-          {board?.signals.map(s => (
+          {(board?.signals || []).map(s => (
             <SignalCard key={`${s.market}-${s.symbol}`} signal={s} busy={busy} onExecute={onExecute} canLive={canLive} />
           ))}
           {board?.signals?.length === 0 && !loading && (

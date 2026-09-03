@@ -470,12 +470,31 @@ export async function executeServerMCPTool(name, args = {}, context = {}) {
         };
       }
 
-      // 6. Sector Radar
+      // 6. Sector Radar — REAL NSE sector index moves via Yahoo, ranked
+      // (leaders/laggards), plus the ML regime fed with live index data.
+      // Previously returned fabricated constants (getRegime() with no
+      // args); now every number comes from a live quote or is omitted.
       case 'get_sector_rotation_radar': {
-        const mlRegime = getRegime();
+        const { fetchYahooQuotes } = await import('./ai/data.js');
+        const q = await fetchYahooQuotes(['NIFTY', 'BANKNIFTY', 'INDIAVIX', 'IT', 'AUTO', 'PHARMA', 'FMCG', 'METAL', 'REALTY']).catch(() => ({}));
+        const sectors = [
+          ['IT', q.IT], ['Bank', q.BANKNIFTY], ['Auto', q.AUTO], ['Pharma', q.PHARMA],
+          ['FMCG', q.FMCG], ['Metal', q.METAL], ['Realty', q.REALTY],
+        ].filter(([, v]) => v && Number.isFinite(v.changePct))
+          .map(([name, v]) => ({ sector: name, changePct: Math.round(v.changePct * 100) / 100 }))
+          .sort((a, b) => b.changePct - a.changePct);
+        if (sectors.length === 0) {
+          return { error: 'NSE sector index data unreachable right now — no live sector quotes could be fetched' };
+        }
+        const asIdx = (v) => v && Number.isFinite(v.changePct) ? { change: v.changePct, price: v.price } : null;
+        const mlRegime = getRegime(asIdx(q.NIFTY), asIdx(q.BANKNIFTY), asIdx(q.INDIAVIX), null, null, null);
         return {
           regime: mlRegime?.regime || 'NEUTRAL',
-          narrative: mlRegime?.narrative || 'Sector breadth steady'
+          leaders: sectors.slice(0, 3),
+          laggards: sectors.slice(-3).reverse(),
+          sectors,
+          unavailable: ['IT', 'AUTO', 'PHARMA', 'FMCG', 'METAL', 'REALTY'].filter(s => !sectors.some(x => x.sector === s) && s !== 'Bank'),
+          fetchedAt: new Date().toISOString(),
         };
       }
 
@@ -512,15 +531,43 @@ export async function executeServerMCPTool(name, args = {}, context = {}) {
         };
       }
 
-      // 8. Market Regime
+      // 8. Market Regime — the ML regime engine fed with LIVE quotes
+      // (NIFTY/BANKNIFTY/India VIX/US VIX/DXY/Gold/Crude/BTC). Never
+      // fabricated constants: anything unreachable is reported as null.
       case 'get_market_regime': {
-        const mlRegime = getRegime();
+        const { fetchYahooQuotes } = await import('./ai/data.js');
+        const q = await fetchYahooQuotes(['NIFTY', 'BANKNIFTY', 'INDIAVIX', 'USVIX', 'DXY', 'GOLD', 'CRUDE', 'BTC']).catch(() => ({}));
+        if (Object.keys(q).length === 0) {
+          return { error: 'Market data unreachable right now — regime inputs unavailable' };
+        }
+        const asIdx = (v) => v && Number.isFinite(v.changePct) ? { change: v.changePct, price: v.price } : null;
+        const mlRegime = getRegime(asIdx(q.NIFTY), asIdx(q.BANKNIFTY), asIdx(q.INDIAVIX), q.USVIX?.price ?? null, q.DXY?.price ?? null, asIdx(q.GOLD));
+        const vix = q.INDIAVIX?.price ?? null;
+        const usVix = q.USVIX?.price ?? null;
+        const r2n = (v) => Number.isFinite(v) ? Math.round(v * 100) / 100 : null;
+        const parts = [];
+        if (q.NIFTY?.changePct != null) parts.push(`NIFTY ${q.NIFTY.changePct >= 0 ? '+' : ''}${r2n(q.NIFTY.changePct)}%`);
+        if (vix != null) parts.push(`India VIX ${r2n(vix)}`);
+        if (usVix != null) parts.push(`US VIX ${r2n(usVix)}`);
+        if (q.DXY?.changePct != null) parts.push(`DXY ${q.DXY.changePct >= 0 ? '+' : ''}${r2n(q.DXY.changePct)}%`);
+        if (q.GOLD?.changePct != null) parts.push(`Gold ${q.GOLD.changePct >= 0 ? '+' : ''}${r2n(q.GOLD.changePct)}%`);
+        if (q.CRUDE?.changePct != null) parts.push(`Crude ${q.CRUDE.changePct >= 0 ? '+' : ''}${r2n(q.CRUDE.changePct)}%`);
         return {
           regime: mlRegime?.regime || 'NEUTRAL',
-          confidence: `${mlRegime?.confidence || 70}%`,
-          volatilityLevel: mlRegime?.vix > 20 ? 'HIGH' : 'NORMAL',
-          vix: mlRegime?.vix || 14.5,
-          narrative: mlRegime?.narrative || 'Market breadth steady'
+          probability: mlRegime?.probability ?? null,
+          sipMultiplier: mlRegime?.sip_multiplier ?? null,
+          indiaVix: vix != null ? r2n(vix) : null,
+          usVix: usVix != null ? r2n(usVix) : null,
+          volatilityLevel: vix != null ? (vix > 20 ? 'HIGH' : vix > 14 ? 'NORMAL' : 'LOW')
+            : usVix != null ? (usVix > 22 ? 'HIGH' : usVix > 15 ? 'NORMAL' : 'LOW') : null,
+          niftyChangePct: r2n(q.NIFTY?.changePct),
+          bankNiftyChangePct: r2n(q.BANKNIFTY?.changePct),
+          dxy: r2n(q.DXY?.price),
+          gold: r2n(q.GOLD?.price),
+          crude: r2n(q.CRUDE?.price),
+          btc: r2n(q.BTC?.price),
+          narrative: `${mlRegime?.regime || 'NEUTRAL'} regime — ${parts.join(' · ')}`,
+          fetchedAt: new Date().toISOString(),
         };
       }
 

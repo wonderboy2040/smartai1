@@ -88,6 +88,20 @@ export function isCryptoSymbol(sym: string): boolean {
   return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI', 'BITCOIN', 'ETHEREUM'].includes(clean);
 }
 
+/**
+ * POSITION-level crypto classification (v6.2). The symbol NAME list alone
+ * misses every non-major coin (SHIB, PEPE, TRX, NEAR, BONK, TON, …) —
+ * CoinDCX rows for those landed in the INDIA group with an NSE badge and
+ * polluted the "APP EXACT" 🇮🇳 card, the insights market-split and the
+ * poller partitions. Source of truth first, name fallback second.
+ */
+export function isCryptoPosition(p: { symbol?: string; source?: string; indmKey?: string } | undefined | null): boolean {
+  if (!p) return false;
+  if (p.source === 'coindcx') return true;
+  if (typeof p.indmKey === 'string' && p.indmKey.startsWith('cdcx:')) return true;
+  return isCryptoSymbol(p.symbol || '');
+}
+
 // Real TradingView exchanges the price scanner can return. Used to decide
 // whether a resolved "EXCHANGE:SYMBOL" is safe to feed straight to the chart.
 const VALID_TV_EXCHANGES = new Set([

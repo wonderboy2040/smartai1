@@ -262,6 +262,7 @@ export async function completeConnect({ code, state: st, error, errorDescription
     expiresAt: json.expires_in ? nowMs() + json.expires_in * 1000 : null,
     scope: json.scope || INDM.SCOPES,
     obtainedAt: nowMs(),
+    clientId: pending.clientId || null, // the client that ISSUED this token
   };
   // Fresh connection → reset any stale MCP session/tools cache.
   s.mcp = { sessionId: null, serverInfo: null, tools: null, toolsAt: 0 };
@@ -277,7 +278,14 @@ export async function refreshAccessToken() {
   if (!s.tokens || !s.tokens.refreshToken) {
     throw new IndmError('Not connected (no refresh token)', 401, 'NOT_CONNECTED');
   }
-  const clientId = s.clients[Object.keys(s.clients)[0]]?.clientId;
+  // Prefer the client that ISSUED this token (persisted at connect time).
+  // Object-insertion order of s.clients is NOT a valid signal — a user
+  // connecting first from an old/preview origin then from the deployed one
+  // would send the WRONG client_id with the CURRENT refresh token →
+  // invalid_grant → the whole connection wrongly wiped. Legacy stored
+  // tokens (no clientId) fall back to the first-registered client.
+  const clientId = s.tokens.clientId
+    || s.clients[Object.keys(s.clients)[0]]?.clientId;
   if (!clientId) throw new IndmError('Stored client registration missing', 500, 'NO_CLIENT');
 
   const { res, json } = await postForm(INDM.TOKEN_URL, {
@@ -296,6 +304,7 @@ export async function refreshAccessToken() {
     expiresAt: json.expires_in ? nowMs() + json.expires_in * 1000 : null,
     scope: json.scope || s.tokens.scope,
     obtainedAt: nowMs(),
+    clientId: s.tokens.clientId || null,
   };
   s.mcp = { sessionId: null, serverInfo: null, tools: null, toolsAt: 0 };
   persist();

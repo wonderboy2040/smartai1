@@ -36,6 +36,7 @@ const _subscribed = new Set();  // clean NSE symbols (RELIANCE, NIFTY, …)
 const _refcounts = new Map();   // sym -> interested SSE clients (2026 perf audit M2)
 const _evictTimers = new Map(); // sym -> pending unsubscribe timer
 let _timer = null;
+let _openTimer = null; // one-shot "retry at the next NSE window open"
 let _activeClients = 0;
 let _failureStreak = 0;
 
@@ -69,6 +70,7 @@ export function _resetInStreamForTest() {
   _refcounts.clear();
   for (const t of _evictTimers.values()) clearTimeout(t);
   _evictTimers.clear();
+  if (_openTimer) { clearTimeout(_openTimer); _openTimer = null; }
   _activeClients = 0; _failureStreak = 0;
 }
 export function inDebugState() {
@@ -133,15 +135,56 @@ export function inClientDown() {
 
 function _startIfNeeded() {
   if (_timer || _subscribed.size === 0) return;
-  if (!nseWindow()) return; // outside NSE hours the one-shot refreshes own the snapshot
+  if (!nseWindow()) {
+    // Outside NSE hours: schedule a one-shot retry at the next window
+    // open. Without this, a page connected pre-market (or a stream that
+    // outlived the 15:40 close) keeps its SSE alive via keepalives but
+    // the 3s loop NEVER starts — frozen India prices for the whole
+    // session. inClientUp/ensureInSubscribed ran while the market was
+    // closed and nothing would ever retry.
+    _scheduleNextOpen();
+    return;
+  }
   _timer = setInterval(_tick, POLL_MS);
   if (typeof _timer.unref === 'function') _timer.unref();
   _tick(); // immediate first round
 }
 
+/** Minutes-until-open math in IST, weekday-aware (Mon-Fri). */
+function _msUntilNextNseOpen(date = new Date()) {
+  const parts = _istFmt.formatToParts(date);
+  const get = (t) => parts.find(p => p.type === t)?.value || '';
+  const weekday = get('weekday').substring(0, 3);
+  let h = parseInt(get('hour'), 10);
+  if (isNaN(h) || h === 24) h = 0;
+  const m = parseInt(get('minute'), 10) || 0;
+  const mins = h * 60 + m;
+  const OPEN = 9 * 60 + 15;
+  const dayIdx = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(weekday);
+  let days = 0;
+  if (dayIdx === 5) days = 2;        // Saturday → Monday
+  else if (dayIdx === 6) days = 1;    // Sunday → Monday
+  else if (mins >= OPEN) days = dayIdx === 4 ? 3 : 1; // post-session weekday (Fri → Mon)
+  const waitMins = days * 24 * 60 + OPEN - mins;
+  return Math.max(60_000, waitMins * 60_000);
+}
+
+function _scheduleNextOpen() {
+  if (_openTimer || _timer) return;
+  const ms = _msUntilNextNseOpen();
+  _openTimer = setTimeout(() => {
+    _openTimer = null;
+    _startIfNeeded(); // starts the 3s loop if clients + subscriptions exist
+  }, ms);
+  if (typeof _openTimer.unref === 'function') _openTimer.unref();
+}
+
 function _stop() {
   if (_timer) { clearInterval(_timer); _timer = null; }
   _failureStreak = 0;
+  // Keep the next-open retry while clients remain connected (they need
+  // the loop back at 09:15); drop it only when the last client is gone.
+  if (_activeClients === 0 && _openTimer) { clearTimeout(_openTimer); _openTimer = null; }
 }
 
 // ---------------------------------------------------------------
@@ -150,7 +193,7 @@ function _stop() {
 async function _tick() {
   try {
     if (_activeClients === 0 || _subscribed.size === 0) return;
-    if (!nseWindow()) { _stop(); return; }
+    if (!nseWindow()) { _stop(); _scheduleNextOpen(); return; }
 
     const symbols = [..._subscribed];
     let got = 0;

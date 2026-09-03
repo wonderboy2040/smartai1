@@ -216,7 +216,9 @@ export function registerAITradingRoutes(app, deps) {
       const cfg = loadConfig();
       if (!cfg.allowAuto || cfg.killSwitch || cfg.mode !== 'live') return;
       const j = loadJournal();
-      if (j.positions.some(p => p.status === 'OPEN' && p.source === 'auto')) return; // one auto position at a time
+      // one auto position at a time — UNKNOWN (unreconciled live fills)
+      // counts as open: never stack auto orders onto an uncertain fill
+      if (j.positions.some(p => (p.status === 'OPEN' || p.status === 'UNKNOWN') && p.source === 'auto')) return;
       const board = await getSignals('CRYPTO', depsForSignals, { limit: 5 });
       const strong = (board?.signals || []).find(s => s.grade === 'STRONG' && s.executable);
       if (!strong) return;
