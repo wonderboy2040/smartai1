@@ -4,7 +4,13 @@
  * Intraday TAB, plus NSE↔CRYPTO chip switch safety + zero JS errors.
  * Runs against the live local server (APP_PIN=9201, PORT=9201).
  */
-const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
+// Portable Playwright loader (v4.9 audit fix — no hardcoded-only path).
+function loadPlaywright() {
+  try { return require('playwright'); } catch { /* not in local node_modules */ }
+  try { return require('/home/z/.npm-global/lib/node_modules/playwright'); } catch { /* not on this box */ }
+  throw new Error('Playwright not found — install: npm i -g playwright && npx playwright install chromium');
+}
+const { chromium } = loadPlaywright();
 
 const BASE = 'http://localhost:9201';
 const PIN = '9201';

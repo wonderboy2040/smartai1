@@ -164,6 +164,121 @@ function WinRateStrip({ track, todayCount, todayAPlus }: {
   );
 }
 
+// ---------- v4.9: MARKET DESK SWITCHER — India NSE ↔ Crypto 24/7 ----------
+// Simple + detailed: one prominent two-segment control replaces the old
+// small NSE/CRYPTO chip + status pill. Each segment carries the market's
+// identity (venue, session hours, feed), a live/closed status dot, and a
+// distinct active glow (cyan = India desk, amber = crypto desk).
+function MarketDeskSwitcher({ market, onSwitch, indiaOpen }: {
+  market: IntradayMarket; onSwitch: (m: IntradayMarket) => void; indiaOpen: boolean;
+}) {
+  const segs = [
+    {
+      id: 'INDIA' as const,
+      icon: '🇮🇳',
+      title: 'INDIA MARKET',
+      sub: 'NSE Equity • 09:15–15:30 IST • Groww + TV',
+      live: indiaOpen,
+      liveTxt: indiaOpen ? 'LIVE' : 'CLOSED',
+      activeCls: 'from-cyan-500/15 to-sky-500/[0.06] border-cyan-400/40 shadow-[0_0_16px_rgba(34,211,238,0.22)]',
+      liveCls: indiaOpen
+        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-400/40'
+        : 'bg-red-500/15 text-red-300 border-red-400/30',
+    },
+    {
+      id: 'CRYPTO' as const,
+      icon: '₿',
+      title: 'CRYPTO MARKET',
+      sub: '24/7 • CoinDCX INR pairs • TV feeds',
+      live: true,
+      liveTxt: 'LIVE 24/7',
+      activeCls: 'from-amber-500/15 to-orange-500/[0.06] border-amber-400/40 shadow-[0_0_16px_rgba(251,191,36,0.22)]',
+      liveCls: 'bg-amber-500/15 text-amber-300 border-amber-400/40',
+    },
+  ];
+  return (
+    <div className="grid grid-cols-2 gap-2" aria-label="Market desk switcher">
+      {segs.map((seg) => {
+        const active = market === seg.id;
+        return (
+          <button
+            key={seg.id}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onSwitch(seg.id)}
+            title={`Switch to ${seg.title} desk`}
+            className={`group relative text-left rounded-xl border px-3.5 py-2.5 bg-gradient-to-r transition-all duration-300 ${active ? seg.activeCls : 'border-white/10 bg-black/40 hover:border-white/20 hover:bg-black/60'}`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className={`text-xl leading-none transition ${active ? '' : 'opacity-50 grayscale-[40%] group-hover:opacity-80'}`}>{seg.icon}</span>
+                <div className="min-w-0">
+                  <div className={`text-[11px] font-black tracking-wide truncate ${active ? 'text-white' : 'text-slate-400'}`}>{seg.title}</div>
+                  <div className="text-[9px] font-mono text-slate-500 truncate">{seg.sub}</div>
+                </div>
+              </div>
+              <span className={`shrink-0 px-1.5 py-0.5 rounded-md text-[8px] font-black font-mono border flex items-center gap-1 ${active ? seg.liveCls : 'bg-white/5 text-slate-600 border-white/10'}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${seg.live ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
+                {seg.liveTxt}
+              </span>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------- v4.9: DESK QUICK FACTS — the desk's trading rules at a glance ----------
+// India desk: session windows + discipline cutoffs. Crypto desk: 24/7 rules.
+// Simple chips, detailed tooltips — market-aware, zero extra fetches.
+function DeskInfoStrip({ market }: { market: IntradayMarket }) {
+  const india = market !== 'CRYPTO';
+  const chips: [string, string, string][] = india ? [
+    ['⏱', 'Session 09:15–15:30', 'IST trading window (Mon–Fri) — scanner auto-pauses outside'],
+    ['⚡', 'ORB 09:15–09:45', 'Opening-range breakout window — highest-probability entries'],
+    ['🚫', 'Entries till 15:00', '15:00 IST ke baad naye intraday entries block ho jaate hain'],
+    ['⏸', 'Dead-zone 14:30–15:00', 'Statistically weak window — fresh signals gated'],
+    ['🏁', 'Sq-off 15:10 IST', 'Mandatory intraday square-off — no overnight carry'],
+    ['±', 'Slippage ±7bps/side', 'NSE spread-impact model (entry + exit dono par)'],
+  ] : [
+    ['♾', '24/7 session', 'Weekend + raat ke trades allowed — koi EOD band nahi'],
+    ['🇮🇳', 'INR pairs (CoinDCX)', 'BTC/ETH/altcoins Indian exchange se, ₹ me hi P&L'],
+    ['🔢', 'Fractional qty', '0.0027 BTC jaisi units bhi allowed — 1% risk sizing'],
+    ['🏁', 'No EOD sq-off', 'Position apni marzi se jitni der rakho'],
+    ['±', 'Slippage ±12bps/side', 'Spot taker fee model (INR pairs)'],
+    ['🧠', 'BTC regime gate', 'Crypto signals BTC-trend ke against hone par penalty khate hain'],
+  ];
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      {chips.map(([icon, label, tip]) => (
+        <span
+          key={label}
+          title={tip}
+          className="px-2 py-0.5 rounded-lg bg-white/[0.03] border border-white/[0.07] text-[9px] font-mono font-bold text-slate-400 flex items-center gap-1"
+        >
+          <span className="opacity-80">{icon}</span>{label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ---------- v4.9: SECTION LABEL — simple ordered desk hierarchy ----------
+// The tab is long; numbered section dividers make it read like a pro desk
+// runbook: 01 Signals → 02 Market Pulse → 03 India Research → 04 Execution.
+function SectionLabel({ n, icon, title, sub }: { n: string; icon: string; title: string; sub?: string }) {
+  return (
+    <div className="flex items-center gap-2.5 px-1">
+      <span className="text-[9px] font-black font-mono text-slate-600 tracking-widest">{n}</span>
+      <span className="text-sm leading-none">{icon}</span>
+      <span className="text-[11px] font-black text-slate-200 tracking-wider uppercase">{title}</span>
+      <span className="h-px flex-1 bg-gradient-to-r from-white/10 to-transparent" />
+      {sub && <span className="text-[9px] font-mono text-slate-500 hidden md:inline">{sub}</span>}
+    </div>
+  );
+}
+
 // ---------- v4: Signal detail modal — full dual-expert analysis ----------
 function SignalDetailModal({ signal, onClose }: {
   signal: IntradaySignal | null; onClose: () => void;
@@ -199,7 +314,7 @@ function SignalDetailModal({ signal, onClose }: {
         <div className="grid grid-cols-3 gap-2">
           <div className="rounded-xl bg-black/40 border border-white/5 px-3 py-2 text-center">
             <div className="text-[8px] uppercase font-bold text-slate-500 tracking-wider">Quant Engine</div>
-            <div className="text-lg font-black font-mono text-cyan-300">{s.quantConfidence}%</div>
+            <div className="text-lg font-black font-mono text-cyan-300">{s.quantConfidence ?? 0}%</div>
           </div>
           <div className="rounded-xl bg-black/40 border border-white/5 px-3 py-2 text-center">
             <div className="text-[8px] uppercase font-bold text-slate-500 tracking-wider">AI Consensus</div>
@@ -207,7 +322,7 @@ function SignalDetailModal({ signal, onClose }: {
           </div>
           <div className="rounded-xl bg-black/40 border border-white/5 px-3 py-2 text-center">
             <div className="text-[8px] uppercase font-bold text-slate-500 tracking-wider">Final</div>
-            <div className="text-lg font-black font-mono text-emerald-300">{s.confidence}%</div>
+            <div className="text-lg font-black font-mono text-emerald-300">{s.confidence ?? 0}%</div>
           </div>
         </div>
 
@@ -273,19 +388,19 @@ function SignalDetailModal({ signal, onClose }: {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center font-mono">
           <div className="rounded-xl bg-white/[0.03] border border-white/5 px-2 py-2">
             <div className="text-[8px] uppercase font-bold text-slate-500">Entry {s.aiAdjustedEntry != null && <span className="text-teal-300">(AI)</span>}</div>
-            <div className="text-xs font-black text-cyan-200">₹{(s.aiAdjustedEntry ?? s.entry).toFixed(2)}</div>
+            <div className="text-xs font-black text-cyan-200">₹{((s.aiAdjustedEntry ?? s.entry) ?? 0).toFixed(2)}</div>
           </div>
           <div className="rounded-xl bg-red-500/[0.06] border border-red-500/15 px-2 py-2">
             <div className="text-[8px] uppercase font-bold text-slate-500">Stop {s.aiAdjustedSL != null && <span className="text-teal-300">(AI-tight)</span>}</div>
-            <div className="text-xs font-black text-red-300">₹{s.stopLoss.toFixed(2)}</div>
+            <div className="text-xs font-black text-red-300">₹{(s.stopLoss ?? 0).toFixed(2)}</div>
           </div>
           <div className="rounded-xl bg-emerald-500/[0.06] border border-emerald-500/15 px-2 py-2">
             <div className="text-[8px] uppercase font-bold text-slate-500">T1</div>
-            <div className="text-xs font-black text-emerald-300">₹{s.target1.toFixed(2)}</div>
+            <div className="text-xs font-black text-emerald-300">₹{(s.target1 ?? 0).toFixed(2)}</div>
           </div>
           <div className="rounded-xl bg-emerald-500/[0.08] border border-emerald-500/20 px-2 py-2">
             <div className="text-[8px] uppercase font-bold text-slate-500">T2</div>
-            <div className="text-xs font-black text-emerald-300">₹{s.target2.toFixed(2)}</div>
+            <div className="text-xs font-black text-emerald-300">₹{(s.target2 ?? 0).toFixed(2)}</div>
           </div>
         </div>
 
@@ -308,7 +423,7 @@ function PaperTradeModal({ signal, onClose, onDone }: {
   useEffect(() => { setQty(signal?.qtyPerLakh ?? (signal?.market === 'CRYPTO' ? 0.01 : 10)); }, [signal]);
   if (!signal) return null;
 
-  const risk = Math.abs(signal.entry - signal.stopLoss) * qty;
+  const risk = Math.abs((signal.entry ?? 0) - (signal.stopLoss ?? 0)) * qty;
   const long = signal.direction === 'LONG';
   const qtyStep = isCrypto ? 0.0001 : 1;
   const fmtQty = (v: number) => isCrypto ? v.toFixed(4) : String(Math.floor(v));
@@ -334,8 +449,8 @@ function PaperTradeModal({ signal, onClose, onDone }: {
 
         <div className="rounded-xl bg-black/40 border border-white/5 p-3 space-y-1.5 text-[11px] font-mono">
           <div className="flex justify-between"><span className="text-slate-400">Symbol</span><b className="text-white">{signal.symbol} {long ? '🟢 LONG' : '🔴 SHORT'}</b></div>
-          <div className="flex justify-between"><span className="text-slate-400">Entry</span><b className="text-cyan-300">₹{signal.entry.toFixed(2)}</b></div>
-          <div className="flex justify-between"><span className="text-slate-400">SL / T1 / T2</span><b>₹{signal.stopLoss.toFixed(1)} / ₹{signal.target1.toFixed(1)} / ₹{signal.target2.toFixed(1)}</b></div>
+          <div className="flex justify-between"><span className="text-slate-400">Entry</span><b className="text-cyan-300">₹{(signal.entry ?? 0).toFixed(2)}</b></div>
+          <div className="flex justify-between"><span className="text-slate-400">SL / T1 / T2</span><b>₹{(signal.stopLoss ?? 0).toFixed(1)} / ₹{(signal.target1 ?? 0).toFixed(1)} / ₹{(signal.target2 ?? 0).toFixed(1)}</b></div>
         </div>
 
         <div>
@@ -353,7 +468,7 @@ function PaperTradeModal({ signal, onClose, onDone }: {
           />
           <div className="flex justify-between text-[10px] font-mono text-slate-500 mt-1">
             <span>Risk @ SL: <b className="text-red-400">₹{risk.toFixed(0)}</b></span>
-            <span>Capital: <b className="text-slate-300">₹{(qty * signal.entry).toFixed(0)}</b>{isCrypto && <span className="ml-1 text-purple-300">({fmtQty(qty)} u)</span>}</span>
+            <span>Capital: <b className="text-slate-300">₹{(qty * (signal.entry ?? 0)).toFixed(0)}</b>{isCrypto && <span className="ml-1 text-purple-300">({fmtQty(qty)} u)</span>}</span>
           </div>
         </div>
 
@@ -633,7 +748,7 @@ export const IntradayTab = () => {
     <div className="space-y-4">
       {/* ===== Top Banner / Header ===== */}
       <div className="quantum-panel rounded-2xl p-5 border border-purple-500/25 relative overflow-hidden bg-gradient-to-r from-purple-950/20 via-slate-900/60 to-cyan-950/20">
-        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-purple-500 via-cyan-400 to-emerald-400" />
+        <div className={`absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r ${isCryptoMode ? 'from-purple-500 via-amber-400 to-orange-400' : 'from-purple-500 via-cyan-400 to-emerald-400'}`} />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2 flex-wrap">
@@ -651,7 +766,9 @@ export const IntradayTab = () => {
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-1">
-              Top 5 High-Conviction Graded Setups • Dual-AI Expert Consensus (Gemini + Groq) • Supertrend/POC/SMA50 Confluence • NIFTY/VIX Regime Gate • 1% Risk Sizing • Live Outcome Tracking
+              {isCryptoMode
+                ? 'Top Crypto Setups • Dual-AI Expert Consensus (Gemini + Groq) • TV + CoinDCX Confluence • BTC Regime Gate • 1% Risk Sizing • 24/7 Live Outcome Tracking'
+                : 'Top 5 High-Conviction Graded Setups • Dual-AI Expert Consensus (Gemini + Groq) • Supertrend/POC/SMA50 Confluence • NIFTY/VIX Regime Gate • 1% Risk Sizing • Live Outcome Tracking'}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -699,33 +816,6 @@ export const IntradayTab = () => {
             >
               <span>🔔</span> ALGO {alertStatus?.enabled ? 'ON' : 'OFF'}
             </button>
-            <div className="flex items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/10" title="Market: NSE (09:15–15:30 IST) ya CRYPTO (24/7 CoinDCX INR)">
-              <button
-                onClick={() => switchMarket('INDIA')}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-black font-mono transition-all ${market === 'INDIA' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-500 hover:text-slate-300'}`}
-              >
-                🇮🇳 NSE
-              </button>
-              <button
-                onClick={() => switchMarket('CRYPTO')}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-black font-mono transition-all ${market === 'CRYPTO' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'text-slate-500 hover:text-slate-300'}`}
-              >
-                ₿ CRYPTO
-              </button>
-            </div>
-            {marketClosed ? (
-              <span className="px-3 py-1.5 rounded-xl bg-red-500/15 border border-red-500/30 text-red-400 text-[11px] font-black">🔴 MARKET CLOSED</span>
-            ) : isCryptoMode ? (
-              <span className="px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] font-black animate-pulse-dot flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping inline-block" />
-                ₿ CRYPTO 24/7
-              </span>
-            ) : (
-              <span className="px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[11px] font-black animate-pulse-dot flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
-                🟢 NSE LIVE
-              </span>
-            )}
             <button onClick={() => setUniverseOpen(true)} className="quantum-btn-ghost p-2 rounded-xl" title="Custom scanner universe / watchlist">
               ⚙
             </button>
@@ -733,6 +823,18 @@ export const IntradayTab = () => {
               <span className={loading ? 'inline-block animate-spin' : ''}>🔄</span>
             </button>
           </div>
+        </div>
+
+        {/* ===== v4.9: MARKET DESK SWITCHER — India NSE ↔ Crypto 24/7.
+              Simple + detailed: venue identity, session hours, feeds and
+              live/closed status sab ek prominent segmented control me. ===== */}
+        <div className="mt-3">
+          <MarketDeskSwitcher market={market} onSwitch={switchMarket} indiaOpen={data?.marketOpen !== false} />
+        </div>
+
+        {/* ===== v4.9: DESK QUICK FACTS — market-aware trading rules ===== */}
+        <div className="mt-2">
+          <DeskInfoStrip market={market} />
         </div>
 
         {/* Regime banner + win-rate strip (v4) — market-aware */}
@@ -773,33 +875,12 @@ export const IntradayTab = () => {
         )}
       </div>
 
-      {/* ===== TRENDING MOVERS (2026-09) — top up/down list + deep analysis
-            for BOTH markets (India NSE today / Crypto 24h). v4.5: index
-            pulse, sector heat, most-active view + per-row chart/paper-trade
-            bridge into this tab's existing modals. ===== */}
-      <TrendingMovers key={market} market={market} onChart={openChart} onPaper={openPaperFromCard} />
-
-      {/* ===== GLOBAL CRYPTO INTEL (2026-09 v4.6) — external free
-            keyless sources: CoinLobster whale flows + liquidations,
-            CoinGecko trending, Fear & Greed. Global crypto context —
-            dono markets (NSE + CRYPTO desk) par useful. ===== */}
-      <MarketIntelPanel />
-
-      {/* ===== TAPETIDE INDIA RESEARCH DESK (2026-09 v4.7) —
-            India's AI-first stock research MCP (NSE/BSE): OAuth
-            account login, auto-discovered tool catalog (analysis /
-            quotes / screeners / fundamentals / news), run-any-tool
-            desk. NSE desk only — crypto desk ke liye relevant
-            nahi. ===== */}
-      {!isCryptoMode && <TapetidePanel />}
-
-      {/* ===== PRO TRADER MCP AGENT + COMMITTEE — NSE desk tools (India mode) ===== */}
-      {!isCryptoMode && (
-        <>
-          <ProTraderAgentPanel />
-          <CommitteePanel />
-        </>
-      )}
+      {/* ===== v4.9 · 01 — SIGNAL DESK: hero section, pehle graded setups
+            (pro desks lead with signals, context panels follow). ===== */}
+      <SectionLabel
+        n="01" icon="🎯" title="Signal Desk"
+        sub={isCryptoMode ? '₿ crypto setups · graded A+/A/B · 60s re-scan' : '🇮🇳 NSE setups · graded A+/A/B · 60s re-scan'}
+      />
 
       {/* ===== Fresh-entry ban warning ===== */}
       {!marketClosed && !freshAllowed && (
@@ -979,7 +1060,39 @@ export const IntradayTab = () => {
         </div>
       )}
 
-      {/* ===== Paper trading simulator (both markets — rows carry market badges) ===== */}
+      {/* ===== v4.9 · 02 — MARKET PULSE: movers + global intel ===== */}
+      <SectionLabel n="02" icon="🔥" title="Market Pulse" sub="trending movers · index & sector pulse · whale intel" />
+
+      {/* TRENDING MOVERS (2026-09) — top up/down list + deep analysis
+            for BOTH markets (India NSE today / Crypto 24h). v4.5: index
+            pulse, sector heat, most-active view + per-row chart/paper-trade
+            bridge into this tab's existing modals. */}
+      <TrendingMovers key={market} market={market} onChart={openChart} onPaper={openPaperFromCard} />
+
+      {/* GLOBAL CRYPTO INTEL (2026-09 v4.6) — external free keyless
+            sources: CoinLobster whale flows + liquidations, CoinGecko
+            trending, Fear & Greed. Global crypto context — dono
+            markets (NSE + CRYPTO desk) par useful. */}
+      <MarketIntelPanel />
+
+      {/* ===== v4.9 · 03 — INDIA RESEARCH DESK: NSE-only MCP tools ===== */}
+      {!isCryptoMode && (
+        <>
+          <SectionLabel n="03" icon="🇮🇳" title="India Research Desk" sub="Tapetide MCP · ProTrader agent · committee" />
+          {/* TAPETIDE (v4.7) — India's AI-first stock research MCP
+                (NSE/BSE): OAuth account login, auto-discovered tool
+                catalog, run-any-tool desk. NSE desk only. */}
+          <TapetidePanel />
+          {/* PRO TRADER MCP AGENT + COMMITTEE — NSE desk tools */}
+          <ProTraderAgentPanel />
+          <CommitteePanel />
+        </>
+      )}
+
+      {/* ===== v4.9 · 04 — EXECUTION & RECORDS: paper desk → tracking → journal ===== */}
+      <SectionLabel n="04" icon="📋" title="Execution & Records" sub="paper desk · track record · AI journal" />
+
+      {/* Paper trading simulator (both markets — rows carry market badges) */}
       {!marketClosed && (
         <PaperTradePanel livePrices={stream.livePrices} refreshKey={paperRefresh} />
       )}

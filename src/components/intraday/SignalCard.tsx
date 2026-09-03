@@ -92,11 +92,13 @@ function EntryQualityMeter({ q }: { q?: number | null }) {
 }
 
 // Risk vs Reward proportional bars.
+// v4.9 audit: every numeric read is null-guarded — a degraded/movers-
+// synthesized signal can never crash the render with undefined .toFixed().
 function RiskRewardBars({ s }: { s: IntradaySignal }) {
-  const risk = Math.abs(s.entry - s.stopLoss);
-  const reward = Math.abs(s.target2 - s.entry);
+  const risk = Math.abs((s.entry ?? 0) - (s.stopLoss ?? 0));
+  const reward = Math.abs((s.target2 ?? 0) - (s.entry ?? 0));
   const max = Math.max(risk, reward) || 1;
-  const rr = (s.effRR ?? s.rr) || s.rr;
+  const rr = (s.effRR ?? s.rr ?? 0) || 0;
   return (
     <div className="flex items-center gap-2 text-[9px] font-mono">
       <div className="flex-1 flex items-center gap-1" title={`Risk: ₹${risk.toFixed(1)}/share`}>
@@ -142,24 +144,24 @@ function AiReasoningPreview({ text }: { text: string }) {
 
 // SL ←→ T2 progress meter with T1 marker. Uses LIVE price when available.
 function ProximityMeter({ s, live }: { s: IntradaySignal; live?: LiveQuote }) {
-  const price = live?.price ?? s.ltp;
-  const lo = Math.min(s.stopLoss, s.target2);
-  const hi = Math.max(s.stopLoss, s.target2);
+  const price = live?.price ?? (s.ltp ?? 0);
+  const lo = Math.min(s.stopLoss ?? 0, s.target2 ?? 0);
+  const hi = Math.max(s.stopLoss ?? 0, s.target2 ?? 0);
   const span = hi - lo;
   if (!(span > 0)) return null;
   const pct = Math.max(2, Math.min(98, ((price - lo) / span) * 100));
-  const t1Pct = Math.max(2, Math.min(98, ((s.target1 - lo) / span) * 100));
+  const t1Pct = Math.max(2, Math.min(98, (((s.target1 ?? 0) - lo) / span) * 100));
   const zone = pct < 25 ? 'risk' : pct < t1Pct ? 'mid' : 'reward';
   const zoneColor = zone === 'risk' ? 'bg-red-400' : zone === 'mid' ? 'bg-cyan-400' : 'bg-emerald-400';
-  const distT1 = ((s.target1 - price) / price) * 100;
+  const distT1 = (((s.target1 ?? 0) - price) / (price || 1)) * 100;
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-[8px] font-mono text-slate-500">
-        <span>SL {s.stopLoss.toFixed(1)}</span>
+        <span>SL {(s.stopLoss ?? 0).toFixed(1)}</span>
         <span className={zone === 'reward' ? 'text-emerald-400' : 'text-slate-400'}>
           {zone === 'reward' ? 'TARGET ZONE' : `T1 ${Math.abs(distT1).toFixed(1)}% ${distT1 >= 0 ? 'away' : 'passed'}`}
         </span>
-        <span>T2 {s.target2.toFixed(1)}</span>
+        <span>T2 {(s.target2 ?? 0).toFixed(1)}</span>
       </div>
       <div className="relative h-1.5 rounded-full bg-gradient-to-r from-red-500/25 via-slate-700/40 to-emerald-500/25 overflow-visible">
         {/* T1 marker */}
@@ -188,9 +190,9 @@ export const SignalCard = memo(function SignalCard({
   s, live, freshEntriesAllowed, paperOpenForSymbol, onChart, onPaper, onDetail,
 }: SignalCardProps) {
   const long = s.direction === 'LONG';
-  const risk = Math.abs(s.entry - s.stopLoss);
-  const reward1 = Math.abs(s.target1 - s.entry);
-  const reward2 = Math.abs(s.target2 - s.entry);
+  const risk = Math.abs((s.entry ?? 0) - (s.stopLoss ?? 0));
+  const reward1 = Math.abs((s.target1 ?? 0) - (s.entry ?? 0));
+  const reward2 = Math.abs((s.target2 ?? 0) - (s.entry ?? 0));
   const sector = sectorOf(s.symbol);
   const isB = s.grade === 'B';
 
@@ -235,17 +237,17 @@ export const SignalCard = memo(function SignalCard({
             </div>
             <div className="flex items-baseline gap-2 mt-1.5">
               <span className={`text-2xl font-black font-mono transition-colors duration-300 ${priceUp ? 'text-emerald-300' : priceDown ? 'text-red-300' : 'text-cyan-300'}`}>
-                ₹{(livePrice ?? s.ltp).toFixed(2)}
+                ₹{(livePrice ?? s.ltp ?? 0).toFixed(2)}
               </span>
               {livePrice != null && (
                 <span className="text-[9px] font-mono text-cyan-500/80 animate-pulse">● LIVE</span>
               )}
-              <span className={`text-xs font-black font-mono ${(live?.change ?? s.changePct) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                {(live?.change ?? s.changePct) >= 0 ? '+' : ''}{(live?.change ?? s.changePct).toFixed(2)}%
+              <span className={`text-xs font-black font-mono ${(live?.change ?? s.changePct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                {(live?.change ?? s.changePct ?? 0) >= 0 ? '+' : ''}{(live?.change ?? s.changePct ?? 0).toFixed(2)}%
               </span>
               {s.gapPct != null && Math.abs(s.gapPct) >= 0.2 && (
                 <span className="text-[10px] font-mono text-slate-400 bg-white/5 px-1.5 py-0.5 rounded">
-                  Gap {s.gapPct >= 0 ? '+' : ''}{s.gapPct.toFixed(1)}%
+                  Gap {(s.gapPct ?? 0) >= 0 ? '+' : ''}{(s.gapPct ?? 0).toFixed(1)}%
                 </span>
               )}
             </div>
@@ -265,7 +267,7 @@ export const SignalCard = memo(function SignalCard({
           )}
           {s.aiAdjustedSL != null && (
             <span className="px-1.5 py-0.5 rounded-md text-[9px] font-bold font-mono bg-teal-500/10 text-teal-300 border border-teal-500/25" title="AI suggested a tighter structural stop — levels rebuilt on the new risk">
-              ✂ AI-TIGHT SL ₹{s.aiAdjustedSL.toFixed(1)}
+              ✂ AI-TIGHT SL ₹{(s.aiAdjustedSL ?? 0).toFixed(1)}
             </span>
           )}
           {s.marketPhase === 'early' && (
@@ -291,26 +293,26 @@ export const SignalCard = memo(function SignalCard({
         <div className="grid grid-cols-4 gap-1.5">
           <div className="rounded-xl bg-white/[0.04] border border-white/5 px-2 py-2 text-center">
             <div className="text-[8px] uppercase font-bold text-slate-400 tracking-wider">Entry Trig</div>
-            <div className="text-xs font-black font-mono text-cyan-200">₹{s.entry.toFixed(2)}</div>
-            {s.entryZoneLow && s.entryZoneHigh && (
+            <div className="text-xs font-black font-mono text-cyan-200">₹{(s.entry ?? 0).toFixed(2)}</div>
+            {s.entryZoneLow != null && s.entryZoneHigh != null && (
               <div className="text-[8px] font-mono text-slate-500 mt-0.5">
-                {s.entryZoneLow.toFixed(1)}–{s.entryZoneHigh.toFixed(1)}
+                {(s.entryZoneLow ?? 0).toFixed(1)}–{(s.entryZoneHigh ?? 0).toFixed(1)}
               </div>
             )}
           </div>
           <div className="rounded-xl bg-red-500/[0.08] border border-red-500/20 px-2 py-2 text-center">
             <div className="text-[8px] uppercase font-bold text-red-400/80 tracking-wider">Stop Loss</div>
-            <div className="text-xs font-black font-mono text-red-400">₹{s.stopLoss.toFixed(2)}</div>
+            <div className="text-xs font-black font-mono text-red-400">₹{(s.stopLoss ?? 0).toFixed(2)}</div>
             <div className="text-[8px] font-mono text-red-400/70 mt-0.5">-₹{risk.toFixed(1)}</div>
           </div>
           <div className="rounded-xl bg-emerald-500/[0.08] border border-emerald-500/20 px-2 py-2 text-center">
             <div className="text-[8px] uppercase font-bold text-emerald-400/80 tracking-wider">Target 1 (1.6R)</div>
-            <div className="text-xs font-black font-mono text-emerald-400">₹{s.target1.toFixed(2)}</div>
+            <div className="text-xs font-black font-mono text-emerald-400">₹{(s.target1 ?? 0).toFixed(2)}</div>
             <div className="text-[8px] font-mono text-emerald-400/70 mt-0.5">+₹{reward1.toFixed(1)}</div>
           </div>
           <div className="rounded-xl bg-emerald-500/[0.12] border border-emerald-500/30 px-2 py-2 text-center">
             <div className="text-[8px] uppercase font-bold text-emerald-300/80 tracking-wider">Target 2 (2.6R)</div>
-            <div className="text-xs font-black font-mono text-emerald-300">₹{s.target2.toFixed(2)}</div>
+            <div className="text-xs font-black font-mono text-emerald-300">₹{(s.target2 ?? 0).toFixed(2)}</div>
             <div className="text-[8px] font-mono text-emerald-300/70 mt-0.5">+₹{reward2.toFixed(1)}</div>
           </div>
         </div>
@@ -335,12 +337,12 @@ export const SignalCard = memo(function SignalCard({
           </div>
           <div className="flex items-center justify-between text-slate-300">
             <span className="text-slate-400">🛡️ Trailing SL Rule:</span>
-            <span className="text-emerald-300">Once T1 hit → Trail SL to ₹{s.trailAfterT1 ?? s.entry.toFixed(2)} (Breakeven)</span>
+            <span className="text-emerald-300">Once T1 hit → Trail SL to ₹{s.trailAfterT1 ?? (s.entry ?? 0).toFixed(2)} (Breakeven)</span>
           </div>
           {s.slippage != null && s.slippage > 0 && (
             <div className="flex items-center justify-between text-slate-400 border-t border-white/5 pt-1.5">
               <span className="text-slate-500">⚙ Slippage model (±7bps/side):</span>
-              <span>±₹{s.slippage.toFixed(2)}/share • Net RR 1:{(s.effRR ?? s.rr).toFixed(2)}</span>
+              <span>±₹{(s.slippage ?? 0).toFixed(2)}/share • Net RR 1:{(s.effRR ?? s.rr ?? 0).toFixed(2)}</span>
             </div>
           )}
         </div>
@@ -348,11 +350,11 @@ export const SignalCard = memo(function SignalCard({
 
       {/* Technical Confluence Strip */}
       <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-400 flex-wrap bg-white/[0.02] p-2 rounded-xl border border-white/5">
-        <span>RR <b className="text-slate-200">1:{s.rr.toFixed(2)}</b></span>
+        <span>RR <b className="text-slate-200">1:{(s.rr ?? 0).toFixed(2)}</b></span>
         <span>•</span>
-        <span>VWAP <b className="text-slate-200">₹{s.vwap.toFixed(1)}</b> {s.vwapDist != null && <span className={s.vwapDist >= 0 ? 'text-emerald-400' : 'text-red-400'}>({s.vwapDist >= 0 ? '+' : ''}{s.vwapDist.toFixed(1)}%)</span>}</span>
+        <span>VWAP <b className="text-slate-200">₹{(s.vwap ?? 0).toFixed(1)}</b> {s.vwapDist != null && <span className={s.vwapDist >= 0 ? 'text-emerald-400' : 'text-red-400'}>({s.vwapDist >= 0 ? '+' : ''}{(s.vwapDist ?? 0).toFixed(1)}%)</span>}</span>
         <span>•</span>
-        <span>RSI <b className={s.rsi > 70 ? 'text-red-400' : s.rsi < 30 ? 'text-emerald-400' : 'text-slate-200'}>{Math.round(s.rsi)}</b></span>
+        <span>RSI <b className={s.rsi > 70 ? 'text-red-400' : s.rsi < 30 ? 'text-emerald-400' : 'text-slate-200'}>{Math.round(s.rsi ?? 50)}</b></span>
         <span>•</span>
         {s.adx != null && (
           <>
@@ -360,9 +362,9 @@ export const SignalCard = memo(function SignalCard({
             <span>•</span>
           </>
         )}
-        <span>Vol <b className={s.volumeRatio >= 1.4 ? 'text-amber-400' : 'text-slate-200'}>{s.volumeRatio.toFixed(1)}x</b></span>
+        <span>Vol <b className={s.volumeRatio >= 1.4 ? 'text-amber-400' : 'text-slate-200'}>{(s.volumeRatio ?? 0).toFixed(1)}x</b></span>
         <span>•</span>
-        <span>ATR <b className="text-slate-200">₹{s.atr.toFixed(1)}</b></span>
+        <span>ATR <b className="text-slate-200">₹{(s.atr ?? 0).toFixed(1)}</b></span>
         {s.orbMode && (
           <>
             <span>•</span>

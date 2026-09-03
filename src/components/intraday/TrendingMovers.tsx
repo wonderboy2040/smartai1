@@ -100,11 +100,28 @@ const RSI_CONF = (rsi: number | null) => {
   return { cls: 'text-cyan-400', bar: 'bg-cyan-400', w: Math.max(4, rsi) };
 };
 
+/** Client-side IST minutes-of-day (fresh-entry cutoff for India rows). */
+const istMinsClient = () => {
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(new Date());
+    const h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0') % 24;
+    const mnt = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+    return h * 60 + mnt;
+  } catch { return 12 * 60; /* noon fallback — never blocks on TZ error */ }
+};
+
 /**
  * Synthesize a scanner-grade IntradaySignal from a mover row so the
  * existing CHART modal (level overlays) and PAPER-TRADE modal (qty
  * prompt + risk math) work straight off the movers list.
  * Convention mirrors the engine: 1% stop, T1 = 1.6R, T2 = 2.6R.
+ * v4.9 audit fix: the FULL optional field set is populated (grade,
+ * exchange, slippage, effRR, qtyPerLakh, entry zone, trailing rule,
+ * fresh-entry cutoff, sq-off) with the same conventions the engine
+ * uses, so ANY display path the signal can reach (SignalCard, detail
+ * modal, table row) is null-safe — no undefined .toFixed() crashes.
  */
 export function moverToSignal(m: MoverRow, market: 'INDIA' | 'CRYPTO'): IntradaySignal {
   const ltp = m.ltp > 0 ? m.ltp : 1;
@@ -112,6 +129,22 @@ export function moverToSignal(m: MoverRow, market: 'INDIA' | 'CRYPTO'): Intraday
   const risk = ltp * 0.01;              // 1% initial stop distance
   const dir = long ? 1 : -1;
   const vol = Math.max(0.004, (m.adx ?? 20) / 20 * 0.01); // ADX-scaled fallback ATR%
+  const atr = ltp * vol;
+  const isCrypto = market === 'CRYPTO';
+  // Slippage model mirrors the engine: ±7bps NSE / ±12bps crypto per side.
+  const slippage = +(ltp * (isCrypto ? 12 : 7) / 10000).toFixed(2);
+  const effRisk = risk + 2 * slippage;                  // slip hurts entry AND exit
+  const effReward1 = risk * 1.6 - 2 * slippage;
+  const effRR = effRisk > 0 ? +(effReward1 / effRisk).toFixed(2) : 0;
+  // 1% risk sizing per ₹1L, 25% capital cap — engine convention (crypto fractional).
+  const qtyRaw = Math.max(0, Math.min(
+    effRisk > 0 ? Math.floor(1000 / effRisk) : 0,
+    Math.floor(25000 / ltp),
+  ));
+  const qtyPerLakh = isCrypto
+    ? (qtyRaw >= 1 ? Math.floor(qtyRaw) : Math.max(0.0001, +qtyRaw.toFixed(4)))
+    : qtyRaw;
+  const entry = ltp;
   return {
     symbol: m.symbol,
     ltp,
@@ -123,15 +156,33 @@ export function moverToSignal(m: MoverRow, market: 'INDIA' | 'CRYPTO'): Intraday
     aiModel: 'movers',
     aiNote: `Trending ${long ? 'UP' : 'DOWN'} ${(Math.abs(m.changePct ?? 0)).toFixed(2)}% — movers-quick entry (chart/paper-trade se, scanner grade nahi)`,
     market,
-    entry: ltp,
+    // Crash-guard completeness (v4.9): honest values, engine conventions.
+    exchange: isCrypto ? 'COINDCX' : 'NSE',
+    grade: 'B', // movers-quick is NOT scanner-graded → watch-only policy stays honest
+    gapPct: 0,  // movers feed has no open/prevClose → badge hidden, never fake data
+    adx: m.adx ?? undefined,
+    vwapDist: m.vwapDist ?? undefined,
+    trendStrength: m.adx == null ? undefined
+      : (m.adx >= 28 ? 'STRONG' : m.adx >= 20 ? 'BUILDING' : 'WEAK-RANGE'),
+    freshEntriesAllowed: isCrypto ? true : istMinsClient() < 15 * 60,
+    sqOffBy: isCrypto ? '24/7 (no EOD sq-off)' : '15:10 IST',
+    entry,
     stopLoss: ltp - dir * risk,
     target1: ltp + dir * risk * 1.6,
     target2: ltp + dir * risk * 2.6,
+    entryZoneLow: +(entry - 0.25 * atr).toFixed(2),
+    entryZoneHigh: +(entry + 0.10 * atr).toFixed(2),
+    trailingSL: +(entry - dir * 0.8 * atr).toFixed(2),
+    trailAfterT1: +entry.toFixed(2), // breakeven lock once T1 books (engine rule)
     rr: 1.6,
-    atr: ltp * vol,
+    effRR,
+    slippage,
+    qtyPerLakh,
+    atr,
     vwap: (m.vwapDist != null && m.ltp > 0) ? m.ltp / (1 + m.vwapDist / 100) : ltp,
     rsi: m.rsi ?? 50,
     volumeRatio: m.relVolume ?? 1,
+    orbMode: 'PROXY', // ATR-proxy band — never presented as exact session range
     reasons: m.tags?.length ? [...m.tags] : ['MOVERS-QUICK'],
   };
 }

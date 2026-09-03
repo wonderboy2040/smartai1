@@ -16,7 +16,15 @@
  *   menu → search → delete row (cleanup).
  * PHASE C — cross-cutting: console error audit + screenshots.
  */
-const { chromium } = require('/home/z/.npm-global/lib/node_modules/playwright');
+// Portable Playwright loader (v4.9 audit fix): standard module resolution
+// first, then this CI box's global install — the old hardcoded-only path
+// broke on Windows / any other machine with MODULE_NOT_FOUND.
+function loadPlaywright() {
+  try { return require('playwright'); } catch { /* not in local node_modules */ }
+  try { return require('/home/z/.npm-global/lib/node_modules/playwright'); } catch { /* not on this box */ }
+  throw new Error('Playwright not found — install: npm i -g playwright && npx playwright install chromium');
+}
+const { chromium } = loadPlaywright();
 
 const BASE = 'http://localhost:9201';
 const PIN = '9201';
@@ -210,13 +218,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('A13 universe editor button', false, 'button not found');
   }
 
-  // -- A14: NSE ↔ CRYPTO switch --
+  // -- A14: INDIA ↔ CRYPTO desk switch (v4.9: MarketDeskSwitcher segments
+  //         replaced the old small NSE/CRYPTO chips) --
   if (!(await overlayGone())) {
     await page.keyboard.press('Escape');
     await sleep(600);
     if (!(await overlayGone())) { await page.mouse.click(20, 20); await sleep(600); }
   }
-  const cryptoChip = page.locator('button', { hasText: /₿ CRYPTO/i }).first();
+  const cryptoChip = page.locator('button', { hasText: /CRYPTO MARKET/i }).first();
   if (await cryptoChip.count()) {
     await cryptoChip.click();
     await sleep(3500);
@@ -224,7 +233,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('A14a CRYPTO desk switches (crypto scanner)', tC.includes('coin') || tC.includes('crypto'));
     check('A14b CRYPTO desk hides Tapetide (India-only)', !tC.includes('tapetide india research'));
     check('A14c CRYPTO desk keeps intel + movers', tC.includes('global crypto intel') && tC.includes('trending movers'));
-    const nseChip = page.locator('button', { hasText: /🇮🇳 NSE/i }).first();
+    check('A14c2 crypto desk quick-facts swap (24/7 chips)', tC.includes('24/7 session') && tC.includes('fractional qty'));
+    const nseChip = page.locator('button', { hasText: /INDIA MARKET/i }).first();
     if (await nseChip.count()) {
       await nseChip.click();
       await sleep(3000);
@@ -232,7 +242,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       check('A14d switch back to NSE restores desk', tN.includes('tapetide india research'));
     }
   } else {
-    check('A14 market chips found', false, 'NSE/CRYPTO chips not located');
+    check('A14 market chips found', false, 'MarketDeskSwitcher segments not located');
   }
 
   await page.screenshot({ path: '/tmp/v48-intraday-full.png', fullPage: true });

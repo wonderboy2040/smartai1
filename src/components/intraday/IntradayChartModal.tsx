@@ -29,19 +29,20 @@ export function IntradayChartModal({ signal, market, live, onClose }: IntradayCh
 
   const priceLines = useMemo<ChartPriceLine[]>(() => {
     if (!signal) return [];
+    // v4.9 audit: null-safe levels — a degraded signal can never break the chart.
     return [
-      { price: signal.entry, color: '#22d3ee', title: 'ENTRY', dashed: false },
-      { price: signal.stopLoss, color: '#ef4444', title: 'SL' },
-      { price: signal.target1, color: '#34d399', title: 'T1 (1.6R)' },
-      { price: signal.target2, color: '#10b981', title: 'T2 (2.6R)' },
+      { price: signal.entry ?? 0, color: '#22d3ee', title: 'ENTRY', dashed: false },
+      { price: signal.stopLoss ?? 0, color: '#ef4444', title: 'SL' },
+      { price: signal.target1 ?? 0, color: '#34d399', title: 'T1 (1.6R)' },
+      { price: signal.target2 ?? 0, color: '#10b981', title: 'T2 (2.6R)' },
     ];
   }, [signal]);
 
   if (!signal) return null;
   const long = signal.direction === 'LONG';
   const livePrice = live?.price;
-  const distToT1 = livePrice != null ? ((signal.target1 - livePrice) / livePrice) * 100 : null;
-  const distToSL = livePrice != null ? ((livePrice - signal.stopLoss) / livePrice) * 100 : null;
+  const distToT1 = livePrice != null ? (((signal.target1 ?? 0) - livePrice) / livePrice) * 100 : null;
+  const distToSL = livePrice != null ? ((livePrice - (signal.stopLoss ?? 0)) / livePrice) * 100 : null;
 
   return (
     <div
@@ -60,11 +61,11 @@ export function IntradayChartModal({ signal, market, live, onClose }: IntradayCh
               {long ? '🟢 LONG' : '🔴 SHORT'}
             </span>
             <span className="text-xl font-black font-mono text-cyan-300">
-              ₹{(livePrice ?? signal.ltp).toFixed(2)}
+              ₹{(livePrice ?? signal.ltp ?? 0).toFixed(2)}
             </span>
             {live && <span className="text-[9px] font-mono text-cyan-500 animate-pulse">● LIVE (5s)</span>}
             <span className="text-[10px] font-mono text-slate-400">
-              Conf {signal.confidence}% • RR 1:{signal.rr.toFixed(2)} • ATR ₹{signal.atr.toFixed(1)}
+              Conf {signal.confidence ?? 0}% • RR 1:{(signal.rr ?? 0).toFixed(2)} • ATR ₹{(signal.atr ?? 0).toFixed(1)}
             </span>
           </div>
           <button onClick={onClose} className="quantum-btn-ghost px-3 py-1.5 rounded-xl text-xs font-black">
@@ -104,10 +105,10 @@ export function IntradayChartModal({ signal, market, live, onClose }: IntradayCh
         {/* Footer: level legend + discipline */}
         <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-white/10 bg-black/30 text-[10px] font-mono flex-wrap">
           <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-cyan-300">— ENTRY ₹{signal.entry.toFixed(2)}</span>
-            <span className="text-red-400">-- SL ₹{signal.stopLoss.toFixed(2)}</span>
-            <span className="text-emerald-400">-- T1 ₹{signal.target1.toFixed(2)}</span>
-            <span className="text-emerald-300">-- T2 ₹{signal.target2.toFixed(2)}</span>
+            <span className="text-cyan-300">— ENTRY ₹{(signal.entry ?? 0).toFixed(2)}</span>
+            <span className="text-red-400">-- SL ₹{(signal.stopLoss ?? 0).toFixed(2)}</span>
+            <span className="text-emerald-400">-- T1 ₹{(signal.target1 ?? 0).toFixed(2)}</span>
+            <span className="text-emerald-300">-- T2 ₹{(signal.target2 ?? 0).toFixed(2)}</span>
           </div>
           <span className="text-slate-500">{isCrypto ? 'T1 hit → book 50%, trail to entry • 24/7 session' : 'T1 hit → book 50%, trail to entry • Sq-off 15:10 IST'}</span>
         </div>

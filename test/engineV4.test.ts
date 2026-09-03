@@ -154,6 +154,46 @@ describe('analyzeIntradayFromScanner — v4 factors', () => {
     expect(paceRelVolume(1.8, 'INDIA', SAT_NOON_IST)).toBe(1.8);
   });
 
+  // ---- v4.9 audit fix: the injectable clock (opts.now) now flows through
+  // the ORB window, dead-zone, fresh-entry cutoff AND market phase —
+  // previously these four read the wall clock even with opts.now injected,
+  // so any time-shifted test would get wrong ORB/dead-zone/fresh results.
+  const MON_0930_IST = new Date('2026-08-31T04:00:00Z'); // Mon 09:30 IST (ORB window)
+  const MON_1440_IST = new Date('2026-08-31T09:10:00Z'); // Mon 14:40 IST (dead-zone)
+  const MON_1520_IST = new Date('2026-08-31T09:50:00Z'); // Mon 15:20 IST (entries cut)
+
+  it('v4.9 injectable clock: 09:30 via opts.now → ORB LIVE, phase early, fresh entries allowed', () => {
+    const r = analyzeIntradayFromScanner('SBIN', bullTv, bullGroww, { now: MON_0930_IST });
+    expect(r).toBeTruthy();
+    expect(r.orbMode).toBe('LIVE');
+    expect(r.marketPhase).toBe('early');
+    expect(r.freshEntriesAllowed).toBe(true);
+    expect(r._deadZone).toBe(false);
+  });
+
+  it('v4.9 injectable clock: 14:40 via opts.now → dead-zone flagged, power-hour phase, entries still open', () => {
+    const r = analyzeIntradayFromScanner('SBIN', bullTv, bullGroww, { now: MON_1440_IST });
+    expect(r._deadZone).toBe(true);
+    expect(r.marketPhase).toBe('power-hour');
+    expect(r.freshEntriesAllowed).toBe(true); // 14:40 < 15:00 cutoff
+    expect(r.reasons.some((x: string) => x.includes('Dead-zone'))).toBe(true);
+  });
+
+  it('v4.9 injectable clock: 15:20 via opts.now → fresh entries blocked, ORB proxy, power-hour', () => {
+    const r = analyzeIntradayFromScanner('SBIN', bullTv, bullGroww, { now: MON_1520_IST });
+    expect(r.freshEntriesAllowed).toBe(false);
+    expect(r.marketPhase).toBe('power-hour');
+    expect(r.orbMode).toBe('PROXY');
+  });
+
+  it('v4.9 injectable clock: CRYPTO ignores the session clock (24/7 semantics)', () => {
+    const r = analyzeIntradayFromScanner('BTCUSDT', bullTv, bullGroww, { now: MON_0930_IST, market: 'CRYPTO' });
+    expect(r.marketPhase).toBe('full');
+    expect(r.freshEntriesAllowed).toBe(true);
+    expect(r.orbMode).toBe('PROXY'); // crypto: ATR-proxy only, never a session range
+    expect(r.sqOffBy).toBe('24/7 (no EOD sq-off)');
+  });
+
   it('emits v4 reasons: Supertrend proxy, SMA50 confluence (price near VWAP → POC)', () => {
     // price 0.18% above VWAP → value-area acceptance zone
     const nearPoc = analyzeIntradayFromScanner('SBIN', { ...bullTv, vwap: 810.5 }, { ...bullGroww }, {});

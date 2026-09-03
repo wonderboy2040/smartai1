@@ -397,8 +397,10 @@ export function analyzeIntradayFromScanner(symbol, tv, groww, opts = {}) {
   // from daily OHLC alone, so we use an honest ATR-proxy band around the
   // open (labelled PROXY in the payload — never presented as exact).
   // CRYPTO 24/7: there IS no session open — the ATR-proxy band is the only
-  // honest form (never a LIVE session range).
-  const _istMins = istMinutes();
+  // honest form (never a LIVE session range). v4.9 audit fix: _istMins honors
+  // the injectable clock (opts.now) so ORB/dead-zone/fresh-entry/phase logic
+  // stays deterministic under test — same wall clock live.
+  const _istMins = istMinutes(now);
   const inOrbWindow = !isCrypto && _istMins >= 9 * 60 + 15 && _istMins < 9 * 60 + 45;
   const orbHigh = inOrbWindow ? high : open + 0.55 * atr;
   const orbLow = inOrbWindow ? effectiveLow : open - 0.55 * atr;
@@ -554,7 +556,8 @@ export function analyzeIntradayFromScanner(symbol, tv, groww, opts = {}) {
   // ADX regime label
   const trendStrength = adx >= 28 ? 'STRONG' : adx >= 20 ? 'BUILDING' : 'WEAK-RANGE';
 
-  const phase = marketPhaseFor(isCrypto ? 'CRYPTO' : 'INDIA');
+  // v4.9 audit fix: phase honors the injectable clock too (wall clock live).
+  const phase = marketPhaseFor(isCrypto ? 'CRYPTO' : 'INDIA', now);
   const freshEntriesAllowed = isCrypto ? true : (_istMins < 15 * 60); // crypto: 24/7, no entry cutoff
 
   return {
