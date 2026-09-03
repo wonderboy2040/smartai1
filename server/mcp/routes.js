@@ -9,8 +9,6 @@
 //   GET  /api/mcp/indmoney/callback    → OAuth redirect target
 //   POST /api/mcp/indmoney/disconnect  → revoke + forget tokens
 //   GET  /api/mcp/indmoney/tools       → list MCP tools
-//   GET  /api/mcp/indmoney/portfolio   → normalized portfolio
-//   POST /api/mcp/indmoney/portfolio   → force re-sync (bypass cache)
 //   POST /api/mcp/indmoney/call        → generic MCP tool call (debug)
 //   GET  /api/mcp/indmoney/assets      → synced asset TABLE snapshot
 //                                      (hidden rows filtered out;
@@ -35,7 +33,6 @@
 import { Router } from 'express';
 import {
   startConnect, completeConnect, disconnect, getStatus,
-  listTools, callTool, fetchPortfolio, extractToolPayload,
   getPendingOrigin, IndmError,
 } from './indmoney.js';
 import {
@@ -171,21 +168,6 @@ router.get('/api/mcp/indmoney/tools', async (req, res) => {
     });
   } catch (err) { return fail(res, err); }
 });
-
-// ------------------------------------------------------------
-// GET/POST /portfolio — normalized INDMoney portfolio.
-// POST (or ?force=1) bypasses the 60s cache.
-// ------------------------------------------------------------
-router.get('/api/mcp/indmoney/portfolio', handlePortfolio);
-router.post('/api/mcp/indmoney/portfolio', handlePortfolio);
-async function handlePortfolio(req, res) {
-  try {
-    if (rateLimited('portfolio')) throw new IndmError('Too many requests — try again shortly', 429, 'RATE_LIMITED');
-    const force = req.method === 'POST' || req.query.force === '1' || req.query.force === 'true';
-    const data = await fetchPortfolio({ force });
-    return res.json({ ok: true, ...data });
-  } catch (err) { return fail(res, err); }
-}
 
 // ------------------------------------------------------------
 // GET/POST /assets — the synced ASSET TABLE (INDMoney + CoinDCX

@@ -1,7 +1,7 @@
-import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { useApp } from '../hooks/AppContext';
 import {
-  computeLiveDailyPL, recordDailyPL, buildMonthlyPLReport,
+  computeLiveDailyPL, buildMonthlyPLReport,
   formatMonthlyPLForTelegram, getRecentDailyPL,
   shouldAutoGenerateMonthlyReport, markMonthlyReportGenerated,
   exportDailyPLCSV,
@@ -40,30 +40,21 @@ export const DailyPLTracker = React.memo(function DailyPLTracker() {
   const [autoReport, setAutoReport] = useState<MonthlyPLReport | null>(null);
   const [logRefreshTick, setLogRefreshTick] = useState(0);
 
-  // Always-fresh prices for the 60s recorder interval (stable ref so the
-  // interval doesn't re-arm on every flush).
-  const livePricesRef = useRef(livePrices);
-  livePricesRef.current = livePrices;
-
   // ---- LIVE daily P&L (computed from `change` field) ----
   const livePL: LiveDailyPL = useMemo(() => {
     return computeLiveDailyPL(portfolio, livePrices, usdInrRate);
   }, [portfolio, livePrices, usdInrRate]);
 
-  // ---- Freeze today's P&L into log ----
-  // 2026 perf audit (M3): the old 5s debounce re-armed on EVERY price flush
-  // (livePL is a new object each time) so it NEVER fired while prices were
-  // moving — the hook's own 60s recorder (useAppState) was the only thing
-  // actually saving data. A plain 60s interval records reliably and the
-  // "recent" table refreshes on the same cadence.
+  // ---- Log refresh cadence (60s) ----
+  // v5.0: RECORDING is owned by useAppState's 60s recorder (it reads fresh
+  // prices from the authoritative ref). This panel previously DUPLICATED that
+  // recorder — two writes/min, each a full JSON parse+stringify of the log.
+  // Here we only refresh the DISPLAY tick so the frozen-history table stays
+  // current without any write churn.
   useEffect(() => {
-    if (portfolio.length === 0) return;
-    const t = setInterval(() => {
-      recordDailyPL(computeLiveDailyPL(portfolio, livePricesRef.current, usdInrRate));
-      setLogRefreshTick(k => k + 1);
-    }, 60_000);
+    const t = setInterval(() => setLogRefreshTick(k => k + 1), 60_000);
     return () => clearInterval(t);
-  }, [portfolio, usdInrRate]);
+  }, []);
 
   // ---- Auto-generate previous month's report on 1st ----
   useEffect(() => {
@@ -74,6 +65,13 @@ export const DailyPLTracker = React.memo(function DailyPLTracker() {
       setShowReport(true);
     }
   }, []);
+
+  // v5.0: the value key that gates todayEntry — livePL gets a new object on
+  // every price flush, which previously re-derived todayEntry and
+  // re-JSON.parsed the whole 500-entry log 2-4x/sec while this tab was open.
+  const livePLKey = useMemo(() =>
+    `${livePL.india.toFixed(2)}|${livePL.usa.toFixed(2)}|${livePL.crypto.toFixed(2)}|${livePL.total.toFixed(2)}`,
+    [livePL]);
 
   const todayEntry: DailyPLEntry | null = useMemo(() => {
     if (portfolio.length === 0) return null;
@@ -90,7 +88,8 @@ export const DailyPLTracker = React.memo(function DailyPLTracker() {
       investedINR: livePL.investedINR,
       ts: Date.now(),
     };
-  }, [livePL, portfolio.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [livePLKey, portfolio.length]);
 
   // Recent days: frozen history + today live
   const recent: DailyPLEntry[] = useMemo(() => {

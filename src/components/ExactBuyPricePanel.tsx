@@ -3,7 +3,7 @@ import { useApp } from '../hooks/AppContext';
 import { calculateExactEntryPrice, EntryPriceResult } from '../utils/entryPriceEngine';
 import { calculateConfluence, ConfluenceResult } from '../utils/confluenceEngine';
 import { analyzeSentimentWithAI, SentimentResult, fetchStockNews } from '../utils/sentimentEngine';
-import { calculatePortfolioRisk, RiskMetrics } from '../utils/riskAnalyzer';
+import { calculatePortfolioRisk, RiskMetrics } from '../utils/riskEngine';
 import { runBacktest, BacktestResult } from '../utils/backtestEngine';
 import { getUpcomingEarnings, EarningsEvent } from '../utils/earningsCalendar';
 import { sendTelegramAlert } from '../utils/api';

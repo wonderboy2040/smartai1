@@ -370,10 +370,6 @@ export function getBacktest(symbol, candles) {
   return runBacktest(candles);
 }
 
-export function getPricePoints(symbol, currentPrice, candles) {
-  return calculatePricePoints(candles, currentPrice);
-}
-
 export function getHealth() {
   return {
     status: 'healthy',

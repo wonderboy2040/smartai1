@@ -271,33 +271,84 @@ export function useAppState() {
   const latestDataRef = useRef({ portfolio, livePrices, usdInrRate });
 
   useEffect(() => { portfolioRef.current = portfolio; }, [portfolio]);
-  useEffect(() => { livePricesRef.current = livePrices; }, [livePrices]);
+  // NOTE (v5.0): livePrices is NO LONGER synced state→ref here. The flush path
+  // keeps livePricesRef authoritative (ref-first merge); React state is a
+  // throttled, display-gated mirror. A state→ref sync effect would roll the
+  // ref BACKWARD to the throttled state and lose fresher merged ticks.
   useEffect(() => { transactionsRef.current = transactions; }, [transactions]);
   useEffect(() => { priceAlertsRef.current = priceAlerts; }, [priceAlerts]);
 
   const portfolioSymbolKey = useMemo(() => portfolio.map(p => p.symbol).sort().join(','), [portfolio]);
 
-  // --- Flush prices ---
+  // --- Flush prices (v5.0 lag fix) ------------------------------------------
+  // WAS: a plain setState every 250ms — every crypto wiggle (24/7) produced a
+  // NEW livePrices identity → the whole context value rebuilt → ALL useApp()
+  // consumers re-rendered up to 4×/sec forever (typing/scroll/chart stutter).
+  // NOW: ref-first + display-precision gate + 1s throttle + hidden gate:
+  //   • livePricesRef is ALWAYS fresh (pollers, P&L, AI context read it);
+  //   • React state updates at most 1×/s, only when a DISPLAYED value
+  //     (price/change at 2dp) actually changed;
+  //   • sub-display wiggles and background tabs cost ZERO React work.
+  // ---------------------------------------------------------------------------
+  const priceFlushLastAtRef = useRef(0);
+  const priceFlushTimerRef = useRef<number | null>(null);
+  const priceHiddenDirtyRef = useRef(false);
+  const pricePersistSnapRef = useRef<Record<string, PriceData> | null>(null);
+
   const flushPricesToStorage = useCallback(() => {
-    const batched = { ...pendingPricesRef.current };
+    const batched = pendingPricesRef.current;
+    const keys = Object.keys(batched);
+    if (keys.length === 0) return;
     pendingPricesRef.current = {};
-    if (Object.keys(batched).length === 0) return;
-    setLivePrices(prev => {
-      const merged = { ...prev };
-      let changed = false;
-      for (const [key, data] of Object.entries(batched)) {
-        const existing = merged[key] as PriceData | undefined;
-        const result = mergePriceData(existing, data);
-        if (result !== existing) { merged[key] = result; changed = true; }
+
+    const base = livePricesRef.current || {};
+    const merged = { ...base };
+    let displayChanged = false;
+    for (const key of keys) {
+      const existing = merged[key] as PriceData | undefined;
+      const result = mergePriceData(existing, batched[key]);
+      if (result !== existing) {
+        if (
+          !existing ||
+          Math.round((existing.price ?? 0) * 100) !== Math.round((result.price ?? 0) * 100) ||
+          Math.round((existing.change ?? 0) * 100) !== Math.round((result.change ?? 0) * 100)
+        ) displayChanged = true;
+        merged[key] = result;
       }
-      if (!changed) return prev;
+    }
+    // Ref = single source of truth (objects are never mutated after publish).
+    livePricesRef.current = merged;
+    pricePersistSnapRef.current = merged;
+
+    const persist = () => {
       const now = Date.now();
       if (now - lastLocalSaveRef.current > 30000) {
         lastLocalSaveRef.current = now;
-        try { secureStorage.setItem('livePrices', JSON.stringify(merged)); } catch { /* quota */ }
+        const snap = pricePersistSnapRef.current;
+        if (snap) { try { secureStorage.setItem('livePrices', JSON.stringify(snap)); } catch { /* quota */ } }
       }
-      return merged;
-    });
+    };
+
+    // Sub-display wiggle → no React work at all (refs stay fresh).
+    if (!displayChanged) { persist(); return; }
+
+    // Background tab → refs only; React catches up on visibility return.
+    if (document.hidden) { priceHiddenDirtyRef.current = true; persist(); return; }
+
+    const now = Date.now();
+    if (now - priceFlushLastAtRef.current < 900) {
+      // Too soon — schedule ONE trailing flush so the newest tick always lands.
+      if (priceFlushTimerRef.current == null) {
+        priceFlushTimerRef.current = window.setTimeout(() => {
+          priceFlushTimerRef.current = null;
+          priceFlushLastAtRef.current = Date.now();
+          setLivePrices(livePricesRef.current);
+        }, 900 - (now - priceFlushLastAtRef.current));
+      }
+      return;
+    }
+    priceFlushLastAtRef.current = now;
+    setLivePrices(livePricesRef.current);
   }, []);
 
   // --- Initialize ---
@@ -437,15 +488,14 @@ export function useAppState() {
           };
         });
         if (Object.keys(seeds).length > 0) {
-          setLivePrices(prev => {
-            const next = { ...prev };
-            let changed = false;
-            for (const [k, v] of Object.entries(seeds)) {
-              const ex = next[k];
-              if (!ex || (!ex.isRealtime && Date.now() - (ex.time || 0) > 5 * 60_000)) { next[k] = v; changed = true; }
-            }
-            return changed ? next : prev;
-          });
+          // v5.0: merge ref-first (state may be a throttled mirror of the ref).
+          const next = { ...(livePricesRef.current || {}) };
+          let changed = false;
+          for (const [k, v] of Object.entries(seeds)) {
+            const ex = next[k];
+            if (!ex || (!ex.isRealtime && Date.now() - (ex.time || 0) > 5 * 60_000)) { next[k] = v; changed = true; }
+          }
+          if (changed) { livePricesRef.current = next; setLivePrices(next); }
         }
         console.log(`🏦 Synced assets: ${positions.length} loaded (${data.counts?.live ?? 0} live-priced, ${data.counts?.noLive ?? 0} NAV-priced${data.counts?.coindcx ? `, ${data.counts.coindcx} CoinDCX` : ''}${data.hiddenCount ? `, ${data.hiddenCount} removed` : ''})`);
         return true;
@@ -535,7 +585,11 @@ export function useAppState() {
         }
       }
       const savedPrices = secureStorage.getItem('livePrices');
-      if (savedPrices) setLivePrices(JSON.parse(savedPrices));
+      if (savedPrices) {
+        const parsed = JSON.parse(savedPrices);
+        livePricesRef.current = parsed;
+        setLivePrices(parsed);
+      }
     } catch (e) { console.warn('Failed to load local state:', e); }
 
     // 1.5) INDMoney — the ASSET TABLE source of truth. Kicked off BEFORE
@@ -763,12 +817,31 @@ export function useAppState() {
     };
   }, [buildCloudState, cloudStateFingerprint]);
 
-  // --- Price flush interval (250ms — WS & SSE give real-time ticks, flushed ultra fast for live feel) ---
+  // --- Price flush interval (v5.0: 250ms → 1s) -------------------------------
+  // The flush itself is display-gated + self-throttled (see above), so a 1s
+  // sweep is plenty: live feel (1s ≈ one visual refresh) is preserved while
+  // the re-render storm is gone. Ticks still land in the ref instantly via
+  // the SSE/WS callbacks (they call flush directly, which merges the ref).
   useEffect(() => {
     if (!isAuthenticated) return;
-    priceFlushRef.current = window.setInterval(() => { requestAnimationFrame(flushPricesToStorage); }, 250);
-    return () => { if (priceFlushRef.current) { clearInterval(priceFlushRef.current); priceFlushRef.current = null; } };
+    priceFlushRef.current = window.setInterval(flushPricesToStorage, 1000);
+    return () => {
+      if (priceFlushRef.current) { clearInterval(priceFlushRef.current); priceFlushRef.current = null; }
+    };
   }, [isAuthenticated, flushPricesToStorage]);
+
+  // v5.0: background tab → React catches up the moment the user returns.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && priceHiddenDirtyRef.current) {
+        priceHiddenDirtyRef.current = false;
+        priceFlushLastAtRef.current = Date.now();
+        setLivePrices(livePricesRef.current);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
 
   // --- Crypto Fast Polling (CoinDCX INR prices updated every 10s) ---
   // NOTE: CoinDCX's API does NOT serve CORS headers, so direct browser fetches
@@ -895,12 +968,20 @@ export function useAppState() {
     };
 
     pollCrypto();
-    // 2026-09 ultra-fast pass: 10s → 3s. The SSE stream pushes CoinDCX+
-    // Binance-projected ticks every ~1-2s; this HTTP poller is only the
-    // safety net (in-flight guard + Binance geo-block breaker below keep
-    // it cheap — 20 requests/minute through the shared server cache).
-    const cryptoInterval = window.setInterval(pollCrypto, 3000);
-    return () => { clearInterval(cryptoInterval); };
+    // v5.0: the SSE stream pushes coindcx-live ticks every 1-2s — this HTTP
+    // poller is only a WATCHDOG now: 30s while the crypto SSE feed is
+    // healthy, 3s when it is dark. (Was a flat 3s = ~20 req/min that
+    // duplicated every SSE tick and re-triggered the render pipeline.)
+    let cryptoStopped = false;
+    let cryptoTimer: number | null = null;
+    const scheduleCrypto = () => {
+      if (cryptoStopped) return;
+      const feeds = feedStatusRef.current || {};
+      const cryptoSseLive = Object.keys(feeds).some(s => feeds[s] && /coindcx/i.test(s));
+      cryptoTimer = window.setTimeout(() => { pollCrypto().finally(scheduleCrypto); }, cryptoSseLive ? 30000 : 3000);
+    };
+    scheduleCrypto();
+    return () => { cryptoStopped = true; if (cryptoTimer) clearTimeout(cryptoTimer); };
   }, [isAuthenticated, hasCrypto, flushPricesToStorage]);
 
   // --- NSE / BSE Realtime Streaming (HTTP) -----------------------------------
@@ -1524,6 +1605,9 @@ export function useAppState() {
   useEffect(() => {
     if (!isAuthenticated) return;
     const generateContext = () => {
+      // v5.0: multi-KB serialization only for a visible tab — the text is
+      // consumed by NeuralChat, which can't be read while hidden anyway.
+      if (document.hidden) return;
       const p = portfolioRef.current;
       const lp = livePricesRef.current;
       const rate = usdInrRateRef.current;
@@ -1712,6 +1796,9 @@ export function useAppState() {
   useEffect(() => {
     if (!isAuthenticated) return;
     const fetchIntel = async () => {
+      // v5.0: sector rotation is a Macro-tab visual — no reason to hit the
+      // TradingView scanners while the tab is hidden.
+      if (document.hidden) return;
       try { const intel = await fetchMarketIntelligence(); if (intel.sectors?.length > 0) setSectorData(intel.sectors); } catch { }
     };
     fetchIntel();
@@ -1723,6 +1810,7 @@ export function useAppState() {
   useEffect(() => {
     return () => {
       if (priceFlushRef.current) clearInterval(priceFlushRef.current);
+      if (priceFlushTimerRef.current) clearTimeout(priceFlushTimerRef.current);
       if (telegramIntervalRef.current) clearInterval(telegramIntervalRef.current);
       if (forexIntervalRef.current) clearInterval(forexIntervalRef.current);
       if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
@@ -1759,16 +1847,13 @@ export function useAppState() {
   }, [currentRsi]);
 
   // --- Planner calculations ---
+  // v5.0 dedupe: fvMed/fvWorst/fvBest/multiplier/totalInvestedPlanner/months
+  // removed — they fed only the deleted "fake Monte Carlo" summary panel in
+  // PlannerTab. The REAL projections live in MonteCarloSimulator (10k paths)
+  // and WhatIfSIPOptimizer (scenario + step-up engine).
   const totalSIP = indiaSIP + usSIP + btcSIP + ethSIP;
   const cagr = riskLevel === 'low' ? 8 : riskLevel === 'high' ? 18 : 12;
-  const months = investYears * 12;
-  const totalInvestedPlanner = totalSIP * months;
   const monthlyRate = cagr / 100 / 12;
-  const fvMed = totalSIP > 0 ? totalSIP * (Math.pow(1 + monthlyRate, months) - 1) * (1 + monthlyRate) / monthlyRate : 0;
-  const worstRate = Math.max(0.5, cagr - 8) / 100 / 12;
-  const fvWorst = totalSIP > 0 ? totalSIP * (Math.pow(1 + worstRate, months) - 1) * (1 + worstRate) / worstRate : 0;
-  const fvBest = totalSIP > 0 ? totalSIP * (Math.pow(1 + (cagr + 8) / 100 / 12, months) - 1) * (1 + (cagr + 8) / 100 / 12) / ((cagr + 8) / 100 / 12) : 0;
-  const multiplier = totalInvestedPlanner > 0 ? fvMed / totalInvestedPlanner : 0;
 
   // --- FIRE ---
   const fireNumber = monthlyExpenses * 12 * 25;
@@ -1854,7 +1939,9 @@ export function useAppState() {
       if (result && result.price > 0) {
         setCurrentSymbol(sym); setCurrentMarket(result.market as 'IN' | 'US');
         const key = `${result.market}_${sym}`;
-        setLivePrices(prev => ({ ...prev, [key]: result }));
+        // v5.0: ref-first write (rare, user-initiated → sync immediately).
+        livePricesRef.current = { ...(livePricesRef.current || {}), [key]: result };
+        setLivePrices(livePricesRef.current);
       }
     } catch (e) { console.warn('Analyze error:', e); }
     finally { setIsAnalyzing(false); }
@@ -1870,7 +1957,9 @@ export function useAppState() {
         if (result && result.price > 0) {
           setCurrentSymbol(fullSym); setCurrentMarket(result.market as 'IN' | 'US');
           const key = `${result.market}_${fullSym}`;
-          setLivePrices(prev => ({ ...prev, [key]: result }));
+          // v5.0: ref-first write (rare, user-initiated → sync immediately).
+          livePricesRef.current = { ...(livePricesRef.current || {}), [key]: result };
+          setLivePrices(livePricesRef.current);
         }
       } catch (e) { console.warn('Symbol analysis failed:', e); }
       finally { setIsAnalyzing(false); }
@@ -2139,7 +2228,7 @@ export function useAppState() {
     usVix, inVix, avgVix, sentiment, currentData, currentPrice, currentChange, currentRsi,
     signalData, metrics,
     // Planner computed
-    totalSIP, cagr, months, totalInvestedPlanner, rate: monthlyRate, fvMed, fvWorst, fvBest, multiplier,
+    totalSIP, cagr,
     fireNumber, yearsToFire, fireProgress,
     // Smart allocations (memoized)
     smartAllocations,
@@ -2173,7 +2262,7 @@ export function useAppState() {
     wsLatency, portfolioContextText,
     usVix, inVix, avgVix, sentiment, currentData, currentPrice, currentChange, currentRsi,
     signalData, metrics,
-    totalSIP, cagr, months, totalInvestedPlanner, monthlyRate, fvMed, fvWorst, fvBest, multiplier,
+    totalSIP, cagr,
     fireNumber, yearsToFire, fireProgress,
     smartAllocations,
     analyzeSymbol, quickSelect, openAddModal, savePosition, pushTelegramReport,

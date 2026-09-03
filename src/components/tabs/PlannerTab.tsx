@@ -11,9 +11,9 @@ import { InflationAdjustedReturns } from '../InflationAdjustedReturns';
 import { MonthlyAnalyticsPanel } from '../MonthlyAnalyticsPanel';
 import { exportMonthlyAnalyticsCSV } from '../../utils/exportData';
 import {
-  calculateWealthMilestones, compareSIPStepUps,
+  calculateWealthMilestones,
   analyzeGoals, analyzeRebalancing, calculatePortfolioXIRR,
-  adjustForInflation, calculateFireVariants, planCryptoDCA,
+  calculateFireVariants, planCryptoDCA,
   DEFAULT_GOALS, type InvestmentGoal
 } from '../../utils/wealthEngine';
 
@@ -23,9 +23,15 @@ export default React.memo(function PlannerTab() {
     indiaSIP, setIndiaSIP, usSIP, setUsSIP, btcSIP, setBtcSIP, ethSIP, setEthSIP,
     emergencyFund, setEmergencyFund, investYears, setInvestYears, riskLevel, setRiskLevel,
     monthlyExpenses, setMonthlyExpenses, currentAge, setCurrentAge,
-    totalSIP, cagr, totalInvestedPlanner, fvMed, fvWorst, fvBest, multiplier,
+    totalSIP, cagr,
     fireNumber, yearsToFire, fireProgress,
   } = useApp();
+
+  // v5.0 dedupe: fvMed/fvWorst/fvBest/multiplier/totalInvestedPlanner (the
+  // deterministic "fake Monte Carlo" summary) were ONLY rendered by the
+  // removed inline panel below — the REAL 10k-path MonteCarloSimulator +
+  // WhatIfSIPOptimizer cover this properly. Planner projections that still
+  // need the corpus trajectory compute it locally from totalSIP/cagr.
 
   // --- Goals State (localStorage persisted) ---
   const [goals, setGoals] = useState<InvestmentGoal[]>(() => {
@@ -48,12 +54,6 @@ export default React.memo(function PlannerTab() {
   const milestones = useMemo(() =>
     calculateWealthMilestones(metrics.totalValue, totalSIP, cagr, 10),
     [metrics.totalValue, totalSIP, cagr]
-  );
-
-  // --- Computed: SIP Step-Up Comparison ---
-  const stepUpScenarios = useMemo(() =>
-    compareSIPStepUps(totalSIP, investYears, cagr),
-    [totalSIP, investYears, cagr]
   );
 
   // --- Computed: Goal Analysis ---
@@ -82,7 +82,6 @@ export default React.memo(function PlannerTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [portfolio, plannerPriceKey]
   );
-  const realFvMed = useMemo(() => adjustForInflation(fvMed, investYears), [fvMed, investYears]);
   const fireVariants = useMemo(() =>
     calculateFireVariants(monthlyExpenses, metrics.totalValue, currentAge, 60, cagr),
     [monthlyExpenses, metrics.totalValue, currentAge, cagr]
@@ -179,52 +178,12 @@ export default React.memo(function PlannerTab() {
       {/* ============ MCP AI AGENT WEALTH ALLOCATION ENGINE ============ */}
       <MCPAgentAllocationPanel />
 
-      {/* Monte Carlo */}
-      <div className="quantum-panel rounded-2xl p-5 animate-fade-in-up delay-100">
-        <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
-          <span className="w-7 h-7 rounded-lg bg-cyan-500/10 flex items-center justify-center text-sm">🔮</span>
-          Monte Carlo Simulator
-        </h3>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div className="quantum-stat p-3 rounded-xl text-center">
-            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">Monthly SIP</div>
-            <div className="text-lg font-black text-white font-mono">₹{Math.round(totalSIP).toLocaleString('en-IN')}</div>
-          </div>
-          <div className="quantum-stat p-3 rounded-xl text-center">
-            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">Total Invested</div>
-            <div className="text-lg font-black text-slate-300 font-mono">₹{Math.round(totalInvestedPlanner).toLocaleString('en-IN')}</div>
-          </div>
-          <div className="bg-red-500/5 border border-red-500/15 p-3 rounded-xl text-center">
-            <div className="text-[10px] text-red-400/80 font-bold uppercase tracking-wider mb-1">Worst Case</div>
-            <div className="text-base font-black text-red-400 font-mono">₹{Math.round(fvWorst).toLocaleString('en-IN')}</div>
-          </div>
-          <div className="bg-cyan-500/5 border-2 border-cyan-500/20 p-4 rounded-xl text-center">
-            <div className="text-[10px] text-cyan-400/80 font-bold uppercase tracking-wider mb-1">🎯 Expected</div>
-            <div className="text-xl font-black text-cyan-400 font-mono">₹{Math.round(fvMed).toLocaleString('en-IN')}</div>
-          </div>
-          <div className="bg-emerald-500/5 border border-emerald-500/15 p-3 rounded-xl text-center">
-            <div className="text-[10px] text-emerald-400/80 font-bold uppercase tracking-wider mb-1">Best Case</div>
-            <div className="text-base font-black text-emerald-400 font-mono">₹{Math.round(fvBest).toLocaleString('en-IN')}</div>
-          </div>
-        </div>
-        <div className="mt-4 p-4 bg-amber-500/5 rounded-xl border border-amber-500/15 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">💎</span>
-            <div>
-              <div className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">Wealth Multiplier</div>
-              <div className="text-[10px] text-amber-200/40">Growth factor over investment period</div>
-            </div>
-          </div>
-          <div className="text-3xl font-black text-amber-400 font-mono">{multiplier.toFixed(1)}x</div>
-        </div>
-        <div className="mt-3 p-4 bg-blue-500/5 rounded-xl border border-blue-500/15 flex items-center justify-between">
-          <div>
-            <div className="text-[10px] text-blue-400 font-bold uppercase tracking-wider">🧮 Real Value (Inflation-Adjusted @ 6%)</div>
-            <div className="text-[10px] text-blue-200/40">Expected corpus in today's purchasing power</div>
-          </div>
-          <div className="text-xl font-black text-blue-300 font-mono">₹{Math.round(realFvMed).toLocaleString('en-IN')}</div>
-        </div>
-      </div>
+      {/* v5.0 dedupe: the inline "Monte Carlo Simulator" summary panel (a
+          deterministic CAGR±8 calc mislabeled as Monte Carlo) was removed —
+          the REAL MonteCarloSimulator below runs 10,000 stochastic paths
+          with p10/p50/p90 + hit probability + real (inflation-adjusted)
+          corpus. Same for the duplicate step-up mini-panels: the What-If
+          SIP Optimizer + real Monte Carlo below cover both. */}
 
       {/* What-If SIP Optimizer — Regime-Aware (with Step-Up comparison + inflation) */}
       <WhatIfSIPOptimizer currentSIP={totalSIP} investYears={investYears} />
@@ -455,45 +414,11 @@ export default React.memo(function PlannerTab() {
             </div>
           </div>
 
-          {/* SIP Step-Up Calculator */}
-          <div className="bg-black/20 rounded-xl p-4 border border-purple-500/15 mt-4">
-            <div className="text-xs font-bold text-purple-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-              <span className="text-lg">🚀</span> 10% Annual SIP Step-Up Magic
-            </div>
-            <div className="text-xs text-slate-400 mb-4">
-              Increasing your SIP by 10% every year drastically boosts final wealth.
-            </div>
-            <div className="space-y-2">
-              {(() => {
-                const r = 0.15; // 15% CAGR
-                const monthlyRate = Math.pow(1 + r, 1 / 12) - 1; // monthly compounding
-                const step = 0.10; // 10% annual step-up
-                const y = investYears;
-                let currentSip = totalSIP;
-                let wealth = 0;
-                let totalInv = 0;
-                for (let yr = 1; yr <= y; yr++) {
-                  for (let m = 0; m < 12; m++) {
-                    wealth = (wealth + currentSip) * (1 + monthlyRate);
-                    totalInv += currentSip;
-                  }
-                  currentSip *= (1 + step);
-                }
-                return (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-3 bg-white/5 rounded-lg text-center">
-                      <div className="text-[10px] uppercase text-slate-500 mb-1">Total Invested</div>
-                      <div className="font-mono text-sm text-white">₹{formatCurrency(totalInv, '')}</div>
-                    </div>
-                    <div className="p-3 bg-white/5 rounded-lg text-center border border-emerald-500/30">
-                      <div className="text-[10px] uppercase text-emerald-500 mb-1">Final Wealth (15% CAGR)</div>
-                      <div className="font-mono text-sm text-emerald-400 font-bold">₹{formatCurrency(wealth, '')}</div>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-          </div>
+          {/* v5.0 dedupe: "10% Annual SIP Step-Up Magic" mini-calculator
+              removed — hardcoded 15% CAGR single-scenario variant of the
+              same math; the What-If SIP Optimizer's Step-Up Power
+              Comparison strip above covers this with live inflation +
+              the app's actual SIP values. */}
 
       {/* ============ WEALTH MILESTONE TRACKER ============ */}
       <div className="quantum-panel rounded-2xl p-5 border-amber-500/10 animate-fade-in-up">
@@ -547,52 +472,10 @@ export default React.memo(function PlannerTab() {
         </div>
       </div>
 
-      {/* ============ SIP STEP-UP COMPARISON ============ */}
-      <div className="quantum-panel rounded-2xl p-5 border-indigo-500/10 animate-fade-in-up">
-        <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
-          <span className="w-7 h-7 rounded-lg bg-indigo-500/10 flex items-center justify-center text-sm">📊</span>
-          SIP Step-Up Power Comparison
-          <span className="ml-auto text-[10px] text-slate-500 font-mono">{investYears}yr @ {cagr}% CAGR</span>
-        </h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-white/5 text-slate-500">
-                <th className="py-2">Scenario</th>
-                <th className="py-2 text-right">Invested</th>
-                <th className="py-2 text-right">Final Wealth</th>
-                <th className="py-2 text-right">Profit</th>
-                <th className="py-2 text-right">Multiplier</th>
-              </tr>
-            </thead>
-            <tbody className="text-slate-300">
-              {stepUpScenarios.map((s, i) => (
-                <tr key={i} className={`border-b border-white/5 last:border-0 hover:bg-white/5 ${
-                  s.stepUpPercent === 10 ? 'bg-cyan-500/5' : ''
-                }`}>
-                  <td className="py-2.5">
-                    <span className="font-bold">{s.label}</span>
-                    {s.stepUpPercent === 10 && <span className="ml-1 text-[8px] bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded border border-cyan-500/20">RECOMMENDED</span>}
-                  </td>
-                  <td className="py-2.5 text-right font-mono text-slate-400">{formatCurrency(s.totalInvested)}</td>
-                  <td className="py-2.5 text-right font-mono text-emerald-400 font-bold">{formatCurrency(s.finalWealth)}</td>
-                  <td className="py-2.5 text-right font-mono text-cyan-400">{formatCurrency(s.wealthGain)}</td>
-                  <td className="py-2.5 text-right">
-                    <span className={`font-black font-mono ${
-                      s.multiplier >= 5 ? 'text-emerald-400' : s.multiplier >= 3 ? 'text-cyan-400' : 'text-amber-400'
-                    }`}>{s.multiplier}x</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {stepUpScenarios.length >= 2 && (
-          <div className="mt-3 p-3 bg-emerald-500/5 border border-emerald-500/15 rounded-xl text-xs text-emerald-400">
-            💡 <strong>10% Step-Up vs Flat SIP:</strong> You gain extra <strong>{formatCurrency((stepUpScenarios[2]?.finalWealth || 0) - (stepUpScenarios[0]?.finalWealth || 0))}</strong> — that's <strong>{((stepUpScenarios[2]?.finalWealth || 1) / (stepUpScenarios[0]?.finalWealth || 1) * 100 - 100).toFixed(0)}% MORE</strong> wealth!
-          </div>
-        )}
-      </div>
+      {/* v5.0 dedupe: standalone "SIP Step-Up Power Comparison" table removed
+          — the identical flat/5/10/15/20% comparison (with inflation toggle +
+          bar visualization) already renders inside the What-If SIP Optimizer
+          above, so the tab showed the same numbers twice. */}
 
       {/* ============ GOAL-BASED PLANNER ============ */}
       <div className="quantum-panel rounded-2xl p-5 border-teal-500/10 animate-fade-in-up">

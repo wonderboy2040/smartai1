@@ -31,21 +31,12 @@ export function usePrefetch(
   };
 
   useEffect(() => {
-    // 1. If user is on Dashboard -> prefetch top holdings news & macro data
+    // 1. If user is on Dashboard -> prefetch top holding news
+    // (v5.0: the old `macro_intel` prefetch was removed — it called a
+    // nonexistent /api/macro-regime (404 every 3 min) and NOBODY ever read
+    // the cache entry; the client computes macro regime locally from
+    // livePrices via detectMacroRegime().)
     if (activeTab === 'dashboard') {
-      if (shouldPrefetch('macro_intel')) {
-        queuedFetch(
-          () =>
-            cachedFetch(
-              generateCacheKey('/api/macro-regime'),
-              () => apiFetch('/api/macro-regime').then(r => r.json()).catch(() => null),
-              5 * 60 * 1000
-            ),
-          Priority.LOW,
-          'prefetch_macro'
-        ).catch(() => {});
-      }
-
       // Prefetch news for the largest holding
       if (portfolio.length > 0) {
         const topAsset = portfolio[0];

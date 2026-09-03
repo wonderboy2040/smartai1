@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Position, PriceData, DipSignal } from '../types';
-import { computePortfolioDipSignals, allocateDipBudget } from '../utils/dipEngine';
+import { computePortfolioDipSignals } from '../utils/dipEngine';
 
 interface DipIntelligenceProps {
   portfolio: Position[];
@@ -40,10 +40,9 @@ export const DipIntelligence = React.memo(({ portfolio, livePrices, totalBudget,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portfolio, dipPriceKey, totalBudget]);
 
-  const allocations = useMemo(() => {
-    if (dipSignals.length === 0) return [];
-    return allocateDipBudget(totalBudget, dipSignals, portfolio);
-  }, [dipSignals, totalBudget, portfolio]);
+  // v5.0 dedupe: budget-allocation math (allocateDipBudget) is rendered only
+  // by the Planner tab's SmartDipSizer — this panel focuses on dip alerts +
+  // the buy ladder.
 
   const deepDips = dipSignals.filter(d => d.dipDepth === 'DEEP');
   const mildDips = dipSignals.filter(d => d.dipDepth === 'MILD');
@@ -91,28 +90,10 @@ export const DipIntelligence = React.memo(({ portfolio, livePrices, totalBudget,
         </div>
       )}
 
-      {/* Dip Budget Allocation */}
-      {allocations.length > 0 && (
-        <div className="mt-3 border-t border-slate-700/50 pt-3">
-          <div className="text-xs font-medium text-slate-400 mb-2">DIP BUDGET ALLOCATION</div>
-          <div className="space-y-1.5">
-            {allocations.slice(0, 6).map(a => (
-              <div key={a.symbol} className="flex items-center gap-2 text-xs">
-                <span className="text-slate-300 w-24 truncate">{a.symbol}</span>
-                <div className="flex-1 quantum-progress">
-                  <div
-                    className="quantum-progress-fill bg-gradient-to-r from-blue-500 to-cyan-400"
-                    style={{ width: `${Math.min(a.allocationPct, 100)}%` }}
-                  />
-                </div>
-                <span className="text-blue-400 w-16 text-right">{formatPrice(a.allocatedAmount, (a as any).market || 'IN')}</span>
-                <span className="text-slate-500 w-10 text-right">{a.allocationPct}%</span>
-                {a.dipMultiplier > 1 && <span className="text-amber-400 text-[10px]">{a.dipMultiplier}x</span>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* v5.0 dedupe: the "DIP BUDGET ALLOCATION" sub-section was removed —
+          the Planner tab's SmartDipSizer renders the SAME allocateDipBudget()
+          output as a full sizing table (Kelly/Inverse-Vol/multiplier columns),
+          so the Dashboard showed the same allocation twice. */}
 
       {/* Expandable Dip Ladder for first deep dip */}
       {deepDips.length > 0 && (

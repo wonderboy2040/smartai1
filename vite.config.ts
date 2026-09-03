@@ -40,8 +40,8 @@ export default defineConfig({
           if (id.includes('utils/portfolioAnalytics')) return 'utils-analytics';
           // Heavy utility modules — split for parallel loading
           if (id.includes('utils/telegram')) return 'utils-telegram';
-          if (id.includes('utils/riskEngine') || id.includes('utils/screener') || id.includes('utils/dipEngine')) return 'utils-analysis';
-          if (id.includes('utils/deepScanner') || id.includes('utils/wealthEngine')) return 'utils-scanner';
+          if (id.includes('utils/riskEngine') || id.includes('utils/dipEngine')) return 'utils-analysis';
+          if (id.includes('utils/wealthEngine')) return 'utils-scanner';
           if (id.includes('utils/tvWebsocket') || id.includes('utils/smartMoney')) return 'utils-market';
         },
       },

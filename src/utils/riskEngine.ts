@@ -22,14 +22,6 @@ export interface ConcentrationRisk {
   contributionToRisk: number;
 }
 
-export interface DrawdownInfo {
-  symbol: string;
-  currentDrawdown: number;
-  maxDrawdown: number;
-  recoveryTime: string;
-  riskScore: number;
-}
-
 export interface PortfolioRiskSummary {
   totalVaR: VaRResult;
   varPercent: number;
@@ -141,26 +133,6 @@ export function analyzeConcentrationRisk(positions: Position[], livePrices: Reco
   }).sort((a, b) => b.contributionToRisk - a.contributionToRisk);
 }
 
-export function analyzeDrawdown(positions: Position[], livePrices: Record<string, PriceData>): DrawdownInfo[] {
-  return positions.map(p => {
-    const key = `${p.market}_${p.symbol}`;
-    const data = livePrices[key];
-    const currentPrice = data?.price || p.avgPrice;
-    const high = data?.high || p.avgPrice * 1.05;
-    const drawdown = ((currentPrice - high) / high) * 100;
-    const cagr = getAssetCagrProxy(p.symbol, p.market);
-    const recoveryMonths = cagr > 0 ? Math.ceil(Math.abs(drawdown) / (cagr / 12)) : -1;
-    const recoveryStr = recoveryMonths > 0 ? recoveryMonths < 12 ? `${recoveryMonths} months` : `${Math.round(recoveryMonths / 12)} years` : 'N/A';
-    const riskScore = Math.min(10, Math.max(1, Math.round(Math.abs(drawdown) / 5 + (recoveryMonths > 0 ? recoveryMonths / 6 : 5))));
-    // FIX H3: previously `maxDrawdown` was identical to `currentDrawdown`
-    // (both used today's intraday `high`). Without persistent peak tracking
-    // we can't know the real all-time drawdown, so we expose currentDrawdown
-    // again as `maxDrawdown` for type-safety but consumers should treat it as
-    // a lower-bound estimate only — historical peak tracking is not implemented.
-    return { symbol: p.symbol, currentDrawdown: Math.round(drawdown * 10) / 10, maxDrawdown: Math.round(drawdown * 10) / 10, recoveryTime: recoveryStr, riskScore };
-  });
-}
-
 export function summarizePortfolioRisk(portfolioValue: number, positions: Position[], livePrices: Record<string, PriceData>): PortfolioRiskSummary {
   const varResult = calculateVaR(portfolioValue, positions, livePrices, 0.95);
   const varPercent = portfolioValue > 0 ? (varResult.monteCarlo / portfolioValue) * 100 : 0;
@@ -199,32 +171,6 @@ export function summarizePortfolioRisk(portfolioValue: number, positions: Positi
   };
 }
 
-export function calculateRebalance(portfolio: Position[], livePrices: Record<string, PriceData>, targetAllocations: Record<string, number>, totalInvestment: number, usdInrRate: number = 83.5) {
-  const recommendations: Array<{ symbol: string; action: 'BUY' | 'SELL' | 'HOLD'; amount: number; pctChange: number; urgency: number }> = [];
-  portfolio.forEach(p => {
-    const key = `${p.market}_${p.symbol}`;
-    const price = livePrices[key]?.price || p.avgPrice;
-    const currentVal = price * p.qty;
-    const valINR = p.market === 'IN' ? currentVal : currentVal * usdInrRate;
-    const targetPct = targetAllocations[p.symbol] || 0;
-    const targetValINR = totalInvestment * targetPct;
-    const diffINR = targetValINR - valINR;
-    // FIX M2: guard against division-by-zero (totalInvestment=0, price=0, valINR=0).
-    const urgency = totalInvestment > 0 ? Math.abs(diffINR) / totalInvestment : 0;
-    const unitPrice = p.market === 'IN' ? price : price * usdInrRate;
-    const amount = unitPrice > 0 ? Math.abs(diffINR) / unitPrice : 0;
-    const pctChange = valINR > 0 ? (diffINR / valINR) * 100 : 0;
-    if (Math.abs(diffINR) < 500) {
-      recommendations.push({ symbol: p.symbol, action: 'HOLD', amount: 0, pctChange: 0, urgency: 0 });
-    } else if (diffINR > 0) {
-      recommendations.push({ symbol: p.symbol, action: 'BUY', amount, pctChange, urgency });
-    } else {
-      recommendations.push({ symbol: p.symbol, action: 'SELL', amount, pctChange, urgency });
-    }
-  });
-  return recommendations;
-}
-
 export function suggestPositionSize(totalCapital: number, assets: { symbol: string; volatility: number }[]) {
   const totalVol = assets.reduce((sum, a) => sum + a.volatility, 0);
   if (totalVol === 0) return assets.map(a => ({ symbol: a.symbol, suggestedAmount: totalCapital / assets.length }));
@@ -234,35 +180,340 @@ export function suggestPositionSize(totalCapital: number, assets: { symbol: stri
   });
 }
 
-export function calculateKellyFraction(winRate: number, avgWin: number, avgLoss: number): number {
-  if (avgLoss === 0) return 0;
-  const b = avgWin / avgLoss;
-  const p = winRate / 100;
-  const kelly = (p * b - (1 - p)) / b;
-  return Math.max(0, Math.min(0.25, kelly));
+// ============================================================
+// v5.0 UNIFIED RISK ANALYZER (merged from the former riskAnalyzer.ts —
+// the site previously shipped TWO parallel risk engines computing the
+// same VaR/drawdown/concentration math for different tabs). One engine
+// now serves MacroTab (VaR trio + stress tests), PortfolioHealthMonitor
+// (summary) and the Exact Buy Price panel's Risk tab (full metrics).
+// ============================================================
+
+export interface RiskAlert {
+  level: 'INFO' | 'WARNING' | 'CRITICAL';
+  type: string;
+  message: string;
+  action: string;
 }
 
-export function calculateCorrelationMatrix(positions: Position[], _livePrices?: Record<string, PriceData>): Record<string, Record<string, number>> {
-  // FIX C4: Previously this returned `Math.random() * 0.6 + 0.2` and labeled
-  // the output as "correlation" — random numbers presented as risk metrics to
-  // a financial audience. Without real OHLC history we cannot compute a true
-  // Pearson correlation; return a clearly-marked "no-data" matrix (null) so
-  // downstream UI can show "insufficient data" instead of fake confidence.
-  const matrix: Record<string, Record<string, number>> = {};
-  const symbols = positions.map(p => p.symbol);
-  for (let i = 0; i < symbols.length; i++) {
-    matrix[symbols[i]] = {};
-    for (let j = 0; j < symbols.length; j++) {
-      if (i === j) { matrix[symbols[i]][symbols[j]] = 1; continue; }
-      if (j < i) { matrix[symbols[i]][symbols[j]] = matrix[symbols[j]][symbols[i]]; continue; }
-      // Diagonal-of-1 with null off-diagonal signals "unknown" to consumers.
-      // Components that need a number can fall back to a neutral 0 (uncorrelated
-      // assumption) — never present this as a measured correlation.
-      matrix[symbols[i]][symbols[j]] = 0;
+export interface RiskMetrics {
+  portfolioVaR: { amount: number; percent: number; confidence: number };
+  portfolioCVaR: { amount: number; percent: number };
+  maxDrawdown: { percent: number; amount: number; fromPrice: number; toPrice: number };
+  currentDrawdown: { percent: number; amount: number };
+  sharpeRatio: number;
+  sortinoRatio: number;
+  beta: number;
+  volatility: { daily: number; annualized: number };
+  concentrationRisk: { topHolding: string; topPct: number; hhi: number; diversified: boolean };
+  correlationMatrix: { symbol: string; correlations: Record<string, number> }[];
+  alerts: RiskAlert[];
+  riskScore: number; // 0-100 (lower = less risk)
+  timestamp: number;
+}
+
+function changeBasedVaR(
+  portfolio: Position[],
+  livePrices: Record<string, PriceData>,
+  usdInrRate: number,
+  confidence: number = 95
+): { amount: number; percent: number } {
+  let totalValue = 0;
+  const returns: number[] = [];
+
+  for (const pos of portfolio) {
+    const key = `${pos.market}_${pos.symbol}`;
+    const data = livePrices[key];
+    const curPrice = data?.price || pos.avgPrice;
+    const change = (data?.change || 0) / 100;
+    const rate = pos.market === 'IN' ? 1 : usdInrRate;
+    totalValue += curPrice * pos.qty * rate;
+    returns.push(change);
+  }
+
+  if (totalValue === 0 || returns.length === 0) return { amount: 0, percent: 0 };
+
+  // Parametric VaR (assuming normal distribution)
+  const mean = returns.reduce((s, r) => s + r, 0) / returns.length;
+  const variance = returns.reduce((s, r) => s + Math.pow(r - mean, 2), 0) / returns.length;
+  const stdDev = Math.sqrt(variance);
+
+  // Z-score for confidence level
+  const zScores: Record<number, number> = { 90: 1.282, 95: 1.645, 99: 2.326 };
+  const z = zScores[confidence] || 1.645;
+
+  const varPercent = (mean - z * stdDev) * 100;
+  const varAmount = totalValue * Math.abs(varPercent) / 100;
+
+  return {
+    amount: Math.round(Math.abs(varAmount)),
+    percent: Math.round(Math.abs(varPercent) * 100) / 100
+  };
+}
+
+function computeCVaR(
+  portfolio: Position[],
+  livePrices: Record<string, PriceData>,
+  usdInrRate: number
+): { amount: number; percent: number } {
+  let totalValue = 0;
+  const returns: number[] = [];
+
+  for (const pos of portfolio) {
+    const key = `${pos.market}_${pos.symbol}`;
+    const data = livePrices[key];
+    const curPrice = data?.price || pos.avgPrice;
+    const change = (data?.change || 0) / 100;
+    const rate = pos.market === 'IN' ? 1 : usdInrRate;
+    totalValue += curPrice * pos.qty * rate;
+    returns.push(change);
+  }
+
+  if (totalValue === 0 || returns.length === 0) return { amount: 0, percent: 0 };
+
+  const sorted = [...returns].sort((a, b) => a - b);
+  const cutoff = Math.floor(sorted.length * 0.05);
+  const tailReturns = sorted.slice(0, cutoff + 1);
+  const avgTail = tailReturns.reduce((s, r) => s + r, 0) / (tailReturns.length || 1);
+
+  return {
+    amount: Math.round(totalValue * Math.abs(avgTail)),
+    percent: Math.round(Math.abs(avgTail) * 10000) / 100
+  };
+}
+
+function computeDrawdownPct(
+  portfolio: Position[],
+  livePrices: Record<string, PriceData>,
+  usdInrRate: number
+): { maxDrawdown: number; currentDrawdown: number } {
+  let totalValue = 0;
+  let totalInvested = 0;
+
+  for (const pos of portfolio) {
+    const key = `${pos.market}_${pos.symbol}`;
+    const data = livePrices[key];
+    const curPrice = data?.price || pos.avgPrice;
+    const rate = pos.market === 'IN' ? 1 : usdInrRate;
+    totalValue += curPrice * pos.qty * rate;
+    totalInvested += pos.avgPrice * pos.qty * rate;
+  }
+
+  if (totalInvested === 0) return { maxDrawdown: 0, currentDrawdown: 0 };
+
+  const currentDD = totalInvested > 0 ? Math.max(0, ((totalInvested - totalValue) / totalInvested) * 100) : 0;
+  // Estimate max drawdown from VIX + current DD
+  const estimatedMaxDD = Math.max(currentDD, currentDD * 1.5 + 5);
+
+  return {
+    maxDrawdown: Math.round(estimatedMaxDD * 100) / 100,
+    currentDrawdown: Math.round(currentDD * 100) / 100
+  };
+}
+
+function computeVolatility(
+  portfolio: Position[],
+  livePrices: Record<string, PriceData>,
+  usdInrRate: number
+): { daily: number; annualized: number } {
+  let totalValue = 0;
+  let weightedVol = 0;
+
+  for (const pos of portfolio) {
+    const key = `${pos.market}_${pos.symbol}`;
+    const data = livePrices[key];
+    const curPrice = data?.price || pos.avgPrice;
+    const rate = pos.market === 'IN' ? 1 : usdInrRate;
+    const posValue = curPrice * pos.qty * rate;
+    totalValue += posValue;
+    const atr = (data?.high || curPrice * 1.02) - (data?.low || curPrice * 0.98);
+    const dailyVol = curPrice > 0 ? atr / curPrice : 0.02;
+    weightedVol += dailyVol * posValue;
+  }
+
+  const dailyVol = totalValue > 0 ? weightedVol / totalValue : 0.02;
+  const annualized = dailyVol * Math.sqrt(252);
+
+  return {
+    daily: Math.round(dailyVol * 10000) / 100,
+    annualized: Math.round(annualized * 10000) / 100
+  };
+}
+
+function computeConcentrationHHI(
+  portfolio: Position[],
+  livePrices: Record<string, PriceData>,
+  usdInrRate: number
+): { topHolding: string; topPct: number; hhi: number; diversified: boolean } {
+  let totalValue = 0;
+  const holdings: { symbol: string; value: number }[] = [];
+
+  for (const pos of portfolio) {
+    const key = `${pos.market}_${pos.symbol}`;
+    const data = livePrices[key];
+    const curPrice = data?.price || pos.avgPrice;
+    const rate = pos.market === 'IN' ? 1 : usdInrRate;
+    const val = curPrice * pos.qty * rate;
+    totalValue += val;
+    holdings.push({ symbol: pos.symbol, value: val });
+  }
+
+  if (totalValue === 0) return { topHolding: 'N/A', topPct: 0, hhi: 0, diversified: true };
+
+  holdings.sort((a, b) => b.value - a.value);
+  const topPct = (holdings[0].value / totalValue) * 100;
+
+  // Herfindahl-Hirschman Index
+  const hhi = holdings.reduce((s, h) => s + Math.pow(h.value / totalValue * 100, 2), 0);
+
+  return {
+    topHolding: holdings[0].symbol,
+    topPct: Math.round(topPct * 10) / 10,
+    hhi: Math.round(hhi),
+    diversified: hhi < 1500
+  };
+}
+
+function computeSharpe(
+  portfolio: Position[],
+  livePrices: Record<string, PriceData>,
+  usdInrRate: number
+): number {
+  let totalValue = 0;
+  const returns: number[] = [];
+
+  for (const pos of portfolio) {
+    const key = `${pos.market}_${pos.symbol}`;
+    const data = livePrices[key];
+    const curPrice = data?.price || pos.avgPrice;
+    const rate = pos.market === 'IN' ? 1 : usdInrRate;
+    totalValue += curPrice * pos.qty * rate;
+    returns.push((data?.change || 0) / 100);
+  }
+
+  if (returns.length === 0 || totalValue === 0) return 0;
+
+  const avgReturn = returns.reduce((s, r) => s + r, 0) / returns.length;
+  const stdDev = Math.sqrt(returns.reduce((s, r) => s + Math.pow(r - avgReturn, 2), 0) / returns.length);
+  const riskFreeRate = 0.065 / 252; // 6.5% annualized (India)
+  const annualizedReturn = avgReturn * 252;
+  const annualizedVol = stdDev * Math.sqrt(252);
+
+  if (annualizedVol === 0) return 0;
+  return Math.round(((annualizedReturn - riskFreeRate * 252) / annualizedVol) * 100) / 100;
+}
+
+function computeRiskAlerts(
+  metrics: RiskMetrics,
+  portfolio: Position[],
+  livePrices: Record<string, PriceData>
+): RiskAlert[] {
+  const alerts: RiskAlert[] = [];
+  // FIX C1: Operator precedence bug — `+` binds tighter than `||`, so the
+  // original `a || 15 + b || 15` evaluated as `a || (15 + b) || 15`. Use ?? so
+  // each VIX falls back to 15 independently, then average.
+  const usVix = livePrices['US_VIX']?.price ?? 15;
+  const inVix = livePrices['IN_INDIAVIX']?.price ?? 15;
+  const avgVix = (usVix + inVix) / 2;
+
+  // VaR alert
+  if (metrics.portfolioVaR.percent > 3) {
+    alerts.push({ level: 'CRITICAL', type: 'VaR', message: `High daily VaR: ${metrics.portfolioVaR.percent}%`, action: 'Reduce position sizes or hedge' });
+  } else if (metrics.portfolioVaR.percent > 2) {
+    alerts.push({ level: 'WARNING', type: 'VaR', message: `Elevated VaR: ${metrics.portfolioVaR.percent}%`, action: 'Monitor closely' });
+  }
+
+  // Drawdown alert
+  if (metrics.currentDrawdown.percent > 15) {
+    alerts.push({ level: 'CRITICAL', type: 'Drawdown', message: `Severe drawdown: ${metrics.currentDrawdown.percent}%`, action: 'Consider stop-losses on weakest holdings' });
+  } else if (metrics.currentDrawdown.percent > 8) {
+    alerts.push({ level: 'WARNING', type: 'Drawdown', message: `Moderate drawdown: ${metrics.currentDrawdown.percent}%`, action: 'Review portfolio health' });
+  }
+
+  // Concentration alert
+  if (metrics.concentrationRisk.topPct > 40) {
+    alerts.push({ level: 'WARNING', type: 'Concentration', message: `${metrics.concentrationRisk.topHolding} is ${metrics.concentrationRisk.topPct}% of portfolio`, action: 'Diversify by trimming overexposed position' });
+  }
+
+  // VIX alert
+  if (avgVix > 25) {
+    alerts.push({ level: 'CRITICAL', type: 'VIX', message: `VIX elevated at ${avgVix.toFixed(1)}`, action: 'Hedge portfolio, reduce leveraged positions' });
+  } else if (avgVix > 18) {
+    alerts.push({ level: 'WARNING', type: 'VIX', message: `VIX at ${avgVix.toFixed(1)}`, action: 'Stay cautious, maintain cash buffer' });
+  }
+
+  // Volatility alert
+  if (metrics.volatility.annualized > 30) {
+    alerts.push({ level: 'WARNING', type: 'Volatility', message: `High annualized vol: ${metrics.volatility.annualized}%`, action: 'Consider protective puts' });
+  }
+
+  // RSI extremes
+  for (const pos of portfolio) {
+    const key = `${pos.market}_${pos.symbol}`;
+    const data = livePrices[key];
+    if (data?.rsi && data.rsi > 75) {
+      alerts.push({ level: 'WARNING', type: 'RSI', message: `${pos.symbol} RSI at ${data.rsi.toFixed(0)} (overbought)`, action: 'Consider partial profit booking' });
+    }
+    if (data?.rsi && data.rsi < 25) {
+      alerts.push({ level: 'INFO', type: 'RSI', message: `${pos.symbol} RSI at ${data.rsi.toFixed(0)} (oversold)`, action: 'Potential accumulation opportunity' });
     }
   }
-  // Mark the matrix as data-missing so callers can distinguish "0% correlation"
-  // from "no data available".
-  (matrix as any).__simulated = true;
-  return matrix;
+
+  return alerts;
+}
+
+// ========================================
+// MAIN UNIFIED RISK CALCULATOR
+// (was riskAnalyzer.calculatePortfolioRisk — same API)
+// ========================================
+export function calculatePortfolioRisk(
+  portfolio: Position[],
+  livePrices: Record<string, PriceData>,
+  usdInrRate: number
+): RiskMetrics {
+  const var95 = changeBasedVaR(portfolio, livePrices, usdInrRate, 95);
+  const cvar = computeCVaR(portfolio, livePrices, usdInrRate);
+  const { maxDrawdown, currentDrawdown } = computeDrawdownPct(portfolio, livePrices, usdInrRate);
+  const sharpe = computeSharpe(portfolio, livePrices, usdInrRate);
+  const vol = computeVolatility(portfolio, livePrices, usdInrRate);
+  const concentration = computeConcentrationHHI(portfolio, livePrices, usdInrRate);
+
+  let totalValue = 0;
+  for (const pos of portfolio) {
+    const key = `${pos.market}_${pos.symbol}`;
+    const data = livePrices[key];
+    const curPrice = data?.price || pos.avgPrice;
+    const rate = pos.market === 'IN' ? 1 : usdInrRate;
+    totalValue += curPrice * pos.qty * rate;
+  }
+
+  const metrics: RiskMetrics = {
+    portfolioVaR: { amount: var95.amount, percent: var95.percent, confidence: 95 },
+    portfolioCVaR: { amount: cvar.amount, percent: cvar.percent },
+    maxDrawdown: { percent: maxDrawdown, amount: Math.round(totalValue * maxDrawdown / 100), fromPrice: 0, toPrice: 0 },
+    currentDrawdown: { percent: currentDrawdown, amount: Math.round(totalValue * currentDrawdown / 100) },
+    sharpeRatio: sharpe,
+    sortinoRatio: Math.round(sharpe * 1.3 * 100) / 100,
+    beta: Math.round((1 + (vol.annualized - 15) / 50) * 100) / 100,
+    volatility: vol,
+    concentrationRisk: concentration,
+    correlationMatrix: [],
+    alerts: [],
+    riskScore: 0,
+    timestamp: Date.now()
+  };
+
+  metrics.alerts = computeRiskAlerts(metrics, portfolio, livePrices);
+
+  // Overall risk score (0-100)
+  let riskScore = 30;
+  if (metrics.portfolioVaR.percent > 3) riskScore += 25;
+  else if (metrics.portfolioVaR.percent > 2) riskScore += 15;
+  if (metrics.currentDrawdown.percent > 10) riskScore += 20;
+  else if (metrics.currentDrawdown.percent > 5) riskScore += 10;
+  if (metrics.concentrationRisk.topPct > 40) riskScore += 10;
+  if (metrics.volatility.annualized > 30) riskScore += 10;
+  if (metrics.alerts.filter(a => a.level === 'CRITICAL').length > 0) riskScore += 15;
+  metrics.riskScore = Math.min(100, Math.max(0, riskScore));
+
+  return metrics;
 }

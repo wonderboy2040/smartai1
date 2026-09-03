@@ -89,18 +89,11 @@ docker compose up --build
 
 The Compose setup builds the `node-server` from the Node build stage and the frontend from the final Nginx stage. Nginx proxies API, WebSocket/SSE, and health requests to the backend.
 
-## ML service (optional)
+## ML engine
 
-```bash
-cd ml-service
-python -m venv .venv
-# Linux/macOS: source .venv/bin/activate
-# Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-Or build `ml-service/Dockerfile`. Model training can be CPU- and memory-intensive.
+The ML engine runs in-process (`server/mlEngine.js`, pure JS) and serves all
+`/api/ml/*` routes. The old standalone Python FastAPI service was removed —
+the Node server replaces it entirely (no second deployment needed).
 
 ## Telegram bot (optional)
 

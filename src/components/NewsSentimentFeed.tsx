@@ -13,20 +13,10 @@ interface NewsItem {
   tickers: string[];
 }
 
-interface EarningsEvent {
-  symbol: string;
-  date: string;
-  estimate: string;
-  sentiment: string;
-  action: string;
-}
-
 export const NewsSentimentFeed = React.memo(() => {
   const { portfolio } = useApp();
   const [news, setNews] = useState<NewsItem[]>([]);
-  const [earnings, setEarnings] = useState<EarningsEvent[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'news' | 'earnings'>('news');
   const [error, setError] = useState('');
 
   const analyzeNews = useCallback(async () => {
@@ -35,10 +25,12 @@ export const NewsSentimentFeed = React.memo(() => {
 
     try {
       const symbols = portfolio.map(p => p.symbol).join(', ');
-      const prompt = `Analyze current market news and earnings for these stocks: ${symbols}.
+      // v5.0 dedupe: the LLM-hallucinated "earnings" array was removed from
+      // the prompt and the UI — the calendar-based earnings feed in the
+      // Exact Buy Price panel (earningsCalendar.ts) is the trustworthy one.
+      const prompt = `Analyze current market news for these stocks: ${symbols}.
 Return JSON with:
-1. "news": array of {title, sentiment (BULLISH/BEARISH/NEUTRAL), impact (HIGH/MEDIUM/LOW), source, tickers[]}
-2. "earnings": array of {symbol, date, estimate, sentiment, action}
+"news": array of {title, sentiment (BULLISH/BEARISH/NEUTRAL), impact (HIGH/MEDIUM/LOW), source, tickers[]}
 
 Focus on:
 - Recent earnings surprises or guidance changes
@@ -96,7 +88,6 @@ Return ONLY valid JSON, no markdown.`;
 
       if (parsed) {
         setNews(parsed.news || []);
-        setEarnings(parsed.earnings || []);
       } else {
         throw new Error('Could not parse AI response');
       }
@@ -124,21 +115,9 @@ Return ONLY valid JSON, no markdown.`;
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <span className="w-6 h-6 rounded-lg bg-blue-500/10 flex items-center justify-center text-xs">📰</span>
-          <span className="text-[10px] text-blue-500/70 font-bold uppercase tracking-wider">News & Earnings Sentiment</span>
+          <span className="text-[10px] text-blue-500/70 font-bold uppercase tracking-wider">News Sentiment</span>
         </div>
         <div className="flex gap-1">
-          <button
-            onClick={() => setActiveTab('news')}
-            className={`px-3 py-1 rounded-lg text-[10px] font-bold transition-all ${activeTab === 'news' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'text-slate-500 hover:text-white'}`}
-          >
-            News
-          </button>
-          <button
-            onClick={() => setActiveTab('earnings')}
-            className={`px-3 py-1 rounded-lg text-[10px] font-bold transition-all ${activeTab === 'earnings' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'text-slate-500 hover:text-white'}`}
-          >
-            Earnings
-          </button>
           <button
             onClick={analyzeNews}
             disabled={loading}
@@ -153,14 +132,13 @@ Return ONLY valid JSON, no markdown.`;
         <div className="mb-3 px-3 py-1.5 bg-red-500/10 border border-red-500/20 rounded-lg text-[10px] text-red-300">{error}</div>
       )}
 
-      {activeTab === 'news' && (
-        <div className="space-y-2">
-          {news.length === 0 && !loading && (
-            <div className="text-center py-6 text-[10px] text-slate-600">
-              Click "Groq Analyze" to fetch AI-powered news sentiment
-            </div>
-          )}
-          {news.map(item => (
+      <div className="space-y-2">
+        {news.length === 0 && !loading && (
+          <div className="text-center py-6 text-[10px] text-slate-600">
+            Click "Groq Analyze" to fetch AI-powered news sentiment
+          </div>
+        )}
+        {news.map(item => (
             <div key={item.title} className="bg-black/30 rounded-xl p-3 border border-white/5">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1">
@@ -185,36 +163,7 @@ Return ONLY valid JSON, no markdown.`;
               </div>
             </div>
           ))}
-        </div>
-      )}
-
-      {activeTab === 'earnings' && (
-        <div className="space-y-2">
-          {earnings.length === 0 && !loading && (
-            <div className="text-center py-6 text-[10px] text-slate-600">
-              Click "Groq Analyze" to fetch earnings calendar & sentiment
-            </div>
-          )}
-          {earnings.map(e => (
-            <div key={`${e.symbol}_${e.date}`} className="bg-black/30 rounded-xl p-3 border border-white/5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="text-xs font-bold text-white font-mono">{e.symbol}</span>
-                  <span className="text-[9px] text-slate-500 ml-2">{e.date}</span>
-                </div>
-                <span className="text-[9px] text-cyan-400 font-mono">{e.estimate}</span>
-              </div>
-              <div className="flex items-center gap-2 mt-1">
-                <span className={`text-[9px] font-bold ${e.sentiment === 'BULLISH' ? 'text-emerald-400' : e.sentiment === 'BEARISH' ? 'text-red-400' : 'text-amber-400'}`}>
-                  {e.sentiment}
-                </span>
-                <span className="text-[9px] text-slate-500">→</span>
-                <span className="text-[9px] text-slate-300">{e.action}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      </div>
 
       <div className="mt-3 text-[9px] text-slate-600">
         Powered by Groq LLM (llama-3.3-70b). News sentiment is AI-processed, not investment advice.

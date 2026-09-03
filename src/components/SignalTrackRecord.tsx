@@ -30,7 +30,7 @@ export function SignalTrackRecord() {
       <div className="quantum-panel rounded-2xl p-5 border-cyan-500/10">
         <div className="flex items-center gap-3 mb-3">
           <span className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center text-sm">📋</span>
-          <h3 className="text-base font-bold text-white">Signal Track Record</h3>
+          <h3 className="text-base font-bold text-white">ML Model Backtest</h3>
           <span className="ml-auto badge bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px]">PRO</span>
         </div>
         <div className="text-center py-8">
@@ -50,7 +50,7 @@ export function SignalTrackRecord() {
     <div className="quantum-panel rounded-2xl p-5 border-emerald-500/10 animate-fade-in-up">
       <div className="flex items-center gap-3 mb-4">
         <span className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center text-sm">📋</span>
-        <h3 className="text-base font-bold text-white">Signal Track Record</h3>
+        <h3 className="text-base font-bold text-white">ML Model Backtest</h3>
         <span className="ml-auto badge bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px]">ML VALIDATED</span>
       </div>
 

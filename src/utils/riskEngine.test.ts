@@ -7,6 +7,7 @@ import {
   runStressTests,
   analyzeConcentrationRisk,
   suggestPositionSize,
+  calculatePortfolioRisk,
 } from './riskEngine';
 import { Position, PriceData } from '../types';
 
@@ -99,5 +100,38 @@ describe('suggestPositionSize', () => {
       { symbol: 'BBB', volatility: 0 },
     ]);
     expect(result[0].suggestedAmount).toBe(5000);
+  });
+});
+
+describe('calculatePortfolioRisk (v5.0 unified engine)', () => {
+  const positions: Position[] = [
+    { id: '1', symbol: 'SMH', qty: 10, avgPrice: 100, market: 'US', dateAdded: '2024-01-01', leverage: 1 },
+    { id: '2', symbol: 'JUNIORBEES', qty: 50, avgPrice: 50, market: 'IN', dateAdded: '2024-01-01', leverage: 1 },
+  ];
+  const prices: Record<string, PriceData> = {
+    'US_SMH': { price: 90, change: -3, high: 95, low: 88, volume: 0, rsi: 22, market: 'US', tvExchange: 'NASDAQ', tvExactSymbol: 'SMH', time: Date.now() },
+    'IN_JUNIORBEES': { price: 52, change: 1, high: 53, low: 51, volume: 0, rsi: 55, market: 'IN', tvExchange: 'NSE', tvExactSymbol: 'JUNIORBEES', time: Date.now() },
+  };
+
+  it('computes full RiskMetrics without crashing', () => {
+    const m = calculatePortfolioRisk(positions, prices, 84);
+    expect(m.portfolioVaR.confidence).toBe(95);
+    expect(m.portfolioVaR.amount).toBeGreaterThanOrEqual(0);
+    expect(m.portfolioCVaR.amount).toBeGreaterThanOrEqual(0);
+    expect(m.currentDrawdown.percent).toBeGreaterThanOrEqual(0);
+    expect(m.maxDrawdown.percent).toBeGreaterThanOrEqual(m.currentDrawdown.percent);
+    expect(m.concentrationRisk.topHolding).toBe('SMH'); // 10×90×84 INR > 50×52 INR
+    expect(m.concentrationRisk.topPct).toBeGreaterThan(0);
+    expect(m.riskScore).toBeGreaterThanOrEqual(0);
+    expect(m.riskScore).toBeLessThanOrEqual(100);
+    expect(m.alerts.length).toBeGreaterThan(0); // oversold RSI 28 → INFO alert
+    expect(m.alerts.some(a => a.type === 'RSI')).toBe(true);
+  });
+
+  it('handles empty portfolio safely', () => {
+    const m = calculatePortfolioRisk([], {}, 84);
+    expect(m.riskScore).toBeGreaterThanOrEqual(0);
+    expect(m.portfolioVaR.amount).toBe(0);
+    expect(m.concentrationRisk.topHolding).toBe('N/A');
   });
 });

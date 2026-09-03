@@ -72,31 +72,11 @@ export async function fetchMLPrediction(symbol: string, market: string, price?: 
   });
 }
 
-export async function fetchAllMLSignals(portfolio?: any[], livePrices?: Record<string, any>): Promise<{ signals: MLPrediction[]; count: number }> {
-  return mlFetch('/signals', {
-    method: 'POST',
-    body: JSON.stringify({ portfolio: portfolio || [], livePrices: livePrices || {} }),
-  });
-}
-
 export async function fetchMLBacktest(symbol?: string, candles?: any[]): Promise<MLBacktestResult> {
   return mlFetch('/backtest', {
     method: 'POST',
     body: JSON.stringify({ symbol, candles: candles || [] }),
   });
-}
-
-export async function fetchMLPricePoints(symbol: string, price?: number): Promise<any> {
-  const params = price ? `?price=${price}` : '';
-  return mlFetch(`/pricepoints/${encodeURIComponent(symbol)}${params}`);
-}
-
-export async function triggerMLTraining(): Promise<any> {
-  return mlFetch('/train', { method: 'POST', body: '{}' });
-}
-
-export async function refreshMLData(): Promise<any> {
-  return mlFetch('/refresh', { method: 'POST', body: '{}' });
 }
 
 export async function fetchMLRegime(nifty?: any, bankNifty?: any, vix?: any): Promise<{

@@ -639,45 +639,6 @@ export function registerIntradayRoutes(app, deps) {
   });
 
   // ----------------------------------------------------------
-  // v4 — SIGNAL DETAIL: full dual-expert analysis for one symbol.
-  // Serves the last scan's structured AI reasoning (Gemini + Groq),
-  // grade, entry-quality, risk factors and adjusted levels.
-  // ----------------------------------------------------------
-  app.get('/api/intraday-signal-detail/:symbol', (req, res) => {
-    const sym = String(req.params.symbol || '').trim().toUpperCase();
-    if (!/^[A-Z0-9&\-]{2,15}$/.test(sym)) return jsonError(res, 400, 'Valid symbol required.');
-    const scan = _intradayCache.data?.signals?.find(x => x.symbol === sym)
-      ? _intradayCache.data
-      : _cryptoCache.data;
-    const s = scan?.signals?.find(x => x.symbol === sym);
-    if (!s) {
-      return jsonError(res, 404, `No live signal for ${sym} — scanner cache me nahi hai (market band / filtered out ho sakta hai).`);
-    }
-    res.set('Cache-Control', 'no-store');
-    res.json({
-      ok: true,
-      asOf: scan.asOf,
-      signal: {
-        symbol: s.symbol, direction: s.direction, grade: s.grade,
-        confidence: s.confidence, quantConfidence: s.quantConfidence,
-        aiConfidence: s.aiConfidence, aiModel: s.aiModel, aiNote: s.aiNote,
-        tradeType: s.tradeType ?? null,
-        entryQuality: s.entryQuality ?? null,
-        aiReasoning: s.aiReasoning || '',
-        riskFactors: s.riskFactors || [],
-        geminiVerdict: s.geminiVerdict ?? null,
-        groqVerdict: s.groqVerdict ?? null,
-        entry: s.entry, stopLoss: s.stopLoss, target1: s.target1, target2: s.target2,
-        aiAdjustedSL: s.aiAdjustedSL ?? null,
-        aiAdjustedEntry: s.aiAdjustedEntry ?? null,
-        rr: s.rr, effRR: s.effRR, adx: s.adx, rsi: s.rsi,
-        volumeRatio: s.volumeRatio, vwapDist: s.vwapDist,
-        counterTrend: !!s.counterTrend, reasons: s.reasons || [],
-      },
-    });
-  });
-
-  // ----------------------------------------------------------
   // PRO TRADER MCP AGENT — POST /api/intraday-agent
   // Agentic chat with live tool access (auth required — AI cost).
   // ----------------------------------------------------------

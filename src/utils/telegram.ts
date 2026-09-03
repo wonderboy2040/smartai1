@@ -11,20 +11,34 @@ import { computeUnifiedEntry } from './entryPriceEngine';
 // builds). Use `Intl.DateTimeFormat.formatToParts` and read weekday/hour/minute
 // explicitly so the parser is robust across Node/V8 versions.
 function getTimeInZone(tz: string): { h: number; m: number; day: number } {
-  const now = new Date();
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
-  });
-  const parts = fmt.formatToParts(now);
+  // v5.0 perf: Intl.DateTimeFormat construction costs ~0.1-1ms and this
+  // helper fires on EVERY WebSocket price message and EVERY market-status
+  // render (tvWebsocket.validatePrice + Dashboard header). Hoist the
+  // formatters to module scope and memoize per-tz results for 30s — far
+  // finer than any market-open boundary the callers care about.
+  const nowMs = Date.now();
+  const cached = _tzCache[tz];
+  if (cached && nowMs - cached.at < 30_000) return cached.val;
+  if (!_tzFormatters[tz]) {
+    _tzFormatters[tz] = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+  }
+  const parts = _tzFormatters[tz].formatToParts(new Date(nowMs));
   const get = (type: string) => parts.find(p => p.type === type)?.value || '';
   const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  const day = dayMap[get('weekday').substring(0, 3)] ?? now.getDay();
+  const d = new Date(nowMs);
+  const day = dayMap[get('weekday').substring(0, 3)] ?? d.getDay();
   // hour can be "24" in some environments for midnight; normalize to 0.
   let h = parseInt(get('hour'), 10);
   if (isNaN(h) || h === 24) h = 0;
   const m = parseInt(get('minute'), 10) || 0;
-  return { h, m, day };
+  const val = { h, m, day };
+  _tzCache[tz] = { at: nowMs, val };
+  return val;
 }
+const _tzFormatters: Record<string, Intl.DateTimeFormat> = {};
+const _tzCache: Record<string, { at: number; val: { h: number; m: number; day: number } }> = {};
 
 export function isIndiaMarketOpen(): boolean {
   const { h, m, day } = getTimeInZone('Asia/Kolkata');
