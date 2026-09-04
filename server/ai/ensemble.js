@@ -319,3 +319,72 @@ export function fitPlanToRiskCap(signal, maxRiskPct = 5) {
     note: `risk auto-fitted ${r2(riskPct)}% → ${r2(maxRiskPct)}% cap (SL tightened, targets re-derived)`,
   };
 }
+
+/**
+ * v6.6 — MAX SANE LEVERAGE for a given stop distance.
+ *
+ * With isolated-margin leverage L, the liquidation sits roughly at
+ * 0.95/L away from entry (0.95 = conservative 5% maintenance buffer).
+ * If that distance is SMALLER than the stop-loss distance the SL is
+ * dead code — the exchange liquidates first and the "risk-managed"
+ * plan is fiction. This returns the largest L (1..maxCap) that keeps
+ * liquidation OUTSIDE the stop:
+ *      0.95 / L ≥ stopDistPct / 100   →   L ≤ 95 / stopDistPct
+ * A 5% stop → L ≤ 19 (capped by config), a 10% stop → L ≤ 9.
+ */
+export function maxSaneLeverage(stopDistPct, maxCap = 10) {
+  const pct = Number(stopDistPct);
+  const cap = Math.max(1, Math.min(20, Number(maxCap) || 10));
+  if (!Number.isFinite(pct) || !(pct > 0)) return 1;
+  return Math.max(1, Math.min(cap, Math.floor(95 / pct)));
+}
+
+/**
+ * v6.6 — LEVERAGE VIEW (the one honest number set for a leveraged trade).
+ *
+ * Pure math shared by the execute path and the ticket preview (the
+ * frontend mirrors it — one source of truth for the FORMULAS, the
+ * server recomputes everything at execute time and wins).
+ *
+ * Liquidation estimate (isolated margin, documented approximation):
+ *   LONG  liq ≈ entry × (1 − 0.95/L)     SHORT liq ≈ entry × (1 + 0.95/L)
+ * The 0.95 factor bakes in a conservative ~5% maintenance margin so
+ * the estimate triggers EARLY rather than late. It is an ESTIMATE —
+ * the exchange's exact maintenance tiers differ per pair.
+ *
+ *   qty       = margin × L / entry          (notional = margin × L)
+ *   riskINR   = qty × |entry − SL|          (scales with L — honest!)
+ *   effRiskOnMargin = riskINR / margin      (5% stop @ 10x = 50%)
+ *   liqBeforeSl     = liquidation closer than the SL → SL is fiction
+ */
+export function computeLeverageView({ side, entry, stopLoss, target2, marginINR, leverage }) {
+  const e = Number(entry), sl = Number(stopLoss), t2 = Number(target2);
+  const margin = Number(marginINR);
+  const L = Math.max(1, Math.floor(Number(leverage) || 1));
+  if (!(e > 0) || !(margin > 0) || !(sl > 0)) return null;
+  const long = String(side).toUpperCase() !== 'SHORT';
+  if (long !== (sl < e)) return null; // SL on the wrong side — unusable
+
+  const notionalINR = margin * L;
+  const qty = notionalINR / e;
+  const slDist = Math.abs(e - sl);
+  const t2Dist = t2 > 0 ? Math.abs(t2 - e) : null;
+  const liquidation = r2(long ? e * (1 - 0.95 / L) : e * (1 + 0.95 / L));
+  const liqDist = Math.abs(e - liquidation);
+  const slDistPct = r2((slDist / e) * 100);
+
+  return {
+    leverage: L,
+    marginINR: r2(margin),
+    notionalINR: r2(notionalINR),
+    qty: r2(qty),
+    liquidation,
+    liqDistPct: r2((liqDist / e) * 100),
+    slDistPct,
+    riskINR: r2(qty * slDist),
+    rewardT2INR: t2Dist != null ? r2(qty * t2Dist) : null,
+    effRiskOnMarginPct: r2((slDist / e) * 100 * L), // ₹ risk as % of margin
+    liqBeforeSl: liqDist < slDist,
+    maxSaneLeverage: maxSaneLeverage(slDistPct),
+  };
+}

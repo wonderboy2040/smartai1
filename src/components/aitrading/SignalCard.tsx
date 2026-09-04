@@ -4,17 +4,18 @@
 // One consensus signal, expanded: confidence gauge, trade plan,
 // every model's vote with reasons, AI Council note.
 //
-// v6.4 —
-//   • INDIA: 📋 TRADE SLIP — risk-based position sizing (qty from
-//     YOUR ₹ risk budget ÷ stop distance), capital needed, ₹ P&L
-//     at T1/T2, order-type guidance (LIMIT band / SL-M trigger /
-//     square-off 15:15) and one-tap COPY for the broker terminal.
-//     This answers "India me trade kaisa lein" on the card itself.
-//   • CRYPTO: order preview (₹ budget → qty → ₹ risk at SL, ₹
-//     reward at T2) + risk-auto-fit transparency chip when the
-//     structural ATR stop was fitted to the configured cap.
-//   • PAPER always available; LIVE only for STRONG + executable
-//     crypto signals.
+// v6.6 SIMPLE TRADE —
+//   • 🚀 TRADE button on every actionable card opens the SIMPLE TRADE
+//     TICKET: one screen with everything pre-computed to TAKE the
+//     trade — size input, qty, ₹ risk @ SL, ₹ reward @ T2, R:R — and
+//     one-click PAPER / LIVE execute. The math MIRRORS the server
+//     (qty = budget÷price, leverage notional, liquidation est.) so the
+//     preview you see is the position you get.
+//   • CRYPTO LEVERAGE: chips 1x..10x (server-clamped ceiling),
+//     liquidation estimate + "liquidation fires before your SL"
+//     warning with the max-sane-leverage hint, honest ₹-risk scaling.
+//   • v6.4 features kept: India manual-broker trade slip, crypto order
+//     preview, risk-auto-fit transparency chips.
 // ============================================================
 import { memo, useCallback, useEffect, useState } from 'react';
 import type { AISignal, Side } from './types';
@@ -210,11 +211,206 @@ function CryptoOrderPreview({ signal, budgetINR }: { signal: AISignal; budgetINR
   );
 }
 
+// ---------------- v6.6: THE SIMPLE TRADE TICKET ----------------
+// One screen. Everything pre-computed. One click.
+// The math MIRRORS the server execute path so the preview IS the fill:
+//   crypto: qty = (margin × leverage) / entry   [server floors to pair precision]
+//   india:  qty = floor(budget / price)          [whole shares]
+type ExecHandler = (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; leverage?: number }) => void;
+
+interface TicketProps {
+  signal: AISignal;
+  busy?: boolean;
+  onExecute?: ExecHandler;          // crypto gauntlet
+  onExecuteIndia?: ExecHandler;     // india gauntlet
+  canLive?: boolean;
+  canLiveIndia?: boolean;
+  /** v6.6: server config cryptoLeverage (the hard ceiling) */
+  maxLeverage?: number;
+  /** default margin (crypto) / capital budget (india) from server config */
+  defaultBudgetINR?: number;
+}
+
+function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, canLive, canLiveIndia, maxLeverage = 1, defaultBudgetINR = 1000 }: TicketProps) {
+  const plan = signal.plan!;
+  const crypto = signal.market === 'CRYPTO';
+  const india = signal.market === 'INDIA';
+  const long = signal.side === 'LONG';
+  const cap = Math.max(1, Math.min(10, Math.floor(maxLeverage || 1)));
+
+  const [margin, setMargin] = useState<number>(Math.max(100, Math.round(defaultBudgetINR)));
+  const [lev, setLev] = useState<number>(1);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // --- CRYPTO math (mirror of server executeSignal) ---
+  const notional = crypto ? margin * lev : margin;
+  const qtyRaw = crypto ? notional / plan.entry : margin / plan.entry;
+  const qty = crypto ? qtyRaw : Math.floor(qtyRaw);           // india: whole shares (server)
+  const stopDist = Math.abs(plan.entry - plan.stopLoss);
+  const t1Dist = Math.abs(plan.target1 - plan.entry);
+  const t2Dist = Math.abs(plan.target2 - plan.entry);
+  const riskINR = qty * stopDist;
+  const rewardT1 = qty * t1Dist;
+  const rewardT2 = qty * t2Dist;
+  const rr = riskINR > 0 ? rewardT2 / riskINR : 0;
+  const liquidation = crypto && lev > 1 ? plan.entry * (long ? 1 - 0.95 / lev : 1 + 0.95 / lev) : null;
+  const liqDistPct = liquidation != null ? (Math.abs(plan.entry - liquidation) / plan.entry) * 100 : null;
+  const slDistPct = (stopDist / plan.entry) * 100;
+  const liqBeforeSl = liqDistPct != null && liqDistPct < slDistPct;
+  const maxSane = Math.max(1, Math.min(cap, Math.floor(95 / slDistPct)));
+  const effRiskOnMargin = crypto ? slDistPct * lev : null;
+
+  const onMargin = (v: string) => {
+    const n = Math.max(100, Math.min(1_000_000, Math.round(Number(v) || 0)));
+    setMargin(n);
+    setResult(null);
+  };
+  const pickLev = (l: number) => { setLev(l); setResult(null); };
+
+  const exec = (mode: 'paper' | 'live') => {
+    const handler = crypto ? onExecute : onExecuteIndia;
+    if (!handler) return;
+    const opts = crypto
+      ? { qtyINR: margin, ...(lev > 1 ? { leverage: lev } : {}) }
+      : { qtyINR: margin };
+    handler(signal, mode, opts);
+    // result feedback comes via the parent toast; ticket shows a local ack
+    setResult({ ok: true, text: mode === 'live'
+      ? `⚡ LIVE order request bheja gaya — ${qty < 1 ? qty.toFixed(6) : qty} ${crypto ? 'units' : 'shares'} @ ₹${plan.entry}${crypto && lev > 1 ? ` · ${lev}x` : ''} (console me position confirm karo)`
+      : `🧪 PAPER position khula — ${qty < 1 ? qty.toFixed(6) : qty} ${crypto ? 'units' : 'shares'} @ ₹${plan.entry}${crypto && lev > 1 ? ` · ${lev}x margin` : ''} · watcher SL/TP manage karega` });
+    setTimeout(() => setResult(null), 8000);
+  };
+
+  const canLiveHere = crypto ? canLive : canLiveIndia;
+
+  return (
+    <div className={`mt-2.5 rounded-xl border p-3 ${crypto
+      ? 'border-cyan-500/30 bg-gradient-to-b from-cyan-500/[0.08] to-transparent'
+      : 'border-orange-500/30 bg-gradient-to-b from-orange-500/[0.08] to-transparent'}`} aria-label="simple trade ticket">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className={`text-[10px] font-black tracking-wider ${crypto ? 'text-cyan-300' : 'text-orange-300'}`}>
+          🚀 SIMPLE TRADE TICKET — {signal.symbol} {signal.side}
+        </span>
+        <span className="text-[9px] text-slate-500">{crypto ? 'margin ₹ (leverage apni lag raha hai)' : 'capital budget ₹'}</span>
+      </div>
+
+      {/* size + leverage inputs */}
+      <div className="flex items-center gap-2 flex-wrap mt-2">
+        <label className="flex items-center gap-1.5 text-[9px] font-black text-slate-500 tracking-wider">
+          {crypto ? 'MARGIN ₹' : 'BUDGET ₹'}
+          <input
+            type="number" min={100} max={1000000} step={50}
+            value={margin} onChange={e => onMargin(e.target.value)}
+            className="quantum-input px-2 py-1 rounded-lg text-[11px] font-mono font-bold text-white w-24"
+            aria-label={crypto ? 'margin in rupees' : 'capital budget in rupees'} />
+        </label>
+        {crypto && (
+          <div className="flex items-center gap-1" role="group" aria-label="leverage selector">
+            <span className="text-[9px] font-black text-slate-500 tracking-wider">LEVERAGE</span>
+            {[1, 2, 3, 5, 10].filter(l => l <= cap).map(l => (
+              <button key={l} onClick={() => pickLev(l)} disabled={l > maxSane && l > 1}
+                title={l > maxSane && l > 1 ? `${l}x par liquidation SL se pehle fire hogi (max sane ${maxSane}x)` : `${l}x — notional ${fmt(margin * l, 0)}`}
+                className={`px-2 py-1 rounded-lg text-[10px] font-black font-mono border transition-colors disabled:opacity-30 ${lev === l
+                  ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400/60'
+                  : 'bg-black/30 text-slate-400 border-slate-600/40 hover:bg-cyan-500/10'}`}>
+                {l}x
+              </button>
+            ))}
+            {cap < 10 && <span className="text-[9px] text-slate-600">(max {cap}x — Risk settings)</span>}
+          </div>
+        )}
+      </div>
+
+      {/* the pre-computed numbers — preview IS the fill */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mt-2">
+        {[
+          { l: 'QTY', v: qty < 1 ? qty.toFixed(6) : String(qty), c: 'text-white' },
+          { l: crypto ? 'NOTIONAL' : 'CAPITAL USED', v: fmt(qty * plan.entry, 0), c: 'text-cyan-300' },
+          { l: '₹ RISK @ SL', v: `−${fmt(riskINR, 0)}`, c: 'text-red-300' },
+          { l: '₹ PROFIT @ T2', v: `+${fmt(rewardT2, 0)}`, c: 'text-emerald-300' },
+        ].map(x => (
+          <div key={x.l} className="bg-black/30 rounded-lg px-2 py-1.5 text-center">
+            <div className="text-[8px] text-slate-500 font-black tracking-wider">{x.l}</div>
+            <div className={`text-xs font-mono font-bold ${x.c}`}>{x.v}</div>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-3 mt-1.5 text-[10px] font-mono font-bold flex-wrap">
+        <span className="text-slate-500">ENTRY <span className="text-cyan-300">₹{plan.entry.toLocaleString('en-IN')}</span></span>
+        <span className="text-slate-500">SL <span className="text-red-300">₹{plan.stopLoss.toLocaleString('en-IN')}</span> (−{slDistPct.toFixed(2)}%)</span>
+        <span className="text-slate-500">T1 <span className="text-emerald-300">+{fmt(rewardT1, 0)}</span></span>
+        <span className="text-slate-500">T2 <span className="text-emerald-300">+{fmt(rewardT2, 0)}</span></span>
+        <span className="text-amber-300">R:R 1:{rr.toFixed(1)}</span>
+      </div>
+
+      {/* leverage honesty block */}
+      {crypto && lev > 1 && (
+        <div className="mt-2 space-y-1.5">
+          <div className="flex gap-2 flex-wrap text-[10px] font-mono font-bold">
+            <span className="px-1.5 py-0.5 rounded bg-black/30 text-cyan-300">{lev}x · margin {fmt(margin, 0)} → notional {fmt(margin * lev, 0)}</span>
+            {liquidation != null && <span className="px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-300">≈ LIQUIDATION ₹{liquidation.toLocaleString('en-IN', { maximumFractionDigits: 2 })} (−{liqDistPct!.toFixed(1)}%)</span>}
+            {effRiskOnMargin != null && <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300">SL hit = −{effRiskOnMargin.toFixed(0)}% of margin</span>}
+          </div>
+          {liqBeforeSl ? (
+            <div className="px-2.5 py-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-[10px] font-bold text-red-300 leading-relaxed">
+              ⚠️ {lev}x par liquidation (−{liqDistPct!.toFixed(1)}%) tumhare SL (−{slDistPct.toFixed(1)}%) se <b>PEHLE</b> fire hogi — plan ka SL kabhi execute hi nahi hoga.
+              LIVE reject hoga; PAPER me server leverage auto-reduce kar dega. Max sane: <b>{maxSane}x</b>.
+            </div>
+          ) : (
+            <div className="px-2.5 py-1.5 rounded-lg bg-black/20 text-[10px] font-bold text-slate-400 leading-relaxed">
+              ✅ Liquidation (−{liqDistPct!.toFixed(1)}%) SL (−{slDistPct.toFixed(1)}%) se door hai — SL pehle fire hoga, plan kaam karega.
+            </div>
+          )}
+        </div>
+      )}
+      {crypto && lev > 1 && (
+        <div className="mt-1 text-[9px] text-slate-600 leading-relaxed">
+          LIVE mode me {lev}x order CoinDCX MARGIN API (B-pair) se jaata hai — exit watcher <b>margin exit_positions</b> se karega. Liquidation estimate hai (maintenance ~5% buffer) — exact level exchange tiers par depend karta hai.
+        </div>
+      )}
+      {india && qty < 1 && (
+        <div className="mt-2 px-2.5 py-1.5 rounded-lg bg-amber-500/5 border border-amber-500/20 text-[10px] font-bold text-amber-300/90">
+          ⚠️ Budget ₹{margin} par 1 share bhi nahi aati (₹{plan.entry.toLocaleString('en-IN')}/share) — PAPER me server 1-share practice position bana dega, LIVE honestly reject karega. Budget badhao ya India Max ₹ settings me.
+        </div>
+      )}
+
+      {/* ONE-CLICK execute */}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button onClick={() => exec('paper')} disabled={busy}
+          className={`quantum-btn-primary px-4 py-2 rounded-xl text-xs font-black disabled:opacity-50 ${crypto ? 'bg-gradient-to-r from-cyan-600 to-indigo-600' : 'bg-gradient-to-r from-orange-600 to-amber-600'}`}>
+          🧪 PAPER EXECUTE{crypto && lev > 1 ? ` · ${lev}x` : ''}
+        </button>
+        {signal.grade === 'STRONG' && (crypto ? signal.executable : true) && (
+          <button onClick={() => exec('live')} disabled={busy || !canLiveHere}
+            title={canLiveHere ? 'REAL order — saare gates server-side re-verify honge' : 'STRONG hai — console me LIVE arm karo (Dhan connect for India)'}
+            className="px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            ⚡ LIVE EXECUTE{crypto && lev > 1 ? ` · ${lev}x` : ''}
+          </button>
+        )}
+        {signal.grade !== 'STRONG' && (
+          <span className="text-[10px] text-slate-500 self-center px-1">LIVE locked — needs STRONG (75%+ conf, 70%+ agreement)</span>
+        )}
+      </div>
+
+      {result && (
+        <div className={`mt-2 px-2.5 py-2 rounded-lg text-[10px] font-bold leading-relaxed ${result.ok ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300' : 'bg-red-500/10 border border-red-500/30 text-red-300'}`}>
+          {result.text}
+        </div>
+      )}
+
+      {/* 3-line how-it-runs */}
+      <div className="mt-2 text-[9px] text-slate-500 leading-relaxed bg-black/20 rounded-lg px-2.5 py-2">
+        <b className="text-slate-400">Kaise chalega:</b> ① {long ? 'BUY' : 'SELL'} entry market/limit @ <b>₹{plan.entry.toLocaleString('en-IN')}</b>{crypto && lev > 1 ? ` (${lev}x margin)` : ''} → ② SL <b className="text-red-400">₹{plan.stopLoss.toLocaleString('en-IN')}</b> + T1/T2 watcher khud track karega{crypto ? ' (trailing SL ON)' : ' (trailing + 15:15 square-off)'} → ③ position <b>03 Execution Console</b> me manage hota hai — CLOSE button kabhi bhi.
+      </div>
+    </div>
+  );
+}
+
 interface Props {
   signal: AISignal;
   busy?: boolean;
-  onExecute?: (signal: AISignal, mode: 'paper' | 'live') => void;
-  onExecuteIndia?: (signal: AISignal, mode: 'paper' | 'live') => void;
+  onExecute?: (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; leverage?: number }) => void;
+  onExecuteIndia?: (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; leverage?: number }) => void;
   onDeep?: (signal: AISignal) => void;
   canLive?: boolean;
   canLiveIndia?: boolean;
@@ -223,11 +419,16 @@ interface Props {
   orderBudgetINR?: number;
   /** v6.4: the risk cap the board plans were built within. */
   riskCapPct?: number;
+  /** v6.6: crypto leverage ceiling from server config (default 1). */
+  maxLeverage?: number;
+  /** v6.6: India default capital budget (indiaMaxOrderINR). */
+  indiaBudgetINR?: number;
 }
 
-export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, onExecuteIndia, onDeep, canLive, canLiveIndia, isNew, orderBudgetINR, riskCapPct }: Props) {
+export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, onExecuteIndia, onDeep, canLive, canLiveIndia, isNew, orderBudgetINR, riskCapPct, maxLeverage, indiaBudgetINR }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [slipOpen, setSlipOpen] = useState(false);
+  const [ticketOpen, setTicketOpen] = useState(false);
   const g = gradeBadge(signal.grade);
   const long = signal.side === 'LONG';
   const actionable = signal.grade === 'STRONG' || signal.grade === 'ACTION';
@@ -274,6 +475,16 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
           </div>
         </div>
         <div className="flex gap-1.5">
+          {(onExecute || onExecuteIndia) && plan && actionable && (
+            <button onClick={() => setTicketOpen(v => !v)}
+              title="Size, ₹ risk/reward, leverage (crypto) — sab pre-computed, one-click execute"
+              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border-2 transition-all ${ticketOpen
+                ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400/60'
+                : 'bg-gradient-to-r from-cyan-600/80 to-indigo-600/80 text-white border-cyan-400/40 hover:from-cyan-500 hover:to-indigo-500'}`}
+              aria-expanded={ticketOpen}>
+              {ticketOpen ? '▲ Ticket' : '🚀 TRADE'}
+            </button>
+          )}
           {signal.market === 'INDIA' && plan && (
             <button onClick={() => setSlipOpen(v => !v)} disabled={!actionable && !slipOpen}
               title={actionable ? 'Risk-sized order slip with entry/SL/targets — copy to your broker terminal' : 'Trade slips are for ACTION/STRONG signals'}
@@ -324,6 +535,16 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
         </>
       )}
 
+      {/* v6.6: SIMPLE TRADE TICKET (both desks) */}
+      {ticketOpen && plan && actionable && (onExecute || onExecuteIndia) && (
+        <SimpleTradeTicket
+          signal={signal} busy={busy}
+          onExecute={onExecute} onExecuteIndia={onExecuteIndia}
+          canLive={canLive} canLiveIndia={canLiveIndia}
+          maxLeverage={signal.market === 'CRYPTO' ? (maxLeverage ?? 1) : 1}
+          defaultBudgetINR={signal.market === 'CRYPTO' ? orderBudgetINR : (indiaBudgetINR ?? 5000)} />
+      )}
+
       {/* v6.4: India trade slip (manual broker flow) */}
       {signal.market === 'INDIA' && slipOpen && plan && (
         <IndiaTradeSlip signal={signal} />
@@ -371,7 +592,7 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
       )}
 
       {/* Execution buttons (crypto — CoinDCX gauntlet) */}
-      {signal.market === 'CRYPTO' && onExecute && (
+      {signal.market === 'CRYPTO' && onExecute && !ticketOpen && (
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             onClick={() => onExecute(signal, 'paper')}
@@ -395,7 +616,7 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
       )}
 
       {/* Execution buttons (India — Dhan gauntlet, v6.5) */}
-      {signal.market === 'INDIA' && onExecuteIndia && actionable && (
+      {signal.market === 'INDIA' && onExecuteIndia && actionable && !ticketOpen && (
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             onClick={() => onExecuteIndia(signal, 'paper')}

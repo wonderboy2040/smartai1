@@ -130,12 +130,11 @@ function IndiaHowToTrade() {
           </p>
         </div>
         <div className="bg-black/25 rounded-xl p-2.5">
-          <div className="text-[10px] font-black text-orange-300 mb-1">② 📋 SLIP KHOLO — qty + levels ready</div>
+          <div className="text-[10px] font-black text-orange-300 mb-1">② 🚀 TRADE TICKET — one-click, sab pre-computed</div>
           <p className="text-slate-400">
-            Card par <b className="text-orange-300">📋 Slip</b> button dabao — risk ₹ ke hisaab se
-            <b> qty, capital, SL-M trigger, T1/T2, limit band</b> sab calculate ho jaata hai.
-            <b className="text-orange-300"> COPY SLIP</b> dabao aur broker terminal (Zerodha/Upstox) me wahi levels daalo.
-            <span className="text-cyan-300"> v6.5: <b>PAPER TRADE</b> button se practice position bhi khul jaata hai (watcher SL/TP + trailing + 15:15 square-off manage karega).</span>
+            Card par <b className="text-cyan-300">🚀 TRADE</b> button dabao — <b>budget ₹ daalo, qty + ₹ risk @ SL + ₹ profit @ T2 + R:R sab instant</b>
+            calculate ho jaata hai (same math server use karta hai). <b className="text-cyan-300">PAPER EXECUTE</b> one-click practice (watcher SL/TP + trailing + 15:15 square-off manage karega).
+            Manual broker chahiye? <b className="text-orange-300">📋 Slip</b> button me risk-sized order slip + COPY for Zerodha/Upstox.
           </p>
         </div>
         <div className="bg-black/25 rounded-xl p-2.5">
@@ -249,20 +248,21 @@ export default memo(function AITradingTab() {
     setTimeout(() => setToast(null), 6000);
   }, []);
 
-  const onExecute = useCallback(async (signal: AISignal, mode: 'paper' | 'live') => {
-    const r = await executeSignal(signal, mode);
+  const onExecute = useCallback(async (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; leverage?: number }) => {
+    const r = await executeSignal(signal, mode, opts);
     if (r.ok) {
+      const levTag = r.filled?.leverage ? ` · ${r.filled.leverage}x margin (₹${Math.round(r.filled.marginINR ?? 0)})` : '';
       notify(true, mode === 'live'
-        ? `✅ LIVE order placed — ${signal.symbol} ${signal.side} · qty ${r.filled?.qty} @ ₹${r.filled?.price}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`
-        : `🧪 Paper trade opened — ${signal.symbol} ${signal.side} · qty ${r.filled?.qty} @ ₹${r.filled?.price}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
+        ? `✅ LIVE order placed — ${signal.symbol} ${signal.side} · qty ${r.filled?.qty} @ ₹${r.filled?.price}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`
+        : `🧪 Paper trade opened — ${signal.symbol} ${signal.side} · qty ${r.filled?.qty} @ ₹${r.filled?.price}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
     } else {
       notify(false, `⛔ ${r.error || 'execution failed'}`);
     }
   }, [executeSignal, notify]);
 
   // v6.5: India gauntlet (Dhan paper/live) — same handler shape.
-  const onExecuteIndia = useCallback(async (signal: AISignal, mode: 'paper' | 'live') => {
-    const r = await executeIndia(signal, mode);
+  const onExecuteIndia = useCallback(async (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; leverage?: number }) => {
+    const r = await executeIndia(signal, mode, opts);
     if (r.ok) {
       notify(true, mode === 'live'
         ? `✅ Dhan LIVE order placed — ${signal.symbol} ${signal.side} · ${r.filled?.qty} shares @ ₹${r.filled?.price} · broker SL-M armed · 15:15 square-off${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`
@@ -332,7 +332,7 @@ export default memo(function AITradingTab() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-black gradient-text-cyan tracking-wide">SUPERINTELLIGENCE AI TRADING TERMINAL</h2>
-              <span className="quantum-badge">v6.5</span>
+              <span className="quantum-badge">v6.6</span>
             </div>
             <p className="text-[10px] text-slate-500 mt-0.5">
               9-model ensemble consensus · MCP model bus · {models.filter(m => m.online).length}/{models.length || 9} models online
@@ -400,7 +400,8 @@ export default memo(function AITradingTab() {
           {visibleSignals.map(s => (
             <SignalCard key={`${s.market}-${s.symbol}`} signal={s} busy={busy} onExecute={onExecute} onExecuteIndia={onExecuteIndia} onDeep={onDeep}
               canLive={canLive} canLiveIndia={canLiveIndia} isNew={newSymbols.has(s.symbol)}
-              orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5} />
+              orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5}
+              maxLeverage={state?.config?.cryptoLeverage ?? 1} indiaBudgetINR={state?.config?.indiaMaxOrderINR ?? 5000} />
           ))}
           {board?.signals?.length === 0 && !loading && (
             <div className="quantum-panel rounded-2xl p-8 col-span-full text-center">
@@ -488,7 +489,8 @@ export default memo(function AITradingTab() {
             {!deep.loading && deep.signal && (
               <>
                 <SignalCard signal={deep.signal} onExecute={onExecute} onExecuteIndia={onExecuteIndia} canLive={canLive} canLiveIndia={canLiveIndia} busy={busy}
-                  orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5} />
+                  orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5}
+                  maxLeverage={state?.config?.cryptoLeverage ?? 1} indiaBudgetINR={state?.config?.indiaMaxOrderINR ?? 5000} />
                 {deep.indicators && (
                   <div className="mt-3 bg-black/25 rounded-xl p-3">
                     <div className="text-[10px] font-black text-slate-500 tracking-wider mb-2">LIVE INDICATOR SNAPSHOT</div>

@@ -65,7 +65,7 @@ try {
   const statusR = await fetch(`${BASE}/api/ai/status`, { headers: { cookie } });
   const status = await statusR.json();
   check('/api/ai/status ok', status.ok);
-  check('engine stamps v6.5', /v6\.5/.test(status.engine || ''), status.engine);
+  check('engine stamps v6.6', /v6\.6/.test(status.engine || ''), status.engine);
   check('status carries dhan + telegram blocks', typeof status.dhan?.connected === 'boolean' && typeof status.telegram?.configured === 'boolean');
 
   // ---- trading state: trail + india fields ----

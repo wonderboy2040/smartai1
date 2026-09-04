@@ -82,7 +82,7 @@ export function registerAITradingRoutes(app, deps) {
       ]);
       res.json({
         ok: true,
-        engine: 'SUPERINTELLIGENCE ENSEMBLE v6.5',
+        engine: 'SUPERINTELLIGENCE ENSEMBLE v6.6',
         models: board?.models || cryptoBoard?.models || [],
         aiCouncilOnline: (board?.models || []).some(m => m.id === 'aicouncil' && m.online),
         risk,
@@ -172,13 +172,16 @@ export function registerAITradingRoutes(app, deps) {
   // ---------------- THE EXECUTION GAUNTLET (crypto) ----------------
   app.post('/api/ai/execute', async (req, res) => {
     try {
-      const { symbol, side, mode, qtyINR } = req.body || {};
+      const { symbol, side, mode, qtyINR, leverage } = req.body || {};
       if (!symbol) return res.status(400).json({ ok: false, error: 'symbol required' });
       const result = await executeSignal({
         symbol: String(symbol).toUpperCase(),
         side: side ? String(side).toUpperCase() : undefined,
         mode: mode === 'live' ? 'live' : 'paper',
         qtyINR: qtyINR != null ? Number(qtyINR) : undefined,
+        // v6.6: leverage is CLAMPED server-side to config.cryptoLeverage —
+        // a client payload can never widen the ceiling
+        leverage: leverage != null ? Number(leverage) : undefined,
         getFreshSignal: (pair) => getFreshSignalForExec(pair, depsForSignals()),
         wantAuto: false,
         source: 'manual',
@@ -424,5 +427,5 @@ export function registerAITradingRoutes(app, deps) {
   }, 90_000);
   if (auto.unref) auto.unref();
 
-  console.log('[ai] Superintelligence Ensemble v6.5 — 9 models online · trailing SL · backtests · Telegram alerts · India Dhan gauntlet');
+  console.log('[ai] Superintelligence Ensemble v6.6 — 9 models online · trailing SL · backtests · Telegram alerts · India Dhan gauntlet · crypto leverage');
 }

@@ -183,6 +183,8 @@ export interface TradingConfig {
   trailEnabled: boolean;
   trailArmR: number;
   trailOffsetR: number;
+  /** v6.6: crypto margin leverage ceiling (1-10; 1 = spot only) */
+  cryptoLeverage?: number;
 }
 
 export interface JournalPosition {
@@ -213,6 +215,11 @@ export interface JournalPosition {
   unrealizedPnlINR?: number | null;
   exchangeOrderId?: string | null;
   slOrderId?: string | null;
+  /** v6.6: leverage fields (margin positions only; spot positions omit) */
+  leverage?: number;
+  marginINR?: number;
+  liquidation?: number | null;
+  marginPair?: string | null;
 }
 
 export interface JournalEntry {

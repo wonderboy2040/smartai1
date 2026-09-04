@@ -44,6 +44,11 @@ export const DEFAULT_CONFIG = {
   killSwitch: false,
   liveConfirmedAt: null,
   indiaLiveConfirmedAt: null,   // v6.5 — India arming is separate
+  // v6.6 CRYPTO LEVERAGE — CoinDCX margin. This is BOTH the default AND
+  // the hard ceiling for any request (server clamps, never trusts the
+  // client). 1 = spot only. Liquidation-vs-SL sanity is enforced on
+  // every leveraged execution (see ensemble.maxSaneLeverage).
+  cryptoLeverage: 3,
   // v6.5 TRAILING SL — winners run, stops ratchet (never loosen)
   trailEnabled: true,
   trailArmR: 1.0,               // arm once profit ≥ 1× initial risk
@@ -110,6 +115,7 @@ export function updateConfig(patch = {}) {
     next.indiaLiveConfirmedAt = Date.now();
   }
   if (patch.indiaMaxOrderINR != null) { const v = numeric(patch.indiaMaxOrderINR, 100, 500_000); if (v != null) next.indiaMaxOrderINR = v; }
+  if (patch.cryptoLeverage != null) { const v = numeric(patch.cryptoLeverage, 1, 10); if (v != null) next.cryptoLeverage = Math.round(v); }
   if (patch.onePositionPerPair != null) next.onePositionPerPair = !!patch.onePositionPerPair;
   if (patch.allowAuto != null) next.allowAuto = !!patch.allowAuto;
   if (patch.killSwitch != null) {
@@ -221,9 +227,70 @@ export async function roundQty(pair, qty) {
   return { qty: q, meta };
 }
 
+// ---------------- v6.6: CoinDCX margin (leverage) helpers ----------------
+// Margin orders live on a SEPARATE API family from spot:
+//   create  POST /exchange/v1/margin/orders               { side, pair: "B-BTC_INR", leverage, margin: {...} }
+//   exit    POST /exchange/v1/margin/orders/exit_positions { positions: [{ pair, side }] }
+// Spot pairs are "BTCINR"; margin pairs are "B-BTC_INR". The active-pairs
+// list is fetched (signed, 6h cache) when available to confirm the pair is
+// margin-enabled and learn its leverage limits; the B-<BASE>_INR naming is
+// CoinDCX's stable convention, so a failed/unreachable list falls back to it.
+let _marginPairsCache = null, _marginPairsAt = 0;
+async function getMarginPairName(pair, creds) {
+  const spotBase = String(pair).replace('INR', '').replace('USDT', '');
+  const conventional = `B-${spotBase}INR`;
+  if (!_marginPairsCache || Date.now() - _marginPairsAt > 6 * 3600_000) {
+    try {
+      const resp = await coindcxPrivate('/exchange/v1/margin/active_pairs', creds.apiKey, creds.secret, {});
+      const list = Array.isArray(resp) ? resp : (Array.isArray(resp?.pairs) ? resp.pairs : null);
+      if (list) { _marginPairsCache = list; _marginPairsAt = Date.now(); }
+    } catch { /* convention fallback below */ }
+  }
+  if (Array.isArray(_marginPairsCache)) {
+    const hit = _marginPairsCache.find(p => p && (p.pair === conventional || p.pair === pair || p.instrument === conventional));
+    if (hit) return { pair: String(hit.pair || conventional), listed: true };
+    // pair listed under a different naming shape? scan by base token
+    const byBase = _marginPairsCache.find(p => p && String(p.pair || p.instrument || '').includes(spotBase));
+    if (byBase) return { pair: String(byBase.pair || byBase.instrument), listed: true };
+  }
+  return { pair: conventional, listed: false };
+}
+
+function marginOrderBody({ marginPair, side, qty, leverage, marginINR }) {
+  const long = String(side).toUpperCase() !== 'SHORT';
+  return {
+    side: long ? 'buy' : 'sell',
+    pair: marginPair,
+    order_type: 'market_order',
+    total_quantity: String(qty),
+    leverage: Math.max(1, Math.floor(leverage)),
+    margin: {
+      margin_amount_short: long ? 0 : marginINR,
+      margin_currency_short: 'INR',
+      margin_amount_long: long ? marginINR : 0,
+      margin_currency_long: 'INR',
+      margin_amount_needed: marginINR,
+    },
+    hidden: true,
+    post_only: false,
+    time_in_force: 'good_till_cancel',
+  };
+}
+
+function marginExitBody({ marginPair, side }) {
+  // exit_positions keys off the POSITION's side (the side it was opened with)
+  return { positions: [{ pair: marginPair, side: String(side).toLowerCase() === 'short' ? 'sell' : 'buy' }] };
+}
+
 // ---------------- THE EXECUTION GAUNTLET ----------------
 /**
- * executeSignal({ symbol, side, mode, qtyINR, getFreshSignal, wantAuto })
+ * executeSignal({ symbol, side, mode, qtyINR, leverage, getFreshSignal, wantAuto })
+ *
+ * v6.6 LEVERAGE: `qtyINR` is the MARGIN (₹ you commit). With leverage L
+ * the notional = margin × L and the qty/₹-risk scale with it. The
+ * effective L is clamped server-side to [1, config.cryptoLeverage] — a
+ * client payload can never widen it. L=1 keeps the battle-tested spot
+ * path; L>1 routes LIVE orders through the CoinDCX margin API.
  *
  * getFreshSignal(symbol) MUST return a signal from a fresh ensemble
  * run (injected by routes.js to avoid circular imports) — client
@@ -231,7 +298,7 @@ export async function roundQty(pair, qty) {
  */
 export async function executeSignal(opts) {
   const {
-    symbol, side, mode, qtyINR, getFreshSignal, wantAuto = false, source = 'manual',
+    symbol, side, mode, qtyINR, leverage, getFreshSignal, wantAuto = false, source = 'manual',
   } = opts || {};
   const cfg = loadConfig();
   const pair = `${String(symbol || '').toUpperCase()}INR`;
@@ -280,7 +347,7 @@ export async function executeSignal(opts) {
     return reject('No fresh ensemble signal available for this pair');
   }
   const gates = { minConfidence: cfg.minConfidence, minAgreement: cfg.minAgreement };
-  const { evaluateExecutionGate, buildTradePlan, fitPlanToRiskCap } = await import('./ensemble.js');
+  const { evaluateExecutionGate, buildTradePlan, fitPlanToRiskCap, maxSaneLeverage } = await import('./ensemble.js');
 
   // PAPER practice fallback: when the FRESH consensus is FLAT/planless but
   // the user clicked a directional card, synthesize a practice plan at the
@@ -343,22 +410,49 @@ export async function executeSignal(opts) {
   if (!(price > 0)) {
     return { ok: false, error: 'No live price for sizing' };
   }
-  const budget = Math.min(Number(qtyINR) > 0 ? Number(qtyINR) : cfg.maxOrderINR, cfg.maxOrderINR);
-  if (budget < 100) {
-    return { ok: false, error: `Order size ₹${budget} below the ₹100 minimum` };
+  // v6.6: qtyINR = the MARGIN you commit. Leverage multiplies the notional.
+  const levCap = Number(cfg.cryptoLeverage) >= 1 ? Math.floor(Number(cfg.cryptoLeverage)) : 1;
+  let lev = Math.max(1, Math.floor(Number(leverage) || 1));
+  if (lev > levCap) lev = levCap; // server-side clamp — client can never widen
+  const marginBudget = Math.min(Number(qtyINR) > 0 ? Number(qtyINR) : cfg.maxOrderINR, cfg.maxOrderINR);
+  if (marginBudget < 100) {
+    return { ok: false, error: `Order size ₹${marginBudget} below the ₹100 minimum` };
   }
-  const rawQty = budget / price;
+  // LEVERAGE SANITY (v6.6 accuracy gate): if the liquidation estimate sits
+  // INSIDE the stop-loss the SL is dead code — the exchange liquidates
+  // first. PAPER auto-reduces the leverage to the largest sane value
+  // (practice must never dead-end); LIVE rejects honestly — a leveraged
+  // real order whose plan cannot execute belongs in a REJECT, not a hope.
+  const slDistPct = Math.abs(price - (effectiveSignal.plan?.stopLoss ?? price)) / price * 100;
+  const saneLev = maxSaneLeverage(slDistPct, levCap);
+  let levNote = null;
+  if (lev > 1 && lev > saneLev) {
+    if (wantMode === 'paper') {
+      levNote = `leverage auto-reduced ${lev}x → ${saneLev}x (liquidation est. would fire before the ${r2(slDistPct)}% SL)`;
+      lev = saneLev;
+    } else {
+      return reject(`leverage ${lev}x puts liquidation (~${r2(95 / lev)}% away) inside the ${r2(slDistPct)}% stop — reduce leverage to ≤${saneLev}x`, `Leverage gate: ${lev}x liquidates before the SL — use ≤ ${saneLev}x or widen "Max stop %"`);
+    }
+  }
+  const notionalBudget = marginBudget * lev;
+  const rawQty = notionalBudget / price;
   const { qty, meta } = await roundQty(pair, rawQty);
   if (!(qty > 0)) {
     return { ok: false, error: `Quantity rounds to 0 at ${pair} precision (${meta.qtyPrecision}dp) — increase order size` };
   }
   const notional = qty * price;
+  const marginUsed = r2(notional / lev);
   if (meta.minQty > 0 && qty < meta.minQty) {
     return { ok: false, error: `Quantity ${qty} is below the exchange minimum (${meta.minQty}) for ${pair}` };
   }
   if (meta.minNotional > 0 && notional < meta.minNotional) {
     return { ok: false, error: `Order ₹${Math.round(notional)} is below the exchange minimum (₹${meta.minNotional}) for ${pair}` };
   }
+  // v6.6 liquidation estimate stored on the position (paper watcher simulates
+  // liquidation at this level; live positions carry it for display + watch)
+  const liquidation = lev > 1 && effectiveSignal.plan?.stopLoss != null
+    ? r2(effectiveSignal.side !== 'SHORT' ? price * (1 - 0.95 / lev) : price * (1 + 0.95 / lev))
+    : null;
 
   // --- FINAL MUTATION — under the journal lock with a FRESH copy ---
   // The caps + one-per-pair checks live HERE (not before the signal run,
@@ -390,6 +484,7 @@ export async function executeSignal(opts) {
       const position = {
         id: crypto.randomUUID(), pair, side: effectiveSignal.side, mode: 'paper', market: 'CRYPTO', source,
         qty, entryPrice: price, notionalINR: r2(notional),
+        ...(lev > 1 ? { leverage: lev, marginINR: marginUsed, liquidation } : {}),
         sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
         initialRisk: r2(Math.abs(price - (effectiveSignal.plan?.stopLoss ?? price))),
         peakPrice: r2(price),
@@ -399,47 +494,69 @@ export async function executeSignal(opts) {
       j.positions.push(position);
       pushEntry(j, {
         ...entry, status: 'FILLED', qty, price: r2(price), notionalINR: r2(notional),
+        ...(lev > 1 ? { leverage: lev, marginINR: marginUsed } : {}),
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
-        reason: [verdict.reason, synthNote, fitNote].filter(Boolean).join(' · '),
+        reason: [verdict.reason, synthNote, fitNote, levNote].filter(Boolean).join(' · '),
       });
       saveJournal(j);
-      return { ok: true, mode: 'paper', position, filled: { qty, price: r2(price), notionalINR: r2(notional) }, ...(fitNote ? { fitted: fitNote } : {}) };
+      return { ok: true, mode: 'paper', position, filled: { qty, price: r2(price), notionalINR: r2(notional), ...(lev > 1 ? { leverage: lev, marginINR: marginUsed } : {}) }, ...{ fitted: [fitNote, levNote].filter(Boolean).join(' · ') || undefined } };
     }
 
     // --- LIVE execution: signed order to CoinDCX ---
+    // v6.6: leverage > 1 → the MARGIN API (pair "B-BTC_INR", margin block,
+    // exit via /margin/orders/exit_positions). Leverage 1 keeps the
+    // battle-tested spot path untouched.
     try {
       const creds = loadCredsForOrder();
       if (!creds?.apiKey || !creds?.secret) return { ok: false, error: 'CoinDCX credentials unreadable' };
-      const body = {
-        side: effectiveSignal.side === 'SHORT' ? 'sell' : 'buy',
-        pair,
-        order_type: 'market',
-        total_quantity: String(qty),
-        hidden: true,
-      };
-      const resp = await coindcxPrivate('/exchange/v1/orders/create', creds.apiKey, creds.secret, body);
-      const orderId = resp?.orders?.[0]?.id || resp?.order?.id || null;
+      let orderId = null;
+      let marginPairUsed = null;
+      if (lev > 1) {
+        const mp = await getMarginPairName(pair, creds);
+        marginPairUsed = mp.pair;
+        const body = marginOrderBody({ marginPair: mp.pair, side: effectiveSignal.side, qty, leverage: lev, marginINR: marginUsed });
+        const resp = await coindcxPrivate('/exchange/v1/margin/orders', creds.apiKey, creds.secret, body);
+        orderId = resp?.orders?.[0]?.id || resp?.order?.id || null;
+      } else {
+        const body = {
+          side: effectiveSignal.side === 'SHORT' ? 'sell' : 'buy',
+          pair,
+          order_type: 'market',
+          total_quantity: String(qty),
+          hidden: true,
+        };
+        const resp = await coindcxPrivate('/exchange/v1/orders/create', creds.apiKey, creds.secret, body);
+        orderId = resp?.orders?.[0]?.id || resp?.order?.id || null;
+      }
       // CoinDCX market orders report avg fill in list/status — entry price
       // starts at the signal LTP and the watcher reconciles UNKNOWN/
-      // fill data on its next pass (see reconcileLivePosition).
+      // fill data on its next pass (see reconcileLivePosition). Margin
+      // positions skip that reconciliation (different orders API) — the
+      // watcher still enforces SL/TP/liquidation via exit_positions.
       const position = {
         id: crypto.randomUUID(), pair, side: effectiveSignal.side, mode: 'live', market: 'CRYPTO', source, exchangeOrderId: orderId,
         qty, entryPrice: price, notionalINR: r2(notional),
+        ...(lev > 1 ? { leverage: lev, marginINR: marginUsed, liquidation, ...(marginPairUsed ? { marginPair: marginPairUsed } : {}) } : {}),
         sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
         initialRisk: r2(Math.abs(price - (effectiveSignal.plan?.stopLoss ?? price))),
         peakPrice: r2(price),
         signal: { grade: signal.grade, confidence: signal.confidence, agreement: signal.agreement, summary: signal.summary },
-        openedAt: Date.now(), status: orderId ? 'OPEN' : 'UNKNOWN',
+        openedAt: Date.now(),
+        // margin create responses always carry an id when accepted; no-id
+        // margin fills go UNKNOWN-free (watcher retry loop would never
+        // resolve them through the SPOT orders API anyway)
+        status: orderId ? 'OPEN' : (lev > 1 ? 'OPEN' : 'UNKNOWN'),
       };
       j.positions.push(position);
       pushEntry(j, {
         ...entry, status: orderId ? 'SUBMITTED' : 'SUBMITTED_UNKNOWN', qty, price: r2(price),
         notionalINR: r2(notional), exchangeOrderId: orderId,
+        ...(lev > 1 ? { leverage: lev, marginINR: marginUsed } : {}),
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
-        reason: [verdict.reason, fitNote].filter(Boolean).join(' · '),
+        reason: [verdict.reason, fitNote, levNote].filter(Boolean).join(' · '),
       });
       saveJournal(j);
-      return { ok: true, mode: 'live', orderId, position, filled: { qty, price: r2(price), notionalINR: r2(notional) }, ...(fitNote ? { fitted: fitNote } : {}) };
+      return { ok: true, mode: 'live', orderId, position, filled: { qty, price: r2(price), notionalINR: r2(notional), ...(lev > 1 ? { leverage: lev, marginINR: marginUsed } : {}) }, ...{ fitted: [fitNote, levNote].filter(Boolean).join(' · ') || undefined } };
     } catch (e) {
       pushEntry(j, { ...entry, status: 'FAILED', reason: String(e?.message || e).slice(0, 200) });
       saveJournal(j);
@@ -560,6 +677,51 @@ export async function watchPositions({ sendTelegram } = {}) {
         const price = byPair.get(p.pair);
         if (!(price > 0)) continue;
 
+        // v6.6 LEVERAGE: liquidation check comes FIRST — if the price is
+        // beyond the liquidation estimate the position is gone at the
+        // exchange (or would be, on paper) regardless of where the SL sits.
+        // Paper closes AT the liquidation price (honest simulation: loss
+        // ≈ the whole margin); live positions close via exit_positions.
+        if (p.leverage > 1 && p.liquidation != null && p.liquidation > 0) {
+          const long = p.side === 'LONG';
+          if (long ? price <= p.liquidation : price >= p.liquidation) {
+            let closed = false;
+            if (p.mode === 'live' && coindcxConnected()) {
+              try {
+                const creds = loadCredsForOrder();
+                if (creds) {
+                  const mp = await getMarginPairName(p.pair, creds);
+                  await coindcxPrivate('/exchange/v1/margin/orders/exit_positions', creds.apiKey, creds.secret, marginExitBody({ marginPair: mp.pair, side: p.side }));
+                  closed = true;
+                }
+              } catch (e) {
+                pushEntry(j, { kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair, reason: `margin exit failed: ${String(e?.message || e).slice(0, 160)}` });
+                dirty = true;
+                watchErrors.push({ pair: p.pair, reason: String(e?.message || e).slice(0, 120) });
+              }
+            } else {
+              closed = true; // paper liquidation always executes
+            }
+            if (closed) {
+              const liqPrice = p.liquidation;
+              const pnlINR = (p.side === 'LONG' ? liqPrice - p.entryPrice : p.entryPrice - liqPrice) * p.qty;
+              p.status = 'CLOSED';
+              p.closedAt = Date.now();
+              p.closePrice = liqPrice;
+              p.pnlINR = r2(pnlINR);
+              p.closeReason = 'LIQUIDATED (est.)';
+              dirty = true;
+              pushEntry(j, {
+                kind: 'CLOSE', day: todayIST(), pair: p.pair, mode: p.mode,
+                qty: p.qty, entryPrice: p.entryPrice, closePrice: liqPrice, pnlINR: r2(pnlINR),
+                reason: `LIQUIDATED (est. @ ${p.leverage}x — price crossed the liquidation estimate)`,
+              });
+              closures.push({ pair: p.pair, mode: p.mode, pnlINR: p.pnlINR, reason: 'LIQUIDATED (est.)' });
+            }
+            continue; // position resolved (or exit failed + persisted) — next position
+          }
+        }
+
         // v6.5 TRAILING SL — track the peak, ratchet the stop (never loosen).
         // The initial risk R is frozen at open; once profit ≥ armR×R the SL
         // locks to breakeven, then trails peak − offsetR×R. Every move lands
@@ -601,13 +763,19 @@ export async function watchPositions({ sendTelegram } = {}) {
           try {
             const creds = loadCredsForOrder();
             if (creds) {
-              await coindcxPrivate('/exchange/v1/orders/create', creds.apiKey, creds.secret, {
-                side: long ? 'sell' : 'buy',
-                pair: p.pair,
-                order_type: 'market',
-                total_quantity: String(p.qty),
-                hidden: true,
-              });
+              if (p.leverage > 1) {
+                // v6.6: margin positions exit through the margin API
+                const mp = await getMarginPairName(p.pair, creds);
+                await coindcxPrivate('/exchange/v1/margin/orders/exit_positions', creds.apiKey, creds.secret, marginExitBody({ marginPair: mp.pair, side: p.side }));
+              } else {
+                await coindcxPrivate('/exchange/v1/orders/create', creds.apiKey, creds.secret, {
+                  side: long ? 'sell' : 'buy',
+                  pair: p.pair,
+                  order_type: 'market',
+                  total_quantity: String(p.qty),
+                  hidden: true,
+                });
+              }
               closed = true;
             }
           } catch (e) {
@@ -675,10 +843,16 @@ export async function closePosition(positionId) {
     if (p.mode === 'live' && coindcxConnected()) {
       try {
         const creds = loadCredsForOrder();
-        await coindcxPrivate('/exchange/v1/orders/create', creds.apiKey, creds.secret, {
-          side: p.side === 'LONG' ? 'sell' : 'buy',
-          pair: p.pair, order_type: 'market', total_quantity: String(p.qty), hidden: true,
-        });
+        if (p.leverage > 1) {
+          // v6.6: margin positions close through the margin exit API
+          const mp = await getMarginPairName(p.pair, creds);
+          await coindcxPrivate('/exchange/v1/margin/orders/exit_positions', creds.apiKey, creds.secret, marginExitBody({ marginPair: mp.pair, side: p.side }));
+        } else {
+          await coindcxPrivate('/exchange/v1/orders/create', creds.apiKey, creds.secret, {
+            side: p.side === 'LONG' ? 'sell' : 'buy',
+            pair: p.pair, order_type: 'market', total_quantity: String(p.qty), hidden: true,
+          });
+        }
       } catch (e) {
         return { ok: false, error: `Exchange close failed: ${e?.message || e}` };
       }
@@ -765,6 +939,8 @@ export function __resetForTests() {
   saveConfig({ ...DEFAULT_CONFIG });
   saveJournal({ entries: [], positions: [] });
   _productsCache = null;
+  _marginPairsCache = null;
+  _marginPairsAt = 0;
 }
 export function __setJournalForTests(j) { saveJournal(j); }
 export function __setConfigForTests(cfg) { saveConfig(cfg); }

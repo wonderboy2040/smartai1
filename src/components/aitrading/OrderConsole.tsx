@@ -52,6 +52,7 @@ function ConfigEditor({ config, busy, onSave, state }: {
   const [maxStop, setMaxStop] = useState(String(config.maxRiskPct ?? 5));
   const [trailArm, setTrailArm] = useState(String(config.trailArmR ?? 1));
   const [trailOff, setTrailOff] = useState(String(config.trailOffsetR ?? 1));
+  const [maxLev, setMaxLev] = useState(String(config.cryptoLeverage ?? 1));
   const [phrase, setPhrase] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -68,6 +69,7 @@ function ConfigEditor({ config, busy, onSave, state }: {
     setMaxStop(String(config.maxRiskPct ?? 5));
     setTrailArm(String(config.trailArmR ?? 1));
     setTrailOff(String(config.trailOffsetR ?? 1));
+    setMaxLev(String(config.cryptoLeverage ?? 1));
   }, [config]);
 
   const save = async (patch: Record<string, unknown>) => {
@@ -152,6 +154,7 @@ function ConfigEditor({ config, busy, onSave, state }: {
           { label: 'Daily trades', val: dailyTrades, set: setDailyTrades, key: 'dailyMaxTrades', hint: '1-50' },
           { label: 'Daily loss ₹', val: dailyLoss, set: setDailyLoss, key: 'dailyMaxLossINR', hint: '≥50' },
           { label: 'Max stop %', val: maxStop, set: setMaxStop, key: 'maxRiskPct', hint: '1-20' },
+          { label: 'Max leverage × (crypto)', val: maxLev, set: setMaxLev, key: 'cryptoLeverage', hint: '1-10' },
         ].map(f => (
           <div key={f.key}>
             <label className="text-[9px] text-slate-500 font-black tracking-wider block mb-1">{f.label.toUpperCase()}</label>
@@ -168,6 +171,7 @@ function ConfigEditor({ config, busy, onSave, state }: {
         (v6.4: over-cap stops AUTO-FIT to this cap — SL tightened, targets re-derived; LIVE only fits mild overshoot ≤ 1.5×),
         daily trade/loss caps, one position per pair, 90s signal freshness. CoinDCX key needs trade permission for LIVE.
         v6.5: Trailing SL dono desks par watcher chalata hai (breakeven → peak-trail, ratchet-only).
+        v6.6: Max leverage = crypto margin ceiling (1 = spot only) — ticket me leverage chips isi se clamp hoti hain; server-side bhi enforce. Liquidation-vs-SL sanity har order par check hota hai (PAPER auto-reduce, LIVE reject).
       </p>
     </div>
   );
@@ -358,6 +362,11 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
                     {isIndia && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-orange-500/15 text-orange-300">🇮🇳 NSE</span>}
                     <span className={`text-[11px] font-black ${p.side === 'LONG' ? 'text-emerald-400' : 'text-red-400'}`}>{p.side}</span>
                     <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${p.mode === 'live' ? 'bg-red-500/15 text-red-300' : 'bg-cyan-500/15 text-cyan-300'}`}>{p.mode.toUpperCase()}</span>
+                    {p.leverage != null && p.leverage > 1 && (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-violet-500/15 text-violet-300" title={`margin ₹${p.marginINR?.toLocaleString('en-IN')} · notional ₹${p.notionalINR?.toLocaleString('en-IN')}`}>
+                        {p.leverage}x MARGIN
+                      </span>
+                    )}
                     {p.trailing && open && (
                       <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-amber-500/15 text-amber-300" title={`peak ₹${p.peakPrice?.toLocaleString('en-IN')} — ratchet-only`}>
                         🔗 {p.trailing === 'breakeven' ? 'BE LOCKED' : 'TRAILING'}
@@ -382,6 +391,9 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
                       <span className="text-emerald-400/70">TP ₹{p.tp?.toLocaleString('en-IN')} / ₹{p.tp2?.toLocaleString('en-IN')}</span>
                       {p.peakPrice != null && p.peakPrice > 0 && (
                         <span className="text-amber-400/70" title="best price since entry (trailing anchor)">🔺 peak ₹{p.peakPrice?.toLocaleString('en-IN')}</span>
+                      )}
+                      {p.leverage != null && p.leverage > 1 && p.liquidation != null && (
+                        <span className="text-violet-400/70" title={`estimated liquidation (${p.leverage}x isolated-margin, ~5% maintenance buffer)`}>⚠ LIQ ₹{p.liquidation?.toLocaleString('en-IN')}</span>
                       )}
                       <span className="text-slate-600">{isIndia ? 'watcher + 15:15 square-off' : 'watcher auto-closes on breach'}</span>
                     </div>

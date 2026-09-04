@@ -23,10 +23,18 @@ export interface ExecuteResult {
   error?: string;
   mode?: string;
   orderId?: string | null;
-  filled?: { qty: number; price: number; notionalINR: number };
+  filled?: { qty: number; price: number; notionalINR: number; leverage?: number; marginINR?: number };
   position?: JournalPosition;
   /** v6.4: set when the ATR stop was auto-fitted to the risk cap. */
   fitted?: string;
+}
+
+/** v6.6: sizing + leverage parameters for a ticket execute. */
+export interface ExecuteOpts {
+  /** crypto: the MARGIN you commit (₹); india: the capital budget (₹) */
+  qtyINR?: number;
+  /** crypto only — clamped server-side to config.cryptoLeverage */
+  leverage?: number;
 }
 
 export function useAITrading(active: boolean) {
@@ -84,13 +92,17 @@ export function useAITrading(active: boolean) {
     return () => { clearInterval(b); clearInterval(s); clearInterval(p); };
   }, [active, loadBoards, loadState, loadPositions]);
 
-  const executeSignal = useCallback(async (signal: AISignal, mode: 'paper' | 'live', qtyINR?: number): Promise<ExecuteResult> => {
+  const executeSignal = useCallback(async (signal: AISignal, mode: 'paper' | 'live', opts?: ExecuteOpts): Promise<ExecuteResult> => {
     setBusy(true);
     try {
       const r = await apiFetch(`${getProxyBase()}/api/ai/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: signal.symbol, side: signal.side, mode, ...(qtyINR ? { qtyINR } : {}) }),
+        body: JSON.stringify({
+          symbol: signal.symbol, side: signal.side, mode,
+          ...(opts?.qtyINR != null ? { qtyINR: opts.qtyINR } : {}),
+          ...(opts?.leverage != null ? { leverage: opts.leverage } : {}),
+        }),
         signal: AbortSignal.timeout(40000),
       });
       const j = await r.json().catch(() => ({ ok: false, error: 'bad response' }));
@@ -153,13 +165,13 @@ export function useAITrading(active: boolean) {
 
   // v6.5: India gauntlet execution (Dhan paper/live) — same flow shape
   // as the crypto execute so the cards can share one handler.
-  const executeIndia = useCallback(async (signal: AISignal, mode: 'paper' | 'live', qtyINR?: number): Promise<ExecuteResult> => {
+  const executeIndia = useCallback(async (signal: AISignal, mode: 'paper' | 'live', opts?: ExecuteOpts): Promise<ExecuteResult> => {
     setBusy(true);
     try {
       const r = await apiFetch(`${getProxyBase()}/api/ai/india/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: signal.symbol, side: signal.side, mode, ...(qtyINR ? { qtyINR } : {}) }),
+        body: JSON.stringify({ symbol: signal.symbol, side: signal.side, mode, ...(opts?.qtyINR != null ? { qtyINR: opts.qtyINR } : {}) }),
         signal: AbortSignal.timeout(40000),
       });
       const j = await r.json().catch(() => ({ ok: false, error: 'bad response' }));
