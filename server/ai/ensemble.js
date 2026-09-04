@@ -22,6 +22,27 @@ const r1 = (v) => Math.round(v * 10) / 10;
 
 /**
  * Aggregate model votes into a consensus.
+ *
+ * v6.3 RECALIBRATION — the v6.0 formula (|Σ dir·w·conf| / ALL weight)
+ * was mathematically starved: 3 abstaining models diluted every board
+ * signal ~35% and the model conf scale topped out ~70, so confidence
+ * could NEVER reach the 75% STRONG gate — the terminal showed only
+ * WATCH/NEUTRAL cards and users saw "no trade signals".
+ *
+ * New decomposition (each factor is honest and inspectable):
+ *   score         = raw / votingWeight  → the weighted-average conviction
+ *                                          of the models that DID vote
+ *   participation = votingWeight / allWeight → quorum (abstain = weaker
+ *                                          committee mandate, not zero)
+ *   agreement     = winWeight / votingWeight → side unison of voters
+ *
+ *   confidence = 100 × score × (0.60 + 0.40·agreement) × (0.70 + 0.30·participation)
+ *
+ * Calibrated so: a 5/8-model all-aligned bear stack reads ACTION (~66),
+ * a full-committee confluence reads STRONG (75+), diluted or split
+ * committees stay WATCH/NEUTRAL. Gates are UNCHANGED — only the scale
+ * now actually reaches them.
+ *
  * @param {{id,name,weight,dir,conf,reasons}[]} votes
  * @param {object} gates { minConfidence, minAgreement }
  */
@@ -32,7 +53,7 @@ export function aggregateVotes(votes, gates = DEFAULT_GATES) {
 
   if (votingWeight <= 0) {
     return {
-      side: 'FLAT', dir: 0, confidence: 0, agreement: 0,
+      side: 'FLAT', dir: 0, confidence: 0, agreement: 0, participation: 0,
       grade: 'NEUTRAL', participating: 0, totalModels: (votes || []).length,
       summary: 'No model found a tradeable edge',
     };
@@ -48,16 +69,17 @@ export function aggregateVotes(votes, gates = DEFAULT_GATES) {
   // Agreement: winning weight / voting weight (abstaining models don't count against).
   const agreement = winWeight / votingWeight;
 
-  // Weighted score: Σ(dir × weight × conf/100) over ALL models — opposing
-  // votes subtract — normalized by total model weight (incl. abstainers
-  // diluting, which is honest: silence is a weak signal too).
-  const norm = allWeight > 0 ? allWeight : votingWeight;
-  const raw = (votes || []).reduce((a, v) => a + (v.dir || 0) * (v.weight || 0) * ((v.conf || 0) / 100), 0);
-  const signed = raw / norm; // -1..+1
+  // Score: weighted-average conviction of the VOTING models (opposing
+  // votes subtract from the winning side's average).
+  const raw = valid.reduce((a, v) => a + v.dir * v.weight * ((v.conf || 0) / 100), 0);
+  const score = Math.abs(raw) / votingWeight; // 0..1
 
-  // Confidence = 100 × |signed| × (0.55 + 0.45 × agreement)
-  // Rationale: a 0.9 raw score with 55% agreement is NOT a 90% signal.
-  const confidence = Math.round(clamp(Math.abs(signed) * 100 * (0.55 + 0.45 * agreement)));
+  // Quorum: how much of the committee's weight actually showed up.
+  const participation = allWeight > 0 ? votingWeight / allWeight : 1;
+
+  const confidence = Math.round(clamp(
+    score * 100 * (0.60 + 0.40 * agreement) * (0.70 + 0.30 * participation)
+  ));
 
   let grade;
   if (confidence >= gates.minConfidence && agreement >= gates.minAgreement) grade = 'STRONG';
@@ -67,11 +89,12 @@ export function aggregateVotes(votes, gates = DEFAULT_GATES) {
 
   return {
     side, dir, confidence, agreement: Math.round(agreement * 100) / 100,
+    participation: Math.round(participation * 100) / 100,
     grade,
     participating: valid.length,
     totalModels: (votes || []).length,
     bullWeight: r2(bull), bearWeight: r2(bear),
-    summary: `${side} ${confidence}% · ${valid.length}/${(votes || []).length} models voting · ${Math.round(agreement * 100)}% agreement`,
+    summary: `${side} ${confidence}% · ${valid.length}/${(votes || []).length} models voting · ${Math.round(agreement * 100)}% agreement · ${Math.round(participation * 100)}% quorum`,
   };
 }
 
@@ -122,6 +145,7 @@ export function buildSignal({ symbol, market, ctx, votes, consensus, plan, aiNot
     grade: consensus.grade,
     confidence: consensus.confidence,
     agreement: consensus.agreement,
+    participation: consensus.participation ?? null,
     participating: consensus.participating,
     totalModels: consensus.totalModels,
     bullWeight: consensus.bullWeight ?? null,

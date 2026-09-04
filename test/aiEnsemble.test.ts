@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { aggregateVotes, buildTradePlan, evaluateExecutionGate, DEFAULT_GATES } from '../server/ai/ensemble.js';
 import { runQuantModels, MODELS, aiCouncilVoteFromVerdict } from '../server/ai/models.js';
 import { computeIndicatorsFromCandles, detectPatterns, rsi, macd, bollinger, atr } from '../server/ai/lib/indicators.js';
-import { toCouncilCandidate } from '../server/ai/signals.js';
+import { toCouncilCandidate, scannerPatterns } from '../server/ai/signals.js';
 
 // ---- vote helpers ---------------------------------------------
 const v = (id, dir, conf, weight = 1) => ({ id, name: id, role: 'test', weight, dir, conf, reasons: [] });
@@ -318,5 +318,112 @@ describe('toCouncilCandidate — the 9th-model prompt normalization', () => {
     expect(c.ltp).toBe(23800);
     expect(c.side).toBeUndefined(); // honest: no consensus available
     expect(c.plan).toBeNull();
+  });
+});
+
+// ============================================================
+// v6.3 RECALIBRATION — the "no trade signals" fix
+// ------------------------------------------------------------
+// Pre-v6.3 the confidence formula (|Σdir·w·conf| / ALL weight) was
+// mathematically starved: 3 abstainers diluted every India stock
+// signal ~35% and realistic consensus landed 30-43% — below even the
+// ACTION threshold. Users saw only WATCH/NEUTRAL cards ("trade
+// signals hi nhi de rahe"). These tests pin the NEW contract.
+// ============================================================
+describe('v6.3 confidence recalibration — quorum-decomposed confidence', () => {
+  // THE USER BUG: a real MARUTI-style bear day — 5 of 8 models vote
+  // SHORT with 100% agreement, 3 abstain (no options chain, thin
+  // volume, mid-BB). Pre-v6.3: conf 43 WATCH. Must now read ACTION.
+  it('diluted-but-unanimous committee (5/8 voting, 100% agree) → ACTION, not WATCH', () => {
+    const out = aggregateVotes([
+      v('trend', -1, 100, 1.4), v('momentum', -1, 81, 1.3), v('pattern', -1, 53, 1.0),
+      v('sr', -1, 58, 1.1), v('regime', -1, 63, 0.8),
+      v('volatility', 0, 25, 0.9), v('volume', 0, 25, 1.2), v('options', 0, 0, 1.0),
+    ]);
+    expect(out.side).toBe('SHORT');
+    expect(out.agreement).toBe(1);
+    expect(out.participation).toBeCloseTo(5.6 / 8.7, 2);
+    expect(out.confidence).toBeGreaterThanOrEqual(55);
+    expect(out.grade).toBe('ACTION');
+  });
+
+  it('STRONG is REACHABLE with a full-committee confluence (the v6.0 ceiling bug)', () => {
+    // 8/8 quant models voting the same side at realistic conviction —
+    // pre-v6.3 this computed ~70 (below the 75 gate): STRONG could
+    // NEVER fire, so LIVE execution was dead code in practice.
+    const out = aggregateVotes([
+      v('trend', 1, 100, 1.4), v('momentum', 1, 90, 1.3), v('volatility', 1, 80, 0.9),
+      v('volume', 1, 85, 1.2), v('pattern', 1, 82, 1.0), v('sr', 1, 85, 1.1),
+      v('regime', 1, 75, 0.8), v('options', 0, 0, 1.0),
+    ]);
+    expect(out.confidence).toBeGreaterThanOrEqual(75);
+    expect(out.grade).toBe('STRONG');
+  });
+
+  it('quorum honesty: the SAME votes with more abstainers → strictly lower confidence, agreement unchanged', () => {
+    const voters = [v('a', 1, 80, 1.4), v('b', 1, 75, 1.3), v('c', 1, 70, 1.2)];
+    const full = aggregateVotes(voters);
+    const diluted = aggregateVotes([...voters, v('x', 0, 30, 1.0), v('y', 0, 30, 1.0), v('z', 0, 0, 1.0)]);
+    expect(diluted.agreement).toBe(full.agreement);
+    expect(diluted.confidence).toBeLessThan(full.confidence);
+    expect(diluted.participation).toBeLessThan(full.participation);
+  });
+
+  it('consensus exposes participation (quorum) and the summary mentions it', () => {
+    const out = aggregateVotes([v('a', 1, 80, 1.4), v('b', 0, 25, 1.2)]);
+    expect(typeof out.participation).toBe('number');
+    expect(out.participation).toBeGreaterThan(0);
+    expect(out.participation).toBeLessThanOrEqual(1);
+    expect(out.summary).toMatch(/quorum/);
+  });
+
+  it('split committee still degrades hard (agreement factor intact)', () => {
+    const out = aggregateVotes([
+      v('a', 1, 90, 1.4), v('b', 1, 88, 1.3), v('c', -1, 92, 1.2), v('d', -1, 90, 1.1),
+    ]);
+    // 2.7 vs 2.3 — near-tie: must NOT be STRONG
+    expect(out.grade).not.toBe('STRONG');
+    expect(out.confidence).toBeLessThan(75);
+  });
+});
+
+// ============================================================
+// v6.3 scannerPatterns — candlestick derivation for India stocks
+// (scanner rows have OHLC + change% but no pattern column; the
+// PatternNeural model previously had ZERO pattern input on NSE)
+// ============================================================
+describe('scannerPatterns — deriving today\\u2019s candle from scanner OHLC', () => {
+  const base = { open: 100, high: 103, low: 99, ltp: 102.5, changePct: 2.5 };
+
+  it('strong green body → Bullish Marubozu, bias +1', () => {
+    const p = scannerPatterns({ open: 100, high: 102.6, low: 99.9, ltp: 102.5, changePct: 2.5 });
+    const maru = p.find(x => x.name.includes('Marubozu'));
+    expect(maru).toBeDefined();
+    expect(maru.bias).toBe(1);
+  });
+
+  it('long lower wick small body → Hammer, bias +1', () => {
+    const p = scannerPatterns({ open: 100, high: 100.4, low: 97, ltp: 100.3, changePct: -1 });
+    expect(p.find(x => x.name === 'Hammer')?.bias).toBe(1);
+  });
+
+  it('long upper wick small body → Shooting Star, bias -1', () => {
+    const p = scannerPatterns({ open: 100, high: 103, low: 99.9, ltp: 100.5, changePct: 1 });
+    expect(p.find(x => x.name === 'Shooting Star')?.bias).toBe(-1);
+  });
+
+  it('open above prev close → Gap Up; open below → Gap Down', () => {
+    const up = scannerPatterns({ ...base, open: 101, ltp: 102.5, changePct: 2.5 });
+    // prevClose = 102.5/1.025 = 100 → open 101 > 100.5 ✓
+    expect(up.find(x => x.name === 'Gap Up')?.bias).toBe(1);
+    const down = scannerPatterns({ ...base, open: 98, ltp: 99, changePct: -1 });
+    // prevClose = 99/0.99 = 100 → open 98 < 99.5 ✓
+    expect(down.find(x => x.name === 'Gap Down')?.bias).toBe(-1);
+  });
+
+  it('degrades to [] on missing/zero OHLC (never throws)', () => {
+    expect(scannerPatterns({ open: null, high: 10, low: 9, ltp: 9.5, changePct: 0 })).toEqual([]);
+    expect(scannerPatterns({ open: 10, high: 10, low: 10, ltp: 10, changePct: 0 })).toEqual([]); // zero range
+    expect(scannerPatterns({})).toEqual([]);
   });
 });

@@ -74,6 +74,37 @@ async function fetchYahooCandles(key, range = '3mo') {
 }
 
 // ---------------- TV row → indicator context ----------------
+// v6.3: derive today's candlestick patterns from the scanner's OHLC +
+// change% (prevClose = close/(1+chg/100)) — India stock rows previously
+// had patterns:[] so PatternNeural almost always abstained on the whole
+// NSE universe (one more silent vote missing from every consensus).
+export function scannerPatterns(row) {
+  const { open, high, low, ltp: close, changePct } = row;
+  if (![open, high, low, close].every(v => typeof v === 'number' && v > 0)) return [];
+  const prevClose = Number.isFinite(changePct) && changePct > -100
+    ? close / (1 + changePct / 100) : null;
+  const range = high - low;
+  if (range <= 0) return [];
+  const body = close - open;
+  const bodyAbs = Math.abs(body);
+  const bodyPct = bodyAbs / range;
+  const upperWick = high - Math.max(open, close);
+  const lowerWick = Math.min(open, close) - low;
+  const out = [];
+  if (bodyPct < 0.1) out.push({ name: 'Doji', bias: 0 });
+  else if (bodyPct > 0.85) out.push({ name: body > 0 ? 'Bullish Marubozu' : 'Bearish Marubozu', bias: body > 0 ? 1 : -1 });
+  if (lowerWick > bodyAbs * 2 && upperWick < bodyAbs * 0.8 && bodyPct < 0.4) out.push({ name: 'Hammer', bias: 1 });
+  if (upperWick > bodyAbs * 2 && lowerWick < bodyAbs * 0.8 && bodyPct < 0.4) out.push({ name: 'Shooting Star', bias: -1 });
+  if (prevClose != null) {
+    const prevBody = close > open ? Math.max(prevClose - open, 0) : 0; // approx prior body via prevClose
+    if (body > 0 && close > prevClose && open <= prevClose && bodyAbs > prevBody) out.push({ name: 'Bullish Engulfing (approx)', bias: 1 });
+    if (body < 0 && close < prevClose && open >= prevClose && bodyAbs > prevBody) out.push({ name: 'Bearish Engulfing (approx)', bias: -1 });
+    if (open > prevClose * 1.005) out.push({ name: 'Gap Up', bias: 1 });
+    else if (open < prevClose * 0.995) out.push({ name: 'Gap Down', bias: -1 });
+  }
+  return out.slice(0, 3);
+}
+
 function tvToInd(row, ltp) {
   const bb = row.bbUpper != null && row.bbLower != null && ltp ? {
     upper: row.bbUpper, lower: row.bbLower, mid: (row.bbUpper + row.bbLower) / 2,
@@ -94,7 +125,7 @@ function tvToInd(row, ltp) {
     vwap: row.vwap ?? null,
     supertrend: null, roc: null,
     relVolume: row.relVolume ?? null,
-    patterns: [],
+    patterns: scannerPatterns(row),
     high52w: row.high52w ?? null, low52w: row.low52w ?? null,
     pivot: row.pivot ?? null,
     recommend: row.recommend ?? null,
@@ -122,53 +153,8 @@ async function buildIndiaStockCtx(row, regime) {
   };
 }
 
-async function buildCryptoCtx(base, tvRow, inrPrice, regime, candles) {
-  const ltp = inrPrice ?? (tvRow?.usdPrice ? tvRow.usdPrice * 84 : null);
-  if (!(ltp > 0)) return null;
-  let ind = null;
-  if (tvRow) {
-    const scale = tvRow.usdPrice ? ltp / tvRow.usdPrice : 1;
-    ind = tvToInd({
-      ...tvRow,
-      atr: tvRow.atr != null ? tvRow.atr * scale : null,
-      ema10: tvRow.ema10 != null ? tvRow.ema10 * scale : null,
-      ema20: tvRow.ema20 != null ? tvRow.ema20 * scale : null,
-      ema50: tvRow.ema50 != null ? tvRow.ema50 * scale : null,
-      sma20: tvRow.sma20 != null ? tvRow.sma20 * scale : null,
-      sma50: tvRow.sma50 != null ? tvRow.sma50 * scale : null,
-      bbUpper: tvRow.bbUpper != null ? tvRow.bbUpper * scale : null,
-      bbLower: tvRow.bbLower != null ? tvRow.bbLower * scale : null,
-      macd: tvRow.macd != null ? tvRow.macd * scale : null,
-      macdSignal: tvRow.macdSignal != null ? tvRow.macdSignal * scale : null,
-      vwap: null, pivot: null,
-    }, ltp);
-  }
-  // CoinDCX 1h candles enrich: vwap / patterns / obv / mfi / supertrend / atrPct / roc.
-  if (Array.isArray(candles) && candles.length >= 30) {
-    const ci = computeIndicatorsFromCandles(candles);
-    if (ci) ind = { ...(ind || {}), ...ci, relVolume: ind?.relVolume ?? (ci.avgVolume20 > 0 ? ci.volume / ci.avgVolume20 : null) };
-  }
-  if (!ind) return null;
-  return {
-    market: 'CRYPTO', symbol: base, ltp, changePct: tvRow?.changePct ?? 0,
-    volume: tvRow?.volume ?? 0, pair: `${base}INR`,
-    ind, candles: candles || null, options: null, regime,
-    priceSource: inrPrice != null ? 'coindcx' : 'tv-usd-approx',
-  };
-}
-
-async function buildIndexCtx(symbol, regime, optionsCtx) {
-  const candles = await fetchYahooCandles(symbol, '6mo');
-  if (!candles) return null;
-  const ci = computeIndicatorsFromCandles(candles);
-  if (!ci) return null;
-  return {
-    market: 'INDIA', symbol, ltp: ci.ltp, changePct: regime.niftyChange ?? 0,
-    volume: 0, isIndex: true,
-    ind: { ...ci, vwap: ci.vwap, recommend: null, high52w: Math.max(...candles.map(c => c.high)), low52w: Math.min(...candles.map(c => c.low)) },
-    candles, options: optionsCtx, regime,
-  };
-}
+// (v6.3: the async buildCryptoCtx + buildIndexCtx duplicates were removed —
+// the board uses buildCryptoCtxSync and inlines its index contexts.)
 
 // ---------------- AI COUNCIL (LLM chain) ----------------
 function aiKeysPresent(KEYS) {
@@ -363,13 +349,20 @@ export async function getSignals(market, deps, opts = {}) {
 
   // Run quant models per symbol → aggregate → rank.
   const candidates = [];
+  const breadth = { bull: 0, bear: 0, flat: 0, avgConf: 0 };
+  let confSum = 0;
   for (const ctx of contexts) {
     const votes = runQuantModels(ctx);
     const consensus = aggregateVotes(votes, gatesFor(depsSafe));
+    if (consensus.dir > 0) breadth.bull++;
+    else if (consensus.dir < 0) breadth.bear++;
+    else breadth.flat++;
+    confSum += consensus.confidence;
     if (consensus.dir === 0) continue;
     const plan = buildTradePlan(consensus, ctx, mkt);
     candidates.push({ ctx, votes, consensus, plan });
   }
+  breadth.avgConf = contexts.length > 0 ? Math.round(confSum / contexts.length) : 0;
   candidates.sort((a, b) => b.consensus.confidence - a.consensus.confidence);
 
   // AI Council on the top candidates (toCouncilCandidate normalizes the
@@ -410,6 +403,7 @@ export async function getSignals(market, deps, opts = {}) {
     ok: true, market: mkt,
     marketOpen: mkt === 'INDIA' ? isNseOpen() : true,
     regime,
+    breadth,
     scanned: contexts.length,
     signals,
     models: modelStatus(council, depsSafe),

@@ -69,21 +69,25 @@ interface Props {
   onExecute?: (signal: AISignal, mode: 'paper' | 'live') => void;
   onDeep?: (signal: AISignal) => void;
   canLive?: boolean;
+  isNew?: boolean; // v6.3: freshly-appeared actionable signal → flash ring
 }
 
-export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, onDeep, canLive }: Props) {
+export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, onDeep, canLive, isNew }: Props) {
   const [expanded, setExpanded] = useState(false);
   const g = gradeBadge(signal.grade);
   const long = signal.side === 'LONG';
 
   return (
-    <div className={`quantum-panel rounded-2xl p-4 transition-all hover:border-cyan-500/20 ${signal.grade === 'STRONG' ? 'ring-1 ring-emerald-500/40' : ''}`}>
+    <div className={`quantum-panel rounded-2xl p-4 transition-colors hover:border-cyan-500/20 border-l-4 ${long ? 'border-l-emerald-500/60' : 'border-l-red-500/60'}
+      ${signal.grade === 'STRONG' ? 'ring-1 ring-emerald-500/40' : ''}
+      ${isNew ? 'ring-2 ring-cyan-400/60 animate-pulse' : ''}`}>
       {/* Header row */}
       <div className="flex items-center gap-3 flex-wrap">
         <ConfidenceGauge value={signal.confidence} side={signal.side} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-base font-black text-white font-mono tracking-wide">{signal.symbol}</span>
+            {isNew && <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 text-[9px] font-black border border-cyan-500/30">NEW</span>}
             <span className={`text-sm font-black ${sideColor(signal.side)}`}>{long ? '▲ LONG' : '▼ SHORT'}</span>
             <span className={`px-2 py-0.5 rounded-md text-[10px] font-black tracking-wider ${g.cls}`}>{g.label}</span>
             {signal.market === 'CRYPTO' && signal.executable && (
@@ -104,6 +108,12 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
             <span>{signal.participating}/{signal.totalModels} models</span>
             <span className="text-slate-500">·</span>
             <span>{Math.round((signal.agreement || 0) * 100)}% agree</span>
+            {signal.participation != null && (
+              <>
+                <span className="text-slate-500">·</span>
+                <span title="share of committee weight that cast a directional vote">{Math.round(signal.participation * 100)}% quorum</span>
+              </>
+            )}
           </div>
         </div>
         <div className="flex gap-1.5">
@@ -186,7 +196,7 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
               onClick={() => onExecute(signal, 'live')}
               disabled={busy || !canLive}
               title={canLive ? 'Place a REAL CoinDCX order (all gates re-verified server-side)' : 'Signal is STRONG — enable LIVE mode in the console to arm execution'}
-              className="px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 disabled:cursor-not-allowed transition-all">
+              className="px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
               ⚡ EXECUTE LIVE ₹
             </button>
           )}

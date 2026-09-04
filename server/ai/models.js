@@ -75,7 +75,7 @@ function trendMatrix(ctx) {
 function momentumQuant(ctx) {
   const i = ctx.ind || {};
   const pts = [];
-  let score = 0, conf = 40;
+  let score = 0, conf = 45;
 
   const rsi = i.rsi;
   if (rsi != null) {
@@ -107,7 +107,9 @@ function momentumQuant(ctx) {
   }
 
   const dir = score > 1.0 ? 1 : score < -1.0 ? -1 : 0;
-  return vote(dir, dir === 0 ? 28 : clamp(conf + Math.abs(score) * 15), pts);
+  // v6.3: base 40→45, slope ×15→×17 (a full RSI+MACD+Stoch confluence
+  // now reads 75-85, not 55-65 — the ensemble needs expressive votes).
+  return vote(dir, dir === 0 ? 28 : clamp(conf + Math.abs(score) * 17), pts);
 }
 
 // ------------------------------------------------------------
@@ -116,7 +118,7 @@ function momentumQuant(ctx) {
 function volatilityScope(ctx) {
   const i = ctx.ind || {};
   const pts = [];
-  let score = 0, conf = 35;
+  let score = 0, conf = 42;
 
   const bb = i.bollinger || (i.bbUpper != null && i.bbLower != null && ctx.ltp ? {
     upper: i.bbUpper, lower: i.bbLower,
@@ -142,7 +144,8 @@ function volatilityScope(ctx) {
   }
 
   const dir = score > 0.8 ? 1 : score < -0.8 ? -1 : 0;
-  return vote(dir, dir === 0 ? 25 : clamp(conf + Math.abs(score) * 18), pts);
+  // v6.3: base 35→42, slope ×18→×22 (band-ride votes were capped ~49).
+  return vote(dir, dir === 0 ? 25 : clamp(conf + Math.abs(score) * 22), pts);
 }
 
 // ------------------------------------------------------------
@@ -151,7 +154,7 @@ function volatilityScope(ctx) {
 function volumeFlow(ctx) {
   const i = ctx.ind || {};
   const pts = [];
-  let score = 0, conf = 35;
+  let score = 0, conf = 40;
 
   const rv = i.relVolume;
   if (rv != null) {
@@ -184,7 +187,9 @@ function volumeFlow(ctx) {
   }
 
   const dir = score > 0.9 ? 1 : score < -0.9 ? -1 : 0;
-  return vote(dir, dir === 0 ? 25 : clamp(conf + Math.abs(score) * 16), pts);
+  // v6.3: base 35→40, slope ×16→×18 (vol-backed moves read 70+, thin
+  // tape still penalised via the conf adjustments above).
+  return vote(dir, dir === 0 ? 25 : clamp(conf + Math.abs(score) * 18), pts);
 }
 
 // ------------------------------------------------------------
@@ -193,7 +198,7 @@ function volumeFlow(ctx) {
 function patternNeural(ctx) {
   const i = ctx.ind || {};
   const pts = [];
-  let score = 0, conf = 32;
+  let score = 0, conf = 38;
 
   const patterns = Array.isArray(i.patterns) ? i.patterns : [];
   for (const p of patterns) {
@@ -218,6 +223,7 @@ function patternNeural(ctx) {
   }
 
   const dir = score > 0.7 ? 1 : score < -0.7 ? -1 : 0;
+  // v6.3: base 32→38 (pattern votes were the weakest link in the board).
   return vote(dir, dir === 0 ? 22 : clamp(conf + patterns.length * 8 + Math.abs(score) * 14), pts);
 }
 
@@ -227,7 +233,7 @@ function patternNeural(ctx) {
 function srMatrix(ctx) {
   const i = ctx.ind || {};
   const pts = [];
-  let score = 0, conf = 30;
+  let score = 0, conf = 36;
 
   const piv = i.pivot;
   if (piv && piv.p != null && ctx.ltp) {
@@ -250,7 +256,8 @@ function srMatrix(ctx) {
   }
 
   const dir = score > 0.7 ? 1 : score < -0.7 ? -1 : 0;
-  return vote(dir, dir === 0 ? 22 : clamp(conf + Math.abs(score) * 20), pts);
+  // v6.3: base 30→36, slope ×20→×24 (pivot-break votes were capped ~64).
+  return vote(dir, dir === 0 ? 22 : clamp(conf + Math.abs(score) * 24), pts);
 }
 
 // ------------------------------------------------------------
@@ -261,7 +268,7 @@ function optionsFlow(ctx) {
   const o = ctx.options;
   if (!o) return vote(0, 0, ['No option-chain data (stock / crypto) — model abstains']);
   const pts = [];
-  let score = 0, conf = 34;
+  let score = 0, conf = 40;
 
   const pcr = o.pcr;
   if (pcr != null) {
@@ -286,7 +293,8 @@ function optionsFlow(ctx) {
   }
 
   const dir = score > 0.7 ? 1 : score < -0.7 ? -1 : 0;
-  return vote(dir, dir === 0 ? 25 : clamp(conf + Math.abs(score) * 16), pts);
+  // v6.3: base 34→40, slope ×16→×18 (PCR-extreme votes read 75+).
+  return vote(dir, dir === 0 ? 25 : clamp(conf + Math.abs(score) * 18), pts);
 }
 
 // ------------------------------------------------------------
@@ -295,7 +303,7 @@ function optionsFlow(ctx) {
 function macroRegime(ctx) {
   const reg = ctx.regime || {};
   const pts = [];
-  let score = 0, conf = 30;
+  let score = 0, conf = 40;
 
   if (ctx.market === 'CRYPTO') {
     const btc = reg.btcChange;
@@ -316,7 +324,8 @@ function macroRegime(ctx) {
     }
   }
   const dir = score > 0.6 ? 1 : score < -0.6 ? -1 : 0;
-  return vote(dir, dir === 0 ? 25 : clamp(conf + Math.abs(score) * 18), pts);
+  // v6.3: base 30→40, slope ×18→×22 (macro gate votes were capped ~48).
+  return vote(dir, dir === 0 ? 25 : clamp(conf + Math.abs(score) * 22), pts);
 }
 
 // ------------------------------------------------------------

@@ -10,6 +10,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, getProxyBase } from '../../utils/api';
 import type { AISignal, OptionsDesk, SignalBoard, TradingState, JournalPosition, JournalEntry } from './types';
 
+export interface DeepSignalResult {
+  ok: boolean;
+  signal?: AISignal;
+  indicators?: Record<string, unknown>;
+  priceSource?: string | null;
+  error?: string;
+}
+
 export interface ExecuteResult {
   ok: boolean;
   error?: string;
@@ -127,9 +135,23 @@ export function useAITrading(active: boolean) {
     } finally { setBusy(false); }
   }, [loadPositions, loadState]);
 
+  // v6.3 PRO: deep single-symbol analysis (every model vote, fresh run,
+  // AI Council note) — powers the 🔬 button on each signal card.
+  const fetchDeep = useCallback(async (symbol: string, market: 'INDIA' | 'CRYPTO'): Promise<DeepSignalResult> => {
+    try {
+      const r = await apiFetch(`${getProxyBase()}/api/ai/deep/${encodeURIComponent(symbol)}?market=${market}&t=${Date.now()}`, {
+        signal: AbortSignal.timeout(40000),
+      });
+      const j = await r.json().catch(() => ({ ok: false, error: 'bad response' }));
+      return j;
+    } catch (e) {
+      return { ok: false, error: String((e as Error)?.message || e) };
+    }
+  }, []);
+
   return {
     india, crypto, state, positions, entries, loading, busy,
-    refresh: loadBoards, executeSignal, updateConfig, killSwitch, closePos,
+    refresh: loadBoards, executeSignal, updateConfig, killSwitch, closePos, fetchDeep,
   };
 }
 

@@ -43,6 +43,7 @@ export interface AISignal {
   grade: Grade;
   confidence: number;
   agreement: number;
+  participation?: number | null; // v6.3: voting-weight quorum (0-1)
   participating: number;
   totalModels: number;
   bullWeight?: number | null;
@@ -66,12 +67,20 @@ export interface ModelStatusRow {
   engine: string; // 'quant' | provider name
 }
 
+export interface MarketBreadth {
+  bull: number;
+  bear: number;
+  flat: number;
+  avgConf: number;
+}
+
 export interface SignalBoard {
   ok: boolean;
   market: MarketKind;
   marketOpen?: boolean;
   reason?: string;
   regime?: { niftyChange?: number | null; indiaVix?: number | null; btcChange?: number | null };
+  breadth?: MarketBreadth;
   scanned?: number;
   signals: AISignal[];
   models: ModelStatusRow[];
