@@ -5,7 +5,7 @@
 // and every quant model's voting behavior on synthetic contexts.
 // ============================================================
 import { describe, it, expect } from 'vitest';
-import { aggregateVotes, buildTradePlan, evaluateExecutionGate, DEFAULT_GATES } from '../server/ai/ensemble.js';
+import { aggregateVotes, buildTradePlan, evaluateExecutionGate, fitPlanToRiskCap, DEFAULT_GATES } from '../server/ai/ensemble.js';
 import { runQuantModels, MODELS, aiCouncilVoteFromVerdict } from '../server/ai/models.js';
 import { computeIndicatorsFromCandles, detectPatterns, rsi, macd, bollinger, atr } from '../server/ai/lib/indicators.js';
 import { toCouncilCandidate, scannerPatterns } from '../server/ai/signals.js';
@@ -115,10 +115,13 @@ describe('evaluateExecutionGate — THE order gauntlet', () => {
     expect(g.ok).toBe(true);
   });
 
-  it('rejects India signals (options = signals only)', () => {
+  it('venue gate: an INDIA signal is rejected on the default (crypto) venue — and passes on the India venue (v6.5)', () => {
     const g = evaluateExecutionGate({ ...strong, market: 'INDIA' }, { side: 'LONG' });
     expect(g.ok).toBe(false);
-    expect(g.reason).toMatch(/CoinDCX-only/i);
+    expect(g.reason).toMatch(/INDIA market/);
+    // the India gauntlet passes the SAME signal with venue: 'INDIA'
+    const gi = evaluateExecutionGate({ ...strong, market: 'INDIA' }, { side: 'LONG', venue: 'INDIA' });
+    expect(gi.ok).toBe(true);
   });
 
   it('rejects stale signals (> 90s)', () => {
@@ -425,5 +428,86 @@ describe('scannerPatterns — deriving today\\u2019s candle from scanner OHLC', 
     expect(scannerPatterns({ open: null, high: 10, low: 9, ltp: 9.5, changePct: 0 })).toEqual([]);
     expect(scannerPatterns({ open: 10, high: 10, low: 10, ltp: 10, changePct: 0 })).toEqual([]); // zero range
     expect(scannerPatterns({})).toEqual([]);
+  });
+});
+
+// ============================================================
+// v6.4 — RISK AUTO-FIT (the "plan risk 5.04% > 5% max" bug)
+// ============================================================
+describe('v6.4 buildTradePlan maxRiskPct — plans born inside the cap', () => {
+  it('clamps an 8% ATR stop to the 5% cap (LONG): SL 95, T1 105, T2 110, honest flags', () => {
+    // crypto 1.6×ATR: ltp 100, atr 5 → stop 8% away
+    const plan = buildTradePlan({ side: 'LONG', dir: 1 }, { ltp: 100, ind: { atr: 5 } }, 'CRYPTO', { maxRiskPct: 5 });
+    expect(plan).not.toBeNull();
+    expect(plan!.riskPct).toBe(5);
+    expect(plan!.stopLoss).toBeCloseTo(95, 1);
+    expect(plan!.target1).toBeCloseTo(105, 1);
+    expect(plan!.target2).toBeCloseTo(110, 1);
+    expect(plan!.riskClamped).toBe(true);
+    expect(plan!.originalRiskPct).toBeCloseTo(8, 1);
+  });
+
+  it('clamps on the SHORT side symmetrically (SL 105 on ltp 100)', () => {
+    const plan = buildTradePlan({ side: 'SHORT', dir: -1 }, { ltp: 100, ind: { atr: 5 } }, 'CRYPTO', { maxRiskPct: 5 });
+    expect(plan!.stopLoss).toBeCloseTo(105, 1);
+    expect(plan!.target1).toBeCloseTo(95, 1);
+    expect(plan!.riskClamped).toBe(true);
+  });
+
+  it('leaves an under-cap plan untouched (no clamp flags)', () => {
+    const plan = buildTradePlan({ side: 'LONG', dir: 1 }, { ltp: 100, ind: { atr: 2 } }, 'CRYPTO', { maxRiskPct: 5 });
+    expect(plan!.riskClamped).toBeUndefined();
+    expect(plan!.riskPct).toBeCloseTo(3.2, 1);
+  });
+
+  it('no maxRiskPct opt → legacy behavior (wide stops stay wide)', () => {
+    const plan = buildTradePlan({ side: 'LONG', dir: 1 }, { ltp: 100, ind: { atr: 5 } }, 'CRYPTO');
+    expect(plan!.riskPct).toBeCloseTo(8, 1);
+    expect(plan!.riskClamped).toBeUndefined();
+  });
+});
+
+describe('v6.4 fitPlanToRiskCap — execute-time auto-fit', () => {
+  const mk = (riskPct: number, side = 'LONG') => ({
+    symbol: 'BTC', market: 'CRYPTO', side, grade: 'STRONG',
+    confidence: 82, agreement: 0.78, generatedAt: Date.now(), ltp: 100,
+    plan: {
+      entry: 100, stopLoss: side === 'LONG' ? 100 - riskPct : 100 + riskPct,
+      target1: side === 'LONG' ? 100 + riskPct : 100 - riskPct,
+      target2: side === 'LONG' ? 100 + 2 * riskPct : 100 - 2 * riskPct,
+      risk: riskPct, riskPct, rewardRisk: 2, atrUsed: riskPct / 1.6, planStyle: 'atr-based',
+    },
+  });
+
+  it('THE USER BUG: 5.04% vs 5% cap → fitted, not bounced', () => {
+    const { signal, note } = fitPlanToRiskCap(mk(5.04), 5);
+    expect(note).toMatch(/auto-fitted 5\.04% → 5%/);
+    expect(signal.plan.riskPct).toBe(5);
+    expect(signal.plan.stopLoss).toBeCloseTo(95, 1); // 100 × 5%
+    expect(signal.plan.target2).toBeCloseTo(110, 1);
+    expect(signal.plan.riskClamped).toBe(true);
+    expect(signal.plan.originalRiskPct).toBeCloseTo(5.04, 2);
+  });
+
+  it('SHORT side mirrors correctly (SL above entry)', () => {
+    const { signal, note } = fitPlanToRiskCap(mk(6.2, 'SHORT'), 5);
+    expect(note).toBeTruthy();
+    expect(signal.plan.stopLoss).toBeCloseTo(105, 1);
+    expect(signal.plan.target1).toBeCloseTo(95, 1);
+  });
+
+  it('under-cap plan is a no-op with no note', () => {
+    const { signal, note } = fitPlanToRiskCap(mk(3.2), 5);
+    expect(note).toBeNull();
+    expect(signal.plan.riskPct).toBe(3.2);
+    expect(signal.plan.riskClamped).toBeUndefined();
+  });
+
+  it('degrades safely on broken inputs (never throws, never mutates)', () => {
+    expect(fitPlanToRiskCap(null, 5).note).toBeNull();
+    expect(fitPlanToRiskCap(mk(8), 0).note).toBeNull();
+    expect(fitPlanToRiskCap(mk(8), NaN).note).toBeNull();
+    expect(fitPlanToRiskCap({ ...mk(8), ltp: null }, 5).note).toBeNull();
+    expect(fitPlanToRiskCap({ ...mk(8), plan: null }, 5).note).toBeNull();
   });
 });

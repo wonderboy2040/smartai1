@@ -55,7 +55,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await page.click('button:has-text("AI Trading")');
     await page.waitForSelector('text=SUPERINTELLIGENCE AI TRADING TERMINAL', { timeout: 20000 });
     const hdrBar = await page.locator('h2:has-text("SUPERINTELLIGENCE")').locator('xpath=..').innerText();
-    check('AI Trading terminal header + v6.3 badge', /v6\.3/i.test(hdrBar), hdrBar.replace(/\n/g, ' ').slice(0, 70));
+    check('AI Trading terminal header + version badge (v6.3+)', /v6\.[3-9]/i.test(hdrBar), hdrBar.replace(/\n/g, ' ').slice(0, 70)); // v6.5: version advances with releases
     await page.waitForSelector('text=MARKET BREADTH', { timeout: 30000 });
 
     // ---------- 3. Breadth strip ----------

@@ -259,6 +259,25 @@ export async function durableBootRestoreAll() {
     remoteTs: (s) => s?.updatedAt || 0,
   });
   if (st) restored.settings = true;
+  // 7) AI Terminal secrets (v6.5): Telegram bot token/chat id + AI
+  // Council keys — typed in the app, stored server-side. Without this
+  // restore a Render restart would silently kill alerts and the 9th
+  // model until the user re-entered everything.
+  const aiSec = await durableBootRestore('ai-secrets.json', {
+    isUsable: (s) => !!(s && s.secrets && typeof s.secrets === 'object' && Object.keys(s.secrets).length),
+    localTs: (s) => s?.updatedAt || 0,
+    remoteTs: (s) => s?.updatedAt || 0,
+  });
+  if (aiSec) restored.aiSecrets = true;
+  // 8) Dhan broker credentials (v6.5 — India execution venue). Same
+  // restart-safety as the CoinDCX keys: connected ONCE, stays connected
+  // across redeploys.
+  const dhan = await durableBootRestore('mcp-dhan.json', {
+    isUsable: (s) => !!(s && s.clientId && s.accessToken),
+    localTs: (s) => s?.connectedAt || 0,
+    remoteTs: (s) => s?.connectedAt || 0,
+  });
+  if (dhan) restored.dhan = true;
   const keys = Object.keys(restored);
   if (keys.length) _log(`boot restore complete: ${keys.join(', ')}`);
   return restored;

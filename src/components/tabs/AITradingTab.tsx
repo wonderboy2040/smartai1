@@ -19,7 +19,9 @@ import { SignalCard } from '../aitrading/SignalCard';
 import { OptionsDeskPanel } from '../aitrading/OptionsDeskPanel';
 import { OrderConsole } from '../aitrading/OrderConsole';
 import { ModelRegistry } from '../aitrading/ModelRegistry';
-import type { AISignal, MarketKind, SignalBoard } from '../aitrading/types';
+import { BacktestPanel } from '../aitrading/BacktestPanel';
+import { AlertsPanel } from '../aitrading/AlertsPanel';
+import type { AISignal, DhanStatus, MarketKind, SignalBoard } from '../aitrading/types';
 
 const REFRESH_MS = 30_000;
 
@@ -92,6 +94,66 @@ const FILTERS: { id: BoardFilter; label: string }[] = [
   { id: 'SHORT', label: '▼ SHORT' },
 ];
 
+/** v6.4: the "India me trade kaisa lein" answer, on the board itself —
+ *  3-step manual broker flow. Collapsible, dismissal remembered. */
+const HOWTO_KEY = 'ai-india-howto-dismissed';
+function IndiaHowToTrade() {
+  const [open, setOpen] = useState(() => {
+    try { return !localStorage.getItem(HOWTO_KEY); } catch { return true; }
+  });
+  const dismiss = () => {
+    setOpen(false);
+    try { localStorage.setItem(HOWTO_KEY, '1'); } catch { /* private mode */ }
+  };
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)}
+        className="quantum-btn-ghost px-3 py-1.5 rounded-xl text-[10px] font-black text-orange-300">
+        🇮🇳 India trade kaise lein? — 3-step guide
+      </button>
+    );
+  }
+  return (
+    <div className="quantum-panel rounded-2xl p-4 border border-orange-500/20 bg-gradient-to-r from-orange-500/[0.05] to-transparent">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-black text-orange-300 tracking-wide">🇮🇳 INDIA DESK — SIGNAL SE TRADE TAK (3 steps)</span>
+        <button onClick={dismiss} className="quantum-btn-ghost px-2 py-1 rounded-lg text-[10px] font-black" aria-label="Dismiss guide">✕ Got it</button>
+      </div>
+      <div className="grid gap-2 md:grid-cols-3 mt-2.5 text-[11px] leading-relaxed">
+        <div className="bg-black/25 rounded-xl p-2.5">
+          <div className="text-[10px] font-black text-cyan-300 mb-1">① SIGNAL CHUNO (grade dekho)</div>
+          <p className="text-slate-400">
+            <b className="text-cyan-300">★ STRONG</b> = full committee agree (75%+ conf) — highest accuracy.
+            <b className="text-cyan-300"> ⚡ ACTION</b> (55%+) bhi tradeable hai.
+            Sirf <b>LONG/SHORT</b> side ka card chuno — NEUTRAL/WATCH skip karo.
+            <span className="text-slate-500"> 9:30–14:30 ke beech entry best hai.</span>
+          </p>
+        </div>
+        <div className="bg-black/25 rounded-xl p-2.5">
+          <div className="text-[10px] font-black text-orange-300 mb-1">② 📋 SLIP KHOLO — qty + levels ready</div>
+          <p className="text-slate-400">
+            Card par <b className="text-orange-300">📋 Slip</b> button dabao — risk ₹ ke hisaab se
+            <b> qty, capital, SL-M trigger, T1/T2, limit band</b> sab calculate ho jaata hai.
+            <b className="text-orange-300"> COPY SLIP</b> dabao aur broker terminal (Zerodha/Upstox) me wahi levels daalo.
+            <span className="text-cyan-300"> v6.5: <b>PAPER TRADE</b> button se practice position bhi khul jaata hai (watcher SL/TP + trailing + 15:15 square-off manage karega).</span>
+          </p>
+        </div>
+        <div className="bg-black/25 rounded-xl p-2.5">
+          <div className="text-[10px] font-black text-violet-300 mb-1">③ DHAN LIVE ya OPTIONS DESK (small capital)</div>
+          <p className="text-slate-400">
+            <span className="text-emerald-300">v6.5: <b>Dhan broker connect</b> karke (Execution Console me) STRONG India signals par direct <b>LIVE execution</b> — entry market order + broker SL-M + 15:15 square-off, sab automated.</span>
+            Capital kam hai ya index pe trade karna hai? Neeche <b className="text-violet-300">02 · Options Desk</b>
+            me NIFTY/BANKNIFTY ki ready strategies (spread/condor) — legs, max profit/loss, breakeven sab priced.
+          </p>
+        </div>
+      </div>
+      <p className="text-[10px] text-slate-500 mt-2">
+        India desk: signals + slip sizing + (optional) Dhan LIVE execution + Options Desk. Crypto desk (CoinDCX) me PAPER/LIVE buttons se direct execution hai. Intraday rules: square-off 15:15 IST (LIVE par watcher + broker dono enforce karte hain), opening 15 min avoid karo — LIVE entries 09:30–15:00 tak hi open hoti hain.
+      </p>
+    </div>
+  );
+}
+
 function FilterChips({ filter, onChange, counts }: { filter: BoardFilter; onChange: (f: BoardFilter) => void; counts: Record<BoardFilter, number> }) {
   return (
     <div className="flex gap-1.5 flex-wrap" role="group" aria-label="Signal filters">
@@ -144,15 +206,29 @@ function BoardSummary({ board }: { board: SignalBoard | null }) {
 }
 
 export default memo(function AITradingTab() {
-  const { india, crypto, state, positions, entries, loading, busy, refresh, executeSignal, updateConfig, closePos, fetchDeep } = useAITrading(true);
+  const t = useAITrading(true);
+  const { india, crypto, state, positions, entries, loading, busy, refresh, executeSignal, updateConfig, closePos, fetchDeep } = t;
+  const { executeIndia, runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert, fetchDhanStatus, dhanConnect, dhanDisconnect } = t;
   const [market, setMarket] = useState<MarketKind>('INDIA');
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [filter, setFilter] = useState<BoardFilter>('ALL');
   const [deep, setDeep] = useState<{ loading: boolean; signal?: AISignal; indicators?: Record<string, unknown>; error?: string } | null>(null);
+  const [dhan, setDhan] = useState<DhanStatus | null>(null);
 
   const board = market === 'INDIA' ? india : crypto;
   const models = board?.models || india?.models || crypto?.models || [];
   const canLive = state?.config?.mode === 'live' && !state?.blocked?.notConnected;
+  const canLiveIndia = state?.config?.indiaMode === 'live' && !!dhan?.connected;
+
+  // v6.5: Dhan status boot-load (light: profile ping only when connected)
+  useEffect(() => {
+    let alive = true;
+    fetchDhanStatus().then(s => { if (alive && s) setDhan(s); }).catch(() => {});
+    return () => { alive = false; };
+  }, [fetchDhanStatus]);
+  const refreshDhan = useCallback(() => {
+    fetchDhanStatus().then(s => { if (s) setDhan(s); }).catch(() => {});
+  }, [fetchDhanStatus]);
 
   // Track which ACTIONABLE symbols were NOT in the previous board → flash them.
   const prevTopRef = useRef<Set<string>>(new Set());
@@ -177,12 +253,24 @@ export default memo(function AITradingTab() {
     const r = await executeSignal(signal, mode);
     if (r.ok) {
       notify(true, mode === 'live'
-        ? `✅ LIVE order placed — ${signal.symbol} ${signal.side} · qty ${r.filled?.qty} @ ₹${r.filled?.price}`
-        : `🧪 Paper trade opened — ${signal.symbol} ${signal.side} · qty ${r.filled?.qty} @ ₹${r.filled?.price}`);
+        ? `✅ LIVE order placed — ${signal.symbol} ${signal.side} · qty ${r.filled?.qty} @ ₹${r.filled?.price}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`
+        : `🧪 Paper trade opened — ${signal.symbol} ${signal.side} · qty ${r.filled?.qty} @ ₹${r.filled?.price}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
     } else {
       notify(false, `⛔ ${r.error || 'execution failed'}`);
     }
   }, [executeSignal, notify]);
+
+  // v6.5: India gauntlet (Dhan paper/live) — same handler shape.
+  const onExecuteIndia = useCallback(async (signal: AISignal, mode: 'paper' | 'live') => {
+    const r = await executeIndia(signal, mode);
+    if (r.ok) {
+      notify(true, mode === 'live'
+        ? `✅ Dhan LIVE order placed — ${signal.symbol} ${signal.side} · ${r.filled?.qty} shares @ ₹${r.filled?.price} · broker SL-M armed · 15:15 square-off${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`
+        : `🧪 India paper trade opened — ${signal.symbol} ${signal.side} · ${r.filled?.qty} shares @ ₹${r.filled?.price} (watcher SL/TP + trailing)${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
+    } else {
+      notify(false, `⛔ ${r.error || 'execution failed'}`);
+    }
+  }, [executeIndia, notify]);
 
   const onSaveConfig = useCallback(async (patch: Record<string, unknown>) => {
     const r = await updateConfig(patch);
@@ -244,11 +332,12 @@ export default memo(function AITradingTab() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-black gradient-text-cyan tracking-wide">SUPERINTELLIGENCE AI TRADING TERMINAL</h2>
-              <span className="quantum-badge">v6.3</span>
+              <span className="quantum-badge">v6.5</span>
             </div>
             <p className="text-[10px] text-slate-500 mt-0.5">
               9-model ensemble consensus · MCP model bus · {models.filter(m => m.online).length}/{models.length || 9} models online
               {canLive && <span className="text-red-400 font-black"> · LIVE EXECUTION ARMED</span>}
+              {canLiveIndia && <span className="text-red-400 font-black"> · INDIA LIVE ARMED</span>}
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2 flex-wrap">
@@ -272,6 +361,9 @@ export default memo(function AITradingTab() {
 
       {/* ============ MARKET BREADTH (v6.3) ============ */}
       <BreadthStrip board={board} />
+
+      {/* ============ v6.4: India how-to-trade guide ============ */}
+      {market === 'INDIA' && <IndiaHowToTrade />}
 
       {/* toast */}
       {toast && (
@@ -306,7 +398,9 @@ export default memo(function AITradingTab() {
             </div>
           )}
           {visibleSignals.map(s => (
-            <SignalCard key={`${s.market}-${s.symbol}`} signal={s} busy={busy} onExecute={onExecute} onDeep={onDeep} canLive={canLive} isNew={newSymbols.has(s.symbol)} />
+            <SignalCard key={`${s.market}-${s.symbol}`} signal={s} busy={busy} onExecute={onExecute} onExecuteIndia={onExecuteIndia} onDeep={onDeep}
+              canLive={canLive} canLiveIndia={canLiveIndia} isNew={newSymbols.has(s.symbol)}
+              orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5} />
           ))}
           {board?.signals?.length === 0 && !loading && (
             <div className="quantum-panel rounded-2xl p-8 col-span-full text-center">
@@ -337,18 +431,37 @@ export default memo(function AITradingTab() {
 
       {/* ============ 03 · EXECUTION CONSOLE ============ */}
       <div>
-        <SectionLabel num={market === 'INDIA' ? '03' : '02'} title="Execution Console" sub="CoinDCX order gauntlet — STRONG signals only · risk-gated · audited" />
+        <SectionLabel num={market === 'INDIA' ? '03' : '02'} title="Execution Console" sub="CoinDCX + Dhan gauntlets — STRONG signals only · trailing SL · risk-gated · audited" />
         <div className="mt-2.5">
           <OrderConsole
             state={state} positions={positions} entries={entries} busy={busy}
             onClose={onClose} onSaveConfig={onSaveConfig}
+            dhan={dhan} onDhanConnect={async (id, tok) => { const r = await dhanConnect(id, tok); refreshDhan(); return r; }}
+            onDhanDisconnect={async () => { const r = await dhanDisconnect(); refreshDhan(); return r; }}
+            onDhanRefresh={refreshDhan}
           />
         </div>
       </div>
 
-      {/* ============ 04 · MODEL REGISTRY ============ */}
+      {/* ============ 04 · BACKTEST (v6.5) ============ */}
       <div>
-        <SectionLabel num={market === 'INDIA' ? '04' : '03'} title="Model Registry" sub="the superintelligence bus — every analyst, weight & status" />
+        <SectionLabel num={market === 'INDIA' ? '04' : '03'} title="Backtest Lab" sub="the SAME 9-model ensemble replayed on history — win rate · avg R · equity curve" />
+        <div className="mt-2.5">
+          <BacktestPanel market={market} runBacktest={runBacktest} />
+        </div>
+      </div>
+
+      {/* ============ 05 · ALERTS & AI KEYS (v6.5) ============ */}
+      <div>
+        <SectionLabel num={market === 'INDIA' ? '05' : '04'} title="Alerts & AI Keys" sub="Telegram pings on STRONG signals · 9th model keys — app se hi, Render env ki zaroorat nahi" />
+        <div className="mt-2.5">
+          <AlertsPanel fetchAlertsStatus={fetchAlertsStatus} saveAlertsConfig={saveAlertsConfig} testAlert={testAlert} busy={busy} notify={notify} />
+        </div>
+      </div>
+
+      {/* ============ 06 · MODEL REGISTRY ============ */}
+      <div>
+        <SectionLabel num={market === 'INDIA' ? '06' : '05'} title="Model Registry" sub="the superintelligence bus — every analyst, weight & status" />
         <div className="mt-2.5">
           <ModelRegistry models={models} />
         </div>
@@ -374,7 +487,8 @@ export default memo(function AITradingTab() {
             )}
             {!deep.loading && deep.signal && (
               <>
-                <SignalCard signal={deep.signal} onExecute={onExecute} canLive={canLive} busy={busy} />
+                <SignalCard signal={deep.signal} onExecute={onExecute} onExecuteIndia={onExecuteIndia} canLive={canLive} canLiveIndia={canLiveIndia} busy={busy}
+                  orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5} />
                 {deep.indicators && (
                   <div className="mt-3 bg-black/25 rounded-xl p-3">
                     <div className="text-[10px] font-black text-slate-500 tracking-wider mb-2">LIVE INDICATOR SNAPSHOT</div>

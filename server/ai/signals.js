@@ -359,7 +359,7 @@ export async function getSignals(market, deps, opts = {}) {
     else breadth.flat++;
     confSum += consensus.confidence;
     if (consensus.dir === 0) continue;
-    const plan = buildTradePlan(consensus, ctx, mkt);
+    const plan = buildTradePlan(consensus, ctx, mkt, { maxRiskPct: riskCapFor(depsSafe) });
     candidates.push({ ctx, votes, consensus, plan });
   }
   breadth.avgConf = contexts.length > 0 ? Math.round(confSum / contexts.length) : 0;
@@ -392,7 +392,7 @@ export async function getSignals(market, deps, opts = {}) {
     // Rebuild the plan from the POST-council consensus: the council vote
     // can flip the final side, and a SHORT signal carrying a long-style
     // plan (SL below entry, TP2 above) would invert every alert level.
-    const plan2 = buildTradePlan(consensus2, c.ctx, mkt) ?? c.plan;
+    const plan2 = buildTradePlan(consensus2, c.ctx, mkt, { maxRiskPct: riskCapFor(depsSafe) }) ?? c.plan;
     signals.push(buildSignal({
       symbol: c.ctx.symbol, market: mkt, ctx: c.ctx, votes, consensus: consensus2, plan: plan2, aiNote,
     }));
@@ -404,6 +404,7 @@ export async function getSignals(market, deps, opts = {}) {
     marketOpen: mkt === 'INDIA' ? isNseOpen() : true,
     regime,
     breadth,
+    riskCap: riskCapFor(depsSafe),
     scanned: contexts.length,
     signals,
     models: modelStatus(council, depsSafe),
@@ -418,6 +419,18 @@ function gatesFor(deps) {
     const cfg = deps?.getTradingConfig?.();
     return { minConfidence: cfg?.minConfidence ?? 75, minAgreement: cfg?.minAgreement ?? 0.70 };
   } catch { return DEFAULT_GATES; }
+}
+
+/** v6.4: the user's configured max-stop% — board plans are BUILT inside
+ *  the cap (riskClamped flag + originalRiskPct on the plan) so the cards
+ *  honestly show a fitted plan instead of one the execute-gate would
+ *  bounce. Paper execute additionally auto-fits server-side. */
+function riskCapFor(deps) {
+  try {
+    const cfg = deps?.getTradingConfig?.();
+    const cap = Number(cfg?.maxRiskPct);
+    return Number.isFinite(cap) && cap > 0 ? cap : 5;
+  } catch { return 5; }
 }
 
 function modelStatus(council, deps) {
@@ -526,7 +539,7 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
     ltp: ctx.ltp,
     changePct: ctx.changePct,
     ind: ctx.ind,
-    plan: buildTradePlan(preConsensus, ctx, mkt),
+    plan: buildTradePlan(preConsensus, ctx, mkt, { maxRiskPct: riskCapFor(deps) }),
     votes,
   }], deps, mkt).catch(() => ({ verdicts: {}, online: false }));
   const verdict = council?.verdicts?.[sym];
@@ -538,7 +551,7 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
     });
   }
   const consensus = aggregateVotes(votes, gatesFor(deps));
-  const plan = buildTradePlan(consensus, ctx, mkt);
+  const plan = buildTradePlan(consensus, ctx, mkt, { maxRiskPct: riskCapFor(deps) });
   const payload = {
     ok: true,
     signal: buildSignal({ symbol: sym, market: mkt, ctx, votes, consensus, plan, aiNote: verdict ? { verdict: verdict.verdict, note: verdict.note, analysis: verdict.analysis, model: council.model } : null }),

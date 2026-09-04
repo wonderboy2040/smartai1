@@ -17,9 +17,11 @@
 // ============================================================
 import crypto from 'node:crypto';
 import { coindcxPrivate, coindcxConnected } from '../mcp/coindcx.js';
+import { dhanConnected } from './dhan.js';
 import { loadJSON, saveJSON } from '../lib/store.js';
 import { durablePut } from '../mcp/durable.js';
 import { fetchCoinDcxTickers } from '../cryptoStream.js';
+import { computeTrailSl } from './ensemble.js';
 
 const CONFIG_FILE = 'ai-trading-config.json';
 const JOURNAL_FILE = 'ai-trading-journal.json';
@@ -29,16 +31,23 @@ const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 
 // ---------------- config (durable-backed) ----------------
 export const DEFAULT_CONFIG = {
-  mode: 'paper',                // 'paper' | 'live'
+  mode: 'paper',                // 'paper' | 'live'  (crypto CoinDCX)
+  indiaMode: 'paper',           // 'paper' | 'live'  (India Dhan) — v6.5
   minConfidence: 75,            // STRONG gate (ensemble must also agree)
   minAgreement: 0.70,
-  maxOrderINR: 1000,            // per-order cap (₹)
+  maxOrderINR: 1000,            // per-order cap (₹) — crypto
+  indiaMaxOrderINR: 5000,       // per-order cap (₹) — India equity — v6.5
   dailyMaxTrades: 3,
   dailyMaxLossINR: 500,         // realized+paper loss cap per day
   onePositionPerPair: true,
   allowAuto: false,             // auto-execute STRONG signals (no click)
   killSwitch: false,
   liveConfirmedAt: null,
+  indiaLiveConfirmedAt: null,   // v6.5 — India arming is separate
+  // v6.5 TRAILING SL — winners run, stops ratchet (never loosen)
+  trailEnabled: true,
+  trailArmR: 1.0,               // arm once profit ≥ 1× initial risk
+  trailOffsetR: 1.0,            // trail SL = peak − 1× initial risk
 };
 
 export function loadConfig() {
@@ -80,11 +89,32 @@ export function updateConfig(patch = {}) {
   if (patch.dailyMaxTrades != null) { const v = numeric(patch.dailyMaxTrades, 1, 50); if (v != null) next.dailyMaxTrades = v; }
   if (patch.dailyMaxLossINR != null) { const v = numeric(patch.dailyMaxLossINR, 50, 1_000_000); if (v != null) next.dailyMaxLossINR = v; }
   if (patch.maxRiskPct != null) { const v = numeric(patch.maxRiskPct, 1, 20); if (v != null) next.maxRiskPct = v; }
+  if (patch.trailEnabled != null) next.trailEnabled = !!patch.trailEnabled;
+  if (patch.trailArmR != null) { const v = numeric(patch.trailArmR, 0.5, 3); if (v != null) next.trailArmR = v; }
+  if (patch.trailOffsetR != null) { const v = numeric(patch.trailOffsetR, 0.5, 2); if (v != null) next.trailOffsetR = v; }
+  if (patch.indiaMode === 'paper') { next.indiaMode = 'paper'; }
+  if (patch.indiaMode === 'live') {
+    // India LIVE has its own typed confirmation (independent of crypto).
+    const phrase = String(patch.liveConfirmPhrase || '').trim().toUpperCase();
+    if (phrase !== 'LIVE') {
+      const err = new Error('Enabling India LIVE mode requires liveConfirmPhrase="LIVE" (typed confirmation)');
+      err.status = 400;
+      throw err;
+    }
+    if (!dhanConnected()) {
+      const err = new Error('Dhan not connected — connect Client ID + Access Token first (Execution Console)');
+      err.status = 400;
+      throw err;
+    }
+    next.indiaMode = 'live';
+    next.indiaLiveConfirmedAt = Date.now();
+  }
+  if (patch.indiaMaxOrderINR != null) { const v = numeric(patch.indiaMaxOrderINR, 100, 500_000); if (v != null) next.indiaMaxOrderINR = v; }
   if (patch.onePositionPerPair != null) next.onePositionPerPair = !!patch.onePositionPerPair;
   if (patch.allowAuto != null) next.allowAuto = !!patch.allowAuto;
   if (patch.killSwitch != null) {
     next.killSwitch = !!patch.killSwitch;
-    if (next.killSwitch) { next.allowAuto = false; next.mode = 'paper'; }
+    if (next.killSwitch) { next.allowAuto = false; next.mode = 'paper'; next.indiaMode = 'paper'; }
   }
   return saveConfig(next);
 }
@@ -119,6 +149,8 @@ export function withJournalLock(fn) {
 function pushEntry(j, entry) {
   j.entries.push({ id: crypto.randomUUID(), ts: Date.now(), ...entry });
 }
+// v6.5: shared with indiaOrders.js (same journal, same lock, same stamps)
+export { pushEntry, todayIST };
 
 function todayIST() {
   // Daily caps reset at IST midnight REGARDLESS of the server's TZ
@@ -248,7 +280,7 @@ export async function executeSignal(opts) {
     return reject('No fresh ensemble signal available for this pair');
   }
   const gates = { minConfidence: cfg.minConfidence, minAgreement: cfg.minAgreement };
-  const { evaluateExecutionGate, buildTradePlan } = await import('./ensemble.js');
+  const { evaluateExecutionGate, buildTradePlan, fitPlanToRiskCap } = await import('./ensemble.js');
 
   // PAPER practice fallback: when the FRESH consensus is FLAT/planless but
   // the user clicked a directional card, synthesize a practice plan at the
@@ -271,6 +303,24 @@ export async function executeSignal(opts) {
 
   // PAPER = practice money (relaxed gate, 10-min freshness); LIVE = the full
   // STRONG gauntlet (90s freshness, confidence + agreement + risk caps).
+  // v6.4 RISK AUTO-FIT: a structural ATR stop a hair over the cap
+  // (5.04% vs 5%) used to hard-REJECT even the PAPER button. Now the
+  // stop is FITTED to the cap and targets re-derived — PAPER always
+  // fits; LIVE fits only mild overshoot (≤ 1.5× cap) because a
+  // wildly-wide ATR stop clamped tight is noise-suicide and belongs
+  // in an honest REJECT. The gate below stays as the final safety net.
+  const riskCap = Number(cfg.maxRiskPct) > 0 ? Number(cfg.maxRiskPct) : 5;
+  let fitNote = null;
+  const planRiskPct = Number(effectiveSignal?.plan?.riskPct);
+  if (Number.isFinite(planRiskPct) && planRiskPct > riskCap) {
+    if (wantMode === 'paper' || planRiskPct <= riskCap * 1.5) {
+      const fitted = fitPlanToRiskCap(effectiveSignal, riskCap);
+      if (fitted.note) {
+        effectiveSignal = fitted.signal;
+        fitNote = fitted.note;
+      }
+    } // else: leave the plan as-is — the gate rejects with the honest reason
+  }
   const verdict = evaluateExecutionGate(effectiveSignal, {
     side: side || effectiveSignal.side, gates,
     requireStrong: wantMode === 'live',
@@ -278,7 +328,10 @@ export async function executeSignal(opts) {
     maxRiskPct: cfg.maxRiskPct || 5,
   });
   if (!verdict.ok) {
-    return reject(verdict.reason, `Signal gate: ${verdict.reason}`, {
+    const hint = (Number(effectiveSignal?.plan?.riskPct) > riskCap)
+      ? ` — widen "Max stop %" (currently ${riskCap}%) in Risk settings or skip this volatile pair`
+      : '';
+    return reject(verdict.reason, `Signal gate: ${verdict.reason}${hint}`, {
       signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
     });
   }
@@ -335,9 +388,11 @@ export async function executeSignal(opts) {
     // --- paper execution ---
     if (wantMode === 'paper') {
       const position = {
-        id: crypto.randomUUID(), pair, side: effectiveSignal.side, mode: 'paper', source,
+        id: crypto.randomUUID(), pair, side: effectiveSignal.side, mode: 'paper', market: 'CRYPTO', source,
         qty, entryPrice: price, notionalINR: r2(notional),
         sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
+        initialRisk: r2(Math.abs(price - (effectiveSignal.plan?.stopLoss ?? price))),
+        peakPrice: r2(price),
         signal: { grade: signal.grade, confidence: signal.confidence, agreement: signal.agreement, summary: synthNote || signal.summary },
         openedAt: Date.now(), status: 'OPEN',
       };
@@ -345,10 +400,10 @@ export async function executeSignal(opts) {
       pushEntry(j, {
         ...entry, status: 'FILLED', qty, price: r2(price), notionalINR: r2(notional),
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
-        reason: synthNote ? `${verdict.reason} · ${synthNote}` : verdict.reason,
+        reason: [verdict.reason, synthNote, fitNote].filter(Boolean).join(' · '),
       });
       saveJournal(j);
-      return { ok: true, mode: 'paper', position, filled: { qty, price: r2(price), notionalINR: r2(notional) } };
+      return { ok: true, mode: 'paper', position, filled: { qty, price: r2(price), notionalINR: r2(notional) }, ...(fitNote ? { fitted: fitNote } : {}) };
     }
 
     // --- LIVE execution: signed order to CoinDCX ---
@@ -368,9 +423,11 @@ export async function executeSignal(opts) {
       // starts at the signal LTP and the watcher reconciles UNKNOWN/
       // fill data on its next pass (see reconcileLivePosition).
       const position = {
-        id: crypto.randomUUID(), pair, side: effectiveSignal.side, mode: 'live', source, exchangeOrderId: orderId,
+        id: crypto.randomUUID(), pair, side: effectiveSignal.side, mode: 'live', market: 'CRYPTO', source, exchangeOrderId: orderId,
         qty, entryPrice: price, notionalINR: r2(notional),
         sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
+        initialRisk: r2(Math.abs(price - (effectiveSignal.plan?.stopLoss ?? price))),
+        peakPrice: r2(price),
         signal: { grade: signal.grade, confidence: signal.confidence, agreement: signal.agreement, summary: signal.summary },
         openedAt: Date.now(), status: orderId ? 'OPEN' : 'UNKNOWN',
       };
@@ -379,10 +436,10 @@ export async function executeSignal(opts) {
         ...entry, status: orderId ? 'SUBMITTED' : 'SUBMITTED_UNKNOWN', qty, price: r2(price),
         notionalINR: r2(notional), exchangeOrderId: orderId,
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
-        reason: verdict.reason,
+        reason: [verdict.reason, fitNote].filter(Boolean).join(' · '),
       });
       saveJournal(j);
-      return { ok: true, mode: 'live', orderId, position, filled: { qty, price: r2(price), notionalINR: r2(notional) } };
+      return { ok: true, mode: 'live', orderId, position, filled: { qty, price: r2(price), notionalINR: r2(notional) }, ...(fitNote ? { fitted: fitNote } : {}) };
     } catch (e) {
       pushEntry(j, { ...entry, status: 'FAILED', reason: String(e?.message || e).slice(0, 200) });
       saveJournal(j);
@@ -491,13 +548,48 @@ export async function watchPositions({ sendTelegram } = {}) {
     }
 
     const open = j.positions.filter(p => p.status === 'OPEN');
-    if (open.length > 0) {
+    // v6.5: India positions live in the SAME journal but are priced by the
+    // TV scanner and square-off at 15:15 IST — watchIndiaPositions (indiaOrders.js)
+    // owns them. This watcher stays CRYPTO-only.
+    const openCrypto = open.filter(p => p.market !== 'INDIA');
+    if (openCrypto.length > 0) {
       const tickers = await fetchCoinDcxTickers().catch(() => []);
       const byPair = new Map((Array.isArray(tickers) ? tickers : []).map(t => [t.market, parseFloat(t.last_price)]));
 
-      for (const p of open) {
+      for (const p of openCrypto) {
         const price = byPair.get(p.pair);
         if (!(price > 0)) continue;
+
+        // v6.5 TRAILING SL — track the peak, ratchet the stop (never loosen).
+        // The initial risk R is frozen at open; once profit ≥ armR×R the SL
+        // locks to breakeven, then trails peak − offsetR×R. Every move lands
+        // in the journal as a TRAIL entry (audit trail, same as orders).
+        if (cfg.trailEnabled && p.sl != null && p.sl > 0) {
+          const long = p.side === 'LONG';
+          const prevPeak = Number(p.peakPrice);
+          const peak = long
+            ? Math.max(Number.isFinite(prevPeak) && prevPeak > 0 ? prevPeak : price, price)
+            : Math.min(Number.isFinite(prevPeak) && prevPeak > 0 ? prevPeak : price, price);
+          p.peakPrice = r2(peak);
+          const risk = Number(p.initialRisk) > 0 ? Number(p.initialRisk) : Math.abs(p.entryPrice - p.sl);
+          if (risk > 0) {
+            const trail = computeTrailSl({
+              side: p.side, entryPrice: p.entryPrice, peakPrice: peak, currentSl: p.sl,
+              initialRisk: risk, price, armR: cfg.trailArmR, offsetR: cfg.trailOffsetR,
+            });
+            if (trail) {
+              pushEntry(j, {
+                kind: 'TRAIL', day: todayIST(), pair: p.pair, market: 'CRYPTO',
+                reason: `SL ${trail.stage}: ₹${p.sl} → ₹${trail.sl} (peak ₹${r2(peak)})`,
+                from: p.sl, to: trail.sl,
+              });
+              p.sl = trail.sl;
+              p.trailing = trail.stage;
+            }
+          }
+          dirty = true;
+        }
+
         const long = p.side === 'LONG';
         let close = null;
         if (p.sl != null && (long ? price <= p.sl : price >= p.sl)) close = { reason: 'STOP-LOSS hit', price, kind: 'SL' };
@@ -644,10 +736,19 @@ export async function getPositionsWithPnl() {
   const j = loadJournal();
   const tickers = await fetchCoinDcxTickers().catch(() => []);
   const byPair = new Map((Array.isArray(tickers) ? tickers : []).map(t => [t.market, parseFloat(t.last_price)]));
+  // v6.5: India positions are priced from the TV India scanner (same
+  // source the signals use). One batch request for all open symbols.
+  const indiaSyms = [...new Set(j.positions.filter(p => p.market === 'INDIA' && p.status === 'OPEN').map(p => p.symbol))];
+  const indiaLtp = new Map();
+  if (indiaSyms.length > 0) {
+    const { fetchTVIndiaBatch } = await import('./data.js');
+    const rows = await fetchTVIndiaBatch(indiaSyms).catch(() => ({}));
+    for (const s of indiaSyms) if (rows[s]?.ltp > 0) indiaLtp.set(s, rows[s].ltp);
+  }
   const stats = dailyStats(j);
   return {
     positions: j.positions.slice().reverse().map(p => {
-      const ltp = byPair.get(p.pair) ?? p.entryPrice;
+      const ltp = p.market === 'INDIA' ? (indiaLtp.get(p.symbol) ?? p.entryPrice) : (byPair.get(p.pair) ?? p.entryPrice);
       const long = p.side === 'LONG';
       const upnl = p.status === 'OPEN'
         ? r2((long ? ltp - p.entryPrice : p.entryPrice - ltp) * p.qty)

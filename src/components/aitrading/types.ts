@@ -27,6 +27,10 @@ export interface TradePlan {
   rewardRisk: number;
   atrUsed: number;
   planStyle: string;
+  /** v6.4: structural ATR stop exceeded the risk cap → SL fitted to the
+   *  cap and targets re-derived (honest display + audit trail). */
+  riskClamped?: boolean;
+  originalRiskPct?: number;
 }
 
 export interface AINote {
@@ -81,6 +85,8 @@ export interface SignalBoard {
   reason?: string;
   regime?: { niftyChange?: number | null; indiaVix?: number | null; btcChange?: number | null };
   breadth?: MarketBreadth;
+  /** v6.4: the user's max-stop% the board plans were built within. */
+  riskCap?: number;
   scanned?: number;
   signals: AISignal[];
   models: ModelStatusRow[];
@@ -160,9 +166,11 @@ export interface OptionsDesk {
 
 export interface TradingConfig {
   mode: 'paper' | 'live';
+  indiaMode: 'paper' | 'live';
   minConfidence: number;
   minAgreement: number;
   maxOrderINR: number;
+  indiaMaxOrderINR: number;
   dailyMaxTrades: number;
   dailyMaxLossINR: number;
   onePositionPerPair: boolean;
@@ -170,11 +178,18 @@ export interface TradingConfig {
   killSwitch: boolean;
   maxRiskPct: number;
   liveConfirmedAt: number | null;
+  indiaLiveConfirmedAt: number | null;
+  /** v6.5 trailing stop-loss */
+  trailEnabled: boolean;
+  trailArmR: number;
+  trailOffsetR: number;
 }
 
 export interface JournalPosition {
   id: string;
   pair: string;
+  symbol?: string;
+  market?: 'CRYPTO' | 'INDIA';
   side: Side;
   mode: 'paper' | 'live';
   qty: number;
@@ -183,6 +198,10 @@ export interface JournalPosition {
   sl: number | null;
   tp: number | null;
   tp2: number | null;
+  /** v6.5 trailing state */
+  peakPrice?: number | null;
+  initialRisk?: number | null;
+  trailing?: 'breakeven' | 'trail' | null;
   signal?: { grade: string; confidence: number; agreement: number; summary?: string };
   openedAt: number;
   status: 'OPEN' | 'CLOSED' | 'UNKNOWN';
@@ -193,6 +212,7 @@ export interface JournalPosition {
   ltp?: number | null;
   unrealizedPnlINR?: number | null;
   exchangeOrderId?: string | null;
+  slOrderId?: string | null;
 }
 
 export interface JournalEntry {
@@ -218,4 +238,74 @@ export interface TradingState {
   stats: { day: string; tradesCount: number; realizedPnlINR: number };
   openPositions: number;
   blocked: { killSwitch: boolean; dailyTrades: boolean; dailyLoss: boolean; notConnected: boolean };
+}
+
+// ---------------- v6.5: Backtest ----------------
+export interface BacktestTrade {
+  symbol: string;
+  side: Side;
+  grade: Grade;
+  confidence: number;
+  entry: number | null;
+  exit: number | null;
+  sl: number | null;
+  tp2: number | null;
+  r: number | null;
+  pnlINR: number | null;
+  reason: string;
+  holdBars: number | null;
+  planStyle?: string;
+}
+
+export interface BacktestStats {
+  trades: number;
+  wins: number;
+  losses: number;
+  winRate: number | null;
+  avgR: number | null;
+  totalR: number | null;
+  profitFactor: number | null;
+  maxDDR: number | null;
+  avgHoldBars: number | null;
+  pnlINR: number | null;
+  symbols?: number;
+}
+
+export interface BacktestResult {
+  ok: boolean;
+  market: MarketKind;
+  params?: { minGrade?: string; capitalPerTradeINR?: number; maxRiskPct?: number; maxHoldBars?: number; slippagePct?: number };
+  scannedSymbols?: number;
+  perSymbol?: { symbol: string; ok: boolean; reason?: string; stats?: BacktestStats }[];
+  stats: BacktestStats;
+  gradeDist?: Record<string, number>;
+  exitDist?: Record<string, number>;
+  equity?: { i: number; cumR: number; symbol: string; r: number | null }[];
+  trades?: BacktestTrade[];
+  disclaimer?: string;
+  generatedAt?: number;
+}
+
+// ---------------- v6.5: Alerts + AI keys + Dhan ----------------
+export interface MaskedSecret {
+  configured: boolean;
+  tail: string | null;
+}
+
+export interface AlertsStatus {
+  ok: boolean;
+  status: {
+    telegramBotToken: MaskedSecret;
+    telegramChatId: MaskedSecret;
+    geminiApiKey: MaskedSecret;
+    groqApiKey: MaskedSecret;
+  };
+  telegram: { configured: boolean; source?: string | null };
+}
+
+export interface DhanStatus {
+  ok: boolean;
+  connected: boolean;
+  scrips?: { cached?: boolean; symbols?: number; updatedAt?: number | null };
+  profile?: { name?: string | null; clientId?: string | null } | null;
 }

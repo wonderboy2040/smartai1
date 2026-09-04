@@ -341,3 +341,69 @@ describe('PAPER practice-plan synthesis (FLAT fresh consensus)', () => {
     expect(out.error).toMatch(/side is FLAT|no tradeable side\/plan/i);
   });
 });
+
+// ============================================================
+// v6.4 — RISK AUTO-FIT through the full gauntlet
+// (the user bug: strong-signal PAPER click bounced with
+//  "Signal gate: plan risk 5.04% > 5% max")
+// ============================================================
+describe('v6.4 risk auto-fit — a 5.04% ATR stop no longer dead-ends', () => {
+  const WIDE = {
+    ...STRONG,
+    ltp: 100,
+    plan: {
+      entry: 100, stopLoss: 94.96, target1: 105.04, target2: 110.08,
+      risk: 5.04, riskPct: 5.04, rewardRisk: 2, atrUsed: 3.15, planStyle: 'atr-based',
+    },
+  };
+
+  it('PAPER: 5.04% plan → FILLED with the SL auto-fitted to the 5% cap + fitted note', async () => {
+    const out = await executeSignal({ symbol: 'BTC', mode: 'paper', getFreshSignal: async () => ({ ...WIDE }) });
+    expect(out.ok).toBe(true);
+    expect(out.mode).toBe('paper');
+    expect(out.fitted).toMatch(/auto-fitted 5\.04% → 5%/);
+    expect(out.position!.sl).toBeCloseTo(95, 1);      // 100 × 5%
+    expect(out.position!.tp).toBeCloseTo(105, 1);      // 1R of fitted risk
+    expect(out.position!.tp2).toBeCloseTo(110, 1);     // 2R of fitted risk
+    const e = loadJournal().entries.at(-1)!;
+    expect(e.status).toBe('FILLED');
+    expect(e.reason).toMatch(/auto-fitted/);
+  });
+
+  it('LIVE: mild overshoot (5.04% vs 5) also fits — SL clamped, order placed', async () => {
+    __setConfigForTests({ mode: 'live', liveConfirmedAt: Date.now() });
+    const out = await executeSignal({ symbol: 'BTC', mode: 'live', getFreshSignal: async () => ({ ...WIDE }) });
+    expect(out.ok).toBe(true);
+    expect(out.fitted).toMatch(/auto-fitted/);
+    expect(out.position!.sl).toBeCloseTo(95, 1);
+    expect(out.orderId).toBe('order-123');
+  });
+
+  it('LIVE: a wildly-wide 10% stop still REJECTS honestly (with the settings hint)', async () => {
+    __setConfigForTests({ mode: 'live', liveConfirmedAt: Date.now() });
+    const WILD = {
+      ...STRONG, ltp: 100,
+      plan: {
+        entry: 100, stopLoss: 90, target1: 110, target2: 120,
+        risk: 10, riskPct: 10, rewardRisk: 2, atrUsed: 6.25, planStyle: 'atr-based',
+      },
+    };
+    const out = await executeSignal({ symbol: 'BTC', mode: 'live', getFreshSignal: async () => ({ ...WILD }) });
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/plan risk 10% > 5% max/);
+    expect(out.error).toMatch(/Max stop %/);
+  });
+
+  it('PAPER: even the wildly-wide 10% stop fits (practice never dead-ends)', async () => {
+    const WILD = {
+      ...STRONG, ltp: 100,
+      plan: {
+        entry: 100, stopLoss: 90, target1: 110, target2: 120,
+        risk: 10, riskPct: 10, rewardRisk: 2, atrUsed: 6.25, planStyle: 'atr-based',
+      },
+    };
+    const out = await executeSignal({ symbol: 'BTC', mode: 'paper', getFreshSignal: async () => ({ ...WILD }) });
+    expect(out.ok).toBe(true);
+    expect(out.position!.sl).toBeCloseTo(95, 1);
+  });
+});

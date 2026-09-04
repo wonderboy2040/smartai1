@@ -105,7 +105,7 @@ export function aggregateVotes(votes, gates = DEFAULT_GATES) {
  *   T1   = entry ± 1.0 × R
  *   T2   = entry ± 2.0 × R
  */
-export function buildTradePlan(consensus, ctx, market) {
+export function buildTradePlan(consensus, ctx, market, opts = {}) {
   const ltp = ctx?.ltp;
   if (!consensus || consensus.dir === 0 || !(ltp > 0)) {
     return null;
@@ -115,7 +115,20 @@ export function buildTradePlan(consensus, ctx, market) {
   const a = atr != null && atr > 0 ? atr : atrFallback;
   const slMult = market === 'CRYPTO' ? 1.6 : 1.4;
   const long = consensus.dir > 0;
-  const stopLoss = long ? ltp - slMult * a : ltp + slMult * a;
+  let stopLoss = long ? ltp - slMult * a : ltp + slMult * a;
+  // v6.4 — build-time risk cap (optional): when the caller knows the
+  // user's maxRiskPct the plan is born INSIDE the cap instead of being
+  // rejected downstream (fitPlanToRiskCap is the execute-time twin).
+  let riskClamped = false, originalRiskPct = null;
+  const cap = Number(opts.maxRiskPct);
+  if (Number.isFinite(cap) && cap > 0) {
+    const cappedDist = ltp * (cap / 100);
+    if (Math.abs(ltp - stopLoss) > cappedDist) {
+      originalRiskPct = r2((Math.abs(ltp - stopLoss) / ltp) * 100);
+      stopLoss = long ? ltp - cappedDist : ltp + cappedDist;
+      riskClamped = true;
+    }
+  }
   const risk = Math.abs(ltp - stopLoss);
   const target1 = long ? ltp + risk : ltp - risk;
   const target2 = long ? ltp + 2 * risk : ltp - 2 * risk;
@@ -130,6 +143,7 @@ export function buildTradePlan(consensus, ctx, market) {
     rewardRisk: r2(rr),
     atrUsed: r2(a),
     planStyle: atr != null ? 'atr-based' : 'atr-fallback',
+    ...(riskClamped ? { riskClamped: true, originalRiskPct } : {}),
   };
 }
 
@@ -168,7 +182,8 @@ export function buildSignal({ symbol, market, ctx, votes, consensus, plan, aiNot
  * THE EXECUTION GATE — used by the order layer (and tests).
  * A LIVE order may ONLY pass when ALL conditions hold:
  *   1. fresh ensemble run (age ≤ maxAgeMs)
- *   2. market is CRYPTO (execution venue = CoinDCX)
+ *   2. market matches the execution venue (crypto=CoinDCX,
+ *      India=Dhan — v6.5 made the venue a parameter)
  *   3. side matches the requested side
  *   4. grade STRONG: confidence ≥ gates.minConfidence
  *      AND agreement ≥ gates.minAgreement
@@ -178,10 +193,13 @@ export function buildSignal({ symbol, market, ctx, votes, consensus, plan, aiNot
  * PAPER mode (practice money) uses requireStrong:false with a
  * longer freshness window — the gauntlet is for REAL money.
  */
-export function evaluateExecutionGate(signal, { side, gates = DEFAULT_GATES, maxAgeMs = 90_000, maxRiskPct = 5, requireStrong = true } = {}) {
+export function evaluateExecutionGate(signal, { side, gates = DEFAULT_GATES, maxAgeMs = 90_000, maxRiskPct = 5, requireStrong = true, venue = 'CRYPTO' } = {}) {
   if (!signal) return { ok: false, reason: 'no signal' };
   if (Date.now() - (signal.generatedAt || 0) > maxAgeMs) return { ok: false, reason: `signal stale (age > ${Math.round(maxAgeMs / 1000)}s) — re-run ensemble` };
-  if (signal.market !== 'CRYPTO') return { ok: false, reason: 'live execution is CoinDCX-only (India = options signals)' };
+  const wantVenue = String(venue).toUpperCase();
+  if (String(signal.market || 'CRYPTO').toUpperCase() !== wantVenue) {
+    return { ok: false, reason: `signal is for the ${signal.market} market — this gate guards ${wantVenue} execution` };
+  }
   const wantSide = String(side || signal.side).toUpperCase();
   if (signal.side !== wantSide) return { ok: false, reason: `signal side is ${signal.side}, requested ${wantSide}` };
   if (signal.side === 'FLAT' || !signal.plan) return { ok: false, reason: 'no tradeable side/plan in the current consensus' };
@@ -196,4 +214,108 @@ export function evaluateExecutionGate(signal, { side, gates = DEFAULT_GATES, max
   return { ok: true, reason: requireStrong
     ? `STRONG ${signal.side} · ${signal.confidence}% conf · ${Math.round(signal.agreement * 100)}% agreement`
     : `PAPER ${signal.side} · ${signal.confidence}% conf (practice — STRONG gate applies to LIVE only)` };
+}
+
+/**
+ * v6.5 — TRAILING STOP-LOSS MATH (shared by the crypto + India watchers).
+ *
+ * A prop desk doesn't let a winner round-trip back to the initial stop.
+ * The ratchet (all LONG flipped for SHORT):
+ *   • track peakPrice since entry (highest high for LONG)
+ *   • initial risk R = |entry − original SL| (stored at open)
+ *   • once profit ≥ armR × R   → SL ≥ entry (breakeven floor)
+ *   • beyond that, trail       → SL = peak − offsetR × R
+ *   • RATCHET-ONLY: a new SL may only TIGHTEN (LONG: > current; SHORT: < current)
+ *   • never trail past the live price (that close is this tick's SL job)
+ *
+ * Pure + exported for tests. Returns { sl, peak, stage } or null when
+ * nothing should move yet (or inputs are unusable).
+ */
+export function computeTrailSl(opts) {
+  if (!opts || typeof opts !== 'object') return null;
+  const { side, entryPrice, peakPrice, currentSl, initialRisk, price, armR = 1.0, offsetR = 1.0 } = opts;
+  const long = String(side).toUpperCase() !== 'SHORT';
+  const entry = Number(entryPrice), peak = Number(peakPrice), risk = Number(initialRisk), ltp = Number(price);
+  if (!(entry > 0) || !(peak > 0) || !(risk > 0) || !(ltp > 0)) return null;
+  const arm = Number.isFinite(Number(armR)) && armR > 0 ? armR : 1.0;
+  const off = Number.isFinite(Number(offsetR)) && offsetR > 0 ? offsetR : 1.0;
+  const profit = long ? peak - entry : entry - peak;
+  if (profit < arm * risk) return null; // not armed yet — initial SL stands
+  let candidate;
+  let stage;
+  if (profit < (arm + 0.5 * off) * risk) {
+    // stage 1: lock breakeven (entry) — the psychological lock
+    candidate = entry;
+    stage = 'breakeven';
+  } else {
+    // stage 2: trail the peak at offsetR × R behind
+    candidate = long ? peak - off * risk : peak + off * risk;
+    stage = 'trail';
+  }
+  // breakeven floor for stage 2 as well (never below entry once armed)
+  candidate = long ? Math.max(candidate, entry) : Math.min(candidate, entry);
+  // ratchet: only tighten
+  const cur = Number(currentSl);
+  if (Number.isFinite(cur) && cur > 0) {
+    if (long && candidate <= cur) return null;
+    if (!long && candidate >= cur) return null;
+  }
+  // never cross the live price (that's a stop HIT, not a trail move)
+  if (long && candidate >= ltp) return null;
+  if (!long && candidate <= ltp) return null;
+  return { sl: Math.round(candidate * 100) / 100, peak, stage };
+}
+
+/**
+ * v6.4 — RISK AUTO-FIT (the execute-time twin of buildTradePlan's cap).
+ *
+ * The user bug: a STRONG crypto signal whose structural ATR stop reads
+ * 5.04% vs the 5% cap used to hard-REJECT even the PAPER button
+ * ("Signal gate: plan risk 5.04% > 5% max"). A 0.04% overshoot is not
+ * a risk problem — conflating stop WIDTH with money AT RISK was. A
+ * prop desk fits the stop to the cap and re-derives targets; it does
+ * not bounce the trade.
+ *
+ *   SL  → entry ∓ cap% (tightened to the configured ceiling)
+ *   T1  → entry ± 1× fitted risk · T2 → entry ± 2× fitted risk
+ *   plan.riskClamped = true + originalRiskPct (honest audit trail)
+ *
+ * PAPER always fits (practice money must never dead-end on stop
+ * width). LIVE callers decide their own tolerance BEFORE calling this
+ * (executeSignal only fits mild overshoot ≤ 1.5× cap for live — a
+ * wildly-wide ATR stop clamped tight is noise-suicide and honestly
+ * belongs in a REJECT).
+ *
+ * @returns {{ signal, note: string|null }} note is set when a fit happened
+ */
+export function fitPlanToRiskCap(signal, maxRiskPct = 5) {
+  const plan = signal?.plan;
+  const ltp = Number(signal?.ltp);
+  const riskPct = Number(plan?.riskPct);
+  if (!plan || !Number.isFinite(riskPct) || !(riskPct > 0) || !(ltp > 0)
+    || !Number.isFinite(Number(maxRiskPct)) || !(maxRiskPct > 0)) {
+    return { signal, note: null };
+  }
+  if (riskPct <= maxRiskPct) return { signal, note: null };
+  const long = signal.side !== 'SHORT';
+  const capDist = ltp * (maxRiskPct / 100);
+  const stopLoss = long ? ltp - capDist : ltp + capDist;
+  const target1 = long ? ltp + capDist : ltp - capDist;
+  const target2 = long ? ltp + 2 * capDist : ltp - 2 * capDist;
+  const fitted = {
+    ...plan,
+    stopLoss: r2(stopLoss),
+    target1: r2(target1),
+    target2: r2(target2),
+    risk: r2(capDist),
+    riskPct: r2(maxRiskPct),
+    rewardRisk: 2,
+    riskClamped: true,
+    originalRiskPct: r2(riskPct),
+    planStyle: `${plan.planStyle || 'atr'}→risk-fitted`,
+  };
+  return {
+    signal: { ...signal, plan: fitted },
+    note: `risk auto-fitted ${r2(riskPct)}% → ${r2(maxRiskPct)}% cap (SL tightened, targets re-derived)`,
+  };
 }
