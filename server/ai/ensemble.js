@@ -110,10 +110,11 @@ export function buildTradePlan(consensus, ctx, market, opts = {}) {
   if (!consensus || consensus.dir === 0 || !(ltp > 0)) {
     return null;
   }
+  const cryptoish = market === 'CRYPTO' || market === 'FUTURES'; // v6.8: futures = 24/7 noise regime too
   const atr = ctx?.ind?.atr ?? (ctx?.indicators?.atr) ?? null;
-  const atrFallback = ltp * (market === 'CRYPTO' ? 0.012 : 0.008);
+  const atrFallback = ltp * (cryptoish ? 0.012 : 0.008);
   const a = atr != null && atr > 0 ? atr : atrFallback;
-  const slMult = market === 'CRYPTO' ? 1.6 : 1.4;
+  const slMult = cryptoish ? 1.6 : 1.4;
   const long = consensus.dir > 0;
   let stopLoss = long ? ltp - slMult * a : ltp + slMult * a;
   // v6.4 — build-time risk cap (optional): when the caller knows the
@@ -173,7 +174,7 @@ export function buildSignal({ symbol, market, ctx, votes, consensus, plan, aiNot
     })),
     summary: consensus.summary,
     aiNote: aiNote || null,
-    executable: market === 'CRYPTO' && consensus.grade === 'STRONG' && !!plan,
+    executable: (market === 'CRYPTO' || market === 'FUTURES') && consensus.grade === 'STRONG' && !!plan,
     generatedAt: Date.now(),
   };
 }

@@ -5,7 +5,7 @@
 
 export type Side = 'LONG' | 'SHORT' | 'FLAT';
 export type Grade = 'STRONG' | 'ACTION' | 'WATCH' | 'NEUTRAL';
-export type MarketKind = 'INDIA' | 'CRYPTO';
+export type MarketKind = 'INDIA' | 'CRYPTO' | 'FUTURES';
 
 export interface ModelVote {
   id: string;
@@ -199,7 +199,7 @@ export interface JournalPosition {
   id: string;
   pair: string;
   symbol?: string;
-  market?: 'CRYPTO' | 'INDIA';
+  market?: 'CRYPTO' | 'INDIA' | 'FUTURES';
   side: Side;
   mode: 'paper' | 'live';
   qty: number;
@@ -228,6 +228,17 @@ export interface JournalPosition {
   marginINR?: number;
   liquidation?: number | null;
   marginPair?: string | null;
+  /** v6.8: GLOBAL FUTURES fields (USDT domain) */
+  notionalUSDT?: number | null;
+  marginUSDT?: number | null;
+  pnlUSDT?: number | null;
+  closePriceUSDT?: number | null;
+  unrealizedPnlUSDT?: number | null;
+  usdInr?: number | null;
+  exchangePositionId?: string | null;
+  source?: string | null;
+  /** v6.8: 'exchange' when the liquidation level came from CoinDCX itself */
+  liquidationSource?: string | null;
 }
 
 export interface JournalEntry {
@@ -238,12 +249,19 @@ export interface JournalEntry {
   pair?: string;
   side?: string;
   mode?: string;
+  market?: string;
+  source?: string;
   status: string;
   reason?: string;
   qty?: number;
   price?: number;
   notionalINR?: number;
+  notionalUSDT?: number;
+  marginUSDT?: number;
+  leverage?: number;
   pnlINR?: number;
+  pnlUSDT?: number;
+  closePrice?: number;
   signal?: { grade?: string; conf?: number; agreement?: number };
 }
 
@@ -464,4 +482,146 @@ export interface OrderbookView {
   askWall: { price: number; qty: number };
   read: string;
   error?: string;
+}
+
+// ---------------- v6.8: GLOBAL FUTURES + AGENT + WALLET ----------------
+
+export interface WalletRow {
+  currency: string;
+  free: number;
+  locked: number;
+  total: number;
+  crossUserMargin?: number | null;
+}
+
+export interface WalletView {
+  ok: boolean;
+  connected: boolean;
+  usdInr: number;
+  spot: {
+    inr: WalletRow | { free: number; locked: number; total: number };
+    usdt: WalletRow | { free: number; locked: number; total: number };
+    error: string | null;
+    rows: WalletRow[];
+  };
+  futures: {
+    usdt: WalletRow | { free: number; locked: number; total: number; crossUserMargin?: number | null };
+    error: string | null;
+  };
+  equityINR: number;
+  deployableFuturesUSDT: number;
+  deployableSpotINR: number;
+  fetchedAt: number;
+  error?: string;
+}
+
+export interface FuturesMarketRow {
+  pair: string;
+  base: string;
+  last: number;
+  mark: number;
+  changePct: number | null;
+  high: number | null;
+  low: number | null;
+  volumeUSDT: number | null;
+}
+
+export interface FuturesMarketsView {
+  ok: boolean;
+  count: number;
+  markets: FuturesMarketRow[];
+  fetchedAt: number;
+  error?: string;
+}
+
+export interface AgentTradeToday {
+  ts: number;
+  pair: string;
+  side: string;
+  mode: string;
+  market: string;
+  status: string;
+  qty: number | null;
+  price: number | null;
+  leverage: number | null;
+  marginUSDT: number | null;
+  reason: string | null;
+}
+
+export interface AgentLogLine {
+  ts: number;
+  level: 'info' | 'entry' | 'exit' | 'skip' | 'error' | string;
+  text: string;
+}
+
+export interface AgentConfig {
+  enabled: boolean;
+  mode: 'paper' | 'live' | string;
+  desks: { futures: boolean; spot: boolean; india: boolean };
+  maxTradesPerDay: number;
+  minConfidence: number;
+  minAgreement: number;
+  riskPerTradePct: number;
+  maxLeverage: number;
+  cooldownMin: number;
+  maxHoldMin: number;
+  dailyLossCapPct: number;
+  minEquityINR: number;
+}
+
+export interface AgentOpenPosition {
+  id: string;
+  pair: string;
+  market: string;
+  side: string;
+  mode: string;
+  qty: number;
+  entryPrice: number;
+  sl: number | null;
+  tp2: number | null;
+  leverage: number | null;
+  marginUSDT: number | null;
+  openedAt: number;
+  ageMin: number | null;
+  maxHoldMin: number;
+}
+
+export interface AgentPick {
+  symbol: string;
+  side: Side;
+  grade: string;
+  confidence: number;
+  ltp: number | null;
+  pair: string;
+  plan: { entry: number; stopLoss: number; target2: number; riskPct: number } | null;
+}
+
+export interface AgentView {
+  ok: boolean;
+  engine: string;
+  config: AgentConfig;
+  trading: { mode: string; allowAuto: boolean; killSwitch: boolean; connected: boolean };
+  state: {
+    running: boolean;
+    runningSince: number | null;
+    lastScanAt: number | null;
+    scans: number;
+    lastEntryAt: number | null;
+    lastEntryPair: string | null;
+    pausedToday: { day: string; reason: string } | null;
+    lastWallet: { equityINR: number; usdInr: number; deployableFuturesUSDT: number; deployableSpotINR: number; at: number } | null;
+    log: AgentLogLine[];
+  };
+  today: {
+    day: string;
+    trades: AgentTradeToday[];
+    tradesCount: number;
+    maxTrades: number;
+    realizedPnlINR: number;
+    lossCapINR: number;
+    paused: { day: string; reason: string } | null;
+  };
+  openPositions: AgentOpenPosition[];
+  wallet: WalletView | null;
+  picks: Partial<Record<'INDIA' | 'FUTURES' | 'CRYPTO', AgentPick[]>>;
 }

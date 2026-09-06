@@ -1,3 +1,30 @@
+## v6.8 — GLOBAL FUTURES + SUPERINTELLIGENCE AUTO-AGENT (2026-09-07)
+
+### New: CoinDCX GLOBAL FUTURES desk (USDT-margined perpetuals)
+- New `server/ai/futures.js` — the complete futures stack: RT prices (`market_data/v3/current_prices/futures/rt`), pcode=f candlesticks, instrument rules, DF wallets, positions, order create / **position-id** exit / **native exchange TP/SL** (`create_tpsl`), spot→futures margin auto-transfer
+- **executeFuturesSignal()** — the SAME gauntlet ladder as spot, venue-switched: kill switch → auto policy → LIVE arming → fresh STRONG signal (venue FUTURES) → leverage sanity (liquidation OUTSIDE the SL) → wallet-margin sizing → journal caps (daily 3 / loss / one-per-pair / concentration)
+- **watchFuturesPositions()** (60s loop) — SL/TP/trailing on RT prices, liquidation backstop, LIVE reconcile against the exchange's own position list (native TP/SL closes detected), USDT↔INR honest twins
+- FUTURES signal board (10-model consensus, TV USD indicators ≈ USDT 1:1, plans in the exact quote currency), third desk tab, futures trade ticket (margin USDT, leverage, liquidation honesty)
+- Currency honesty: futures P&L carries both USDT and INR (live USDINR, 10-min cache); the shared journal + daily caps stay INR
+
+### New: SUPERINTELLIGENCE AUTO-AGENT (server-side, 60s loop)
+- New `server/ai/agent.js` + `AgentPanel.tsx` — the autonomous prop-desk agent:
+  - **Wallet-fetch**: live CoinDCX spot + futures margin balances (`/api/ai/wallet`); every trade sized from EQUITY (risk %/trade, SL-based; ≤60% of deployable margin)
+  - **Auto Entry**: only ≥80% confidence + 75% agreement STRONG signals (stricter than the manual 75/70)
+  - **Auto Exit**: watcher SL/TP/trailing + native exchange TP/SL + agent TIME-EXIT (default 90m)
+  - **Exactly 3 trades/day** (user spec; agent-scoped, manual trades don't count) + daily loss-cap stand-down (−3% equity) + cooldown between entries
+  - LIVE needs the full chain: typed LIVE in Risk settings + Auto-execution ON + typed LIVE at agent start + CoinDCX connected — no private path to money
+  - Agent log (every scan decision), Telegram pings on entry/exit, India intraday picks + futures picks strip
+- Endpoints: `GET /api/ai/agent`, `POST /api/ai/agent/start|stop|config`, `GET /api/ai/wallet`, `GET /api/ai/futures/markets`, `POST /api/ai/futures/execute`, `?market=FUTURES` on signals/deep
+
+### Site
+- OrderConsole: live wallet strip + futures position rows (USDT pricing, agent badge, exchange-reported liquidation)
+- engine string → `SUPERINTELLIGENCE ENSEMBLE v6.8`
+
+### Tests
+- 43 new tests (futures gauntlet math/parsing/wallets/watcher + agent quota/sizing/loss-cap/time-exit) → **572/572 passing**
+
+
 
 ## v1.4.0 — SuperScore Backtester + AI Follow-ups (2026-07-20)
 

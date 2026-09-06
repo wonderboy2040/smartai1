@@ -6,7 +6,8 @@
 // confirmation), kill switch, and the full audit journal.
 // ============================================================
 import { memo, useState, useEffect, useCallback } from 'react';
-import type { DhanStatus, JournalEntry, JournalPosition, TradingConfig, TradingState } from './types';
+import { fetchWallet } from './useAITrading';
+import type { DhanStatus, JournalEntry, JournalPosition, TradingConfig, TradingState, WalletView } from './types';
 
 const fmt = (n: number | null | undefined): string => {
   if (n == null || !Number.isFinite(n)) return '—';
@@ -35,6 +36,37 @@ function RiskBar({ label, value, max, tone }: { label: string; value: number; ma
       <div className="h-1.5 bg-black/40 rounded-full overflow-hidden">
         <div className={`h-full ${color} rounded-full transition-all`} style={{ width: `${pct}%` }} />
       </div>
+    </div>
+  );
+}
+
+/** v6.8: live CoinDCX wallet strip — "wallet me kitna bacha hai" right in
+ *  the execution console. Refreshes every 60s; degrades silently. */
+function WalletStrip() {
+  const [w, setW] = useState<WalletView | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => { fetchWallet().then(x => { if (alive && x) setW(x); }).catch(() => {}); };
+    load();
+    const t = setInterval(() => { if (!document.hidden) load(); }, 60_000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+  if (!w) return null;
+  const fut = w.futures?.usdt as { free?: number } | undefined;
+  const inr = w.spot?.inr as { free?: number } | undefined;
+  return (
+    <div className="quantum-panel rounded-2xl p-3 mb-3 bg-gradient-to-r from-amber-500/[0.05] to-transparent">
+      <div className="flex items-center gap-2 flex-wrap text-[10px] font-mono font-bold">
+        <span className="text-amber-300 font-black tracking-wider">📱 COINDCX WALLET</span>
+        <span className="text-emerald-300">equity {fmt(w.equityINR)}</span>
+        <span className="text-slate-400">spot INR {fmt(inr?.free ?? 0)}</span>
+        <span className="text-cyan-300">futures margin {fut?.free != null ? `${fut.free.toLocaleString('en-US', { maximumFractionDigits: 2 })} USDT` : '—'}</span>
+        <span className="text-slate-600">USD/₹ {w.usdInr ?? '—'}</span>
+        <span className="ml-auto text-slate-600">{ago(w.fetchedAt)}</span>
+      </div>
+      {(w.spot?.error || w.futures?.error) && (
+        <div className="text-[9px] text-amber-500/80 mt-1 font-mono">⚠ {w.spot?.error || w.futures?.error}</div>
+      )}
     </div>
   );
 }
@@ -308,6 +340,9 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
 
   return (
     <section className="space-y-3" aria-label="Execution console">
+      {/* v6.8: live CoinDCX wallet strip (spot + futures margin) */}
+      <WalletStrip />
+
       {/* Kill switch + risk meters */}
       <div className="quantum-panel rounded-2xl p-4">
         <div className="flex items-center gap-3 flex-wrap">
@@ -359,27 +394,33 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
               const upnl = p.unrealizedPnlINR ?? 0;
               const open = p.status === 'OPEN';
               const isIndia = p.market === 'INDIA';
+              const isFut = p.market === 'FUTURES'; // v6.8 — prices/P&L in the USDT domain
+              const pf = (n?: number | null, dp = 2) => isFut
+                ? (n?.toLocaleString('en-US', { maximumFractionDigits: dp }) ?? '—')
+                : `₹${n?.toLocaleString('en-IN', { maximumFractionDigits: dp })}`;
               return (
                 <div key={p.id} className="px-4 py-3 border-b border-white/[0.03] hover:bg-white/[0.02]">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-black font-mono text-white">{p.pair}</span>
                     {isIndia && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-orange-500/15 text-orange-300">🇮🇳 NSE</span>}
+                    {isFut && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-violet-500/15 text-violet-300">⚡ PERP · USDT</span>}
+                    {p.source === 'agent' && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-cyan-500/15 text-cyan-300" title="Superintelligence Auto-Agent ka trade">🤖 AGENT</span>}
                     <span className={`text-[11px] font-black ${p.side === 'LONG' ? 'text-emerald-400' : 'text-red-400'}`}>{p.side}</span>
                     <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${p.mode === 'live' ? 'bg-red-500/15 text-red-300' : 'bg-cyan-500/15 text-cyan-300'}`}>{p.mode.toUpperCase()}</span>
                     {p.leverage != null && p.leverage > 1 && (
-                      <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-violet-500/15 text-violet-300" title={`margin ₹${p.marginINR?.toLocaleString('en-IN')} · notional ₹${p.notionalINR?.toLocaleString('en-IN')}`}>
-                        {p.leverage}x MARGIN
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-violet-500/15 text-violet-300" title={isFut ? `margin ${p.marginUSDT} USDT · notional ${p.notionalUSDT} USDT` : `margin ₹${p.marginINR?.toLocaleString('en-IN')} · notional ₹${p.notionalINR?.toLocaleString('en-IN')}`}>
+                        {p.leverage}x {isFut ? 'LEV' : 'MARGIN'}
                       </span>
                     )}
                     {p.trailing && open && (
-                      <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-amber-500/15 text-amber-300" title={`peak ₹${p.peakPrice?.toLocaleString('en-IN')} — ratchet-only`}>
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-amber-500/15 text-amber-300" title={`peak ${pf(p.peakPrice)} — ratchet-only`}>
                         🔗 {p.trailing === 'breakeven' ? 'BE LOCKED' : 'TRAILING'}
                       </span>
                     )}
                     {!open && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-slate-600/20 text-slate-400">{p.closeReason || 'CLOSED'}</span>}
-                    <span className="ml-auto text-[11px] font-mono text-slate-400">{p.qty} @ ₹{p.entryPrice?.toLocaleString('en-IN')}</span>
-                    {open && p.ltp != null && <span className="text-[11px] font-mono text-slate-300">→ ₹{p.ltp?.toLocaleString('en-IN')}</span>}
-                    <span className={`text-xs font-black font-mono ${upnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    <span className="ml-auto text-[11px] font-mono text-slate-400">{p.qty} @ {pf(p.entryPrice)}</span>
+                    {open && p.ltp != null && <span className="text-[11px] font-mono text-slate-300">→ {pf(p.ltp)}</span>}
+                    <span className={`text-xs font-black font-mono ${upnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`} title={isFut ? `≈ ${p.unrealizedPnlUSDT != null ? `${p.unrealizedPnlUSDT >= 0 ? '+' : ''}${p.unrealizedPnlUSDT} USDT` : 'n/a'} @ USD/₹ ${p.usdInr ?? '—'}` : undefined}>
                       {upnl >= 0 ? '+' : ''}{fmt(upnl)}
                     </span>
                     {open && (
@@ -391,15 +432,15 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
                   </div>
                   {open && (p.sl != null || p.tp2 != null) && (
                     <div className="flex gap-3 mt-1.5 text-[10px] font-mono flex-wrap">
-                      <span className="text-red-400/70">SL ₹{p.sl?.toLocaleString('en-IN')}</span>
-                      <span className="text-emerald-400/70">TP ₹{p.tp?.toLocaleString('en-IN')} / ₹{p.tp2?.toLocaleString('en-IN')}</span>
+                      <span className="text-red-400/70">SL {pf(p.sl)}</span>
+                      <span className="text-emerald-400/70">TP {pf(p.tp)} / {pf(p.tp2)}</span>
                       {p.peakPrice != null && p.peakPrice > 0 && (
-                        <span className="text-amber-400/70" title="best price since entry (trailing anchor)">🔺 peak ₹{p.peakPrice?.toLocaleString('en-IN')}</span>
+                        <span className="text-amber-400/70" title="best price since entry (trailing anchor)">🔺 peak {pf(p.peakPrice)}</span>
                       )}
                       {p.leverage != null && p.leverage > 1 && p.liquidation != null && (
-                        <span className="text-violet-400/70" title={`estimated liquidation (${p.leverage}x isolated-margin, ~5% maintenance buffer)`}>⚠ LIQ ₹{p.liquidation?.toLocaleString('en-IN')}</span>
+                        <span className="text-violet-400/70" title={`estimated liquidation (${p.leverage}x, ~5% maintenance buffer${p.liquidationSource === 'exchange' ? ' — exchange-reported' : ''})`}>⚠ LIQ {pf(p.liquidation)}</span>
                       )}
-                      <span className="text-slate-600">{isIndia ? 'watcher + 15:15 square-off' : 'watcher auto-closes on breach'}</span>
+                      <span className="text-slate-600">{isIndia ? 'watcher + 15:15 square-off' : isFut ? 'futures watcher + native TP/SL + agent time-exit' : 'watcher auto-closes on breach'}</span>
                     </div>
                   )}
                   <div className="text-[10px] text-slate-600 mt-1">

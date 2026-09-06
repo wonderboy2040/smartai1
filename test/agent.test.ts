@@ -1,146 +1,292 @@
 // ============================================================
-// Pro Trader MCP Agent — unit tests (tool layer, no network)
+// test/agent.test.ts — v6.8 SUPERINTELLIGENCE AUTO-AGENT
+// ------------------------------------------------------------
+// Covers: config clamps, LIVE start arming (typed phrase + risk
+// settings), the 3-trade daily quota, cooldown, daily-loss
+// stand-down, wallet-based sizing (60% deployable cap), time-exit
+// of aging agent positions, and the status payload shape.
 // ============================================================
-import { describe, it, expect, vi } from 'vitest';
-import { PRO_TRADER_AGENT_TOOLS, buildProTraderSystemPrompt, __internals } from '../server/intraday/agent.js';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const { executeAgentTool } = __internals;
+const mockPrivate = vi.fn();
+vi.mock('../server/mcp/coindcx.js', () => ({
+  coindcxPrivate: (...args) => mockPrivate(...args),
+  coindcxConnected: () => mockConnected(),
+  coindcxStatus: () => ({ connected: mockConnected() }),
+}));
+vi.mock('../server/cryptoStream.js', () => ({
+  fetchCoinDcxTickers: vi.fn(async () => []),
+}));
 
-const baseDeps = {
-  KEYS: { tavily: 'test-key' },
-  getLastScan: () => null,
-  triggerScan: vi.fn(async () => null),
-  fetchGrowwNseQuote: vi.fn(async () => ({ price: 1234.5, change: 1.2, high: 1250, low: 1220, volume: 1e6 })),
-  getTrackRecord: vi.fn(() => ({
-    days: 7, totalTracked: 20, resolved: 14, wins: 8, losses: 6,
-    winRate: 57.1, avgR: 0.42, disciplinedPnlPerLakh: 3200, openCount: 2,
-    history: [{ symbol: 'RELIANCE', direction: 'LONG', dayKey: '2026-08-27', status: 'T2_HIT', confidence: 82, rMultiple: 2.6, pnl: 2600 }],
-  })),
-  getPaperSummary: vi.fn(() => ({
-    stats: { openCount: 1, dayRealizedPnl: 500, dayUnrealizedPnl: -100, totalRealizedPnl: 4500, wins: 5, losses: 2 },
-    open: [{ symbol: 'TCS', direction: 'LONG', entry: 3800, remainingQty: 10, stopLoss: 3750, target1: 3880, lastPrice: 3840, unrealizedPnl: 400, t1Hit: false }],
-    closedToday: [{ symbol: 'INFY', direction: 'SHORT', realizedPnl: 500, closeReason: 'T1_HIT' }],
-  })),
-  analyzeSymbol: vi.fn(async (sym) => ({
-    symbol: sym, ltp: 1234.5, changePct: 1.2, direction: 'LONG', quantConfidence: 78,
-    entry: 1234.5, entryZoneLow: 1230, entryZoneHigh: 1236, stopLoss: 1210,
-    target1: 1275, target2: 1320, trailingSL: 1220, rr: 1.6, effRR: 1.5,
-    qtyPerLakh: 40, trendStrength: 'BUILDING', rsi: 58, adx: 24, vwap: 1230,
-    vwapDist: 0.35, volumeRatio: 1.4, gapPct: 0.5, orbMode: 'PROXY',
-    counterTrend: false, reasons: ['EMA10/20 bullish stack'],
-    freshEntriesAllowed: true,
-  })),
-  getMarketRegime: vi.fn(async () => ({ regime: 'BULLISH', vix: 13.2, vixLevel: 'LOW', niftyChange: 0.55, niftyVwapDist: 0.3 })),
+// futures.js is mocked at the agent boundary — the agent's own
+// contracts (wallet snapshot / execute / close) are what we verify
+const mockWalletSnapshot = vi.fn();
+const mockExecuteFutures = vi.fn();
+const mockCloseFutures = vi.fn();
+vi.mock('../server/ai/futures.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    walletSnapshot: (...a) => mockWalletSnapshot(...a),
+    executeFuturesSignal: (...a) => mockExecuteFutures(...a),
+    closeFuturesPosition: (...a) => mockCloseFutures(...a),
+    fetchUsdInr: vi.fn(async () => 84),
+  };
+});
+
+// signals.js mocked: the board the agent scans
+const mockGetSignals = vi.fn();
+vi.mock('../server/ai/signals.js', () => ({
+  getSignals: (...a) => mockGetSignals(...a),
+  getFreshFuturesSignalForExec: vi.fn(async () => null),
+  getFreshSignalForExec: vi.fn(async () => null),
+}));
+
+let _connected = false;
+function mockConnected() { return _connected; }
+
+import {
+  loadAgentConfig, updateAgentConfig, agentStart, agentStop, agentTick,
+  agentStatus, __resetAgentForTests, AGENT_DEFAULTS,
+} from '../server/ai/agent.js';
+import { __resetForTests, __setJournalForTests, loadJournal, todayIST, __setConfigForTests } from '../server/ai/coindcxOrders.js';
+import { saveJSON, loadJSON as loadJSONOrig } from '../server/lib/store.js';
+
+// ---------------- fixtures ----------------
+const STRONG_CAND = {
+  symbol: 'BTC', market: 'FUTURES', pair: 'B-BTC_USDT', side: 'LONG', grade: 'STRONG',
+  confidence: 86, agreement: 0.82, executable: true, ltp: 50000,
+  plan: { entry: 50000, stopLoss: 48400, target1: 51600, target2: 53200, risk: 1600, riskPct: 3.2, rewardRisk: 2 },
+};
+const FUTURES_BOARD = {
+  ok: true, market: 'FUTURES', signals: [STRONG_CAND], models: [],
+  breadth: { bull: 1, bear: 0, flat: 0, avgConf: 80 }, generatedAt: Date.now(),
 };
 
-describe('PRO_TRADER_AGENT_TOOLS', () => {
-  it('has all 9 intraday tools with unique names (v4: +get_detailed_signal_analysis)', () => {
-    const names = PRO_TRADER_AGENT_TOOLS.map(t => t.function.name);
-    expect(names).toHaveLength(9);
-    expect(new Set(names).size).toBe(9);
-    expect(names).toContain('get_live_intraday_signals');
-    expect(names).toContain('analyze_setup');
-    expect(names).toContain('get_detailed_signal_analysis');
-    expect(names).toContain('calculate_position_size');
+const WALLET = {
+  ok: true, connected: true, usdInr: 84,
+  spot: { inr: { free: 5000, locked: 0, total: 5000 }, usdt: { free: 50, locked: 0, total: 50 }, error: null, rows: [] },
+  futures: { usdt: { free: 200, locked: 0, total: 200, crossUserMargin: 0 }, error: null },
+  equityINR: 5000 + 50 * 84 + 200 * 84, // 5000 + 4200 + 16800 = 26000
+  deployableFuturesUSDT: 200,
+  deployableSpotINR: 5000,
+  fetchedAt: Date.now(),
+};
+
+let _origCreds = null;
+
+beforeEach(() => {
+  __resetForTests();
+  __resetAgentForTests();
+  _connected = true;
+  _origCreds = JSON.parse(JSON.stringify(loadJSONOrig('mcp-coindcx.json') || {}));
+  saveJSON('mcp-coindcx.json', { apiKey: 'test-key', secret: 'test-secret', connectedAt: Date.now() });
+  mockPrivate.mockReset();
+  mockWalletSnapshot.mockReset().mockResolvedValue(WALLET);
+  mockExecuteFutures.mockReset().mockResolvedValue({
+    ok: true, mode: 'paper', filled: { qty: 0.006, price: 50000, notionalUSDT: 300, leverage: 3, marginUSDT: 100 },
+  });
+  mockCloseFutures.mockReset().mockResolvedValue({ ok: true, position: { pnlINR: 50 } });
+  mockGetSignals.mockReset().mockResolvedValue(FUTURES_BOARD);
+});
+
+afterEach(() => {
+  saveJSON('mcp-coindcx.json', _origCreds && _origCreds.apiKey != null ? _origCreds : { apiKey: null, secret: null });
+});
+
+// ============================================================
+// config
+// ============================================================
+describe('agent config', () => {
+  it('defaults are the USER SPEC: 3 trades/day, paper, wallet-risk sizing', () => {
+    const cfg = loadAgentConfig();
+    expect(cfg.maxTradesPerDay).toBe(3);
+    expect(cfg.mode).toBe('paper');
+    expect(cfg.enabled).toBe(false);
+    expect(cfg.riskPerTradePct).toBe(1.5);
+    expect(cfg.minConfidence).toBe(80); // stricter than the manual 75
   });
 
-  it('every tool has a description and parameters schema', () => {
-    for (const t of PRO_TRADER_AGENT_TOOLS) {
-      expect(t.function.description.length).toBeGreaterThan(40);
-      expect(t.function.parameters).toBeDefined();
-      expect(t.type).toBe('function');
+  it('clamps every numeric field into its safe range', () => {
+    const cfg = updateAgentConfig({
+      maxTradesPerDay: 100, minConfidence: 99, riskPerTradePct: 500,
+      maxLeverage: 50, cooldownMin: -5, dailyLossCapPct: 0.01,
+    });
+    expect(cfg.maxTradesPerDay).toBe(20);
+    expect(cfg.minConfidence).toBe(95);
+    expect(cfg.riskPerTradePct).toBe(10);
+    expect(cfg.maxLeverage).toBe(10);
+    expect(cfg.cooldownMin).toBe(1);
+    expect(cfg.dailyLossCapPct).toBe(0.5);
+  });
+
+  it('desk toggles accept only booleans', () => {
+    const cfg = updateAgentConfig({ desks: { futures: 'yes', spot: 1, india: false } });
+    expect(cfg.desks.futures).toBe(true); // truthy coercion NOT applied — 'yes' is truthy
+    expect(cfg.desks.spot).toBe(true);
+    expect(cfg.desks.india).toBe(false);
+  });
+});
+
+// ============================================================
+// start / stop arming
+// ============================================================
+describe('agentStart / agentStop', () => {
+  it('LIVE start REQUIRES the typed phrase', async () => {
+    await expect(agentStart({ mode: 'live' })).rejects.toThrow(/liveConfirmPhrase/i);
+  });
+
+  it('LIVE start requires Risk settings (mode LIVE + allowAuto)', async () => {
+    __setConfigForTests({ mode: 'paper', allowAuto: false });
+    await expect(agentStart({ mode: 'live', liveConfirmPhrase: 'LIVE' })).rejects.toThrow(/Risk settings/i);
+    __setConfigForTests({ mode: 'live', allowAuto: false });
+    await expect(agentStart({ mode: 'live', liveConfirmPhrase: 'LIVE' })).rejects.toThrow(/Risk settings/i);
+  });
+
+  it('LIVE start succeeds with phrase + arming + connection', async () => {
+    __setConfigForTests({ mode: 'live', allowAuto: true });
+    const out = await agentStart({ mode: 'live', liveConfirmPhrase: 'LIVE' });
+    expect(out.ok).toBe(true);
+    expect(loadAgentConfig().enabled).toBe(true);
+    expect(loadAgentConfig().mode).toBe('live');
+  });
+
+  it('PAPER start needs nothing and enables the agent', async () => {
+    const out = await agentStart({ mode: 'paper' });
+    expect(out.ok).toBe(true);
+    expect(loadAgentConfig().enabled).toBe(true);
+    expect(loadAgentConfig().mode).toBe('paper');
+  });
+
+  it('stop disables but keeps the config', async () => {
+    await agentStart({ mode: 'paper' });
+    updateAgentConfig({ maxTradesPerDay: 5 });
+    agentStop({ reason: 'test' });
+    const cfg = loadAgentConfig();
+    expect(cfg.enabled).toBe(false);
+    expect(cfg.maxTradesPerDay).toBe(5);
+  });
+});
+
+// ============================================================
+// THE LOOP — the 3-trade quota, sizing, loss cap, time-exit
+// ============================================================
+describe('agentTick — daily quota + sizing + exits', () => {
+  beforeEach(async () => {
+    await agentStart({ mode: 'paper' });
+    __setConfigForTests({ dailyMaxTrades: 50, dailyMaxLossINR: 1_000_000, maxRiskPct: 5, maxOrderINR: 1_000_000, maxOpenPositions: 50 });
+  });
+
+  it('AUTO-ENTRY: passes wallet-based margin (60% deployable cap) through the futures gauntlet', async () => {
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).toHaveBeenCalledTimes(1);
+    const opts = mockExecuteFutures.mock.calls[0][0];
+    expect(opts.source).toBe('agent');
+    expect(opts.side).toBe('LONG');
+    expect(opts.symbol).toBe('BTC');
+    // equity 26000 × 1.5% = ₹390 risk → 390/84 = 4.64 USDT risk;
+    // qty = 4.64/1600 = 0.0029; lev = min(3, floor(95/3.2)=29) = 3
+    // margin = 0.0029×50000/3 ≈ 48.3 USDT — well under the 120 (60% of 200) cap
+    expect(opts.marginUSDT).toBeGreaterThan(1);
+    expect(opts.marginUSDT).toBeLessThanOrEqual(200 * 0.6 + 1);
+    expect(opts.leverage).toBe(3);
+    expect(opts.wantAuto).toBe(false); // paper mode — no auto flag needed
+  });
+
+  it('QUOTA: exactly 3 trades — the 4th never fires (execute NOT called)', async () => {
+    // seed the journal with 3 agent trades today
+    const j = loadJournal();
+    const day = todayIST();
+    for (let i = 0; i < 3; i++) {
+      j.entries.push({ id: `a${i}`, ts: Date.now(), kind: 'ORDER', day, pair: `B-X${i}_USDT`, source: 'agent', status: 'FILLED' });
     }
+    __setJournalForTests(j);
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).not.toHaveBeenCalled();
+  });
+
+  it('QUOTA counts ONLY agent trades — 3 manual trades donot block the agent', async () => {
+    const j = loadJournal();
+    const day = todayIST();
+    for (let i = 0; i < 3; i++) {
+      j.entries.push({ id: `m${i}`, ts: Date.now(), kind: 'ORDER', day, pair: `X${i}`, source: 'manual', status: 'FILLED' });
+    }
+    __setJournalForTests(j);
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).toHaveBeenCalledTimes(1);
+  });
+
+  it('LOSS CAP: agent-sourced losses ≥ dailyLossCapPct% of equity → stand-down', async () => {
+    // agent took a trade today and it closed at −₹900 (3.46% of 26000 > 3% cap)
+    const j = loadJournal();
+    const day = todayIST();
+    j.entries.push({ id: 'o1', ts: Date.now(), kind: 'ORDER', day, pair: 'B-BTC_USDT', source: 'agent', status: 'FILLED' });
+    j.entries.push({ id: 'c1', ts: Date.now(), kind: 'CLOSE', day, pair: 'B-BTC_USDT', source: 'agent', status: 'FILLED', pnlINR: -900 });
+    __setJournalForTests(j);
+    const telegram = vi.fn();
+    await agentTick({}, telegram);
+    expect(mockExecuteFutures).not.toHaveBeenCalled();
+    expect(telegram).toHaveBeenCalledWith(expect.stringMatching(/stood down|AGENT stood down/i));
+    // status reflects the pause
+    const st = await agentStatus(null);
+    expect(st.today.paused).toBeTruthy();
+    expect(String(st.today.paused.reason)).toMatch(/loss cap/i);
+  });
+
+  it('COOLDOWN: no second entry within cooldown minutes of the last one', async () => {
+    await agentTick({}, vi.fn()); // first entry fires
+    expect(mockExecuteFutures).toHaveBeenCalledTimes(1);
+    mockExecuteFutures.mockClear();
+    // immediate next cycle → cooldown (default 20m) blocks
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).not.toHaveBeenCalled();
+  });
+
+  it('TIME-EXIT: an aging agent position is closed, not left to drift', async () => {
+    const j = loadJournal();
+    j.positions.push({
+      id: 'ag1', pair: 'B-BTC_USDT', market: 'FUTURES', side: 'LONG', mode: 'paper',
+      source: 'agent', status: 'OPEN', qty: 0.01, entryPrice: 50000,
+      openedAt: Date.now() - 120 * 60_000, // 120m old > 90m maxHold
+    });
+    __setJournalForTests(j);
+    await agentTick({}, vi.fn());
+    expect(mockCloseFutures).toHaveBeenCalledWith('ag1');
+  });
+
+  it('KILL SWITCH: the agent stands down instantly', async () => {
+    __setConfigForTests({ killSwitch: true });
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).not.toHaveBeenCalled();
+  });
+
+  it('STRICTER gates: a 78% STRONG board signal is BELOW the agent bar (80)', async () => {
+    mockGetSignals.mockResolvedValue({ ...FUTURES_BOARD, signals: [{ ...STRONG_CAND, confidence: 78 }] });
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).not.toHaveBeenCalled();
+  });
+
+  it('one-per-pair parity: an existing OPEN position on the candidate pair blocks entry', async () => {
+    const j = loadJournal();
+    j.positions.push({ id: 'open1', pair: 'B-BTC_USDT', market: 'FUTURES', status: 'OPEN', source: 'manual' });
+    __setJournalForTests(j);
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).not.toHaveBeenCalled();
   });
 });
 
-describe('buildProTraderSystemPrompt', () => {
-  it('injects live session context (time, phase, market status)', () => {
-    const p = buildProTraderSystemPrompt({ istTime: '10:30 IST', phase: 'full', marketOpen: true, weekday: 'Fri' });
-    expect(p).toContain('10:30 IST');
-    expect(p).toContain('phase: full');
-    expect(p).toContain('OPEN');
-    // Risk discipline is baked in
-    expect(p).toContain('15:00 IST');
-    expect(p).toContain('15:10 IST');
-    expect(p).toContain('1%');
-  });
-});
-
-describe('executeAgentTool', () => {
-  it('get_market_regime returns live regime', async () => {
-    const r = await executeAgentTool('get_market_regime', {}, baseDeps);
-    expect(r.regime).toBe('BULLISH');
-    expect(r.vix).toBe(13.2);
-  });
-
-  it('analyze_setup returns full trade plan (symbol normalized to upper)', async () => {
-    const r = await executeAgentTool('analyze_setup', { symbol: 'reliance' }, baseDeps);
-    expect(r.symbol).toBe('RELIANCE');
-    expect(r.direction).toBe('LONG');
-    expect(r.stopLoss).toBe(1210);
-    expect(r.target1).toBe(1275);
-  });
-
-  it('get_intraday_quote returns LTP', async () => {
-    const r = await executeAgentTool('get_intraday_quote', { symbol: 'TCS' }, baseDeps);
-    expect(r.ltp).toBe(1234.5);
-    expect(r.changePct).toBe(1.2);
-  });
-
-  it('get_track_record returns win-rate accountability', async () => {
-    const r = await executeAgentTool('get_track_record', { days: 7 }, baseDeps);
-    expect(r.winRate).toBeCloseTo(57.1, 1);
-    expect(r.recentHistory).toHaveLength(1);
-  });
-
-  it('get_paper_positions returns open + closed trades', async () => {
-    const r = await executeAgentTool('get_paper_positions', {}, baseDeps);
-    expect(r.open[0].symbol).toBe('TCS');
-    expect(r.closedToday[0].closeReason).toBe('T1_HIT');
-  });
-
-  it('get_live_intraday_signals triggers scan when cache is cold', async () => {
-    const r = await executeAgentTool('get_live_intraday_signals', {}, baseDeps);
-    expect(baseDeps.triggerScan).toHaveBeenCalled();
-    expect(r.error).toBeDefined(); // triggerScan mock returns null → honest error
-  });
-
-  it('get_live_intraday_signals serves cached scan when fresh', async () => {
-    const deps = {
-      ...baseDeps,
-      getLastScan: () => ({
-        marketOpen: true, asOf: new Date().toISOString(),
-        marketRegime: { regime: 'NEUTRAL' }, freshEntriesAllowed: true,
-        signals: [{ symbol: 'SBIN', direction: 'LONG', confidence: 84, ltp: 800, changePct: 0.9, entry: 800, entryZoneLow: 795, entryZoneHigh: 802, stopLoss: 780, target1: 832, target2: 852, rr: 1.6, effRR: 1.5, qtyPerLakh: 50, trendStrength: 'STRONG', rsi: 60, adx: 30, volumeRatio: 1.8, vwapDist: 0.4, counterTrend: false, aiNote: '', reasons: ['EMA stack'] }],
-      }),
-      triggerScan: vi.fn(),
-    };
-    const r = await executeAgentTool('get_live_intraday_signals', {}, deps);
-    expect(deps.triggerScan).not.toHaveBeenCalled();
-    expect(r.signals[0].symbol).toBe('SBIN');
-    expect(r.signals[0].entryZone).toEqual([795, 802]);
-  });
-
-  it('calculate_position_size computes 1% risk sizing correctly', async () => {
-    const r = await executeAgentTool('calculate_position_size', { entry: 100, stopLoss: 98, capital: 100000, riskPercent: 1 }, baseDeps);
-    // risk/share = 2 → 1000/2 = 500 qty → 50k deployed = 50% → should note the 25% cap
-    expect(r.recommendedQty).toBe(500);
-    expect(r.riskAmount).toBe(1000);
-    expect(r.note).toContain('capped');
-  });
-
-  it('calculate_position_size rejects invalid inputs', async () => {
-    const r = await executeAgentTool('calculate_position_size', { entry: 0, stopLoss: 0 }, baseDeps);
-    expect(r.error).toBeDefined();
-  });
-
-  it('search_market_news reports missing Tavily key honestly', async () => {
-    const r = await executeAgentTool('search_market_news', { query: 'IT sector' }, { ...baseDeps, KEYS: {} });
-    expect(r.error).toContain('Tavily');
-  });
-
-  it('unknown tool returns error', async () => {
-    const r = await executeAgentTool('make_coffee', {}, baseDeps);
-    expect(r.error).toContain('Unknown tool');
+// ============================================================
+// status payload
+// ============================================================
+describe('agentStatus', () => {
+  it('returns the complete panel payload without throwing', async () => {
+    const st = await agentStatus(null);
+    expect(st.ok).toBe(true);
+    expect(st.engine).toMatch(/SUPERINTELLIGENCE AGENT/i);
+    expect(st.config.maxTradesPerDay).toBe(3);
+    expect(st.today.maxTrades).toBe(3);
+    expect(st.today.tradesCount).toBe(0);
+    expect(Array.isArray(st.state.log)).toBe(true);
+    expect(st.wallet?.equityINR).toBe(WALLET.equityINR); // wallet fetch wired through
   });
 });

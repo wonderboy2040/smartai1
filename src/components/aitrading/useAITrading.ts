@@ -8,7 +8,7 @@
 // ============================================================
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, getProxyBase } from '../../utils/api';
-import type { AISignal, OptionsDesk, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, AlertsStatus, DhanStatus, SwingBoard, WhaleRadar, LedgerView, MorningBrief, OrderbookView } from './types';
+import type { AISignal, OptionsDesk, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, AlertsStatus, DhanStatus, SwingBoard, WhaleRadar, LedgerView, MorningBrief, OrderbookView, AgentView, WalletView, FuturesMarketsView, MarketKind } from './types';
 
 export interface DeepSignalResult {
   ok: boolean;
@@ -40,6 +40,7 @@ export interface ExecuteOpts {
 export function useAITrading(active: boolean) {
   const [india, setIndia] = useState<SignalBoard | null>(null);
   const [crypto, setCrypto] = useState<SignalBoard | null>(null);
+  const [futures, setFutures] = useState<SignalBoard | null>(null);
   const [state, setState] = useState<TradingState | null>(null);
   const [positions, setPositions] = useState<JournalPosition[]>([]);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
@@ -49,15 +50,19 @@ export function useAITrading(active: boolean) {
   activeRef.current = active;
 
   const loadBoards = useCallback(async () => {
-    const [i, c] = await Promise.allSettled([
+    const [i, c, f] = await Promise.allSettled([
       apiFetch(`${getProxyBase()}/api/ai/signals?market=INDIA&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) }),
       apiFetch(`${getProxyBase()}/api/ai/signals?market=CRYPTO&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) }),
+      apiFetch(`${getProxyBase()}/api/ai/signals?market=FUTURES&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) }),
     ]);
     if (i.status === 'fulfilled' && i.value.ok) {
       try { setIndia(await i.value.json()); } catch { /* skip */ }
     }
     if (c.status === 'fulfilled' && c.value.ok) {
       try { setCrypto(await c.value.json()); } catch { /* skip */ }
+    }
+    if (f.status === 'fulfilled' && f.value.ok) {
+      try { setFutures(await f.value.json()); } catch { /* skip */ }
     }
     setLoading(false);
   }, []);
@@ -151,7 +156,7 @@ export function useAITrading(active: boolean) {
 
   // v6.3 PRO: deep single-symbol analysis (every model vote, fresh run,
   // AI Council note) — powers the 🔬 button on each signal card.
-  const fetchDeep = useCallback(async (symbol: string, market: 'INDIA' | 'CRYPTO'): Promise<DeepSignalResult> => {
+  const fetchDeep = useCallback(async (symbol: string, market: 'INDIA' | 'CRYPTO' | 'FUTURES'): Promise<DeepSignalResult> => {
     try {
       const r = await apiFetch(`${getProxyBase()}/api/ai/deep/${encodeURIComponent(symbol)}?market=${market}&t=${Date.now()}`, {
         signal: AbortSignal.timeout(40000),
@@ -227,6 +232,29 @@ export function useAITrading(active: boolean) {
     } finally { setBusy(false); }
   }, []);
 
+  // v6.8: GLOBAL FUTURES gauntlet execution (CoinDCX USDT perps).
+  const executeFutures = useCallback(async (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }): Promise<ExecuteResult> => {
+    setBusy(true);
+    try {
+      const r = await apiFetch(`${getProxyBase()}/api/ai/futures/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: signal.symbol, side: signal.side, mode,
+          ...(opts?.qtyINR != null ? { qtyINR: opts.qtyINR } : {}),
+          ...(opts?.marginUSDT != null ? { marginUSDT: opts.marginUSDT } : {}),
+          ...(opts?.leverage != null ? { leverage: opts.leverage } : {}),
+        }),
+        signal: AbortSignal.timeout(45000),
+      });
+      const j = await r.json().catch(() => ({ ok: false, error: 'bad response' }));
+      loadPositions(); loadState();
+      return j;
+    } catch (e) {
+      return { ok: false, error: String((e as Error)?.message || e) };
+    } finally { setBusy(false); }
+  }, [loadPositions, loadState]);
+
   // v6.5: Dhan broker connect/status.
   const fetchDhanStatus = useCallback(async (): Promise<DhanStatus | null> => {
     try {
@@ -266,10 +294,10 @@ export function useAITrading(active: boolean) {
   }, [loadState]);
 
   return {
-    india, crypto, state, positions, entries, loading, busy,
+    india, crypto, futures, state, positions, entries, loading, busy,
     refresh: loadBoards, executeSignal, updateConfig, killSwitch, closePos, fetchDeep,
     executeIndia, runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert,
-    fetchDhanStatus, dhanConnect, dhanDisconnect,
+    fetchDhanStatus, dhanConnect, dhanDisconnect, executeFutures,
   };
 }
 
@@ -288,17 +316,19 @@ export async function fetchOptionsDesk(symbol: string, force = false): Promise<O
 }
 
 // ---------------- v6.7: swing · whales · ledger · brief · orderbook ----------------
-export async function fetchSwingBoard(market: 'INDIA' | 'CRYPTO'): Promise<SwingBoard | null> {
+export async function fetchSwingBoard(market: MarketKind): Promise<SwingBoard | null> {
+  const m = market === 'INDIA' ? 'INDIA' : 'CRYPTO'; // futures → underlying crypto desk
   try {
-    const r = await apiFetch(`${getProxyBase()}/api/ai/swing?market=${market}&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) });
+    const r = await apiFetch(`${getProxyBase()}/api/ai/swing?market=${m}&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) });
     if (!r.ok) return null;
     return await r.json();
   } catch { return null; }
 }
 
-export async function fetchWhales(market: 'INDIA' | 'CRYPTO'): Promise<WhaleRadar | null> {
+export async function fetchWhales(market: MarketKind): Promise<WhaleRadar | null> {
+  const m = market === 'INDIA' ? 'INDIA' : 'CRYPTO'; // futures → underlying crypto desk
   try {
-    const r = await apiFetch(`${getProxyBase()}/api/ai/whales?market=${market}&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) });
+    const r = await apiFetch(`${getProxyBase()}/api/ai/whales?market=${m}&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) });
     if (!r.ok) return null;
     return await r.json();
   } catch { return null; }
@@ -324,6 +354,67 @@ export async function fetchOrderbook(symbol: string): Promise<OrderbookView | nu
   try {
     const r = await apiFetch(`${getProxyBase()}/api/ai/orderbook?symbol=${symbol}&t=${Date.now()}`, { signal: AbortSignal.timeout(15000) });
     // 502 with an honest error payload is still a displayable view
+    return await r.json().catch(() => null);
+  } catch { return null; }
+}
+
+// ---------------- v6.8: agent · wallet · futures markets ----------------
+export async function fetchAgentStatus(): Promise<AgentView | null> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/agent?t=${Date.now()}`, { signal: AbortSignal.timeout(45000) });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+export async function startAgent(mode: 'paper' | 'live', liveConfirmPhrase?: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/agent/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, ...(mode === 'live' && liveConfirmPhrase ? { liveConfirmPhrase } : {}) }),
+      signal: AbortSignal.timeout(20000),
+    });
+    return await r.json().catch(() => ({ ok: false, error: 'bad response' }));
+  } catch (e) {
+    return { ok: false, error: String((e as Error)?.message || e) };
+  }
+}
+
+export async function stopAgent(): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/agent/stop`, { method: 'POST', signal: AbortSignal.timeout(15000) });
+    return await r.json().catch(() => ({ ok: false, error: 'bad response' }));
+  } catch (e) {
+    return { ok: false, error: String((e as Error)?.message || e) };
+  }
+}
+
+export async function saveAgentConfig(patch: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/agent/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+      signal: AbortSignal.timeout(15000),
+    });
+    return await r.json().catch(() => ({ ok: false, error: 'bad response' }));
+  } catch (e) {
+    return { ok: false, error: String((e as Error)?.message || e) };
+  }
+}
+
+export async function fetchWallet(): Promise<WalletView | null> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/wallet?t=${Date.now()}`, { signal: AbortSignal.timeout(20000) });
+    // 4xx/5xx with an honest payload is still displayable
+    return await r.json().catch(() => null);
+  } catch { return null; }
+}
+
+export async function fetchFuturesMarkets(): Promise<FuturesMarketsView | null> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/futures/markets?t=${Date.now()}`, { signal: AbortSignal.timeout(15000) });
     return await r.json().catch(() => null);
   } catch { return null; }
 }

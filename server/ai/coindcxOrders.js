@@ -692,10 +692,11 @@ export async function watchPositions({ sendTelegram } = {}) {
     }
 
     const open = j.positions.filter(p => p.status === 'OPEN');
-    // v6.5: India positions live in the SAME journal but are priced by the
-    // TV scanner and square-off at 15:15 IST — watchIndiaPositions (indiaOrders.js)
-    // owns them. This watcher stays CRYPTO-only.
-    const openCrypto = open.filter(p => p.market !== 'INDIA');
+    // v6.8: India positions → watchIndiaPositions (Dhan); FUTURES →
+    // watchFuturesPositions (futures.js); THIS watcher stays SPOT-crypto
+    // only (spot tickers don't price "B-BTC_USDT" rows — the filter made
+    // them look stuck-open with no LTP).
+    const openCrypto = open.filter(p => p.market === 'CRYPTO');
     if (openCrypto.length > 0) {
       const tickers = await fetchCoinDcxTickers().catch(() => []);
       const byPair = new Map((Array.isArray(tickers) ? tickers : []).map(t => [t.market, parseFloat(t.last_price)]));
@@ -949,14 +950,46 @@ export async function getPositionsWithPnl() {
     const rows = await fetchTVIndiaBatch(indiaSyms).catch(() => ({}));
     for (const s of indiaSyms) if (rows[s]?.ltp > 0) indiaLtp.set(s, rows[s].ltp);
   }
+  // v6.8: futures positions priced from the futures RT feed (USDT domain)
+  const futPairs = [...new Set(j.positions.filter(p => p.market === 'FUTURES' && p.status === 'OPEN').map(p => p.pair))];
+  const futLtp = new Map();
+  let futUsdInr = null;
+  if (futPairs.length > 0) {
+    const { fetchFuturesPrices, fetchUsdInr } = await import('./futures.js');
+    const [rows, usdInr] = await Promise.all([
+      fetchFuturesPrices().catch(() => []),
+      fetchUsdInr().catch(() => 84),
+    ]);
+    futUsdInr = usdInr;
+    for (const r of (Array.isArray(rows) ? rows : [])) if (r.last > 0) futLtp.set(r.pair, r.last);
+  }
   const stats = dailyStats(j);
   return {
     positions: j.positions.slice().reverse().map(p => {
-      const ltp = p.market === 'INDIA' ? (indiaLtp.get(p.symbol) ?? p.entryPrice) : (byPair.get(p.pair) ?? p.entryPrice);
+      let ltp;
+      let upnl = null;
+      if (p.market === 'INDIA') {
+        ltp = indiaLtp.get(p.symbol) ?? p.entryPrice;
+      } else if (p.market === 'FUTURES') {
+        ltp = futLtp.get(p.pair) ?? p.entryPrice;
+      } else {
+        ltp = byPair.get(p.pair) ?? p.entryPrice;
+      }
       const long = p.side === 'LONG';
-      const upnl = p.status === 'OPEN'
-        ? r2((long ? ltp - p.entryPrice : p.entryPrice - ltp) * p.qty)
-        : p.pnlINR;
+      if (p.status === 'OPEN') {
+        if (p.market === 'FUTURES') {
+          const pnlUSDT = (long ? ltp - p.entryPrice : p.entryPrice - ltp) * p.qty;
+          upnl = r2(pnlUSDT * (futUsdInr || 84));
+          return {
+            ...p, ltp: r2(ltp), unrealizedPnlINR: upnl,
+            unrealizedPnlUSDT: r2(pnlUSDT), usdInr: r2(futUsdInr || 84),
+            marginUSDT: p.marginUSDT ?? null,
+          };
+        }
+        upnl = r2((long ? ltp - p.entryPrice : p.entryPrice - ltp) * p.qty);
+      } else {
+        upnl = p.pnlINR;
+      }
       return { ...p, ltp: r2(ltp), unrealizedPnlINR: upnl };
     }),
     stats,

@@ -22,6 +22,7 @@ import { ModelRegistry } from '../aitrading/ModelRegistry';
 import { BacktestPanel } from '../aitrading/BacktestPanel';
 import { AlertsPanel } from '../aitrading/AlertsPanel';
 import { MorningBriefPanel, SwingDeskPanel, WhaleRadarPanel, SignalLedgerPanel, OrderbookPanel } from '../aitrading/ProPanels';
+import { AgentPanel } from '../aitrading/AgentPanel';
 import type { AISignal, DhanStatus, MarketKind, SignalBoard } from '../aitrading/types';
 
 const REFRESH_MS = 30_000;
@@ -50,6 +51,11 @@ function DeskSwitcher({ market, onChange, indiaOpen }: { market: MarketKind; onC
         className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl text-xs font-black transition-colors flex items-center gap-2 ${market === 'CRYPTO' ? 'bg-gradient-to-r from-amber-600 to-yellow-600 text-white shadow-lg shadow-amber-500/20' : 'text-slate-400 hover:text-slate-200'}`}>
         ₿ CRYPTO · CoinDCX
         <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-emerald-500/20 text-emerald-300">24/7</span>
+      </button>
+      <button onClick={() => onChange('FUTURES')} role="tab" aria-pressed={market === 'FUTURES'}
+        className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl text-xs font-black transition-colors flex items-center gap-2 ${market === 'FUTURES' ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-lg shadow-violet-500/20' : 'text-slate-400 hover:text-slate-200'}`}>
+        ⚡ GLOBAL FUTURES
+        <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-violet-500/20 text-violet-300">USDT · 24/7</span>
       </button>
     </div>
   );
@@ -207,15 +213,15 @@ function BoardSummary({ board }: { board: SignalBoard | null }) {
 
 export default memo(function AITradingTab() {
   const t = useAITrading(true);
-  const { india, crypto, state, positions, entries, loading, busy, refresh, executeSignal, updateConfig, closePos, fetchDeep } = t;
-  const { executeIndia, runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert, fetchDhanStatus, dhanConnect, dhanDisconnect } = t;
+  const { india, crypto, futures, state, positions, entries, loading, busy, refresh, executeSignal, updateConfig, closePos, fetchDeep } = t;
+  const { executeIndia, executeFutures, runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert, fetchDhanStatus, dhanConnect, dhanDisconnect } = t;
   const [market, setMarket] = useState<MarketKind>('INDIA');
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [filter, setFilter] = useState<BoardFilter>('ALL');
   const [deep, setDeep] = useState<{ loading: boolean; signal?: AISignal; indicators?: Record<string, unknown>; error?: string } | null>(null);
   const [dhan, setDhan] = useState<DhanStatus | null>(null);
 
-  const board = market === 'INDIA' ? india : crypto;
+  const board = market === 'INDIA' ? india : market === 'FUTURES' ? futures : crypto;
   const models = board?.models || india?.models || crypto?.models || [];
   const canLive = state?.config?.mode === 'live' && !state?.blocked?.notConnected;
   const canLiveIndia = state?.config?.indiaMode === 'live' && !!dhan?.connected;
@@ -273,6 +279,19 @@ export default memo(function AITradingTab() {
     }
   }, [executeIndia, notify]);
 
+  // v6.8: GLOBAL FUTURES gauntlet (CoinDCX USDT perpetuals) — same handler shape.
+  const onExecuteFutures = useCallback(async (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => {
+    const r = await executeFutures(signal, mode, opts);
+    if (r.ok) {
+      const levTag = r.filled?.leverage ? ` · ${r.filled.leverage}x · margin ${Math.round((r.filled as { marginUSDT?: number }).marginUSDT ?? 0)} USDT` : '';
+      notify(true, mode === 'live'
+        ? `✅ FUTURES LIVE order placed — ${signal.symbol} ${signal.side} · ${r.filled?.qty} @ ${r.filled?.price}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`
+        : `🧪 Futures paper trade opened — ${signal.symbol} ${signal.side} · ${r.filled?.qty} @ ${r.filled?.price}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
+    } else {
+      notify(false, `⛔ ${r.error || 'execution failed'}`);
+    }
+  }, [executeFutures, notify]);
+
   const onSaveConfig = useCallback(async (patch: Record<string, unknown>) => {
     const r = await updateConfig(patch);
     if (!r.ok) notify(false, `⛔ ${r.error}`);
@@ -296,12 +315,12 @@ export default memo(function AITradingTab() {
   }, [fetchDeep]);
 
   const regime = board?.regime;
-  const regimeChips = market === 'CRYPTO'
-    ? (regime?.btcChange != null ? [{ label: 'BTC 24h', v: `${regime.btcChange >= 0 ? '+' : ''}${regime.btcChange.toFixed(2)}%`, bull: regime.btcChange >= 0 }] : [])
-    : [
+  const regimeChips = market === 'INDIA'
+    ? [
       regime?.niftyChange != null ? { label: 'NIFTY', v: `${regime.niftyChange >= 0 ? '+' : ''}${regime.niftyChange.toFixed(2)}%`, bull: regime.niftyChange >= 0 } : null,
       regime?.indiaVix != null ? { label: 'VIX', v: regime.indiaVix.toFixed(1), bull: regime.indiaVix < 15 } : null,
-    ].filter(Boolean) as { label: string; v: string; bull: boolean }[];
+    ].filter(Boolean) as { label: string; v: string; bull: boolean }[]
+    : (regime?.btcChange != null ? [{ label: 'BTC 24h', v: `${regime.btcChange >= 0 ? '+' : ''}${regime.btcChange.toFixed(2)}%`, bull: regime.btcChange >= 0 }] : []);
 
   const counts = useMemo(() => {
     const sigs = board?.signals || [];
@@ -333,10 +352,10 @@ export default memo(function AITradingTab() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-black gradient-text-cyan tracking-wide">SUPERINTELLIGENCE AI TRADING TERMINAL</h2>
-              <span className="quantum-badge">v6.7</span>
+              <span className="quantum-badge">v6.8</span>
             </div>
             <p className="text-[10px] text-slate-500 mt-0.5">
-              10-model ensemble consensus · SMC/ICT · GEX desk · swing · whales · ledger · adaptive · {models.filter(m => m.online).length}/{models.length || 10} models online
+              10-model ensemble · SMC/ICT · GEX desk · swing · whales · ledger · adaptive · GLOBAL FUTURES · AUTO-AGENT · {models.filter(m => m.online).length}/{models.length || 10} models online
               {canLive && <span className="text-red-400 font-black"> · LIVE EXECUTION ARMED</span>}
               {canLiveIndia && <span className="text-red-400 font-black"> · INDIA LIVE ARMED</span>}
             </p>
@@ -360,6 +379,14 @@ export default memo(function AITradingTab() {
         </div>
       </div>
 
+      {/* ============ 00 · SUPERINTELLIGENCE AUTO-AGENT (v6.8) ============ */}
+      <div>
+        <SectionLabel num="00" title="Superintelligence Auto-Agent" sub="wallet-fetch · auto entry/exit · daily 3 trades · SL-based sizing — India intraday + CoinDCX spot/futures, sab gauntlet-gated" />
+        <div className="mt-2.5">
+          <AgentPanel notify={notify} />
+        </div>
+      </div>
+
       {/* ============ MARKET BREADTH (v6.3) ============ */}
       <BreadthStrip board={board} />
 
@@ -377,7 +404,7 @@ export default memo(function AITradingTab() {
       {/* ============ 01 · SIGNAL BOARD ============ */}
       <div>
         <div className="flex items-end justify-between flex-wrap gap-2">
-          <SectionLabel num="01" title="Signal Board" sub={`${market === 'INDIA' ? 'NSE equities + indices (TV live scanner)' : 'CoinDCX crypto majors'} → 10-model consensus (SMC/ICT included)`} />
+          <SectionLabel num="01" title="Signal Board" sub={`${market === 'INDIA' ? 'NSE equities + indices (TV live scanner)' : market === 'FUTURES' ? 'CoinDCX GLOBAL FUTURES (USDT perpetuals, RT prices)' : 'CoinDCX crypto majors'} → 10-model consensus (SMC/ICT included)`} />
           <BoardSummary board={board} />
         </div>
         <div className="mt-2.5 flex items-center justify-between flex-wrap gap-2">
@@ -399,7 +426,7 @@ export default memo(function AITradingTab() {
             </div>
           )}
           {visibleSignals.map(s => (
-            <SignalCard key={`${s.market}-${s.symbol}`} signal={s} busy={busy} onExecute={onExecute} onExecuteIndia={onExecuteIndia} onDeep={onDeep}
+            <SignalCard key={`${s.market}-${s.symbol}`} signal={s} busy={busy} onExecute={onExecute} onExecuteIndia={onExecuteIndia} onExecuteFutures={onExecuteFutures} onDeep={onDeep}
               canLive={canLive} canLiveIndia={canLiveIndia} isNew={newSymbols.has(s.symbol)}
               orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5}
               maxLeverage={state?.config?.cryptoLeverage ?? 1} indiaBudgetINR={state?.config?.indiaMaxOrderINR ?? 5000} />
@@ -443,10 +470,10 @@ export default memo(function AITradingTab() {
       <div>
         <SectionLabel num={market === 'INDIA' ? '02b' : '02b'} title="Swing Desk + Whale Radar" sub="multi-day setups (analysis only) · volume-spike footprints — 3–8 din horizon" />
         <div className="mt-2.5 grid gap-3 xl:grid-cols-2">
-          <SwingDeskPanel market={market} />
+          <SwingDeskPanel market={market === 'FUTURES' ? 'CRYPTO' : market} />
           <div className="space-y-3">
-            <WhaleRadarPanel market={market} />
-            {market === 'CRYPTO' && <OrderbookPanel />}
+            <WhaleRadarPanel market={market === 'FUTURES' ? 'CRYPTO' : market} />
+            {market !== 'INDIA' && <OrderbookPanel />}
           </div>
         </div>
       </div>
@@ -477,7 +504,7 @@ export default memo(function AITradingTab() {
       <div>
         <SectionLabel num={market === 'INDIA' ? '04' : '03'} title="Backtest Lab" sub="the SAME 9-model ensemble replayed on history — win rate · avg R · equity curve" />
         <div className="mt-2.5">
-          <BacktestPanel market={market} runBacktest={runBacktest} />
+          <BacktestPanel market={market === 'FUTURES' ? 'CRYPTO' : market} runBacktest={runBacktest} />
         </div>
       </div>
 
@@ -517,7 +544,7 @@ export default memo(function AITradingTab() {
             )}
             {!deep.loading && deep.signal && (
               <>
-                <SignalCard signal={deep.signal} onExecute={onExecute} onExecuteIndia={onExecuteIndia} canLive={canLive} canLiveIndia={canLiveIndia} busy={busy}
+                <SignalCard signal={deep.signal} onExecute={onExecute} onExecuteIndia={onExecuteIndia} onExecuteFutures={onExecuteFutures} canLive={canLive} canLiveIndia={canLiveIndia} busy={busy}
                   orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5}
                   maxLeverage={state?.config?.cryptoLeverage ?? 1} indiaBudgetINR={state?.config?.indiaMaxOrderINR ?? 5000} />
                 {deep.indicators && (

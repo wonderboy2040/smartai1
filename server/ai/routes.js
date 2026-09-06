@@ -29,13 +29,20 @@
 //   • STRONG-signal alerter (60s) — telegram on fresh STRONG consensus
 //   • auto-executor  (90s)     — STRONG-only auto trading when enabled
 // ============================================================
-import { getSignals, getDeepSignal, getFreshSignalForExec } from './signals.js';
+import { getSignals, getDeepSignal, getFreshSignalForExec, getFreshFuturesSignalForExec } from './signals.js';
 import { getOptionsDesk, buildStrategies } from './optionsDesk.js';
 import {
   loadConfig, updateConfig, getRiskState, executeSignal, getPositionsWithPnl,
   closePosition, listExchangeOrders, cancelExchangeOrder, cancelAllExchangeOrders,
   watchPositions, loadJournal, dailyStats,
 } from './coindcxOrders.js';
+import {
+  executeFuturesSignal, watchFuturesPositions, closeFuturesPosition,
+  walletSnapshot, futuresMarketsView,
+} from './futures.js';
+import {
+  agentTick, agentStatus, agentStart, agentStop, updateAgentConfig, loadAgentConfig,
+} from './agent.js';
 import { executeIndiaSignal, watchIndiaPositions, closeIndiaPosition } from './indiaOrders.js';
 import { runBacktest } from './backtest.js';
 import { getSwingBoard, scanWhales, getOrderbook } from './swing.js';
@@ -75,17 +82,23 @@ export function registerAITradingRoutes(app, deps) {
   // v6.5: telegram — secrets WIN over env; one resolver, one sender.
   const sendTelegram = (text) => sendTelegramMessage(text, { token: TG?.token || '', chatId: TG?.chatId || '' });
 
+  const normMarket = (raw) => {
+    const m = String(raw || 'INDIA').toUpperCase();
+    return m === 'CRYPTO' ? 'CRYPTO' : m === 'FUTURES' ? 'FUTURES' : 'INDIA';
+  };
+
   // ---------------- status ----------------
   app.get('/api/ai/status', async (_req, res) => {
     try {
       const risk = getRiskState();
-      const [board, cryptoBoard] = await Promise.all([
+      const [board, cryptoBoard, futuresBoard] = await Promise.all([
         getSignals('INDIA', depsForSignals()).catch(() => null),
         getSignals('CRYPTO', depsForSignals()).catch(() => null),
+        getSignals('FUTURES', depsForSignals()).catch(() => null),
       ]);
       res.json({
         ok: true,
-        engine: 'SUPERINTELLIGENCE ENSEMBLE v6.7',
+        engine: 'SUPERINTELLIGENCE ENSEMBLE v6.8',
         models: board?.models || cryptoBoard?.models || [],
         aiCouncilOnline: (board?.models || []).some(m => m.id === 'aicouncil' && m.online),
         risk,
@@ -94,8 +107,10 @@ export function registerAITradingRoutes(app, deps) {
         ledger: ledgerStatus(),
         dhan: { connected: dhanConnected() },
         telegram: { configured: !!telegramConfig(TG || {}) },
+        agent: { enabled: loadAgentConfig().enabled, mode: loadAgentConfig().mode },
         india: board ? { ok: board.ok, signals: board.signals?.length || 0, marketOpen: board.marketOpen } : null,
         crypto: cryptoBoard ? { ok: cryptoBoard.ok, signals: cryptoBoard.signals?.length || 0 } : null,
+        futures: futuresBoard ? { ok: futuresBoard.ok, signals: futuresBoard.signals?.length || 0 } : null,
       });
     } catch (e) {
       jsonError(res, 500, 'ai status failed', e);
@@ -105,9 +120,9 @@ export function registerAITradingRoutes(app, deps) {
   // ---------------- signal board ----------------
   app.get('/api/ai/signals', async (req, res) => {
     try {
-      const market = String(req.query.market || 'INDIA').toUpperCase();
+      const market = normMarket(req.query.market);
       const limit = Math.min(15, Math.max(3, parseInt(req.query.limit, 10) || 10));
-      const board = await getSignals(market === 'CRYPTO' ? 'CRYPTO' : 'INDIA', depsForSignals(), { limit });
+      const board = await getSignals(market, depsForSignals(), { limit });
       res.json(board);
     } catch (e) {
       jsonError(res, 500, 'ai signals failed', e);
@@ -117,7 +132,7 @@ export function registerAITradingRoutes(app, deps) {
   // ---------------- deep single-symbol analysis ----------------
   app.get('/api/ai/deep/:symbol', async (req, res) => {
     try {
-      const market = String(req.query.market || 'INDIA').toUpperCase();
+      const market = normMarket(req.query.market);
       const out = await getDeepSignal(req.params.symbol, market, depsForSignals());
       if (!out?.ok) return res.status(404).json(out);
       res.json(out);
@@ -198,6 +213,84 @@ export function registerAITradingRoutes(app, deps) {
     }
   });
 
+  // ---------------- THE EXECUTION GAUNTLET (GLOBAL FUTURES, v6.8) ----------------
+  app.post('/api/ai/futures/execute', async (req, res) => {
+    try {
+      const { symbol, side, mode, qtyINR, marginUSDT, leverage } = req.body || {};
+      if (!symbol) return res.status(400).json({ ok: false, error: 'symbol required' });
+      const result = await executeFuturesSignal({
+        symbol: String(symbol).toUpperCase().replace(/^B-/, '').replace(/_USDT$/, ''),
+        side: side ? String(side).toUpperCase() : undefined,
+        mode: mode === 'live' ? 'live' : 'paper',
+        qtyINR: qtyINR != null ? Number(qtyINR) : undefined,
+        marginUSDT: marginUSDT != null ? Number(marginUSDT) : undefined,
+        leverage: leverage != null ? Number(leverage) : undefined,
+        getFreshSignal: (pair) => getFreshFuturesSignalForExec(pair, depsForSignals()),
+        wantAuto: false,
+        source: 'manual',
+      });
+      return res.status(result.ok ? 200 : 400).json(result);
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  // ---------------- CoinDCX WALLET (spot + futures, v6.8) ----------------
+  app.get('/api/ai/wallet', async (_req, res) => {
+    try {
+      res.json(await walletSnapshot());
+    } catch (e) {
+      const status = e?.status || 502;
+      res.status(status).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  // ---------------- GLOBAL FUTURES markets view (v6.8) ----------------
+  app.get('/api/ai/futures/markets', async (_req, res) => {
+    try {
+      const out = await futuresMarketsView();
+      if (!out?.ok) return res.status(502).json(out);
+      res.json(out);
+    } catch (e) {
+      jsonError(res, 500, 'futures markets failed', e);
+    }
+  });
+
+  // ---------------- SUPERINTELLIGENCE AGENT (v6.8) ----------------
+  app.get('/api/ai/agent', async (_req, res) => {
+    try {
+      res.json(await agentStatus(depsForSignals()));
+    } catch (e) {
+      jsonError(res, 500, 'agent status failed', e);
+    }
+  });
+
+  app.post('/api/ai/agent/start', async (req, res) => {
+    try {
+      const { mode, liveConfirmPhrase } = req.body || {};
+      res.json(await agentStart({ mode, liveConfirmPhrase }));
+    } catch (e) {
+      const status = e?.status || 400;
+      res.status(status).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  app.post('/api/ai/agent/stop', (_req, res) => {
+    try { res.json(agentStop({ reason: 'user (panel)' })); }
+    catch (e) { return res.status(400).json({ ok: false, error: String(e?.message || e) }); }
+  });
+
+  app.post('/api/ai/agent/config', (req, res) => {
+    try {
+      // mode changes NEVER pass through this endpoint — start/stop own it
+      const { mode, enabled, ...patch } = req.body || {};
+      const cfg = updateAgentConfig(patch);
+      res.json({ ok: true, config: cfg });
+    } catch (e) {
+      return res.status(400).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
   // ---------------- THE EXECUTION GAUNTLET (India, v6.5) ----------------
   app.post('/api/ai/india/execute', async (req, res) => {
     try {
@@ -232,11 +325,14 @@ export function registerAITradingRoutes(app, deps) {
       if (!id) return res.status(400).json({ ok: false, error: 'id required' });
       // v6.5: India positions close through the Dhan path (market order +
       // broker-SL cancel); crypto positions through the CoinDCX path.
+      // v6.8: FUTURES positions close through the futures exit API.
       const j = loadJournal();
       const p = j.positions.find(x => x.id === id || x.exchangeOrderId === id);
       const out = p && p.market === 'INDIA'
         ? await closeIndiaPosition(String(id))
-        : await closePosition(String(id));
+        : p && p.market === 'FUTURES'
+          ? await closeFuturesPosition(String(id))
+          : await closePosition(String(id));
       return res.status(out.ok ? 200 : 400).json(out);
     } catch (e) {
       return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -445,7 +541,7 @@ export function registerAITradingRoutes(app, deps) {
   });
 
   // ---------------- background loops ----------------
-  // Crypto position watcher — SL/TP + trailing every 60s.
+  // Crypto position watcher — SPOT SL/TP + trailing every 60s.
   const watcher = setInterval(async () => {
     try {
       const closures = await watchPositions({ sendTelegram });
@@ -455,6 +551,27 @@ export function registerAITradingRoutes(app, deps) {
     } catch { /* non-fatal */ }
   }, 60_000);
   if (watcher.unref) watcher.unref();
+
+  // v6.8: GLOBAL FUTURES watcher — SL/TP/trailing/liquidation + exchange
+  // reconcile (native TP/SL closes) + paper simulation, every 60s.
+  const futuresWatcher = setInterval(async () => {
+    try {
+      const closures = await watchFuturesPositions({ sendTelegram });
+      if (closures.length > 0) {
+        console.log(`[ai] futures watcher closed ${closures.length} position(s): ${closures.map(c => `${c.pair} ${c.pnlINR}`).join(', ')}`);
+      }
+    } catch { /* non-fatal */ }
+  }, 60_000);
+  if (futuresWatcher.unref) futuresWatcher.unref();
+
+  // v6.8: SUPERINTELLIGENCE AGENT loop — wallet scan → auto entry/exit,
+  // 3 trades/day, every 60s. Every entry passes the same gauntlet.
+  const agentLoop = setInterval(async () => {
+    try {
+      await agentTick(depsForSignals(), sendTelegram);
+    } catch { /* non-fatal — agent logs its own errors */ }
+  }, 60_000);
+  if (agentLoop.unref) agentLoop.unref();
 
   // India watcher — SL/TP + trailing + 15:15 square-off (NSE hours only).
   const indiaWatcher = setInterval(async () => {
@@ -527,5 +644,5 @@ export function registerAITradingRoutes(app, deps) {
   }, 90_000);
   if (auto.unref) auto.unref();
 
-  console.log('[ai] Superintelligence Ensemble v6.7 — 10 models · SMC/ICT · GEX desk · swing · whales · ledger · adaptive weights · trailing SL · backtests · Telegram · Dhan + CoinDCX gauntlets · crypto leverage');
+  console.log('[ai] Superintelligence Ensemble v6.8 — 10 models · SMC/ICT · GEX desk · swing · whales · ledger · adaptive weights · trailing SL · backtests · Telegram · Dhan + CoinDCX gauntlets · crypto leverage · GLOBAL FUTURES (USDT perps) · SUPERINTELLIGENCE AUTO-AGENT (3 trades/day, wallet-sized)');
 }

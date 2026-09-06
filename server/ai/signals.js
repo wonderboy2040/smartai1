@@ -16,6 +16,7 @@ import {
   INDIA_UNIVERSE, CRYPTO_UNIVERSE, fetchTVIndiaBatch, fetchTVCryptoBatch,
   fetchCoinDcxCandles, fetchYahooQuotes, isNseOpen,
 } from './data.js';
+import { FUTURES_UNIVERSE, futuresPairFor, fetchFuturesPrices, fetchFuturesCandles } from './futures.js';
 import { MODELS, runQuantModels, aiCouncilVoteFromVerdict } from './models.js';
 // v6.7 self-correcting ensemble: live-outcome Bayesian weight multipliers
 import { adaptiveMultipliers, applyAdaptiveWeights } from './adaptive.js';
@@ -265,7 +266,9 @@ export async function aiCouncilVerify(candidates, deps, market) {
   }));
   const venue = market === 'CRYPTO'
     ? 'CoinDCX spot (INR pairs, 24/7). Penalize extreme 24h moves, thin books, counter-BTC-regime calls.'
-    : 'NSE India (options-led desk). Penalize RSI exhaustion, low ADX, thin relative volume, and VIX spikes.';
+    : market === 'FUTURES'
+      ? 'CoinDCX GLOBAL FUTURES (USDT-margined perpetuals, 24/7, leveraged). Penalize extreme 24h moves, funding-fighting continuation calls, thin books, counter-BTC-regime calls.'
+      : 'NSE India (options-led desk). Penalize RSI exhaustion, low ADX, thin relative volume, and VIX spikes.';
   const prompt = `You are the AI COUNCIL — the final verification layer of a 9-model superintelligence ensemble for a ${venue}.
 
 Below are pre-scored consensus candidates. For EACH, analyze deeply and either CONFIRM or VETO. Be strict: an edge must be confluence-driven, not single-factor.
@@ -287,9 +290,10 @@ Respond STRICT JSON only (no markdown):
 
 // ---------------- the signal board ----------------
 export async function getSignals(market, deps, opts = {}) {
-  const mkt = String(market || 'INDIA').toUpperCase() === 'CRYPTO' ? 'CRYPTO' : 'INDIA';
+  const raw = String(market || 'INDIA').toUpperCase();
+  const mkt = raw === 'CRYPTO' ? 'CRYPTO' : raw === 'FUTURES' ? 'FUTURES' : 'INDIA';
   const cacheKey = `board:${mkt}`;
-  const cached = cacheGet(cacheKey, mkt === 'CRYPTO' ? 45_000 : 60_000);
+  const cached = cacheGet(cacheKey, mkt === 'INDIA' ? 60_000 : 45_000);
   if (cached && !opts.noCache) return cached;
 
   const depsSafe = deps || {};
@@ -318,6 +322,24 @@ export async function getSignals(market, deps, opts = {}) {
       if (ctx) contexts.push(ctx);
     }
     for (const r of indexCandleJobs) if (r.status === 'fulfilled' && r.value) contexts.push(r.value);
+  } else if (mkt === 'FUTURES') {
+    // v6.8 GLOBAL FUTURES: TV crypto USD indicators (USD ≈ USDT 1:1) +
+    // CoinDCX futures RT prices + pcode=f candlesticks. Everything stays
+    // in the USDT domain — the plan prices ARE the prices you trade.
+    const [tv, futRows] = await Promise.all([
+      fetchTVCryptoBatch(FUTURES_UNIVERSE).catch(() => ({})),
+      fetchFuturesPrices().catch(() => []),
+    ]);
+    const futMap = new Map((Array.isArray(futRows) ? futRows : []).map(x => [x.base, x]));
+    const candleJobs = await Promise.allSettled(
+      FUTURES_UNIVERSE.map(b => futMap.has(b) ? fetchFuturesCandles(futuresPairFor(b), '60').catch(() => null) : Promise.resolve(null)),
+    );
+    FUTURES_UNIVERSE.forEach((base, i) => {
+      const row = futMap.get(base);
+      const candles = candleJobs[i].status === 'fulfilled' ? candleJobs[i].value : null;
+      const ctx = buildFuturesCtxSync(base, tv[base], row, candles, regime);
+      if (ctx) contexts.push(ctx);
+    });
   } else {
     // Crypto: TV crypto batch + CoinDCX INR prices + candles.
     const { fetchCoinDcxTickers } = await import('../cryptoStream.js');
@@ -342,7 +364,9 @@ export async function getSignals(market, deps, opts = {}) {
     const payload = {
       ok: false, market: mkt, reason: mkt === 'CRYPTO'
         ? 'No crypto data reachable right now (TV + CoinDCX both unavailable)'
-        : 'No India market data reachable right now (TV scanner unavailable)',
+        : mkt === 'FUTURES'
+          ? 'No futures data reachable right now (TV + CoinDCX futures RT unavailable)'
+          : 'No India market data reachable right now (TV scanner unavailable)',
       marketOpen: mkt === 'INDIA' ? isNseOpen() : true,
       signals: [], models: modelStatus(null, depsSafe), regime, generatedAt: Date.now(),
     };
@@ -485,9 +509,43 @@ function buildCryptoCtxSync(base, tvRow, inrPrice, regime, candles) {
   };
 }
 
+// v6.8: futures context — the USDT twin of buildCryptoCtxSync. TV crypto
+// indicators are already USD-denominated (USD ≈ USDT 1:1 on these majors)
+// so NO scaling happens: entry/SL/targets land in the exact quote currency
+// the futures contract trades. Candles come from the pcode=f endpoint.
+function buildFuturesCtxSync(base, tvRow, futRow, candles, regime) {
+  const ltp = futRow?.last ?? (tvRow?.usdPrice ?? null);
+  if (!(ltp > 0)) return null;
+  let ind = null;
+  if (tvRow) {
+    ind = tvToInd({
+      rsi: tvRow.rsi, macd: tvRow.macd, macdSignal: tvRow.macdSignal,
+      ema10: tvRow.ema10, ema20: tvRow.ema20, ema50: tvRow.ema50,
+      sma20: tvRow.sma20, sma50: tvRow.sma50,
+      atr: tvRow.atr, adx: tvRow.adx, adxPlus: tvRow.adxPlus, adxMinus: tvRow.adxMinus,
+      bbUpper: tvRow.bbUpper, bbLower: tvRow.bbLower,
+      stochK: tvRow.stochK, stochD: tvRow.stochD,
+      relVolume: tvRow.relVolume, recommend: tvRow.recommend,
+      vwap: null, pivot: null, high52w: null, low52w: null,
+    }, ltp);
+  }
+  if (Array.isArray(candles) && candles.length >= 30) {
+    const ci = computeIndicatorsFromCandles(candles);
+    if (ci) ind = { ...(ind || {}), ...ci, relVolume: ind?.relVolume ?? (ci.avgVolume20 > 0 ? ci.volume / ci.avgVolume20 : null) };
+  }
+  if (!ind) return null;
+  return {
+    market: 'FUTURES', symbol: base, ltp, changePct: futRow?.changePct ?? tvRow?.changePct ?? 0,
+    volume: futRow?.volume ?? 0, pair: futuresPairFor(base),
+    ind, candles: candles || null, options: null, regime,
+    priceSource: futRow?.last != null ? 'coindcx-futures-rt' : 'tv-usd-approx',
+  };
+}
+
 // ---------------- deep single-symbol signal ----------------
 export async function getDeepSignal(symbol, market, deps, opts = {}) {
-  const mkt = String(market || 'INDIA').toUpperCase() === 'CRYPTO' ? 'CRYPTO' : 'INDIA';
+  const raw = String(market || 'INDIA').toUpperCase();
+  const mkt = raw === 'CRYPTO' ? 'CRYPTO' : raw === 'FUTURES' ? 'FUTURES' : 'INDIA';
   const sym = String(symbol || '').toUpperCase().replace(/[^A-Z0-9\-]/g, '');
   if (!sym) return { ok: false, reason: 'symbol required' };
   // optionsCtx changes which models participate (OptionsFlow) — cache
@@ -497,9 +555,17 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
   const cached = cacheGet(cacheKey, 30_000);
   if (cached) return cached;
 
-  const regime = await buildRegime(mkt);
+  const regime = await buildRegime(mkt === 'INDIA' ? 'INDIA' : 'CRYPTO');
   let ctx = null;
-  if (mkt === 'CRYPTO') {
+  if (mkt === 'FUTURES') {
+    const [tv, futRows, candles] = await Promise.all([
+      fetchTVCryptoBatch([sym]).catch(() => ({})),
+      fetchFuturesPrices().catch(() => []),
+      fetchFuturesCandles(futuresPairFor(sym), '60').catch(() => null),
+    ]);
+    const row = (Array.isArray(futRows) ? futRows : []).find(x => x.base === sym);
+    ctx = buildFuturesCtxSync(sym, tv[sym], row, candles, regime);
+  } else if (mkt === 'CRYPTO') {
     const { fetchCoinDcxTickers } = await import('../cryptoStream.js');
     const [tv, tickers, candles] = await Promise.all([
       fetchTVCryptoBatch([sym]).catch(() => ({})),
@@ -577,6 +643,14 @@ export async function getFreshSignalForExec(pairOrSymbol, deps) {
   // Accept "BTCINR" or "BTC".
   const sym = String(pairOrSymbol || '').toUpperCase().replace(/INR$/, '').replace(/USDT$/, '');
   const deep = await getDeepSignal(sym, 'CRYPTO', deps);
+  return deep?.ok ? deep.signal : null;
+}
+
+/** v6.8: the FUTURES gauntlet's fresh signal source ("B-BTC_USDT" | "BTC"). */
+export async function getFreshFuturesSignalForExec(pairOrSymbol, deps) {
+  const sym = String(pairOrSymbol || '').toUpperCase()
+    .replace(/^B-/, '').replace(/_USDT$/, '').replace(/USDT$/, '');
+  const deep = await getDeepSignal(sym, 'FUTURES', deps);
   return deep?.ok ? deep.signal : null;
 }
 
