@@ -17,6 +17,9 @@ import {
   fetchCoinDcxCandles, fetchYahooQuotes, isNseOpen,
 } from './data.js';
 import { MODELS, runQuantModels, aiCouncilVoteFromVerdict } from './models.js';
+// v6.7 self-correcting ensemble: live-outcome Bayesian weight multipliers
+import { adaptiveMultipliers, applyAdaptiveWeights } from './adaptive.js';
+import { modelStats as _ledgerModelStats } from './ledger.js';
 import { aggregateVotes, buildTradePlan, buildSignal, DEFAULT_GATES } from './ensemble.js';
 
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
@@ -348,11 +351,15 @@ export async function getSignals(market, deps, opts = {}) {
   }
 
   // Run quant models per symbol → aggregate → rank.
+  // v6.7: each vote's weight is scaled by its LIVE hit-rate multiplier
+  // (ledger outcomes → Beta posterior; n<8 keeps the base weight —
+  // we refuse to tune on noise). Computed ONCE per board run.
+  const adaptiveMul = adaptiveMultipliers(_ledgerModelStats());
   const candidates = [];
   const breadth = { bull: 0, bear: 0, flat: 0, avgConf: 0 };
   let confSum = 0;
   for (const ctx of contexts) {
-    const votes = runQuantModels(ctx);
+    const votes = applyAdaptiveWeights(runQuantModels(ctx), adaptiveMul);
     const consensus = aggregateVotes(votes, gatesFor(depsSafe));
     if (consensus.dir > 0) breadth.bull++;
     else if (consensus.dir < 0) breadth.bear++;
@@ -526,7 +533,7 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
     return payload;
   }
 
-  const votes = runQuantModels(ctx);
+  const votes = applyAdaptiveWeights(runQuantModels(ctx), adaptiveMultipliers(_ledgerModelStats()));
   // Pre-council consensus: the deep path feeds the council the same flat
   // candidate shape as the board path (side/confidence/ltp/ind/plan) so
   // the LLM actually sees the symbol, price and indicator state it is

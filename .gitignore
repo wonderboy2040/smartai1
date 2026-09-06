@@ -35,3 +35,6 @@ server/data/
 
 # INDMoney MCP OAuth tokens (secrets — never commit)
 server/data/mcp-indmoney.json
+.test-data-*
+.verify-*
+.e2e-*

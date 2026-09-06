@@ -160,6 +160,7 @@ export async function fetchTVCryptoBatch(symbols) {
 // ---------------- CoinDCX public candles (crypto TA) ----------------
 // https://public.coindcx.com/market_data/candles?pair=BTCINR&duration=1h&limit=300
 const CANDLE_SOURCES = {
+  '1d': { duration: '1d', limit: 180 },   // v6.7 swing desk (daily bars)
   '1h': { duration: '1h', limit: 300 },   // swing/position TA
   '4h': { duration: '4h', limit: 300 },
   '15m': { duration: '15m', limit: 400 }, // aggressive TA

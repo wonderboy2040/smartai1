@@ -28,6 +28,7 @@ import { computeTrailSl, evaluateExecutionGate, buildTradePlan, fitPlanToRiskCap
 import {
   loadConfig, loadJournal, saveJournal, withJournalLock, pushEntry, todayIST, dailyStats,
 } from './coindcxOrders.js';
+import { recordExecution, settlePositionOutcome } from './ledger.js';
 
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 
@@ -171,12 +172,26 @@ export async function executeIndiaSignal(opts) {
       saveJournal(j);
       return { ok: false, error: `An open India position already exists for ${sym} (one-per-symbol rule)` };
     }
+    // v6.7 CONCENTRATION GUARD — shared book across BOTH desks
+    const openCount = j.positions.filter(p => p.status === 'OPEN' || p.status === 'UNKNOWN').length;
+    if (openCount >= (cfg.maxOpenPositions || 5)) {
+      pushEntry(j, { ...entry, status: 'REJECTED', reason: `Max open positions (${cfg.maxOpenPositions || 5}) hit` });
+      saveJournal(j);
+      return { ok: false, error: `Concentration guard: ${openCount} positions already open across both desks (max ${cfg.maxOpenPositions || 5}) — close some first or raise the cap in Risk settings` };
+    }
 
     // --- paper execution ---
     if (wantMode === 'paper') {
+      // v6.7: stamp into the tamper-evident ledger
+      let ledgerEntryId = null;
+      try {
+        const rec = recordExecution(signal, { mode: 'paper', market: 'INDIA', source });
+        ledgerEntryId = rec?.id || null;
+      } catch { /* best-effort */ }
       const position = {
         id: crypto.randomUUID(), pair: sym, symbol: sym, side: effectiveSignal.side, mode: 'paper', market: 'INDIA', source,
         qty, entryPrice: price, notionalINR: r2(notional),
+        ...(ledgerEntryId ? { ledgerEntryId } : {}),
         sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
         initialRisk: r2(Math.abs(price - (effectiveSignal.plan?.stopLoss ?? price))),
         peakPrice: r2(price),
@@ -211,6 +226,8 @@ export async function executeIndiaSignal(opts) {
         exchangeOrderId: entryOrder.orderId, slOrderId,
         securityId: entryOrder.securityId || null,
         qty, entryPrice: price, notionalINR: r2(notional),
+        // v6.7: live executions are part of the tamper-evident trail too
+        ledgerEntryId: (() => { try { return recordExecution(signal, { mode: 'live', market: 'INDIA', source })?.id || null; } catch { return null; } })(),
         sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
         initialRisk: r2(Math.abs(price - (effectiveSignal.plan?.stopLoss ?? price))),
         peakPrice: r2(price),
@@ -340,6 +357,7 @@ export async function watchIndiaPositions({ sendTelegram } = {}) {
       p.closePrice = price;
       p.pnlINR = r2(pnlINR);
       p.closeReason = close.reason;
+      settlePositionOutcome(p, close.reason); // v6.7 ledger
       dirty = true;
       pushEntry(j, {
         kind: 'CLOSE', day: todayIST(), pair: p.pair, symbol: p.symbol, market: 'INDIA', mode: p.mode,
@@ -385,6 +403,7 @@ export async function closeIndiaPosition(positionId) {
     p.closePrice = price;
     p.pnlINR = r2(pnlINR);
     p.closeReason = 'Manual close';
+    settlePositionOutcome(p, 'Manual close'); // v6.7 ledger
     pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, symbol: p.symbol, market: 'INDIA', mode: p.mode, qty: p.qty, entryPrice: p.entryPrice, closePrice: price, pnlINR: r2(pnlINR), reason: 'Manual close' });
     saveJournal(j);
     return { ok: true, position: p };

@@ -200,13 +200,61 @@ function statsFrom(trades) {
   };
 }
 
+// ---------------- v6.7: learned gates (glama jakemo007-inspired) ----------------
+/**
+ * "The agent learns from backtests and applies those rules live."
+ * Honest version: per-grade PERFORMANCE + a bounded gate
+ * recommendation. We never auto-apply — the user sees the numbers
+ * and clicks. Rules:
+ *   • STRONG (n≥20) winRate < 45%  → recommend RAISING minConfidence
+ *     (the bar is letting weak "strongs" through) — capped at 85
+ *   • ACTION (n≥20) winRate ≥ 60%  → the ensemble is under-trading
+ *     its second tier — suggest lowering minConfidence to harvest it
+ *     (floor 60) — ONLY if STRONG's own winRate is healthy ≥ 50%
+ *   • anything else → keep current (insufficient evidence)
+ */
+export function learnedGates(trades, currentMinConfidence = 75) {
+  const per = {};
+  for (const g of ['STRONG', 'ACTION', 'WATCH']) {
+    const t = trades.filter(x => x.grade === g);
+    const wins = t.filter(x => x.r > 0).length;
+    per[g] = {
+      n: t.length,
+      winRate: t.length > 0 ? Math.round((wins / t.length) * 1000) / 10 : null,
+      avgR: t.length > 0 ? Math.round((t.reduce((a, x) => a + x.r, 0) / t.length) * 100) / 100 : null,
+    };
+  }
+  let suggested = currentMinConfidence;
+  let why = 'insufficient settled evidence to move the gate — keeping the current bar';
+  if (per.STRONG.n >= 20 && per.STRONG.winRate != null) {
+    if (per.STRONG.winRate < 45) {
+      suggested = Math.min(85, Math.max(currentMinConfidence, 80));
+      why = `STRONG signals won only ${per.STRONG.winRate}% of ${per.STRONG.n} backtested trades — raise the bar so only cleaner confluences grade STRONG`;
+    } else if (per.ACTION.n >= 20 && per.ACTION.winRate != null && per.ACTION.winRate >= 60) {
+      suggested = Math.max(60, Math.min(currentMinConfidence, 70));
+      why = `ACTION signals won ${per.ACTION.winRate}% of ${per.ACTION.n} trades (STRONG itself is ${per.STRONG.winRate}%) — the 55–75% confidence band is under-traded: lowering the STRONG bar to ${suggested}% harvests it`;
+    } else if (per.STRONG.winRate >= 55) {
+      why = `STRONG health-check passed (${per.STRONG.winRate}% of ${per.STRONG.n}) — current gate is calibrated, no change recommended`;
+    }
+  }
+  const changed = suggested !== currentMinConfidence;
+  return {
+    perGrade: per,
+    currentMinConfidence,
+    suggestedMinConfidence: changed ? suggested : null,
+    recommendation: why,
+    changed,
+    disclaimer: 'Backtest-learned, bounded to 60–85, human-approved. Past ≠ future. Apply only if you accept the trade-off described above.',
+  };
+}
+
 // ---------------- multi-symbol runner (cached) ----------------
 const DEFAULT_CRYPTO = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'DOGE'];
 const DEFAULT_INDIA = ['RELIANCE', 'HDFCBANK', 'ICICIBANK', 'INFY', 'TCS', 'SBIN'];
 const _cache = new Map();
 const CACHE_TTL = 10 * 60_000;
 
-export async function runBacktest({ market = 'CRYPTO', symbols, minGrade = 'ACTION', capitalPerTradeINR = 1000, maxRiskPct = 5 }) {
+export async function runBacktest({ market = 'CRYPTO', symbols, minGrade = 'ACTION', capitalPerTradeINR = 1000, maxRiskPct = 5, currentMinConfidence = 75 }) {
   const mkt = String(market).toUpperCase() === 'INDIA' ? 'INDIA' : 'CRYPTO';
   const syms = (Array.isArray(symbols) && symbols.length > 0 ? symbols : (mkt === 'CRYPTO' ? DEFAULT_CRYPTO : DEFAULT_INDIA))
     .map(s => String(s).toUpperCase().replace(/[^A-Z0-9\-]/g, '')).filter(Boolean).slice(0, 8);
@@ -259,6 +307,9 @@ export async function runBacktest({ market = 'CRYPTO', symbols, minGrade = 'ACTI
     equity: equity.slice(-120), // cap the payload
     trades: allTrades.slice(-40).reverse(), // most recent first (display)
     barsInfo: perSymbol.map(s => ({ symbol: s.symbol, ok: s.ok, source: s.source || null })),
+    // v6.7: backtest-learned gate tuning (read-only recommendation —
+    // the user applies it; nothing auto-mutates the live config)
+    learned: learnedGates(allTrades, currentMinConfidence),
     disclaimer: 'Walk-forward replay of the SAME live ensemble on historical candles. Past performance ≠ future results. R = multiples of initial risk. No AI Council vote (offline in backtests).',
     generatedAt: Date.now(),
   };

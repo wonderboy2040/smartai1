@@ -18,7 +18,7 @@
 //      Greeks and lot sizes.
 // ============================================================
 import { fetchNSEOptionChain, fetchYahooQuotes } from './data.js';
-import { bsPrice, bsGreeks, impliedVol, yearsToExpiry, nextWeeklyExpiry } from './lib/blackScholes.js';
+import { bsPrice, bsGreeks, impliedVol, yearsToExpiry, nextWeeklyExpiry, normCdf } from './lib/blackScholes.js';
 import { aggregateVotes } from './ensemble.js';
 
 const RISK_FREE = 0.069; // ~RBI repo-ish risk-free for NSE pricing
@@ -68,7 +68,88 @@ export function analyzeChain(chain, spot) {
   for (const r of chain.rows) { dCall += r.callOIChange || 0; dPut += r.putOIChange || 0; }
   const oiSkew = (dCall + dPut) > 0 ? (dCall - dPut) / (dCall + dPut) : null;
 
-  return { pcr: r2(pcr), maxPain, atmIV: atmIV ? r2(atmIV * 100) : null, ivPercentile: null, oiSkew: r2(oiSkew), callOI, putOI };
+  // v6.7 GEX / GAMMA FLIP / EXPECTED MOVE (glama Trading-Volatility inspired).
+  // All from data we ALREADY fetch (OI + IV + Greeks) — no new source.
+  const gex = computeGex(chain, spot, atmIV);
+
+  return { pcr: r2(pcr), maxPain, atmIV: atmIV ? r2(atmIV * 100) : null, ivPercentile: null, oiSkew: r2(oiSkew), callOI, putOI, ...(gex ? { gex } : {}) };
+}
+
+/**
+ * v6.7 — GAMMA EXPOSURE PROFILE (per-strike, flip, walls, expected move).
+ *  GEX_k = gamma_k × OI_k × 100 × spot   (per-share gamma × contracts)
+ *  call dealers are typically SHORT gamma / put dealers LONG — the
+ *  standard retail approximation nets them: +put GEX − call GEX
+ *  (positive net GEX = mean-reversion pin regime; negative = trend /
+ *  gamma-flip acceleration regime).
+ *  gammaFlip = strike where cumulative net GEX crosses zero.
+ *  callWall / putWall = largest absolute strike-level GEX magnets.
+ *  expectedMove = ATM straddle price × 0.85 (the classic 1-expiry
+ *  expected-move proxy; ~1 SD under lognormal at expiry).
+ * Only meaningful with REAL OI — synthetic chains return null
+ *  (bs-model rows carry OI 0 → honest skip).
+ */
+export function computeGex(chain, spot, atmIVFallback) {
+  if (!chain || !Array.isArray(chain.rows) || !(spot > 0)) return null;
+  const expiry = chain.expiry;
+  const T = yearsToExpiry(`${expiry}T15:30:00+05:30`);
+  if (!(T > 0)) return null;
+  const ivDefault = atmIVFallback ? Math.min(IV_CAP, Math.max(IV_FLOOR, atmIVFallback)) : 0.13;
+  const hasRealOI = chain.rows.some(r => (r.callOI || 0) + (r.putOI || 0) > 0);
+  if (!hasRealOI) return null; // model chain — no honest GEX
+
+  const per = [];
+  let cum = 0;
+  const sorted = [...chain.rows].sort((a, b) => a.strike - b.strike);
+  for (const r of sorted) {
+    const callG = bsGreeks(spot, r.strike, T, RISK_FREE, Math.min(IV_CAP, Math.max(IV_FLOOR, (r.callIV || ivDefault * 100) / 100)), 'CE').gamma || 0;
+    const putG = bsGreeks(spot, r.strike, T, RISK_FREE, Math.min(IV_CAP, Math.max(IV_FLOOR, (r.putIV || ivDefault * 100) / 100)), 'PE').gamma || 0;
+    // dealer-positioning convention: calls short gamma (−), puts long gamma (+)
+    const netGex = (putG * (r.putOI || 0) - callG * (r.callOI || 0)) * 100 * spot;
+    cum += netGex;
+    per.push({ strike: r.strike, netGex: Math.round(netGex), cumGex: Math.round(cum) });
+  }
+
+  // gamma flip: first zero-crossing of cumulative GEX (low → high strikes)
+  let gammaFlip = null;
+  for (let i = 1; i < per.length; i++) {
+    if ((per[i - 1].cumGex < 0 && per[i].cumGex >= 0) || (per[i - 1].cumGex > 0 && per[i].cumGex <= 0)) {
+      gammaFlip = per[i].strike; break;
+    }
+  }
+  // walls: biggest absolute strike-level GEX on each side
+  let callWall = null, putWall = null, maxAbs = 0, minAbs = 0;
+  for (const p of per) {
+    if (p.netGex < minAbs) { minAbs = p.netGex; callWall = p.strike; } // negative = call-side wall
+    if (p.netGex > maxAbs) { maxAbs = p.netGex; putWall = p.strike; }  // positive = put-side wall
+  }
+  const totalNet = cum;
+
+  // expected move from the ATM straddle (×0.85 empirical haircut)
+  const atmRow = sorted.reduce((best, r) => (Math.abs(r.strike - spot) < Math.abs(best.strike - spot) ? r : best), sorted[0]);
+  const straddle = (atmRow.callLTP || 0) + (atmRow.putLTP || 0);
+  const hasLtp = straddle > 0;
+  const emAbs = hasLtp ? straddle * 0.85 : (spot * (ivDefault * Math.sqrt(T)) * 0.85);
+  const expectedMove = {
+    abs: r2(emAbs),
+    pct: r2((emAbs / spot) * 100),
+    low: Math.round(spot - emAbs), high: Math.round(spot + emAbs),
+    method: hasLtp ? 'atm-straddle×0.85' : 'bs-iv-approx',
+  };
+
+  const regimeNote = totalNet > 0
+    ? 'Positive net GEX — dealers dampen moves (mean-reversion / pin toward walls)'
+    : 'Negative net GEX — dealers hedge WITH the move (trend acceleration zone)';
+
+  return {
+    perStrike: per,
+    gammaFlip,
+    callWall: gammaFlip != null && callWall != null && callWall < gammaFlip ? callWall : callWall,
+    putWall,
+    totalNetGex: Math.round(totalNet),
+    expectedMove,
+    regimeNote,
+  };
 }
 
 // ---------------- synthetic BS chain (the honest fallback) ----------------
@@ -181,6 +262,68 @@ function greeksFor(spot, strike, expiry, ivPct, type) {
 
 // ---------------- strategy builder ----------------
 /**
+ * v6.7 additions (glama trading_skills-inspired):
+ *   • POP — probability of profit at expiry via the lognormal
+ *     terminal distribution (Black-Scholes N(d2) of the breakevens).
+ *   • payoff — sampled expiry payoff curve (per share) for the UI's
+ *     SVG chart: [{ s: spot, pnl }] across ±6% of spot.
+ *   • Short Straddle + Short Strangle (premium harvesting when the
+ *     ensemble is NEUTRAL / low conviction), and a Long Straddle
+ *     (event-style breakout play) when conviction is split but the
+ *     IV percentile is LOW (cheap vol + coiled setup).
+ */
+function popFor({ spot, expiry, atmIV, breakevens, bias, kind }) {
+  const T = yearsToExpiry(`${expiry}T15:30:00+05:30`);
+  if (!(T > 0) || !(spot > 0) || !atmIV || !Array.isArray(breakevens) || breakevens.length === 0) return null;
+  const sigma = Math.min(IV_CAP, Math.max(IV_FLOOR, atmIV / 100));
+  // P(S_T > K) = N(d2(K))
+  const pAbove = (K) => {
+    const d2 = (Math.log(spot / K) + (RISK_FREE - 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+    return normCdf(d2);
+  };
+  let p;
+  if (kind === 'credit-range' && breakevens.length >= 2) {
+    // profit BETWEEN the breakevens: P(low < S_T < high)
+    const [lo, hi] = [...breakevens].sort((a, b) => a - b);
+    p = pAbove(lo) - pAbove(hi);
+  } else if (kind === 'debit') {
+    const b = breakevens[0];
+    p = bias === 'BULLISH' ? pAbove(b) : 1 - pAbove(b);
+  } else { // credit-tail (short straddle-ish): profit below BE1 / above BE2
+    const [lo, hi] = [...breakevens].sort((a, b) => a - b);
+    p = pAbove(lo) + (1 - pAbove(hi));
+  }
+  return r1(Math.max(0, Math.min(100, p * 100)));
+}
+
+/** Expiry payoff per share at spot s for a leg list. */
+function payoffPoint(legs, s) {
+  let pnl = 0;
+  for (const l of legs) {
+    const intrinsic = l.type === 'CE' ? Math.max(0, s - l.strike) : Math.max(0, l.strike - s);
+    const signed = l.action === 'BUY' ? intrinsic - l.premium : l.premium - intrinsic;
+    pnl += signed;
+  }
+  return Math.round(pnl * 100) / 100;
+}
+
+function attachPnlProfile(strat, { spot, expiry, atmIV }) {
+  if (!strat) return strat;
+  const legs = strat.legs || [];
+  if (!(spot > 0) || legs.length === 0) return strat;
+  const lo = spot * 0.94, hi = spot * 1.06;
+  const points = [];
+  for (let k = 0; k <= 24; k++) {
+    const s = Math.round((lo + ((hi - lo) * k) / 24) / 1) ;
+    points.push({ s, pnl: payoffPoint(legs, s) });
+  }
+  strat.payoff = points;
+  strat.pop = popFor({ spot, expiry, atmIV, breakevens: strat.breakevens, bias: strat.bias, kind: strat._popKind || 'debit' });
+  delete strat._popKind;
+  return strat;
+}
+
+/**
  * Convert an ensemble direction into CONCRETE priced strategies.
  * Each strategy: legs + maxProfit/maxLoss + breakevens + net Greeks.
  * All values per SHARE (multiply by lotSize for the contract).
@@ -206,6 +349,10 @@ export function buildStrategies(desk, consensus) {
   };
   const T = yearsToExpiry(`${expiry}T15:30:00+05:30`);
   const out = [];
+  // v6.7: POP needs an IV anchor — real chain ATM IV, else the VIX the
+  // synthetic chain was priced from (honest model-estimated POP)
+  const atmIV = desk?.analytics?.atmIV ?? (desk?.vix != null ? r1(desk.vix) : null);
+  const ivPct = desk?.analytics?.ivPercentile ?? null;
 
   const side = consensus?.side || 'FLAT';
   const conf = consensus?.confidence || 0;
@@ -218,7 +365,7 @@ export function buildStrategies(desk, consensus) {
     const debit = l1.premium - l2.premium;
     const width = l2.strike - l1.strike;
     out.push({
-      id: 'bull-call-spread', name: 'Bull Call Spread',
+      id: 'bull-call-spread', name: 'Bull Call Spread', _popKind: 'debit',
       bias: 'BULLISH', conviction: grade,
       rationale: `Ensemble consensus LONG ${conf}% — buy the ATM call, sell 2-strikes OTM to fund it. Defined risk, IV-tolerant.`,
       legs: [l1, l2],
@@ -234,7 +381,7 @@ export function buildStrategies(desk, consensus) {
     if (grade === 'STRONG') {
       const l = leg('BUY', 'CE', atm);
       out.push({
-        id: 'long-call', name: 'Long Call (ATM)',
+        id: 'long-call', name: 'Long Call (ATM)', _popKind: 'debit',
         bias: 'BULLISH', conviction: 'STRONG',
         rationale: `STRONG consensus ${conf}% with ${Math.round((consensus?.agreement || 0) * 100)}% agreement — full directional exposure via ATM call (only when IV percentile < 60).`,
         legs: [l],
@@ -256,7 +403,7 @@ export function buildStrategies(desk, consensus) {
     const debit = l1.premium - l2.premium;
     const width = l1.strike - l2.strike;
     out.push({
-      id: 'bear-put-spread', name: 'Bear Put Spread',
+      id: 'bear-put-spread', name: 'Bear Put Spread', _popKind: 'debit',
       bias: 'BEARISH', conviction: grade,
       rationale: `Ensemble consensus SHORT ${conf}% — buy the ATM put, sell 2-strikes ITM to fund it. Defined risk.`,
       legs: [l1, l2],
@@ -271,7 +418,7 @@ export function buildStrategies(desk, consensus) {
     if (grade === 'STRONG') {
       const l = leg('BUY', 'PE', atm);
       out.push({
-        id: 'long-put', name: 'Long Put (ATM)',
+        id: 'long-put', name: 'Long Put (ATM)', _popKind: 'debit',
         bias: 'BEARISH', conviction: 'STRONG',
         rationale: `STRONG consensus ${conf}% — full directional downside via ATM put (check IV percentile first).`,
         legs: [l],
@@ -298,7 +445,7 @@ export function buildStrategies(desk, consensus) {
     const credit = legs[0].premium - legs[1].premium + legs[2].premium - legs[3].premium;
     const width = 2 * step;
     out.push({
-      id: 'iron-condor', name: 'Iron Condor',
+      id: 'iron-condor', name: 'Iron Condor', _popKind: 'credit-range',
       bias: 'NEUTRAL', conviction: grade,
       rationale: `No STRONG consensus (${conf}%) — harvest theta instead: sell 4-strike OTM wings, buy protection. Works when IV percentile is high.`,
       legs,
@@ -311,9 +458,91 @@ export function buildStrategies(desk, consensus) {
       perLot: { maxProfit: r2(credit * lotSize), maxLoss: r2(Math.max(0, width - credit) * lotSize) },
       exitPlan: `Book at 50% credit or adjust when spot breaches a short strike. Avoid holding into expiry-day gamma.`,
     });
+
+    // v6.7 — SHORT STRADDLE: premium harvesting when real OI/IV data says
+    // the desk is truly neutral AND vol is RICH (IV percentile ≥ 55 — sell
+    // expensive vol, not cheap vol). Defined-risk guard: wings appended.
+    if ((ivPct == null || ivPct >= 55) && out.every(s => s.id !== 'short-straddle')) {
+      const legsS = [
+        leg('SELL', 'CE', atm),
+        leg('SELL', 'PE', atm),
+        leg('BUY', 'CE', atm + 4 * step),
+        leg('BUY', 'PE', atm - 4 * step),
+      ];
+      const creditS = legsS[0].premium + legsS[1].premium - legsS[2].premium - legsS[3].premium;
+      if (creditS > 0) {
+        out.push({
+          id: 'short-straddle', name: 'Iron Fly (Short Straddle + Wings)', _popKind: 'credit-range',
+          bias: 'NEUTRAL', conviction: grade,
+          rationale: `Neutral ensemble (${conf}%) + rich IV (percentile ${ivPct ?? 'n/a'}) — sell the ATM straddle, buy 4-strike wings to cap the tail. Theta-positive, gamma-risky: size small.`,
+          legs: legsS,
+          netCredit: r2(creditS),
+          maxProfit: r2(creditS),
+          maxLoss: r2(Math.max(0, 4 * step - creditS)),
+          breakevens: [r2(atm - creditS), r2(atm + creditS)],
+          netDelta: r2(legsS.reduce((a, l) => a + (l.action === 'SELL' ? -l.delta : l.delta), 0)),
+          netTheta: r2(legsS.reduce((a, l) => a + (l.action === 'SELL' ? -l.theta : l.theta), 0)),
+          perLot: { maxProfit: r2(creditS * lotSize), maxLoss: r2(Math.max(0, 4 * step - creditS) * lotSize) },
+          exitPlan: `Book 50% credit fast; hard-adjust when |spot − ${atm}| > ${2 * step}. Never hold naked — wings are the seatbelt.`,
+        });
+      }
+    }
+
+    // v6.7 — SHORT STRANGLE (OTM credit, cheaper gamma than the fly):
+    // sell 2-strike OTM call + 2-strike OTM put, 5-strike wings.
+    if (out.every(s => s.id !== 'short-strangle')) {
+      const legsG = [
+        leg('SELL', 'CE', atm + 2 * step),
+        leg('SELL', 'PE', atm - 2 * step),
+        leg('BUY', 'CE', atm + 5 * step),
+        leg('BUY', 'PE', atm - 5 * step),
+      ];
+      const creditG = legsG[0].premium + legsG[1].premium - legsG[2].premium - legsG[3].premium;
+      if (creditG > 0) {
+        out.push({
+          id: 'short-strangle', name: 'Short Strangle (Winged)', _popKind: 'credit-range',
+          bias: 'NEUTRAL', conviction: grade,
+          rationale: `Neutral ensemble (${conf}%) — sell 2-strike OTM call+put strangle, cap tails with 5-strike wings. Wider profit zone than the Iron Fly, lower credit.`,
+          legs: legsG,
+          netCredit: r2(creditG),
+          maxProfit: r2(creditG),
+          maxLoss: r2(Math.max(0, 3 * step - creditG)),
+          breakevens: [r2(atm - 2 * step - creditG), r2(atm + 2 * step + creditG)],
+          netDelta: r2(legsG.reduce((a, l) => a + (l.action === 'SELL' ? -l.delta : l.delta), 0)),
+          netTheta: r2(legsG.reduce((a, l) => a + (l.action === 'SELL' ? -l.theta : l.theta), 0)),
+          perLot: { maxProfit: r2(creditG * lotSize), maxLoss: r2(Math.max(0, 3 * step - creditG) * lotSize) },
+          exitPlan: `Book 50% credit; roll the tested side when spot breaches a short strike. Wings cap the disaster case.`,
+        });
+      }
+    }
   }
 
-  return out;
+  // v6.7 — LONG STRADDLE (event/breakout play): conviction is SPLIT
+  // (WATCH/NEUTRAL) and vol is CHEAP (IV percentile ≤ 40 or unknown
+  // with low VIX) — pay for both sides and let the breakout pay for it.
+  if ((grade === 'WATCH' || grade === 'NEUTRAL' || side === 'FLAT') && (ivPct == null || ivPct <= 40)) {
+    const lc = leg('BUY', 'CE', atm);
+    const lp = leg('BUY', 'PE', atm);
+    const debit = lc.premium + lp.premium;
+    if (debit > 0) {
+      out.push({
+        id: 'long-straddle', name: 'Long Straddle (ATM)', _popKind: 'debit',
+        bias: 'BREAKOUT', conviction: 'WATCH',
+        rationale: `Split committee (${conf}%) + cheap vol (IV percentile ${ivPct ?? 'n/a'}) — buy the ATM straddle: any move beyond ±${r1((debit / spot) * 100)}% at expiry pays. Theta bleeds daily — this is a coiled-spring bet, not a hold.`,
+        legs: [lc, lp],
+        netDebit: r2(debit),
+        maxProfit: null,
+        maxLoss: r2(debit),
+        breakevens: [r2(atm + debit), r2(atm - debit)],
+        netDelta: r2(lc.delta + lp.delta), netTheta: r2(lc.theta + lp.theta),
+        perLot: { maxProfit: null, maxLoss: r2(debit * lotSize) },
+        exitPlan: `Sell into the breakout at +100% premium; stop at 40% decay by day 3. Expiry-day gamma is the friend ONLY if the move comes.`,
+      });
+    }
+  }
+
+  // v6.7 — attach POP + payoff profile to every strategy
+  return out.map(s => attachPnlProfile(s, { spot, expiry, atmIV }));
 }
 
 // ---------------- convenience: options-context for ensemble ----------------

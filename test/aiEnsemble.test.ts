@@ -156,12 +156,12 @@ describe('evaluateExecutionGate — THE order gauntlet', () => {
 });
 
 describe('quant models — voting on synthetic contexts', () => {
-  it('registry has 9 models with sane weights; AI Council has fn=null (LLM layer)', () => {
-    expect(MODELS).toHaveLength(9);
+  it('registry has 10 models with sane weights; AI Council has fn=null (LLM layer)', () => {
+    expect(MODELS).toHaveLength(10); // v6.7: +SmartMoneyICT (SMC/ICT)
     expect(MODELS.find(m => m.id === 'aicouncil')?.fn).toBeNull();
     const total = MODELS.reduce((a, m) => a + m.weight, 0);
     expect(total).toBeGreaterThan(8);
-    expect(total).toBeLessThan(12);
+    expect(total).toBeLessThan(13);
   });
 
   it('bullish context → TrendMatrix + MomentumQuant vote LONG with reasons', () => {
@@ -237,7 +237,7 @@ describe('quant models — voting on synthetic contexts', () => {
 
   it('model crashes are contained (dir 0 with error reason)', () => {
     const votes = runQuantModels({ market: 'INDIA', symbol: 'X', ltp: null, ind: null, regime: null });
-    expect(votes).toHaveLength(8);
+    expect(votes).toHaveLength(9);
     votes.forEach(vt => {
       if (vt.dir !== 0) return; // may legitimately vote from partial data
       expect(vt.conf).toBeGreaterThanOrEqual(0);

@@ -21,6 +21,7 @@ import { OrderConsole } from '../aitrading/OrderConsole';
 import { ModelRegistry } from '../aitrading/ModelRegistry';
 import { BacktestPanel } from '../aitrading/BacktestPanel';
 import { AlertsPanel } from '../aitrading/AlertsPanel';
+import { MorningBriefPanel, SwingDeskPanel, WhaleRadarPanel, SignalLedgerPanel, OrderbookPanel } from '../aitrading/ProPanels';
 import type { AISignal, DhanStatus, MarketKind, SignalBoard } from '../aitrading/types';
 
 const REFRESH_MS = 30_000;
@@ -332,10 +333,10 @@ export default memo(function AITradingTab() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-black gradient-text-cyan tracking-wide">SUPERINTELLIGENCE AI TRADING TERMINAL</h2>
-              <span className="quantum-badge">v6.6</span>
+              <span className="quantum-badge">v6.7</span>
             </div>
             <p className="text-[10px] text-slate-500 mt-0.5">
-              9-model ensemble consensus · MCP model bus · {models.filter(m => m.online).length}/{models.length || 9} models online
+              10-model ensemble consensus · SMC/ICT · GEX desk · swing · whales · ledger · adaptive · {models.filter(m => m.online).length}/{models.length || 10} models online
               {canLive && <span className="text-red-400 font-black"> · LIVE EXECUTION ARMED</span>}
               {canLiveIndia && <span className="text-red-400 font-black"> · INDIA LIVE ARMED</span>}
             </p>
@@ -376,7 +377,7 @@ export default memo(function AITradingTab() {
       {/* ============ 01 · SIGNAL BOARD ============ */}
       <div>
         <div className="flex items-end justify-between flex-wrap gap-2">
-          <SectionLabel num="01" title="Signal Board" sub={`${market === 'INDIA' ? 'NSE equities + indices (TV live scanner)' : 'CoinDCX crypto majors'} → 9-model consensus`} />
+          <SectionLabel num="01" title="Signal Board" sub={`${market === 'INDIA' ? 'NSE equities + indices (TV live scanner)' : 'CoinDCX crypto majors'} → 10-model consensus (SMC/ICT included)`} />
           <BoardSummary board={board} />
         </div>
         <div className="mt-2.5 flex items-center justify-between flex-wrap gap-2">
@@ -420,6 +421,14 @@ export default memo(function AITradingTab() {
         </div>
       </div>
 
+      {/* ============ 01.5 · MORNING BRIEF (v6.7) ============ */}
+      <div>
+        <SectionLabel num={market === 'INDIA' ? '01b' : '01b'} title="Morning Brief" sub="ek nazar me poora desk — market · top signals · open book · guards · ledger" />
+        <div className="mt-2.5">
+          <MorningBriefPanel />
+        </div>
+      </div>
+
       {/* ============ 02 · OPTIONS DESK (India) ============ */}
       {market === 'INDIA' && (
         <div>
@@ -429,6 +438,18 @@ export default memo(function AITradingTab() {
           </div>
         </div>
       )}
+
+      {/* ============ 02.5 · SWING DESK + WHALE RADAR (v6.7) ============ */}
+      <div>
+        <SectionLabel num={market === 'INDIA' ? '02b' : '02b'} title="Swing Desk + Whale Radar" sub="multi-day setups (analysis only) · volume-spike footprints — 3–8 din horizon" />
+        <div className="mt-2.5 grid gap-3 xl:grid-cols-2">
+          <SwingDeskPanel market={market} />
+          <div className="space-y-3">
+            <WhaleRadarPanel market={market} />
+            {market === 'CRYPTO' && <OrderbookPanel />}
+          </div>
+        </div>
+      </div>
 
       {/* ============ 03 · EXECUTION CONSOLE ============ */}
       <div>
@@ -441,6 +462,14 @@ export default memo(function AITradingTab() {
             onDhanDisconnect={async () => { const r = await dhanDisconnect(); refreshDhan(); return r; }}
             onDhanRefresh={refreshDhan}
           />
+        </div>
+      </div>
+
+      {/* ============ 03.5 · SIGNAL LEDGER (v6.7) ============ */}
+      <div>
+        <SectionLabel num={market === 'INDIA' ? '03b' : '02c'} title="Signal Ledger" sub="SHA-256 hash chain — har executed signal provable, koi edit possible nahi" />
+        <div className="mt-2.5">
+          <SignalLedgerPanel />
         </div>
       </div>
 

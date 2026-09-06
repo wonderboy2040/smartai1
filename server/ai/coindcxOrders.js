@@ -22,6 +22,7 @@ import { loadJSON, saveJSON } from '../lib/store.js';
 import { durablePut } from '../mcp/durable.js';
 import { fetchCoinDcxTickers } from '../cryptoStream.js';
 import { computeTrailSl } from './ensemble.js';
+import { recordExecution, settlePositionOutcome, __setLedgerForTests } from './ledger.js';
 
 const CONFIG_FILE = 'ai-trading-config.json';
 const JOURNAL_FILE = 'ai-trading-journal.json';
@@ -40,6 +41,10 @@ export const DEFAULT_CONFIG = {
   dailyMaxTrades: 3,
   dailyMaxLossINR: 500,         // realized+paper loss cap per day
   onePositionPerPair: true,
+  // v6.7 CONCENTRATION GUARD — total open positions across BOTH desks
+  // (crypto + India, paper + live). Prop-desk style: no more than N
+  // simultaneous exposures no matter how good the signals look.
+  maxOpenPositions: 5,
   allowAuto: false,             // auto-execute STRONG signals (no click)
   killSwitch: false,
   liveConfirmedAt: null,
@@ -116,6 +121,7 @@ export function updateConfig(patch = {}) {
   }
   if (patch.indiaMaxOrderINR != null) { const v = numeric(patch.indiaMaxOrderINR, 100, 500_000); if (v != null) next.indiaMaxOrderINR = v; }
   if (patch.cryptoLeverage != null) { const v = numeric(patch.cryptoLeverage, 1, 10); if (v != null) next.cryptoLeverage = Math.round(v); }
+  if (patch.maxOpenPositions != null) { const v = numeric(patch.maxOpenPositions, 1, 20); if (v != null) next.maxOpenPositions = Math.round(v); }
   if (patch.onePositionPerPair != null) next.onePositionPerPair = !!patch.onePositionPerPair;
   if (patch.allowAuto != null) next.allowAuto = !!patch.allowAuto;
   if (patch.killSwitch != null) {
@@ -181,12 +187,14 @@ export function getRiskState() {
   return {
     config: cfg,
     stats,
-    openPositions: j.positions.length,
+    openPositions: j.positions.filter(p => p.status === 'OPEN' || p.status === 'UNKNOWN').length,
     blocked: {
       killSwitch: cfg.killSwitch,
       dailyTrades: stats.tradesCount >= cfg.dailyMaxTrades,
       dailyLoss: stats.realizedPnlINR <= -cfg.dailyMaxLossINR,
       notConnected: !coindcxConnected(),
+      // v6.7: concentration — too many simultaneous exposures
+      maxOpenPositions: j.positions.filter(p => p.status === 'OPEN' || p.status === 'UNKNOWN').length >= (cfg.maxOpenPositions || 5),
     },
   };
 }
@@ -478,12 +486,28 @@ export async function executeSignal(opts) {
       saveJournal(j);
       return { ok: false, error: `An open position already exists for ${pair} (one-per-pair rule)` };
     }
+    // v6.7 CONCENTRATION GUARD — the whole book (both desks) at once.
+    // one-per-pair stops SAME-symbol stacking; this stops 8 different
+    // symbols all bleeding simultaneously on a choppy day.
+    const openCount = j.positions.filter(p => p.status === 'OPEN' || p.status === 'UNKNOWN').length;
+    if (openCount >= (cfg.maxOpenPositions || 5)) {
+      pushEntry(j, { ...entry, status: 'REJECTED', reason: `Max open positions (${cfg.maxOpenPositions || 5}) hit` });
+      saveJournal(j);
+      return { ok: false, error: `Concentration guard: ${openCount} positions already open (max ${cfg.maxOpenPositions || 5}) — close some first or raise the cap in Risk settings` };
+    }
 
     // --- paper execution ---
     if (wantMode === 'paper') {
+      // v6.7: stamp the execution into the tamper-evident ledger
+      let ledgerEntryId = null;
+      try {
+        const rec = recordExecution(signal, { mode: 'paper', market: 'CRYPTO', source });
+        ledgerEntryId = rec?.id || null;
+      } catch { /* best-effort */ }
       const position = {
         id: crypto.randomUUID(), pair, side: effectiveSignal.side, mode: 'paper', market: 'CRYPTO', source,
         qty, entryPrice: price, notionalINR: r2(notional),
+        ...(ledgerEntryId ? { ledgerEntryId } : {}),
         ...(lev > 1 ? { leverage: lev, marginINR: marginUsed, liquidation } : {}),
         sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
         initialRisk: r2(Math.abs(price - (effectiveSignal.plan?.stopLoss ?? price))),
@@ -536,6 +560,9 @@ export async function executeSignal(opts) {
       const position = {
         id: crypto.randomUUID(), pair, side: effectiveSignal.side, mode: 'live', market: 'CRYPTO', source, exchangeOrderId: orderId,
         qty, entryPrice: price, notionalINR: r2(notional),
+        // v6.7: live executions land in the ledger too — the tamper-
+        // evident trail covers REAL money decisions, not just paper
+        ledgerEntryId: (() => { try { return recordExecution(signal, { mode: 'live', market: 'CRYPTO', source })?.id || null; } catch { return null; } })(),
         ...(lev > 1 ? { leverage: lev, marginINR: marginUsed, liquidation, ...(marginPairUsed ? { marginPair: marginPairUsed } : {}) } : {}),
         sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
         initialRisk: r2(Math.abs(price - (effectiveSignal.plan?.stopLoss ?? price))),
@@ -710,6 +737,7 @@ export async function watchPositions({ sendTelegram } = {}) {
               p.closePrice = liqPrice;
               p.pnlINR = r2(pnlINR);
               p.closeReason = 'LIQUIDATED (est.)';
+              settlePositionOutcome(p, 'LIQUIDATED (est.)'); // v6.7 ledger
               dirty = true;
               pushEntry(j, {
                 kind: 'CLOSE', day: todayIST(), pair: p.pair, mode: p.mode,
@@ -797,6 +825,7 @@ export async function watchPositions({ sendTelegram } = {}) {
         p.closePrice = price;
         p.pnlINR = r2(pnlINR);
         p.closeReason = close.reason;
+        settlePositionOutcome(p, close.reason); // v6.7 ledger
         dirty = true;
         pushEntry(j, {
           kind: 'CLOSE', day: todayIST(), pair: p.pair, mode: p.mode,
@@ -864,6 +893,7 @@ export async function closePosition(positionId) {
     p.closePrice = ltp;
     p.pnlINR = r2(pnlINR);
     p.closeReason = 'Manual close';
+    settlePositionOutcome(p, 'Manual close'); // v6.7 ledger
     pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, mode: p.mode, qty: p.qty, entryPrice: p.entryPrice, closePrice: ltp, pnlINR: r2(pnlINR), reason: 'Manual close' });
     saveJournal(j);
     return { ok: true, position: p };
@@ -941,6 +971,8 @@ export function __resetForTests() {
   _productsCache = null;
   _marginPairsCache = null;
   _marginPairsAt = 0;
+  // v6.7: the signal ledger resets with the journal (same test hygiene)
+  try { __setLedgerForTests(null); } catch { /* best-effort */ }
 }
 export function __setJournalForTests(j) { saveJournal(j); }
 export function __setConfigForTests(cfg) { saveConfig(cfg); }

@@ -135,6 +135,10 @@ export interface Strategy {
   netDelta?: number | null;
   netTheta?: number | null;
   perLot?: { maxProfit: number | null; maxLoss: number | null };
+  /** v6.7: probability-of-profit % at expiry (lognormal N(d2) of breakevens) */
+  pop?: number | null;
+  /** v6.7: sampled expiry payoff curve (per share) for the SVG chart */
+  payoff?: { s: number; pnl: number }[];
   exitPlan: string;
 }
 
@@ -156,6 +160,8 @@ export interface OptionsDesk {
     oiSkew: number | null;
     callOI: number;
     putOI: number;
+    /** v6.7: gamma-exposure profile (real OI chains only) */
+    gex?: GexProfile;
   } | null;
   consensus?: { side: Side; confidence: number; agreement: number; grade: Grade };
   strategies: Strategy[];
@@ -185,6 +191,8 @@ export interface TradingConfig {
   trailOffsetR: number;
   /** v6.6: crypto margin leverage ceiling (1-10; 1 = spot only) */
   cryptoLeverage?: number;
+  /** v6.7: concentration guard — max simultaneous open positions (both desks) */
+  maxOpenPositions?: number;
 }
 
 export interface JournalPosition {
@@ -244,7 +252,7 @@ export interface TradingState {
   config: TradingConfig;
   stats: { day: string; tradesCount: number; realizedPnlINR: number };
   openPositions: number;
-  blocked: { killSwitch: boolean; dailyTrades: boolean; dailyLoss: boolean; notConnected: boolean };
+  blocked: { killSwitch: boolean; dailyTrades: boolean; dailyLoss: boolean; notConnected: boolean; maxOpenPositions?: boolean };
 }
 
 // ---------------- v6.5: Backtest ----------------
@@ -289,6 +297,15 @@ export interface BacktestResult {
   exitDist?: Record<string, number>;
   equity?: { i: number; cumR: number; symbol: string; r: number | null }[];
   trades?: BacktestTrade[];
+  /** v6.7: backtest-learned gate recommendation (read-only; user applies) */
+  learned?: {
+    perGrade: Record<string, { n: number; winRate: number | null; avgR: number | null }>;
+    currentMinConfidence: number;
+    suggestedMinConfidence: number | null;
+    recommendation: string;
+    changed: boolean;
+    disclaimer?: string;
+  };
   disclaimer?: string;
   generatedAt?: number;
 }
@@ -315,4 +332,136 @@ export interface DhanStatus {
   connected: boolean;
   scrips?: { cached?: boolean; symbols?: number; updatedAt?: number | null };
   profile?: { name?: string | null; clientId?: string | null } | null;
+}
+
+// ---------------- v6.7: GEX · swing · whales · ledger · brief ----------------
+export interface GexProfile {
+  perStrike: { strike: number; netGex: number; cumGex: number }[];
+  gammaFlip: number | null;
+  callWall: number | null;
+  putWall: number | null;
+  totalNetGex: number;
+  expectedMove: { abs: number | null; pct: number | null; low: number; high: number; method: string };
+  regimeNote: string;
+}
+
+export interface SwingIdea {
+  symbol: string;
+  market: MarketKind;
+  side: Side;
+  grade: 'A' | 'B';
+  score: number;
+  ltp: number | null;
+  rsi: number | null;
+  atr: number | null;
+  plan: { entry: number; stopLoss: number; target1: number; target2: number; riskPct: number; rewardRisk: number } | null;
+  holdDays: string;
+  reasons: string[];
+  source?: string;
+}
+
+export interface SwingBoard {
+  ok: boolean;
+  market: MarketKind;
+  horizon: string;
+  ideas: SwingIdea[];
+  scanned: number;
+  disclaimer?: string;
+  generatedAt?: number;
+}
+
+export interface WhaleAlert {
+  symbol: string;
+  market: MarketKind;
+  spike: number;
+  changePct: number | null;
+  ltp: number | null;
+  direction: 'ACCUMULATION' | 'DISTRIBUTION';
+  obvSlope: number | null;
+  note: string;
+}
+
+export interface WhaleRadar {
+  ok: boolean;
+  market: MarketKind;
+  whales: WhaleAlert[];
+  scanned: number;
+  note?: string;
+  generatedAt?: number;
+}
+
+export interface LedgerEntryLite {
+  id: string;
+  ts: number;
+  market: string;
+  symbol: string;
+  side: string;
+  grade: string | null;
+  confidence: number | null;
+  mode: string;
+  plan: { entry: number; stopLoss: number; target2: number } | null;
+  outcome: { ts: number; r: number | null; pnlINR: number | null; reason: string | null; exit: number | null } | null;
+  hash: string;
+  prevHash: string | null;
+}
+
+export interface LedgerView {
+  ok: boolean;
+  entries: number;
+  settled: number;
+  open: number;
+  wins: number;
+  losses: number;
+  winRate: number | null;
+  headHash: string | null;
+  verified: boolean;
+  brokenAt: number | null;
+  verify?: { ok: boolean; entries: number; brokenAt: number | null };
+  recent: LedgerEntryLite[];
+}
+
+export interface AdaptiveModelStatus {
+  model: string;
+  mul: number;
+  n: number;
+  posterior: number | null;
+  hitRate: number | null;
+}
+
+export interface MorningBrief {
+  ok: boolean;
+  asOf: string;
+  nseOpen: boolean;
+  market: { nifty: number | null; niftyChangePct: number | null; indiaVix: number | null; btc: number | null; btcChangePct: number | null };
+  topSignals: {
+    india: { symbol: string; side: Side; grade: Grade; confidence: number; ltp: number | null; plan: { entry: number; stopLoss: number; target2: number } | null }[];
+    crypto: { symbol: string; side: Side; grade: Grade; confidence: number; ltp: number | null; plan: { entry: number; stopLoss: number; target2: number } | null }[];
+  };
+  swingTop: { symbol: string; side: Side; grade: string; score: number; ltp: number | null }[];
+  whales: WhaleAlert[];
+  book: {
+    openPositions: { market: string; symbol: string; side: string; mode: string; qty: number; uPnl: number | null; sl: number | null }[];
+    todayRealized: number | null;
+    tradesToday: number;
+    caps: { dailyMaxTrades: number; dailyMaxLossINR: number; maxOpenPositions: number; blocked: Record<string, boolean> };
+  };
+  ledger?: { entries: number; settled: number; winRate: number | null; verified: boolean };
+  adaptive?: { enabled: boolean; learning: AdaptiveModelStatus[] };
+  note?: string;
+}
+
+export interface OrderbookView {
+  ok: boolean;
+  symbol: string;
+  pair: string;
+  bestBid: number;
+  bestAsk: number;
+  spreadPct: number | null;
+  bidVol: number;
+  askVol: number;
+  imbalancePct: number | null;
+  bidWall: { price: number; qty: number };
+  askWall: { price: number; qty: number };
+  read: string;
+  error?: string;
 }

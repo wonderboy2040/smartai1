@@ -7,7 +7,7 @@
 // ============================================================
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { fetchOptionsDesk } from './useAITrading';
-import type { OptionsDesk, Strategy } from './types';
+import type { OptionsDesk, Strategy, GexProfile } from './types';
 
 const INDICES = ['NIFTY', 'BANKNIFTY', 'FINNIFTY'];
 
@@ -21,14 +21,31 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: '
   );
 }
 
-function StrategyCard({ s, lotSize }: { s: Strategy; lotSize: number }) {
+function StrategyCard({ s, lotSize, spot }: { s: Strategy; lotSize: number; spot: number }) {
   const bull = s.bias === 'BULLISH';
+  // v6.7: payoff SVG — expiry P&L per share across ±6% of spot
+  const payoff = s.payoff || [];
+  const W = 260, H = 64;
+  const xs = payoff.map(p => p.s);
+  const ys = payoff.map(p => p.pnl);
+  const xLo = Math.min(...xs, spot * 0.94), xHi = Math.max(...xs, spot * 1.06);
+  const yLo = Math.min(...ys, 0), yHi = Math.max(...ys, 0);
+  const px = (v: number) => ((v - xLo) / (xHi - xLo || 1)) * W;
+  const py = (v: number) => H - ((v - yLo) / (yHi - yLo || 1)) * H;
+  const spotX = px(spot);
+  const zeroY = py(0);
+  const path = payoff.map((p, i) => `${i === 0 ? 'M' : 'L'}${px(p.s).toFixed(1)},${py(p.pnl).toFixed(1)}`).join(' ');
   return (
     <div className={`quantum-panel rounded-2xl p-4 ${bull ? 'border-l-2 border-l-emerald-500/50' : s.bias === 'BEARISH' ? 'border-l-2 border-l-red-500/50' : 'border-l-2 border-l-violet-500/50'}`}>
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-sm font-black text-white">{s.name}</span>
         <span className={`px-2 py-0.5 rounded-md text-[9px] font-black ${bull ? 'bg-emerald-500/15 text-emerald-300' : s.bias === 'BEARISH' ? 'bg-red-500/15 text-red-300' : 'bg-violet-500/15 text-violet-300'}`}>{s.bias}</span>
         <span className="px-2 py-0.5 rounded-md text-[9px] font-black bg-slate-600/20 text-slate-300">{s.conviction} conviction</span>
+        {s.pop != null && (
+          <span className={`px-2 py-0.5 rounded-md text-[9px] font-black border ${s.pop >= 60 ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25' : s.pop >= 40 ? 'bg-amber-500/10 text-amber-300 border-amber-500/25' : 'bg-red-500/10 text-red-300 border-red-500/25'}`} title="Probability of profit at expiry (lognormal N(d2) of the breakevens)">
+            POP {s.pop}%
+          </span>
+        )}
         {s.netDebit != null && <span className="text-[11px] font-mono text-amber-300 font-bold">debit ₹{s.netDebit}</span>}
         {s.netCredit != null && <span className="text-[11px] font-mono text-emerald-300 font-bold">credit ₹{s.netCredit}</span>}
       </div>
@@ -66,6 +83,33 @@ function StrategyCard({ s, lotSize }: { s: Strategy; lotSize: number }) {
         {s.perLot?.maxLoss != null && <span>per lot (×{lotSize}): max loss ₹{Math.round(s.perLot.maxLoss)}</span>}
         {s.perLot?.maxProfit != null && <span className="text-emerald-500/70">· max profit ₹{Math.round(s.perLot.maxProfit)}</span>}
       </div>
+      {/* v6.7 payoff curve */}
+      {payoff.length > 3 && (
+        <div className="mt-2.5 bg-black/30 rounded-xl p-2">
+          <div className="flex items-center justify-between text-[8px] text-slate-600 font-black tracking-wider mb-1">
+            <span>EXPIRY PAYOFF / share</span>
+            <span className="font-mono">green = profit zone</span>
+          </div>
+          <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-16" role="img" aria-label="Payoff curve at expiry">
+            <line x1="0" y1={zeroY} x2={W} y2={zeroY} stroke="rgba(148,163,184,0.25)" strokeWidth="1" strokeDasharray="3,3" />
+            <line x1={spotX} y1="0" x2={spotX} y2={H} stroke="rgba(34,211,238,0.4)" strokeWidth="1" strokeDasharray="2,3" />
+            <path d={`${path} L${W},${zeroY} L0,${zeroY} Z`} fill="url(#payGrad)" opacity="0.25" />
+            <path d={path} fill="none" stroke={bull ? '#34d399' : s.bias === 'BEARISH' ? '#f87171' : '#a78bfa'} strokeWidth="2" />
+            <defs>
+              <linearGradient id="payGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#34d399" stopOpacity="0.6" />
+                <stop offset="50%" stopColor="transparent" stopOpacity="0" />
+                <stop offset="100%" stopColor="#f87171" stopOpacity="0.6" />
+              </linearGradient>
+            </defs>
+          </svg>
+          <div className="flex justify-between text-[8px] font-mono text-slate-600">
+            <span>{Math.round(xLo).toLocaleString('en-IN')}</span>
+            <span className="text-cyan-500/70">spot {spot?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+            <span>{Math.round(xHi).toLocaleString('en-IN')}</span>
+          </div>
+        </div>
+      )}
       <p className="text-[10px] text-slate-500 mt-2 italic">📍 {s.exitPlan}</p>
     </div>
   );
@@ -96,6 +140,7 @@ export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
   const atm = desk?.rows?.length
     ? desk.rows.reduce((best, r) => (Math.abs(r.strike - spot) < Math.abs(best.strike - spot) ? r : best), desk.rows[0])
     : null;
+  const gex = desk?.analytics?.gex ?? null;
 
   return (
     <section className="space-y-3" aria-label="India options desk">
@@ -142,7 +187,16 @@ export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
         <Metric label="PCR" value={desk?.analytics?.pcr != null ? desk.analytics.pcr.toFixed(2) : 'n/a'} tone={desk?.analytics?.pcr != null ? (desk.analytics.pcr > 1.4 ? 'bull' : desk.analytics.pcr < 0.6 ? 'bear' : 'neutral') : 'neutral'} />
         <Metric label="MAX PAIN" value={desk?.analytics?.maxPain != null ? desk.analytics.maxPain.toLocaleString('en-IN') : 'n/a'} />
         <Metric label="ATM IV" value={desk?.analytics?.atmIV != null ? `${desk.analytics.atmIV.toFixed(1)}%` : 'n/a'} />
+        {gex && <Metric label="GAMMA FLIP" value={gex.gammaFlip != null ? gex.gammaFlip.toLocaleString('en-IN') : 'n/a'} tone="neutral" />}
+        {gex && <Metric label="CALL WALL" value={gex.callWall != null ? gex.callWall.toLocaleString('en-IN') : 'n/a'} tone="bear" />}
+        {gex && <Metric label="PUT WALL" value={gex.putWall != null ? gex.putWall.toLocaleString('en-IN') : 'n/a'} tone="bull" />}
+        {gex && <Metric label="EXP MOVE" value={gex.expectedMove?.pct != null ? `±${gex.expectedMove.pct}%` : 'n/a'} tone="neutral" />}
       </div>
+
+      {/* v6.7 GEX profile — dealer gamma positioning */}
+      {gex && (
+        <GexChart gex={gex} spot={desk?.spot ?? 0} />
+      )}
 
       {/* OI chain table */}
       <div className="quantum-panel rounded-2xl overflow-hidden">
@@ -196,9 +250,9 @@ export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
 
       {/* Strategy cards */}
       <div>
-        <div className="text-[10px] font-black text-slate-500 tracking-[0.2em] uppercase mb-2">Ensemble-Driven Strategies</div>
+        <div className="text-[10px] font-black text-slate-500 tracking-[0.2em] uppercase mb-2">Ensemble-Driven Strategies — POP + payoff ke saath</div>
         <div className="grid gap-3 lg:grid-cols-2">
-          {(desk?.strategies || []).map(s => <StrategyCard key={s.id} s={s} lotSize={desk?.lotSize || 1} />)}
+          {(desk?.strategies || []).map(s => <StrategyCard key={s.id} s={s} lotSize={desk?.lotSize || 1} spot={spot} />)}
           {(desk?.strategies || []).length === 0 && (
             <div className="quantum-panel rounded-2xl p-6 text-center text-slate-500 text-xs">
               {loading ? 'Building strategies…' : 'No strategies — index data unavailable'}
@@ -209,3 +263,80 @@ export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
     </section>
   );
 });
+
+// ---------------- v6.7: GEX bar chart ----------------
+function GexChart({ gex, spot }: { gex: GexProfile; spot: number }) {
+  const per = (gex.perStrike || []).slice(-24); // right-most strikes window
+  if (per.length < 6) return null;
+  const maxAbs = Math.max(...per.map(p => Math.abs(p.netGex)), 1);
+  const lo = per[0].strike, hi = per[per.length - 1].strike;
+  const posOf = (k: number) => ((k - lo) / (hi - lo || 1)) * 100;
+  const net = gex.totalNetGex ?? 0;
+  const em = gex.expectedMove;
+  return (
+    <div className="quantum-panel rounded-2xl p-4">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+        <span className="text-xs font-black text-slate-200">⚡ GEX PROFILE — dealer gamma positioning</span>
+        <span className={`px-2 py-0.5 rounded-md text-[9px] font-black border ${net > 0 ? 'bg-violet-500/10 text-violet-300 border-violet-500/25' : 'bg-amber-500/10 text-amber-300 border-amber-500/25'}`}>
+          {net > 0 ? 'POSITIVE (pin regime)' : 'NEGATIVE (trend regime)'}
+        </span>
+      </div>
+      {/* per-strike bars (center-anchored) */}
+      <div className="relative h-24 flex items-center">
+        <div className="absolute left-0 right-0 top-1/2 h-px bg-white/10" />
+        {per.map(p => {
+          const h = Math.max(2, (Math.abs(p.netGex) / maxAbs) * 46);
+          const w = Math.max(3, 80 / per.length);
+          const left = posOf(p.strike);
+          return (
+            <div key={p.strike}
+              title={`strike ${p.strike} · net GEX ${p.netGex.toLocaleString('en-IN')}`}
+              className={p.netGex >= 0 ? 'absolute bg-violet-400/60 rounded-t' : 'absolute bg-amber-400/60 rounded-b'}
+              style={{
+                left: `${Math.min(99, Math.max(0, left - w / 2.2))}%`,
+                width: `${w}%`,
+                top: p.netGex >= 0 ? `${50 - (h / 1.24)}%` : '50%',
+                height: `${h / 1.24}%`,
+              }} />
+          );
+        })}
+        {gex.gammaFlip != null && (
+          <div className="absolute top-0 bottom-0 border-l-2 border-dashed border-cyan-400/70" style={{ left: `${posOf(gex.gammaFlip)}%` }}>
+            <span className="absolute -top-0.5 left-1 text-[8px] font-black text-cyan-300 whitespace-nowrap">flip {gex.gammaFlip}</span>
+          </div>
+        )}
+        {gex.callWall != null && (
+          <div className="absolute top-0 bottom-0 border-l border-dashed border-red-400/50" style={{ left: `${posOf(gex.callWall)}%` }}>
+            <span className="absolute bottom-0 left-1 text-[8px] font-black text-red-300 whitespace-nowrap">C-wall</span>
+          </div>
+        )}
+        {gex.putWall != null && (
+          <div className="absolute top-0 bottom-0 border-l border-dashed border-emerald-400/50" style={{ left: `${posOf(gex.putWall)}%` }}>
+            <span className="absolute bottom-0 left-1 text-[8px] font-black text-emerald-300 whitespace-nowrap">P-wall</span>
+          </div>
+        )}
+        {spot > 0 && (
+          <div className="absolute top-0 bottom-0 border-l-2 border-cyan-300/60" style={{ left: `${posOf(Math.min(hi, Math.max(lo, spot)))}%` }}>
+            <span className="absolute top-0 left-1 text-[8px] font-black text-cyan-200 whitespace-nowrap">spot</span>
+          </div>
+        )}
+      </div>
+      <div className="flex justify-between text-[8px] font-mono text-slate-600 mt-1">
+        <span>{lo.toLocaleString('en-IN')}</span>
+        <span>{hi.toLocaleString('en-IN')}</span>
+      </div>
+      <div className="mt-2.5 grid sm:grid-cols-2 gap-1.5">
+        {em && (
+          <div className="bg-cyan-500/5 border border-cyan-500/15 rounded-lg px-2.5 py-1.5">
+            <div className="text-[9px] font-black text-cyan-300/80 tracking-wider">EXPECTED MOVE (1 expiry, {em.method})</div>
+            <div className="text-[11px] font-mono text-slate-200">{em.low?.toLocaleString('en-IN')} — {em.high?.toLocaleString('en-IN')} {em.pct != null ? <span className="text-slate-500">(±{em.pct}%)</span> : null}</div>
+          </div>
+        )}
+        <div className="bg-black/30 rounded-lg px-2.5 py-1.5">
+          <div className="text-[9px] font-black text-slate-500 tracking-wider">READ</div>
+          <div className="text-[10px] text-slate-400 leading-snug">{gex.regimeNote}{gex.gammaFlip != null ? ` · Spot ${spot > gex.gammaFlip ? 'ABOVE' : 'BELOW'} the flip (${gex.gammaFlip.toLocaleString('en-IN')})` : ''}</div>
+        </div>
+      </div>
+    </div>
+  );
+}

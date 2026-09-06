@@ -17,6 +17,8 @@
 //   8. MacroRegime      0.8  NIFTY/VIX gate (India) / BTC gate (crypto)
 //   9. AICouncil        1.5  LLM verification (Gemini→Groq→Cerebras)
 //                           — honest OFFLINE when no AI keys configured
+//  10. SmartMoneyICT    1.1  v6.7 liquidity sweeps + order blocks + FVG
+//                           (ICT/SMC candle geometry — glama-inspired)
 //
 // The ensemble aggregator (ensemble.js) turns these votes into ONE
 // consensus: side, confidence, agreement and the STRONG grade that
@@ -342,6 +344,8 @@ export function aiCouncilVoteFromVerdict(verdict) {
   return null;
 }
 
+import { smcVote } from './lib/smc.js';
+
 // ------------------------------------------------------------
 // REGISTRY (the "Superintelligence MCP model bus")
 // ------------------------------------------------------------
@@ -354,6 +358,7 @@ export const MODELS = [
   { id: 'sr', name: 'SRMatrix', role: 'Pivot levels + breakout / breakdown', weight: 1.1, fn: srMatrix },
   { id: 'options', name: 'OptionsFlow', role: 'PCR + max pain + IV percentile (contrarian)', weight: 1.0, fn: optionsFlow },
   { id: 'regime', name: 'MacroRegime', role: 'NIFTY/VIX gate (India) · BTC gate (crypto)', weight: 0.8, fn: macroRegime },
+  { id: 'smc', name: 'SmartMoneyICT', role: 'Liquidity sweeps + order blocks + FVG (SMC)', weight: 1.1, fn: smartMoneyICT },
   { id: 'aicouncil', name: 'AI Council (LLM)', role: 'Gemini → Groq → Cerebras verification chain', weight: 1.5, fn: null },
 ];
 
@@ -367,4 +372,10 @@ export function runQuantModels(ctx) {
         return { id: m.id, name: m.name, weight: m.weight, role: m.role, dir: 0, conf: 0, reasons: [`model error: ${e?.message || 'unknown'}`] };
       }
     });
+}
+
+// v6.7 — 10th model: ICT / smart-money geometry (thin wrapper so the
+// registry stays uniform; smcVote accepts the ctx directly).
+function smartMoneyICT(ctx) {
+  return smcVote(ctx);
 }

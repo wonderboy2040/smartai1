@@ -68,7 +68,8 @@ const check = (name, ok, extra = '') => {
     await page.waitForSelector('text=SUPERINTELLIGENCE AI TRADING TERMINAL', { timeout: 20000 });
 
     // ---------- v6.5 identity ----------
-    check('version badge (v6.6)', (await page.locator('span.quantum-badge:has-text("v6.6")').count()) > 0);
+    const badgeTxt = await page.locator('span.quantum-badge', { hasText: /v6\./ }).first().textContent().catch(() => '');
+    check('version badge (v6.6+)', /v6\.[5-9]/.test(badgeTxt || ''));
 
     // ---------- India desk ----------
     await page.waitForSelector('button:has-text("INDIA MARKET")', { timeout: 10000 });

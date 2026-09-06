@@ -53,6 +53,7 @@ function ConfigEditor({ config, busy, onSave, state }: {
   const [trailArm, setTrailArm] = useState(String(config.trailArmR ?? 1));
   const [trailOff, setTrailOff] = useState(String(config.trailOffsetR ?? 1));
   const [maxLev, setMaxLev] = useState(String(config.cryptoLeverage ?? 1));
+  const [maxOpen, setMaxOpen] = useState(String(config.maxOpenPositions ?? 5));
   const [phrase, setPhrase] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -70,6 +71,7 @@ function ConfigEditor({ config, busy, onSave, state }: {
     setTrailArm(String(config.trailArmR ?? 1));
     setTrailOff(String(config.trailOffsetR ?? 1));
     setMaxLev(String(config.cryptoLeverage ?? 1));
+    setMaxOpen(String(config.maxOpenPositions ?? 5));
   }, [config]);
 
   const save = async (patch: Record<string, unknown>) => {
@@ -155,6 +157,7 @@ function ConfigEditor({ config, busy, onSave, state }: {
           { label: 'Daily loss ₹', val: dailyLoss, set: setDailyLoss, key: 'dailyMaxLossINR', hint: '≥50' },
           { label: 'Max stop %', val: maxStop, set: setMaxStop, key: 'maxRiskPct', hint: '1-20' },
           { label: 'Max leverage × (crypto)', val: maxLev, set: setMaxLev, key: 'cryptoLeverage', hint: '1-10' },
+          { label: 'Max open positions', val: maxOpen, set: setMaxOpen, key: 'maxOpenPositions', hint: '1-20' },
         ].map(f => (
           <div key={f.key}>
             <label className="text-[9px] text-slate-500 font-black tracking-wider block mb-1">{f.label.toUpperCase()}</label>
@@ -172,6 +175,7 @@ function ConfigEditor({ config, busy, onSave, state }: {
         daily trade/loss caps, one position per pair, 90s signal freshness. CoinDCX key needs trade permission for LIVE.
         v6.5: Trailing SL dono desks par watcher chalata hai (breakeven → peak-trail, ratchet-only).
         v6.6: Max leverage = crypto margin ceiling (1 = spot only) — ticket me leverage chips isi se clamp hoti hain; server-side bhi enforce. Liquidation-vs-SL sanity har order par check hota hai (PAPER auto-reduce, LIVE reject).
+        v6.7: Max open positions = concentration guard — dono desks ka total open book isi par cap hota hai (default 5).
       </p>
     </div>
   );
@@ -322,9 +326,9 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
             </div>
           )}
         </div>
-        {(state?.blocked.dailyTrades || state?.blocked.dailyLoss) && (
+        {(state?.blocked.dailyTrades || state?.blocked.dailyLoss || state?.blocked.maxOpenPositions) && (
           <p className="text-[10px] text-red-400 font-bold mt-2">
-            🚫 {state.blocked.dailyTrades ? 'Daily trade cap reached. ' : ''}{state.blocked.dailyLoss ? 'Daily loss cap breached.' : ''} Resets at IST midnight.
+            🚫 {state.blocked.dailyTrades ? 'Daily trade cap reached. ' : ''}{state.blocked.dailyLoss ? 'Daily loss cap breached. ' : ''}{state.blocked.maxOpenPositions ? 'Max open positions (concentration guard) hit. ' : ''}Resets at IST midnight.
           </p>
         )}
       </div>

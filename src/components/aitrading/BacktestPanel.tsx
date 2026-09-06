@@ -1,10 +1,11 @@
 // ============================================================
 // src/components/aitrading/BacktestPanel.tsx — v6.5
 // ------------------------------------------------------------
-// Walk-forward replay of the SAME 9-model ensemble on historical
+// Walk-forward replay of the SAME 10-model ensemble on historical
 // candles. Shows the honest question users actually ask: "would
 // these signals have made money?" — win rate, avg R, profit
 // factor, max drawdown, equity curve, per-symbol table.
+// v6.7: backtest-LEARNED gate recommendation (read-only — user applies).
 // ============================================================
 import { memo, useCallback, useEffect, useState } from 'react';
 import type { BacktestResult } from './types';
@@ -106,6 +107,33 @@ export const BacktestPanel = memo(function BacktestPanel({ market, runBacktest }
 
           {result.equity && result.equity.length > 1 && <EquityCurve equity={result.equity} />}
 
+          {/* v6.7: learned gate recommendation */}
+          {result.learned && (
+            <div className={`rounded-xl p-2.5 border ${result.learned.changed ? 'bg-violet-500/5 border-violet-500/25' : 'bg-black/20 border-white/5'}`}>
+              <div className="flex items-center gap-2 flex-wrap mb-1">
+                <span className="text-[10px] font-black text-violet-300 tracking-wider">🧓 LEARNED GATES — backtest se seekha gaya</span>
+                {result.learned.changed ? (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-violet-500/15 text-violet-300 border border-violet-500/25">
+                    SUGGEST: {result.learned.currentMinConfidence}% → {result.learned.suggestedMinConfidence}%
+                  </span>
+                ) : (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-slate-600/20 text-slate-400">no change recommended</span>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-1.5 mb-1.5">
+                {Object.entries(result.learned.perGrade || {}).map(([g, p]) => (
+                  <div key={g} className="bg-black/30 rounded-lg px-2 py-1 text-center">
+                    <div className="text-[8px] text-slate-500 font-black tracking-wider">{g}</div>
+                    <div className="text-[11px] font-mono font-black text-slate-200">{p.winRate != null ? `${p.winRate}%` : '—'} <span className="text-slate-600 text-[9px]">({p.n} trades)</span></div>
+                    <div className="text-[9px] font-mono text-slate-500">avg {(p.avgR ?? 0) >= 0 ? '+' : ''}{p.avgR ?? '—'}R</div>
+                  </div>
+                ))}
+              </div>
+              <div className="text-[10px] text-slate-400 leading-relaxed">{result.learned.recommendation}</div>
+              <div className="text-[9px] text-slate-600 mt-1">{result.learned.disclaimer} Apply karne ke liye: Execution Console → Risk settings → Min confidence {result.learned.suggestedMinConfidence ?? result.learned.currentMinConfidence}% set karo.</div>
+            </div>
+          )}
+
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="bg-black/20 rounded-xl p-2.5">
               <div className="text-[10px] font-black text-slate-500 tracking-wider mb-1.5">PER SYMBOL</div>
@@ -149,7 +177,7 @@ export const BacktestPanel = memo(function BacktestPanel({ market, runBacktest }
       {err && <div className="text-[11px] text-red-400 font-bold">⚠️ {err}</div>}
       {!result && !running && !err && (
         <div className="text-[11px] text-slate-500">
-          Run karo — SAME live ensemble (indicators → 9-model votes → consensus → risk-capped plan) historical candles par replay hota hai.
+          Run karo — SAME live ensemble (indicators → 10-model votes → consensus → risk-capped plan) historical candles par replay hota hai.
           {market === 'INDIA' ? ' India: 2 saal daily candles, max 5-day hold.' : ' Crypto: 300 × 1h candles, max 48h hold.'}
         </div>
       )}

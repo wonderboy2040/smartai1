@@ -34,15 +34,18 @@ import { getOptionsDesk, buildStrategies } from './optionsDesk.js';
 import {
   loadConfig, updateConfig, getRiskState, executeSignal, getPositionsWithPnl,
   closePosition, listExchangeOrders, cancelExchangeOrder, cancelAllExchangeOrders,
-  watchPositions, loadJournal,
+  watchPositions, loadJournal, dailyStats,
 } from './coindcxOrders.js';
 import { executeIndiaSignal, watchIndiaPositions, closeIndiaPosition } from './indiaOrders.js';
 import { runBacktest } from './backtest.js';
+import { getSwingBoard, scanWhales, getOrderbook } from './swing.js';
+import { ledgerStatus, recentEntries, verifyLedger } from './ledger.js';
+import { adaptiveStatus } from './adaptive.js';
 import {
   secretsStatus, setSecret, getSecrets, telegramConfig, sendTelegramMessage,
 } from './secrets.js';
 import { dhanConnect, dhanDisconnect, dhanConnected, dhanProfile, scripMasterStatus } from './dhan.js';
-import { isNseOpen } from './data.js';
+import { isNseOpen, fetchYahooQuotes } from './data.js';
 
 const ALERT_COOLDOWN_MS = 30 * 60_000; // same symbol+side re-alerts after 30 min
 
@@ -82,10 +85,13 @@ export function registerAITradingRoutes(app, deps) {
       ]);
       res.json({
         ok: true,
-        engine: 'SUPERINTELLIGENCE ENSEMBLE v6.6',
+        engine: 'SUPERINTELLIGENCE ENSEMBLE v6.7',
         models: board?.models || cryptoBoard?.models || [],
         aiCouncilOnline: (board?.models || []).some(m => m.id === 'aicouncil' && m.online),
         risk,
+        // v6.7: self-correcting ensemble + tamper-evident ledger status
+        adaptive: adaptiveStatus(),
+        ledger: ledgerStatus(),
         dhan: { connected: dhanConnected() },
         telegram: { configured: !!telegramConfig(TG || {}) },
         india: board ? { ok: board.ok, signals: board.signals?.length || 0, marketOpen: board.marketOpen } : null,
@@ -256,7 +262,7 @@ export function registerAITradingRoutes(app, deps) {
     catch (e) { jsonError(res, 500, 'cancel-all failed', e); }
   });
 
-  // ---------------- backtest (v6.5) ----------------
+  // ---------------- backtest (v6.5 + v6.7 learned gates) ----------------
   app.get('/api/ai/backtest', async (req, res) => {
     try {
       const market = String(req.query.market || 'CRYPTO').toUpperCase();
@@ -264,11 +270,105 @@ export function registerAITradingRoutes(app, deps) {
       const minGrade = ['STRONG', 'ACTION', 'WATCH'].includes(String(req.query.minGrade).toUpperCase())
         ? String(req.query.minGrade).toUpperCase() : 'ACTION';
       const capital = Math.min(1_000_000, Math.max(100, parseInt(req.query.capital, 10) || 1000));
-      const riskCap = (() => { try { const cfg = loadConfig(); return Number(cfg.maxRiskPct) > 0 ? cfg.maxRiskPct : 5; } catch { return 5; } })();
-      const out = await runBacktest({ market, symbols, minGrade, capitalPerTradeINR: capital, maxRiskPct: riskCap });
+      const cfg = (() => { try { return loadConfig(); } catch { return {}; } })();
+      const riskCap = Number(cfg.maxRiskPct) > 0 ? cfg.maxRiskPct : 5;
+      const out = await runBacktest({ market, symbols, minGrade, capitalPerTradeINR: capital, maxRiskPct: riskCap, currentMinConfidence: Number(cfg.minConfidence) > 0 ? Number(cfg.minConfidence) : 75 });
       res.json(out);
     } catch (e) {
       jsonError(res, 500, 'backtest failed', e);
+    }
+  });
+
+  // ---------------- v6.7: swing desk (read-only ideas) ----------------
+  app.get('/api/ai/swing', async (req, res) => {
+    try {
+      const market = String(req.query.market || 'INDIA').toUpperCase();
+      const symbols = String(req.query.symbols || '').split(',').map(s => s.trim()).filter(Boolean);
+      res.json(await getSwingBoard(market === 'CRYPTO' ? 'CRYPTO' : 'INDIA', symbols.length ? symbols : undefined));
+    } catch (e) {
+      jsonError(res, 500, 'swing board failed', e);
+    }
+  });
+
+  // ---------------- v6.7: whale radar ----------------
+  app.get('/api/ai/whales', async (req, res) => {
+    try {
+      const market = String(req.query.market || 'CRYPTO').toUpperCase();
+      const symbols = String(req.query.symbols || '').split(',').map(s => s.trim()).filter(Boolean);
+      res.json(await scanWhales(market === 'INDIA' ? 'INDIA' : 'CRYPTO', symbols.length ? symbols : undefined));
+    } catch (e) {
+      jsonError(res, 500, 'whale radar failed', e);
+    }
+  });
+
+  // ---------------- v6.7: tamper-evident signal ledger ----------------
+  app.get('/api/ai/ledger', (req, res) => {
+    try {
+      const limit = Math.min(50, Math.max(5, parseInt(req.query.limit, 10) || 20));
+      res.json({ ...ledgerStatus(), verify: verifyLedger(), recent: recentEntries(limit) });
+    } catch (e) {
+      jsonError(res, 500, 'ledger failed', e);
+    }
+  });
+
+  // ---------------- v6.7: CoinDCX public orderbook ----------------
+  app.get('/api/ai/orderbook', async (req, res) => {
+    try {
+      const symbol = String(req.query.symbol || 'BTC').toUpperCase();
+      const out = await getOrderbook(symbol);
+      if (!out?.ok) return res.status(502).json(out);
+      res.json(out);
+    } catch (e) {
+      jsonError(res, 500, 'orderbook failed', e);
+    }
+  });
+
+  // ---------------- v6.7: morning brief (one-call desk overview) ----------------
+  app.get('/api/ai/brief', async (_req, res) => {
+    try {
+      const [indiaBoard, cryptoBoard, whales, positions, quotes] = await Promise.all([
+        getSignals('INDIA', depsForSignals(), { limit: 5 }).catch(() => null),
+        getSignals('CRYPTO', depsForSignals(), { limit: 5 }).catch(() => null),
+        scanWhales('CRYPTO').catch(() => null),
+        getPositionsWithPnl().catch(() => ({ positions: [], entries: [] })),
+        fetchYahooQuotes(['NIFTY', 'INDIAVIX', 'BTC']).catch(() => ({})),
+      ]);
+      const risk = getRiskState();
+      const swing = await getSwingBoard('INDIA').catch(() => null);
+      const top = (b) => (b?.signals || []).filter(s => s.grade === 'STRONG' || s.grade === 'ACTION').slice(0, 3)
+        .map(s => ({ symbol: s.symbol, side: s.side, grade: s.grade, confidence: s.confidence, ltp: s.ltp,
+          plan: s.plan ? { entry: s.plan.entry, stopLoss: s.plan.stopLoss, target2: s.plan.target2 } : null }));
+      const openPositions = (positions?.positions || []).filter(p => p.status === 'OPEN' || p.status === 'UNKNOWN');
+      res.json({
+        ok: true,
+        asOf: new Date().toISOString(),
+        nseOpen: isNseOpen(),
+        market: {
+          nifty: quotes['NIFTY']?.price ?? null,
+          niftyChangePct: quotes['NIFTY']?.changePct ?? null,
+          indiaVix: quotes['INDIAVIX']?.price ?? null,
+          btc: quotes['BTC']?.price ?? null,
+          btcChangePct: quotes['BTC']?.changePct ?? null,
+        },
+        topSignals: { india: top(indiaBoard), crypto: top(cryptoBoard) },
+        swingTop: (swing?.ideas || []).slice(0, 3).map(i => ({ symbol: i.symbol, side: i.side, grade: i.grade, score: i.score, ltp: i.ltp })),
+        whales: (whales?.whales || []).slice(0, 3),
+        book: {
+          openPositions: openPositions.map(p => ({ market: p.market, symbol: p.symbol, side: p.side, mode: p.mode, qty: p.qty,
+            uPnl: p.uPnlINR ?? p.pnlINR ?? null, sl: p.sl ?? null })),
+          todayRealized: risk.stats?.realizedPnlINR ?? null,
+          tradesToday: risk.stats?.tradesCount ?? 0,
+          caps: {
+            dailyMaxTrades: risk.config?.dailyMaxTrades, dailyMaxLossINR: risk.config?.dailyMaxLossINR,
+            maxOpenPositions: risk.config?.maxOpenPositions, blocked: risk.blocked,
+          },
+        },
+        ledger: ledgerStatus(),
+        adaptive: adaptiveStatus(),
+        note: 'Morning brief — one call, the whole desk. Data is cached at the source boards; nothing here is an order.',
+      });
+    } catch (e) {
+      jsonError(res, 500, 'brief failed', e);
     }
   });
 
@@ -427,5 +527,5 @@ export function registerAITradingRoutes(app, deps) {
   }, 90_000);
   if (auto.unref) auto.unref();
 
-  console.log('[ai] Superintelligence Ensemble v6.6 — 9 models online · trailing SL · backtests · Telegram alerts · India Dhan gauntlet · crypto leverage');
+  console.log('[ai] Superintelligence Ensemble v6.7 — 10 models · SMC/ICT · GEX desk · swing · whales · ledger · adaptive weights · trailing SL · backtests · Telegram · Dhan + CoinDCX gauntlets · crypto leverage');
 }

@@ -8,7 +8,7 @@
 // ============================================================
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, getProxyBase } from '../../utils/api';
-import type { AISignal, OptionsDesk, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, AlertsStatus, DhanStatus } from './types';
+import type { AISignal, OptionsDesk, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, AlertsStatus, DhanStatus, SwingBoard, WhaleRadar, LedgerView, MorningBrief, OrderbookView } from './types';
 
 export interface DeepSignalResult {
   ok: boolean;
@@ -285,4 +285,45 @@ export async function fetchOptionsDesk(symbol: string, force = false): Promise<O
     deskCache.set(symbol, { at: Date.now(), data });
     return data;
   } catch { return hit?.data || null; }
+}
+
+// ---------------- v6.7: swing · whales · ledger · brief · orderbook ----------------
+export async function fetchSwingBoard(market: 'INDIA' | 'CRYPTO'): Promise<SwingBoard | null> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/swing?market=${market}&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+export async function fetchWhales(market: 'INDIA' | 'CRYPTO'): Promise<WhaleRadar | null> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/whales?market=${market}&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+export async function fetchLedger(limit = 20): Promise<LedgerView | null> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/ledger?limit=${limit}&t=${Date.now()}`, { signal: AbortSignal.timeout(15000) });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+export async function fetchMorningBrief(): Promise<MorningBrief | null> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/brief?t=${Date.now()}`, { signal: AbortSignal.timeout(45000) });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+export async function fetchOrderbook(symbol: string): Promise<OrderbookView | null> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/orderbook?symbol=${symbol}&t=${Date.now()}`, { signal: AbortSignal.timeout(15000) });
+    // 502 with an honest error payload is still a displayable view
+    return await r.json().catch(() => null);
+  } catch { return null; }
 }
