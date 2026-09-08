@@ -37,7 +37,10 @@ export interface ExecuteOpts {
   leverage?: number;
 }
 
-export function useAITrading(active: boolean) {
+export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' | 'CRYPTO' | 'FUTURES'> }) {
+  // v6.9: market-scoped loading — the India desk only pays for the India
+  // board; the CoinDCX desk loads spot + futures. Default = all (legacy).
+  const markets = scope?.markets ?? ['INDIA', 'CRYPTO', 'FUTURES'];
   const [india, setIndia] = useState<SignalBoard | null>(null);
   const [crypto, setCrypto] = useState<SignalBoard | null>(null);
   const [futures, setFutures] = useState<SignalBoard | null>(null);
@@ -50,22 +53,19 @@ export function useAITrading(active: boolean) {
   activeRef.current = active;
 
   const loadBoards = useCallback(async () => {
-    const [i, c, f] = await Promise.allSettled([
-      apiFetch(`${getProxyBase()}/api/ai/signals?market=INDIA&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) }),
-      apiFetch(`${getProxyBase()}/api/ai/signals?market=CRYPTO&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) }),
-      apiFetch(`${getProxyBase()}/api/ai/signals?market=FUTURES&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) }),
-    ]);
-    if (i.status === 'fulfilled' && i.value.ok) {
-      try { setIndia(await i.value.json()); } catch { /* skip */ }
-    }
-    if (c.status === 'fulfilled' && c.value.ok) {
-      try { setCrypto(await c.value.json()); } catch { /* skip */ }
-    }
-    if (f.status === 'fulfilled' && f.value.ok) {
-      try { setFutures(await f.value.json()); } catch { /* skip */ }
-    }
+    const jobs: Array<Promise<void>> = [];
+    if (markets.includes('INDIA')) jobs.push(apiFetch(`${getProxyBase()}/api/ai/signals?market=INDIA&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) })
+      .then(r => r.ok ? r.json() : null).catch(() => null)
+      .then(j => { if (j) setIndia(j); }));
+    if (markets.includes('CRYPTO')) jobs.push(apiFetch(`${getProxyBase()}/api/ai/signals?market=CRYPTO&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) })
+      .then(r => r.ok ? r.json() : null).catch(() => null)
+      .then(j => { if (j) setCrypto(j); }));
+    if (markets.includes('FUTURES')) jobs.push(apiFetch(`${getProxyBase()}/api/ai/signals?market=FUTURES&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) })
+      .then(r => r.ok ? r.json() : null).catch(() => null)
+      .then(j => { if (j) setFutures(j); }));
+    await Promise.allSettled(jobs);
     setLoading(false);
-  }, []);
+  }, [markets.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadState = useCallback(async () => {
     try {

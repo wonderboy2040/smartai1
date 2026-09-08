@@ -58,31 +58,39 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     await page.fill('input[type="password"], input[inputmode="numeric"]', '2023', { timeout: 15000 });
     await page.keyboard.press('Enter');
     await page.waitForTimeout(2500);
-    // ---- AI Trading tab ----
-    const tab = page.locator('button, [role="tab"]', { hasText: /AI TRADING|AI Trading/i }).first();
+    // ---- India Intraday tab (v6.9 split) ----
+    const tab = page.locator('button, [role="tab"]', { hasText: /INDIA INTRADAY|India Intraday/i }).first();
     await tab.click({ timeout: 20000 });
     await page.waitForTimeout(5000);
 
     const body = await page.textContent('body');
 
     // ---- 2. version + models ----
-    ok('v6.7 badge', /v6\.7/.test(body), '');
-    ok('10-model header', /10-model ensemble/i.test(body), '');
+    ok('version badge (v6.7+)', /v6\.[7-9]/.test(body), '');
+    ok('10-model header', /10-model consensus/i.test(body) || /10-model ensemble/i.test(body), '');
 
     // ---- 3. Morning Brief ----
     ok('Morning Brief section', /Morning Brief/i.test(body));
     ok('Brief NIFTY/BTC/VIX strip', /NIFTY/.test(body) && /INDIA VIX/.test(body) && /BTC/.test(body));
     ok('Brief guards chip', /GUARDS/.test(body));
 
-    // ---- 4. Swing Desk ----
+    // ---- 4. Swing Desk (India tab has it) ----
     ok('Swing Desk section', /Swing Desk/i.test(body));
 
-    // ---- 5. Whale Radar ----
-    ok('Whale Radar section', /Whale Radar/i.test(body));
+    // ---- 5. Whale Radar (CoinDCX tab) ----
+    const cxTab = page.locator('button, [role="tab"]', { hasText: /COINDCX|CoinDCX/i }).first();
+    await cxTab.click({ timeout: 20000 });
+    await page.waitForTimeout(3000);
+    const bodyCx = await page.textContent('body');
+    ok('Whale Radar section (CoinDCX desk)', /Whale Radar/i.test(bodyCx));
+    // back to India for the remaining India checks
+    await tab.click({ timeout: 20000 });
+    await page.waitForTimeout(3000);
+    const bodyBack = await page.textContent('body');
 
     // ---- 6. Signal Ledger ----
-    ok('Signal Ledger section', /Signal Ledger/i.test(body));
-    ok('Ledger chain chip', /CHAIN INTACT|BROKEN|head/i.test(body));
+    ok('Signal Ledger section', /Signal Ledger/i.test(bodyBack));
+    ok('Ledger chain chip', /CHAIN INTACT|BROKEN|head/i.test(bodyBack));
 
     // ---- 7. Options Desk (switch to INDIA desk if needed) ----
     const indiaBtn = page.locator('button', { hasText: /NSE|INDIA/i }).first();

@@ -59,17 +59,17 @@ const check = (name, ok, extra = '') => {
     await page.fill('input[type="password"]', '2023');
     await page.click('button:has-text("Unlock Terminal")');
     await page.waitForSelector('[role="tablist"]', { timeout: 20000 });
-    await page.click('[role="tablist"] button:has-text("AI Trading")');
-    await page.waitForSelector('text=SUPERINTELLIGENCE AI TRADING TERMINAL', { timeout: 20000 });
-    check('v6.6 badge in header', await page.locator('.quantum-badge:has-text("v6.6")').count() > 0);
+    await page.click(`[role="tablist"] button:has-text("India Intraday")`);
+    await page.waitForSelector(`text=INDIA INTRADAY DESK`, { timeout: 20000 });
+    check('badge in header (v6.6+)', await page.locator('.quantum-badge:has-text("v6.")').count() > 0);
 
-    // ---------- INDIA DESK: the TRADE ticket ----------
-    await page.waitForSelector('button:has-text("INDIA MARKET")', { timeout: 10000 });
+    // ---------- INDIA DESK: the TRADE ticket (v6.9: India tab directly) ----------
+    await page.waitForSelector('text=INDIA INTRADAY DESK', { timeout: 10000 });
     await sleep(9000); // board load
-    let tradeBtns = await page.locator('button:has-text("🚀 TRADE")').count();
+    let tradeBtns = await page.locator('[id^="sig-"] button:has-text("🚀 TRADE")').count();
     check('India cards show 🚀 TRADE buttons', tradeBtns > 0, `${tradeBtns} cards`);
     if (tradeBtns > 0) {
-      await page.locator('button:has-text("🚀 TRADE")').first().click();
+      await page.locator('[id^="sig-"] button:has-text("🚀 TRADE")').first().click();
       await sleep(700);
       check('SIMPLE TRADE TICKET opens', await page.locator('[aria-label="simple trade ticket"]').count() > 0);
       check('ticket shows pre-computed grid (QTY / RISK / PROFIT)', (await page.locator('text=₹ RISK @ SL').count()) > 0 && (await page.locator('text=₹ PROFIT @ T2').count()) > 0);
@@ -90,13 +90,13 @@ const check = (name, ok, extra = '') => {
       await sleep(400);
     }
 
-    // ---------- CRYPTO DESK: leverage ----------
-    await page.click('button:has-text("₿ CRYPTO")');
+    // ---------- CRYPTO DESK: leverage (v6.9: CoinDCX tab, SPOT default) ----------
+    await page.click('[role="tablist"] button:has-text("CoinDCX")');
     await sleep(9000);
-    tradeBtns = await page.locator('button:has-text("🚀 TRADE")').count();
+    tradeBtns = await page.locator('[id^="sig-"] button:has-text("🚀 TRADE")').count();
     check('crypto cards show 🚀 TRADE buttons', tradeBtns > 0, `${tradeBtns} cards`);
     if (tradeBtns > 0) {
-      await page.locator('button:has-text("🚀 TRADE")').first().click();
+      await page.locator('[id^="sig-"] button:has-text("🚀 TRADE")').first().click();
       await sleep(700);
       check('crypto ticket opens', await page.locator('[aria-label="simple trade ticket"]').count() > 0);
       check('margin input present', await page.locator('input[aria-label="margin in rupees"]').count() > 0);

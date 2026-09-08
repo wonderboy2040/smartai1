@@ -78,6 +78,14 @@ export interface MarketBreadth {
   avgConf: number;
 }
 
+/** v6.9: a TOP-5 ranked pick — the same AISignal payload plus the
+ *  composite score, medal rank and the Hinglish rank reason. */
+export interface TopPick extends AISignal {
+  rank: number;
+  score: number;
+  rankReason: string;
+}
+
 export interface SignalBoard {
   ok: boolean;
   market: MarketKind;
@@ -85,6 +93,8 @@ export interface SignalBoard {
   reason?: string;
   regime?: { niftyChange?: number | null; indiaVix?: number | null; btcChange?: number | null };
   breadth?: MarketBreadth;
+  /** v6.9: full-universe composite TOP-5 (ranked, scored, reason'd). */
+  topFive?: TopPick[];
   /** v6.4: the user's max-stop% the board plans were built within. */
   riskCap?: number;
   scanned?: number;

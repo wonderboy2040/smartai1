@@ -1,4 +1,34 @@
 
+## v6.9.0 — DUAL DESKS SPLIT (India | CoinDCX) · TOP-5 COMPOSITE PICKS · UI/UX UPGRADE (2026-09-08)
+
+### The split: ONE mixed tab → TWO self-contained desks
+- The single 🤖 AI Trading tab (India + CoinDCX sab mixup) is GONE — replaced by **🇮🇳 India Intraday** (slot 2) and **₿ CoinDCX** (slot 3) top-level tabs.
+- **IndiaIntradayTab**: NSE clock (live session phase + countdown) · 🏆 TOP 5 · signal board · options desk · swing desk · Dhan execution console · backtest (India) · alerts · registry · ledger — **zero crypto elements on screen**.
+- **CoinDcxTab**: SPOT ↔ ⚡ GLOBAL FUTURES sub-desk switcher · 📱 wallet card (spot INR/USDT + futures margin + equity — "wallet me kitna hai") · Superintelligence Auto-Agent · 🏆 TOP 5 · signal board · whales + orderbook + swing · CoinDCX execution console · backtest (crypto) — **zero NSE/Dhan elements on screen**.
+- `?tab=trading` legacy deep-links redirect to the India desk; keyboard slots 1-6 re-mapped automatically.
+- `useAITrading(active, { markets })` — market-scoped board loading (India desk only pays for the India board; CoinDCX loads spot + futures).
+- `OrderConsole` gained a `venue` prop: India venue = NSE positions + Dhan panel + India risk fields; CoinDCX venue = spot+futures positions + wallet strip + crypto arming/leverage. Journal stays the full audit trail.
+
+### 🏆 TOP 5 PICKS — full-universe composite ranking (server-side)
+- `computeTopFive()` in `server/ai/signals.js` (pure, exported, unit-tested): only actionable signals (STRONG/ACTION, non-neutral side, plan present) are eligible.
+- **Transparent composite score**: 40% confidence + 20% model agreement + 15% reward:risk (capped 3) + 10% participation + 10% regime alignment (NIFTY for India / BTC for crypto; unknown regime = neutral 50) + 5% momentum.
+- Every pick carries `rank` (🥇🥈🥉), `score` /100 and a **Hinglish rank reason** ("9 models me se 7 LONG side pe · conf 82% · R:R 1:2.0 · NIFTY +0.8% trend se ALIGNED").
+- Board payload now includes `topFive` on ALL three desks (INDIA/CRYPTO/FUTURES); honest-degrade boards return `topFive: []` (never padded).
+- TopPicksPanel: medal rows + ENTRY/SL/T1/T2 strip + score chip + 🚀 TRADE (smooth-jumps to the full signal card + flash ring — one ticket source of truth) + 🔬 deep analysis.
+
+### UI/UX upgrade (detailed + simple)
+- **QuickNav**: sticky jump-chip bar per desk (TOP 5 · SIGNALS · OPTIONS/WHALES · EXECUTE · BACKTEST · ALERTS · MODELS · LEDGER) — long pages ab bury nahi hote.
+- **MarketClockStrip**: live IST clock + session phase (PRE-OPEN / LIVE / NO FRESH ENTRY / SQUARE-OFF / CLOSED / WEEKEND) + next-event countdown, honest `⚠ data offline` on clock/data mismatch.
+- Market-branded command bars (orange India / amber-violet CoinDCX) with explicit cross-links ("crypto alag tab me (₿ CoinDCX)"), re-written Hinglish section subtitles, refreshed India 3-step how-to (TOP 5 flow ke saath).
+- SignalCard root gained `sig-<MARKET>-<SYMBOL>` anchors for the jump-target.
+
+### Verification (all green)
+- **584/584 vitest** (12 new: v69-core — eligibility, ordering, regime alignment, unknown-regime neutrality, clamps, purity, limit, board payload on all 3 desks).
+- **v69-verify 20/20** (boot + PIN 2023 + v6.9 stamp + topFive on all boards + ranked/actionable/score/reason + paper-execute regression + agent/wallet v6.8 regression + auth guards).
+- **v69-e2e 29/29** (browser: two separate tabs, India desk has NO CoinDCX elements, CoinDCX desk has NO Dhan/NSE elements, top-5 rows populated, TRADE jump, futures sub-desk, venue-scoped consoles, zero JS errors).
+- Regressions updated to the split layout and all green: v60-e2e 30/30 · v60-paper-flow 7/7 · v63-e2e 20/20 · v64-e2e 16/16 · v65-e2e ALL · v65/v66-verify ALL · v66-e2e 21/21 · v67-verify 24/24 · v67-e2e 14/14 · v61-settings-smoke ALL.
+- tsc 0 errors · vite build clean (IndiaIntradayTab + CoinDcxTab as separate lazy chunks).
+
 ## v6.0.0 — INTRADAY REMOVED · SUPERINTELLIGENCE AI TRADING TERMINAL (2026-09-03)
 
 ### Removed: Intraday TAB (complete)

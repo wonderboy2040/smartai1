@@ -28,11 +28,11 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     await page.click('button:has-text("Unlock Terminal")');
     await page.waitForSelector('[role="tablist"]', { timeout: 20000 });
 
-    await page.click('[role="tablist"] button:has-text("AI Trading")');
-    await page.waitForSelector('text=SUPERINTELLIGENCE AI TRADING TERMINAL', { timeout: 20000 });
+    await page.click(`[role="tablist"] button:has-text("India Intraday")`);
+    await page.waitForSelector(`text=INDIA INTRADAY DESK`, { timeout: 20000 });
 
-    // Go to CRYPTO desk and wait for signal cards
-    await page.click('button:has-text("CRYPTO")');
+    // Go to CRYPTO desk (v6.9: CoinDCX tab, SPOT default) and wait for signal cards
+    await page.click('[role="tablist"] button:has-text("CoinDCX")');
     await sleep(10000);
     const paperBtns = await page.locator('button:has-text("PAPER TRADE")').count();
     check('crypto PAPER TRADE buttons present', paperBtns > 0, `${paperBtns}`);

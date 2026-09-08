@@ -76,7 +76,9 @@ export interface ExpertInfo {
   border: string;
 }
 
-export type TabType = 'dashboard' | 'trading' | 'portfolio' | 'planner' | 'macro';
+// v6.9: the AI Trading tab is SPLIT into two self-contained desks —
+// India intraday (NSE) and CoinDCX (crypto spot + global futures).
+export type TabType = 'dashboard' | 'india' | 'crypto' | 'portfolio' | 'planner' | 'macro';
 export type RiskLevel = 'low' | 'medium' | 'high';
 export type TransactionType = 'buy' | 'sell';
 

@@ -71,10 +71,13 @@ function WalletStrip() {
   );
 }
 
-function ConfigEditor({ config, busy, onSave, state }: {
+function ConfigEditor({ config, busy, onSave, state, venue }: {
   config: TradingConfig; busy?: boolean;
   onSave: (patch: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
   state: TradingState | null;
+  /** v6.9: desk-scoped — India desk hides crypto arming/limits; CoinDCX
+   *  desk hides India fields. undefined = full console (legacy). */
+  venue?: 'INDIA' | 'COINDCX';
 }) {
   const [minConf, setMinConf] = useState(String(config.minConfidence));
   const [maxOrder, setMaxOrder] = useState(String(config.maxOrderINR));
@@ -116,11 +119,12 @@ function ConfigEditor({ config, busy, onSave, state }: {
   return (
     <div className="quantum-panel rounded-2xl p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-black text-slate-200">🛡️ RISK & EXECUTION SETTINGS</span>
+        <span className="text-xs font-black text-slate-200">🛡️ RISK & EXECUTION SETTINGS{venue === 'INDIA' ? ' — INDIA DESK' : venue === 'COINDCX' ? ' — COINDCX DESK' : ''}</span>
         {msg && <span className={`text-[10px] font-bold ${msg.ok ? 'text-emerald-400' : 'text-red-400'}`}>{msg.text}</span>}
       </div>
 
-      {/* Mode arm/disarm */}
+      {/* Mode arm/disarm (crypto LIVE — CoinDCX venue only) */}
+      {venue !== 'INDIA' && (
       <div className="flex items-center gap-2 flex-wrap">
         <span className={`px-3 py-1.5 rounded-xl text-[11px] font-black border ${config.mode === 'live' ? 'bg-red-500/15 text-red-300 border-red-500/40 animate-pulse' : 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30'}`}>
           {config.mode === 'live' ? '🔴 LIVE MODE — REAL ORDERS' : '🧪 PAPER MODE — SIMULATED'}
@@ -142,8 +146,10 @@ function ConfigEditor({ config, busy, onSave, state }: {
           </button>
         )}
       </div>
+      )}
 
-      {/* Auto toggle */}
+      {/* Auto toggle (crypto — CoinDCX venue only) */}
+      {venue !== 'INDIA' && (
       <div className="flex items-center gap-2 flex-wrap">
         <button onClick={() => save({ allowAuto: !config.allowAuto })}
           disabled={busy || config.mode !== 'live'}
@@ -153,6 +159,7 @@ function ConfigEditor({ config, busy, onSave, state }: {
         </button>
         {state?.blocked.notConnected && <span className="text-[10px] text-amber-400/80 font-bold">⚠️ CoinDCX not connected — Portfolio tab → Connect CoinDCX</span>}
       </div>
+      )}
 
       {/* v6.5: TRAILING STOP-LOSS */}
       <div className="flex items-center gap-2 gap-y-1.5 flex-wrap bg-black/20 rounded-xl px-3 py-2.5">
@@ -182,15 +189,15 @@ function ConfigEditor({ config, busy, onSave, state }: {
       {/* Numeric limits */}
       <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
         {[
-          { label: 'Min conf %', val: minConf, set: setMinConf, key: 'minConfidence', hint: '50-95' },
-          { label: 'Max order ₹ (crypto)', val: maxOrder, set: setMaxOrder, key: 'maxOrderINR', hint: '≥100' },
-          { label: 'India Max ₹', val: indiaMaxOrder, set: setIndiaMaxOrder, key: 'indiaMaxOrderINR', hint: '≥100' },
-          { label: 'Daily trades', val: dailyTrades, set: setDailyTrades, key: 'dailyMaxTrades', hint: '1-50' },
-          { label: 'Daily loss ₹', val: dailyLoss, set: setDailyLoss, key: 'dailyMaxLossINR', hint: '≥50' },
-          { label: 'Max stop %', val: maxStop, set: setMaxStop, key: 'maxRiskPct', hint: '1-20' },
-          { label: 'Max leverage × (crypto)', val: maxLev, set: setMaxLev, key: 'cryptoLeverage', hint: '1-10' },
-          { label: 'Max open positions', val: maxOpen, set: setMaxOpen, key: 'maxOpenPositions', hint: '1-20' },
-        ].map(f => (
+          { label: 'Min conf %', val: minConf, set: setMinConf, key: 'minConfidence', hint: '50-95', venueOK: true },
+          { label: 'Max order ₹ (crypto)', val: maxOrder, set: setMaxOrder, key: 'maxOrderINR', hint: '≥100', venueOK: venue !== 'INDIA' },
+          { label: 'India Max ₹', val: indiaMaxOrder, set: setIndiaMaxOrder, key: 'indiaMaxOrderINR', hint: '≥100', venueOK: venue !== 'COINDCX' },
+          { label: 'Daily trades', val: dailyTrades, set: setDailyTrades, key: 'dailyMaxTrades', hint: '1-50', venueOK: true },
+          { label: 'Daily loss ₹', val: dailyLoss, set: setDailyLoss, key: 'dailyMaxLossINR', hint: '≥50', venueOK: true },
+          { label: 'Max stop %', val: maxStop, set: setMaxStop, key: 'maxRiskPct', hint: '1-20', venueOK: true },
+          { label: 'Max leverage × (crypto)', val: maxLev, set: setMaxLev, key: 'cryptoLeverage', hint: '1-10', venueOK: venue !== 'INDIA' },
+          { label: 'Max open positions', val: maxOpen, set: setMaxOpen, key: 'maxOpenPositions', hint: '1-20', venueOK: true },
+        ].filter(f => f.venueOK).map(f => (
           <div key={f.key}>
             <label className="text-[9px] text-slate-500 font-black tracking-wider block mb-1">{f.label.toUpperCase()}</label>
             <div className="flex gap-1">
@@ -331,17 +338,30 @@ interface Props {
   onDhanConnect: (clientId: string, accessToken: string) => Promise<{ ok: boolean; error?: string }>;
   onDhanDisconnect: () => Promise<{ ok: boolean; error?: string }>;
   onDhanRefresh: () => void;
+  /** v6.9: desk scope — 'INDIA' = NSE positions + Dhan + India config;
+   *  'COINDCX' = spot+futures positions + wallet + crypto config;
+   *  undefined = the full console (legacy shared view). */
+  venue?: 'INDIA' | 'COINDCX';
+  /** v6.9: console heading override (per desk). */
+  title?: string;
 }
 
-export const OrderConsole = memo(function OrderConsole({ state, positions, entries, busy, onClose, onSaveConfig, dhan, onDhanConnect, onDhanDisconnect, onDhanRefresh }: Props) {
+export const OrderConsole = memo(function OrderConsole({ state, positions, entries, busy, onClose, onSaveConfig, dhan, onDhanConnect, onDhanDisconnect, onDhanRefresh, venue, title }: Props) {
   const [tab, setTab] = useState<'positions' | 'journal'>('positions');
-  const open = positions.filter(p => p.status === 'OPEN');
+  // v6.9: desk-scoped positions — India desk sees NSE rows only, CoinDCX
+  // desk sees spot + futures rows only. Journal stays the FULL audit trail.
+  const shown = venue === 'INDIA'
+    ? positions.filter(p => p.market === 'INDIA')
+    : venue === 'COINDCX'
+      ? positions.filter(p => p.market !== 'INDIA')
+      : positions;
+  const open = shown.filter(p => p.status === 'OPEN');
   const cfg = state?.config;
 
   return (
-    <section className="space-y-3" aria-label="Execution console">
-      {/* v6.8: live CoinDCX wallet strip (spot + futures margin) */}
-      <WalletStrip />
+    <section className="space-y-3" aria-label={title || 'Execution console'}>
+      {/* v6.8: live CoinDCX wallet strip (spot + futures margin) — CoinDCX desk */}
+      {venue !== 'INDIA' && <WalletStrip />}
 
       {/* Kill switch + risk meters */}
       <div className="quantum-panel rounded-2xl p-4">
@@ -369,10 +389,12 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
       </div>
 
       {/* Config editor */}
-      {cfg && <ConfigEditor config={cfg} state={state} busy={busy} onSave={onSaveConfig} />}
+      {cfg && <ConfigEditor config={cfg} state={state} busy={busy} onSave={onSaveConfig} venue={venue} />}
 
-      {/* v6.5: Dhan broker + India LIVE arming */}
-      <DhanPanel busy={busy} onSave={onSaveConfig} dhan={dhan} indiaMode={cfg?.indiaMode} onConnect={onDhanConnect} onDisconnect={onDhanDisconnect} onRefresh={onDhanRefresh} />
+      {/* v6.5: Dhan broker + India LIVE arming (India desk) */}
+      {venue !== 'COINDCX' && (
+        <DhanPanel busy={busy} onSave={onSaveConfig} dhan={dhan} indiaMode={cfg?.indiaMode} onConnect={onDhanConnect} onDisconnect={onDhanDisconnect} onRefresh={onDhanRefresh} />
+      )}
 
       {/* Positions / Journal tabs */}
       <div className="quantum-panel rounded-2xl overflow-hidden">
@@ -380,17 +402,23 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
           {(['positions', 'journal'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-4 py-2.5 text-[11px] font-black transition-all ${tab === t ? 'text-cyan-300 border-b-2 border-cyan-400 bg-cyan-500/5' : 'text-slate-500 hover:text-slate-300'}`}>
-              {t === 'positions' ? `📋 POSITIONS (${open.length} open)` : '📜 AUDIT JOURNAL'}
+              {t === 'positions' ? `📋 POSITIONS (${open.length} open${venue === 'INDIA' ? ' · 🇮🇳 NSE' : venue === 'COINDCX' ? ' · ₿ COINDCX' : ''})` : '📜 AUDIT JOURNAL'}
             </button>
           ))}
         </div>
 
         {tab === 'positions' && (
           <div className="max-h-96 overflow-y-auto">
-            {positions.length === 0 && (
-              <div className="p-8 text-center text-slate-500 text-xs">No positions yet — execute a STRONG signal (PAPER is always available)</div>
+            {shown.length === 0 && (
+              <div className="p-8 text-center text-slate-500 text-xs">
+                {venue === 'INDIA'
+                  ? 'No India positions yet — TOP 5 / Signal Board se 🚀 TRADE karo (PAPER always available)'
+                  : venue === 'COINDCX'
+                    ? 'No CoinDCX positions yet — crypto/futures signal ka ticket kholo (PAPER always available)'
+                    : 'No positions yet — execute a STRONG signal (PAPER is always available)'}
+              </div>
             )}
-            {positions.map(p => {
+            {shown.map(p => {
               const upnl = p.unrealizedPnlINR ?? 0;
               const open = p.status === 'OPEN';
               const isIndia = p.market === 'INDIA';

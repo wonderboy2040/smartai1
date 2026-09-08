@@ -64,15 +64,15 @@ const check = (name, ok, extra = '') => {
     await page.fill('input[type="password"]', '2023');
     await page.click('button:has-text("Unlock Terminal")');
     await page.waitForSelector('[role="tablist"]', { timeout: 20000 });
-    await page.click('[role="tablist"] button:has-text("AI Trading")');
-    await page.waitForSelector('text=SUPERINTELLIGENCE AI TRADING TERMINAL', { timeout: 20000 });
+    await page.click(`[role="tablist"] button:has-text("India Intraday")`);
+    await page.waitForSelector(`text=INDIA INTRADAY DESK`, { timeout: 20000 });
 
     // ---------- v6.5 identity ----------
     const badgeTxt = await page.locator('span.quantum-badge', { hasText: /v6\./ }).first().textContent().catch(() => '');
     check('version badge (v6.6+)', /v6\.[5-9]/.test(badgeTxt || ''));
 
     // ---------- India desk ----------
-    await page.waitForSelector('button:has-text("INDIA MARKET")', { timeout: 10000 });
+    await page.waitForSelector('text=INDIA INTRADAY DESK', { timeout: 10000 });
     await sleep(9000); // board load
 
     // India PAPER TRADE buttons on actionable cards (v6.5)
@@ -135,7 +135,7 @@ const check = (name, ok, extra = '') => {
     }
 
     // ---------- crypto desk regression ----------
-    await page.click('button:has-text("CRYPTO · CoinDCX")');
+    await page.click('[role="tablist"] button:has-text("CoinDCX")');
     await sleep(9000);
     const cryptoPaper = await page.locator('button:has-text("PAPER TRADE")').count();
     check('crypto cards still show PAPER TRADE', cryptoPaper > 0, `${cryptoPaper} buttons`);

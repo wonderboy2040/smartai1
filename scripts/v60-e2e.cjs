@@ -52,18 +52,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await page.waitForSelector('[role="tablist"]', { timeout: 20000 });
     check('login with PIN 2023', true);
 
-    // ---------- 2. Tab bar: Intraday gone, AI Trading present ----------
+    // ---------- 2. Tab bar: v6.9 split desks — India Intraday + CoinDCX ----------
     const tabText = await page.locator('[role="tablist"]').innerText();
-    check('tab bar has NO "Intraday"', !/intraday/i.test(tabText), tabText.replace(/\n/g, ' | ').slice(0, 90));
-    check('tab bar shows "AI Trading"', /AI Trading/i.test(tabText));
+    check('tab bar has NO legacy "AI Trading" single tab', !/AI Trading/i.test(tabText), tabText.replace(/\n/g, ' | ').slice(0, 90));
+    check('tab bar shows "India Intraday" + "CoinDCX" (v6.9 split)', /India Intraday/i.test(tabText) && /CoinDCX/i.test(tabText));
 
-    // ---------- 3. Open AI Trading tab ----------
-    await page.click('[role="tablist"] button:has-text("AI Trading")');
-    await page.waitForSelector('text=SUPERINTELLIGENCE AI TRADING TERMINAL', { timeout: 20000 });
+    // ---------- 3. Open India Intraday tab ----------
+    await page.click('[role="tablist"] button:has-text("India Intraday")');
+    await page.waitForSelector('text=INDIA INTRADAY DESK', { timeout: 20000 });
     check('command bar renders', true);
 
     const desk = await page.innerText('body');
-    check('desk switcher (INDIA MARKET / CoinDCX)', /INDIA MARKET/.test(desk) && /CRYPTO/.test(desk));
+    check('v6.9 India desk: NSE clock + TOP 5 (no desk switcher needed)', /NSE/.test(desk) && /TOP 5 PICKS/.test(desk));
     check('section 01 Signal Board', /SIGNAL BOARD/i.test(desk));
     check('execution console section', /EXECUTION CONSOLE/i.test(desk));
     check('model registry section', /MODEL REGISTRY/i.test(desk));
@@ -115,11 +115,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const modelCards = await page.locator('text=/TrendMatrix|MomentumQuant|VolatilityScope|VolumeFlow|PatternNeural|SRMatrix|OptionsFlow|MacroRegime|AI Council/').count();
     check('model registry: 9 model names', modelCards >= 9, `${modelCards} mentions`);
 
-    // ---------- 8. Crypto desk ----------
-    await page.click('button:has-text("CRYPTO")');
+    // ---------- 8. CoinDCX tab (crypto desk — v6.9 separate tab) ----------
+    await page.click('[role="tablist"] button:has-text("CoinDCX")');
     await sleep(9000);
     body = await page.innerText('body');
-    check('crypto desk active (options desk hidden)', !/OPTION CHAIN/.test(body));
+    check('CoinDCX desk active (no NSE options chain on crypto desk)', !/OPTION CHAIN/.test(body));
     const cryptoCardCount = await page.locator('[role="img"][aria-label*="confidence"]').count();
     check('crypto signal cards render', cryptoCardCount > 0, `${cryptoCardCount} cards`);
     // paper-trade button present on crypto cards
@@ -129,7 +129,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('LIVE lock note (needs STRONG)', /LIVE execution locked|EXECUTE LIVE/i.test(body));
 
     // ---------- 9. switch back to India ----------
-    await page.click('button:has-text("INDIA MARKET")');
+    await page.click('[role="tablist"] button:has-text("India Intraday")');
     await sleep(1500);
     body = await page.innerText('body');
     check('switch back to India restores options desk', /OPTIONS DESK|OPTION CHAIN/i.test(body));
@@ -141,10 +141,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     });
     check('old /api/intraday-scanner endpoint removed (404)', gone === 404, `status ${gone}`);
 
-    // ---------- 11. keyboard shortcut 2 opens AI Trading ----------
+    // ---------- 11. keyboard shortcut 2 opens India desk (v6.9 slot 2) ----------
     await page.keyboard.press('2');
     await sleep(800);
-    check('keyboard "2" opens AI Trading', /SUPERINTELLIGENCE/.test(await page.innerText('body')));
+    check('keyboard "2" opens India Intraday desk', /INDIA INTRADAY DESK/.test(await page.innerText('body')));
 
     // ---------- 12. zero JS errors ----------
     check('zero page JS errors', pageErrors.length === 0, pageErrors.slice(0, 2).join(' || ').slice(0, 140));
@@ -152,7 +152,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     await page.screenshot({ path: 'scripts/v60-ai-trading-india.png', fullPage: false });
     // crypto shot
-    await page.click('button:has-text("CRYPTO")');
+    await page.click('[role="tablist"] button:has-text("CoinDCX")');
     await sleep(4000);
     await page.screenshot({ path: 'scripts/v60-ai-trading-crypto.png', fullPage: false });
   } catch (e) {

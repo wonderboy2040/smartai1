@@ -464,7 +464,7 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
   const overCap = !!(plan && riskCapPct && plan.riskPct > riskCapPct);
 
   return (
-    <div className={`quantum-panel rounded-2xl p-4 transition-colors hover:border-cyan-500/20 border-l-4 ${long ? 'border-l-emerald-500/60' : 'border-l-red-500/60'}
+    <div id={`sig-${signal.market}-${signal.symbol}`} className={`quantum-panel rounded-2xl p-4 transition-colors hover:border-cyan-500/20 border-l-4 ${long ? 'border-l-emerald-500/60' : 'border-l-red-500/60'} scroll-mt-24}
       ${signal.grade === 'STRONG' ? 'ring-1 ring-emerald-500/40' : ''}
       ${isNew ? 'ring-2 ring-cyan-400/60 animate-pulse' : ''}`}>
       {/* Header row */}

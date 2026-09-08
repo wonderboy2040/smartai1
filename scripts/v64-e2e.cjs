@@ -67,11 +67,11 @@ const check = (name, ok, extra = '') => {
     await page.fill('input[type="password"]', '2023');
     await page.click('button:has-text("Unlock Terminal")');
     await page.waitForSelector('[role="tablist"]', { timeout: 20000 });
-    await page.click('[role="tablist"] button:has-text("AI Trading")');
-    await page.waitForSelector('text=SUPERINTELLIGENCE AI TRADING TERMINAL', { timeout: 20000 });
+    await page.click(`[role="tablist"] button:has-text("India Intraday")`);
+    await page.waitForSelector(`text=INDIA INTRADAY DESK`, { timeout: 20000 });
 
     // ---------- INDIA DESK ----------
-    await page.waitForSelector('button:has-text("INDIA MARKET")', { timeout: 10000 });
+    await page.waitForSelector('text=INDIA INTRADAY DESK', { timeout: 10000 });
     check('India 3-step how-to guide visible (v6.4)', await page.locator('text=INDIA DESK — SIGNAL SE TRADE TAK').count() > 0);
     check('guide mentions broker flow (slip → broker / Dhan LIVE)', (await page.locator('text=COPY SLIP').count()) + (await page.locator('text=DHAN LIVE').count()) > 0); // v6.5: India gained direct Dhan execution
 
@@ -101,7 +101,7 @@ const check = (name, ok, extra = '') => {
     check('guide re-opens from chip', await page.locator('text=INDIA DESK — SIGNAL SE TRADE TAK').count() > 0);
 
     // ---------- CRYPTO DESK ----------
-    await page.click('button:has-text("₿ CRYPTO")');
+    await page.click('[role="tablist"] button:has-text("CoinDCX")');
     await sleep(9000);
     check('crypto ORDER PREVIEW strip on cards', await page.locator('text=ORDER PREVIEW').count() > 0);
     const fittedChip = await page.locator('text=Auto-fitted').count();

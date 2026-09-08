@@ -289,6 +289,59 @@ Respond STRICT JSON only (no markdown):
 }
 
 // ---------------- the signal board ----------------
+// ---------------- v6.9 TOP-5 COMPOSITE RANKING ----------------
+// The user's "full universe analyze karke top 5 accurate signals" —
+// a transparent composite score over the FINAL board signals. Every
+// factor is normalized to 0-100 so weights are honest:
+//   0.40 × confidence        — the committee's conviction
+//   0.20 × agreement×100     — how many voting models align
+//   0.15 × min(R:R,3)/3×100  — reward:risk (capped at 3, diminishing)
+//   0.10 × participation×100 — quorum: how many models actually voted
+//   0.10 × regime alignment  — trade direction with the market regime
+//   0.05 × momentum          — |24h change| tiebreak (capped at 3%)
+// Only actionable signals (STRONG/ACTION, non-neutral side, plan present)
+// are eligible. Fewer than 5 eligible → shorter list (honest, never padded).
+export function computeTopFive(signals, regime, market = 'INDIA', limit = 5) {
+  if (!Array.isArray(signals) || signals.length === 0) return [];
+  const mkt = String(market || 'INDIA').toUpperCase();
+  const rawRegime = mkt === 'INDIA' ? regime?.niftyChange : regime?.btcChange;
+  const regimeChange = rawRegime == null ? null : Number(rawRegime);
+  const regimeLabel = mkt === 'INDIA' ? 'NIFTY' : 'BTC';
+  const eligible = signals.filter(s =>
+    s && (s.grade === 'STRONG' || s.grade === 'ACTION')
+    && (s.side === 'LONG' || s.side === 'SHORT')
+    && s.plan && Number.isFinite(s.plan.entry));
+  const scored = eligible.map(s => {
+    const conf = Math.max(0, Math.min(100, Number(s.confidence) || 0));
+    const agree = Math.max(0, Math.min(100, (Number(s.agreement) || 0) * 100));
+    const rr = Math.max(0, Math.min(3, Number(s.plan?.rewardRisk) || 0));
+    const part = Math.max(0, Math.min(1, Number(s.participation ?? 1) || 0));
+    const sideIsLong = s.side === 'LONG';
+    const aligned = regimeChange != null && Number.isFinite(regimeChange)
+      ? (regimeChange > 0.1 && sideIsLong) || (regimeChange < -0.1 && !sideIsLong)
+      : null; // null = regime unknown → neutral 50 (neither reward nor penalty)
+    const regScore = aligned == null ? 50 : aligned ? 100 : 0;
+    const chg = Math.max(0, Math.min(3, Math.abs(Number(s.changePct) || 0)));
+    const score =
+      0.40 * conf +
+      0.20 * agree +
+      0.15 * (rr / 3) * 100 +
+      0.10 * part * 100 +
+      0.10 * regScore +
+      0.05 * (chg / 3) * 100;
+    const votesFor = (s.votes || []).filter(v => v.dir === (sideIsLong ? 1 : -1)).length;
+    const totalVoted = (s.votes || []).length;
+    const regTxt = aligned == null ? `${regimeLabel} regime nahi mila`
+      : aligned ? `${regimeLabel} ${regimeChange >= 0 ? '+' : ''}${regimeChange.toFixed(1)}% trend se ALIGNED`
+      : `${regimeLabel} ke against (counter-trend)`;
+    const rrTxt = Number.isFinite(s.plan?.rewardRisk) ? `R:R 1:${s.plan.rewardRisk.toFixed(1)}` : 'plan ready';
+    const reason = `${totalVoted} models me se ${votesFor} ${s.side} side pe · conf ${Math.round(conf)}% · ${rrTxt} · ${regTxt} · ${s.grade === 'STRONG' ? 'FULL committee STRONG grade' : 'ACTION grade (tradeable)'}`;
+    return { ...s, rank: 0, score: Math.round(score * 10) / 10, rankReason: reason };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, Math.max(1, limit)).map((s, i) => ({ ...s, rank: i + 1 }));
+}
+
 export async function getSignals(market, deps, opts = {}) {
   const raw = String(market || 'INDIA').toUpperCase();
   const mkt = raw === 'CRYPTO' ? 'CRYPTO' : raw === 'FUTURES' ? 'FUTURES' : 'INDIA';
@@ -368,6 +421,7 @@ export async function getSignals(market, deps, opts = {}) {
           ? 'No futures data reachable right now (TV + CoinDCX futures RT unavailable)'
           : 'No India market data reachable right now (TV scanner unavailable)',
       marketOpen: mkt === 'INDIA' ? isNseOpen() : true,
+      topFive: [],
       signals: [], models: modelStatus(null, depsSafe), regime, generatedAt: Date.now(),
     };
     cacheSet(cacheKey, payload);
@@ -430,11 +484,17 @@ export async function getSignals(market, deps, opts = {}) {
   }
   signals.sort((a, b) => b.confidence - a.confidence);
 
+  // v6.9: full-universe composite TOP-5 (transparent score + Hinglish
+  // rank reason — the board payload carries it so the desks get the
+  // SAME ranking the server would execute against).
+  const topFive = computeTopFive(signals, regime, mkt, 5);
+
   const payload = {
     ok: true, market: mkt,
     marketOpen: mkt === 'INDIA' ? isNseOpen() : true,
     regime,
     breadth,
+    topFive,
     riskCap: riskCapFor(depsSafe),
     scanned: contexts.length,
     signals,

@@ -65,7 +65,7 @@ try {
 
   // ---- 1. status ----
   const st = await j('/api/ai/status');
-  ok('status v6.7 stamp', String(st.data?.engine || '').includes('v6.7'), st.data?.engine);
+  ok('status engine stamp (v6.7+)', /v6\.[7-9]/.test(String(st.data?.engine || '')), st.data?.engine);
   ok('status adaptive block', st.data?.adaptive && typeof st.data.adaptive.enabled === 'boolean');
   ok('status ledger block', st.data?.ledger && typeof st.data.ledger.verified === 'boolean');
   ok('status 10-model registry', (st.data?.models || []).some(m => m.id === 'smc'), 'SmartMoneyICT present');

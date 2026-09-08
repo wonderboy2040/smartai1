@@ -51,11 +51,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await page.waitForSelector('[role="tablist"]', { timeout: 20000 });
     check('login with PIN 2023', true);
 
-    // ---------- 2. Open AI Trading ----------
-    await page.click('button:has-text("AI Trading")');
-    await page.waitForSelector('text=SUPERINTELLIGENCE AI TRADING TERMINAL', { timeout: 20000 });
-    const hdrBar = await page.locator('h2:has-text("SUPERINTELLIGENCE")').locator('xpath=..').innerText();
-    check('AI Trading terminal header + version badge (v6.3+)', /v6\.[3-9]/i.test(hdrBar), hdrBar.replace(/\n/g, ' ').slice(0, 70)); // v6.5: version advances with releases
+    // ---------- 2. Open India Intraday desk (v6.9 split) ----------
+    await page.click('button:has-text("India Intraday")');
+    await page.waitForSelector('text=INDIA INTRADAY DESK', { timeout: 20000 });
+    const hdrBar = await page.locator('h2:has-text("INDIA INTRADAY")').locator('xpath=..').innerText();
+    check('India desk header + version badge (v6.3+)', /v6\.[3-9]/i.test(hdrBar), hdrBar.replace(/\n/g, ' ').slice(0, 70)); // v6.5: version advances with releases
     await page.waitForSelector('text=MARKET BREADTH', { timeout: 30000 });
 
     // ---------- 3. Breadth strip ----------
@@ -113,8 +113,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       check('deep modal opens with fresh run + indicators', false, 'no 🔬 button rendered');
     }
 
-    // ---------- 7. CRYPTO desk ----------
-    await page.click('button:has-text("CRYPTO")');
+    // ---------- 7. CRYPTO desk (v6.9: CoinDCX tab) ----------
+    await page.click('[role="tablist"] button:has-text("CoinDCX")');
     await sleep(3000);
     const cryptoCards = await page.locator('text=CONF').count();
     check('crypto desk renders signal cards', cryptoCards > 0, `${cryptoCards} cards`);
@@ -122,7 +122,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('crypto PAPER TRADE buttons', paperBtns > 0, `${paperBtns} buttons`);
 
     // ---------- 8. Options desk / console / registry (back on INDIA) ----------
-    await page.click('button:has-text("INDIA MARKET")');
+    await page.click('[role="tablist"] button:has-text("India Intraday")');
     await page.waitForSelector('text=OPTIONS DESK', { timeout: 20000 });
     check('options desk renders (India)', true);
     await page.waitForSelector('text=EXECUTION CONSOLE', { timeout: 20000 });

@@ -34,22 +34,26 @@ function lazyWithRetry(importFn: () => Promise<any>, name: string) {
 
 // Lazy load all tab components for faster initial load
 const DashboardTab = lazyWithRetry(() => import('./components/tabs/DashboardTab'), 'dashboard');
-const AITradingTab = lazyWithRetry(() => import('./components/tabs/AITradingTab'), 'aitrading');
 const PortfolioTab = lazyWithRetry(() => import('./components/tabs/PortfolioTab'), 'portfolio');
 const PlannerTab = lazyWithRetry(() => import('./components/tabs/PlannerTab'), 'planner');
 const MacroTab = lazyWithRetry(() => import('./components/tabs/MacroTab').then(m => ({ default: m.MacroTab })), 'macro');
+const IndiaIntradayTab = lazyWithRetry(() => import('./components/tabs/IndiaIntradayTab'), 'india');
+const CoinDcxTab = lazyWithRetry(() => import('./components/tabs/CoinDcxTab'), 'coindcx');
 
 const NeuralChat = lazyWithRetry(() => import('./components/NeuralChat').then(m => ({ default: m.NeuralChat })), 'neuralchat');
 
 // Shared tab metadata — desktop pills, mobile bottom nav, shortcut hints.
+// v6.9: the AI Trading tab is SPLIT — India intraday (NSE) and CoinDCX
+// (crypto spot + global futures) are now two self-contained tabs.
 const TAB_META: Record<TabType, { emoji: string; label: string }> = {
   dashboard: { emoji: '📊', label: 'Dashboard' },
-  trading: { emoji: '🤖', label: 'AI Trading' },
+  india: { emoji: '🇮🇳', label: 'India Intraday' },
+  crypto: { emoji: '₿', label: 'CoinDCX' },
   portfolio: { emoji: '💼', label: 'Portfolio' },
   planner: { emoji: '🎯', label: 'Planner' },
   macro: { emoji: '🌍', label: 'Risk' },
 };
-const TAB_ORDER: TabType[] = ['dashboard', 'trading', 'portfolio', 'planner', 'macro'];
+const TAB_ORDER: TabType[] = ['dashboard', 'india', 'crypto', 'portfolio', 'planner', 'macro'];
 
 export default function App() {
   const state = useAppState();
@@ -96,11 +100,13 @@ export default function App() {
   usePrefetch(activeTab, portfolio);
 
   // Deep-link support: /?tab=portfolio (used by the INDMoney OAuth callback
-  // redirect) opens the requested tab once on mount.
+  // redirect) opens the requested tab once on mount. v6.9: the legacy
+  // `trading` deep-link lands on the India desk (its successor).
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
-      const t = params.get('tab');
+      let t = params.get('tab');
+      if (t === 'trading') t = 'india';
       if (t && (TAB_ORDER as string[]).includes(t)) setActiveTab(t as TabType);
     } catch { /* non-fatal */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -266,7 +272,7 @@ export default function App() {
                   <button key={tab} onClick={() => setActiveTab(tab)} role="tab" aria-selected={activeTab === tab}
                     title={`${TAB_META[tab].label} — press ${i + 1}`}
                     className={`quantum-tab flex-1 sm:flex-none px-3 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm whitespace-nowrap flex items-center justify-center ${activeTab === tab ? 'active' : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'}`}>
-                    <span className="hidden sm:inline">{tab === 'dashboard' && '📊 Dashboard'}{tab === 'trading' && '🤖 AI Trading'}{tab === 'portfolio' && '💼 Portfolio'}{tab === 'planner' && '🎯 Planner'}{tab === 'macro' && '🌍 Risk'}</span>
+                    <span className="hidden sm:inline">{tab === 'dashboard' && '📊 Dashboard'}{tab === 'india' && '🇮🇳 India Intraday'}{tab === 'crypto' && '₿ CoinDCX'}{tab === 'portfolio' && '💼 Portfolio'}{tab === 'planner' && '🎯 Planner'}{tab === 'macro' && '🌍 Risk'}</span>
                     <span className="sm:hidden">{TAB_META[tab].emoji}</span>
                   </button>
                 ))}
@@ -287,7 +293,8 @@ export default function App() {
           <Suspense fallback={<div className="flex items-center justify-center py-20"><div className="text-center"><div className="text-4xl mb-3 animate-float">⚡</div><div className="text-sm text-slate-500 font-medium">Loading module...</div></div></div>}>
             <ErrorBoundary fallback={<div className="quantum-panel rounded-2xl p-8 text-center border border-red-500/20"><div className="text-4xl mb-3">🚨</div><div className="text-red-400 font-bold mb-2">Tab crashed</div><div className="text-slate-500 text-sm">Reload or switch tabs</div></div>}>
               {activeTab === 'dashboard' && <DashboardTab />}
-              {activeTab === 'trading' && <AITradingTab />}
+              {activeTab === 'india' && <IndiaIntradayTab />}
+              {activeTab === 'crypto' && <CoinDcxTab />}
               {activeTab === 'portfolio' && <PortfolioTab />}
               {activeTab === 'planner' && <PlannerTab />}
               {activeTab === 'macro' && <MacroTab />}
