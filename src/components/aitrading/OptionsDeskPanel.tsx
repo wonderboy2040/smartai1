@@ -6,8 +6,8 @@
 // P&L math. Clearly labels bs-model vs live NSE data.
 // ============================================================
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { fetchOptionsDesk } from './useAITrading';
-import type { OptionsDesk, Strategy, GexProfile } from './types';
+import { fetchOptionsDesk, fetchIncomeSetups } from './useAITrading';
+import type { OptionsDesk, Strategy, GexProfile, IncomeView } from './types';
 
 const INDICES = ['NIFTY', 'BANKNIFTY', 'FINNIFTY'];
 
@@ -191,7 +191,36 @@ export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
         {gex && <Metric label="CALL WALL" value={gex.callWall != null ? gex.callWall.toLocaleString('en-IN') : 'n/a'} tone="bear" />}
         {gex && <Metric label="PUT WALL" value={gex.putWall != null ? gex.putWall.toLocaleString('en-IN') : 'n/a'} tone="bull" />}
         {gex && <Metric label="EXP MOVE" value={gex.expectedMove?.pct != null ? `±${gex.expectedMove.pct}%` : 'n/a'} tone="neutral" />}
+        {desk?.analytics?.skew?.value != null && (
+          <Metric label="IV SKEW" value={`${desk.analytics.skew.value > 0 ? '+' : ''}${desk.analytics.skew.value}`} tone={desk.analytics.skew.value >= 2.5 ? 'bear' : desk.analytics.skew.value < -0.5 ? 'bull' : 'neutral'} />
+        )}
+        {desk?.analytics?.flow?.callPutVolRatio != null && (
+          <Metric label="C/P VOL" value={desk.analytics.flow.callPutVolRatio.toFixed(2)} tone={desk.analytics.flow.callPutVolRatio >= 1.5 ? 'bull' : desk.analytics.flow.callPutVolRatio <= 0.67 ? 'bear' : 'neutral'} />
+        )}
       </div>
+
+      {/* v6.11: skew + flow reads (glama tv-mcp) */}
+      {(desk?.analytics?.skew || desk?.analytics?.flow) && (
+        <div className="grid sm:grid-cols-2 gap-2">
+          {desk?.analytics?.skew && (
+            <div className="quantum-panel rounded-2xl p-3">
+              <div className="text-[9px] font-black text-slate-500 tracking-wider mb-1">📐 IV SKEW (OTM put − call, 2–6%)</div>
+              <div className="text-[10px] text-slate-300 leading-relaxed">{desk.analytics.skew.read}</div>
+              <div className="text-[9px] font-mono text-slate-600 mt-1">put IV {desk.analytics.skew.putIV ?? '—'} · call IV {desk.analytics.skew.callIV ?? '—'}</div>
+            </div>
+          )}
+          {desk?.analytics?.flow && (
+            <div className="quantum-panel rounded-2xl p-3">
+              <div className="text-[9px] font-black text-slate-500 tracking-wider mb-1">🌊 OPTIONS FLOW (aaj ka premium)</div>
+              <div className="text-[10px] text-slate-300 leading-relaxed">{desk.analytics.flow.read} · {desk.analytics.flow.oiLeanRead}</div>
+              <div className="text-[9px] font-mono text-slate-600 mt-1">CE vol {desk.analytics.flow.callVolume?.toLocaleString('en-IN')} · PE vol {desk.analytics.flow.putVolume?.toLocaleString('en-IN')}</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* v6.11: income setup ranker (glama tv-mcp rank_income_setups) */}
+      <IncomeRanker />
 
       {/* v6.7 GEX profile — dealer gamma positioning */}
       {gex && (
@@ -337,6 +366,51 @@ function GexChart({ gex, spot }: { gex: GexProfile; spot: number }) {
           <div className="text-[10px] text-slate-400 leading-snug">{gex.regimeNote}{gex.gammaFlip != null ? ` · Spot ${spot > gex.gammaFlip ? 'ABOVE' : 'BELOW'} the flip (${gex.gammaFlip.toLocaleString('en-IN')})` : ''}</div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---------------- v6.11: Income Setup Ranker (glama tv-mcp) ----------------
+function IncomeRanker() {
+  const [view, setView] = useState<IncomeView | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setView(await fetchIncomeSetups());
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div className="quantum-panel rounded-2xl p-3">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <span className="text-[10px] font-black text-slate-200">💰 INCOME SETUP RANKER — teeno indices ke credit setups ranked</span>
+        <button onClick={load} className="quantum-btn-ghost px-2 py-1 rounded-lg text-[10px] font-bold" aria-label="Refresh income ranker">
+          <span className={loading ? 'inline-block animate-spin' : ''}>🔄</span>
+        </button>
+      </div>
+      {!view || view.count === 0 && (
+        <div className="py-3 text-center text-[10px] text-slate-500">{loading ? 'Strategies build ho rahe hain…' : (view?.note || 'koi credit setup nahi bana')}</div>
+      )}
+      {view && view.count > 0 && (
+        <div className="space-y-1.5">
+          {(view.top || []).map((r, i) => (
+            <div key={`${r.symbol}-${r.id}`} className={`bg-black/25 rounded-xl px-3 py-2 flex items-center gap-2 flex-wrap ${i === 0 ? 'border-l-2 border-l-cyan-500/60' : ''}`}>
+              <span className="text-[9px] font-black text-slate-600 w-4">{i + 1}</span>
+              <span className="text-[10px] font-black text-white">{r.symbol}</span>
+              <span className="text-[9px] text-slate-400">{r.name}</span>
+              <span className="px-1.5 py-0.5 rounded text-[8px] font-black bg-cyan-500/15 text-cyan-300">score {r.score ?? '—'}</span>
+              <span className="px-1.5 py-0.5 rounded text-[8px] font-black bg-emerald-500/10 text-emerald-300">POP {r.pop ?? '—'}%</span>
+              <span className="text-[9px] font-mono text-slate-500">credit ₹{r.credit}</span>
+              {r.riskReward != null && <span className="text-[9px] font-mono text-slate-600">c/l {r.riskReward}</span>}
+              <span className={`ml-auto text-[8px] font-black ${r.source === 'bs-model' ? 'text-amber-400/70' : 'text-slate-600'}`}>{r.source === 'bs-model' ? 'model' : 'live'}</span>
+            </div>
+          ))}
+          <div className="text-[8px] text-slate-600 leading-relaxed">{view.methodology} · {view.note}</div>
+        </div>
+      )}
     </div>
   );
 }

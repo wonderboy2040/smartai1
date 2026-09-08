@@ -25,7 +25,7 @@ import { ModelRegistry } from '../aitrading/ModelRegistry';
 import { BacktestPanel } from '../aitrading/BacktestPanel';
 import { AlertsPanel } from '../aitrading/AlertsPanel';
 import { AgentPanel } from '../aitrading/AgentPanel';
-import { MorningBriefPanel, SwingDeskPanel, WhaleRadarPanel, SignalLedgerPanel, OrderbookPanel } from '../aitrading/ProPanels';
+import { MorningBriefPanel, SwingDeskPanel, WhaleRadarPanel, SignalLedgerPanel, OrderbookPanel, TrustLayerPanel, PerfAnalyticsPanel, CorrelationPanel } from '../aitrading/ProPanels';
 import {
   SectionLabel, RegimeChips, BreadthStrip, FilterChips, RefreshCountdown, BoardSummary, DeskStatsStrip,
   filterSignals, countSignals, type BoardFilter,
@@ -108,7 +108,7 @@ export default memo(function CoinDcxTab() {
   const [desk, setDesk] = useState<'CRYPTO' | 'FUTURES'>('CRYPTO');
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [filter, setFilter] = useState<BoardFilter>('ALL');
-  const [deep, setDeep] = useState<{ loading: boolean; signal?: AISignal; indicators?: Record<string, unknown>; error?: string } | null>(null);
+  const [deep, setDeep] = useState<{ loading: boolean; signal?: AISignal; indicators?: Record<string, unknown>; narrative?: import('../aitrading/types').NarrativeView | null; error?: string } | null>(null);
 
   const board: SignalBoard | null = desk === 'FUTURES' ? futures : crypto;
   const models = board?.models || crypto?.models || futures?.models || [];
@@ -130,7 +130,7 @@ export default memo(function CoinDcxTab() {
     setTimeout(() => setToast(null), 6000);
   }, []);
 
-  const onExecute = useCallback(async (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; leverage?: number }) => {
+  const onExecute = useCallback(async (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; leverage?: number }) => {
     const r = await executeSignal(signal, mode, opts);
     if (r.ok) {
       const levTag = r.filled?.leverage ? ` · ${r.filled.leverage}x margin (₹${Math.round(r.filled.marginINR ?? 0)})` : '';
@@ -143,7 +143,7 @@ export default memo(function CoinDcxTab() {
   }, [executeSignal, notify]);
 
   // v6.8: GLOBAL FUTURES gauntlet (USDT perpetuals) — same handler shape.
-  const onExecuteFutures = useCallback(async (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => {
+  const onExecuteFutures = useCallback(async (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => {
     const r = await executeFutures(signal, mode, opts);
     if (r.ok) {
       const levTag = r.filled?.leverage ? ` · ${r.filled.leverage}x · margin ${Math.round((r.filled as { marginUSDT?: number }).marginUSDT ?? 0)} USDT` : '';
@@ -172,7 +172,7 @@ export default memo(function CoinDcxTab() {
   const onDeep = useCallback(async (signal: AISignal) => {
     setDeep({ loading: true });
     const r = await fetchDeep(signal.symbol, signal.market);
-    if (r.ok && r.signal) setDeep({ loading: false, signal: r.signal, indicators: r.indicators });
+    if (r.ok && r.signal) setDeep({ loading: false, signal: r.signal, indicators: r.indicators, narrative: r.narrative });
     else setDeep({ loading: false, error: r.error || 'deep analysis unavailable' });
   }, [fetchDeep]);
 
@@ -325,6 +325,14 @@ export default memo(function CoinDcxTab() {
         </div>
       </div>
 
+      {/* ============ 02c · CROSS-ASSET CORRELATIONS (v6.11) ============ */}
+      <div id="cx-corr">
+        <SectionLabel num="02c" title="Cross-Asset Correlations" sub="60d returns — NIFTY + sectors + GOLD/CRUDE/DXY/USVIX + BTC/ETH · BTC↔NIFTY risk link · hidden concentration visible" />
+        <div className="mt-2.5">
+          <CorrelationPanel />
+        </div>
+      </div>
+
       {/* ============ 03 · EXECUTION CONSOLE (CoinDCX venue) ============ */}
       <div id="cx-execute">
         <SectionLabel num="03" title="Execution Console" sub="CoinDCX spot + futures positions · leverage · native TP/SL · trailing · risk-gated · audited" />
@@ -369,6 +377,15 @@ export default memo(function CoinDcxTab() {
         </div>
       </div>
 
+      {/* ============ 07b · TRUST LAYER + PERFORMANCE (v6.11) ============ */}
+      <div id="cx-trust">
+        <SectionLabel num="07b" title="Trust Layer + Performance Lab" sub="engine ki confidence kitni sahi hai — calibration · Brier · monthly trend · model p-values · MDD/Sharpe/Sortino" />
+        <div className="mt-2.5 grid gap-3 lg:grid-cols-2">
+          <TrustLayerPanel />
+          <PerfAnalyticsPanel />
+        </div>
+      </div>
+
       {/* ============ DEEP ANALYSIS MODAL ============ */}
       {deep && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Deep analysis"
@@ -392,6 +409,17 @@ export default memo(function CoinDcxTab() {
                 <SignalCard signal={deep.signal} onExecute={onExecute} onExecuteFutures={onExecuteFutures} canLive={canLive} busy={busy}
                   orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5}
                   maxLeverage={state?.config?.cryptoLeverage ?? 1} />
+                {deep.narrative && (
+                  <div className="mt-3 bg-cyan-500/[0.05] border border-cyan-500/15 rounded-xl p-3" aria-label="regime narrative">
+                    <div className="text-[10px] font-black text-cyan-300 tracking-wider mb-1.5">📖 EXPLAIN TICKER — {deep.narrative.title}</div>
+                    <ul className="space-y-1">
+                      {(deep.narrative.story || []).slice(0, 6).map((s, i) => (
+                        <li key={i} className="text-[10px] text-slate-300 leading-relaxed">• {s}</li>
+                      ))}
+                    </ul>
+                    <div className="text-[10px] text-amber-300/90 mt-1.5 font-bold">⚠️ {deep.narrative.watch}</div>
+                  </div>
+                )}
                 {deep.indicators && (
                   <div className="mt-3 bg-black/25 rounded-xl p-3">
                     <div className="text-[10px] font-black text-slate-500 tracking-wider mb-2">LIVE INDICATOR SNAPSHOT</div>

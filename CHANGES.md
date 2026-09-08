@@ -1,3 +1,57 @@
+## v6.11.0 — GLAMA TIER-2/3 FEATURES × 12 (2026-09-08)
+
+> 12 remaining features from the glama.ai MCP analysis (Task 39 ke Tier-2/3 backlog — jo v6.7 me implement NAHI hue the) ab live hain. PIN **1992** (user's new pin — 2023 ab reject hota hai).
+
+### 1. 🎯 Trust Layer v2 (oneqaz Trust Layer) — `server/ai/trust.js`
+- **Calibration**: confidence buckets (40-55…85%+) vs realized win-rate — "engine bola 70% tha, hua kitna?" ka seedha jawab, gap ke saath.
+- **Brier score** (0 perfect · 0.25 coin) + verdict string. **Monthly accuracy trend** (6 months, win-rate bars + drift pp) — accuracy gir rahi ho toh size kam karne ka trigger.
+- **Governance (p-values)**: per-model one-sided binomial test vs desk base-rate → SIGNIFICANT / BORDERLINE / NOISE / NEEDS DATA verdicts (n<10 honest refusal).
+
+### 2. 📈 Performance Lab (oneqaz portfolio analytics) — `server/ai/perf.js`
+- Ledger ke settled R-multiples par: **expectancy · totalR · MDD (R-units) · Sharpe (per-trade) · Sortino · Calmar · streaks · profit factor** + cumulative-R equity sparkline + byMarket/byMode splits. Annualization honestly skipped (frequency-dependent).
+
+### 3. 🔗 Cross-Asset Correlations (oneqaz + staskh price_correlation) — `server/ai/correlation.js`
+- 60d daily-return Pearson matrix: NIFTY · BANKNIFTY · 6 NSE sectors · GOLD · CRUDE · DXY · USVIX · BTC · ETH (Yahoo daily closes via new `fetchYahooDailyCloses`).
+- **BTC↔NIFTY risk link** read (diversifier ya ek-hi-bet), most +/− pairs, host-blocked tickers honest-skipped (0 se fill NAHI).
+
+### 4. 🗺️ Sector Map + Context Chain (mukul8896 sector sentiment + oneqaz macro chain) — `server/ai/sectors.js`
+- 45-stock universe → 10 sectors: breadth (% above EMA20), avg momentum, mood label, leader/laggard, Yahoo sector-index overlay.
+- **Macro→Sector→Symbol chain**: NIFTY bias + VIX regime + DXY/CRUDE/GOLD → strongest sectors → top aligned symbols (F-Score sorted).
+
+### 5. F-SCORE (staskh piotroski_score) — trend-quality edition
+- 9 price-action checks (EMA stack · RSI health · MACD · ADX · VWAP · relVol · 52w position …), 0-9 score, A/B/C grades, top/bottom board + A/B/C distribution. **Honest label: Piotroski-STYLE proxy** — balance-sheet data is host se unreachable.
+
+### 6-7. 📐 IV SKEW + 🌊 OPTIONS FLOW (tv-mcp) — `optionsDesk.js`
+- OTM put−call IV skew (2-6% strikes) + fear/complacency read; call/put volume ratio + OI-change lean. Real chains only — bs-model honest-null.
+
+### 8. 💰 Income Setup Ranker (tv-mcp rank_income_setups) — `rankIncomeSetups()`
+- Teeno indices (NIFTY/BANKNIFTY/FINNIFTY) ke credit setups (Iron Condor / Iron Fly / Winged Strangle) ranked by **score = POP × credit%-of-spot**, live/model source-tagged.
+
+### 9. 📖 EXPLAIN TICKER (tv-mcp explain_ticker) — `server/ai/narrative.js`
+- Deep-scan me rule-based Hinglish regime story: trend → momentum → volatility → structure → flow, + "kya dekhna hai" invalidation line. Dono desks ke deep modal me.
+
+### 10. 🎯 NEXT-ACTIONS + followup hooks (oneqaz conversational) — `/api/ai/next-actions` + brief
+- Desk-state se derive kiye suggestions (NSE open/closed · open book · STRONG signals · caps · telegram setup) + followup question chips. Morning Brief me bhi nextActions block.
+
+### 11. 🔔 NOTIFY EXECUTION MODE (mukul8896 3-mode execution) — teeno gauntlets
+- **paper | notify | live** — notify poora gauntlet chalata hai (kill switch → fresh signal → risk gates) par output sirf **Telegram alert + journal NOTIFIED audit** hai: koi order nahi, koi position nahi, **daily quota bhi nahi jalta** (NOTIFIED entries tradesCount me exclude). Signal-card ticket me 🔔 NOTIFY button + AgentPanel me 🔔 START NOTIFY mode.
+
+### 🖥️ UI (v6.11 sections)
+- India desk: **01c Sector Map + Context Chain** · **07b Trust Layer + Performance Lab** (lg:grid-cols-2). CoinDCX desk: **02c Cross-Asset Correlations** · **07b Trust + Perf**. Options Desk me SKEW/FLOW metrics + reads + IncomeRanker panel. MorningBrief me NEXT ACTIONS block.
+
+### 🐛 Fixed during verify
+- `pct()` double-scaling in sectors.js (TV `change` already percent tha — 279% "changes" fixed to 2.79%).
+- `telegramConfig()` null-return crash in next-actions route.
+- Income ranker: `attachPnlProfile` deletes `_popKind` — filter now by id set; empty-desks note false-positive fixed.
+- `price` TDZ bug in notify branches (crypto+india+futures — defined inside the branch).
+- dailyStats + agentTradesToday: NOTIFIED entries excluded (alert ≠ trade).
+
+### Verification (all green)
+- **606/606 vitest** (+22 naye v611-core: trust calibration/Brier/monthly/governance, perf math, pearson, F-Score bounds, SECTOR_MAP coverage, narrative, skew/flow, notify gauntlet ×3) · tsc 0 · build clean.
+- **NEW v611-verify 37/37**: boot · PIN 1992 login + 2023 rejected · v6.11 stamp · 6 naye endpoints · honest-insufficient trust/perf · 12-asset matrix + riskLink · 10 sectors sane + F-Score disclaimer · income ranker · next-actions · brief nextActions · deep narrative · notify gauntlet (journal NOTIFIED + 0 positions + quota 0) · paper regression (quota 1) · anonymous 401.
+- **NEW v611-e2e 17/17** (browser, PIN 1992): 01c sector map + F-Score + macro chips · income ranker · 07b trust dono desks · NEXT ACTIONS · 02c correlations + matrix + risk-link · START NOTIFY + ticket NOTIFY button · zero JS errors.
+- All regressions green: v610-e2e 20/20 · v69-verify 20/20 · v69-e2e 29/29 · v67-verify 24/24 · v67-e2e 14/14 · v66-verify ALL · v66-e2e 21 · v65 both ALL · v64-verify ALL · v63-e2e ALL · v60-e2e 30/30 · v60-paper-flow 3/3 · v61 both ALL.
+
 
 ## v6.10.0 — THREE-TAB UX UPGRADE (India Intraday · CoinDCX · Portfolio) + ISSUE FIXES (2026-09-08)
 

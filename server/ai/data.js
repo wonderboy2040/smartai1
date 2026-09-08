@@ -268,6 +268,26 @@ export async function fetchYahooQuotes(keys) {
   return out;
 }
 
+/**
+ * v6.11 (glama cross-asset correlations): daily CLOSES for any
+ * Yahoo symbol (^NSEI, BTC-USD, RELIANCE.NS …). Oldest-first,
+ * nulls dropped, empty array on failure (caller degrades honestly).
+ */
+export async function fetchYahooDailyCloses(yahooSymbol, range = '3mo') {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=${range}`;
+    const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(9000) });
+    if (!r.ok) return [];
+    const j = await r.json();
+    const closes = j?.chart?.result?.[0]?.indicators?.quote?.[0]?.close;
+    if (!Array.isArray(closes)) return [];
+    return closes.map(Number).filter(v => Number.isFinite(v) && v > 0);
+  } catch { return []; }
+}
+
+/** v6.11: asset-key → Yahoo symbol (for correlation + sector desks). */
+export const YF_SYMBOL = (k) => YF_MAP[k] || null;
+
 // ---------------- NSE option chain (real, with cookie bootstrap) ----------------
 const NSE_HEADERS = {
   'User-Agent': UA,

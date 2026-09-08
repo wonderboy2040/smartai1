@@ -41,7 +41,7 @@ const nowMin = () => Date.now() / 60000;
 // ---------------- config (durable) ----------------
 export const AGENT_DEFAULTS = {
   enabled: false,             // agent ON/OFF
-  mode: 'paper',              // 'paper' | 'live' — execution mode
+  mode: 'paper',              // 'paper' | 'notify' | 'live' — execution mode
   desks: { futures: true, spot: false, india: true },
   maxTradesPerDay: 3,         // USER SPEC: daily ke 3 trades
   minConfidence: 80,          // agent STRONG bar (stricter than manual 75)
@@ -93,7 +93,7 @@ export function updateAgentConfig(patch = {}) {
       if (patch.desks[k] != null) next.desks[k] = !!patch.desks[k];
     }
   }
-  if (patch.mode === 'paper') next.mode = 'paper';
+  if (patch.mode === 'paper' || patch.mode === 'notify') next.mode = patch.mode;
   return saveAgentConfig(next);
 }
 
@@ -128,7 +128,8 @@ function log(level, text) {
 /** Agent trades today = journal ORDER entries with source 'agent' (non-rejected). */
 function agentTradesToday(j) {
   const day = todayIST();
-  return (j?.entries || []).filter(e => e.day === day && e.kind === 'ORDER' && e.source === 'agent' && e.status !== 'REJECTED');
+  // v6.11: NOTIFIED = alert-only — the 3-per-day TRADE quota counts real entries.
+  return (j?.entries || []).filter(e => e.day === day && e.kind === 'ORDER' && e.source === 'agent' && e.status !== 'REJECTED' && e.status !== 'NOTIFIED');
 }
 /** Realized P&L (INR) of agent-sourced closes today. */
 function agentRealizedToday(j) {
@@ -145,7 +146,8 @@ function openAgentPositions(j) {
 export async function agentStart({ mode, liveConfirmPhrase } = {}) {
   const cfg = loadAgentConfig();
   const trading = loadConfig();
-  const wantMode = mode === 'live' ? 'live' : mode === 'paper' ? 'paper' : cfg.mode;
+  // v6.11: notify = alert-only agent (telegram pings, no orders)
+  const wantMode = mode === 'live' ? 'live' : mode === 'paper' ? 'paper' : mode === 'notify' ? 'notify' : cfg.mode;
   if (wantMode === 'live') {
     if (String(liveConfirmPhrase || '').trim().toUpperCase() !== 'LIVE') {
       const e = new Error('Starting the agent in LIVE requires liveConfirmPhrase="LIVE" (typed confirmation)');
@@ -328,11 +330,12 @@ async function _tick(deps, sendTelegram) {
     const { getFreshFuturesSignalForExec } = await import('./signals.js');
     out = await executeFuturesSignal({
       symbol: best.symbol, side: best.side,
-      mode: cfg.mode === 'live' ? 'live' : 'paper',
+      mode: cfg.mode === 'live' ? 'live' : cfg.mode === 'notify' ? 'notify' : 'paper',
       marginUSDT, leverage: lev,
       getFreshSignal: (pair) => getFreshFuturesSignalForExec(pair, deps),
       wantAuto: cfg.mode === 'live',
       source: 'agent',
+      sendTelegram,
     });
   } else {
     // spot (INR)
@@ -345,11 +348,12 @@ async function _tick(deps, sendTelegram) {
     const { getFreshSignalForExec } = await import('./signals.js');
     out = await executeSignal({
       symbol: best.symbol, side: best.side,
-      mode: cfg.mode === 'live' ? 'live' : 'paper',
+      mode: cfg.mode === 'live' ? 'live' : cfg.mode === 'notify' ? 'notify' : 'paper',
       qtyINR: budgetINR, leverage: 1,
       getFreshSignal: (pair) => getFreshSignalForExec(pair, deps),
       wantAuto: cfg.mode === 'live',
       source: 'agent',
+      sendTelegram,
     });
   }
 
@@ -357,13 +361,17 @@ async function _tick(deps, sendTelegram) {
     _state.lastEntryAt = Date.now();
     _state.lastEntryPair = pairOfSignal(best);
     const f = out.filled || {};
-    log('entry', `AUTO-ENTRY ${wantFutures ? 'FUTURES' : 'SPOT'} ${best.symbol} ${best.side} (${best.confidence}% conf) — ${f.qty ?? '?'} @ ${f.price ?? best.plan.entry}${wantFutures ? ` · ${f.leverage ?? '?'}x · margin ${f.marginUSDT ?? '?'} USDT` : ''} · SL ${best.plan.stopLoss} · T2 ${best.plan.target2}`);
-    await notify(sendTelegram,
-      `🤖 <b>AGENT AUTO-ENTRY</b> — ${wantFutures ? '⚡ Global Futures' : '₿ Spot'} ${best.symbol} ${best.side}\n` +
-      `Confidence ${best.confidence}% · agreement ${Math.round((best.agreement || 0) * 100)}% · trade ${tradesToday.length + 1}/${cfg.maxTradesPerDay} today\n` +
-      `${f.qty ?? '?'} @ ${f.price ?? best.plan.entry}${wantFutures ? ` · ${f.leverage ?? 1}x · margin ${Math.round(f.marginUSDT ?? 0)} USDT` : ''}\n` +
-      `SL ${best.plan.stopLoss} · T2 ${best.plan.target2} · time-exit ${cfg.maxHoldMin}m`,
-    );
+    if (out.mode === 'notify') {
+      log('entry', `NOTIFY ${wantFutures ? 'FUTURES' : 'SPOT'} ${best.symbol} ${best.side} (${best.confidence}% conf) — alert-only, koi order nahi${out.telegramSent ? '' : ' (telegram off)'}`);
+    } else {
+      log('entry', `AUTO-ENTRY ${wantFutures ? 'FUTURES' : 'SPOT'} ${best.symbol} ${best.side} (${best.confidence}% conf) — ${f.qty ?? '?'} @ ${f.price ?? best.plan.entry}${wantFutures ? ` · ${f.leverage ?? '?'}x · margin ${f.marginUSDT ?? '?'} USDT` : ''} · SL ${best.plan.stopLoss} · T2 ${best.plan.target2}`);
+      await notify(sendTelegram,
+        `🤖 <b>AGENT AUTO-ENTRY</b> — ${wantFutures ? '⚡ Global Futures' : '₿ Spot'} ${best.symbol} ${best.side}\n` +
+        `Confidence ${best.confidence}% · agreement ${Math.round((best.agreement || 0) * 100)}% · trade ${tradesToday.length + 1}/${cfg.maxTradesPerDay} today\n` +
+        `${f.qty ?? '?'} @ ${f.price ?? best.plan.entry}${wantFutures ? ` · ${f.leverage ?? 1}x · margin ${Math.round(f.marginUSDT ?? 0)} USDT` : ''}\n` +
+        `SL ${best.plan.stopLoss} · T2 ${best.plan.target2} · time-exit ${cfg.maxHoldMin}m`,
+      );
+    }
   } else {
     log('skip', `entry rejected — ${best.symbol} ${best.side}: ${String(out?.error || '').slice(0, 120)}`);
   }

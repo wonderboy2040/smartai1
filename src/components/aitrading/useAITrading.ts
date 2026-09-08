@@ -8,12 +8,14 @@
 // ============================================================
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, getProxyBase } from '../../utils/api';
-import type { AISignal, OptionsDesk, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, AlertsStatus, DhanStatus, SwingBoard, WhaleRadar, LedgerView, MorningBrief, OrderbookView, AgentView, WalletView, FuturesMarketsView, MarketKind } from './types';
+import type { AISignal, OptionsDesk, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, AlertsStatus, DhanStatus, SwingBoard, WhaleRadar, LedgerView, MorningBrief, OrderbookView, AgentView, WalletView, FuturesMarketsView, MarketKind, TrustView, PerfView, CorrView, SectorView, IncomeView, NextActionsView, NarrativeView } from './types';
 
 export interface DeepSignalResult {
   ok: boolean;
   signal?: AISignal;
   indicators?: Record<string, unknown>;
+  /** v6.11: rule-based regime story (glama explain_ticker). */
+  narrative?: NarrativeView | null;
   priceSource?: string | null;
   error?: string;
 }
@@ -97,7 +99,7 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
     return () => { clearInterval(b); clearInterval(s); clearInterval(p); };
   }, [active, loadBoards, loadState, loadPositions]);
 
-  const executeSignal = useCallback(async (signal: AISignal, mode: 'paper' | 'live', opts?: ExecuteOpts): Promise<ExecuteResult> => {
+  const executeSignal = useCallback(async (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: ExecuteOpts): Promise<ExecuteResult> => {
     setBusy(true);
     try {
       const r = await apiFetch(`${getProxyBase()}/api/ai/execute`, {
@@ -170,7 +172,7 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
 
   // v6.5: India gauntlet execution (Dhan paper/live) — same flow shape
   // as the crypto execute so the cards can share one handler.
-  const executeIndia = useCallback(async (signal: AISignal, mode: 'paper' | 'live', opts?: ExecuteOpts): Promise<ExecuteResult> => {
+  const executeIndia = useCallback(async (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: ExecuteOpts): Promise<ExecuteResult> => {
     setBusy(true);
     try {
       const r = await apiFetch(`${getProxyBase()}/api/ai/india/execute`, {
@@ -233,7 +235,7 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
   }, []);
 
   // v6.8: GLOBAL FUTURES gauntlet execution (CoinDCX USDT perps).
-  const executeFutures = useCallback(async (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }): Promise<ExecuteResult> => {
+  const executeFutures = useCallback(async (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }): Promise<ExecuteResult> => {
     setBusy(true);
     try {
       const r = await apiFetch(`${getProxyBase()}/api/ai/futures/execute`, {
@@ -367,7 +369,7 @@ export async function fetchAgentStatus(): Promise<AgentView | null> {
   } catch { return null; }
 }
 
-export async function startAgent(mode: 'paper' | 'live', liveConfirmPhrase?: string): Promise<{ ok: boolean; error?: string }> {
+export async function startAgent(mode: 'paper' | 'live' | 'notify', liveConfirmPhrase?: string): Promise<{ ok: boolean; error?: string }> {
   try {
     const r = await apiFetch(`${getProxyBase()}/api/ai/agent/start`, {
       method: 'POST',
@@ -416,5 +418,54 @@ export async function fetchFuturesMarkets(): Promise<FuturesMarketsView | null> 
   try {
     const r = await apiFetch(`${getProxyBase()}/api/ai/futures/markets?t=${Date.now()}`, { signal: AbortSignal.timeout(15000) });
     return await r.json().catch(() => null);
+  } catch { return null; }
+}
+
+// ---------------- v6.11: glama Tier-2/3 fetchers ----------------
+export async function fetchTrust(): Promise<TrustView | null> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/trust?t=${Date.now()}`, { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+export async function fetchPerf(): Promise<PerfView | null> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/perf?t=${Date.now()}`, { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+export async function fetchCorrelations(): Promise<CorrView | null> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/correlations?t=${Date.now()}`, { signal: AbortSignal.timeout(30000) });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+export async function fetchSectors(): Promise<SectorView | null> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/sectors?t=${Date.now()}`, { signal: AbortSignal.timeout(30000) });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+export async function fetchIncomeSetups(): Promise<IncomeView | null> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/income?t=${Date.now()}`, { signal: AbortSignal.timeout(30000) });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+export async function fetchNextActions(): Promise<NextActionsView | null> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/next-actions?t=${Date.now()}`, { signal: AbortSignal.timeout(30000) });
+    if (!r.ok) return null;
+    return await r.json();
   } catch { return null; }
 }

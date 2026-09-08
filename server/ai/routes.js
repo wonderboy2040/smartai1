@@ -48,6 +48,11 @@ import { runBacktest } from './backtest.js';
 import { getSwingBoard, scanWhales, getOrderbook } from './swing.js';
 import { ledgerStatus, recentEntries, verifyLedger } from './ledger.js';
 import { adaptiveStatus } from './adaptive.js';
+import { trustReport, governance } from './trust.js';
+import { perfReport } from './perf.js';
+import { correlationMatrix } from './correlation.js';
+import { sectorDesk } from './sectors.js';
+import { rankIncomeSetups } from './optionsDesk.js';
 import {
   secretsStatus, setSecret, getSecrets, telegramConfig, sendTelegramMessage,
 } from './secrets.js';
@@ -98,7 +103,7 @@ export function registerAITradingRoutes(app, deps) {
       ]);
       res.json({
         ok: true,
-        engine: 'SUPERINTELLIGENCE ENSEMBLE v6.10',
+        engine: 'SUPERINTELLIGENCE ENSEMBLE v6.11',
         models: board?.models || cryptoBoard?.models || [],
         aiCouncilOnline: (board?.models || []).some(m => m.id === 'aicouncil' && m.online),
         risk,
@@ -198,7 +203,8 @@ export function registerAITradingRoutes(app, deps) {
       const result = await executeSignal({
         symbol: String(symbol).toUpperCase(),
         side: side ? String(side).toUpperCase() : undefined,
-        mode: mode === 'live' ? 'live' : 'paper',
+        // v6.11: notify = alert-only gauntlet (telegram + journal audit)
+        mode: mode === 'live' ? 'live' : mode === 'notify' ? 'notify' : 'paper',
         qtyINR: qtyINR != null ? Number(qtyINR) : undefined,
         // v6.6: leverage is CLAMPED server-side to config.cryptoLeverage —
         // a client payload can never widen the ceiling
@@ -206,6 +212,7 @@ export function registerAITradingRoutes(app, deps) {
         getFreshSignal: (pair) => getFreshSignalForExec(pair, depsForSignals()),
         wantAuto: false,
         source: 'manual',
+        sendTelegram, // v6.11: notify-mode alert sender
       });
       return res.status(result.ok ? 200 : 400).json(result);
     } catch (e) {
@@ -221,13 +228,14 @@ export function registerAITradingRoutes(app, deps) {
       const result = await executeFuturesSignal({
         symbol: String(symbol).toUpperCase().replace(/^B-/, '').replace(/_USDT$/, ''),
         side: side ? String(side).toUpperCase() : undefined,
-        mode: mode === 'live' ? 'live' : 'paper',
+        mode: mode === 'live' ? 'live' : mode === 'notify' ? 'notify' : 'paper',
         qtyINR: qtyINR != null ? Number(qtyINR) : undefined,
         marginUSDT: marginUSDT != null ? Number(marginUSDT) : undefined,
         leverage: leverage != null ? Number(leverage) : undefined,
         getFreshSignal: (pair) => getFreshFuturesSignalForExec(pair, depsForSignals()),
         wantAuto: false,
         source: 'manual',
+        sendTelegram, // v6.11: notify-mode alert sender
       });
       return res.status(result.ok ? 200 : 400).json(result);
     } catch (e) {
@@ -299,13 +307,14 @@ export function registerAITradingRoutes(app, deps) {
       const result = await executeIndiaSignal({
         symbol: String(symbol).toUpperCase(),
         side: side ? String(side).toUpperCase() : undefined,
-        mode: mode === 'live' ? 'live' : 'paper',
+        mode: mode === 'live' ? 'live' : mode === 'notify' ? 'notify' : 'paper',
         qtyINR: qtyINR != null ? Number(qtyINR) : undefined,
         getFreshIndiaSignal: async (sym) => {
           const deep = await getDeepSignal(sym, 'INDIA', depsForSignals()).catch(() => null);
           return deep?.ok ? deep.signal : null;
         },
         source: 'manual',
+        sendTelegram, // v6.11: notify-mode alert sender
       });
       return res.status(result.ok ? 200 : 400).json(result);
     } catch (e) {
@@ -435,10 +444,22 @@ export function registerAITradingRoutes(app, deps) {
         .map(s => ({ symbol: s.symbol, side: s.side, grade: s.grade, confidence: s.confidence, ltp: s.ltp,
           plan: s.plan ? { entry: s.plan.entry, stopLoss: s.plan.stopLoss, target2: s.plan.target2 } : null }));
       const openPositions = (positions?.positions || []).filter(p => p.status === 'OPEN' || p.status === 'UNKNOWN');
+      // v6.11 (glama oneqaz next-actions): morning brief ke saath "ab kya
+      // karein" — brief ke hi data se derive, no extra board fetch.
+      const briefActions = [];
+      if (risk?.config?.killSwitch) briefActions.push({ id: 'kill', label: 'Kill switch ON — trading band hai.', kind: 'warning' });
+      briefActions.push(isNseOpen()
+        ? { id: 'nse-open', label: 'NSE OPEN — intraday window live hai.', kind: 'info' }
+        : { id: 'nse-closed', label: 'NSE CLOSED — swing/crypto desk dekho ya 09:15 wapas aao.', kind: 'info' });
+      if (openPositions.length > 0) briefActions.push({ id: 'book', label: `${openPositions.length} open — console me SL/trailing check karo.`, kind: 'book' });
+      const si = top(indiaBoard)[0], sc = top(cryptoBoard)[0];
+      if (si) briefActions.push({ id: 'india-top', label: `🇮🇳 top: ${si.symbol} ${si.side} ${si.confidence}%`, kind: 'signal', market: 'INDIA', symbol: si.symbol });
+      if (sc) briefActions.push({ id: 'crypto-top', label: `₿ top: ${sc.symbol} ${sc.side} ${sc.confidence}%`, kind: 'signal', market: 'CRYPTO', symbol: sc.symbol });
       res.json({
         ok: true,
         asOf: new Date().toISOString(),
         nseOpen: isNseOpen(),
+        nextActions: briefActions,
         market: {
           nifty: quotes['NIFTY']?.price ?? null,
           niftyChangePct: quotes['NIFTY']?.changePct ?? null,
@@ -465,6 +486,96 @@ export function registerAITradingRoutes(app, deps) {
       });
     } catch (e) {
       jsonError(res, 500, 'brief failed', e);
+    }
+  });
+
+  // ---------------- v6.11: trust layer (calibration + governance) ----------------
+  app.get('/api/ai/trust', (_req, res) => {
+    try {
+      res.json({ ok: true, calibration: trustReport(), governance: governance() });
+    } catch (e) {
+      jsonError(res, 500, 'trust report failed', e);
+    }
+  });
+
+  // ---------------- v6.11: portfolio performance analytics ----------------
+  app.get('/api/ai/perf', (_req, res) => {
+    try { res.json(perfReport()); } catch (e) { jsonError(res, 500, 'perf report failed', e); }
+  });
+
+  // ---------------- v6.11: cross-asset correlation matrix ----------------
+  app.get('/api/ai/correlations', async (_req, res) => {
+    try { res.json(await correlationMatrix()); } catch (e) { jsonError(res, 500, 'correlations failed', e); }
+  });
+
+  // ---------------- v6.11: sector map + context chain + F-Score ----------------
+  app.get('/api/ai/sectors', async (_req, res) => {
+    try { res.json(await sectorDesk()); } catch (e) { jsonError(res, 500, 'sector desk failed', e); }
+  });
+
+  // ---------------- v6.11: income setup ranker (NSE indices) ----------------
+  app.get('/api/ai/income', async (_req, res) => {
+    try { res.json(await rankIncomeSetups()); } catch (e) { jsonError(res, 500, 'income ranker failed', e); }
+  });
+
+  // ---------------- v6.11: next-actions + followup hooks ----------------
+  // Context-aware "ab kya karna chahiye" — the oneqaz conversational
+  // layer: suggested actions + followup questions the UI shows as chips.
+  app.get('/api/ai/next-actions', async (_req, res) => {
+    try {
+      const [indiaBoard, cryptoBoard, positions, risk] = await Promise.all([
+        getSignals('INDIA', depsForSignals(), { limit: 5 }).catch(() => null),
+        getSignals('CRYPTO', depsForSignals(), { limit: 5 }).catch(() => null),
+        getPositionsWithPnl().catch(() => ({ positions: [] })),
+        Promise.resolve(getRiskState()),
+      ]);
+      const actions = [];
+      const followups = [];
+
+      if (risk?.config?.killSwitch) {
+        actions.push({ id: 'kill', label: '⚠️ Kill switch ON hai — trading band. Wapas karna ho to Risk settings me toggle karo.', kind: 'warning' });
+      }
+      const open = (positions?.positions || []).filter(p => p.status === 'OPEN' || p.status === 'UNKNOWN');
+      const nseOpenNow = isNseOpen();
+      actions.push(nseOpenNow
+        ? { id: 'nse-open', label: 'NSE OPEN hai (09:15–15:30) — India intraday window live, Top-5 picks refresh ho rahe hain.', kind: 'info' }
+        : { id: 'nse-closed', label: 'NSE CLOSED — India entries LIVE-blocked hain; swing setups + crypto desk dekho, ya subah 09:15 wapas aao.', kind: 'info' });
+      if (open.length > 0) {
+        const losing = open.filter(p => (p.uPnlINR ?? p.pnlINR ?? 0) < 0).length;
+        actions.push({ id: 'book', label: `${open.length} open position${open.length > 1 ? 's' : ''} (${losing} red) — Execution Console me trailing/SL state check karo.`, kind: 'book' });
+        followups.push(`${open[0]?.symbol} ka abhi SL/T2 kahan hai?`);
+      }
+      const strong = (b) => (b?.signals || []).find(s => s.grade === 'STRONG');
+      const si = strong(indiaBoard), sc = strong(cryptoBoard);
+      if (si) actions.push({ id: 'india-strong', label: `🇮🇳 STRONG: ${si.symbol} ${si.side} ${si.confidence}% — deep scan chala ke plan dekho.`, kind: 'signal', market: 'INDIA', symbol: si.symbol });
+      if (sc) actions.push({ id: 'crypto-strong', label: `₿ STRONG: ${sc.symbol} ${sc.side} ${sc.confidence}% — deep scan + orderbook ek saath dekho.`, kind: 'signal', market: 'CRYPTO', symbol: sc.symbol });
+      if (si || sc) followups.push((si || sc).symbol + ' par kya invalidate hoga?');
+
+      const led = ledgerStatus();
+      if (led?.open > 0) actions.push({ id: 'ledger-open', label: `Ledger me ${led.open} entries abhi settle nahi hue — positions close hone par outcome hash-chain me lock hoga.`, kind: 'ledger' });
+      const tgCfg = telegramConfig(TG || {});
+      if (!tgCfg) {
+        actions.push({ id: 'tg-setup', label: 'Telegram configured nahi — Alerts & AI Keys me bot-token/chat-id daalo, STRONG signals + fills wahan pingen.', kind: 'setup' });
+      }
+      if (risk?.blocked && Object.values(risk.blocked || {}).some(Boolean)) {
+        actions.push({ id: 'caps', label: 'Koi risk-cap breached hai aaj — guards panel dekho, naya entry block ho sakta hai.', kind: 'warning' });
+      }
+      followups.push(
+        'Sector rotation me kaunsa sector strongest hai?',
+        'NIFTY ka GEX / gamma-flip level kya hai?',
+        'BTC aur NIFTY ka correlation abhi kya hai?',
+        'Engine ki calibration kitni sahi hai?',
+      );
+      res.json({
+        ok: true,
+        asOf: Date.now(),
+        nseOpen: nseOpenNow,
+        actions,
+        followups: followups.slice(0, 6),
+        note: 'Next-actions = desk state se derive kiye gaye suggestions. Followup chips = existing panels ka shortcut. Read-only.',
+      });
+    } catch (e) {
+      jsonError(res, 500, 'next-actions failed', e);
     }
   });
 

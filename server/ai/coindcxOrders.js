@@ -174,11 +174,16 @@ function todayIST() {
 
 function dailyStats(j) {
   const day = todayIST();
-  const trades = j.entries.filter(e => e.day === day && e.kind === 'ORDER' && e.status !== 'REJECTED');
+  // v6.11: NOTIFIED (alert-only) entries are NOT trades — they must not
+  // consume the daily trade budget. REJECTED likewise never counted.
+  const trades = j.entries.filter(e => e.day === day && e.kind === 'ORDER' && e.status !== 'REJECTED' && e.status !== 'NOTIFIED');
   const closedToday = j.entries.filter(e => e.day === day && e.kind === 'CLOSE');
   const realized = closedToday.reduce((a, e) => a + (e.pnlINR || 0), 0);
   return { day, tradesCount: trades.length, realizedPnlINR: r2(realized) };
 }
+
+/** v6.11 test hook: daily stats with the NOTIFIED exclusion verified. */
+export function dailyStatsExport(j) { return dailyStats(j); }
 
 export function getRiskState() {
   const cfg = loadConfig();
@@ -307,10 +312,13 @@ function marginExitBody({ marginPair, side }) {
 export async function executeSignal(opts) {
   const {
     symbol, side, mode, qtyINR, leverage, getFreshSignal, wantAuto = false, source = 'manual',
+    sendTelegram,
   } = opts || {};
   const cfg = loadConfig();
   const pair = `${String(symbol || '').toUpperCase()}INR`;
-  const wantMode = mode === 'live' ? 'live' : 'paper';
+  // v6.11: NOTIFY mode (glama mukul8896 3-mode execution) — full gauntlet,
+  // alert-only output. Paper-grade gates (alert-grade info, not money).
+  const wantMode = mode === 'live' ? 'live' : mode === 'notify' ? 'notify' : 'paper';
   const day = todayIST();
   const entry = { kind: 'ORDER', day, symbol: pair, side, mode: wantMode, source };
 
@@ -357,14 +365,14 @@ export async function executeSignal(opts) {
   const gates = { minConfidence: cfg.minConfidence, minAgreement: cfg.minAgreement };
   const { evaluateExecutionGate, buildTradePlan, fitPlanToRiskCap, maxSaneLeverage } = await import('./ensemble.js');
 
-  // PAPER practice fallback: when the FRESH consensus is FLAT/planless but
+  // PAPER/NOTIFY practice fallback: when the FRESH consensus is FLAT/planless but
   // the user clicked a directional card, synthesize a practice plan at the
   // live price (ATR %-fallback). The side comes from the card, the price/
   // risk come from the server — and the journal records the honest fresh
   // grade. LIVE never enters this branch (full gauntlet below).
   let effectiveSignal = signal;
   let synthNote = null;
-  if (wantMode === 'paper' && (signal.side === 'FLAT' || !signal.plan)) {
+  if (wantMode !== 'live' && (signal.side === 'FLAT' || !signal.plan)) {
     const reqSide = String(side || '').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
     const synthPlan = buildTradePlan(
       { side: reqSide, dir: reqSide === 'LONG' ? 1 : -1 },
@@ -388,7 +396,7 @@ export async function executeSignal(opts) {
   let fitNote = null;
   const planRiskPct = Number(effectiveSignal?.plan?.riskPct);
   if (Number.isFinite(planRiskPct) && planRiskPct > riskCap) {
-    if (wantMode === 'paper' || planRiskPct <= riskCap * 1.5) {
+    if (wantMode !== 'live' || planRiskPct <= riskCap * 1.5) {
       const fitted = fitPlanToRiskCap(effectiveSignal, riskCap);
       if (fitted.note) {
         effectiveSignal = fitted.signal;
@@ -408,6 +416,48 @@ export async function executeSignal(opts) {
       : '';
     return reject(verdict.reason, `Signal gate: ${verdict.reason}${hint}`, {
       signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
+    });
+  }
+
+  // v6.11 NOTIFY: the signal passed the gauntlet — send the Telegram
+  // alert under the lock (audit trail in the journal, NO position).
+  // Position-creation caps (daily trades / loss / one-per-pair /
+  // concentration) deliberately DON'T block a notification — "cap hit
+  // + STRONG signal aaya" is exactly the moment an alert earns its keep.
+  if (wantMode === 'notify') {
+    return withJournalLock(async () => {
+      const j = loadJournal();
+      const stats = dailyStats(j);
+      const plan = effectiveSignal.plan;
+      const price = Number(effectiveSignal.ltp) > 0 ? Number(effectiveSignal.ltp) : null;
+      const capsNote = `trades ${stats.tradesCount}/${cfg.dailyMaxTrades} · realized ₹${r2(stats.realizedPnlINR)}`;
+      const lines = [
+        `🔔 <b>SmartAI NOTIFY</b> — ${pair} ${effectiveSignal.side}`,
+        `<b>${signal.grade || '—'}</b> · conf ${signal.confidence ?? '—'}% · agreement ${Math.round((signal.agreement ?? 0) * 100)}%`,
+        plan ? `Entry ${r2(plan.entry)} · SL ${r2(plan.stopLoss)} · T1 ${r2(plan.target1)} · T2 ${r2(plan.target2)} · risk ${r2(plan.riskPct)}%` : 'plan nahi bana',
+        `Book: ${capsNote}`,
+        [synthNote, fitNote].filter(Boolean).join(' · ') || undefined,
+        '— notify-only: koi order place NAHI hua.',
+      ].filter(Boolean);
+      let telegramSent = false;
+      if (typeof sendTelegram === 'function') {
+        try { telegramSent = !!(await sendTelegram(lines.join('\n'))).ok; } catch { /* alert best-effort */ }
+      }
+      pushEntry(j, {
+        ...entry, status: 'NOTIFIED', ...(price ? { price: r2(price) } : {}),
+        signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
+        reason: [synthNote, fitNote, verdict.reason].filter(Boolean).join(' · ') || 'gauntlet pass',
+        telegramSent,
+      });
+      saveJournal(j);
+      return {
+        ok: true, mode: 'notify', notified: true, telegramSent,
+        alert: { pair, side: effectiveSignal.side, grade: signal.grade, confidence: signal.confidence,
+          plan: plan ? { entry: r2(plan.entry), stopLoss: r2(plan.stopLoss), target2: r2(plan.target2) } : null,
+          caps: capsNote },
+        note: telegramSent ? 'Telegram alert bhej diya (journal AUDIT: NOTIFIED). Koi position nahi bani.'
+          : 'Gauntlet pass + journal AUDIT likha, par Telegram configured nahi — Alerts & AI Keys me token/chat-id daalo.',
+      };
     });
   }
 

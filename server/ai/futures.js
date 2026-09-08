@@ -405,12 +405,13 @@ export async function createFuturesTpsl({ positionId, stopLoss, takeProfit }) {
 export async function executeFuturesSignal(opts) {
   const {
     symbol, side, mode, qtyINR, marginUSDT, leverage,
-    getFreshSignal, wantAuto = false, source = 'manual',
+    getFreshSignal, wantAuto = false, source = 'manual', sendTelegram,
   } = opts || {};
   const cfg = await import('./coindcxOrders.js').then(m => m.loadConfig());
   const pair = futuresPairFor(symbol);
   const base = baseOfFuturesPair(pair);
-  const wantMode = mode === 'live' ? 'live' : 'paper';
+  // v6.11: NOTIFY mode — full gauntlet, Telegram alert, no order/position.
+  const wantMode = mode === 'live' ? 'live' : mode === 'notify' ? 'notify' : 'paper';
   const day = todayIST();
   const entry = { kind: 'ORDER', day, symbol: pair, side, mode: wantMode, market: 'FUTURES', source };
 
@@ -444,7 +445,7 @@ export async function executeFuturesSignal(opts) {
   // PAPER practice fallback (same honesty model as the spot path).
   let effectiveSignal = signal;
   let synthNote = null;
-  if (wantMode === 'paper' && (signal.side === 'FLAT' || !signal.plan)) {
+  if (wantMode !== 'live' && (signal.side === 'FLAT' || !signal.plan)) {
     const reqSide = String(side || '').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
     const { buildTradePlan } = await import('./ensemble.js');
     const synthPlan = buildTradePlan(
@@ -461,7 +462,7 @@ export async function executeFuturesSignal(opts) {
   let fitNote = null;
   const planRiskPct = Number(effectiveSignal?.plan?.riskPct);
   if (Number.isFinite(planRiskPct) && planRiskPct > riskCap) {
-    if (wantMode === 'paper' || planRiskPct <= riskCap * 1.5) {
+    if (wantMode !== 'live' || planRiskPct <= riskCap * 1.5) {
       const fitted = fitPlanToRiskCap(effectiveSignal, riskCap);
       if (fitted.note) { effectiveSignal = fitted.signal; fitNote = fitted.note; }
     }
@@ -475,6 +476,45 @@ export async function executeFuturesSignal(opts) {
   if (!verdict.ok) {
     return reject(verdict.reason, `Signal gate: ${verdict.reason}`, {
       signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
+    });
+  }
+
+  // v6.11 NOTIFY: gauntlet pass — Telegram alert + journal audit, NO order.
+  // Position-creation caps deliberately don't block a notification.
+  if (wantMode === 'notify') {
+    const alertPrice = Number(effectiveSignal.ltp) > 0 ? Number(effectiveSignal.ltp) : null;
+    return withJournalLock(async () => {
+      const j = loadJournalFresh();
+      const stats = dailyStats(j);
+      const plan = effectiveSignal.plan;
+      const capsNote = `trades ${stats.tradesCount}/${cfg.dailyMaxTrades} · realized ₹${r2(stats.realizedPnlINR)}`;
+      const lines = [
+        `🔔 <b>SmartAI NOTIFY (Futures)</b> — ${base} PERP ${effectiveSignal.side}`,
+        `<b>${signal.grade || '—'}</b> · conf ${signal.confidence ?? '—'}% · agreement ${Math.round((signal.agreement ?? 0) * 100)}%`,
+        plan ? `Entry ${r2(plan.entry)} · SL ${r2(plan.stopLoss)} · T1 ${r2(plan.target1)} · T2 ${r2(plan.target2)} · risk ${r2(plan.riskPct)}%` : 'plan nahi bana',
+        `Book: ${capsNote}`,
+        [synthNote, fitNote].filter(Boolean).join(' · ') || undefined,
+        '— notify-only: koi order place NAHI hua.',
+      ].filter(Boolean);
+      let telegramSent = false;
+      if (typeof sendTelegram === 'function') {
+        try { telegramSent = !!(await sendTelegram(lines.join('\n'))).ok; } catch { /* best-effort */ }
+      }
+      pushEntry(j, {
+        ...entry, status: 'NOTIFIED', ...(alertPrice ? { price: r2(alertPrice) } : {}),
+        signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
+        reason: [synthNote, fitNote, verdict.reason].filter(Boolean).join(' · ') || 'gauntlet pass',
+        telegramSent,
+      });
+      saveJournalFresh(j);
+      return {
+        ok: true, mode: 'notify', notified: true, telegramSent,
+        alert: { pair: base, side: effectiveSignal.side, grade: signal.grade, confidence: signal.confidence,
+          plan: plan ? { entry: r2(plan.entry), stopLoss: r2(plan.stopLoss), target2: r2(plan.target2) } : null,
+          caps: capsNote },
+        note: telegramSent ? 'Telegram alert bhej diya (journal AUDIT: NOTIFIED). Koi futures order nahi laga.'
+          : 'Gauntlet pass + journal AUDIT likha, par Telegram configured nahi — Alerts & AI Keys me token daalo.',
+      };
     });
   }
 

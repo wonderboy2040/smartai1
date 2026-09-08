@@ -217,7 +217,7 @@ function CryptoOrderPreview({ signal, budgetINR }: { signal: AISignal; budgetINR
 //   crypto:  qty = (margin ₹ × leverage) / entry
 //   futures: qty = (margin USDT × leverage) / entry  (v6.8 — wallet USDT)
 //   india:   qty = floor(budget / price)             [whole shares]
-type ExecHandler = (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => void;
+type ExecHandler = (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => void;
 
 interface TicketProps {
   signal: AISignal;
@@ -281,7 +281,7 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
     : fmt(n, dp);
   const fmtINRapprox = (n: number) => `₹${Math.round(n * approxUsdInr).toLocaleString('en-IN')}`;
 
-  const exec = (mode: 'paper' | 'live') => {
+  const exec = (mode: 'paper' | 'live' | 'notify') => {
     const handler = futures ? onExecuteFutures : crypto ? onExecute : onExecuteIndia;
     if (!handler) return;
     const opts = futures
@@ -293,7 +293,9 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
     // result feedback comes via the parent toast; ticket shows a local ack
     setResult({ ok: true, text: mode === 'live'
       ? `⚡ LIVE order request bheja gaya — ${qty < 1 ? qty.toFixed(6) : qty} ${futures ? 'contracts' : crypto ? 'units' : 'shares'} @ ${futures ? `${plan.entry} USDT` : `₹${plan.entry}`}${leveraged && lev > 1 ? ` · ${lev}x` : ''} (console me position confirm karo)`
-      : `🧪 PAPER position khula — ${qty < 1 ? qty.toFixed(6) : qty} ${futures ? 'contracts' : crypto ? 'units' : 'shares'} @ ${futures ? `${plan.entry} USDT` : `₹${plan.entry}`}${leveraged && lev > 1 ? ` · ${lev}x margin` : ''} · watcher SL/TP manage karega` });
+      : mode === 'notify'
+        ? `🔔 NOTIFY — gauntlet chala, Telegram alert plan ke saath bheja (agar configured hai). Koi order/position NAHI bana.`
+        : `🧪 PAPER position khula — ${qty < 1 ? qty.toFixed(6) : qty} ${futures ? 'contracts' : crypto ? 'units' : 'shares'} @ ${futures ? `${plan.entry} USDT` : `₹${plan.entry}`}${leveraged && lev > 1 ? ` · ${lev}x margin` : ''} · watcher SL/TP manage karega` });
     setTimeout(() => setResult(null), 8000);
   };
 
@@ -407,6 +409,11 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
           className={`quantum-btn-primary px-4 py-2 rounded-xl text-xs font-black disabled:opacity-50 ${futures ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600' : crypto ? 'bg-gradient-to-r from-cyan-600 to-indigo-600' : 'bg-gradient-to-r from-orange-600 to-amber-600'}`}>
           🧪 PAPER EXECUTE{leveraged && lev > 1 ? ` · ${lev}x` : ''}
         </button>
+        <button onClick={() => exec('notify')} disabled={busy}
+          title="NOTIFY (v6.11) — poora gauntlet chalega, par output sirf Telegram alert + journal audit hoga. Koi order nahi, koi position nahi."
+          className="px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-sky-600 to-blue-600 text-white hover:from-sky-500 hover:to-blue-500 disabled:opacity-50 transition-colors">
+          🔔 NOTIFY
+        </button>
         {signal.grade === 'STRONG' && (leveraged ? signal.executable : true) && (
           <button onClick={() => exec('live')} disabled={busy || !canLiveHere}
             title={canLiveHere ? 'REAL order — saare gates server-side re-verify honge' : 'STRONG hai — console me LIVE arm karo (Dhan connect for India)'}
@@ -436,9 +443,9 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
 interface Props {
   signal: AISignal;
   busy?: boolean;
-  onExecute?: (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; leverage?: number }) => void;
-  onExecuteIndia?: (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; leverage?: number }) => void;
-  onExecuteFutures?: (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => void;
+  onExecute?: (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; leverage?: number }) => void;
+  onExecuteIndia?: (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; leverage?: number }) => void;
+  onExecuteFutures?: (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => void;
   onDeep?: (signal: AISignal) => void;
   canLive?: boolean;
   canLiveIndia?: boolean;

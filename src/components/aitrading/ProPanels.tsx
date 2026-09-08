@@ -1,16 +1,21 @@
 // ============================================================
-// src/components/aitrading/ProPanels.tsx — v6.7 PRO PANELS
+// src/components/aitrading/ProPanels.tsx — v6.7 + v6.11 PRO PANELS
 // ------------------------------------------------------------
-// Four read-only intelligence layers (glama-inspired):
-//   • MorningBriefPanel  — one call, the whole desk
+// Read-only intelligence layers (glama-inspired):
+//   • MorningBriefPanel  — one call, the whole desk (+ next-actions)
 //   • SwingDeskPanel     — 3–8 day multi-factor setups (no execution)
 //   • WhaleRadarPanel    — volume-spike footprints (2.5x+ vs 20-bar)
 //   • SignalLedgerPanel  — SHA-256 tamper-evident track record
 //   • OrderbookPanel     — CoinDCX depth + imbalance + walls
+// v6.11 (glama Tier-2/3):
+//   • TrustLayerPanel    — calibration + Brier + monthly trend + p-values
+//   • PerfAnalyticsPanel — MDD/Sharpe/Sortino/Calmar on ledger R-series
+//   • CorrelationPanel   — cross-asset 60d matrix + BTC↔NIFTY risk link
+//   • SectorMapPanel     — sector sentiment + macro context chain + F-Score
 // ============================================================
 import { memo, useCallback, useEffect, useState } from 'react';
-import { fetchMorningBrief, fetchSwingBoard, fetchWhales, fetchLedger, fetchOrderbook } from './useAITrading';
-import type { MarketKind, MorningBrief, SwingBoard, WhaleRadar, LedgerView, OrderbookView } from './types';
+import { fetchMorningBrief, fetchSwingBoard, fetchWhales, fetchLedger, fetchOrderbook, fetchTrust, fetchPerf, fetchCorrelations, fetchSectors } from './useAITrading';
+import type { MarketKind, MorningBrief, SwingBoard, WhaleRadar, LedgerView, OrderbookView, TrustView, PerfView, CorrView, SectorView } from './types';
 
 const inr = (v: number | null | undefined, dp = 0) =>
   v == null || !Number.isFinite(v) ? '—' : `₹${v.toLocaleString('en-IN', { maximumFractionDigits: dp })}`;
@@ -138,6 +143,21 @@ export const MorningBriefPanel = memo(function MorningBriefPanel() {
               )}
             </div>
           </div>
+
+          {/* v6.11: next-actions — the "ab kya karein" chips (glama oneqaz) */}
+          {(brief.nextActions || []).length > 0 && (
+            <div className="bg-cyan-500/[0.06] border border-cyan-500/15 rounded-xl p-2.5">
+              <div className="text-[9px] font-black text-slate-500 tracking-wider mb-1.5">🎯 NEXT ACTIONS</div>
+              <div className="space-y-1">
+                {(brief.nextActions || []).slice(0, 5).map(a => (
+                  <div key={a.id} className="flex items-start gap-1.5 text-[10px] leading-relaxed">
+                    <span className={a.kind === 'warning' ? 'text-amber-400' : a.kind === 'signal' ? 'text-emerald-400' : a.kind === 'book' ? 'text-cyan-400' : 'text-slate-600'}>▸</span>
+                    <span className="text-slate-300">{a.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </PanelShell>
@@ -354,6 +374,396 @@ export const OrderbookPanel = memo(function OrderbookPanel() {
             <div className="bg-black/25 rounded-lg px-2 py-1.5 flex justify-between"><span className="text-slate-600">🧱 ask wall</span><span className="text-slate-300">{view.askWall.price} ({view.askWall.qty})</span></div>
           </div>
           <div className="text-[10px] text-slate-400 bg-cyan-500/5 border border-cyan-500/15 rounded-lg px-2.5 py-1.5">{view.read}</div>
+        </div>
+      )}
+    </PanelShell>
+  );
+});
+
+// ---------------- Trust Layer (v6.11 — calibration + governance) ----------------
+export const TrustLayerPanel = memo(function TrustLayerPanel() {
+  const [view, setView] = useState<TrustView | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setView(await fetchTrust());
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const cal = view?.calibration;
+  const gov = view?.governance;
+  return (
+    <PanelShell title="🎯 Trust Layer — engine ki confidence kitni sahi hai?" tag="v6.11" onRefresh={load} loading={loading}>
+      {!view && <EmptyNote>{loading ? 'Ledger outcomes padh raha hai…' : 'Trust report unavailable'}</EmptyNote>}
+      {view && (!cal?.sufficient) && (
+        <EmptyNote>{cal?.note || 'Insufficient settled outcomes — track record gather hone do, phir calibration yahan milegi.'}</EmptyNote>
+      )}
+      {view && cal?.sufficient && (
+        <div className="space-y-3">
+          {/* Brier + overall */}
+          <div className="grid grid-cols-3 gap-1.5 text-center">
+            <div className="bg-black/30 rounded-xl px-2 py-1.5">
+              <div className="text-[8px] text-slate-500 font-black tracking-wider">BRIER ↓</div>
+              <div className={`text-xs font-mono font-black ${(cal.brier ?? 1) <= 0.2 ? 'text-emerald-300' : (cal.brier ?? 1) <= 0.25 ? 'text-amber-300' : 'text-red-300'}`}>{cal.brier ?? '—'}</div>
+            </div>
+            <div className="bg-black/30 rounded-xl px-2 py-1.5">
+              <div className="text-[8px] text-slate-500 font-black tracking-wider">REALIZED WR</div>
+              <div className={`text-xs font-mono font-black ${cal.overall && cal.overall.winRate >= 50 ? 'text-emerald-300' : 'text-red-300'}`}>{cal.overall?.winRate ?? '—'}%</div>
+            </div>
+            <div className="bg-black/30 rounded-xl px-2 py-1.5">
+              <div className="text-[8px] text-slate-500 font-black tracking-wider">AVG CLAIM</div>
+              <div className="text-xs font-mono font-black text-slate-200">{cal.overall?.avgConfidence ?? '—'}%</div>
+            </div>
+          </div>
+          <div className="text-[9px] text-slate-500 leading-relaxed">{cal.brierVerdict} · Brier: 0 = perfect, 0.25 = coin-flip.</div>
+
+          {/* calibration buckets */}
+          <div>
+            <div className="text-[9px] font-black text-slate-500 tracking-wider mb-1">CALIBRATION — bola vs hua</div>
+            <div className="grid gap-1">
+              {(cal.calibration || []).map(b => (
+                <div key={b.bucket} className="flex items-center gap-2 text-[10px] font-mono">
+                  <span className="text-slate-500 w-14">{b.bucket}</span>
+                  <span className="text-slate-400">n={b.n}</span>
+                  <div className="flex-1 h-2 bg-black/40 rounded overflow-hidden relative">
+                    <div className="absolute top-0 bottom-0 w-px bg-slate-500" style={{ left: `${Math.min(98, b.claimed)}%` }} title={`claimed ${b.claimed}%`} />
+                    <div className={`h-full ${b.winRate != null && b.winRate >= b.claimed ? 'bg-emerald-500/50' : 'bg-amber-500/50'}`} style={{ width: `${Math.min(100, b.winRate ?? 0)}%` }} />
+                  </div>
+                  <span className={`w-16 text-right font-black ${b.gap == null ? 'text-slate-600' : b.gap >= 0 ? 'text-emerald-300' : 'text-amber-300'}`}>
+                    {b.winRate ?? '—'}%{b.gap != null ? ` (${b.gap > 0 ? '+' : ''}${b.gap})` : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* monthly trend */}
+          {(cal.monthly || []).length > 0 && (
+            <div>
+              <div className="text-[9px] font-black text-slate-500 tracking-wider mb-1">MONTHLY TREND</div>
+              <div className="flex items-end gap-1 h-12">
+                {(cal.monthly || []).map(m => (
+                  <div key={m.month} className="flex-1 flex flex-col items-center justify-end h-full" title={`${m.month}: ${m.n} trades · ${m.winRate}% WR · avg ${m.avgR}R`}>
+                    <div className={`w-full rounded-t ${m.winRate >= 50 ? 'bg-emerald-500/40' : 'bg-red-500/40'}`} style={{ height: `${Math.max(6, m.winRate)}%` }} />
+                    <span className="text-[7px] text-slate-600 mt-0.5">{m.month.slice(2)}</span>
+                  </div>
+                ))}
+              </div>
+              {cal.drift != null && (
+                <div className={`text-[9px] mt-0.5 ${cal.drift >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  last month vs prior: {cal.drift > 0 ? '+' : ''}{cal.drift}pp {cal.drift <= -10 ? '⚠️ accuracy gir rahi hai — size kam karo' : ''}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* governance */}
+          {(gov?.models || []).length > 0 && (
+            <div>
+              <div className="text-[9px] font-black text-slate-500 tracking-wider mb-1">MODEL GOVERNANCE — p-values</div>
+              <div className="overflow-x-auto max-h-40 overflow-y-auto">
+                <table className="w-full text-[10px] font-mono">
+                  <thead className="sticky top-0 bg-[#0d1424]">
+                    <tr className="text-[8px] text-slate-500 font-black tracking-wider">
+                      <th className="px-1.5 py-1 text-left">MODEL</th>
+                      <th className="px-1.5 py-1 text-right">N</th>
+                      <th className="px-1.5 py-1 text-right">HIT</th>
+                      <th className="px-1.5 py-1 text-right">EDGE</th>
+                      <th className="px-1.5 py-1 text-right">p</th>
+                      <th className="px-1.5 py-1 text-left">VERDICT</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(gov?.models || []).map(m => (
+                      <tr key={m.model} className="border-t border-white/[0.03]">
+                        <td className="px-1.5 py-1 text-slate-300">{m.model}</td>
+                        <td className="px-1.5 py-1 text-right text-slate-500">{m.n}</td>
+                        <td className="px-1.5 py-1 text-right text-slate-200">{m.hitRate ?? '—'}%</td>
+                        <td className={`px-1.5 py-1 text-right ${(m.edge ?? 0) > 0 ? 'text-emerald-300' : 'text-red-300'}`}>{m.edge != null ? `${m.edge > 0 ? '+' : ''}${m.edge}` : '—'}</td>
+                        <td className="px-1.5 py-1 text-right text-slate-500">{m.pValue}</td>
+                        <td className={`px-1.5 py-1 font-black ${m.verdict === 'SIGNIFICANT' ? 'text-emerald-300' : m.verdict === 'NEEDS DATA' ? 'text-slate-500' : m.verdict === 'BORDERLINE' ? 'text-amber-300' : 'text-slate-600'}`}>{m.verdict}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="text-[8px] text-slate-600 mt-1 leading-relaxed">{gov?.note}</div>
+            </div>
+          )}
+        </div>
+      )}
+    </PanelShell>
+  );
+});
+
+// ---------------- Perf Analytics (v6.11 — MDD/Sharpe/Sortino/Calmar) ----------------
+export const PerfAnalyticsPanel = memo(function PerfAnalyticsPanel() {
+  const [view, setView] = useState<PerfView | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setView(await fetchPerf());
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  // equity-curve sparkline (cumulative R)
+  const curve = view?.equityCurveR || [];
+  const max = curve.length ? Math.max(1, ...curve) : 1;
+  const min = curve.length ? Math.min(0, ...curve) : 0;
+  const span = Math.max(1e-9, max - min);
+  return (
+    <PanelShell title="📈 Performance Lab — R-multiple analytics" tag="v6.11" onRefresh={load} loading={loading}>
+      {!view && <EmptyNote>{loading ? 'Settled outcomes aggregate ho rahe hain…' : 'Perf report unavailable'}</EmptyNote>}
+      {view && !view.sufficient && <EmptyNote>{view.note}</EmptyNote>}
+      {view && view.sufficient && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5 text-center">
+            {[
+              { l: 'EXPECTANCY', v: `${(view.expectancy ?? 0) > 0 ? '+' : ''}${view.expectancy ?? '—'}R`, c: (view.expectancy ?? 0) > 0 ? 'text-emerald-300' : 'text-red-300' },
+              { l: 'TOTAL R', v: `${(view.totalR ?? 0) > 0 ? '+' : ''}${view.totalR ?? '—'}`, c: (view.totalR ?? 0) > 0 ? 'text-emerald-300' : 'text-red-300' },
+              { l: 'MAX DD', v: `−${view.mdd?.r ?? 0}R`, c: 'text-red-300' },
+              { l: 'PROFIT FACT', v: `${view.profitFactor ?? '—'}`, c: (view.profitFactor ?? 0) >= 1.5 ? 'text-emerald-300' : 'text-amber-300' },
+              { l: 'SHARPE /trade', v: `${view.sharpe?.perTrade ?? '—'}`, c: 'text-slate-200' },
+              { l: 'SORTINO /trade', v: `${view.sortino?.perTrade ?? '—'}`, c: 'text-slate-200' },
+              { l: 'CALMAR', v: view.calmar?.expectancyOverMdd != null ? `${view.calmar.expectancyOverMdd}` : '—', c: 'text-slate-200' },
+              { l: 'STREAK W/L', v: `${view.streaks?.win ?? 0}/${view.streaks?.loss ?? 0}`, c: 'text-slate-200' },
+            ].map(x => (
+              <div key={x.l} className="bg-black/30 rounded-xl px-2 py-1.5">
+                <div className="text-[8px] text-slate-500 font-black tracking-wider">{x.l}</div>
+                <div className={`text-xs font-mono font-black ${x.c}`}>{x.v}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* equity curve */}
+          {curve.length > 1 && (
+            <div>
+              <div className="text-[9px] font-black text-slate-500 tracking-wider mb-1">CUMULATIVE R EQUITY CURVE</div>
+              <svg viewBox={`0 0 ${Math.max(60, curve.length)} 24`} className="w-full h-12" preserveAspectRatio="none" role="img" aria-label="cumulative R equity curve">
+                {curve.map((r, i) => i === 0 ? null : (
+                  <line key={i} x1={i - 1} x2={i}
+                    y1={22 - ((curve[i - 1] - min) / span) * 20} y2={22 - ((r - min) / span) * 20}
+                    stroke={(r ?? 0) >= 0 ? '#34d399' : '#f87171'} strokeWidth="0.6" />
+                ))}
+                <line x1="0" x2={Math.max(60, curve.length)} y1={22 - ((0 - min) / span) * 20} y2={22 - ((0 - min) / span) * 20} stroke="#475569" strokeWidth="0.25" strokeDasharray="1 1" />
+              </svg>
+            </div>
+          )}
+
+          {/* desk split */}
+          <div className="grid sm:grid-cols-2 gap-2 text-[10px] font-mono">
+            {(['india', 'crypto', 'futures'] as const).map(k => {
+              const g = view.byMarket?.[k];
+              return (
+                <div key={k} className="bg-black/25 rounded-xl px-2.5 py-1.5 flex justify-between items-center">
+                  <span className="text-slate-500">{k === 'india' ? '🇮🇳 INDIA' : k === 'crypto' ? '₿ CRYPTO' : '⚡ FUTURES'}</span>
+                  {g ? <span className={((g.totalR ?? 0) > 0) ? 'text-emerald-300' : 'text-red-300'}>{g.n} trades · {g.winRate}% WR · {((g.totalR ?? 0) > 0 ? '+' : '')}${g.totalR}R</span>
+                    : <span className="text-slate-600">no settled trades</span>}
+                </div>
+              );
+            })}
+          </div>
+          <div className="text-[8px] text-slate-600 leading-relaxed">{view.note} · {view.sharpe?.note}</div>
+        </div>
+      )}
+    </PanelShell>
+  );
+});
+
+// ---------------- Correlation Matrix (v6.11) ----------------
+const corrColor = (r: number | null) => {
+  if (r == null) return 'bg-slate-800/40';
+  const a = Math.min(0.85, Math.abs(r) * 0.85 + 0.08);
+  return r >= 0 ? `rgba(16,185,129,${a})` : `rgba(248,113,113,${a})`;
+};
+export const CorrelationPanel = memo(function CorrelationPanel() {
+  const [view, setView] = useState<CorrView | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setView(await fetchCorrelations());
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <PanelShell title="🔗 Cross-Asset Correlations — 60d returns" tag="v6.11" onRefresh={load} loading={loading}>
+      {!view?.ok && <EmptyNote>{loading ? 'Daily closes fetch ho rahe hain…' : 'Correlation data unavailable'}</EmptyNote>}
+      {view?.ok && (
+        <div className="space-y-2.5">
+          {view.riskLink && (
+            <div className="bg-cyan-500/[0.06] border border-cyan-500/15 rounded-xl px-2.5 py-1.5 text-[10px] leading-relaxed">
+              <b className="text-cyan-300">{view.riskLink.pair}: {view.riskLink.r}</b> — {view.riskLink.read}
+            </div>
+          )}
+          <div className="grid sm:grid-cols-2 gap-2">
+            {(['mostPositive', 'mostNegative'] as const).map(k => (
+              <div key={k} className="bg-black/25 rounded-xl p-2">
+                <div className="text-[8px] font-black text-slate-500 tracking-wider mb-1">{k === 'mostPositive' ? '🤝 MOST POSITIVE' : '↔️ MOST NEGATIVE'}</div>
+                {(view.top[k] || []).map((p, i) => (
+                  <div key={i} className="flex items-center gap-1.5 text-[10px] font-mono py-0.5">
+                    <span className="text-slate-300">{p.a}↔{p.b}</span>
+                    <span className={`ml-auto font-black ${p.r >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>{p.r}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+          {/* the matrix */}
+          <div className="overflow-x-auto">
+            <table className="text-[8px] font-mono border-separate" style={{ borderSpacing: '1px' }}>
+              <thead>
+                <tr>
+                  <th className="px-1" />
+                  {view.assets.map(a => <th key={a.key} className="px-1 text-slate-500 font-black" title={a.label}>{a.key.slice(0, 5)}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {view.matrix.map((row, i) => (
+                  <tr key={view.assets[i].key}>
+                    <td className="px-1 text-slate-500 font-black whitespace-nowrap">{view.assets[i].key}</td>
+                    {row.map((v, j) => (
+                      <td key={j} className={`px-1 py-0.5 text-center font-bold ${j === i ? 'text-white' : v == null ? 'text-slate-700' : v >= 0.6 ? 'text-emerald-200' : v <= -0.4 ? 'text-red-200' : 'text-slate-300'}`}
+                        style={{ background: j === i ? 'rgba(148,163,184,0.18)' : (corrColor(v) as string) }}
+                        title={v == null ? 'insufficient overlap' : `${view.assets[i].key} ↔ ${view.assets[j].key}: ${v}`}>
+                        {j === i ? '·' : v == null ? '—' : v.toFixed(1).replace('0.', '.').replace('-', '−')}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="text-[8px] text-slate-600 leading-relaxed">
+            {view.note}{view.skipped?.length ? ` · skipped (host-block): ${view.skipped.join(', ')}` : ''}
+          </div>
+        </div>
+      )}
+    </PanelShell>
+  );
+});
+
+// ---------------- Sector Map + Context Chain + F-Score (v6.11) ----------------
+export const SectorMapPanel = memo(function SectorMapPanel() {
+  const [view, setView] = useState<SectorView | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setView(await fetchSectors());
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const moodColor = (m: string) => m === 'BULLISH' ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25'
+    : m === 'BEARISH' ? 'text-red-300 bg-red-500/10 border-red-500/25'
+    : 'text-slate-400 bg-slate-500/10 border-slate-500/20';
+  return (
+    <PanelShell title="🗺️ Sector Map + Context Chain — macro→sector→symbol" tag="v6.11" onRefresh={load} loading={loading}>
+      {!view?.ok && <EmptyNote>{loading ? '45-stock universe sector-wise padh raha hai…' : (view?.error || 'Sector map unavailable')}</EmptyNote>}
+      {view?.ok && (
+        <div className="space-y-3">
+          {/* context chain */}
+          {view.chain && (
+            <div className="bg-black/25 rounded-xl p-2.5">
+              <div className="flex items-center gap-1.5 flex-wrap text-[10px] font-mono mb-1">
+                <span className="text-[8px] font-black text-slate-500 tracking-wider">MACRO</span>
+                <span className={`px-1.5 py-0.5 rounded font-black ${view.chain.macro.bias === 'RISK-ON' ? 'bg-emerald-500/15 text-emerald-300' : view.chain.macro.bias === 'RISK-OFF' ? 'bg-red-500/15 text-red-300' : 'bg-slate-500/15 text-slate-300'}`}>
+                  {view.chain.macro.bias}
+                </span>
+                {view.chain.macro.vixRegime && <span className="px-1.5 py-0.5 rounded bg-black/30 text-slate-400">VIX {view.chain.macro.vixRegime}</span>}
+                {view.chain.macro.dollar != null && <span className={`px-1.5 py-0.5 rounded bg-black/30 ${view.chain.macro.dollar >= 0 ? 'text-red-300' : 'text-emerald-300'}`}>DXY {view.chain.macro.dollar > 0 ? '+' : ''}{view.chain.macro.dollar}%</span>}
+                {view.chain.macro.crude != null && <span className={`px-1.5 py-0.5 rounded bg-black/30 ${view.chain.macro.crude >= 0 ? 'text-amber-300' : 'text-emerald-300'}`}>CRUDE {view.chain.macro.crude > 0 ? '+' : ''}{view.chain.macro.crude}%</span>}
+                <span className="text-slate-600">→ SECTOR → SYMBOL</span>
+              </div>
+              <div className="text-[10px] text-slate-400 leading-relaxed">{view.chain.read}</div>
+              <div className="grid sm:grid-cols-3 gap-1.5 mt-1.5">
+                {(view.chain.strongest || []).slice(0, 3).map(s => (
+                  <div key={s.sector} className="bg-black/30 rounded-lg px-2 py-1.5">
+                    <div className="flex items-center gap-1 text-[9px] font-black">
+                      <span className="text-slate-300">{s.sector}</span>
+                      <span className={s.mood === 'BULLISH' ? 'text-emerald-400' : 'text-slate-500'}>{s.mood}</span>
+                      <span className="text-slate-600 ml-auto">{s.breadth}% up</span>
+                    </div>
+                    {(s.top || []).map(t => (
+                      <div key={t.symbol} className="text-[9px] font-mono text-slate-400 flex justify-between">
+                        <span>{t.symbol} <span className="text-cyan-400/80">F{t.fscore}</span></span>
+                        <span className={t.changePct >= 0 ? 'text-emerald-300' : 'text-red-300'}>{t.changePct > 0 ? '+' : ''}{t.changePct}%</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* sector rows */}
+          <div className="grid sm:grid-cols-2 gap-1.5">
+            {(view.sectors || []).map(s => (
+              <div key={s.sector} className="bg-black/25 rounded-xl px-2.5 py-2">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] font-black text-white">{s.sector}</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[8px] font-black border ${moodColor(s.mood)}`}>{s.mood}</span>
+                  <span className="text-[9px] font-mono text-slate-500 ml-auto">{s.symbols} stocks{' · '}<span className={s.indexChangePct == null ? 'text-slate-600' : s.indexChangePct >= 0 ? 'text-emerald-400' : 'text-red-400'}>{s.indexChangePct != null ? `${s.indexChangePct > 0 ? '+' : ''}${s.indexChangePct}% idx` : ''}</span></span>
+                </div>
+                <div className="mt-1.5 flex items-center gap-2 text-[10px] font-mono">
+                  <div className="flex-1 h-1.5 bg-black/40 rounded overflow-hidden" title={`${s.breadth}% stocks above EMA20`}>
+                    <div className={`h-full ${s.breadth >= 60 ? 'bg-emerald-500/60' : s.breadth <= 40 ? 'bg-red-500/60' : 'bg-amber-500/50'}`} style={{ width: `${s.breadth}%` }} />
+                  </div>
+                  <span className={`font-bold ${s.avgChangePct >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>{s.avgChangePct > 0 ? '+' : ''}{s.avgChangePct}%</span>
+                </div>
+                <div className="mt-1 flex justify-between text-[8px] font-mono text-slate-600">
+                  <span>⬆ {s.leader?.symbol ?? '—'} {s.leader ? `${s.leader.changePct > 0 ? '+' : ''}${s.leader.changePct}%` : ''}</span>
+                  <span>⬇ {s.laggard?.symbol ?? '—'} {s.laggard ? `${s.laggard.changePct > 0 ? '+' : ''}${s.laggard.changePct}%` : ''}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* F-Score board */}
+          {view.fscore && (
+            <div>
+              <div className="text-[9px] font-black text-slate-500 tracking-wider mb-1">F-SCORE BOARD — trend quality (0-9)</div>
+              <div className="grid sm:grid-cols-2 gap-1.5">
+                <div className="bg-black/25 rounded-xl p-2">
+                  <div className="text-[8px] text-emerald-400/70 font-black tracking-wider mb-1">TOP QUALITY</div>
+                  {(view.fscore.top || []).slice(0, 6).map(f => (
+                    <div key={f.symbol} className="flex items-center gap-1.5 text-[10px] font-mono py-0.5">
+                      <span className="text-slate-200 font-bold">{f.symbol}</span>
+                      <span className={`px-1 rounded text-[8px] font-black ${f.grade === 'A' ? 'bg-cyan-500/15 text-cyan-300' : 'bg-slate-600/20 text-slate-300'}`}>{f.score}/9</span>
+                      {f.rsi != null && <span className="text-slate-600 text-[8px]">RSI {f.rsi}</span>}
+                      {f.pos52 != null && <span className="text-slate-600 text-[8px] ml-auto">52w {f.pos52}%</span>}
+                    </div>
+                  ))}
+                </div>
+                <div className="bg-black/25 rounded-xl p-2">
+                  <div className="text-[8px] text-red-400/70 font-black tracking-wider mb-1">DISTRIBUTION + BOTTOM</div>
+                  <div className="flex gap-1.5 text-[9px] font-mono mb-1.5">
+                    <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300 font-black">A: {view.fscore.distribution.A}</span>
+                    <span className="px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-300 font-black">B: {view.fscore.distribution.B}</span>
+                    <span className="px-1.5 py-0.5 rounded bg-red-500/10 text-red-300 font-black">C: {view.fscore.distribution.C}</span>
+                  </div>
+                  {(view.fscore.bottom || []).map(f => (
+                    <div key={f.symbol} className="flex items-center gap-1.5 text-[10px] font-mono py-0.5">
+                      <span className="text-slate-400">{f.symbol}</span>
+                      <span className="px-1 rounded text-[8px] font-black bg-red-500/10 text-red-300">{f.score}/9</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="text-[8px] text-slate-600 mt-1 leading-relaxed">⚠️ {view.fscore.disclaimer}</div>
+            </div>
+          )}
+          <div className="text-[8px] text-slate-600 leading-relaxed">{view.note}</div>
         </div>
       )}
     </PanelShell>

@@ -52,10 +52,11 @@ const IST_ENTRY_FIRST = 9 * 60 + 30;        // 09:30 — opening chop avoided
  * (injected by routes.js — client payloads are never trusted).
  */
 export async function executeIndiaSignal(opts) {
-  const { symbol, side, mode, qtyINR, getFreshIndiaSignal, source = 'manual' } = opts || {};
+  const { symbol, side, mode, qtyINR, getFreshIndiaSignal, source = 'manual', sendTelegram } = opts || {};
   const cfg = loadConfig();
   const sym = String(symbol || '').toUpperCase().replace(/[^A-Z0-9\-]/g, '');
-  const wantMode = mode === 'live' ? 'live' : 'paper';
+  // v6.11: NOTIFY mode — full gauntlet, Telegram alert, no order/position.
+  const wantMode = mode === 'live' ? 'live' : mode === 'notify' ? 'notify' : 'paper';
   const day = todayIST();
   const entry = { kind: 'ORDER', day, pair: sym, symbol: sym, market: 'INDIA', side, mode: wantMode, source };
 
@@ -92,7 +93,7 @@ export async function executeIndiaSignal(opts) {
   // a practice plan at the live price, journal the real fresh grade.
   let effectiveSignal = signal;
   let synthNote = null;
-  if (wantMode === 'paper' && (signal.side === 'FLAT' || !signal.plan)) {
+  if (wantMode !== 'live' && (signal.side === 'FLAT' || !signal.plan)) {
     const reqSide = String(side || '').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
     const synthPlan = buildTradePlan({ side: reqSide, dir: reqSide === 'LONG' ? 1 : -1 }, { ltp: signal.ltp, ind: {} }, 'INDIA');
     if (synthPlan && signal.ltp > 0) {
@@ -106,7 +107,7 @@ export async function executeIndiaSignal(opts) {
   let fitNote = null;
   const planRiskPct = Number(effectiveSignal?.plan?.riskPct);
   if (Number.isFinite(planRiskPct) && planRiskPct > riskCap) {
-    if (wantMode === 'paper' || planRiskPct <= riskCap * 1.5) {
+    if (wantMode !== 'live' || planRiskPct <= riskCap * 1.5) {
       const fitted = fitPlanToRiskCap(effectiveSignal, riskCap);
       if (fitted.note) {
         effectiveSignal = fitted.signal;
@@ -129,6 +130,45 @@ export async function executeIndiaSignal(opts) {
       : '';
     return reject(verdict.reason, `Signal gate: ${verdict.reason}${hint}`, {
       signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
+    });
+  }
+
+  // v6.11 NOTIFY: gauntlet pass — Telegram alert + journal audit, NO order.
+  // Position-creation caps deliberately don't block a notification.
+  if (wantMode === 'notify') {
+    const alertPrice = Number(effectiveSignal.ltp) > 0 ? Number(effectiveSignal.ltp) : null;
+    return withJournalLock(async () => {
+      const j = loadJournal();
+      const stats = dailyStats(j);
+      const plan = effectiveSignal.plan;
+      const capsNote = `trades ${stats.tradesCount}/${cfg.dailyMaxTrades} · realized ₹${r2(stats.realizedPnlINR)} · NSE ${isNseOpen() ? 'OPEN' : 'CLOSED'}`;
+      const lines = [
+        `🔔 <b>SmartAI NOTIFY (India)</b> — ${sym} ${effectiveSignal.side}`,
+        `<b>${signal.grade || '—'}</b> · conf ${signal.confidence ?? '—'}% · agreement ${Math.round((signal.agreement ?? 0) * 100)}%`,
+        plan ? `Entry ${r2(plan.entry)} · SL ${r2(plan.stopLoss)} · T1 ${r2(plan.target1)} · T2 ${r2(plan.target2)} · risk ${r2(plan.riskPct)}%` : 'plan nahi bana',
+        `Book: ${capsNote}`,
+        [synthNote, fitNote].filter(Boolean).join(' · ') || undefined,
+        '— notify-only: koi order place NAHI hua.',
+      ].filter(Boolean);
+      let telegramSent = false;
+      if (typeof sendTelegram === 'function') {
+        try { telegramSent = !!(await sendTelegram(lines.join('\n'))).ok; } catch { /* best-effort */ }
+      }
+      pushEntry(j, {
+        ...entry, status: 'NOTIFIED', ...(alertPrice ? { price: r2(alertPrice) } : {}),
+        signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
+        reason: [synthNote, fitNote, verdict.reason].filter(Boolean).join(' · ') || 'gauntlet pass',
+        telegramSent,
+      });
+      saveJournal(j);
+      return {
+        ok: true, mode: 'notify', notified: true, telegramSent,
+        alert: { pair: sym, side: effectiveSignal.side, grade: signal.grade, confidence: signal.confidence,
+          plan: plan ? { entry: r2(plan.entry), stopLoss: r2(plan.stopLoss), target2: r2(plan.target2) } : null,
+          caps: capsNote },
+        note: telegramSent ? 'Telegram alert bhej diya (journal AUDIT: NOTIFIED). Koi order nahi laga.'
+          : 'Gauntlet pass + journal AUDIT likha, par Telegram configured nahi — Alerts & AI Keys me token daalo.',
+      };
     });
   }
 

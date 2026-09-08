@@ -71,8 +71,75 @@ export function analyzeChain(chain, spot) {
   // v6.7 GEX / GAMMA FLIP / EXPECTED MOVE (glama Trading-Volatility inspired).
   // All from data we ALREADY fetch (OI + IV + Greeks) — no new source.
   const gex = computeGex(chain, spot, atmIV);
+  // v6.11 (glama tv-mcp skew + options flow): OTM put-vs-call IV skew
+  // and volume/OI flow — real chains only (synthetic = honest null).
+  const skewFlow = computeSkewFlow(chain, spot);
 
-  return { pcr: r2(pcr), maxPain, atmIV: atmIV ? r2(atmIV * 100) : null, ivPercentile: null, oiSkew: r2(oiSkew), callOI, putOI, ...(gex ? { gex } : {}) };
+  return { pcr: r2(pcr), maxPain, atmIV: atmIV ? r2(atmIV * 100) : null, ivPercentile: null, oiSkew: r2(oiSkew), callOI, putOI, ...(gex ? { gex } : {}), ...(skewFlow || {}) };
+}
+
+/**
+ * v6.11 — IV SKEW + VOLUME/OI FLOW (glama tv-mcp "skew" + "options
+ * volume/flow"). Real-chain only (synthetic rows carry no volume/OI
+ * → honest null, never a made-up number).
+ *
+ *   skew = avg OTM-put IV − avg OTM-call IV (strikes 2–6% from spot)
+ *     positive skew = crash insurance in demand = fear bid
+ *     negative/flat = complacency (call chasing)
+ *   flow = call volume vs put volume + today's OI-change direction —
+ *     who is actually paying premium today.
+ */
+export function computeSkewFlow(chain, spot) {
+  if (!chain || !Array.isArray(chain.rows) || !(spot > 0)) return null;
+  const isReal = chain.rows.some(r => (r.callVolume || 0) + (r.putVolume || 0) > 0 || (r.callOI || 0) + (r.putOI || 0) > 0);
+  if (!isReal) return null;
+
+  const putIVs = [], callIVs = [];
+  let callVol = 0, putVol = 0, dCall = 0, dPut = 0;
+  for (const r of chain.rows) {
+    callVol += r.callVolume || 0; putVol += r.putVolume || 0;
+    dCall += r.callOIChange || 0; dPut += r.putOIChange || 0;
+    const dist = Math.abs(r.strike - spot) / spot;
+    if (dist >= 0.02 && dist <= 0.06) {
+      if (r.strike < spot && r.putIV > 0) putIVs.push(r.putIV);
+      if (r.strike > spot && r.callIV > 0) callIVs.push(r.callIV);
+    }
+  }
+  const avg = (a) => a.length ? a.reduce((s, v) => s + v, 0) / a.length : null;
+  const putIV = avg(putIVs), callIV = avg(callIVs);
+  const skew = (putIV != null && callIV != null) ? Math.round((putIV - callIV) * 10) / 10 : null;
+  const volRatio = putVol > 0 ? callVol / putVol : null;
+  const oiLean = (dCall + dPut) !== 0 ? (dCall - dPut) / (dCall + dPut) : null;
+
+  const skewRead = skew == null ? 'OTM IVs thin — skew measure nahi hua'
+    : skew >= 2.5 ? 'put skew HIGH — hedgers crash-insurance kharid rahe hain (fear bid)'
+    : skew >= 0.5 ? 'mild put skew — normal protective demand'
+    : skew > -0.5 ? 'flat skew — dono side equally priced (complacency zone)'
+    : 'CALL skew — upside chasing (FOMO bid, rallies fade-prone)';
+  const flowRead = volRatio == null ? 'volume data nahi'
+    : volRatio >= 1.5 ? 'call volume dominates — aggressive upside bets aaj'
+    : volRatio <= 0.67 ? 'put volume dominates — protection/downside bets aaj'
+    : 'balanced two-way flow';
+
+  return {
+    skew: {
+      putIV: putIV != null ? r1(putIV) : null,
+      callIV: callIV != null ? r1(callIV) : null,
+      value: skew,
+      read: skewRead,
+    },
+    flow: {
+      callVolume: Math.round(callVol),
+      putVolume: Math.round(putVol),
+      callPutVolRatio: volRatio != null ? r2(volRatio) : null,
+      oiLean: oiLean != null ? r2(oiLean) : null,
+      oiLeanRead: oiLean == null ? 'OI change flat'
+        : oiLean > 0.15 ? 'calls OI add kar rahe — positioning bullish'
+        : oiLean < -0.15 ? 'puts OI add kar rahe — positioning defensive'
+        : 'OI changes balanced',
+      read: flowRead,
+    },
+  };
 }
 
 /**
@@ -549,6 +616,71 @@ export function buildStrategies(desk, consensus) {
 export async function getOptionsContext(symbol = 'NIFTY') {
   const desk = await getOptionsDesk(symbol);
   return { desk, ctx: desk?.ok ? desk.optionsCtx : null };
+}
+
+/**
+ * v6.11 — INCOME SETUP RANKER (glama tv-mcp "rank_income_setups"):
+ * run the strategy builder on all three NSE indices, keep ONLY the
+ * credit-harvest setups (Iron Condor / Iron Fly / Winged Strangle),
+ * rank by risk-adjusted expected credit:
+ *
+ *   score = POP × (credit / spot × 100)
+ *
+ * i.e. expected credit-capture per rupee of underlying exposure.
+ * Honesty: synthetic desks (bs-model) still rank but carry their
+ * source tag; a desk that fails to load is skipped, never faked.
+ */
+export async function rankIncomeSetups() {
+  const symbols = ['NIFTY', 'BANKNIFTY', 'FINNIFTY'];
+  const INCOME_IDS = new Set(['iron-condor', 'short-straddle', 'short-strangle']);
+  const desks = await Promise.all(symbols.map(s => getOptionsDesk(s).catch(() => null)));
+  const loaded = desks.filter(d => d?.ok);
+  const rows = [];
+  for (const desk of loaded) {
+    // income ranking wants the NEUTRAL harvest view — call the builder
+    // with a flat consensus so directional spreads don't pollute it
+    const strategies = buildStrategies(desk, { side: 'FLAT', confidence: 0, grade: 'NEUTRAL', agreement: 0 });
+    for (const s of strategies) {
+      // NOTE: attachPnlProfile deletes _popKind — income = credit-range ids
+      if (!INCOME_IDS.has(s.id)) continue;
+      const credit = Number(s.netCredit ?? s.maxProfit);
+      const pop = Number(s.pop);
+      if (!(credit > 0)) continue;
+      const creditPct = r2((credit / desk.spot) * 100);
+      const score = (pop != null && Number.isFinite(pop))
+        ? Math.round(pop * creditPct * 10) / 10
+        : null;
+      rows.push({
+        symbol: desk.symbol,
+        name: s.name,
+        id: s.id,
+        credit: r2(credit),
+        creditPct,
+        pop: pop ?? null,
+        maxLoss: s.maxLoss,
+        riskReward: s.maxLoss > 0 ? r2(credit / s.maxLoss) : null,
+        score,
+        breakevens: s.breakevens,
+        source: desk.source,
+        expiry: desk.expiry,
+        exitPlan: s.exitPlan,
+      });
+    }
+  }
+  rows.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  return {
+    ok: true,
+    asOf: Date.now(),
+    count: rows.length,
+    desksLoaded: loaded.length,
+    top: rows.slice(0, 6),
+    methodology: 'score = POP × credit%-of-spot (expected credit capture). Credit-only setups; directional spreads ranked alag se Options Desk me.',
+    note: loaded.length === 0
+      ? 'koi options desk load nahi hui — thodi der baad retry karo'
+      : rows.some(r => r.source === 'bs-model')
+        ? '⚠️ model-chain (bs-model) desks — premiums estimates hain, live quotes nahi (NSE is host se unreachable).'
+        : 'sab desks live NSE chain par.',
+  };
 }
 
 export { STRIKE_STEPS, LOT_SIZES, RISK_FREE };

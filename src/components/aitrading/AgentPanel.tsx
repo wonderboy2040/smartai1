@@ -320,14 +320,16 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
   const paused = view?.today?.paused || view?.state?.pausedToday;
   const liveArmed = view?.trading?.mode === 'live' && view?.trading?.allowAuto && view?.trading?.connected;
 
-  const onStart = useCallback(async (mode: 'paper' | 'live') => {
+  const onStart = useCallback(async (mode: 'paper' | 'live' | 'notify') => {
     setBusy(true);
     const r = await startAgent(mode, mode === 'live' ? livePhrase : undefined);
     setBusy(false);
     if (r.ok) {
       notify(true, mode === 'live'
         ? '🔴 SUPERINTELLIGENCE AGENT LIVE — wallet se real orders, max 3/day, auto entry+exit armed'
-        : '🧠 Agent PAPER mode live — wallet-based sizing ke saath practice trades');
+        : mode === 'notify'
+          ? '🔔 Agent NOTIFY mode live — STRONG signals Telegram par pingenge, koi order nahi'
+          : '🧠 Agent PAPER mode live — wallet-based sizing ke saath practice trades');
       setShowLive(false); setLivePhrase('');
       load();
     } else {
@@ -387,6 +389,11 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
               <button onClick={() => onStart('paper')} disabled={busy}
                 className="px-4 py-2 rounded-xl text-xs font-black bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/25 disabled:opacity-50">
                 ▶ START PAPER
+              </button>
+              <button onClick={() => onStart('notify')} disabled={busy}
+                title="NOTIFY mode (v6.11) — agent STRONG signals dhoondhega aur Telegram par alert karega. Koi order/place position nahi — 3/day quota bhi nahi jalta."
+                className="px-4 py-2 rounded-xl text-xs font-black bg-sky-500/15 text-sky-300 border border-sky-500/40 hover:bg-sky-500/25 disabled:opacity-50">
+                🔔 START NOTIFY
               </button>
               <button onClick={() => setShowLive(s => !s)} disabled={busy || !liveArmed}
                 className={`px-4 py-2 rounded-xl text-xs font-black border disabled:opacity-40 ${liveArmed ? 'bg-red-500/15 text-red-300 border-red-500/40 hover:bg-red-500/25' : 'bg-black/30 text-slate-500 border-slate-700/40'}`}

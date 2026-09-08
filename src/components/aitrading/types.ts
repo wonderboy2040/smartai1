@@ -172,6 +172,9 @@ export interface OptionsDesk {
     putOI: number;
     /** v6.7: gamma-exposure profile (real OI chains only) */
     gex?: GexProfile;
+    /** v6.11: OTM put-vs-call IV skew + volume/OI flow (real chains only) */
+    skew?: { putIV: number | null; callIV: number | null; value: number | null; read: string };
+    flow?: { callVolume: number; putVolume: number; callPutVolRatio: number | null; oiLean: number | null; oiLeanRead: string; read: string };
   } | null;
   consensus?: { side: Side; confidence: number; agreement: number; grade: Grade };
   strategies: Strategy[];
@@ -475,6 +478,8 @@ export interface MorningBrief {
   };
   ledger?: { entries: number; settled: number; winRate: number | null; verified: boolean };
   adaptive?: { enabled: boolean; learning: AdaptiveModelStatus[] };
+  /** v6.11: context-aware "ab kya karein" suggestions (glama oneqaz). */
+  nextActions?: NextActionItem[];
   note?: string;
 }
 
@@ -634,4 +639,190 @@ export interface AgentView {
   openPositions: AgentOpenPosition[];
   wallet: WalletView | null;
   picks: Partial<Record<'INDIA' | 'FUTURES' | 'CRYPTO', AgentPick[]>>;
+}
+
+// ============================================================
+// v6.11 — glama Tier-2/3 feature types
+// ------------------------------------------------------------
+
+/** Calibration bucket: claimed confidence vs realized win-rate. */
+export interface CalibrationBucket {
+  bucket: string;
+  claimed: number;
+  n: number;
+  winRate: number | null;
+  gap: number | null;
+}
+
+export interface MonthlyTrendRow {
+  month: string;
+  n: number;
+  winRate: number;
+  avgR: number;
+}
+
+export interface TrustReport {
+  ok: boolean;
+  settled: number;
+  sufficient: boolean;
+  calibration: CalibrationBucket[];
+  brier: number | null;
+  brierVerdict: string | null;
+  monthly: MonthlyTrendRow[];
+  drift?: number | null;
+  overall?: { winRate: number; avgConfidence: number };
+  note?: string;
+}
+
+export interface GovernanceRow {
+  model: string;
+  n: number;
+  hitRate: number | null;
+  baseRate: number;
+  pValue: number;
+  verdict: 'SIGNIFICANT' | 'BORDERLINE' | 'NOISE' | 'NEEDS DATA';
+  edge: number | null;
+}
+
+export interface GovernanceView {
+  ok: boolean;
+  settled: number;
+  baseRate: number;
+  method: string;
+  minN: number;
+  models: GovernanceRow[];
+  note?: string;
+}
+
+export interface TrustView {
+  ok: boolean;
+  calibration: TrustReport;
+  governance: GovernanceView;
+}
+
+export interface PerfView {
+  ok: boolean;
+  settled: number;
+  sufficient: boolean;
+  expectancy?: number | null;
+  winRate?: number;
+  totalR?: number | null;
+  totalPnlINR?: number | null;
+  mdd?: { r: number; note: string | null };
+  sharpe?: { perTrade: number | null; note?: string };
+  sortino?: { perTrade: number | null };
+  calmar?: { expectancyOverMdd: number | null; note?: string | null };
+  streaks?: { win: number; loss: number };
+  profitFactor?: number | null;
+  avgWinR?: number | null;
+  avgLossR?: number | null;
+  equityCurveR?: number[];
+  byMarket?: Record<string, { n: number; winRate: number; avgR: number | null; totalR: number | null } | null>;
+  byMode?: Record<string, { n: number; winRate: number; avgR: number | null; totalR: number | null } | null>;
+  note?: string;
+}
+
+export interface CorrAsset { key: string; label: string; group: string }
+
+export interface CorrView {
+  ok: boolean;
+  window: number;
+  assets: CorrAsset[];
+  skipped: string[];
+  matrix: (number | null)[][];
+  top: { mostPositive: { a: string; b: string; r: number }[]; mostNegative: { a: string; b: string; r: number }[] };
+  riskLink: { pair: string; r: number; read: string } | null;
+  note: string;
+}
+
+export interface SectorRow {
+  sector: string;
+  symbols: number;
+  breadth: number;
+  avgChangePct: number;
+  avgRsi: number;
+  mood: 'BULLISH' | 'NEUTRAL' | 'BEARISH';
+  indexChangePct: number | null;
+  leader: { symbol: string; changePct: number } | null;
+  laggard: { symbol: string; changePct: number } | null;
+}
+
+export interface ContextChain {
+  macro: { niftyChangePct: number | null; vix: number | null; vixRegime: string | null; dollar: number | null; crude: number | null; gold: number | null; bias: string };
+  read: string;
+  strongest: { sector: string; mood: string; breadth: number; top: { symbol: string; changePct: number; fscore: number }[] }[];
+}
+
+export interface FScoreRow {
+  symbol: string;
+  ltp?: number | null;
+  score: number;
+  grade: 'A' | 'B' | 'C';
+  rsi?: number | null;
+  pos52?: number | null;
+  adx?: number | null;
+}
+
+export interface SectorView {
+  ok: boolean;
+  universe?: number;
+  sectors: SectorRow[];
+  chain: ContextChain | null;
+  fscore?: {
+    top: FScoreRow[];
+    bottom: FScoreRow[];
+    distribution: { A: number; B: number; C: number };
+    disclaimer?: string;
+  };
+  error?: string;
+  note?: string;
+}
+
+export interface IncomeRow {
+  symbol: string;
+  name: string;
+  id: string;
+  credit: number;
+  creditPct: number;
+  pop: number | null;
+  maxLoss: number | null;
+  riskReward: number | null;
+  score: number | null;
+  breakevens: number[];
+  source: string;
+  expiry: string;
+  exitPlan?: string;
+}
+
+export interface IncomeView {
+  ok: boolean;
+  count: number;
+  desksLoaded?: number;
+  top: IncomeRow[];
+  methodology: string;
+  note: string;
+}
+
+export interface NextActionItem {
+  id: string;
+  label: string;
+  kind: string;
+  market?: string;
+  symbol?: string;
+}
+
+export interface NextActionsView {
+  ok: boolean;
+  nseOpen: boolean;
+  actions: NextActionItem[];
+  followups: string[];
+  note?: string;
+}
+
+/** Deep-scan regime story (glama explain_ticker). */
+export interface NarrativeView {
+  title: string;
+  story: string[];
+  watch: string;
+  asOf?: number;
 }

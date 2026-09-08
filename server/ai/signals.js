@@ -21,6 +21,7 @@ import { MODELS, runQuantModels, aiCouncilVoteFromVerdict } from './models.js';
 // v6.7 self-correcting ensemble: live-outcome Bayesian weight multipliers
 import { adaptiveMultipliers, applyAdaptiveWeights } from './adaptive.js';
 import { modelStats as _ledgerModelStats } from './ledger.js';
+import { explainTicker } from './narrative.js';
 import { aggregateVotes, buildTradePlan, buildSignal, DEFAULT_GATES } from './ensemble.js';
 
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
@@ -685,10 +686,15 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
   }
   const consensus = aggregateVotes(votes, gatesFor(deps));
   const plan = buildTradePlan(consensus, ctx, mkt, { maxRiskPct: riskCapFor(deps) });
+  const built = buildSignal({ symbol: sym, market: mkt, ctx, votes, consensus, plan, aiNote: verdict ? { verdict: verdict.verdict, note: verdict.note, analysis: verdict.analysis, model: council.model } : null });
+  // v6.11 (glama explain_ticker): rule-based regime narrative — the
+  // indicator stack translated into a Hinglish story for the deep modal.
+  const narrative = explainTicker(built, ctx.ind);
   const payload = {
     ok: true,
-    signal: buildSignal({ symbol: sym, market: mkt, ctx, votes, consensus, plan, aiNote: verdict ? { verdict: verdict.verdict, note: verdict.note, analysis: verdict.analysis, model: council.model } : null }),
+    signal: built,
     indicators: ctx.ind,
+    narrative,
     priceSource: ctx.priceSource || null,
   };
   cacheSet(cacheKey, payload);
