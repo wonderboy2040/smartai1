@@ -63,9 +63,9 @@ try {
   COOKIE = (pin?.headers?.get('set-cookie') || '').split(';')[0] || '';
   ok('PIN 2023 unlocks', pin && pin.ok && !!COOKIE, `status ${pin?.status}`);
 
-  // ---- 1. status v6.9 ----
+  // ---- 1. status version stamp (v6.x, version-tolerant) ----
   const st = await j('/api/ai/status');
-  ok('status v6.9 stamp', String(st.data?.engine || '').includes('v6.9'), st.data?.engine);
+  ok('status engine stamp (v6.x)', /v6\.\d+/.test(String(st.data?.engine || '')), st.data?.engine);
   ok('status agent + futures blocks (v6.8 regression)', st.data?.agent != null && st.data?.futures != null);
 
   // ---- 3/4/5. boards with topFive ----

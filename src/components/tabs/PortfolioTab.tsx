@@ -18,6 +18,20 @@ import { LivePrice } from '../LivePrice';
 import { WidgetSetup } from '../WidgetSetup';
 import { INDMoneyPanel } from '../INDMoneyPanel';
 import { CoinDcxPanel } from '../CoinDcxPanel';
+import { QuickNav } from '../aitrading/QuickNav';
+import { SectionLabel } from '../aitrading/deskShared';
+
+/** v6.10: sticky section jump chips — the Portfolio tab is LONG (sources →
+ *  summary → insights → trackers → tools → table); same navigation pattern
+ *  the India/CoinDCX desks got in v6.9 so nothing feels buried. */
+const PF_NAV = [
+  { id: 'pf-sources', label: 'SOURCES', emoji: '🔌' },
+  { id: 'pf-summary', label: 'SUMMARY', emoji: '💰' },
+  { id: 'pf-insights', label: 'INSIGHTS', emoji: '🔎' },
+  { id: 'pf-trackers', label: 'TRACKERS', emoji: '📅' },
+  { id: 'pf-tools', label: 'TOOLS', emoji: '🧰' },
+  { id: 'pf-table', label: 'ASSETS', emoji: '📋' },
+];
 
 type SortKey = 'alloc' | 'pnl' | 'pnlPct' | 'xirr' | 'value' | 'name' | 'today' | 'invested';
 type AssetGroup = 'india' | 'usa' | 'crypto';
@@ -409,14 +423,24 @@ const PortfolioTab = React.memo(function PortfolioTab() {
 
   return (
     <div className="space-y-5 animate-fade-in">
-      {/* INDMoney official MCP integration — real portfolio read-only view */}
-      <INDMoneyPanel />
-      {/* CoinDCX crypto exchange account — balances in the same table */}
-      <CoinDcxPanel />
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* ============ 00 · SOURCES — INDMoney MCP + CoinDCX ============ */}
+      <div id="pf-sources" className="scroll-mt-20">
+        <INDMoneyPanel />
+        {/* CoinDCX crypto exchange account — balances in the same table */}
+        <div className="mt-3">
+          <CoinDcxPanel />
+        </div>
+      </div>
+
+      {/* ============ STICKY QUICK NAV (v6.10) ============ */}
+      <QuickNav items={PF_NAV} />
+
+      {/* ============ Header + grouped toolbar (v6.10 declutter) ============ */}
+      <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-2xl font-black gradient-text-cyan font-display">
           💼 Portfolio
         </h2>
+        {/* PRIMARY: refresh (data actions cluster) */}
         <div className="flex flex-wrap gap-2">
           <button
             onClick={refreshAll}
@@ -442,8 +466,17 @@ const PortfolioTab = React.memo(function PortfolioTab() {
               >
                 ⚙️
               </button>
+              <button
+                onClick={() => openAddModal()}
+                className="quantum-btn-primary px-5 py-2 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-sm text-white"
+              >
+                + Add Asset
+              </button>
             </>
           )}
+        </div>
+        {/* SECONDARY: export / share (visual weight kam — sab ghost) */}
+        <div className="flex flex-wrap gap-2 ml-auto">
           <div className="relative group">
             <button className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm text-emerald-300 border border-emerald-500/20">
               ⬇️ Export
@@ -470,14 +503,6 @@ const PortfolioTab = React.memo(function PortfolioTab() {
               </button>
             </div>
           </div>
-          {!indmActive && (
-            <button
-              onClick={() => openAddModal()}
-              className="quantum-btn-primary px-5 py-2 bg-gradient-to-r from-cyan-600 to-indigo-600 rounded-xl font-bold text-sm text-white"
-            >
-              + Add Asset
-            </button>
-          )}
           <button
             onClick={pushTelegramReport}
             className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm text-indigo-300 border-indigo-500/20"
@@ -495,7 +520,12 @@ const PortfolioTab = React.memo(function PortfolioTab() {
           <span className="text-sm font-medium text-slate-400">USD/INR</span>
           <span className="text-base font-black text-emerald-400 font-mono">₹{usdInrRate.toFixed(2)}</span>
         </div>
-        <span className="text-[10px] text-cyan-500/60 font-bold uppercase tracking-wider">Live Forex • 24×7 · 30s</span>
+        <span className="text-[10px] text-cyan-500/70 font-bold uppercase tracking-wider">Live Forex • 24×7 · 30s</span>
+      </div>
+
+      {/* ============ 01 · SUMMARY (app-parity cards) ============ */}
+      <div id="pf-summary" className="scroll-mt-20">
+        <SectionLabel num="01" title="Summary" sub="app-exact — INDMoney India (₹) · USA ($) · CoinDCX crypto · Today's live P&L" />
       </div>
 
       {/* v5.2 APP-PARITY SUMMARY — each card mirrors the OFFICIAL app's
@@ -730,6 +760,11 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         </div>
       </div>
 
+      {/* ============ 02 · INSIGHTS + XIRR ============ */}
+      <div id="pf-insights" className="scroll-mt-20">
+        <SectionLabel num="02" title="Insights" sub="live X-ray — movers · performers · diversification · XIRR (manual mode)" />
+      </div>
+
       {/* v4.5: PORTFOLIO INSIGHTS — live X-ray (today's movers, all-time
           performers, diversification health, market split) */}
       {insightAssets.length > 0 && (
@@ -777,6 +812,11 @@ const PortfolioTab = React.memo(function PortfolioTab() {
       )}
 
 
+      {/* ============ 03 · TRACKERS (plan · daily · monthly) ============ */}
+      <div id="pf-trackers" className="scroll-mt-20">
+        <SectionLabel num="03" title="Trackers" sub="monthly plan vs actual · daily P&L streaks · month-wise returns" />
+      </div>
+
       {/* FEATURE: Monthly Plan Tracker — planned vs actual per market */}
       <MonthlyPlanTracker />
 
@@ -785,6 +825,11 @@ const PortfolioTab = React.memo(function PortfolioTab() {
 
       {/* Monthly Return Report (month-wise booked + unrealized returns) */}
       <MonthlyReturnReport />
+
+      {/* ============ 04 · TOOLS (scorecard · alerts · ledger) ============ */}
+      <div id="pf-tools" className="scroll-mt-20">
+        <SectionLabel num="04" title="Tools" sub="fundamental scorecard · price alerts → Telegram · transaction history (manual mode)" />
+      </div>
 
       {/* FEATURE 3: Stock Quality Scorecard — fundamental analysis */}
       {portfolio.length > 0 && (
@@ -820,6 +865,11 @@ const PortfolioTab = React.memo(function PortfolioTab() {
 
       {/* Transaction History (manual ledger — retired while INDMoney drives the table) */}
       {!indmActive && <TransactionHistoryPanel />}
+
+      {/* ============ 05 · ASSETS TABLE (grouped) ============ */}
+      <div id="pf-table" className="scroll-mt-20">
+        <SectionLabel num="05" title="Assets" sub="🇮🇳 India · 🦅 USA · 🪙 Crypto — live LTP · today's P&L · sync-truth unrealized" />
+      </div>
 
       {/* Search / Sort toolbar */}
       {portfolio.length > 0 && (
@@ -1057,7 +1107,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                                 <span>H</span>
                               </div>
                             ) : (
-                              <div className="mt-2 text-[9px] text-slate-600 font-mono flex items-center gap-1" title="Range will appear once the live feed serves this symbol">
+                              <div className="mt-2 text-[9px] text-slate-500 font-mono flex items-center gap-1" title="Range will appear once the live feed serves this symbol">
                                 <span className="w-1 h-1 rounded-full bg-slate-500 animate-pulse" />awaiting quote
                               </div>
                             )}
@@ -1091,7 +1141,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                                 Cost {cur}{invNative.toFixed(0)}
                               </div>
                             ) : (
-                              <div className="text-[9px] text-slate-600 mt-1 font-mono hidden md:block">Eq Value</div>
+                              <div className="text-[9px] text-slate-500 mt-1 font-mono hidden md:block">Eq Value</div>
                             )}
                           </div>
 
@@ -1278,7 +1328,7 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         )}
 
         {portfolio.length === 0 && (
-          <div className="quantum-panel rounded-2xl p-10 text-center space-y-4">
+          <div className="quantum-panel rounded-2xl p-8 sm:p-10 text-center space-y-5 border border-cyan-500/10">
             <div className="text-6xl animate-bounce">📊</div>
             <h3 className="text-xl font-black text-white font-display">
               {indmActive || indmSource === 'unknown' ? 'Waiting for INDMoney Sync…' : 'No Portfolio Assets Loaded'}
@@ -1288,6 +1338,25 @@ const PortfolioTab = React.memo(function PortfolioTab() {
                 ? 'INDMoney connected — the first portfolio sync is running. Your INDIA / USA / Crypto assets will appear here automatically (2× daily thereafter).'
                 : 'If your assets are in Google Sheets, link your Google Apps Script Web App URL below to fetch them automatically.'}
             </p>
+            {/* v6.10: 3-step visual guide — the empty dark space now ANSWERS
+                "ab kya karna hai" instead of being blank ambiguity. */}
+            <div className="grid sm:grid-cols-3 gap-3 max-w-2xl mx-auto text-left">
+              <div className="rounded-xl bg-black/25 border border-white/5 p-3">
+                <div className="text-lg">🏦</div>
+                <div className="text-[11px] font-black text-violet-300 mt-1">① INDMoney connect</div>
+                <div className="text-[10px] text-slate-500 mt-1 leading-relaxed">OAuth login → India + USA assets auto-sync (upar wala card)</div>
+              </div>
+              <div className="rounded-xl bg-black/25 border border-white/5 p-3">
+                <div className="text-lg">🪙</div>
+                <div className="text-[11px] font-black text-amber-300 mt-1">② CoinDCX connect</div>
+                <div className="text-[10px] text-slate-500 mt-1 leading-relaxed">API key (view-only) → crypto balances usi table me</div>
+              </div>
+              <div className="rounded-xl bg-black/25 border border-white/5 p-3">
+                <div className="text-lg">📈</div>
+                <div className="text-[11px] font-black text-cyan-300 mt-1">③ Live tracking</div>
+                <div className="text-[10px] text-slate-500 mt-1 leading-relaxed">Prices tick live · P&L app-exact · alerts Telegram par</div>
+              </div>
+            </div>
             {!(indmActive || indmSource === 'unknown') && (
               <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
                 <button

@@ -55,7 +55,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await page.click('button:has-text("India Intraday")');
     await page.waitForSelector('text=INDIA INTRADAY DESK', { timeout: 20000 });
     const hdrBar = await page.locator('h2:has-text("INDIA INTRADAY")').locator('xpath=..').innerText();
-    check('India desk header + version badge (v6.3+)', /v6\.[3-9]/i.test(hdrBar), hdrBar.replace(/\n/g, ' ').slice(0, 70)); // v6.5: version advances with releases
+    check('India desk header + version badge (v6.3+)', /v6\.\d+/i.test(hdrBar), hdrBar.replace(/\n/g, ' ').slice(0, 70)); // v6.5: version advances with releases
     await page.waitForSelector('text=MARKET BREADTH', { timeout: 30000 });
 
     // ---------- 3. Breadth strip ----------

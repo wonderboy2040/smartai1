@@ -62,7 +62,7 @@ function WalletCard({ wallet }: { wallet: WalletView | null }) {
     <div className="bg-black/25 rounded-xl p-3">
       <div className="flex items-center justify-between mb-2">
         <span className="text-[10px] font-black text-amber-300 tracking-wider">📱 COINDCX WALLET · LIVE</span>
-        <span className="text-[9px] font-mono text-slate-600">{ago(wallet.fetchedAt)}</span>
+        <span className="text-[9px] font-mono text-slate-500">{ago(wallet.fetchedAt)}</span>
       </div>
       <div className="grid grid-cols-2 gap-1.5 text-[10px] font-mono">
         <div className="bg-black/30 rounded-lg px-2 py-1.5">
@@ -72,17 +72,17 @@ function WalletCard({ wallet }: { wallet: WalletView | null }) {
         <div className="bg-black/30 rounded-lg px-2 py-1.5">
           <div className="text-slate-500 text-[9px] font-bold">FUTURES MARGIN (USDT)</div>
           <div className="text-cyan-300 font-black text-xs">{fmtUSDT(fut?.free)}</div>
-          <div className="text-slate-600 text-[9px]">locked {fmtUSDT(fut?.locked)} · ≈ {fmtINR((fut?.total ?? 0) * (wallet.usdInr || 84))}</div>
+          <div className="text-slate-500 text-[9px]">locked {fmtUSDT(fut?.locked)} · ≈ {fmtINR((fut?.total ?? 0) * (wallet.usdInr || 84))}</div>
         </div>
         <div className="bg-black/30 rounded-lg px-2 py-1.5">
           <div className="text-slate-500 text-[9px] font-bold">SPOT INR</div>
           <div className="text-slate-200 font-black">{fmtINR(spotINR?.free)}</div>
-          <div className="text-slate-600 text-[9px]">locked {fmtINR(spotINR?.locked)}</div>
+          <div className="text-slate-500 text-[9px]">locked {fmtINR(spotINR?.locked)}</div>
         </div>
         <div className="bg-black/30 rounded-lg px-2 py-1.5">
           <div className="text-slate-500 text-[9px] font-bold">SPOT USDT</div>
           <div className="text-slate-200 font-black">{fmtUSDT(spotUSDT?.free)}</div>
-          <div className="text-slate-600 text-[9px]">USD/₹ {wallet.usdInr ?? '—'}</div>
+          <div className="text-slate-500 text-[9px]">USD/₹ {wallet.usdInr ?? '—'}</div>
         </div>
       </div>
       {(wallet.spot?.error || wallet.futures?.error) && (
@@ -90,7 +90,7 @@ function WalletCard({ wallet }: { wallet: WalletView | null }) {
           ⚠ {wallet.spot?.error || wallet.futures?.error}
         </div>
       )}
-      <div className="text-[9px] text-slate-600 mt-1.5">
+      <div className="text-[9px] text-slate-500 mt-1.5">
         Agent in futures trades sirf {fmtUSDT(wallet.deployableFuturesUSDT)} free margin ka 60% tak use karta hai — liquidation buffer hamesha bacha rehta hai.
       </div>
     </div>
@@ -110,12 +110,12 @@ function TradeSlots({ used, total, pnlINR, lossCapINR }: { used: number; total: 
         {Array.from({ length: Math.min(total, 10) }).map((_, i) => (
           <div key={i} className={`flex-1 h-6 rounded-md flex items-center justify-center text-[10px] font-black font-mono border ${i < used
             ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
-            : 'bg-black/30 text-slate-600 border-slate-700/40'}`}>
+            : 'bg-black/30 text-slate-500 border-slate-700/40'}`}>
             {i < used ? '✓' : i + 1}
           </div>
         ))}
       </div>
-      <div className="flex justify-between text-[9px] font-mono text-slate-600">
+      <div className="flex justify-between text-[9px] font-mono text-slate-500">
         <span>{used}/{total} trades used · resets IST midnight</span>
         <span>loss cap −{fmtINR(lossCapINR)}</span>
       </div>
@@ -166,11 +166,11 @@ function AgentConfigEditor({ cfg, onSaved }: { cfg: AgentView['config']; onSaved
       </div>
       <div className="flex items-center gap-2 mt-2">
         <button onClick={save} disabled={!dirty || saving}
-          className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-colors ${dirty && !saving ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/30' : 'bg-black/30 text-slate-600 border border-slate-700/40'}`}>
+          className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-colors ${dirty && !saving ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/30' : 'bg-black/30 text-slate-500 border border-slate-700/40'}`}>
           {saving ? 'saving…' : dirty ? 'SAVE RULES' : 'saved'}
         </button>
         {dirty && <span className="text-[9px] text-amber-400/80 font-mono">unsaved changes</span>}
-        <span className="ml-auto text-[9px] font-mono text-slate-600">
+        <span className="ml-auto text-[9px] font-mono text-slate-500">
           agent STRONG bar: {Number(cfg.minConfidence)}% + {Math.round(Number(cfg.minAgreement) * 100)}% agreement (manual se strict)
         </span>
       </div>
@@ -192,18 +192,18 @@ function OpenPositions({ positions }: { positions: AgentView['openPositions'] })
             <div className="flex items-center gap-2 flex-wrap text-[10px] font-mono font-bold">
               <span className={p.side === 'LONG' ? 'text-emerald-400' : 'text-red-400'}>{p.side}</span>
               <span className="text-slate-200">{p.pair}</span>
-              <span className="text-slate-500">{p.mode.toUpperCase()}</span>
+              <span className="text-slate-400">{p.mode.toUpperCase()}</span>
               {p.leverage != null && <span className="text-amber-300">{p.leverage}x</span>}
-              <span className="text-slate-400">{p.qty} @ {p.entryPrice}</span>
-              <span className="text-slate-600">SL {p.sl ?? '—'} · T2 {p.tp2 ?? '—'}</span>
+              <span className="text-slate-300">{p.qty} @ {p.entryPrice}</span>
+              <span className="text-slate-500">SL {p.sl ?? '—'} · T2 {p.tp2 ?? '—'}</span>
               {p.marginUSDT != null && <span className="text-cyan-300">margin {p.marginUSDT} USDT</span>}
-              <span className="ml-auto text-slate-500">{p.ageMin ?? '?'}m old</span>
+              <span className="ml-auto text-slate-400">{p.ageMin ?? '?'}m old</span>
             </div>
             <div className="mt-1.5 flex items-center gap-2">
               <div className="flex-1 h-1 rounded-full bg-black/40 overflow-hidden" role="img" aria-label="time to auto exit">
                 <div className={`h-full rounded-full ${holdPct > 80 ? 'bg-red-500/70' : 'bg-orange-400/60'}`} style={{ width: `${holdPct}%` }} />
               </div>
-              <span className="text-[9px] font-mono text-slate-600">time-exit {p.maxHoldMin}m</span>
+              <span className="text-[9px] font-mono text-slate-500">time-exit {p.maxHoldMin}m</span>
             </div>
           </div>
         );
@@ -221,15 +221,15 @@ function TodayTrades({ trades }: { trades: AgentView['today']['trades'] }) {
       <div className="text-[10px] font-black text-emerald-300 tracking-wider mb-1">📋 TODAY'S AGENT TRADES</div>
       {trades.slice().reverse().map((t, i) => (
         <div key={`${t.ts}-${i}`} className="bg-black/30 rounded-lg px-2.5 py-1.5 flex items-center gap-2 flex-wrap text-[10px] font-mono">
-          <span className="text-slate-600">{new Date(t.ts).toLocaleTimeString('en-IN', { hour12: false })}</span>
+          <span className="text-slate-500">{new Date(t.ts).toLocaleTimeString('en-IN', { hour12: false })}</span>
           <span className={t.side === 'LONG' ? 'text-emerald-400' : 'text-red-400'}>{t.side}</span>
           <span className="text-slate-200">{t.pair}</span>
           <span className="text-slate-500">{t.mode.toUpperCase()}</span>
           {t.leverage != null && <span className="text-amber-300">{t.leverage}x</span>}
-          {t.qty != null && <span className="text-slate-400">{t.qty} @ {t.price}</span>}
+          {t.qty != null && <span className="text-slate-300">{t.qty} @ {t.price}</span>}
           {t.marginUSDT != null && <span className="text-cyan-300">m {t.marginUSDT} USDT</span>}
           <span className={`ml-auto px-1.5 py-0.5 rounded text-[9px] font-black ${t.status === 'FILLED' || t.status === 'SUBMITTED' ? 'bg-emerald-500/15 text-emerald-300' : t.status === 'REJECTED' ? 'bg-red-500/15 text-red-300' : 'bg-slate-600/20 text-slate-400'}`}>{t.status}</span>
-          {t.reason && <div className="w-full text-[9px] text-slate-600 truncate" title={t.reason}>{t.reason}</div>}
+          {t.reason && <div className="w-full text-[9px] text-slate-500 truncate" title={t.reason}>{t.reason}</div>}
         </div>
       ))}
     </div>
@@ -240,19 +240,33 @@ function PickStrip({ title, picks, accent }: { title: string; picks: AgentPick[]
   if (!picks || picks.length === 0) return null;
   return (
     <div className="bg-black/25 rounded-xl p-3">
-      <div className={`text-[10px] font-black ${accent} tracking-wider mb-1.5`}>{title}</div>
-      <div className="grid gap-1.5 sm:grid-cols-3">
+      <div className={`text-[10px] font-black ${accent} tracking-wider mb-2`}>{title}</div>
+      {/* v6.10: roomier pick cards — 2-per-row on sm+ (was 3, too
+          cramped), E/SL/T2 plan chips with labels + color coding,
+          grade pill instead of floating text, conf as a mini bar. */}
+      <div className="grid gap-2 sm:grid-cols-2">
         {picks.map((pick) => (
-            <div key={pick.symbol} className="bg-black/30 rounded-lg px-2 py-1.5 text-[10px] font-mono">
-              <div className="flex items-center gap-1.5">
-                <span className={`font-black ${pick.side === 'LONG' ? 'text-emerald-400' : 'text-red-400'}`}>{pick.side}</span>
-                <span className="text-slate-200 font-black">{pick.symbol}</span>
-                <span className="text-slate-500">{pick.confidence}%</span>
-                <span className="ml-auto text-[9px] text-amber-300/80">{pick.grade}</span>
-              </div>
-              {pick.plan && <div className="text-[9px] text-slate-600 mt-0.5">E {pick.plan.entry} · SL {pick.plan.stopLoss} · T2 {pick.plan.target2}</div>}
+          <div key={pick.symbol} className="bg-black/30 rounded-lg px-2.5 py-2 space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${pick.side === 'LONG' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-red-500/15 text-red-300'}`}>{pick.side}</span>
+              <span className="text-[11px] text-slate-100 font-black font-mono">{pick.symbol}</span>
+              <span className="ml-auto text-[9px] font-black text-amber-300/90 bg-amber-500/10 border border-amber-500/25 rounded px-1.5 py-0.5">{pick.grade}</span>
             </div>
-          ))}
+            <div className="flex items-center gap-1.5" title="model confidence">
+              <div className="flex-1 h-1 rounded-full bg-black/40 overflow-hidden">
+                <div className="h-full rounded-full bg-cyan-500/60" style={{ width: `${Math.min(100, Math.max(0, pick.confidence ?? 0))}%` }} />
+              </div>
+              <span className="text-[9px] text-slate-400 font-mono font-bold shrink-0">{pick.confidence}%</span>
+            </div>
+            {pick.plan && (
+              <div className="flex items-center gap-1 flex-wrap text-[9px] font-mono">
+                <span className="px-1.5 py-0.5 rounded bg-black/40 text-slate-400" title="entry">E {pick.plan.entry}</span>
+                <span className="px-1.5 py-0.5 rounded bg-red-500/10 text-red-300/90" title="stop loss">SL {pick.plan.stopLoss}</span>
+                <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300/90" title="target 2">T2 {pick.plan.target2}</span>
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -263,11 +277,11 @@ function LogFeed({ log }: { log: AgentLogLine[] }) {
     <div className="bg-black/25 rounded-xl p-3">
       <div className="text-[10px] font-black text-slate-400 tracking-wider mb-1.5">🛰 AGENT LOG (live — every 60s scan)</div>
       <div className="max-h-44 overflow-y-auto space-y-0.5 font-mono text-[10px]">
-        {log.length === 0 && <div className="text-slate-600">no log lines yet — agent start karo</div>}
+        {log.length === 0 && <div className="text-slate-500">no log lines yet — agent start karo</div>}
         {log.map((l, i) => (
           <div key={`${l.ts}-${i}`} className="flex gap-2">
-            <span className="text-slate-700 shrink-0">{new Date(l.ts).toLocaleTimeString('en-IN', { hour12: false })}</span>
-            <span className={LOG_STYLE[l.level] || 'text-slate-400'}>{l.text}</span>
+            <span className="text-slate-500 shrink-0">{new Date(l.ts).toLocaleTimeString('en-IN', { hour12: false })}</span>
+            <span className={LOG_STYLE[l.level] || 'text-slate-300'}>{l.text}</span>
           </div>
         ))}
       </div>
@@ -375,7 +389,7 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
                 ▶ START PAPER
               </button>
               <button onClick={() => setShowLive(s => !s)} disabled={busy || !liveArmed}
-                className={`px-4 py-2 rounded-xl text-xs font-black border disabled:opacity-40 ${liveArmed ? 'bg-red-500/15 text-red-300 border-red-500/40 hover:bg-red-500/25' : 'bg-black/30 text-slate-600 border-slate-700/40'}`}
+                className={`px-4 py-2 rounded-xl text-xs font-black border disabled:opacity-40 ${liveArmed ? 'bg-red-500/15 text-red-300 border-red-500/40 hover:bg-red-500/25' : 'bg-black/30 text-slate-500 border-slate-700/40'}`}
                 title={liveArmed ? 'Real orders — typed LIVE confirmation' : 'Pehle Risk settings me mode LIVE (typed) + Auto-execution ON karo'}>
                 🔴 START LIVE
               </button>
@@ -385,7 +399,7 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
       </div>
 
       {!liveArmed && !running && (
-        <div className="text-[10px] text-slate-600 mt-2 font-mono">
+        <div className="text-[10px] text-slate-500 mt-2 font-mono">
           LIVE ke liye: Execution Console → Risk settings → mode LIVE (type "LIVE") + Auto-execution ON + CoinDCX connected. Agent LIVE start par bhi typed "LIVE" maangta hai.
         </div>
       )}

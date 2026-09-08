@@ -69,7 +69,7 @@ const check = (name, ok, extra = '') => {
 
     // ---------- v6.5 identity ----------
     const badgeTxt = await page.locator('span.quantum-badge', { hasText: /v6\./ }).first().textContent().catch(() => '');
-    check('version badge (v6.6+)', /v6\.[5-9]/.test(badgeTxt || ''));
+    check('version badge (v6.x)', /v6\.\d+/.test(badgeTxt || ''));
 
     // ---------- India desk ----------
     await page.waitForSelector('text=INDIA INTRADAY DESK', { timeout: 10000 });

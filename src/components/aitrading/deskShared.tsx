@@ -1,11 +1,12 @@
 // ============================================================
-// src/components/aitrading/deskShared.tsx — v6.9
+// src/components/aitrading/deskShared.tsx — v6.9 + v6.10
 // ------------------------------------------------------------
 // Shared building blocks for the two SPLIT desks (IndiaIntradayTab
 // + CoinDcxTab): section labels, regime chips, breadth meter,
-// board filters, refresh countdown, summary chips and the India
-// how-to guide. Extracted from the old single AI Trading tab so
-// each desk stays visually consistent while fully separate.
+// board filters, refresh countdown, summary chips, the India
+// how-to guide and the v6.10 DESK STATS quick-glance strip.
+// Extracted from the old single AI Trading tab so each desk
+// stays visually consistent while fully separate.
 // ============================================================
 import { memo, useEffect, useState } from 'react';
 import type { MarketKind, SignalBoard } from './types';
@@ -74,6 +75,49 @@ export const BreadthStrip = memo(function BreadthStrip({ board }: { board: Signa
 });
 
 export type BoardFilter = 'ALL' | 'ACTION' | 'STRONG' | 'LONG' | 'SHORT';
+
+/** v6.10 DESK STATS — the one-glance "desk kaisa hai" strip:
+ *  scanned universe · actionable · STRONG · avg confidence · breadth mood.
+ *  Five compact stat tiles directly under the command bar so the user
+ *  never has to scroll into the board to answer "aaj kuch hai kya?"
+ *  Degrades to a slim placeholder while the first board loads. */
+export const DeskStatsStrip = memo(function DeskStatsStrip({ board, deskLabel }: { board: SignalBoard | null; deskLabel: string }) {
+  const sigs = board?.signals || [];
+  const strong = sigs.filter(s => s.grade === 'STRONG').length;
+  const actionable = sigs.filter(s => s.grade === 'ACTION' || s.grade === 'STRONG').length;
+  const b = board?.breadth;
+  const mood = b ? (b.bull - b.bear) : null;
+  const moodTxt = mood == null ? '—' : mood > 25 ? 'RISK-ON' : mood < -25 ? 'RISK-OFF' : 'MIXED';
+  const moodCls = mood == null ? 'text-slate-400' : mood > 25 ? 'text-emerald-400' : mood < -25 ? 'text-red-400' : 'text-amber-400';
+  const stats: { label: string; value: string; cls?: string; title: string }[] = [
+    { label: 'SCANNED', value: board ? `${board.scanned ?? 0}` : '…', title: 'Universe symbols the ensemble scanned' },
+    { label: 'SIGNALS', value: `${sigs.length}`, title: 'Rows on the board (any grade)' },
+    { label: 'ACTIONABLE', value: `${actionable}`, cls: actionable > 0 ? 'text-cyan-300' : 'text-slate-400', title: 'STRONG + ACTION — tradeable consensus' },
+    { label: 'STRONG', value: `${strong}`, cls: strong > 0 ? 'text-emerald-300' : 'text-slate-400', title: 'Full-committee agreement (75%+ conf)' },
+    { label: 'AVG CONF', value: b ? `${Math.round(b.avgConf ?? 0)}%` : '—', title: 'Average confidence across the board' },
+    { label: 'MOOD', value: moodTxt, cls: moodCls, title: 'Breadth mood (bull − bear)' },
+  ];
+  return (
+    <div className="quantum-panel rounded-2xl px-3.5 py-2.5" aria-label={`${deskLabel} desk stats`}>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[9px] font-black text-slate-400 tracking-widest">{deskLabel}</span>
+        {b && (
+          <span className="ml-auto text-[9px] font-mono text-slate-500">
+            ▲{b.bull} ▼{b.bear} ·{b.flat}
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+        {stats.map(s => (
+          <div key={s.label} className="bg-black/25 rounded-xl px-2 py-1.5 text-center" title={s.title}>
+            <div className="text-[8px] font-black text-slate-500 tracking-wider">{s.label}</div>
+            <div className={`text-sm font-black font-mono ${s.cls ?? 'text-slate-100'}`}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+});
 
 const FILTERS: { id: BoardFilter; label: string }[] = [
   { id: 'ALL', label: 'ALL' },

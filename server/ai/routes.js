@@ -98,7 +98,7 @@ export function registerAITradingRoutes(app, deps) {
       ]);
       res.json({
         ok: true,
-        engine: 'SUPERINTELLIGENCE ENSEMBLE v6.9',
+        engine: 'SUPERINTELLIGENCE ENSEMBLE v6.10',
         models: board?.models || cryptoBoard?.models || [],
         aiCouncilOnline: (board?.models || []).some(m => m.id === 'aicouncil' && m.online),
         risk,
@@ -644,5 +644,5 @@ export function registerAITradingRoutes(app, deps) {
   }, 90_000);
   if (auto.unref) auto.unref();
 
-  console.log('[ai] Superintelligence Ensemble v6.9 — DUAL DESKS (India | CoinDCX) · topFive ranking ·  10 models · SMC/ICT · GEX desk · swing · whales · ledger · adaptive weights · trailing SL · backtests · Telegram · Dhan + CoinDCX gauntlets · crypto leverage · GLOBAL FUTURES (USDT perps) · SUPERINTELLIGENCE AUTO-AGENT (3 trades/day, wallet-sized)');
+  console.log('[ai] Superintelligence Ensemble v6.10 — DUAL DESKS + 3-TAB UX UPGRADE (India | CoinDCX) · topFive ranking ·  10 models · SMC/ICT · GEX desk · swing · whales · ledger · adaptive weights · trailing SL · backtests · Telegram · Dhan + CoinDCX gauntlets · crypto leverage · GLOBAL FUTURES (USDT perps) · SUPERINTELLIGENCE AUTO-AGENT (3 trades/day, wallet-sized)');
 }

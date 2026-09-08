@@ -1,11 +1,12 @@
 // ============================================================
-// src/components/tabs/CoinDcxTab.tsx — v6.9 COINDCX DESK
+// src/components/tabs/CoinDcxTab.tsx — v6.10 COINDCX DESK
 // ------------------------------------------------------------
 // The CoinDCX half of the old AI Trading tab, now a SELF-CONTAINED
 // desk — nothing NSE on this screen:
 //   ┌ COMMAND BAR      BTC regime · engine status · refresh
 //   ├ DESK SWITCHER    ₿ SPOT (INR pairs)  |  ⚡ GLOBAL FUTURES (USDT perps)
 //   ├ QUICK NAV        sticky section jump chips
+//   ├ 📊 DESK STATS    v6.10 one-glance strip of the active desk
 //   ├ 00 AUTO-AGENT    superintelligence auto entry/exit (3 trades/day)
 //   ├ 📱 WALLET        spot + futures + equity — "wallet me kitna hai"
 //   ├ 🏆 TOP 5 PICKS   composite ranking of the active desk's universe
@@ -26,7 +27,7 @@ import { AlertsPanel } from '../aitrading/AlertsPanel';
 import { AgentPanel } from '../aitrading/AgentPanel';
 import { MorningBriefPanel, SwingDeskPanel, WhaleRadarPanel, SignalLedgerPanel, OrderbookPanel } from '../aitrading/ProPanels';
 import {
-  SectionLabel, RegimeChips, BreadthStrip, FilterChips, RefreshCountdown, BoardSummary,
+  SectionLabel, RegimeChips, BreadthStrip, FilterChips, RefreshCountdown, BoardSummary, DeskStatsStrip,
   filterSignals, countSignals, type BoardFilter,
 } from '../aitrading/deskShared';
 import type { AISignal, SignalBoard, WalletView } from '../aitrading/types';
@@ -186,7 +187,7 @@ export default memo(function CoinDcxTab() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-black tracking-wide bg-gradient-to-r from-amber-300 to-yellow-200 bg-clip-text text-transparent">₿ COINDCX DESK</h2>
-              <span className="quantum-badge">v6.9</span>
+              <span className="quantum-badge">v6.10</span>
             </div>
             <p className="text-[10px] text-slate-500 mt-0.5">
               SPOT (INR) + ⚡ GLOBAL FUTURES (USDT perps) · wallet · leverage · auto-agent
@@ -223,6 +224,9 @@ export default memo(function CoinDcxTab() {
 
       {/* ============ STICKY QUICK NAV (v6.9) ============ */}
       <QuickNav items={NAV} />
+
+      {/* ============ 📊 DESK STATS (v6.10 — active desk one-glance) ============ */}
+      <DeskStatsStrip board={board} deskLabel={desk === 'FUTURES' ? '⚡ FUTURES DESK SNAPSHOT' : '₿ SPOT DESK SNAPSHOT'} />
 
       {/* ============ 00 · SUPERINTELLIGENCE AUTO-AGENT ============ */}
       <div id="cx-agent">

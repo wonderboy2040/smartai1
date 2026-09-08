@@ -1,11 +1,13 @@
 // ============================================================
-// src/components/tabs/IndiaIntradayTab.tsx — v6.9 INDIA DESK
+// src/components/tabs/IndiaIntradayTab.tsx — v6.10 INDIA DESK
 // ------------------------------------------------------------
 // The India half of the old AI Trading tab, now a SELF-CONTAINED
 // desk — nothing crypto on this screen:
 //   ┌ COMMAND BAR     NIFTY/VIX regime · engine status · refresh
 //   ├ NSE CLOCK       live IST session phase + countdown
 //   ├ QUICK NAV       sticky section jump chips
+//   ├ 📊 DESK STATS   v6.10 one-glance strip (scanned·actionable·
+//   │                 STRONG·avg conf·mood)
 //   ├ 🏆 TOP 5 PICKS  full-universe composite ranking (44 stocks
 //   │                 + NIFTY/BANKNIFTY → ranked 5 best trades)
 //   ├ 01 SIGNAL BOARD 10-model consensus cards (Dhan paper/live)
@@ -27,7 +29,7 @@ import { BacktestPanel } from '../aitrading/BacktestPanel';
 import { AlertsPanel } from '../aitrading/AlertsPanel';
 import { MorningBriefPanel, SwingDeskPanel, SignalLedgerPanel } from '../aitrading/ProPanels';
 import {
-  SectionLabel, RegimeChips, BreadthStrip, FilterChips, RefreshCountdown, BoardSummary,
+  SectionLabel, RegimeChips, BreadthStrip, FilterChips, RefreshCountdown, BoardSummary, DeskStatsStrip,
   filterSignals, countSignals, IndiaHowToTrade, type BoardFilter,
 } from '../aitrading/deskShared';
 import type { AISignal, DhanStatus } from '../aitrading/types';
@@ -128,7 +130,7 @@ export default memo(function IndiaIntradayTab() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-black tracking-wide bg-gradient-to-r from-orange-300 to-amber-200 bg-clip-text text-transparent">🇮🇳 INDIA INTRADAY DESK</h2>
-              <span className="quantum-badge">v6.9</span>
+              <span className="quantum-badge">v6.10</span>
             </div>
             <p className="text-[10px] text-slate-500 mt-0.5">
               NSE 44 stocks + NIFTY/BANKNIFTY → 10-model consensus · TOP-5 composite rank · options desk · Dhan gauntlet
@@ -152,6 +154,9 @@ export default memo(function IndiaIntradayTab() {
 
       {/* ============ STICKY QUICK NAV (v6.9) ============ */}
       <QuickNav items={NAV} />
+
+      {/* ============ 📊 DESK STATS (v6.10 one-glance) ============ */}
+      <DeskStatsStrip board={board} deskLabel="🇮🇳 INDIA DESK SNAPSHOT" />
 
       {/* toast */}
       {toast && (

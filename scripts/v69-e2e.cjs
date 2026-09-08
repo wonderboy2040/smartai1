@@ -71,7 +71,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     await page.waitForTimeout(6000); // board + top5 fetch
     const bodyIndia = await page.textContent('body');
     ok('India desk header', /INDIA INTRADAY DESK/i.test(bodyIndia));
-    ok('v6.9 badge', /v6\.9/.test(bodyIndia));
+    ok('desk version badge (v6.x)', /v6\.\d+/.test(bodyIndia), 'version-tolerant since v6.10');
     ok('India TOP 5 PICKS panel', /TOP 5 PICKS/i.test(bodyIndia));
     ok('India NSE clock', /NSE/i.test(bodyIndia) && /(PRE-OPEN|LIVE|NO FRESH ENTRY|SQUARE-OFF|CLOSED|WEEKEND)/i.test(bodyIndia));
     ok('India pick reasons (KYUN)', /KYUN:/i.test(bodyIndia));

@@ -35,9 +35,19 @@ export const CoinDcxPanel = React.memo(function CoinDcxPanel() {
   const [loading, setLoading] = useState(true);
   const [apiKey, setApiKey] = useState('');
   const [secret, setSecret] = useState('');
+  const [showSecret, setShowSecret] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  // v6.10: help collapsed for returning visitors (same pattern as INDMoneyPanel)
+  const [helpOpen, setHelpOpen] = useState(() => {
+    try { return !localStorage.getItem('pf-cdcx-help-dismissed'); } catch { return true; }
+  });
+  const toggleHelp = () => setHelpOpen(v => {
+    const next = !v;
+    try { localStorage.setItem('pf-cdcx-help-dismissed', next ? '' : '1'); } catch { /* private mode */ }
+    return next;
+  });
   const mountedRef = useRef(true);
 
   const cdcxInfo = indmMeta?.coindcx || status;
@@ -166,9 +176,7 @@ export const CoinDcxPanel = React.memo(function CoinDcxPanel() {
                 Disconnect
               </button>
             </>
-          ) : (
-            <span className="text-[10px] text-slate-500 font-bold self-center hidden sm:inline">API key needed →</span>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -184,30 +192,45 @@ export const CoinDcxPanel = React.memo(function CoinDcxPanel() {
         </div>
       )}
 
-      {/* Connect form */}
+      {/* Connect form — v6.10: clearer inputs (labels + visibility toggle
+          on the secret), help text collapsible, everything roomier. */}
       {!connected && (
         <div className="space-y-3">
           <div className="grid sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">API Key</label>
+              <label htmlFor="cdcx-api-key" className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">API Key</label>
               <input
-                type="password"
+                id="cdcx-api-key"
+                type="text"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 placeholder="CoinDCX API key"
                 autoComplete="off"
-                className="w-full bg-slate-800/70 border border-slate-700 rounded-xl px-3 py-2.5 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
+                spellCheck={false}
+                className="w-full bg-slate-900/70 border border-slate-600/70 focus:border-amber-500 rounded-xl px-3.5 py-2.5 text-white font-mono text-xs focus:outline-none transition-colors placeholder:text-slate-500"
               />
             </div>
             <div>
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Secret</label>
+              <label htmlFor="cdcx-secret" className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                Secret
+                <button
+                  type="button"
+                  onClick={() => setShowSecret(v => !v)}
+                  className="ml-2 text-[9px] font-black text-amber-300 hover:text-amber-200 normal-case tracking-normal"
+                  aria-label={showSecret ? 'Hide secret' : 'Show secret'}
+                >
+                  {showSecret ? '🙈 hide' : '👁 show'}
+                </button>
+              </label>
               <input
-                type="password"
+                id="cdcx-secret"
+                type={showSecret ? 'text' : 'password'}
                 value={secret}
                 onChange={(e) => setSecret(e.target.value)}
                 placeholder="CoinDCX API secret"
                 autoComplete="off"
-                className="w-full bg-slate-800/70 border border-slate-700 rounded-xl px-3 py-2.5 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
+                spellCheck={false}
+                className="w-full bg-slate-900/70 border border-slate-600/70 focus:border-amber-500 rounded-xl px-3.5 py-2.5 text-white font-mono text-xs focus:outline-none transition-colors placeholder:text-slate-500"
               />
             </div>
           </div>
@@ -228,14 +251,29 @@ export const CoinDcxPanel = React.memo(function CoinDcxPanel() {
               CoinDCX → Profile → API Keys se banao ↗
             </a>
           </div>
-          <div className="text-xs text-slate-400 leading-relaxed space-y-1.5">
-            <p>
-              <b className="text-slate-300">Kaise kaam karta hai:</b> Connect karte hi aapke CoinDCX balances (BTC/ETH/… INR values ke saath)
-              asset table ke <b>Crypto</b> group me aa jayenge — 2× daily auto-sync + live prices (jo coins INDMoney me hain wo alag rows rahenge).
-            </p>
-            <p className="text-slate-500">
-              🔑 Key banate waqt <b>View / read-only</b> permission kafi hai — SmartAI kabhi trade nahi karta. Keys sirf server pe store hote hain (encrypted at rest nahi hain, server access = key access).
-            </p>
+          {/* v6.10 collapsible help */}
+          <div className="rounded-xl bg-black/20 border border-white/5">
+            <button
+              onClick={toggleHelp}
+              className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 text-left"
+              aria-expanded={helpOpen}
+            >
+              <span className="text-[11px] font-bold text-slate-300">
+                ℹ️ Kaise kaam karta hai — <span className="text-slate-500 font-medium">view-only key · balances auto-sync · live prices</span>
+              </span>
+              <span className={`text-slate-500 transition-transform ${helpOpen ? 'rotate-180' : ''}`}>▼</span>
+            </button>
+            {helpOpen && (
+              <div className="px-3.5 pb-3 text-xs text-slate-400 leading-relaxed space-y-1.5">
+                <p>
+                  Connect karte hi aapke CoinDCX balances (BTC/ETH/… INR values ke saath)
+                  asset table ke <b>Crypto</b> group me aa jayenge — 2× daily auto-sync + live prices (jo coins INDMoney me hain wo alag rows rahenge).
+                </p>
+                <p className="text-slate-500">
+                  🔑 Key banate waqt <b>View / read-only</b> permission kafi hai — SmartAI kabhi trade nahi karta. Keys sirf server pe store hote hain (encrypted at rest nahi hain, server access = key access).
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}

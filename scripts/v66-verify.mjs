@@ -65,7 +65,7 @@ try {
   // ---- status stamp ----
   const status = await (await fetch(`${BASE}/api/ai/status`, { headers: { cookie } })).json();
   check('/api/ai/status ok', status.ok);
-  check('engine stamps v6.6+', /v6\.[6-9]/.test(status.engine || ''), status.engine);
+  check('engine stamps v6.x', /v6\.\d+/.test(status.engine || ''), status.engine);
 
   // ---- state: cryptoLeverage ----
   const state = await (await fetch(`${BASE}/api/ai/trading/state`, { headers: { cookie } })).json();

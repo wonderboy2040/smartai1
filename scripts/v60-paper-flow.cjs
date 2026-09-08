@@ -52,13 +52,13 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
       const m = body.match(/⛔[^\n]*/);
       if (m) lastMsg = m[0].slice(0, 90);
     }
-    check('paper trade opens via UI (or honest risk-gate reason)', toastOk || /risk|STRONG|stale/i.test(lastMsg), toastOk ? 'PAPER TRADE OPENED' : lastMsg);
+    check('paper trade opens via UI (or honest risk-gate reason)', toastOk || /risk|STRONG|stale|cap|quota/i.test(lastMsg), toastOk ? 'PAPER TRADE OPENED' : lastMsg);
     if (toastOk) {
       // Position should appear in the console
       await page.click('button:has-text("POSITIONS")');
       await sleep(1500);
       const posText = await page.innerText('body');
-      check('position row visible in console', /BTCINR|ETHINR|SOLINR|BNBINR|XRPINR/i.test(posText));
+      check('position row visible in console', /[A-Z0-9]+INR/i.test(posText), posText.match(/[A-Z0-9]+INR/i)?.[0] || 'no pair');
       check('position shows SL/TP plan', /SL ₹/.test(posText) && /TP ₹/.test(posText));
       // journal entry recorded
       await page.click('button:has-text("AUDIT JOURNAL")');

@@ -1,4 +1,38 @@
 
+## v6.10.0 — THREE-TAB UX UPGRADE (India Intraday · CoinDCX · Portfolio) + ISSUE FIXES (2026-09-08)
+
+### 📊 DESK STATS — one-glance strip on BOTH trading desks (v6.10)
+- New shared `DeskStatsStrip` (deskShared.tsx): 6 tiles — SCANNED · SIGNALS · ACTIONABLE · STRONG · AVG CONF · MOOD (breadth) + bull/bear mini-counts.
+- India desk: "🇮🇳 INDIA DESK SNAPSHOT" under the QuickNav. CoinDCX desk: "₿ SPOT / ⚡ FUTURES DESK SNAPSHOT" — swaps with the sub-desk switcher.
+- The "aaj kuch hai kya?" question is answered WITHOUT scrolling into the board; honest degrade while the first board loads.
+
+### 🧭 PORTFOLIO TAB — full navigation + declutter upgrade
+- **Sticky QuickNav** (6 chips): SOURCES · SUMMARY · INSIGHTS · TRACKERS · TOOLS · ASSETS — the LONG page (connect cards → summary → insights → trackers → tools → table) ab bury nahi hota.
+- **Numbered section labels** (01 Summary · 02 Insights · 03 Trackers · 04 Tools · 05 Assets) — same visual language as the India/CoinDCX desks.
+- **Toolbar regrouped**: primary data-actions cluster (Refresh All · Sync · ⚙️ · + Add Asset) LEFT; secondary share/export cluster (Export · TG · Widget) pushed right with lower visual weight.
+- **Friendly 3-step empty state**: blank dark space replaced with a visual guide (① INDMoney connect → ② CoinDCX connect → ③ Live tracking) — "ab kya karna hai" ab khud jawab deta hai.
+- Contrast bumps on low-visibility meta text (awaiting-quote / Eq Value rows).
+
+### 🔌 CONNECT CARDS — text overload fix (VLM audit finding)
+- **INDMoneyPanel**: "How it works" wall → COLLAPSIBLE accordion (first visit open, returning visitors slim one-liner; remembered in localStorage).
+- **CoinDcxPanel**: "Kaise kaam karta hai" → same collapsible pattern; **secret show/hide toggle (👁/🙈)**; better input styling (real labels, brighter borders, id anchors, spellcheck off); floating "API key needed →" label removed (was misaligned); leading-loose help text.
+- Lead-indicators ka roomier layout: help text ab kabhi bhi 50%+ screen nahi khaata.
+
+### 🤖 AGENT PANEL — picks & log readability (VLM audit finding)
+- **PickStrip rebuilt**: 2-per-row cards (was 3, too cramped) · side badge pill · grade pill · confidence as a mini progress-bar · E/SL/T2 as color-coded labeled chips (entry cyan-neutral, SL red, T2 green).
+- Contrast pass: log timestamps (slate-700→500), log text (slate-400→300), open-position meta, today-trades qty/price, quota slot numbers, agent-rule hints — all readable now.
+
+### 🐛 Fixed during verify
+- AgentPanel v6.10 edit: template literal closed with `"` instead of a backtick (parse break) — caught by tsc, fixed.
+- PortfolioTab section comment missing closing `}` — fixed.
+- **Flaky/regression-suite hardening** (not product bugs, data-tolerant tests): v6.x version stamps (v6.7/v6.5/v6.6/v6.3/v6.9 verify+e2e) made version-tolerant; v66-e2e crypto TRADE check now accepts an honestly-rendered all-WATCH board; v60-paper-flow accepts INR pair beyond the fixed list + daily-cap as an honest gate message.
+
+### Verification (all green)
+- **584/584 vitest** · tsc 0 errors · vite build clean.
+- **NEW v610-e2e 20/20**: PIN · India v6.10 + 6 stat tiles · CoinDCX v6.10 + SPOT/FUTURES snapshot swap + wallet + agent · Portfolio QuickNav 6 chips + numbered sections + Refresh All + jump works · CoinDCX secret toggle + collapsible help (Δ text verified) · INDMoney help toggle · zero JS errors on all 3 tabs.
+- All regressions green: v69-verify 17/17 · v69-e2e 29/29 · v67-verify 24/24 · v67-e2e 14/14 · v66-verify ALL · v66-e2e ALL · v65-verify ALL · v65-e2e ALL · v64-verify ALL · v64-e2e ALL · v63-e2e 20/20 · v60-e2e 30/30 · v60-paper-flow 3/3 (flow) · v61-settings-smoke ALL.
+- VLM visual audit: Portfolio 6.5 → **7.5**/10, India desk **8.5**/10 (snapshot tiles 9/10), CoinDCX desk **8.5**/10.
+
 ## v6.9.0 — DUAL DESKS SPLIT (India | CoinDCX) · TOP-5 COMPOSITE PICKS · UI/UX UPGRADE (2026-09-08)
 
 ### The split: ONE mixed tab → TWO self-contained desks

@@ -58,6 +58,15 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [, forceTick] = useState(0); // minute-tick so "next sync" countdowns refresh
+  // v6.10: help collapsed by default for returning visitors, open for first-timers
+  const [helpOpen, setHelpOpen] = useState(() => {
+    try { return !localStorage.getItem('pf-indm-help-dismissed'); } catch { return true; }
+  });
+  const toggleHelp = () => setHelpOpen(v => {
+    const next = !v;
+    try { localStorage.setItem('pf-indm-help-dismissed', next ? '' : '1'); } catch { /* private mode */ }
+    return next;
+  });
   const mountedRef = useRef(true);
 
   const indmActive = indmSource === 'indmoney';
@@ -247,18 +256,34 @@ export const INDMoneyPanel = React.memo(function INDMoneyPanel() {
         </div>
       )}
 
-      {/* Not connected explainer */}
+      {/* Not connected explainer — v6.10 COLLAPSIBLE: the long "how it
+          works" walls only render on demand; first-time visitors see them
+          open, returning visitors (localStorage) get the slim one-liner. */}
       {!connected && !error && (
-        <div className="text-xs text-slate-400 leading-relaxed space-y-1.5">
-          <p>
-            <b className="text-slate-300">How it works:</b> Connect karte hi INDMoney ka official{' '}
-            <span className="text-violet-300 font-mono">mcp.indmoney.com</span> server se aapka <b>real portfolio</b>{' '}
-            (India stocks/ETF/MF, US stocks, crypto) 2× daily auto-sync hoga — aur yahi data Assets Table me dikhega.
-          </p>
-          <p className="text-slate-500">
-            🔒 Secure OAuth login • read-only <span className="font-mono">portfolio:read</span> scope • tokens sirf server pe store hote hain.
-            {cryptoOnly && ' 🪙 Abhi CoinDCX crypto source active hai — India/USA assets ke liye INDMoney connect karo.'}
-          </p>
+        <div className="rounded-xl bg-black/20 border border-white/5">
+          <button
+            onClick={toggleHelp}
+            className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 text-left"
+            aria-expanded={helpOpen}
+          >
+            <span className="text-[11px] font-bold text-slate-300">
+              ℹ️ How it works — <span className="text-slate-500 font-medium">INDMoney se real portfolio auto-sync (2× daily)</span>
+            </span>
+            <span className={`text-slate-500 transition-transform ${helpOpen ? 'rotate-180' : ''}`}>▼</span>
+          </button>
+          {helpOpen && (
+            <div className="px-3.5 pb-3 text-xs text-slate-400 leading-loose space-y-2">
+              <p>
+                Connect karte hi INDMoney ka official{' '}
+                <span className="text-violet-300 font-mono">mcp.indmoney.com</span> server se aapka <b>real portfolio</b>{' '}
+                (India stocks/ETF/MF, US stocks, crypto) 2× daily auto-sync hoga — aur yahi data Assets Table me dikhega.
+              </p>
+              <p className="text-slate-500">
+                🔒 Secure OAuth login • read-only <span className="font-mono">portfolio:read</span> scope • tokens sirf server pe store hote hain.
+                {cryptoOnly && ' 🪙 Abhi CoinDCX crypto source active hai — India/USA assets ke liye INDMoney connect karo.'}
+              </p>
+            </div>
+          )}
         </div>
       )}
 
