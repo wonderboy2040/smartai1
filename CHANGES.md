@@ -1,3 +1,37 @@
+## v6.13 — ORDER TICKET + SIMPLE VIEW: "trade kaise karna hai" ka seedha jawab (2026-09-09)
+
+> User feedback: "F&O Options Trading me kaisa trade karna hai pata hi nahi chal raha — kab lena hai, konsa expiry pe lena hai, kab exit karna hai, limit order kaisa lagana hai · CoinDCX ko bhi same · UI bahut mixup ho gaya hai." Do deliverables: (1) har trade ke saath **broker-ready step-by-step guide**, (2) **SIMPLE/PRO desk view** — clutter khatam.
+
+### 🎫 1. OPTIONS ORDER TICKET (server-computed, OptionsDesk har strategy par)
+`optionsDesk.js` me naya **`buildOrderTicket()`** (pure, test-pinnable) — har strategy (Bull Call Spread / Long Call / Condor / Iron Fly / Straddle sab) ke saath ab:
+- **① KAB lena hai** — session-phase aware (MORNING/POWER = "entry OK", OPENING = "9:30 ka wait karo", NO_NEW_ENTRIES = "aaj nahi, kal") + grade honesty (directional + sub-ACTION = "entry MAT karo"; credit setups immune — wo low-conviction design hain).
+- **② KYA + KONSA expiry** — desk expiry + **DTE-aware theta advice**: expiry-day (dte 0) = red flag "14:00–14:30 square-off PAKKA / NEXT weekly lo" · dte 1 = "aaj hi close karo" · dte 2–4 = "best liquidity" · dte ≥5 = "premium dheere move".
+- **③ LIMIT ORDER kaise lagana** — per-leg broker-ready rows: `BUY NIFTY 2026-09-15 24600 CE · LTP ₹101.40 → LIMIT ₹102.45 · qty 75/lot`. Limit prices **NSE ₹0.05 tick** pe — BUY slightly-above / SELL slightly-below (fill-friendly, fantasy nahi). Sath me: Product MIS · LIMIT order type · "MARKET order kabhi nahi" warning.
+- **④ KAB EXIT karna hai** — strategy-kind ke hisaab se: debit spread = combined premium 50% SL + 50% max-profit target + 15:15 MIS square-off · naked = premium −40% SL / +80–100% target / expiry-day 14:30 · credit = 50% credit book + short-strike adjust + expiry-day subah exit · straddle = −30% SL / breakout book / 2–3 din max.
+- **Sizing**: 1/2/3 lots → ₹ max-loss rows (risk budget se lots nikal jate hain).
+- Desk payload me naya `dte` (IST **calendar-date** semantics — aaj=0; epoch-ceil off-by-one tha, fix).
+- UI: `OptionsDeskPanel` me **TradeSteps block** — 4 numbered steps, entry-window chip (OPEN/BAND), expiry chip (din baaki / AAJ EXPIRY ⚠️), leg rows, SL/TARGET/TIME color-coded boxes.
+
+### 📋 2. SIGNAL CARD ORDER GUIDE (Intraday equity + CoinDCX spot + futures — teeno venues)
+`SignalCard` trade ticket me purana 1-line "Kaise chalega" ab **4-step ORDER GUIDE** ban gaya:
+- **① KAB** — India: live session phase (signal.quality.session se — tradeable window green, band pe "wait karo") + best windows 9:30–10:30 / 13:30–15:15, 9:15–9:30 noise + 15:15+ entry NAHI · crypto/futures: 24/7 + weekend thin-liquidity warning.
+- **② LIMIT ORDER kaise** — venue-specific: Dhan/broker (symbol → LIMIT → price → qty → MIS) · CoinDCX spot (pair → BUY/LIMIT → price → amount) · CoinDCX futures (perp → LIMIT → contracts → leverage). MARKET order warning + "fill nahi mile to ±0.2% adjust, chase nahi".
+- **③ EXIT kab** — SL/T1/T2 + watcher (trailing/15:15/native TP-SL) + **double guard** (app watcher + broker SL dono lagao).
+- **④ MANAGE** — Execution Console me position, CLOSE kabhi bhi.
+
+### 🎛 3. SIMPLE / PRO DESK VIEW (UI declutter — dono tabs)
+- Desk command bar me **SIMPLE ⇄ PRO** toggle (`localStorage` persist, dono desks share).
+- **SIMPLE (default)** = sirf trade-flow: TOP 5 → SIGNALS → OPTIONS/AGENT → EXECUTE + slim "PRO VIEW me ye sections hain" note. India me 12 sections → 4; CoinDCX me 13 → 5.
+- **PRO** = poora desk (Brief · Sectors · Swing/Whales · Correlations · Backtest · Alerts · Models · Ledger · Trust).
+- QuickNav bhi mode ke hisaab se filter hota hai (SIMPLE: 4 chips).
+
+### ✅ Verification (sab green)
+- **676/676 unit tests** (+25 naye v613-core: DTE calendar math / tick-rounding BUY-up-SELL-down / lot scaling / session KAB honesty / grade-line immunity / expiry-day red flag / strategy-kind exits / null-honesty / buildStrategies integration).
+- tsc 0 · vite build clean · **v613-verify 16/16** (API: dte, ticket on every strategy, 4 steps, limit-side honesty, tick validity, lot linearity, phase-known, expiryDay consistency, BANKNIFTY lot wiring, 401) · **v613-e2e 27/27** (browser: SIMPLE default + sections hidden + 4-chip nav + ORDER TICKET render + LIMIT ₹ rows + MARKET warning + PRO toggle reveal + signal ORDER GUIDE + CoinDCX persistence + zero JS errors).
+- Regressions: v612-verify 24/24 · v612-e2e 16/16 · v611-verify ALL · v611-e2e 17/17 · v610-e2e 20/20 (badge regex version-tolerant) · v69 29+23 · v67 14+22 · v66 ALL · v65 ALL · v64 ALL · v63-e2e 20/20 · v60-e2e 30/30 · v60-paper 7/7. (v611/v610/v67/v65/v63/v60 e2e me PRO-mode click patch — SIMPLE default ke baad bhi purane section-checks chalte hain.)
+
+---
+
 ## v6.12.1 — FULL-SITE CODE RECHECK: 7 fixes from the deep review (2026-09-09)
 
 > User ne "ek baar full site code recheck karo" bola — full pipeline sweep (static + 651 tests + 20 verify/E2E suites + manual review) ne **7 real bugs** pakde, sab fixed + regression-pinned.

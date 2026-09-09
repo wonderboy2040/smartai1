@@ -60,6 +60,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     // ---------- 3. Open India Intraday tab ----------
     await page.click('[role="tablist"] button:has-text("India Intraday")');
     await page.waitForSelector('text=INDIA INTRADAY DESK', { timeout: 20000 });
+    // v6.13: desks SIMPLE me khulte hain — MODEL REGISTRY PRO view me hai
+    await page.locator('[data-desk-view="pro"]').first().click();
+    await sleep(800);
     check('command bar renders', true);
 
     const desk = await page.innerText('body');

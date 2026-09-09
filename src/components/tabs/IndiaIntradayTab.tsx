@@ -31,20 +31,22 @@ import { AlertsPanel } from '../aitrading/AlertsPanel';
 import { MorningBriefPanel, SwingDeskPanel, SignalLedgerPanel, TrustLayerPanel, PerfAnalyticsPanel, SectorMapPanel } from '../aitrading/ProPanels';
 import {
   SectionLabel, RegimeChips, BreadthStrip, FilterChips, RefreshCountdown, BoardSummary, DeskStatsStrip,
-  filterSignals, countSignals, IndiaHowToTrade, type BoardFilter,
+  filterSignals, countSignals, IndiaHowToTrade, useDeskViewMode, ViewModeToggle, ProSectionsNote, type BoardFilter,
 } from '../aitrading/deskShared';
 import type { AISignal, DhanStatus } from '../aitrading/types';
 
+// v6.13: simple-view me sirf trade-flow sections (TOP5/SIGNALS/OPTIONS/EXECUTE)
+// dikhte hain; pro nav ke andar walon ko `pro: true` lagaya gaya hai.
 const NAV = [
-  { id: 'in-top5', label: 'TOP 5', emoji: '🏆' },
-  { id: 'in-signals', label: 'SIGNALS', emoji: '📡' },
-  { id: 'in-options', label: 'OPTIONS', emoji: '📊' },
-  { id: 'in-execute', label: 'EXECUTE', emoji: '⚙️' },
-  { id: 'in-swing', label: 'SWING', emoji: '🗂️' },
-  { id: 'in-backtest', label: 'BACKTEST', emoji: '🧪' },
-  { id: 'in-alerts', label: 'ALERTS', emoji: '🔔' },
-  { id: 'in-models', label: 'MODELS', emoji: '🧠' },
-  { id: 'in-ledger', label: 'LEDGER', emoji: '🔗' },
+  { id: 'in-top5', label: 'TOP 5', emoji: '🏆', pro: false },
+  { id: 'in-signals', label: 'SIGNALS', emoji: '📡', pro: false },
+  { id: 'in-options', label: 'OPTIONS', emoji: '📊', pro: false },
+  { id: 'in-execute', label: 'EXECUTE', emoji: '⚙️', pro: false },
+  { id: 'in-swing', label: 'SWING', emoji: '🗂️', pro: true },
+  { id: 'in-backtest', label: 'BACKTEST', emoji: '🧪', pro: true },
+  { id: 'in-alerts', label: 'ALERTS', emoji: '🔔', pro: true },
+  { id: 'in-models', label: 'MODELS', emoji: '🧠', pro: true },
+  { id: 'in-ledger', label: 'LEDGER', emoji: '🔗', pro: true },
 ];
 
 export default memo(function IndiaIntradayTab() {
@@ -55,6 +57,9 @@ export default memo(function IndiaIntradayTab() {
   const { runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert, fetchDhanStatus, dhanConnect, dhanDisconnect } = t;
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [filter, setFilter] = useState<BoardFilter>('ALL');
+  // v6.13: SIMPLE (trade-flow only) / PRO (poora desk) — persist hota hai
+  const [viewMode, setViewMode] = useDeskViewMode();
+  const simple = viewMode === 'simple';
   const [deep, setDeep] = useState<{ loading: boolean; signal?: AISignal; indicators?: Record<string, unknown>; narrative?: import('../aitrading/types').NarrativeView | null; ltf?: import('../aitrading/types').LtfSnapshot | null; edge?: import('../aitrading/types').EdgeStats | null; error?: string } | null>(null);
   const [dhan, setDhan] = useState<DhanStatus | null>(null);
 
@@ -145,7 +150,7 @@ export default memo(function IndiaIntradayTab() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-black tracking-wide bg-gradient-to-r from-orange-300 to-amber-200 bg-clip-text text-transparent">🇮🇳 INDIA INTRADAY DESK</h2>
-              <span className="quantum-badge">v6.10</span>
+              <span className="quantum-badge">v6.13</span>
             </div>
             <p className="text-[10px] text-slate-500 mt-0.5">
               NSE 44 stocks + NIFTY/BANKNIFTY → 10-model consensus · TOP-5 composite rank · options desk · Dhan gauntlet
@@ -156,6 +161,7 @@ export default memo(function IndiaIntradayTab() {
           <div className="ml-auto flex items-center gap-2 flex-wrap">
             <RegimeChips board={board} market="INDIA" />
             <RefreshCountdown board={board} loading={loading} />
+            <ViewModeToggle mode={viewMode} onSet={setViewMode} />
             <button onClick={refresh} disabled={loading}
               className="quantum-btn-ghost px-3 py-2 rounded-xl text-xs font-bold disabled:opacity-50">
               <span className={loading ? 'inline-block animate-spin' : ''}>🔄</span>
@@ -184,8 +190,8 @@ export default memo(function IndiaIntradayTab() {
         </div>
       )}
 
-      {/* ============ STICKY QUICK NAV (v6.9) ============ */}
-      <QuickNav items={NAV} />
+      {/* ============ STICKY QUICK NAV (v6.9; v6.13 simple-mode filter) ============ */}
+      <QuickNav items={simple ? NAV.filter(n => !n.pro) : NAV} />
 
       {/* ============ 📊 DESK STATS (v6.10 one-glance) ============ */}
       <DeskStatsStrip board={board} deskLabel="🇮🇳 INDIA DESK SNAPSHOT" />
@@ -256,21 +262,25 @@ export default memo(function IndiaIntradayTab() {
         </div>
       </div>
 
-      {/* ============ 01b · MORNING BRIEF ============ */}
-      <div id="in-brief">
-        <SectionLabel num="01b" title="Morning Brief" sub="ek nazar me poora desk — market · top signals · open book · guards · ledger · next-actions" />
-        <div className="mt-2.5">
-          <MorningBriefPanel />
+      {/* ============ 01b · MORNING BRIEF (PRO) ============ */}
+      {!simple && (
+        <div id="in-brief">
+          <SectionLabel num="01b" title="Morning Brief" sub="ek nazar me poora desk — market · top signals · open book · guards · ledger · next-actions" />
+          <div className="mt-2.5">
+            <MorningBriefPanel />
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* ============ 01c · SECTOR MAP + CONTEXT CHAIN + F-SCORE (v6.11) ============ */}
-      <div id="in-sectors">
-        <SectionLabel num="01c" title="Sector Map + Context Chain" sub="macro→sector→symbol top-down lens · 45 stocks 10 sectors me · F-Score trend-quality board (Piotroski-style)" />
-        <div className="mt-2.5">
-          <SectorMapPanel />
+      {/* ============ 01c · SECTOR MAP + CONTEXT CHAIN + F-SCORE (v6.11 · PRO) ============ */}
+      {!simple && (
+        <div id="in-sectors">
+          <SectionLabel num="01c" title="Sector Map + Context Chain" sub="macro→sector→symbol top-down lens · 45 stocks 10 sectors me · F-Score trend-quality board (Piotroski-style)" />
+          <div className="mt-2.5">
+            <SectorMapPanel />
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ============ 02 · OPTIONS DESK ============ */}
       <div id="in-options">
@@ -280,13 +290,15 @@ export default memo(function IndiaIntradayTab() {
         </div>
       </div>
 
-      {/* ============ 02b · SWING DESK (India) ============ */}
-      <div id="in-swing">
-        <SectionLabel num="02b" title="Swing Desk" sub="multi-day India setups (analysis only) — 3–8 din horizon · 1.8×ATR stop · 2R/3R targets" />
-        <div className="mt-2.5">
-          <SwingDeskPanel market="INDIA" />
+      {/* ============ 02b · SWING DESK (India · PRO) ============ */}
+      {!simple && (
+        <div id="in-swing">
+          <SectionLabel num="02b" title="Swing Desk" sub="multi-day India setups (analysis only) — 3–8 din horizon · 1.8×ATR stop · 2R/3R targets" />
+          <div className="mt-2.5">
+            <SwingDeskPanel market="INDIA" />
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ============ 03 · EXECUTION CONSOLE (India venue) ============ */}
       <div id="in-execute">
@@ -302,46 +314,61 @@ export default memo(function IndiaIntradayTab() {
         </div>
       </div>
 
-      {/* ============ 04 · BACKTEST LAB (India) ============ */}
-      <div id="in-backtest">
-        <SectionLabel num="04" title="Backtest Lab" sub="the SAME 10-model ensemble replayed on India history — win rate · avg R · equity curve · learned gates" />
-        <div className="mt-2.5">
-          <BacktestPanel market="INDIA" runBacktest={runBacktest} />
+      {/* ============ 04 · BACKTEST LAB (India · PRO) ============ */}
+      {!simple && (
+        <div id="in-backtest">
+          <SectionLabel num="04" title="Backtest Lab" sub="the SAME 10-model ensemble replayed on India history — win rate · avg R · equity curve · learned gates" />
+          <div className="mt-2.5">
+            <BacktestPanel market="INDIA" runBacktest={runBacktest} />
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* ============ 05 · ALERTS & AI KEYS ============ */}
-      <div id="in-alerts">
-        <SectionLabel num="05" title="Alerts & AI Keys" sub="Telegram pings on STRONG signals · AI Council keys — app se hi, Render env ki zaroorat nahi" />
-        <div className="mt-2.5">
-          <AlertsPanel fetchAlertsStatus={fetchAlertsStatus} saveAlertsConfig={saveAlertsConfig} testAlert={testAlert} busy={busy} notify={notify} />
+      {/* ============ 05 · ALERTS & AI KEYS (PRO) ============ */}
+      {!simple && (
+        <div id="in-alerts">
+          <SectionLabel num="05" title="Alerts & AI Keys" sub="Telegram pings on STRONG signals · AI Council keys — app se hi, Render env ki zaroorat nahi" />
+          <div className="mt-2.5">
+            <AlertsPanel fetchAlertsStatus={fetchAlertsStatus} saveAlertsConfig={saveAlertsConfig} testAlert={testAlert} busy={busy} notify={notify} />
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* ============ 06 · MODEL REGISTRY ============ */}
-      <div id="in-models">
-        <SectionLabel num="06" title="Model Registry" sub="the superintelligence bus — every analyst, weight & status" />
-        <div className="mt-2.5">
-          <ModelRegistry models={models} />
+      {/* ============ 06 · MODEL REGISTRY (PRO) ============ */}
+      {!simple && (
+        <div id="in-models">
+          <SectionLabel num="06" title="Model Registry" sub="the superintelligence bus — every analyst, weight & status" />
+          <div className="mt-2.5">
+            <ModelRegistry models={models} />
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* ============ 07 · SIGNAL LEDGER ============ */}
-      <div id="in-ledger">
-        <SectionLabel num="07" title="Signal Ledger" sub="SHA-256 hash chain — har executed signal provable, koi edit possible nahi (dono desks)" />
-        <div className="mt-2.5">
-          <SignalLedgerPanel />
+      {/* ============ 07 · SIGNAL LEDGER (PRO) ============ */}
+      {!simple && (
+        <div id="in-ledger">
+          <SectionLabel num="07" title="Signal Ledger" sub="SHA-256 hash chain — har executed signal provable, koi edit possible nahi (dono desks)" />
+          <div className="mt-2.5">
+            <SignalLedgerPanel />
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* ============ 07b · TRUST LAYER + PERFORMANCE (v6.11) ============ */}
-      <div id="in-trust">
-        <SectionLabel num="07b" title="Trust Layer + Performance Lab" sub="engine ki confidence kitni sahi hai — calibration · Brier · monthly trend · model p-values · MDD/Sharpe/Sortino" />
-        <div className="mt-2.5 grid gap-3 lg:grid-cols-2">
-          <TrustLayerPanel />
-          <PerfAnalyticsPanel />
+      {/* ============ 07b · TRUST LAYER + PERFORMANCE (v6.11 · PRO) ============ */}
+      {!simple && (
+        <div id="in-trust">
+          <SectionLabel num="07b" title="Trust Layer + Performance Lab" sub="engine ki confidence kitni sahi hai — calibration · Brier · monthly trend · model p-values · MDD/Sharpe/Sortino" />
+          <div className="mt-2.5 grid gap-3 lg:grid-cols-2">
+            <TrustLayerPanel />
+            <PerfAnalyticsPanel />
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* ============ v6.13: SIMPLE-mode me PRO sections ka pointer ============ */}
+      {simple && (
+        <ProSectionsNote names="Brief · Sector Map · Swing · Backtest · Alerts · Models · Ledger · Trust" />
+      )}
 
       {/* ============ DEEP ANALYSIS MODAL ============ */}
       {deep && (

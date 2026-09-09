@@ -476,9 +476,40 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
         </div>
       )}
 
-      {/* 3-line how-it-runs */}
-      <div className="mt-2 text-[9px] text-slate-500 leading-relaxed bg-black/20 rounded-lg px-2.5 py-2">
-        <b className="text-slate-400">Kaise chalega:</b> ① {long ? 'BUY' : 'SELL'} entry market/limit @ <b>{futures ? `${plan.entry.toLocaleString('en-US')} USDT` : `₹${plan.entry.toLocaleString('en-IN')}`}</b>{leveraged && lev > 1 ? ` (${lev}x margin)` : ''} → ② SL <b className="text-red-400">{futures ? plan.stopLoss.toLocaleString('en-US') : `₹${plan.stopLoss.toLocaleString('en-IN')}`}</b> + T1/T2 watcher khud track karega{futures ? ' (trailing SL + native exchange TP/SL)' : crypto ? ' (trailing SL ON)' : ' (trailing + 15:15 square-off)'} → ③ position <b>03 Execution Console</b> me manage hota hai — CLOSE button kabhi bhi.
+      {/* v6.13 — 4-STEP ORDER GUIDE: ① KAB ② LIMIT kaise ③ EXIT kab ④ MANAGE.
+          User ka seedha sawaal: "kab lena · limit kaise lagana · kab exit" —
+          yeh block wahi jawab deta hai, venue ke hisaab se. */}
+      <div className="mt-2 rounded-lg bg-black/25 border border-white/5 px-2.5 py-2.5 space-y-1.5" aria-label="order guide 4 steps">
+        <div className="text-[9px] font-black text-cyan-300 tracking-wider">📋 ORDER GUIDE — {futures ? 'COINDCX FUTURES' : crypto ? 'COINDCX SPOT' : 'DHAN / BROKER'} · 4 STEP</div>
+        <div className="text-[10px] text-slate-300 leading-relaxed">
+          <b className="text-white">① KAB:</b>{' '}
+          {india
+            ? (signal.quality?.session
+              ? (signal.quality.session.tradeable
+                ? <>abhi <b className="text-emerald-300">{signal.quality.session.phase}</b> window chal raha hai — entry OK. Best windows: <b>9:30–10:30</b> (MORNING) aur <b>13:30–15:15</b> (AFTERNOON/POWER). <b className="text-red-300">9:15–9:30 opening noise</b> aur <b className="text-red-300">15:15 ke baad entry NAHI</b>.</>
+                : <>abhi phase <b className="text-amber-300">{signal.quality.session.phase}</b> hai — fresh entry <b>wait</b> karo. Tradeable window: <b>9:30–10:30</b> ya <b>13:30–15:15</b> (Mon–Fri).</>)
+              : <>best windows <b>9:30–10:30</b> (MORNING) ya <b>13:30–15:15</b> (AFTERNOON/POWER); <b className="text-red-300">9:15–9:30 noise me entry nahi</b>, <b className="text-red-300">15:15 ke baad sirf square-off</b>.</>)
+            : futures
+              ? '24/7 USDT perp market — kabhi bhi. Par weekend/holiday pe liquidity thin hoti hai: size aadha, limit order zaroori.'
+              : '24/7 crypto market — kabhi bhi. Weekend pe spread wide — LIMIT order hi lagao, MARKET nahi.'}
+        </div>
+        <div className="text-[10px] text-slate-300 leading-relaxed">
+          <b className="text-white">② LIMIT ORDER kaise lagana hai:</b>{' '}
+          {futures
+            ? <>CoinDCX app me <b>{signal.symbol}</b> perp kholo → <b>BUY/LIMIT</b> select → price me <b className="text-cyan-300">{plan.entry.toLocaleString('en-US')} USDT</b> → amount <b>{qty < 1 ? qty.toFixed(6) : qty} contracts</b>{leveraged && lev > 1 ? ` · ${lev}x leverage · margin mode` : ''}. </>
+            : crypto
+              ? <>CoinDCX app me <b>{signal.symbol}</b> pair kholo → <b>{long ? 'BUY' : 'SELL'} / LIMIT</b> → price me <b className="text-cyan-300">₹{plan.entry.toLocaleString('en-IN')}</b> → amount <b>{qty < 1 ? qty.toFixed(6) : qty} {long ? 'buy' : 'sell'}</b>. </>
+              : <>broker me <b>{signal.symbol}</b> search karo → <b>{long ? 'BUY' : 'SELL'} · LIMIT</b> select → price me <b className="text-cyan-300">₹{plan.entry.toLocaleString('en-IN')}</b> (band {`₹${(plan.entry * 0.9985).toFixed(2)}–₹${(plan.entry * 1.0015).toFixed(2)}`}) → qty <b>{qty}</b> · product <b>MIS</b>. </>}
+          <b className="text-red-300">MARKET order kabhi mat lagao</b> — spread slip entry ka edge kha jaata hai. Fill nahi mile to limit ±0.2% adjust karo, price chase nahi.
+        </div>
+        <div className="text-[10px] text-slate-300 leading-relaxed">
+          <b className="text-white">③ EXIT kab:</b>{' '}
+          SL <b className="text-red-300">{futures ? `${plan.stopLoss.toLocaleString('en-US')} USDT` : `₹${plan.stopLoss.toLocaleString('en-IN')}`}</b> (−{slDistPct.toFixed(2)}%) · T1/T2 watcher khud track karega{futures ? ' (trailing + native exchange TP/SL)' : crypto ? ' (trailing SL ON)' : ' (trailing + 15:15 auto square-off)'}.
+          {' '}App ke saath broker me bhi SL laga do{india ? ' (SL-M / bracket)' : futures ? ' (stop-market on the perp)' : ' (stop-limit)'} — <b>double guard</b>: app watcher + exchange dono.
+        </div>
+        <div className="text-[10px] text-slate-300 leading-relaxed">
+          <b className="text-white">④ MANAGE:</b> position <b>03 Execution Console</b> me dikhega — P&L live, <b>CLOSE</b> button kabhi bhi. Exit ka rule: SL aaye → nikal jao, andekha mat karo; T2 hit → profit book.
+        </div>
       </div>
     </div>
   );

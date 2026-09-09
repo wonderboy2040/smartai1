@@ -41,8 +41,8 @@ async function main() {
 
   // 2. engine stamp (lives on /api/ai/status)
   const status = await (await fetch(`${BASE}/api/ai/status`, { headers: H })).json();
-  const stampOk = /v6\.12/.test(JSON.stringify(status || {}));
-  ok('engine stamp v6.12', stampOk, status?.engine || status?.aiEngine || '');
+  const stampOk = /v6\.1[2-9]|v6\.[2-9]\d/.test(JSON.stringify(status || {}));
+  ok('engine stamp v6.12+ (v6.13 supersedes)', stampOk, status?.engine || status?.aiEngine || '');
 
   // 3-5. India board
   const ind = await (await fetch(`${BASE}/api/ai/signals?market=INDIA&limit=10&t=${Date.now()}`, { headers: H })).json();

@@ -7,9 +7,79 @@
 // ============================================================
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { fetchOptionsDesk, fetchIncomeSetups } from './useAITrading';
-import type { OptionsDesk, Strategy, GexProfile, IncomeView } from './types';
+import type { OptionsDesk, Strategy, GexProfile, IncomeView, OrderTicket } from './types';
 
 const INDICES = ['NIFTY', 'BANKNIFTY', 'FINNIFTY'];
+
+// ------------------------------------------------------------
+// v6.13 — TRADE STEPS: the "trade kaise karna hai" block.
+// Server computes every number (session phase · DTE-aware expiry
+// advice · per-leg LIMIT prices at the 0.05 tick · exit rules ·
+// lot sizing); this just renders it as 4 numbered steps.
+// ------------------------------------------------------------
+function StepShell({ n, title, children, tone = 'cyan' }: { n: string; title: string; children: React.ReactNode; tone?: 'cyan' | 'amber' }) {
+  return (
+    <div className="flex gap-2 items-start">
+      <span className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black ${tone === 'cyan' ? 'bg-cyan-500/20 text-cyan-300' : 'bg-amber-500/20 text-amber-300'}`} aria-label={`step ${n}`}>{n}</span>
+      <div className="min-w-0">
+        <div className="text-[9px] font-black text-slate-500 tracking-wider uppercase">{title}</div>
+        <div className="text-[10px] text-slate-300 leading-relaxed mt-0.5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function TradeSteps({ t, symbol, expiry, name }: { t: OrderTicket; symbol: string; expiry?: string; name: string }) {
+  return (
+    <div className="mt-2.5 rounded-xl border border-cyan-500/25 bg-cyan-500/[0.05] p-3 space-y-2.5" aria-label="order ticket — 4 steps">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[10px] font-black text-cyan-300 tracking-wider">🎫 ORDER TICKET — 4 STEP ME TRADE</span>
+        {t.dte != null && (
+          <span className={`px-1.5 py-0.5 rounded text-[9px] font-black border ${t.expiryDay ? 'bg-red-500/10 text-red-300 border-red-500/30' : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25'}`}>
+            {t.expiryDay ? 'AAJ EXPIRY ⚠️' : `${t.dte} din baaki`}
+          </span>
+        )}
+        <span className={`px-1.5 py-0.5 rounded text-[9px] font-black border ${t.sessionTradeable ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25' : 'bg-amber-500/10 text-amber-300 border-amber-500/30'}`}>
+          {t.sessionTradeable ? '🟢 entry window OPEN' : '⏰ entry window BAND'}
+        </span>
+      </div>
+      <StepShell n="1" title="Kab lena hai">{t.whenText}</StepShell>
+      <StepShell n="2" title="Kya lena hai · konsa expiry">
+        <b className="text-white">{name}</b> — {symbol} {expiry ? `· expiry ${expiry}` : ''}
+        <div className="mt-0.5 text-amber-200/80">{t.expiryText}</div>
+      </StepShell>
+      <StepShell n="3" title="Limit order kaise lagana hai">
+        <div className="space-y-1">
+          {(t.legs || []).map((l, i) => (
+            <div key={i} className="flex items-center gap-2 flex-wrap bg-black/30 rounded-lg px-2.5 py-1.5 font-mono text-[10px]">
+              <span className={`font-black w-10 ${l.action === 'BUY' ? 'text-emerald-400' : 'text-red-400'}`}>{l.action}</span>
+              <span className="text-slate-200 font-bold">{symbol} {expiry} {l.strike} {l.type}</span>
+              <span className="ml-auto">LTP ₹{l.ltp} → <b className="text-cyan-300">LIMIT ₹{l.limit}</b></span>
+              <span className="text-slate-500">qty {l.qtyPerLot}/lot</span>
+            </div>
+          ))}
+          <div className="text-[10px] text-slate-400 leading-relaxed pt-0.5">
+            Broker (Dhan/Kite) me: <b className="text-slate-200">Product = MIS</b> (intraday) · <b className="text-slate-200">Order type = LIMIT</b> · price box me upar wala LIMIT price daalo. <b className="text-red-300">MARKET order kabhi nahi</b> — options me spread slip turant premium kha jaata hai. Fill nahi mile to limit price ko 1 tick (₹0.05) upar/neeche karo, chase mat karo.
+          </div>
+        </div>
+      </StepShell>
+      <StepShell n="4" title="Kab exit karna hai" tone="amber">
+        <div className="space-y-1">
+          <div className="bg-red-500/[0.07] border border-red-500/20 rounded-lg px-2.5 py-1.5 text-[10px] text-red-200/90 leading-relaxed">{t.exit.sl}</div>
+          <div className="bg-emerald-500/[0.07] border border-emerald-500/20 rounded-lg px-2.5 py-1.5 text-[10px] text-emerald-200/90 leading-relaxed">{t.exit.target}</div>
+          <div className="bg-amber-500/[0.07] border border-amber-500/20 rounded-lg px-2.5 py-1.5 text-[10px] text-amber-200/90 leading-relaxed">⏱️ {t.exit.time}</div>
+        </div>
+      </StepShell>
+      {t.lotRows?.length > 0 && (
+        <div className="text-[10px] text-slate-400 font-mono leading-relaxed bg-black/25 rounded-lg px-2.5 py-1.5">
+          💰 Sizing (max loss per position, 1 lot = {t.legs[0]?.qtyPerLot ?? '—'} qty):{' '}
+          {t.lotRows.map(r => `${r.lots} lot → ₹${r.maxLoss.toLocaleString('en-IN')}`).join(' · ')}
+          <span className="text-slate-500"> — risk budget ₹5,000 hai to 1 lot se zyada mat lo.</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function Metric({ label, value, tone }: { label: string; value: string; tone?: 'bull' | 'bear' | 'neutral' }) {
   const cls = tone === 'bull' ? 'text-emerald-300' : tone === 'bear' ? 'text-red-300' : 'text-slate-200';
@@ -21,7 +91,7 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: '
   );
 }
 
-function StrategyCard({ s, lotSize, spot }: { s: Strategy; lotSize: number; spot: number }) {
+function StrategyCard({ s, lotSize, spot, symbol, expiry }: { s: Strategy; lotSize: number; spot: number; symbol: string; expiry?: string }) {
   const bull = s.bias === 'BULLISH';
   // v6.7: payoff SVG — expiry P&L per share across ±6% of spot
   const payoff = s.payoff || [];
@@ -50,6 +120,9 @@ function StrategyCard({ s, lotSize, spot }: { s: Strategy; lotSize: number; spot
         {s.netCredit != null && <span className="text-[11px] font-mono text-emerald-300 font-bold">credit ₹{s.netCredit}</span>}
       </div>
       <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">{s.rationale}</p>
+
+      {/* v6.13 — ORDER TICKET: 4-step trade guide (KAB · KYA/EXPIRY · LIMIT · EXIT) */}
+      {s.orderTicket && <TradeSteps t={s.orderTicket} symbol={symbol} expiry={expiry} name={s.name} />}
 
       {/* Legs */}
       <div className="mt-2.5 grid gap-1">
@@ -182,7 +255,7 @@ export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
         <Metric label="SPOT" value={desk ? desk.spot?.toLocaleString('en-IN', { maximumFractionDigits: 0 }) : '—'} />
         <Metric label="DAY %" value={desk?.spotChangePct != null ? `${desk.spotChangePct >= 0 ? '+' : ''}${desk.spotChangePct.toFixed(2)}%` : '—'} tone={(desk?.spotChangePct ?? 0) >= 0 ? 'bull' : 'bear'} />
         <Metric label="INDIA VIX" value={desk?.vix != null ? desk.vix.toFixed(1) : '—'} />
-        <Metric label="EXPIRY" value={desk?.expiry || '—'} />
+        <Metric label="EXPIRY" value={desk ? `${desk.expiry}${desk.dte != null ? ` · ${desk.dte}d` : ''}` : '—'} />
         <Metric label="LOT SIZE" value={desk ? String(desk.lotSize) : '—'} />
         <Metric label="PCR" value={desk?.analytics?.pcr != null ? desk.analytics.pcr.toFixed(2) : 'n/a'} tone={desk?.analytics?.pcr != null ? (desk.analytics.pcr > 1.4 ? 'bull' : desk.analytics.pcr < 0.6 ? 'bear' : 'neutral') : 'neutral'} />
         <Metric label="MAX PAIN" value={desk?.analytics?.maxPain != null ? desk.analytics.maxPain.toLocaleString('en-IN') : 'n/a'} />
@@ -281,7 +354,7 @@ export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
       <div>
         <div className="text-[10px] font-black text-slate-500 tracking-[0.2em] uppercase mb-2">Ensemble-Driven Strategies — POP + payoff ke saath</div>
         <div className="grid gap-3 lg:grid-cols-2">
-          {(desk?.strategies || []).map(s => <StrategyCard key={s.id} s={s} lotSize={desk?.lotSize || 1} spot={spot} />)}
+          {(desk?.strategies || []).map(s => <StrategyCard key={s.id} s={s} lotSize={desk?.lotSize || 1} spot={spot} symbol={symbol} expiry={desk?.expiry} />)}
           {(desk?.strategies || []).length === 0 && (
             <div className="quantum-panel rounded-2xl p-6 text-center text-slate-500 text-xs">
               {loading ? 'Building strategies…' : 'No strategies — index data unavailable'}

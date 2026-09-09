@@ -29,20 +29,22 @@ import { AgentPanel } from '../aitrading/AgentPanel';
 import { MorningBriefPanel, SwingDeskPanel, WhaleRadarPanel, SignalLedgerPanel, OrderbookPanel, TrustLayerPanel, PerfAnalyticsPanel, CorrelationPanel } from '../aitrading/ProPanels';
 import {
   SectionLabel, RegimeChips, BreadthStrip, FilterChips, RefreshCountdown, BoardSummary, DeskStatsStrip,
-  filterSignals, countSignals, type BoardFilter,
+  filterSignals, countSignals, useDeskViewMode, ViewModeToggle, ProSectionsNote, type BoardFilter,
 } from '../aitrading/deskShared';
 import type { AISignal, SignalBoard, WalletView } from '../aitrading/types';
 
+// v6.13: simple-view = trade-flow only (AGENT/TOP5/SIGNALS/EXECUTE);
+// whales/backtest/alerts/models/ledger/trust/brief/correlations → PRO.
 const NAV = [
-  { id: 'cx-agent', label: 'AGENT', emoji: '🤖' },
-  { id: 'cx-top5', label: 'TOP 5', emoji: '🏆' },
-  { id: 'cx-signals', label: 'SIGNALS', emoji: '📡' },
-  { id: 'cx-whales', label: 'WHALES', emoji: '🐋' },
-  { id: 'cx-execute', label: 'EXECUTE', emoji: '⚙️' },
-  { id: 'cx-backtest', label: 'BACKTEST', emoji: '🧪' },
-  { id: 'cx-alerts', label: 'ALERTS', emoji: '🔔' },
-  { id: 'cx-models', label: 'MODELS', emoji: '🧠' },
-  { id: 'cx-ledger', label: 'LEDGER', emoji: '🔗' },
+  { id: 'cx-agent', label: 'AGENT', emoji: '🤖', pro: false },
+  { id: 'cx-top5', label: 'TOP 5', emoji: '🏆', pro: false },
+  { id: 'cx-signals', label: 'SIGNALS', emoji: '📡', pro: false },
+  { id: 'cx-execute', label: 'EXECUTE', emoji: '⚙️', pro: false },
+  { id: 'cx-whales', label: 'WHALES', emoji: '🐋', pro: true },
+  { id: 'cx-backtest', label: 'BACKTEST', emoji: '🧪', pro: true },
+  { id: 'cx-alerts', label: 'ALERTS', emoji: '🔔', pro: true },
+  { id: 'cx-models', label: 'MODELS', emoji: '🧠', pro: true },
+  { id: 'cx-ledger', label: 'LEDGER', emoji: '🔗', pro: true },
 ];
 
 /** v6.9: prominent wallet card — spot INR + USDT, futures margin, equity.
@@ -109,6 +111,9 @@ export default memo(function CoinDcxTab() {
   const [desk, setDesk] = useState<'CRYPTO' | 'FUTURES'>('CRYPTO');
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [filter, setFilter] = useState<BoardFilter>('ALL');
+  // v6.13: SIMPLE (trade-flow only) / PRO (poora desk) — persist hota hai
+  const [viewMode, setViewMode] = useDeskViewMode();
+  const simple = viewMode === 'simple';
   const [deep, setDeep] = useState<{ loading: boolean; signal?: AISignal; indicators?: Record<string, unknown>; narrative?: import('../aitrading/types').NarrativeView | null; ltf?: import('../aitrading/types').LtfSnapshot | null; edge?: import('../aitrading/types').EdgeStats | null; error?: string } | null>(null);
 
   const board: SignalBoard | null = desk === 'FUTURES' ? futures : crypto;
@@ -202,7 +207,7 @@ export default memo(function CoinDcxTab() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-black tracking-wide bg-gradient-to-r from-amber-300 to-yellow-200 bg-clip-text text-transparent">₿ COINDCX DESK</h2>
-              <span className="quantum-badge">v6.10</span>
+              <span className="quantum-badge">v6.13</span>
             </div>
             <p className="text-[10px] text-slate-500 mt-0.5">
               SPOT (INR) + ⚡ GLOBAL FUTURES (USDT perps) · wallet · leverage · auto-agent
@@ -213,6 +218,7 @@ export default memo(function CoinDcxTab() {
           <div className="ml-auto flex items-center gap-2 flex-wrap">
             <RegimeChips board={board} market="CRYPTO" />
             <RefreshCountdown board={board} loading={loading} />
+            <ViewModeToggle mode={viewMode} onSet={setViewMode} />
             <button onClick={refresh} disabled={loading}
               className="quantum-btn-ghost px-3 py-2 rounded-xl text-xs font-bold disabled:opacity-50">
               <span className={loading ? 'inline-block animate-spin' : ''}>🔄</span>
@@ -237,8 +243,8 @@ export default memo(function CoinDcxTab() {
         </div>
       </div>
 
-      {/* ============ STICKY QUICK NAV (v6.9) ============ */}
-      <QuickNav items={NAV} />
+      {/* ============ STICKY QUICK NAV (v6.9; v6.13 simple-mode filter) ============ */}
+      <QuickNav items={simple ? NAV.filter(n => !n.pro) : NAV} />
 
       {/* ============ 📊 DESK STATS (v6.10 — active desk one-glance) ============ */}
       <DeskStatsStrip board={board} deskLabel={desk === 'FUTURES' ? '⚡ FUTURES DESK SNAPSHOT' : '₿ SPOT DESK SNAPSHOT'} />
@@ -320,33 +326,39 @@ export default memo(function CoinDcxTab() {
         </div>
       </div>
 
-      {/* ============ 01b · MORNING BRIEF ============ */}
-      <div id="cx-brief">
-        <SectionLabel num="01b" title="Morning Brief" sub="ek nazar me poora desk — market · top signals · open book · guards · ledger" />
-        <div className="mt-2.5">
-          <MorningBriefPanel />
-        </div>
-      </div>
-
-      {/* ============ 02b · SWING DESK + WHALE RADAR + ORDERBOOK ============ */}
-      <div id="cx-whales">
-        <SectionLabel num="02b" title="Swing Desk + Whale Radar + Orderbook" sub="multi-day crypto setups · volume-spike footprints · live book imbalance" />
-        <div className="mt-2.5 grid gap-3 xl:grid-cols-2">
-          <SwingDeskPanel market="CRYPTO" />
-          <div className="space-y-3">
-            <WhaleRadarPanel market="CRYPTO" />
-            <OrderbookPanel />
+      {/* ============ 01b · MORNING BRIEF (PRO) ============ */}
+      {!simple && (
+        <div id="cx-brief">
+          <SectionLabel num="01b" title="Morning Brief" sub="ek nazar me poora desk — market · top signals · open book · guards · ledger" />
+          <div className="mt-2.5">
+            <MorningBriefPanel />
           </div>
         </div>
-      </div>
+      )}
 
-      {/* ============ 02c · CROSS-ASSET CORRELATIONS (v6.11) ============ */}
-      <div id="cx-corr">
-        <SectionLabel num="02c" title="Cross-Asset Correlations" sub="60d returns — NIFTY + sectors + GOLD/CRUDE/DXY/USVIX + BTC/ETH · BTC↔NIFTY risk link · hidden concentration visible" />
-        <div className="mt-2.5">
-          <CorrelationPanel />
+      {/* ============ 02b · SWING DESK + WHALE RADAR + ORDERBOOK (PRO) ============ */}
+      {!simple && (
+        <div id="cx-whales">
+          <SectionLabel num="02b" title="Swing Desk + Whale Radar + Orderbook" sub="multi-day crypto setups · volume-spike footprints · live book imbalance" />
+          <div className="mt-2.5 grid gap-3 xl:grid-cols-2">
+            <SwingDeskPanel market="CRYPTO" />
+            <div className="space-y-3">
+              <WhaleRadarPanel market="CRYPTO" />
+              <OrderbookPanel />
+            </div>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* ============ 02c · CROSS-ASSET CORRELATIONS (v6.11 · PRO) ============ */}
+      {!simple && (
+        <div id="cx-corr">
+          <SectionLabel num="02c" title="Cross-Asset Correlations" sub="60d returns — NIFTY + sectors + GOLD/CRUDE/DXY/USVIX + BTC/ETH · BTC↔NIFTY risk link · hidden concentration visible" />
+          <div className="mt-2.5">
+            <CorrelationPanel />
+          </div>
+        </div>
+      )}
 
       {/* ============ 03 · EXECUTION CONSOLE (CoinDCX venue) ============ */}
       <div id="cx-execute">
@@ -360,46 +372,61 @@ export default memo(function CoinDcxTab() {
         </div>
       </div>
 
-      {/* ============ 04 · BACKTEST LAB (crypto) ============ */}
-      <div id="cx-backtest">
-        <SectionLabel num="04" title="Backtest Lab" sub="the SAME 10-model ensemble replayed on crypto history — win rate · avg R · equity curve · learned gates" />
-        <div className="mt-2.5">
-          <BacktestPanel market="CRYPTO" runBacktest={runBacktest} />
+      {/* ============ 04 · BACKTEST LAB (crypto · PRO) ============ */}
+      {!simple && (
+        <div id="cx-backtest">
+          <SectionLabel num="04" title="Backtest Lab" sub="the SAME 10-model ensemble replayed on crypto history — win rate · avg R · equity curve · learned gates" />
+          <div className="mt-2.5">
+            <BacktestPanel market="CRYPTO" runBacktest={runBacktest} />
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* ============ 05 · ALERTS & AI KEYS ============ */}
-      <div id="cx-alerts">
-        <SectionLabel num="05" title="Alerts & AI Keys" sub="Telegram pings on STRONG signals · AI Council keys — app se hi, Render env ki zaroorat nahi" />
-        <div className="mt-2.5">
-          <AlertsPanel fetchAlertsStatus={fetchAlertsStatus} saveAlertsConfig={saveAlertsConfig} testAlert={testAlert} busy={busy} notify={notify} />
+      {/* ============ 05 · ALERTS & AI KEYS (PRO) ============ */}
+      {!simple && (
+        <div id="cx-alerts">
+          <SectionLabel num="05" title="Alerts & AI Keys" sub="Telegram pings on STRONG signals · AI Council keys — app se hi, Render env ki zaroorat nahi" />
+          <div className="mt-2.5">
+            <AlertsPanel fetchAlertsStatus={fetchAlertsStatus} saveAlertsConfig={saveAlertsConfig} testAlert={testAlert} busy={busy} notify={notify} />
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* ============ 06 · MODEL REGISTRY ============ */}
-      <div id="cx-models">
-        <SectionLabel num="06" title="Model Registry" sub="the superintelligence bus — every analyst, weight & status" />
-        <div className="mt-2.5">
-          <ModelRegistry models={models} />
+      {/* ============ 06 · MODEL REGISTRY (PRO) ============ */}
+      {!simple && (
+        <div id="cx-models">
+          <SectionLabel num="06" title="Model Registry" sub="the superintelligence bus — every analyst, weight & status" />
+          <div className="mt-2.5">
+            <ModelRegistry models={models} />
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* ============ 07 · SIGNAL LEDGER ============ */}
-      <div id="cx-ledger">
-        <SectionLabel num="07" title="Signal Ledger" sub="SHA-256 hash chain — har executed signal provable, koi edit possible nahi (dono desks)" />
-        <div className="mt-2.5">
-          <SignalLedgerPanel />
+      {/* ============ 07 · SIGNAL LEDGER (PRO) ============ */}
+      {!simple && (
+        <div id="cx-ledger">
+          <SectionLabel num="07" title="Signal Ledger" sub="SHA-256 hash chain — har executed signal provable, koi edit possible nahi (dono desks)" />
+          <div className="mt-2.5">
+            <SignalLedgerPanel />
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* ============ 07b · TRUST LAYER + PERFORMANCE (v6.11) ============ */}
-      <div id="cx-trust">
-        <SectionLabel num="07b" title="Trust Layer + Performance Lab" sub="engine ki confidence kitni sahi hai — calibration · Brier · monthly trend · model p-values · MDD/Sharpe/Sortino" />
-        <div className="mt-2.5 grid gap-3 lg:grid-cols-2">
-          <TrustLayerPanel />
-          <PerfAnalyticsPanel />
+      {/* ============ 07b · TRUST LAYER + PERFORMANCE (v6.11 · PRO) ============ */}
+      {!simple && (
+        <div id="cx-trust">
+          <SectionLabel num="07b" title="Trust Layer + Performance Lab" sub="engine ki confidence kitni sahi hai — calibration · Brier · monthly trend · model p-values · MDD/Sharpe/Sortino" />
+          <div className="mt-2.5 grid gap-3 lg:grid-cols-2">
+            <TrustLayerPanel />
+            <PerfAnalyticsPanel />
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* ============ v6.13: SIMPLE-mode me PRO sections ka pointer ============ */}
+      {simple && (
+        <ProSectionsNote names="Brief · Swing/Whales · Correlations · Backtest · Alerts · Models · Ledger · Trust" />
+      )}
 
       {/* ============ DEEP ANALYSIS MODAL ============ */}
       {deep && (

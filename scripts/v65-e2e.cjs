@@ -66,6 +66,9 @@ const check = (name, ok, extra = '') => {
     await page.waitForSelector('[role="tablist"]', { timeout: 20000 });
     await page.click(`[role="tablist"] button:has-text("India Intraday")`);
     await page.waitForSelector(`text=INDIA INTRADAY DESK`, { timeout: 20000 });
+    // v6.13: Backtest Lab PRO view me hai — PRO chip on karo
+    await page.locator('[data-desk-view="pro"]').first().click().catch(() => {});
+    await page.waitForTimeout(1500);
 
     // ---------- v6.5 identity ----------
     const badgeTxt = await page.locator('span.quantum-badge', { hasText: /v6\./ }).first().textContent().catch(() => '');

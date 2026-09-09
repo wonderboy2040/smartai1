@@ -72,6 +72,10 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   // ---- 2. INDIA desk ----
   await page.click('[role="tablist"] button:has-text("India Intraday")');
   await page.waitForSelector('text=INDIA INTRADAY DESK', { timeout: 25000 });
+  // v6.13: desks ab SIMPLE view me khulte hain — PRO sections ke liye
+  // PRO chip click karo (v6.11 ke section checks usi me hain).
+  await page.locator('[data-desk-view="pro"]').first().click();
+  await sleep(800);
   // scroll through so lazy sections render
   for (const anchor of ['#in-brief', '#in-sectors', '#in-options', '#in-ledger', '#in-trust']) {
     await page.evaluate(a => { const el = document.querySelector(a); if (el) el.scrollIntoView({ block: 'center' }); }, anchor);
@@ -91,6 +95,9 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   // ---- 3. COINDCX desk ----
   await page.click('[role="tablist"] button:has-text("CoinDCX")');
   await page.waitForSelector('text=COINDCX DESK', { timeout: 25000 });
+  // v6.13: belt-and-braces — CoinDCX bhi PRO view me hona chahiye
+  await page.locator('[data-desk-view="pro"]').first().click();
+  await sleep(800);
   for (const anchor of ['#cx-brief', '#cx-corr', '#cx-ledger', '#cx-trust']) {
     await page.evaluate(a => { const el = document.querySelector(a); if (el) el.scrollIntoView({ block: 'center' }); }, anchor);
     await sleep(1200);

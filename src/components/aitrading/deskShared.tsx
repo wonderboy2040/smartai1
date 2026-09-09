@@ -8,7 +8,7 @@
 // Extracted from the old single AI Trading tab so each desk
 // stays visually consistent while fully separate.
 // ============================================================
-import { memo, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import type { MarketKind, SignalBoard } from './types';
 
 export const REFRESH_MS = 30_000;
@@ -259,3 +259,54 @@ export function IndiaHowToTrade() {
     </div>
   );
 }
+
+// ------------------------------------------------------------
+// v6.13 — SIMPLE / PRO desk view.
+// User feedback: "UI bahut mixup ho gaya" — 12 sections ek saath
+// dikhna overwhelming tha. SIMPLE (default) = sirf trade-flow
+// (TOP5 → SIGNALS → OPTIONS/AGENT → EXECUTE); PRO = poora desk.
+// Choice localStorage me persist hoti hai (dono desks share).
+// ------------------------------------------------------------
+export type DeskViewMode = 'simple' | 'pro';
+
+export const DESK_VIEW_KEY = 'smartai-desk-view';
+
+export function useDeskViewMode(): [DeskViewMode, (m: DeskViewMode) => void] {
+  const [mode, setMode] = useState<DeskViewMode>(() => {
+    try { return localStorage.getItem(DESK_VIEW_KEY) === 'pro' ? 'pro' : 'simple'; } catch { return 'simple'; }
+  });
+  const set = useCallback((m: DeskViewMode) => {
+    try { localStorage.setItem(DESK_VIEW_KEY, m); } catch { /* private mode — state-only */ }
+    setMode(m);
+  }, []);
+  return [mode, set];
+}
+
+export const ViewModeToggle = memo(function ViewModeToggle({ mode, onSet }: { mode: DeskViewMode; onSet: (m: DeskViewMode) => void }) {
+  return (
+    <div className="flex gap-0.5 quantum-panel p-0.5 rounded-xl" role="group" aria-label="desk view mode">
+      <button data-desk-view="simple" onClick={() => onSet('simple')} aria-pressed={mode === 'simple'}
+        title="SIMPLE — sirf trade-flow: TOP 5 · SIGNALS · OPTIONS/AGENT · EXECUTE"
+        className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-colors ${mode === 'simple' ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+        SIMPLE
+      </button>
+      <button data-desk-view="pro" onClick={() => onSet('pro')} aria-pressed={mode === 'pro'}
+        title="PRO — poora desk: Brief · Sectors · Swing · Backtest · Alerts · Models · Ledger · Trust · Correlations"
+        className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-colors ${mode === 'pro' ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+        PRO
+      </button>
+    </div>
+  );
+});
+
+/** v6.13: SIMPLE mode ke neeche chhota footer — kya chhupa hai, kaise kholega. */
+export const ProSectionsNote = memo(function ProSectionsNote({ names }: { names: string }) {
+  return (
+    <div className="quantum-panel rounded-xl px-3 py-2 flex items-center gap-2 flex-wrap" role="note">
+      <span className="text-[10px] font-black text-violet-300 tracking-wider">🔬 PRO VIEW</span>
+      <span className="text-[10px] text-slate-400 leading-relaxed">
+        baaki sections abhi chhupe hain — <b className="text-slate-300">{names}</b>. Sab dikhana ho to upar <b className="text-violet-300">PRO</b> chip dabao (yaad rakha jaata hai).
+      </span>
+    </div>
+  );
+});

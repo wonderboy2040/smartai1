@@ -61,6 +61,8 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     // ---- India Intraday tab (v6.9 split) ----
     const tab = page.locator('button, [role="tab"]', { hasText: /INDIA INTRADAY|India Intraday/i }).first();
     await tab.click({ timeout: 20000 });
+    // v6.13: desks SIMPLE me khulte hain — Brief/Swing/Ledger/Backtest PRO view me hain
+    await page.locator('[data-desk-view="pro"]').first().click().catch(() => {});
     await page.waitForTimeout(5000);
 
     const body = await page.textContent('body');
@@ -80,6 +82,8 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     // ---- 5. Whale Radar (CoinDCX tab) ----
     const cxTab = page.locator('button, [role="tab"]', { hasText: /COINDCX|CoinDCX/i }).first();
     await cxTab.click({ timeout: 20000 });
+    // v6.13: PRO view (localStorage se aata hai, belt-and-braces click)
+    await page.locator('[data-desk-view="pro"]').first().click().catch(() => {});
     await page.waitForTimeout(3000);
     const bodyCx = await page.textContent('body');
     ok('Whale Radar section (CoinDCX desk)', /Whale Radar/i.test(bodyCx));

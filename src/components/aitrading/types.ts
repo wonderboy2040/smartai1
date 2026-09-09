@@ -186,6 +186,33 @@ export interface StrategyLeg {
   theta: number | null;
 }
 
+/** v6.13: one broker-ready leg of an options order ticket. */
+export interface TicketLeg {
+  action: 'BUY' | 'SELL';
+  type: 'CE' | 'PE';
+  strike: number;
+  ltp: number;
+  /** LIMIT price at the NSE ₹0.05 tick (BUY slightly above LTP, SELL slightly below — fill-friendly). */
+  limit: number;
+  qtyPerLot: number;
+}
+
+/** v6.13: server-computed step-by-step guide — KAB lena · konsa EXPIRY ·
+ *  LIMIT order kaise lagana hai · kab EXIT karna hai · lots sizing. */
+export interface OrderTicket {
+  kind: 'debit' | 'credit';
+  dte: number | null;
+  expiryDay: boolean;
+  whenText: string;
+  sessionPhase: string;
+  sessionTradeable: boolean;
+  expiryText: string;
+  legs: TicketLeg[];
+  lotRows: { lots: number; maxLoss: number }[];
+  perLotLoss: number | null;
+  exit: { sl: string; target: string; time: string };
+}
+
 export interface Strategy {
   id: string;
   name: string;
@@ -205,6 +232,8 @@ export interface Strategy {
   pop?: number | null;
   /** v6.7: sampled expiry payoff curve (per share) for the SVG chart */
   payoff?: { s: number; pnl: number }[];
+  /** v6.13: step-by-step order ticket (null when data insufficient — honest) */
+  orderTicket?: OrderTicket | null;
   exitPlan: string;
 }
 
@@ -215,6 +244,8 @@ export interface OptionsDesk {
   spotChangePct?: number | null;
   vix?: number | null;
   expiry: string;
+  /** v6.13: days to expiry (0 = expiry-day) */
+  dte?: number | null;
   source: 'nse' | 'bs-model';
   syntheticNote?: string | null;
   lotSize: number;

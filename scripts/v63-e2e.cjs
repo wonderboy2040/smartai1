@@ -54,6 +54,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     // ---------- 2. Open India Intraday desk (v6.9 split) ----------
     await page.click('button:has-text("India Intraday")');
     await page.waitForSelector('text=INDIA INTRADAY DESK', { timeout: 20000 });
+    // v6.13: desks SIMPLE me khulte hain — MODEL REGISTRY PRO view me hai
+    await page.locator('[data-desk-view="pro"]').first().click();
+    await sleep(800);
     const hdrBar = await page.locator('h2:has-text("INDIA INTRADAY")').locator('xpath=..').innerText();
     check('India desk header + version badge (v6.3+)', /v6\.\d+/i.test(hdrBar), hdrBar.replace(/\n/g, ' ').slice(0, 70)); // v6.5: version advances with releases
     await page.waitForSelector('text=MARKET BREADTH', { timeout: 30000 });

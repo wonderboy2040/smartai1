@@ -20,6 +20,7 @@
 import { fetchNSEOptionChain, fetchYahooQuotes } from './data.js';
 import { bsPrice, bsGreeks, impliedVol, yearsToExpiry, nextWeeklyExpiry, normCdf } from './lib/blackScholes.js';
 import { aggregateVotes } from './ensemble.js';
+import { sessionPhase } from './probrain.js';
 
 const RISK_FREE = 0.069; // ~RBI repo-ish risk-free for NSE pricing
 const STRIKE_STEPS = { NIFTY: 50, BANKNIFTY: 100, FINNIFTY: 50, MIDCPNIFTY: 25, NIFTYNXT50: 100, SENSEX: 100 };
@@ -304,6 +305,8 @@ export async function getOptionsDesk(symbol = 'NIFTY') {
     spotChangePct: r2(quotes[sym]?.changePct ?? null),
     vix: r1(vix),
     expiry: chain.expiry,
+    // v6.13: days-to-expiry (0 = expiry-day) for the ticket UI
+    dte: daysToExpiry(chain.expiry),
     source: chain.source,
     syntheticNote,
     lotSize: LOT_SIZES[sym] || 1,
@@ -609,7 +612,153 @@ export function buildStrategies(desk, consensus) {
   }
 
   // v6.7 — attach POP + payoff profile to every strategy
-  return out.map(s => attachPnlProfile(s, { spot, expiry, atmIV }));
+  // v6.13 — attach the ORDER TICKET (step-by-step entry/exit guide)
+  return out.map(s => {
+    const withPop = attachPnlProfile(s, { spot, expiry, atmIV });
+    withPop.orderTicket = buildOrderTicket(desk, withPop, consensus);
+    return withPop;
+  });
+}
+
+// ------------------------------------------------------------
+// v6.13 — ORDER TICKET: the "trade kaise karna hai" layer.
+// Converts a priced strategy into a step-by-step broker-ready
+// guide: KAB (session phase + grade honesty) · KONSA expiry
+// (DTE-aware theta logic) · LIMIT ORDER (per-leg prices at the
+// NSE 0.05 tick, BUY slightly-above / SELL slightly-below for
+// fill probability) · EXIT (SL% / target / time-exit) · lots.
+// PURE — `now` injectable for tests. Honest: missing data → null.
+// ------------------------------------------------------------
+const roundToTick = (v) => Math.round(v * 20) / 20; // NSE ₹0.05 tick
+
+export function daysToExpiry(expiry, now = Date.now()) {
+  // IST calendar-date semantics: expiry aaj (IST) → 0, kal → 1.
+  // (Epoch-diff/ceil off-by-one deta — aaj expiry ko "1 din baaki"
+  // bol deta tha, jo option trader ke liye jhooth hai.)
+  if (typeof expiry !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(expiry)) return null;
+  const nowIst = new Date(now + 330 * 60000).toISOString().slice(0, 10); // IST wall-clock date
+  const d = Math.round((Date.parse(`${expiry}T00:00:00Z`) - Date.parse(`${nowIst}T00:00:00Z`)) / 86_400_000);
+  return Number.isFinite(d) ? d : null;
+}
+
+function expiryAdvice(dte, expiry) {
+  if (dte == null) return { dte: null, expiryDay: false, text: 'Expiry date confirm nahi hui — order se pehle broker me expiry check karo.' };
+  if (dte <= 0) return {
+    dte: 0, expiryDay: true,
+    text: `⚠️ Ye chain AAJ ke expiry (${expiry} 15:30) pe hai — aaj expiry me raat bhar theta ~100% jala + gamma violent. Sirf scalpers. Aaj lena hi hai to 14:00–14:30 tak square-off PAKKA. Aaram se lena hai to NEXT weekly expiry lo (chain dropdown me agli date) — wahan premium full nahi bhaadkti.`,
+  };
+  if (dte === 1) return { dte: 1, expiryDay: false, text: `Kal (${expiry}) expiry hai — intraday direction ke liye theek, par position AAJ hi close karo: kal subah opening gap + theta dono premium kha sakte hain.` };
+  if (dte <= 4) return { dte, expiryDay: false, text: `Current weekly expiry (${expiry}, ${dte} din baaki) — intraday F&O ke liye sabse best liquidity aur fast premium response.` };
+  return { dte, expiryDay: false, text: `Weekly expiry ${dte} din door hai (${expiry}) — premium dheere move hota hai; intraday ke liye theek, agar swing lena hai to next weekly bhi dekh lo.` };
+}
+
+function whenAdvice(consensus, directional, now) {
+  const phase = sessionPhase('INDIA', now);
+  const grade = consensus?.grade || 'NEUTRAL';
+  const gradeOk = grade === 'STRONG' || grade === 'ACTION';
+  const gradeLine = directional && !gradeOk
+    ? `⚠️ Ensemble signal abhi ${grade}-grade hai — ACTION hone tak entry MAT karo (ye desk sirf mature signals pe bolta hai). `
+    : '';
+  const phaseText = {
+    PRE_OPEN: 'Market abhi band hai (pre-open) — order mat lagao. Best plan: 9:30 MORNING window me limit order.',
+    OPENING: '9:15–9:30 opening noise hai — spread wide, moves fake. 9:30 ka wait karo, fir entry.',
+    MORNING: 'MORNING prime window (9:30–10:30) — entry ke liye best time, liquidity full.',
+    MIDDAY: 'Midday chop (10:30–13:30) — entry sirf level pe, size aadha rakho.',
+    AFTERNOON: 'Afternoon window (13:30–14:30) — trend continuation entries OK.',
+    POWER: 'Power hour (14:30–15:15) — momentum entries OK, par 15:15 se pehle hi.',
+    NO_NEW_ENTRIES: '15:15+ hai — fresh entry band, sirf square-off. Naya trade kal MORNING window me.',
+    CLOSED: 'NSE band hai — order abhi nahi (kal gap risk). Plan ready rakho, kal 9:30 me lagao.',
+  }[phase.phase] || `Session: ${phase.phase}.`;
+  return { text: gradeLine + phaseText, phase: phase.phase, tradeable: !!phase.tradeable };
+}
+
+function exitAdvice(strat, expiryInfo) {
+  const id = strat.id;
+  const expiryDay = expiryInfo.expiryDay;
+  // (a) directional debit spreads — SL on combined premium, target on
+  //     half the width, time on broker MIS auto square-off.
+  if (id === 'bull-call-spread' || id === 'bear-put-spread') {
+    const debit = strat.netDebit ?? 0;
+    const half = debit / 2;
+    return {
+      sl: `SL: combined premium 50% gir jaye (₹${r2(debit)} → ₹${r2(half)}) ya index apna SL level tode — jo PEHLE aaye. Entry order ke SAATH hi SL lagao (bracket/cover order ya turant SL-M) — baad me sochne ka time nahi hota.`,
+      target: `Target: 50% max profit book karo (premium ₹${r2(debit)} → ₹${r2(debit + (strat.maxProfit ?? 0) / 2)}) ya index T2 — dono me se jo pehle. Greed nahi — 50% par nikal jao.`,
+      time: expiryDay
+        ? 'Aaj expiry hai: 14:00–14:30 tak square-off COMPULSORY (theta last ghante me sab kha jaata hai).'
+        : 'Intraday (MIS): broker 15:15 auto square-off karega. Raat tak hold chahiye to NRML/CF product me lo (margin badhta hai).',
+    };
+  }
+  // (b) naked directionals — premium-% based (option ka SL index level
+  //     pe nahi, premium pe hota hai).
+  if (id === 'long-call' || id === 'long-put') {
+    const p = strat.netDebit ?? 0;
+    return {
+      sl: `SL: premium −40% (₹${r2(p)} → ₹${r2(p * 0.6)}) — OPTION me SL premium pe lagate hain, index level pe nahi. Broker me SL-M trigger ₹${r2(p * 0.6)} premium ke barabar.`,
+      target: `Target: premium +80–100% (₹${r2(p)} → ₹${r2(p * 1.8)}–${r2(p * 2)}) ya index T2. +50% ke baad SL ko entry (cost) pe shift karo — trade free ho jaata hai.`,
+      time: expiryDay
+        ? 'Expiry-day hai: 14:30 se pehle book karo — 15:00 ke baad ATM premium zero-bazaar hai.'
+        : `Expiry-day (${expiryInfo.expiry}) 14:30 se pehle pakka exit — last din theta burn severe hai.`,
+    };
+  }
+  // (c) credit harvesters — theta tumhari taraf, par gamma risk.
+  if (id === 'iron-condor' || id === 'short-straddle' || id === 'short-strangle') {
+    const credit = strat.netCredit ?? strat.maxProfit ?? 0;
+    return {
+      sl: `SL/Adjust: spot kisi SHORT strike ke paas aa jaye (±${r1(Math.abs((strat.breakevens?.[0] ?? 0) - (strat.legs?.[0]?.strike ?? 0))) || 'level'} ke andar) → roll/adjust ya exit. Loss cap: net credit ka ~2× — isse aage mat pahunchne do.`,
+      target: `Target: 50% credit jaldi book karo (₹${r2(credit)} me se ₹${r2(credit / 2)}) — theta tumhari taraf hai, time ke saath profit badhta hai, par greed mat karo.`,
+      time: 'Expiry-day (Thursday) subah tak exit — aakhri din gamma pin violent hota hai, wings ke bawajood slippage milti hai.',
+    };
+  }
+  // (d) long straddle — breakout play.
+  if (id === 'long-straddle') {
+    const p = strat.netDebit ?? 0;
+    return {
+      sl: `SL: straddle premium −30% (₹${r2(p)} → ₹${r2(p * 0.7)}) — coil fail maan ke nikal jao.`,
+      target: `Target: premium +60–100% — breakout aaye to EK side ki option book karo, doosri hedge ban jaati hai.`,
+      time: 'Max 2–3 din hold — har din theta ~2–4% premium kaat ta hai. Breakout ke turant baad book karo.',
+    };
+  }
+  return { sl: '—', target: '—', time: '—' };
+}
+
+export function buildOrderTicket(desk, strat, consensus, now = Date.now()) {
+  try {
+    if (!desk?.ok || !(desk.spot > 0) || !strat?.legs?.length || !(desk.lotSize > 0)) return null;
+    const lotSize = desk.lotSize;
+    const expiryInfo = expiryAdvice(daysToExpiry(desk.expiry, now), desk.expiry);
+    const directional = strat.bias === 'BULLISH' || strat.bias === 'BEARISH';
+    const when = whenAdvice(consensus, directional, now);
+    // Per-leg LIMIT prices: BUY ko tick-up (+1% cushion — fill milti hai,
+    // overpay ka limit hai), SELL ko tick-down (fill mile, zyada cheap
+    // nahi bechna padta).
+    const legs = strat.legs.map(l => {
+      const ltp = Number(l.premium) || 0;
+      if (!(ltp > 0)) return null;
+      const limit = l.action === 'BUY'
+        ? roundToTick(Math.max(ltp + 0.05, ltp * 1.01))
+        : roundToTick(Math.max(0.05, ltp * 0.99));
+      return { action: l.action, type: l.type, strike: l.strike, ltp: r2(ltp), limit: r2(limit), qtyPerLot: lotSize };
+    }).filter(Boolean);
+    if (legs.length !== strat.legs.length) return null;
+    const perLotLoss = Number.isFinite(strat.perLot?.maxLoss) && strat.perLot.maxLoss > 0
+      ? Math.round(strat.perLot.maxLoss) : null;
+    const lotRows = perLotLoss ? [1, 2, 3].map(l => ({ lots: l, maxLoss: perLotLoss * l })) : [];
+    return {
+      kind: (strat.netCredit ?? 0) > 0 ? 'credit' : 'debit',
+      dte: expiryInfo.dte,
+      expiryDay: expiryInfo.expiryDay,
+      whenText: when.text,
+      sessionPhase: when.phase,
+      sessionTradeable: when.tradeable,
+      expiryText: expiryInfo.text,
+      legs,
+      lotRows,
+      perLotLoss,
+      exit: exitAdvice(strat, expiryInfo),
+    };
+  } catch {
+    return null; // honest — ticket nahi bana to UI guide nahi dikhayega
+  }
 }
 
 // ---------------- convenience: options-context for ensemble ----------------
