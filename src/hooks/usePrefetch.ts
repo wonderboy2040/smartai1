@@ -20,6 +20,8 @@ export function usePrefetch(
   currentSymbol?: string
 ) {
   const lastPrefetchRef = useRef<Record<string, number>>({});
+  const portfolioSymbolsKey = portfolio.map(p => p.symbol).join(',');
+  const topAssetSymbol = portfolio[0]?.symbol;
 
   const shouldPrefetch = (key: string): boolean => {
     const last = lastPrefetchRef.current[key] || 0;
@@ -38,20 +40,19 @@ export function usePrefetch(
     // livePrices via detectMacroRegime().)
     if (activeTab === 'dashboard') {
       // Prefetch news for the largest holding
-      if (portfolio.length > 0) {
-        const topAsset = portfolio[0];
-        const cacheKey = `prefetch_news_${topAsset.symbol}`;
+      if (topAssetSymbol) {
+        const cacheKey = `prefetch_news_${topAssetSymbol}`;
         if (shouldPrefetch(cacheKey)) {
           queuedFetch(
             () =>
               cachedFetch(
-                generateCacheKey('/api/tavily', { symbol: topAsset.symbol }),
+                generateCacheKey('/api/tavily', { symbol: topAssetSymbol }),
                 () =>
                   apiFetch('/api/tavily', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                      messages: [{ role: 'user', content: `${topAsset.symbol} stock latest news` }],
+                      messages: [{ role: 'user', content: `${topAssetSymbol} stock latest news` }],
                       model: ''
                     })
                   }).then(r => r.json()).catch(() => null),
@@ -102,5 +103,5 @@ export function usePrefetch(
         `prefetch_${currentSymbol}`
       ).catch(() => {});
     }
-  }, [activeTab, portfolio, currentSymbol]);
+  }, [activeTab, portfolioSymbolsKey, topAssetSymbol, currentSymbol]);
 }

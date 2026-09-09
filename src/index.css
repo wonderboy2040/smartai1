@@ -134,7 +134,7 @@ textarea:focus-visible,
       0 4px 12px var(--clay-shadow-dark),
       inset 0 1px 0 var(--clay-highlight);
   }
-  .animate-float, .animate-gradient, .animate-shimmer { animation: none !important; }
+  .animate-float, .animate-gradient, .animate-shimmer, .ticker-content { animation: none !important; }
   .animate-pulse { animation-duration: 3s !important; }
   .login-card, .quantum-modal { box-shadow: 0 8px 24px rgba(0,0,0,0.4) !important; }
 }
@@ -254,13 +254,15 @@ textarea:focus-visible,
   overflow: hidden;
   /* v6.3: was `transition: all` — transitioned EVERY property incl.
      box-shadow/layout on each repaint (the #1 scroll-jank source). */
-  transition: border-color 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.25s cubic-bezier(0.4, 0, 0.2, 1),
               box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .quantum-panel::before { display: none; }
 
 .quantum-panel:hover {
+  will-change: transform;
   border-color: var(--clay-border-hover);
   box-shadow:
     0 4px 8px var(--clay-shadow-dark),
@@ -274,6 +276,7 @@ textarea:focus-visible,
 
 /* ===== STAT CARD — clay tile ===== */
 .quantum-stat {
+  contain: content;
   position: relative;
   background: var(--clay-surface);
   border: 1px solid var(--clay-border);
@@ -284,10 +287,11 @@ textarea:focus-visible,
     0 6px 12px var(--clay-shadow-dark),
     inset 0 1px 0 var(--clay-highlight),
     inset 0 -1px 0 rgba(0, 0, 0, 0.15);
-  transition: color 0.3s ease, background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, opacity 0.3s ease;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .quantum-stat:hover {
+  will-change: transform;
   border-color: var(--clay-border-hover);
   box-shadow:
     0 4px 8px var(--clay-shadow-dark),
@@ -728,7 +732,7 @@ textarea:focus-visible,
   white-space: nowrap;
   opacity: 0;
   visibility: hidden;
-  transition: color 0.2s ease, background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease;
   z-index: 100;
   box-shadow:
     0 4px 8px var(--clay-shadow-dark),
@@ -827,12 +831,13 @@ textarea:focus-visible,
     0 12px 24px var(--clay-shadow-dark),
     inset 0 1px 0 var(--clay-highlight),
     inset 0 -1px 0 rgba(0, 0, 0, 0.15);
-  transition: color 0.3s ease, background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, opacity 0.3s ease;
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .bento-item::before { display: none; }
 
 .bento-item:hover {
+  will-change: transform;
   border-color: var(--clay-border-hover);
   transform: translateY(-3px);
   box-shadow:
@@ -921,8 +926,8 @@ textarea:focus-visible,
 
 .trade-pnl-flash { animation: pnl-flash 1s ease-out forwards; }
 .trade-leverage-chip { background: rgba(139, 92, 246, 0.08); border: 1px solid rgba(139, 92, 246, 0.15); color: #a78bfa; border-radius: 8px; }
-.trade-card-hover { transition: color 0.3s ease, background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, opacity 0.3s ease; }
-.trade-card-hover:hover { transform: translateY(-2px); box-shadow: 0 8px 24px var(--clay-shadow-dark); }
+.trade-card-hover { transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease; }
+.trade-card-hover:hover { will-change: transform; transform: translateY(-2px); box-shadow: 0 8px 24px var(--clay-shadow-dark); }
 
 /* ===== AMBIENT ORBS ===== */
 .ambient-orb {
@@ -1133,6 +1138,3 @@ textarea:focus-visible,
   .quantum-panel { padding: 0.875rem !important; }
   .quantum-tab { padding: 0.5rem 0.75rem !important; }
 }
-
-/* Selection */
-::selection { background: rgba(0, 242, 255, 0.25); color: #fff; }

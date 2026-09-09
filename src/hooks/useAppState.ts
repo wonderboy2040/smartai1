@@ -1489,21 +1489,33 @@ export function useAppState() {
         console.log('☁️ Cloud Sync: periodic auto-load from Google Sheets…');
         mergeCloudData();
       }
-    }, 30000); // 30 seconds
+    }, 120000); // 120 seconds (2 mins)
     return () => { if (cloudLoadTimerRef.current) clearInterval(cloudLoadTimerRef.current); };
   }, [isAuthenticated, mergeCloudData]);
 
-  // --- Tab Visibility Auto-Sync (manual mode only) ---
+  // --- Tab Visibility Auto-Sync (manual mode only, 5s debounce) ---
   useEffect(() => {
     if (!isAuthenticated) return;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const handleVisibility = () => {
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+      }
       if (document.visibilityState === 'visible' && !indmActiveRef.current) {
-        console.log('👁️ Tab active: fetching latest portfolio from Google Sheets…');
-        mergeCloudData();
+        debounceTimer = setTimeout(() => {
+          if (document.visibilityState === 'visible' && !indmActiveRef.current) {
+            console.log('👁️ Tab active: fetching latest portfolio from Google Sheets…');
+            mergeCloudData();
+          }
+        }, 5000);
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
-    return () => document.removeEventListener('visibilitychange', handleVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (debounceTimer) clearTimeout(debounceTimer);
+    };
   }, [isAuthenticated, mergeCloudData]);
 
   // --- Forex refresh (realtime 24x7, every 15s) ---
@@ -2005,7 +2017,7 @@ export function useAppState() {
     return syms.map(k => {
       const d = livePrices[k];
       if (!d) return '0';
-      return `${(d.price ?? 0).toFixed(2)}:${(d.rsi ?? 0).toFixed(0)}:${(d.low ?? 0).toFixed(2)}:${(d.high ?? 0).toFixed(2)}:${(d.sma20 ?? 0).toFixed(1)}:${(d.sma50 ?? 0).toFixed(1)}`;
+      return `${Math.round(d.price ?? 0)}:${(d.rsi ?? 0).toFixed(0)}:${Math.round(d.low ?? 0)}:${Math.round(d.high ?? 0)}:${Math.round(d.sma20 ?? 0)}:${Math.round(d.sma50 ?? 0)}`;
     }).join('|');
   }, [livePrices]);
   const smartAllocations = useMemo(() => getSmartAllocations(livePrices, indiaSIP, usSIP, btcSIP, ethSIP, usdInrRate),

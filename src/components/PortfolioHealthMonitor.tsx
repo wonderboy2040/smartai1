@@ -26,9 +26,11 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
   const portfolioRef = useRef(portfolio);
   const livePricesRef = useRef(livePrices);
   const metricsRef = useRef(metrics);
+  const healthRef = useRef(health);
   useEffect(() => { portfolioRef.current = portfolio; }, [portfolio]);
   useEffect(() => { livePricesRef.current = livePrices; }, [livePrices]);
   useEffect(() => { metricsRef.current = metrics; }, [metrics]);
+  useEffect(() => { healthRef.current = health; }, [health]);
 
   useEffect(() => {
     if (portfolio.length === 0) return;
@@ -47,18 +49,15 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
     return () => clearInterval(timer);
   }, [portfolio.length > 0]); // only restart when portfolio goes empty→non-empty or vice versa
 
-  // Keep latest state in refs to avoid resetting the interval on every price/portfolio change
-  const stateRef = useRef({ portfolio, livePrices, health, metrics });
-  useEffect(() => {
-    stateRef.current = { portfolio, livePrices, health, metrics };
-  }, [portfolio, livePrices, health, metrics]);
-
   // Background monitoring: check alerts every 60s
   useEffect(() => {
     if (!telegramConfig.enabled || !telegramConfig.token || !telegramConfig.chatId) return;
 
     intervalRef.current = setInterval(() => {
-      const { portfolio: currentPortfolio, livePrices: currentLivePrices, health: currentHealth, metrics: currentMetrics } = stateRef.current;
+      const currentPortfolio = portfolioRef.current;
+      const currentLivePrices = livePricesRef.current;
+      const currentHealth = healthRef.current;
+      const currentMetrics = metricsRef.current;
 
       // Update previous highs
       currentPortfolio.forEach(pos => {
