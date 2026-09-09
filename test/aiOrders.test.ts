@@ -320,15 +320,16 @@ describe('getRiskState', () => {
 });
 
 describe('PAPER practice-plan synthesis (FLAT fresh consensus)', () => {
-  it('paper executes at live price with a synthesized plan + honest note', async () => {
+  it('v6.12: paper on FLAT consensus is honestly REJECTED — the ACTION floor (no more noise rehearsal)', async () => {
+    // Pre-v6.12 a FLAT fresh consensus still synthesized a practice
+    // plan — rehearsing directionless trades was a direct source of
+    // user paper losses. Now paper demands ACTION+ confluence.
     const out = await executeSignal({
       symbol: 'BTC', mode: 'paper', side: 'LONG',
       getFreshSignal: async () => ({ ...STRONG, side: 'FLAT', grade: 'NEUTRAL', confidence: 20, plan: null, dir: 0 }),
     });
-    expect(out.ok).toBe(true);
-    expect(out.position!.side).toBe('LONG');
-    expect(out.position!.sl).toBeLessThan(out.position!.entryPrice);
-    expect(out.position!.signal!.summary).toMatch(/practice plan/);
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/ACTION-grade confluence|grade NEUTRAL/i);
   });
 
   it('LIVE never synthesizes — FLAT consensus is a hard reject', async () => {

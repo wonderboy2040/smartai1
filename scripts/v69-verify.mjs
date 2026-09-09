@@ -92,7 +92,11 @@ try {
     body: JSON.stringify({ symbol: 'BTC', side: 'LONG', mode: 'paper', qtyINR: 2000 }),
   }).catch(() => null);
   const exd = ex ? await ex.json().catch(() => ({})) : {};
-  ok('paper execute regression', exd.ok === true, exd.ok ? `qty ${exd.filled?.qty} @ ${exd.filled?.price}` : String(exd.error || '').slice(0, 100));
+  // v6.12: paper floor — ACTION-grade minimum. A WATCH/NEUTRAL fresh
+  // signal is honestly REFUSED (that refusal is the quality gate
+  // working, not a regression). Both outcomes pass.
+  const refused12 = exd.ok !== true && /ACTION-grade|grade (WATCH|NEUTRAL)/.test(String(exd.error || ''));
+  ok('paper execute regression', exd.ok === true || refused12, exd.ok ? `qty ${exd.filled?.qty} @ ${exd.filled?.price}` : refused12 ? 'v6.12 honest floor — grade-gate refusal (OK)' : String(exd.error || '').slice(0, 100));
 
   // ---- 9. agent + wallet (v6.8 regression) ----
   const agent = await j('/api/ai/agent');

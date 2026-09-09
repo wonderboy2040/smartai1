@@ -58,6 +58,50 @@ function ConfidenceGauge({ value, side }: { value: number; side: string }) {
   );
 }
 
+/** v6.12 PRO TRADER BRAIN — one honest chips row: quorum, MTF, regime,
+ *  extension veto, session gate, stop style. The WHY behind the grade. */
+function QualityChips({ quality, voters, total }: { quality: NonNullable<AISignal['quality']>; voters: number | null | undefined; total: number }) {
+  const chips: Array<{ label: string; cls: string; title: string }> = [];
+  const v = voters ?? 0;
+  // quorum
+  chips.push(v <= 1
+    ? { label: `⚠ QUORUM ${v}/${total}`, cls: 'bg-red-500/10 text-red-300 border-red-500/30', title: `sirf ${v} model vote kar raha hai — single-factor, consensus NAHI` }
+    : v === 2
+      ? { label: `QUORUM ${v}/${total} weak`, cls: 'bg-amber-500/10 text-amber-300 border-amber-500/30', title: 'sirf 2 models voting — weak quorum' }
+      : { label: `QUORUM ${v}/${total}`, cls: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30', title: `${v} models ne directional vote diya` });
+  // MTF
+  const mtf = quality.mtf;
+  if (mtf?.available) {
+    if (mtf.phase === 'ALIGNED') chips.push({ label: `MTF ✓ (${mtf.phase === 'ALIGNED' ? 'HTF+LTF' : mtf.phase})`, cls: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30', title: 'daily trend + intraday dono align — continuation entry OK' });
+    else if (mtf.phase === 'COUNTER_HTF') chips.push({ label: 'MTF ⚠ COUNTER', cls: 'bg-red-500/10 text-red-300 border-red-500/30', title: 'daily trend ke AGAINST — counter-trend, sirf strong reversal pe' });
+    else chips.push({ label: `MTF ⚠ ${mtf.phase}`, cls: 'bg-amber-500/10 text-amber-300 border-amber-500/30', title: 'timeframes conflict — timing risk' });
+  } else {
+    chips.push({ label: 'MTF n/a', cls: 'bg-slate-600/20 text-slate-400 border-slate-600/30', title: 'LTF candles unavailable — MTF check skip (honest)' });
+  }
+  // regime
+  const rg = quality.regime;
+  if (rg?.aligned === true) chips.push({ label: 'REGIME ✓', cls: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30', title: 'market regime trade ke sapt hai' });
+  else if (rg?.aligned === false) chips.push({ label: `REGIME ⚠ against${rg.penaltyPct ? ` −${rg.penaltyPct}%` : ''}`, cls: 'bg-red-500/10 text-red-300 border-red-500/30', title: 'BTC/NIFTY regime ke against trade — penalty laga hai' });
+  // extension veto
+  if (quality.extension?.veto) chips.push({ label: '🚫 EXTENSION VETO', cls: 'bg-red-500/15 text-red-300 border-red-500/40', title: 'move already extended / RSI exhaustion — chase mat karo' });
+  else if (quality.extension?.downgrade) chips.push({ label: 'EXT ⚠ extended', cls: 'bg-amber-500/10 text-amber-300 border-amber-500/30', title: 'entry thodi extended hai' });
+  // session (India only)
+  const ses = quality.session;
+  if (ses && !ses.tradeable) chips.push({ label: `⏰ ${ses.phase}`, cls: 'bg-amber-500/10 text-amber-300 border-amber-500/30', title: 'abhi fresh entry ka window nahi (opening noise / square-off / closed)' });
+  // structure stop
+  if (quality.stopStyle) chips.push({ label: `🔒 ${quality.stopStyle === 'swing-structure' ? 'SWING SL' : 'ATR SL'}`, cls: 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30', title: quality.stopStyle === 'swing-structure' ? 'SL last swing level ke piche — structure-aware, noise pad ke saath' : 'ATR-based stop' });
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-2">
+      {chips.map((c, i) => (
+        <span key={i} className={`px-1.5 py-0.5 rounded text-[9px] font-black border tracking-wide ${c.cls}`} title={c.title}>{c.label}</span>
+      ))}
+      {(quality.reasons || []).length > 0 && (
+        <span className="px-1.5 py-0.5 rounded text-[9px] font-black border tracking-wide bg-slate-600/20 text-slate-300 border-slate-600/30" title={(quality.reasons || []).join('\n')}>⋯ {quality.reasons?.length} reasons</span>
+      )}
+    </div>
+  );
+}
+
 function VoteChip({ vote }: { vote: AISignal['votes'][number] }) {
   const dir = vote.dir > 0 ? 'BULL' : vote.dir < 0 ? 'BEAR' : 'FLAT';
   const cls = vote.dir > 0
@@ -538,6 +582,9 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
           )}
         </div>
       </div>
+
+      {/* v6.12 PRO TRADER BRAIN — quality chips: the honest WHY behind the grade */}
+      {signal.quality && <QualityChips quality={signal.quality} voters={signal.voters ?? signal.participating} total={signal.totalModels} />}
 
       {/* Trade plan strip */}
       {plan && (

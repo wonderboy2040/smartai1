@@ -42,11 +42,11 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   await sleep(2500);
   const pin = page.locator('input[placeholder*="•"], input[type="password"]').first();
   if (await pin.count() > 0) {
-    await pin.fill('2023');
+    await pin.fill('1992');
     await page.locator('button:has-text("Unlock")').first().click();
     await sleep(4000);
   }
-  check('PIN 2023 unlock', !(await page.locator('input[placeholder*="•"], input[type="password"]').count()));
+  check('PIN 1992 unlock (user pin change)', !(await page.locator('input[placeholder*="•"], input[type="password"]').count()));
 
   // dismiss PWA install prompt if present
   const notNow = page.locator('button:has-text("Not now")');

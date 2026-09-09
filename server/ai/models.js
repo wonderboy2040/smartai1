@@ -302,6 +302,12 @@ function optionsFlow(ctx) {
 // ------------------------------------------------------------
 // 8. MacroRegime — the market gate
 // ------------------------------------------------------------
+// v6.12 PRO RECALIBRATION: the old bands (BTC ±1.5%, NIFTY ±0.5%)
+// read "BTC -1.4%" as NEUTRAL while alts correlate ~0.8 with BTC —
+// the whole board went LONG into a red BTC day. Tightened:
+//   CRYPTO  BTC ±0.75% directional, ±2.5% strong
+//   INDIA   NIFTY ±0.35% directional, ±1.0% strong
+// Daily EMA trend tie-break lives in probrain.regimeGate.
 function macroRegime(ctx) {
   const reg = ctx.regime || {};
   const pts = [];
@@ -310,18 +316,22 @@ function macroRegime(ctx) {
   if (ctx.market === 'CRYPTO') {
     const btc = reg.btcChange;
     if (btc != null) {
-      if (btc > 1.5) { score += 1.0; pts.push(`BTC +${r1(btc)}% — risk-on regime for alts`); }
-      else if (btc < -1.5) { score -= 1.0; pts.push(`BTC ${r1(btc)}% — risk-off, alts bleed`); }
-      else pts.push(`BTC ${r1(btc)}% flat — neutral regime`);
+      if (btc > 2.5) { score += 1.2; pts.push(`BTC +${r1(btc)}% STRONG risk-on — alts ke liye tailwind`); }
+      else if (btc > 0.75) { score += 1.0; pts.push(`BTC +${r1(btc)}% — risk-on regime`); }
+      else if (btc < -2.5) { score -= 1.2; pts.push(`BTC ${r1(btc)}% STRONG risk-off — alts bleed`); }
+      else if (btc < -0.75) { score -= 1.0; pts.push(`BTC ${r1(btc)}% — risk-off, alts flat/weak`); }
+      else pts.push(`BTC ${r1(btc)}% flat — regime neutral`);
     }
   } else {
     const nifty = reg.niftyChange, vix = reg.indiaVix;
     if (nifty != null) {
-      if (nifty > 0.5) { score += 0.8; pts.push(`NIFTY +${r1(nifty)}% — broad risk-on`); }
-      else if (nifty < -0.5) { score -= 0.8; pts.push(`NIFTY ${r1(nifty)}% — broad risk-off`); }
+      if (nifty > 1.0) { score += 1.0; pts.push(`NIFTY +${r1(nifty)}% strong risk-on`); }
+      else if (nifty > 0.35) { score += 0.8; pts.push(`NIFTY +${r1(nifty)}% — broad risk-on`); }
+      else if (nifty < -1.0) { score -= 1.0; pts.push(`NIFTY ${r1(nifty)}% strong risk-off`); }
+      else if (nifty < -0.35) { score -= 0.8; pts.push(`NIFTY ${r1(nifty)}% — broad risk-off`); }
     }
     if (vix != null) {
-      if (vix > 20) { conf -= 10; pts.push(`India VIX ${r1(vix)} elevated — size down`); }
+      if (vix > 18) { conf -= 10; pts.push(`India VIX ${r1(vix)} elevated — size down`); }
       else if (vix < 11) { conf += 5; pts.push(`India VIX ${r1(vix)} calm`); }
     }
   }

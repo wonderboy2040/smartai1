@@ -20,8 +20,13 @@ describe('aggregateVotes — the consensus formula', () => {
     ]);
     expect(out.side).toBe('LONG');
     expect(out.agreement).toBe(1);
-    expect(out.confidence).toBeGreaterThanOrEqual(75);
-    expect(out.grade).toBe('STRONG');
+    // v6.12 quorum honesty: 3 voters cap confidence at 72 — a thin
+    // committee can wear ACTION, never STRONG (was 75+ pre-v6.12,
+    // which let single-factor noise reach the execution gate).
+    expect(out.confidence).toBe(72);
+    expect(out.grade).toBe('ACTION');
+    expect(out.quorumCapped).toBe(true);
+    expect(out.voters).toBe(3);
   });
 
   it('conflicting votes split agreement below the STRONG gate', () => {

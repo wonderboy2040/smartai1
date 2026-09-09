@@ -23,6 +23,10 @@ import { adaptiveMultipliers, applyAdaptiveWeights } from './adaptive.js';
 import { modelStats as _ledgerModelStats } from './ledger.js';
 import { explainTicker } from './narrative.js';
 import { aggregateVotes, buildTradePlan, buildSignal, DEFAULT_GATES } from './ensemble.js';
+// v6.12 PRO TRADER BRAIN — quality/honesty layer over the consensus
+import { qualityVerdict, sessionPhase as sessionPhaseOf } from './probrain.js';
+import { smcVote } from './lib/smc.js';
+import { simulateSymbol } from './backtest.js';
 
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 
@@ -50,11 +54,11 @@ const YF_TICKER = {
   NIFTY: '^NSEI', BANKNIFTY: '^NSEBANK', FINNIFTY: 'NIFTY_FIN_SERVICE.NS',
   SENSEX: '^BSESN', INDIAVIX: '^INDIAVIX', BTC: 'BTC-USD',
 };
-async function fetchYahooCandles(key, range = '3mo') {
+async function fetchYahooCandles(key, range = '3mo', interval = '1d') {
   const t = YF_TICKER[key];
   if (!t) return null;
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(t)}?interval=1d&range=${range}`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(t)}?interval=${interval}&range=${range}`;
     const r = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI ai-signals)' },
       signal: AbortSignal.timeout(8000),
@@ -137,14 +141,102 @@ function tvToInd(row, ltp) {
   };
 }
 
+// ---------------- v6.12: Yahoo intraday candles (LTF for MTF) ----------------
+// India: <sym>.NS 15m bars (1mo ≈ 500 bars) — the intraday timing TF.
+// Crypto: <base>-USD 1h bars (3mo ≈ 2000 bars, we keep the tail) —
+// works even where CoinDCX public candles are blocked, so the MTF
+// layer never silently dies. Cached 2 min per symbol (bounded map).
+async function fetchYahooIntradayCandles(symbol, market) {
+  const mkt = String(market || 'INDIA').toUpperCase();
+  const key = `ltf:${mkt}:${symbol}`;
+  const hit = cacheGet(key, 120_000);
+  if (hit) return hit;
+  // indices (^NSEI etc.) map via YF_TICKER; stocks get .NS; crypto -USD
+  const t = YF_TICKER[symbol];
+  const yh = t || (mkt === 'CRYPTO' || mkt === 'FUTURES' ? `${symbol}-USD` : `${symbol}.NS`);
+  const interval = mkt === 'CRYPTO' || mkt === 'FUTURES' ? '1h' : '15m';
+  const range = mkt === 'CRYPTO' || mkt === 'FUTURES' ? '3mo' : '1mo';
+  let out = null;
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yh)}?interval=${interval}&range=${range}`;
+    const r = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI probrain-mtf)' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (r.ok) {
+      const j = await r.json();
+      const res = j?.chart?.result?.[0];
+      const ts = res?.timestamp;
+      const q = res?.indicators?.quote?.[0];
+      if (Array.isArray(ts) && q) {
+        const rows = [];
+        for (let i = 0; i < ts.length; i++) {
+          if (q.open?.[i] == null || q.close?.[i] == null) continue;
+          rows.push({
+            time: ts[i] * 1000,
+            open: q.open[i], high: q.high?.[i] ?? q.close[i], low: q.low?.[i] ?? q.close[i],
+            close: q.close[i], volume: q.volume?.[i] || 0,
+          });
+        }
+        if (rows.length >= 60) out = rows;
+      }
+    }
+  } catch { out = null; }
+  cacheSet(key, out);
+  return out;
+}
+
 // ---------------- regime (shared by all symbols of a market) ----------------
+// v6.12: daily EMA trend tie-break (btcTrend / niftyTrend) — a -1.4%
+// BTC day inside a daily UPTREND is a pullback; inside a DOWNTREND it
+// is continuation. The regime model + probrain gate both read it.
+const _regimeTrendCache = { at: 0, crypto: null, india: null };
+async function dailyTrend(candles) {
+  if (!Array.isArray(candles) || candles.length < 60) return null;
+  const closes = candles.map(c => c.close);
+  const ema = (period) => {
+    const k = 2 / (period + 1);
+    let e = closes[0];
+    for (let i = 1; i < closes.length; i++) e = closes[i] * k + e * (1 - k);
+    return e;
+  };
+  const e20 = ema(20), e50 = ema(50);
+  const last = closes[closes.length - 1];
+  if (!(e50 > 0) || !(last > 0)) return null;
+  const spread = (e20 - e50) / e50 * 100;
+  if (Math.abs(spread) < 0.5) return { trend: 'FLAT', spread };
+  return { trend: spread > 0 ? 'UP' : 'DOWN', spread: Math.round(spread * 100) / 100 };
+}
 async function buildRegime(market) {
-  if (market === 'CRYPTO') {
+  const mkt = String(market || 'INDIA').toUpperCase();
+  const useTrendCache = Date.now() - _regimeTrendCache.at < 15 * 60_000;
+  if (mkt === 'CRYPTO' || mkt === 'FUTURES') {
     const q = await fetchYahooQuotes(['BTC']).catch(() => ({}));
-    return { btcChange: q?.BTC?.changePct ?? null };
+    let btcTrend = useTrendCache ? _regimeTrendCache.crypto : null;
+    if (!btcTrend) {
+      const d = await fetchYahooCandles('BTC', '6mo').catch(() => null);
+      btcTrend = dailyTrend(d);
+      _regimeTrendCache.crypto = btcTrend; _regimeTrendCache.at = Date.now();
+    }
+    return {
+      btcChange: q?.BTC?.changePct ?? null,
+      btcTrend: btcTrend?.trend ?? null,
+      btcTrendSpread: btcTrend?.spread ?? null,
+    };
   }
   const q = await fetchYahooQuotes(['NIFTY', 'INDIAVIX']).catch(() => ({}));
-  return { niftyChange: q?.NIFTY?.changePct ?? null, indiaVix: q?.INDIAVIX?.price ?? null };
+  let niftyTrend = useTrendCache ? _regimeTrendCache.india : null;
+  if (!niftyTrend) {
+    const d = await fetchYahooCandles('NIFTY', '6mo').catch(() => (null));
+    niftyTrend = dailyTrend(d);
+    _regimeTrendCache.india = niftyTrend; _regimeTrendCache.at = Date.now();
+  }
+  return {
+    niftyChange: q?.NIFTY?.changePct ?? null,
+    indiaVix: q?.INDIAVIX?.price ?? null,
+    niftyTrend: niftyTrend?.trend ?? null,
+    niftyTrendSpread: niftyTrend?.spread ?? null,
+  };
 }
 
 // ---------------- per-symbol context builders ----------------
@@ -451,6 +543,28 @@ export async function getSignals(market, deps, opts = {}) {
   breadth.avgConf = contexts.length > 0 ? Math.round(confSum / contexts.length) : 0;
   candidates.sort((a, b) => b.consensus.confidence - a.consensus.confidence);
 
+  // ---------------- v6.12 PASS 2: pro-trader verification ----------------
+  // The top candidates get the LTF (15m India / 1h crypto) candles:
+  //   • SMC model comes ALIVE on intraday structure (it abstained
+  //     on the whole India board pre-v6.12 — no candles)
+  //   • mtfAnalysis: daily HTF vs LTF alignment
+  //   • structureStop: swing-aware SL for the plan
+  // Yahoo intraday works even where CoinDCX candles are blocked.
+  // Everything degrades HONESTLY (mtf: UNAVAILABLE, no penalty).
+  const enrichN = Math.min(10, opts.limit || 10);
+  const enriched = new Map();
+  await Promise.all(candidates.slice(0, enrichN).map(async (c) => {
+    const key = `${mkt}:${c.ctx.symbol}`;
+    if (enriched.has(key)) return;
+    try {
+      const candles = await fetchYahooIntradayCandles(c.ctx.symbol, mkt);
+      if (Array.isArray(candles) && candles.length >= 60) {
+        const ltfInd = computeIndicatorsFromCandles(candles);
+        enriched.set(key, { candles, ltfInd });
+      }
+    } catch { /* honest degrade — quality layer skips MTF */ }
+  }));
+
   // AI Council on the top candidates (toCouncilCandidate normalizes the
   // {ctx, votes, consensus, plan} board shape into the flat candidate
   // shape — symbol/side/confidence/ltp/indicators/plan).
@@ -461,7 +575,19 @@ export async function getSignals(market, deps, opts = {}) {
   // Merge AI Council as the 9th vote + final signals.
   const signals = [];
   for (const c of candidates.slice(0, opts.limit || 10)) {
-    const votes = c.votes;
+    const votes = [...c.votes];
+    const enrKey = `${mkt}:${c.ctx.symbol}`;
+    const enr = enriched.get(enrKey) || null;
+    // v6.12: inject the LTF-alive SMC vote (replace the pass-1 abstain)
+    if (enr) {
+      const smcV = smcVote(enr.candles);
+      if (smcV && smcV.dir !== 0 && (smcV.conf || 0) > 0) {
+        const reg = MODELS.find(m => m.id === 'smc');
+        const idx = votes.findIndex(v => v.id === 'smc');
+        if (idx >= 0) votes.splice(idx, 1);
+        votes.push({ id: 'smc', name: reg.name, role: reg.role, weight: reg.weight, ...smcV });
+      }
+    }
     let aiNote = null;
     const verdict = council.verdicts[c.ctx.symbol];
     if (verdict) {
@@ -474,13 +600,56 @@ export async function getSignals(market, deps, opts = {}) {
         aiNote = { verdict: verdict.verdict, note: verdict.note, analysis: verdict.analysis, model: council.model };
       }
     }
-    const consensus2 = aggregateVotes(votes, gatesFor(depsSafe));
+    let consensus2 = aggregateVotes(votes, gatesFor(depsSafe));
     // Rebuild the plan from the POST-council consensus: the council vote
     // can flip the final side, and a SHORT signal carrying a long-style
-    // plan (SL below entry, TP2 above) would invert every alert level.
-    const plan2 = buildTradePlan(consensus2, c.ctx, mkt, { maxRiskPct: riskCapFor(depsSafe) }) ?? c.plan;
+    // plan (SL below entry, TP2 above) would invert every alert levels.
+    // v6.12: the plan also takes the swing-structure stop when the
+    // probrain layer found one on the LTF candles.
+    let plan2 = null, quality = null;
+    if (consensus2.dir !== 0) {
+      const qv = qualityVerdict({
+        market: mkt, side: consensus2.side, consensus: consensus2, votes,
+        ltp: c.ctx.ltp, changePct: c.ctx.changePct,
+        rsi: c.ctx.ind?.rsi, adx: c.ctx.ind?.adx, atr: enr?.ltfInd?.atr ?? c.ctx.ind?.atr,
+        candles: enr?.candles, regime, htf: c.ctx.ind, ltf: enr?.ltfInd,
+        ltfLabel: mkt === 'INDIA' ? '15m' : '1h', now: Date.now(),
+      });
+      plan2 = buildTradePlan(consensus2, c.ctx, mkt, {
+        maxRiskPct: riskCapFor(depsSafe),
+        ...(qv.stop && !qv.stop.rejected && qv.stop.sl ? { structureStop: qv.stop } : {}),
+      }) ?? c.plan;
+      // v6.12 finalization: honest confidence (quorum caps already in
+      // aggregateVotes) + probrain adjustments + grade cap ladder.
+      const finalConf = Math.max(5, Math.min(99, consensus2.confidence + qv.confAdj));
+      const gates = gatesFor(depsSafe);
+      let finalGrade;
+      if (finalConf >= gates.minConfidence && consensus2.agreement >= gates.minAgreement) finalGrade = 'STRONG';
+      else if (finalConf >= 55) finalGrade = 'ACTION';
+      else if (finalConf >= 35) finalGrade = 'WATCH';
+      else finalGrade = 'NEUTRAL';
+      const capRank = { NEUTRAL: 0, WATCH: 1, ACTION: 2, STRONG: 3 };
+      if (capRank[qv.gradeCap] < capRank[finalGrade]) finalGrade = qv.gradeCap;
+      quality = {
+        ...qv.flags,
+        confAdj: qv.confAdj,
+        veto: qv.flags.veto || null,
+        reasons: qv.reasons,
+        mtf: { phase: qv.mtf.phase, aligned: qv.mtf.aligned, available: qv.mtf.available },
+        session: { phase: qv.session.phase, tradeable: qv.session.tradeable },
+        stopStyle: qv.stop && !qv.stop.rejected ? (qv.stop.style || 'swing-structure') : null,
+      };
+      consensus2 = {
+        ...consensus2,
+        confidence: finalConf,
+        grade: finalGrade,
+        summary: `${consensus2.summary}${qv.flags.veto ? ` · ${qv.flags.veto.toUpperCase()} VETO` : ''}`,
+      };
+    } else {
+      plan2 = c.plan;
+    }
     signals.push(buildSignal({
-      symbol: c.ctx.symbol, market: mkt, ctx: c.ctx, votes, consensus: consensus2, plan: plan2, aiNote,
+      symbol: c.ctx.symbol, market: mkt, ctx: c.ctx, votes, consensus: consensus2, plan: plan2, aiNote, quality,
     }));
   }
   signals.sort((a, b) => b.confidence - a.confidence);
@@ -490,9 +659,13 @@ export async function getSignals(market, deps, opts = {}) {
   // SAME ranking the server would execute against).
   const topFive = computeTopFive(signals, regime, mkt, 5);
 
+  // v6.12: session phase — the intraday desk must KNOW when it is
+  // safe to fire (opening noise / square-off window / market closed).
+  const ses = sessionPhaseOf(mkt, Date.now());
   const payload = {
     ok: true, market: mkt,
     marketOpen: mkt === 'INDIA' ? isNseOpen() : true,
+    sessionPhase: { phase: ses.phase, tradeable: ses.tradeable, note: ses.note },
     regime,
     breadth,
     topFive,
@@ -661,6 +834,26 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
   }
 
   const votes = applyAdaptiveWeights(runQuantModels(ctx), adaptiveMultipliers(_ledgerModelStats()));
+  // ---------------- v6.12 pass-2 deep enrichment ----------------
+  // LTF candles: 15m (India) / 1h (crypto) — SMC + MTF + structure
+  // stop + edge stats. Tries the ctx candles first (crypto deep path
+  // already fetched CoinDCX 1h), then the Yahoo intraday fallback.
+  let ltfCandles = Array.isArray(ctx.candles) && ctx.candles.length >= 60 ? ctx.candles : null;
+  let ltfInd = null;
+  if (!ltfCandles) {
+    ltfCandles = await fetchYahooIntradayCandles(sym, mkt).catch(() => null) || null;
+  }
+  if (Array.isArray(ltfCandles) && ltfCandles.length >= 60) {
+    ltfInd = computeIndicatorsFromCandles(ltfCandles);
+    // SMC revival on the LTF structure (replace the abstained vote)
+    const smcV = smcVote(ltfCandles);
+    if (smcV && smcV.dir !== 0 && (smcV.conf || 0) > 0) {
+      const reg = MODELS.find(m => m.id === 'smc');
+      const idx = votes.findIndex(v => v.id === 'smc');
+      if (idx >= 0) votes.splice(idx, 1);
+      votes.push({ id: 'smc', name: reg.name, role: reg.role, weight: reg.weight, ...smcV });
+    }
+  }
   // Pre-council consensus: the deep path feeds the council the same flat
   // candidate shape as the board path (side/confidence/ltp/ind/plan) so
   // the LLM actually sees the symbol, price and indicator state it is
@@ -684,9 +877,69 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
       weight: MODELS.find(m => m.id === 'aicouncil').weight, ...av,
     });
   }
-  const consensus = aggregateVotes(votes, gatesFor(deps));
-  const plan = buildTradePlan(consensus, ctx, mkt, { maxRiskPct: riskCapFor(deps) });
-  const built = buildSignal({ symbol: sym, market: mkt, ctx, votes, consensus, plan, aiNote: verdict ? { verdict: verdict.verdict, note: verdict.note, analysis: verdict.analysis, model: council.model } : null });
+  let consensus = aggregateVotes(votes, gatesFor(deps));
+  // ---------------- v6.12: quality verdict + EDGE stats ----------------
+  let quality = null, edge = null, structureStopOpt = null;
+  if (consensus.dir !== 0) {
+    const qv = qualityVerdict({
+      market: mkt, side: consensus.side, consensus, votes,
+      ltp: ctx.ltp, changePct: ctx.changePct,
+      rsi: ctx.ind?.rsi, adx: ctx.ind?.adx, atr: ltfInd?.atr ?? ctx.ind?.atr,
+      candles: ltfCandles, regime, htf: ctx.ind, ltf: ltfInd,
+      ltfLabel: mkt === 'INDIA' ? '15m' : '1h', now: Date.now(),
+    });
+    quality = {
+      ...qv.flags,
+      confAdj: qv.confAdj,
+      veto: qv.flags.veto || null,
+      reasons: qv.reasons,
+      mtf: { phase: qv.mtf.phase, aligned: qv.mtf.aligned, available: qv.mtf.available },
+      session: { phase: qv.session.phase, tradeable: qv.session.tradeable },
+      stopStyle: qv.stop && !qv.stop.rejected ? (qv.stop.style || 'swing-structure') : null,
+    };
+    if (qv.stop && !qv.stop.rejected && qv.stop.sl) structureStopOpt = qv.stop;
+    const finalConf = Math.max(5, Math.min(99, consensus.confidence + qv.confAdj));
+    const gates = gatesFor(deps);
+    let finalGrade;
+    if (finalConf >= gates.minConfidence && consensus.agreement >= gates.minAgreement) finalGrade = 'STRONG';
+    else if (finalConf >= 55) finalGrade = 'ACTION';
+    else if (finalConf >= 35) finalGrade = 'WATCH';
+    else finalGrade = 'NEUTRAL';
+    const capRank = { NEUTRAL: 0, WATCH: 1, ACTION: 2, STRONG: 3 };
+    if (capRank[qv.gradeCap] < capRank[finalGrade]) finalGrade = qv.gradeCap;
+    consensus = {
+      ...consensus,
+      confidence: finalConf,
+      grade: finalGrade,
+      summary: `${consensus.summary}${qv.flags.veto ? ` · ${qv.flags.veto.toUpperCase()} VETO` : ''}`,
+    };
+    // EDGE: walk-forward replay of THIS symbol through the same
+    // ensemble + plan discipline (the v6.5 backtester). Honest sample
+    // size + disclaimer — past ≠ future, ye context hai guarantee nahi.
+    try {
+      const simCandles = Array.isArray(ltfCandles) ? ltfCandles.slice(-400) : null;
+      if (simCandles && simCandles.length >= 120) {
+        const sim = simulateSymbol({
+          symbol: sym, market: mkt, candles: simCandles,
+          minGrade: 'ACTION', maxRiskPct: riskCapFor(deps),
+          maxHoldBars: mkt === 'INDIA' ? 26 : 48,
+        });
+        if (sim?.stats && sim.stats.trades > 0) {
+          edge = {
+            ...sim.stats,
+            timeframe: mkt === 'INDIA' ? '15m' : '1h',
+            bars: simCandles.length,
+            disclaimer: 'Walk-forward replay of the SAME ensemble on recent bars — past performance ≠ future results',
+          };
+        }
+      }
+    } catch { /* edge stats are optional context */ }
+  }
+  const plan = buildTradePlan(consensus, ctx, mkt, {
+    maxRiskPct: riskCapFor(deps),
+    ...(structureStopOpt && consensus.dir !== 0 ? { structureStop: structureStopOpt } : {}),
+  });
+  const built = buildSignal({ symbol: sym, market: mkt, ctx, votes, consensus, plan, aiNote: verdict ? { verdict: verdict.verdict, note: verdict.note, analysis: verdict.analysis, model: council.model } : null, quality });
   // v6.11 (glama explain_ticker): rule-based regime narrative — the
   // indicator stack translated into a Hinglish story for the deep modal.
   const narrative = explainTicker(built, ctx.ind);
@@ -695,11 +948,19 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
     signal: built,
     indicators: ctx.ind,
     narrative,
+    ltf: ltfInd ? {
+      label: mkt === 'INDIA' ? '15m' : '1h',
+      rsi: ltfInd.rsi ?? null, macdHist: ltfInd.macd?.hist ?? null,
+      ema20: ltfInd.ema20 ?? null, ema50: ltfInd.ema50 ?? null,
+      atr: ltfInd.atr ?? null,
+    } : null,
+    edge,
     priceSource: ctx.priceSource || null,
   };
   cacheSet(cacheKey, payload);
   return payload;
 }
+
 
 /**
  * The execute-gauntlet's fresh signal source — a single-symbol ensemble

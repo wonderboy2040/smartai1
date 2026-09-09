@@ -31,6 +31,56 @@ export interface TradePlan {
    *  cap and targets re-derived (honest display + audit trail). */
   riskClamped?: boolean;
   originalRiskPct?: number;
+  /** v6.12: the SL sits behind a verified swing level (probrain). */
+  structure?: { level: number | null; barsAgo: number | null };
+  rrBelowFloor?: boolean;
+}
+
+/** v6.12 PRO TRADER BRAIN — the honest quality layer on every signal:
+ *  quorum, regime alignment, MTF phase, extension veto, session gate. */
+export interface SignalQuality {
+  quorum?: { voters: number; total: number };
+  regime?: { aligned: boolean | null; counterTrend?: boolean; penaltyPct?: number };
+  extension?: { veto: boolean; downgrade?: boolean };
+  mtf?: { phase: string; aligned: boolean | null; available?: boolean };
+  session?: { phase: string; tradeable: boolean };
+  confAdj?: number;
+  veto?: string | null;
+  stopStyle?: string | null;
+  reasons?: string[];
+}
+
+/** v6.12: walk-forward edge stats (deep signal only) — the SAME
+ *  ensemble replayed on recent LTF bars. Honest, disclaimer'd. */
+export interface EdgeStats {
+  trades: number;
+  wins: number;
+  losses: number;
+  winRate: number | null;
+  avgR: number | null;
+  totalR: number;
+  profitFactor: number | null;
+  maxDDR: number;
+  avgHoldBars: number | null;
+  timeframe: string;
+  bars: number;
+  disclaimer: string;
+}
+
+/** v6.12: LTF (15m India / 1h crypto) indicator snapshot for MTF view. */
+export interface LtfSnapshot {
+  label: string;
+  rsi: number | null;
+  macdHist: number | null;
+  ema20: number | null;
+  ema50: number | null;
+  atr: number | null;
+}
+
+export interface SessionPhaseInfo {
+  phase: string;
+  tradeable: boolean;
+  note: string;
 }
 
 export interface AINote {
@@ -49,12 +99,16 @@ export interface AISignal {
   agreement: number;
   participation?: number | null; // v6.3: voting-weight quorum (0-1)
   participating: number;
+  /** v6.12: models that actually cast a non-abstain vote. */
+  voters?: number | null;
   totalModels: number;
   bullWeight?: number | null;
   bearWeight?: number | null;
   ltp: number | null;
   changePct: number | null;
   plan: TradePlan | null;
+  /** v6.12 PRO TRADER BRAIN: quorum/regime/MTF/extension/session verdict. */
+  quality?: SignalQuality | null;
   votes: ModelVote[];
   summary: string;
   aiNote: AINote | null;
@@ -91,7 +145,9 @@ export interface SignalBoard {
   market: MarketKind;
   marketOpen?: boolean;
   reason?: string;
-  regime?: { niftyChange?: number | null; indiaVix?: number | null; btcChange?: number | null };
+  /** v6.12: NSE session gate — when fresh intraday entries are safe. */
+  sessionPhase?: SessionPhaseInfo;
+  regime?: { niftyChange?: number | null; indiaVix?: number | null; btcChange?: number | null; niftyTrend?: string | null; btcTrend?: string | null };
   breadth?: MarketBreadth;
   /** v6.9: full-universe composite TOP-5 (ranked, scored, reason'd). */
   topFive?: TopPick[];

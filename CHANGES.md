@@ -1,3 +1,52 @@
+## v6.12.0 — PRO TRADER BRAIN: signal-quality deep rebuild (2026-09-09)
+
+> **User feedback drove this**: "Intraday TAB aur crypto tab me accurate trade signal nahi mil raha, paper pe trade karta hun toh loss me aata hai." A prop-desk risk-manager pass over the whole signal pipeline — the fake-consensus bug killed, multi-timeframe confluence enforced, regime recalibrated, and paper practice now rehearses REAL discipline (ACTION-grade minimum). **Signal kam aayenge par real aayenge.**
+
+### 0. 🔴 THE ROOT CAUSE (pro-trader audit findings)
+1. **Fake consensus (v6.11 bug)**: ek hi loud model (conf 100) "74% confidence · 100% agreement · ACTION grade" dikha raha tha — board pe single-factor EMA signal "9-model consensus" ka khel khel raha tha. Paper losses ka #1 source.
+2. **No MTF check**: intraday timing signal ko daily trend se koi agreement nahi tha — counter-trend entries full grade ke saath pass ho jaate the.
+3. **Loose regime bands**: BTC −1.4% "NEUTRAL" read hota tha jabki alts ~0.8 BTC-correlate hain — poora board red-BTC day pe LONG jaata tha. NIFTY ±0.5% same disease.
+4. **Chase entries**: +8-15% day-mover ya RSI-78 pe bhi continuation entry milti thi (blow-off chasing).
+5. **Blind ATR stops**: fixed 1.4×ATR SL no-man's land me baithta tha jabki taza swing level available tha.
+6. **Session blindness**: 9:15-9:30 opening noise aur 15:15+ square-off window me bhi fresh "entries" ban rahe the.
+7. **Paper = sandbox of bad habits**: WATCH/NEUTRAL single-voter noise pe bhi paper position khulti thi — practice khud losses rehearse kar rahi thi.
+
+### 1. 🧠 PRO TRADER BRAIN — `server/ai/probrain.js` (new, 6 pure functions)
+- **sessionPhase**: NSE-aware phases (PRE_OPEN/OPENING/MORNING/MIDDAY/AFTERNOON/POWER/NO_NEW_ENTRIES/CLOSED) — untradeable windows me fresh India entries grade-cap WATCH. Crypto 24/7 with weekend-liquidity honesty.
+- **mtfAnalysis**: HTF (daily EMA20/50 + RSI) vs LTF (15m India / 1h crypto) — ALIGNED / COUNTER_HTF / MISALIGNED / HTF_FLAT / honest UNAVAILABLE. Counter-HTF + weak quorum → cap WATCH.
+- **regimeGate**: tightened bands (CRYPTO BTC ±0.75% soft / ±2.5% hard; INDIA NIFTY ±0.35% / ±1.0%) + **daily EMA-trend tie-break** (btcTrend/niftyTrend) + VIX>18 penalty. Counter-regime = −10% (strong −18%) confidence.
+- **extensionGuard**: +8% crypto / +5% India day-move same-direction chase = **VETO (grade WATCH cap)**; RSI ≥78/≤22 exhaustion veto; ADX<18 downgrade.
+- **structureStop**: last fractal swing (±2) ke piche noise-padded SL — sirf tighter-than-ATR allowed, ≤2.2 ATR sanity window, honest rejection reasons.
+- **qualityVerdict**: sab blends → flags + reasons + confAdj + gradeCap ladder.
+
+### 2. ⚖️ QUORUM CONF CAPS — `ensemble.js` (the fake-consensus killer)
+- 1-2 voters → hard cap 52/54 (WATCH max — paper/notify buttons refuse) · 3 voters → 72 · 4 → 85 · ≥5 uncapped. Confidence cap grade ladder se PEHLE lagta hai. `voters` + `quorumCapped` consensus payload me.
+
+### 3. 🔧 Integration (signals.js — board + deep dono paths)
+- **Yahoo intraday candles** (India <sym>.NS 15m / crypto <base>-USD 1h, 2-min cache) — CoinDCX-candles-blocked boxes pe bhi MTF layer zinda rehta hai.
+- **Pass-2 enrichment**: top-10 candidates ko LTF candles — SMC model LTF structure pe **revive** (pehle India board pe abstain karta tha), MTF alignment, structure stop, quality verdict. Deep path me same.
+- **Final confidence** = quorum-capped consensus + probrain adjustments (regime penalty, MTF ±, weak-quorum −), grade caps: extension veto / single-voter / untradeable session / counter-HTF-weak → WATCH.
+- **EDGE stats (deep only)**: walk-forward replay of the SAME ensemble on recent LTF bars (v6.5 backtester) — trades/WR/avgR with honest "past ≠ future" disclaimer.
+- **Regime payload**: btcTrend/niftyTrend + spread (15-min cached daily EMA20/50 read).
+
+### 4. 🚪 EXECUTION FLOOR — `evaluateExecutionGate` (paper ab discipline rehearse karta hai)
+- Paper/notify floor: **grade ≥ ACTION** (conf ≥55) — WATCH/NEUTRAL pe honest refusal ("WATCH = sirf dekho, trade mat karo"). Live STRONG unchanged. Ye user ke paper-losses ka behavioral fix hai.
+- **MacroRegime model** recalibrated with same tightened bands (models.js) + swing-structure stops plan builder me (tighter-of structure vs ATR, ≤2.2 ATR).
+
+### 5. 🖥️ UI
+- **SignalCard**: QUALITY CHIPS row (QUORUM n/9 · MTF ✓/⚠/n-a · REGIME ✓/⚠ −penalty · 🚫 EXTENSION VETO · ⏰ session · 🔒 SWING SL) + veto badge + "n reasons" tooltip.
+- **Both desks**: SESSION GATE banner (phase + Hinglish note + grade-cap warning). Deep modal me **MtfBlock** (DAILY vs 15M/1H indicator split) + **EdgeBlock** (walk-forward stats + disclaimer) — naya `DeepQualityBlock.tsx`.
+- **Modal a11y**: Escape key ab deep modal band karta hai (dono tabs).
+
+### 6. ✅ Verification
+- 643 unit tests (naye v612-core + updated quorum-cap expectations) · tsc clean · vite build clean.
+- **v612-verify.mjs 24/24** (PIN 1992 · quality objects 10/10 dono boards · quorum honesty · veto caps · LTF snapshots · SMC LTF revival · EDGE + disclaimer · paper ACTION floor · 401 guard).
+- **v612-e2e.cjs 16/16** (browser: session gate banner · quality chips · deep MTF/EDGE blocks dono desks · zero JS errors).
+- ALL regressions green (v6.12-aware updates): v611-verify 37/37 · v611-e2e 17/17 · v610-e2e 20/20 (PIN 1992) · v69 20+29 · v67 22+14 · v66/v65/v64 ALL · v63-e2e 20/20 · v60 30+3.
+- Regression scripts ko **v6.12-honest** banaya: hardcoded LONG paper-executes ab adaptive hain (board direction follow) ya grade-gate refusal ko PASS maante hain — kyunki refusal hi naya correct behavior hai.
+
+---
+
 ## v6.11.0 — GLAMA TIER-2/3 FEATURES × 12 (2026-09-08)
 
 > 12 remaining features from the glama.ai MCP analysis (Task 39 ke Tier-2/3 backlog — jo v6.7 me implement NAHI hue the) ab live hain. PIN **1992** (user's new pin — 2023 ab reject hota hai).

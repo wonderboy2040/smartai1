@@ -18,6 +18,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAITrading, fetchWallet } from '../aitrading/useAITrading';
 import { SignalCard } from '../aitrading/SignalCard';
+import { MtfBlock, EdgeBlock } from '../aitrading/DeepQualityBlock';
 import { TopPicksPanel } from '../aitrading/TopPicksPanel';
 import { QuickNav } from '../aitrading/QuickNav';
 import { OrderConsole } from '../aitrading/OrderConsole';
@@ -108,7 +109,7 @@ export default memo(function CoinDcxTab() {
   const [desk, setDesk] = useState<'CRYPTO' | 'FUTURES'>('CRYPTO');
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [filter, setFilter] = useState<BoardFilter>('ALL');
-  const [deep, setDeep] = useState<{ loading: boolean; signal?: AISignal; indicators?: Record<string, unknown>; narrative?: import('../aitrading/types').NarrativeView | null; error?: string } | null>(null);
+  const [deep, setDeep] = useState<{ loading: boolean; signal?: AISignal; indicators?: Record<string, unknown>; narrative?: import('../aitrading/types').NarrativeView | null; ltf?: import('../aitrading/types').LtfSnapshot | null; edge?: import('../aitrading/types').EdgeStats | null; error?: string } | null>(null);
 
   const board: SignalBoard | null = desk === 'FUTURES' ? futures : crypto;
   const models = board?.models || crypto?.models || futures?.models || [];
@@ -172,9 +173,17 @@ export default memo(function CoinDcxTab() {
   const onDeep = useCallback(async (signal: AISignal) => {
     setDeep({ loading: true });
     const r = await fetchDeep(signal.symbol, signal.market);
-    if (r.ok && r.signal) setDeep({ loading: false, signal: r.signal, indicators: r.indicators, narrative: r.narrative });
+    if (r.ok && r.signal) setDeep({ loading: false, signal: r.signal, indicators: r.indicators, narrative: r.narrative, ltf: r.ltf, edge: r.edge });
     else setDeep({ loading: false, error: r.error || 'deep analysis unavailable' });
   }, [fetchDeep]);
+
+  // v6.12: Escape closes the deep modal (keyboard a11y)
+  useEffect(() => {
+    if (!deep) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDeep(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [deep]);
 
   const counts = useMemo(() => countSignals(board), [board]);
   const visibleSignals = useMemo(() => filterSignals(board, filter), [board, filter]);
@@ -409,6 +418,8 @@ export default memo(function CoinDcxTab() {
                 <SignalCard signal={deep.signal} onExecute={onExecute} onExecuteFutures={onExecuteFutures} canLive={canLive} busy={busy}
                   orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5}
                   maxLeverage={state?.config?.cryptoLeverage ?? 1} />
+                <MtfBlock ltf={deep.ltf} quality={deep.signal.quality} />
+                <EdgeBlock edge={deep.edge} />
                 {deep.narrative && (
                   <div className="mt-3 bg-cyan-500/[0.05] border border-cyan-500/15 rounded-xl p-3" aria-label="regime narrative">
                     <div className="text-[10px] font-black text-cyan-300 tracking-wider mb-1.5">📖 EXPLAIN TICKER — {deep.narrative.title}</div>

@@ -16,6 +16,19 @@ export const DEFAULT_GATES = {
   minAgreement: 0.70,  // ≥ 70% of voting weight on the winning side
 };
 
+// v6.12 PRO-TRADER QUORUM CAPS — the fake-consensus killer.
+// Pre-v6.12 a SINGLE loud model (conf 100) read as 74% confidence,
+// 100% agreement, ACTION grade — the board displayed a one-factor
+// EMA signal as a "9-model consensus" and paper trades died on it.
+// Confidence is now capped by how many models actually voted:
+//   voters 1-2 → hard cap below the ACTION line (WATCH max — a
+//                 1-2 model "consensus" is a watchlist note, not a
+//                 trade; paper/lucrative buttons refuse it)
+//   voters 3   → cap 72 (STRONG impossible, ACTION reachable)
+//   voters 4   → cap 85
+//   voters ≥ 5 → no cap — real committee territory
+export const QUORUM_CONF_CAPS = { 1: 52, 2: 54, 3: 72, 4: 85 };
+
 const clamp = (v, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, v));
 const r2 = (v) => Math.round(v * 100) / 100;
 const r1 = (v) => Math.round(v * 10) / 10;
@@ -77,9 +90,20 @@ export function aggregateVotes(votes, gates = DEFAULT_GATES) {
   // Quorum: how much of the committee's weight actually showed up.
   const participation = allWeight > 0 ? votingWeight / allWeight : 1;
 
-  const confidence = Math.round(clamp(
+  let confidence = Math.round(clamp(
     score * 100 * (0.60 + 0.40 * agreement) * (0.70 + 0.30 * participation)
   ));
+
+  // v6.12: quorum honesty — a 1-2 model "consensus" is not a
+  // consensus. The cap is applied BEFORE the grade ladder so no
+  // single-factor signal can ever wear the ACTION/STRONG badge.
+  const voters = valid.length;
+  const quorumCap = QUORUM_CONF_CAPS[voters];
+  let quorumCapped = false;
+  if (quorumCap != null && confidence > quorumCap) {
+    confidence = quorumCap;
+    quorumCapped = true;
+  }
 
   let grade;
   if (confidence >= gates.minConfidence && agreement >= gates.minAgreement) grade = 'STRONG';
@@ -91,10 +115,12 @@ export function aggregateVotes(votes, gates = DEFAULT_GATES) {
     side, dir, confidence, agreement: Math.round(agreement * 100) / 100,
     participation: Math.round(participation * 100) / 100,
     grade,
+    voters,
+    quorumCapped: quorumCapped || undefined,
     participating: valid.length,
     totalModels: (votes || []).length,
     bullWeight: r2(bull), bearWeight: r2(bear),
-    summary: `${side} ${confidence}% · ${valid.length}/${(votes || []).length} models voting · ${Math.round(agreement * 100)}% agreement · ${Math.round(participation * 100)}% quorum`,
+    summary: `${side} ${confidence}% · ${valid.length}/${(votes || []).length} models voting · ${Math.round(agreement * 100)}% agreement · ${Math.round(participation * 100)}% quorum${quorumCapped ? ' · quorum-capped (few voters)' : ''}`,
   };
 }
 
@@ -117,6 +143,21 @@ export function buildTradePlan(consensus, ctx, market, opts = {}) {
   const slMult = cryptoish ? 1.6 : 1.4;
   const long = consensus.dir > 0;
   let stopLoss = long ? ltp - slMult * a : ltp + slMult * a;
+  let planStyle = atr != null ? 'atr-based' : 'atr-fallback';
+  let structure = null;
+  // v6.12: swing-structure stop — when the probrain layer found a
+  // valid recent swing, the stop sits BEHIND the structure (padded
+  // for noise) instead of in no-man's land. We take the TIGHTER of
+  // (structure, ATR) so risk never widens versus the ATR baseline.
+  const ss = opts.structureStop;
+  if (ss && Number.isFinite(ss.sl) && ss.sl > 0) {
+    const tighter = long ? Math.max(stopLoss, ss.sl) : Math.min(stopLoss, ss.sl);
+    if ((long && tighter > stopLoss) || (!long && tighter < stopLoss)) {
+      stopLoss = tighter;
+      planStyle = `${planStyle}+${ss.style || 'structure'}`;
+      structure = { level: ss.structural ?? null, barsAgo: ss.barsAgo ?? null };
+    }
+  }
   // v6.4 — build-time risk cap (optional): when the caller knows the
   // user's maxRiskPct the plan is born INSIDE the cap instead of being
   // rejected downstream (fitPlanToRiskCap is the execute-time twin).
@@ -142,8 +183,14 @@ export function buildTradePlan(consensus, ctx, market, opts = {}) {
     risk: r2(risk),
     riskPct: r2((risk / ltp) * 100),
     rewardRisk: r2(rr),
+    // v6.12: honest flag — the reward side is mechanically 2R by
+    // construction; structure-aware stops change risk, not reward.
+    // The probrain quality layer separately judges whether 2R is
+    // structurally reachable. rrBelowFloor flags unusable plans.
+    rrBelowFloor: rr < 1.5 || undefined,
     atrUsed: r2(a),
-    planStyle: atr != null ? 'atr-based' : 'atr-fallback',
+    planStyle,
+    ...(structure ? { structure } : {}),
     ...(riskClamped ? { riskClamped: true, originalRiskPct } : {}),
   };
 }
@@ -151,7 +198,7 @@ export function buildTradePlan(consensus, ctx, market, opts = {}) {
 /**
  * Assemble the final signal object (what the API serves).
  */
-export function buildSignal({ symbol, market, ctx, votes, consensus, plan, aiNote }) {
+export function buildSignal({ symbol, market, ctx, votes, consensus, plan, aiNote, quality }) {
   const changePct = ctx?.changePct ?? null;
   return {
     symbol,
@@ -162,12 +209,14 @@ export function buildSignal({ symbol, market, ctx, votes, consensus, plan, aiNot
     agreement: consensus.agreement,
     participation: consensus.participation ?? null,
     participating: consensus.participating,
+    voters: consensus.voters ?? consensus.participating ?? null,
     totalModels: consensus.totalModels,
     bullWeight: consensus.bullWeight ?? null,
     bearWeight: consensus.bearWeight ?? null,
     ltp: r2(ctx?.ltp ?? null),
     changePct: r1(changePct),
     plan,
+    quality: quality || null,
     votes: (votes || []).map(v => ({
       id: v.id, name: v.name, role: v.role, weight: v.weight,
       dir: v.dir, conf: v.conf, reasons: v.reasons || [],
@@ -192,7 +241,10 @@ export function buildSignal({ symbol, market, ctx, votes, consensus, plan, aiNot
  *   6. AI Council (when online) did NOT veto (its vote is already
  *      inside the ensemble — a veto drops agreement/confidence).
  * PAPER mode (practice money) uses requireStrong:false with a
- * longer freshness window — the gauntlet is for REAL money.
+ * longer freshness window — BUT v6.12 raised its floor: paper now
+ * requires grade ≥ ACTION (confidence ≥ 55). Practicing on
+ * WATCH/NEUTRAL single-voter noise was the direct source of the
+ * user's paper losses — practice must rehearse REAL discipline.
  */
 export function evaluateExecutionGate(signal, { side, gates = DEFAULT_GATES, maxAgeMs = 90_000, maxRiskPct = 5, requireStrong = true, venue = 'CRYPTO' } = {}) {
   if (!signal) return { ok: false, reason: 'no signal' };
@@ -208,13 +260,20 @@ export function evaluateExecutionGate(signal, { side, gates = DEFAULT_GATES, max
     if (signal.grade !== 'STRONG') return { ok: false, reason: `grade ${signal.grade} — live orders need STRONG (${gates.minConfidence}% conf + ${Math.round(gates.minAgreement * 100)}% agreement)` };
     if ((signal.confidence ?? 0) < gates.minConfidence) return { ok: false, reason: `confidence ${signal.confidence}% < ${gates.minConfidence}% gate` };
     if ((signal.agreement ?? 0) < gates.minAgreement) return { ok: false, reason: `agreement ${Math.round((signal.agreement || 0) * 100)}% < ${Math.round(gates.minAgreement * 100)}% gate` };
+  } else {
+    // v6.12: PAPER/NOTIFY floor — ACTION minimum. A WATCH/NEUTRAL
+    // signal is a watchlist note, not a rehearsal trade.
+    if (signal.grade !== 'STRONG' && signal.grade !== 'ACTION') {
+      return { ok: false, reason: `grade ${signal.grade} — paper practice bhi ACTION-grade confluence maangta hai (WATCH = sirf dekho, trade mat karo)` };
+    }
+    if ((signal.confidence ?? 0) < 55) return { ok: false, reason: `confidence ${signal.confidence}% < 55% paper floor` };
   }
   const riskPct = signal.plan.riskPct ?? 0;
   if (!(riskPct > 0)) return { ok: false, reason: 'no risk plan' };
   if (riskPct > maxRiskPct) return { ok: false, reason: `plan risk ${riskPct}% > ${maxRiskPct}% max` };
   return { ok: true, reason: requireStrong
     ? `STRONG ${signal.side} · ${signal.confidence}% conf · ${Math.round(signal.agreement * 100)}% agreement`
-    : `PAPER ${signal.side} · ${signal.confidence}% conf (practice — STRONG gate applies to LIVE only)` };
+    : `PAPER ${signal.side} · ${signal.confidence}% conf (ACTION+ floor — practice bhi discipline se)` };
 }
 
 /**

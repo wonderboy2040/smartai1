@@ -8,7 +8,7 @@
 // ============================================================
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, getProxyBase } from '../../utils/api';
-import type { AISignal, OptionsDesk, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, AlertsStatus, DhanStatus, SwingBoard, WhaleRadar, LedgerView, MorningBrief, OrderbookView, AgentView, WalletView, FuturesMarketsView, MarketKind, TrustView, PerfView, CorrView, SectorView, IncomeView, NextActionsView, NarrativeView } from './types';
+import type { AISignal, OptionsDesk, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, AlertsStatus, DhanStatus, SwingBoard, WhaleRadar, LedgerView, MorningBrief, OrderbookView, AgentView, WalletView, FuturesMarketsView, MarketKind, TrustView, PerfView, CorrView, SectorView, IncomeView, NextActionsView, NarrativeView, EdgeStats, LtfSnapshot } from './types';
 
 export interface DeepSignalResult {
   ok: boolean;
@@ -16,6 +16,9 @@ export interface DeepSignalResult {
   indicators?: Record<string, unknown>;
   /** v6.11: rule-based regime story (glama explain_ticker). */
   narrative?: NarrativeView | null;
+  /** v6.12: LTF (15m/1h) indicator snapshot + walk-forward edge stats. */
+  ltf?: LtfSnapshot | null;
+  edge?: EdgeStats | null;
   priceSource?: string | null;
   error?: string;
 }

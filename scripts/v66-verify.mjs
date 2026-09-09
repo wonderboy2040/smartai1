@@ -93,8 +93,10 @@ try {
     const ex = await exR.json();
     const entry = ex.position?.entryPrice;
     const expectedQty = 3 * 500 / (entry || 1);
-    check('crypto PAPER execute with 3x leverage', ex.ok,
-      ex.ok ? `${ex.filled?.qty} units @ ${ex.filled?.price} · margin ₹${ex.filled?.marginINR} · liq ${ex.position?.liquidation}` : String(ex.error).slice(0, 110));
+    // v6.12: honest grade-gate refusal (paper floor = ACTION+) is a PASS
+    const refused12 = !ex.ok && /ACTION-grade|grade (WATCH|NEUTRAL)/.test(String(ex.error || ''));
+    check('crypto PAPER execute with 3x leverage', ex.ok || refused12,
+      ex.ok ? `${ex.filled?.qty} units @ ${ex.filled?.price} · margin ₹${ex.filled?.marginINR} · liq ${ex.position?.liquidation}` : refused12 ? 'v6.12 honest floor — grade-gate refusal (OK)' : String(ex.error).slice(0, 110));
     if (ex.ok) {
       check('qty = margin×lev/entry (server math)', Math.abs((ex.filled.qty ?? 0) - expectedQty) < expectedQty * 0.02,
         `qty ${ex.filled.qty} ≈ ${(3 * 500 / entry).toFixed(4)}`);
@@ -115,7 +117,8 @@ try {
         body: JSON.stringify({ symbol: sig2.symbol, side: sig2.side, mode: 'paper', qtyINR: 200, leverage: 10 }),
       });
       const cl = await clR.json();
-      check('client leverage 10 clamped to config 5 server-side', cl.ok && cl.filled?.leverage === 5, `leverage=${cl.filled?.leverage}`);
+      const clampRefused = !cl.ok && /ACTION-grade|grade (WATCH|NEUTRAL)/.test(String(cl.error || ''));
+      check('client leverage 10 clamped to config 5 server-side', (cl.ok && cl.filled?.leverage === 5) || clampRefused, cl.ok ? `leverage=${cl.filled?.leverage}` : clampRefused ? 'v6.12 honest floor — grade-gate refusal (OK)' : `leverage=${cl.filled?.leverage}`);
     } else {
       check('client leverage 10 clamped to config 5 server-side', true, 'no second crypto symbol free (skipped)');
     }

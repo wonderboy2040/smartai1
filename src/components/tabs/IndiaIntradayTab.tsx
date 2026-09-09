@@ -19,6 +19,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAITrading } from '../aitrading/useAITrading';
 import { SignalCard } from '../aitrading/SignalCard';
+import { MtfBlock, EdgeBlock } from '../aitrading/DeepQualityBlock';
 import { TopPicksPanel } from '../aitrading/TopPicksPanel';
 import { MarketClockStrip } from '../aitrading/MarketClockStrip';
 import { QuickNav } from '../aitrading/QuickNav';
@@ -54,7 +55,7 @@ export default memo(function IndiaIntradayTab() {
   const { runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert, fetchDhanStatus, dhanConnect, dhanDisconnect } = t;
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [filter, setFilter] = useState<BoardFilter>('ALL');
-  const [deep, setDeep] = useState<{ loading: boolean; signal?: AISignal; indicators?: Record<string, unknown>; narrative?: import('../aitrading/types').NarrativeView | null; error?: string } | null>(null);
+  const [deep, setDeep] = useState<{ loading: boolean; signal?: AISignal; indicators?: Record<string, unknown>; narrative?: import('../aitrading/types').NarrativeView | null; ltf?: import('../aitrading/types').LtfSnapshot | null; edge?: import('../aitrading/types').EdgeStats | null; error?: string } | null>(null);
   const [dhan, setDhan] = useState<DhanStatus | null>(null);
 
   const board = india;
@@ -115,9 +116,17 @@ export default memo(function IndiaIntradayTab() {
   const onDeep = useCallback(async (signal: AISignal) => {
     setDeep({ loading: true });
     const r = await fetchDeep(signal.symbol, signal.market);
-    if (r.ok && r.signal) setDeep({ loading: false, signal: r.signal, indicators: r.indicators, narrative: r.narrative });
+    if (r.ok && r.signal) setDeep({ loading: false, signal: r.signal, indicators: r.indicators, narrative: r.narrative, ltf: r.ltf, edge: r.edge });
     else setDeep({ loading: false, error: r.error || 'deep analysis unavailable' });
   }, [fetchDeep]);
+
+  // v6.12: Escape closes the deep modal (keyboard a11y)
+  useEffect(() => {
+    if (!deep) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDeep(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [deep]);
 
   const counts = useMemo(() => countSignals(board), [board]);
   const visibleSignals = useMemo(() => filterSignals(board, filter), [board, filter]);
@@ -151,6 +160,23 @@ export default memo(function IndiaIntradayTab() {
 
       {/* ============ NSE SESSION CLOCK (v6.9) ============ */}
       <MarketClockStrip marketOpen={board?.marketOpen} />
+
+      {/* ============ v6.12 PRO SESSION GATE ============ */}
+      {board?.sessionPhase && (
+        <div className={`mt-1.5 mb-1.5 rounded-lg border px-3 py-1.5 flex items-center gap-2 flex-wrap ${board.sessionPhase.tradeable
+          ? 'bg-emerald-500/10 border-emerald-500/25'
+          : 'bg-amber-500/10 border-amber-500/30'}`}
+          aria-label="session phase gate">
+          <span className={`text-[10px] font-black tracking-wider ${board.sessionPhase.tradeable ? 'text-emerald-300' : 'text-amber-300'}`}>
+            {board.sessionPhase.tradeable ? '🟢 SESSION' : '⏰ SESSION GATE'}
+          </span>
+          <span className="text-[10px] font-mono text-slate-300">{board.sessionPhase.phase}</span>
+          <span className="text-[10px] text-slate-400">· {board.sessionPhase.note}</span>
+          {!board.sessionPhase.tradeable && (
+            <span className="text-[9px] font-black text-amber-300/90">— abhi fresh intraday entries grade-cap ho rahe hain (WATCH tak)</span>
+          )}
+        </div>
+      )}
 
       {/* ============ STICKY QUICK NAV (v6.9) ============ */}
       <QuickNav items={NAV} />
@@ -334,6 +360,8 @@ export default memo(function IndiaIntradayTab() {
                 <SignalCard signal={deep.signal} onExecuteIndia={onExecuteIndia} canLiveIndia={canLiveIndia} busy={busy}
                   orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5}
                   indiaBudgetINR={state?.config?.indiaMaxOrderINR ?? 5000} />
+                <MtfBlock ltf={deep.ltf} quality={deep.signal.quality} />
+                <EdgeBlock edge={deep.edge} />
                 {deep.narrative && (
                   <div className="mt-3 bg-cyan-500/[0.05] border border-cyan-500/15 rounded-xl p-3" aria-label="regime narrative">
                     <div className="text-[10px] font-black text-cyan-300 tracking-wider mb-1.5">📖 EXPLAIN TICKER — {deep.narrative.title}</div>

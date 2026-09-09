@@ -154,7 +154,9 @@ try {
     body: JSON.stringify({ symbol: 'BTC', side: 'LONG', mode: 'paper' }),
   });
   const cex = await cexR.json();
-  check('crypto PAPER execute still healthy', cex.ok, cex.ok ? `qty ${cex.filled?.qty} @ ${cex.filled?.price}` : String(cex.error).slice(0, 90));
+  // v6.12: honest grade-gate refusal (paper floor = ACTION+) is a PASS
+  const refused12 = !cex.ok && /ACTION-grade|grade (WATCH|NEUTRAL)/.test(String(cex.error || ''));
+  check('crypto PAPER execute still healthy', cex.ok || refused12, cex.ok ? `qty ${cex.filled?.qty} @ ${cex.filled?.price}` : refused12 ? 'v6.12 honest floor — grade-gate refusal (OK)' : String(cex.error).slice(0, 90));
 
   // ---- unauth guards ----
   const unauth = await fetch(`${BASE}/api/ai/backtest?market=CRYPTO`);

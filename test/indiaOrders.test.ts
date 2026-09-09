@@ -145,12 +145,14 @@ describe('India gauntlet — gates', () => {
     expect(out.error).toMatch(/STRONG/);
   });
 
-  it('PAPER practice is relaxed: FLAT consensus still synthesizes a practice plan', async () => {
+  it('v6.12: PAPER on FLAT consensus is honestly REJECTED — ACTION floor (noise rehearsal band)', async () => {
+    // Pre-v6.12: FLAT consensus + user click = synthesized practice
+    // trade. That slot-machined the user's paper losses away. Now
+    // paper/notify require a real ACTION+ committee verdict.
     const flat = { ...STRONG_IN(), side: 'FLAT', dir: 0, confidence: 0, plan: null };
     const out = await executeIndiaSignal({ symbol: 'RELIANCE', side: 'LONG', mode: 'paper', getFreshIndiaSignal: async () => flat });
-    expect(out.ok).toBe(true);
-    expect(out.mode).toBe('paper');
-    expect(loadJournal().entries.at(-1)!.reason).toMatch(/practice plan/);
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/paper floor|ACTION-grade confluence|grade NEUTRAL/i);
   });
 
   it('risk auto-fit: an over-cap paper stop is fitted, never bounced (v6.4 policy, India too)', async () => {
