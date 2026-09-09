@@ -151,8 +151,13 @@ export function buildTradePlan(consensus, ctx, market, opts = {}) {
   // (structure, ATR) so risk never widens versus the ATR baseline.
   const ss = opts.structureStop;
   if (ss && Number.isFinite(ss.sl) && ss.sl > 0) {
+    // v6.12.1 belt-and-braces (recheck C-1): a structure stop is only
+    // valid on the CORRECT side of entry (LONG: below ltp, SHORT:
+    // above). A wrong-side stop would be an instant stop-out even if
+    // some upstream layer let it through.
+    const sideOk = long ? ss.sl < ltp : ss.sl > ltp;
     const tighter = long ? Math.max(stopLoss, ss.sl) : Math.min(stopLoss, ss.sl);
-    if ((long && tighter > stopLoss) || (!long && tighter < stopLoss)) {
+    if (sideOk && ((long && tighter > stopLoss && tighter < ltp) || (!long && tighter < stopLoss && tighter > ltp))) {
       stopLoss = tighter;
       planStyle = `${planStyle}+${ss.style || 'structure'}`;
       structure = { level: ss.structural ?? null, barsAgo: ss.barsAgo ?? null };

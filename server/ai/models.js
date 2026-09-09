@@ -313,7 +313,12 @@ function macroRegime(ctx) {
   const pts = [];
   let score = 0, conf = 40;
 
-  if (ctx.market === 'CRYPTO') {
+  // v6.12.1 FIX (recheck H-2): FUTURES contexts carry the CRYPTO
+  // regime (buildRegime('FUTURES') → btcChange/btcTrend) — the old
+  // CRYPTO-only check pushed them into the NIFTY branch where the
+  // model silently abstained on the whole FUTURES desk.
+  const isCryptoish = ctx.market === 'CRYPTO' || ctx.market === 'FUTURES';
+  if (isCryptoish) {
     const btc = reg.btcChange;
     if (btc != null) {
       if (btc > 2.5) { score += 1.2; pts.push(`BTC +${r1(btc)}% STRONG risk-on — alts ke liye tailwind`); }

@@ -1,3 +1,32 @@
+## v6.12.1 — FULL-SITE CODE RECHECK: 7 fixes from the deep review (2026-09-09)
+
+> User ne "ek baar full site code recheck karo" bola — full pipeline sweep (static + 651 tests + 20 verify/E2E suites + manual review) ne **7 real bugs** pakde, sab fixed + regression-pinned.
+
+### 🔴 C-1 (CRITICAL): wrong-side structure stop — instant stop-out killer
+- **probrain.js `structureStop`**: jab price last swing LOW ke NEECHE hi ho (dip-buy under broken structure), "structure stop" entry ke UPAR ban jaata tha — LONG position entry ke turant baad stop-out (guaranteed loss, LIVE orders pe bhi). Distance-only sanity checks isko pakad nahi sakte the. **Fix**: side-check — LONG ka SL entry se neeche, SHORT ka upar warna structure reject → ATR stop stands.
+- **ensemble.js `buildTradePlan`** belt-and-braces: forged/wrong-side `ss.sl` ab kabhi plan SL ko flip nahi kar sakta (side + tighter + entry-ke-andar teen conditions).
+
+### 🟠 HIGH fixes
+- **H-1 grade-cap escalation leak**: `qualityVerdict` ka counter-regime ACTION line WATCH cap ko re-raise kar raha tha (2-voter counter-regime signal paper/notify eligible ho jaata). Fix: `gradeCap === 'STRONG'` guard. Ladder ab monotonic hai — cap sirf gir sakta hai, kabhi badh nahi.
+- **H-2 MacroRegime FUTURES pe dead tha**: `market === 'CRYPTO'` check FUTURES ko India branch me phenk deta tha (niftyChange undefined → 9-model committee ka 1 model poore FUTURES desk pe abstain). Fix: `isCryptoish = CRYPTO || FUTURES`.
+- **H-3 regime trend cache cross-market staleness race**: dono markets ek hi `.at` timestamp share karte the — India ka write crypto ki freshness ko fake-refresh karta tha (trend 2-3× TTL stale serve ho sakta tha). Fix: per-market `{at, val}` + failed-fetch 5-min negative hold.
+
+### 🟡 MEDIUM fixes
+- **M-1 LTF negative caching**: failed Yahoo fetch `cacheSet(key, null)` — jo miss hi treat hota tha (har board refresh pe dead symbols re-hit + null keys live cache entries evict karte the). Fix: dedicated 60s miss-map.
+- **M-2 backtest equity-curve phantom ordering**: trades me `entryTime` tha hi nahi — sort comparator NaN → symbol-alphabetical order pe maxDD/equity compute ho rahe the. Fix: `entryTime` stamp (entry bar ka time) + chronological sort.
+- **M-3 pass-2 votes adaptive weights skip**: SMC-revival + AI-Council injected votes raw registry weight le rahe the — learned ×1.3 boost silently ×1.0 revert. Fix: pass-1 jaisa hi `adaptiveMultipliers()` multiplier (board + deep dono paths, teeno injection points).
+
+### 🟢 LOW fixes
+- VIX comment 15→18 (doc/code mismatch) · DeepQualityBlock null-EMA ab neutral "n/a" STACK chip (misleading red nahi) · deep-modal race: request-token (`deepReq` ref) — Escape/close ke baad stale fetchDeep response modal wapas nahi khol sakta (dono tabs).
+- **Time-bomb test**: `blackScholes.test.ts` hardcoded expiry '2026-09-09' = AAJ — premium zero ho gaye the. Dynamic +7d expiry fix.
+
+### ✅ Verification
+- **651/651 unit tests** (+8 naye v6.12.1 regression pins: wrong-side SL reject LONG+SHORT, forged-sl belt-and-braces, cap-never-escalates, MacroRegime FUTURES votes both directions, time-bomb fix).
+- tsc clean · vite build clean · **v612-verify 24/24** · **v612-e2e 16/16** · **v611-verify 37/37** · v69-verify 23/23 · v67-verify 22/22 · v610-e2e 20/20.
+- Review ne explicitly clean confirm kiya: dead imports zero · types.ts ↔ signals.js quality shape exact field-match · auth guards global mount se pehle · enrichment try/catch coverage · React deps/cleanup correct · no hardcoded creds · caches bounded.
+
+---
+
 ## v6.12.0 — PRO TRADER BRAIN: signal-quality deep rebuild (2026-09-09)
 
 > **User feedback drove this**: "Intraday TAB aur crypto tab me accurate trade signal nahi mil raha, paper pe trade karta hun toh loss me aata hai." A prop-desk risk-manager pass over the whole signal pipeline — the fake-consensus bug killed, multi-timeframe confluence enforced, regime recalibrated, and paper practice now rehearses REAL discipline (ACTION-grade minimum). **Signal kam aayenge par real aayenge.**

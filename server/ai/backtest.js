@@ -110,7 +110,7 @@ export function simulateSymbol({ symbol, market, candles, minGrade = 'ACTION', m
             if (risk > 0) {
               openTrade = {
                 symbol, market, side: consensus.side, grade: consensus.grade, confidence: consensus.confidence,
-                agreement: consensus.agreement, entryBar: i + 1, entry, sl: plan.stopLoss, tp: plan.target1, tp2: plan.target2,
+                agreement: consensus.agreement, entryBar: i + 1, entryTime: next?.time ?? null, entry, sl: plan.stopLoss, tp: plan.target1, tp2: plan.target2,
                 risk, qty: capitalPerTradeINR > 0 ? capitalPerTradeINR / entry : 0,
                 planStyle: plan.planStyle + (plan.riskClamped ? ' (fitted)' : ''),
                 modelsVoting: consensus.participating,
@@ -167,6 +167,7 @@ function finish(t, trades, exitPrice, reason, exitBar) {
     entry: r2(t.entry), exit: r2(exitPrice), sl: r2(t.sl), tp2: r2(t.tp2),
     risk: r2(t.risk), r: r2(rMult), pnlINR: r2(pnlINR), reason,
     entryBar: t.entryBar, exitBar, holdBars: exitBar - t.entryBar,
+    entryTime: t.entryTime ?? null,
     planStyle: t.planStyle, modelsVoting: t.modelsVoting,
   });
 }
@@ -285,7 +286,11 @@ export async function runBacktest({ market = 'CRYPTO', symbols, minGrade = 'ACTI
 
   const perSymbol = results.map(r => r.status === 'fulfilled' ? r.value : { symbol: '?', ok: false, reason: 'failed' });
   const allTrades = perSymbol.filter(s => s.ok).flatMap(s => s.trades.map(t => ({ ...t, symbol: s.symbol })));
-  allTrades.sort((a, b) => (a.entryTime - b.entryTime) || (a.symbol < b.symbol ? -1 : 1));
+  // v6.12.1 FIX (recheck M-2): sort CHRONOLOGICALLY by the (now
+  // stamped) entry time — trades previously carried no `entryTime`, so
+  // the primary comparator was NaN and the equity curve + maxDD were
+  // computed over a symbol-alphabetical phantom ordering.
+  allTrades.sort((a, b) => ((a.entryTime ?? 0) - (b.entryTime ?? 0)) || (a.symbol < b.symbol ? -1 : 1));
   // equity curve in cumulative R (chronological)
   let cum = 0;
   const equity = allTrades.map((t, idx) => { cum += t.r; return { i: idx + 1, cumR: r2(cum), symbol: t.symbol, r: t.r }; });

@@ -177,7 +177,7 @@ export function mtfAnalysis({ htf, ltf, side, ltfLabel = '15m' }) {
 // BTC, so that is a counter-trend board. Pro thresholds:
 //   CRYPTO  BTC 24h ±0.75% directional, ±2.5% strong · BTC daily
 //           EMA trend as tie-break
-//   INDIA   NIFTY ±0.35% directional · VIX > 15 = risk penalty
+//   INDIA   NIFTY ±0.35% directional · VIX > 18 = risk penalty
 //           · NIFTY daily EMA trend tie-break
 export function regimeGate({ market, side, regime }) {
   const want = String(side || '').toUpperCase() === 'SHORT' ? -1 : 1;
@@ -295,6 +295,20 @@ export function structureStop({ candles, side, ltp, atr, maxAtrMult = 2.2, noise
   const structural = long ? structLevel - pad : structLevel + pad;
   const atrStop = long ? ltp - 1.4 * a : ltp + 1.4 * a;
 
+  // v6.12.1 CRITICAL FIX (full-code recheck): the stop must sit on
+  // the CORRECT side of the entry price — LONG: below, SHORT: above.
+  // When price has already broken the last swing (e.g. a dip-buy
+  // BELOW the most recent pivot low), the "structure stop" lands on
+  // the wrong side and stops the trade out INSTANTLY on entry (the
+  // distance-only sanity checks below could not catch this). Reject
+  // the structure and let the plain ATR stop stand.
+  if ((long && structural >= ltp) || (!long && structural <= ltp)) {
+    return {
+      sl: null, structural: null, rejected: true,
+      reasons: [`swing ${long ? 'low' : 'high'} @ ${r2(structLevel)} price ke ${long ? 'upar' : 'niche'} hai — structure already broken, ATR stop use hoga`],
+    };
+  }
+
   // choose the stop: structural when sane (within maxAtrMult × ATR),
   // else the ATR stop stands and we say so
   const maxDist = maxAtrMult * a;
@@ -390,7 +404,11 @@ export function qualityVerdict({
     if (!ses.tradeable && mkt === 'INDIA') gradeCap = 'WATCH';
     if (mtf.phase === 'COUNTER_HTF' && voters < 5) gradeCap = 'WATCH';
     if (ext.downgrade && gradeCap === 'STRONG') gradeCap = 'ACTION';
-    if (rg.counterTrend && rg.penaltyPct >= 15 && voters < 5) gradeCap = 'ACTION';
+    // v6.12.1 FIX (recheck H-1): the STRONG guard is REQUIRED — without
+    // it this line re-RAISED a WATCH cap (set above by voters===2 /
+    // session / counter-HTF) back to ACTION, leaking 2-voter counter-
+    // regime signals into paper/notify eligibility.
+    if (rg.counterTrend && rg.penaltyPct >= 15 && voters < 5 && gradeCap === 'STRONG') gradeCap = 'ACTION';
   }
 
   return { flags, reasons, confAdj, gradeCap, regime: rg, mtf, extension: ext, session: ses, stop };

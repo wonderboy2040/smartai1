@@ -320,3 +320,122 @@ describe('v6.12 qualityVerdict — the grade-cap ladder', () => {
     expect(counter).toBeLessThan(aligned);
   });
 });
+
+// ============================================================
+// v6.12.1 — FULL-CODE RECHECK REGRESSIONS (C-1, H-1, H-2)
+// Found by the v6.12.1 full-site review; each test pins the exact
+// bug that shipped in v6.12.0.
+// ============================================================
+import { runQuantModels } from '../server/ai/models.js';
+
+describe('v6.12.1 C-1: wrong-side structure stop (instant stop-out killer)', () => {
+  // Broken-structure tape: pivot low 99.0 forms at bar 30, price
+  // bounces (bars 31-33), then BREAKS below the swing and slides to
+  // ~96 — a dip-buy entry under the pivot. The old code put the
+  // "structure stop" at ~98.9 (ABOVE entry!) — an instant guaranteed
+  // loss through every gate.
+  const candles = Array.from({ length: 40 }, (_, i) => {
+    const base = i < 30 ? 100.2 - i * 0.04
+      : i === 30 ? 99.0
+        : i <= 33 ? 99.0 + (i - 30) * 0.25   // bounce off the pivot
+          : 99.75 - (i - 33) * 0.6;          // break below the swing
+    return { time: i * 3600_000, open: base, high: base + 0.25, low: base - 0.25, close: base - 0.05, volume: 10 };
+  });
+  const ltp = candles[candles.length - 1].close; // ≈ 96.1 — below the 99.0 pivot
+  const atr = 1.2;
+
+  it('structureStop REJECTS a swing on the wrong side of price (LONG, price below pivot)', () => {
+    const ss = structureStop({ candles, side: 'LONG', ltp, atr });
+    expect(ss).not.toBeNull();
+    expect(ss!.rejected).toBe(true);
+    expect(ss!.sl).toBeNull();
+    expect(String(ss!.reasons[0])).toMatch(/upar|structure already broken/);
+  });
+
+  it('SHORT mirror: price above the last swing high → rejected', () => {
+    const inv = candles.map(c => ({ ...c, open: 200 - c.open, high: 200 - c.low, low: 200 - c.high, close: 200 - c.close }));
+    const ss = structureStop({ candles: inv, side: 'SHORT', ltp: 200 - ltp, atr });
+    expect(ss?.rejected).toBe(true);
+    expect(ss?.sl).toBeNull();
+  });
+
+  it('buildTradePlan belt-and-braces: a FORGED wrong-side ss.sl can never flip the SL above entry', () => {
+    const ctx = { ltp, ind: { atr } };
+    const forged = buildTradePlan({ side: 'LONG', dir: 1 }, ctx, 'CRYPTO', {
+      structureStop: { sl: 98.93, structural: 99.0, barsAgo: 5, style: 'swing-structure' } as never,
+    });
+    expect(forged!.stopLoss).toBeLessThan(ltp);
+    expect(forged!.risk).toBeGreaterThan(0);
+    expect(forged!.target1).toBeGreaterThan(ltp);
+    const shortForged = buildTradePlan({ side: 'SHORT', dir: -1 }, ctx, 'CRYPTO', {
+      structureStop: { sl: 95.0, structural: 94.8, barsAgo: 5, style: 'swing-structure' } as never,
+    });
+    expect(shortForged!.stopLoss).toBeGreaterThan(ltp);
+  });
+
+  it('the execution gate could never again bless an inverted plan (defense in depth)', () => {
+    const inverted = mkSignal({
+      market: 'CRYPTO', side: 'LONG', ltp,
+      plan: { entry: ltp, stopLoss: 98.93, target1: 98.93, target2: 101, risk: 2.13, riskPct: 2.2, rewardRisk: 0, atrUsed: atr, planStyle: 'atr-based+swing-structure' },
+    });
+    const out = evaluateExecutionGate(inverted, { side: 'LONG', venue: 'CRYPTO', maxAgeMs: 600_000, maxRiskPct: 5, requireStrong: false });
+    // NOTE: this documents why the plan-builder side check matters —
+    // the gate itself only checks magnitude. With the C-1 fix the
+    // inverted plan is never BUILT, so this signal shape is now
+    // unreachable in production; the plan builder tests above are the
+    // real regression guard.
+    expect(out.ok).toBe(true); // gate passes magnitude-only — the fix lives upstream
+  });
+});
+
+describe('v6.12.1 H-1: grade-cap ladder can never be re-raised (WATCH stays WATCH)', () => {
+  const mk = (over: Record<string, unknown> = {}) => ({
+    market: 'CRYPTO', side: 'LONG',
+    votes: [v('a', 1, 90, 1.4), v('b', 1, 88, 1.3)],
+    ltp: 100, changePct: 0.3, rsi: 58, adx: { adx: 30 }, atr: 2,
+    candles: null, regime: { btcChange: -3.0, btcTrend: 'DOWN' },
+    htf: { ema20: 105, ema50: 100 }, ltf: { ema20: 104, ema50: 101, macdHist: 1 }, ltfLabel: '1h',
+    consensus: { dir: 1, side: 'LONG' } as never, now: Date.now(),
+    ...over,
+  });
+
+  it('2 voters + STRONG counter-regime → cap stays WATCH (v6.12.0 leaked it to ACTION)', () => {
+    const qv = qualityVerdict(mk());
+    expect(qv.flags.quorum.voters).toBe(2);
+    expect(qv.regime.counterTrend).toBe(true);
+    expect(qv.regime.penaltyPct).toBeGreaterThanOrEqual(15);
+    // the v6.12.0 bug: the counter-regime line re-raised this WATCH to ACTION
+    expect(qv.gradeCap).toBe('WATCH');
+  });
+
+  it('untradeable session cap survives too (no escalation path)', () => {
+    const qv = qualityVerdict({ ...mk(), market: 'INDIA', regime: { niftyChange: -1.5, indiaVix: 20 }, now: Date.UTC(2026, 8, 12, 6, 0) });
+    expect(qv.session.tradeable).toBe(false);
+    expect(qv.gradeCap).toBe('WATCH');
+  });
+});
+
+describe('v6.12.1 H-2: MacroRegime votes on the FUTURES desk (was silently dead)', () => {
+  it('FUTURES ctx with btcChange regime → the regime model VOTES (non-zero)', () => {
+    const votes = runQuantModels({
+      market: 'FUTURES', symbol: 'BTCUSDT', ltp: 50000, changePct: 0.4,
+      ind: { rsi: 55, ema20: 50200, ema50: 49900, macd: { hist: 40 }, atr: 600, adx: 26 },
+      regime: { btcChange: 2.0, btcTrend: 'UP' },
+    });
+    const macro = votes.find(x => x.id === 'regime');
+    expect(macro).toBeDefined();
+    expect(macro!.dir).not.toBe(0); // v6.12.0: dir 0, conf 25, no reasons — model dead on FUTURES
+    expect((macro!.reasons || []).length).toBeGreaterThan(0);
+    expect(String(macro!.reasons[0])).toMatch(/BTC/);
+  });
+
+  it('FUTURES risk-off regime → bearish vote (mirror works too)', () => {
+    const votes = runQuantModels({
+      market: 'FUTURES', symbol: 'ETHUSDT', ltp: 3000, changePct: -0.2,
+      ind: { rsi: 48, ema20: 2990, ema50: 3010, macd: { hist: -5 }, atr: 40, adx: 22 },
+      regime: { btcChange: -2.8, btcTrend: 'DOWN' },
+    });
+    const macro = votes.find(x => x.id === 'regime');
+    expect(macro!.dir).toBeLessThan(0);
+  });
+});

@@ -24,7 +24,9 @@ export function MtfBlock({ ltf, quality }: { ltf?: LtfSnapshot | null; quality?:
     : phase === 'COUNTER_HTF' || phase === 'MISALIGNED'
       ? 'text-red-300 bg-red-500/10 border-red-500/30'
       : 'text-amber-300 bg-amber-500/10 border-amber-500/30';
-  const bull = (ltf?.ema20 ?? 0) > (ltf?.ema50 ?? 0);
+  // v6.12.1: null EMAs → neutral (n/a) chip, not a misleading red stack
+  const emasKnown = ltf?.ema20 != null && ltf?.ema50 != null;
+  const bull = emasKnown ? (ltf?.ema20 ?? 0) > (ltf?.ema50 ?? 0) : null;
   return (
     <div className="mt-3 bg-violet-500/[0.05] border border-violet-500/15 rounded-xl p-3" aria-label="multi timeframe snapshot">
       <div className="flex items-center justify-between mb-2">
@@ -39,7 +41,7 @@ export function MtfBlock({ ltf, quality }: { ltf?: LtfSnapshot | null; quality?:
           <div className="flex justify-between bg-black/30 rounded px-2 py-1"><span className="text-slate-500">EMA50</span><span className="text-slate-200">{n2(ltf.ema50, 1)}</span></div>
           <div className="flex justify-between bg-black/30 rounded px-2 py-1">
             <span className="text-slate-500">STACK</span>
-            <span className={bull ? 'text-emerald-300' : 'text-red-300'}>{bull ? '20>50 ▲' : '20<50 ▼'}</span>
+            <span className={bull == null ? 'text-slate-500' : bull ? 'text-emerald-300' : 'text-red-300'}>{bull == null ? 'n/a' : bull ? '20>50 ▲' : '20<50 ▼'}</span>
           </div>
         </div>
       ) : (

@@ -146,11 +146,19 @@ function tvToInd(row, ltp) {
 // Crypto: <base>-USD 1h bars (3mo ≈ 2000 bars, we keep the tail) —
 // works even where CoinDCX public candles are blocked, so the MTF
 // layer never silently dies. Cached 2 min per symbol (bounded map).
+// v6.12.1 FIX (recheck M-1): a FAILED fetch is negative-cached for
+// 60s in its own map — the old code cached `null` via cacheSet,
+// which cacheGet treated as a MISS (so every board refresh re-hit
+// Yahoo for dead symbols AND the null keys evicted live entries
+// from the bounded 80-key cache).
+const _ltfMiss = new Map();
 async function fetchYahooIntradayCandles(symbol, market) {
   const mkt = String(market || 'INDIA').toUpperCase();
   const key = `ltf:${mkt}:${symbol}`;
   const hit = cacheGet(key, 120_000);
   if (hit) return hit;
+  const missAt = _ltfMiss.get(key);
+  if (missAt != null && Date.now() - missAt < 60_000) return null;
   // indices (^NSEI etc.) map via YF_TICKER; stocks get .NS; crypto -USD
   const t = YF_TICKER[symbol];
   const yh = t || (mkt === 'CRYPTO' || mkt === 'FUTURES' ? `${symbol}-USD` : `${symbol}.NS`);
@@ -182,7 +190,8 @@ async function fetchYahooIntradayCandles(symbol, market) {
       }
     }
   } catch { out = null; }
-  cacheSet(key, out);
+  if (out) cacheSet(key, out);
+  else _ltfMiss.set(key, Date.now());
   return out;
 }
 
@@ -190,7 +199,22 @@ async function fetchYahooIntradayCandles(symbol, market) {
 // v6.12: daily EMA trend tie-break (btcTrend / niftyTrend) — a -1.4%
 // BTC day inside a daily UPTREND is a pullback; inside a DOWNTREND it
 // is continuation. The regime model + probrain gate both read it.
-const _regimeTrendCache = { at: 0, crypto: null, india: null };
+// v6.12.1 FIX (recheck H-3): PER-MARKET timestamps — the old single
+// shared `.at` meant each market's write kept re-freshening the
+// other's perceived cache age, so a trend could be served 2-3× the
+// intended 15-min TTL. Each market now owns its own clock; a failed
+// fetch is held as a null negative for 5 min (no Yahoo hammering).
+const _regimeTrendCache = {
+  crypto: { at: 0, val: null },
+  india: { at: 0, val: null },
+};
+const TREND_TTL = 15 * 60_000;
+const TREND_NEG_TTL = 5 * 60_000;
+function _trendFresh(entry) {
+  if (!entry) return false;
+  const age = Date.now() - entry.at;
+  return entry.val ? age < TREND_TTL : age < TREND_NEG_TTL;
+}
 async function dailyTrend(candles) {
   if (!Array.isArray(candles) || candles.length < 60) return null;
   const closes = candles.map(c => c.close);
@@ -209,14 +233,14 @@ async function dailyTrend(candles) {
 }
 async function buildRegime(market) {
   const mkt = String(market || 'INDIA').toUpperCase();
-  const useTrendCache = Date.now() - _regimeTrendCache.at < 15 * 60_000;
   if (mkt === 'CRYPTO' || mkt === 'FUTURES') {
     const q = await fetchYahooQuotes(['BTC']).catch(() => ({}));
-    let btcTrend = useTrendCache ? _regimeTrendCache.crypto : null;
+    const c = _regimeTrendCache.crypto;
+    let btcTrend = _trendFresh(c) ? c.val : null;
     if (!btcTrend) {
       const d = await fetchYahooCandles('BTC', '6mo').catch(() => null);
       btcTrend = dailyTrend(d);
-      _regimeTrendCache.crypto = btcTrend; _regimeTrendCache.at = Date.now();
+      c.val = btcTrend; c.at = Date.now();
     }
     return {
       btcChange: q?.BTC?.changePct ?? null,
@@ -225,11 +249,12 @@ async function buildRegime(market) {
     };
   }
   const q = await fetchYahooQuotes(['NIFTY', 'INDIAVIX']).catch(() => ({}));
-  let niftyTrend = useTrendCache ? _regimeTrendCache.india : null;
+  const n = _regimeTrendCache.india;
+  let niftyTrend = _trendFresh(n) ? n.val : null;
   if (!niftyTrend) {
     const d = await fetchYahooCandles('NIFTY', '6mo').catch(() => (null));
     niftyTrend = dailyTrend(d);
-    _regimeTrendCache.india = niftyTrend; _regimeTrendCache.at = Date.now();
+    n.val = niftyTrend; n.at = Date.now();
   }
   return {
     niftyChange: q?.NIFTY?.changePct ?? null,
@@ -574,6 +599,12 @@ export async function getSignals(market, deps, opts = {}) {
 
   // Merge AI Council as the 9th vote + final signals.
   const signals = [];
+  // v6.12.1 FIX (recheck M-3): pass-2 injected votes (SMC revival,
+  // AI Council) must carry the SAME adaptive weight multipliers that
+  // pass-1 votes get — otherwise the self-correcting ensemble
+  // silently reverts a learned ×1.3 boost to 1.0 on the exact vote
+  // that replaced the abstain.
+  const _ad = adaptiveMultipliers(_ledgerModelStats());
   for (const c of candidates.slice(0, opts.limit || 10)) {
     const votes = [...c.votes];
     const enrKey = `${mkt}:${c.ctx.symbol}`;
@@ -585,7 +616,7 @@ export async function getSignals(market, deps, opts = {}) {
         const reg = MODELS.find(m => m.id === 'smc');
         const idx = votes.findIndex(v => v.id === 'smc');
         if (idx >= 0) votes.splice(idx, 1);
-        votes.push({ id: 'smc', name: reg.name, role: reg.role, weight: reg.weight, ...smcV });
+        votes.push({ id: 'smc', name: reg.name, role: reg.role, weight: reg.weight * (_ad?.smc?.mul ?? 1), ...smcV });
       }
     }
     let aiNote = null;
@@ -595,7 +626,7 @@ export async function getSignals(market, deps, opts = {}) {
       if (av) {
         votes.push({
           id: 'aicouncil', name: 'AI Council (LLM)', role: MODELS.find(m => m.id === 'aicouncil').role,
-          weight: MODELS.find(m => m.id === 'aicouncil').weight, ...av,
+          weight: MODELS.find(m => m.id === 'aicouncil').weight * (_ad?.aicouncil?.mul ?? 1), ...av,
         });
         aiNote = { verdict: verdict.verdict, note: verdict.note, analysis: verdict.analysis, model: council.model };
       }
@@ -851,7 +882,9 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
       const reg = MODELS.find(m => m.id === 'smc');
       const idx = votes.findIndex(v => v.id === 'smc');
       if (idx >= 0) votes.splice(idx, 1);
-      votes.push({ id: 'smc', name: reg.name, role: reg.role, weight: reg.weight, ...smcV });
+      // v6.12.1 (recheck M-3): adaptive multiplier on the injected vote
+      const _ad = adaptiveMultipliers(_ledgerModelStats());
+      votes.push({ id: 'smc', name: reg.name, role: reg.role, weight: reg.weight * (_ad?.smc?.mul ?? 1), ...smcV });
     }
   }
   // Pre-council consensus: the deep path feeds the council the same flat
@@ -872,10 +905,14 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
   const verdict = council?.verdicts?.[sym];
   if (verdict) {
     const av = aiCouncilVoteFromVerdict(verdict);
-    if (av) votes.push({
-      id: 'aicouncil', name: 'AI Council (LLM)', role: MODELS.find(m => m.id === 'aicouncil').role,
-      weight: MODELS.find(m => m.id === 'aicouncil').weight, ...av,
-    });
+    if (av) {
+      // v6.12.1 (recheck M-3): adaptive multiplier on the injected vote
+      const _ad = adaptiveMultipliers(_ledgerModelStats());
+      votes.push({
+        id: 'aicouncil', name: 'AI Council (LLM)', role: MODELS.find(m => m.id === 'aicouncil').role,
+        weight: MODELS.find(m => m.id === 'aicouncil').weight * (_ad?.aicouncil?.mul ?? 1), ...av,
+      });
+    }
   }
   let consensus = aggregateVotes(votes, gatesFor(deps));
   // ---------------- v6.12: quality verdict + EDGE stats ----------------

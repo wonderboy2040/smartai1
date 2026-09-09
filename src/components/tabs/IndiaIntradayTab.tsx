@@ -113,9 +113,15 @@ export default memo(function IndiaIntradayTab() {
     notify(r.ok, r.ok ? '✅ Position closed' : `⛔ ${r.error}`);
   }, [closePos, notify]);
 
+  // v6.12.1: request token — a stale fetchDeep response (modal closed
+  // via Escape mid-flight, or a new deep scan started) can no longer
+  // re-open the modal with late data.
+  const deepReq = useRef(0);
   const onDeep = useCallback(async (signal: AISignal) => {
+    const id = ++deepReq.current;
     setDeep({ loading: true });
     const r = await fetchDeep(signal.symbol, signal.market);
+    if (deepReq.current !== id) return; // stale — dropped
     if (r.ok && r.signal) setDeep({ loading: false, signal: r.signal, indicators: r.indicators, narrative: r.narrative, ltf: r.ltf, edge: r.edge });
     else setDeep({ loading: false, error: r.error || 'deep analysis unavailable' });
   }, [fetchDeep]);
@@ -123,7 +129,7 @@ export default memo(function IndiaIntradayTab() {
   // v6.12: Escape closes the deep modal (keyboard a11y)
   useEffect(() => {
     if (!deep) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDeep(null); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { deepReq.current++; setDeep(null); } };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [deep]);

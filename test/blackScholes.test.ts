@@ -110,7 +110,10 @@ describe('yearsToExpiry', () => {
 describe('synthetic chain + analytics', () => {
   it('chain is centered on ATM with a volatility smile', () => {
     const spot = 24000;
-    const chain = buildSyntheticChain('NIFTY', spot, 0.13, '2026-09-09')!;
+    // v6.12.1 (recheck): DYNAMIC expiry — the hardcoded '2026-09-09'
+    // was a TIME BOMB that expired today and zeroed every premium.
+    const expiry = new Date(Date.now() + 7 * 86400_000).toISOString().slice(0, 10);
+    const chain = buildSyntheticChain('NIFTY', spot, 0.13, expiry)!;
     expect(chain.source).toBe('bs-model');
     expect(chain.rows.length).toBeGreaterThan(15);
     const atm = chain.rows.find(r => r.strike === 24000)!;
@@ -140,7 +143,9 @@ describe('synthetic chain + analytics', () => {
 
 describe('buildStrategies — ensemble-driven, P&L identities exact', () => {
   const spot = 24000;
-  const chain = buildSyntheticChain('NIFTY', spot, 0.13, '2026-09-09')!;
+  // v6.12.1 (recheck): dynamic 7-day expiry (was hardcoded '2026-09-09' —
+  // a time bomb that expired today and made the Iron Condor credit 0)
+  const chain = buildSyntheticChain('NIFTY', spot, 0.13, new Date(Date.now() + 7 * 86400_000).toISOString().slice(0, 10))!;
   const desk = {
     ok: true, symbol: 'NIFTY', spot, expiry: chain.expiry, lotSize: 75,
     rows: chain.rows, source: 'bs-model', fetchedAt: Date.now(),
