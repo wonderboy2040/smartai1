@@ -40,11 +40,14 @@ const NAV = [
   { id: 'cx-top5', label: 'TOP 5', emoji: '🏆', pro: false },
   { id: 'cx-signals', label: 'SIGNALS', emoji: '📡', pro: false },
   { id: 'cx-execute', label: 'EXECUTE', emoji: '⚙️', pro: false },
+  { id: 'cx-brief', label: 'BRIEF', emoji: '📰', pro: true },
   { id: 'cx-whales', label: 'WHALES', emoji: '🐋', pro: true },
+  { id: 'cx-corr', label: 'CORR', emoji: '📊', pro: true },
   { id: 'cx-backtest', label: 'BACKTEST', emoji: '🧪', pro: true },
   { id: 'cx-alerts', label: 'ALERTS', emoji: '🔔', pro: true },
   { id: 'cx-models', label: 'MODELS', emoji: '🧠', pro: true },
   { id: 'cx-ledger', label: 'LEDGER', emoji: '🔗', pro: true },
+  { id: 'cx-trust', label: 'TRUST', emoji: '🛡️', pro: true },
 ];
 
 /** v6.9: prominent wallet card — spot INR + USDT, futures margin, equity.
@@ -111,6 +114,9 @@ export default memo(function CoinDcxTab() {
   const [desk, setDesk] = useState<'CRYPTO' | 'FUTURES'>('CRYPTO');
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [filter, setFilter] = useState<BoardFilter>('ALL');
+  // BUG 6 fix: reset filter when desk changes — avoids stale empty-board
+  // when e.g. STRONG filter active on SPOT but 0 STRONG on FUTURES.
+  const switchDesk = useCallback((d: 'CRYPTO' | 'FUTURES') => { setDesk(d); setFilter('ALL'); }, []);
   // v6.13: SIMPLE (trade-flow only) / PRO (poora desk) — persist hota hai
   const [viewMode, setViewMode] = useDeskViewMode();
   const simple = viewMode === 'simple';
@@ -189,11 +195,13 @@ export default memo(function CoinDcxTab() {
   }, [fetchDeep]);
 
   // v6.12: Escape closes the deep modal (keyboard a11y)
+  // v6.13.1: body scroll lock when deep modal is open
   useEffect(() => {
     if (!deep) return;
+    document.body.style.overflow = 'hidden';
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { deepReq.current++; setDeep(null); } };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
   }, [deep]);
 
   const counts = useMemo(() => countSignals(board), [board]);
@@ -229,12 +237,12 @@ export default memo(function CoinDcxTab() {
           {/* Desk switcher: SPOT vs GLOBAL FUTURES (dono CoinDCX ke hain —
               isliye ye tab ke ANDAR hai; India alag top-level tab hai). */}
           <div className="flex gap-1 quantum-panel p-1 rounded-2xl w-full sm:w-auto" role="tablist" aria-label="CoinDCX desk">
-            <button onClick={() => setDesk('CRYPTO')} role="tab" aria-pressed={desk === 'CRYPTO'}
+            <button onClick={() => switchDesk('CRYPTO')} role="tab" aria-pressed={desk === 'CRYPTO'}
               className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl text-xs font-black transition-colors flex items-center gap-2 ${desk === 'CRYPTO' ? 'bg-gradient-to-r from-amber-600 to-yellow-600 text-white shadow-lg shadow-amber-500/20' : 'text-slate-400 hover:text-slate-200'}`}>
               ₿ SPOT
               <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-emerald-500/20 text-emerald-300">INR · 24/7</span>
             </button>
-            <button onClick={() => setDesk('FUTURES')} role="tab" aria-pressed={desk === 'FUTURES'}
+            <button onClick={() => switchDesk('FUTURES')} role="tab" aria-pressed={desk === 'FUTURES'}
               className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl text-xs font-black transition-colors flex items-center gap-2 ${desk === 'FUTURES' ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-lg shadow-violet-500/20' : 'text-slate-400 hover:text-slate-200'}`}>
               ⚡ GLOBAL FUTURES
               <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-violet-500/20 text-violet-300">USDT · 24/7</span>
@@ -431,11 +439,11 @@ export default memo(function CoinDcxTab() {
       {/* ============ DEEP ANALYSIS MODAL ============ */}
       {deep && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Deep analysis"
-          onClick={() => setDeep(null)}>
+          onClick={() => { deepReq.current++; setDeep(null); }}>
           <div className="quantum-panel rounded-2xl p-5 max-w-2xl w-full max-h-[85vh] overflow-y-auto animate-scale-in" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-black text-amber-300 tracking-wide">🔬 DEEP ENSEMBLE ANALYSIS</h3>
-              <button onClick={() => setDeep(null)} className="quantum-btn-ghost px-2.5 py-1 rounded-lg text-xs font-black" aria-label="Close">✕</button>
+              <button onClick={() => { deepReq.current++; setDeep(null); }} className="quantum-btn-ghost px-2.5 py-1 rounded-lg text-xs font-black" aria-label="Close">✕</button>
             </div>
             {deep.loading && (
               <div className="py-12 text-center">
@@ -448,7 +456,10 @@ export default memo(function CoinDcxTab() {
             )}
             {!deep.loading && deep.signal && (
               <>
-                <SignalCard signal={deep.signal} onExecute={onExecute} onExecuteFutures={onExecuteFutures} canLive={canLive} busy={busy}
+                <SignalCard signal={deep.signal}
+                  onExecute={deep.signal.market === 'CRYPTO' ? onExecute : undefined}
+                  onExecuteFutures={deep.signal.market === 'FUTURES' ? onExecuteFutures : undefined}
+                  canLive={canLive} busy={busy}
                   orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5}
                   maxLeverage={state?.config?.cryptoLeverage ?? 1} />
                 <MtfBlock ltf={deep.ltf} quality={deep.signal.quality} />

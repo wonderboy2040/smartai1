@@ -464,7 +464,7 @@ function IncomeRanker() {
           <span className={loading ? 'inline-block animate-spin' : ''}>🔄</span>
         </button>
       </div>
-      {!view || view.count === 0 && (
+      {(!view || view.count === 0) && (
         <div className="py-3 text-center text-[10px] text-slate-500">{loading ? 'Strategies build ho rahe hain…' : (view?.note || 'koi credit setup nahi bana')}</div>
       )}
       {view && view.count > 0 && (

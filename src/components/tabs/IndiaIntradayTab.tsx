@@ -42,11 +42,14 @@ const NAV = [
   { id: 'in-signals', label: 'SIGNALS', emoji: '📡', pro: false },
   { id: 'in-options', label: 'OPTIONS', emoji: '📊', pro: false },
   { id: 'in-execute', label: 'EXECUTE', emoji: '⚙️', pro: false },
+  { id: 'in-brief', label: 'BRIEF', emoji: '📰', pro: true },
+  { id: 'in-sectors', label: 'SECTORS', emoji: '🗺️', pro: true },
   { id: 'in-swing', label: 'SWING', emoji: '🗂️', pro: true },
   { id: 'in-backtest', label: 'BACKTEST', emoji: '🧪', pro: true },
   { id: 'in-alerts', label: 'ALERTS', emoji: '🔔', pro: true },
   { id: 'in-models', label: 'MODELS', emoji: '🧠', pro: true },
   { id: 'in-ledger', label: 'LEDGER', emoji: '🔗', pro: true },
+  { id: 'in-trust', label: 'TRUST', emoji: '🛡️', pro: true },
 ];
 
 export default memo(function IndiaIntradayTab() {
@@ -132,11 +135,13 @@ export default memo(function IndiaIntradayTab() {
   }, [fetchDeep]);
 
   // v6.12: Escape closes the deep modal (keyboard a11y)
+  // v6.13.1: body scroll lock when deep modal is open
   useEffect(() => {
     if (!deep) return;
+    document.body.style.overflow = 'hidden';
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { deepReq.current++; setDeep(null); } };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
   }, [deep]);
 
   const counts = useMemo(() => countSignals(board), [board]);
@@ -373,11 +378,11 @@ export default memo(function IndiaIntradayTab() {
       {/* ============ DEEP ANALYSIS MODAL ============ */}
       {deep && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Deep analysis"
-          onClick={() => setDeep(null)}>
+          onClick={() => { deepReq.current++; setDeep(null); }}>
           <div className="quantum-panel rounded-2xl p-5 max-w-2xl w-full max-h-[85vh] overflow-y-auto animate-scale-in" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-black text-orange-300 tracking-wide">🔬 DEEP ENSEMBLE ANALYSIS</h3>
-              <button onClick={() => setDeep(null)} className="quantum-btn-ghost px-2.5 py-1 rounded-lg text-xs font-black" aria-label="Close">✕</button>
+              <button onClick={() => { deepReq.current++; setDeep(null); }} className="quantum-btn-ghost px-2.5 py-1 rounded-lg text-xs font-black" aria-label="Close">✕</button>
             </div>
             {deep.loading && (
               <div className="py-12 text-center">
