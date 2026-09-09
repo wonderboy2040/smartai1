@@ -669,6 +669,12 @@ export interface AgentConfig {
   maxHoldMin: number;
   dailyLossCapPct: number;
   minEquityINR: number;
+  // v7.0 PRO TRADER
+  partialTpEnabled?: boolean;
+  tp1ClosePct?: number;
+  tp2ClosePct?: number;
+  runnerPct?: number;
+  breakEvenAfterTp1?: boolean;
 }
 
 export interface AgentOpenPosition {
@@ -678,9 +684,15 @@ export interface AgentOpenPosition {
   side: string;
   mode: string;
   qty: number;
+  initialQty?: number;
   entryPrice: number;
   sl: number | null;
+  tp?: number | null;
   tp2: number | null;
+  tp1Hit?: boolean;
+  tp2Hit?: boolean;
+  bookedPnlINR?: number;
+  exitStage?: 'ACTIVE' | 'TP1_BOOKED_BE_LOCKED' | 'TP2_BOOKED' | 'RUNNER_ACTIVE' | string;
   leverage: number | null;
   marginUSDT: number | null;
   openedAt: number;
@@ -698,10 +710,25 @@ export interface AgentPick {
   plan: { entry: number; stopLoss: number; target2: number; riskPct: number } | null;
 }
 
+export interface AgentSizingPreview {
+  equityINR: number;
+  riskPerTradePct: number;
+  riskINR: number;
+  riskUSDT: number;
+  leverage: number;
+  spotEstimatedOrderINR: number;
+  futuresEstimatedMarginUSDT: number;
+  futuresEstimatedNotionalUSDT: number;
+  futuresCapUSDT: number;
+  slotsPerDay: number;
+  maxDailyRiskINR: number;
+}
+
 export interface AgentView {
   ok: boolean;
   engine: string;
   config: AgentConfig;
+  sizingPreview?: AgentSizingPreview;
   trading: { mode: string; allowAuto: boolean; killSwitch: boolean; connected: boolean };
   state: {
     running: boolean;

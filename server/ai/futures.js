@@ -621,7 +621,9 @@ export async function executeFuturesSignal(opts) {
 
     const mkPosition = (extra) => ({
       id: crypto.randomUUID(), pair, symbol: base, market: 'FUTURES', side: effectiveSignal.side, mode: wantMode, source,
-      qty, entryPrice: price, notionalUSDT, notionalINR: inrOfUsdt(notionalUSDT, usdInr),
+      qty, initialQty: qty, bookedPnlUSDT: 0, bookedPnlINR: 0, exitStage: 'ACTIVE',
+      ...(opts?.partialTp != null ? { partialTp: !!opts.partialTp } : (source === 'agent' ? { partialTp: cfg.partialTpEnabled !== false } : {})),
+      entryPrice: price, notionalUSDT, notionalINR: inrOfUsdt(notionalUSDT, usdInr),
       marginUSDT: marginUsed, marginINR: inrOfUsdt(marginUsed, usdInr),
       leverage: lev, ...(lev > 1 ? { liquidation } : {}),
       sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
@@ -730,7 +732,7 @@ function saveJournalFresh(j) {
  *     (paper closes simulated, live exits via /positions/exit).
  *   • watch errors persist — a dead stop never looks healthy.
  */
-export async function watchFuturesPositions({ sendTelegram } = {}) {
+export async function watchFuturesPositions({ sendTelegram, maxAgeMs = 20_000 } = {}) {
   return withJournalLock(async () => {
     const j = loadJournalFresh();
     const closures = [];
@@ -741,7 +743,7 @@ export async function watchFuturesPositions({ sendTelegram } = {}) {
     let openFut = j.positions.filter(p => p.market === 'FUTURES' && (p.status === 'OPEN' || p.status === 'UNKNOWN'));
     if (openFut.length === 0) return closures;
 
-    const prices = await fetchFuturesPrices().catch(() => null);
+    const prices = await fetchFuturesPrices({ maxAgeMs }).catch(() => null);
     const byPair = new Map((prices || []).map(p => [p.pair, p.last]));
 
     // --- LIVE reconcile against the exchange's own position list ---
@@ -838,9 +840,165 @@ export async function watchFuturesPositions({ sendTelegram } = {}) {
         dirty = true;
       }
 
+      const isPartialTp = !!p.partialTp && (cfg.partialTpEnabled !== false);
+
+      // --- v7.0 PRO TRADER: TARGET-1 PARTIAL TAKE-PROFIT (40% + Breakeven Lock) ---
+      if (isPartialTp && !p.tp1Hit && p.tp != null && (long ? price >= p.tp : price <= p.tp)) {
+        const initialQty = Number(p.initialQty) || Number(p.qty) || 0;
+        const tp1Pct = (cfg.tp1ClosePct || 40) / 100;
+        let closeQty = Math.round(initialQty * tp1Pct * 1e6) / 1e6;
+        if (closeQty > p.qty) closeQty = p.qty;
+
+        let closed = false;
+        if (p.mode === 'live' && p.exchangePositionId && coindcxConnected() && closeQty > 0) {
+          try {
+            await createFuturesOrder({
+              pair: p.pair,
+              side: long ? 'sell' : 'buy',
+              qty: closeQty,
+              leverage: p.leverage,
+            });
+            closed = true;
+          } catch (e) {
+            pushEntry(j, { kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair, reason: `futures TP1 partial exit failed: ${String(e?.message || e).slice(0, 160)}` });
+            dirty = true; watchErrors.push({ pair: p.pair, reason: String(e?.message || e).slice(0, 120) });
+          }
+        } else {
+          closed = true; // paper
+        }
+
+        if (closed) {
+          const usdInr = await fetchUsdInr();
+          const chunkPnlUSDT = (long ? price - p.entryPrice : p.entryPrice - price) * closeQty;
+          const chunkPnlINR = inrOfUsdt(chunkPnlUSDT, usdInr);
+          p.tp1Hit = true;
+          p.tp1Price = price;
+          p.tp1At = Date.now();
+          p.bookedPnlUSDT = r2((p.bookedPnlUSDT || 0) + chunkPnlUSDT);
+          p.bookedPnlINR = inrOfUsdt(p.bookedPnlUSDT, usdInr);
+          p.qty = Math.round((p.qty - closeQty) * 1e6) / 1e6;
+          p.exitStage = 'TP1_BOOKED_BE_LOCKED';
+
+          if (cfg.breakEvenAfterTp1 !== false) {
+            p.sl = p.entryPrice;
+            p.trailing = 'breakeven_tp1';
+            if (p.mode === 'live' && p.exchangePositionId && coindcxConnected()) {
+              try { await createFuturesTpsl({ positionId: p.exchangePositionId, stopLoss: p.sl }); } catch { /* watcher guards */ }
+            }
+          }
+
+          dirty = true;
+          pushEntry(j, {
+            kind: 'PARTIAL_TP', day: todayIST(), pair: p.pair, market: 'FUTURES', mode: p.mode, source: p.source,
+            stage: 'TP1', qty: closeQty, remainingQty: p.qty, closePrice: price, pnlUSDT: r2(chunkPnlUSDT), pnlINR: chunkPnlINR,
+            sl: p.sl, reason: `TARGET-1 hit @ ${price} — ${Math.round(tp1Pct * 100)}% booked (+${r2(chunkPnlUSDT)} USDT / +₹${chunkPnlINR}), SL locked to breakeven (${p.entryPrice})`,
+          });
+          if (typeof sendTelegram === 'function') {
+            sendTelegram(`🎯 <b>AI Futures (PRO)</b> — TARGET-1 HIT: ${p.pair}\n` +
+              `Booked ${Math.round(tp1Pct * 100)}% @ ${price} (+${r2(chunkPnlUSDT)} USDT / +₹${chunkPnlINR})\n` +
+              `SL locked to Breakeven ${p.entryPrice} · Remaining: ${p.qty}`).catch(() => {});
+          }
+        }
+      }
+
+      // --- v7.0 PRO TRADER: TARGET-2 PARTIAL TAKE-PROFIT (40% + Runner 20%) ---
+      if (isPartialTp && !p.tp2Hit && p.tp2 != null && (long ? price >= p.tp2 : price <= p.tp2)) {
+        const initialQty = Number(p.initialQty) || (p.tp1Hit ? p.qty / 0.6 : p.qty);
+        const tp2Pct = (cfg.tp2ClosePct || 40) / 100;
+        const runnerPct = (cfg.runnerPct != null ? cfg.runnerPct : 20) / 100;
+        const runnerQty = Math.round(initialQty * runnerPct * 1e6) / 1e6;
+
+        let closeQty;
+        let isFullClose = false;
+        if (runnerPct <= 0 || p.qty <= runnerQty * 1.05) {
+          closeQty = p.qty;
+          isFullClose = true;
+        } else {
+          closeQty = Math.round((p.qty - runnerQty) * 1e6) / 1e6;
+        }
+
+        let closed = false;
+        if (p.mode === 'live' && p.exchangePositionId && coindcxConnected() && closeQty > 0) {
+          try {
+            if (isFullClose) {
+              await exitFuturesPosition(p.exchangePositionId);
+            } else {
+              await createFuturesOrder({
+                pair: p.pair,
+                side: long ? 'sell' : 'buy',
+                qty: closeQty,
+                leverage: p.leverage,
+              });
+            }
+            closed = true;
+          } catch (e) {
+            pushEntry(j, { kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair, reason: `futures TP2 exit failed: ${String(e?.message || e).slice(0, 160)}` });
+            dirty = true; watchErrors.push({ pair: p.pair, reason: String(e?.message || e).slice(0, 120) });
+          }
+        } else {
+          closed = true; // paper
+        }
+
+        if (closed) {
+          const usdInr = await fetchUsdInr();
+          const chunkPnlUSDT = (long ? price - p.entryPrice : p.entryPrice - price) * closeQty;
+          const chunkPnlINR = inrOfUsdt(chunkPnlUSDT, usdInr);
+          p.tp2Hit = true;
+          p.tp2Price = price;
+          p.tp2At = Date.now();
+          p.bookedPnlUSDT = r2((p.bookedPnlUSDT || 0) + chunkPnlUSDT);
+          p.bookedPnlINR = inrOfUsdt(p.bookedPnlUSDT, usdInr);
+          p.qty = Math.round((p.qty - closeQty) * 1e6) / 1e6;
+
+          if (isFullClose || p.qty <= 0.000001) {
+            p.status = 'CLOSED'; p.closedAt = Date.now(); p.closePrice = price;
+            p.pnlUSDT = r2(p.bookedPnlUSDT); p.pnlINR = inrOfUsdt(p.bookedPnlUSDT, usdInr);
+            p.closeReason = 'TARGET-2 hit (Full close)';
+            try { settlePositionOutcome(p, p.closeReason); } catch { /* best-effort */ }
+            dirty = true;
+            pushEntry(j, {
+              kind: 'CLOSE', day: todayIST(), pair: p.pair, market: 'FUTURES', mode: p.mode, source: p.source,
+              qty: initialQty, entryPrice: p.entryPrice, closePrice: price, pnlUSDT: p.pnlUSDT, pnlINR: p.pnlINR, reason: p.closeReason,
+            });
+            closures.push({ pair: p.pair, mode: p.mode, pnlINR: p.pnlINR, reason: p.closeReason });
+            continue;
+          } else {
+            // Runner 20% remains! Lock SL at TP1 level
+            if (p.tp != null) {
+              p.sl = p.tp;
+              p.trailing = 'runner_tp1_locked';
+              if (p.mode === 'live' && p.exchangePositionId && coindcxConnected()) {
+                try { await createFuturesTpsl({ positionId: p.exchangePositionId, stopLoss: p.sl }); } catch { /* watcher guards */ }
+              }
+            }
+            p.exitStage = 'RUNNER_ACTIVE';
+            dirty = true;
+            pushEntry(j, {
+              kind: 'PARTIAL_TP', day: todayIST(), pair: p.pair, market: 'FUTURES', mode: p.mode, source: p.source,
+              stage: 'TP2', qty: closeQty, remainingQty: p.qty, closePrice: price, pnlUSDT: r2(chunkPnlUSDT), pnlINR: chunkPnlINR,
+              sl: p.sl, reason: `TARGET-2 hit @ ${price} — booked ${Math.round(tp2Pct * 100)}%, runner ${Math.round(runnerPct * 100)}% left with SL locked to TP1 (${p.tp})`,
+            });
+            if (typeof sendTelegram === 'function') {
+              sendTelegram(`🎯 <b>AI Futures (PRO)</b> — TARGET-2 HIT: ${p.pair}\n` +
+                `Booked @ ${price} (+${r2(chunkPnlUSDT)} USDT / +₹${chunkPnlINR})\n` +
+                `Runner ${p.qty} running with SL locked to TP1 ${p.tp}`).catch(() => {});
+            }
+          }
+        }
+      }
+
+      // --- STOP-LOSS & TARGET-2 (standard exit) ---
       let close = null;
-      if (p.sl != null && (long ? price <= p.sl : price >= p.sl)) close = { reason: 'STOP-LOSS hit', price, kind: 'SL' };
-      else if (p.tp2 != null && (long ? price >= p.tp2 : price <= p.tp2)) close = { reason: 'TARGET-2 hit', price, kind: 'TP2' };
+      if (p.sl != null && (long ? price <= p.sl : price >= p.sl)) {
+        const isProfitableSl = (p.tp1Hit || p.tp2Hit) && (long ? p.sl >= p.entryPrice : p.sl <= p.entryPrice);
+        close = {
+          reason: isProfitableSl ? 'STOP-LOSS hit (Breakeven/Trail Profit locked)' : 'STOP-LOSS hit',
+          price,
+          kind: 'SL',
+        };
+      } else if (!isPartialTp && p.tp2 != null && (long ? price >= p.tp2 : price <= p.tp2)) {
+        close = { reason: 'TARGET-2 hit', price, kind: 'TP2' };
+      }
       if (!close) continue;
 
       let closed = false;
@@ -855,14 +1013,16 @@ export async function watchFuturesPositions({ sendTelegram } = {}) {
       if (!closed) continue;
 
       const usdInr = await fetchUsdInr();
-      const pnlUSDT = (long ? price - p.entryPrice : p.entryPrice - price) * p.qty;
+      const remainingPnlUSDT = (long ? price - p.entryPrice : p.entryPrice - price) * p.qty;
+      const totalPnlUSDT = r2((p.bookedPnlUSDT || 0) + remainingPnlUSDT);
+      const totalPnlINR = inrOfUsdt(totalPnlUSDT, usdInr);
       p.status = 'CLOSED'; p.closedAt = Date.now(); p.closePrice = price;
-      p.pnlUSDT = r2(pnlUSDT); p.pnlINR = inrOfUsdt(pnlUSDT, usdInr);
+      p.pnlUSDT = totalPnlUSDT; p.pnlINR = totalPnlINR;
       p.closeReason = close.reason;
       try { settlePositionOutcome(p, close.reason); } catch { /* best-effort */ }
       dirty = true;
-      pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, market: 'FUTURES', mode: p.mode, qty: p.qty, entryPrice: p.entryPrice, closePrice: price, pnlUSDT: p.pnlUSDT, pnlINR: p.pnlINR, reason: close.reason });
-      closures.push({ pair: p.pair, mode: p.mode, pnlINR: p.pnlINR, reason: close.reason });
+      pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, market: 'FUTURES', mode: p.mode, source: p.source, qty: p.initialQty || p.qty, entryPrice: p.entryPrice, closePrice: price, pnlUSDT: totalPnlUSDT, pnlINR: totalPnlINR, reason: close.reason });
+      closures.push({ pair: p.pair, mode: p.mode, pnlINR: totalPnlINR, reason: close.reason });
     }
 
     if (dirty) saveJournalFresh(j);

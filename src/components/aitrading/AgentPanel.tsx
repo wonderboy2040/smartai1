@@ -44,7 +44,77 @@ const LOG_STYLE: Record<string, string> = {
   error: 'text-red-400',
   skip: 'text-slate-500',
   info: 'text-cyan-300',
+  partial_tp: 'text-emerald-400 font-bold',
 };
+
+function ProStrategyCard({ sizing, cfg }: { sizing?: AgentView['sizingPreview']; cfg?: AgentView['config'] }) {
+  const riskPct = cfg?.riskPerTradePct ?? 1.5;
+  const tp1Pct = cfg?.tp1ClosePct ?? 40;
+  const tp2Pct = cfg?.tp2ClosePct ?? 40;
+  const runnerPct = cfg?.runnerPct ?? 20;
+  const beActive = cfg?.breakEvenAfterTp1 !== false;
+
+  return (
+    <div className="bg-gradient-to-br from-indigo-950/40 via-purple-950/20 to-black/40 border border-purple-500/25 rounded-xl p-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm">🎯</span>
+          <span className="text-[10px] font-black text-purple-300 tracking-wider">PRO TRADER ENGINE · 3-STAGE AUTO-EXIT</span>
+        </div>
+        <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold">
+          WALLET-SCALED
+        </span>
+      </div>
+
+      {sizing && (
+        <div className="grid grid-cols-3 gap-1.5 mb-2 text-[10px] font-mono">
+          <div className="bg-black/30 rounded-lg p-2 border border-purple-500/15">
+            <div className="text-slate-400 text-[8.5px] font-bold">WALLET RISK / TRADE</div>
+            <div className="text-emerald-300 font-black text-xs">₹{sizing.riskINR}</div>
+            <div className="text-slate-500 text-[8.5px]">{riskPct}% equity ({sizing.riskUSDT} USDT)</div>
+          </div>
+          <div className="bg-black/30 rounded-lg p-2 border border-cyan-500/15">
+            <div className="text-slate-400 text-[8.5px] font-bold">SPOT ALLOCATION</div>
+            <div className="text-cyan-300 font-black text-xs">≈ ₹{sizing.spotEstimatedOrderINR.toLocaleString('en-IN')}</div>
+            <div className="text-slate-500 text-[8.5px]">max 60% free spot</div>
+          </div>
+          <div className="bg-black/30 rounded-lg p-2 border border-amber-500/15">
+            <div className="text-slate-400 text-[8.5px] font-bold">FUTURES MARGIN</div>
+            <div className="text-amber-300 font-black text-xs">{sizing.futuresEstimatedMarginUSDT} USDT</div>
+            <div className="text-slate-500 text-[8.5px]">@ {sizing.leverage}x (cap {sizing.futuresCapUSDT} U)</div>
+          </div>
+        </div>
+      )}
+
+      {/* 3-Stage Exit Ladder */}
+      <div className="space-y-1 text-[9.5px] font-mono">
+        <div className="flex items-center gap-2 p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25">
+          <span className="px-1.5 py-0.5 rounded bg-emerald-500/25 text-emerald-300 font-black text-[9px]">STAGE 1 · T1</span>
+          <span className="text-slate-200 font-bold">{tp1Pct}% Position Closed</span>
+          <span className="ml-auto text-emerald-300 font-black text-[9px]">
+            {beActive ? '🛡 SL ➔ BREAKEVEN (RISK-FREE)' : 'PROFIT BOOKED'}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 p-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/25">
+          <span className="px-1.5 py-0.5 rounded bg-cyan-500/25 text-cyan-300 font-black text-[9px]">STAGE 2 · T2</span>
+          <span className="text-slate-200 font-bold">{tp2Pct}% Position Closed</span>
+          <span className="ml-auto text-cyan-300 font-black text-[9px]">
+            🔒 SL ➔ T1 LEVEL (PROFIT LOCKED)
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 p-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25">
+          <span className="px-1.5 py-0.5 rounded bg-amber-500/25 text-amber-300 font-black text-[9px]">STAGE 3 · RUNNER</span>
+          <span className="text-slate-200 font-bold">{runnerPct}% Moonbag Runner</span>
+          <span className="ml-auto text-amber-300 font-black text-[9px]">
+            🏃 TRAILING SL TO THE MOON
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function WalletCard({ wallet }: { wallet: WalletView | null }) {
   if (!wallet) {
@@ -123,12 +193,15 @@ function TradeSlots({ used, total, pnlINR, lossCapINR }: { used: number; total: 
   );
 }
 
-type CfgKey = 'maxTradesPerDay' | 'minConfidence' | 'riskPerTradePct' | 'maxLeverage' | 'maxHoldMin' | 'cooldownMin' | 'dailyLossCapPct';
+type CfgKey = 'maxTradesPerDay' | 'minConfidence' | 'riskPerTradePct' | 'maxLeverage' | 'maxHoldMin' | 'cooldownMin' | 'dailyLossCapPct' | 'tp1ClosePct' | 'tp2ClosePct' | 'runnerPct';
 const CFG_FIELDS: { key: CfgKey; label: string; min: number; max: number; step: number; suffix: string; hint: string }[] = [
-  { key: 'maxTradesPerDay', label: 'Trades/day', min: 1, max: 10, step: 1, suffix: '', hint: 'user spec: 3' },
+  { key: 'maxTradesPerDay', label: 'Trades/day', min: 1, max: 10, step: 1, suffix: '', hint: 'user spec: 3 trades daily' },
   { key: 'minConfidence', label: 'Min confidence', min: 55, max: 95, step: 1, suffix: '%', hint: 'agent STRONG bar' },
   { key: 'riskPerTradePct', label: 'Risk/trade', min: 0.25, max: 10, step: 0.25, suffix: '%', hint: '% of wallet equity' },
   { key: 'maxLeverage', label: 'Max leverage', min: 1, max: 10, step: 1, suffix: 'x', hint: 'futures ceiling' },
+  { key: 'tp1ClosePct', label: 'T1 Close', min: 10, max: 80, step: 5, suffix: '%', hint: 'close % at target 1 (breakeven lock)' },
+  { key: 'tp2ClosePct', label: 'T2 Close', min: 10, max: 80, step: 5, suffix: '%', hint: 'close % at target 2' },
+  { key: 'runnerPct', label: 'Runner', min: 0, max: 50, step: 5, suffix: '%', hint: 'runner % left to trail' },
   { key: 'maxHoldMin', label: 'Max hold', min: 5, max: 480, step: 5, suffix: 'm', hint: 'time-exit' },
   { key: 'cooldownMin', label: 'Cooldown', min: 1, max: 240, step: 1, suffix: 'm', hint: 'between entries' },
   { key: 'dailyLossCapPct', label: 'Day loss cap', min: 0.5, max: 50, step: 0.5, suffix: '%', hint: 'stand-down' },
@@ -136,21 +209,43 @@ const CFG_FIELDS: { key: CfgKey; label: string; min: number; max: number; step: 
 
 function AgentConfigEditor({ cfg, onSaved }: { cfg: AgentView['config']; onSaved: (ok: boolean, msg: string) => void }) {
   const [draft, setDraft] = useState<Partial<Record<CfgKey, number>>>({});
+  const [partialTp, setPartialTp] = useState<boolean>(cfg.partialTpEnabled !== false);
+  const [breakEven, setBreakEven] = useState<boolean>(cfg.breakEvenAfterTp1 !== false);
   const [saving, setSaving] = useState(false);
-  const dirty = Object.keys(draft).length > 0;
+  const dirty = Object.keys(draft).length > 0 || partialTp !== (cfg.partialTpEnabled !== false) || breakEven !== (cfg.breakEvenAfterTp1 !== false);
+
   const save = async () => {
     setSaving(true);
-    const r = await saveAgentConfig(draft);
+    const payload = {
+      ...draft,
+      partialTpEnabled: partialTp,
+      breakEvenAfterTp1: breakEven,
+    };
+    const r = await saveAgentConfig(payload);
     setSaving(false);
-    if (r.ok) { setDraft({}); onSaved(true, '✅ Agent config saved — next scan se live'); }
+    if (r.ok) { setDraft({}); onSaved(true, '✅ Agent Pro config saved — next scan se live'); }
     else onSaved(false, `⛔ ${r.error}`);
   };
+
   return (
     <div className="bg-black/25 rounded-xl p-3">
-      <div className="text-[10px] font-black text-violet-300 tracking-wider mb-2">⚙ AGENT RULES (server-side enforced)</div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] font-black text-violet-300 tracking-wider">⚙ PRO AGENT RULES & TAKE-PROFIT</span>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1 text-[9px] font-mono font-bold text-slate-400 cursor-pointer">
+            <input type="checkbox" checked={partialTp} onChange={e => setPartialTp(e.target.checked)} className="accent-purple-500 rounded" />
+            Auto-TP (40/40/20)
+          </label>
+          <label className="flex items-center gap-1 text-[9px] font-mono font-bold text-slate-400 cursor-pointer">
+            <input type="checkbox" checked={breakEven} onChange={e => setBreakEven(e.target.checked)} className="accent-emerald-500 rounded" />
+            BE Lock
+          </label>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
         {CFG_FIELDS.map(f => {
-          const value = draft[f.key] != null ? draft[f.key] : Number(cfg[f.key]);
+          const value = draft[f.key] != null ? draft[f.key] : Number(cfg[f.key] ?? (f.key === 'tp1ClosePct' ? 40 : f.key === 'tp2ClosePct' ? 40 : f.key === 'runnerPct' ? 20 : 0));
           return (
             <label key={f.key} className="bg-black/30 rounded-lg px-2 py-1.5 block" title={f.hint}>
               <div className="flex justify-between items-baseline">
@@ -171,7 +266,7 @@ function AgentConfigEditor({ cfg, onSaved }: { cfg: AgentView['config']; onSaved
         </button>
         {dirty && <span className="text-[9px] text-amber-400/80 font-mono">unsaved changes</span>}
         <span className="ml-auto text-[9px] font-mono text-slate-500">
-          agent STRONG bar: {Number(cfg.minConfidence)}% + {Math.round(Number(cfg.minAgreement) * 100)}% agreement (manual se strict)
+          agent STRONG bar: {Number(cfg.minConfidence)}% + {Math.round(Number(cfg.minAgreement) * 100)}% agreement
         </span>
       </div>
     </div>
@@ -183,22 +278,44 @@ function OpenPositions({ positions }: { positions: AgentView['openPositions'] })
     return <div className="bg-black/25 rounded-xl p-3 text-[11px] text-slate-500">No open agent positions — agent scans every 60s, entry sirf top-conviction signal par.</div>;
   }
   return (
-    <div className="bg-black/25 rounded-xl p-3 space-y-1.5">
-      <div className="text-[10px] font-black text-orange-300 tracking-wider mb-1">🤖 OPEN AGENT POSITIONS — AUTO-EXIT ARMED</div>
+    <div className="bg-black/25 rounded-xl p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-black text-orange-300 tracking-wider">🤖 OPEN AGENT POSITIONS — AUTO-EXIT ARMED</span>
+        <span className="text-[9px] font-mono text-slate-500">{positions.length} active</span>
+      </div>
       {positions.map(p => {
         const holdPct = p.ageMin != null ? Math.min(100, (p.ageMin / Math.max(1, p.maxHoldMin)) * 100) : 0;
+        const isLong = p.side === 'LONG';
+        const stageBadge = p.exitStage === 'RUNNER_ACTIVE'
+          ? { text: '🏃 20% RUNNER · TRAILING', cls: 'bg-amber-500/20 text-amber-300 border-amber-500/40' }
+          : p.exitStage === 'TP1_BOOKED_BE_LOCKED'
+            ? { text: '🛡 T1 BOOKED · BREAKEVEN LOCKED', cls: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' }
+            : { text: '⚡ ACTIVE · T1/T2 ARMED', cls: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' };
+
         return (
-          <div key={p.id} className="bg-black/30 rounded-lg px-2.5 py-2">
+          <div key={p.id} className="bg-black/30 rounded-lg px-2.5 py-2 border border-slate-800/80">
             <div className="flex items-center gap-2 flex-wrap text-[10px] font-mono font-bold">
-              <span className={p.side === 'LONG' ? 'text-emerald-400' : 'text-red-400'}>{p.side}</span>
+              <span className={isLong ? 'text-emerald-400' : 'text-red-400'}>{p.side}</span>
               <span className="text-slate-200">{p.pair}</span>
               <span className="text-slate-400">{p.mode.toUpperCase()}</span>
               {p.leverage != null && <span className="text-amber-300">{p.leverage}x</span>}
-              <span className="text-slate-300">{p.qty} @ {p.entryPrice}</span>
-              <span className="text-slate-500">SL {p.sl ?? '—'} · T2 {p.tp2 ?? '—'}</span>
-              {p.marginUSDT != null && <span className="text-cyan-300">margin {p.marginUSDT} USDT</span>}
-              <span className="ml-auto text-slate-400">{p.ageMin ?? '?'}m old</span>
+              <span className="text-slate-300">
+                {p.qty}{p.initialQty && p.initialQty !== p.qty ? ` (orig ${p.initialQty})` : ''} @ {p.entryPrice}
+              </span>
+              <span className={`px-1.5 py-0.5 rounded text-[8.5px] font-black border font-mono ml-auto ${stageBadge.cls}`}>
+                {stageBadge.text}
+              </span>
             </div>
+
+            <div className="mt-1 flex items-center justify-between text-[9px] font-mono text-slate-400">
+              <span>SL {p.sl ?? '—'} · T1 {p.tp ?? '—'} · T2 {p.tp2 ?? '—'}</span>
+              {p.bookedPnlINR != null && p.bookedPnlINR > 0 && (
+                <span className="text-emerald-400 font-bold">Booked: +₹{p.bookedPnlINR}</span>
+              )}
+              {p.marginUSDT != null && <span className="text-cyan-300">margin {p.marginUSDT} USDT</span>}
+              <span className="text-slate-400">{p.ageMin ?? '?'}m old</span>
+            </div>
+
             <div className="mt-1.5 flex items-center gap-2">
               <div className="flex-1 h-1 rounded-full bg-black/40 overflow-hidden" role="img" aria-label="time to auto exit">
                 <div className={`h-full rounded-full ${holdPct > 80 ? 'bg-red-500/70' : 'bg-orange-400/60'}`} style={{ width: `${holdPct}%` }} />
@@ -368,10 +485,12 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-black gradient-text-cyan tracking-wide">SUPERINTELLIGENCE AUTO-AGENT</h3>
-              <span className="quantum-badge">v6.8</span>
+              <span className="quantum-badge bg-gradient-to-r from-cyan-500/30 to-purple-500/30 text-purple-200 border border-purple-400/40 shadow-sm">
+                v7.0 PRO
+              </span>
             </div>
-            <div className="text-[10px] text-slate-500 mt-0.5">
-              wallet-fetch · auto entry/exit · {cfg?.maxTradesPerDay ?? 3} trades/day · SL-based sizing · time-exit · native TP/SL · 60s server loop
+            <div className="text-[10px] text-slate-400 mt-0.5">
+              wallet-proportional sizing · auto entry · 3-stage pro take-profit (40% T1 + BE lock · 40% T2 · 20% runner) · 60s server loop
             </div>
           </div>
         </div>
@@ -428,6 +547,7 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
       <div className="grid gap-3 mt-3 lg:grid-cols-2">
         <div className="space-y-3">
           <WalletCard wallet={wallet || view.wallet} />
+          <ProStrategyCard sizing={view.sizingPreview} cfg={view.config} />
           <TradeSlots
             used={view.today.tradesCount}
             total={view.today.maxTrades}
@@ -438,9 +558,9 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
         <div className="space-y-3">
           <OpenPositions positions={view.openPositions} />
           <TodayTrades trades={view.today.trades} />
-          <PickStrip title="🇮🇳 INDIA INTRADAY PICKS (agent watch)" picks={view.picks.INDIA} accent="text-orange-300" />
           <PickStrip title="⚡ FUTURES PICKS (auto-trade desk)" picks={view.picks.FUTURES} accent="text-amber-300" />
           <PickStrip title="₿ SPOT PICKS" picks={view.picks.CRYPTO} accent="text-cyan-300" />
+          <PickStrip title="🇮🇳 INDIA INTRADAY PICKS (agent watch)" picks={view.picks.INDIA} accent="text-orange-300" />
         </div>
       </div>
 
