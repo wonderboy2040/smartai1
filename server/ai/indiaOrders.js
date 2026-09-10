@@ -400,7 +400,7 @@ export async function watchIndiaPositions({ sendTelegram } = {}) {
       settlePositionOutcome(p, close.reason); // v6.7 ledger
       dirty = true;
       pushEntry(j, {
-        kind: 'CLOSE', day: todayIST(), pair: p.pair, symbol: p.symbol, market: 'INDIA', mode: p.mode,
+        kind: 'CLOSE', day: todayIST(), pair: p.pair, symbol: p.symbol, market: 'INDIA', mode: p.mode, source: p.source,
         qty: p.qty, entryPrice: p.entryPrice, closePrice: price, pnlINR: r2(pnlINR), reason: close.reason,
       });
       closures.push({ pair: p.pair, mode: p.mode, pnlINR: p.pnlINR, reason: close.reason });
@@ -426,7 +426,12 @@ export async function closeIndiaPosition(positionId) {
     }
     const rows = await fetchTVIndiaBatch([p.symbol]).catch(() => ({}));
     const ltp = Number(rows[p.symbol]?.ltp);
-    const price = Number.isFinite(ltp) && ltp > 0 ? ltp : p.entryPrice;
+    const price = Number.isFinite(ltp) && ltp > 0 ? ltp : null;
+    // v7.0.2: no live price → HONEST reject (the old `|| p.entryPrice`
+    // booked a fake ₹0-P&L close and understated the daily-loss cap).
+    if (price == null) {
+      return { ok: false, error: `No live price for ${p.symbol} — thodi der baad try karo (honest close, no fake P&L)` };
+    }
     if (p.mode === 'live' && dhanConnected()) {
       try {
         const exit = await dhanPlaceOrder({ symbol: p.symbol, side: p.side === 'LONG' ? 'SELL' : 'BUY', quantity: p.qty, kind: 'ENTRY' });
@@ -444,7 +449,7 @@ export async function closeIndiaPosition(positionId) {
     p.pnlINR = r2(pnlINR);
     p.closeReason = 'Manual close';
     settlePositionOutcome(p, 'Manual close'); // v6.7 ledger
-    pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, symbol: p.symbol, market: 'INDIA', mode: p.mode, qty: p.qty, entryPrice: p.entryPrice, closePrice: price, pnlINR: r2(pnlINR), reason: 'Manual close' });
+    pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, symbol: p.symbol, market: 'INDIA', mode: p.mode, source: p.source, qty: p.qty, entryPrice: p.entryPrice, closePrice: price, pnlINR: r2(pnlINR), reason: 'Manual close' });
     saveJournal(j);
     return { ok: true, position: p };
   });

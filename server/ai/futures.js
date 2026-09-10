@@ -722,10 +722,23 @@ export async function transferSpotToFutures({ amount, currency = 'USDT' }) {
 
 // ---------------- journal helpers (same files as coindcxOrders) ----------------
 const JOURNAL_FILE = 'ai-trading-journal.json';
+const MAX_JOURNAL = 500;
+const CLOSED_POSITION_TTL = 90 * 24 * 3600_000; // v7.0.2: closed positions pruned after 90d
 function loadJournalFresh() {
   return loadJSON(JOURNAL_FILE, { entries: [], positions: [] });
 }
+// v7.0.2: futures writes now prune like the spot desk — saveJournalFresh
+// previously capped NOTHING, so TRAIL/WATCH_ERROR entries and every closed
+// position grew the file forever (multi-MB reloads on every route hit).
 function saveJournalFresh(j) {
+  if (Array.isArray(j.entries) && j.entries.length > MAX_JOURNAL) {
+    j.entries = j.entries.slice(-MAX_JOURNAL);
+  }
+  if (Array.isArray(j.positions)) {
+    const cutoff = Date.now() - CLOSED_POSITION_TTL;
+    const keep = j.positions.filter(p => p.status !== 'CLOSED' || (p.closedAt || p.openedAt || 0) >= cutoff);
+    if (keep.length !== j.positions.length) j.positions = keep;
+  }
   try { durablePut(JOURNAL_FILE, j); } catch { /* best-effort */ }
   saveJSON(JOURNAL_FILE, j);
   return j;
@@ -767,6 +780,18 @@ export async function watchFuturesPositions({ sendTelegram } = {}) {
           const row = byExchPair.get(p.pair);
           if (!row) continue; // pair absent this page — retry next pass
           if (row.activePos !== 0) {
+            // v7.0.2 CRITICAL FIX: adopt the exchange position id when the
+            // entry-time polls missed it (fill latency). Without the id NO
+            // exit path can reach the exchange — the position would be
+            // "closed" on paper only while real margin bleeds with no stop.
+            if (!p.exchangePositionId && row.id) {
+              p.exchangePositionId = row.id;
+              dirty = true;
+              pushEntry(j, {
+                kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair, market: 'FUTURES',
+                reason: `exchange position id adopted late (${row.id}) — exit paths now armed`,
+              });
+            }
             // still open — refresh the exchange's own numbers.
             // v7.0: partial legs shrink activePos — sync our qty to the
             // exchange's truth (a native/app partial close shows up here)
@@ -799,7 +824,7 @@ export async function watchFuturesPositions({ sendTelegram } = {}) {
           p.closeReason = reason;
           try { settlePositionOutcome(p, reason); } catch { /* best-effort */ }
           dirty = true;
-          pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, market: 'FUTURES', mode: p.mode, qty: p.qty, entryPrice: p.entryPrice, closePrice: exitPrice, pnlUSDT: p.pnlUSDT, pnlINR: p.pnlINR, reason });
+          pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, market: 'FUTURES', mode: p.mode, source: p.source, qty: p.qty, entryPrice: p.entryPrice, closePrice: exitPrice, pnlUSDT: p.pnlUSDT, pnlINR: p.pnlINR, reason });
           closures.push({ pair: p.pair, mode: p.mode, pnlINR: p.pnlINR, reason });
         }
       }
@@ -822,7 +847,16 @@ export async function watchFuturesPositions({ sendTelegram } = {}) {
               pushEntry(j, { kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair, reason: `futures liq exit failed: ${String(e?.message || e).slice(0, 160)}` });
               dirty = true; watchErrors.push({ pair: p.pair, reason: String(e?.message || e).slice(0, 120) });
             }
-          } else { closed = true; }
+          } else if (p.mode !== 'live') {
+            closed = true; // paper liquidation always executes
+          } else {
+            // v7.0.2 CRITICAL FIX: LIVE without id/creds used to be
+            // paper-simulated closed — orphaning the real exchange
+            // position. Persist + retry instead; the reconcile pass will
+            // adopt the id or close it honestly when the exchange reports flat.
+            pushEntry(j, { kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair, market: 'FUTURES', reason: `LIVE liq-exit BLOCKED (no exchange position id / CoinDCX disconnected) — NOT paper-closing, will retry` });
+            dirty = true; watchErrors.push({ pair: p.pair, reason: 'live liq-exit blocked (no id/creds) — retrying' });
+          }
           if (closed) {
             const usdInr = await fetchUsdInr();
             const liq = p.liquidation;
@@ -832,7 +866,7 @@ export async function watchFuturesPositions({ sendTelegram } = {}) {
             p.closeReason = 'LIQUIDATED (est.)';
             try { settlePositionOutcome(p, 'LIQUIDATED (est.)'); } catch { /* best-effort */ }
             dirty = true;
-            pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, market: 'FUTURES', mode: p.mode, qty: p.qty, entryPrice: p.entryPrice, closePrice: liq, pnlUSDT: p.pnlUSDT, pnlINR: p.pnlINR, reason: 'LIQUIDATED (est. — price crossed the liquidation level)' });
+            pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, market: 'FUTURES', mode: p.mode, source: p.source, qty: p.qty, entryPrice: p.entryPrice, closePrice: liq, pnlUSDT: p.pnlUSDT, pnlINR: p.pnlINR, reason: 'LIQUIDATED (est. — price crossed the liquidation level)' });
             closures.push({ pair: p.pair, mode: p.mode, pnlINR: p.pnlINR, reason: 'LIQUIDATED (est.)' });
           }
           continue;
@@ -935,7 +969,15 @@ export async function watchFuturesPositions({ sendTelegram } = {}) {
           dirty = true; watchErrors.push({ pair: p.pair, reason: String(e?.message || e).slice(0, 120) });
           continue;
         }
-      } else { closed = true; }
+      } else if (p.mode !== 'live') {
+        closed = true; // paper close is always executable
+      } else {
+        // v7.0.2 CRITICAL FIX: never paper-simulate a LIVE close. The real
+        // leveraged position stays open on the exchange — persist + retry.
+        pushEntry(j, { kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair, market: 'FUTURES', reason: `LIVE ${close.kind} exit BLOCKED (no exchange position id / CoinDCX disconnected) — NOT paper-closing, will retry` });
+        dirty = true; watchErrors.push({ pair: p.pair, reason: `live ${close.kind} exit blocked (no id/creds) — retrying` });
+        continue;
+      }
       if (!closed) continue;
 
       const usdInr = await fetchUsdInr();
@@ -945,7 +987,7 @@ export async function watchFuturesPositions({ sendTelegram } = {}) {
       p.closeReason = close.reason;
       try { settlePositionOutcome(p, close.reason); } catch { /* best-effort */ }
       dirty = true;
-      pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, market: 'FUTURES', mode: p.mode, qty: p.qty, entryPrice: p.entryPrice, closePrice: price, pnlUSDT: p.pnlUSDT, pnlINR: p.pnlINR, reason: close.reason });
+      pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, market: 'FUTURES', mode: p.mode, source: p.source, qty: p.qty, entryPrice: p.entryPrice, closePrice: price, pnlUSDT: p.pnlUSDT, pnlINR: p.pnlINR, reason: close.reason });
       closures.push({ pair: p.pair, mode: p.mode, pnlINR: p.pnlINR, reason: close.reason });
     }
 
@@ -1025,7 +1067,7 @@ async function partialCloseFuturesLeg(j, p, price, { stage, pct }) {
       p.closeReason = `PARTIAL TP (${stage}) closed the full book`;
       try { settlePositionOutcome(p, p.closeReason); } catch { /* best-effort */ }
       pushEntry(j, {
-        kind: 'CLOSE', day: todayIST(), pair: p.pair, market: 'FUTURES', mode: p.mode,
+        kind: 'CLOSE', day: todayIST(), pair: p.pair, market: 'FUTURES', mode: p.mode, source: p.source,
         qty: 0, entryPrice: p.entryPrice, closePrice: price, pnlUSDT: 0, pnlINR: 0,
         reason: `${stage} leg closed the full remaining book (qty too small to split)`,
       });
@@ -1053,7 +1095,18 @@ export async function closeFuturesPosition(positionId) {
     const p = j.positions.find(x => x.id === positionId || x.exchangePositionId === positionId);
     if (!p || (p.status !== 'OPEN' && p.status !== 'UNKNOWN')) return { ok: false, error: 'Position not found / already closed' };
     const prices = await fetchFuturesPrices().catch(() => null);
-    const ltp = (prices || []).find(x => x.pair === p.pair)?.last || p.entryPrice;
+    const ltp = (prices || []).find(x => x.pair === p.pair)?.last;
+    // v7.0.2: no live price → HONEST reject. The old `|| p.entryPrice`
+    // booked a fake ₹0-P&L close for a trade that really moved money
+    // (and silently understated the daily-loss cap).
+    if (!(ltp > 0)) {
+      return { ok: false, error: `No live futures price for ${p.pair} — thodi der baad try karo (honest close, no fake P&L)` };
+    }
+    // v7.0.2: LIVE without id/connection → reject honestly (reconciler
+    // adopts the id on its next pass). Never book a paper close for it.
+    if (p.mode === 'live' && (!p.exchangePositionId || !coindcxConnected())) {
+      return { ok: false, error: 'LIVE position without exchange connection/id — reconcile ho raha hai, kuch second baad retry karo' };
+    }
     if (p.mode === 'live' && p.exchangePositionId && coindcxConnected()) {
       try { await exitFuturesPosition(p.exchangePositionId); }
       catch (e) { return { ok: false, error: `Exchange close failed: ${e?.message || e}` }; }
@@ -1065,7 +1118,7 @@ export async function closeFuturesPosition(positionId) {
     p.pnlUSDT = r2(pnlUSDT); p.pnlINR = inrOfUsdt(pnlUSDT, usdInr);
     p.closeReason = 'Manual close';
     try { settlePositionOutcome(p, 'Manual close'); } catch { /* best-effort */ }
-    pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, market: 'FUTURES', mode: p.mode, qty: p.qty, entryPrice: p.entryPrice, closePrice: ltp, pnlUSDT: p.pnlUSDT, pnlINR: p.pnlINR, reason: 'Manual close' });
+    pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, market: 'FUTURES', mode: p.mode, source: p.source, qty: p.qty, entryPrice: p.entryPrice, closePrice: ltp, pnlUSDT: p.pnlUSDT, pnlINR: p.pnlINR, reason: 'Manual close' });
     saveJournalFresh(j);
     return { ok: true, position: p };
   });

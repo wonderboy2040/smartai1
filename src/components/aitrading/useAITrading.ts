@@ -35,6 +35,8 @@ export interface ExecuteResult {
   position?: JournalPosition;
   /** v6.4: set when the ATR stop was auto-fitted to the risk cap. */
   fitted?: string;
+  /** v7.0.2: notify-mode server note (alert-only — no order/position). */
+  note?: string;
 }
 
 /** v6.6: sizing + leverage parameters for a ticket execute. */
@@ -57,21 +59,27 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  // v7.0.2: board fetch failure state — a dead API used to render NOTHING
+  // between the section header and the next section (silent hole).
+  const [boardError, setBoardError] = useState(false);
   const activeRef = useRef(active);
   activeRef.current = active;
 
   const loadBoards = useCallback(async () => {
     const jobs: Array<Promise<void>> = [];
+    let anyOk = false;
+    const markOk = () => { anyOk = true; };
     if (markets.includes('INDIA')) jobs.push(apiFetch(`${getProxyBase()}/api/ai/signals?market=INDIA&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) })
       .then(r => r.ok ? r.json() : null).catch(() => null)
-      .then(j => { if (j) setIndia(j); }));
+      .then(j => { if (j) { setIndia(j); markOk(); } }));
     if (markets.includes('CRYPTO')) jobs.push(apiFetch(`${getProxyBase()}/api/ai/signals?market=CRYPTO&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) })
       .then(r => r.ok ? r.json() : null).catch(() => null)
-      .then(j => { if (j) setCrypto(j); }));
+      .then(j => { if (j) { setCrypto(j); markOk(); } }));
     if (markets.includes('FUTURES')) jobs.push(apiFetch(`${getProxyBase()}/api/ai/signals?market=FUTURES&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) })
       .then(r => r.ok ? r.json() : null).catch(() => null)
-      .then(j => { if (j) setFutures(j); }));
+      .then(j => { if (j) { setFutures(j); markOk(); } }));
     await Promise.allSettled(jobs);
+    setBoardError(!anyOk); // v7.0.2: every requested board failed
     setLoading(false);
   }, [markets.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -313,7 +321,7 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
   }, [loadState]);
 
   return {
-    india, crypto, futures, state, positions, entries, loading, busy,
+    india, crypto, futures, state, positions, entries, loading, busy, boardError,
     refresh: loadBoards, executeSignal, updateConfig, killSwitch, closePos, fetchDeep,
     executeIndia, runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert,
     fetchDhanStatus, dhanConnect, dhanDisconnect, executeFutures,

@@ -289,7 +289,7 @@ function CryptoOrderPreview({ signal, budgetINR }: { signal: AISignal; budgetINR
 //   crypto:  qty = (margin ₹ × leverage) / entry
 //   futures: qty = (margin USDT × leverage) / entry  (v6.8 — wallet USDT)
 //   india:   qty = floor(budget / price)             [whole shares]
-type ExecHandler = (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => void;
+type ExecHandler = (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => Promise<{ ok?: boolean; error?: string; note?: string } | void> | void;
 
 interface TicketProps {
   signal: AISignal;
@@ -328,7 +328,7 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
   const defaultMargin = Math.max(futures ? 5 : 100, Math.round(defaultBudgetINR));
   const [marginRaw, setMarginRaw] = useState<string>(String(defaultMargin));
   const [lev, setLev] = useState<number>(futures ? 3 : 1);
-  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; text: string; pending?: boolean } | null>(null);
   const approxUsdInr = 84; // display-only conversion (server uses the live rate)
 
   const marginNum = Number(marginRaw);
@@ -380,7 +380,7 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
     : fmt(n, dp);
   const fmtINRapprox = (n: number) => `₹${Math.round(n * approxUsdInr).toLocaleString('en-IN')}`;
 
-  const exec = (mode: 'paper' | 'live' | 'notify') => {
+  const exec = async (mode: 'paper' | 'live' | 'notify') => {
     const handler = futures ? onExecuteFutures : crypto ? onExecute : onExecuteIndia;
     if (!handler) return;
     if (invalid) {
@@ -394,13 +394,23 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
       : crypto
         ? { qtyINR: sendMargin, ...(lev > 1 ? { leverage: lev } : {}) }
         : { qtyINR: sendMargin };
-    handler(signal, mode, opts);
-    // result feedback comes via the parent toast; ticket shows a local ack
-    setResult({ ok: true, text: mode === 'live'
-      ? `⚡ LIVE order request bheja gaya — ${qty < 1 ? qty.toFixed(6) : qty} ${futures ? 'contracts' : crypto ? 'units' : 'shares'} @ ${futures ? `${plan.entry} USDT` : `₹${plan.entry}`}${leveraged && lev > 1 ? ` · ${lev}x` : ''} (console me position confirm karo)`
-      : mode === 'notify'
-        ? `🔔 NOTIFY — gauntlet chala, Telegram alert plan ke saath bheja (agar configured hai). Koi order/position NAHI bana.`
-        : `🧪 PAPER position khula — ${qty < 1 ? qty.toFixed(6) : qty} ${futures ? 'contracts' : crypto ? 'units' : 'shares'} @ ${futures ? `${plan.entry} USDT` : `₹${plan.entry}`}${leveraged && lev > 1 ? ` · ${lev}x margin` : ''} · watcher SL/TP manage karega` });
+    // v7.0.2 HONEST RESULT: the banner used to claim "position opened"
+    // BEFORE the gauntlet answered — a kill-switch / daily-cap / network
+    // rejection then showed a green success banner next to the parent's
+    // red error toast. Now we await the server verdict.
+    setResult({ ok: true, pending: true, text: '⏳ Order request gauntlet ko gaya — server gates (kill switch, caps, wallet) check ho rahe hain…' });
+    let r: { ok?: boolean; error?: string; note?: string } | void;
+    try { r = await handler(signal, mode, opts); }
+    catch { r = { ok: false, error: 'request failed — network error' }; }
+    if (r && typeof r === 'object' && r.ok === false) {
+      setResult({ ok: false, text: `⛔ ${r.error || 'Gauntlet ne order reject kiya — toast/console me reason dekho'}` });
+    } else {
+      setResult({ ok: true, text: mode === 'live'
+        ? `⚡ LIVE order executed — ${qty < 1 ? qty.toFixed(6) : qty} ${futures ? 'contracts' : crypto ? 'units' : 'shares'} @ ${futures ? `${plan.entry} USDT` : `₹${plan.entry}`}${leveraged && lev > 1 ? ` · ${lev}x` : ''} (console me position confirm karo)`
+        : mode === 'notify'
+          ? `🔔 NOTIFY-only — gauntlet chala, alert + journal audit likha. Koi order/position NAHI bana.`
+          : `🧪 PAPER position khula — ${qty < 1 ? qty.toFixed(6) : qty} ${futures ? 'contracts' : crypto ? 'units' : 'shares'} @ ${futures ? `${plan.entry} USDT` : `₹${plan.entry}`}${leveraged && lev > 1 ? ` · ${lev}x margin` : ''} · watcher SL/TP manage karega` });
+    }
     setTimeout(() => setResult(null), 8000);
   };
 
@@ -567,7 +577,7 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
       </div>
 
       {result && (
-        <div className={`mt-2 px-2.5 py-2 rounded-lg text-[10px] font-bold leading-relaxed ${result.ok ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300' : 'bg-red-500/10 border border-red-500/30 text-red-300'}`}>
+        <div className={`mt-2 px-2.5 py-2 rounded-lg text-[10px] font-bold leading-relaxed ${result.pending ? 'bg-slate-500/10 border border-slate-500/30 text-slate-300 animate-pulse' : result.ok ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300' : 'bg-red-500/10 border border-red-500/30 text-red-300'}`}>
           {result.text}
         </div>
       )}
@@ -614,9 +624,9 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
 interface Props {
   signal: AISignal;
   busy?: boolean;
-  onExecute?: (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; leverage?: number }) => void;
-  onExecuteIndia?: (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; leverage?: number }) => void;
-  onExecuteFutures?: (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => void;
+  onExecute?: (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; leverage?: number }) => Promise<{ ok?: boolean; error?: string; note?: string } | void> | void;
+  onExecuteIndia?: (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; leverage?: number }) => Promise<{ ok?: boolean; error?: string; note?: string } | void> | void;
+  onExecuteFutures?: (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => Promise<{ ok?: boolean; error?: string; note?: string } | void> | void;
   onDeep?: (signal: AISignal) => void;
   canLive?: boolean;
   canLiveIndia?: boolean;
@@ -642,7 +652,7 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
   const overCap = !!(plan && riskCapPct && plan.riskPct > riskCapPct);
 
   return (
-    <div id={`sig-${signal.market}-${signal.symbol}`} className={`quantum-panel rounded-2xl p-4 transition-colors hover:border-cyan-500/20 border-l-4 ${long ? 'border-l-emerald-500/60' : 'border-l-red-500/60'} scroll-mt-24}
+    <div id={`sig-${signal.market}-${signal.symbol}`} className={`quantum-panel rounded-2xl p-4 transition-colors hover:border-cyan-500/20 border-l-4 ${long ? 'border-l-emerald-500/60' : 'border-l-red-500/60'} scroll-mt-24
       ${signal.grade === 'STRONG' ? 'ring-1 ring-emerald-500/40' : ''}
       ${isNew ? 'ring-2 ring-cyan-400/60 animate-pulse' : ''}`}>
       {/* Header row */}
@@ -662,7 +672,7 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
             )}
           </div>
           <div className="flex items-center gap-3 mt-1 text-xs text-slate-400 flex-wrap">
-            <span className="font-mono font-bold text-slate-200">{signal.market === 'FUTURES' ? `${signal.ltp?.toLocaleString('en-US', { maximumFractionDigits: 4 })} USDT` : fmt(signal.ltp)}</span>
+            <span className="font-mono font-bold text-slate-200">{signal.market === 'FUTURES' ? (signal.ltp != null ? `${signal.ltp.toLocaleString('en-US', { maximumFractionDigits: 4 })} USDT` : '—') : fmt(signal.ltp)}</span>
             {signal.changePct != null && (
               <span className={`font-mono font-bold ${(signal.changePct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                 {(signal.changePct ?? 0) >= 0 ? '+' : ''}{signal.changePct?.toFixed(2)}%

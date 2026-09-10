@@ -55,9 +55,17 @@ const NAV = [
  *  CoinDCX desk. 60s poll, honest degrade (CF-block / no keys note). */
 const WalletCard = memo(function WalletCard() {
   const [w, setW] = useState<WalletView | null>(null);
+  // v7.0.2: honest failure state — a dead wallet API used to show
+  // "loading…" forever.
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let alive = true;
-    const load = () => { fetchWallet().then(x => { if (alive) setW(x); }).catch(() => {}); };
+    const load = () => {
+      fetchWallet().then(x => {
+        if (!alive) return;
+        if (x) { setW(x); setFailed(false); } else setFailed(true);
+      }).catch(() => { if (alive) setFailed(true); });
+    };
     load();
     const t = setInterval(() => { if (!alive) return; if (!document.hidden) load(); }, 60_000);
     return () => { alive = false; clearInterval(t); };
@@ -77,7 +85,7 @@ const WalletCard = memo(function WalletCard() {
             {w.connected ? 'LIVE · API CONNECTED' : 'PAPER (API keys nahi mili — Portfolio tab se connect karo)'}
           </span>
         )}
-        {!w && <span className="text-[10px] text-slate-500">loading…</span>}
+        {!w && <span className={`text-[10px] ${failed ? 'text-amber-500/80' : 'text-slate-500'}`}>{failed ? '⚠️ wallet API unreachable — retrying every 60s' : 'loading…'}</span>}
         {w?.usdInr != null && <span className="ml-auto text-[10px] font-mono font-bold text-slate-500">USD/₹ {w.usdInr}</span>}
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
@@ -109,7 +117,7 @@ const WalletCard = memo(function WalletCard() {
 export default memo(function CoinDcxTab() {
   // v6.9: CoinDCX-scoped loading — spot + futures boards only.
   const t = useAITrading(true, { markets: ['CRYPTO', 'FUTURES'] });
-  const { crypto, futures, state, positions, entries, loading, busy, refresh, executeSignal, executeFutures, updateConfig, closePos, fetchDeep } = t;
+  const { crypto, futures, state, positions, entries, loading, busy, refresh, executeSignal, executeFutures, updateConfig, closePos, fetchDeep, boardError } = t;
   const { runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert } = t;
   const [desk, setDesk] = useState<'CRYPTO' | 'FUTURES'>('CRYPTO');
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
@@ -145,26 +153,40 @@ export default memo(function CoinDcxTab() {
   const onExecute = useCallback(async (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; leverage?: number }) => {
     const r = await executeSignal(signal, mode, opts);
     if (r.ok) {
+      // v7.0.2: notify-mode is NOT a paper trade — honest branch + guarded
+      // fills (the old toast rendered "qty undefined @ ₹undefined").
+      if (mode === 'notify') {
+        notify(true, `🔔 Notify-only — ${r.note || 'gauntlet chala, alert + journal audit likha. Koi order/position NAHI bana.'}`);
+        return r;
+      }
       const levTag = r.filled?.leverage ? ` · ${r.filled.leverage}x margin (₹${Math.round(r.filled.marginINR ?? 0)})` : '';
       notify(true, mode === 'live'
-        ? `✅ LIVE order placed — ${signal.symbol} ${signal.side} · qty ${r.filled?.qty} @ ₹${r.filled?.price}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`
-        : `🧪 Paper trade opened — ${signal.symbol} ${signal.side} · qty ${r.filled?.qty} @ ₹${r.filled?.price}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
+        ? `✅ LIVE order placed — ${signal.symbol} ${signal.side} · qty ${r.filled?.qty ?? '—'} @ ₹${r.filled?.price ?? '—'}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`
+        : `🧪 Paper trade opened — ${signal.symbol} ${signal.side} · qty ${r.filled?.qty ?? '—'} @ ₹${r.filled?.price ?? '—'}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
     } else {
       notify(false, `⛔ ${r.error || 'execution failed'}`);
     }
+    return r; // v7.0.2: the ticket's own banner awaits this honest result
   }, [executeSignal, notify]);
 
   // v6.8: GLOBAL FUTURES gauntlet (USDT perpetuals) — same handler shape.
   const onExecuteFutures = useCallback(async (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => {
     const r = await executeFutures(signal, mode, opts);
     if (r.ok) {
+      // v7.0.2: notify-mode is NOT a paper trade — honest branch + guarded
+      // fills (the old toast rendered "qty undefined @ undefined").
+      if (mode === 'notify') {
+        notify(true, `🔔 Notify-only — ${r.note || 'gauntlet chala, alert + journal audit likha. Koi order/position NAHI bana.'}`);
+        return r;
+      }
       const levTag = r.filled?.leverage ? ` · ${r.filled.leverage}x · margin ${Math.round((r.filled as { marginUSDT?: number }).marginUSDT ?? 0)} USDT` : '';
       notify(true, mode === 'live'
-        ? `✅ FUTURES LIVE order placed — ${signal.symbol} ${signal.side} · ${r.filled?.qty} @ ${r.filled?.price}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`
-        : `🧪 Futures paper trade opened — ${signal.symbol} ${signal.side} · ${r.filled?.qty} @ ${r.filled?.price}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
+        ? `✅ FUTURES LIVE order placed — ${signal.symbol} ${signal.side} · ${r.filled?.qty ?? '—'} @ ${r.filled?.price ?? '—'}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`
+        : `🧪 Futures paper trade opened — ${signal.symbol} ${signal.side} · ${r.filled?.qty ?? '—'} @ ${r.filled?.price ?? '—'}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
     } else {
       notify(false, `⛔ ${r.error || 'execution failed'}`);
     }
+    return r; // v7.0.2: the ticket's own banner awaits this honest result
   }, [executeFutures, notify]);
 
   const onSaveConfig = useCallback(async (patch: Record<string, unknown>) => {
@@ -306,6 +328,15 @@ export default memo(function CoinDcxTab() {
               <div className="text-3xl mb-2">📡</div>
               <div className="text-sm text-red-400 font-bold">{board.reason || 'Data unavailable'}</div>
               <div className="text-[11px] text-slate-500 mt-1">Will auto-retry every 30s</div>
+            </div>
+          )}
+          {/* v7.0.2: network/API failure used to render NOTHING here (silent
+              hole between sections) — now an honest unreachable panel. */}
+          {!loading && !board && boardError && (
+            <div className="quantum-panel rounded-2xl p-6 col-span-full text-center border border-red-500/20">
+              <div className="text-3xl mb-2">📡</div>
+              <div className="text-sm text-red-400 font-bold">Signal board unreachable</div>
+              <div className="text-[11px] text-slate-500 mt-1">Network / API issue — har 30s me auto-retry ho raha hai. Desk switch ya refresh button se dobara try karo.</div>
             </div>
           )}
           {visibleSignals.map(s => (

@@ -433,12 +433,16 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
   const [busy, setBusy] = useState(false);
   const [livePhrase, setLivePhrase] = useState('');
   const [showLive, setShowLive] = useState(false);
+  // v7.0.2: honest failure state — a persistently failing status API used
+  // to show the loading spinner FOREVER (silent 5xx / proxy failure).
+  const [viewFailed, setViewFailed] = useState(false);
   const viewRef = useRef(view);
   viewRef.current = view;
 
   const load = useCallback(async () => {
     const v = await fetchAgentStatus();
-    if (v) setView(v);
+    if (v) { setView(v); setViewFailed(false); }
+    else if (!viewRef.current) setViewFailed(true);
   }, []);
   const loadWallet = useCallback(async () => {
     const w = await fetchWallet();
@@ -484,6 +488,16 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
   }, [notify, load]);
 
   if (!view) {
+    if (viewFailed) {
+      return (
+        <div className="quantum-panel rounded-2xl p-6 text-center border border-amber-500/20">
+          <div className="text-3xl mb-2">⚠️</div>
+          <div className="text-xs text-amber-300 font-bold">Agent status unavailable</div>
+          <div className="text-[11px] text-slate-500 mt-1">API/proxy issue — har 15s me retry ho raha hai.</div>
+          <button onClick={() => { setViewFailed(false); load(); }} className="mt-3 px-3 py-1.5 rounded-lg text-[10px] font-black quantum-btn-ghost">↻ Retry now</button>
+        </div>
+      );
+    }
     return (
       <div className="quantum-panel rounded-2xl p-6 text-center">
         <div className="text-3xl mb-2 animate-float">🤖</div>

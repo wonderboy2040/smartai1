@@ -354,8 +354,12 @@ async function _tick(deps, sendTelegram) {
           return closePosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }));
         })();
       if (out?.ok) {
-        closures.push({ pair: p.pair, pnlINR: out.position?.pnlINR ?? null, reason: `TIME-EXIT after ${Math.round(ageMin)}m` });
-        log('exit', `TIME-EXIT ${p.pair} after ${Math.round(ageMin)}m — pnl ${out.position?.pnlINR != null ? `₹${out.position.pnlINR}` : 'n/a'}`);
+        // v7.0.2: honest TOTAL pnl — booked partial legs + the final leg
+        // (p.pnlINR alone is only the remaining runner's leg).
+        const totalPnl = (out.position?.pnlINR ?? 0) + (out.position?.bookedPnlINR ?? 0);
+        const hasBooked = (out.position?.bookedPnlINR ?? 0) !== 0;
+        closures.push({ pair: p.pair, pnlINR: totalPnl, reason: `TIME-EXIT after ${Math.round(ageMin)}m${hasBooked ? ' (incl. booked T1/T2 legs)' : ''}` });
+        log('exit', `TIME-EXIT ${p.pair} after ${Math.round(ageMin)}m — pnl ₹${r2(totalPnl)}${hasBooked ? ` (final ${r2(out.position?.pnlINR ?? 0)} + booked ${r2(out.position?.bookedPnlINR ?? 0)})` : ''}`);
       } else {
         log('error', `time-exit failed for ${p.pair}: ${String(out?.error || '').slice(0, 100)}`);
       }

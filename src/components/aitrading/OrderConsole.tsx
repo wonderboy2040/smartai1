@@ -5,7 +5,7 @@
 // daily risk meters, config editor (LIVE arming with typed
 // confirmation), kill switch, and the full audit journal.
 // ============================================================
-import { memo, useState, useEffect, useCallback } from 'react';
+import { memo, useState, useEffect, useCallback, useRef } from 'react';
 import { fetchWallet } from './useAITrading';
 import type { DhanStatus, JournalEntry, JournalPosition, TradingConfig, TradingState, WalletView } from './types';
 
@@ -91,12 +91,29 @@ function ConfigEditor({ config, busy, onSave, state, venue }: {
   const [maxOpen, setMaxOpen] = useState(String(config.maxOpenPositions ?? 5));
   const [phrase, setPhrase] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null); // v7.0.2: mid-edit resync guard
 
   // v6.2: resync the number boxes whenever the SERVER config changes (60s
   // state poll, kill-switch auto-disarm, another device's SET) — the boxes
   // were initialized once and then showed stale values while the badges
   // above showed the real ones; clicking SET pushed the stale box back.
+  // v7.0.2 FIX: the 60s poll creates a NEW config object identity even when
+  // values are identical, so this effect re-fired every minute and silently
+  // reverted a box the user was MID-TYPING in. Skip while any editor inside
+  // this panel is focused; the user's blur/SET will resync on the next real
+  // config change.
+  const cfgKey = [
+    config.minConfidence, config.maxOrderINR, config.indiaMaxOrderINR,
+    config.dailyMaxTrades, config.dailyMaxLossINR, config.maxRiskPct,
+    config.trailArmR, config.trailOffsetR, config.cryptoLeverage, config.maxOpenPositions,
+  ].join('|');
   useEffect(() => {
+    const root = rootRef.current;
+    const activeEl = document.activeElement;
+    if (root && activeEl instanceof HTMLElement && root.contains(activeEl)
+      && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'SELECT')) {
+      return; // user is editing — don't clobber their half-typed value
+    }
     setMinConf(String(config.minConfidence));
     setMaxOrder(String(config.maxOrderINR));
     setIndiaMaxOrder(String(config.indiaMaxOrderINR ?? 5000));
@@ -107,7 +124,8 @@ function ConfigEditor({ config, busy, onSave, state, venue }: {
     setTrailOff(String(config.trailOffsetR ?? 1));
     setMaxLev(String(config.cryptoLeverage ?? 1));
     setMaxOpen(String(config.maxOpenPositions ?? 5));
-  }, [config]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cfgKey]);
 
   const save = async (patch: Record<string, unknown>) => {
     const r = await onSave(patch);
@@ -117,7 +135,7 @@ function ConfigEditor({ config, busy, onSave, state, venue }: {
   };
 
   return (
-    <div className="quantum-panel rounded-2xl p-4 space-y-3">
+    <div ref={rootRef} className="quantum-panel rounded-2xl p-4 space-y-3">
       <div className="flex items-center justify-between">
         <span className="text-xs font-black text-slate-200">🛡️ RISK & EXECUTION SETTINGS{venue === 'INDIA' ? ' — INDIA DESK' : venue === 'COINDCX' ? ' — COINDCX DESK' : ''}</span>
         {msg && <span className={`text-[10px] font-bold ${msg.ok ? 'text-emerald-400' : 'text-red-400'}`}>{msg.text}</span>}
@@ -423,9 +441,11 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
               const open = p.status === 'OPEN';
               const isIndia = p.market === 'INDIA';
               const isFut = p.market === 'FUTURES'; // v6.8 — prices/P&L in the USDT domain
+              // v7.0.2: null-guard every ₹-branch price — `SL ₹undefined`
+              // used to render when a trailing/BE position nulled its SL.
               const pf = (n?: number | null, dp = 2) => isFut
                 ? (n?.toLocaleString('en-US', { maximumFractionDigits: dp }) ?? '—')
-                : `₹${n?.toLocaleString('en-IN', { maximumFractionDigits: dp })}`;
+                : (n == null ? '—' : `₹${n.toLocaleString('en-IN', { maximumFractionDigits: dp })}`);
               return (
                 <div key={p.id} className="px-4 py-3 border-b border-white/[0.03] hover:bg-white/[0.02]">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -436,7 +456,7 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
                     <span className={`text-[11px] font-black ${p.side === 'LONG' ? 'text-emerald-400' : 'text-red-400'}`}>{p.side}</span>
                     <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${p.mode === 'live' ? 'bg-red-500/15 text-red-300' : 'bg-cyan-500/15 text-cyan-300'}`}>{p.mode.toUpperCase()}</span>
                     {p.leverage != null && p.leverage > 1 && (
-                      <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-violet-500/15 text-violet-300" title={isFut ? `margin ${p.marginUSDT} USDT · notional ${p.notionalUSDT} USDT` : `margin ₹${p.marginINR?.toLocaleString('en-IN')} · notional ₹${p.notionalINR?.toLocaleString('en-IN')}`}>
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-violet-500/15 text-violet-300" title={isFut ? `margin ${p.marginUSDT} USDT · notional ${p.notionalUSDT} USDT` : `margin ${p.marginINR != null ? `₹${p.marginINR.toLocaleString('en-IN')}` : '—'} · notional ${p.notionalINR != null ? `₹${p.notionalINR.toLocaleString('en-IN')}` : '—'}`}>
                         {p.leverage}x {isFut ? 'LEV' : 'MARGIN'}
                       </span>
                     )}
@@ -490,10 +510,10 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
                       </button>
                     )}
                   </div>
-                  {open && (p.sl != null || p.tp2 != null) && (
+                  {open && (p.sl != null || p.tp != null || p.tp2 != null) && (
                     <div className="flex gap-3 mt-1.5 text-[10px] font-mono flex-wrap">
-                      <span className="text-red-400/70">SL {pf(p.sl)}</span>
-                      <span className="text-emerald-400/70">TP {pf(p.tp)} / {pf(p.tp2)}</span>
+                      {p.sl != null && <span className="text-red-400/70">SL {pf(p.sl)}</span>}
+                      {(p.tp != null || p.tp2 != null) && <span className="text-emerald-400/70">TP {pf(p.tp)} / {pf(p.tp2)}</span>}
                       {p.peakPrice != null && p.peakPrice > 0 && (
                         <span className="text-amber-400/70" title="best price since entry (trailing anchor)">🔺 peak {pf(p.peakPrice)}</span>
                       )}

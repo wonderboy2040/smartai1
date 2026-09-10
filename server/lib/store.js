@@ -60,7 +60,10 @@ export function saveJSON(filename, data) {
   try {
     if (!ensureDir()) return false;
     const p = path.join(DATA_DIR, filename);
-    const tmp = `${p}.tmp`;
+    // v7.0.2: unique tmp name (pid + ms). A second writer process using the
+    // SAME shared `${p}.tmp` path could interleave write+rename and corrupt
+    // the file; unique names keep the write+rename atomic per writer.
+    const tmp = `${p}.${process.pid}.${Date.now()}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(data), 'utf8');
     fs.renameSync(tmp, p);
     return true;

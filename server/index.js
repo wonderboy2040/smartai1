@@ -226,8 +226,12 @@ const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
 // alongside `Access-Control-Allow-Credentials: true` -- the session cookie is
 // SameSite=None, so reflecting any origin equals full cross-origin account
 // takeover (portfolio reads, cloud-state overwrites, AI-key burn).
+// v7.0.2 FIX: the guard used to fail open when NODE_ENV was UNSET — but the
+// repo's own start paths (start_server.vbs, plain `node server/index.js` on a
+// VPS) run exactly that way, silently echoing any origin with credentials.
+// Now it fails closed in EVERY mode except an explicit NODE_ENV=development.
 const _corsFailClosed = !ALLOWED_ORIGINS
-  && String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+  && String(process.env.NODE_ENV || '').toLowerCase() !== 'development';
 if (_corsFailClosed) {
   console.warn('[wealth-ai] SECURITY: ALLOWED_ORIGINS is not set in production. ' +
     'CORS is FAIL-CLOSED -- no cross-origin requests will be authorized. ' +
@@ -866,12 +870,21 @@ app.get('/api/forex', async (_req, res) => {
   const now = Date.now();
   if (_forexCache.rate && (now - _forexCache.ts) < FOREX_CACHE_MS) {
     res.set('Cache-Control', 'no-store, max-age=0');
-    return res.json({ usdInr: _forexCache.rate, ts: _forexCache.ts });
+    return res.json({ usdInr: _forexCache.rate, ts: _forexCache.ts, live: true });
   }
   const rate = await fetchForexUpstream();
   if (rate) _forexCache = { rate, ts: now };
+  // v7.0.2: mark the fallback honestly — the old response stamped the
+  // hardcoded DEFAULT_USD_INR as `ts: Date.now()` (a stale constant
+  // disguised as a fresh quote for every consumer).
+  const served = rate || _forexCache.rate || null;
   res.set('Cache-Control', 'no-store, max-age=0');
-  return res.json({ usdInr: rate || _forexCache.rate || DEFAULT_USD_INR, ts: Date.now() });
+  return res.json({
+    usdInr: served ?? DEFAULT_USD_INR,
+    ts: served ? (rate ? now : _forexCache.ts) : 0,
+    live: !!rate,
+    ...(served ? {} : { fallback: true, fallbackRate: DEFAULT_USD_INR }),
+  });
 });
 
 // ------------------------------------------------------------
@@ -884,7 +897,28 @@ app.get('/api/forex', async (_req, res) => {
 // stream light.
 // ------------------------------------------------------------
 function parseSyms(v) {
-  return String(v || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 60);
+  // v7.0.2 SECURITY: validate the symbol charset — /api/stream is a PUBLIC
+  // endpoint and anonymous visitors could previously subscribe up to 180
+  // ARBITRARY strings per connection (upstream amplification / 429 bans).
+  return String(v || '').split(',')
+    .map(s => s.trim().toUpperCase())
+    .filter(Boolean)
+    .filter(s => /^[A-Z0-9._-]{1,20}$/.test(s))
+    .slice(0, 60);
+}
+
+// v7.0.2 SECURITY: cap concurrent SSE connections per IP (public endpoint,
+// each connection drives upstream polling for up to 180 symbols).
+const _sseConns = new Map(); // ip → count
+const SSE_MAX_PER_IP = 3;
+function sseConnAllowed(ip) {
+  const n = _sseConns.get(ip) || 0;
+  return n < SSE_MAX_PER_IP;
+}
+function sseConnOpen(ip) { _sseConns.set(ip, (_sseConns.get(ip) || 0) + 1); }
+function sseConnClose(ip) {
+  const n = (_sseConns.get(ip) || 1) - 1;
+  if (n <= 0) _sseConns.delete(ip); else _sseConns.set(ip, n);
 }
 
 // ------------------------------------------------------------
@@ -895,6 +929,15 @@ function parseSyms(v) {
 initInStream({ fetchGrowwNseQuote, fetchYahooQuote, toYahooSymbol });
 
 app.get('/api/stream', (req, res) => {
+  // v7.0.2 SECURITY: per-IP SSE connection cap (see parseSyms note).
+  const _sseXff = (req.headers['x-forwarded-for'] || '').toString().split(',').map(s => s.trim()).filter(Boolean);
+  const _sseIp = _sseXff[_sseXff.length - 1] || req.socket.remoteAddress || 'unknown';
+  if (!sseConnAllowed(_sseIp)) {
+    return res.status(429).set('Retry-After', '30').json({ error: { message: 'Too many stream connections from this IP.' } });
+  }
+  sseConnOpen(_sseIp);
+  res.on('close', () => sseConnClose(_sseIp));
+
   const inSyms = parseSyms(req.query.in);
   const usSyms = parseSyms(req.query.us);
   const cryptoSyms = parseSyms(req.query.crypto);
@@ -1654,9 +1697,37 @@ app.get('/api/telegram-status', (_req, res) => {
 // service needed. This is critical for Render free tier since
 // 2 services would exceed 750 hrs/month limit.
 // ------------------------------------------------------------
+// v7.0.2 SECURITY: /api/ml/* is public (no auth) and does real CPU work on
+// client-supplied candle arrays — apply the same per-IP limiter the Telegram
+// endpoints use, and cap the candles so a 1MB body can't drive a 10k-candle
+// walk-forward simulation in a tight loop.
+const _mlRate = new Map(); // ip → { n, windowStart }
+function mlRateCheck(ip) {
+  const now = Date.now();
+  let r = _mlRate.get(ip);
+  if (!r || now - r.windowStart > 10 * 60_000) { r = { n: 0, windowStart: now }; _mlRate.set(ip, r); }
+  if (_mlRate.size > 5000) { // bounded map
+    for (const [k, v] of _mlRate) { if (now - v.windowStart > 10 * 60_000) _mlRate.delete(k); }
+  }
+  r.n++;
+  return r.n <= 30; // 30 requests / 10 min per IP
+}
+function mlGuard(req, res) {
+  const xff = (req.headers['x-forwarded-for'] || '').toString().split(',').map(s => s.trim()).filter(Boolean);
+  const ip = xff[xff.length - 1] || req.socket.remoteAddress || 'unknown';
+  if (!mlRateCheck(ip)) {
+    return res.status(429).json({ error: 'Too many ML requests — thodi der baad try karo' });
+  }
+  if (req.body && Array.isArray(req.body.candles)) {
+    req.body.candles = req.body.candles.slice(0, 500); // CPU-bound input cap
+  }
+  return false;
+}
+
 app.get('/api/ml/health', (_req, res) => { res.json(mlHealth()); });
 
 app.post('/api/ml/predict', (req, res) => {
+  if (mlGuard(req, res)) return;
   const { symbol, market, price, change, candles } = req.body || {};
   if (!symbol) return res.status(400).json({ error: 'symbol required' });
   const result = getMLPrediction(symbol, market || 'IN', price || 100, change || 0, candles);
@@ -1677,20 +1748,23 @@ app.get('/api/ml/regime', (_req, res) => {
 });
 
 app.post('/api/ml/signals', (req, res) => {
+  if (mlGuard(req, res)) return;
   const { portfolio, livePrices } = req.body || {};
   const result = getAllSignals(portfolio || [], livePrices || {});
   res.json(result);
 });
 
 app.post('/api/ml/regime', (req, res) => {
+  if (mlGuard(req, res)) return;
   const { nifty, bankNifty, vix, usVix, dxy, gold } = req.body || {};
   const regime = getRegime(nifty, bankNifty, vix, usVix, dxy, gold);
   res.json(regime);
 });
 
 app.post('/api/ml/backtest', (req, res) => {
+  if (mlGuard(req, res)) return;
   const { symbol, candles } = req.body || {};
-  const result = getBacktest(symbol || '', candles || []);
+  const result = getBacktest(symbol || '', Array.isArray(candles) ? candles.slice(0, 500) : []);
   res.json(result);
 });
 

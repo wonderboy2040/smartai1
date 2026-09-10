@@ -57,7 +57,24 @@ function load() {
   return loadJSON(LEDGER_FILE, { entries: [] });
 }
 function save(l) {
-  if (l.entries.length > MAX_ENTRIES) l.entries = l.entries.slice(-MAX_ENTRIES);
+  if (l.entries.length > MAX_ENTRIES) {
+    l.entries = l.entries.slice(-MAX_ENTRIES);
+    // v7.0.2 FIX: re-anchor the pruned chain as a fresh checkpoint — the
+    // new head gets prevHash null and every later link is recomputed. The
+    // old code left the head's prevHash dangling on the pruned entry, so
+    // verifyLedger() reported brokenAt:0 FOREVER after the first prune
+    // past 400 entries (false alarm on the tamper evidence). Tampering
+    // detection itself is unchanged: a spliced entry WITHOUT re-anchoring
+    // still fails the strict head check.
+    if (l.entries.length > 0) {
+      let prev = null;
+      for (const e of l.entries) {
+        e.prevHash = prev;
+        e.hash = hashEntry(e);
+        prev = e.hash;
+      }
+    }
+  }
   saveJSON(LEDGER_FILE, l);
   try { durablePut(LEDGER_FILE, l); } catch { /* best-effort */ }
   return l;
@@ -259,7 +276,13 @@ export function settlePositionOutcome(p, reason) {
     // TOTAL P&L (booked partial legs + the final leg).
     const qtyAtEntry = Number(p.originalQty) > 0 ? Number(p.originalQty) : (Number(p.qty) || 0);
     const riskPerUnit = Number(p.initialRisk) || 0;
-    const riskINR = riskPerUnit > 0 && qtyAtEntry > 0 ? riskPerUnit * qtyAtEntry : null;
+    // v7.0.2 FIX: FUTURES positions store initialRisk in the USDT domain
+    // but totalPnlINR is ₹ — dividing ₹ by USDT understated every futures
+    // R by ~84x (a +1R win logged as +0.012R). Recover the entry-time FX
+    // from the position's own notionalINR/notionalUSDT twin (exact).
+    const fx = Number(p.notionalUSDT) > 0 && Number(p.notionalINR) > 0
+      ? Number(p.notionalINR) / Number(p.notionalUSDT) : 1;
+    const riskINR = riskPerUnit > 0 && qtyAtEntry > 0 ? riskPerUnit * qtyAtEntry * fx : null;
     const totalPnlINR = (Number(p.pnlINR) || 0) + (Number(p.bookedPnlINR) || 0);
     const r = riskINR > 0 ? totalPnlINR / riskINR : null;
     return markOutcome(p.ledgerEntryId, {

@@ -16,7 +16,10 @@ const MEDALS = ['🥇', '🥈', '🥉', '4', '5'];
 function pickPriceFmt(market: string): (n: number | null | undefined) => string {
   return (n) => {
     if (n == null || !Number.isFinite(n)) return '—';
-    if (market === 'FUTURES') return `$${n >= 100 ? n.toFixed(1) : n.toFixed(4)}`;
+    // v7.0.2: USDT (not $) — every other futures surface (ticket, console,
+    // positions) labels perp prices USDT; a mixed $/USDT display misled
+    // notional comparisons between the Top-5 row and the trade ticket.
+    if (market === 'FUTURES') return `${n >= 100 ? n.toFixed(1) : n.toFixed(4)} USDT`;
     return `₹${n >= 100 ? n.toFixed(1) : n.toFixed(2)}`;
   };
 }

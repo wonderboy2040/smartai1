@@ -27,6 +27,7 @@ import { recordExecution, settlePositionOutcome, markPartialOutcome, __setLedger
 const CONFIG_FILE = 'ai-trading-config.json';
 const JOURNAL_FILE = 'ai-trading-journal.json';
 const MAX_JOURNAL = 500;
+const CLOSED_POSITION_TTL = 90 * 24 * 3600_000; // v7.0.2: closed positions pruned after 90d
 
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 
@@ -137,6 +138,14 @@ export function loadJournal() {
 }
 export function saveJournal(j) {
   if (j.entries.length > MAX_JOURNAL) j.entries = j.entries.slice(-MAX_JOURNAL);
+  // v7.0.2: CLOSED positions pruned after 90d — the journal used to keep
+  // every closed position forever (multi-MB reload on every route hit;
+  // the tamper-evident LEDGER remains the permanent track record).
+  if (Array.isArray(j.positions)) {
+    const cutoff = Date.now() - CLOSED_POSITION_TTL;
+    const keep = j.positions.filter(p => p.status !== 'CLOSED' || (p.closedAt || p.openedAt || 0) >= cutoff);
+    if (keep.length !== j.positions.length) j.positions = keep;
+  }
   saveJSON(JOURNAL_FILE, j);
   try { durablePut(JOURNAL_FILE, j); } catch { /* best-effort */ }
   return j;
@@ -265,8 +274,13 @@ async function getMarginPairName(pair, creds) {
   if (Array.isArray(_marginPairsCache)) {
     const hit = _marginPairsCache.find(p => p && (p.pair === conventional || p.pair === pair || p.instrument === conventional));
     if (hit) return { pair: String(hit.pair || conventional), listed: true };
-    // pair listed under a different naming shape? scan by base token
-    const byBase = _marginPairsCache.find(p => p && String(p.pair || p.instrument || '').includes(spotBase));
+    // v7.0.2: base-token scan used substring match — a short base like "B"
+    // or "T" substring-matched nearly every margin pair and could route a
+    // LIVE order to the WRONG instrument. Exact-convention match only.
+    const byBase = _marginPairsCache.find(p => p && (() => {
+      const name = String(p.pair || p.instrument || '');
+      return name === conventional || name.split('_')[0] === `B-${spotBase}` || name.replace('_', '') === conventional.replace('_', '');
+    })());
     if (byBase) return { pair: String(byBase.pair || byBase.instrument), listed: true };
   }
   return { pair: conventional, listed: false };
@@ -534,7 +548,10 @@ export async function executeSignal(opts) {
       saveJournal(j);
       return { ok: false, error: `Daily loss cap (₹${cfg.dailyMaxLossINR}) breached — trading paused for today` };
     }
-    if (cfg.onePositionPerPair && j.positions.some(p => p.pair === pair && p.status === 'OPEN')) {
+    if (cfg.onePositionPerPair && j.positions.some(p => p.pair === pair && (p.status === 'OPEN' || p.status === 'UNKNOWN'))) {
+      // v7.0.2: UNKNOWN counts as open (consistent with the futures desk +
+      // concentration guard) — an unreconciled fill must not stack a second
+      // live order on the same pair.
       pushEntry(j, { ...entry, status: 'REJECTED', reason: 'Position already open for this pair' });
       saveJournal(j);
       return { ok: false, error: `An open position already exists for ${pair} (one-per-pair rule)` };
@@ -717,8 +734,26 @@ export async function watchPositions({ sendTelegram } = {}) {
 
     // --- reconcile UNKNOWN live positions ---
     for (const p of j.positions) {
-      if (p.status !== 'UNKNOWN' || p.mode !== 'live' || !p.exchangeOrderId) continue;
+      if (p.status !== 'UNKNOWN' || p.mode !== 'live') continue;
       if (cfg.killSwitch) break; // no exchange calls while killed
+      if (!p.exchangeOrderId) {
+        // v7.0.2: live UNKNOWN with NO order id used to be a silent
+        // permanent dead zone — never reconciled, never SL/TP-watched,
+        // never alerted. Surface it ONCE (~3 min in) so a human can close
+        // it on the exchange; it still occupies a concentration slot.
+        p.unknownSince = p.unknownSince || Date.now();
+        const ageMin = (Date.now() - p.unknownSince) / 60_000;
+        if (ageMin >= 3 && !p.unknownAlerted) {
+          p.unknownAlerted = true;
+          dirty = true;
+          pushEntry(j, {
+            kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair,
+            reason: `UNKNOWN live position (no exchange order id) — ${Math.round(ageMin)}min se unresolved. Exchange app me check karke manually close karo — SL/TP is NOT being enforced on it.`,
+          });
+          watchErrors.push({ pair: p.pair, reason: 'UNKNOWN live position — no order id, manual close needed' });
+        }
+        continue;
+      }
       const rec = await reconcileLivePosition(p).catch(() => null);
       if (!rec) continue;
       if (rec.status === 'OPEN') {
@@ -781,8 +816,15 @@ export async function watchPositions({ sendTelegram } = {}) {
                 dirty = true;
                 watchErrors.push({ pair: p.pair, reason: String(e?.message || e).slice(0, 120) });
               }
-            } else {
+            } else if (p.mode !== 'live') {
               closed = true; // paper liquidation always executes
+            } else {
+              // v7.0.2 CRITICAL FIX: LIVE but CoinDCX creds gone — the old
+              // code paper-simulated the close while the real leveraged
+              // position kept bleeding with no stop. Persist + retry instead.
+              pushEntry(j, { kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair, reason: 'LIVE liq-exit BLOCKED (CoinDCX disconnected) — NOT paper-closing, will retry' });
+              dirty = true;
+              watchErrors.push({ pair: p.pair, reason: 'live liq-exit blocked (creds) — retrying' });
             }
             if (closed) {
               const liqPrice = p.liquidation;
@@ -795,7 +837,7 @@ export async function watchPositions({ sendTelegram } = {}) {
               settlePositionOutcome(p, 'LIQUIDATED (est.)'); // v6.7 ledger
               dirty = true;
               pushEntry(j, {
-                kind: 'CLOSE', day: todayIST(), pair: p.pair, mode: p.mode,
+                kind: 'CLOSE', day: todayIST(), pair: p.pair, mode: p.mode, source: p.source,
                 qty: p.qty, entryPrice: p.entryPrice, closePrice: liqPrice, pnlINR: r2(pnlINR),
                 reason: `LIQUIDATED (est. @ ${p.leverage}x — price crossed the liquidation estimate)`,
               });
@@ -939,8 +981,16 @@ export async function watchPositions({ sendTelegram } = {}) {
             watchErrors.push({ pair: p.pair, reason: String(e?.message || e).slice(0, 120) });
             continue;
           }
-        } else {
+        } else if (p.mode !== 'live') {
           closed = true; // paper close is always executable
+        } else {
+          // v7.0.2 CRITICAL FIX: LIVE position + creds revoked/missing —
+          // the old code booked a fake CLOSE at the ticker price while the
+          // real exchange position stayed open with NO stop. Persist + retry.
+          pushEntry(j, { kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair, reason: `LIVE ${close.kind} close BLOCKED (CoinDCX disconnected) — NOT paper-closing, will retry` });
+          dirty = true;
+          watchErrors.push({ pair: p.pair, reason: `live ${close.kind} close blocked (creds) — retrying` });
+          continue;
         }
         if (!closed) continue;
 
@@ -953,7 +1003,7 @@ export async function watchPositions({ sendTelegram } = {}) {
         settlePositionOutcome(p, close.reason); // v6.7 ledger
         dirty = true;
         pushEntry(j, {
-          kind: 'CLOSE', day: todayIST(), pair: p.pair, mode: p.mode,
+          kind: 'CLOSE', day: todayIST(), pair: p.pair, mode: p.mode, source: p.source,
           qty: p.qty, entryPrice: p.entryPrice, closePrice: price, pnlINR: r2(pnlINR), reason: close.reason,
         });
         closures.push({ pair: p.pair, mode: p.mode, pnlINR: p.pnlINR, reason: close.reason });
@@ -998,10 +1048,16 @@ const AGENT_CONFIG_FILE_MIRROR = 'ai-agent-config.json';
 export function loadProTraderConfig() {
   const saved = loadJSON(AGENT_CONFIG_FILE_MIRROR, {}) || {};
   const n = (v, d) => { const x = Number(v); return Number.isFinite(x) ? x : d; };
+  // v7.0.2: same T1+T2 ≤ 90 invariant agent.js enforces — a hand-edited /
+  // legacy config with a bigger split would try to close more than 100%
+  // of the position (live: net-short flip on the exchange).
+  let tp1 = Math.max(10, Math.min(80, n(saved.tp1ClosePct, 40)));
+  let tp2 = Math.max(10, Math.min(80, n(saved.tp2ClosePct, 40)));
+  if (tp1 + tp2 > 90) { const over = tp1 + tp2 - 90; tp2 = Math.max(10, tp2 - over); }
   return {
     partialTpEnabled: saved.partialTpEnabled !== false,   // default ON
-    tp1ClosePct: Math.max(10, Math.min(80, n(saved.tp1ClosePct, 40))),
-    tp2ClosePct: Math.max(10, Math.min(80, n(saved.tp2ClosePct, 40))),
+    tp1ClosePct: tp1,
+    tp2ClosePct: tp2,
     breakEvenAfterTp1: saved.breakEvenAfterTp1 !== false, // default ON
   };
 }
@@ -1100,7 +1156,7 @@ async function partialCloseSpotLeg(j, p, price, { stage, pct }) {
       p.closeReason = `PARTIAL TP (${stage}) closed the full book`;
       try { settlePositionOutcome(p, p.closeReason); } catch { /* best-effort */ }
       pushEntry(j, {
-        kind: 'CLOSE', day: todayIST(), pair: p.pair, mode: p.mode,
+        kind: 'CLOSE', day: todayIST(), pair: p.pair, mode: p.mode, source: p.source,
         qty: 0, entryPrice: p.entryPrice, closePrice: price, pnlINR: 0,
         reason: `${stage} leg closed the full remaining book (qty too small to split)`,
       });
@@ -1132,7 +1188,18 @@ export async function closePosition(positionId) {
     if (!p || (p.status !== 'OPEN' && p.status !== 'UNKNOWN')) return { ok: false, error: 'Position not found / already closed' };
     const tickers = await fetchCoinDcxTickers().catch(() => []);
     const price = (Array.isArray(tickers) ? tickers : []).find(t => t.market === p.pair);
-    const ltp = price ? parseFloat(price.last_price) : p.entryPrice;
+    const ltp = price ? parseFloat(price.last_price) : null;
+    // v7.0.2: no live price → HONEST reject. The old `|| p.entryPrice`
+    // booked a fake ₹0-P&L close (and silently understated the daily-loss
+    // cap) exactly when users panic-close during a feed outage.
+    if (!(ltp > 0)) {
+      return { ok: false, error: `No live price for ${p.pair} — thodi der baad try karo (honest close, no fake P&L)` };
+    }
+    // v7.0.2: LIVE + creds revoked → reject honestly; NEVER book a paper
+    // close for a live position (the real coins are still on the exchange).
+    if (p.mode === 'live' && !coindcxConnected()) {
+      return { ok: false, error: 'LIVE position but CoinDCX keys missing/revoked — exchange par position abhi bhi OPEN hai. Keys wapas connect karke close karo.' };
+    }
     if (p.mode === 'live' && coindcxConnected()) {
       try {
         const creds = loadCredsForOrder();
@@ -1158,7 +1225,7 @@ export async function closePosition(positionId) {
     p.pnlINR = r2(pnlINR);
     p.closeReason = 'Manual close';
     settlePositionOutcome(p, 'Manual close'); // v6.7 ledger
-    pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, mode: p.mode, qty: p.qty, entryPrice: p.entryPrice, closePrice: ltp, pnlINR: r2(pnlINR), reason: 'Manual close' });
+    pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, mode: p.mode, source: p.source, qty: p.qty, entryPrice: p.entryPrice, closePrice: ltp, pnlINR: r2(pnlINR), reason: 'Manual close' });
     saveJournal(j);
     return { ok: true, position: p };
   });

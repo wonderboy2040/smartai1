@@ -51,6 +51,10 @@ let _reconnectAt = 0;
 let _activeClients = 0;
 let _reconnectTimer = null;
 let _fallbackTimer = null;
+// v7.0.2: Finnhub handshake failure streak → exponential backoff + jitter
+// (mirrors cryptoStream's breaker). A fixed 3-5s reconnect loop used to
+// hammer a down/auth-failing upstream for hours while clients were up.
+let _wsFailStreak = 0;
 let _wsFactory = null;              // test injection
 let _fetchImpl = null;              // test injection
 let _tvFailStreak = 0;              // TV batch circuit breaker
@@ -188,6 +192,15 @@ function _scheduleReconnect(delayMs) {
     if (_activeClients > 0) _connect();
   }, Math.max(0, delayMs));
   if (typeof _reconnectTimer.unref === 'function') _reconnectTimer.unref();
+}
+
+// v7.0.2: failure-path reconnect with backoff (3s → 6s → 12s → 24s → 30s cap
+// + jitter). A successful OPEN resets the streak so ordinary blips still
+// reconnect fast (~3s, same as the old fixed close-path delay).
+function _scheduleFailureReconnect() {
+  const base = Math.min(30_000, 3000 * 2 ** _wsFailStreak);
+  _wsFailStreak = Math.min(_wsFailStreak + 1, 5);
+  _scheduleReconnect(base + Math.floor(Math.random() * 1000));
 }
 
 // ---------------------------------------------------------------
@@ -480,6 +493,7 @@ function _connect() {
     _ws = ws;
     ws.on('open', () => {
       _connecting = false;
+      _wsFailStreak = 0; // v7.0.2: healthy handshake resets the backoff streak
       for (const s of _subscribed) ws.send(JSON.stringify({ type: 'subscribe', symbol: s }));
     });
     ws.on('message', (raw) => {
@@ -523,15 +537,16 @@ function _connect() {
       if (_ws !== ws) return;
       _connecting = false; _ws = null;
       // Only reconnect if clients still active (FIX audit M-2: actually schedule it).
-      if (_activeClients > 0) _scheduleReconnect(3000);
+      // v7.0.2: backoff path — never got a healthy OPEN on this socket.
+      if (_activeClients > 0) _scheduleFailureReconnect();
     });
     ws.on('error', () => {
       if (_ws !== ws) return; // stale handler from a replaced socket (M1)
       _connecting = false; try { ws.close(); } catch { }
       _ws = null;
-      if (_activeClients > 0) _scheduleReconnect(5000);
+      if (_activeClients > 0) _scheduleFailureReconnect();
     });
-  } catch { _connecting = false; _scheduleReconnect(5000); }
+  } catch { _connecting = false; _scheduleFailureReconnect(); }
 }
 
 // ---------------------------------------------------------------

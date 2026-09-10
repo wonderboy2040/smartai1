@@ -56,7 +56,7 @@ export default memo(function IndiaIntradayTab() {
   // v6.9: India-scoped loading — the India desk never pays for the
   // crypto/futures boards.
   const t = useAITrading(true, { markets: ['INDIA'] });
-  const { india, state, positions, entries, loading, busy, refresh, executeIndia, updateConfig, closePos, fetchDeep } = t;
+  const { india, state, positions, entries, loading, busy, refresh, executeIndia, updateConfig, closePos, fetchDeep, boardError } = t;
   const { runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert, fetchDhanStatus, dhanConnect, dhanDisconnect } = t;
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [filter, setFilter] = useState<BoardFilter>('ALL');
@@ -99,12 +99,19 @@ export default memo(function IndiaIntradayTab() {
   const onExecuteIndia = useCallback(async (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; leverage?: number }) => {
     const r = await executeIndia(signal, mode, opts);
     if (r.ok) {
-      notify(true, mode === 'live'
-        ? `✅ Dhan LIVE order placed — ${signal.symbol} ${signal.side} · ${r.filled?.qty} shares @ ₹${r.filled?.price} · broker SL-M armed · 15:15 square-off${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`
-        : `🧪 India paper trade opened — ${signal.symbol} ${signal.side} · ${r.filled?.qty} shares @ ₹${r.filled?.price} (watcher SL/TP + trailing)${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
+      // v7.0.2: notify-mode is NOT a paper trade — the old toast fell into
+      // the paper branch and said "paper trade opened … qty undefined".
+      if (mode === 'notify') {
+        notify(true, `🔔 Notify-only — ${r.note || 'gauntlet chala, alert + journal audit likha. Koi order/position NAHI bana.'}`);
+      } else {
+        notify(true, mode === 'live'
+          ? `✅ Dhan LIVE order placed — ${signal.symbol} ${signal.side} · ${r.filled?.qty ?? '—'} shares @ ₹${r.filled?.price ?? '—'} · broker SL-M armed · 15:15 square-off${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`
+          : `🧪 India paper trade opened — ${signal.symbol} ${signal.side} · ${r.filled?.qty ?? '—'} shares @ ₹${r.filled?.price ?? '—'} (watcher SL/TP + trailing)${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
+      }
     } else {
       notify(false, `⛔ ${r.error || 'execution failed'}`);
     }
+    return r; // v7.0.2: the ticket's own banner awaits this honest result
   }, [executeIndia, notify]);
 
   const onSaveConfig = useCallback(async (patch: Record<string, unknown>) => {
@@ -242,6 +249,15 @@ export default memo(function IndiaIntradayTab() {
               <div className="text-3xl mb-2">📡</div>
               <div className="text-sm text-red-400 font-bold">{board.reason || 'Data unavailable'}</div>
               <div className="text-[11px] text-slate-500 mt-1">Will auto-retry every 30s</div>
+            </div>
+          )}
+          {/* v7.0.2: network/API failure used to render NOTHING here (silent
+              hole between sections) — now an honest unreachable panel. */}
+          {!loading && !board && boardError && (
+            <div className="quantum-panel rounded-2xl p-6 col-span-full text-center border border-red-500/20">
+              <div className="text-3xl mb-2">📡</div>
+              <div className="text-sm text-red-400 font-bold">Signal board unreachable</div>
+              <div className="text-[11px] text-slate-500 mt-1">Network / API issue — har 30s me auto-retry ho raha hai. Top-5 picks bhi isi board se aate hain (refresh button bhi dabao).</div>
             </div>
           )}
           {visibleSignals.map(s => (

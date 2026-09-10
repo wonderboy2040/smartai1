@@ -346,6 +346,9 @@ export function useAppState() {
   const priceFlushTimerRef = useRef<number | null>(null);
   const priceHiddenDirtyRef = useRef(false);
   const pricePersistSnapRef = useRef<Record<string, PriceData> | null>(null);
+  // v7.0.2: background-tab slow-flush clock — the browser-tab title
+  // (realtime Today's P&L) must keep moving while the tab is hidden.
+  const priceHiddenFlushAtRef = useRef(0);
 
   const flushPricesToStorage = useCallback(() => {
     const batched = pendingPricesRef.current;
@@ -385,7 +388,22 @@ export function useAppState() {
     if (!displayChanged) { persist(); return; }
 
     // Background tab → refs only; React catches up on visibility return.
-    if (document.hidden) { priceHiddenDirtyRef.current = true; persist(); return; }
+    // v7.0.2 FIX: except a SLOW 30s catch-up flush — the browser-tab title
+    // (Today's P&L) is keyed on the livePrices STATE, so without this the
+    // title froze at the value from the moment the user switched tabs,
+    // which is exactly when they read it from the tab bar.
+    if (document.hidden) {
+      priceHiddenDirtyRef.current = true;
+      const nowH = Date.now();
+      if (nowH - priceHiddenFlushAtRef.current >= 30_000) {
+        priceHiddenFlushAtRef.current = nowH;
+        priceHiddenDirtyRef.current = false;
+        setLivePrices(livePricesRef.current);
+      }
+      persist();
+      return;
+    }
+    priceHiddenFlushAtRef.current = 0;
 
     const now = Date.now();
     if (now - priceFlushLastAtRef.current < 900) {
