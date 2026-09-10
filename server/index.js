@@ -24,6 +24,10 @@ import { SERVER_MCP_TOOLS_OPENAI, SERVER_MCP_TOOLS_GEMINI, executeServerMCPTool 
 import indmMcpRoutes from './mcp/routes.js';
 import { registerAITradingRoutes } from './ai/routes.js';
 import { registerIntradayRoutes } from './intraday/routes.js';
+// v9.1: graceful-shutdown flushers for the debounced intraday writers.
+import { flushPaperState } from './intraday/paperTrading.js';
+import { flushTrackRecordState } from './intraday/trackRecord.js';
+import { flushJournalState } from './intraday/journal.js';
 import { startScheduler as startIndmPortfolioScheduler } from './mcp/portfolioSync.js';
 import { durableBootRestoreAll } from './mcp/durable.js';
 import path from 'node:path';
@@ -2215,6 +2219,27 @@ process.on('uncaughtException', (err) => {
   // for a single-instance free-tier deployment, staying up is better
   // than going down.
 });
+
+// ------------------------------------------------------------
+// v9.1 GRACEFUL SHUTDOWN — the intraday desk's debounced writers
+// (paper trades 1s / track record 1s / journal 1.5s) could lose the
+// very last state change on a deploy/restart that lands inside the
+// debounce window (e.g. a paper-trade close immediately followed by
+// SIGTERM). Flush them synchronously before exiting.
+// ------------------------------------------------------------
+let _shuttingDown = false;
+function _gracefulShutdown(signal) {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+  for (const [name, flush] of [
+    ['paper', flushPaperState], ['track-record', flushTrackRecordState], ['journal', flushJournalState],
+  ]) {
+    try { flush(); } catch (e) { console.warn(`[wealth-ai] shutdown flush ${name}:`, e?.message); }
+  }
+  process.exit(signal === 'SIGINT' ? 130 : 143);
+}
+process.on('SIGTERM', () => _gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => _gracefulShutdown('SIGINT'));
 
 // ------------------------------------------------------------
 // Startup environment validation.

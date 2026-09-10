@@ -13,9 +13,16 @@
 // the stream is unavailable — the tab still works via 60s polling.
 // ============================================================
 import { useEffect, useRef, useState } from 'react';
+import { getSessionToken, getProxyBase } from '../../utils/api';
 import type { LiveQuote, MarketRegime, OutcomeEvent } from './types';
 
-const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
+// v9.1 FIX: resolve the backend the SAME way apiFetch does (localStorage
+// override → env → mirror-host detection) — the raw env-only read could
+// point SSE at a different backend than every REST call. And append the
+// ?session= token: /api/intraday-stream is NOT a public path, so a bare
+// EventSource 401'd cross-origin (Vercel → Render can't send cookies) and
+// the Paper Desk live P&L never ticked.
+const PROXY_BASE = getProxyBase();
 
 export interface StreamState {
   livePrices: Record<string, LiveQuote>;
@@ -44,8 +51,17 @@ export function useIntradayStream(enabled: boolean, onOutcome?: (ev: OutcomeEven
     let es: EventSource | null = null;
     let closed = false;
 
+    // SECURITY: EventSource cannot send the Bearer header, and httpOnly
+    // cookies don't travel cross-origin — requireAuth accepts a
+    // ?session=<token> query param for exactly this case (same pattern as
+    // utils/liveStream.ts → /api/stream).
+    const session = getSessionToken();
+    const streamUrl = session
+      ? `${PROXY_BASE}/api/intraday-stream?session=${encodeURIComponent(session)}`
+      : `${PROXY_BASE}/api/intraday-stream`;
+
     try {
-      es = new EventSource(`${PROXY_BASE}/api/intraday-stream`);
+      es = new EventSource(streamUrl);
     } catch {
       return;
     }

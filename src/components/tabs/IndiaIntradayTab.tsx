@@ -30,6 +30,22 @@ import { ModelRegistry } from '../aitrading/ModelRegistry';
 import { BacktestPanel } from '../aitrading/BacktestPanel';
 import { AlertsPanel } from '../aitrading/AlertsPanel';
 import { MorningBriefPanel, SwingDeskPanel, SignalLedgerPanel, TrustLayerPanel, PerfAnalyticsPanel, SectorMapPanel } from '../aitrading/ProPanels';
+// v9.1 PAPER DESK (Phase-1 merge of the orphaned v4 intraday tree — the
+// panels were fully built/tested, just unreachable from the shipped UI,
+// which is why "Paper Trading" never started on the India desk):
+//   • useIntradayStream — SSE live quotes for open paper positions
+//   • PaperTradePanel / openPaperTrade — server-managed simulator
+//     (T1 50% book + breakeven trail + SL/T2/EOD auto-exit)
+//   • TrackRecordPanel / JournalPanel / CommitteePanel — the
+//     accountability + AI-coaching layer over those virtual trades
+//   • UniverseEditor — the scanner watchlist those scans run on
+import { useIntradayStream } from '../intraday/useIntradayStream';
+import { PaperTradePanel, openPaperTrade } from '../intraday/PaperTradePanel';
+import { TrackRecordPanel } from '../intraday/TrackRecordPanel';
+import { JournalPanel } from '../intraday/JournalPanel';
+import { CommitteePanel } from '../intraday/CommitteePanel';
+import { UniverseEditor } from '../intraday/UniverseEditor';
+import { adaptAISignal } from '../intraday/adaptAISignal';
 import {
   SectionLabel, RegimeChips, BreadthStrip, FilterChips, RefreshCountdown, BoardSummary, DeskStatsStrip,
   filterSignals, countSignals, IndiaHowToTrade, useDeskViewMode, ViewModeToggle, ProSectionsNote, type BoardFilter,
@@ -43,6 +59,7 @@ const NAV = [
   { id: 'in-signals', label: 'SIGNALS', emoji: '📡', pro: false },
   { id: 'in-options', label: 'OPTIONS', emoji: '📊', pro: false },
   { id: 'in-execute', label: 'EXECUTE', emoji: '⚙️', pro: false },
+  { id: 'in-paper-desk', label: 'PAPER', emoji: '📋', pro: true },
   { id: 'in-brief', label: 'BRIEF', emoji: '📰', pro: true },
   { id: 'in-sectors', label: 'SECTORS', emoji: '🗺️', pro: true },
   { id: 'in-swing', label: 'SWING', emoji: '🗂️', pro: true },
@@ -64,6 +81,23 @@ export default memo(function IndiaIntradayTab() {
   // v6.13: SIMPLE (trade-flow only) / PRO (poora desk) — persist hota hai
   const [viewMode, setViewMode] = useDeskViewMode();
   const simple = viewMode === 'simple';
+
+  // ---- v9.1 PAPER DESK state ----
+  // SSE live quotes feed the open-position P&L (only connect while the
+  // pro-mode desk is actually mounted — simple mode never renders it).
+  const stream = useIntradayStream(!simple);
+  // bump → Paper/TrackRecord/Journal panels refetch (after open/close).
+  const [paperRefresh, setPaperRefresh] = useState(0);
+  const [universeOpen, setUniverseOpen] = useState(false);
+  // open Paper-Desk symbols, lifted UP from PaperTradePanel so the board
+  // cards can show ✓ PAPER OPEN (the old tab kept this in a dead ref — fixed).
+  const [paperOpenSymbols, setPaperOpenSymbols] = useState<ReadonlySet<string>>(new Set());
+  const handlePaperSymbols = useCallback((next: Set<string>) => {
+    setPaperOpenSymbols(prev => {
+      if (prev.size === next.size && [...next].every(x => prev.has(x))) return prev; // no-change → no re-render
+      return new Set(next);
+    });
+  }, []);
   const [deep, setDeep] = useState<{ loading: boolean; signal?: AISignal; indicators?: Record<string, unknown>; narrative?: import('../aitrading/types').NarrativeView | null; ltf?: import('../aitrading/types').LtfSnapshot | null; edge?: import('../aitrading/types').EdgeStats | null; error?: string } | null>(null);
   const [dhan, setDhan] = useState<DhanStatus | null>(null);
 
@@ -114,6 +148,28 @@ export default memo(function IndiaIntradayTab() {
     }
     return r; // v7.0.2: the ticket's own banner awaits this honest result
   }, [executeIndia, notify]);
+
+  // v9.1 PAPER DESK BRIDGE — the Superintelligence board's signal, opened
+  // as a server-managed Paper Desk position (/api/intraday-paper): T1 par
+  // 50% book, breakeven trail, SL/T2 watcher + 15:10 EOD square-off, live
+  // P&L + durable history + AI journal — the full simulator, one click.
+  const onDeskPaper = useCallback(async (signal: AISignal) => {
+    const adapted = adaptAISignal(signal);
+    if (!adapted) {
+      notify(false, `⛔ ${signal.symbol}: Paper Desk ke liye tradeable levels (entry/SL/targets) incomplete hain`);
+      return;
+    }
+    // Size mirrors the ticket math: budget ÷ entry (min 1 share).
+    const budget = state?.config?.indiaMaxOrderINR ?? 5000;
+    const qty = Math.max(1, Math.floor(budget / adapted.entry));
+    const r = await openPaperTrade(adapted, qty);
+    if (r.ok) {
+      notify(true, `📈 Paper Desk trade opened — ${signal.symbol} ${qty} shares @ ₹${adapted.entry.toFixed(2)} · T1 50% book + breakeven trail + SL/T2/EOD auto-exit (08 PAPER DESK me track)`);
+      setPaperRefresh(k => k + 1); // panels + badges refetch
+    } else {
+      notify(false, `⛔ ${r.error || 'Paper Desk open failed'}`);
+    }
+  }, [state?.config?.indiaMaxOrderINR, notify]);
 
   const onSaveConfig = useCallback(async (patch: Record<string, unknown>) => {
     const r = await updateConfig(patch);
@@ -279,7 +335,8 @@ export default memo(function IndiaIntradayTab() {
             <SignalCard key={`INDIA-${s.symbol}`} signal={s} busy={busy} onExecuteIndia={onExecuteIndia} onDeep={onDeep}
               canLiveIndia={canLiveIndia} isNew={newSymbols.has(s.symbol)}
               orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5}
-              indiaBudgetINR={state?.config?.indiaMaxOrderINR ?? 5000} />
+              indiaBudgetINR={state?.config?.indiaMaxOrderINR ?? 5000}
+              onPaperTrade={onDeskPaper} paperOpenForSymbol={paperOpenSymbols.has(s.symbol)} />
           ))}
           {board?.signals?.length === 0 && !loading && (
             <div className="quantum-panel rounded-2xl p-8 col-span-full text-center">
@@ -401,9 +458,33 @@ export default memo(function IndiaIntradayTab() {
         </div>
       )}
 
+      {/* ============ 08 · PAPER DESK & AI JOURNAL (v9.1 · PRO) ============
+          The orphaned v4 intraday tree, merged into the live desk:
+          server-managed virtual trades (T1 50% book → breakeven trail →
+          SL/T2/EOD auto-exit) + signal track record + AI-reviewed journal
+          + committee debate. Board cards open positions via 📈 DESK PAPER. */}
+      {!simple && (
+        <div id="in-paper-desk">
+          <div className="flex items-end justify-between gap-2 flex-wrap">
+            <SectionLabel num="08" title="Paper Desk & AI Journal" sub="virtual trade simulator (server-managed T1/trail/SL/EOD) · signal track record · AI-reviewed trade journal · committee debate" />
+            <button onClick={() => setUniverseOpen(true)}
+              title="Scanner universe edit karo — committee debates / briefing / track-record scans isi universe se chalte hain (add/remove/restore, server-side persisted)"
+              className="quantum-btn-ghost px-2.5 py-1.5 rounded-lg text-[10px] font-black shrink-0">
+              ⚙ UNIVERSE
+            </button>
+          </div>
+          <div className="mt-2.5 space-y-3">
+            <PaperTradePanel livePrices={stream.livePrices} refreshKey={paperRefresh} onOpenSymbolsChange={handlePaperSymbols} />
+            <TrackRecordPanel refreshKey={paperRefresh} />
+            <JournalPanel refreshKey={paperRefresh} />
+            <CommitteePanel />
+          </div>
+        </div>
+      )}
+
       {/* ============ v6.13: SIMPLE-mode me PRO sections ka pointer ============ */}
       {simple && (
-        <ProSectionsNote names="Brief · Sector Map · Swing · Backtest · Alerts · Models · Ledger · Trust" />
+        <ProSectionsNote names="Brief · Sector Map · Swing · Backtest · Alerts · Models · Ledger · Trust · Paper Desk" />
       )}
 
       {/* ============ DEEP ANALYSIS MODAL ============ */}
@@ -428,7 +509,8 @@ export default memo(function IndiaIntradayTab() {
               <>
                 <SignalCard signal={deep.signal} onExecuteIndia={onExecuteIndia} canLiveIndia={canLiveIndia} busy={busy}
                   orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5}
-                  indiaBudgetINR={state?.config?.indiaMaxOrderINR ?? 5000} />
+                  indiaBudgetINR={state?.config?.indiaMaxOrderINR ?? 5000}
+                  onPaperTrade={onDeskPaper} paperOpenForSymbol={paperOpenSymbols.has(deep.signal.symbol)} />
                 <MtfBlock ltf={deep.ltf} quality={deep.signal.quality} />
                 <EdgeBlock edge={deep.edge} />
                 {deep.narrative && (
@@ -458,6 +540,11 @@ export default memo(function IndiaIntradayTab() {
             )}
           </div>
         </div>
+      )}
+
+      {/* ============ v9.1: SCANNER UNIVERSE EDITOR (Paper Desk ke saath) ============ */}
+      {universeOpen && (
+        <UniverseEditor market="INDIA" onClose={() => setUniverseOpen(false)} onChanged={() => setPaperRefresh(k => k + 1)} />
       )}
     </div>
   );

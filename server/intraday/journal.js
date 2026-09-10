@@ -29,6 +29,12 @@ function _persist() {
   if (typeof _saveTimer.unref === 'function') _saveTimer.unref();
 }
 
+/** v9.1: synchronous flush for graceful shutdown (see flushPaperState). */
+export function flushJournalState() {
+  if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+  saveJSON(FILE, _state);
+}
+
 // ------------------------------------------------------------
 // 1. Data capture — called by paperTrading on EVERY close path
 //    (SL/T1/T2/trail/EOD/manual/stale). Synchronous, no AI.

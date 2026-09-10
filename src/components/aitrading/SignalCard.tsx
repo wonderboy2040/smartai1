@@ -732,9 +732,16 @@ interface Props {
   maxLeverage?: number;
   /** v6.6: India default capital budget (indiaMaxOrderINR). */
   indiaBudgetINR?: number;
+  /** v9.1 PAPER DESK BRIDGE: open this signal as a server-managed Paper
+   *  Desk position (/api/intraday-paper — T1 50% book, breakeven trail,
+   *  SL/T2/EOD auto-exit) instead of the quick journal paper fill. */
+  onPaperTrade?: (signal: AISignal) => void;
+  /** v9.1: the Paper Desk already has an open trade on this symbol →
+   *  show the ✓ PAPER OPEN state (server also blocks duplicates). */
+  paperOpenForSymbol?: boolean;
 }
 
-export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, onExecuteIndia, onExecuteFutures, onDeep, canLive, canLiveIndia, isNew, orderBudgetINR, riskCapPct, maxLeverage, indiaBudgetINR }: Props) {
+export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, onExecuteIndia, onExecuteFutures, onDeep, canLive, canLiveIndia, isNew, orderBudgetINR, riskCapPct, maxLeverage, indiaBudgetINR, onPaperTrade, paperOpenForSymbol }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [slipOpen, setSlipOpen] = useState(false);
   const [ticketOpen, setTicketOpen] = useState(false);
@@ -965,7 +972,10 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
 
       {/* Execution buttons (India — Dhan gauntlet, v6.5; v9.0.2: PAPER
           always visible — the old actionable gate hid the paper button on
-          WATCH cards and dead-ended India practice entirely) */}
+          WATCH cards and dead-ended India practice entirely).
+          v9.1: 📈 DESK PAPER — same levels, but opened in the server-managed
+          Paper Desk simulator (T1 50% book + breakeven trail + SL/T2/EOD
+          auto-exit, tracked in the 08 PAPER DESK section). */}
       {signal.market === 'INDIA' && onExecuteIndia && !ticketOpen && (
         <div className="mt-3 flex flex-wrap gap-2">
           <button
@@ -975,6 +985,17 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
             className="quantum-btn-primary px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-orange-600 to-amber-600 disabled:opacity-50">
             🧪 PAPER TRADE
           </button>
+          {onPaperTrade && plan && (
+            <button
+              onClick={() => onPaperTrade(signal)}
+              disabled={busy || paperOpenForSymbol}
+              title={paperOpenForSymbol
+                ? 'Is symbol par already ek Paper Desk trade khula hai — duplicate server-side blocked hai (08 PAPER DESK me dekho/close karo)'
+                : 'Paper Desk simulator me kholo — server-managed: T1 par 50% book + breakeven trail + SL/T2/EOD auto-exit · position 08 PAPER DESK section me track hogi (live P&L + history)'}
+              className="px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white hover:from-purple-500 hover:to-fuchsia-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              {paperOpenForSymbol ? '✓ PAPER OPEN' : '📈 DESK PAPER'}
+            </button>
+          )}
           {signal.grade === 'STRONG' && (
             <button
               onClick={() => onExecuteIndia(signal, 'live')}

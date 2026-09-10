@@ -55,6 +55,14 @@ function _persist() {
   if (typeof _saveTimer.unref === 'function') _saveTimer.unref();
 }
 
+/** v9.1: synchronous flush for graceful shutdown — the 1s debounce loses
+ *  the very last state change (an open/close, a T1 partial book) if the
+ *  process dies inside the window (deploy/restart races). */
+export function flushPaperState() {
+  if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+  saveJSON(FILE, _state);
+}
+
 function _validateSym(sym) {
   return typeof sym === 'string' && /^[A-Z0-9&\-]{2,15}$/.test(sym.trim().toUpperCase());
 }

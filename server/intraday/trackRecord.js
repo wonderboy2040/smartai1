@@ -48,6 +48,12 @@ function _persist() {
   if (typeof _saveTimer.unref === 'function') _saveTimer.unref();
 }
 
+/** v9.1: synchronous flush for graceful shutdown (see flushPaperState). */
+export function flushTrackRecordState() {
+  if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+  saveJSON(FILE, _state);
+}
+
 function _id(symbol, market = 'INDIA') { return `${symbol}:${dayKeyFor(market)}`; }
 
 export function trackedSymbolsForToday() {

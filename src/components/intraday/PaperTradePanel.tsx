@@ -197,18 +197,35 @@ function HistorySection({ history }: { history: PaperHistory }) {
   );
 }
 
-export function PaperTradePanel({ livePrices, refreshKey }: { livePrices: Record<string, LiveQuote>; refreshKey: number }) {
+export function PaperTradePanel({ livePrices, refreshKey, onOpenSymbolsChange }: {
+  livePrices: Record<string, LiveQuote>; refreshKey: number;
+  /** v9.1: lift the open-trade symbol set to the parent tab so the Signal
+   *  Board cards can badge "PAPER OPEN" (the old IntradayTab kept this
+   *  in a never-populated ref — the badge never lit up; fixed by design). */
+  onOpenSymbolsChange?: (symbols: Set<string>) => void;
+}) {
   const [summary, setSummary] = useState<PaperSummary | null>(null);
   const [history, setHistory] = useState<PaperHistory | null>(null);
   const [closingId, setClosingId] = useState<number | null>(null);
   const [expanded, setExpanded] = useState(true);
   const [restoredNote, setRestoredNote] = useState<string | null>(null);
   const syncingRef = useRef(false);
+  // v9.1: report the open-symbol set upward (dedup'd via a ref so the
+  // 15s/60s pollers don't spam the parent with fresh-but-equal Sets).
+  const lastSymbolsRef = useRef<Set<string> | null>(null);
+  const reportSymbols = useCallback((s: PaperSummary | null) => {
+    if (!onOpenSymbolsChange) return;
+    const next = new Set((s?.open || []).map(t => String(t.symbol).toUpperCase()));
+    const prev = lastSymbolsRef.current;
+    if (prev && prev.size === next.size && [...next].every(x => prev.has(x))) return;
+    lastSymbolsRef.current = next;
+    onOpenSymbolsChange(next);
+  }, [onOpenSymbolsChange]);
 
   const load = useCallback(async () => {
     const s = await fetchSummary();
-    if (s) setSummary(s);
-  }, []);
+    if (s) { setSummary(s); reportSymbols(s); }
+  }, [reportSymbols]);
 
   const loadHistory = useCallback(async () => {
     // History fetch + device-mirror sync (guard: no overlapping runs —
@@ -220,6 +237,7 @@ export function PaperTradePanel({ livePrices, refreshKey }: { livePrices: Record
       if (!s) return;
       setSummary(s);
       setHistory(h);
+      reportSymbols(s);
       if (h) {
         const restored = await syncMirrorWithServer(s.open || [], h.trades || []);
         if (restored) {
@@ -228,6 +246,7 @@ export function PaperTradePanel({ livePrices, refreshKey }: { livePrices: Record
           const [s2, h2] = await Promise.all([fetchSummary(), fetchHistory()]);
           if (s2) setSummary(s2);
           if (h2) setHistory(h2);
+          if (s2) reportSymbols(s2);
           setRestoredNote('history device-backup se recover hui');
           setTimeout(() => setRestoredNote(null), 8000);
         }
@@ -272,7 +291,7 @@ export function PaperTradePanel({ livePrices, refreshKey }: { livePrices: Record
           <span>📈</span> Paper Trading Simulator
         </div>
         <p className="text-[11px] text-slate-500">
-          Koi virtual trade nahi khula. Kisi bhi signal card par <b className="text-purple-300">📈 PAPER TRADE</b> dabain
+          Koi virtual trade nahi khula. Kisi bhi signal card par <b className="text-purple-300">📈 DESK PAPER</b> dabain
           aur engine ki levels bina real paisa lagaye test karein — T1 par 50% book, breakeven trail, SL/T2/EOD auto-manage.
         </p>
       </div>

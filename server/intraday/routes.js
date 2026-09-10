@@ -163,7 +163,14 @@ export function registerIntradayRoutes(app, deps) {
   const agentDeps = () => ({
     KEYS, OPENAI_COMPAT,
     getLastScan: () => _intradayCache.data,
-    triggerScan: async () => (isNseMarketOpen() ? runScanner(process.env.INTRADAY_DEBUG === '1') : _intradayCache.data),
+    // v9.1 FIX: was `isNseMarketOpen() ? runScanner(...) : cache` — that
+    // gate ignores INTRADAY_DEBUG, so committee/briefing/agent could NEVER
+    // trigger the on-demand scan outside NSE hours even with the owner
+    // debug flag set (its documented purpose). Production behaviour is
+    // unchanged: outside market hours they still serve the cached scan.
+    triggerScan: async () => ((isNseMarketOpen() || process.env.INTRADAY_DEBUG === '1')
+      ? runScanner(process.env.INTRADAY_DEBUG === '1')
+      : _intradayCache.data),
     getMarketRegime,
     getTrackRecord,
     getPaperSummary,
@@ -706,6 +713,18 @@ export function registerIntradayRoutes(app, deps) {
     return cache.inflight;
   };
 
+  // ----------------------------------------------------------
+  // v9.1 SCANNER DISPOSITION (audit Phase-2 Step-3 call):
+  // The live India desk now runs the /api/ai/signals Superintelligence
+  // board, and this /api/intraday-scanner route is no longer POLLED by
+  // any frontend component. The scanner logic itself is deliberately
+  // KEPT (Option A) — it is request-driven (60s cache + in-flight
+  // dedupe), so there is NO idle compute cost, and it feeds:
+  //   • CommitteePanel debates  (triggerScan → top setups)
+  //   • briefing / journal EOD / weekly + the MCP agent (getLastScan)
+  //   • the signal track record (recordSignals → watcher outcomes)
+  // Stripping it would have broken the very panels Phase 1 wired in.
+  // ----------------------------------------------------------
   app.get('/api/intraday-scanner', async (req, res) => {
     const market = _normMarket(req.query.market);
     const debugForce = process.env.INTRADAY_DEBUG === '1';
