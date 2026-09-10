@@ -6,6 +6,17 @@ AI-powered portfolio analytics for Indian and US markets, crypto tracking, risk 
 
 > **Financial disclaimer:** Signals, projections, and AI/ML output are informational only. They are not investment advice. Verify market data before trading.
 
+## What's New in v8.0.1 (Advance Pro Trader Engine)
+
+- 🧠 **EXPERT PICKS (80+ AI SCORE)** — whole-universe CoinDCX scan on both desks: every liquid SPOT INR pair + every GLOBAL FUTURES USDT perp. 7-factor composite score (trend 25% · momentum 20% · SMC 15% · volume 10% · volatility 10% · regime 10% · R:R 10%); only 80+ = STRONG picks shown.
+- 📋 **Complete trade blueprint per pick** — entry zone (limit band), ATR stop-loss, T1/T2/T3 targets, recommended leverage (liquidation-aware ladder: spot 1×, futures ≤6× by score), staged 40/40/20 exit plan with breakeven+trail, IMMEDIATE vs PULLBACK timing window, hold horizon, invalidation note.
+- 🌐 **Dynamic universe discovery** — LIVE from the CoinDCX feed (no stale hardcoded coin lists; delistings/new listings flow automatically). Resilient fallback chain: CoinDCX → Binance top-listing (CoinDCX-seed filtered) → static majors, with live USDINR conversion.
+- 🔧 **CoinDCX Signal Board fix** — pass-2 now revives the pattern/sr/volume/volatility model votes from 1h LTF candles (previously 4-5 of 9 models abstained on crypto → confidence collapsed to NEUTRAL and no trade signals showed).
+- 🔓 **CRITICAL login fix** — the PIN input had `maxLength={4}`: any strong PIN (5+ chars, as `.env.example` recommends) could NEVER be entered and the terminal stayed permanently locked. Now 4-32 chars.
+- ✅ All checks pass — TypeScript clean, 851/851 tests (43 files), build OK, 0 npm audit vulnerabilities, live API + browser E2E verified.
+
+See [`docs/UPGRADE_REPORT_v18.md`](docs/UPGRADE_REPORT_v18.md) for the v18 audit & fix list.
+
 ## What's New in v18.0 (Advance Pro Intelligence)
 
 - 🚀 **`/pro`** — Flagship Advance Pro Intelligence Dashboard (regime + portfolio + market + smart money + AI verdict in one)

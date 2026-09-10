@@ -211,7 +211,11 @@ export default function App() {
             <p className="text-slate-500 text-sm mt-3">Secure PIN enter karein</p>
           </div>
           <div className="relative z-10">
-            <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && verifyPin()} placeholder="••••" maxLength={4} className="w-full text-center px-4 py-5 quantum-input rounded-2xl text-3xl tracking-[0.5em] text-cyan-400 font-bold mb-5 font-mono placeholder-slate-700 relative z-10" />
+            {/* v8.0.1 FIX: maxLength={4} tha — 4+ char ka strong PIN (jo
+                .env.example recommend karta hai) KABHI enter hi nahi ho
+                sakta tha aur site permanently locked lagti thi. Strong
+                PINs allowed: 4-32 chars. */}
+            <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && verifyPin()} placeholder="••••" maxLength={32} autoComplete="current-password" className="w-full text-center px-4 py-5 quantum-input rounded-2xl text-3xl tracking-[0.3em] text-cyan-400 font-bold mb-5 font-mono placeholder-slate-700 relative z-10" />
           </div>
           <button onClick={verifyPin} className="quantum-btn-primary w-full py-4 bg-gradient-to-r from-cyan-500 to-purple-600 animate-gradient rounded-2xl font-bold text-white text-lg relative z-10">🔓 Unlock Terminal</button>
           <div className="text-center mt-5 relative z-10">

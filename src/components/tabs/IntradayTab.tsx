@@ -28,6 +28,7 @@ import { CommitteePanel } from '../intraday/CommitteePanel';
 import { JournalPanel } from '../intraday/JournalPanel';
 import { useIntradayStream } from '../intraday/useIntradayStream';
 import { sectorConcentration } from '../intraday/sectorMap';
+import { ExpertPicksPanel } from '../aitrading/ExpertPicksPanel';
 import type {
   IntradaySignal, IntradayAlertsStatus, ScannerResponse, OutcomeEvent, MarketRegime, TrackRecordData,
 } from '../intraday/types';
@@ -890,6 +891,13 @@ export const IntradayTab = () => {
             </div>
           </div>
         )}
+      </div>
+
+      {/* ===== v8.0 · 00 — EXPERT PICKS (Advance Pro Trader Engine):
+            whole-universe 80+ AI-score picks with the complete trade
+            blueprint (entry · leverage · exit) — leads the desk. ===== */}
+      <div className="mt-3">
+        <ExpertPicksPanel active={!marketClosed || market === 'CRYPTO'} market={market} />
       </div>
 
       {/* ===== v4.9 · 01 — SIGNAL DESK: hero section, pehle graded setups

@@ -17,6 +17,7 @@
 // ============================================================
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAITrading, fetchWallet } from '../aitrading/useAITrading';
+import { ExpertPicksPanel } from '../aitrading/ExpertPicksPanel';
 import { SignalCard } from '../aitrading/SignalCard';
 import { MtfBlock, EdgeBlock } from '../aitrading/DeepQualityBlock';
 import { TopPicksPanel } from '../aitrading/TopPicksPanel';
@@ -37,6 +38,7 @@ import type { AISignal, SignalBoard, WalletView } from '../aitrading/types';
 // whales/backtest/alerts/models/ledger/trust/brief/correlations → PRO.
 const NAV = [
   { id: 'cx-agent', label: 'AGENT', emoji: '🤖', pro: false },
+  { id: 'cx-expert', label: 'EXPERT', emoji: '🧠', pro: false },
   { id: 'cx-top5', label: 'TOP 5', emoji: '🏆', pro: false },
   { id: 'cx-signals', label: 'SIGNALS', emoji: '📡', pro: false },
   { id: 'cx-execute', label: 'EXECUTE', emoji: '⚙️', pro: false },
@@ -297,6 +299,11 @@ export default memo(function CoinDcxTab() {
           {toast.text}
         </div>
       )}
+
+      {/* ============ 🧠 EXPERT PICKS (v8.0 Advance Pro Trader Engine) ============ */}
+      <div id="cx-expert">
+        <ExpertPicksPanel active market={desk} onDeep={(sym) => { onDeep({ symbol: sym, market: desk } as AISignal); }} />
+      </div>
 
       {/* ============ 🏆 TOP 5 PICKS (v6.9) ============ */}
       <div id="cx-top5">

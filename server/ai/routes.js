@@ -30,6 +30,7 @@
 //   • auto-executor  (90s)     — STRONG-only auto trading when enabled
 // ============================================================
 import { getSignals, getDeepSignal, getFreshSignalForExec, getFreshFuturesSignalForExec } from './signals.js';
+import { getExpertPicks } from './expertPicks.js';
 import { getOptionsDesk, buildStrategies } from './optionsDesk.js';
 import {
   loadConfig, updateConfig, getRiskState, executeSignal, getPositionsWithPnl,
@@ -131,6 +132,25 @@ export function registerAITradingRoutes(app, deps) {
       res.json(board);
     } catch (e) {
       jsonError(res, 500, 'ai signals failed', e);
+    }
+  });
+
+  // ---------------- v8.0 EXPERT PICKS (Advance Pro Trader Engine) ----
+  // Whole-universe scan (all liquid CoinDCX spot INR pairs / B-USDT
+  // perpetuals / NSE names) → composite 0-100 expert score → only
+  // 80+ STRONG picks (default) with a full trade blueprint: entry
+  // zone, SL, T1/T2/T3, leverage ladder, staged exit plan, timing
+  // window, invalidation.
+  app.get('/api/ai/expert-picks', async (req, res) => {
+    try {
+      const market = normMarket(req.query.market);
+      const minScore = Math.min(99, Math.max(1, parseInt(req.query.minScore, 10) || 80));
+      const limit = Math.min(15, Math.max(1, parseInt(req.query.limit, 10) || 12));
+      const picks = await getExpertPicks(market, { minScore, limit });
+      res.set('Cache-Control', 'no-store');
+      res.json(picks);
+    } catch (e) {
+      jsonError(res, 500, 'expert picks failed', e);
     }
   });
 

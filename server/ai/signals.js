@@ -152,7 +152,7 @@ function tvToInd(row, ltp) {
 // Yahoo for dead symbols AND the null keys evicted live entries
 // from the bounded 80-key cache).
 const _ltfMiss = new Map();
-async function fetchYahooIntradayCandles(symbol, market) {
+export async function fetchYahooIntradayCandles(symbol, market) {
   const mkt = String(market || 'INDIA').toUpperCase();
   const key = `ltf:${mkt}:${symbol}`;
   const hit = cacheGet(key, 120_000);
@@ -231,7 +231,7 @@ async function dailyTrend(candles) {
   if (Math.abs(spread) < 0.5) return { trend: 'FLAT', spread };
   return { trend: spread > 0 ? 'UP' : 'DOWN', spread: Math.round(spread * 100) / 100 };
 }
-async function buildRegime(market) {
+export async function buildRegime(market) {
   const mkt = String(market || 'INDIA').toUpperCase();
   if (mkt === 'CRYPTO' || mkt === 'FUTURES') {
     const q = await fetchYahooQuotes(['BTC']).catch(() => ({}));
@@ -618,6 +618,38 @@ export async function getSignals(market, deps, opts = {}) {
         if (idx >= 0) votes.splice(idx, 1);
         votes.push({ id: 'smc', name: reg.name, role: reg.role, weight: reg.weight * (_ad?.smc?.mul ?? 1), ...smcV });
       }
+      // v8.0 PASS-2 REVIVAL: the TV crypto rows used to leave pattern /
+      // sr / volume abstaining on the WHOLE crypto board (patterns:[],
+      // pivot:null, vwap:null) — participation ~47% crushed every
+      // confidence into NEUTRAL and the desk showed zero trade signals.
+      // The LTF candles we already fetched for SMC carry the full
+      // indicator set (patterns, OBV, MFI, VWAP, avgVolume) — so those
+      // three models get a REAL second vote here. Only abstained
+      // pass-1 slots are replaced (no double counting).
+      try {
+        const li = enr.ltfInd;
+        if (li && Array.isArray(enr.candles) && enr.candles.length >= 30) {
+          const relVol = li.avgVolume20 > 0 ? (li.volume || 0) / li.avgVolume20 : null;
+          const ltfCtx = {
+            ...c.ctx,
+            ltp: Number.isFinite(li.ltp) && li.ltp > 0 ? li.ltp : c.ctx.ltp,
+            ind: { ...li, relVolume: relVol },
+            candles: enr.candles,
+          };
+          for (const mid of ['pattern', 'sr', 'volume', 'volatility']) {
+            const m = MODELS.find(x => x.id === mid);
+            if (!m || typeof m.fn !== 'function') continue;
+            const pIdx = votes.findIndex(v => v.id === mid);
+            const pAbstained = pIdx >= 0 && votes[pIdx].dir === 0;
+            if (pIdx >= 0 && !pAbstained) continue; // already voted on TV data
+            const v2 = m.fn(ltfCtx);
+            if (v2 && v2.dir !== 0 && (v2.conf || 0) > 0) {
+              if (pIdx >= 0) votes.splice(pIdx, 1);
+              votes.push({ id: mid, name: m.name, role: m.role, weight: m.weight * (_ad?.[mid]?.mul ?? 1), ...v2, revived: true });
+            }
+          }
+        }
+      } catch { /* honest degrade — keep pass-1 votes */ }
     }
     let aiNote = null;
     const verdict = council.verdicts[c.ctx.symbol];
