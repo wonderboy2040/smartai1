@@ -39,6 +39,7 @@ import { futuresPairFor, fetchFuturesPrices, fetchFuturesCandles } from './futur
 import { computeIndicatorsFromCandles } from './lib/indicators.js';
 import { smcVote } from './lib/smc.js';
 import { maxSaneLeverage } from './ensemble.js';
+import { pRound as pR, MAX_STOP_FRACTION } from './lib/priceRound.js';
 import { buildRegime, fetchYahooIntradayCandles } from './signals.js';
 
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
@@ -342,6 +343,10 @@ export function expertScoreFactors({ tv, ltf, regime, market, smc = null }) {
     if (atrPctLtp >= 0.5 && atrPctLtp <= 2.2) rr += 30;     // 1.6×ATR stop ≈ sane risk
     else if (atrPctLtp < 0.25) rr -= 20;                    // dead — SL too tight, noise stops out
     else if (atrPctLtp > 4) rr -= 24;                       // huge stop eats the R:R
+    // v9.2: an ATR wider than 25% of price (micro-tick meme coins, thin
+    // Yahoo fallback candles) is a 25%+ STOP — the blueprint's own
+    // stop-cap kicks in and the honest R:R grade must scream it.
+    if (atrPctLtp > 25) rr -= 35;
   }
   const high52 = num(ind.high52w), low52 = num(ind.low52w);
   if (high52 != null && low52 != null && high52 > low52) {
@@ -394,20 +399,9 @@ export function expertScoreFactors({ tv, ltf, regime, market, smc = null }) {
 // Adaptive price precision — DOGE @ ₹15.40 needs different decimals
 // than BTC @ ₹64,00,000. Never let rounding crush a low-price coin's
 // levels to all-zero lookalikes (0.08 / 0.08 / 0.08).
-export function pricePrecision(p) {
-  const v = Math.abs(Number(p) || 0);
-  if (!Number.isFinite(v) || v === 0) return 2;
-  if (v >= 1000) return 2;
-  if (v >= 1) return 2;
-  if (v >= 0.01) return 4;
-  if (v >= 0.0001) return 6;
-  return 8;
-}
-const pR = (v) => {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return null;
-  return Number(n.toFixed(pricePrecision(n)));
-};
+// v9.2: moved to server/ai/lib/priceRound.js (shared with the plan
+// engine + order layers); re-exported here for the existing tests/API.
+export { pricePrecision } from './lib/priceRound.js';
 
 // smcVote returns {dir, conf, reasons} — extract conf when aligned.
 function smcAlignedValue(smv, side) {
@@ -429,12 +423,18 @@ export function buildExpertBlueprint({ side, ltp, atr, score, market, ema20 = nu
   const sgn = long ? 1 : -1;
 
   // Entry zone: a limit band straddling price (pullback-friendly).
-  const zoneLo = long ? ltp - 0.35 * a : ltp - 0.10 * a;
+  // v9.2: floor the low edge at 50% of price — an absurd ATR could push
+  // it negative on micro-tick coins.
+  const zoneLo = Math.max(long ? ltp - 0.35 * a : ltp - 0.10 * a, ltp * 0.5);
   const zoneHi = long ? ltp + 0.10 * a : ltp + 0.35 * a;
   const entry = ltp;
 
   // Stop: 1.6×ATR (crypto noise), never tighter than 0.9×ATR.
-  const slDist = Math.max(1.6 * a, ltp * 0.004);
+  // v9.2 STOP-DISTANCE CAP: an ATR wider than the price itself (JUP-class
+  // micro ticks: ATR 283% of price) put SHORT targets NEGATIVE and LONG
+  // stops negative. A stop beyond 30% of price is untradeable fiction —
+  // cap it so every level (incl. the 3R runner) stays positive.
+  const slDist = Math.min(Math.max(1.6 * a, ltp * 0.004), ltp * MAX_STOP_FRACTION);
   const stopLoss = long ? entry - slDist : entry + slDist;
   const t1 = entry + sgn * 1.0 * slDist;
   const t2 = entry + sgn * 2.0 * slDist;

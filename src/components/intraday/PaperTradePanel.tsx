@@ -68,6 +68,15 @@ export async function openPaperTrade(s: IntradaySignal, qty: number): Promise<{ 
 const pnlColor = (v: number) => (v > 0 ? 'text-emerald-400' : v < 0 ? 'text-red-400' : 'text-slate-400');
 const fmtPnl = (v: number) => `${v >= 0 ? '+' : '−'}₹${Math.abs(v).toFixed(2)}`;
 
+/** v9.2 adaptive price format — DOGE/SHIB-class crypto paper trades
+ *  must not render as ₹0.0 (0.0848 → ₹0.0848, 4-8 decimals below ₹1). */
+const px = (v: number | null | undefined): string => {
+  if (v == null || !Number.isFinite(v)) return '—';
+  const a = Math.abs(v);
+  const dp = a >= 1 ? (a >= 100 ? 1 : 2) : a >= 0.01 ? 4 : a >= 0.0001 ? 6 : 8;
+  return `₹${v.toFixed(dp)}`;
+};
+
 function dayLabel(dayKey: string): string {
   try {
     const d = new Date(`${dayKey}T12:00:00`);
@@ -95,9 +104,9 @@ function TradeRow({ t, live, onClose, closing }: {
           {t.direction === 'LONG' ? 'L' : 'S'}
         </span>
       </td>
-      <td className="px-2 py-1.5 text-center text-cyan-200">₹{t.entry.toFixed(1)}</td>
+      <td className="px-2 py-1.5 text-center text-cyan-200">{px(t.entry)}</td>
       <td className="px-2 py-1.5 text-center text-slate-300">
-        ₹{livePrice.toFixed(1)}{live && <span className="ml-0.5 text-[7px] text-cyan-500 animate-pulse">●</span>}
+        {px(livePrice)}{live && <span className="ml-0.5 text-[7px] text-cyan-500 animate-pulse">●</span>}
       </td>
       <td className="px-2 py-1.5 text-center text-slate-400">{t.remainingQty}/{t.qty}</td>
       <td className={`px-2 py-1.5 text-center font-bold ${pnlColor(livePnl)}`}>{fmtPnl(livePnl)}</td>
@@ -178,8 +187,8 @@ function HistorySection({ history }: { history: PaperHistory }) {
                               {t.direction === 'LONG' ? 'L' : 'S'}
                             </span>
                           </td>
-                          <td className="px-2 py-1 text-center text-cyan-200/80">₹{t.entry.toFixed(1)}</td>
-                          <td className="px-2 py-1 text-center text-slate-400">₹{exit.toFixed(1)}</td>
+                          <td className="px-2 py-1 text-center text-cyan-200/80">{px(t.entry)}</td>
+                          <td className="px-2 py-1 text-center text-slate-400">{px(exit)}</td>
                           <td className="px-2 py-1 text-center text-slate-500">{t.qty}</td>
                           <td className={`px-2 py-1 text-center font-bold ${pnlColor(t.realizedPnl)}`}>{fmtPnl(t.realizedPnl)}</td>
                           <td className="px-2 py-1 text-center text-[8px] text-slate-600">{t.closeReason}</td>
@@ -367,8 +376,8 @@ export function PaperTradePanel({ livePrices, refreshKey, onOpenSymbolsChange }:
                             {t.direction === 'LONG' ? 'L' : 'S'}
                           </span>
                         </td>
-                        <td className="px-2 py-1.5 text-center text-cyan-200">₹{t.entry.toFixed(1)}</td>
-                        <td className="px-2 py-1.5 text-center text-slate-300">₹{exit.toFixed(1)}</td>
+                        <td className="px-2 py-1.5 text-center text-cyan-200">{px(t.entry)}</td>
+                        <td className="px-2 py-1.5 text-center text-slate-300">{px(exit)}</td>
                         <td className="px-2 py-1.5 text-center text-slate-400">{t.qty}</td>
                         <td className={`px-2 py-1.5 text-center font-bold ${pnlColor(t.realizedPnl)}`}>{fmtPnl(t.realizedPnl)}</td>
                         <td className="px-2 py-1.5 text-center text-[9px] text-slate-500">{t.closeReason}</td>

@@ -229,6 +229,11 @@ export const ExpertPicksPanel = memo(function ExpertPicksPanel({ active, market,
   const [view, setView] = useState<ExpertPicksView | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(false);
+  /** v9.2 red-day fallback: jab 80+ STRONG setup zero ho aur engine ne
+   *  coins scan kiye ho, ek baar 65+ (ACTION-grade) retry karo — panel
+   *  khali nahi baithega, picks "downgraded tier" banner ke saath
+   *  dikhte hain (grade chip har card pe honest hai). */
+  const [relaxedNote, setRelaxedNote] = useState<string | null>(null);
   const activeRef = useRef(active);
   activeRef.current = active;
 
@@ -236,7 +241,20 @@ export const ExpertPicksPanel = memo(function ExpertPicksPanel({ active, market,
     try {
       const r = await apiFetch(`${getProxyBase()}/api/ai/expert-picks?market=${market}&minScore=${minScore}&limit=12&t=${Date.now()}`, { signal: AbortSignal.timeout(45000) });
       if (!r.ok) throw new Error(String(r.status));
-      const j = await r.json();
+      let j = await r.json();
+      // v9.2: 0 STRONG picks + a scanned universe → one honest retry at 65+.
+      if (Array.isArray(j?.picks) && j.picks.length === 0 && Number(j?.scanned) > 0 && minScore > 65) {
+        try {
+          const r2 = await apiFetch(`${getProxyBase()}/api/ai/expert-picks?market=${market}&minScore=65&limit=12&t=${Date.now()}`, { signal: AbortSignal.timeout(45000) });
+          if (r2.ok) {
+            const j2 = await r2.json();
+            if (Array.isArray(j2?.picks) && j2.picks.length > 0) {
+              j = j2;
+              setRelaxedNote('Aaj 80+ STRONG setup nahi mila — ACTION-grade (65+) setups dikha rahe hain, har card ka grade chip dekho aur size aadha rakho');
+            } else setRelaxedNote(null);
+          } else setRelaxedNote(null);
+        } catch { setRelaxedNote(null); }
+      } else setRelaxedNote(null);
       setView(j);
       setErr(false);
     } catch { setErr(true); }
@@ -290,8 +308,14 @@ export const ExpertPicksPanel = memo(function ExpertPicksPanel({ active, market,
       {!loading && view?.ok && picks.length === 0 && (
         <div className="py-8 text-center">
           <div className="text-3xl mb-2">😌</div>
-          <div className="text-xs text-slate-400 font-bold">Abhi koi 80+ score setup nahi</div>
+          <div className="text-xs text-slate-400 font-bold">Abhi koi {minScore}+ score setup nahi</div>
           <div className="text-[10px] text-slate-500 mt-1">Engine {view.scanned ?? 0} coins scan kar chuka hai — patience hi edge hai. 60s me rescan.</div>
+        </div>
+      )}
+
+      {!loading && relaxedNote && picks.length > 0 && (
+        <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[10px] text-amber-300 font-semibold">
+          ⚠️ {relaxedNote}
         </div>
       )}
 

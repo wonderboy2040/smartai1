@@ -11,6 +11,9 @@
 //                 ACTION / WATCH / NEUTRAL below that
 // ============================================================
 
+import { pRound, MAX_STOP_FRACTION } from './lib/priceRound.js';
+
+
 export const DEFAULT_GATES = {
   minConfidence: 75,   // ensemble confidence ≥ this → STRONG-eligible
   minAgreement: 0.70,  // ≥ 70% of voting weight on the winning side
@@ -142,8 +145,15 @@ export function buildTradePlan(consensus, ctx, market, opts = {}) {
   const a = atr != null && atr > 0 ? atr : atrFallback;
   const slMult = cryptoish ? 1.6 : 1.4;
   const long = consensus.dir > 0;
-  let stopLoss = long ? ltp - slMult * a : ltp + slMult * a;
+  // v9.2 STOP-DISTANCE CAP: an absurd ATR (micro-price meme coins,
+  // thin Yahoo fallback candles) can put the stop 3.8× the price away —
+  // LONG stop goes NEGATIVE, SHORT targets go negative. A stop wider
+  // than 30% of price is untradeable fiction; the honest plan caps it
+  // (30% keeps even the 3R target positive on both sides).
+  const maxSlDist = ltp * MAX_STOP_FRACTION;
+  let stopLoss = long ? ltp - Math.min(slMult * a, maxSlDist) : ltp + Math.min(slMult * a, maxSlDist);
   let planStyle = atr != null ? 'atr-based' : 'atr-fallback';
+  if (slMult * a > maxSlDist) planStyle = `${planStyle}+stop-capped(30%)`;
   let structure = null;
   // v6.12: swing-structure stop — when the probrain layer found a
   // valid recent swing, the stop sits BEHIND the structure (padded
@@ -169,7 +179,7 @@ export function buildTradePlan(consensus, ctx, market, opts = {}) {
   let riskClamped = false, originalRiskPct = null;
   const cap = Number(opts.maxRiskPct);
   if (Number.isFinite(cap) && cap > 0) {
-    const cappedDist = ltp * (cap / 100);
+    const cappedDist = Math.min(ltp * (cap / 100), maxSlDist);
     if (Math.abs(ltp - stopLoss) > cappedDist) {
       originalRiskPct = r2((Math.abs(ltp - stopLoss) / ltp) * 100);
       stopLoss = long ? ltp - cappedDist : ltp + cappedDist;
@@ -180,12 +190,17 @@ export function buildTradePlan(consensus, ctx, market, opts = {}) {
   const target1 = long ? ltp + risk : ltp - risk;
   const target2 = long ? ltp + 2 * risk : ltp - 2 * risk;
   const rr = risk > 0 ? Math.abs(target2 - ltp) / risk : 0;
+  // v9.2: adaptive price precision — a fixed 2-decimal round collapsed
+  // sub-1 instruments (DOGE 0.0848 → entry 0.08, T1 0.08, T2 0.08;
+  // OP's SL landed ON the entry = instant stop-out). pRound keeps 4-8
+  // significant decimals on low-price legs so SL/T1/T2 stay DISTINCT
+  // and direction-consistent. Prices ≥ 1 round exactly as before.
   return {
-    entry: r2(ltp),
-    stopLoss: r2(stopLoss),
-    target1: r2(target1),
-    target2: r2(target2),
-    risk: r2(risk),
+    entry: pRound(ltp),
+    stopLoss: pRound(stopLoss),
+    target1: pRound(target1),
+    target2: pRound(target2),
+    risk: pRound(risk),
     riskPct: r2((risk / ltp) * 100),
     rewardRisk: r2(rr),
     // v6.12: honest flag — the reward side is mechanically 2R by
@@ -193,7 +208,7 @@ export function buildTradePlan(consensus, ctx, market, opts = {}) {
     // The probrain quality layer separately judges whether 2R is
     // structurally reachable. rrBelowFloor flags unusable plans.
     rrBelowFloor: rr < 1.5 || undefined,
-    atrUsed: r2(a),
+    atrUsed: pRound(a),
     planStyle,
     ...(structure ? { structure } : {}),
     ...(riskClamped ? { riskClamped: true, originalRiskPct } : {}),
@@ -218,7 +233,7 @@ export function buildSignal({ symbol, market, ctx, votes, consensus, plan, aiNot
     totalModels: consensus.totalModels,
     bullWeight: consensus.bullWeight ?? null,
     bearWeight: consensus.bearWeight ?? null,
-    ltp: r2(ctx?.ltp ?? null),
+    ltp: pRound(ctx?.ltp ?? null),
     changePct: r1(changePct),
     plan,
     quality: quality || null,
@@ -333,7 +348,9 @@ export function computeTrailSl(opts) {
   // never cross the live price (that's a stop HIT, not a trail move)
   if (long && candidate >= ltp) return null;
   if (!long && candidate <= ltp) return null;
-  return { sl: Math.round(candidate * 100) / 100, peak, stage };
+  // v9.2: adaptive precision — a 2-decimal trail stop on a sub-1
+  // instrument rounds ONTO the entry (OP-class instant stop-outs).
+  return { sl: pRound(candidate), peak, stage };
 }
 
 /**
@@ -374,10 +391,10 @@ export function fitPlanToRiskCap(signal, maxRiskPct = 5) {
   const target2 = long ? ltp + 2 * capDist : ltp - 2 * capDist;
   const fitted = {
     ...plan,
-    stopLoss: r2(stopLoss),
-    target1: r2(target1),
-    target2: r2(target2),
-    risk: r2(capDist),
+    stopLoss: pRound(stopLoss),
+    target1: pRound(target1),
+    target2: pRound(target2),
+    risk: pRound(capDist),
     riskPct: r2(maxRiskPct),
     rewardRisk: 2,
     riskClamped: true,
@@ -439,7 +456,7 @@ export function computeLeverageView({ side, entry, stopLoss, target2, marginINR,
   const qty = notionalINR / e;
   const slDist = Math.abs(e - sl);
   const t2Dist = t2 > 0 ? Math.abs(t2 - e) : null;
-  const liquidation = r2(long ? e * (1 - 0.95 / L) : e * (1 + 0.95 / L));
+  const liquidation = pRound(long ? e * (1 - 0.95 / L) : e * (1 + 0.95 / L));
   const liqDist = Math.abs(e - liquidation);
   const slDistPct = r2((slDist / e) * 100);
 

@@ -182,8 +182,9 @@ export function buildSuperBlueprint({
   const a = (atr != null && atr > 0) ? atr : ltp * 0.012;
   const score = clamp(num(aiScore) ?? 50, 0, 100);
 
-  // --- entry zone (caller's zone if given, else ATR band) ---
-  const zLo = Number.isFinite(entryZoneLow) && entryZoneLow > 0 ? entryZoneLow : long ? ltp - 0.35 * a : ltp - 0.10 * a;
+  // --- entry zone (caller's zone if given, else ATR band; low edge
+  //     floored at 50% of price so an absurd ATR can't push it negative) ---
+  const zLo = Number.isFinite(entryZoneLow) && entryZoneLow > 0 ? entryZoneLow : Math.max(long ? ltp - 0.35 * a : ltp - 0.10 * a, ltp * 0.5);
   const zHi = Number.isFinite(entryZoneHigh) && entryZoneHigh > 0 ? entryZoneHigh : long ? ltp + 0.10 * a : ltp + 0.35 * a;
 
   // --- entry TIMING window ---

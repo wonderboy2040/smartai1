@@ -17,6 +17,7 @@ import { istDayKey, istMinutes, dayKeyFor } from './time.js';
 import { isCryptoSymbolBase } from './engine.js';
 import { recordTradeClose } from './journal.js';
 import { scheduleBackup, restoreBackup, backupConfigured } from './backup.js';
+import { pRound } from '../ai/lib/priceRound.js';
 
 const FILE = 'paper-trades.json';
 const MAX_TRADES = 500;
@@ -109,10 +110,10 @@ export function openPaperTrade(input) {
   const trade = {
     id: _state.nextId++,
     symbol: sym, market: mkt, direction: dir,
-    entry: +e.toFixed(2), qty: q,
-    stopLoss: +sl.toFixed(2),
-    target1: t1 ? +t1.toFixed(2) : null,
-    target2: t2 ? +t2.toFixed(2) : null,
+    entry: pRound(e), qty: q,
+    stopLoss: pRound(sl),
+    target1: t1 ? pRound(t1) : null,
+    target2: t2 ? pRound(t2) : null,
     remainingQty: q,
     t1Hit: false,
     status: 'OPEN',           // OPEN | PARTIAL | CLOSED
@@ -120,7 +121,7 @@ export function openPaperTrade(input) {
     closedAt: null, closeReason: null,
     realizedPnl: 0,
     unrealizedPnl: 0,
-    lastPrice: +e.toFixed(2),
+    lastPrice: pRound(e),
     parts: [],                // [{qty, exitPrice, ts, reason}]
     dayKey: today,
     capital: +(q * e).toFixed(2), // notionally deployed
@@ -139,7 +140,7 @@ function _closePart(trade, qty, price, reason) {
   const sign = trade.direction === 'LONG' ? 1 : -1;
   trade.remainingQty -= use;
   trade.realizedPnl += use * (price - trade.entry) * sign;
-  trade.parts.push({ qty: use, exitPrice: +(+price).toFixed(2), ts: Date.now(), reason });
+  trade.parts.push({ qty: use, exitPrice: pRound(price), ts: Date.now(), reason });
   if (trade.remainingQty <= 0) {
     trade.status = 'CLOSED';
     trade.closedAt = Date.now();
@@ -167,7 +168,7 @@ export function evaluatePaper(quotes, events) {
     const afterSqOff = mkt !== 'CRYPTO' && m >= PAPER_SQOFF_MIN;
     const q = quotes[t.symbol];
     const price = q?.price;
-    if (price > 0) t.lastPrice = +price.toFixed(2);
+    if (price > 0) t.lastPrice = pRound(price);
     const p = t.lastPrice;
     if (!(p > 0)) continue;
 
@@ -432,7 +433,7 @@ function _sanitizeRestoredTrade(raw) {
   const parts = Array.isArray(raw.parts)
     ? raw.parts.slice(0, 20).map(p => ({
         qty: _normQty(_num(p?.qty, 1), market) || (market === 'CRYPTO' ? 0.0001 : 1),
-        exitPrice: +_num(p?.exitPrice, entry).toFixed(2),
+        exitPrice: pRound(_num(p?.exitPrice, entry)),
         ts: _num(p?.ts, openedAt),
         reason: String(p?.reason || 'RESTORE').slice(0, 20),
       }))
@@ -443,10 +444,10 @@ function _sanitizeRestoredTrade(raw) {
   const realizedPnl = +_num(raw.realizedPnl).toFixed(2);
   return {
     id, symbol, market, direction,
-    entry: +entry.toFixed(2), qty,
-    stopLoss: +_num(raw.stopLoss, entry).toFixed(2),
-    target1: _num(raw.target1) > 0 ? +_num(raw.target1).toFixed(2) : null,
-    target2: _num(raw.target2) > 0 ? +_num(raw.target2).toFixed(2) : null,
+    entry: pRound(entry), qty,
+    stopLoss: pRound(_num(raw.stopLoss, entry)),
+    target1: _num(raw.target1) > 0 ? pRound(_num(raw.target1)) : null,
+    target2: _num(raw.target2) > 0 ? pRound(_num(raw.target2)) : null,
     remainingQty,
     t1Hit: !!raw.t1Hit,
     status,
@@ -455,7 +456,7 @@ function _sanitizeRestoredTrade(raw) {
     closeReason: status === 'CLOSED' ? String(raw.closeReason || 'RESTORED').slice(0, 20) : null,
     realizedPnl,
     unrealizedPnl: status === 'CLOSED' ? 0 : +_num(raw.unrealizedPnl).toFixed(2),
-    lastPrice: +_num(raw.lastPrice, entry).toFixed(2),
+    lastPrice: pRound(_num(raw.lastPrice, entry)),
     parts,
     dayKey: /^\d{4}-\d{2}-\d{2}$/.test(String(raw.dayKey)) ? raw.dayKey : dayKeyFor(market, new Date(openedAt)),
     capital: +_num(raw.capital, qty * entry).toFixed(2),

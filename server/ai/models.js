@@ -43,8 +43,23 @@ function trendMatrix(ctx) {
 
   // EMA stack alignment (10 > 20 > 50 for uptrend).
   if (i.ema10 != null && i.ema20 != null && i.ema50 != null) {
-    if (i.ema10 > i.ema20 && i.ema20 > i.ema50) { score += 2; pts.push('EMA 10>20>50 bullish stack'); }
-    else if (i.ema10 < i.ema20 && i.ema20 < i.ema50) { score -= 2; pts.push('EMA 10<20<50 bearish stack'); }
+    if (i.ema10 > i.ema20 && i.ema20 > i.ema50) {
+      // v9.2 PRICE-CONFIRMATION GUARD (the "wrong direction" fix):
+      // a lagging HTF stack stays bullish for hours after an intraday
+      // reversal — the vote used to read "EMA 10>20>50 bullish" on a
+      // coin already dumping. Price closing below the FAST average
+      // (ema10) is the textbook flip-warning: the stack term is halved
+      // and the reason says so, instead of voting full-size against
+      // the tape the user is watching.
+      const confirmed = ctx.ltp == null || ctx.ltp > i.ema10;
+      score += confirmed ? 2 : 1;
+      pts.push(confirmed ? 'EMA 10>20>50 bullish stack' : 'EMA stack bullish but price < EMA10 — flip watch');
+    }
+    else if (i.ema10 < i.ema20 && i.ema20 < i.ema50) {
+      const confirmed = ctx.ltp == null || ctx.ltp < i.ema10;
+      score -= confirmed ? 2 : 1;
+      pts.push(confirmed ? 'EMA 10<20<50 bearish stack' : 'EMA stack bearish but price > EMA10 — flip watch');
+    }
     else { score += i.ema10 > i.ema20 ? 0.5 : -0.5; pts.push('EMA stack mixed'); }
   }
   // Price vs 50-period average.

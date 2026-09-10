@@ -38,6 +38,7 @@ import { loadJSON, saveJSON } from '../lib/store.js';
 import { durablePut } from '../mcp/durable.js';
 import { recordExecution, settlePositionOutcome, markPartialOutcome } from './ledger.js';
 import { computeTrailSl, maxSaneLeverage, fitPlanToRiskCap, evaluateExecutionGate } from './ensemble.js';
+import { pRound } from './lib/priceRound.js';
 import { withJournalLock, pushEntry, todayIST, dailyStats, ratchetSl, exitStageOf, loadProTraderConfig } from './coindcxOrders.js';
 
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
@@ -512,7 +513,7 @@ export async function executeFuturesSignal(opts) {
       const lines = [
         `🔔 <b>SmartAI NOTIFY (Futures)</b> — ${base} PERP ${effectiveSignal.side}`,
         `<b>${signal.grade || '—'}</b> · conf ${signal.confidence ?? '—'}% · agreement ${Math.round((signal.agreement ?? 0) * 100)}%`,
-        plan ? `Entry ${r2(plan.entry)} · SL ${r2(plan.stopLoss)} · T1 ${r2(plan.target1)} · T2 ${r2(plan.target2)} · risk ${r2(plan.riskPct)}%` : 'plan nahi bana',
+        plan ? `Entry ${pRound(plan.entry)} · SL ${pRound(plan.stopLoss)} · T1 ${pRound(plan.target1)} · T2 ${pRound(plan.target2)} · risk ${r2(plan.riskPct)}%` : 'plan nahi bana',
         `Book: ${capsNote}`,
         [synthNote, fitNote, floorNote].filter(Boolean).join(' · ') || undefined,
         '— notify-only: koi order place NAHI hua.',
@@ -522,7 +523,7 @@ export async function executeFuturesSignal(opts) {
         try { telegramSent = !!(await sendTelegram(lines.join('\n'))).ok; } catch { /* best-effort */ }
       }
       pushEntry(j, {
-        ...entry, status: 'NOTIFIED', ...(alertPrice ? { price: r2(alertPrice) } : {}),
+        ...entry, status: 'NOTIFIED', ...(alertPrice ? { price: pRound(alertPrice) } : {}),
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
         reason: [synthNote, fitNote, floorNote, verdict.reason].filter(Boolean).join(' · ') || 'gauntlet pass',
         telegramSent,
@@ -531,7 +532,7 @@ export async function executeFuturesSignal(opts) {
       return {
         ok: true, mode: 'notify', notified: true, telegramSent,
         alert: { pair: base, side: effectiveSignal.side, grade: signal.grade, confidence: signal.confidence,
-          plan: plan ? { entry: r2(plan.entry), stopLoss: r2(plan.stopLoss), target2: r2(plan.target2) } : null,
+          plan: plan ? { entry: pRound(plan.entry), stopLoss: pRound(plan.stopLoss), target2: pRound(plan.target2) } : null,
           caps: capsNote },
         note: telegramSent ? 'Telegram alert bhej diya (journal AUDIT: NOTIFIED). Koi futures order nahi laga.'
           : 'Gauntlet pass + journal AUDIT likha, par Telegram configured nahi — Alerts & AI Keys me token daalo.',
@@ -611,7 +612,7 @@ export async function executeFuturesSignal(opts) {
   const marginUsed = r2(notionalUSDT / lev);
   if (marginUsed < 2) return { ok: false, error: `Margin ₹${inrOfUsdt(marginUsed, usdInr)} too small for ${pair} — increase the order size` };
   const liquidation = lev > 1 && effectiveSignal.plan?.stopLoss != null
-    ? r2(effectiveSignal.side !== 'SHORT' ? price * (1 - 0.95 / lev) : price * (1 + 0.95 / lev))
+    ? pRound(effectiveSignal.side !== 'SHORT' ? price * (1 - 0.95 / lev) : price * (1 + 0.95 / lev))
     : null;
 
   // --- FINAL MUTATION under the journal lock (fresh copy) ---
@@ -646,8 +647,8 @@ export async function executeFuturesSignal(opts) {
       marginUSDT: marginUsed, marginINR: inrOfUsdt(marginUsed, usdInr),
       leverage: lev, ...(lev > 1 ? { liquidation } : {}),
       sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
-      initialRisk: r2(Math.abs(price - (effectiveSignal.plan?.stopLoss ?? price))),
-      peakPrice: r2(price),
+      initialRisk: pRound(Math.abs(price - (effectiveSignal.plan?.stopLoss ?? price))),
+      peakPrice: pRound(price),
       signal: { grade: signal.grade, confidence: signal.confidence, agreement: signal.agreement, summary: synthNote || signal.summary },
       openedAt: Date.now(), status: 'OPEN', ...extra,
     });
@@ -659,7 +660,7 @@ export async function executeFuturesSignal(opts) {
       const position = mkPosition(ledgerEntryId ? { ledgerEntryId } : {});
       j.positions.push(position);
       pushEntry(j, {
-        ...entry, status: 'FILLED', qty, price: r2(price), notionalUSDT, notionalINR: inrOfUsdt(notionalUSDT, usdInr),
+        ...entry, status: 'FILLED', qty, price: pRound(price), notionalUSDT, notionalINR: inrOfUsdt(notionalUSDT, usdInr),
         leverage: lev, marginUSDT: marginUsed,
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
         reason: [verdict.reason, synthNote, fitNote, levNote, floorNote].filter(Boolean).join(' · '),
@@ -667,7 +668,7 @@ export async function executeFuturesSignal(opts) {
       saveJournalFresh(j);
       return {
         ok: true, mode: 'paper', position,
-        filled: { qty, price: r2(price), notionalUSDT, notionalINR: inrOfUsdt(notionalUSDT, usdInr), leverage: lev, marginUSDT: marginUsed },
+        filled: { qty, price: pRound(price), notionalUSDT, notionalINR: inrOfUsdt(notionalUSDT, usdInr), leverage: lev, marginUSDT: marginUsed },
         ...(walletNote || synthNote || fitNote || levNote || floorNote ? { fitted: [walletNote, synthNote, fitNote, levNote, floorNote].filter(Boolean).join(' · ') } : {}),
       };
     }
@@ -703,7 +704,7 @@ export async function executeFuturesSignal(opts) {
       j.positions.push(position);
       pushEntry(j, {
         ...entry, status: orderId || exchangePositionId ? 'SUBMITTED' : 'SUBMITTED_UNKNOWN',
-        qty, price: r2(price), notionalUSDT, notionalINR: inrOfUsdt(notionalUSDT, usdInr),
+        qty, price: pRound(price), notionalUSDT, notionalINR: inrOfUsdt(notionalUSDT, usdInr),
         leverage: lev, marginUSDT: marginUsed, exchangeOrderId: orderId ?? null,
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
         reason: [verdict.reason, fitNote, levNote, walletNote, tpslNote].filter(Boolean).join(' · '),
@@ -711,7 +712,7 @@ export async function executeFuturesSignal(opts) {
       saveJournalFresh(j);
       return {
         ok: true, mode: 'live', orderId, position,
-        filled: { qty, price: r2(price), notionalUSDT, notionalINR: inrOfUsdt(notionalUSDT, usdInr), leverage: lev, marginUSDT: marginUsed },
+        filled: { qty, price: pRound(price), notionalUSDT, notionalINR: inrOfUsdt(notionalUSDT, usdInr), leverage: lev, marginUSDT: marginUsed },
         ...(walletNote || fitNote || levNote || tpslNote ? { fitted: [walletNote, fitNote, levNote, tpslNote].filter(Boolean).join(' · ') } : {}),
       };
     } catch (e) {
@@ -888,12 +889,12 @@ export async function watchFuturesPositions({ sendTelegram } = {}) {
         const peak = long
           ? Math.max(Number.isFinite(prevPeak) && prevPeak > 0 ? prevPeak : price, price)
           : Math.min(Number.isFinite(prevPeak) && prevPeak > 0 ? prevPeak : price, price);
-        p.peakPrice = r2(peak);
+        p.peakPrice = pRound(peak);
         const risk = Number(p.initialRisk) > 0 ? Number(p.initialRisk) : Math.abs(p.entryPrice - p.sl);
         if (risk > 0) {
           const trail = computeTrailSl({ side: p.side, entryPrice: p.entryPrice, peakPrice: peak, currentSl: p.sl, initialRisk: risk, price, armR: cfg.trailArmR, offsetR: cfg.trailOffsetR });
           if (trail) {
-            pushEntry(j, { kind: 'TRAIL', day: todayIST(), pair: p.pair, market: 'FUTURES', reason: `SL ${trail.stage}: ${p.sl} → ${trail.sl} (peak ${r2(peak)})`, from: p.sl, to: trail.sl });
+            pushEntry(j, { kind: 'TRAIL', day: todayIST(), pair: p.pair, market: 'FUTURES', reason: `SL ${trail.stage}: ${p.sl} → ${trail.sl} (peak ${pRound(peak)})`, from: p.sl, to: trail.sl });
             p.sl = trail.sl; p.trailing = trail.stage;
             // LIVE: nudge the native stop too (ratchet-only on the exchange)
             if (p.mode === 'live' && p.exchangePositionId && coindcxConnected()) {
@@ -923,13 +924,13 @@ export async function watchFuturesPositions({ sendTelegram } = {}) {
               const prevSl = p.sl;
               p.sl = ratchetSl(p.side, p.sl, p.entryPrice);
               if (prevSl !== p.sl) {
-                pushEntry(j, { kind: 'TRAIL', day: todayIST(), pair: p.pair, market: 'FUTURES', reason: `BREAKEVEN LOCK (T1 hit): SL ${r2(prevSl)} → ${r2(p.sl)} — runner risk-free`, from: prevSl, to: p.sl });
+                pushEntry(j, { kind: 'TRAIL', day: todayIST(), pair: p.pair, market: 'FUTURES', reason: `BREAKEVEN LOCK (T1 hit): SL ${pRound(prevSl)} → ${pRound(p.sl)} — runner risk-free`, from: prevSl, to: p.sl });
                 if (p.mode === 'live' && p.exchangePositionId && coindcxConnected()) {
                   try { await createFuturesTpsl({ positionId: p.exchangePositionId, stopLoss: p.sl }); } catch { /* watcher remains the guard */ }
                 }
               }
             }
-            partialNotes.push(`T1 ${leg.closedQty} @ ${r2(price)} → +₹${r2(leg.legPnlINR)}`);
+            partialNotes.push(`T1 ${leg.closedQty} @ ${pRound(price)} → +₹${r2(leg.legPnlINR)}`);
           } else {
             pushEntry(j, { kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair, reason: `T1 futures partial failed: ${String(leg.error || '').slice(0, 160)}` });
             watchErrors.push({ pair: p.pair, reason: `T1 partial failed: ${String(leg.error || '').slice(0, 120)}` });
@@ -945,13 +946,13 @@ export async function watchFuturesPositions({ sendTelegram } = {}) {
               const prevSl = p.sl;
               p.sl = ratchetSl(p.side, p.sl, t1);
               if (prevSl !== p.sl) {
-                pushEntry(j, { kind: 'TRAIL', day: todayIST(), pair: p.pair, market: 'FUTURES', reason: `PROFIT LOCK (T2 hit): SL ${r2(prevSl)} → T1 ${r2(p.sl)}`, from: prevSl, to: p.sl });
+                pushEntry(j, { kind: 'TRAIL', day: todayIST(), pair: p.pair, market: 'FUTURES', reason: `PROFIT LOCK (T2 hit): SL ${pRound(prevSl)} → T1 ${pRound(p.sl)}`, from: prevSl, to: p.sl });
                 if (p.mode === 'live' && p.exchangePositionId && coindcxConnected()) {
                   try { await createFuturesTpsl({ positionId: p.exchangePositionId, stopLoss: p.sl }); } catch { /* watcher remains the guard */ }
                 }
               }
             }
-            partialNotes.push(`T2 ${leg.closedQty} @ ${r2(price)} → +₹${r2(leg.legPnlINR)}`);
+            partialNotes.push(`T2 ${leg.closedQty} @ ${pRound(price)} → +₹${r2(leg.legPnlINR)}`);
           } else {
             pushEntry(j, { kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair, reason: `T2 futures partial failed: ${String(leg.error || '').slice(0, 160)}` });
             watchErrors.push({ pair: p.pair, reason: `T2 partial failed: ${String(leg.error || '').slice(0, 120)}` });

@@ -22,6 +22,7 @@ import { loadJSON, saveJSON } from '../lib/store.js';
 import { durablePut } from '../mcp/durable.js';
 import { fetchCoinDcxTickers } from '../cryptoStream.js';
 import { computeTrailSl } from './ensemble.js';
+import { pRound } from './lib/priceRound.js';
 import { recordExecution, settlePositionOutcome, markPartialOutcome, __setLedgerForTests } from './ledger.js';
 
 const CONFIG_FILE = 'ai-trading-config.json';
@@ -461,7 +462,7 @@ export async function executeSignal(opts) {
       const lines = [
         `🔔 <b>SmartAI NOTIFY</b> — ${pair} ${effectiveSignal.side}`,
         `<b>${signal.grade || '—'}</b> · conf ${signal.confidence ?? '—'}% · agreement ${Math.round((signal.agreement ?? 0) * 100)}%`,
-        plan ? `Entry ${r2(plan.entry)} · SL ${r2(plan.stopLoss)} · T1 ${r2(plan.target1)} · T2 ${r2(plan.target2)} · risk ${r2(plan.riskPct)}%` : 'plan nahi bana',
+        plan ? `Entry ${pRound(plan.entry)} · SL ${pRound(plan.stopLoss)} · T1 ${pRound(plan.target1)} · T2 ${pRound(plan.target2)} · risk ${r2(plan.riskPct)}%` : 'plan nahi bana',
         `Book: ${capsNote}`,
         [synthNote, fitNote, floorNote].filter(Boolean).join(' · ') || undefined,
         '— notify-only: koi order place NAHI hua.',
@@ -471,7 +472,7 @@ export async function executeSignal(opts) {
         try { telegramSent = !!(await sendTelegram(lines.join('\n'))).ok; } catch { /* alert best-effort */ }
       }
       pushEntry(j, {
-        ...entry, status: 'NOTIFIED', ...(price ? { price: r2(price) } : {}),
+        ...entry, status: 'NOTIFIED', ...(price ? { price: pRound(price) } : {}),
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
         reason: [synthNote, fitNote, floorNote, verdict.reason].filter(Boolean).join(' · ') || 'gauntlet pass',
         telegramSent,
@@ -480,7 +481,7 @@ export async function executeSignal(opts) {
       return {
         ok: true, mode: 'notify', notified: true, telegramSent,
         alert: { pair, side: effectiveSignal.side, grade: signal.grade, confidence: signal.confidence,
-          plan: plan ? { entry: r2(plan.entry), stopLoss: r2(plan.stopLoss), target2: r2(plan.target2) } : null,
+          plan: plan ? { entry: pRound(plan.entry), stopLoss: pRound(plan.stopLoss), target2: pRound(plan.target2) } : null,
           caps: capsNote },
         note: telegramSent ? 'Telegram alert bhej diya (journal AUDIT: NOTIFIED). Koi position nahi bani.'
           : 'Gauntlet pass + journal AUDIT likha, par Telegram configured nahi — Alerts & AI Keys me token/chat-id daalo.',
@@ -536,7 +537,7 @@ export async function executeSignal(opts) {
   // v6.6 liquidation estimate stored on the position (paper watcher simulates
   // liquidation at this level; live positions carry it for display + watch)
   const liquidation = lev > 1 && effectiveSignal.plan?.stopLoss != null
-    ? r2(effectiveSignal.side !== 'SHORT' ? price * (1 - 0.95 / lev) : price * (1 + 0.95 / lev))
+    ? pRound(effectiveSignal.side !== 'SHORT' ? price * (1 - 0.95 / lev) : price * (1 + 0.95 / lev))
     : null;
 
   // --- FINAL MUTATION — under the journal lock with a FRESH copy ---
@@ -590,20 +591,20 @@ export async function executeSignal(opts) {
         ...(ledgerEntryId ? { ledgerEntryId } : {}),
         ...(lev > 1 ? { leverage: lev, marginINR: marginUsed, liquidation } : {}),
         sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
-        initialRisk: r2(Math.abs(price - (effectiveSignal.plan?.stopLoss ?? price))),
-        peakPrice: r2(price),
+        initialRisk: pRound(Math.abs(price - (effectiveSignal.plan?.stopLoss ?? price))),
+        peakPrice: pRound(price),
         signal: { grade: signal.grade, confidence: signal.confidence, agreement: signal.agreement, summary: synthNote || signal.summary },
         openedAt: Date.now(), status: 'OPEN',
       };
       j.positions.push(position);
       pushEntry(j, {
-        ...entry, status: 'FILLED', qty, price: r2(price), notionalINR: r2(notional),
+        ...entry, status: 'FILLED', qty, price: pRound(price), notionalINR: r2(notional),
         ...(lev > 1 ? { leverage: lev, marginINR: marginUsed } : {}),
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
         reason: [verdict.reason, synthNote, fitNote, levNote, floorNote].filter(Boolean).join(' · '),
       });
       saveJournal(j);
-      return { ok: true, mode: 'paper', position, filled: { qty, price: r2(price), notionalINR: r2(notional), ...(lev > 1 ? { leverage: lev, marginINR: marginUsed } : {}) }, ...{ fitted: [synthNote, fitNote, levNote, floorNote].filter(Boolean).join(' · ') || undefined } };
+      return { ok: true, mode: 'paper', position, filled: { qty, price: pRound(price), notionalINR: r2(notional), ...(lev > 1 ? { leverage: lev, marginINR: marginUsed } : {}) }, ...{ fitted: [synthNote, fitNote, levNote, floorNote].filter(Boolean).join(' · ') || undefined } };
     }
 
     // --- LIVE execution: signed order to CoinDCX ---
@@ -645,8 +646,8 @@ export async function executeSignal(opts) {
         ledgerEntryId: (() => { try { return recordExecution(signal, { mode: 'live', market: 'CRYPTO', source })?.id || null; } catch { return null; } })(),
         ...(lev > 1 ? { leverage: lev, marginINR: marginUsed, liquidation, ...(marginPairUsed ? { marginPair: marginPairUsed } : {}) } : {}),
         sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
-        initialRisk: r2(Math.abs(price - (effectiveSignal.plan?.stopLoss ?? price))),
-        peakPrice: r2(price),
+        initialRisk: pRound(Math.abs(price - (effectiveSignal.plan?.stopLoss ?? price))),
+        peakPrice: pRound(price),
         signal: { grade: signal.grade, confidence: signal.confidence, agreement: signal.agreement, summary: signal.summary },
         openedAt: Date.now(),
         // margin create responses always carry an id when accepted; no-id
@@ -656,14 +657,14 @@ export async function executeSignal(opts) {
       };
       j.positions.push(position);
       pushEntry(j, {
-        ...entry, status: orderId ? 'SUBMITTED' : 'SUBMITTED_UNKNOWN', qty, price: r2(price),
+        ...entry, status: orderId ? 'SUBMITTED' : 'SUBMITTED_UNKNOWN', qty, price: pRound(price),
         notionalINR: r2(notional), exchangeOrderId: orderId,
         ...(lev > 1 ? { leverage: lev, marginINR: marginUsed } : {}),
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
         reason: [verdict.reason, fitNote, levNote].filter(Boolean).join(' · '),
       });
       saveJournal(j);
-      return { ok: true, mode: 'live', orderId, position, filled: { qty, price: r2(price), notionalINR: r2(notional), ...(lev > 1 ? { leverage: lev, marginINR: marginUsed } : {}) }, ...{ fitted: [fitNote, levNote].filter(Boolean).join(' · ') || undefined } };
+      return { ok: true, mode: 'live', orderId, position, filled: { qty, price: pRound(price), notionalINR: r2(notional), ...(lev > 1 ? { leverage: lev, marginINR: marginUsed } : {}) }, ...{ fitted: [fitNote, levNote].filter(Boolean).join(' · ') || undefined } };
     } catch (e) {
       pushEntry(j, { ...entry, status: 'FAILED', reason: String(e?.message || e).slice(0, 200) });
       saveJournal(j);
@@ -867,7 +868,7 @@ export async function watchPositions({ sendTelegram } = {}) {
           const peak = long
             ? Math.max(Number.isFinite(prevPeak) && prevPeak > 0 ? prevPeak : price, price)
             : Math.min(Number.isFinite(prevPeak) && prevPeak > 0 ? prevPeak : price, price);
-          p.peakPrice = r2(peak);
+          p.peakPrice = pRound(peak);
           const risk = Number(p.initialRisk) > 0 ? Number(p.initialRisk) : Math.abs(p.entryPrice - p.sl);
           if (risk > 0) {
             const trail = computeTrailSl({
@@ -877,7 +878,7 @@ export async function watchPositions({ sendTelegram } = {}) {
             if (trail) {
               pushEntry(j, {
                 kind: 'TRAIL', day: todayIST(), pair: p.pair, market: 'CRYPTO',
-                reason: `SL ${trail.stage}: ₹${p.sl} → ₹${trail.sl} (peak ₹${r2(peak)})`,
+                reason: `SL ${trail.stage}: ${p.sl} → ${trail.sl} (peak ${pRound(peak)})`,
                 from: p.sl, to: trail.sl,
               });
               p.sl = trail.sl;
@@ -918,7 +919,7 @@ export async function watchPositions({ sendTelegram } = {}) {
                   });
                 }
               }
-              partialNotes.push(`T1 ${leg.closedQty} @ ₹${r2(price)} → +₹${r2(leg.legPnlINR)} · SL→${pro.breakEvenAfterTp1 ? 'breakeven' : 'unchanged'}`);
+              partialNotes.push(`T1 ${leg.closedQty} @ ${pRound(price)} → +₹${r2(leg.legPnlINR)} · SL→${pro.breakEvenAfterTp1 ? 'breakeven' : 'unchanged'}`);
             } else {
               pushEntry(j, { kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair, reason: `T1 partial close failed: ${String(leg.error || '').slice(0, 160)}` });
               watchErrors.push({ pair: p.pair, reason: `T1 partial failed: ${String(leg.error || '').slice(0, 120)}` });
@@ -941,7 +942,7 @@ export async function watchPositions({ sendTelegram } = {}) {
                   });
                 }
               }
-              partialNotes.push(`T2 ${leg.closedQty} @ ₹${r2(price)} → +₹${r2(leg.legPnlINR)} · SL→T1`);
+              partialNotes.push(`T2 ${leg.closedQty} @ ${pRound(price)} → +₹${r2(leg.legPnlINR)} · SL→T1`);
             } else {
               pushEntry(j, { kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair, reason: `T2 partial close failed: ${String(leg.error || '').slice(0, 160)}` });
               watchErrors.push({ pair: p.pair, reason: `T2 partial failed: ${String(leg.error || '').slice(0, 120)}` });
@@ -1175,9 +1176,9 @@ async function partialCloseSpotLeg(j, p, price, { stage, pct }) {
     pushEntry(j, {
       kind: 'PARTIAL_TP', day: todayIST(), pair: p.pair, mode: p.mode, market: 'CRYPTO',
       source: p.source, stage,
-      qty: partialQty, price: r2(price), pnlINR: r2(legPnlINR),
+      qty: partialQty, price: pRound(price), pnlINR: r2(legPnlINR),
       remainingQty: p.qty, bookedPnlINR: p.bookedPnlINR, exitStage: p.exitStage,
-      reason: `${stage} partial: closed ${pct}% (${partialQty} of ${originalQty}) @ ₹${r2(price)} — booked ₹${r2(legPnlINR)} · remaining ${p.qty}`,
+      reason: `${stage} partial: closed ${pct}% (${partialQty} of ${originalQty}) @ ${pRound(price)} — booked ₹${r2(legPnlINR)} · remaining ${p.qty}`,
     });
     try { markPartialOutcome(p.ledgerEntryId, { stage, qty: partialQty, price, pnlINR: legPnlINR }); } catch { /* best-effort */ }
 
