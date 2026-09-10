@@ -347,6 +347,9 @@ export interface JournalPosition {
   bookedPnlINR?: number | null;
   bookedPnlUSDT?: number | null;
   exitStage?: 'ENTRY' | 'T2_HIT' | 'RUNNER' | 'CLOSED' | string | null;
+  /** v7.0.1: where the current ltp tick came from — 'coindcx' | 'tv-india' |
+   *  'futures-rt' | 'tv-usd-fallback' | 'entry-fallback' (frozen price). */
+  priceSource?: string | null;
 }
 
 export interface JournalEntry {

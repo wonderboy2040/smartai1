@@ -458,7 +458,28 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
                     )}
                     {!open && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-slate-600/20 text-slate-400">{p.closeReason || 'CLOSED'}</span>}
                     <span className="ml-auto text-[11px] font-mono text-slate-400">{p.qty} @ {pf(p.entryPrice)}</span>
-                    {open && p.ltp != null && <span className="text-[11px] font-mono text-slate-300">→ {pf(p.ltp)}</span>}
+                    {/* v7.0.1: live LTP with source honesty — pulse dot when a
+                        live feed drives it, ~TV tag on the USD-fallback path,
+                        STALE tag only when every feed failed (frozen). */}
+                    {open && p.ltp != null && (
+                      <span
+                        className="text-[11px] font-mono text-slate-300 flex items-center gap-1"
+                        title={p.priceSource === 'tv-usd-fallback'
+                          ? 'CoinDCX feed unavailable — TradingView USD price × live USD/₹ (approx, live)'
+                          : p.priceSource === 'entry-fallback'
+                            ? 'No live feed reachable — price frozen at entry price'
+                            : 'Live price — 10s refresh while position is open'}>
+                        → {pf(p.ltp)}
+                        {p.priceSource === 'tv-usd-fallback' && <span className="text-[8px] font-black text-amber-400">~TV</span>}
+                        {p.priceSource === 'entry-fallback' && <span className="text-[8px] font-black text-red-400">STALE</span>}
+                        {p.priceSource !== 'entry-fallback' && (
+                          <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
+                            <span className="absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-60 animate-ping" />
+                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500" />
+                          </span>
+                        )}
+                      </span>
+                    )}
                     <span className={`text-xs font-black font-mono ${upnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`} title={isFut ? `≈ ${p.unrealizedPnlUSDT != null ? `${p.unrealizedPnlUSDT >= 0 ? '+' : ''}${p.unrealizedPnlUSDT} USDT` : 'n/a'} @ USD/₹ ${p.usdInr ?? '—'}` : undefined}>
                       {upnl >= 0 ? '+' : ''}{fmt(upnl)}
                     </span>

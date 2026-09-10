@@ -17,7 +17,7 @@
 //   • v6.4 features kept: India manual-broker trade slip, crypto order
 //     preview, risk-auto-fit transparency chips.
 // ============================================================
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useState } from 'react';
 import type { AISignal, Side } from './types';
 
 const fmt = (n: number | null | undefined, dp = 2): string => {
@@ -130,9 +130,14 @@ const loadRiskBudget = (): number => {
 function IndiaTradeSlip({ signal }: { signal: AISignal }) {
   const plan = signal.plan!;
   const long = signal.side === 'LONG';
-  const [budget, setBudget] = useState<number>(loadRiskBudget);
+  // v7.0.1: free-typing risk input (raw string) — same fix as the trade
+  // ticket: the old Math.max(50, …) on every keystroke made the box
+  // impossible to clear/edit. Clamp now happens on blur only.
+  const [budgetRaw, setBudgetRaw] = useState<string>(String(loadRiskBudget()));
   const [copied, setCopied] = useState(false);
-  useEffect(() => { setBudget(loadRiskBudget()); }, []);
+  const budgetNum = Number(budgetRaw);
+  const typedOk = budgetRaw.trim() !== '' && Number.isFinite(budgetNum);
+  const budget = typedOk ? budgetNum : 0;
 
   const stopDist = Math.abs(plan.entry - plan.stopLoss);
   const t1Dist = Math.abs(plan.target1 - plan.entry);
@@ -145,10 +150,18 @@ function IndiaTradeSlip({ signal }: { signal: AISignal }) {
   const bandLo = plan.entry * 0.9985, bandHi = plan.entry * 1.0015;
 
   const onBudget = (v: string) => {
-    const n = Math.max(50, Math.min(1_000_000, Math.round(Number(v) || 0)));
-    setBudget(n);
+    setBudgetRaw(v);
+    const n = Number(v);
+    if (v.trim() !== '' && Number.isFinite(n) && n >= 50 && n <= 1_000_000) {
+      try { localStorage.setItem(RISK_KEY, String(Math.round(n))); } catch { /* private mode */ }
+    }
+  };
+  const onBudgetBlur = () => {
+    const n = Math.max(50, Math.min(1_000_000, Math.round(Number(budgetRaw) || 0)));
+    setBudgetRaw(String(n));
     try { localStorage.setItem(RISK_KEY, String(n)); } catch { /* private mode */ }
   };
+  const pickRisk = (n: number) => { setBudgetRaw(String(n)); try { localStorage.setItem(RISK_KEY, String(n)); } catch { /* private mode */ } };
 
   const slipText = [
     `🇮🇳 NSE TRADE SLIP — ${signal.symbol} (${signal.side})`,
@@ -185,10 +198,25 @@ function IndiaTradeSlip({ signal }: { signal: AISignal }) {
           RISK / TRADE
           <input
             type="number" min={50} max={1000000} step={50}
-            value={budget} onChange={e => onBudget(e.target.value)}
+            value={budgetRaw} onChange={e => onBudget(e.target.value)} onBlur={onBudgetBlur}
+            placeholder="₹"
             className="quantum-input px-2 py-1 rounded-lg text-[11px] font-mono font-bold text-orange-200 w-24"
-            aria-label="risk per trade in rupees" />
+            aria-label="risk per trade in rupees — apna amount type karo" />
         </label>
+      </div>
+
+      {/* v7.0.1 quick-risk chips */}
+      <div className="flex items-center gap-1 flex-wrap mt-1.5" role="group" aria-label="quick risk presets">
+        <span className="text-[8px] font-black text-slate-600 tracking-wider">QUICK:</span>
+        {[200, 500, 1000, 2000].map(a => (
+          <button key={a} onClick={() => pickRisk(a)}
+            title={`Risk ₹${a.toLocaleString('en-IN')} per trade`}
+            className={`px-2 py-0.5 rounded-lg text-[10px] font-black font-mono border transition-colors ${typedOk && budgetNum === a
+              ? 'bg-orange-500/25 text-orange-200 border-orange-400/60'
+              : 'bg-black/30 text-slate-400 border-slate-600/40 hover:bg-orange-500/10'}`}>
+            ₹{a >= 1000 ? `${a / 1000}k` : a}
+          </button>
+        ))}
       </div>
 
       {enough ? (
@@ -275,9 +303,13 @@ interface TicketProps {
   maxLeverage?: number;
   /** default margin (crypto) / capital budget (india) from server config */
   defaultBudgetINR?: number;
+  /** v7.0.1: server per-order cap (crypto maxOrderINR / india indiaMaxOrderINR)
+   *  — the preview stays an honest twin of the fill even when the user
+   *  types a bigger amount. Futures are wallet-limited (no cap). */
+  serverCapINR?: number;
 }
 
-function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteFutures, canLive, canLiveIndia, maxLeverage = 1, defaultBudgetINR = 1000 }: TicketProps) {
+function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteFutures, canLive, canLiveIndia, maxLeverage = 1, defaultBudgetINR = 1000, serverCapINR }: TicketProps) {
   const plan = signal.plan!;
   const crypto = signal.market === 'CRYPTO';
   const futures = signal.market === 'FUTURES';
@@ -288,17 +320,40 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
 
   // futures ticket works in the WALLET's own unit (USDT margin); the
   // others in ₹. Server re-derives everything — this is a preview twin.
-  const [margin, setMargin] = useState<number>(Math.max(futures ? 5 : 100, Math.round(defaultBudgetINR)));
+  // v7.0.1 BUDGET BOX FIX: the input is now FREE-TYPING (raw string).
+  // The old code clamped to ≥100 on EVERY keystroke — the box could
+  // never be cleared or edited freely ("100 clear hi nahi hota").
+  // Validation now happens on blur + execute only.
+  const lo = futures ? 2 : 100;
+  const defaultMargin = Math.max(futures ? 5 : 100, Math.round(defaultBudgetINR));
+  const [marginRaw, setMarginRaw] = useState<string>(String(defaultMargin));
   const [lev, setLev] = useState<number>(futures ? 3 : 1);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const approxUsdInr = 84; // display-only conversion (server uses the live rate)
 
-  const onMargin = (v: string) => {
-    const lo = futures ? 2 : 100;
-    const n = Math.max(lo, Math.min(1_000_000, Math.round((Number(v) || 0) * 100) / 100));
-    setMargin(n);
-    setResult(null);
+  const marginNum = Number(marginRaw);
+  const typedValid = marginRaw.trim() !== '' && Number.isFinite(marginNum);
+  // honest twin: server clamps crypto/india orders to the per-order cap
+  // (Risk settings) — preview shows the fill you will actually get.
+  const orderCap = !futures && serverCapINR && serverCapINR > 0 ? serverCapINR : null;
+  const margin = typedValid ? (orderCap != null ? Math.min(marginNum, orderCap) : marginNum) : 0;
+  const overCapTyped = typedValid && orderCap != null && marginNum > orderCap;
+  const belowMin = typedValid && marginNum < lo;
+  const invalid = !typedValid || belowMin;
+
+  const clampMargin = (v: string | number): number => {
+    const n = Math.round((Number(v) || 0) * 100) / 100;
+    let c = Math.max(lo, Math.min(1_000_000, n));
+    if (orderCap != null && c > orderCap) c = Math.min(orderCap, Math.max(lo, orderCap));
+    return c;
   };
+  const onMargin = (v: string) => { setMarginRaw(v); setResult(null); };
+  const onMarginBlur = () => {
+    if (!typedValid) { setMarginRaw(String(defaultMargin)); setResult(null); return; }
+    const n = clampMargin(marginRaw);
+    if (String(n) !== marginRaw.trim()) setMarginRaw(String(n));
+  };
+  const pickAmount = (n: number) => { setMarginRaw(String(n)); setResult(null); };
 
   // --- math (mirror of the server execute paths) ---
   const notional = leveraged ? margin * lev : margin;
@@ -328,11 +383,17 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
   const exec = (mode: 'paper' | 'live' | 'notify') => {
     const handler = futures ? onExecuteFutures : crypto ? onExecute : onExecuteIndia;
     if (!handler) return;
+    if (invalid) {
+      setResult({ ok: false, text: `⚠ Pehle amount daalo — minimum ${futures ? `${lo} USDT margin` : `₹${lo}`}${orderCap != null ? ` (server cap ${futures ? '' : '₹'}${orderCap.toLocaleString('en-IN')})` : ''}. Box khali/clear karke apna amount type karo, blur par apne aap valid ho jayega.` });
+      setTimeout(() => setResult(null), 8000);
+      return;
+    }
+    const sendMargin = clampMargin(marginRaw); // final safety clamp (cap incl.)
     const opts = futures
-      ? { marginUSDT: margin, ...(lev > 1 ? { leverage: lev } : {}) }
+      ? { marginUSDT: sendMargin, ...(lev > 1 ? { leverage: lev } : {}) }
       : crypto
-        ? { qtyINR: margin, ...(lev > 1 ? { leverage: lev } : {}) }
-        : { qtyINR: margin };
+        ? { qtyINR: sendMargin, ...(lev > 1 ? { leverage: lev } : {}) }
+        : { qtyINR: sendMargin };
     handler(signal, mode, opts);
     // result feedback comes via the parent toast; ticket shows a local ack
     setResult({ ok: true, text: mode === 'live'
@@ -358,17 +419,38 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
         <span className="text-[9px] text-slate-500">{futures ? 'margin USDT (perp wallet se)' : crypto ? 'margin ₹ (leverage apni lag raha hai)' : 'capital budget ₹'}</span>
       </div>
 
-      {/* size + leverage inputs */}
+      {/* size + leverage inputs — v7.0.1 FREE-TYPING budget box */}
       <div className="flex items-center gap-2 flex-wrap mt-2">
         <label className="flex items-center gap-1.5 text-[9px] font-black text-slate-500 tracking-wider">
           {futures ? 'MARGIN USDT' : crypto ? 'MARGIN ₹' : 'BUDGET ₹'}
           <input
             type="number" min={futures ? 2 : 100} max={1000000} step={futures ? 1 : 50}
-            value={margin} onChange={e => onMargin(e.target.value)}
-            className="quantum-input px-2 py-1 rounded-lg text-[11px] font-mono font-bold text-white w-24"
-            aria-label={futures ? 'margin in USDT' : crypto ? 'margin in rupees' : 'capital budget in rupees'} />
-          {futures && <span className="text-[9px] text-slate-600 font-mono">≈ {fmtINRapprox(margin)}</span>}
+            value={marginRaw} onChange={e => onMargin(e.target.value)} onBlur={onMarginBlur}
+            placeholder={futures ? 'USDT' : '₹'}
+            className={`quantum-input px-2 py-1 rounded-lg text-[11px] font-mono font-bold text-white w-28 ${invalid ? 'border-amber-500/50' : ''}`}
+            aria-label={futures ? 'margin in USDT — apna amount type karo' : 'budget in rupees — apna amount type karo'} />
+          {futures && typedValid && <span className="text-[9px] text-slate-600 font-mono">≈ {fmtINRapprox(margin)}</span>}
+          {invalid && <span className="text-[9px] font-black text-amber-400">amount daalo (min {futures ? `${lo} USDT` : `₹${lo}`})</span>}
         </label>
+        {/* v7.0.1 quick-amount chips — one-tap sizing, no typing needed */}
+        <div className="flex items-center gap-1 flex-wrap" role="group" aria-label="quick amount presets">
+          {(futures ? [5, 10, 25, 50, 100] : [500, 1000, 2500, 5000, 10000]).map(a => (
+            <button key={a} onClick={() => pickAmount(a)}
+              title={`Quick-set ${futures ? `${a} USDT margin` : `₹${a.toLocaleString('en-IN')} budget`}`}
+              className={`px-2 py-1 rounded-lg text-[10px] font-black font-mono border transition-colors ${typedValid && Number(marginRaw) === a
+                ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400/60'
+                : 'bg-black/30 text-slate-400 border-slate-600/40 hover:bg-cyan-500/10'}`}>
+              {futures ? `${a}U` : a >= 1000 ? `₹${a / 1000}k` : `₹${a}`}
+            </button>
+          ))}
+          {orderCap != null && (
+            <button onClick={() => pickAmount(orderCap)}
+              title={`Server per-order cap — Execution Console → Risk settings me badha sakte ho`}
+              className="px-2 py-1 rounded-lg text-[10px] font-black font-mono border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 transition-colors">
+              MAX ₹{orderCap.toLocaleString('en-IN')}
+            </button>
+          )}
+        </div>
         {leveraged && (
           <div className="flex items-center gap-1" role="group" aria-label="leverage selector">
             <span className="text-[9px] font-black text-slate-500 tracking-wider">LEVERAGE</span>
@@ -385,6 +467,19 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
           </div>
         )}
       </div>
+
+      {/* v7.0.1 honest-cap + validation warnings (below the inputs) */}
+      {overCapTyped && (
+        <div className="mt-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/[0.07] border border-amber-500/25 text-[10px] font-bold text-amber-300/90 leading-relaxed">
+          ⚠ Tumne {futures ? '' : '₹'}{Math.round(marginNum).toLocaleString('en-IN')} daala, par server per-order cap <b>₹{orderCap!.toLocaleString('en-IN')}</b> hai — order/calculations upar <b>₹{orderCap!.toLocaleString('en-IN')}</b> par hi jayenge (preview wahi dikhata hai).
+          Cap badhana hai to Execution Console → Risk settings me <b>"Max order ₹"</b> badhao, ya upar <b>MAX</b> chip dabao.
+        </div>
+      )}
+      {belowMin && typedValid && (
+        <div className="mt-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/[0.07] border border-amber-500/25 text-[10px] font-bold text-amber-300/90 leading-relaxed">
+          ⚠ {futures ? `Margin ${marginRaw} USDT` : `Budget ₹${marginRaw}`} minimum {futures ? `${lo} USDT` : `₹${lo}`} se kam hai — execute nahi hoga. Amount badhao (blur par apne aap clamp ho jayega).
+        </div>
+      )}
 
       {/* the pre-computed numbers — preview IS the fill */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mt-2">
@@ -447,19 +542,20 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
         </div>
       )}
 
-      {/* ONE-CLICK execute */}
+      {/* ONE-CLICK execute — v7.0.1: disabled while the budget box is
+          empty/below-min so a half-typed amount can never fire */}
       <div className="mt-3 flex flex-wrap gap-2">
-        <button onClick={() => exec('paper')} disabled={busy}
+        <button onClick={() => exec('paper')} disabled={busy || invalid}
           className={`quantum-btn-primary px-4 py-2 rounded-xl text-xs font-black disabled:opacity-50 ${futures ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600' : crypto ? 'bg-gradient-to-r from-cyan-600 to-indigo-600' : 'bg-gradient-to-r from-orange-600 to-amber-600'}`}>
           🧪 PAPER EXECUTE{leveraged && lev > 1 ? ` · ${lev}x` : ''}
         </button>
-        <button onClick={() => exec('notify')} disabled={busy}
+        <button onClick={() => exec('notify')} disabled={busy || invalid}
           title="NOTIFY (v6.11) — poora gauntlet chalega, par output sirf Telegram alert + journal audit hoga. Koi order nahi, koi position nahi."
           className="px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-sky-600 to-blue-600 text-white hover:from-sky-500 hover:to-blue-500 disabled:opacity-50 transition-colors">
           🔔 NOTIFY
         </button>
         {signal.grade === 'STRONG' && (leveraged ? signal.executable : true) && (
-          <button onClick={() => exec('live')} disabled={busy || !canLiveHere}
+          <button onClick={() => exec('live')} disabled={busy || !canLiveHere || invalid}
             title={canLiveHere ? 'REAL order — saare gates server-side re-verify honge' : 'STRONG hai — console me LIVE arm karo (Dhan connect for India)'}
             className="px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
             ⚡ LIVE EXECUTE{leveraged && lev > 1 ? ` · ${lev}x` : ''}
@@ -655,7 +751,8 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
           onExecute={onExecute} onExecuteIndia={onExecuteIndia} onExecuteFutures={onExecuteFutures}
           canLive={canLive} canLiveIndia={canLiveIndia}
           maxLeverage={signal.market === 'INDIA' ? 1 : (maxLeverage ?? 1)}
-          defaultBudgetINR={signal.market === 'CRYPTO' ? orderBudgetINR : signal.market === 'FUTURES' ? 10 : (indiaBudgetINR ?? 5000)} />
+          defaultBudgetINR={signal.market === 'CRYPTO' ? orderBudgetINR : signal.market === 'FUTURES' ? 10 : (indiaBudgetINR ?? 5000)}
+          serverCapINR={signal.market === 'CRYPTO' ? (orderBudgetINR ?? 1000) : signal.market === 'FUTURES' ? undefined : (indiaBudgetINR ?? 5000)} />
       )}
 
       {/* v6.4: India trade slip (manual broker flow) */}

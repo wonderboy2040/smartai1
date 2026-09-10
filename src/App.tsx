@@ -99,6 +99,25 @@ export default function App() {
   // Predictive prefetching for active tab and portfolio holdings
   usePrefetch(activeTab, portfolio);
 
+  // v7.0.1: BROWSER TAB TITLE = LIVE Today's P&L. The Chrome/Edge tab now
+  // reads "📈 +₹1,234 · Wealth AI Pro — Trading Terminal" — the same
+  // realtime Today's P&L the Portfolio tab hero shows, visible even when
+  // another browser tab is on top. Keyed on the ROUNDED value so the title
+  // only rewrites when the number actually changes (metrics recompute on
+  // every price tick); signed out / PIN-locked → the plain default title.
+  const todayPLTitleKey = isAuthenticated ? Math.round(metrics.todayPL ?? 0) : null;
+  useEffect(() => {
+    if (todayPLTitleKey == null) {
+      document.title = 'Wealth AI Pro — Trading Terminal';
+      return;
+    }
+    const v = todayPLTitleKey;
+    const emoji = v > 0 ? '📈' : v < 0 ? '📉' : '⚡';
+    const sign = v > 0 ? '+' : v < 0 ? '−' : '';
+    const abs = Math.abs(v).toLocaleString('en-IN');
+    document.title = `${emoji} ${sign}₹${abs} · Wealth AI Pro — Trading Terminal`;
+  }, [todayPLTitleKey]);
+
   // Deep-link support: /?tab=portfolio (used by the INDMoney OAuth callback
   // redirect) opens the requested tab once on mount. v6.9: the legacy
   // `trading` deep-link lands on the India desk (its successor).

@@ -4,7 +4,10 @@
 // Polls the /api/ai/* endpoints on a staggered cadence and exposes
 // execute / config / kill-switch / close actions with honest
 // loading + error states. Signals refresh every 30s (active tab
-// only), positions every 45s, options desk on demand per index.
+// only), options desk on demand per index.
+// v7.0.1: positions poll is now DYNAMIC — 10s while any position is
+// OPEN (realtime LTP + uPnL feel, server caches make it cheap), 45s
+// when flat. Open positions are exactly when the user is watching.
 // ============================================================
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, getProxyBase } from '../../utils/api';
@@ -91,16 +94,27 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
   }, []);
 
   // Boot + staggered polling (active tab only — background tabs cost zero).
+  // v7.0.1: dynamic positions cadence — 10s while any position is OPEN
+  // (live LTP + uPnL feel; the server-side ticker caches make this cheap),
+  // 45s when flat. Open positions are exactly when the user is watching.
+  const hasOpen = positions.some(p => p.status === 'OPEN');
   useEffect(() => {
     if (!active) return;
     loadBoards();
     loadState();
     loadPositions();
+  }, [active, loadBoards, loadState, loadPositions]);
+  useEffect(() => {
+    if (!active) return;
     const b = setInterval(() => { if (activeRef.current && !document.hidden) loadBoards(); }, 30_000);
     const s = setInterval(() => { if (activeRef.current && !document.hidden) loadState(); }, 60_000);
-    const p = setInterval(() => { if (activeRef.current && !document.hidden) loadPositions(); }, 45_000);
-    return () => { clearInterval(b); clearInterval(s); clearInterval(p); };
-  }, [active, loadBoards, loadState, loadPositions]);
+    return () => { clearInterval(b); clearInterval(s); };
+  }, [active, loadBoards, loadState]);
+  useEffect(() => {
+    if (!active) return;
+    const p = setInterval(() => { if (activeRef.current && !document.hidden) loadPositions(); }, hasOpen ? 10_000 : 45_000);
+    return () => clearInterval(p);
+  }, [active, loadPositions, hasOpen]);
 
   const executeSignal = useCallback(async (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: ExecuteOpts): Promise<ExecuteResult> => {
     setBusy(true);

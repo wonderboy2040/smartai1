@@ -1200,6 +1200,13 @@ export async function cancelAllExchangeOrders() {
 }
 
 // ---------------- positions with live uPnL ----------------
+// v7.0.1 REALTIME PRICE FALLBACK: when the CoinDCX public ticker is
+// unreachable (Cloudflare block / geo / outage) open positions used to
+// freeze at entryPrice — "realtime price fetch nahi ho raha". Now any
+// pair the primary feed misses is priced from the TradingView Binance
+// feed (USD domain) — spot pairs converted via the live USD/INR rate,
+// futures used natively (USDT perp ≈ Binance spot). A `priceSource`
+// tag rides along so the UI can show exactly where the tick came from.
 export async function getPositionsWithPnl() {
   const j = loadJournal();
   const tickers = await fetchCoinDcxTickers().catch(() => []);
@@ -1208,10 +1215,28 @@ export async function getPositionsWithPnl() {
   // source the signals use). One batch request for all open symbols.
   const indiaSyms = [...new Set(j.positions.filter(p => p.market === 'INDIA' && p.status === 'OPEN').map(p => p.symbol))];
   const indiaLtp = new Map();
+  const indiaSrc = new Map();
   if (indiaSyms.length > 0) {
     const { fetchTVIndiaBatch } = await import('./data.js');
     const rows = await fetchTVIndiaBatch(indiaSyms).catch(() => ({}));
-    for (const s of indiaSyms) if (rows[s]?.ltp > 0) indiaLtp.set(s, rows[s].ltp);
+    for (const s of indiaSyms) if (rows[s]?.ltp > 0) { indiaLtp.set(s, rows[s].ltp); indiaSrc.set(s, 'tv-india'); }
+    // v7.0.1: Yahoo fallback for India symbols the TV scanner missed
+    // (scanner down / symbol not on the sheet) — keeps positions live.
+    const miss = indiaSyms.filter(s => !indiaLtp.has(s));
+    if (miss.length > 0) {
+      await Promise.allSettled(miss.map(async (sym) => {
+        try {
+          const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}.NS?interval=1d&range=1d`, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) SmartAI/7.0' },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!r.ok) return;
+          const meta = (await r.json())?.chart?.result?.[0]?.meta;
+          const price = Number(meta?.regularMarketPrice);
+          if (price > 0) { indiaLtp.set(sym, price); indiaSrc.set(sym, 'yahoo'); }
+        } catch { /* skip */ }
+      }));
+    }
   }
   // v6.8: futures positions priced from the futures RT feed (USDT domain)
   const futPairs = [...new Set(j.positions.filter(p => p.market === 'FUTURES' && p.status === 'OPEN').map(p => p.pair))];
@@ -1226,17 +1251,57 @@ export async function getPositionsWithPnl() {
     futUsdInr = usdInr;
     for (const r of (Array.isArray(rows) ? rows : [])) if (r.last > 0) futLtp.set(r.pair, r.last);
   }
+  // v7.0.1: TV-Binance fallback for CRYPTO spot pairs the CoinDCX
+  // ticker map missed (CF-block) — priced in ₹ via the live USD/INR.
+  const cryptoOpen = j.positions.filter(p => p.status === 'OPEN' && p.market !== 'INDIA' && p.market !== 'FUTURES');
+  const cryptoMiss = cryptoOpen.filter(p => !byPair.has(p.pair)).map(p => String(p.pair || '').replace(/INR$/, '').replace(/^B-/, '').replace(/_USDT$/, ''));
+  const tvUsd = new Map();
+  let spotUsdInr = null;
+  if (cryptoMiss.length > 0) {
+    const { fetchTVCryptoBatch } = await import('./data.js');
+    const { fetchUsdInr } = await import('./futures.js');
+    const [rows, usdInr] = await Promise.all([
+      fetchTVCryptoBatch([...new Set(cryptoMiss)]).catch(() => ({})),
+      fetchUsdInr().catch(() => 84),
+    ]);
+    spotUsdInr = usdInr;
+    for (const [base, row] of Object.entries(rows || {})) if (row?.usdPrice > 0) tvUsd.set(base, row.usdPrice);
+  }
+  // v7.0.1: futures fallback bases the RT feed missed → TV-Binance USD
+  const futMiss = j.positions.filter(p => p.status === 'OPEN' && p.market === 'FUTURES' && !futLtp.has(p.pair))
+    .map(p => String(p.pair || '').replace(/^B-/, '').replace(/_USDT$/, ''));
+  if (futMiss.length > 0 && [...new Set(futMiss)].some(b => !tvUsd.has(b))) {
+    const { fetchTVCryptoBatch } = await import('./data.js');
+    const missing = [...new Set(futMiss)].filter(b => !tvUsd.has(b));
+    const rows = await fetchTVCryptoBatch(missing).catch(() => ({}));
+    for (const [base, row] of Object.entries(rows || {})) if (row?.usdPrice > 0) tvUsd.set(base, row.usdPrice);
+  }
+  const tvInrPrice = (pair) => {
+    const base = String(pair || '').replace(/INR$/, '').replace(/^B-/, '').replace(/_USDT$/, '');
+    const usd = tvUsd.get(base);
+    return usd != null && (spotUsdInr || futUsdInr) ? usd * (spotUsdInr || futUsdInr || 84) : null;
+  };
+  // v7.0.1: futures fallback stays in the USDT domain (perp ≈ Binance
+  // spot USD) — multiplying by USD/₹ here would corrupt the P&L math.
+  const tvUsdPrice = (pair) => {
+    const base = String(pair || '').replace(/^B-/, '').replace(/_USDT$/, '');
+    return tvUsd.get(base) ?? null;
+  };
   const stats = dailyStats(j);
   return {
     positions: j.positions.slice().reverse().map(p => {
       let ltp;
+      let priceSource = null;
       let upnl = null;
       if (p.market === 'INDIA') {
         ltp = indiaLtp.get(p.symbol) ?? p.entryPrice;
+        priceSource = indiaLtp.has(p.symbol) ? (indiaSrc.get(p.symbol) || 'tv-india') : 'entry-fallback';
       } else if (p.market === 'FUTURES') {
-        ltp = futLtp.get(p.pair) ?? p.entryPrice;
+        ltp = futLtp.get(p.pair) ?? tvUsdPrice(p.pair) ?? p.entryPrice;
+        priceSource = futLtp.has(p.pair) ? 'futures-rt' : (tvUsdPrice(p.pair) != null ? 'tv-usd-fallback' : 'entry-fallback');
       } else {
-        ltp = byPair.get(p.pair) ?? p.entryPrice;
+        ltp = byPair.get(p.pair) ?? tvInrPrice(p.pair) ?? p.entryPrice;
+        priceSource = byPair.has(p.pair) ? 'coindcx' : (tvInrPrice(p.pair) != null ? 'tv-usd-fallback' : 'entry-fallback');
       }
       const long = p.side === 'LONG';
       // v7.0: positions with booked partial-TP legs show the HONEST
@@ -1247,7 +1312,7 @@ export async function getPositionsWithPnl() {
           const pnlUSDT = (long ? ltp - p.entryPrice : p.entryPrice - ltp) * p.qty;
           upnl = r2(pnlUSDT * (futUsdInr || 84) + booked);
           return {
-            ...p, ltp: r2(ltp), unrealizedPnlINR: upnl,
+            ...p, ltp: r2(ltp), unrealizedPnlINR: upnl, priceSource,
             unrealizedPnlUSDT: r2(pnlUSDT + (Number(p.bookedPnlUSDT) || 0)), usdInr: r2(futUsdInr || 84),
             marginUSDT: p.marginUSDT ?? null,
             exitStage: exitStageOf(p),
@@ -1258,7 +1323,7 @@ export async function getPositionsWithPnl() {
         // closed: final leg + booked legs = the position's true total
         upnl = r2((Number(p.pnlINR) || 0) + booked);
       }
-      return { ...p, ltp: r2(ltp), unrealizedPnlINR: upnl, exitStage: exitStageOf(p) };
+      return { ...p, ltp: r2(ltp), unrealizedPnlINR: upnl, priceSource, exitStage: exitStageOf(p) };
     }),
     stats,
     entries: j.entries.slice(-60).reverse(),
