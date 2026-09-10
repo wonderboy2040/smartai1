@@ -488,13 +488,15 @@ export const SignalCard = memo(function SignalCard({
         )}
         <button
           onClick={() => onPaper(s)}
-          disabled={paperOpenForSymbol || noFresh || isB}
+          disabled={paperOpenForSymbol || noFresh}
           className={`flex-1 py-1.5 rounded-xl text-[10px] font-black font-mono flex items-center justify-center gap-1.5 border transition-all disabled:opacity-40 ${paperOpenForSymbol
             ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-            : 'bg-purple-500/10 border-purple-500/30 text-purple-300 hover:bg-purple-500/20'}`}
-          title={paperOpenForSymbol ? 'Virtual trade already open' : isB ? 'B-grade = WATCH ONLY — entries not recommended' : noFresh ? 'Fresh entries blocked after 15:00 IST' : 'Open a virtual (paper) trade with these levels'}
+            : isB
+              ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/20'
+              : 'bg-purple-500/10 border-purple-500/30 text-purple-300 hover:bg-purple-500/20'}`}
+          title={paperOpenForSymbol ? 'Virtual trade already open' : isB ? 'B-grade = LIVE ke liye WATCH ONLY — paper practice apne risk par, levels ke saath khulega' : noFresh ? 'Fresh entries blocked after 15:00 IST' : 'Open a virtual (paper) trade with these levels'}
         >
-          {paperOpenForSymbol ? '✓ PAPER OPEN' : '📈 PAPER TRADE'}
+          {paperOpenForSymbol ? '✓ PAPER OPEN' : isB ? '📈 PAPER (B)' : '📈 PAPER TRADE'}
         </button>
       </div>
     </div>

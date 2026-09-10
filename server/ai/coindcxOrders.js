@@ -382,24 +382,33 @@ export async function executeSignal(opts) {
   const gates = { minConfidence: cfg.minConfidence, minAgreement: cfg.minAgreement };
   const { evaluateExecutionGate, buildTradePlan, fitPlanToRiskCap, maxSaneLeverage } = await import('./ensemble.js');
 
-  // PAPER/NOTIFY practice fallback: when the FRESH consensus is FLAT/planless but
-  // the user clicked a directional card, synthesize a practice plan at the
-  // live price (ATR %-fallback). The side comes from the card, the price/
-  // risk come from the server — and the journal records the honest fresh
-  // grade. LIVE never enters this branch (full gauntlet below).
+  // PAPER/NOTIFY practice fallback: the FRESH consensus can be FLAT/planless,
+  // can have DECAYED below the ACTION floor, or can have FLIPPED side versus
+  // the card the user clicked (board cached vs fresh re-run race — the direct
+  // cause of "paper trading start hi nhi ho raha"). Practice mode synthesizes
+  // a plan at the live price for the requested side; the journal records the
+  // honest fresh grade. LIVE never enters this branch (full gauntlet below).
   let effectiveSignal = signal;
   let synthNote = null;
-  if (wantMode !== 'live' && (signal.side === 'FLAT' || !signal.plan)) {
-    const reqSide = String(side || '').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
+  const reqSide = String(side || '').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
+  const sideConflict = signal.side !== 'FLAT' && signal.side !== reqSide;
+  const belowFloor = signal.grade !== 'STRONG' && signal.grade !== 'ACTION';
+  if (wantMode !== 'live' && (sideConflict || signal.side === 'FLAT' || !signal.plan)) {
     const synthPlan = buildTradePlan(
       { side: reqSide, dir: reqSide === 'LONG' ? 1 : -1 },
       { ltp: signal.ltp, ind: {} }, 'CRYPTO',
     );
     if (synthPlan && signal.ltp > 0) {
       effectiveSignal = { ...signal, side: reqSide, plan: synthPlan };
-      synthNote = `practice plan @ live price (fresh consensus: ${signal.side} ${signal.confidence}%)`;
+      synthNote = sideConflict
+        ? `practice plan @ live price (fresh consensus FLIPPED: ${signal.side} ${signal.confidence}%)`
+        : `practice plan @ live price (fresh consensus: ${signal.side} ${signal.confidence}%)`;
     }
   }
+  // v9.0.2: honest disclosure when the fresh consensus matched the request
+  // but sat below the paper floor — the trade opens AND the toast says so.
+  const floorNote = (wantMode !== 'live' && !synthNote && (belowFloor || (Number(signal.confidence) || 0) < 55))
+    ? `practice floor relaxed (fresh ${signal.grade ?? '—'} · ${signal.confidence ?? 0}% — journaled)` : null;
 
   // PAPER = practice money (relaxed gate, 10-min freshness); LIVE = the full
   // STRONG gauntlet (90s freshness, confidence + agreement + risk caps).
@@ -426,6 +435,7 @@ export async function executeSignal(opts) {
     requireStrong: wantMode === 'live',
     maxAgeMs: wantMode === 'live' ? 90_000 : 600_000,
     maxRiskPct: cfg.maxRiskPct || 5,
+    practice: wantMode !== 'live', // v9.0.2: paper/notify practice — floor relaxed, honesty journaled
   });
   if (!verdict.ok) {
     const hint = (Number(effectiveSignal?.plan?.riskPct) > riskCap)
@@ -453,7 +463,7 @@ export async function executeSignal(opts) {
         `<b>${signal.grade || '—'}</b> · conf ${signal.confidence ?? '—'}% · agreement ${Math.round((signal.agreement ?? 0) * 100)}%`,
         plan ? `Entry ${r2(plan.entry)} · SL ${r2(plan.stopLoss)} · T1 ${r2(plan.target1)} · T2 ${r2(plan.target2)} · risk ${r2(plan.riskPct)}%` : 'plan nahi bana',
         `Book: ${capsNote}`,
-        [synthNote, fitNote].filter(Boolean).join(' · ') || undefined,
+        [synthNote, fitNote, floorNote].filter(Boolean).join(' · ') || undefined,
         '— notify-only: koi order place NAHI hua.',
       ].filter(Boolean);
       let telegramSent = false;
@@ -463,7 +473,7 @@ export async function executeSignal(opts) {
       pushEntry(j, {
         ...entry, status: 'NOTIFIED', ...(price ? { price: r2(price) } : {}),
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
-        reason: [synthNote, fitNote, verdict.reason].filter(Boolean).join(' · ') || 'gauntlet pass',
+        reason: [synthNote, fitNote, floorNote, verdict.reason].filter(Boolean).join(' · ') || 'gauntlet pass',
         telegramSent,
       });
       saveJournal(j);
@@ -590,10 +600,10 @@ export async function executeSignal(opts) {
         ...entry, status: 'FILLED', qty, price: r2(price), notionalINR: r2(notional),
         ...(lev > 1 ? { leverage: lev, marginINR: marginUsed } : {}),
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
-        reason: [verdict.reason, synthNote, fitNote, levNote].filter(Boolean).join(' · '),
+        reason: [verdict.reason, synthNote, fitNote, levNote, floorNote].filter(Boolean).join(' · '),
       });
       saveJournal(j);
-      return { ok: true, mode: 'paper', position, filled: { qty, price: r2(price), notionalINR: r2(notional), ...(lev > 1 ? { leverage: lev, marginINR: marginUsed } : {}) }, ...{ fitted: [fitNote, levNote].filter(Boolean).join(' · ') || undefined } };
+      return { ok: true, mode: 'paper', position, filled: { qty, price: r2(price), notionalINR: r2(notional), ...(lev > 1 ? { leverage: lev, marginINR: marginUsed } : {}) }, ...{ fitted: [synthNote, fitNote, levNote, floorNote].filter(Boolean).join(' · ') || undefined } };
     }
 
     // --- LIVE execution: signed order to CoinDCX ---

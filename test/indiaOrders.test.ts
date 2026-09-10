@@ -145,14 +145,23 @@ describe('India gauntlet — gates', () => {
     expect(out.error).toMatch(/STRONG/);
   });
 
-  it('v6.12: PAPER on FLAT consensus is honestly REJECTED — ACTION floor (noise rehearsal band)', async () => {
+  it('v9.0.2: PAPER on FLAT consensus SYNTHESIZES a practice plan (v6.12 ACTION floor no longer dead-ends practice)', async () => {
     // Pre-v6.12: FLAT consensus + user click = synthesized practice
-    // trade. That slot-machined the user's paper losses away. Now
-    // paper/notify require a real ACTION+ committee verdict.
+    // trade. v6.12 flipped it to a hard reject — which dead-ended the
+    // whole India paper desk ("paper trading start hi nhi ho raha").
+    // v9.0.2: practice opens with the honest fresh grade journaled.
     const flat = { ...STRONG_IN(), side: 'FLAT', dir: 0, confidence: 0, plan: null };
     const out = await executeIndiaSignal({ symbol: 'RELIANCE', side: 'LONG', mode: 'paper', getFreshIndiaSignal: async () => flat });
-    expect(out.ok).toBe(false);
-    expect(out.error).toMatch(/paper floor|ACTION-grade confluence|grade NEUTRAL/i);
+    expect(out.ok).toBe(true);
+    expect(out.fitted).toMatch(/practice plan @ live price/i);
+  });
+
+  it('v9.0.2: PAPER on a side-flip (fresh SHORT, clicked LONG) opens the requested side as practice', async () => {
+    const flip = { ...STRONG_IN(), side: 'SHORT' };
+    const out = await executeIndiaSignal({ symbol: 'RELIANCE', side: 'LONG', mode: 'paper', getFreshIndiaSignal: async () => flip });
+    expect(out.ok).toBe(true);
+    expect(out.position!.side).toBe('LONG');
+    expect(out.fitted).toMatch(/fresh consensus FLIPPED: SHORT/i);
   });
 
   it('risk auto-fit: an over-cap paper stop is fitted, never bounced (v6.4 policy, India too)', async () => {

@@ -937,8 +937,36 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
         </div>
       )}
 
-      {/* Execution buttons (India — Dhan gauntlet, v6.5) */}
-      {signal.market === 'INDIA' && onExecuteIndia && actionable && !ticketOpen && (
+      {/* Execution buttons (global futures — CoinDCX perps gauntlet, v9.0.2
+          one-click PAPER added: futures cards had NO quick paper button, only
+          the sized ticket — paper practice should always be one click away) */}
+      {signal.market === 'FUTURES' && onExecuteFutures && !ticketOpen && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            onClick={() => onExecuteFutures(signal, 'paper')}
+            disabled={busy}
+            className="quantum-btn-primary px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-violet-600 to-fuchsia-600 disabled:opacity-50">
+            🧪 PAPER TRADE
+          </button>
+          {signal.grade === 'STRONG' && signal.executable && (
+            <button
+              onClick={() => onExecuteFutures(signal, 'live')}
+              disabled={busy || !canLive}
+              title={canLive ? 'REAL leveraged CoinDCX futures order (all gates re-verified server-side)' : 'Signal is STRONG — enable LIVE mode in the console to arm execution'}
+              className="px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              ⚡ EXECUTE LIVE ₮
+            </button>
+          )}
+          {signal.grade !== 'STRONG' && (
+            <span className="text-[10px] text-slate-500 self-center px-1">LIVE execution locked — needs STRONG (75%+ conf, 70%+ agreement)</span>
+          )}
+        </div>
+      )}
+
+      {/* Execution buttons (India — Dhan gauntlet, v6.5; v9.0.2: PAPER
+          always visible — the old actionable gate hid the paper button on
+          WATCH cards and dead-ended India practice entirely) */}
+      {signal.market === 'INDIA' && onExecuteIndia && !ticketOpen && (
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             onClick={() => onExecuteIndia(signal, 'paper')}
@@ -957,7 +985,7 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
             </button>
           )}
           {signal.grade !== 'STRONG' && (
-            <span className="text-[10px] text-slate-500 self-center px-1">India LIVE = STRONG signals only · PAPER hamesha open</span>
+            <span className="text-[10px] text-slate-500 self-center px-1">India LIVE = STRONG signals only · PAPER hamesha open (practice plan @ live price par)</span>
           )}
         </div>
       )}

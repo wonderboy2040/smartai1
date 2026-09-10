@@ -149,15 +149,17 @@ export function SignalTable({ signals, livePrices, freshEntriesAllowed, onChart,
                 </td>
                 <td className="px-2.5 py-2 text-center text-slate-500 text-[9px]">{sectorOf(s.symbol)}</td>
                 <td className="px-2.5 py-2 text-center">
-                  {/* B-grade gating parity with SignalCard (2026-09 audit
-                      fix): cards disable WATCH-ONLY setups — the dense
-                      table must enforce the same rule, else the same data
-                      has two different entry policies by view mode. */}
+                  {/* v9.0.2 parity with SignalCard: B-grade paper ENABLED
+                      (LIVE-grade watch-only rule stays in the grade badge +
+                      titles — paper practice opens with the honest amber
+                      hint, never dead-ends). */}
                   <button
                     onClick={(e) => { e.stopPropagation(); onPaper(s); }}
-                    disabled={noFresh || s.grade === 'B'}
-                    className="px-1.5 py-0.5 rounded text-[9px] font-black bg-purple-500/10 border border-purple-500/30 text-purple-300 hover:bg-purple-500/20 disabled:opacity-40"
-                    title={s.grade === 'B' ? 'B-grade = WATCH ONLY — entries not recommended (A/A+ par trade karo)' : 'Open virtual trade'}
+                    disabled={noFresh}
+                    className={`px-1.5 py-0.5 rounded text-[9px] font-black border disabled:opacity-40 ${s.grade === 'B'
+                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/20'
+                      : 'bg-purple-500/10 border-purple-500/30 text-purple-300 hover:bg-purple-500/20'}`}
+                    title={s.grade === 'B' ? 'B-grade = LIVE ke liye WATCH ONLY — paper practice apne risk par' : 'Open virtual trade'}
                   >
                     📈
                   </button>

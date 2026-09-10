@@ -89,18 +89,26 @@ export async function executeIndiaSignal(opts) {
   const signal = await getFreshIndiaSignal(sym);
   if (!signal) return reject('No fresh ensemble signal available for this symbol');
 
-  // PAPER practice fallback — same honesty as the crypto path: synthesize
-  // a practice plan at the live price, journal the real fresh grade.
+  // PAPER/NOTIFY practice fallback — same honesty as the crypto path, plus
+  // v9.0.2 side-flip + below-floor coverage (the "paper trading start hi
+  // nhi ho raha" fix): synthesize a practice plan at the live price for
+  // the requested side, journal the real fresh grade.
   let effectiveSignal = signal;
   let synthNote = null;
-  if (wantMode !== 'live' && (signal.side === 'FLAT' || !signal.plan)) {
-    const reqSide = String(side || '').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
+  const reqSide = String(side || '').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
+  const sideConflict = signal.side !== 'FLAT' && signal.side !== reqSide;
+  const belowFloor = signal.grade !== 'STRONG' && signal.grade !== 'ACTION';
+  if (wantMode !== 'live' && (sideConflict || signal.side === 'FLAT' || !signal.plan)) {
     const synthPlan = buildTradePlan({ side: reqSide, dir: reqSide === 'LONG' ? 1 : -1 }, { ltp: signal.ltp, ind: {} }, 'INDIA');
     if (synthPlan && signal.ltp > 0) {
       effectiveSignal = { ...signal, side: reqSide, plan: synthPlan };
-      synthNote = `practice plan @ live price (fresh consensus: ${signal.side} ${signal.confidence}%)`;
+      synthNote = sideConflict
+        ? `practice plan @ live price (fresh consensus FLIPPED: ${signal.side} ${signal.confidence}%)`
+        : `practice plan @ live price (fresh consensus: ${signal.side} ${signal.confidence}%)`;
     }
   }
+  const floorNote = (wantMode !== 'live' && !synthNote && (belowFloor || (Number(signal.confidence) || 0) < 55))
+    ? `practice floor relaxed (fresh ${signal.grade ?? '—'} · ${signal.confidence ?? 0}% — journaled)` : null;
 
   // --- gate 5: risk auto-fit (shared policy with crypto) ---
   const riskCap = Number(cfg.maxRiskPct) > 0 ? Number(cfg.maxRiskPct) : 5;
@@ -123,6 +131,7 @@ export async function executeIndiaSignal(opts) {
     maxAgeMs: wantMode === 'live' ? 90_000 : 600_000,
     maxRiskPct: cfg.maxRiskPct || 5,
     venue: 'INDIA',
+    practice: wantMode !== 'live', // v9.0.2: paper/notify practice — floor relaxed, honesty journaled
   });
   if (!verdict.ok) {
     const hint = (Number(effectiveSignal?.plan?.riskPct) > riskCap)
@@ -147,7 +156,7 @@ export async function executeIndiaSignal(opts) {
         `<b>${signal.grade || '—'}</b> · conf ${signal.confidence ?? '—'}% · agreement ${Math.round((signal.agreement ?? 0) * 100)}%`,
         plan ? `Entry ${r2(plan.entry)} · SL ${r2(plan.stopLoss)} · T1 ${r2(plan.target1)} · T2 ${r2(plan.target2)} · risk ${r2(plan.riskPct)}%` : 'plan nahi bana',
         `Book: ${capsNote}`,
-        [synthNote, fitNote].filter(Boolean).join(' · ') || undefined,
+        [synthNote, fitNote, floorNote].filter(Boolean).join(' · ') || undefined,
         '— notify-only: koi order place NAHI hua.',
       ].filter(Boolean);
       let telegramSent = false;
@@ -157,7 +166,7 @@ export async function executeIndiaSignal(opts) {
       pushEntry(j, {
         ...entry, status: 'NOTIFIED', ...(alertPrice ? { price: r2(alertPrice) } : {}),
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
-        reason: [synthNote, fitNote, verdict.reason].filter(Boolean).join(' · ') || 'gauntlet pass',
+        reason: [synthNote, fitNote, floorNote, verdict.reason].filter(Boolean).join(' · ') || 'gauntlet pass',
         telegramSent,
       });
       saveJournal(j);
@@ -242,10 +251,10 @@ export async function executeIndiaSignal(opts) {
       pushEntry(j, {
         ...entry, status: 'FILLED', qty, price: r2(price), notionalINR: r2(notional),
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
-        reason: [verdict.reason, synthNote, fitNote, smallNote].filter(Boolean).join(' · '),
+        reason: [verdict.reason, synthNote, fitNote, smallNote, floorNote].filter(Boolean).join(' · '),
       });
       saveJournal(j);
-      return { ok: true, mode: 'paper', position, filled: { qty, price: r2(price), notionalINR: r2(notional) }, ...(fitNote ? { fitted: fitNote } : {}), ...(smallNote ? { fitted: [fitNote, smallNote].filter(Boolean).join(' · ') } : {}) };
+      return { ok: true, mode: 'paper', position, filled: { qty, price: r2(price), notionalINR: r2(notional) }, ...{ fitted: [synthNote, fitNote, smallNote, floorNote].filter(Boolean).join(' · ') || undefined } };
     }
 
     // --- LIVE: market entry + protective broker SL (SL-M at the plan stop) ---

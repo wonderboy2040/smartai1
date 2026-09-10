@@ -6,6 +6,15 @@ AI-powered portfolio analytics for Indian and US markets, crypto tracking, risk 
 
 > **Financial disclaimer:** Signals, projections, and AI/ML output are informational only. They are not investment advice. Verify market data before trading.
 
+## What's New in v9.0.2 (Paper Trading Always Starts)
+
+- 🧪 **PAPER/NOTIFY clicks never dead-end** — the execution gauntlet re-runs a FRESH ensemble at click time, and any disagreement with the card you clicked used to hard-reject the trade ("signal side is SHORT, requested LONG", "grade WATCH", "confidence < 55% paper floor"). Since the board is a 30s-polled snapshot, a fast market flipped sides between render and click constantly — Paper Trading literally would not start. Now ALL three desks (₿ CoinDCX spot · ⚡ global futures · 🇮🇳 India Dhan) open the practice trade anyway with an honest disclosure note (toast + journal): "practice plan @ live price (fresh consensus FLIPPED: SHORT 5%)" or "practice floor relaxed (fresh WATCH · 38% — journaled)".
+- 🎯 **Side-flip synthesis** — requested side + live price + ATR-fallback plan (risk-capped, leverage sanity intact) replaces the mismatched consensus for PAPER/NOTIFY. LIVE keeps the full strict gauntlet 100% untouched (typed arming, STRONG grade, 90s freshness, connection + caps).
+- 🔓 **India PAPER button unhidden** — the Intraday TAB's India cards hid the entire 🧪 PAPER TRADE button below ACTION grade (while the helper text said "PAPER hamesha open"). The button now shows on every India card; B-grade scanner cards get an amber "PAPER (B)" practice button too (LIVE-grade watch-only rule stays in the badge/titles).
+- ⚡ **Futures quick PAPER button added** — futures cards had NO one-click paper button (only the sized ticket). Now every FUTURES card has the same one-click 🧪 PAPER TRADE as spot.
+- 🛡️ **Nothing safety-critical changed** — kill switch, daily trade/loss caps, one-per-pair, concentration guard, ₹100 minimum, leverage clamp + liquidation sanity, LIVE arming all still enforced; the fresh signal's honest grade/conf/side is journaled on every practice fill.
+- ✅ Verified end-to-end — 882/882 tests (+8 new: side-flip synth, FLAT synth revival, floor-relaxed disclosure, practice-flag gate boundaries, LIVE-still-strict), tsc clean, build OK, live API repro (4/4 paper paths open), browser E2E (CoinDCX tab crypto card → position opened · India Intraday tab card → position opened, 0 JS errors).
+
 ## What's New in v9.0 (Superintelligence Pro Trader Engine — Signal Board Upgrade)
 
 - 🧠 **AI SCORE on EVERY Signal Board signal (both tabs)** — the Intraday TAB (🇮🇳 India desk) and the CoinDCX TAB (₿ spot + ⚡ futures desks) now score every signal 0-100 via a three-source blend: engine conviction × 7-factor expert score × AI verdict, with honest quality adjustments (extension veto cap, MTF ±4, session gate −6, quorum −4, counter-regime −6, agreement +3). Tier ladder: **85+ ELITE · 80+ STRONG · 65+ ACTION · 50+ WATCH**.

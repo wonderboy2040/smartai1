@@ -108,6 +108,34 @@ describe('v6.12 paper ACTION floor (the slot-machine fix)', () => {
   });
 });
 
+// ---------------- v9.0.2 PRACTICE FLAG (paper always starts) ----------------
+describe('v9.0.2 practice flag — desk PAPER/NOTIFY clicks', () => {
+  const base = { side: 'LONG', venue: 'CRYPTO', maxAgeMs: 600_000, maxRiskPct: 5 };
+
+  it('practice: true lets a WATCH-grade signal through (fresh grade is journaled by the desk)', () => {
+    const out = evaluateExecutionGate(mkSignal({ grade: 'WATCH', confidence: 40 }), { ...base, requireStrong: false, practice: true });
+    expect(out.ok).toBe(true);
+  });
+
+  it('practice: true lets sub-55 confidence through', () => {
+    const out = evaluateExecutionGate(mkSignal({ grade: 'ACTION', confidence: 41 }), { ...base, requireStrong: false, practice: true });
+    expect(out.ok).toBe(true);
+  });
+
+  it('practice does NOT bypass the side/plan/risk checks', () => {
+    expect(evaluateExecutionGate(mkSignal(), { ...base, side: 'SHORT', requireStrong: false, practice: true }).ok).toBe(false);
+    expect(evaluateExecutionGate(mkSignal({ plan: null }), { ...base, requireStrong: false, practice: true }).ok).toBe(false);
+    const wide = mkSignal({ plan: { entry: 100, stopLoss: 88, target1: 112, target2: 124, risk: 12, riskPct: 12, rewardRisk: 2 } });
+    expect(evaluateExecutionGate(wide, { ...base, requireStrong: false, practice: true }).ok).toBe(false);
+  });
+
+  it('practice does NOT bypass staleness or the LIVE gauntlet', () => {
+    const stale = mkSignal({ generatedAt: Date.now() - 20 * 60_000 });
+    expect(evaluateExecutionGate(stale, { ...base, requireStrong: false, practice: true }).ok).toBe(false);
+    expect(evaluateExecutionGate(mkSignal({ grade: 'ACTION' }), { ...base, requireStrong: true, practice: true }).ok).toBe(false);
+  });
+});
+
 // ---------------- SESSION PHASE ----------------
 describe('v6.12 NSE session phases', () => {
   const wed = (istH: number, istM: number) => {

@@ -454,11 +454,15 @@ export async function executeFuturesSignal(opts) {
   const gates = { minConfidence: cfg.minConfidence, minAgreement: cfg.minAgreement };
   const riskCap = Number(cfg.maxRiskPct) > 0 ? Number(cfg.maxRiskPct) : 5;
 
-  // PAPER practice fallback (same honesty model as the spot path).
+  // PAPER practice fallback (same honesty model as the spot path) — v9.0.2
+  // adds side-flip + below-floor coverage so a PAPER click never dead-ends
+  // (the "paper trading start hi nhi ho raha" fix).
   let effectiveSignal = signal;
   let synthNote = null;
-  if (wantMode !== 'live' && (signal.side === 'FLAT' || !signal.plan)) {
-    const reqSide = String(side || '').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
+  const reqSide = String(side || '').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
+  const sideConflict = signal.side !== 'FLAT' && signal.side !== reqSide;
+  const belowFloor = signal.grade !== 'STRONG' && signal.grade !== 'ACTION';
+  if (wantMode !== 'live' && (sideConflict || signal.side === 'FLAT' || !signal.plan)) {
     const { buildTradePlan } = await import('./ensemble.js');
     const synthPlan = buildTradePlan(
       { side: reqSide, dir: reqSide === 'LONG' ? 1 : -1 },
@@ -466,9 +470,13 @@ export async function executeFuturesSignal(opts) {
     );
     if (synthPlan && signal.ltp > 0) {
       effectiveSignal = { ...signal, side: reqSide, plan: synthPlan };
-      synthNote = `practice plan @ live futures price (fresh consensus: ${signal.side} ${signal.confidence}%)`;
+      synthNote = sideConflict
+        ? `practice plan @ live futures price (fresh consensus FLIPPED: ${signal.side} ${signal.confidence}%)`
+        : `practice plan @ live futures price (fresh consensus: ${signal.side} ${signal.confidence}%)`;
     }
   }
+  const floorNote = (wantMode !== 'live' && !synthNote && (belowFloor || (Number(signal.confidence) || 0) < 55))
+    ? `practice floor relaxed (fresh ${signal.grade ?? '—'} · ${signal.confidence ?? 0}% — journaled)` : null;
 
   // risk auto-fit (paper always; live mild overshoot ≤ 1.5×)
   let fitNote = null;
@@ -484,6 +492,7 @@ export async function executeFuturesSignal(opts) {
     requireStrong: wantMode === 'live',
     maxAgeMs: wantMode === 'live' ? 90_000 : 600_000,
     maxRiskPct: riskCap, venue: 'FUTURES',
+    practice: wantMode !== 'live', // v9.0.2: paper/notify practice — floor relaxed, honesty journaled
   });
   if (!verdict.ok) {
     return reject(verdict.reason, `Signal gate: ${verdict.reason}`, {
@@ -505,7 +514,7 @@ export async function executeFuturesSignal(opts) {
         `<b>${signal.grade || '—'}</b> · conf ${signal.confidence ?? '—'}% · agreement ${Math.round((signal.agreement ?? 0) * 100)}%`,
         plan ? `Entry ${r2(plan.entry)} · SL ${r2(plan.stopLoss)} · T1 ${r2(plan.target1)} · T2 ${r2(plan.target2)} · risk ${r2(plan.riskPct)}%` : 'plan nahi bana',
         `Book: ${capsNote}`,
-        [synthNote, fitNote].filter(Boolean).join(' · ') || undefined,
+        [synthNote, fitNote, floorNote].filter(Boolean).join(' · ') || undefined,
         '— notify-only: koi order place NAHI hua.',
       ].filter(Boolean);
       let telegramSent = false;
@@ -515,7 +524,7 @@ export async function executeFuturesSignal(opts) {
       pushEntry(j, {
         ...entry, status: 'NOTIFIED', ...(alertPrice ? { price: r2(alertPrice) } : {}),
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
-        reason: [synthNote, fitNote, verdict.reason].filter(Boolean).join(' · ') || 'gauntlet pass',
+        reason: [synthNote, fitNote, floorNote, verdict.reason].filter(Boolean).join(' · ') || 'gauntlet pass',
         telegramSent,
       });
       saveJournalFresh(j);
@@ -653,13 +662,13 @@ export async function executeFuturesSignal(opts) {
         ...entry, status: 'FILLED', qty, price: r2(price), notionalUSDT, notionalINR: inrOfUsdt(notionalUSDT, usdInr),
         leverage: lev, marginUSDT: marginUsed,
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
-        reason: [verdict.reason, synthNote, fitNote, levNote].filter(Boolean).join(' · '),
+        reason: [verdict.reason, synthNote, fitNote, levNote, floorNote].filter(Boolean).join(' · '),
       });
       saveJournalFresh(j);
       return {
         ok: true, mode: 'paper', position,
         filled: { qty, price: r2(price), notionalUSDT, notionalINR: inrOfUsdt(notionalUSDT, usdInr), leverage: lev, marginUSDT: marginUsed },
-        ...(walletNote || fitNote || levNote ? { fitted: [walletNote, fitNote, levNote].filter(Boolean).join(' · ') } : {}),
+        ...(walletNote || synthNote || fitNote || levNote || floorNote ? { fitted: [walletNote, synthNote, fitNote, levNote, floorNote].filter(Boolean).join(' · ') } : {}),
       };
     }
 

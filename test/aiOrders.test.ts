@@ -319,17 +319,42 @@ describe('getRiskState', () => {
   });
 });
 
-describe('PAPER practice-plan synthesis (FLAT fresh consensus)', () => {
-  it('v6.12: paper on FLAT consensus is honestly REJECTED — the ACTION floor (no more noise rehearsal)', async () => {
-    // Pre-v6.12 a FLAT fresh consensus still synthesized a practice
-    // plan — rehearsing directionless trades was a direct source of
-    // user paper losses. Now paper demands ACTION+ confluence.
+describe('PAPER practice-plan synthesis (v9.0.2 — paper always starts)', () => {
+  it('v9.0.2: paper on FLAT consensus SYNTHESIZES a practice plan (was a dead end since v6.12)', async () => {
+    // v6.12 killed noise rehearsal with the ACTION floor, but it also
+    // dead-ended every FLAT/planless fresh re-run — "paper trading
+    // start hi nhi ho raha". Practice now always opens with an honest
+    // disclosure; the journal keeps the real fresh grade.
     const out = await executeSignal({
       symbol: 'BTC', mode: 'paper', side: 'LONG',
       getFreshSignal: async () => ({ ...STRONG, side: 'FLAT', grade: 'NEUTRAL', confidence: 20, plan: null, dir: 0 }),
     });
-    expect(out.ok).toBe(false);
-    expect(out.error).toMatch(/ACTION-grade confluence|grade NEUTRAL/i);
+    expect(out.ok).toBe(true);
+    expect(out.position!.side).toBe('LONG');
+    expect(out.fitted).toMatch(/practice plan @ live price/i);
+    const j = loadJournal();
+    expect(j.entries.at(-1)!.signal!.grade).toBe('NEUTRAL'); // honesty journaled
+  });
+
+  it('v9.0.2: paper on a SIDE-FLIP (fresh SHORT, clicked LONG) opens the requested side as practice', async () => {
+    // The #1 real-world blocker: the board card was LONG at scan time,
+    // the fresh re-run says SHORT → old gate hard-rejected the click.
+    const out = await executeSignal({
+      symbol: 'BTC', mode: 'paper', side: 'LONG',
+      getFreshSignal: async () => ({ ...STRONG, side: 'SHORT' }),
+    });
+    expect(out.ok).toBe(true);
+    expect(out.position!.side).toBe('LONG');
+    expect(out.fitted).toMatch(/fresh consensus FLIPPED: SHORT/i);
+  });
+
+  it('v9.0.2: paper below the ACTION floor (WATCH grade, matching side) opens with a floor-relaxed note', async () => {
+    const out = await executeSignal({
+      symbol: 'BTC', mode: 'paper', side: 'LONG',
+      getFreshSignal: async () => ({ ...STRONG, grade: 'WATCH', confidence: 48 }),
+    });
+    expect(out.ok).toBe(true);
+    expect(out.fitted).toMatch(/practice floor relaxed/i);
   });
 
   it('LIVE never synthesizes — FLAT consensus is a hard reject', async () => {
@@ -340,6 +365,16 @@ describe('PAPER practice-plan synthesis (FLAT fresh consensus)', () => {
     });
     expect(out.ok).toBe(false);
     expect(out.error).toMatch(/side is FLAT|no tradeable side\/plan/i);
+  });
+
+  it('LIVE on a side-flip still rejects (strict gauntlet untouched)', async () => {
+    __setConfigForTests({ mode: 'live', liveConfirmedAt: Date.now() });
+    const out = await executeSignal({
+      symbol: 'BTC', mode: 'live', side: 'LONG',
+      getFreshSignal: async () => ({ ...STRONG, side: 'SHORT' }),
+    });
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/side is SHORT, requested LONG/i);
   });
 });
 

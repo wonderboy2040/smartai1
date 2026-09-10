@@ -246,12 +246,15 @@ export function buildSignal({ symbol, market, ctx, votes, consensus, plan, aiNot
  *   6. AI Council (when online) did NOT veto (its vote is already
  *      inside the ensemble — a veto drops agreement/confidence).
  * PAPER mode (practice money) uses requireStrong:false with a
- * longer freshness window — BUT v6.12 raised its floor: paper now
- * requires grade ≥ ACTION (confidence ≥ 55). Practicing on
- * WATCH/NEUTRAL single-voter noise was the direct source of the
- * user's paper losses — practice must rehearse REAL discipline.
+ * longer freshness window — v6.12 raised its floor: paper requires
+ * grade ≥ ACTION (confidence ≥ 55). v9.0.2 adds `practice: true`:
+ * the desks pass it for PAPER/NOTIFY clicks so the grade/conf floor
+ * no longer dead-ends practice — the card the user clicked was
+ * graded at SCAN time and the fresh re-run's honest grade/conf is
+ * journaled instead (the direct fix for "paper trading start hi
+ * nhi ho raha"). LIVE keeps the full strict gauntlet untouched.
  */
-export function evaluateExecutionGate(signal, { side, gates = DEFAULT_GATES, maxAgeMs = 90_000, maxRiskPct = 5, requireStrong = true, venue = 'CRYPTO' } = {}) {
+export function evaluateExecutionGate(signal, { side, gates = DEFAULT_GATES, maxAgeMs = 90_000, maxRiskPct = 5, requireStrong = true, venue = 'CRYPTO', practice = false } = {}) {
   if (!signal) return { ok: false, reason: 'no signal' };
   if (Date.now() - (signal.generatedAt || 0) > maxAgeMs) return { ok: false, reason: `signal stale (age > ${Math.round(maxAgeMs / 1000)}s) — re-run ensemble` };
   const wantVenue = String(venue).toUpperCase();
@@ -265,9 +268,11 @@ export function evaluateExecutionGate(signal, { side, gates = DEFAULT_GATES, max
     if (signal.grade !== 'STRONG') return { ok: false, reason: `grade ${signal.grade} — live orders need STRONG (${gates.minConfidence}% conf + ${Math.round(gates.minAgreement * 100)}% agreement)` };
     if ((signal.confidence ?? 0) < gates.minConfidence) return { ok: false, reason: `confidence ${signal.confidence}% < ${gates.minConfidence}% gate` };
     if ((signal.agreement ?? 0) < gates.minAgreement) return { ok: false, reason: `agreement ${Math.round((signal.agreement || 0) * 100)}% < ${Math.round(gates.minAgreement * 100)}% gate` };
-  } else {
+  } else if (!practice) {
     // v6.12: PAPER/NOTIFY floor — ACTION minimum. A WATCH/NEUTRAL
     // signal is a watchlist note, not a rehearsal trade.
+    // v9.0.2: `practice` (desk PAPER/NOTIFY clicks) skips this floor —
+    // the fresh consensus is journaled honestly by the desk instead.
     if (signal.grade !== 'STRONG' && signal.grade !== 'ACTION') {
       return { ok: false, reason: `grade ${signal.grade} — paper practice bhi ACTION-grade confluence maangta hai (WATCH = sirf dekho, trade mat karo)` };
     }
