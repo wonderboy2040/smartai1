@@ -6,6 +6,15 @@ AI-powered portfolio analytics for Indian and US markets, crypto tracking, risk 
 
 > **Financial disclaimer:** Signals, projections, and AI/ML output are informational only. They are not investment advice. Verify market data before trading.
 
+## What's New in v9.0 (Superintelligence Pro Trader Engine — Signal Board Upgrade)
+
+- 🧠 **AI SCORE on EVERY Signal Board signal (both tabs)** — the Intraday TAB (🇮🇳 India desk) and the CoinDCX TAB (₿ spot + ⚡ futures desks) now score every signal 0-100 via a three-source blend: engine conviction × 7-factor expert score × AI verdict, with honest quality adjustments (extension veto cap, MTF ±4, session gate −6, quorum −4, counter-regime −6, agreement +3). Tier ladder: **85+ ELITE · 80+ STRONG · 65+ ACTION · 50+ WATCH**.
+- 📋 **Full trade blueprint on every signal card** — entry TIMING window (IMMEDIATE vs PULLBACK + limit zone), liquidation-aware LEVERAGE ladder (spot 1× / futures tier-capped ≤6× with liquidation estimate), staged 40/40/20 EXIT PLAN with breakeven+trail, and the EXIT CLOCK (India: hard 15:10 IST square-off; crypto: horizon-based wall-clock 8h/72h). "Kab entry · kitna leverage · kab exit" — every card par.
+- 🌐 **Whole-market scan on the Signal Board itself** — the board's static 12-coin list is gone: CRYPTO spot scans every liquid CoinDCX INR pair, FUTURES scans every liquid B-USDT perp (live discovery, 40 coins), India keeps the full 44-stock NSE universe. Universal pass-2 revival: EVERY coin gets the SMC + pattern/sr/volume/volatility LTF second vote (top-10-only bias removed).
+- 🔌 **WAF-proof data chain** — CoinDCX blocked? Binance × live USDINR anchors + Yahoo 1h candles (domain-rescaled onto the trading currency) keep the boards ALIVE; the intraday crypto scanner gets the same fallback anchors. Delistings/listings flow automatically.
+- 🔥 **80+ filter chip** — one click isolates the STRONG/ELITE signals on the board; the engine meta strip shows universe size, price chain and the 80+/85+ counts.
+- ✅ All checks pass — TypeScript clean, 874/874 tests (44 files, +23 new superIntel tests), build OK, live API + browser E2E verified on both tabs.
+
 ## What's New in v8.0.1 (Advance Pro Trader Engine)
 
 - 🧠 **EXPERT PICKS (80+ AI SCORE)** — whole-universe CoinDCX scan on both desks: every liquid SPOT INR pair + every GLOBAL FUTURES USDT perp. 7-factor composite score (trend 25% · momentum 20% · SMC 15% · volume 10% · volatility 10% · regime 10% · R:R 10%); only 80+ = STRONG picks shown.

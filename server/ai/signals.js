@@ -27,6 +27,80 @@ import { aggregateVotes, buildTradePlan, buildSignal, DEFAULT_GATES } from './en
 import { qualityVerdict, sessionPhase as sessionPhaseOf } from './probrain.js';
 import { smcVote } from './lib/smc.js';
 import { simulateSymbol } from './backtest.js';
+// v9 SUPERINTELLIGENCE PRO TRADER ENGINE — the Signal Board upgrade:
+// dynamic full-universe scan + AI SCORE (0-100) + complete trade
+// blueprint (entry timing / leverage / exit time) on every signal.
+import { discoverSpotUniverse, discoverFuturesUniverse, binancePriceMap, fetchUsdInr, expertScoreFactors } from './expertPicks.js';
+import { computeSuperScore, buildSuperBlueprint } from './superIntel.js';
+
+// v9: how many coins the Superintelligence Signal Board scans for the
+// dynamic desks (spot + futures). 40 = every liquid CoinDCX book by
+// 24h turnover, bounded so the board stays fast under the 30s client
+// timeout (TV is chunked 40/call, candles flow in bounded batches).
+const SUPER_UNIVERSE_SIZE = 40;
+
+/** v9: TV crypto scanner over a LARGE universe — chunked at 40 symbols
+ * per scanner call (the scanner's documented batch ceiling). */
+async function fetchTVCryptoChunked(symbols) {
+  const out = {};
+  const chunks = [];
+  for (let i = 0; i < symbols.length; i += 40) chunks.push(symbols.slice(i, i + 40));
+  const outs = await Promise.allSettled(chunks.map(ch => fetchTVCryptoBatch(ch)));
+  for (const o of outs) if (o.status === 'fulfilled' && o.value) Object.assign(out, o.value);
+  return out;
+}
+
+/** v9: LTF candles for the WHOLE universe in bounded parallel waves
+ * (12 in flight at a time) — every scanned coin gets the full LTF
+ * revival treatment, not just the top-10 by pre-confidence. */
+async function loadCandlesBounded(symbols, fetchOne) {
+  const map = new Map();
+  const BATCH = 12;
+  for (let i = 0; i < symbols.length; i += BATCH) {
+    const batch = symbols.slice(i, i + BATCH);
+    const outs = await Promise.allSettled(batch.map(fetchOne));
+    batch.forEach((b, j) => {
+      const v = outs[j].status === 'fulfilled' ? outs[j].value : null;
+      if (Array.isArray(v) && v.length >= 30) map.set(b, v);
+    });
+  }
+  return map;
+}
+
+/** v9: stash the Superintelligence scoring inputs on the context (never
+ * part of the signal payload — buildSignal picks its own fields). */
+function attachSuperCtx(ctx, tvRow, candles) {
+  ctx.__tv = tvRow || null;
+  ctx.__ltfInd = Array.isArray(candles) && candles.length >= 30 ? computeIndicatorsFromCandles(candles) : null;
+  ctx.__smc = null; // filled by the pass-1 SMC revival when it fires
+}
+
+/** v9: rescale a USD-domain candle set onto the desk's own price anchor
+ * (spot INR / futures USDT). The CoinDCX candle feed can be WAF-blocked
+ * — the Yahoo 1h fallback keeps the revival ALIVE, but its OHLC is USD.
+ * Every price field is linear, so ×scale lands every ATR/EMA/VWAP in the
+ * trading domain the plan prices use. Ratios (RSI, relVolume) are
+ * scale-invariant.
+ * Domain guard: the observed scale must sit within ±50% of the EXPECTED
+ * cross-domain ratio — spot INR ≈ ltp/tv.usdPrice (≈ live fx), futures
+ * USDT ≈ 1. A stale/mismatched Yahoo series can never slip through. */
+function rescaleCandlesToLtp(candles, ltp, expectedScale = null) {
+  if (!Array.isArray(candles) || candles.length < 30 || !(ltp > 0)) return null;
+  const last = candles[candles.length - 1]?.close;
+  if (!(last > 0)) return null;
+  const scale = ltp / last;
+  if (!Number.isFinite(scale) || scale <= 0) return null;
+  const exp = Number(expectedScale);
+  if (Number.isFinite(exp) && exp > 0) {
+    if (scale < exp * 0.5 || scale > exp * 1.5) return null;
+  } else if (scale <= 0.2 || scale >= 5) {
+    return null; // no reference anchor — conservative sanity bound
+  }
+  return candles.map(c => ({
+    time: c.time, volume: c.volume,
+    open: c.open * scale, high: c.high * scale, low: c.low * scale, close: c.close * scale,
+  }));
+}
 
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 
@@ -464,11 +538,15 @@ export async function getSignals(market, deps, opts = {}) {
   const raw = String(market || 'INDIA').toUpperCase();
   const mkt = raw === 'CRYPTO' ? 'CRYPTO' : raw === 'FUTURES' ? 'FUTURES' : 'INDIA';
   const cacheKey = `board:${mkt}`;
-  const cached = cacheGet(cacheKey, mkt === 'INDIA' ? 60_000 : 45_000);
+  // v9: full-universe scans are heavier — the dynamic desks (crypto/
+  // futures) hold their board for 90s; India keeps the 60s cadence.
+  const cached = cacheGet(cacheKey, mkt === 'INDIA' ? 60_000 : 90_000);
   if (cached && !opts.noCache) return cached;
 
   const depsSafe = deps || {};
   const regime = await buildRegime(mkt);
+  // v9 SUPERINTELLIGENCE board meta (scanned universe + price chain).
+  const superMeta = { engine: 'SUPERINTELLIGENCE PRO TRADER ENGINE v9', universeSize: 0, universeMode: 'static', priceSource: null };
 
   const contexts = [];
   if (mkt === 'INDIA') {
@@ -490,44 +568,100 @@ export async function getSignals(market, deps, opts = {}) {
     ]);
     for (const row of Object.values(tv)) {
       const ctx = await buildIndiaStockCtx(row, regime);
-      if (ctx) contexts.push(ctx);
+      if (ctx) { attachSuperCtx(ctx, row, null); contexts.push(ctx); }
     }
     for (const r of indexCandleJobs) if (r.status === 'fulfilled' && r.value) contexts.push(r.value);
+    superMeta.universeSize = INDIA_UNIVERSE.length + 2;
+    superMeta.universeMode = 'tv-nse-batch';
   } else if (mkt === 'FUTURES') {
-    // v6.8 GLOBAL FUTURES: TV crypto USD indicators (USD ≈ USDT 1:1) +
-    // CoinDCX futures RT prices + pcode=f candlesticks. Everything stays
-    // in the USDT domain — the plan prices ARE the prices you trade.
-    const [tv, futRows] = await Promise.all([
-      fetchTVCryptoBatch(FUTURES_UNIVERSE).catch(() => ({})),
-      fetchFuturesPrices().catch(() => []),
+    // v9 SUPERINTELLIGENCE: the FULL DYNAMIC futures universe — every
+    // liquid CoinDCX B-USDT perpetual by 24h turnover (live discovery,
+    // delistings/listings flow in automatically; Binance futures is the
+    // fallback universe+price chain). The old static ~12-coin list is
+    // now only the last-resort seed.
+    const [uni, futRows] = await Promise.all([
+      discoverFuturesUniverse(SUPER_UNIVERSE_SIZE).catch(() => null),
+      fetchFuturesPrices().catch(() => null),
     ]);
+    const universe = Array.isArray(uni) && uni.length > 0 ? uni : [...FUTURES_UNIVERSE];
+    superMeta.universeSize = universe.length;
+    superMeta.universeMode = Array.isArray(uni) && uni.length > 0 ? 'dynamic' : 'static-fallback';
     const futMap = new Map((Array.isArray(futRows) ? futRows : []).map(x => [x.base, x]));
-    const candleJobs = await Promise.allSettled(
-      FUTURES_UNIVERSE.map(b => futMap.has(b) ? fetchFuturesCandles(futuresPairFor(b), '60').catch(() => null) : Promise.resolve(null)),
-    );
-    FUTURES_UNIVERSE.forEach((base, i) => {
-      const row = futMap.get(base);
-      const candles = candleJobs[i].status === 'fulfilled' ? candleJobs[i].value : null;
-      const ctx = buildFuturesCtxSync(base, tv[base], row, candles, regime);
-      if (ctx) contexts.push(ctx);
+    // Missing RT prices → Binance futures (USDT domain — same domain as
+    // the desk, no conversion needed).
+    if (futMap.size === 0 || universe.some(b => !futMap.has(b))) {
+      const { map } = await binancePriceMap(universe, true).catch(() => ({ map: new Map() }));
+      for (const [b, usd] of map) if (!futMap.has(b)) futMap.set(b, { base: b, last: usd, volume: 0 });
+      if (map.size > 0) superMeta.priceSource = futMap.size > map.size ? 'coindcx-fut + binance-fut' : 'binance-fut-usdt';
+    } else {
+      superMeta.priceSource = 'coindcx-fut-usdt';
+    }
+    // TV indicators for the whole universe (chunked) + LTF candles for
+    // EVERY coin — the whole board gets the pass-2 revival now.
+    // Candle chain: CoinDCX 1h primary → Yahoo 1h fallback RESCALED
+    // onto the desk's USDT anchor (Yahoo OHLC is USD — the linear
+    // rescale keeps every ATR/EMA in the domain the plan prices use).
+    const tv = await fetchTVCryptoChunked(universe);
+    const candleMap = await loadCandlesBounded(universe, (b) => (async () => {
+      const ltp = futMap.get(b)?.last;
+      if (!(ltp > 0)) return null;
+      const c = await fetchFuturesCandles(futuresPairFor(b), '60').catch(() => null);
+      if (Array.isArray(c) && c.length >= 30) return c;
+      const y = await fetchYahooIntradayCandles(b, 'FUTURES').catch(() => null);
+      // USDT ≈ USD: expected scale ≈ ltp / tv.usdPrice (≈ 1)
+      const usd = tv?.[b]?.usdPrice;
+      return rescaleCandlesToLtp(y, ltp, usd > 0 ? ltp / usd : 1);
+    })());
+    universe.forEach((base) => {
+      const ctx = buildFuturesCtxSync(base, tv[base], futMap.get(base), candleMap.get(base) || null, regime);
+      if (ctx) { attachSuperCtx(ctx, tv[base], candleMap.get(base) || null); contexts.push(ctx); }
     });
   } else {
-    // Crypto: TV crypto batch + CoinDCX INR prices + candles.
+    // CRYPTO — v9 SUPERINTELLIGENCE: the FULL DYNAMIC spot universe.
+    // Every liquid CoinDCX INR pair by 24h turnover, live discovered
+    // (CoinDCX tickers primary → Binance spot × live USDINR fallback).
+    // The old static 12-coin list is the last-resort seed only.
     const { fetchCoinDcxTickers } = await import('../cryptoStream.js');
-    const [tv, tickers] = await Promise.all([
-      fetchTVCryptoBatch(CRYPTO_UNIVERSE).catch(() => ({})),
-      fetchCoinDcxTickers().catch(() => []),
+    const [uni, tickers] = await Promise.all([
+      discoverSpotUniverse(SUPER_UNIVERSE_SIZE).catch(() => null),
+      fetchCoinDcxTickers().catch(() => null),
     ]);
+    const universe = Array.isArray(uni) && uni.length > 0 ? uni : [...CRYPTO_UNIVERSE];
+    superMeta.universeSize = universe.length;
+    superMeta.universeMode = Array.isArray(uni) && uni.length > 0 ? 'dynamic' : 'static-fallback';
     const inrMap = new Map((Array.isArray(tickers) ? tickers : [])
       .filter(t => t && typeof t.market === 'string' && t.market.endsWith('INR'))
       .map(t => [t.market.replace('INR', ''), parseFloat(t.last_price)]));
-    const candleJobs = await Promise.allSettled(
-      CRYPTO_UNIVERSE.map(b => inrMap.has(b) ? fetchCoinDcxCandles(b, '1h').catch(() => null) : Promise.resolve(null)),
-    );
-    CRYPTO_UNIVERSE.forEach((base, i) => {
-      const candles = candleJobs[i].status === 'fulfilled' ? candleJobs[i].value : null;
-      const ctx = buildCryptoCtxSync(base, tv[base], inrMap.get(base), regime, candles);
-      if (ctx) contexts.push(ctx);
+    // Missing INR quotes → Binance spot USDT × live USDINR (INR domain,
+    // exactly how the expert-picks desk prices its fallback picks).
+    if (inrMap.size === 0 || universe.some(b => !inrMap.has(b))) {
+      const [{ map }, fx] = await Promise.all([
+        binancePriceMap(universe, false).catch(() => ({ map: new Map() })),
+        fetchUsdInr(),
+      ]);
+      for (const [b, usd] of map) if (!inrMap.has(b)) inrMap.set(b, usd * fx);
+      if (map.size > 0) superMeta.priceSource = inrMap.size > map.size ? 'coindcx-inr + binance-inr' : 'binance-usdt-x-inr';
+    } else {
+      superMeta.priceSource = 'coindcx-inr';
+    }
+    const tv = await fetchTVCryptoChunked(universe);
+    // Candle chain: CoinDCX INR 1h primary → Yahoo USD 1h fallback
+    // RESCALED onto the coin's INR anchor (the fallback keeps the
+    // revival alive when the CoinDCX public candle feed is WAF-blocked,
+    // while keeping every price field in the INR trading domain).
+    const candleMap = await loadCandlesBounded(universe, (b) => (async () => {
+      const ltp = inrMap.get(b);
+      if (!(ltp > 0)) return null;
+      const c = await fetchCoinDcxCandles(b, '1h').catch(() => null);
+      if (Array.isArray(c) && c.length >= 30) return c;
+      const y = await fetchYahooIntradayCandles(b, 'CRYPTO').catch(() => null);
+      // INR domain: expected scale = ltp / tv.usdPrice (live fx ratio)
+      const usd = tv?.[b]?.usdPrice;
+      return rescaleCandlesToLtp(y, ltp, usd > 0 ? ltp / usd : null);
+    })());
+    universe.forEach((base) => {
+      const ctx = buildCryptoCtxSync(base, tv[base], inrMap.get(base), regime, candleMap.get(base) || null);
+      if (ctx) { attachSuperCtx(ctx, tv[base], candleMap.get(base) || null); contexts.push(ctx); }
     });
   }
 
@@ -555,7 +689,47 @@ export async function getSignals(market, deps, opts = {}) {
   const breadth = { bull: 0, bear: 0, flat: 0, avgConf: 0 };
   let confSum = 0;
   for (const ctx of contexts) {
-    const votes = applyAdaptiveWeights(runQuantModels(ctx), adaptiveMul);
+    let votes = applyAdaptiveWeights(runQuantModels(ctx), adaptiveMul);
+    // v9 UNIVERSAL PASS-2 REVIVAL: every scanned coin that carries LTF
+    // candles gets the full revival treatment HERE — the SMC model
+    // comes alive on intraday structure AND the pattern/sr/volume/
+    // volatility abstains get their second vote from the LTF
+    // indicator set. The old flow only revived the top-10 by
+    // PRE-confidence — the best setup could sit at rank 11+ and read
+    // NEUTRAL forever. Only abstained slots are replaced (no double
+    // counting) and everything degrades honestly.
+    if (Array.isArray(ctx.candles) && ctx.candles.length >= 30 && ctx.__ltfInd) {
+      const li = ctx.__ltfInd;
+      // SMC revival (replace the abstain with the LTF-alive vote)
+      const smcV = smcVote(ctx.candles);
+      if (smcV && smcV.dir !== 0 && (smcV.conf || 0) > 0) {
+        const reg = MODELS.find(m => m.id === 'smc');
+        const idx = votes.findIndex(v => v.id === 'smc');
+        if (idx >= 0) votes.splice(idx, 1);
+        votes.push({ id: 'smc', name: reg.name, role: reg.role, weight: reg.weight * (adaptiveMul?.smc?.mul ?? 1), ...smcV });
+        ctx.__smc = { dir: smcV.dir, conf: smcV.conf };
+      }
+      // pattern / sr / volume / volatility second vote from the LTF set
+      const relVol = li.avgVolume20 > 0 ? (li.volume || 0) / li.avgVolume20 : null;
+      const ltfCtx = {
+        ...ctx,
+        ltp: Number.isFinite(li.ltp) && li.ltp > 0 ? li.ltp : ctx.ltp,
+        ind: { ...li, relVolume: relVol },
+        candles: ctx.candles,
+      };
+      for (const mid of ['pattern', 'sr', 'volume', 'volatility']) {
+        const m = MODELS.find(x => x.id === mid);
+        if (!m || typeof m.fn !== 'function') continue;
+        const pIdx = votes.findIndex(v => v.id === mid);
+        const pAbstained = pIdx >= 0 && votes[pIdx].dir === 0;
+        if (pIdx >= 0 && !pAbstained) continue; // already voted on TV data
+        const v2 = m.fn(ltfCtx);
+        if (v2 && v2.dir !== 0 && (v2.conf || 0) > 0) {
+          if (pIdx >= 0) votes.splice(pIdx, 1);
+          votes.push({ id: mid, name: m.name, role: m.role, weight: m.weight * (adaptiveMul?.[mid]?.mul ?? 1), ...v2, revived: true });
+        }
+      }
+    }
     const consensus = aggregateVotes(votes, gatesFor(depsSafe));
     if (consensus.dir > 0) breadth.bull++;
     else if (consensus.dir < 0) breadth.bear++;
@@ -563,20 +737,36 @@ export async function getSignals(market, deps, opts = {}) {
     confSum += consensus.confidence;
     if (consensus.dir === 0) continue;
     const plan = buildTradePlan(consensus, ctx, mkt, { maxRiskPct: riskCapFor(depsSafe) });
-    candidates.push({ ctx, votes, consensus, plan });
+    // v9: the 7-factor EXPERT score for this coin (domain-correct ltp
+    // injected — spot INR / futures USDT / India INR) + the PRE-super
+    // AI score that ranks the candidate pool.
+    const expert = expertScoreFactors({
+      tv: ctx.__tv ? { ...ctx.__tv, ltp: ctx.ltp } : { ...ctx.ind, ltp: ctx.ltp },
+      ltf: ctx.__ltfInd, regime, market: mkt, smc: ctx.__smc,
+    });
+    const pre = computeSuperScore({
+      engineConf: consensus.confidence,
+      expertScore: expert?.score ?? null,
+      agreement: consensus.agreement,
+    });
+    candidates.push({ ctx, votes, consensus, plan, expert, pre });
   }
   breadth.avgConf = contexts.length > 0 ? Math.round(confSum / contexts.length) : 0;
-  candidates.sort((a, b) => b.consensus.confidence - a.consensus.confidence);
+  // v9: rank the pool by the SUPERINTELLIGENCE pre-score (committee
+  // conviction × expert factors), confidence as the tie-breaker.
+  candidates.sort((a, b) => ((b.pre?.aiScore ?? 0) - (a.pre?.aiScore ?? 0)) || (b.consensus.confidence - a.consensus.confidence));
 
   // ---------------- v6.12 PASS 2: pro-trader verification ----------------
-  // The top candidates get the LTF (15m India / 1h crypto) candles:
+  // INDIA-ONLY now: the crypto/futures desks carry LTF candles on every
+  // context (v9 universal revival above), so the Yahoo intraday
+  // enrichment remains the India stock board's LTF source (15m bars).
   //   • SMC model comes ALIVE on intraday structure (it abstained
   //     on the whole India board pre-v6.12 — no candles)
   //   • mtfAnalysis: daily HTF vs LTF alignment
   //   • structureStop: swing-aware SL for the plan
   // Yahoo intraday works even where CoinDCX candles are blocked.
   // Everything degrades HONESTLY (mtf: UNAVAILABLE, no penalty).
-  const enrichN = Math.min(10, opts.limit || 10);
+  const enrichN = mkt === 'INDIA' ? Math.min(10, opts.limit || 10) : 0;
   const enriched = new Map();
   await Promise.all(candidates.slice(0, enrichN).map(async (c) => {
     const key = `${mkt}:${c.ctx.symbol}`;
@@ -652,6 +842,7 @@ export async function getSignals(market, deps, opts = {}) {
       } catch { /* honest degrade — keep pass-1 votes */ }
     }
     let aiNote = null;
+    let aiConf = null; // v9: the council's own confidence → the super score blend
     const verdict = council.verdicts[c.ctx.symbol];
     if (verdict) {
       const av = aiCouncilVoteFromVerdict(verdict);
@@ -661,6 +852,7 @@ export async function getSignals(market, deps, opts = {}) {
           weight: MODELS.find(m => m.id === 'aicouncil').weight * (_ad?.aicouncil?.mul ?? 1), ...av,
         });
         aiNote = { verdict: verdict.verdict, note: verdict.note, analysis: verdict.analysis, model: council.model };
+        aiConf = av.conf ?? verdict.confidence ?? null;
       }
     }
     let consensus2 = aggregateVotes(votes, gatesFor(depsSafe));
@@ -711,11 +903,46 @@ export async function getSignals(market, deps, opts = {}) {
     } else {
       plan2 = c.plan;
     }
-    signals.push(buildSignal({
+    const sig = buildSignal({
       symbol: c.ctx.symbol, market: mkt, ctx: c.ctx, votes, consensus: consensus2, plan: plan2, aiNote, quality,
-    }));
+    });
+    // v9 SUPERINTELLIGENCE final scoring + blueprint — the committee
+    // verdict (post-council, post-quality) × the 7-factor expert score
+    // × the AI verdict, then the COMPLETE trade ticket: entry timing,
+    // leverage ladder, staged exit, exit CLOCK.
+    if (consensus2.dir !== 0) {
+      // expert factors re-shape when the council flipped the side
+      const expert = (c.expert && c.expert.side === consensus2.side) ? c.expert : expertScoreFactors({
+        tv: c.ctx.__tv ? { ...c.ctx.__tv, ltp: c.ctx.ltp } : { ...c.ctx.ind, ltp: c.ctx.ltp },
+        ltf: enr?.ltfInd ?? c.ctx.__ltfInd ?? null, regime, market: mkt, smc: c.ctx.__smc,
+      });
+      const sup = computeSuperScore({
+        engineConf: consensus2.confidence,
+        expertScore: expert?.score ?? null,
+        aiConf,
+        quality,
+        agreement: consensus2.agreement,
+        counterTrend: !!(quality?.regime?.counterTrend),
+      });
+      const atr = enr?.ltfInd?.atr ?? c.ctx.ind?.atr ?? null;
+      const blueprint = buildSuperBlueprint({
+        side: consensus2.side, ltp: c.ctx.ltp, atr, aiScore: sup.aiScore, market: mkt,
+        ema20: c.ctx.ind?.ema20 ?? enr?.ltfInd?.ema20 ?? null,
+        stopLoss: plan2?.stopLoss, target1: plan2?.target1, target2: plan2?.target2,
+        atrPctLtp: (atr != null && atr > 0 && c.ctx.ltp > 0) ? (atr / c.ctx.ltp) * 100 : null,
+        now: Date.now(), sqOffBy: mkt === 'INDIA' ? '15:10 IST' : null,
+        changePct: c.ctx.changePct,
+      });
+      sig.superIntel = {
+        aiScore: sup.aiScore, tier: sup.tier, drivers: sup.drivers,
+        factors: expert?.factors ?? null, blueprint,
+      };
+    }
+    signals.push(sig);
   }
-  signals.sort((a, b) => b.confidence - a.confidence);
+  // v9: the board is ranked by the SUPERINTELLIGENCE AI score (the
+  // 80+ bar the desk filters on), confidence as the tie-breaker.
+  signals.sort((a, b) => ((b.superIntel?.aiScore ?? b.confidence) - (a.superIntel?.aiScore ?? a.confidence)));
 
   // v6.9: full-universe composite TOP-5 (transparent score + Hinglish
   // rank reason — the board payload carries it so the desks get the
@@ -731,6 +958,15 @@ export async function getSignals(market, deps, opts = {}) {
     sessionPhase: { phase: ses.phase, tradeable: ses.tradeable, note: ses.note },
     regime,
     breadth,
+    // v9 SUPERINTELLIGENCE PRO TRADER ENGINE meta — what got scanned,
+    // through which price chain, and how many signals cleared the 80+
+    // STRONG / 85+ ELITE bars.
+    superIntelMeta: {
+      ...superMeta,
+      strongCount: signals.filter(s => (s.superIntel?.aiScore ?? 0) >= 80).length,
+      eliteCount: signals.filter(s => (s.superIntel?.aiScore ?? 0) >= 85).length,
+      scored: signals.filter(s => !!s.superIntel).length,
+    },
     topFive,
     riskCap: riskCapFor(depsSafe),
     scanned: contexts.length,

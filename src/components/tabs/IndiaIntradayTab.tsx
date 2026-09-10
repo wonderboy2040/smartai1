@@ -21,6 +21,7 @@ import { useAITrading } from '../aitrading/useAITrading';
 import { SignalCard } from '../aitrading/SignalCard';
 import { MtfBlock, EdgeBlock } from '../aitrading/DeepQualityBlock';
 import { TopPicksPanel } from '../aitrading/TopPicksPanel';
+import { ExpertPicksPanel } from '../aitrading/ExpertPicksPanel';
 import { MarketClockStrip } from '../aitrading/MarketClockStrip';
 import { QuickNav } from '../aitrading/QuickNav';
 import { OptionsDeskPanel } from '../aitrading/OptionsDeskPanel';
@@ -216,6 +217,11 @@ export default memo(function IndiaIntradayTab() {
         </div>
       )}
 
+      {/* ============ 🧠 EXPERT PICKS (v9 — Advance Pro Trader Engine) ============ */}
+      <div id="in-expert">
+        <ExpertPicksPanel active market="INDIA" onDeep={(sym) => { onDeep({ symbol: sym, market: 'INDIA' } as AISignal); }} />
+      </div>
+
       {/* ============ 🏆 TOP 5 PICKS (v6.9) ============ */}
       <div id="in-top5">
         <TopPicksPanel picks={board?.topFive} market="INDIA" deskLabel="🇮🇳 NSE · INDIA" scanned={board?.scanned} loading={loading} onDeep={onDeep} />
@@ -227,16 +233,25 @@ export default memo(function IndiaIntradayTab() {
       {/* ============ India how-to-trade guide ============ */}
       <IndiaHowToTrade />
 
-      {/* ============ 01 · SIGNAL BOARD ============ */}
+      {/* ============ 01 · SUPERINTELLIGENCE SIGNAL BOARD ============ */}
       <div id="in-signals">
         <div className="flex items-end justify-between flex-wrap gap-2">
-          <SectionLabel num="01" title="Signal Board" sub="NSE equities + indices (TV live scanner) → 10-model consensus (SMC/ICT included)" />
+          <SectionLabel num="01" title="Superintelligence Signal Board" sub="NSE equities + indices (TV live scanner) → 10-model consensus + 7-factor expert engine → AI SCORE (80+ = STRONG, 85+ = ELITE) + full trade blueprint" />
           <BoardSummary board={board} />
         </div>
         <div className="mt-2.5 flex items-center justify-between flex-wrap gap-2">
           <FilterChips filter={filter} onChange={setFilter} counts={counts} />
-          <span className="text-[10px] text-slate-600 font-mono">grades: STRONG ≥75% conf + 70% agree · ACTION ≥55 · WATCH ≥35</span>
+          <span className="text-[10px] text-slate-600 font-mono">🔥 80+ = super AI score · STRONG ≥75% conf + 70% agree · ACTION ≥55 · WATCH ≥35</span>
         </div>
+        {/* v9 engine meta strip — what got scanned, how many cleared 80+ */}
+        {board?.superIntelMeta && (
+          <div className="mt-2 flex items-center gap-2 flex-wrap text-[10px] font-mono">
+            <span className="px-2 py-1 rounded-lg bg-gradient-to-r from-cyan-500/15 to-violet-500/15 border border-cyan-500/30 text-cyan-300 font-black tracking-wider">🧠 {board.superIntelMeta.engine}</span>
+            <span className="px-2 py-1 rounded-lg bg-black/30 border border-slate-700/40 text-slate-400">universe: {board.superIntelMeta.universeSize} symbols ({board.superIntelMeta.universeMode})</span>
+            <span className="px-2 py-1 rounded-lg bg-black/30 border border-emerald-500/25 text-emerald-400">🔥 80+ strong: {board.superIntelMeta.strongCount ?? 0}</span>
+            <span className="px-2 py-1 rounded-lg bg-black/30 border border-amber-500/25 text-amber-400">🧠 85+ elite: {board.superIntelMeta.eliteCount ?? 0}</span>
+          </div>
+        )}
         <div className="grid gap-3 mt-2.5 xl:grid-cols-2">
           {loading && (!board || board.signals.length === 0) && (
             <div className="quantum-panel rounded-2xl p-10 text-center col-span-full">

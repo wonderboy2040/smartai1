@@ -74,7 +74,7 @@ export const BreadthStrip = memo(function BreadthStrip({ board }: { board: Signa
   );
 });
 
-export type BoardFilter = 'ALL' | 'ACTION' | 'STRONG' | 'LONG' | 'SHORT';
+export type BoardFilter = 'ALL' | 'ACTION' | 'STRONG' | 'SUPER' | 'LONG' | 'SHORT';
 
 /** v6.10 DESK STATS — the one-glance "desk kaisa hai" strip:
  *  scanned universe · actionable · STRONG · avg confidence · breadth mood.
@@ -121,6 +121,7 @@ export const DeskStatsStrip = memo(function DeskStatsStrip({ board, deskLabel }:
 
 const FILTERS: { id: BoardFilter; label: string }[] = [
   { id: 'ALL', label: 'ALL' },
+  { id: 'SUPER', label: '🔥 80+' },
   { id: 'ACTION', label: '⚡ ACTIONABLE' },
   { id: 'STRONG', label: '★ STRONG' },
   { id: 'LONG', label: '▲ LONG' },
@@ -182,6 +183,7 @@ export function BoardSummary({ board }: { board: SignalBoard | null }) {
 export function filterSignals(board: SignalBoard | null, filter: BoardFilter) {
   const sigs = board?.signals || [];
   switch (filter) {
+    case 'SUPER': return sigs.filter(s => (s.superIntel?.aiScore ?? 0) >= 80);
     case 'ACTION': return sigs.filter(s => s.grade === 'ACTION' || s.grade === 'STRONG');
     case 'STRONG': return sigs.filter(s => s.grade === 'STRONG');
     case 'LONG': return sigs.filter(s => s.side === 'LONG' && s.grade !== 'NEUTRAL');
@@ -194,6 +196,7 @@ export function countSignals(board: SignalBoard | null): Record<BoardFilter, num
   const sigs = board?.signals || [];
   return {
     ALL: sigs.length,
+    SUPER: sigs.filter(s => (s.superIntel?.aiScore ?? 0) >= 80).length,
     ACTION: sigs.filter(s => s.grade === 'ACTION' || s.grade === 'STRONG').length,
     STRONG: sigs.filter(s => s.grade === 'STRONG').length,
     LONG: sigs.filter(s => s.side === 'LONG' && s.grade !== 'NEUTRAL').length,

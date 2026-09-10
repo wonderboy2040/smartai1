@@ -13,7 +13,7 @@
 //   warning, no-fresh-entry state, slippage-RR, chart + paper-trade.
 // ============================================================
 import { memo, useState } from 'react';
-import type { IntradaySignal, LiveQuote } from './types';
+import type { IntradaySignal, LiveQuote, SuperIntel } from './types';
 import { sectorOf } from './sectorMap';
 
 const GRADE_STYLE: Record<string, string> = {
@@ -186,6 +186,75 @@ interface SignalCardProps {
   onDetail?: (s: IntradaySignal) => void;
 }
 
+/** v9 SUPERINTELLIGENCE — compact AI SCORE badge for the card header.
+ *  85+ ELITE (gold glow) · 80+ STRONG (emerald) · 65+ ACTION (cyan). */
+function SuperScoreBadge({ si }: { si: SuperIntel }) {
+  const tier = si.tier;
+  const cls = tier === 'ELITE'
+    ? 'bg-gradient-to-r from-amber-400/25 to-yellow-500/25 text-amber-300 border-amber-400/50 shadow-[0_0_12px_rgba(251,191,36,0.35)]'
+    : tier === 'STRONG' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+      : tier === 'ACTION' ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40'
+        : 'bg-slate-500/15 text-slate-400 border-slate-500/30';
+  const label = tier === 'ELITE' ? '🧠 ELITE' : tier === 'STRONG' ? '🔥 STRONG' : tier === 'ACTION' ? '⚡ ACTION' : tier;
+  return (
+    <span
+      className={`px-2 py-1 rounded-xl text-[10px] font-black font-mono tracking-wider border flex flex-col items-center leading-tight ${cls}`}
+      title={`Superintelligence AI Score: ${si.aiScore}/100 — ${si.drivers.join(' · ')}`}
+    >
+      <span className="text-base">{si.aiScore}</span>
+      <span className="text-[7px] opacity-80">{label} · AI SCORE</span>
+    </span>
+  );
+}
+
+/** v9 SUPERINTELLIGENCE BLUEPRINT — the pro-trader ticket strip: entry
+ *  timing window, leverage ladder (liquidation-aware), staged exit
+ *  (40/40/20) and the EXIT CLOCK (kab entry · kitna leverage · kab exit). */
+function SuperIntelPanel({ s }: { s: IntradaySignal }) {
+  const bp = s.superIntel?.blueprint;
+  if (!bp) return null;
+  const isCrypto = s.market === 'CRYPTO';
+  const px = (v: number | null | undefined) =>
+    v == null || !Number.isFinite(v) ? '—'
+      : `₹${v.toLocaleString('en-IN', { maximumFractionDigits: Math.abs(v) < 1 ? 6 : 2 })}`;
+  const zone = bp.entryZone && bp.entryZone[0] != null && bp.entryZone[1] != null
+    ? `${px(bp.entryZone[0])}–${px(bp.entryZone[1])}` : '—';
+  const t = bp.targets;
+  return (
+    <div className="rounded-xl border border-cyan-500/15 bg-gradient-to-r from-cyan-500/[0.05] via-transparent to-violet-500/[0.05] p-2.5 space-y-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+        <div className="bg-black/30 rounded-lg px-2 py-1.5" title={bp.entryTiming?.note || ''}>
+          <div className="text-[8px] text-slate-500 font-black tracking-wider">⏱ ENTRY WINDOW</div>
+          <div className={`text-[11px] font-mono font-bold ${bp.entryTiming?.mode === 'IMMEDIATE' ? 'text-emerald-300' : 'text-amber-300'}`}>
+            {bp.entryTiming?.mode || '—'} · {zone}
+          </div>
+        </div>
+        <div className="bg-black/30 rounded-lg px-2 py-1.5" title={bp.leverageNote}>
+          <div className="text-[8px] text-slate-500 font-black tracking-wider">⚡ LEVERAGE</div>
+          <div className="text-[11px] font-mono font-bold text-violet-300">
+            {bp.leverage}×{bp.liquidation != null ? ` · liq ${px(bp.liquidation)}` : ''}
+          </div>
+        </div>
+        <div className="bg-black/30 rounded-lg px-2 py-1.5" title={(bp.exitPlan || []).map(e => e.action).join(' · ')}>
+          <div className="text-[8px] text-slate-500 font-black tracking-wider">🎯 EXIT PLAN</div>
+          <div className="text-[11px] font-mono font-bold text-emerald-300">
+            40% {px(t.t1)} · 40% {px(t.t2)} · 20% {px(t.t3)}
+          </div>
+        </div>
+        <div className="bg-black/30 rounded-lg px-2 py-1.5" title={bp.horizon?.note || ''}>
+          <div className="text-[8px] text-slate-500 font-black tracking-wider">⏰ EXIT BY</div>
+          <div className="text-[11px] font-mono font-bold text-amber-300">
+            {bp.exitBy} · {bp.horizon?.label || (isCrypto ? '24/7' : 'INTRADAY')}
+          </div>
+        </div>
+      </div>
+      <div className="text-[9px] text-slate-500 font-semibold leading-relaxed">
+        🛑 {bp.invalidation}
+      </div>
+    </div>
+  );
+}
+
 export const SignalCard = memo(function SignalCard({
   s, live, freshEntriesAllowed, paperOpenForSymbol, onChart, onPaper, onDetail,
 }: SignalCardProps) {
@@ -252,7 +321,10 @@ export const SignalCard = memo(function SignalCard({
               )}
             </div>
           </div>
-          <ConfidenceRing value={s.confidence} quant={s.quantConfidence} />
+          <div className="flex items-center flex-col gap-1.5">
+            <ConfidenceRing value={s.confidence} quant={s.quantConfidence} />
+            {s.superIntel && <SuperScoreBadge si={s.superIntel} />}
+          </div>
         </div>
 
         {/* AI & Market Phase Badges */}
@@ -319,6 +391,10 @@ export const SignalCard = memo(function SignalCard({
 
         {/* SL↔T2 live proximity meter */}
         <ProximityMeter s={s} live={live} />
+
+        {/* v9 SUPERINTELLIGENCE blueprint — entry window · leverage ·
+            staged exit · exit clock (kab entry · kitna leverage · kab exit) */}
+        {s.superIntel && <SuperIntelPanel s={s} />}
 
         {/* v4: Entry quality meter + risk↔reward bars */}
         <div className="space-y-1.5">

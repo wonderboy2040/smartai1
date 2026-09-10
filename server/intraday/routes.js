@@ -23,8 +23,13 @@
 // ============================================================
 import {
   BASE_UNIVERSE, CRYPTO_UNIVERSE, INTRADAY_MIN_CONFIDENCE, INTRADAY_TOP_N, gradeSignal, inDeadZone,
-  fetchIntradayDataBatch, analyzeIntradayFromScanner, aiVerifySignals,
+  fetchIntradayDataBatch, analyzeIntradayFromScanner, aiVerifySignals, registerCryptoBases,
 } from './engine.js';
+// v9 SUPERINTELLIGENCE PRO TRADER ENGINE — dynamic full-universe crypto
+// scan + AI SCORE (0-100) + the complete trade blueprint (entry timing /
+// leverage / exit time) on every intraday signal.
+import { discoverSpotUniverse } from '../ai/expertPicks.js';
+import { computeSuperScore, buildSuperBlueprint, intradayExpertFactors } from '../ai/superIntel.js';
 import { runProTraderAgent } from './agent.js';
 import { runCommitteeDebate, clearCommitteeCache } from './committee.js';
 import { generateDailyBriefing, pushMorningBriefingToTelegram, getLastBriefing } from './briefing.js';
@@ -71,6 +76,34 @@ function effectiveUniverse(market = 'INDIA') {
   const removed = new Set(state.removedBase || []);
   const custom = (state.custom || []).filter(_validCustomSym);
   return [...new Set([..._baseUniverseFor(mkt).filter(s => !removed.has(s)), ...custom])];
+}
+
+// v9 SUPERINTELLIGENCE: the CRYPTO scan universe is DYNAMIC — every
+// liquid CoinDCX INR pair by 24h turnover (10-min cached, shared with the
+// Expert Picks desk), MERGED with the user's watchlist (static base minus
+// removals + customs). Bounded at 36 so the scan stays fast.
+const SUPER_CRYPTO_SCAN_SIZE = 30;
+let _dynCryptoUniverse = { at: 0, list: [] };
+async function effectiveCryptoUniverse() {
+  let dyn = [];
+  if (Date.now() - _dynCryptoUniverse.at < 5 * 60_000) {
+    dyn = _dynCryptoUniverse.list;
+  } else {
+    try {
+      dyn = await discoverSpotUniverse(SUPER_CRYPTO_SCAN_SIZE);
+    } catch { dyn = _dynCryptoUniverse.list; }
+    if (Array.isArray(dyn) && dyn.length > 0) _dynCryptoUniverse = { at: Date.now(), list: dyn };
+    else dyn = _dynCryptoUniverse.list || [];
+  }
+  const state = _universeStateFor('CRYPTO');
+  const removed = new Set(state.removedBase || []);
+  const custom = (state.custom || []).filter(_validCustomSym);
+  // dynamic bases first (liquid books), then static base + customs;
+  // user removals are honoured against BOTH dynamic and static.
+  const merged = [...new Set([...dyn, ...CRYPTO_UNIVERSE, ...custom])]
+    .filter(s => !removed.has(s))
+    .slice(0, SUPER_CRYPTO_SCAN_SIZE + CRYPTO_UNIVERSE.length);
+  return merged;
 }
 
 function _saveUniverse(market) {
@@ -398,15 +431,32 @@ export function registerIntradayRoutes(app, deps) {
     const mkt = _normMarket(market);
     const cache = _cacheFor(mkt);
     try {
-        const universe = effectiveUniverse(mkt);
         const isCrypto = mkt === 'CRYPTO';
+        // v9: CRYPTO scans the DYNAMIC universe (every liquid CoinDCX INR
+        // pair); INDIA keeps the F&O base + watchlist.
+        const universe = isCrypto ? await effectiveCryptoUniverse() : effectiveUniverse(mkt);
+        if (isCrypto) registerCryptoBases(universe); // route quotes/paper/track correctly
 
         // Regime + market data in parallel (regime gates every analysis).
         // CRYPTO regime = BTC-based (getCryptoRegime).
+        // v9: fallbackCryptoPrices — CoinDCX ticker feed blocked ho to
+        // Binance spot × live USDINR anchors (INR domain preserved).
+        const fallbackCryptoPrices = async () => {
+          try {
+            const { binancePriceMap, fetchUsdInr } = await import('../ai/expertPicks.js');
+            const [{ map }, fx] = await Promise.all([
+              binancePriceMap(universe, false).catch(() => ({ map: new Map() })),
+              fetchUsdInr(),
+            ]);
+            const out = {};
+            for (const [b, usd] of map) out[b] = { price: usd * fx };
+            return out;
+          } catch { return {}; }
+        };
         const [regime, [tvData, quoteData]] = await Promise.all([
           isCrypto ? getCryptoRegime(debugForce) : getMarketRegime(debugForce),
           isCrypto
-            ? fetchIntradayDataBatch(universe, fetchGrowwNseQuote, { market: 'CRYPTO', fetchCoinDcxTickers })
+            ? fetchIntradayDataBatch(universe, fetchGrowwNseQuote, { market: 'CRYPTO', fetchCoinDcxTickers, fallbackCryptoPrices })
             : fetchIntradayDataBatch(universe, fetchGrowwNseQuote),
         ]);
         const tvCount = Object.keys(tvData).length;
@@ -560,6 +610,40 @@ export function registerIntradayRoutes(app, deps) {
           // v4: quality grade (A+/A/B) — B is watch-only (frontend flags it)
           .map(s => ({ ...s, grade: gradeSignal(s) }));
 
+        // ---------- v9 SUPERINTELLIGENCE PRO TRADER LAYER ----------
+        // Every published signal gets: the composite AI SCORE (0-100 =
+        // engine conviction × 7-factor expert score × dual-AI verdict)
+        // + the COMPLETE trade blueprint — entry timing window,
+        // leverage ladder, staged exit (40/40/20) and the EXIT CLOCK
+        // (India: hard 15:10 IST square-off; crypto: horizon-based).
+        let strongCount = 0, eliteCount = 0;
+        for (const s of signals) {
+          const exp = intradayExpertFactors(s, regime);
+          const sup = computeSuperScore({
+            engineConf: s.confidence,
+            expertScore: exp?.score ?? null,
+            aiConf: s.aiConfidence ?? null,
+            counterTrend: !!s.counterTrend,
+            // v4 contract: B-grade is WATCH-ONLY (below the A-grade
+            // gates) — it can never wear the STRONG/ELITE badge either.
+            cap: s.grade === 'B' ? 64 : null,
+          });
+          const blueprint = buildSuperBlueprint({
+            side: s.direction, ltp: s.ltp, atr: s.atr, aiScore: sup.aiScore, market: mkt,
+            ema20: s.vwap, entryZoneLow: s.entryZoneLow, entryZoneHigh: s.entryZoneHigh,
+            stopLoss: s.stopLoss, target1: s.target1, target2: s.target2,
+            atrPctLtp: (s.ltp > 0 && s.atr > 0) ? (s.atr / s.ltp) * 100 : null,
+            now: Date.now(), sqOffBy: s.sqOffBy, changePct: s.changePct,
+          });
+          s.superIntel = {
+            aiScore: sup.aiScore, tier: sup.tier, drivers: sup.drivers,
+            factors: exp?.factors ?? null, blueprint,
+          };
+          if (sup.aiScore >= 80) strongCount++;
+          if (sup.aiScore >= 85) eliteCount++;
+        }
+        signals.sort((a, b) => ((b.superIntel?.aiScore ?? 0) - (a.superIntel?.aiScore ?? 0)));
+
         const payload = {
           market: mkt,
           marketOpen: true,
@@ -567,13 +651,18 @@ export function registerIntradayRoutes(app, deps) {
           scanned: results.length,
           universe: universe.length,
           minConfidence: minConf,
+          superIntelMeta: {
+            engine: 'SUPERINTELLIGENCE PRO TRADER ENGINE v9',
+            universeMode: isCrypto ? 'dynamic (live CoinDCX INR pairs by turnover)' : 'F&O base + watchlist',
+            strongCount, eliteCount, scored: signals.length,
+          },
           aiVerified: !!ai,
           aiModel: (ai?.models || []).join('+'),
           aiConsensus: (ai?.models || []).length > 1 ? 'multi-model' : ((ai?.models || [])[0] || ''),
           aiEngine: isCrypto ? 'Crypto Intraday Realtime Market Expert (MCP)' : 'NSE Intraday Realtime Market Expert (MCP)',
           engine: isCrypto
-            ? 'SUPER INTELLIGENCE INTRADAY v4 CRYPTO — DUAL-AI EXPERT (Gemini+Groq) • Supertrend/POC/SMA50 confluence • BTC regime gate • CoinDCX INR pricing • 24/7 session • A+/A/B grading'
-            : 'SUPER INTELLIGENCE INTRADAY v4 — DUAL-AI EXPERT (Gemini+Groq) • Supertrend/POC/SMA50 confluence • ORB-15 • NIFTY/VIX regime gate • A+/A/B signal grading',
+            ? 'SUPERINTELLIGENCE PRO TRADER v9 CRYPTO — DUAL-AI EXPERT (Gemini+Groq) • dynamic full-universe scan • Supertrend/POC/SMA50 confluence • BTC regime gate • CoinDCX INR pricing • 24/7 session • AI SCORE 80+ = STRONG • A+/A/B grading'
+            : 'SUPERINTELLIGENCE PRO TRADER v9 — DUAL-AI EXPERT (Gemini+Groq) • Supertrend/POC/SMA50 confluence • ORB-15 • NIFTY/VIX regime gate • AI SCORE 80+ = STRONG • A+/A/B signal grading',
           sources: { tradingView: tvCount, [isCrypto ? 'coindcx' : 'groww']: gwCount },
           marketRegime: regime,
           freshEntriesAllowed: isCrypto ? true : freshEntriesAllowedNow(),

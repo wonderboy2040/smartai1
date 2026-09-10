@@ -18,7 +18,7 @@
 //     preview, risk-auto-fit transparency chips.
 // ============================================================
 import { memo, useCallback, useState } from 'react';
-import type { AISignal, Side } from './types';
+import type { AISignal, Side, SuperIntel } from './types';
 
 const fmt = (n: number | null | undefined, dp = 2): string => {
   if (n == null || !Number.isFinite(n)) return '—';
@@ -53,6 +53,99 @@ function ConfidenceGauge({ value, side }: { value: number; side: string }) {
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span className={`text-sm font-black font-mono ${sideColor(side)}`}>{value}</span>
         <span className="text-[8px] text-slate-500 font-bold tracking-wider">CONF</span>
+      </div>
+    </div>
+  );
+}
+
+/** v9 SUPERINTELLIGENCE — the AI SCORE ring (0-100): engine conviction ×
+ *  7-factor expert score × AI verdict. 85+ ELITE (gold), 80+ STRONG
+ *  (emerald), 65+ ACTION (cyan) — the ring colour IS the tier. */
+function SuperIntelRing({ score, tier }: { score: number; tier: string }) {
+  const r = 26, c = 2 * Math.PI * r;
+  const pct = Math.max(0, Math.min(100, score)) / 100;
+  const gold = tier === 'ELITE';
+  const strong = tier === 'STRONG';
+  const action = tier === 'ACTION';
+  const stroke = gold ? '#fbbf24' : strong ? '#34d399' : action ? '#22d3ee' : '#64748b';
+  return (
+    <div className="relative w-16 h-16 shrink-0" role="img" aria-label={`AI score ${score} ${tier}`}>
+      <svg viewBox="0 0 64 64" className="w-16 h-16 -rotate-90">
+        <circle cx="32" cy="32" r={r} fill="none" stroke="rgba(148,163,184,0.15)" strokeWidth="6" />
+        <circle cx="32" cy="32" r={r} fill="none" stroke={stroke} strokeWidth="6" strokeLinecap="round"
+          strokeDasharray={`${c * pct} ${c}`} className="transition-all duration-700"
+          style={gold ? { filter: 'drop-shadow(0 0 5px rgba(251,191,36,0.7))' } : undefined} />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className={`text-sm font-black font-mono ${gold ? 'text-amber-300' : strong ? 'text-emerald-300' : action ? 'text-cyan-300' : 'text-slate-400'}`}>{score}</span>
+        <span className="text-[8px] text-slate-500 font-bold tracking-wider">AI SCORE</span>
+      </div>
+    </div>
+  );
+}
+
+const superTierBadge = (tier: string) => {
+  switch (tier) {
+    case 'ELITE': return { cls: 'bg-gradient-to-r from-amber-400/25 to-yellow-500/25 text-amber-300 border border-amber-400/50 shadow-[0_0_12px_rgba(251,191,36,0.25)]', label: '🧠 ELITE 85+' };
+    case 'STRONG': return { cls: 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/40', label: '🔥 STRONG 80+' };
+    case 'ACTION': return { cls: 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40', label: '⚡ ACTION 65+' };
+    case 'WATCH': return { cls: 'bg-amber-500/15 text-amber-300 border border-amber-500/40', label: 'WATCH 50+' };
+    default: return { cls: 'bg-slate-500/15 text-slate-400 border border-slate-500/30', label: 'NEUTRAL' };
+  }
+};
+
+/** v9 SUPERINTELLIGENCE BLUEPRINT STRIP — the complete pro-trader
+ *  ticket in one row: entry window (timing), leverage (liquidation-aware
+ *  ladder), staged exit plan (40/40/20) and the EXIT CLOCK. This is the
+ *  "kab entry · kitna leverage · kab exit" answer on every card. */
+function SuperIntelStrip({ signal, si }: { signal: AISignal; si: SuperIntel }) {
+  const bp = si.blueprint;
+  if (!bp) return null;
+  const isFut = signal.market === 'FUTURES';
+  const px = (v: number | null | undefined) =>
+    v == null || !Number.isFinite(v) ? '—'
+      : isFut ? `${v.toLocaleString('en-US', { maximumFractionDigits: 4 })}`
+        : `₹${v.toLocaleString('en-IN', { maximumFractionDigits: Math.abs(v) < 1 ? 6 : 2 })}`;
+  const zone = bp.entryZone && bp.entryZone[0] != null && bp.entryZone[1] != null ? `${px(bp.entryZone[0])}–${px(bp.entryZone[1])}` : '—';
+  const t = bp.targets;
+  return (
+    <div className="mt-2.5 rounded-xl border border-cyan-500/15 bg-gradient-to-r from-cyan-500/[0.05] via-transparent to-violet-500/[0.05] p-2.5">
+      {/* header: tier badge + drivers */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className={`px-2 py-0.5 rounded-md text-[10px] font-black tracking-wider ${superTierBadge(si.tier).cls}`}>{superTierBadge(si.tier).label}</span>
+        {si.drivers.slice(0, 3).map((d, i) => (
+          <span key={i} className="text-[9px] text-slate-500 font-semibold" title={d}>· {d}</span>
+        ))}
+      </div>
+      {/* the four pro-trader answers */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mt-2">
+        <div className="bg-black/30 rounded-lg px-2 py-1.5" title={bp.entryTiming?.note || ''}>
+          <div className="text-[8px] text-slate-500 font-black tracking-wider">⏱ ENTRY WINDOW</div>
+          <div className={`text-[11px] font-mono font-bold ${bp.entryTiming?.mode === 'IMMEDIATE' ? 'text-emerald-300' : 'text-amber-300'}`}>
+            {bp.entryTiming?.mode || '—'} · {zone}
+          </div>
+        </div>
+        <div className="bg-black/30 rounded-lg px-2 py-1.5" title={bp.leverageNote}>
+          <div className="text-[8px] text-slate-500 font-black tracking-wider">⚡ LEVERAGE</div>
+          <div className="text-[11px] font-mono font-bold text-violet-300">
+            {bp.leverage}×{bp.liquidation != null ? ` · liq ${px(bp.liquidation)}` : ''}
+          </div>
+        </div>
+        <div className="bg-black/30 rounded-lg px-2 py-1.5" title={(bp.exitPlan || []).map(e => e.action).join(' · ')}>
+          <div className="text-[8px] text-slate-500 font-black tracking-wider">🎯 EXIT PLAN</div>
+          <div className="text-[11px] font-mono font-bold text-emerald-300">
+            40% {px(t.t1)} · 40% {px(t.t2)} · 20% {px(t.t3)}
+          </div>
+        </div>
+        <div className="bg-black/30 rounded-lg px-2 py-1.5" title={bp.horizon?.note || ''}>
+          <div className="text-[8px] text-slate-500 font-black tracking-wider">⏰ EXIT BY</div>
+          <div className="text-[11px] font-mono font-bold text-amber-300">
+            {bp.exitBy} · {bp.horizon?.label || ''}
+          </div>
+        </div>
+      </div>
+      <div className="mt-1.5 text-[9px] text-slate-500 font-semibold leading-relaxed">
+        🛑 {bp.invalidation}
       </div>
     </div>
   );
@@ -650,14 +743,19 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
   const actionable = signal.grade === 'STRONG' || signal.grade === 'ACTION';
   const plan = signal.plan;
   const overCap = !!(plan && riskCapPct && plan.riskPct > riskCapPct);
+  const si = signal.superIntel ?? null; // v9 SUPERINTELLIGENCE
 
   return (
     <div id={`sig-${signal.market}-${signal.symbol}`} className={`quantum-panel rounded-2xl p-4 transition-colors hover:border-cyan-500/20 border-l-4 ${long ? 'border-l-emerald-500/60' : 'border-l-red-500/60'} scroll-mt-24
       ${signal.grade === 'STRONG' ? 'ring-1 ring-emerald-500/40' : ''}
+      ${(si?.aiScore ?? 0) >= 80 ? 'ring-1 ring-cyan-400/40' : ''}
       ${isNew ? 'ring-2 ring-cyan-400/60 animate-pulse' : ''}`}>
       {/* Header row */}
       <div className="flex items-center gap-3 flex-wrap">
         <ConfidenceGauge value={signal.confidence} side={signal.side} />
+        {/* v9: the SUPERINTELLIGENCE AI SCORE ring — the board's ranking
+            number (80+ = STRONG, 85+ = ELITE). */}
+        {si && <SuperIntelRing score={si.aiScore} tier={si.tier} />}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-base font-black text-white font-mono tracking-wide">{signal.symbol}</span>
@@ -722,6 +820,10 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
 
       {/* v6.12 PRO TRADER BRAIN — quality chips: the honest WHY behind the grade */}
       {signal.quality && <QualityChips quality={signal.quality} voters={signal.voters ?? signal.participating} total={signal.totalModels} />}
+
+      {/* v9 SUPERINTELLIGENCE BLUEPRINT — entry window · leverage ·
+          staged exit · exit clock: the complete pro-trader ticket. */}
+      {si && <SuperIntelStrip signal={signal} si={si} />}
 
       {/* Trade plan strip */}
       {plan && (

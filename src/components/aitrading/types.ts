@@ -90,6 +90,57 @@ export interface AINote {
   model?: string | null;
 }
 
+/** v9 SUPERINTELLIGENCE PRO TRADER ENGINE — the complete trade ticket
+ * that rides on every signal: entry zone + TIMING window, leverage
+ * ladder (liquidation-aware), staged exit plan (40/40/20) and the EXIT
+ * CLOCK (India: hard square-off; crypto: horizon-based wall-clock). */
+export interface SuperIntelBlueprint {
+  side: 'LONG' | 'SHORT';
+  entry: number | null;
+  entryZone: [number, number] | null;
+  entryTiming: { mode: 'IMMEDIATE' | 'PULLBACK'; note: string } | null;
+  stopLoss: number | null;
+  targets: { t1: number | null; t2: number | null; t3: number | null };
+  leverage: number;
+  maxSaneLeverage: number;
+  liquidation: number | null;
+  leverageNote: string;
+  exitPlan: { at: number | null; bookPct: number; action: string }[];
+  exitBy: string;
+  horizon: { label: string; hours: number; note: string };
+  invalidation: string;
+}
+
+export interface SuperIntelFactor {
+  key: string;
+  label: string;
+  value: number;
+  weight: number;
+}
+
+/** The composite AI SCORE (0-100): engine conviction × 7-factor expert
+ * score × AI verdict, with the honest quality adjustments baked in.
+ * Tier ladder: 85+ ELITE · 80+ STRONG (the desk's "80+" bar) · 65+ ACTION. */
+export interface SuperIntel {
+  aiScore: number;
+  tier: 'ELITE' | 'STRONG' | 'ACTION' | 'WATCH' | 'NEUTRAL';
+  drivers: string[];
+  factors?: SuperIntelFactor[] | null;
+  blueprint: SuperIntelBlueprint | null;
+}
+
+/** v9: board-level Superintelligence meta — what got scanned, through
+ * which price chain, how many signals cleared 80+/85+. */
+export interface SuperIntelMeta {
+  engine: string;
+  universeSize: number;
+  universeMode: string;
+  priceSource: string | null;
+  strongCount?: number;
+  eliteCount?: number;
+  scored?: number;
+}
+
 export interface AISignal {
   symbol: string;
   market: MarketKind;
@@ -109,6 +160,8 @@ export interface AISignal {
   plan: TradePlan | null;
   /** v6.12 PRO TRADER BRAIN: quorum/regime/MTF/extension/session verdict. */
   quality?: SignalQuality | null;
+  /** v9 SUPERINTELLIGENCE: AI SCORE (0-100) + the full trade blueprint. */
+  superIntel?: SuperIntel | null;
   votes: ModelVote[];
   summary: string;
   aiNote: AINote | null;
@@ -149,6 +202,8 @@ export interface SignalBoard {
   sessionPhase?: SessionPhaseInfo;
   regime?: { niftyChange?: number | null; indiaVix?: number | null; btcChange?: number | null; niftyTrend?: string | null; btcTrend?: string | null };
   breadth?: MarketBreadth;
+  /** v9 SUPERINTELLIGENCE: what got scanned + the 80+/85+ counts. */
+  superIntelMeta?: SuperIntelMeta;
   /** v6.9: full-universe composite TOP-5 (ranked, scored, reason'd). */
   topFive?: TopPick[];
   /** v6.4: the user's max-stop% the board plans were built within. */

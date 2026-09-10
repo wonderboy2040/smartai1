@@ -1,6 +1,9 @@
 // ============================================================
 // intraday/types — shared intraday tab types (v3)
 // ============================================================
+import type { SuperIntel, SuperIntelMeta } from '../aitrading/types';
+
+export type { SuperIntel, SuperIntelMeta };
 
 export interface IntradaySignal {
   symbol: string;
@@ -51,6 +54,9 @@ export interface IntradaySignal {
   groqVerdict?: { confidence: number; note: string } | null;
   aiAdjustedSL?: number | null;
   aiAdjustedEntry?: number | null;
+  /** v9 SUPERINTELLIGENCE: AI SCORE (0-100) + the full trade blueprint
+   *  (entry timing · leverage ladder · staged exit · exit clock). */
+  superIntel?: SuperIntel | null;
 }
 
 export interface MarketRegime {
@@ -90,6 +96,8 @@ export interface ScannerResponse {
   aiConsensus?: string;
   aiEngine?: string;
   engine?: string;
+  /** v9 SUPERINTELLIGENCE meta — engine + 80+/85+ counts. */
+  superIntelMeta?: SuperIntelMeta;
   sources?: { tradingView?: number; groww?: number; coindcx?: number };
   marketRegime?: MarketRegime | null;
   freshEntriesAllowed?: boolean;

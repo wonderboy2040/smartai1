@@ -197,8 +197,10 @@ export async function discoverFuturesUniverse(size = DEFAULT_UNIVERSE_SIZE) {
   });
 }
 
-/** Fallback price map (USDT domain → INR at live rate for spot). */
-async function binancePriceMap(bases, futures) {
+/** Fallback price map (USDT domain → INR at live rate for spot).
+ * v9: exported — the Superintelligence Signal Board reuses the same
+ * CoinDCX-primary → Binance-fallback price chain as Expert Picks. */
+export async function binancePriceMap(bases, futures) {
   try {
     const rows = await _binanceTopBases(futures, 200);
     const map = new Map();
@@ -208,7 +210,9 @@ async function binancePriceMap(bases, futures) {
 }
 
 // ---------------- LTF candle loader (chunked, honest) ----------------
-async function loadLtfCandles(base, market) {
+// v9: exported — the Superintelligence Signal Board loads LTF candles
+// for its FULL dynamic universe through the same honest chain.
+export async function loadLtfCandles(base, market) {
   try {
     if (market === 'CRYPTO') {
       const c = await fetchCoinDcxCandles(base, '1h').catch(() => null);

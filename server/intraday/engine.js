@@ -82,9 +82,20 @@ export const CRYPTO_UNIVERSE = [
   'BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'LINK', 'UNI', 'MATIC',
 ];
 
-/** Is this bare symbol a crypto base (used to route quotes per market)? */
+/** Is this bare symbol a crypto base (used to route quotes per market)?
+ * v9 SUPERINTELLIGENCE: the crypto scan universe is DYNAMIC now (every
+ * liquid CoinDCX INR pair by 24h turnover) — every scanned base is
+ * registered here so paper trades / track records / the SSE stream keep
+ * routing new coins to the CRYPTO side correctly (not INDIA). */
+const _knownCryptoBases = new Set(CRYPTO_UNIVERSE);
+export function registerCryptoBases(list) {
+  for (const b of (Array.isArray(list) ? list : [])) {
+    const s = String(b || '').trim().toUpperCase();
+    if (s) _knownCryptoBases.add(s);
+  }
+}
 export function isCryptoSymbolBase(sym) {
-  return CRYPTO_UNIVERSE.includes(String(sym || '').trim().toUpperCase());
+  return _knownCryptoBases.has(String(sym || '').trim().toUpperCase());
 }
 
 export const TV_INTRADAY_COLUMNS = [
@@ -114,7 +125,7 @@ export const TV_INTRADAY_COLUMNS = [
 export async function fetchIntradayDataBatch(symbols, fetchGrowwNseQuote, opts = {}) {
   const market = String(opts.market || 'INDIA').toUpperCase();
   if (market === 'CRYPTO') {
-    return fetchCryptoIntradayDataBatch(symbols, opts.fetchCoinDcxTickers);
+    return fetchCryptoIntradayDataBatch(symbols, opts.fetchCoinDcxTickers, opts.fallbackCryptoPrices);
   }
   const tvTickers = [];
   const tvToClean = {};
@@ -199,8 +210,12 @@ export async function fetchIntradayDataBatch(symbols, fetchGrowwNseQuote, opts =
 // ------------------------------------------------------------
 // CRYPTO batch — TV crypto scanner (BINANCE:SYMUSDT) + CoinDCX INR
 // LTP + USD→INR re-scaling via the per-symbol anchor ratio.
+// v9: when the CoinDCX ticker feed is unreachable (WAF/geo/outage),
+// opts.fallbackCryptoPrices() supplies INR anchors from Binance spot
+// USDT × live USDINR — the scan stays ALIVE instead of dropping every
+// symbol. Honest degrade, INR domain preserved.
 // ------------------------------------------------------------
-async function fetchCryptoIntradayDataBatch(symbols, fetchCoinDcxTickers) {
+async function fetchCryptoIntradayDataBatch(symbols, fetchCoinDcxTickers, fallbackCryptoPrices = null) {
   const tvToSym = {};
   const tvTickers = symbols.map(sym => {
     const t = `BINANCE:${sym}USDT`;
@@ -285,7 +300,32 @@ async function fetchCryptoIntradayDataBatch(symbols, fetchCoinDcxTickers) {
     return out;
   })();
 
-  const [tvData, cdcxData] = await Promise.all([tvPromise, cdcxPromise]);
+  const [tvData, cdcxDataRaw] = await Promise.all([tvPromise, cdcxPromise]);
+
+  // v9: CoinDCX unreachable → Binance spot × live USDINR anchors (the
+  // same honest fallback chain the Superintelligence boards use).
+  const cdcxData = cdcxDataRaw;
+  if (Object.keys(cdcxData).length === 0 && typeof fallbackCryptoPrices === 'function') {
+    try {
+      const fb = await fallbackCryptoPrices();
+      if (fb && typeof fb === 'object') {
+        for (const sym of symbols) {
+          const f = fb[sym];
+          const price = Number(f?.price);
+          if (!(price > 0)) continue;
+          const chg = Number(f?.change);
+          const change = Number.isFinite(chg) ? chg : (Number(tvData[sym]?.change) || 0);
+          cdcxData[sym] = {
+            price, change,
+            high: Number(f?.high) > 0 ? Number(f.high) : price,
+            low: Number(f?.low) > 0 ? Number(f.low) : price,
+            volume: Number(f?.volume) || 0,
+            prevClose: (change > -99 && change < 99) ? price / (1 + change / 100) : price,
+          };
+        }
+      }
+    } catch { /* honest degrade — TV-only symbols get dropped below */ }
+  }
 
   // Re-scale every TV USD price field into INR via the per-symbol anchor
   // (coindcxINR / binanceUSDT — captures USD/INR + India premium exactly).

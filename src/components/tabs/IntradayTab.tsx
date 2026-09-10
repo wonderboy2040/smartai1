@@ -774,7 +774,7 @@ export const IntradayTab = () => {
                 ⚡ Super Intelligence Intraday
               </h1>
               <span className="quantum-badge text-[9px] bg-cyan-500/10 text-cyan-300 border border-cyan-500/30">
-                PRO-DESK ALGO ENGINE v4
+                SUPERINTELLIGENCE PRO TRADER v9
               </span>
               <span className="px-2 py-0.5 rounded-lg text-[9px] font-mono font-bold bg-purple-500/15 text-purple-300 border border-purple-500/25">
                 DUAL-AI EXPERT · GEMINI + GROQ
@@ -782,11 +782,16 @@ export const IntradayTab = () => {
               <span className="px-2 py-0.5 rounded-lg text-[9px] font-mono font-bold bg-amber-500/10 text-amber-300 border border-amber-500/25" title="Signals graded A+ / A / B — B is watch-only. AI-rejected setups never publish.">
                 A+/A/B GRADED
               </span>
+              {data?.superIntelMeta && (
+                <span className="px-2 py-0.5 rounded-lg text-[9px] font-mono font-bold bg-gradient-to-r from-cyan-500/15 to-violet-500/15 text-cyan-300 border border-cyan-500/30" title={`AI SCORE = engine conviction × 7-factor expert score × dual-AI verdict · ${data.superIntelMeta.universeMode || ''}`}>
+                  🧠 AI SCORE 80+ = STRONG · 85+ = ELITE · 🔥 {data.superIntelMeta.strongCount ?? 0} strong / 🧠 {data.superIntelMeta.eliteCount ?? 0} elite
+                </span>
+              )}
             </div>
             <p className="text-xs text-slate-400 mt-1">
               {isCryptoMode
-                ? 'Top Crypto Setups • Dual-AI Expert Consensus (Gemini + Groq) • TV + CoinDCX Confluence • BTC Regime Gate • 1% Risk Sizing • 24/7 Live Outcome Tracking'
-                : 'Top 5 High-Conviction Graded Setups • Dual-AI Expert Consensus (Gemini + Groq) • Supertrend/POC/SMA50 Confluence • NIFTY/VIX Regime Gate • 1% Risk Sizing • Live Outcome Tracking'}
+                ? 'Top Crypto Setups • Superintelligence AI Score (engine × 7-factor expert × dual-AI) • Dynamic Full-Universe Scan (live CoinDCX INR pairs) • TV + CoinDCX Confluence • BTC Regime Gate • 1% Risk Sizing • 24/7 Live Outcome Tracking'
+                : 'Top 5 High-Conviction Graded Setups • Superintelligence AI Score (engine × 7-factor expert × dual-AI) • Supertrend/POC/SMA50 Confluence • NIFTY/VIX Regime Gate • 1% Risk Sizing • Live Outcome Tracking'}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">

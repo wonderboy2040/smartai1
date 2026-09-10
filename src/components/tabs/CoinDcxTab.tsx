@@ -313,16 +313,28 @@ export default memo(function CoinDcxTab() {
       {/* ============ MARKET BREADTH ============ */}
       <BreadthStrip board={board} />
 
-      {/* ============ 01 · SIGNAL BOARD ============ */}
+      {/* ============ 01 · SUPERINTELLIGENCE SIGNAL BOARD ============ */}
       <div id="cx-signals">
         <div className="flex items-end justify-between flex-wrap gap-2">
-          <SectionLabel num="01" title="Signal Board" sub={desk === 'FUTURES' ? 'CoinDCX GLOBAL FUTURES (USDT perpetuals, RT prices) → 10-model consensus' : 'CoinDCX crypto majors → 10-model consensus (SMC/ICT included)'} />
+          <SectionLabel num="01" title="Superintelligence Signal Board" sub={`${desk === 'FUTURES'
+            ? 'CoinDCX GLOBAL FUTURES — poora dynamic perp universe scan (RT USDT prices)'
+            : 'CoinDCX SPOT — poora dynamic INR universe scan'} → 10-model consensus + 7-factor expert engine → AI SCORE (80+ = STRONG, 85+ = ELITE) + full trade blueprint`} />
           <BoardSummary board={board} />
         </div>
         <div className="mt-2.5 flex items-center justify-between flex-wrap gap-2">
           <FilterChips filter={filter} onChange={setFilter} counts={counts} />
-          <span className="text-[10px] text-slate-600 font-mono">grades: STRONG ≥75% conf + 70% agree · ACTION ≥55 · WATCH ≥35</span>
+          <span className="text-[10px] text-slate-600 font-mono">🔥 80+ = super AI score · STRONG ≥75% conf + 70% agree · ACTION ≥55 · WATCH ≥35</span>
         </div>
+        {/* v9 engine meta strip — what got scanned, how many cleared 80+ */}
+        {board?.superIntelMeta && (
+          <div className="mt-2 flex items-center gap-2 flex-wrap text-[10px] font-mono">
+            <span className="px-2 py-1 rounded-lg bg-gradient-to-r from-cyan-500/15 to-violet-500/15 border border-cyan-500/30 text-cyan-300 font-black tracking-wider">🧠 {board.superIntelMeta.engine}</span>
+            <span className="px-2 py-1 rounded-lg bg-black/30 border border-slate-700/40 text-slate-400">universe: {board.superIntelMeta.universeSize} coins ({board.superIntelMeta.universeMode})</span>
+            {board.superIntelMeta.priceSource && <span className="px-2 py-1 rounded-lg bg-black/30 border border-slate-700/40 text-slate-500">prices: {board.superIntelMeta.priceSource}</span>}
+            <span className="px-2 py-1 rounded-lg bg-black/30 border border-emerald-500/25 text-emerald-400">🔥 80+ strong: {board.superIntelMeta.strongCount ?? 0}</span>
+            <span className="px-2 py-1 rounded-lg bg-black/30 border border-amber-500/25 text-amber-400">🧠 85+ elite: {board.superIntelMeta.eliteCount ?? 0}</span>
+          </div>
+        )}
         <div className="grid gap-3 mt-2.5 xl:grid-cols-2">
           {loading && (!board || board.signals.length === 0) && (
             <div className="quantum-panel rounded-2xl p-10 text-center col-span-full">
