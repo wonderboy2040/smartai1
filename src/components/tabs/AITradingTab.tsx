@@ -255,38 +255,44 @@ export default memo(function AITradingTab() {
     setTimeout(() => setToast(null), 6000);
   }, []);
 
-  const onExecute = useCallback(async (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; leverage?: number }) => {
+  const onExecute = useCallback(async (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; leverage?: number }) => {
     const r = await executeSignal(signal, mode, opts);
     if (r.ok) {
       const levTag = r.filled?.leverage ? ` · ${r.filled.leverage}x margin (₹${Math.round(r.filled.marginINR ?? 0)})` : '';
       notify(true, mode === 'live'
         ? `✅ LIVE order placed — ${signal.symbol} ${signal.side} · qty ${r.filled?.qty} @ ₹${r.filled?.price}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`
-        : `🧪 Paper trade opened — ${signal.symbol} ${signal.side} · qty ${r.filled?.qty} @ ₹${r.filled?.price}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
+        : mode === 'notify'
+          ? `🔔 Notify-only — ${signal.symbol} ${signal.side} alert + journal audit likha gaya, koi order nahi bana`
+          : `🧪 Paper trade opened — ${signal.symbol} ${signal.side} · qty ${r.filled?.qty} @ ₹${r.filled?.price}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
     } else {
       notify(false, `⛔ ${r.error || 'execution failed'}`);
     }
   }, [executeSignal, notify]);
 
   // v6.5: India gauntlet (Dhan paper/live) — same handler shape.
-  const onExecuteIndia = useCallback(async (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; leverage?: number }) => {
+  const onExecuteIndia = useCallback(async (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; leverage?: number }) => {
     const r = await executeIndia(signal, mode, opts);
     if (r.ok) {
       notify(true, mode === 'live'
         ? `✅ Dhan LIVE order placed — ${signal.symbol} ${signal.side} · ${r.filled?.qty} shares @ ₹${r.filled?.price} · broker SL-M armed · 15:15 square-off${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`
-        : `🧪 India paper trade opened — ${signal.symbol} ${signal.side} · ${r.filled?.qty} shares @ ₹${r.filled?.price} (watcher SL/TP + trailing)${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
+        : mode === 'notify'
+          ? `🔔 Notify-only — ${signal.symbol} ${signal.side} alert + journal audit likha gaya, koi order nahi bana`
+          : `🧪 India paper trade opened — ${signal.symbol} ${signal.side} · ${r.filled?.qty} shares @ ₹${r.filled?.price} (watcher SL/TP + trailing)${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
     } else {
       notify(false, `⛔ ${r.error || 'execution failed'}`);
     }
   }, [executeIndia, notify]);
 
   // v6.8: GLOBAL FUTURES gauntlet (CoinDCX USDT perpetuals) — same handler shape.
-  const onExecuteFutures = useCallback(async (signal: AISignal, mode: 'paper' | 'live', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => {
+  const onExecuteFutures = useCallback(async (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => {
     const r = await executeFutures(signal, mode, opts);
     if (r.ok) {
       const levTag = r.filled?.leverage ? ` · ${r.filled.leverage}x · margin ${Math.round((r.filled as { marginUSDT?: number }).marginUSDT ?? 0)} USDT` : '';
       notify(true, mode === 'live'
         ? `✅ FUTURES LIVE order placed — ${signal.symbol} ${signal.side} · ${r.filled?.qty} @ ${r.filled?.price}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`
-        : `🧪 Futures paper trade opened — ${signal.symbol} ${signal.side} · ${r.filled?.qty} @ ${r.filled?.price}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
+        : mode === 'notify'
+          ? `🔔 Notify-only — ${signal.symbol} ${signal.side} alert + journal audit likha gaya, koi order nahi bana`
+          : `🧪 Futures paper trade opened — ${signal.symbol} ${signal.side} · ${r.filled?.qty} @ ${r.filled?.price}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''}`);
     } else {
       notify(false, `⛔ ${r.error || 'execution failed'}`);
     }

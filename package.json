@@ -43,6 +43,9 @@
     "vitest": "^4.1.9"
   },
   "description": "Advance Pro Intelligence v18 — Multi-Engine AI Portfolio Analytics, Market Intelligence, ML Signals, and Telegram Automation",
+  "overrides": {
+    "qs": "^6.16.0"
+  },
   "engines": {
     "node": ">=20"
   }

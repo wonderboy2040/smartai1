@@ -111,3 +111,9 @@ npm run start:telegram
 ## Upgrade status
 
 See [`docs/UPGRADE_REPORT.md`](docs/UPGRADE_REPORT.md) for the checks performed, fixes applied, dependency/security status, and known environment-dependent limitations.
+
+## v18.0.1 patch (audit & fix)
+
+- Fixed 6 TypeScript errors in `src/components/tabs/AITradingTab.tsx` — the three `onExecute*` wrappers now accept the `notify` mode that `SignalCard` dispatches (`npm run check` passes again).
+- Security: `qs` pinned to `^6.16.0` via npm `overrides` (express transitive dep, GHSA-x5fp-wj9c-mxmx / GHSA-4mjr-xmp4-gh2g); dev-dep + telegram-bot advisories patched. `npm audit` → 0 vulnerabilities.
+- Full audit details: [`docs/AUDIT_FIX_REPORT_v1801.md`](docs/AUDIT_FIX_REPORT_v1801.md)
