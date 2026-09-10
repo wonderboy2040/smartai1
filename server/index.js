@@ -23,6 +23,7 @@ import {
 import { SERVER_MCP_TOOLS_OPENAI, SERVER_MCP_TOOLS_GEMINI, executeServerMCPTool } from './mcpTools.js';
 import indmMcpRoutes from './mcp/routes.js';
 import { registerAITradingRoutes } from './ai/routes.js';
+import { registerIntradayRoutes } from './intraday/routes.js';
 import { startScheduler as startIndmPortfolioScheduler } from './mcp/portfolioSync.js';
 import { durableBootRestoreAll } from './mcp/durable.js';
 import path from 'node:path';
@@ -539,6 +540,24 @@ registerAITradingRoutes(app, {
   KEYS,
   OPENAI_COMPAT,
   TG,
+  jsonError,
+});
+
+// ============================================================
+// INTRADAY DESK (server/intraday/*)
+// ------------------------------------------------------------
+// Dual-market scanner (India NSE + Crypto 24/7), SSE live stream,
+// paper trading, track record, journal, universe editor, movers,
+// market intel, Pro Trader agent, committee debate, briefing.
+// 20 /api/intraday-* endpoints registered by routes.js.
+// ============================================================
+registerIntradayRoutes(app, {
+  fetchGrowwNseQuote,
+  fetchCoinDcxTickers,
+  KEYS,
+  OPENAI_COMPAT,
+  TG,
+  escapeHtml,
   jsonError,
 });
 
