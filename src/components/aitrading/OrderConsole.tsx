@@ -445,6 +445,17 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
                         🔗 {p.trailing === 'breakeven' ? 'BE LOCKED' : 'TRAILING'}
                       </span>
                     )}
+                    {/* v7.0 PRO TRADER: exit-stage chip on partial-TP positions */}
+                    {open && p.tp1Hit && (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-emerald-500/15 text-emerald-300" title={`3-tier exit: T1 ${p.tp1Hit ? 'booked' : '—'} · T2 ${p.tp2Hit ? 'booked' : '—'} · runner trailing`}>
+                        {p.tp2Hit ? '⚡ RUNNER (80% booked)' : '🟡 T1 HIT (40% booked)'}
+                      </span>
+                    )}
+                    {open && p.bookedPnlINR != null && (
+                      <span className={`text-[10px] font-black font-mono ${(p.bookedPnlINR || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`} title="realized via partial T1/T2 legs">
+                        booked {p.bookedPnlINR >= 0 ? '+' : ''}{fmt(p.bookedPnlINR)}
+                      </span>
+                    )}
                     {!open && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-slate-600/20 text-slate-400">{p.closeReason || 'CLOSED'}</span>}
                     <span className="ml-auto text-[11px] font-mono text-slate-400">{p.qty} @ {pf(p.entryPrice)}</span>
                     {open && p.ltp != null && <span className="text-[11px] font-mono text-slate-300">→ {pf(p.ltp)}</span>}
@@ -484,19 +495,26 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
         {tab === 'journal' && (
           <div className="max-h-96 overflow-y-auto">
             {entries.length === 0 && <div className="p-8 text-center text-slate-500 text-xs">Empty — every execution attempt (approved or rejected) lands here</div>}
-            {entries.map(e => (
-              <div key={e.id} className="px-4 py-2.5 border-b border-white/[0.03] text-[11px] flex items-center gap-2 flex-wrap hover:bg-white/[0.02]">
-                <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${
-                  e.status === 'FILLED' || e.status === 'SUBMITTED' ? 'bg-emerald-500/15 text-emerald-300'
-                  : e.status === 'REJECTED' || e.status === 'FAILED' ? 'bg-red-500/15 text-red-300'
-                  : 'bg-slate-600/20 text-slate-400'}`}>{e.status}</span>
+            {entries.map(e => {
+              // v7.0 PRO TRADER: PARTIAL_TP legs render green (booked profit legs)
+              const isPartial = e.kind === 'PARTIAL_TP';
+              const chipCls = isPartial
+                ? 'bg-emerald-500/15 text-emerald-300'
+                : e.status === 'FILLED' || e.status === 'SUBMITTED' ? 'bg-emerald-500/15 text-emerald-300'
+                : e.status === 'REJECTED' || e.status === 'FAILED' ? 'bg-red-500/15 text-red-300'
+                : 'bg-slate-600/20 text-slate-400';
+              return (
+              <div key={e.id} className={`px-4 py-2.5 border-b border-white/[0.03] text-[11px] flex items-center gap-2 flex-wrap hover:bg-white/[0.02] ${isPartial ? 'bg-emerald-500/[0.03]' : ''}`}>
+                <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${chipCls}`}>{isPartial ? `💰 PARTIAL ${e.stage || 'TP'}` : e.status}</span>
                 <span className="font-mono text-slate-300 w-20">{e.pair || '—'}</span>
                 <span className="font-mono text-slate-500">{e.side || ''} {e.qty || ''}</span>
                 {e.pnlINR != null && <span className={`font-mono font-bold ${(e.pnlINR || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{(e.pnlINR || 0) >= 0 ? '+' : ''}{fmt(e.pnlINR)}</span>}
+                {isPartial && e.remainingQty != null && <span className="text-[9px] font-mono text-slate-500">runner {e.remainingQty}</span>}
                 {e.reason && <span className="text-slate-500 truncate max-w-[300px]">{e.reason}</span>}
                 <span className="ml-auto text-slate-600 font-mono text-[10px]">{ago(e.ts)}</span>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

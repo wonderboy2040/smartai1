@@ -1,5 +1,5 @@
 // ============================================================
-// server/ai/agent.js — THE SUPERINTELLIGENCE AUTO-AGENT (v6.8)
+// server/ai/agent.js — THE SUPERINTELLIGENCE AUTO-AGENT (v7.0 PRO)
 // ------------------------------------------------------------
 // A prop-desk style AUTONOMOUS trading agent living server-side.
 // It does EXACTLY what the user asked:
@@ -9,6 +9,8 @@
 //   • AUTO-ENTRY: takes only the highest-conviction STRONG
 //     ensemble signals (agent gates are STRICTER than manual)
 //   • exactly N trades per day (default 3 — user's spec)
+//   • v7.0 PRO 3-TIER EXIT: T1 → close 40% + SL→breakeven,
+//     T2 → close 40% + SL→T1, RUNNER (20%) trails to time-exit/SL
 //   • AUTO-EXIT: SL/TP/trailing via the watchers + native
 //     exchange TP/SL + agent TIME-EXIT (max hold)
 //   • daily loss cap → agent stands down for the day
@@ -42,7 +44,7 @@ const nowMin = () => Date.now() / 60000;
 export const AGENT_DEFAULTS = {
   enabled: false,             // agent ON/OFF
   mode: 'paper',              // 'paper' | 'notify' | 'live' — execution mode
-  desks: { futures: true, spot: true, india: true }, // v7.0: spot enabled by default for CoinDCX auto-trading
+  desks: { futures: true, spot: true, india: true }, // v7.0: spot auto-trade desk ON (was false)
   maxTradesPerDay: 3,         // USER SPEC: daily ke 3 trades
   minConfidence: 80,          // agent STRONG bar (stricter than manual 75)
   minAgreement: 0.75,         // …and stricter agreement
@@ -52,12 +54,12 @@ export const AGENT_DEFAULTS = {
   maxHoldMin: 90,             // agent time-exit (auto square-off)
   dailyLossCapPct: 3,         // −3% of equity → agent stands down today
   minEquityINR: 300,          // below this the agent refuses to trade (honest)
-  // v7.0 PRO TRADER: Auto Take-Profit & Wallet-Sizing
-  partialTpEnabled: true,     // auto take-profit on targets
-  tp1ClosePct: 40,            // 40% position closed at T1 + SL moved to breakeven
-  tp2ClosePct: 40,            // 40% position closed at T2 + SL moved to T1
-  runnerPct: 20,              // 20% runner left with trailing stop
-  breakEvenAfterTp1: true,    // auto lock breakeven at Target 1
+  // ---- v7.0 PRO TRADER: 3-tier partial take-profit ----
+  partialTpEnabled: true,     // T1/T2/runner tiered exits on agent positions
+  tp1ClosePct: 40,            // % of ORIGINAL qty closed at T1
+  tp2ClosePct: 40,            // % of ORIGINAL qty closed at T2
+  runnerPct: 20,              // % riding as the trailing runner (derived 100−T1−T2)
+  breakEvenAfterTp1: true,    // SL → entry once T1 books (risk-free runner)
 };
 
 export function loadAgentConfig() {
@@ -84,9 +86,9 @@ const NUM_CLAMPS = {
   maxHoldMin: [5, 1440],
   dailyLossCapPct: [0.5, 50],
   minEquityINR: [0, 100_000],
+  // v7.0 PRO TRADER split knobs (T1% + T2% ≤ 90 enforced below)
   tp1ClosePct: [10, 80],
   tp2ClosePct: [10, 80],
-  runnerPct: [0, 50],
 };
 export function updateAgentConfig(patch = {}) {
   const cfg = loadAgentConfig();
@@ -97,13 +99,21 @@ export function updateAgentConfig(patch = {}) {
       if (Number.isFinite(n)) next[key] = Math.round(Math.max(lo, Math.min(hi, n)) * 100) / 100;
     }
   }
-  if (patch.partialTpEnabled != null) next.partialTpEnabled = !!patch.partialTpEnabled;
-  if (patch.breakEvenAfterTp1 != null) next.breakEvenAfterTp1 = !!patch.breakEvenAfterTp1;
   if (patch.desks && typeof patch.desks === 'object') {
     for (const k of ['futures', 'spot', 'india']) {
       if (patch.desks[k] != null) next.desks[k] = !!patch.desks[k];
     }
   }
+  // v7.0 PRO TRADER toggles (booleans — not in NUM_CLAMPS)
+  if (patch.partialTpEnabled != null) next.partialTpEnabled = !!patch.partialTpEnabled;
+  if (patch.breakEvenAfterTp1 != null) next.breakEvenAfterTp1 = !!patch.breakEvenAfterTp1;
+  // v7.0: keep the split honest — T1+T2 ≤ 90, runner ≥ 10, sums shown
+  if (next.tp1ClosePct + next.tp2ClosePct > 90) {
+    const scale = 90 / (next.tp1ClosePct + next.tp2ClosePct);
+    next.tp1ClosePct = Math.round(next.tp1ClosePct * scale);
+    next.tp2ClosePct = 90 - next.tp1ClosePct;
+  }
+  next.runnerPct = Math.max(10, Math.round(100 - next.tp1ClosePct - next.tp2ClosePct));
   if (patch.mode === 'paper' || patch.mode === 'notify') next.mode = patch.mode;
   return saveAgentConfig(next);
 }
@@ -142,11 +152,13 @@ function agentTradesToday(j) {
   // v6.11: NOTIFIED = alert-only — the 3-per-day TRADE quota counts real entries.
   return (j?.entries || []).filter(e => e.day === day && e.kind === 'ORDER' && e.source === 'agent' && e.status !== 'REJECTED' && e.status !== 'NOTIFIED');
 }
-/** Realized P&L (INR) of agent-sourced closes today. */
+/** Realized P&L (INR) of agent-sourced closes today. v7.0: PARTIAL_TP
+ *  legs count the moment they fill (a booked winner is real money —
+ *  and a booked loss must respect the daily loss cap). */
 function agentRealizedToday(j) {
   const day = todayIST();
   return (j?.entries || [])
-    .filter(e => e.day === day && e.kind === 'CLOSE' && e.source === 'agent')
+    .filter(e => e.day === day && (e.kind === 'CLOSE' || e.kind === 'PARTIAL_TP') && e.source === 'agent')
     .reduce((a, e) => a + (e.pnlINR || 0), 0);
 }
 function openAgentPositions(j) {
@@ -174,7 +186,7 @@ export async function agentStart({ mode, liveConfirmPhrase } = {}) {
   saveAgentConfig(next);
   _state.runningSince = Date.now();
   _state.pausedToday = null;
-  log('info', `AGENT STARTED (${wantMode.toUpperCase()}) — max ${next.maxTradesPerDay} trades/day · risk ${next.riskPerTradePct}%/trade · SL-based wallet sizing`);
+  log('info', `AGENT STARTED (${wantMode.toUpperCase()}) — max ${next.maxTradesPerDay} trades/day · risk ${next.riskPerTradePct}%/trade · SL-based wallet sizing · PRO exits: T1 ${next.partialTpEnabled ? `${next.tp1ClosePct}%+BE-lock` : 'off'} · T2 ${next.tp2ClosePct}% · runner ${next.runnerPct}% trailing`);
   persistState();
   return { ok: true, config: next };
 }
@@ -184,6 +196,78 @@ export function agentStop({ reason = 'user' } = {}) {
   log('info', `AGENT STOPPED (${reason})`);
   persistState();
   return { ok: true, config: { ...cfg, enabled: false } };
+}
+
+// ---------------- v7.0 PRO TRADER: wallet-based sizing preview ----------------
+/**
+ * The sizing math the agent WILL use on its next STRONG entry — the
+ * same formula _tick() runs, surfaced for the UI so the user sees
+ * "agent will invest ₹X on next signal" BEFORE it happens:
+ *
+ *   FUTURES: riskINR = equity × riskPct → riskUSDT = riskINR / usdInr
+ *            → qty = riskUSDT / |entry − SL|
+ *            → marginUSDT = (qty × entry) / leverage (60% deployable cap)
+ *   SPOT:    budgetINR = min(maxOrderINR, (riskINR / riskPct) × 100,
+ *            60% of deployable spot INR)
+ *
+ * Pure function — no wallet fetch (callers pass a snapshot/stale view
+ * and it degrades to the practice ₹10,000 equity when unconnected).
+ */
+export function agentSizingPreview({ cfg, equityINR, usdInr, plan, market, wallet, trading }) {
+  const c = cfg || loadAgentConfig();
+  const t = trading || loadConfig();
+  const eq = Number(equityINR) > 0 ? Number(equityINR) : 10_000;
+  const fx = Number(usdInr) > 0 ? Number(usdInr) : 84;
+  const p = plan || null;
+  const wantFutures = market != null
+    ? String(market).toUpperCase() === 'FUTURES'
+    : true; // legacy default: plan with a stop distance prices like futures
+  const entry = Number(p?.entry);
+  const sl = Number(p?.stopLoss);
+  const stopDist = Number.isFinite(entry) && Number.isFinite(sl) ? Math.abs(entry - sl) : null;
+  const riskINR = r2(eq * (c.riskPerTradePct / 100));
+
+  if (p && wantFutures && stopDist > 0) {
+    // futures math (SL-distance qty + leveraged margin + deployable cap)
+    const riskUSDT = riskINR / fx;
+    const qty = riskUSDT / stopDist;
+    const lev = Math.max(1, Math.min(c.maxLeverage, Math.floor(95 / Math.max(0.5, (p.riskPct || 5)))));
+    let marginUSDT = (qty * entry) / lev;
+    const deployable = Number(wallet?.deployableFuturesUSDT) > 0 ? Number(wallet.deployableFuturesUSDT) : (eq * 0.5 / fx);
+    const capped = marginUSDT > deployable * 0.6;
+    if (capped) marginUSDT = deployable * 0.6;
+    return {
+      desk: 'FUTURES', riskINR, riskPct: c.riskPerTradePct, equityINR: r2(eq), usdInr: r2(fx),
+      entry: r2(entry), stopLoss: r2(sl), stopDist: r2(stopDist),
+      qty: Math.round(qty * 1e4) / 1e4,
+      leverage: lev,
+      marginUSDT: Math.round(marginUSDT * 1000) / 1000,
+      marginINR: r2(marginUSDT * fx),
+      deployableUSDT: r2(deployable), capped: !!capped,
+      note: `₹${r2(riskINR)} risk (${c.riskPerTradePct}% of ₹${r2(eq)}) → ${Math.round(qty * 1e4) / 1e4} qty → ${Math.round(marginUSDT * 1000) / 1000} USDT margin at ${lev}x${capped ? ' (60% deployable cap applied)' : ''}`,
+    };
+  }
+
+  if (p && (p.riskPct || 0) > 0) {
+    // spot math (risk budget → notional at the plan's risk %)
+    const deployableSpotINR = Number(wallet?.deployableSpotINR) > 0 ? Number(wallet.deployableSpotINR) : eq;
+    const budgetINR = Math.min(
+      t.maxOrderINR || 1000,
+      Math.max(100, (riskINR / (p.riskPct || 5)) * 100),
+      Math.max(100, deployableSpotINR * 0.6),
+    );
+    return {
+      desk: 'SPOT', riskINR, riskPct: c.riskPerTradePct, equityINR: r2(eq), usdInr: r2(fx),
+      entry: r2(entry), stopLoss: r2(sl),
+      budgetINR: r2(budgetINR), deployableSpotINR: r2(deployableSpotINR),
+      note: `₹${r2(riskINR)} risk (${c.riskPerTradePct}% of ₹${r2(eq)}) → ₹${r2(budgetINR)} spot order @ ₹${r2(entry)}`,
+    };
+  }
+
+  return {
+    desk: null, riskINR, riskPct: c.riskPerTradePct, equityINR: r2(eq), usdInr: r2(fx),
+    note: `₹${r2(riskINR)} risk budget ready (${c.riskPerTradePct}% of ₹${r2(eq)}) — plan ka intezaar next STRONG signal se`,
+  };
 }
 
 // ---------------- the agent loop ----------------
@@ -321,6 +405,23 @@ async function _tick(deps, sendTelegram) {
   // ---- wallet-based sizing ----
   const riskINR = equityINR * (cfg.riskPerTradePct / 100);
   const wantFutures = best.market === 'FUTURES';
+  // v7.0: the sizing math is LOGGED transparently before execution —
+  // the user can audit "₹X risk → Y qty → Z margin at Lx" in the feed
+  {
+    const stopDist = Math.abs(best.plan.entry - best.plan.stopLoss);
+    if (wantFutures && stopDist > 0) {
+      const lev = Math.max(1, Math.min(cfg.maxLeverage, Math.floor(95 / (best.plan.riskPct || 5))));
+      const q = riskINR / usdInr / stopDist;
+      log('info', `SIZING ${best.symbol}: ₹${r2(riskINR)} risk (${cfg.riskPerTradePct}% of ₹${r2(equityINR)}) → ${Math.round(q * 1e4) / 1e4} qty → ${r2((q * best.plan.entry) / lev)} USDT margin at ${lev}x`);
+    } else {
+      const budget = Math.min(
+        trading.maxOrderINR || 1000,
+        Math.max(100, (riskINR / (best.plan.riskPct || 5)) * 100),
+        Math.max(100, (wallet?.deployableSpotINR ?? equityINR) * 0.6),
+      );
+      log('info', `SIZING ${best.symbol}: ₹${r2(riskINR)} risk (${cfg.riskPerTradePct}% of ₹${r2(equityINR)}) → ₹${r2(budget)} spot order`);
+    }
+  }
   let out = null;
   if (wantFutures) {
     const riskUSDT = riskINR / usdInr;
@@ -346,7 +447,6 @@ async function _tick(deps, sendTelegram) {
       getFreshSignal: (pair) => getFreshFuturesSignalForExec(pair, deps),
       wantAuto: cfg.mode === 'live',
       source: 'agent',
-      partialTp: cfg.partialTpEnabled !== false,
       sendTelegram,
     });
   } else {
@@ -365,7 +465,6 @@ async function _tick(deps, sendTelegram) {
       getFreshSignal: (pair) => getFreshSignalForExec(pair, deps),
       wantAuto: cfg.mode === 'live',
       source: 'agent',
-      partialTp: cfg.partialTpEnabled !== false,
       sendTelegram,
     });
   }
@@ -410,47 +509,11 @@ function pairOfSignal(s) {
   return s.symbol;
 }
 
-// ---------------- wallet sizing preview (v7.0 PRO) ----------------
-export function computeSizingPreview({ equityINR, riskPerTradePct, leverage, usdInr, deployableFuturesUSDT, deployableSpotINR }) {
-  const eq = Number(equityINR) > 0 ? Number(equityINR) : 10_000;
-  const riskPct = Number(riskPerTradePct) || 1.5;
-  const lev = Math.max(1, Math.min(10, Number(leverage) || 3));
-  const rate = Number(usdInr) || 84;
-  const riskINR = Math.round(eq * (riskPct / 100) * 100) / 100;
-  const riskUSDT = Math.round((riskINR / rate) * 100) / 100;
-
-  // Spot budget estimate (assuming typical 3-5% stop distance)
-  const spotEstINR = Math.round(Math.min(
-    (deployableSpotINR ?? eq) * 0.6,
-    Math.max(100, (riskINR / 0.04))
-  ));
-
-  // Futures margin estimate
-  const futDeployable = deployableFuturesUSDT ?? (eq * 0.5 / rate);
-  const futCapUSDT = Math.round(futDeployable * 0.6 * 100) / 100;
-  const futMarginEstUSDT = Math.round(Math.min(futCapUSDT, Math.max(2, (riskUSDT / 0.04) / lev)) * 100) / 100;
-  const futPositionNotionalUSDT = Math.round(futMarginEstUSDT * lev * 100) / 100;
-
-  return {
-    equityINR: Math.round(eq),
-    riskPerTradePct: riskPct,
-    riskINR,
-    riskUSDT,
-    leverage: lev,
-    spotEstimatedOrderINR: spotEstINR,
-    futuresEstimatedMarginUSDT: futMarginEstUSDT,
-    futuresEstimatedNotionalUSDT: futPositionNotionalUSDT,
-    futuresCapUSDT: futCapUSDT,
-    slotsPerDay: 3,
-    maxDailyRiskINR: Math.round(riskINR * 3),
-  };
-}
-
 // ---------------- status view (the panel's single call) ----------------
 /**
  * Everything the Superintelligence Agent panel needs in ONE payload:
  * config + live state + today's agent trades + wallet + top picks per
- * desk + open agent positions + wallet sizing preview. Never throws; boards degrade to null.
+ * desk + open agent positions. Never throws; boards degrade to null.
  */
 export async function agentStatus(deps) {
   const cfg = loadAgentConfig();
@@ -484,25 +547,35 @@ export async function agentStatus(deps) {
     }
   }
 
+  // v7.0 PRO TRADER: what the agent WOULD invest on the next STRONG
+  // signal — the top pick across the ENABLED desks, sized against the
+  // live wallet (falls back to the last-known/practice equity).
+  let preview = null;
+  try {
+    const deskOrder = [];
+    if (cfg.desks.futures && picks.FUTURES?.length) deskOrder.push({ market: 'FUTURES', pick: picks.FUTURES[0] });
+    if (cfg.desks.spot && picks.CRYPTO?.length) deskOrder.push({ market: 'CRYPTO', pick: picks.CRYPTO[0] });
+    const top = deskOrder.find(x => x?.pick?.plan) || null;
+    preview = agentSizingPreview({
+      cfg,
+      equityINR: wallet?.equityINR ?? (_state.lastWallet?.equityINR ?? null),
+      usdInr: wallet?.usdInr ?? (_state.lastWallet?.usdInr ?? null),
+      plan: top?.pick?.plan ?? null,
+      market: top?.market ?? null,
+      wallet,
+      trading,
+    });
+    if (top?.pick) preview.symbol = top.pick.symbol;
+  } catch { preview = null; }
+
   const day = todayIST();
   const lossCapINR = (equityINR ?? 10_000) * (cfg.dailyLossCapPct / 100);
   const paused = _state.pausedToday && _state.pausedToday.day === day ? _state.pausedToday : null;
-
-  const usdInr = wallet?.usdInr || _state.lastWallet?.usdInr || 84;
-  const sizingPreview = computeSizingPreview({
-    equityINR: equityINR ?? 10_000,
-    riskPerTradePct: cfg.riskPerTradePct,
-    leverage: cfg.maxLeverage,
-    usdInr,
-    deployableFuturesUSDT: wallet?.deployableFuturesUSDT ?? _state.lastWallet?.deployableFuturesUSDT,
-    deployableSpotINR: wallet?.deployableSpotINR ?? _state.lastWallet?.deployableSpotINR,
-  });
 
   return {
     ok: true,
     engine: 'SUPERINTELLIGENCE AGENT v7.0 PRO',
     config: cfg,
-    sizingPreview,
     trading: { mode: trading.mode, allowAuto: trading.allowAuto, killSwitch: trading.killSwitch, connected: coindcxConnected() },
     state: {
       running: cfg.enabled,
@@ -530,18 +603,21 @@ export async function agentStatus(deps) {
     },
     openPositions: openAgent.map(p => ({
       id: p.id, pair: p.pair, market: p.market, side: p.side, mode: p.mode, qty: p.qty,
-      initialQty: p.initialQty ?? p.qty,
-      entryPrice: p.entryPrice, sl: p.sl, tp: p.tp ?? null, tp2: p.tp2,
-      tp1Hit: !!p.tp1Hit, tp2Hit: !!p.tp2Hit,
-      bookedPnlINR: p.bookedPnlINR ?? 0,
-      exitStage: p.exitStage ?? (p.tp2Hit ? 'RUNNER_ACTIVE' : p.tp1Hit ? 'TP1_BOOKED_BE_LOCKED' : 'ACTIVE'),
-      leverage: p.leverage ?? null,
+      entryPrice: p.entryPrice, sl: p.sl, tp: p.tp ?? null, tp2: p.tp2, leverage: p.leverage ?? null,
       marginUSDT: p.marginUSDT ?? null, openedAt: p.openedAt,
       ageMin: p.openedAt ? Math.round((Date.now() - p.openedAt) / 60000) : null,
       maxHoldMin: cfg.maxHoldMin,
+      // v7.0 PRO TRADER exit-stage state
+      tp1Hit: !!p.tp1Hit, tp2Hit: !!p.tp2Hit,
+      bookedPnlINR: p.bookedPnlINR ?? null,
+      bookedPnlUSDT: p.bookedPnlUSDT ?? null,
+      remainingQty: p.qty ?? null,
+      originalQty: p.originalQty ?? null,
+      exitStage: p.exitStage || 'ENTRY',
     })),
     wallet,
     picks,
+    sizingPreview: preview,
   };
 }
 

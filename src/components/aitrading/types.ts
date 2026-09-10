@@ -339,6 +339,14 @@ export interface JournalPosition {
   source?: string | null;
   /** v6.8: 'exchange' when the liquidation level came from CoinDCX itself */
   liquidationSource?: string | null;
+  /** v7.0 PRO TRADER: 3-tier partial take-profit state */
+  tp1Hit?: boolean;
+  tp2Hit?: boolean;
+  partialTpOff?: boolean;
+  originalQty?: number | null;
+  bookedPnlINR?: number | null;
+  bookedPnlUSDT?: number | null;
+  exitStage?: 'ENTRY' | 'T2_HIT' | 'RUNNER' | 'CLOSED' | string | null;
 }
 
 export interface JournalEntry {
@@ -363,6 +371,11 @@ export interface JournalEntry {
   pnlUSDT?: number;
   closePrice?: number;
   signal?: { grade?: string; conf?: number; agreement?: number };
+  /** v7.0 PRO TRADER: PARTIAL_TP leg fields */
+  stage?: 'T1' | 'T2' | string;
+  remainingQty?: number;
+  bookedPnlINR?: number;
+  exitStage?: string;
 }
 
 export interface TradingState {
@@ -669,12 +682,34 @@ export interface AgentConfig {
   maxHoldMin: number;
   dailyLossCapPct: number;
   minEquityINR: number;
-  // v7.0 PRO TRADER
-  partialTpEnabled?: boolean;
-  tp1ClosePct?: number;
-  tp2ClosePct?: number;
-  runnerPct?: number;
-  breakEvenAfterTp1?: boolean;
+  /** v7.0 PRO TRADER: 3-tier partial take-profit */
+  partialTpEnabled: boolean;
+  tp1ClosePct: number;
+  tp2ClosePct: number;
+  runnerPct: number;
+  breakEvenAfterTp1: boolean;
+}
+
+/** v7.0: what the agent WOULD invest on the next STRONG signal. */
+export interface AgentSizingPreview {
+  desk: 'FUTURES' | 'SPOT' | null | string;
+  symbol?: string;
+  riskINR: number;
+  riskPct: number;
+  equityINR: number;
+  usdInr: number;
+  entry?: number | null;
+  stopLoss?: number | null;
+  stopDist?: number | null;
+  qty?: number;
+  leverage?: number;
+  marginUSDT?: number;
+  marginINR?: number;
+  deployableUSDT?: number;
+  capped?: boolean;
+  budgetINR?: number;
+  deployableSpotINR?: number;
+  note: string;
 }
 
 export interface AgentOpenPosition {
@@ -684,20 +719,23 @@ export interface AgentOpenPosition {
   side: string;
   mode: string;
   qty: number;
-  initialQty?: number;
   entryPrice: number;
   sl: number | null;
   tp?: number | null;
   tp2: number | null;
-  tp1Hit?: boolean;
-  tp2Hit?: boolean;
-  bookedPnlINR?: number;
-  exitStage?: 'ACTIVE' | 'TP1_BOOKED_BE_LOCKED' | 'TP2_BOOKED' | 'RUNNER_ACTIVE' | string;
   leverage: number | null;
   marginUSDT: number | null;
   openedAt: number;
   ageMin: number | null;
   maxHoldMin: number;
+  /** v7.0 PRO TRADER: 3-tier exit state */
+  tp1Hit?: boolean;
+  tp2Hit?: boolean;
+  bookedPnlINR?: number | null;
+  bookedPnlUSDT?: number | null;
+  remainingQty?: number | null;
+  originalQty?: number | null;
+  exitStage?: 'ENTRY' | 'T2_HIT' | 'RUNNER' | 'CLOSED' | string;
 }
 
 export interface AgentPick {
@@ -710,25 +748,10 @@ export interface AgentPick {
   plan: { entry: number; stopLoss: number; target2: number; riskPct: number } | null;
 }
 
-export interface AgentSizingPreview {
-  equityINR: number;
-  riskPerTradePct: number;
-  riskINR: number;
-  riskUSDT: number;
-  leverage: number;
-  spotEstimatedOrderINR: number;
-  futuresEstimatedMarginUSDT: number;
-  futuresEstimatedNotionalUSDT: number;
-  futuresCapUSDT: number;
-  slotsPerDay: number;
-  maxDailyRiskINR: number;
-}
-
 export interface AgentView {
   ok: boolean;
   engine: string;
   config: AgentConfig;
-  sizingPreview?: AgentSizingPreview;
   trading: { mode: string; allowAuto: boolean; killSwitch: boolean; connected: boolean };
   state: {
     running: boolean;
@@ -753,6 +776,8 @@ export interface AgentView {
   openPositions: AgentOpenPosition[];
   wallet: WalletView | null;
   picks: Partial<Record<'INDIA' | 'FUTURES' | 'CRYPTO', AgentPick[]>>;
+  /** v7.0 PRO TRADER: next-trade sizing preview */
+  sizingPreview?: AgentSizingPreview | null;
 }
 
 // ============================================================

@@ -14,6 +14,10 @@
 //   recordExecution(signal, meta)  → called by BOTH gauntlets
 //                                    (paper + live) under the same
 //                                    journal lock section
+//   markPartialOutcome(entryId, p)  → v7.0 PRO TRADER — every partial
+//                                    take-profit leg is stamped onto
+//                                    its execution entry (qty/price/
+//                                    pnl/stage) BEFORE the final close
 //   markOutcome(entryId, outcome)  → called when the position CLOSES
 //                                    ({ r, pnlINR, reason, exit })
 //   modelStats()                   → per-model win/loss attribution
@@ -32,11 +36,14 @@ import { durablePut } from '../mcp/durable.js';
 const LEDGER_FILE = 'ai-signal-ledger.json';
 const MAX_ENTRIES = 400;
 
+const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 const sha256 = (s) => crypto.createHash('sha256').update(String(s), 'utf8').digest('hex');
 
-/** Canonical body — everything EXCEPT id/prevHash/hash/outcome. */
+/** Canonical body — everything EXCEPT id/prevHash/hash/outcome/
+ *  partials (v7.0: the partial legs mutate in place exactly like the
+ *  outcome does, without breaking the chain links after them). */
 function bodyOf(e) {
-  const { id, prevHash, hash, outcome, ...body } = e || {};
+  const { id, prevHash, hash, outcome, partials, ...body } = e || {};
   return body;
 }
 function hashEntry(e) {
@@ -96,6 +103,39 @@ export function recordExecution(signal, meta = {}) {
   l.entries.push(entry);
   save(l);
   return entry;
+}
+
+// ---------------- v7.0 partial take-profit legs ----------------
+/**
+ * Stamp a PARTIAL_TP leg onto the execution entry (append-only array
+ * on the entry — the hash body deliberately excludes `partials`, the
+ * same honesty model `outcome` uses: history links never break, but
+ * the legs are persisted and reviewable). Multiple legs per position
+ * are the NORM for the pro trader (T1 40% → T2 40% → runner).
+ * @param {string} entryId  the ledgerEntryId on the position
+ * @param {{stage: string, qty: number, price: number, pnlINR: number}} leg
+ * @returns {boolean} true when the leg was stamped
+ */
+export function markPartialOutcome(entryId, leg) {
+  try {
+    if (!entryId || !leg) return false;
+    const l = load();
+    const e = l.entries.find(x => x.id === entryId);
+    if (!e) return false;
+    if (!Array.isArray(e.partials)) e.partials = [];
+    e.partials.push({
+      ts: Date.now(),
+      stage: String(leg.stage || 'T1'),
+      qty: Number.isFinite(Number(leg.qty)) ? Number(leg.qty) : null,
+      price: Number.isFinite(Number(leg.price)) ? Number(leg.price) : null,
+      pnlINR: Number.isFinite(Number(leg.pnlINR)) ? Math.round(Number(leg.pnlINR) * 100) / 100 : null,
+    });
+    // same in-place re-assign pattern as markOutcome — body excludes
+    // partials, so the chain links before/after stay verifiable
+    e.hash = hashEntry(e);
+    save(l);
+    return true;
+  } catch { return false; }
 }
 
 // ---------------- outcome ----------------
@@ -213,12 +253,17 @@ export function modelStats() {
 export function settlePositionOutcome(p, reason) {
   try {
     if (!p?.ledgerEntryId || p.status !== 'CLOSED') return false;
-    const qty = Number(p.qty) || 0;
+    // v7.0: partial closes reduce p.qty long before the final close —
+    // the honest R denominator is the risk taken at ENTRY (original
+    // qty × initial per-unit risk), and the honest numerator is the
+    // TOTAL P&L (booked partial legs + the final leg).
+    const qtyAtEntry = Number(p.originalQty) > 0 ? Number(p.originalQty) : (Number(p.qty) || 0);
     const riskPerUnit = Number(p.initialRisk) || 0;
-    const riskINR = riskPerUnit > 0 && qty > 0 ? riskPerUnit * qty : null;
-    const r = riskINR > 0 ? (Number(p.pnlINR) || 0) / riskINR : null;
+    const riskINR = riskPerUnit > 0 && qtyAtEntry > 0 ? riskPerUnit * qtyAtEntry : null;
+    const totalPnlINR = (Number(p.pnlINR) || 0) + (Number(p.bookedPnlINR) || 0);
+    const r = riskINR > 0 ? totalPnlINR / riskINR : null;
     return markOutcome(p.ledgerEntryId, {
-      r, pnlINR: p.pnlINR, reason: reason || p.closeReason || null, exit: p.closePrice ?? null,
+      r, pnlINR: r2(totalPnlINR), reason: reason || p.closeReason || null, exit: p.closePrice ?? null,
     });
   } catch { return false; }
 }

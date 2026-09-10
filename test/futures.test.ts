@@ -379,13 +379,60 @@ describe('watchFuturesPositions', () => {
     expect(p.pnlINR).toBeCloseTo(-20 * 84, 0);
   });
 
-  it('closes at TARGET-2 with the runner profit', async () => {
-    __setJournalForTests({ entries: [], positions: [mkPos()] });
+  it('closes at TARGET-2 with the runner profit (manual desk — classic full exit)', async () => {
+    // v7.0: PARTIAL TP applies to AGENT positions only — a manual
+    // position keeps the classic full-close-at-T2 behavior.
+    __setJournalForTests({ entries: [], positions: [mkPos({ source: 'manual' })] });
     routeFetch({ 'current_prices/futures/rt': { ...RT_PAYLOAD, prices: { ...RT_PAYLOAD.prices, 'B-BTC_USDT': { ...RT_PAYLOAD.prices['B-BTC_USDT'], ls: 53300 } } } });
     const closures = await watchFuturesPositions({});
     expect(closures[0].reason).toMatch(/TARGET-2/i);
     const p = loadJournal().positions[0];
     expect(p.pnlUSDT).toBeCloseTo(33, 0); // (53300 − 50000) × 0.01
+  });
+
+  it('v7.0 PRO: agent position at T2 books 40%+40% partials, 20% runner rides (no full close)', async () => {
+    __setJournalForTests({ entries: [], positions: [mkPos()] }); // source: 'agent'
+    routeFetch({ 'current_prices/futures/rt': { ...RT_PAYLOAD, prices: { ...RT_PAYLOAD.prices, 'B-BTC_USDT': { ...RT_PAYLOAD.prices['B-BTC_USDT'], ls: 53300 } } } });
+    const closures = await watchFuturesPositions({});
+    // both partial legs booked in one pass (price gapped past T1+T2)
+    const partial = closures.filter(c => c.partial);
+    expect(partial).toHaveLength(1);
+    expect(partial[0].reason).toMatch(/PARTIAL TP/i);
+    const j = loadJournal();
+    const p = j.positions[0];
+    const legs = j.entries.filter(e => e.kind === 'PARTIAL_TP');
+    expect(legs.map(l => l.stage)).toEqual(['T1', 'T2']);
+    expect(p.status).toBe('OPEN');               // RUNNER alive at 20%
+    expect(p.tp1Hit).toBe(true);
+    expect(p.tp2Hit).toBe(true);
+    expect(p.exitStage).toBe('RUNNER');
+    expect(p.originalQty).toBe(0.01);
+    expect(p.qty).toBeCloseTo(0.002, 4);         // 0.01 − 40% − 40%
+    // booked legs: 0.004 × 3300 × 2 = 26.4 USDT (+ INR twin @84)
+    expect(p.bookedPnlUSDT).toBeCloseTo(26.4, 2);
+    expect(p.bookedPnlINR).toBeCloseTo(26.4 * 84, 1);
+    // no CLOSE — the runner continues
+    expect(j.entries.filter(e => e.kind === 'CLOSE')).toHaveLength(0);
+    // SL locked at/above T1 (profit lock; trail ratchet keeps it ≥)
+    expect(p.sl).toBeGreaterThanOrEqual(51600);
+  });
+
+  it('v7.0 PRO: T1 partial on an agent position → 40% booked + breakeven lock', async () => {
+    __setJournalForTests({ entries: [], positions: [mkPos()] }); // source: 'agent'
+    // price 52000: T1 51600 hit, T2 53200 not yet
+    routeFetch({ 'current_prices/futures/rt': { ...RT_PAYLOAD, prices: { ...RT_PAYLOAD.prices, 'B-BTC_USDT': { ...RT_PAYLOAD.prices['B-BTC_USDT'], ls: 52000 } } } });
+    await watchFuturesPositions({});
+    const j = loadJournal();
+    const p = j.positions[0];
+    expect(j.entries.filter(e => e.kind === 'PARTIAL_TP')).toHaveLength(1);
+    expect(p.tp1Hit).toBe(true);
+    expect(p.qty).toBeCloseTo(0.006, 4);         // 0.01 − 40%
+    // booked leg: 0.004 × (52000 − 50000) = 8 USDT
+    expect(p.bookedPnlUSDT).toBeCloseTo(8, 2);
+    // breakeven lock: SL ≥ entry 50000 (was 48400)
+    expect(p.sl).toBeGreaterThanOrEqual(50000);
+    expect(p.status).toBe('OPEN');
+    expect(j.entries.filter(e => e.kind === 'CLOSE')).toHaveLength(0);
   });
 
   it('reconciles a LIVE position the exchange already closed (native TP/SL)', async () => {
