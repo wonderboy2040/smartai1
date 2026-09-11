@@ -149,6 +149,15 @@ export interface PaperTrade {
   unrealizedPnl: number;
   parts: { qty: number; exitPrice: number; ts: number; reason: string }[];
   capital: number;
+  /** v9.5 F&O option rows — present only on option paper trades. */
+  assetKind?: 'OPTION';
+  underlying?: string;
+  strike?: number;
+  optType?: 'CE' | 'PE';
+  expiry?: string;
+  lotSize?: number;
+  /** "Nifty50 15Sep 23400 CE" — the card name this trade came from. */
+  label?: string | null;
 }
 
 export interface PaperSummary {

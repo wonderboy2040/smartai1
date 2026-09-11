@@ -18,6 +18,7 @@ import { isCryptoSymbolBase } from './engine.js';
 import { recordTradeClose } from './journal.js';
 import { scheduleBackup, restoreBackup, backupConfigured } from './backup.js';
 import { pRound } from '../ai/lib/priceRound.js';
+import { bsPrice, yearsToExpiry } from '../ai/lib/blackScholes.js';
 
 const FILE = 'paper-trades.json';
 const MAX_TRADES = 500;
@@ -68,17 +69,104 @@ function _validateSym(sym) {
   return typeof sym === 'string' && /^[A-Z0-9&\-]{2,15}$/.test(sym.trim().toUpperCase());
 }
 
+// ------------------------------------------------------------
+// v9.5 F&O OPTION PAPER TRADES — "Nifty50 15Sep 23400 CE" cards
+// can now be paper-traded through the SAME engine. An option buy is
+// a premium-LONG position (BUY CE on a LONG index consensus, BUY PE
+// on SHORT): the card's Entry/Target/SL are premium levels, so the
+// existing LONG level-sanity (SL < E < T1 < T2) holds as-is.
+//   qty      = LOTS (integer); P&L multiplies by lotSize
+//   pricing  = the watcher injects a live BS-model premium quote
+//              per tick (spot via Yahoo ^NSEI/^BSESN — see
+//              injectOptionPaperQuotes below), so SL/T1/T2/EOD
+//              auto-management + P&L work exactly like equities
+// ------------------------------------------------------------
+const OPTION_UNDERLYINGS = new Set(['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'NIFTYNXT50', 'SENSEX']);
+const RISK_FREE = 0.065; // matches optionsDesk.js
+
+function _isOptionTrade(t) { return t?.assetKind === 'OPTION'; }
+
+/** v9.5 — called by the watcher tick BEFORE evaluatePaper(): for every
+ * open OPTION paper trade, fetch the underlying spot (Yahoo map in
+ * index.js) and re-price the premium via Black-Scholes (entry IV held
+ * fixed — same basis as the card that opened it). Injected into the
+ * quotes map, so evaluatePaper()/closePaperTrade() need zero changes. */
+export async function injectOptionPaperQuotes(quotes, fetchIndexSpot) {
+  if (typeof fetchIndexSpot !== 'function') return;
+  const open = _state.trades.filter(t => _isOptionTrade(t) && t.status !== 'CLOSED');
+  if (open.length === 0) return;
+  const spotCache = new Map();
+  for (const t of open) {
+    try {
+      if (!spotCache.has(t.underlying)) {
+        const q = await fetchIndexSpot(t.underlying);   // {price} | null
+        if (q?.price > 0) spotCache.set(t.underlying, q.price);
+      }
+      const spot = spotCache.get(t.underlying);
+      if (!(spot > 0)) continue;
+      // T: expiry 15:30 IST; clamp to [0, ∞). T=0 → intrinsic value.
+      const T = Math.max(0, yearsToExpiry(`${t.expiry}T15:30:00+05:30`));
+      const intrinsic = t.optType === 'CE'
+        ? Math.max(0, spot - t.strike)
+        : Math.max(0, t.strike - spot);
+      // t.iv is stored in PERCENT (e.g. 13.2) — bsPrice wants the decimal
+      // sigma (0.132), clamped to the same [6%, 60%] band as the card desk.
+      const sigma = Math.min(0.60, Math.max(0.06, (Number(t.iv) || 13) / 100));
+      const prem = T > 0
+        ? Math.max(0.05, bsPrice(spot, t.strike, T, RISK_FREE, sigma, t.optType))
+        : intrinsic;
+      quotes[t.symbol] = { price: +prem.toFixed(2), change: 0, ts: Date.now() };
+    } catch { /* skip this trade this tick */ }
+  }
+}
+
+/** Underlying index symbols the watcher must fetch when OPTION paper
+ * trades are open (quotes for the CONTRACT itself don't exist on any
+ * equity feed — the premium is model-priced from the index spot). */
+export function optionUnderlyingsForWatcher() {
+  return [...new Set(
+    _state.trades
+      .filter(t => _isOptionTrade(t) && t.status !== 'CLOSED')
+      .map(t => String(t.underlying || '').toUpperCase())
+      .filter(u => OPTION_UNDERLYINGS.has(u))
+  )];
+}
+
 export function openPaperTrade(input) {
   const {
     symbol, direction, entry, qty,
     stopLoss, target1, target2, market,
+    // v9.5 F&O option fields (optional):
+    assetKind, underlying, strike, optType, expiry, iv, lotSize, label,
   } = input || {};
 
   if (!_validateSym(symbol)) return { error: 'Invalid symbol format.' };
   const sym = symbol.trim().toUpperCase();
+  const isOption = String(assetKind || '').toUpperCase() === 'OPTION';
+  if (isOption) {
+    const u = String(underlying || '').trim().toUpperCase();
+    if (!OPTION_UNDERLYINGS.has(u)) {
+      return { error: `Option paper trade: unsupported underlying "${u || '—'}" (NIFTY/SENSEX supported).` };
+    }
+    const k = Number(strike);
+    if (!(Number.isFinite(k) && k > 0)) return { error: 'Option paper trade: valid strike required.' };
+    const ot = String(optType || '').toUpperCase();
+    if (ot !== 'CE' && ot !== 'PE') return { error: 'Option paper trade: optType must be CE or PE.' };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(expiry || ''))) return { error: 'Option paper trade: expiry (YYYY-MM-DD) required.' };
+    const ivn = Number(iv);
+    if (!(Number.isFinite(ivn) && ivn > 0)) return { error: 'Option paper trade: IV required for premium re-pricing.' };
+    const ls = Number(lotSize);
+    if (!(Number.isFinite(ls) && ls >= 1 && ls <= 10000)) return { error: 'Option paper trade: lotSize (1..10000) required.' };
+    // Option BUY = premium LONG, always. A SHORT/PE-consensus card is
+    // still a premium-LONG position — the direction arg must agree.
+    if (String(direction || '').toUpperCase() !== 'LONG') {
+      return { error: 'Option paper trades are premium-BUY (LONG). Pass direction "LONG".' };
+    }
+  }
   const mkt = (['INDIA', 'CRYPTO'].includes(String(market || '').toUpperCase())
     ? String(market).toUpperCase()
     : (isCryptoSymbolBase(sym) ? 'CRYPTO' : 'INDIA'));
+  if (isOption && mkt !== 'INDIA') return { error: 'Option paper trades are INDIA-market only.' };
   const dir = direction === 'SHORT' ? 'SHORT' : 'LONG';
   const n = (v) => (typeof v === 'number' && isFinite(v) && v > 0) ? v : null;
   const e = n(entry), sl = n(stopLoss);
@@ -126,6 +214,18 @@ export function openPaperTrade(input) {
     dayKey: today,
     capital: +(q * e).toFixed(2), // notionally deployed
   };
+  if (isOption) {
+    // v9.5 F&O: contract identity + re-pricing inputs + lot multiplier.
+    trade.assetKind = 'OPTION';
+    trade.underlying = String(underlying).trim().toUpperCase();
+    trade.strike = Number(strike);
+    trade.optType = String(optType).toUpperCase();
+    trade.expiry = String(expiry).slice(0, 10);
+    trade.iv = Number(iv);                 // entry IV, held fixed
+    trade.lotSize = Number(lotSize);       // P&L multiplier (qty = lots)
+    trade.label = String(label || '').slice(0, 40) || null; // "Nifty50 15Sep 23400 CE"
+    trade.capital = +(q * trade.lotSize * e).toFixed(2);     // 1 lot premium × lots
+  }
   _state.trades.push(trade);
   if (_state.trades.length > MAX_TRADES) {
     _state.trades = _state.trades.slice(_state.trades.length - MAX_TRADES);
@@ -138,8 +238,9 @@ function _closePart(trade, qty, price, reason) {
   const use = Math.min(qty, trade.remainingQty);
   if (use <= 0) return;
   const sign = trade.direction === 'LONG' ? 1 : -1;
+  const mult = _isOptionTrade(trade) ? (trade.lotSize || 1) : 1; // v9.5: lots × lotSize
   trade.remainingQty -= use;
-  trade.realizedPnl += use * (price - trade.entry) * sign;
+  trade.realizedPnl += use * (price - trade.entry) * sign * mult;
   trade.parts.push({ qty: use, exitPrice: pRound(price), ts: Date.now(), reason });
   if (trade.remainingQty <= 0) {
     trade.status = 'CLOSED';
@@ -229,7 +330,8 @@ export function evaluatePaper(quotes, events) {
   for (const t of _state.trades) {
     if (t.status === 'CLOSED') continue;
     const sign = t.direction === 'LONG' ? 1 : -1;
-    t.unrealizedPnl = +(t.remainingQty * (t.lastPrice - t.entry) * sign).toFixed(2);
+    const mult = _isOptionTrade(t) ? (t.lotSize || 1) : 1; // v9.5 option lots
+    t.unrealizedPnl = +(t.remainingQty * (t.lastPrice - t.entry) * sign * mult).toFixed(2);
   }
   if (changed) _persist();
   return changed;
@@ -295,6 +397,13 @@ function _publicTrade(t) {
     lastPrice: t.lastPrice, realizedPnl: +(+t.realizedPnl).toFixed(2),
     unrealizedPnl: +(+t.unrealizedPnl).toFixed(2),
     parts: t.parts, capital: t.capital,
+    // v9.5 F&O option identity (absent on equity/crypto rows). iv is
+    // included — the device-mirror restore needs it to re-price.
+    ...(t.assetKind === 'OPTION' ? {
+      assetKind: 'OPTION', underlying: t.underlying, strike: t.strike,
+      optType: t.optType, expiry: t.expiry, lotSize: t.lotSize,
+      iv: t.iv, label: t.label || null,
+    } : {}),
   };
 }
 
@@ -442,7 +551,7 @@ function _sanitizeRestoredTrade(raw) {
     ? 0
     : Math.min(qty, _normQty(_num(raw.remainingQty, qty), market));
   const realizedPnl = +_num(raw.realizedPnl).toFixed(2);
-  return {
+  const t = {
     id, symbol, market, direction,
     entry: pRound(entry), qty,
     stopLoss: pRound(_num(raw.stopLoss, entry)),
@@ -461,6 +570,21 @@ function _sanitizeRestoredTrade(raw) {
     dayKey: /^\d{4}-\d{2}-\d{2}$/.test(String(raw.dayKey)) ? raw.dayKey : dayKeyFor(market, new Date(openedAt)),
     capital: +_num(raw.capital, qty * entry).toFixed(2),
   };
+  // v9.5: option fields survive the device-mirror/backup round-trip.
+  if (raw.assetKind === 'OPTION' && OPTION_UNDERLYINGS.has(String(raw.underlying || '').toUpperCase())) {
+    const k = _num(raw.strike, 0), ls = Math.round(_num(raw.lotSize, 0));
+    const ot = String(raw.optType || '').toUpperCase();
+    if (k > 0 && ls >= 1 && (ot === 'CE' || ot === 'PE') && /^\d{4}-\d{2}-\d{2}$/.test(String(raw.expiry || '')) && _num(raw.iv, 0) > 0) {
+      t.assetKind = 'OPTION';
+      t.underlying = String(raw.underlying).trim().toUpperCase();
+      t.strike = k; t.optType = ot;
+      t.expiry = String(raw.expiry).slice(0, 10);
+      t.iv = _num(raw.iv);
+      t.lotSize = ls;
+      t.label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim().slice(0, 40) : null;
+    }
+  }
+  return t;
 }
 
 function _mergeRestoredState(remote) {

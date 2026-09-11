@@ -23,12 +23,15 @@
 import { istMinutes, getISTParts, istDayKey, dayKeyFor } from './time.js';
 import { isCryptoSymbolBase } from './engine.js';
 import { evaluateTracked, watcherSymbolsByMarket } from './trackRecord.js';
-import { evaluatePaper, paperSymbolsByMarket } from './paperTrading.js';
+import { evaluatePaper, paperSymbolsByMarket, injectOptionPaperQuotes, optionUnderlyingsForWatcher } from './paperTrading.js';
 import { getMarketRegime, getCryptoRegime } from './regime.js';
 
 const POLL_MS = 5000;
 const BACKOFF_MS = 30000;
 const FAILURE_STREAK_LIMIT = 3;
+// v9.5: index symbols the option paper-trades re-price from (Groww has
+// no index quotes — these ride the Yahoo map in _fetchQuotes).
+const INDEX_SYMBOLS = new Set(['NIFTY', 'BANKNIFTY', 'SENSEX', 'INDIAVIX', 'FINNIFTY', 'MIDCPNIFTY', 'NIFTYNXT50']);
 // v9.4: 24 → 34. The watch set = paper ∪ scan ∪ tracked, and tracked rows
 // accumulate through the day (MAX_PER_DAY=40). With the old 24 cap the
 // paper symbols — inserted last — were the FIRST to be silently dropped
@@ -101,6 +104,10 @@ function _watchSet() {
   const paper = paperSymbolsByMarket();
   paper.india.forEach(s => mark(s, false));
   paper.crypto.forEach(s => mark(s, true));
+  // v9.5: open OPTION paper trades need their UNDERLYING index spot
+  // (NIFTY/SENSEX) for the BS premium re-pricing below. Indices skip
+  // the Groww equity feed, so _fetchQuotes routes them to Yahoo.
+  optionUnderlyingsForWatcher().forEach(s => mark(s, false));
   _scanSymbols.forEach(s => mark(s, _scanCrypto.has(s)));
   const tracked = watcherSymbolsByMarket();
   tracked.india.forEach(s => mark(s, false));
@@ -136,6 +143,20 @@ async function _fetchQuotes(symMarket) {
         } catch { /* skip */ }
       }));
     }
+  }
+
+  // v9.5: INDEX symbols (NIFTY/SENSEX — needed by open OPTION paper
+  // trades) have no honest Groww equity quote — Groww's CASH/NIFTY
+  // endpoint actually serves a garbage ltp for the index name (observed
+  // live: 19425 when ^NSEI was 23398). Yahoo's index tickers are the
+  // truth here, so they OVERRIDE anything Groww set for indices.
+  if (typeof _deps.fetchIndexSpot === 'function') {
+    await Promise.allSettled(india.filter(s => INDEX_SYMBOLS.has(s)).map(async (sym) => {
+      try {
+        const q = await _deps.fetchIndexSpot(sym);
+        if (q?.price > 0) out[sym] = { price: q.price, change: q.change ?? 0, ts: Date.now() };
+      } catch { /* skip */ }
+    }));
   }
 
   // CRYPTO: CoinDCX INR quotes — ONE shared 2s-cached ticker round-trip
@@ -184,6 +205,12 @@ async function _tick() {
       if (typeof _timer.unref === 'function') _timer.unref();
     }
     _failureStreak = 0;
+
+    // v9.5 F&O: re-price open OPTION paper trades (BS model on the live
+    // underlying spot) and inject their premiums into this tick's quotes
+    // BEFORE the latest-quotes merge + evaluation — SL/T1/T2/EOD, P&L and
+    // manual close (getLatestQuotes) then see them like any equity LTP.
+    try { await injectOptionPaperQuotes(quotes, _deps.fetchIndexSpot); } catch (e) { console.warn('[intraday-stream] option reprice:', e?.message); }
 
     // 2026 perf audit (M2): reset at the IST day boundary (NSE session) AND
     // the UTC day boundary (crypto session) — each market starts its own

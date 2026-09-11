@@ -605,8 +605,16 @@ export async function executeFuturesSignal(opts) {
   const rawQty = (margin * lev) / price;
   const qty = roundFuturesQty(pair, rawQty);
   if (!(qty > 0)) return { ok: false, error: `Quantity rounds to 0 for ${pair} — increase the margin` };
+  // v9.5: the exchange minimum stays a HARD gate for LIVE (CoinDCX would
+  // reject the real order), but PAPER is practice money — a small-margin
+  // rehearsal now runs with an honest note instead of dead-ending on
+  // "Quantity below the futures minimum" (BTC's min is 1 whole contract).
+  let minQtyNote = null;
   if (meta?.minQty > 0 && qty < meta.minQty) {
-    return { ok: false, error: `Quantity ${qty} below the futures minimum (${meta.minQty}) for ${pair}` };
+    if (wantMode === 'live') {
+      return { ok: false, error: `Quantity ${qty} below the futures minimum (${meta.minQty}) for ${pair}` };
+    }
+    minQtyNote = `paper qty ${qty} below the exchange minimum (${meta.minQty}) — real order would need more margin; simulating anyway`;
   }
   const notionalUSDT = r2(qty * price);
   const marginUsed = r2(notionalUSDT / lev);
@@ -663,13 +671,13 @@ export async function executeFuturesSignal(opts) {
         ...entry, status: 'FILLED', qty, price: pRound(price), notionalUSDT, notionalINR: inrOfUsdt(notionalUSDT, usdInr),
         leverage: lev, marginUSDT: marginUsed,
         signal: { grade: signal.grade, conf: signal.confidence, agreement: signal.agreement },
-        reason: [verdict.reason, synthNote, fitNote, levNote, floorNote].filter(Boolean).join(' · '),
+        reason: [verdict.reason, synthNote, fitNote, levNote, floorNote, minQtyNote].filter(Boolean).join(' · '),
       });
       saveJournalFresh(j);
       return {
         ok: true, mode: 'paper', position,
         filled: { qty, price: pRound(price), notionalUSDT, notionalINR: inrOfUsdt(notionalUSDT, usdInr), leverage: lev, marginUSDT: marginUsed },
-        ...(walletNote || synthNote || fitNote || levNote || floorNote ? { fitted: [walletNote, synthNote, fitNote, levNote, floorNote].filter(Boolean).join(' · ') } : {}),
+        ...(walletNote || synthNote || fitNote || levNote || floorNote || minQtyNote ? { fitted: [walletNote, synthNote, fitNote, levNote, floorNote, minQtyNote].filter(Boolean).join(' · ') } : {}),
       };
     }
 

@@ -464,6 +464,7 @@ const YF_INDEX_MAP = {
   // Indian indices â†’ Yahoo tickers
   NIFTY: '^NSEI', NIFTY50: '^NSEI', BANKNIFTY: '^NSEBANK', NIFTYBANK: '^NSEBANK',
   SENSEX: '^BSESN', INDIAVIX: '^INDIAVIX', CNXIT: '^CNXIT',
+  FINNIFTY: '^CNXFIN', MIDCPNIFTY: 'NIFTY_MID_SELECT.NS', NIFTYNXT50: '^NIFTYNEXT50',
   // US indices
   SPX: '^GSPC', NDX: '^NDX', DJI: '^DJI', RUT: '^RUT', VIX: '^VIX',
 };
@@ -555,9 +556,18 @@ registerAITradingRoutes(app, {
 // market intel, Pro Trader agent, committee debate, briefing.
 // 20 /api/intraday-* endpoints registered by routes.js.
 // ============================================================
+// v9.5 F&O OPTION PAPER TRADES — the intraday watcher needs live index
+// spot (NIFTY/SENSEX) to re-price open option positions. Groww serves
+// equities only, so indices ride the Yahoo fetcher above (^NSEI etc.,
+// 3s micro-cache shared with /api/quote's index path).
+const fetchIndexSpot = async (sym) => {
+  try { return await fetchYahooQuote(toYahooSymbol(sym, 'IN')); } catch { return null; }
+};
+
 registerIntradayRoutes(app, {
   fetchGrowwNseQuote,
   fetchCoinDcxTickers,
+  fetchIndexSpot,
   KEYS,
   OPENAI_COMPAT,
   TG,

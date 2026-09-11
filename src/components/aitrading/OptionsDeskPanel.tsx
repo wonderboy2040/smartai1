@@ -7,6 +7,7 @@
 // ============================================================
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { fetchOptionsDesk, fetchIncomeSetups, fetchOptionSignals } from './useAITrading';
+import { openOptionPaperTrade } from '../intraday/PaperTradePanel';
 import type { OptionsDesk, Strategy, GexProfile, IncomeView, OrderTicket, OptionSignalsView, OptionSignalCard } from './types';
 
 const INDICES = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX'];
@@ -33,9 +34,28 @@ const prem = (v: number | null | undefined): string => {
 // premiums vs BS model — SENSEX chain is BSE/datacenter-blocked so it
 // rides the model with its label).
 // ------------------------------------------------------------
-function OptionSignalCardView({ c }: { c: OptionSignalCard }) {
+function OptionSignalCardView({ c, onOpened }: { c: OptionSignalCard; onOpened?: (msg: string, ok: boolean) => void }) {
   const bull = c.direction === 'LONG';
   const srcLabel = c.source === 'nse' ? 'LIVE NSE PREMIUM' : 'BS MODEL PREMIUM';
+  // v9.5 F&O PAPER: one-click option paper trade (1 lot) from the card.
+  const [paperBusy, setPaperBusy] = useState(false);
+  const [paperMsg, setPaperMsg] = useState<string | null>(null);
+  const onPaper = useCallback(async () => {
+    if (paperBusy) return;
+    setPaperBusy(true); setPaperMsg(null);
+    const r = await openOptionPaperTrade({
+      symbol: c.symbol, strike: c.strike, type: c.type, expiry: c.expiry,
+      entry: c.entry, target: c.target, stopLoss: c.stopLoss,
+      iv: c.iv, lotSize: c.lotSize, name: c.name,
+    });
+    setPaperBusy(false);
+    const msg = r.ok
+      ? `🧪 F&O paper trade opened — ${c.name} · 1 lot (${c.lotSize}) @ ₹${prem(c.entry)} · watcher premium live re-price karega (08 PAPER DESK me track)`
+      : `⛔ ${r.error || 'option paper trade failed'}`;
+    setPaperMsg(msg);
+    onOpened?.(msg, r.ok);
+    setTimeout(() => setPaperMsg(null), 8000);
+  }, [c, paperBusy, onOpened]);
   return (
     <div className={`quantum-panel rounded-2xl p-4 ${bull ? 'border-l-2 border-l-emerald-500/60' : 'border-l-2 border-l-red-500/60'}`} data-testid="option-signal-card">
       <div className="flex items-center gap-2 flex-wrap">
@@ -102,6 +122,28 @@ function OptionSignalCardView({ c }: { c: OptionSignalCard }) {
           📐 index plan: spot {c.indexLevels.spot?.toLocaleString('en-IN')} → target {c.indexLevels.target1?.toLocaleString('en-IN')} / SL {c.indexLevels.stopLoss?.toLocaleString('en-IN')} · premium = option re-priced in BS at those levels
         </div>
       )}
+
+      {/* v9.5 — F&O PAPER TRADE: the card's own levels, one click, same desk */}
+      <div className="mt-2.5">
+        <button
+          onClick={onPaper}
+          disabled={paperBusy || c.tradeable === false}
+          className={`w-full px-3 py-2 rounded-xl text-[11px] font-black border transition-colors ${
+            c.tradeable === false
+              ? 'bg-slate-700/20 border-slate-600/30 text-slate-500 cursor-not-allowed'
+              : 'bg-fuchsia-500/15 border-fuchsia-500/40 text-fuchsia-200 hover:bg-fuchsia-500/25 disabled:opacity-50'}`}
+          title={c.tradeable === false
+            ? `Grade ${c.consensus?.grade || 'NEUTRAL'} — ACTION/STRONG hone par hi trade khulega`
+            : `1 lot (${c.lotSize} qty) · premium ₹${prem(c.entry)} · SL ₹${prem(c.stopLoss)} · target ₹${prem(c.target)} · Paper Desk me watcher-managed (T1 50% book + breakeven trail + SL/T2 + 15:10 square-off)`}
+        >
+          {paperBusy ? '⏳ opening…' : c.tradeable === false ? '🧪 PAPER (ACTION/STRONG grade chahiye)' : `🧪 PAPER TRADE — 1 LOT (₹${c.perLotCost?.toLocaleString('en-IN')})`}
+        </button>
+        {paperMsg && (
+          <div className={`mt-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-bold leading-relaxed ${paperMsg.startsWith('⛔') ? 'bg-red-500/10 border border-red-500/25 text-red-200' : 'bg-emerald-500/10 border border-emerald-500/25 text-emerald-200'}`}>
+            {paperMsg}
+          </div>
+        )}
+      </div>
       <p className="text-[9px] text-slate-500 mt-1.5 italic leading-relaxed">{c.note} Expiry-day hold karke mat baitho — 14:30 se pehle square-off.</p>
     </div>
   );

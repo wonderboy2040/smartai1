@@ -22,7 +22,7 @@
 // Hermetic: data.js + network mocked OFFLINE (same pattern as
 // boardResilience.test.ts).
 // ============================================================
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -119,6 +119,13 @@ vi.stubGlobal('fetch', vi.fn(async (url) => {
 }));
 
 const { getSignals, __clearSignalCaches } = await import('../server/ai/signals.js');
+
+// v9.5 DETERMINISM FIX: the INDIA session gate (sessionPhase → "no-new-
+// entries after 15:15 IST" → gradeCap WATCH) made these tests TIME-OF-DAY
+// dependent — they passed at authoring time (mid-session) and failed every
+// evening after 15:15 IST. All quality-verdict / board fixtures now pin a
+// fixed mid-session Wednesday 11:00 IST so the suite is deterministic.
+const MID_SESSION = new Date('2026-09-09T05:30:00Z'); // Wed 11:00 IST
 
 beforeEach(() => {
   __clearSignalCaches();
@@ -223,7 +230,7 @@ describe('v9.3 counter-tape strength + grade gating', () => {
       market: 'INDIA', side: 'SHORT', consensus: { side: 'SHORT' }, votes: goodVotes,
       ltp: 1258, changePct: -1.2, rsi: 37, adx: 25,
       htf: htfBearish, ltf: { ema20: 1253, ema50: 1248, rsi: 63, macdHist: 1.2 },
-      ltfLabel: '15m', now: Date.now(),
+      ltfLabel: '15m', now: MID_SESSION,
     });
     expect(qv.mtf.phase).toBe('MISALIGNED');
     expect(qv.mtf.againstTapeStrength).toBe(1);
@@ -241,7 +248,7 @@ describe('v9.3 counter-tape strength + grade gating', () => {
       market: 'INDIA', side: 'SHORT', consensus: { side: 'SHORT' }, votes: goodVotes,
       ltp: 1258, changePct: -1.2, rsi: 37, adx: 25,
       htf: htfBearish, ltf: { ema20: 1253, ema50: 1248, rsi: 51, macdHist: 0.05 },
-      ltfLabel: '15m', now: Date.now(),
+      ltfLabel: '15m', now: MID_SESSION,
     });
     expect(qv.mtf.phase).toBe('MISALIGNED');
     expect(qv.gradeCap).toBe('ACTION');
@@ -254,7 +261,7 @@ describe('v9.3 counter-tape strength + grade gating', () => {
       votes: goodVotes.map(v => v.id === 'tape' ? { ...v, dir: -1 } : v),
       ltp: 1258, changePct: -1.2, rsi: 37, adx: 25,
       htf: htfBearish, ltf: { ema20: 1262, ema50: 1266, rsi: 36, macdHist: -1.5 },
-      ltfLabel: '15m', now: Date.now(),
+      ltfLabel: '15m', now: MID_SESSION,
     });
     expect(qv.mtf.phase).toBe('ALIGNED');
     expect(qv.gradeCap).toBe('STRONG');
@@ -272,8 +279,13 @@ describe('v9.3 counter-tape strength + grade gating', () => {
 
 // ============================================================
 // 3. THE BOARD REGRESSION — the exact screenshot bug, end-to-end
+// (clock pinned to mid-session: the 15:15 IST no-new-entries cap must
+// not leak into these assertions)
 // ============================================================
 describe('v9.3 board — bearish daily + rising 15m tape (THE screenshot bug)', () => {
+  beforeAll(() => { vi.useFakeTimers(); vi.setSystemTime(MID_SESSION); });
+  afterAll(() => { vi.useRealTimers(); });
+
   it('can NEVER badge STRONG SHORT while the tape is climbing', async () => {
     tapeSeries = risingTapeCandles();
     const board = await getSignals('INDIA', {}, { limit: 10, noCache: true });

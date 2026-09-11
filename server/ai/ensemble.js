@@ -276,8 +276,16 @@ export function evaluateExecutionGate(signal, { side, gates = DEFAULT_GATES, max
   if (String(signal.market || 'CRYPTO').toUpperCase() !== wantVenue) {
     return { ok: false, reason: `signal is for the ${signal.market} market — this gate guards ${wantVenue} execution` };
   }
-  const wantSide = String(side || signal.side).toUpperCase();
-  if (signal.side !== wantSide) return { ok: false, reason: `signal side is ${signal.side}, requested ${wantSide}` };
+  // v9.5 side-vocabulary normalisation: ensemble sides are LONG/SHORT/FLAT,
+  // but order layers (and hand-rolled API calls) naturally speak BUY/SELL.
+  // A raw string compare rejected "requested BUY" against "side LONG" —
+  // the exact class of direction bug this gate exists to prevent. Accept
+  // both vocabularies; FLAT never matches anything tradeable.
+  const SIDE_ALIAS = { BUY: 'LONG', SELL: 'SHORT', LONG: 'LONG', SHORT: 'SHORT' };
+  const wantSide = SIDE_ALIAS[String(side || signal.side).toUpperCase()]
+    || String(side || signal.side).toUpperCase();
+  const sigSide = SIDE_ALIAS[String(signal.side).toUpperCase()] || String(signal.side);
+  if (sigSide !== wantSide) return { ok: false, reason: `signal side is ${signal.side}, requested ${wantSide}` };
   if (signal.side === 'FLAT' || !signal.plan) return { ok: false, reason: 'no tradeable side/plan in the current consensus' };
   if (requireStrong) {
     if (signal.grade !== 'STRONG') return { ok: false, reason: `grade ${signal.grade} — live orders need STRONG (${gates.minConfidence}% conf + ${Math.round(gates.minAgreement * 100)}% agreement)` };

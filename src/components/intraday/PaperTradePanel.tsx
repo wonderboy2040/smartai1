@@ -65,6 +65,51 @@ export async function openPaperTrade(s: IntradaySignal, qty: number): Promise<{ 
   }
 }
 
+// ------------------------------------------------------------
+// v9.5 F&O OPTION PAPER TRADE — the "Nifty50 15Sep 23400 CE" signal
+// card opens a premium-BUY (LONG) position in the SAME Paper Desk:
+//   qty   = 1 LOT (P&L auto-multiplied by lotSize server-side)
+//   T2    = entry + 1.5× the reward leg (extends the card's target)
+//   price = watcher re-prices the premium via Black-Scholes on the
+//           live index spot (NIFTY→^NSEI / SENSEX→^BSESN), so SL/T1/
+//           T2/trailing/15:10 square-off + live P&L all work
+// ------------------------------------------------------------
+export async function openOptionPaperTrade(c: {
+  symbol: string; strike: number; type: 'CE' | 'PE'; expiry: string;
+  entry: number; target: number; stopLoss: number; iv: number | null;
+  lotSize: number; name: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  try {
+    // Option BUY = premium LONG: SL < entry < T1 < T2 in premium terms.
+    if (!(c.stopLoss > 0 && c.stopLoss < c.entry && c.target > c.entry)) {
+      return { ok: false, error: 'Card levels incomplete (entry/target/SL) — option paper trade nahi khul sakta.' };
+    }
+    const t2 = +(c.entry + (c.target - c.entry) * 1.5).toFixed(2);
+    const res = await apiFetch(`/api/intraday-paper`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        // compact contract id: NIFTY23400CE (validated server-side)
+        symbol: `${c.symbol}${Math.round(c.strike)}${c.type}`,
+        direction: 'LONG',                    // premium BUY
+        entry: c.entry, qty: 1,               // 1 lot
+        stopLoss: c.stopLoss, target1: c.target, target2: t2,
+        market: 'INDIA',
+        assetKind: 'OPTION', underlying: c.symbol,
+        strike: c.strike, optType: c.type, expiry: c.expiry,
+        iv: c.iv && c.iv > 0 ? c.iv : 13,    // BS fallback IV (13%) — same as the card builder
+        lotSize: c.lotSize, label: c.name,    // "Nifty50 15Sep 23400 CE"
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (res.ok && j.ok) return { ok: true };
+    return { ok: false, error: j?.error?.message || `HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'network error' };
+  }
+}
+
 const pnlColor = (v: number) => (v > 0 ? 'text-emerald-400' : v < 0 ? 'text-red-400' : 'text-slate-400');
 const fmtPnl = (v: number) => `${v >= 0 ? '+' : '−'}₹${Math.abs(v).toFixed(2)}`;
 
@@ -88,15 +133,22 @@ function TradeRow({ t, live, onClose, closing }: {
   t: PaperTrade; live?: LiveQuote; onClose: (id: number) => void; closing: boolean;
 }) {
   const sign = t.direction === 'LONG' ? 1 : -1;
+  const lotMult = t.assetKind === 'OPTION' ? (t.lotSize || 1) : 1; // v9.5 F&O lots
   const livePnl = live?.price != null
-    ? t.remainingQty * (live.price - t.entry) * sign + t.realizedPnl
+    ? t.remainingQty * (live.price - t.entry) * sign * lotMult + t.realizedPnl
     : t.realizedPnl + t.unrealizedPnl;
   const livePrice = live?.price ?? t.lastPrice;
   const isClosed = t.status === 'CLOSED';
+  const isOption = t.assetKind === 'OPTION';
   return (
     <tr className="border-b border-white/5 hover:bg-white/[0.03]">
       <td className="px-2 py-1.5">
-        <span className="font-black text-white">{t.symbol}</span>
+        <span className="font-black text-white" title={isOption ? `${t.label || t.symbol} · ${t.expiry} · lot ${t.lotSize}` : t.symbol}>
+          {isOption ? (t.label || t.symbol) : t.symbol}
+        </span>
+        {isOption && (
+          <span className="ml-1 px-1 py-0.5 rounded text-[8px] font-black font-mono bg-fuchsia-500/15 text-fuchsia-300 border border-fuchsia-500/25" title={`F&O option · 1 lot = ${t.lotSize} qty · premium re-priced live`}>F&amp;O</span>
+        )}
         {t.market === 'CRYPTO' && (
           <span className="ml-1 px-1 py-0.5 rounded text-[8px] font-black font-mono bg-amber-500/15 text-amber-300 border border-amber-500/25" title="Crypto market · CoinDCX INR · 24/7">₿</span>
         )}
@@ -182,7 +234,9 @@ function HistorySection({ history }: { history: PaperHistory }) {
                       return (
                         <tr key={t.id} className="border-b border-white/5">
                           <td className="px-2 py-1 text-left">
-                            <span className="font-black text-slate-200">{t.symbol}</span>
+                            <span className="font-black text-slate-200" title={t.assetKind === 'OPTION' ? `${t.label || t.symbol} · lot ${t.lotSize}` : undefined}>
+                              {t.assetKind === 'OPTION' ? (t.label || t.symbol) : t.symbol}
+                            </span>
                             <span className={`ml-1 text-[8px] font-black ${t.direction === 'LONG' ? 'text-emerald-400' : 'text-red-400'}`}>
                               {t.direction === 'LONG' ? 'L' : 'S'}
                             </span>
@@ -371,7 +425,9 @@ export function PaperTradePanel({ livePrices, refreshKey, onOpenSymbolsChange }:
                     return (
                       <tr key={t.id} className="border-b border-white/5">
                         <td className="px-2 py-1.5">
-                          <span className="font-black text-slate-200">{t.symbol}</span>
+                          <span className="font-black text-slate-200" title={t.assetKind === 'OPTION' ? `${t.label || t.symbol} · lot ${t.lotSize}` : undefined}>
+                            {t.assetKind === 'OPTION' ? (t.label || t.symbol) : t.symbol}
+                          </span>
                           <span className={`ml-1 text-[9px] font-black ${t.direction === 'LONG' ? 'text-emerald-400' : 'text-red-400'}`}>
                             {t.direction === 'LONG' ? 'L' : 'S'}
                           </span>

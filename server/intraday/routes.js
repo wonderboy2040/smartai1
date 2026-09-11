@@ -130,7 +130,7 @@ export function getUniverseInfo(market = 'INDIA') {
 // ------------------------------------------------------------
 export function registerIntradayRoutes(app, deps) {
   const {
-    fetchGrowwNseQuote, fetchCoinDcxTickers, KEYS, OPENAI_COMPAT, TG, escapeHtml, jsonError,
+    fetchGrowwNseQuote, fetchCoinDcxTickers, fetchIndexSpot, KEYS, OPENAI_COMPAT, TG, escapeHtml, jsonError,
   } = deps;
 
   // Telegram raw sender (from TG env — server-side only).
@@ -150,7 +150,7 @@ export function registerIntradayRoutes(app, deps) {
   // crypto symbols 24/7.
   initTrackRecord();
   initPaperTrading();
-  initIntradayStream({ fetchGrowwNseQuote, fetchCoinDcxTickers, sendTelegramRaw, escapeHtml, dispatchOutcomeAlert });
+  initIntradayStream({ fetchGrowwNseQuote, fetchCoinDcxTickers, fetchIndexSpot, sendTelegramRaw, escapeHtml, dispatchOutcomeAlert });
   initJournal();
 
   // ----------------------------------------------------------
