@@ -31,7 +31,7 @@
 // ============================================================
 import { getSignals, getDeepSignal, getFreshSignalForExec, getFreshFuturesSignalForExec } from './signals.js';
 import { getExpertPicks } from './expertPicks.js';
-import { getOptionsDesk, buildStrategies } from './optionsDesk.js';
+import { getOptionsDesk, buildStrategies, getOptionSignalsView } from './optionsDesk.js';
 import {
   loadConfig, updateConfig, getRiskState, executeSignal, getPositionsWithPnl,
   closePosition, listExchangeOrders, cancelExchangeOrder, cancelAllExchangeOrders,
@@ -167,6 +167,18 @@ export function registerAITradingRoutes(app, deps) {
   });
 
   // ---------------- India options desk ----------------
+  // v9.4: combined NIFTY + SENSEX option SIGNAL CARDS (one request,
+  // 30s cached) — the "Nifty50 17Sep 23400 CE · Target · Entry (Buy)
+  // · Stop Loss" strip on the Options Desk.
+  app.get('/api/ai/option-signals', async (_req, res) => {
+    try {
+      const view = await getOptionSignalsView(depsForSignals());
+      res.json(view);
+    } catch (e) {
+      jsonError(res, 500, 'option signals failed', e);
+    }
+  });
+
   app.get('/api/ai/options', async (req, res) => {
     try {
       const symbol = String(req.query.symbol || 'NIFTY').toUpperCase();

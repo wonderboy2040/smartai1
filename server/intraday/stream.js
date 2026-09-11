@@ -29,7 +29,16 @@ import { getMarketRegime, getCryptoRegime } from './regime.js';
 const POLL_MS = 5000;
 const BACKOFF_MS = 30000;
 const FAILURE_STREAK_LIMIT = 3;
-const MAX_WATCH_NSE = 24;
+// v9.4: 24 → 34. The watch set = paper ∪ scan ∪ tracked, and tracked rows
+// accumulate through the day (MAX_PER_DAY=40). With the old 24 cap the
+// paper symbols — inserted last — were the FIRST to be silently dropped
+// once the desk had been running for a few hours, exactly the "paper
+// trade lagane par realtime price fetch nahi ho raha" report: the
+// position card froze at entry while the quotes ticked for everyone else.
+// Groww calls ride the 3s micro-cache shared with /api/quote + the SSE
+// poller, so 34 symbols × every 5s is still one digit % of the cache's
+// dedupe budget.
+const MAX_WATCH_NSE = 34;
 const MAX_WATCH_CRYPTO = 14;
 
 let _deps = null;               // { fetchGrowwNseQuote, fetchCoinDcxTickers, sendTelegramRaw, escapeHtml, dispatchOutcomeAlert }
@@ -76,6 +85,11 @@ export function getLatestQuotes() {
 // Watch-set assembly: symbol → market classification. Legacy rows
 // (persisted before the market field existed) fall back to the
 // crypto-base heuristic so BTC rows are never routed to Groww.
+// v9.4 PRIORITY ORDER: PAPER first, then the latest scan, then
+// tracked rows. Map preserves insertion order and _fetchQuotes slices
+// to MAX_WATCH_NSE — the user's open paper positions have live P&L
+// on screen, so they must be the LAST symbols anyone would drop when
+// the tracked set fills up through the day.
 // ------------------------------------------------------------
 function _watchSet() {
   const symMarket = new Map();
@@ -84,14 +98,21 @@ function _watchSet() {
     const s = String(sym).toUpperCase();
     if (!symMarket.has(s)) symMarket.set(s, isCrypto ? 'CRYPTO' : 'INDIA');
   };
+  const paper = paperSymbolsByMarket();
+  paper.india.forEach(s => mark(s, false));
+  paper.crypto.forEach(s => mark(s, true));
   _scanSymbols.forEach(s => mark(s, _scanCrypto.has(s)));
   const tracked = watcherSymbolsByMarket();
   tracked.india.forEach(s => mark(s, false));
   tracked.crypto.forEach(s => mark(s, true));
-  const paper = paperSymbolsByMarket();
-  paper.india.forEach(s => mark(s, false));
-  paper.crypto.forEach(s => mark(s, true));
   return symMarket;
+}
+
+// v9.4: test hook — the watch-set ORDER is a user-facing contract now
+// (paper trades must always receive quotes). Exposed for the
+// regression suite; production code uses _watchSet directly.
+export function watchSetForTests() {
+  return _watchSet();
 }
 
 async function _fetchQuotes(symMarket) {

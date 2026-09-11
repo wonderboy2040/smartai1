@@ -11,7 +11,7 @@
 // ============================================================
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, getProxyBase } from '../../utils/api';
-import type { AISignal, OptionsDesk, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, AlertsStatus, DhanStatus, SwingBoard, WhaleRadar, LedgerView, MorningBrief, OrderbookView, AgentView, WalletView, FuturesMarketsView, MarketKind, TrustView, PerfView, CorrView, SectorView, IncomeView, NextActionsView, NarrativeView, EdgeStats, LtfSnapshot } from './types';
+import type { AISignal, OptionsDesk, OptionSignalsView, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, AlertsStatus, DhanStatus, SwingBoard, WhaleRadar, LedgerView, MorningBrief, OrderbookView, AgentView, WalletView, FuturesMarketsView, MarketKind, TrustView, PerfView, CorrView, SectorView, IncomeView, NextActionsView, NarrativeView, EdgeStats, LtfSnapshot } from './types';
 
 export interface DeepSignalResult {
   ok: boolean;
@@ -340,6 +340,20 @@ export async function fetchOptionsDesk(symbol: string, force = false): Promise<O
     deskCache.set(symbol, { at: Date.now(), data });
     return data;
   } catch { return hit?.data || null; }
+}
+
+// v9.4 — F&O OPTION SIGNAL CARDS (NIFTY + SENSEX, one request, 60s
+// client cache; server side is 30s cached anyway).
+let _optSigCache: { at: number; data: OptionSignalsView } | null = null;
+export async function fetchOptionSignals(force = false): Promise<OptionSignalsView | null> {
+  if (!force && _optSigCache && Date.now() - _optSigCache.at < 60_000) return _optSigCache.data;
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/option-signals?t=${Date.now()}`, { signal: AbortSignal.timeout(30000) });
+    if (!r.ok) return _optSigCache?.data || null;
+    const data = await r.json();
+    _optSigCache = { at: Date.now(), data };
+    return data;
+  } catch { return _optSigCache?.data || null; }
 }
 
 // ---------------- v6.7: swing · whales · ledger · brief · orderbook ----------------

@@ -295,6 +295,69 @@ export interface Strategy {
   exitPlan: string;
 }
 
+/** v9.4 — F&O OPTION SIGNAL CARD. One concrete, fully-priced option
+ * contract distilled from the ensemble's INDEX consensus, in the
+ * user's exact requested display format:
+ *   Stock name : Nifty50 17Sep 23400 CE
+ *   Target     : 110.00   (premium)
+ *   Entry (Buy): 86.50    (premium)
+ *   Stop Loss  : 77.00    (premium)
+ * LONG → BUY the ATM CE · SHORT → BUY the ATM PE. Target/SL are the
+ * option re-priced at the index plan's target1/stopLoss (BS, IV+expiry
+ * held fixed) — the premium translation of the desk's index levels. */
+export interface OptionSignalCard {
+  kind: 'option-signal';
+  /** "Nifty50 17Sep 23400 CE" — display name + DDMon + strike + type */
+  name: string;
+  symbol: string;
+  type: 'CE' | 'PE';
+  strike: number;
+  direction: 'LONG' | 'SHORT';
+  expiry: string;
+  expiryLabel: string | null;
+  dte: number | null;
+  entry: number;
+  target: number;
+  stopLoss: number;
+  ltp: number | null;
+  delta: number | null;
+  theta: number | null;
+  iv: number | null;
+  lotSize: number;
+  perLotCost: number;
+  perLotRisk: number;
+  perLotReward: number;
+  rr: number | null;
+  consensus: { side: string; confidence: number | null; grade: string; agreement?: number | null };
+  /** v9.4 pro discipline — only STRONG/ACTION grades are tradeable; a
+   * NEUTRAL/WATCH card renders with a loud "entry MAT karo" warning. */
+  tradeable: boolean;
+  basis: { target: string; stopLoss: string };
+  indexLevels: { spot: number; target1?: number; stopLoss?: number };
+  source: 'nse' | 'bs-model';
+  note: string;
+}
+
+/** v9.4 — combined NIFTY + SENSEX option-card view (GET /api/ai/option-signals). */
+export interface OptionSignalsView {
+  ok: boolean;
+  asOf: number;
+  desks: Array<{
+    symbol: string;
+    ok: boolean;
+    reason?: string;
+    spot?: number;
+    dte?: number | null;
+    expiry?: string;
+    expiryLabel?: string | null;
+    lotSize?: number;
+    source?: 'nse' | 'bs-model';
+    consensus?: { side: string; confidence: number; grade: string };
+    cards: OptionSignalCard[];
+    noCardReason?: string | null;
+  }>;
+}
+
 export interface OptionsDesk {
   ok: boolean;
   symbol: string;

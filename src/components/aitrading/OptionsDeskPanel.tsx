@@ -6,10 +6,156 @@
 // P&L math. Clearly labels bs-model vs live NSE data.
 // ============================================================
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { fetchOptionsDesk, fetchIncomeSetups } from './useAITrading';
-import type { OptionsDesk, Strategy, GexProfile, IncomeView, OrderTicket } from './types';
+import { fetchOptionsDesk, fetchIncomeSetups, fetchOptionSignals } from './useAITrading';
+import type { OptionsDesk, Strategy, GexProfile, IncomeView, OrderTicket, OptionSignalsView, OptionSignalCard } from './types';
 
-const INDICES = ['NIFTY', 'BANKNIFTY', 'FINNIFTY'];
+const INDICES = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX'];
+
+// v9.4 — premium formatter for the F&O signal cards (NSE ₹0.05 tick
+// world): ≥100 → 1dp, else 2dp — "110.0" / "86.50" / "0.85".
+const prem = (v: number | null | undefined): string => {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return v >= 100 ? v.toFixed(1) : v.toFixed(2);
+};
+
+// ------------------------------------------------------------
+// v9.4 — F&O OPTION SIGNAL CARDS. The user's exact requested format:
+//
+//     Stock name : Nifty50 17Sep 23400 CE
+//     Target     : 110.00
+//     Entry (Buy): 86.50
+//     Stop Loss  : 77.00
+//
+// One card per index (NIFTY + SENSEX side by side), each distilled
+// from the ensemble's INDEX consensus: LONG → BUY the ATM CE,
+// SHORT → BUY the ATM PE; Target/SL = the option re-priced at the
+// index plan's target1/stopLoss. Source chip stays honest (live NSE
+// premiums vs BS model — SENSEX chain is BSE/datacenter-blocked so it
+// rides the model with its label).
+// ------------------------------------------------------------
+function OptionSignalCardView({ c }: { c: OptionSignalCard }) {
+  const bull = c.direction === 'LONG';
+  const srcLabel = c.source === 'nse' ? 'LIVE NSE PREMIUM' : 'BS MODEL PREMIUM';
+  return (
+    <div className={`quantum-panel rounded-2xl p-4 ${bull ? 'border-l-2 border-l-emerald-500/60' : 'border-l-2 border-l-red-500/60'}`} data-testid="option-signal-card">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[9px] font-black text-slate-500 tracking-wider">🎯 F&amp;O SIGNAL CARD</span>
+        <span className={`px-1.5 py-0.5 rounded text-[9px] font-black border ${bull ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-red-500/15 text-red-300 border-red-500/30'}`}>
+          {c.consensus?.grade || '—'} · {bull ? 'LONG INDEX' : 'SHORT INDEX'}{c.consensus?.confidence != null ? ` ${c.consensus.confidence}%` : ''}
+        </span>
+        <span className={`px-1.5 py-0.5 rounded text-[9px] font-black border ${c.source === 'nse' ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25' : 'bg-amber-500/10 text-amber-300 border-amber-500/30'}`} title={c.source === 'nse' ? 'Live NSE chain premiums' : 'NSE/BSE chain is server-blocked — Black-Scholes model premiums (IV anchored to India VIX)'}>
+          {srcLabel}
+        </span>
+        {c.dte != null && (
+          <span className={`px-1.5 py-0.5 rounded text-[9px] font-black border ${c.dte <= 1 ? 'bg-red-500/10 text-red-300 border-red-500/30' : 'bg-slate-600/20 text-slate-300 border-slate-600/30'}`}>
+            {c.dte === 0 ? 'AAJ EXPIRY ⚠️' : `${c.dte} din baaki`}
+          </span>
+        )}
+      </div>
+
+      {/* THE card — user's exact format */}
+      <div className="mt-2.5 rounded-xl bg-black/40 border border-cyan-500/20 p-3 font-mono">
+        <div className="text-[9px] text-slate-500 font-black tracking-wider mb-2">STOCK NAME</div>
+        <div className="text-base sm:text-lg font-black text-white tracking-tight break-words">{c.name}</div>
+        <div className="mt-3 space-y-2 text-sm">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-[11px] text-slate-400 font-bold">Target</span>
+            <span className="font-black text-emerald-300">₹{prem(c.target)}</span>
+          </div>
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-[11px] text-slate-400 font-bold">Entry (Buy)</span>
+            <span className="font-black text-cyan-300">₹{prem(c.entry)}</span>
+          </div>
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-[11px] text-slate-400 font-bold">Stop Loss</span>
+            <span className="font-black text-red-300">₹{prem(c.stopLoss)}</span>
+          </div>
+        </div>
+        {c.tradeable === false && (
+          <div className="mt-2.5 rounded-lg bg-amber-500/[0.07] border border-amber-500/25 px-2.5 py-1.5 text-[9px] text-amber-200/90 leading-relaxed">
+            ⚠️ Grade <b>{c.consensus?.grade || 'NEUTRAL'}</b> hai — ye WATCHLIST card hai. Entry MAT karo jab tak consensus ACTION/STRONG na ho (card har 60s me auto-update hota hai).
+          </div>
+        )}
+      </div>
+
+      {/* pro context footer */}
+      <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-center">
+        <div className="bg-black/30 rounded-lg px-2 py-1.5">
+          <div className="text-[8px] text-slate-600 font-black tracking-wider">STRIKE</div>
+          <div className="text-[11px] font-mono font-black text-slate-200">{c.strike} {c.type}</div>
+        </div>
+        <div className="bg-black/30 rounded-lg px-2 py-1.5">
+          <div className="text-[8px] text-slate-600 font-black tracking-wider">DELTA / IV</div>
+          <div className="text-[11px] font-mono font-black text-slate-200">{c.delta != null ? c.delta.toFixed(2) : '—'} / {c.iv != null ? `${c.iv.toFixed(1)}%` : '—'}</div>
+        </div>
+        <div className="bg-black/30 rounded-lg px-2 py-1.5">
+          <div className="text-[8px] text-slate-600 font-black tracking-wider">1 LOT ({c.lotSize})</div>
+          <div className="text-[11px] font-mono font-black text-slate-200">₹{c.perLotCost?.toLocaleString('en-IN')}</div>
+        </div>
+        <div className="bg-black/30 rounded-lg px-2 py-1.5">
+          <div className="text-[8px] text-slate-600 font-black tracking-wider">RISK : REWARD</div>
+          <div className="text-[11px] font-mono font-black text-slate-200">₹{c.perLotRisk?.toLocaleString('en-IN')} : ₹{c.perLotReward?.toLocaleString('en-IN')}{c.rr != null ? ` (${c.rr}R)` : ''}</div>
+        </div>
+      </div>
+      {c.indexLevels && c.indexLevels.target1 != null && (
+        <div className="mt-1.5 text-[9px] font-mono text-slate-500 leading-relaxed">
+          📐 index plan: spot {c.indexLevels.spot?.toLocaleString('en-IN')} → target {c.indexLevels.target1?.toLocaleString('en-IN')} / SL {c.indexLevels.stopLoss?.toLocaleString('en-IN')} · premium = option re-priced in BS at those levels
+        </div>
+      )}
+      <p className="text-[9px] text-slate-500 mt-1.5 italic leading-relaxed">{c.note} Expiry-day hold karke mat baitho — 14:30 se pehle square-off.</p>
+    </div>
+  );
+}
+
+function OptionSignalCardsStrip() {
+  const [view, setView] = useState<OptionSignalsView | null>(null);
+  const [err, setErr] = useState(false);
+  const seqRef = useRef(0);
+
+  useEffect(() => {
+    let alive = true;
+    const run = async (force = false) => {
+      const seq = ++seqRef.current;
+      const v = await fetchOptionSignals(force);
+      if (!alive || seq !== seqRef.current) return;
+      if (v) { setView(v); setErr(false); }
+      else if (!view) setErr(true);
+    };
+    run(true);
+    const iv = setInterval(() => run(false), 60_000);
+    return () => { alive = false; clearInterval(iv); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const desks = view?.desks || [];
+  const cards = desks.flatMap(d => d.cards || []);
+  if (err && !view) {
+    return (
+      <div className="quantum-panel rounded-2xl p-4 text-[11px] text-slate-400">
+        <span className="font-black text-slate-300">🎯 F&amp;O Signal Cards</span> — option desks load nahi huin (auto-retry 60s me). Neeche chain + strategies zinda hain.
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2" aria-label="F&O option signal cards">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs font-black text-slate-200">🎯 F&amp;O SIGNAL CARDS</span>
+        <span className="text-[9px] text-slate-500 font-mono">Nifty50 + Sensex · ensemble consensus → ATM CE/PE · premium Entry/Target/SL</span>
+      </div>
+      {cards.length > 0 ? (
+        <div className="grid md:grid-cols-2 gap-2.5">
+          {cards.map(c => <OptionSignalCardView key={`${c.symbol}-${c.strike}-${c.type}-${c.expiry}`} c={c} />)}
+        </div>
+      ) : (
+        <div className="quantum-panel rounded-2xl p-4 text-[11px] text-slate-400">
+          {desks.some(d => d.ok)
+            ? (desks.find(d => d.noCardReason)?.noCardReason || 'Aaj kisi index pe directional consensus nahi — neutral desk. Option chain + income setups neeche hain.')
+            : 'Option desks load ho rahi hain (NSE/BSE is server se blocked ho sakte hain — BS model fallback 30s me aata hai)...'}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ------------------------------------------------------------
 // v6.13 — TRADE STEPS: the "trade kaise karna hai" block.
@@ -249,6 +395,10 @@ export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
           ⚠️ {desk.syntheticNote}
         </div>
       )}
+
+      {/* v9.4 — F&O OPTION SIGNAL CARDS: Nifty50 + Sensex, the user's
+          exact format (Stock name / Target / Entry (Buy) / Stop Loss) */}
+      <OptionSignalCardsStrip />
 
       {/* Metrics strip */}
       <div className="flex flex-wrap gap-2">

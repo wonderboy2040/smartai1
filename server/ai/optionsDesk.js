@@ -27,6 +27,43 @@ const STRIKE_STEPS = { NIFTY: 50, BANKNIFTY: 100, FINNIFTY: 50, MIDCPNIFTY: 25, 
 const LOT_SIZES = { NIFTY: 75, BANKNIFTY: 35, FINNIFTY: 65, MIDCPNIFTY: 140, NIFTYNXT50: 25, SENSEX: 20 };
 const IV_FLOOR = 0.10, IV_CAP = 0.60;
 
+// ------------------------------------------------------------
+// v9.4 — F&O OPTION SIGNAL CARDS. The user's exact requested
+// format ("Nifty50 15Sep 23400 CE · Target 110 · Entry (Buy) 86.5
+// · Stop Loss 77") needs (a) the broker display name, (b) the
+// DD+Mon expiry label, (c) the CURRENT weekly-expiry weekday.
+//
+// EXPIRY SCHEDULE (live-verified Sept 2026): the exchanges swapped
+// days effective ~1 Sep 2026 — NSE NIFTY weekly = THURSDAY, BSE
+// SENSEX weekly = TUESDAY (ICICI's revised table + Groww's Sept
+// 2026 F&O calendar + BSE's Aug-2026 circular all agree). When the
+// REAL NSE chain loads, its own expiryDates are ground truth and
+// this map is only the bs-model fallback — but for SENSEX (BSE,
+// datacenter-blocked) the map IS the expiry source, so it must be
+// current. BANKEX/Sensex-50 weeklies are discontinued; BANKNIFTY is
+// monthly-only (last Thursday) — the map day only shapes the
+// nearest-expiry guess for the synthetic chain.
+// ------------------------------------------------------------
+const INDEX_DISPLAY_NAMES = {
+  NIFTY: 'Nifty50', BANKNIFTY: 'BankNifty', FINNIFTY: 'FinNifty',
+  MIDCPNIFTY: 'MidcapNifty', NIFTYNXT50: 'NiftyNext50', SENSEX: 'Sensex',
+};
+const WEEKLY_EXPIRY_WEEKDAY = { NIFTY: 4, SENSEX: 2 }; // 4=Thu (NSE), 2=Tue (BSE)
+
+/** Nearest weekly expiry for a symbol under the CURRENT schedule. */
+function nextWeeklyExpiryFor(sym, now = new Date()) {
+  const wd = WEEKLY_EXPIRY_WEEKDAY[sym] ?? 4; // NSE family default: Thursday
+  return nextWeeklyExpiry(now, wd);
+}
+
+/** "2026-09-17" → "17Sep" — the trader shorthand the cards display. */
+export function expiryLabel(expiry) {
+  if (typeof expiry !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(expiry)) return null;
+  const [, mm, dd] = expiry.split('-');
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${parseInt(dd, 10)}${MON[parseInt(mm, 10) - 1] || ''}`;
+}
+
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 const r1 = (v) => (Number.isFinite(v) ? Math.round(v * 10) / 10 : null);
 
@@ -265,7 +302,7 @@ export async function getOptionsDesk(symbol = 'NIFTY') {
     })();
     const exp = (nse.expiryDates || []).map(d => String(d))
       .filter(d => d >= today).sort()[0]
-      || nextWeeklyExpiry(new Date(), sym === 'NIFTY' ? 2 : 4);
+      || nextWeeklyExpiryFor(sym);
     const rows = nse.rows.filter(r => r.expiry === exp);
     if (rows.length > 5) {
       chain = { symbol: sym, spot: r2(spot), expiry: exp, rows, source: 'nse', fetchedAt: nse.fetchedAt };
@@ -280,7 +317,7 @@ export async function getOptionsDesk(symbol = 'NIFTY') {
   if (!chain && spot) {
     // BS-synthetic fallback: IV anchored to India VIX (or 13% floor).
     const iv = vix ? Math.min(IV_CAP, Math.max(IV_FLOOR, vix / 100)) : 0.13;
-    const expiry = nextWeeklyExpiry(new Date(), sym === 'NIFTY' ? 2 : 4);
+    const expiry = nextWeeklyExpiryFor(sym);
     chain = buildSyntheticChain(sym, spot, iv, expiry);
     if (chain) {
       syntheticNote = `NSE chain unreachable from this server — showing a Black-Scholes model chain (IV anchored to India VIX ${vix ? r1(vix) : 'n/a'}). Premiums are model estimates, NOT live quotes; OI/PCR unavailable in model mode.`;
@@ -765,6 +802,156 @@ export function buildOrderTicket(desk, strat, consensus, now = Date.now()) {
 export async function getOptionsContext(symbol = 'NIFTY') {
   const desk = await getOptionsDesk(symbol);
   return { desk, ctx: desk?.ok ? desk.optionsCtx : null };
+}
+
+// ------------------------------------------------------------
+// v9.4 — F&O OPTION SIGNAL CARDS ("Stock name: Nifty50 17Sep 23400 CE
+// · Target · Entry (Buy) · Stop Loss"). Converts the ensemble's INDEX
+// consensus into ONE concrete, fully-priced option contract card:
+//
+//   direction LONG → BUY the ATM CE; SHORT → BUY the ATM PE
+//     (option buying keeps the card honest: defined premium risk,
+//     no margin, exactly how an intraday F&O retail ticket looks)
+//   Entry      = the contract's live premium (NSE chain LTP, else
+//                the BS model price — the card carries its source)
+//   Target     = the SAME option re-priced with the index at the
+//                ensemble plan's target1 (BS holds IV+expiry fixed —
+//                the standard "what's my premium if NIFTY goes to X")
+//   Stop Loss  = the option re-priced with the index at plan stopLoss
+//
+// Premium guards (BUY semantics — SL < entry < target, always):
+//   • target must clear entry by ≥10%, else premium-based +30%
+//   • SL must sit below entry; BS-implied loss capped at 65% of
+//     premium (a full wipe as the suggested stop is never "accurate")
+// Every level rounds to the NSE ₹0.05 tick.
+// ------------------------------------------------------------
+export function buildOptionSignalCards(desk, deep) {
+  if (!desk?.ok || !(desk.spot > 0)) return [];
+  const sig = deep?.signal;
+  const side = sig?.side;
+  if (side !== 'LONG' && side !== 'SHORT') return [];
+  const symbol = desk.symbol;
+  const type = side === 'LONG' ? 'CE' : 'PE';
+  const spot = desk.spot;
+  const rows = Array.isArray(desk.rows) ? desk.rows : [];
+  if (rows.length === 0) return [];
+
+  // ATM strike — nearest listed strike to live spot (max liquidity,
+  // peak gamma: the intraday directional contract).
+  const atm = rows.reduce((best, r) => (Math.abs(r.strike - spot) < Math.abs(best.strike - spot) ? r : best), rows[0]);
+  const strike = atm.strike;
+  const ltp = type === 'CE' ? atm.callLTP : atm.putLTP;
+  if (!(ltp > 0)) return [];
+
+  const ivPct = (type === 'CE' ? atm.callIV : atm.putIV) || null;
+  const g = greeksFor(spot, strike, desk.expiry, ivPct, type);
+  const T = yearsToExpiry(`${desk.expiry}T15:30:00+05:30`);
+  if (!(T > 0)) return []; // expiry-day post-15:30 — nothing honest to price
+  const sigma = Math.min(IV_CAP, Math.max(IV_FLOOR, (ivPct ?? 13) / 100));
+  const priceAt = (indexLevel) => roundToTick(Math.max(0.05, bsPrice(indexLevel, strike, T, RISK_FREE, sigma, type)));
+
+  const entry = roundToTick(Math.max(0.05, ltp));
+  const plan = sig?.plan && Number.isFinite(sig.plan.target1) && Number.isFinite(sig.plan.stopLoss)
+    ? sig.plan : null;
+
+  // Target / SL — index-plan geometry translated into premium terms.
+  let target = null, stopLoss = null;
+  let basisT = 'premium-based', basisS = 'premium-based';
+  if (plan && plan.target1 > 0 && (side === 'LONG' ? plan.target1 > spot : plan.target1 < spot)) {
+    const t = priceAt(plan.target1);
+    if (t > entry * 1.10) { target = t; basisT = 'index-plan→premium'; }
+  }
+  if (plan && plan.stopLoss > 0 && (side === 'LONG' ? plan.stopLoss < spot : plan.stopLoss > spot)) {
+    const s = priceAt(plan.stopLoss);
+    if (s < entry) { stopLoss = s; basisS = 'index-plan→premium'; }
+  }
+  if (target == null) target = roundToTick(entry * 1.30);
+  if (stopLoss == null) stopLoss = roundToTick(entry * 0.75);
+  if (stopLoss < entry * 0.35) stopLoss = roundToTick(entry * 0.35); // cap max premium loss at 65%
+
+  const lotSize = LOT_SIZES[symbol] || 1;
+  const name = `${INDEX_DISPLAY_NAMES[symbol] || symbol} ${expiryLabel(desk.expiry) || desk.expiry} ${strike} ${type}`;
+  const risk = entry - stopLoss;
+  const reward = target - entry;
+
+  return [{
+    kind: 'option-signal',
+    name,                       // "Nifty50 17Sep 23400 CE" — user's format
+    symbol, type, strike,
+    direction: side,            // the INDEX consensus driving the card
+    expiry: desk.expiry,
+    expiryLabel: expiryLabel(desk.expiry),
+    dte: daysToExpiry(desk.expiry),
+    // the four numbers the user asked for, in his exact framing:
+    entry,                      // Entry (Buy) — premium
+    target,                     // Target — premium
+    stopLoss,                   // Stop Loss — premium
+    ltp: r2(ltp),
+    delta: g.delta, theta: g.theta,
+    iv: ivPct ? r1(ivPct) : null,
+    lotSize,
+    perLotCost: Math.round(entry * lotSize),
+    perLotRisk: Math.round(risk * lotSize),
+    perLotReward: Math.round(reward * lotSize),
+    rr: risk > 0 ? r2(reward / risk) : null,
+    consensus: {
+      side, confidence: sig?.confidence ?? null,
+      grade: sig?.grade || 'NEUTRAL', agreement: sig?.agreement ?? null,
+    },
+    // v9.4 pro discipline: the desk trades STRONG/ACTION grades only —
+    // a NEUTRAL/WATCH card is a WATCHLIST card and says so loudly.
+    tradeable: sig?.grade === 'STRONG' || sig?.grade === 'ACTION',
+    basis: { target: basisT, stopLoss: basisS },
+    indexLevels: plan ? {
+      spot: r2(spot),
+      target1: r2(plan.target1), stopLoss: r2(plan.stopLoss),
+    } : { spot: r2(spot) },
+    source: desk.source,        // 'nse' (live premiums) | 'bs-model'
+    note: plan
+      ? `Index plan se bana hai: ${symbol} ${r2(plan.target1)} pe premium target, ${r2(plan.stopLoss)} pe stop (BS re-price, IV/dte constant).`
+      : `Premium-based levels (index plan nahi mila): +30% target / −25% SL discipline.`,
+  }];
+}
+
+// ------------------------------------------------------------
+// v9.4 — combined view for the F&O SIGNAL CARDS strip: one request
+// computes NIFTY + SENSEX cards together (each desk + its deep
+// consensus), 30s cached. Deep signals are imported lazily so the
+// module graph stays acyclic (signals.js → ensemble.js → here is
+// already an edge for OptionsFlow inputs).
+// ------------------------------------------------------------
+const _cardsCache = new Map();
+export async function getOptionSignalsView(deps, symbols = ['NIFTY', 'SENSEX']) {
+  const key = symbols.join(',');
+  const hit = _cardsCache.get(key);
+  if (hit && Date.now() - hit.at < 30_000) return hit.data;
+  const { getDeepSignal } = await import('./signals.js');
+  const desks = await Promise.all((symbols || []).map(async (sym) => {
+    try {
+      const s = String(sym || '').toUpperCase();
+      const desk = await getOptionsDesk(s);
+      if (!desk?.ok) return { symbol: s, ok: false, reason: desk?.reason || 'desk unavailable' };
+      const deep = await getDeepSignal(s, 'INDIA', deps, { optionsCtx: desk.optionsCtx }).catch(() => null);
+      const consensus = deep?.ok
+        ? { side: deep.signal.side, confidence: deep.signal.confidence, grade: deep.signal.grade }
+        : { side: 'FLAT', confidence: 0, grade: 'NEUTRAL' };
+      return {
+        symbol: s, ok: true, spot: desk.spot, dte: desk.dte,
+        expiry: desk.expiry, expiryLabel: expiryLabel(desk.expiry),
+        lotSize: desk.lotSize, source: desk.source,
+        consensus,
+        cards: buildOptionSignalCards(desk, deep),
+        noCardReason: (!deep?.ok || deep.signal?.side === 'FLAT')
+          ? 'Ensemble index consensus abhi FLAT hai — directional option card nahi banega (neutral desk pe Options Desk ke straddle/condor dekho).'
+          : null,
+      };
+    } catch (e) {
+      return { symbol: String(sym || '').toUpperCase(), ok: false, reason: e?.message || 'failed' };
+    }
+  }));
+  const data = { ok: true, asOf: Date.now(), desks };
+  _cardsCache.set(key, { at: Date.now(), data });
+  return data;
 }
 
 /**

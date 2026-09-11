@@ -4,6 +4,27 @@
 
 AI-powered portfolio analytics for Indian and US markets, crypto tracking, risk analytics, ML signals, 7-engine AI chat with smart failover, cloud sync, broker connectors, and a full Telegram automation suite (53 commands).
 
+---
+
+## ⚡ v9.4 — F&O Option Signal Cards + realtime paper prices (Nifty50/Sensex)
+
+- 🎯 **F&O OPTION SIGNAL CARDS — the exact trader format**: the Options Desk (both tabs that carry it) now opens with a cards strip for **NIFTY + SENSEX** that reads exactly like a broker ticket:
+  ```
+  STOCK NAME
+  Nifty50 17Sep 23400 CE        ← display name + expiry + strike + CE/PE
+  Target      : ₹145.10          ← premium at the index plan's target1
+  Entry (Buy) : ₹129.00          ← live/model premium of the ATM contract
+  Stop Loss   : ₹112.00          ← premium at the index plan's stopLoss
+  ```
+  LONG consensus → **BUY the ATM CE** · SHORT → **BUY the ATM PE**. Target/SL are not guessed — the ensemble's index plan levels are **re-priced through Black-Scholes into premium terms** (IV + days-to-expiry held constant), so the card says what the option is worth *if the index does what the desk expects*. Pro context rides along: strike, delta/IV, lot cost, per-lot risk:reward, R multiple, and the index levels the premiums came from. `GET /api/ai/option-signals` serves both desks in one request (30s server cache, 60s client refresh).
+- 🗓️ **Weekly-expiry schedule fixed for the Sept-2026 exchange swap** — live-verified against ICICI's revised table + Groww's September 2026 F&O calendar: **NIFTY weekly = Thursday, SENSEX weekly = Tuesday** (the code had the old pre-swap days). When the real NSE chain loads, its own expiryDates stay ground truth; the map only drives the honest BS-model fallback — which is what SENSEX always rides (the BSE chain is datacenter-blocked, so its premiums are Black-Scholes estimates anchored to live ^BSESN spot + India VIX, **labelled** `BS MODEL PREMIUM`). **SENSEX joined the index selector** (100-point strikes, lot 20).
+- 🛡️ **Pro discipline stays loud**: a card built on a NEUTRAL/WATCH-grade consensus renders with an amber *"Entry MAT karo — WATCHLIST card hai"* strip (the desk trades STRONG/ACTION only); BUY-premium semantics are hard-guarded — **SL < entry < target, every side, every basis** — with max premium loss capped at 65% and every level on the ₹0.05 NSE tick.
+- 🩺 **Paper-trade realtime prices — root cause found and fixed**: the SSE watcher's symbol set was assembled **scan-first / paper-last** and then sliced to a 24-symbol cap, while tracked signal rows accumulate all session (up to 40/day). A few hours into the desk day, **open paper positions were the first symbols silently dropped** — the position card froze at entry while quotes ticked for everyone else. Now **paper symbols enter the watch set FIRST** (they can never be the dropped ones) and the cap rose 24 → 34 (the Groww micro-cache absorbs it).
+- ✅ **Live-verified end-to-end during NSE hours (PIN 1992)**: F&O cards served `Nifty50 17Sep 23400 PE` + `Sensex 15Sep 74900 PE` with correct expiries and ATM strikes; a DESK PAPER click opened `LT SHORT @ ₹3925` and the panel ticked to `₹3926.0●` with live P&L `−₹1.00` (SHORT math correct); a separate desk run auto-booked a paper SHORT at T1 (`RELIANCE SHORT 1274 → 1266, +₹16`); SSE quote frames carried the paper symbol + all 5 scan symbols every 5s; CoinDCX regression clean (no dead panels, HBAR SHORT live-priced via TV fallback). Full matrix: **tsc 0 · 953/953 tests (51 files, +14 new guards: card format/direction lock/level-ordering invariants/expiry-schedule swap/watch-set priority) · build 5.2s · check:routes PASS · audit 0**.
+
+---
+
+
 > **Financial disclaimer:** Signals, projections, and AI/ML output are informational only. They are not investment advice. Verify market data before trading.
 
 ## What's New in v9.3 (Intraday Tape Alignment — the "strong signals wrong trend de rahe hai" fix)
