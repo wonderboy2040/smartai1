@@ -10,7 +10,7 @@ import {
   syncToCloud, loadFromCloud, sendTelegramAlert,
   syncGroqKeyToCloud, loadGroqKeyFromCloud, getBatchInterval, fetchMarketIntelligence,
   syncStateToCloud, loadAppStateFromCloud, CloudAppState,
-  apiFetch, setSessionToken, ensureAuthenticated,
+  apiFetch, setSessionToken, ensureAuthenticated, getProxyBase,
   fetchIndmAssets, forceIndmSync, hideIndmAsset, unhideIndmAsset, IndmAssetsResponse,
   fetchServerSettings, saveServerSetting,
 } from '../utils/api';
@@ -968,7 +968,7 @@ export function useAppState() {
 
   useEffect(() => {
     if (!isAuthenticated || !hasCrypto) return;
-    const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
+    const proxyBase = getProxyBase();
 
     // FIX (audit H4): in-flight guard + Binance fallback circuit breaker.
     // The 2s interval is shorter than the 5s request timeout — when the proxy
@@ -2050,7 +2050,7 @@ export function useAppState() {
   const verifyPin = useCallback(async () => {
     if (!pinInput) return;
     try {
-      const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
+      const proxyBase = getProxyBase();
       const res = await apiFetch(`${proxyBase}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2071,7 +2071,7 @@ export function useAppState() {
       }
     } catch (e) {
       console.warn('Login failed:', e);
-      const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
+      const proxyBase = getProxyBase();
       if (!proxyBase) {
         alert('⚠️ Login failed: VITE_API_PROXY is not set. If frontend and backend are on different domains, set VITE_API_PROXY to the backend URL (e.g. https://smartback-iyuq.onrender.com) in Vercel environment variables.');
       } else {
@@ -2087,7 +2087,7 @@ export function useAppState() {
     setPinInput('');
     setSessionToken(null);
     // Also invalidate the server-side session.
-    const proxyBase = (import.meta.env.VITE_API_PROXY as string) || '';
+    const proxyBase = getProxyBase();
     apiFetch(`${proxyBase}/api/auth/logout`, { method: 'POST' }).catch(() => {});
   }, []);
 

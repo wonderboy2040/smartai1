@@ -307,7 +307,7 @@ export interface Strategy {
  * held fixed) — the premium translation of the desk's index levels. */
 export interface OptionSignalCard {
   kind: 'option-signal';
-  /** "Nifty50 17Sep 23400 CE" — display name + DDMon + strike + type */
+  /** "Nifty50 15Sep 23400 CE" — display name + DDMon + strike + type */
   name: string;
   symbol: string;
   type: 'CE' | 'PE';
@@ -328,9 +328,25 @@ export interface OptionSignalCard {
   perLotRisk: number;
   perLotReward: number;
   rr: number | null;
+  /** v9.6 superintelligence layer — AI score 0-100 + tier + pro metrics */
+  aiScore?: number | null;
+  tier?: 'ELITE' | 'STRONG' | 'ACTION' | 'WATCH' | string | null;
+  pop?: number | null;
+  breakeven?: number | null;
+  expectedMovePct?: number | null;
+  strikeBias?: 'ATM' | 'ITM' | 'OTM' | string;
+  trendTag?: string | null;
+  exitPlan?: {
+    t1?: number; t1Note?: string;
+    t2?: number; t2Note?: string;
+    hardStop?: number;
+    timeExit?: string;
+  } | null;
+  machineNote?: string | null;
   consensus: { side: string; confidence: number | null; grade: string; agreement?: number | null };
-  /** v9.4 pro discipline — only STRONG/ACTION grades are tradeable; a
-   * NEUTRAL/WATCH card renders with a loud "entry MAT karo" warning. */
+  /** v9.4 pro discipline kept, AI-score aware — STRONG/ACTION grade
+   * YA 75+ AI score; a NEUTRAL/WATCH card renders with a loud
+   * "entry MAT karo" warning. */
   tradeable: boolean;
   basis: { target: string; stopLoss: string };
   indexLevels: { spot: number; target1?: number; stopLoss?: number };
@@ -342,6 +358,10 @@ export interface OptionSignalCard {
 export interface OptionSignalsView {
   ok: boolean;
   asOf: number;
+  /** v9.6 — the merged TOP-4 cards by AI score (Nifty50 + Sensex). */
+  cards?: OptionSignalCard[];
+  topCount?: number;
+  methodology?: string | null;
   desks: Array<{
     symbol: string;
     ok: boolean;
@@ -798,6 +818,8 @@ export interface AgentConfig {
   mode: 'paper' | 'live' | string;
   desks: { futures: boolean; spot: boolean; india: boolean };
   maxTradesPerDay: number;
+  /** v9.6 — 75+ AI score → auto entry (user spec) */
+  minAiScore?: number;
   minConfidence: number;
   minAgreement: number;
   riskPerTradePct: number;
@@ -867,6 +889,8 @@ export interface AgentPick {
   side: Side;
   grade: string;
   confidence: number;
+  /** v9.6 — superintelligence AI score (75+ = auto-entry bar) */
+  aiScore?: number | null;
   ltp: number | null;
   pair: string;
   plan: { entry: number; stopLoss: number; target2: number; riskPct: number } | null;

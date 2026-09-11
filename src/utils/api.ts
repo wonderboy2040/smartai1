@@ -20,7 +20,11 @@ export function getProxyBase(): string {
   if (typeof window !== 'undefined' && window.location) {
     const host = window.location.hostname;
     if (host.includes('.vercel.app') || host.includes('.github.io') || host.includes('.netlify.app')) {
-      return 'https://smartback-iyuq.onrender.com';
+      // v9.6: the CURRENT production backend. The old smartback URL was
+      // a dead service — every Vercel deploy without VITE_API_PROXY set
+      // silently pointed at it and login failed. Set VITE_API_PROXY in
+      // Vercel to override this default.
+      return 'https://smartai-e954.onrender.com';
     }
   }
 

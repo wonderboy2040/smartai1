@@ -104,15 +104,17 @@ describe('agent config', () => {
     expect(cfg.mode).toBe('paper');
     expect(cfg.enabled).toBe(false);
     expect(cfg.riskPerTradePct).toBe(1.5);
-    expect(cfg.minConfidence).toBe(80); // stricter than the manual 75
+    expect(cfg.minConfidence).toBe(80); // legacy STRONG-committee bar
+    expect(cfg.minAiScore).toBe(75); // v9.6 USER SPEC: 75+ AI score → auto entry
   });
 
   it('clamps every numeric field into its safe range', () => {
     const cfg = updateAgentConfig({
-      maxTradesPerDay: 100, minConfidence: 99, riskPerTradePct: 500,
+      maxTradesPerDay: 100, minAiScore: 99, minConfidence: 99, riskPerTradePct: 500,
       maxLeverage: 50, cooldownMin: -5, dailyLossCapPct: 0.01,
     });
     expect(cfg.maxTradesPerDay).toBe(20);
+    expect(cfg.minAiScore).toBe(95);
     expect(cfg.minConfidence).toBe(95);
     expect(cfg.riskPerTradePct).toBe(10);
     expect(cfg.maxLeverage).toBe(10);
@@ -263,6 +265,46 @@ describe('agentTick — daily quota + sizing + exits', () => {
   it('STRICTER gates: a 78% STRONG board signal is BELOW the agent bar (80)', async () => {
     mockGetSignals.mockResolvedValue({ ...FUTURES_BOARD, signals: [{ ...STRONG_CAND, confidence: 78 }] });
     await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).not.toHaveBeenCalled();
+  });
+
+  it('v9.6 AI-SCORE GATE: a 76-AI-score ACTION signal (68% conf, not executable) STILL fires the entry', async () => {
+    // the user's spec: "75+ AI Score hone par auto entry" — the board's
+    // superIntel AI score now qualifies on its own (committee barYA)
+    mockGetSignals.mockResolvedValue({
+      ...FUTURES_BOARD,
+      signals: [{ ...STRONG_CAND, grade: 'ACTION', confidence: 68, agreement: 0.6, executable: false, superIntel: { aiScore: 76 } }],
+    });
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).toHaveBeenCalledTimes(1);
+    expect(mockExecuteFutures.mock.calls[0][0].symbol).toBe('BTC');
+    expect(mockExecuteFutures.mock.calls[0][0].side).toBe('LONG');
+  });
+
+  it('v9.6 AI-SCORE GATE below bar: 70 AI score + 68% conf ACTION → no entry', async () => {
+    mockGetSignals.mockResolvedValue({
+      ...FUTURES_BOARD,
+      signals: [{ ...STRONG_CAND, grade: 'ACTION', confidence: 68, agreement: 0.6, executable: false, superIntel: { aiScore: 70 } }],
+    });
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).not.toHaveBeenCalled();
+  });
+
+  it('v9.6 TREND-FLIP EXIT: board flips opposite on a held pair → position cut + re-entry cooldown-stamped', async () => {
+    const j = loadJournal();
+    j.positions.push({
+      id: 'ag2', pair: 'B-BTC_USDT', market: 'FUTURES', side: 'LONG', mode: 'paper',
+      source: 'agent', status: 'OPEN', qty: 0.01, entryPrice: 50000,
+      openedAt: Date.now() - 5 * 60_000, // 5m old — well under the 90m time-exit
+    });
+    __setJournalForTests(j);
+    mockGetSignals.mockResolvedValue({
+      ...FUTURES_BOARD,
+      signals: [{ ...STRONG_CAND, side: 'SHORT', superIntel: { aiScore: 84 } }],
+    });
+    await agentTick({}, vi.fn());
+    expect(mockCloseFutures).toHaveBeenCalledWith('ag2');
+    // the flip side (SHORT) can NOT re-enter this tick — cooldown stamped
     expect(mockExecuteFutures).not.toHaveBeenCalled();
   });
 

@@ -37,6 +37,12 @@ const prem = (v: number | null | undefined): string => {
 function OptionSignalCardView({ c, onOpened }: { c: OptionSignalCard; onOpened?: (msg: string, ok: boolean) => void }) {
   const bull = c.direction === 'LONG';
   const srcLabel = c.source === 'nse' ? 'LIVE NSE PREMIUM' : 'BS MODEL PREMIUM';
+  // v9.6 superintelligence tier styling (AI score 85+ ELITE · 75+ STRONG · 65+ ACTION)
+  const tier = (c.tier as string) || 'WATCH';
+  const tierCls = tier === 'ELITE' ? 'bg-violet-500/15 text-violet-300 border-violet-500/40'
+    : tier === 'STRONG' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+    : tier === 'ACTION' ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40'
+    : 'bg-slate-600/20 text-slate-400 border-slate-600/40';
   // v9.5 F&O PAPER: one-click option paper trade (1 lot) from the card.
   const [paperBusy, setPaperBusy] = useState(false);
   const [paperMsg, setPaperMsg] = useState<string | null>(null);
@@ -60,8 +66,14 @@ function OptionSignalCardView({ c, onOpened }: { c: OptionSignalCard; onOpened?:
     <div className={`quantum-panel rounded-2xl p-4 ${bull ? 'border-l-2 border-l-emerald-500/60' : 'border-l-2 border-l-red-500/60'}`} data-testid="option-signal-card">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-[9px] font-black text-slate-500 tracking-wider">🎯 F&amp;O SIGNAL CARD</span>
+        {c.aiScore != null && (
+          <span className={`px-1.5 py-0.5 rounded text-[9px] font-black border ${tierCls}`}
+            title="AI score = 35% index-consensus + 20% POP-at-expiry + 15% reward:risk + 15% delta-fit (ATM ideal) + 15% grade">
+            🧠 AI {c.aiScore} · {tier}
+          </span>
+        )}
         <span className={`px-1.5 py-0.5 rounded text-[9px] font-black border ${bull ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-red-500/15 text-red-300 border-red-500/30'}`}>
-          {c.consensus?.grade || '—'} · {bull ? 'LONG INDEX' : 'SHORT INDEX'}{c.consensus?.confidence != null ? ` ${c.consensus.confidence}%` : ''}
+          {c.trendTag || `${bull ? '▲ BULLISH' : '▼ BEARISH'} INDEX`}{c.consensus?.confidence != null ? ` · ${c.consensus.confidence}% conf` : ''}
         </span>
         <span className={`px-1.5 py-0.5 rounded text-[9px] font-black border ${c.source === 'nse' ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25' : 'bg-amber-500/10 text-amber-300 border-amber-500/30'}`} title={c.source === 'nse' ? 'Live NSE chain premiums' : 'NSE/BSE chain is server-blocked — Black-Scholes model premiums (IV anchored to India VIX)'}>
           {srcLabel}
@@ -93,20 +105,63 @@ function OptionSignalCardView({ c, onOpened }: { c: OptionSignalCard; onOpened?:
         </div>
         {c.tradeable === false && (
           <div className="mt-2.5 rounded-lg bg-amber-500/[0.07] border border-amber-500/25 px-2.5 py-1.5 text-[9px] text-amber-200/90 leading-relaxed">
-            ⚠️ Grade <b>{c.consensus?.grade || 'NEUTRAL'}</b> hai — ye WATCHLIST card hai. Entry MAT karo jab tak consensus ACTION/STRONG na ho (card har 60s me auto-update hota hai).
+            ⚠️ Grade <b>{c.consensus?.grade || 'NEUTRAL'}</b> + AI score <b>{c.aiScore ?? '—'}</b> — ye WATCHLIST card hai. Entry MAT karo jab tak 75+ AI score ya ACTION/STRONG grade na ho (cards har 60s me auto-update hoti hain).
           </div>
         )}
       </div>
 
-      {/* pro context footer */}
+      {/* v9.6 — AI score meter */}
+      {c.aiScore != null && (
+        <div className="mt-2 flex items-center gap-2">
+          <div className="flex-1 h-1.5 rounded-full bg-black/40 overflow-hidden" role="img" aria-label={`AI score ${c.aiScore} of 100`}>
+            <div className={`h-full rounded-full ${c.aiScore >= 85 ? 'bg-violet-400/80' : c.aiScore >= 75 ? 'bg-emerald-400/80' : c.aiScore >= 65 ? 'bg-cyan-400/70' : 'bg-slate-500/60'}`} style={{ width: `${Math.max(4, Math.min(100, c.aiScore))}%` }} />
+          </div>
+          <span className="text-[8px] font-mono font-black text-slate-500 shrink-0">AI {c.aiScore}/100</span>
+        </div>
+      )}
+
+      {/* v9.6 — 3-tier exit discipline (premium terms) */}
+      {c.exitPlan && (
+        <div className="mt-2 grid grid-cols-3 gap-1 text-center">
+          <div className="bg-black/30 rounded-lg px-1.5 py-1">
+            <div className="text-[7px] text-slate-600 font-black tracking-wider">T1 · 50% BOOK</div>
+            <div className="text-[10px] font-mono font-black text-amber-300">₹{prem(c.exitPlan.t1)}</div>
+            <div className="text-[7px] text-slate-500">{c.exitPlan.t1Note}</div>
+          </div>
+          <div className="bg-black/30 rounded-lg px-1.5 py-1">
+            <div className="text-[7px] text-slate-600 font-black tracking-wider">T2 · 40% BOOK</div>
+            <div className="text-[10px] font-mono font-black text-emerald-300">₹{prem(c.exitPlan.t2)}</div>
+            <div className="text-[7px] text-slate-500">{c.exitPlan.t2Note}</div>
+          </div>
+          <div className="bg-black/30 rounded-lg px-1.5 py-1">
+            <div className="text-[7px] text-slate-600 font-black tracking-wider">HARD STOP</div>
+            <div className="text-[10px] font-mono font-black text-red-300">₹{prem(c.exitPlan.hardStop)}</div>
+            <div className="text-[7px] text-slate-500">{c.exitPlan.timeExit}</div>
+          </div>
+        </div>
+      )}
+
+      {/* pro context footer — v9.6 superintelligence metrics */}
       <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-center">
         <div className="bg-black/30 rounded-lg px-2 py-1.5">
-          <div className="text-[8px] text-slate-600 font-black tracking-wider">STRIKE</div>
+          <div className="text-[8px] text-slate-600 font-black tracking-wider">STRIKE{c.strikeBias ? ` · ${c.strikeBias}` : ''}</div>
           <div className="text-[11px] font-mono font-black text-slate-200">{c.strike} {c.type}</div>
         </div>
         <div className="bg-black/30 rounded-lg px-2 py-1.5">
           <div className="text-[8px] text-slate-600 font-black tracking-wider">DELTA / IV</div>
           <div className="text-[11px] font-mono font-black text-slate-200">{c.delta != null ? c.delta.toFixed(2) : '—'} / {c.iv != null ? `${c.iv.toFixed(1)}%` : '—'}</div>
+        </div>
+        <div className="bg-black/30 rounded-lg px-2 py-1.5">
+          <div className="text-[8px] text-slate-600 font-black tracking-wider">POP (EXPIRY)</div>
+          <div className={`text-[11px] font-mono font-black ${c.pop != null && c.pop >= 45 ? 'text-emerald-300' : 'text-amber-300'}`}>{c.pop != null ? `${c.pop}%` : '—'}</div>
+        </div>
+        <div className="bg-black/30 rounded-lg px-2 py-1.5">
+          <div className="text-[8px] text-slate-600 font-black tracking-wider">THETA / DAY</div>
+          <div className="text-[11px] font-mono font-black text-red-300">{c.theta != null ? `−₹${Math.abs(c.theta).toFixed(1)}` : '—'}</div>
+        </div>
+        <div className="bg-black/30 rounded-lg px-2 py-1.5">
+          <div className="text-[8px] text-slate-600 font-black tracking-wider">BREAKEVEN</div>
+          <div className="text-[11px] font-mono font-black text-slate-200">{c.breakeven != null ? c.breakeven.toLocaleString('en-IN') : '—'}</div>
         </div>
         <div className="bg-black/30 rounded-lg px-2 py-1.5">
           <div className="text-[8px] text-slate-600 font-black tracking-wider">1 LOT ({c.lotSize})</div>
@@ -116,10 +171,21 @@ function OptionSignalCardView({ c, onOpened }: { c: OptionSignalCard; onOpened?:
           <div className="text-[8px] text-slate-600 font-black tracking-wider">RISK : REWARD</div>
           <div className="text-[11px] font-mono font-black text-slate-200">₹{c.perLotRisk?.toLocaleString('en-IN')} : ₹{c.perLotReward?.toLocaleString('en-IN')}{c.rr != null ? ` (${c.rr}R)` : ''}</div>
         </div>
+        <div className="bg-black/30 rounded-lg px-2 py-1.5">
+          <div className="text-[8px] text-slate-600 font-black tracking-wider">EXP. MOVE</div>
+          <div className="text-[11px] font-mono font-black text-cyan-300">{c.expectedMovePct != null ? `${c.expectedMovePct}%` : '—'}</div>
+        </div>
       </div>
       {c.indexLevels && c.indexLevels.target1 != null && (
         <div className="mt-1.5 text-[9px] font-mono text-slate-500 leading-relaxed">
           📐 index plan: spot {c.indexLevels.spot?.toLocaleString('en-IN')} → target {c.indexLevels.target1?.toLocaleString('en-IN')} / SL {c.indexLevels.stopLoss?.toLocaleString('en-IN')} · premium = option re-priced in BS at those levels
+        </div>
+      )}
+
+      {/* v9.6 — the machine verdict */}
+      {c.machineNote && (
+        <div className="mt-1.5 rounded-lg bg-gradient-to-r from-cyan-500/[0.08] to-violet-500/[0.08] border border-cyan-500/20 px-2.5 py-1.5 text-[9px] text-cyan-100/90 leading-relaxed font-mono">
+          {c.machineNote}
         </div>
       )}
 
@@ -170,7 +236,9 @@ function OptionSignalCardsStrip() {
   }, []);
 
   const desks = view?.desks || [];
-  const cards = desks.flatMap(d => d.cards || []);
+  // v9.6: server sends the merged TOP-4 by AI score; older servers
+  // fall back to the per-desk cards.
+  const cards = view?.cards?.length ? view.cards : desks.flatMap(d => d.cards || []);
   if (err && !view) {
     return (
       <div className="quantum-panel rounded-2xl p-4 text-[11px] text-slate-400">
@@ -182,7 +250,7 @@ function OptionSignalCardsStrip() {
     <div className="space-y-2" aria-label="F&O option signal cards">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-xs font-black text-slate-200">🎯 F&amp;O SIGNAL CARDS</span>
-        <span className="text-[9px] text-slate-500 font-mono">Nifty50 + Sensex · ensemble consensus → ATM CE/PE · premium Entry/Target/SL</span>
+        <span className="text-[9px] text-slate-500 font-mono">Nifty50 + Sensex · AI-scored TOP 4 (ATM/ITM/OTM candidates) · premium Entry/Target/SL · 30s re-rank</span>
       </div>
       {cards.length > 0 ? (
         <div className="grid md:grid-cols-2 gap-2.5">

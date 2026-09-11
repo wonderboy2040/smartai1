@@ -33,26 +33,27 @@ const IV_FLOOR = 0.10, IV_CAP = 0.60;
 // · Stop Loss 77") needs (a) the broker display name, (b) the
 // DD+Mon expiry label, (c) the CURRENT weekly-expiry weekday.
 //
-// EXPIRY SCHEDULE (live-verified Sept 2026): the exchanges swapped
-// days effective ~1 Sep 2026 — NSE NIFTY weekly = THURSDAY, BSE
-// SENSEX weekly = TUESDAY (ICICI's revised table + Groww's Sept
-// 2026 F&O calendar + BSE's Aug-2026 circular all agree). When the
-// REAL NSE chain loads, its own expiryDates are ground truth and
-// this map is only the bs-model fallback — but for SENSEX (BSE,
-// datacenter-blocked) the map IS the expiry source, so it must be
-// current. BANKEX/Sensex-50 weeklies are discontinued; BANKNIFTY is
-// monthly-only (last Thursday) — the map day only shapes the
-// nearest-expiry guess for the synthetic chain.
+// EXPIRY SCHEDULE (v9.6 FIX — user-verified vs the LIVE exchange,
+// 11 Sep 2026): NSE NIFTY weekly = TUESDAY, BSE SENSEX weekly =
+// THURSDAY. v9.4 had these SWAPPED — it served a "Nifty50 17Sep"
+// card while the real Nifty weekly is 15Sep (17Sep ka Nifty contract
+// exists hi nahi; BSE Sensex weekly 17Sep hai). The trader's broker
+// terminal is ground truth. When the REAL NSE chain loads, its own
+// expiryDates still win; but for SENSEX (BSE, datacenter-blocked)
+// this map IS the expiry source, so it must be current.
+// BANKEX/Sensex-50 weeklies are discontinued; BANKNIFTY is
+// monthly-only — the map day only shapes the nearest-expiry guess
+// for the synthetic chain.
 // ------------------------------------------------------------
 const INDEX_DISPLAY_NAMES = {
   NIFTY: 'Nifty50', BANKNIFTY: 'BankNifty', FINNIFTY: 'FinNifty',
   MIDCPNIFTY: 'MidcapNifty', NIFTYNXT50: 'NiftyNext50', SENSEX: 'Sensex',
 };
-const WEEKLY_EXPIRY_WEEKDAY = { NIFTY: 4, SENSEX: 2 }; // 4=Thu (NSE), 2=Tue (BSE)
+const WEEKLY_EXPIRY_WEEKDAY = { NIFTY: 2, SENSEX: 4 }; // 2=Tue (NSE), 4=Thu (BSE)
 
 /** Nearest weekly expiry for a symbol under the CURRENT schedule. */
 function nextWeeklyExpiryFor(sym, now = new Date()) {
-  const wd = WEEKLY_EXPIRY_WEEKDAY[sym] ?? 4; // NSE family default: Thursday
+  const wd = WEEKLY_EXPIRY_WEEKDAY[sym] ?? 2; // NSE family default: Tuesday
   return nextWeeklyExpiry(now, wd);
 }
 
@@ -825,6 +826,33 @@ export async function getOptionsContext(symbol = 'NIFTY') {
 //     premium (a full wipe as the suggested stop is never "accurate")
 // Every level rounds to the NSE ₹0.05 tick.
 // ------------------------------------------------------------
+// v9.6 — SUPERINTELLIGENCE F&O SIGNAL CARDS. The user's exact
+// requested format kept front-and-center:
+//
+//   Stock name : Nifty50 15Sep 23400 CE
+//   Target     : 110.00
+//   Entry (Buy): 86.50
+//   Stop Loss  : 77.00
+//
+// UPGRADE over v9.4 (single ATM card):
+//   • THREE candidates per index — ATM + ITM + OTM (one strike each
+//     side) — every one re-priced the v9.4 way: LONG → BUY the CE,
+//     SHORT → BUY the PE (defined premium risk, no margin); Target/
+//     SL = the option BS re-priced at the ensemble plan's target1/
+//     stopLoss. Premium guards (BUY semantics — SL < entry < target,
+//     always): target must clear entry by ≥10% (else premium-based
+//     +30%), BS-implied loss capped at 65% of premium, every level
+//     on the NSE ₹0.05 tick.
+//   • every candidate carries an AI SCORE (0-100, transparent blend:
+//     35% index-consensus confidence + 20% POP-at-expiry + 15%
+//     reward:risk + 15% delta-fit (ATM ideal) + 15% grade).
+//     85+ ELITE · 75+ STRONG · 65+ ACTION · else WATCH.
+//   • the VIEW merges NIFTY+SENSEX and serves the TOP 4 cards by
+//     AI score (user spec: "top 4 cards show hone chahiye").
+//   • pro metrics per card: POP, breakeven, theta, per-lot cost/
+//     risk/reward, expected index move, strike-bias chip, 3-tier
+//     exit discipline, Hinglish machine note.
+// ------------------------------------------------------------
 export function buildOptionSignalCards(desk, deep) {
   if (!desk?.ok || !(desk.spot > 0)) return [];
   const sig = deep?.signal;
@@ -835,90 +863,149 @@ export function buildOptionSignalCards(desk, deep) {
   const spot = desk.spot;
   const rows = Array.isArray(desk.rows) ? desk.rows : [];
   if (rows.length === 0) return [];
-
-  // ATM strike — nearest listed strike to live spot (max liquidity,
-  // peak gamma: the intraday directional contract).
-  const atm = rows.reduce((best, r) => (Math.abs(r.strike - spot) < Math.abs(best.strike - spot) ? r : best), rows[0]);
-  const strike = atm.strike;
-  const ltp = type === 'CE' ? atm.callLTP : atm.putLTP;
-  if (!(ltp > 0)) return [];
-
-  const ivPct = (type === 'CE' ? atm.callIV : atm.putIV) || null;
-  const g = greeksFor(spot, strike, desk.expiry, ivPct, type);
   const T = yearsToExpiry(`${desk.expiry}T15:30:00+05:30`);
   if (!(T > 0)) return []; // expiry-day post-15:30 — nothing honest to price
-  const sigma = Math.min(IV_CAP, Math.max(IV_FLOOR, (ivPct ?? 13) / 100));
-  const priceAt = (indexLevel) => roundToTick(Math.max(0.05, bsPrice(indexLevel, strike, T, RISK_FREE, sigma, type)));
 
-  const entry = roundToTick(Math.max(0.05, ltp));
+  const lotSize = LOT_SIZES[symbol] || 1;
+  const step = STRIKE_STEPS[symbol] || 50;
   const plan = sig?.plan && Number.isFinite(sig.plan.target1) && Number.isFinite(sig.plan.stopLoss)
     ? sig.plan : null;
 
-  // Target / SL — index-plan geometry translated into premium terms.
-  let target = null, stopLoss = null;
-  let basisT = 'premium-based', basisS = 'premium-based';
-  if (plan && plan.target1 > 0 && (side === 'LONG' ? plan.target1 > spot : plan.target1 < spot)) {
-    const t = priceAt(plan.target1);
-    if (t > entry * 1.10) { target = t; basisT = 'index-plan→premium'; }
-  }
-  if (plan && plan.stopLoss > 0 && (side === 'LONG' ? plan.stopLoss < spot : plan.stopLoss > spot)) {
-    const s = priceAt(plan.stopLoss);
-    if (s < entry) { stopLoss = s; basisS = 'index-plan→premium'; }
-  }
-  if (target == null) target = roundToTick(entry * 1.30);
-  if (stopLoss == null) stopLoss = roundToTick(entry * 0.75);
-  if (stopLoss < entry * 0.35) stopLoss = roundToTick(entry * 0.35); // cap max premium loss at 65%
+  // ---- candidate strikes: ATM + one ITM + one OTM (BUY-side view:
+  // CE me spot-upar-wale strikes OTM, PE me neeche-wale OTM).
+  const atm = rows.reduce((best, r) => (Math.abs(r.strike - spot) < Math.abs(best.strike - spot) ? r : best), rows[0]);
+  const byStrike = (k) => rows.find(r => r.strike === k);
+  const cand = [];
+  const pushCand = (row, bias) => {
+    if (!row) return;
+    const ltp = type === 'CE' ? row.callLTP : row.putLTP;
+    if (!(ltp > 0)) return;
+    cand.push({ row, bias, strike: row.strike, ltp });
+  };
+  const otmDir = side === 'LONG' ? 1 : -1; // CE: upar OTM · PE: neeche OTM
+  pushCand(atm, 'ATM');
+  pushCand(byStrike(atm.strike - otmDir * step), 'ITM');
+  pushCand(byStrike(atm.strike + otmDir * step), 'OTM');
+  if (cand.length === 0) return [];
 
-  const lotSize = LOT_SIZES[symbol] || 1;
-  const name = `${INDEX_DISPLAY_NAMES[symbol] || symbol} ${expiryLabel(desk.expiry) || desk.expiry} ${strike} ${type}`;
-  const risk = entry - stopLoss;
-  const reward = target - entry;
+  const grade = sig?.grade || 'NEUTRAL';
+  const gradeBonus = grade === 'STRONG' ? 100 : grade === 'ACTION' ? 70 : 40;
+  const cards = cand.map(({ row, bias, strike, ltp }) => {
+    const ivPct = (type === 'CE' ? row.callIV : row.putIV) || null;
+    const g = greeksFor(spot, strike, desk.expiry, ivPct, type);
+    const sigma = Math.min(IV_CAP, Math.max(IV_FLOOR, (ivPct ?? 13) / 100));
+    const priceAt = (indexLevel) => roundToTick(Math.max(0.05, bsPrice(indexLevel, strike, T, RISK_FREE, sigma, type)));
 
-  return [{
-    kind: 'option-signal',
-    name,                       // "Nifty50 17Sep 23400 CE" — user's format
-    symbol, type, strike,
-    direction: side,            // the INDEX consensus driving the card
-    expiry: desk.expiry,
-    expiryLabel: expiryLabel(desk.expiry),
-    dte: daysToExpiry(desk.expiry),
-    // the four numbers the user asked for, in his exact framing:
-    entry,                      // Entry (Buy) — premium
-    target,                     // Target — premium
-    stopLoss,                   // Stop Loss — premium
-    ltp: r2(ltp),
-    delta: g.delta, theta: g.theta,
-    iv: ivPct ? r1(ivPct) : null,
-    lotSize,
-    perLotCost: Math.round(entry * lotSize),
-    perLotRisk: Math.round(risk * lotSize),
-    perLotReward: Math.round(reward * lotSize),
-    rr: risk > 0 ? r2(reward / risk) : null,
-    consensus: {
-      side, confidence: sig?.confidence ?? null,
-      grade: sig?.grade || 'NEUTRAL', agreement: sig?.agreement ?? null,
-    },
-    // v9.4 pro discipline: the desk trades STRONG/ACTION grades only —
-    // a NEUTRAL/WATCH card is a WATCHLIST card and says so loudly.
-    tradeable: sig?.grade === 'STRONG' || sig?.grade === 'ACTION',
-    basis: { target: basisT, stopLoss: basisS },
-    indexLevels: plan ? {
-      spot: r2(spot),
-      target1: r2(plan.target1), stopLoss: r2(plan.stopLoss),
-    } : { spot: r2(spot) },
-    source: desk.source,        // 'nse' (live premiums) | 'bs-model'
-    note: plan
-      ? `Index plan se bana hai: ${symbol} ${r2(plan.target1)} pe premium target, ${r2(plan.stopLoss)} pe stop (BS re-price, IV/dte constant).`
-      : `Premium-based levels (index plan nahi mila): +30% target / −25% SL discipline.`,
-  }];
+    const entry = roundToTick(Math.max(0.05, ltp));
+
+    // Target / SL — index-plan geometry translated into premium terms.
+    let target = null, stopLoss = null;
+    let basisT = 'premium-based', basisS = 'premium-based';
+    if (plan && plan.target1 > 0 && (side === 'LONG' ? plan.target1 > spot : plan.target1 < spot)) {
+      const t = priceAt(plan.target1);
+      if (t > entry * 1.10) { target = t; basisT = 'index-plan→premium'; }
+    }
+    if (plan && plan.stopLoss > 0 && (side === 'LONG' ? plan.stopLoss < spot : plan.stopLoss > spot)) {
+      const s = priceAt(plan.stopLoss);
+      if (s < entry) { stopLoss = s; basisS = 'index-plan→premium'; }
+    }
+    if (target == null) target = roundToTick(entry * 1.30);
+    if (stopLoss == null) stopLoss = roundToTick(entry * 0.75);
+    if (stopLoss < entry * 0.35) stopLoss = roundToTick(entry * 0.35); // cap max premium loss at 65%
+
+    const risk = entry - stopLoss;
+    const reward = target - entry;
+    const rr = risk > 0 ? r2(reward / risk) : null;
+
+    // POP at expiry — lognormal P(S_T clears strike±debit): the true
+    // at-expiry probability for a LONG option (1dp %).
+    const kEff = type === 'CE' ? strike + entry : strike - entry;
+    let pop = null;
+    if (kEff > 0) {
+      const d2 = (Math.log(spot / kEff) + (RISK_FREE - 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+      const p = type === 'CE' ? normCdf(d2) : 1 - normCdf(d2);
+      pop = Math.round(Math.max(0, Math.min(1, p)) * 1000) / 10;
+    }
+
+    // AI SCORE (transparent blend — methodology ships with the view)
+    const conf = Math.max(0, Math.min(100, Number(sig?.confidence ?? 50)));
+    const rrScore = rr != null ? Math.max(0, Math.min(1, rr / 2.5)) * 100 : 0;
+    const deltaFit = g.delta != null ? Math.max(0, 100 - (Math.abs(Math.abs(g.delta) - 0.5) / 0.5) * 100) : 50;
+    const aiScore = Math.round(
+      0.35 * conf + 0.20 * (pop ?? 40) + 0.15 * rrScore + 0.15 * deltaFit + 0.15 * gradeBonus,
+    );
+    const tier = aiScore >= 85 ? 'ELITE' : aiScore >= 75 ? 'STRONG' : aiScore >= 65 ? 'ACTION' : 'WATCH';
+
+    const expectedMovePct = plan ? r1(Math.abs((plan.target1 - spot) / spot) * 100) : null;
+    const breakeven = r1(type === 'CE' ? strike + entry : strike - entry);
+    const name = `${INDEX_DISPLAY_NAMES[symbol] || symbol} ${expiryLabel(desk.expiry) || desk.expiry} ${strike} ${type}`;
+
+    return {
+      kind: 'option-signal',
+      name,                       // "Nifty50 15Sep 23400 CE" — user's format
+      symbol, type, strike,
+      direction: side,            // the INDEX consensus driving the card
+      expiry: desk.expiry,
+      expiryLabel: expiryLabel(desk.expiry),
+      dte: daysToExpiry(desk.expiry),
+      // the four numbers the user asked for, in his exact framing:
+      entry,                      // Entry (Buy) — premium
+      target,                     // Target — premium
+      stopLoss,                   // Stop Loss — premium
+      ltp: r2(ltp),
+      delta: g.delta, theta: g.theta,
+      iv: ivPct ? r1(ivPct) : null,
+      lotSize,
+      perLotCost: Math.round(entry * lotSize),
+      perLotRisk: Math.round(risk * lotSize),
+      perLotReward: Math.round(reward * lotSize),
+      rr,
+      // ---- v9.6 SUPERINTELLIGENCE pro layer ----
+      aiScore, tier,
+      pop,
+      breakeven,
+      expectedMovePct,
+      strikeBias: bias,            // ATM | ITM | OTM
+      trendTag: side === 'LONG' ? '▲ BULLISH INDEX CONSENSUS' : '▼ BEARISH INDEX CONSENSUS',
+      exitPlan: {
+        t1: r1(entry + reward * 0.5), t1Note: 'book 50% · SL → breakeven',
+        t2: r1(target), t2Note: 'book 40% · baaki trail',
+        hardStop: r1(stopLoss),
+        timeExit: '15:10 IST (expiry-day 14:30)',
+      },
+      consensus: {
+        side, confidence: sig?.confidence ?? null,
+        grade, agreement: sig?.agreement ?? null,
+      },
+      // v9.4 discipline kept, now AI-score aware: STRONG/ACTION grade
+      // YA 75+ AI score — the same bar the auto-agent fires on.
+      tradeable: grade === 'STRONG' || grade === 'ACTION' || aiScore >= 75,
+      basis: { target: basisT, stopLoss: basisS },
+      indexLevels: plan ? {
+        spot: r2(spot),
+        target1: r2(plan.target1), stopLoss: r2(plan.stopLoss),
+      } : { spot: r2(spot) },
+      source: desk.source,        // 'nse' (live premiums) | 'bs-model'
+      note: plan
+        ? `Index plan se bana hai: ${symbol} ${r2(plan.target1)} pe premium target, ${r2(plan.stopLoss)} pe stop (BS re-price, IV/dte constant).`
+        : `Premium-based levels (index plan nahi mila): +30% target / −25% SL discipline.`,
+      machineNote: `🧠 AI ${aiScore}/100 (${tier}) — ${bias} strike · Δ ${g.delta != null ? g.delta.toFixed(2) : '—'} · POP ${pop != null ? `${pop}%` : '—'} · R:R ${rr != null ? `${rr}R` : '—'}${bias === 'OTM' ? ' · sasta par POP kam' : bias === 'ITM' ? ' · mehenga par POP zyada' : ' · peak liquidity + gamma'}.`,
+    };
+  });
+
+  // ranked by AI score, best first; the view merges indices → TOP 4.
+  cards.sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
+  return cards.slice(0, 3);
 }
 
 // ------------------------------------------------------------
-// v9.4 — combined view for the F&O SIGNAL CARDS strip: one request
-// computes NIFTY + SENSEX cards together (each desk + its deep
-// consensus), 30s cached. Deep signals are imported lazily so the
-// module graph stays acyclic (signals.js → ensemble.js → here is
-// already an edge for OptionsFlow inputs).
+// v9.6 — combined SUPERINTELLIGENCE view for the F&O SIGNAL CARDS
+// strip: one request computes NIFTY + SENSEX desks (each + its deep
+// consensus), builds the ranked candidates per index, then merges
+// and serves the TOP 4 cards by AI score (user spec), 30s cached.
+// Deep signals are imported lazily so the module graph stays
+// acyclic (signals.js → ensemble.js → here is already an edge for
+// OptionsFlow inputs).
 // ------------------------------------------------------------
 const _cardsCache = new Map();
 export async function getOptionSignalsView(deps, symbols = ['NIFTY', 'SENSEX']) {
@@ -949,10 +1036,21 @@ export async function getOptionSignalsView(deps, symbols = ['NIFTY', 'SENSEX']) 
       return { symbol: String(sym || '').toUpperCase(), ok: false, reason: e?.message || 'failed' };
     }
   }));
-  const data = { ok: true, asOf: Date.now(), desks };
+  // v9.6: merge both desks' ranked cards → global TOP 4 by AI score.
+  const all = [];
+  for (const d of desks) if (d.ok && Array.isArray(d.cards)) all.push(...d.cards);
+  all.sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
+  const data = {
+    ok: true, asOf: Date.now(),
+    topCount: 4,
+    cards: all.slice(0, 4),
+    methodology: 'AI score = 35% index-consensus + 20% POP-at-expiry + 15% reward:risk + 15% delta-fit (ATM ideal) + 15% grade. Nifty50 + Sensex candidates (ATM/ITM/OTM) merged, TOP 4 served, har 30s re-ranked.',
+    desks,
+  };
   _cardsCache.set(key, { at: Date.now(), data });
   return data;
 }
+
 
 /**
  * v6.11 — INCOME SETUP RANKER (glama tv-mcp "rank_income_setups"):

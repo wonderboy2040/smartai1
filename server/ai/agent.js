@@ -6,8 +6,8 @@
 //
 //   • fetches the LIVE CoinDCX wallet (spot + futures margin)
 //   • sizes every trade from that wallet (risk % of equity)
-//   • AUTO-ENTRY: takes only the highest-conviction STRONG
-//     ensemble signals (agent gates are STRICTER than manual)
+//   • AUTO-ENTRY: v9.6 — 75+ AI SCORE (superIntel blend) ya the old
+//     STRONG-committee bar, jo bhi pehle qualify kare
 //   • exactly N trades per day (default 3 — user's spec)
 //   • v7.0 PRO 3-TIER EXIT: T1 → close 40% + SL→breakeven,
 //     T2 → close 40% + SL→T1, RUNNER (20%) trails to time-exit/SL
@@ -46,7 +46,8 @@ export const AGENT_DEFAULTS = {
   mode: 'paper',              // 'paper' | 'notify' | 'live' — execution mode
   desks: { futures: true, spot: true, india: true }, // v7.0: spot auto-trade desk ON (was false)
   maxTradesPerDay: 3,         // USER SPEC: daily ke 3 trades
-  minConfidence: 80,          // agent STRONG bar (stricter than manual 75)
+  minAiScore: 75,             // v9.6 USER SPEC: 75+ AI score → auto entry
+  minConfidence: 80,          // legacy STRONG-committee bar (AI-score path YA ye)
   minAgreement: 0.75,         // …and stricter agreement
   riskPerTradePct: 1.5,       // % of wallet EQUITY risked per trade (SL-based)
   maxLeverage: 3,             // futures leverage ceiling for the agent
@@ -78,6 +79,7 @@ export function saveAgentConfig(cfg) {
 
 const NUM_CLAMPS = {
   maxTradesPerDay: [1, 20],
+  minAiScore: [55, 95],
   minConfidence: [55, 95],
   minAgreement: [0.5, 0.95],
   riskPerTradePct: [0.25, 10],
@@ -344,6 +346,7 @@ async function _tick(deps, sendTelegram) {
 
   // ---- time-exit sweep (auto exit of aging agent positions) ----
   const closures = [];
+  const timeExited = new Set(); // v9.6: ids closed this tick (trend-flip must not double-close)
   for (const p of openAgent) {
     const ageMin = (Date.now() - (p.openedAt || 0)) / 60000;
     if (ageMin >= cfg.maxHoldMin) {
@@ -354,6 +357,7 @@ async function _tick(deps, sendTelegram) {
           return closePosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }));
         })();
       if (out?.ok) {
+        timeExited.add(p.id);
         // v7.0.2: honest TOTAL pnl — booked partial legs + the final leg
         // (p.pnlINR alone is only the remaining runner's leg).
         const totalPnl = (out.position?.pnlINR ?? 0) + (out.position?.bookedPnlINR ?? 0);
@@ -369,6 +373,63 @@ async function _tick(deps, sendTelegram) {
     await notify(sendTelegram, `🤖 <b>AGENT time-exit</b>\n${closures.map(c => `• ${c.pair} — ${c.reason}: ₹${c.pnlINR ?? '?'}`).join('\n')}`);
   }
 
+  // ---- scan the boards ONCE (cached server-side; cheap) — the exit
+  // sweeps need the live consensus too, so this runs BEFORE the
+  // quota/cooldown gates (a flipped position must exit even when
+  // today's entry quota is done). ----
+  const { getSignals } = await import('./signals.js');
+  const boards = [];
+  if (cfg.desks.futures) boards.push('FUTURES');
+  if (cfg.desks.spot) boards.push('CRYPTO');
+  const scans = await Promise.all(boards.map(m => getSignals(m, deps, { limit: 20 }).catch(() => null)));
+  const signalOf = (s) => Number(s?.superIntel?.aiScore ?? 0);
+  // v9.6 USER SPEC GATE: 75+ AI score qualifies on its own; the old
+  // STRONG-committee bar (grade + confidence + agreement) still works.
+  const qualifies = (s) => !!(s && s.plan && s.side && (
+    signalOf(s) >= cfg.minAiScore || (
+      s.grade === 'STRONG' && s.executable
+      && (s.confidence ?? 0) >= cfg.minConfidence
+      && (s.agreement ?? 0) >= cfg.minAgreement
+    )
+  ));
+
+  // ---- v9.6 TREND-FLIP auto-exit ("auto exit as per market trend"):
+  // the board now prints a QUALIFYING signal on the OPPOSITE side of
+  // a pair the agent holds → the runner is cut immediately. A
+  // cooldown is stamped so the flip side can only re-enter after
+  // cooldownMin — no whipsaw churn. ----
+  for (const p of openAgent) {
+    if (timeExited.has(p.id)) continue;
+    const posSide = /^(L|B)/i.test(String(p.side || '')) ? 'BUY' : 'SELL';
+    const pair = String(p.pair || '');
+    let flipped = null;
+    for (const board of scans) {
+      if (!board?.ok) continue;
+      for (const s of (board.signals || [])) {
+        if (pairOfSignal(s) !== pair) continue;
+        const raw = String(s.side || '').toUpperCase();
+        const sSide = raw === 'SHORT' || raw === 'SELL' ? 'SELL' : 'BUY';
+        if (sSide !== posSide && qualifies(s)) { flipped = s; break; }
+      }
+      if (flipped) break;
+    }
+    if (!flipped) continue;
+    const out = p.market === 'FUTURES'
+      ? await closeFuturesPosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }))
+      : await (async () => {
+          const { closePosition } = await import('./coindcxOrders.js');
+          return closePosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }));
+        })();
+    if (out?.ok) {
+      _state.lastEntryAt = Date.now(); // the flip side re-enters only after cooldown
+      const totalPnl = (out.position?.pnlINR ?? 0) + (out.position?.bookedPnlINR ?? 0);
+      log('exit', `TREND-FLIP EXIT ${p.pair} — board flipped ${flipped.side} (AI ${signalOf(flipped) || flipped.confidence}%) → cut at ₹${r2(totalPnl)} total`);
+      await notify(sendTelegram, `🤖 <b>AGENT trend-flip exit</b> — ${p.pair}\nBoard ab ${flipped.side} side pe ${signalOf(flipped) || flipped.confidence}% conviction: position ₹${r2(totalPnl)} pe cut. Re-entry cooldown (${cfg.cooldownMin}m) ke baad.`);
+    } else {
+      log('error', `trend-flip close failed for ${p.pair}: ${String(out?.error || '').slice(0, 100)}`);
+    }
+  }
+
   // ---- 3-trade daily cap ----
   if (tradesToday.length >= cfg.maxTradesPerDay) {
     maybeLogSkip('daily trade quota done', `quota ${tradesToday.length}/${cfg.maxTradesPerDay} used — waiting for IST midnight`);
@@ -380,19 +441,12 @@ async function _tick(deps, sendTelegram) {
     persistState(); return; // silent — too chatty otherwise
   }
 
-  // ---- scan the boards (cached server-side; cheap) ----
-  const { getSignals } = await import('./signals.js');
-  const boards = [];
-  if (cfg.desks.futures) boards.push('FUTURES');
-  if (cfg.desks.spot) boards.push('CRYPTO');
-  const scans = await Promise.all(boards.map(m => getSignals(m, deps, { limit: 8 }).catch(() => null)));
+  // ---- candidates (boards already scanned above) ----
   let candidates = [];
   for (const board of scans) {
     if (!board?.ok) continue;
     for (const s of (board.signals || [])) {
-      if (s.grade !== 'STRONG' || !s.plan || !s.executable) continue;
-      if ((s.confidence ?? 0) < cfg.minConfidence) continue;
-      if ((s.agreement ?? 0) < cfg.minAgreement) continue;
+      if (!qualifies(s)) continue;
       if ((s.plan.riskPct ?? 0) > (trading.maxRiskPct || 5)) continue;
       // already positioned on this pair? skip (one-per-pair anyway)
       if ((j.positions || []).some(p => p.pair === pairOfSignal(s) && (p.status === 'OPEN' || p.status === 'UNKNOWN'))) continue;
@@ -400,10 +454,10 @@ async function _tick(deps, sendTelegram) {
     }
   }
   if (candidates.length === 0) {
-    maybeLogSkip('no qualifying signal', `scan: 0 candidates ≥ ${cfg.minConfidence}% conf + ${Math.round(cfg.minAgreement * 100)}% agreement`);
+    maybeLogSkip('no qualifying signal', `scan: 0 candidates ≥ ${cfg.minAiScore} AI score / ${cfg.minConfidence}% conf + ${Math.round(cfg.minAgreement * 100)}% agreement`);
     persistState(); return;
   }
-  candidates.sort((a, b) => (b.confidence - a.confidence) || (b.agreement - a.agreement));
+  candidates.sort((a, b) => (signalOf(b) - signalOf(a)) || (b.confidence - a.confidence));
   const best = candidates[0];
 
   // ---- wallet-based sizing ----
@@ -572,7 +626,7 @@ export async function agentStatus(deps) {
         const b = await getSignals(m, deps, { limit: 6, warmOnly: true }).catch(() => null);
         if (b?.ok) {
           picks[m] = (b.signals || []).filter(s => s.grade === 'STRONG' || s.grade === 'ACTION').slice(0, 3)
-            .map(s => ({ symbol: s.symbol, side: s.side, grade: s.grade, confidence: s.confidence, ltp: s.ltp, pair: pairOfSignal(s),
+            .map(s => ({ symbol: s.symbol, side: s.side, grade: s.grade, confidence: s.confidence, aiScore: s.superIntel?.aiScore ?? null, ltp: s.ltp, pair: pairOfSignal(s),
               plan: s.plan ? { entry: s.plan.entry, stopLoss: s.plan.stopLoss, target2: s.plan.target2, riskPct: s.plan.riskPct } : null }));
         }
       }));

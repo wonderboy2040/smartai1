@@ -203,10 +203,11 @@ function TradeSlots({ used, total, pnlINR, lossCapINR }: { used: number; total: 
   );
 }
 
-type CfgKey = 'maxTradesPerDay' | 'minConfidence' | 'riskPerTradePct' | 'maxLeverage' | 'maxHoldMin' | 'cooldownMin' | 'dailyLossCapPct';
+type CfgKey = 'maxTradesPerDay' | 'minAiScore' | 'minConfidence' | 'riskPerTradePct' | 'maxLeverage' | 'maxHoldMin' | 'cooldownMin' | 'dailyLossCapPct';
 const CFG_FIELDS: { key: CfgKey; label: string; min: number; max: number; step: number; suffix: string; hint: string }[] = [
   { key: 'maxTradesPerDay', label: 'Trades/day', min: 1, max: 10, step: 1, suffix: '', hint: 'user spec: 3' },
-  { key: 'minConfidence', label: 'Min confidence', min: 55, max: 95, step: 1, suffix: '%', hint: 'agent STRONG bar' },
+  { key: 'minAiScore', label: 'Min AI score', min: 55, max: 95, step: 1, suffix: '', hint: '75+ = auto entry (user spec)' },
+  { key: 'minConfidence', label: 'Min confidence', min: 55, max: 95, step: 1, suffix: '%', hint: 'legacy STRONG bar' },
   { key: 'riskPerTradePct', label: 'Risk/trade', min: 0.25, max: 10, step: 0.25, suffix: '%', hint: '% of wallet equity' },
   { key: 'maxLeverage', label: 'Max leverage', min: 1, max: 10, step: 1, suffix: 'x', hint: 'futures ceiling' },
   { key: 'maxHoldMin', label: 'Max hold', min: 5, max: 480, step: 5, suffix: 'm', hint: 'time-exit' },
@@ -286,7 +287,7 @@ function AgentConfigEditor({ cfg, onSaved }: { cfg: AgentView['config']; onSaved
         </button>
         {dirty && <span className="text-[9px] text-amber-400/80 font-mono">unsaved changes</span>}
         <span className="ml-auto text-[9px] font-mono text-slate-500">
-          agent STRONG bar: {Number(cfg.minConfidence)}% + {Math.round(Number(cfg.minAgreement) * 100)}% agreement (manual se strict)
+          auto bar: AI score ≥ {Number(cfg.minAiScore ?? 75)} YA STRONG {Number(cfg.minConfidence)}% + {Math.round(Number(cfg.minAgreement) * 100)}% agreement
         </span>
       </div>
     </div>
@@ -388,7 +389,10 @@ function PickStrip({ title, picks, accent }: { title: string; picks: AgentPick[]
             <div className="flex items-center gap-2">
               <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${pick.side === 'LONG' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-red-500/15 text-red-300'}`}>{pick.side}</span>
               <span className="text-[11px] text-slate-100 font-black font-mono">{pick.symbol}</span>
-              <span className="ml-auto text-[9px] font-black text-amber-300/90 bg-amber-500/10 border border-amber-500/25 rounded px-1.5 py-0.5">{pick.grade}</span>
+              {pick.aiScore != null && (
+                <span className="text-[9px] font-black text-violet-300/90 bg-violet-500/10 border border-violet-500/25 rounded px-1.5 py-0.5" title="superintelligence AI score — 75+ par agent auto-entry karta hai">🧠 {pick.aiScore}</span>
+              )}
+              <span className={`${pick.aiScore != null ? '' : 'ml-auto'} text-[9px] font-black text-amber-300/90 bg-amber-500/10 border border-amber-500/25 rounded px-1.5 py-0.5`}>{pick.grade}</span>
             </div>
             <div className="flex items-center gap-1.5" title="model confidence">
               <div className="flex-1 h-1 rounded-full bg-black/40 overflow-hidden">
