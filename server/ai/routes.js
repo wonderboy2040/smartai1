@@ -42,7 +42,7 @@ import {
   walletSnapshot, futuresMarketsView,
 } from './futures.js';
 import {
-  agentTick, agentStatus, agentStart, agentStop, updateAgentConfig, loadAgentConfig,
+  agentTick, agentStatus, agentStart, agentStop, updateAgentConfig, loadAgentConfig, AGENT_TICK_SEC,
 } from './agent.js';
 import { executeIndiaSignal, watchIndiaPositions, closeIndiaPosition } from './indiaOrders.js';
 import { runBacktest } from './backtest.js';
@@ -708,12 +708,14 @@ export function registerAITradingRoutes(app, deps) {
   if (futuresWatcher.unref) futuresWatcher.unref();
 
   // v6.8: SUPERINTELLIGENCE AGENT loop — wallet scan → auto entry/exit,
-  // 3 trades/day, every 60s. Every entry passes the same gauntlet.
+  // 3 trades/day. v9.7: 30s cadence (faster trend-flip reaction; the
+  // wallet fetch inside the tick is throttled to ~60s). Every entry
+  // still passes the same gauntlet.
   const agentLoop = setInterval(async () => {
     try {
       await agentTick(depsForSignals(), sendTelegram);
     } catch { /* non-fatal — agent logs its own errors */ }
-  }, 60_000);
+  }, AGENT_TICK_SEC * 1000);
   if (agentLoop.unref) agentLoop.unref();
 
   // India watcher — SL/TP + trailing + 15:15 square-off (NSE hours only).

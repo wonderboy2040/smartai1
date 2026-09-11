@@ -25,7 +25,7 @@
 // All hermetic — no network. Pure functions under test.
 // ============================================================
 import { describe, it, expect } from 'vitest';
-import { buildOptionSignalCards, expiryLabel, buildSyntheticChain, STRIKE_STEPS, LOT_SIZES } from '../server/ai/optionsDesk.js';
+import { buildOptionSignalCards, expiryLabel, buildSyntheticChain, STRIKE_STEPS, LOT_SIZES, nextWeeklyExpiryFor } from '../server/ai/optionsDesk.js';
 import { nextWeeklyExpiry } from '../server/ai/lib/blackScholes.js';
 
 // A desk shaped exactly like getOptionsDesk() serves it (bs-model
@@ -218,5 +218,79 @@ describe('v9.6 superintelligence layer — AI score, POP, ranking, tradeable bar
     expect(c.aiScore).toBeLessThan(75);
     expect(c.tradeable).toBe(false);
     expect(c.consensus.grade).toBe('NEUTRAL');
+  });
+});
+
+// ============================================================
+// v9.7 — INDIA PUT-SKEW + MONTHLY-ONLY expiries
+// ============================================================
+describe('v9.7 synthetic-chain put-skew (India index reality)', () => {
+  it('same-strike PE IV > CE IV (crash-insurance premium) — and the price gap vs CE narrows to near-parity', () => {
+    const chain = buildSyntheticChain('NIFTY', 23400, 0.122, '2026-09-15', 6);
+    const atm = chain.rows.find(r => r.strike === 23400);
+    // IV skew is the demand signal (pricing/POP inputs)
+    expect(atm.putIV).toBeGreaterThan(atm.callIV);
+    // price: the r=6.9% carry puts same-IV ATM CE ~₹13 up (put-call
+    // parity); the skew claws most of it back → near parity (real NSE
+    // ATM weeklies trade near parity too). Symmetric model gap would
+    // be ~13; skewed model must land under 10.
+    expect(atm.callLTP - atm.putLTP).toBeGreaterThan(0);
+    expect(atm.callLTP - atm.putLTP).toBeLessThan(10);
+    // skew is mild, not wild — within 1.5 vol pts
+    expect(atm.putIV - atm.callIV).toBeLessThan(1.5);
+    expect(atm.putIV - atm.callIV).toBeGreaterThanOrEqual(1);
+  });
+
+  it('skew survives the smile: wings pe bhi PE richer than CE at same distance', () => {
+    const chain = buildSyntheticChain('NIFTY', 23400, 0.122, '2026-09-15', 6);
+    const up = chain.rows.find(r => r.strike === 23500); // OTM for CE
+    const dn = chain.rows.find(r => r.strike === 23300); // OTM for PE
+    expect(dn.putIV).toBeGreaterThan(up.callIV);
+  });
+
+  it('SHORT cards now price richer PE entries than a symmetric model would', () => {
+    // the pre-v9.7 symmetric chain priced CE==PE; skew must lift the PE card entry
+    const spot = 23400, expiry = '2026-09-15';
+    const plan = { entry: spot, stopLoss: spot + 90, target1: spot - 120, target2: spot - 240 };
+    const cards = buildOptionSignalCards(mkDesk('NIFTY', spot, expiry), mkDeep('SHORT', plan));
+    const pe = cards.find(c => c.type === 'PE' && c.strikeBias === 'ATM');
+    expect(pe).toBeTruthy();
+    // ATM straddle legs: PE entry must exceed the CE leg of the same strike
+    const chain = buildSyntheticChain('NIFTY', spot, 0.122, expiry, 6);
+    const atm = chain.rows.find(r => r.strike === 23400);
+    expect(pe.entry).toBeGreaterThanOrEqual(atm.putLTP - 0.05);
+  });
+});
+
+describe('v9.7 MONTHLY-ONLY expiries (SEBI weekly rationalization)', () => {
+  // Saturday 12 Sep 2026, 19:00 IST → IST date = 2026-09-12
+  const NOW = new Date('2026-09-12T13:30:00Z');
+
+  it('NIFTY weekly stays next TUESDAY (15Sep)', () => {
+    expect(nextWeeklyExpiryFor('NIFTY', NOW)).toBe('2026-09-15'); // Tuesday
+  });
+
+  it('SENSEX weekly stays next THURSDAY (17Sep)', () => {
+    expect(nextWeeklyExpiryFor('SENSEX', NOW)).toBe('2026-09-17'); // Thursday
+  });
+
+  it('BANKNIFTY is monthly-only → LAST TUESDAY of Sep 2026 (29Sep), not next Tuesday', () => {
+    const d = nextWeeklyExpiryFor('BANKNIFTY', NOW);
+    expect(d).toBe('2026-09-29'); // 29 Sep 2026 is the last Tuesday
+    expect(new Date(`${d}T00:00:00Z`).getUTCDay()).toBe(2);
+  });
+
+  it('FINNIFTY/MIDCPNIFTY/NIFTYNXT50 follow the same last-Tuesday rule', () => {
+    for (const sym of ['FINNIFTY', 'MIDCPNIFTY', 'NIFTYNXT50']) {
+      const d = nextWeeklyExpiryFor(sym, NOW);
+      expect(new Date(`${d}T00:00:00Z`).getUTCDay()).toBe(2);
+      expect(d).toBe('2026-09-29');
+    }
+  });
+
+  it('after the last Tuesday 15:30 IST → rolls to NEXT month last Tuesday', () => {
+    // 29 Sep 2026 16:00 IST (expiry passed) → Oct 2026 ka last Tuesday = 27Oct
+    const after = new Date('2026-09-29T10:30:00Z'); // 16:00 IST
+    expect(nextWeeklyExpiryFor('BANKNIFTY', after)).toBe('2026-10-27');
   });
 });

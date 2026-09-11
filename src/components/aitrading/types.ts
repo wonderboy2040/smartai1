@@ -834,6 +834,8 @@ export interface AgentConfig {
   tp2ClosePct: number;
   runnerPct: number;
   breakEvenAfterTp1: boolean;
+  /** v9.7 — trend-flip exit protects manual positions too (user spec, default ON) */
+  manageManualPositions?: boolean;
 }
 
 /** v7.0: what the agent WOULD invest on the next STRONG signal. */
@@ -910,8 +912,14 @@ export interface AgentView {
     lastEntryPair: string | null;
     pausedToday: { day: string; reason: string } | null;
     lastWallet: { equityINR: number; usdInr: number; deployableFuturesUSDT: number; deployableSpotINR: number; at: number } | null;
+    /** v9.7 — loop cadence + countdown + latest wait/blocker reason */
+    tickSec?: number;
+    nextScanInSec?: number | null;
+    lastSkip?: { key: string; text: string; at: number } | null;
     log: AgentLogLine[];
   };
+  /** v9.7 — "entry kyun nahi ho raha" strip: hard blockers + soft wait reasons */
+  blockers?: Array<{ key: string; text: string; soft?: boolean }>;
   today: {
     day: string;
     trades: AgentTradeToday[];

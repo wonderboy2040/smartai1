@@ -23,7 +23,7 @@
 //   gauntlet a manual click passes. The agent has ZERO private
 //   paths to money.
 //
-// Loop cadence: 60s (unref'd). Paper mode is the default; LIVE
+// Loop cadence: 30s (unref'd). Paper mode is the default; LIVE
 // needs (1) typed LIVE in Risk settings, (2) allowAuto ON,
 // (3) typed LIVE when starting the agent, (4) CoinDCX connected.
 // ============================================================
@@ -36,6 +36,11 @@ import { loadConfig, loadJournal, dailyStats, todayIST } from './coindcxOrders.j
 const AGENT_CONFIG_FILE = 'ai-agent-config.json';
 const AGENT_STATE_FILE = 'ai-agent-state.json';
 const LOG_RING = 120;
+
+// v9.7: the loop cadence — 30s (was 60s). Faster trend-flip reaction +
+// quicker entry after a qualifying signal; wallet fetch is throttled
+// to ~60s inside the tick so the exchange API load stays flat.
+export const AGENT_TICK_SEC = 30;
 
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 const nowMin = () => Date.now() / 60000;
@@ -61,6 +66,12 @@ export const AGENT_DEFAULTS = {
   tp2ClosePct: 40,            // % of ORIGINAL qty closed at T2
   runnerPct: 20,              // % riding as the trailing runner (derived 100−T1−T2)
   breakEvenAfterTp1: true,    // SL → entry once T1 books (risk-free runner)
+  // ---- v9.7 USER SPEC: "auto exit as per market trend" ----
+  // TREND-FLIP exit (board prints a qualifying OPPOSITE-side signal →
+  // position cut) applies to MANUAL positions too, not just the
+  // agent's own. Time-exit/partial-TP stay agent-owned — a manual
+  // swing holder sirf trend-flip se protect hota hai.
+  manageManualPositions: true,
 };
 
 export function loadAgentConfig() {
@@ -109,6 +120,8 @@ export function updateAgentConfig(patch = {}) {
   // v7.0 PRO TRADER toggles (booleans — not in NUM_CLAMPS)
   if (patch.partialTpEnabled != null) next.partialTpEnabled = !!patch.partialTpEnabled;
   if (patch.breakEvenAfterTp1 != null) next.breakEvenAfterTp1 = !!patch.breakEvenAfterTp1;
+  // v9.7: trend-flip exit on manual positions (user spec default ON)
+  if (patch.manageManualPositions != null) next.manageManualPositions = !!patch.manageManualPositions;
   // v7.0: keep the split honest — T1+T2 ≤ 90, runner ≥ 10, sums shown
   if (next.tp1ClosePct + next.tp2ClosePct > 90) {
     const scale = 90 / (next.tp1ClosePct + next.tp2ClosePct);
@@ -127,6 +140,8 @@ function freshState() {
     lastEntryAt: null, lastEntryPair: null,
     lastWallet: null,
     pausedToday: null, // { day, reason }
+    lastSkip: null,   // v9.7: { key, text, at } — the CURRENT wait/blocker reason (panel strip)
+    alerted: {},      // v9.7: stand-down telegram alerts already sent today (key → day)
     log: [],
   };
 }
@@ -166,6 +181,19 @@ function agentRealizedToday(j) {
 function openAgentPositions(j) {
   return (j?.positions || []).filter(p => p.source === 'agent' && (p.status === 'OPEN' || p.status === 'UNKNOWN'));
 }
+/**
+ * v9.7 — positions the agent's TREND-FLIP exit protects. Own trades
+ * always; MANUAL crypto/futures trades too when manageManualPositions
+ * (user spec "auto exit as per market trend" — default ON). India
+ * positions are the India watcher's job, never touched here.
+ */
+function openManagedPositions(j, cfg) {
+  const open = (j?.positions || []).filter(p =>
+    (p.status === 'OPEN' || p.status === 'UNKNOWN')
+    && (p.market === 'FUTURES' || p.market === 'CRYPTO' || p.pair?.startsWith('B-') || /INR$/.test(String(p.pair || ''))));
+  if (cfg?.manageManualPositions === false) return open.filter(p => p.source === 'agent');
+  return open;
+}
 
 // ---------------- start / stop ----------------
 export async function agentStart({ mode, liveConfirmPhrase } = {}) {
@@ -190,7 +218,21 @@ export async function agentStart({ mode, liveConfirmPhrase } = {}) {
   _state.pausedToday = null;
   log('info', `AGENT STARTED (${wantMode.toUpperCase()}) — max ${next.maxTradesPerDay} trades/day · risk ${next.riskPerTradePct}%/trade · SL-based wallet sizing · PRO exits: T1 ${next.partialTpEnabled ? `${next.tp1ClosePct}%+BE-lock` : 'off'} · T2 ${next.tp2ClosePct}% · runner ${next.runnerPct}% trailing`);
   persistState();
-  return { ok: true, config: next };
+  // v9.7: honest LIVE-start warning — the #1 "agent chal raha hai par
+  // trade nahi karta" cause was a wallet below the equity floor. Tell
+  // the user AT START, not 3 days later in a log they never open.
+  let warning = null;
+  if (wantMode === 'live' && coindcxConnected()) {
+    const w = await Promise.race([
+      walletSnapshot().catch(() => null),
+      new Promise((r) => { const t = setTimeout(() => r(null), 3500); t.unref?.(); }),
+    ]);
+    const eq = w?.equityINR ?? _state.lastWallet?.equityINR ?? null;
+    if (eq != null && eq < next.minEquityINR) {
+      warning = `Wallet equity ₹${r2(eq)} agent floor (₹${next.minEquityINR}) se neeche hai — agent scan karega par entry TAB tak nahi karega jab tak CoinDCX wallet top-up nahi hota. 08/06 panel me AGENT BLOCKERS strip live reason dikhata hai.`;
+    }
+  }
+  return { ok: true, config: next, ...(warning ? { warning } : {}) };
 }
 export function agentStop({ reason = 'user' } = {}) {
   const cfg = loadAgentConfig();
@@ -298,11 +340,16 @@ async function _tick(deps, sendTelegram) {
   _state.lastScanAt = Date.now();
   if (_state.runningSince == null) _state.runningSince = _state.lastScanAt;
 
-  // ---- hard stops ----
+  // ---- hard stops (v9.7: each records its blocker for the panel strip) ----
   if (!cfg.enabled) return;
-  if (trading.killSwitch) { log('skip', 'kill switch ON — agent idle'); persistState(); return; }
+  if (trading.killSwitch) {
+    maybeLogSkip('kill_switch', 'kill switch ON — agent idle');
+    await alertOnce(sendTelegram, 'kill_switch', '🤖 <b>AGENT idle</b> — kill switch ON hai (Risk settings).');
+    persistState(); return;
+  }
   if (cfg.mode === 'live' && (!coindcxConnected() || trading.mode !== 'live' || !trading.allowAuto)) {
-    log('skip', 'LIVE preconditions lost (connection/arming/auto) — agent idle');
+    maybeLogSkip('live_preconditions', 'LIVE preconditions lost (connection/arming/auto) — agent idle');
+    await alertOnce(sendTelegram, 'live_preconditions', '🤖 <b>AGENT idle</b> — LIVE preconditions toot gayi (CoinDCX connect / Risk mode LIVE / Auto-execution ON check karo).');
     persistState(); return;
   }
 
@@ -315,15 +362,28 @@ async function _tick(deps, sendTelegram) {
   const tradesToday = agentTradesToday(j);
   const openAgent = openAgentPositions(j);
 
-  // ---- wallet (the sizing source of truth) ----
+  // ---- wallet (the sizing source of truth; v9.7 throttled to ~60s
+  // now that the loop runs at 30s — exchange API load stays flat) ----
   let wallet = null;
   if (coindcxConnected()) {
-    wallet = await walletSnapshot().catch(e => { log('error', `wallet fetch failed: ${String(e?.message || e).slice(0, 120)}`); return null; });
-    if (wallet) _state.lastWallet = { equityINR: wallet.equityINR, usdInr: wallet.usdInr, deployableFuturesUSDT: wallet.deployableFuturesUSDT, deployableSpotINR: wallet.deployableSpotINR, at: wallet.fetchedAt };
+    const lw = _state.lastWallet;
+    if (lw && Date.now() - (lw.at || 0) < 55_000) {
+      wallet = { equityINR: lw.equityINR, usdInr: lw.usdInr, deployableFuturesUSDT: lw.deployableFuturesUSDT, deployableSpotINR: lw.deployableSpotINR };
+    } else {
+      wallet = await walletSnapshot().catch(e => { log('error', `wallet fetch failed: ${String(e?.message || e).slice(0, 120)}`); return null; });
+      if (wallet) _state.lastWallet = { equityINR: wallet.equityINR, usdInr: wallet.usdInr, deployableFuturesUSDT: wallet.deployableFuturesUSDT, deployableSpotINR: wallet.deployableSpotINR, at: wallet.fetchedAt };
+    }
   }
   const equityINR = wallet?.equityINR > 0 ? wallet.equityINR
     : (_state.lastWallet?.equityINR > 0 ? _state.lastWallet.equityINR : 10_000); // paper practice equity
   const usdInr = wallet?.usdInr || (await fetchUsdInr());
+  // v9.7: FUTURES viability — a connected wallet with <2 USDT free
+  // margin can NEVER fund a futures entry (margin floor). Filter those
+  // candidates BEFORE picking best, so spot candidates aren't starved
+  // by a futures pick that dies at the margin gate every cycle.
+  const futuresViable = !coindcxConnected()
+    ? true // practice-equity fallback keeps paper futures alive
+    : ((wallet?.deployableFuturesUSDT ?? _state.lastWallet?.deployableFuturesUSDT ?? 0) >= 2);
 
   // ---- daily loss cap (agent's own, on top of the global ₹ cap) ----
   if (_state.pausedToday) {
@@ -340,7 +400,9 @@ async function _tick(deps, sendTelegram) {
 
   // ---- equity floor ----
   if (equityINR < cfg.minEquityINR) {
-    log('skip', `wallet equity ₹${r2(equityINR)} < floor ₹${cfg.minEquityINR} — not trading (wallet top-up needed)`);
+    maybeLogSkip('equity_floor', `wallet equity ₹${r2(equityINR)} < floor ₹${cfg.minEquityINR} — not trading (wallet top-up needed)`);
+    await alertOnce(sendTelegram, 'equity_floor',
+      `🤖 <b>AGENT entry paused</b> — wallet equity ₹${r2(equityINR)} floor ₹${cfg.minEquityINR} se neeche hai.\nCoinDCX wallet top-up karo — scans turant resume honge.`);
     persistState(); return;
   }
 
@@ -395,10 +457,13 @@ async function _tick(deps, sendTelegram) {
 
   // ---- v9.6 TREND-FLIP auto-exit ("auto exit as per market trend"):
   // the board now prints a QUALIFYING signal on the OPPOSITE side of
-  // a pair the agent holds → the runner is cut immediately. A
-  // cooldown is stamped so the flip side can only re-enter after
-  // cooldownMin — no whipsaw churn. ----
-  for (const p of openAgent) {
+  // a held pair → the position is cut immediately. v9.7: this now
+  // protects MANUAL positions too when manageManualPositions (user
+  // spec, default ON) — a manual swing holder exits the moment the
+  // trend flips against them. A cooldown is stamped so the flip side
+  // can only re-enter after cooldownMin — no whipsaw churn. ----
+  const managed = openManagedPositions(j, cfg);
+  for (const p of managed) {
     if (timeExited.has(p.id)) continue;
     const posSide = /^(L|B)/i.test(String(p.side || '')) ? 'BUY' : 'SELL';
     const pair = String(p.pair || '');
@@ -423,8 +488,9 @@ async function _tick(deps, sendTelegram) {
     if (out?.ok) {
       _state.lastEntryAt = Date.now(); // the flip side re-enters only after cooldown
       const totalPnl = (out.position?.pnlINR ?? 0) + (out.position?.bookedPnlINR ?? 0);
-      log('exit', `TREND-FLIP EXIT ${p.pair} — board flipped ${flipped.side} (AI ${signalOf(flipped) || flipped.confidence}%) → cut at ₹${r2(totalPnl)} total`);
-      await notify(sendTelegram, `🤖 <b>AGENT trend-flip exit</b> — ${p.pair}\nBoard ab ${flipped.side} side pe ${signalOf(flipped) || flipped.confidence}% conviction: position ₹${r2(totalPnl)} pe cut. Re-entry cooldown (${cfg.cooldownMin}m) ke baad.`);
+      const manual = p.source !== 'agent';
+      log('exit', `TREND-FLIP EXIT${manual ? ' (manual-held)' : ''} ${p.pair} — board flipped ${flipped.side} (AI ${signalOf(flipped) || flipped.confidence}%) → cut at ₹${r2(totalPnl)} total`);
+      await notify(sendTelegram, `🤖 <b>AGENT trend-flip exit</b>${manual ? ' (manual position)' : ''} — ${p.pair}\nBoard ab ${flipped.side} side pe ${signalOf(flipped) || flipped.confidence}% conviction: position ₹${r2(totalPnl)} pe cut. Re-entry cooldown (${cfg.cooldownMin}m) ke baad.`);
     } else {
       log('error', `trend-flip close failed for ${p.pair}: ${String(out?.error || '').slice(0, 100)}`);
     }
@@ -432,19 +498,27 @@ async function _tick(deps, sendTelegram) {
 
   // ---- 3-trade daily cap ----
   if (tradesToday.length >= cfg.maxTradesPerDay) {
-    maybeLogSkip('daily trade quota done', `quota ${tradesToday.length}/${cfg.maxTradesPerDay} used — waiting for IST midnight`);
+    maybeLogSkip('quota', `quota ${tradesToday.length}/${cfg.maxTradesPerDay} used — waiting for IST midnight`);
     persistState(); return;
   }
 
   // ---- cooldown between entries ----
   if (_state.lastEntryAt && (Date.now() - _state.lastEntryAt) / 60000 < cfg.cooldownMin) {
-    persistState(); return; // silent — too chatty otherwise
+    const left = Math.max(1, Math.ceil(cfg.cooldownMin - (Date.now() - _state.lastEntryAt) / 60000));
+    maybeLogSkip('cooldown', `entry cooldown — ${left}m baaki (flip-side re-entry guard)`);
+    persistState(); return;
   }
 
   // ---- candidates (boards already scanned above) ----
+  if (cfg.desks.futures && !futuresViable && coindcxConnected()) {
+    maybeLogSkip('futures_margin', `futures wallet margin < 2 USDT — futures candidates skip, sirf spot scan (${cfg.desks.spot ? 'spot ON' : 'spot OFF — kuch trade nahi hoga'})`);
+  }
   let candidates = [];
-  for (const board of scans) {
+  for (let bi = 0; bi < boards.length; bi++) {
+    const board = scans[bi];
+    const m = boards[bi];
     if (!board?.ok) continue;
+    if (m === 'FUTURES' && !futuresViable) continue; // v9.7: margin floor can't fund it
     for (const s of (board.signals || [])) {
       if (!qualifies(s)) continue;
       if ((s.plan.riskPct ?? 0) > (trading.maxRiskPct || 5)) continue;
@@ -454,7 +528,7 @@ async function _tick(deps, sendTelegram) {
     }
   }
   if (candidates.length === 0) {
-    maybeLogSkip('no qualifying signal', `scan: 0 candidates ≥ ${cfg.minAiScore} AI score / ${cfg.minConfidence}% conf + ${Math.round(cfg.minAgreement * 100)}% agreement`);
+    maybeLogSkip('no_candidates', `scan: 0 candidates ≥ ${cfg.minAiScore} AI score / ${cfg.minConfidence}% conf + ${Math.round(cfg.minAgreement * 100)}% agreement${cfg.desks.futures && !futuresViable ? ' (futures margin ke karan sirf spot scope)' : ''}`);
     persistState(); return;
   }
   candidates.sort((a, b) => (signalOf(b) - signalOf(a)) || (b.confidence - a.confidence));
@@ -551,10 +625,24 @@ async function _tick(deps, sendTelegram) {
 // small helpers ------------------------------------------------
 let _lastSkip = { key: '', at: 0 };
 function maybeLogSkip(key, text) {
-  // dedupe repeated skip reasons to once per 10 minutes
+  // v9.7: EVERY skip records the reason in state — the status view's
+  // BLOCKERS strip shows the user WHY the agent isn't entering (the
+  // old flow logged to console where nobody looked).
+  _state.lastSkip = { key, text: String(text).slice(0, 200), at: Date.now() };
+  // dedupe repeated skip reasons to once per 10 minutes (console/log ring)
   if (_lastSkip.key === key && Date.now() - _lastSkip.at < 10 * 60_000) return;
   _lastSkip = { key, at: Date.now() };
   log('skip', text);
+}
+/** v9.7: one Telegram ping per stand-down-class reason per day (no spam). */
+async function alertOnce(sendTelegram, key, text) {
+  try {
+    const day = todayIST();
+    _state.alerted = _state.alerted || {};
+    if (_state.alerted[key] === day) return;
+    _state.alerted[key] = day;
+    await notify(sendTelegram, text);
+  } catch { /* best-effort */ }
 }
 async function notify(sendTelegram, text) {
   try { if (typeof sendTelegram === 'function') await sendTelegram(text); } catch { /* best-effort */ }
@@ -592,7 +680,6 @@ export async function agentStatus(deps) {
   const tradesToday = agentTradesToday(j);
   const openAgent = openAgentPositions(j);
   const agentPnl = r2(agentRealizedToday(j));
-  const equityINR = _state.lastWallet?.equityINR ?? null;
 
   const rememberWallet = (w) => {
     if (!w) return;
@@ -613,6 +700,8 @@ export async function agentStatus(deps) {
       else job.then(rememberWallet).catch(() => {});
     }
   }
+  // v9.7: freshest view wins (served wallet > last persisted snapshot)
+  const equityINR = wallet?.equityINR ?? _state.lastWallet?.equityINR ?? null;
 
   // top picks per desk — v9.2.1 warmOnly: read the cached boards only.
   // A cold board triggers a background warm and shows up on the next
@@ -658,6 +747,41 @@ export async function agentStatus(deps) {
   const lossCapINR = (equityINR ?? 10_000) * (cfg.dailyLossCapPct / 100);
   const paused = _state.pausedToday && _state.pausedToday.day === day ? _state.pausedToday : null;
 
+  // ---- v9.7 AGENT BLOCKERS — the "entry kyun nahi ho raha" strip.
+  // Live-computed hard blockers + the latest soft skip reason, so the
+  // panel never again leaves the user guessing while the agent waits.
+  const blockers = [];
+  if (!cfg.enabled) {
+    blockers.push({ key: 'disabled', text: 'Agent STOPPED hai — START button dabao' });
+  } else {
+    if (trading.killSwitch) blockers.push({ key: 'kill_switch', text: '🛑 Kill switch ON (Risk settings) — agent idle' });
+    if (cfg.mode === 'live' && (!coindcxConnected() || trading.mode !== 'live' || !trading.allowAuto)) {
+      blockers.push({ key: 'live_preconditions', text: '🔴 LIVE preconditions missing — CoinDCX connect + Risk mode LIVE + Auto-execution ON' });
+    }
+    if (paused) blockers.push({ key: 'loss_cap', text: `🩹 Stood down — ${paused.reason}` });
+    const eq = equityINR ?? _state.lastWallet?.equityINR ?? null;
+    if (eq != null && eq < cfg.minEquityINR) {
+      blockers.push({ key: 'equity_floor', text: `💰 Wallet equity ₹${r2(eq)} < floor ₹${cfg.minEquityINR} — CoinDCX top-up karo, tab tak entry nahi` });
+    }
+    if (tradesToday.length >= cfg.maxTradesPerDay) {
+      blockers.push({ key: 'quota', text: `🎯 Daily quota done ${tradesToday.length}/${cfg.maxTradesPerDay} — IST midnight reset` });
+    } else if (_state.lastEntryAt && (Date.now() - _state.lastEntryAt) / 60000 < cfg.cooldownMin) {
+      const left = Math.max(1, Math.ceil(cfg.cooldownMin - (Date.now() - _state.lastEntryAt) / 60000));
+      blockers.push({ key: 'cooldown', text: `⏳ Cooldown — ${left}m baadi next entry try` });
+    }
+    if (coindcxConnected() && ((_state.lastWallet?.deployableFuturesUSDT ?? 0) < 2)) {
+      blockers.push({ key: 'futures_margin', soft: true, text: '⚡ Futures margin < 2 USDT — sirf SPOT desk se entry hoga' });
+    }
+    // soft: latest wait reason (usually "no qualifying signal") — info, not a fault
+    const ls = _state.lastSkip;
+    if (ls && Date.now() - (ls.at || 0) < 10 * 60_000 && !blockers.some(b => b.key === ls.key)) {
+      blockers.push({ key: ls.key, soft: true, text: `ℹ️ ${ls.text}` });
+    }
+  }
+  const nextScanInSec = _state.lastScanAt
+    ? Math.max(0, AGENT_TICK_SEC - (Math.floor((Date.now() - _state.lastScanAt) / 1000) % AGENT_TICK_SEC))
+    : null;
+
   return {
     ok: true,
     engine: 'SUPERINTELLIGENCE AGENT v7.0 PRO',
@@ -672,6 +796,10 @@ export async function agentStatus(deps) {
       lastEntryPair: _state.lastEntryPair,
       pausedToday: paused,
       lastWallet: _state.lastWallet,
+      // v9.7: loop transparency — cadence + countdown + wait reason
+      tickSec: AGENT_TICK_SEC,
+      nextScanInSec,
+      lastSkip: _state.lastSkip,
       log: (_state.log || []).slice(-40).reverse(),
     },
     today: {
@@ -704,6 +832,8 @@ export async function agentStatus(deps) {
     wallet,
     picks,
     sizingPreview: preview,
+    // v9.7: the panel's AGENT BLOCKERS strip — why the agent is (not) entering
+    blockers,
   };
 }
 
@@ -713,6 +843,7 @@ export function __resetAgentForTests() {
   persistState();
   saveAgentConfig({ ...AGENT_DEFAULTS });
   _lastSkip = { key: '', at: 0 };
+  _lastWalletView = null;
 }
 export function __setAgentStateForTests(s) { _state = { ...freshState(), ...s }; }
 export function __agentLogForTests() { return _state.log; }

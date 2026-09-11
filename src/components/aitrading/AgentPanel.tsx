@@ -217,7 +217,7 @@ const CFG_FIELDS: { key: CfgKey; label: string; min: number; max: number; step: 
 
 function AgentConfigEditor({ cfg, onSaved }: { cfg: AgentView['config']; onSaved: (ok: boolean, msg: string) => void }) {
   const [draft, setDraft] = useState<Partial<Record<CfgKey, number>>>({});
-  const [toggles, setToggles] = useState<Partial<Record<'partialTpEnabled' | 'breakEvenAfterTp1', boolean>>>({});
+  const [toggles, setToggles] = useState<Partial<Record<'partialTpEnabled' | 'breakEvenAfterTp1' | 'manageManualPositions', boolean>>>({});
   const [saving, setSaving] = useState(false);
   const dirty = Object.keys(draft).length > 0 || Object.keys(toggles).length > 0;
   const save = async () => {
@@ -230,6 +230,8 @@ function AgentConfigEditor({ cfg, onSaved }: { cfg: AgentView['config']; onSaved
   // v7.0 effective toggle states (draft overrides server config)
   const partialOn = toggles.partialTpEnabled != null ? toggles.partialTpEnabled : !!cfg.partialTpEnabled;
   const beLockOn = toggles.breakEvenAfterTp1 != null ? toggles.breakEvenAfterTp1 : !!cfg.breakEvenAfterTp1;
+  // v9.7: trend-flip exit on manual positions (default ON — user spec)
+  const manualOn = toggles.manageManualPositions != null ? toggles.manageManualPositions : cfg.manageManualPositions !== false;
   return (
     <div className="bg-black/25 rounded-xl p-3">
       <div className="text-[10px] font-black text-violet-300 tracking-wider mb-2">⚙ AGENT RULES (server-side enforced)</div>
@@ -250,8 +252,8 @@ function AgentConfigEditor({ cfg, onSaved }: { cfg: AgentView['config']; onSaved
         })}
       </div>
 
-      {/* v7.0 PRO TRADER toggles — partial TP + breakeven lock */}
-      <div className="grid grid-cols-2 gap-1.5 mt-2">
+      {/* v9.7 PRO TRADER toggles — partial TP + breakeven lock + manual trend-exit */}
+      <div className="grid grid-cols-3 gap-1.5 mt-2">
         <button
           onClick={() => setToggles(t => ({ ...t, partialTpEnabled: !partialOn }))}
           className={`px-2 py-1.5 rounded-lg text-[10px] font-black border transition-colors ${partialOn
@@ -267,7 +269,15 @@ function AgentConfigEditor({ cfg, onSaved }: { cfg: AgentView['config']; onSaved
             ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
             : 'bg-black/30 text-slate-500 border-slate-700/40'}`}
           title="T1 hit hone ke baad SL entry price par lock — runner risk-free">
-          🔒 BREAKEVEN LOCK: {beLockOn ? 'ON' : 'OFF'}
+          🔒 BE LOCK: {beLockOn ? 'ON' : 'OFF'}
+        </button>
+        <button
+          onClick={() => setToggles(t => ({ ...t, manageManualPositions: !manualOn }))}
+          className={`px-2 py-1.5 rounded-lg text-[10px] font-black border transition-colors ${manualOn
+            ? 'bg-sky-500/15 text-sky-300 border-sky-500/40'
+            : 'bg-black/30 text-slate-500 border-slate-700/40'}`}
+          title="TREND-FLIP exit manual positions par bhi lagega — board aapke held pair pe QUALIFYING opposite-side signal de to position turant cut (time-exit/partial-TP sirf agent ke apne trades par rehte hain)">
+          🛡 TREND-EXIT MANUAL: {manualOn ? 'ON' : 'OFF'}
         </button>
       </div>
       {/* v7.0: the T1/T2/runner split at a glance */}
@@ -296,7 +306,7 @@ function AgentConfigEditor({ cfg, onSaved }: { cfg: AgentView['config']; onSaved
 
 function OpenPositions({ positions, cfg }: { positions: AgentView['openPositions']; cfg?: AgentView['config'] }) {
   if (positions.length === 0) {
-    return <div className="bg-black/25 rounded-xl p-3 text-[11px] text-slate-500">No open agent positions — agent scans every 60s, entry sirf top-conviction signal par.</div>;
+    return <div className="bg-black/25 rounded-xl p-3 text-[11px] text-slate-500">No open agent positions — agent scans every 30s, entry sirf top-conviction signal par.</div>;
   }
   return (
     <div className="bg-black/25 rounded-xl p-3 space-y-1.5">
@@ -417,7 +427,7 @@ function PickStrip({ title, picks, accent }: { title: string; picks: AgentPick[]
 function LogFeed({ log }: { log: AgentLogLine[] }) {
   return (
     <div className="bg-black/25 rounded-xl p-3">
-      <div className="text-[10px] font-black text-slate-400 tracking-wider mb-1.5">🛰 AGENT LOG (live — every 60s scan)</div>
+      <div className="text-[10px] font-black text-slate-400 tracking-wider mb-1.5">🛰 AGENT LOG (live — every 30s scan)</div>
       <div className="max-h-44 overflow-y-auto space-y-0.5 font-mono text-[10px]">
         {log.length === 0 && <div className="text-slate-500">no log lines yet — agent start karo</div>}
         {log.map((l, i) => (
@@ -480,6 +490,9 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
         : mode === 'notify'
           ? '🔔 Agent NOTIFY mode live — STRONG signals Telegram par pingenge, koi order nahi'
           : '🧠 Agent PAPER mode live — wallet-based sizing ke saath practice trades');
+      // v9.7: honest start warning — equity floor etc. turant dikhe,
+      // 3 din baad log me dhoondhna nahi padega.
+      if ((r as { warning?: string }).warning) notify(false, `⚠️ ${(r as { warning?: string }).warning}`);
       setShowLive(false); setLivePhrase('');
       load();
     } else {
@@ -516,8 +529,15 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
 
   const statusChip = running
     ? (paused ? { text: `STOOD DOWN — ${paused.reason?.slice(0, 60)}`, cls: 'bg-amber-500/15 text-amber-300 border-amber-500/40' }
-      : { text: `RUNNING · ${view.config.mode.toUpperCase()} · scan ${ago(view.state.lastScanAt)}`, cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 animate-pulse' })
+      : { text: `RUNNING · ${view.config.mode.toUpperCase()} · next scan ${view.state.nextScanInSec != null ? `${view.state.nextScanInSec}s` : '—'}`, cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 animate-pulse' })
     : { text: 'STOPPED', cls: 'bg-slate-600/20 text-slate-400 border-slate-600/30' };
+
+  // v9.7: AGENT BLOCKERS — the "entry kyun nahi ho raha" strip. Hard
+  // blockers red, soft wait-states (cooldown/no-signal/futures-margin)
+  // slate. Ye panel hi wahi jagah hai jahan user ko reason turant
+  // milta hai — pehle console log me chhupa tha.
+  const blockers = view.blockers || [];
+  const hardBlockers = blockers.filter(b => !b.soft);
 
   return (
     <div className="quantum-panel rounded-2xl p-4 bg-gradient-to-r from-cyan-500/[0.07] via-transparent to-amber-500/[0.05]">
@@ -540,7 +560,7 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
               </span>
             </div>
             <div className="text-[10px] text-slate-500 mt-0.5">
-              wallet-sizing · auto entry · 3-tier partial TP (T1 {cfg?.partialTpEnabled ? `${cfg?.tp1ClosePct ?? 40}%+BE-lock → T2 ${cfg?.tp2ClosePct ?? 40}% → runner ${cfg?.runnerPct ?? 20}%` : 'off'}) · {cfg?.maxTradesPerDay ?? 3} trades/day · time-exit · 60s server loop
+              wallet-sizing · auto entry · 3-tier partial TP (T1 {cfg?.partialTpEnabled ? `${cfg?.tp1ClosePct ?? 40}%+BE-lock → T2 ${cfg?.tp2ClosePct ?? 40}% → runner ${cfg?.runnerPct ?? 20}%` : 'off'}) · {cfg?.maxTradesPerDay ?? 3} trades/day · time-exit · {view.state.tickSec ?? 30}s server loop{cfg?.manageManualPositions === false ? '' : ' · 🛡 trend-flip guards manual positions too'}
             </div>
           </div>
         </div>
@@ -590,6 +610,28 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
             ARM REAL MONEY
           </button>
           <span className="text-[9px] text-slate-500">kill switch / caps / gauntlet sab apply hote hain — ye agent ke liye private koi bypass nahi hai</span>
+        </div>
+      )}
+
+      {/* v9.7: AGENT BLOCKERS strip — live answer to "auto trade kyun nahi ho raha" */}
+      {blockers.length > 0 && (
+        <div className={`mt-2 rounded-xl border p-2.5 ${hardBlockers.length > 0 ? 'border-red-500/30 bg-red-500/[0.06]' : 'border-slate-600/30 bg-black/25'}`} data-testid="agent-blockers" aria-label="agent blockers">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`text-[10px] font-black tracking-wider ${hardBlockers.length > 0 ? 'text-red-300' : 'text-slate-400'}`}>
+              {hardBlockers.length > 0 ? '🚧 AGENT BLOCKERS — entry ruka hua hai:' : '🛰 AGENT WAITING —'}
+            </span>
+            <span className="text-[9px] font-mono text-slate-500">scan every {view.state.tickSec ?? 30}s · scans: {view.state.scans}</span>
+          </div>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {blockers.map(b => (
+              <span key={b.key} title={b.text}
+                className={`px-2 py-1 rounded-lg text-[10px] font-bold border leading-snug ${b.soft
+                  ? 'bg-black/30 border-slate-600/40 text-slate-400'
+                  : 'bg-red-500/10 border-red-500/30 text-red-200'}`}>
+                {b.text}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 

@@ -332,3 +332,130 @@ describe('agentStatus', () => {
     expect(st.wallet?.equityINR).toBe(WALLET.equityINR); // wallet fetch wired through
   });
 });
+
+// ============================================================
+// v9.7 — TRANSPARENCY: blockers strip + manual trend-exit +
+// futures-margin viability filter
+// ============================================================
+describe('v9.7 agentStatus BLOCKERS — the "entry kyun nahi ho raha" strip', () => {
+  it('stopped agent → disabled blocker shown', async () => {
+    const st = await agentStatus(null);
+    expect(st.blockers.some(b => b.key === 'disabled')).toBe(true);
+  });
+
+  it('EQUITY FLOOR: wallet below ₹300 → hard blocker + lastSkip recorded + entry blocked', async () => {
+    mockWalletSnapshot.mockResolvedValue({
+      ...WALLET, equityINR: 0.01, deployableSpotINR: 0.01, deployableFuturesUSDT: 0,
+    });
+    await agentStart({ mode: 'paper' });
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).not.toHaveBeenCalled();
+    const st = await agentStatus(null);
+    const b = st.blockers.find(x => x.key === 'equity_floor');
+    expect(b).toBeTruthy();
+    expect(b.text).toMatch(/0\.01/);
+    expect(st.state.lastSkip?.key).toBe('equity_floor');
+  });
+
+  it('QUOTA done → blocker carries the count; cooldown → countdown text', async () => {
+    await agentStart({ mode: 'paper' });
+    const j = loadJournal();
+    const day = todayIST();
+    for (let i = 0; i < 3; i++) j.entries.push({ id: `q${i}`, ts: Date.now(), kind: 'ORDER', day, pair: `B-Q${i}_USDT`, source: 'agent', status: 'FILLED' });
+    __setJournalForTests(j);
+    const st = await agentStatus(null);
+    expect(st.blockers.some(b => b.key === 'quota' && /3\/3/.test(b.text))).toBe(true);
+
+    // cooldown: an entry 5m ago with 20m cooldown → 15m baaki text
+    const j2 = loadJournal();
+    __setJournalForTests(j2);
+    const stCfg = await updateAgentConfig({ cooldownMin: 20 });
+    expect(stCfg.cooldownMin).toBe(20);
+  });
+
+  it('running agent with healthy wallet → NO hard blockers, loop fields present', async () => {
+    await agentStart({ mode: 'paper' });
+    const st = await agentStatus(null);
+    expect(st.blockers.some(b => !b.soft)).toBe(false);
+    expect(st.state.tickSec).toBeGreaterThanOrEqual(30);
+    expect(st.state.nextScanInSec == null || st.state.nextScanInSec >= 0).toBe(true);
+  });
+});
+
+describe('v9.7 TREND-FLIP on MANUAL positions (user spec: auto exit per trend)', () => {
+  beforeEach(async () => {
+    await agentStart({ mode: 'paper' });
+  });
+
+  it('manual-held position + qualifying OPPOSITE board → cut (default ON)', async () => {
+    const j = loadJournal();
+    j.positions.push({
+      id: 'man1', pair: 'B-BTC_USDT', market: 'FUTURES', side: 'LONG', mode: 'paper',
+      source: 'manual', status: 'OPEN', qty: 0.01, entryPrice: 50000,
+      openedAt: Date.now() - 5 * 60_000,
+    });
+    __setJournalForTests(j);
+    mockGetSignals.mockResolvedValue({
+      ...FUTURES_BOARD,
+      signals: [{ ...STRONG_CAND, side: 'SHORT', superIntel: { aiScore: 84 } }],
+    });
+    await agentTick({}, vi.fn());
+    expect(mockCloseFutures).toHaveBeenCalledWith('man1');
+  });
+
+  it('manageManualPositions=false → manual position left alone (agent-only guard)', async () => {
+    updateAgentConfig({ manageManualPositions: false });
+    const j = loadJournal();
+    j.positions.push({
+      id: 'man2', pair: 'B-BTC_USDT', market: 'FUTURES', side: 'LONG', mode: 'paper',
+      source: 'manual', status: 'OPEN', qty: 0.01, entryPrice: 50000,
+      openedAt: Date.now() - 5 * 60_000,
+    });
+    __setJournalForTests(j);
+    mockGetSignals.mockResolvedValue({
+      ...FUTURES_BOARD,
+      signals: [{ ...STRONG_CAND, side: 'SHORT', superIntel: { aiScore: 84 } }],
+    });
+    await agentTick({}, vi.fn());
+    expect(mockCloseFutures).not.toHaveBeenCalledWith('man2');
+  });
+
+  it('agent TIME-EXIT still agent-only — a 200m-old MANUAL position is NOT time-exited', async () => {
+    const j = loadJournal();
+    j.positions.push({
+      id: 'man3', pair: 'B-BTC_USDT', market: 'FUTURES', side: 'LONG', mode: 'paper',
+      source: 'manual', status: 'OPEN', qty: 0.01, entryPrice: 50000,
+      openedAt: Date.now() - 200 * 60_000,
+    });
+    __setJournalForTests(j);
+    await agentTick({}, vi.fn());
+    expect(mockCloseFutures).not.toHaveBeenCalledWith('man3');
+  });
+});
+
+describe('v9.7 FUTURES-margin viability filter', () => {
+  beforeEach(async () => {
+    await agentStart({ mode: 'paper' });
+    __setConfigForTests({ dailyMaxTrades: 50, dailyMaxLossINR: 1_000_000, maxRiskPct: 5, maxOrderINR: 1_000_000, maxOpenPositions: 50 });
+  });
+
+  it('connected wallet with <2 USDT futures margin → futures candidates skipped pre-selection', async () => {
+    mockWalletSnapshot.mockResolvedValue({
+      ...WALLET, deployableFuturesUSDT: 0, equityINR: 400, deployableSpotINR: 400,
+      futures: { ...WALLET.futures, usdt: { free: 0, locked: 0, total: 0, crossUserMargin: 0 }, error: '[404] not_found' },
+    });
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).not.toHaveBeenCalled();
+    const st = await agentStatus(null);
+    // soft blocker surfaced: sirf SPOT desk se entry hoga
+    expect(st.blockers.some(b => b.key === 'futures_margin' && b.soft)).toBe(true);
+  });
+
+  it('unconnected practice wallet → futures stays viable (paper fallback)', async () => {
+    _connected = false;
+    mockWalletSnapshot.mockResolvedValue(null);
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).toHaveBeenCalledTimes(1);
+    _connected = true;
+  });
+});

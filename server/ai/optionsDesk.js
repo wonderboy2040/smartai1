@@ -50,9 +50,35 @@ const INDEX_DISPLAY_NAMES = {
   MIDCPNIFTY: 'MidcapNifty', NIFTYNXT50: 'NiftyNext50', SENSEX: 'Sensex',
 };
 const WEEKLY_EXPIRY_WEEKDAY = { NIFTY: 2, SENSEX: 4 }; // 2=Tue (NSE), 4=Thu (BSE)
+// v9.7: SEBI weekly-expiry rationalization ke baad sirf NIFTY (NSE) aur
+// SENSEX (BSE) ke weekly contracts zinda hain. BANKNIFTY / FINNIFTY /
+// MIDCPNIFTY / NIFTYNXT50 ab MONTHLY-ONLY hain — expiry = month ka
+// LAST Tuesday (NSE convention). Inka "next Tuesday" guess galat
+// contract label deta tha; ab last-Tuesday hi hota hai.
+const MONTHLY_ONLY = new Set(['BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'NIFTYNXT50']);
 
-/** Nearest weekly expiry for a symbol under the CURRENT schedule. */
-function nextWeeklyExpiryFor(sym, now = new Date()) {
+/** Last <wd> (0=Sun…6=Sat) of the given calendar month (UTC date math). */
+function lastWeekdayOfMonth(y, m, wd) {
+  const d = new Date(Date.UTC(y, m + 1, 0)); // last day of month m
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() - wd + 7) % 7));
+  return d;
+}
+
+/** Nearest monthly expiry (last Tuesday) for a MONTHLY_ONLY index, IST-aware. */
+function nextMonthlyExpiryFor(sym, now = new Date()) {
+  const wd = WEEKLY_EXPIRY_WEEKDAY[sym] ?? 2; // NSE family: last Tuesday
+  const ist = new Date(now.getTime() + (330 + now.getTimezoneOffset()) * 60000);
+  let d = lastWeekdayOfMonth(ist.getUTCFullYear(), ist.getUTCMonth(), wd);
+  const cutoff = new Date(d); cutoff.setUTCHours(10, 0, 0, 0); // 15:30 IST = 10:00 UTC
+  if (ist.getTime() >= cutoff.getTime()) {
+    d = lastWeekdayOfMonth(ist.getUTCFullYear(), ist.getUTCMonth() + 1, wd);
+  }
+  return d.toISOString().slice(0, 10);
+}
+
+/** Nearest tradable expiry for a symbol under the CURRENT schedule. */
+export function nextWeeklyExpiryFor(sym, now = new Date()) {
+  if (MONTHLY_ONLY.has(sym)) return nextMonthlyExpiryFor(sym, now);
   const wd = WEEKLY_EXPIRY_WEEKDAY[sym] ?? 2; // NSE family default: Tuesday
   return nextWeeklyExpiry(now, wd);
 }
@@ -264,6 +290,12 @@ export function buildSyntheticChain(symbol, spot, iv, expiryDate, strikeCount = 
   const atm = Math.round(spot / step) * step;
   const T = yearsToExpiry(`${expiryDate}T15:30:00+05:30`);
   if (!(T > 0)) return null;
+  // v9.7 INDIA PUT-SKEW: index puts trade richer than calls at the
+  // same distance (crash-insurance demand). ATM PE ≈ +0.8 vol pts,
+  // ATM CE ≈ −0.3 — wings pe smile already lifts both sides. Ye model
+  // premium ko real NSE quotes ke aur kareeb le jaata hai (VIX anchor
+  // + skew ke saath), "bs-model" label honest rehta hai.
+  const PE_SKEW = 0.008, CE_SKEW = -0.003;
   const rows = [];
   for (let k = -strikeCount; k <= strikeCount; k++) {
     const strike = atm + k * step;
@@ -271,12 +303,14 @@ export function buildSyntheticChain(symbol, spot, iv, expiryDate, strikeCount = 
     // Smile: wings carry extra vol — a mild, standard curve.
     const m = Math.abs(Math.log(strike / spot));
     const smileIV = Math.min(IV_CAP, Math.max(IV_FLOOR, iv * (1 + 1.6 * m * m * 12)));
-    const call = bsPrice(spot, strike, T, RISK_FREE, smileIV, 'CE');
-    const put = bsPrice(spot, strike, T, RISK_FREE, smileIV, 'PE');
+    const putIV = Math.min(IV_CAP, Math.max(IV_FLOOR, smileIV + PE_SKEW));
+    const callIV = Math.min(IV_CAP, Math.max(IV_FLOOR, smileIV + CE_SKEW));
+    const call = bsPrice(spot, strike, T, RISK_FREE, callIV, 'CE');
+    const put = bsPrice(spot, strike, T, RISK_FREE, putIV, 'PE');
     rows.push({
       strike, expiry: expiryDate,
-      callOI: 0, callOIChange: 0, callIV: r2(smileIV * 100), callLTP: r2(call), callVolume: 0,
-      putOI: 0, putOIChange: 0, putIV: r2(smileIV * 100), putLTP: r2(put), putVolume: 0,
+      callOI: 0, callOIChange: 0, callIV: r2(callIV * 100), callLTP: r2(call), callVolume: 0,
+      putOI: 0, putOIChange: 0, putIV: r2(putIV * 100), putLTP: r2(put), putVolume: 0,
     });
   }
   return { symbol, spot: r2(spot), expiry: expiryDate, rows, source: 'bs-model', synthetic: true, atmStrike: atm, fetchedAt: Date.now() };
@@ -321,7 +355,7 @@ export async function getOptionsDesk(symbol = 'NIFTY') {
     const expiry = nextWeeklyExpiryFor(sym);
     chain = buildSyntheticChain(sym, spot, iv, expiry);
     if (chain) {
-      syntheticNote = `NSE chain unreachable from this server — showing a Black-Scholes model chain (IV anchored to India VIX ${vix ? r1(vix) : 'n/a'}). Premiums are model estimates, NOT live quotes; OI/PCR unavailable in model mode.`;
+      syntheticNote = `NSE chain unreachable from this server — showing a Black-Scholes model chain (IV anchored to India VIX ${vix ? r1(vix) : 'n/a'} + India put-skew). Premiums are model estimates, NOT live quotes; OI/PCR unavailable in model mode.`;
       analytics = null; // honest: no real OI → no PCR/max-pain
     }
   }

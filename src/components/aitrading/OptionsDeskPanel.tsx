@@ -230,7 +230,10 @@ function OptionSignalCardsStrip() {
       else if (!view) setErr(true);
     };
     run(true);
-    const iv = setInterval(() => run(false), 60_000);
+    // v9.7: 30s poll — the strip label ("30s re-rank") aur the server's
+    // 30s cards cache dono se aligned (pehle 60s poll chal raha tha,
+    // label jhooth bolta tha).
+    const iv = setInterval(() => run(false), 30_000);
     return () => { alive = false; clearInterval(iv); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
