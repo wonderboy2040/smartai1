@@ -1,5 +1,5 @@
 // ============================================================
-// server/ai/models.js — THE SUPERINTELLIGENCE ENSEMBLE (9 models)
+// server/ai/models.js — THE SUPERINTELLIGENCE ENSEMBLE (11 models + 3 gated V2)
 // ------------------------------------------------------------
 // Each model is an independent "AI analyst" with its own specialty,
 // reading the SAME live context and casting a weighted vote:
@@ -23,6 +23,13 @@
 //                           EMA10/20 stack, MACD, RSI zone, session
 //                           VWAP side, 3-bar momentum. The trading
 //                           timeframe finally VOTES, not just advises.
+//  12. SentimentPulse    0.7  V2 Phase 1 — news headlines (RSS lexicon,
+//                           India) + Fear&Greed & perp funding (crypto)
+//  13. InstFlow          0.8  V2 Phase 2 — FII/DII daily net (India) ·
+//                           CoinDCX orderbook depth imbalance (crypto)
+//  14. FundaCheck        0.5  V2 Phase 3 — P/E vs sector avg + earnings
+//                           surprise proxy (India SWING path only; the
+//                           intraday board never attaches its data)
 //
 // The ensemble aggregator (ensemble.js) turns these votes into ONE
 // consensus: side, confidence, agreement and the STRONG grade that
@@ -36,6 +43,24 @@ const r1 = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 
 function vote(dir, conf, reasons) {
   return { dir, conf: Math.round(clamp(conf)), reasons: reasons.filter(Boolean) };
 }
+
+// ------------------------------------------------------------
+// V2 SIGNAL-ACCURACY UPGRADE — 3 new models behind a feature flag
+// ------------------------------------------------------------
+// Phase 4 wiring per the upgrade plan: all 3 entries are gated by
+// AI_ENABLE_V2_MODELS so the rollout can run a clean A/B (flag OFF =
+// the exact 11-model ensemble that ships today; flag ON = 14 models)
+// before going live for real users. Default OFF — enable with
+// AI_ENABLE_V2_MODELS=true (also accepts 1/on/yes).
+import { sentimentVote } from './sentiment.js';
+import { instFlowVote } from './instFlow.js';
+import { fundamentalsVote } from './fundamentals.js';
+
+export function v2ModelsEnabled() {
+  return ['true', '1', 'on', 'yes'].includes(String(process.env.AI_ENABLE_V2_MODELS || '').trim().toLowerCase());
+}
+
+export const V2_MODEL_IDS = ['sentiment', 'instflow', 'fundamentals'];
 
 // ------------------------------------------------------------
 // 1. TrendMatrix — the trend engine
@@ -468,6 +493,14 @@ export const MODELS = [
   { id: 'smc', name: 'SmartMoneyICT', role: 'Liquidity sweeps + order blocks + FVG (SMC)', weight: 1.1, fn: smartMoneyICT },
   { id: 'tape', name: 'IntradayTape', role: '15m EMA/MACD/RSI + session VWAP + 3-bar momentum (India tape)', weight: 1.3, fn: intradayTape },
   { id: 'aicouncil', name: 'AI Council (LLM)', role: 'Gemini → Groq → Cerebras verification chain', weight: 1.5, fn: null },
+  // ---- V2 (Phase 1-3 of the signal-accuracy upgrade). Deliberately
+  // LOW weights until adaptive.js earns multipliers from settled
+  // outcomes (MIN_SAMPLE 8). Gated by AI_ENABLE_V2_MODELS.
+  ...(v2ModelsEnabled() ? [
+    { id: 'sentiment', name: 'SentimentPulse', role: 'News headlines + Fear&Greed/funding sentiment', weight: 0.7, fn: sentimentVote },
+    { id: 'instflow', name: 'InstFlow', role: 'FII/DII net (India) · orderbook imbalance (crypto)', weight: 0.8, fn: instFlowVote },
+    { id: 'fundamentals', name: 'FundaCheck', role: 'P/E vs sector avg + earnings surprise (India swing only)', weight: 0.5, fn: fundamentalsVote },
+  ] : []),
 ];
 
 export function runQuantModels(ctx) {

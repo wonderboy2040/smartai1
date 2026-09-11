@@ -17,7 +17,12 @@ import {
   fetchCoinDcxCandles, fetchYahooQuotes, isNseOpen,
 } from './data.js';
 import { FUTURES_UNIVERSE, futuresPairFor, fetchFuturesPrices, fetchFuturesCandles } from './futures.js';
-import { MODELS, runQuantModels, aiCouncilVoteFromVerdict } from './models.js';
+import { MODELS, runQuantModels, aiCouncilVoteFromVerdict, v2ModelsEnabled } from './models.js';
+// v2 signal-accuracy upgrade: sentiment (news/F&G/funding), institutional
+// flow (FII/DII + orderbook), fundamentals (India swing-only deep path)
+import { refreshSentiment, sentimentContextFor, absorbCouncilSentiment } from './sentiment.js';
+import { refreshFiiDii, warmInstFlow } from './instFlow.js';
+import { attachFundamentals } from './fundamentals.js';
 // v6.7 self-correcting ensemble: live-outcome Bayesian weight multipliers
 import { adaptiveMultipliers, applyAdaptiveWeights } from './adaptive.js';
 import { modelStats as _ledgerModelStats } from './ledger.js';
@@ -483,11 +488,17 @@ export async function aiCouncilVerify(candidates, deps, market) {
     : market === 'FUTURES'
       ? 'CoinDCX GLOBAL FUTURES (USDT-margined perpetuals, 24/7, leveraged). Penalize extreme 24h moves, funding-fighting continuation calls, thin books, counter-BTC-regime calls.'
       : 'NSE India (options-led desk). Penalize RSI exhaustion, low ADX, thin relative volume, and VIX spikes.';
-  const prompt = `You are the AI COUNCIL — the final verification layer of a 9-model superintelligence ensemble for a ${venue}.
+  // v2 SentimentPulse reuse (plan Phase 1): the SAME council call also
+  // carries the sentiment desk's context — no extra LLM cost — and the
+  // response may return an optional `sentiment` block that gets folded
+  // back into the sentiment cache for the next cycle.
+  const sentCtx = v2ModelsEnabled() ? sentimentContextFor(market) : null;
+  const sentLines = sentCtx ? `\n${sentCtx}` : '';
+  const prompt = `You are the AI COUNCIL — the final verification layer of a ${MODELS.length}-model superintelligence ensemble for a ${venue}.
 
 Below are pre-scored consensus candidates. For EACH, analyze deeply and either CONFIRM or VETO. Be strict: an edge must be confluence-driven, not single-factor.
 
-${JSON.stringify(compact, null, 1)}
+${JSON.stringify(compact, null, 1)}${sentLines}
 
 Respond STRICT JSON only (no markdown):
 {"verdicts":{"SYMBOL":{"verdict":"LONG"|"SHORT"|"AVOID","confidence":0-100,"note":"max 12 words","analysis":"2 sentences: your reasoning chain — indicator state, timing quality, risk"}}}`;
@@ -497,6 +508,9 @@ Respond STRICT JSON only (no markdown):
   if (!verdicts && deps?.KEYS?.groq) { verdicts = await askOpenAICompat(prompt, deps.KEYS, deps.OPENAI_COMPAT, 'groq'); model = verdicts ? 'groq' : null; }
   if (!verdicts && deps?.KEYS?.cerebras) { verdicts = await askOpenAICompat(prompt, deps.KEYS, deps.OPENAI_COMPAT, 'cerebras'); model = verdicts ? 'cerebras' : null; }
   if (!verdicts && deps?.KEYS?.openrouter) { verdicts = await askOpenAICompat(prompt, deps.KEYS, deps.OPENAI_COMPAT, 'openrouter'); model = verdicts ? 'openrouter' : null; }
+
+  // fold the council's optional sentiment read back into the cache
+  if (verdicts?.sentiment) absorbCouncilSentiment({ ...verdicts.sentiment, model }, market);
 
   const out = verdicts?.verdicts && typeof verdicts.verdicts === 'object' ? verdicts.verdicts : {};
   return { verdicts: out, model, online: model != null };
@@ -611,6 +625,12 @@ export async function getSignals(market, deps, opts = {}) {
 async function _computeBoard(mkt, deps, opts = {}) {
   const cacheKey = `board:${mkt}`;
   const depsSafe = deps || {};
+  // v2 (plan Phase 1-2): warm the sentiment + institutional-flow
+  // caches IN PARALLEL with the board's own data phase — by the time
+  // the model loop runs, votes have fresh data; a dead feed costs
+  // nothing (honest abstain, never blocks the board).
+  const _v2Warms = v2ModelsEnabled() ? [refreshSentiment(mkt === 'INDIA' ? 'INDIA' : 'CRYPTO').catch(() => {})] : [];
+  if (v2ModelsEnabled() && mkt === 'INDIA') _v2Warms.push(refreshFiiDii().catch(() => {}));
   const regime = await buildRegime(mkt);
   // v9 SUPERINTELLIGENCE board meta (scanned universe + price chain).
   const superMeta = { engine: 'SUPERINTELLIGENCE PRO TRADER ENGINE v9', universeSize: 0, universeMode: 'static', priceSource: null };
@@ -651,6 +671,7 @@ async function _computeBoard(mkt, deps, opts = {}) {
       fetchFuturesPrices().catch(() => null),
     ]);
     const universe = Array.isArray(uni) && uni.length > 0 ? uni : [...FUTURES_UNIVERSE];
+    if (v2ModelsEnabled()) _v2Warms.push(warmInstFlow(universe.slice(0, 8))); // v2 InstFlow: poll the most-liquid books
     superMeta.universeSize = universe.length;
     superMeta.universeMode = Array.isArray(uni) && uni.length > 0 ? 'dynamic' : 'static-fallback';
     const futMap = new Map((Array.isArray(futRows) ? futRows : []).map(x => [x.base, x]));
@@ -694,6 +715,7 @@ async function _computeBoard(mkt, deps, opts = {}) {
       fetchCoinDcxTickers().catch(() => null),
     ]);
     const universe = Array.isArray(uni) && uni.length > 0 ? uni : [...CRYPTO_UNIVERSE];
+    if (v2ModelsEnabled()) _v2Warms.push(warmInstFlow(universe.slice(0, 8))); // v2 InstFlow: poll the most-liquid books
     superMeta.universeSize = universe.length;
     superMeta.universeMode = Array.isArray(uni) && uni.length > 0 ? 'dynamic' : 'static-fallback';
     const inrMap = new Map((Array.isArray(tickers) ? tickers : [])
@@ -751,6 +773,7 @@ async function _computeBoard(mkt, deps, opts = {}) {
   // v6.7: each vote's weight is scaled by its LIVE hit-rate multiplier
   // (ledger outcomes → Beta posterior; n<8 keeps the base weight —
   // we refuse to tune on noise). Computed ONCE per board run.
+  await (v2ModelsEnabled() ? Promise.allSettled(_v2Warms) : Promise.resolve()); // v2: warms already ran parallel to the data fetches
   const adaptiveMul = adaptiveMultipliers(_ledgerModelStats());
   const candidates = [];
   const breadth = { bull: 0, bear: 0, flat: 0, avgConf: 0 };
@@ -1234,6 +1257,14 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
     const payload = { ok: false, reason: `No data for ${sym} on ${mkt}` };
     cacheSet(cacheKey, payload);
     return payload;
+  }
+
+  // v2 Phase 3: FundaCheck — the DEEP path is the swing desk's analysis
+  // route, so fundamentals (P/E vs sector peers + earnings-growth proxy)
+  // attach HERE only. The intraday board never attaches them (plan rule:
+  // a 15m tape trade must never be swung by a P/E ratio).
+  if (v2ModelsEnabled() && mkt === 'INDIA' && !ctx.isIndex) {
+    await attachFundamentals(ctx).catch(() => {});
   }
 
   const votes = applyAdaptiveWeights(runQuantModels(ctx), adaptiveMultipliers(_ledgerModelStats()));

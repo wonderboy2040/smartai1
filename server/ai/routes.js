@@ -30,6 +30,11 @@
 //   • auto-executor  (90s)     — STRONG-only auto trading when enabled
 // ============================================================
 import { getSignals, getDeepSignal, getFreshSignalForExec, getFreshFuturesSignalForExec } from './signals.js';
+// v2 signal-accuracy upgrade (sentiment / instflow / fundamentals desks)
+import { v2ModelsEnabled } from './models.js';
+import { sentimentStatus } from './sentiment.js';
+import { instFlowStatus } from './instFlow.js';
+import { fundamentalsStatus } from './fundamentals.js';
 import { getExpertPicks } from './expertPicks.js';
 import { getOptionsDesk, buildStrategies, getOptionSignalsView } from './optionsDesk.js';
 import {
@@ -108,6 +113,15 @@ export function registerAITradingRoutes(app, deps) {
         models: board?.models || cryptoBoard?.models || [],
         aiCouncilOnline: (board?.models || []).some(m => m.id === 'aicouncil' && m.online),
         risk,
+        // v2 signal-accuracy upgrade — 3 new models behind AI_ENABLE_V2_MODELS
+        v2Models: {
+          enabled: v2ModelsEnabled(),
+          flag: 'AI_ENABLE_V2_MODELS',
+          newModels: ['sentiment (SentimentPulse)', 'instflow (InstFlow)', 'fundamentals (FundaCheck)'],
+          sentiment: sentimentStatus(),
+          instFlow: instFlowStatus(),
+          fundamentals: fundamentalsStatus(),
+        },
         // v6.7: self-correcting ensemble + tamper-evident ledger status
         adaptive: adaptiveStatus(),
         ledger: ledgerStatus(),
@@ -815,5 +829,5 @@ export function registerAITradingRoutes(app, deps) {
     if (warmer.unref) warmer.unref();
   }
 
-  console.log('[ai] Superintelligence Ensemble v6.13 — ORDER TICKET + SIMPLE VIEW (options trade guide: session/expiry/limit/exit · 4-step signal order guide · simple/pro desk view · v6.12 pro-trader brain: quorum caps · MTF · session phases · extension veto · swing-structure SL · trust/perf/correlation/sector desks) · 11 models + AI Council (v9.3: IntradayTape 15m seat) · topFive ranking · Dhan + CoinDCX + GLOBAL FUTURES gauntlets · SUPERINTELLIGENCE AUTO-AGENT');
+  console.log('[ai] Superintelligence Ensemble v6.13 — ORDER TICKET + SIMPLE VIEW (options trade guide: session/expiry/limit/exit · 4-step signal order guide · simple/pro desk view · v6.12 pro-trader brain: quorum caps · MTF · session phases · extension veto · swing-structure SL · trust/perf/correlation/sector desks) · 11 models + AI Council (v9.3: IntradayTape 15m seat) + V2 upgrade: SentimentPulse/InstFlow/FundaCheck behind AI_ENABLE_V2_MODELS (14 models when on) · topFive ranking · Dhan + CoinDCX + GLOBAL FUTURES gauntlets · SUPERINTELLIGENCE AUTO-AGENT');
 }

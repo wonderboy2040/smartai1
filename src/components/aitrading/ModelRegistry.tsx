@@ -11,6 +11,7 @@ import type { ModelStatusRow } from './types';
 const ICONS: Record<string, string> = {
   trend: '📐', momentum: '🚀', volatility: '📊', volume: '🌊',
   pattern: '🕯️', sr: '🎯', options: '🎲', regime: '🌍', aicouncil: '🧠',
+  sentiment: '📰', instflow: '🏦', fundamentals: '🧾',
 };
 
 export const ModelRegistry = memo(function ModelRegistry({ models }: { models: ModelStatusRow[] }) {
