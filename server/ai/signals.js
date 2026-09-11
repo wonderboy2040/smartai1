@@ -352,6 +352,28 @@ async function buildIndiaStockCtx(row, regime) {
 // (v6.3: the async buildCryptoCtx + buildIndexCtx duplicates were removed —
 // the board uses buildCryptoCtxSync and inlines its index contexts.)
 
+// ---------------- v9.3: the 15m TAPE READ ----------------
+// Compact intraday-tape snapshot fed to the IntradayTape model (the
+// trading-timeframe seat on the India desk). Built from the SAME 15m
+// Yahoo candles the pass-2 enrichment already fetches + the TV row's
+// TRUE session VWAP (the month-anchored candle VWAP is not a session
+// anchor — the scanner row is).
+function tapeFromCandles(candles, li, tvRow) {
+  if (!Array.isArray(candles) || candles.length < 35 || !li) return null;
+  const last = candles[candles.length - 1];
+  const bar3 = candles[candles.length - 4] || candles[0];
+  if (!last || !(last.close > 0)) return null;
+  const last3Pct = bar3 && bar3.close > 0 ? ((last.close - bar3.close) / bar3.close) * 100 : null;
+  return {
+    ltp: Number.isFinite(li.ltp) && li.ltp > 0 ? li.ltp : last.close,
+    ema10: li.ema10 ?? null, ema20: li.ema20 ?? null, ema50: li.ema50 ?? null,
+    rsi: li.rsi ?? null,
+    macdHist: li.macd?.hist ?? null, macdSlope: li.macd?.histSlope ?? null,
+    vwap: tvRow?.vwap ?? null, // session VWAP from the scanner row
+    last3Pct,
+  };
+}
+
 // ---------------- AI COUNCIL (LLM chain) ----------------
 function aiKeysPresent(KEYS) {
   return !!(KEYS && (KEYS.gemini || KEYS.groq || KEYS.cerebras || KEYS.openrouter));
@@ -809,9 +831,16 @@ async function _computeBoard(mkt, deps, opts = {}) {
   //     on the whole India board pre-v6.12 — no candles)
   //   • mtfAnalysis: daily HTF vs LTF alignment
   //   • structureStop: swing-aware SL for the plan
+  //   • v9.3 IntradayTape: the 15m tape gets its committee seat — the
+  //     daily-driven committee can no longer badge a counter-tape
+  //     SHORT as STRONG while the tape is rising (the screenshot bug).
   // Yahoo intraday works even where CoinDCX candles are blocked.
   // Everything degrades HONESTLY (mtf: UNAVAILABLE, no penalty).
-  const enrichN = mkt === 'INDIA' ? Math.min(10, opts.limit || 10) : 0;
+  // v9.3: enrichment widened to 2× the board (cap 24) so the tape vote
+  // ALSO fixes the ranking — the final cut re-sorts AFTER the tape
+  // weighs in (the best tape-aligned setup can no longer sit at rank
+  // 11+ behind daily-only votes).
+  const enrichN = mkt === 'INDIA' ? Math.min(24, Math.max(10, (opts.limit || 10) * 2)) : 0;
   const enriched = new Map();
   await Promise.all(candidates.slice(0, enrichN).map(async (c) => {
     const key = `${mkt}:${c.ctx.symbol}`;
@@ -820,7 +849,8 @@ async function _computeBoard(mkt, deps, opts = {}) {
       const candles = await fetchYahooIntradayCandles(c.ctx.symbol, mkt);
       if (Array.isArray(candles) && candles.length >= 60) {
         const ltfInd = computeIndicatorsFromCandles(candles);
-        enriched.set(key, { candles, ltfInd });
+        const tape = mkt === 'INDIA' ? tapeFromCandles(candles, ltfInd, c.ctx.__tv) : null;
+        enriched.set(key, { candles, ltfInd, ...(tape ? { tape } : {}) });
       }
     } catch { /* honest degrade — quality layer skips MTF */ }
   }));
@@ -840,7 +870,14 @@ async function _computeBoard(mkt, deps, opts = {}) {
   // silently reverts a learned ×1.3 boost to 1.0 on the exact vote
   // that replaced the abstain.
   const _ad = adaptiveMultipliers(_ledgerModelStats());
-  for (const c of candidates.slice(0, opts.limit || 10)) {
+  // v9.3: the India final pass runs over 2× the board (cap 24) — the
+  // 15m tape vote re-ranks BEFORE the cut, so a tape-aligned setup can
+  // climb into the board and a counter-tape STRONG gets demoted out of
+  // the top cut by its own post-tape score. Crypto/futures boards keep
+  // the plain limit (their candles already voted in pass-1).
+  const boardLimit = opts.limit || 10;
+  const finalN = mkt === 'INDIA' ? Math.min(24, Math.max(10, boardLimit * 2)) : boardLimit;
+  for (const c of candidates.slice(0, finalN)) {
     const votes = [...c.votes];
     const enrKey = `${mkt}:${c.ctx.symbol}`;
     const enr = enriched.get(enrKey) || null;
@@ -852,6 +889,22 @@ async function _computeBoard(mkt, deps, opts = {}) {
         const idx = votes.findIndex(v => v.id === 'smc');
         if (idx >= 0) votes.splice(idx, 1);
         votes.push({ id: 'smc', name: reg.name, role: reg.role, weight: reg.weight * (_ad?.smc?.mul ?? 1), ...smcV });
+      }
+      // v9.3 INTRADAY TAPE VOTE — the 15m tape's committee seat. The
+      // trading timeframe finally VOTES alongside the daily readers:
+      // a rising 15m tape now pulls the consensus toward LONG with real
+      // weight (1.3) instead of only whispering -12 conf afterwards.
+      // Replaces the pass-1 abstain (same pattern as SMC — no double
+      // count) and carries the adaptive multiplier like every other
+      // injected vote.
+      if (enr.tape && mkt === 'INDIA') {
+        const tapeReg = MODELS.find(m => m.id === 'tape');
+        const tapeV = tapeReg?.fn ? tapeReg.fn({ market: mkt, tape: enr.tape }) : null;
+        if (tapeV && tapeV.dir !== 0 && (tapeV.conf || 0) > 0) {
+          const tIdx = votes.findIndex(v => v.id === 'tape');
+          if (tIdx >= 0) votes.splice(tIdx, 1); // drop the pass-1 abstain
+          votes.push({ id: 'tape', name: tapeReg.name, role: tapeReg.role, weight: tapeReg.weight * (_ad?.tape?.mul ?? 1), ...tapeV, revived: true });
+        }
       }
       // v8.0 PASS-2 REVIVAL: the TV crypto rows used to leave pattern /
       // sr / volume abstaining on the WHOLE crypto board (patterns:[],
@@ -988,6 +1041,9 @@ async function _computeBoard(mkt, deps, opts = {}) {
   // v9: the board is ranked by the SUPERINTELLIGENCE AI score (the
   // 80+ bar the desk filters on), confidence as the tie-breaker.
   signals.sort((a, b) => ((b.superIntel?.aiScore ?? b.confidence) - (a.superIntel?.aiScore ?? a.confidence)));
+  // v9.3: the India pass built 2× the board — cut to the display limit
+  // AFTER the tape-aware re-rank (crypto/futures already match the cut).
+  if (signals.length > boardLimit) signals.length = boardLimit;
 
   // v6.9: full-universe composite TOP-5 (transparent score + Hinglish
   // rank reason — the board payload carries it so the desks get the
@@ -1156,6 +1212,9 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
     const tv = await fetchTVIndiaBatch([sym]).catch(() => ({}));
     if (tv[sym]) {
       ctx = await buildIndiaStockCtx(tv[sym], regime);
+      // v9.3: keep the raw scanner row on the ctx (session VWAP feeds
+      // the IntradayTape read — same as the board's attachSuperCtx).
+      if (ctx) ctx.__tv = tv[sym];
     } else {
       // Index fallback (NIFTY/BANKNIFTY or unknown symbol → Yahoo daily candles).
       ctx = await (async () => {
@@ -1198,6 +1257,22 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
       // v6.12.1 (recheck M-3): adaptive multiplier on the injected vote
       const _ad = adaptiveMultipliers(_ledgerModelStats());
       votes.push({ id: 'smc', name: reg.name, role: reg.role, weight: reg.weight * (_ad?.smc?.mul ?? 1), ...smcV });
+    }
+    // v9.3 INTRADAY TAPE VOTE (deep) — the 15m tape gets its committee
+    // seat on the single-symbol deep dive too (same model, same weight;
+    // the deep card must never disagree with the board's tape read).
+    if (mkt === 'INDIA') {
+      const tape = tapeFromCandles(ltfCandles, ltfInd, ctx.__tv || null);
+      if (tape) {
+        const tapeReg = MODELS.find(m => m.id === 'tape');
+        const tapeV = tapeReg?.fn ? tapeReg.fn({ market: mkt, tape }) : null;
+        if (tapeV && tapeV.dir !== 0 && (tapeV.conf || 0) > 0) {
+          const tIdx = votes.findIndex(v => v.id === 'tape');
+          if (tIdx >= 0) votes.splice(tIdx, 1);
+          const _adT = adaptiveMultipliers(_ledgerModelStats());
+          votes.push({ id: 'tape', name: tapeReg.name, role: tapeReg.role, weight: tapeReg.weight * (_adT?.tape?.mul ?? 1), ...tapeV, revived: true });
+        }
+      }
     }
   }
   // Pre-council consensus: the deep path feeds the council the same flat

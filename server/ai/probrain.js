@@ -116,6 +116,17 @@ export function mtfAnalysis({ htf, ltf, side, ltfLabel = '15m' }) {
   const reasons = [];
   const facts = {};
 
+  // v9.3 LATENT-BUG FIX: the LTF arrives in TWO shapes — the flat legacy
+  // shape ({ema20, ema50, macdHist, rsi} — what the unit tests and the
+  // TV rows carry) and the computeIndicatorsFromCandles shape
+  // ({macd: {hist, histSlope}}) — which is what the BOARD actually passes.
+  // The old `ltf?.macdHist` reads silently missed the candle shape, so
+  // the MACD leg of this analysis was DEAD in production (only the
+  // EMA20/50 line ever fired). Normalize both shapes ONCE here.
+  const ltfMacdHist = ltf?.macdHist != null
+    ? ltf.macdHist
+    : (Number.isFinite(ltf?.macd?.hist) ? ltf.macd.hist : null);
+
   // --- HTF (daily) trend read ---
   let htfDir = 0;
   if (htf?.ema20 != null && htf?.ema50 != null) {
@@ -138,9 +149,9 @@ export function mtfAnalysis({ htf, ltf, side, ltfLabel = '15m' }) {
     const t = ltfDir > 0 ? 'bullish' : ltfDir < 0 ? 'bearish' : 'flat';
     reasons.push(`LTF ${ltfLabel}: EMA20 ${ltfDir > 0 ? '>' : ltfDir < 0 ? '<' : '='} EMA50 (${t})`);
   }
-  if (ltf?.macdHist != null) {
-    if (ltf.macdHist > 0 && ltfDir >= 0) { ltfDir = Math.max(ltfDir, 1); reasons.push(`LTF ${ltfLabel} MACD histogram positive`); }
-    else if (ltf.macdHist < 0 && ltfDir <= 0) { ltfDir = Math.min(ltfDir, -1); reasons.push(`LTF ${ltfLabel} MACD histogram negative`); }
+  if (ltfMacdHist != null) {
+    if (ltfMacdHist > 0 && ltfDir >= 0) { ltfDir = Math.max(ltfDir, 1); reasons.push(`LTF ${ltfLabel} MACD histogram positive`); }
+    else if (ltfMacdHist < 0 && ltfDir <= 0) { ltfDir = Math.min(ltfDir, -1); reasons.push(`LTF ${ltfLabel} MACD histogram negative`); }
   }
   if (ltf?.rsi != null) {
     // LTF RSI exhaustion against the trade side is a timing warning
@@ -148,7 +159,7 @@ export function mtfAnalysis({ htf, ltf, side, ltfLabel = '15m' }) {
     else if (want < 0 && ltf.rsi < 28) reasons.push(`LTF RSI ${r1(ltf.rsi)} — oversold, entry thodi extended`);
   }
 
-  const available = (htf?.ema20 != null || htf?.rsi != null) && (ltf?.ema20 != null || ltf?.macdHist != null);
+  const available = (htf?.ema20 != null || htf?.rsi != null) && (ltf?.ema20 != null || ltfMacdHist != null);
   let aligned = null; // null = not enough data — honest skip
   let phase = 'UNAVAILABLE';
   if (available) {
@@ -164,9 +175,24 @@ export function mtfAnalysis({ htf, ltf, side, ltfLabel = '15m' }) {
     reasons.push('LTF/HTF candles unavailable — MTF check skip (honest degrade)');
   }
 
+  // v9.3 COUNTER-TAPE STRENGTH: when the signal fights the LTF tape,
+  // how hard is the tape actually PUSHING? RSI in the momentum zone
+  // against the trade + MACD agreeing = a DRIVING tape (shorting into
+  // that is the exact screenshot bug — the stock keeps climbing). A
+  // stalling tape (RSI mid-zone / MACD flat) is only a mild conflict —
+  // the reversal case stays practiceable at ACTION.
+  let againstTapeStrength = 0; // 0 = mild/stalling, 1 = driving hard
+  if (phase === 'MISALIGNED' && ltfDir !== 0 && ltfDir === -want) {
+    const rsiAgainst = want > 0
+      ? (ltf?.rsi != null && ltf.rsi < 45)
+      : (ltf?.rsi != null && ltf.rsi > 55);
+    const macdAgainst = want > 0 ? (ltfMacdHist ?? 0) < 0 : (ltfMacdHist ?? 0) > 0;
+    if (rsiAgainst && macdAgainst) againstTapeStrength = 1;
+  }
+
   // score: 0 (worst) .. 100 (best) — null-data = 50 neutral
   const score = aligned == null ? 50 : aligned ? 100 : 10;
-  return { available, phase, aligned, score, facts, reasons };
+  return { available, phase, aligned, score, facts, reasons, ltfDir, againstTapeStrength };
 }
 
 // ------------------------------------------------------------
@@ -387,6 +413,17 @@ export function qualityVerdict({
   if (rg.penaltyPct) confAdj -= rg.penaltyPct;
   if (mtf.aligned === true) { confAdj += 6; }
   else if (mtf.aligned === false) { confAdj -= 12; }
+  // v9.3 COUNTER-TAPE (the intraday "wrong trend" fix): a signal that
+  // fights the LIVE tape pays harder than a generic MTF conflict —
+  // a DRIVING tape (RSI momentum zone + MACD against the trade) is the
+  // exact screenshot bug (STRONG SHORT while the 15m tape rips up).
+  if (mtf.phase === 'MISALIGNED') {
+    flags.counterTape = { strong: mtf.againstTapeStrength === 1, ltfDir: mtf.ltfDir ?? 0 };
+    confAdj -= mtf.againstTapeStrength === 1 ? 6 : 0; // extra on top of the -12 above
+    reasons.push(mtf.againstTapeStrength === 1
+      ? '🛑 COUNTER-TAPE hard: 15m tape momentum ke against trade — STRONG/ACTION banned, tape roll hone do (sirf WATCH)'
+      : '⚠ counter-tape: 15m tape against hai par stall ho raha hai — ACTION max (STRONG banned)');
+  }
   if (voters === 2) confAdj -= 6;
   else if (voters <= 1) confAdj -= 25;
 
@@ -410,8 +447,20 @@ export function qualityVerdict({
     // regime signals into paper/notify eligibility.
     if (rg.counterTrend && rg.penaltyPct >= 15 && voters < 5 && gradeCap === 'STRONG') gradeCap = 'ACTION';
   }
+  // v9.3 COUNTER-TAPE caps: an intraday trade against the live 15m
+  // tape can NEVER wear STRONG (the badge that gates auto-exec + the
+  // user's trust); a stalling tape allows ACTION practice, a DRIVING
+  // tape is WATCH-only. Caps only ever TIGHTEN (never re-raise).
+  if (mtf.phase === 'MISALIGNED') {
+    const capRank = { NEUTRAL: 0, WATCH: 1, ACTION: 2, STRONG: 3 };
+    const tapeCap = mtf.againstTapeStrength === 1 ? 'WATCH' : 'ACTION';
+    if (capRank[tapeCap] < capRank[gradeCap]) {
+      gradeCap = tapeCap;
+      if (mtf.againstTapeStrength === 1) flags.veto = flags.veto || 'counter-tape';
+    }
+  }
 
   return { flags, reasons, confAdj, gradeCap, regime: rg, mtf, extension: ext, session: ses, stop };
 }
 
-export const PROBRAIN_VERSION = 'v6.12.0';
+export const PROBRAIN_VERSION = 'v9.3.0';

@@ -161,12 +161,12 @@ describe('evaluateExecutionGate — THE order gauntlet', () => {
 });
 
 describe('quant models — voting on synthetic contexts', () => {
-  it('registry has 10 models with sane weights; AI Council has fn=null (LLM layer)', () => {
-    expect(MODELS).toHaveLength(10); // v6.7: +SmartMoneyICT (SMC/ICT)
+  it('registry has 11 models with sane weights; AI Council has fn=null (LLM layer)', () => {
+    expect(MODELS).toHaveLength(11); // v6.7: +SmartMoneyICT (SMC/ICT) · v9.3: +IntradayTape (15m seat)
     expect(MODELS.find(m => m.id === 'aicouncil')?.fn).toBeNull();
     const total = MODELS.reduce((a, m) => a + m.weight, 0);
     expect(total).toBeGreaterThan(8);
-    expect(total).toBeLessThan(13);
+    expect(total).toBeLessThan(14);
   });
 
   it('bullish context → TrendMatrix + MomentumQuant vote LONG with reasons', () => {
@@ -242,7 +242,7 @@ describe('quant models — voting on synthetic contexts', () => {
 
   it('model crashes are contained (dir 0 with error reason)', () => {
     const votes = runQuantModels({ market: 'INDIA', symbol: 'X', ltp: null, ind: null, regime: null });
-    expect(votes).toHaveLength(9);
+    expect(votes).toHaveLength(10); // 11 models − AI Council (fn=null); v9.3 IntradayTape abstains cleanly
     votes.forEach(vt => {
       if (vt.dir !== 0) return; // may legitimately vote from partial data
       expect(vt.conf).toBeGreaterThanOrEqual(0);

@@ -180,6 +180,15 @@ function QualityChips({ quality, voters, total }: { quality: NonNullable<AISigna
   if (mtf?.available) {
     if (mtf.phase === 'ALIGNED') chips.push({ label: `MTF ✓ (${mtf.phase === 'ALIGNED' ? 'HTF+LTF' : mtf.phase})`, cls: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30', title: 'daily trend + intraday dono align — continuation entry OK' });
     else if (mtf.phase === 'COUNTER_HTF') chips.push({ label: 'MTF ⚠ COUNTER', cls: 'bg-red-500/10 text-red-300 border-red-500/30', title: 'daily trend ke AGAINST — counter-trend, sirf strong reversal pe' });
+    else if (mtf.phase === 'MISALIGNED') {
+      // v9.3: the exact "wrong trend" screenshot case — daily committee
+      // said SHORT but the 15m tape was rising. Show it LOUD, not as a
+      // generic amber MTF conflict.
+      const ct = quality.counterTape;
+      chips.push(ct?.strong
+        ? { label: '🛑 COUNTER-TAPE (15m against)', cls: 'bg-red-500/15 text-red-300 border-red-500/40', title: '15m tape momentum trade ke against DRIVE kar raha hai — STRONG/ACTION banned, tape roll hone do (sirf WATCH)' }
+        : { label: '⚠ COUNTER-TAPE (15m)', cls: 'bg-amber-500/10 text-amber-300 border-amber-500/30', title: '15m tape against hai par stall ho raha — STRONG banned, ACTION max (reversal practice only)' });
+    }
     else chips.push({ label: `MTF ⚠ ${mtf.phase}`, cls: 'bg-amber-500/10 text-amber-300 border-amber-500/30', title: 'timeframes conflict — timing risk' });
   } else {
     chips.push({ label: 'MTF n/a', cls: 'bg-slate-600/20 text-slate-400 border-slate-600/30', title: 'LTF candles unavailable — MTF check skip (honest)' });

@@ -1,7 +1,7 @@
 // ============================================================
 // src/components/aitrading/ModelRegistry.tsx
 // ------------------------------------------------------------
-// The "Superintelligence MCP model bus" — all 9 models with role,
+// The "Superintelligence MCP model bus" — all 11 models with role,
 // weight, engine type and live online status. AI Council shows its
 // provider (gemini/groq/cerebras) or an honest OFFLINE badge.
 // ============================================================

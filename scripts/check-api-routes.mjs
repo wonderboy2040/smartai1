@@ -16,7 +16,6 @@
 //          telegram bot / external clients / owner endpoints)
 //
 // Usage:  node scripts/check-api-routes.mjs     (or npm run check:routes)
-// ============================================================
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';

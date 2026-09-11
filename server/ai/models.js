@@ -19,6 +19,10 @@
 //                           — honest OFFLINE when no AI keys configured
 //  10. SmartMoneyICT    1.1  v6.7 liquidity sweeps + order blocks + FVG
 //                           (ICT/SMC candle geometry — glama-inspired)
+//  11. IntradayTape     1.3  v9.3 THE 15m tape seat (India desk) —
+//                           EMA10/20 stack, MACD, RSI zone, session
+//                           VWAP side, 3-bar momentum. The trading
+//                           timeframe finally VOTES, not just advises.
 //
 // The ensemble aggregator (ensemble.js) turns these votes into ONE
 // consensus: side, confidence, agreement and the STRONG grade that
@@ -377,6 +381,79 @@ export function aiCouncilVoteFromVerdict(verdict) {
 import { smcVote } from './lib/smc.js';
 
 // ------------------------------------------------------------
+// 11. IntradayTape — v9.3 THE 15-MINUTE TAPE SEAT
+// ------------------------------------------------------------
+// THE "wrong trend" fix. The India desk's other models read the TV
+// scanner snapshot, which serves DAILY-timeframe indicators (verified
+// live: scanner EMA10/EMA50 == Yahoo DAILY EMAs to the cent). A stock
+// can sit in a multi-day downtrend (daily RSI 37, price below every
+// daily EMA) while its 15-minute tape is RIPPING UP — the committee
+// voted "STRONG SHORT" off the daily stack while the user watched the
+// price climb against their fresh short (the exact screenshot bug).
+//
+// This model gives the timeframe the user actually TRADES (15:15
+// square-off, entry cutoff 15:00) a full committee seat:
+//   • 15m EMA10/20 stack + price position
+//   • 15m MACD histogram + slope
+//   • 15m RSI momentum zone (with exhaustion guards)
+//   • session-VWAP side (from the TV row — true session anchor)
+//   • last-3-bar momentum (the tape direction RIGHT NOW)
+//
+// CRYPTO/FUTURES desks: abstains with an honest reason — their ctx.ind
+// already merges live 1h candle indicators at build time, so a second
+// tape vote would double-count the same timeframe.
+function intradayTape(ctx) {
+  if (ctx.market !== 'INDIA') {
+    return vote(0, 0, ['IntradayTape abstains — crypto/futures committee already reads live 1h candles (no double count)']);
+  }
+  const t = ctx.tape;
+  if (!t || typeof t !== 'object') {
+    return vote(0, 0, ['15m tape unavailable — model abstains (honest degrade)']);
+  }
+  const pts = [];
+  let score = 0, conf = 42;
+  const ltp = t.ltp, e10 = t.ema10, e20 = t.ema20;
+
+  // 15m EMA stack + price position — the tape's own trend.
+  if (e10 != null && e20 != null && ltp > 0) {
+    if (e10 > e20 && ltp > e10) { score += 1.2; pts.push('15m EMA10>20 stack, price above EMA10 — tape rising'); }
+    else if (e10 < e20 && ltp < e10) { score -= 1.2; pts.push('15m EMA10<20 stack, price below EMA10 — tape falling'); }
+    else if (e10 > e20) { score += 0.5; pts.push('15m stack up, price pulling back under EMA10'); }
+    else if (e10 < e20) { score -= 0.5; pts.push('15m stack down, price bouncing over EMA10'); }
+    else pts.push('15m EMA10 = EMA20 (coil)');
+  }
+  // 15m MACD momentum.
+  if (t.macdHist != null) {
+    if (t.macdHist > 0 && (t.macdSlope ?? 0) > 0) { score += 0.9; pts.push('15m MACD histogram positive & rising'); }
+    else if (t.macdHist < 0 && (t.macdSlope ?? 0) < 0) { score -= 0.9; pts.push('15m MACD histogram negative & falling'); }
+    else if ((t.macdSlope ?? 0) > 0) { score += 0.3; pts.push('15m MACD turning up'); }
+    else if ((t.macdSlope ?? 0) < 0) { score -= 0.3; pts.push('15m MACD turning down'); }
+  }
+  // 15m RSI momentum zone — with exhaustion guards (never chase blow-offs).
+  if (t.rsi != null) {
+    if (t.rsi > 60 && t.rsi <= 75) { score += 0.6; pts.push(`15m RSI ${r1(t.rsi)} momentum zone`); }
+    else if (t.rsi < 40 && t.rsi >= 25) { score -= 0.6; pts.push(`15m RSI ${r1(t.rsi)} weakness zone`); }
+    if (t.rsi > 78) { score -= 0.4; pts.push(`15m RSI ${r1(t.rsi)} overbought — exhaustion`); }
+    if (t.rsi < 22) { score += 0.4; pts.push(`15m RSI ${r1(t.rsi)} oversold — bounce fuel`); }
+  }
+  // Session-VWAP side (TV row's true session anchor).
+  if (t.vwap != null && ltp > 0) {
+    const vd = ((ltp - t.vwap) / t.vwap) * 100;
+    if (vd > 0.08) { score += 0.5; pts.push(`Above session VWAP +${r1(vd)}%`); }
+    else if (vd < -0.08) { score -= 0.5; pts.push(`Below session VWAP ${r1(vd)}%`); }
+    else pts.push('Hugging session VWAP');
+  }
+  // Last-3-bar momentum — the tape direction RIGHT NOW.
+  if (t.last3Pct != null) {
+    if (t.last3Pct > 0.25) { score += 0.6; pts.push(`3-bar tape +${r1(t.last3Pct)}%`); }
+    else if (t.last3Pct < -0.25) { score -= 0.6; pts.push(`3-bar tape ${r1(t.last3Pct)}%`); }
+  }
+
+  const dir = score > 0.9 ? 1 : score < -0.9 ? -1 : 0;
+  return vote(dir, dir === 0 ? 26 : clamp(conf + Math.abs(score) * 18), pts);
+}
+
+// ------------------------------------------------------------
 // REGISTRY (the "Superintelligence MCP model bus")
 // ------------------------------------------------------------
 export const MODELS = [
@@ -389,6 +466,7 @@ export const MODELS = [
   { id: 'options', name: 'OptionsFlow', role: 'PCR + max pain + IV percentile (contrarian)', weight: 1.0, fn: optionsFlow },
   { id: 'regime', name: 'MacroRegime', role: 'NIFTY/VIX gate (India) · BTC gate (crypto)', weight: 0.8, fn: macroRegime },
   { id: 'smc', name: 'SmartMoneyICT', role: 'Liquidity sweeps + order blocks + FVG (SMC)', weight: 1.1, fn: smartMoneyICT },
+  { id: 'tape', name: 'IntradayTape', role: '15m EMA/MACD/RSI + session VWAP + 3-bar momentum (India tape)', weight: 1.3, fn: intradayTape },
   { id: 'aicouncil', name: 'AI Council (LLM)', role: 'Gemini → Groq → Cerebras verification chain', weight: 1.5, fn: null },
 ];
 

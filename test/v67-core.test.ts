@@ -253,7 +253,7 @@ describe('smc: liquidity sweep / order block / FVG', () => {
       ind: {}, regime: { btcChange: null }, options: null,
     });
     expect(votes.some(v => v.id === 'smc')).toBe(true);
-    expect(votes.length).toBe(9); // 9 quant models (aicouncil has no fn)
+    expect(votes.length).toBe(10); // 10 quant models (aicouncil has no fn) — v9.3: +IntradayTape (abstains on crypto)
   });
 });
 

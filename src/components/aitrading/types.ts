@@ -43,6 +43,9 @@ export interface SignalQuality {
   regime?: { aligned: boolean | null; counterTrend?: boolean; penaltyPct?: number };
   extension?: { veto: boolean; downgrade?: boolean };
   mtf?: { phase: string; aligned: boolean | null; available?: boolean };
+  /** v9.3: counter-tape honesty — the 15m tape is against this trade
+   *  (strong = momentum driving against it → WATCH-capped). */
+  counterTape?: { strong?: boolean; ltfDir?: number };
   session?: { phase: string; tradeable: boolean };
   confAdj?: number;
   veto?: string | null;
