@@ -487,8 +487,54 @@ export function buildExpertBlueprint({ side, ltp, atr, score, market, ema20 = nu
 }
 
 // ---------------- orchestrator ----------------
-const _picksCache = new Map(); // market → { at, payload }
-const PICKS_TTL = 60_000;
+// v9.2.1 RESILIENCE — the scan is now keyed by MARKET ONLY (not
+// minScore:limit) so the panel's 65+ red-day fallback reuses the SAME
+// scan instead of triggering a second full-universe pass, and three
+// anti-timeout mechanisms protect slow/blocked hosts:
+//   • SINGLE-FLIGHT — concurrent cold requests JOIN one scan.
+//   • STALE-SERVE (SWR) — a scan ≤10 min old is served INSTANTLY while
+//     a refresh runs in the background; if the feed later DIES, the
+//     last good scan keeps the panel alive for up to 45 min (flagged).
+//   • SCAN BUDGET — a cold scan that can't finish in ~25s returns the
+//     picks scored so far, honestly flagged partial.
+const _scanCache = new Map();     // market → { at, scan }
+const _scanInflight = new Map();  // market → Promise<scan>
+const PICKS_TTL = 60_000;             // fresh window
+const PICKS_STALE_MS = 10 * 60_000;   // instant-serve (stale flag) window
+const PICKS_FAIL_STALE_MS = 45 * 60_000; // feed-dead fallback window
+const PICKS_BUDGET_MS = 25_000;       // cold-scan wall-clock budget
+
+/** Build the route payload from a scan: filter by minScore, cut to limit. */
+function _picksView(scan, minScore, limit, extra = {}) {
+  const eligible = (scan.picks || [])
+    .filter(p => p.score >= minScore && p.plan)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+  return {
+    ok: true, market: scan.market, minScore,
+    scanned: scan.scanned, universeSize: scan.universeSize,
+    priceSource: scan.priceSource, marketOpen: scan.marketOpen,
+    regime: scan.regime, picks: eligible,
+    generatedAt: scan.generatedAt,
+    ...(scan.partial ? { partial: true, partialNote: scan.partialNote } : {}),
+    ...extra,
+  };
+}
+
+/** Start (or join) the single-flight background scan for a market. */
+function _scanInBackground(mkt, opts = {}) {
+  if (_scanInflight.has(mkt)) return _scanInflight.get(mkt);
+  const p = (async () => {
+    try {
+      const scan = await _runScan(mkt, opts);
+      if (scan && scan.universeSize > 0) _scanCache.set(mkt, { at: Date.now(), scan });
+      return scan;
+    } catch { return null; }
+    finally { _scanInflight.delete(mkt); }
+  })();
+  _scanInflight.set(mkt, p);
+  return p;
+}
 
 /**
  * Scan the whole tradable universe and return STRONG expert picks
@@ -500,10 +546,41 @@ export async function getExpertPicks(market, opts = {}) {
   const minScore = Math.max(1, Math.min(99, Number(opts.minScore) || EXPERT_MIN_STRONG));
   const limit = Math.max(1, Math.min(15, Number(opts.limit) || 12));
 
-  const cacheKey = `${mkt}:${minScore}:${limit}`;
-  const hit = _picksCache.get(cacheKey);
-  if (hit && Date.now() - hit.at < PICKS_TTL && !opts.noCache) return hit.payload;
+  if (!opts.noCache) {
+    const hit = _scanCache.get(mkt);
+    const age = hit ? Date.now() - hit.at : Infinity;
+    if (hit && age < PICKS_TTL) return _picksView(hit.scan, minScore, limit);
+    if (hit && age < PICKS_STALE_MS) {
+      // SWR: serve the old scan NOW, refresh behind the curtain
+      _scanInBackground(mkt, opts);
+      return _picksView(hit.scan, minScore, limit, {
+        stale: true, staleAgeSec: Math.round(age / 1000), refreshing: true,
+      });
+    }
+  }
 
+  // cold: join or start the single-flight budget-bounded scan
+  const scan = await _scanInBackground(mkt, opts);
+  if (scan && scan.universeSize > 0) return _picksView(scan, minScore, limit);
+
+  // scan failed → a recent-enough last-good scan beats an error screen
+  const hit = _scanCache.get(mkt);
+  if (hit && Date.now() - hit.at < PICKS_FAIL_STALE_MS) {
+    return _picksView(hit.scan, minScore, limit, {
+      stale: true, staleAgeSec: Math.round((Date.now() - hit.at) / 1000),
+      staleReason: scan?.reason || 'live feed unreachable — last successful scan',
+    });
+  }
+  return scan || {
+    ok: false, market: mkt,
+    reason: 'universe discovery failed (CoinDCX + Binance both unreachable)',
+    picks: [], scanned: 0, universeSize: 0, generatedAt: Date.now(),
+  };
+}
+
+/** The actual universe scan (IO). Returns a scan object, or an
+ *  {ok:false, universeSize:0, reason} marker when discovery fails. */
+async function _runScan(mkt, opts = {}) {
   const regime = await buildRegime(mkt).catch(() => ({}));
 
   // ---- universe + price discovery (CoinDCX primary → Binance fallback) ----
@@ -546,7 +623,11 @@ export async function getExpertPicks(market, opts = {}) {
     universe = [...INDIA_UNIVERSE];
   }
   if (universe.length === 0) {
-    return { ok: false, market: mkt, reason: 'universe discovery failed (CoinDCX + Binance both unreachable)', picks: [], scanned: 0, generatedAt: Date.now() };
+    return {
+      ok: false, market: mkt,
+      reason: 'universe discovery failed (CoinDCX + Binance both unreachable)',
+      picks: [], scanned: 0, universeSize: 0, generatedAt: Date.now(),
+    };
   }
 
   // TV scanner in chunks of 40 (crypto) — India batch is already one call.
@@ -560,10 +641,22 @@ export async function getExpertPicks(market, opts = {}) {
   }
 
   // ---- per-coin scoring (LTF candles in bounded parallel batches) ----
+  // v9.2.1 SCAN BUDGET: a cold scan on a slow host must still ANSWER —
+  // when the wall clock runs out, return what was scored so far,
+  // honestly flagged partial (the next 60s refresh covers the rest).
+  const budgetMs = Number(opts.budgetMs) > 0 ? Number(opts.budgetMs) : PICKS_BUDGET_MS;
+  const deadline = Date.now() + budgetMs;
   const picks = [];
   let scanned = 0;
+  let partial = false;
+  let partialNote = null;
   const BATCH = 12;
   for (let i = 0; i < universe.length; i += BATCH) {
+    if (Date.now() > deadline) {
+      partial = true;
+      partialNote = `Scan time-budget (${Math.round(budgetMs / 1000)}s) hit — ${picks.length}/${universe.length} coins cover hue; agli 60s refresh baaki universe scan karegi`;
+      break;
+    }
     const batch = universe.slice(i, i + BATCH);
     const results = await Promise.allSettled(batch.map(async (base) => {
       const row = tv[base];
@@ -609,24 +702,30 @@ export async function getExpertPicks(market, opts = {}) {
     }
   }
 
-  const eligible = picks.filter(p => p.score >= minScore && p.plan).sort((a, b) => b.score - a.score).slice(0, limit);
-  const payload = {
-    ok: true,
+  return {
     market: mkt,
-    minScore,
     scanned,
     universeSize: universe.length,
     priceSource,
     marketOpen: mkt === 'INDIA' ? isNseOpen() : true,
     regime,
-    picks: eligible,
+    picks,
+    partial,
+    partialNote,
     generatedAt: Date.now(),
   };
-  _picksCache.set(cacheKey, { at: Date.now(), payload });
-  return payload;
 }
 
+// ---------------- test hooks ----------------
 export function __clearExpertPicksCaches() {
-  _picksCache.clear();
+  _scanCache.clear();
   _uniCache.clear();
+}
+/** v9.2.1: inject a scan of a given age (ms) — resilience tests. */
+export function __setScanCacheForTests(mkt, scan, ageMs = 0) {
+  _scanCache.set(mkt, { at: Date.now() - Math.max(0, Number(ageMs) || 0), scan });
+}
+/** v9.2.1: inject a discovered universe — resilience tests (no network). */
+export function __setUniverseForTests(key, bases) {
+  _uniCache.set(key, { at: Date.now(), val: bases });
 }

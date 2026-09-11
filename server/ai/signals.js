@@ -534,6 +534,27 @@ export function computeTopFive(signals, regime, market = 'INDIA', limit = 5) {
   return scored.slice(0, Math.max(1, limit)).map((s, i) => ({ ...s, rank: i + 1 }));
 }
 
+// v9.2.1 RESILIENCE — slow hosts (free-tier containers, cold networks,
+// WAF-blocked feeds) were STACKING full board computes: every 15s
+// agent-status poll + every 30s board poll started its OWN cold scan,
+// multiplying latency until every request timed out and the panels
+// read "Agent status unavailable" / "data feed unreachable".
+//   • SINGLE-FLIGHT — concurrent callers JOIN the running compute.
+//   • warmOnly — status polls NEVER compute inline: serve the cached
+//     board (stale is fine) and warm the cache in the background.
+const _boardInflight = new Map(); // mkt → running compute promise
+
+function _warmBoardInBackground(mkt, deps) {
+  if (_boardInflight.has(mkt)) return _boardInflight.get(mkt);
+  const p = (async () => {
+    try { return await _computeBoard(mkt, deps || {}, { limit: 10 }); }
+    catch { return null; } // best-effort warm — next poll retries
+    finally { _boardInflight.delete(mkt); }
+  })();
+  _boardInflight.set(mkt, p);
+  return p;
+}
+
 export async function getSignals(market, deps, opts = {}) {
   const raw = String(market || 'INDIA').toUpperCase();
   const mkt = raw === 'CRYPTO' ? 'CRYPTO' : raw === 'FUTURES' ? 'FUTURES' : 'INDIA';
@@ -543,6 +564,30 @@ export async function getSignals(market, deps, opts = {}) {
   const cached = cacheGet(cacheKey, mkt === 'INDIA' ? 60_000 : 90_000);
   if (cached && !opts.noCache) return cached;
 
+  // v9.2.1: status/polling callers must answer in milliseconds — never
+  // run a cold compute on the request path. Serve a stale board if one
+  // exists (any age — the payload carries generatedAt) and refresh in
+  // the background; with nothing cached at all, answer null now.
+  if (opts.warmOnly) {
+    const staleHit = _cache.get(cacheKey);
+    _warmBoardInBackground(mkt, deps);
+    return staleHit ? staleHit.payload : null;
+  }
+  if (opts.noCache) return _computeBoard(mkt, deps, opts);
+
+  // single-flight: join the scan that is already running
+  const running = _boardInflight.get(mkt);
+  if (running) return running;
+  const p = (async () => {
+    try { return await _computeBoard(mkt, deps, opts); }
+    finally { _boardInflight.delete(mkt); }
+  })();
+  _boardInflight.set(mkt, p);
+  return p;
+}
+
+async function _computeBoard(mkt, deps, opts = {}) {
+  const cacheKey = `board:${mkt}`;
   const depsSafe = deps || {};
   const regime = await buildRegime(mkt);
   // v9 SUPERINTELLIGENCE board meta (scanned universe + price chain).
@@ -1287,4 +1332,9 @@ export async function getFreshFuturesSignalForExec(pairOrSymbol, deps) {
 }
 
 // ---------------- test hooks ----------------
-export function __clearSignalCaches() { _cache.clear(); }
+export function __clearSignalCaches() { _cache.clear(); _boardInflight.clear(); }
+/** v9.2.1: inject a board cache entry of a given age (ms) — resilience tests. */
+export function __setBoardCacheForTests(mkt, payload, ageMs = 0) {
+  _cache.set(`board:${mkt}`, { at: Date.now() - Math.max(0, Number(ageMs) || 0), payload });
+}
+

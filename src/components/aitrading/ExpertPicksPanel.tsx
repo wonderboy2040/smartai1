@@ -53,6 +53,16 @@ export interface ExpertPicksView {
   picks: ExpertPick[];
   reason?: string;
   generatedAt?: number;
+  /** v9.2.1: server served a scan older than the fresh window (SWR /
+   *  feed-dead fallback) — UI shows an honest age chip, not an error. */
+  stale?: boolean;
+  staleAgeSec?: number;
+  staleReason?: string;
+  /** a background refresh is already running server-side */
+  refreshing?: boolean;
+  /** the scan hit its time budget — partial universe coverage */
+  partial?: boolean;
+  partialNote?: string;
 }
 
 function priceFmt(market: string): (n: number | null | undefined) => string {
@@ -229,6 +239,10 @@ export const ExpertPicksPanel = memo(function ExpertPicksPanel({ active, market,
   const [view, setView] = useState<ExpertPicksView | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(false);
+  /** v9.2.1: last fetch FAILED but a previous view is on screen —
+   *  keep showing it with a "stale — retrying" chip instead of the
+   *  old hard error ("Expert engine unavailable"). */
+  const [connStale, setConnStale] = useState(false);
   /** v9.2 red-day fallback: jab 80+ STRONG setup zero ho aur engine ne
    *  coins scan kiye ho, ek baar 65+ (ACTION-grade) retry karo — panel
    *  khali nahi baithega, picks "downgraded tier" banner ke saath
@@ -236,6 +250,8 @@ export const ExpertPicksPanel = memo(function ExpertPicksPanel({ active, market,
   const [relaxedNote, setRelaxedNote] = useState<string | null>(null);
   const activeRef = useRef(active);
   activeRef.current = active;
+  const viewRef = useRef<ExpertPicksView | null>(null);
+  viewRef.current = view;
 
   const load = useCallback(async () => {
     try {
@@ -257,7 +273,12 @@ export const ExpertPicksPanel = memo(function ExpertPicksPanel({ active, market,
       } else setRelaxedNote(null);
       setView(j);
       setErr(false);
-    } catch { setErr(true); }
+      setConnStale(false); // a server answer is a server answer (stale flags ride on the payload)
+    } catch {
+      setErr(true);
+      // v9.2.1: keep the last good view on screen — flag it, don't nuke it
+      setConnStale(!!viewRef.current);
+    }
     finally { setLoading(false); }
   }, [market, minScore]);
 
@@ -290,15 +311,16 @@ export const ExpertPicksPanel = memo(function ExpertPicksPanel({ active, market,
         </div>
       )}
 
-      {!loading && err && !view?.ok && (
+      {!loading && err && !view && (
         <div className="py-8 text-center">
           <div className="text-3xl mb-2">📡</div>
-          <div className="text-xs text-red-400 font-bold">{view?.reason || 'Expert engine unavailable — data feed unreachable'}</div>
-          <div className="text-[10px] text-slate-500 mt-1">60s me auto-retry hoga</div>
+          <div className="text-xs text-red-400 font-bold">Expert engine tak connect nahi ho pa raha</div>
+          <div className="text-[10px] text-slate-500 mt-1">60s me auto-retry + server background scan jaari hai</div>
+          <button onClick={() => { setLoading(true); load(); }} className="mt-3 px-3 py-1.5 rounded-lg text-[10px] font-black quantum-btn-ghost">↻ Retry now</button>
         </div>
       )}
 
-      {!loading && (!err || view?.ok) && view && !view.ok && (
+      {!loading && !err && view && !view.ok && (
         <div className="py-8 text-center">
           <div className="text-3xl mb-2">📡</div>
           <div className="text-xs text-red-400 font-bold">{view.reason || 'Scan failed'}</div>
@@ -316,6 +338,24 @@ export const ExpertPicksPanel = memo(function ExpertPicksPanel({ active, market,
       {!loading && relaxedNote && picks.length > 0 && (
         <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[10px] text-amber-300 font-semibold">
           ⚠️ {relaxedNote}
+        </div>
+      )}
+
+      {/* v9.2.1: honest degradation strips — a stale/partial scan on
+          screen beats a dead panel. Never hides the picks. */}
+      {!loading && connStale && view?.ok && picks.length > 0 && (
+        <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[10px] text-amber-300 font-semibold">
+          ⚠️ Live update fail — {view.generatedAt ? `${Math.max(0, Math.round((Date.now() - view.generatedAt) / 1000))}s purana` : 'purana'} scan dikh raha hai, auto-retry jaari
+        </div>
+      )}
+      {!loading && view?.ok && view.stale && (
+        <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[10px] text-amber-300 font-semibold">
+          ⏳ {view.staleReason ? `${view.staleReason} — ` : ''}ye scan {view.staleAgeSec != null ? `${Math.round(view.staleAgeSec / 60)} min` : 'kuch'} purana hai{view.refreshing ? ' · fresh scan background me chal raha hai' : ''}
+        </div>
+      )}
+      {!loading && view?.ok && view.partial && (
+        <div className="mt-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1.5 text-[10px] text-cyan-300 font-semibold">
+          ⏱ {view.partialNote || 'Scan time-budget hit — partial universe covered; agli refresh poora scan karegi'}
         </div>
       )}
 

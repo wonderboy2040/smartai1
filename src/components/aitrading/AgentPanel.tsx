@@ -436,13 +436,17 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
   // v7.0.2: honest failure state — a persistently failing status API used
   // to show the loading spinner FOREVER (silent 5xx / proxy failure).
   const [viewFailed, setViewFailed] = useState(false);
+  // v9.2.1: a poll failed but an older view is on screen — flag it as
+  // stale instead of pretending the panel is dead.
+  const [stalePoll, setStalePoll] = useState(false);
   const viewRef = useRef(view);
   viewRef.current = view;
 
   const load = useCallback(async () => {
     const v = await fetchAgentStatus();
-    if (v) { setView(v); setViewFailed(false); }
+    if (v) { setView(v); setViewFailed(false); setStalePoll(false); }
     else if (!viewRef.current) setViewFailed(true);
+    else setStalePoll(true);
   }, []);
   const loadWallet = useCallback(async () => {
     const w = await fetchWallet();
@@ -493,7 +497,7 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
         <div className="quantum-panel rounded-2xl p-6 text-center border border-amber-500/20">
           <div className="text-3xl mb-2">⚠️</div>
           <div className="text-xs text-amber-300 font-bold">Agent status unavailable</div>
-          <div className="text-[11px] text-slate-500 mt-1">API/proxy issue — har 15s me retry ho raha hai.</div>
+          <div className="text-[11px] text-slate-500 mt-1">Server jagg raha hai ya network slow hai — har 15s me retry ho raha hai. Pehla response aane ke baad panel ms-level fast ho jata hai.</div>
           <button onClick={() => { setViewFailed(false); load(); }} className="mt-3 px-3 py-1.5 rounded-lg text-[10px] font-black quantum-btn-ghost">↻ Retry now</button>
         </div>
       );
@@ -513,6 +517,12 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
 
   return (
     <div className="quantum-panel rounded-2xl p-4 bg-gradient-to-r from-cyan-500/[0.07] via-transparent to-amber-500/[0.05]">
+      {/* v9.2.1: transient poll failure — old status stays, flagged */}
+      {stalePoll && (
+        <div className="mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[10px] text-amber-300 font-semibold">
+          ⚠️ Live status update fail — purana status dikh raha hai, har 15s auto-retry jaari
+        </div>
+      )}
       {/* header */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">

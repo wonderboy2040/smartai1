@@ -518,7 +518,19 @@ function pairOfSignal(s) {
  * Everything the Superintelligence Agent panel needs in ONE payload:
  * config + live state + today's agent trades + wallet + top picks per
  * desk + open agent positions. Never throws; boards degrade to null.
+ *
+ * v9.2.1 LATENCY CONTRACT — the panel polls this every 15s, so the
+ * status must answer in milliseconds even on a cold/slow host:
+ *   • wallet: serve the last full view instantly; refresh in the
+ *     background (first-ever fetch is bounded to 3.5s).
+ *   • picks: boards are read warmOnly — never computed inline; a cold
+ *     board is warmed in the background and appears on the next poll.
+ * This kills the old failure mode where a cold status call ran THREE
+ * full board scans (>45s on slow hosts) and every panel poll timed
+ * out behind it ("Agent status unavailable — API/proxy issue").
  */
+let _lastWalletView = null; // in-memory only — serve-while-refreshing
+
 export async function agentStatus(deps) {
   const cfg = loadAgentConfig();
   const trading = loadConfig();
@@ -528,20 +540,36 @@ export async function agentStatus(deps) {
   const agentPnl = r2(agentRealizedToday(j));
   const equityINR = _state.lastWallet?.equityINR ?? null;
 
+  const rememberWallet = (w) => {
+    if (!w) return;
+    _lastWalletView = w;
+    _state.lastWallet = { equityINR: w.equityINR, usdInr: w.usdInr, deployableFuturesUSDT: w.deployableFuturesUSDT, deployableSpotINR: w.deployableSpotINR, at: w.fetchedAt };
+  };
+
   let wallet = null;
   if (coindcxConnected()) {
-    wallet = await walletSnapshot().catch(() => null);
-    if (wallet) _state.lastWallet = { equityINR: wallet.equityINR, usdInr: wallet.usdInr, deployableFuturesUSDT: wallet.deployableFuturesUSDT, deployableSpotINR: wallet.deployableSpotINR, at: wallet.fetchedAt };
+    const job = walletSnapshot().catch(() => null);
+    if (_lastWalletView) {
+      wallet = _lastWalletView; // instant — refresh lands in background
+      job.then(rememberWallet).catch(() => {});
+    } else {
+      // first fetch after boot: bounded wait, late-fill in background
+      wallet = await Promise.race([job, new Promise((r) => { setTimeout(() => r(null), 3500).unref?.(); })]);
+      if (wallet) rememberWallet(wallet);
+      else job.then(rememberWallet).catch(() => {});
+    }
   }
 
-  // top picks per desk (cached boards — cheap)
+  // top picks per desk — v9.2.1 warmOnly: read the cached boards only.
+  // A cold board triggers a background warm and shows up on the next
+  // 15s poll instead of stalling this response for tens of seconds.
   const picks = {};
   if (deps) {
     const { getSignals } = await import('./signals.js').catch(() => ({ getSignals: null }));
     if (getSignals) {
       const wantMarkets = ['INDIA', 'FUTURES', 'CRYPTO'];
       await Promise.all(wantMarkets.map(async (m) => {
-        const b = await getSignals(m, deps, { limit: 6 }).catch(() => null);
+        const b = await getSignals(m, deps, { limit: 6, warmOnly: true }).catch(() => null);
         if (b?.ok) {
           picks[m] = (b.signals || []).filter(s => s.grade === 'STRONG' || s.grade === 'ACTION').slice(0, 3)
             .map(s => ({ symbol: s.symbol, side: s.side, grade: s.grade, confidence: s.confidence, ltp: s.ltp, pair: pairOfSignal(s),

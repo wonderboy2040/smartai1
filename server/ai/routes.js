@@ -775,5 +775,31 @@ export function registerAITradingRoutes(app, deps) {
   }, 90_000);
   if (auto.unref) auto.unref();
 
+  // ---------------- v9.2.1 BOOT WARM-UP ----------------
+  // Free-tier hosts (Render etc.) put the process to sleep; the first
+  // user polls after wake hit COLD caches and used to time out behind
+  // three full board scans ("Agent status unavailable" / "Expert
+  // engine unavailable"). Pre-heat the boards ~2s after boot so the
+  // first poll is warm. Boards first (parallel), expert scans after —
+  // single-flight joins any request that arrives mid-warm. Disable
+  // with WARM_ON_BOOT=0.
+  if (process.env.WARM_ON_BOOT !== '0') {
+    const warmBoards = () => Promise.allSettled([
+      getSignals('CRYPTO', depsForSignals()).catch(() => null),
+      getSignals('FUTURES', depsForSignals()).catch(() => null),
+      getSignals('INDIA', depsForSignals()).catch(() => null),
+    ]);
+    const warmPicks = () => Promise.allSettled([
+      getExpertPicks('CRYPTO', {}).catch(() => null),
+      getExpertPicks('FUTURES', {}).catch(() => null),
+    ]);
+    const warmer = setTimeout(() => {
+      warmBoards()
+        .then(() => warmPicks())
+        .catch(() => { /* best-effort warm */ });
+    }, 2000);
+    if (warmer.unref) warmer.unref();
+  }
+
   console.log('[ai] Superintelligence Ensemble v6.13 — ORDER TICKET + SIMPLE VIEW (options trade guide: session/expiry/limit/exit · 4-step signal order guide · simple/pro desk view · v6.12 pro-trader brain: quorum caps · MTF · session phases · extension veto · swing-structure SL · trust/perf/correlation/sector desks) · 10 models + AI Council · topFive ranking · Dhan + CoinDCX + GLOBAL FUTURES gauntlets · SUPERINTELLIGENCE AUTO-AGENT');
 }
