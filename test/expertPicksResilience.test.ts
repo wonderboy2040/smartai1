@@ -130,6 +130,7 @@ describe('v9.2.1 feed-dead fallback — an old scan beats an error screen', () =
   it('discovery fails + a 20-min-old scan exists → the old scan is served, flagged', async () => {
     // 20 min: past the SWR window, inside the 45-min fail-fallback window
     __setScanCacheForTests('CRYPTO', SCAN([PICK('OLD', 88)]), 20 * 60_000);
+    __setUniverseForTests('spot-inr', []);
     const v = await getExpertPicks('CRYPTO', { minScore: 80, limit: 12 });
     expect(v.ok).toBe(true);
     expect(v.stale).toBe(true);
@@ -140,6 +141,7 @@ describe('v9.2.1 feed-dead fallback — an old scan beats an error screen', () =
 
   it('discovery fails + scan older than the fail window → honest ok:false payload', async () => {
     __setScanCacheForTests('CRYPTO', SCAN([PICK('ANCIENT', 88)]), 50 * 60_000);
+    __setUniverseForTests('spot-inr', []);
     const v = await getExpertPicks('CRYPTO', { minScore: 80, limit: 12 });
     expect(v.ok).toBe(false);
     expect(v.reason).toContain('universe discovery failed');

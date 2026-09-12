@@ -128,22 +128,57 @@ const BINANCE_BLOCKLIST = new Set([
   'BRL', 'TRY', 'ARS', 'JPY', 'COP', 'HKD', 'CNH', 'AED', 'DAI', 'USDE', 'SUSD',
 ]);
 async function _binanceTopBases(fapi, size) {
-  const url = fapi ? 'https://fapi.binance.com/fapi/v1/ticker/24hr' : 'https://api.binance.com/api/v3/ticker/24hr';
-  const r = await fetch(url, { signal: AbortSignal.timeout(12000) });
-  if (!r.ok) throw new Error(`binance ${fapi ? 'futures' : 'spot'} HTTP ${r.status}`);
-  const j = await r.json();
-  let rows = (Array.isArray(j) ? j : [])
-    .filter(x => x && typeof x.symbol === 'string' && x.symbol.endsWith('USDT'))
-    .map(x => ({ base: x.symbol.replace(/USDT$/, ''), last: parseFloat(x.lastPrice), quoteVol: parseFloat(x.quoteVolume) }))
-    .filter(x => /^[A-Z0-9]{2,10}$/.test(x.base) && !BINANCE_BLOCKLIST.has(x.base) && x.last > 0 && x.quoteVol > 0);
-  // Fallback-path guard: only bases CoinDCX actually lists (seed set).
-  const seeded = rows.filter(x => SEED_SET.has(x.base));
-  if (seeded.length >= 10) rows = seeded; // seeds cover the desk — use them
-  // else: keep raw top rows (prod uses the CoinDCX feed anyway)
-  rows.sort((a, b) => b.quoteVol - a.quoteVol);
-  const out = rows.slice(0, size);
-  if (out.length === 0) throw new Error('binance: empty universe');
-  return out; // [{base, last, quoteVol}]
+  const urls = fapi
+    ? ['https://fapi.binance.com/fapi/v1/ticker/24hr']
+    : [
+        'https://api.binance.com/api/v3/ticker/24hr',
+        'https://data-api.binance.vision/api/v3/ticker/24hr',
+      ];
+  let lastErr = null;
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!r.ok) throw new Error(`binance ${fapi ? 'futures' : 'spot'} HTTP ${r.status}`);
+      const j = await r.json();
+      let rows = (Array.isArray(j) ? j : [])
+        .filter(x => x && typeof x.symbol === 'string' && x.symbol.endsWith('USDT'))
+        .map(x => ({ base: x.symbol.replace(/USDT$/, ''), last: parseFloat(x.lastPrice), quoteVol: parseFloat(x.quoteVolume) }))
+        .filter(x => /^[A-Z0-9]{2,10}$/.test(x.base) && !BINANCE_BLOCKLIST.has(x.base) && x.last > 0 && x.quoteVol > 0);
+      const seeded = rows.filter(x => SEED_SET.has(x.base));
+      if (seeded.length >= 10) rows = seeded;
+      rows.sort((a, b) => b.quoteVol - a.quoteVol);
+      const out = rows.slice(0, size);
+      if (out.length > 0) return out;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  // If Binance endpoints are blocked (451/403/timeout), fallback to Bybit public tickers
+  try {
+    const category = fapi ? 'linear' : 'spot';
+    const r = await fetch(`https://api.bybit.com/v5/market/tickers?category=${category}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (r.ok) {
+      const j = await r.json();
+      const list = j?.result?.list || [];
+      let rows = (Array.isArray(list) ? list : [])
+        .filter(x => x && typeof x.symbol === 'string' && x.symbol.endsWith('USDT'))
+        .map(x => ({ base: x.symbol.replace(/USDT$/, ''), last: parseFloat(x.lastPrice), quoteVol: parseFloat(x.turnover24h || x.volume24h || 0) }))
+        .filter(x => /^[A-Z0-9]{2,10}$/.test(x.base) && !BINANCE_BLOCKLIST.has(x.base) && x.last > 0 && x.quoteVol > 0);
+      const seeded = rows.filter(x => SEED_SET.has(x.base));
+      if (seeded.length >= 10) rows = seeded;
+      rows.sort((a, b) => b.quoteVol - a.quoteVol);
+      const out = rows.slice(0, size);
+      if (out.length > 0) return out;
+    }
+  } catch { /* Bybit fallback failed */ }
+
+  throw lastErr || new Error('binance: empty universe');
 }
 
 /** Top liquid CoinDCX SPOT (INR pair) bases by 24h turnover. */
@@ -166,8 +201,10 @@ export async function discoverSpotUniverse(size = DEFAULT_UNIVERSE_SIZE) {
       bases = rows.map(r => r.base);
     } catch { /* CoinDCX blocked → Binance fallback below */ }
     if (bases.length === 0) {
-      const bn = await _binanceTopBases(false, size); // spot fallback
-      bases = bn.map(x => x.base);
+      try {
+        const bn = await _binanceTopBases(false, size); // spot fallback
+        bases = bn.map(x => x.base);
+      } catch { /* Binance fallback failed → static majors below */ }
     }
     // Static majors are ALWAYS in (deep books even on quiet days).
     const set = new Set(bases);
@@ -189,8 +226,10 @@ export async function discoverFuturesUniverse(size = DEFAULT_UNIVERSE_SIZE) {
         .map(x => x.base);
     } catch { /* CoinDCX futures blocked → Binance futures fallback */ }
     if (bases.length === 0) {
-      const bn = await _binanceTopBases(true, size);
-      bases = bn.map(x => x.base);
+      try {
+        const bn = await _binanceTopBases(true, size);
+        bases = bn.map(x => x.base);
+      } catch { /* Binance fallback failed → static majors below */ }
     }
     const set = new Set(bases);
     for (const m of CRYPTO_UNIVERSE) if (!set.has(m)) bases.push(m);
@@ -587,7 +626,7 @@ async function _runScan(mkt, opts = {}) {
   let universe = [], tv = {}, priceMap = new Map(), priceSource = null;
   if (mkt === 'CRYPTO') {
     const [uni] = await Promise.all([discoverSpotUniverse().catch(() => [])]);
-    universe = uni;
+    universe = Array.isArray(uni) && uni.length > 0 ? uni : [...CRYPTO_UNIVERSE];
     try {
       const { fetchCoinDcxTickers } = await import('../cryptoStream.js');
       const tickers = await fetchCoinDcxTickers();
@@ -604,9 +643,12 @@ async function _runScan(mkt, opts = {}) {
         priceSource = `${source}-x-inr`;
       }
     }
+    if (priceMap.size === 0) {
+      priceSource = 'tradingview-approx';
+    }
   } else if (mkt === 'FUTURES') {
     const [uni] = await Promise.all([discoverFuturesUniverse().catch(() => [])]);
-    universe = uni;
+    universe = Array.isArray(uni) && uni.length > 0 ? uni : [...CRYPTO_UNIVERSE];
     try {
       const futRows = await fetchFuturesPrices();
       priceMap = new Map((Array.isArray(futRows) ? futRows : []).map(x => [x.base, x.last]));
@@ -618,6 +660,9 @@ async function _runScan(mkt, opts = {}) {
         priceMap = map; // USDT domain already
         priceSource = source;
       }
+    }
+    if (priceMap.size === 0) {
+      priceSource = 'tradingview-approx';
     }
   } else {
     universe = [...INDIA_UNIVERSE];

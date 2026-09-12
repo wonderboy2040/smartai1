@@ -61,7 +61,12 @@ export async function fetchCoinDcxTickers() {
   const p = (async () => {
     try {
       const r = await _cfetch(`https://api.coindcx.com/exchange/ticker?t=${Date.now()}`, {
-        signal: AbortSignal.timeout(4000),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+        signal: AbortSignal.timeout(8000),
       });
       if (!r.ok) throw new Error(`CoinDCX upstream ${r.status}`);
       const tickers = await r.json();
