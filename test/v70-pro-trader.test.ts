@@ -207,7 +207,7 @@ describe('v7.0 spot watcher partial TP (agent positions)', () => {
     expect(p.tp1Hit).toBe(true);
     expect(p.originalQty).toBe(10);          // frozen at the first leg
     expect(p.qty).toBe(6);                   // 10 − 40%
-    expect(p.exitStage).toBe('T2_HIT');
+    expect(p.exitStage).toBe('T1_HIT');
     // booked leg P&L: 4 qty × (104 − 100) = +16
     expect(p.bookedPnlINR).toBeCloseTo(16, 1);
     // breakeven lock: SL ≥ entry (trail already armed BE at 100)
@@ -218,7 +218,7 @@ describe('v7.0 spot watcher partial TP (agent positions)', () => {
   });
 
   it('T2 hit (after T1) → closes 40% more, SL → T1 (profit lock), runner 20%', async () => {
-    const pos = agentSpotPosition({ tp1Hit: true, originalQty: 10, qty: 6, bookedPnlINR: 16, exitStage: 'T2_HIT' });
+    const pos = agentSpotPosition({ tp1Hit: true, originalQty: 10, qty: 6, bookedPnlINR: 16, exitStage: 'T1_HIT' });
     __setJournalForTests({ entries: [], positions: [pos] });
     _tickers = [{ market: 'BTCINR', last_price: '107' }]; // T2 106.4 hit
 

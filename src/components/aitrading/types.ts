@@ -836,6 +836,8 @@ export interface AgentConfig {
   breakEvenAfterTp1: boolean;
   /** v9.7 — trend-flip exit protects manual positions too (user spec, default ON) */
   manageManualPositions?: boolean;
+  /** v10.2 — thin committee (<5 voters) AI score bump (default 10, range 0-15) */
+  quorumPenalty?: number;
 }
 
 /** v7.0: what the agent WOULD invest on the next STRONG signal. */
@@ -883,7 +885,7 @@ export interface AgentOpenPosition {
   bookedPnlUSDT?: number | null;
   remainingQty?: number | null;
   originalQty?: number | null;
-  exitStage?: 'ENTRY' | 'T2_HIT' | 'RUNNER' | 'CLOSED' | string;
+  exitStage?: 'ENTRY' | 'T1_HIT' | 'T2_HIT' | 'RUNNER' | 'CLOSED' | string;
 }
 
 export interface AgentPick {
@@ -895,6 +897,9 @@ export interface AgentPick {
   aiScore?: number | null;
   ltp: number | null;
   pair: string;
+  /** v10.2: models casting directional votes / total models */
+  voters?: number | null;
+  totalModels?: number | null;
   plan: { entry: number; stopLoss: number; target2: number; riskPct: number } | null;
 }
 
@@ -924,6 +929,7 @@ export interface AgentView {
    *  B3 rolling win-rate · B4 correlation guard) */
   accuracy?: {
     quorumAwareEntry: boolean;
+    quorumPenalty?: number;
     effectiveMinAiScore: number;
     thinCommitteeMinAiScore: number;
     dynamicTimeExit: boolean;
@@ -933,6 +939,19 @@ export interface AgentView {
     minRollingWinRate: number;
     winRateDowngraded: { at: number; winRate: number; trades: number } | null;
     correlationGuard: boolean;
+    /** v10.2 Step 1: near-miss diagnostics */
+    lastNearMisses?: Array<{
+      pair: string;
+      symbol: string;
+      aiScore: number;
+      needScore: number;
+      voters: number;
+      quorumCapped: boolean;
+      confidence: number;
+      agreement: number;
+    }>;
+    /** v10.2 Step 1: V2 models flag (Sentiment, InstFlow, Fundamentals) */
+    v2ModelsEnabled?: boolean;
   };
   today: {
     day: string;

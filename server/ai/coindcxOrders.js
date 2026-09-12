@@ -1085,7 +1085,7 @@ export function ratchetSl(side, currentSl, candidate) {
 export function exitStageOf(p) {
   if (p.status === 'OPEN' || p.status === 'UNKNOWN') {
     if (p.tp2Hit) return 'RUNNER';
-    if (p.tp1Hit) return 'T2_HIT';
+    if (p.tp1Hit) return 'T1_HIT';
     return 'ENTRY';
   }
   return 'CLOSED';

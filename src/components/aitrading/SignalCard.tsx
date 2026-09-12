@@ -791,6 +791,18 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
             {isNew && <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 text-[9px] font-black border border-cyan-500/30">NEW</span>}
             <span className={`text-sm font-black ${sideColor(signal.side)}`}>{long ? '▲ LONG' : '▼ SHORT'}</span>
             <span className={`px-2 py-0.5 rounded-md text-[10px] font-black tracking-wider ${g.cls}`}>{g.label}</span>
+            {(() => {
+              const vc = signal.voters ?? signal.participating;
+              const capped = vc < 5;
+              return (
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${capped ? 'bg-amber-500/15 text-amber-300 border-amber-500/40' : 'bg-slate-700/40 text-slate-300 border-slate-600/40'}`}
+                  title={capped ? 'Thin committee (<5 voters) — AI score bar raised by quorum penalty' : `${vc} models cast a directional vote`}
+                >
+                  {vc}/{signal.totalModels} votes{capped ? ' ⚠️ capped' : ''}
+                </span>
+              );
+            })()}
             {(signal.market === 'CRYPTO' || signal.market === 'FUTURES') && signal.executable && (
               <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${signal.market === 'FUTURES' ? 'bg-violet-500/15 text-violet-300 border-violet-500/30' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'}`}>⚡ {signal.market === 'FUTURES' ? 'FUTURES-ELIGIBLE' : 'EXECUTION-ELIGIBLE'}</span>
             )}

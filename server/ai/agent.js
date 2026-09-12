@@ -34,6 +34,8 @@ import { walletSnapshot, executeFuturesSignal, closeFuturesPosition, fetchUsdInr
 import { loadConfig, loadJournal, dailyStats, todayIST } from './coindcxOrders.js';
 // v10.1 accuracy upgrade (B4): pair-level correlation for the entry guard
 import { pairCorrelation } from './correlation.js';
+// v10.2: near-miss diagnostics + V2 model flag exposure (Step 1)
+import { v2ModelsEnabled } from './models.js';
 
 const AGENT_CONFIG_FILE = 'ai-agent-config.json';
 const AGENT_STATE_FILE = 'ai-agent-state.json';
@@ -86,6 +88,9 @@ export const AGENT_DEFAULTS = {
   // → soft self-downgrade LIVE→paper + Telegram alert.
   minRollingWinRate: 35,
   rollingWindow: 10,
+  // v10.2 Step 3: quorum penalty — thin committee (<5 voters) AI-score bump
+  // (was hardcoded +10; now config-tunable 0-15)
+  quorumPenalty: 10,
 };
 
 export function loadAgentConfig() {
@@ -116,6 +121,8 @@ const NUM_CLAMPS = {
   // v7.0 PRO TRADER split knobs (T1% + T2% ≤ 90 enforced below)
   tp1ClosePct: [10, 80],
   tp2ClosePct: [10, 80],
+  // v10.2 Step 3: quorum penalty range
+  quorumPenalty: [0, 15],
 };
 export function updateAgentConfig(patch = {}) {
   const cfg = loadAgentConfig();
@@ -168,6 +175,13 @@ function freshState() {
     // rolling win-rate floor tripped a LIVE→paper downgrade (re-arms
     // only when the user re-starts the agent).
     winRateDowngraded: null,
+    // v10.2 Step 1: near-miss signals from the last scan (top-3 closest
+    // signals that ALMOST qualified — diagnostic for "kyun nahi enter kiya")
+    lastNearMisses: [],
+    // v10.2 Step 5: futures margin restore alert flag — prevents spam,
+    // fires once when margin drops below 2 USDT, resets+notifies when
+    // margin restores above 2 USDT.
+    futuresMarginAlerted: false,
     log: [],
   };
 }
@@ -411,6 +425,18 @@ async function _tick(deps, sendTelegram) {
     ? true // practice-equity fallback keeps paper futures alive
     : ((wallet?.deployableFuturesUSDT ?? _state.lastWallet?.deployableFuturesUSDT ?? 0) >= 2);
 
+  // v10.2 Step 5: FUTURES MARGIN RESTORE alert — one-time positive
+  // Telegram when margin recovers (was < 2 USDT, now >= 2 again).
+  // The flag prevents spam: set when margin drops, reset+notify
+  // when it restores.
+  if (!futuresViable && coindcxConnected()) {
+    _state.futuresMarginAlerted = true;
+  } else if (futuresViable && _state.futuresMarginAlerted) {
+    _state.futuresMarginAlerted = false;
+    await notify(sendTelegram, '🤖 <b>Futures margin restored</b> — futures desk phir se active. Deployable margin ≥ 2 USDT ho gaya hai.');
+    log('info', 'Futures margin restored — futures desk active again');
+  }
+
   // ---- daily loss cap (agent's own, on top of the global ₹ cap) ----
   if (_state.pausedToday) {
     persistState(); return;
@@ -510,7 +536,7 @@ async function _tick(deps, sendTelegram) {
   // across the voting weight) is already quorum-honest, so it stays.
   const voterCount = (s) => Number(s?.voters ?? s?.participating ?? 0);
   const qualifies = (s) => !!(s && s.plan && s.side && (
-    signalOf(s) >= (voterCount(s) >= 5 ? cfg.minAiScore : cfg.minAiScore + 10) || (
+    signalOf(s) >= (voterCount(s) >= 5 ? cfg.minAiScore : cfg.minAiScore + (cfg.quorumPenalty ?? 10)) || (
       s.grade === 'STRONG' && s.executable
       && (s.confidence ?? 0) >= cfg.minConfidence
       && (s.agreement ?? 0) >= cfg.minAgreement
@@ -590,7 +616,42 @@ async function _tick(deps, sendTelegram) {
     }
   }
   if (candidates.length === 0) {
-    maybeLogSkip('no_candidates', `scan: 0 candidates ≥ ${cfg.minAiScore} AI score / ${cfg.minConfidence}% conf + ${Math.round(cfg.minAgreement * 100)}% agreement${cfg.desks.futures && !futuresViable ? ' (futures margin ke karan sirf spot scope)' : ''}`);
+    // v10.2 Step 1: NEAR-MISS DIAGNOSTICS — capture the top-3 signals
+    // closest to qualifying. Exact reason pata chalega: was it score,
+    // voters, quorum-cap, or confidence?
+    const nearMisses = [];
+    for (const board of scans) {
+      if (!board?.ok) continue;
+      for (const s of (board.signals || [])) {
+        if (!s?.plan || !s.side) continue;
+        const ai = signalOf(s);
+        const vc = voterCount(s);
+        const quorumCapped = vc < 5;
+        const needScore = quorumCapped ? cfg.minAiScore + (cfg.quorumPenalty ?? 10) : cfg.minAiScore;
+        nearMisses.push({
+          pair: pairOfSignal(s),
+          symbol: s.symbol,
+          aiScore: ai,
+          needScore,
+          voters: vc,
+          quorumCapped,
+          confidence: Math.round(s.confidence ?? 0),
+          agreement: Math.round((s.agreement ?? 0) * 100),
+        });
+      }
+    }
+    nearMisses.sort((a, b) => (b.aiScore - a.aiScore) || (b.confidence - a.confidence));
+    const top3 = nearMisses.slice(0, 3);
+    _state.lastNearMisses = top3;
+    if (top3.length > 0) {
+      const lines = top3.map(nm =>
+        `closest: ${nm.symbol} score=${nm.aiScore}/${nm.needScore} (${nm.voters} voters${nm.quorumCapped ? ' — QUORUM-CAPPED' : ''}) conf=${nm.confidence}%`
+      );
+      log('skip', `scan: 0 candidates — near-misses: ${lines.join(' · ')}`);
+    } else {
+      log('skip', `scan: 0 candidates ≥ ${cfg.minAiScore} AI score / ${cfg.minConfidence}% conf + ${Math.round(cfg.minAgreement * 100)}% agreement${cfg.desks.futures && !futuresViable ? ' (futures margin ke karan sirf spot scope)' : ''}`);
+    }
+    maybeLogSkip('no_candidates', `scan: 0 candidates ≥ ${cfg.minAiScore} AI score${cfg.desks.futures && !futuresViable ? ' (futures margin ke karan sirf spot scope)' : ''}`);
     persistState(); return;
   }
   candidates.sort((a, b) => (signalOf(b) - signalOf(a)) || (b.confidence - a.confidence));
@@ -902,6 +963,8 @@ export async function agentStatus(deps) {
         if (b?.ok) {
           picks[m] = (b.signals || []).filter(s => s.grade === 'STRONG' || s.grade === 'ACTION').slice(0, 3)
             .map(s => ({ symbol: s.symbol, side: s.side, grade: s.grade, confidence: s.confidence, aiScore: s.superIntel?.aiScore ?? null, ltp: s.ltp, pair: pairOfSignal(s),
+              voters: s.voters ?? s.participating ?? null,
+              totalModels: s.totalModels ?? null,
               plan: s.plan ? { entry: s.plan.entry, stopLoss: s.plan.stopLoss, target2: s.plan.target2, riskPct: s.plan.riskPct } : null }));
         }
       }));
@@ -970,8 +1033,9 @@ export async function agentStatus(deps) {
   const rollingWR = rollingAgentWinRate(j, cfg.rollingWindow);
   const accuracy = {
     quorumAwareEntry: true, // B1 — thin committees need a HIGHER AI-score bar
+    quorumPenalty: cfg.quorumPenalty ?? 10,
     effectiveMinAiScore: cfg.minAiScore,
-    thinCommitteeMinAiScore: cfg.minAiScore + 10, // applied when voters < 5
+    thinCommitteeMinAiScore: cfg.minAiScore + (cfg.quorumPenalty ?? 10), // applied when voters < 5
     dynamicTimeExit: cfg.dynamicTimeExit !== false, // B2
     openWindowOverrides: Object.entries(_state.entryMeta || {})
       .filter(([, v]) => v && v.atrPct != null && cfg.dynamicTimeExit !== false)
@@ -982,6 +1046,9 @@ export async function agentStatus(deps) {
     minRollingWinRate: cfg.minRollingWinRate,
     winRateDowngraded: _state.winRateDowngraded || null,
     correlationGuard: cfg.correlationGuard !== false, // B4
+    // v10.2 Step 1: near-miss diagnostics + V2 model flag
+    lastNearMisses: _state.lastNearMisses || [],
+    v2ModelsEnabled: typeof v2ModelsEnabled === 'function' ? v2ModelsEnabled() : false,
   };
   if (_state.winRateDowngraded) {
     blockers.push({ key: 'win_rate_downgrade', soft: true, text: `📉 Rolling win-rate ${_state.winRateDowngraded.winRate}% (last ${_state.winRateDowngraded.trades}) — agent paper mode me self-downgrade ho chuka hai. LIVE re-arm karne se pehle review karo.` });

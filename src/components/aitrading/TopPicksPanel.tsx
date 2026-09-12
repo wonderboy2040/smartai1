@@ -103,6 +103,19 @@ export const TopPicksPanel = memo(function TopPicksPanel({ picks, market, deskLa
                     {p.grade === 'STRONG'
                       ? <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[9px] font-black border border-emerald-500/30">★ STRONG</span>
                       : <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 text-[9px] font-black border border-cyan-500/30">⚡ ACTION</span>}
+                    {(() => {
+                      const vc = p.voters ?? p.participating;
+                      if (vc == null || !p.totalModels) return null;
+                      const capped = vc < 5;
+                      return (
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${capped ? 'bg-amber-500/15 text-amber-300 border-amber-500/40' : 'bg-slate-700/40 text-slate-300 border-slate-600/40'}`}
+                          title={capped ? 'Thin committee (<5 voters) — AI score bar raised by quorum penalty' : `${vc} models voted`}
+                        >
+                          {vc}/{p.totalModels} votes{capped ? ' ⚠️ capped' : ''}
+                        </span>
+                      );
+                    })()}
                     {p.ltp != null && (
                       <span className="text-[11px] font-mono text-slate-300">{price(p.ltp)}
                         {p.changePct != null && (

@@ -54,6 +54,7 @@ const LOG_STYLE: Record<string, string> = {
 // v7.0 PRO TRADER: exit-stage chip colors (ENTRY → T1 → T2 → RUNNER)
 const STAGE_STYLE: Record<string, { label: string; cls: string }> = {
   ENTRY: { label: '🟢 ENTRY', cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40' },
+  T1_HIT: { label: '🟡 T1 HIT', cls: 'bg-amber-500/15 text-amber-300 border-amber-500/40' },
   T2_HIT: { label: '🟡 T1 HIT', cls: 'bg-amber-500/15 text-amber-300 border-amber-500/40' },
   RUNNER: { label: '⚡ RUNNER', cls: 'bg-orange-500/15 text-orange-300 border-orange-500/40' },
 };
@@ -203,11 +204,12 @@ function TradeSlots({ used, total, pnlINR, lossCapINR }: { used: number; total: 
   );
 }
 
-type CfgKey = 'maxTradesPerDay' | 'minAiScore' | 'minConfidence' | 'riskPerTradePct' | 'maxLeverage' | 'maxHoldMin' | 'cooldownMin' | 'dailyLossCapPct';
+type CfgKey = 'maxTradesPerDay' | 'minAiScore' | 'minConfidence' | 'riskPerTradePct' | 'maxLeverage' | 'maxHoldMin' | 'cooldownMin' | 'dailyLossCapPct' | 'quorumPenalty';
 const CFG_FIELDS: { key: CfgKey; label: string; min: number; max: number; step: number; suffix: string; hint: string }[] = [
   { key: 'maxTradesPerDay', label: 'Trades/day', min: 1, max: 10, step: 1, suffix: '', hint: 'user spec: 3' },
   { key: 'minAiScore', label: 'Min AI score', min: 55, max: 95, step: 1, suffix: '', hint: '75+ = auto entry (user spec)' },
   { key: 'minConfidence', label: 'Min confidence', min: 55, max: 95, step: 1, suffix: '%', hint: 'legacy STRONG bar' },
+  { key: 'quorumPenalty', label: 'Quorum Penalty', min: 0, max: 15, step: 1, suffix: '', hint: 'thin committee (<5 voters) AI score bump' },
   { key: 'riskPerTradePct', label: 'Risk/trade', min: 0.25, max: 10, step: 0.25, suffix: '%', hint: '% of wallet equity' },
   { key: 'maxLeverage', label: 'Max leverage', min: 1, max: 10, step: 1, suffix: 'x', hint: 'futures ceiling' },
   { key: 'maxHoldMin', label: 'Max hold', min: 5, max: 480, step: 5, suffix: 'm', hint: 'time-exit' },
@@ -333,7 +335,7 @@ function OpenPositions({ positions, cfg }: { positions: AgentView['openPositions
             {splitActive && (
               <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
                 <span className={`px-1.5 py-0.5 rounded border text-[9px] font-black ${stage.cls}`}>
-                  {stage.label}{p.exitStage === 'T2_HIT' ? ' (40% booked, SL→BE)' : p.exitStage === 'RUNNER' ? ' (80% booked, trailing)' : ''}
+                  {stage.label}{(p.exitStage === 'T1_HIT' || p.exitStage === 'T2_HIT') ? ' (40% booked, SL→BE)' : p.exitStage === 'RUNNER' ? ' (80% booked, trailing)' : ''}
                 </span>
                 <div className="flex items-center gap-1" title="qty remaining vs original">
                   <div className="w-16 h-1.5 rounded-full bg-black/40 overflow-hidden">
@@ -402,7 +404,15 @@ function PickStrip({ title, picks, accent }: { title: string; picks: AgentPick[]
               {pick.aiScore != null && (
                 <span className="text-[9px] font-black text-violet-300/90 bg-violet-500/10 border border-violet-500/25 rounded px-1.5 py-0.5" title="superintelligence AI score — 75+ par agent auto-entry karta hai">🧠 {pick.aiScore}</span>
               )}
-              <span className={`${pick.aiScore != null ? '' : 'ml-auto'} text-[9px] font-black text-amber-300/90 bg-amber-500/10 border border-amber-500/25 rounded px-1.5 py-0.5`}>{pick.grade}</span>
+              {pick.voters != null && (
+                <span
+                  className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${pick.voters < 5 ? 'bg-amber-500/15 text-amber-300 border-amber-500/40' : 'bg-slate-700/40 text-slate-300 border-slate-600/40'}`}
+                  title={pick.voters < 5 ? 'Thin committee (<5 voters) — quorum penalty applied' : `${pick.voters} models voted`}
+                >
+                  {pick.voters}v{pick.voters < 5 ? ' ⚠️' : ''}
+                </span>
+              )}
+              <span className="text-[9px] font-black text-amber-300/90 bg-amber-500/10 border border-amber-500/25 rounded px-1.5 py-0.5">{pick.grade}</span>
             </div>
             <div className="flex items-center gap-1.5" title="model confidence">
               <div className="flex-1 h-1 rounded-full bg-black/40 overflow-hidden">
@@ -670,7 +680,24 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
                 corr-guard |r|≤0.7
               </span>
             )}
+            {acc.v2ModelsEnabled != null && (
+              <span className={`px-2 py-0.5 rounded-md text-[9px] font-mono border ${acc.v2ModelsEnabled ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-black/30 border-slate-600/40 text-slate-500'}`}
+                title={acc.v2ModelsEnabled ? 'V2 models (Sentiment, InstFlow, Fundamentals) enabled (14 voters)' : 'V2 models disabled — set AI_ENABLE_V2_MODELS=true in Render'}>
+                V2 models {acc.v2ModelsEnabled ? 'ON (14 models)' : 'OFF (11 models)'}
+              </span>
+            )}
           </div>
+          {acc.lastNearMisses && acc.lastNearMisses.length > 0 && (
+            <div className="mt-1.5 pt-1.5 border-t border-cyan-500/15 flex items-center gap-1.5 flex-wrap text-[9px] font-mono">
+              <span className="text-amber-300 font-bold">NEAR-MISSES:</span>
+              {acc.lastNearMisses.map((nm) => (
+                <span key={nm.pair} className="px-1.5 py-0.5 rounded bg-black/30 text-slate-300 border border-slate-700/40"
+                  title={`${nm.symbol}: score ${nm.aiScore} (needed ${nm.needScore}), ${nm.voters} voters${nm.quorumCapped ? ' (QUORUM-CAPPED)' : ''}, ${nm.confidence}% conf`}>
+                  {nm.symbol} {nm.aiScore}/{nm.needScore} ({nm.voters}v{nm.quorumCapped ? ' ⚠️' : ''})
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
