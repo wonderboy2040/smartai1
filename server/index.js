@@ -2354,6 +2354,28 @@ app.use((err, _req, res, _next) => {
   }
 });
 
+// ------------------------------------------------------------
+// v10.3.1 DURABLE BOOT RESTORE — AWAITED BEFORE THE PORT OPENS.
+// Render's ephemeral filesystem starts every boot with an empty
+// server/data/. The old fire-and-forget restore left a window where
+// a watcher tick could durablePut an EMPTY journal over the good
+// backup — the exact "site refresh par saare positions clear"
+// bug (refresh after idle = Render spin-down cold boot = wiped
+// journal with no restore). Now the trading state (journal with
+// open positions, risk config, both agents' state, credentials)
+// hydrates BEFORE any route can serve or write. Bounded by an 8s
+// race so a dead GitHub can never block boot — trading continues
+// from the local (empty) disk exactly as before in that case.
+// ------------------------------------------------------------
+try {
+  await Promise.race([
+    durableBootRestoreAll(),
+    new Promise(resolve => { const t = setTimeout(resolve, 8000); if (typeof t.unref === 'function') t.unref(); }),
+  ]);
+} catch (e) {
+  console.warn('[mcp/durable] boot restore error:', e?.message || e);
+}
+
 app.listen(PORT, () => {
   const ready = Object.entries(KEYS).filter(([, v]) => v).map(([k]) => k);
   console.log(`[wealth-ai] server on :${PORT} â€” providers: ${ready.join(', ') || 'NONE'}`);
@@ -2362,14 +2384,8 @@ app.listen(PORT, () => {
   // No self-ping keepalive (Render ToS violation).
   // For 24x7 uptime on free tier, use an EXTERNAL uptime monitor
   // (e.g. UptimeRobot) that pings /health every 5 min.
-
-  // Durable MCP state boot-restore (INDMoney tokens + CoinDCX keys + the
-  // asset snapshot + symbol cache re-hydrated from the encrypted GitHub
-  // backup) — fire-and-forget; it lands within a second or two, well before
-  // the first authenticated /assets request. This is what makes credentials
-  // survive Render's ephemeral-disk restarts without re-entering anything.
-  durableBootRestoreAll().catch((e) => console.warn('[mcp/durable] boot restore error:', e?.message || e));
-
-  // Start Telegram bot with auto-restart
-  startBot();
 });
+
+// Start Telegram bot with auto-restart (after listen — the webhook
+// route + long-poll bot need the express app wired and serving).
+startBot();

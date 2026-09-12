@@ -228,20 +228,41 @@ function credGuard() {
   return creds;
 }
 
-/** DF (derivatives-futures) wallet rows: [{ currency, total, free, locked, crossMargin }] */
+/** DF (derivatives-futures) wallet rows: [{ currency, total, free, locked, crossMargin }]
+ *
+ * 2025 FUTURES API SEMANTICS (docs.coindcx.com — verified against the
+ * official field reference + the "Total wallet balance" formula):
+ *   • balance            = USABLE (free) balance — NOT the total. The
+ *                          old pre-migration reading (`balance` = total,
+ *                          free = total − locked) now computes free
+ *                          NEGATIVE and clips to 0 — the exact
+ *                          "3.01 USDT available par site kuch nahi
+ *                          dikha raha" bug. `free` IS `balance`.
+ *   • locked_balance     = total initial margin locked in ISOLATED
+ *                          margined orders/positions
+ *   • cross_order_margin = total initial margin locked in CROSS orders
+ *   • cross_user_margin  = total initial margin locked in CROSS positions
+ *   • Total wallet balance = balance + locked_balance
+ *                          + cross_order_margin + cross_user_margin
+ * Wrapper tolerance: bare array (documented), `{wallets:[]}`,
+ * `{data:[]}` and `{balances:[]}` are all accepted. */
 export async function fetchFuturesWallets() {
   const { apiKey, secret } = credGuard();
   const resp = await coindcxPrivate(WALLETS_PATH, apiKey, secret, {});
-  const list = Array.isArray(resp) ? resp : (Array.isArray(resp?.wallets) ? resp.wallets : []);
+  const list = Array.isArray(resp) ? resp
+    : (Array.isArray(resp?.wallets) ? resp.wallets
+      : (Array.isArray(resp?.data) ? resp.data
+        : (Array.isArray(resp?.balances) ? resp.balances : [])));
   return list.map(w => {
-    const total = num(w.balance) || 0;
-    const locked = (num(w.locked_balance) || 0) + (num(w.cross_order_margin) || 0);
+    const free = num(w.balance) || 0;
+    const lockedIso = num(w.locked_balance) || 0;
+    const crossOrder = num(w.cross_order_margin) || 0;
     const crossUser = num(w.cross_user_margin) || 0;
     return {
-      currency: String(w.currency_short_name || '').toUpperCase(),
-      total: r2(total),
-      locked: r2(locked),
-      free: r2(Math.max(0, total - locked - crossUser)),
+      currency: String(w.currency_short_name || w.currency || '').toUpperCase(),
+      total: r2(free + lockedIso + crossOrder + crossUser),
+      locked: r2(lockedIso + crossOrder),
+      free: r2(Math.max(0, free)),
       crossUserMargin: r2(crossUser),
     };
   }).filter(w => w.currency && w.total > 0);

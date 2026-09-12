@@ -21,6 +21,11 @@
 import { loadJSON, saveJSON } from './store.js';
 import { istDayKey, istMinutes, isNseMarketOpen, dayKeyFor } from './time.js';
 import { isCryptoSymbolBase } from './engine.js';
+// v10.3.1: encrypted durable mirror (paper-trades already had the raw
+// scheduleBackup; the track record now rides the same encrypted
+// durableBootRestore path as the trading journal) — a Render spin-down
+// can no longer reset the accountability history to zero.
+import { durablePut } from '../mcp/durable.js';
 
 const FILE = 'tracked-signals.json';
 const MAX_ROWS = 800;          // ~40/day × 20 days of history
@@ -38,12 +43,18 @@ const _marketOf = (rowOrSig) => {
 let _state = loadJSON(FILE, { signals: [] });
 let _saveTimer = null;
 
+/** v10.3.1: durable boot-restore hook — _state was loaded at module-eval
+ * time (before the pre-listen durable restore rehydrated the disk file).
+ * Re-read so the accountability history survives Render spin-downs. */
+export function __reloadTrackRecordForBoot() { _state = loadJSON(FILE, { signals: [] }); }
+
 function _persist() {
   // Debounced write (max one write/sec under bursty updates).
   if (_saveTimer) return;
   _saveTimer = setTimeout(() => {
     _saveTimer = null;
     saveJSON(FILE, _state);
+    try { durablePut(FILE, _state); } catch { /* durable optional */ }
   }, 1000);
   if (typeof _saveTimer.unref === 'function') _saveTimer.unref();
 }

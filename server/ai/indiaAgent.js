@@ -39,7 +39,7 @@ import { loadJSON, saveJSON } from '../lib/store.js';
 import { durablePut } from '../mcp/durable.js';
 import { isNseOpen, fetchTVIndiaBatch } from './data.js';
 import { dhanConnected, dhanPlaceOrder, dhanCancelOrder } from './dhan.js';
-import { loadConfig, loadJournal, withJournalLock, pushEntry, todayIST } from './coindcxOrders.js';
+import { loadConfig, loadJournal, saveJournal, withJournalLock, pushEntry, todayIST } from './coindcxOrders.js';
 import { executeIndiaSignal, closeIndiaPosition, istHM, IST_SQUAREOFF, IST_ENTRY_LAST, IST_ENTRY_FIRST } from './indiaOrders.js';
 // v10.2 parity: V2 model flag exposure in the status view
 import { v2ModelsEnabled } from './models.js';
@@ -153,6 +153,11 @@ function loadState() {
   return saved && typeof saved === 'object' ? { ...freshState(), ...saved } : freshState();
 }
 let _state = loadState();
+/** v10.3.1: durable boot-restore hook — _state was loaded at module-eval
+ * time (BEFORE the pre-listen durable restore rehydrated the disk file
+ * on a fresh Render boot). Re-read so a restart resumes with the real
+ * quota/log/exposure state instead of a blank one. */
+export function __reloadStateForBoot() { _state = loadState(); }
 function persistState() {
   saveJSON(AGENT_STATE_FILE, _state);
   try { durablePut(AGENT_STATE_FILE, _state); } catch { /* best-effort */ }

@@ -176,12 +176,42 @@ describe('futuresOrderBody', () => {
 });
 
 describe('futures wallets + snapshot', () => {
-  it('computes free = balance − locked − cross margins (never negative)', async () => {
+  it('2025 API: balance IS free — total = balance + locked + cross margins', async () => {
     const rows = await fetchFuturesWallets();
     const usdt = rows.find(r => r.currency === 'USDT');
-    // 6.169 − 0.5 (locked) − 0.2 (cross order) − 0.1 (cross user) = 5.369…
-    expect(usdt.free).toBeCloseTo(5.37, 1);
+    // balance 6.169 = USABLE (free); locked_balance 0.5 (isolated) +
+    // cross_order 0.2 = locked 0.7; cross_user 0.1 rides separately;
+    // total = 6.169 + 0.5 + 0.2 + 0.1 = 6.969…
+    expect(usdt.free).toBeCloseTo(6.17, 1);
     expect(usdt.locked).toBeCloseTo(0.7, 1);
+    expect(usdt.crossUserMargin).toBeCloseTo(0.1, 2);
+    expect(usdt.total).toBeCloseTo(6.97, 1);
+  });
+  it('USER BUG CASE: "3.01 USDT available" shows 3.01 free (not a 0-clip)', async () => {
+    // The exact live report: futures margin 3.01 USDT available while the
+    // site showed nothing. Old (pre-2025) reading treated balance as TOTAL
+    // and subtracted locked margins from it — free went negative and
+    // clipped to 0. Under the documented semantics free IS balance.
+    mockPrivate.mockImplementation(async (path) => {
+      if (path === '/exchange/v1/derivatives/futures/wallets') return [
+        { id: 'w1', currency_short_name: 'USDT', balance: '3.01', locked_balance: '2.5', cross_order_margin: '0.0', cross_user_margin: '0.0' },
+      ];
+      if (path === '/exchange/v1/users/balances') return [];
+      throw new Error(`unexpected ${path}`);
+    });
+    const rows = await fetchFuturesWallets();
+    expect(rows.find(r => r.currency === 'USDT')?.free).toBeCloseTo(3.01, 2);
+  });
+  it('wrapper tolerance: {data:[…]} and {wallets:[…]} both parse', async () => {
+    mockPrivate.mockImplementation(async (path) => {
+      if (path === '/exchange/v1/derivatives/futures/wallets') return {
+        data: [{ id: 'w1', currency_short_name: 'USDT', balance: '4.5', locked_balance: '0', cross_order_margin: '0', cross_user_margin: '0' }],
+      };
+      if (path === '/exchange/v1/users/balances') return [];
+      throw new Error(`unexpected ${path}`);
+    });
+    const rows = await fetchFuturesWallets();
+    expect(rows.find(r => r.currency === 'USDT')?.free).toBeCloseTo(4.5, 2);
   });
   it('walletSnapshot carries spot + futures + INR-equivalent equity', async () => {
     mockPrivate.mockImplementation(async (path) => {
@@ -195,10 +225,10 @@ describe('futures wallets + snapshot', () => {
     const snap = await walletSnapshot();
     expect(snap.ok).toBe(true);
     expect(snap.usdInr).toBe(84);
-    // 8400 + 10×84 + 6.169×84 = 8400 + 840 + 518.2 ≈ 9758
+    // 8400 + 10×84 + (6.169+0.5+0.2+0.1)×84 = 8400 + 840 + 585.4 ≈ 9825
     expect(snap.equityINR).toBeGreaterThan(9500);
     expect(snap.equityINR).toBeLessThan(10000);
-    expect(snap.deployableFuturesUSDT).toBeCloseTo(5.37, 1);
+    expect(snap.deployableFuturesUSDT).toBeCloseTo(6.17, 1);
     expect(snap.deployableSpotINR).toBe(8400);
   });
   it('walletSnapshot NEVER throws — a dead leg degrades with the reason', async () => {

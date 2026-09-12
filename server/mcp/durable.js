@@ -154,6 +154,16 @@ export async function durableBootRestore(file, opts = {}) {
  * every sync), then the asset snapshot, then the symbol cache.
  * Fire-and-forget from index.js — GitHub round-trip is ~500ms-2s and
  * the first authenticated /assets hit lands after hydration anyway.
+ *
+ * v10.3.1 CRITICAL ADDITION — TRADING STATE (user-reported bug:
+ * "site refresh par saare positions clear ho rahe hai"):
+ * Render free-tier spin-downs wipe server/data/ — and the trading
+ * JOURNAL was durablePut'd on every save but NEVER restored on boot,
+ * so every restart silently zeroed open paper/live positions, the
+ * risk config and both agents' quota/log state. The same files now
+ * hydrate FIRST (before any route or watcher can write an empty
+ * journal over a good backup). The intraday desk's track-record and
+ * journal state ride the same encrypted path.
  */
 export async function durableBootRestoreAll() {
   if (!durableConfigured()) {
@@ -163,6 +173,69 @@ export async function durableBootRestoreAll() {
     return {};
   }
   const restored = {};
+
+  // 0) TRADING STATE FIRST — the journal is the one file a live route
+  // could conceivably write during boot (watcher tick, agent resume).
+  // Hydrating it before anything else runs removes that race. ts on
+  // the journal is the max entry/position timestamp (monotonic-ish);
+  // agent/config/state files carry their own updatedAt / ts fields.
+  const maxTs = (arr) => (Array.isArray(arr) && arr.length
+    ? arr.reduce((m, x) => { const t = Number(x?.ts || x?.openedAt || x?.closedAt) || 0; return t > m ? t : m; }, 0)
+    : 0);
+  const journal = await durableBootRestore('ai-trading-journal.json', {
+    isUsable: (s) => !!(s && (Array.isArray(s.positions) || Array.isArray(s.entries))
+      && ((s.positions || []).length > 0 || (s.entries || []).length > 0)),
+    localTs: (s) => Math.max(maxTs(s?.positions), maxTs(s?.entries)),
+    remoteTs: (s) => Math.max(maxTs(s?.positions), maxTs(s?.entries)),
+  });
+  if (journal) restored.tradingJournal = true;
+  const tcfg = await durableBootRestore('ai-trading-config.json', {
+    isUsable: (s) => !!(s && typeof s === 'object' && Object.keys(s).length),
+    localTs: (s) => s?.liveConfirmedAt || s?.updatedAt || 0,
+    remoteTs: (s) => s?.liveConfirmedAt || s?.updatedAt || 0,
+  });
+  if (tcfg) restored.tradingConfig = true;
+  // Both agents' quota/log/exposure state + their configs (the
+  // journal accounting is source-scoped, but the RUN state — started/
+  // stopped, today's trade count, ring log — lived only on the
+  // ephemeral disk before this restore existed).
+  for (const [file, key, tsKey] of [
+    ['ai-agent-state.json', 'cryptoAgentState', 'ts'],
+    ['ai-agent-config.json', 'cryptoAgentConfig', 'ts'],
+    ['india-agent-state.json', 'indiaAgentState', 'ts'],
+    ['india-agent-config.json', 'indiaAgentConfig', 'ts'],
+    // Intraday desk accountability (v10.3.1): the signal track-record
+    // and the AI trade journal were plain saveJSON before — restarts
+    // reset the track record to zero. They durablePut on save now.
+    ['tracked-signals.json', 'trackedSignals', 'ts'],
+    ['trade-journal.json', 'tradeJournal', 'ts'],
+  ]) {
+    const st = await durableBootRestore(file, {
+      isUsable: (s) => !!(s && typeof s === 'object'
+        && (Array.isArray(s.signals) || Array.isArray(s.entries) || Array.isArray(s.trades)
+          || Object.keys(s).some(k => !['signals', 'entries', 'trades'].includes(k)))),
+      localTs: (s) => Math.max(maxTs(s?.signals), maxTs(s?.entries), Number(s?.updatedAt) || 0, Number(s?.[tsKey]) || 0),
+      remoteTs: (s) => Math.max(maxTs(s?.signals), maxTs(s?.entries), Number(s?.updatedAt) || 0, Number(s?.[tsKey]) || 0),
+    });
+    if (st) restored[key] = true;
+  }
+  // v10.3.1: the agent/accountability modules captured their state at
+  // MODULE-EVAL time — before this restore wrote the disk files. Drop
+  // those in-memory copies so the next read sees the hydrated disk
+  // (same pattern the INDMoney restore uses). Dynamic imports — no
+  // static cycle with agent.js / indiaAgent.js.
+  for (const [mod, hook] of [
+    ['../ai/agent.js', '__reloadStateForBoot'],
+    ['../ai/indiaAgent.js', '__reloadStateForBoot'],
+    ['../intraday/trackRecord.js', '__reloadTrackRecordForBoot'],
+    ['../intraday/journal.js', '__reloadJournalForBoot'],
+  ]) {
+    try {
+      const m = await import(mod);
+      if (typeof m?.[hook] === 'function') m[hook]();
+    } catch { /* non-fatal */ }
+  }
+
   // 1) INDMoney OAuth tokens.
   const indm = await durableBootRestore('mcp-indmoney.json', {
     isUsable: (s) => !!(s && s.tokens && s.tokens.accessToken),

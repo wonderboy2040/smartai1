@@ -77,7 +77,7 @@ const WalletCard = memo(function WalletCard() {
   }, []);
   const inr = w?.spot?.inr as { free?: number; locked?: number } | undefined;
   const usdt = w?.spot?.usdt as { free?: number; locked?: number } | undefined;
-  const fut = w?.futures?.usdt as { free?: number; locked?: number; crossUserMargin?: number | null } | undefined;
+  const fut = w?.futures?.usdt as { free?: number; locked?: number; total?: number; crossUserMargin?: number | null } | undefined;
   const err = w?.spot?.error || w?.futures?.error;
   return (
     <div className="quantum-panel rounded-2xl p-4 bg-gradient-to-br from-amber-500/[0.06] via-transparent to-violet-500/[0.05] border border-amber-500/15" aria-label="CoinDCX wallet">
@@ -106,6 +106,11 @@ const WalletCard = memo(function WalletCard() {
         <div className="bg-black/25 rounded-xl p-2.5 text-center">
           <div className="text-[9px] font-black text-slate-500 tracking-wider">FUTURES MARGIN (USDT)</div>
           <div className="text-sm font-black font-mono text-violet-300">{fut?.free != null ? `${fut.free.toLocaleString('en-US', { maximumFractionDigits: 2 })}` : '—'}</div>
+          {/* v10.3.1: 2025 futures API — `balance` IS the free margin; locked
+              (isolated + cross-order) aur total ab honest subtitle me dikhte
+              hain instead of the old silent 0-clip. */}
+          {(fut?.locked != null && fut.locked > 0) && <div className="text-[9px] font-mono text-slate-500">locked {fut.locked.toFixed(2)}</div>}
+          {(fut?.total != null && fut.total > 0) && <div className="text-[9px] font-mono text-slate-600">total {fut.total.toFixed(2)}</div>}
           {fut?.crossUserMargin != null && fut.crossUserMargin > 0 && <div className="text-[9px] font-mono text-amber-400/80">cross {fut.crossUserMargin.toFixed(2)}</div>}
         </div>
         <div className="bg-black/25 rounded-xl p-2.5 text-center">

@@ -190,6 +190,11 @@ function loadState() {
   return saved && typeof saved === 'object' ? { ...freshState(), ...saved } : freshState();
 }
 let _state = loadState();
+/** v10.3.1: durable boot-restore hook — _state was loaded at module-eval
+ * time (BEFORE the pre-listen durable restore rehydrated the disk file
+ * on a fresh Render boot). Re-read so a restart resumes with the real
+ * quota/log/exposure state instead of a blank one. */
+export function __reloadStateForBoot() { _state = loadState(); }
 function persistState() {
   saveJSON(AGENT_STATE_FILE, _state);
   try { durablePut(AGENT_STATE_FILE, _state); } catch { /* best-effort */ }

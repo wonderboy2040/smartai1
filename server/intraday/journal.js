@@ -13,6 +13,9 @@
 import { askLLM } from './agent.js';
 import { istDayKey } from './time.js';
 import { loadJSON, saveJSON } from './store.js';
+// v10.3.1: encrypted durable mirror — the AI trade journal (EOD reviews,
+// weekly reports, closed-trade entries) survives Render spin-downs now.
+import { durablePut } from '../mcp/durable.js';
 
 const FILE = 'trade-journal.json';
 const MAX_ENTRIES = 800;
@@ -20,11 +23,17 @@ const MAX_ENTRIES = 800;
 let _state = loadJSON(FILE, { entries: [], reviews: {}, weekly: {} });
 let _saveTimer = null;
 
+/** v10.3.1: durable boot-restore hook — _state was loaded at module-eval
+ * time (before the pre-listen durable restore rehydrated the disk file).
+ * Re-read so the EOD reviews + weekly reports survive restarts. */
+export function __reloadJournalForBoot() { _state = loadJSON(FILE, { entries: [], reviews: {}, weekly: {} }); }
+
 function _persist() {
   if (_saveTimer) return;
   _saveTimer = setTimeout(() => {
     _saveTimer = null;
     saveJSON(FILE, _state);
+    try { durablePut(FILE, _state); } catch { /* durable optional */ }
   }, 1500);
   if (typeof _saveTimer.unref === 'function') _saveTimer.unref();
 }

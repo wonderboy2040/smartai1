@@ -21,6 +21,31 @@ import { istMinutes, marketPhase, getISTParts, isNseMarketOpen } from './time.js
 const MAX_TOOL_ROUNDS = 6;
 const PER_ROUND_TIMEOUT_MS = 30000;
 
+// v10.3.1 TOOL TIMEOUT — user-reported: "ASK AI theek se kaam nahi
+// kar raha". A cold NSE scan (full universe + AI consensus) takes
+// 30-90s; the OLD unbounded tool await blew straight through the
+// 90s frontend gate and the chain (Gemini→Groq→Cerebras) re-paid it
+// on EVERY retry. Every tool call is now bounded at 20s and degrades
+// to an honest `error` payload the model can answer around — the
+// crypto desk never hit this because its Binance ticker feed is one
+// cheap HTTP call.
+const TOOL_TIMEOUT_MS = 20000;
+function withToolTimeout(toolPromise, name) {
+  // executeAgentTool never rejects (its own try/catch), but belt-and-
+  // suspenders: a rejection AFTER the race resolves must not surface
+  // as an unhandled rejection.
+  const safe = Promise.resolve(toolPromise).catch(e => ({ error: `Tool ${name} failed: ${e?.message || e}` }));
+  return Promise.race([
+    safe,
+    new Promise(resolve => {
+      const t = setTimeout(() => resolve({
+        error: `${name} timeout (${TOOL_TIMEOUT_MS / 1000}s) — live data fetch slow hai. Jo context available hai usse jawab do aur saaf batao ki ye number fresh nahi hai.`,
+      }), TOOL_TIMEOUT_MS);
+      if (typeof t.unref === 'function') t.unref();
+    }),
+  ]);
+}
+
 // ------------------------------------------------------------
 // 1. TOOL DEFINITIONS (OpenAI function-calling format —
 //    converted to Gemini format on the fly)
@@ -317,10 +342,20 @@ async function executeAgentTool(name, args, deps) {
   try {
     switch (name) {
       case 'get_live_intraday_signals': {
-        // Fresh-enough cache (<3 min) → serve instantly; else trigger a scan.
+        // v10.3.1 STALE-WHILE-REVALIDATE: the first question of every
+        // boot used to BLOCK on a full cold scan (universe fetch + AI
+        // consensus = 30-90s+) and die at the 90s frontend gate. Now a
+        // cached scan is served INSTANTLY with its age attached (the
+        // system prompt already forces honest asOf language), while a
+        // refresh runs in the background for the NEXT question. Only
+        // a boot with zero scan history still blocks.
         let scan = getLastScan?.();
-        if (!scan || !scan.signals?.length || (Date.now() - new Date(scan.asOf || 0).getTime() > 3 * 60 * 1000)) {
+        const hasScan = !!(scan && Array.isArray(scan.signals) && scan.signals.length > 0);
+        const ageMs = scan?.asOf ? Date.now() - new Date(scan.asOf).getTime() : Infinity;
+        if (!hasScan) {
           scan = (await triggerScan?.()) || scan;
+        } else if (ageMs > 3 * 60 * 1000) {
+          Promise.resolve(triggerScan?.()).catch(() => {}); // background revalidate
         }
         if (!scan) return { error: 'Scanner data unavailable — market band ho sakta hai (09:15-15:30 IST Mon-Fri).' };
         return {
@@ -555,12 +590,13 @@ async function _runGeminiLoop(model, { systemPrompt, messages, deps, toolTrace }
     if (fnCalls.length === 0) break;
 
     contents.push({ role: 'model', parts: parts.map(p => p.functionCall ? { functionCall: p.functionCall } : { text: p.text }).filter(p => p.functionCall || p.text) });
-    const responseParts = [];
-    for (const fn of fnCalls) {
+    // v10.3.1: parallel + timeout-bounded tool execution (the old
+    // sequential unbounded loop is what froze Ask-AI on cold scans).
+    const responseParts = await Promise.all(fnCalls.map(async fn => {
       toolTrace.push({ tool: fn.name, ts: Date.now() });
-      const result = await executeAgentTool(fn.name, fn.args || {}, deps);
-      responseParts.push({ functionResponse: { name: fn.name, response: { result } } });
-    }
+      const result = await withToolTimeout(executeAgentTool(fn.name, fn.args || {}, deps), fn.name);
+      return { functionResponse: { name: fn.name, response: { result } } };
+    }));
     contents.push({ role: 'user', parts: responseParts });
     payload.contents = contents.map(c => ({ ...c, parts: [...c.parts] }));
   }
@@ -626,18 +662,21 @@ async function _runOpenAICompatLoop(model, cfg, { systemPrompt, messages, deps, 
     if (toolCalls.length === 0) break;
 
     reqMessages.push(choice.message);
-    for (const tc of toolCalls) {
+    // v10.3.1: parallel + timeout-bounded tool execution (same fix as
+    // the Gemini loop — sequential unbounded awaits froze Ask-AI).
+    const toolMsgs = await Promise.all(toolCalls.map(async tc => {
       let args = {};
       try { args = JSON.parse(tc.function?.arguments || '{}'); } catch { /* keep {} */ }
       toolTrace.push({ tool: tc.function?.name, ts: Date.now() });
-      const result = await executeAgentTool(tc.function?.name, args, deps);
-      reqMessages.push({
+      const result = await withToolTimeout(executeAgentTool(tc.function?.name, args, deps), tc.function?.name);
+      return {
         role: 'tool',
         tool_call_id: tc.id,
         name: tc.function?.name,
         content: JSON.stringify(result),
-      });
-    }
+      };
+    }));
+    reqMessages.push(...toolMsgs);
   }
 
   const text = data?.choices?.[0]?.message?.content?.trim();
@@ -712,4 +751,4 @@ export async function runProTraderAgent(messages, deps) {
 }
 
 // For tests / route registration helper
-export const __internals = { executeAgentTool, buildProTraderSystemPrompt };
+export const __internals = { executeAgentTool, buildProTraderSystemPrompt, withToolTimeout, TOOL_TIMEOUT_MS };

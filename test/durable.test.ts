@@ -36,6 +36,12 @@ const SNAP_PATH = path.join(DATA, 'mcp-portfolio.json');
 const SYM_PATH = path.join(DATA, 'mcp-symbol-cache.json');
 const BASIS_PATH = path.join(DATA, 'mcp-coindcx-basis.json');
 const SETTINGS_PATH = path.join(DATA, 'mcp-settings.json');
+const JOURNAL_PATH = path.join(DATA, 'ai-trading-journal.json');
+const TCFG_PATH = path.join(DATA, 'ai-trading-config.json');
+const AGST_PATH = path.join(DATA, 'ai-agent-state.json');
+const INDST_PATH = path.join(DATA, 'india-agent-state.json');
+const TRACKED_PATH = path.join(DATA, 'tracked-signals.json');
+const TJOURNAL_PATH = path.join(DATA, 'trade-journal.json');
 
 function setDurableEnv() {
   process.env.GITHUB_BACKUP_TOKEN = 'ghp_testtoken';
@@ -46,7 +52,8 @@ function setDurableEnv() {
 beforeEach(() => {
   __resetDurableForTests();
   setDurableEnv();
-  for (const p of [CREDS_PATH, INDM_PATH, SNAP_PATH, SYM_PATH, BASIS_PATH, SETTINGS_PATH]) {
+  for (const p of [CREDS_PATH, INDM_PATH, SNAP_PATH, SYM_PATH, BASIS_PATH, SETTINGS_PATH,
+    JOURNAL_PATH, TCFG_PATH, AGST_PATH, INDST_PATH, TRACKED_PATH, TJOURNAL_PATH]) {
     try { fs.rmSync(p, { force: true }); } catch { /* ignore */ }
   }
 });
@@ -256,5 +263,65 @@ describe('durableBootRestoreAll', () => {
     const restored = await durableBootRestoreAll();
     expect(restored).toEqual({});
     expect(restoreMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------- v10.3.1: trading state ----------------
+// User-reported: "site refresh par saare positions clear ho rahe hai".
+// Render free-tier spin-downs wipe server/data/ — the journal was
+// durablePut'd on every save but never RESTORED on boot. These tests
+// pin the new hydration: journal + risk config + both agents' state +
+// the intraday accountability files.
+describe('v10.3.1 trading-state boot restore (positions survive restarts)', () => {
+  it('restores the journal, risk config, agent states + intraday files', async () => {
+    const journal = {
+      positions: [{ id: 'p1', pair: 'RELIANCE', market: 'INDIA', status: 'OPEN', side: 'LONG', openedAt: 5000 }],
+      entries: [{ id: 'e1', ts: 5000, kind: 'OPEN', pair: 'RELIANCE' }],
+    };
+    restoreMock.mockImplementation(async (file) => {
+      if (file === 'ai-trading-journal.json') return encryptJSON(journal);
+      if (file === 'ai-trading-config.json') return encryptJSON({ mode: 'paper', maxOrderINR: 5000 });
+      if (file === 'ai-agent-state.json') return encryptJSON({ day: '2026-09-13', started: true, ts: 6000 });
+      if (file === 'india-agent-state.json') return encryptJSON({ day: '2026-09-13', ts: 6000 });
+      if (file === 'tracked-signals.json') return encryptJSON({ signals: [{ _id: 'x', ts: 6000 }] });
+      if (file === 'trade-journal.json') return encryptJSON({ entries: [{ ts: 6000 }], reviews: {}, weekly: {} });
+      return null;
+    });
+
+    const restored = await durableBootRestoreAll();
+    expect(restored).toMatchObject({
+      tradingJournal: true, tradingConfig: true,
+      cryptoAgentState: true, indiaAgentState: true,
+      trackedSignals: true, tradeJournal: true,
+    });
+    // Positions hydrated on disk — the refresh-clear bug fixed
+    expect(JSON.parse(fs.readFileSync(JOURNAL_PATH, 'utf8')).positions[0].pair).toBe('RELIANCE');
+    expect(JSON.parse(fs.readFileSync(TCFG_PATH, 'utf8')).maxOrderINR).toBe(5000);
+    expect(JSON.parse(fs.readFileSync(AGST_PATH, 'utf8')).started).toBe(true);
+    expect(JSON.parse(fs.readFileSync(TRACKED_PATH, 'utf8')).signals).toHaveLength(1);
+  });
+
+  it('keeps a fresh local journal over an older backup (no clobber)', async () => {
+    fs.writeFileSync(JOURNAL_PATH, JSON.stringify({
+      positions: [{ id: 'local-1', pair: 'TATAMOTORS', market: 'INDIA', status: 'OPEN', openedAt: Date.now() }],
+      entries: [{ id: 'e1', ts: Date.now(), kind: 'OPEN' }],
+    }));
+    restoreMock.mockImplementation(async (file) => {
+      if (file === 'ai-trading-journal.json') {
+        return encryptJSON({ positions: [{ id: 'remote-1', openedAt: 1000 }], entries: [] });
+      }
+      return null;
+    });
+    const restored = await durableBootRestoreAll();
+    expect(restored.tradingJournal).toBeUndefined();
+    expect(JSON.parse(fs.readFileSync(JOURNAL_PATH, 'utf8')).positions[0].id).toBe('local-1');
+  });
+
+  it('journal restores FIRST — before any credentials (the clobber race)', async () => {
+    restoreMock.mockImplementation(async () => null);
+    await durableBootRestoreAll();
+    const files = restoreMock.mock.calls.map((c) => c[0]);
+    expect(files.indexOf('ai-trading-journal.json')).toBeLessThan(files.indexOf('mcp-indmoney.json'));
+    expect(files.indexOf('ai-trading-journal.json')).toBe(0);
   });
 });

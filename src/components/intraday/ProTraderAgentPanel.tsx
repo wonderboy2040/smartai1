@@ -144,11 +144,16 @@ export const ProTraderAgentPanel = memo(function ProTraderAgentPanel({ onOpen }:
 
     try {
       const convo = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }));
+      // v10.3.1: 150s (was 90s) — the agent's first question after a
+      // cold boot walks the Gemini→Groq→Cerebras chain with live tool
+      // calls; 90s cut off mid-chain and showed "Agent timeout" even
+      // though an answer was one retry away. Tools themselves are now
+      // 20s-bounded server-side, so 150s is the honest outer budget.
       const res = await apiFetch('/api/intraday-agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: convo }),
-        signal: AbortSignal.timeout(90000),
+        signal: AbortSignal.timeout(150000),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || `agent error ${res.status}`);
