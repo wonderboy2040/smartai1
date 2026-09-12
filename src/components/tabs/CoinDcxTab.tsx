@@ -28,6 +28,8 @@ import { BacktestPanel } from '../aitrading/BacktestPanel';
 import { AlertsPanel } from '../aitrading/AlertsPanel';
 import { AgentPanel } from '../aitrading/AgentPanel';
 import { MorningBriefPanel, SwingDeskPanel, WhaleRadarPanel, SignalLedgerPanel, OrderbookPanel, TrustLayerPanel, PerfAnalyticsPanel, CorrelationPanel } from '../aitrading/ProPanels';
+// v10.1: the crypto desk conversational AI (mirror of the intraday ProTrader panel)
+import { CryptoAgentPanel } from '../aitrading/CryptoAgentPanel';
 import {
   SectionLabel, RegimeChips, BreadthStrip, FilterChips, RefreshCountdown, BoardSummary, DeskStatsStrip,
   filterSignals, countSignals, useDeskViewMode, ViewModeToggle, ProSectionsNote, type BoardFilter,
@@ -38,6 +40,7 @@ import type { AISignal, SignalBoard, WalletView } from '../aitrading/types';
 // whales/backtest/alerts/models/ledger/trust/brief/correlations → PRO.
 const NAV = [
   { id: 'cx-agent', label: 'AGENT', emoji: '🤖', pro: false },
+  { id: 'cx-chat', label: 'ASK AI', emoji: '💬', pro: false },
   { id: 'cx-expert', label: 'EXPERT', emoji: '🧠', pro: false },
   { id: 'cx-top5', label: 'TOP 5', emoji: '🏆', pro: false },
   { id: 'cx-signals', label: 'SIGNALS', emoji: '📡', pro: false },
@@ -286,6 +289,14 @@ export default memo(function CoinDcxTab() {
         <SectionLabel num="00" title="Superintelligence Auto-Agent" sub="wallet-fetch · auto entry/exit · daily 3 trades · SL-based sizing — CoinDCX spot + futures, sab gauntlet-gated" />
         <div className="mt-2.5">
           <AgentPanel notify={notify} />
+        </div>
+      </div>
+
+      {/* ============ 00b · CRYPTO DESK AI AGENT (v10.1 chat) ============ */}
+      <div id="cx-chat">
+        <SectionLabel num="00b" title="Crypto Desk AI Agent" sub="conversational · 8 live tools (signals / deep scan / wallet / positions / regime / track-record / sizing / agent status) — full-ticket answers, Telegram bot se bhi yahi engine" />
+        <div className="mt-2.5">
+          <CryptoAgentPanel />
         </div>
       </div>
 

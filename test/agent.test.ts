@@ -56,6 +56,11 @@ import { saveJSON, loadJSON as loadJSONOrig } from '../server/lib/store.js';
 const STRONG_CAND = {
   symbol: 'BTC', market: 'FUTURES', pair: 'B-BTC_USDT', side: 'LONG', grade: 'STRONG',
   confidence: 86, agreement: 0.82, executable: true, ltp: 50000,
+  // v10.1 B1: a realistic committee quorum (8 of 11 voting) — thin-committee
+  // signals now need minAiScore+10, and these legacy tests test the AI-score
+  // gate at its FULL-committee bar (see test/v101AgentAccuracy.test.ts for
+  // the thin-committee counterpart).
+  voters: 8, totalModels: 11,
   plan: { entry: 50000, stopLoss: 48400, target1: 51600, target2: 53200, risk: 1600, riskPct: 3.2, rewardRisk: 2 },
 };
 const FUTURES_BOARD = {

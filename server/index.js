@@ -24,6 +24,7 @@ import { SERVER_MCP_TOOLS_OPENAI, SERVER_MCP_TOOLS_GEMINI, executeServerMCPTool 
 import indmMcpRoutes from './mcp/routes.js';
 import { registerAITradingRoutes } from './ai/routes.js';
 import { registerIntradayRoutes } from './intraday/routes.js';
+import { registerTelegramWebhook } from './telegram/webhook.js';
 // v9.1: graceful-shutdown flushers for the debounced intraday writers.
 import { flushPaperState } from './intraday/paperTrading.js';
 import { flushTrackRecordState } from './intraday/trackRecord.js';
@@ -109,6 +110,7 @@ const PUBLIC_PATHS = new Set([
   '/api/config',
   '/api/ai-status',
   '/api/telegram-status',
+  '/api/telegram/webhook', // v10.1: Telegram's server-to-server webhook (secret-token + chat-id allowlist inside)
   '/api/feed-status',
   // Cloud sync endpoints REQUIRE AUTH â€” they proxy portfolio data and
   // stored API keys; exposing them publicly would leak private data.
@@ -574,6 +576,18 @@ registerIntradayRoutes(app, {
   escapeHtml,
   jsonError,
 });
+
+// ============================================================
+// INTERACTIVE TELEGRAM BOT (server/telegram/webhook.js)
+// ------------------------------------------------------------
+// v10.1: the bot now LISTENS — /crypto, /intraday, /status commands
+// route to the SAME agents the website tabs use (read-only). Webhook
+// path is PUBLIC (Telegram can't send session cookies) but secured by
+// the X-Telegram-Bot-Api-Secret-Token header + configured-chat-id
+// allowlist. setWebhook is a one-time auth'd call
+// (POST /api/telegram/setup-webhook { url }).
+// ============================================================
+registerTelegramWebhook(app, { KEYS, OPENAI_COMPAT, TG, jsonError });
 
 // ============================================================
 // INDMONEY PORTFOLIO MCP (server/mcp/*)

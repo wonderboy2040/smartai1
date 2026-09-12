@@ -35,6 +35,8 @@ import { v2ModelsEnabled } from './models.js';
 import { sentimentStatus } from './sentiment.js';
 import { instFlowStatus } from './instFlow.js';
 import { fundamentalsStatus } from './fundamentals.js';
+// v10.1 crypto desk AI chatbot (mirror of the intraday ProTrader agent)
+import { runCryptoAgent } from './cryptoAgent.js';
 import { getExpertPicks } from './expertPicks.js';
 import { getOptionsDesk, buildStrategies, getOptionSignalsView } from './optionsDesk.js';
 import {
@@ -459,6 +461,31 @@ export function registerAITradingRoutes(app, deps) {
       res.json({ ...ledgerStatus(), verify: verifyLedger(), recent: recentEntries(limit) });
     } catch (e) {
       jsonError(res, 500, 'ledger failed', e);
+    }
+  });
+
+  // ---------------- v10.1: crypto desk AI agent (chat) ----------------
+  // The CoinDCX tab's conversational agent — same pattern as
+  // POST /api/intraday-agent (messages[] in, tool-calling ReAct loop,
+  // Gemini→Groq→Cerebras chain). Auth required (AI cost).
+  app.post('/api/crypto-agent', async (req, res) => {
+    try {
+      const { messages = [] } = req.body || {};
+      if (!Array.isArray(messages) || messages.length === 0) {
+        return jsonError(res, 400, 'messages[] required');
+      }
+      // Bound token cost: last 24 turns, 6k chars per message (same
+      // contract as the intraday agent route).
+      const trimmed = messages.slice(-24).map(m => ({
+        role: ['user', 'assistant', 'system'].includes(m?.role) ? m.role : 'user',
+        content: String(m?.content || '').slice(0, 6000),
+      }));
+      const result = await runCryptoAgent(trimmed, depsForSignals());
+      if (!result.ok) return jsonError(res, 502, result.error);
+      res.set('Cache-Control', 'no-store');
+      res.json(result);
+    } catch (e) {
+      jsonError(res, 500, 'crypto agent failed', e);
     }
   });
 

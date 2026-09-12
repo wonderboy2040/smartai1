@@ -920,6 +920,20 @@ export interface AgentView {
   };
   /** v9.7 — "entry kyun nahi ho raha" strip: hard blockers + soft wait reasons */
   blockers?: Array<{ key: string; text: string; soft?: boolean }>;
+  /** v10.1 — decision-quality state (B1 quorum bar · B2 dynamic windows ·
+   *  B3 rolling win-rate · B4 correlation guard) */
+  accuracy?: {
+    quorumAwareEntry: boolean;
+    effectiveMinAiScore: number;
+    thinCommitteeMinAiScore: number;
+    dynamicTimeExit: boolean;
+    openWindowOverrides: Array<{ pair: string; atrPct: number | null; windowMin: number }>;
+    rollingWinRate: number | null;
+    rollingWindow: number;
+    minRollingWinRate: number;
+    winRateDowngraded: { at: number; winRate: number; trades: number } | null;
+    correlationGuard: boolean;
+  };
   today: {
     day: string;
     trades: AgentTradeToday[];

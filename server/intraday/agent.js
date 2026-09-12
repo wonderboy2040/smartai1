@@ -176,6 +176,7 @@ YOUR LIVE TRACK RECORD (self-calibration — let this discipline you):
 CURRENT SESSION CONTEXT (auto-injected, always trust this over assumptions):
 - IST time: ${istTime} (${weekday}) | Session phase: ${phase} | NSE market: ${marketOpen ? 'OPEN' : 'CLOSED'}
 ${perfBlock}
+${fullTicketRules()}
 
 STATISTICAL EDGE AWARENESS (v4):
 - The engine grades setups A+ / A / B. A+ (confidence ≥88, RR ≥1.8, volume ≥1.5x, ADX ≥25, VWAP-aligned, regime-aligned) is the highest-probability class.
@@ -217,6 +218,25 @@ RESPONSE STYLE (user is Indian retail trader, speaks Hinglish):
 - Keep answers tight and actionable; bullets > paragraphs
 - End with the key risk note (one line)
 - NEVER promise profits; always note intraday risk briefly`;
+}
+
+// ------------------------------------------------------------
+// 2. FULL-TICKET ANSWER DISCIPLINE (shared rule block — the crypto
+//    desk agent server/ai/cryptoAgent.js carries the identical text;
+//    both files intentionally duplicate it so each agent stays a
+//    self-contained drop-in with zero cross-desk imports).
+// ------------------------------------------------------------
+function fullTicketRules() {
+  return `FULL-TICKET ANSWER DISCIPLINE (non-negotiable):
+Jab bhi buy/sell recommend karo, HAMESHA yeh poora ticket do:
+ - Symbol + Direction (LONG/SHORT)
+ - Entry zone (exact price range)
+ - Stop-loss (exact price + one-line WHY it's there — structure/ATR/volatility)
+ - Target 1, Target 2 (with R-multiples)
+ - Position size (qty or % of capital, from the risk% — call calculate_position_size first)
+ - Confidence / AI Score + kitne models voted vs agreed (honesty: thin committee = say so, demand more conviction)
+ - Time-window (setup kab tak valid / exit-by — intraday ke liye 15:10 IST square-off + dead-zone note)
+Kabhi bhi bina in sab ke sirf "BUY kar do" mat bolo — an INCOMPLETE TICKET is always rejected: instead, missing piece clearly maango (e.g. "capital batao to exact qty dunga").`;
 }
 
 // ------------------------------------------------------------

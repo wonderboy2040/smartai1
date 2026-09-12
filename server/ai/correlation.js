@@ -123,3 +123,36 @@ export async function correlationMatrix() {
 }
 
 export const __testables = { ASSETS, MIN_OVERLAP, WINDOW };
+
+// ---------------- v10.1 B4: PAIR-LEVEL CORRELATION ----------------
+// The matrix above is index/asset level; the agent's correlation guard
+// needs COIN-vs-COIN reads (e.g. SOL candidate vs the BTC position the
+// book already holds). Same math (60d daily returns, Pearson), same
+// honesty (unreachable data → null, never a fake 0), cached per
+// unordered pair for 15 min.
+const _pairCache = new Map(); // "A|B" → { r, at }
+
+/**
+ * 60-day daily-return Pearson correlation between two crypto bases.
+ * @returns {number|null} r in [-1,1], null when data is unavailable
+ *   for either side (the caller must treat null as UNKNOWN, not 0).
+ */
+export async function pairCorrelation(baseA, baseB) {
+  const a = String(baseA || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const b = String(baseB || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!a || !b || a === b) return a === b && a ? 1 : null;
+  const key = [a, b].sort().join('|');
+  const hit = _pairCache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL) return hit.r;
+  const [ca, cb] = await Promise.all([
+    fetchYahooDailyCloses(`${a}-USD`, '4mo').catch(() => null),
+    fetchYahooDailyCloses(`${b}-USD`, '4mo').catch(() => null),
+  ]);
+  if (!Array.isArray(ca) || !Array.isArray(cb)) return null; // unknown, not zero
+  const ra = returnsOf(ca).slice(-WINDOW);
+  const rb = returnsOf(cb).slice(-WINDOW);
+  if (Math.min(ra.length, rb.length) < MIN_OVERLAP) return null;
+  const r = pearson(ra, rb);
+  if (r != null) _pairCache.set(key, { r, at: Date.now() });
+  return r;
+}

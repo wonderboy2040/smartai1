@@ -32,6 +32,8 @@ import { durablePut } from '../mcp/durable.js';
 import { coindcxConnected } from '../mcp/coindcx.js';
 import { walletSnapshot, executeFuturesSignal, closeFuturesPosition, fetchUsdInr, inrOfUsdt } from './futures.js';
 import { loadConfig, loadJournal, dailyStats, todayIST } from './coindcxOrders.js';
+// v10.1 accuracy upgrade (B4): pair-level correlation for the entry guard
+import { pairCorrelation } from './correlation.js';
 
 const AGENT_CONFIG_FILE = 'ai-agent-config.json';
 const AGENT_STATE_FILE = 'ai-agent-state.json';
@@ -72,6 +74,18 @@ export const AGENT_DEFAULTS = {
   // agent's own. Time-exit/partial-TP stay agent-owned — a manual
   // swing holder sirf trend-flip se protect hota hai.
   manageManualPositions: true,
+  // ---- v10.1 ACCURACY UPGRADE (Track B) ----
+  // B2: ATR-adaptive time-exit — fast movers (high ATR%) get a SHORTER
+  // window (signal goes stale faster), slow movers get a LONGER one
+  // (targets need time). Base window stays maxHoldMin.
+  dynamicTimeExit: true,
+  // B4: correlation guard — a new entry >0.7 correlated with an open
+  // position is the same bet twice; skip it (concentration-risk rule).
+  correlationGuard: true,
+  // B3: rolling win-rate floor — last N agent trades winning < this %
+  // → soft self-downgrade LIVE→paper + Telegram alert.
+  minRollingWinRate: 35,
+  rollingWindow: 10,
 };
 
 export function loadAgentConfig() {
@@ -122,6 +136,9 @@ export function updateAgentConfig(patch = {}) {
   if (patch.breakEvenAfterTp1 != null) next.breakEvenAfterTp1 = !!patch.breakEvenAfterTp1;
   // v9.7: trend-flip exit on manual positions (user spec default ON)
   if (patch.manageManualPositions != null) next.manageManualPositions = !!patch.manageManualPositions;
+  // v10.1 Track-B toggles
+  if (patch.dynamicTimeExit != null) next.dynamicTimeExit = !!patch.dynamicTimeExit;
+  if (patch.correlationGuard != null) next.correlationGuard = !!patch.correlationGuard;
   // v7.0: keep the split honest — T1+T2 ≤ 90, runner ≥ 10, sums shown
   if (next.tp1ClosePct + next.tp2ClosePct > 90) {
     const scale = 90 / (next.tp1ClosePct + next.tp2ClosePct);
@@ -142,6 +159,15 @@ function freshState() {
     pausedToday: null, // { day, reason }
     lastSkip: null,   // v9.7: { key, text, at } — the CURRENT wait/blocker reason (panel strip)
     alerted: {},      // v9.7: stand-down telegram alerts already sent today (key → day)
+    // v10.1 B2: per-position entry volatility (pair → { atrPct, at }) —
+    // the ATR% the position was OPENED with, driving its dynamic
+    // time-exit window. Missing entry (pre-upgrade positions / manual)
+    // → base cfg.maxHoldMin.
+    entryMeta: {},
+    // v10.1 B3: soft-downgrade latch — { at, winRate, trades } once the
+    // rolling win-rate floor tripped a LIVE→paper downgrade (re-arms
+    // only when the user re-starts the agent).
+    winRateDowngraded: null,
     log: [],
   };
 }
@@ -398,6 +424,26 @@ async function _tick(deps, sendTelegram) {
     persistState(); return;
   }
 
+  // ---- v10.1 B3: rolling win-rate self-check (accuracy decay early
+  // warning). Only meaningful in LIVE — a degraded paper agent is
+  // already riskless; only a LIVE agent can silently bleed money on
+  // a stale edge. Soft-downgrade (NOT kill switch — the user re-arms
+  // by re-starting LIVE once the record recovers or they disagree). ----
+  if (cfg.mode === 'live') {
+    const wr = rollingAgentWinRate(j, cfg.rollingWindow);
+    if (wr != null && wr < cfg.minRollingWinRate) {
+      const next = { ...cfg, mode: 'paper' };
+      saveAgentConfig(next);
+      _state.winRateDowngraded = { at: Date.now(), winRate: wr, trades: cfg.rollingWindow };
+      log('skip', `SELF-DOWNGRADE LIVE→PAPER — rolling win-rate ${wr}% (last ${cfg.rollingWindow}) < floor ${cfg.minRollingWinRate}%`);
+      await notify(sendTelegram,
+        `🤖 <b>AGENT self-downgrade: LIVE → PAPER</b>\nLast ${cfg.rollingWindow} agent trades ka win-rate ${wr}% hai (floor ${cfg.minRollingWinRate}%).\nSilent accuracy decay ka early warning — LIVE dobara arm karne se pehle signals review karo (/api/ai/trust + agent log).`);
+      cfg.mode = 'paper'; // this tick continues safely in paper
+    } else if (wr != null) {
+      _state.winRateDowngraded = null; // healthy record clears the latch
+    }
+  }
+
   // ---- equity floor ----
   if (equityINR < cfg.minEquityINR) {
     maybeLogSkip('equity_floor', `wallet equity ₹${r2(equityINR)} < floor ₹${cfg.minEquityINR} — not trading (wallet top-up needed)`);
@@ -407,11 +453,16 @@ async function _tick(deps, sendTelegram) {
   }
 
   // ---- time-exit sweep (auto exit of aging agent positions) ----
+  // v10.1 B2: the window is now PER-POSITION — the entry-time ATR%
+  // (state.entryMeta) drives dynamicMaxHoldMin. Fast movers exit at
+  // half the base window, slow movers get a third longer; unknown
+  // entries keep the base window (honest default).
   const closures = [];
   const timeExited = new Set(); // v9.6: ids closed this tick (trend-flip must not double-close)
   for (const p of openAgent) {
+    const holdMin = holdWindowFor(cfg, p.pair);
     const ageMin = (Date.now() - (p.openedAt || 0)) / 60000;
-    if (ageMin >= cfg.maxHoldMin) {
+    if (ageMin >= holdMin) {
       const out = p.market === 'FUTURES'
         ? await closeFuturesPosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }))
         : await (async () => {
@@ -424,8 +475,10 @@ async function _tick(deps, sendTelegram) {
         // (p.pnlINR alone is only the remaining runner's leg).
         const totalPnl = (out.position?.pnlINR ?? 0) + (out.position?.bookedPnlINR ?? 0);
         const hasBooked = (out.position?.bookedPnlINR ?? 0) !== 0;
-        closures.push({ pair: p.pair, pnlINR: totalPnl, reason: `TIME-EXIT after ${Math.round(ageMin)}m${hasBooked ? ' (incl. booked T1/T2 legs)' : ''}` });
-        log('exit', `TIME-EXIT ${p.pair} after ${Math.round(ageMin)}m — pnl ₹${r2(totalPnl)}${hasBooked ? ` (final ${r2(out.position?.pnlINR ?? 0)} + booked ${r2(out.position?.bookedPnlINR ?? 0)})` : ''}`);
+        closures.push({ pair: p.pair, pnlINR: totalPnl, reason: `TIME-EXIT after ${Math.round(ageMin)}m${holdMin !== cfg.maxHoldMin ? ` (dynamic window ${holdMin}m — ATR-adaptive)` : ''}${hasBooked ? ' (incl. booked T1/T2 legs)' : ''}` });
+        log('exit', `TIME-EXIT ${p.pair} after ${Math.round(ageMin)}m (window ${holdMin}m${holdMin !== cfg.maxHoldMin ? ', ATR-adaptive' : ''}) — pnl ₹${r2(totalPnl)}${hasBooked ? ` (final ${r2(out.position?.pnlINR ?? 0)} + booked ${r2(out.position?.bookedPnlINR ?? 0)})` : ''}`);
+        // B2 hygiene: the entry's volatility record is spent with the position
+        if (_state.entryMeta) delete _state.entryMeta[p.pair];
       } else {
         log('error', `time-exit failed for ${p.pair}: ${String(out?.error || '').slice(0, 100)}`);
       }
@@ -447,8 +500,17 @@ async function _tick(deps, sendTelegram) {
   const signalOf = (s) => Number(s?.superIntel?.aiScore ?? 0);
   // v9.6 USER SPEC GATE: 75+ AI score qualifies on its own; the old
   // STRONG-committee bar (grade + confidence + agreement) still works.
+  // v10.1 B1 — QUORUM-AWARE THRESHOLD: ensemble.js's QUORUM_CONF_CAPS
+  // already says a 1-4 voter "consensus" is capped WATCH/ACTION-grade
+  // trust; the agent must respect the same honesty. When fewer than 5
+  // models actually voted (data missing / honest abstains), the AI-score
+  // bar is RAISED by 10 (plan: effectiveMinScore = voterCount >= 5 ?
+  // minAiScore : minAiScore + 10) — thin committees need MORE conviction
+  // to touch money, not less. The legacy STRONG bar (agreement ≥0.75
+  // across the voting weight) is already quorum-honest, so it stays.
+  const voterCount = (s) => Number(s?.voters ?? s?.participating ?? 0);
   const qualifies = (s) => !!(s && s.plan && s.side && (
-    signalOf(s) >= cfg.minAiScore || (
+    signalOf(s) >= (voterCount(s) >= 5 ? cfg.minAiScore : cfg.minAiScore + 10) || (
       s.grade === 'STRONG' && s.executable
       && (s.confidence ?? 0) >= cfg.minConfidence
       && (s.agreement ?? 0) >= cfg.minAgreement
@@ -532,7 +594,65 @@ async function _tick(deps, sendTelegram) {
     persistState(); return;
   }
   candidates.sort((a, b) => (signalOf(b) - signalOf(a)) || (b.confidence - a.confidence));
-  const best = candidates[0];
+  let best = candidates[0];
+
+  // ---- v10.1 B4: CORRELATION GUARD on concurrent positions ----
+  // 5 open alt-positions that all correlate ~0.8 with each other are ONE
+  // leveraged bet, not five. Before committing: check the candidate's
+  // 60d-return correlation against EVERY open position's base (both
+  // directions of the pair both count — a BTC-anchored alts book is a
+  // BTC bet). >0.7 → skip to the NEXT candidate; all correlated → wait
+  // this cycle. Unknown correlation (feed down) → allow (the same
+  // honesty as correlation.js: a missing number is not a 0).
+  if (cfg.correlationGuard !== false) {
+    const openBases = [...new Set((j.positions || [])
+      .filter(p => (p.status === 'OPEN' || p.status === 'UNKNOWN'))
+      .map(p => baseOfPair(p.pair))
+      .filter(Boolean))];
+    if (openBases.length > 0) {
+      const checked = [best];
+      let chosen = null;
+      for (const cand of candidates) {
+        const candBase = String(cand.symbol || '').toUpperCase();
+        if (!openBases.includes(candBase)) {
+          let correlatedWith = null;
+          for (const ob of openBases) {
+            const r = await pairCorrelation(candBase, ob).catch(() => null);
+            if (r != null && Math.abs(r) > 0.7) { correlatedWith = { base: ob, r }; break; }
+          }
+          if (correlatedWith) {
+            log('skip', `CORRELATION GUARD — ${cand.symbol} skipped (60d r=${correlatedWith.r} with ${correlatedWith.base}, |r|>0.7 = same bet twice)`);
+            continue; // try the next candidate
+          }
+        }
+        chosen = cand; break;
+      }
+      if (!chosen) {
+        maybeLogSkip('correlation', `CORRELATION GUARD — all ${candidates.length} qualifying candidates |r|>0.7 correlated with open positions (${openBases.join(', ')}); same-bet-twice risk, ye cycle skip`);
+        persistState(); return;
+      }
+      best = chosen;
+      checked.length = 0; // (debug clarity only)
+    }
+  }
+
+  // ---- v10.1 B2: record the entry's volatility for its dynamic
+  // time-exit window (ATR% from the plan; stop-distance % is the
+  // fallback when ATR wasn't logged on the plan). ----
+  const atrPctOf = (s) => {
+    const p = s?.plan || {};
+    const ltp = Number(s?.ltp || p.entry);
+    const atr = Number(p.atrUsed);
+    if (Number.isFinite(atr) && atr > 0 && ltp > 0) return (atr / ltp) * 100;
+    const rp = Number(p.riskPct);
+    return Number.isFinite(rp) && rp > 0 ? rp : null;
+  };
+  const entryAtrPct = atrPctOf(best);
+  _state.entryMeta = _state.entryMeta || {};
+  _state.entryMeta[pairOfSignal(best)] = { atrPct: entryAtrPct, at: Date.now() };
+  if (entryAtrPct != null && cfg.dynamicTimeExit !== false) {
+    log('info', `ENTRY VOLATILITY ${best.symbol}: ATR ${r2(entryAtrPct)}% → dynamic time-exit window ${dynamicMaxHoldMin(cfg, entryAtrPct)}m (base ${cfg.maxHoldMin}m)`);
+  }
 
   // ---- wallet-based sizing ----
   const riskINR = equityINR * (cfg.riskPerTradePct / 100);
@@ -624,6 +744,60 @@ async function _tick(deps, sendTelegram) {
 
 // small helpers ------------------------------------------------
 let _lastSkip = { key: '', at: 0 };
+
+// ---- v10.1 B2: ATR-adaptive time-exit window -----------------
+// Pure: base window (cfg.maxHoldMin) adjusted by the position's
+// entry-time ATR% (ATR/ltp×100 from the signal's plan):
+//   • fast mover (ATR% ≥ 2.5):  signals go stale FAST → window × 0.5
+//     (plan's e.g. 45min at base 90)
+//   • slow mover (ATR% ≤ 0.8): targets need TIME to travel → window
+//     × 1.33, floored at 120min (plan's e.g. 120min)
+//   • mid: base window untouched
+// Clamped to [15, 240] so a mis-set base can't produce a 5-minute
+// or 24-hour absurdity. null atrPct (no data) → base window, honest.
+export function dynamicMaxHoldMin(cfg, atrPct) {
+  const base = Number(cfg?.maxHoldMin) > 0 ? Number(cfg.maxHoldMin) : 90;
+  const a = Number(atrPct);
+  if (!Number.isFinite(a) || a <= 0) return base;
+  let out = base;
+  if (a >= 2.5) out = Math.round(base * 0.5);
+  else if (a <= 0.8) out = Math.round(base * 4 / 3);
+  return Math.max(15, Math.min(240, out));
+}
+
+/** A position's effective hold window: entry-time ATR% (state map)
+ *  → dynamicMaxHoldMin; unknown entry → base cfg.maxHoldMin. */
+function holdWindowFor(cfg, pair) {
+  if (cfg.dynamicTimeExit === false) return Number(cfg.maxHoldMin) > 0 ? Number(cfg.maxHoldMin) : 90;
+  const meta = _state.entryMeta?.[pair];
+  return dynamicMaxHoldMin(cfg, meta?.atrPct);
+}
+
+// ---- v10.1 B3: rolling agent win-rate (self-calibration) ----
+/** Last-N CLOSED agent trades (newest first) with TOTAL pnl per trade
+ *  (final leg + booked T1/T2 legs — a partial-booked winner is a
+ *  winner). Journal is the single source of truth. */
+export function recentAgentTrades(j, n = 10) {
+  const closed = (j?.positions || [])
+    .filter(p => p.source === 'agent' && String(p.status || '').toUpperCase() === 'CLOSED')
+    .sort((a, b) => (b.closedAt || b.updatedAt || 0) - (a.closedAt || a.updatedAt || 0));
+  return closed.slice(0, Math.max(1, Number(n) || 10)).map(p => ({
+    pair: p.pair,
+    pnlINR: (p.pnlINR ?? 0) + (p.bookedPnlINR ?? 0),
+    closedAt: p.closedAt || p.updatedAt || null,
+  }));
+}
+
+/** Rolling win-rate over the last N closed agent trades. null when
+ *  fewer than N closed trades exist (we refuse to tune on noise —
+ *  same discipline as adaptive.js MIN_SAMPLE). */
+export function rollingAgentWinRate(j, n = 10) {
+  const trades = recentAgentTrades(j, n);
+  if (trades.length < n) return null;
+  const wins = trades.filter(t => t.pnlINR > 0).length;
+  return Math.round((wins / trades.length) * 1000) / 10;
+}
+
 function maybeLogSkip(key, text) {
   // v9.7: EVERY skip records the reason in state — the status view's
   // BLOCKERS strip shows the user WHY the agent isn't entering (the
@@ -653,6 +827,18 @@ function pairOfSignal(s) {
   if (s.market === 'FUTURES') return `B-${s.symbol}_USDT`;
   if (s.market === 'CRYPTO') return `${s.symbol}INR`;
   return s.symbol;
+}
+
+/** v10.1 B4: the BASE coin of a journal pair — 'B-SOL_USDT'/'SOLINR'
+ *  → 'SOL' (India equity symbols / unknown shapes → null — the
+ *  correlation guard is a crypto-desk rule; it must never guess). */
+function baseOfPair(pair) {
+  const s = String(pair || '').toUpperCase();
+  let m = s.match(/^B-([A-Z0-9]+)_USDT$/);
+  if (m) return m[1];
+  m = s.match(/^([A-Z0-9]+)INR$/);
+  if (m) return m[1];
+  return null;
 }
 
 // ---------------- status view (the panel's single call) ----------------
@@ -778,6 +964,28 @@ export async function agentStatus(deps) {
       blockers.push({ key: ls.key, soft: true, text: `ℹ️ ${ls.text}` });
     }
   }
+  // v10.1 B1-B4 accuracy state — the panel's transparency strip for the
+  // new decision-quality layers (quorum bar, dynamic windows, rolling
+  // win-rate, correlation guard).
+  const rollingWR = rollingAgentWinRate(j, cfg.rollingWindow);
+  const accuracy = {
+    quorumAwareEntry: true, // B1 — thin committees need a HIGHER AI-score bar
+    effectiveMinAiScore: cfg.minAiScore,
+    thinCommitteeMinAiScore: cfg.minAiScore + 10, // applied when voters < 5
+    dynamicTimeExit: cfg.dynamicTimeExit !== false, // B2
+    openWindowOverrides: Object.entries(_state.entryMeta || {})
+      .filter(([, v]) => v && v.atrPct != null && cfg.dynamicTimeExit !== false)
+      .map(([pair, v]) => ({ pair, atrPct: v.atrPct, windowMin: dynamicMaxHoldMin(cfg, v.atrPct) }))
+      .slice(0, 5),
+    rollingWinRate: rollingWR, // B3 — null until N closed trades exist
+    rollingWindow: cfg.rollingWindow,
+    minRollingWinRate: cfg.minRollingWinRate,
+    winRateDowngraded: _state.winRateDowngraded || null,
+    correlationGuard: cfg.correlationGuard !== false, // B4
+  };
+  if (_state.winRateDowngraded) {
+    blockers.push({ key: 'win_rate_downgrade', soft: true, text: `📉 Rolling win-rate ${_state.winRateDowngraded.winRate}% (last ${_state.winRateDowngraded.trades}) — agent paper mode me self-downgrade ho chuka hai. LIVE re-arm karne se pehle review karo.` });
+  }
   const nextScanInSec = _state.lastScanAt
     ? Math.max(0, AGENT_TICK_SEC - (Math.floor((Date.now() - _state.lastScanAt) / 1000) % AGENT_TICK_SEC))
     : null;
@@ -834,6 +1042,8 @@ export async function agentStatus(deps) {
     sizingPreview: preview,
     // v9.7: the panel's AGENT BLOCKERS strip — why the agent is (not) entering
     blockers,
+    // v10.1: B1-B4 decision-quality state
+    accuracy,
   };
 }
 

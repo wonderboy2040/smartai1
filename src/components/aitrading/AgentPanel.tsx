@@ -538,6 +538,9 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
   // milta hai — pehle console log me chhupa tha.
   const blockers = view.blockers || [];
   const hardBlockers = blockers.filter(b => !b.soft);
+  // v10.1: decision-quality strip (B1-B4) — quorum bar, dynamic windows,
+  // rolling win-rate, correlation guard — the agent's accuracy state.
+  const acc = view.accuracy;
 
   return (
     <div className="quantum-panel rounded-2xl p-4 bg-gradient-to-r from-cyan-500/[0.07] via-transparent to-amber-500/[0.05]">
@@ -631,6 +634,42 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
                 {b.text}
               </span>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* v10.1: DECISION-QUALITY strip — the agent's accuracy upgrades at a glance */}
+      {acc && (
+        <div className="mt-2 rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] p-2.5" data-testid="agent-accuracy" aria-label="agent accuracy state">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] font-black tracking-wider text-cyan-300">🎯 DECISION QUALITY</span>
+            {acc.quorumAwareEntry && (
+              <span className="px-2 py-0.5 rounded-md text-[9px] font-mono border bg-black/30 border-cyan-500/30 text-cyan-300"
+                title="Thin committees (<5 voters) need a HIGHER AI-score bar to touch money">
+                quorum bar {acc.thinCommitteeMinAiScore}+ (thin) / {acc.effectiveMinAiScore}+ (full)
+              </span>
+            )}
+            {acc.dynamicTimeExit && (
+              <span className="px-2 py-0.5 rounded-md text-[9px] font-mono border bg-black/30 border-cyan-500/30 text-cyan-300"
+                title="Time-exit windows adapt to each position's entry-time ATR% — fast movers cut sooner, slow movers get time">
+                ATR time-exit {acc.openWindowOverrides?.length ? `· ${acc.openWindowOverrides.map(o => `${(String(o.pair).split('_')[0] || '').replace('B-', '') || o.pair}: ${o.windowMin}m`).join(', ')}` : '(base window)'}
+              </span>
+            )}
+            <span className={`px-2 py-0.5 rounded-md text-[9px] font-mono border ${acc.rollingWinRate == null
+              ? 'bg-black/30 border-slate-600/40 text-slate-500'
+              : acc.rollingWinRate < acc.minRollingWinRate
+                ? 'bg-red-500/10 border-red-500/30 text-red-200'
+                : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'}`}
+              title={`Last ${acc.rollingWindow} closed agent trades — below ${acc.minRollingWinRate}% a LIVE agent self-downgrades to paper`}>
+              rolling WR {acc.rollingWinRate == null ? `needs ${acc.rollingWindow} trades` : `${acc.rollingWinRate}%`}
+              {acc.winRateDowngraded ? ' · DOWNGRADED→PAPER' : ''}
+            </span>
+            {acc.correlationGuard && (
+              <span className="px-2 py-0.5 rounded-md text-[9px] font-mono border bg-black/30 border-cyan-500/30 text-cyan-300"
+                title="A new entry |r|>0.7-correlated with an open position is the same bet twice — skipped">
+                corr-guard |r|≤0.7
+              </span>
+            )}
           </div>
         </div>
       )}

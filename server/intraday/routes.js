@@ -128,6 +128,19 @@ export function getUniverseInfo(market = 'INDIA') {
 // ------------------------------------------------------------
 // Registration
 // ------------------------------------------------------------
+// ------------------------------------------------------------
+// v10.1 INTERACTIVE TELEGRAM — the SAME wired agent deps the
+// /api/intraday-agent route uses, exposed for the Telegram webhook
+// (server/telegram/webhook.js). Set once at route registration.
+// ------------------------------------------------------------
+let _agentDeps = null;
+/** Run the intraday ProTrader agent from outside Express (Telegram).
+ *  @param {{role,content}[]} messages — same shape as /api/intraday-agent */
+export async function runIntradayAgentForExternal(messages) {
+  if (!_agentDeps) throw new Error('intraday routes not registered yet');
+  return runProTraderAgent(messages, _agentDeps);
+}
+
 export function registerIntradayRoutes(app, deps) {
   const {
     fetchGrowwNseQuote, fetchCoinDcxTickers, fetchIndexSpot, KEYS, OPENAI_COMPAT, TG, escapeHtml, jsonError,
@@ -764,6 +777,25 @@ export function registerIntradayRoutes(app, deps) {
     }
   };
 
+  // v10.1: wire the agent deps ONCE at registration (the Telegram
+  // webhook reuses the exact same closures the HTTP route uses).
+  _agentDeps = {
+    KEYS,
+    OPENAI_COMPAT,
+    fetchGrowwNseQuote,
+    getLastScan: () => _intradayCache.data,
+    triggerScan: async () => {
+      // Respect market hours — outside the session serve the last scan
+      // (stale context is still useful: "last scan was 14:55 IST").
+      if (!isNseMarketOpen() && !debugScan()) return _intradayCache.data;
+      return runScanner(debugScan());
+    },
+    getTrackRecord,
+    getPaperSummary,
+    analyzeSymbol,
+    getMarketRegime,
+  };
+
   app.post('/api/intraday-agent', async (req, res) => {
     try {
     const { messages = [] } = req.body || {};
@@ -776,22 +808,7 @@ export function registerIntradayRoutes(app, deps) {
       content: String(m?.content || '').slice(0, 6000),
     }));
 
-    const result = await runProTraderAgent(trimmed, {
-      KEYS,
-      OPENAI_COMPAT,
-      fetchGrowwNseQuote,
-      getLastScan: () => _intradayCache.data,
-      triggerScan: async () => {
-        // Respect market hours — outside the session serve the last scan
-        // (stale context is still useful: "last scan was 14:55 IST").
-        if (!isNseMarketOpen() && !debugScan()) return _intradayCache.data;
-        return runScanner(debugScan());
-      },
-      getTrackRecord,
-      getPaperSummary,
-      analyzeSymbol,
-      getMarketRegime,
-    });
+    const result = await runProTraderAgent(trimmed, _agentDeps);
 
     if (!result.ok) return jsonError(res, 502, result.error);
     res.set('Cache-Control', 'no-store');
