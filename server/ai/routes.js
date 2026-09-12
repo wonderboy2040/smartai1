@@ -52,6 +52,11 @@ import {
   agentTick, agentStatus, agentStart, agentStop, updateAgentConfig, loadAgentConfig, AGENT_TICK_SEC,
 } from './agent.js';
 import { executeIndiaSignal, watchIndiaPositions, closeIndiaPosition } from './indiaOrders.js';
+// v10.3: NSE SUPERINTELLIGENCE AUTO-AGENT — the India twin of agent.js
+import {
+  indiaAgentTick, indiaAgentStatus, indiaAgentStart, indiaAgentStop,
+  updateIndiaAgentConfig, INDIA_AGENT_TICK_SEC,
+} from './indiaAgent.js';
 import { runBacktest } from './backtest.js';
 import { getSwingBoard, scanWhales, getOrderbook } from './swing.js';
 import { ledgerStatus, recentEntries, verifyLedger } from './ledger.js';
@@ -341,6 +346,44 @@ export function registerAITradingRoutes(app, deps) {
       // mode changes NEVER pass through this endpoint — start/stop own it
       const { mode, enabled, ...patch } = req.body || {};
       const cfg = updateAgentConfig(patch);
+      res.json({ ok: true, config: cfg });
+    } catch (e) {
+      return res.status(400).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  // ---------------- NSE SUPERINTELLIGENCE AGENT (v10.3) ----------------
+  // The India desk's autonomous agent — same contract as /api/ai/agent/*
+  // but scoped to market INDIA + source 'india-agent' (cross-agent
+  // hygiene: the crypto agent's accounting can never see these trades).
+  app.get('/api/india/agent', async (_req, res) => {
+    try {
+      res.json(await indiaAgentStatus(depsForSignals()));
+    } catch (e) {
+      jsonError(res, 500, 'india agent status failed', e);
+    }
+  });
+
+  app.post('/api/india/agent/start', async (req, res) => {
+    try {
+      const { mode, liveConfirmPhrase } = req.body || {};
+      res.json(await indiaAgentStart({ mode, liveConfirmPhrase }));
+    } catch (e) {
+      const status = e?.status || 400;
+      res.status(status).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  app.post('/api/india/agent/stop', (_req, res) => {
+    try { res.json(indiaAgentStop({ reason: 'user (panel)' })); }
+    catch (e) { return res.status(400).json({ ok: false, error: String(e?.message || e) }); }
+  });
+
+  app.post('/api/india/agent/config', (req, res) => {
+    try {
+      // mode changes NEVER pass through this endpoint — start/stop own it
+      const { mode, enabled, ...patch } = req.body || {};
+      const cfg = updateIndiaAgentConfig(patch);
       res.json({ ok: true, config: cfg });
     } catch (e) {
       return res.status(400).json({ ok: false, error: String(e?.message || e) });
@@ -758,6 +801,18 @@ export function registerAITradingRoutes(app, deps) {
     } catch { /* non-fatal — agent logs its own errors */ }
   }, AGENT_TICK_SEC * 1000);
   if (agentLoop.unref) agentLoop.unref();
+
+  // v10.3: NSE SUPERINTELLIGENCE AGENT loop — the India twin. Same 30s
+  // cadence; the tick itself gates on the NSE clock (09:30–15:00
+  // entries, 15:15 EOD square-off sweep, idle outside market hours),
+  // so after-hours ticks are cheap no-ops. Every entry passes the SAME
+  // executeIndiaSignal gauntlet a manual click passes.
+  const indiaAgentLoop = setInterval(async () => {
+    try {
+      await indiaAgentTick(depsForSignals(), sendTelegram);
+    } catch { /* non-fatal — agent logs its own errors */ }
+  }, INDIA_AGENT_TICK_SEC * 1000);
+  if (indiaAgentLoop.unref) indiaAgentLoop.unref();
 
   // India watcher — SL/TP + trailing + 15:15 square-off (NSE hours only).
   const indiaWatcher = setInterval(async () => {

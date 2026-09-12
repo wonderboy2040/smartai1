@@ -33,7 +33,7 @@ import { recordExecution, settlePositionOutcome } from './ledger.js';
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 
 // ---------------- IST clock helpers ----------------
-function istHM(now = new Date()) {
+export function istHM(now = new Date()) {
   try {
     const f = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }).format(now);
     const [h, m] = f.split(':').map(Number);
@@ -43,8 +43,8 @@ function istHM(now = new Date()) {
   }
 }
 export const IST_SQUAREOFF = 15 * 60 + 15;  // 15:15 — intraday discipline
-const IST_ENTRY_LAST = 15 * 60;             // 15:00 — LIVE entries stop
-const IST_ENTRY_FIRST = 9 * 60 + 30;        // 09:30 — opening chop avoided
+export const IST_ENTRY_LAST = 15 * 60;             // 15:00 — LIVE entries stop
+export const IST_ENTRY_FIRST = 9 * 60 + 30;        // 09:30 — opening chop avoided
 
 /**
  * executeIndiaSignal({ symbol, side, mode, qtyINR, getFreshIndiaSignal })
@@ -239,7 +239,8 @@ export async function executeIndiaSignal(opts) {
       } catch { /* best-effort */ }
       const position = {
         id: crypto.randomUUID(), pair: sym, symbol: sym, side: effectiveSignal.side, mode: 'paper', market: 'INDIA', source,
-        qty, entryPrice: price, notionalINR: r2(notional),
+        qty, originalQty: qty, exitStage: 'ENTRY', // v10.3 agent PRO-exit tiers (harmless on manual)
+        entryPrice: price, notionalINR: r2(notional),
         ...(ledgerEntryId ? { ledgerEntryId } : {}),
         sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
         initialRisk: r2(Math.abs(price - (effectiveSignal.plan?.stopLoss ?? price))),
@@ -274,7 +275,8 @@ export async function executeIndiaSignal(opts) {
         id: crypto.randomUUID(), pair: sym, symbol: sym, side: effectiveSignal.side, mode: 'live', market: 'INDIA', source,
         exchangeOrderId: entryOrder.orderId, slOrderId,
         securityId: entryOrder.securityId || null,
-        qty, entryPrice: price, notionalINR: r2(notional),
+        qty, originalQty: qty, exitStage: 'ENTRY', // v10.3 agent PRO-exit tiers (harmless on manual)
+        entryPrice: price, notionalINR: r2(notional),
         // v6.7: live executions are part of the tamper-evident trail too
         ledgerEntryId: (() => { try { return recordExecution(signal, { mode: 'live', market: 'INDIA', source })?.id || null; } catch { return null; } })(),
         sl: effectiveSignal.plan?.stopLoss ?? null, tp: effectiveSignal.plan?.target1 ?? null, tp2: effectiveSignal.plan?.target2 ?? null,
@@ -426,7 +428,14 @@ export async function watchIndiaPositions({ sendTelegram } = {}) {
 }
 
 // ---------------- manual close ----------------
-export async function closeIndiaPosition(positionId) {
+// v10.3: opts { qty, reason } — a qty BELOW the remaining position is a
+// PARTIAL close (agent PRO-exit T1/T2 legs): the leg books immediately
+// (kind PARTIAL_TP, counts in daily realized P&L exactly like the crypto
+// desk), the position stays OPEN for the runner, and on LIVE the
+// protective broker SL is cancel+replaced to the remainder. Callers not
+// passing opts get the original full-close behaviour 1:1.
+export async function closeIndiaPosition(positionId, opts = {}) {
+  const { qty: wantQty, reason = 'Manual close' } = opts || {};
   return withJournalLock(async () => {
     const j = loadJournal();
     const p = j.positions.find(x => x.id === positionId || x.exchangeOrderId === positionId);
@@ -441,24 +450,58 @@ export async function closeIndiaPosition(positionId) {
     if (price == null) {
       return { ok: false, error: `No live price for ${p.symbol} — thodi der baad try karo (honest close, no fake P&L)` };
     }
+    const long = p.side === 'LONG';
+    const closeQty = Number.isFinite(Number(wantQty)) && Number(wantQty) >= 1
+      ? Math.min(Math.floor(Number(wantQty)), p.qty)
+      : p.qty;
+
+    // ---- v10.3 PARTIAL leg (qty < remaining) ----
+    if (closeQty < p.qty) {
+      if (p.mode === 'live' && dhanConnected()) {
+        try {
+          const exit = await dhanPlaceOrder({ symbol: p.symbol, side: long ? 'SELL' : 'BUY', quantity: closeQty, kind: 'ENTRY' });
+          if (!exit.orderId) return { ok: false, error: 'Dhan partial close failed: no orderId returned' };
+          // the protective SL must follow the REMAINING qty (cancel + replace)
+          if (p.slOrderId) { await dhanCancelOrder(p.slOrderId).catch(() => { /* best-effort */ }); p.slOrderId = null; }
+          if (p.sl > 0) {
+            try {
+              const o = await dhanPlaceOrder({ symbol: p.symbol, side: p.side, quantity: p.qty - closeQty, kind: 'SL', triggerPrice: p.sl });
+              if (o?.orderId) p.slOrderId = o.orderId;
+            } catch { /* watcher still guards the remainder */ }
+          }
+        } catch (e) {
+          return { ok: false, error: `Dhan partial close failed: ${e?.message || e}` };
+        }
+      }
+      const legPnl = (long ? price - p.entryPrice : p.entryPrice - price) * closeQty;
+      p.qty -= closeQty;
+      p.bookedPnlINR = r2((p.bookedPnlINR || 0) + legPnl);
+      pushEntry(j, {
+        kind: 'PARTIAL_TP', day: todayIST(), pair: p.pair, symbol: p.symbol, market: 'INDIA', mode: p.mode, source: p.source,
+        qty: closeQty, entryPrice: p.entryPrice, closePrice: price, pnlINR: r2(legPnl), reason,
+      });
+      saveJournal(j);
+      return { ok: true, partial: true, position: p, leg: { qty: closeQty, price: r2(price), pnlINR: r2(legPnl) } };
+    }
+
+    // ---- full close (original path; reason threaded through) ----
     if (p.mode === 'live' && dhanConnected()) {
       try {
-        const exit = await dhanPlaceOrder({ symbol: p.symbol, side: p.side === 'LONG' ? 'SELL' : 'BUY', quantity: p.qty, kind: 'ENTRY' });
+        const exit = await dhanPlaceOrder({ symbol: p.symbol, side: long ? 'SELL' : 'BUY', quantity: p.qty, kind: 'ENTRY' });
         if (!exit.orderId) return { ok: false, error: 'Dhan close failed: no orderId returned' };
       } catch (e) {
         return { ok: false, error: `Dhan close failed: ${e?.message || e}` };
       }
       if (p.slOrderId) dhanCancelOrder(p.slOrderId).catch(() => { /* best-effort */ });
     }
-    const long = p.side === 'LONG';
     const pnlINR = (long ? price - p.entryPrice : p.entryPrice - price) * p.qty;
     p.status = 'CLOSED';
     p.closedAt = Date.now();
     p.closePrice = price;
     p.pnlINR = r2(pnlINR);
-    p.closeReason = 'Manual close';
-    settlePositionOutcome(p, 'Manual close'); // v6.7 ledger
-    pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, symbol: p.symbol, market: 'INDIA', mode: p.mode, source: p.source, qty: p.qty, entryPrice: p.entryPrice, closePrice: price, pnlINR: r2(pnlINR), reason: 'Manual close' });
+    p.closeReason = reason;
+    settlePositionOutcome(p, reason); // v6.7 ledger
+    pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, symbol: p.symbol, market: 'INDIA', mode: p.mode, source: p.source, qty: p.qty, entryPrice: p.entryPrice, closePrice: price, pnlINR: r2(pnlINR), reason });
     saveJournal(j);
     return { ok: true, position: p };
   });

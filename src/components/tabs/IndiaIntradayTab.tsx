@@ -6,6 +6,8 @@
 //   ┌ COMMAND BAR     NIFTY/VIX regime · engine status · refresh
 //   ├ NSE CLOCK       live IST session phase + countdown
 //   ├ QUICK NAV       sticky section jump chips
+//   ├ 00 AGENT        NSE auto-trade agent console (v10.3)
+//   ├ 00b ASK AI      Pro Trader MCP agent chat (v10.3 wiring)
 //   ├ 📊 DESK STATS   v6.10 one-glance strip (scanned·actionable·
 //   │                 STRONG·avg conf·mood)
 //   ├ 🏆 TOP 5 PICKS  full-universe composite ranking (44 stocks
@@ -46,16 +48,25 @@ import { JournalPanel } from '../intraday/JournalPanel';
 import { CommitteePanel } from '../intraday/CommitteePanel';
 import { UniverseEditor } from '../intraday/UniverseEditor';
 import { adaptAISignal } from '../intraday/adaptAISignal';
+// v10.3 PARITY (CoinDCX level): the two missing panels —
+//   • ProTraderAgentPanel — the ASK-AI chat (8 MCP tools, /api/intraday-agent)
+//     jo purane dead IntradayTab me tha par naye desk me wire nahi hua tha
+//   • IndiaAgentPanel — the NSE auto-trade agent console (/api/india/agent)
+import { ProTraderAgentPanel } from '../intraday/ProTraderAgentPanel';
+import { IndiaAgentPanel } from '../aitrading/IndiaAgentPanel';
 import {
   SectionLabel, RegimeChips, BreadthStrip, FilterChips, RefreshCountdown, BoardSummary, DeskStatsStrip,
   filterSignals, countSignals, IndiaHowToTrade, useDeskViewMode, ViewModeToggle, ProSectionsNote, type BoardFilter,
 } from '../aitrading/deskShared';
 import type { AISignal, DhanStatus } from '../aitrading/types';
 
-// v6.13: simple-view me sirf trade-flow sections (TOP5/SIGNALS/OPTIONS/EXECUTE)
-// dikhte hain; pro nav ke andar walon ko `pro: true` lagaya gaya hai.
+// v6.13: simple-view me sirf trade-flow sections (AGENT/TOP5/ASK AI/
+// SIGNALS/OPTIONS/EXECUTE) dikhte hain; pro nav ke andar walon ko
+// `pro: true` lagaya gaya hai.
 const NAV = [
+  { id: 'in-agent', label: 'AGENT', emoji: '🤖', pro: false },
   { id: 'in-top5', label: 'TOP 5', emoji: '🏆', pro: false },
+  { id: 'in-chat', label: 'ASK AI', emoji: '💬', pro: false },
   { id: 'in-signals', label: 'SIGNALS', emoji: '📡', pro: false },
   { id: 'in-options', label: 'OPTIONS', emoji: '📊', pro: false },
   { id: 'in-execute', label: 'EXECUTE', emoji: '⚙️', pro: false },
@@ -273,6 +284,18 @@ export default memo(function IndiaIntradayTab() {
         </div>
       )}
 
+      {/* ============ 00 · NSE AUTO-TRADE AGENT (v10.3 · CoinDCX parity) ============
+          The India desk's autonomous agent — auto entry (75+ AI score,
+          quorum-aware) · 3 trades/day · T1/T2/runner PRO exits · NSE
+          clock (09:30–15:00 entries, 15:15 EOD square-off) · trend-flip
+          + time-exit · paper-first (LIVE needs typed arming). */}
+      <div id="in-agent">
+        <SectionLabel num="00" title="India Auto-Trade Agent" sub="NSE autonomous desk — auto entry/exit · daily 3 trades · capital-based sizing · T1 40%+BE / T2 40% / runner trail · 15:15 EOD square-off — sab gauntlet-gated (Dhan)" />
+        <div className="mt-2.5">
+          <IndiaAgentPanel />
+        </div>
+      </div>
+
       {/* ============ 🧠 EXPERT PICKS (v9 — Advance Pro Trader Engine) ============ */}
       <div id="in-expert">
         <ExpertPicksPanel active market="INDIA" onDeep={(sym) => { onDeep({ symbol: sym, market: 'INDIA' } as AISignal); }} />
@@ -281,6 +304,18 @@ export default memo(function IndiaIntradayTab() {
       {/* ============ 🏆 TOP 5 PICKS (v6.9) ============ */}
       <div id="in-top5">
         <TopPicksPanel picks={board?.topFive} market="INDIA" deskLabel="🇮🇳 NSE · INDIA" scanned={board?.scanned} loading={loading} onDeep={onDeep} />
+      </div>
+
+      {/* ============ 00b · ASK AI — PRO TRADER MCP AGENT (v10.3 wiring fix) ============
+          CoinDCX parity: the desk ka conversational agent (8 live tools —
+          signals / deep scan / quotes / regime / track-record / paper
+          positions / news / sizing). Backend (/api/intraday-agent) pehle
+          se mounted tha — sirf naye desk me panel wire nahi hua tha. */}
+      <div id="in-chat">
+        <SectionLabel num="00b" title="Ask AI — Pro Trader Agent" sub="intraday desk ka conversational agent — buy/sell reasoning, tools se live data (signals · deep scan · quotes · regime · track-record · positions · news · sizing)" />
+        <div className="mt-2.5">
+          <ProTraderAgentPanel />
+        </div>
       </div>
 
       {/* ============ MARKET BREADTH ============ */}
