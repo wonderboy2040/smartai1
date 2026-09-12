@@ -625,8 +625,14 @@ async function _runScan(mkt, opts = {}) {
   // ---- universe + price discovery (CoinDCX primary → Binance fallback) ----
   let universe = [], tv = {}, priceMap = new Map(), priceSource = null;
   if (mkt === 'CRYPTO') {
+    // v9.2.2: keep the honest-failure contract — an EMPTY discovery must
+    // reach the ok:false marker below (feed-dead fallback + honest error
+    // screen depend on it). Discovery itself is already resilient: the
+    // static-majors guard inside discoverSpotUniverse() guarantees a
+    // scannable universe whenever ANY feed answers, so this branch only
+    // sees [] when EVERY leg (CoinDCX + Binance + Bybit + majors) is dead.
     const [uni] = await Promise.all([discoverSpotUniverse().catch(() => [])]);
-    universe = Array.isArray(uni) && uni.length > 0 ? uni : [...CRYPTO_UNIVERSE];
+    universe = uni;
     try {
       const { fetchCoinDcxTickers } = await import('../cryptoStream.js');
       const tickers = await fetchCoinDcxTickers();
@@ -647,8 +653,9 @@ async function _runScan(mkt, opts = {}) {
       priceSource = 'tradingview-approx';
     }
   } else if (mkt === 'FUTURES') {
+    // v9.2.2: same honest-failure contract as the CRYPTO leg above.
     const [uni] = await Promise.all([discoverFuturesUniverse().catch(() => [])]);
-    universe = Array.isArray(uni) && uni.length > 0 ? uni : [...CRYPTO_UNIVERSE];
+    universe = uni;
     try {
       const futRows = await fetchFuturesPrices();
       priceMap = new Map((Array.isArray(futRows) ? futRows : []).map(x => [x.base, x.last]));
@@ -762,9 +769,23 @@ async function _runScan(mkt, opts = {}) {
 }
 
 // ---------------- test hooks ----------------
+/**
+ * v9.2.2: single-flight leakage guard — a background refresh started by a
+ * previous test can still be IN FLIGHT when this hook runs; without the
+ * drain, the next test's cold scan would JOIN that stale scan (wrong
+ * universe / wrong budget) and flake. The hook returns a promise that
+ * settles after every pending scan finishes and the caches are re-cleared
+ * (a completing scan re-populates _scanCache, which must not survive into
+ * the next test). Sync callers keep the old behavior (clear-only).
+ */
 export function __clearExpertPicksCaches() {
   _scanCache.clear();
   _uniCache.clear();
+  if (_scanInflight.size === 0) return Promise.resolve();
+  return Promise.allSettled([..._scanInflight.values()]).then(() => {
+    _scanCache.clear();
+    _uniCache.clear();
+  });
 }
 /** v9.2.1: inject a scan of a given age (ms) — resilience tests. */
 export function __setScanCacheForTests(mkt, scan, ageMs = 0) {

@@ -3,10 +3,29 @@
 // (tool layer only — no network, AI mocked via askLLM bypass)
 // ============================================================
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildProTraderSystemPrompt, askLLM } from '../server/intraday/agent.js';
-import { runCommitteeDebate, clearCommitteeCache } from '../server/intraday/committee.js';
-import { generateDailyBriefing, getLastBriefing } from '../server/intraday/briefing.js';
-import { recordTradeClose, getJournal, runEodReview, runWeeklyReport, getWeekKey } from '../server/intraday/journal.js';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+// Hermetic data dir (same trick as the other suites) — WITHOUT this the
+// journal tests write synthetic trades into the production
+// server/data/trade-journal.json. UNIQUE PER RUN: the journal de-dupes by
+// tradeId, so a persisted entry from yesterday's run (old dayKey) would
+// silently swallow today's record and age the test out again.
+process.env.SMARTAI_DATA_DIR = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  `../.test-data-phase2-${Date.now().toString(36)}-${process.pid}`);
+
+// Dynamic imports: the store reads SMARTAI_DATA_DIR at module-eval time,
+// so the env var must be set BEFORE these modules load (repo convention).
+const { buildProTraderSystemPrompt, askLLM } = await import('../server/intraday/agent.js');
+const { runCommitteeDebate, clearCommitteeCache } = await import('../server/intraday/committee.js');
+const { generateDailyBriefing, getLastBriefing } = await import('../server/intraday/briefing.js');
+const { recordTradeClose, getJournal, runEodReview, runWeeklyReport, getWeekKey } = await import('../server/intraday/journal.js');
+
+// Today's IST dayKey — journal tests must use a DYNAMIC dayKey: the
+// hardcoded '2026-08-28' aged out of getJournal(14)'s rolling window
+// (2026-09-13 onwards) and the entries silently disappeared.
+const TODAY_IST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' });
 
 // ---- shared mocks ----------------------------------------------------
 const mockScan = {
@@ -132,7 +151,7 @@ describe('generateDailyBriefing', () => {
 describe('journal data capture (no AI needed)', () => {
   it('records a closed trade exactly once (de-dupe)', () => {
     const trade = {
-      id: 99901, status: 'CLOSED', dayKey: '2026-08-28', symbol: 'TESTJ', direction: 'LONG',
+      id: 99901, status: 'CLOSED', dayKey: TODAY_IST, symbol: 'TESTJ', direction: 'LONG',
       entry: 100, qty: 10, stopLoss: 98, target1: 104, target2: 106,
       closeReason: 'T2_HIT', realizedPnl: 260, openedAt: Date.now() - 3600000,
       closedAt: Date.now(), t1Hit: true, parts: [{}, {}],
@@ -154,7 +173,7 @@ describe('journal data capture (no AI needed)', () => {
 
   it('computes rMultiple as null when SL equals entry', () => {
     recordTradeClose({
-      id: 99903, status: 'CLOSED', dayKey: '2026-08-28', symbol: 'TESTZ', direction: 'LONG',
+      id: 99903, status: 'CLOSED', dayKey: TODAY_IST, symbol: 'TESTZ', direction: 'LONG',
       entry: 100, qty: 10, stopLoss: 100, target1: null, target2: null,
       closeReason: 'MANUAL', realizedPnl: 0, openedAt: Date.now(), closedAt: Date.now(),
     });

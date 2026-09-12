@@ -12,7 +12,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const DATA_DIR = path.join(__dirname, '..', 'data');
+// SMARTAI_DATA_DIR: dev/test isolation override (same convention as
+// server/lib/store.js). Without it, test runs pollute the production
+// server/data/ journal + paper-trading files with synthetic trades.
+export const DATA_DIR = process.env.SMARTAI_DATA_DIR
+  ? path.resolve(process.env.SMARTAI_DATA_DIR)
+  : path.join(__dirname, '..', 'data');
 
 let _dirReady = false;
 function ensureDir() {

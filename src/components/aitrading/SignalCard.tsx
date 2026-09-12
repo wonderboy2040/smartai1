@@ -792,7 +792,11 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
             <span className={`text-sm font-black ${sideColor(signal.side)}`}>{long ? '▲ LONG' : '▼ SHORT'}</span>
             <span className={`px-2 py-0.5 rounded-md text-[10px] font-black tracking-wider ${g.cls}`}>{g.label}</span>
             {(() => {
+              // v10.2.1: guard like TopPicksPanel — a stale/partial signal
+              // without voters would render an "undefined/undefined votes"
+              // badge. Hide the badge instead of showing garbage.
               const vc = signal.voters ?? signal.participating;
+              if (vc == null || !signal.totalModels) return null;
               const capped = vc < 5;
               return (
                 <span

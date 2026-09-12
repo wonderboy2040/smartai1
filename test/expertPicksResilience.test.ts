@@ -67,7 +67,9 @@ const SCAN = (picks) => ({
   partialNote: null, generatedAt: Date.now(),
 });
 
-beforeEach(() => { __clearExpertPicksCaches(); });
+// v9.2.2: await the drain — a background refresh from the previous test
+// must fully settle before the next one starts (single-flight join guard).
+beforeEach(async () => { await __clearExpertPicksCaches(); });
 
 describe('v9.2.1 SWR — a stale scan is served INSTANTLY, never an error', () => {
   it('a 5-min-old scan serves immediately with stale+refreshing flags and minScore-filtered picks', async () => {
