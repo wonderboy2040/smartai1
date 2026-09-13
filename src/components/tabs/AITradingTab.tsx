@@ -510,7 +510,7 @@ export default memo(function AITradingTab() {
       <div>
         <SectionLabel num={market === 'INDIA' ? '04' : '03'} title="Backtest Lab" sub="the SAME 9-model ensemble replayed on history — win rate · avg R · equity curve" />
         <div className="mt-2.5">
-          <BacktestPanel market={market === 'FUTURES' ? 'CRYPTO' : market} runBacktest={runBacktest} />
+          <BacktestPanel market={market === 'FUTURES' || market === 'GLOBALFUTURES' ? 'CRYPTO' : market} runBacktest={runBacktest} />
         </div>
       </div>
 

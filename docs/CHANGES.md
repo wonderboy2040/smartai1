@@ -1,3 +1,35 @@
+## v10.4 — GLOBAL EQUITY FUTURES SIM DESK + futures-wallet GET transport + ultra-stream (2026-09-14)
+
+### Fix: CoinDCX futures wallet `[404] not_found` — the route is GET-only
+- **Root cause** (the live "futures USDT 3.01 dikhta hi nahi" bug): the derivatives wallets route is a **GET** endpoint — the old POST died with `[404] not_found` (Express routes by METHOD), so the futures margin tile showed 0 while the CoinDCX app showed balance
+- New `coindcxPrivateGET()` in `server/mcp/coindcx.js` — query-param auth for the 2025 derivatives wallet routes (params in the query string, HMAC over the compact JSON of the same params, seconds timestamp; ms variant kept as fallback)
+- `fetchFuturesWallets()` transport chain: **GET(s) → GET(ms) → legacy POST** — first transport that answers sticks for the process lifetime (no per-poll probing); wrapper tolerance unchanged (`[]` / `{wallets}` / `{data}` / `{balances}`)
+- With the wallet live, the agent's futures-viability gate (`deployableFuturesUSDT ≥ 2`) works again — the "scan: 0 candidates (futures margin ke karan sirf spot scope)" state clears automatically when margin exists
+
+### New: GLOBAL EQUITY FUTURES SIM desk (Apple/Google/NVIDIA/SpaceX…)
+- New `server/ai/globalFutures.js` — CFD-style SIM futures on the world's biggest companies:
+  - **AAPL, MSFT, GOOGL, AMZN, NVDA, TSLA, META** — REAL Yahoo Finance quotes (live) + REAL 1h candles (3mo, the same feed the crypto LTF layer uses)
+  - **SPACEX** — private company, koi public price NAHI: a deterministic synthetic walk (seeded per-hour random walk, anchored near the tender-valuation per-share equivalent), clearly labeled **SIM** on every surface
+- The SAME 10-model superintelligence committee votes on these — full plans (entry/SL/T1/T2/R:R), AI score, regime (NASDAQ-100 + USVIX)
+- **Trading honesty**: CoinDCX par ye contracts listed NAHI hain — the desk is PAPER/NOTIFY only; a LIVE click is rejected with the honest reason (gate 0)
+- Same gauntlet as every desk: kill switch → auto policy → fresh signal → leverage sanity → journal caps (daily cap / loss cap / one-per-pair / concentration)
+- `watchGlobalPositions()` (60s) — SL / TP2 / trailing / partial-TP / liquidation sweep on the desk's own quotes
+- Agent integration: `desks.global` (default ON) — the auto-agent scans + enters/exits the GLOBAL desk through the same time-exit / trend-flip / correlation-guard discipline
+- Ask-AI (crypto desk agent): new `analyze_global_stock` tool + `market: "GLOBAL"` in the signals tool (9 tools now)
+- Endpoints: `GET /api/ai/signals?market=GLOBALFUTURES`, `GET /api/ai/global/markets`, `POST /api/ai/global/execute`, `?market=GLOBALFUTURES` on deep
+- Frontend: third desk tab 🌍 EQUITY SIM in the CoinDCX desk, position rows with the GLOBAL/SIM chip, ticket in the USD margin domain
+
+### Upgrade: positions ultra stream
+- Open positions now poll **every 5s** (was 10s) — live LTP + avg-buy-price + uPnL with the pulse dot (server-side quote caches keep it cheap); flat stays at 45s
+- GLOBALFUTURES positions price from the desk feed (`yahoo` / `global-sim` sources, USD-domain P&L with INR twins)
+
+### Fixes caught live (smoke-tested against the running server)
+- `getPositionsWithPnl`: an open GLOBALFUTURES position hit "Assignment to constant variable" (the quote map was re-assigned over a `const`) — route 500'd; fixed + regression test pinned
+- `/api/ai/global/execute` now passes `mode: 'live'` through to the gauntlet (gate 0 rejects honestly) instead of silently converting to paper
+
+### Tests
+- 28 new tests (wallet GET transport chain + wire contract, global desk gauntlet/watcher/close, board integration on the real model loop, agent desks.global config, positions pricing regression) → **1146/1146 passing**
+
 ## v6.8 — GLOBAL FUTURES + SUPERINTELLIGENCE AUTO-AGENT (2026-09-07)
 
 ### New: CoinDCX GLOBAL FUTURES desk (USDT-margined perpetuals)

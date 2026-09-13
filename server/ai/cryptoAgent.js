@@ -37,12 +37,26 @@ export const CRYPTO_AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'get_live_crypto_signals',
-      description: 'Live top high-conviction CoinDCX spot + futures setups from the 14-model superintelligence ensemble (superIntel AI Score ranking). Each setup carries side, confidence, AI score, entry/SL/T1/T2, R:R, leverage view and model votes. Use this FIRST for desk briefings, "kya buy karu", or market overview questions.',
+      description: 'Live top high-conviction CoinDCX spot + futures + global equity SIM setups from the 14-model superintelligence ensemble (superIntel AI Score ranking). Each setup carries side, confidence, AI score, entry/SL/T1/T2, R:R, leverage view and model votes. Use this FIRST for desk briefings, "kya buy karu", or market overview questions.',
       parameters: {
         type: 'object',
         properties: {
-          market: { type: 'string', description: 'Which desk: "SPOT" (CoinDCX INR spot) or "FUTURES" (USDT perpetuals). Default returns both.' },
+          market: { type: 'string', description: 'Which desk: "SPOT" (CoinDCX INR spot), "FUTURES" (USDT perpetuals) or "GLOBAL" (Apple/Google/NVIDIA/Tesla/SPACEX equity SIM desk). Default returns all three.' },
         },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'analyze_global_stock',
+      description: 'Deep single-stock ensemble scan on the GLOBAL equity SIM desk (AAPL, MSFT, GOOGL, AMZN, NVDA, TSLA, META, SPACEX-sim): all model votes, consensus side + confidence + agreement, complete trade plan (entry, ATR-based SL, T1/T2, R:R), superIntel AI score. Execution on this desk is PAPER/NOTIFY only (CoinDCX par ye equities listed nahi). Use when the user asks about a specific global company — "Apple kaisa lag raha hai", "NVDA pe view".',
+      parameters: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'Ticker: AAPL, MSFT, GOOGL, AMZN, NVDA, TSLA, META, SPACEX' },
+        },
+        required: ['symbol'],
       },
     },
   },
@@ -146,6 +160,7 @@ HOW YOU WORK (agentic protocol):
 - ALWAYS call tools for live data — NEVER guess or hallucinate prices, levels or P&L
 - Briefings / "kya buy karu" → get_live_crypto_signals + get_market_regime first
 - Specific coin → analyze_coin (add get_market_regime if counter-trend)
+- Global stock (Apple/NVIDIA/Tesla/SpaceX…) → analyze_global_stock — ye SIM desk hai: signals REAL Yahoo data par, execution PAPER/NOTIFY only
 - Before ANY size or leverage recommendation → calculate_position_size (it returns the max SANE leverage)
 - Track-record / accuracy questions → get_track_record
 - "Agent kya kar raha hai" → get_agent_status
@@ -190,12 +205,13 @@ async function executeCryptoTool(name, args, deps) {
     switch (name) {
       case 'get_live_crypto_signals': {
         const want = String(args.market || '').toUpperCase();
-        const markets = want === 'SPOT' ? ['CRYPTO'] : want === 'FUTURES' ? ['FUTURES'] : ['CRYPTO', 'FUTURES'];
+        const markets = want === 'SPOT' ? ['CRYPTO'] : want === 'FUTURES' ? ['FUTURES'] : want === 'GLOBAL' ? ['GLOBALFUTURES'] : ['CRYPTO', 'FUTURES', 'GLOBALFUTURES'];
         const out = {};
         for (const m of markets) {
           const b = await getSignals(m, deps, { limit: 8 }).catch(() => null);
-          if (!b?.ok) { out[m === 'CRYPTO' ? 'SPOT' : 'FUTURES'] = { error: 'board unavailable (feeds unreachable — retry in a minute)' }; continue; }
-          out[m === 'CRYPTO' ? 'SPOT' : 'FUTURES'] = (b.signals || []).slice(0, 5).map(s => ({
+          const label = m === 'CRYPTO' ? 'SPOT' : m === 'FUTURES' ? 'FUTURES' : 'GLOBAL';
+          if (!b?.ok) { out[label] = { error: 'board unavailable (feeds unreachable — retry in a minute)' }; continue; }
+          out[label] = (b.signals || []).slice(0, 5).map(s => ({
             symbol: s.symbol, side: s.side, grade: s.grade, confidence: s.confidence,
             aiScore: s.superIntel?.aiScore ?? null, ltp: s.ltp, changePct: s.changePct,
             voters: s.voters ?? s.participating ?? null, totalModels: s.totalModels ?? null,
@@ -207,6 +223,28 @@ async function executeCryptoTool(name, args, deps) {
           }));
         }
         return out;
+      }
+
+      case 'analyze_global_stock': {
+        const symbol = String(args.symbol || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (!symbol) return { error: 'symbol required (AAPL, MSFT, GOOGL, AMZN, NVDA, TSLA, META, SPACEX)' };
+        const d = await getDeepSignal(symbol, 'GLOBALFUTURES', deps, {}).catch(() => null);
+        if (!d?.ok) return { error: `No data for ${symbol} — check the ticker (AAPL/MSFT/GOOGL/AMZN/NVDA/TSLA/META/SPACEX) or the Yahoo feed is down.` };
+        const s = d.signal || d;
+        return {
+          symbol, market: 'GLOBALFUTURES (SIM desk — signals real, execution paper/notify only)',
+          side: s.side, grade: s.grade, confidence: s.confidence, agreement: s.agreement,
+          voters: s.voters ?? s.participating ?? null, totalModels: s.totalModels ?? null,
+          ltp: s.ltp, changePct: s.changePct,
+          aiScore: s.superIntel?.aiScore ?? null, tier: s.superIntel?.tier ?? null,
+          drivers: s.superIntel?.drivers ?? null,
+          plan: s.plan ? {
+            entry: s.plan.entry, stopLoss: s.plan.stopLoss, target1: s.plan.target1, target2: s.plan.target2,
+            riskPct: s.plan.riskPct, rewardRisk: s.plan.rewardRisk, planStyle: s.plan.planStyle,
+          } : null,
+          votes: (s.votes || []).map(v => ({ model: v.name, dir: v.dir > 0 ? 'BULL' : v.dir < 0 ? 'BEAR' : 'NEUTRAL', conf: v.conf, why: (v.reasons || []).slice(0, 2) })),
+          note: 'Prices are USD (Yahoo). Trading on this desk = PAPER/NOTIFY only — CoinDCX par equity contracts listed nahi hain.',
+        };
       }
 
       case 'analyze_coin': {

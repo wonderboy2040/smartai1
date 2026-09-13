@@ -238,11 +238,14 @@ export async function fetchYahooIntradayCandles(symbol, market) {
   if (hit) return hit;
   const missAt = _ltfMiss.get(key);
   if (missAt != null && Date.now() - missAt < 60_000) return null;
-  // indices (^NSEI etc.) map via YF_TICKER; stocks get .NS; crypto -USD
+  // indices (^NSEI etc.) map via YF_TICKER; stocks get .NS; crypto -USD;
+  // global equity futures ARE their Yahoo ticker (AAPL, NVDA…)
   const t = YF_TICKER[symbol];
-  const yh = t || (mkt === 'CRYPTO' || mkt === 'FUTURES' ? `${symbol}-USD` : `${symbol}.NS`);
-  const interval = mkt === 'CRYPTO' || mkt === 'FUTURES' ? '1h' : '15m';
-  const range = mkt === 'CRYPTO' || mkt === 'FUTURES' ? '3mo' : '1mo';
+  const yh = t || (mkt === 'CRYPTO' || mkt === 'FUTURES' ? `${symbol}-USD`
+    : mkt === 'GLOBALFUTURES' ? String(symbol || '').toUpperCase()
+      : `${symbol}.NS`);
+  const interval = mkt === 'CRYPTO' || mkt === 'FUTURES' || mkt === 'GLOBALFUTURES' ? '1h' : '15m';
+  const range = mkt === 'CRYPTO' || mkt === 'FUTURES' || mkt === 'GLOBALFUTURES' ? '3mo' : '1mo';
   let out = null;
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yh)}?interval=${interval}&range=${range}`;
@@ -286,6 +289,7 @@ export async function fetchYahooIntradayCandles(symbol, market) {
 const _regimeTrendCache = {
   crypto: { at: 0, val: null },
   india: { at: 0, val: null },
+  global: { at: 0, val: null },
 };
 const TREND_TTL = 15 * 60_000;
 const TREND_NEG_TTL = 5 * 60_000;
@@ -325,6 +329,26 @@ export async function buildRegime(market) {
       btcChange: q?.BTC?.changePct ?? null,
       btcTrend: btcTrend?.trend ?? null,
       btcTrendSpread: btcTrend?.spread ?? null,
+    };
+  }
+  // v10.4 GLOBAL EQUITY FUTURES — the tech-complex regime: NASDAQ-100
+  // 24h move + the USVIX risk read (the global desk's equivalent of
+  // the crypto desk's BTC regime). Same Yahoo feed the INDIA desk
+  // uses for NIFTY — one call, cached by Yahoo's own chart TTL.
+  if (mkt === 'GLOBALFUTURES') {
+    const q = await fetchYahooQuotes(['NDX', 'USVIX']).catch(() => ({}));
+    const c = _regimeTrendCache.global;
+    let ndxTrend = _trendFresh(c) ? c.val : null;
+    if (!ndxTrend) {
+      const d = await fetchYahooCandles('NDX', '6mo').catch(() => (null));
+      ndxTrend = dailyTrend(d);
+      c.val = ndxTrend; c.at = Date.now();
+    }
+    return {
+      ndxChange: q?.NDX?.changePct ?? null,
+      usVix: q?.USVIX?.price ?? null,
+      ndxTrend: ndxTrend?.trend ?? null,
+      ndxTrendSpread: ndxTrend?.spread ?? null,
     };
   }
   const q = await fetchYahooQuotes(['NIFTY', 'INDIAVIX']).catch(() => ({}));
@@ -532,9 +556,10 @@ Respond STRICT JSON only (no markdown):
 export function computeTopFive(signals, regime, market = 'INDIA', limit = 5) {
   if (!Array.isArray(signals) || signals.length === 0) return [];
   const mkt = String(market || 'INDIA').toUpperCase();
-  const rawRegime = mkt === 'INDIA' ? regime?.niftyChange : regime?.btcChange;
+  // v10.4: GLOBALFUTURES regime = NDX (the tech-complex barometer)
+  const rawRegime = mkt === 'INDIA' ? regime?.niftyChange : mkt === 'GLOBALFUTURES' ? regime?.ndxChange : regime?.btcChange;
   const regimeChange = rawRegime == null ? null : Number(rawRegime);
-  const regimeLabel = mkt === 'INDIA' ? 'NIFTY' : 'BTC';
+  const regimeLabel = mkt === 'INDIA' ? 'NIFTY' : mkt === 'GLOBALFUTURES' ? 'NASDAQ' : 'BTC';
   const eligible = signals.filter(s =>
     s && (s.grade === 'STRONG' || s.grade === 'ACTION')
     && (s.side === 'LONG' || s.side === 'SHORT')
@@ -593,7 +618,7 @@ function _warmBoardInBackground(mkt, deps) {
 
 export async function getSignals(market, deps, opts = {}) {
   const raw = String(market || 'INDIA').toUpperCase();
-  const mkt = raw === 'CRYPTO' ? 'CRYPTO' : raw === 'FUTURES' ? 'FUTURES' : 'INDIA';
+  const mkt = raw === 'CRYPTO' ? 'CRYPTO' : raw === 'FUTURES' ? 'FUTURES' : raw === 'GLOBALFUTURES' ? 'GLOBALFUTURES' : 'INDIA';
   const cacheKey = `board:${mkt}`;
   // v9: full-universe scans are heavier — the dynamic desks (crypto/
   // futures) hold their board for 90s; India keeps the 60s cadence.
@@ -704,6 +729,26 @@ async function _computeBoard(mkt, deps, opts = {}) {
       const ctx = buildFuturesCtxSync(base, tv[base], futMap.get(base), candleMap.get(base) || null, regime);
       if (ctx) { attachSuperCtx(ctx, tv[base], candleMap.get(base) || null); contexts.push(ctx); }
     });
+  } else if (mkt === 'GLOBALFUTURES') {
+    // v10.4 GLOBAL EQUITY FUTURES — AAPL/MSFT/GOOGL/AMZN/NVDA/TSLA/META
+    // (real Yahoo quotes + 1h candles) + SPACEX (deterministic synthetic
+    // walk, labeled SIM). Data + context building live in globalFutures.js
+    // — the SAME 10-model committee votes on these, same as every desk.
+    const gf = await import('./globalFutures.js');
+    const [quotes, ...candleJobs] = await Promise.all([
+      gf.fetchGlobalQuotes().catch(() => null),
+      ...gf.GLOBAL_FUTURES_UNIVERSE.map(u => gf.fetchGlobalCandles(u.symbol).catch(() => null)),
+    ]);
+    superMeta.universeSize = gf.GLOBAL_FUTURES_UNIVERSE.length;
+    superMeta.universeMode = 'global-equity-futures';
+    superMeta.priceSource = quotes ? (quotes.get('SPACEX')?.sim ? 'yahoo + spacex-sim' : 'yahoo') : 'unavailable';
+    for (let i = 0; i < gf.GLOBAL_FUTURES_UNIVERSE.length; i++) {
+      const u = gf.GLOBAL_FUTURES_UNIVERSE[i];
+      const q = quotes?.get(u.symbol) || null;
+      const candles = Array.isArray(candleJobs[i]) ? candleJobs[i] : null;
+      const ctx = gf.buildGlobalCtxSync(u.symbol, q, candles, regime);
+      if (ctx) { attachSuperCtx(ctx, { ltp: ctx.ltp, usdPrice: ctx.ltp }, candles); contexts.push(ctx); }
+    }
   } else {
     // CRYPTO — v9 SUPERINTELLIGENCE: the FULL DYNAMIC spot universe.
     // Every liquid CoinDCX INR pair by 24h turnover, live discovered
@@ -1202,7 +1247,7 @@ function buildFuturesCtxSync(base, tvRow, futRow, candles, regime) {
 // ---------------- deep single-symbol signal ----------------
 export async function getDeepSignal(symbol, market, deps, opts = {}) {
   const raw = String(market || 'INDIA').toUpperCase();
-  const mkt = raw === 'CRYPTO' ? 'CRYPTO' : raw === 'FUTURES' ? 'FUTURES' : 'INDIA';
+  const mkt = raw === 'CRYPTO' ? 'CRYPTO' : raw === 'FUTURES' ? 'FUTURES' : raw === 'GLOBALFUTURES' ? 'GLOBALFUTURES' : 'INDIA';
   const sym = String(symbol || '').toUpperCase().replace(/[^A-Z0-9\-]/g, '');
   if (!sym) return { ok: false, reason: 'symbol required' };
   // optionsCtx changes which models participate (OptionsFlow) — cache
@@ -1212,7 +1257,7 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
   const cached = cacheGet(cacheKey, 30_000);
   if (cached) return cached;
 
-  const regime = await buildRegime(mkt === 'INDIA' ? 'INDIA' : 'CRYPTO');
+  const regime = await buildRegime(mkt === 'INDIA' ? 'INDIA' : mkt === 'GLOBALFUTURES' ? 'GLOBALFUTURES' : 'CRYPTO');
   let ctx = null;
   if (mkt === 'FUTURES') {
     const [tv, futRows, candles] = await Promise.all([
@@ -1222,6 +1267,15 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
     ]);
     const row = (Array.isArray(futRows) ? futRows : []).find(x => x.base === sym);
     ctx = buildFuturesCtxSync(sym, tv[sym], row, candles, regime);
+  } else if (mkt === 'GLOBALFUTURES') {
+    // v10.4: the deep dive on a global name — quotes + candles from the
+    // desk's own feed (Yahoo for the real names, synthetic for SPACEX).
+    const gf = await import('./globalFutures.js');
+    const [quotes, candles] = await Promise.all([
+      gf.fetchGlobalQuotes().catch(() => null),
+      gf.fetchGlobalCandles(sym).catch(() => null),
+    ]);
+    ctx = gf.buildGlobalCtxSync(sym, quotes?.get(sym) || null, candles, regime);
   } else if (mkt === 'CRYPTO') {
     const { fetchCoinDcxTickers } = await import('../cryptoStream.js');
     const [tv, tickers, candles] = await Promise.all([
@@ -1434,6 +1488,13 @@ export async function getFreshFuturesSignalForExec(pairOrSymbol, deps) {
   const sym = String(pairOrSymbol || '').toUpperCase()
     .replace(/^B-/, '').replace(/_USDT$/, '').replace(/USDT$/, '');
   const deep = await getDeepSignal(sym, 'FUTURES', deps);
+  return deep?.ok ? deep.signal : null;
+}
+
+/** v10.4: the GLOBAL FUTURES gauntlet's fresh signal source ("NVDA-USD" | "NVDA"). */
+export async function getFreshGlobalSignalForExec(pairOrSymbol, deps) {
+  const sym = String(pairOrSymbol || '').toUpperCase().replace(/-USD$/, '');
+  const deep = await getDeepSignal(sym, 'GLOBALFUTURES', deps);
   return deep?.ok ? deep.signal : null;
 }
 

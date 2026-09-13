@@ -1329,9 +1329,25 @@ export async function getPositionsWithPnl() {
     futUsdInr = usdInr;
     for (const r of (Array.isArray(rows) ? rows : [])) if (r.last > 0) futLtp.set(r.pair, r.last);
   }
+  // v10.4: GLOBAL EQUITY FUTURES positions priced from the desk's own
+  // feed (Yahoo quotes / SPACEX synthetic) — same USD-domain math as
+  // futures, so the LTP + uPnL stream stays live on this desk too.
+  const globalSyms = [...new Set(j.positions.filter(p => p.market === 'GLOBALFUTURES' && p.status === 'OPEN').map(p => p.symbol))];
+  let globalLtp = new Map();
+  let globalUsdInr = null;
+  if (globalSyms.length > 0) {
+    const { fetchGlobalLtpMap } = await import('./globalFutures.js');
+    const { fetchUsdInr } = await import('./futures.js');
+    const [q, fx] = await Promise.all([
+      fetchGlobalLtpMap().catch(() => new Map()),
+      fetchUsdInr().catch(() => 84),
+    ]);
+    globalUsdInr = fx;
+    globalLtp = q;
+  }
   // v7.0.1: TV-Binance fallback for CRYPTO spot pairs the CoinDCX
   // ticker map missed (CF-block) — priced in ₹ via the live USD/INR.
-  const cryptoOpen = j.positions.filter(p => p.status === 'OPEN' && p.market !== 'INDIA' && p.market !== 'FUTURES');
+  const cryptoOpen = j.positions.filter(p => p.status === 'OPEN' && p.market !== 'INDIA' && p.market !== 'FUTURES' && p.market !== 'GLOBALFUTURES');
   const cryptoMiss = cryptoOpen.filter(p => !byPair.has(p.pair)).map(p => String(p.pair || '').replace(/INR$/, '').replace(/^B-/, '').replace(/_USDT$/, ''));
   const tvUsd = new Map();
   let spotUsdInr = null;
@@ -1377,6 +1393,10 @@ export async function getPositionsWithPnl() {
       } else if (p.market === 'FUTURES') {
         ltp = futLtp.get(p.pair) ?? tvUsdPrice(p.pair) ?? p.entryPrice;
         priceSource = futLtp.has(p.pair) ? 'futures-rt' : (tvUsdPrice(p.pair) != null ? 'tv-usd-fallback' : 'entry-fallback');
+      } else if (p.market === 'GLOBALFUTURES') {
+        const q = globalLtp.get(p.symbol);
+        ltp = q?.price ?? p.entryPrice;
+        priceSource = q ? (q.sim ? 'global-sim' : 'yahoo') : 'entry-fallback';
       } else {
         ltp = byPair.get(p.pair) ?? tvInrPrice(p.pair) ?? p.entryPrice;
         priceSource = byPair.has(p.pair) ? 'coindcx' : (tvInrPrice(p.pair) != null ? 'tv-usd-fallback' : 'entry-fallback');
@@ -1392,6 +1412,17 @@ export async function getPositionsWithPnl() {
           return {
             ...p, ltp: r2(ltp), unrealizedPnlINR: upnl, priceSource,
             unrealizedPnlUSDT: r2(pnlUSDT + (Number(p.bookedPnlUSDT) || 0)), usdInr: r2(futUsdInr || 84),
+            marginUSDT: p.marginUSDT ?? null,
+            exitStage: exitStageOf(p),
+          };
+        }
+        if (p.market === 'GLOBALFUTURES') {
+          // v10.4: USD domain (futures math, yahoo/sim feed)
+          const pnlUSD = (long ? ltp - p.entryPrice : p.entryPrice - ltp) * p.qty;
+          upnl = r2(pnlUSD * (globalUsdInr || 84) + booked);
+          return {
+            ...p, ltp: r2(ltp), unrealizedPnlINR: upnl, priceSource,
+            unrealizedPnlUSDT: r2(pnlUSD + (Number(p.bookedPnlUSDT) || 0)), usdInr: r2(globalUsdInr || 84),
             marginUSDT: p.marginUSDT ?? null,
             exitStage: exitStageOf(p),
           };

@@ -185,6 +185,46 @@ export async function coindcxPrivate(path, apiKey, secret, body = {}) {
   return json;
 }
 
+// ---------------- signed private REST call (GET, query-param auth) ----------------
+// 2025 FUTURES API: the derivatives wallet routes are GET-only — a POST
+// to the same path dies with `[404] not_found` (Express routes by method,
+// so the route "doesn't exist" for POST). The GET auth mirrors the POST
+// contract but the signed payload travels as QUERY params:
+//   • timestamp unit: SECONDS (string) — the derivatives wallet route
+//     family expects the 10-digit epoch; the ms variant is kept as a
+//     fallback (`unit: 'ms'`) in case the route drifts back.
+//   • signature = HMAC-SHA256(secret, JSON.stringify({...params, timestamp}))
+//     — the server rebuilds the same JSON from the query string to verify.
+//   • params are serialized in insertion order so the rebuilt payload
+//     matches the signed string byte-for-byte.
+export async function coindcxPrivateGET(path, apiKey, secret, params = {}, { unit = 's' } = {}) {
+  const timestamp = unit === 'ms' ? String(Date.now()) : Math.floor(Date.now() / 1000).toString();
+  const payload = { ...params, timestamp };
+  const payloadStr = JSON.stringify(payload);
+  const signature = crypto.createHmac('sha256', secret).update(payloadStr).digest('hex');
+  const qs = new URLSearchParams(
+    Object.entries(payload).map(([k, v]) => [k, String(v)]),
+  ).toString();
+  const r = await fetch(`${API_BASE}${path}?${qs}`, {
+    method: 'GET',
+    headers: {
+      'X-AUTH-APIKEY': apiKey,
+      'X-AUTH-SIGNATURE': signature,
+    },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  const text = await r.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch { /* error body may be plain */ }
+  if (!r.ok) {
+    const msg = (json && (json.message || json.error || json.error_description)) || `CoinDCX API ${r.status}`;
+    const err = new Error(`[${r.status}] ${String(msg).slice(0, 180)}`);
+    err.status = r.status;
+    throw err;
+  }
+  return json;
+}
+
 // ---------------- balances fetch with pagination ----------------
 // CoinDCX docs use STRING page/size values; one page holds at most
 // `size` records. Loop until a short page arrives (max 5 pages —

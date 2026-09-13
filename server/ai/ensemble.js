@@ -139,7 +139,7 @@ export function buildTradePlan(consensus, ctx, market, opts = {}) {
   if (!consensus || consensus.dir === 0 || !(ltp > 0)) {
     return null;
   }
-  const cryptoish = market === 'CRYPTO' || market === 'FUTURES'; // v6.8: futures = 24/7 noise regime too
+  const cryptoish = market === 'CRYPTO' || market === 'FUTURES' || market === 'GLOBALFUTURES'; // v6.8/v10.4: futures + global-equity SIM = 24/7 noise regime too
   const atr = ctx?.ind?.atr ?? (ctx?.indicators?.atr) ?? null;
   const atrFallback = ltp * (cryptoish ? 0.012 : 0.008);
   const a = atr != null && atr > 0 ? atr : atrFallback;
@@ -243,7 +243,7 @@ export function buildSignal({ symbol, market, ctx, votes, consensus, plan, aiNot
     })),
     summary: consensus.summary,
     aiNote: aiNote || null,
-    executable: (market === 'CRYPTO' || market === 'FUTURES') && consensus.grade === 'STRONG' && !!plan,
+    executable: (market === 'CRYPTO' || market === 'FUTURES' || market === 'GLOBALFUTURES') && consensus.grade === 'STRONG' && !!plan,
     generatedAt: Date.now(),
   };
 }

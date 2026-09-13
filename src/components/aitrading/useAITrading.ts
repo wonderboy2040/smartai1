@@ -47,13 +47,14 @@ export interface ExecuteOpts {
   leverage?: number;
 }
 
-export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' | 'CRYPTO' | 'FUTURES'> }) {
+export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' | 'CRYPTO' | 'FUTURES' | 'GLOBALFUTURES'> }) {
   // v6.9: market-scoped loading — the India desk only pays for the India
   // board; the CoinDCX desk loads spot + futures. Default = all (legacy).
   const markets = scope?.markets ?? ['INDIA', 'CRYPTO', 'FUTURES'];
   const [india, setIndia] = useState<SignalBoard | null>(null);
   const [crypto, setCrypto] = useState<SignalBoard | null>(null);
   const [futures, setFutures] = useState<SignalBoard | null>(null);
+  const [globalFut, setGlobalFut] = useState<SignalBoard | null>(null); // v10.4 GLOBAL equity futures SIM desk
   const [state, setState] = useState<TradingState | null>(null);
   const [positions, setPositions] = useState<JournalPosition[]>([]);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
@@ -78,6 +79,9 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
     if (markets.includes('FUTURES')) jobs.push(apiFetch(`${getProxyBase()}/api/ai/signals?market=FUTURES&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) })
       .then(r => r.ok ? r.json() : null).catch(() => null)
       .then(j => { if (j) { setFutures(j); markOk(); } }));
+    if (markets.includes('GLOBALFUTURES')) jobs.push(apiFetch(`${getProxyBase()}/api/ai/signals?market=GLOBALFUTURES&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) })
+      .then(r => r.ok ? r.json() : null).catch(() => null)
+      .then(j => { if (j) { setGlobalFut(j); markOk(); } }));
     await Promise.allSettled(jobs);
     setBoardError(!anyOk); // v7.0.2: every requested board failed
     setLoading(false);
@@ -102,9 +106,9 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
   }, []);
 
   // Boot + staggered polling (active tab only — background tabs cost zero).
-  // v7.0.1: dynamic positions cadence — 10s while any position is OPEN
-  // (live LTP + uPnL feel; the server-side ticker caches make this cheap),
-  // 45s when flat. Open positions are exactly when the user is watching.
+  // v10.4 ULTRA STREAM: open positions poll every 5s (LTP + avg-buy-price
+  // + uPnL live — the "realtime ultra stream" feel; the server-side
+  // ticker/quote caches make this cheap), 45s when flat.
   const hasOpen = positions.some(p => p.status === 'OPEN');
   useEffect(() => {
     if (!active) return;
@@ -120,7 +124,7 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
   }, [active, loadBoards, loadState]);
   useEffect(() => {
     if (!active) return;
-    const p = setInterval(() => { if (activeRef.current && !document.hidden) loadPositions(); }, hasOpen ? 10_000 : 45_000);
+    const p = setInterval(() => { if (activeRef.current && !document.hidden) loadPositions(); }, hasOpen ? 5_000 : 45_000);
     return () => clearInterval(p);
   }, [active, loadPositions, hasOpen]);
 
@@ -183,7 +187,7 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
 
   // v6.3 PRO: deep single-symbol analysis (every model vote, fresh run,
   // AI Council note) — powers the 🔬 button on each signal card.
-  const fetchDeep = useCallback(async (symbol: string, market: 'INDIA' | 'CRYPTO' | 'FUTURES'): Promise<DeepSignalResult> => {
+  const fetchDeep = useCallback(async (symbol: string, market: 'INDIA' | 'CRYPTO' | 'FUTURES' | 'GLOBALFUTURES'): Promise<DeepSignalResult> => {
     try {
       const r = await apiFetch(`${getProxyBase()}/api/ai/deep/${encodeURIComponent(symbol)}?market=${market}&t=${Date.now()}`, {
         signal: AbortSignal.timeout(40000),
@@ -282,6 +286,31 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
     } finally { setBusy(false); }
   }, [loadPositions, loadState]);
 
+  // v10.4: GLOBAL EQUITY FUTURES SIM desk execution (AAPL/MSFT/GOOGL/
+  // AMZN/NVDA/TSLA/META + SPACEX — paper/notify only; the server rejects
+  // LIVE honestly because CoinDCX par ye contracts listed nahi hain).
+  const executeGlobal = useCallback(async (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }): Promise<ExecuteResult> => {
+    setBusy(true);
+    try {
+      const r = await apiFetch(`${getProxyBase()}/api/ai/global/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: signal.symbol, side: signal.side, mode, // 'live' server pe gate-0 REJECT hota hai with the honest SIM-desk reason
+          ...(opts?.qtyINR != null ? { qtyINR: opts.qtyINR } : {}),
+          ...(opts?.marginUSDT != null ? { marginUSDT: opts.marginUSDT } : {}),
+          ...(opts?.leverage != null ? { leverage: opts.leverage } : {}),
+        }),
+        signal: AbortSignal.timeout(45000),
+      });
+      const j = await r.json().catch(() => ({ ok: false, error: 'bad response' }));
+      loadPositions(); loadState();
+      return j;
+    } catch (e) {
+      return { ok: false, error: String((e as Error)?.message || e) };
+    } finally { setBusy(false); }
+  }, [loadPositions, loadState]);
+
   // v6.5: Dhan broker connect/status.
   const fetchDhanStatus = useCallback(async (): Promise<DhanStatus | null> => {
     try {
@@ -321,10 +350,10 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
   }, [loadState]);
 
   return {
-    india, crypto, futures, state, positions, entries, loading, busy, boardError,
+    india, crypto, futures, globalFut, state, positions, entries, loading, busy, boardError,
     refresh: loadBoards, executeSignal, updateConfig, killSwitch, closePos, fetchDeep,
     executeIndia, runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert,
-    fetchDhanStatus, dhanConnect, dhanDisconnect, executeFutures,
+    fetchDhanStatus, dhanConnect, dhanDisconnect, executeFutures, executeGlobal,
   };
 }
 

@@ -51,13 +51,13 @@ const { executeCryptoTool, fullTicketRules } = __internals;
 const DEPS = { KEYS: {}, OPENAI_COMPAT: {} };
 
 // ============================================================
-// the tool registry — 8 tools, OpenAI function format
+// the tool registry — 9 tools, OpenAI function format
 // ============================================================
 describe('crypto agent registry', () => {
-  it('exposes exactly the 8 planned tools', () => {
+  it('exposes exactly the 9 planned tools', () => {
     const names = CRYPTO_AGENT_TOOLS.map(t => t.function.name);
     expect(names).toEqual([
-      'get_live_crypto_signals', 'analyze_coin', 'get_wallet', 'get_open_positions',
+      'get_live_crypto_signals', 'analyze_global_stock', 'analyze_coin', 'get_wallet', 'get_open_positions',
       'get_market_regime', 'get_track_record', 'calculate_position_size', 'get_agent_status',
     ]);
     for (const t of CRYPTO_AGENT_TOOLS) {

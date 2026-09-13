@@ -126,22 +126,23 @@ const WalletCard = memo(function WalletCard() {
 
 export default memo(function CoinDcxTab() {
   // v6.9: CoinDCX-scoped loading — spot + futures boards only.
-  const t = useAITrading(true, { markets: ['CRYPTO', 'FUTURES'] });
-  const { crypto, futures, state, positions, entries, loading, busy, refresh, executeSignal, executeFutures, updateConfig, closePos, fetchDeep, boardError } = t;
+  // v10.4: + GLOBAL equity futures SIM board (AAPL/GOOGL/NVDA/…/SPACEX).
+  const t = useAITrading(true, { markets: ['CRYPTO', 'FUTURES', 'GLOBALFUTURES'] });
+  const { crypto, futures, globalFut, state, positions, entries, loading, busy, refresh, executeSignal, executeFutures, executeGlobal, updateConfig, closePos, fetchDeep, boardError } = t;
   const { runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert } = t;
-  const [desk, setDesk] = useState<'CRYPTO' | 'FUTURES'>('CRYPTO');
+  const [desk, setDesk] = useState<'CRYPTO' | 'FUTURES' | 'GLOBAL'>('CRYPTO');
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [filter, setFilter] = useState<BoardFilter>('ALL');
   // BUG 6 fix: reset filter when desk changes — avoids stale empty-board
   // when e.g. STRONG filter active on SPOT but 0 STRONG on FUTURES.
-  const switchDesk = useCallback((d: 'CRYPTO' | 'FUTURES') => { setDesk(d); setFilter('ALL'); }, []);
+  const switchDesk = useCallback((d: 'CRYPTO' | 'FUTURES' | 'GLOBAL') => { setDesk(d); setFilter('ALL'); }, []);
   // v6.13: SIMPLE (trade-flow only) / PRO (poora desk) — persist hota hai
   const [viewMode, setViewMode] = useDeskViewMode();
   const simple = viewMode === 'simple';
   const [deep, setDeep] = useState<{ loading: boolean; signal?: AISignal; indicators?: Record<string, unknown>; narrative?: import('../aitrading/types').NarrativeView | null; ltf?: import('../aitrading/types').LtfSnapshot | null; edge?: import('../aitrading/types').EdgeStats | null; error?: string } | null>(null);
 
-  const board: SignalBoard | null = desk === 'FUTURES' ? futures : crypto;
-  const models = board?.models || crypto?.models || futures?.models || [];
+  const board: SignalBoard | null = desk === 'FUTURES' ? futures : desk === 'GLOBAL' ? globalFut : crypto;
+  const models = board?.models || crypto?.models || futures?.models || globalFut?.models || [];
   const canLive = state?.config?.mode === 'live' && !state?.blocked?.notConnected;
 
   // Track which ACTIONABLE symbols were NOT in the previous board → flash them.
@@ -198,6 +199,25 @@ export default memo(function CoinDcxTab() {
     }
     return r; // v7.0.2: the ticket's own banner awaits this honest result
   }, [executeFutures, notify]);
+
+  // v10.4: GLOBAL EQUITY FUTURES SIM desk (Apple/Google/NVIDIA/Tesla/Meta/
+  // Amazon/Microsoft + SPACEX) — signals REAL Yahoo data par, execution
+  // paper/notify only (CoinDCX par ye contracts listed nahi — server
+  // LIVE-reject karta hai with the honest reason).
+  const onExecuteGlobal = useCallback(async (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => {
+    const r = await executeGlobal(signal, mode, opts); // 'live' → server gate-0 honest reject (SIM desk)
+    if (r.ok) {
+      if (mode === 'notify') {
+        notify(true, `🔔 Notify-only — ${r.note || 'gauntlet chala, alert + journal audit likha. Koi position NAHI bani.'}`);
+        return r;
+      }
+      const levTag = r.filled?.leverage ? ` · ${r.filled.leverage}x · margin ${Math.round((r.filled as { marginUSDT?: number }).marginUSDT ?? 0)} USDT` : '';
+      notify(true, `🌍 Global SIM trade opened — ${signal.symbol} ${signal.side} · ${r.filled?.qty ?? '—'} @ ${r.filled?.price ?? '—'}${levTag}${r.fitted ? ` · ⚙️ ${r.fitted}` : ''} · paper-only desk`);
+    } else {
+      notify(false, `⛔ ${r.error || 'execution failed'}`);
+    }
+    return r;
+  }, [executeGlobal, notify]);
 
   const onSaveConfig = useCallback(async (patch: Record<string, unknown>) => {
     const r = await updateConfig(patch);
@@ -279,6 +299,13 @@ export default memo(function CoinDcxTab() {
               ⚡ GLOBAL FUTURES
               <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-violet-500/20 text-violet-300">USDT · 24/7</span>
             </button>
+            {/* v10.4: GLOBAL EQUITY FUTURES SIM desk — the world's biggest
+                companies, REAL Yahoo signals, paper/notify execution. */}
+            <button onClick={() => switchDesk('GLOBAL')} role="tab" aria-pressed={desk === 'GLOBAL'}
+              className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl text-xs font-black transition-colors flex items-center gap-2 ${desk === 'GLOBAL' ? 'bg-gradient-to-r from-sky-600 to-blue-600 text-white shadow-lg shadow-sky-500/20' : 'text-slate-400 hover:text-slate-200'}`}>
+              🌍 EQUITY SIM
+              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-sky-500/20 text-sky-300">USD · AAPL…SPACEX</span>
+            </button>
           </div>
         </div>
       </div>
@@ -318,12 +345,12 @@ export default memo(function CoinDcxTab() {
 
       {/* ============ 🧠 EXPERT PICKS (v8.0 Advance Pro Trader Engine) ============ */}
       <div id="cx-expert">
-        <ExpertPicksPanel active market={desk} onDeep={(sym) => { onDeep({ symbol: sym, market: desk } as AISignal); }} />
+        {desk !== 'GLOBAL' && <ExpertPicksPanel active market={desk} onDeep={(sym) => { onDeep({ symbol: sym, market: desk } as AISignal); }} />}
       </div>
 
       {/* ============ 🏆 TOP 5 PICKS (v6.9) ============ */}
       <div id="cx-top5">
-        <TopPicksPanel picks={board?.topFive} market={desk} deskLabel={desk === 'FUTURES' ? '⚡ COINDCX GLOBAL FUTURES · USDT' : '₿ COINDCX SPOT · INR'} scanned={board?.scanned} loading={loading} onDeep={onDeep} />
+        <TopPicksPanel picks={board?.topFive} market={desk === 'GLOBAL' ? 'GLOBALFUTURES' : desk} deskLabel={desk === 'GLOBAL' ? '🌍 GLOBAL EQUITY FUTURES · USD (SIM desk)' : desk === 'FUTURES' ? '⚡ COINDCX GLOBAL FUTURES · USDT' : '₿ COINDCX SPOT · INR'} scanned={board?.scanned} loading={loading} onDeep={onDeep} />
       </div>
 
       {/* ============ MARKET BREADTH ============ */}
@@ -334,7 +361,9 @@ export default memo(function CoinDcxTab() {
         <div className="flex items-end justify-between flex-wrap gap-2">
           <SectionLabel num="01" title="Superintelligence Signal Board" sub={`${desk === 'FUTURES'
             ? 'CoinDCX GLOBAL FUTURES — poora dynamic perp universe scan (RT USDT prices)'
-            : 'CoinDCX SPOT — poora dynamic INR universe scan'} → 10-model consensus + 7-factor expert engine → AI SCORE (80+ = STRONG, 85+ = ELITE) + full trade blueprint`} />
+            : desk === 'GLOBAL'
+              ? '🌍 GLOBAL EQUITY FUTURES SIM — AAPL/MSFT/GOOGL/AMZN/NVDA/TSLA/META (real Yahoo quotes + 1h candles) + SPACEX (deterministic synthetic, labeled SIM) → same 10-model committee → signals REAL data par, execution PAPER/NOTIFY only'
+              : 'CoinDCX SPOT — poora dynamic INR universe scan'} → 10-model consensus + 7-factor expert engine → AI SCORE (80+ = STRONG, 85+ = ELITE) + full trade blueprint`} />
           <BoardSummary board={board} />
         </div>
         <div className="mt-2.5 flex items-center justify-between flex-wrap gap-2">
@@ -355,7 +384,7 @@ export default memo(function CoinDcxTab() {
           {loading && (!board || board.signals.length === 0) && (
             <div className="quantum-panel rounded-2xl p-10 text-center col-span-full">
               <div className="text-4xl mb-3 animate-float">🧠</div>
-              <div className="text-sm text-slate-400 font-medium">Ensemble scanning {desk === 'FUTURES' ? 'the futures universe' : 'crypto majors'}…</div>
+              <div className="text-sm text-slate-400 font-medium">Ensemble scanning {desk === 'FUTURES' ? 'the futures universe' : desk === 'GLOBAL' ? 'the global equity desk (Yahoo feed)' : 'crypto majors'}…</div>
             </div>
           )}
           {board && !board.ok && (
@@ -378,8 +407,9 @@ export default memo(function CoinDcxTab() {
             <SignalCard key={`${s.market}-${s.symbol}`} signal={s} busy={busy}
               onExecute={desk === 'CRYPTO' ? onExecute : undefined}
               onExecuteFutures={desk === 'FUTURES' ? onExecuteFutures : undefined}
+              onExecuteGlobal={desk === 'GLOBAL' ? onExecuteGlobal : undefined}
               onDeep={onDeep}
-              canLive={canLive} isNew={newSymbols.has(s.symbol)}
+              canLive={desk === 'GLOBAL' ? false : canLive} isNew={newSymbols.has(s.symbol)}
               orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5}
               maxLeverage={state?.config?.cryptoLeverage ?? 1} />
           ))}

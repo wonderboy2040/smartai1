@@ -440,7 +440,8 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
               const upnl = p.unrealizedPnlINR ?? 0;
               const open = p.status === 'OPEN';
               const isIndia = p.market === 'INDIA';
-              const isFut = p.market === 'FUTURES'; // v6.8 — prices/P&L in the USDT domain
+              const isFut = p.market === 'FUTURES' || p.market === 'GLOBALFUTURES'; // v6.8/v10.4 — prices/P&L in the USDT domain
+              const isGlobal = p.market === 'GLOBALFUTURES';
               // v7.0.2: null-guard every ₹-branch price — `SL ₹undefined`
               // used to render when a trailing/BE position nulled its SL.
               const pf = (n?: number | null, dp = 2) => isFut
@@ -451,7 +452,8 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-black font-mono text-white">{p.pair}</span>
                     {isIndia && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-orange-500/15 text-orange-300">🇮🇳 NSE</span>}
-                    {isFut && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-violet-500/15 text-violet-300">⚡ PERP · USDT</span>}
+                    {isGlobal && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-sky-500/15 text-sky-300" title="Global Equity Futures — SIM desk (Yahoo quotes; SPACEX synthetic)">🌍 GLOBAL {p.isSim ? '· SIM' : ''}</span>}
+                    {p.market === 'FUTURES' && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-violet-500/15 text-violet-300">⚡ PERP · USDT</span>}
                     {p.source === 'agent' && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-cyan-500/15 text-cyan-300" title="Superintelligence Auto-Agent ka trade">🤖 AGENT</span>}
                     <span className={`text-[11px] font-black ${p.side === 'LONG' ? 'text-emerald-400' : 'text-red-400'}`}>{p.side}</span>
                     <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${p.mode === 'live' ? 'bg-red-500/15 text-red-300' : 'bg-cyan-500/15 text-cyan-300'}`}>{p.mode.toUpperCase()}</span>
@@ -486,9 +488,11 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
                         className="text-[11px] font-mono text-slate-300 flex items-center gap-1"
                         title={p.priceSource === 'tv-usd-fallback'
                           ? 'CoinDCX feed unavailable — TradingView USD price × live USD/₹ (approx, live)'
-                          : p.priceSource === 'entry-fallback'
-                            ? 'No live feed reachable — price frozen at entry price'
-                            : 'Live price — 10s refresh while position is open'}>
+                          : p.priceSource === 'global-sim'
+                            ? 'SPACEX SIM — deterministic synthetic walk (clearly-labeled simulation, not a market price)'
+                            : p.priceSource === 'entry-fallback'
+                              ? 'No live feed reachable — price frozen at entry price'
+                              : 'Live price — 5s ultra-stream refresh while position is open'}>
                         → {pf(p.ltp)}
                         {p.priceSource === 'tv-usd-fallback' && <span className="text-[8px] font-black text-amber-400">~TV</span>}
                         {p.priceSource === 'entry-fallback' && <span className="text-[8px] font-black text-red-400">STALE</span>}

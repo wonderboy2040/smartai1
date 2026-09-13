@@ -53,7 +53,7 @@ const nowMin = () => Date.now() / 60000;
 export const AGENT_DEFAULTS = {
   enabled: false,             // agent ON/OFF
   mode: 'paper',              // 'paper' | 'notify' | 'live' — execution mode
-  desks: { futures: true, spot: true, india: true }, // v7.0: spot auto-trade desk ON (was false)
+  desks: { futures: true, spot: true, india: true, global: true }, // v7.0 spot ON · v10.4 GLOBAL equity-futures SIM desk ON
   maxTradesPerDay: 3,         // USER SPEC: daily ke 3 trades
   minAiScore: 75,             // v9.6 USER SPEC: 75+ AI score → auto entry
   minConfidence: 80,          // legacy STRONG-committee bar (AI-score path YA ye)
@@ -134,7 +134,7 @@ export function updateAgentConfig(patch = {}) {
     }
   }
   if (patch.desks && typeof patch.desks === 'object') {
-    for (const k of ['futures', 'spot', 'india']) {
+    for (const k of ['futures', 'spot', 'india', 'global']) {
       if (patch.desks[k] != null) next.desks[k] = !!patch.desks[k];
     }
   }
@@ -496,10 +496,15 @@ async function _tick(deps, sendTelegram) {
     if (ageMin >= holdMin) {
       const out = p.market === 'FUTURES'
         ? await closeFuturesPosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }))
-        : await (async () => {
-          const { closePosition } = await import('./coindcxOrders.js');
-          return closePosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }));
-        })();
+        : p.market === 'GLOBALFUTURES'
+          ? await (async () => {
+              const { closeGlobalPosition } = await import('./globalFutures.js');
+              return closeGlobalPosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }));
+            })()
+          : await (async () => {
+              const { closePosition } = await import('./coindcxOrders.js');
+              return closePosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }));
+            })();
       if (out?.ok) {
         timeExited.add(p.id);
         // v7.0.2: honest TOTAL pnl — booked partial legs + the final leg
@@ -527,6 +532,7 @@ async function _tick(deps, sendTelegram) {
   const boards = [];
   if (cfg.desks.futures) boards.push('FUTURES');
   if (cfg.desks.spot) boards.push('CRYPTO');
+  if (cfg.desks.global) boards.push('GLOBALFUTURES'); // v10.4 — Apple/Google/NVIDIA/SPACEX SIM desk
   const scans = await Promise.all(boards.map(m => getSignals(m, deps, { limit: 20 }).catch(() => null)));
   const signalOf = (s) => Number(s?.superIntel?.aiScore ?? 0);
   // v9.6 USER SPEC GATE: 75+ AI score qualifies on its own; the old
@@ -574,10 +580,15 @@ async function _tick(deps, sendTelegram) {
     if (!flipped) continue;
     const out = p.market === 'FUTURES'
       ? await closeFuturesPosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }))
-      : await (async () => {
-          const { closePosition } = await import('./coindcxOrders.js');
-          return closePosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }));
-        })();
+      : p.market === 'GLOBALFUTURES'
+        ? await (async () => {
+            const { closeGlobalPosition } = await import('./globalFutures.js');
+            return closeGlobalPosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }));
+          })()
+        : await (async () => {
+            const { closePosition } = await import('./coindcxOrders.js');
+            return closePosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }));
+          })();
     if (out?.ok) {
       _state.lastEntryAt = Date.now(); // the flip side re-enters only after cooldown
       const totalPnl = (out.position?.pnlINR ?? 0) + (out.position?.bookedPnlINR ?? 0);
@@ -727,7 +738,7 @@ async function _tick(deps, sendTelegram) {
   // the user can audit "₹X risk → Y qty → Z margin at Lx" in the feed
   {
     const stopDist = Math.abs(best.plan.entry - best.plan.stopLoss);
-    if (wantFutures && stopDist > 0) {
+    if ((wantFutures || best.market === 'GLOBALFUTURES') && stopDist > 0) {
       const lev = Math.max(1, Math.min(cfg.maxLeverage, Math.floor(95 / (best.plan.riskPct || 5))));
       const q = riskINR / usdInr / stopDist;
       log('info', `SIZING ${best.symbol}: ₹${r2(riskINR)} risk (${cfg.riskPerTradePct}% of ₹${r2(equityINR)}) → ${Math.round(q * 1e4) / 1e4} qty → ${r2((q * best.plan.entry) / lev)} USDT margin at ${lev}x`);
@@ -741,32 +752,51 @@ async function _tick(deps, sendTelegram) {
     }
   }
   let out = null;
-  if (wantFutures) {
+  if (wantFutures || best.market === 'GLOBALFUTURES') {
+    const isGlobal = best.market === 'GLOBALFUTURES';
     const riskUSDT = riskINR / usdInr;
     const stopDist = Math.abs(best.plan.entry - best.plan.stopLoss);
     if (!(stopDist > 0)) { persistState(); return; }
     const qty = riskUSDT / stopDist;
     const lev = Math.max(1, Math.min(cfg.maxLeverage, Math.floor(95 / (best.plan.riskPct || 5))));
     let marginUSDT = (qty * best.plan.entry) / lev;
-    // never commit more than 60% of the deployable futures margin
-    const deployable = wallet?.deployableFuturesUSDT ?? (equityINR * 0.5 / usdInr);
+    // never commit more than 60% of the deployable margin — the SIM desk
+    // sizes against practice equity (CoinDCX margin is desk par nahi)
+    const deployable = isGlobal
+      ? (equityINR * 0.5 / usdInr)
+      : (wallet?.deployableFuturesUSDT ?? (equityINR * 0.5 / usdInr));
     const capUSDT = deployable * 0.6;
     if (marginUSDT > capUSDT) marginUSDT = capUSDT;
     marginUSDT = Math.round(marginUSDT * 1000) / 1000;
-    if (marginUSDT < 2) {
-      maybeLogSkip('margin too small', `futures margin ${marginUSDT} USDT < 2 — equity ₹${r2(equityINR)} / risk ${cfg.riskPerTradePct}% too small for this stop`);
+    if (marginUSDT < (isGlobal ? 1 : 2)) {
+      maybeLogSkip('margin too small', `${isGlobal ? 'global SIM' : 'futures'} margin ${marginUSDT} USDT < ${isGlobal ? 1 : 2} — equity ₹${r2(equityINR)} / risk ${cfg.riskPerTradePct}% too small for this stop`);
       persistState(); return;
     }
-    const { getFreshFuturesSignalForExec } = await import('./signals.js');
-    out = await executeFuturesSignal({
-      symbol: best.symbol, side: best.side,
-      mode: cfg.mode === 'live' ? 'live' : cfg.mode === 'notify' ? 'notify' : 'paper',
-      marginUSDT, leverage: lev,
-      getFreshSignal: (pair) => getFreshFuturesSignalForExec(pair, deps),
-      wantAuto: cfg.mode === 'live',
-      source: 'agent',
-      sendTelegram,
-    });
+    if (isGlobal) {
+      // v10.4 GLOBAL EQUITY FUTURES SIM — paper/notify only (LIVE reject
+      // hota hai executeGlobalSignal gate 0 me — CoinDCX par ye equities nahi)
+      const { getFreshGlobalSignalForExec } = await import('./signals.js');
+      const { executeGlobalSignal } = await import('./globalFutures.js');
+      out = await executeGlobalSignal({
+        symbol: best.symbol, side: best.side,
+        mode: cfg.mode === 'notify' ? 'notify' : 'paper',
+        marginUSDT, leverage: lev,
+        getFreshSignal: (pair) => getFreshGlobalSignalForExec(pair, deps),
+        source: 'agent',
+        sendTelegram,
+      });
+    } else {
+      const { getFreshFuturesSignalForExec } = await import('./signals.js');
+      out = await executeFuturesSignal({
+        symbol: best.symbol, side: best.side,
+        mode: cfg.mode === 'live' ? 'live' : cfg.mode === 'notify' ? 'notify' : 'paper',
+        marginUSDT, leverage: lev,
+        getFreshSignal: (pair) => getFreshFuturesSignalForExec(pair, deps),
+        wantAuto: cfg.mode === 'live',
+        source: 'agent',
+        sendTelegram,
+      });
+    }
   } else {
     // spot (INR)
     const budgetINR = Math.min(
@@ -791,14 +821,15 @@ async function _tick(deps, sendTelegram) {
     _state.lastEntryAt = Date.now();
     _state.lastEntryPair = pairOfSignal(best);
     const f = out.filled || {};
+    const deskTag = best.market === 'GLOBALFUTURES' ? '🌍 Global SIM' : wantFutures ? '⚡ Futures' : '₿ Spot';
     if (out.mode === 'notify') {
-      log('entry', `NOTIFY ${wantFutures ? 'FUTURES' : 'SPOT'} ${best.symbol} ${best.side} (${best.confidence}% conf) — alert-only, koi order nahi${out.telegramSent ? '' : ' (telegram off)'}`);
+      log('entry', `NOTIFY ${deskTag} ${best.symbol} ${best.side} (${best.confidence}% conf) — alert-only, koi order nahi${out.telegramSent ? '' : ' (telegram off)'}`);
     } else {
-      log('entry', `AUTO-ENTRY ${wantFutures ? 'FUTURES' : 'SPOT'} ${best.symbol} ${best.side} (${best.confidence}% conf) — ${f.qty ?? '?'} @ ${f.price ?? best.plan.entry}${wantFutures ? ` · ${f.leverage ?? '?'}x · margin ${f.marginUSDT ?? '?'} USDT` : ''} · SL ${best.plan.stopLoss} · T2 ${best.plan.target2}`);
+      log('entry', `AUTO-ENTRY ${deskTag} ${best.symbol} ${best.side} (${best.confidence}% conf) — ${f.qty ?? '?'} @ ${f.price ?? best.plan.entry}${wantFutures || best.market === 'GLOBALFUTURES' ? ` · ${f.leverage ?? '?'}x · margin ${f.marginUSDT ?? '?'} USDT` : ''} · SL ${best.plan.stopLoss} · T2 ${best.plan.target2}`);
       await notify(sendTelegram,
-        `🤖 <b>AGENT AUTO-ENTRY</b> — ${wantFutures ? '⚡ Global Futures' : '₿ Spot'} ${best.symbol} ${best.side}\n` +
+        `🤖 <b>AGENT AUTO-ENTRY</b> — ${deskTag} ${best.symbol} ${best.side}\n` +
         `Confidence ${best.confidence}% · agreement ${Math.round((best.agreement || 0) * 100)}% · trade ${tradesToday.length + 1}/${cfg.maxTradesPerDay} today\n` +
-        `${f.qty ?? '?'} @ ${f.price ?? best.plan.entry}${wantFutures ? ` · ${f.leverage ?? 1}x · margin ${Math.round(f.marginUSDT ?? 0)} USDT` : ''}\n` +
+        `${f.qty ?? '?'} @ ${f.price ?? best.plan.entry}${wantFutures || best.market === 'GLOBALFUTURES' ? ` · ${f.leverage ?? 1}x · margin ${Math.round(f.marginUSDT ?? 0)} USDT` : ''}\n` +
         `SL ${best.plan.stopLoss} · T2 ${best.plan.target2} · time-exit ${cfg.maxHoldMin}m`,
       );
     }
@@ -891,6 +922,7 @@ async function notify(sendTelegram, text) {
 /** Normalize a signal's journal pair (one-per-pair check parity). */
 function pairOfSignal(s) {
   if (s.market === 'FUTURES') return `B-${s.symbol}_USDT`;
+  if (s.market === 'GLOBALFUTURES') return `${s.symbol}-USD`; // v10.4 SIM desk
   if (s.market === 'CRYPTO') return `${s.symbol}INR`;
   return s.symbol;
 }
@@ -962,7 +994,7 @@ export async function agentStatus(deps) {
   if (deps) {
     const { getSignals } = await import('./signals.js').catch(() => ({ getSignals: null }));
     if (getSignals) {
-      const wantMarkets = ['INDIA', 'FUTURES', 'CRYPTO'];
+      const wantMarkets = ['INDIA', 'FUTURES', 'CRYPTO', 'GLOBALFUTURES'];
       await Promise.all(wantMarkets.map(async (m) => {
         const b = await getSignals(m, deps, { limit: 6, warmOnly: true }).catch(() => null);
         if (b?.ok) {
@@ -984,6 +1016,7 @@ export async function agentStatus(deps) {
     const deskOrder = [];
     if (cfg.desks.futures && picks.FUTURES?.length) deskOrder.push({ market: 'FUTURES', pick: picks.FUTURES[0] });
     if (cfg.desks.spot && picks.CRYPTO?.length) deskOrder.push({ market: 'CRYPTO', pick: picks.CRYPTO[0] });
+    if (cfg.desks.global && picks.GLOBALFUTURES?.length) deskOrder.push({ market: 'GLOBALFUTURES', pick: picks.GLOBALFUTURES[0] });
     const top = deskOrder.find(x => x?.pick?.plan) || null;
     preview = agentSizingPreview({
       cfg,

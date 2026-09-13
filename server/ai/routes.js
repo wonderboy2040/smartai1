@@ -29,7 +29,7 @@
 //   • STRONG-signal alerter (60s) — telegram on fresh STRONG consensus
 //   • auto-executor  (90s)     — STRONG-only auto trading when enabled
 // ============================================================
-import { getSignals, getDeepSignal, getFreshSignalForExec, getFreshFuturesSignalForExec } from './signals.js';
+import { getSignals, getDeepSignal, getFreshSignalForExec, getFreshFuturesSignalForExec, getFreshGlobalSignalForExec } from './signals.js';
 // v2 signal-accuracy upgrade (sentiment / instflow / fundamentals desks)
 import { v2ModelsEnabled } from './models.js';
 import { sentimentStatus } from './sentiment.js';
@@ -48,6 +48,10 @@ import {
   executeFuturesSignal, watchFuturesPositions, closeFuturesPosition,
   walletSnapshot, futuresMarketsView,
 } from './futures.js';
+import {
+  executeGlobalSignal, watchGlobalPositions, closeGlobalPosition,
+  globalFuturesMarketsView,
+} from './globalFutures.js';
 import {
   agentTick, agentStatus, agentStart, agentStop, updateAgentConfig, loadAgentConfig, AGENT_TICK_SEC,
 } from './agent.js';
@@ -102,7 +106,7 @@ export function registerAITradingRoutes(app, deps) {
 
   const normMarket = (raw) => {
     const m = String(raw || 'INDIA').toUpperCase();
-    return m === 'CRYPTO' ? 'CRYPTO' : m === 'FUTURES' ? 'FUTURES' : 'INDIA';
+    return m === 'CRYPTO' ? 'CRYPTO' : m === 'FUTURES' ? 'FUTURES' : m === 'GLOBALFUTURES' ? 'GLOBALFUTURES' : 'INDIA';
   };
 
   // ---------------- status ----------------
@@ -296,6 +300,39 @@ export function registerAITradingRoutes(app, deps) {
     }
   });
 
+  // ---------------- GLOBAL EQUITY FUTURES desk (v10.4 — AAPL/GOOGL/NVDA/…/SPACEX SIM) ----------------
+  app.post('/api/ai/global/execute', async (req, res) => {
+    try {
+      const { symbol, side, mode, qtyINR, marginUSDT, leverage } = req.body || {};
+      if (!symbol) return res.status(400).json({ ok: false, error: 'symbol required' });
+      const result = await executeGlobalSignal({
+        symbol: String(symbol).toUpperCase().replace(/-USD$/, ''),
+        side: side ? String(side).toUpperCase() : undefined,
+        mode: mode === 'live' ? 'live' : mode === 'notify' ? 'notify' : 'paper', // 'live' passes through — gate 0 rejects it honestly (SIM desk)
+        qtyINR: qtyINR != null ? Number(qtyINR) : undefined,
+        marginUSDT: marginUSDT != null ? Number(marginUSDT) : undefined,
+        leverage: leverage != null ? Number(leverage) : undefined,
+        getFreshSignal: (pair) => getFreshGlobalSignalForExec(pair, depsForSignals()),
+        wantAuto: false,
+        source: 'manual',
+        sendTelegram,
+      });
+      return res.status(result.ok ? 200 : 400).json(result);
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  app.get('/api/ai/global/markets', async (_req, res) => {
+    try {
+      const out = await globalFuturesMarketsView();
+      if (!out?.ok) return res.status(502).json(out);
+      res.json(out);
+    } catch (e) {
+      jsonError(res, 500, 'global futures markets failed', e);
+    }
+  });
+
   // ---------------- CoinDCX WALLET (spot + futures, v6.8) ----------------
   app.get('/api/ai/wallet', async (_req, res) => {
     try {
@@ -432,7 +469,9 @@ export function registerAITradingRoutes(app, deps) {
         ? await closeIndiaPosition(String(id))
         : p && p.market === 'FUTURES'
           ? await closeFuturesPosition(String(id))
-          : await closePosition(String(id));
+          : p && p.market === 'GLOBALFUTURES'
+            ? await closeGlobalPosition(String(id)) // v10.4 SIM desk — live quote se close
+            : await closePosition(String(id));
       return res.status(out.ok ? 200 : 400).json(out);
     } catch (e) {
       return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -790,6 +829,19 @@ export function registerAITradingRoutes(app, deps) {
     } catch { /* non-fatal */ }
   }, 60_000);
   if (futuresWatcher.unref) futuresWatcher.unref();
+
+  // v10.4: GLOBAL EQUITY FUTURES watcher — SL/TP/trailing/partial-TP/
+  // liquidation sweep on the Yahoo-quote (or SIM) price, every 60s.
+  const globalWatcher = setInterval(async () => {
+    try {
+      const out = await watchGlobalPositions({ sendTelegram });
+      const closures = out?.closures || out || [];
+      if (Array.isArray(closures) && closures.length > 0) {
+        console.log(`[ai] global-futures watcher closed ${closures.length} position(s): ${closures.map(c => `${c.pair} ${c.pnlINR}`).join(', ')}`);
+      }
+    } catch { /* non-fatal */ }
+  }, 60_000);
+  if (globalWatcher.unref) globalWatcher.unref();
 
   // v6.8: SUPERINTELLIGENCE AGENT loop — wallet scan → auto entry/exit,
   // 3 trades/day. v9.7: 30s cadence (faster trend-flip reaction; the

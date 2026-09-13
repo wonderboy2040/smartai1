@@ -133,6 +133,15 @@ describe('agent config', () => {
     expect(cfg.desks.spot).toBe(true);
     expect(cfg.desks.india).toBe(false);
   });
+
+  it('v10.4: the GLOBAL equity-futures desk defaults ON and toggles like the others', () => {
+    // default ON (loadAgentConfig merges AGENT_DEFAULTS)
+    expect(loadAgentConfig().desks.global).toBe(true);
+    // toggle OFF
+    expect(updateAgentConfig({ desks: { global: false } }).desks.global).toBe(false);
+    // toggle back ON
+    expect(updateAgentConfig({ desks: { global: 1 } }).desks.global).toBe(true);
+  });
 });
 
 // ============================================================

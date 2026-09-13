@@ -244,28 +244,59 @@ function credGuard() {
  *   • cross_user_margin  = total initial margin locked in CROSS positions
  *   • Total wallet balance = balance + locked_balance
  *                          + cross_order_margin + cross_user_margin
+ *
+ * v10.3.2 TRANSPORT FIX: the wallets route is GET-only — the POST call
+ * died with `[404] not_found` (Express routes by METHOD, so the path
+ * "doesn't exist" for POST), which is why the futures USDT tile showed
+ * 0 while the user's CoinDCX app showed 3.01 USDT available. Transport
+ * chain: GET(seconds) → GET(ms) → legacy POST. The first transport that
+ * answers sticks for the process lifetime (no per-poll probing).
  * Wrapper tolerance: bare array (documented), `{wallets:[]}`,
  * `{data:[]}` and `{balances:[]}` are all accepted. */
+const _walletsTransport = { mode: null };
+function _walletList(resp) {
+  if (Array.isArray(resp)) return resp;
+  if (Array.isArray(resp?.wallets)) return resp.wallets;
+  if (Array.isArray(resp?.data)) return resp.data;
+  if (Array.isArray(resp?.balances)) return resp.balances;
+  return null; // error-shaped / unknown wrapper → try the next transport
+}
+async function _walletTransportAttempt(mode, apiKey, secret) {
+  if (mode === 'POST') return coindcxPrivate(WALLETS_PATH, apiKey, secret, {});
+  const { coindcxPrivateGET } = await import('../mcp/coindcx.js');
+  return coindcxPrivateGET(WALLETS_PATH, apiKey, secret, {}, { unit: mode === 'GET-ms' ? 'ms' : 's' });
+}
 export async function fetchFuturesWallets() {
   const { apiKey, secret } = credGuard();
-  const resp = await coindcxPrivate(WALLETS_PATH, apiKey, secret, {});
-  const list = Array.isArray(resp) ? resp
-    : (Array.isArray(resp?.wallets) ? resp.wallets
-      : (Array.isArray(resp?.data) ? resp.data
-        : (Array.isArray(resp?.balances) ? resp.balances : [])));
-  return list.map(w => {
-    const free = num(w.balance) || 0;
-    const lockedIso = num(w.locked_balance) || 0;
-    const crossOrder = num(w.cross_order_margin) || 0;
-    const crossUser = num(w.cross_user_margin) || 0;
-    return {
-      currency: String(w.currency_short_name || w.currency || '').toUpperCase(),
-      total: r2(free + lockedIso + crossOrder + crossUser),
-      locked: r2(lockedIso + crossOrder),
-      free: r2(Math.max(0, free)),
-      crossUserMargin: r2(crossUser),
-    };
-  }).filter(w => w.currency && w.total > 0);
+  const ALL = ['GET-s', 'GET-ms', 'POST'];
+  const order = _walletsTransport.mode
+    ? [_walletsTransport.mode, ...ALL.filter(t => t !== _walletsTransport.mode)]
+    : [...ALL];
+  let lastErr = null;
+  for (const mode of order) {
+    try {
+      const resp = await _walletTransportAttempt(mode, apiKey, secret);
+      const list = _walletList(resp);
+      if (!list) throw new Error(`wallets payload not array-shaped (${mode})`);
+      _walletsTransport.mode = mode;
+      return list.map(w => {
+        const free = num(w.balance) || 0;
+        const lockedIso = num(w.locked_balance) || 0;
+        const crossOrder = num(w.cross_order_margin) || 0;
+        const crossUser = num(w.cross_user_margin) || 0;
+        return {
+          currency: String(w.currency_short_name || w.currency || '').toUpperCase(),
+          total: r2(free + lockedIso + crossOrder + crossUser),
+          locked: r2(lockedIso + crossOrder),
+          free: r2(Math.max(0, free)),
+          crossUserMargin: r2(crossUser),
+        };
+      }).filter(w => w.currency && w.total > 0);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('futures wallets: every transport failed');
 }
 
 /** Spot wallet rows via the SAME /users/balances transport (free/locked). */
@@ -1191,6 +1222,7 @@ export function __resetFuturesForTests() {
   _pricesCache = null; _pricesAt = 0;
   _instrumentsCache = null; _instrumentsAt = 0;
   _instrumentMetaCache = new Map();
+  _walletsTransport.mode = null;
   _usdInr = null; _usdInrAt = 0;
 }
 export function __setUsdInrForTests(v) { _usdInr = v; _usdInrAt = Date.now(); }

@@ -241,6 +241,9 @@ const YF_MAP = {
   IT: '^CNXIT', AUTO: '^CNXAUTO', PHARMA: '^CNXPHARMA', FMCG: '^CNXFMCG',
   METAL: '^CNXMETAL', REALTY: '^CNXREALTY',
   USVIX: '^VIX', DXY: 'DX-Y.NYB', GOLD: 'GC=F', CRUDE: 'CL=F',
+  // v10.4 GLOBAL EQUITY FUTURES desk regime: NASDAQ-100 (the tech-
+  // complex risk barometer) + S&P 500 fallback.
+  NDX: '^NDX', SPX: '^GSPC',
 };
 
 export async function fetchYahooQuotes(keys) {

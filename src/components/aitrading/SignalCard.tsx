@@ -412,6 +412,7 @@ interface TicketProps {
   onExecute?: ExecHandler;          // crypto gauntlet
   onExecuteIndia?: ExecHandler;     // india gauntlet
   onExecuteFutures?: ExecHandler;   // global-futures gauntlet (v6.8)
+  onExecuteGlobal?: ExecHandler;    // GLOBAL equity-futures SIM gauntlet (v10.4)
   canLive?: boolean;
   canLiveIndia?: boolean;
   /** v6.6: server config cryptoLeverage (the hard ceiling) */
@@ -424,11 +425,12 @@ interface TicketProps {
   serverCapINR?: number;
 }
 
-function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteFutures, canLive, canLiveIndia, maxLeverage = 1, defaultBudgetINR = 1000, serverCapINR }: TicketProps) {
+function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteFutures, onExecuteGlobal, canLive, canLiveIndia, maxLeverage = 1, defaultBudgetINR = 1000, serverCapINR }: TicketProps) {
   const plan = signal.plan!;
   const crypto = signal.market === 'CRYPTO';
   const futures = signal.market === 'FUTURES';
-  const leveraged = crypto || futures; // v6.8: futures are natively leveraged
+  const global = signal.market === 'GLOBALFUTURES'; // v10.4 SIM desk (USD margin domain)
+  const leveraged = crypto || futures || global; // v6.8/v10.4: futures + SIM desk are natively leveraged
   const india = signal.market === 'INDIA';
   const long = signal.side === 'LONG';
   const cap = Math.max(1, Math.min(10, Math.floor(maxLeverage || 1)));
@@ -439,10 +441,10 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
   // The old code clamped to ≥100 on EVERY keystroke — the box could
   // never be cleared or edited freely ("100 clear hi nahi hota").
   // Validation now happens on blur + execute only.
-  const lo = futures ? 2 : 100;
-  const defaultMargin = Math.max(futures ? 5 : 100, Math.round(defaultBudgetINR));
+  const lo = futures ? 2 : global ? 2 : 100;
+  const defaultMargin = Math.max(futures || global ? 5 : 100, Math.round(defaultBudgetINR));
   const [marginRaw, setMarginRaw] = useState<string>(String(defaultMargin));
-  const [lev, setLev] = useState<number>(futures ? 3 : 1);
+  const [lev, setLev] = useState<number>(futures || global ? 3 : 1);
   const [result, setResult] = useState<{ ok: boolean; text: string; pending?: boolean } | null>(null);
   const approxUsdInr = 84; // display-only conversion (server uses the live rate)
 
@@ -450,7 +452,7 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
   const typedValid = marginRaw.trim() !== '' && Number.isFinite(marginNum);
   // honest twin: server clamps crypto/india orders to the per-order cap
   // (Risk settings) — preview shows the fill you will actually get.
-  const orderCap = !futures && serverCapINR && serverCapINR > 0 ? serverCapINR : null;
+  const orderCap = !futures && !global && serverCapINR && serverCapINR > 0 ? serverCapINR : null;
   const margin = typedValid ? (orderCap != null ? Math.min(marginNum, orderCap) : marginNum) : 0;
   const overCapTyped = typedValid && orderCap != null && marginNum > orderCap;
   const belowMin = typedValid && marginNum < lo;
@@ -490,21 +492,21 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
 
   const pickLev = (l: number) => { setLev(l); setResult(null); };
 
-  const fmtU = (n: number, dp = 0) => futures
+  const fmtU = (n: number, dp = 0) => futures || global
     ? `${n.toLocaleString('en-US', { maximumFractionDigits: dp || 2 })} USDT`
     : fmt(n, dp);
   const fmtINRapprox = (n: number) => `₹${Math.round(n * approxUsdInr).toLocaleString('en-IN')}`;
 
   const exec = async (mode: 'paper' | 'live' | 'notify') => {
-    const handler = futures ? onExecuteFutures : crypto ? onExecute : onExecuteIndia;
+    const handler = global ? onExecuteGlobal : futures ? onExecuteFutures : crypto ? onExecute : onExecuteIndia;
     if (!handler) return;
     if (invalid) {
-      setResult({ ok: false, text: `⚠ Pehle amount daalo — minimum ${futures ? `${lo} USDT margin` : `₹${lo}`}${orderCap != null ? ` (server cap ${futures ? '' : '₹'}${orderCap.toLocaleString('en-IN')})` : ''}. Box khali/clear karke apna amount type karo, blur par apne aap valid ho jayega.` });
+      setResult({ ok: false, text: `⚠ Pehle amount daalo — minimum ${futures || global ? `${lo} USDT margin` : `₹${lo}`}${orderCap != null ? ` (server cap ${futures || global ? '' : '₹'}${orderCap.toLocaleString('en-IN')})` : ''}. Box khali/clear karke apna amount type karo, blur par apne aap valid ho jayega.` });
       setTimeout(() => setResult(null), 8000);
       return;
     }
     const sendMargin = clampMargin(marginRaw); // final safety clamp (cap incl.)
-    const opts = futures
+    const opts = futures || global
       ? { marginUSDT: sendMargin, ...(lev > 1 ? { leverage: lev } : {}) }
       : crypto
         ? { qtyINR: sendMargin, ...(lev > 1 ? { leverage: lev } : {}) }
@@ -742,6 +744,7 @@ interface Props {
   onExecute?: (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; leverage?: number }) => Promise<{ ok?: boolean; error?: string; note?: string } | void> | void;
   onExecuteIndia?: (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; leverage?: number }) => Promise<{ ok?: boolean; error?: string; note?: string } | void> | void;
   onExecuteFutures?: (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => Promise<{ ok?: boolean; error?: string; note?: string } | void> | void;
+  onExecuteGlobal?: (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; marginUSDT?: number; leverage?: number }) => Promise<{ ok?: boolean; error?: string; note?: string } | void> | void;
   onDeep?: (signal: AISignal) => void;
   canLive?: boolean;
   canLiveIndia?: boolean;
@@ -763,7 +766,7 @@ interface Props {
   paperOpenForSymbol?: boolean;
 }
 
-export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, onExecuteIndia, onExecuteFutures, onDeep, canLive, canLiveIndia, isNew, orderBudgetINR, riskCapPct, maxLeverage, indiaBudgetINR, onPaperTrade, paperOpenForSymbol }: Props) {
+export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, onExecuteIndia, onExecuteFutures, onExecuteGlobal, onDeep, canLive, canLiveIndia, isNew, orderBudgetINR, riskCapPct, maxLeverage, indiaBudgetINR, onPaperTrade, paperOpenForSymbol }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [slipOpen, setSlipOpen] = useState(false);
   const [ticketOpen, setTicketOpen] = useState(false);
@@ -834,7 +837,7 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
           </div>
         </div>
         <div className="flex gap-1.5">
-          {(onExecute || onExecuteIndia || onExecuteFutures) && plan && actionable && (
+          {(onExecute || onExecuteIndia || onExecuteFutures || onExecuteGlobal) && plan && actionable && (
             <button onClick={() => setTicketOpen(v => !v)}
               title="Size, ₹ risk/reward, leverage (crypto) — sab pre-computed, one-click execute"
               className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border-2 transition-all ${ticketOpen
@@ -902,14 +905,14 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
       )}
 
       {/* v6.6: SIMPLE TRADE TICKET (all desks) */}
-      {ticketOpen && plan && actionable && (onExecute || onExecuteIndia || onExecuteFutures) && (
+      {ticketOpen && plan && actionable && (onExecute || onExecuteIndia || onExecuteFutures || onExecuteGlobal) && (
         <SimpleTradeTicket
           signal={signal} busy={busy}
-          onExecute={onExecute} onExecuteIndia={onExecuteIndia} onExecuteFutures={onExecuteFutures}
+          onExecute={onExecute} onExecuteIndia={onExecuteIndia} onExecuteFutures={onExecuteFutures} onExecuteGlobal={onExecuteGlobal}
           canLive={canLive} canLiveIndia={canLiveIndia}
           maxLeverage={signal.market === 'INDIA' ? 1 : (maxLeverage ?? 1)}
-          defaultBudgetINR={signal.market === 'CRYPTO' ? orderBudgetINR : signal.market === 'FUTURES' ? 10 : (indiaBudgetINR ?? 5000)}
-          serverCapINR={signal.market === 'CRYPTO' ? (orderBudgetINR ?? 1000) : signal.market === 'FUTURES' ? undefined : (indiaBudgetINR ?? 5000)} />
+          defaultBudgetINR={signal.market === 'CRYPTO' ? orderBudgetINR : signal.market === 'FUTURES' || signal.market === 'GLOBALFUTURES' ? 10 : (indiaBudgetINR ?? 5000)}
+          serverCapINR={signal.market === 'CRYPTO' ? (orderBudgetINR ?? 1000) : signal.market === 'FUTURES' || signal.market === 'GLOBALFUTURES' ? undefined : (indiaBudgetINR ?? 5000)} />
       )}
 
       {/* v6.4: India trade slip (manual broker flow) */}
@@ -1005,6 +1008,26 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
           {signal.grade !== 'STRONG' && (
             <span className="text-[10px] text-slate-500 self-center px-1">LIVE execution locked — needs STRONG (75%+ conf, 70%+ agreement)</span>
           )}
+        </div>
+      )}
+
+      {signal.market === 'GLOBALFUTURES' && onExecuteGlobal && !ticketOpen && (
+        <div className="mt-3 flex flex-wrap gap-2 items-center">
+          <button
+            onClick={() => onExecuteGlobal(signal, 'paper')}
+            disabled={busy}
+            title="Practice journal position on the SIM desk — watcher SL/TP + trailing + partial-TP se manage hota hai (Yahoo quotes; SPACEX synthetic)"
+            className="quantum-btn-primary px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-sky-600 to-blue-600 disabled:opacity-50">
+            🧪 PAPER TRADE
+          </button>
+          <button
+            onClick={() => onExecuteGlobal(signal, 'notify')}
+            disabled={busy}
+            title="Notify-only: gauntlet pass → Telegram alert + journal audit, koi position nahi"
+            className="px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-amber-600 to-orange-600 text-white hover:from-amber-500 hover:to-orange-500 disabled:opacity-50 transition-colors">
+            🔔 NOTIFY
+          </button>
+          <span className="text-[10px] text-slate-500 self-center px-1" title="CoinDCX par AAPL/MSFT/GOOGL/NVDA/TSLA/META/SPACEX contracts listed nahi hain — ye SIM desk hai: signals REAL data par, execution paper/notify only">🌍 SIM desk — signals real data par · execution PAPER only</span>
         </div>
       )}
 

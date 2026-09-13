@@ -5,7 +5,7 @@
 
 export type Side = 'LONG' | 'SHORT' | 'FLAT';
 export type Grade = 'STRONG' | 'ACTION' | 'WATCH' | 'NEUTRAL';
-export type MarketKind = 'INDIA' | 'CRYPTO' | 'FUTURES';
+export type MarketKind = 'INDIA' | 'CRYPTO' | 'FUTURES' | 'GLOBALFUTURES'; // v10.4: global equity futures SIM desk
 
 export interface ModelVote {
   id: string;
@@ -440,7 +440,7 @@ export interface JournalPosition {
   id: string;
   pair: string;
   symbol?: string;
-  market?: 'CRYPTO' | 'INDIA' | 'FUTURES';
+  market?: 'CRYPTO' | 'INDIA' | 'FUTURES' | 'GLOBALFUTURES';
   side: Side;
   mode: 'paper' | 'live';
   qty: number;
@@ -487,9 +487,11 @@ export interface JournalPosition {
   originalQty?: number | null;
   bookedPnlINR?: number | null;
   bookedPnlUSDT?: number | null;
+  /** v10.4: GLOBAL desk — true when the instrument is a synthetic SIM (SPACEX). */
+  isSim?: boolean;
   exitStage?: 'ENTRY' | 'T2_HIT' | 'RUNNER' | 'CLOSED' | string | null;
   /** v7.0.1: where the current ltp tick came from — 'coindcx' | 'tv-india' |
-   *  'futures-rt' | 'tv-usd-fallback' | 'entry-fallback' (frozen price). */
+   *  'futures-rt' | 'tv-usd-fallback' | 'global-sim' | 'yahoo' | 'entry-fallback' (frozen price). */
   priceSource?: string | null;
 }
 

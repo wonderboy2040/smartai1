@@ -11,8 +11,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const mockPrivate = vi.fn();
+const mockPrivateGET = vi.fn();
 vi.mock('../server/mcp/coindcx.js', () => ({
   coindcxPrivate: (...args) => mockPrivate(...args),
+  coindcxPrivateGET: (...args) => mockPrivateGET(...args),
   coindcxConnected: () => true,
   coindcxStatus: () => ({ connected: true }),
 }));
@@ -90,8 +92,15 @@ beforeEach(() => {
   _origCreds = JSON.parse(JSON.stringify(loadJSONOrig('mcp-coindcx.json') || {}));
   saveJSON('mcp-coindcx.json', { apiKey: 'test-key', secret: 'test-secret', connectedAt: Date.now() });
   mockPrivate.mockReset();
-  // default private transport: wallets rich, positions list with our pair,
-  // create + tpsl succeed
+  mockPrivateGET.mockReset();
+  // default private transport: GET wallets (2025 API), positions list with
+  // our pair, create + tpsl succeed. GET is the primary transport (the
+  // route is GET-only — POST dies [404] not_found); POST stays as the
+  // legacy fallback for older gateway deployments.
+  mockPrivateGET.mockImplementation(async (path, _key, _secret, _params, opts) => {
+    if (path === '/exchange/v1/derivatives/futures/wallets') return WALLETS_PAYLOAD;
+    throw new Error(`unexpected GET path: ${path} (${opts?.unit})`);
+  });
   mockPrivate.mockImplementation(async (path) => {
     if (path === '/exchange/v1/derivatives/futures/wallets') return WALLETS_PAYLOAD;
     if (path === '/exchange/v1/derivatives/futures/positions') return [
@@ -176,6 +185,34 @@ describe('futuresOrderBody', () => {
 });
 
 describe('futures wallets + snapshot', () => {
+  it('v10.3.2 TRANSPORT: GET(seconds) is the primary wallets call — POST never fires when GET answers', async () => {
+    const rows = await fetchFuturesWallets();
+    expect(mockPrivateGET).toHaveBeenCalledTimes(1);
+    expect(mockPrivateGET.mock.calls[0][0]).toBe('/exchange/v1/derivatives/futures/wallets');
+    expect(mockPrivateGET.mock.calls[0][4]).toEqual({ unit: 's' });
+    expect(mockPrivate).not.toHaveBeenCalledWith('/exchange/v1/derivatives/futures/wallets', expect.anything(), expect.anything(), expect.anything());
+    expect(rows.find(r => r.currency === 'USDT')).toBeTruthy();
+  });
+  it('v10.3.2 TRANSPORT: GET-404 → GET-ms → legacy POST fallback chain (the live [404] not_found case)', async () => {
+    mockPrivateGET.mockImplementation(async () => {
+      const e = new Error('[404] not_found'); e.status = 404; throw e;
+    });
+    const rows = await fetchFuturesWallets();
+    // both GET units tried before the POST fallback
+    expect(mockPrivateGET).toHaveBeenCalledTimes(2);
+    expect(mockPrivateGET.mock.calls[0][4]).toEqual({ unit: 's' });
+    expect(mockPrivateGET.mock.calls[1][4]).toEqual({ unit: 'ms' });
+    expect(mockPrivate).toHaveBeenCalledWith('/exchange/v1/derivatives/futures/wallets', expect.anything(), expect.anything(), expect.anything());
+    expect(rows.find(r => r.currency === 'USDT')?.free).toBeCloseTo(6.17, 1);
+  });
+  it('v10.3.2 TRANSPORT: the working transport sticks — no per-poll re-probing', async () => {
+    await fetchFuturesWallets(); // GET-s wins
+    const callsAfterFirst = mockPrivateGET.mock.calls.length;
+    await fetchFuturesWallets();
+    await fetchFuturesWallets();
+    expect(mockPrivateGET.mock.calls.length).toBe(callsAfterFirst + 2); // still GET-s, one call each
+    expect(mockPrivate).not.toHaveBeenCalledWith('/exchange/v1/derivatives/futures/wallets', expect.anything(), expect.anything(), expect.anything());
+  });
   it('2025 API: balance IS free — total = balance + locked + cross margins', async () => {
     const rows = await fetchFuturesWallets();
     const usdt = rows.find(r => r.currency === 'USDT');
@@ -192,6 +229,12 @@ describe('futures wallets + snapshot', () => {
     // site showed nothing. Old (pre-2025) reading treated balance as TOTAL
     // and subtracted locked margins from it — free went negative and
     // clipped to 0. Under the documented semantics free IS balance.
+    mockPrivateGET.mockImplementation(async (path) => {
+      if (path === '/exchange/v1/derivatives/futures/wallets') return [
+        { id: 'w1', currency_short_name: 'USDT', balance: '3.01', locked_balance: '2.5', cross_order_margin: '0.0', cross_user_margin: '0.0' },
+      ];
+      throw new Error(`unexpected ${path}`);
+    });
     mockPrivate.mockImplementation(async (path) => {
       if (path === '/exchange/v1/derivatives/futures/wallets') return [
         { id: 'w1', currency_short_name: 'USDT', balance: '3.01', locked_balance: '2.5', cross_order_margin: '0.0', cross_user_margin: '0.0' },
@@ -203,6 +246,12 @@ describe('futures wallets + snapshot', () => {
     expect(rows.find(r => r.currency === 'USDT')?.free).toBeCloseTo(3.01, 2);
   });
   it('wrapper tolerance: {data:[…]} and {wallets:[…]} both parse', async () => {
+    mockPrivateGET.mockImplementation(async (path) => {
+      if (path === '/exchange/v1/derivatives/futures/wallets') return {
+        data: [{ id: 'w1', currency_short_name: 'USDT', balance: '4.5', locked_balance: '0', cross_order_margin: '0', cross_user_margin: '0' }],
+      };
+      throw new Error(`unexpected ${path}`);
+    });
     mockPrivate.mockImplementation(async (path) => {
       if (path === '/exchange/v1/derivatives/futures/wallets') return {
         data: [{ id: 'w1', currency_short_name: 'USDT', balance: '4.5', locked_balance: '0', cross_order_margin: '0', cross_user_margin: '0' }],
@@ -232,6 +281,7 @@ describe('futures wallets + snapshot', () => {
     expect(snap.deployableSpotINR).toBe(8400);
   });
   it('walletSnapshot NEVER throws — a dead leg degrades with the reason', async () => {
+    mockPrivateGET.mockRejectedValue(new Error('[401] bad key'));
     mockPrivate.mockRejectedValue(new Error('[401] bad key'));
     const snap = await walletSnapshot();
     expect(snap.ok).toBe(true);
@@ -310,6 +360,12 @@ describe('executeFuturesSignal', () => {
 
   it('LIVE: creates the order, resolves the position id, arms NATIVE TP/SL', async () => {
     const tpslCalls = [];
+    mockPrivateGET.mockImplementation(async (path) => {
+      if (path === '/exchange/v1/derivatives/futures/wallets') return [
+        { id: 'w1', currency_short_name: 'USDT', balance: '500', locked_balance: '0', cross_order_margin: '0', cross_user_margin: '0' },
+      ];
+      throw new Error(`unexpected GET ${path}`);
+    });
     mockPrivate.mockImplementation(async (path, _key, _sec, body) => {
       if (path === '/exchange/v1/derivatives/futures/wallets') return [
         { id: 'w1', currency_short_name: 'USDT', balance: '500', locked_balance: '0', cross_order_margin: '0', cross_user_margin: '0' },
