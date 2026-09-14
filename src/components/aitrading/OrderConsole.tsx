@@ -483,7 +483,7 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-black font-mono text-white">{p.pair}</span>
                     {isIndia && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-orange-500/15 text-orange-300">🇮🇳 NSE</span>}
-                    {isGlobal && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-sky-500/15 text-sky-300" title="Global Equity Futures — SIM desk (Yahoo quotes; SPACEX synthetic)">🌍 GLOBAL {p.isSim ? '· SIM' : ''}</span>}
+                    {isGlobal && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-sky-500/15 text-sky-300" title="CoinDCX Global Futures — USDC perps (app-parity live feed; Yahoo fallback; SPACEX synthetic)">🌍 GLOBAL {p.isSim ? '· SIM' : ''} · USDC</span>}
                     {p.market === 'FUTURES' && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-violet-500/15 text-violet-300">⚡ PERP · USDT</span>}
                     {p.source === 'agent' && <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-cyan-500/15 text-cyan-300" title="Superintelligence Auto-Agent ka trade">🤖 AGENT</span>}
                     <span className={`text-[11px] font-black ${p.side === 'LONG' ? 'text-emerald-400' : 'text-red-400'}`}>{p.side}</span>
@@ -520,7 +520,9 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
                     {open && p.ltp != null && (
                       <span
                         className="text-[11px] font-mono text-slate-300 flex items-center gap-1"
-                        title={p.priceSource === 'tv-usd-fallback'
+                        title={p.priceSource === 'coindcx-gf-rt'
+                          ? 'CoinDCX Global Futures live feed (USDC) — the SAME LTP the CoinDCX app shows, ~1s fresh'
+                          : p.priceSource === 'tv-usd-fallback'
                           ? 'CoinDCX feed unavailable — TradingView USD price × live USD/₹ (approx, live)'
                           : p.priceSource === 'global-sim'
                             ? 'SPACEX SIM — deterministic synthetic walk (clearly-labeled simulation, not a market price)'
@@ -531,7 +533,7 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
                                 : positionsLive === 'poll'
                                   ? 'Live price — REST poll fallback (5s) jab tak stream reconnect hota hai'
                                   : 'Live price — 5s refresh while position is open'}>
-                        → {pf(p.ltp)}
+                        → {pf(p.ltp)}{isGlobal ? <span className="text-[8px] font-black text-sky-400"> USDC</span> : null}
                         {p.priceSource === 'tv-usd-fallback' && <span className="text-[8px] font-black text-amber-400">~TV</span>}
                         {p.priceSource === 'entry-fallback' && <span className="text-[8px] font-black text-red-400">STALE</span>}
                         {p.priceSource !== 'entry-fallback' && (

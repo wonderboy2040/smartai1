@@ -1,3 +1,25 @@
+## v10.7 — COINDCX GLOBAL FUTURES APP-PARITY PRICING (USDC RT feed) + realtime positions fix (2026-09-14)
+
+### Fix: Equity SIM prices never matched the CoinDCX app (AAPL 332.27 site vs 333.62 USDC app)
+- **Root cause** (the user's live report): the Global Equity SIM desk priced every symbol from **Yahoo stock spot** (`regularMarketPrice`) — but CoinDCX's Global Futures are **USDC-margined perpetuals that trade 24/7**. Two consequences: (a) the number itself differed (perp premium/discount + delayed Yahoo print), and (b) outside US market hours the Yahoo spot is FROZEN while the perp keeps trading — positions LTP/P&L/SL/TP never moved during IST daytime
+- New `fetchGlobalFuturesRt()` (`server/ai/globalFutures.js`) — prices this desk from **CoinDCX's own public derivatives RT feed** (`public.coindcx.com/market_data/v3/current_prices/futures/rt`, the same market_data family the crypto perp desk uses), scoped to the USDC margin domain:
+  - the USDC-scoping param is probed in every plausible shape (scalar → array-style → combined-feed scan); a variant is accepted ONLY with ≥ 3 live `B-<EQUITY>_USDC` rows and becomes **sticky**
+  - 5s cache (positions SSE stream polls at 1s), single-flight probe (board + stream + watcher share ONE round-trip), 60s negative cache, and a **6s probe-deadline race** so a hung/blocked upstream can never stall the board or the positions stream
+- `fetchGlobalQuotes()` — RT first (source `coindcx-usdc`, the feed's own 24h change), **Yahoo fills ONLY the uncovered symbols** (fallback, honestly labeled), SPACEX stays the sim walk
+- `buildGlobalCtxSync` / `getPositionsWithPnl` carry the true source (`coindcx-usdc` / `coindcx-gf-rt` / `yahoo` / `global-sim`); markets view exposes the CoinDCX pair (`B-AAPL_USDC`)
+- **Realtime positions fixed**: `watchGlobalPositions` SL/TP/trailing and the SSE positions stream now tick on the live perp LTP (24/7 — US hours no longer a freeze window)
+- Currency display parity: the GLOBALFUTURES desk labels **USDC** everywhere (ticket, plan strip, toasts, position rows) — exactly the unit the app shows; FUTURES stays USDT, INDIA stays ₹
+
+### Fix: the "full universe scan" was discovering COMMODITIES, not stocks
+- The USDT book lists XAU (gold) / XAG (silver) / NATGAS / INX / COPPER / ROBO / SLX / RAYSOL perps — they pass every crypto filter yet are NOT stocks; they crowded the discovered tail with names that have no Yahoo equity ticker
+- `fetchGlobalFuturesInstruments()` (`server/mcp/coindcx.js`): explicit `COMMODITY_INDEX_BASES` exclusion + a **USDC instrument scan** (`margin_currency_short_name[]=USDC`, both param shapes, ≥ 3 rows validation) that finds the app's actual Global Futures stock list (AAPL/TSLA/NVDA/TSM/SKHX/SMSN/CRWV/HOOD…) and merges it with the USDT scan (deduped by symbol; rows carry `margin`)
+
+### Tests
+- NEW `test/globalFuturesRt.test.ts` (11): variant probing + stickiness, ≥ 3-row validation, negative-cache one-probe-per-minute, dark-row skip, RT-first quotes merge (the stale-Yahoo AAPL case), feed-down full fallback, ctx source honesty, markets-view dcxPair, single-flight, **hung-feed deadline**
+- `test/globalInstruments.test.ts` +4 (USDC discovery + merge/dedup, < 3-row USDC ignored, commodity/index exclusion, USDC-only honest partial) → 7 tests
+- `test/signalCardCurrency.test.tsx` updated to the USDC contract (GLOBALFUTURES renders USDC + ZERO ₹ / USDT; FUTURES renders USDT + never USDC)
+- **1322/1322 tests passing (70 files), tsc clean** — zero regressions across the indiaAgent / ensemble / wick / depth / regime / kelly / positions-stream suites
+
 ## v10.4 — GLOBAL EQUITY FUTURES SIM DESK + futures-wallet GET transport + ultra-stream (2026-09-14)
 
 ### Fix: CoinDCX futures wallet `[404] not_found` — the route is GET-only

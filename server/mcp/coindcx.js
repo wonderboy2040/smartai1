@@ -574,11 +574,17 @@ export async function fetchCoinDcxAssets(usdInr) {
 // ---------------- global equity futures instruments (PUBLIC) ----------------
 // v10.5.3 FULL-UNIVERSE SCAN (Issue #2): the Global Equity SIM desk's
 // watchlist is no longer a hand-typed 8-name array — it MERGES whatever
-// single-stock USDT-margined perps CoinDCX actually lists
-// (B-<TICKER>_USDT style) with the desk's liquid seed. This function
-// pulls CoinDCX's PUBLIC derivatives instrument list and separates
-// equity-linked perps from crypto perps:
+// single-stock perps CoinDCX actually lists with the desk's liquid
+// seed. This function pulls CoinDCX's PUBLIC derivatives instrument
+// list and separates equity-linked perps from crypto perps:
 //
+//   • v10.7 USDC SCAN FIRST — CoinDCX's Global Futures (the US stocks
+//     the app's "Global Futures" section actually shows: AAPL, TSLA,
+//     TSM, SKHX…) are USDC-margined perps (B-<TICKER>_USDC). The
+//     margin_currency_short_name[]=USDC variant is tried in both
+//     param shapes and a scan is accepted only when it yields >= 3
+//     B-<BASE>_USDC rows (same never-trust-one-shape discipline as
+//     everywhere else in this module).
 //   • a base with a CoinDCX SPOT market is a CRYPTO COIN — every
 //     tradeable crypto trades on spot; tokenized/synthetic equities
 //     have no spot market. (fetchCoinDcxTickers carries the whole
@@ -588,7 +594,13 @@ export async function fetchCoinDcxAssets(usdInr) {
 //     derivatives, never equities.
 //   • perp-only crypto staples that lack a spot market are excluded by
 //     an explicit set (belt-and-braces for venue-specific gaps).
-// Whatever survives is a candidate global-equity perp: { symbol, pair }.
+//   • v10.7 COMMODITY/INDEX fix: the USDT book also lists METALS /
+//     ENERGY / INDEX perps (XAU gold, XAG silver, NATGAS, INX, COPPER,
+//     ROBO, SLX, RAYSOL…) which pass every crypto filter yet are NOT
+//     stocks — they used to crowd the discovered tail with names that
+//     have no Yahoo equity ticker. Explicitly excluded.
+// Whatever survives is a candidate global-equity perp: { symbol, pair,
+// margin }.
 // The Yahoo ticker mapping for each discovery lives in
 // server/ai/globalFutures.js (alias table for class-A/B shares etc).
 const FUTURES_ACTIVE_INSTRUMENTS_URL = 'https://api.coindcx.com/exchange/v1/derivatives/futures/data/active_instruments';
@@ -598,17 +610,28 @@ const GLOBAL_INSTRUMENTS_CACHE_MS = 30 * 60_000;
 // revisions — explicitly never equities.
 const PERP_ONLY_CRYPTO_BASES = new Set(['PEPE', 'BONK', 'FLOKI', 'ORDI', 'SATS', 'RATS', 'MOODENG', 'GOAT', 'PNUT', 'ACT', 'NEIRO', 'POPCAT', 'MEW', 'TURBO', 'WIF']);
 const PERP_LEVERAGED_PATTERNS = [/3L$/, /3S$/, /BULL$/, /BEAR$/, /HALF$/];
+// v10.7: commodity / energy / index perp bases on the USDT book —
+// real markets, but NOT stocks (no Yahoo equity ticker, and the desk
+// is an EQUITY simulator). Never discovered as "equity perps".
+const COMMODITY_INDEX_BASES = new Set([
+  'XAU', 'XAG', 'XPT', 'XPD',          // metals
+  'NATGAS', 'GAS', 'OIL', 'BRN', 'WTI', 'NG', // energy
+  'INX', 'SPX', 'NDX', 'DJ', 'DXY',    // indices / FX
+  'COPPER', 'ROBO', 'SLX', 'ARX', 'RAYSOL', 'URA', // sector/commodity baskets
+]);
+
+/** True when the base survives the equity-ticker shape + exclusion sets. */
+function _isEquityPerpBase(base, spotBases) {
+  if (spotBases.has(base)) return false;
+  if (PERP_ONLY_CRYPTO_BASES.has(base)) return false;
+  if (COMMODITY_INDEX_BASES.has(base)) return false;
+  if (PERP_LEVERAGED_PATTERNS.some(re => re.test(base))) return false;
+  if (!/^[A-Z]{1,8}$/.test(base)) return false; // ticker-shaped (no digits — equity tickers are letters)
+  return true;
+}
 
 export async function fetchGlobalFuturesInstruments({ maxAgeMs = GLOBAL_INSTRUMENTS_CACHE_MS } = {}) {
   if (_globalInstrumentsCache && Date.now() - _globalInstrumentsAt < maxAgeMs) return _globalInstrumentsCache;
-  const url = `${FUTURES_ACTIVE_INSTRUMENTS_URL}?margin_currency_short_name[]=USDT`;
-  const r = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36' },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  if (!r.ok) throw new Error(`global futures instruments HTTP ${r.status}`);
-  const list = await r.json();
-  if (!Array.isArray(list) || list.length === 0) throw new Error('global futures instruments: empty');
   // crypto bases = every SPOT market base (shared cached round-trip)
   const spotBases = new Set();
   try {
@@ -618,22 +641,61 @@ export async function fetchGlobalFuturesInstruments({ maxAgeMs = GLOBAL_INSTRUME
       if (base) spotBases.add(base.toUpperCase());
     }
   } catch { /* ticker book unavailable → classification falls to the explicit sets */ }
+
   const rows = [];
   const seen = new Set();
-  for (const raw of list) {
-    // the endpoint returns plain pair strings; object shapes are tolerated
-    const pair = String(raw?.pair || raw?.instrument || raw || '').toUpperCase();
-    const m = pair.match(/^B-([A-Z0-9]+)_USDT$/);
-    if (!m) continue;
-    const base = m[1];
-    if (seen.has(base)) continue;
-    if (spotBases.has(base)) continue;
-    if (PERP_ONLY_CRYPTO_BASES.has(base)) continue;
-    if (PERP_LEVERAGED_PATTERNS.some(re => re.test(base))) continue;
-    if (!/^[A-Z]{1,8}$/.test(base)) continue; // ticker-shaped (no digits — equity tickers are letters)
-    seen.add(base);
-    rows.push({ symbol: base, pair });
+  const pushRows = (list, margin) => {
+    for (const raw of list) {
+      // the endpoint returns plain pair strings; object shapes are tolerated
+      const pair = String(raw?.pair || raw?.instrument || raw || '').toUpperCase();
+      const m = pair.match(/^B-([A-Z0-9]+)_(USDC|USDT)$/);
+      if (!m) continue;
+      const base = m[1];
+      if (seen.has(base)) continue;
+      if (!_isEquityPerpBase(base, spotBases)) continue;
+      seen.add(base);
+      rows.push({ symbol: base, pair, margin });
+    }
+  };
+
+  // 1) v10.7 USDC scan — the app's actual Global Futures stock list.
+  //    Both param shapes tried; a scan counts only with >= 3 USDC rows
+  //    (a 200-with-USDT-payload or error page must never be mistaken
+  //    for "no global futures exist"). Failures are swallowed here —
+  //    the USDT scan below still gets its chance.
+  let anyRow = false;
+  for (const param of ['margin_currency_short_name%5B%5D=USDC', 'margin_currency_short_name=USDC']) {
+    try {
+      const r = await fetch(`${FUTURES_ACTIVE_INSTRUMENTS_URL}?${param}`, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36' },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      if (!r.ok) throw new Error(`global futures instruments HTTP ${r.status}`);
+      const list = await r.json();
+      if (!Array.isArray(list) || list.length === 0) throw new Error('global futures instruments: empty');
+      const usdcPairs = list.map(x => String(x?.pair || x?.instrument || x || '').toUpperCase())
+        .filter(p => /^B-[A-Z0-9]+_USDC$/.test(p));
+      if (usdcPairs.length >= 3) { pushRows(usdcPairs, 'USDC'); anyRow = true; break; }
+    } catch { /* try the next param shape */ }
   }
+
+  // 2) the USDT scan (v10.5.3 behavior — equity-shaped USDT perps)
+  try {
+    const url = `${FUTURES_ACTIVE_INSTRUMENTS_URL}?margin_currency_short_name[]=USDT`;
+    const r = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36' },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!r.ok) throw new Error(`global futures instruments HTTP ${r.status}`);
+    const list = await r.json();
+    if (!Array.isArray(list) || list.length === 0) throw new Error('global futures instruments: empty');
+    pushRows(list, 'USDT');
+  } catch (e) {
+    // BOTH scans unreachable AND zero USDC rows → honest throw (caller
+    // degrades to seed-only). USDC-only success is a valid partial.
+    if (!anyRow) throw e;
+  }
+
   _globalInstrumentsCache = rows;
   _globalInstrumentsAt = Date.now();
   return rows;

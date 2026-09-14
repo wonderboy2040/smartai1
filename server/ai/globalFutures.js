@@ -275,18 +275,156 @@ export function syntheticCandles(symbol, bars = 500) {
   return out;
 }
 
-// ---------------- REAL quotes (Yahoo) ----------------
+// ============================================================
+// v10.7 COINDCX GLOBAL FUTURES RT FEED (app-parity pricing)
+// ------------------------------------------------------------
+// THE BUG (user report): the site priced this desk from Yahoo stock
+// spot (regularMarketPrice), but the CoinDCX app's Global Futures are
+// USDC-margined PERPS that trade 24/7 — AAPL showed 332.27 (Yahoo,
+// frozen outside US hours) while the app showed 333.62 USDC (live
+// perp LTP). Positions SL/TP/P&L were equally frozen.
+//
+// THE FIX: price this desk from CoinDCX's OWN public derivatives RT
+// feed — the same public.coindcx.com market_data family the crypto
+// perp desk uses — scoped to the USDC margin domain. Yahoo becomes
+// the FALLBACK (only for symbols the feed doesn't cover / feed down).
+//
+// The exact USDC-scoping query param is tried in EVERY plausible
+// shape (scalar, array-style — the instruments endpoint's own
+// convention, then a combined-feed scan) and a variant is accepted
+// ONLY if it returns >= 3 live B-<EQUITY>_USDC rows (the repo's
+// "CoinDCX field-name lesson, learned twice" pattern: never trust
+// one key shape). The working variant is sticky; a total failure
+// negative-caches for 60s so a blocked feed costs one probe round
+// per minute, not one per poll.
+// ============================================================
+const GLOBAL_RT_URL = 'https://public.coindcx.com/market_data/v3/current_prices/futures/rt';
+const GLOBAL_RT_PARAM_VARIANTS = [
+  'margin_currency_short_name=USDC',
+  'margin_currency_short_name[]=USDC',
+  '', // combined feed — USDC keys inside a shared payload
+];
+const GLOBAL_RT_CACHE_MS = 5_000;    // live perp LTP — positions stream polls 1s
+const GLOBAL_RT_NEG_CACHE_MS = 60_000;
+const GLOBAL_RT_PROBE_DEADLINE_MS = 6_000; // a blocked feed must never stall the caller
+const GLOBAL_RT_MIN_ROWS = 3;        // honest proof we got the USDC domain
+let _rtCache = null;                 // Map<BASE, row>
+let _rtAt = 0;
+let _rtDownUntil = 0;                // negative cache (CHECKED — v10.6.1 lesson)
+let _rtVariant = 0;                  // sticky working param variant
+let _rtInflight = null;              // single-flight probe
+
+/** Parse one RT payload variant into Map<BASE, row> for USDC pairs.
+ *  Accepts both the B-<BASE>_USDC key shape and a <BASE>/USDC shape. */
+function _parseRtUsdcRows(j) {
+  const map = new Map();
+  const prices = j?.prices && typeof j.prices === 'object' ? j.prices : null;
+  if (!prices) return map;
+  for (const [rawKey, p] of Object.entries(prices)) {
+    if (!p || typeof p !== 'object') continue;
+    const last = num(p.ls);
+    if (!(last > 0)) continue; // dark/illiquid rows carry ls=0
+    const key = String(rawKey);
+    const m = key.match(/^B-([A-Z0-9.]+)_USDC$/) || key.match(/^([A-Z0-9.]+)\/USDC$/);
+    if (!m) continue;
+    const base = m[1];
+    if (!base || map.has(base)) continue;
+    map.set(base, {
+      pair: key,
+      price: last,
+      mark: num(p.mp) || last,
+      changePct: num(p.pc) || 0,
+      high: num(p.h), low: num(p.l), volume: num(p.v),
+      ts: num(j?.ts) || Date.now(),
+      source: 'coindcx-usdc',
+    });
+  }
+  return map;
+}
+
+async function _fetchRtVariant(param) {
+  const r = await fetch(`${GLOBAL_RT_URL}${param ? `?${param}` : ''}`, {
+    headers: { 'User-Agent': UA },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) return null;
+  const rows = _parseRtUsdcRows(await r.json().catch(() => null));
+  return rows.size >= GLOBAL_RT_MIN_ROWS ? rows : null;
+}
+
+/**
+ * CoinDCX Global Futures live prices (the feed the app itself shows).
+ * Returns Map<BASE, { pair, price, mark, changePct, high, low, volume,
+ * ts, source: 'coindcx-usdc' }> — or null when the feed is unreachable
+ * (callers honestly fall back to Yahoo).
+ */
+export async function fetchGlobalFuturesRt({ maxAgeMs = GLOBAL_RT_CACHE_MS } = {}) {
+  if (_rtCache && Date.now() - _rtAt < maxAgeMs) return _rtCache;
+  if (Date.now() < _rtDownUntil) return null; // negative cache — one probe round per minute max
+  if (_rtInflight) return _rtInflight;        // single-flight: board + stream + watcher share one probe
+  const loop = (async () => {
+    try {
+      for (let i = 0; i < GLOBAL_RT_PARAM_VARIANTS.length; i++) {
+        const idx = (_rtVariant + i) % GLOBAL_RT_PARAM_VARIANTS.length;
+        let rows = null;
+        try { rows = await _fetchRtVariant(GLOBAL_RT_PARAM_VARIANTS[idx]); } catch { rows = null; }
+        if (rows) {
+          _rtVariant = idx; _rtCache = rows; _rtAt = Date.now();
+          return rows;
+        }
+      }
+      return null;
+    } finally {
+      _rtInflight = null;
+    }
+  })();
+  // Deadline race: a hung/blocked upstream costs this ONE round's budget
+  // (≤6s), then the 60s negative cache serves null instantly — the
+  // board/positions callers degrade to Yahoo without a stall. A late
+  // background SUCCESS still populates the cache (the positive-cache
+  // check runs before the negative-cache check, so the next poll that
+  // finds it fresh serves it). Both timers are unref'd — they never
+  // hold the process open.
+  _rtInflight = Promise.race([
+    loop,
+    new Promise((resolve) => {
+      const t = setTimeout(() => resolve(null), GLOBAL_RT_PROBE_DEADLINE_MS);
+      if (typeof t === 'object' && t && typeof t.unref === 'function') t.unref();
+    }),
+  ]);
+  const winner = await _rtInflight;
+  if (!winner) _rtDownUntil = Date.now() + GLOBAL_RT_NEG_CACHE_MS;
+  return winner;
+}
+
+// ---------------- REAL quotes (CoinDCX RT first, Yahoo fallback) ----------------
 let _quotesCache = null, _quotesAt = 0;
 /**
  * Live quotes for the whole global universe:
- * Map symbol → { price, changePct, source: 'yahoo' | 'sim', sim }
- * 10s cache (positions poll at 5s with server-side dedupe → cheap).
+ * Map symbol → { price, changePct, source: 'coindcx-usdc' | 'yahoo' | 'sim', sim }
+ * 5s cache — the RT feed is ~1s fresh, the positions SSE stream polls at 1s
+ * with server-side dedupe, and ONE upstream call prices every symbol.
  */
-export async function fetchGlobalQuotes({ maxAgeMs = 10_000 } = {}) {
+export async function fetchGlobalQuotes({ maxAgeMs = 5_000 } = {}) {
   if (_quotesCache && Date.now() - _quotesAt < maxAgeMs) return _quotesCache;
   const map = new Map();
-  const real = GLOBAL_FUTURES_UNIVERSE.filter(u => !u.sim);
-  await Promise.allSettled(real.map(async (u) => {
+  // 1) CoinDCX Global Futures RT — the app-parity source (USDC domain)
+  const rt = await fetchGlobalFuturesRt().catch(() => null);
+  for (const u of GLOBAL_FUTURES_UNIVERSE) {
+    if (u.sim) continue;
+    const row = rt?.get(u.symbol);
+    if (row) {
+      map.set(u.symbol, {
+        symbol: u.symbol, price: row.price, changePct: row.changePct,
+        high: row.high, low: row.low, mark: row.mark, dcxPair: row.pair,
+        source: 'coindcx-usdc', sim: false, ts: row.ts,
+      });
+    }
+  }
+  // 2) Yahoo fallback — ONLY the symbols the RT feed didn't cover
+  //    (unlisted-on-CoinDCX names, or the feed is down → full fallback)
+  const needYahoo = GLOBAL_FUTURES_UNIVERSE.filter(u => !u.sim && !map.has(u.symbol));
+  await Promise.allSettled(needYahoo.map(async (u) => {
     try {
       const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(u.yahoo)}?interval=1d&range=5d`;
       const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) });
@@ -302,6 +440,7 @@ export async function fetchGlobalQuotes({ maxAgeMs = 10_000 } = {}) {
       }
     } catch { /* dead ticker → skipped honestly */ }
   }));
+  // 3) SIM names stay the deterministic synthetic walk
   for (const u of GLOBAL_FUTURES_UNIVERSE.filter(x => x.sim)) {
     const price = syntheticPriceAt(u.symbol);
     map.set(u.symbol, {
@@ -379,7 +518,9 @@ export function buildGlobalCtxSync(symbol, quote, candles, regime) {
     market: 'GLOBALFUTURES', symbol, ltp, changePct: quote?.changePct ?? 0,
     volume: candles?.[candles.length - 1]?.volume ?? 0,
     pair: globalPairFor(symbol), ind, candles: candles || null, options: null, regime,
-    priceSource: quote?.sim ? 'synthetic-sim' : 'yahoo-1h',
+    // v10.7: the LTP carries its TRUE source — CoinDCX USDC RT (app parity)
+    // wins over the Yahoo fallback; candles stay Yahoo 1h either way.
+    priceSource: quote?.sim ? 'synthetic-sim' : quote?.source === 'coindcx-usdc' ? 'coindcx-usdc' : 'yahoo-1h',
     isSim: !!quote?.sim,
   };
 }
@@ -791,6 +932,9 @@ export async function globalFuturesMarketsView() {
       pair: globalPairFor(u.symbol), symbol: u.symbol, name: u.name,
       last: q?.price ?? null, changePct: q?.changePct ?? null,
       sim: u.sim, source: q?.source ?? null,
+      // v10.7: the CoinDCX Global Futures pair when the RT feed prices it
+      // (B-AAPL_USDC — the app-parity identifier), null on Yahoo/sim.
+      dcxPair: q?.dcxPair ?? null,
       discovered: !!u.discovered,
     };
   });
@@ -809,9 +953,21 @@ export async function globalFuturesMarketsView() {
 export function __resetGlobalForTests() {
   _quotesCache = null; _quotesAt = 0;
   _candleCache = new Map();
+  // v10.7: the RT feed state resets too (sticky variant + caches) so
+  // every case starts from a clean probe.
+  _rtCache = null; _rtAt = 0; _rtDownUntil = 0; _rtVariant = 0; _rtInflight = null;
   // v10.5.3: restore the SEED universe (drop test-time discoveries so
   // each case starts hermetic) + stop the refresh timer
   if (_universeTimer) { clearInterval(_universeTimer); _universeTimer = null; }
   GLOBAL_FUTURES_UNIVERSE.length = 0;
   GLOBAL_FUTURES_UNIVERSE.push(...GLOBAL_FUTURES_SEED.map(u => ({ ...u })));
+}
+/** v10.7: inject/inspect the RT feed state from the regression suite. */
+export function __setGlobalRtForTests(rowsByBase) {
+  _rtCache = new Map(Object.entries(rowsByBase || {}));
+  _rtAt = Date.now();
+  _rtDownUntil = 0;
+}
+export function __globalRtStateForTests() {
+  return { variant: _rtVariant, down: Date.now() < _rtDownUntil, size: _rtCache?.size ?? 0 };
 }

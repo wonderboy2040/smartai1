@@ -44,19 +44,20 @@ const pxFmt = (v: number | null | undefined): string => {
  *  ENTRY/SL/TARGETS in ₹. Now every desk formats distinctly:
  *    'inr'  → ₹178.32   (India desk, NSE)
  *    'usdt' → 63,120.50 USDT (CoinDCX USDT-margined perp domain)
- *    'usd'  → USD 178.32   (Global Equity SIM — USD-priced shares/
- *                           contracts; NOT USDT margin like crypto perps,
+ *    'usdc' → USDC 178.32   (v10.7: CoinDCX Global Futures — USDC-
+ *                           margined equity perps, the EXACT domain the
+ *                           app shows; NOT USDT margin like crypto perps,
  *                           so the two are never visually conflated) */
-export type CurrencyTag = 'inr' | 'usdt' | 'usd';
+export type CurrencyTag = 'inr' | 'usdt' | 'usdc';
 const px = (v: number | null | undefined, cur: CurrencyTag = 'inr'): string => {
   if (v == null || !Number.isFinite(v)) return '—';
   if (cur === 'inr') return `₹${pxFmt(v)}`;
   const s = pxFmt(v);
-  return cur === 'usd' ? `USD ${s}` : `${s} USDT`;
+  return cur === 'usdc' ? `USDC ${s}` : `${s} USDT`;
 };
 /** The currency tag for a market — the ONE place desks resolve their unit. */
 const curFor = (market: string): CurrencyTag =>
-  market === 'FUTURES' ? 'usdt' : market === 'GLOBALFUTURES' ? 'usd' : 'inr';
+  market === 'FUTURES' ? 'usdt' : market === 'GLOBALFUTURES' ? 'usdc' : 'inr';
 
 const sideColor = (side: Side | string) =>
   side === 'LONG' ? 'text-emerald-400' : side === 'SHORT' ? 'text-red-400' : 'text-slate-400';
@@ -137,7 +138,7 @@ function SuperIntelStrip({ signal, si }: { signal: AISignal; si: SuperIntel }) {
   const px = (v: number | null | undefined) =>
     v == null || !Number.isFinite(v) ? '—'
       : cur === 'inr' ? `₹${v.toLocaleString('en-IN', { maximumFractionDigits: Math.abs(v) < 1 ? 6 : 2 })}`
-        : cur === 'usd' ? `USD ${v.toLocaleString('en-US', { maximumFractionDigits: 4 })}`
+        : cur === 'usdc' ? `USDC ${v.toLocaleString('en-US', { maximumFractionDigits: 4 })}`
           : `${v.toLocaleString('en-US', { maximumFractionDigits: 4 })} USDT`;
   const zone = bp.entryZone && bp.entryZone[0] != null && bp.entryZone[1] != null ? `${px(bp.entryZone[0])}–${px(bp.entryZone[1])}` : '—';
   const t = bp.targets;
@@ -449,12 +450,12 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
   const plan = signal.plan!;
   const crypto = signal.market === 'CRYPTO';
   const futures = signal.market === 'FUTURES';
-  const global = signal.market === 'GLOBALFUTURES'; // v10.4 SIM desk (USD margin domain)
+  const global = signal.market === 'GLOBALFUTURES'; // v10.4 SIM desk (v10.7: USDC margin domain — CoinDCX app parity)
   // v10.5.3: one shared currency decision for every price/amount label in
   // the ticket — the old `futures ?` checks let the global SIM desk fall
   // through to the ₹ branch in a dozen places.
-  const cur: CurrencyTag = global ? 'usd' : futures ? 'usdt' : 'inr';
-  const unit = global ? 'USD' : 'USDT';       // display unit (global ≠ USDT!)
+  const cur: CurrencyTag = global ? 'usdc' : futures ? 'usdt' : 'inr';
+  const unit = global ? 'USDC' : 'USDT';       // display unit (global USDC ≠ crypto USDT!)
   const usdDenominated = futures || global;    // shared boolean per the fix plan
   const leveraged = crypto || futures || global; // v6.8/v10.4: futures + SIM desk are natively leveraged
   const india = signal.market === 'INDIA';
@@ -569,13 +570,13 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
         <span className={`text-[10px] font-black tracking-wider ${futures ? 'text-violet-300' : crypto ? 'text-cyan-300' : global ? 'text-sky-300' : 'text-orange-300'}`}>
           🚀 SIMPLE TRADE TICKET — {signal.symbol} {signal.side}
         </span>
-        <span className="text-[9px] text-slate-500">{futures ? 'margin USDT (perp wallet se)' : global ? 'margin USD (SIM desk — practice)' : crypto ? 'margin ₹ (leverage apni lag raha hai)' : 'capital budget ₹'}</span>
+        <span className="text-[9px] text-slate-500">{futures ? 'margin USDT (perp wallet se)' : global ? 'margin USDC (CoinDCX Global Futures SIM — practice)' : crypto ? 'margin ₹ (leverage apni lag raha hai)' : 'capital budget ₹'}</span>
       </div>
 
       {/* size + leverage inputs — v7.0.1 FREE-TYPING budget box */}
       <div className="flex items-center gap-2 flex-wrap mt-2">
         <label className="flex items-center gap-1.5 text-[9px] font-black text-slate-500 tracking-wider">
-          {futures ? 'MARGIN USDT' : global ? 'MARGIN USD' : crypto ? 'MARGIN ₹' : 'BUDGET ₹'}
+          {futures ? 'MARGIN USDT' : global ? 'MARGIN USDC' : crypto ? 'MARGIN ₹' : 'BUDGET ₹'}
           <input
             type="number" min={usdDenominated ? 2 : 100} max={1000000} step={usdDenominated ? 1 : 50}
             value={marginRaw} onChange={e => onMargin(e.target.value)} onBlur={onMarginBlur}
@@ -633,7 +634,7 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
       )}
       {belowMin && typedValid && (
         <div className="mt-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/[0.07] border border-amber-500/25 text-[10px] font-bold text-amber-300/90 leading-relaxed">
-          ⚠ {futures ? `Margin ${marginRaw} USDT` : global ? `Margin ${marginRaw} USD` : `Budget ₹${marginRaw}`} minimum {usdDenominated ? `${lo} ${unit}` : `₹${lo}`} se kam hai — execute nahi hoga. Amount badhao (blur par apne aap clamp ho jayega).
+          ⚠ {futures ? `Margin ${marginRaw} USDT` : global ? `Margin ${marginRaw} USDC` : `Budget ₹${marginRaw}`} minimum {usdDenominated ? `${lo} ${unit}` : `₹${lo}`} se kam hai — execute nahi hoga. Amount badhao (blur par apne aap clamp ho jayega).
         </div>
       )}
 
@@ -752,7 +753,7 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
           {futures
             ? <>CoinDCX app me <b>{signal.symbol}</b> perp kholo → <b>BUY/LIMIT</b> select → price me <b className="text-cyan-300">{px(plan.entry, 'usdt')}</b> → amount <b>{qty < 1 ? qty.toFixed(6) : qty} contracts</b>{leveraged && lev > 1 ? ` · ${lev}x leverage · margin mode` : ''}. </>
             : global
-              ? <>SIM desk — CoinDCX par ye equity listed nahi, koi broker order NAHI jata. Ticket se <b>PAPER EXECUTE</b> karo (sizing USD margin se), watcher SL/TP/trailing khud manage karega. Entry reference <b className="text-cyan-300">{px(plan.entry, 'usd')}</b>. </>
+              ? <>SIM desk — prices CoinDCX Global Futures (USDC) se aate hain, koi broker order NAHI jata. Ticket se <b>PAPER EXECUTE</b> karo (sizing USDC margin se), watcher SL/TP/trailing khud manage karega. Entry reference <b className="text-cyan-300">{px(plan.entry, 'usdc')}</b>. </>
               : crypto
                 ? <>CoinDCX app me <b>{signal.symbol}</b> pair kholo → <b>{long ? 'BUY' : 'SELL'} / LIMIT</b> → price me <b className="text-cyan-300">{px(plan.entry)}</b> → amount <b>{qty < 1 ? qty.toFixed(6) : qty} {long ? 'buy' : 'sell'}</b>. </>
                 : <>broker me <b>{signal.symbol}</b> search karo → <b>{long ? 'BUY' : 'SELL'} · LIMIT</b> select → price me <b className="text-cyan-300">₹{plan.entry.toLocaleString('en-IN')}</b> (band {`₹${(plan.entry * 0.9985).toFixed(2)}–₹${(plan.entry * 1.0015).toFixed(2)}`}) → qty <b>{qty}</b> · product <b>MIS</b>. </>}
@@ -854,7 +855,7 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
             <span className="font-mono font-bold text-slate-200">{signal.market === 'FUTURES'
               ? (signal.ltp != null ? `${signal.ltp.toLocaleString('en-US', { maximumFractionDigits: 4 })} USDT` : '—')
               : signal.market === 'GLOBALFUTURES'
-                ? (signal.ltp != null ? `USD ${signal.ltp.toLocaleString('en-US', { maximumFractionDigits: 4 })}` : '—')
+                ? (signal.ltp != null ? `USDC ${signal.ltp.toLocaleString('en-US', { maximumFractionDigits: 4 })}` : '—')
                 : fmt(signal.ltp)}</span>
             {signal.changePct != null && (
               <span className={`font-mono font-bold ${(signal.changePct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
@@ -877,7 +878,7 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
           {(onExecute || onExecuteIndia || onExecuteFutures || onExecuteGlobal) && plan && actionable && (
             <button onClick={() => setTicketOpen(v => !v)}
               title={signal.market === 'GLOBALFUTURES'
-                ? 'Size, USD risk/reward, leverage — sab pre-computed, one-click execute'
+                ? 'Size, USDC risk/reward, leverage — sab pre-computed, one-click execute'
                 : signal.market === 'FUTURES'
                   ? 'Size, USDT risk/reward, leverage — sab pre-computed, one-click execute'
                   : signal.market === 'CRYPTO'

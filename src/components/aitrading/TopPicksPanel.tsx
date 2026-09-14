@@ -19,7 +19,9 @@ function pickPriceFmt(market: string): (n: number | null | undefined) => string 
     // v7.0.2: USDT (not $) — every other futures surface (ticket, console,
     // positions) labels perp prices USDT; a mixed $/USDT display misled
     // notional comparisons between the Top-5 row and the trade ticket.
-    if (market === 'FUTURES' || market === 'GLOBALFUTURES') return `${n >= 100 ? n.toFixed(1) : n.toFixed(4)} USD`;
+    // v10.7: GLOBALFUTURES labels USDC — the CoinDCX app-parity domain.
+    if (market === 'GLOBALFUTURES') return `USDC ${n >= 100 ? n.toFixed(1) : n.toFixed(4)}`;
+    if (market === 'FUTURES') return `${n >= 100 ? n.toFixed(1) : n.toFixed(4)} USDT`;
     return `₹${n >= 100 ? n.toFixed(1) : n.toFixed(2)}`;
   };
 }

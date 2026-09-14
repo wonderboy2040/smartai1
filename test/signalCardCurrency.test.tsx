@@ -1,21 +1,24 @@
 // ============================================================
 // test/signalCardCurrency.test.tsx — v10.5.3 currency-display
-// regression suite (Issue #1: global futures priced in ₹).
+// regression suite (Issue #1: global futures priced in ₹), updated
+// v10.7 for the CoinDCX app-parity USDC domain.
 //
 // THE BUG: SignalCard's `px()` helper and a dozen call sites branched
 // only on `futures`, so GLOBALFUTURES (Global Equity SIM) cards fell
 // through to the ₹ branch — an AAPL card showed "ENTRY ₹178.32" and
 // the ticket summary showed "₹ RISK @ SL" for a USD-priced share.
 //
-// THE FIX: `px()` takes a currency tag ('inr' | 'usdt' | 'usd') and
+// THE FIX: `px()` takes a currency tag ('inr' | 'usdt' | 'usdc') and
 // the whole ticket resolves its unit through one shared decision.
+// v10.7: the tag is USDC — CoinDCX's Global Futures are USDC-margined
+// perps and the app labels them USDC, so the desk matches the app.
 //
 // THE CONTRACT (locked here):
 //   • GLOBALFUTURES card renders NO ₹ character anywhere — header,
 //     plan strip, blueprint strip, opened ticket, labels, tooltips.
 //   • FUTURES keeps the USDT domain (CoinDCX USDT-margined perps).
 //   • INDIA keeps ₹ (NSE).
-//   • The USD and USDT labels are never conflated (USD ≠ USDT text).
+//   • The USDC and USDT labels are never conflated (USDC ≠ USDT text).
 // ============================================================
 import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
@@ -58,14 +61,14 @@ const base = (market: AISignal['market']): AISignal => ({
 
 const noopExec = async () => ({ ok: true });
 
-describe('v10.5.3 SignalCard currency display — the global desk never renders ₹', () => {
-  it('GLOBALFUTURES card (closed state): USD everywhere, zero ₹ characters', () => {
+describe('v10.7 SignalCard currency display — the global desk never renders ₹', () => {
+  it('GLOBALFUTURES card (closed state): USDC everywhere, zero ₹ characters', () => {
     const { container } = render(<SignalCard signal={base('GLOBALFUTURES')} onExecuteGlobal={noopExec} />);
     const text = container.textContent || '';
     expect(text).not.toContain('₹');
-    // header LTP + plan strip price the card in USD
-    expect(text).toContain('USD');
-    expect(text).toMatch(/USD\s?178/);
+    // header LTP + plan strip price the card in USDC (the app's domain)
+    expect(text).toContain('USDC');
+    expect(text).toMatch(/USDC\s?178/);
   });
 
   it('GLOBALFUTURES opened SIMPLE TRADE TICKET: no ₹ in the full ticket (labels, chips, guide)', () => {
@@ -74,38 +77,39 @@ describe('v10.5.3 SignalCard currency display — the global desk never renders 
     // the ticket renders asynchronously with state — assert the full tree again
     const text = container.textContent || '';
     expect(text).not.toContain('₹');
-    expect(text).toContain('MARGIN USD');
-    expect(text).toContain('USD RISK @ SL');
-    expect(text).toContain('USD PROFIT @ T2');
-    expect(text).toMatch(/USD\s?178\.32/); // ENTRY priced in USD
-    expect(text).toMatch(/USD\s?172\.5/); // SL priced in USD
+    expect(text).toContain('MARGIN USDC');
+    expect(text).toContain('USDC RISK @ SL');
+    expect(text).toContain('USDC PROFIT @ T2');
+    expect(text).toMatch(/USDC\s?178\.32/); // ENTRY priced in USDC
+    expect(text).toMatch(/USDC\s?172\.5/); // SL priced in USDC
   });
 
-  it('the USD label is never conflated with the crypto USDT domain', () => {
+  it('the USDC label is never conflated with the crypto USDT domain', () => {
     const { container } = render(<SignalCard signal={base('GLOBALFUTURES')} onExecuteGlobal={noopExec} />);
     const text = container.textContent || '';
-    expect(text).not.toContain('USDT'); // global SIM = shares of a USD instrument
+    expect(text).not.toContain('USDT'); // global SIM = USDC equity perps
     const { container: c2 } = render(<SignalCard signal={base('FUTURES')} onExecuteFutures={noopExec} />);
     expect((c2.textContent || '')).toContain('USDT');
+    expect((c2.textContent || '')).not.toContain('USDC');
   });
 
-  it('GLOBALFUTURES paper-execute toast also stays in the USD domain', () => {
+  it('GLOBALFUTURES paper-execute toast also stays in the USDC domain', () => {
     const { container } = render(<SignalCard signal={base('GLOBALFUTURES')} onExecuteGlobal={noopExec} />);
     fireEvent.click(screen.getByRole('button', { name: /🚀/ }));
     fireEvent.click(screen.getByRole('button', { name: /PAPER EXECUTE/i }));
     return new Promise((resolve) => setTimeout(() => {
       const text = container.textContent || '';
       expect(text).not.toContain('₹');
-      expect(text).toMatch(/@\s?178\.32 USD/);
+      expect(text).toMatch(/@\s?178\.32 USDC/);
       resolve(null);
     }, 50));
   });
 
-  it('FUTURES (real CoinDCX perps) keeps the USDT domain, not USD', () => {
+  it('FUTURES (real CoinDCX perps) keeps the USDT domain, not USDC', () => {
     const { container } = render(<SignalCard signal={base('FUTURES')} onExecuteFutures={noopExec} />);
     const text = container.textContent || '';
     expect(text).toContain('USDT');
-    expect(text).not.toContain('USD '); // "USD " with space — the SIM desk prefix
+    expect(text).not.toContain('USDC'); // the global SIM desk unit
     expect(text).not.toContain('₹');
   });
 

@@ -1427,7 +1427,9 @@ export async function getPositionsWithPnl() {
       } else if (p.market === 'GLOBALFUTURES') {
         const q = globalLtp.get(p.symbol);
         ltp = q?.price ?? p.entryPrice;
-        priceSource = q ? (q.sim ? 'global-sim' : 'yahoo') : 'entry-fallback';
+        // v10.7: 'coindcx-gf-rt' = the app-parity CoinDCX Global Futures
+        // RT feed (live USDC perp LTP); 'yahoo' = fallback spot quote.
+        priceSource = q ? (q.sim ? 'global-sim' : q.source === 'coindcx-usdc' ? 'coindcx-gf-rt' : 'yahoo') : 'entry-fallback';
       } else {
         ltp = byPair.get(p.pair) ?? tvInrPrice(p.pair) ?? p.entryPrice;
         priceSource = byPair.has(p.pair) ? 'coindcx' : (tvInrPrice(p.pair) != null ? 'tv-usd-fallback' : 'entry-fallback');
