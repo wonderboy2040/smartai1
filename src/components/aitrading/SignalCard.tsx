@@ -19,6 +19,7 @@
 // ============================================================
 import { memo, useCallback, useState } from 'react';
 import { MTFConfluenceBadge } from '../intraday/MTFConfluenceBadge';
+import { DepthLadder } from './DepthLadder';
 import type { AISignal, Side, SuperIntel } from './types';
 
 const fmt = (n: number | null | undefined, dp = 2): string => {
@@ -915,6 +916,17 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
           + agreement % (India signals with the flag ON; renders nothing
           when the payload is absent — honest degrade). */}
       {signal.mtf && <div className="mt-1.5"><MTFConfluenceBadge mtf={signal.mtf} /></div>}
+
+      {/* v10.6 ORDER-FLOW DEPTH (Pro Upgrade #1) — the L2 ladder the
+          VolumeFlow seat read: top-5 book, two-band imbalance, walls,
+          spoof flag. 2s live poll while the card is rendered (the
+          server's 2s cache dedupes N viewers into one upstream call).
+          GLOBALFUTURES has no CoinDCX book — no widget there. */}
+      {(signal.market === 'INDIA' || signal.market === 'CRYPTO' || signal.market === 'FUTURES') && (
+        <div className="mt-1.5">
+          <DepthLadder market={signal.market} symbol={signal.symbol} ltp={signal.ltp} />
+        </div>
+      )}
 
       {/* v9 SUPERINTELLIGENCE BLUEPRINT — entry window · leverage ·
           staged exit · exit clock: the complete pro-trader ticket. */}

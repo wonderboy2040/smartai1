@@ -30,7 +30,7 @@
 //   • STRONG-signal alerter (60s) — telegram on fresh STRONG consensus
 //   • auto-executor  (90s)     — STRONG-only auto trading when enabled
 // ============================================================
-import { getSignals, getDeepSignal, getFreshSignalForExec, getFreshFuturesSignalForExec, getFreshGlobalSignalForExec } from './signals.js';
+import { getSignals, getDeepSignal, getFreshSignalForExec, getFreshFuturesSignalForExec, getFreshGlobalSignalForExec, buildRegime } from './signals.js';
 // v2 signal-accuracy upgrade (sentiment / instflow / fundamentals desks)
 import { v2ModelsEnabled } from './models.js';
 import { sentimentStatus } from './sentiment.js';
@@ -67,9 +67,12 @@ import {
 } from './indiaAgent.js';
 import { runBacktest } from './backtest.js';
 import { getSwingBoard, scanWhales, getOrderbook } from './swing.js';
+import { readDepth, depthStatus } from './orderFlowDepth.js';
+import { wickFilterStatus } from './wickFilter.js';
 import { ledgerStatus, recentEntries, verifyLedger } from './ledger.js';
 import { adaptiveStatus } from './adaptive.js';
-import { trustReport, governance } from './trust.js';
+import { regimeReweightView } from './ensemble.js';
+import { trustReport, governance, modelPerformanceWindows } from './trust.js';
 import { perfReport } from './perf.js';
 import { correlationMatrix } from './correlation.js';
 import { sectorDesk } from './sectors.js';
@@ -516,9 +519,14 @@ export function registerAITradingRoutes(app, deps) {
       const minGrade = ['STRONG', 'ACTION', 'WATCH'].includes(String(req.query.minGrade).toUpperCase())
         ? String(req.query.minGrade).toUpperCase() : 'ACTION';
       const capital = Math.min(1_000_000, Math.max(100, parseInt(req.query.capital, 10) || 1000));
+      // v10.6 (Pro Upgrade #4): strategy=regime_weighted → the SAME replay
+      // with the regime multiplier layer forced on + a side-by-side plain
+      // leg per symbol (identical folds) — the A/B that decides whether
+      // AI_ENABLE_REGIME_WEIGHTS goes live.
+      const strategy = String(req.query.strategy || '').toLowerCase() === 'regime_weighted' ? 'regime_weighted' : 'weighted';
       const cfg = (() => { try { return loadConfig(); } catch { return {}; } })();
       const riskCap = Number(cfg.maxRiskPct) > 0 ? cfg.maxRiskPct : 5;
-      const out = await runBacktest({ market, symbols, minGrade, capitalPerTradeINR: capital, maxRiskPct: riskCap, currentMinConfidence: Number(cfg.minConfidence) > 0 ? Number(cfg.minConfidence) : 75 });
+      const out = await runBacktest({ market, symbols, minGrade, capitalPerTradeINR: capital, maxRiskPct: riskCap, currentMinConfidence: Number(cfg.minConfidence) > 0 ? Number(cfg.minConfidence) : 75, strategy });
       res.json(out);
     } catch (e) {
       jsonError(res, 500, 'backtest failed', e);
@@ -594,6 +602,24 @@ export function registerAITradingRoutes(app, deps) {
     }
   });
 
+  // ---------------- v10.6: L2 depth ladder (order-flow reader) ----------------
+  // Pro Upgrade #1 — the depth-ladder mini-widget's feed: top-5 ladder
+  // + two-band imbalance + walls + spoof velocity. 2s server cache
+  // (positionsStream fast tier) so N viewers share ONE upstream call.
+  app.get('/api/ai/depth', async (req, res) => {
+    try {
+      const market = ['CRYPTO', 'FUTURES', 'INDIA'].includes(String(req.query.market || '').toUpperCase())
+        ? String(req.query.market).toUpperCase() : 'CRYPTO';
+      const symbol = String(req.query.symbol || 'BTC').toUpperCase().slice(0, 12);
+      const ltpNum = Number(req.query.ltp);
+      const out = await readDepth(market, symbol, { ltp: Number.isFinite(ltpNum) && ltpNum > 0 ? ltpNum : null });
+      res.set('Cache-Control', 'no-store');
+      res.json(out);
+    } catch (e) {
+      jsonError(res, 500, 'depth failed', e);
+    }
+  });
+
   // ---------------- v6.7: morning brief (one-call desk overview) ----------------
   app.get('/api/ai/brief', async (_req, res) => {
     try {
@@ -656,11 +682,35 @@ export function registerAITradingRoutes(app, deps) {
   });
 
   // ---------------- v6.11: trust layer (calibration + governance) ----------------
-  app.get('/api/ai/trust', (_req, res) => {
+  app.get('/api/ai/trust', async (_req, res) => {
     try {
-      res.json({ ok: true, calibration: trustReport(), governance: governance() });
+      // v10.6 (Pro Upgrades #4/#5): the walk-forward dashboard's data —
+      // per-model 30/90d windows + the live regime reweight state.
+      const [regimeIndia, regimeCrypto] = await Promise.all([
+        buildRegime('INDIA').catch(() => null),
+        buildRegime('CRYPTO').catch(() => null),
+      ]);
+      res.json({
+        ok: true,
+        calibration: trustReport(),
+        governance: governance(),
+        windows: modelPerformanceWindows(),
+        regimeReweight: {
+          INDIA: regimeReweightView(regimeIndia, 'INDIA'),
+          CRYPTO: regimeReweightView(regimeCrypto, 'CRYPTO'),
+        },
+      });
     } catch (e) {
       jsonError(res, 500, 'trust report failed', e);
+    }
+  });
+
+  // ---------------- v10.6: order-flow + price-validation status ----------------
+  app.get('/api/ai/orderflow-status', (_req, res) => {
+    try {
+      res.json({ ok: true, depth: depthStatus(), wickFilter: wickFilterStatus() });
+    } catch (e) {
+      jsonError(res, 500, 'orderflow status failed', e);
     }
   });
 

@@ -109,8 +109,15 @@ def test_build_meta_training_frame_synthetic():
         }))
     frame = build_meta_training_frame(pd.concat(frames, ignore_index=True))
     assert not frame.empty
-    assert list(frame.columns[:-1]) == meta_feature_names()
+    # v10.6: the frame now carries [features..., dir_label, regime_label]
+    # (the rolling regime feeds backtest.py --strategy regime_weighted).
+    assert list(frame.columns[:-2]) == meta_feature_names()
+    assert frame.columns[-2] == "dir_label"
+    assert frame.columns[-1] == "regime_label"
     assert set(frame["dir_label"].unique()) <= {"UP", "DOWN", "FLAT"}
+    assert set(frame["regime_label"].unique()) <= {
+        "TRENDING", "CHOPPY", "HIGH_VOL", "LOW_VOL", "UNKNOWN",
+    }
 
 
 # ------------------------------------------------------------------

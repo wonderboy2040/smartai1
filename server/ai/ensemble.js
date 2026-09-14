@@ -154,6 +154,151 @@ export function aggregateVotes(votes, gates = DEFAULT_GATES, opts = {}) {
 }
 
 // ------------------------------------------------------------
+// v10.6 REGIME-AWARE DYNAMIC MODEL REWEIGHTING (Pro Upgrade #4)
+// ------------------------------------------------------------
+// The 14 model weights are static constants — a trend-following model
+// like TrendMatrix should matter more in a TRENDING regime and less
+// in a CHOPPY one, but the code weighted it the same always. This is
+// a multiplier LAYER on top of the existing base weights, applied on
+// the weighted-average fallback path ONLY (the meta-ensemble path
+// learns its own non-linear combinations — never double-adjusted).
+//
+// Gated by AI_ENABLE_REGIME_WEIGHTS (default OFF — the plan's own
+// sequencing: backtest both ways (`--strategy regime_weighted`)
+// before flipping the flag on live boards).
+export function regimeWeightsEnabled() {
+  return ['true', '1', 'on', 'yes'].includes(String(process.env.AI_ENABLE_REGIME_WEIGHTS || '').trim().toLowerCase());
+}
+
+/**
+ * Classify the current market state — PURE.
+ * @param {object} a { market, changePct, trend, vix }
+ *   changePct: the gate index's 24h move (BTC for crypto, NIFTY for
+ *              India, NDX for global). trend: 'UP'|'DOWN'|'FLAT'|null
+ *              (the daily EMA20/50 tie-break from buildRegime).
+ *              vix: IndiaVix / USVIX level (null for crypto).
+ * @returns {'TRENDING'|'CHOPPY'|'HIGH_VOL'|'LOW_VOL'|null}
+ */
+export function classifyRegime({ market, changePct, trend, vix }) {
+  // null/undefined must stay null (Number(null) === 0 — a missing VIX
+  // must NEVER read as "calm = 0")
+  const num = (v) => (v == null || v === '' ? null : (Number.isFinite(Number(v)) ? Number(v) : null));
+  const ch = num(changePct);
+  const vx = num(vix);
+  const mkt = String(market || '').toUpperCase();
+  const isCryptoish = mkt === 'CRYPTO' || mkt === 'FUTURES';
+  const isGlobal = mkt === 'GLOBALFUTURES';
+  const trendAligned = ch != null && trend && ((ch > 0 && trend === 'UP') || (ch < 0 && trend === 'DOWN'));
+
+  if (isCryptoish) {
+    if (ch == null) return null;
+    if (Math.abs(ch) >= 2.5) return 'HIGH_VOL';
+    if (Math.abs(ch) >= 0.75 && trendAligned) return 'TRENDING';
+    if (Math.abs(ch) < 0.5 && (!trend || trend === 'FLAT')) return 'LOW_VOL';
+    return 'CHOPPY';
+  }
+  // INDIA + GLOBAL (index gate + vol gauge)
+  const strongMove = isGlobal ? 2.0 : 1.0;
+  const dirMove = isGlobal ? 0.5 : 0.35;
+  const calmVix = isGlobal ? 14 : 11;
+  const hotVix = isGlobal ? 25 : 18;
+  if (vx != null && vx >= hotVix) return 'HIGH_VOL';
+  if (ch != null && Math.abs(ch) >= strongMove) return 'HIGH_VOL';
+  if (ch != null && Math.abs(ch) >= dirMove && trendAligned) return 'TRENDING';
+  if (vx != null && vx <= calmVix && (ch == null || Math.abs(ch) < dirMove)) return 'LOW_VOL';
+  if (ch == null) return null;
+  return 'CHOPPY';
+}
+
+/** Map a live buildRegime() payload into classifyRegime's inputs. */
+export function classifyRegimeFor(regime, market) {
+  if (!regime || typeof regime !== 'object') return null;
+  const mkt = String(market || '').toUpperCase();
+  if (mkt === 'CRYPTO' || mkt === 'FUTURES') {
+    return classifyRegime({ market: mkt, changePct: regime.btcChange, trend: regime.btcTrend, vix: null });
+  }
+  if (mkt === 'GLOBALFUTURES') {
+    return classifyRegime({ market: mkt, changePct: regime.ndxChange, trend: regime.ndxTrend, vix: regime.usVix });
+  }
+  return classifyRegime({ market: 'INDIA', changePct: regime.niftyChange, trend: regime.niftyTrend, vix: regime.indiaVix });
+}
+
+/** Rolling regime from a candle history (backtest path — no look-ahead:
+ * everything computed from bars [0..i] only). */
+export function classifyRegimeFromCandles(hist, market) {
+  const closes = (hist || []).map(c => c.close);
+  const n = closes.length;
+  if (n < 60) return null;
+  const lookback = 24;
+  const ch = closes[n - 1 - lookback] > 0 ? ((closes[n - 1] / closes[n - 1 - lookback]) - 1) * 100 : null;
+  const ema = (p) => {
+    const k = 2 / (p + 1);
+    let e = closes[0];
+    for (let j = 1; j < n; j++) e = closes[j] * k + e * (1 - k);
+    return e;
+  };
+  const e20 = ema(20), e50 = ema(50);
+  const spread = e50 > 0 ? (e20 - e50) / e50 * 100 : 0;
+  const trend = Math.abs(spread) < 0.5 ? 'FLAT' : spread > 0 ? 'UP' : 'DOWN';
+  return classifyRegime({ market, changePct: ch, trend, vix: null });
+}
+
+// The multiplier table — deliberately MODEST (±25% max): this is a
+// tilt, not a takeover; the base weights stay the spine. Unknown
+// model ids default 1.0 (a new seat is never accidentally reweighted).
+export const REGIME_MODEL_MULTIPLIERS = {
+  TRENDING: { trend: 1.25, momentum: 1.15, smc: 1.15, tape: 1.15, 'tape-mtf': 1.15, volatility: 0.85, sr: 0.90, pattern: 0.95, volume: 1.05, regime: 1.10 },
+  CHOPPY: { trend: 0.75, momentum: 0.80, smc: 0.80, tape: 0.85, 'tape-mtf': 0.85, volatility: 1.20, sr: 1.25, pattern: 1.10, volume: 1.00, regime: 1.00, instflow: 1.10 },
+  HIGH_VOL: { trend: 0.85, momentum: 0.90, smc: 0.90, tape: 0.95, 'tape-mtf': 0.95, volatility: 1.25, sr: 1.05, pattern: 0.95, volume: 1.00, regime: 1.10, options: 1.05 },
+  LOW_VOL: { trend: 1.10, momentum: 1.05, smc: 1.00, tape: 1.05, 'tape-mtf': 1.05, volatility: 0.80, sr: 0.95, pattern: 1.00, volume: 1.00, regime: 1.00 },
+};
+
+/** One model's multiplier under a regime label (1.0 when unknown). */
+export function regimeMulFor(label, modelId) {
+  if (!label) return 1;
+  const m = REGIME_MODEL_MULTIPLIERS[label]?.[modelId];
+  return Number.isFinite(m) && m > 0 ? Math.max(0.5, Math.min(1.5, m)) : 1;
+}
+
+/**
+ * Apply the regime multipliers to a votes array (COPY — the input is
+ * never mutated; adaptive weights may share the objects). label null /
+ * flag OFF → votes returned as-is (byte-identical legacy path).
+ * Adjusted votes carry regimeAdj { label, base, mul } for the UI.
+ *
+ * `force: true` bypasses the env flag — used ONLY by the backtest's
+ * `--strategy regime_weighted` A/B mode (the whole point of which is
+ * comparing the tilt BEFORE flipping the flag on live boards).
+ */
+export function applyRegimeWeights(votes, label, { force = false } = {}) {
+  if (!label || (!force && !regimeWeightsEnabled())) return votes;
+  const table = REGIME_MODEL_MULTIPLIERS[label];
+  if (!table) return votes;
+  return (votes || []).map(v => {
+    const mul = regimeMulFor(label, v?.id);
+    if (mul === 1) return v;
+    return { ...v, weight: Math.round(v.weight * mul * 1000) / 1000, regimeAdj: { label, base: v.weight, mul } };
+  });
+}
+
+/** Status view for /api/ai/trust + the dashboard panel. */
+export function regimeReweightView(regime, market) {
+  const enabled = regimeWeightsEnabled();
+  const label = enabled ? classifyRegimeFor(regime, market) : null;
+  const table = label ? REGIME_MODEL_MULTIPLIERS[label] : null;
+  const names = { trend: 'TrendMatrix', momentum: 'MomentumQuant', volatility: 'VolatilityScope', volume: 'VolumeFlow', pattern: 'PatternNeural', sr: 'SRMatrix', options: 'OptionsFlow', regime: 'MacroRegime', smc: 'SmartMoneyICT', tape: 'IntradayTape', 'tape-mtf': 'IntradayTapeMTF', instflow: 'InstFlow' };
+  return {
+    enabled,
+    label,
+    note: enabled
+      ? (label ? `regime=${label} — model weights tilted ±25% max (weighted-average path only; meta-ensemble untouched)` : 'regime inputs unavailable — base weights (no tilt)')
+      : 'AI_ENABLE_REGIME_WEIGHTS off — static base weights (A/B against --strategy regime_weighted first)',
+    downWeighted: table ? Object.entries(table).filter(([, m]) => m < 1).map(([id, m]) => ({ id, name: names[id] || id, mul: m })) : [],
+    upWeighted: table ? Object.entries(table).filter(([, m]) => m > 1).map(([id, m]) => ({ id, name: names[id] || id, mul: m })) : [],
+  };
+}
+
+// ------------------------------------------------------------
 // v10.5 META-ENSEMBLE STACKING (Upgrade 4 — Node consume side)
 // ------------------------------------------------------------
 // AI_ENABLE_META_ENSEMBLE=true routes the raw model votes through

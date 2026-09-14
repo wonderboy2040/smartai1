@@ -22,7 +22,7 @@
 import { computeIndicatorsFromCandles } from './lib/indicators.js';
 import { fetchCoinDcxCandles } from './data.js';
 import { runQuantModels } from './models.js';
-import { aggregateVotes, buildTradePlan } from './ensemble.js';
+import { aggregateVotes, buildTradePlan, applyRegimeWeights, classifyRegimeFromCandles } from './ensemble.js';
 
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 const SLIPPAGE = 0.001; // 10 bps each side
@@ -72,8 +72,15 @@ async function fetchYahooChart(yhTicker, interval, range) {
 /**
  * Simulate ONE symbol's history through the live ensemble.
  * @returns {{trades: [], stats: {}}|null} null when data is unusable.
+ *
+ * v10.6 `strategy: 'regime_weighted'` (Pro Upgrade #4): the same
+ * replay with the regime multiplier layer FORCED on — a rolling
+ * TRENDING/CHOPPY/HIGH_VOL/LOW_VOL label is classified from the
+ * candle history itself (no look-ahead: bars [0..i] only) and tilts
+ * the model weights per bar. The A/B runner below runs BOTH legs on
+ * identical data so the flag can be evaluated before going live.
  */
-export function simulateSymbol({ symbol, market, candles, minGrade = 'ACTION', maxRiskPct = 5, capitalPerTradeINR = 1000, maxHoldBars = 48 }) {
+export function simulateSymbol({ symbol, market, candles, minGrade = 'ACTION', maxRiskPct = 5, capitalPerTradeINR = 1000, maxHoldBars = 48, strategy = 'weighted' }) {
   if (!Array.isArray(candles) || candles.length < WARMUP + 20) return null;
   const long = side => String(side).toUpperCase() !== 'SHORT';
   const trades = [];
@@ -98,7 +105,9 @@ export function simulateSymbol({ symbol, market, candles, minGrade = 'ACTION', m
           ind, candles: hist, options: null,
           regime: market === 'CRYPTO' ? { btcChange: null } : { niftyChange: null, indiaVix: null },
         };
-        const votes = runQuantModels(ctx);
+        const votes = applyRegimeWeights(runQuantModels(ctx),
+          strategy === 'regime_weighted' ? classifyRegimeFromCandles(hist, market) : null,
+          { force: true });
         const consensus = aggregateVotes(votes);
         const gf = { STRONG: 4, ACTION: 3, WATCH: 2, NEUTRAL: 1 }[consensus.grade] || 1;
         if (consensus.dir !== 0 && gf >= gradeFloor) {
@@ -255,11 +264,11 @@ const DEFAULT_INDIA = ['RELIANCE', 'HDFCBANK', 'ICICIBANK', 'INFY', 'TCS', 'SBIN
 const _cache = new Map();
 const CACHE_TTL = 10 * 60_000;
 
-export async function runBacktest({ market = 'CRYPTO', symbols, minGrade = 'ACTION', capitalPerTradeINR = 1000, maxRiskPct = 5, currentMinConfidence = 75 }) {
+export async function runBacktest({ market = 'CRYPTO', symbols, minGrade = 'ACTION', capitalPerTradeINR = 1000, maxRiskPct = 5, currentMinConfidence = 75, strategy = 'weighted' }) {
   const mkt = String(market).toUpperCase() === 'INDIA' ? 'INDIA' : 'CRYPTO';
   const syms = (Array.isArray(symbols) && symbols.length > 0 ? symbols : (mkt === 'CRYPTO' ? DEFAULT_CRYPTO : DEFAULT_INDIA))
     .map(s => String(s).toUpperCase().replace(/[^A-Z0-9\-]/g, '')).filter(Boolean).slice(0, 8);
-  const key = `bt:${mkt}:${syms.join(',')}:${minGrade}:${capitalPerTradeINR}:${maxRiskPct}`;
+  const key = `bt:${mkt}:${syms.join(',')}:${minGrade}:${capitalPerTradeINR}:${maxRiskPct}:${strategy}`;
   const hit = _cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL) return hit.payload;
 
@@ -279,9 +288,16 @@ export async function runBacktest({ market = 'CRYPTO', symbols, minGrade = 'ACTI
       if (candles) source = 'yahoo-1d';
     }
     if (!candles) return { symbol: sym, ok: false, reason: 'no historical data (CoinDCX + Yahoo both unreachable)' };
-    const sim = simulateSymbol({ symbol: sym, market: mkt, candles, minGrade, maxRiskPct, capitalPerTradeINR, maxHoldBars });
+    const sim = simulateSymbol({ symbol: sym, market: mkt, candles, minGrade, maxRiskPct, capitalPerTradeINR, maxHoldBars, strategy });
     if (!sim) return { symbol: sym, ok: false, reason: 'not enough bars' };
-    return { symbol: sym, ok: true, source, ...sim };
+    // v10.6 A/B: the regime leg also runs the PLAIN leg on the SAME
+    // candles — identical folds, side-by-side comparison.
+    let comparison = null;
+    if (strategy === 'regime_weighted') {
+      const plain = simulateSymbol({ symbol: sym, market: mkt, candles, minGrade, maxRiskPct, capitalPerTradeINR, maxHoldBars, strategy: 'weighted' });
+      comparison = plain ? { weighted: plain.stats, regime_weighted: sim.stats } : null;
+    }
+    return { symbol: sym, ok: true, source, ...(comparison ? { comparison } : {}), ...sim };
   }));
 
   const perSymbol = results.map(r => r.status === 'fulfilled' ? r.value : { symbol: '?', ok: false, reason: 'failed' });
@@ -303,6 +319,7 @@ export async function runBacktest({ market = 'CRYPTO', symbols, minGrade = 'ACTI
   const payload = {
     ok: allTrades.length > 0 || perSymbol.some(s => s.ok),
     market: mkt,
+    strategy,
     params: { minGrade, capitalPerTradeINR, maxRiskPct, maxHoldBars, slippagePct: 0.1, warmupBars: WARMUP },
     scannedSymbols: perSymbol.filter(s => s.ok).length,
     dataSources: perSymbol.filter(s => s.ok).map(s => ({ symbol: s.symbol, source: s.source })),

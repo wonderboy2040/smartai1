@@ -25,6 +25,7 @@ import { QuickNav } from '../aitrading/QuickNav';
 import { OrderConsole } from '../aitrading/OrderConsole';
 import { ModelRegistry } from '../aitrading/ModelRegistry';
 import { BacktestPanel } from '../aitrading/BacktestPanel';
+import { ModelPerformancePanel } from '../aitrading/ModelPerformancePanel';
 import { AlertsPanel } from '../aitrading/AlertsPanel';
 import { AgentPanel } from '../aitrading/AgentPanel';
 import { MorningBriefPanel, SwingDeskPanel, WhaleRadarPanel, SignalLedgerPanel, OrderbookPanel, TrustLayerPanel, PerfAnalyticsPanel, CorrelationPanel } from '../aitrading/ProPanels';
@@ -482,6 +483,11 @@ export default memo(function CoinDcxTab() {
           <SectionLabel num="04" title="Backtest Lab" sub="the SAME 10-model ensemble replayed on crypto history — win rate · avg R · equity curve · learned gates" />
           <div className="mt-2.5">
             <BacktestPanel market="CRYPTO" runBacktest={runBacktest} />
+          </div>
+          {/* v10.6 Pro Upgrade #5: the walk-forward dashboard — per-model
+              30/90d win-rates + calibration chart + regime tilt state. */}
+          <div className="mt-2.5">
+            <ModelPerformancePanel desk="CRYPTO" />
           </div>
         </div>
       )}

@@ -1047,10 +1047,38 @@ export interface GovernanceView {
   note?: string;
 }
 
+export interface ModelPerfRow {
+  model: string;
+  name: string;
+  n: number;
+  hitRate: number | null;
+}
+
+export interface ModelPerfWindows {
+  ok: boolean;
+  windows: string[];
+  settledTotal: number;
+  d30?: ModelPerfRow[];
+  d90?: ModelPerfRow[];
+  note?: string;
+}
+
+export interface RegimeReweightState {
+  enabled: boolean;
+  label: 'TRENDING' | 'CHOPPY' | 'HIGH_VOL' | 'LOW_VOL' | null;
+  note: string;
+  downWeighted: { id: string; name: string; mul: number }[];
+  upWeighted: { id: string; name: string; mul: number }[];
+}
+
 export interface TrustView {
   ok: boolean;
   calibration: TrustReport;
   governance: GovernanceView;
+  /** v10.6 Pro Upgrade #5: rolling per-model windows. */
+  windows?: ModelPerfWindows;
+  /** v10.6 Pro Upgrade #4: live regime reweight state per desk. */
+  regimeReweight?: { INDIA?: RegimeReweightState; CRYPTO?: RegimeReweightState };
 }
 
 export interface PerfView {

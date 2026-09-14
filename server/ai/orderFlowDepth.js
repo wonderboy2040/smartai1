@@ -1,0 +1,415 @@
+// ============================================================
+// server/ai/orderFlowDepth.js — v10.6 ORDER-FLOW / LEVEL-2 DEPTH
+// ------------------------------------------------------------
+// THE GAP (Pro Upgrade #1): InstFlow only read a single top-N
+// imbalance number from the CoinDCX orderbook. No true ladder
+// analysis — no multi-band imbalance, no large-order/iceberg wall
+// detection, no book-velocity (spoof) read, and NOTHING on the
+// India side beyond end-of-day FII/DII prints.
+//
+// THIS MODULE (pure + cached, honest degrade everywhere):
+//   • CoinDCX depth-snapshot puller — top 20-50 levels via the
+//     SAME public endpoint family the OrderbookPanel uses. Cached
+//     2s (the positionsStream fast tier) so N viewers of a signal
+//     card share ONE upstream call; single-flight + negative-cache.
+//   • India Level-2 — Dhan marketfeed/quote carries NSE best-5
+//     bids/asks (the repo's live India broker; the plan named Angel
+//     One but THIS desk's creds are Dhan — same best-5 L2 data,
+//     no new broker integration required). 3s cache, only when
+//     Dhan is connected.
+//   • analyzeDepth() — PURE:
+//       - imbalance at TWO bands: top-5 (shallow/impulse) vs
+//         top-20 (deep/conviction) — the divergence between the
+//         bands is the interesting signal (shallow-heavy +
+//         deep-light = spoof-prone pump)
+//       - WALL detection: any single level ≥ WALL_X × the side's
+//         median level size = a wall (iceberg candidate)
+//       - VELOCITY: keeps a ring of the last 3 snapshots; a wall
+//         that VANISHES between snapshots = spoof flag (down-
+//         weight, never silently trust a stacked book)
+//   • VolumeFlow fold-in (the plan's "cheaper to ship first"
+//     route): the board attaches ctx.depth for the top-turnover
+//     slice; the VolumeFlow seat weighs it (zero change to the
+//     14-model registry, quorum caps, or weight tuning).
+//
+// FUTURES desk: CoinDCX perp depth is not public — the spot INR
+// book votes as a PROXY (same precedent as InstFlow, flagged).
+// ============================================================
+import { dhanConnected, dhanPrivate, resolveDhanSymbol } from './dhan.js';
+
+const DEPTH_URL = 'https://public.coindcx.com/market_data/v3/orders';
+const DEPTH_TTL_MS = 2000;          // fast tier (positionsStream class)
+const DHAN_DEPTH_TTL_MS = 3000;     // L2 quote cadence
+const NEG_TTL_MS = 60_000;          // endpoint down → retry at most 1/min
+const RING_KEEP = 3;                // velocity ring (spoof detection)
+const WALL_X = 4;                   // level ≥ 4× side median = wall
+const WALL_VANISH_FACTOR = 1.5;     // wall "gone" when back under this × median
+
+const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(String(v ?? '')); return Number.isFinite(n) ? n : null; };
+const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+const r4 = (v) => (Number.isFinite(v) ? Math.round(v * 10000) / 10000 : null);
+
+// base → { at, snap, negUntil, inflight, ring: [{ts, walls}] }
+const _cryptoBooks = new Map();
+// symbol → { at, snap, negUntil, inflight }
+const _indiaBooks = new Map();
+
+// ---------------- CoinDCX public depth (spot INR book) ----------------
+/** Tolerant level normalizer (same shapes swing.js handles). */
+export function normalizeLevels(arr) {
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const x of arr) {
+    const p = num(x?.price ?? x?.p ?? (Array.isArray(x) ? x[0] : NaN));
+    const q = num(x?.quantity ?? x?.q ?? x?.volume ?? (Array.isArray(x) ? x[1] : NaN));
+    if (p > 0 && q > 0) out.push({ price: p, qty: q });
+  }
+  return out;
+}
+
+async function _fetchCoinDcxDepth(base, levels) {
+  const pair = `B-${base}_INR`;
+  const r = await fetch(`${DEPTH_URL}?pair=${encodeURIComponent(pair)}&limit=${levels}`, {
+    signal: AbortSignal.timeout(6000),
+    headers: { 'User-Agent': 'Mozilla/5.0 (SmartAI depth reader)' },
+  });
+  if (!r.ok) throw new Error(`depth HTTP ${r.status}`);
+  const j = await r.json();
+  const bids = normalizeLevels(j?.bids || j?.buy || j?.bid_book).slice(0, levels);
+  const asks = normalizeLevels(j?.asks || j?.sell || j?.ask_book).slice(0, levels);
+  if (bids.length === 0 || asks.length === 0) throw new Error('empty ladder');
+  // books arrive price-DESC (best first) on CoinDCX; keep best-first order
+  bids.sort((a, b) => b.price - a.price);
+  asks.sort((a, b) => a.price - b.price);
+  return { bids, asks, pair };
+}
+
+/** Get (cached) the raw depth snapshot for a crypto base. */
+export async function getCoinDcxDepth(base, { maxAgeMs = DEPTH_TTL_MS, levels = 50 } = {}) {
+  const sym = String(base || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!sym) return null;
+  const slot = _cryptoBooks.get(sym) || { at: 0, snap: null, negUntil: 0, inflight: null };
+  _cryptoBooks.set(sym, slot);
+  if (slot.snap && Date.now() - slot.at < maxAgeMs) return slot.snap;
+  if (Date.now() < slot.negUntil) return slot.snap; // endpoint down — stale beats hammering
+  if (slot.inflight) return slot.inflight;
+  slot.inflight = (async () => {
+    try {
+      const snap = await _fetchCoinDcxDepth(sym, levels);
+      slot.snap = snap; slot.at = Date.now(); slot.negUntil = 0;
+      return snap;
+    } catch {
+      slot.negUntil = Date.now() + NEG_TTL_MS;
+      slot.at = Date.now();
+      return slot.snap; // stale or null — honest degrade
+    } finally {
+      slot.inflight = null;
+    }
+  })();
+  return slot.inflight;
+}
+
+// ---------------- India L2 (Dhan best-5 ladder) ----------------
+/** Tolerant Dhan marketfeed/quote depth parse (v2 shapes drift). */
+export function parseDhanDepth(raw, securityId) {
+  const d = raw?.data?.[String(securityId)]?.depth
+    ?? raw?.data?.[securityId]?.depth
+    ?? raw?.depth
+    ?? null;
+  if (!d) return null;
+  const bp = Array.isArray(d.buy_price) ? d.buy_price : [];
+  const bq = Array.isArray(d.buy_quantity) ? d.buy_quantity : [];
+  const sp = Array.isArray(d.sell_price) ? d.sell_price : [];
+  const sq = Array.isArray(d.sell_quantity) ? d.sell_quantity : [];
+  const bids = [], asks = [];
+  for (let i = 0; i < 5; i++) {
+    const p = num(bp[i]), q = num(bq[i]);
+    if (p > 0 && q > 0) bids.push({ price: p, qty: q });
+  }
+  for (let i = 0; i < 5; i++) {
+    const p = num(sp[i]), q = num(sq[i]);
+    if (p > 0 && q > 0) asks.push({ price: p, qty: q });
+  }
+  if (bids.length === 0 || asks.length === 0) return null;
+  return { bids, asks, pair: 'NSE-L2' };
+}
+
+export async function getIndiaDepth(symbol, { maxAgeMs = DHAN_DEPTH_TTL_MS } = {}) {
+  const sym = String(symbol || '').toUpperCase().replace(/[^A-Z0-9&-]/g, '');
+  if (!sym || !dhanConnected()) return null;
+  const slot = _indiaBooks.get(sym) || { at: 0, snap: null, negUntil: 0, inflight: null, secId: null };
+  _indiaBooks.set(sym, slot);
+  if (slot.snap && Date.now() - slot.at < maxAgeMs) return slot.snap;
+  if (Date.now() < slot.negUntil) return slot.snap;
+  if (slot.inflight) return slot.inflight;
+  slot.inflight = (async () => {
+    try {
+      if (slot.secId == null) {
+        const sid = await resolveDhanSymbol(sym);
+        if (!(sid > 0)) throw new Error('no securityId');
+        slot.secId = sid;
+      }
+      const raw = await dhanPrivate('/marketfeed/quote', {
+        method: 'POST',
+        body: { ISEM: [{ exchangeSegment: 'NSE_EQ', securityId: slot.secId }] },
+      });
+      const snap = parseDhanDepth(raw, slot.secId);
+      if (!snap) throw new Error('no depth in response');
+      slot.snap = snap; slot.at = Date.now(); slot.negUntil = 0;
+      return snap;
+    } catch {
+      slot.negUntil = Date.now() + NEG_TTL_MS;
+      slot.at = Date.now();
+      return slot.snap; // stale or null
+    } finally {
+      slot.inflight = null;
+    }
+  })();
+  return slot.inflight;
+}
+
+// ---------------- PURE: the ladder analysis ----------------
+/** Walls on one side: levels ≥ WALL_X × the side's median size. */
+export function findWalls(levels, x = WALL_X) {
+  if (!Array.isArray(levels) || levels.length < 3) return [];
+  const sorted = [...levels].map(l => l.qty).sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  if (!(median > 0)) return [];
+  return levels
+    .filter(l => l.qty >= x * median)
+    .map(l => ({ price: r2(l.price), qty: r2(l.qty), x: r4(l.qty / median) }));
+}
+
+function _bandImbalance(levels, n) {
+  const slice = levels.slice(0, n);
+  if (slice.length === 0) return null;
+  const vol = slice.reduce((s, l) => s + l.qty, 0);
+  return vol; // side volume
+}
+
+/**
+ * Analyze one snapshot (+ optional previous ring for velocity).
+ * PURE — callers pass plain arrays; `ring` is this module's velocity
+ * history for the base (managed by readDepth, tests inject their own).
+ */
+export function analyzeDepth({ bids, asks, ring = [], now = Date.now(), ltp = null }) {
+  if (!Array.isArray(bids) || !Array.isArray(asks) || bids.length === 0 || asks.length === 0) {
+    return { ok: false };
+  }
+  const bestBid = bids[0].price, bestAsk = asks[0].price;
+  const mid = (bestBid + bestAsk) / 2;
+  const spreadPct = bestAsk > 0 ? r4(((bestAsk - bestBid) / bestAsk) * 100) : null;
+
+  // two-band imbalance: shallow (top-5) vs deep (top-20 → all if < 20)
+  const bid5 = _bandImbalance(bids, 5), ask5 = _bandImbalance(asks, 5);
+  const bid20 = _bandImbalance(bids, 20), ask20 = _bandImbalance(asks, 20);
+  const imbalanceTop5 = (bid5 != null && ask5 != null && bid5 + ask5 > 0)
+    ? r4(bid5 / (bid5 + ask5)) : null;
+  const imbalanceTop20 = (bid20 != null && ask20 != null && bid20 + ask20 > 0)
+    ? r4(bid20 / (bid20 + ask20)) : null;
+
+  // walls
+  const bidWalls = findWalls(bids);
+  const askWalls = findWalls(asks);
+
+  // velocity: walls in the PREVIOUS snapshots that vanished in this one
+  const thisWallSet = new Set([...bidWalls, ...askWalls].map(w => `${w.price}`));
+  let spoofRisk = false;
+  const vanishedWalls = [];
+  for (const prev of ring.slice(0, RING_KEEP - 1)) {
+    if (!(now - prev.ts < 60_000)) continue; // stale ring rows don't count
+    for (const w of prev.walls || []) {
+      if (thisWallSet.has(`${w.price}`)) continue;
+      // is the level still present (small) or GONE entirely?
+      const stillThere = [...bids, ...asks].some(l => Math.abs(l.price - w.price) < 1e-9);
+      if (!stillThere) { spoofRisk = true; vanishedWalls.push(w); }
+    }
+  }
+
+  // distance of the nearest wall from price (in %) — support/resistance read
+  const px = ltp != null && ltp > 0 ? ltp : mid;
+  const wallDist = (w, side) => side === 'bid'
+    ? r4(((px - w.price) / px) * 100)
+    : r4(((w.price - px) / px) * 100);
+  const nearBidWall = bidWalls.length ? { ...bidWalls[0], distPct: wallDist(bidWalls[0], 'bid') } : null;
+  const nearAskWall = askWalls.length ? { ...askWalls[0], distPct: wallDist(askWalls[0], 'ask') } : null;
+
+  return {
+    ok: true,
+    bestBid: r2(bestBid), bestAsk: r2(bestAsk), mid: r2(mid),
+    spreadPct, ltp: ltp != null ? r2(ltp) : null,
+    imbalanceTop5, imbalanceTop20,
+    bidWalls: bidWalls.slice(0, 3), askWalls: askWalls.slice(0, 3),
+    nearBidWall, nearAskWall,
+    spoofRisk, vanishedWalls: vanishedWalls.slice(0, 3),
+    levels: { bids: bids.length, asks: asks.length },
+    ts: now,
+  };
+}
+
+// velocity rings (per crypto base — India's 5-level quote is too
+// thin for wall-velocity to mean anything)
+const _rings = new Map();
+
+function _pushRing(base, walls, now) {
+  const ring = (_rings.get(base) || []).filter(r => now - r.ts < 60_000);
+  ring.unshift({ ts: now, walls });
+  _rings.set(base, ring.slice(0, RING_KEEP));
+}
+
+// ---------------- the unified reader ----------------
+/**
+ * One depth read for a (market, symbol) — the /api/ai/depth endpoint
+ * (UI ladder widget) and the agent's slippage estimator both call
+ * this. FUTURES uses the spot book as a PROXY (perp depth is not
+ * public on CoinDCX — same precedent as InstFlow, flagged honestly).
+ */
+export async function readDepth(market, symbol, { ltp = null, levels = 50 } = {}) {
+  const mkt = String(market || '').toUpperCase();
+  if (mkt === 'INDIA') {
+    const snap = await getIndiaDepth(symbol);
+    if (!snap) return { ok: false, market: mkt, symbol, reason: 'Dhan L2 unavailable (not connected / market closed / no securityId)' };
+    const analysis = analyzeDepth({ bids: snap.bids, asks: snap.asks, ltp, now: Date.now() });
+    return { ok: true, market: mkt, symbol, source: 'dhan-nse-l2', ...analysis,
+      ladder: { bids: snap.bids.slice(0, 5), asks: snap.asks.slice(0, 5) } };
+  }
+  // CRYPTO (spot INR book) + FUTURES (spot proxy)
+  const base = String(symbol || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const snap = await getCoinDcxDepth(base, { levels });
+  if (!snap) return { ok: false, market: mkt, symbol: base, reason: 'CoinDCX public depth unavailable right now' };
+  const now = Date.now();
+  const analysis = analyzeDepth({ bids: snap.bids, asks: snap.asks, ring: _rings.get(base) || [], ltp, now });
+  _pushRing(base, [...analysis.bidWalls, ...analysis.askWalls], now);
+  return {
+    ok: true, market: mkt, symbol: base,
+    source: mkt === 'FUTURES' ? 'coindcx-spot-book (perp proxy)' : 'coindcx-spot-inr',
+    proxy: mkt === 'FUTURES' || undefined,
+    ...analysis,
+    ladder: { bids: snap.bids.slice(0, 5), asks: snap.asks.slice(0, 5) },
+  };
+}
+
+// ---------------- slippage estimation (Pro Upgrade #6) ----------------
+/**
+ * Walk the ladder to fill a NOTIONAL (quote currency — INR for the spot
+ * book) and report how far the fill VWAP drifts from the touch.
+ * PURE — callers pass the readDepth() output.
+ * @param {object} a { side:'BUY'|'SELL', notional:number, depth:{ladder,ok} }
+ * @returns {{pct:number|null, bookExhausted:boolean, filledPct:number}}
+ *   pct = expected slippage % (positive = paying up); null when the
+ *   book is unusable (honest degrade → single order). bookExhausted =
+ *   the notional ran past the visible ladder — the pct is a LOWER
+ *   BOUND (callers should force the max split).
+ */
+export function estimateSlippagePct({ side, notional, depth }) {
+  const isSell = String(side).toUpperCase() === 'SELL';
+  const levels = isSell
+    ? (depth?.ladder?.bids || [])
+    : (depth?.ladder?.asks || []);
+  const n = Number(notional);
+  if (!Array.isArray(levels) || levels.length === 0 || !(n > 0)) return { pct: null, bookExhausted: false, filledPct: 0 };
+  const touch = levels[0].price;
+  if (!(touch > 0)) return { pct: null, bookExhausted: false, filledPct: 0 };
+  let remaining = n, filled = 0, cost = 0;
+  for (const l of levels) {
+    if (remaining <= 0) break;
+    const take = Math.min(remaining / l.price, l.qty); // base qty this level can absorb
+    cost += take * l.price;
+    filled += take;
+    remaining -= take * l.price;
+  }
+  if (filled <= 0) return { pct: null, bookExhausted: false, filledPct: 0 };
+  const vwap = cost / filled;
+  // ADVERSE magnitude, always ≥ 0: a BUY pays up (vwap > touch), a
+  // SELL hits lower levels (vwap < touch). Both mean paying the spread
+  // + depth impact — the number the splitter needs.
+  const adversePct = isSell ? ((touch - vwap) / touch) * 100 : ((vwap - touch) / touch) * 100;
+  const bookExhausted = remaining > n * 0.02; // >2% of the notional left unfilled
+  return {
+    pct: r4(adversePct),
+    bookExhausted,
+    filledPct: r4(Math.min(100, ((n - remaining) / n) * 100)),
+  };
+}
+
+/**
+ * TWAP-lite splitter: expected slippage over the threshold (or the
+ * book exhausted before the notional filled) → 2-4 child orders.
+ * Returns the split (always ≥1 child). PURE.
+ * @param {object} a { side, notional, depth, thresholdPct }
+ * @returns {{ children: number, slippagePct: number|null, reason: string }}
+ */
+export function splitOrderForSlippage({ side, notional, depth, thresholdPct = 0.35 }) {
+  const est = estimateSlippagePct({ side, notional, depth });
+  const slip = est.pct;
+  const thr = Number.isFinite(Number(thresholdPct)) && Number(thresholdPct) > 0 ? Number(thresholdPct) : 0.35;
+  if (slip == null) {
+    return { children: 1, slippagePct: null, reason: 'no depth read — single order (honest degrade)' };
+  }
+  if (est.bookExhausted) {
+    return { children: 4, slippagePct: slip, reason: `notional exceeds the visible book (only ${est.filledPct}% fillable, slip ≥ ${slip}% seen) — TWAP-lite into 4 child orders` };
+  }
+  if (slip <= thr) {
+    return { children: 1, slippagePct: slip, reason: `expected slip ${slip}% ≤ ${thr}% — single order` };
+  }
+  const kids = Math.max(2, Math.min(4, Math.ceil(slip / thr)));
+  return { children: kids, slippagePct: slip, reason: `expected slip ${slip}% > ${thr}% — TWAP-lite into ${kids} child orders` };
+}
+
+// ---------------- board warming (VolumeFlow ctx.depth) ----------------
+/**
+ * Warm depth for the board's top-turnover slice (the plan's VolumeFlow
+ * fold-in). Rate-guarded per base like warmInstFlow; fire-and-forget
+ * safe. Returns base → analysis (null entries skipped) for ctx attach.
+ */
+export async function warmDepthBatch(market, bases, { ltpOf = null, levels = 20 } = {}) {
+  const mkt = String(market || '').toUpperCase();
+  const list = (Array.isArray(bases) ? bases : []).slice(0, 8);
+  const out = new Map();
+  await Promise.allSettled(list.map(async (b) => {
+    const ltp = typeof ltpOf === 'function' ? ltpOf(b) : null;
+    const r = await readDepth(mkt, b, { ltp, levels }).catch(() => null);
+    if (r?.ok) out.set(String(b).toUpperCase(), r);
+  }));
+  return out;
+}
+
+// ---------------- status ----------------
+export function depthStatus() {
+  return {
+    crypto: {
+      booksCached: [..._cryptoBooks.values()].filter(s => s.snap).length,
+      ttlMs: DEPTH_TTL_MS,
+      wallX: WALL_X,
+      ringsTracked: _rings.size,
+    },
+    india: {
+      available: dhanConnected(),
+      booksCached: [..._indiaBooks.values()].filter(s => s.snap).length,
+      ttlMs: DHAN_DEPTH_TTL_MS,
+    },
+  };
+}
+
+// ---------------- test hooks ----------------
+export const __testables = {
+  _cryptoBooks, _indiaBooks, _rings,
+  __resetDepthForTests() {
+    _cryptoBooks.clear(); _indiaBooks.clear(); _rings.clear();
+  },
+  __setCryptoDepthForTests(base, bids, asks, ageMs = 0) {
+    _cryptoBooks.set(String(base).toUpperCase(), {
+      at: Date.now() - ageMs, snap: { bids, asks, pair: `B-${base}_INR` }, negUntil: 0, inflight: null,
+    });
+  },
+  __setIndiaDepthForTests(symbol, bids, asks, ageMs = 0) {
+    _indiaBooks.set(String(symbol).toUpperCase(), {
+      at: Date.now() - ageMs, snap: { bids, asks, pair: 'NSE-L2' }, negUntil: 0, inflight: null, secId: 12345,
+    });
+  },
+  __pushRingForTests(base, walls, ts = Date.now()) {
+    const ring = _rings.get(base) || [];
+    ring.push({ ts, walls });
+    _rings.set(base, ring.slice(-RING_KEEP));
+  },
+};

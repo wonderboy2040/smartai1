@@ -245,6 +245,32 @@ def votes_to_feature_vector(votes: dict, regime_risk: float = 0.0) -> list:
     return out
 
 
+def regime_label_of(r) -> str:
+    """v10.6 (Pro Upgrade #4): the PAST-ONLY rolling regime label for one
+    feature row (daily domain). Mirrors ensemble.js classifyRegime with
+    thresholds scaled from 24h gate-index moves to 10-day daily momentum
+    (roc_10) — no look-ahead: roc_10/ema20/ema50 are computed from bars
+    strictly BEFORE the label horizon is evaluated on.
+    """
+    roc = r.get("roc_10", np.nan)
+    e20, e50 = r.get("ema20", np.nan), r.get("ema50", np.nan)
+    if not np.isfinite(roc) or not np.isfinite(e20) or not np.isfinite(e50) or e50 <= 0:
+        return "UNKNOWN"
+    if e20 > e50 * 1.005:
+        trend = "UP"
+    elif e20 < e50 * 0.995:
+        trend = "DOWN"
+    else:
+        trend = "FLAT"
+    if abs(roc) >= 10:
+        return "HIGH_VOL"
+    if abs(roc) >= 3 and ((roc > 0 and trend == "UP") or (roc < 0 and trend == "DOWN")):
+        return "TRENDING"
+    if abs(roc) < 1.5 and trend == "FLAT":
+        return "LOW_VOL"
+    return "CHOPPY"
+
+
 def build_meta_training_frame(all_symbols_df: pd.DataFrame = None) -> pd.DataFrame:
     """Per-symbol feature rows → the 29-vote-feature training frame
     with the 3-class direction label (UP/DOWN/FLAT)."""
@@ -273,11 +299,11 @@ def build_meta_training_frame(all_symbols_df: pd.DataFrame = None) -> pd.DataFra
             votes = simulate_model_votes(r)
             risk_flag = 1.0 if (np.isfinite(r.get("vix_proxy", np.nan)) and r.get("vix_proxy", 0) > 20) else 0.0
             vec = votes_to_feature_vector(votes, risk_flag)
-            rows.append(vec + [r.get("dir_label")])
+            rows.append(vec + [r.get("dir_label"), regime_label_of(r)])
 
     if not rows:
         return pd.DataFrame()
-    df = pd.DataFrame(rows, columns=meta_feature_names() + ["dir_label"])
+    df = pd.DataFrame(rows, columns=meta_feature_names() + ["dir_label", "regime_label"])
     return df.dropna(subset=["dir_label"])
 
 

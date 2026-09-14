@@ -28,6 +28,7 @@
 // writes to the ledger.
 // ============================================================
 import { __ledgerRaw, modelStats } from './ledger.js';
+import { MODELS } from './models.js'; // names only — no cycle (models never imports trust)
 
 const MONTHS_BACK = 6;
 const MIN_SETTLED = 10;
@@ -188,6 +189,51 @@ export function governance() {
     minN: MIN_SETTLED,
     models: models.sort((a, b) => (a.pValue ?? 1) - (b.pValue ?? 1)),
     note: 'p < 0.05 = model ka edge base-rate se alag lagta hai (upward). NEEDS DATA = sample chhota hai — koi conclusion nahi. NOISE = edge base-rate se distinguishable nahi.',
+  };
+}
+
+// ---------------- v10.6: windowed per-model performance (Pro Upgrade #5) ----------------
+/**
+ * Per-model win/loss attribution over ROLLING windows (30d + 90d) —
+ * the dashboard's "which of the 14 models is actually pulling its
+ * weight THIS MONTH" view. Same attribution rule as ledger.modelStats
+ * (a model whose recorded dir matched the trade's outcome gets win
+ * credit), but time-boxed by the entry's SETTLE time.
+ */
+export function modelPerformanceWindows({ windows = [30, 90], now = Date.now() } = {}) {
+  const settled = settledEntries();
+  const names = {};
+  for (const m of MODELS || []) names[m.id] = m.name;
+  const out = {};
+  for (const days of windows) {
+    const since = now - days * 86400_000;
+    const stats = {};
+    for (const e of settled) {
+      const ts = e.outcome?.ts || e.ts || 0;
+      if (ts < since) continue;
+      const win = (e.outcome.r ?? 0) > 0;
+      for (const [modelId, v] of Object.entries(e.votes || {})) {
+        if (!v || v.dir === 0) continue;
+        const s = stats[modelId] = stats[modelId] || { model: modelId, aligned: 0, wins: 0, losses: 0 };
+        s.aligned++;
+        const alignedWithSide = (v.dir > 0) === (e.side !== 'SHORT');
+        const calledItRight = alignedWithSide === win;
+        if (calledItRight) s.wins++; else s.losses++;
+      }
+    }
+    out[`d${days}`] = Object.values(stats).map(s => ({
+      model: s.model,
+      name: names[s.model] || s.model,
+      n: s.wins + s.losses,
+      hitRate: (s.wins + s.losses) > 0 ? Math.round((s.wins / (s.wins + s.losses)) * 1000) / 10 : null,
+    })).filter(s => s.n > 0).sort((a, b) => (b.hitRate ?? -1) - (a.hitRate ?? -1) || b.n - a.n);
+  }
+  return {
+    ok: true,
+    windows: windows.map(d => `d${d}`),
+    settledTotal: settled.length,
+    ...out,
+    note: 'Per-model attribution over rolling windows (a model wins when its recorded dir matched the settled outcome). 30d/90d — small n means noise, not edge.',
   };
 }
 

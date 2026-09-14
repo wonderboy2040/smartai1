@@ -40,6 +40,7 @@ import { recordExecution, settlePositionOutcome, markPartialOutcome } from './le
 import { computeTrailSl, maxSaneLeverage, fitPlanToRiskCap, evaluateExecutionGate } from './ensemble.js';
 import { pRound } from './lib/priceRound.js';
 import { withJournalLock, pushEntry, todayIST, dailyStats, ratchetSl, exitStageOf, loadProTraderConfig } from './coindcxOrders.js';
+import { validateTick, wickJournalEntry } from './wickFilter.js';
 
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(String(v ?? '')); return Number.isFinite(n) ? n : null; };
@@ -902,9 +903,31 @@ export async function watchFuturesPositions({ sendTelegram } = {}) {
 
     openFut = j.positions.filter(p => p.market === 'FUTURES' && p.status === 'OPEN');
 
+    // v10.6 CROSS-EXCHANGE VALIDATION (Pro Upgrade #3): perp prices are
+    // natively USDT → compared 1:1 against Binance perps (no conversion).
+    // A fresh cross-venue gap skips all liq/trailing/SL/TP checks for
+    // that base this pass; a reverted wick lands in the journal; a
+    // sustained gap is accepted (real move).
+    const _futWick = new Map(); // base → verdict|null
+    for (const p of openFut) {
+      const base = String(p.pair || '').replace(/^B-/, '').replace(/_USDT$/, '');
+      if (!base || _futWick.has(base)) continue;
+      _futWick.set(base, await validateTick({ market: 'FUTURES', base, price: byPair.get(p.pair) }).catch(() => null));
+    }
+    for (const [base, wv] of _futWick.entries()) {
+      if (wv?.episode === 'wick') {
+        const entry = wickJournalEntry({ market: 'FUTURES', base, pair: `B-${base}_USDT`, verdict: wv });
+        entry.day = todayIST();
+        pushEntry(j, entry);
+        dirty = true;
+      }
+    }
+
     for (const p of openFut) {
       const price = byPair.get(p.pair);
       if (!(price > 0)) continue;
+      const _wv = _futWick.get(String(p.pair || '').replace(/^B-/, '').replace(/_USDT$/, ''));
+      if (_wv?.action === 'SUPPRESS') continue; // fresh bad print — no action this pass
       const long = p.side === 'LONG';
 
       // liquidation estimate first (paper sim + live backstop)

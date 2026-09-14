@@ -27,7 +27,7 @@ import { attachFundamentals } from './fundamentals.js';
 import { adaptiveMultipliers, applyAdaptiveWeights } from './adaptive.js';
 import { modelStats as _ledgerModelStats } from './ledger.js';
 import { explainTicker } from './narrative.js';
-import { aggregateVotes, buildTradePlan, buildSignal, DEFAULT_GATES } from './ensemble.js';
+import { aggregateVotes, buildTradePlan, buildSignal, DEFAULT_GATES, applyRegimeWeights, classifyRegimeFor, regimeMulFor, regimeWeightsEnabled } from './ensemble.js';
 // v6.12 PRO TRADER BRAIN — quality/honesty layer over the consensus
 import { qualityVerdict, sessionPhase as sessionPhaseOf } from './probrain.js';
 import { smcVote } from './lib/smc.js';
@@ -36,6 +36,8 @@ import { simulateSymbol } from './backtest.js';
 // dynamic full-universe scan + AI SCORE (0-100) + complete trade
 // blueprint (entry timing / leverage / exit time) on every signal.
 import { discoverSpotUniverse, discoverFuturesUniverse, binancePriceMap, fetchUsdInr, expertScoreFactors } from './expertPicks.js';
+import { validateTick } from './wickFilter.js';
+import { readDepth, warmDepthBatch } from './orderFlowDepth.js';
 import { computeSuperScore, buildSuperBlueprint } from './superIntel.js';
 
 // v9: how many coins the Superintelligence Signal Board scans for the
@@ -846,7 +848,17 @@ async function _computeBoard(mkt, deps, opts = {}) {
       const usd = tv?.[b]?.usdPrice;
       return rescaleCandlesToLtp(y, ltp, usd > 0 ? ltp / usd : 1);
     })());
+    // v10.6 WICK GUARD (Pro Upgrade #3): perp LTPs validated against
+    // Binance perps (1:1 USDT domain) before any card may be built.
+    const _futWick = new Map();
+    await Promise.all(universe.map(async (base) => {
+      const p = futMap.get(base)?.last;
+      if (!(p > 0)) return;
+      _futWick.set(base, await validateTick({ market: 'FUTURES', base, price: p }).catch(() => null));
+    }));
+    superMeta.wickSuppressed = [..._futWick.entries()].filter(([, v]) => v?.action === 'SUPPRESS').map(([b]) => b);
     universe.forEach((base) => {
+      if (_futWick.get(base)?.action === 'SUPPRESS') return; // bad print — no card this cycle
       const ctx = buildFuturesCtxSync(base, tv[base], futMap.get(base), candleMap.get(base) || null, regime);
       if (ctx) { attachSuperCtx(ctx, tv[base], candleMap.get(base) || null); contexts.push(ctx); }
     });
@@ -914,7 +926,18 @@ async function _computeBoard(mkt, deps, opts = {}) {
       const usd = tv?.[b]?.usdPrice;
       return rescaleCandlesToLtp(y, ltp, usd > 0 ? ltp / usd : null);
     })());
+    // v10.6 WICK GUARD (Pro Upgrade #3): validate every base's LTP
+    // against the Binance cross-venue reference BEFORE it may generate
+    // a signal card (shared ref book — one fetch for the whole board).
+    const _wickGuard = new Map();
+    await Promise.all(universe.map(async (base) => {
+      const p = inrMap.get(base);
+      if (!(p > 0)) return;
+      _wickGuard.set(base, await validateTick({ market: 'CRYPTO', base, price: p }).catch(() => null));
+    }));
+    superMeta.wickSuppressed = [..._wickGuard.entries()].filter(([, v]) => v?.action === 'SUPPRESS').map(([b]) => b);
     universe.forEach((base) => {
+      if (_wickGuard.get(base)?.action === 'SUPPRESS') return; // bad print — no card this cycle
       const ctx = buildCryptoCtxSync(base, tv[base], inrMap.get(base), regime, candleMap.get(base) || null);
       if (ctx) { attachSuperCtx(ctx, tv[base], candleMap.get(base) || null); contexts.push(ctx); }
     });
@@ -940,12 +963,32 @@ async function _computeBoard(mkt, deps, opts = {}) {
   // (ledger outcomes → Beta posterior; n<8 keeps the base weight —
   // we refuse to tune on noise). Computed ONCE per board run.
   await (v2ModelsEnabled() ? Promise.allSettled(_v2Warms) : Promise.resolve()); // v2: warms already ran parallel to the data fetches
+  // v10.6 ORDER-FLOW DEPTH (Pro Upgrade #1): warm L2 ladders for the
+  // top-turnover slice — the VolumeFlow seat folds the read in
+  // (ctx.depth). Soft-deadline 2.5s: whatever the reader resolved in
+  // time attaches NOW; the rest keeps warming in the background cache
+  // for the next board cycle (honest degrade, board latency bounded).
+  const _depthBases = contexts.slice(0, 8).map(c => c.symbol);
+  const _depthMap = await Promise.race([
+    warmDepthBatch(mkt, _depthBases, { ltpOf: (b) => contexts.find(c => c.symbol === b)?.ltp ?? null }),
+    new Promise((res) => { const t = setTimeout(() => res(new Map()), 2500); t.unref?.(); }),
+  ]).catch(() => new Map());
+  if (_depthMap && _depthMap.size > 0) {
+    for (const c of contexts) if (_depthMap.has(c.symbol)) c.depth = _depthMap.get(c.symbol);
+    superMeta.depthWarmed = [..._depthMap.keys()];
+  }
   const adaptiveMul = adaptiveMultipliers(_ledgerModelStats());
+  // v10.6 REGIME-AWARE REWEIGHTING (Pro Upgrade #4): the board's regime
+  // read (shared by all symbols) tilts the model weights ±25% max —
+  // flag OFF keeps the exact static-weight board (A/B first via
+  // `--strategy regime_weighted`, per the plan's own sequencing).
+  const regimeLabel = regimeWeightsEnabled() ? classifyRegimeFor(regime, mkt) : null;
+  if (regimeLabel) superMeta.regimeLabel = regimeLabel;
   const candidates = [];
   const breadth = { bull: 0, bear: 0, flat: 0, avgConf: 0 };
   let confSum = 0;
   for (const ctx of contexts) {
-    let votes = applyAdaptiveWeights(runQuantModels(ctx), adaptiveMul);
+    let votes = applyRegimeWeights(applyAdaptiveWeights(runQuantModels(ctx), adaptiveMul), regimeLabel);
     // v9 UNIVERSAL PASS-2 REVIVAL: every scanned coin that carries LTF
     // candles gets the full revival treatment HERE — the SMC model
     // comes alive on intraday structure AND the pattern/sr/volume/
@@ -962,7 +1005,7 @@ async function _computeBoard(mkt, deps, opts = {}) {
         const reg = MODELS.find(m => m.id === 'smc');
         const idx = votes.findIndex(v => v.id === 'smc');
         if (idx >= 0) votes.splice(idx, 1);
-        votes.push({ id: 'smc', name: reg.name, role: reg.role, weight: reg.weight * (adaptiveMul?.smc?.mul ?? 1), ...smcV });
+        votes.push({ id: 'smc', name: reg.name, role: reg.role, weight: reg.weight * (adaptiveMul?.smc?.mul ?? 1) * regimeMulFor(regimeLabel, 'smc'), ...smcV });
         ctx.__smc = { dir: smcV.dir, conf: smcV.conf };
       }
       // pattern / sr / volume / volatility second vote from the LTF set
@@ -982,7 +1025,7 @@ async function _computeBoard(mkt, deps, opts = {}) {
         const v2 = m.fn(ltfCtx);
         if (v2 && v2.dir !== 0 && (v2.conf || 0) > 0) {
           if (pIdx >= 0) votes.splice(pIdx, 1);
-          votes.push({ id: mid, name: m.name, role: m.role, weight: m.weight * (adaptiveMul?.[mid]?.mul ?? 1), ...v2, revived: true });
+          votes.push({ id: mid, name: m.name, role: m.role, weight: m.weight * (adaptiveMul?.[mid]?.mul ?? 1) * regimeMulFor(regimeLabel, mid), ...v2, revived: true });
         }
       }
     }
@@ -1464,6 +1507,27 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
     return payload;
   }
 
+  // v10.6 WICK GUARD (deep path): a bad print must not drive a deep
+  // dive's plan either — suppressed tick → honest unavailable answer.
+  if (mkt === 'CRYPTO' || mkt === 'FUTURES') {
+    const wv = await validateTick({ market: mkt, base: sym, price: ctx.ltp }).catch(() => null);
+    if (wv?.action === 'SUPPRESS') {
+      const payload = {
+        ok: false,
+        reason: `Cross-venue price check flagged ${sym}'s last print (deviation ${wv.deviationPct}% vs ${wv.refSource}) — signal suppressed until the price reverts or proves itself.`,
+      };
+      cacheSet(cacheKey, payload);
+      return payload;
+    }
+  }
+
+  // v10.6 ORDER-FLOW DEPTH (deep path): the single-symbol dive always
+  // gets the fresh L2 ladder (VolumeFlow reads it via ctx.depth).
+  {
+    const d = await readDepth(mkt, sym, { ltp: ctx.ltp }).catch(() => null);
+    if (d?.ok) ctx.depth = d;
+  }
+
   // v2 Phase 3: FundaCheck — the DEEP path is the swing desk's analysis
   // route, so fundamentals (P/E vs sector peers + earnings-growth proxy)
   // attach HERE only. The intraday board never attaches them (plan rule:
@@ -1472,7 +1536,12 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
     await attachFundamentals(ctx).catch(() => {});
   }
 
-  const votes = applyAdaptiveWeights(runQuantModels(ctx), adaptiveMultipliers(_ledgerModelStats()));
+  // v10.6: deep dive votes get the SAME regime tilt as the board (flag
+  // OFF → static weights, byte-identical legacy deep path).
+  const votes = applyRegimeWeights(
+    applyAdaptiveWeights(runQuantModels(ctx), adaptiveMultipliers(_ledgerModelStats())),
+    regimeWeightsEnabled() ? classifyRegimeFor(regime, mkt) : null,
+  );
   // ---------------- v6.12 pass-2 deep enrichment ----------------
   // LTF candles: 15m (India) / 1h (crypto) — SMC + MTF + structure
   // stop + edge stats. Tries the ctx candles first (crypto deep path

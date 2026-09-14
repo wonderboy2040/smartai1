@@ -79,6 +79,28 @@ services:
       # 1.6, replaces the plain 15m tape when ON).
       - key: AI_ENABLE_MTF_CONFLUENCE
         sync: false
+      # ---- v10.6 PRO ACCURACY UPGRADES ----
+      # REGIME-AWARE REWEIGHTING (Pro #4): TRENDING/CHOPPY/HIGH_VOL/
+      # LOW_VOL multiplier layer on the weighted-average path (±25%
+      # max). Default OFF — A/B via backtest strategy=regime_weighted
+      # first (Node runBacktest + ml-service backtest.py both support
+      # the side-by-side comparison).
+      - key: AI_ENABLE_REGIME_WEIGHTS
+        sync: false
+      # KELLY-LITE SIZING (Pro #2): riskPerTradePct becomes the ceiling;
+      # the confidence bucket's realized win-rate (trust calibration)
+      # sizes at half-Kelly. Negative edge → entry skipped.
+      - key: AI_ENABLE_KELLY_SIZING
+        sync: false
+      # WICK FILTER (Pro #3): cross-exchange price validation against
+      # Binance. ON by default — set 1 to disable; thresholds tunable
+      # via AI_WICK_THRESHOLD_PCT / AI_WICK_ALT_THRESHOLD_PCT.
+      - key: AI_DISABLE_WICK_FILTER
+        sync: false
+      # SLIPPAGE-AWARE EXECUTION (Pro #6): TWAP-lite child-order split
+      # when the L2 depth walk expects more than this % of slippage.
+      - key: AI_SLIPPAGE_THRESHOLD_PCT
+        sync: false
 
   # ---- v10.5 META-ENSEMBLE WEEKLY RETRAIN (Upgrade 4) ----
   # Refreshes meta_ensemble.pkl weekly so the stacked learner never

@@ -30,6 +30,7 @@ import { OptionsDeskPanel } from '../aitrading/OptionsDeskPanel';
 import { OrderConsole } from '../aitrading/OrderConsole';
 import { ModelRegistry } from '../aitrading/ModelRegistry';
 import { BacktestPanel } from '../aitrading/BacktestPanel';
+import { ModelPerformancePanel } from '../aitrading/ModelPerformancePanel';
 import { AlertsPanel } from '../aitrading/AlertsPanel';
 import { MorningBriefPanel, SwingDeskPanel, SignalLedgerPanel, TrustLayerPanel, PerfAnalyticsPanel, SectorMapPanel } from '../aitrading/ProPanels';
 // v9.1 PAPER DESK (Phase-1 merge of the orphaned v4 intraday tree — the
@@ -448,6 +449,11 @@ export default memo(function IndiaIntradayTab() {
           <SectionLabel num="04" title="Backtest Lab" sub="the SAME 10-model ensemble replayed on India history — win rate · avg R · equity curve · learned gates" />
           <div className="mt-2.5">
             <BacktestPanel market="INDIA" runBacktest={runBacktest} />
+          </div>
+          {/* v10.6 Pro Upgrade #5: the walk-forward dashboard — per-model
+              30/90d win-rates + calibration chart + regime tilt state. */}
+          <div className="mt-2.5">
+            <ModelPerformancePanel desk="INDIA" />
           </div>
         </div>
       )}

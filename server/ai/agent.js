@@ -36,6 +36,10 @@ import { loadConfig, loadJournal, dailyStats, todayIST } from './coindcxOrders.j
 import { pairCorrelation } from './correlation.js';
 // v10.2: near-miss diagnostics + V2 model flag exposure (Step 1)
 import { v2ModelsEnabled } from './models.js';
+// v10.6 Pro Upgrade #2 (Kelly-lite): calibration buckets → realized edge
+import { trustReport, __testables as __trustTestables } from './trust.js';
+// v10.6 Pro Upgrade #6 (slippage-aware execution)
+import { readDepth, estimateSlippagePct, splitOrderForSlippage } from './orderFlowDepth.js';
 
 const AGENT_CONFIG_FILE = 'ai-agent-config.json';
 const AGENT_STATE_FILE = 'ai-agent-state.json';
@@ -91,6 +95,12 @@ export const AGENT_DEFAULTS = {
   // v10.2 Step 3: quorum penalty — thin committee (<5 voters) AI-score bump
   // (was hardcoded +10; now config-tunable 0-15)
   quorumPenalty: 10,
+  // ---- v10.6 EDGE-ADAPTIVE SIZING (Pro Upgrade #2: Kelly-lite) ----
+  // OFF by default — enable with AI_ENABLE_KELLY_SIZING=true or this
+  // knob. When ON, riskPerTradePct becomes the CEILING: the realized
+  // edge of the signal's confidence bucket (trust.js calibration, ≥10
+  // settled) sizes the trade at HALF-Kelly, never above the ceiling.
+  kellySizing: false,
 };
 
 export function loadAgentConfig() {
@@ -146,6 +156,8 @@ export function updateAgentConfig(patch = {}) {
   // v10.1 Track-B toggles
   if (patch.dynamicTimeExit != null) next.dynamicTimeExit = !!patch.dynamicTimeExit;
   if (patch.correlationGuard != null) next.correlationGuard = !!patch.correlationGuard;
+  // v10.6 Kelly-lite toggle
+  if (patch.kellySizing != null) next.kellySizing = !!patch.kellySizing;
   // v7.0: keep the split honest — T1+T2 ≤ 90, runner ≥ 10, sums shown
   if (next.tp1ClosePct + next.tp2ClosePct > 90) {
     const scale = 90 / (next.tp1ClosePct + next.tp2ClosePct);
@@ -285,6 +297,92 @@ export function agentStop({ reason = 'user' } = {}) {
   log('info', `AGENT STOPPED (${reason})`);
   persistState();
   return { ok: true, config: { ...cfg, enabled: false } };
+}
+
+// ---------------- v10.6 EDGE-ADAPTIVE SIZING (Pro Upgrade #2: Kelly-lite) ----------------
+// The gap: agent.js sized EVERY trade at a flat riskPerTradePct — a
+// 60-score STRONG and a 95-score STRONG risked the same amount. The
+// trust layer already tracks claimed-confidence vs realized win-rate
+// per bucket; Kelly turns that into sizing:
+//
+//   f* = winProb − (1−winProb)/payoffRatio        (the Kelly fraction)
+//   riskPct = min(riskPerTradePct, f*/2 × 100)    (HALF-Kelly — the
+//                                                  standard haircut for
+//                                                  noisy edge estimates)
+//
+// Honest-degrade rules (this codebase's standing philosophy):
+//   • flag OFF (default) → the exact flat sizing that ships today
+//   • bucket has < MIN_SETTLED settled trades → flat (we refuse to
+//     size on noise — same discipline as trust.js/adaptive.js)
+//   • f* ≤ 0 (realized win-rate too low for the payoff) → the entry
+//     is SKIPPED with the reason logged — no honest edge, no trade
+//   • Kelly only ever sizes DOWN from riskPerTradePct — never above
+//     the user's configured ceiling.
+export function kellySizingEnabled(cfg) {
+  if (['true', '1', 'on', 'yes'].includes(String(process.env.AI_ENABLE_KELLY_SIZING || '').trim().toLowerCase())) return true;
+  return cfg?.kellySizing === true;
+}
+
+/** '40-55%' → {lo:40, hi:55} · '85%+' → {lo:85, hi:101} (PURE). */
+export function parseCalBucket(label) {
+  const m = String(label || '').match(/^(\d+)\s*-\s*(\d+)%$/);
+  if (m) return { lo: Number(m[1]), hi: Number(m[2]) };
+  const p = String(label || '').match(/^(\d+)%\+?$/);
+  if (p) return { lo: Number(p[1]), hi: 101 };
+  return null;
+}
+
+/**
+ * The Kelly-lite risk % for one signal. PURE.
+ * @param {object} a { confidence, calibration:[{bucket,n,winRate}],
+ *                     baseRiskPct, payoffRatio, minSettled }
+ * @returns {null|{pct:number, mode:'flat'|'kelly'|'refused', bucket,
+ *                 winRate, n, payoff, halfKelly, reason}}
+ *   null → flag/knob handled by caller (flat, no note)
+ */
+export function kellyRiskPct({ confidence, calibration, baseRiskPct, payoffRatio = 2, minSettled = 10 }) {
+  const conf = Number(confidence);
+  const base = Number(baseRiskPct);
+  const payoff = Number(payoffRatio) > 0 ? Number(payoffRatio) : 2;
+  if (!(conf > 0) || !(base > 0) || !Array.isArray(calibration) || calibration.length === 0) return null;
+
+  const bucket = calibration.find(b => {
+    const rng = parseCalBucket(b?.bucket);
+    return rng && conf >= rng.lo && conf < rng.hi;
+  });
+  if (!bucket) return null;
+  const n = Number(bucket.n) || 0;
+  if (n < minSettled) {
+    return { pct: base, mode: 'flat', bucket: bucket.bucket, winRate: bucket.winRate, n, payoff,
+      reason: `bucket ${bucket.bucket} has only ${n} settled (<${minSettled}) — flat ${base}% (refuse to size on noise)` };
+  }
+  const winRate = Number(bucket.winRate);
+  if (!(winRate > 0)) return null;
+  const winProb = winRate / 100;
+  const fStar = winProb - (1 - winProb) / payoff;
+  if (fStar <= 0) {
+    return { pct: 0, mode: 'refused', bucket: bucket.bucket, winRate, n, payoff,
+      reason: `bucket ${bucket.bucket} realized ${winRate}% win over ${n} settled — f* ≤ 0 at ${payoff}:1 payoff (no honest edge)` };
+  }
+  const halfKelly = fStar / 2;
+  const pct = Math.round(Math.min(base, halfKelly * 100) * 100) / 100;
+  return { pct, mode: 'kelly', bucket: bucket.bucket, winRate, n, payoff, halfKelly: Math.round(halfKelly * 10000) / 10000,
+    reason: `bucket ${bucket.bucket} realized ${winRate}% (n=${n}) → f* ${(Math.round(fStar * 10000) / 10000)} → half-Kelly ${(Math.round(halfKelly * 10000) / 10000)} → ${pct}% (${pct < base ? 'sized DOWN from ' + base + '%' : 'at ceiling'})` };
+}
+
+/** Live wrapper: flag + trust calibration + the pure math. */
+export function effectiveRiskPctFor(cfg, signal) {
+  if (!kellySizingEnabled(cfg)) return null;
+  let calibration = null;
+  try { calibration = trustReport()?.calibration || null; } catch { calibration = null; }
+  if (!calibration) return null;
+  return kellyRiskPct({
+    confidence: signal?.confidence,
+    calibration,
+    baseRiskPct: Number(cfg?.riskPerTradePct) > 0 ? Number(cfg.riskPerTradePct) : 1.5,
+    payoffRatio: Number(signal?.plan?.rewardRisk) > 0 ? Number(signal.plan.rewardRisk) : 2,
+    minSettled: __trustTestables.MIN_SETTLED,
+  });
 }
 
 // ---------------- v7.0 PRO TRADER: wallet-based sizing preview ----------------
@@ -731,8 +829,19 @@ async function _tick(deps, sendTelegram) {
     log('info', `ENTRY VOLATILITY ${best.symbol}: ATR ${r2(entryAtrPct)}% → dynamic time-exit window ${dynamicMaxHoldMin(cfg, entryAtrPct)}m (base ${cfg.maxHoldMin}m)`);
   }
 
-  // ---- wallet-based sizing ----
-  const riskINR = equityINR * (cfg.riskPerTradePct / 100);
+  // ---- wallet-based sizing (v10.6: Kelly-lite ceiling on the flat %) ----
+  // flag OFF (default) → the exact flat riskPerTradePct that shipped.
+  // flag ON → the confidence bucket's realized edge (trust calibration,
+  // ≥10 settled) sizes at HALF-Kelly, never above the ceiling. f* ≤ 0
+  // = no honest edge → the entry is skipped with the reason logged.
+  const kelly = effectiveRiskPctFor(cfg, best);
+  if (kelly?.mode === 'refused') {
+    maybeLogSkip('kelly-negative', `KELLY EDGE NEGATIVE — ${best.symbol} skipped: ${kelly.reason}`);
+    persistState(); return;
+  }
+  if (kelly?.mode === 'kelly') log('info', `KELLY SIZING ${best.symbol}: ${kelly.reason}`);
+  const riskPct = kelly?.mode === 'kelly' && kelly.pct > 0 ? kelly.pct : cfg.riskPerTradePct;
+  const riskINR = equityINR * (riskPct / 100);
   const wantFutures = best.market === 'FUTURES';
   // v7.0: the sizing math is LOGGED transparently before execution —
   // the user can audit "₹X risk → Y qty → Z margin at Lx" in the feed
@@ -741,16 +850,30 @@ async function _tick(deps, sendTelegram) {
     if ((wantFutures || best.market === 'GLOBALFUTURES') && stopDist > 0) {
       const lev = Math.max(1, Math.min(cfg.maxLeverage, Math.floor(95 / (best.plan.riskPct || 5))));
       const q = riskINR / usdInr / stopDist;
-      log('info', `SIZING ${best.symbol}: ₹${r2(riskINR)} risk (${cfg.riskPerTradePct}% of ₹${r2(equityINR)}) → ${Math.round(q * 1e4) / 1e4} qty → ${r2((q * best.plan.entry) / lev)} USDT margin at ${lev}x`);
+      log('info', `SIZING ${best.symbol}: ₹${r2(riskINR)} risk (${riskPct}% of ₹${r2(equityINR)}${kelly?.mode === 'kelly' ? ' · kelly-capped' : ''}) → ${Math.round(q * 1e4) / 1e4} qty → ${r2((q * best.plan.entry) / lev)} USDT margin at ${lev}x`);
     } else {
       const budget = Math.min(
         trading.maxOrderINR || 1000,
         Math.max(100, (riskINR / (best.plan.riskPct || 5)) * 100),
         Math.max(100, (wallet?.deployableSpotINR ?? equityINR) * 0.6),
       );
-      log('info', `SIZING ${best.symbol}: ₹${r2(riskINR)} risk (${cfg.riskPerTradePct}% of ₹${r2(equityINR)}) → ₹${r2(budget)} spot order`);
+      log('info', `SIZING ${best.symbol}: ₹${r2(riskINR)} risk (${riskPct}% of ₹${r2(equityINR)}${kelly?.mode === 'kelly' ? ' · kelly-capped' : ''}) → ₹${r2(budget)} spot order`);
     }
   }
+  // ---- v10.6 SLIPPAGE-AWARE EXECUTION (Pro Upgrade #6) ----
+  // Expected slippage from the L2 depth walk (Pro #1's reader) vs the
+  // configured threshold → TWAP-lite split into 2-4 child orders with
+  // small gaps. No depth read (endpoint down / desk without a CoinDCX
+  // book, e.g. GLOBAL SIM) → single order, honest degrade.
+  const SLIP_THRESHOLD_PCT = (() => {
+    const n = Number(process.env.AI_SLIPPAGE_THRESHOLD_PCT);
+    return Number.isFinite(n) && n > 0 ? n : 0.35;
+  })();
+  const SLIP_CHILD_GAP_MS = 2000;
+  const depthFor = await readDepth(
+    best.market === 'INDIA' ? 'INDIA' : best.market === 'GLOBALFUTURES' ? 'CRYPTO' : best.market,
+    best.symbol, { ltp: best.plan.entry, levels: 20 },
+  ).catch(() => null);
   let out = null;
   if (wantFutures || best.market === 'GLOBALFUTURES') {
     const isGlobal = best.market === 'GLOBALFUTURES';
@@ -769,33 +892,44 @@ async function _tick(deps, sendTelegram) {
     if (marginUSDT > capUSDT) marginUSDT = capUSDT;
     marginUSDT = Math.round(marginUSDT * 1000) / 1000;
     if (marginUSDT < (isGlobal ? 1 : 2)) {
-      maybeLogSkip('margin too small', `${isGlobal ? 'global SIM' : 'futures'} margin ${marginUSDT} USDT < ${isGlobal ? 1 : 2} — equity ₹${r2(equityINR)} / risk ${cfg.riskPerTradePct}% too small for this stop`);
+      maybeLogSkip('margin too small', `${isGlobal ? 'global SIM' : 'futures'} margin ${marginUSDT} USDT < ${isGlobal ? 1 : 2} — equity ₹${r2(equityINR)} / risk ${riskPct}% too small for this stop`);
       persistState(); return;
     }
-    if (isGlobal) {
-      // v10.4 GLOBAL EQUITY FUTURES SIM — paper/notify only (LIVE reject
-      // hota hai executeGlobalSignal gate 0 me — CoinDCX par ye equities nahi)
-      const { getFreshGlobalSignalForExec } = await import('./signals.js');
-      const { executeGlobalSignal } = await import('./globalFutures.js');
-      out = await executeGlobalSignal({
-        symbol: best.symbol, side: best.side,
-        mode: cfg.mode === 'notify' ? 'notify' : 'paper',
-        marginUSDT, leverage: lev,
-        getFreshSignal: (pair) => getFreshGlobalSignalForExec(pair, deps),
-        source: 'agent',
-        sendTelegram,
-      });
-    } else {
-      const { getFreshFuturesSignalForExec } = await import('./signals.js');
-      out = await executeFuturesSignal({
-        symbol: best.symbol, side: best.side,
-        mode: cfg.mode === 'live' ? 'live' : cfg.mode === 'notify' ? 'notify' : 'paper',
-        marginUSDT, leverage: lev,
-        getFreshSignal: (pair) => getFreshFuturesSignalForExec(pair, deps),
-        wantAuto: cfg.mode === 'live',
-        source: 'agent',
-        sendTelegram,
-      });
+    // v10.6: the depth walk runs on the POSITION NOTIONAL in the book's
+    // currency (USDT notional × usdInr → INR book; the % is unit-free).
+    const notionalINR = qty * best.plan.entry * usdInr;
+    const split = splitOrderForSlippage({ side: best.side, notional: notionalINR, depth: depthFor, thresholdPct: SLIP_THRESHOLD_PCT });
+    const legs = Math.max(1, split.children);
+    if (legs > 1) log('info', `SLIPPAGE GUARD ${best.symbol}: ${split.reason}`);
+    const marginPerLeg = Math.round((marginUSDT / legs) * 1000) / 1000;
+    for (let leg = 0; leg < legs; leg++) {
+      if (leg > 0) await new Promise(r => setTimeout(r, SLIP_CHILD_GAP_MS));
+      if (isGlobal) {
+        // v10.4 GLOBAL EQUITY FUTURES SIM — paper/notify only (LIVE reject
+        // hota hai executeGlobalSignal gate 0 me — CoinDCX par ye equities nahi)
+        const { getFreshGlobalSignalForExec } = await import('./signals.js');
+        const { executeGlobalSignal } = await import('./globalFutures.js');
+        out = await executeGlobalSignal({
+          symbol: best.symbol, side: best.side,
+          mode: cfg.mode === 'notify' ? 'notify' : 'paper',
+          marginUSDT: marginPerLeg, leverage: lev,
+          getFreshSignal: (pair) => getFreshGlobalSignalForExec(pair, deps),
+          source: 'agent',
+          sendTelegram,
+        });
+      } else {
+        const { getFreshFuturesSignalForExec } = await import('./signals.js');
+        out = await executeFuturesSignal({
+          symbol: best.symbol, side: best.side,
+          mode: cfg.mode === 'live' ? 'live' : cfg.mode === 'notify' ? 'notify' : 'paper',
+          marginUSDT: marginPerLeg, leverage: lev,
+          getFreshSignal: (pair) => getFreshFuturesSignalForExec(pair, deps),
+          wantAuto: cfg.mode === 'live',
+          source: 'agent',
+          sendTelegram,
+        });
+      }
+      if (!out?.ok) break; // a failed leg stops the split (next tick retries fresh)
     }
   } else {
     // spot (INR)
@@ -804,17 +938,24 @@ async function _tick(deps, sendTelegram) {
       Math.max(100, (riskINR / (best.plan.riskPct || 5)) * 100),
       Math.max(100, (wallet?.deployableSpotINR ?? equityINR) * 0.6),
     );
+    const split = splitOrderForSlippage({ side: best.side, notional: budgetINR, depth: depthFor, thresholdPct: SLIP_THRESHOLD_PCT });
+    const legs = Math.max(1, split.children);
+    if (legs > 1) log('info', `SLIPPAGE GUARD ${best.symbol}: ${split.reason}`);
     const { executeSignal } = await import('./coindcxOrders.js');
     const { getFreshSignalForExec } = await import('./signals.js');
-    out = await executeSignal({
-      symbol: best.symbol, side: best.side,
-      mode: cfg.mode === 'live' ? 'live' : cfg.mode === 'notify' ? 'notify' : 'paper',
-      qtyINR: budgetINR, leverage: 1,
-      getFreshSignal: (pair) => getFreshSignalForExec(pair, deps),
-      wantAuto: cfg.mode === 'live',
-      source: 'agent',
-      sendTelegram,
-    });
+    for (let leg = 0; leg < legs; leg++) {
+      if (leg > 0) await new Promise(r => setTimeout(r, SLIP_CHILD_GAP_MS));
+      out = await executeSignal({
+        symbol: best.symbol, side: best.side,
+        mode: cfg.mode === 'live' ? 'live' : cfg.mode === 'notify' ? 'notify' : 'paper',
+        qtyINR: Math.round(budgetINR / legs), leverage: 1,
+        getFreshSignal: (pair) => getFreshSignalForExec(pair, deps),
+        wantAuto: cfg.mode === 'live',
+        source: 'agent',
+        sendTelegram,
+      });
+      if (!out?.ok) break;
+    }
   }
 
   if (out?.ok) {
@@ -825,12 +966,12 @@ async function _tick(deps, sendTelegram) {
     if (out.mode === 'notify') {
       log('entry', `NOTIFY ${deskTag} ${best.symbol} ${best.side} (${best.confidence}% conf) — alert-only, koi order nahi${out.telegramSent ? '' : ' (telegram off)'}`);
     } else {
-      log('entry', `AUTO-ENTRY ${deskTag} ${best.symbol} ${best.side} (${best.confidence}% conf) — ${f.qty ?? '?'} @ ${f.price ?? best.plan.entry}${wantFutures || best.market === 'GLOBALFUTURES' ? ` · ${f.leverage ?? '?'}x · margin ${f.marginUSDT ?? '?'} USDT` : ''} · SL ${best.plan.stopLoss} · T2 ${best.plan.target2}`);
+      log('entry', `AUTO-ENTRY ${deskTag} ${best.symbol} ${best.side} (${best.confidence}% conf) — ${f.qty ?? '?'} @ ${f.price ?? best.plan.entry}${wantFutures || best.market === 'GLOBALFUTURES' ? ` · ${f.leverage ?? '?'}x · margin ${f.marginUSDT ?? '?'} USDT` : ''} · SL ${best.plan.stopLoss} · T2 ${best.plan.target2}${kelly?.mode === 'kelly' ? ` · kelly ${riskPct}%` : ''}`);
       await notify(sendTelegram,
         `🤖 <b>AGENT AUTO-ENTRY</b> — ${deskTag} ${best.symbol} ${best.side}\n` +
         `Confidence ${best.confidence}% · agreement ${Math.round((best.agreement || 0) * 100)}% · trade ${tradesToday.length + 1}/${cfg.maxTradesPerDay} today\n` +
         `${f.qty ?? '?'} @ ${f.price ?? best.plan.entry}${wantFutures || best.market === 'GLOBALFUTURES' ? ` · ${f.leverage ?? 1}x · margin ${Math.round(f.marginUSDT ?? 0)} USDT` : ''}\n` +
-        `SL ${best.plan.stopLoss} · T2 ${best.plan.target2} · time-exit ${cfg.maxHoldMin}m`,
+        `SL ${best.plan.stopLoss} · T2 ${best.plan.target2} · time-exit ${cfg.maxHoldMin}m${kelly?.mode === 'kelly' ? ` · kelly-sized ${riskPct}%` : ''}`,
       );
     }
   } else {

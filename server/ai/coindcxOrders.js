@@ -23,6 +23,7 @@ import { durablePut } from '../mcp/durable.js';
 import { fetchCoinDcxTickers } from '../cryptoStream.js';
 import { computeTrailSl } from './ensemble.js';
 import { pRound } from './lib/priceRound.js';
+import { validateTick, wickJournalEntry } from './wickFilter.js';
 import { recordExecution, settlePositionOutcome, markPartialOutcome, __setLedgerForTests } from './ledger.js';
 
 const CONFIG_FILE = 'ai-trading-config.json';
@@ -801,9 +802,39 @@ export async function watchPositions({ sendTelegram } = {}) {
       const tickers = await fetchCoinDcxTickers().catch(() => []);
       const byPair = new Map((Array.isArray(tickers) ? tickers : []).map(t => [t.market, parseFloat(t.last_price)]));
 
+      // v10.6 CROSS-EXCHANGE VALIDATION (Pro Upgrade #3): a single bad
+      // print must not trigger a false stop-out. Every DISTINCT base
+      // in the open book is validated once per pass against Binance
+      // (validator, never a trading feed). A fresh cross-venue gap →
+      // this pass SKIPS all SL/TP/trailing/liq checks for that base
+      // (the wick gets a chance to revert); a confirmed-reverted wick
+      // closes the episode and lands in the journal (auditable);
+      // a sustained gap is accepted as a real move.
+      const wickVerdicts = new Map(); // base → verdict|null
+      for (const p of openCrypto) {
+        const base = String(p.pair || '').replace(/INR$/, '');
+        if (!base || wickVerdicts.has(base)) continue;
+        wickVerdicts.set(base, await validateTick({ market: 'CRYPTO', base, price: byPair.get(p.pair) }).catch(() => null));
+      }
+      for (const [base, wv] of wickVerdicts.entries()) {
+        if (wv?.episode === 'wick') {
+          const entry = wickJournalEntry({ market: 'CRYPTO', base, pair: `${base}INR`, verdict: wv });
+          entry.day = todayIST();
+          pushEntry(j, entry);
+          dirty = true;
+        }
+      }
+
       for (const p of openCrypto) {
         const price = byPair.get(p.pair);
         if (!(price > 0)) continue;
+        const _wv = wickVerdicts.get(String(p.pair || '').replace(/INR$/, ''));
+        if (_wv?.action === 'SUPPRESS') {
+          // fresh cross-venue deviation — do not act on this print
+          // (checked again next pass; reverts → wick episode closes,
+          // persists → accepted as a real move).
+          continue;
+        }
 
         // v6.6 LEVERAGE: liquidation check comes FIRST — if the price is
         // beyond the liquidation estimate the position is gone at the

@@ -141,6 +141,94 @@ if __name__ == "__main__":
 
     import sys as _sys
 
+    # --strategy regime_weighted → the Pro Upgrade #4 A/B: the SAME
+    # weighted-average baseline with STATIC weights vs the regime
+    # multiplier layer (TRENDING/CHOPPY/HIGH_VOL/LOW_VOL tilt, the
+    # ensemble.js table mirrored here). Walk-forward, same folds for
+    # BOTH legs — the honest comparison that decides whether
+    # AI_ENABLE_REGIME_WEIGHTS goes live.
+    if len(_sys.argv) > 1 and _sys.argv[1] == "--strategy" and len(_sys.argv) > 2 and _sys.argv[2] == "regime_weighted":
+        from models.train_signal import build_meta_training_frame, meta_feature_names
+
+        frame = build_meta_training_frame(load_ohlcv())
+        if frame.empty or "regime_label" not in frame.columns:
+            print({"error": "No training data with regime labels — run fetch_data.py first."})
+            raise SystemExit(0)
+
+        try:
+            from sklearn.metrics import f1_score, accuracy_score
+        except ImportError:
+            print({"error": "scikit-learn not installed"})
+            raise SystemExit(0)
+
+        X = frame[meta_feature_names()].values.astype(float)
+        y = frame["dir_label"].values
+        rl = frame["regime_label"].values.astype(str)
+        valid = ~(np.isnan(X).any(axis=1) | np.isinf(X).any(axis=1))
+        X, y, rl = X[valid], y[valid], rl[valid]
+
+        # the ensemble.js base weights + the REGIME_MODEL_MULTIPLIERS tilt
+        WEIGHTS = {"trend": 1.4, "momentum": 1.3, "volatility": 0.9, "volume": 1.2,
+                   "pattern": 1.0, "sr": 1.1, "options": 1.0, "regime": 0.8,
+                   "smc": 1.1, "tape": 1.3, "aicouncil": 1.5,
+                   "sentiment": 0.7, "instflow": 0.8, "fundamentals": 0.5}
+        MULTIPLIERS = {
+            "TRENDING": {"trend": 1.25, "momentum": 1.15, "smc": 1.15, "tape": 1.15, "volatility": 0.85, "sr": 0.90, "pattern": 0.95, "volume": 1.05, "regime": 1.10},
+            "CHOPPY": {"trend": 0.75, "momentum": 0.80, "smc": 0.80, "tape": 0.85, "volatility": 1.20, "sr": 1.25, "pattern": 1.10, "volume": 1.00, "regime": 1.00, "instflow": 1.10},
+            "HIGH_VOL": {"trend": 0.85, "momentum": 0.90, "smc": 0.90, "tape": 0.95, "volatility": 1.25, "sr": 1.05, "pattern": 0.95, "volume": 1.00, "regime": 1.10, "options": 1.05},
+            "LOW_VOL": {"trend": 1.10, "momentum": 1.05, "smc": 1.00, "tape": 1.05, "volatility": 0.80, "sr": 0.95, "pattern": 1.00, "volume": 1.00, "regime": 1.00},
+        }
+
+        def weighted_side(vec, mul_table=None):
+            votes = {}
+            names = meta_feature_names()
+            for i, mid in enumerate([n.rsplit("__", 1)[0] for n in names if n.endswith("__dir")]):
+                votes[mid] = (vec[i * 2], vec[i * 2 + 1])
+            w = WEIGHTS if mul_table is None else {m: WEIGHTS.get(m, 1.0) * mul_table.get(m, 1.0) for m in votes}
+            raw = sum(d * w.get(m, 1.0) * (c / 100.0) for m, (d, c) in votes.items())
+            if raw > 0.15:
+                return "UP"
+            if raw < -0.15:
+                return "DOWN"
+            return "FLAT"
+
+        out = {"static": [], "regime": []}
+        regime_counts = {}
+        for i in range(0, len(X) - 120, 120):
+            te = X[i:i + 120]
+            yte, rte = y[i:i + 120], rl[i:i + 120]
+            if len(te) < 30:
+                continue
+            static_pred = np.array([weighted_side(v) for v in te])
+            regime_pred = np.array([weighted_side(v, MULTIPLIERS.get(lbl, {})) for v, lbl in zip(te, rte)])
+            for lbl in rte:
+                regime_counts[lbl] = regime_counts.get(lbl, 0) + 1
+            out["static"].append({
+                "acc": round(float(accuracy_score(yte, static_pred)), 3),
+                "f1w": round(float(f1_score(yte, static_pred, average="weighted", labels=np.unique(yte))), 3),
+            })
+            out["regime"].append({
+                "acc": round(float(accuracy_score(yte, regime_pred)), 3),
+                "f1w": round(float(f1_score(yte, regime_pred, average="weighted", labels=np.unique(yte))), 3),
+            })
+
+        s_acc = float(np.mean([f["acc"] for f in out["static"]])) if out["static"] else 0
+        r_acc = float(np.mean([f["acc"] for f in out["regime"]])) if out["regime"] else 0
+        s_f1 = float(np.mean([f["f1w"] for f in out["static"]])) if out["static"] else 0
+        r_f1 = float(np.mean([f["f1w"] for f in out["regime"]])) if out["regime"] else 0
+        total = max(1, sum(regime_counts.values()))
+        print({
+            "strategy": "regime_weighted vs static weights (walk-forward)",
+            "folds": len(out["static"]),
+            "static_accuracy": round(s_acc, 3),
+            "regime_accuracy": round(r_acc, 3),
+            "static_f1_weighted": round(s_f1, 3),
+            "regime_f1_weighted": round(r_f1, 3),
+            "regime_mix": {k: round(v / total, 3) for k, v in sorted(regime_counts.items())},
+            "verdict": "regime wins — flip AI_ENABLE_REGIME_WEIGHTS on the boards" if (r_acc, r_f1) >= (s_acc, s_f1) else "static wins — keep the flag OFF",
+        })
+        raise SystemExit(0)
+
     # --strategy meta_ensemble → side-by-side weighted-average vs the
     # trained meta-learner (walk-forward, same folds for BOTH so the
     # comparison is honest — overfitting-safe by construction).

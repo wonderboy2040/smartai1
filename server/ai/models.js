@@ -240,6 +240,31 @@ function volumeFlow(ctx) {
     else if (Math.abs(vd) >= 2) { score -= Math.sign(vd) * 0.3; pts.push(`Far from VWAP (${r1(vd)}%) — mean-reversion risk`); }
   }
 
+  // v10.6 ORDER-FLOW DEPTH (Pro Upgrade #1 — the VolumeFlow fold-in):
+  // the L2 ladder read joins the volume seat (zero change to the model
+  // registry / weights / quorum caps). ctx.depth is warmed by the board
+  // for the top-turnover slice; absent → the exact legacy vote.
+  const d = ctx.depth;
+  if (d && d.ok === true) {
+    const i5 = d.imbalanceTop5, i20 = d.imbalanceTop20;
+    if (i5 != null) {
+      if (i5 >= 0.62) { score += 0.7; pts.push(`L2 top-5 bids hold ${Math.round(i5 * 100)}% — buyers stacked`); }
+      else if (i5 <= 0.38) { score -= 0.7; pts.push(`L2 top-5 asks hold ${Math.round((1 - i5) * 100)}% — sellers stacked`); }
+    }
+    if (i5 != null && i20 != null) {
+      if (i5 >= 0.58 && i20 >= 0.55) { score += 0.3; pts.push(`depth-confirmed (${Math.round(i20 * 100)}% bid-side at top-20)`); }
+      else if (i5 <= 0.42 && i20 <= 0.45) { score -= 0.3; pts.push(`depth-confirmed sell side (${Math.round((1 - i20) * 100)}% ask-side at top-20)`); }
+      else if (Math.abs(i5 - 0.5) > 0.12 && Math.abs(i20 - 0.5) < 0.06) { conf -= 5; pts.push('shallow-only imbalance — spoof risk, down-weighted'); }
+    }
+    if (d.nearBidWall && d.nearBidWall.distPct != null && d.nearBidWall.distPct >= 0 && d.nearBidWall.distPct <= 0.5) {
+      score += 0.4; pts.push(`bid wall ${d.nearBidWall.x}x at ${d.nearBidWall.price} (${d.nearBidWall.distPct}% below)`);
+    }
+    if (d.nearAskWall && d.nearAskWall.distPct != null && d.nearAskWall.distPct >= 0 && d.nearAskWall.distPct <= 0.5) {
+      score -= 0.4; pts.push(`ask wall ${d.nearAskWall.x}x at ${d.nearAskWall.price} (${d.nearAskWall.distPct}% above)`);
+    }
+    if (d.spoofRisk) { conf -= 6; pts.push('book walls vanished between snapshots — spoof pattern, conviction cut'); }
+  }
+
   const dir = score > 0.9 ? 1 : score < -0.9 ? -1 : 0;
   // v6.3: base 35→40, slope ×16→×18 (vol-backed moves read 70+, thin
   // tape still penalised via the conf adjustments above).
