@@ -179,6 +179,57 @@ describe('VolumeFlow fold-in (Pro #1 — zero weight-tuning route)', () => {
   });
 });
 
+describe('v10.6.1 — raw-precision walls + deeper book for the slippage walk', () => {
+  it('sub-₹0.01 token books (SHIB-class) keep exact wall prices — r2() used to collapse them to 0', () => {
+    // SHIBINR-style ladder: prices at 0.0007x, one huge level
+    const shibBids = Array.from({ length: 12 }, (_, i) => ({ price: 0.00070 - i * 0.00001, qty: 1e6 + i }));
+    shibBids[3] = { price: 0.00067, qty: 9e6 };
+    const walls = findWalls(shibBids);
+    expect(walls.length).toBeGreaterThan(0);
+    expect(walls[0].price).toBeCloseTo(0.00067, 8); // NOT 0
+    const a = analyzeDepth({ bids: shibBids, asks: shibBids.map(l => ({ ...l, price: l.price + 0.00001 })), ltp: 0.00070 });
+    expect(a.nearBidWall?.distPct).not.toBe(-100); // the old r2 bug produced garbage distances
+    expect(a.nearBidWall?.distPct).toBeGreaterThan(0);
+  });
+
+  it('estimateSlippagePct walks the deeper `book`, not just the 5-level `ladder`', () => {
+    // thin top-5 ladder + deep book: the walk must span the book
+    const thinLadder = {
+      ladder: {
+        bids: [{ price: 99.9, qty: 1 }, { price: 99.8, qty: 1 }],
+        asks: [{ price: 100, qty: 1 }, { price: 100.5, qty: 1 }],
+      },
+    };
+    const withBook = {
+      ...thinLadder,
+      book: {
+        bids: [{ price: 99.9, qty: 1 }, { price: 99.8, qty: 1 }, { price: 99.7, qty: 400 }],
+        asks: [{ price: 100, qty: 1 }, { price: 100.5, qty: 1 }, { price: 101, qty: 500 }],
+      },
+    };
+    // ladder-only: a ₹40k BUY exhausts the 2-level ask ladder (a LOWER
+    // bound — only ₹200.5 of ₹40k fillable)
+    const estLadder = estimateSlippagePct({ side: 'BUY', notional: 40_000, depth: thinLadder });
+    expect(estLadder.bookExhausted).toBe(true);
+    expect(estLadder.filledPct).toBeLessThan(1);
+    // with the book attached: the deep 101-level absorbs the whole
+    // notional — no false exhaustion, an honest full-book walk
+    const estBook = estimateSlippagePct({ side: 'BUY', notional: 40_000, depth: withBook });
+    expect(estBook.bookExhausted).toBe(false);
+    expect(estBook.filledPct).toBe(100);
+    expect(estBook.pct).not.toBeNull();
+  });
+
+  it('readDepth returns both the 5-level UI ladder and the 20-level walk book', async () => {
+    __testables.__setCryptoDepthForTests('BTC', bids(20), asks(20));
+    const r = await readDepth('CRYPTO', 'BTC', { ltp: 100 });
+    expect(r.ok).toBe(true);
+    expect(r.ladder.bids).toHaveLength(5);
+    expect(r.book.bids).toHaveLength(20);
+    expect(r.book.bids[0]).toEqual(r.ladder.bids[0]); // same best level
+  });
+});
+
 describe('estimateSlippagePct + splitOrderForSlippage (Pro #6)', () => {
   const book = { ladder: { bids: [{ price: 99.9, qty: 5 }, { price: 99.8, qty: 10 }], asks: [{ price: 100, qty: 2 }, { price: 100.5, qty: 3 }, { price: 101, qty: 10 }] } };
   it('walks the asks for a BUY and reports VWAP-vs-touch drift', () => {

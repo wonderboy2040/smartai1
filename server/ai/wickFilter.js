@@ -86,6 +86,11 @@ export const REVERT_WINDOW = REVERT_WINDOW_MS;
 async function _fetchRefBook(which) {
   const slot = which === 'fut' ? _ref.fut : _ref.spot;
   if (slot.map && Date.now() - slot.at < REF_TTL_MS) return slot.map;
+  // v10.6.1 FIX: the negative-cache was SET on failure but never
+  // CHECKED — a Binance outage made every board/watcher pass pay a
+  // fresh 4s timeout instead of the designed 1-retry-per-5-min. An
+  // outage stays a pass-through (ACCEPT); it must not become a tax.
+  if (Date.now() < slot.downUntil) return null;
   if (slot.inflight) return slot.inflight;
   slot.inflight = (async () => {
     try {
@@ -164,9 +169,17 @@ export function assessTick({ market, base, price, refPrice, now = Date.now() }) 
   const deviationPct = Math.abs(p - ref) / ref * 100;
 
   if (deviationPct <= threshold) {
-    // back in line. Were we suppressing? → the move REVERTED = wick.
+    // back in line. Were we suppressing?
     if (prev) {
       _state.delete(key);
+      if (prev.sustainedAt) {
+        // v10.6.1: the gap closed AFTER the episode had already been
+        // accepted as sustained — we ACTED on those ticks, so this is
+        // NOT a wick (no WICK_SUPPRESSED journal). Clean close.
+        _stats.accepted++;
+        _stats.lastAt = now;
+        return { action: 'ACCEPT', deviationPct: r4(deviationPct), episode: null, firstSeen: null, threshold };
+      }
       _stats.wickEpisodes++;
       _stats.accepted++;
       _stats.lastAt = now;
@@ -185,13 +198,22 @@ export function assessTick({ market, base, price, refPrice, now = Date.now() }) 
   }
 
   // already suspect: fresh (< window) → keep suppressing; stale →
-  // the gap is SUSTAINED (real move / real divergence) → accept
+  // the gap is SUSTAINED (real move / real divergence) → accept.
   if (now - prev.suspectAt < REVERT_WINDOW_MS) {
     _stats.suppressed++;
     return { action: 'SUPPRESS', deviationPct: r4(deviationPct), episode: null, firstSeen: prev.suspectAt, threshold };
   }
-  _state.delete(key);
-  _stats.sustained++;
+  // v10.6.1 FIX: keep the state with a sustainedAt marker instead of
+  // deleting it — otherwise the NEXT still-deviating tick opened a
+  // fresh episode and re-suppressed for another 15s (SUPPRESS →
+  // ACCEPT(1 tick) → SUPPRESS → …), making SL/TP checks erratic
+  // exactly during a persistent real move. Once sustained, acceptance
+  // HOLDS while the deviation stays; the state clears when price
+  // returns within threshold.
+  if (!prev.sustainedAt) {
+    _state.set(key, { ...prev, sustainedAt: now });
+    _stats.sustained++;
+  }
   _stats.accepted++;
   _stats.lastAt = now;
   return { action: 'ACCEPT', deviationPct: r4(deviationPct), episode: 'sustained', firstSeen: prev.suspectAt, threshold };
@@ -265,7 +287,9 @@ export function wickFilterStatus() {
       spot: _ref.spot.map ? { symbols: _ref.spot.map.size, ageSec: Math.round((Date.now() - _ref.spot.at) / 1000) } : null,
       futures: _ref.fut.map ? { symbols: _ref.fut.map.size, ageSec: Math.round((Date.now() - _ref.fut.at) / 1000) } : null,
     },
-    currentlySuppressed: [..._state.entries()].map(([k, v]) => ({
+    // v10.6.1: sustained-accepted symbols are NOT suppressed — only
+    // fresh-gap episodes are "currently suppressed".
+    currentlySuppressed: [..._state.entries()].filter(([, v]) => !v.sustainedAt).map(([k, v]) => ({
       market: k.split('|')[0], base: k.split('|')[1],
       devPct: v.devPct, since: v.suspectAt,
     })),
@@ -275,7 +299,7 @@ export function wickFilterStatus() {
 
 // ---------------- test hooks ----------------
 export const __testables = {
-  _state, _stats,
+  _state, _stats, _ref,
   __resetWickForTests() {
     _state.clear();
     _stats.accepted = 0; _stats.suppressed = 0; _stats.wickEpisodes = 0; _stats.sustained = 0;

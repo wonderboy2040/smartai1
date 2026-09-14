@@ -169,7 +169,11 @@ export async function getIndiaDepth(symbol, { maxAgeMs = DHAN_DEPTH_TTL_MS } = {
 }
 
 // ---------------- PURE: the ladder analysis ----------------
-/** Walls on one side: levels ≥ WALL_X × the side's median size. */
+/** Walls on one side: levels ≥ WALL_X × the side's median size.
+ * v10.6.1 FIX: the wall's price stays RAW (full venue precision) —
+ * r2() collapsed sub-₹0.01 tokens (SHIB/BONK/PEPE books) to price 0
+ * (garbage distPct, false spoof flags) and broke the UI's wall-marker
+ * matching on >2-decimal books. Only qty/x get rounded. */
 export function findWalls(levels, x = WALL_X) {
   if (!Array.isArray(levels) || levels.length < 3) return [];
   const sorted = [...levels].map(l => l.qty).sort((a, b) => a - b);
@@ -177,7 +181,7 @@ export function findWalls(levels, x = WALL_X) {
   if (!(median > 0)) return [];
   return levels
     .filter(l => l.qty >= x * median)
-    .map(l => ({ price: r2(l.price), qty: r2(l.qty), x: r4(l.qty / median) }));
+    .map(l => ({ price: l.price, qty: r2(l.qty), x: r4(l.qty / median) }));
 }
 
 function _bandImbalance(levels, n) {
@@ -212,7 +216,10 @@ export function analyzeDepth({ bids, asks, ring = [], now = Date.now(), ltp = nu
   const bidWalls = findWalls(bids);
   const askWalls = findWalls(asks);
 
-  // velocity: walls in the PREVIOUS snapshots that vanished in this one
+  // velocity: walls in the PREVIOUS snapshots that vanished in this one.
+  // v10.6.1: raw prices both sides (walls are raw now) — the 1e-9
+  // exact-match works because both come from the same normalizeLevels
+  // precision, and rounding differences can no longer fake a vanish.
   const thisWallSet = new Set([...bidWalls, ...askWalls].map(w => `${w.price}`));
   let spoofRisk = false;
   const vanishedWalls = [];
@@ -271,7 +278,8 @@ export async function readDepth(market, symbol, { ltp = null, levels = 50 } = {}
     if (!snap) return { ok: false, market: mkt, symbol, reason: 'Dhan L2 unavailable (not connected / market closed / no securityId)' };
     const analysis = analyzeDepth({ bids: snap.bids, asks: snap.asks, ltp, now: Date.now() });
     return { ok: true, market: mkt, symbol, source: 'dhan-nse-l2', ...analysis,
-      ladder: { bids: snap.bids.slice(0, 5), asks: snap.asks.slice(0, 5) } };
+      ladder: { bids: snap.bids.slice(0, 5), asks: snap.asks.slice(0, 5) },
+      book: { bids: snap.bids, asks: snap.asks } }; // best-5 IS the book on Dhan
   }
   // CRYPTO (spot INR book) + FUTURES (spot proxy)
   const base = String(symbol || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -285,7 +293,11 @@ export async function readDepth(market, symbol, { ltp = null, levels = 50 } = {}
     source: mkt === 'FUTURES' ? 'coindcx-spot-book (perp proxy)' : 'coindcx-spot-inr',
     proxy: mkt === 'FUTURES' || undefined,
     ...analysis,
+    // v10.6.1: `ladder` stays the UI's top-5 view; `book` carries the
+    // deeper walk levels the slippage estimator needs (the agent passes
+    // levels:20 — the walk must not stop at 5).
     ladder: { bids: snap.bids.slice(0, 5), asks: snap.asks.slice(0, 5) },
+    book: { bids: snap.bids.slice(0, 20), asks: snap.asks.slice(0, 20) },
   };
 }
 
@@ -303,9 +315,14 @@ export async function readDepth(market, symbol, { ltp = null, levels = 50 } = {}
  */
 export function estimateSlippagePct({ side, notional, depth }) {
   const isSell = String(side).toUpperCase() === 'SELL';
-  const levels = isSell
-    ? (depth?.ladder?.bids || [])
-    : (depth?.ladder?.asks || []);
+  // v10.6.1: prefer the deeper `book` (readDepth's top-20 walk levels)
+  // over the UI's 5-level `ladder` — the walk must span the book the
+  // splitter will actually lean on. Plain-ladder inputs (tests, older
+  // callers) keep working unchanged.
+  const _usable = (src) => (Array.isArray(src?.bids) && src.bids.length > 0
+    && Array.isArray(src?.asks) && src.asks.length > 0) ? src : null;
+  const src = _usable(depth?.book) || _usable(depth?.ladder);
+  const levels = isSell ? (src?.bids || []) : (src?.asks || []);
   const n = Number(notional);
   if (!Array.isArray(levels) || levels.length === 0 || !(n > 0)) return { pct: null, bookExhausted: false, filledPct: 0 };
   const touch = levels[0].price;

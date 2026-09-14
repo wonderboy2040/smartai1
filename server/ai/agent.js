@@ -870,10 +870,16 @@ async function _tick(deps, sendTelegram) {
     return Number.isFinite(n) && n > 0 ? n : 0.35;
   })();
   const SLIP_CHILD_GAP_MS = 2000;
-  const depthFor = await readDepth(
-    best.market === 'INDIA' ? 'INDIA' : best.market === 'GLOBALFUTURES' ? 'CRYPTO' : best.market,
-    best.symbol, { ltp: best.plan.entry, levels: 20 },
-  ).catch(() => null);
+  // v10.6.1 FIX: GLOBALFUTURES desks are EQUITY perps (MU/AMD/…) —
+  // there is no CoinDCX <SYMBOL>_INR book to walk; the old mapping
+  // fetched a nonexistent pair and paid a 6s timeout per attempt just
+  // to arrive at the same honest single-order degrade. Skip the read.
+  const depthFor = best.market === 'GLOBALFUTURES'
+    ? null
+    : await readDepth(
+      best.market === 'INDIA' ? 'INDIA' : best.market,
+      best.symbol, { ltp: best.plan.entry, levels: 20 },
+    ).catch(() => null);
   let out = null;
   if (wantFutures || best.market === 'GLOBALFUTURES') {
     const isGlobal = best.market === 'GLOBALFUTURES';

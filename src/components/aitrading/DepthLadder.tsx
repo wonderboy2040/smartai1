@@ -42,6 +42,15 @@ const qty = (q: number): string => {
   return String(Math.round(q * 100) / 100);
 };
 
+// v10.6.1: readable price for every venue scale — 65432.1 / 100.35 /
+// 0.000704 (SHIB-class INR tokens) all stay exact and compact.
+const px = (p: number): string => {
+  if (!Number.isFinite(p)) return '—';
+  if (p >= 1000) return String(Math.round(p * 10) / 10);
+  if (p >= 1) return String(Math.round(p * 100) / 100);
+  return String(Number(p.toPrecision(4)));
+};
+
 interface Props {
   market: MarketKind;
   symbol: string;
@@ -53,29 +62,38 @@ interface Props {
 export const DepthLadder = memo(function DepthLadder({ market, symbol, ltp, compact = true }: Props) {
   const [view, setView] = useState<DepthView | null>(null);
   const [misses, setMisses] = useState(0);
-  const alive = useRef(true);
+  // v10.6.1 FIX: ltp lives in a ref (read at poll time) instead of the
+  // effect deps — a live ltp change no longer re-fires the fetch loop.
+  const ltpRef = useRef(ltp);
+  ltpRef.current = ltp;
 
   useEffect(() => {
-    alive.current = true;
+    // v10.6.1 FIX: aliveness is now PER-EFFECT (local flag, not a shared
+    // ref). The old shared `alive` ref was flipped back to true by the
+    // NEXT effect run, so an in-flight fetch from the previous run still
+    // scheduled its timer after cleanup — a ZOMBIE 2s poll loop per ltp
+    // change mid-flight. `stopped` is scoped to this closure only.
+    let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = async () => {
       try {
         const q = new URLSearchParams({ market, symbol });
-        if (ltp != null && Number.isFinite(ltp) && ltp > 0) q.set('ltp', String(ltp));
+        const l = ltpRef.current;
+        if (l != null && Number.isFinite(l) && l > 0) q.set('ltp', String(l));
         const r = await apiFetch(`${getProxyBase()}/api/ai/depth?${q.toString()}`, { signal: AbortSignal.timeout(5000) });
-        if (alive.current) { setView(r); setMisses(0); }
+        if (!stopped) { setView(r); setMisses(0); }
       } catch {
-        if (alive.current) setMisses(m => m + 1);
+        if (!stopped) setMisses(m => m + 1);
       } finally {
-        if (alive.current) timer = setTimeout(tick, 2000); // positionsStream fast tier
+        if (!stopped) timer = setTimeout(tick, 2000); // positionsStream fast tier
       }
     };
     tick();
     return () => {
-      alive.current = false;
+      stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [market, symbol, ltp]);
+  }, [market, symbol]);
 
   const d = view;
   if (!d || !d.ok || !d.ladder) {
@@ -119,7 +137,7 @@ export const DepthLadder = memo(function DepthLadder({ market, symbol, ltp, comp
         </div>
         {i20 != null && (
           <div className="text-[8px] text-slate-500 font-mono">
-            top-20: {Math.round(i20 * 100)}% bid-side {Math.abs(i5! - 0.5) > 0.12 && Math.abs(i20 - 0.5) < 0.06 ? '· shallow-only (spoof-prone)' : ''}
+            top-20: {Math.round(i20 * 100)}% bid-side{i5 != null && Math.abs(i5 - 0.5) > 0.12 && Math.abs(i20 - 0.5) < 0.06 ? ' · shallow-only (spoof-prone)' : ''}
           </div>
         )}
       </div>
@@ -129,8 +147,9 @@ export const DepthLadder = memo(function DepthLadder({ market, symbol, ltp, comp
         {[...(d.ladder.asks || [])].slice(0, 5).reverse().map((a, i) => (
           <div key={`a${i}`} className="flex items-center gap-1.5">
             <span className="text-slate-500 w-10 text-right">{qty(a.qty)}</span>
-            <span className={`w-16 text-right ${wallPrices.has(a.price) ? 'text-amber-300 font-black' : 'text-red-400'}`}>
-              {a.price}{wallPrices.has(a.price) ? ' ▮' : ''}
+            <span className={`w-16 text-right ${wallPrices.has(a.price) ? 'text-amber-300 font-black' : 'text-red-400'}`}
+              title={wallPrices.has(a.price) ? 'wall — large resting order' : undefined}>
+              {px(a.price)}{wallPrices.has(a.price) ? ' ▮' : ''}
             </span>
           </div>
         ))}
@@ -138,8 +157,9 @@ export const DepthLadder = memo(function DepthLadder({ market, symbol, ltp, comp
         {(d.ladder.bids || []).slice(0, 5).map((b, i) => (
           <div key={`b${i}`} className="flex items-center gap-1.5">
             <span className="text-slate-500 w-10 text-right">{qty(b.qty)}</span>
-            <span className={`w-16 text-right ${wallPrices.has(b.price) ? 'text-amber-300 font-black' : 'text-emerald-400'}`}>
-              {b.price}{wallPrices.has(b.price) ? ' ▮' : ''}
+            <span className={`w-16 text-right ${wallPrices.has(b.price) ? 'text-amber-300 font-black' : 'text-emerald-400'}`}
+              title={wallPrices.has(b.price) ? 'wall — large resting order' : undefined}>
+              {px(b.price)}{wallPrices.has(b.price) ? ' ▮' : ''}
             </span>
           </div>
         ))}
@@ -150,12 +170,12 @@ export const DepthLadder = memo(function DepthLadder({ market, symbol, ltp, comp
         <div className="flex gap-2 flex-wrap text-[8px] font-mono">
           {d.nearBidWall && d.nearBidWall.distPct != null && d.nearBidWall.distPct >= 0 && (
             <span className="text-emerald-300" title="large bid within 0.5% — support">
-              bid wall {d.nearBidWall.x}× @ {d.nearBidWall.price}
+              bid wall {d.nearBidWall.x}× @ {px(d.nearBidWall.price)}
             </span>
           )}
           {d.nearAskWall && d.nearAskWall.distPct != null && d.nearAskWall.distPct >= 0 && (
             <span className="text-red-300" title="large ask within 0.5% — resistance">
-              ask wall {d.nearAskWall.x}× @ {d.nearAskWall.price}
+              ask wall {d.nearAskWall.x}× @ {px(d.nearAskWall.price)}
             </span>
           )}
           {d.spreadPct != null && <span className="text-slate-600 ml-auto">spread {d.spreadPct}%</span>}

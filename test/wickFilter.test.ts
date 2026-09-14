@@ -159,6 +159,56 @@ describe('validateTick — the async wrapper', () => {
   });
 });
 
+describe('v10.6.1 — sustained-gap hold + validator negative-cache', () => {
+  it('after ACCEPT-sustained, a STILL-deviating tick stays ACCEPT (no SUPPRESS→ACCEPT oscillation)', () => {
+    assessTick({ market: 'CRYPTO', base: MAJOR, price: 103, refPrice: 100, now: 1000 });
+    const sustained = assessTick({ market: 'CRYPTO', base: MAJOR, price: 103.2, refPrice: 100, now: 1000 + REVERT_WINDOW + 1 });
+    expect(sustained.action).toBe('ACCEPT');
+    expect(sustained.episode).toBe('sustained');
+    // the OLD bug: state was deleted → the next tick re-opened a fresh
+    // episode and SUPPRESSED for another 15s window. Acceptance must HOLD.
+    const still = assessTick({ market: 'CRYPTO', base: MAJOR, price: 103.1, refPrice: 100, now: 1000 + REVERT_WINDOW + 5000 });
+    expect(still.action).toBe('ACCEPT');
+    expect(still.episode).toBe('sustained');
+    // stats: the sustained transition counts ONCE, not per tick
+    expect(wickFilterStatus().stats.sustained).toBe(1);
+  });
+
+  it('sustained symbol is NOT listed as currently suppressed', () => {
+    assessTick({ market: 'CRYPTO', base: MAJOR, price: 103, refPrice: 100, now: 1000 });
+    assessTick({ market: 'CRYPTO', base: MAJOR, price: 103.2, refPrice: 100, now: 1000 + REVERT_WINDOW + 1 });
+    const s = wickFilterStatus();
+    expect(s.currentlySuppressed.filter(x => x.base === MAJOR)).toHaveLength(0);
+  });
+
+  it('gap closing AFTER a sustained acceptance is a clean close — NOT a wick (no false WICK_SUPPRESSED journal)', () => {
+    assessTick({ market: 'CRYPTO', base: MAJOR, price: 103, refPrice: 100, now: 1000 });
+    assessTick({ market: 'CRYPTO', base: MAJOR, price: 103.2, refPrice: 100, now: 1000 + REVERT_WINDOW + 1 });
+    const back = assessTick({ market: 'CRYPTO', base: MAJOR, price: 100.1, refPrice: 100, now: 1000 + REVERT_WINDOW + 60000 });
+    expect(back.action).toBe('ACCEPT');
+    expect(back.episode).toBeNull(); // we ACTED on the sustained ticks — no wick to journal
+    expect(wickFilterStatus().stats.wickEpisodes).toBe(0);
+  });
+
+  it('validator negative-cache: while Binance is marked down, no refetch is attempted (pass-through)', async () => {
+    __testables.__setRefBookForTests('fut', { BTC: 100 });
+    // simulate a hard outage window (map cleared, negative-cache armed)
+    __testables._ref.fut.map = null;
+    __testables._ref.fut.downUntil = Date.now() + 60_000;
+    const t0 = Date.now();
+    const v = await validateTick({ market: 'FUTURES', base: 'BTC', price: 102 });
+    expect(v.action).toBe('ACCEPT');
+    expect(v.refPrice).toBeNull();
+    expect(Date.now() - t0).toBeLessThan(500); // returned instantly — NO 4s timeout fetch
+    // a fresh-book success must clear the outage window
+    __testables.__setRefBookForTests('fut', { BTC: 100 });
+    __testables._ref.fut.downUntil = Date.now() + 60_000; // still armed?
+    const ok2 = await validateTick({ market: 'FUTURES', base: 'BTC', price: 100.1 });
+    // TTL-fresh book wins over the stale downUntil → validated normally
+    expect(ok2.refPrice).toBe(100);
+  });
+});
+
 describe('journal + status (audit trail)', () => {
   it('wickJournalEntry carries the wick_suppressed tag + deviation facts', () => {
     assessTick({ market: 'CRYPTO', base: MAJOR, price: 103, refPrice: 100, now: 1000 });
