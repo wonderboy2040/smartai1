@@ -117,10 +117,17 @@ describe('synthetic chain + analytics', () => {
     expect(chain.source).toBe('bs-model');
     expect(chain.rows.length).toBeGreaterThan(15);
     const atm = chain.rows.find(r => r.strike === 24000)!;
-    const wing = chain.rows.find(r => r.strike === 24300)!;
+    const wing = chain.rows.find(r => r.strike === 24300)!;   // +1.25% OTM call side
+    const putWing = chain.rows.find(r => r.strike === 23700)!; // −1.25% OTM put side
     expect(atm.callLTP).toBeGreaterThan(0);
-    expect(wing.callIV!).toBeGreaterThan(atm.callIV!); // smile lifts wings
-    // ATM call > ATM put at low rates
+    // v10.5.2 (skew recalibration): under the distance-aware put-skew
+    // model, the smile lifts the PUT wing strongly (smile + crash
+    // premium dono milte hain); the CALL wing ka smile-lift aur CE
+    // discount near-ATM par lagbhag cancel ho jaate hain — that IS
+    // the real NSE smirk. Call wing stays within a whisker of ATM.
+    expect(putWing.putIV!).toBeGreaterThan(atm.putIV!);
+    expect(wing.callIV!).toBeGreaterThan(atm.callIV! - 0.15);
+    // ATM call > ATM put at low rates (skew-neutral at the money)
     expect(atm.callLTP).toBeGreaterThan(atm.putLTP * 0.94);
   });
 

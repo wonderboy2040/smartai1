@@ -26,7 +26,26 @@
 // ============================================================
 import { describe, it, expect } from 'vitest';
 import { buildOptionSignalCards, expiryLabel, buildSyntheticChain, STRIKE_STEPS, LOT_SIZES, nextWeeklyExpiryFor } from '../server/ai/optionsDesk.js';
-import { nextWeeklyExpiry } from '../server/ai/lib/blackScholes.js';
+import { nextWeeklyExpiry, yearsToExpiry } from '../server/ai/lib/blackScholes.js';
+
+// ------------------------------------------------------------
+// Runtime expiry helpers (v10.5.2 de-rot): the hardcoded
+// '2026-09-15' / '2026-09-17' expiries were TIME BOMBS — the moment
+// that weekly expired (T ≤ 0), buildSyntheticChain returned null and
+// the whole file went red. Live-clock tests now derive FUTURE dates:
+//   • nextWeekly() → the real next NIFTY TUESDAY weekly (lib fn, IST-aware)
+//   • nextSensex() → the real next SENSEX THURSDAY weekly
+//   • istDateOut(n) → IST calendar date ~n days out. Its 15:30 IST
+//     anchor is ALWAYS in the future (T ∈ (~n−1, ~n] days on any run
+//     date/time), giving a controlled time-to-expiry window for the
+//     parity assertions.
+// ------------------------------------------------------------
+const nextWeekly = () => nextWeeklyExpiry(new Date(), 2);
+const nextSensex = () => nextWeeklyExpiry(new Date(), 4);
+function istDateOut(days: number) {
+  const ist = new Date(Date.now() + days * 86400000 + 5.5 * 3600000);
+  return ist.toISOString().slice(0, 10);
+}
 
 // A desk shaped exactly like getOptionsDesk() serves it (bs-model
 // branch — rows carry the BS premiums the card must translate).
@@ -48,7 +67,7 @@ const mkDeep = (side, plan) => ({
 });
 
 describe('v9.4/v9.6 F&O option signal cards — the user format', () => {
-  const EXPIRY = '2026-09-15'; // a TUESDAY — the real Nifty weekly
+  const EXPIRY = nextWeekly(); // the real next NIFTY Tuesday weekly (runtime — no date rot)
   const NIFTY_SPOT = 23411;
   const desk = mkDesk('NIFTY', NIFTY_SPOT, EXPIRY);
   // v9.6: cards are ranked candidates — grab the ATM one for the
@@ -64,8 +83,10 @@ describe('v9.4/v9.6 F&O option signal cards — the user format', () => {
     expect(c.type).toBe('CE');
     // strike must be ATM (nearest 50-step to 23411 → 23400)
     expect(c.strike).toBe(23400);
-    expect(c.name).toBe(`Nifty50 15Sep 23400 CE`);
-    expect(expiryLabel(EXPIRY)).toBe('15Sep');
+    // label is runtime-derived now (16Sep, 23Sep, …) — lock the exact
+    // <display> <DDMon> <strike> <CE|PE> shape with the live label
+    expect(c.name).toBe(`Nifty50 ${expiryLabel(EXPIRY)} 23400 CE`);
+    expect(expiryLabel(EXPIRY)).toMatch(/^\d{2}[A-Z][a-z]{2}$/);
   });
 
   it('LONG consensus → CE · SHORT consensus → PE (direction lock)', () => {
@@ -125,12 +146,13 @@ describe('v9.4/v9.6 F&O option signal cards — the user format', () => {
   });
 
   it('SENSEX desk: 100-step strikes, lot 20, Sensex display name', () => {
-    const sdesk = mkDesk('SENSEX', 74489, '2026-09-17'); // a THURSDAY — the real Sensex weekly
+    const sExpiry = nextSensex(); // the real next SENSEX Thursday weekly
+    const sdesk = mkDesk('SENSEX', 74489, sExpiry);
     const c = atmOf(buildOptionSignalCards(sdesk, mkDeep('SHORT', { entry: 74489, stopLoss: 74489 + 250, target1: 74489 - 300 })));
     expect(c.type).toBe('PE');
     expect(c.strike % 100).toBe(0);
     expect(c.lotSize).toBe(20);
-    expect(c.name).toMatch(/^Sensex 17Sep \d+ PE$/);
+    expect(c.name).toMatch(new RegExp(`^Sensex ${expiryLabel(sExpiry)} \\d+ PE$`));
     expect(STRIKE_STEPS.SENSEX).toBe(100);
     expect(LOT_SIZES.SENSEX).toBe(20);
   });
@@ -164,16 +186,17 @@ describe('v9.6 weekly expiry schedule — user-verified vs the live exchange', (
   });
 
   it('synthetic SENSEX chain honours the given weekly expiry + 100 strikes', () => {
-    const chain = buildSyntheticChain('SENSEX', 74489, 0.13, '2026-09-17', 4);
+    const sExpiry = nextSensex();
+    const chain = buildSyntheticChain('SENSEX', 74489, 0.13, sExpiry, 4);
     expect(chain.source).toBe('bs-model');
     expect(chain.atmStrike % 100).toBe(0);
     expect(chain.rows.length).toBeGreaterThan(5);
-    for (const r of chain.rows) expect(r.expiry).toBe('2026-09-17');
+    for (const r of chain.rows) expect(r.expiry).toBe(sExpiry);
   });
 });
 
 describe('v9.6 superintelligence layer — AI score, POP, ranking, tradeable bar', () => {
-  const EXPIRY = '2026-09-15'; // Tuesday — the real Nifty weekly
+  const EXPIRY = nextWeekly(); // the real next NIFTY Tuesday weekly (runtime)
   const NIFTY_SPOT = 23411;
   const desk = mkDesk('NIFTY', NIFTY_SPOT, EXPIRY);
   const atmOf = (cards) => cards.find(x => x.strikeBias === 'ATM') ?? cards[0];
@@ -222,43 +245,98 @@ describe('v9.6 superintelligence layer — AI score, POP, ranking, tradeable bar
 });
 
 // ============================================================
-// v9.7 — INDIA PUT-SKEW + MONTHLY-ONLY expiries
+// v10.5.2 — DISTANCE-AWARE PUT-SKEW (ATM parity fix)
 // ============================================================
-describe('v9.7 synthetic-chain put-skew (India index reality)', () => {
-  it('same-strike PE IV > CE IV (crash-insurance premium) — and the price gap vs CE narrows to near-parity', () => {
-    const chain = buildSyntheticChain('NIFTY', 23400, 0.122, '2026-09-15', 6);
-    const atm = chain.rows.find(r => r.strike === 23400);
-    // IV skew is the demand signal (pricing/POP inputs)
-    expect(atm.putIV).toBeGreaterThan(atm.callIV);
-    // price: the r=6.9% carry puts same-IV ATM CE ~₹13 up (put-call
-    // parity); the skew claws most of it back → near parity (real NSE
-    // ATM weeklies trade near parity too). Symmetric model gap would
-    // be ~13; skewed model must land under 10.
-    expect(atm.callLTP - atm.putLTP).toBeGreaterThan(0);
-    expect(atm.callLTP - atm.putLTP).toBeLessThan(10);
-    // skew is mild, not wild — within 1.5 vol pts
-    expect(atm.putIV - atm.callIV).toBeLessThan(1.5);
-    expect(atm.putIV - atm.callIV).toBeGreaterThanOrEqual(1);
+describe('v10.5.2 distance-aware put-skew (ATM parity restored)', () => {
+  // The v9.7 flat ATM bump (PE +0.8 / CE −0.3 vol pts at EVERY
+  // strike — 1.1 vol pts combined) overpowered the r=6.9% carry on
+  // near-dated ATM strikes and priced ATM puts ABOVE same-strike
+  // calls (C−P ≈ −0.77 on a 1-day weekly — the reported bug). The
+  // corrected model is distance-aware: skew ~0 AT the money (both
+  // legs share ONE smile IV → the BS parity identity C−P = S−K·e^(−rT)
+  // holds exactly) and the crash-insurance premium ramps in on OTM
+  // puts (2–6% out — the same window computeSkewFlow() measures on
+  // real chains). NOTE: the old "putIV − callIV ≥ 1 AT the money"
+  // assertion was mathematically incompatible with C−P > 0 on a
+  // ~1-day weekly (vega × 1.1 vol pts > the carry) — that very
+  // contradiction IS the bug, so the demand-signal assertions moved
+  // to the OTM wings where the premium actually lives.
+  const SPOT = 23400; // exact 50-step multiple → the ATM row IS spot
+  const R = 0.069;    // optionsDesk RISK_FREE (the carry driver)
+
+  it('ATM is skew-neutral: PE IV = CE IV — and C−P keeps put-call parity (positive, ≈ carry)', () => {
+    const expiry = istDateOut(2); // T ∈ (~1.6, ~2.6] days — a real near-dated weekly
+    const chain = buildSyntheticChain('NIFTY', SPOT, 0.122, expiry, 6);
+    const atm = chain.rows.find(r => r.strike === SPOT);
+    // ATM legs share ONE smile IV → skew-neutral at the money.
+    expect(atm.putIV).toBe(atm.callIV);
+    // PARITY (the bug fix): C − P = S − K·e^(−rT) > 0 — calls trade
+    // above puts by the carry, NEVER below (v9.7 flipped this −0.77).
+    const T = yearsToExpiry(`${expiry}T15:30:00+05:30`);
+    const carry = SPOT * (1 - Math.exp(-R * T));
+    const gap = atm.callLTP - atm.putLTP;
+    expect(gap).toBeGreaterThan(0);
+    expect(Math.abs(gap - carry)).toBeLessThan(1.5); // pure carry, no skew drag
+    // Crash premium is DISTANCE-AWARE now — it lives on the wings:
+    const otmPut = chain.rows.find(r => r.strike === 23150);  // −1.07% OTM
+    const otmCall = chain.rows.find(r => r.strike === 23650); // +1.07% OTM
+    expect(otmPut.putIV).toBeGreaterThan(otmPut.callIV);  // same-strike: PE > CE
+    expect(otmPut.putIV).toBeGreaterThan(otmCall.callIV); // mirror-strike: PE wing richer
   });
 
   it('skew survives the smile: wings pe bhi PE richer than CE at same distance', () => {
-    const chain = buildSyntheticChain('NIFTY', 23400, 0.122, '2026-09-15', 6);
+    const chain = buildSyntheticChain('NIFTY', 23400, 0.122, istDateOut(2), 6);
     const up = chain.rows.find(r => r.strike === 23500); // OTM for CE
     const dn = chain.rows.find(r => r.strike === 23300); // OTM for PE
     expect(dn.putIV).toBeGreaterThan(up.callIV);
   });
 
-  it('SHORT cards now price richer PE entries than a symmetric model would', () => {
-    // the pre-v9.7 symmetric chain priced CE==PE; skew must lift the PE card entry
-    const spot = 23400, expiry = '2026-09-15';
+  it('SHORT cards still price PE entries off the (now skew-neutral) ATM put premium', () => {
+    const spot = 23400, expiry = istDateOut(2);
     const plan = { entry: spot, stopLoss: spot + 90, target1: spot - 120, target2: spot - 240 };
     const cards = buildOptionSignalCards(mkDesk('NIFTY', spot, expiry), mkDeep('SHORT', plan));
     const pe = cards.find(c => c.type === 'PE' && c.strikeBias === 'ATM');
     expect(pe).toBeTruthy();
-    // ATM straddle legs: PE entry must exceed the CE leg of the same strike
+    // ATM straddle legs: PE entry must track the modelled ATM put leg
+    // (the desk chain runs a slightly higher IV — 0.13 vs 0.122)
     const chain = buildSyntheticChain('NIFTY', spot, 0.122, expiry, 6);
     const atm = chain.rows.find(r => r.strike === 23400);
     expect(pe.entry).toBeGreaterThanOrEqual(atm.putLTP - 0.05);
+  });
+});
+
+// ============================================================
+// v10.5.2 ATM-parity REGRESSION — property-style, multi-combo
+// ============================================================
+describe('v10.5.2 ATM parity regression (property-style across spot/IV/expiry)', () => {
+  // Locks the invariant the v9.7 flat skew broke: at EVERY combo of
+  // spot, IV and time-to-expiry, the synthetic chain's ATM row must
+  // satisfy C − P = S − K·e^(−rT) > 0 (calls above puts by the carry)
+  // with skew-neutral IVs at the money. Spots are exact strike-step
+  // multiples so the ATM row IS spot itself (BS identity exact).
+  const R = 0.069;
+  const combos: Array<[symbol: string, spot: number, iv: number, daysOut: number]> = [
+    ['NIFTY', 23400, 0.10, 1],
+    ['NIFTY', 22000, 0.15, 2],
+    ['NIFTY', 24550, 0.22, 5],
+    ['BANKNIFTY', 48000, 0.18, 2],
+    ['BANKNIFTY', 52000, 0.30, 9],
+    ['NIFTY', 23400, 0.28, 30],
+  ];
+  it.each(combos)('%s spot=%d iv=%s +%sd: ATM putIV=callIV and C−P = carry > 0', (symbol, spot, iv, daysOut) => {
+    const expiry = istDateOut(daysOut);
+    const chain = buildSyntheticChain(symbol, spot, iv, expiry, 8);
+    expect(chain).toBeTruthy();
+    const atm = chain.rows.find(r => r.strike === spot);
+    expect(atm).toBeTruthy();
+    // skew-neutral at the money (the distance-aware ramp starts at 0)
+    expect(atm.putIV).toBe(atm.callIV);
+    // parity: gap = pure carry — positive, within rounding of theory
+    const T = yearsToExpiry(`${expiry}T15:30:00+05:30`);
+    const carry = spot * (1 - Math.exp(-R * T));
+    const gap = atm.callLTP - atm.putLTP;
+    expect(gap).toBeGreaterThan(0);                   // parity direction (the bug)
+    expect(Math.abs(gap - carry)).toBeLessThan(1.5);  // and its magnitude ≈ theory
   });
 });
 

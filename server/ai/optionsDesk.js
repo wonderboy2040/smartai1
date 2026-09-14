@@ -290,12 +290,22 @@ export function buildSyntheticChain(symbol, spot, iv, expiryDate, strikeCount = 
   const atm = Math.round(spot / step) * step;
   const T = yearsToExpiry(`${expiryDate}T15:30:00+05:30`);
   if (!(T > 0)) return null;
-  // v9.7 INDIA PUT-SKEW: index puts trade richer than calls at the
-  // same distance (crash-insurance demand). ATM PE ≈ +0.8 vol pts,
-  // ATM CE ≈ −0.3 — wings pe smile already lifts both sides. Ye model
-  // premium ko real NSE quotes ke aur kareeb le jaata hai (VIX anchor
-  // + skew ke saath), "bs-model" label honest rehta hai.
-  const PE_SKEW = 0.008, CE_SKEW = -0.003;
+  // v10.5.2 PUT-SKEW RECALIBRATION (ATM parity fix): v9.7 ka FLAT ATM
+  // bump (PE +0.8 / CE −0.3 vol pts at EVERY strike — 1.1 vol pts
+  // combined) near-dated ATM strikes par put-call parity ko overpower
+  // karta tha — synthetic chain ATM put ko same-strike CALL se upar
+  // price kar rahi thi (C−P ≈ −0.77 on a 1-day NIFTY weekly), jo kisi
+  // bhi trader ke liye visibly wrong number hai. Real NSE index skew
+  // DISTANCE-AWARE hai: ~0 at-the-money, growing crash-insurance
+  // premium on OTM puts (2–6% OTM — wahi window computeSkewFlow()
+  // upar measure karta hai). ATM rows ab skew-neutral hain → dono
+  // legs EK hi smile IV share karti hain → BS identity
+  // C − P = S − K·e^(−rT) exactly holds (parity naturally positive
+  // for index options); OTM puts ko full crash premium milta hai,
+  // OTM calls ko halka discount (the smirk).
+  const PE_SKEW_MAX = 0.010;   // +1.0 vol pt full put premium at ≥5% OTM
+  const CE_SKEW_MAX = -0.004;  // −0.4 vol pt call-side discount at ≥5% OTM
+  const SKEW_RAMP_PCT = 0.05;   // linear ramp: 0 at ATM → full at 5% OTM
   const rows = [];
   for (let k = -strikeCount; k <= strikeCount; k++) {
     const strike = atm + k * step;
@@ -303,8 +313,13 @@ export function buildSyntheticChain(symbol, spot, iv, expiryDate, strikeCount = 
     // Smile: wings carry extra vol — a mild, standard curve.
     const m = Math.abs(Math.log(strike / spot));
     const smileIV = Math.min(IV_CAP, Math.max(IV_FLOOR, iv * (1 + 1.6 * m * m * 12)));
-    const putIV = Math.min(IV_CAP, Math.max(IV_FLOOR, smileIV + PE_SKEW));
-    const callIV = Math.min(IV_CAP, Math.max(IV_FLOOR, smileIV + CE_SKEW));
+    // Distance-aware skew: ~0 at the money (parity untouched), full
+    // crash premium by 5% OTM. Negative moneyness → OTM put side.
+    const moneynessPct = (strike - spot) / spot;
+    const peSkewAtStrike = PE_SKEW_MAX * Math.min(1, Math.max(0, -moneynessPct / SKEW_RAMP_PCT));
+    const ceSkewAtStrike = CE_SKEW_MAX * Math.min(1, Math.max(0, moneynessPct / SKEW_RAMP_PCT));
+    const putIV = Math.min(IV_CAP, Math.max(IV_FLOOR, smileIV + peSkewAtStrike));
+    const callIV = Math.min(IV_CAP, Math.max(IV_FLOOR, smileIV + ceSkewAtStrike));
     const call = bsPrice(spot, strike, T, RISK_FREE, callIV, 'CE');
     const put = bsPrice(spot, strike, T, RISK_FREE, putIV, 'PE');
     rows.push({
