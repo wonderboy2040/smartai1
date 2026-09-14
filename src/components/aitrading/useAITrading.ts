@@ -17,7 +17,7 @@
 // ============================================================
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, getProxyBase, getSessionToken } from '../../utils/api';
-import type { AISignal, OptionsDesk, OptionSignalsView, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, AlertsStatus, DhanStatus, SwingBoard, WhaleRadar, LedgerView, MorningBrief, OrderbookView, AgentView, WalletView, FuturesMarketsView, MarketKind, TrustView, PerfView, CorrView, SectorView, IncomeView, NextActionsView, NarrativeView, EdgeStats, LtfSnapshot } from './types';
+import type { AISignal, OptionsDesk, OptionSignalsView, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, StrategyLabResult, AlertsStatus, DhanStatus, SwingBoard, WhaleRadar, LedgerView, MorningBrief, OrderbookView, AgentView, WalletView, FuturesMarketsView, MarketKind, TrustView, PerfView, CorrView, SectorView, IncomeView, NextActionsView, NarrativeView, EdgeStats, LtfSnapshot } from './types';
 
 export interface DeepSignalResult {
   ok: boolean;
@@ -322,6 +322,24 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
     } catch { return null; }
   }, []);
 
+  // v10.8: NL Custom Strategy Lab — description → bounded rules → replay.
+  const runStrategyLab = useCallback(async (
+    description: string,
+    market: 'INDIA' | 'CRYPTO' = 'CRYPTO',
+  ): Promise<StrategyLabResult | null> => {
+    try {
+      const r = await apiFetch(`${getProxyBase()}/api/ai/strategy-lab`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description, market }),
+        signal: AbortSignal.timeout(120000),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) return { ok: false, error: j?.error || `lab failed (${r.status})` } as StrategyLabResult;
+      return j;
+    } catch { return { ok: false, error: 'lab request failed — network/timeout' } as StrategyLabResult; }
+  }, []);
+
   // v6.5: alerts + AI council keys.
   const fetchAlertsStatus = useCallback(async (): Promise<AlertsStatus | null> => {
     try {
@@ -447,7 +465,7 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
     /** v10.5.3: 'stream' = SSE live push, 'poll' = REST fallback, null = flat. */
     positionsLive,
     refresh: loadBoards, executeSignal, updateConfig, killSwitch, closePos, fetchDeep,
-    executeIndia, runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert,
+    executeIndia, runBacktest, runStrategyLab, fetchAlertsStatus, saveAlertsConfig, testAlert,
     fetchDhanStatus, dhanConnect, dhanDisconnect, executeFutures, executeGlobal,
   };
 }

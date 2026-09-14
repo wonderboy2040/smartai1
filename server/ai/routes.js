@@ -66,6 +66,8 @@ import {
   updateIndiaAgentConfig, INDIA_AGENT_TICK_SEC,
 } from './indiaAgent.js';
 import { runBacktest } from './backtest.js';
+// v10.8 PRO #2: NL Custom Strategy Lab — description → bounded rules → replay
+import { runCustomStrategyBacktest } from './strategyLab.js';
 import { getSwingBoard, scanWhales, getOrderbook } from './swing.js';
 import { readDepth, depthStatus } from './orderFlowDepth.js';
 import { wickFilterStatus } from './wickFilter.js';
@@ -530,6 +532,34 @@ export function registerAITradingRoutes(app, deps) {
       res.json(out);
     } catch (e) {
       jsonError(res, 500, 'backtest failed', e);
+    }
+  });
+
+  // ---------------- v10.8: NL Custom Strategy Lab (Pro Upgrade #2) ----------------
+  // Natural-language strategy idea → LLM compiles a BOUNDED whitelist
+  // rule-expression (never free-form code) → validated → walk-forward
+  // replay on the SAME candle history the ensemble backtest uses.
+  app.post('/api/ai/strategy-lab', async (req, res) => {
+    try {
+      const { description, market, symbols, capital } = req.body || {};
+      if (!description || String(description).trim().length < 8) {
+        return jsonError(res, 400, 'description required (min 8 chars — describe the entry/exit idea)');
+      }
+      const mkt = String(market || 'CRYPTO').toUpperCase() === 'INDIA' ? 'INDIA' : 'CRYPTO';
+      const syms = Array.isArray(symbols) ? symbols.slice(0, 6).map(s => String(s).slice(0, 12)) : undefined;
+      const cap = Math.min(1_000_000, Math.max(100, parseInt(capital, 10) || 1000));
+      const out = await runCustomStrategyBacktest({
+        description: String(description).slice(0, 800),
+        market: mkt,
+        symbols: syms,
+        capitalPerTradeINR: cap,
+        deps: depsForSignals(),
+      });
+      if (!out?.ok && out?.stage === 'compile') return jsonError(res, 422, out.error);
+      res.set('Cache-Control', 'no-store');
+      res.json(out);
+    } catch (e) {
+      jsonError(res, 500, 'strategy lab failed', e);
     }
   });
 

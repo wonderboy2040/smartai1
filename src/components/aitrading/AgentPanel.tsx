@@ -204,7 +204,7 @@ function TradeSlots({ used, total, pnlINR, lossCapINR }: { used: number; total: 
   );
 }
 
-type CfgKey = 'maxTradesPerDay' | 'minAiScore' | 'minConfidence' | 'riskPerTradePct' | 'maxLeverage' | 'maxHoldMin' | 'cooldownMin' | 'dailyLossCapPct' | 'quorumPenalty';
+type CfgKey = 'maxTradesPerDay' | 'minAiScore' | 'minConfidence' | 'riskPerTradePct' | 'maxLeverage' | 'maxHoldMin' | 'cooldownMin' | 'dailyLossCapPct' | 'quorumPenalty' | 'nearMissScoreGap' | 'nearMissMinConfidence' | 'nearMissMaxPerDay';
 const CFG_FIELDS: { key: CfgKey; label: string; min: number; max: number; step: number; suffix: string; hint: string }[] = [
   { key: 'maxTradesPerDay', label: 'Trades/day', min: 1, max: 10, step: 1, suffix: '', hint: 'user spec: 3' },
   { key: 'minAiScore', label: 'Min AI score', min: 55, max: 95, step: 1, suffix: '', hint: '75+ = auto entry (user spec)' },
@@ -212,14 +212,18 @@ const CFG_FIELDS: { key: CfgKey; label: string; min: number; max: number; step: 
   { key: 'quorumPenalty', label: 'Quorum Penalty', min: 0, max: 15, step: 1, suffix: '', hint: 'thin committee (<5 voters) AI score bump' },
   { key: 'riskPerTradePct', label: 'Risk/trade', min: 0.25, max: 10, step: 0.25, suffix: '%', hint: '% of wallet equity' },
   { key: 'maxLeverage', label: 'Max leverage', min: 1, max: 10, step: 1, suffix: 'x', hint: 'futures ceiling' },
-  { key: 'maxHoldMin', label: 'Max hold', min: 5, max: 480, step: 5, suffix: 'm', hint: 'time-exit' },
+  { key: 'maxHoldMin', label: 'Max hold', min: 5, max: 480, step: 5, suffix: 'm', hint: 'time-exit (winner extension adds)' },
   { key: 'cooldownMin', label: 'Cooldown', min: 1, max: 240, step: 1, suffix: 'm', hint: 'between entries' },
   { key: 'dailyLossCapPct', label: 'Day loss cap', min: 0.5, max: 50, step: 0.5, suffix: '%', hint: 'stand-down' },
+  // v10.8 NEAR-MISS AUTO-TRADE knobs (user spec)
+  { key: 'nearMissScoreGap', label: 'Near-miss gap', min: 0, max: 20, step: 1, suffix: 'pt', hint: 'AI score within this far BELOW the bar still qualifies for near-miss auto-entry' },
+  { key: 'nearMissMinConfidence', label: 'NM min conf', min: 55, max: 95, step: 1, suffix: '%', hint: 'high-confidence floor for near-miss entries' },
+  { key: 'nearMissMaxPerDay', label: 'NM per day', min: 0, max: 5, step: 1, suffix: '', hint: 'max near-miss auto-entries per day (quality guard)' },
 ];
 
 function AgentConfigEditor({ cfg, onSaved }: { cfg: AgentView['config']; onSaved: (ok: boolean, msg: string) => void }) {
   const [draft, setDraft] = useState<Partial<Record<CfgKey, number>>>({});
-  const [toggles, setToggles] = useState<Partial<Record<'partialTpEnabled' | 'breakEvenAfterTp1' | 'manageManualPositions', boolean>>>({});
+  const [toggles, setToggles] = useState<Partial<Record<'partialTpEnabled' | 'breakEvenAfterTp1' | 'manageManualPositions' | 'nearMissAutoTrade' | 'winnerExtendEnabled', boolean>>>({});
   const [saving, setSaving] = useState(false);
   const dirty = Object.keys(draft).length > 0 || Object.keys(toggles).length > 0;
   const save = async () => {
@@ -234,6 +238,9 @@ function AgentConfigEditor({ cfg, onSaved }: { cfg: AgentView['config']; onSaved
   const beLockOn = toggles.breakEvenAfterTp1 != null ? toggles.breakEvenAfterTp1 : !!cfg.breakEvenAfterTp1;
   // v9.7: trend-flip exit on manual positions (default ON — user spec)
   const manualOn = toggles.manageManualPositions != null ? toggles.manageManualPositions : cfg.manageManualPositions !== false;
+  // v10.8: near-miss auto-trade + winner extension (default ON — user spec)
+  const nearMissOn = toggles.nearMissAutoTrade != null ? toggles.nearMissAutoTrade : cfg.nearMissAutoTrade !== false;
+  const winnerExtOn = toggles.winnerExtendEnabled != null ? toggles.winnerExtendEnabled : cfg.winnerExtendEnabled !== false;
   return (
     <div className="bg-black/25 rounded-xl p-3">
       <div className="text-[10px] font-black text-violet-300 tracking-wider mb-2">⚙ AGENT RULES (server-side enforced)</div>
@@ -254,8 +261,8 @@ function AgentConfigEditor({ cfg, onSaved }: { cfg: AgentView['config']; onSaved
         })}
       </div>
 
-      {/* v9.7 PRO TRADER toggles — partial TP + breakeven lock + manual trend-exit */}
-      <div className="grid grid-cols-3 gap-1.5 mt-2">
+      {/* v9.7 PRO TRADER toggles + v10.8 near-miss/winner-extension */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 mt-2">
         <button
           onClick={() => setToggles(t => ({ ...t, partialTpEnabled: !partialOn }))}
           className={`px-2 py-1.5 rounded-lg text-[10px] font-black border transition-colors ${partialOn
@@ -281,6 +288,22 @@ function AgentConfigEditor({ cfg, onSaved }: { cfg: AgentView['config']; onSaved
           title="TREND-FLIP exit manual positions par bhi lagega — board aapke held pair pe QUALIFYING opposite-side signal de to position turant cut (time-exit/partial-TP sirf agent ke apne trades par rehte hain)">
           🛡 TREND-EXIT MANUAL: {manualOn ? 'ON' : 'OFF'}
         </button>
+        <button
+          onClick={() => setToggles(t => ({ ...t, nearMissAutoTrade: !nearMissOn }))}
+          className={`px-2 py-1.5 rounded-lg text-[10px] font-black border transition-colors ${nearMissOn
+            ? 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/40'
+            : 'bg-black/30 text-slate-500 border-slate-700/40'}`}
+          title="NEAR-MISS AUTO-TRADE — jab full bar koi clear na kare, sabse highest AI-score + high-confidence near-miss auto-entry lagta hai (per-day capped, journal-tagged)">
+          🎯 NEAR-MISS AUTO: {nearMissOn ? 'ON' : 'OFF'}
+        </button>
+        <button
+          onClick={() => setToggles(t => ({ ...t, winnerExtendEnabled: !winnerExtOn }))}
+          className={`px-2 py-1.5 rounded-lg text-[10px] font-black border transition-colors ${winnerExtOn
+            ? 'bg-violet-500/15 text-violet-300 border-violet-500/40'
+            : 'bg-black/30 text-slate-500 border-slate-700/40'}`}
+          title="WINNER EXTENSION — time-exit par profitable position (opposite signal na ho) ki window extend hoti hai + SL breakeven lock — winners ko bhaagne ka room milta hai">
+          ♾ WIN-EXTEND: {winnerExtOn ? 'ON' : 'OFF'}
+        </button>
       </div>
       {/* v7.0: the T1/T2/runner split at a glance */}
       <div className="flex items-center gap-1.5 mt-1.5" title="T1/T2/runner exit split (T1+T2 sliders ke through adjust hota hai)">
@@ -300,6 +323,7 @@ function AgentConfigEditor({ cfg, onSaved }: { cfg: AgentView['config']; onSaved
         {dirty && <span className="text-[9px] text-amber-400/80 font-mono">unsaved changes</span>}
         <span className="ml-auto text-[9px] font-mono text-slate-500">
           auto bar: AI score ≥ {Number(cfg.minAiScore ?? 75)} YA STRONG {Number(cfg.minConfidence)}% + {Math.round(Number(cfg.minAgreement) * 100)}% agreement
+          {cfg.nearMissAutoTrade !== false ? ` · near-miss gap ${Number(cfg.nearMissScoreGap ?? 10)}pt conf≥${Number(cfg.nearMissMinConfidence ?? 70)}%` : ''}
         </span>
       </div>
     </div>
@@ -680,6 +704,31 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
                 corr-guard |r|≤0.7
               </span>
             )}
+            {/* v10.8: near-miss auto-trade chip */}
+            <span className={`px-2 py-0.5 rounded-md text-[9px] font-mono border ${acc.nearMiss?.enabled
+              ? 'bg-fuchsia-500/10 border-fuchsia-500/30 text-fuchsia-300'
+              : 'bg-black/30 border-slate-600/40 text-slate-500'}`}
+              title={acc.nearMiss?.enabled
+                ? `Jab full bar koi clear na kare: highest AI-score near-miss (gap ≤ ${acc.nearMiss?.scoreGap}pt, conf ≥ ${acc.nearMiss?.minConfidence}%, 5+ voters) auto-entry lagta hai — ${acc.nearMiss?.usedToday}/${acc.nearMiss?.maxPerDay} aaj use ho chuke`
+                : 'Near-miss auto-trade OFF hai — Agent Rules me enable karo'}>
+              near-miss auto {acc.nearMiss?.enabled ? `≤${acc.nearMiss?.scoreGap}pt · ${acc.nearMiss?.usedToday ?? 0}/${acc.nearMiss?.maxPerDay ?? 1}` : 'OFF'}
+            </span>
+            {/* v10.8: winner-extension chip */}
+            <span className={`px-2 py-0.5 rounded-md text-[9px] font-mono border ${acc.winnerExtension?.enabled
+              ? 'bg-violet-500/10 border-violet-500/30 text-violet-300'
+              : 'bg-black/30 border-slate-600/40 text-slate-500'}`}
+              title={acc.winnerExtension?.enabled
+                ? `Time-exit par profitable position ki window +${acc.winnerExtension?.extendPct}% extend hoti hai (max ${acc.winnerExtension?.max}×) + SL breakeven lock — losers original window par hi cut`
+                : 'Winner extension OFF hai'}>
+              win-extend {acc.winnerExtension?.enabled ? `+${acc.winnerExtension?.extendPct}% ×${acc.winnerExtension?.max}${acc.winnerExtension?.open?.length ? ` · ${acc.winnerExtension.open.map(o => `${o.pair.replace(/^B-/, '').replace('_USDT', '')}:${o.windowMin}m`).join(', ')}` : ''}` : 'OFF'}
+            </span>
+            {/* v10.8 PRO #4: frozen mandate chip */}
+            {acc.mandate && (
+              <span className="px-2 py-0.5 rounded-md text-[9px] font-mono border bg-amber-500/10 border-amber-500/30 text-amber-300"
+                title={`MANDATE frozen at agent start (${new Date(acc.mandate.frozenAt).toLocaleString('en-IN')}) — mid-session risk-cap loosening ignore hoti hai; STOP+START par naya mandate freezes. Caps: ${Object.entries(acc.mandate.caps || {}).filter(([, v]) => v != null).map(([k, v]) => `${k}=${v}`).join(' · ')}`}>
+                🔒 mandate {acc.mandate.mode?.toUpperCase()}
+              </span>
+            )}
             {acc.v2ModelsEnabled != null && (
               <span className={`px-2 py-0.5 rounded-md text-[9px] font-mono border ${acc.v2ModelsEnabled ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-black/30 border-slate-600/40 text-slate-500'}`}
                 title={acc.v2ModelsEnabled ? 'V2 models (Sentiment, InstFlow, Fundamentals) enabled (14 voters)' : 'V2 models disabled — set AI_ENABLE_V2_MODELS=true in Render'}>
@@ -689,11 +738,25 @@ export const AgentPanel = memo(function AgentPanel({ notify }: { notify: (ok: bo
           </div>
           {acc.lastNearMisses && acc.lastNearMisses.length > 0 && (
             <div className="mt-1.5 pt-1.5 border-t border-cyan-500/15 flex items-center gap-1.5 flex-wrap text-[9px] font-mono">
-              <span className="text-amber-300 font-bold">NEAR-MISSES:</span>
+              <span className="text-amber-300 font-bold" title="Closest signals to the auto-entry bar — top score + high conf wale auto-trade ho jaate hain (jab tak daily near-miss budget baaki hai)">
+                NEAR-MISSES {acc.nearMiss?.enabled ? '(auto-traded · best one)' : '(diagnostic only)'}:
+              </span>
               {acc.lastNearMisses.map((nm) => (
                 <span key={nm.pair} className="px-1.5 py-0.5 rounded bg-black/30 text-slate-300 border border-slate-700/40"
                   title={`${nm.symbol}: score ${nm.aiScore} (needed ${nm.needScore}), ${nm.voters} voters${nm.quorumCapped ? ' (QUORUM-CAPPED)' : ''}, ${nm.confidence}% conf`}>
                   {nm.symbol} {nm.aiScore}/{nm.needScore} ({nm.voters}v{nm.quorumCapped ? ' ⚠️' : ''})
+                </span>
+              ))}
+            </div>
+          )}
+          {/* v10.8: today's near-miss auto-entries (audit strip) */}
+          {acc.nearMiss?.todayEntries && acc.nearMiss.todayEntries.length > 0 && (
+            <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[9px] font-mono">
+              <span className="text-fuchsia-300 font-bold">NEAR-MISS AUTO-ENTRIES TODAY:</span>
+              {acc.nearMiss.todayEntries.map((e, i) => (
+                <span key={`${e.symbol}-${e.ts}-${i}`} className="px-1.5 py-0.5 rounded bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/30"
+                  title={`${e.symbol}: AI ${e.aiScore} vs bar ${e.needScore} · conf ${e.confidence}% · ${e.voters} voters`}>
+                  {e.symbol} AI {e.aiScore}/{e.needScore}
                 </span>
               ))}
             </div>

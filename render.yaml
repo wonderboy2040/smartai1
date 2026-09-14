@@ -92,6 +92,11 @@ services:
       # sizes at half-Kelly. Negative edge → entry skipped.
       - key: AI_ENABLE_KELLY_SIZING
         sync: false
+      # AI COUNCIL DEBATE (v10.8 Pro #1): bull advocate → bear advocate
+      # → PM verdict — 3 grounded LLM steps instead of single-shot.
+      # Default ON; set 0/off to fall back to the legacy prompt.
+      - key: AI_COUNCIL_DEBATE
+        sync: false
       # WICK FILTER (Pro #3): cross-exchange price validation against
       # Binance. ON by default — set 1 to disable; thresholds tunable
       # via AI_WICK_THRESHOLD_PCT / AI_WICK_ALT_THRESHOLD_PCT.

@@ -24,6 +24,8 @@ import { maxSaneLeverage } from './ensemble.js';
 import { loadAgentConfig, agentStatus } from './agent.js';
 import { coindcxConnected } from '../mcp/coindcx.js';
 import { sentimentStatus } from './sentiment.js';
+// v10.8 PRO #3: persistent chat memory — the desk remembers past turns
+import { rememberChat, memoryContextFor } from './agentMemory.js';
 
 const MAX_TOOL_ROUNDS = 6;
 const PER_ROUND_TIMEOUT_MS = 30000;
@@ -167,6 +169,22 @@ export const CRYPTO_AGENT_TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'backtest_custom_strategy',
+      description: 'STRATEGY LAB (v10.8): describe a strategy idea in plain English (e.g. "buy when RSI crosses above 30 and volume is 2x average, exit at 2R or 48 bars") — an LLM compiles it into a bounded rule set, which is validated against a strict whitelist and replayed walk-forward on historical candles (crypto 1h / India daily). Returns the exact rules that ran + win-rate, avg R, profit factor, max DD, exit reasons. Use when the user asks to test a strategy idea or says "backtest this".',
+      parameters: {
+        type: 'object',
+        properties: {
+          description: { type: 'string', description: 'The strategy idea in natural language (entry conditions, exit conditions, stop/target style, max hold)' },
+          market: { type: 'string', description: '"SPOT"/"FUTURES" → CRYPTO universe, "INDIA" → NSE daily candles. Default CRYPTO.' },
+          symbols: { type: 'array', items: { type: 'string' }, description: 'Optional 1-6 symbols (e.g. ["BTC","SOL"]). Defaults to the desk universe.' },
+        },
+        required: ['description'],
+      },
+    },
+  },
 ];
 
 function geminiTools() {
@@ -202,6 +220,7 @@ HOW YOU WORK (agentic protocol):
 - P&L questions → get_pnl (period: today/7d/30d/all)
 - Track-record / accuracy questions → get_track_record
 - "Agent kya kar raha hai" → get_agent_status
+- Strategy idea / "backtest this" → backtest_custom_strategy (describe the idea in plain English — the lab compiles + replays it honestly)
 
 ${fullTicketRules()}
 
@@ -513,6 +532,31 @@ async function executeCryptoTool(name, args, deps) {
         };
       }
 
+      case 'backtest_custom_strategy': {
+        // v10.8 PRO #2: NL → bounded rules → walk-forward replay
+        const { runCustomStrategyBacktest } = await import('./strategyLab.js');
+        const description = String(args.description || '').trim();
+        if (description.length < 8) return { error: 'description too short — batao entry/exit idea kya hai' };
+        const market = String(args.market || '').toUpperCase() === 'INDIA' ? 'INDIA' : 'CRYPTO';
+        const symbols = Array.isArray(args.symbols)
+          ? args.symbols.map(s => String(s).toUpperCase().replace(/[^A-Z0-9\-]/g, '')).filter(Boolean).slice(0, 6)
+          : undefined;
+        const out = await runCustomStrategyBacktest({ description, market, symbols, deps }).catch(e => ({ ok: false, error: String(e?.message || e) }));
+        if (!out?.ok && out?.stage === 'compile') return { error: `strategy compile failed: ${out.error}` };
+        if (!out?.ok) return { error: out?.error || 'strategy lab run failed — historical data unavailable, retry in a minute' };
+        return {
+          strategyName: out.rules?.name ?? 'custom strategy',
+          market: out.market,
+          rules: out.rules,
+          symbolsTested: out.scannedSymbols,
+          stats: out.stats,
+          exitDist: out.exitDist,
+          perSymbol: (out.perSymbol || []).map(p => ({ symbol: p.symbol, ok: p.ok, trades: p.stats?.trades ?? 0, winRate: p.stats?.winRate ?? null, avgR: p.stats?.avgR ?? null })),
+          recentTrades: (out.trades || []).slice(0, 8).map(t => ({ symbol: t.symbol, side: t.side, r: t.r, reason: t.reason, holdBars: t.holdBars })),
+          disclaimer: out.disclaimer,
+        };
+      }
+
       default:
         return { error: `Unknown tool: ${name}` };
     }
@@ -666,7 +710,10 @@ export async function runCryptoAgent(messages, deps) {
     aiOnline: !!(d.KEYS?.gemini || d.KEYS?.groq || d.KEYS?.cerebras),
   };
 
-  const systemPrompt = buildCryptoSystemPrompt(ctx);
+  // v10.8 PRO #3: persistent memory — recent turns + recurring focus
+  // feed the system prompt (null on a fresh install = zero bloat).
+  const memBlock = memoryContextFor('crypto');
+  const systemPrompt = buildCryptoSystemPrompt(ctx) + (memBlock ? `\n\nDESK MEMORY — past conversations with this user:\n${memBlock}` : '');
   const toolTrace = [];
 
   const chain = [
@@ -680,6 +727,10 @@ export async function runCryptoAgent(messages, deps) {
     try {
       const result = await step.run();
       if (result) {
+        // v10.8 PRO #3: record the answered turn — next session's prompt
+        // carries this continuity (best-effort, never blocks the reply).
+        const lastUser = [...(messages || [])].reverse().find(m => m?.role === 'user')?.content || '';
+        rememberChat('crypto', { q: lastUser, a: result.text });
         return {
           ok: true,
           text: result.text,

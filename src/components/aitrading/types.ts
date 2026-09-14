@@ -610,6 +610,40 @@ export interface BacktestResult {
   generatedAt?: number;
 }
 
+// ---------------- v10.8: NL Custom Strategy Lab ----------------
+export interface StrategyLabCondition {
+  indicator: string;
+  operator?: string;
+  value: number | string;
+}
+
+export interface StrategyLabResult {
+  ok: boolean;
+  stage?: 'compile' | 'done';
+  error?: string;
+  market?: MarketKind;
+  description?: string;
+  /** the EXACT validated rules that ran — full transparency */
+  rules?: {
+    name: string;
+    direction: 'LONG' | 'SHORT';
+    entry: StrategyLabCondition[];
+    exit?: StrategyLabCondition[];
+    stopLossAtr: number;
+    takeProfitR: number;
+    maxHoldBars: number;
+  };
+  params?: { capitalPerTradeINR?: number; slippagePct?: number; warmupBars?: number };
+  scannedSymbols?: number;
+  perSymbol?: { symbol: string; ok: boolean; reason?: string | null; stats?: BacktestStats }[];
+  stats: BacktestStats;
+  exitDist?: Record<string, number>;
+  equity?: { i: number; cumR: number; symbol: string; r: number | null }[];
+  trades?: BacktestTrade[];
+  disclaimer?: string;
+  generatedAt?: number;
+}
+
 // ---------------- v6.5: Alerts + AI keys + Dhan ----------------
 export interface MaskedSecret {
   configured: boolean;
@@ -863,6 +897,15 @@ export interface AgentConfig {
   manageManualPositions?: boolean;
   /** v10.2 — thin committee (<5 voters) AI score bump (default 10, range 0-15) */
   quorumPenalty?: number;
+  /** v10.8 — near-miss auto-trade (user spec: highest-score near-misses with high conf get entered) */
+  nearMissAutoTrade?: boolean;
+  nearMissScoreGap?: number;
+  nearMissMinConfidence?: number;
+  nearMissMaxPerDay?: number;
+  /** v10.8 — winner extension at time-exit (profitable positions get window + SL→BE) */
+  winnerExtendEnabled?: boolean;
+  winnerExtendPct?: number;
+  winnerExtendMax?: number;
 }
 
 /** v7.0: what the agent WOULD invest on the next STRONG signal. */
@@ -977,6 +1020,24 @@ export interface AgentView {
     }>;
     /** v10.2 Step 1: V2 models flag (Sentiment, InstFlow, Fundamentals) */
     v2ModelsEnabled?: boolean;
+    /** v10.8 — near-miss auto-trade state */
+    nearMiss?: {
+      enabled: boolean;
+      scoreGap: number;
+      minConfidence: number;
+      maxPerDay: number;
+      usedToday: number;
+      todayEntries: Array<{ ts: number; symbol: string; aiScore: number | null; needScore: number | null; confidence: number | null; voters: number | null }>;
+    };
+    /** v10.8 — winner-extension state ("trade ke hisaab se extension") */
+    winnerExtension?: {
+      enabled: boolean;
+      extendPct: number;
+      max: number;
+      open: Array<{ pair: string; extensions: number; windowMin: number; lastExtendAt: number | null }>;
+    };
+    /** v10.8 PRO #4 — the frozen mandate (null = agent stopped) */
+    mandate?: { frozenAt: number; mode: string; caps: Record<string, number | null> } | null;
   };
   today: {
     day: string;

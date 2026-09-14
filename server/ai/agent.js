@@ -31,7 +31,10 @@ import { loadJSON, saveJSON } from '../lib/store.js';
 import { durablePut } from '../mcp/durable.js';
 import { coindcxConnected } from '../mcp/coindcx.js';
 import { walletSnapshot, executeFuturesSignal, closeFuturesPosition, fetchUsdInr, inrOfUsdt } from './futures.js';
-import { loadConfig, loadJournal, dailyStats, todayIST } from './coindcxOrders.js';
+import {
+  loadConfig, loadJournal, dailyStats, todayIST,
+  getPositionsWithPnl, withJournalLock, saveJournal, pushEntry,
+} from './coindcxOrders.js';
 // v10.1 accuracy upgrade (B4): pair-level correlation for the entry guard
 import { pairCorrelation } from './correlation.js';
 // v10.2: near-miss diagnostics + V2 model flag exposure (Step 1)
@@ -101,6 +104,27 @@ export const AGENT_DEFAULTS = {
   // edge of the signal's confidence bucket (trust.js calibration, ≥10
   // settled) sizes the trade at HALF-Kelly, never above the ceiling.
   kellySizing: false,
+  // ---- v10.8 NEAR-MISS AUTO-TRADE (user spec: "Near Miss ke trade
+  // mat chhodo — jo HIGHEST AI Score + high confidence ho usko auto
+  // trade lagao, entry + exit + trade ke hisaab se extension") ----
+  // When no signal clears the full bar (AI score / STRONG committee)
+  // this scan-cycle, the single BEST near-miss (highest AI score,
+  // high confidence, full quorum) can still be entered — capped,
+  // journal-tagged, and managed with the SAME exit gauntlet.
+  nearMissAutoTrade: true,    // master switch (default ON — user spec)
+  nearMissScoreGap: 10,       // AI score within this many points BELOW the effective bar still qualifies
+  nearMissMinConfidence: 70,  // "high confidence" floor for a near-miss entry
+  nearMissMaxPerDay: 1,       // quality guard: max near-miss entries/day (they're lower-conviction)
+  // ---- v10.8 WINNER EXTENSION ("trade ke hisaab se extension") ----
+  // At time-exit, a position that is IN PROFIT with NO opposite
+  // qualifying signal gets its window EXTENDED (each extension =
+  // +winnerExtendPct% of its dynamic window, max winnerExtendMax
+  // times) and SL moved to breakeven — winners get room to run,
+  // losers still get cut at the original window. Applies to AGENT
+  // positions only (manual positions keep the flip/time rules).
+  winnerExtendEnabled: true,
+  winnerExtendPct: 50,        // % of the dynamic window added per extension
+  winnerExtendMax: 2,         // max extensions per position
 };
 
 export function loadAgentConfig() {
@@ -133,6 +157,13 @@ const NUM_CLAMPS = {
   tp2ClosePct: [10, 80],
   // v10.2 Step 3: quorum penalty range
   quorumPenalty: [0, 15],
+  // v10.8 near-miss auto-trade knobs
+  nearMissScoreGap: [0, 20],
+  nearMissMinConfidence: [55, 95],
+  nearMissMaxPerDay: [0, 5],
+  // v10.8 winner-extension knobs
+  winnerExtendPct: [10, 100],
+  winnerExtendMax: [0, 4],
 };
 export function updateAgentConfig(patch = {}) {
   const cfg = loadAgentConfig();
@@ -158,6 +189,9 @@ export function updateAgentConfig(patch = {}) {
   if (patch.correlationGuard != null) next.correlationGuard = !!patch.correlationGuard;
   // v10.6 Kelly-lite toggle
   if (patch.kellySizing != null) next.kellySizing = !!patch.kellySizing;
+  // v10.8 near-miss auto-trade + winner-extension toggles
+  if (patch.nearMissAutoTrade != null) next.nearMissAutoTrade = !!patch.nearMissAutoTrade;
+  if (patch.winnerExtendEnabled != null) next.winnerExtendEnabled = !!patch.winnerExtendEnabled;
   // v7.0: keep the split honest — T1+T2 ≤ 90, runner ≥ 10, sums shown
   if (next.tp1ClosePct + next.tp2ClosePct > 90) {
     const scale = 90 / (next.tp1ClosePct + next.tp2ClosePct);
@@ -194,6 +228,10 @@ function freshState() {
     // fires once when margin drops below 2 USDT, resets+notifies when
     // margin restores above 2 USDT.
     futuresMarginAlerted: false,
+    // v10.8 PRO #4: the frozen mandate — captured at START, immutable
+    // for the session, released on STOP (the journal MANDATE entry is
+    // the permanent audit record).
+    mandate: null,
     log: [],
   };
 }
@@ -217,6 +255,187 @@ function log(level, text) {
   if (_state.log.length > LOG_RING) _state.log = _state.log.slice(-LOG_RING);
   const tag = level === 'entry' ? '🟢' : level === 'exit' ? '🔴' : level === 'error' ? '⚠️' : level === 'skip' ? '⋯' : 'ℹ️';
   console.log(`[agent] ${tag} ${text}`);
+}
+
+// ============================================================
+// v10.8 PRO #4 — BOUNDED-AUTONOMY MANDATE (Vibe-Trading port)
+// ------------------------------------------------------------
+// A FROZEN, immutable risk-cap contract captured at agent START.
+// The saved config stays user-owned, but MID-SESSION the agent can
+// only ever get STRICTER: any change that would LOOSEN a risk cap
+// (more trades, more risk %, more leverage, longer hold…) is clamped
+// to the frozen value until the agent is STOPPED and re-STARTED —
+// a bug or bad admin action can't quietly widen the agent's limits
+// while it's trading. Every freeze lands in the trade journal as an
+// immutable record of exactly which caps were active per session.
+// ============================================================
+/** Each cap's "tighter of the two" rule — the value that risks LESS. */
+export const MANDATE_CAPS = {
+  maxTradesPerDay: (a, b) => Math.min(a, b),
+  riskPerTradePct: (a, b) => Math.min(a, b),
+  maxLeverage: (a, b) => Math.min(a, b),
+  dailyLossCapPct: (a, b) => Math.min(a, b),   // lower stand-down trigger = stricter
+  minEquityINR: (a, b) => Math.max(a, b),      // higher floor = stricter
+  cooldownMin: (a, b) => Math.max(a, b),       // longer wait = stricter
+  maxHoldMin: (a, b) => Math.min(a, b),        // shorter hold = stricter
+  minAiScore: (a, b) => Math.max(a, b),        // higher bar = stricter
+  minConfidence: (a, b) => Math.max(a, b),
+  minAgreement: (a, b) => Math.max(a, b),
+  minRollingWinRate: (a, b) => Math.max(a, b),
+  quorumPenalty: (a, b) => Math.max(a, b),
+};
+
+function _deepFreeze(o) {
+  Object.freeze(o);
+  for (const v of Object.values(o)) if (v && typeof v === 'object' && !Object.isFrozen(v)) _deepFreeze(v);
+  return o;
+}
+
+/** Capture the mandate at START. PURE (no side effects). */
+export function freezeMandate(cfg, mode) {
+  const caps = {};
+  for (const k of Object.keys(MANDATE_CAPS)) {
+    const v = Number(cfg?.[k]);
+    caps[k] = Number.isFinite(v) ? v : null;
+  }
+  return _deepFreeze({ frozenAt: Date.now(), mode: String(mode || cfg?.mode || 'paper'), caps: _deepFreeze(caps) });
+}
+
+/**
+ * The effective config for THIS tick: current config with any
+ * mid-session LOOSENING clamped back to the frozen mandate. PURE.
+ * @returns {{cfg: object, clamped: string[]}} fields that were clamped.
+ */
+export function mandateEffectiveCfg(cfg, mandate) {
+  if (!mandate?.caps) return { cfg, clamped: [] };
+  const out = { ...cfg };
+  const clamped = [];
+  for (const [k, tighter] of Object.entries(MANDATE_CAPS)) {
+    const frozen = Number(mandate.caps[k]);
+    const now = Number(cfg?.[k]);
+    if (Number.isFinite(frozen) && Number.isFinite(now) && tighter(now, frozen) !== now) {
+      out[k] = frozen;
+      clamped.push(k);
+    }
+  }
+  return { cfg: out, clamped };
+}
+
+/** Journal audit entry — the immutable record of the session's caps. */
+async function journalMandateEntry(mandate, trading) {
+  try {
+    await withJournalLock(async () => {
+      const j = loadJournal();
+      pushEntry(j, {
+        day: todayIST(), kind: 'MANDATE', source: 'agent', market: 'AGENT',
+        text: `AGENT MANDATE FROZEN (${mandate.mode}) — caps: ${Object.entries(mandate.caps)
+          .filter(([, v]) => v != null).map(([k, v]) => `${k}=${v}`).join(', ')}`
+          .slice(0, 400),
+        caps: { ...mandate.caps }, frozenAt: mandate.frozenAt, mode: mandate.mode,
+        riskMode: trading?.mode ?? null,
+      });
+      saveJournal(j);
+    });
+  } catch { /* best-effort audit */ }
+}
+
+// ============================================================
+// v10.8 — NEAR-MISS AUTO-TRADE + WINNER EXTENSION (pure cores)
+// ============================================================
+/**
+ * The full-qualification bar for one signal (quorum-aware), shared by
+ * the qualifier and the near-miss gate so the gap math is one truth.
+ * PURE.
+ */
+export function effectiveScoreBar(cfg, s) {
+  const vc = Number(s?.voters ?? s?.participating ?? 0);
+  return vc >= 5 ? Number(cfg.minAiScore) : Number(cfg.minAiScore) + Number(cfg.quorumPenalty ?? 10);
+}
+
+/**
+ * Near-miss gate — is this signal CLOSE to the bar but not over it,
+ * with high confidence and a full quorum? PURE.
+ * @returns {null|{aiScore:number, needScore:number, gap:number, confidence:number, voters:number}}
+ */
+export function nearMissEntryGate(cfg, s) {
+  if (cfg?.nearMissAutoTrade === false) return null;
+  if (Number(cfg?.nearMissMaxPerDay) <= 0) return null;
+  if (!s?.plan || !s.side) return null;
+  if (s.executable === false) return null;
+  const grade = String(s.grade || '').toUpperCase();
+  if (grade !== 'STRONG' && grade !== 'ACTION') return null; // WATCH noise is not a near-miss
+  const vc = Number(s.voters ?? s.participating ?? 0);
+  if (vc < 5) return null; // quorum-honest: thin-committee near-miss is noise
+  const conf = Number(s.confidence ?? 0);
+  if (conf < Number(cfg?.nearMissMinConfidence ?? 70)) return null;
+  const ai = Number(s.superIntel?.aiScore ?? 0);
+  const bar = effectiveScoreBar(cfg, s);
+  const gap = Number(cfg?.nearMissScoreGap ?? 10);
+  if (ai >= bar) return null;         // already fully qualifies — not a near-miss
+  if (ai < bar - gap) return null;    // too far below the bar
+  return { aiScore: ai, needScore: bar, gap, confidence: Math.round(conf), voters: vc };
+}
+
+/** Near-miss entries today (journal NEAR_MISS markers, source 'agent'). */
+export function nearMissEntriesToday(j) {
+  const day = todayIST();
+  return (j?.entries || []).filter(e => e.day === day && e.kind === 'NEAR_MISS' && e.source === 'agent');
+}
+
+/**
+ * Winner-extension window math. PURE.
+ * baseWindowMin + extensions × extendPct% of base, rounded to minutes.
+ */
+export function effectiveHoldWindowMin(baseWindowMin, extensions, extendPct) {
+  const base = Number(baseWindowMin) > 0 ? Number(baseWindowMin) : 90;
+  const ext = Math.max(0, Math.floor(Number(extensions) || 0));
+  const pct = Number(extendPct) > 0 ? Number(extendPct) : 50;
+  return Math.round(base * (1 + (pct / 100) * ext));
+}
+
+/**
+ * Winner-extension eligibility. PURE.
+ * A position may extend its time-exit window only when: extension is
+ * ON, under the max count, the position is IN PROFIT, and the board
+ * has NOT printed a qualifying opposite-side signal (that's a
+ * trend-flip exit, not an extension).
+ */
+export function extensionEligible({ enabled, extensions, maxExtensions, pnlPct, oppositeQualifying, source }) {
+  if (enabled === false) return false;
+  if (Number(extensions) >= Math.max(0, Number(maxExtensions) || 0)) return false;
+  if (String(source || '').toLowerCase() === 'manual') return false; // agent positions only
+  if (oppositeQualifying) return false; // flip beats extension — always
+  return Number(pnlPct) > 0;             // only winners earn room
+}
+
+/**
+ * Move an open position's SL to its entry price (breakeven) in the
+ * journal — the watcher reads p.sl, so this arms the risk-free
+ * runner immediately. Only ever TIGHTENS (long: sl<entry→entry;
+ * short: sl>entry→entry). Returns true when moved.
+ */
+async function moveAgentSlToBreakeven(posId) {
+  return withJournalLock(async () => {
+    const j = loadJournal();
+    const pos = (j.positions || []).find(x => x.id === posId);
+    if (!pos || (pos.status !== 'OPEN' && pos.status !== 'UNKNOWN')) return false;
+    const entry = Number(pos.entryPrice);
+    if (!(entry > 0)) return false;
+    const isLong = /^(L|B)/i.test(String(pos.side || ''));
+    const sl = Number(pos.sl);
+    const improves = !Number.isFinite(sl) || (isLong ? sl < entry : sl > entry);
+    if (!improves) return false;
+    pos.sl = entry;
+    pos.slMovedAt = Date.now();
+    pushEntry(j, {
+      day: todayIST(), kind: 'SL', source: 'agent', market: pos.market || 'CRYPTO',
+      symbol: pos.pair, positionId: pos.id,
+      text: `WINNER-EXTENSION breakeven lock — SL ${sl} → entry ${entry} (extension granted)`,
+      from: Number.isFinite(sl) ? sl : null, to: entry,
+    });
+    saveJournal(j);
+    return true;
+  }).catch(() => false);
 }
 
 // ---------------- agent trade accounting (journal is truth) ----------------
@@ -271,9 +490,16 @@ export async function agentStart({ mode, liveConfirmPhrase } = {}) {
   }
   const next = { ...cfg, enabled: true, mode: wantMode };
   saveAgentConfig(next);
+  // v10.8 PRO #4: BOUNDED-AUTONOMY MANDATE — freeze the risk caps at
+  // START (immutable for the session) + journal the exact values as
+  // an audit record. Mid-session config changes can only TIGHTEN.
+  const mandate = freezeMandate(next, wantMode);
+  _state.mandate = JSON.parse(JSON.stringify(mandate)); // persisted copy (frozen object stays in-memory)
+  await journalMandateEntry(mandate, trading);
   _state.runningSince = Date.now();
   _state.pausedToday = null;
   log('info', `AGENT STARTED (${wantMode.toUpperCase()}) — max ${next.maxTradesPerDay} trades/day · risk ${next.riskPerTradePct}%/trade · SL-based wallet sizing · PRO exits: T1 ${next.partialTpEnabled ? `${next.tp1ClosePct}%+BE-lock` : 'off'} · T2 ${next.tp2ClosePct}% · runner ${next.runnerPct}% trailing`);
+  log('info', `MANDATE FROZEN — ${Object.entries(mandate.caps).filter(([, v]) => v != null).map(([k, v]) => `${k}=${v}`).join(' · ')} (mid-session loosening clamp active — restart par naya mandate)`);
   persistState();
   // v9.7: honest LIVE-start warning — the #1 "agent chal raha hai par
   // trade nahi karta" cause was a wallet below the equity floor. Tell
@@ -294,7 +520,10 @@ export async function agentStart({ mode, liveConfirmPhrase } = {}) {
 export function agentStop({ reason = 'user' } = {}) {
   const cfg = loadAgentConfig();
   saveAgentConfig({ ...cfg, enabled: false });
-  log('info', `AGENT STOPPED (${reason})`);
+  // v10.8: session over → mandate released (next START re-freezes
+  // the then-current config). The journal record stays forever.
+  _state.mandate = null;
+  log('info', `AGENT STOPPED (${reason}) — mandate released`);
   persistState();
   return { ok: true, config: { ...cfg, enabled: false } };
 }
@@ -477,8 +706,20 @@ export async function agentTick(deps, sendTelegram) {
 }
 
 async function _tick(deps, sendTelegram) {
-  const cfg = loadAgentConfig();
+  const userCfg = loadAgentConfig();
   const trading = loadConfig();
+  // v10.8 PRO #4: MANDATE GUARD — mid-session, the agent's risk caps
+  // can only get STRICTER. Any config change that would LOOSEN a
+  // frozen cap is clamped back to the mandate value (the saved user
+  // config is untouched; a restart re-freezes fresh).
+  let cfg = userCfg;
+  if (cfg.enabled && _state.mandate?.caps) {
+    const eff = mandateEffectiveCfg(cfg, _state.mandate);
+    if (eff.clamped.length > 0) {
+      log('skip', `MANDATE GUARD — mid-session loosening ignored: ${eff.clamped.join(', ')} (mandate frozen at start; STOP+START to apply new values)`);
+      cfg = eff.cfg;
+    }
+  }
   _state.scans++;
   _state.lastScanAt = Date.now();
   if (_state.runningSince == null) _state.runningSince = _state.lastScanAt;
@@ -561,7 +802,9 @@ async function _tick(deps, sendTelegram) {
   if (cfg.mode === 'live') {
     const wr = rollingAgentWinRate(j, cfg.rollingWindow);
     if (wr != null && wr < cfg.minRollingWinRate) {
-      const next = { ...cfg, mode: 'paper' };
+      // v10.8: save from userCfg — a mid-session self-downgrade must
+      // never persist mandate-clamped caps over the user's own config.
+      const next = { ...userCfg, mode: 'paper' };
       saveAgentConfig(next);
       _state.winRateDowngraded = { at: Date.now(), winRate: wr, trades: cfg.rollingWindow };
       log('skip', `SELF-DOWNGRADE LIVE→PAPER — rolling win-rate ${wr}% (last ${cfg.rollingWindow}) < floor ${cfg.minRollingWinRate}%`);
@@ -581,51 +824,12 @@ async function _tick(deps, sendTelegram) {
     persistState(); return;
   }
 
-  // ---- time-exit sweep (auto exit of aging agent positions) ----
-  // v10.1 B2: the window is now PER-POSITION — the entry-time ATR%
-  // (state.entryMeta) drives dynamicMaxHoldMin. Fast movers exit at
-  // half the base window, slow movers get a third longer; unknown
-  // entries keep the base window (honest default).
-  const closures = [];
-  const timeExited = new Set(); // v9.6: ids closed this tick (trend-flip must not double-close)
-  for (const p of openAgent) {
-    const holdMin = holdWindowFor(cfg, p.pair);
-    const ageMin = (Date.now() - (p.openedAt || 0)) / 60000;
-    if (ageMin >= holdMin) {
-      const out = p.market === 'FUTURES'
-        ? await closeFuturesPosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }))
-        : p.market === 'GLOBALFUTURES'
-          ? await (async () => {
-              const { closeGlobalPosition } = await import('./globalFutures.js');
-              return closeGlobalPosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }));
-            })()
-          : await (async () => {
-              const { closePosition } = await import('./coindcxOrders.js');
-              return closePosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }));
-            })();
-      if (out?.ok) {
-        timeExited.add(p.id);
-        // v7.0.2: honest TOTAL pnl — booked partial legs + the final leg
-        // (p.pnlINR alone is only the remaining runner's leg).
-        const totalPnl = (out.position?.pnlINR ?? 0) + (out.position?.bookedPnlINR ?? 0);
-        const hasBooked = (out.position?.bookedPnlINR ?? 0) !== 0;
-        closures.push({ pair: p.pair, pnlINR: totalPnl, reason: `TIME-EXIT after ${Math.round(ageMin)}m${holdMin !== cfg.maxHoldMin ? ` (dynamic window ${holdMin}m — ATR-adaptive)` : ''}${hasBooked ? ' (incl. booked T1/T2 legs)' : ''}` });
-        log('exit', `TIME-EXIT ${p.pair} after ${Math.round(ageMin)}m (window ${holdMin}m${holdMin !== cfg.maxHoldMin ? ', ATR-adaptive' : ''}) — pnl ₹${r2(totalPnl)}${hasBooked ? ` (final ${r2(out.position?.pnlINR ?? 0)} + booked ${r2(out.position?.bookedPnlINR ?? 0)})` : ''}`);
-        // B2 hygiene: the entry's volatility record is spent with the position
-        if (_state.entryMeta) delete _state.entryMeta[p.pair];
-      } else {
-        log('error', `time-exit failed for ${p.pair}: ${String(out?.error || '').slice(0, 100)}`);
-      }
-    }
-  }
-  if (closures.length > 0) {
-    await notify(sendTelegram, `🤖 <b>AGENT time-exit</b>\n${closures.map(c => `• ${c.pair} — ${c.reason}: ₹${c.pnlINR ?? '?'}`).join('\n')}`);
-  }
-
   // ---- scan the boards ONCE (cached server-side; cheap) — the exit
   // sweeps need the live consensus too, so this runs BEFORE the
   // quota/cooldown gates (a flipped position must exit even when
-  // today's entry quota is done). ----
+  // today's entry quota is done). v10.8: moved ABOVE the time-exit
+  // sweep — winner-extension needs to know whether the board has
+  // printed a qualifying OPPOSITE-side signal before granting room. ----
   const { getSignals } = await import('./signals.js');
   const boards = [];
   if (cfg.desks.futures) boards.push('FUTURES');
@@ -645,12 +849,115 @@ async function _tick(deps, sendTelegram) {
   // across the voting weight) is already quorum-honest, so it stays.
   const voterCount = (s) => Number(s?.voters ?? s?.participating ?? 0);
   const qualifies = (s) => !!(s && s.plan && s.side && (
-    signalOf(s) >= (voterCount(s) >= 5 ? cfg.minAiScore : cfg.minAiScore + (cfg.quorumPenalty ?? 10)) || (
+    signalOf(s) >= effectiveScoreBar(cfg, s) || (
       s.grade === 'STRONG' && s.executable
       && (s.confidence ?? 0) >= cfg.minConfidence
       && (s.agreement ?? 0) >= cfg.minAgreement
     )
   ));
+
+  // ---- v10.8: OPPOSITE-SIDE qualifying signal per held pair (one
+  // shared pass — the trend-flip exits AND the winner-extension veto
+  // read the SAME truth, never two different scans). ----
+  const oppositeQualifying = new Map(); // pair → signal
+  for (const p of openManagedPositions(j, cfg)) {
+    const posSide = /^(L|B)/i.test(String(p.side || '')) ? 'BUY' : 'SELL';
+    const pair = String(p.pair || '');
+    for (const board of scans) {
+      if (!board?.ok) continue;
+      for (const s of (board.signals || [])) {
+        if (pairOfSignal(s) !== pair) continue;
+        const raw = String(s.side || '').toUpperCase();
+        const sSide = raw === 'SHORT' || raw === 'SELL' ? 'SELL' : 'BUY';
+        if (sSide !== posSide && qualifies(s)) { oppositeQualifying.set(pair, s); break; }
+      }
+      if (oppositeQualifying.has(pair)) break;
+    }
+  }
+
+  // ---- v10.8: live P&L read (cached server-side by the positions
+  // pipeline) — fetched ONLY when a position is actually at/past its
+  // window and extension is armed, so the hot path pays nothing. ----
+  let livePnlByPair = null;
+  const needLivePnl = cfg.winnerExtendEnabled !== false && cfg.winnerExtendMax > 0
+    && openAgent.some(p => (Date.now() - (p.openedAt || 0)) / 60000 >= holdWindowFor(cfg, p.pair))
+    && oppositeQualifying.size === 0;
+  if (needLivePnl) {
+    const lp = await getPositionsWithPnl().catch(() => null);
+    if (lp?.positions) livePnlByPair = new Map(lp.positions.map(x => [x.pair, x]));
+  }
+
+  // ---- time-exit sweep (auto exit of aging agent positions) ----
+  // v10.1 B2: the window is now PER-POSITION — the entry-time ATR%
+  // (state.entryMeta) drives dynamicMaxHoldMin. Fast movers exit at
+  // half the base window, slow movers get a third longer; unknown
+  // entries keep the base window (honest default).
+  // v10.8 WINNER EXTENSION ("trade ke hisaab se extension"): a position
+  // AT its window that is IN PROFIT with NO opposite qualifying signal
+  // gets its window extended (+winnerExtendPct% per extension, up to
+  // winnerExtendMax) and SL locked to breakeven — winners earn room to
+  // run, losers still get cut at the original window.
+  const closures = [];
+  const timeExited = new Set(); // v9.6: ids closed this tick (trend-flip must not double-close)
+  const extended = [];
+  for (const p of openAgent) {
+    const meta = _state.entryMeta?.[p.pair] || {};
+    const extensions = Number(meta.extensions) || 0;
+    const baseWin = holdWindowFor(cfg, p.pair);
+    const holdMin = effectiveHoldWindowMin(baseWin, extensions, cfg.winnerExtendPct);
+    const ageMin = (Date.now() - (p.openedAt || 0)) / 60000;
+    if (ageMin >= holdMin) {
+      // v10.8: extension gate — agent positions only, in profit, no
+      // opposite qualifier, under the max count.
+      if (extensionEligible({
+        enabled: cfg.winnerExtendEnabled !== false,
+        extensions,
+        maxExtensions: cfg.winnerExtendMax,
+        pnlPct: livePnlByPair?.get(p.pair)?.pnlPct ?? null,
+        oppositeQualifying: oppositeQualifying.has(p.pair),
+        source: p.source,
+      })) {
+        const nextExt = extensions + 1;
+        _state.entryMeta = _state.entryMeta || {};
+        _state.entryMeta[p.pair] = { ...(meta || {}), extensions: nextExt, lastExtendAt: Date.now() };
+        const moved = await moveAgentSlToBreakeven(p.id);
+        const newWin = effectiveHoldWindowMin(baseWin, nextExt, cfg.winnerExtendPct);
+        extended.push({ pair: p.pair, ext: nextExt, newWin, pnlPct: livePnlByPair?.get(p.pair)?.pnlPct ?? null });
+        log('exit', `WINNER EXTENSION ${p.pair} — in profit (pnlPct ${r2(livePnlByPair?.get(p.pair)?.pnlPct ?? 0)}%), window ${holdMin}m → ${newWin}m (ext ${nextExt}/${cfg.winnerExtendMax})${moved ? ' · SL → breakeven (risk-free runner)' : ''}`);
+        continue; // not closed this tick — the new window owns it now
+      }
+      const out = p.market === 'FUTURES'
+        ? await closeFuturesPosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }))
+        : p.market === 'GLOBALFUTURES'
+          ? await (async () => {
+              const { closeGlobalPosition } = await import('./globalFutures.js');
+              return closeGlobalPosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }));
+            })()
+          : await (async () => {
+              const { closePosition } = await import('./coindcxOrders.js');
+              return closePosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }));
+            })();
+      if (out?.ok) {
+        timeExited.add(p.id);
+        // v7.0.2: honest TOTAL pnl — booked partial legs + the final leg
+        // (p.pnlINR alone is only the remaining runner's leg).
+        const totalPnl = (out.position?.pnlINR ?? 0) + (out.position?.bookedPnlINR ?? 0);
+        const hasBooked = (out.position?.bookedPnlINR ?? 0) !== 0;
+        closures.push({ pair: p.pair, pnlINR: totalPnl, reason: `TIME-EXIT after ${Math.round(ageMin)}m${holdMin !== cfg.maxHoldMin ? ` (dynamic window ${holdMin}m${extensions > 0 ? `, ${extensions}× extended` : ''})` : ''}${hasBooked ? ' (incl. booked T1/T2 legs)' : ''}` });
+        log('exit', `TIME-EXIT ${p.pair} after ${Math.round(ageMin)}m (window ${holdMin}m${extensions > 0 ? `, ${extensions}× winner-extended` : ''}) — pnl ₹${r2(totalPnl)}${hasBooked ? ` (final ${r2(out.position?.pnlINR ?? 0)} + booked ${r2(out.position?.bookedPnlINR ?? 0)})` : ''}`);
+        // B2 hygiene: the entry's volatility record is spent with the position
+        if (_state.entryMeta) delete _state.entryMeta[p.pair];
+      } else {
+        log('error', `time-exit failed for ${p.pair}: ${String(out?.error || '').slice(0, 100)}`);
+      }
+    }
+  }
+  if (extended.length > 0) {
+    await notify(sendTelegram, `🤖 <b>AGENT winner-extension</b>\n${extended.map(e => `• ${e.pair} — profitable at window, extended to ${e.newWin}m (${e.ext}/${cfg.winnerExtendMax}), SL → breakeven`).join('\n')}`);
+  }
+  if (closures.length > 0) {
+    await notify(sendTelegram, `🤖 <b>AGENT time-exit</b>\n${closures.map(c => `• ${c.pair} — ${c.reason}: ₹${c.pnlINR ?? '?'}`).join('\n')}`);
+  }
 
   // ---- v9.6 TREND-FLIP auto-exit ("auto exit as per market trend"):
   // the board now prints a QUALIFYING signal on the OPPOSITE side of
@@ -658,23 +965,13 @@ async function _tick(deps, sendTelegram) {
   // protects MANUAL positions too when manageManualPositions (user
   // spec, default ON) — a manual swing holder exits the moment the
   // trend flips against them. A cooldown is stamped so the flip side
-  // can only re-enter after cooldownMin — no whipsaw churn. ----
+  // can only re-enter after cooldownMin — no whipsaw churn.
+  // v10.8: flipped-signal detection reads the shared oppositeQualifying
+  // map computed above — same truth, one pass. ----
   const managed = openManagedPositions(j, cfg);
   for (const p of managed) {
     if (timeExited.has(p.id)) continue;
-    const posSide = /^(L|B)/i.test(String(p.side || '')) ? 'BUY' : 'SELL';
-    const pair = String(p.pair || '');
-    let flipped = null;
-    for (const board of scans) {
-      if (!board?.ok) continue;
-      for (const s of (board.signals || [])) {
-        if (pairOfSignal(s) !== pair) continue;
-        const raw = String(s.side || '').toUpperCase();
-        const sSide = raw === 'SHORT' || raw === 'SELL' ? 'SELL' : 'BUY';
-        if (sSide !== posSide && qualifies(s)) { flipped = s; break; }
-      }
-      if (flipped) break;
-    }
+    const flipped = oppositeQualifying.get(String(p.pair || '')) || null;
     if (!flipped) continue;
     const out = p.market === 'FUTURES'
       ? await closeFuturesPosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }))
@@ -716,60 +1013,83 @@ async function _tick(deps, sendTelegram) {
     maybeLogSkip('futures_margin', `futures wallet margin < 2 USDT — futures candidates skip, sirf spot scan (${cfg.desks.spot ? 'spot ON' : 'spot OFF — kuch trade nahi hoga'})`);
   }
   let candidates = [];
+  // v10.8 NEAR-MISS AUTO-TRADE: signals that MISS the full bar but sit
+  // inside the gap window with high confidence + full quorum. Used
+  // ONLY when no full qualifier exists this cycle, capped per day.
+  const nearMissPool = [];
   for (let bi = 0; bi < boards.length; bi++) {
     const board = scans[bi];
     const m = boards[bi];
     if (!board?.ok) continue;
     if (m === 'FUTURES' && !futuresViable) continue; // v9.7: margin floor can't fund it
     for (const s of (board.signals || [])) {
-      if (!qualifies(s)) continue;
       if ((s.plan.riskPct ?? 0) > (trading.maxRiskPct || 5)) continue;
       // already positioned on this pair? skip (one-per-pair anyway)
       if ((j.positions || []).some(p => p.pair === pairOfSignal(s) && (p.status === 'OPEN' || p.status === 'UNKNOWN'))) continue;
-      candidates.push(s);
+      if (qualifies(s)) { candidates.push(s); continue; }
+      const nm = nearMissEntryGate(cfg, s);
+      if (nm) nearMissPool.push({ signal: s, nm });
     }
   }
+  // v10.2 Step 1: NEAR-MISS DIAGNOSTICS — always capture the top-3
+  // closest signals (panel strip), whether or not a near-miss trade
+  // fires this cycle.
+  const nearMissDiag = [];
+  for (const board of scans) {
+    if (!board?.ok) continue;
+    for (const s of (board.signals || [])) {
+      if (!s?.plan || !s.side) continue;
+      const ai = signalOf(s);
+      const vc = voterCount(s);
+      const quorumCapped = vc < 5;
+      const needScore = quorumCapped ? cfg.minAiScore + (cfg.quorumPenalty ?? 10) : cfg.minAiScore;
+      nearMissDiag.push({
+        pair: pairOfSignal(s),
+        symbol: s.symbol,
+        aiScore: ai,
+        needScore,
+        voters: vc,
+        quorumCapped,
+        confidence: Math.round(s.confidence ?? 0),
+        agreement: Math.round((s.agreement ?? 0) * 100),
+      });
+    }
+  }
+  nearMissDiag.sort((a, b) => (b.aiScore - a.aiScore) || (b.confidence - a.confidence));
+  _state.lastNearMisses = nearMissDiag.slice(0, 3);
+
+  // v10.8: near-miss AUTO-ENTRY — only when the full bar found nobody
+  // this cycle, the daily near-miss budget remains, and the BEST
+  // near-miss is a high-confidence full-quorum setup. The user's spec:
+  // "Near Miss ke trade mat chhodo — highest AI score + high conf
+  // wale ko auto trade lagao."
+  let best = null;
+  let nearMissInfo = null;
+  const nmUsedToday = nearMissEntriesToday(j).length;
   if (candidates.length === 0) {
-    // v10.2 Step 1: NEAR-MISS DIAGNOSTICS — capture the top-3 signals
-    // closest to qualifying. Exact reason pata chalega: was it score,
-    // voters, quorum-cap, or confidence?
-    const nearMisses = [];
-    for (const board of scans) {
-      if (!board?.ok) continue;
-      for (const s of (board.signals || [])) {
-        if (!s?.plan || !s.side) continue;
-        const ai = signalOf(s);
-        const vc = voterCount(s);
-        const quorumCapped = vc < 5;
-        const needScore = quorumCapped ? cfg.minAiScore + (cfg.quorumPenalty ?? 10) : cfg.minAiScore;
-        nearMisses.push({
-          pair: pairOfSignal(s),
-          symbol: s.symbol,
-          aiScore: ai,
-          needScore,
-          voters: vc,
-          quorumCapped,
-          confidence: Math.round(s.confidence ?? 0),
-          agreement: Math.round((s.agreement ?? 0) * 100),
-        });
-      }
+    nearMissPool.sort((a, b) => (b.nm.aiScore - a.nm.aiScore) || (b.nm.confidence - a.nm.confidence));
+    if (nearMissPool.length > 0 && nmUsedToday < Number(cfg.nearMissMaxPerDay)) {
+      best = nearMissPool[0].signal;
+      nearMissInfo = { ...nearMissPool[0].nm, usedToday: nmUsedToday + 1, maxPerDay: Number(cfg.nearMissMaxPerDay) };
+      log('info', `NEAR-MISS AUTO-ENTRY candidate ${best.symbol} — AI ${nearMissInfo.aiScore} vs bar ${nearMissInfo.needScore} (gap ${nearMissInfo.needScore - nearMissInfo.aiScore} ≤ ${cfg.nearMissScoreGap}), conf ${nearMissInfo.confidence}%, ${nearMissInfo.voters} voters — highest-score near-miss entering (${nmUsedToday + 1}/${cfg.nearMissMaxPerDay} today)`);
     }
-    nearMisses.sort((a, b) => (b.aiScore - a.aiScore) || (b.confidence - a.confidence));
-    const top3 = nearMisses.slice(0, 3);
-    _state.lastNearMisses = top3;
-    if (top3.length > 0) {
-      const lines = top3.map(nm =>
-        `closest: ${nm.symbol} score=${nm.aiScore}/${nm.needScore} (${nm.voters} voters${nm.quorumCapped ? ' — QUORUM-CAPPED' : ''}) conf=${nm.confidence}%`
-      );
-      log('skip', `scan: 0 candidates — near-misses: ${lines.join(' · ')}`);
-    } else {
-      log('skip', `scan: 0 candidates ≥ ${cfg.minAiScore} AI score / ${cfg.minConfidence}% conf + ${Math.round(cfg.minAgreement * 100)}% agreement${cfg.desks.futures && !futuresViable ? ' (futures margin ke karan sirf spot scope)' : ''}`);
-    }
-    maybeLogSkip('no_candidates', `scan: 0 candidates ≥ ${cfg.minAiScore} AI score${cfg.desks.futures && !futuresViable ? ' (futures margin ke karan sirf spot scope)' : ''}`);
-    persistState(); return;
   }
-  candidates.sort((a, b) => (signalOf(b) - signalOf(a)) || (b.confidence - a.confidence));
-  let best = candidates[0];
+  if (!best) {
+    if (candidates.length === 0) {
+      if (_state.lastNearMisses.length > 0) {
+        const lines = _state.lastNearMisses.map(nm =>
+          `closest: ${nm.symbol} score=${nm.aiScore}/${nm.needScore} (${nm.voters} voters${nm.quorumCapped ? ' — QUORUM-CAPPED' : ''}) conf=${nm.confidence}%`
+        );
+        log('skip', `scan: 0 candidates — near-misses: ${lines.join(' · ')}${cfg.nearMissAutoTrade === false ? ' (near-miss auto-trade OFF)' : nmUsedToday >= Number(cfg.nearMissMaxPerDay) ? ` (near-miss budget ${nmUsedToday}/${cfg.nearMissMaxPerDay} used)` : ' (none met the near-miss gate: gap/conf/quorum)'}`);
+      } else {
+        log('skip', `scan: 0 candidates ≥ ${cfg.minAiScore} AI score / ${cfg.minConfidence}% conf + ${Math.round(cfg.minAgreement * 100)}% agreement${cfg.desks.futures && !futuresViable ? ' (futures margin ke karan sirf spot scope)' : ''}`);
+      }
+      maybeLogSkip('no_candidates', `scan: 0 candidates ≥ ${cfg.minAiScore} AI score${cfg.desks.futures && !futuresViable ? ' (futures margin ke karan sirf spot scope)' : ''}`);
+      persistState(); return;
+    }
+    candidates.sort((a, b) => (signalOf(b) - signalOf(a)) || (b.confidence - a.confidence));
+    best = candidates[0];
+  }
 
   // ---- v10.1 B4: CORRELATION GUARD on concurrent positions ----
   // 5 open alt-positions that all correlate ~0.8 with each other are ONE
@@ -785,9 +1105,11 @@ async function _tick(deps, sendTelegram) {
       .map(p => baseOfPair(p.pair))
       .filter(Boolean))];
     if (openBases.length > 0) {
-      const checked = [best];
+      // v10.8: a near-miss pick joins the same guard as full
+      // qualifiers — it is a candidate like any other once chosen.
+      const pool = nearMissInfo ? [best, ...candidates] : candidates;
       let chosen = null;
-      for (const cand of candidates) {
+      for (const cand of pool) {
         const candBase = String(cand.symbol || '').toUpperCase();
         if (!openBases.includes(candBase)) {
           let correlatedWith = null;
@@ -797,17 +1119,17 @@ async function _tick(deps, sendTelegram) {
           }
           if (correlatedWith) {
             log('skip', `CORRELATION GUARD — ${cand.symbol} skipped (60d r=${correlatedWith.r} with ${correlatedWith.base}, |r|>0.7 = same bet twice)`);
+            if (cand === best) nearMissInfo = null; // the near-miss pick itself was correlated
             continue; // try the next candidate
           }
         }
         chosen = cand; break;
       }
       if (!chosen) {
-        maybeLogSkip('correlation', `CORRELATION GUARD — all ${candidates.length} qualifying candidates |r|>0.7 correlated with open positions (${openBases.join(', ')}); same-bet-twice risk, ye cycle skip`);
+        maybeLogSkip('correlation', `CORRELATION GUARD — all ${pool.length} qualifying candidates |r|>0.7 correlated with open positions (${openBases.join(', ')}); same-bet-twice risk, ye cycle skip`);
         persistState(); return;
       }
       best = chosen;
-      checked.length = 0; // (debug clarity only)
     }
   }
 
@@ -969,15 +1291,33 @@ async function _tick(deps, sendTelegram) {
     _state.lastEntryPair = pairOfSignal(best);
     const f = out.filled || {};
     const deskTag = best.market === 'GLOBALFUTURES' ? '🌍 Global SIM' : wantFutures ? '⚡ Futures' : '₿ Spot';
+    // v10.8: near-miss entries get a journal marker (NEAR_MISS kind —
+    // accounting-neutral: the ORDER entry the executor pushed already
+    // counts the trade against quota; this is the audit trail for the
+    // per-day near-miss budget + the panel strip).
+    if (nearMissInfo) {
+      await withJournalLock(async () => {
+        const jj = loadJournal();
+        pushEntry(jj, {
+          day: todayIST(), kind: 'NEAR_MISS', source: 'agent', market: best.market || 'CRYPTO',
+          symbol: best.symbol, positionId: out?.position?.id ?? null,
+          aiScore: nearMissInfo.aiScore, needScore: nearMissInfo.needScore,
+          confidence: nearMissInfo.confidence, voters: nearMissInfo.voters,
+          text: `NEAR-MISS AUTO-ENTRY ${best.symbol} ${best.side} — AI ${nearMissInfo.aiScore} vs bar ${nearMissInfo.needScore} (gap ≤ ${cfg.nearMissScoreGap}), conf ${nearMissInfo.confidence}%, ${nearMissInfo.voters} voters (${nearMissInfo.usedToday}/${nearMissInfo.maxPerDay} today)`,
+        });
+        saveJournal(jj);
+      }).catch(() => { /* best-effort marker */ });
+    }
     if (out.mode === 'notify') {
       log('entry', `NOTIFY ${deskTag} ${best.symbol} ${best.side} (${best.confidence}% conf) — alert-only, koi order nahi${out.telegramSent ? '' : ' (telegram off)'}`);
     } else {
-      log('entry', `AUTO-ENTRY ${deskTag} ${best.symbol} ${best.side} (${best.confidence}% conf) — ${f.qty ?? '?'} @ ${f.price ?? best.plan.entry}${wantFutures || best.market === 'GLOBALFUTURES' ? ` · ${f.leverage ?? '?'}x · margin ${f.marginUSDT ?? '?'} USDT` : ''} · SL ${best.plan.stopLoss} · T2 ${best.plan.target2}${kelly?.mode === 'kelly' ? ` · kelly ${riskPct}%` : ''}`);
+      log('entry', `AUTO-ENTRY ${deskTag} ${best.symbol} ${best.side} (${best.confidence}% conf)${nearMissInfo ? ` [NEAR-MISS ${nearMissInfo.aiScore}/${nearMissInfo.needScore}]` : ''} — ${f.qty ?? '?'} @ ${f.price ?? best.plan.entry}${wantFutures || best.market === 'GLOBALFUTURES' ? ` · ${f.leverage ?? '?'}x · margin ${f.marginUSDT ?? '?'} USDT` : ''} · SL ${best.plan.stopLoss} · T2 ${best.plan.target2}${kelly?.mode === 'kelly' ? ` · kelly ${riskPct}%` : ''}`);
       await notify(sendTelegram,
-        `🤖 <b>AGENT AUTO-ENTRY</b> — ${deskTag} ${best.symbol} ${best.side}\n` +
+        `🤖 <b>AGENT AUTO-ENTRY${nearMissInfo ? ' · NEAR-MISS' : ''}</b> — ${deskTag} ${best.symbol} ${best.side}\n` +
+        `${nearMissInfo ? `AI ${nearMissInfo.aiScore} (bar ${nearMissInfo.needScore}, conf ${nearMissInfo.confidence}%, ${nearMissInfo.voters} voters)\n` : ''}` +
         `Confidence ${best.confidence}% · agreement ${Math.round((best.agreement || 0) * 100)}% · trade ${tradesToday.length + 1}/${cfg.maxTradesPerDay} today\n` +
         `${f.qty ?? '?'} @ ${f.price ?? best.plan.entry}${wantFutures || best.market === 'GLOBALFUTURES' ? ` · ${f.leverage ?? 1}x · margin ${Math.round(f.marginUSDT ?? 0)} USDT` : ''}\n` +
-        `SL ${best.plan.stopLoss} · T2 ${best.plan.target2} · time-exit ${cfg.maxHoldMin}m${kelly?.mode === 'kelly' ? ` · kelly-sized ${riskPct}%` : ''}`,
+        `SL ${best.plan.stopLoss} · T2 ${best.plan.target2} · time-exit ${cfg.maxHoldMin}m (winner-extension armed)${kelly?.mode === 'kelly' ? ` · kelly-sized ${riskPct}%` : ''}`,
       );
     }
   } else {
@@ -1234,6 +1574,31 @@ export async function agentStatus(deps) {
     // v10.2 Step 1: near-miss diagnostics + V2 model flag
     lastNearMisses: _state.lastNearMisses || [],
     v2ModelsEnabled: typeof v2ModelsEnabled === 'function' ? v2ModelsEnabled() : false,
+    // v10.8 NEAR-MISS AUTO-TRADE state — the panel's transparency for
+    // "near-miss kyun / kab / kitna".
+    nearMiss: {
+      enabled: cfg.nearMissAutoTrade !== false,
+      scoreGap: cfg.nearMissScoreGap ?? 10,
+      minConfidence: cfg.nearMissMinConfidence ?? 70,
+      maxPerDay: cfg.nearMissMaxPerDay ?? 1,
+      usedToday: nearMissEntriesToday(j).length,
+      todayEntries: nearMissEntriesToday(j).map(e => ({
+        ts: e.ts, symbol: e.symbol, aiScore: e.aiScore ?? null, needScore: e.needScore ?? null,
+        confidence: e.confidence ?? null, voters: e.voters ?? null,
+      })),
+    },
+    // v10.8 WINNER-EXTENSION state — "trade ke hisaab se extension"
+    winnerExtension: {
+      enabled: cfg.winnerExtendEnabled !== false,
+      extendPct: cfg.winnerExtendPct ?? 50,
+      max: cfg.winnerExtendMax ?? 2,
+      open: Object.entries(_state.entryMeta || {})
+        .filter(([, v]) => v && Number(v.extensions) > 0)
+        .map(([pair, v]) => ({ pair, extensions: v.extensions, windowMin: effectiveHoldWindowMin(dynamicMaxHoldMin(cfg, v.atrPct), v.extensions, cfg.winnerExtendPct), lastExtendAt: v.lastExtendAt ?? null }))
+        .slice(0, 5),
+    },
+    // v10.8 PRO #4: the frozen mandate (null = agent stopped)
+    mandate: _state.mandate || null,
   };
   if (_state.winRateDowngraded) {
     blockers.push({ key: 'win_rate_downgrade', soft: true, text: `📉 Rolling win-rate ${_state.winRateDowngraded.winRate}% (last ${_state.winRateDowngraded.trades}) — agent paper mode me self-downgrade ho chuka hai. LIVE re-arm karne se pehle review karo.` });

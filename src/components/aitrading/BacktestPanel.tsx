@@ -8,7 +8,7 @@
 // v6.7: backtest-LEARNED gate recommendation (read-only — user applies).
 // ============================================================
 import { memo, useCallback, useEffect, useState } from 'react';
-import type { BacktestResult } from './types';
+import type { BacktestResult, StrategyLabResult } from './types';
 
 const fmtINR = (n: number | null | undefined): string => {
   if (n == null || !Number.isFinite(n)) return '—';
@@ -48,9 +48,11 @@ function EquityCurve({ equity }: { equity: NonNullable<BacktestResult['equity']>
 interface Props {
   market: 'INDIA' | 'CRYPTO';
   runBacktest: (market: 'INDIA' | 'CRYPTO', minGrade?: string) => Promise<BacktestResult | null>;
+  /** v10.8: NL Custom Strategy Lab runner (optional — panel degrades without it) */
+  runStrategyLab?: (description: string, market: 'INDIA' | 'CRYPTO') => Promise<StrategyLabResult | null>;
 }
 
-export const BacktestPanel = memo(function BacktestPanel({ market, runBacktest }: Props) {
+export const BacktestPanel = memo(function BacktestPanel({ market, runBacktest, runStrategyLab }: Props) {
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [grade, setGrade] = useState<'ACTION' | 'STRONG' | 'WATCH'>('ACTION');
   const [running, setRunning] = useState(false);
@@ -181,6 +183,101 @@ export const BacktestPanel = memo(function BacktestPanel({ market, runBacktest }
           {market === 'INDIA' ? ' India: 2 saal daily candles, max 5-day hold.' : ' Crypto: 300 × 1h candles, max 48h hold.'}
         </div>
       )}
+
+      {/* v10.8 PRO #2: NL CUSTOM STRATEGY LAB — describe an idea in plain
+          English → LLM compiles BOUNDED whitelist rules → validated →
+          walk-forward replay on the SAME candle history. */}
+      {runStrategyLab && <StrategyLab market={market} run={runStrategyLab} />}
     </div>
   );
 });
+
+/** v10.8: the Custom Strategy Lab block. */
+function StrategyLab({ market, run }: { market: 'INDIA' | 'CRYPTO'; run: (description: string, market: 'INDIA' | 'CRYPTO') => Promise<StrategyLabResult | null> }) {
+  const [desc, setDesc] = useState('');
+  const [running, setRunning] = useState(false);
+  const [out, setOut] = useState<StrategyLabResult | null>(null);
+
+  const runLab = useCallback(async () => {
+    if (desc.trim().length < 8) return;
+    setRunning(true); setOut(null);
+    const r = await run(desc.trim(), market);
+    setRunning(false);
+    setOut(r);
+  }, [desc, market, run]);
+
+  // reset on market switch
+  useEffect(() => { setOut(null); }, [market]);
+
+  const s = out?.stats;
+  const cond = (c: { indicator: string; operator?: string; value: number | string }) =>
+    c.indicator === 'emaStack' ? `EMA stack ${String(c.value)}` : `${c.indicator} ${c.operator} ${c.value}`;
+
+  return (
+    <div className="mt-3 rounded-xl border border-violet-500/20 bg-violet-500/[0.04] p-3 space-y-2.5" data-testid="strategy-lab" aria-label="custom strategy lab">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[10px] font-black text-violet-300 tracking-wider">🧪 CUSTOM STRATEGY LAB — apna idea bolo, history par test karo</span>
+        <span className="px-1.5 py-0.5 rounded text-[8px] font-black bg-black/30 border border-violet-500/25 text-violet-300" title="an LLM compiles your idea into a bounded whitelist rule set — validated before anything runs, never free-form code">
+          LLM → SAFE RULES → REPLAY
+        </span>
+      </div>
+      <div className="flex gap-2 flex-col sm:flex-row">
+        <textarea
+          value={desc}
+          onChange={e => setDesc(e.target.value)}
+          placeholder={market === 'INDIA'
+            ? 'e.g. "RELIANCE jab RSI 30 ke upar cross kare aur volume 2x average ho tab LONG — exit 2R ya 20 din, stop 2×ATR"'
+            : 'e.g. "buy BTC when RSI crosses above 30 and volume is 2x average — exit at 2R or 48 bars, stop 2×ATR"'}
+          rows={2}
+          maxLength={800}
+          className="flex-1 bg-black/30 border border-violet-500/20 rounded-xl px-3 py-2 text-[11px] text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 resize-none"
+          aria-label="strategy description"
+        />
+        <button onClick={runLab} disabled={running || desc.trim().length < 8}
+          className="sm:w-36 px-3 py-2 rounded-xl text-[10px] font-black bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white disabled:opacity-40 shrink-0"
+          title="compile + validate + walk-forward replay">
+          {running ? '⏳ TESTING…' : '▶ TEST STRATEGY'}
+        </button>
+      </div>
+      {out?.error && (
+        <div className="text-[10px] text-amber-400/90 font-mono bg-amber-500/5 border border-amber-500/20 rounded-lg px-2.5 py-2">⚠ {out.error}</div>
+      )}
+      {out?.ok && s && (
+        <div className="space-y-2">
+          {/* the EXACT rules that ran — full transparency */}
+          <div className="bg-black/30 rounded-lg px-2.5 py-2 text-[10px] font-mono text-slate-300">
+            <span className="text-violet-300 font-black">RULES THAT RAN:</span>{' '}
+            {out.rules?.direction} · {out.rules?.entry.map(cond).join(' AND ')}
+            {out.rules?.exit?.length ? ` · EXIT: ${out.rules.exit.map(cond).join(' OR ')}` : ''}
+            {' '}· SL {out.rules?.stopLossAtr}×ATR · TP {out.rules?.takeProfitR}R · max hold {out.rules?.maxHoldBars} bars
+          </div>
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+            {[
+              { l: 'TRADES', v: String(s.trades), c: 'text-slate-200' },
+              { l: 'WIN RATE', v: s.winRate != null ? `${s.winRate}%` : '—', c: (s.winRate ?? 0) >= 50 ? 'text-emerald-300' : 'text-amber-300' },
+              { l: 'AVG R', v: s.avgR != null ? `${s.avgR >= 0 ? '+' : ''}${s.avgR}` : '—', c: (s.avgR ?? 0) >= 0 ? 'text-emerald-300' : 'text-red-300' },
+              { l: 'PROFIT FACTOR', v: s.profitFactor != null && Number.isFinite(s.profitFactor) ? String(s.profitFactor) : '∞', c: (s.profitFactor ?? 0) >= 1.2 ? 'text-emerald-300' : 'text-amber-300' },
+              { l: 'MAX DD', v: `−${s.maxDDR ?? 0}R`, c: 'text-red-300' },
+              { l: `P&L @₹${(out.params?.capitalPerTradeINR ?? 1000).toLocaleString('en-IN')}`, v: fmtINR(s.pnlINR), c: (s.pnlINR ?? 0) >= 0 ? 'text-emerald-300' : 'text-red-300' },
+            ].map(x => (
+              <div key={x.l} className="bg-black/30 rounded-lg px-2 py-1.5 text-center">
+                <div className="text-[8px] text-slate-500 font-black tracking-wider">{x.l}</div>
+                <div className={`text-xs font-mono font-bold ${x.c}`}>{x.v}</div>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-1.5 flex-wrap items-center">
+            <span className="text-[9px] font-black text-slate-500 tracking-wider">EXITS:</span>
+            {Object.entries(out.exitDist || {}).map(([k, v]) => (
+              <span key={k} className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${k === 'TP' ? 'bg-emerald-500/10 text-emerald-300' : k === 'SL' ? 'bg-red-500/10 text-red-300' : 'bg-slate-600/20 text-slate-400'}`}>
+                {k} × {v}
+              </span>
+            ))}
+            <span className="text-[9px] text-slate-600 ml-auto">{out.scannedSymbols} symbols · {out.disclaimer ? 'walk-forward, no look-ahead' : ''}</span>
+          </div>
+          <p className="text-[9px] text-slate-600 leading-relaxed">{out.disclaimer}</p>
+        </div>
+      )}
+    </div>
+  );
+}

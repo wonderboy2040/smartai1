@@ -17,6 +17,8 @@
 //     analyzeSymbol, getMarketRegime }
 // ============================================================
 import { istMinutes, marketPhase, getISTParts, isNseMarketOpen } from './time.js';
+// v10.8 PRO #3: persistent chat memory — the desk remembers past turns
+import { rememberChat, memoryContextFor } from '../ai/agentMemory.js';
 
 const MAX_TOOL_ROUNDS = 6;
 const PER_ROUND_TIMEOUT_MS = 30000;
@@ -698,7 +700,6 @@ export async function runProTraderAgent(messages, deps) {
     phase: marketPhase(),
     marketOpen: isNseMarketOpen(),
   };
-
   // SELF-CALIBRATION — last 7 days of accountability stats.
   let perf = null;
   try {
@@ -712,7 +713,10 @@ export async function runProTraderAgent(messages, deps) {
     }
   } catch { /* calibration optional */ }
 
-  const systemPrompt = buildProTraderSystemPrompt(ctx, perf);
+  // v10.8 PRO #3: persistent chat memory — recent turns + recurring
+  // focus feed the system prompt (null on fresh install = zero bloat).
+  const memBlock = memoryContextFor('protrade');
+  const systemPrompt = buildProTraderSystemPrompt(ctx, perf) + (memBlock ? `\n\nDESK MEMORY — past conversations with this user:\n${memBlock}` : '');
   const toolTrace = [];
 
   // Provider chain: Gemini → Groq → Cerebras
@@ -727,6 +731,10 @@ export async function runProTraderAgent(messages, deps) {
     try {
       const result = await step.run();
       if (result) {
+        // v10.8 PRO #3: record the answered turn for next-session
+        // continuity (best-effort, never blocks the reply).
+        const lastUser = [...(messages || [])].reverse().find(m => m?.role === 'user')?.content || '';
+        rememberChat('protrade', { q: lastUser, a: result.text });
         return {
           ok: true,
           text: result.text,

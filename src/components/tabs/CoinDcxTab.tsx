@@ -130,7 +130,7 @@ export default memo(function CoinDcxTab() {
   // v10.4: + GLOBAL equity futures SIM board (AAPL/GOOGL/NVDA/…/SPACEX).
   const t = useAITrading(true, { markets: ['CRYPTO', 'FUTURES', 'GLOBALFUTURES'] });
   const { crypto, futures, globalFut, state, positions, entries, loading, busy, refresh, executeSignal, executeFutures, executeGlobal, updateConfig, closePos, fetchDeep, boardError, positionsLive } = t;
-  const { runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert } = t;
+  const { runBacktest, runStrategyLab, fetchAlertsStatus, saveAlertsConfig, testAlert } = t;
   const [desk, setDesk] = useState<'CRYPTO' | 'FUTURES' | 'GLOBAL'>('CRYPTO');
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [filter, setFilter] = useState<BoardFilter>('ALL');
@@ -482,7 +482,7 @@ export default memo(function CoinDcxTab() {
         <div id="cx-backtest">
           <SectionLabel num="04" title="Backtest Lab" sub="the SAME 10-model ensemble replayed on crypto history — win rate · avg R · equity curve · learned gates" />
           <div className="mt-2.5">
-            <BacktestPanel market="CRYPTO" runBacktest={runBacktest} />
+            <BacktestPanel market="CRYPTO" runBacktest={runBacktest} runStrategyLab={runStrategyLab} />
           </div>
           {/* v10.6 Pro Upgrade #5: the walk-forward dashboard — per-model
               30/90d win-rates + calibration chart + regime tilt state. */}

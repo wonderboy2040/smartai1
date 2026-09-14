@@ -35,6 +35,11 @@ vi.mock('../server/ai/coindcxOrders.js', () => ({
   loadJournal: vi.fn(() => ({ entries: [], positions: [] })),
   dailyStats: vi.fn(() => ({ trades: 0 })),
   todayIST: vi.fn(() => '2026-09-14'),
+  // v10.8: agent.js now imports these (near-miss/mandate/extension paths)
+  getPositionsWithPnl: vi.fn(async () => ({ positions: [] })),
+  withJournalLock: vi.fn(async (fn) => fn()),
+  saveJournal: vi.fn(),
+  pushEntry: vi.fn(),
 }));
 vi.mock('../server/ai/correlation.js', () => ({ pairCorrelation: vi.fn(async () => null) }));
 vi.mock('../server/ai/models.js', () => ({ v2ModelsEnabled: vi.fn(() => false), MODELS: [] }));

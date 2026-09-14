@@ -1,3 +1,31 @@
+## v10.8 — NEAR-MISS AUTO-TRADE + 4 VE-TRADING PRO PORTS (2026-09-15)
+
+### Feat: NEAR-MISS AUTO-TRADE (user spec: "Near Miss ke trade mat chhodo — highest AI score + high conf wale ko auto trade lagao")
+- `agent.js`: jab poora bar (AI score / STRONG committee) koi clear na kare us scan-cycle me, sabse **highest AI-score near-miss** (gap ≤ `nearMissScoreGap` pt below the effective bar, confidence ≥ `nearMissMinConfidence`, 5+ voters quorum-honest, STRONG/ACTION grade, executable plan) **auto-entry** lagta hai — same execution gauntlet, same 3-tier exits.
+- Quality guards: `nearMissMaxPerDay` (default 1/day) — journal `NEAR_MISS` markers budget ka audit trail hain; full qualifiers HAMESHA priority rakhte hain; correlation guard + one-per-pair + risk-cap near-miss par bhi apply hote hain; per-day budget khatam → honest skip with reason.
+- Panel: Decision Quality strip me near-miss chip (gap/budget live), NEAR-MISSES ab "(auto-traded · best one)" labeled, aur "NEAR-MISS AUTO-ENTRIES TODAY" audit strip; Agent Rules editor me NEAR-MISS AUTO toggle + gap/conf/per-day sliders.
+
+### Feat: WINNER EXTENSION ("trade ke hisaab se extension ho na chahiye")
+- Time-exit par jo agent position **profit me** hai aur board par koi qualifying **opposite signal nahi** hai — uski window extend hoti hai (each +`winnerExtendPct`% of the dynamic ATR window, max `winnerExtendMax`× = default 2) aur **SL breakeven lock** ho jaata hai (journal `SL` entry, watcher turant armed). Losers original window par hi cut. Trend-flip hamesha extension ko beat karta hai. Board scan ab time-exit sweep se PEHLE ek hi pass me opposite-qualifying map banata hai (flip-exit + extension veto ek hi truth se padhte hain).
+- Panel: win-extend chip + Agent Rules toggle.
+
+### Feat: PRO #4 — BOUNDED-AUTONOMY MANDATE (Vibe-Trading port)
+- `agentStart` risk-caps ko **frozen mandate** me capture karta hai (deep-frozen, session-immutable) + journal `MANDATE` audit entry (exact caps ka immutable record). Mid-session config loosening (zyada trades/risk/leverage…) clamp ho jaati hai frozen value par — agent sirf STRICTER hi ho sakta hai; user config file untouched rehti hai; STOP+START fresh freeze. `agentStatus.accuracy.mandate` + panel chip.
+
+### Feat: PRO #1 — BULL/BEAR DEBATE COUNCIL (Vibe-Trading investment-committee port)
+- AICouncil ab 3-step chain hai: **Bull Advocate** (strongest honest LONG case, grounded in the same indicator data) → **Bear Advocate** (strongest honest SHORT case) → **PM Verdict** (MUST cite where bull/bear disagree + why it sides one way; same verdicts shape as before).
+- Resilience: koi bhi step fail → legacy single-shot prompt fallback (never offline because the debate hiccuped). Flag `AI_COUNCIL_DEBATE` (default ON). SentimentPulse parity preserved. `aiNote.debate` carries both cases on the signal card.
+
+### Feat: PRO #3 — LIGHTWEIGHT CHAT MEMORY (Vibe-Trading memory port)
+- NEW `server/ai/agentMemory.js`: per-desk (crypto/protrade) ring of 60 Q&A turns, symbols + topics auto-extracted (whitelist + pair shapes), last 8 + recurring-focus tally system-prompt me feed hote hain — "pichhli baar SOL pe short view tha" continuity. Durable-backed, best-effort everywhere. Wired into cryptoAgent + ProTrader (india chat).
+
+### Feat: PRO #2 — NL CUSTOM STRATEGY LAB (Vibe-Trading strategy-discovery port)
+- NEW `server/ai/strategyLab.js` + `POST /api/ai/strategy-lab` + chat tool `backtest_custom_strategy` + Backtest Lab UI block: plain-English idea → LLM compiles a **bounded whitelist rule-expression** (10 indicators × 4 operators × sane value ranges, max 4 entry + 3 exit conditions, ATR-stop 0.5–5, TP 0.5–5R, hold 6–168 bars) → validator rejects ANYTHING outside → walk-forward replay on the SAME candle history (no look-ahead, SL-first, 10bps slippage) → same R-multiple stats shape as the ensemble backtest. Rules jo chale wahi UI pe echo hote hain (full transparency).
+- `backtest.js`: `fetchHistoryFor` + `statsFromTrades` shared exports.
+
+### Validation
+- tsc CLEAN; vitest **75 files / 1394 tests ALL PASS × 2 consecutive runs** (baseline 1322 + 72 new: nearMissAutoTrade 17, mandateFreeze 9, councilDebate 11, agentMemory 13, strategyLab 22); ml-service pytest 11/11; import-smoke all modules clean; functional smoke of every new pure core.
+
 ## v10.7 — COINDCX GLOBAL FUTURES APP-PARITY PRICING (USDC RT feed) + realtime positions fix (2026-09-14)
 
 ### Fix: Equity SIM prices never matched the CoinDCX app (AAPL 332.27 site vs 333.62 USDC app)

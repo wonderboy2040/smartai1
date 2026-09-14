@@ -29,6 +29,20 @@ const SLIPPAGE = 0.001; // 10 bps each side
 const WARMUP = 60;      // bars burned before the first signal
 
 // ---------------- historical data ----------------
+/** v10.8: shared history fetcher for the Strategy Lab (and any future
+ *  tool that needs the SAME candle sources the backtester uses). */
+export async function fetchHistoryFor(market, sym) {
+  const mkt = String(market).toUpperCase() === 'INDIA' ? 'INDIA' : 'CRYPTO';
+  if (mkt === 'CRYPTO') {
+    let candles = await fetchCoinDcxCandles(sym, '1h').catch(() => null);
+    if (candles) return { candles, source: 'coindcx-1h' };
+    candles = await fetchYahooHourlyCrypto(sym).catch(() => null);
+    return candles ? { candles, source: 'yahoo-1h-USD' } : { candles: null, source: null };
+  }
+  const candles = await fetchYahooDailyCandles(sym).catch(() => null);
+  return candles ? { candles, source: 'yahoo-1d' } : { candles: null, source: null };
+}
+
 async function fetchYahooDailyCandles(symbol, range = '2y') {
   const yh = `${symbol.toUpperCase().replace(/[^A-Z0-9\-]/g, '')}.NS`;
   return fetchYahooChart(yh, '1d', range);
@@ -180,6 +194,10 @@ function finish(t, trades, exitPrice, reason, exitBar) {
     planStyle: t.planStyle, modelsVoting: t.modelsVoting,
   });
 }
+
+/** v10.8: shared R-multiple stats block (the Strategy Lab aggregates
+ *  custom-strategy results with the SAME math as the ensemble backtest). */
+export function statsFromTrades(trades) { return statsFrom(trades); }
 
 function statsFrom(trades) {
   const n = trades.length;

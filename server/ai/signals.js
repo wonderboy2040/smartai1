@@ -614,15 +614,11 @@ export function toCouncilCandidate(c) {
 }
 
 /**
- * AI Council: verify top candidates via LLM (Gemini → Groq → Cerebras
- * → OpenRouter). Returns { verdicts: {symbol: {verdict, confidence,
- * note, analysis}}, model: provider | null }.
+ * Compact the council candidates once — shared by the legacy
+ * single-shot prompt AND the v10.8 debate chain (one truth).
  */
-export async function aiCouncilVerify(candidates, deps, market) {
-  if (!candidates?.length || !aiKeysPresent(deps?.KEYS)) return { verdicts: {}, model: null, online: false };
-  const norm = candidates.map(toCouncilCandidate).filter(c => c && c.symbol);
-  if (norm.length === 0) return { verdicts: {}, model: null, online: false };
-  const compact = norm.map(c => ({
+function compactCouncilCandidates(candidates) {
+  return candidates.map(toCouncilCandidate).filter(c => c && c.symbol).map(c => ({
     sym: c.symbol, side: c.side, conf: c.confidence, ltp: r2(c.ltp),
     chg: c.changePct, rsi: r2(c.ind?.rsi), adx: r2(c.ind?.adx?.adx),
     relVol: r2(c.ind?.relVolume), vwapDist: c.ind?.vwap && c.ltp ? r2(((c.ltp - c.ind.vwap) / c.ind.vwap) * 100) : null,
@@ -630,6 +626,123 @@ export async function aiCouncilVerify(candidates, deps, market) {
     plan: c.plan ? { e: c.plan.entry, sl: c.plan.stopLoss, t1: c.plan.target1, t2: c.plan.target2 } : null,
     votes: (c.votes || []).filter(v => v.dir !== 0).map(v => `${v.name}:${v.dir > 0 ? '+' : '-'}${v.conf}`).join(', '),
   }));
+}
+
+/** One ask through the provider chain (Gemini → Groq → Cerebras →
+ *  OpenRouter). Returns { json, model } | { json: null, model: null }. */
+async function councilAsk(prompt, deps) {
+  const { KEYS, OPENAI_COMPAT } = deps || {};
+  let json = null, model = null;
+  if (KEYS?.gemini) { json = await askGemini(prompt, KEYS); model = json ? 'gemini' : null; }
+  if (!json && KEYS?.groq) { json = await askOpenAICompat(prompt, KEYS, OPENAI_COMPAT, 'groq'); model = json ? 'groq' : null; }
+  if (!json && KEYS?.cerebras) { json = await askOpenAICompat(prompt, KEYS, OPENAI_COMPAT, 'cerebras'); model = json ? 'cerebras' : null; }
+  if (!json && KEYS?.openrouter) { json = await askOpenAICompat(prompt, KEYS, OPENAI_COMPAT, 'openrouter'); model = json ? 'openrouter' : null; }
+  return { json, model };
+}
+
+// ---------------- v10.8 PRO #1: BULL/BEAR DEBATE COUNCIL ----------------
+// (Vibe-Trading investment-committee port). The old single-shot prompt
+// asked ONE brain to be neutral — one-sided narration slipped through.
+// The debate runs THREE bounded steps on the same grounded data:
+//   1. BULL ADVOCATE — builds the strongest honest LONG case per symbol
+//   2. BEAR ADVOCATE — builds the strongest honest SHORT case per symbol
+//   3. PM VERDICT — must cite where bull/bear DISAGREE and why it sides
+//      one way, then issues the SAME verdict shape as the legacy path.
+// Any step failing → honest null → the caller falls back to the legacy
+// single-shot prompt (resilience first). Cost: ≤3 short LLM calls per
+// board cycle, only over the top candidates (already ≤5).
+export function councilDebateEnabled() {
+  const v = String(process.env.AI_COUNCIL_DEBATE || '').trim().toLowerCase();
+  if (['0', 'off', 'false', 'no', 'disable', 'disabled'].includes(v)) return false;
+  return true; // default ON (v10.8)
+}
+
+/**
+ * The 3-step debate. PURE-ish (network only via councilAsk).
+ * @returns {Promise<{verdicts:object, model:string, online:true,
+ *                     debate:{bull:object, bear:object}}|null>}
+ */
+export async function aiCouncilDebate(candidates, deps, market) {
+  const compact = compactCouncilCandidates(candidates);
+  if (compact.length === 0) return null;
+  const venue = market === 'CRYPTO'
+    ? 'CoinDCX spot (INR pairs, 24/7)'
+    : market === 'FUTURES'
+      ? 'CoinDCX GLOBAL FUTURES (USDT-margined perpetuals, 24/7, leveraged)'
+      : market === 'GLOBALFUTURES'
+        ? 'global equity perpetual futures SIM desk (USDC-margined, 24/7)'
+        : 'NSE India (options-led desk)';
+  const data = JSON.stringify(compact, null, 1);
+  // v2 SentimentPulse parity (the legacy single-shot path injects the
+  // same context — the debate must not silently lose the feature).
+  const sentCtx = v2ModelsEnabled() ? sentimentContextFor(market) : null;
+  const sentLines = sentCtx ? `\n${sentCtx}` : '';
+
+  // ---- STEP 1: BULL ADVOCATE ----
+  const bull = await councilAsk(`You are the BULL ADVOCATE on an institutional investment committee for a ${venue} desk.
+Below are pre-scored consensus candidates from a 14-model quant ensemble. Your ONE job: build the strongest HONEST LONG case for EACH symbol using ONLY the numbers given (RSI/ADX/relVol/VWAP distance/ATR%/plan levels/votes). Never invent data; if a long case is weak, say so honestly and score it low.
+
+${data}
+
+Respond STRICT JSON only: {"cases":{"SYMBOL":{"case":"2 sentences: the strongest long thesis grounded in the numbers","strength":0-100}}}`, deps);
+  if (!bull?.json?.cases || typeof bull.json.cases !== 'object') return null;
+
+  // ---- STEP 2: BEAR ADVOCATE ----
+  const bear = await councilAsk(`You are the BEAR ADVOCATE on an institutional investment committee for a ${venue} desk.
+Below are the SAME pre-scored consensus candidates. Your ONE job: build the strongest HONEST SHORT case for EACH symbol using ONLY the numbers given (overbought RSI, exhaustion, thin volume, counter-regime, funding/crowding, stop placement risk). Never invent data; if a short case is weak, say so honestly and score it low.
+
+${data}
+
+Respond STRICT JSON only: {"cases":{"SYMBOL":{"case":"2 sentences: the strongest short thesis grounded in the numbers","strength":0-100}}}`, deps);
+  if (!bear?.json?.cases || typeof bear.json.cases !== 'object') return null;
+
+  // ---- STEP 3: PM VERDICT (must cite the disagreement) ----
+  const pm = await councilAsk(`You are the PORTFOLIO MANAGER — the final verification layer of a superintelligence ensemble for a ${venue} desk.
+Your bull and bear advocates have argued over these candidates. For EACH symbol you MUST (a) name where the two cases DISAGREE (which numbers each side leans on), and (b) state WHY you side one way. Then issue the verdict. Be strict: an edge must be confluence-driven, not single-factor. Penalize extreme 24h moves, thin books, counter-BTC-regime calls${market === 'GLOBALFUTURES' ? ', and remember these are USDC-margined equity perps' : ''}.
+
+CANDIDATE DATA:
+${data}
+
+BULL ADVOCATE:
+${JSON.stringify(bull.json.cases, null, 1)}
+
+BEAR ADVOCATE:
+${JSON.stringify(bear.json.cases, null, 1)}${sentLines}
+
+Respond STRICT JSON only (no markdown):
+{"verdicts":{"SYMBOL":{"verdict":"LONG"|"SHORT"|"AVOID","confidence":0-100,"note":"max 12 words","analysis":"2 sentences: where bull/bear disagree + why you side one way — indicator state, timing quality, risk"}}}`, deps);
+  if (!pm?.json?.verdicts || typeof pm.json.verdicts !== 'object') return null;
+
+  // fold the council's optional sentiment read back into the cache
+  // (same parity as the legacy path).
+  if (pm.json.sentiment) absorbCouncilSentiment({ ...pm.json.sentiment, model: pm.model }, market);
+
+  return {
+    verdicts: pm.json.verdicts,
+    model: pm.model || 'debate',
+    online: true,
+    debate: { bull: bull.json.cases, bear: bear.json.cases },
+  };
+}
+
+/**
+ * AI Council: verify top candidates via LLM (Gemini → Groq → Cerebras
+ * → OpenRouter). Returns { verdicts: {symbol: {verdict, confidence,
+ * note, analysis}}, model: provider | null }.
+ *
+ * v10.8: the 3-step bull/bear debate runs FIRST (default ON); any step
+ * failing degrades to this legacy single-shot path — never offline
+ * just because the debate chain hiccuped.
+ */
+export async function aiCouncilVerify(candidates, deps, market) {
+  if (!candidates?.length || !aiKeysPresent(deps?.KEYS)) return { verdicts: {}, model: null, online: false };
+  if (councilDebateEnabled()) {
+    const debated = await aiCouncilDebate(candidates, deps, market).catch(() => null);
+    if (debated && debated.online) return debated;
+  }
+  const norm = candidates.map(toCouncilCandidate).filter(c => c && c.symbol);
+  if (norm.length === 0) return { verdicts: {}, model: null, online: false };
+  const compact = compactCouncilCandidates(norm);
   const venue = market === 'CRYPTO'
     ? 'CoinDCX spot (INR pairs, 24/7). Penalize extreme 24h moves, thin books, counter-BTC-regime calls.'
     : market === 'FUTURES'
@@ -1199,7 +1312,9 @@ async function _computeBoard(mkt, deps, opts = {}) {
           id: 'aicouncil', name: 'AI Council (LLM)', role: MODELS.find(m => m.id === 'aicouncil').role,
           weight: MODELS.find(m => m.id === 'aicouncil').weight * (_ad?.aicouncil?.mul ?? 1), ...av,
         });
-        aiNote = { verdict: verdict.verdict, note: verdict.note, analysis: verdict.analysis, model: council.model };
+        aiNote = { verdict: verdict.verdict, note: verdict.note, analysis: verdict.analysis, model: council.model,
+          // v10.8: bull/bear debate cases — the PM verdict's evidence trail
+          ...(council.debate ? { debate: { bull: council.debate.bull?.[c.ctx.symbol]?.case ?? null, bear: council.debate.bear?.[c.ctx.symbol]?.case ?? null } } : {}) };
         aiConf = av.conf ?? verdict.confidence ?? null;
       }
     }
@@ -1684,7 +1799,7 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
     maxRiskPct: riskCapFor(deps),
     ...(structureStopOpt && consensus.dir !== 0 ? { structureStop: structureStopOpt } : {}),
   });
-  const built = buildSignal({ symbol: sym, market: mkt, ctx, votes, consensus, plan, aiNote: verdict ? { verdict: verdict.verdict, note: verdict.note, analysis: verdict.analysis, model: council.model } : null, quality });
+  const built = buildSignal({ symbol: sym, market: mkt, ctx, votes, consensus, plan, aiNote: verdict ? { verdict: verdict.verdict, note: verdict.note, analysis: verdict.analysis, model: council.model, ...(council.debate ? { debate: { bull: council.debate.bull?.[sym]?.case ?? null, bear: council.debate.bear?.[sym]?.case ?? null } } : {}) } : null, quality });
   // v10.5 MTF (Upgrade 1): the deep card carries the same 5m/15m/1h
   // wire payload the board badge renders (deep == board read).
   if (mkt === 'INDIA' && mtfConfluenceEnabled()) {

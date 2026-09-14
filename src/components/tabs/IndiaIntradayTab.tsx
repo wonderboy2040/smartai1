@@ -87,7 +87,7 @@ export default memo(function IndiaIntradayTab() {
   // crypto/futures boards.
   const t = useAITrading(true, { markets: ['INDIA'] });
   const { india, state, positions, entries, loading, busy, refresh, executeIndia, updateConfig, closePos, fetchDeep, boardError, positionsLive } = t;
-  const { runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert, fetchDhanStatus, dhanConnect, dhanDisconnect } = t;
+  const { runBacktest, runStrategyLab, fetchAlertsStatus, saveAlertsConfig, testAlert, fetchDhanStatus, dhanConnect, dhanDisconnect } = t;
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [filter, setFilter] = useState<BoardFilter>('ALL');
   // v6.13: SIMPLE (trade-flow only) / PRO (poora desk) — persist hota hai
@@ -448,7 +448,7 @@ export default memo(function IndiaIntradayTab() {
         <div id="in-backtest">
           <SectionLabel num="04" title="Backtest Lab" sub="the SAME 10-model ensemble replayed on India history — win rate · avg R · equity curve · learned gates" />
           <div className="mt-2.5">
-            <BacktestPanel market="INDIA" runBacktest={runBacktest} />
+            <BacktestPanel market="INDIA" runBacktest={runBacktest} runStrategyLab={runStrategyLab} />
           </div>
           {/* v10.6 Pro Upgrade #5: the walk-forward dashboard — per-model
               30/90d win-rates + calibration chart + regime tilt state. */}

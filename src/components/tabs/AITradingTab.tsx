@@ -214,7 +214,7 @@ function BoardSummary({ board }: { board: SignalBoard | null }) {
 export default memo(function AITradingTab() {
   const t = useAITrading(true);
   const { india, crypto, futures, state, positions, entries, loading, busy, refresh, executeSignal, updateConfig, closePos, fetchDeep, positionsLive } = t;
-  const { executeIndia, executeFutures, runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert, fetchDhanStatus, dhanConnect, dhanDisconnect } = t;
+  const { executeIndia, executeFutures, runBacktest, runStrategyLab, fetchAlertsStatus, saveAlertsConfig, testAlert, fetchDhanStatus, dhanConnect, dhanDisconnect } = t;
   const [market, setMarket] = useState<MarketKind>('INDIA');
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [filter, setFilter] = useState<BoardFilter>('ALL');
@@ -510,7 +510,7 @@ export default memo(function AITradingTab() {
       <div>
         <SectionLabel num={market === 'INDIA' ? '04' : '03'} title="Backtest Lab" sub="the SAME 9-model ensemble replayed on history — win rate · avg R · equity curve" />
         <div className="mt-2.5">
-          <BacktestPanel market={market === 'FUTURES' || market === 'GLOBALFUTURES' ? 'CRYPTO' : market} runBacktest={runBacktest} />
+          <BacktestPanel market={market === 'FUTURES' || market === 'GLOBALFUTURES' ? 'CRYPTO' : market} runBacktest={runBacktest} runStrategyLab={runStrategyLab} />
         </div>
       </div>
 
