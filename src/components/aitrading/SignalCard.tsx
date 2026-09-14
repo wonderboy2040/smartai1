@@ -18,6 +18,7 @@
 //     preview, risk-auto-fit transparency chips.
 // ============================================================
 import { memo, useCallback, useState } from 'react';
+import { MTFConfluenceBadge } from '../intraday/MTFConfluenceBadge';
 import type { AISignal, Side, SuperIntel } from './types';
 
 const fmt = (n: number | null | undefined, dp = 2): string => {
@@ -868,6 +869,11 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
 
       {/* v6.12 PRO TRADER BRAIN — quality chips: the honest WHY behind the grade */}
       {signal.quality && <QualityChips quality={signal.quality} voters={signal.voters ?? signal.participating} total={signal.totalModels} />}
+
+      {/* v10.5 MTF CONFLUENCE (Upgrade 1) — the 5m/15m/1h tape reads
+          + agreement % (India signals with the flag ON; renders nothing
+          when the payload is absent — honest degrade). */}
+      {signal.mtf && <div className="mt-1.5"><MTFConfluenceBadge mtf={signal.mtf} /></div>}
 
       {/* v9 SUPERINTELLIGENCE BLUEPRINT — entry window · leverage ·
           staged exit · exit clock: the complete pro-trader ticket. */}

@@ -8,6 +8,101 @@ import { isCryptoSymbol } from './constants';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+// ------------------------------------------------------------
+// v10.5 ASSET-CLASS ALLOCATION (Upgrade 3 — INDMoney net-worth)
+// ------------------------------------------------------------
+/** The allocation buckets the Portfolio tab's Net Worth card shows. */
+export type AssetClass = 'Equity' | 'Mutual Funds' | 'EPF' | 'Gold' | 'Crypto' | 'Fixed Income' | 'Other';
+
+export const ASSET_CLASS_ORDER: AssetClass[] = ['Equity', 'Mutual Funds', 'EPF', 'Gold', 'Crypto', 'Fixed Income', 'Other'];
+
+export const ASSET_CLASS_COLORS: Record<AssetClass, string> = {
+  Equity: '#34d399',
+  'Mutual Funds': '#22d3ee',
+  EPF: '#a78bfa',
+  Gold: '#fbbf24',
+  Crypto: '#f472b6',
+  'Fixed Income': '#94a3b8',
+  Other: '#64748b',
+};
+
+/**
+ * Classify ONE position row into an asset class. Works for BOTH the
+ * INDMoney-synced rows (name + noLive + source carry the hints) and
+ * manual rows (symbol/market are all we have — equity/crypto by
+ * symbol, everything ambiguous lands in Other honestly).
+ */
+export function classifyAssetClass(p: Position): AssetClass {
+  if (p.source === 'coindcx') return 'Crypto';
+  const symbol = (p.symbol || '').toUpperCase();
+  if (isCryptoSymbol(symbol)) return 'Crypto';
+  const name = `${p.name || ''} ${p.symbol || ''}`.toLowerCase();
+  // retirement/pension vehicles → EPF bucket (EPF/PPF/NPS/pension)
+  if (/epf|ppf|provident|pension|nps|gratuity/.test(name)) return 'EPF';
+  // gold instruments (SGB, gold ETF, gold fund) — "digital gold" bhi
+  if (/gold|sgb|sovereign gold/.test(name)) return 'Gold';
+  // fixed-income: FD/RD/bonds/debentures/treasury
+  if (/fixed deposit|\bfd\b|recurring deposit|\brd\b|bond|debenture|treasury|liquid fund|money market|arbitrage/.test(name)) return 'Fixed Income';
+  // mutual funds: the fund-house vocabulary + index ETF vocabulary
+  if (/mutual|fund|flexi cap|mid cap|small cap|large cap|multi ?cap|elss|balanced|hybrid|sip|nifty|sensex|bees|index|amc|direct growth|dividend yield|value fund|emerging|bluechip|tax ?saver/.test(name)) return 'Mutual Funds';
+  // synced equities carry the indmoney source; manual stocks fall back
+  // to "not one of the above" = plain equity
+  if (p.source === 'indmoney') return 'Equity';
+  return p.noLive ? 'Other' : 'Equity';
+}
+
+/** Value weight per asset class, in % (0-100). null when nothing has a
+ * computable value — the caller shows "n/a" instead of fake zeros. */
+export function assetClassWeights(
+  portfolio: Position[],
+  livePrices: Record<string, PriceData>,
+  usdInr: number = 85.5
+): Record<AssetClass, number> | null {
+  const totals = new Map<AssetClass, number>();
+  let total = 0;
+  for (const p of portfolio) {
+    const d = livePrices[`${p.market}_${p.symbol}`];
+    const price = d?.price || p.avgPrice;
+    const value = price * p.qty * (p.market === 'US' ? usdInr : 1);
+    if (!(value > 0)) continue;
+    const cls = classifyAssetClass(p);
+    totals.set(cls, (totals.get(cls) || 0) + value);
+    total += value;
+  }
+  if (total <= 0) return null;
+  const out = {} as Record<AssetClass, number>;
+  for (const [cls, v] of totals) out[cls] = (v / total) * 100;
+  return out;
+}
+
+/** The full allocation breakdown for the Net Worth card:
+ * per-class value (INR) + pct + count. */
+export function assetAllocationBreakdown(
+  portfolio: Position[],
+  livePrices: Record<string, PriceData>,
+  usdInr: number = 85.5
+): { classes: Array<{ cls: AssetClass; valueINR: number; pct: number; count: number }>; totalINR: number } | null {
+  const values = new Map<AssetClass, { value: number; count: number }>();
+  let total = 0;
+  for (const p of portfolio) {
+    const d = livePrices[`${p.market}_${p.symbol}`];
+    const price = d?.price || p.avgPrice;
+    const value = price * p.qty * (p.market === 'US' ? usdInr : 1);
+    if (!(value > 0)) continue;
+    const cls = classifyAssetClass(p);
+    const cur = values.get(cls) || { value: 0, count: 0 };
+    cur.value += value;
+    cur.count += 1;
+    values.set(cls, cur);
+    total += value;
+  }
+  if (total <= 0) return null;
+  const classes = [...values.entries()]
+    .sort((a, b) => b[1].value - a[1].value)
+    .map(([cls, v]) => ({ cls, valueINR: Math.round(v.value * 100) / 100, pct: Math.round((v.value / total) * 1000) / 10, count: v.count }));
+  return { classes, totalINR: Math.round(total * 100) / 100 };
+}
+
 function monthKey(date: string): string {
   // date is YYYY-MM-DD → YYYY-MM
   return (date || '').slice(0, 7) || new Date().toISOString().slice(0, 7);

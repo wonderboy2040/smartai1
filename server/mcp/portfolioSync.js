@@ -278,6 +278,60 @@ export function syncInfo() {
 // ---------------- hidden assets (user-removed rows) ----------------
 // Removal is a HIDE, not a delete: the next sync re-adds the holding
 // (INDMoney/CoinDCX still report it) but it stays hidden until restored.
+
+// ---------------- v10.5 NET-WORTH AGGREGATION (Upgrade 3) ----------------
+// The unified view the Portfolio tab's "Net Worth Summary" card reads:
+// every visible asset bucketed into an asset class, with the total and
+// the source-of-truth stamps. KIND → CLASS is the primary mapping
+// (resolveSymbolsForHoldings assigns it); assetType (the INDMoney enum
+// label) is the fallback; a CoinDCX-source row is crypto whatever it
+// says. Hidden rows never count (they are removed, not "zero-value").
+const CLASS_OF_KIND = {
+  stock: 'Equity', etf: 'Equity', mf: 'Mutual Funds', retirement: 'EPF',
+  gold: 'Gold', crypto: 'Crypto', bond: 'Fixed Income', fixed: 'Fixed Income',
+  other: 'Other',
+};
+function assetClassOf(a) {
+  if (a?.source === 'coindcx' || a?.kind === 'crypto') return 'Crypto';
+  return CLASS_OF_KIND[a?.kind] || CLASS_OF_KIND[String(a?.kind || '').toLowerCase()] || 'Other';
+}
+
+export function netWorthSnapshot() {
+  const snap = getAssetsSnapshot();
+  const hidden = Array.isArray(snap?.hidden) ? snap.hidden : [];
+  const assets = (Array.isArray(snap?.assets) ? snap.assets : []).filter(a => a && !hidden.includes(a.key));
+  const byClass = new Map();
+  let total = 0;
+  let valued = 0;
+  for (const a of assets) {
+    const cls = assetClassOf(a);
+    const cur = byClass.get(cls) || { category: cls, valueINR: 0, count: 0 };
+    cur.count += 1;
+    if (typeof a.value === 'number' && Number.isFinite(a.value)) {
+      cur.valueINR += a.value;
+      total += a.value;
+      valued += 1;
+    }
+    byClass.set(cls, cur);
+  }
+  const categories = [...byClass.values()]
+    .map(c => ({ ...c, valueINR: round2(c.valueINR) }))
+    .sort((x, y) => y.valueINR - x.valueINR)
+    .map(c => ({ ...c, pct: total > 0 ? round2((c.valueINR / total) * 100) : null }));
+  const info = syncInfo();
+  return {
+    ok: assets.length > 0,
+    totalValueINR: round2(total),
+    valuedCount: valued,
+    holdingCount: assets.length,
+    categories,
+    sources: info.sources,
+    syncedAt: snap?.syncedAt || null,
+    lastError: snap?.lastError || null,
+    note: 'All values INR (INDMoney native; US rows reported in INR by the app). Hidden rows excluded.',
+  };
+}
+
 function persistHiddenUpdate(mutate) {
   const snap = getAssetsSnapshot() || {};
   const hidden = new Set(Array.isArray(snap.hidden) ? snap.hidden : []);

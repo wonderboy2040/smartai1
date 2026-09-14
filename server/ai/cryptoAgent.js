@@ -18,7 +18,7 @@
 // ============================================================
 import { getSignals, getDeepSignal, buildRegime } from './signals.js';
 import { walletSnapshot, fetchUsdInr } from './futures.js';
-import { getPositionsWithPnl, loadConfig } from './coindcxOrders.js';
+import { getPositionsWithPnl, loadConfig, getRiskState, loadJournal, todayIST } from './coindcxOrders.js';
 import { trustReport, governance } from './trust.js';
 import { maxSaneLeverage } from './ensemble.js';
 import { loadAgentConfig, agentStatus } from './agent.js';
@@ -132,6 +132,41 @@ export const CRYPTO_AGENT_TOOLS = [
       parameters: { type: 'object', properties: {} },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'get_funding_rate',
+      description: 'Per-symbol perpetual funding rate (8h, Binance fapi public — the honest cross-exchange reference since CoinDCX does not publish a public funding endpoint). Positive = longs pay shorts (crowded longs), negative = shorts pay longs (squeeze fuel). Use before ANY perp hold > 1 day — funding is a real carrying cost.',
+      parameters: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'Coin base symbol, e.g. BTC, SOL, ETH' },
+        },
+        required: ['symbol'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_risk_status',
+      description: 'Risk governance state: kill-switch, daily trade cap usage, daily loss cap usage, open position count vs max, and the exact blockers list (why execution is disabled). Use before recommending new entries when the user has had a losing day.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_pnl',
+      description: 'P&L summary: realized (booked CLOSE/PARTIAL_TP legs from the trade journal) over a period (today | 7d | 30d | all) PLUS live unrealized across open positions (INR + USDT). Use for "kitna profit/loss ho raha hai" questions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          period: { type: 'string', description: '"today" (default), "7d", "30d" or "all"' },
+        },
+      },
+    },
+  },
 ];
 
 function geminiTools() {
@@ -162,6 +197,9 @@ HOW YOU WORK (agentic protocol):
 - Specific coin → analyze_coin (add get_market_regime if counter-trend)
 - Global stock (Apple/NVIDIA/Tesla/SpaceX…) → analyze_global_stock — ye SIM desk hai: signals REAL Yahoo data par, execution PAPER/NOTIFY only
 - Before ANY size or leverage recommendation → calculate_position_size (it returns the max SANE leverage)
+- Perp hold > 1 day → get_funding_rate (funding is a real carrying cost)
+- Risk / "kitna bura gaya" / losing day → get_risk_status (kill-switch + caps + blockers)
+- P&L questions → get_pnl (period: today/7d/30d/all)
 - Track-record / accuracy questions → get_track_record
 - "Agent kya kar raha hai" → get_agent_status
 
@@ -379,6 +417,99 @@ async function executeCryptoTool(name, args, deps) {
             bookedPnlINR: p.bookedPnlINR, exitStage: p.exitStage,
           })),
           blockers: (st.blockers || []).map(b => b.text),
+        };
+      }
+
+      case 'get_funding_rate': {
+        const symbol = String(args.symbol || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (!symbol) return { error: 'symbol required (e.g. BTC, SOL)' };
+        // CoinDCX publishes no public funding endpoint — Binance fapi's
+        // perp premiumIndex is the honest cross-exchange reference.
+        try {
+          const r = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}USDT`, {
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!r.ok) return { error: `funding data unavailable (fapi ${r.status})` };
+          const j = await r.json();
+          const rate8h = parseFloat(j?.lastFundingRate);
+          if (!Number.isFinite(rate8h)) return { error: 'funding data unavailable (no lastFundingRate)' };
+          const bps8h = rate8h * 10000;
+          const dailyPct = rate8h * 3 * 100; // 3 x 8h settlements/day
+          const r4 = (v) => (Number.isFinite(v) ? Math.round(v * 10000) / 10000 : null);
+          return {
+            symbol, markPrice: j?.markPrice != null ? Number(j.markPrice) : null,
+            fundingRate8h: rate8h,
+            fundingBps8h: r2(bps8h),
+            approxDailyCarryPct: r4(dailyPct),
+            interpretation: bps8h > 10
+              ? 'crowded longs — LONG side pays the carry, thoda sweat + trend-check before holding longs overnight'
+              : bps8h < -3
+                ? 'shorts paying — squeeze fuel, short-side carry cost + bounce risk'
+                : 'balanced funding — carry is not a factor',
+            note: 'Binance fapi reference rate (CoinDCX par no public funding endpoint). Positive = longs pay shorts.',
+          };
+        } catch (e) {
+          return { error: `funding fetch failed: ${e?.message || e}` };
+        }
+      }
+
+      case 'get_risk_status': {
+        const rs = getRiskState();
+        const cfg = rs.config || {};
+        return {
+          killSwitch: rs.blocked.killSwitch,
+          mode: cfg.mode ?? null,
+          allowAuto: cfg.allowAuto ?? null,
+          dailyTrades: `${rs.stats.tradesCount}/${cfg.dailyMaxTrades}`,
+          dailyLoss: `${rs.blocked.dailyLoss ? 'AT CAP' : 'ok'} (realized today ₹${rs.stats.realizedPnlINR}, cap ₹${cfg.dailyMaxLossINR})`,
+          openPositions: `${rs.openPositions}/${cfg.maxOpenPositions || 5}`,
+          connected: rs.blocked.notConnected ? 'NO (CoinDCX API not connected — paper context only)' : 'yes',
+          blockers: Object.entries(rs.blocked).filter(([, v]) => v).map(([k]) => ({
+            killSwitch: '🛑 Kill switch ON — execution disabled (Risk settings)',
+            dailyTrades: `📊 Daily trade cap hit (${rs.stats.tradesCount}/${cfg.dailyMaxTrades})`,
+            dailyLoss: `📉 Daily loss cap hit (₹${rs.stats.realizedPnlINR} realized today)`,
+            notConnected: '🔌 CoinDCX API not connected',
+            maxOpenPositions: '🎯 Max simultaneous open positions reached',
+          }[k] || k)),
+          verdict: Object.values(rs.blocked).some(Boolean)
+            ? 'BLOCKED — pehle yeh blockers resolve karo (kill-switch off / caps reset kal / connect API)'
+            : 'CLEAR — execution guards pass, discipline ke saath trade karo',
+        };
+      }
+
+      case 'get_pnl': {
+        const period = String(args.period || 'today').trim().toLowerCase();
+        const j = loadJournal();
+        const now = Date.now();
+        const daysBack = period === '7d' ? 7 : period === '30d' ? 30 : period === 'all' ? 3650 : 1;
+        const since = now - daysBack * 24 * 3600_000;
+        // realized = booked CLOSE + PARTIAL_TP legs (NOTIFIED/REJECTED never count)
+        const closed = (j.entries || []).filter(e =>
+          (e.kind === 'CLOSE' || e.kind === 'PARTIAL_TP')
+          && (e.ts || 0) >= since && (period === 'today' ? e.day === todayIST() : true));
+        const realized = closed.reduce((a, e) => a + (e.pnlINR || 0), 0);
+        const wins = closed.filter(e => (e.pnlINR || 0) > 0).length;
+        const losses = closed.filter(e => (e.pnlINR || 0) < 0).length;
+        // live unrealized across open positions
+        const p = await getPositionsWithPnl().catch(() => null);
+        const positions = p?.positions || [];
+        const unrealizedINR = positions.reduce((a, x) => a + (x.pnlINR || 0), 0);
+        return {
+          period,
+          realizedPnlINR: r2(realized),
+          closedLegs: closed.length, wins, losses,
+          winRate: closed.length ? r2((wins / closed.length) * 100) : null,
+          unrealizedPnlINR: r2(unrealizedINR),
+          openPositions: positions.length,
+          openDetail: positions.map(x => ({
+            pair: x.pair, market: x.market, side: x.side,
+            pnlINR: x.pnlINR ?? null, pnlPct: x.pnlPct ?? null,
+            bookedPnlINR: x.bookedPnlINR ?? null, exitStage: x.exitStage ?? null,
+          })),
+          totalPnlINR: r2(realized + unrealizedINR),
+          note: period === 'today'
+            ? 'Realized = booked CLOSE/PARTIAL_TP legs today (IST); unrealized = live open positions.'
+            : `Realized over the last ${period === 'all' ? 'all-time' : daysBack + ' days'}; unrealized = live open positions.`,
         };
       }
 

@@ -3,7 +3,55 @@ import numpy as np
 from typing import List
 
 
-def build_features(df: pd.DataFrame) -> pd.DataFrame:
+# ============================================================
+# MULTI-TIMEFRAME RESAMPLING (Upgrade 1 — MTF confluence)
+# ------------------------------------------------------------
+# Pure OHLCV resampler: groups a fine-grained frame (e.g. 1m/5m
+# bars) into coarser buckets ("5min", "15min", "1h"). open=first,
+# high=max, low=min, close=last, volume=sum. Time-bucketed (not
+# row-count based) so session gaps don't smear bars together.
+# ============================================================
+def resample_ohlcv(df: pd.DataFrame, rule: str = "15min") -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    work = df.copy()
+    # need a DatetimeIndex to resample
+    if not isinstance(work.index, pd.DatetimeIndex):
+        if "date" in work.columns:
+            try:
+                work["date"] = pd.to_datetime(work["date"])
+                work = work.set_index("date")
+            except Exception:
+                return pd.DataFrame()
+        elif "time" in work.columns:
+            try:
+                ts = pd.to_datetime(work["time"], unit="ms", errors="coerce")
+                work = work.assign(_ts=ts).set_index("_ts")
+            except Exception:
+                return pd.DataFrame()
+        else:
+            return pd.DataFrame()
+    agg = {
+        "open": "first",
+        "high": "max",
+        "low": "min",
+        "close": "last",
+        "volume": "sum",
+    }
+    cols = {k: v for k, v in agg.items() if k in work.columns}
+    try:
+        out = work.resample(rule).agg(cols).dropna(subset=["close"])
+    except Exception:
+        return pd.DataFrame()
+    out = out[out["volume"].fillna(0) > 0] if "volume" in out.columns else out
+    return out.reset_index()
+
+
+def build_features(df: pd.DataFrame, timeframe: str = "1d") -> pd.DataFrame:
+    """Feature builder. `timeframe` is informational metadata (which
+    bar size the frame holds) — the feature math is identical on any
+    bar granularity, so the same indicator stack serves the 5m/15m/
+    1h MTF votes and the daily swing model."""
     result = df.copy()
     close = result["close"]
     high = result["high"]

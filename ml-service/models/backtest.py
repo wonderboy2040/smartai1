@@ -139,6 +139,97 @@ if __name__ == "__main__":
     from pipeline.features import build_features, get_feature_columns
     from pipeline.labels import build_labels
 
+    import sys as _sys
+
+    # --strategy meta_ensemble → side-by-side weighted-average vs the
+    # trained meta-learner (walk-forward, same folds for BOTH so the
+    # comparison is honest — overfitting-safe by construction).
+    if len(_sys.argv) > 1 and _sys.argv[1] == "--strategy" and len(_sys.argv) > 2 and _sys.argv[2] == "meta_ensemble":
+        from models.train_signal import (
+            build_meta_training_frame, meta_feature_names,
+            simulate_model_votes, votes_to_feature_vector, load_meta_ensemble,
+        )
+
+        frame = build_meta_training_frame(load_ohlcv())
+        if frame.empty:
+            print({"error": "No meta training data — run fetch_data.py first."})
+            raise SystemExit(0)
+
+        try:
+            import lightgbm as lgb
+            from sklearn.metrics import f1_score, accuracy_score
+        except ImportError:
+            print({"error": "lightgbm/scikit-learn not installed"})
+            raise SystemExit(0)
+
+        X = frame[meta_feature_names()].values.astype(float)
+        y = frame["dir_label"].values
+        valid = ~(np.isnan(X).any(axis=1) | np.isinf(X).any(axis=1))
+        X, y = X[valid], y[valid]
+
+        window = max(600, len(X) // 8)
+        step = max(120, window // 6)
+        folds = []
+        for start in range(0, len(X) - window - step, step):
+            tr, te = X[start:start + window], X[start + window:start + window + step]
+            ytr, yte = y[start:start + window], y[start + window:start + window + step]
+            if len(te) == 0 or len(np.unique(ytr)) < 2:
+                continue
+            folds.append((tr, te, ytr, yte))
+
+        # WEIGHTED-AVERAGE baseline: the live ensemble.js formula in
+        # miniature — weighted dir·conf sum → majority side.
+        WEIGHTS = {"trend": 1.4, "momentum": 1.3, "volatility": 0.9, "volume": 1.2,
+                   "pattern": 1.0, "sr": 1.1, "options": 1.0, "regime": 0.8,
+                   "smc": 1.1, "tape": 1.3, "aicouncil": 1.5,
+                   "sentiment": 0.7, "instflow": 0.8, "fundamentals": 0.5}
+
+        def weighted_side(vec):
+            votes = {}
+            names = meta_feature_names()
+            for i, mid in enumerate([n.rsplit("__", 1)[0] for n in names if n.endswith("__dir")]):
+                votes[mid] = (vec[i * 2], vec[i * 2 + 1])
+            raw = sum(d * WEIGHTS.get(m, 1.0) * (c / 100.0) for m, (d, c) in votes.items())
+            if raw > 0.15:
+                return "UP"
+            if raw < -0.15:
+                return "DOWN"
+            return "FLAT"
+
+        out = {"folds": len(folds), "meta": [], "weighted": []}
+        for tr, te, ytr, yte in folds:
+            m = lgb.LGBMClassifier(
+                n_estimators=400, learning_rate=0.03, num_leaves=31,
+                subsample=0.8, colsample_bytree=0.8, class_weight="balanced",
+                random_state=42, verbosity=-1, n_jobs=-1,
+            )
+            m.fit(tr, ytr)
+            meta_pred = m.predict(te)
+            w_pred = np.array([weighted_side(v) for v in te])
+            out["meta"].append({
+                "acc": round(float(accuracy_score(yte, meta_pred)), 3),
+                "f1w": round(float(f1_score(yte, meta_pred, average="weighted")), 3),
+            })
+            out["weighted"].append({
+                "acc": round(float(accuracy_score(yte, w_pred)), 3),
+                "f1w": round(float(f1_score(yte, w_pred, average="weighted", labels=np.unique(ytr))), 3),
+            })
+
+        meta_acc = float(np.mean([f["acc"] for f in out["meta"]])) if out["meta"] else 0
+        w_acc = float(np.mean([f["acc"] for f in out["weighted"]])) if out["weighted"] else 0
+        meta_f1 = float(np.mean([f["f1w"] for f in out["meta"]])) if out["meta"] else 0
+        w_f1 = float(np.mean([f["f1w"] for f in out["weighted"]])) if out["weighted"] else 0
+        print({
+            "strategy": "meta_ensemble vs weighted-average (walk-forward)",
+            "folds": out["folds"],
+            "meta_accuracy": round(meta_acc, 3),
+            "weighted_accuracy": round(w_acc, 3),
+            "meta_f1_weighted": round(meta_f1, 3),
+            "weighted_f1_weighted": round(w_f1, 3),
+            "verdict": "meta wins" if (meta_acc, meta_f1) >= (w_acc, w_f1) else "weighted wins — keep the flag OFF",
+        })
+        raise SystemExit(0)
+
     df = load_ohlcv()
     if df is None:
         print("No data.")

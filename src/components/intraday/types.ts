@@ -1,9 +1,14 @@
 // ============================================================
 // intraday/types — shared intraday tab types (v3)
 // ============================================================
-import type { SuperIntel, SuperIntelMeta } from '../aitrading/types';
+import type { SuperIntel, SuperIntelMeta, MTFConfluence, MTFTapeRead } from '../aitrading/types';
 
 export type { SuperIntel, SuperIntelMeta };
+
+/** v10.5 MTF CONFLUENCE (Upgrade 1) — re-exported from the AI board's
+ *  type module (single source of truth; the intraday scanner pipeline
+ *  does not produce it, so IntradaySignal.mtf stays undefined there). */
+export type { MTFConfluence, MTFTapeRead };
 
 export interface IntradaySignal {
   symbol: string;
@@ -57,6 +62,12 @@ export interface IntradaySignal {
   /** v9 SUPERINTELLIGENCE: AI SCORE (0-100) + the full trade blueprint
    *  (entry timing · leverage ladder · staged exit · exit clock). */
   superIntel?: SuperIntel | null;
+  /** v10.5 MTF CONFLUENCE (Upgrade 1): the 5m/15m/1h tape read —
+   *  per-TF direction + confidence and the 3-way agreement (0..1,
+   *  measured vs the 15m trading timeframe). Present only when the
+   *  server's AI_ENABLE_MTF_CONFLUENCE flag is ON and the tapes
+   *  resolved. */
+  mtf?: MTFConfluence | null;
 }
 
 export interface MarketRegime {

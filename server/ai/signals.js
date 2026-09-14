@@ -17,7 +17,7 @@ import {
   fetchCoinDcxCandles, fetchYahooQuotes, isNseOpen,
 } from './data.js';
 import { FUTURES_UNIVERSE, futuresPairFor, fetchFuturesPrices, fetchFuturesCandles } from './futures.js';
-import { MODELS, runQuantModels, aiCouncilVoteFromVerdict, v2ModelsEnabled } from './models.js';
+import { MODELS, runQuantModels, aiCouncilVoteFromVerdict, v2ModelsEnabled, mtfConfluenceEnabled, tapeVote } from './models.js';
 // v2 signal-accuracy upgrade: sentiment (news/F&G/funding), institutional
 // flow (FII/DII + orderbook), fundamentals (India swing-only deep path)
 import { refreshSentiment, sentimentContextFor, absorbCouncilSentiment } from './sentiment.js';
@@ -400,6 +400,127 @@ function tapeFromCandles(candles, li, tvRow) {
     macdHist: li.macd?.hist ?? null, macdSlope: li.macd?.histSlope ?? null,
     vwap: tvRow?.vwap ?? null, // session VWAP from the scanner row
     last3Pct,
+  };
+}
+
+// ---------------- v10.5: MTF CONFLUENCE DATA LAYER ----------------
+// Upgrade 1 — the 5m/15m/1h tapes from ONE extra 5m fetch:
+//   • 5m tape  = the base series itself (entry-timing TF)
+//   • 15m tape = the NATIVE 15m candles the pass-2 already fetched
+//                (resample fallback when the native fetch failed)
+//   • 1h tape  = 5m base resampled server-side (no extra API call —
+//                the plan's rule: resample, don't re-fetch)
+// agreement is computed the SAME way the model does it (matching
+// dirs vs the 15m anchor / 3) so the badge, the vote and the
+// ensemble cap can never disagree.
+
+/** Pure time-bucketed OHLCV resampler. Buckets align to epoch
+ * boundaries (15m → :00/:15/:30/:45, 1h → UTC hours) exactly like
+ * Yahoo's native bars. Exported for tests. */
+export function resampleCandles(candles, minutes) {
+  if (!Array.isArray(candles) || candles.length < 2 || !(minutes > 0)) return null;
+  const bucketMs = minutes * 60_000;
+  const out = [];
+  let cur = null;
+  let curKey = -1;
+  for (const c of candles) {
+    const t = Number(c.time);
+    const o = Number(c.open), h = Number(c.high), l = Number(c.low), cl = Number(c.close), v = Number(c.volume) || 0;
+    if (!Number.isFinite(t) || !Number.isFinite(cl)) continue;
+    const key = Math.floor(t / bucketMs);
+    if (key !== curKey) {
+      if (cur) out.push(cur);
+      curKey = key;
+      cur = { time: key * bucketMs, open: o, high: h, low: l, close: cl, volume: v };
+    } else if (cur) {
+      cur.high = Math.max(cur.high, h);
+      cur.low = Math.min(cur.low, l);
+      cur.close = cl;
+      cur.volume += v;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/** 5m base bars (India desk) — cached 2 min, negative-cached 60s,
+ * same pattern as fetchYahooIntradayCandles. */
+const _ltf5mMiss = new Map();
+export async function fetchYahoo5mCandles(symbol) {
+  const key = `ltf5m:INDIA:${symbol}`;
+  const hit = cacheGet(key, 120_000);
+  if (hit) return hit;
+  const missAt = _ltf5mMiss.get(key);
+  if (missAt != null && Date.now() - missAt < 60_000) return null;
+  const t = YF_TICKER[symbol];
+  const yh = t || `${symbol}.NS`;
+  let out = null;
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yh)}?interval=5m&range=1mo`;
+    const r = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI probrain-mtf)' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (r.ok) {
+      const j = await r.json();
+      const res = j?.chart?.result?.[0];
+      const ts = res?.timestamp;
+      const q = res?.indicators?.quote?.[0];
+      if (Array.isArray(ts) && q) {
+        const rows = [];
+        for (let i = 0; i < ts.length; i++) {
+          if (q.open?.[i] == null || q.close?.[i] == null) continue;
+          rows.push({
+            time: ts[i] * 1000,
+            open: q.open[i], high: q.high?.[i] ?? q.close[i], low: q.low?.[i] ?? q.close[i],
+            close: q.close[i], volume: q.volume?.[i] || 0,
+          });
+        }
+        if (rows.length >= 60) out = rows;
+      }
+    }
+  } catch { out = null; }
+  if (out) cacheSet(key, out);
+  else _ltf5mMiss.set(key, Date.now());
+  return out;
+}
+
+/** The MTF tape payload: { m5, m15, h1, agreement } — each a plain
+ * tape snapshot (same shape ctx.tape uses), agreement vs the 15m
+ * anchor. Pure; null on insufficient data. */
+export function tapeMTFFromBase(candles5m, candles15mNative, tvRow) {
+  const mkTape = (candles) => {
+    if (!Array.isArray(candles) || candles.length < 35) return null;
+    const li = computeIndicatorsFromCandles(candles);
+    return tapeFromCandles(candles, li, tvRow);
+  };
+  if (!Array.isArray(candles5m) || candles5m.length < 60) return null;
+  const m5 = mkTape(candles5m);
+  const m15 = candles15mNative && candles15mNative.length >= 35 ? mkTape(candles15mNative) : mkTape(resampleCandles(candles5m, 15));
+  const h1 = mkTape(resampleCandles(candles5m, 60));
+  if (!m5 || !m15) return null; // anchor + entry TF required; h1 optional
+  const dirOf = (t) => {
+    const v = tapeVote(t, 'mtf');
+    return v.dir;
+  };
+  const d5 = dirOf(m5), d15 = dirOf(m15), dh = h1 ? dirOf(h1) : 0;
+  const agreement = d15 === 0 ? null : [d5, d15, dh].filter(d => d === d15).length / 3;
+  return { m5, m15, ...(h1 ? { h1 } : {}), agreement };
+}
+
+/** Compact MTF wire payload for the signal card (dirs + conf only). */
+export function mtfWirePayload(tapeMTF) {
+  if (!tapeMTF || typeof tapeMTF !== 'object' || !tapeMTF.m15) return null;
+  const compact = (t) => {
+    if (!t) return null;
+    const v = tapeVote(t, 'mtf');
+    return { dir: v.dir, conf: v.conf };
+  };
+  return {
+    m5: compact(tapeMTF.m5),
+    m15: compact(tapeMTF.m15),
+    h1: compact(tapeMTF.h1 || null),
+    agreement: tapeMTF.agreement,
   };
 }
 
@@ -910,6 +1031,7 @@ async function _computeBoard(mkt, deps, opts = {}) {
   // 11+ behind daily-only votes).
   const enrichN = mkt === 'INDIA' ? Math.min(24, Math.max(10, (opts.limit || 10) * 2)) : 0;
   const enriched = new Map();
+  const _mtfOn = mkt === 'INDIA' && mtfConfluenceEnabled();
   await Promise.all(candidates.slice(0, enrichN).map(async (c) => {
     const key = `${mkt}:${c.ctx.symbol}`;
     if (enriched.has(key)) return;
@@ -918,7 +1040,16 @@ async function _computeBoard(mkt, deps, opts = {}) {
       if (Array.isArray(candles) && candles.length >= 60) {
         const ltfInd = computeIndicatorsFromCandles(candles);
         const tape = mkt === 'INDIA' ? tapeFromCandles(candles, ltfInd, c.ctx.__tv) : null;
-        enriched.set(key, { candles, ltfInd, ...(tape ? { tape } : {}) });
+        // v10.5 MTF CONFLUENCE (Upgrade 1): flag ON → also fetch the 5m
+        // base (ONE extra call, cached) and build the 5m/15m/1h tape
+        // payload (15m reuses these native candles; 1h resamples the 5m
+        // base — no third call).
+        let tapeMTF = null;
+        if (_mtfOn) {
+          const base5m = await fetchYahoo5mCandles(c.ctx.symbol).catch(() => null);
+          tapeMTF = base5m ? tapeMTFFromBase(base5m, candles, c.ctx.__tv) : null;
+        }
+        enriched.set(key, { candles, ltfInd, ...(tape ? { tape } : {}), ...(tapeMTF ? { tapeMTF } : {}) });
       }
     } catch { /* honest degrade — quality layer skips MTF */ }
   }));
@@ -965,13 +1096,21 @@ async function _computeBoard(mkt, deps, opts = {}) {
       // Replaces the pass-1 abstain (same pattern as SMC — no double
       // count) and carries the adaptive multiplier like every other
       // injected vote.
-      if (enr.tape && mkt === 'INDIA') {
-        const tapeReg = MODELS.find(m => m.id === 'tape');
-        const tapeV = tapeReg?.fn ? tapeReg.fn({ market: mkt, tape: enr.tape }) : null;
+      // v10.5 MTF (Upgrade 1): flag ON → the seat is IntradayTapeMTF
+      // (id 'tape-mtf', w 1.6) voting the 5m/15m/1h confluence; the
+      // plain tape vote is not injected (same seat, no double-count).
+      if (mkt === 'INDIA' && (_mtfOn ? enr.tapeMTF : enr.tape)) {
+        const tapeReg = MODELS.find(m => _mtfOn ? m.id === 'tape-mtf' : m.id === 'tape');
+        const tapeV = tapeReg?.fn
+          ? tapeReg.fn(_mtfOn
+            ? { market: mkt, tape: enr.tape, tapeMTF: enr.tapeMTF }
+            : { market: mkt, tape: enr.tape })
+          : null;
         if (tapeV && tapeV.dir !== 0 && (tapeV.conf || 0) > 0) {
-          const tIdx = votes.findIndex(v => v.id === 'tape');
+          const seatId = _mtfOn ? 'tape-mtf' : 'tape';
+          const tIdx = votes.findIndex(v => v.id === 'tape' || v.id === 'tape-mtf');
           if (tIdx >= 0) votes.splice(tIdx, 1); // drop the pass-1 abstain
-          votes.push({ id: 'tape', name: tapeReg.name, role: tapeReg.role, weight: tapeReg.weight * (_ad?.tape?.mul ?? 1), ...tapeV, revived: true });
+          votes.push({ id: seatId, name: tapeReg.name, role: tapeReg.role, weight: tapeReg.weight * (_ad?.tape?.mul ?? 1), ...tapeV, revived: true });
         }
       }
       // v8.0 PASS-2 REVIVAL: the TV crypto rows used to leave pattern /
@@ -1021,7 +1160,13 @@ async function _computeBoard(mkt, deps, opts = {}) {
         aiConf = av.conf ?? verdict.confidence ?? null;
       }
     }
-    let consensus2 = aggregateVotes(votes, gatesFor(depsSafe));
+    let consensus2 = aggregateVotes(votes, gatesFor(depsSafe), {
+      // v10.5 MTF CONFLUENCE CAP: a 5m/15m/1h disagreement (< 0.67)
+      // bans the STRONG badge at the consensus layer (the plan's
+      // "max MODERATE" — ACTION in this ladder).
+      ...(_mtfOn && enr?.tapeMTF && Number.isFinite(enr.tapeMTF.agreement)
+        ? { mtfAgreement: enr.tapeMTF.agreement } : {}),
+    });
     // Rebuild the plan from the POST-council consensus: the council vote
     // can flip the final side, and a SHORT signal carrying a long-style
     // plan (SL below entry, TP2 above) would invert every alert levels.
@@ -1072,6 +1217,12 @@ async function _computeBoard(mkt, deps, opts = {}) {
     const sig = buildSignal({
       symbol: c.ctx.symbol, market: mkt, ctx: c.ctx, votes, consensus: consensus2, plan: plan2, aiNote, quality,
     });
+    // v10.5 MTF CONFLUENCE (Upgrade 1): the 5m/15m/1h wire payload for
+    // the signal card's MTF badge (dirs + conf + agreement %).
+    if (_mtfOn && enr?.tapeMTF) {
+      const mtf = mtfWirePayload(enr.tapeMTF);
+      if (mtf) sig.mtf = mtf;
+    }
     // v9 SUPERINTELLIGENCE final scoring + blueprint — the committee
     // verdict (post-council, post-quality) × the 7-factor expert score
     // × the AI verdict, then the COMPLETE trade ticket: entry timing,
@@ -1328,6 +1479,8 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
   // already fetched CoinDCX 1h), then the Yahoo intraday fallback.
   let ltfCandles = Array.isArray(ctx.candles) && ctx.candles.length >= 60 ? ctx.candles : null;
   let ltfInd = null;
+  // v10.5: the deep path's MTF agreement (caps STRONG on conflict)
+  let _deepMtfAgreement = null;
   if (!ltfCandles) {
     ltfCandles = await fetchYahooIntradayCandles(sym, mkt).catch(() => null) || null;
   }
@@ -1346,16 +1499,28 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
     // v9.3 INTRADAY TAPE VOTE (deep) — the 15m tape gets its committee
     // seat on the single-symbol deep dive too (same model, same weight;
     // the deep card must never disagree with the board's tape read).
+    // v10.5 MTF (Upgrade 1): flag ON → the 5m/15m/1h confluence seat
+    // (IntradayTapeMTF, w 1.6) votes instead — deep card == board card.
     if (mkt === 'INDIA') {
       const tape = tapeFromCandles(ltfCandles, ltfInd, ctx.__tv || null);
-      if (tape) {
-        const tapeReg = MODELS.find(m => m.id === 'tape');
-        const tapeV = tapeReg?.fn ? tapeReg.fn({ market: mkt, tape }) : null;
+      const _mtfOn = mtfConfluenceEnabled();
+      let tapeMTF = null;
+      if (_mtfOn) {
+        const base5m = await fetchYahoo5mCandles(sym).catch(() => null);
+        tapeMTF = base5m ? tapeMTFFromBase(base5m, ltfCandles, ctx.__tv || null) : null;
+      }
+      _deepMtfAgreement = tapeMTF && Number.isFinite(tapeMTF.agreement) ? tapeMTF.agreement : null;
+      if (tape || tapeMTF) {
+        const tapeReg = MODELS.find(m => _mtfOn ? m.id === 'tape-mtf' : m.id === 'tape');
+        const tapeV = tapeReg?.fn
+          ? tapeReg.fn(_mtfOn ? { market: mkt, tape, tapeMTF } : { market: mkt, tape })
+          : null;
         if (tapeV && tapeV.dir !== 0 && (tapeV.conf || 0) > 0) {
-          const tIdx = votes.findIndex(v => v.id === 'tape');
+          const seatId = _mtfOn ? 'tape-mtf' : 'tape';
+          const tIdx = votes.findIndex(v => v.id === 'tape' || v.id === 'tape-mtf');
           if (tIdx >= 0) votes.splice(tIdx, 1);
           const _adT = adaptiveMultipliers(_ledgerModelStats());
-          votes.push({ id: 'tape', name: tapeReg.name, role: tapeReg.role, weight: tapeReg.weight * (_adT?.tape?.mul ?? 1), ...tapeV, revived: true });
+          votes.push({ id: seatId, name: tapeReg.name, role: tapeReg.role, weight: tapeReg.weight * (_adT?.tape?.mul ?? 1), ...tapeV, revived: true });
         }
       }
     }
@@ -1364,7 +1529,8 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
   // candidate shape as the board path (side/confidence/ltp/ind/plan) so
   // the LLM actually sees the symbol, price and indicator state it is
   // being asked to verify — 'PENDING'/conf 0 starved the prompt.
-  const preConsensus = aggregateVotes(votes, gatesFor(deps));
+  // v10.5: MTF agreement caps STRONG here too when the tape read conflicts.
+  const preConsensus = aggregateVotes(votes, gatesFor(deps), _deepMtfAgreement != null ? { mtfAgreement: _deepMtfAgreement } : {});
   const council = await aiCouncilVerify([{
     symbol: sym,
     side: preConsensus.side,
@@ -1387,7 +1553,7 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
       });
     }
   }
-  let consensus = aggregateVotes(votes, gatesFor(deps));
+  let consensus = aggregateVotes(votes, gatesFor(deps), _deepMtfAgreement != null ? { mtfAgreement: _deepMtfAgreement } : {});
   // ---------------- v6.12: quality verdict + EDGE stats ----------------
   let quality = null, edge = null, structureStopOpt = null;
   if (consensus.dir !== 0) {
@@ -1450,6 +1616,16 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
     ...(structureStopOpt && consensus.dir !== 0 ? { structureStop: structureStopOpt } : {}),
   });
   const built = buildSignal({ symbol: sym, market: mkt, ctx, votes, consensus, plan, aiNote: verdict ? { verdict: verdict.verdict, note: verdict.note, analysis: verdict.analysis, model: council.model } : null, quality });
+  // v10.5 MTF (Upgrade 1): the deep card carries the same 5m/15m/1h
+  // wire payload the board badge renders (deep == board read).
+  if (mkt === 'INDIA' && mtfConfluenceEnabled()) {
+    try {
+      const base5m2 = await fetchYahoo5mCandles(sym).catch(() => null);
+      const tapeMTF2 = base5m2 ? tapeMTFFromBase(base5m2, ltfCandles, ctx.__tv || null) : null;
+      const mtfWire = tapeMTF2 ? mtfWirePayload(tapeMTF2) : null;
+      if (mtfWire) built.mtf = mtfWire;
+    } catch { /* honest degrade — no badge */ }
+  }
   // v6.11 (glama explain_ticker): rule-based regime narrative — the
   // indicator stack translated into a Hinglish story for the deep modal.
   const narrative = explainTicker(built, ctx.ind);

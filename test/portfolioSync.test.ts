@@ -27,6 +27,7 @@ const {
 const {
   mapHoldingsToAssets, parseSlots, slotTsToday, computeDueSlots, nextSlotTs,
   syncNow, getAssetsSnapshot, syncInfo, clearSnapshot, maybeBackgroundSync,
+  netWorthSnapshot,
   __resetSyncForTests, __stopSchedulerForTests, istParts,
 } = syncMod;
 
@@ -663,5 +664,75 @@ describe('syncNow e2e (mocked OAuth + MCP + Groww + forex)', () => {
     expect(snap.ok).toBe(false);
     expect(snap.assets).toEqual([]);
     expect(syncInfo().assetCount).toBe(0);
+  });
+});
+
+// ============================================================
+// v10.5 netWorthSnapshot — the unified by-class net-worth view
+// ============================================================
+describe('netWorthSnapshot (Upgrade 3 — by-class aggregation)', () => {
+  function writeSnap(assets, hidden = []) {
+    fs.writeFileSync(SNAP_PATH, JSON.stringify({
+      ok: true, syncedAt: Date.now(), assets, hidden,
+    }));
+  }
+
+  it('buckets every class correctly (Equity/MF/EPF/Gold/Fixed/Crypto) with pct math', () => {
+    writeSnap([
+      { key: 'a', name: 'RELIANCE', kind: 'stock', source: 'indmoney', value: 300000 },
+      { key: 'b', name: 'HDFC Flexi Cap Fund', kind: 'mf', source: 'indmoney', value: 200000 },
+      { key: 'c', name: 'EPF Account', kind: 'retirement', source: 'indmoney', value: 250000 },
+      { key: 'd', name: 'Sovereign Gold Bond', kind: 'gold', source: 'indmoney', value: 100000 },
+      { key: 'e', name: 'SBI FD', kind: 'fixed', source: 'indmoney', value: 150000 },
+      { key: 'f', name: 'BTC', kind: 'crypto', source: 'coindcx', value: 200000 },
+    ]);
+    const nw = netWorthSnapshot();
+    expect(nw.ok).toBe(true);
+    expect(nw.totalValueINR).toBe(1200000);
+    expect(nw.holdingCount).toBe(6);
+    const byCat = Object.fromEntries(nw.categories.map(c => [c.category, c]));
+    expect(byCat.Equity.valueINR).toBe(300000);
+    expect(byCat['Mutual Funds'].valueINR).toBe(200000);
+    expect(byCat.EPF.valueINR).toBe(250000);
+    expect(byCat.Gold.valueINR).toBe(100000);
+    expect(byCat['Fixed Income'].valueINR).toBe(150000);
+    expect(byCat.Crypto.valueINR).toBe(200000);
+    // pct sums to 100 and the largest class is sorted first
+    expect(nw.categories[0].category).toBe('Equity');
+    expect(nw.categories.reduce((a, c) => a + (c.pct || 0), 0)).toBeCloseTo(100, 1);
+    expect(byCat.Equity.pct).toBeCloseTo(25, 1);
+  });
+
+  it('hidden rows NEVER count (removed, not zero-valued)', () => {
+    writeSnap([
+      { key: 'a', name: 'RELIANCE', kind: 'stock', source: 'indmoney', value: 100 },
+      { key: 'b', name: 'BTC', kind: 'crypto', source: 'coindcx', value: 300 },
+    ], ['b']);
+    const nw = netWorthSnapshot();
+    expect(nw.totalValueINR).toBe(100);
+    expect(nw.holdingCount).toBe(1);
+    expect(nw.categories.find(c => c.category === 'Crypto')).toBeUndefined();
+  });
+
+  it('missing-field rows count toward holdings but add 0 value (graceful)', () => {
+    writeSnap([
+      { key: 'a', name: 'RELIANCE', kind: 'stock', source: 'indmoney', value: 500 },
+      { key: 'b', name: 'Mystery Asset' }, // no kind, no value
+    ]);
+    const nw = netWorthSnapshot();
+    expect(nw.holdingCount).toBe(2);
+    expect(nw.valuedCount).toBe(1);
+    expect(nw.totalValueINR).toBe(500);
+    const other = nw.categories.find(c => c.category === 'Other');
+    expect(other.count).toBe(1);
+    expect(other.valueINR).toBe(0);
+  });
+
+  it('empty snapshot → ok:false, zero total (no fake zeros on the card)', () => {
+    writeSnap([]);
+    const nw = netWorthSnapshot();
+    expect(nw.ok).toBe(false);
+    expect(nw.totalValueINR).toBe(0);
+    expect(nw.categories).toEqual([]);
   });
 });

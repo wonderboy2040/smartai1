@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from app.config import HORIZON_DAYS
+from app.config import HORIZON_DAYS, META_DIR_DEADBAND, META_DIR_HORIZON_DAYS
 
 
 def build_labels(df: pd.DataFrame, horizon: int = HORIZON_DAYS) -> pd.DataFrame:
@@ -35,6 +35,46 @@ def build_labels(df: pd.DataFrame, horizon: int = HORIZON_DAYS) -> pd.DataFrame:
         default="HOLD"
     )
 
+    return result
+
+
+def direction_label_from_return(fwd_return, deadband: float = META_DIR_DEADBAND):
+    """Map a forward return to the 3-class direction label.
+
+    UP:   fwd_return >  +deadband
+    DOWN: fwd_return <  -deadband
+    FLAT: |fwd_return| <= deadband   (noise band — no edge either way)
+
+    Scalar or Series input, same type out (vectorised).
+    """
+    fr = pd.Series(fwd_return) if np.ndim(fwd_return) == 1 and hasattr(fwd_return, "__len__") else fwd_return
+    if isinstance(fr, pd.Series):
+        up = fr > deadband
+        down = fr < -deadband
+        return np.select([up, down], ["UP", "DOWN"], default="FLAT")
+    # scalar
+    if fwd_return is None or (isinstance(fwd_return, float) and np.isnan(fwd_return)):
+        return None
+    if fwd_return > deadband:
+        return "UP"
+    if fwd_return < -deadband:
+        return "DOWN"
+    return "FLAT"
+
+
+def build_direction_labels(df: pd.DataFrame, horizon: int = META_DIR_HORIZON_DAYS) -> pd.DataFrame:
+    """3-class direction labels (UP/DOWN/FLAT) for the meta-ensemble.
+
+    The meta-learner combines model VOTES, so its label must be the
+    actual forward-return direction — not the 4-class swing verdict
+    (STRONG_BUY/BUY/HOLD/SELL) whose thresholds (±7%/15%) are tuned
+    for position sizing, not direction. A 10-day horizon + ±0.5%
+    deadband matches the ensemble's intraday-to-swing holding mix.
+    """
+    result = df.copy()
+    close = result["close"]
+    result["dir_return"] = close.shift(-horizon) / close - 1
+    result["dir_label"] = direction_label_from_return(result["dir_return"])
     return result
 
 

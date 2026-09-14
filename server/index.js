@@ -1815,6 +1815,39 @@ app.post('/api/ml/backtest', (req, res) => {
   res.json(result);
 });
 
+// ------------------------------------------------------------
+// v10.5 POST /api/ml/meta-ensemble — PROXY to the Python
+// meta-learner (ml-service /meta-ensemble, Upgrade 4).
+// The Node in-process engine stays the default; this route exists
+// so the frontend (and ops) can query the stacked meta-learner
+// without exposing the Python service. Honest 503 when the Python
+// service isn't deployed — the caller falls back to the in-process
+// weighted ensemble (never a fake "meta" answer).
+// ------------------------------------------------------------
+const ML_SERVICE_BASE = () => String(process.env.ML_SERVICE_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
+app.post('/api/ml/meta-ensemble', async (req, res) => {
+  if (mlGuard(req, res)) return;
+  const { votes, regime } = req.body || {};
+  if (!Array.isArray(votes)) {
+    return res.status(400).json({ error: 'votes[] required: [{id, dir, conf, weight?}]' });
+  }
+  try {
+    const r = await fetch(`${ML_SERVICE_BASE()}/meta-ensemble`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ votes: votes.slice(0, 40), regime: String(regime || 'NEUTRAL') }),
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!r.ok) throw new Error(`ml-service ${r.status}`);
+    const j = await r.json();
+    return res.json(j);
+  } catch (e) {
+    return res.status(503).json({
+      error: `ml-service unreachable (${e?.message || 'unknown'}) — the in-process weighted ensemble is authoritative`,
+    });
+  }
+});
+
 // GET /api/fundamentals/:symbol â†’ fundamental data for Quality Scorecard
 // ------------------------------------------------------------
 // Proxies Yahoo Finance quoteSummary server-side (no CORS issue) and

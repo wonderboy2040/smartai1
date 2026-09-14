@@ -83,3 +83,38 @@ TARGET_Q50_PATH = MODEL_DIR / "target_q50.pkl"
 TARGET_Q90_PATH = MODEL_DIR / "target_q90.pkl"
 HMM_MODEL_PATH = MODEL_DIR / "hmm_model.pkl"
 OHLCV_STORE_PATH = STORE_DIR / "ohlcv.parquet"
+
+# ============================================================
+# META-ENSEMBLE STACKING (Upgrade 4)
+# ------------------------------------------------------------
+# A trained meta-learner (LightGBM) that combines the 14 model
+# votes {dir, conf} instead of the fixed weighted-average.
+#   - 14 models x 2 features (dir, conf) = 28 features
+#   - + 1 market-regime flag = 29 features
+#   - label: forward-return direction (UP / DOWN / FLAT)
+# Enabled via AI_ENABLE_META_ENSEMBLE=true. The Node ensemble
+# consumes it through POST /meta-ensemble (see orchestrator.py)
+# and ALWAYS falls back to the weighted average when the pkl is
+# missing, stale or shape-mismatched — never crashes.
+# ============================================================
+META_ENSEMBLE_PATH = MODEL_DIR / "meta_ensemble.pkl"
+META_FEATURE_COLS_PATH = MODEL_DIR / "meta_feature_cols.pkl"
+
+# The 14-model registry the meta-learner was trained on (order is
+# the feature contract — keep in sync with server/ai/models.js).
+META_MODEL_IDS = [
+    "trend", "momentum", "volatility", "volume", "pattern", "sr",
+    "options", "regime", "smc", "tape", "aicouncil",
+    "sentiment", "instflow", "fundamentals",
+]
+
+# Direction label deadband: |fwd return| <= this → FLAT
+META_DIR_DEADBAND = 0.005
+# Shorter horizon for the direction label (90d swing labels are too
+# coarse for the ensemble's intraday/swing mix — 10 trading days)
+META_DIR_HORIZON_DAYS = 10
+
+
+def meta_ensemble_enabled() -> bool:
+    """AI_ENABLE_META_ENSEMBLE flag (accepts true/1/on/yes)."""
+    return os.getenv("AI_ENABLE_META_ENSEMBLE", "").strip().lower() in ("true", "1", "on", "yes")

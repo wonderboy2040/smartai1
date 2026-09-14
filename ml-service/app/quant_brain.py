@@ -313,7 +313,64 @@ def analyze(symbol: str, df: pd.DataFrame, macro: Optional[dict] = None) -> dict
         },
         "reasons": reasons,
         "reason": " | ".join(reasons) if reasons else "No significant signal",
+        # META-ENSEMBLE STACKING (Upgrade 4): when the trained meta-
+        # learner exists AND AI_ENABLE_META_ENSEMBLE=true, it recombines
+        # the deterministic factor votes instead of the fixed weighted
+        # sum. Missing/stale pkl or any failure → source stays
+        # "weighted" and the verdict above is untouched (never crash).
+        **_apply_meta_ensemble(locals()),
     }
+
+
+def _apply_meta_ensemble(env: dict) -> dict:
+    """Combine the deterministic factor votes with the trained meta-
+    learner. Returns { metaEnsemble: {...} } (empty dict on disable)."""
+    try:
+        from app.config import meta_ensemble_enabled
+        if not meta_ensemble_enabled():
+            return {}
+        from models.train_signal import simulate_model_votes, votes_to_feature_vector, predict_meta_direction
+
+        # A vote-vector derived from THIS analysis' own factor states —
+        # the same factors the reasons above were built from.
+        row = {
+            "rsi": env.get("rsi", 50.0),
+            "adx": env.get("adx", 20.0),
+            "sma_cross": (env.get("sma50", 0) - env.get("sma200", 1)) / max(env.get("sma200", 1), 1e-9),
+            "ema10": env.get("sma50", 0.0), "ema20": env.get("sma50", 0.0), "ema50": env.get("sma200", 0.0),
+            "bb_pct_b": 0.5, "volume_zscore": 0.0, "mfi": 50.0,
+            "stoch_k": 50.0, "stoch_d": 50.0,
+            "dist_52w_high": -0.1, "dist_52w_low": 0.1,
+            "trend_strength": 0.0,
+            "ret_5": env.get("macd", {}).get("histogram", 0.0) or 0.0,
+            "acceleration": 0.0, "roc_10": env.get("rsi", 50.0) - 50.0,
+            "consec_up": 0.0, "consec_down": 0.0, "obv": 1.0, "obv_slope": 0.0,
+            "vix_proxy": env.get("vix", 0.0),
+        }
+        trend = env.get("trend")
+        if trend == "UP":
+            row["sma_cross"] = max(row["sma_cross"], 0.004)
+            row["trend_strength"] = 1.2
+        elif trend == "DOWN":
+            row["sma_cross"] = min(row["sma_cross"], -0.004)
+            row["trend_strength"] = -1.2
+
+        votes = simulate_model_votes(row)
+        regime_risk = 1.0 if env.get("regime") == "RISK_OFF" else 0.0
+        pred = predict_meta_direction(votes, regime_risk)
+        if pred is None:
+            return {"metaEnsemble": {
+                "applied": False, "source": "weighted",
+                "note": "meta_ensemble.pkl missing/stale — weighted-average fallback",
+            }}
+        return {"metaEnsemble": {
+            "applied": True, "source": "meta",
+            "side": pred["side"], "confidence": pred["confidence"],
+            "label": pred["label"],
+        }}
+    except Exception:
+        # NEVER let the meta layer break the deterministic brain.
+        return {"metaEnsemble": {"applied": False, "source": "weighted", "note": "meta layer error — fallback"}}
 
 
 def brain_to_text(result: dict) -> str:

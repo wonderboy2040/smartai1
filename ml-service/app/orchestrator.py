@@ -23,6 +23,7 @@ from app.prompts import (
     build_analysis_prompt,
     build_signals_prompt,
     build_portfolio_prompt,
+    build_crypto_prompt,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -70,6 +71,27 @@ class PortfolioRequest(BaseModel):
     positions: List[dict]
     live_prices: dict = {}
     usd_inr_rate: float = 85.5
+    user_query: str = ""
+
+
+class MetaEnsembleRequest(BaseModel):
+    """14-model vote wire format from the Node ensemble (Upgrade 4).
+    votes: [{id, dir (-1|0|1), conf (0-100), weight?}] — unknown ids
+    are ignored, missing ids vote (0,0). regime: 'RISK_ON'|'NEUTRAL'|
+    'RISK_OFF'|'GOLDILOCKS'|... maps to the risk flag feature."""
+    votes: List[dict] = []
+    regime: str = "NEUTRAL"
+    # caller's own weighted consensus (fallback + agreement recompute)
+    weighted: Optional[dict] = None
+
+
+class CryptoAgentRequest(BaseModel):
+    """Upgrade 2 — the ml-service narration leg of the CoinDCX desk
+    agent. The Node side runs the tool loop (live signals / wallet /
+    positions / regime); this endpoint narrates the tool context with
+    the CRYPTO DESK persona when its LLM keys differ from Node's."""
+    symbol: str = ""
+    tools_context: str = ""
     user_query: str = ""
 
 
@@ -288,3 +310,92 @@ async def ask_freeform(symbol: str = "", query: str = "", live_snapshot: str = "
 async def providers():
     """List all LLM providers and their status."""
     return {"providers": get_provider_status()}
+
+
+# ============================================================
+# META-ENSEMBLE COMBINATION (Upgrade 4)
+# ------------------------------------------------------------
+# The Node ensemble (server/ai/ensemble.js) POSTs its 14 raw votes
+# here when AI_ENABLE_META_ENSEMBLE=true. Response shape (the
+# contract the Node side validates before using):
+#   { ok, side, confidence, agreement, grade, source: "meta"|"weighted" }
+# EVERY failure mode (pkl missing, feature mismatch, predict
+# error, empty votes) degrades to the weighted-average answer —
+# the endpoint NEVER 500s on a model problem.
+# ============================================================
+@app.post("/meta-ensemble")
+async def meta_ensemble(req: MetaEnsembleRequest):
+    from app.config import meta_ensemble_enabled
+    from models.train_signal import predict_meta_direction
+
+    votes = [v for v in (req.votes or []) if isinstance(v, dict) and v.get("id")]
+    # weighted fallback (mirrors ensemble.js aggregateVotes math)
+    bull = sum((v.get("weight") or 1.0) * (v.get("conf") or 0) / 100.0
+               for v in votes if (v.get("dir") or 0) > 0)
+    bear = sum((v.get("weight") or 1.0) * (v.get("conf") or 0) / 100.0
+               for v in votes if (v.get("dir") or 0) < 0)
+    voting = sum((v.get("weight") or 1.0) for v in votes if (v.get("dir") or 0) != 0 and (v.get("conf") or 0) > 0)
+    side = "LONG" if bull >= bear else "SHORT" if bull > 0 or bear > 0 else "FLAT"
+    if voting <= 0 or (bull == 0 and bear == 0):
+        side = "FLAT"
+    agreement = (max(bull, bear) / voting) if voting > 0 else 0.0
+    score = (abs(bull - bear) / voting) if voting > 0 else 0.0
+    w_conf = round(100 * score * (0.60 + 0.40 * agreement))
+    grade = "STRONG" if (w_conf >= 75 and agreement >= 0.70) else \
+            "ACTION" if w_conf >= 55 else \
+            "WATCH" if w_conf >= 35 else "NEUTRAL"
+
+    if not meta_ensemble_enabled() or not votes:
+        return {"ok": True, "side": side, "confidence": w_conf, "agreement": round(agreement, 2),
+                "grade": grade, "source": "weighted",
+                "note": "flag off or no votes — weighted-average"}
+
+    risk_flag = 1.0 if "RISK_OFF" in str(req.regime or "").upper() else 0.0
+    vote_map = {v["id"]: (v.get("dir") or 0, v.get("conf") or 0) for v in votes}
+    try:
+        pred = predict_meta_direction(vote_map, risk_flag)
+    except Exception:
+        pred = None
+    if pred is None or pred.get("side") == "FLAT":
+        return {"ok": True, "side": side, "confidence": w_conf, "agreement": round(agreement, 2),
+                "grade": grade, "source": "weighted",
+                "note": "meta pkl unavailable/mismatch — weighted fallback"}
+    # meta answered: scale its confidence with the committee agreement
+    # (a split committee halves ANY combiner's conviction — honest)
+    m_conf = round(float(pred["confidence"]) * (0.60 + 0.40 * agreement))
+    m_grade = "STRONG" if (m_conf >= 75 and agreement >= 0.70) else \
+              "ACTION" if m_conf >= 55 else \
+              "WATCH" if m_conf >= 35 else "NEUTRAL"
+    return {"ok": True, "side": pred["side"], "confidence": m_conf,
+            "agreement": round(agreement, 2), "grade": m_grade, "source": "meta",
+            "label": pred.get("label"), "weighted": {"side": side, "confidence": w_conf}}
+
+
+# ============================================================
+# CRYPTO-AGENT NARRATION (Upgrade 2)
+# ------------------------------------------------------------
+# The Node side (server/ai/cryptoAgent.js) owns the tool loop and
+# the FULL-TICKET discipline; this endpoint is the Python LLM leg
+# (Groq/other keys configured only on ml-service). It never
+# fabricates data — it narrates ONLY the tools_context it was
+# handed, quant_brain fallback when no LLM answers.
+# ============================================================
+@app.post("/crypto-agent")
+async def crypto_agent(req: CryptoAgentRequest):
+    user_prompt = build_crypto_prompt(req.symbol, req.tools_context, req.user_query)
+    llm_text = ask_llm(get_7step_system_prompt(), user_prompt)
+
+    used_provider = "llm"
+    if not llm_text:
+        llm_text = (
+            f"CRYPTO DESK QUANT READ (no LLM — deterministic fallback)\n"
+            f"Symbol: {req.symbol or 'N/A'}\n"
+            f"{req.tools_context or 'No tool context provided.'}"
+        )
+        used_provider = "quant_brain"
+    return {
+        "text": llm_text,
+        "used_provider": used_provider,
+        "symbol": req.symbol,
+        "timestamp": time.time(),
+    }

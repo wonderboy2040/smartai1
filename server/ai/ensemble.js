@@ -59,10 +59,18 @@ const r1 = (v) => Math.round(v * 10) / 10;
  * committees stay WATCH/NEUTRAL. Gates are UNCHANGED — only the scale
  * now actually reaches them.
  *
+ * v10.5 opts.mtfAgreement (Upgrade 1 — MTF confluence): the 3-timeframe
+ * (5m/15m/1h) agreement read, 0..1. When the timeframes DISAGREE
+ * (< 0.67 — i.e. only the trading TF + at most nothing aligned) the
+ * STRONG grade is banned regardless of the weighted score: a signal
+ * fighting 2 of its 3 timeframes is practice-grade at best (the plan's
+ * "MODERATE cap" — this ladder's equivalent below STRONG is ACTION).
+ *
  * @param {{id,name,weight,dir,conf,reasons}[]} votes
  * @param {object} gates { minConfidence, minAgreement }
+ * @param {object} [opts] { mtfAgreement?: number|null }
  */
-export function aggregateVotes(votes, gates = DEFAULT_GATES) {
+export function aggregateVotes(votes, gates = DEFAULT_GATES, opts = {}) {
   const valid = (votes || []).filter(v => v && typeof v.dir === 'number' && v.dir !== 0 && (v.conf || 0) > 0 && (v.weight || 0) > 0);
   const votingWeight = valid.reduce((a, v) => a + v.weight, 0);
   const allWeight = (votes || []).filter(v => (v.weight || 0) > 0).reduce((a, v) => a + v.weight, 0);
@@ -114,16 +122,130 @@ export function aggregateVotes(votes, gates = DEFAULT_GATES) {
   else if (confidence >= 35) grade = 'WATCH';
   else grade = 'NEUTRAL';
 
+  // v10.5 MTF CONFLUENCE CAP (Upgrade 1): the plan's "confluence <
+  // 0.67 → max MODERATE". This ladder's grade below STRONG is ACTION
+  // (NEUTRAL < WATCH < ACTION < STRONG) — a high-score signal whose
+  // 5m/15m/1h timeframes disagree can no longer wear STRONG, whatever
+  // the weighted committee thinks (cap only ever TIGHTENS).
+  // v10.5.1: "disagree" means FEWER than 2 of 3 timeframes aligned —
+  // 2/3 itself PASSES (the plan's 0.67 ≈ 2/3; the float 2/3 = 0.666…
+  // must not trip its own 2-of-3 case). Integer-exact via ×3.
+  const _rawMtf = opts?.mtfAgreement;
+  const mtfAgreement = _rawMtf == null ? null : (Number.isFinite(Number(_rawMtf)) ? Number(_rawMtf) : null);
+  let mtfCapped = false;
+  if (mtfAgreement != null && mtfAgreement * 3 < 2 - 1e-9 && grade === 'STRONG') {
+    grade = 'ACTION';
+    mtfCapped = true;
+  }
+
   return {
     side, dir, confidence, agreement: Math.round(agreement * 100) / 100,
     participation: Math.round(participation * 100) / 100,
     grade,
     voters,
     quorumCapped: quorumCapped || undefined,
+    ...(mtfAgreement != null ? { mtfAgreement: Math.round(mtfAgreement * 100) / 100 } : {}),
+    mtfCapped: mtfCapped || undefined,
     participating: valid.length,
     totalModels: (votes || []).length,
     bullWeight: r2(bull), bearWeight: r2(bear),
-    summary: `${side} ${confidence}% · ${valid.length}/${(votes || []).length} models voting · ${Math.round(agreement * 100)}% agreement · ${Math.round(participation * 100)}% quorum${quorumCapped ? ' · quorum-capped (few voters)' : ''}`,
+    summary: `${side} ${confidence}% · ${valid.length}/${(votes || []).length} models voting · ${Math.round(agreement * 100)}% agreement · ${Math.round(participation * 100)}% quorum${quorumCapped ? ' · quorum-capped (few voters)' : ''}${mtfCapped ? ' · MTF-capped (timeframes disagree)' : ''}`,
+  };
+}
+
+// ------------------------------------------------------------
+// v10.5 META-ENSEMBLE STACKING (Upgrade 4 — Node consume side)
+// ------------------------------------------------------------
+// AI_ENABLE_META_ENSEMBLE=true routes the raw model votes through
+// the Python meta-learner (ml-service POST /meta-ensemble, LightGBM
+// trained on the 29-feature vote contract). EVERY failure mode —
+// service down, timeout, malformed response, feature mismatch —
+// falls back to the deterministic weighted aggregateVotes(). A
+// circuit breaker keeps the hot path clean: after one failure the
+// calls are skipped for 5 minutes (no per-symbol timeout tax).
+export function metaEnsembleEnabled() {
+  return ['true', '1', 'on', 'yes'].includes(String(process.env.AI_ENABLE_META_ENSEMBLE || '').trim().toLowerCase());
+}
+
+const META_SERVICE_URL = () => String(process.env.ML_SERVICE_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
+const META_BREAKER_MS = 5 * 60_000;
+const META_TIMEOUT_MS = 400;
+let _metaBreakerAt = 0;
+
+export function __resetMetaBreakerForTests() { _metaBreakerAt = 0; }
+
+/** POST the raw votes to the Python meta-learner. null on ANY
+ * problem (caller falls back to weighted). Pure transport. */
+async function _callMetaService(votes, regime) {
+  const now = Date.now();
+  if (now - _metaBreakerAt < META_BREAKER_MS) return null;
+  try {
+    const body = JSON.stringify({
+      votes: (votes || []).map(v => ({ id: v.id, dir: v.dir, conf: v.conf, weight: v.weight })),
+      regime: String(regime || 'NEUTRAL').toUpperCase(),
+    });
+    const res = await fetch(`${META_SERVICE_URL()}/meta-ensemble`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      signal: AbortSignal.timeout(META_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`meta-ensemble ${res.status}`);
+    const j = await res.json();
+    // response contract: { ok, side, confidence, agreement, grade, source }
+    if (!j || j.ok !== true || !['LONG', 'SHORT', 'FLAT'].includes(j.side)
+      || !Number.isFinite(Number(j.confidence)) || !['meta', 'weighted'].includes(j.source)) {
+      throw new Error('meta-ensemble malformed response');
+    }
+    return j;
+  } catch {
+    _metaBreakerAt = Date.now(); // open the breaker — 5 min weighted-only
+    return null;
+  }
+}
+
+/**
+ * Meta-aware aggregation: weighted consensus + (flag on) the Python
+ * meta-learner's recombination. The meta result can only be USED when
+ * it agrees with the weighted side — a combiner that flips sides
+ * against its own committee is un-trustable in production. Response
+ * carries source: 'meta' | 'weighted' for honest audit.
+ */
+export async function aggregateVotesWithMeta(votes, gates = DEFAULT_GATES, { regime, mtfAgreement } = {}) {
+  const weighted = aggregateVotes(votes, gates, { mtfAgreement });
+  if (!metaEnsembleEnabled()) return { ...weighted, source: 'weighted' };
+  const meta = await _callMetaService(votes, regime);
+  if (!meta || meta.source !== 'meta') {
+    return { ...weighted, source: meta?.source || 'weighted' };
+  }
+  if (meta.side !== weighted.side || weighted.side === 'FLAT') {
+    // honest disagreement — keep the weighted verdict, note the meta read
+    return {
+      ...weighted,
+      source: 'weighted',
+      metaRead: { side: meta.side, confidence: meta.confidence },
+    };
+  }
+  // meta agrees with the weighted side → use its confidence/grade
+  // (never LOWER than the honest quorum/MTF caps already applied)
+  const conf = Math.max(5, Math.min(99, Math.round(meta.confidence)));
+  let grade;
+  if (conf >= gates.minConfidence && (meta.agreement ?? 0) >= gates.minAgreement) grade = 'STRONG';
+  else if (conf >= 55) grade = 'ACTION';
+  else if (conf >= 35) grade = 'WATCH';
+  else grade = 'NEUTRAL';
+  if (weighted.quorumCapped && conf > weighted.confidence) {
+    // quorum caps are HONESTY caps — meta may not bypass them
+    return { ...weighted, source: 'meta-capped', metaRead: { side: meta.side, confidence: conf } };
+  }
+  return {
+    ...weighted,
+    confidence: conf,
+    grade,
+    agreement: Number.isFinite(Number(meta.agreement)) ? Math.round(Number(meta.agreement) * 100) / 100 : weighted.agreement,
+    source: 'meta',
+    metaLabel: meta.label || null,
+    summary: `${weighted.summary} · meta-ensemble ${meta.label || meta.side} ${conf}%`,
   };
 }
 

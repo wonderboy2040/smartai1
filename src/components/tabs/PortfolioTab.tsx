@@ -18,6 +18,7 @@ import { LivePrice } from '../LivePrice';
 import { WidgetSetup } from '../WidgetSetup';
 import { INDMoneyPanel } from '../INDMoneyPanel';
 import { CoinDcxPanel } from '../CoinDcxPanel';
+import { NetWorthCard } from '../portfolio/NetWorthCard';
 import { QuickNav } from '../aitrading/QuickNav';
 import { SectionLabel } from '../aitrading/deskShared';
 
@@ -429,6 +430,12 @@ const PortfolioTab = React.memo(function PortfolioTab() {
         {/* CoinDCX crypto exchange account — balances in the same table */}
         <div className="mt-3">
           <CoinDcxPanel />
+        </div>
+        {/* v10.5 (Upgrade 3) — the unified NET WORTH SUMMARY: stocks +
+            MF + EPF + gold + FD/bonds + crypto, ek donut me (server-side
+            netWorthSnapshot rides the /assets response). */}
+        <div className="mt-3">
+          <NetWorthCard netWorth={indmMeta?.netWorth} onSynced={() => void loadIndmAssets(false)} />
         </div>
       </div>
 

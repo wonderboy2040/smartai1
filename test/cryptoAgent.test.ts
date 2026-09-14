@@ -1,12 +1,18 @@
 // ============================================================
-// test/cryptoAgent.test.ts — CRYPTO DESK MCP AGENT (v10.1)
+// test/cryptoAgent.test.ts — CRYPTO DESK MCP AGENT (v10.1 + v10.5)
 // ------------------------------------------------------------
-// Pins the 8-tool registry, the FULL-TICKET prompt discipline
+// Pins the 12-tool registry, the FULL-TICKET prompt discipline
 // (shared with the intraday agent), and the tool implementations
-// that don't need network (sizing math + agent status). Live-data
+// that don't need network (sizing math + agent status + the v10.5
+// risk-status / P&L tools via journal test hooks). Live-data
 // tools are shape-checked with their fetchers mocked.
 // ============================================================
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+// hermetic data dir (the risk/pnl tools read the journal + config)
+process.env.SMARTAI_DATA_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../.test-data-crypto-agent');
 
 vi.mock('../server/mcp/coindcx.js', () => ({
   coindcxConnected: () => false,
@@ -45,20 +51,22 @@ vi.mock('../server/ai/agent.js', () => ({
 import {
   CRYPTO_AGENT_TOOLS, buildCryptoSystemPrompt, runCryptoAgent, __internals,
 } from '../server/ai/cryptoAgent.js';
+import { __setJournalForTests, __setConfigForTests, loadConfig, todayIST } from '../server/ai/coindcxOrders.js';
 
 const { executeCryptoTool, fullTicketRules } = __internals;
 
 const DEPS = { KEYS: {}, OPENAI_COMPAT: {} };
 
 // ============================================================
-// the tool registry — 9 tools, OpenAI function format
+// the tool registry — 12 tools, OpenAI function format
 // ============================================================
 describe('crypto agent registry', () => {
-  it('exposes exactly the 9 planned tools', () => {
+  it('exposes exactly the 12 planned tools', () => {
     const names = CRYPTO_AGENT_TOOLS.map(t => t.function.name);
     expect(names).toEqual([
       'get_live_crypto_signals', 'analyze_global_stock', 'analyze_coin', 'get_wallet', 'get_open_positions',
       'get_market_regime', 'get_track_record', 'calculate_position_size', 'get_agent_status',
+      'get_funding_rate', 'get_risk_status', 'get_pnl',
     ]);
     for (const t of CRYPTO_AGENT_TOOLS) {
       expect(t.type).toBe('function');
@@ -69,6 +77,13 @@ describe('crypto agent registry', () => {
   it('sizing tool description mandates max-sane-leverage (plan Part 1.1)', () => {
     const t = CRYPTO_AGENT_TOOLS.find(x => x.function.name === 'calculate_position_size');
     expect(t.function.description).toMatch(/max SANE leverage/i);
+  });
+
+  it('the system prompt routes funding / risk / P&L questions to the new tools', () => {
+    const p = buildCryptoSystemPrompt({ utcTime: '10:30 UTC', btcRegime: 'x', fng: 'x', funding: 'x', connected: false, aiOnline: false });
+    expect(p).toContain('get_funding_rate');
+    expect(p).toContain('get_risk_status');
+    expect(p).toContain('get_pnl');
   });
 });
 
@@ -180,5 +195,102 @@ describe('executeCryptoTool', () => {
 
   it('unknown tool → honest error', async () => {
     expect((await executeCryptoTool('make_money', {}, DEPS)).error).toMatch(/Unknown tool/i);
+  });
+});
+
+// ============================================================
+// v10.5 — the three gap tools (funding / risk / P&L)
+// ============================================================
+describe('v10.5 gap tools — get_funding_rate / get_risk_status / get_pnl', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  it('get_funding_rate: per-symbol 8h rate + daily carry + interpretation', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ symbol: 'BTCUSDT', markPrice: '60000', lastFundingRate: '0.00015' }),
+    }));
+    const out = await executeCryptoTool('get_funding_rate', { symbol: 'BTC' }, DEPS);
+    expect(out.symbol).toBe('BTC');
+    expect(out.fundingRate8h).toBeCloseTo(0.00015, 8);
+    expect(out.fundingBps8h).toBe(1.5);
+    expect(out.approxDailyCarryPct).toBeCloseTo(0.045, 5);
+    expect(out.interpretation).toBeTruthy();
+  });
+
+  it('get_funding_rate: crowded-long reading is interpreted honestly', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ lastFundingRate: '0.0025' }), // 25 bps/8h
+    }));
+    const out = await executeCryptoTool('get_funding_rate', { symbol: 'PEPE' }, DEPS);
+    expect(out.fundingBps8h).toBe(25);
+    expect(out.interpretation).toMatch(/crowded longs/i);
+  });
+
+  it('get_funding_rate: unreachable feed → honest error (no fake numbers)', async () => {
+    globalThis.fetch = vi.fn(async () => { throw new Error('offline'); });
+    const out = await executeCryptoTool('get_funding_rate', { symbol: 'BTC' }, DEPS);
+    expect(out.error).toMatch(/funding fetch failed/i);
+    globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({}) }));
+    expect((await executeCryptoTool('get_funding_rate', { symbol: 'BTC' }, DEPS)).error).toBeTruthy();
+  });
+
+  it('get_funding_rate: junk symbol → validation error', async () => {
+    expect((await executeCryptoTool('get_funding_rate', { symbol: '   ' }, DEPS)).error).toMatch(/symbol required/i);
+  });
+
+  it('get_risk_status: kill-switch + caps + the blockers verdict', async () => {
+    __setConfigForTests({ ...loadConfig(), killSwitch: true, dailyMaxTrades: 3, dailyMaxLossINR: 2000, maxOpenPositions: 5 });
+    __setJournalForTests({ entries: [], positions: [] });
+    const out = await executeCryptoTool('get_risk_status', {}, DEPS);
+    expect(out.killSwitch).toBe(true);
+    expect(Array.isArray(out.blockers)).toBe(true);
+    expect(out.blockers.join(' ')).toMatch(/Kill switch ON/i);
+    expect(out.verdict).toMatch(/BLOCKED/i);
+    // kill-switch cleared → that blocker is gone (the CoinDCX-not-connected
+    // blocker legitimately stays — this suite mocks the exchange OFF)
+    __setConfigForTests({ ...loadConfig(), killSwitch: false });
+    const clean = await executeCryptoTool('get_risk_status', {}, DEPS);
+    expect(clean.killSwitch).toBe(false);
+    expect(clean.blockers.join(' ')).not.toMatch(/Kill switch/i);
+  });
+
+  it('get_pnl: realized (CLOSE + PARTIAL_TP only — NOTIFIED never counts) + win-rate + total', async () => {
+    const today = todayIST(); // the journal's own day key (IST)
+    const ts = Date.now();
+    globalThis.fetch = vi.fn(async () => { throw new Error('offline (test)'); }); // tickers feed down → positions degrade to []
+    __setConfigForTests({ ...loadConfig(), killSwitch: false });
+    __setJournalForTests({
+      entries: [
+        { kind: 'CLOSE', day: today, ts, pnlINR: 500 },
+        { kind: 'PARTIAL_TP', day: today, ts, pnlINR: 200 },
+        { kind: 'CLOSE', day: today, ts, pnlINR: -100 },
+        { kind: 'NOTIFIED', day: today, ts, pnlINR: 999 }, // never counts
+        { kind: 'ORDER', day: today, ts, pnlINR: 999 }, // never counts
+      ],
+      positions: [],
+    });
+    const out = await executeCryptoTool('get_pnl', { period: 'today' }, DEPS);
+    expect(out.period).toBe('today');
+    expect(out.closedLegs).toBe(3);
+    expect(out.realizedPnlINR).toBe(600);
+    expect(out.wins).toBe(2);
+    expect(out.losses).toBe(1);
+    expect(out.winRate).toBeCloseTo(66.67, 1);
+    expect(out.totalPnlINR).toBe(600); // no open positions → unrealized 0
+  });
+
+  it('get_pnl: 7d window filters old legs, all-time keeps them', async () => {
+    globalThis.fetch = vi.fn(async () => { throw new Error('offline (test)'); });
+    const old = { kind: 'CLOSE', day: '2020-01-01', ts: Date.now() - 40 * 24 * 3600_000, pnlINR: 5000 };
+    const recent = { kind: 'CLOSE', day: '2026-09-13', ts: Date.now() - 2 * 24 * 3600_000, pnlINR: -300 };
+    __setJournalForTests({ entries: [old, recent], positions: [] });
+    const w7 = await executeCryptoTool('get_pnl', { period: '7d' }, DEPS);
+    expect(w7.closedLegs).toBe(1);
+    expect(w7.realizedPnlINR).toBe(-300);
+    const all = await executeCryptoTool('get_pnl', { period: 'all' }, DEPS);
+    expect(all.closedLegs).toBe(2);
+    expect(all.realizedPnlINR).toBe(4700);
   });
 });

@@ -6,6 +6,7 @@
 import { Position, PriceData, PortfolioHealth } from '../types';
 import { getAssetCagrProxy } from './constants';
 import { analyzeAsset } from './telegram';
+import { assetClassWeights } from './portfolioAnalytics';
 
 /**
  * Compute portfolio health score (0-100)
@@ -86,6 +87,37 @@ export function computeHealthScore(
         warnings.push(`${pos.symbol}: ${weight.toFixed(0)}% concentration — overconcentrated`);
       }
     });
+  }
+
+  // 4b. v10.5 DIVERSIFICATION ACROSS ASSET CLASSES (Upgrade 3): the
+  // concentration check above is a STOCK-level read (any single ticker
+  // > 35%). The INDMoney-synced portfolio spans whole asset classes —
+  // a portfolio that is 90% equity is one macro drawdown away from a
+  // full-portfolio hit even with 20 different stocks. The class view
+  // (Equity / MF / EPF / Gold / Crypto / Fixed) is computed from the
+  // same Position rows INDMoney tags, so it works for both synced and
+  // manual portfolios.
+  const classBreakdown = assetClassWeights(portfolio, livePrices);
+  if (classBreakdown) {
+    const equityPct = (classBreakdown.Equity ?? 0) + (classBreakdown['Mutual Funds'] ?? 0);
+    const cryptoPct = classBreakdown.Crypto ?? 0;
+    // > 80% in market-correlated assets (equity + MF) — the classic
+    // under-diversified book. EPF/FD/gold are the ballast.
+    if (equityPct > 80) {
+      score -= 8;
+      warnings.push(`${equityPct.toFixed(0)}% in equity+MF — asset-class diversification kam hai (EPF/FD/gold ballast add karo)`);
+    } else if (equityPct > 0 && equityPct <= 80) {
+      score += 4; // meaningful ballast exists
+    }
+    // crypto is a high-volatility sleeve: > 25% of the book is a
+    // risk-budget breach regardless of how many coins it's spread over
+    if (cryptoPct > 25) {
+      score -= 12;
+      warnings.push(`Crypto ${cryptoPct.toFixed(0)}% of portfolio — high-volatility sleeve 25% se upar hai`);
+    }
+    // gold hedge bonus: a 5-20% gold sleeve historically cushions equity drawdowns
+    const goldPct = classBreakdown.Gold ?? 0;
+    if (goldPct >= 5 && goldPct <= 20 && equityPct > 0) score += 2;
   }
 
   // 5. Buy signal bonus

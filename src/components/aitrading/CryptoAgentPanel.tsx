@@ -4,8 +4,9 @@
 // The CoinDCX tab's conversational agent — the mirror of the proven
 // intraday ProTraderAgentPanel: same chat shell, tool-trace chips,
 // quick prompts (crypto-flavoured). Backend: POST /api/crypto-agent
-// (8 tools: signals, deep coin scan, wallet, positions, regime,
-// track-record, sizing, agent status). Answers follow the strict
+// (12 tools: signals, deep coin scan, global stocks, wallet,
+// positions, regime, track-record, sizing, agent status + v10.5
+// funding-rate, risk-status and P&L). Answers follow the strict
 // FULL-TICKET format enforced server-side.
 // ============================================================
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
@@ -24,9 +25,9 @@ interface AgentMessage {
 
 const QUICK_PROMPTS = [
   { icon: '📋', label: 'Desk Briefing', prompt: 'Aaj ka desk briefing do — BTC regime, top spot+futures setups risk notes ke saath.' },
-  { icon: '💰', label: 'Wallet + Risk', prompt: 'Mera wallet aur open positions dikhao risk ke saath — kahan SL tighten karna chahiye?' },
+  { icon: '💰', label: 'Wallet + Risk', prompt: 'Mera wallet, open positions aur risk status dikhao — kahan SL tighten karna chahiye?' },
   { icon: '🔍', label: 'Coin Deep-Dive', prompt: 'SOL ka deep analysis karo — entry, SL, leverage sab exact numbers me.' },
-  { icon: '📊', label: 'Track Record', prompt: 'Track record check karo — last 30 din engine kitna accurate hai?' },
+  { icon: '📈', label: 'P&L Review', prompt: 'Mera last 7 din ka P&L batao — realized + unrealized, win-rate ke saath.' },
 ];
 
 // Lightweight markdown-ish renderer (same as the intraday panel).
@@ -57,12 +58,16 @@ function renderRich(text: string) {
 const TOOL_LABEL: Record<string, string> = {
   get_live_crypto_signals: '📡 Live Signals',
   analyze_coin: '🔍 Deep Scan',
+  analyze_global_stock: '🌍 Global Stock',
   get_wallet: '💰 Wallet',
   get_open_positions: '📝 Positions',
   get_market_regime: '🌍 Regime',
   get_track_record: '📊 Track Record',
   calculate_position_size: '🧮 Sizing',
   get_agent_status: '🤖 Agent',
+  get_funding_rate: '💸 Funding',
+  get_risk_status: '🛑 Risk',
+  get_pnl: '📈 P&L',
 };
 
 // Memoized — the CoinDCX tab re-renders on every board poll; this panel
@@ -134,7 +139,7 @@ export const CryptoAgentPanel = memo(function CryptoAgentPanel() {
             <Bot size={14} className="text-cyan-400" /> CRYPTO DESK AI AGENT
           </span>
           <span className="px-2 py-0.5 rounded-md text-[9px] font-black font-mono border bg-cyan-500/15 text-cyan-300 border-cyan-500/30">
-            8 TOOLS • FULL TICKETS
+            12 TOOLS • FULL TICKETS
           </span>
           {busy && (
             <span className="px-2 py-0.5 rounded-md text-[9px] font-black font-mono border bg-emerald-500/15 text-emerald-300 border-emerald-500/30 animate-pulse">

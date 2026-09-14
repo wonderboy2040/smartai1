@@ -23,6 +23,11 @@
 //                           EMA10/20 stack, MACD, RSI zone, session
 //                           VWAP side, 3-bar momentum. The trading
 //                           timeframe finally VOTES, not just advises.
+//                           v10.5: when AI_ENABLE_MTF_CONFLUENCE=true
+//                           this seat is held by IntradayTapeMTF
+//                           (weight 1.6) — the 5m/15m/1h confluence
+//                           vote; the plain 15m tape stays registered
+//                           for backward-compat (flag OFF boards).
 //  12. SentimentPulse    0.7  V2 Phase 1 — news headlines (RSS lexicon,
 //                           India) + Fear&Greed & perp funding (crypto)
 //  13. InstFlow          0.8  V2 Phase 2 — FII/DII daily net (India) ·
@@ -33,7 +38,10 @@
 //
 // The ensemble aggregator (ensemble.js) turns these votes into ONE
 // consensus: side, confidence, agreement and the STRONG grade that
-// gates live order execution.
+// gates live order execution. 12/14 models feed a trained meta-
+// learner when AI_ENABLE_META_ENSEMBLE=true (LightGBM stacking —
+// see ml-service/models/train_signal.py); the weighted average
+// remains the always-on fallback.
 // ============================================================
 
 // helper: clamp + round
@@ -427,39 +435,40 @@ import { smcVote } from './lib/smc.js';
 // CRYPTO/FUTURES desks: abstains with an honest reason — their ctx.ind
 // already merges live 1h candle indicators at build time, so a second
 // tape vote would double-count the same timeframe.
-function intradayTape(ctx) {
-  if (ctx.market !== 'INDIA') {
-    return vote(0, 0, ['IntradayTape abstains — crypto/futures committee already reads live 1h candles (no double count)']);
-  }
-  const t = ctx.tape;
+//
+// v10.5: the scoring core lives in tapeVote(tape, label) so the MTF
+// seat can run the IDENTICAL read on the 5m/15m/1h tapes (label is
+// just the reason prefix — output for '15m' is byte-identical to the
+// v9.3 single-TF model, the tape-alignment tests lock that).
+export function tapeVote(t, label = '15m') {
   if (!t || typeof t !== 'object') {
-    return vote(0, 0, ['15m tape unavailable — model abstains (honest degrade)']);
+    return vote(0, 0, [`${label} tape unavailable — model abstains (honest degrade)`]);
   }
   const pts = [];
   let score = 0, conf = 42;
   const ltp = t.ltp, e10 = t.ema10, e20 = t.ema20;
 
-  // 15m EMA stack + price position — the tape's own trend.
+  // EMA stack + price position — the tape's own trend.
   if (e10 != null && e20 != null && ltp > 0) {
-    if (e10 > e20 && ltp > e10) { score += 1.2; pts.push('15m EMA10>20 stack, price above EMA10 — tape rising'); }
-    else if (e10 < e20 && ltp < e10) { score -= 1.2; pts.push('15m EMA10<20 stack, price below EMA10 — tape falling'); }
-    else if (e10 > e20) { score += 0.5; pts.push('15m stack up, price pulling back under EMA10'); }
-    else if (e10 < e20) { score -= 0.5; pts.push('15m stack down, price bouncing over EMA10'); }
-    else pts.push('15m EMA10 = EMA20 (coil)');
+    if (e10 > e20 && ltp > e10) { score += 1.2; pts.push(`${label} EMA10>20 stack, price above EMA10 — tape rising`); }
+    else if (e10 < e20 && ltp < e10) { score -= 1.2; pts.push(`${label} EMA10<20 stack, price below EMA10 — tape falling`); }
+    else if (e10 > e20) { score += 0.5; pts.push(`${label} stack up, price pulling back under EMA10`); }
+    else if (e10 < e20) { score -= 0.5; pts.push(`${label} stack down, price bouncing over EMA10`); }
+    else pts.push(`${label} EMA10 = EMA20 (coil)`);
   }
-  // 15m MACD momentum.
+  // MACD momentum.
   if (t.macdHist != null) {
-    if (t.macdHist > 0 && (t.macdSlope ?? 0) > 0) { score += 0.9; pts.push('15m MACD histogram positive & rising'); }
-    else if (t.macdHist < 0 && (t.macdSlope ?? 0) < 0) { score -= 0.9; pts.push('15m MACD histogram negative & falling'); }
-    else if ((t.macdSlope ?? 0) > 0) { score += 0.3; pts.push('15m MACD turning up'); }
-    else if ((t.macdSlope ?? 0) < 0) { score -= 0.3; pts.push('15m MACD turning down'); }
+    if (t.macdHist > 0 && (t.macdSlope ?? 0) > 0) { score += 0.9; pts.push(`${label} MACD histogram positive & rising`); }
+    else if (t.macdHist < 0 && (t.macdSlope ?? 0) < 0) { score -= 0.9; pts.push(`${label} MACD histogram negative & falling`); }
+    else if ((t.macdSlope ?? 0) > 0) { score += 0.3; pts.push(`${label} MACD turning up`); }
+    else if ((t.macdSlope ?? 0) < 0) { score -= 0.3; pts.push(`${label} MACD turning down`); }
   }
-  // 15m RSI momentum zone — with exhaustion guards (never chase blow-offs).
+  // RSI momentum zone — with exhaustion guards (never chase blow-offs).
   if (t.rsi != null) {
-    if (t.rsi > 60 && t.rsi <= 75) { score += 0.6; pts.push(`15m RSI ${r1(t.rsi)} momentum zone`); }
-    else if (t.rsi < 40 && t.rsi >= 25) { score -= 0.6; pts.push(`15m RSI ${r1(t.rsi)} weakness zone`); }
-    if (t.rsi > 78) { score -= 0.4; pts.push(`15m RSI ${r1(t.rsi)} overbought — exhaustion`); }
-    if (t.rsi < 22) { score += 0.4; pts.push(`15m RSI ${r1(t.rsi)} oversold — bounce fuel`); }
+    if (t.rsi > 60 && t.rsi <= 75) { score += 0.6; pts.push(`${label} RSI ${r1(t.rsi)} momentum zone`); }
+    else if (t.rsi < 40 && t.rsi >= 25) { score -= 0.6; pts.push(`${label} RSI ${r1(t.rsi)} weakness zone`); }
+    if (t.rsi > 78) { score -= 0.4; pts.push(`${label} RSI ${r1(t.rsi)} overbought — exhaustion`); }
+    if (t.rsi < 22) { score += 0.4; pts.push(`${label} RSI ${r1(t.rsi)} oversold — bounce fuel`); }
   }
   // Session-VWAP side (TV row's true session anchor).
   if (t.vwap != null && ltp > 0) {
@@ -478,6 +487,87 @@ function intradayTape(ctx) {
   return vote(dir, dir === 0 ? 26 : clamp(conf + Math.abs(score) * 18), pts);
 }
 
+function intradayTape(ctx) {
+  if (ctx.market !== 'INDIA') {
+    return vote(0, 0, ['IntradayTape abstains — crypto/futures committee already reads live 1h candles (no double count)']);
+  }
+  const t = ctx.tape;
+  if (!t || typeof t !== 'object') {
+    return vote(0, 0, ['15m tape unavailable — model abstains (honest degrade)']);
+  }
+  return tapeVote(t, '15m');
+}
+
+// ------------------------------------------------------------
+// 11b. IntradayTapeMTF — v10.5 THE 5m/15m/1h CONFLUENCE SEAT
+// ------------------------------------------------------------
+// The multi-timeframe upgrade of the 15m tape seat: 5m (entry
+// timing), 15m (the TRADING timeframe — anchor), and 1h (the
+// intraday trend) each get the same tape read; the vote is the
+// 15m direction scaled by the 3-TF confluence:
+//   agreement = matching dirs / 3   (vs the 15m anchor)
+//   agreement === 1        → conf +15  (all three aligned)
+//   agreement < 0.67       → conf -20 (2+ TFs disagree)
+// The ensemble layer additionally caps a <0.67 board at ACTION
+// (never STRONG). Gated by AI_ENABLE_MTF_CONFLUENCE — flag OFF
+// keeps the exact 11-model v9.3 board (plain IntradayTape 1.3).
+export function mtfConfluenceEnabled() {
+  return ['true', '1', 'on', 'yes'].includes(String(process.env.AI_ENABLE_MTF_CONFLUENCE || '').trim().toLowerCase());
+}
+
+function intradayTapeMTF(ctx) {
+  if (ctx.market !== 'INDIA') {
+    return vote(0, 0, ['IntradayTapeMTF abstains — crypto/futures committee already reads live 1h candles (no double count)']);
+  }
+  // graceful degrade: no MTF payload → the plain 15m tape logic
+  const m = ctx.tapeMTF;
+  if (!m || typeof m !== 'object' || !m.m15) {
+    if (ctx.tape) return intradayTape(ctx);
+    return vote(0, 0, ['MTF tape unavailable — model abstains (honest degrade)']);
+  }
+
+  const perTf = {};
+  for (const [tf, tape] of [['m5', m.m5], ['m15', m.m15], ['h1', m.h1]]) {
+    if (!tape || typeof tape !== 'object') { perTf[tf] = null; continue; }
+    const v = tapeVote(tape, tf === 'h1' ? '1h' : tf === 'm5' ? '5m' : '15m');
+    perTf[tf] = v.dir !== 0 ? v : null;
+  }
+  const anchor = perTf.m15; // the trading timeframe carries the vote
+  if (!anchor) {
+    return vote(0, 0, ['15m tape read is neutral/coil — MTF model abstains']);
+  }
+
+  // agreement = countMatchingDir(dir5m, dir15m, dir1h) / 3 — measured
+  // against the 15m anchor (the TF the user actually trades).
+  const dirs = [perTf.m5?.dir ?? 0, perTf.m15.dir, perTf.h1?.dir ?? 0];
+  const matching = dirs.filter(d => d === perTf.m15.dir).length;
+  // v10.5.1: integer-exact threshold — the plan's "agreement < 0.67"
+  // means FEWER than 2 of 3 timeframes aligned (0.67 ≈ 2/3, but the
+  // float 2/3 = 0.666… would wrongly trip its own 2-of-3 case). Only
+  // 1-of-3 (or 0) disagreements pay the penalty.
+  const alignedCount = matching;
+  const agreement = matching / 3;
+
+  let conf = anchor.conf;
+  const pts = [];
+  const label = (tf, v) => `${tf} ${v != null ? (v.dir > 0 ? '↑ bull' : '↓ bear') : '· neutral'}`;
+  pts.push(`MTF read — ${label('5m', perTf.m5)} · ${label('15m', perTf.m15)} · ${label('1h', perTf.h1)} · ${Math.round(agreement * 100)}% aligned`);
+  if (perTf.m5) pts.push(...(perTf.m5.reasons || []).slice(0, 1).map(r => `5m: ${r}`));
+  if (perTf.h1) pts.push(...(perTf.h1.reasons || []).slice(0, 1).map(r => `1h: ${r}`));
+
+  if (alignedCount === 3) {
+    conf += 15;
+    pts.push('ALL 3 timeframes aligned (5m/15m/1h) — full confluence boost');
+  } else if (alignedCount < 2) {
+    conf -= 20;
+    pts.push('Timeframe conflict (2+ of 3 disagree) — conviction penalized, STRONG banned');
+  } else {
+    pts.push('2 of 3 timeframes aligned — partial confluence');
+  }
+
+  return vote(anchor.dir, clamp(conf), pts.filter(Boolean));
+}
+
 // ------------------------------------------------------------
 // REGISTRY (the "Superintelligence MCP model bus")
 // ------------------------------------------------------------
@@ -491,7 +581,13 @@ export const MODELS = [
   { id: 'options', name: 'OptionsFlow', role: 'PCR + max pain + IV percentile (contrarian)', weight: 1.0, fn: optionsFlow },
   { id: 'regime', name: 'MacroRegime', role: 'NIFTY/VIX gate (India) · BTC gate (crypto)', weight: 0.8, fn: macroRegime },
   { id: 'smc', name: 'SmartMoneyICT', role: 'Liquidity sweeps + order blocks + FVG (SMC)', weight: 1.1, fn: smartMoneyICT },
-  { id: 'tape', name: 'IntradayTape', role: '15m EMA/MACD/RSI + session VWAP + 3-bar momentum (India tape)', weight: 1.3, fn: intradayTape },
+  // v10.5 MTF CONFLUENCE (Upgrade 1): flag ON → the tape seat is held
+  // by IntradayTapeMTF (w 1.6, 5m/15m/1h confluence); flag OFF → the
+  // exact v9.3 11-model board (plain IntradayTape w 1.3). Same seat —
+  // no double-count, either flavour.
+  ...(mtfConfluenceEnabled()
+    ? [{ id: 'tape-mtf', name: 'IntradayTapeMTF', role: '5m/15m/1h confluence vote (MTF tape — replaces 15m-only seat)', weight: 1.6, fn: intradayTapeMTF }]
+    : [{ id: 'tape', name: 'IntradayTape', role: '15m EMA/MACD/RSI + session VWAP + 3-bar momentum (India tape)', weight: 1.3, fn: intradayTape }]),
   { id: 'aicouncil', name: 'AI Council (LLM)', role: 'Gemini → Groq → Cerebras verification chain', weight: 1.5, fn: null },
   // ---- V2 (Phase 1-3 of the signal-accuracy upgrade). Deliberately
   // LOW weights until adaptive.js earns multipliers from settled

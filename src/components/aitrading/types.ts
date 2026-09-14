@@ -53,6 +53,25 @@ export interface SignalQuality {
   reasons?: string[];
 }
 
+/** v10.5 — one timeframe's compact tape read (5m / 15m / 1h). */
+export interface MTFTapeRead {
+  dir: 1 | 0 | -1;
+  conf: number;
+}
+
+/** v10.5 MTF CONFLUENCE (Upgrade 1) — the 5m/15m/1h tape payload on
+ *  India signals: per-TF direction + confidence and the 3-way
+ *  agreement measured against the 15m trading timeframe.
+ *  agreement < 0.67 → the server banned STRONG (grade cap). */
+export interface MTFConfluence {
+  m5: MTFTapeRead | null;
+  m15: MTFTapeRead | null;
+  h1: MTFTapeRead | null;
+  /** matching dirs / 3 (vs the 15m anchor); null when the 15m read
+   *  itself is neutral/coil. */
+  agreement: number | null;
+}
+
 /** v6.12: walk-forward edge stats (deep signal only) — the SAME
  *  ensemble replayed on recent LTF bars. Honest, disclaimer'd. */
 export interface EdgeStats {
@@ -165,6 +184,10 @@ export interface AISignal {
   quality?: SignalQuality | null;
   /** v9 SUPERINTELLIGENCE: AI SCORE (0-100) + the full trade blueprint. */
   superIntel?: SuperIntel | null;
+  /** v10.5 MTF CONFLUENCE: the 5m/15m/1h tape read (India signals,
+   *  AI_ENABLE_MTF_CONFLUENCE=true). agreement < 0.67 → the server
+   *  already banned STRONG; the badge makes the conflict visible. */
+  mtf?: MTFConfluence | null;
   votes: ModelVote[];
   summary: string;
   aiNote: AINote | null;

@@ -61,3 +61,35 @@ services:
         sync: false
       - key: DHAN_ACCESS_TOKEN
         sync: false
+      # ---- v10.5 UPGRADE FLAGS (4-upgrade plan) ----
+      # META-ENSEMBLE (Upgrade 4): route the 14-model votes through the
+      # trained LightGBM meta-learner on the ml-service. Default OFF —
+      # the in-process weighted ensemble stays authoritative until the
+      # walk-forward backtest (backtest.py --strategy meta_ensemble)
+      # proves the meta-learner wins.
+      - key: AI_ENABLE_META_ENSEMBLE
+        sync: false
+      # Where the ml-service (FastAPI) lives, if deployed. The Node
+      # server proxies /api/ml/meta-ensemble to it and falls back to
+      # the weighted ensemble when unreachable.
+      - key: ML_SERVICE_URL
+        sync: false
+      # MTF CONFLUENCE (Upgrade 1): 5m/15m/1h time-frame confluence
+      # engine on the India intraday desk (IntradayTapeMTF, weight
+      # 1.6, replaces the plain 15m tape when ON).
+      - key: AI_ENABLE_MTF_CONFLUENCE
+        sync: false
+
+  # ---- v10.5 META-ENSEMBLE WEEKLY RETRAIN (Upgrade 4) ----
+  # Refreshes meta_ensemble.pkl weekly so the stacked learner never
+  # trains on stale market data. One-shot job: python -m
+  # models.retrain_scheduler --once (fetches fresh OHLCV, retrains,
+  # saves the pkl; a failed run keeps the previous artifact — the
+  # inference side degrades to weighted-average, never crashes).
+  - type: cron
+    name: meta-ensemble-retrain
+    runtime: python
+    schedule: "0 3 * * 1"   # Mondays 03:00 UTC (post-weekend data)
+    buildCommand: pip install -r ml-service/requirements.txt
+    startCommand: python -m models.retrain_scheduler --once
+    rootDir: ml-service

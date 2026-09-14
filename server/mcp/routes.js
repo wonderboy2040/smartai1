@@ -38,6 +38,7 @@ import {
 import {
   syncNow, syncInfo, getAssetsSnapshot, maybeBackgroundSync,
   clearSourceAssets, hideAsset, unhideAsset, unhideAll, summarizeAssets,
+  netWorthSnapshot,
 } from './portfolioSync.js';
 import {
   coindcxConnect, coindcxDisconnect, coindcxStatus,
@@ -217,6 +218,11 @@ router.get('/api/mcp/indmoney/assets', (_req, res) => {
       coindcx: info.coindcx,
       syncedAt: snap?.syncedAt || null,
       stale: info.stale,
+      // v10.5 (Upgrade 3): the unified net-worth view — every visible
+      // asset bucketed by class (Equity/MF/EPF/Gold/Crypto/Fixed), the
+      // total, and the source stamps. The Portfolio tab's Net Worth
+      // Summary card renders exactly this.
+      netWorth: netWorthSnapshot(),
       slots: info.slots,
       lastRuns: info.lastRuns,
       nextSyncAt: info.nextSyncAt,

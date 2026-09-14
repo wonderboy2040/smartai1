@@ -1929,6 +1929,28 @@ export interface CoinDcxInfo {
   durable?: { configured: boolean; keySource: string };
 }
 
+export interface IndmNetWorthCategory {
+  category: 'Equity' | 'Mutual Funds' | 'EPF' | 'Gold' | 'Crypto' | 'Fixed Income' | 'Other';
+  valueINR: number;
+  count: number;
+  /** share of the total, 0-100 (null when the total is 0) */
+  pct: number | null;
+}
+
+/** v10.5 (Upgrade 3): the unified net-worth view — every visible asset
+ * bucketed by class, the INR total, and the source stamps. */
+export interface IndmNetWorth {
+  ok: boolean;
+  totalValueINR: number;
+  valuedCount: number;
+  holdingCount: number;
+  categories: IndmNetWorthCategory[];
+  sources?: { indmoney: boolean; coindcx: boolean };
+  syncedAt: number | null;
+  lastError?: string | null;
+  note?: string;
+}
+
 export interface IndmAssetsResponse {
   ok: boolean;
   reason?: string | null;
@@ -1947,6 +1969,8 @@ export interface IndmAssetsResponse {
   coindcx?: CoinDcxInfo | null;
   syncedAt: number | null;
   stale?: boolean;
+  /** v10.5 (Upgrade 3): the unified by-class net-worth view. */
+  netWorth?: IndmNetWorth | null;
   slots?: string[];
   lastRuns?: Record<string, number>;
   nextSyncAt?: number | null;
