@@ -85,7 +85,7 @@ export default memo(function IndiaIntradayTab() {
   // v6.9: India-scoped loading — the India desk never pays for the
   // crypto/futures boards.
   const t = useAITrading(true, { markets: ['INDIA'] });
-  const { india, state, positions, entries, loading, busy, refresh, executeIndia, updateConfig, closePos, fetchDeep, boardError } = t;
+  const { india, state, positions, entries, loading, busy, refresh, executeIndia, updateConfig, closePos, fetchDeep, boardError, positionsLive } = t;
   const { runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert, fetchDhanStatus, dhanConnect, dhanDisconnect } = t;
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [filter, setFilter] = useState<BoardFilter>('ALL');
@@ -433,7 +433,7 @@ export default memo(function IndiaIntradayTab() {
         <SectionLabel num="03" title="Execution Console" sub="India positions + Dhan gauntlet — STRONG signals only · trailing SL · 15:15 square-off · audited" />
         <div className="mt-2.5">
           <OrderConsole
-            state={state} positions={positions} entries={entries} busy={busy} venue="INDIA"
+            state={state} positions={positions} entries={entries} busy={busy} venue="INDIA" positionsLive={positionsLive}
             onClose={onClose} onSaveConfig={onSaveConfig}
             dhan={dhan} onDhanConnect={async (id, tok) => { const r = await dhanConnect(id, tok); refreshDhan(); return r; }}
             onDhanDisconnect={async () => { const r = await dhanDisconnect(); refreshDhan(); return r; }}

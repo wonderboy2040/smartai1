@@ -128,7 +128,7 @@ export default memo(function CoinDcxTab() {
   // v6.9: CoinDCX-scoped loading — spot + futures boards only.
   // v10.4: + GLOBAL equity futures SIM board (AAPL/GOOGL/NVDA/…/SPACEX).
   const t = useAITrading(true, { markets: ['CRYPTO', 'FUTURES', 'GLOBALFUTURES'] });
-  const { crypto, futures, globalFut, state, positions, entries, loading, busy, refresh, executeSignal, executeFutures, executeGlobal, updateConfig, closePos, fetchDeep, boardError } = t;
+  const { crypto, futures, globalFut, state, positions, entries, loading, busy, refresh, executeSignal, executeFutures, executeGlobal, updateConfig, closePos, fetchDeep, boardError, positionsLive } = t;
   const { runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert } = t;
   const [desk, setDesk] = useState<'CRYPTO' | 'FUTURES' | 'GLOBAL'>('CRYPTO');
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
@@ -469,7 +469,7 @@ export default memo(function CoinDcxTab() {
         <SectionLabel num="03" title="Execution Console" sub="CoinDCX spot + futures positions · leverage · native TP/SL · trailing · risk-gated · audited" />
         <div className="mt-2.5">
           <OrderConsole
-            state={state} positions={positions} entries={entries} busy={busy} venue="COINDCX"
+            state={state} positions={positions} entries={entries} busy={busy} venue="COINDCX" positionsLive={positionsLive}
             onClose={onClose} onSaveConfig={onSaveConfig}
             dhan={null} onDhanConnect={async () => ({ ok: false, error: 'India desk me jao (🇮🇳 India tab)' })} onDhanDisconnect={async () => ({ ok: false, error: 'n/a' })} onDhanRefresh={() => {}}
           />

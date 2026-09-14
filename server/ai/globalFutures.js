@@ -49,7 +49,34 @@ const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(String(v ?
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36';
 
 // ---------------- universe ----------------
-export const GLOBAL_FUTURES_UNIVERSE = [
+// v10.5.3 FULL-UNIVERSE SCAN (Issue #2): the desk used to be a
+// hand-typed 8-name array — MU (Micron) was never in it, so it never
+// got scanned and never got a signal card. The universe is now a
+// periodically-refreshed CACHE built exactly like the crypto desk's
+// dynamic spot universe (signals.js: "dynamic discovery with a static
+// seed fallback"):
+//
+//   • GLOBAL_FUTURES_SEED      — the liquid desk watchlist (guarantees
+//                                the board works even when CoinDCX
+//                                lists no equity perps; includes MU +
+//                                the chip complex + the momentum names)
+//   • refreshGlobalUniverse()  — every 30 min, re-pulls CoinDCX's
+//                                active USDT-perp instrument list
+//                                (server/mcp/coindcx.js —
+//                                fetchGlobalFuturesInstruments), diffs
+//                                in newly LISTED equity names and drops
+//                                delisted discoveries. SPACEX stays the
+//                                private-company SIM special case.
+//   • GLOBAL_FUTURES_UNIVERSE  — the LIVE merged array (mutated IN
+//                                PLACE so every consumer — the board
+//                                scan in signals.js, the quotes feed,
+//                                the markets view — reads the fresh set
+//                                with zero wiring changes).
+//
+// Yahoo mapping: most US tickers map 1:1; GLOBAL_YAHOO_ALIAS carries
+// the class-A/B + special-share edge cases so a discovery can never
+// silently price as another company.
+export const GLOBAL_FUTURES_SEED = [
   { symbol: 'AAPL', name: 'Apple', yahoo: 'AAPL', sim: false },
   { symbol: 'MSFT', name: 'Microsoft', yahoo: 'MSFT', sim: false },
   { symbol: 'GOOGL', name: 'Alphabet (Google)', yahoo: 'GOOGL', sim: false },
@@ -57,8 +84,109 @@ export const GLOBAL_FUTURES_UNIVERSE = [
   { symbol: 'NVDA', name: 'NVIDIA', yahoo: 'NVDA', sim: false },
   { symbol: 'TSLA', name: 'Tesla', yahoo: 'TSLA', sim: false },
   { symbol: 'META', name: 'Meta Platforms', yahoo: 'META', sim: false },
+  // the chip complex + momentum names the user actually asks about —
+  // MU was the headline miss of the 8-name era
+  { symbol: 'MU', name: 'Micron Technology', yahoo: 'MU', sim: false },
+  { symbol: 'AMD', name: 'Advanced Micro Devices', yahoo: 'AMD', sim: false },
+  { symbol: 'INTC', name: 'Intel', yahoo: 'INTC', sim: false },
+  { symbol: 'AVGO', name: 'Broadcom', yahoo: 'AVGO', sim: false },
+  { symbol: 'QCOM', name: 'Qualcomm', yahoo: 'QCOM', sim: false },
+  { symbol: 'TXN', name: 'Texas Instruments', yahoo: 'TXN', sim: false },
+  { symbol: 'SMCI', name: 'Super Micro Computer', yahoo: 'SMCI', sim: false },
+  { symbol: 'PLTR', name: 'Palantir', yahoo: 'PLTR', sim: false },
+  { symbol: 'COIN', name: 'Coinbase', yahoo: 'COIN', sim: false },
+  { symbol: 'NFLX', name: 'Netflix', yahoo: 'NFLX', sim: false },
+  { symbol: 'ORCL', name: 'Oracle', yahoo: 'ORCL', sim: false },
+  { symbol: 'ADBE', name: 'Adobe', yahoo: 'ADBE', sim: false },
+  { symbol: 'UBER', name: 'Uber Technologies', yahoo: 'UBER', sim: false },
+  // SPACEX — private company, koi public price NAHI hota: the
+  // deterministic synthetic walk below powers it, clearly labeled SIM
+  // on every surface. This special case is DESIGNED to stay (it is the
+  // honest way to show a non-traded name), never a "discovery".
   { symbol: 'SPACEX', name: 'SpaceX (SIM)', yahoo: null, sim: true },
 ];
+
+/** Yahoo tickers for class-A/B shares and special bases — a discovered
+ *  symbol maps through this before touching the quote feed so a dual
+ *  listing can never silently return another company's price. */
+export const GLOBAL_YAHOO_ALIAS = {
+  BRK: 'BRK-B', BRKB: 'BRK-B', BRK_B: 'BRK-B', 'BRK.B': 'BRK-B', // Berkshire class B
+  BRKA: 'BRK-A', BRK_A: 'BRK-A', 'BRK.A': 'BRK-A', // Berkshire class A
+  BF: 'BF-B', BFB: 'BF-B', BF_B: 'BF-B', 'BF.B': 'BF-B',   // Brown-Forman class B
+  BFA: 'BF-A', BF_A: 'BF-A', 'BF.A': 'BF-A',
+  GOOG: 'GOOG',  // class C (explicit identity)
+  GOOGL: 'GOOGL', // class A (explicit identity)
+  LEN: 'LEN-B', LENB: 'LEN-B', // Lennar class B dual listing
+  MOG_A: 'MOG-A', MOGA: 'MOG-A', // Moog class A
+  HEI_A: 'HEI-A', HEIA: 'HEI-A', // HEICO class A
+};
+export function yahooForGlobal(symbol) {
+  const s = String(symbol || '').toUpperCase();
+  return GLOBAL_YAHOO_ALIAS[s] || s; // most US tickers map 1:1
+}
+
+// discovery cap — each scanned symbol costs one Yahoo 1h/3mo candle
+// fetch (150s cache) + one quote call (10s cache) per board refresh,
+// so the dynamically-added tail stays bounded.
+const GLOBAL_DISCOVERED_MAX = Number(process.env.AI_GLOBAL_DISCOVERED_MAX) > 0
+  ? Math.floor(Number(process.env.AI_GLOBAL_DISCOVERED_MAX))
+  : 8;
+const GLOBAL_UNIVERSE_REFRESH_MS = 30 * 60_000; // 30 min
+
+/** The LIVE universe — mutated in place by refreshGlobalUniverse(). */
+export const GLOBAL_FUTURES_UNIVERSE = GLOBAL_FUTURES_SEED.map(u => ({ ...u }));
+
+let _universeTimer = null;
+
+/**
+ * Merge the seed with CoinDCX's live equity-perp discoveries:
+ *   seed names ALWAYS stay (stable desk — a delisting on CoinDCX
+ *   cannot wipe the practice board), newly discovered names append
+ *   (up to GLOBAL_DISCOVERED_MAX), delisted discoveries drop out.
+ * Returns { size, discovered, added, dropped }.
+ */
+export async function refreshGlobalUniverse() {
+  const { fetchGlobalFuturesInstruments } = await import('../mcp/coindcx.js');
+  let discovered = [];
+  try { discovered = await fetchGlobalFuturesInstruments(); }
+  catch { discovered = []; /* CoinDCX unreachable → seed-only (honest degrade) */ }
+  const bySymbol = new Map(GLOBAL_FUTURES_SEED.map(u => [u.symbol, { ...u }]));
+  let added = [];
+  for (const d of (Array.isArray(discovered) ? discovered : [])) {
+    if (bySymbol.has(d.symbol)) continue;
+    if (bySymbol.size >= GLOBAL_FUTURES_SEED.length + GLOBAL_DISCOVERED_MAX) break;
+    bySymbol.set(d.symbol, {
+      symbol: d.symbol, name: d.symbol, yahoo: yahooForGlobal(d.symbol),
+      sim: false, discovered: true,
+    });
+    added.push(d.symbol);
+  }
+  const next = [...bySymbol.values()];
+  const dropped = GLOBAL_FUTURES_UNIVERSE
+    .filter(u => u.discovered && !next.some(n => n.symbol === u.symbol))
+    .map(u => u.symbol);
+  // in-place swap — every consumer holding the array reference sees it
+  GLOBAL_FUTURES_UNIVERSE.length = 0;
+  GLOBAL_FUTURES_UNIVERSE.push(...next);
+  _candleCache.clear(); // stale candles for dropped symbols must not linger
+  return {
+    size: GLOBAL_FUTURES_UNIVERSE.length,
+    discovered: (Array.isArray(discovered) ? discovered : []).length,
+    added,
+    dropped,
+  };
+}
+
+/** Boot hook — first merge immediately (non-blocking, never throws),
+ *  then every 30 minutes. unref'd so it never holds the process. */
+export function startGlobalUniverseRefresh() {
+  refreshGlobalUniverse().catch(e => console.warn('[globalFutures] universe refresh failed:', e?.message || e));
+  if (_universeTimer) return;
+  _universeTimer = setInterval(() => {
+    refreshGlobalUniverse().catch(e => console.warn('[globalFutures] universe refresh failed:', e?.message || e));
+  }, GLOBAL_UNIVERSE_REFRESH_MS);
+  if (typeof _universeTimer.unref === 'function') _universeTimer.unref();
+}
 
 export function globalPairFor(symbol) {
   return `${String(symbol || '').toUpperCase()}-USD`;
@@ -663,13 +791,27 @@ export async function globalFuturesMarketsView() {
       pair: globalPairFor(u.symbol), symbol: u.symbol, name: u.name,
       last: q?.price ?? null, changePct: q?.changePct ?? null,
       sim: u.sim, source: q?.source ?? null,
+      discovered: !!u.discovered,
     };
   });
-  return { ok: true, count: rows.length, markets: rows, fetchedAt: Date.now() };
+  return {
+    ok: true, count: rows.length, markets: rows, fetchedAt: Date.now(),
+    // v10.5.3 universe provenance: seed size + CoinDCX-discovered tail
+    universe: {
+      seed: GLOBAL_FUTURES_SEED.length,
+      discovered: rows.filter(r => r.discovered).length,
+      mode: 'seed+coindcx-discovery',
+    },
+  };
 }
 
 // ---------------- test hooks ----------------
 export function __resetGlobalForTests() {
   _quotesCache = null; _quotesAt = 0;
   _candleCache = new Map();
+  // v10.5.3: restore the SEED universe (drop test-time discoveries so
+  // each case starts hermetic) + stop the refresh timer
+  if (_universeTimer) { clearInterval(_universeTimer); _universeTimer = null; }
+  GLOBAL_FUTURES_UNIVERSE.length = 0;
+  GLOBAL_FUTURES_UNIVERSE.push(...GLOBAL_FUTURES_SEED.map(u => ({ ...u })));
 }

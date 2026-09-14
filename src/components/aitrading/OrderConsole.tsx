@@ -362,9 +362,14 @@ interface Props {
   venue?: 'INDIA' | 'COINDCX';
   /** v6.9: console heading override (per desk). */
   title?: string;
+  /** v10.5.3: how the positions feed is being delivered — 'stream' =
+   *  SSE diff-push (price-driven, sub-second on cached desks), 'poll'
+   *  = REST fallback (5s), null = flat / connecting. Drives the honest
+   *  LIVE dot on each open-position row. */
+  positionsLive?: 'stream' | 'poll' | null;
 }
 
-export const OrderConsole = memo(function OrderConsole({ state, positions, entries, busy, onClose, onSaveConfig, dhan, onDhanConnect, onDhanDisconnect, onDhanRefresh, venue, title }: Props) {
+export const OrderConsole = memo(function OrderConsole({ state, positions, entries, busy, onClose, onSaveConfig, dhan, onDhanConnect, onDhanDisconnect, onDhanRefresh, venue, title, positionsLive }: Props) {
   const [tab, setTab] = useState<'positions' | 'journal'>('positions');
   // v6.9: desk-scoped positions — India desk sees NSE rows only, CoinDCX
   // desk sees spot + futures rows only. Journal stays the FULL audit trail.
@@ -423,6 +428,32 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
               {t === 'positions' ? `📋 POSITIONS (${open.length} open${venue === 'INDIA' ? ' · 🇮🇳 NSE' : venue === 'COINDCX' ? ' · ₿ COINDCX' : ''})` : '📜 AUDIT JOURNAL'}
             </button>
           ))}
+          {/* v10.5.3 FEED HONESTY — the old label claimed "ULTRA STREAM"
+              while the rows were fed by a 5s REST poll. The badge now says
+              exactly what is feeding them: SSE push (green, pulsing) vs
+              REST poll fallback. */}
+          {tab === 'positions' && open.length > 0 && (
+            positionsLive === 'stream' ? (
+              <span
+                className="ml-auto self-center mr-3 flex items-center gap-1.5 text-[9px] font-black tracking-wider text-emerald-300"
+                title="SSE diff-push (/api/ai/positions/stream) — server har price change par sirf usi row ka LTP/P&L push karta hai. Crypto/futures/global ~1s cadence, India market-hours cadence.">
+                <span className="relative flex h-2 w-2" aria-hidden="true">
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                </span>
+                LIVE PUSH
+              </span>
+            ) : (
+              <span
+                className="ml-auto self-center mr-3 flex items-center gap-1.5 text-[9px] font-black tracking-wider text-slate-500"
+                title={positionsLive === 'poll'
+                  ? 'Stream down — REST fallback (5s poll). Connection wapas aane par push resume ho jayega.'
+                  : 'Connecting — pehla snapshot aane tak REST poll chal raha hai.'}>
+                <span className="inline-flex rounded-full h-1.5 w-1.5 bg-slate-500" aria-hidden="true" />
+                {positionsLive === 'poll' ? 'POLL · 5s' : 'CONNECTING'}
+              </span>
+            )
+          )}
         </div>
 
         {tab === 'positions' && (
@@ -482,7 +513,10 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
                     <span className="ml-auto text-[11px] font-mono text-slate-400">{p.qty} @ {pf(p.entryPrice)}</span>
                     {/* v7.0.1: live LTP with source honesty — pulse dot when a
                         live feed drives it, ~TV tag on the USD-fallback path,
-                        STALE tag only when every feed failed (frozen). */}
+                        STALE tag only when every feed failed (frozen).
+                        v10.5.3: the tooltip + dot colour now tell the TRUTH
+                        about delivery too (SSE push vs REST poll) — the old
+                        "5s ultra-stream" text claimed streaming that wasn't. */}
                     {open && p.ltp != null && (
                       <span
                         className="text-[11px] font-mono text-slate-300 flex items-center gap-1"
@@ -492,14 +526,20 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
                             ? 'SPACEX SIM — deterministic synthetic walk (clearly-labeled simulation, not a market price)'
                             : p.priceSource === 'entry-fallback'
                               ? 'No live feed reachable — price frozen at entry price'
-                              : 'Live price — 5s ultra-stream refresh while position is open'}>
+                              : positionsLive === 'stream'
+                                ? 'Live price — SSE diff-push (/api/ai/positions/stream): har change par server khud push karta hai'
+                                : positionsLive === 'poll'
+                                  ? 'Live price — REST poll fallback (5s) jab tak stream reconnect hota hai'
+                                  : 'Live price — 5s refresh while position is open'}>
                         → {pf(p.ltp)}
                         {p.priceSource === 'tv-usd-fallback' && <span className="text-[8px] font-black text-amber-400">~TV</span>}
                         {p.priceSource === 'entry-fallback' && <span className="text-[8px] font-black text-red-400">STALE</span>}
                         {p.priceSource !== 'entry-fallback' && (
                           <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
-                            <span className="absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-60 animate-ping" />
-                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500" />
+                            {positionsLive === 'stream'
+                              ? <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60 animate-ping" />
+                              : null}
+                            <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${positionsLive === 'stream' ? 'bg-emerald-500' : 'bg-cyan-500'}`} />
                           </span>
                         )}
                       </span>

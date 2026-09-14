@@ -8,9 +8,15 @@
 // v7.0.1: positions poll is now DYNAMIC — 10s while any position is
 // OPEN (realtime LTP + uPnL feel, server caches make it cheap), 45s
 // when flat. Open positions are exactly when the user is watching.
+//
+// v10.5.3 REALTIME POSITIONS: while any position is open the hook
+// subscribes to /api/ai/positions/stream (SSE) and merges per-row
+// {ltp, unrealizedPnl} deltas in place — the panel updates on every
+// price tick, price-driven (the old 5s REST poll is kept ONLY as the
+// disconnect fallback + 45s reconciliation while streaming).
 // ============================================================
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { apiFetch, getProxyBase } from '../../utils/api';
+import { apiFetch, getProxyBase, getSessionToken } from '../../utils/api';
 import type { AISignal, OptionsDesk, OptionSignalsView, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, AlertsStatus, DhanStatus, SwingBoard, WhaleRadar, LedgerView, MorningBrief, OrderbookView, AgentView, WalletView, FuturesMarketsView, MarketKind, TrustView, PerfView, CorrView, SectorView, IncomeView, NextActionsView, NarrativeView, EdgeStats, LtfSnapshot } from './types';
 
 export interface DeepSignalResult {
@@ -47,6 +53,30 @@ export interface ExecuteOpts {
   leverage?: number;
 }
 
+/** v10.5.3: how the positions panel is being fed right now —
+ *  'stream' = SSE diff-push (live, price-driven), 'poll' = REST
+ *  fallback (5s while open), null = flat / not connected. */
+export type PositionsFeed = 'stream' | 'poll' | null;
+
+/** A per-position delta pushed by /api/ai/positions/stream `tick`. */
+interface PositionTick {
+  id: string;
+  ltp?: number | null;
+  unrealizedPnlINR?: number | null;
+  unrealizedPnlUSDT?: number | null;
+  usdInr?: number | null;
+  priceSource?: string | null;
+  sl?: number | null;
+  tp?: number | null;
+  tp2?: number | null;
+  trailing?: 'breakeven' | 'trail' | null;
+  tp1Hit?: boolean;
+  tp2Hit?: boolean;
+  exitStage?: string | null;
+  qty?: number;
+  ts?: number;
+}
+
 export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' | 'CRYPTO' | 'FUTURES' | 'GLOBALFUTURES'> }) {
   // v6.9: market-scoped loading — the India desk only pays for the India
   // board; the CoinDCX desk loads spot + futures. Default = all (legacy).
@@ -63,6 +93,9 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
   // v7.0.2: board fetch failure state — a dead API used to render NOTHING
   // between the section header and the next section (silent hole).
   const [boardError, setBoardError] = useState(false);
+  // v10.5.3 REALTIME POSITIONS: feed mode + reconnect epoch
+  const [positionsLive, setPositionsLive] = useState<PositionsFeed>(null);
+  const [positionsEpoch, setPositionsEpoch] = useState(0);
   const activeRef = useRef(active);
   activeRef.current = active;
 
@@ -106,9 +139,6 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
   }, []);
 
   // Boot + staggered polling (active tab only — background tabs cost zero).
-  // v10.4 ULTRA STREAM: open positions poll every 5s (LTP + avg-buy-price
-  // + uPnL live — the "realtime ultra stream" feel; the server-side
-  // ticker/quote caches make this cheap), 45s when flat.
   const hasOpen = positions.some(p => p.status === 'OPEN');
   useEffect(() => {
     if (!active) return;
@@ -122,11 +152,74 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
     const s = setInterval(() => { if (activeRef.current && !document.hidden) loadState(); }, 60_000);
     return () => { clearInterval(b); clearInterval(s); };
   }, [active, loadBoards, loadState]);
+
+  // -----------------------------------------------------------------
+  // v10.5.3 REALTIME POSITIONS — SSE diff-push while positions are
+  // open (the real "ULTRA STREAM"; the old path was a 5s REST poll).
+  //   • `positions` event → full snapshot (connect + structural
+  //     changes: open/close/partial) — replaces the rows wholesale.
+  //   • `tick` event → { id, ltp, unrealizedPnl, ... } — merged into
+  //     the matching row IN PLACE so React only re-renders that row.
+  //   • onerror → EventSource auto-reconnects; until it does, the
+  //     REST poll below drops back to its fast 5s fallback cadence.
+  //   • visibility: returning to the tab forces an immediate REST
+  //     refresh + a fresh socket (prices moved while backgrounded).
+  // -----------------------------------------------------------------
+  useEffect(() => {
+    if (!active || !hasOpen) {
+      setPositionsLive(null);
+      return;
+    }
+    const session = getSessionToken();
+    const url = session
+      ? `${getProxyBase()}/api/ai/positions/stream?session=${encodeURIComponent(session)}`
+      : `${getProxyBase()}/api/ai/positions/stream`;
+    let es: EventSource | null = null;
+    try { es = new EventSource(url); } catch { return; }
+    const src = es;
+
+    src.onopen = () => setPositionsLive('stream');
+    src.addEventListener('positions', (e) => {
+      try {
+        const j = JSON.parse((e as MessageEvent).data);
+        if (Array.isArray(j.positions)) setPositions(j.positions);
+        if (Array.isArray(j.entries)) setEntries(j.entries);
+      } catch { /* malformed frame */ }
+    });
+    src.addEventListener('tick', (e) => {
+      try {
+        const d = JSON.parse((e as MessageEvent).data) as PositionTick;
+        setPositions(prev => prev.map(p => p.id === d.id ? { ...p, ...d } : p));
+      } catch { /* malformed frame */ }
+    });
+    src.onerror = () => setPositionsLive('poll');
+
+    // Reconnect-on-visibility: force REST refresh + resubscribe when the
+    // tab comes back (covers "prices moved a lot while backgrounded").
+    const onVis = () => {
+      if (!document.hidden) {
+        loadPositions();
+        setPositionsEpoch(n => n + 1); // re-runs this effect → fresh socket
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      try { src.close(); } catch { /* noop */ }
+      setPositionsLive(null);
+    };
+  }, [active, hasOpen, positionsEpoch, loadPositions]);
+
+  // REST poll — now the FALLBACK + reconciliation path: 5s while any
+  // position is open AND the stream is down; relaxed to 45s while the
+  // SSE stream is live (it pushes every change anyway; the periodic
+  // REST pass only reconciles book-keeping the stream doesn't carry).
   useEffect(() => {
     if (!active) return;
-    const p = setInterval(() => { if (activeRef.current && !document.hidden) loadPositions(); }, hasOpen ? 5_000 : 45_000);
+    const fast = hasOpen && positionsLive !== 'stream';
+    const p = setInterval(() => { if (activeRef.current && !document.hidden) loadPositions(); }, fast ? 5_000 : 45_000);
     return () => clearInterval(p);
-  }, [active, loadPositions, hasOpen]);
+  }, [active, loadPositions, hasOpen, positionsLive]);
 
   const executeSignal = useCallback(async (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: ExecuteOpts): Promise<ExecuteResult> => {
     setBusy(true);
@@ -351,6 +444,8 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
 
   return {
     india, crypto, futures, globalFut, state, positions, entries, loading, busy, boardError,
+    /** v10.5.3: 'stream' = SSE live push, 'poll' = REST fallback, null = flat. */
+    positionsLive,
     refresh: loadBoards, executeSignal, updateConfig, killSwitch, closePos, fetchDeep,
     executeIndia, runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert,
     fetchDhanStatus, dhanConnect, dhanDisconnect, executeFutures, executeGlobal,

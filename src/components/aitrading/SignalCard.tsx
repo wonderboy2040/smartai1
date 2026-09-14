@@ -38,8 +38,24 @@ const pxFmt = (v: number | null | undefined): string => {
   const dp = a >= 1 ? 2 : a >= 0.01 ? 4 : a >= 0.0001 ? 6 : 8;
   return v.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
 };
-const px = (v: number | null | undefined, futures = false): string =>
-  v == null || !Number.isFinite(v) ? '—' : futures ? pxFmt(v) : `₹${pxFmt(v)}`;
+/** v10.5.3 CURRENCY TAGS — the old boolean helper only branched on
+ *  `futures`, so GLOBALFUTURES (global equity SIM) cards priced their
+ *  ENTRY/SL/TARGETS in ₹. Now every desk formats distinctly:
+ *    'inr'  → ₹178.32   (India desk, NSE)
+ *    'usdt' → 63,120.50 USDT (CoinDCX USDT-margined perp domain)
+ *    'usd'  → USD 178.32   (Global Equity SIM — USD-priced shares/
+ *                           contracts; NOT USDT margin like crypto perps,
+ *                           so the two are never visually conflated) */
+export type CurrencyTag = 'inr' | 'usdt' | 'usd';
+const px = (v: number | null | undefined, cur: CurrencyTag = 'inr'): string => {
+  if (v == null || !Number.isFinite(v)) return '—';
+  if (cur === 'inr') return `₹${pxFmt(v)}`;
+  const s = pxFmt(v);
+  return cur === 'usd' ? `USD ${s}` : `${s} USDT`;
+};
+/** The currency tag for a market — the ONE place desks resolve their unit. */
+const curFor = (market: string): CurrencyTag =>
+  market === 'FUTURES' ? 'usdt' : market === 'GLOBALFUTURES' ? 'usd' : 'inr';
 
 const sideColor = (side: Side | string) =>
   side === 'LONG' ? 'text-emerald-400' : side === 'SHORT' ? 'text-red-400' : 'text-slate-400';
@@ -115,11 +131,13 @@ const superTierBadge = (tier: string) => {
 function SuperIntelStrip({ signal, si }: { signal: AISignal; si: SuperIntel }) {
   const bp = si.blueprint;
   if (!bp) return null;
-  const isFut = signal.market === 'FUTURES';
+  // v10.5.3: currency-tag aware (was FUTURES-only — global cards printed ₹)
+  const cur = curFor(signal.market);
   const px = (v: number | null | undefined) =>
     v == null || !Number.isFinite(v) ? '—'
-      : isFut ? `${v.toLocaleString('en-US', { maximumFractionDigits: 4 })}`
-        : `₹${v.toLocaleString('en-IN', { maximumFractionDigits: Math.abs(v) < 1 ? 6 : 2 })}`;
+      : cur === 'inr' ? `₹${v.toLocaleString('en-IN', { maximumFractionDigits: Math.abs(v) < 1 ? 6 : 2 })}`
+        : cur === 'usd' ? `USD ${v.toLocaleString('en-US', { maximumFractionDigits: 4 })}`
+          : `${v.toLocaleString('en-US', { maximumFractionDigits: 4 })} USDT`;
   const zone = bp.entryZone && bp.entryZone[0] != null && bp.entryZone[1] != null ? `${px(bp.entryZone[0])}–${px(bp.entryZone[1])}` : '—';
   const t = bp.targets;
   return (
@@ -431,6 +449,12 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
   const crypto = signal.market === 'CRYPTO';
   const futures = signal.market === 'FUTURES';
   const global = signal.market === 'GLOBALFUTURES'; // v10.4 SIM desk (USD margin domain)
+  // v10.5.3: one shared currency decision for every price/amount label in
+  // the ticket — the old `futures ?` checks let the global SIM desk fall
+  // through to the ₹ branch in a dozen places.
+  const cur: CurrencyTag = global ? 'usd' : futures ? 'usdt' : 'inr';
+  const unit = global ? 'USD' : 'USDT';       // display unit (global ≠ USDT!)
+  const usdDenominated = futures || global;    // shared boolean per the fix plan
   const leveraged = crypto || futures || global; // v6.8/v10.4: futures + SIM desk are natively leveraged
   const india = signal.market === 'INDIA';
   const long = signal.side === 'LONG';
@@ -493,8 +517,8 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
 
   const pickLev = (l: number) => { setLev(l); setResult(null); };
 
-  const fmtU = (n: number, dp = 0) => futures || global
-    ? `${n.toLocaleString('en-US', { maximumFractionDigits: dp || 2 })} USDT`
+  const fmtU = (n: number, dp = 0) => usdDenominated
+    ? `${n.toLocaleString('en-US', { maximumFractionDigits: dp || 2 })} ${unit}`
     : fmt(n, dp);
   const fmtINRapprox = (n: number) => `₹${Math.round(n * approxUsdInr).toLocaleString('en-IN')}`;
 
@@ -502,7 +526,7 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
     const handler = global ? onExecuteGlobal : futures ? onExecuteFutures : crypto ? onExecute : onExecuteIndia;
     if (!handler) return;
     if (invalid) {
-      setResult({ ok: false, text: `⚠ Pehle amount daalo — minimum ${futures || global ? `${lo} USDT margin` : `₹${lo}`}${orderCap != null ? ` (server cap ${futures || global ? '' : '₹'}${orderCap.toLocaleString('en-IN')})` : ''}. Box khali/clear karke apna amount type karo, blur par apne aap valid ho jayega.` });
+      setResult({ ok: false, text: `⚠ Pehle amount daalo — minimum ${usdDenominated ? `${lo} ${unit} margin` : `₹${lo}`}${orderCap != null ? ` (server cap ${futures || global ? '' : '₹'}${orderCap.toLocaleString('en-IN')})` : ''}. Box khali/clear karke apna amount type karo, blur par apne aap valid ho jayega.` });
       setTimeout(() => setResult(null), 8000);
       return;
     }
@@ -524,15 +548,15 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
       setResult({ ok: false, text: `⛔ ${r.error || 'Gauntlet ne order reject kiya — toast/console me reason dekho'}` });
     } else {
       setResult({ ok: true, text: mode === 'live'
-        ? `⚡ LIVE order executed — ${qty < 1 ? qty.toFixed(6) : qty} ${futures ? 'contracts' : crypto ? 'units' : 'shares'} @ ${futures ? `${plan.entry} USDT` : `₹${plan.entry}`}${leveraged && lev > 1 ? ` · ${lev}x` : ''} (console me position confirm karo)`
+        ? `⚡ LIVE order executed — ${qty < 1 ? qty.toFixed(6) : qty} ${global ? 'shares' : futures ? 'contracts' : crypto ? 'units' : 'shares'} @ ${usdDenominated ? `${plan.entry} ${unit}` : `₹${plan.entry}`}${leveraged && lev > 1 ? ` · ${lev}x` : ''} (console me position confirm karo)`
         : mode === 'notify'
           ? `🔔 NOTIFY-only — gauntlet chala, alert + journal audit likha. Koi order/position NAHI bana.`
-          : `🧪 PAPER position khula — ${qty < 1 ? qty.toFixed(6) : qty} ${futures ? 'contracts' : crypto ? 'units' : 'shares'} @ ${futures ? `${plan.entry} USDT` : `₹${plan.entry}`}${leveraged && lev > 1 ? ` · ${lev}x margin` : ''} · watcher SL/TP manage karega` });
+          : `🧪 PAPER position khula — ${qty < 1 ? qty.toFixed(6) : qty} ${global ? 'shares' : futures ? 'contracts' : crypto ? 'units' : 'shares'} @ ${usdDenominated ? `${plan.entry} ${unit}` : `₹${plan.entry}`}${leveraged && lev > 1 ? ` · ${lev}x margin` : ''} · watcher SL/TP manage karega` });
     }
     setTimeout(() => setResult(null), 8000);
   };
 
-  const canLiveHere = futures ? canLive : crypto ? canLive : canLiveIndia;
+  const canLiveHere = global ? canLive : futures ? canLive : crypto ? canLive : canLiveIndia;
 
   return (
     <div className={`mt-2.5 rounded-xl border p-3 ${futures
@@ -541,34 +565,37 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
         ? 'border-cyan-500/30 bg-gradient-to-b from-cyan-500/[0.08] to-transparent'
         : 'border-orange-500/30 bg-gradient-to-b from-orange-500/[0.08] to-transparent'}`} aria-label="simple trade ticket">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className={`text-[10px] font-black tracking-wider ${futures ? 'text-violet-300' : crypto ? 'text-cyan-300' : 'text-orange-300'}`}>
+        <span className={`text-[10px] font-black tracking-wider ${futures ? 'text-violet-300' : crypto ? 'text-cyan-300' : global ? 'text-sky-300' : 'text-orange-300'}`}>
           🚀 SIMPLE TRADE TICKET — {signal.symbol} {signal.side}
         </span>
-        <span className="text-[9px] text-slate-500">{futures ? 'margin USDT (perp wallet se)' : crypto ? 'margin ₹ (leverage apni lag raha hai)' : 'capital budget ₹'}</span>
+        <span className="text-[9px] text-slate-500">{futures ? 'margin USDT (perp wallet se)' : global ? 'margin USD (SIM desk — practice)' : crypto ? 'margin ₹ (leverage apni lag raha hai)' : 'capital budget ₹'}</span>
       </div>
 
       {/* size + leverage inputs — v7.0.1 FREE-TYPING budget box */}
       <div className="flex items-center gap-2 flex-wrap mt-2">
         <label className="flex items-center gap-1.5 text-[9px] font-black text-slate-500 tracking-wider">
-          {futures ? 'MARGIN USDT' : crypto ? 'MARGIN ₹' : 'BUDGET ₹'}
+          {futures ? 'MARGIN USDT' : global ? 'MARGIN USD' : crypto ? 'MARGIN ₹' : 'BUDGET ₹'}
           <input
-            type="number" min={futures ? 2 : 100} max={1000000} step={futures ? 1 : 50}
+            type="number" min={usdDenominated ? 2 : 100} max={1000000} step={usdDenominated ? 1 : 50}
             value={marginRaw} onChange={e => onMargin(e.target.value)} onBlur={onMarginBlur}
-            placeholder={futures ? 'USDT' : '₹'}
+            placeholder={usdDenominated ? unit : '₹'}
             className={`quantum-input px-2 py-1 rounded-lg text-[11px] font-mono font-bold text-white w-28 ${invalid ? 'border-amber-500/50' : ''}`}
-            aria-label={futures ? 'margin in USDT — apna amount type karo' : 'budget in rupees — apna amount type karo'} />
+            aria-label={usdDenominated ? `margin in ${unit} — apna amount type karo` : 'budget in rupees — apna amount type karo'} />
+          {/* v10.5.3: the ≈ ₹ conversion hint stays on the REAL CoinDCX perp
+              desk (USDT = actual wallet money). The global SIM desk shows a
+              pure USD domain — a ₹ hint there re-conflates the two desks. */}
           {futures && typedValid && <span className="text-[9px] text-slate-600 font-mono">≈ {fmtINRapprox(margin)}</span>}
-          {invalid && <span className="text-[9px] font-black text-amber-400">amount daalo (min {futures ? `${lo} USDT` : `₹${lo}`})</span>}
+          {invalid && <span className="text-[9px] font-black text-amber-400">amount daalo (min {usdDenominated ? `${lo} ${unit}` : `₹${lo}`})</span>}
         </label>
         {/* v7.0.1 quick-amount chips — one-tap sizing, no typing needed */}
         <div className="flex items-center gap-1 flex-wrap" role="group" aria-label="quick amount presets">
-          {(futures ? [5, 10, 25, 50, 100] : [500, 1000, 2500, 5000, 10000]).map(a => (
+          {(usdDenominated ? [5, 10, 25, 50, 100] : [500, 1000, 2500, 5000, 10000]).map(a => (
             <button key={a} onClick={() => pickAmount(a)}
-              title={`Quick-set ${futures ? `${a} USDT margin` : `₹${a.toLocaleString('en-IN')} budget`}`}
+              title={`Quick-set ${usdDenominated ? `${a} ${unit} margin` : `₹${a.toLocaleString('en-IN')} budget`}`}
               className={`px-2 py-1 rounded-lg text-[10px] font-black font-mono border transition-colors ${typedValid && Number(marginRaw) === a
                 ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400/60'
                 : 'bg-black/30 text-slate-400 border-slate-600/40 hover:bg-cyan-500/10'}`}>
-              {futures ? `${a}U` : a >= 1000 ? `₹${a / 1000}k` : `₹${a}`}
+              {usdDenominated ? (global ? `$${a}` : `${a}U`) : a >= 1000 ? `₹${a / 1000}k` : `₹${a}`}
             </button>
           ))}
           {orderCap != null && (
@@ -584,7 +611,7 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
             <span className="text-[9px] font-black text-slate-500 tracking-wider">LEVERAGE</span>
             {[1, 2, 3, 5, 10].filter(l => l <= cap).map(l => (
               <button key={l} onClick={() => pickLev(l)} disabled={l > maxSane && l > 1}
-                title={l > maxSane && l > 1 ? `${l}x par liquidation SL se pehle fire hogi (max sane ${maxSane}x)` : `${l}x — notional ${futures ? `${(margin * l).toFixed(0)} USDT` : fmt(margin * l, 0)}`}
+                title={l > maxSane && l > 1 ? `${l}x par liquidation SL se pehle fire hogi (max sane ${maxSane}x)` : `${l}x — notional ${usdDenominated ? `${(margin * l).toFixed(0)} ${unit}` : fmt(margin * l, 0)}`}
                 className={`px-2 py-1 rounded-lg text-[10px] font-black font-mono border transition-colors disabled:opacity-30 ${lev === l
                   ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400/60'
                   : 'bg-black/30 text-slate-400 border-slate-600/40 hover:bg-cyan-500/10'}`}>
@@ -599,13 +626,13 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
       {/* v7.0.1 honest-cap + validation warnings (below the inputs) */}
       {overCapTyped && (
         <div className="mt-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/[0.07] border border-amber-500/25 text-[10px] font-bold text-amber-300/90 leading-relaxed">
-          ⚠ Tumne {futures ? '' : '₹'}{Math.round(marginNum).toLocaleString('en-IN')} daala, par server per-order cap <b>₹{orderCap!.toLocaleString('en-IN')}</b> hai — order/calculations upar <b>₹{orderCap!.toLocaleString('en-IN')}</b> par hi jayenge (preview wahi dikhata hai).
+          ⚠ Tumne {usdDenominated ? '' : '₹'}{Math.round(marginNum).toLocaleString('en-IN')} daala, par server per-order cap <b>₹{orderCap!.toLocaleString('en-IN')}</b> hai — order/calculations upar <b>₹{orderCap!.toLocaleString('en-IN')}</b> par hi jayenge (preview wahi dikhata hai).
           Cap badhana hai to Execution Console → Risk settings me <b>"Max order ₹"</b> badhao, ya upar <b>MAX</b> chip dabao.
         </div>
       )}
       {belowMin && typedValid && (
         <div className="mt-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/[0.07] border border-amber-500/25 text-[10px] font-bold text-amber-300/90 leading-relaxed">
-          ⚠ {futures ? `Margin ${marginRaw} USDT` : `Budget ₹${marginRaw}`} minimum {futures ? `${lo} USDT` : `₹${lo}`} se kam hai — execute nahi hoga. Amount badhao (blur par apne aap clamp ho jayega).
+          ⚠ {futures ? `Margin ${marginRaw} USDT` : global ? `Margin ${marginRaw} USD` : `Budget ₹${marginRaw}`} minimum {usdDenominated ? `${lo} ${unit}` : `₹${lo}`} se kam hai — execute nahi hoga. Amount badhao (blur par apne aap clamp ho jayega).
         </div>
       )}
 
@@ -613,9 +640,9 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mt-2">
         {[
           { l: 'QTY', v: qty < 1 ? qty.toFixed(6) : String(qty), c: 'text-white' },
-          { l: leveraged ? 'NOTIONAL' : 'CAPITAL USED', v: futures ? `${(qty * plan.entry).toLocaleString('en-US', { maximumFractionDigits: 2 })} USDT` : fmt(qty * plan.entry, 0), c: 'text-cyan-300' },
-          { l: futures ? 'RISK @ SL' : '₹ RISK @ SL', v: `−${fmtU(riskUnits, 2)}`, c: 'text-red-300' },
-          { l: futures ? 'PROFIT @ T2' : '₹ PROFIT @ T2', v: `+${fmtU(rewardT2, 2)}`, c: 'text-emerald-300' },
+          { l: leveraged ? 'NOTIONAL' : 'CAPITAL USED', v: usdDenominated ? `${(qty * plan.entry).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${unit}` : fmt(qty * plan.entry, 0), c: 'text-cyan-300' },
+          { l: usdDenominated ? `${unit} RISK @ SL` : '₹ RISK @ SL', v: `−${fmtU(riskUnits, 2)}`, c: 'text-red-300' },
+          { l: usdDenominated ? `${unit} PROFIT @ T2` : '₹ PROFIT @ T2', v: `+${fmtU(rewardT2, 2)}`, c: 'text-emerald-300' },
         ].map(x => (
           <div key={x.l} className="bg-black/30 rounded-lg px-2 py-1.5 text-center">
             <div className="text-[8px] text-slate-500 font-black tracking-wider">{x.l}</div>
@@ -627,8 +654,8 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
         <div className="text-[9px] text-slate-600 font-mono mt-1">USDT ≈ ₹ conversion display-only (×{approxUsdInr}) — server live USDINR use karta hai</div>
       )}
       <div className="flex items-center gap-3 mt-1.5 text-[10px] font-mono font-bold flex-wrap">
-        <span className="text-slate-500">ENTRY <span className="text-cyan-300">{px(plan.entry, futures)}</span></span>
-        <span className="text-slate-500">SL <span className="text-red-300">{px(plan.stopLoss, futures)}</span> (−{slDistPct.toFixed(2)}%)</span>
+        <span className="text-slate-500">ENTRY <span className="text-cyan-300">{px(plan.entry, cur)}</span></span>
+        <span className="text-slate-500">SL <span className="text-red-300">{px(plan.stopLoss, cur)}</span> (−{slDistPct.toFixed(2)}%)</span>
         <span className="text-slate-500">T1 <span className="text-emerald-300">+{fmtU(rewardT1, 2)}</span></span>
         <span className="text-slate-500">T2 <span className="text-emerald-300">+{fmtU(rewardT2, 2)}</span></span>
         <span className="text-amber-300">R:R 1:{rr.toFixed(1)}</span>
@@ -638,8 +665,8 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
       {leveraged && lev > 1 && (
         <div className="mt-2 space-y-1.5">
           <div className="flex gap-2 flex-wrap text-[10px] font-mono font-bold">
-            <span className="px-1.5 py-0.5 rounded bg-black/30 text-cyan-300">{lev}x · margin {futures ? `${margin} USDT` : fmt(margin, 0)} → notional {futures ? `${(margin * lev).toFixed(0)} USDT` : fmt(margin * lev, 0)}</span>
-            {liquidation != null && <span className="px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-300">≈ LIQUIDATION {px(liquidation, futures)} (−{liqDistPct!.toFixed(1)}%)</span>}
+            <span className="px-1.5 py-0.5 rounded bg-black/30 text-cyan-300">{lev}x · margin {usdDenominated ? `${margin} ${unit}` : fmt(margin, 0)} → notional {usdDenominated ? `${(margin * lev).toFixed(0)} ${unit}` : fmt(margin * lev, 0)}</span>
+            {liquidation != null && <span className="px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-300">≈ LIQUIDATION {px(liquidation, cur)} (−{liqDistPct!.toFixed(1)}%)</span>}
             {effRiskOnMargin != null && <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300">SL hit = −{effRiskOnMargin.toFixed(0)}% of margin</span>}
           </div>
           {liqBeforeSl ? (
@@ -704,7 +731,7 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
           User ka seedha sawaal: "kab lena · limit kaise lagana · kab exit" —
           yeh block wahi jawab deta hai, venue ke hisaab se. */}
       <div className="mt-2 rounded-lg bg-black/25 border border-white/5 px-2.5 py-2.5 space-y-1.5" aria-label="order guide 4 steps">
-        <div className="text-[9px] font-black text-cyan-300 tracking-wider">📋 ORDER GUIDE — {futures ? 'COINDCX FUTURES' : crypto ? 'COINDCX SPOT' : 'DHAN / BROKER'} · 4 STEP</div>
+        <div className="text-[9px] font-black text-cyan-300 tracking-wider">📋 ORDER GUIDE — {futures ? 'COINDCX FUTURES' : global ? 'GLOBAL EQUITY · SIM DESK' : crypto ? 'COINDCX SPOT' : 'DHAN / BROKER'} · 4 STEP</div>
         <div className="text-[10px] text-slate-300 leading-relaxed">
           <b className="text-white">① KAB:</b>{' '}
           {india
@@ -715,20 +742,24 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
               : <>best windows <b>9:30–10:30</b> (MORNING) ya <b>13:30–15:15</b> (AFTERNOON/POWER); <b className="text-red-300">9:15–9:30 noise me entry nahi</b>, <b className="text-red-300">15:15 ke baad sirf square-off</b>.</>)
             : futures
               ? '24/7 USDT perp market — kabhi bhi. Par weekend/holiday pe liquidity thin hoti hai: size aadha, limit order zaroori.'
-              : '24/7 crypto market — kabhi bhi. Weekend pe spread wide — LIMIT order hi lagao, MARKET nahi.'}
+              : global
+                ? 'US market hours (≈ 21:30–04:00 IST winter / 20:30–03:30 summer) me quotes + volume live; baaki time board last-close par chalta hai. SIM desk — practice sizing wahi rahe.'
+                : '24/7 crypto market — kabhi bhi. Weekend pe spread wide — LIMIT order hi lagao, MARKET nahi.'}
         </div>
         <div className="text-[10px] text-slate-300 leading-relaxed">
           <b className="text-white">② LIMIT ORDER kaise lagana hai:</b>{' '}
           {futures
-            ? <>CoinDCX app me <b>{signal.symbol}</b> perp kholo → <b>BUY/LIMIT</b> select → price me <b className="text-cyan-300">{px(plan.entry, true)} USDT</b> → amount <b>{qty < 1 ? qty.toFixed(6) : qty} contracts</b>{leveraged && lev > 1 ? ` · ${lev}x leverage · margin mode` : ''}. </>
-            : crypto
-              ? <>CoinDCX app me <b>{signal.symbol}</b> pair kholo → <b>{long ? 'BUY' : 'SELL'} / LIMIT</b> → price me <b className="text-cyan-300">{px(plan.entry)}</b> → amount <b>{qty < 1 ? qty.toFixed(6) : qty} {long ? 'buy' : 'sell'}</b>. </>
-              : <>broker me <b>{signal.symbol}</b> search karo → <b>{long ? 'BUY' : 'SELL'} · LIMIT</b> select → price me <b className="text-cyan-300">₹{plan.entry.toLocaleString('en-IN')}</b> (band {`₹${(plan.entry * 0.9985).toFixed(2)}–₹${(plan.entry * 1.0015).toFixed(2)}`}) → qty <b>{qty}</b> · product <b>MIS</b>. </>}
+            ? <>CoinDCX app me <b>{signal.symbol}</b> perp kholo → <b>BUY/LIMIT</b> select → price me <b className="text-cyan-300">{px(plan.entry, 'usdt')}</b> → amount <b>{qty < 1 ? qty.toFixed(6) : qty} contracts</b>{leveraged && lev > 1 ? ` · ${lev}x leverage · margin mode` : ''}. </>
+            : global
+              ? <>SIM desk — CoinDCX par ye equity listed nahi, koi broker order NAHI jata. Ticket se <b>PAPER EXECUTE</b> karo (sizing USD margin se), watcher SL/TP/trailing khud manage karega. Entry reference <b className="text-cyan-300">{px(plan.entry, 'usd')}</b>. </>
+              : crypto
+                ? <>CoinDCX app me <b>{signal.symbol}</b> pair kholo → <b>{long ? 'BUY' : 'SELL'} / LIMIT</b> → price me <b className="text-cyan-300">{px(plan.entry)}</b> → amount <b>{qty < 1 ? qty.toFixed(6) : qty} {long ? 'buy' : 'sell'}</b>. </>
+                : <>broker me <b>{signal.symbol}</b> search karo → <b>{long ? 'BUY' : 'SELL'} · LIMIT</b> select → price me <b className="text-cyan-300">₹{plan.entry.toLocaleString('en-IN')}</b> (band {`₹${(plan.entry * 0.9985).toFixed(2)}–₹${(plan.entry * 1.0015).toFixed(2)}`}) → qty <b>{qty}</b> · product <b>MIS</b>. </>}
           <b className="text-red-300">MARKET order kabhi mat lagao</b> — spread slip entry ka edge kha jaata hai. Fill nahi mile to limit ±0.2% adjust karo, price chase nahi.
         </div>
         <div className="text-[10px] text-slate-300 leading-relaxed">
           <b className="text-white">③ EXIT kab:</b>{' '}
-          SL <b className="text-red-300">{px(plan.stopLoss, futures)}</b> (−{slDistPct.toFixed(2)}%) · T1/T2 watcher khud track karega{futures ? ' (trailing + native exchange TP/SL)' : crypto ? ' (trailing SL ON)' : ' (trailing + 15:15 auto square-off)'}.
+          SL <b className="text-red-300">{px(plan.stopLoss, cur)}</b> (−{slDistPct.toFixed(2)}%) · T1/T2 watcher khud track karega{futures ? ' (trailing + native exchange TP/SL)' : crypto ? ' (trailing SL ON)' : ' (trailing + 15:15 auto square-off)'}.
           {' '}App ke saath broker me bhi SL laga do{india ? ' (SL-M / bracket)' : futures ? ' (stop-market on the perp)' : ' (stop-limit)'} — <b>double guard</b>: app watcher + exchange dono.
         </div>
         <div className="text-[10px] text-slate-300 leading-relaxed">
@@ -819,7 +850,11 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
             )}
           </div>
           <div className="flex items-center gap-3 mt-1 text-xs text-slate-400 flex-wrap">
-            <span className="font-mono font-bold text-slate-200">{signal.market === 'FUTURES' ? (signal.ltp != null ? `${signal.ltp.toLocaleString('en-US', { maximumFractionDigits: 4 })} USDT` : '—') : fmt(signal.ltp)}</span>
+            <span className="font-mono font-bold text-slate-200">{signal.market === 'FUTURES'
+              ? (signal.ltp != null ? `${signal.ltp.toLocaleString('en-US', { maximumFractionDigits: 4 })} USDT` : '—')
+              : signal.market === 'GLOBALFUTURES'
+                ? (signal.ltp != null ? `USD ${signal.ltp.toLocaleString('en-US', { maximumFractionDigits: 4 })}` : '—')
+                : fmt(signal.ltp)}</span>
             {signal.changePct != null && (
               <span className={`font-mono font-bold ${(signal.changePct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                 {(signal.changePct ?? 0) >= 0 ? '+' : ''}{signal.changePct?.toFixed(2)}%
@@ -840,7 +875,13 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
         <div className="flex gap-1.5">
           {(onExecute || onExecuteIndia || onExecuteFutures || onExecuteGlobal) && plan && actionable && (
             <button onClick={() => setTicketOpen(v => !v)}
-              title="Size, ₹ risk/reward, leverage (crypto) — sab pre-computed, one-click execute"
+              title={signal.market === 'GLOBALFUTURES'
+                ? 'Size, USD risk/reward, leverage — sab pre-computed, one-click execute'
+                : signal.market === 'FUTURES'
+                  ? 'Size, USDT risk/reward, leverage — sab pre-computed, one-click execute'
+                  : signal.market === 'CRYPTO'
+                    ? 'Size, ₹ risk/reward, leverage — sab pre-computed, one-click execute'
+                    : 'Size, ₹ risk/reward — sab pre-computed, one-click execute'}
               className={`px-2.5 py-1.5 rounded-lg text-[11px] font-black border-2 transition-all ${ticketOpen
                 ? 'bg-cyan-500/25 text-cyan-200 border-cyan-400/60'
                 : 'bg-gradient-to-r from-cyan-600/80 to-indigo-600/80 text-white border-cyan-400/40 hover:from-cyan-500 hover:to-indigo-500'}`}
@@ -884,10 +925,10 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
         <>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 mt-3">
             {[
-              { l: 'ENTRY', v: px(plan.entry, signal.market === 'FUTURES'), c: 'text-cyan-300' },
-              { l: `STOP ${plan.riskPct != null ? `(${plan.riskPct.toFixed(2)}%)` : ''}`, v: px(plan.stopLoss, signal.market === 'FUTURES'), c: 'text-red-300' },
-              { l: 'TARGET 1', v: px(plan.target1, signal.market === 'FUTURES'), c: 'text-emerald-300' },
-              { l: 'TARGET 2', v: px(plan.target2, signal.market === 'FUTURES'), c: 'text-emerald-400' },
+              { l: 'ENTRY', v: px(plan.entry, curFor(signal.market)), c: 'text-cyan-300' },
+              { l: `STOP ${plan.riskPct != null ? `(${plan.riskPct.toFixed(2)}%)` : ''}`, v: px(plan.stopLoss, curFor(signal.market)), c: 'text-red-300' },
+              { l: 'TARGET 1', v: px(plan.target1, curFor(signal.market)), c: 'text-emerald-300' },
+              { l: 'TARGET 2', v: px(plan.target2, curFor(signal.market)), c: 'text-emerald-400' },
               { l: 'R:R', v: `1:${plan.rewardRisk}`, c: 'text-amber-300' },
             ].map(x => (
               <div key={x.l} className="bg-black/30 rounded-lg px-2 py-1.5 text-center">

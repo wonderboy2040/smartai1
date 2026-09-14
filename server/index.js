@@ -578,6 +578,19 @@ registerIntradayRoutes(app, {
 });
 
 // ============================================================
+// v10.5.3 GLOBAL FUTURES FULL-UNIVERSE SCAN (Issue #2)
+// ------------------------------------------------------------
+// The global equity desk's universe is no longer a hardcoded 8-name
+// list: it merges CoinDCX's live USDT-margined equity-perp instrument
+// list into the desk seed every 30 min (new listings like MU-class
+// names appear automatically; delisted discoveries drop out; the
+// SPACEX synthetic SIM special case stays). Boot hook lives HERE (not
+// routes.js) so test imports never trigger the upstream fetch.
+// ============================================================
+import { startGlobalUniverseRefresh } from './ai/globalFutures.js';
+try { startGlobalUniverseRefresh(); } catch (e) { console.warn('[globalFutures] universe refresh failed to start:', e?.message || e); }
+
+// ============================================================
 // INTERACTIVE TELEGRAM BOT (server/telegram/webhook.js)
 // ------------------------------------------------------------
 // v10.1: the bot now LISTENS — /crypto, /intraday, /status commands

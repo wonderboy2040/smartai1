@@ -11,6 +11,7 @@
 //   POST /api/ai/execute                 THE gauntlet — crypto (paper | live)
 //   POST /api/ai/india/execute           THE gauntlet — India Dhan (v6.5)
 //   GET  /api/ai/positions               journal positions + uPnL + entries
+//   GET  /api/ai/positions/stream        SSE: realtime LTP/PnL diff-push (v10.5.3)
 //   POST /api/ai/positions/close         { id } (routes by market)
 //   GET  /api/ai/orders                  CoinDCX exchange open orders
 //   POST /api/ai/orders/cancel           { id }
@@ -52,6 +53,9 @@ import {
   executeGlobalSignal, watchGlobalPositions, closeGlobalPosition,
   globalFuturesMarketsView,
 } from './globalFutures.js';
+// v10.5.3 REALTIME POSITIONS — SSE diff-push of open-position LTP/PnL
+// (replaces the 5s REST poll the console used to call "ULTRA STREAM").
+import { positionsStreamHandler } from './positionsStream.js';
 import {
   agentTick, agentStatus, agentStart, agentStop, updateAgentConfig, loadAgentConfig, AGENT_TICK_SEC,
 } from './agent.js';
@@ -455,6 +459,13 @@ export function registerAITradingRoutes(app, deps) {
     try { res.json({ ok: true, ...(await getPositionsWithPnl()) }); }
     catch (e) { jsonError(res, 500, 'positions failed', e); }
   });
+
+  // v10.5.3 REALTIME POSITIONS SSE — same auth as every /api/ai/* route
+  // (EventSource appends ?session= per requireAuth). Push protocol:
+  // `positions` (full snapshot on connect + structural changes) and
+  // `tick` (per-position LTP/PnL deltas, price-driven). The REST GET
+  // above stays as the fallback + reconciliation path.
+  app.get('/api/ai/positions/stream', positionsStreamHandler);
 
   app.post('/api/ai/positions/close', async (req, res) => {
     try {

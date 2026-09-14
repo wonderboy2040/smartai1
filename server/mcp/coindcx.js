@@ -571,6 +571,74 @@ export async function fetchCoinDcxAssets(usdInr) {
   return { assets, balanceCount: balances.length, basis };
 }
 
+// ---------------- global equity futures instruments (PUBLIC) ----------------
+// v10.5.3 FULL-UNIVERSE SCAN (Issue #2): the Global Equity SIM desk's
+// watchlist is no longer a hand-typed 8-name array — it MERGES whatever
+// single-stock USDT-margined perps CoinDCX actually lists
+// (B-<TICKER>_USDT style) with the desk's liquid seed. This function
+// pulls CoinDCX's PUBLIC derivatives instrument list and separates
+// equity-linked perps from crypto perps:
+//
+//   • a base with a CoinDCX SPOT market is a CRYPTO COIN — every
+//     tradeable crypto trades on spot; tokenized/synthetic equities
+//     have no spot market. (fetchCoinDcxTickers carries the whole
+//     spot book and is already 2s-cached + shared with the SSE stream
+//     and /api/crypto-prices — no extra upstream load.)
+//   • leveraged-token bases (3L/3S/BULL/BEAR/HALF suffixes) are crypto
+//     derivatives, never equities.
+//   • perp-only crypto staples that lack a spot market are excluded by
+//     an explicit set (belt-and-braces for venue-specific gaps).
+// Whatever survives is a candidate global-equity perp: { symbol, pair }.
+// The Yahoo ticker mapping for each discovery lives in
+// server/ai/globalFutures.js (alias table for class-A/B shares etc).
+const FUTURES_ACTIVE_INSTRUMENTS_URL = 'https://api.coindcx.com/exchange/v1/derivatives/futures/data/active_instruments';
+let _globalInstrumentsCache = null, _globalInstrumentsAt = 0;
+const GLOBAL_INSTRUMENTS_CACHE_MS = 30 * 60_000;
+// Perp-only crypto bases seen without spot markets on some venue
+// revisions — explicitly never equities.
+const PERP_ONLY_CRYPTO_BASES = new Set(['PEPE', 'BONK', 'FLOKI', 'ORDI', 'SATS', 'RATS', 'MOODENG', 'GOAT', 'PNUT', 'ACT', 'NEIRO', 'POPCAT', 'MEW', 'TURBO', 'WIF']);
+const PERP_LEVERAGED_PATTERNS = [/3L$/, /3S$/, /BULL$/, /BEAR$/, /HALF$/];
+
+export async function fetchGlobalFuturesInstruments({ maxAgeMs = GLOBAL_INSTRUMENTS_CACHE_MS } = {}) {
+  if (_globalInstrumentsCache && Date.now() - _globalInstrumentsAt < maxAgeMs) return _globalInstrumentsCache;
+  const url = `${FUTURES_ACTIVE_INSTRUMENTS_URL}?margin_currency_short_name[]=USDT`;
+  const r = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36' },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!r.ok) throw new Error(`global futures instruments HTTP ${r.status}`);
+  const list = await r.json();
+  if (!Array.isArray(list) || list.length === 0) throw new Error('global futures instruments: empty');
+  // crypto bases = every SPOT market base (shared cached round-trip)
+  const spotBases = new Set();
+  try {
+    const tickers = await fetchCoinDcxTickers();
+    for (const t of (Array.isArray(tickers) ? tickers : [])) {
+      const base = String(t?.market || '').replace(/(INR|USDT|USDC|BTC|BNB)$/, '');
+      if (base) spotBases.add(base.toUpperCase());
+    }
+  } catch { /* ticker book unavailable → classification falls to the explicit sets */ }
+  const rows = [];
+  const seen = new Set();
+  for (const raw of list) {
+    // the endpoint returns plain pair strings; object shapes are tolerated
+    const pair = String(raw?.pair || raw?.instrument || raw || '').toUpperCase();
+    const m = pair.match(/^B-([A-Z0-9]+)_USDT$/);
+    if (!m) continue;
+    const base = m[1];
+    if (seen.has(base)) continue;
+    if (spotBases.has(base)) continue;
+    if (PERP_ONLY_CRYPTO_BASES.has(base)) continue;
+    if (PERP_LEVERAGED_PATTERNS.some(re => re.test(base))) continue;
+    if (!/^[A-Z]{1,8}$/.test(base)) continue; // ticker-shaped (no digits — equity tickers are letters)
+    seen.add(base);
+    rows.push({ symbol: base, pair });
+  }
+  _globalInstrumentsCache = rows;
+  _globalInstrumentsAt = Date.now();
+  return rows;
+}
+
 // ---------------- test hooks ----------------
 export function __resetCoinDcxForTests() {
   try { saveCreds({ apiKey: null, secret: null }); } catch { /* ignore */ }

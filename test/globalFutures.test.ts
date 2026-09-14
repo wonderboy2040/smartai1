@@ -9,18 +9,25 @@
 // ============================================================
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
+// v10.5.3: controllable CoinDCX equity-perp discoveries for the
+// full-universe-scan suite (refreshGlobalUniverse reads this through
+// the mocked module below).
+const gfInstruments = vi.hoisted(() => ({ rows: [] as Array<{ symbol: string; pair: string }> }));
+
 vi.mock('../server/mcp/coindcx.js', () => ({
   coindcxConnected: () => false, // practice mode — no exchange legs
   coindcxPrivate: vi.fn(),
   coindcxPrivateGET: vi.fn(),
   coindcxStatus: () => ({ connected: false }),
+  fetchGlobalFuturesInstruments: vi.fn(async () => gfInstruments.rows),
 }));
 
 import {
-  GLOBAL_FUTURES_UNIVERSE, globalPairFor, baseOfGlobalPair,
+  GLOBAL_FUTURES_UNIVERSE, GLOBAL_FUTURES_SEED, globalPairFor, baseOfGlobalPair,
   syntheticPriceAt, syntheticCandles, buildGlobalCtxSync,
   fetchGlobalQuotes, executeGlobalSignal, watchGlobalPositions,
   closeGlobalPosition, globalFuturesMarketsView, __resetGlobalForTests,
+  refreshGlobalUniverse, yahooForGlobal,
 } from '../server/ai/globalFutures.js';
 import { getSignals, __clearSignalCaches } from '../server/ai/signals.js';
 import { __resetForTests, __setJournalForTests, loadJournal, __setConfigForTests } from '../server/ai/coindcxOrders.js';
@@ -84,6 +91,7 @@ function routeYahoo({ priceBy = {}, candlesBy = {} } = {}) {
 beforeEach(() => {
   __resetForTests();
   __resetGlobalForTests();
+  gfInstruments.rows = [];
   __setConfigForTests({ mode: 'paper', minConfidence: 75, minAgreement: 0.7, maxRiskPct: 5, dailyMaxTrades: 50, dailyMaxLossINR: 100_000, maxOrderINR: 1_000_000, maxOpenPositions: 50 });
 });
 
@@ -97,7 +105,7 @@ afterEach(() => {
 describe('global futures universe + pairs', () => {
   it('covers the user-named companies + SPACEX, SIM flagged only on SPACEX', () => {
     const syms = GLOBAL_FUTURES_UNIVERSE.map(u => u.symbol);
-    for (const want of ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'TSLA', 'META', 'SPACEX']) {
+    for (const want of ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'TSLA', 'META', 'MU', 'SPACEX']) {
       expect(syms).toContain(want);
     }
     expect(GLOBAL_FUTURES_UNIVERSE.filter(u => u.sim).map(u => u.symbol)).toEqual(['SPACEX']);
@@ -105,6 +113,99 @@ describe('global futures universe + pairs', () => {
   it('derives the -USD pair name and back', () => {
     expect(globalPairFor('nvda')).toBe('NVDA-USD');
     expect(baseOfGlobalPair('NVDA-USD')).toBe('NVDA');
+  });
+});
+
+// ============================================================
+// v10.5.3 FULL-UNIVERSE SCAN — CoinDCX discovery merge (Issue #2)
+// ============================================================
+describe('refreshGlobalUniverse — the full-universe scan', () => {
+  it('MU ships in the SEED (the headline miss of the 8-name era)', () => {
+    const mu = GLOBAL_FUTURES_UNIVERSE.find(u => u.symbol === 'MU');
+    expect(mu).toBeTruthy();
+    expect(mu.name).toBe('Micron Technology');
+    expect(mu.yahoo).toBe('MU');
+    expect(mu.sim).toBe(false);
+  });
+
+  it('merges EVERY returned USDT-margined global-equity symbol (not just the old 8)', async () => {
+    // 8 discoveries = exactly the GLOBAL_DISCOVERED_MAX tail — every one
+    // of them must land in the universe alongside the seed
+    gfInstruments.rows = [
+      { symbol: 'AAPL', pair: 'B-AAPL_USDT' },  // seed dup — must NOT double-add
+      { symbol: 'DIS', pair: 'B-DIS_USDT' },
+      { symbol: 'KO', pair: 'B-KO_USDT' },
+      { symbol: 'JPM', pair: 'B-JPM_USDT' },
+      { symbol: 'WMT', pair: 'B-WMT_USDT' },
+      { symbol: 'XOM', pair: 'B-XOM_USDT' },
+      { symbol: 'CVX', pair: 'B-CVX_USDT' },
+      { symbol: 'PFE', pair: 'B-PFE_USDT' },
+      { symbol: 'MCD', pair: 'B-MCD_USDT' },
+    ];
+    const out = await refreshGlobalUniverse();
+    const syms = GLOBAL_FUTURES_UNIVERSE.map(u => u.symbol);
+    for (const want of ['DIS', 'KO', 'JPM', 'WMT', 'XOM', 'CVX', 'PFE', 'MCD']) {
+      expect(syms).toContain(want);
+    }
+    expect(out.size).toBe(GLOBAL_FUTURES_SEED.length + 8);
+    // seed dup filtered, exactly one AAPL
+    expect(syms.filter(s => s === 'AAPL')).toHaveLength(1);
+    // SPACEX remains the ONLY sim — discoveries are real-market names
+    expect(GLOBAL_FUTURES_UNIVERSE.filter(u => u.sim).map(u => u.symbol)).toEqual(['SPACEX']);
+    // discovered entries carry the Yahoo mapping + provenance flag
+    const ko = GLOBAL_FUTURES_UNIVERSE.find(u => u.symbol === 'KO');
+    expect(ko.yahoo).toBe('KO');
+    expect(ko.discovered).toBe(true);
+  });
+
+  it('caps the discovery tail — the scan stays bounded', async () => {
+    gfInstruments.rows = Array.from({ length: 30 }, (_, i) => ({
+      symbol: `T${i}`, pair: `B-T${i}_USDT`,
+    }));
+    const out = await refreshGlobalUniverse();
+    expect(out.size).toBe(GLOBAL_FUTURES_SEED.length + 8); // GLOBAL_DISCOVERED_MAX default
+    expect(GLOBAL_FUTURES_UNIVERSE.filter(u => u.discovered)).toHaveLength(8);
+  });
+
+  it('delisted discoveries DROP OUT on the next refresh; seed names never drop', async () => {
+    gfInstruments.rows = [{ symbol: 'DIS', pair: 'B-DIS_USDT' }, { symbol: 'KO', pair: 'B-KO_USDT' }];
+    await refreshGlobalUniverse();
+    expect(GLOBAL_FUTURES_UNIVERSE.map(u => u.symbol)).toContain('DIS');
+    // next refresh: DIS delisted, KO still listed
+    gfInstruments.rows = [{ symbol: 'KO', pair: 'B-KO_USDT' }];
+    const out = await refreshGlobalUniverse();
+    const syms = GLOBAL_FUTURES_UNIVERSE.map(u => u.symbol);
+    expect(syms).not.toContain('DIS'); // discovery gone with its listing
+    expect(out.dropped).toContain('DIS');
+    expect(syms).toContain('KO');
+    expect(syms).toContain('MU');     // seed is permanent
+    expect(syms).toContain('SPACEX'); // the SIM special case is designed to stay
+  });
+
+  it('class-A/B discoveries map to the CORRECT Yahoo ticker (never another company)', async () => {
+    gfInstruments.rows = [
+      { symbol: 'BRKB', pair: 'B-BRKB_USDT' }, // Berkshire class B → BRK-B
+      { symbol: 'LENB', pair: 'B-LENB_USDT' }, // Lennar class B → LEN-B
+      { symbol: 'GOOG', pair: 'B-GOOG_USDT' }, // class C → stays GOOG
+    ];
+    await refreshGlobalUniverse();
+    expect(GLOBAL_FUTURES_UNIVERSE.find(u => u.symbol === 'BRKB').yahoo).toBe('BRK-B');
+    expect(GLOBAL_FUTURES_UNIVERSE.find(u => u.symbol === 'LENB').yahoo).toBe('LEN-B');
+    expect(GLOBAL_FUTURES_UNIVERSE.find(u => u.symbol === 'GOOG').yahoo).toBe('GOOG');
+    expect(yahooForGlobal('BF_B')).toBe('BF-B');
+  });
+
+  it('markets view reports universe provenance (seed + discovered counts)', async () => {
+    gfInstruments.rows = [{ symbol: 'DIS', pair: 'B-DIS_USDT' }, { symbol: 'KO', pair: 'B-KO_USDT' }];
+    await refreshGlobalUniverse();
+    routeYahoo({ priceBy: { AAPL: { price: 227, prev: 225 } } });
+    const view = await globalFuturesMarketsView();
+    expect(view.ok).toBe(true);
+    expect(view.count).toBe(GLOBAL_FUTURES_UNIVERSE.length);
+    expect(view.universe.seed).toBe(GLOBAL_FUTURES_SEED.length);
+    expect(view.universe.discovered).toBe(2);
+    expect(view.universe.mode).toBe('seed+coindcx-discovery');
+    expect(view.markets.find(m => m.symbol === 'DIS').discovered).toBe(true);
   });
 });
 

@@ -213,7 +213,7 @@ function BoardSummary({ board }: { board: SignalBoard | null }) {
 
 export default memo(function AITradingTab() {
   const t = useAITrading(true);
-  const { india, crypto, futures, state, positions, entries, loading, busy, refresh, executeSignal, updateConfig, closePos, fetchDeep } = t;
+  const { india, crypto, futures, state, positions, entries, loading, busy, refresh, executeSignal, updateConfig, closePos, fetchDeep, positionsLive } = t;
   const { executeIndia, executeFutures, runBacktest, fetchAlertsStatus, saveAlertsConfig, testAlert, fetchDhanStatus, dhanConnect, dhanDisconnect } = t;
   const [market, setMarket] = useState<MarketKind>('INDIA');
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
@@ -489,7 +489,7 @@ export default memo(function AITradingTab() {
         <SectionLabel num={market === 'INDIA' ? '03' : '02'} title="Execution Console" sub="CoinDCX + Dhan gauntlets — STRONG signals only · trailing SL · risk-gated · audited" />
         <div className="mt-2.5">
           <OrderConsole
-            state={state} positions={positions} entries={entries} busy={busy}
+            state={state} positions={positions} entries={entries} busy={busy} positionsLive={positionsLive}
             onClose={onClose} onSaveConfig={onSaveConfig}
             dhan={dhan} onDhanConnect={async (id, tok) => { const r = await dhanConnect(id, tok); refreshDhan(); return r; }}
             onDhanDisconnect={async () => { const r = await dhanDisconnect(); refreshDhan(); return r; }}
