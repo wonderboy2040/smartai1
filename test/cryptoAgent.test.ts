@@ -117,6 +117,44 @@ describe('full-ticket prompt discipline (Part 2)', () => {
     expect(out.error).toMatch(/no AI keys configured/i);
     expect(out.session.utcTime).toBeTruthy();
   });
+
+  // v10.10 — the SOL "[object Object]" report fix, end-to-end: engines
+  // down must still answer a coin deep-dive with the exact-number
+  // FULL TICKET from pure tool compute.
+  it('runCryptoAgent: engines down + SOL deep-dive ask → deterministic FULL TICKET (ok:true)', async () => {
+    mockGetDeepSignal.mockResolvedValue({
+      ok: true, signal: {
+        symbol: 'SOL', side: 'LONG', grade: 'STRONG', confidence: 82, agreement: 0.85,
+        voters: 9, totalModels: 11, ltp: 9000, changePct: 2.1,
+        superIntel: { aiScore: 83, tier: 'STRONG', blueprint: {
+          entryZone: [8900, 9100], leverage: 3, maxSaneLeverage: 7, liquidation: 6200,
+          leverageNote: '3× margin (sane-max 7×) · liquidation ≈ 6200',
+          exitPlan: [{ at: 9400, bookPct: 40, action: 'T1 9400 — 40% book + SL breakeven' }],
+          exitBy: '3h ATR clock', invalidation: 'SL 8600 break → pick cancel',
+        } },
+        plan: { entry: 9000, stopLoss: 8600, target1: 9400, target2: 9800, riskPct: 4.4, rewardRisk: 2, planStyle: 'atr-based' },
+        quality: { veto: null, mtf: '2/3', session: 'open', stopStyle: 'swing-structure' },
+        votes: [{ name: 'TrendMatrix', dir: 1, conf: 80, reasons: ['stack up'] }],
+        aiNote: { note: 'strong tape' },
+      },
+    });
+    const out = await runCryptoAgent(
+      [{ role: 'user', content: 'SOL ka deep analysis karo — entry, SL, leverage sab exact numbers me' }],
+      { KEYS: {}, OPENAI_COMPAT: {} },
+    );
+    expect(out.ok).toBe(true);
+    expect(out.engine).toBe('super-intel-deterministic');
+    expect(out.degraded).toBe(true);
+    expect(out.text).toContain('FULL TICKET');
+    expect(out.text).toContain('SOL LONG');
+    expect(out.text).toContain('9,000'); // entry
+    expect(out.text).toContain('8,600'); // SL
+    expect(out.text).toContain('9,400'); // T1
+    expect(out.text).toContain('3×');    // leverage ladder
+    // the UI tool chips light up even in deterministic mode
+    expect(out.toolsUsed).toContain('analyze_coin');
+    expect(out.toolsUsed).toContain('calculate_position_size');
+  });
 });
 
 // ============================================================

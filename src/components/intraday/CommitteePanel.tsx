@@ -7,6 +7,7 @@
 // ============================================================
 import { memo, useCallback, useState } from 'react';
 import { apiFetch } from '../../utils/api';
+import { describeApiError } from '../../utils/apiError';
 import { ChevronDown, Loader2, RefreshCw, Gavel } from 'lucide-react';
 
 interface PersonaResult {
@@ -75,7 +76,8 @@ export const CommitteePanel = memo(function CommitteePanel() {
         signal: AbortSignal.timeout(120000),
       });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d?.error || `committee error ${res.status}`);
+      // v10.10 [object Object] fix — unwrap {error:{message}} properly.
+      if (!res.ok) throw new Error(describeApiError(d, res.status, `committee error ${res.status}`));
       setData(d);
     } catch (e) {
       const err = e as { message?: string };

@@ -856,9 +856,11 @@ export async function getSignals(market, deps, opts = {}) {
   const raw = String(market || 'INDIA').toUpperCase();
   const mkt = raw === 'CRYPTO' ? 'CRYPTO' : raw === 'FUTURES' ? 'FUTURES' : raw === 'GLOBALFUTURES' ? 'GLOBALFUTURES' : 'INDIA';
   const cacheKey = `board:${mkt}`;
-  // v9: full-universe scans are heavier — the dynamic desks (crypto/
-  // futures) hold their board for 90s; India keeps the 60s cadence.
-  const cached = cacheGet(cacheKey, mkt === 'INDIA' ? 60_000 : 90_000);
+  // v9: full-universe scans are heavier — desks used to hold their board
+  // for 90s. v10.10 (direct-RT pass): every desk is 60s now — the visible
+  // LTP is already realtime via the /api/stream overlay, but the PLANS
+  // (entry/SL/targets) also deserve ≤60s-old prices, not ≤90s+20s.
+  const cached = cacheGet(cacheKey, 60_000);
   if (cached && !opts.noCache) return cached;
 
   // v9.2.1: status/polling callers must answer in milliseconds — never
@@ -929,7 +931,9 @@ async function _computeBoard(mkt, deps, opts = {}) {
     // now only the last-resort seed.
     const [uni, futRows] = await Promise.all([
       discoverFuturesUniverse(SUPER_UNIVERSE_SIZE).catch(() => null),
-      fetchFuturesPrices().catch(() => null),
+      // v10.10: ultra-fresh RT (≤2s) — shares the single-flight round-trip
+      // with the cxRtStream 2s poller, so the board rides the same fetch.
+      fetchFuturesPrices({ maxAgeMs: 2000 }).catch(() => null),
     ]);
     const universe = Array.isArray(uni) && uni.length > 0 ? uni : [...FUTURES_UNIVERSE];
     if (v2ModelsEnabled()) _v2Warms.push(warmInstFlow(universe.slice(0, 8))); // v2 InstFlow: poll the most-liquid books
@@ -982,7 +986,9 @@ async function _computeBoard(mkt, deps, opts = {}) {
     // — the SAME 10-model committee votes on these, same as every desk.
     const gf = await import('./globalFutures.js');
     const [quotes, ...candleJobs] = await Promise.all([
-      gf.fetchGlobalQuotes().catch(() => null),
+      // v10.10: ultra-fresh quotes (≤2s quote cache; internal USDC RT probe
+      // shares the single-flight with the cxRtStream poller).
+      gf.fetchGlobalQuotes({ maxAgeMs: 2000 }).catch(() => null),
       ...gf.GLOBAL_FUTURES_UNIVERSE.map(u => gf.fetchGlobalCandles(u.symbol).catch(() => null)),
     ]);
     superMeta.universeSize = gf.GLOBAL_FUTURES_UNIVERSE.length;

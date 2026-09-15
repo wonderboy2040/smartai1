@@ -19,6 +19,9 @@
 import { istMinutes, marketPhase, getISTParts, isNseMarketOpen } from './time.js';
 // v10.8 PRO #3: persistent chat memory — the desk remembers past turns
 import { rememberChat, memoryContextFor } from '../ai/agentMemory.js';
+// v10.10 SUPER-INTEL FALLBACK — engine-down ≠ data-down: deterministic
+// full-ticket answers from the same tools the LLM loop would call.
+import { buildDeterministicIntradayAnswer } from '../ai/superIntelFallback.js';
 
 const MAX_TOOL_ROUNDS = 6;
 const PER_ROUND_TIMEOUT_MS = 30000;
@@ -750,9 +753,31 @@ export async function runProTraderAgent(messages, deps) {
     }
   }
 
+  // v10.10 SUPER-INTEL DETERMINISTIC FALLBACK — all LLM engines down,
+  // but analyze_setup / scanner / sizing need NO LLM. The India tab
+  // gets the exact-number FULL TICKET instead of "engines unavailable"
+  // — the fix behind the "[object Object]" report on this tab.
+  const det = await buildDeterministicIntradayAnswer(
+    messages, deps, executeAgentTool, toolTrace,
+  ).catch(() => null);
+  if (det?.text) {
+    const lastUser = [...(messages || [])].reverse().find(m => m?.role === 'user')?.content || '';
+    rememberChat('protrade', { q: lastUser, a: det.text });
+    return {
+      ok: true,
+      text: det.text,
+      engine: 'super-intel-deterministic',
+      toolsUsed: [...new Set(toolTrace.map(t => t.tool))],
+      toolCalls: toolTrace.length,
+      session: ctx,
+      calibration: perf,
+      degraded: true,
+    };
+  }
+
   return {
     ok: false,
-    error: `Agent engines unavailable: ${errors.join(' | ') || 'no AI keys configured'}`,
+    error: `Agent engines unavailable: ${errors.join(' | ') || 'no AI keys configured'} — deterministic desk answers abhi bhi available hain: kisi NSE symbol ka analysis (e.g. "RELIANCE ka analysis") ya "top setups" poocho.`,
     toolsUsed: [...new Set(toolTrace.map(t => t.tool))],
     session: ctx,
   };

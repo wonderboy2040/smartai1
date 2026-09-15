@@ -16,6 +16,9 @@ import { subscribe as feedSubscribe, snapshot as feedSnapshot, feedStatus } from
 import { ensureUsSubscribed, usClientUp, usClientDown, usMarketOpen, isStaleUsQuote, getUsSessionQuote, releaseUsSubscribed } from './usStream.js';
 import { initInStream, ensureInSubscribed, inClientUp, inClientDown, releaseInSubscribed } from './inStream.js';
 import { ensureCryptoSubscribed, cryptoClientUp, cryptoClientDown, releaseCryptoSubscribed, fetchCoinDcxTickers } from './cryptoStream.js';
+// v10.10: CoinDCX DIRECT ultra-fast RT — USDT perps (FUT_) + USDC global
+// equity perps (GLOB_) pushed straight into the shared liveFeed at 2s.
+import { ensureCxRtSubscribed, cxRtClientUp, cxRtClientDown, releaseCxRtSubscribed } from './ai/cxRtStream.js';
 import {
   getMLPrediction, getAllSignals, getRegime, getBacktest,
   getHealth as mlHealth,
@@ -1001,11 +1004,18 @@ app.get('/api/stream', (req, res) => {
   const inSyms = parseSyms(req.query.in);
   const usSyms = parseSyms(req.query.us);
   const cryptoSyms = parseSyms(req.query.crypto);
+  // v10.10: the two CoinDCX perpetual domains — B-<BASE>_USDT perps and
+  // B-<SYM>_USDC global equity perps — served by ai/cxRtStream.js (2s
+  // direct CoinDCX poll, refcounted, idle-stop). SPOT stays on crypto=.
+  const futSyms = parseSyms(req.query.fut);
+  const globSyms = parseSyms(req.query.glob);
 
   const keys = new Set([
     ...inSyms.map(s => `IN_${s}`),
     ...usSyms.map(s => `US_${s}`),
     ...cryptoSyms.map(s => `IN_${s}`),
+    ...futSyms.map(s => `FUT_${s}`),
+    ...globSyms.map(s => `GLOB_${s}`),
   ]);
 
   // Kick off / refresh upstream subscriptions for the requested symbols.
@@ -1015,11 +1025,13 @@ app.get('/api/stream', (req, res) => {
   ensureInSubscribed(inSyms);
   if (usSyms.length) ensureUsSubscribed(usSyms);
   ensureCryptoSubscribed(cryptoSyms);
+  ensureCxRtSubscribed({ fut: futSyms, glob: globSyms });
 
   // Notify streams a client is now active — starts polling/WebSocket if idle
   inClientUp();
   usClientUp();
   cryptoClientUp();
+  if (futSyms.length || globSyms.length) cxRtClientUp();
 
   res.set({
     'Content-Type': 'text/event-stream',
@@ -1087,16 +1099,18 @@ app.get('/api/stream', (req, res) => {
   req.on('close', () => {
     clearInterval(keepalive);
     unsub();
-    // Notify streams this client left â€” pauses polling when no clients remain
+    // Notify streams this client left — pauses polling when no clients remain
     inClientDown();
     usClientDown();
     cryptoClientDown();
+    if (futSyms.length || globSyms.length) cxRtClientDown();
     // Refcount release (2026 perf audit M2): the LAST client that wanted a
     // symbol schedules its graceful unsubscribe - subscribed sets no longer
     // grow for the whole process lifetime.
     releaseInSubscribed(inSyms);
     releaseUsSubscribed(usSyms);
     releaseCryptoSubscribed(cryptoSyms);
+    releaseCxRtSubscribed({ fut: futSyms, glob: globSyms });
     try { res.end(); } catch { /* noop */ }
   });
 });

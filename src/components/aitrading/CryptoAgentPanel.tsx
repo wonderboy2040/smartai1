@@ -11,6 +11,7 @@
 // ============================================================
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../utils/api';
+import { describeApiError } from '../../utils/apiError';
 import { Send, Bot, User, Wrench, ChevronDown, Loader2, Trash2, Sparkles } from 'lucide-react';
 
 interface AgentMessage {
@@ -102,7 +103,9 @@ export const CryptoAgentPanel = memo(function CryptoAgentPanel() {
         signal: AbortSignal.timeout(90000),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `agent error ${res.status}`);
+      // v10.10 [object Object] fix — jsonError() responds {error:{message,correlationId}};
+      // describeApiError unwraps every shape + appends the server log ref.
+      if (!res.ok) throw new Error(describeApiError(data, res.status, `agent error ${res.status}`));
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: data.text || '(empty response)',

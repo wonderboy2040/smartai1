@@ -26,6 +26,9 @@ import { coindcxConnected } from '../mcp/coindcx.js';
 import { sentimentStatus } from './sentiment.js';
 // v10.8 PRO #3: persistent chat memory — the desk remembers past turns
 import { rememberChat, memoryContextFor } from './agentMemory.js';
+// v10.10 SUPER-INTEL FALLBACK — engine-down ≠ data-down: deterministic
+// full-ticket answers from the same tools the LLM loop would call.
+import { buildDeterministicCryptoAnswer } from './superIntelFallback.js';
 
 const MAX_TOOL_ROUNDS = 6;
 const PER_ROUND_TIMEOUT_MS = 30000;
@@ -745,9 +748,31 @@ export async function runCryptoAgent(messages, deps) {
     }
   }
 
+  // v10.10 SUPER-INTEL DETERMINISTIC FALLBACK — all LLM engines down,
+  // but the question is still actionable from pure tool compute
+  // (analyze_coin / signals / sizing / funding need NO LLM). The user
+  // gets the exact-number FULL TICKET instead of "engines unavailable"
+  // — the fix behind the SOL "[object Object]" report.
+  const det = await buildDeterministicCryptoAnswer(
+    messages, deps, executeCryptoTool, toolTrace,
+  ).catch(() => null);
+  if (det?.text) {
+    const lastUser = [...(messages || [])].reverse().find(m => m?.role === 'user')?.content || '';
+    rememberChat('crypto', { q: lastUser, a: det.text });
+    return {
+      ok: true,
+      text: det.text,
+      engine: 'super-intel-deterministic',
+      toolsUsed: [...new Set(toolTrace.map(t => t.tool))],
+      toolCalls: toolTrace.length,
+      session: ctx,
+      degraded: true,
+    };
+  }
+
   return {
     ok: false,
-    error: `Agent engines unavailable: ${errors.join(' | ') || 'no AI keys configured'}`,
+    error: `Agent engines unavailable: ${errors.join(' | ') || 'no AI keys configured'} — deterministic desk answers abhi bhi available hain: coin deep-dive ("SOL ka deep analysis"), desk briefing, wallet, P&L, risk status poocho.`,
     toolsUsed: [...new Set(toolTrace.map(t => t.tool))],
     session: ctx,
   };

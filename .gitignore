@@ -2,6 +2,7 @@
 node_modules/
 dist/
 telegram-bot/node_modules/
+*.tsbuildinfo
 
 # Environment and secrets
 .env

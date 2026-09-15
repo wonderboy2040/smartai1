@@ -8,6 +8,7 @@
 // ============================================================
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../utils/api';
+import { describeApiError } from '../../utils/apiError';
 import { Send, Bot, User, Wrench, ChevronDown, Loader2, Trash2, Sparkles, Volume2, Square } from 'lucide-react';
 
 interface AgentMessage {
@@ -100,7 +101,7 @@ export const ProTraderAgentPanel = memo(function ProTraderAgentPanel({ onOpen }:
       if (!text) {
         const res = await apiFetch('/api/intraday-briefing', { signal: AbortSignal.timeout(90000) });
         const d = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(d?.error || 'briefing unavailable');
+        if (!res.ok) throw new Error(describeApiError(d, res.status, 'briefing unavailable'));
         text = d?.briefing?.voiceText || d?.briefing?.text || '';
         voiceTextRef.current = text as string;
       }
@@ -156,7 +157,9 @@ export const ProTraderAgentPanel = memo(function ProTraderAgentPanel({ onOpen }:
         signal: AbortSignal.timeout(150000),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `agent error ${res.status}`);
+      // v10.10 [object Object] fix — the route's jsonError() nests the
+      // message inside {error:{message}}; unwrap it properly.
+      if (!res.ok) throw new Error(describeApiError(data, res.status, `agent error ${res.status}`));
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: data.text || '(empty response)',

@@ -8,6 +8,7 @@
 // ============================================================
 import { memo, useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../../utils/api';
+import { describeApiError } from '../../utils/apiError';
 import { ChevronDown, Loader2, BookOpen, Sparkles, CalendarDays } from 'lucide-react';
 
 interface JournalEntry {
@@ -76,7 +77,7 @@ export const JournalPanel = memo(function JournalPanel({ refreshKey }: { refresh
     try {
       const res = await apiFetch('/api/intraday-journal/eod', { method: 'POST', signal: AbortSignal.timeout(90000) });
       const d = await res.json().catch(() => ({}));
-      setMsg(res.ok ? '✅ EOD review ready' : `⚠️ ${d?.error || 'review failed'}`);
+      setMsg(res.ok ? '✅ EOD review ready' : `⚠️ ${describeApiError(d, res.status, 'review failed')}`);
       if (res.ok) load();
     } catch { setMsg('⚠️ EOD review timeout — thodi der baad try karein'); }
     finally { setBusy(null); }
@@ -87,7 +88,7 @@ export const JournalPanel = memo(function JournalPanel({ refreshKey }: { refresh
     try {
       const res = await apiFetch('/api/intraday-journal/weekly', { method: 'POST', signal: AbortSignal.timeout(90000) });
       const d = await res.json().catch(() => ({}));
-      setMsg(res.ok ? '✅ Weekly report ready' : `⚠️ ${d?.error || 'report failed'}`);
+      setMsg(res.ok ? '✅ Weekly report ready' : `⚠️ ${describeApiError(d, res.status, 'report failed')}`);
       if (res.ok) load();
     } catch { setMsg('⚠️ Weekly report timeout — thodi der baad try karein'); }
     finally { setBusy(null); }

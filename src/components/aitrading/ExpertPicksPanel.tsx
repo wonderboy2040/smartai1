@@ -105,12 +105,15 @@ function FactorBar({ label, value, weight }: { label: string; value: number; wei
   );
 }
 
-const ExpertPickCard = memo(function ExpertPickCard({ pick, market, onDeep }: { pick: ExpertPick; market: string; onDeep?: (symbol: string) => void }) {
+const ExpertPickCard = memo(function ExpertPickCard({ pick, market, onDeep, liveLtp }: { pick: ExpertPick; market: string; onDeep?: (symbol: string) => void; liveLtp?: number | null }) {
   const [open, setOpen] = useState(false);
   const price = priceFmt(market);
   const p = pick.plan;
   const long = pick.side === 'LONG';
   if (!p) return null;
+  // v10.10: live direct-CoinDCX LTP wins over the 60s snapshot LTP.
+  const showLtp = liveLtp != null && liveLtp > 0 ? liveLtp : pick.ltp;
+  const isLive = liveLtp != null && liveLtp > 0;
   return (
     <div id={`xp-${pick.market}-${pick.symbol}`} className="quantum-panel rounded-2xl p-4 bg-gradient-to-br from-emerald-500/[0.06] via-transparent to-cyan-500/[0.05]">
       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -125,7 +128,8 @@ const ExpertPickCard = memo(function ExpertPickCard({ pick, market, onDeep }: { 
               <span className="px-2 py-0.5 rounded-lg text-[9px] font-black bg-black/30 text-slate-400 border border-slate-700">{p.horizon.label}</span>
             </div>
             <div className="text-[10px] text-slate-500 mt-1 font-mono">
-              LTP {price(pick.ltp)}{pick.changePct != null ? ` · 24h ${pick.changePct >= 0 ? '+' : ''}${pick.changePct.toFixed(1)}%` : ''}
+              {isLive && <span className="text-emerald-400" title="Direct CoinDCX RT — 2s direct poll (60s expert-scan snapshot nahi)">⚡ </span>}
+              LTP {price(showLtp)}{pick.changePct != null ? ` · 24h ${pick.changePct >= 0 ? '+' : ''}${pick.changePct.toFixed(1)}%` : ''}
               {p.liquidation != null ? ` · liq≈ ${price(p.liquidation)}` : ''}
             </div>
           </div>
@@ -233,9 +237,12 @@ interface Props {
   /** minimum expert score to display (default 80 = STRONG only) */
   minScore?: number;
   onDeep?: (symbol: string) => void;
+  /** v10.10: live direct-CoinDCX LTP lookup (2s RT stream) — overlay on
+   *  each pick's LTP; undefined → snapshot behaviour. */
+  liveLtpFor?: (market: string, symbol: string) => number | null | undefined;
 }
 
-export const ExpertPicksPanel = memo(function ExpertPicksPanel({ active, market, minScore = 80, onDeep }: Props) {
+export const ExpertPicksPanel = memo(function ExpertPicksPanel({ active, market, minScore = 80, onDeep, liveLtpFor }: Props) {
   const [view, setView] = useState<ExpertPicksView | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(false);
@@ -360,7 +367,7 @@ export const ExpertPicksPanel = memo(function ExpertPicksPanel({ active, market,
       )}
 
       <div className="mt-3 space-y-2.5">
-        {picks.map(p => <ExpertPickCard key={`${p.market}-${p.symbol}`} pick={p} market={market} onDeep={onDeep} />)}
+        {picks.map(p => <ExpertPickCard key={`${p.market}-${p.symbol}`} pick={p} market={market} onDeep={onDeep} liveLtp={liveLtpFor?.(p.market || market, p.symbol) ?? null} />)}
       </div>
 
       {picks.length > 0 && (

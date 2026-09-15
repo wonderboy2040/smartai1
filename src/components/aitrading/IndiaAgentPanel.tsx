@@ -25,6 +25,7 @@
 // ============================================================
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../utils/api';
+import { describeApiError } from '../../utils/apiError';
 
 const POLL_MS = 15_000;
 
@@ -146,7 +147,7 @@ export const IndiaAgentPanel = memo(function IndiaAgentPanel() {
     try {
       const res = await apiFetch('/api/india/agent', { signal: AbortSignal.timeout(12000) });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok || !d?.ok) throw new Error(d?.error || `status ${res.status}`);
+      if (!res.ok || !d?.ok) throw new Error(describeApiError(d, res.status, `status ${res.status}`));
       setView(d);
       setError(null);
     } catch (e) {
@@ -168,7 +169,7 @@ export const IndiaAgentPanel = memo(function IndiaAgentPanel() {
         body: JSON.stringify({ mode, liveConfirmPhrase: mode === 'live' ? livePhrase : undefined }),
       });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok || !d?.ok) throw new Error(d?.error || `start failed (${res.status})`);
+      if (!res.ok || !d?.ok) throw new Error(describeApiError(d, res.status, `start failed (${res.status})`));
       notify(true, mode === 'live' ? '🔴 India AGENT LIVE armed — ab qualifying NSE signals REAL Dhan orders denge' : '🧪 India AGENT PAPER me chalu — qualifying signals virtual trades journal honge (2 hafte track record dekho, phir LIVE)');
       setLivePhrase('');
       await poll();
@@ -181,7 +182,7 @@ export const IndiaAgentPanel = memo(function IndiaAgentPanel() {
     try {
       const res = await apiFetch('/api/india/agent/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok || !d?.ok) throw new Error(d?.error || 'stop failed');
+      if (!res.ok || !d?.ok) throw new Error(describeApiError(d, res.status, 'stop failed'));
       notify(true, '🛑 India AGENT stopped — open positions venue watcher (SL/TP/EOD) aage guard karega');
       await poll();
     } catch (e) { notify(false, `⛔ ${(e as { message?: string })?.message || 'stop failed'}`); }
@@ -196,7 +197,7 @@ export const IndiaAgentPanel = memo(function IndiaAgentPanel() {
         body: JSON.stringify(patch),
       });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok || !d?.ok) throw new Error(d?.error || 'config save failed');
+      if (!res.ok || !d?.ok) throw new Error(describeApiError(d, res.status, 'config save failed'));
       notify(true, '✅ Agent config saved');
       setCfgDraft(null);
       await poll();

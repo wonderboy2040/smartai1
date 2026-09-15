@@ -88,39 +88,46 @@ const inrOfUsdt = (usdt, usdInr) => (Number.isFinite(usdt) ? Math.round(usdt * u
 
 // ---------------- PUBLIC: RT prices ----------------
 let _pricesCache = null, _pricesAt = 0;
+let _pricesInflight = null; // v10.10: single-flight — the 2s RT stream + board compute share ONE round-trip
 /**
  * Live futures prices. Returns [{ pair, base, last, mark, changePct,
- * high, low, volume }] — one row per active USDT perp. 20s cache (the
- * SSE crypto stream pattern: one shared round-trip, nobody hits the
- * upstream per-request).
+ * high, low, volume }] — one row per active USDT perp. 20s default cache
+ * (the SSE crypto stream pattern: one shared round-trip, nobody hits the
+ * upstream per-request); the v10.10 ultra-fast stream passes maxAgeMs≈1.3s
+ * and joins the in-flight fetch instead of stacking a second one.
  */
 export async function fetchFuturesPrices({ maxAgeMs = 20_000 } = {}) {
   if (_pricesCache && Date.now() - _pricesAt < maxAgeMs) return _pricesCache;
-  const r = await fetch(PRICES_URL, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) });
-  if (!ok(r)) throw new Error(`futures prices HTTP ${r?.status}`);
-  const j = await r.json();
-  const map = j?.prices && typeof j.prices === 'object' ? j.prices : null;
-  if (!map) throw new Error('futures prices: unexpected payload');
-  const rows = [];
-  for (const [pair, p] of Object.entries(map)) {
-    if (!p || typeof p !== 'object') continue;
-    const last = num(p.ls);
-    if (!(last > 0)) continue; // dark/illiquid rows carry ls=0
-    rows.push({
-      pair: String(pair),
-      base: baseOfFuturesPair(pair),
-      last,
-      mark: num(p.mp) || last,
-      changePct: num(p.pc),
-      high: num(p.h),
-      low: num(p.l),
-      volume: num(p.v),
-      ts: num(j?.ts) || Date.now(),
-    });
-  }
-  if (rows.length === 0) throw new Error('futures prices: empty');
-  _pricesCache = rows; _pricesAt = Date.now();
-  return rows;
+  if (_pricesInflight) return _pricesInflight;
+  const probe = (async () => {
+    const r = await fetch(PRICES_URL, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) });
+    if (!ok(r)) throw new Error(`futures prices HTTP ${r?.status}`);
+    const j = await r.json();
+    const map = j?.prices && typeof j.prices === 'object' ? j.prices : null;
+    if (!map) throw new Error('futures prices: unexpected payload');
+    const rows = [];
+    for (const [pair, p] of Object.entries(map)) {
+      if (!p || typeof p !== 'object') continue;
+      const last = num(p.ls);
+      if (!(last > 0)) continue; // dark/illiquid rows carry ls=0
+      rows.push({
+        pair: String(pair),
+        base: baseOfFuturesPair(pair),
+        last,
+        mark: num(p.mp) || last,
+        changePct: num(p.pc),
+        high: num(p.h),
+        low: num(p.l),
+        volume: num(p.v),
+        ts: num(j?.ts) || Date.now(),
+      });
+    }
+    if (rows.length === 0) throw new Error('futures prices: empty');
+    _pricesCache = rows; _pricesAt = Date.now();
+    return rows;
+  })();
+  _pricesInflight = probe;
+  try { return await probe; } finally { _pricesInflight = null; }
 }
 export async function fetchFuturesLtpMap() {
   const rows = await fetchFuturesPrices().catch(() => []);
@@ -1242,7 +1249,7 @@ export async function futuresMarketsView(limit = 24) {
 
 // ---------------- test hooks ----------------
 export function __resetFuturesForTests() {
-  _pricesCache = null; _pricesAt = 0;
+  _pricesCache = null; _pricesAt = 0; _pricesInflight = null;
   _instrumentsCache = null; _instrumentsAt = 0;
   _instrumentMetaCache = new Map();
   _walletsTransport.mode = null;

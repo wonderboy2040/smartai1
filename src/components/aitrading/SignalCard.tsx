@@ -17,7 +17,7 @@
 //   • v6.4 features kept: India manual-broker trade slip, crypto order
 //     preview, risk-auto-fit transparency chips.
 // ============================================================
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { MTFConfluenceBadge } from '../intraday/MTFConfluenceBadge';
 import { DepthLadder } from './DepthLadder';
 import type { AISignal, Side, SuperIntel } from './types';
@@ -58,6 +58,28 @@ const px = (v: number | null | undefined, cur: CurrencyTag = 'inr'): string => {
 /** The currency tag for a market — the ONE place desks resolve their unit. */
 const curFor = (market: string): CurrencyTag =>
   market === 'FUTURES' ? 'usdt' : market === 'GLOBALFUTURES' ? 'usdc' : 'inr';
+
+/** v10.10 LIVE LTP TEXT — renders the direct-CoinDCX 2s stream price with
+ *  a 600ms green/red flash on every tick (trading-terminal feel). Falls
+ *  back to the board-snapshot text when no live tick has arrived yet —
+ *  the card NEVER shows a blank price while the stream connects. */
+function LivePriceText({ value, fallback, format }: { value: number | null; fallback: string; format: (n: number) => string }) {
+  const [dir, setDir] = useState<'' | 'up' | 'down'>('');
+  const prev = useRef<number | null>(value);
+  useEffect(() => {
+    if (value == null || !(value > 0)) { prev.current = null; return; }
+    const before = prev.current;
+    if (before != null && before > 0) {
+      if (value > before) setDir('up');
+      else if (value < before) setDir('down');
+    }
+    prev.current = value;
+    const t = setTimeout(() => setDir(''), 600);
+    return () => clearTimeout(t);
+  }, [value]);
+  if (value == null || !(value > 0)) return <>{fallback}</>;
+  return <span className={dir === 'up' ? 'text-emerald-300' : dir === 'down' ? 'text-red-300' : 'text-slate-100'}>{format(value)}</span>;
+}
 
 const sideColor = (side: Side | string) =>
   side === 'LONG' ? 'text-emerald-400' : side === 'SHORT' ? 'text-red-400' : 'text-slate-400';
@@ -798,9 +820,12 @@ interface Props {
   /** v9.1: the Paper Desk already has an open trade on this symbol →
    *  show the ✓ PAPER OPEN state (server also blocks duplicates). */
   paperOpenForSymbol?: boolean;
+  /** v10.10: LIVE direct-CoinDCX LTP (2s RT stream — /api/stream fut=/
+   *  glob=/crypto= overlay). null = no live tick yet → snapshot ltp shows. */
+  liveLtp?: number | null;
 }
 
-export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, onExecuteIndia, onExecuteFutures, onExecuteGlobal, onDeep, canLive, canLiveIndia, isNew, orderBudgetINR, riskCapPct, maxLeverage, indiaBudgetINR, onPaperTrade, paperOpenForSymbol }: Props) {
+export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, onExecuteIndia, onExecuteFutures, onExecuteGlobal, onDeep, canLive, canLiveIndia, isNew, orderBudgetINR, riskCapPct, maxLeverage, indiaBudgetINR, onPaperTrade, paperOpenForSymbol, liveLtp }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [slipOpen, setSlipOpen] = useState(false);
   const [ticketOpen, setTicketOpen] = useState(false);
@@ -852,16 +877,51 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
             )}
           </div>
           <div className="flex items-center gap-3 mt-1 text-xs text-slate-400 flex-wrap">
-            <span className="font-mono font-bold text-slate-200">{signal.market === 'FUTURES'
-              ? (signal.ltp != null ? `${signal.ltp.toLocaleString('en-US', { maximumFractionDigits: 4 })} USDT` : '—')
-              : signal.market === 'GLOBALFUTURES'
-                ? (signal.ltp != null ? `USDC ${signal.ltp.toLocaleString('en-US', { maximumFractionDigits: 4 })}` : '—')
-                : fmt(signal.ltp)}</span>
+            <span className="font-mono font-bold text-slate-200 flex items-center gap-1.5">
+              {/* v10.10: DIRECT CoinDCX 2s live LTP (flash on tick) with the
+                  board snapshot as the honest fallback — stale prices next
+                  to fresh signals were the "wrong call" experience. */}
+              <LivePriceText
+                value={liveLtp != null && liveLtp > 0 ? liveLtp : null}
+                fallback={signal.market === 'FUTURES'
+                  ? (signal.ltp != null ? `${signal.ltp.toLocaleString('en-US', { maximumFractionDigits: 4 })} USDT` : '—')
+                  : signal.market === 'GLOBALFUTURES'
+                    ? (signal.ltp != null ? `USDC ${signal.ltp.toLocaleString('en-US', { maximumFractionDigits: 4 })}` : '—')
+                    : fmt(signal.ltp)}
+                format={signal.market === 'FUTURES'
+                  ? (v => `${pxFmt(v)} USDT`)
+                  : signal.market === 'GLOBALFUTURES'
+                    ? (v => `USDC ${pxFmt(v)}`)
+                    : (v => fmt(v))} />
+              {liveLtp != null && liveLtp > 0 && (
+                <span className="px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[8px] font-black border border-emerald-500/30 tracking-wider"
+                  title="Direct CoinDCX RT feed — 2s direct poll (board snapshot nahi)">⚡ LIVE</span>
+              )}
+            </span>
             {signal.changePct != null && (
               <span className={`font-mono font-bold ${(signal.changePct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                 {(signal.changePct ?? 0) >= 0 ? '+' : ''}{signal.changePct?.toFixed(2)}%
               </span>
             )}
+            {/* v10.10: live price vs plan-entry distance — the honest "is the
+                call still fresh" check. Plan entry is a LIMIT level; if live
+                has drifted, the chip says by how much (amber ≥0.5%, red ≥1.5%). */}
+            {(() => {
+              if (liveLtp == null || !(liveLtp > 0) || !plan || !(plan.entry > 0)) return null;
+              const d = (liveLtp / plan.entry - 1) * 100;
+              if (Math.abs(d) < 0.25) return null; // noise floor
+              const cls = Math.abs(d) >= 1.5
+                ? 'bg-red-500/15 text-red-300 border-red-500/40'
+                : Math.abs(d) >= 0.5
+                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                  : 'bg-slate-700/40 text-slate-300 border-slate-600/40';
+              return (
+                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border font-mono ${cls}`}
+                  title={`Live price plan entry se ${d >= 0 ? '+' : ''}${d.toFixed(2)}% door hai. Entry ek LIMIT level hai — ticket me wahi price use hota hai; plan 60s cadence par refresh hota hai.`}>
+                  ⚡ live {d >= 0 ? '+' : ''}{d.toFixed(2)}% vs entry
+                </span>
+              );
+            })()}
             <span className="text-slate-500">·</span>
             <span>{signal.participating}/{signal.totalModels} models</span>
             <span className="text-slate-500">·</span>
@@ -925,7 +985,8 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
           GLOBALFUTURES has no CoinDCX book — no widget there. */}
       {(signal.market === 'INDIA' || signal.market === 'CRYPTO' || signal.market === 'FUTURES') && (
         <div className="mt-1.5">
-          <DepthLadder market={signal.market} symbol={signal.symbol} ltp={signal.ltp} />
+          {/* v10.10: ladder anchors on the LIVE direct-CoinDCX LTP when the stream has a tick (snapshot fallback). */}
+          <DepthLadder market={signal.market} symbol={signal.symbol} ltp={(liveLtp != null && liveLtp > 0 ? liveLtp : signal.ltp)} />
         </div>
       )}
 

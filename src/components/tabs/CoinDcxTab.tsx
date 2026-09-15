@@ -31,6 +31,9 @@ import { AgentPanel } from '../aitrading/AgentPanel';
 import { MorningBriefPanel, SwingDeskPanel, WhaleRadarPanel, SignalLedgerPanel, OrderbookPanel, TrustLayerPanel, PerfAnalyticsPanel, CorrelationPanel } from '../aitrading/ProPanels';
 // v10.1: the crypto desk conversational AI (mirror of the intraday ProTrader panel)
 import { CryptoAgentPanel } from '../aitrading/CryptoAgentPanel';
+// v10.10: DIRECT CoinDCX ultra-fast live prices (2s RT — spot INR +
+// USDT perps + USDC global equity perps) overlaid on every card.
+import { useCxLivePrices } from '../aitrading/useCxLivePrices';
 import {
   SectionLabel, RegimeChips, BreadthStrip, FilterChips, RefreshCountdown, BoardSummary, DeskStatsStrip,
   FreshnessBadge, boardStaleClass,
@@ -146,6 +149,22 @@ export default memo(function CoinDcxTab() {
   const board: SignalBoard | null = desk === 'FUTURES' ? futures : desk === 'GLOBAL' ? globalFut : crypto;
   const models = board?.models || crypto?.models || futures?.models || globalFut?.models || [];
   const canLive = state?.config?.mode === 'live' && !state?.blocked?.notConnected;
+
+  // -----------------------------------------------------------------
+  // v10.10 DIRECT COINDCX ULTRA-FAST RT — the fix for "SPOT / Global
+  // Futures / Equity SIM me realtime prices fetch nahi ho rahe, isliye
+  // wrong call / signal show ho rahe hai". ONE EventSource carries all
+  // three desks' symbols (crypto= spot INR · fut= USDT perps · glob=
+  // USDC equity perps), server polls CoinDCX DIRECT every 2s and pushes
+  // ticks; the cards overlay the live LTP with the snapshot as fallback.
+  // -----------------------------------------------------------------
+  const spotSyms = useMemo(() => (crypto?.signals || []).map(s => s.symbol), [crypto]);
+  const futSyms = useMemo(() => (futures?.signals || []).map(s => s.symbol), [futures]);
+  const globSyms = useMemo(() => (globalFut?.signals || []).map(s => s.symbol), [globalFut]);
+  const cxLive = useCxLivePrices(true, spotSyms, futSyms, globSyms);
+  const liveFor = cxLive.forSignal;
+  // honesty chip: how fresh is the newest live tick (s) + feed state
+  const liveAgeS = cxLive.lastAt ? Math.max(0, Math.round((Date.now() - cxLive.lastAt) / 1000)) : null;
 
   // Track which ACTIONABLE symbols were NOT in the previous board → flash them.
   const prevTopRef = useRef<Set<string>>(new Set());
@@ -279,6 +298,16 @@ export default memo(function CoinDcxTab() {
           </div>
           <div className="ml-auto flex items-center gap-2 flex-wrap">
             <RegimeChips board={board} market="CRYPTO" />
+            {/* v10.10: the direct-CoinDCX feed honesty chip — LIVE (2s direct
+                poll) / connecting / down, plus the newest tick's age. */}
+            <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black border tracking-wider ${cxLive.status === 'live'
+              ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+              : cxLive.status === 'down'
+                ? 'bg-red-500/15 text-red-300 border-red-500/30'
+                : 'bg-slate-600/20 text-slate-400 border-slate-600/30'}`}
+              title="Spot INR (2s CoinDCX anchor + ~1s Binance WS) · USDT perps (2s direct CoinDCX RT) · USDC equity perps (2s direct RT + Yahoo fallback) — ek hi SSE connection, teeno desks live">
+              {cxLive.status === 'live' ? `⚡ DIRECT COINDCX · 2s${liveAgeS != null ? ` · ${liveAgeS}s ago` : ''}` : cxLive.status === 'down' ? '⚡ live feed down — retrying' : '⚡ live feed connecting…'}
+            </span>
             <FreshnessBadge board={board} />
             <RefreshCountdown board={board} loading={loading} />
             <ViewModeToggle mode={viewMode} onSet={setViewMode} />
@@ -348,12 +377,14 @@ export default memo(function CoinDcxTab() {
 
       {/* ============ 🧠 EXPERT PICKS (v8.0 Advance Pro Trader Engine) ============ */}
       <div id="cx-expert">
-        {desk !== 'GLOBAL' && <ExpertPicksPanel active market={desk} onDeep={(sym) => { onDeep({ symbol: sym, market: desk } as AISignal); }} />}
+        {desk !== 'GLOBAL' && <ExpertPicksPanel active market={desk} onDeep={(sym) => { onDeep({ symbol: sym, market: desk } as AISignal); }}
+          liveLtpFor={(m, s) => liveFor(m, s)?.price ?? null} />}
       </div>
 
       {/* ============ 🏆 TOP 5 PICKS (v6.9) ============ */}
       <div id="cx-top5">
-        <TopPicksPanel picks={board?.topFive} market={desk === 'GLOBAL' ? 'GLOBALFUTURES' : desk} deskLabel={desk === 'GLOBAL' ? '🌍 GLOBAL EQUITY FUTURES · USD (SIM desk)' : desk === 'FUTURES' ? '⚡ COINDCX GLOBAL FUTURES · USDT' : '₿ COINDCX SPOT · INR'} scanned={board?.scanned} loading={loading} onDeep={onDeep} />
+        <TopPicksPanel picks={board?.topFive} market={desk === 'GLOBAL' ? 'GLOBALFUTURES' : desk} deskLabel={desk === 'GLOBAL' ? '🌍 GLOBAL EQUITY FUTURES · USD (SIM desk)' : desk === 'FUTURES' ? '⚡ COINDCX GLOBAL FUTURES · USDT' : '₿ COINDCX SPOT · INR'} scanned={board?.scanned} loading={loading} onDeep={onDeep}
+          liveLtpFor={(m, s) => liveFor(m, s)?.price ?? null} />
       </div>
 
       {/* ============ MARKET BREADTH ============ */}
@@ -408,6 +439,7 @@ export default memo(function CoinDcxTab() {
           )}
           {visibleSignals.map(s => (
             <SignalCard key={`${s.market}-${s.symbol}`} signal={s} busy={busy}
+              liveLtp={liveFor(s.market, s.symbol)?.price ?? null}
               onExecute={desk === 'CRYPTO' ? onExecute : undefined}
               onExecuteFutures={desk === 'FUTURES' ? onExecuteFutures : undefined}
               onExecuteGlobal={desk === 'GLOBAL' ? onExecuteGlobal : undefined}
@@ -561,6 +593,7 @@ export default memo(function CoinDcxTab() {
             {!deep.loading && deep.signal && (
               <>
                 <SignalCard signal={deep.signal}
+                  liveLtp={liveFor(deep.signal.market, deep.signal.symbol)?.price ?? null}
                   onExecute={deep.signal.market === 'CRYPTO' ? onExecute : undefined}
                   onExecuteFutures={deep.signal.market === 'FUTURES' ? onExecuteFutures : undefined}
                   canLive={canLive} busy={busy}
