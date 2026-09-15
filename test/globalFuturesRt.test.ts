@@ -9,14 +9,20 @@
 // frozen the same way.
 //
 // THE CONTRACT (locked here):
-//   • fetchGlobalFuturesRt() tries every plausible USDC param shape
-//     and accepts a variant ONLY with >= 3 live B-<BASE>_USDC rows;
-//     the working variant is STICKY (no re-probe per poll).
-//   • total failure → 60s negative cache (ONE probe round per
-//     minute, never one per poll — the v10.6.1 wick lesson).
+//   • fetchGlobalFuturesRt() tries every plausible USDC param shape —
+//     v10.11 order: ARRAY-STYLE FIRST (CoinDCX's documented multi-value
+//     convention on the derivatives family), then scalar, then the
+//     param-less combined feed — and accepts a variant ONLY with >= 3
+//     live B-<BASE>_USDC rows; the working variant is STICKY (no
+//     re-probe per poll).
+//   • total failure → v10.11 jittered exponential backoff: first
+//     failure blacks out ~10s (10s base + 0-2s jitter), repeated
+//     failures double it to a 40s CAP, and ONE success resets the
+//     streak (the v10.6.1 wick lesson, now with fast healing).
 //   • fetchGlobalQuotes() prices from the RT feed FIRST (source
-//     'coindcx-usdc', feed's own 24h changePct), Yahoo fills ONLY
-//     the uncovered symbols, SPACEX stays sim.
+//     'coindcx-usdc', feed's own 24h changePct), FINNHUB fills next
+//     (source 'finnhub' — see globalFuturesFinnhubFallback.test.ts),
+//     Yahoo is the FINAL fallback, SPACEX stays sim.
 //   • buildGlobalCtxSync carries the honest priceSource.
 //   • markets view exposes the CoinDCX pair (B-AAPL_USDC).
 // ============================================================
@@ -83,38 +89,45 @@ afterEach(() => {
 // the RT probe itself
 // ============================================================
 describe('fetchGlobalFuturesRt — variant probing + validation', () => {
-  it('prices from the CoinDCX USDC RT feed (the exact LTP the app shows)', async () => {
+  it('prices from the CoinDCX USDC RT feed — the ARRAY-STYLE variant (documented convention) is probed FIRST', async () => {
+    let arrayProbedFirst = false;
+    let probeOrder: string[] = [];
     routeFetch((u) => {
-      if (u.includes('current_prices/futures/rt') && u.includes('margin_currency_short_name=USDC')) {
+      if (u.includes('current_prices/futures/rt') && u.includes('%5B%5D=USDC')) {
+        probeOrder.push('array');
+        arrayProbedFirst = probeOrder.length === 1;
         return { ok: true, status: 200, json: async () => RT_USDC_PAYLOAD };
       }
+      if (u.includes('current_prices/futures/rt')) probeOrder.push('other');
       return null;
     });
     const rt = await fetchGlobalFuturesRt();
     expect(rt).toBeTruthy();
+    expect(arrayProbedFirst).toBe(true); // array-style leads the round (v10.11 reorder)
+    expect(probeOrder).toEqual(['array']);
     expect(rt.get('AAPL')).toMatchObject({ price: 333.62, source: 'coindcx-usdc', pair: 'B-AAPL_USDC' });
     expect(rt.get('AAPL').mark).toBeGreaterThan(333);
     expect(rt.get('AAPL').changePct).toBe(0.4);
   });
 
-  it('falls through to the array-style param when the scalar one 403s, and the working variant is STICKY', async () => {
-    let scalarCalls = 0;
+  it('falls through to the SCALAR param when the array one 403s, and the working variant is STICKY', async () => {
+    let arrayCalls = 0;
     routeFetch((u) => {
-      if (u.includes('margin_currency_short_name=USDC') && !u.includes('%5B%5D') && !u.includes('%5B')) {
-        scalarCalls += 1;
+      if (u.includes('%5B%5D=USDC')) {
+        arrayCalls += 1;
         return { ok: false, status: 403, json: async () => ({}) };
       }
-      if (u.includes('USDC')) { // array shape
+      if (u.includes('margin_currency_short_name=USDC')) { // scalar shape
         return { ok: true, status: 200, json: async () => RT_USDC_PAYLOAD };
       }
       return null;
     });
     const rt = await fetchGlobalFuturesRt();
     expect(rt?.get('TSLA')?.price).toBe(412.05);
-    expect(scalarCalls).toBe(1);
-    // next fresh probe reuses the sticky array variant — scalar never re-tried
+    expect(arrayCalls).toBe(1);
+    // next fresh probe reuses the sticky SCALAR variant — array never re-tried
     await fetchGlobalFuturesRt({ maxAgeMs: 0 });
-    expect(scalarCalls).toBe(1);
+    expect(arrayCalls).toBe(1);
   });
 
   it('a payload with ZERO USDC rows is REJECTED (a USDT-only response is not the global domain)', async () => {
@@ -124,15 +137,87 @@ describe('fetchGlobalFuturesRt — variant probing + validation', () => {
     expect(__globalRtStateForTests().down).toBe(true); // negative cache armed
   });
 
-  it('total failure arms the 60s negative cache — ONE probe round, not one per poll', async () => {
+  it('total failure arms the BACKOFF negative cache — ONE probe round, not one per poll', async () => {
     let calls = 0;
     globalThis.fetch = vi.fn(async () => { calls += 1; return { ok: false, status: 403, json: async () => ({}), text: async () => '' }; }) as any;
     expect(await fetchGlobalFuturesRt()).toBeNull();
     const callsAfterProbe = calls;
-    expect(callsAfterProbe).toBe(3); // scalar + array + combined = one full round
+    expect(callsAfterProbe).toBe(3); // array + scalar + combined = one full round
     expect(await fetchGlobalFuturesRt()).toBeNull();
     expect(await fetchGlobalFuturesRt()).toBeNull();
-    expect(calls).toBe(callsAfterProbe); // negative cache served both
+    expect(calls).toBe(callsAfterProbe); // backoff negative cache served both
+    const st = __globalRtStateForTests();
+    expect(st.failStreak).toBe(1);      // first failure → base blackout
+  });
+
+  it('v10.11 backoff: first failure blacks out ~10s (base + 0-2s jitter) — a WAF blip heals FAST', async () => {
+    globalThis.fetch = vi.fn(async () => ({ ok: false, status: 403, json: async () => ({}), text: async () => '' })) as any;
+    const t0 = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(t0);
+    try {
+      expect(await fetchGlobalFuturesRt()).toBeNull();
+      const st = __globalRtStateForTests();
+      expect(st.failStreak).toBe(1);
+      expect(st.downUntil - t0).toBeGreaterThanOrEqual(10_000);
+      expect(st.downUntil - t0).toBeLessThanOrEqual(12_000); // 10s base + ≤2s jitter
+    } finally { nowSpy.mockRestore(); }
+  });
+
+  it('v10.11 backoff: repeated failures DOUBLE the blackout (10s→20s→40s) and CAP at 40s', async () => {
+    globalThis.fetch = vi.fn(async () => ({ ok: false, status: 403, json: async () => ({}), text: async () => '' })) as any;
+    const t0 = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now');
+    let fake = t0;
+    nowSpy.mockImplementation(() => fake);
+    try {
+      await fetchGlobalFuturesRt({ maxAgeMs: 0 });            // fail 1 @ t0 → ~10s
+      expect(__globalRtStateForTests().failStreak).toBe(1);
+      fake = t0 + 13_000;                                      // past blackout #1
+      await fetchGlobalFuturesRt({ maxAgeMs: 0 });            // fail 2 → ~20s
+      let st = __globalRtStateForTests();
+      expect(st.failStreak).toBe(2);
+      expect(st.downUntil - fake).toBeGreaterThanOrEqual(20_000);
+      expect(st.downUntil - fake).toBeLessThanOrEqual(22_000);
+      fake = t0 + 35_000;                                      // past blackout #2
+      await fetchGlobalFuturesRt({ maxAgeMs: 0 });            // fail 3 → 40s (the cap)
+      st = __globalRtStateForTests();
+      expect(st.failStreak).toBe(3);
+      expect(st.downUntil - fake).toBeGreaterThanOrEqual(40_000);
+      expect(st.downUntil - fake).toBeLessThanOrEqual(42_000);
+      fake = t0 + 78_000;                                      // past blackout #3
+      await fetchGlobalFuturesRt({ maxAgeMs: 0 });            // fail 4 → STILL 40s (capped)
+      st = __globalRtStateForTests();
+      expect(st.failStreak).toBe(4);
+      expect(st.downUntil - fake).toBeGreaterThanOrEqual(40_000);
+      expect(st.downUntil - fake).toBeLessThanOrEqual(42_000);
+    } finally { nowSpy.mockRestore(); }
+  });
+
+  it('v10.11 backoff: ONE success fully heals the streak — the next failure is back at the 10s base', async () => {
+    const fail = { ok: false, status: 403, json: async () => ({}), text: async () => '' };
+    const succeed = { ok: true, status: 200, json: async () => RT_USDC_PAYLOAD };
+    let mode: 'fail' | 'succeed' = 'fail';
+    globalThis.fetch = vi.fn(async () => (mode === 'fail' ? fail : succeed)) as any;
+    const t0 = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now');
+    let fake = t0;
+    nowSpy.mockImplementation(() => fake);
+    try {
+      await fetchGlobalFuturesRt({ maxAgeMs: 0 });            // fail 1 → ~10s
+      expect(__globalRtStateForTests().failStreak).toBe(1);
+      fake = t0 + 13_000;
+      mode = 'succeed';
+      const rt = await fetchGlobalFuturesRt({ maxAgeMs: 0 }); // SUCCESS → streak reset
+      expect(rt?.get('AAPL')?.price).toBe(333.62);
+      expect(__globalRtStateForTests().failStreak).toBe(0);
+      fake = t0 + 20_000;                                      // beyond the 5s positive cache
+      mode = 'fail';
+      await fetchGlobalFuturesRt({ maxAgeMs: 0 });            // fail again → BASE again
+      const st = __globalRtStateForTests();
+      expect(st.failStreak).toBe(1);                          // not 2 — the success healed it
+      expect(st.downUntil - fake).toBeGreaterThanOrEqual(10_000);
+      expect(st.downUntil - fake).toBeLessThanOrEqual(12_000);
+    } finally { nowSpy.mockRestore(); }
   });
 
   it('dark rows (ls=0) are skipped — illiquid USDC perps never zero a price', async () => {

@@ -110,7 +110,8 @@ describe('inStream (RC5 — India server-side push)', () => {
     const t = getTick('IN_RELIANCE');
     expect(t).toBeTruthy();
     expect(t.price).toBe(2925.5);
-    expect(t.source).toBe('groww-in-stream');
+    // v10.12 (#1): canonical India source label (Groww·live badge on the UI)
+    expect(t.source).toBe('groww-live');
     // No polling loop outside NSE hours:
     expect(inStream.inDebugState().timer).toBe(false);
   });
@@ -126,8 +127,41 @@ describe('inStream (RC5 — India server-side push)', () => {
     const t = getTick('IN_NIFTY');
     expect(t).toBeTruthy();
     expect(t.price).toBe(24800);
-    expect(t.source).toBe('yahoo-in-stream');
+    // v10.12 (#1): the Yahoo fallback is honestly labeled (Yahoo·delayed)
+    expect(t.source).toBe('yahoo-delayed');
     expect(toY).toHaveBeenCalledWith('NIFTY', 'IN');
+  });
+
+  // v10.12.1 REGRESSION (deep-recheck live find): Groww's CASH/<INDEX>
+  // endpoint serves a garbage STALE ltp for index names (observed live:
+  // 19425.35, lastTradeTime Nov-2023, while ^NSEI was current). The inStream
+  // poller must skip Groww for indices ENTIRELY — not "try Groww first" —
+  // or the SSE wire pushes a WRONG price tagged 'groww-live'.
+  it('REGRESSION (v10.12.1): indices skip Groww entirely — its garbage stale index ltp (19425 vs live ^NSEI) can NEVER be served as groww-live', async () => {
+    vi.setSystemTime(NSE_CLOSED_T);
+    // Groww serves the REAL garbage payload shape for indices: ltp>0 + null close
+    const groww = vi.fn(async (s) => (s === 'NIFTY'
+      ? { price: 19425.35, change: 0, high: 19425.35, low: 19425.35, volume: 0, time: 1699592213000 }
+      : { price: 2925.5, change: 1.2 }));
+    const yahoo = vi.fn(async () => ({ price: 24912.4, change: -0.31, high: 25000, low: 24700, volume: 0, time: Date.now() }));
+    const toY = vi.fn(() => '^NSEI');
+    inStream.initInStream({ fetchGrowwNseQuote: groww, fetchYahooQuote: yahoo, toYahooSymbol: toY });
+
+    inStream.ensureInSubscribed(['NIFTY', 'SENSEX']);
+    await vi.advanceTimersByTimeAsync(50);
+
+    const t = getTick('IN_NIFTY');
+    expect(t).toBeTruthy();
+    expect(t.price).toBe(24912.4);            // Yahoo's CURRENT spot…
+    expect(t.source).toBe('yahoo-delayed');   // …honestly labeled
+    expect(groww).not.toHaveBeenCalled();     // Groww never even asked for an index
+    expect(getTick('IN_SENSEX')?.source).toBe('yahoo-delayed');
+
+    // Stocks still go to Groww first (no behavior change for equities):
+    inStream.ensureInSubscribed(['RELIANCE']);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(getTick('IN_RELIANCE')?.source).toBe('groww-live');
+    expect(groww).toHaveBeenCalledWith('RELIANCE');
   });
 
   it('during NSE hours: 5s poll loop runs while clients are connected and stops when they leave', async () => {

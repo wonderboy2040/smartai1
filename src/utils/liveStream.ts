@@ -33,6 +33,11 @@ function toPriceData(t: Record<string, unknown>): Partial<PriceData> {
     volume: t.volume != null ? Number(t.volume) : undefined,
     time: Number(t.time) || Date.now(),
     prevClose: t.prevClose != null ? Number(t.prevClose) : undefined,
+    // v10.12 (#1): the server labels every liveFeed write on the wire
+    // (`source`) — carry it through so the India desk can badge Groww·live
+    // vs Yahoo·delayed (and the other desks CoinDCX·RT / Finnhub·RT / …).
+    // Unknown/missing stays undefined → LiveSourceBadge's neutral LIVE pill.
+    src: typeof t.source === 'string' ? t.source : undefined,
     isRealtime: true,
   };
 }

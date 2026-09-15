@@ -2,7 +2,6 @@
 node_modules/
 dist/
 telegram-bot/node_modules/
-*.tsbuildinfo
 
 # Environment and secrets
 .env
@@ -39,3 +38,4 @@ server/data/mcp-indmoney.json
 .test-data-*
 .verify-*
 .e2e-*
+tsconfig.tsbuildinfo

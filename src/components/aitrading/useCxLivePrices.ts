@@ -36,6 +36,10 @@ export interface CxLiveTick {
   low?: number;
   volume?: number;
   time: number;
+  /** v10.11 (#1): which upstream actually served this tick — the server
+   *  labels every liveFeed write (SSE wire field `source`) so the UI can
+   *  badge CoinDCX RT vs Finnhub vs Yahoo-delayed honestly. */
+  src?: string;
 }
 
 export type CxLiveStatus = 'connecting' | 'live' | 'down';
@@ -67,6 +71,7 @@ function toTick(t: Record<string, unknown>): CxLiveTick | null {
     low: t.low != null ? Number(t.low) : undefined,
     volume: t.volume != null ? Number(t.volume) : undefined,
     time: Number(t.time) || Date.now(),
+    src: typeof t.source === 'string' ? t.source : undefined,
   };
 }
 

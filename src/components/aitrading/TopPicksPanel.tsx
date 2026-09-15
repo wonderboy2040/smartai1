@@ -9,6 +9,7 @@
 // (one source of truth for the ticket); 🔬 opens deep analysis.
 // ============================================================
 import { memo } from 'react';
+import { LiveSourceBadge } from './LiveSourceBadge';
 import type { AISignal, TopPick } from './types';
 
 const MEDALS = ['🥇', '🥈', '🥉', '4', '5'];
@@ -37,6 +38,9 @@ interface Props {
    *  tick for a pick's symbol it replaces the board-snapshot price (with a
    *  ⚡ marker); null/undefined → snapshot behaviour, nothing breaks. */
   liveLtpFor?: (market: string, symbol: string) => number | null | undefined;
+  /** v10.11 (#1): source label of the live tick (server `source` field) →
+   *  the provenance pill next to the live price. */
+  liveSrcFor?: (market: string, symbol: string) => string | null | undefined;
 }
 
 /** Smooth-scroll to the full signal card + flash ring so the user
@@ -52,7 +56,7 @@ export function jumpToSignalCard(signal: AISignal) {
   } catch { return false; }
 }
 
-export const TopPicksPanel = memo(function TopPicksPanel({ picks, market, deskLabel, scanned, loading, onDeep, liveLtpFor }: Props) {
+export const TopPicksPanel = memo(function TopPicksPanel({ picks, market, deskLabel, scanned, loading, onDeep, liveLtpFor, liveSrcFor }: Props) {
   const price = pickPriceFmt(market);
   const list = picks || [];
 
@@ -92,6 +96,7 @@ export const TopPicksPanel = memo(function TopPicksPanel({ picks, market, deskLa
           const livePx = liveLtpFor?.(p.market || market, p.symbol);
           const showPx = livePx != null && livePx > 0 ? livePx : p.ltp;
           const isLive = livePx != null && livePx > 0;
+          const liveSrc = isLive ? liveSrcFor?.(p.market || market, p.symbol) : null;
           return (
             <div key={`${p.market}-${p.symbol}-${p.rank}`}
               className={`rounded-xl p-3 bg-black/25 border-l-4 ${long ? 'border-l-emerald-500/70' : 'border-l-red-500/70'} ${p.rank <= 3 ? 'bg-gradient-to-r from-white/[0.04] to-transparent' : ''}`}>
@@ -127,12 +132,13 @@ export const TopPicksPanel = memo(function TopPicksPanel({ picks, market, deskLa
                       );
                     })()}
                     {showPx != null && (
-                      <span className="text-[11px] font-mono text-slate-300">{isLive && <span className="text-emerald-400" title="Direct CoinDCX RT — 2s direct poll">⚡ </span>}{price(showPx)}
+                      <span className="text-[11px] font-mono text-slate-300">{isLive && <span className="text-emerald-400" title="Direct CoinDCX RT — 2s direct poll / WS event push">⚡ </span>}{price(showPx)}
                         {p.changePct != null && (
                           <span className={`ml-1 ${p.changePct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                             {p.changePct >= 0 ? '+' : ''}{p.changePct.toFixed(2)}%
                           </span>
                         )}
+                        {isLive && <span className="ml-1"><LiveSourceBadge src={liveSrc} /></span>}
                       </span>
                     )}
                   </div>

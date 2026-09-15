@@ -31,6 +31,20 @@ const BATCH = 24;
 // Crypto bases are owned by cryptoStream (IN_BTC etc.) — never poll them here.
 const CRYPTO_BASES = new Set(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'MATIC', 'LINK', 'UNI']);
 
+// v10.12.1 FIX (deep-recheck live find): indices have NO honest Groww quote —
+// Groww's CASH/<INDEX> endpoint serves a garbage STALE ltp for index names
+// (observed live on the /api/stream wire: 19425.35 with lastTradeTime from
+// Nov-2023 while Yahoo's ^NSEI was current — the same v9.5 note that made
+// intraday/stream.js route indices to Yahoo). /api/quote already skips Groww
+// for INDIAN_INDICES; the inStream poller MUST do the same or the SSE push
+// serves a WRONG price tagged 'groww-live' — the exact opposite of the
+// v10.12 honest-badge goal. Set = union of stream.js INDEX_SYMBOLS and
+// index.js INDIAN_INDICES (every name has a YF_INDEX_MAP entry).
+const INDEX_SYMBOLS = new Set([
+  'NIFTY', 'NIFTY50', 'BANKNIFTY', 'NIFTYBANK', 'SENSEX', 'INDIAVIX',
+  'CNXIT', 'FINNIFTY', 'MIDCPNIFTY', 'NIFTYNXT50',
+]);
+
 let _deps = null;               // { fetchGrowwNseQuote, fetchYahooQuote, toYahooSymbol }
 const _subscribed = new Set();  // clean NSE symbols (RELIANCE, NIFTY, …)
 const _refcounts = new Map();   // sym -> interested SSE clients (2026 perf audit M2)
@@ -84,19 +98,32 @@ export function initInStream(deps) {
 // ---------------------------------------------------------------
 // Quote fetch: Groww first (genuine NSE LTP, stocks + ETFs), Yahoo for
 // indices / Groww misses. Both are micro-cached in index.js (3s shared).
+//
+// v10.12 (#1 source transparency): every tick carries WHICH upstream
+// served it — the wire label is liveFeed's `source` field and the values
+// are the plan's canonical India tags:
+//   'groww-live'      Groww NSE served the tick (the app-parity LTP)
+//   'yahoo-delayed'   the Yahoo fallback served it (indices — Groww has
+//                     no index quotes — or a Groww miss)
+// The browser maps them to the Groww·live / Yahoo·delayed pills via
+// LiveSourceBadge; the TradingView browser socket tags its own ticks
+// 'tv-ws' (tvWebsocket.ts) so all three India paths are honest.
 // ---------------------------------------------------------------
 async function _fetchInQuote(sym) {
-  if (typeof _deps?.fetchGrowwNseQuote === 'function') {
+  // v10.12.1: indices skip Groww ENTIRELY (garbage stale ltp — see the
+  // INDEX_SYMBOLS note above) and go straight to the Yahoo fallback, which
+  // serves them honestly labeled 'yahoo-delayed'.
+  if (!INDEX_SYMBOLS.has(sym) && typeof _deps?.fetchGrowwNseQuote === 'function') {
     try {
       const q = await _deps.fetchGrowwNseQuote(sym);
-      if (q && q.price > 0) return { q, source: 'groww-in-stream' };
+      if (q && q.price > 0) return { q, source: 'groww-live' };
     } catch { /* fall through */ }
   }
   if (typeof _deps?.fetchYahooQuote === 'function' && typeof _deps?.toYahooSymbol === 'function') {
     try {
       const ysym = _deps.toYahooSymbol(sym, 'IN');
       const q = await _deps.fetchYahooQuote(ysym);
-      if (q && q.price > 0) return { q, source: 'yahoo-in-stream' };
+      if (q && q.price > 0) return { q, source: 'yahoo-delayed' };
     } catch { /* give up this round */ }
   }
   return null;

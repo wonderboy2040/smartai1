@@ -124,6 +124,11 @@ export interface LiveQuote {
   price: number;
   change?: number;
   ts?: number;
+  /** v10.12 (#1): which upstream served this quote — 'groww-live' |
+   *  'yahoo-delayed' (indices) | 'coindcx-inr' (crypto watch symbols).
+   *  Rendered as the Groww·live / Yahoo·delayed / CoinDCX·RT pill by
+   *  LiveSourceBadge on the signal cards. */
+  src?: string;
 }
 
 export interface OutcomeEvent {

@@ -49,6 +49,7 @@ import { JournalPanel } from '../intraday/JournalPanel';
 import { CommitteePanel } from '../intraday/CommitteePanel';
 import { UniverseEditor } from '../intraday/UniverseEditor';
 import { adaptAISignal } from '../intraday/adaptAISignal';
+import type { LiveQuote } from '../intraday/types';
 // v10.3 PARITY (CoinDCX level): the two missing panels —
 //   • ProTraderAgentPanel — the ASK-AI chat (8 MCP tools, /api/intraday-agent)
 //     jo purane dead IntradayTab me tha par naye desk me wire nahi hua tha
@@ -95,9 +96,19 @@ export default memo(function IndiaIntradayTab() {
   const simple = viewMode === 'simple';
 
   // ---- v9.1 PAPER DESK state ----
-  // SSE live quotes feed the open-position P&L (only connect while the
-  // pro-mode desk is actually mounted — simple mode never renders it).
-  const stream = useIntradayStream(!simple);
+  // SSE live quotes feed the open-position P&L. v10.12 (#1): the SIGNAL
+  // BOARD cards now consume the same stream for their live LTP overlay +
+  // source pill (Groww·live / Yahoo·delayed), so the stream stays connected
+  // in EVERY view mode — not just while the pro-mode paper desk renders.
+  // (The server watcher broadcasts regardless; one more attached client
+  // costs nothing.)
+  const stream = useIntradayStream(true);
+  // Live-quote lookup for a board signal — null (snapshot fallback) when
+  // the watcher isn't covering that symbol yet.
+  const liveFor = useCallback((symbol: string): LiveQuote | null => {
+    const q = stream.livePrices[String(symbol || '').toUpperCase()];
+    return q && q.price > 0 ? q : null;
+  }, [stream.livePrices]);
   // bump → Paper/TrackRecord/Journal panels refetch (after open/close).
   const [paperRefresh, setPaperRefresh] = useState(0);
   const [universeOpen, setUniverseOpen] = useState(false);
@@ -372,7 +383,9 @@ export default memo(function IndiaIntradayTab() {
               canLiveIndia={canLiveIndia} isNew={newSymbols.has(s.symbol)}
               orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5}
               indiaBudgetINR={state?.config?.indiaMaxOrderINR ?? 5000}
-              onPaperTrade={onDeskPaper} paperOpenForSymbol={paperOpenSymbols.has(s.symbol)} />
+              onPaperTrade={onDeskPaper} paperOpenForSymbol={paperOpenSymbols.has(s.symbol)}
+              liveLtp={liveFor(s.symbol)?.price ?? null}
+              liveSrc={liveFor(s.symbol)?.src ?? null} />
           ))}
           {board?.signals?.length === 0 && !loading && (
             <div className="quantum-panel rounded-2xl p-8 col-span-full text-center">

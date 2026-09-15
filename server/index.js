@@ -627,113 +627,37 @@ try { startIndmPortfolioScheduler(); } catch (e) { console.warn('[mcp/portfolioS
 // Resp:  { quotes: { SMH: {price,change,high,low,volume,prevClose,time,source}, ... } }
 // ------------------------------------------------------------
 const INDIAN_INDICES = new Set(['NIFTY','BANKNIFTY','SENSEX','INDIAVIX','CNXIT','NIFTY50','NIFTYBANK']);
-// PERF (2026 lag audit): 3s micro-cache + in-flight sharing for the US quote
-// path — same rationale as the Groww/Yahoo caches below.
-const _finnhubMicroCache = new Map(); // sym -> { ts, promise }
-const FINNHUB_CACHE_MS = 3000;
-async function fetchFinnhubQuote(plainSym) {
-  const key = process.env.FINNHUB_API_KEY || '';
-  if (!key || !plainSym) return null;
-  const sym = String(plainSym).toUpperCase();
-  const hit = _finnhubMicroCache.get(sym);
-  if (hit && Date.now() - hit.ts < FINNHUB_CACHE_MS) return hit.promise;
-  const promise = _fetchFinnhubQuoteUncached(sym, key);
-  _finnhubMicroCache.set(sym, { ts: Date.now(), promise });
-  if (_finnhubMicroCache.size > 500) {
-    const cutoff = Date.now() - FINNHUB_CACHE_MS * 2;
-    for (const [k, v] of _finnhubMicroCache) if (v.ts < cutoff) _finnhubMicroCache.delete(k);
-  }
-  return promise;
-}
-async function _fetchFinnhubQuoteUncached(plainSym, key) {
-  try {
-    const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(plainSym)}&token=${key}`;
-    const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
-    if (!r.ok) return null;
-    const j = await r.json();
-    // c=current, d=change, dp=percent, h=high, l=low, pc=prevClose, t=epoch(s)
-    if (!j || typeof j.c !== 'number' || j.c <= 0) return null;
-    // 2026 realtime audit (RC1): Finnhub free-tier REST /quote returns the
-    // PREVIOUS SESSION CLOSE (t = last close, e.g. Friday 4pm ET) while the
-    // US market is OPEN — verified live: REST said QQQ 716.47 (Friday close)
-    // while Yahoo + the WS trade stream said 713.36/713.68. Rejecting the
-    // stale quote here lets /api/quote fall through to the live Yahoo path.
-    if (isStaleUsQuote(j.t ? j.t * 1000 : 0, Date.now(), usMarketOpen())) return null;
-    return {
-      price: j.c,
-      change: typeof j.dp === 'number' ? j.dp : (j.pc ? ((j.c - j.pc) / j.pc) * 100 : 0),
-      high: j.h || j.c,
-      low: j.l || j.c,
-      volume: 0,
-      prevClose: j.pc || j.c,
-      time: (j.t ? j.t * 1000 : Date.now()),
-      source: 'finnhub-realtime',
-    };
-  } catch { return null; }
-}
+// v10.11: the Finnhub fetcher now lives in ai/finnhubQuote.js — ONE shared
+// micro-cache + ONE 55/min sliding-window rate limiter serves BOTH the US
+// desk (/api/quote) and the EQUITY SIM desk's fallback chain
+// (globalFutures.js), so neither can starve the other's free-tier key.
+// Behavior is byte-identical to the old inline copy (3s micro-cache,
+// in-flight promise sharing, isStaleUsQuote freshness gate).
+import { fetchFinnhubQuote } from './ai/finnhubQuote.js';
 
-// REAL-TIME NSE quote (the India equivalent of the US realtime fix).
-// NSE's own API blocks datacenter IPs (403), and Yahoo .NS is ~15-min delayed.
-// Groww's public live-price endpoint serves the genuine NSE last-traded price
-// (`ltp`, type LIVE_PRICE) for stocks AND ETFs, and works from cloud servers.
-//
-// PERF (2026 lag audit): this function is called by FOUR concurrent consumers —
-// /api/quote (browser polls ~every 3s per tab), the intraday scanner
-// (87 symbols/scan), the SSE quote watcher (24 symbols/5s) and the India
-// inStream poller (3s). With no shared cache that was hundreds of upstream Groww
-// requests per minute from ONE browser tab, starving the Render free-tier CPU
-// and making EVERY endpoint (scanner, AI, Telegram) sluggish. A 3s
-// micro-cache with in-flight promise sharing cuts upstream traffic ~95%
-// while keeping LTP freshness at or below every caller's own poll cadence.
-const _growwMicroCache = new Map(); // sym -> { ts, promise }
-const GROWW_CACHE_MS = 3000;
-async function fetchGrowwNseQuote(plainSym) {
-  const sym = String(plainSym || '').replace('.NS', '').replace('.BO', '').trim().toUpperCase();
-  if (!sym) return null;
-  const hit = _growwMicroCache.get(sym);
-  if (hit && Date.now() - hit.ts < GROWW_CACHE_MS) return hit.promise; // fresh OR still in-flight
-  const promise = _fetchGrowwNseQuoteUncached(sym); // never throws — resolves null on failure
-  _growwMicroCache.set(sym, { ts: Date.now(), promise });
-  // Opportunistic cleanup so the map cannot grow unbounded with custom watchlists.
-  if (_growwMicroCache.size > 500) {
-    const cutoff = Date.now() - GROWW_CACHE_MS * 2;
-    for (const [k, v] of _growwMicroCache) if (v.ts < cutoff) _growwMicroCache.delete(k);
-  }
-  return promise;
-}
-async function _fetchGrowwNseQuoteUncached(sym) {
-  try {
-    const url = `https://groww.in/v1/api/stocks_data/v1/tr_live_prices/exchange/NSE/segment/CASH/${encodeURIComponent(sym)}/latest`;
-    const r = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120 Safari/537.36',
-        'Accept': 'application/json',
-      },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!r.ok) return null;
-    const j = await r.json();
-    const price = (typeof j.ltp === 'number' && j.ltp > 0) ? j.ltp
-      : (typeof j.close === 'number' && j.close > 0) ? j.close : 0;
-    if (!price) return null;
-    return {
-      price,
-      change: typeof j.dayChangePerc === 'number' ? j.dayChangePerc : 0,
-      high: j.high || price,
-      low: j.low || price,
-      volume: j.volume || 0,
-      prevClose: (j.ltp && j.dayChange != null) ? (j.ltp - j.dayChange) : price,
-      time: (j.lastTradeTime ? j.lastTradeTime * 1000 : Date.now()),
-      source: 'groww-nse-realtime',
-    };
-  } catch { return null; }
-}
+// v10.12 (India plan #2): the Groww fetcher moved to ai/growwQuote.js —
+// same 3s micro-cache + in-flight promise sharing this file always had
+// (FOUR consumers: /api/quote, the intraday scanner, the SSE watcher, the
+// India inStream 3s poller — N consumers still cost ONE round-trip/symbol),
+// plus the new resilience layer: ONE jittered quick retry (~300-500ms)
+// inside the same fetch cycle (a transient blip no longer costs a full
+// 3s poll interval) and a per-symbol fail-streak backoff that skips ONE
+// poll cycle for a persistently-erroring symbol (honest null instantly,
+// callers fall back to Yahoo) instead of hammering it — keeping the shared
+// cache budget healthy for the symbols that ARE working.
+import { fetchGrowwNseQuote } from './ai/growwQuote.js';
 
-// PERF (2026 lag audit): same 3s micro-cache + in-flight sharing as the Groww
-// fetcher above. fetchYahooQuote serves the Indian INDICES (NIFTY, BANKNIFTY,
-// INDIAVIX — Groww has no index quotes) and the US fallback path; the browser
-// polls them every few seconds, and without a cache each poll meant a fresh
-// Yahoo round-trip per index per client.
+// REAL-TIME NSE quote (the India equivalent of the US realtime fix):
+// see ai/growwQuote.js — fetchGrowwNseQuote is imported above. NSE's own
+// API blocks datacenter IPs (403), and Yahoo .NS is ~15-min delayed;
+// Groww's public live-price endpoint serves the genuine NSE last-traded
+// price (`ltp`, type LIVE_PRICE) for stocks AND ETFs from cloud servers.
+
+// PERF (2026 lag audit): same 3s micro-cache + in-flight sharing pattern
+// for the Yahoo fetcher below. fetchYahooQuote serves the Indian INDICES
+// (NIFTY, BANKNIFTY, INDIAVIX — Groww has no index quotes) and the US
+// fallback path; the browser polls them every few seconds, and without a
+// cache each poll meant a fresh Yahoo round-trip per index per client.
 const _yahooMicroCache = new Map(); // ysym -> { ts, promise }
 const YAHOO_CACHE_MS = 3000;
 async function fetchYahooQuote(ysym) {

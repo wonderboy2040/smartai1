@@ -130,16 +130,21 @@ async function _fetchQuotes(symMarket) {
     (mkt === 'CRYPTO' ? crypto : india).push(sym);
   }
 
-  // INDIA: Groww NSE quotes (≤24 watcher symbols in ONE parallel round —
+  // INDIA: Groww NSE quotes (≤34 watcher symbols in ONE parallel round —
   // the server-side Groww micro-cache de-dupes these against the
   // /api/quote poll flood).
+  // v10.12 (#1 source transparency): every quote is tagged with the
+  // upstream that actually served it — the intraday signal cards render
+  // the Groww·live / Yahoo·delayed pill from this field (LiveQuote.src →
+  // LiveSourceBadge). Groww → 'groww-live'; indices below → 'yahoo-delayed';
+  // crypto → 'coindcx-inr'.
   if (india.length && typeof _deps.fetchGrowwNseQuote === 'function') {
     for (let i = 0; i < Math.min(india.length, MAX_WATCH_NSE); i += 24) {
       const batch = india.slice(i, i + 24);
       await Promise.allSettled(batch.map(async (sym) => {
         try {
           const q = await _deps.fetchGrowwNseQuote(sym);
-          if (q && q.price > 0) out[sym] = { price: q.price, change: q.change ?? 0, ts: Date.now() };
+          if (q && q.price > 0) out[sym] = { price: q.price, change: q.change ?? 0, ts: Date.now(), src: 'groww-live' };
         } catch { /* skip */ }
       }));
     }
@@ -154,7 +159,11 @@ async function _fetchQuotes(symMarket) {
     await Promise.allSettled(india.filter(s => INDEX_SYMBOLS.has(s)).map(async (sym) => {
       try {
         const q = await _deps.fetchIndexSpot(sym);
-        if (q?.price > 0) out[sym] = { price: q.price, change: q.change ?? 0, ts: Date.now() };
+        // fetchIndexSpot = the Yahoo index fetcher (^NSEI etc.) — honestly
+        // labeled 'yahoo-delayed' (Groww serves stocks/ETFs only, and its
+        // CASH/NIFTY endpoint serves a garbage index ltp — see the v9.5 note
+        // above, verified live 19425 vs 23398).
+        if (q?.price > 0) out[sym] = { price: q.price, change: q.change ?? 0, ts: Date.now(), src: 'yahoo-delayed' };
       } catch { /* skip */ }
     }));
   }
@@ -170,7 +179,7 @@ async function _fetchQuotes(symMarket) {
         const t = byMkt.get(`${sym}INR`);
         const price = parseFloat(t?.last_price);
         if (price > 0) {
-          out[sym] = { price, change: parseFloat(t.change_24_hour) || 0, ts: Date.now() };
+          out[sym] = { price, change: parseFloat(t.change_24_hour) || 0, ts: Date.now(), src: 'coindcx-inr' };
         }
       }
     } catch { /* CoinDCX transient */ }

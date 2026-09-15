@@ -20,6 +20,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { MTFConfluenceBadge } from '../intraday/MTFConfluenceBadge';
 import { DepthLadder } from './DepthLadder';
+import { LiveSourceBadge } from './LiveSourceBadge';
 import type { AISignal, Side, SuperIntel } from './types';
 
 const fmt = (n: number | null | undefined, dp = 2): string => {
@@ -823,9 +824,13 @@ interface Props {
   /** v10.10: LIVE direct-CoinDCX LTP (2s RT stream — /api/stream fut=/
    *  glob=/crypto= overlay). null = no live tick yet → snapshot ltp shows. */
   liveLtp?: number | null;
+  /** v10.11 (#1): which upstream served the live tick (server source label:
+   *  'coindcx-fut-rt' | 'coindcx-fut-ws' | 'finnhub-global-rt' |
+   *  'yahoo-global-rt' | 'binance-fut-rt' | …) → the provenance pill. */
+  liveSrc?: string | null;
 }
 
-export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, onExecuteIndia, onExecuteFutures, onExecuteGlobal, onDeep, canLive, canLiveIndia, isNew, orderBudgetINR, riskCapPct, maxLeverage, indiaBudgetINR, onPaperTrade, paperOpenForSymbol, liveLtp }: Props) {
+export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, onExecuteIndia, onExecuteFutures, onExecuteGlobal, onDeep, canLive, canLiveIndia, isNew, orderBudgetINR, riskCapPct, maxLeverage, indiaBudgetINR, onPaperTrade, paperOpenForSymbol, liveLtp, liveSrc }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [slipOpen, setSlipOpen] = useState(false);
   const [ticketOpen, setTicketOpen] = useState(false);
@@ -895,8 +900,12 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
                     : (v => fmt(v))} />
               {liveLtp != null && liveLtp > 0 && (
                 <span className="px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[8px] font-black border border-emerald-500/30 tracking-wider"
-                  title="Direct CoinDCX RT feed — 2s direct poll (board snapshot nahi)">⚡ LIVE</span>
+                  title="Direct CoinDCX RT feed — 2s direct poll / WS event push (board snapshot nahi)">⚡ LIVE</span>
               )}
+              {/* v10.11 (#1): source-transparency — WHICH upstream is serving
+                  this live price right now (CoinDCX·RT / Finnhub·RT /
+                  Yahoo·delayed / Binance·RT / SIM·synthetic). */}
+              {liveLtp != null && liveLtp > 0 && <LiveSourceBadge src={liveSrc} />}
             </span>
             {signal.changePct != null && (
               <span className={`font-mono font-bold ${(signal.changePct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>

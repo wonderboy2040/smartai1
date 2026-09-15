@@ -279,7 +279,9 @@ export default function App() {
                       <>
                         <span className="text-slate-700">•</span>
                         <span className="flex items-center gap-1" title="Live real-time feeds active">
-                          {(feedStatus['groww-in-stream'] || feedStatus['yahoo-in-stream']) && <span className="px-1 rounded bg-emerald-500/15 text-emerald-400 text-[9px] font-bold font-mono">NSE⚡</span>}
+                          {/* v10.12: inStream's canonical labels are now 'groww-live' /
+                              'yahoo-delayed' (source transparency plan #1) */}
+                          {(feedStatus['groww-live'] || feedStatus['yahoo-delayed']) && <span className="px-1 rounded bg-emerald-500/15 text-emerald-400 text-[9px] font-bold font-mono">NSE⚡</span>}
                           {(feedStatus['finnhub-stream'] || feedStatus['yahoo-us-fallback']) && <span className="px-1 rounded bg-emerald-500/15 text-emerald-400 text-[9px] font-bold font-mono">US⚡</span>}
                           {feedStatus['coindcx-live'] && <span className="px-1 rounded bg-amber-500/15 text-amber-400 text-[9px] font-bold font-mono">CRYPTO⚡</span>}
                         </span>

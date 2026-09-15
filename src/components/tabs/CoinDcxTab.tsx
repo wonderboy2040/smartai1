@@ -378,13 +378,15 @@ export default memo(function CoinDcxTab() {
       {/* ============ 🧠 EXPERT PICKS (v8.0 Advance Pro Trader Engine) ============ */}
       <div id="cx-expert">
         {desk !== 'GLOBAL' && <ExpertPicksPanel active market={desk} onDeep={(sym) => { onDeep({ symbol: sym, market: desk } as AISignal); }}
-          liveLtpFor={(m, s) => liveFor(m, s)?.price ?? null} />}
+          liveLtpFor={(m, s) => liveFor(m, s)?.price ?? null}
+          liveSrcFor={(m, s) => liveFor(m, s)?.src ?? null} />}
       </div>
 
       {/* ============ 🏆 TOP 5 PICKS (v6.9) ============ */}
       <div id="cx-top5">
         <TopPicksPanel picks={board?.topFive} market={desk === 'GLOBAL' ? 'GLOBALFUTURES' : desk} deskLabel={desk === 'GLOBAL' ? '🌍 GLOBAL EQUITY FUTURES · USD (SIM desk)' : desk === 'FUTURES' ? '⚡ COINDCX GLOBAL FUTURES · USDT' : '₿ COINDCX SPOT · INR'} scanned={board?.scanned} loading={loading} onDeep={onDeep}
-          liveLtpFor={(m, s) => liveFor(m, s)?.price ?? null} />
+          liveLtpFor={(m, s) => liveFor(m, s)?.price ?? null}
+          liveSrcFor={(m, s) => liveFor(m, s)?.src ?? null} />
       </div>
 
       {/* ============ MARKET BREADTH ============ */}
@@ -440,6 +442,7 @@ export default memo(function CoinDcxTab() {
           {visibleSignals.map(s => (
             <SignalCard key={`${s.market}-${s.symbol}`} signal={s} busy={busy}
               liveLtp={liveFor(s.market, s.symbol)?.price ?? null}
+              liveSrc={liveFor(s.market, s.symbol)?.src ?? null}
               onExecute={desk === 'CRYPTO' ? onExecute : undefined}
               onExecuteFutures={desk === 'FUTURES' ? onExecuteFutures : undefined}
               onExecuteGlobal={desk === 'GLOBAL' ? onExecuteGlobal : undefined}
@@ -594,6 +597,7 @@ export default memo(function CoinDcxTab() {
               <>
                 <SignalCard signal={deep.signal}
                   liveLtp={liveFor(deep.signal.market, deep.signal.symbol)?.price ?? null}
+                  liveSrc={liveFor(deep.signal.market, deep.signal.symbol)?.src ?? null}
                   onExecute={deep.signal.market === 'CRYPTO' ? onExecute : undefined}
                   onExecuteFutures={deep.signal.market === 'FUTURES' ? onExecuteFutures : undefined}
                   canLive={canLive} busy={busy}

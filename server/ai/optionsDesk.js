@@ -925,13 +925,21 @@ export function buildOptionSignalCards(desk, deep) {
   const atm = rows.reduce((best, r) => (Math.abs(r.strike - spot) < Math.abs(best.strike - spot) ? r : best), rows[0]);
   const byStrike = (k) => rows.find(r => r.strike === k);
   const cand = [];
+  const otmDir = side === 'LONG' ? 1 : -1; // CE: upar OTM · PE: neeche OTM
+  // v10.11 (expiry-day fix): candidates whose premium has COLLAPSED below
+  // the tradeable floor are DROPPED, not tick-clamped. Minutes before expiry
+  // an OTM premium rounds to the ₹0.05 tick and the old code served a
+  // degenerate 0.05/0.05/0.05 card (SL == entry == target — meaningless
+  // numbers next to a fresh-looking call). Below ~₹1 the bid-ask spread IS
+  // the premium; no honest card exists for that strike.
+  const MIN_TRADEABLE_PREMIUM = 1.0;
   const pushCand = (row, bias) => {
     if (!row) return;
     const ltp = type === 'CE' ? row.callLTP : row.putLTP;
     if (!(ltp > 0)) return;
+    if (ltp < MIN_TRADEABLE_PREMIUM) return; // collapsed premium — skip honestly
     cand.push({ row, bias, strike: row.strike, ltp });
   };
-  const otmDir = side === 'LONG' ? 1 : -1; // CE: upar OTM · PE: neeche OTM
   pushCand(atm, 'ATM');
   pushCand(byStrike(atm.strike - otmDir * step), 'ITM');
   pushCand(byStrike(atm.strike + otmDir * step), 'OTM');
@@ -961,6 +969,11 @@ export function buildOptionSignalCards(desk, deep) {
     if (target == null) target = roundToTick(entry * 1.30);
     if (stopLoss == null) stopLoss = roundToTick(entry * 0.75);
     if (stopLoss < entry * 0.35) stopLoss = roundToTick(entry * 0.35); // cap max premium loss at 65%
+    // v10.11 (expiry-day fix): tick-separation guards — sub-tick geometry
+    // can NEVER serve SL >= entry or target <= entry (belt-and-suspenders
+    // under the candidate floor above; protects every future path).
+    if (!(stopLoss < entry)) stopLoss = roundToTick(Math.max(entry * 0.35, entry - 0.05));
+    if (!(target > entry)) target = roundToTick(Math.max(entry * 1.30, entry + 0.05));
 
     const risk = entry - stopLoss;
     const reward = target - entry;

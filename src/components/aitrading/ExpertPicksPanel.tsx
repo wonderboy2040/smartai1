@@ -11,6 +11,7 @@
 // ============================================================
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, getProxyBase } from '../../utils/api';
+import { LiveSourceBadge } from './LiveSourceBadge';
 
 export interface ExpertFactor { key: string; label: string; value: number; weight: number }
 export interface ExpertExitStep { at: number; bookPct: number; action: string }
@@ -105,7 +106,7 @@ function FactorBar({ label, value, weight }: { label: string; value: number; wei
   );
 }
 
-const ExpertPickCard = memo(function ExpertPickCard({ pick, market, onDeep, liveLtp }: { pick: ExpertPick; market: string; onDeep?: (symbol: string) => void; liveLtp?: number | null }) {
+const ExpertPickCard = memo(function ExpertPickCard({ pick, market, onDeep, liveLtp, liveSrc }: { pick: ExpertPick; market: string; onDeep?: (symbol: string) => void; liveLtp?: number | null; liveSrc?: string | null }) {
   const [open, setOpen] = useState(false);
   const price = priceFmt(market);
   const p = pick.plan;
@@ -128,9 +129,10 @@ const ExpertPickCard = memo(function ExpertPickCard({ pick, market, onDeep, live
               <span className="px-2 py-0.5 rounded-lg text-[9px] font-black bg-black/30 text-slate-400 border border-slate-700">{p.horizon.label}</span>
             </div>
             <div className="text-[10px] text-slate-500 mt-1 font-mono">
-              {isLive && <span className="text-emerald-400" title="Direct CoinDCX RT — 2s direct poll (60s expert-scan snapshot nahi)">⚡ </span>}
+              {isLive && <span className="text-emerald-400" title="Direct CoinDCX RT — 2s direct poll / WS event push (60s expert-scan snapshot nahi)">⚡ </span>}
               LTP {price(showLtp)}{pick.changePct != null ? ` · 24h ${pick.changePct >= 0 ? '+' : ''}${pick.changePct.toFixed(1)}%` : ''}
               {p.liquidation != null ? ` · liq≈ ${price(p.liquidation)}` : ''}
+              {isLive && <span className="ml-1"><LiveSourceBadge src={liveSrc} /></span>}
             </div>
           </div>
         </div>
@@ -240,9 +242,11 @@ interface Props {
   /** v10.10: live direct-CoinDCX LTP lookup (2s RT stream) — overlay on
    *  each pick's LTP; undefined → snapshot behaviour. */
   liveLtpFor?: (market: string, symbol: string) => number | null | undefined;
+  /** v10.11 (#1): source label of the live tick → provenance pill. */
+  liveSrcFor?: (market: string, symbol: string) => string | null | undefined;
 }
 
-export const ExpertPicksPanel = memo(function ExpertPicksPanel({ active, market, minScore = 80, onDeep, liveLtpFor }: Props) {
+export const ExpertPicksPanel = memo(function ExpertPicksPanel({ active, market, minScore = 80, onDeep, liveLtpFor, liveSrcFor }: Props) {
   const [view, setView] = useState<ExpertPicksView | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(false);
@@ -367,7 +371,7 @@ export const ExpertPicksPanel = memo(function ExpertPicksPanel({ active, market,
       )}
 
       <div className="mt-3 space-y-2.5">
-        {picks.map(p => <ExpertPickCard key={`${p.market}-${p.symbol}`} pick={p} market={market} onDeep={onDeep} liveLtp={liveLtpFor?.(p.market || market, p.symbol) ?? null} />)}
+        {picks.map(p => <ExpertPickCard key={`${p.market}-${p.symbol}`} pick={p} market={market} onDeep={onDeep} liveLtp={liveLtpFor?.(p.market || market, p.symbol) ?? null} liveSrc={liveSrcFor?.(p.market || market, p.symbol) ?? null} />)}
       </div>
 
       {picks.length > 0 && (

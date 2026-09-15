@@ -1290,8 +1290,11 @@ export function useAppState() {
       // even when the US or India feed specifically was dark. Gate PER
       // MARKET now: the batch loop only sleeps while BOTH the India and US
       // SSE sources are healthy (the crypto poller covers its own market).
+      // v10.12: India labels renamed to the canonical source-transparency
+      // tags — 'groww-live' / 'yahoo-delayed' (was groww-in-stream /
+      // yahoo-in-stream).
       const feeds = feedStatusRef.current;
-      const inSseLive = Object.keys(feeds).some(s => feeds[s] && /in-stream|groww/.test(s));
+      const inSseLive = Object.keys(feeds).some(s => feeds[s] && /groww-live|yahoo-delayed/.test(s));
       const usSseLive = Object.keys(feeds).some(s => feeds[s] && /finnhub|us-fallback|tv-us-batch/.test(s));
       if (inSseLive && usSseLive) {
         // Still keep the storage flush path warm.

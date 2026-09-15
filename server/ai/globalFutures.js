@@ -42,6 +42,7 @@ import { computeTrailSl, maxSaneLeverage, fitPlanToRiskCap, evaluateExecutionGat
 import { pRound } from './lib/priceRound.js';
 import { withJournalLock, pushEntry, todayIST, dailyStats, loadProTraderConfig } from './coindcxOrders.js';
 import { computeIndicatorsFromCandles } from './lib/indicators.js';
+import { fetchFinnhubQuote } from './finnhubQuote.js';
 
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(String(v ?? '')); return Number.isFinite(n) ? n : null; };
@@ -294,23 +295,40 @@ export function syntheticCandles(symbol, bars = 500) {
 // convention, then a combined-feed scan) and a variant is accepted
 // ONLY if it returns >= 3 live B-<EQUITY>_USDC rows (the repo's
 // "CoinDCX field-name lesson, learned twice" pattern: never trust
-// one key shape). The working variant is sticky; a total failure
-// negative-caches for 60s so a blocked feed costs one probe round
-// per minute, not one per poll.
+// one key shape). The working variant is sticky; a total failure backs
+// off 10s→40s (jittered, v10.11) so a blocked feed costs one probe round
+// per backoff window, not one per poll — and a WAF blip heals in 10s.
 // ============================================================
 const GLOBAL_RT_URL = 'https://public.coindcx.com/market_data/v3/current_prices/futures/rt';
+// v10.11 (#4 endpoint-contract research, docs.coindcx.com): the RT endpoint
+// is DOCUMENTED with NO query params (sample response = USDT pairs only),
+// so USDC-scoping stays an undocumented best-effort. The array-style
+// `margin_currency_short_name[]=…` IS CoinDCX's documented multi-value
+// convention on the derivatives family (active_instruments), so it goes
+// FIRST; the scalar shape (documented on the single `instrument` endpoint)
+// second; the param-less combined feed last. A variant is still accepted
+// only with >= 3 live B-<EQUITY>_USDC rows, and the working one is sticky.
 const GLOBAL_RT_PARAM_VARIANTS = [
-  'margin_currency_short_name=USDC',
-  'margin_currency_short_name[]=USDC',
+  'margin_currency_short_name%5B%5D=USDC', // array-style — documented convention
+  'margin_currency_short_name=USDC',       // scalar — instrument-endpoint shape
   '', // combined feed — USDC keys inside a shared payload
 ];
 const GLOBAL_RT_CACHE_MS = 5_000;    // live perp LTP — positions stream polls 1s
-const GLOBAL_RT_NEG_CACHE_MS = 60_000;
+// v10.11 (#2): the flat 60s negative cache is now a jittered exponential
+// backoff — 10s after the FIRST failed probe round, doubling to a 40s cap.
+// A WAF blip recovers in 10s (was: a full minute of Yahoo-only prices);
+// a hard outage still backs off politely (max one probe round / 40s).
+// ±0-2s jitter desynchronizes multiple server instances hammering the
+// same blocked feed. A single SUCCESS resets the streak (fail-1 = 10s).
+const GLOBAL_RT_NEG_BASE_MS = 10_000;
+const GLOBAL_RT_NEG_MAX_MS = 40_000;
+const GLOBAL_RT_NEG_JITTER_MS = 2_000;
 const GLOBAL_RT_PROBE_DEADLINE_MS = 6_000; // a blocked feed must never stall the caller
 const GLOBAL_RT_MIN_ROWS = 3;        // honest proof we got the USDC domain
 let _rtCache = null;                 // Map<BASE, row>
 let _rtAt = 0;
 let _rtDownUntil = 0;                // negative cache (CHECKED — v10.6.1 lesson)
+let _rtFailStreak = 0;               // consecutive failed probe rounds (v10.11 backoff)
 let _rtVariant = 0;                  // sticky working param variant
 let _rtInflight = null;              // single-flight probe
 
@@ -360,7 +378,7 @@ async function _fetchRtVariant(param) {
  */
 export async function fetchGlobalFuturesRt({ maxAgeMs = GLOBAL_RT_CACHE_MS } = {}) {
   if (_rtCache && Date.now() - _rtAt < maxAgeMs) return _rtCache;
-  if (Date.now() < _rtDownUntil) return null; // negative cache — one probe round per minute max
+  if (Date.now() < _rtDownUntil) return null; // backoff negative cache (10s→40s)
   if (_rtInflight) return _rtInflight;        // single-flight: board + stream + watcher share one probe
   const loop = (async () => {
     try {
@@ -370,6 +388,7 @@ export async function fetchGlobalFuturesRt({ maxAgeMs = GLOBAL_RT_CACHE_MS } = {
         try { rows = await _fetchRtVariant(GLOBAL_RT_PARAM_VARIANTS[idx]); } catch { rows = null; }
         if (rows) {
           _rtVariant = idx; _rtCache = rows; _rtAt = Date.now();
+          _rtFailStreak = 0; // v10.11 (#2): one success fully heals the backoff
           return rows;
         }
       }
@@ -379,8 +398,8 @@ export async function fetchGlobalFuturesRt({ maxAgeMs = GLOBAL_RT_CACHE_MS } = {
     }
   })();
   // Deadline race: a hung/blocked upstream costs this ONE round's budget
-  // (≤6s), then the 60s negative cache serves null instantly — the
-  // board/positions callers degrade to Yahoo without a stall. A late
+  // (≤6s), then the backoff negative cache serves null instantly — the
+  // board/positions callers degrade to Finnhub/Yahoo without a stall. A late
   // background SUCCESS still populates the cache (the positive-cache
   // check runs before the negative-cache check, so the next poll that
   // finds it fresh serves it). Both timers are unref'd — they never
@@ -393,17 +412,38 @@ export async function fetchGlobalFuturesRt({ maxAgeMs = GLOBAL_RT_CACHE_MS } = {
     }),
   ]);
   const winner = await _rtInflight;
-  if (!winner) _rtDownUntil = Date.now() + GLOBAL_RT_NEG_CACHE_MS;
+  if (!winner) {
+    // v10.11 (#2) jittered exponential backoff: 10s → 20s → 40s (cap), ±2s
+    _rtFailStreak += 1;
+    const backoff = Math.min(GLOBAL_RT_NEG_MAX_MS, GLOBAL_RT_NEG_BASE_MS * 2 ** (_rtFailStreak - 1));
+    _rtDownUntil = Date.now() + backoff + Math.floor(Math.random() * GLOBAL_RT_NEG_JITTER_MS);
+  }
   return winner;
 }
 
-// ---------------- REAL quotes (CoinDCX RT first, Yahoo fallback) ----------------
+// ---------------- REAL quotes (CoinDCX RT → Finnhub → Yahoo) ----------------
 let _quotesCache = null, _quotesAt = 0;
 /**
  * Live quotes for the whole global universe:
- * Map symbol → { price, changePct, source: 'coindcx-usdc' | 'yahoo' | 'sim', sim }
+ * Map symbol → { price, changePct, source: 'coindcx-usdc' | 'finnhub' |
+ * 'yahoo' | 'sim', sim }
  * 5s cache — the RT feed is ~1s fresh, the positions SSE stream polls at 1s
  * with server-side dedupe, and ONE upstream call prices every symbol.
+ *
+ * v10.11 (#3) fallback priority (was: RT → Yahoo):
+ *   1. CoinDCX USDC RT feed  — the app-parity 24/7 perp LTP (unchanged)
+ *   2. FINNHUB REST quote    — shared module (ai/finnhubQuote.js) shares
+ *                              the US desk's micro-cache + 55/min rate
+ *                              limiter. Outside US hours this is a clean,
+ *                              instant last-close quote — exactly when the
+ *                              24/7 perps need a fallback. While the US
+ *                              market is OPEN the shared staleness gate
+ *                              (isStaleUsQuote — free-tier REST serves the
+ *                              previous close) rejects it, so it can NEVER
+ *                              serve an open-market stale price.
+ *   3. Yahoo chart quote     — final fallback: Finnhub down / rate-limited
+ *                              / freshness-gated / no key configured.
+ *   4. SIM names             — deterministic synthetic walk (unchanged).
  */
 export async function fetchGlobalQuotes({ maxAgeMs = 5_000 } = {}) {
   if (_quotesCache && Date.now() - _quotesAt < maxAgeMs) return _quotesCache;
@@ -421,8 +461,27 @@ export async function fetchGlobalQuotes({ maxAgeMs = 5_000 } = {}) {
       });
     }
   }
-  // 2) Yahoo fallback — ONLY the symbols the RT feed didn't cover
-  //    (unlisted-on-CoinDCX names, or the feed is down → full fallback)
+  // 2) Finnhub — FIRST fallback for the symbols the RT feed didn't cover
+  //    (unlisted-on-CoinDCX names, or the feed is down → full fallback).
+  //    Finnhub tickers match the Yahoo `yahoo:` field for US large-caps —
+  //    no second mapping table needed. Never throws; a null row (no key /
+  //    over budget / stale-gated) simply falls through to Yahoo below.
+  const need = GLOBAL_FUTURES_UNIVERSE.filter(u => !u.sim && !map.has(u.symbol));
+  if (need.length > 0) {
+    await Promise.allSettled(need.map(async (u) => {
+      try {
+        const fh = u.yahoo ? await fetchFinnhubQuote(u.yahoo) : null;
+        if (fh && fh.price > 0) {
+          map.set(u.symbol, {
+            symbol: u.symbol, price: fh.price, changePct: fh.change ?? 0,
+            high: fh.high, low: fh.low,
+            source: 'finnhub', sim: false, ts: fh.time || Date.now(),
+          });
+        }
+      } catch { /* honest fallthrough to Yahoo */ }
+    }));
+  }
+  // 3) Yahoo — ONLY the symbols Finnhub didn't cover either
   const needYahoo = GLOBAL_FUTURES_UNIVERSE.filter(u => !u.sim && !map.has(u.symbol));
   await Promise.allSettled(needYahoo.map(async (u) => {
     try {
@@ -954,8 +1013,9 @@ export function __resetGlobalForTests() {
   _quotesCache = null; _quotesAt = 0;
   _candleCache = new Map();
   // v10.7: the RT feed state resets too (sticky variant + caches) so
-  // every case starts from a clean probe.
-  _rtCache = null; _rtAt = 0; _rtDownUntil = 0; _rtVariant = 0; _rtInflight = null;
+  // every case starts from a clean probe. v10.11: the backoff streak
+  // resets with it (a leaky streak would poison cadence assertions).
+  _rtCache = null; _rtAt = 0; _rtDownUntil = 0; _rtFailStreak = 0; _rtVariant = 0; _rtInflight = null;
   // v10.5.3: restore the SEED universe (drop test-time discoveries so
   // each case starts hermetic) + stop the refresh timer
   if (_universeTimer) { clearInterval(_universeTimer); _universeTimer = null; }
@@ -969,5 +1029,10 @@ export function __setGlobalRtForTests(rowsByBase) {
   _rtDownUntil = 0;
 }
 export function __globalRtStateForTests() {
-  return { variant: _rtVariant, down: Date.now() < _rtDownUntil, size: _rtCache?.size ?? 0 };
+  return {
+    variant: _rtVariant, down: Date.now() < _rtDownUntil,
+    downUntil: _rtDownUntil,           // v10.11: exact backoff boundary (jitter-aware asserts)
+    failStreak: _rtFailStreak,         // v10.11: consecutive failed probe rounds
+    size: _rtCache?.size ?? 0,
+  };
 }

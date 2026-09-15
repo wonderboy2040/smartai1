@@ -50,6 +50,14 @@ export interface PriceData {
   sma50?: number;
   macd?: number;
   isRealtime?: boolean;
+  /** v10.12 (#1 source transparency): which upstream actually served this
+   *  tick. India desk: 'groww-live' (Groww NSE SSE) | 'tv-ws' (browser
+   *  TradingView socket) | 'yahoo-delayed' (Yahoo fallback — indices / Groww
+   *  misses). The shared SSE pipeline also carries the other desks' labels
+   *  ('coindcx-*', 'finnhub-*', 'binance-*', 'yahoo-us-fallback', …) —
+   *  LiveSourceBadge maps every known label to its honest pill and renders
+   *  a neutral LIVE pill for unlabeled provenance. */
+  src?: string;
   /** REAL previous close from the quote source (not back-computed from the
    *  rounded change %). Present on Groww/Yahoo/Finnhub/TV-batch sourced
    *  ticks — used for exact Today's P&L: (price - prevClose) * qty. */

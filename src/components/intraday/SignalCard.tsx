@@ -15,6 +15,9 @@
 import { memo, useState } from 'react';
 import type { IntradaySignal, LiveQuote, SuperIntel } from './types';
 import { sectorOf } from './sectorMap';
+// v10.12 (#1): the SAME provenance pill the CoinDCX desk uses — reused
+// verbatim so Groww·live / TV·WS / Yahoo·delayed look identical across desks.
+import { LiveSourceBadge } from '../aitrading/LiveSourceBadge';
 
 const GRADE_STYLE: Record<string, string> = {
   'A+': 'bg-gradient-to-r from-amber-400/25 to-yellow-500/25 text-amber-300 border border-amber-400/50 shadow-[0_0_12px_rgba(251,191,36,0.35)]',
@@ -311,6 +314,11 @@ export const SignalCard = memo(function SignalCard({
               {livePrice != null && (
                 <span className="text-[9px] font-mono text-cyan-500/80 animate-pulse">● LIVE</span>
               )}
+              {/* v10.12 (#1): source-transparency — WHICH upstream is serving
+                  this live LTP (Groww·live / Yahoo·delayed / CoinDCX·RT for
+                  the crypto watch symbols). Only beside a LIVE price; a
+                  snapshot LTP shows no provenance pill. */}
+              {livePrice != null && <LiveSourceBadge src={live?.src} />}
               <span className={`text-xs font-black font-mono ${(live?.change ?? s.changePct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                 {(live?.change ?? s.changePct ?? 0) >= 0 ? '+' : ''}{(live?.change ?? s.changePct ?? 0).toFixed(2)}%
               </span>

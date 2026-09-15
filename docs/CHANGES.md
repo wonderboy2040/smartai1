@@ -1,3 +1,86 @@
+## v10.12.1 — INDIA INTRADAY: DEEP-RECHECK FIX (2026-09-15)
+
+**Full-site deep recheck (the agreed final step after Plan C) found one real bug — fixed + live-verified.**
+
+### The bug (live on the wire, caught by the boot smoke)
+- `server/inStream.js` (`/api/stream?in=` SSE writer) tried Groww FIRST for INDEX symbols too — but Groww's `CASH/<INDEX>` endpoint serves a **garbage STALE ltp** (live-observed: `19425.35` with `lastTradeTime` from Nov-2023 while Yahoo's `^NSEI` was current). That garbage passed the `price > 0` check and went out as **`IN_NIFTY` @ 19425.35 tagged `groww-live`** — a WRONG price with the WORST possible badge, the exact opposite of the v10.12 honest-source goal.
+- `/api/quote` (INDIAN_INDICES skip) and `intraday/stream.js` (INDEX_SYMBOLS → Yahoo override) already handled this; the inStream poller was the one gap. The old test only mocked "Groww returns null for NIFTY" — reality returns garbage, so the gap was invisible to the hermetic suite.
+
+### The fix
+- `inStream.js`: `INDEX_SYMBOLS` (union of the other two modules' sets — every name has a YF_INDEX_MAP entry) now skips Groww **entirely**; indices go straight to the Yahoo fallback, honestly tagged **`yahoo-delayed`**. Stocks unchanged (Groww first).
+
+### Verification
+- NEW regression test in `streamFeeds.test.ts`: Groww mocked with the REAL garbage payload shape (ltp 19425.35) → asserts Yahoo's current spot is served `yahoo-delayed` AND Groww is never even asked for an index, while stocks still hit Groww first.
+- Boot smoke (5/5 PASS, live upstreams): `IN_RELIANCE` 1235.3 `groww-live` · `IN_NIFTY` **23118.6 `yahoo-delayed`** (was 19425.35 `groww-live`) · `/api/feed-status` shows both sources live.
+- Browser E2E: India Intraday board renders **Groww·live** emerald pills next to live LTPs (AXISBANK ₹1,222.9, SBIN ₹968 — VLM-verified screenshot), SSE 200, zero JS errors.
+- Suite: **90 files / 1621 tests ALL PASS**; tsc clean; vite build clean.
+
+## v10.12 — INDIA INTRADAY: PLAN C HARDENING (2026-09-15)
+
+**The user's 2-part plan, implemented end-to-end** (source-transparency badge + faster retry/backoff on Groww; Groww REST + TradingView WS as-is, no broker account).
+
+### #1: Source-transparency badge — Groww·live / TV·WS / Yahoo·delayed
+- Every India live tick now says WHICH upstream served it, end-to-end:
+  - `server/inStream.js` (the `/api/stream?in=` SSE writer): canonical labels **`groww-live`** (Groww NSE served it) / **`yahoo-delayed`** (Yahoo fallback — indices, which Groww doesn't cover, or a Groww miss); the old `groww-in-stream`/`yahoo-in-stream` labels are retired (App.tsx `NSE⚡` chip + `useAppState` India-SSE-health regex updated to match).
+  - `server/intraday/stream.js` (the `/api/intraday-stream` quotes the intraday signal cards + paper P&L actually run on): every quote tagged — stocks `groww-live`, indices `yahoo-delayed` (Groww's CASH/NIFTY endpoint serves a garbage index ltp — verified live 19425 vs 23398), crypto watch symbols `coindcx-inr`.
+  - `src/utils/tvWebsocket.ts`: every browser TradingView-socket update tagged **`src: 'tv-ws'`**.
+  - `src/utils/liveStream.ts`: the SSE wire `source` field now passes through into `PriceData.src` (was dropped); `PriceData` + `LiveQuote` gain the optional `src` field (zero breakage — absent = neutral LIVE pill).
+- `LiveSourceBadge` (the v10.11 CoinDCX pill, reused verbatim for visual consistency) maps the three India labels: **Groww·live** (emerald) / **TV·WS** (sky) / **Yahoo·delayed** (amber).
+- UI wiring: the intraday `SignalCard` renders the pill next to `● LIVE` (only when a live LTP exists — a snapshot price shows no provenance pill); `IndiaIntradayTab`'s board cards now get a live LTP overlay + pill from the existing intraday SSE stream (`liveLtp`/`liveSrc` — the aitrading SignalCard's v10.11 props, so the AI desk gets the same live-price treatment as the CoinDCX desk; the stream stays connected in every view mode since the signal board consumes it).
+
+### #2: Faster retry / backoff on Groww failures
+- NEW **`server/ai/growwQuote.js`** — the Groww fetcher lifted out of `index.js` (same pattern as v10.11's `finnhubQuote.js`): the 3s micro-cache + in-flight promise sharing is byte-identical (N consumers — /api/quote, intraday scanner, SSE watcher, inStream poller — still cost ONE round-trip/symbol), plus:
+  - **Quick jittered retry** — ONE immediate retry after ~300–500ms INSIDE the same fetch cycle; a transient network blip recovers in the same cycle instead of costing a full 3s poll interval (all concurrent consumers ride the one retry — no extra upstream cost).
+  - **Per-symbol fail-streak backoff** — after 2 consecutive fully-failed cycles (4 upstream misses ≈ 6s of REAL failure — a blip the retry absorbs never reaches 1), that ONE symbol is skipped for one poll cycle (~4.5s): honest null returns instantly with ZERO upstream traffic (callers fall back to Yahoo), the probe resumes after the hold, and one success anywhere resets the state completely. Steady state for a dead symbol = half-rate probing — never hammering, never frozen, and the shared cache budget stays healthy for symbols that ARE working.
+
+### Tests (v10.12)
+- NEW `test/growwQuote.test.ts` (12 — cache/normalization/never-throws + retry-same-cycle + backoff arm/instant-null/per-symbol/expiry/reset/half-rate steady state), `test/indiaLiveSource.test.tsx` (11 — per-path src tagging: intraday stream groww-live/yahoo-delayed/coindcx-inr, tvWebsocket `tv-ws`, badge mapping, SignalCard render gating). UPDATED `test/streamFeeds.test.ts` (canonical inStream labels).
+- Suite: **90 files / 1620 tests ALL PASS** (was 88/1597); tsc clean; vite build clean; npm audit 0 vulns; boot smoke clean.
+
+## v10.11 — COINDCX REALTIME PRICES: 5-PART RELIABILITY PLAN (2026-09-15)
+
+**The user's diagnosis-based plan, implemented end-to-end** ("wiring is correct; the EQUITY SIM (USDC stock-perp) domain's upstream source is unreliable — guessed params + 60s blackout + slow Yahoo fallback").
+
+### #1: Source-transparency badge (trust fix)
+- Every liveFeed tick already carries a `source` label on the SSE wire; the frontend now SURFACES it: new `src/components/aitrading/LiveSourceBadge.tsx` renders an 8px provenance pill next to every live price — **CoinDCX·RT** (emerald, direct feed REST or WS), **Finnhub·RT** (sky, fallback #1), **Yahoo·delayed** (amber, final fallback), **Binance·RT** (sky, honest CoinDCX-dark fallback), **SIM·synthetic** (slate, SPACEX). Unknown source → neutral LIVE pill — never a blank, never a wrong guess.
+- `useCxLivePrices.ts` passes `src` through (`CxLiveTick.src`); `SignalCard` (+ deep modal), `TopPicksPanel`, `ExpertPicksPanel` all render it (new `liveSrc` / `liveSrcFor` props, optional → zero breakage); CoinDcxTab wires all 4 call sites.
+
+### #2: Negative-cache blackout shrunk (60s → jittered exponential backoff)
+- `globalFutures.js` `fetchGlobalFuturesRt`: first failed probe round now blacks out **~10s** (was a flat 60s), repeated failures double it (**20s → 40s cap**) with ±0–2s jitter; **one success resets the streak**. A WAF blip heals in 10s instead of a full minute of degraded prices.
+
+### #3: Finnhub fallback for EQUITY SIM (replaces Yahoo as primary fallback)
+- NEW **`server/ai/finnhubQuote.js`** — the US desk's inline fetcher lifted into a SHARED module: one 3s micro-cache with in-flight promise sharing (a symbol one desk just fetched is free for the other) + **one 55/min sliding-window rate limiter** (free tier is 60/min; neither desk can starve the other). The 2026-audit staleness gate survives the lift (open-market stale quotes are rejected → Yahoo), so Finnhub-first can never serve a frozen price during US hours.
+- `fetchGlobalQuotes` fallback chain is now **CoinDCX RT → Finnhub → Yahoo** (was RT → Yahoo), rows tagged `source: 'finnhub'` → the badge in #1 shows exactly which upstream served each price. `server/index.js` imports the shared module (byte-parity behavior for /api/quote).
+
+### #4: Endpoint contract confirmed (docs.coindcx.com research)
+- The `/market_data/v3/current_prices/futures/rt` endpoint is **documented with NO query params** (sample response = USDT pairs only) — USDC-scoping stays best-effort, so the 3-variant probe stays, but now **array-style FIRST** (`margin_currency_short_name[]=USDC` — CoinDCX's documented multi-value convention on the derivatives family: `active_instruments`), then scalar, then combined. Response row shape (`ls/pc/h/l/v/mp/ts`) confirmed → the parser is docs-accurate.
+
+### #5: CoinDCX futures WEBSOCKET (event-driven, no 2s ceiling)
+- Docs confirm a futures socket: `wss://stream.coindcx.com` — **Socket.IO v2 / Engine.IO 3**, per-instrument channels `B-<PAIR>@prices-futures`, event `price-change`, app-level ping every 25s, market data needs **no auth**.
+- NEW **`server/ai/cxSocketIo.js`** — a hand-rolled EIO=3 framing client over the existing `ws` dependency (~60 lines, factory-injectable, zero new npm packages — keeps `npm audit` clean; the legacy `socket.io-client@2.4.0` has known advisories).
+- `cxRtStream.js` gains the **WS accelerator**: subscribes the refcounted symbol set (`B-<BASE>_USDT@…` + `B-<SYM>_USDC@…`), lands every attributable `price-change` in liveFeed **immediately** (labels `coindcx-fut-ws` / `coindcx-glob-ws`), tolerant to every plausible payload shape (channel-attributed single ticks, inline fields, book-style `prices` maps — the docs' own sample for this event is empty). **Tolerant parse + auto-detect health**: only an ACTUALLY-LANDED tick counts as proof —
+  - WS healthy (tick < 30s old) → REST poller slows to a **10s floor** (event-driven freshness + a guaranteed floor for illiquid perp channels that can go minutes without events);
+  - WS down / unproven / silent → REST stays at the full **2s** (v10.10 behavior — a docs mismatch can NEVER freeze or slow prices);
+  - ns-connected but zero attributable ticks for 2 min → **watchdog kills the socket + 10-min cooldown** (the docs payload is best-effort; the REST poller owns the desks);
+  - out-of-order guard (a late WS frame never regresses a newer tick), handshake watchdog 8s, fail-streak circuit breaker (3 → 10 min cooldown), reconnect backoff 3s→24s, idle-close with the SSE client count, engine.io ping→pong auto-answer.
+- SPOT deliberately untouched: the spot WS channel (`currentPrices@spot@10s`) is SLOWER than the existing CoinDCX 2s REST anchor + ~1s Binance WS accelerator.
+
+### Tests (v10.11)
+- NEW `test/finnhubQuote.test.ts` (7 — shared contract, cache sharing, budget guard, staleness gate), `test/globalFuturesFinnhubFallback.test.ts` (5 — RT→Finnhub→Yahoo chain, per-symbol honesty), `test/cxSocketIo.test.ts` (8 — EIO=3 framing, join/leave exactness, lifecycle honesty), `test/liveSourceBadge.test.tsx` (10 — badge mapping + render gating).
+- Extended `test/globalFuturesRt.test.ts` (14 — array-first probe order, backoff growth/cap/reset) and `test/cxRtStream.test.ts` (18 — Finnhub/Yahoo labels + the full WS contract: immediate tick, cadence transitions, degrade path, silent watchdog, out-of-order guard, book-style fan-out).
+
+### BONUS FIX (deep-recheck find — fired live TODAY): expiry-day option-card degeneracy
+- The full-suite recheck caught `optionSignalCards` failing at HEAD (pre-existing, untouched by the plan): on the expiry-day MORNING (2026-09-15, the real NIFTY Tuesday weekly, ~15:20 IST) the OTM candidate's BS premium collapses to the ₹0.05 tick → `roundToTick` clamping served a degenerate **0.05/0.05/0.05 card (SL == entry == target)** — meaningless numbers next to a fresh consensus, the exact "wrong call" experience.
+- `optionsDesk.js` fix: sub-**₹1 collapsed-premium candidates are DROPPED** (below ~₹1 the bid-ask spread IS the premium — no honest card exists for that strike) + belt-and-suspenders **tick-separation guards** (SL ≥ entry or target ≤ entry can never ship, on any path). +2 regression tests (hand-built collapsed row + the runtime-clock expiry-morning case).
+
+## v10.10 — COINDCX DIRECT 2s RT OVERLAY (2026-09-15)
+
+**The original bug**: the CoinDCX tab's three desks (SPOT / GLOBAL FUTURES / EQUITY SIM USDC) rendered `signal.ltp` — a board-snapshot price that could be ~2.5 minutes old next to a "fresh" signal → "wrong call / wrong signal" experience.
+
+- NEW `server/ai/cxRtStream.js` — the 2s DIRECT-from-CoinDCX poller for the two domains the SSE stream never covered: `FUT_<BASE>` (USDT perps, CoinDCX RT + Binance perp fallback, honest labels) and `GLOB_<SYM>` (USDC equity perps, CoinDCX RT + Yahoo fallback + SPACEX synthetic walk). Refcounted subscriptions, 90s eviction grace, idle-stop, single-flight shared with the board compute.
+- `/api/stream` accepts `fut=` + `glob=` params; `signals.js` board TTL 90s→60s with ≤2s-fresh plan pricing; `futures.js` single-flight.
+- NEW `src/components/aitrading/useCxLivePrices.ts` — ONE EventSource for all three desks, 800ms batched flush render-storm guard, visibility pause; `SignalCard` live LTP with tick flash + ⚡ LIVE badge + drift-vs-entry chip; CoinDcxTab/TopPicks/ExpertPicks live overlays + the honesty chip.
+
 ## v10.9 — TELEGRAM BOT 8-UPGRADE PLAN (2026-09-15)
 
 ### Feat #1: ONE SOURCE OF TRUTH — dual-bot unification

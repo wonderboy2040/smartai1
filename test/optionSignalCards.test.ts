@@ -372,3 +372,65 @@ describe('v9.7 MONTHLY-ONLY expiries (SEBI weekly rationalization)', () => {
     expect(nextWeeklyExpiryFor('BANKNIFTY', after)).toBe('2026-10-27');
   });
 });
+
+// ============================================================
+// v10.11 EXPIRY-DAY FIX — the regression that actually fired live:
+// on the expiry-day MORNING (2026-09-15, the real NIFTY Tuesday
+// weekly, ~15:20 IST) the OTM candidate's premium had collapsed to
+// the ₹0.05 tick and the card served a degenerate 0.05/0.05/0.05
+// ticket (SL == entry == target) — "wrong call" numbers next to a
+// fresh-looking consensus.
+//
+// THE CONTRACT (locked here):
+//   • sub-₹1 collapsed-premium rows are DROPPED from the candidate
+//     list (below ~₹1 the bid-ask spread IS the premium — no honest
+//     card exists for that strike).
+//   • every surviving card keeps StopLoss < Entry < Target — on ANY
+//     runtime clock, including minutes-to-expiry.
+// ============================================================
+describe('v10.11 expiry-day fix — collapsed premiums never serve degenerate cards', () => {
+  it('a sub-₹1 collapsed OTM row is DROPPED from the candidate list (honest skip)', () => {
+    const desk = {
+      ok: true, symbol: 'NIFTY', spot: 23411, expiry: istDateOut(4), dte: 4,
+      lotSize: LOT_SIZES['NIFTY'] || 1, source: 'bs-model', syntheticNote: 'model chain',
+      rows: [
+        { strike: 23400, callLTP: 120.4, putLTP: 98.2, callIV: 13, putIV: 13 },   // ATM
+        { strike: 23350, callLTP: 145.6, putLTP: 75.1, callIV: 13, putIV: 13 },   // ITM (CE)
+        { strike: 23450, callLTP: 0.04, putLTP: 210.0, callIV: 13, putIV: 13 },   // collapsed OTM
+      ],
+    };
+    const cards = buildOptionSignalCards(desk, mkDeep('LONG', null));
+    expect(cards.map(c => c.strike)).not.toContain(23450); // dropped — no honest card
+    expect(cards.length).toBe(2);                           // ATM + ITM still serve
+    for (const c of cards) {
+      expect(c.entry).toBeGreaterThanOrEqual(1.0);          // tradeable floor holds
+      expect(c.stopLoss).toBeLessThan(c.entry);             // never degenerate
+      expect(c.entry).toBeLessThan(c.target);
+    }
+  });
+
+  it('expiry-morning runtime clock (the REAL next weekly, however near) → invariant holds on every card', () => {
+    // On expiry-day mornings nextWeekly() is only hours/minutes away — the
+    // exact window that fired the bug. The invariant must hold regardless.
+    const SPOT = 23411;
+    const desk = {
+      ok: true, symbol: 'NIFTY', spot: SPOT, expiry: nextWeekly(), dte: 4,
+      lotSize: LOT_SIZES['NIFTY'] || 1, source: 'bs-model', syntheticNote: 'model chain',
+      rows: buildSyntheticChain('NIFTY', SPOT, 0.13, nextWeekly(), 8)?.rows || [],
+    };
+    const cases = [
+      mkDeep('LONG', { entry: SPOT, stopLoss: SPOT - 40, target1: SPOT + 60 }),
+      mkDeep('LONG', null),
+      mkDeep('SHORT', null),
+    ];
+    for (const deep of cases) {
+      const cards = buildOptionSignalCards(desk, deep);
+      expect(cards.length).toBeGreaterThanOrEqual(1); // ATM/ITM survive the floor
+      for (const c of cards) {
+        expect(c.entry).toBeGreaterThanOrEqual(1.0);
+        expect(c.stopLoss).toBeLessThan(c.entry);
+        expect(c.entry).toBeLessThan(c.target);
+      }
+    }
+  });
+});

@@ -397,7 +397,9 @@ function connect() {
   }, 30000);
 }
 
-function handleParsedMessage(parsed: Record<string, unknown>): void {
+// Exported for unit tests (the v10.12 #1 `src: 'tv-ws'` tagging contract
+// lives here) — production callers reach it via the ws.onmessage handler.
+export function handleParsedMessage(parsed: Record<string, unknown>): void {
   if (parsed.m !== 'qsd' || !Array.isArray(parsed.p) || parsed.p.length < 2) return;
 
   // TradingView qsd format: p[0] = session_id, p[1] = { n: "EXCHANGE:SYMBOL", s: "ok", v: { lp, ch, ... } }
@@ -441,6 +443,11 @@ function handleParsedMessage(parsed: Record<string, unknown>): void {
   // Derive market from the key
   update.market = key.startsWith('IN_') ? 'IN' : 'US';
   update.isRealtime = true;
+  // v10.12 (#1 source transparency): every TV-socket update is tagged with
+  // its origin so the UI can badge Groww·live (server SSE) vs TV·WS
+  // (browser socket) vs Yahoo·delayed honestly — one canonical `src` field
+  // on PriceData across all three India live paths.
+  update.src = 'tv-ws';
 
   // FIX H5: previously the guard was `Object.keys(update).length > 1` which
   // was always true because `update.time` and `update.market` were already
