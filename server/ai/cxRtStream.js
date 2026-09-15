@@ -551,7 +551,15 @@ function _landWsTick(domain, sym, d) {
   const price = _num(d.p) || _num(d.ls) || _num(d.price) || _num(d.last_price);
   if (!(price > 0)) return;
   const change = _num(d.pc) || _num(d.change) || _num(d.dp) || 0;
-  const time = _num(d.T) || _num(d.ts) || _num(d.btST) || _nowFn();
+  let time = _num(d.T) || _num(d.ts) || _num(d.btST) || _nowFn();
+  // v10.13 (deep-recheck M3): epoch UNIT normalization. The guard below
+  // compares this tick against ticks written by the REST pollers (futures.js
+  // `j.ts`, globalFutures `j.ts` — CoinDCX serves SECONDS) and the
+  // Date.now()-ms fallbacks. A seconds-based WS T against a ms-based last
+  // tick made the out-of-order guard reject by LUCK of unit order (and a
+  // seconds value stored into liveFeed poisoned frontend freshness).
+  // Everything is ms from here on: < 1e12 means seconds.
+  if (time > 0 && time < 1e12) time *= 1000;
   const key = `${domain}_${sym}`;
   // out-of-order guard — a late WS frame must never regress a newer tick
   const last = getTick(key);

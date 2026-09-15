@@ -31,8 +31,9 @@ export function getProxyBase(): string {
   return '';
 }
 
-// Legacy PROXY_BASE constant for backwards compatibility
-const PROXY_BASE = getProxyBase();
+// (v10.13: the legacy module-const PROXY_BASE was removed — every call site
+// now resolves getProxyBase() LIVE so a runtime backend switch applies
+// everywhere at once. See the batchFetchPrices note.)
 
 // ============================================================
 // Centralized API fetch — sends auth token via Authorization header
@@ -109,8 +110,10 @@ export function apiFetch(input: string, init: RequestInit = {}): Promise<Respons
   // v1.3 THROTTLE-GUARD: default 30s timeout when the caller didn't supply
   // its own AbortSignal. Prevents corner-case hung requests from stalling
   // the UI indefinitely (all existing explicit timeouts still take priority).
-  if (!init.signal) init.signal = AbortSignal.timeout(30000);
-  return fetch(url, { ...init, credentials: 'include', headers })
+  // v10.13 (deep-recheck L3): no longer MUTATES the caller's init object —
+  // a shared/reused init gained a surprise .signal side effect.
+  const signal = init.signal ?? AbortSignal.timeout(30000);
+  return fetch(url, { ...init, signal, credentials: 'include', headers })
     .then(res => {
       // MIRROR-BANNER FIX (v4.4): any successful API round-trip is proof the
       // Express backend is alive (the /health probe can false-negative on a
@@ -132,17 +135,20 @@ function notifyBackendOnline() {
 }
 export function getSessionToken(): string | null { return _sessionToken; }
 
-// SECURITY FIX (audit C1): Cloud sync auth token. Previously a hardcoded shared
-// token was shipped to EVERY browser bundle (and it also sits in the public repo
-// inside server/apps-script/Code.gs), letting anyone read/overwrite the user's
-// cloud-synced portfolio and synced API keys. The fallback literal is removed —
-// cloud sync now requires an explicit token from localStorage or build config.
+// SECURITY FIX (audit C1 + v10.13 deep-recheck H-1): Cloud sync auth token.
+// Previously a hardcoded shared token was shipped to EVERY browser bundle;
+// the audit removed the literal but kept a VITE_API_TOKEN build-time fallback
+// — render.yaml invited setting it to the same value as the server's master
+// API_TOKEN, which would inline a VALID MASTER BEARER TOKEN into the public
+// JS bundle (requireAuth accepts it on every endpoint). The build-time read
+// is now REMOVED entirely: cloud sync auth comes from the explicit runtime
+// localStorage override (WEALTH_AI_CLOUD_TOKEN) only.
 function getCloudAuthToken(): string {
   try {
     const customToken = localStorage.getItem('WEALTH_AI_CLOUD_TOKEN');
     if (customToken) return customToken.trim();
   } catch {}
-  return ((import.meta.env.VITE_API_TOKEN as string) || '').trim();
+  return '';
 }
 
 export function isCloudSyncConfigured(): boolean {
@@ -934,7 +940,11 @@ export async function batchFetchPrices(
     if (allInSyms.length > 0) {
       tasks.push((async () => {
         try {
-          const url = `${PROXY_BASE}/api/quote?market=IN&symbols=${encodeURIComponent(allInSyms.join(','))}&t=${Date.now()}`;
+          // v10.13 (deep-recheck L4): live base — the module-const PROXY_BASE
+          // froze the backend at bundle load, so a runtime backend switch
+          // (WEALTH_AI_BACKEND_URL) left these batch quotes hitting the OLD
+          // server while every apiFetch call used the new one.
+          const url = `${getProxyBase()}/api/quote?market=IN&symbols=${encodeURIComponent(allInSyms.join(','))}&t=${Date.now()}`;
           const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
           if (!res.ok) return;
           const json = await res.json();
@@ -959,7 +969,7 @@ export async function batchFetchPrices(
     if (allUsSyms.length > 0) {
       tasks.push((async () => {
         try {
-          const url = `${PROXY_BASE}/api/quote?market=US&symbols=${encodeURIComponent(allUsSyms.join(','))}&t=${Date.now()}`;
+          const url = `${getProxyBase()}/api/quote?market=US&symbols=${encodeURIComponent(allUsSyms.join(','))}&t=${Date.now()}`;
           const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
           if (!res.ok) return;
           const json = await res.json();

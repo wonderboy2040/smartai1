@@ -114,8 +114,19 @@ class IndexedDBStorage {
         };
 
         request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-        request.onblocked = () => console.warn('[IndexedDB] Database upgrade blocked');
+        request.onerror = () => {
+          // v10.13 (deep-recheck M7): reset the cached promise on failure —
+          // a transient open failure (private mode, blocked upgrade, quota)
+          // used to leave the REJECTED promise cached forever, so every call
+          // this session took the localStorage fallback even after IndexedDB
+          // recovered.
+          this.dbPromise = null;
+          reject(request.error);
+        };
+        request.onblocked = () => {
+          console.warn('[IndexedDB] Database upgrade blocked');
+          this.dbPromise = null; // v10.13: allow a retry once the blocker clears
+        };
       } catch (err) {
         reject(err);
       }

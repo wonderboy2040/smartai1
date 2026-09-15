@@ -535,7 +535,11 @@ export function registerAITradingRoutes(app, deps) {
   app.get('/api/ai/backtest', async (req, res) => {
     try {
       const market = String(req.query.market || 'CRYPTO').toUpperCase();
-      const symbols = String(req.query.symbols || '').split(',').map(s => s.trim()).filter(Boolean);
+      // v10.13 (deep-recheck L-3): cap + validate the client symbol list — a
+      // 500-symbol comma list drove a 500-symbol backtest per request (same
+      // treatment strategy-lab already had: cap 6, 12 chars, charset filter).
+      const symbols = String(req.query.symbols || '').split(',').map(s => s.trim().toUpperCase())
+        .filter(Boolean).filter(s => /^[A-Z0-9._-]{1,20}$/.test(s)).slice(0, 12);
       const minGrade = ['STRONG', 'ACTION', 'WATCH'].includes(String(req.query.minGrade).toUpperCase())
         ? String(req.query.minGrade).toUpperCase() : 'ACTION';
       const capital = Math.min(1_000_000, Math.max(100, parseInt(req.query.capital, 10) || 1000));
@@ -585,7 +589,9 @@ export function registerAITradingRoutes(app, deps) {
   app.get('/api/ai/swing', async (req, res) => {
     try {
       const market = String(req.query.market || 'INDIA').toUpperCase();
-      const symbols = String(req.query.symbols || '').split(',').map(s => s.trim()).filter(Boolean);
+      // v10.13 (L-3): same cap/validate treatment as backtest.
+      const symbols = String(req.query.symbols || '').split(',').map(s => s.trim().toUpperCase())
+        .filter(Boolean).filter(s => /^[A-Z0-9._-]{1,20}$/.test(s)).slice(0, 12);
       res.json(await getSwingBoard(market === 'CRYPTO' ? 'CRYPTO' : 'INDIA', symbols.length ? symbols : undefined));
     } catch (e) {
       jsonError(res, 500, 'swing board failed', e);
@@ -596,7 +602,9 @@ export function registerAITradingRoutes(app, deps) {
   app.get('/api/ai/whales', async (req, res) => {
     try {
       const market = String(req.query.market || 'CRYPTO').toUpperCase();
-      const symbols = String(req.query.symbols || '').split(',').map(s => s.trim()).filter(Boolean);
+      // v10.13 (L-3): same cap/validate treatment as backtest.
+      const symbols = String(req.query.symbols || '').split(',').map(s => s.trim().toUpperCase())
+        .filter(Boolean).filter(s => /^[A-Z0-9._-]{1,20}$/.test(s)).slice(0, 12);
       res.json(await scanWhales(market === 'INDIA' ? 'INDIA' : 'CRYPTO', symbols.length ? symbols : undefined));
     } catch (e) {
       jsonError(res, 500, 'whale radar failed', e);

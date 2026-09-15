@@ -17,10 +17,15 @@ services:
       # (leaked, now removed) client-side hardcoded token.
       - key: API_TOKEN
         sync: false
-      - key: VITE_API_TOKEN
-        sync: false
-      - key: VITE_ENCRYPTION_KEY
-        sync: false
+      # SECURITY FIX (v10.13 deep-recheck H-1): VITE_API_TOKEN and
+      # VITE_ENCRYPTION_KEY are REMOVED from the blueprint. Build-time VITE_*
+      # vars are INLINED INTO THE PUBLIC BROWSER BUNDLE — a VITE_API_TOKEN
+      # equal to API_TOKEN would hand every anonymous visitor a valid master
+      # bearer token (requireAuth treats API_TOKEN as a service master key
+      # for EVERY endpoint). Cloud sync auth now comes from the runtime
+      # localStorage override (WEALTH_AI_CLOUD_TOKEN) only. The server also
+      # refuses to boot if API_TOKEN === VITE_API_TOKEN is detected in its
+      # own runtime env (belt and braces for non-Render deploys).
       - key: ALLOWED_ORIGINS
         sync: false
       - key: GROQ_API_KEY

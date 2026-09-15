@@ -102,6 +102,29 @@ function loginRateCheck(ip) {
   return true;
 }
 
+// v10.13 SECURITY (deep-recheck M-4): GLOBAL failed-PIN lockout. The per-IP
+// limiter above is trivially bypassed by rotating IPs (a 4-digit PIN has only
+// 10k combinations). This counts FAILED pins across ALL IPs in a rolling
+// 15-min window: past 150 total failures the login endpoint 429s globally
+// for 5 minutes. Sized so a forgetful owner (a handful of failures) never
+// trips it, while a distributed spray cannot iterate the keyspace.
+const _pinFails = []; // timestamps of failed PIN attempts (global)
+const PIN_FAIL_WINDOW_MS = 15 * 60 * 1000;
+const PIN_FAIL_LOCK_LIMIT = 150;
+const PIN_FAIL_LOCK_MS = 5 * 60 * 1000;
+let _pinLockUntil = 0;
+function recordPinFail() {
+  const now = Date.now();
+  _pinFails.push(now);
+  while (_pinFails.length && now - _pinFails[0] > PIN_FAIL_WINDOW_MS) _pinFails.shift();
+  if (_pinFails.length >= PIN_FAIL_LOCK_LIMIT) {
+    _pinLockUntil = Math.max(_pinLockUntil, now + PIN_FAIL_LOCK_MS);
+    _pinFails.length = 0; // fresh window after the lockout arms
+    console.warn('[wealth-ai] SECURITY: global PIN-failure lockout armed for 5 minutes (distributed brute-force suspected).');
+  }
+}
+function pinLockActive() { return Date.now() < _pinLockUntil; }
+
 // Cookie name for the session token.
 const SESSION_COOKIE = 'wealthai_session';
 
@@ -275,12 +298,67 @@ app.use((req, res, next) => {
 app.use(requireAuth);
 
 // ============================================================
+// v10.13 SECURITY (deep-recheck H-2): GLOBAL CSRF DISCRIMINATOR
+// ------------------------------------------------------------
+// The session cookie is SameSite=None (required for cross-origin
+// deployments) — a third-party page can issue "simple requests"
+// (form POST / no-cors fetch) that ride the cookie WITHOUT any
+// preflight. CORS only hides the RESPONSE; the mutation still runs.
+// That silently authenticates no-body mutations like:
+//   POST /api/ai/orders/cancel-all          (cancels ALL live orders)
+//   POST /api/ai/trading/kill-switch {}     (enabled:false → DISARMS it)
+//   POST /api/ai/dhan/disconnect            (forgets broker keys)
+//   POST /api/mcp/coindcx/disconnect        (forgets API keys)
+// /api/auth/logout already had this exact discriminator inline; it is
+// now generalized to EVERY state-changing request.
+//
+// DISCRIMINATOR (same as logout): a cross-site <form> can NEVER set an
+// Authorization header, while the app's own cross-origin calls
+// (Vercel → Render, also Sec-Fetch-Site: cross-site) always send the
+// Bearer token via apiFetch. Therefore:
+//   cross-site + no Bearer + session cookie present  → 403
+// Login is exempt (no session exists yet — there is nothing to hijack;
+// a login CSRF gains an attacker nothing on a single-user PIN app).
+// Requests with no session cookie at all pass through (public paths /
+// unauthenticated) — there is no cookie for an attacker to ride.
+// Legacy browsers without Sec-Fetch-Site fall back to the same Origin
+// host/allowlist check logout uses.
+// ============================================================
+app.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  if (req.path === '/api/auth/login') return next(); // nothing to hijack pre-login
+  const hasBearer = /^Bearer\s+\S+/i.test(String(req.headers.authorization || ''));
+  if (hasBearer) return next(); // explicit token auth — not a cookie ride-along
+  const cookie = parseCookie(req.headers.cookie || '')[SESSION_COOKIE];
+  if (!cookie) return next(); // no session cookie → CSRF has nothing to ride
+  const secFetchSite = String(req.headers['sec-fetch-site'] || '').toLowerCase();
+  if (secFetchSite === 'cross-site') {
+    return res.status(403).json({ error: { message: 'Cross-site request blocked.' } });
+  }
+  if (!secFetchSite && req.headers.origin) {
+    const origin = String(req.headers.origin);
+    let allowed = false;
+    try { allowed = !!req.headers.host && new URL(origin).host === String(req.headers.host); } catch { /* parse fail */ }
+    if (!allowed && ALLOWED_ORIGINS) allowed = ALLOWED_ORIGINS.has(origin);
+    if (!allowed && _corsFailClosed) {
+      return res.status(403).json({ error: { message: 'Cross-site request blocked.' } });
+    }
+  }
+  next();
+});
+
+// ============================================================
 // AUTH ENDPOINTS
 // ============================================================
 
 // POST /api/auth/login â†’ { pin: string } â†’ sets session cookie
 app.post('/api/auth/login', (req, res) => {
   const xff = (req.headers['x-forwarded-for'] || '').toString().split(',').map(s => s.trim()).filter(Boolean); const ip = xff[xff.length - 1] || req.socket.remoteAddress || 'unknown';
+  // v10.13: global lockout check BEFORE the per-IP limiter (rotating IPs
+  // must not bypass it; also don't count lockout-blocked probes as attempts).
+  if (pinLockActive()) {
+    return res.status(429).json({ error: { message: 'Too many failed attempts. Login is temporarily locked — please wait a few minutes.' } });
+  }
   if (!loginRateCheck(ip)) {
     return res.status(429).json({ error: { message: 'Too many login attempts. Please wait a minute.' } });
   }
@@ -298,6 +376,7 @@ app.post('/api/auth/login', (req, res) => {
   const a = crypto.createHash('sha256').update(String(pin)).digest();
   const b = crypto.createHash('sha256').update(APP_PIN).digest();
   if (!crypto.timingSafeEqual(a, b)) {
+    recordPinFail(); // v10.13: feeds the global distributed-brute-force lockout
     return res.status(401).json({ error: { message: 'Invalid PIN.' } });
   }
 
@@ -456,6 +535,43 @@ function capArray(arr, maxLen) {
 }
 
 // ------------------------------------------------------------
+// v10.13 SECURITY (deep-recheck M-2): per-IP rate limits on the PUBLIC
+// market-data endpoints. /api/quote accepts 50 symbols/call and hits
+// Groww/Yahoo/Finnhub upstreams; /api/quote + /api/chart are
+// unauthenticated by design ("prices always load") — an anonymous loop
+// could otherwise hammer third-party upstreams from OUR shared IP
+// (429 bans that degrade the legit quote path for everyone). Limits are
+// sized far above the busiest legitimate single-session pattern
+// (India 3s poller + US poller + sync batches ≈ 40-50 req/min for one
+// tab; multi-device use stays well under).
+// ------------------------------------------------------------
+const _pubRate = new Map(); // ip → { n, windowStart }
+function publicRateCheck(ip, limit) {
+  const now = Date.now();
+  let r = _pubRate.get(ip);
+  if (!r || now - r.windowStart > 10 * 60_000) { r = { n: 0, windowStart: now }; _pubRate.set(ip, r); }
+  if (_pubRate.size > 5000) { // bounded map — prune finished windows
+    for (const [k, v] of _pubRate) { if (now - v.windowStart > 10 * 60_000) _pubRate.delete(k); }
+  }
+  r.n++;
+  return r.n <= limit;
+}
+function clientIp(req) {
+  const xff = (req.headers['x-forwarded-for'] || '').toString().split(',').map(s => s.trim()).filter(Boolean);
+  return xff[xff.length - 1] || req.socket.remoteAddress || 'unknown';
+}
+function pubGuard(req, res, limit) {
+  if (!publicRateCheck(clientIp(req), limit)) {
+    res.status(429).set('Retry-After', '30').json({ error: { message: 'Too many requests — please slow down.' } });
+    return true;
+  }
+  return false;
+}
+const QUOTE_RATE_10MIN = 900;   // 1.5/s sustained — never touches legit tabs
+const CHART_RATE_10MIN = 300;   // chart opens + 5m intraday refreshes
+const FUND_RATE_10MIN = 240;    // 24h-cached fundamentals
+
+// ------------------------------------------------------------
 // GET /api/chart  â†’ real OHLC candles for ANY symbol (incl. NSE/BSE)
 // ------------------------------------------------------------
 // The embeddable TradingView widget shows "This symbol is only available on
@@ -485,6 +601,7 @@ function toYahooSymbol(symbol, market) {
 }
 
 app.get('/api/chart', async (req, res) => {
+  if (pubGuard(req, res, CHART_RATE_10MIN)) return; // v10.13: public-endpoint rate limit
   const { symbol = '', market = '', interval = 'D' } = req.query || {};
   if (!symbol) return jsonError(res, 400, 'symbol required');
   // SECURITY: validate symbol format to prevent injection / open-proxy abuse.
@@ -740,6 +857,7 @@ async function _fetchYahooQuoteUncached(ysym) {
   return null;
 }
 app.get('/api/quote', async (req, res) => {
+  if (pubGuard(req, res, QUOTE_RATE_10MIN)) return; // v10.13: public-endpoint rate limit
   const raw = String(req.query.symbols || req.query.symbol || '').trim();
   const market = String(req.query.market || '').toUpperCase();
   if (!raw) return jsonError(res, 400, 'symbols required');
@@ -953,7 +1071,10 @@ app.get('/api/stream', (req, res) => {
 
   // Notify streams a client is now active — starts polling/WebSocket if idle
   inClientUp();
-  usClientUp();
+  // v10.13 (deep-recheck L-5): an India/crypto-only session no longer holds
+  // an EMPTY Finnhub socket open for its lifetime (usClientUp connects
+  // unconditionally while ensureUsSubscribed is gated on usSyms.length).
+  if (usSyms.length) usClientUp();
   cryptoClientUp();
   if (futSyms.length || globSyms.length) cxRtClientUp();
 
@@ -964,7 +1085,10 @@ app.get('/api/stream', (req, res) => {
     'X-Accel-Buffering': 'no',
   });
   if (res.flushHeaders) res.flushHeaders();
-  res.write('retry: 3000\n\n');
+  // v10.13 (deep-recheck L-6): guarded — the close/cleanup handlers below
+  // register AFTER this write; a synchronous throw here would skip them and
+  // leak the clientUp refcounts (pollers would never stop).
+  try { res.write('retry: 3000\n\n'); } catch { /* client gone before start */ }
 
   // ---- 2026 perf audit (H1): SSE backpressure guard ----
   // A stalled client (phone sleep / TCP zero-window) makes Node buffer every
@@ -1071,6 +1195,15 @@ for (const [name, cfg] of Object.entries(OPENAI_COMPAT)) {
     if (!key) return jsonError(res, 503, `${name} not configured`);
     try {
       const body = { ...req.body };
+      // v10.13 (deep-recheck L-4): clamp client-controlled completion params
+      // on the compat proxies — /api/claude already capped max_tokens at 8192,
+      // but these proxies forwarded it (and `stream`) as-is, so an auth'd
+      // client could request max_tokens: 200000 or SSE-stream every call
+      // (quota burn on the shared free-tier keys).
+      if (typeof body.max_tokens === 'number') body.max_tokens = Math.min(8192, Math.max(1, Math.floor(body.max_tokens)));
+      else if (body.max_tokens == null) body.max_tokens = 4096;
+      if (typeof body.temperature === 'number') body.temperature = Math.min(2, Math.max(0, body.temperature));
+      delete body.stream; // the proxies never pipe SSE through — force non-stream
       // Auto-correct deprecated models (e.g. decommissioned Llama 3.3/3.2/3.1, preview-only Llama 4 Scout)
       if (name === 'groq' && (!body.model || body.model.includes('llama-3.3') || body.model.includes('llama-3.2-90b') || body.model.includes('llama-3.1') || body.model.includes('llama-4-scout'))) {
         body.model = 'openai/gpt-oss-120b';
@@ -1501,7 +1634,11 @@ app.post('/api/vision-analysis', async (req, res) => {
 
     if (!upstream.ok) {
       const errText = await upstream.text();
-      return jsonError(res, 502, `Gemini Vision error: ${upstream.status} - ${errText}`);
+      // v10.13 (deep-recheck L-2): log the upstream body server-side; the
+      // client gets a generic message — the raw body can carry provider
+      // account hints / internal detail to the browser.
+      console.error('[vision-analysis] upstream error:', upstream.status, String(errText).slice(0, 500));
+      return jsonError(res, 502, `Gemini Vision error: ${upstream.status}`);
     }
 
     const data = await upstream.json();
@@ -1806,9 +1943,11 @@ app.post('/api/ml/meta-ensemble', async (req, res) => {
 // Cached 24h because fundamentals change slowly.
 // ------------------------------------------------------------
 const _fundamentalsCache = new Map();  // symbol â†’ { data, ts }
+const _fundamentalsInFlight = new Map(); // v10.13: symbol -> shared compute promise (stampede fix)
 const FUNDAMENTALS_TTL = 24 * 60 * 60 * 1000;
 
 app.get('/api/fundamentals/:symbol', async (req, res) => {
+  if (pubGuard(req, res, FUND_RATE_10MIN)) return; // v10.13: public-endpoint rate limit
   const rawSymbol = String(req.params.symbol || '').trim().toUpperCase();
   if (!rawSymbol) return jsonError(res, 400, 'symbol required');
   // SECURITY: validate symbol format.
@@ -1820,11 +1959,22 @@ app.get('/api/fundamentals/:symbol', async (req, res) => {
     return res.json(cached.data);
   }
 
+  // v10.13 (deep-recheck L-5): cache-stampede fix. On TTL expiry, N
+  // concurrent cold requests share ONE in-flight promise — the first
+  // caller computes, everyone else awaits the same round-trips.
+  {
+    const pending = _fundamentalsInFlight.get(rawSymbol);
+    if (pending) {
+      try { return res.json(await pending); }
+      catch (e) { return jsonError(res, 502, 'Failed to fetch fundamentals data.', e); }
+    }
+  }
+  const _compute = (async () => {
+
   // Map to Yahoo ticker (same logic as /api/chart)
   const ysym = toYahooSymbol(rawSymbol, market);
 
-  try {
-    // FIX: Yahoo v10 quoteSummary is now rate-limited/blocked for many IPs.
+  // FIX: Yahoo v10 quoteSummary is now rate-limited/blocked for many IPs.
     // Use v8 chart API (more reliable) for price + meta, then try v10 for
     // fundamentals. If v10 fails, use v8 data to compute what we can.
     const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ysym)}?interval=1d&range=1y`;
@@ -1832,10 +1982,10 @@ app.get('/api/fundamentals/:symbol', async (req, res) => {
       headers: { 'User-Agent': 'Mozilla/5.0 (WealthAI fundamentals proxy)' },
       signal: AbortSignal.timeout(6000),
     });
-    if (!chartR.ok) return jsonError(res, 502, `Yahoo chart ${chartR.status}`);
+    if (!chartR.ok) throw new Error(`Yahoo chart ${chartR.status}`);
     const chartJ = await chartR.json();
     const result = chartJ?.chart?.result?.[0];
-    if (!result) return jsonError(res, 502, 'No chart result');
+    if (!result) throw new Error('No chart result');
     const meta = result.meta || {};
 
     // Try v10 quoteSummary for fundamentals (may fail)
@@ -1950,6 +2100,11 @@ app.get('/api/fundamentals/:symbol', async (req, res) => {
       if (oldest !== undefined) _fundamentalsCache.delete(oldest);
     }
     _fundamentalsCache.set(rawSymbol, { data, ts: Date.now() });
+    return data;
+  })();
+  _fundamentalsInFlight.set(rawSymbol, _compute.finally(() => _fundamentalsInFlight.delete(rawSymbol)));
+  try {
+    const data = await _compute;
     res.set('Cache-Control', 'public, max-age=86400');
     return res.json(data);
   } catch (e) {
@@ -2236,6 +2391,7 @@ process.on('uncaughtException', (err) => {
 // SIGTERM). Flush them synchronously before exiting.
 // ------------------------------------------------------------
 let _shuttingDown = false;
+let _httpServer = null; // v10.13: captured at listen() for graceful drain
 function _gracefulShutdown(signal) {
   if (_shuttingDown) return;
   _shuttingDown = true;
@@ -2244,7 +2400,19 @@ function _gracefulShutdown(signal) {
   ]) {
     try { flush(); } catch (e) { console.warn(`[wealth-ai] shutdown flush ${name}:`, e?.message); }
   }
-  process.exit(signal === 'SIGINT' ? 130 : 143);
+  // v10.13 (deep-recheck L-8): drain in-flight HTTP responses before exit —
+  // the old immediate process.exit() cut responses (SSE frames, API calls)
+  // mid-write on every deploy. server.close() stops NEW connections; a
+  // short hard-exit deadline keeps Render's SIGTERM window bounded.
+  const exitCode = signal === 'SIGINT' ? 130 : 143;
+  if (_httpServer) {
+    try {
+      _httpServer.close(() => process.exit(exitCode));
+      setTimeout(() => process.exit(exitCode), 2000).unref?.();
+      return;
+    } catch { /* fall through to immediate exit */ }
+  }
+  process.exit(exitCode);
 }
 process.on('SIGTERM', () => _gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => _gracefulShutdown('SIGINT'));
@@ -2271,6 +2439,34 @@ function validateEnv() {
       `TG_TOKEN and TG_CHAT_ID must both be set (or both empty). ` +
       `TG_TOKEN=${TG.token ? 'set' : 'empty'}, TG_CHAT_ID=${TG.chatId ? 'set' : 'empty'}.`
     );
+  }
+
+  // v10.13 SECURITY (deep-recheck H-1): refuse to boot when the master
+  // service token would ALSO be baked into the public browser bundle.
+  // render.yaml no longer declares VITE_API_TOKEN, but a hand-rolled env
+  // (.env, Docker, VPS) can still set both to the same value — that single
+  // mistake hands every anonymous visitor a valid master bearer token
+  // (API_TOKEN authenticates on EVERY endpoint, incl. /api/ai/execute and
+  // cloud save). Fail LOUD at boot instead.
+  const viteTok = String(process.env.VITE_API_TOKEN || '').trim();
+  if (viteTok) {
+    if (viteTok === String(process.env.API_TOKEN || '').trim()) {
+      errors.push(
+        'VITE_API_TOKEN === API_TOKEN — the master service token would be INLINED ' +
+        'INTO THE PUBLIC BROWSER BUNDLE (build-time VITE_* vars are readable by anyone ' +
+ 'who downloads the JS). Remove VITE_API_TOKEN from the build environment; ' +
+        'cloud sync uses the WEALTH_AI_CLOUD_TOKEN localStorage override.'
+      );
+    } else {
+      warnings.push('VITE_API_TOKEN is set — its value ships inside the public bundle. Ensure it is NOT the API_TOKEN master key.');
+    }
+  }
+
+  // v10.13 (deep-recheck M-4): weak-PIN heads-up. Not enforced (existing
+  // deployments already run a short PIN — forcing a change would lock the
+  // owner out after upgrade), but a 4-digit PIN has only 10k combinations.
+  if (APP_PIN && String(APP_PIN).length < 8 && /^\d+$/.test(String(APP_PIN))) {
+    warnings.push('APP_PIN is short (<8 chars). A longer PIN is strongly recommended — login throttling is per-IP plus a global failure lockout.');
   }
 
   // Warn if no AI provider keys are set.
@@ -2334,7 +2530,12 @@ validateEnv();
 app.use((err, _req, res, _next) => {
   console.error('[wealth-ai] Unhandled route error:', err?.message || err);
   if (!res.headersSent) {
-    res.status(500).json({ error: { message: 'Internal server error.', detail: String(err?.message || err).slice(0, 200) } });
+    // v10.13 (deep-recheck L-1): body-parser errors carry err.status=400 —
+    // a malformed JSON body is a CLIENT error and must 400 (was 500).
+    const status = Number.isInteger(err?.status) && err.status >= 400 && err.status <= 599
+      ? err.status
+      : (Number.isInteger(err?.statusCode) && err.statusCode >= 400 && err.statusCode <= 599 ? err.statusCode : 500);
+    res.status(status).json({ error: { message: status === 500 ? 'Internal server error.' : String(err?.message || err).slice(0, 200), detail: String(err?.message || err).slice(0, 200) } });
   }
 });
 
@@ -2360,7 +2561,9 @@ try {
   console.warn('[mcp/durable] boot restore error:', e?.message || e);
 }
 
-app.listen(PORT, () => {
+// v10.13 (deep-recheck L-8): capture the server so graceful shutdown can
+// drain in-flight responses before exiting.
+_httpServer = app.listen(PORT, () => {
   const ready = Object.entries(KEYS).filter(([, v]) => v).map(([k]) => k);
   console.log(`[wealth-ai] server on :${PORT} â€” providers: ${ready.join(', ') || 'NONE'}`);
   console.log('[wealth-ai] Authentication: enabled (server-side PIN + httpOnly session cookie)');

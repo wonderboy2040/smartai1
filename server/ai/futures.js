@@ -106,6 +106,12 @@ export async function fetchFuturesPrices({ maxAgeMs = 20_000 } = {}) {
     const map = j?.prices && typeof j.prices === 'object' ? j.prices : null;
     if (!map) throw new Error('futures prices: unexpected payload');
     const rows = [];
+    // v10.13 (deep-recheck M3): normalize the payload epoch to MILLISECONDS.
+    // CoinDCX's top-level `ts` is seconds; consumers (cxRtStream's WS
+    // out-of-order guard, liveFeed freshness) compare against ms values —
+    // mixed units made correctness luck-dependent.
+    const rawTs = num(j?.ts);
+    const tsMs = rawTs > 0 ? (rawTs < 1e12 ? rawTs * 1000 : rawTs) : Date.now();
     for (const [pair, p] of Object.entries(map)) {
       if (!p || typeof p !== 'object') continue;
       const last = num(p.ls);
@@ -119,7 +125,7 @@ export async function fetchFuturesPrices({ maxAgeMs = 20_000 } = {}) {
         high: num(p.h),
         low: num(p.l),
         volume: num(p.v),
-        ts: num(j?.ts) || Date.now(),
+        ts: tsMs,
       });
     }
     if (rows.length === 0) throw new Error('futures prices: empty');

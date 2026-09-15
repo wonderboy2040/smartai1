@@ -33,6 +33,15 @@ const BINANCE_MAX_STREAMS = 20;            // cap the combined stream list
 const BINANCE_RECONNECT_MS = 5000;
 const BINANCE_FAIL_LIMIT = 3;              // consecutive dead handshakes → breaker
 const BINANCE_COOLDOWN_MS = 30 * 60 * 1000;
+// v10.13 (deep-recheck L2): rapid-cycle backoff for post-open drops. The
+// 3-fail breaker only counted HANDSHAKE failures — a socket that repeatedly
+// connects then gets kicked (LB idle kill / 5s reconnect loop) reconnected
+// every 5s forever. 5+ connect-then-drop cycles within 5 minutes → hold off
+// 60s (with jitter) so an unhealthy upstream isn't hammered tight-loop.
+const BINANCE_RAPID_CYCLES = 5;
+const BINANCE_RAPID_WINDOW_MS = 5 * 60 * 1000;
+const BINANCE_RAPID_BACKOFF_MS = 60 * 1000;
+const BINANCE_MAX_FRAME_BYTES = 1_000_000;  // v10.13 (L10): upstream frame size cap
 const BINANCE_RESUB_DEBOUNCE_MS = 2000;    // re-connect after universe changes
 const ANCHOR_MAX_AGE_MS = 60 * 1000;       // stop projecting on a stale anchor
 
@@ -171,6 +180,7 @@ let _binanceDisabledUntil = 0;
 let _binanceGotData = false;
 let _binanceWsFactory = null;      // test injection
 const _binanceLast = new Map();    // base -> { price, at } (USDT)
+const _binanceCycleTimes = [];     // v10.13: open→close cycle timestamps (rapid-cycle backoff)
 
 function _binanceTargetStreams() {
   const bases = [..._subscribed].slice(0, BINANCE_MAX_STREAMS);
@@ -184,7 +194,9 @@ function _ensureBinanceWs() {
   if (!streams) return;
   if (_binanceWs && _binanceWs.readyState === WebSocket.OPEN && streams === _binanceStreams) return;
 
-  if (_binanceWs || (_binanceWs && _binanceWs.readyState === WebSocket.CONNECTING)) {
+  if (_binanceWs) { // v10.13 (L3): dead second clause removed — the old
+    // `|| (_binanceWs && _binanceWs.readyState === WebSocket.CONNECTING)`
+    // could never add anything once the first term was true.
     // Universe changed — debounce a swap to a fresh combined stream.
     if (streams !== _binanceStreams) _scheduleBinanceResub();
     return;
@@ -227,6 +239,7 @@ function _openBinanceWs(streams) {
     });
     ws.on('message', (raw) => {
       if (_binanceWs !== ws) return;
+      if (raw && raw.length > BINANCE_MAX_FRAME_BYTES) return; // v10.13 (L10)
       _binanceGotData = true;
       _binanceFailStreak = 0;
       let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
@@ -248,6 +261,7 @@ function _openBinanceWs(streams) {
       if (_activeClients > 0) _scheduleBinanceReconnect();
     });
     ws.on('error', () => {
+      clearTimeout(connectTimeout); // v10.13 (L4): the 8s connect timer now clears on every terminal path
       if (_binanceWs !== ws) return;
       _registerBinanceFailure(!_binanceGotData);
       try { ws.close(); } catch { /* noop */ }
@@ -266,12 +280,28 @@ function _registerBinanceFailure(handshakeFailed) {
   }
 }
 
+// v10.13 (L2): count an open→close cycle for the rapid-cycle backoff.
+function _recordBinanceCycle() {
+  const now = Date.now();
+  _binanceCycleTimes.push(now);
+  while (_binanceCycleTimes.length && now - _binanceCycleTimes[0] > BINANCE_RAPID_WINDOW_MS) _binanceCycleTimes.shift();
+  return _binanceCycleTimes.length >= BINANCE_RAPID_CYCLES;
+}
+
 function _scheduleBinanceReconnect() {
   if (_binanceReconnectTimer || Date.now() < _binanceDisabledUntil) return;
+  // v10.13 (L2): rapid connect-then-drop cycles → 60s hold-off + jitter
+  // instead of the tight 5s loop (which repeated forever because the
+  // fail-streak breaker only counts handshake failures).
+  let delay = BINANCE_RECONNECT_MS + Math.floor(Math.random() * 1000); // always jittered
+  if (_recordBinanceCycle()) {
+    delay = BINANCE_RAPID_BACKOFF_MS + Math.floor(Math.random() * 5000);
+    _binanceCycleTimes.length = 0; // re-arm after the hold-off
+  }
   _binanceReconnectTimer = setTimeout(() => {
     _binanceReconnectTimer = null;
     if (_activeClients > 0) _ensureBinanceWs();
-  }, BINANCE_RECONNECT_MS);
+  }, delay);
   if (typeof _binanceReconnectTimer.unref === 'function') _binanceReconnectTimer.unref();
 }
 

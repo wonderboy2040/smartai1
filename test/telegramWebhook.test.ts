@@ -181,6 +181,32 @@ describe('webhook security', () => {
     process.env.NODE_ENV = 'test';
   });
 
+  it('v10.13: NODE_ENV UNSET (VPS / start_server.vbs path) + no secret → also refuses (fail-closed)', async () => {
+    // The old gate only refused NODE_ENV === 'production' — the repo's own
+    // documented start paths run with NODE_ENV unset and silently accepted
+    // forged updates. Now every mode except EXPLICIT development refuses.
+    const prev = process.env.NODE_ENV;
+    delete process.env.NODE_ENV;
+    delete process.env.TELEGRAM_WEBHOOK_SECRET;
+    const app = buildApp();
+    const { body } = await post(app, { message: { chat: { id: CHAT }, text: '/crypto hi' } });
+    expect(body.ok).toBe(false);
+    await wait();
+    expect(mockCryptoAgent).not.toHaveBeenCalled();
+    process.env.NODE_ENV = prev || 'test';
+  });
+
+  it('v10.13: EXPLICIT development mode + no secret → processes (local dev loop unchanged)', async () => {
+    process.env.NODE_ENV = 'development';
+    delete process.env.TELEGRAM_WEBHOOK_SECRET;
+    const app = buildApp();
+    const { body } = await post(app, { message: { chat: { id: CHAT }, text: '/crypto hi' } });
+    expect(body.ok).toBe(true);
+    await wait();
+    expect(mockCryptoAgent).toHaveBeenCalled();
+    process.env.NODE_ENV = 'test';
+  });
+
   it('non-allowlisted chat id → silently ignored even with the right secret', async () => {
     process.env.TELEGRAM_WEBHOOK_SECRET = SECRET;
     const app = buildApp();

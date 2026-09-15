@@ -159,7 +159,9 @@ export default function App() {
     if (now - lastSnapRef.current < 60_000) return;
     lastSnapRef.current = now;
     appDB.savePortfolioSnapshot({
-      date: new Date().toISOString().split('T')[0],
+      // v10.13 (deep-recheck L12): IST calendar day (en-CA → YYYY-MM-DD) —
+      // UTC toISOString() labeled 18:30-24:00 IST snapshots as the NEXT day.
+      date: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date()),
       totalValue: metrics.totalValue || 0,
       totalInvested: metrics.totalInvested || 0,
       totalProfit: metrics.totalPL || 0,
@@ -174,7 +176,12 @@ export default function App() {
     if (!isAuthenticated) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if user is typing in an input
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement
+        || (e.target as HTMLElement | null)?.isContentEditable) return;
+      // v10.13 (deep-recheck L8): ignore OS/browser shortcut combos —
+      // Ctrl+1/Cmd+1 etc. switch browser tabs and must not ALSO switch the
+      // app tab; Alt+<digit> can be an OS-level shortcut.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       const tabs = TAB_ORDER;
       const key = parseInt(e.key);
       if (!isNaN(key) && key >= 1 && key <= tabs.length) {
@@ -316,7 +323,7 @@ export default function App() {
 
         <main className="container mx-auto px-4 py-6">
           <Suspense fallback={<div className="flex items-center justify-center py-20"><div className="text-center"><div className="text-4xl mb-3 animate-float">⚡</div><div className="text-sm text-slate-500 font-medium">Loading module...</div></div></div>}>
-            <ErrorBoundary fallback={<div className="quantum-panel rounded-2xl p-8 text-center border border-red-500/20"><div className="text-4xl mb-3">🚨</div><div className="text-red-400 font-bold mb-2">Tab crashed</div><div className="text-slate-500 text-sm">Reload or switch tabs</div></div>}>
+            <ErrorBoundary key={activeTab} fallback={<div className="quantum-panel rounded-2xl p-8 text-center border border-red-500/20"><div className="text-4xl mb-3">🚨</div><div className="text-red-400 font-bold mb-2">Tab crashed</div><div className="text-slate-500 text-sm">Reload or switch tabs</div></div>}>
               {activeTab === 'dashboard' && <DashboardTab />}
               {activeTab === 'india' && <IndiaIntradayTab />}
               {activeTab === 'crypto' && <CoinDcxTab />}

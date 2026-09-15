@@ -249,6 +249,16 @@ export function disconnectPrices() {
   tvSymbolToKey.clear();
   rawSymbolToKey.clear();
   subscribedSymbols.clear();
+  // v10.13 (deep-recheck H5): callbacks too. The old global kill wiped the
+  // symbol maps but LEFT other subscribers' callbacks in the Set — any
+  // future subscriber (a chart modal, a second hook instance) would get
+  // silently dead updates forever (tvSymbolToPortfolioKey lookups return
+  // null on the cleared maps). Killing the socket means killing the
+  // subscription contract for everyone: the only current caller
+  // (useAppState) re-subscribes immediately after, so its behavior is
+  // unchanged — but a stray second subscriber can no longer ride a dead
+  // socket.
+  callbacks.clear();
 }
 
 // ========================================

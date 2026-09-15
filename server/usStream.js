@@ -51,6 +51,8 @@ let _reconnectAt = 0;
 let _activeClients = 0;
 let _reconnectTimer = null;
 let _fallbackTimer = null;
+let _wsAliveTimer = null;           // v10.13: ping + idle watchdog interval
+let _lastWsFrameAt = 0;             // v10.13: ANY message/pong on the live socket
 // v7.0.2: Finnhub handshake failure streak → exponential backoff + jitter
 // (mirrors cryptoStream's breaker). A fixed 3-5s reconnect loop used to
 // hammer a down/auth-failing upstream for hours while clients were up.
@@ -78,6 +80,16 @@ const TV_FAIL_LIMIT = 5;            // circuit breaker: consecutive TV failures
 const TV_COOLDOWN_MS = 10 * 60 * 1000; // then stop calling TV for 10 minutes
 const EVICT_GRACE_MS = 90 * 1000;   // refcount-0 symbols unsubscribe after this
 const BOOT_CONCURRENCY = 6;         // fresh-symbol Yahoo bootstrap semaphore
+// v10.13 (deep-recheck M1 stream): Finnhub WS liveness. Without a ping +
+// idle watchdog, a half-open TCP (laptop sleep→resume, NAT rebind) leaves
+// readyState OPEN forever — _ensureConnected() short-circuits on OPEN and
+// Priority-1 instant trades are lost for the PROCESS LIFETIME while the
+// Yahoo fallback keeps prices flowing (silent cadence degradation). Ping
+// every 30s; no frame/pong for 90s while connected → terminate → the normal
+// failure-reconnect path takes over.
+const WS_PING_MS = 30 * 1000;
+const WS_IDLE_KILL_MS = 90 * 1000;
+const WS_MAX_FRAME_BYTES = 1_000_000; // v10.13 (L10): upstream frame size cap
 
 // ---------------------------------------------------------------
 // Pure helpers (exported for unit tests + reuse in index.js)
@@ -128,7 +140,10 @@ export function _resetUsStreamForTest() {
   _ws = null; _connecting = false; _reconnectAt = 0; _activeClients = 0;
   clearTimeout(_reconnectTimer); _reconnectTimer = null;
   clearInterval(_fallbackTimer); _fallbackTimer = null;
+  clearInterval(_wsAliveTimer); _wsAliveTimer = null; // v10.13
+  _lastWsFrameAt = 0;
   _tvFailStreak = 0; _tvDisabledUntil = 0; _lastClosedRefresh = 0;
+  _fbPolling = false;
 }
 export function usDebugState() {
   return {
@@ -166,6 +181,8 @@ function _disconnect() {
   _connecting = false;
   clearTimeout(_reconnectTimer);
   _reconnectTimer = null;
+  clearInterval(_wsAliveTimer); // v10.13: no pings/watchdog on a dead socket
+  _wsAliveTimer = null;
   // NOTE: _reconnectAt is intentionally left as-is; _ensureConnected()
   // re-schedules a timer for the remaining backoff when a new client
   // arrives (fixes the reconnect deadlock where the cleared timer plus a
@@ -331,7 +348,10 @@ async function _bootstrapSymbol(sym) {
   let source = 'yahoo-us-fallback';
   if (!(s.price > 0)) {
     const fh = await _fetchFinnhubSession(sym);
-    if (fh) { s = fh; source = 'finnhub-stream'; }
+    // v10.13 (deep-recheck M5): REST bootstrap honestly labeled — this is a
+    // REST /quote round-trip, not the push stream. 'finnhub-stream' is
+    // reserved for actual WS trades (set in the trade handler).
+    if (fh) { s = fh; source = 'finnhub-rest'; }
   }
   if (s.price > 0) {
     setTick(`US_${sym}`, {
@@ -440,7 +460,15 @@ function _startFallbackPoller() {
 }
 
 let _fbCursor = 0;
+let _fbPolling = false; // v10.13 (deep-recheck M7): re-entrancy guard
 async function _fallbackPoll() {
+  // v10.13: the 3s interval can fire while a slow TV batch (4.5s timeout) is
+  // still in flight — overlapping _fetchTvUsBatch POSTs to
+  // scanner.tradingview.com stack exactly when the upstream is unhealthy
+  // (the rate-limit/ban vector the circuit breaker exists to prevent).
+  // Yahoo is in-flight-deduped already; the TV batch was not.
+  if (_fbPolling) return;
+  _fbPolling = true;
   try {
     if (_activeClients === 0 || _subscribed.size === 0) return;
 
@@ -478,6 +506,7 @@ async function _fallbackPoll() {
       _publishFallbackQuote(sym, s, 'yahoo-us-fallback');
     }));
   } catch { /* transient — retry next cycle */ }
+  finally { _fbPolling = false; }
 }
 
 // ---------------------------------------------------------------
@@ -494,9 +523,25 @@ function _connect() {
     ws.on('open', () => {
       _connecting = false;
       _wsFailStreak = 0; // v7.0.2: healthy handshake resets the backoff streak
+      _lastWsFrameAt = Date.now(); // v10.13: liveness baseline
       for (const s of _subscribed) ws.send(JSON.stringify({ type: 'subscribe', symbol: s }));
+      // v10.13 (deep-recheck M1): ping + idle watchdog — a half-open TCP
+      // socket otherwise stays OPEN forever and Priority-1 trades are lost
+      // silently for the process lifetime (Yahoo keeps 3s prices flowing).
+      clearInterval(_wsAliveTimer);
+      _wsAliveTimer = setInterval(() => {
+        if (_ws !== ws || ws.readyState !== WebSocket.OPEN) { clearInterval(_wsAliveTimer); _wsAliveTimer = null; return; }
+        try { ws.ping(); } catch { /* dead — watchdog will catch it */ }
+        if (Date.now() - _lastWsFrameAt > WS_IDLE_KILL_MS) {
+          console.warn('[us-stream] Finnhub WS idle >90s (half-open?) — terminating for reconnect');
+          try { ws.terminate(); } catch { /* already gone */ }
+        }
+      }, WS_PING_MS);
+      if (typeof _wsAliveTimer.unref === 'function') _wsAliveTimer.unref();
     });
     ws.on('message', (raw) => {
+      if (raw && raw.length > WS_MAX_FRAME_BYTES) return; // v10.13 (L10): frame size cap
+      _lastWsFrameAt = Date.now(); // ANY frame (incl. pong) proves liveness
       let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
       if (msg.type !== 'trade' || !Array.isArray(msg.data)) return;
       const latest = {};
@@ -536,6 +581,7 @@ function _connect() {
       // guard it would null out B (leaked OPEN socket + duplicate trades).
       if (_ws !== ws) return;
       _connecting = false; _ws = null;
+      if (_wsAliveTimer) { clearInterval(_wsAliveTimer); _wsAliveTimer = null; } // v10.13
       // Only reconnect if clients still active (FIX audit M-2: actually schedule it).
       // v7.0.2: backoff path — never got a healthy OPEN on this socket.
       if (_activeClients > 0) _scheduleFailureReconnect();
@@ -544,6 +590,7 @@ function _connect() {
       if (_ws !== ws) return; // stale handler from a replaced socket (M1)
       _connecting = false; try { ws.close(); } catch { }
       _ws = null;
+      if (_wsAliveTimer) { clearInterval(_wsAliveTimer); _wsAliveTimer = null; } // v10.13
       if (_activeClients > 0) _scheduleFailureReconnect();
     });
   } catch { _connecting = false; _scheduleFailureReconnect(); }

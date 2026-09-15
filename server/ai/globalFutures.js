@@ -353,7 +353,10 @@ function _parseRtUsdcRows(j) {
       mark: num(p.mp) || last,
       changePct: num(p.pc) || 0,
       high: num(p.h), low: num(p.l), volume: num(p.v),
-      ts: num(j?.ts) || Date.now(),
+      // v10.13 (deep-recheck M3): epoch unit normalization to MILLISECONDS
+      // (CoinDCX's top-level ts is seconds; cxRtStream's WS out-of-order
+      // guard and liveFeed freshness compare against ms values).
+      ts: (() => { const rawTs = num(j?.ts); return rawTs > 0 ? (rawTs < 1e12 ? rawTs * 1000 : rawTs) : Date.now(); })(),
       source: 'coindcx-usdc',
     });
   }

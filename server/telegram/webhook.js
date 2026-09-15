@@ -37,6 +37,7 @@
 import {
   telegramConfig, sendTelegramMessageTo, telegramApiCall, telegramFileBase64,
 } from '../ai/secrets.js';
+import nodeCrypto from 'node:crypto'; // v10.13: constant-time secret-token compare
 import { runIntradayAgentForExternal } from '../intraday/routes.js';
 import { runCryptoAgent } from '../ai/cryptoAgent.js';
 import { agentStatus, loadAgentConfig } from '../ai/agent.js';
@@ -383,15 +384,29 @@ export function registerTelegramWebhook(app, deps = {}) {
 
     // ---- security gate 1: Telegram secret_token header ----
     if (secret) {
+      // v10.13 (deep-recheck M-1): constant-time compare (the plain !== leaked
+      // byte-by-byte through response timing — same digest pattern index.js
+      // uses for the PIN and the service token).
       const got = String(req.headers['x-telegram-bot-api-secret-token'] || '');
-      if (got !== secret) {
+      let eq = false;
+      try {
+        const ha = nodeCrypto.createHash('sha256').update(got).digest();
+        const hb = nodeCrypto.createHash('sha256').update(secret).digest();
+        eq = nodeCrypto.timingSafeEqual(ha, hb);
+      } catch { eq = false; }
+      if (!eq) {
         // A 4xx would make Telegram retry a foreign URL forever — the
         // documented pattern is a silent 200 drop.
         return respond(false);
       }
-    } else if (process.env.NODE_ENV === 'production') {
-      // No secret configured in production → the webhook is not safely
-      // armed. Refuse (still 200 to Telegram, but nothing is processed).
+    } else if (String(process.env.NODE_ENV || '').toLowerCase() !== 'development') {
+      // v10.13 (deep-recheck M-1): FAIL CLOSED in every mode except an
+      // EXPLICIT NODE_ENV=development. The old check only refused
+      // NODE_ENV === 'production' — the repo's own documented start paths
+      // (start_server.vbs, plain `node server/index.js` on a VPS) run with
+      // NODE_ENV unset, silently accepting forged updates with zero secret
+      // (mirrors the v7.0.2 CORS fail-closed fix for the same footgun).
+      // Refuse (still 200 to Telegram, but nothing is processed).
       return respond(false, { note: 'TELEGRAM_WEBHOOK_SECRET not configured' });
     }
 

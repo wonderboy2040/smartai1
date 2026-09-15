@@ -48,11 +48,18 @@ export function liveSourceBadge(src?: string | null): { label: string; cls: stri
       title: 'TradingView browser WebSocket — sub-second push, no API key',
     };
   }
-  if (s === 'finnhub-global-rt') {
+  if (s === 'finnhub-global-rt' || s === 'finnhub-rest') {
     return {
       label: 'Finnhub·RT',
       cls: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
       title: 'Finnhub REST quote — fallback #1 (US-desk shared key, 55/min rate-limited, staleness-gated)',
+    };
+  }
+  if (s === 'finnhub-stream') {
+    return {
+      label: 'Finnhub·WS',
+      cls: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
+      title: 'Finnhub WebSocket trade stream — instant push for covered symbols',
     };
   }
   if (s.startsWith('binance')) {
@@ -62,11 +69,18 @@ export function liveSourceBadge(src?: string | null): { label: string; cls: stri
       title: 'Binance perp fallback — CoinDCX RT dark right now, same USDT domain, honestly labeled',
     };
   }
-  if (s === 'yahoo-delayed' || s === 'yahoo-global-rt') {
+  if (s === 'yahoo-delayed' || s === 'yahoo-global-rt' || s === 'yahoo-us-fallback') {
     return {
       label: 'Yahoo·delayed',
       cls: 'bg-amber-500/15 text-amber-300 border-amber-500/40',
       title: 'Yahoo Finance — fallback source (Groww miss / index fallback / Finnhub failed or rate-limited)',
+    };
+  }
+  if (s === 'tv-us-batch') {
+    return {
+      label: 'TV·batch',
+      cls: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
+      title: 'TradingView scanner batch — one request for every gap symbol (~3s cadence)',
     };
   }
   if (s === 'global-sim-rt') {
@@ -76,10 +90,15 @@ export function liveSourceBadge(src?: string | null): { label: string; cls: stri
       title: 'Deterministic synthetic walk — no public price exists for this name (labeled SIM everywhere)',
     };
   }
+  // v10.13 (deep-recheck M6): unknown/missing source → NEUTRAL pill, not a
+  // green LIVE. The old default painted every unmapped label (misspelled,
+  // future source strings, 'yahoo-us-fallback' before this fix) as a green
+  // "LIVE" — a label sink that silently laundered delayed/unknown feeds into
+  // realtime-looking pills. Unknown provenance must LOOK unknown.
   return {
     label: 'LIVE',
-    cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
-    title: 'Live price stream',
+    cls: 'bg-slate-600/20 text-slate-400 border-slate-500/30',
+    title: 'Live price stream (source unlabeled)',
   };
 }
 

@@ -53,12 +53,38 @@ describe('liveSourceBadge — the pure label mapping', () => {
     expect(b.label).toBe('SIM·synthetic');
     expect(b.cls).toContain('slate');
   });
-  it('unknown or missing → neutral LIVE pill (never a wrong guess, never blank)', () => {
-    for (const src of [undefined, null, '', 'mystery-feed']) {
+  it('unknown or missing → NEUTRAL slate LIVE pill — never a green guess (v10.13)', () => {
+    // v10.13 (deep-recheck M6): the default used to be GREEN — a label sink
+    // that laundered delayed/unknown feeds into realtime-looking pills.
+    // Unknown provenance must LOOK unknown.
+    for (const src of [undefined, null, '', 'mystery-feed', 'some-future-typo']) {
       const b = liveSourceBadge(src);
       expect(b.label).toBe('LIVE');
-      expect(b.cls).toContain('emerald');
+      expect(b.cls).toContain('slate');
+      expect(b.cls).not.toContain('emerald');
     }
+  });
+  it('v10.13: yahoo-us-fallback → amber Yahoo·delayed (was laundered green LIVE)', () => {
+    const b = liveSourceBadge('yahoo-us-fallback');
+    expect(b.label).toBe('Yahoo·delayed');
+    expect(b.cls).toContain('amber');
+  });
+  it('v10.13: finnhub-stream (WS trades) vs finnhub-rest (REST bootstrap) map distinctly', () => {
+    expect(liveSourceBadge('finnhub-stream').label).toBe('Finnhub·WS');
+    expect(liveSourceBadge('finnhub-stream').cls).toContain('sky');
+    expect(liveSourceBadge('finnhub-rest').label).toBe('Finnhub·RT');
+    expect(liveSourceBadge('finnhub-rest').cls).toContain('sky');
+  });
+  it('v10.13: tv-us-batch → TV·batch (sky, scanner batch cadence)', () => {
+    const b = liveSourceBadge('tv-us-batch');
+    expect(b.label).toBe('TV·batch');
+    expect(b.cls).toContain('sky');
+  });
+  it('groww-live → Groww·live (emerald) and tv-ws → TV·WS (sky) — India contract unchanged', () => {
+    expect(liveSourceBadge('groww-live').label).toBe('Groww·live');
+    expect(liveSourceBadge('groww-live').cls).toContain('emerald');
+    expect(liveSourceBadge('tv-ws').label).toBe('TV·WS');
+    expect(liveSourceBadge('tv-ws').cls).toContain('sky');
   });
 });
 

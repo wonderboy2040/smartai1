@@ -710,11 +710,16 @@ export function useAppState() {
 
     // 2) CLOUD — background fetch, merge when ready (manual mode only)
     // Fire immediately (don't await) so the UI renders local data first.
+    // v10.13 (deep-recheck M8): the 3.5s cold-boot retry is cancellable —
+    // a logout/unmount inside the window previously still ran mergeCloudData
+    // (portfolio resurrection after logout / setState after unmount).
+    let authLoadCancelled = false;
     mergeCloudData().then(success => {
+      if (authLoadCancelled) return;
       if (!success) {
         // Retry once after 3.5s in case backend server was waking up from cold sleep
         setTimeout(() => {
-          mergeCloudData();
+          if (!authLoadCancelled) mergeCloudData();
         }, 3500);
       }
     });
@@ -793,6 +798,9 @@ export function useAppState() {
         if (s.monthlyExpenses) setMonthlyExpenses(s.monthlyExpenses);
       }
     } catch (e) { console.warn('Failed to load planner settings:', e); }
+
+    // v10.13 (M8): cancel the pending cloud retry when auth state drops.
+    return () => { authLoadCancelled = true; };
   }, [isAuthenticated]);
 
   // --- Persist planner ---
@@ -813,12 +821,23 @@ export function useAppState() {
   const lastSavedFingerprintRef = useRef('');
   const skipNextStateSaveRef = useRef(false);
 
+  // v10.13 (deep-recheck M4): ledger retention cap. txn_history grew
+  // forever (manual trades + every INDMoney/Sheets/cloud auto-diff synthetic
+  // transaction) — after months the JSON blew the ~5MB localStorage quota,
+  // the setItem threw, and persistence SILENTLY stopped (fire-and-forget
+  // catch). 5,000 newest entries ≈ years of active trading; the cap applies
+  // at record time so both state and every persistence surface (storage,
+  // cloud save) stay bounded.
+  const TXN_LEDGER_CAP = 5000;
+  const _capTxns = (txns: Transaction[]): Transaction[] =>
+    txns.length > TXN_LEDGER_CAP ? txns.slice(txns.length - TXN_LEDGER_CAP) : txns;
+
   const buildCloudState = useCallback((): CloudAppState => ({
     v: 1,
     savedAt: Date.now(),
     plannerSettings: { indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses },
     usFrequency,
-    transactions,
+    transactions: _capTxns(transactions),
     priceAlerts,
   }), [indiaSIP, usSIP, btcSIP, ethSIP, investYears, riskLevel, emergencyFund, currentAge, monthlyExpenses, usFrequency, transactions, priceAlerts]);
 
@@ -845,7 +864,7 @@ export function useAppState() {
       if (typeof p.monthlyExpenses === 'number' && p.monthlyExpenses > 0) setMonthlyExpenses(p.monthlyExpenses);
     }
     if (s.usFrequency === 'monthly' || s.usFrequency === 'quarterly') setUsFrequency(s.usFrequency);
-    if (Array.isArray(s.transactions)) setTransactions(s.transactions as Transaction[]);
+    if (Array.isArray(s.transactions)) setTransactions(_capTxns(s.transactions as Transaction[]));
     if (Array.isArray(s.priceAlerts)) setPriceAlerts(s.priceAlerts as PriceAlert[]);
   }, [setUsFrequency]);
 
@@ -1423,7 +1442,9 @@ export function useAppState() {
 
   // --- Save transaction ledger ---
   useEffect(() => {
-    try { secureStorage.setItem('txn_history', JSON.stringify(transactions)); } catch { }
+    // v10.13: cap the PERSISTED ledger (see TXN_LEDGER_CAP note) — guards
+    // the quota even if a cloud restore briefly loaded an oversized array.
+    try { secureStorage.setItem('txn_history', JSON.stringify(_capTxns(transactions))); } catch { }
   }, [transactions]);
 
   // --- Save price alerts ---
@@ -1909,7 +1930,12 @@ export function useAppState() {
       const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
       const day = ist.getDay(); // 0 = Sunday
       const hour = ist.getHours();
-      const todayStr = ist.toISOString().split('T')[0];
+      // v10.13 (deep-recheck L11): the IST date KEY must come from the
+      // formatter directly — `ist.toISOString()` re-shifted by the BROWSER's
+      // offset, off-by-one-ing the dedup key for users outside IST in some
+      // hour windows (double-send or missed weekly report). en-CA renders
+      // YYYY-MM-DD natively.
+      const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(now);
 
       // FIX H3: check secureStorage instead of in-memory ref — survives reloads.
       const alreadySent = secureStorage.getItem(`weekly_report_sent_${todayStr}`) === '1';
@@ -2213,7 +2239,7 @@ export function useAppState() {
         prevQty, prevAvg, newQty, newAvg,
         ...(realizedPL !== undefined ? { realizedPL } : {}),
       };
-      setTransactions(prev => [...prev, txn]);
+      setTransactions(prev => _capTxns([...prev, txn]));
     };
 
     if (transactionType === 'sell') {

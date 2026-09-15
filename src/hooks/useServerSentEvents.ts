@@ -128,20 +128,47 @@ export function useStreamingAI() {
       }
 
       let accumulatedText = '';
+      // v10.13 (deep-recheck M1): cross-read LINE BUFFER. TCP/SSE events
+      // frequently split mid-line across reader.read() chunks — the old
+      // per-chunk split() fed BOTH halves to JSON.parse, which failed silently
+      // in the catch, DROPPING the content. Buffer and only process up to the
+      // last newline; the remainder carries into the next read.
+      let lineBuffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
 
         if (done) {
           console.log('[Stream] Complete');
+          // flush any trailing line that never got its final newline
+          if (lineBuffer.startsWith('data: ')) {
+            const data = lineBuffer.slice(6).trim();
+            if (data && data !== '[DONE]') {
+              try {
+                const parsed = JSON.parse(data);
+                const content = parsed.content || parsed.choices?.[0]?.delta?.content || '';
+                if (content) {
+                  accumulatedText += content;
+                  setStreamedText(accumulatedText);
+                }
+              } catch { /* skip invalid JSON */ }
+            }
+          }
           break;
         }
 
         // Decode chunk
         const chunk = decoder.decode(value, { stream: true });
+        const combined = lineBuffer + chunk;
+        const lastNewline = combined.lastIndexOf('\n');
+        if (lastNewline === -1) {
+          lineBuffer = combined; // incomplete line — wait for more data
+          continue;
+        }
+        lineBuffer = combined.slice(lastNewline + 1);
 
         // Parse SSE format
-        const lines = chunk.split('\n');
+        const lines = combined.slice(0, lastNewline + 1).split('\n');
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             const data = line.slice(6).trim();
@@ -203,7 +230,10 @@ export function useLiveUpdates(endpoint: string | null) {
 
   const { data, status } = useServerSentEvents(endpoint, {
     onMessage: (newData) => {
-      setUpdates(prev => [...prev, newData]);
+      // v10.13 (deep-recheck H2): RING BUFFER — the old append-forever array
+      // grew unboundedly on a 1-5 msg/sec stream (slow memory leak + each
+      // update re-rendered an ever-longer list). Keep the newest 200.
+      setUpdates(prev => [...prev, newData].slice(-200));
     }
   });
 

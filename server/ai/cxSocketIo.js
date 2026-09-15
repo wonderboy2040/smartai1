@@ -130,6 +130,10 @@ export function createCxSocketIo({
     });
     ws.on('message', (raw) => {
       if (_ws !== ws) return;
+      // v10.13 (deep-recheck L10): upstream frame size cap — a misbehaving
+      // peer must not be able to OOM the process via a giant frame (the
+      // String() + JSON.parse below would happily buffer/parse it).
+      if (raw && raw.length > 1_000_000) return;
       _handleFrame(typeof raw === 'string' ? raw : raw.toString());
     });
     ws.on('error', () => {

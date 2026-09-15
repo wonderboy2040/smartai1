@@ -107,13 +107,25 @@ class ResponseCache {
 // Global cache instance
 export const responseCache = new ResponseCache();
 
-// Auto-cleanup every 60 seconds
-setInterval(() => {
-  const cleaned = responseCache.cleanup();
-  if (cleaned > 0) {
-    console.log(`[Cache] Cleaned ${cleaned} expired entries`);
-  }
-}, 60000);
+// Auto-cleanup every 60 seconds — v10.13 (deep-recheck L1): LAZY-started on
+// the first set() instead of firing forever from module import (the old
+// module-scope setInterval ran in every test/SSR context that merely
+// imported the module, and never stopped).
+let _cleanupTimer: ReturnType<typeof setInterval> | null = null;
+function _ensureCleanupTimer() {
+  if (_cleanupTimer || typeof setInterval === 'undefined') return;
+  _cleanupTimer = setInterval(() => {
+    const cleaned = responseCache.cleanup();
+    if (cleaned > 0) {
+      console.log(`[Cache] Cleaned ${cleaned} expired entries`);
+    }
+  }, 60000);
+}
+const _origSet = responseCache.set.bind(responseCache);
+responseCache.set = <T,>(key: string, data: T, ttl?: number) => {
+  _ensureCleanupTimer();
+  return _origSet(key, data, ttl);
+};
 
 // Helper to generate cache keys
 export function generateCacheKey(

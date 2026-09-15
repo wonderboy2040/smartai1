@@ -12,15 +12,12 @@ interface UseWebSocketOptions {
   reconnectDelay?: number;
   maxReconnectAttempts?: number;
   heartbeatInterval?: number;
+  symbols?: string[];
 }
 
 export function useWebSocket(options: UseWebSocketOptions) {
   const {
     url,
-    onMessage,
-    onConnect,
-    onDisconnect,
-    onError,
     reconnectDelay = 3000,
     maxReconnectAttempts = 5,
     heartbeatInterval = 30000
@@ -29,8 +26,16 @@ export function useWebSocket(options: UseWebSocketOptions) {
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttemptsRef = useRef(0);
-  const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const heartbeatTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // v10.13 (deep-recheck H1): handlers live in a REF, not the connect closure.
+  // The old effect ran once with empty deps — onMessage/onConnect/onDisconnect/
+  // onError were captured from the FIRST render forever, so any consumer
+  // reading current state in a handler silently read stale state for the
+  // socket's lifetime. Refs stay fresh on every render.
+  const handlersRef = useRef(options);
+  handlersRef.current = options;
 
   const cleanup = useCallback(() => {
     if (reconnectTimerRef.current) {
@@ -55,9 +60,17 @@ export function useWebSocket(options: UseWebSocketOptions) {
   const connect = useCallback(() => {
     cleanup();
 
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+    // v10.13 (M2): CONNECTING also short-circuits — the old OPEN-only guard
+    // let a manual connect() racing a pending socket create a SECOND socket
+    // (the first kept its handlers → duplicate connections + double delivery).
+    if (wsRef.current?.readyState === WebSocket.OPEN
+      || wsRef.current?.readyState === WebSocket.CONNECTING) {
       return;
     }
+    // v10.13 (H1b): a manual connect() must be able to actually reconnect —
+    // the old path never reset the attempts counter (disconnect() set it to
+    // max), so a manual retry after a failed server just gave up silently.
+    reconnectAttemptsRef.current = 0;
 
     setStatus('connecting');
     console.log('[WebSocket] Connecting to:', url);
@@ -71,7 +84,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
         setStatus('connected');
         reconnectAttemptsRef.current = 0;
         startHeartbeat();
-        onConnect?.();
+        handlersRef.current.onConnect?.();
       };
 
       ws.onmessage = (event) => {
@@ -81,7 +94,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
           // Ignore pong messages
           if (data.type === 'pong') return;
 
-          onMessage?.(data);
+          handlersRef.current.onMessage?.(data);
         } catch (error) {
           console.error('[WebSocket] Message parse error:', error);
         }
@@ -90,14 +103,14 @@ export function useWebSocket(options: UseWebSocketOptions) {
       ws.onerror = (error) => {
         console.error('[WebSocket] Error:', error);
         setStatus('error');
-        onError?.(error);
+        handlersRef.current.onError?.(error);
       };
 
       ws.onclose = (event) => {
         console.log('[WebSocket] Disconnected:', event.code, event.reason);
         setStatus('disconnected');
         cleanup();
-        onDisconnect?.();
+        handlersRef.current.onDisconnect?.();
 
         // Attempt reconnection
         if (reconnectAttemptsRef.current < maxReconnectAttempts) {
@@ -119,13 +132,14 @@ export function useWebSocket(options: UseWebSocketOptions) {
       console.error('[WebSocket] Connection error:', error);
       setStatus('error');
     }
-  }, [url, onMessage, onConnect, onDisconnect, onError, reconnectDelay, maxReconnectAttempts, startHeartbeat, cleanup]);
+  }, [url, reconnectDelay, maxReconnectAttempts, startHeartbeat, cleanup]);
 
   const disconnect = useCallback(() => {
     cleanup();
     reconnectAttemptsRef.current = maxReconnectAttempts; // Prevent reconnection
 
     if (wsRef.current) {
+      wsRef.current.onclose = null; // deliberate close — no auto-reconnect
       wsRef.current.close();
       wsRef.current = null;
     }
@@ -143,13 +157,16 @@ export function useWebSocket(options: UseWebSocketOptions) {
     return false;
   }, []);
 
+  // v10.13 (H1c): dep on `url` ONLY — handlers flow through handlersRef, so
+  // an inline onMessage no longer re-creates the socket (connection churn)
+  // while still being called with fresh closure state.
   useEffect(() => {
     connect();
-
     return () => {
       disconnect();
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url]);
 
   return {
     status,
@@ -183,6 +200,9 @@ export function useLivePrices(
     }
   });
 
+  // v10.13 (H1d): string-key dep — an inline `symbols` array identity changes
+  // on EVERY render, which re-fired this effect (subscribe spam) every tick.
+  const symbolsKey = symbols.join(',');
   useEffect(() => {
     if (isConnected) {
       send({
@@ -190,7 +210,8 @@ export function useLivePrices(
         symbols
       });
     }
-  }, [symbols, isConnected, send]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbolsKey, isConnected, send]);
 
   return {
     status,

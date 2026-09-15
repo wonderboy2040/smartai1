@@ -40,10 +40,65 @@ const GROWW_RETRY_MIN_MS = 300;     // quick-retry jitter window (plan: ~300-500
 const GROWW_RETRY_MAX_MS = 500;
 const GROWW_BACKOFF_AFTER_FAILS = 2; // consecutive failed cycles → skip 1 cycle
 const GROWW_BACKOFF_MS = 4500;       // ~one 3s poll cycle + margin
+// v10.13 (deep-recheck M-2 stream): NSE-session freshness gate for
+// lastTradeTime. The v10.12.1 live find proved Groww can serve a GROSSLY
+// stale row that passes the price>0 check (IN_NIFTY 19425 with a Nov-2023
+// lastTradeTime). Indices are now excluded upstream, but the same failure
+// mode (WAF/CDN serving a previous-session row during market hours) would
+// tag a stale stock quote 'groww-live'. While the NSE window is OPEN we
+// therefore reject rows whose last trade predates TODAY's 09:15 session
+// open (every listed symbol gets an opening-auction print by ~09:15, so a
+// pre-session timestamp during live hours is garbage by definition) and
+// rows with an absurd future clock (server-side skew/garbage). Same-session
+// old timestamps are ACCEPTED — an illiquid stock that simply hasn't traded
+// in 20 minutes still has an honest last-traded price.
+const GROWW_SESSION_START_IST = 'T09:15:00+05:30';
+
+// IST calendar key + session-start epoch for TODAY (cached per day).
+let _sessionStartCache = { day: '', epochMs: 0 };
+function _todayNseSessionStartMs(now = new Date()) {
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(now); // YYYY-MM-DD
+  if (_sessionStartCache.day === day) return _sessionStartCache.epochMs;
+  const epochMs = Date.parse(`${day}${GROWW_SESSION_START_IST}`);
+  _sessionStartCache = { day, epochMs };
+  return epochMs;
+}
+function _isStaleGrowwRow(lastTradeMs, nowMs) {
+  if (!lastTradeMs || lastTradeMs <= 0) return false; // no timestamp → trust (unchanged behavior)
+  // Absurd future clock (>60s ahead) → garbage.
+  if (lastTradeMs > nowMs + 60_000) return true;
+  // Freshness only matters while the NSE session is live.
+  if (!nseWindow()) return false;
+  const sessionStart = _todayNseSessionStartMs();
+  if (!Number.isFinite(sessionStart)) return false; // date math failed → don't guess
+  // During market hours a last trade from BEFORE today's 09:15 open is a
+  // stale/previous-session row — exactly the observed garbage shape.
+  return lastTradeMs < sessionStart;
+}
 
 const _microCache = new Map();      // sym -> { ts, promise }
 const _failStreaks = new Map();     // sym -> consecutive failed fetch cycles
 const _backoffUntil = new Map();    // sym -> epoch ms until which upstream is skipped
+
+// v10.13 (deep-recheck M-2): keep the failure maps bounded. They were only
+// cleared on SUCCESS — a symbol that never resolves (or an anonymous caller
+// enumerating random symbol strings through the public /api/quote) left
+// permanent entries. Same opportunistic >500 sweep as _microCache: drop
+// expired backoffs and stale streaks; if still oversized (abuse), reset the
+// streak map wholesale (worst case: a failing symbol re-arms after 2 more
+// misses — bounded memory wins).
+function _sweepFailureMaps() {
+  if (_failStreaks.size <= 500 && _backoffUntil.size <= 500) return;
+  const now = Date.now();
+  for (const [k, until] of _backoffUntil) {
+    if (until < now - 60_000) _backoffUntil.delete(k);
+  }
+  if (_failStreaks.size > 500) _failStreaks.clear();
+}
+
+// v10.13: nseWindow imported from inStream (single source of truth for the
+// NSE session check — no circular import: inStream only pulls liveFeed).
+import { nseWindow } from '../inStream.js';
 
 // test injection (default: global fetch — Node 18+)
 let _fetchImpl = null;
@@ -86,6 +141,13 @@ async function _growwFetchOnce(sym) {
     const price = (typeof j.ltp === 'number' && j.ltp > 0) ? j.ltp
       : (typeof j.close === 'number' && j.close > 0) ? j.close : 0;
     if (!price) return null;
+    const lastTradeMs = (typeof j.lastTradeTime === 'number' && j.lastTradeTime > 0) ? j.lastTradeTime * 1000 : 0;
+    // v10.13 (deep-recheck M-2): grossly-stale row guard — a previous-session
+    // or garbage-clock lastTradeTime during live hours must NOT be served
+    // (and must NOT be tagged groww-live downstream). Returning null here
+    // runs the normal failure path: quick retry, then honest Yahoo fallback
+    // in the callers.
+    if (_isStaleGrowwRow(lastTradeMs, Date.now())) return null;
     return {
       price,
       change: typeof j.dayChangePerc === 'number' ? j.dayChangePerc : 0,
@@ -93,7 +155,7 @@ async function _growwFetchOnce(sym) {
       low: j.low || price,
       volume: j.volume || 0,
       prevClose: (j.ltp && j.dayChange != null) ? (j.ltp - j.dayChange) : price,
-      time: (j.lastTradeTime ? j.lastTradeTime * 1000 : Date.now()),
+      time: (lastTradeMs || Date.now()),
       source: 'groww-nse-realtime',
     };
   } catch { return null; }
@@ -131,6 +193,7 @@ export async function fetchGrowwNseQuote(plainSym) {
     const cutoff = Date.now() - GROWW_CACHE_MS * 2;
     for (const [k, v] of _microCache) if (v.ts < cutoff) _microCache.delete(k);
   }
+  _sweepFailureMaps(); // v10.13: bounded failure maps (public /api/quote enumeration)
   return promise;
 }
 

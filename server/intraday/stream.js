@@ -31,7 +31,14 @@ const BACKOFF_MS = 30000;
 const FAILURE_STREAK_LIMIT = 3;
 // v9.5: index symbols the option paper-trades re-price from (Groww has
 // no index quotes — these ride the Yahoo map in _fetchQuotes).
-const INDEX_SYMBOLS = new Set(['NIFTY', 'BANKNIFTY', 'SENSEX', 'INDIAVIX', 'FINNIFTY', 'MIDCPNIFTY', 'NIFTYNXT50']);
+// v10.13 (deep-recheck L9): UNION with inStream's INDEX_SYMBOLS — the old
+// 7-name subset let a paper trade on NIFTY50/NIFTYBANK/CNXIT fall through
+// to Groww's garbage index ltp (the exact v10.12.1 bug class, verified live
+// 19425-vs-23398). Every name here has a YF_INDEX_MAP entry.
+const INDEX_SYMBOLS = new Set([
+  'NIFTY', 'NIFTY50', 'BANKNIFTY', 'NIFTYBANK', 'SENSEX', 'INDIAVIX',
+  'CNXIT', 'FINNIFTY', 'MIDCPNIFTY', 'NIFTYNXT50',
+]);
 // v9.4: 24 → 34. The watch set = paper ∪ scan ∪ tracked, and tracked rows
 // accumulate through the day (MAX_PER_DAY=40). With the old 24 cap the
 // paper symbols — inserted last — were the FIRST to be silently dropped
@@ -45,14 +52,20 @@ const MAX_WATCH_NSE = 34;
 const MAX_WATCH_CRYPTO = 14;
 
 let _deps = null;               // { fetchGrowwNseQuote, fetchCoinDcxTickers, sendTelegramRaw, escapeHtml, dispatchOutcomeAlert }
-let _scanSymbols = new Set();   // latest scan's published signal symbols (all markets)
-let _scanCrypto = new Set();    // subset of _scanSymbols that are CRYPTO-market symbols
+// v10.13 (deep-recheck M4): per-market scan sets. The old single
+// _scanSymbols was wholesale-replaced by EVERY completed scan — an India
+// scan evicted the crypto scanner's signal symbols (and vice versa), so
+// the other market's signal-card quotes froze until ITS next scan ran.
+// Each market now owns its own set; _watchSet() unions both.
+let _scanIndia = new Set();     // latest INDIA scan's published signal symbols
+let _scanCrypto = new Set();    // latest CRYPTO scan's published signal symbols
 let _latestQuotes = { data: {}, ts: 0, day: '', utcDay: '' };
 let _clients = new Set();       // SSE response writers
 let _timer = null;
 let _failureStreak = 0;
 let _lastRegimePush = 0;
 let _lastCryptoRegimePush = 0;
+let _ticking = false; // v10.13 (deep-recheck L1): poll re-entrancy guard
 
 function _debug() { return process.env.INTRADAY_DEBUG === '1'; }
 
@@ -75,9 +88,19 @@ export function initIntradayStream(deps) {
 
 export function setScanSymbols(symbols, market = 'INDIA') {
   const list = Array.isArray(symbols) ? symbols.map(s => String(s).toUpperCase()) : [];
-  _scanSymbols = new Set(list);
   const isCrypto = String(market).toUpperCase() === 'CRYPTO';
-  _scanCrypto = new Set(isCrypto ? list : list.filter(s => isCryptoSymbolBase(s)));
+  // v10.13 (M4): write ONLY this market's set — a scan for one market must
+  // never evict the other market's symbols (see the _scanIndia note).
+  // The crypto-base heuristic is kept for INDIA scans that somehow carry
+  // crypto names (legacy rows) — those route to the crypto set so Groww is
+  // never asked for a coin.
+  if (isCrypto) {
+    _scanCrypto = new Set(list);
+  } else {
+    _scanIndia = new Set(list.filter(s => !isCryptoSymbolBase(s)));
+    const strays = list.filter(s => isCryptoSymbolBase(s));
+    if (strays.length) _scanCrypto = new Set(strays);
+  }
 }
 
 export function getLatestQuotes() {
@@ -108,7 +131,10 @@ function _watchSet() {
   // (NIFTY/SENSEX) for the BS premium re-pricing below. Indices skip
   // the Groww equity feed, so _fetchQuotes routes them to Yahoo.
   optionUnderlyingsForWatcher().forEach(s => mark(s, false));
-  _scanSymbols.forEach(s => mark(s, _scanCrypto.has(s)));
+  // v10.13 (M4): union of BOTH markets' scan sets — neither scan evicts the
+  // other's symbols any more.
+  _scanIndia.forEach(s => mark(s, false));
+  _scanCrypto.forEach(s => mark(s, true));
   const tracked = watcherSymbolsByMarket();
   tracked.india.forEach(s => mark(s, false));
   tracked.crypto.forEach(s => mark(s, true));
@@ -188,6 +214,11 @@ async function _fetchQuotes(symMarket) {
 }
 
 async function _tick() {
+  // v10.13 (deep-recheck L1): re-entrancy guard — a slow quote round can
+  // exceed the 5s interval; overlapping ticks stack upstream load exactly
+  // when the upstream is unhealthy.
+  if (_ticking) return;
+  _ticking = true;
   try {
     const symMarket = _watchSet();
     const hasCrypto = [...symMarket.values()].includes('CRYPTO');
@@ -230,6 +261,20 @@ async function _tick() {
       _latestQuotes = { data: {}, ts: 0, day: today, utcDay };
     }
     _latestQuotes = { data: { ..._latestQuotes.data, ...quotes }, ts: Date.now(), day: today, utcDay };
+    // v10.13 (deep-recheck L7): prune departed symbols. The map was
+    // merge-only — symbols that left the watch set kept their frozen last
+    // quote forever and a fresh client's initial snapshot served them as if
+    // live. A key absent from the CURRENT watch set for >10 minutes can
+    // never refresh again — drop it (paper/tracked legs are always in the
+    // watch set, so live positions are never pruned).
+    {
+      const cutoff = Date.now() - 10 * 60 * 1000;
+      for (const k of Object.keys(_latestQuotes.data)) {
+        if (!symMarket.has(k) && (_latestQuotes.data[k]?.ts || 0) < cutoff) {
+          delete _latestQuotes.data[k];
+        }
+      }
+    }
 
     // Outcome evaluation (tracked signals + paper trades).
     const events = [];
@@ -258,6 +303,8 @@ async function _tick() {
     }
   } catch (e) {
     console.warn('[intraday-stream] tick error:', e?.message);
+  } finally {
+    _ticking = false;
   }
 }
 

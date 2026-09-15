@@ -76,6 +76,21 @@ export async function fetchWithRetry<T>(
     } catch (error) {
       lastError = error as Error;
 
+      // v10.13 (deep-recheck M6): a CALLER-initiated abort (unmount
+      // AbortController) is NOT retryable — the consumer is gone; retrying
+      // wastes quota and delays teardown. A timeout abort (our own
+      // AbortSignal.timeout) still is. Distinguish by checking whether the
+      // error is a bare AbortError WITHOUT a timeout marker — timeout
+      // errors come from AbortSignal.timeout and carry 'timeout' in the
+      // message (TimeoutError also surfaces as AbortError in some browsers).
+      const err = error as { name?: string; message?: string };
+      const isAbort = err?.name === 'AbortError';
+      const looksLikeTimeout = String(err?.message || '').toLowerCase().includes('timeout')
+        || err?.name === 'TimeoutError';
+      if (isAbort && !looksLikeTimeout) {
+        throw error;
+      }
+
       // Don't retry if not retryable
       if (!isRetryableError(error, opts.retryableStatuses)) {
         throw error;

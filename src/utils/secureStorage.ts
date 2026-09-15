@@ -207,8 +207,14 @@ export const secureStorage = {
   // Fire-and-forget — most callers don't need to await
   setItem(key: string, value: string): void {
     if (isSensitive(key) && ENCRYPTION_KEY && isCryptoAvailable()) {
+      // v10.13 (deep-recheck L2): .catch added — a rare WebCrypto failure
+      // surfaced as an unhandled promise rejection on every write.
       encryptData(value).then(encrypted => {
         try { localStorage.setItem(key, `enc:${encrypted}`); } catch { }
+      }).catch(() => {
+        // Encryption failed — persist PLAINTEXT rather than silently losing
+        // the write entirely (same degradation setItemAsync already uses).
+        try { localStorage.setItem(key, value); } catch { }
       });
     } else {
       try { localStorage.setItem(key, value); } catch { }

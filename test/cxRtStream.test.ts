@@ -528,6 +528,60 @@ describe('cxRtStream — WEBSOCKET accelerator (CoinDCX futures socket)', () => 
     cxRtClientDown();
   });
 
+  // v10.13 (deep-recheck M3): epoch UNIT normalization. CoinDCX serves
+  // SECONDS in `ts`/`T` fields while every internal comparison is in ms.
+  // A seconds-based WS T against an ms-based REST tick used to make the
+  // out-of-order guard reject (or accept) by LUCK of unit order — and a
+  // seconds value stored into liveFeed poisoned frontend freshness logic.
+  it('SECONDS-based WS T is normalized to ms — accepted after an ms REST tick (unit-mix guard)', async () => {
+    // REST serves first with a normal ms-based ts (fetchFuturesPrices)
+    routeFetch(url => {
+      if (url.includes('/futures/data/active?')) return { ok: true, json: async () => [] };
+      return {
+        ok: true,
+        json: async () => ({ ts: Date.now(), prices: { 'B-BTC_USDT': futRow(50_000, 2.5) } }),
+      };
+    });
+    const sockets: FakeDcxWs[] = [];
+    armWs(sockets);
+    ensureCxRtSubscribed({ fut: ['BTC'] });
+    cxRtClientUp();
+    await _pollOnceForTest();
+    expect(getTick('FUT_BTC')!.price).toBeCloseTo(50_000, 6);
+    expect(getTick('FUT_BTC')!.source).toBe('coindcx-fut-rt');
+    // the WS arms in parallel — wait for the live socket before pushing
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    await vi.waitFor(() => expect(sockets[0].sent.filter(f => f.startsWith('42["join"'))).toHaveLength(1));
+
+    // NOW a WS event with a SECONDS-based T (≈ now/1000). Pre-fix this
+    // landed in liveFeed as ~1970 or tripped the guard by unit luck;
+    // post-fix it is normalized to ms and ACCEPTED as the newer tick.
+    const secs = Math.floor(Date.now() / 1000);
+    sockets[0].serverMessage(pcFrame('B-BTC_USDT@prices-futures', { p: '51000', pc: 2.0, T: secs }));
+    const t = getTick('FUT_BTC')!;
+    expect(t.price).toBeCloseTo(51000, 6);
+    expect(t.source).toBe('coindcx-fut-ws');
+    expect(t.time).toBeGreaterThan(1e12); // stored in MILLISECONDS
+    cxRtClientDown();
+  });
+
+  it('SECONDS-based REST ts is normalized to ms in liveFeed (futures.js parse)', async () => {
+    routeFetch(url => {
+      if (url.includes('/futures/data/active?')) return { ok: true, json: async () => [] };
+      return {
+        ok: true,
+        json: async () => ({ ts: Math.floor(Date.now() / 1000), prices: { 'B-BTC_USDT': futRow(50_500, 1.0) } }),
+      };
+    });
+    ensureCxRtSubscribed({ fut: ['BTC'] });
+    cxRtClientUp();
+    await _pollOnceForTest();
+    const t = getTick('FUT_BTC')!;
+    expect(t.price).toBeCloseTo(50_500, 6);
+    expect(t.time).toBeGreaterThan(1e12); // ms, not seconds
+    cxRtClientDown();
+  });
+
   it('BOOK-STYLE full updates fan out per subscribed symbol (tolerant parse)', async () => {
     routeFetch(() => null);
     const sockets: FakeDcxWs[] = [];
