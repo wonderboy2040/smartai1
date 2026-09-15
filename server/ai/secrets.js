@@ -140,6 +140,93 @@ export async function sendTelegramMessage(text, env = {}) {
   }
 }
 
+// ---------------- v10.9: multi-user + interactive surfaces ----------------
+/** Just the token (secrets WIN over env) — multi-user sends target
+ *  an EXPLICIT chat id, so the default chatId must not leak in. */
+export function telegramToken(env = {}) {
+  const s = getSecrets();
+  return s.telegramBotToken || String(env?.token || '') || null;
+}
+
+/**
+ * Send to an EXPLICIT chat id (v10.9 #6 multi-user roles: the reply goes
+ * to the chat that ASKED — a viewer chat must never redirect to the
+ * admin's configured chat, and vice versa). Same fire-safe contract.
+ * @param {string} chatId numeric Telegram chat id
+ * @param {object} extra { replyMarkup } — inline keyboard for approvals
+ */
+export async function sendTelegramMessageTo(chatId, text, env = {}, extra = {}) {
+  const token = telegramToken(env);
+  const id = String(chatId ?? '').trim();
+  if (!token) return { ok: false, error: 'telegram token not configured' };
+  if (!/^-?\d{3,20}$/.test(id)) return { ok: false, error: `invalid chat id "${id.slice(0, 12)}"` };
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: Number(id),
+        text: String(text || ''),
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        ...(extra?.replyMarkup ? { reply_markup: extra.replyMarkup } : {}),
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!r.ok) {
+      const body = await r.text().catch(() => '');
+      return { ok: false, error: `telegram HTTP ${r.status} ${body.slice(0, 120)}` };
+    }
+    const j = await r.json().catch(() => ({}));
+    return { ok: true, messageId: j?.result?.message_id ?? null };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e).slice(0, 120) };
+  }
+}
+
+/**
+ * Generic Bot API call (v10.9 #4: answerCallbackQuery + getFile for the
+ * approval buttons and voice downloads). Same fire-safe contract.
+ */
+export async function telegramApiCall(method, payload = {}, env = {}) {
+  const token = telegramToken(env);
+  if (!token) return { ok: false, error: 'telegram token not configured' };
+  if (!/^[a-zA-Z]+$/.test(String(method))) return { ok: false, error: 'bad method' };
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload || {}),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.ok) {
+      return { ok: false, error: `telegram ${method} HTTP ${r.status} ${String(j?.description || '').slice(0, 120)}` };
+    }
+    return { ok: true, result: j.result ?? true };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e).slice(0, 120) };
+  }
+}
+
+/** Download a Telegram file by file_path (voice notes). */
+export async function telegramFileBase64(filePath, env = {}) {
+  const token = telegramToken(env);
+  const fp = String(filePath || '').replace(/[^A-Za-z0-9/_.\-]/g, '');
+  if (!token || !fp) return { ok: false, error: 'token/file_path missing' };
+  try {
+    const r = await fetch(`https://api.telegram.org/file/bot${token}/${fp}`, {
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!r.ok) return { ok: false, error: `file download HTTP ${r.status}` };
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (!buf?.length || buf.length > 20 * 1024 * 1024) return { ok: false, error: `voice file too large (${buf.length} bytes)` };
+    return { ok: true, base64: buf.toString('base64'), size: buf.length };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e).slice(0, 120) };
+  }
+}
+
 // ---------------- test hooks ----------------
 export function __resetSecretsForTests() {
   saveJSON(SECRETS_FILE, { secrets: {}, updatedAt: 0 });

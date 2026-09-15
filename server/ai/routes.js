@@ -68,6 +68,13 @@ import {
 import { runBacktest } from './backtest.js';
 // v10.8 PRO #2: NL Custom Strategy Lab — description → bounded rules → replay
 import { runCustomStrategyBacktest } from './strategyLab.js';
+// v10.9 INSTANT TELEGRAM PUSH — the price-driven sink (SL/TP touches +
+// STRONG signals) + the shared dedupe the 60s backup alerter reuses.
+import {
+  startInstaPushSink, scanStrongSignalsBackup, instaPushStatus, instantPushEnabled,
+} from './telegramPush.js';
+// v10.9 WEEKLY REVIEW — journal + calibration → one LLM narration
+import { runWeeklyPerformanceReview, weeklyReviewStatus, scheduleWeeklyReviewPush } from './weeklyReview.js';
 import { getSwingBoard, scanWhales, getOrderbook } from './swing.js';
 import { readDepth, depthStatus } from './orderFlowDepth.js';
 import { wickFilterStatus } from './wickFilter.js';
@@ -76,7 +83,7 @@ import { adaptiveStatus } from './adaptive.js';
 import { regimeReweightView } from './ensemble.js';
 import { trustReport, governance, modelPerformanceWindows } from './trust.js';
 import { perfReport } from './perf.js';
-import { correlationMatrix } from './correlation.js';
+import { correlationMatrix, pairCorrelation } from './correlation.js';
 import { sectorDesk } from './sectors.js';
 import { rankIncomeSetups } from './optionsDesk.js';
 import {
@@ -85,11 +92,22 @@ import {
 import { dhanConnect, dhanDisconnect, dhanConnected, dhanProfile, scripMasterStatus } from './dhan.js';
 import { isNseOpen, fetchYahooQuotes } from './data.js';
 
-const ALERT_COOLDOWN_MS = 30 * 60_000; // same symbol+side re-alerts after 30 min
+// ------------------------------------------------------------
+// v10.9 CONTROLLED TRADE APPROVAL — the Telegram webhook's SINGLE
+// execution path. Wired at registration to the EXACT same
+// executeSignal gauntlet POST /api/ai/execute runs (fresh-signal
+// re-verification, kill switch, risk caps, mandate freeze). The
+// approval button only ADDS a manual trigger — it bypasses none
+// of the safety layers.
+// ------------------------------------------------------------
+let _approvedExec = null;
+export async function runApprovedExecution(opts = {}) {
+  if (!_approvedExec) throw new Error('AI trading routes not registered yet');
+  return _approvedExec(opts);
+}
 
 export function registerAITradingRoutes(app, deps) {
   const { KEYS, OPENAI_COMPAT, TG, jsonError } = deps || {};
-
   // v6.5: AI Council keys — secrets (typed in the app) WIN over env.
   // Built fresh on every call so a key saved mid-flight engages on the
   // next board run without a restart.
@@ -825,6 +843,58 @@ export function registerAITradingRoutes(app, deps) {
     }
   });
 
+  // ---------------- v10.9: instant-push pipeline status ----------------
+  // The legacy bot's 10-min backup cron consults this — healthy pipeline
+  // means the cron stays silent.
+  app.get('/api/ai/insta-push/status', (_req, res) => {
+    try { res.json(instaPushStatus()); } catch (e) { jsonError(res, 500, 'insta-push status failed', e); }
+  });
+
+  // v10.9: the approval flow's execution path — same gauntlet as
+  // POST /api/ai/execute, source-tagged for the journal audit.
+  _approvedExec = async ({ symbol, side, mode, qtyINR, leverage } = {}) => executeSignal({
+    symbol: String(symbol || '').toUpperCase(),
+    side: side ? String(side).toUpperCase() : undefined,
+    mode: mode === 'live' ? 'live' : mode === 'notify' ? 'notify' : 'paper',
+    qtyINR: qtyINR != null ? Number(qtyINR) : undefined,
+    leverage: leverage != null ? Number(leverage) : undefined,
+    getFreshSignal: (pair) => getFreshSignalForExec(pair, depsForSignals()),
+    wantAuto: false,
+    source: 'telegram-approval',
+    sendTelegram,
+  });
+
+  // ---------------- v10.9: pair correlation (alert bundling) ----------------
+  // The price-alert watcher calls this to decide whether two alerts that
+  // fired in the same 20s window are really ONE correlated move (BTC + ETH
+  // breaking out together = one notification, not two).
+  app.get('/api/ai/pair-correlation', async (req, res) => {
+    try {
+      const a = String(req.query.a || '').toUpperCase().slice(0, 12);
+      const b = String(req.query.b || '').toUpperCase().slice(0, 12);
+      if (!/^[A-Z0-9]{1,12}$/.test(a) || !/^[A-Z0-9]{1,12}$/.test(b) || a === b) {
+        return res.status(400).json({ ok: false, error: 'a and b required (distinct symbols)' });
+      }
+      const r = await pairCorrelation(a, b);
+      res.json({ ok: true, a, b, r, note: '60d daily-return Pearson. null = data unavailable (never a fake 0).' });
+    } catch (e) { jsonError(res, 500, 'pair correlation failed', e); }
+  });
+
+  // ---------------- v10.9: weekly trade-performance review ----------------
+  // /weeklyreview — journal + calibration → quant numbers → one LLM
+  // narration. Same compute the Sunday auto-push uses.
+  app.post('/api/ai/weekly-review', async (_req, res) => {
+    try {
+      const out = await runWeeklyPerformanceReview({ KEYS: effectiveKeys(), OPENAI_COMPAT });
+      if (!out.ok) return res.status(400).json(out);
+      res.set('Cache-Control', 'no-store');
+      res.json(out);
+    } catch (e) { jsonError(res, 500, 'weekly review failed', e); }
+  });
+  app.get('/api/ai/weekly-review/status', (_req, res) => {
+    try { res.json(weeklyReviewStatus()); } catch (e) { jsonError(res, 500, 'weekly review status failed', e); }
+  });
+
   // ---------------- alerts + AI council keys (v6.5) ----------------
   app.get('/api/ai/alerts/config', (_req, res) => {
     try {
@@ -971,36 +1041,25 @@ export function registerAITradingRoutes(app, deps) {
 
   // v6.5 STRONG-signal alerter — telegram ping when a fresh STRONG
   // consensus appears on either desk (deduped per symbol+side, 30 min).
-  const lastAlerts = new Map(); // key → ts
+  // v10.9: DEMOTED to backup — the instant-push sink (telegramPush.js)
+  // scans the same boards every ~30s through the SAME dedupe map, so
+  // whichever path sees the signal first wins and this loop no-ops.
+  // Flag off → the sink is not running and this loop IS the cadence
+  // (exactly the pre-v10.9 behaviour, 60s).
   const alerter = setInterval(async () => {
     try {
-      const tg = telegramConfig(TG || {});
-      if (!tg) return;
-      const cfg = loadConfig();
-      if (cfg.killSwitch) return;
-      for (const mkt of ['CRYPTO', 'INDIA']) {
-        const board = await getSignals(mkt, depsForSignals(), { limit: 5 }).catch(() => null);
-        const strongs = (board?.signals || []).filter(s => s.grade === 'STRONG');
-        for (const s of strongs) {
-          const key = `${mkt}:${s.symbol}:${s.side}`;
-          const last = lastAlerts.get(key) || 0;
-          if (Date.now() - last < ALERT_COOLDOWN_MS) continue;
-          lastAlerts.set(key, Date.now());
-          await sendTelegram(
-            `🤖 <b>STRONG SIGNAL</b> — ${mkt === 'INDIA' ? '🇮🇳 NSE' : '₿ Crypto'} · ${s.symbol} ${s.side}\n` +
-            `Confidence ${s.confidence}% · agreement ${Math.round((s.agreement || 0) * 100)}% · ${s.participating}/${s.totalModels} models\n` +
-            (s.plan ? `Entry ₹${s.plan.entry} · SL ₹${s.plan.stopLoss} · T2 ₹${s.plan.target2} (R:R 1:${s.plan.rewardRisk})` : ''),
-          );
-        }
-      }
-      // prune the dedupe map so it can't grow unboundedly
-      if (lastAlerts.size > 100) {
-        const cutoff = Date.now() - ALERT_COOLDOWN_MS;
-        for (const [k, ts] of lastAlerts) if (ts < cutoff) lastAlerts.delete(k);
-      }
+      await scanStrongSignalsBackup({ getSignals, depsForSignals });
     } catch { /* non-fatal */ }
   }, 60_000);
   if (alerter.unref) alerter.unref();
+
+  // v10.9: the instant-push sink — 5s SL/TP level touches + 30s STRONG
+  // scan, one shared dedupe with the backup alerter above.
+  startInstaPushSink({ getSignals, depsForSignals });
+
+  // v10.9: weekly trade-performance digest — Sunday 19:00 IST Telegram
+  // push (AI_WEEKLY_REVIEW_PUSH=off). /weeklyreview runs it on demand.
+  scheduleWeeklyReviewPush(() => ({ KEYS: effectiveKeys(), OPENAI_COMPAT }));
 
   // Auto-executor — only when the user explicitly enabled it in LIVE
   // mode. executeSignal re-runs every gate; caps/kill switch apply.

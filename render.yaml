@@ -106,6 +106,29 @@ services:
       # when the L2 depth walk expects more than this % of slippage.
       - key: AI_SLIPPAGE_THRESHOLD_PCT
         sync: false
+      # ---- v10.9 TELEGRAM UPGRADES ----
+      # #2 INSTANT PUSH: price-driven sink (5s SL/TP touches, 30s STRONG
+      # scan with correlation bundling). Default ON; set off for
+      # watcher-only alerts.
+      - key: AI_INSTANT_PUSH
+        sync: false
+      # #3 WEEKLY REVIEW: Sunday 19:00 IST auto-push (journal + calibration).
+      - key: AI_WEEKLY_REVIEW_PUSH
+        sync: false
+      # #6 MULTI-USER ROLES: "chatid:role,..." — configured chat is
+      # always admin; viewers get read-only bot access.
+      - key: TELEGRAM_ROLES
+        sync: false
+      # #4 CONTROLLED ORDER APPROVAL (all default OFF — opt-in on the
+      # user's own env): /trade → Approve button → PIN (4-12 digits) →
+      # the same executeSignal gauntlet as the website's Execute button.
+      # Daily cap + 5-min TTL enforced server-side.
+      - key: AI_TELEGRAM_APPROVALS
+        sync: false
+      - key: AI_APPROVAL_PIN
+        sync: false
+      - key: AI_APPROVAL_MAX_PER_DAY
+        sync: false
 
   # ---- v10.5 META-ENSEMBLE WEEKLY RETRAIN (Upgrade 4) ----
   # Refreshes meta_ensemble.pkl weekly so the stacked learner never

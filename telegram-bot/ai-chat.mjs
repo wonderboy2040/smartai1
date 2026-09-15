@@ -1081,3 +1081,76 @@ export function getAIHealthStatus() {
     huggingface: { available: isHFAvailable(), health: engineHealth.huggingface },
   };
 }
+
+// ============================================
+// 🎤 VOICE TRANSCRIPTION (#5 voice notes)
+// Groq Whisper large-v3 (fast + cheap, the bot's own key) →
+// Gemini inline-audio fallback (the bot's primary key).
+// Never hallucinates a transcript — every engine failure is
+// surfaced honestly to the caller.
+// ============================================
+export async function transcribeVoice(base64Audio, { mimeType = 'audio/ogg' } = {}) {
+  const b64 = String(base64Audio || '').replace(/^data:[^,]+,/, '');
+  const buf = Buffer.from(b64, 'base64');
+  if (!buf.length) throw new Error('empty voice payload');
+
+  // 1) Groq Whisper large-v3 — the default STT engine
+  if (isGroqAvailable()) {
+    try {
+      const fd = new FormData();
+      fd.append('file', new Blob([buf], { type: mimeType || 'audio/ogg' }), 'voice.ogg');
+      fd.append('model', 'whisper-large-v3');
+      fd.append('response_format', 'json');
+      const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${GROQ_KEY}` },
+        body: fd,
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (res.ok) {
+        const j = await res.json().catch(() => ({}));
+        const text = String(j?.text || '').trim();
+        if (text) { recordEngineSuccess('groq'); return { ok: true, text, engine: 'groq-whisper-large-v3' }; }
+      } else {
+        recordEngineFailure('groq');
+        console.warn(`[voice] groq whisper HTTP ${res.status} — trying fallback`);
+      }
+    } catch (e) {
+      recordEngineFailure('groq');
+      console.warn('[voice] groq whisper failed:', e?.message);
+    }
+  }
+
+  // 2) Gemini inline-audio fallback — same multimodal path
+  //    analyzeChartImage uses for images, just with audio parts.
+  if (isGeminiAvailable()) {
+    try {
+      const payload = {
+        contents: [{
+          parts: [
+            { text: 'Transcribe this voice note exactly. Reply with ONLY the spoken text — no labels, no commentary, no translation notes. Hinglish stays Hinglish.' },
+            { inlineData: { mimeType: mimeType || 'audio/ogg', data: b64 } },
+          ],
+        }],
+      };
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(45_000),
+      });
+      if (res.ok) {
+        const j = await res.json().catch(() => ({}));
+        const text = String(j?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+        if (text) { recordEngineSuccess('gemini'); return { ok: true, text, engine: 'gemini-inline-audio' }; }
+      } else {
+        recordEngineFailure('gemini');
+      }
+    } catch (e) {
+      recordEngineFailure('gemini');
+      console.warn('[voice] gemini fallback failed:', e?.message);
+    }
+  }
+
+  throw new Error('voice transcription unavailable — GROQ_API_KEY / GEMINI_KEY check karo');
+}

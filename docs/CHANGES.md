@@ -1,3 +1,39 @@
+## v10.9 — TELEGRAM BOT 8-UPGRADE PLAN (2026-09-15)
+
+### Feat #1: ONE SOURCE OF TRUTH — dual-bot unification
+- **The problem**: the legacy polling bot (`telegram-bot/bot.mjs`, own `analysis.mjs`/`market.mjs`/`algo.mjs` pipelines) and the site webhook bot (`server/telegram/webhook.js`, site agents) could answer the SAME question DIFFERENTLY — "bot says BUY, site says HOLD".
+- NEW `telegram-bot/siteAgents.mjs` bridge: `/scan`, `/screener`, `/consensus`, `/regime`, `/smartmoney` ab the SAME site backend routes chalate hain jo website tabs + webhook use karte hain (`/api/ai/deep/:symbol`, `/api/ai/signals`, `/api/crypto-agent`, `/api/intraday-agent`) over the 127.0.0.1 loopback with the server-only `API_TOKEN`.
+- **Never goes dark**: site unreachable → every command falls back to its legacy local path (bot stays alive, just local). The bot keeps its genuinely bot-specific value (Gemini Vision chart photos, FII/DII via Tavily — prepended with the SITE's regime read so interpretations can't drift).
+
+### Feat #2: INSTANT TELEGRAM PUSH (SL/TP touches in seconds)
+- NEW `server/ai/telegramPush.js` — a price-driven sink polling `getPositionsWithPnl` (the same cached view the realtime SSE stream serves) every **5s while positions are open**: SL / TP1 / TP2 / liquidation level TOUCH → instant push (level-touch early warning; the 60s watcher stays the executor and sends the fill-confirmed truth).
+- Fresh **STRONG signals** scanned every ~30s through the SAME board cache + single-flight (underlying compute cadence unchanged).
+- The routes.js 60s alerter is DEMOTED to backup — both paths share ONE dedupe map, whichever sees it first wins. The legacy bot's 10-min algo cron is now a **backup heartbeat**: it checks `GET /api/ai/insta-push/status` and only fires when the pipeline is stale/unreachable. Flag `AI_INSTANT_PUSH=off` reverts to watcher-only.
+
+### Feat #3: WEEKLY TRADE-PERFORMANCE DIGEST
+- NEW `server/ai/weeklyReview.js` + `POST /api/ai/weekly-review`: the **quant-computes-numbers, LLM-narrates** pattern — AI desk journal closes (rolling 7 IST days), trust.js calibration (claimed vs realized win-rate, Brier, drift), NSE intraday paper week → ONE LLM narration (Week Scorecard / Calibration Read / Best & Worst / Discipline Audit / Next Week Plan / GREEN-AMBER-RED verdict). Quant header is ALWAYS visible (LLM or not).
+- Sunday **19:00 IST auto-push** (`AI_WEEKLY_REVIEW_PUSH=off` disables); on demand: webhook `/weeklyreview` + legacy bot `/weeklyreview` (via the bridge).
+
+### Feat #4: CONTROLLED TELEGRAM ORDER APPROVAL (opt-in, security-sensitive — done LAST as planned)
+- NEW `server/ai/tradeApproval.js` + webhook `/trade` + inline **Approve/Reject callback buttons** + **PIN second factor**.
+- Security contract (all test-locked): default **OFF** (`AI_TELEGRAM_APPROVALS=on` arms); admin-only (viewer chats blocked); PIN mandatory (`AI_APPROVAL_PIN`, 4–12 digits, 3 tries then dead); **daily hard cap** (default 3 EXECUTED/day IST); 5-min TTL + 3-min PIN window; ONE pending request at a time; approval only triggers the **existing `executeSignal` gauntlet** (`source: 'telegram-approval'`) — fresh-signal re-verification, kill switch, risk caps, mandate freeze, one-per-pair ALL still apply. The button is a manual trigger, it **bypasses nothing**.
+- `/trade BTC LONG 5000 x3 paper` grammar is strict — no chat text ever becomes an order on its own. `GET /api/telegram/approval/status` for transparency.
+
+### Feat #5: VOICE NOTES
+- Both bots listen now: `bot.on('voice')` (legacy) and webhook voice messages → download → **Groq Whisper large-v3** (Gemini inline-audio fallback) → transcript shown → routed to the SAME desk agent (crypto/intraday inference + session memory) a text question would hit. Legacy bot falls back to its own 7-engine chat if the site is down. NEW `server/ai/voiceNotes.js` (site-side, reads groqApiKey/geminiApiKey from the secrets store).
+
+### Feat #6: MULTI-USER ROLES
+- `TELEGRAM_ROLES="<chatid>:admin,<chatid>:viewer"` — the configured chat is ALWAYS admin; viewers get read-only access (desk agents, /status, /weeklyreview, voice notes) and are blocked from every approval surface (`/trade` + the buttons + the PIN window are chat-owner-checked). Strangers stay silently ignored. `/whoami` shows the role.
+
+### Feat #7: CORRELATION-AWARE ALERT BUNDLING
+- telegramPush.js STRONG scan: simultaneous crypto STRONG signals with 60d Pearson r ≥ 0.75 (the existing `pairCorrelation`, 15-min cache) go out as **ONE bundled message** ("2 correlated moves — ek hi trade hai, diversify ka dhyan") instead of N pings. Unknown correlation = SEPARATE alerts (never a fake 0). INDIA stays per-signal. `GET /api/ai/pair-correlation?a=&b=` exposes the same read.
+
+### Feat #8: SIGNAL FRESHNESS DECAY (CoinDCX tab)
+- The Intraday tab's 5-min stale concept applied to the ensemble boards: `FreshnessBadge` (LIVE green pulse <2min → amber "Xm old" 2–5min → red pulsing "STALE Xm" >5min) + the signal grid **opacity ramp** (100% → 80% → 50%). Grades the SIGNAL COMPUTE freshness honestly — prices on cards may still be SSE-live; the badge says which is which.
+
+### Validation
+- tsc CLEAN; vitest **81 files / 1504 tests ALL PASS × 2 consecutive runs** (baseline 1394 + 110 new across 7 test files: tradeApproval 29, telegramWebhook 32 incl. the end-to-end approval + voice flows, telegramPush 21, boardFreshness 11, weeklyReview 11, siteAgents 9, voiceNotes 8); node --check on every touched bot/server module; import-smoke all 7 new/extended modules clean; route registry PASS with the 4 new routes (/api/ai/insta-push/status, /api/ai/weekly-review + status, /api/ai/pair-correlation, /api/telegram/approval/status).
+
 ## v10.8 — NEAR-MISS AUTO-TRADE + 4 VE-TRADING PRO PORTS (2026-09-15)
 
 ### Feat: NEAR-MISS AUTO-TRADE (user spec: "Near Miss ke trade mat chhodo — highest AI score + high conf wale ko auto trade lagao")

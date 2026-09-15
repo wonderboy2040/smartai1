@@ -29,9 +29,17 @@ import {
 } from './analysis.mjs';
 
 
-import { chatWithAI, chatWithConsensus, analyzeChartImage, clearChatHistory, setChatEngine, getChatEngine, AI_ENGINE_LABELS, getAIHealthStatus } from './ai-chat.mjs';
+import { chatWithAI, chatWithConsensus, analyzeChartImage, transcribeVoice, clearChatHistory, setChatEngine, getChatEngine, AI_ENGINE_LABELS, getAIHealthStatus } from './ai-chat.mjs';
 import { backtestSignal, calculateBacktestMetrics } from './backtester.mjs';
 import { scanAlgoSignals, formatAlgoAlert, algoWatchKeys } from './algo.mjs';
+
+// v18.2 UNIFICATION: the bot's analysis commands now route through the
+// SAME site backend the website tabs + webhook bot use (one source of
+// truth — the "bot says BUY, site says HOLD" era ends here). The bridge
+// talks to the site over the 127.0.0.1 loopback with the server-only
+// API_TOKEN; when the site is unreachable every caller falls back to
+// its legacy local path so the bot never goes dark.
+import * as siteAgents from './siteAgents.mjs';
 
 // Validate required environment variables
 if (!TG_TOKEN) {
@@ -952,13 +960,16 @@ bot.onText(/^\/help(@\w+)?$/i, async (msg) => {
 🚀 <b>FLAGSHIP — Pro Intelligence:</b>
 🚀 <b>/pro</b> — Advance Pro Intelligence Dashboard (everything in one)
 🧠 <b>/super</b> <i>(or /super ai)</i> — One-shot Super Brief with inline buttons
-⚡ <b>/algo</b> — Intraday Pro Algo Scanner (auto-alerts every 10 min)
+⚡ <b>/algo</b> — Intraday Pro Algo Scanner (instant push + cron backup)
 🔬 <b>/insights &lt;SYM&gt;</b> — Portfolio-aware deep insight + conviction
 🎯 <b>/quality &lt;SYM&gt; [IN|US]</b> — 7-factor Quality Scorecard
-📊 <b>/screener</b> — Multi-factor stock screener
+📊 <b>/screener</b> — Site 14-model ensemble boards (NSE + crypto)
 🎯 <b>/dip</b> — Buy-the-Dip Intelligence
-💰 <b>/smartmoney</b> — Real FII/DII Smart Money Flow
-📊 <b>/regime</b> — Macro Regime (VIX + bonds + breadth)
+💰 <b>/smartmoney</b> — Real FII/DII flow + site regime read
+📊 <b>/regime</b> — Site's own regime read (boards)
+🤝 <b>/consensus &lt;query&gt;</b> — Site desk-agent consensus (14 models)
+🔍 <b>/scan &lt;SYM&gt;</b> — Site deep ticket (committee + debate)
+📊 <b>/weeklyreview</b> — Weekly trade-performance digest
 🤖 <b>/ml &lt;SYM&gt;</b> — LightGBM ML signal
 🧠 <b>/mlregime</b> — HMM regime detection + SIP multiplier
 🧪 <b>/mlbacktest &lt;SYM&gt;</b> — Walk-forward ML backtest
@@ -1017,7 +1028,9 @@ bot.onText(/^\/help(@\w+)?$/i, async (msg) => {
 🎯 <b>/exact &lt;SYM&gt;</b> — 3-Layer Exact Buy Price
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-💬 <b>Pro Tip:</b> Bina command ke koi bhi message likho = AI chat mode auto-activate (7-engine failover + Quant Brain fallback)
+💬 <b>Pro Tip:</b> Bina command ke koi bhi message likho = AI chat mode auto-activate (7-engine failover + Quant Brain fallback). 🎤 <b>Voice note bhejo</b> — transcribe hoke wahi desk agent chalta hai.
+
+🔗 <i>/scan · /screener · /consensus · /regime ab website ka SAME backend engine use karte hain — bot aur site ka answer ab match karega.</i>
 
 💎 <i>${BOT_NAME} ${BOT_VERSION} · ${BOT_TAGLINE}</i>`;
 
@@ -1560,6 +1573,16 @@ bot.onText(/^\/regime(@\w+)?$/i, async (msg) => {
   const chatId = msg.chat.id;
   console.log(`📥 /regime from ${msg.from?.first_name || chatId}`);
   try {
+    // v18.2 UNIFICATION: show the SITE's own regime read (the same
+    // boards the website renders) instead of a second local opinion.
+    if (siteAgents.siteBridgeReady()) {
+      const view = await siteAgents.siteRegimeView();
+      if (view.ok) {
+        await safeSend(chatId, view.text);
+        return;
+      }
+      console.warn(`[unify] site regime fell back (${view.error}) — legacy macro path`);
+    }
     await Promise.all([refreshPrices(), refreshIntel()]);
 
     const vixUS = livePrices['US_VIX']?.price || 18;
@@ -1627,6 +1650,16 @@ bot.onText(/^\/smartmoney(@\w+)?$/i, async (msg) => {
   const stopTyping = startTyping(chatId);
   try {
     await smartRefreshPrices();
+
+    // v18.2 UNIFICATION: prepend the SITE's own regime read so the FII/DII
+    // interpretation can't drift from what the website shows. The raw
+    // Tavily FII/DII numbers themselves stay (the site has no FII/DII
+    // route — this is the bot's genuinely bot-specific value).
+    let siteRegimeLine = '';
+    if (siteAgents.siteBridgeReady()) {
+      const view = await siteAgents.siteRegimeView();
+      if (view.ok) siteRegimeLine = `${view.text}\n\n━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    }
 
     // 1. Fetch real FII/DII data from Tavily
     const fiiData = await fetchFIIDIIData(TAVILY_API_KEY);
@@ -1702,7 +1735,7 @@ bot.onText(/^\/smartmoney(@\w+)?$/i, async (msg) => {
       }
     }
     out += `\n<i>Source: Tavily Real-time Web Search · ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</i>`;
-    await safeSend(chatId, out);
+    await safeSend(chatId, siteRegimeLine + out);
   } catch (e) {
     console.error('❌ /smartmoney error:', e.message);
     await safeSend(chatId, `❌ Smart money error: ${e.message}`);
@@ -1720,6 +1753,24 @@ bot.onText(/^\/screener(@\w+)?$/i, async (msg) => {
   console.log(`📥 /screener from ${msg.from?.first_name || chatId}`);
   try {
     await safeSend(chatId, '📊 <i>Running multi-factor screener...</i>');
+    // v18.2 UNIFICATION: the SAME 14-model ensemble boards the website
+    // renders — grades, AI scores, committee agreement all match the site
+    // now. The legacy portfolio-only scorer stays as the fallback.
+    if (siteAgents.siteBridgeReady()) {
+      const [india, crypto] = await Promise.all([
+        siteAgents.siteBoard('INDIA', { limit: 6 }),
+        siteAgents.siteBoard('CRYPTO', { limit: 6 }),
+      ]);
+      const li = siteAgents.formatBoardLines(india, { label: '🇮🇳 NSE SCREENER — site 14-model board', max: 6 });
+      const lc = siteAgents.formatBoardLines(crypto, { label: '₿ CRYPTO SCREENER — site 14-model board', max: 6 });
+      if (li || lc) {
+        await safeSend(chatId, [li, lc].filter(Boolean).join('\n\n'));
+        await safeSend(chatId, 'ℹ️ <i>Ye wahi board hai jo website pe dikhta hai — ek hi engine, ek hi answer. Portfolio-only deep ke liye /insights use karo.</i>');
+        return;
+      }
+      console.warn('[unify] site boards unavailable — legacy screener path');
+    }
+
     await smartRefreshPrices();
 
     if (portfolio.length === 0) {
@@ -2120,6 +2171,17 @@ bot.onText(/^\/scan(?:@\w+)?(?:\s+(.+))?$/i, async (msg, match) => {
   console.log(`📥 /scan ${symbol} from ${msg.from?.first_name || chatId}`);
   try {
     await safeSend(chatId, `🔍 <i>Deep scanning ${escapeHtml(symbol)}... ek second...</i>`);
+    // v18.2 UNIFICATION: the SAME deep engine the website's Deep button
+    // uses — 14-model committee, council debate, walk-forward edge.
+    // Legacy local scan stays as the offline fallback.
+    if (siteAgents.siteBridgeReady()) {
+      const site = await siteAgents.siteDeepScan(symbol);
+      if (site.ok) {
+        await safeSend(chatId, siteAgents.formatDeepTicket({ deep: site.deep, market: site.market, symbol }));
+        return;
+      }
+      console.warn(`[unify] site deep scan fell back (${site.error}) — legacy local scan`);
+    }
     const data = await fetchSingleSymbol(symbol);
     if (!data) {
       await safeSend(chatId, `❌ <b>${escapeHtml(symbol)}</b> not found. Check symbol name and try again.\n\nExamples: <code>/scan RELIANCE</code>, <code>/scan AAPL</code>, <code>/scan SMH</code>`);
@@ -2903,6 +2965,51 @@ bot.on('message', async (msg) => {
 });
 
 // ========================================
+// 📊 WEEKLY REVIEW (#3) — the site's quant-computed trade-performance
+// digest (journal + calibration → ONE LLM narration). Same compute
+// the Sunday 19:00 IST auto-push uses; here it's on demand.
+// ========================================
+bot.onText(/^\/weeklyreview(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  console.log(`📥 /weeklyreview from ${msg.from?.first_name || chatId}`);
+  const stopTyping = startTyping(chatId);
+  try {
+    await safeSend(chatId, '📊 <i>Weekly review bana raha hoon — journal + calibration scan…</i>');
+    if (siteAgents.siteBridgeReady()) {
+      const out = await siteAgents.siteWeeklyReview();
+      if (out.ok && out.data?.text) {
+        // Telegram 4096 cap — split on lines like the webhook does.
+        let rest = String(out.data.text);
+        while (rest.length > 0) {
+          let cut = rest.length;
+          if (cut > 3900) {
+            const nl = rest.lastIndexOf('\n', 3900);
+            cut = nl > 1950 ? nl : 3900;
+          }
+          await safeSend(chatId, rest.slice(0, cut));
+          rest = rest.slice(cut);
+        }
+        if (out.data.cached) await safeSend(chatId, '♻️ <i>Ye is hafte ka cached review hai — naya data settle hone par refresh hoga.</i>');
+        return;
+      }
+      // honest 400s ("no settled trades this week") reach here with a reason
+      if (out.error) {
+        await safeSend(chatId, `📭 ${escapeHtml(out.error)}`);
+        return;
+      }
+      console.warn(`[weeklyreview] site path failed (${out.error})`);
+    }
+    await safeSend(chatId, '📭 Site backend se connect nahi ho paya — weekly review ke liye site server chalu hona chahiye (API_TOKEN configured). Tab tak /performance se desk stats dekho.');
+  } catch (e) {
+    console.error('❌ /weeklyreview error:', e.message);
+    await safeSend(chatId, `❌ Weekly review error: ${e.message}`);
+  } finally {
+    stopTyping();
+  }
+});
+
+// ========================================
 // SCHEDULED TASKS (via node-cron)
 // ========================================
 
@@ -2932,9 +3039,20 @@ bot.onText(/^\/algo(@\w+)?$/i, async (msg) => {
 });
 
 // Auto intraday algo alerts: every 10 min during market hours (high-conviction).
+// v18.2 DEMOTED TO BACKUP HEARTBEAT (#2): the site's instant-push pipeline
+// (server/ai/telegramPush.js) now pushes SL/TP level touches + fresh STRONG
+// signals within SECONDS. This cron only fires when that pipeline is stale
+// or unreachable — the bot never goes silent because the site hiccupped,
+// but it never double-pings what the site already pushed. The site check
+// itself is 8s-bounded and best-effort.
 cron.schedule('*/10 * * * *', async () => {
   if (!autoAlerts || !isAnyMarketOpen()) return;
   try {
+    if (siteAgents.siteBridgeReady()) {
+      const st = await siteAgents.siteInstaPushStatus().catch(() => null);
+      if (st?.ok && st?.status?.healthy) return; // pipeline fresh — stay silent
+      console.warn(`[algo-cron] insta-push ${st?.ok ? 'STALE' : 'unreachable'} — backup heartbeat mode`);
+    }
     await smartRefreshPrices();
     const hot = scanAlgoSignals(algoWatchKeys(livePrices), livePrices)
       .filter(s => s.direction !== 'WAIT' && s.conviction >= 65)
@@ -4517,12 +4635,26 @@ bot.onText(/^\/consensus(?:\s+(.+))?$/i, async (msg, match) => {
   const chatId = msg.chat.id;
   const query = match[1]?.trim();
   if (!query) {
-    await safeSend(chatId, '🤝 <b>Usage:</b> <code>/consensus &lt;stock or query&gt;</code>\n\n<i>Example:</i> <code>/consensus RELIANCE target and entry</code>\n<i>Queries 3 models in parallel to build multi-engine consensus.</i>');
+    await safeSend(chatId, '🤝 <b>Usage:</b> <code>/consensus &lt;stock or query&gt;</code>\n\n<i>Example:</i> <code>/consensus RELIANCE target and entry</code>\n<i>Site ke 14-model committee desk agent ko route hota hai — website wala SAME engine. Crypto words → CoinDCX desk, NSE words → intraday desk (baaki last-used desk).</i>');
     return;
   }
   console.log(`📥 /consensus from ${msg.from?.first_name || chatId}: ${query}`);
   const stopTyping = startTyping(chatId);
   try {
+    // v18.2 UNIFICATION: the SAME desk agent the website + the webhook
+    // bot use — a 14-model committee behind it (not the bot's own
+    // 3-LLM vote that could disagree with the site's answer).
+    if (siteAgents.siteBridgeReady()) {
+      const desk = siteAgents.inferDeskFromText(query) || siteAgents.deskSessionFor(chatId) || 'crypto';
+      siteAgents.rememberDesk(chatId, desk);
+      const out = await siteAgents.siteAgentQuery(`Consensus view chahiye — multi-model committee se pucho: ${query}`, desk);
+      if (out.ok && out.text) {
+        await safeSend(chatId, `🤝 <b>DESK CONSENSUS — ${desk === 'intraday' ? '🇮🇳 NSE' : '₿ Crypto'}</b> <i>(site 14-model engine)</i>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n${out.text}`);
+        if (out.tools?.length) await safeSend(chatId, `🔧 tools: ${out.tools.join(', ')}`);
+        return;
+      }
+      console.warn(`[unify] site consensus fell back (${out.error}) — legacy 3-model vote`);
+    }
     await smartRefreshPrices();
     const result = await chatWithConsensus(chatId, query, portfolio, livePrices, usdInrRate);
     await safeSend(chatId, result);
@@ -4561,6 +4693,58 @@ bot.on('photo', async (msg) => {
   } catch (e) {
     console.error('❌ Chart vision error:', e.message);
     await safeSend(chatId, `❌ Chart analysis error: ${e.message}\n\n<i>Ensure Gemini API key is configured.</i>`);
+  } finally {
+    stopTyping();
+  }
+});
+
+// ========================================
+// 🎤 VOICE LISTENER (#5 voice notes) — transcribe → SAME site desk agent
+// Groq Whisper large-v3 (Gemini inline-audio fallback) → siteAgents
+// bridge (crypto/intraday desk, session memory). Falls back to the
+// bot's own 7-engine chat when the site is unreachable — the voice
+// note is never wasted.
+// ========================================
+bot.on('voice', async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  console.log(`🎤 Voice note from ${msg.from?.first_name || chatId} (${msg.voice?.duration || '?'}s)`);
+  const stopTyping = startTyping(chatId);
+  try {
+    await safeSend(chatId, '🎤 <i>Sun raha hoon — transcript bana raha hoon…</i>');
+    const file = await bot.getFile(msg.voice.file_id);
+    const fileUrl = `https://api.telegram.org/file/bot${TG_TOKEN}/${file.file_path}`;
+    const audioRes = await fetch(fileUrl, { signal: AbortSignal.timeout(30_000) });
+    if (!audioRes.ok) throw new Error(`voice download failed (${audioRes.status})`);
+    const b64 = Buffer.from(await audioRes.arrayBuffer()).toString('base64');
+
+    const tr = await transcribeVoice(b64, { mimeType: msg.voice.mime_type || 'audio/ogg' });
+    const said = String(tr.text || '').trim();
+    if (!said) {
+      await safeSend(chatId, '🤫 Transcript khaali aaya — thoda clear bolke phir se bhejo.');
+      return;
+    }
+    await safeSend(chatId, `📝 <b>Transcript</b> <i>(${tr.engine})</i>: "${escapeHtml(said.slice(0, 400))}"`);
+
+    // Route through the SAME site desk agent a text question would hit.
+    if (siteAgents.siteBridgeReady()) {
+      const desk = siteAgents.inferDeskFromText(said) || siteAgents.deskSessionFor(chatId) || 'crypto';
+      siteAgents.rememberDesk(chatId, desk);
+      const out = await siteAgents.siteAgentQuery(said, desk);
+      if (out.ok && out.text) {
+        await safeSend(chatId, `${desk === 'intraday' ? '🇮🇳 Intraday desk' : '₿ Crypto desk'} (voice → site agent):\n\n${out.text}`.slice(0, 4000));
+        if (out.tools?.length) await safeSend(chatId, `🔧 tools: ${out.tools.join(', ')}`);
+        return;
+      }
+      console.warn(`[voice] site agent fell back (${out.error}) — local AI chat`);
+    }
+    // Fallback: the bot's own 7-engine chat — voice still gets an answer.
+    await smartRefreshPrices().catch(() => {});
+    const answer = await chatWithAI(chatId, said, portfolio, livePrices, usdInrRate);
+    await safeSend(chatId, answer);
+  } catch (e) {
+    console.error('❌ Voice note error:', e.message);
+    await safeSend(chatId, `❌ Voice error: ${e.message}\n\n<i>Text me likho — wahi agent chalega.</i>`);
   } finally {
     stopTyping();
   }

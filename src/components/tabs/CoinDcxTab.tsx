@@ -33,6 +33,7 @@ import { MorningBriefPanel, SwingDeskPanel, WhaleRadarPanel, SignalLedgerPanel, 
 import { CryptoAgentPanel } from '../aitrading/CryptoAgentPanel';
 import {
   SectionLabel, RegimeChips, BreadthStrip, FilterChips, RefreshCountdown, BoardSummary, DeskStatsStrip,
+  FreshnessBadge, boardStaleClass,
   filterSignals, countSignals, useDeskViewMode, ViewModeToggle, ProSectionsNote, type BoardFilter,
 } from '../aitrading/deskShared';
 import type { AISignal, SignalBoard, WalletView } from '../aitrading/types';
@@ -278,6 +279,7 @@ export default memo(function CoinDcxTab() {
           </div>
           <div className="ml-auto flex items-center gap-2 flex-wrap">
             <RegimeChips board={board} market="CRYPTO" />
+            <FreshnessBadge board={board} />
             <RefreshCountdown board={board} loading={loading} />
             <ViewModeToggle mode={viewMode} onSet={setViewMode} />
             <button onClick={refresh} disabled={loading}
@@ -381,7 +383,7 @@ export default memo(function CoinDcxTab() {
             <span className="px-2 py-1 rounded-lg bg-black/30 border border-amber-500/25 text-amber-400">🧠 85+ elite: {board.superIntelMeta.eliteCount ?? 0}</span>
           </div>
         )}
-        <div className="grid gap-3 mt-2.5 xl:grid-cols-2">
+        <div className={`grid gap-3 mt-2.5 xl:grid-cols-2 ${boardStaleClass(board)}`}>
           {loading && (!board || board.signals.length === 0) && (
             <div className="quantum-panel rounded-2xl p-10 text-center col-span-full">
               <div className="text-4xl mb-3 animate-float">🧠</div>

@@ -1,0 +1,229 @@
+// ============================================================
+// test/telegramPush.test.ts — v10.9 INSTANT PUSH + #7 BUNDLING
+// ------------------------------------------------------------
+// Pins: level-touch detection (SL/TP1/TP2/LIQ, long + short),
+// cooldown gating, message formats, correlation bundling
+// (union-find, unknown-r honesty, rMax), the shared STRONG scan
+// (bundled CRYPTO pushes + per-signal INDIA + dedupe between the
+// sink and the backup alerter), and the status heartbeat.
+// ============================================================
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+const mockPositions = vi.fn(async () => ({ positions: [] }));
+const mockConfig = vi.fn(() => ({ killSwitch: false }));
+const mockSend = vi.fn(async () => ({ ok: true }));
+let pairRCalls = [];
+
+vi.mock('../server/ai/coindcxOrders.js', () => ({
+  getPositionsWithPnl: () => mockPositions(),
+  loadConfig: () => mockConfig(),
+}));
+
+vi.mock('../server/ai/secrets.js', () => ({
+  telegramConfig: () => ({ token: 'T', chatId: 'C', source: 'env' }),
+  sendTelegramMessage: (...a) => mockSend(...a),
+}));
+
+vi.mock('../server/ai/correlation.js', () => ({
+  pairCorrelation: (a, b) => {
+    pairRCalls.push([a, b]);
+    const table = { 'BTC|ETH': 0.86, 'ETH|SOL': 0.78, 'BTC|SOL': null };
+    const key = [a, b].sort().join('|');
+    return Promise.resolve(table[key] ?? null);
+  },
+}));
+
+import {
+  detectLevelTouches, cooldownOk, formatLevelTouch, formatStrongSignal, formatStrongBundle,
+  groupCorrelatedSignals, scanStrongSignalsBackup, instaPushStatus, instantPushEnabled,
+  __mapsForTests, __resetInstaPushForTests,
+} from '../server/ai/telegramPush.js';
+
+const P = (o) => ({
+  id: 'p1', pair: 'BTCUSDT', market: 'CRYPTO', side: 'LONG', status: 'OPEN',
+  ltp: 100, sl: null, tp: null, tp2: null, tp1Hit: false, tp2Hit: false,
+  liquidation: null, leverage: 1, unrealizedPnlINR: 0, ...o,
+});
+
+beforeEach(() => {
+  __resetInstaPushForTests();
+  mockSend.mockClear();
+  mockPositions.mockClear();
+  mockConfig.mockClear();
+  pairRCalls = [];
+});
+
+// ============================================================
+// level-touch detection (pure)
+// ============================================================
+describe('detectLevelTouches', () => {
+  it('LONG: SL touched when ltp <= sl, TP when ltp >= tp', () => {
+    const t = detectLevelTouches([P({ ltp: 90, sl: 92 })]);
+    expect(t.map(x => x.kind)).toEqual(['SL']);
+    const t2 = detectLevelTouches([P({ ltp: 112, tp: 110, tp2: 120 })]);
+    expect(t2.map(x => x.kind)).toEqual(['TP1']);
+  });
+  it('SHORT: sides invert (sl above, tp below)', () => {
+    const t = detectLevelTouches([P({ side: 'SHORT', ltp: 108, sl: 105 })]);
+    expect(t.map(x => x.kind)).toEqual(['SL']);
+    const t2 = detectLevelTouches([P({ side: 'SHORT', ltp: 88, tp: 92 })]);
+    expect(t2.map(x => x.kind)).toEqual(['TP1']);
+  });
+  it('LIQ only when leverage > 1', () => {
+    expect(detectLevelTouches([P({ leverage: 1, liquidation: 50, ltp: 40 })])).toEqual([]);
+    const t = detectLevelTouches([P({ leverage: 5, liquidation: 50, ltp: 40 })]);
+    expect(t.map(x => x.kind)).toEqual(['LIQ']);
+  });
+  it('TP1 skipped once already hit; TP2 reported separately', () => {
+    const t = detectLevelTouches([P({ ltp: 125, tp: 110, tp2: 120, tp1Hit: true })]);
+    expect(t.map(x => x.kind)).toEqual(['TP2']);
+  });
+  it('ignores non-OPEN positions, bad numbers, and empty input', () => {
+    expect(detectLevelTouches([P({ status: 'CLOSED', ltp: 50, sl: 90 })])).toEqual([]);
+    expect(detectLevelTouches([P({ ltp: 0, sl: 90 })])).toEqual([]);
+    expect(detectLevelTouches(null)).toEqual([]);
+  });
+});
+
+// ============================================================
+// cooldown + formats (pure)
+// ============================================================
+describe('cooldown + formats', () => {
+  it('cooldownOk honours the window', () => {
+    const m = new Map([['k', Date.now() - 29 * 60_000]]);
+    expect(cooldownOk(m, 'k')).toBe(false);
+    expect(cooldownOk(m, 'other')).toBe(true);
+    const old = new Map([['k', Date.now() - 31 * 60_000]]);
+    expect(cooldownOk(old, 'k')).toBe(true);
+  });
+  it('level-touch message names the level + pair + early-warning contract', () => {
+    const txt = formatLevelTouch({ id: 1, pair: 'BTCUSDT', market: 'FUTURES', side: 'LONG', kind: 'SL', level: 90000, ltp: 89950, unrealizedPnlINR: -120, leverage: 3 });
+    expect(txt).toMatch(/INSTANT — STOP-LOSS TOUCHED/);
+    expect(txt).toMatch(/BTCUSDT/);
+    expect(txt).toMatch(/3x/);
+    expect(txt).toMatch(/early warning/);
+  });
+  it('STRONG message keeps the LEGACY format (one format, both paths)', () => {
+    const txt = formatStrongSignal({ symbol: 'BTC', side: 'LONG', confidence: 84, agreement: 0.8, participating: 9, totalModels: 14, plan: { entry: 100, stopLoss: 95, target2: 115, rewardRisk: 3 } }, 'CRYPTO');
+    expect(txt).toMatch(/STRONG SIGNAL/);
+    expect(txt).toMatch(/Confidence 84%/);
+    expect(txt).toMatch(/9\/14 models/);
+  });
+  it('bundle message names every symbol + the diversify warning', () => {
+    const txt = formatStrongBundle([
+      { symbol: 'BTC', side: 'LONG', confidence: 84, participating: 9, totalModels: 14, plan: { entry: 1, stopLoss: 1, target2: 2 } },
+      { symbol: 'ETH', side: 'LONG', confidence: 81, participating: 8, totalModels: 14 },
+    ], 'CRYPTO', 0.86);
+    expect(txt).toMatch(/2 correlated moves/);
+    expect(txt).toMatch(/<b>BTC<\/b>/);
+    expect(txt).toMatch(/<b>ETH<\/b>/);
+    expect(txt).toMatch(/ek hi trade hai/);
+  });
+  it('feature flag reverts cleanly', () => {
+    expect(instantPushEnabled()).toBe(true); // default ON
+    const prev = process.env.AI_INSTANT_PUSH;
+    process.env.AI_INSTANT_PUSH = 'off';
+    expect(instantPushEnabled()).toBe(false);
+    process.env.AI_INSTANT_PUSH = prev;
+  });
+});
+
+// ============================================================
+// #7 correlation bundling (pure, injected lookup)
+// ============================================================
+describe('groupCorrelatedSignals', () => {
+  const S = (sym) => ({ symbol: sym, side: 'LONG' });
+  it('chains A-B + B-C into ONE cluster with rMax = the strongest link', async () => {
+    const clusters = await groupCorrelatedSignals([S('BTC'), S('ETH'), S('SOL')], {
+      lookup: async (a, b) => ({ 'BTC|ETH': 0.86, 'ETH|SOL': 0.78 }[[a, b].sort().join('|')] ?? null),
+    });
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].signals.map(s => s.symbol).sort()).toEqual(['BTC', 'ETH', 'SOL']);
+    expect(clusters[0].rMax).toBe(0.86);
+  });
+  it('UNKNOWN correlation never fakes a 0 — pair stays separate', async () => {
+    const clusters = await groupCorrelatedSignals([S('BTC'), S('DOGE')], { lookup: async () => null });
+    expect(clusters).toHaveLength(2);
+  });
+  it('below-threshold pairs stay separate', async () => {
+    const clusters = await groupCorrelatedSignals([S('BTC'), S('ETH')], { lookup: async () => 0.6, threshold: 0.75 });
+    expect(clusters).toHaveLength(2);
+  });
+  it('lookup throwing is contained (separate)', async () => {
+    const clusters = await groupCorrelatedSignals([S('A'), S('B')], { lookup: async () => { throw new Error('x'); } });
+    expect(clusters).toHaveLength(2);
+  });
+  it('empty input → no clusters, no lookup calls', async () => {
+    expect(await groupCorrelatedSignals([], { lookup: async () => 0.9 })).toEqual([]);
+  });
+});
+
+// ============================================================
+// the shared STRONG scan (sink + backup, one code path)
+// ============================================================
+describe('scanStrongSignalsBackup (the shared scan)', () => {
+  const strong = (symbol, side = 'LONG') => ({
+    symbol, side, grade: 'STRONG', confidence: 80, agreement: 0.7, participating: 8, totalModels: 14,
+    plan: { entry: 1, stopLoss: 0.9, target2: 1.3, rewardRisk: 3 },
+  });
+  const mkDeps = (crypto, india) => ({
+    getSignals: async (mkt) => ({ signals: mkt === 'CRYPTO' ? crypto : india }),
+    depsForSignals: () => ({}),
+  });
+
+  it('two correlated CRYPTO strongs → ONE bundled push, both symbols marked in dedupe', async () => {
+    const deps = mkDeps([strong('BTC'), strong('ETH')], []);
+    const out = await scanStrongSignalsBackup(deps);
+    expect(out.pushed).toBe(1);
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(mockSend.mock.calls[0][0]).toMatch(/2 correlated moves/);
+    const { _strongAlerts } = __mapsForTests();
+    expect(_strongAlerts.get('CRYPTO:BTC:LONG')).toBeTruthy();
+    expect(_strongAlerts.get('CRYPTO:ETH:LONG')).toBeTruthy();
+  });
+
+  it('correlated + uncorrelated → one bundle + one single', async () => {
+    const deps = mkDeps([strong('BTC'), strong('ETH'), strong('DOGE')], []);
+    const out = await scanStrongSignalsBackup(deps);
+    expect(out.pushed).toBe(2);
+    const texts = mockSend.mock.calls.map(c => c[0]);
+    expect(texts.some(t => /2 correlated moves/.test(t))).toBe(true);
+    expect(texts.some(t => /STRONG SIGNAL.*DOGE/s.test(t))).toBe(true);
+  });
+
+  it('INDIA strongs stay per-signal (no bundling without an honest r)', async () => {
+    const deps = mkDeps([], [strong('RELIANCE'), strong('TCS')]);
+    const out = await scanStrongSignalsBackup(deps);
+    expect(out.pushed).toBe(2);
+    expect(mockSend.mock.calls.every(c => /NSE/.test(c[0]))).toBe(true);
+  });
+
+  it('the DEDUPE makes the second scan silent (whichever path fired first wins)', async () => {
+    const deps = mkDeps([strong('BTC'), strong('ETH')], []);
+    await scanStrongSignalsBackup(deps);
+    mockSend.mockClear();
+    const out2 = await scanStrongSignalsBackup(deps); // the 60s alerter following the 30s sink
+    expect(out2.pushed).toBe(0);
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it('kill switch ON → scan skipped entirely', async () => {
+    mockConfig.mockReturnValueOnce({ killSwitch: true });
+    const out = await scanStrongSignalsBackup(mkDeps([strong('BTC')], []));
+    expect(out.pushed).toBe(0);
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================
+// status heartbeat (the legacy bot consults this)
+// ============================================================
+describe('instaPushStatus', () => {
+  it('reports the pipeline contract', () => {
+    const st = instaPushStatus();
+    expect(st.ok).toBe(true);
+    expect(st.enabled).toBe(true);
+    expect(st.healthy).toBe(false); // never polled — honest
+    expect(typeof st.note).toBe('string');
+  });
+});

@@ -165,6 +165,59 @@ export function RefreshCountdown({ board, loading }: { board: SignalBoard | null
   );
 }
 
+// ---------------- v10.9 #8: SIGNAL FRESHNESS DECAY ----------------
+// The Intraday tab's 5-min stale concept applied to the ensemble boards.
+// The 30s auto-refresh keeps boards fresh; when it breaks (network drop,
+// throttled background tab, server restart) the user must SEE the
+// decay instead of trusting an old signal. Prices on cards may still be
+// SSE-live — this badge grades the SIGNAL COMPUTE, not the price feed.
+export function boardAgeInfo(board: SignalBoard | null, now = Date.now()): { ageMin: number | null; level: 'none' | 'live' | 'aging' | 'stale' } {
+  if (!board?.generatedAt) return { ageMin: null, level: 'none' };
+  const ageMin = Math.max(0, (now - board.generatedAt) / 60_000);
+  const level = ageMin < 2 ? 'live' : ageMin < 5 ? 'aging' : 'stale';
+  return { ageMin, level };
+}
+
+/** Opacity ramp for the signal grid — the visual decay. */
+export function boardStaleClass(board: SignalBoard | null, now = Date.now()): string {
+  const { level } = boardAgeInfo(board, now);
+  if (level === 'aging') return 'opacity-80 transition-opacity';
+  if (level === 'stale') return 'opacity-50 transition-opacity';
+  return '';
+}
+
+/** LIVE (green pulse) → aging (amber "Xm old") → STALE (red pulsing). */
+export function FreshnessBadge({ board }: { board: SignalBoard | null }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick(v => v + 1), 15_000); // re-grade every 15s
+    return () => clearInterval(t);
+  }, []);
+  const { ageMin, level } = boardAgeInfo(board);
+  if (ageMin == null || level === 'none') return null;
+  if (level === 'live') {
+    return (
+      <span className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-[9px] font-mono font-bold flex items-center gap-1.5" title="Signal compute fresh — board generated < 2 min ago. Prices stream live via SSE separately.">
+        <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60 animate-ping" /><span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" /></span>
+        LIVE
+      </span>
+    );
+  }
+  const m = Math.floor(ageMin);
+  if (level === 'aging') {
+    return (
+      <span className="px-2 py-1 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 text-[9px] font-mono font-bold" title="Board generated 2-5 min ago — signals aging, auto-refresh should catch up soon.">
+        ⏳ {m}m old
+      </span>
+    );
+  }
+  return (
+    <span className="px-2 py-1 rounded-lg bg-red-500/15 border border-red-500/40 text-red-300 text-[9px] font-mono font-bold animate-pulse" title="STALE — board older than 5 min. Card prices may be SSE-live, but this signal compute is OLD. Verify with a manual refresh before acting.">
+      ⚠ STALE {m}m
+    </span>
+  );
+}
+
 export function BoardSummary({ board }: { board: SignalBoard | null }) {
   if (!board) return null;
   const strong = (board.signals || []).filter(s => s.grade === 'STRONG').length;
