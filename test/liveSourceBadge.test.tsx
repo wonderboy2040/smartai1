@@ -43,6 +43,15 @@ describe('liveSourceBadge — the pure label mapping', () => {
       expect(liveSourceBadge(src).label).toBe('Binance·RT');
     }
   });
+  it('v10.15: binance-fut-ws → Binance·WS emerald (the SUB-SECOND accelerator tier, distinct from the 5s REST fallback)', () => {
+    const b = liveSourceBadge('binance-fut-ws');
+    expect(b.label).toBe('Binance·WS');
+    expect(b.cls).toContain('emerald');
+    expect(b.title).toContain('SUB-SECOND');
+    // the REST fallback keeps its sky label — the two tiers stay distinct
+    expect(liveSourceBadge('binance-fut-rt').label).toBe('Binance·RT');
+    expect(liveSourceBadge('binance-fut-rt').cls).toContain('sky');
+  });
   it('yahoo-global-rt → Yahoo·delayed (amber)', () => {
     const b = liveSourceBadge('yahoo-global-rt');
     expect(b.label).toBe('Yahoo·delayed');

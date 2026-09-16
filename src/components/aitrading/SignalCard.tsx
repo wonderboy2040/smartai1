@@ -987,6 +987,22 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
           when the payload is absent — honest degrade). */}
       {signal.mtf && <div className="mt-1.5"><MTFConfluenceBadge mtf={signal.mtf} /></div>}
 
+      {/* v10.15 GAP 2 — the EVENT CHIP: ⚠ Earnings in 2h / ⚠ FOMC 30m.
+          The same eventGuard truth the auto-agent's entry gauntlet uses;
+          red when the entry would be BLOCKED, amber when sized down. */}
+      {signal.event && (
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <span
+            className={`px-1.5 py-0.5 rounded border text-[9px] font-black ${signal.event.blocked
+              ? 'bg-red-500/15 text-red-300 border-red-500/40'
+              : 'bg-amber-500/15 text-amber-300 border-amber-500/40'}`}
+            title={`${signal.event.label} in ${signal.event.inMin}m${signal.event.approximate ? ' (approximate date)' : ''}${signal.event.blocked ? ' — agent entries BLOCKED (pre-event blackout)' : signal.event.haircut != null ? ` — agent sizing ×${signal.event.haircut}` : ''} — manual trader ko same warning milta hai jo auto-agent ko milta hai`}
+          >
+            ⚠ {signal.event.label} {signal.event.inMin >= 60 ? `${Math.round(signal.event.inMin / 60)}h` : `${signal.event.inMin}m`}{signal.event.approximate ? '~' : ''}{signal.event.blocked ? ' · ENTRY BLOCKED' : signal.event.haircut != null ? ` · size ×${signal.event.haircut}` : ''}
+          </span>
+        </div>
+      )}
+
       {/* v10.6 ORDER-FLOW DEPTH (Pro Upgrade #1) — the L2 ladder the
           VolumeFlow seat read: top-5 book, two-band imbalance, walls,
           spoof flag. 2s live poll while the card is rendered (the

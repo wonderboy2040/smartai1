@@ -62,11 +62,18 @@ export function liveSourceBadge(src?: string | null): { label: string; cls: stri
       title: 'Finnhub WebSocket trade stream — instant push for covered symbols',
     };
   }
+  if (s === 'binance-fut-ws') {
+    return {
+      label: 'Binance·WS',
+      cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+      title: 'Binance futures WebSocket — SUB-SECOND push (the accelerator tier while the CoinDCX socket is dark; same USDT-perp domain, honestly labeled)',
+    };
+  }
   if (s.startsWith('binance')) {
     return {
       label: 'Binance·RT',
       cls: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
-      title: 'Binance perp fallback — CoinDCX RT dark right now, same USDT domain, honestly labeled',
+      title: 'Binance perp fallback (REST, ~5s) — CoinDCX RT and the Binance WS accelerator are both dark right now; same USDT domain, honestly labeled',
     };
   }
   if (s === 'yahoo-delayed' || s === 'yahoo-global-rt' || s === 'yahoo-us-fallback') {

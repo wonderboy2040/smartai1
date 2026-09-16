@@ -112,6 +112,47 @@ function CalibrationChart({ view }: { view: TrustView }) {
   );
 }
 
+/** v10.15 (deep-recheck #2 S3): the direction-accuracy split — the
+ *  standing answer to "kya sab trades ka direction sahi de raha hai?"
+ *  LONG vs SHORT settled win-rates side-by-side; a systematically wrong
+ *  side becomes visible instead of hiding in the blended average. */
+function DirectionSplit({ view }: { view: TrustView }) {
+  const dir = (view.calibration as unknown as { direction?: { LONG: { n: number; winRate: number | null; avgR: number | null }; SHORT: { n: number; winRate: number | null; avgR: number | null } } })?.direction;
+  if (!dir || ((dir.LONG?.n || 0) + (dir.SHORT?.n || 0)) === 0) {
+    return <div className="text-[10px] text-slate-600 py-1">Direction split ka data abhi nahi — settled trades hone do.</div>;
+  }
+  const row = (label: string, d: { n: number; winRate: number | null; avgR: number | null }, cls: string) => (
+    <div className="flex items-center gap-2 text-[10px] font-mono">
+      <span className={`${cls} w-14 font-black`}>{label}</span>
+      <span className="text-slate-600 w-8">n={d.n}</span>
+      <div className="flex-1 h-2 bg-black/40 rounded overflow-hidden relative">
+        <div className="absolute top-0 bottom-0 w-px bg-slate-500" style={{ left: '50%' }} title="50% line" />
+        <div
+          className={`h-full ${(d.winRate ?? 0) >= 55 ? 'bg-emerald-500/50' : (d.winRate ?? 0) >= 45 ? 'bg-amber-500/50' : 'bg-red-500/50'}`}
+          style={{ width: `${Math.min(100, d.winRate ?? 0)}%` }}
+        />
+      </div>
+      <span className={`w-16 text-right font-black ${(d.winRate ?? 0) >= 55 ? 'text-emerald-300' : (d.winRate ?? 0) >= 45 ? 'text-amber-300' : 'text-red-300'}`}>
+        {d.winRate != null ? `${d.winRate}%` : '—'}
+      </span>
+      <span className="w-14 text-right text-slate-500" title="average R multiple">{d.avgR != null ? `${d.avgR > 0 ? '+' : ''}${d.avgR}R` : '—'}</span>
+    </div>
+  );
+  const gap = dir.LONG?.n > 0 && dir.SHORT?.n > 0 && dir.LONG.winRate != null && dir.SHORT.winRate != null
+    ? Math.round((dir.LONG.winRate - dir.SHORT.winRate) * 10) / 10 : null;
+  return (
+    <div className="space-y-1">
+      {row('LONG ▲', dir.LONG, 'text-emerald-300')}
+      {row('SHORT ▼', dir.SHORT, 'text-red-300')}
+      {gap != null && (
+        <div className={`text-[9px] ${Math.abs(gap) >= 15 ? 'text-amber-300' : 'text-slate-600'}`}>
+          side gap {gap > 0 ? '+' : ''}{gap} pts{Math.abs(gap) >= 15 ? ' — ek side systematically weak hai, review karo' : ''} · settled ledger, direction-only (R&gt;0)
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface Props {
   /** which desk's regime tilt to highlight (kept for the panel contract —
    *  both desks' tilts always render side-by-side in the grid) */
@@ -180,6 +221,12 @@ export const ModelPerformancePanel = memo(function ModelPerformancePanel(_props:
           <div className="bg-black/20 rounded-xl p-2.5">
             <div className="text-[9px] font-black text-slate-500 tracking-wider mb-1.5">CALIBRATION — bola vs hua (claimed vs realized)</div>
             <CalibrationChart view={view || ({} as TrustView)} />
+          </div>
+
+          {/* v10.15 S3: direction split — "kya direction sahi de raha hai?" ka standing answer */}
+          <div className="bg-black/20 rounded-xl p-2.5">
+            <div className="text-[9px] font-black text-slate-500 tracking-wider mb-1.5">DIRECTION SPLIT — LONG vs SHORT (kis side pe dimaag hai)</div>
+            <DirectionSplit view={view || ({} as TrustView)} />
           </div>
 
           <p className="text-[9px] text-slate-600 leading-relaxed">

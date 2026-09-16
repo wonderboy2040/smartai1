@@ -35,9 +35,15 @@ function istDayKey(date = new Date()) {
  * Aggregate the AI trading journal's closed trades for the rolling
  * last `days` IST days. CLOSE entries carry the realized P&L;
  * PARTIAL_TP entries are the staged profit bookings.
+ * v10.15 (deep-recheck #2 S3): adds the DIRECTION + ENTRY-HOUR split —
+ * a systematic "shorts are consistently wrong" or "first-15-min entries
+ * lose" pattern hides inside a blended overall win-rate; the split
+ * comes from closed POSITIONS (they carry side + openedAt; CLOSE
+ * entries don't) — labeled honestly in the payload.
  */
 export function computeAiDeskWeek(journal, { days = 7, now = Date.now() } = {}) {
   const cutoff = istDayKey(new Date(now - (days - 1) * DAY_MS));
+  const cutoffMs = Date.parse(`${cutoff}T00:00:00+05:30`) || (now - days * DAY_MS);
   const entries = Array.isArray(journal?.entries) ? journal.entries : [];
   const closes = entries.filter(e => e?.kind === 'CLOSE' && typeof e.day === 'string' && e.day >= cutoff);
   const partials = entries.filter(e => e?.kind === 'PARTIAL_TP' && typeof e.day === 'string' && e.day >= cutoff);
@@ -58,6 +64,63 @@ export function computeAiDeskWeek(journal, { days = 7, now = Date.now() } = {}) 
   for (const e of closes) pairCount.set(e.pair, (pairCount.get(e.pair) || 0) + 1);
   const topPairs = [...pairCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([pair, n]) => ({ pair, n }));
 
+  // ---- v10.15 S3: the direction-accuracy breakdown (closed positions —
+  // the only journal rows that carry side + openedAt) ----
+  const closedPositions = (journal?.positions || []).filter(p =>
+    p && String(p.status || '').toUpperCase() === 'CLOSED'
+    && Number(p.closedAt || 0) >= cutoffMs);
+  const totalPnlOf = (p) => (Number(p.pnlINR) || 0) + (Number(p.bookedPnlINR) || 0);
+  const dirBucket = (list) => {
+    if (!list.length) return { trades: 0, wins: 0, losses: 0, winRate: null, netPnlINR: 0 };
+    const w = list.filter(p => totalPnlOf(p) > 0).length;
+    return {
+      trades: list.length, wins: w, losses: list.length - w,
+      winRate: Math.round((w / list.length) * 1000) / 10,
+      netPnlINR: +list.reduce((s, p) => s + totalPnlOf(p), 0).toFixed(2),
+    };
+  };
+  const byDirection = {
+    LONG: dirBucket(closedPositions.filter(p => /^(L|B)/i.test(String(p.side || '')))),
+    SHORT: dirBucket(closedPositions.filter(p => /^(S|SELL)/i.test(String(p.side || '')) || String(p.side || '').toUpperCase() === 'SELL')),
+  };
+  // entry-hour buckets (IST hour of openedAt): 09-10, 10-11, … — the
+  // "first-15-min entries lose" / "post-lunch chop" pattern detector
+  const hourBuckets = new Map();
+  for (const p of closedPositions) {
+    if (!Number(p.openedAt || 0)) continue;
+    const istHour = new Date(p.openedAt).toLocaleString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false });
+    const h = parseInt(istHour, 10) % 24;
+    const key = `${String(h).padStart(2, '0')}:00-${String((h + 1) % 24).padStart(2, '0')}:00`;
+    if (!hourBuckets.has(key)) hourBuckets.set(key, []);
+    hourBuckets.get(key).push(p);
+  }
+  const byEntryHour = [...hourBuckets.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([hour, list]) => ({ hour, ...dirBucket(list) }))
+    .filter(b => b.trades > 0);
+
+  // ---- v10.15 GAP 3: the PATIENCE A/B — ENTRY_MODE markers (immediate
+  // vs patient, joined to closed positions by positionId) answer "did
+  // patient entries beat immediate entries?" with numbers. ----
+  const modeMarkers = new Map(); // positionId → 'patient' | 'immediate'
+  for (const e of entries) {
+    if (e?.kind === 'ENTRY_MODE' && e.positionId && (e.mode === 'patient' || e.mode === 'immediate')) {
+      modeMarkers.set(e.positionId, e.mode);
+    }
+  }
+  const modeLists = { immediate: [], patient: [] };
+  for (const p of closedPositions) {
+    const m = modeMarkers.get(p.id);
+    if (m) modeLists[m].push(p);
+  }
+  const missedPullbacks = entries.filter(e => e?.kind === 'MISSED_PULLBACK' && typeof e.day === 'string' && e.day >= cutoff).length;
+  const byEntryMode = {
+    immediate: dirBucket(modeLists.immediate),
+    patient: dirBucket(modeLists.patient),
+    missedPullbacks,
+    note: 'immediate vs patient closed-position win-rates + the unfilled-window count (a discipline win, not a loss)',
+  };
+
   return {
     days,
     cutoff,
@@ -70,6 +133,15 @@ export function computeAiDeskWeek(journal, { days = 7, now = Date.now() } = {}) 
     best, worst, byMode, topPairs,
     partialBookings: partials.length,
     hadActivity: closes.length > 0 || partials.length > 0,
+    // v10.15 S3: the standing answer to "kya sab trades ka direction sahi
+    // de raha hai?" — computed from closed positions (n may differ from
+    // `trades`: entries vs positions — both are honest counts).
+    direction: {
+      byDirection,
+      byEntryHour,
+      note: 'split computed from closed journal positions (side + entry hour); overall numbers above use CLOSE entries',
+    },
+    byEntryMode,
   };
 }
 
@@ -89,6 +161,7 @@ const WEEKLY_SYSTEM = `You are the DESK PERFORMANCE COACH writing the WEEKLY tra
 
 Output (STRICT, Hinglish, max 250 words):
 **Week Scorecard** — trades, win-rate, net P&L across the AI desk
+**Direction Read** — LONG vs SHORT win-rate split + entry-hour buckets (agar ek side systematically galat hai, naam lo)
 **Calibration Read** — claimed confidence vs realized win-rate, Brier verdict, monthly drift (kya keh raha hai)
 **Best & Worst** — name the trades and why
 **Discipline Audit** — SL discipline, booking behaviour, overtrading check
@@ -104,6 +177,21 @@ function _quantPromptBlock(q) {
   if (ai.best) lines.push(`best: ${ai.best.pair} ₹${ai.best.pnlINR} (${ai.best.reason || '?'})`);
   if (ai.worst) lines.push(`worst: ${ai.worst.pair} ₹${ai.worst.pnlINR} (${ai.worst.reason || '?'})`);
   if (ai.topPairs.length) lines.push(`most traded: ${ai.topPairs.map(p => `${p.pair} x${p.n}`).join(', ')}`);
+  // v10.15 S3: the direction-accuracy read — "kya SHORT side systematically
+  // galat hai?" gets a number, not a vibe.
+  const d = ai.direction?.byDirection || {};
+  if ((d.LONG?.trades || 0) + (d.SHORT?.trades || 0) > 0) {
+    lines.push(`direction split: LONG ${d.LONG.trades} trades ${d.LONG.winRate != null ? `${d.LONG.winRate}% WR` : ''} net ₹${d.LONG.netPnlINR} · SHORT ${d.SHORT.trades} trades ${d.SHORT.winRate != null ? `${d.SHORT.winRate}% WR` : ''} net ₹${d.SHORT.netPnlINR}`);
+  }
+  const hours = (ai.direction?.byEntryHour || []).filter(b => b.trades >= 2).slice(0, 4);
+  for (const b of hours) {
+    lines.push(`entry-hour ${b.hour}: ${b.trades} trades ${b.winRate != null ? `${b.winRate}% WR` : ''} net ₹${b.netPnlINR}`);
+  }
+  // v10.15 GAP 3: the patience A/B — did resting at pullbacks beat chasing?
+  const em = ai.byEntryMode;
+  if (em && ((em.immediate?.trades || 0) + (em.patient?.trades || 0)) > 0) {
+    lines.push(`patience A/B: immediate ${em.immediate.trades} trades ${em.immediate.winRate != null ? `${em.immediate.winRate}% WR` : ''} · patient ${em.patient.trades} trades ${em.patient.winRate != null ? `${em.patient.winRate}% WR` : ''} · missed-pullback windows ${em.missedPullbacks}`);
+  }
   lines.push('');
   lines.push(`CALIBRATION (ledger, all-time settled ${calibration.settled}):`);
   if (calibration.sufficient) {
@@ -133,6 +221,10 @@ export function quantHeaderBlock(q) {
     `━━━━━━━━━━━━━━━━━━━━━━━`,
     `🤖 <b>AI desk (${ai.days}d)</b>: ${ai.trades} closed (${ai.wins}W/${ai.losses}L${ai.winRate != null ? ` · ${ai.winRate}%` : ''}) · net <b>₹${ai.netPnlINR.toLocaleString('en-IN')}</b>${ai.partialBookings ? ` · ${ai.partialBookings} partial bookings` : ''}`,
   ];
+  const d = ai.direction?.byDirection || null;
+  if (d && (d.LONG?.trades || 0) + (d.SHORT?.trades || 0) > 0) {
+    lines.push(`🧭 <b>Direction split</b>: LONG ${d.LONG.trades}${d.LONG.winRate != null ? ` · ${d.LONG.winRate}% WR` : ''} · SHORT ${d.SHORT.trades}${d.SHORT.winRate != null ? ` · ${d.SHORT.winRate}% WR` : ''}`);
+  }
   if (calibration.sufficient) {
     lines.push(`🎯 <b>Calibration</b>: claimed ${calibration.overall?.avgConfidence}% → realized ${calibration.overall?.winRate}% · Brier ${calibration.brier}`);
   }

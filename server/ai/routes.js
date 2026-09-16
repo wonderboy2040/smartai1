@@ -84,6 +84,7 @@ import { regimeReweightView } from './ensemble.js';
 import { trustReport, governance, modelPerformanceWindows } from './trust.js';
 import { perfReport } from './perf.js';
 import { correlationMatrix, pairCorrelation } from './correlation.js';
+import { eventGuardStatus } from './eventGuard.js';
 import { sectorDesk } from './sectors.js';
 import { rankIncomeSetups } from './optionsDesk.js';
 import {
@@ -767,6 +768,19 @@ export function registerAITradingRoutes(app, deps) {
       res.json({ ok: true, depth: depthStatus(), wickFilter: wickFilterStatus() });
     } catch (e) {
       jsonError(res, 500, 'orderflow status failed', e);
+    }
+  });
+
+  // ---------------- v10.15 GAP 2: scheduled-event guard status ----------------
+  // The upcoming-events view (FOMC/RBI/CPI/IIP/earnings + the graded
+  // blackout/haircut tunables) — the panels' event strip + the bot's
+  // future /events command read this. Pure snapshot, no side effects.
+  app.get('/api/ai/event-guard', (req, res) => {
+    try {
+      const desk = typeof req.query.desk === 'string' ? req.query.desk : undefined;
+      res.json(eventGuardStatus({ desk }));
+    } catch (e) {
+      jsonError(res, 500, 'event guard status failed', e);
     }
   });
 

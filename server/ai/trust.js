@@ -145,6 +145,24 @@ export function trustReport() {
     drift = Math.round((last.winRate - priorWR) * 10) / 10;
   }
 
+  // v10.15 (deep-recheck #2 S3): the DIRECTION split — settled entries
+  // carry `side`; "kya SHORT side systematically galat hai?" becomes a
+  // standing dashboard number instead of a code re-audit every time.
+  const dirSplit = (rows) => {
+    if (!rows.length) return { n: 0, winRate: null, avgR: null };
+    const wins = rows.filter(e => (e.outcome.r ?? 0) > 0).length;
+    const avgR = rows.reduce((s, e) => s + (e.outcome.r ?? 0), 0) / rows.length;
+    return {
+      n: rows.length,
+      winRate: Math.round((wins / rows.length) * 1000) / 10,
+      avgR: Math.round(avgR * 100) / 100,
+    };
+  };
+  const direction = {
+    LONG: dirSplit(settled.filter(e => /^(L|B)/i.test(String(e.side || '')))),
+    SHORT: dirSplit(settled.filter(e => String(e.side || '').toUpperCase() === 'SHORT' || /^S/i.test(String(e.side || '')))),
+  };
+
   return {
     ...base,
     sufficient: true,
@@ -157,7 +175,8 @@ export function trustReport() {
     brierVerdict,
     monthly,
     drift,
-    note: 'Calibration = claimed confidence vs realized win-rate. Brier = 0 perfect, 0.25 coin. Monthly = direction-only (R>0). Read-only.',
+    direction,
+    note: 'Calibration = claimed confidence vs realized win-rate. Brier = 0 perfect, 0.25 coin. Monthly = direction-only (R>0). Direction = LONG vs SHORT settled split. Read-only.',
   };
 }
 

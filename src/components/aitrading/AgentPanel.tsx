@@ -330,6 +330,24 @@ function AgentConfigEditor({ cfg, onSaved }: { cfg: AgentView['config']; onSaved
   );
 }
 
+function ConvictionBar({ c }: { c?: { state: string; delta: number | null; currentScore: number | null; entryScore: number | null; side?: string | null } | null }) {
+  // v10.15 GAP 1: the live conviction bar — the ensemble's re-vote on
+  // this position. green STRENGTHENING → amber WEAKENING → red FLIPPED.
+  if (!c || !c.state || c.state === 'UNKNOWN') return null;
+  const st = String(c.state);
+  const cls = st === 'STRENGTHENING' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+    : st === 'WEAKENING' ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+    : st === 'FLIPPED' ? 'bg-red-500/15 text-red-300 border-red-500/40'
+    : 'bg-slate-600/20 text-slate-400 border-slate-500/30';
+  const icon = st === 'STRENGTHENING' ? '▲' : st === 'WEAKENING' ? '▼' : st === 'FLIPPED' ? '⯅' : '•';
+  const title = `Live conviction — the 14-model ensemble's re-vote on this position\nentry score ${c.entryScore ?? '?'} → now ${c.currentScore ?? '?'} (${c.side ?? '?'}) · delta ${c.delta != null ? (c.delta > 0 ? '+' : '') + c.delta : '?'}${st === 'FLIPPED' ? '\nFLIPPED: thesis invalidated — conviction-flip exit fires' : st === 'WEAKENING' ? '\nWEAKENING: in-profit positions get SL → breakeven' : st === 'STRENGTHENING' ? '\nSTRENGTHENING: earns winner-extension room' : ''}`;
+  return (
+    <span className={`px-1.5 py-0.5 rounded border text-[9px] font-black ${cls}`} title={title}>
+      CONVICTION {icon} {st}{c.delta != null ? ` ${c.delta > 0 ? '+' : ''}${c.delta}` : ''}
+    </span>
+  );
+}
+
 function OpenPositions({ positions, cfg }: { positions: AgentView['openPositions']; cfg?: AgentView['config'] }) {
   if (positions.length === 0) {
     return <div className="bg-black/25 rounded-xl p-3 text-[11px] text-slate-500">No open agent positions — agent scans every 30s, entry sirf top-conviction signal par.</div>;
@@ -361,6 +379,7 @@ function OpenPositions({ positions, cfg }: { positions: AgentView['openPositions
                 <span className={`px-1.5 py-0.5 rounded border text-[9px] font-black ${stage.cls}`}>
                   {stage.label}{(p.exitStage === 'T1_HIT' || p.exitStage === 'T2_HIT') ? ' (40% booked, SL→BE)' : p.exitStage === 'RUNNER' ? ' (80% booked, trailing)' : ''}
                 </span>
+                <ConvictionBar c={p.conviction} />
                 <div className="flex items-center gap-1" title="qty remaining vs original">
                   <div className="w-16 h-1.5 rounded-full bg-black/40 overflow-hidden">
                     <div className="h-full rounded-full bg-amber-400/70" style={{ width: `${remainingPct}%` }} />
@@ -380,6 +399,7 @@ function OpenPositions({ positions, cfg }: { positions: AgentView['openPositions
               </div>
               <span className="text-[9px] font-mono text-slate-500">time-exit {p.maxHoldMin}m</span>
             </div>
+            {!splitActive && <div className="mt-1.5"><ConvictionBar c={p.conviction} /></div>}
           </div>
         );
       })}

@@ -39,6 +39,9 @@ import { discoverSpotUniverse, discoverFuturesUniverse, binancePriceMap, fetchUs
 import { validateTick } from './wickFilter.js';
 import { readDepth, warmDepthBatch } from './orderFlowDepth.js';
 import { computeSuperScore, buildSuperBlueprint } from './superIntel.js';
+// v10.15 GAP 2: Event Guard — the board attaches the next scheduled
+// event per signal (the signal-card ⚠ chip a manual trader sees).
+import { eventGuardCheck } from './eventGuard.js';
 
 // v9: how many coins the Superintelligence Signal Board scans for the
 // dynamic desks (spot + futures). 40 = every liquid CoinDCX book by
@@ -1427,6 +1430,25 @@ async function _computeBoard(mkt, deps, opts = {}) {
   // v9.3: the India pass built 2× the board — cut to the display limit
   // AFTER the tape-aware re-rank (crypto/futures already match the cut).
   if (signals.length > boardLimit) signals.length = boardLimit;
+
+  // v10.15 GAP 2: the EVENT CHIP — every signal carries the next
+  // scheduled event for its symbol/desk (⚠ Earnings in 2h / ⚠ FOMC
+  // 30m). PURE synchronous attach — the same eventGuardCheck the
+  // agents' entry gauntlet uses (one truth, no drift).
+  for (const s of signals) {
+    try {
+      const eg = eventGuardCheck({ symbol: s.symbol, desk: mkt });
+      if (eg.event && Number(eg.event.minutesUntil) <= 240) {
+        s.event = {
+          kind: eg.event.kind, label: eg.event.label,
+          inMin: Number(eg.event.minutesUntil),
+          approximate: !!eg.event.approximate,
+          blocked: eg.action === 'blackout',
+          haircut: eg.action === 'haircut' ? eg.multiplier : null,
+        };
+      }
+    } catch { /* the chip is cosmetic — never breaks the board */ }
+  }
 
   // v6.9: full-universe composite TOP-5 (transparent score + Hinglish
   // rank reason — the board payload carries it so the desks get the

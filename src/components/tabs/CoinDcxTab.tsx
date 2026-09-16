@@ -168,15 +168,18 @@ export default memo(function CoinDcxTab() {
   // v10.14 (deep-recheck S2 #3): WS accelerator honesty — when the socket
   // is benched, say WHY (quiet GLOB feed vs handshake streak) and for how
   // long, instead of silently reverting to the 2s REST cadence.
+  // v10.15: the BINANCE FUT accelerator tier — while the CoinDCX socket
+  // cools, FUT_ still gets SUB-SECOND pushes; the chip says so.
   const wsH = cxLive.wsHealth;
   const wsCoolMin = wsH?.cooldownActive ? Math.max(1, Math.round(wsH.cooldownRemainMs / 60_000)) : 0;
+  const bnH = wsH?.binanceFut;
   const wsNote = !wsH ? '' : wsH.cooldownActive
     ? (wsH.cooldownReason === 'glob-quiet'
-      ? ` · GLOB quiet — cooling ${wsCoolMin}m`
+      ? ` · GLOB quiet — cooling ${wsCoolMin}m${bnH?.healthy ? ' · FUT Binance·WS⚡' : ''}`
       : wsH.cooldownReason === 'silent-contract'
-        ? ` · WS silent — cooling ${wsCoolMin}m`
-        : ` · WS reconnecting ${wsCoolMin}m`)
-    : wsH.healthy ? ' · WS⚡' : '';
+        ? ` · WS silent — cooling ${wsCoolMin}m${bnH?.healthy ? ' · FUT Binance·WS⚡' : ''}`
+        : ` · WS reconnecting ${wsCoolMin}m${bnH?.healthy ? ' · FUT Binance·WS⚡' : ''}`)
+    : wsH.healthy ? ' · WS⚡' : bnH?.healthy ? ' · FUT Binance·WS⚡' : '';
 
   // Track which ACTIONABLE symbols were NOT in the previous board → flash them.
   const prevTopRef = useRef<Set<string>>(new Set());

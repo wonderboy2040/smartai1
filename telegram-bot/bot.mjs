@@ -1333,7 +1333,7 @@ bot.onText(/^\/coindcx(@\w+)?$/i, async (msg) => {
     `Assets in portfolio: ${cryptoCount}\n` +
     `${cdcx.balanceCount != null ? `Balances found: ${cdcx.balanceCount}\n` : ''}` +
     (cdcx.lastError ? `⚠️ Last error: ${cdcx.lastError}\n` : '') +
-    `\nLive crypto prices: CoinDCX INR + Binance stream (web + /crypto).`);
+    `\nLive crypto prices: <code>/crypto</code> (market prices — ye command account status hai, dono alag cheezein hain).`);
 });
 
 
@@ -1569,12 +1569,12 @@ bot.onText(/^\/selftest(@\w+)?$/i, async (msg) => {
   const warnN = rows.filter(r => r.startsWith('⚠️')).length;
   const failN = rows.filter(r => r.startsWith('❌')).length;
   const table = [
-    '🔧 <b>SELF-TEST — data paths</b> (v10.14)',
+    '🔧 <b>SELF-TEST — data paths</b> (v10.15)',
     '━━━━━━━━━━━━━━━━━━━━━━━━━',
     ...rows,
     '━━━━━━━━━━━━━━━━━━━━━━━━━',
     `📊 <b>${okN} healthy · ${failN} fail · ${warnN} warn</b>`,
-    '<i>❌ wale commands abhi live-data issue me hain (code sahi hai) — khud remove karne se pehle do baar chalake dekho. ⚠️ wale key/config maangte hain.</i>',
+    '<i>TRIAGE (v10.15 recheck #2 S2): ⚠️ = key/config missing → <code>XYZ_KEY</code> Render me add karo, command HATANA nahi. ❌ = path down — 2 baar re-run karo; sirf PERMANENTLY dead path delete karo (analysis.mjs/market.mjs ka helper bhi). Transient timeout = keep.</i>',
   ].join('\n');
   await safeSend(chatId, table);
 });
@@ -3691,6 +3691,10 @@ bot.onText(/^\/crypto(@\w+)?$/i, async (msg) => {
       const report = generateCryptoReport(fallback, usdInrRate, 'TRADINGVIEW');
       await safeSend(msg.chat.id, report);
     }
+    // v10.15 (recheck #2 S2): cross-reference — /coindcx is the ACCOUNT
+    // status view, /crypto is the MARKET price view. One line each way,
+    // no more "dono kya karte hain?" confusion (NOT aliases — different
+    // data paths by design; the dedupe is the shared wording + pointers).
   } catch (e) {
     await safeSend(msg.chat.id, `❌ Error: ${e.message}`);
   }
@@ -3788,6 +3792,11 @@ bot.onText(/^\/digest(@\w+)?$/i, async (msg) => {
 // ========================================
 bot.onText(/^\/(fiidii|fii|dii)(@\w+)?$/i, async (msg) => {
   if (!isAuthorized(msg)) return;
+  // v10.15 (recheck #2 S2): missing-key commands say WHAT they need
+  // instead of failing opaquely — evidence-first triage ke liye.
+  if (!isTavilyAvailable) {
+    return safeSend(msg.chat.id, '⚠️ <b>FII/DII flows need the Tavily key</b> — <code>TAVILY_API_KEY</code> env var set nahi hai (Render me add karo). Command ka code sahi hai; key ke bina live search possible nahi.');
+  }
   await safeSend(msg.chat.id, '🏛️ <b>Fetching FII/DII flows...</b>', { parse_mode: 'HTML' });
   try {
     const { TAVILY_API_KEY } = await import('./config.mjs');
@@ -3804,6 +3813,10 @@ bot.onText(/^\/(fiidii|fii|dii)(@\w+)?$/i, async (msg) => {
 // ========================================
 bot.onText(/^\/ipo(@\w+)?$/i, async (msg) => {
   if (!isAuthorized(msg)) return;
+  // v10.15 (recheck #2 S2): the clear needs-key message
+  if (!isTavilyAvailable) {
+    return safeSend(msg.chat.id, '⚠️ <b>IPO tracker needs the Tavily key</b> — <code>TAVILY_API_KEY</code> env var set nahi hai (Render me add karo). Command ka code sahi hai; key ke bina live search possible nahi.');
+  }
   await safeSend(msg.chat.id, '🚀 <b>Fetching IPO data...</b>', { parse_mode: 'HTML' });
   try {
     const { TAVILY_API_KEY } = await import('./config.mjs');

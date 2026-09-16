@@ -188,6 +188,17 @@ export interface AISignal {
    *  AI_ENABLE_MTF_CONFLUENCE=true). agreement < 0.67 → the server
    *  already banned STRONG; the badge makes the conflict visible. */
   mtf?: MTFConfluence | null;
+  /** v10.15 GAP 2 EVENT GUARD: the next scheduled event for this
+   *  symbol/desk (⚠ Earnings in 2h / ⚠ FOMC 30m) — same truth the
+   *  auto-agent's entry gauntlet vets entries against. */
+  event?: {
+    kind: string;
+    label: string;
+    inMin: number;
+    approximate?: boolean;
+    blocked?: boolean;
+    haircut?: number | null;
+  } | null;
   votes: ModelVote[];
   summary: string;
   aiNote: AINote | null;
@@ -954,6 +965,16 @@ export interface AgentOpenPosition {
   remainingQty?: number | null;
   originalQty?: number | null;
   exitStage?: 'ENTRY' | 'T1_HIT' | 'T2_HIT' | 'RUNNER' | 'CLOSED' | string;
+  /** v10.15 GAP 1: the live conviction re-vote (null when the tracker is
+   *  OFF or no fresh re-vote has landed yet). */
+  conviction?: {
+    state: 'STRENGTHENING' | 'HOLDING' | 'WEAKENING' | 'FLIPPED' | 'UNKNOWN' | string;
+    delta: number | null;
+    currentScore: number | null;
+    entryScore: number | null;
+    side?: string | null;
+    at?: number;
+  } | null;
 }
 
 export interface AgentPick {

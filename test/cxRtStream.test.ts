@@ -45,6 +45,7 @@ import {
   cxRtWsStatus,
   _resetCxRtForTest, _cxRtStateForTest, _pollOnceForTest,
   _setDcxWsEnabledForTest, _setDcxWsFactoryForTest, _setCxRtNowForTest, _setUsPremarketForTest,
+  _setBinanceFutWsFactoryForTest,
 } from '../server/ai/cxRtStream.js';
 import { fetchFuturesPrices } from '../server/ai/futures.js';
 import { __resetFuturesForTests } from '../server/ai/futures.js';
@@ -622,6 +623,206 @@ describe('cxRtStream — WEBSOCKET accelerator (CoinDCX futures socket)', () => 
     expect(t!.price).toBeCloseTo(333.75, 6);
     expect(t!.source).toBe('coindcx-glob-ws');
     cxRtClientDown();
+  });
+});
+
+describe('cxRtStream — v10.15 BINANCE FUTURES WS ACCELERATOR (the tier between the CoinDCX socket and Binance REST)', () => {
+  afterEach(() => { cxRtClientDown(); });
+
+  /** A minimal `ws`-shaped double for the Binance combined-stream socket:
+   *  fires 'open' next macrotask, 'message' with raw JSON strings. */
+  class FakeBinanceWs {
+    readyState = 1; // WebSocket.OPEN
+    url: string;
+    sent: string[] = [];
+    closed = false;
+    private listeners = new Map<string, Array<(arg?: unknown) => void>>();
+    constructor(url: string) {
+      this.url = url;
+      setTimeout(() => { if (!this.closed) this._emit('open'); }, 0);
+    }
+    on(ev: string, fn: (arg?: unknown) => void) {
+      if (!this.listeners.has(ev)) this.listeners.set(ev, []);
+      this.listeners.get(ev)!.push(fn);
+    }
+    removeAllListeners() { this.listeners.clear(); }
+    send(frame: string) { this.sent.push(frame); }
+    close() { if (!this.closed) { this.closed = true; this._emit('close'); } }
+    terminate() { this.close(); }
+    private _emit(ev: string, arg?: unknown) {
+      for (const fn of [...(this.listeners.get(ev) || [])]) fn(arg);
+    }
+    serverMessage(msg: unknown) { if (!this.closed) this._emit('message', JSON.stringify(msg)); }
+    drop() { this.readyState = 3; this.close(); }
+  }
+
+  const tickerFrame = (base: string, c: string, P = '1.1') => ({
+    stream: `${base.toLowerCase()}usdt@ticker`,
+    data: { e: '24hrTicker', E: Date.now(), s: `${base}USDT`, c, P, h: String(Number(c) * 1.01), l: String(Number(c) * 0.99), v: '21000.5', x: String(Number(c) / 1.011) },
+  });
+
+  function armBinanceWs(sockets: FakeBinanceWs[]) {
+    _setBinanceFutWsFactoryForTest((url: string) => {
+      const s = new FakeBinanceWs(url);
+      sockets.push(s);
+      return s;
+    });
+  }
+
+  it('CoinDCX WS DARK → the Binance WS opens, serves SUB-SECOND ticks, and the Binance REST path is NOT hit', async () => {
+    let binanceRestHits = 0;
+    routeFetch(url => {
+      if (url.includes('fapi.binance.com')) { binanceRestHits++; return { ok: true, status: 200, json: async () => [] }; }
+      return { ok: false, status: 403, json: async () => ({}) }; // CoinDCX dark everywhere
+    });
+    const sockets: FakeBinanceWs[] = [];
+    armBinanceWs(sockets);
+    ensureCxRtSubscribed({ fut: ['BTC'] });
+    cxRtClientUp();
+    // the accelerator arms BECAUSE the cx WS is dark (never proven)
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    expect(sockets[0].url).toContain('fstream.binance.com/stream?streams=btcusdt@ticker');
+
+    // liveFeed has no reset hook — earlier suites may have left a FRESH
+    // coindcx-* tick on FUT_BTC, and the source-priority gate correctly
+    // REJECTS binance ticks while that tick is fresh (<2.5s). Push frames
+    // until the leftover ages out and the accelerator's tick lands —
+    // the loop itself proves the no-flapping contract.
+    await vi.waitFor(() => {
+      sockets[0].serverMessage(tickerFrame('BTC', '61000.5', '1.1'));
+      expect(getTick('FUT_BTC')?.source).toBe('binance-fut-ws');
+    }, { timeout: 8000 });
+    const t = getTick('FUT_BTC')!;
+    expect(t.price).toBeCloseTo(61000.5, 6);
+    expect(t.time).toBeGreaterThan(1e12); // ms event time
+    expect(_cxRtStateForTest().binanceFut.healthy).toBe(true);
+
+    // the WS owns FUT → REST slows to the 10s floor, and the next REST
+    // beat SKIPS the WS-covered symbol entirely (the initial beats may
+    // have probed REST before the WS proved itself — that's the tier
+    // below doing its job; from the landed tick on, REST is bypassed).
+    expect(_cxRtStateForTest().restMs).toBe(10_000);
+    const hitsAfterLand = binanceRestHits;
+    await _pollOnceForTest();
+    expect(binanceRestHits).toBe(hitsAfterLand); // WS-covered symbol NOT re-fetched over REST
+  });
+
+  it('both CoinDCX AND Binance WS dark → the Binance REST 5s path still takes over (tier below)', async () => {
+    routeFetch(url => {
+      if (url.includes('current_prices/futures/rt') && !url.includes('margin_currency')) {
+        return { ok: false, status: 403, json: async () => ({}) };
+      }
+      if (url.includes('fapi.binance.com')) {
+        return { ok: true, status: 200, json: async () => ([
+          { symbol: 'BTCUSDT', lastPrice: '62000.25', priceChangePercent: '0.9', highPrice: '62500', lowPrice: '61500', volume: '9000' },
+        ]) };
+      }
+      return null;
+    });
+    const sockets: FakeBinanceWs[] = [];
+    armBinanceWs(sockets);
+    ensureCxRtSubscribed({ fut: ['BTC'] });
+    cxRtClientUp();
+    // the accelerator TRIED to open but never proved a tick (handshake
+    // ok, zero frames) — the REST fallback still owns the desk. The
+    // previous test's binance-fut-ws tick may still be fresh (<5s) on
+    // FUT_BTC, gating the REST branch — wait for it to age out.
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    await vi.waitFor(() => expect(getTick('FUT_BTC')?.source).toBe('binance-fut-rt'), { timeout: 15_000 });
+    expect(getTick('FUT_BTC')!.price).toBeCloseTo(62000.25, 6);
+  }, 25_000);
+
+  it('the cx socket recovers → the accelerator STANDS DOWN (hot-standby closes; CoinDCX owns the key again)', async () => {
+    // CoinDCX REST dark (so the accelerator arms) + a live cx WS double
+    routeFetch(url => ({ ok: false, status: 403, json: async () => ({}) }));
+    const cxSockets: FakeDcxWs[] = [];
+    const bnSockets: FakeBinanceWs[] = [];
+    _setDcxWsEnabledForTest(true);
+    _setDcxWsFactoryForTest((url: string) => { const s = new FakeDcxWs(url); cxSockets.push(s); return s; });
+    armBinanceWs(bnSockets);
+    ensureCxRtSubscribed({ fut: ['BTC'] });
+    cxRtClientUp();
+    await vi.waitFor(() => expect(bnSockets.length).toBe(1)); // accelerator armed (cx unproven)
+    // the cx WS proves itself with a landed tick
+    await vi.waitFor(() => expect(cxSockets.length).toBe(1));
+    await vi.waitFor(() => expect(cxSockets[0].sent.filter(f => f.startsWith('42["join"'))).toHaveLength(1));
+    cxSockets[0].serverMessage(pcFrame('B-BTC_USDT@prices-futures', { p: '60000.5', pc: 1.0, T: Date.now() }));
+    expect(getTick('FUT_BTC')!.source).toBe('coindcx-fut-ws');
+
+    // the accelerator stands DOWN — its socket is closed
+    await vi.waitFor(() => expect(bnSockets[0].closed).toBe(true));
+    expect(_cxRtStateForTest().binanceFut.wantOpen).toBe(false);
+    expect(cxRtWsStatus().binanceFut.wantOpen).toBe(false);
+  });
+
+  it('source priority: a FRESH coindcx-fut-rt tick is never overwritten by a binance-fut-ws tick (no badge flapping)', async () => {
+    // CoinDCX REST healthy at 2s while the cx WS is dark → both paths
+    // alive; the accelerator must respect the authoritative exchange.
+    routeFetch(url => {
+      if (url.includes('current_prices/futures/rt') && !url.includes('margin_currency')) {
+        return { ok: true, status: 200, json: async () => ({ ts: Date.now(), prices: { 'B-BTC_USDT': futRow(50_000, 2.5) } }) };
+      }
+      return { ok: false, status: 403, json: async () => ({}) };
+    });
+    const sockets: FakeBinanceWs[] = [];
+    armBinanceWs(sockets);
+    ensureCxRtSubscribed({ fut: ['BTC'] });
+    cxRtClientUp();
+    await _pollOnceForTest();
+    expect(getTick('FUT_BTC')!.source).toBe('coindcx-fut-rt'); // the authoritative 2s feed
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    // a binance tick arrives — CoinDCX REST is fresh → the tick is REJECTED
+    sockets[0].serverMessage(tickerFrame('BTC', '51000'));
+    expect(getTick('FUT_BTC')!.source).toBe('coindcx-fut-rt');
+    expect(getTick('FUT_BTC')!.price).toBeCloseTo(50_000, 6);
+    // sanity: the gate is FRESHNESS-based — a fresh binance tick DOES land
+    // once the CoinDCX REST tick ages past its window
+  });
+
+  it('no SSE clients → the accelerator closes with the host (Render idle-friendly)', async () => {
+    routeFetch(url => ({ ok: false, status: 403, json: async () => ({}) }));
+    const sockets: FakeBinanceWs[] = [];
+    armBinanceWs(sockets);
+    ensureCxRtSubscribed({ fut: ['BTC'] });
+    cxRtClientUp();
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    cxRtClientDown();
+    await vi.waitFor(() => expect(sockets[0].closed).toBe(true));
+    expect(_cxRtStateForTest().binanceFut.connected).toBe(false);
+  });
+
+  it('the stream list is capped at 20 bases and follows the subscribed universe', async () => {
+    routeFetch(url => ({ ok: false, status: 403, json: async () => ({}) }));
+    const sockets: FakeBinanceWs[] = [];
+    armBinanceWs(sockets);
+    const bases = Array.from({ length: 25 }, (_, i) => `COIN${i}`);
+    ensureCxRtSubscribed({ fut: bases });
+    cxRtClientUp();
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    const streams = sockets[0].url.split('streams=')[1];
+    expect(streams.split('/')).toHaveLength(20); // BINANCE_MAX_STREAMS parity
+    expect(streams).toContain('coin0usdt@ticker');
+    expect(streams).not.toContain('coin24usdt');
+  });
+
+  it('a LATE binance frame never regresses a newer tick (out-of-order guard)', async () => {
+    routeFetch(url => ({ ok: false, status: 403, json: async () => ({}) }));
+    const sockets: FakeBinanceWs[] = [];
+    armBinanceWs(sockets);
+    ensureCxRtSubscribed({ fut: ['BTC'] });
+    cxRtClientUp();
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    const now = Date.now();
+    // earlier suites' fresh coindcx-* leftovers gate the first frame —
+    // push until the accelerator's tick actually lands.
+    await vi.waitFor(() => {
+      sockets[0].serverMessage({ stream: 'btcusdt@ticker', data: { e: '24hrTicker', E: Date.now(), s: 'BTCUSDT', c: '61000.5', P: '1.1', h: '61500', l: '60800', v: '21000', x: '60000' } });
+      expect(getTick('FUT_BTC')?.source).toBe('binance-fut-ws');
+    }, { timeout: 8000 });
+    expect(getTick('FUT_BTC')!.price).toBeCloseTo(61000.5, 6);
+    // 60s-stale frame → rejected
+    sockets[0].serverMessage({ stream: 'btcusdt@ticker', data: { e: '24hrTicker', E: now - 60_000, s: 'BTCUSDT', c: '59000', P: '0.5', h: '59500', l: '58800', v: '20000', x: '58000' } });
+    expect(getTick('FUT_BTC')!.price).toBeCloseTo(61000.5, 6);
   });
 });
 

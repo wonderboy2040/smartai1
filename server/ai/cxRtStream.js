@@ -38,6 +38,13 @@
 //     (fallback #1), 'yahoo-global-rt' (final fallback), 'global-sim-rt'
 //     (SPACEX), 'binance-fut-rt' (CoinDCX-dark fallback). The SSE wire
 //     carries it as `source` and the frontend renders the badge.
+//   • v10.15 BINANCE FUT WS ACCELERATOR (deep-recheck #2 S1) — while the
+//     CoinDCX socket is dark/unproven/cooling, wss://fstream.binance.com
+//     combined <base>usdt@ticker streams serve FUT_ SUB-SECOND (source
+//     'binance-fut-ws'), hot-standby style: the socket opens ONLY when
+//     the CoinDCX WS isn't proving ticks, and closes the moment it is.
+//     The Binance REST 5s path becomes the NEXT fallback instead of the
+//     only one — the "CoinDCX socket dark → 5s REST" speed cliff is gone.
 //
 // Behaviour mirrors cryptoStream.js (the proven pattern):
 //   • refcounted per-symbol subscriptions, graceful 90s eviction
@@ -53,6 +60,10 @@ import { setTick, getTick } from '../liveFeed.js';
 import { fetchFuturesPrices } from './futures.js';
 import { fetchGlobalFuturesRt, fetchGlobalQuotes, syntheticPriceAt, GLOBAL_FUTURES_UNIVERSE } from './globalFutures.js';
 import { createCxSocketIo } from './cxSocketIo.js';
+import {
+  syncBinanceFutAccelerator, binanceFutHealthy, binanceFutStatus, setBinanceFutOnLand,
+  _setBinanceFutWsFactoryForTest, _resetBinanceFutWsForTest, _setBinanceFutNowForTest, _setBinanceFutWsEnabledForTest,
+} from './binanceFutWs.js';
 
 const POLL_MS = 2000;              // full-speed REST cadence (WS down / unproven)
 const REST_HEARTBEAT_MS = 10_000;  // REST floor cadence (WS healthy + writing)
@@ -117,8 +128,18 @@ export function _setCxRtNowForTest(fn) { _nowFn = fn || (() => Date.now()); }
 export function _setDcxWsFactoryForTest(fn) { _wsFactory = fn; }
 export function _setDcxWsEnabledForTest(v) { _wsEnabled = !!v; }
 export function _setUsPremarketForTest(fn) { _usPremarketFn = fn; }
+// v10.15: re-export the accelerator tier's injection hooks so the
+// cxRtStream suites can arm BOTH sockets from one import (the file
+// already followed this style with _setBinanceFutFetchForTest).
+export { _setBinanceFutWsFactoryForTest, _setBinanceFutNowForTest, _setBinanceFutWsEnabledForTest };
 
 const _num = (v) => { const n = typeof v === 'number' ? v : parseFloat(String(v ?? '')); return Number.isFinite(n) ? n : 0; };
+
+// v10.15: a landed accelerator tick slows the REST poller to the 10s
+// floor INSTANTLY (not on the next beat) — same contract as a landed
+// CoinDCX WS tick. Registered once at import; hermetic resets are safe
+// (the callback only touches state _resetCxRtForTest clears).
+setBinanceFutOnLand(() => { _syncRestCadence(); });
 
 // ---------------------------------------------------------------
 // Client lifecycle — start/stop the REST poller + WS with the
@@ -127,6 +148,23 @@ const _num = (v) => { const n = typeof v === 'number' ? v : parseFloat(String(v 
 export function cxRtClientUp() { _activeClients++; _startIfNeeded(); }
 export function cxRtClientDown() { _activeClients = Math.max(0, _activeClients - 1); _stopIfIdle(); }
 
+// ---------------------------------------------------------------
+// v10.15 — the Binance futures WS accelerator tier sync.
+// Called on EVERY state flip (client up/down, universe change, cx WS
+// health change, each poll beat): idempotent, cheap, and the ONLY
+// place that maps cxRtStream state → the tier's open/close decision.
+// wantOpen = "CoinDCX WS is NOT proving ticks right now" — normal
+// operation (cx healthy) keeps the accelerator CLOSED so behavior is
+// byte-identical to v10.14 until CoinDCX actually goes dark.
+// ---------------------------------------------------------------
+function _syncBinanceFutTier() {
+  syncBinanceFutAccelerator({
+    active: _activeClients > 0,
+    wantOpen: !_wsHealthy(),
+    universe: [..._futSubscribed],
+  });
+}
+
 function _startIfNeeded() {
   if (_timer || (_futSubscribed.size === 0 && _globSubscribed.size === 0)) return;
   _pollOnce(); // instant first tick — a fresh page paints live prices NOW
@@ -134,6 +172,7 @@ function _startIfNeeded() {
   _timer = setInterval(_pollOnce, _timerMs);
   if (_timer.unref) _timer.unref();
   _ensureWs();
+  _syncBinanceFutTier();
 }
 
 function _stopIfIdle() {
@@ -141,14 +180,22 @@ function _stopIfIdle() {
   clearInterval(_timer);
   _timer = null;
   _closeWs('idle');
+  _syncBinanceFutTier();
 }
 
 /** REST cadence: 10s floor while the WS is proven writing ticks
  *  (event-driven freshness + a guaranteed floor for illiquid perp
  *  channels that can go minutes without a price-change event);
- *  full 2s whenever the WS is down / unproven / silent. */
+ *  full 2s whenever the WS is down / unproven / silent.
+ *  v10.15: the floor ALSO applies when the Binance futures WS
+ *  accelerator owns FUT sub-second (CoinDCX WS dark) AND no GLOB
+ *  symbol needs the 2s REST floor — GLOB has no Binance path, so a
+ *  GLOB-subscribed session keeps the full 2s cadence whenever the
+ *  CoinDCX WS is dark. */
 function _restIntervalMs() {
-  return _wsHealthy() ? REST_HEARTBEAT_MS : POLL_MS;
+  if (_wsHealthy()) return REST_HEARTBEAT_MS;
+  if (_futSubscribed.size > 0 && _globSubscribed.size === 0 && binanceFutHealthy()) return REST_HEARTBEAT_MS;
+  return POLL_MS;
 }
 
 /** Healthy = ns-connected AND an attributable tick landed recently.
@@ -203,7 +250,7 @@ export function ensureCxRtSubscribed({ fut, glob } = {}) {
   // new symbols get their first tick within ~2s, not POLL_MS + lag.
   if (_activeClients > 0 && (newFut.length || newGlob.length)) {
     if (!_timer) _startIfNeeded();
-    else { _ensureWs(); _pollOnce(); }
+    else { _ensureWs(); _syncBinanceFutTier(); _pollOnce(); }
   }
 }
 
@@ -265,6 +312,8 @@ async function _pollOnce() {
   // once the cooldown has expired. Without this, a single silent-contract
   // kill would keep the accelerator off for the whole process lifetime.
   _ensureWs();
+  // v10.15: the Binance tier follows the (possibly changed) cx WS health.
+  _syncBinanceFutTier();
 }
 
 async function _pollFutures(_now) {
@@ -293,7 +342,10 @@ async function _pollFutures(_now) {
   } catch { /* transient upstream failure — fallback below + liveFeed serves the last good tick */ }
   // CoinDCX RT dark (WAF blip / 403 / timeout) → Binance USDT perps, same
   // domain, honestly labeled. The stream never goes silent on one feed.
-  const missing = [..._futSubscribed].filter(b => !covered.has(b));
+  // v10.15: symbols the Binance FUT WS is already serving sub-second
+  // (<5s-old 'binance-fut-ws' tick) are NOT re-fetched over REST — the WS
+  // is the accelerator tier, REST 5s is only the tier BELOW it.
+  const missing = [..._futSubscribed].filter(b => !covered.has(b) && !_binanceWsFreshFor(b));
   if (missing.length > 0) {
     const byBase = await _binanceFutBook().catch(() => null);
     if (byBase) {
@@ -348,6 +400,13 @@ async function _binanceFutBook() {
   if (byBase.size === 0) throw new Error('binance fut: empty');
   _bnFut = { at: now, byBase };
   return byBase;
+}
+
+/** v10.15: is FUT_<base> currently served by the Binance WS accelerator
+ *  (a fresh <5s binance-fut-ws tick)? Such symbols skip the REST fallback. */
+function _binanceWsFreshFor(base) {
+  const t = getTick(`FUT_${base}`);
+  return !!t && t.source === 'binance-fut-ws' && (_nowFn() - (t.time || 0)) < 5000;
 }
 
 async function _pollGlobal(now) {
@@ -474,6 +533,7 @@ function _ensureWs() {
   // queue the joins (cxSocketIo holds them until the ns-connect ack)
   for (const base of _futSubscribed) io.join(_futChannel(base));
   for (const sym of _globSubscribed) io.join(_globChannel(sym));
+  _syncBinanceFutTier(); // cx socket (re)arming — the tier re-evaluates
 }
 
 function _closeWs(reason) {
@@ -483,6 +543,7 @@ function _closeWs(reason) {
     _io = null;
   }
   _wsLastTickAt = 0;
+  _syncBinanceFutTier(); // cx gone → the accelerator tier may take over FUT
 }
 
 function _leaveChannel(ch) {
@@ -627,6 +688,7 @@ function _landWsTick(domain, sym, d) {
     prevClose: change > -100 ? price / (1 + change / 100) : undefined,
   }, domain === 'FUT' ? 'coindcx-fut-ws' : 'coindcx-glob-ws');
   _syncRestCadence(); // the proof just landed — slow REST to the floor NOW
+  if (domain === 'FUT') _syncBinanceFutTier(); // cx owns FUT again → tier stands down
 }
 
 // ---------------------------------------------------------------
@@ -653,6 +715,7 @@ export function _resetCxRtForTest() {
   _wsLastTickAt = 0;
   _wsOpenedAt = 0;
   _usPremarketFn = null;
+  _resetBinanceFutWsForTest(); // v10.15: the accelerator tier resets with its host
 }
 
 /** Direct poll invocation for the regression suite (the interval itself
@@ -671,6 +734,7 @@ export function _cxRtStateForTest() {
     fut: [..._futSubscribed],
     glob: [..._globSubscribed],
     fallbackAt: _fallbackAt,
+    binanceFut: binanceFutStatus(), // v10.15: the accelerator tier's state
   };
 }
 
@@ -694,5 +758,8 @@ export function cxRtWsStatus() {
     domains: { fut: _futSubscribed.size, glob: _globSubscribed.size },
     premarketBudget: _futSubscribed.size === 0 && _globSubscribed.size > 0
       ? _globSilentBudgetMs(now) : null, // the live GLOB-only silence budget
+    // v10.15: the Binance futures WS accelerator tier — the UI can show
+    // "FUT ab Binance WS se sub-second" while the CoinDCX socket cools.
+    binanceFut: binanceFutStatus(),
   };
 }

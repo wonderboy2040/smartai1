@@ -30,6 +30,7 @@
 import { loadJSON, saveJSON } from '../lib/store.js';
 import { durablePut } from '../mcp/durable.js';
 import { coindcxConnected } from '../mcp/coindcx.js';
+import { getTick } from '../liveFeed.js';
 import { walletSnapshot, executeFuturesSignal, closeFuturesPosition, fetchUsdInr, inrOfUsdt } from './futures.js';
 import {
   loadConfig, loadJournal, dailyStats, todayIST,
@@ -43,6 +44,25 @@ import { v2ModelsEnabled } from './models.js';
 import { trustReport, __testables as __trustTestables } from './trust.js';
 // v10.6 Pro Upgrade #6 (slippage-aware execution)
 import { readDepth, estimateSlippagePct, splitOrderForSlippage } from './orderFlowDepth.js';
+// v10.15 GAP 1: Live Conviction Tracker — the ensemble re-votes open
+// positions; FLIPPED exits at thesis-invalidation, WEAKENING tightens,
+// STRENGTHENING earns winner-extension room.
+import {
+  convictionEnabled, convictionOfPosition, weakeningShouldTighten, extensionConvictionVote,
+} from './positionConviction.js';
+// v10.15 GAP 2: Event Guard — no fresh entries inside a pre-event
+// blackout; T-2h sizing haircut (earnings/FOMC/RBI/CPI awareness).
+import { eventGuardCheck } from './eventGuard.js';
+// v10.15 GAP 4: Global Risk Brain — the ONE cross-desk portfolio view
+// (combined heat cap + risk-off detection) both gauntlets consult.
+import { globalRiskGate } from './globalRisk.js';
+// v10.15 GAP 3: Patient Entry — extended signals rest at a depth-derived
+// pullback level instead of chasing; unfilled windows journal
+// missed-pullback (a GOOD outcome); ENTRY_MODE markers feed the weekly
+// review's "did patience pay?" answer.
+import {
+  patientEntryEnabled, patientWindowMin, classifyEntry, pullbackLevelFor, patientPendingAction,
+} from './patientEntry.js';
 
 const AGENT_CONFIG_FILE = 'ai-agent-config.json';
 const AGENT_STATE_FILE = 'ai-agent-state.json';
@@ -125,6 +145,22 @@ export const AGENT_DEFAULTS = {
   winnerExtendEnabled: true,
   winnerExtendPct: 50,        // % of the dynamic window added per extension
   winnerExtendMax: 2,         // max extensions per position
+  // ---- v10.15 GAP 1: LIVE CONVICTION TRACKER (superintelligence plan) ----
+  // OFF by default — enable with AI_ENABLE_CONVICTION_EXIT=true or this
+  // knob. While ON, the same 14-model ensemble that decided the entry
+  // re-votes every open position each tick (via the cached deep path —
+  // zero new upstream calls): FLIPPED (opposite-side quorum) → immediate
+  // conviction-flip exit; WEAKENING + in-profit → SL ratcheted toward
+  // breakeven; STRENGTHENING → additional winner-extension justification.
+  convictionExit: false,
+  convictionThreshold: 8,     // aiScore points for STRENGTHENING/WEAKENING
+  // ---- v10.15 GAP 3: PATIENT ENTRY (superintelligence plan) ----
+  // OFF by default (ship-last, A/B-able): an EXTENDED signal (>1.5 ATR
+  // beyond its anchor) rests at a depth-derived pullback level for
+  // AI_PATIENT_WINDOW_MIN (default 15m) instead of chasing; at-anchor
+  // signals enter immediately exactly as today. Unfilled windows
+  // journal missed-pullback — "didn't chase" counts as a win.
+  patientEntry: false,
 };
 
 export function loadAgentConfig() {
@@ -164,6 +200,8 @@ const NUM_CLAMPS = {
   // v10.8 winner-extension knobs
   winnerExtendPct: [10, 100],
   winnerExtendMax: [0, 4],
+  // v10.15 conviction knobs
+  convictionThreshold: [3, 25],
 };
 export function updateAgentConfig(patch = {}) {
   const cfg = loadAgentConfig();
@@ -192,6 +230,10 @@ export function updateAgentConfig(patch = {}) {
   // v10.8 near-miss auto-trade + winner-extension toggles
   if (patch.nearMissAutoTrade != null) next.nearMissAutoTrade = !!patch.nearMissAutoTrade;
   if (patch.winnerExtendEnabled != null) next.winnerExtendEnabled = !!patch.winnerExtendEnabled;
+  // v10.15 conviction toggle
+  if (patch.convictionExit != null) next.convictionExit = !!patch.convictionExit;
+  // v10.15 patient-entry toggle
+  if (patch.patientEntry != null) next.patientEntry = !!patch.patientEntry;
   // v7.0: keep the split honest — T1+T2 ≤ 90, runner ≥ 10, sums shown
   if (next.tp1ClosePct + next.tp2ClosePct > 90) {
     const scale = 90 / (next.tp1ClosePct + next.tp2ClosePct);
@@ -228,6 +270,14 @@ function freshState() {
     // fires once when margin drops below 2 USDT, resets+notifies when
     // margin restores above 2 USDT.
     futuresMarginAlerted: false,
+    // v10.15 GAP 1: the LATEST conviction re-vote per open position —
+    // persisted by the conviction sweep for the status payload's live
+    // conviction bar (panel UI). { [pair]: { state, delta, currentScore,
+    // entryScore, side, at } }
+    conviction: {},
+    // v10.15 GAP 3: the ONE resting patient order (null = none).
+    // { symbol, market, pair, side, level, basis, createdAt, expiresAt }
+    patient: null,
     // v10.8 PRO #4: the frozen mandate — captured at START, immutable
     // for the session, released on STOP (the journal MANDATE entry is
     // the permanent audit record).
@@ -399,12 +449,17 @@ export function effectiveHoldWindowMin(baseWindowMin, extensions, extendPct) {
  * ON, under the max count, the position is IN PROFIT, and the board
  * has NOT printed a qualifying opposite-side signal (that's a
  * trend-flip exit, not an extension).
+ * v10.15 (GAP 1): `conviction` — the live ensemble re-vote state.
+ * STRENGTHENING earns room even marginally red (the thesis is MORE
+ * valid now than at entry); WEAKENING/FLIPPED never do.
  */
-export function extensionEligible({ enabled, extensions, maxExtensions, pnlPct, oppositeQualifying, source }) {
+export function extensionEligible({ enabled, extensions, maxExtensions, pnlPct, oppositeQualifying, source, conviction }) {
   if (enabled === false) return false;
   if (Number(extensions) >= Math.max(0, Number(maxExtensions) || 0)) return false;
   if (String(source || '').toLowerCase() === 'manual') return false; // agent positions only
   if (oppositeQualifying) return false; // flip beats extension — always
+  if (conviction === 'WEAKENING' || conviction === 'FLIPPED') return false; // decaying thesis earns nothing
+  if (conviction === 'STRENGTHENING') return true; // strengthening thesis earns room
   return Number(pnlPct) > 0;             // only winners earn room
 }
 
@@ -824,6 +879,31 @@ async function _tick(deps, sendTelegram) {
     persistState(); return;
   }
 
+  // ---- v10.15 GAP 4: GLOBAL RISK BRAIN — the cross-desk check. The
+  // crypto desk used to know only its own book; now a combined-heat
+  // veto (both desks' deployed risk vs ONE ceiling) and a global
+  // risk-off (VIX spike + BTC breakdown together) size-down apply
+  // HERE, before any candidate is even scanned. Cached 5 min inside. ----
+  let grGate = null;
+  try {
+    const { loadIndiaAgentConfig } = await import('./indiaAgent.js');
+    const indiaCfg = loadIndiaAgentConfig();
+    grGate = await globalRiskGate({
+      cryptoEquityINR: equityINR,
+      indiaCapitalINR: Number(indiaCfg?.equityINR) > 0 ? Number(indiaCfg.equityINR) : 10_000,
+      usdInr,
+    });
+    if (grGate.veto) {
+      maybeLogSkip('global_heat', `GLOBAL RISK BRAIN — entry vetoed: ${grGate.reason}; dono desks ka combined heat cap cross ho gaya hai`);
+      persistState(); return;
+    }
+    if (grGate.riskOff) {
+      log('info', `GLOBAL RISK BRAIN — risk-off regime (VIX spike + BTC breakdown): new-entry sizing ×${grGate.sizeMul} across BOTH desks`);
+    }
+  } catch (e) {
+    log('error', `global-risk gate error (entry continues on desk-local rules): ${String(e?.message || e).slice(0, 100)}`);
+  }
+
   // ---- scan the boards ONCE (cached server-side; cheap) — the exit
   // sweeps need the live consensus too, so this runs BEFORE the
   // quota/cooldown gates (a flipped position must exit even when
@@ -887,6 +967,72 @@ async function _tick(deps, sendTelegram) {
     if (lp?.positions) livePnlByPair = new Map(lp.positions.map(x => [x.pair, x]));
   }
 
+  // ---- v10.15 GAP 1: LIVE CONVICTION SWEEP — the ensemble re-votes
+  // every open agent position (same 30s-cached deep path the boards
+  // use; zero new upstream calls). FLIPPED exits at thesis-invalidation
+  // BEFORE the stop is hit; WEAKENING ratchets an in-profit SL toward
+  // breakeven; STRENGTHENING feeds the winner-extension gate below.
+  // Runs INSIDE this tick's existing gauntlet — kill-switch/daily-cap
+  // early-returns above already gate it (an exit is not an entry; the
+  // conviction path can never bypass the caps). ----
+  const convictionByPair = new Map(); // pair → { state, delta, currentScore, entryScore, side }
+  const convictionExited = new Set(); // v10.15: ids closed by the conviction sweep this tick
+  if (convictionEnabled(cfg) && openAgent.length > 0) {
+    const { getDeepSignal } = await import('./signals.js');
+    const lpNeeded = livePnlByPair ? null : await getPositionsWithPnl().catch(() => null);
+    const pnlMap = livePnlByPair || (lpNeeded?.positions ? new Map(lpNeeded.positions.map(x => [x.pair, x])) : new Map());
+    const convictionClosures = [];
+    const convictionTightened = [];
+    for (const p of openAgent) {
+      const sym = baseOfPair(p.pair) || String(p.pair || '').replace(/-USD$/, '');
+      const mkt = p.market === 'FUTURES' ? 'FUTURES' : p.market === 'GLOBALFUTURES' ? 'GLOBALFUTURES' : 'CRYPTO';
+      const deep = await getDeepSignal(sym, mkt, deps).catch(() => null);
+      const entryScore = Number(_state.entryMeta?.[p.pair]?.convictionScore);
+      const c = deep?.ok ? convictionOfPosition(p, deep.signal, Number.isFinite(entryScore) ? entryScore : null, { threshold: cfg.convictionThreshold })
+        : { state: 'UNKNOWN', delta: null, currentScore: null, side: null };
+      convictionByPair.set(p.pair, { ...c, entryScore: Number.isFinite(entryScore) ? entryScore : null });
+      _state.conviction = _state.conviction || {};
+      _state.conviction[p.pair] = { ...c, entryScore: Number.isFinite(entryScore) ? entryScore : null, at: Date.now() };
+      if (c.state === 'FLIPPED') {
+        const out = p.market === 'FUTURES'
+          ? await closeFuturesPosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }))
+          : p.market === 'GLOBALFUTURES'
+            ? await (async () => {
+                const { closeGlobalPosition } = await import('./globalFutures.js');
+                return closeGlobalPosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }));
+              })()
+            : await (async () => {
+                const { closePosition } = await import('./coindcxOrders.js');
+                return closePosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }));
+              })();
+        if (out?.ok) {
+          const totalPnl = (out.position?.pnlINR ?? 0) + (out.position?.bookedPnlINR ?? 0);
+          convictionClosures.push({ pair: p.pair, pnlINR: totalPnl, score: c.currentScore });
+          convictionExited.add(p.id);
+          log('exit', `CONVICTION-FLIP EXIT ${p.pair} — ensemble flipped ${c.side} (score ${c.currentScore}, entry ${Number.isFinite(entryScore) ? entryScore : '?'}) → cut at ₹${r2(totalPnl)} BEFORE the stop (thesis invalidated)`);
+          if (_state.entryMeta) delete _state.entryMeta[p.pair];
+          if (_state.conviction) delete _state.conviction[p.pair];
+        } else {
+          log('error', `conviction-flip close failed for ${p.pair}: ${String(out?.error || '').slice(0, 100)}`);
+        }
+      } else if (weakeningShouldTighten({ state: c.state, pnlPct: pnlMap.get(p.pair)?.pnlPct ?? null })) {
+        const moved = await moveAgentSlToBreakeven(p.id);
+        if (moved) {
+          convictionTightened.push({ pair: p.pair, delta: c.delta });
+          log('exit', `CONVICTION WEAKENING ${p.pair} — delta ${c.delta} while in profit → SL ratcheted to breakeven (position kept — noise must not churn the book)`);
+        }
+      }
+    }
+    if (convictionClosures.length > 0) {
+      await notify(sendTelegram, `🤖 <b>AGENT conviction-flip exit</b> — thesis invalidated
+${convictionClosures.map(c => `• ${c.pair} — ensemble ab OPPOSITE side (${c.score}%) → cut at ₹${r2(c.pnlINR)} (stop se PEHLE bahar)`).join('\n')}`);
+    }
+    if (convictionTightened.length > 0) {
+      await notify(sendTelegram, `🤖 <b>AGENT conviction weakening</b> — SL → breakeven
+${convictionTightened.map(c => `• ${c.pair} — delta ${c.delta}, in profit: risk-free now`).join('\n')}`);
+    }
+  }
+
   // ---- time-exit sweep (auto exit of aging agent positions) ----
   // v10.1 B2: the window is now PER-POSITION — the entry-time ATR%
   // (state.entryMeta) drives dynamicMaxHoldMin. Fast movers exit at
@@ -901,6 +1047,7 @@ async function _tick(deps, sendTelegram) {
   const timeExited = new Set(); // v9.6: ids closed this tick (trend-flip must not double-close)
   const extended = [];
   for (const p of openAgent) {
+    if (convictionExited.has(p.id)) continue; // v10.15: conviction-flip already closed it
     const meta = _state.entryMeta?.[p.pair] || {};
     const extensions = Number(meta.extensions) || 0;
     const baseWin = holdWindowFor(cfg, p.pair);
@@ -908,7 +1055,9 @@ async function _tick(deps, sendTelegram) {
     const ageMin = (Date.now() - (p.openedAt || 0)) / 60000;
     if (ageMin >= holdMin) {
       // v10.8: extension gate — agent positions only, in profit, no
-      // opposite qualifier, under the max count.
+      // opposite qualifier, under the max count. v10.15: a STRENGTHENING
+      // conviction justifies the extension even when marginally red; a
+      // WEAKENING/FLIPPED thesis never earns room.
       if (extensionEligible({
         enabled: cfg.winnerExtendEnabled !== false,
         extensions,
@@ -916,6 +1065,7 @@ async function _tick(deps, sendTelegram) {
         pnlPct: livePnlByPair?.get(p.pair)?.pnlPct ?? null,
         oppositeQualifying: oppositeQualifying.has(p.pair),
         source: p.source,
+        conviction: convictionByPair.get(p.pair)?.state,
       })) {
         const nextExt = extensions + 1;
         _state.entryMeta = _state.entryMeta || {};
@@ -947,6 +1097,7 @@ async function _tick(deps, sendTelegram) {
         log('exit', `TIME-EXIT ${p.pair} after ${Math.round(ageMin)}m (window ${holdMin}m${extensions > 0 ? `, ${extensions}× winner-extended` : ''}) — pnl ₹${r2(totalPnl)}${hasBooked ? ` (final ${r2(out.position?.pnlINR ?? 0)} + booked ${r2(out.position?.bookedPnlINR ?? 0)})` : ''}`);
         // B2 hygiene: the entry's volatility record is spent with the position
         if (_state.entryMeta) delete _state.entryMeta[p.pair];
+        if (_state.conviction) delete _state.conviction[p.pair];
       } else {
         log('error', `time-exit failed for ${p.pair}: ${String(out?.error || '').slice(0, 100)}`);
       }
@@ -971,6 +1122,7 @@ async function _tick(deps, sendTelegram) {
   const managed = openManagedPositions(j, cfg);
   for (const p of managed) {
     if (timeExited.has(p.id)) continue;
+    if (convictionExited.has(p.id)) continue; // v10.15: conviction-flip already closed it
     const flipped = oppositeQualifying.get(String(p.pair || '')) || null;
     if (!flipped) continue;
     const out = p.market === 'FUTURES'
@@ -1091,6 +1243,65 @@ async function _tick(deps, sendTelegram) {
     best = candidates[0];
   }
 
+  // ---- v10.15 GAP 3: PATIENT ENTRY — the resting order comes FIRST.
+  // A touched pullback level overrides this cycle's fresh pick (the
+  // desk PLANNED that entry); an expired window journals missed-pullback
+  // (a good outcome — it didn't chase) and frees the slot. While a
+  // pending rests untouched, the normal candidate flow continues below
+  // (other symbols are independent bets). ----
+  let patientFill = null;
+  if (patientEntryEnabled(cfg) && _state.patient) {
+    const pd = _state.patient;
+    const ltpOf = (p) => {
+      const key = p.market === 'FUTURES' ? `FUT_${p.symbol}` : p.market === 'GLOBALFUTURES' ? `GLOB_${p.symbol}` : `IN_${p.symbol}`;
+      const t = getTick(key);
+      return Number(t?.price) || Number(boardLtpOf(p.symbol)) || null;
+    };
+    const boardLtpOf = (sym) => {
+      for (const b of scans) {
+        if (!b?.ok) continue;
+        const s = (b.signals || []).find(x => String(x.symbol || '').toUpperCase() === String(sym || '').toUpperCase());
+        if (s) return Number(s.ltp) || null;
+      }
+      return null;
+    };
+    const act = patientPendingAction({ pending: pd, ltp: ltpOf(pd), now: Date.now() });
+    if (act.action === 'fill') {
+      // the level was touched — re-enter ONLY if the board still backs
+      // the same side (the executor's getFreshSignal re-validates again)
+      let freshSig = null;
+      for (const b of scans) {
+        if (!b?.ok) continue;
+        const s = (b.signals || []).find(x => String(x.symbol || '').toUpperCase() === String(pd.symbol || '').toUpperCase()
+          && String(x.side || '').toUpperCase() === String(pd.side || '').toUpperCase() && qualifies(x));
+        if (s) { freshSig = s; break; }
+      }
+      if (freshSig) {
+        best = freshSig;
+        patientFill = { ...pd };
+        _state.patient = null;
+        log('info', `PATIENT FILL — ${pd.symbol} pullback level ${pd.level} (${pd.basis}) touched → executing at market (≈ the resting limit)`);
+      } else {
+        _state.patient = null;
+        log('skip', `PATIENT ENTRY invalidated — ${pd.symbol} ka same-side signal board se gayab; resting order cancelled (no chase)`);
+        await withJournalLock(async () => {
+          const jj = loadJournal();
+          pushEntry(jj, { day: todayIST(), kind: 'MISSED_PULLBACK', source: 'agent', market: pd.market || 'CRYPTO', symbol: pd.symbol, text: `PATIENT ENTRY invalidated — signal gone before fill (level ${pd.level})` });
+          saveJournal(jj);
+        }).catch(() => { /* best-effort marker */ });
+      }
+    } else if (act.action === 'expire') {
+      _state.patient = null;
+      log('skip', `MISSED-PULLBACK ${pd.symbol} — ${patientWindowMin(pd.market)}m window expired, level ${pd.level} (${pd.basis}) never touched. GOOD outcome: chase nahi kiya.`);
+      await withJournalLock(async () => {
+        const jj = loadJournal();
+        pushEntry(jj, { day: todayIST(), kind: 'MISSED_PULLBACK', source: 'agent', market: pd.market || 'CRYPTO', symbol: pd.symbol, text: `PATIENT ENTRY expired unfilled — level ${pd.level} (${pd.basis}) not touched in ${patientWindowMin(pd.market)}m; chase nahi kiya (counted as discipline win)` });
+        saveJournal(jj);
+      }).catch(() => { /* best-effort marker */ });
+    }
+    // 'wait' → fall through (the resting order does not block others)
+  }
+
   // ---- v10.1 B4: CORRELATION GUARD on concurrent positions ----
   // 5 open alt-positions that all correlate ~0.8 with each other are ONE
   // leveraged bet, not five. Before committing: check the candidate's
@@ -1133,6 +1344,50 @@ async function _tick(deps, sendTelegram) {
     }
   }
 
+  // ---- v10.15 GAP 2: EVENT GUARD — "is anything scheduled?" The one
+  // question a pro trader asks BEFORE entering that the system never
+  // did. T-30min blackout on the affected symbol/desk → the entry is
+  // vetoed with a reason (journal-visible, like every other gate);
+  // T-2h → the size is haircut (multiplier into the risk path below).
+  // Existing positions are untouched — the exit gauntlet keeps them. ----
+  const eg = eventGuardCheck({ symbol: best.symbol, desk: best.market });
+  if (eg.action === 'blackout') {
+    maybeLogSkip('event_guard', `EVENT GUARD — ${best.symbol} ${best.side} entry blocked: ${eg.reason}`);
+    persistState(); return;
+  }
+  const eventSizeMul = eg.action === 'haircut' ? eg.multiplier : 1;
+  if (eg.action === 'haircut') log('info', `EVENT GUARD — ${best.symbol}: ${eg.reason}`);
+
+  // ---- v10.15 GAP 3: PATIENT ENTRY classification — is this the right
+  // PRICE, not just the right setup? An EXTENDED signal (>1.5 ATR beyond
+  // its anchor) rests at a depth-derived pullback level instead of
+  // chasing. One resting order at a time; a filled patient (patientFill)
+  // or an at-anchor signal proceeds straight to execution. ----
+  if (patientEntryEnabled(cfg) && !patientFill && !_state.patient) {
+    const ltpNow = Number(best.ltp || best.plan.entry);
+    const entryAnchor = Number(best.plan.entry);
+    const atrUnits = Number(best.plan.atrUsed);
+    if (classifyEntry({ ltp: ltpNow, entry: entryAnchor, atr: atrUnits }) === 'extended') {
+      const depth = best.market === 'GLOBALFUTURES'
+        ? null // equity SIM — no CoinDCX book to walk
+        : await readDepth(best.market === 'INDIA' ? 'INDIA' : best.market, best.symbol, { ltp: ltpNow, levels: 20 }).catch(() => null);
+      const { level, basis } = pullbackLevelFor({ side: best.side, ltp: ltpNow, entry: entryAnchor, depth: depth?.ok ? depth : null });
+      _state.patient = {
+        symbol: best.symbol, market: best.market, pair: pairOfSignal(best), side: best.side,
+        level, basis, createdAt: Date.now(),
+        expiresAt: Date.now() + patientWindowMin(best.market) * 60_000,
+      };
+      log('info', `PATIENT ENTRY placed — ${best.symbol} ${best.side} extended ${r2(Math.abs(ltpNow - entryAnchor) / (atrUnits || 1))}×ATR beyond anchor: resting limit @ ${level} (${basis}) for ${patientWindowMin(best.market)}m instead of chasing ${ltpNow}`);
+      await notify(sendTelegram, `🤖 <b>AGENT patient entry</b> — ${best.symbol} ${best.side}\nPrice anchor se extended hai (chase risk) → resting limit @ <b>${level}</b> (${basis}) · window ${patientWindowMin(best.market)}m\nFill hua to better entry; warna missed-pullback = discipline win.`);
+      await withJournalLock(async () => {
+        const jj = loadJournal();
+        pushEntry(jj, { day: todayIST(), kind: 'PATIENT', source: 'agent', market: best.market || 'CRYPTO', symbol: best.symbol, text: `PATIENT ENTRY resting — ${best.symbol} ${best.side} extended; limit @ ${level} (${basis}), window ${patientWindowMin(best.market)}m`, level, basis: basis });
+        saveJournal(jj);
+      }).catch(() => { /* best-effort marker */ });
+      persistState(); return; // resting now — no chase this cycle
+    }
+  }
+
   // ---- v10.1 B2: record the entry's volatility for its dynamic
   // time-exit window (ATR% from the plan; stop-distance % is the
   // fallback when ATR wasn't logged on the plan). ----
@@ -1146,7 +1401,12 @@ async function _tick(deps, sendTelegram) {
   };
   const entryAtrPct = atrPctOf(best);
   _state.entryMeta = _state.entryMeta || {};
-  _state.entryMeta[pairOfSignal(best)] = { atrPct: entryAtrPct, at: Date.now() };
+  // v10.15 GAP 1: record the ENTRY conviction score — the conviction
+  // tracker's delta is measured against exactly this number.
+  _state.entryMeta[pairOfSignal(best)] = {
+    atrPct: entryAtrPct, at: Date.now(),
+    convictionScore: Number(best?.superIntel?.aiScore ?? best?.confidence ?? null),
+  };
   if (entryAtrPct != null && cfg.dynamicTimeExit !== false) {
     log('info', `ENTRY VOLATILITY ${best.symbol}: ATR ${r2(entryAtrPct)}% → dynamic time-exit window ${dynamicMaxHoldMin(cfg, entryAtrPct)}m (base ${cfg.maxHoldMin}m)`);
   }
@@ -1162,7 +1422,14 @@ async function _tick(deps, sendTelegram) {
     persistState(); return;
   }
   if (kelly?.mode === 'kelly') log('info', `KELLY SIZING ${best.symbol}: ${kelly.reason}`);
-  const riskPct = kelly?.mode === 'kelly' && kelly.pct > 0 ? kelly.pct : cfg.riskPerTradePct;
+  // v10.15 GAP 2: the pre-event haircut multiplies BOTH paths (flat and
+  // kelly-capped) — a trade inside T-2h of a scheduled event risks less.
+  // v10.15 GAP 4: a global risk-off regime (VIX spike + BTC breakdown)
+  // down-weights new entries across BOTH desks at once.
+  const grMul = grGate?.riskOff ? grGate.sizeMul : 1;
+  const riskPct = (kelly?.mode === 'kelly' && kelly.pct > 0 ? kelly.pct : cfg.riskPerTradePct) * eventSizeMul * grMul;
+  if (eventSizeMul < 1) log('info', `EVENT GUARD SIZING ${best.symbol}: risk ×${eventSizeMul} → ${Math.round(riskPct * 100) / 100}% (${eg.reason})`);
+  if (grMul < 1) log('info', `GLOBAL RISK-OFF SIZING ${best.symbol}: risk ×${grMul} → ${Math.round(riskPct * 100) / 100}% (VIX spike + BTC breakdown regime)`);
   const riskINR = equityINR * (riskPct / 100);
   const wantFutures = best.market === 'FUTURES';
   // v7.0: the sizing math is LOGGED transparently before execution —
@@ -1308,6 +1575,18 @@ async function _tick(deps, sendTelegram) {
         saveJournal(jj);
       }).catch(() => { /* best-effort marker */ });
     }
+    // v10.15 GAP 3: journal the ENTRY MODE — the weekly review's "did
+    // patience pay?" join key (immediate vs patient vs missed-pullback).
+    await withJournalLock(async () => {
+      const jj = loadJournal();
+      pushEntry(jj, {
+        day: todayIST(), kind: 'ENTRY_MODE', source: 'agent', market: best.market || 'CRYPTO',
+        symbol: best.symbol, positionId: out?.position?.id ?? null,
+        mode: patientFill ? 'patient' : 'immediate',
+        text: `ENTRY MODE ${patientFill ? 'PATIENT' : 'IMMEDIATE'} — ${best.symbol} ${best.side}${patientFill ? ` (pullback level ${patientFill.level}, ${patientFill.basis})` : ''}`,
+      });
+      saveJournal(jj);
+    }).catch(() => { /* best-effort marker */ });
     if (out.mode === 'notify') {
       log('entry', `NOTIFY ${deskTag} ${best.symbol} ${best.side} (${best.confidence}% conf) — alert-only, koi order nahi${out.telegramSent ? '' : ' (telegram off)'}`);
     } else {
@@ -1599,6 +1878,12 @@ export async function agentStatus(deps) {
     },
     // v10.8 PRO #4: the frozen mandate (null = agent stopped)
     mandate: _state.mandate || null,
+    // v10.15 GAP 1: conviction-tracker transparency
+    conviction: {
+      enabled: convictionEnabled(cfg),
+      threshold: cfg.convictionThreshold ?? 8,
+      note: 'FLIPPED → conviction-flip exit · WEAKENING+profit → SL→breakeven · STRENGTHENING → extension justification',
+    },
   };
   if (_state.winRateDowngraded) {
     blockers.push({ key: 'win_rate_downgrade', soft: true, text: `📉 Rolling win-rate ${_state.winRateDowngraded.winRate}% (last ${_state.winRateDowngraded.trades}) — agent paper mode me self-downgrade ho chuka hai. LIVE re-arm karne se pehle review karo.` });
@@ -1653,6 +1938,9 @@ export async function agentStatus(deps) {
       remainingQty: p.qty ?? null,
       originalQty: p.originalQty ?? null,
       exitStage: p.exitStage || 'ENTRY',
+      // v10.15 GAP 1: the live conviction bar — the ensemble's re-vote on
+      // this position (null when the tracker is OFF / no fresh re-vote yet)
+      conviction: _state.conviction?.[p.pair] ?? null,
     })),
     wallet,
     picks,

@@ -41,8 +41,26 @@ import { isNseOpen, fetchTVIndiaBatch } from './data.js';
 import { dhanConnected, dhanPlaceOrder, dhanCancelOrder } from './dhan.js';
 import { loadConfig, loadJournal, saveJournal, withJournalLock, pushEntry, todayIST } from './coindcxOrders.js';
 import { executeIndiaSignal, closeIndiaPosition, istHM, IST_SQUAREOFF, IST_ENTRY_LAST, IST_ENTRY_FIRST } from './indiaOrders.js';
+// v10.15 GAP 3: the Dhan L2 read for the patient pullback level.
+import { readDepth } from './orderFlowDepth.js';
 // v10.2 parity: V2 model flag exposure in the status view
 import { v2ModelsEnabled } from './models.js';
+// v10.15 GAP 1: Live Conviction Tracker (crypto-agent parity) — the
+// ensemble re-votes open India positions; FLIPPED exits at
+// thesis-invalidation, WEAKENING ratchets the SL toward breakeven.
+import {
+  convictionEnabled, convictionOfPosition, weakeningShouldTighten,
+} from './positionConviction.js';
+// v10.15 GAP 2: Event Guard — earnings/RBI/CPI/IIP awareness on the
+// India entry gauntlet (T-30m blackout · T-2h sizing haircut).
+import { eventGuardCheck } from './eventGuard.js';
+// v10.15 GAP 4: Global Risk Brain (crypto-agent parity) — the ONE
+// cross-desk heat cap + risk-off detector BOTH gauntlets consult.
+import { globalRiskGate } from './globalRisk.js';
+// v10.15 GAP 3: Patient Entry (crypto-agent parity, 10m NSE window).
+import {
+  patientEntryEnabled, patientWindowMin, classifyEntry, pullbackLevelFor, patientPendingAction,
+} from './patientEntry.js';
 
 const AGENT_CONFIG_FILE = 'india-agent-config.json';
 const AGENT_STATE_FILE = 'india-agent-state.json';
@@ -84,6 +102,14 @@ export const INDIA_AGENT_DEFAULTS = {
   minRollingWinRate: 35,     // last-N win-rate floor (LIVE self-downgrade)
   rollingWindow: 10,
   quorumPenalty: 10,          // thin-committee AI-score bump (v10.2 Step 3)
+  // ---- v10.15 GAP 1: LIVE CONVICTION TRACKER (crypto-agent parity) ----
+  // OFF by default — AI_ENABLE_CONVICTION_EXIT=true ya ye knob. India has
+  // no winner-extension system yet, so here the tracker only EXITS
+  // (FLIPPED) and TIGHTENS (WEAKENING+profit → SL breakeven ratchet).
+  convictionExit: false,
+  convictionThreshold: 8,     // aiScore points for STRENGTHENING/WEAKENING
+  // ---- v10.15 GAP 3: PATIENT ENTRY (10m NSE window) ----
+  patientEntry: false,
 };
 
 export function loadIndiaAgentConfig() {
@@ -110,6 +136,7 @@ const NUM_CLAMPS = {
   tp1ClosePct: [10, 80],
   tp2ClosePct: [10, 80],
   quorumPenalty: [0, 15],
+  convictionThreshold: [3, 25],
 };
 export function updateIndiaAgentConfig(patch = {}) {
   const cfg = loadIndiaAgentConfig();
@@ -123,6 +150,10 @@ export function updateIndiaAgentConfig(patch = {}) {
   if (patch.partialTpEnabled != null) next.partialTpEnabled = !!patch.partialTpEnabled;
   if (patch.breakEvenAfterTp1 != null) next.breakEvenAfterTp1 = !!patch.breakEvenAfterTp1;
   if (patch.dynamicTimeExit != null) next.dynamicTimeExit = !!patch.dynamicTimeExit;
+  // v10.15 conviction toggle
+  if (patch.convictionExit != null) next.convictionExit = !!patch.convictionExit;
+  // v10.15 patient-entry toggle
+  if (patch.patientEntry != null) next.patientEntry = !!patch.patientEntry;
   // keep the split honest — T1+T2 ≤ 90, runner ≥ 10
   if (next.tp1ClosePct + next.tp2ClosePct > 90) {
     const scale = 90 / (next.tp1ClosePct + next.tp2ClosePct);
@@ -142,9 +173,13 @@ function freshState() {
     pausedToday: null, // { day, reason }
     lastSkip: null,   // { key, text, at } — the CURRENT wait/blocker reason
     alerted: {},      // stand-down telegram alerts already sent today
-    entryMeta: {},    // symbol → { atrPct, at } — entry volatility for dynamic time-exit
+    entryMeta: {},    // symbol → { atrPct, at, convictionScore } — entry volatility + conviction anchor
     winRateDowngraded: null, // LIVE→paper soft-downgrade latch
     lastNearMisses: [], // v10.2 parity: top-3 closest signals that ALMOST qualified
+    // v10.15 GAP 1: the LATEST conviction re-vote per open symbol (panel bar)
+    conviction: {},
+    // v10.15 GAP 3: the ONE resting patient order (null = none)
+    patient: null,
     log: [],
   };
 }
@@ -354,6 +389,30 @@ async function _tick(deps, sendTelegram) {
     persistState(); return;
   }
 
+  // ---- v10.15 GAP 4: GLOBAL RISK BRAIN (India side) — the India desk
+  // consults the SAME combined-heat view the crypto desk does: over the
+  // shared ceiling → veto here too; global risk-off → size-down here
+  // too. "Max-long NIFTY IT + max-long crypto" is ONE bet — now the
+  // system finally sees it. ----
+  let grGate = null;
+  try {
+    const { loadAgentConfig } = await import('./agent.js');
+    const cxCfg = loadAgentConfig();
+    grGate = await globalRiskGate({
+      cryptoEquityINR: 10_000, // practice default; the crypto agent refreshes with its live wallet on ITS ticks
+      indiaCapitalINR: equityINR,
+    });
+    if (grGate.veto) {
+      maybeLogSkip('global_heat', `GLOBAL RISK BRAIN — entry vetoed: ${grGate.reason}; dono desks ka combined heat cap cross ho gaya hai`);
+      persistState(); return;
+    }
+    if (grGate.riskOff) {
+      log('info', `GLOBAL RISK BRAIN — risk-off regime (VIX spike + BTC breakdown): new-entry sizing ×${grGate.sizeMul} across BOTH desks`);
+    }
+  } catch (e) {
+    log('error', `global-risk gate error (entry continues on desk-local rules): ${String(e?.message || e).slice(0, 100)}`);
+  }
+
   // ---- EOD SQUARE-OFF INSURANCE (15:15+): the venue watcher square-offs
   // at 15:15 on its own timer; this sweep catches anything it missed
   // (a watcher tick that landed before 15:15, a live order retry, a
@@ -400,9 +459,64 @@ async function _tick(deps, sendTelegram) {
     )
   ));
 
+  // ---- v10.15 GAP 1: LIVE CONVICTION SWEEP (India parity) — the
+  // ensemble re-votes every open India position via the SAME cached
+  // deep path the board uses. FLIPPED (opposite-side quorum) →
+  // conviction-flip exit BEFORE the stop; WEAKENING while in profit →
+  // SL ratcheted toward breakeven via the existing ratchet helper.
+  // Runs inside this tick's gauntlet (kill-switch/NSE-clock gates
+  // above) — an exit can never bypass the caps. ----
+  const convictionBySymbol = new Map();
+  const convictionExited = new Set(); // ids closed by the conviction sweep this tick
+  if (convictionEnabled(cfg) && openAgent.length > 0) {
+    const { getDeepSignal } = await import('./signals.js');
+    const convictionClosures = [];
+    const convictionTightened = [];
+    const rows = await fetchTVIndiaBatch([...new Set(openAgent.map(p => p.symbol))]).catch(() => ({}));
+    for (const p of openAgent) {
+      const deep = await getDeepSignal(p.symbol, 'INDIA', deps).catch(() => null);
+      const entryScore = Number(_state.entryMeta?.[p.symbol]?.convictionScore);
+      const c = deep?.ok ? convictionOfPosition({ side: p.side }, deep.signal, Number.isFinite(entryScore) ? entryScore : null, { threshold: cfg.convictionThreshold })
+        : { state: 'UNKNOWN', delta: null, currentScore: null, side: null };
+      convictionBySymbol.set(p.symbol, { ...c, entryScore: Number.isFinite(entryScore) ? entryScore : null });
+      _state.conviction = _state.conviction || {};
+      _state.conviction[p.symbol] = { ...c, entryScore: Number.isFinite(entryScore) ? entryScore : null, at: Date.now() };
+      if (c.state === 'FLIPPED') {
+        const out = await closeIndiaPosition(p.id, { reason: `CONVICTION-FLIP: ensemble flipped ${c.side} (score ${c.currentScore}, entry ${Number.isFinite(entryScore) ? entryScore : '?'}) — thesis invalidated, stop se PEHLE bahar` })
+          .catch(e => ({ ok: false, error: String(e?.message || e) }));
+        if (out?.ok) {
+          const totalPnl = (out.position?.pnlINR ?? 0) + (out.position?.bookedPnlINR ?? 0);
+          convictionClosures.push({ symbol: p.symbol, pnlINR: totalPnl, score: c.currentScore });
+          convictionExited.add(p.id);
+          log('exit', `CONVICTION-FLIP EXIT ${p.symbol} — ensemble flipped ${c.side} (score ${c.currentScore}, entry ${Number.isFinite(entryScore) ? entryScore : '?'}) → cut at ₹${r2(totalPnl)} BEFORE the stop`);
+          if (_state.entryMeta) delete _state.entryMeta[p.symbol];
+          if (_state.conviction) delete _state.conviction[p.symbol];
+        } else if (!/not found|already closed/.test(String(out?.error || ''))) {
+          log('error', `conviction-flip close failed for ${p.symbol}: ${String(out?.error || '').slice(0, 100)}`);
+        }
+      } else if (c.state === 'WEAKENING') {
+        // in-profit check from the live LTP (the watcher's own source)
+        const ltp = Number(rows[p.symbol]?.ltp);
+        const inProfit = Number.isFinite(ltp) && ltp > 0 && Number(p.entryPrice) > 0
+          ? (p.side === 'LONG' ? ltp > p.entryPrice : ltp < p.entryPrice) : false;
+        if (inProfit) {
+          const moved = await adjustAgentPositionSl(p.id, p.entryPrice, `CONVICTION WEAKENING (delta ${c.delta}) + in profit → SL → ₹${r2(p.entryPrice)} breakeven ratchet`, p);
+          if (moved?.ok) convictionTightened.push({ symbol: p.symbol, delta: c.delta });
+        }
+      }
+    }
+    if (convictionClosures.length > 0) {
+      await notify(sendTelegram, `🇮🇳 <b>INDIA AGENT conviction-flip exit</b> — thesis invalidated\n${convictionClosures.map(c => `• ${c.symbol} — ensemble ab OPPOSITE side (${c.score}%) → cut at ₹${r2(c.pnlINR)} (stop se PEHLE bahar)`).join('\n')}`);
+    }
+    if (convictionTightened.length > 0) {
+      log('exit', `CONVICTION WEAKENING ×${convictionTightened.length} — ${convictionTightened.map(c => `${c.symbol} (delta ${c.delta})`).join(', ')} → SL ratcheted to breakeven (positions kept)`);
+    }
+  }
+
   // ---- time-exit sweep (ATR-adaptive windows) ----
   const timeExited = new Set();
   for (const p of openAgent) {
+    if (convictionExited.has(p.id)) continue; // v10.15: conviction-flip already closed it
     const holdMin = holdWindowFor(cfg, p.symbol);
     const ageMin = (Date.now() - (p.openedAt || 0)) / 60000;
     if (ageMin >= holdMin) {
@@ -431,6 +545,7 @@ async function _tick(deps, sendTelegram) {
   // the flip side can only re-enter after cooldownMin. ----
   for (const p of openAgent) {
     if (timeExited.has(p.id)) continue;
+    if (convictionExited.has(p.id)) continue; // v10.15: conviction-flip already closed it
     const posSide = String(p.side || '').toUpperCase().startsWith('L') || /^(L|B)/i.test(String(p.side || '')) ? 'BUY' : 'SELL';
     let flipped = null;
     if (board?.ok) {
@@ -511,7 +626,48 @@ async function _tick(deps, sendTelegram) {
     persistState(); return;
   }
   candidates.sort((a, b) => (signalOf(b) - signalOf(a)) || (b.confidence - a.confidence));
-  const best = candidates[0];
+  let best = candidates[0];
+
+  // ---- v10.15 GAP 3: PATIENT ENTRY — the resting order comes FIRST
+  // (10m NSE window). Touched level → execute the PLANNED entry (if the
+  // board still backs the side); expired → journal missed-pullback (the
+  // discipline win); waiting → the fresh candidate flow continues. ----
+  let patientFill = null;
+  if (patientEntryEnabled(cfg) && _state.patient) {
+    const pd = _state.patient;
+    const boardLtp = (sym) => {
+      const s = (board?.signals || []).find(x => String(x.symbol || '').toUpperCase() === String(sym || '').toUpperCase());
+      return Number(s?.ltp) || null;
+    };
+    const act = patientPendingAction({ pending: pd, ltp: boardLtp(pd.symbol), now: Date.now() });
+    if (act.action === 'fill') {
+      const freshSig = (board?.signals || []).find(x =>
+        String(x.symbol || '').toUpperCase() === String(pd.symbol || '').toUpperCase()
+        && String(x.side || '').toUpperCase() === String(pd.side || '').toUpperCase() && qualifies(x));
+      if (freshSig) {
+        best = freshSig;
+        patientFill = { ...pd };
+        _state.patient = null;
+        log('info', `PATIENT FILL — ${pd.symbol} pullback level ₹${pd.level} (${pd.basis}) touched → executing (the planned entry)`);
+      } else {
+        _state.patient = null;
+        log('skip', `PATIENT ENTRY invalidated — ${pd.symbol} ka same-side signal board se gayab; resting order cancelled`);
+        await withJournalLock(async () => {
+          const jj = loadJournal();
+          pushEntry(jj, { kind: 'MISSED_PULLBACK', day: todayIST(), market: 'INDIA', source: 'india-agent', symbol: pd.symbol, text: `PATIENT ENTRY invalidated — signal gone before fill (level ₹${pd.level})` });
+          saveJournal(jj);
+        }).catch(() => { /* best-effort marker */ });
+      }
+    } else if (act.action === 'expire') {
+      _state.patient = null;
+      log('skip', `MISSED-PULLBACK ${pd.symbol} — 10m window expired, level ₹${pd.level} (${pd.basis}) never touched. GOOD outcome: chase nahi kiya.`);
+      await withJournalLock(async () => {
+        const jj = loadJournal();
+        pushEntry(jj, { kind: 'MISSED_PULLBACK', day: todayIST(), market: 'INDIA', source: 'india-agent', symbol: pd.symbol, text: `PATIENT ENTRY expired unfilled — level ₹${pd.level} (${pd.basis}) not touched in 10m; chase nahi kiya (discipline win)` });
+        saveJournal(jj);
+      }).catch(() => { /* best-effort marker */ });
+    }
+  }
 
   // ---- record the entry's volatility for its dynamic time-exit window ----
   const atrPctOf = (s) => {
@@ -524,13 +680,58 @@ async function _tick(deps, sendTelegram) {
   };
   const entryAtrPct = atrPctOf(best);
   _state.entryMeta = _state.entryMeta || {};
-  _state.entryMeta[best.symbol] = { atrPct: entryAtrPct, at: Date.now() };
+  // v10.15 GAP 1: record the ENTRY conviction score (the delta anchor)
+  _state.entryMeta[best.symbol] = {
+    atrPct: entryAtrPct, at: Date.now(),
+    convictionScore: Number(best?.superIntel?.aiScore ?? best?.confidence ?? null),
+  };
   if (entryAtrPct != null && cfg.dynamicTimeExit !== false) {
     log('info', `ENTRY VOLATILITY ${best.symbol}: ATR ${r2(entryAtrPct)}% → dynamic time-exit window ${dynamicMaxHoldMin(cfg, entryAtrPct)}m (base ${cfg.maxHoldMin}m)`);
   }
 
+  // ---- v10.15 GAP 2: EVENT GUARD — the India gauntlet asks "kuch
+  // scheduled hai kya?" before entry: T-30min before earnings/RBI/
+  // CPI/IIP → veto with a reason; T-2h → the budget is haircut. ----
+  const eg = eventGuardCheck({ symbol: best.symbol, desk: 'INDIA' });
+  if (eg.action === 'blackout') {
+    maybeLogSkip('event_guard', `EVENT GUARD — ${best.symbol} ${best.side} entry blocked: ${eg.reason}`);
+    persistState(); return;
+  }
+  const eventSizeMul = eg.action === 'haircut' ? eg.multiplier : 1;
+  if (eg.action === 'haircut') log('info', `EVENT GUARD — ${best.symbol}: ${eg.reason}`);
+
+  // ---- v10.15 GAP 3: PATIENT ENTRY classification — EXTENDED signal
+  // (>1.5 ATR beyond its anchor) rests at a depth-derived pullback level
+  // for the 10m window instead of chasing; at-anchor → immediate as today. ----
+  if (patientEntryEnabled(cfg) && !patientFill && !_state.patient) {
+    const ltpNow = Number(best.ltp || best.plan.entry);
+    const entryAnchor = Number(best.plan.entry);
+    const atrUnits = Number(best.plan.atrUsed);
+    if (classifyEntry({ ltp: ltpNow, entry: entryAnchor, atr: atrUnits }) === 'extended') {
+      const depth = await readDepth('INDIA', best.symbol, { ltp: ltpNow }).catch(() => null);
+      const { level, basis } = pullbackLevelFor({ side: best.side, ltp: ltpNow, entry: entryAnchor, depth: depth?.ok ? depth : null });
+      _state.patient = {
+        symbol: best.symbol, market: 'INDIA', pair: best.symbol, side: best.side,
+        level, basis, createdAt: Date.now(),
+        expiresAt: Date.now() + patientWindowMin('INDIA') * 60_000,
+      };
+      log('info', `PATIENT ENTRY placed — ${best.symbol} ${best.side} extended: resting limit @ ₹${level} (${basis}) for ${patientWindowMin('INDIA')}m instead of chasing ₹${r2(ltpNow)}`);
+      await notify(sendTelegram, `🇮🇳 <b>INDIA AGENT patient entry</b> — ${best.symbol} ${best.side}\nAnchor se extended (chase risk) → resting limit @ <b>₹${level}</b> (${basis}) · window ${patientWindowMin('INDIA')}m`);
+      await withJournalLock(async () => {
+        const jj = loadJournal();
+        pushEntry(jj, { kind: 'PATIENT', day: todayIST(), market: 'INDIA', source: 'india-agent', symbol: best.symbol, text: `PATIENT ENTRY resting — ${best.symbol} ${best.side} extended; limit @ ₹${level} (${basis}), window ${patientWindowMin('INDIA')}m`, level, basis });
+        saveJournal(jj);
+      }).catch(() => { /* best-effort marker */ });
+      persistState(); return; // resting now — no chase this cycle
+    }
+  }
+
   // ---- sizing (transparent log before execution — auditable) ----
-  const riskINR = equityINR * (cfg.riskPerTradePct / 100);
+  // v10.15 GAP 4: a global risk-off regime down-weights this desk too.
+  const grMul = grGate?.riskOff ? grGate.sizeMul : 1;
+  const riskINR = equityINR * (cfg.riskPerTradePct / 100) * eventSizeMul * grMul;
+  if (eventSizeMul < 1) log('info', `EVENT GUARD SIZING ${best.symbol}: risk ×${eventSizeMul} → ₹${r2(riskINR)} (${eg.reason})`);
+  if (grMul < 1) log('info', `GLOBAL RISK-OFF SIZING ${best.symbol}: risk ×${grMul} → ₹${r2(riskINR)} (VIX spike + BTC breakdown regime)`);
   const budgetINR = Math.min(
     Number(trading.indiaMaxOrderINR) > 0 ? Number(trading.indiaMaxOrderINR) : 5000,
     Math.max(100, (riskINR / (best.plan.riskPct || 5)) * 100),
@@ -556,6 +757,18 @@ async function _tick(deps, sendTelegram) {
     _state.lastEntryAt = Date.now();
     _state.lastEntrySymbol = best.symbol;
     const f = out.filled || {};
+    // v10.15 GAP 3: journal the ENTRY MODE — the weekly review's
+    // "did patience pay?" join key (immediate vs patient).
+    await withJournalLock(async () => {
+      const jj = loadJournal();
+      pushEntry(jj, {
+        kind: 'ENTRY_MODE', day: todayIST(), market: 'INDIA', source: 'india-agent',
+        symbol: best.symbol, positionId: out?.position?.id ?? null,
+        mode: patientFill ? 'patient' : 'immediate',
+        text: `ENTRY MODE ${patientFill ? 'PATIENT' : 'IMMEDIATE'} — ${best.symbol} ${best.side}${patientFill ? ` (pullback level ₹${patientFill.level}, ${patientFill.basis})` : ''}`,
+      });
+      saveJournal(jj);
+    }).catch(() => { /* best-effort marker */ });
     if (out.mode === 'notify') {
       log('entry', `NOTIFY ${best.symbol} ${best.side} (${best.confidence}% conf) — alert-only, koi order nahi`);
     } else {
@@ -866,6 +1079,8 @@ export async function indiaAgentStatus(deps) {
       remainingQty: p.qty ?? null,
       originalQty: p.originalQty ?? null,
       exitStage: p.exitStage || 'ENTRY',
+      // v10.15 GAP 1: the live conviction bar (null when OFF / no re-vote yet)
+      conviction: _state.conviction?.[p.symbol] ?? null,
     })),
     picks,
     sizingPreview: preview,

@@ -58,11 +58,25 @@ export interface CxWsHealth {
   failStreak: number;
   domains?: { fut: number; glob: number };
   premarketBudget?: number | null;
+  /** v10.15: the Binance futures WS accelerator tier — sub-second FUT
+   *  pushes while the CoinDCX socket is dark. */
+  binanceFut?: {
+    enabled: boolean;
+    connected: boolean;
+    healthy: boolean;
+    lastTickAt: number | null;
+    streams: number;
+    wantOpen: boolean;
+    cooldownActive: boolean;
+    cooldownRemainMs: number;
+    failStreak: number;
+  } | null;
 }
 
 function toWsHealth(raw: Record<string, unknown> | null | undefined): CxWsHealth | null {
   if (!raw || typeof raw !== 'object') return null;
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const bnRaw = raw.binanceFut as Record<string, unknown> | null | undefined;
   return {
     enabled: raw.enabled !== false,
     connected: raw.connected === true,
@@ -75,6 +89,17 @@ function toWsHealth(raw: Record<string, unknown> | null | undefined): CxWsHealth
       ? { fut: num((raw.domains as Record<string, unknown>).fut), glob: num((raw.domains as Record<string, unknown>).glob) }
       : undefined,
     premarketBudget: typeof raw.premarketBudget === 'number' ? raw.premarketBudget : null,
+    binanceFut: bnRaw && typeof bnRaw === 'object' ? {
+      enabled: bnRaw.enabled !== false,
+      connected: bnRaw.connected === true,
+      healthy: bnRaw.healthy === true,
+      lastTickAt: typeof bnRaw.lastTickAt === 'number' ? bnRaw.lastTickAt : null,
+      streams: num(bnRaw.streams),
+      wantOpen: bnRaw.wantOpen === true,
+      cooldownActive: bnRaw.cooldownActive === true,
+      cooldownRemainMs: num(bnRaw.cooldownRemainMs),
+      failStreak: num(bnRaw.failStreak),
+    } : null,
   };
 }
 

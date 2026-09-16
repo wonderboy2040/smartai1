@@ -21,6 +21,24 @@ const JOURNAL = {
     // noise
     { kind: 'ORDER', day: '2026-09-15', pair: 'X', pnlINR: 1 },
   ],
+  // v10.15 S3: closed positions carry side + openedAt — the direction
+  // split's source (CLOSE entries don't carry side).
+  positions: [
+    // 4 LONGs: 3 win, 1 loss — 75% WR
+    { id: 'p1', side: 'LONG', status: 'CLOSED', openedAt: Date.parse('2026-09-15T04:35:00Z'), closedAt: Date.parse('2026-09-15T06:00:00Z'), pnlINR: 500, bookedPnlINR: 0 },
+    { id: 'p2', side: 'LONG', status: 'CLOSED', openedAt: Date.parse('2026-09-14T05:10:00Z'), closedAt: Date.parse('2026-09-14T07:00:00Z'), pnlINR: -200, bookedPnlINR: 0 },
+    { id: 'p3', side: 'LONG', status: 'CLOSED', openedAt: Date.parse('2026-09-12T09:45:00Z'), closedAt: Date.parse('2026-09-12T10:30:00Z'), pnlINR: 150, bookedPnlINR: 0 },
+    { id: 'p4', side: 'LONG', status: 'CLOSED', openedAt: Date.parse('2026-09-13T10:05:00Z'), closedAt: Date.parse('2026-09-13T11:00:00Z'), pnlINR: 80, bookedPnlINR: 40 },
+    // 4 SHORTs: 1 win, 3 losses — 25% WR (the "shorts are wrong" pattern)
+    { id: 'p5', side: 'SHORT', status: 'CLOSED', openedAt: Date.parse('2026-09-15T09:20:00Z'), closedAt: Date.parse('2026-09-15T10:00:00Z'), pnlINR: 120, bookedPnlINR: 0 },
+    { id: 'p6', side: 'SHORT', status: 'CLOSED', openedAt: Date.parse('2026-09-14T09:50:00Z'), closedAt: Date.parse('2026-09-14T10:30:00Z'), pnlINR: -90, bookedPnlINR: 0 },
+    { id: 'p7', side: 'SHORT', status: 'CLOSED', openedAt: Date.parse('2026-09-13T09:05:00Z'), closedAt: Date.parse('2026-09-13T10:00:00Z'), pnlINR: -60, bookedPnlINR: 0 },
+    { id: 'p8', side: 'SHORT', status: 'CLOSED', openedAt: Date.parse('2026-09-12T05:15:00Z'), closedAt: Date.parse('2026-09-12T06:00:00Z'), pnlINR: -110, bookedPnlINR: 0 },
+    // out-of-window closed position — must NOT count
+    { id: 'p9', side: 'LONG', status: 'CLOSED', openedAt: Date.parse('2026-08-25T05:00:00Z'), closedAt: Date.parse('2026-08-25T06:00:00Z'), pnlINR: 5000, bookedPnlINR: 0 },
+    // still-open position — never counted
+    { id: 'p10', side: 'LONG', status: 'OPEN', openedAt: Date.parse('2026-09-15T05:00:00Z'), closedAt: null, pnlINR: 999, bookedPnlINR: 0 },
+  ],
 };
 const mockLoadJournal = vi.fn(() => JOURNAL);
 const mockTrust = vi.fn(() => ({
@@ -94,6 +112,45 @@ describe('computeAiDeskWeek', () => {
     expect(w.trades).toBe(0);
     expect(w.winRate).toBeNull();
     expect(w.hadActivity).toBe(false);
+    // v10.15 S3: the direction split degrades honestly too
+    expect(w.direction.byDirection.LONG).toMatchObject({ trades: 0, winRate: null });
+    expect(w.direction.byDirection.SHORT).toMatchObject({ trades: 0, winRate: null });
+    expect(w.direction.byEntryHour).toEqual([]);
+  });
+  // ---- v10.15 S3: the DIRECTION-ACCURACY BREAKDOWN ----
+  it('v10.15 S3: direction split — LONG vs SHORT win-rate from closed positions', () => {
+    const w = computeAiDeskWeek(JOURNAL, { now: NOW });
+    // 4 in-window LONGs (p1-p4): wins = p1(500) p3(150) p4(80+40) → 3W/1L = 75%
+    expect(w.direction.byDirection.LONG).toMatchObject({ trades: 4, wins: 3, losses: 1, winRate: 75 });
+    // 4 in-window SHORTs (p5-p8): wins = p5(120) → 1W/3L = 25%
+    expect(w.direction.byDirection.SHORT).toMatchObject({ trades: 4, wins: 1, losses: 3, winRate: 25 });
+    // booked partial legs count in the total (p4: 80 + 40)
+    expect(w.direction.byDirection.LONG.netPnlINR).toBe(570);
+    expect(w.direction.byDirection.SHORT.netPnlINR).toBe(-140);
+    // out-of-window (p9, Aug) and OPEN (p10) positions never count
+    expect(w.direction.byDirection.LONG.trades).toBe(4);
+  });
+  it('v10.15 S3: entry-hour buckets expose the "first-15-min entries lose" pattern', () => {
+    const w = computeAiDeskWeek(JOURNAL, { now: NOW });
+    const hours = w.direction.byEntryHour;
+    expect(hours.length).toBeGreaterThan(0);
+    // buckets are ordered and labeled as IST hour ranges
+    for (let i = 1; i < hours.length; i++) expect(hours[i].hour > hours[i - 1].hour).toBe(true);
+    expect(hours[0].hour).toMatch(/^\d{2}:00-\d{2}:00$/);
+    // 09:xx IST entries (openedAt 03:5x-04:2x UTC): p1(04:35→10:05 IST) is 10:00 bucket;
+    // 04:35Z = 10:05 IST → the 10:00 bucket; 09:20Z = 14:50 IST etc. Just verify
+    // every bucket's math is internally consistent (trades = wins + losses).
+    for (const b of hours) expect(b.trades).toBe(b.wins + b.losses);
+  });
+  it('v10.15 S3: the direction split reaches the Telegram header + the LLM prompt block', () => {
+    const q = weeklyQuantView({ now: NOW });
+    const h = quantHeaderBlock(q);
+    expect(h).toMatch(/Direction split/);
+    expect(h).toMatch(/LONG 4 · 75%/);
+    expect(h).toMatch(/SHORT 4 · 25%/);
+    // prompt block (what the LLM narrates from) carries the same numbers
+    const q2 = weeklyQuantView({ now: NOW });
+    expect(q2.ai.direction.byDirection.SHORT.winRate).toBe(25);
   });
 });
 

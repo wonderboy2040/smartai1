@@ -72,6 +72,8 @@ interface IndiaAgentView {
     openedAt: number; ageMin: number | null; maxHoldMin: number;
     tp1Hit: boolean; tp2Hit: boolean; bookedPnlINR: number | null;
     remainingQty: number | null; originalQty: number | null; exitStage: string;
+    /** v10.15 GAP 1: the live conviction re-vote (null when OFF). */
+    conviction?: { state: string; delta: number | null; currentScore: number | null; entryScore: number | null; side?: string | null } | null;
   }[];
   picks: IndiaAgentPick[];
   sizingPreview: { desk: string | null; symbol?: string; riskINR: number; riskPct: number; equityINR: number; budgetINR?: number; qty?: number; entry?: number; note: string } | null;
@@ -390,9 +392,20 @@ export const IndiaAgentPanel = memo(function IndiaAgentPanel() {
                 {view.openPositions.map(p => {
                   const stage = STAGE_STYLE[p.exitStage] || STAGE_STYLE.ENTRY;
                   const holdPct = p.maxHoldMin > 0 ? Math.min(100, Math.round(((p.ageMin ?? 0) / p.maxHoldMin) * 100)) : 0;
+                  // v10.15 GAP 1: the live conviction bar (green ▲ / amber ▼ / red flip)
+                  const cv = p.conviction;
+                  const cvCls = cv?.state === 'STRENGTHENING' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                    : cv?.state === 'WEAKENING' ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                    : cv?.state === 'FLIPPED' ? 'bg-red-500/15 text-red-300 border-red-500/40' : '';
                   return (
                     <div key={p.id} className="bg-black/30 rounded-xl px-3 py-2 flex items-center gap-2 flex-wrap text-[10px] font-mono">
                       <span className={`px-1.5 py-0.5 rounded border text-[9px] font-black ${stage.cls}`}>{stage.label}</span>
+                      {cv && cv.state !== 'UNKNOWN' && cvCls && (
+                        <span className={`px-1.5 py-0.5 rounded border text-[9px] font-black ${cvCls}`}
+                          title={`Live conviction — ensemble re-vote: entry ${cv.entryScore ?? '?'} → now ${cv.currentScore ?? '?'} (${cv.side ?? '?'}) · delta ${cv.delta != null ? cv.delta : '?'}${cv.state === 'FLIPPED' ? ' — conviction-flip exit fires' : cv.state === 'WEAKENING' ? ' — in-profit SL → breakeven' : ''}`}>
+                          CONVICTION {cv.state === 'STRENGTHENING' ? '▲' : cv.state === 'WEAKENING' ? '▼' : '⯅'} {cv.state}{cv.delta != null ? ` ${cv.delta > 0 ? '+' : ''}${cv.delta}` : ''}
+                        </span>
+                      )}
                       <span className="text-slate-200 font-black">{p.symbol}</span>
                       <span className={p.side === 'LONG' ? 'text-emerald-300' : 'text-red-300'}>{p.side}</span>
                       <span className="text-slate-400">{p.remainingQty ?? p.qty}{p.originalQty ? `/${p.originalQty}` : ''} sh @ ₹{p.entryPrice}</span>
