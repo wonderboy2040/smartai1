@@ -111,6 +111,20 @@ services:
       # when the L2 depth walk expects more than this % of slippage.
       - key: AI_SLIPPAGE_THRESHOLD_PCT
         sync: false
+      # ---- v10.17 INDIA FULL UNIVERSE SCAN ----
+      # ON by default. Tiered cadence: T1 (base + hot) every cycle,
+      # T2 (top ~220 NSE names by TV turnover) in rotating quarter
+      # slices; hot T2 names ride T1 for 20 min. Set "off" to revert
+      # to the static ~45-name F&O base (legacy byte-identical).
+      - key: AI_INDIA_FULL_UNIVERSE
+        sync: false
+      # Discovery depth in NSE names (60-500). Default 220.
+      - key: AI_INDIA_FULL_UNIVERSE_SIZE
+        sync: false
+      # OPTIONS SCANNER: stock-option underlyings scanned alongside
+      # the 3 indices on GET /api/ai/options-scan (0-10). Default 6.
+      - key: AI_OPTIONS_SCAN_STOCKS
+        sync: false
       # ---- v10.9 TELEGRAM UPGRADES ----
       # #2 INSTANT PUSH: price-driven sink (5s SL/TP touches, 30s STRONG
       # scan with correlation bundling). Default ON; set off for

@@ -16,6 +16,16 @@ let _nseOpen = true;       // default: NSE open (weekday 09:15–15:30)
 let _istMin = 10 * 60;     // default: 10:00 IST (inside the 09:30–15:00 entry window)
 let _ltp = {};            // symbol → ltp for the partial-TP manager
 
+// v10.17 CALENDAR DETERMINISM: eventGuard consults REAL event dates
+// (FOMC / RBI / CPI windows). On those days the x0.5 sizing haircut or
+// the T-30m entry blackout silently halved sized trades or blocked
+// entries — these suites passed at authoring time and failed ONLY
+// around FOMC/CPI. Neutral guard: the sizing/mandate/entry math under
+// test is calendar-independent.
+vi.mock('../server/ai/eventGuard.js', () => ({
+  eventGuardCheck: () => ({ action: 'allow' }),
+}));
+
 vi.mock('../server/ai/data.js', async (importOriginal) => {
   const actual = await importOriginal();
   return {

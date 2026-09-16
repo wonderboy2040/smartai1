@@ -44,6 +44,10 @@ import { initIntradayStream, intradayStreamHandler, setScanSymbols, getLatestQuo
 import { buildMoversRows } from './movers.js';
 import { buildCryptoIntel } from './intel.js';
 import { loadJSON, saveJSON } from './store.js';
+// v10.17 FULL UNIVERSE SCAN — the movers feed + the scanner ride the
+// SAME tiered universe the Signal Board uses (T1 every cycle, T2
+// rotating slices, hot promotion). One truth, three consumers.
+import { tieredScanUniverse, absorbScanRows, fullIndiaUniverseEnabled } from '../ai/indiaUniverse.js';
 
 // ------------------------------------------------------------
 // Custom universe / watchlist (persisted) — PER MARKET (2026-09):
@@ -380,16 +384,37 @@ export function registerIntradayRoutes(app, deps) {
       if (cache.inflight) return res.json(await cache.inflight);
       cache.inflight = (async () => {
         try {
-          const universe = effectiveUniverse(mkt);
+          // v10.17: INDIA movers ride the tiered FULL universe — the
+          // gainers/losers/most-active lists now see the whole NSE
+          // tape, not just the watchlist. User watchlist removals are
+          // honoured against discovered names too.
+          let universe;
+          let tieredMeta = null;
+          if (mkt === 'INDIA' && fullIndiaUniverseEnabled()) {
+            const tiered = await tieredScanUniverse(effectiveUniverse(mkt), {
+              exclude: (_universeStateFor('INDIA').removedBase || []),
+            });
+            universe = tiered.scan;
+            tieredMeta = {
+              mode: tiered.mode, full: tiered.fullCount,
+              t1: tiered.t1Count, t2: tiered.t2Count, slice: tiered.sliceCount,
+            };
+          } else {
+            universe = effectiveUniverse(mkt);
+          }
           const [tvData, quoteData] = mkt === 'CRYPTO'
             ? await fetchIntradayDataBatch(universe, fetchGrowwNseQuote, { market: 'CRYPTO', fetchCoinDcxTickers })
             : await fetchIntradayDataBatch(universe, fetchGrowwNseQuote);
           const built = buildMoversRows(universe, tvData, quoteData, mkt);
+          // feed the fresh rows into the shared hot engine (movers rows
+          // carry changePct + relVolume — the same heat rule applies)
+          if (mkt === 'INDIA' && tieredMeta) absorbScanRows(built.gainers.concat(built.losers));
           const payload = {
             ok: true,
             market: mkt,
             asOf: new Date().toISOString(),
             marketOpen: isMarketOpenFor(mkt),
+            ...(tieredMeta ? { universeMeta: tieredMeta } : {}),
             ...built,
             // INDIA: NIFTY/BANKNIFTY/SENSEX/VIX chips; CRYPTO: BTC/ETH already
             // in built.indices — merge whichever is non-empty.
@@ -453,8 +478,22 @@ export function registerIntradayRoutes(app, deps) {
     try {
         const isCrypto = mkt === 'CRYPTO';
         // v9: CRYPTO scans the DYNAMIC universe (every liquid CoinDCX INR
-        // pair); INDIA keeps the F&O base + watchlist.
-        const universe = isCrypto ? await effectiveCryptoUniverse() : effectiveUniverse(mkt);
+        // pair); INDIA rides the v10.17 tiered FULL universe (T1 base∪hot
+        // every cycle + T2 rotating slices — same engine the Signal Board
+        // and movers share; watchlist removals honoured).
+        let universe;
+        let tieredMeta = null;
+        if (isCrypto) {
+          universe = await effectiveCryptoUniverse();
+        } else if (fullIndiaUniverseEnabled()) {
+          const tiered = await tieredScanUniverse(effectiveUniverse(mkt), {
+            exclude: (_universeStateFor('INDIA').removedBase || []),
+          });
+          universe = tiered.scan;
+          tieredMeta = tiered;
+        } else {
+          universe = effectiveUniverse(mkt);
+        }
         if (isCrypto) registerCryptoBases(universe); // route quotes/paper/track correctly
 
         // Regime + market data in parallel (regime gates every analysis).
@@ -482,6 +521,12 @@ export function registerIntradayRoutes(app, deps) {
         const tvCount = Object.keys(tvData).length;
         const gwCount = Object.keys(quoteData).length;
         console.log(`[intraday-scanner:${mkt}] Data: TV=${tvCount} symbols, ${isCrypto ? 'CoinDCX' : 'Groww'}=${gwCount} symbols, regime=${regime?.regime || 'n/a'}`);
+
+        // v10.17: feed the fresh TV rows into the shared hot engine so
+        // heated T2 names ride Tier-1 cadence from the next cycle.
+        if (tieredMeta) {
+          absorbScanRows(Object.entries(tvData).map(([sym, row]) => ({ ...row, symbol: sym })));
+        }
 
         const results = [];
         for (const sym of universe) {
@@ -671,9 +716,18 @@ export function registerIntradayRoutes(app, deps) {
           scanned: results.length,
           universe: universe.length,
           minConfidence: minConf,
+          ...(tieredMeta ? {
+            universeMeta: {
+              mode: tieredMeta.mode, full: tieredMeta.fullCount,
+              t1: tieredMeta.t1Count, t2: tieredMeta.t2Count,
+              slice: tieredMeta.sliceCount, hot: tieredMeta.hot.length,
+            },
+          } : {}),
           superIntelMeta: {
             engine: 'SUPERINTELLIGENCE PRO TRADER ENGINE v9',
-            universeMode: isCrypto ? 'dynamic (live CoinDCX INR pairs by turnover)' : 'F&O base + watchlist',
+            universeMode: isCrypto ? 'dynamic (live CoinDCX INR pairs by turnover)'
+              : tieredMeta ? `${tieredMeta.mode} (T1 ${tieredMeta.t1Count} + T2 slice ${tieredMeta.sliceCount}/${tieredMeta.t2Count})`
+              : 'F&O base + watchlist',
             strongCount, eliteCount, scored: signals.length,
           },
           aiVerified: !!ai,

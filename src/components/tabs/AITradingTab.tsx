@@ -213,7 +213,7 @@ function BoardSummary({ board }: { board: SignalBoard | null }) {
 
 export default memo(function AITradingTab() {
   const t = useAITrading(true);
-  const { india, crypto, futures, state, positions, entries, loading, busy, refresh, executeSignal, updateConfig, closePos, fetchDeep, positionsLive } = t;
+  const { india, crypto, futures, state, positions, entries, loading, busy, refresh, refreshPositions, executeSignal, updateConfig, closePos, fetchDeep, positionsLive } = t;
   const { executeIndia, executeFutures, runBacktest, runStrategyLab, fetchAlertsStatus, saveAlertsConfig, testAlert, fetchDhanStatus, dhanConnect, dhanDisconnect } = t;
   const [market, setMarket] = useState<MarketKind>('INDIA');
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
@@ -490,7 +490,7 @@ export default memo(function AITradingTab() {
         <div className="mt-2.5">
           <OrderConsole
             state={state} positions={positions} entries={entries} busy={busy} positionsLive={positionsLive}
-            onClose={onClose} onSaveConfig={onSaveConfig}
+            onClose={onClose} onSaveConfig={onSaveConfig} onPositionsChanged={refreshPositions}
             dhan={dhan} onDhanConnect={async (id, tok) => { const r = await dhanConnect(id, tok); refreshDhan(); return r; }}
             onDhanDisconnect={async () => { const r = await dhanDisconnect(); refreshDhan(); return r; }}
             onDhanRefresh={refreshDhan}

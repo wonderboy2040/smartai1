@@ -13,9 +13,13 @@
 // ============================================================
 import { computeIndicatorsFromCandles } from './lib/indicators.js';
 import {
-  INDIA_UNIVERSE, CRYPTO_UNIVERSE, fetchTVIndiaBatch, fetchTVCryptoBatch,
+  INDIA_UNIVERSE, CRYPTO_UNIVERSE, fetchTVIndiaBatch, fetchTVIndiaBatchChunked, fetchTVCryptoBatch,
   fetchCoinDcxCandles, fetchYahooQuotes, isNseOpen,
 } from './data.js';
+// v10.17 FULL UNIVERSE SCAN — TV filter-query discovery + tiered
+// cadence (T1 base∪hot every cycle · T2 rotating slices) + hot
+// promotion. Flag AI_INDIA_FULL_UNIVERSE=off reverts to the static base.
+import { tieredScanUniverse, absorbScanRows, fullIndiaUniverseEnabled } from './indiaUniverse.js';
 import { FUTURES_UNIVERSE, futuresPairFor, fetchFuturesPrices, fetchFuturesCandles } from './futures.js';
 import { MODELS, runQuantModels, aiCouncilVoteFromVerdict, v2ModelsEnabled, mtfConfluenceEnabled, tapeVote } from './models.js';
 // v2 signal-accuracy upgrade: sentiment (news/F&G/funding), institutional
@@ -903,9 +907,22 @@ async function _computeBoard(mkt, deps, opts = {}) {
 
   const contexts = [];
   if (mkt === 'INDIA') {
-    // Stocks (TV scanner, one batch request) — parallel with the index contexts.
+    // v10.17 FULL UNIVERSE SCAN + TIERED CADENCE:
+    //   T1 = base ∪ hot            → scanned EVERY cycle
+    //   T2 = discovered NSE names  → rotating ~¼ slices per cycle
+    // (whole-market coverage every ~4 cycles ≈ ~4 min; hot T2 names
+    // ride T1 cadence for 20 min after they show heat). Flag OFF =
+    // the legacy static 45-name scan, byte-identical. Discovery DOWN
+    // (same scanner.tradingview.com upstream as the tickers batch
+    // itself) → legacy static scan too — honest degrade, no seed
+    // guessing on the board path.
+    const tiered = await tieredScanUniverse(INDIA_UNIVERSE);
+    const tieredLive = tiered.mode === 'tiered-full';
+    // Stocks (TV scanner, chunked batch) — parallel with the index contexts.
     const [tv, indexCandleJobs] = await Promise.all([
-      fetchTVIndiaBatch(INDIA_UNIVERSE).catch(() => ({})),
+      (tieredLive
+        ? fetchTVIndiaBatchChunked(tiered.scan)
+        : fetchTVIndiaBatch(INDIA_UNIVERSE)).catch(() => ({})),
       Promise.allSettled(['NIFTY', 'BANKNIFTY'].map(async (idx) => {
         const candles = await fetchYahooCandles(idx, '6mo');
         if (!candles) return null;
@@ -919,13 +936,25 @@ async function _computeBoard(mkt, deps, opts = {}) {
         };
       })),
     ]);
+    // Feed the fresh rows into the hot engine — promoted names join
+    // T1 from the NEXT cycle (this cycle already has its scan set).
+    if (tieredLive) absorbScanRows(Object.values(tv));
     for (const row of Object.values(tv)) {
       const ctx = await buildIndiaStockCtx(row, regime);
       if (ctx) { attachSuperCtx(ctx, row, null); contexts.push(ctx); }
     }
     for (const r of indexCandleJobs) if (r.status === 'fulfilled' && r.value) contexts.push(r.value);
-    superMeta.universeSize = INDIA_UNIVERSE.length + 2;
-    superMeta.universeMode = 'tv-nse-batch';
+    if (tieredLive) {
+      superMeta.universeSize = tiered.fullCount + 2;
+      superMeta.universeMode = `tiered-full (T1 ${tiered.t1Count} + T2 slice ${tiered.sliceCount}/${tiered.t2Count} · hot ${tiered.hot.length})`;
+      superMeta.tiered = {
+        t1: tiered.t1Count, t2: tiered.t2Count, slice: tiered.sliceCount,
+        scanned: tiered.scan.length, hot: tiered.hot, full: tiered.fullCount,
+      };
+    } else {
+      superMeta.universeSize = INDIA_UNIVERSE.length + 2;
+      superMeta.universeMode = 'tv-nse-batch';
+    }
   } else if (mkt === 'FUTURES') {
     // v9 SUPERINTELLIGENCE: the FULL DYNAMIC futures universe — every
     // liquid CoinDCX B-USDT perpetual by 24h turnover (live discovery,

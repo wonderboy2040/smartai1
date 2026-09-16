@@ -1,5 +1,41 @@
 # Changelog
 
+## v10.17 — FULL UNIVERSE SCAN + OPTIONS SCANNER + CLEAR CLOSED + PERF (2026-09-16)
+
+**The superintelligence plan v2's remaining sections, fully applied: Section 1 (full universe scan + tiered cadence + options scanner), the Clear-closed-trades button, and Section 5 (performance/lag cleanup).** Suite grew **1799 → 1865 tests, all passing** (+66 across 6 new files + 5 calendar-determinism patches); boot smoke 20/20 (`scripts/smoke_v1017.mjs` — includes a LIVE TV discovery + LIVE NSE options-chain pass); tsc clean; build clean 5.3s; audit 0/0; ml-service 11/11.
+
+### SECTION 1a — Full universe scan + TIERED CADENCE (India desk)
+The gap: every India surface (Signal Board · Trending Movers · intraday scanner) scanned a FIXED ~45-name F&O base — the best setup of the day sitting outside that list could never surface. Now:
+- **NEW `server/ai/indiaUniverse.js`** — one TV India scanner FILTER query (type=stock · exchange=NSE · sorted by turnover, depth ~220) discovers the most-traded NSE names every 10 min (single-flight, 90s negative-cache, honest static-seed fallback when the scanner is unreachable). LIVE-verified from the boot smoke: 219-220 real names parsed, turnover-ranked.
+- **Tiered cadence** — T1 (base ∪ watchlist ∪ HOT) scans EVERY cycle; T2 (the discovered rest) rotates in ~¼ slices per cycle → whole-market coverage every ~4 board cycles (~4 min) without ever exploding one scan's upstream cost. **Hot promotion**: a T2 name showing heat (|chg| ≥ 2.5% · relVol ≥ 2 · RSI ≥ 72/28) rides T1 cadence for 20 min (cap 15, fittest-survive eviction). The board, movers and scanner SHARE one rotation + one hot set — combined callers cover T2 faster, never slower.
+- **Chunked TV batches** — `fetchTVIndiaBatchChunked` (60 symbols/request, ≤3 concurrent) on the board path; the intraday engine's TV round chunks at 100 tickers/request (small universes keep the exact legacy single-shot path). Groww quote load bounded by the v10.12 micro-cache + per-symbol backoff as before.
+- **Honest degrade**: discovery DOWN → the board falls back to the legacy static scan byte-identically (same upstream as the tickers batch — no seed guessing on the board path); movers/scanner keep the wider seed coverage. User watchlist removals are honoured against discovered T2 seats AND hot rides. `AI_INDIA_FULL_UNIVERSE=off` reverts everything; `superMeta.universeMode` labels the live tier shape.
+- Fixed en route (caught by tests/smoke): `mergeHot`/`pruneHot` silently wiped the production Map state (Array.isArray guard) — hot rides never persisted; `splitTiers` computed the hot set and never seated it into T1 (the smoke's live 220-name rotation caught it); `nextSlice` built the slice before computing the adaptive take.
+
+### SECTION 1b — OPTIONS SCANNER (whole F&O chain, one view)
+- **NEW `server/ai/optionsScan.js` + `GET /api/ai/options-scan`** — 3 indices (NIFTY · SENSEX · BANKNIFTY) + the top stock-option underlyings by NSE turnover (F&O seed intersection, `AI_OPTIONS_SCAN_STOCKS` default 6), each loaded through the existing real-NSE-chain machinery with the honest BS-model fallback. Every row: DETERMINISTIC direction tally (OI lean · PCR · max-pain side · gamma-flip side — zero LLM, fully explainable), GEX pin/flip zone + walls, expected-move band, ATM IV, DTE awareness, source tag. Ranked by a transparent scan score (conviction ×8 + OI-flow ×25 + movement potential ×5 + live-chain +5 − far-expiry drag). 90s cache, single-flight, bounded groups of 4 with 350ms gaps (NSE politeness — never a stampede).
+- **UI**: the Options Desk panel gets a **🔍 SCANNER** toggle — one ranked list across the whole F&O universe (direction chips, score bars, γflip/walls/exp-move, LIVE NSE vs BS MODEL tags, failed rows honestly listed).
+
+### CLEAR CLOSED TRADES (the console button)
+- **`POST /api/ai/positions/clear-closed` + `clearClosedPositions()`** — sweeps ONLY `status === 'CLOSED'` rows from the journal through the writer lock (OPEN/UNKNOWN structurally untouched), stamps a `HOUSEKEEP` audit entry with the count; the tamper-evident LEDGER keeps the permanent trail.
+- **🧹 CLEAR CLOSED (n) button** in the Execution Console (all 3 desks) — only rendered when closed rows actually clutter the list, spinner + result chip, parents refetch via the new `refreshPositions` hook export.
+
+### SECTION 5 — Performance / lag cleanup
+- **THE render-storm killer** — `useAITrading` merged every SSE `tick` event with its own `setPositions` (crypto cadence ⇒ up to N re-renders/SEC of the whole tab tree — the console "lag"). NEW `src/utils/tickBatcher.ts`: ticks buffer per-id (latest-wins, partial deltas merge) and flush in ONE state update every 800ms — the same proven pattern `useCxLivePrices` ships. Hidden tabs render ZERO times; structural `positions` snapshots flush instantly; visibilitychange force-flushes. 20 → 1 renders per window (test-locked).
+- `TrackRecordPanel` memo'd (its only prop is a number — the tab's live flushes now skip that subtree); OrderConsole sweep state is local; the board card grid already rides primitive `liveLtp` props so only price-changed cards re-render.
+- **Calendar determinism fix (pre-existing, found live)**: the agent suites asserted exact sizing (₹390 / qtyINR 5000) with the REAL event-guard calendar live — they silently halved or blocked entries around FOMC/CPI windows (today's FOMC 16-Sep proved it: ×0.5 haircut live). All 5 agent-tick suites now pin a neutral event guard — the sizing/mandate/entry math under test is calendar-independent.
+
+### Verification
+- NEW `test/indiaUniverse.test.ts` (28: wire parsing/validation/local sort · grammar · tier split incl. THE hot-rides-T1 lock · rotation wrap/adaptive · heat rule · TTL/refresh/cap/eviction · discovery cache/single-flight/negative-cache/seed fallback · wire filter contract · tiered scan + exclude + flag-off parity) · `test/indiaBoardTiered.test.ts` (3: board wiring — chunked batch on the tiered set, honest superMeta, legacy path on discovery-down, hot absorb gating) · `test/optionsScan.test.ts` (17: direction tally BULL/BEAR/NEUTRAL · score math incl. model-penalty + dte drag · row contract + degrade · picker intersection · execution: ranking/cache/single-flight/all-model honesty/group-size cap) · `test/clearClosedPositions.test.ts` (6: only-CLOSED · HOUSEKEEP stamp · no-op writes nothing · lock serialization · repeat-safe) · `test/tickBatcher.test.ts` (10: N→1 render · latest-wins · partial merge · hidden no-op · flushNow · dispose · garbage-safe · visibility flush) · `test/intradayTvChunking.test.ts` (3: 150-symbol → 3×100-ticker chunks · small-universe single-shot parity · dead-chunk containment).
+- Calendar-determinism patches: `agent/indiaAgent/mandateFreeze/nearMissAutoTrade/v101AgentAccuracy` (neutral eventGuard mock).
+- **tsc CLEAN · 103 files / 1865 tests ALL PASS (×5 consecutive full runs) · vite build CLEAN (5.3s) · npm audit 0/0 · ml-service pytest 11/11 · `scripts/smoke_v1017.mjs` 20/20 incl. LIVE TV discovery (219-220 names) + LIVE NSE chain scan (3 live desks, 5 honest model fallbacks from this sandbox IP).**
+
+### Deferred (documented, not forgotten)
+- Telegram `/opts` command for the options scanner (the site panel covers the need; bot surface additions ride the next telegram batch).
+- Journal file micro-cache (`loadJournal` reads disk per call — bounded sizes make it ~2-4ms; revisit only if profiling ever shows it hot).
+- The TV India filter-query column set is minimal (name/exchange/close/change/volume/value_traded/relvol/mcap) — discovery is liquidity-only by design; no fundamental columns fetched.
+# Changelog
+
 ## v10.16 — MANUAL TRADE TRACKER + SUPERINTEL THRESHOLD REFORM (2026-09-16)
 
 **The superintelligence plan v2's Section 2 (the user's OWN trades) + Section 3 (the conf=60 threshold spec), fully applied.** Suite grew **1747 → 1799 tests, all passing** (+52 across 1 new file + 5 extended files); boot smoke 14/14 (`scripts/smoke_v1016.mjs`); tsc clean; build clean 5.1s; audit 0/0 both trees.

@@ -6,7 +6,7 @@
 // confirmation), kill switch, and the full audit journal.
 // ============================================================
 import { memo, useState, useEffect, useCallback, useRef } from 'react';
-import { fetchWallet } from './useAITrading';
+import { fetchWallet, clearClosedPositions } from './useAITrading';
 import type { DhanStatus, JournalEntry, JournalPosition, TradingConfig, TradingState, WalletView } from './types';
 
 const fmt = (n: number | null | undefined): string => {
@@ -367,10 +367,32 @@ interface Props {
    *  = REST fallback (5s), null = flat / connecting. Drives the honest
    *  LIVE dot on each open-position row. */
   positionsLive?: 'stream' | 'poll' | null;
+  /** v10.17: called after the 🧹 CLEAR CLOSED sweep succeeds so the
+   *  parent tab refetches positions (the SSE stream's structural
+   *  push covers stream-connected clients; this covers everyone). */
+  onPositionsChanged?: () => void;
 }
 
-export const OrderConsole = memo(function OrderConsole({ state, positions, entries, busy, onClose, onSaveConfig, dhan, onDhanConnect, onDhanDisconnect, onDhanRefresh, venue, title, positionsLive }: Props) {
+export const OrderConsole = memo(function OrderConsole({ state, positions, entries, busy, onClose, onSaveConfig, dhan, onDhanConnect, onDhanDisconnect, onDhanRefresh, venue, title, positionsLive, onPositionsChanged }: Props) {
   const [tab, setTab] = useState<'positions' | 'journal'>('positions');
+  // v10.17: CLEAR CLOSED — purges CLOSED rows server-side (ledger keeps
+  // the permanent audit trail). Spinner + result chip while it runs.
+  const [sweeping, setSweeping] = useState(false);
+  const [sweepNote, setSweepNote] = useState<string | null>(null);
+  const onClearClosed = useCallback(async () => {
+    if (sweeping) return;
+    setSweeping(true);
+    setSweepNote(null);
+    const r = await clearClosedPositions();
+    setSweeping(false);
+    if (r.ok) {
+      setSweepNote(r.removed ? `${r.removed} closed row${r.removed === 1 ? '' : 's'} cleared` : 'koi closed position tha hi nahi');
+      onPositionsChanged?.();
+    } else {
+      setSweepNote(`⛔ ${r.error || 'clear-closed failed'}`);
+    }
+    setTimeout(() => setSweepNote(null), 6000);
+  }, [sweeping, onPositionsChanged]);
   // v6.9: desk-scoped positions — India desk sees NSE rows only, CoinDCX
   // desk sees spot + futures rows only. Journal stays the FULL audit trail.
   const shown = venue === 'INDIA'
@@ -379,6 +401,7 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
       ? positions.filter(p => p.market !== 'INDIA')
       : positions;
   const open = shown.filter(p => p.status === 'OPEN');
+  const closedCount = shown.filter(p => p.status === 'CLOSED').length;
   const cfg = state?.config;
 
   return (
@@ -453,6 +476,22 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
                 {positionsLive === 'poll' ? 'POLL · 5s' : 'CONNECTING'}
               </span>
             )
+          )}
+          {/* v10.17 — 🧹 CLEAR CLOSED: purges the CLOSED rows from the
+              console (server-side journal sweep; the tamper-evident ledger
+              keeps the permanent audit trail). Only shown when there ARE
+              closed rows cluttering this desk's list. */}
+          {tab === 'positions' && closedCount > 0 && (
+            <button
+              onClick={onClearClosed}
+              disabled={sweeping || busy}
+              title={`journal me se ${closedCount} CLOSED row(s) sweep karo — audit trail (LEDGER + journal entries) intact rehta hai`}
+              className="self-center mr-3 px-2.5 py-1 rounded-lg text-[9px] font-black bg-slate-700/60 text-slate-300 hover:bg-slate-600 border border-white/10 disabled:opacity-50">
+              <span className={sweeping ? 'inline-block animate-spin' : ''}>🧹</span> CLEAR CLOSED ({closedCount})
+            </button>
+          )}
+          {tab === 'positions' && sweepNote && (
+            <span className="self-center mr-3 text-[9px] font-black text-cyan-300">{sweepNote}</span>
           )}
         </div>
 

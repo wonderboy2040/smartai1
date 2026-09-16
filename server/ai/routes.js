@@ -43,7 +43,7 @@ import { getOptionsDesk, buildStrategies, getOptionSignalsView } from './options
 import {
   loadConfig, updateConfig, getRiskState, executeSignal, getPositionsWithPnl,
   closePosition, listExchangeOrders, cancelExchangeOrder, cancelAllExchangeOrders,
-  watchPositions, loadJournal, dailyStats,
+  watchPositions, loadJournal, dailyStats, clearClosedPositions,
 } from './coindcxOrders.js';
 import {
   executeFuturesSignal, watchFuturesPositions, closeFuturesPosition,
@@ -94,6 +94,9 @@ import { correlationMatrix, pairCorrelation } from './correlation.js';
 import { eventGuardStatus } from './eventGuard.js';
 import { sectorDesk } from './sectors.js';
 import { rankIncomeSetups } from './optionsDesk.js';
+// v10.17 OPTIONS SCANNER — multi-underlying chain scan (indices + top
+// F&O stocks), deterministic direction reads + GEX zones, one ranked view.
+import { scanOptionsUniverse } from './optionsScan.js';
 import {
   secretsStatus, setSecret, getSecrets, telegramConfig, sendTelegramMessage,
 } from './secrets.js';
@@ -236,6 +239,21 @@ export function registerAITradingRoutes(app, deps) {
       res.json(view);
     } catch (e) {
       jsonError(res, 500, 'option signals failed', e);
+    }
+  });
+
+  // ---------------- v10.17: OPTIONS SCANNER ----------------
+  // Whole-F&O chain scan in one view: 3 indices + top stock-option
+  // underlyings (from the full-universe discovery), each with a
+  // deterministic direction read, GEX pin/flip zone and expected-move
+  // band, ranked by the transparent scan score. 90s cached.
+  app.get('/api/ai/options-scan', async (req, res) => {
+    try {
+      const force = req.query.fresh === '1';
+      res.set('Cache-Control', 'no-store');
+      res.json(await scanOptionsUniverse({ force }));
+    } catch (e) {
+      jsonError(res, 500, 'options scan failed', e);
     }
   });
 
@@ -603,6 +621,19 @@ export function registerAITradingRoutes(app, deps) {
       return res.status(out.ok ? 200 : 400).json(out);
     } catch (e) {
       return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  // v10.17 — CLEAR CLOSED POSITIONS (the console's 🧹 CLEAR CLOSED
+  // button). Purges CLOSED rows from the journal (ledger keeps the
+  // permanent audit trail; a HOUSEKEEP entry stamps the sweep). Only
+  // CLOSED rows are removed — OPEN/UNKNOWN untouched, no-live-effects.
+  app.post('/api/ai/positions/clear-closed', async (_req, res) => {
+    try {
+      const out = await clearClosedPositions();
+      return res.json(out);
+    } catch (e) {
+      return jsonError(res, 500, 'clear-closed failed', e);
     }
   });
 

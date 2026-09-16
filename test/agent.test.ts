@@ -9,6 +9,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const mockPrivate = vi.fn();
+// v10.17 CALENDAR DETERMINISM: eventGuard consults REAL event dates
+// (FOMC / RBI / CPI windows). On those days the x0.5 sizing haircut or
+// the T-30m entry blackout silently halved sized trades or blocked
+// entries — these suites passed at authoring time and failed ONLY
+// around FOMC/CPI. Neutral guard: the sizing/mandate/entry math under
+// test is calendar-independent.
+vi.mock('../server/ai/eventGuard.js', () => ({
+  eventGuardCheck: () => ({ action: 'allow' }),
+}));
+
 vi.mock('../server/mcp/coindcx.js', () => ({
   coindcxPrivate: (...args) => mockPrivate(...args),
   coindcxConnected: () => mockConnected(),

@@ -17,7 +17,8 @@
 // ============================================================
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, getProxyBase, getSessionToken } from '../../utils/api';
-import type { AISignal, OptionsDesk, OptionSignalsView, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, StrategyLabResult, AlertsStatus, DhanStatus, SwingBoard, WhaleRadar, LedgerView, MorningBrief, OrderbookView, AgentView, WalletView, FuturesMarketsView, MarketKind, TrustView, PerfView, CorrView, SectorView, IncomeView, NextActionsView, NarrativeView, EdgeStats, LtfSnapshot } from './types';
+import { createTickBatcher } from '../../utils/tickBatcher';
+import type { AISignal, OptionsDesk, OptionSignalsView, OptionsScanView, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, StrategyLabResult, AlertsStatus, DhanStatus, SwingBoard, WhaleRadar, LedgerView, MorningBrief, OrderbookView, AgentView, WalletView, FuturesMarketsView, MarketKind, TrustView, PerfView, CorrView, SectorView, IncomeView, NextActionsView, NarrativeView, EdgeStats, LtfSnapshot } from './types';
 
 export interface DeepSignalResult {
   ok: boolean;
@@ -158,12 +159,18 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
   // open (the real "ULTRA STREAM"; the old path was a 5s REST poll).
   //   • `positions` event → full snapshot (connect + structural
   //     changes: open/close/partial) — replaces the rows wholesale.
-  //   • `tick` event → { id, ltp, unrealizedPnl, ... } — merged into
-  //     the matching row IN PLACE so React only re-renders that row.
+  //   • `tick` event → { id, ltp, unrealizedPnl, ... } — buffered and
+  //     applied in ONE batched state update every 800ms (v10.17 perf
+  //     fix: the per-event setPositions re-rendered the whole tab
+  //     5-15×/sec — the console "lag"). Only the LATEST delta per id
+  //     survives in a flush window; hidden tabs render zero times.
+  //     (SSE delivery is ordered — the structural `positions` event
+  //     always precedes its own ticks, so unknown-id merges are a
+  //     non-race; the 45s REST reconciliation covers any drift.)
   //   • onerror → EventSource auto-reconnects; until it does, the
   //     REST poll below drops back to its fast 5s fallback cadence.
-  //   • visibility: returning to the tab forces an immediate REST
-  //     refresh + a fresh socket (prices moved while backgrounded).
+  //   • visibility: returning to the tab forces an immediate flush +
+  //     REST refresh + a fresh socket (prices moved while backgrounded).
   // -----------------------------------------------------------------
   useEffect(() => {
     if (!active || !hasOpen) {
@@ -178,10 +185,25 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
     try { es = new EventSource(url); } catch { return; }
     const src = es;
 
+    const batcher = createTickBatcher<PositionTick>((deltas) => {
+      setPositions(prev => {
+        const byId = new Map(deltas.map(d => [d.id, d]));
+        let changed = false;
+        const next = prev.map(p => {
+          const d = byId.get(p.id);
+          if (!d) return p;
+          changed = true;
+          return { ...p, ...d };
+        });
+        return changed ? next : prev;
+      });
+    }, { intervalMs: 800 });
+
     src.onopen = () => setPositionsLive('stream');
     src.addEventListener('positions', (e) => {
       try {
         const j = JSON.parse((e as MessageEvent).data);
+        batcher.flushNow(); // structural snapshot replaces buffered ticks
         if (Array.isArray(j.positions)) setPositions(j.positions);
         if (Array.isArray(j.entries)) setEntries(j.entries);
       } catch { /* malformed frame */ }
@@ -189,7 +211,7 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
     src.addEventListener('tick', (e) => {
       try {
         const d = JSON.parse((e as MessageEvent).data) as PositionTick;
-        setPositions(prev => prev.map(p => p.id === d.id ? { ...p, ...d } : p));
+        batcher.push(d);
       } catch { /* malformed frame */ }
     });
     src.onerror = () => setPositionsLive('poll');
@@ -198,6 +220,7 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
     // tab comes back (covers "prices moved a lot while backgrounded").
     const onVis = () => {
       if (!document.hidden) {
+        batcher.flushNow();
         loadPositions();
         setPositionsEpoch(n => n + 1); // re-runs this effect → fresh socket
       }
@@ -205,6 +228,7 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
     document.addEventListener('visibilitychange', onVis);
     return () => {
       document.removeEventListener('visibilitychange', onVis);
+      batcher.dispose();
       try { src.close(); } catch { /* noop */ }
       setPositionsLive(null);
     };
@@ -465,6 +489,8 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
     /** v10.5.3: 'stream' = SSE live push, 'poll' = REST fallback, null = flat. */
     positionsLive,
     refresh: loadBoards, executeSignal, updateConfig, killSwitch, closePos, fetchDeep,
+    /** v10.17: explicit positions/entries refetch (clear-closed button etc). */
+    refreshPositions: loadPositions,
     executeIndia, runBacktest, runStrategyLab, fetchAlertsStatus, saveAlertsConfig, testAlert,
     fetchDhanStatus, dhanConnect, dhanDisconnect, executeFutures, executeGlobal,
   };
@@ -496,6 +522,37 @@ export async function fetchOptionSignals(force = false): Promise<OptionSignalsVi
     _optSigCache = { at: Date.now(), data };
     return data;
   } catch { return _optSigCache?.data || null; }
+}
+
+// v10.17 — WHOLE-F&O OPTIONS SCANNER (indices + top stock underlyings,
+// one ranked view; server 90s cached, client 45s).
+let _optScanCache: { at: number; data: OptionsScanView } | null = null;
+export async function fetchOptionsScan(force = false): Promise<OptionsScanView | null> {
+  if (!force && _optScanCache && Date.now() - _optScanCache.at < 45_000) return _optScanCache.data;
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/options-scan${force ? '?fresh=1' : ''}`, { signal: AbortSignal.timeout(45000) });
+    if (!r.ok) return _optScanCache?.data || null;
+    const data = await r.json();
+    _optScanCache = { at: Date.now(), data };
+    return data;
+  } catch { return _optScanCache?.data || null; }
+}
+
+// v10.17 — CLEAR CLOSED POSITIONS (Execution Console button). Server
+// purges CLOSED rows from the journal (the tamper-evident LEDGER keeps
+// the permanent audit trail) and stamps a HOUSEKEEP entry.
+export async function clearClosedPositions(): Promise<{ ok: boolean; removed?: number; error?: string }> {
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/positions/clear-closed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(15000),
+    });
+    return await r.json().catch(() => ({ ok: false, error: 'bad response' }));
+  } catch (e) {
+    return { ok: false, error: String((e as Error)?.message || e) };
+  }
 }
 
 // ---------------- v6.7: swing · whales · ledger · brief · orderbook ----------------

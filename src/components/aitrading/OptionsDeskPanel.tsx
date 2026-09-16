@@ -6,9 +6,9 @@
 // P&L math. Clearly labels bs-model vs live NSE data.
 // ============================================================
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { fetchOptionsDesk, fetchIncomeSetups, fetchOptionSignals } from './useAITrading';
+import { fetchOptionsDesk, fetchIncomeSetups, fetchOptionSignals, fetchOptionsScan } from './useAITrading';
 import { openOptionPaperTrade } from '../intraday/PaperTradePanel';
-import type { OptionsDesk, Strategy, GexProfile, IncomeView, OrderTicket, OptionSignalsView, OptionSignalCard } from './types';
+import type { OptionsDesk, Strategy, GexProfile, IncomeView, OrderTicket, OptionSignalsView, OptionSignalCard, OptionsScanView, OptionsScanRow } from './types';
 
 const INDICES = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX'];
 
@@ -447,11 +447,122 @@ function StrategyCard({ s, lotSize, spot, symbol, expiry }: { s: Strategy; lotSi
   );
 }
 
+// ------------------------------------------------------------
+// v10.17 — WHOLE-F&O OPTIONS SCANNER view. One ranked list across
+// 3 indices + the top stock-option underlyings: deterministic
+// direction read (OI lean · PCR · max-pain · gamma-flip), GEX pin
+// zone, expected-move band, source honesty (LIVE NSE vs BS model).
+// ------------------------------------------------------------
+const dirChip = (d?: string) => d === 'BULLISH'
+  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+  : d === 'BEARISH'
+    ? 'bg-red-500/15 text-red-300 border-red-500/30'
+    : 'bg-slate-600/20 text-slate-300 border-slate-600/30';
+
+function ScanRow({ r }: { r: OptionsScanRow }) {
+  return (
+    <div className="px-4 py-3 border-b border-white/[0.03] hover:bg-white/[0.02]">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-sm font-black font-mono text-white">{r.symbol}</span>
+        <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${r.kind === 'index' ? 'bg-cyan-500/15 text-cyan-300' : 'bg-slate-600/20 text-slate-400'}`}>
+          {r.kind === 'index' ? 'IDX' : 'STOCK'}
+        </span>
+        {r.spot != null && <span className="text-[11px] font-mono text-slate-300">{r.spot?.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</span>}
+        {r.changePct != null && (
+          <span className={`text-[11px] font-black font-mono ${(r.changePct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+            {(r.changePct ?? 0) >= 0 ? '+' : ''}{r.changePct?.toFixed(2)}%
+          </span>
+        )}
+        <span className={`px-1.5 py-0.5 rounded text-[9px] font-black border ${dirChip(r.direction)}`}>
+          {r.direction === 'BULLISH' ? '🟢 BULL READ' : r.direction === 'BEARISH' ? '🔴 BEAR READ' : '⚪ BALANCED'}
+        </span>
+        {r.dte != null && (
+          <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${r.dte === 0 ? 'bg-amber-500/15 text-amber-300' : 'bg-slate-600/20 text-slate-400'}`} title="days to expiry">
+            {r.dte === 0 ? 'EXPIRY DAY' : `${r.dte}d`}
+          </span>
+        )}
+        <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${r.source === 'nse' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/15 text-amber-300'}`} title={r.source === 'nse' ? 'real NSE option chain' : 'NSE unreachable — Black-Scholes model chain (premiums estimates)'}>
+          {r.source === 'nse' ? 'LIVE NSE' : 'BS MODEL'}
+        </span>
+        <span className="ml-auto flex items-center gap-2">
+          <span className="text-[10px] font-black font-mono text-cyan-300" title="scan score = conviction + OI flow + movement potential + data quality">{r.scanScore ?? 0}</span>
+          <span className="w-16 h-1.5 rounded-full bg-slate-700 overflow-hidden" aria-hidden="true">
+            <span className="block h-full bg-gradient-to-r from-cyan-500 to-emerald-400" style={{ width: `${Math.max(4, Math.min(100, (r.scanScore ?? 0)))}%` }} />
+          </span>
+        </span>
+      </div>
+      <div className="text-[10px] text-slate-400 font-mono mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+        {r.atmIV != null && <span className="text-slate-500">IV {r.atmIV.toFixed(1)}%</span>}
+        {r.pcr != null && <span className="text-slate-500">PCR {r.pcr.toFixed(2)}</span>}
+        {r.maxPain != null && <span className="text-slate-500">maxPain {r.maxPain.toLocaleString('en-IN')}</span>}
+        {r.gammaFlip != null && <span className="text-slate-500">γflip {r.gammaFlip.toLocaleString('en-IN')}</span>}
+        {r.putWall != null && <span className="text-emerald-500/70">put wall {r.putWall.toLocaleString('en-IN')}</span>}
+        {r.callWall != null && <span className="text-red-500/70">call wall {r.callWall.toLocaleString('en-IN')}</span>}
+        {r.expectedMovePct != null && (
+          <span className="text-slate-400" title={r.expectedMoveBand ? `band ${r.expectedMoveBand.low}–${r.expectedMoveBand.high}` : undefined}>
+            exp move ±{r.expectedMovePct.toFixed(1)}%
+          </span>
+        )}
+        <span className="text-slate-600">{r.expiryLabel || r.expiry}</span>
+      </div>
+      {r.verdict && <div className="text-[10px] text-slate-300 mt-1">{r.verdict}</div>}
+      {(r.directionWhy?.length ?? 0) > 0 && (
+        <div className="text-[9px] text-slate-500 mt-0.5 leading-relaxed">{r.directionWhy!.join(' · ')}</div>
+      )}
+    </div>
+  );
+}
+
+function OptionsScannerView({ scan, loading, err, onRefresh }: { scan: OptionsScanView | null; loading: boolean; err: boolean; onRefresh: () => void }) {
+  const rows = scan?.rows || [];
+  return (
+    <div className="quantum-panel rounded-2xl overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-white/5 flex items-center justify-between flex-wrap gap-2">
+        <span className="text-xs font-black text-slate-200">
+          🔍 WHOLE-F&O OPTIONS SCANNER
+          {scan && <span className="text-slate-500 font-mono ml-2 text-[10px]">{scan.liveCount ?? 0} live · {scan.modelCount ?? 0} model · {scan.failedCount ?? 0} failed</span>}
+        </span>
+        <button onClick={onRefresh} disabled={loading}
+          className="quantum-btn-ghost px-3 py-1 rounded-lg text-[10px] font-black disabled:opacity-50">
+          <span className={loading ? 'inline-block animate-spin' : ''}>🔄</span> Re-scan
+        </button>
+      </div>
+      {loading && rows.length === 0 && (
+        <div className="p-6 text-center text-[11px] text-slate-500">chains load ho rahi hain… (3 indices + top F&O stocks, ~10s pehli baar)</div>
+      )}
+      {err && rows.length === 0 && !loading && (
+        <div className="p-6 text-center text-[11px] text-red-400">options scan unavailable — thodi der baad retry karo</div>
+      )}
+      {rows.length === 0 && !loading && !err && (
+        <div className="p-6 text-center text-[11px] text-slate-500">koi chain load nahi hui</div>
+      )}
+      <div className="max-h-[28rem] overflow-y-auto">
+        {rows.map(r => <ScanRow key={`${r.kind}-${r.symbol}`} r={r} />)}
+      </div>
+      {(scan?.failed?.length ?? 0) > 0 && (
+        <div className="px-4 py-2 text-[9px] text-slate-600 border-t border-white/5">
+          skip: {scan!.failed!.map(f => `${f.symbol} (${f.reason})`).join(' · ')}
+        </div>
+      )}
+      {scan?.note && <div className="px-4 py-2 text-[9px] text-amber-300/80 border-t border-white/5">⚠️ {scan.note}</div>}
+      {scan?.methodology && (
+        <div className="px-4 py-2 text-[8px] text-slate-600 leading-relaxed border-t border-white/5">{scan.methodology}</div>
+      )}
+    </div>
+  );
+}
+
 export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
   const [symbol, setSymbol] = useState('NIFTY');
   const [desk, setDesk] = useState<OptionsDesk | null>(null);
   const [loading, setLoading] = useState(true);
   const seqRef = useRef(0);
+  // v10.17: WHOLE-F&O SCANNER sub-view (indices + top stock underlyings,
+  // one ranked deterministic view — GET /api/ai/options-scan)
+  const [scanMode, setScanMode] = useState(false);
+  const [scan, setScan] = useState<OptionsScanView | null>(null);
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scanErr, setScanErr] = useState(false);
 
   const load = useCallback(async (sym: string, force = false) => {
     // v6.2: sequence guard — rapid NIFTY→BANKNIFTY switching leaves two
@@ -467,6 +578,17 @@ export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
   }, []);
 
   useEffect(() => { load(symbol); }, [symbol, load]);
+
+  // v10.17: scan loads lazily — only when the sub-view is opened.
+  const loadScan = useCallback(async (force = false) => {
+    setScanLoading(true);
+    setScanErr(false);
+    const v = await fetchOptionsScan(force);
+    if (!v || !v.ok) setScanErr(true);
+    if (v) setScan(v);
+    setScanLoading(false);
+  }, []);
+  useEffect(() => { if (scanMode && !scan && !scanLoading) loadScan(); }, [scanMode, scan, scanLoading, loadScan]);
 
   const spot = desk?.spot ?? 0;
   const atm = desk?.rows?.length
@@ -487,22 +609,38 @@ export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
             </button>
           ))}
         </div>
+        {/* v10.17: whole-F&O scanner toggle — one ranked view across
+            indices + top stock-option underlyings */}
+        <button onClick={() => setScanMode(m => !m)}
+          aria-pressed={scanMode}
+          className={`px-3 py-2 rounded-xl text-xs font-black border transition-all ${scanMode
+            ? 'bg-gradient-to-r from-cyan-600 to-sky-600 text-white border-cyan-400/50 shadow-lg shadow-cyan-500/20'
+            : 'quantum-btn-ghost border-transparent'}`}>
+          🔍 SCANNER
+        </button>
         <button onClick={() => load(symbol, true)} disabled={loading}
           className="quantum-btn-ghost px-3 py-2 rounded-xl text-xs font-bold disabled:opacity-50">
           <span className={loading ? 'inline-block animate-spin' : ''}>🔄</span> Refresh
         </button>
-        {desk?.source && (
+        {!scanMode && desk?.source && (
           <span className={`px-2 py-1 rounded-lg text-[10px] font-black border ${desk.source === 'nse' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-amber-500/15 text-amber-300 border-amber-500/30'}`}>
             {desk.source === 'nse' ? 'LIVE NSE CHAIN' : 'BS MODEL CHAIN'}
           </span>
         )}
-        {desk?.consensus && (
+        {!scanMode && desk?.consensus && (
           <span className={`px-2 py-1 rounded-lg text-[10px] font-black border ${desk.consensus.side === 'LONG' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : desk.consensus.side === 'SHORT' ? 'bg-red-500/15 text-red-300 border-red-500/30' : 'bg-slate-600/20 text-slate-300 border-slate-600/30'}`}>
             ENSEMBLE: {desk.consensus.side} {desk.consensus.confidence}% ({desk.consensus.grade})
           </span>
         )}
       </div>
 
+      {/* v10.17: the whole-F&O scanner REPLACES the single-index desk
+          body while toggled on (chains are the expensive bit — the
+          desk's own chain keeps its cache warm behind the scenes). */}
+      {scanMode ? (
+        <OptionsScannerView scan={scan} loading={scanLoading} err={scanErr} onRefresh={() => loadScan(true)} />
+      ) : (
+      <>
       {desk?.syntheticNote && (
         <div className="quantum-panel rounded-xl px-4 py-2.5 text-[11px] text-amber-200/80 leading-relaxed border border-amber-500/20">
           ⚠️ {desk.syntheticNote}
@@ -625,6 +763,8 @@ export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
           )}
         </div>
       </div>
+      </>
+      )}
     </section>
   );
 });

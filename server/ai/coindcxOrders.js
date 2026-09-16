@@ -175,6 +175,35 @@ function pushEntry(j, entry) {
 // v6.5: shared with indiaOrders.js (same journal, same lock, same stamps)
 export { pushEntry, todayIST };
 
+// ---------------- v10.17: CLEAR CLOSED POSITIONS ----------------
+// The Execution Console's 🧹 CLEAR CLOSED button. Purges CLOSED rows
+// from the journal's positions array (they were already TTL-pruned
+// after 90d — this is the user's ON-DEMAND version of that sweep).
+// SAFETY: only status === 'CLOSED' rows go — OPEN/UNKNOWN positions
+// are structurally untouched. The tamper-evident LEDGER keeps the
+// permanent per-order audit trail, and a HOUSEKEEP journal entry
+// stamps the sweep itself (count + day) so the action is auditable.
+export function clearClosedPositions() {
+  return withJournalLock(() => {
+    const j = loadJournal();
+    const positions = Array.isArray(j.positions) ? j.positions : [];
+    const keep = positions.filter(p => p.status !== 'CLOSED');
+    const removed = positions.length - keep.length;
+    if (removed > 0) {
+      j.positions = keep;
+      pushEntry(j, {
+        kind: 'HOUSEKEEP',
+        day: todayIST(),
+        status: 'CLOSED_SWEEP',
+        note: `clear-closed sweep: ${removed} CLOSED position row(s) removed from the console view (ledger audit trail intact)`,
+        removed,
+      });
+      saveJournal(j);
+    }
+    return { ok: true, removed, kept: keep.length };
+  });
+}
+
 function todayIST() {
   // Daily caps reset at IST midnight REGARDLESS of the server's TZ
   // (Render is UTC, but docker/self-host deployments may not be — the

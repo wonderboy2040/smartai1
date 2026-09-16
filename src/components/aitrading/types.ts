@@ -412,6 +412,58 @@ export interface OptionSignalsView {
   }>;
 }
 
+/** v10.17 — whole-F&O OPTIONS SCANNER view (GET /api/ai/options-scan). */
+export interface OptionsScanRow {
+  symbol: string;
+  kind: 'index' | 'stock';
+  ok: boolean;
+  reason?: string;
+  spot?: number;
+  changePct?: number | null;
+  dte?: number | null;
+  expiry?: string;
+  expiryLabel?: string | null;
+  source?: 'nse' | 'bs-model';
+  synthetic?: boolean;
+  lotSize?: number;
+  atmIV?: number | null;
+  pcr?: number | null;
+  maxPain?: number | null;
+  oiSkew?: number | null;
+  ivPercentile?: number | null;
+  skewValue?: number | null;
+  skewRead?: string | null;
+  flowRead?: string | null;
+  oiLean?: number | null;
+  callPutVolRatio?: number | null;
+  expectedMovePct?: number | null;
+  expectedMoveBand?: { low: number; high: number } | null;
+  gammaFlip?: number | null;
+  callWall?: number | null;
+  putWall?: number | null;
+  totalNetGex?: number | null;
+  gexRegimeNote?: string | null;
+  directionPts?: number;
+  direction?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  directionWhy?: string[];
+  scanScore?: number;
+  verdict?: string;
+}
+
+export interface OptionsScanView {
+  ok: boolean;
+  asOf: number;
+  scanned?: number;
+  liveCount?: number;
+  modelCount?: number;
+  failedCount?: number;
+  rows: OptionsScanRow[];
+  failed?: Array<{ symbol: string; reason: string }>;
+  methodology?: string;
+  note?: string | null;
+  error?: string;
+}
+
 export interface OptionsDesk {
   ok: boolean;
   symbol: string;

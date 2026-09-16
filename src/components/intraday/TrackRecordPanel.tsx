@@ -6,7 +6,7 @@
 // the recent history table. Trust builder: the engine's own
 // scorecard, not marketing claims.
 // ============================================================
-import { useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../../utils/api';
 import type { TrackRecordData } from './types';
 
@@ -21,7 +21,10 @@ const STATUS_LABEL: Record<string, string> = {
   T2_HIT: 'T2 WIN', BE_TRAIL_EXIT: 'BE TRAIL', SL_HIT: 'SL', EOD_EXIT: 'EOD', T1_HIT: 'T1',
 };
 
-export function TrackRecordPanel({ refreshKey }: { refreshKey: number }) {
+// v10.17 perf: memo'd — the panel's ONLY prop is a number (refreshKey),
+// so the tab's live-price/positions flushes (every 800ms–5s) skip this
+// subtree entirely; it re-renders only when a paper trade bumps the key.
+export const TrackRecordPanel = memo(function TrackRecordPanel({ refreshKey }: { refreshKey: number }) {
   const [data, setData] = useState<TrackRecordData | null>(null);
   const [expanded, setExpanded] = useState(false);
 
@@ -164,4 +167,4 @@ export function TrackRecordPanel({ refreshKey }: { refreshKey: number }) {
       )}
     </div>
   );
-}
+});

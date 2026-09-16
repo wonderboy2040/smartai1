@@ -136,7 +136,31 @@ export async function fetchIntradayDataBatch(symbols, fetchGrowwNseQuote, opts =
     });
   });
 
+  // v10.17: the tiered full-universe scan can hand this batch 100+
+  // symbols (200+ tickers) — chunked at 100 tickers per request with
+  // 2 sequential rounds max overlap, merged first-match-wins. Small
+  // universes (legacy watchlist) still ride ONE request exactly like
+  // before.
   const tvPromise = (async () => {
+    const out = {};
+    const unique = [...new Set(tvTickers)];
+    if (unique.length === 0) return out;
+    const CHUNK = 100;
+    if (unique.length <= CHUNK) {
+      Object.assign(out, await _tvScanRound(unique));
+      return out;
+    }
+    const chunks = [];
+    for (let i = 0; i < unique.length; i += CHUNK) chunks.push(unique.slice(i, i + CHUNK));
+    for (let i = 0; i < chunks.length; i += 2) {
+      const group = chunks.slice(i, i + 2);
+      const results = await Promise.allSettled(group.map(c => _tvScanRound(c)));
+      results.forEach(r => { if (r.status === 'fulfilled') Object.assign(out, r.value); });
+    }
+    return out;
+  })();
+
+  async function _tvScanRound(tickers) {
     const out = {};
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
@@ -144,7 +168,7 @@ export async function fetchIntradayDataBatch(symbols, fetchGrowwNseQuote, opts =
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
           body: JSON.stringify({
-            symbols: { tickers: [...new Set(tvTickers)] },
+            symbols: { tickers: [...new Set(tickers)] },
             columns: TV_INTRADAY_COLUMNS,
           }),
           signal: AbortSignal.timeout(10000),
@@ -183,7 +207,7 @@ export async function fetchIntradayDataBatch(symbols, fetchGrowwNseQuote, opts =
       }
     }
     return out;
-  })();
+  }
 
   // Groww NSE Live — batch 20 at a time (same source as portfolio prices).
   // PERF (2026 lag audit): 12 → 20 = fewer sequential rounds for the 87-symbol

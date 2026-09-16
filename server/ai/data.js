@@ -111,6 +111,30 @@ export async function fetchTVIndiaBatch(symbols) {
   return {};
 }
 
+// ---------------- v10.17 chunked India batch (full universe) ----------------
+// The tiered full-universe scan can hand over 100+ symbols (200+
+// NSE+BSE tickers) — the single-request path was never sized for
+// that. Chunked at 60 symbols (120 tickers) per request, max 3
+// concurrent, results merged first-match-wins (identical row shape
+// to fetchTVIndiaBatch — a drop-in expansion, zero downstream edits).
+const TV_INDIA_CHUNK_SYMS = 60;
+const TV_INDIA_CHUNK_CONCURRENCY = 3;
+export async function fetchTVIndiaBatchChunked(symbols) {
+  const list = [...new Set((Array.isArray(symbols) ? symbols : []).map(s => String(s || '').trim().toUpperCase()).filter(Boolean))];
+  if (list.length <= TV_INDIA_CHUNK_SYMS) return fetchTVIndiaBatch(list);
+  const out = {};
+  const chunks = [];
+  for (let i = 0; i < list.length; i += TV_INDIA_CHUNK_SYMS) chunks.push(list.slice(i, i + TV_INDIA_CHUNK_SYMS));
+  for (let i = 0; i < chunks.length; i += TV_INDIA_CHUNK_CONCURRENCY) {
+    const group = chunks.slice(i, i + TV_INDIA_CHUNK_CONCURRENCY);
+    const results = await Promise.allSettled(group.map(c => fetchTVIndiaBatch(c)));
+    results.forEach(r => {
+      if (r.status === 'fulfilled' && r.value) Object.assign(out, r.value);
+    });
+  }
+  return out;
+}
+
 // ---------------- TV scanner (CRYPTO, USD indicators) ----------------
 export async function fetchTVCryptoBatch(symbols) {
   const tickers = symbols.map(s => `BINANCE:${s}USDT`);
