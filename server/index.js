@@ -30,6 +30,8 @@ import { registerIntradayRoutes } from './intraday/routes.js';
 import { registerTelegramWebhook } from './telegram/webhook.js';
 // v9.1: graceful-shutdown flushers for the debounced intraday writers.
 import { flushPaperState } from './intraday/paperTrading.js';
+// v10.16 S2: manual-trade store — same shutdown-flush contract
+import { flushManualState } from './ai/manualTrades.js';
 import { flushTrackRecordState } from './intraday/trackRecord.js';
 import { flushJournalState } from './intraday/journal.js';
 import { startScheduler as startIndmPortfolioScheduler } from './mcp/portfolioSync.js';
@@ -2404,6 +2406,7 @@ function _gracefulShutdown(signal) {
   _shuttingDown = true;
   for (const [name, flush] of [
     ['paper', flushPaperState], ['track-record', flushTrackRecordState], ['journal', flushJournalState],
+    ['manual-trades', flushManualState],
   ]) {
     try { flush(); } catch (e) { console.warn(`[wealth-ai] shutdown flush ${name}:`, e?.message); }
   }

@@ -13,6 +13,7 @@ const mockPositions = vi.fn(async () => ({ positions: [] }));
 const mockConfig = vi.fn(() => ({ killSwitch: false }));
 const mockSend = vi.fn(async () => ({ ok: true }));
 const mockPaperSummary = vi.fn(() => ({ open: [] }));
+const mockManualList = vi.fn(() => []);
 let pairRCalls = [];
 
 vi.mock('../server/ai/coindcxOrders.js', () => ({
@@ -40,6 +41,21 @@ vi.mock('../server/ai/correlation.js', () => ({
   },
 }));
 
+// v10.16 (S2): the manual-trade desk is mocked at the SAME boundary
+// (listManualTrades = the store) — the adapter + detection + push path
+// stays REAL. manualTrades' own imports (store/backup/liveFeed) are
+// mocked so importing the real module does zero disk IO here.
+vi.mock('../server/lib/store.js', () => ({
+  loadJSON: (f, d) => d,
+  saveJSON: vi.fn(),
+}));
+vi.mock('../server/intraday/backup.js', () => ({ scheduleBackup: vi.fn() }));
+vi.mock('../server/liveFeed.js', () => ({ getTick: () => null }));
+vi.mock('../server/ai/manualTrades.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, listManualTrades: (o) => mockManualList(o) };
+});
+
 import {
   detectLevelTouches, cooldownOk, formatLevelTouch, formatStrongSignal, formatStrongBundle,
   groupCorrelatedSignals, scanStrongSignalsBackup, instaPushStatus, instantPushEnabled,
@@ -60,6 +76,8 @@ beforeEach(() => {
   mockConfig.mockClear();
   mockPaperSummary.mockClear();
   mockPaperSummary.mockImplementation(() => ({ open: [] }));
+  mockManualList.mockClear();
+  mockManualList.mockImplementation(() => []);
   pairRCalls = [];
 });
 
@@ -281,6 +299,65 @@ describe('India Intraday paper desk — instant push parity', () => {
     mockPositions.mockImplementationOnce(async () => ({
       positions: [P({ ltp: 90, sl: 92 })], // CoinDCX SL touch — must still push
     }));
+    await __tickForTests();
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(mockSend.mock.calls[0][0]).toMatch(/BTCUSDT/);
+    expect(__statusForTests().slTpPushes).toBe(1);
+    expect(__statusForTests().lastError).toBeNull(); // contained — not a tick-level error
+  });
+});
+
+// ============================================================
+// v10.16 (S2) — the user's OWN manual trades: 5s level-touch parity
+// ============================================================
+describe('Manual trade desk — instant push parity', () => {
+  const MT = (o = {}) => ({
+    id: 3, symbol: 'RELIANCE', market: 'INDIA', side: 'BUY', status: 'OPEN',
+    entryPrice: 2500, qty: 10,
+    origin: { plan: { stopLoss: 2450, target1: 2550, target2: 2600 } },
+    __ltp: 2440, ...o,
+  });
+
+  it('an SL touch on a manual trade fires the SAME push path (MANUAL tagged, honest footer)', async () => {
+    mockManualList.mockImplementationOnce(() => [MT()]); // __ltp 2440 <= sl 2450
+    await __tickForTests();
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const txt = mockSend.mock.calls[0][0];
+    expect(txt).toMatch(/STOP-LOSS TOUCHED/);
+    expect(txt).toMatch(/RELIANCE/);
+    expect(txt).toMatch(/MANUAL/);
+    expect(txt).toMatch(/aapka trade/);
+    expect(txt).not.toMatch(/executor watcher/); // no executor watches a manual trade
+    expect(__statusForTests().manualPushes).toBe(1);
+    // dedupe: the 30-min cooldown makes the next tick silent
+    mockManualList.mockImplementationOnce(() => [MT()]);
+    await __tickForTests();
+    expect(mockSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('T2 touch pushes with the native ₹ uP&L for India rows (INR domain)', async () => {
+    mockManualList.mockImplementationOnce(() => [MT({ __ltp: 2605 })]); // T1 2550 AND T2 2600 both touched
+    await __tickForTests();
+    expect(mockSend).toHaveBeenCalledTimes(2); // TP1 + TP2 — both levels crossed
+    const txt = mockSend.mock.calls[1][0];
+    expect(txt).toMatch(/TARGET-2 TOUCHED/);
+    expect(txt).toMatch(/unrealized ₹/); // (2605−2500)×10 = +1050
+    expect(mockSend.mock.calls[0][0]).toMatch(/TARGET-1 TOUCHED/);
+  });
+
+  it('USDT-domain manual rows push WITHOUT a guessed ₹ conversion (honest omission)', async () => {
+    mockManualList.mockImplementationOnce(() => [MT({ market: 'FUTURES', symbol: 'SOL', __ltp: 19.5 })]);
+    // plan sl 2450 → SOL at 19.5 is below it → SL fires for the LONG
+    await __tickForTests();
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const txt = mockSend.mock.calls[0][0];
+    expect(txt).toMatch(/STOP-LOSS TOUCHED/);
+    expect(txt).not.toMatch(/unrealized ₹/);
+  });
+
+  it('a broken manual store NEVER breaks the CoinDCX + paper push paths', async () => {
+    mockManualList.mockImplementationOnce(() => { throw new Error('manual store gone'); });
+    mockPositions.mockImplementationOnce(async () => ({ positions: [P({ ltp: 90, sl: 92 })] }));
     await __tickForTests();
     expect(mockSend).toHaveBeenCalledTimes(1);
     expect(mockSend.mock.calls[0][0]).toMatch(/BTCUSDT/);

@@ -109,8 +109,10 @@ describe('agent config', () => {
     expect(cfg.mode).toBe('paper');
     expect(cfg.enabled).toBe(false);
     expect(cfg.riskPerTradePct).toBe(1.5);
-    expect(cfg.minConfidence).toBe(80); // legacy STRONG-committee bar
+    expect(cfg.minConfidence).toBe(60); // v10.16 S3 USER SPEC: conf=60 (was 80)
     expect(cfg.minAiScore).toBe(75); // v9.6 USER SPEC: 75+ AI score → auto entry
+    expect(cfg.quorumPenalty).toBe(5); // v10.16 S3: proportional-penalty cap (was flat 10)
+    expect(cfg.thresholdProfile).toBe('proportional'); // v10.16 S3: one-flag A/B arm
   });
 
   it('clamps every numeric field into its safe range', () => {
@@ -276,10 +278,19 @@ describe('agentTick — daily quota + sizing + exits', () => {
     expect(mockExecuteFutures).not.toHaveBeenCalled();
   });
 
-  it('STRICTER gates: a 78% STRONG board signal is BELOW the agent bar (80)', async () => {
-    mockGetSignals.mockResolvedValue({ ...FUTURES_BOARD, signals: [{ ...STRONG_CAND, confidence: 78 }] });
+  it('STRICTER gates: a 58% STRONG board signal is BELOW the agent bar (60)', async () => {
+    mockGetSignals.mockResolvedValue({ ...FUTURES_BOARD, signals: [{ ...STRONG_CAND, confidence: 58 }] });
     await agentTick({}, vi.fn());
     expect(mockExecuteFutures).not.toHaveBeenCalled();
+  });
+
+  it('v10.16 S3 (conf=60 user spec): a 78% STRONG signal now QUALIFIES via Path B (was below the 80 bar)', async () => {
+    // the whole point of the fix: Path B (STRONG + conf + agreement) was
+    // unreachable at 80/0.75 — at 60/0.65 a 78% STRONG committee signal
+    // fires the entry (agreement 0.82 ≥ 0.65, executable, full quorum).
+    mockGetSignals.mockResolvedValue({ ...FUTURES_BOARD, signals: [{ ...STRONG_CAND, confidence: 78, superIntel: { aiScore: 60 } }] });
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).toHaveBeenCalledTimes(1);
   });
 
   it('v9.6 AI-SCORE GATE: a 76-AI-score ACTION signal (68% conf, not executable) STILL fires the entry', async () => {

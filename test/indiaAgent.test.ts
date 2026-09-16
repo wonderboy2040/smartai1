@@ -121,7 +121,9 @@ describe('india agent config', () => {
     expect(cfg.cooldownMin).toBe(20);
     expect(cfg.dailyLossCapPct).toBe(3);
     expect(cfg.minAiScore).toBe(75);
-    expect(cfg.minConfidence).toBe(80);
+    expect(cfg.minConfidence).toBe(60); // v10.16 S3 parity (was 80)
+    expect(cfg.quorumPenalty).toBe(5); // v10.16 S3: proportional-penalty cap
+    expect(cfg.thresholdProfile).toBe('proportional');
     expect(cfg.equityINR).toBe(10_000);
   });
 

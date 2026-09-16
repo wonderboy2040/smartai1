@@ -47,7 +47,7 @@ import {
 } from './coindcxOrders.js';
 import {
   executeFuturesSignal, watchFuturesPositions, closeFuturesPosition,
-  walletSnapshot, futuresMarketsView,
+  walletSnapshot, futuresMarketsView, fetchUsdInr,
 } from './futures.js';
 import {
   executeGlobalSignal, watchGlobalPositions, closeGlobalPosition,
@@ -75,6 +75,13 @@ import {
 } from './telegramPush.js';
 // v10.9 WEEKLY REVIEW — journal + calibration → one LLM narration
 import { runWeeklyPerformanceReview, weeklyReviewStatus, scheduleWeeklyReviewPush } from './weeklyReview.js';
+// v10.16 SECTION 2: MANUAL TRADE TRACKER — user's own trades get the
+// same live tracking + conviction intelligence the desk gives its own.
+import {
+  recordManualTrade, listManualTrades, getManualTrade, closeManualTrade,
+  ltpForManualTrade, manualTradeView, manualConvictionOf,
+  startManualTradeMonitor, manualMonitorStatus, flushManualState,
+} from './manualTrades.js';
 import { getSwingBoard, scanWhales, getOrderbook } from './swing.js';
 import { readDepth, depthStatus } from './orderFlowDepth.js';
 import { wickFilterStatus } from './wickFilter.js';
@@ -91,7 +98,7 @@ import {
   secretsStatus, setSecret, getSecrets, telegramConfig, sendTelegramMessage,
 } from './secrets.js';
 import { dhanConnect, dhanDisconnect, dhanConnected, dhanProfile, scripMasterStatus } from './dhan.js';
-import { isNseOpen, fetchYahooQuotes } from './data.js';
+import { isNseOpen, fetchYahooQuotes, fetchTVIndiaBatch } from './data.js';
 
 // ------------------------------------------------------------
 // v10.9 CONTROLLED TRADE APPROVAL — the Telegram webhook's SINGLE
@@ -473,6 +480,92 @@ export function registerAITradingRoutes(app, deps) {
         sendTelegram, // v6.11: notify-mode alert sender
       });
       return res.status(result.ok ? 200 : 400).json(result);
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  // ---------------- v10.16 SECTION 2: MANUAL TRADE TRACKER ----------------
+  // The user's OWN trades — recorded off any signal card with the full
+  // originating snapshot frozen at entry, tracked live (5s LTP · 30s
+  // conviction re-vote via the monitor), closable here or via Telegram
+  // /manualclose. Instrument coverage: India equity + F&O options +
+  // crypto spot/perps + global SIM.
+  app.post('/api/manual-trade', async (req, res) => {
+    try {
+      const b = req.body || {};
+      const out = recordManualTrade(b);
+      if (!out.ok) return res.status(400).json(out);
+      // confirmation push (best-effort) — the baseline is now frozen
+      sendTelegram(`📝 <b>MANUAL TRADE recorded</b>\n<b>${out.trade.symbol}</b> ${out.trade.side === 'BUY' ? 'LONG' : 'SHORT'} @ ${out.trade.entryPrice} · qty ${out.trade.qty}${out.trade.assetKind === 'OPTION' ? ` (${out.trade.optType} ${out.trade.strike} exp ${out.trade.expiry})` : ''}\n${out.trade.origin?.aiScore != null ? `Entry AI score: ${out.trade.origin.aiScore} · conviction tracking ON` : 'Conviction tracking ON'}\n<i>Flip ho gaya to EXIT NOW push aa jayega — WHY ke saath.</i>`).catch(() => {});
+      return res.json(out);
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  app.get('/api/manual-trades', async (req, res) => {
+    try {
+      const trades = listManualTrades(req.query.status ? { status: String(req.query.status).toUpperCase() } : {});
+      const open = trades.filter(t => t.status === 'OPEN');
+      // LTP sweep for the OPEN rows (tick store first — free; TV batch
+      // for India fallback, BS re-price for options). One batched call,
+      // not per-trade.
+      let indiaQuotes = null;
+      const indiaSyms = open.filter(t => t.market === 'INDIA' && t.assetKind !== 'OPTION').map(t => t.symbol);
+      if (indiaSyms.length > 0) {
+        indiaQuotes = await fetchTVIndiaBatch([...new Set(indiaSyms)]).catch(() => null);
+      }
+      const fetchIndiaQuotes = indiaQuotes ? async () => indiaQuotes : null;
+      const fetchIndexSpot = async (sym) => {
+        const q = await fetchYahooQuotes([sym]).catch(() => ({}));
+        return q?.[sym] || null;
+      };
+      let usdInr = 84;
+      try { usdInr = (await fetchUsdInr()) || 84; } catch { /* default */ }
+      const views = [];
+      for (const t of trades) {
+        if (t.status !== 'OPEN') { views.push(t); continue; }
+        const ltp = await ltpForManualTrade(t, { fetchIndiaQuotes, fetchIndexSpot });
+        // conviction: the monitor's fresh re-vote if present; on-demand
+        // (cached deep path) when stale — the UI never shows a dead bar.
+        let conviction = (Date.now() - (t.__conviction?.at || 0) < 90_000) ? t.__conviction : null;
+        if (!conviction) {
+          try {
+            const deep = await getDeepSignal(t.symbol, t.market === 'GLOBALFUTURES' ? 'GLOBALFUTURES' : t.market, depsForSignals());
+            if (deep?.ok && deep.signal) {
+              const c = manualConvictionOf(t, deep.signal);
+              conviction = { ...c, side: String(deep.signal.side || '').toUpperCase(), at: Date.now() };
+              t.__conviction = conviction;
+            }
+          } catch { /* honest null — banner falls back to STALE */ }
+        }
+        views.push(manualTradeView(t, { ltp, usdInr, conviction }));
+      }
+      return res.json({
+        ok: true,
+        trades: views,
+        monitor: manualMonitorStatus(),
+        counts: {
+          open: open.length,
+          closed: trades.filter(t => t.status === 'CLOSED').length,
+          exitNow: views.filter(v => v.__view?.banner === 'EXIT_NOW').length,
+        },
+      });
+    } catch (e) {
+      return jsonError(res, 500, 'manual-trades failed', e);
+    }
+  });
+
+  app.post('/api/manual-trade/:id/close', async (req, res) => {
+    try {
+      const out = closeManualTrade(req.params.id, {
+        exitPrice: req.body?.exitPrice != null ? Number(req.body.exitPrice) : undefined,
+        reason: req.body?.reason,
+      });
+      if (!out.ok) return res.status(400).json(out);
+      sendTelegram(`✅ <b>MANUAL TRADE closed</b>\n<b>${out.trade.symbol}</b> ${out.trade.side === 'BUY' ? 'LONG' : 'SHORT'} @ ${out.trade.entryPrice} → ${out.trade.exitPrice}\nP&L: ${out.pnl.pnlPct >= 0 ? '+' : ''}${out.pnl.pnlPct}% (${out.pnl.currency === 'USDT' ? '$' + out.pnl.pnlUSDT : '₹' + out.pnl.pnlINR}) · reason: ${out.trade.closeReason}`).catch(() => {});
+      return res.json(out);
     } catch (e) {
       return res.status(500).json({ ok: false, error: String(e?.message || e) });
     }
@@ -1078,6 +1171,22 @@ export function registerAITradingRoutes(app, deps) {
   // v10.9: the instant-push sink — 5s SL/TP level touches + 30s STRONG
   // scan, one shared dedupe with the backup alerter above.
   startInstaPushSink({ getSignals, depsForSignals });
+
+  // v10.16 SECTION 2: the MANUAL TRADE monitor — 5s LTP sweep + 30s
+  // conviction re-vote (cached deep path) + telegram pushes on flip /
+  // SL-approach / target-hits / stagnant check-ins. Parks at 60s idle
+  // when no manual trades are open (free).
+  startManualTradeMonitor({
+    getDeepSignal,
+    depsForSignals,
+    send: sendTelegram,
+    fetchIndiaQuotes: async (syms) => fetchTVIndiaBatch(syms),
+    fetchIndexSpot: async (sym) => {
+      const q = await fetchYahooQuotes([sym]).catch(() => ({}));
+      return q?.[sym] || null;
+    },
+    usdInrOf: async () => { try { return (await fetchUsdInr()) || 84; } catch { return 84; } },
+  });
 
   // v10.9: weekly trade-performance digest — Sunday 19:00 IST Telegram
   // push (AI_WEEKLY_REVIEW_PUSH=off). /weeklyreview runs it on demand.

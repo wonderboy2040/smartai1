@@ -508,6 +508,13 @@ export function buildSignal({ symbol, market, ctx, votes, consensus, plan, aiNot
       id: v.id, name: v.name, role: v.role, weight: v.weight,
       dir: v.dir, conf: v.conf, reasons: v.reasons || [],
     })),
+    // v10.16 S3: the abstaining models + their stated reasons — the
+    // diagnostic that answers "WHY is quorum thin?" at the source (a
+    // dead data feed shows up HERE, not as a mystery 85-score bar).
+    abstentions: (votes || [])
+      .filter(v => !v || v.dir === 0 || !(v.conf > 0) || !(v.weight > 0))
+      .map(v => ({ id: v?.id, name: v?.name, reason: (v?.reasons || [])[0] || null }))
+      .filter(a => a.id),
     summary: consensus.summary,
     aiNote: aiNote || null,
     executable: (market === 'CRYPTO' || market === 'FUTURES' || market === 'GLOBALFUTURES') && consensus.grade === 'STRONG' && !!plan,

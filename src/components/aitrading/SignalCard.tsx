@@ -21,6 +21,7 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { MTFConfluenceBadge } from '../intraday/MTFConfluenceBadge';
 import { DepthLadder } from './DepthLadder';
 import { LiveSourceBadge } from './LiveSourceBadge';
+import { ManualTradePrompt } from './ManualTradePrompt';
 import type { AISignal, Side, SuperIntel } from './types';
 
 const fmt = (n: number | null | undefined, dp = 2): string => {
@@ -834,6 +835,8 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
   const [expanded, setExpanded] = useState(false);
   const [slipOpen, setSlipOpen] = useState(false);
   const [ticketOpen, setTicketOpen] = useState(false);
+  // v10.16 S2: manual-trade record panel ("Maine ye trade liya hai")
+  const [manualOpen, setManualOpen] = useState(false);
   const g = gradeBadge(signal.grade);
   const long = signal.side === 'LONG';
   const actionable = signal.grade === 'STRONG' || signal.grade === 'ACTION';
@@ -1214,6 +1217,32 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
           )}
           {signal.grade !== 'STRONG' && (
             <span className="text-[10px] text-slate-500 self-center px-1">India LIVE = STRONG signals only · PAPER hamesha open (practice plan @ live price par)</span>
+          )}
+        </div>
+      )}
+
+      {/* v10.16 SECTION 2: MANUAL TRACK — "Maine ye trade liya hai" (all
+          desks). Self-contained: the prompt POSTs /api/manual-trade with
+          the FULL signal snapshot (plan + 14-model votes + regime + AI
+          score) — the baseline the live conviction tracker measures
+          "trend change" against. Tracking shows in the MANUAL TRADE
+          TRACKER section + Telegram pushes on flip/SL/target. */}
+      {!ticketOpen && !slipOpen && (
+        <div className="mt-3">
+          {manualOpen ? (
+            <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-black text-cyan-300 tracking-wider">✋ MAINE YE TRADE LIYA HAI — RECORD KARO</span>
+                <button onClick={() => setManualOpen(false)} className="text-[10px] text-slate-500 hover:text-slate-300 px-1">✕</button>
+              </div>
+              <ManualTradePrompt signal={signal} liveLtp={liveLtp ?? signal.ltp} onDone={() => setManualOpen(false)} />
+            </div>
+          ) : (
+            <button onClick={() => setManualOpen(true)}
+              title="Aapka REAL trade is signal ke against record karo — live LTP/P&L + ensemble conviction tracking (30s re-vote) + EXIT NOW telegram push on flip"
+              className="w-full py-1.5 rounded-xl text-[11px] font-bold border border-dashed border-slate-600/50 text-slate-400 hover:text-cyan-300 hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-colors">
+              ✋ Maine ye trade liya hai — track karo
+            </button>
           )}
         </div>
       )}

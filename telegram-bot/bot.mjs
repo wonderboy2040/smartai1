@@ -969,6 +969,8 @@ bot.onText(/^\/help(@\w+)?$/i, async (msg) => {
 📊 <b>/regime</b> — Site's own regime read (boards)
 🤝 <b>/consensus &lt;query&gt;</b> — Site desk-agent consensus (14 models)
 📍 <b>/positions</b> — Open positions, dono desks (CoinDCX + India paper)
+✋ <b>/manual</b> — Aapke REAL (manual) trades — live LTP/P&amp;L + conviction banner
+✅ <b>/manualclose &lt;id&gt; [price]</b> — Manual trade close (default: live price)
 💰 <b>/pnl [today|week]</b> — Realized P&L per desk
 🇮🇳 <b>/nse &lt;SYM&gt;</b> — NSE desk deep-dive (intraday agent)
 🔧 <b>/selftest</b> — Data-path health audit (saare commands ka live check)
@@ -1474,6 +1476,94 @@ bot.onText(/^\/pnl(?:@\w+)?(?:\s+(today|week|aaj|hafta|weekly))?$/i, async (msg,
   }
   lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━', '<i>AI narration ke liye: /weeklyreview</i>');
   await safeSend(chatId, lines.join('\n'));
+});
+
+// ========================================
+// v10.16 (Section 2): MANUAL TRADE TRACKER — /manual · /manualclose
+// The user's OWN (real) trades — the same live conviction intelligence
+// the desk gives its own positions, right in Telegram: live LTP/P&L,
+// the ensemble re-vote banner (THESIS INTACT / WEAKENING / EXIT NOW /
+// TARGET HIT), and one-tap close at live price.
+// ========================================
+
+// ---- COMMAND: /manual — live manual trades (open first, EXIT NOW pinned) ----
+bot.onText(/^\/manual(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  if (!siteAgents.siteBridgeReady()) {
+    return safeSend(chatId, '⚠️ <b>Site bridge down</b> — /manual ko site server chahiye (API_TOKEN + running web app).');
+  }
+  const res = await siteAgents.siteFetch('/api/manual-trades', { timeoutMs: 20000 });
+  if (!res?.ok) {
+    return safeSend(chatId, `⚠️ <b>Manual tracker:</b> ${String(res?.error || 'unavailable').slice(0, 160)}`);
+  }
+  const data = res.data || {};
+  const trades = data.trades || [];
+  const open = trades.filter(t => t.status === 'OPEN');
+  const exitNow = open.filter(t => t.__view?.banner === 'EXIT_NOW');
+  const rest = open.filter(t => t.__view?.banner !== 'EXIT_NOW');
+
+  if (open.length === 0) {
+    const closedN = (data.counts?.closed) || trades.filter(t => t.status === 'CLOSED').length || 0;
+    return safeSend(chatId, `✋ <b>Manual Trades</b>\nKoi open manual trade nahi${closedN > 0 ? ` (${closedN} closed — history app me)` : ''}.\n<i>App ke signal cards pe "✋ Maine ye trade liya hai" se record karo — phir live conviction tracking yahin milegi.</i>`);
+  }
+
+  const BANNER_ICON = { EXIT_NOW: '🚨', WEAKENING: '🟡', TARGET_HIT: '🎯', THESIS_INTACT: '🟢', STALE: '⏸' };
+  const fmtRow = (t) => {
+    const v = t.__view || {};
+    const usd = t.market === 'FUTURES' || t.market === 'GLOBALFUTURES';
+    const cur = usd ? '$' : '₹';
+    const pnl = v.pnl || {};
+    const c = v.conviction || {};
+    const banner = v.banner || 'STALE';
+    const dist = v.distances || {};
+    return [
+      `${BANNER_ICON[banner] || '⏸'} <b>${t.symbol}</b> ${t.side === 'BUY' ? 'LONG' : 'SHORT'}${t.assetKind === 'OPTION' ? ` (${t.optType} ${t.strike})` : ''} <i>[${t.market}]</i>`,
+      `   ${cur}${Number(t.entryPrice).toLocaleString('en-IN')} → <b>${cur}${v.ltp != null ? Number(v.ltp).toLocaleString('en-IN') : '—'}</b> · ${pnl.pnlPct >= 0 ? '+' : ''}${pnl.pnlPct ?? 0}% (${pnl.currency === 'USDT' ? `$${pnl.pnlUSDT ?? 0}` : `₹${Math.round(pnl.pnlINR || 0).toLocaleString('en-IN')}`})`,
+      `   conviction ${c.entryScore ?? '—'} → ${c.currentScore ?? '—'}${c.delta != null ? ` (${c.delta >= 0 ? '+' : ''}${c.delta})` : ''} · banner: <b>${banner}</b>${dist.sl != null ? ` · SL ${dist.sl}%` : ''}${dist.t1 != null ? ` · T1 ${dist.t1}%` : ''}`,
+    ].join('\n');
+  };
+
+  const lines = [`✋ <b>MANUAL TRADES — ${open.length} open</b>`, '━━━━━━━━━━━━━━━━━━━━━━━━━'];
+  if (exitNow.length > 0) {
+    lines.push('<b>🚨 EXIT NOW (ensemble flip):</b>');
+    for (const t of exitNow) lines.push(fmtRow(t));
+  }
+  if (rest.length > 0) {
+    if (exitNow.length > 0) lines.push('');
+    for (const t of rest.slice(0, 8)) lines.push(fmtRow(t));
+    if (rest.length > 8) lines.push(`<i>…+${rest.length - 8} more — app me dekho</i>`);
+  }
+  lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━', `<i>Close: /manualclose &lt;id&gt; · flip/SL/target pe push apne aap aayega.</i>`);
+  await safeSend(chatId, lines.join('\n'));
+});
+
+// ---- COMMAND: /manualclose <id> [price] — close a manual trade at live (or given) price ----
+bot.onText(/^\/manualclose(?:@\w+)?\s+(\d+)(?:\s+([\d.]+))?$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  const id = Number(match?.[1]);
+  const price = match?.[2] != null ? Number(match[2]) : undefined;
+  if (!Number.isFinite(id) || id <= 0) return safeSend(chatId, 'Usage: <code>/manualclose 3</code> (id /manual se) · optional price: <code>/manualclose 3 61250.5</code>');
+  if (!siteAgents.siteBridgeReady()) {
+    return safeSend(chatId, '⚠️ <b>Site bridge down</b> — /manualclose ko site server chahiye.');
+  }
+  const res = await siteAgents.siteFetch(`/api/manual-trade/${id}/close`, {
+    method: 'POST',
+    body: price != null ? { exitPrice: price } : {},
+    timeoutMs: 20000,
+  });
+  if (!res?.ok) {
+    return safeSend(chatId, `⚠️ <b>Close failed:</b> ${String(res?.error || res?.data?.error || 'unavailable').slice(0, 160)}\n<i>/manual se sahi id check karo.</i>`);
+  }
+  const t = res.data?.trade || {};
+  const pnl = res.data?.pnl || {};
+  const usd = t.market === 'FUTURES' || t.market === 'GLOBALFUTURES';
+  await safeSend(chatId, [
+    `✅ <b>Manual trade #${id} closed</b>`,
+    `<b>${t.symbol}</b> ${t.side === 'BUY' ? 'LONG' : 'SHORT'} ${usd ? '$' : '₹'}${Number(t.entryPrice).toLocaleString('en-IN')} → ${usd ? '$' : '₹'}${Number(t.exitPrice).toLocaleString('en-IN')}`,
+    `P&amp;L: <b>${pnl.pnlPct >= 0 ? '+' : ''}${pnl.pnlPct}%</b> (${pnl.currency === 'USDT' ? `$${pnl.pnlUSDT}` : `₹${Math.round(pnl.pnlINR || 0).toLocaleString('en-IN')}`}) · reason: ${t.closeReason || 'manual'}`,
+  ].join('\n'));
 });
 
 // ---- COMMAND: /nse <symbol> — India-Intraday-desk deep-dive (the intraday agent, NOT generic /ai) ----

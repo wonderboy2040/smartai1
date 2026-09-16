@@ -32,6 +32,10 @@ import { pairCorrelation } from './correlation.js';
 // get the SAME instant level-touch push the CoinDCX desk has. Import graph
 // is acyclic (paperTrading → store/time/engine/journal — none import ai/*).
 import { getPaperSummary } from '../intraday/paperTrading.js';
+// v10.16 (S2): the user's OWN manual trades ride the same 5s pipeline
+// (SL/T1/T2, MANUAL tagged). manualTrades imports store/backup/liveFeed/
+// blackScholes/positionConviction — none import telegramPush → acyclic.
+import { manualTradesToPositionRows, listManualTrades } from './manualTrades.js';
 
 const TICK_ACTIVE_MS = 5000;   // open positions on the book
 const TICK_IDLE_MS = 15000;    // nothing open — watch for agent-opened entries
@@ -55,6 +59,7 @@ const _status = {
   lastPushAt: null,
   slTpPushes: 0,
   paperPushes: 0,     // v10.14: India-desk paper level-touch pushes
+  manualPushes: 0,    // v10.16: user's own manual-trade level-touch pushes
   signalPushes: 0,
   lastError: null,
 };
@@ -106,6 +111,7 @@ function _touch(p, kind, level, ltp) {
     unrealizedPnlINR: Number.isFinite(Number(p.unrealizedPnlINR)) ? p.unrealizedPnlINR : null,
     leverage: p.leverage || 1,
     ...(p.paper ? { paper: true } : {}),
+    ...(p.manual ? { manual: true } : {}),
   };
 }
 
@@ -168,10 +174,13 @@ export function formatLevelTouch(t) {
   const pnl = t.unrealizedPnlINR != null ? ` · unrealized ₹${Math.round(t.unrealizedPnlINR).toLocaleString('en-IN')}` : '';
   const lev = t.leverage > 1 ? ` · ${t.leverage}x` : '';
   const paperTag = t.paper ? ' · <b>PAPER</b> (India Intraday desk)' : '';
+  const manualTag = t.manual ? ' · ✋ <b>MANUAL</b> (aapka trade)' : '';
   return [
     `⚡${EMOJI[t.kind] || '⚠️'} <b>INSTANT — ${LABEL[t.kind] || 'LEVEL TOUCH'}</b>`,
-    `<b>${t.pair || t.id}</b> ${t.side}${lev} · LTP <b>${_fmt(t.ltp, t.market)}</b> vs ${t.kind} ${_fmt(t.level, t.market)}${pnl}${paperTag}`,
-    `🤖 executor watcher ka fill-confirmed message ≤60s me aayega — ye level-touch early warning hai.`,
+    `<b>${t.pair || t.id}</b> ${t.side}${lev} · LTP <b>${_fmt(t.ltp, t.market)}</b> vs ${t.kind} ${_fmt(t.level, t.market)}${pnl}${paperTag}${manualTag}`,
+    t.manual
+      ? '✋ manual conviction monitor zinda hai — thesis FLIP hote hi EXIT NOW push alag se aayega (WHY ke saath).'
+      : '🤖 executor watcher ka fill-confirmed message ≤60s me aayega — ye level-touch early warning hai.',
   ].join('\n');
 }
 
@@ -337,6 +346,23 @@ async function _tick() {
       if (paperOpen.length > 0) nextDelay = TICK_ACTIVE_MS; // paper desk open → stay at the 5s cadence
     } catch { /* paper desk optional — never break the crypto path */ }
 
+    // --- 1c) v10.16 S2: MANUAL trades — the user's OWN positions ride
+    //     the same 5s level-touch pipeline (SL/T1/T2, MANUAL tagged).
+    //     The LTP used is the manual monitor's sweep stamp (__ltp) — no
+    //     new fetch path, no new cadence. Store failures contained.
+    try {
+      const manualOpen = manualTradesToPositionRows(listManualTrades({ status: 'OPEN' }));
+      for (const t of detectLevelTouches(manualOpen)) {
+        const pushed = await _pushIfFresh(_touchAlerts, `${t.id}:${t.kind}`, formatLevelTouch(t), TOUCH_COOLDOWN_MS, send);
+        if (pushed) {
+          _status.manualPushes++;
+          _status.lastPushAt = Date.now();
+          console.log(`[insta-push] manual ${t.kind} touch ${t.pair} @ ${t.ltp}`);
+        }
+      }
+      if (manualOpen.length > 0) nextDelay = TICK_ACTIVE_MS; // manual trades open → 5s cadence
+    } catch { /* manual desk optional — never break other paths */ }
+
     // --- 2) fresh STRONG signals (every ~30s; board cache + single-
     //     flight keeps the underlying compute at its own cadence) ---
     _tickN++;
@@ -412,6 +438,7 @@ export function instaPushStatus() {
     lastPushAt: _status.lastPushAt,
     slTpPushes: _status.slTpPushes,
     paperPushes: _status.paperPushes,
+    manualPushes: _status.manualPushes,
     signalPushes: _status.signalPushes,
     lastError: _status.lastError,
     // healthy = a poll succeeded within the last 3 minutes. The legacy
@@ -435,6 +462,6 @@ export function __resetInstaPushForTests() {
   _strongAlerts.clear();
   Object.assign(_status, {
     started: false, enabled: true, startedAt: null, lastOkAt: null,
-    lastPushAt: null, slTpPushes: 0, paperPushes: 0, signalPushes: 0, lastError: null,
+    lastPushAt: null, slTpPushes: 0, paperPushes: 0, manualPushes: 0, signalPushes: 0, lastError: null,
   });
 }

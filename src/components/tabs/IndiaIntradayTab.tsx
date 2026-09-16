@@ -28,6 +28,8 @@ import { MarketClockStrip } from '../aitrading/MarketClockStrip';
 import { QuickNav } from '../aitrading/QuickNav';
 import { OptionsDeskPanel } from '../aitrading/OptionsDeskPanel';
 import { OrderConsole } from '../aitrading/OrderConsole';
+// v10.16 S2: the manual-trade tracking section (user's own trades)
+import { ManualTradeMonitor } from '../aitrading/ManualTradeMonitor';
 import { ModelRegistry } from '../aitrading/ModelRegistry';
 import { BacktestPanel } from '../aitrading/BacktestPanel';
 import { ModelPerformancePanel } from '../aitrading/ModelPerformancePanel';
@@ -441,6 +443,14 @@ export default memo(function IndiaIntradayTab() {
           </div>
         </div>
       )}
+
+      {/* ============ 02e · MANUAL TRADE TRACKER (v10.16 S2) ============ */}
+      <div id="in-manual">
+        <SectionLabel num="02e" title="Manual Trade Tracker" sub="aapke REAL trades — live LTP (5s) · P&L · SL/T distances · ensemble conviction re-vote vs entry snapshot · EXIT NOW banner on flip" />
+        <div className="mt-2.5">
+          <ManualTradeMonitor desk="INDIA" notify={notify} />
+        </div>
+      </div>
 
       {/* ============ 03 · EXECUTION CONSOLE (India venue) ============ */}
       <div id="in-execute">

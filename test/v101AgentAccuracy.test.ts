@@ -209,16 +209,25 @@ describe('B1 quorum-aware minAiScore', () => {
     expect(mockExecuteFutures).toHaveBeenCalledTimes(1);
   });
 
-  it('THIN committee (voters 3) at AI 78 needs 75+10=85 → NO entry', async () => {
-    // realistic thin-committee shape: ensemble's QUORUM_CONF_CAPS keeps a
-    // 3-voter consensus at ≤72 conf, so the legacy STRONG bar (80) is
-    // naturally out of reach too — the AI-score path is the only way in.
-    mockGetSignals.mockResolvedValue(boardOf(mkSignal({ voters: 3, confidence: 70, agreement: 0.9 })));
+  it('THIN committee (voters 3) at AI 76 needs 75+3=78 (v10.16 proportional) → NO entry', async () => {
+    // v10.16: the bar is +1.5/voter below 5 (3 voters → +3 = 78), not flat
+    // +10. Path B deliberately closed here (ACTION grade) to isolate the
+    // AI-score bar; near-miss is also closed by quorum honesty (voters < 5).
+    mockGetSignals.mockResolvedValue(boardOf(mkSignal({ voters: 3, superIntel: { aiScore: 76 }, grade: 'ACTION', confidence: 70, agreement: 0.9 })));
     await agentTick({}, vi.fn());
     expect(mockExecuteFutures).not.toHaveBeenCalled();
   });
 
-  it('thin committee at AI 88 (≥85) still enters — the bar is higher, not a wall', async () => {
+  it('v10.16 no-cliff: voters 3 at AI 78 = exactly the 78 bar → entry fires (the flat +10 cliff is gone)', async () => {
+    // a 3-voter committee (one honest abstain) no longer faces 85 —
+    // 75 + min(5, (5−3)×1.5) = 78, and 78 ≥ 78 qualifies (Path B closed
+    // so this proves the AI-score path itself).
+    mockGetSignals.mockResolvedValue(boardOf(mkSignal({ voters: 3, superIntel: { aiScore: 78 }, grade: 'ACTION', confidence: 70, agreement: 0.9 })));
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).toHaveBeenCalledTimes(1);
+  });
+
+  it('thin committee at AI 88 (≥ the 78 bar) still enters — the bar is higher, not a wall', async () => {
     mockGetSignals.mockResolvedValue(boardOf(mkSignal({ voters: 3, superIntel: { aiScore: 88 } })));
     await agentTick({}, vi.fn());
     expect(mockExecuteFutures).toHaveBeenCalledTimes(1);
@@ -237,7 +246,8 @@ describe('B1 quorum-aware minAiScore', () => {
     const st = await agentStatus(null);
     expect(st.accuracy.quorumAwareEntry).toBe(true);
     expect(st.accuracy.effectiveMinAiScore).toBe(AGENT_DEFAULTS.minAiScore);
-    expect(st.accuracy.thinCommitteeMinAiScore).toBe(AGENT_DEFAULTS.minAiScore + 10);
+    // v10.16: worst-case thin bar (voters ≤ 1) = 75 + cap 5 = 80 (was flat +10 = 85)
+    expect(st.accuracy.thinCommitteeMinAiScore).toBe(80);
   });
 });
 

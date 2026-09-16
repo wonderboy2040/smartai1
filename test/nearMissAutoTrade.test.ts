@@ -59,7 +59,7 @@ import { __resetForTests, __setJournalForTests, loadJournal, todayIST, __setConf
 import { saveJSON, loadJSON as loadJSONOrig } from '../server/lib/store.js';
 
 // ---------------- fixtures ----------------
-const BASE_CFG = { ...AGENT_DEFAULTS }; // minAiScore 75, quorumPenalty 10
+const BASE_CFG = { ...AGENT_DEFAULTS }; // v10.16: minAiScore 75, quorumPenalty 5 (proportional cap)
 
 const nearMissSignal = (over = {}) => ({
   symbol: 'SOL', market: 'FUTURES', pair: 'B-SOL_USDT', side: 'LONG', grade: 'ACTION',
@@ -142,10 +142,26 @@ describe('nearMissEntryGate — the qualification math', () => {
     expect(nearMissEntryGate(BASE_CFG, nearMissSignal({ voters: 4 }))).toBeNull();
   });
 
-  it('thin committees see a HIGHER bar (quorum penalty applies to the gap math)', () => {
+  it('thin committees see a PROPORTIONALLY higher bar (v10.16: +1.5/voter, capped +5 — no cliff)', () => {
+    const s3 = nearMissSignal({ voters: 3, superIntel: { aiScore: 74 } });
+    expect(effectiveScoreBar(BASE_CFG, s3)).toBe(78); // 75 + min(5, (5−3)×1.5) = 75 + 3
+    expect(nearMissEntryGate(BASE_CFG, s3)).toBeNull(); // voters < 5 → quorum honesty beats near-miss
+    const s4 = nearMissSignal({ voters: 4, superIntel: { aiScore: 74 } });
+    expect(effectiveScoreBar(BASE_CFG, s4)).toBe(76.5); // 75 + 1.5
+    const s1 = nearMissSignal({ voters: 1, superIntel: { aiScore: 74 } });
+    expect(effectiveScoreBar(BASE_CFG, s1)).toBe(80); // 75 + min(5, 6) = 75 + 5 (cap)
+    const s0 = nearMissSignal({ voters: 0 });
+    expect(effectiveScoreBar(BASE_CFG, s0)).toBe(80); // 75 + 5
+  });
+
+  it("thresholdProfile 'flat' restores the legacy flat +quorumPenalty arm (A/B)", () => {
     const s = nearMissSignal({ voters: 3, superIntel: { aiScore: 74 } });
-    expect(effectiveScoreBar(BASE_CFG, s)).toBe(85); // 75 + 10
-    expect(nearMissEntryGate(BASE_CFG, s)).toBeNull(); // 74 < 85−10 = 75 → below gap window
+    expect(effectiveScoreBar({ ...BASE_CFG, thresholdProfile: 'flat', quorumPenalty: 10 }, s)).toBe(85); // legacy 75+10
+  });
+
+  it('full quorum (≥5 voters) → the base bar, no penalty', () => {
+    expect(effectiveScoreBar(BASE_CFG, nearMissSignal({ voters: 5 }))).toBe(75);
+    expect(effectiveScoreBar(BASE_CFG, nearMissSignal({ voters: 8 }))).toBe(75);
   });
 
   it('WATCH grade / non-executable / planless → null', () => {

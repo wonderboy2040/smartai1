@@ -57,6 +57,9 @@ import { eventGuardCheck } from './eventGuard.js';
 // v10.15 GAP 4: Global Risk Brain (crypto-agent parity) — the ONE
 // cross-desk heat cap + risk-off detector BOTH gauntlets consult.
 import { globalRiskGate } from './globalRisk.js';
+// v10.16 S3 parity: the proportional quorum penalty (ONE truth — the
+// same effectiveScoreBar the crypto agent uses)
+import { effectiveScoreBar } from './agent.js';
 // v10.15 GAP 3: Patient Entry (crypto-agent parity, 10m NSE window).
 import {
   patientEntryEnabled, patientWindowMin, classifyEntry, pullbackLevelFor, patientPendingAction,
@@ -83,8 +86,12 @@ export const INDIA_AGENT_DEFAULTS = {
   mode: 'paper',              // 'paper' | 'notify' | 'live'
   maxTradesPerDay: 3,         // USER SPEC: daily ke 3 trades
   minAiScore: 75,             // v9.6 USER SPEC: 75+ AI score → auto entry
-  minConfidence: 80,          // legacy STRONG-committee bar
-  minAgreement: 0.75,         // …and stricter agreement
+  // v10.16 S3 parity (user spec conf=60): Path B (STRONG + conf +
+  // agreement) becomes a realistic second route; proportional quorum
+  // penalty replaces the flat +10 cliff (crypto-agent parity).
+  minConfidence: 60,
+  minAgreement: 0.65,
+  quorumPenalty: 5,           // v10.16: CAP of the proportional penalty (was flat 10)
   riskPerTradePct: 1.5,       // % of desk capital risked per trade (SL-based)
   equityINR: 10_000,          // desk sizing capital (paper default ₹10k)
   minEquityINR: 300,          // below this the agent refuses to trade (honest)
@@ -101,7 +108,6 @@ export const INDIA_AGENT_DEFAULTS = {
   dynamicTimeExit: true,      // ATR-adaptive time-exit windows
   minRollingWinRate: 35,     // last-N win-rate floor (LIVE self-downgrade)
   rollingWindow: 10,
-  quorumPenalty: 10,          // thin-committee AI-score bump (v10.2 Step 3)
   // ---- v10.15 GAP 1: LIVE CONVICTION TRACKER (crypto-agent parity) ----
   // OFF by default — AI_ENABLE_CONVICTION_EXIT=true ya ye knob. India has
   // no winner-extension system yet, so here the tracker only EXITS
@@ -114,6 +120,15 @@ export const INDIA_AGENT_DEFAULTS = {
 
 export function loadIndiaAgentConfig() {
   const saved = loadJSON(AGENT_CONFIG_FILE, {}) || {};
+  // v10.16 S3 migration (crypto-agent parity): untouched OLD defaults
+  // (80 / 0.75 / 10) migrate to the new bar (60 / 0.65 / 5);
+  // user-customized values are preserved verbatim.
+  if (saved.thresholdProfile == null) {
+    if (saved.minConfidence == null || Number(saved.minConfidence) === 80) saved.minConfidence = INDIA_AGENT_DEFAULTS.minConfidence;
+    if (saved.minAgreement == null || Number(saved.minAgreement) === 0.75) saved.minAgreement = INDIA_AGENT_DEFAULTS.minAgreement;
+    if (saved.quorumPenalty == null || Number(saved.quorumPenalty) === 10) saved.quorumPenalty = INDIA_AGENT_DEFAULTS.quorumPenalty;
+    saved.thresholdProfile = 'proportional';
+  }
   return { ...INDIA_AGENT_DEFAULTS, ...saved };
 }
 export function saveIndiaAgentConfig(cfg) {
@@ -452,7 +467,7 @@ async function _tick(deps, sendTelegram) {
   // v10.2 parity — QUORUM-AWARE threshold: thin committees (<5 voters)
   // need MORE conviction to touch money, not less.
   const qualifies = (s) => !!(s && s.plan && s.side && (
-    signalOf(s) >= (voterCount(s) >= 5 ? cfg.minAiScore : cfg.minAiScore + (cfg.quorumPenalty ?? 10)) || (
+    signalOf(s) >= effectiveScoreBar(cfg, s) || (
       s.grade === 'STRONG' && s.executable
       && (s.confidence ?? 0) >= cfg.minConfidence
       && (s.agreement ?? 0) >= cfg.minAgreement
@@ -613,10 +628,12 @@ async function _tick(deps, sendTelegram) {
         const ai = signalOf(s);
         const vc = voterCount(s);
         const quorumCapped = vc < 5;
-        const needScore = quorumCapped ? cfg.minAiScore + (cfg.quorumPenalty ?? 10) : cfg.minAiScore;
+        const needScore = effectiveScoreBar(cfg, s); // v10.16 S3: ONE truth (proportional)
         nearMisses.push({
           symbol: s.symbol, aiScore: ai, needScore, voters: vc, quorumCapped,
           confidence: Math.round(s.confidence ?? 0), agreement: Math.round((s.agreement ?? 0) * 100),
+          ...(Array.isArray(s.abstentions) && s.abstentions.length > 0
+            ? { abstained: s.abstentions.map(a => a.name || a.id) } : {}),
         });
       }
     }

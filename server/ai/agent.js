@@ -83,8 +83,20 @@ export const AGENT_DEFAULTS = {
   desks: { futures: true, spot: true, india: true, global: true }, // v7.0 spot ON · v10.4 GLOBAL equity-futures SIM desk ON
   maxTradesPerDay: 3,         // USER SPEC: daily ke 3 trades
   minAiScore: 75,             // v9.6 USER SPEC: 75+ AI score → auto entry
-  minConfidence: 80,          // legacy STRONG-committee bar (AI-score path YA ye)
-  minAgreement: 0.75,         // …and stricter agreement
+  // v10.16 SUPERINTEL PLAN S3: USER SPEC conf=60. Path B (STRONG grade
+  // + conf + agreement) was unreachable at 80/0.75 — 60/0.65 makes it
+  // a realistic second route to qualification (quality still guarded
+  // by the STRONG-grade + executable + quorum-honesty caps).
+  minConfidence: 60,
+  minAgreement: 0.65,
+  // v10.16 S3: quorum penalty is now the CAP of a PROPORTIONAL penalty
+  // (see effectiveScoreBar) — a 4-voter committee pays +1.5, not +10.
+  // 'thresholdProfile' is the one-flag A/B arm: 'proportional' (new,
+  // default) vs 'flat' (legacy v10.2 behavior: flat +quorumPenalty).
+  // Journal markers record the active profile on every entry so the
+  // weekly review can compare outcomes honestly.
+  quorumPenalty: 5,
+  thresholdProfile: 'proportional',
   riskPerTradePct: 1.5,       // % of wallet EQUITY risked per trade (SL-based)
   maxLeverage: 3,             // futures leverage ceiling for the agent
   cooldownMin: 20,            // minutes between agent entries
@@ -115,9 +127,6 @@ export const AGENT_DEFAULTS = {
   // → soft self-downgrade LIVE→paper + Telegram alert.
   minRollingWinRate: 35,
   rollingWindow: 10,
-  // v10.2 Step 3: quorum penalty — thin committee (<5 voters) AI-score bump
-  // (was hardcoded +10; now config-tunable 0-15)
-  quorumPenalty: 10,
   // ---- v10.6 EDGE-ADAPTIVE SIZING (Pro Upgrade #2: Kelly-lite) ----
   // OFF by default — enable with AI_ENABLE_KELLY_SIZING=true or this
   // knob. When ON, riskPerTradePct becomes the CEILING: the realized
@@ -135,6 +144,11 @@ export const AGENT_DEFAULTS = {
   nearMissScoreGap: 10,       // AI score within this many points BELOW the effective bar still qualifies
   nearMissMinConfidence: 70,  // "high confidence" floor for a near-miss entry
   nearMissMaxPerDay: 1,       // quality guard: max near-miss entries/day (they're lower-conviction)
+  // ---- v10.16 S3 item 3: ABSTENTION DIAGNOSTICS ----
+  // When the committee is thin (voters < 5), the agent log names the
+  // models that abstained + their reasons (data-feed fixes lift quorum
+  // at the SOURCE — the quality fix, vs threshold-loosening quantity).
+  abstentionDiagnostics: true,
   // ---- v10.8 WINNER EXTENSION ("trade ke hisaab se extension") ----
   // At time-exit, a position that is IN PROFIT with NO opposite
   // qualifying signal gets its window EXTENDED (each extension =
@@ -165,6 +179,18 @@ export const AGENT_DEFAULTS = {
 
 export function loadAgentConfig() {
   const saved = loadJSON(AGENT_CONFIG_FILE, {}) || {};
+  // v10.16 S3 migration: a pre-v10.16 saved config carries the OLD
+  // defaults (conf 80 / agreement 0.75 / quorumPenalty 10). Migrate
+  // UNTOUCHED old-defaults to the new bar (60 / 0.65 / 5) + stamp the
+  // profile — but PRESERVE any value the user explicitly customized
+  // (≠ old default ⇒ they chose it; it stays). 'thresholdProfile':
+  // 'flat' restores the legacy +10 flat penalty (the A/B rollback arm).
+  if (saved.thresholdProfile == null) {
+    if (saved.minConfidence == null || Number(saved.minConfidence) === 80) saved.minConfidence = AGENT_DEFAULTS.minConfidence;
+    if (saved.minAgreement == null || Number(saved.minAgreement) === 0.75) saved.minAgreement = AGENT_DEFAULTS.minAgreement;
+    if (saved.quorumPenalty == null || Number(saved.quorumPenalty) === 10) saved.quorumPenalty = AGENT_DEFAULTS.quorumPenalty;
+    saved.thresholdProfile = AGENT_DEFAULTS.thresholdProfile;
+  }
   return {
     ...AGENT_DEFAULTS,
     ...saved,
@@ -191,7 +217,7 @@ const NUM_CLAMPS = {
   // v7.0 PRO TRADER split knobs (T1% + T2% ≤ 90 enforced below)
   tp1ClosePct: [10, 80],
   tp2ClosePct: [10, 80],
-  // v10.2 Step 3: quorum penalty range
+  // v10.2 Step 3: quorum penalty range (now the CAP of the proportional penalty)
   quorumPenalty: [0, 15],
   // v10.8 near-miss auto-trade knobs
   nearMissScoreGap: [0, 20],
@@ -234,6 +260,9 @@ export function updateAgentConfig(patch = {}) {
   if (patch.convictionExit != null) next.convictionExit = !!patch.convictionExit;
   // v10.15 patient-entry toggle
   if (patch.patientEntry != null) next.patientEntry = !!patch.patientEntry;
+  // v10.16 S3 toggles — the one-flag A/B arm + abstention diagnostics
+  if (patch.thresholdProfile === 'proportional' || patch.thresholdProfile === 'flat') next.thresholdProfile = patch.thresholdProfile;
+  if (patch.abstentionDiagnostics != null) next.abstentionDiagnostics = !!patch.abstentionDiagnostics;
   // v7.0: keep the split honest — T1+T2 ≤ 90, runner ≥ 10, sums shown
   if (next.tp1ClosePct + next.tp2ClosePct > 90) {
     const scale = 90 / (next.tp1ClosePct + next.tp2ClosePct);
@@ -396,10 +425,26 @@ async function journalMandateEntry(mandate, trading) {
  * The full-qualification bar for one signal (quorum-aware), shared by
  * the qualifier and the near-miss gate so the gap math is one truth.
  * PURE.
+ *
+ * v10.16 S3 — PROPORTIONAL QUORUM PENALTY (the plan's exact fix):
+ * the old flat +10 on ANY sub-5-voter committee was the primary trade
+ * killer — a 4-voter committee (one honest abstain) silently faced an
+ * 85 bar. Now the penalty is proportional AND capped at +5:
+ *   voters 4 → +1.5 · 3 → +3 · 2 → +4.5 · 1 → +5
+ * Rigor preserved (thin committees still pay MORE than full ones —
+ * just no cliff). `thresholdProfile: 'flat'` restores the legacy
+ * +quorumPenalty arm for A/B comparison.
  */
 export function effectiveScoreBar(cfg, s) {
   const vc = Number(s?.voters ?? s?.participating ?? 0);
-  return vc >= 5 ? Number(cfg.minAiScore) : Number(cfg.minAiScore) + Number(cfg.quorumPenalty ?? 10);
+  const base = Number(cfg.minAiScore);
+  if (vc >= 5) return base;
+  if (String(cfg.thresholdProfile || 'proportional') === 'flat') {
+    return base + Number(cfg.quorumPenalty ?? 10); // legacy A/B arm
+  }
+  const cap = Math.min(5, Number(cfg.quorumPenalty ?? 5)); // plan: never more than +5
+  const prop = Math.min(cap, (5 - vc) * 1.5);
+  return base + Math.round(prop * 10) / 10;
 }
 
 /**
@@ -1185,7 +1230,10 @@ ${convictionTightened.map(c => `• ${c.pair} — delta ${c.delta}, in profit: r
   }
   // v10.2 Step 1: NEAR-MISS DIAGNOSTICS — always capture the top-3
   // closest signals (panel strip), whether or not a near-miss trade
-  // fires this cycle.
+  // fires this cycle. v10.16 S3: needScore now reads effectiveScoreBar
+  // (ONE truth — the proportional bar, not a stale inline +10), and
+  // each entry carries the abstaining-model list so the panel shows
+  // WHY the committee is thin (the root-cause-behind-the-root-cause).
   const nearMissDiag = [];
   for (const board of scans) {
     if (!board?.ok) continue;
@@ -1193,22 +1241,43 @@ ${convictionTightened.map(c => `• ${c.pair} — delta ${c.delta}, in profit: r
       if (!s?.plan || !s.side) continue;
       const ai = signalOf(s);
       const vc = voterCount(s);
-      const quorumCapped = vc < 5;
-      const needScore = quorumCapped ? cfg.minAiScore + (cfg.quorumPenalty ?? 10) : cfg.minAiScore;
+      const needScore = effectiveScoreBar(cfg, s);
       nearMissDiag.push({
         pair: pairOfSignal(s),
         symbol: s.symbol,
         aiScore: ai,
         needScore,
         voters: vc,
-        quorumCapped,
+        quorumCapped: vc < 5,
         confidence: Math.round(s.confidence ?? 0),
         agreement: Math.round((s.agreement ?? 0) * 100),
+        ...(cfg.abstentionDiagnostics !== false && Array.isArray(s.abstentions) && s.abstentions.length > 0
+          ? { abstained: s.abstentions.map(a => a.name || a.id) } : {}),
       });
     }
   }
   nearMissDiag.sort((a, b) => (b.aiScore - a.aiScore) || (b.confidence - a.confidence));
   _state.lastNearMisses = nearMissDiag.slice(0, 3);
+
+  // v10.16 S3 item 3 — ABSTENTION DIAGNOSTIC LINE: when the committee
+  // is thin on the closest signal, name WHICH models sat out and their
+  // stated reasons (once per scan, info-level). If e.g. OptionsFlow /
+  // InstFlow abstain on every crypto symbol because a data feed is
+  // dead, THIS line is what surfaces it — fixing that feed lifts quorum
+  // at the source (quality) instead of lowering bars (quantity).
+  if (cfg.abstentionDiagnostics !== false) {
+    const thin = nearMissDiag.filter(n => n.voters > 0 && n.voters < 5).slice(0, 2);
+    for (const t of thin) {
+      const sig = (scans.flatMap(b => b?.signals || []).find(s => s?.symbol === t.symbol));
+      const abst = (sig?.abstentions || []).slice(0, 4).map(a => {
+        const why = String(a.reason || '').replace(/\s+/g, ' ').slice(0, 60);
+        return `${a.name || a.id}${why ? ` (${why})` : ''}`;
+      });
+      if (abst.length > 0) {
+        log('info', `THIN COMMITTEE ${t.symbol} — ${t.voters}/14 models voted; abstained: ${abst.join(' · ')} — data-feed fixes here lift quorum at the source`);
+      }
+    }
+  }
 
   // v10.8: near-miss AUTO-ENTRY — only when the full bar found nobody
   // this cycle, the daily near-miss budget remains, and the BEST
@@ -1230,7 +1299,7 @@ ${convictionTightened.map(c => `• ${c.pair} — delta ${c.delta}, in profit: r
     if (candidates.length === 0) {
       if (_state.lastNearMisses.length > 0) {
         const lines = _state.lastNearMisses.map(nm =>
-          `closest: ${nm.symbol} score=${nm.aiScore}/${nm.needScore} (${nm.voters} voters${nm.quorumCapped ? ' — QUORUM-CAPPED' : ''}) conf=${nm.confidence}%`
+          `closest: ${nm.symbol} score=${nm.aiScore}/${nm.needScore} (${nm.voters} voters${nm.quorumCapped ? ' — QUORUM-CAPPED' : ''}) conf=${nm.confidence}%${nm.abstained?.length ? ` · abstained: ${nm.abstained.slice(0, 3).join('/')}` : ''}`
         );
         log('skip', `scan: 0 candidates — near-misses: ${lines.join(' · ')}${cfg.nearMissAutoTrade === false ? ' (near-miss auto-trade OFF)' : nmUsedToday >= Number(cfg.nearMissMaxPerDay) ? ` (near-miss budget ${nmUsedToday}/${cfg.nearMissMaxPerDay} used)` : ' (none met the near-miss gate: gap/conf/quorum)'}`);
       } else {
@@ -1403,9 +1472,15 @@ ${convictionTightened.map(c => `• ${c.pair} — delta ${c.delta}, in profit: r
   _state.entryMeta = _state.entryMeta || {};
   // v10.15 GAP 1: record the ENTRY conviction score — the conviction
   // tracker's delta is measured against exactly this number.
+  // v10.16 S3: record the threshold profile + effective bar the entry
+  // cleared (A/B arm marker — the weekly review compares 'proportional'
+  // vs 'flat' outcomes off exactly this stamp).
   _state.entryMeta[pairOfSignal(best)] = {
     atrPct: entryAtrPct, at: Date.now(),
     convictionScore: Number(best?.superIntel?.aiScore ?? best?.confidence ?? null),
+    thresholdProfile: String(cfg.thresholdProfile || 'proportional'),
+    entryBar: effectiveScoreBar(cfg, best),
+    entryVoters: Number(best?.voters ?? best?.participating ?? 0),
   };
   if (entryAtrPct != null && cfg.dynamicTimeExit !== false) {
     log('info', `ENTRY VOLATILITY ${best.symbol}: ATR ${r2(entryAtrPct)}% → dynamic time-exit window ${dynamicMaxHoldMin(cfg, entryAtrPct)}m (base ${cfg.maxHoldMin}m)`);
@@ -1839,7 +1914,9 @@ export async function agentStatus(deps) {
     quorumAwareEntry: true, // B1 — thin committees need a HIGHER AI-score bar
     quorumPenalty: cfg.quorumPenalty ?? 10,
     effectiveMinAiScore: cfg.minAiScore,
-    thinCommitteeMinAiScore: cfg.minAiScore + (cfg.quorumPenalty ?? 10), // applied when voters < 5
+    // v10.16 S3: the worst-case thin bar (voters ≤ 1) under the
+    // PROPORTIONAL penalty — +1.5/voter below 5, capped at quorumPenalty.
+    thinCommitteeMinAiScore: effectiveScoreBar(cfg, { voters: 1 }),
     dynamicTimeExit: cfg.dynamicTimeExit !== false, // B2
     openWindowOverrides: Object.entries(_state.entryMeta || {})
       .filter(([, v]) => v && v.atrPct != null && cfg.dynamicTimeExit !== false)
