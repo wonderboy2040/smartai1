@@ -165,6 +165,18 @@ export default memo(function CoinDcxTab() {
   const liveFor = cxLive.forSignal;
   // honesty chip: how fresh is the newest live tick (s) + feed state
   const liveAgeS = cxLive.lastAt ? Math.max(0, Math.round((Date.now() - cxLive.lastAt) / 1000)) : null;
+  // v10.14 (deep-recheck S2 #3): WS accelerator honesty — when the socket
+  // is benched, say WHY (quiet GLOB feed vs handshake streak) and for how
+  // long, instead of silently reverting to the 2s REST cadence.
+  const wsH = cxLive.wsHealth;
+  const wsCoolMin = wsH?.cooldownActive ? Math.max(1, Math.round(wsH.cooldownRemainMs / 60_000)) : 0;
+  const wsNote = !wsH ? '' : wsH.cooldownActive
+    ? (wsH.cooldownReason === 'glob-quiet'
+      ? ` · GLOB quiet — cooling ${wsCoolMin}m`
+      : wsH.cooldownReason === 'silent-contract'
+        ? ` · WS silent — cooling ${wsCoolMin}m`
+        : ` · WS reconnecting ${wsCoolMin}m`)
+    : wsH.healthy ? ' · WS⚡' : '';
 
   // Track which ACTIONABLE symbols were NOT in the previous board → flash them.
   const prevTopRef = useRef<Set<string>>(new Set());
@@ -301,12 +313,12 @@ export default memo(function CoinDcxTab() {
             {/* v10.10: the direct-CoinDCX feed honesty chip — LIVE (2s direct
                 poll) / connecting / down, plus the newest tick's age. */}
             <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black border tracking-wider ${cxLive.status === 'live'
-              ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+              ? (wsH?.cooldownActive ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30')
               : cxLive.status === 'down'
                 ? 'bg-red-500/15 text-red-300 border-red-500/30'
                 : 'bg-slate-600/20 text-slate-400 border-slate-600/30'}`}
-              title="Spot INR (2s CoinDCX anchor + ~1s Binance WS) · USDT perps (2s direct CoinDCX RT) · USDC equity perps (2s direct RT + Yahoo fallback) — ek hi SSE connection, teeno desks live">
-              {cxLive.status === 'live' ? `⚡ DIRECT COINDCX · 2s${liveAgeS != null ? ` · ${liveAgeS}s ago` : ''}` : cxLive.status === 'down' ? '⚡ live feed down — retrying' : '⚡ live feed connecting…'}
+              title="Spot INR (2s CoinDCX anchor + ~1s Binance WS) · USDT perps (2s direct CoinDCX RT + WS accelerator) · USDC equity perps (2s direct RT + Yahoo fallback) — ek hi SSE connection, teeno desks live. WS cooldown = socket benched, REST 2s abhi bhi chal raha hai.">
+              {cxLive.status === 'live' ? `⚡ DIRECT COINDCX · 2s${liveAgeS != null ? ` · ${liveAgeS}s ago` : ''}${wsNote}` : cxLive.status === 'down' ? '⚡ live feed down — retrying' : '⚡ live feed connecting…'}
             </span>
             <FreshnessBadge board={board} />
             <RefreshCountdown board={board} loading={loading} />

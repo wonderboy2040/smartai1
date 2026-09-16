@@ -266,8 +266,17 @@ function credGuard() {
  * chain: GET(seconds) → GET(ms) → legacy POST. The first transport that
  * answers sticks for the process lifetime (no per-poll probing).
  * Wrapper tolerance: bare array (documented), `{wallets:[]}`,
- * `{data:[]}` and `{balances:[]}` are all accepted. */
-const _walletsTransport = { mode: null };
+ * `{data:[]}` and `{balances:[]}` are all accepted.
+ *
+ * v10.14 (deep-recheck S1) PROBE-COOLDOWN: a full 3-mode sweep on every
+ * 60s wallet poll could stack 3 × 10s timeouts = 30s — beyond the
+ * client's 20s fetch budget → "wallet API unreachable" even though a
+ * single transport blip was the only fault. After one full-sweep
+ * failure the transport probe goes into a 5-min cooldown: only the
+ * sticky mode is retried (one round-trip, fail fast) until it answers
+ * again or the cooldown lapses. */
+const WALLET_PROBE_COOLDOWN_MS = 5 * 60_000;
+const _walletsTransport = { mode: null, coolUntil: 0 };
 function _walletList(resp) {
   if (Array.isArray(resp)) return resp;
   if (Array.isArray(resp?.wallets)) return resp.wallets;
@@ -283,9 +292,14 @@ async function _walletTransportAttempt(mode, apiKey, secret) {
 export async function fetchFuturesWallets() {
   const { apiKey, secret } = credGuard();
   const ALL = ['GET-s', 'GET-ms', 'POST'];
-  const order = _walletsTransport.mode
+  const probeCooling = Date.now() < _walletsTransport.coolUntil;
+  let order = _walletsTransport.mode
     ? [_walletsTransport.mode, ...ALL.filter(t => t !== _walletsTransport.mode)]
     : [...ALL];
+  // v10.14: during the post-sweep-failure cooldown the alternates are
+  // NOT re-probed — one sticky-mode round-trip bounds the failure path.
+  if (probeCooling && _walletsTransport.mode) order = [_walletsTransport.mode];
+  else if (probeCooling) order = order.slice(0, 1);
   let lastErr = null;
   for (const mode of order) {
     try {
@@ -293,6 +307,7 @@ export async function fetchFuturesWallets() {
       const list = _walletList(resp);
       if (!list) throw new Error(`wallets payload not array-shaped (${mode})`);
       _walletsTransport.mode = mode;
+      _walletsTransport.coolUntil = 0; // health restored — full probing again
       return list.map(w => {
         const free = num(w.balance) || 0;
         const lockedIso = num(w.locked_balance) || 0;
@@ -310,6 +325,9 @@ export async function fetchFuturesWallets() {
       lastErr = e;
     }
   }
+  // every mode failed → arm the probe cooldown (fail-fast on the next
+  // poll instead of another 3×10s sweep)
+  if (!probeCooling) _walletsTransport.coolUntil = Date.now() + WALLET_PROBE_COOLDOWN_MS;
   throw lastErr || new Error('futures wallets: every transport failed');
 }
 
@@ -335,13 +353,38 @@ export async function fetchSpotWallets() {
  *   spot INR/USDT free+locked, futures USDT margin free+locked,
  *   USDINR, and INR-equivalent equity / deployable margin.
  * Never throws — a failed leg degrades to null with the reason kept.
+ *
+ * v10.14 (deep-recheck S1) RESPONSE-BUDGET FIX: the old body ran
+ * `await fetchUsdInr()` SEQUENTIALLY before the two wallet legs — a cold
+ * FX cache added up to 8s of Yahoo latency ON TOP of the legs (a full
+ * 3-mode transport sweep could add 30s) → 38s worst case vs the client's
+ * 20s AbortSignal → "⚡ wallet API unreachable" on a mere FX blip ("ek
+ * ek baar"). Now: FX + both legs run in PARALLEL, each leg individually
+ * deadline-bounded, so the route ALWAYS answers well inside the client
+ * budget with whatever data it has (honest `error` per lagging leg).
  */
+const WALLET_LEG_BUDGET_MS = 9_000;
+let _walletLegBudgetMs = WALLET_LEG_BUDGET_MS;
+function _withDeadline(p, ms, label) {
+  let timer = null;
+  const budget = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ error: `${label} — ${ms}ms budget exceeded (degraded)` }), ms);
+    if (typeof timer.unref === 'function') timer.unref();
+  });
+  return Promise.race([p, budget]).finally(() => { if (timer) clearTimeout(timer); });
+}
 export async function walletSnapshot() {
-  const usdInr = await fetchUsdInr();
-  const [fut, spot] = await Promise.all([
-    fetchFuturesWallets().catch(e => ({ error: String(e?.message || e).slice(0, 140) })),
-    fetchSpotWallets().catch(e => ({ error: String(e?.message || e).slice(0, 140) })),
+  const [usdInr, fut, spot] = await Promise.all([
+    fetchUsdInr().catch(() => _usdInr || 84), // belt & braces — never let FX break the snapshot
+    _withDeadline(
+      fetchFuturesWallets().catch(e => ({ error: String(e?.message || e).slice(0, 140) })),
+      _walletLegBudgetMs, 'futures wallets slow'),
+    _withDeadline(
+      fetchSpotWallets().catch(e => ({ error: String(e?.message || e).slice(0, 140) })),
+      _walletLegBudgetMs, 'spot wallets slow'),
   ]);
+  // FX honesty: 84-static / >10min-cached rate flagged, never silently trusted
+  const fxStale = !(Date.now() - _usdInrAt < 11 * 60_000);
   const futRows = Array.isArray(fut) ? fut : [];
   const spotRows = Array.isArray(spot) ? spot : [];
   const spotINR = spotRows.find(w => w.currency === 'INR') || { free: 0, locked: 0, total: 0 };
@@ -356,6 +399,7 @@ export async function walletSnapshot() {
     ok: true,
     connected: coindcxConnected(),
     usdInr: r2(usdInr),
+    fxStale, // v10.14: true = static-84 or >10min-cached rate (equityINR is an estimate)
     spot: {
       inr: spotINR,
       usdt: spotUSDT,
@@ -1259,7 +1303,11 @@ export function __resetFuturesForTests() {
   _instrumentsCache = null; _instrumentsAt = 0;
   _instrumentMetaCache = new Map();
   _walletsTransport.mode = null;
+  _walletsTransport.coolUntil = 0;
+  _walletLegBudgetMs = WALLET_LEG_BUDGET_MS;
   _usdInr = null; _usdInrAt = 0;
 }
 export function __setUsdInrForTests(v) { _usdInr = v; _usdInrAt = Date.now(); }
+/** v10.14 test hook: shrink the wallet-leg deadline so budget tests run in ms. */
+export function __setWalletLegBudgetForTests(ms) { _walletLegBudgetMs = Math.max(1, Number(ms) || WALLET_LEG_BUDGET_MS); }
 export { inrOfUsdt };

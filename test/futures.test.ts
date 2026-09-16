@@ -26,7 +26,7 @@ import {
   futuresPairFor, baseOfFuturesPair, fetchFuturesPrices, fetchFuturesCandles,
   futuresOrderBody, fetchFuturesWallets, walletSnapshot, executeFuturesSignal,
   watchFuturesPositions, closeFuturesPosition, __resetFuturesForTests,
-  __setUsdInrForTests, inrOfUsdt, roundFuturesQty,
+  __setUsdInrForTests, inrOfUsdt, roundFuturesQty, __setWalletLegBudgetForTests,
 } from '../server/ai/futures.js';
 import { __resetForTests, __setJournalForTests, loadJournal, __setConfigForTests, todayIST } from '../server/ai/coindcxOrders.js';
 import { saveJSON, loadJSON as loadJSONOrig } from '../server/lib/store.js';
@@ -286,6 +286,55 @@ describe('futures wallets + snapshot', () => {
     const snap = await walletSnapshot();
     expect(snap.ok).toBe(true);
     expect(snap.futures.error).toMatch(/401/);
+  });
+
+  // ============================================================
+  // v10.14 (deep-recheck S1) — the "wallet API unreachable" budget fixes
+  // ============================================================
+  it('FX failure degrades to the static rate — snapshot stays ok with the wallets intact', async () => {
+    // cold FX cache + a DEAD Yahoo upstream (the exact "ek ek baar" blip)
+    __resetFuturesForTests(); // _usdInr = null, _usdInrAt = 0
+    globalThis.fetch = vi.fn(async () => { throw new Error('yahoo down'); });
+    mockPrivate.mockImplementation(async (path) => {
+      if (path === '/exchange/v1/users/balances') return [
+        { currency_short_name: 'INR', available_balance: 8400, locked_balance: 0 },
+        { currency_short_name: 'USDT', available_balance: 10, locked_balance: 0 },
+      ];
+      throw new Error(`unexpected private path: ${path}`);
+    });
+    const snap = await walletSnapshot();
+    expect(snap.ok).toBe(true);
+    expect(snap.usdInr).toBe(84);           // static fallback, never a throw
+    expect(snap.fxStale).toBe(true);        // honest: equityINR is an estimate
+    expect(snap.futures.usdt.free).toBeCloseTo(6.17, 1); // wallets still served
+    expect(snap.deployableSpotINR).toBe(8400);
+  });
+  it('a HANGING wallet leg is deadline-bounded — the route answers inside the client budget', async () => {
+    __setWalletLegBudgetForTests(25);
+    // neither transport ever answers (a slow CoinDCX gateway, not an error)
+    mockPrivateGET.mockImplementation(() => new Promise(() => {}));
+    mockPrivate.mockImplementation(() => new Promise(() => {}));
+    const t0 = Date.now();
+    const snap = await walletSnapshot();
+    expect(Date.now() - t0).toBeLessThan(2_000); // budget-bounded, not 30s
+    expect(snap.ok).toBe(true);
+    expect(snap.futures.error).toMatch(/budget exceeded/);
+    expect(snap.spot.error).toMatch(/budget exceeded/);
+  });
+  it('full transport-sweep failure arms the probe cooldown — the next poll tries ONE mode only', async () => {
+    mockPrivateGET.mockRejectedValue(new Error('[502] gateway'));
+    mockPrivate.mockRejectedValue(new Error('[502] gateway'));
+    await fetchFuturesWallets().catch(() => {});
+    const firstSweep = mockPrivateGET.mock.calls.length + mockPrivate.mock.calls.length;
+    expect(firstSweep).toBe(3); // GET-s + GET-ms + POST
+    mockPrivateGET.mockClear(); mockPrivate.mockClear();
+    // inside the 5-min cooldown: only the first mode is retried (fail fast)
+    await fetchFuturesWallets().catch(() => {});
+    expect(mockPrivateGET.mock.calls.length + mockPrivate.mock.calls.length).toBe(1);
+    // and a RECOVERY clears the cooldown — full probing resumes immediately
+    mockPrivateGET.mockResolvedValueOnce(WALLETS_PAYLOAD);
+    const rows = await fetchFuturesWallets().catch(e => { throw e; });
+    expect(Array.isArray(rows)).toBe(true);
   });
 });
 

@@ -18,7 +18,7 @@ import { initInStream, ensureInSubscribed, inClientUp, inClientDown, releaseInSu
 import { ensureCryptoSubscribed, cryptoClientUp, cryptoClientDown, releaseCryptoSubscribed, fetchCoinDcxTickers } from './cryptoStream.js';
 // v10.10: CoinDCX DIRECT ultra-fast RT — USDT perps (FUT_) + USDC global
 // equity perps (GLOB_) pushed straight into the shared liveFeed at 2s.
-import { ensureCxRtSubscribed, cxRtClientUp, cxRtClientDown, releaseCxRtSubscribed } from './ai/cxRtStream.js';
+import { ensureCxRtSubscribed, cxRtClientUp, cxRtClientDown, releaseCxRtSubscribed, cxRtWsStatus } from './ai/cxRtStream.js';
 import {
   getMLPrediction, getAllSignals, getRegime, getBacktest,
   getHealth as mlHealth,
@@ -1140,7 +1140,12 @@ app.get('/api/stream', (req, res) => {
   });
 
   const keepalive = setInterval(() => {
-    _sseWrite(`event: status\ndata: ${JSON.stringify(feedStatus())}\n\n`);
+    // v10.14 (deep-recheck S2 #3): the status frame now carries the cxRt
+    // WS accelerator health (cooldown reason + remaining) so the CoinDCX
+    // desk badge can explain a degradation instead of silently reverting
+    // to REST. Flat source→bool keys stay first — existing consumers
+    // (useAppState watchdogs) only regex-match those key names.
+    _sseWrite(`event: status\ndata: ${JSON.stringify({ ...feedStatus(), cxRt: cxRtWsStatus() })}\n\n`);
   }, 15000);
   if (typeof keepalive.unref === 'function') keepalive.unref();
 
@@ -1166,7 +1171,9 @@ app.get('/api/stream', (req, res) => {
 // GET /api/feed-status â†’ which real-time sources are live (for the UI dot).
 app.get('/api/feed-status', (_req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json(feedStatus());
+  // v10.14: also carries the cxRt WS accelerator health (same shape as
+  // the SSE status frame) — one health contract for poll + stream.
+  res.json({ ...feedStatus(), cxRt: cxRtWsStatus() });
 });
 
 // ------------------------------------------------------------

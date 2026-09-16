@@ -42,8 +42,9 @@ vi.mock('../server/mcp/coindcx.js', () => ({
 
 import {
   ensureCxRtSubscribed, releaseCxRtSubscribed, cxRtClientUp, cxRtClientDown,
+  cxRtWsStatus,
   _resetCxRtForTest, _cxRtStateForTest, _pollOnceForTest,
-  _setDcxWsEnabledForTest, _setDcxWsFactoryForTest, _setCxRtNowForTest,
+  _setDcxWsEnabledForTest, _setDcxWsFactoryForTest, _setCxRtNowForTest, _setUsPremarketForTest,
 } from '../server/ai/cxRtStream.js';
 import { fetchFuturesPrices } from '../server/ai/futures.js';
 import { __resetFuturesForTests } from '../server/ai/futures.js';
@@ -621,5 +622,151 @@ describe('cxRtStream — WEBSOCKET accelerator (CoinDCX futures socket)', () => 
     expect(t!.price).toBeCloseTo(333.75, 6);
     expect(t!.source).toBe('coindcx-glob-ws');
     cxRtClientDown();
+  });
+});
+
+// ============================================================
+// v10.14 (deep-recheck S2) — DOMAIN-AWARE SILENCE BUDGETS
+//   Equity USDC perps (AAPL/MU/SPCX) legitimately go minutes without
+//   a print (especially US premarket) — the old flat 120s watchdog
+//   mistook that for a contract mismatch and benched the accelerator
+//   for 10 min ("ultra-fast feel gone"). New contract:
+//     • FUT-subscribed session silent > 2 min  → still killed (crypto
+//       never goes that quiet — strict thresholds UNCHANGED)
+//     • GLOB-only session silent 2 min         → alive (quiet ≠ dead)
+//     • GLOB-only session silent 5 min         → killed, 3-min cooldown
+//     • GLOB-only in US premarket, 5 min       → still alive (7.5-min budget)
+//     • cxRtWsStatus() exposes the reason + remaining cooldown
+// ============================================================
+describe('cxRtStream — v10.14 GLOB-aware silent-kill thresholds', () => {
+  afterEach(() => { _setUsPremarketForTest(null); });
+
+  // local armWs (the WS-accelerator suite's helper is describe-scoped)
+  function armWs(sockets: FakeDcxWs[]) {
+    _setDcxWsEnabledForTest(true);
+    _setDcxWsFactoryForTest((url: string) => {
+      const s = new FakeDcxWs(url);
+      sockets.push(s);
+      return s;
+    });
+  }
+
+  it('GLOB-only + 2 min of silence → socket ALIVE (quiet equity feed ≠ dead contract)', async () => {
+    routeFetch(() => null);
+    const sockets: FakeDcxWs[] = [];
+    armWs(sockets);
+    _setUsPremarketForTest(() => false); // regular hours budget = 5 min
+    const t0 = Date.now();
+    let fake = t0;
+    _setCxRtNowForTest(() => fake);
+    try {
+      ensureCxRtSubscribed({ glob: ['AAPL', 'MU'] });
+      cxRtClientUp();
+      await vi.waitFor(() => expect(sockets.length).toBe(1));
+      const sock = sockets[0];
+      await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(2));
+
+      fake = t0 + 121_000; // past the OLD 2-min kill point
+      await _pollOnceForTest();
+      expect(_cxRtStateForTest().ws.socket).toBe(true);            // NOT killed
+      expect(sock.closed).toBe(false);
+      expect(_cxRtStateForTest().wsDisabledUntil).toBe(0);          // no cooldown
+      expect(cxRtWsStatus().cooldownActive).toBe(false);
+      expect(cxRtWsStatus().premarketBudget).toBe(300_000);         // the honest live budget
+    } finally {
+      _setCxRtNowForTest(null);
+      cxRtClientDown();
+    }
+  });
+
+  it('GLOB-only + 5 min of silence → killed with the SHORT 3-min cooldown (glob-quiet reason)', async () => {
+    routeFetch(() => null);
+    const sockets: FakeDcxWs[] = [];
+    armWs(sockets);
+    _setUsPremarketForTest(() => false);
+    const t0 = Date.now();
+    let fake = t0;
+    _setCxRtNowForTest(() => fake);
+    try {
+      ensureCxRtSubscribed({ glob: ['AAPL'] });
+      cxRtClientUp();
+      await vi.waitFor(() => expect(sockets.length).toBe(1));
+      const sock = sockets[0];
+      await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(1));
+
+      fake = t0 + 301_000;
+      await _pollOnceForTest();
+      expect(_cxRtStateForTest().ws.socket).toBe(false);             // killed
+      expect(sock.closed).toBe(true);
+      expect(_cxRtStateForTest().wsDisabledUntil).toBeGreaterThan(fake);        // cooldown armed…
+      expect(_cxRtStateForTest().wsDisabledUntil - fake).toBeLessThanOrEqual(3 * 60_000 + 1); // …but only 3 min
+      expect(_cxRtStateForTest().wsCooldownReason).toBe('glob-quiet');
+      const st = cxRtWsStatus();
+      expect(st.cooldownActive).toBe(true);
+      expect(st.cooldownReason).toBe('glob-quiet');
+      expect(st.cooldownRemainMs).toBeGreaterThan(0);
+    } finally {
+      _setCxRtNowForTest(null);
+      cxRtClientDown();
+    }
+  });
+
+  it('same 5-min silence in US PREMARKET → still alive (7.5-min budget)', async () => {
+    routeFetch(() => null);
+    const sockets: FakeDcxWs[] = [];
+    armWs(sockets);
+    _setUsPremarketForTest(() => true); // 04:00–09:30 ET widened budget
+    const t0 = Date.now();
+    let fake = t0;
+    _setCxRtNowForTest(() => fake);
+    try {
+      ensureCxRtSubscribed({ glob: ['AAPL'] });
+      cxRtClientUp();
+      await vi.waitFor(() => expect(sockets.length).toBe(1));
+      const sock = sockets[0];
+      await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(1));
+
+      fake = t0 + 301_000; // would die at regular-hours budget
+      await _pollOnceForTest();
+      expect(_cxRtStateForTest().ws.socket).toBe(true);             // premarket mercy
+      expect(sock.closed).toBe(false);
+      expect(cxRtWsStatus().premarketBudget).toBe(450_000);
+
+      fake = t0 + 451_000; // past even the widened budget
+      await _pollOnceForTest();
+      expect(_cxRtStateForTest().ws.socket).toBe(false);
+      expect(_cxRtStateForTest().wsCooldownReason).toBe('glob-quiet');
+    } finally {
+      _setUsPremarketForTest(null);
+      _setCxRtNowForTest(null);
+      cxRtClientDown();
+    }
+  });
+
+  it('a FUT-subscribed session keeps the STRICT crypto thresholds — 2 min silence still kills (10-min cooldown)', async () => {
+    routeFetch(() => null);
+    const sockets: FakeDcxWs[] = [];
+    armWs(sockets);
+    _setUsPremarketForTest(() => false);
+    const t0 = Date.now();
+    let fake = t0;
+    _setCxRtNowForTest(() => fake);
+    try {
+      ensureCxRtSubscribed({ fut: ['BTC'], glob: ['AAPL'] }); // BOTH domains — crypto speaks loudest
+      cxRtClientUp();
+      await vi.waitFor(() => expect(sockets.length).toBe(1));
+      const sock = sockets[0];
+      await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(2));
+
+      fake = t0 + 121_000;
+      await _pollOnceForTest();
+      expect(_cxRtStateForTest().ws.socket).toBe(false);             // killed — crypto silence IS broken
+      expect(sock.closed).toBe(true);
+      expect(_cxRtStateForTest().wsCooldownReason).toBe('silent-contract');
+      expect(_cxRtStateForTest().wsDisabledUntil - fake).toBeGreaterThan(5 * 60_000); // 10-min cooldown
+    } finally {
+      _setCxRtNowForTest(null);
+      cxRtClientDown();
+    }
   });
 });

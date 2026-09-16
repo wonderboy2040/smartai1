@@ -44,6 +44,40 @@ export interface CxLiveTick {
 
 export type CxLiveStatus = 'connecting' | 'live' | 'down';
 
+/** v10.14 (deep-recheck S2 #3): the cxRt WS accelerator health, mirrored
+ *  from the SSE `status` frame's `cxRt` field (server cxRtWsStatus()).
+ *  Lets the badge explain WHY the ultra-fast feed degraded instead of
+ *  silently reverting to the 2s REST cadence. */
+export interface CxWsHealth {
+  enabled: boolean;
+  connected: boolean;
+  healthy: boolean;
+  cooldownActive: boolean;
+  cooldownRemainMs: number;
+  cooldownReason: string | null;
+  failStreak: number;
+  domains?: { fut: number; glob: number };
+  premarketBudget?: number | null;
+}
+
+function toWsHealth(raw: Record<string, unknown> | null | undefined): CxWsHealth | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  return {
+    enabled: raw.enabled !== false,
+    connected: raw.connected === true,
+    healthy: raw.healthy === true,
+    cooldownActive: raw.cooldownActive === true,
+    cooldownRemainMs: num(raw.cooldownRemainMs),
+    cooldownReason: typeof raw.cooldownReason === 'string' ? raw.cooldownReason : null,
+    failStreak: num(raw.failStreak),
+    domains: raw.domains && typeof raw.domains === 'object'
+      ? { fut: num((raw.domains as Record<string, unknown>).fut), glob: num((raw.domains as Record<string, unknown>).glob) }
+      : undefined,
+    premarketBudget: typeof raw.premarketBudget === 'number' ? raw.premarketBudget : null,
+  };
+}
+
 const FLUSH_MS = 800;
 const MAX_SYMS_PER_DOMAIN = 40; // parseSyms server-cap is 60; stay polite
 
@@ -79,6 +113,8 @@ export function useCxLivePrices(active: boolean, spot: string[], fut: string[], 
   const [ticks, setTicks] = useState<Record<string, CxLiveTick>>({});
   const [status, setStatus] = useState<CxLiveStatus>('connecting');
   const [lastAt, setLastAt] = useState(0);
+  // v10.14: WS accelerator health (null until the first status frame lands)
+  const [wsHealth, setWsHealth] = useState<CxWsHealth | null>(null);
 
   const spotKey = cleanList(spot).join(',');
   const futKey = cleanList(fut).join(',');
@@ -133,6 +169,12 @@ export function useCxLivePrices(active: boolean, spot: string[], fut: string[], 
 
     src.onopen = () => setStatus('live');
     src.onerror = () => setStatus('down');
+    src.addEventListener('status', (e: MessageEvent) => {
+      try {
+        const frame = JSON.parse(e.data) as Record<string, unknown>;
+        setWsHealth(toWsHealth(frame?.cxRt as Record<string, unknown> | undefined));
+      } catch { /* malformed frame */ }
+    });
     src.addEventListener('snapshot', (e: MessageEvent) => {
       try {
         const map = JSON.parse(e.data) as Record<string, Record<string, unknown>>;
@@ -163,5 +205,5 @@ export function useCxLivePrices(active: boolean, spot: string[], fut: string[], 
     return ticks[key] || null;
   }, [ticks]);
 
-  return { ticks, status, lastAt, forSignal };
+  return { ticks, status, lastAt, forSignal, wsHealth };
 }

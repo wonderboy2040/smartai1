@@ -968,6 +968,10 @@ bot.onText(/^\/help(@\w+)?$/i, async (msg) => {
 💰 <b>/smartmoney</b> — Real FII/DII flow + site regime read
 📊 <b>/regime</b> — Site's own regime read (boards)
 🤝 <b>/consensus &lt;query&gt;</b> — Site desk-agent consensus (14 models)
+📍 <b>/positions</b> — Open positions, dono desks (CoinDCX + India paper)
+💰 <b>/pnl [today|week]</b> — Realized P&L per desk
+🇮🇳 <b>/nse &lt;SYM&gt;</b> — NSE desk deep-dive (intraday agent)
+🔧 <b>/selftest</b> — Data-path health audit (saare commands ka live check)
 🔍 <b>/scan &lt;SYM&gt;</b> — Site deep ticket (committee + debate)
 📊 <b>/weeklyreview</b> — Weekly trade-performance digest
 🤖 <b>/ml &lt;SYM&gt;</b> — LightGBM ML signal
@@ -1331,6 +1335,250 @@ bot.onText(/^\/coindcx(@\w+)?$/i, async (msg) => {
     (cdcx.lastError ? `⚠️ Last error: ${cdcx.lastError}\n` : '') +
     `\nLive crypto prices: CoinDCX INR + Binance stream (web + /crypto).`);
 });
+
+
+// ========================================
+// v10.14 (deep-recheck S4): DESK COMMANDS — /positions · /pnl · /nse · /selftest
+// All four pull from the SAME site endpoints the web app's panels use
+// (site bridge: 127.0.0.1 loopback + server-only API_TOKEN) — one source
+// of truth, no second data path that could drift out of sync.
+// ========================================
+
+// ---- COMMAND: /positions — open positions across BOTH desks ----
+bot.onText(/^\/positions(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  if (!siteAgents.siteBridgeReady()) {
+    return safeSend(chatId, '⚠️ <b>Site bridge down</b> — /positions ko site server chahiye.\nRender env me <code>API_TOKEN</code> set hai? Web app (server) chal raha hai?');
+  }
+  await safeSend(chatId, '📍 <b>Fetching open positions — dono desks…</b>');
+  const [cxRes, paperRes] = await Promise.allSettled([
+    siteAgents.siteFetch('/api/ai/positions', { timeoutMs: 20000 }),
+    siteAgents.siteFetch('/api/intraday-paper', { timeoutMs: 15000 }),
+  ]);
+  const cxView = cxRes.status === 'fulfilled' && cxRes.value?.ok ? cxRes.value.data : null;
+  const cxErr = cxRes.status === 'rejected'
+    ? String(cxRes.reason?.message || cxRes.reason || 'network error').slice(0, 90)
+    : String(cxRes.value?.error || 'site error').slice(0, 90);
+  const paper = paperRes.status === 'fulfilled' && paperRes.value?.ok ? paperRes.value.data : null;
+  const paperErr = paperRes.status === 'rejected'
+    ? String(paperRes.reason?.message || paperRes.reason || 'network error').slice(0, 90)
+    : String(paperRes.value?.error || 'site error').slice(0, 90);
+
+  const fmtNum = (v, maxFrac = 2) => Number.isFinite(Number(v))
+    ? Number(v).toLocaleString('en-IN', { maximumFractionDigits: maxFrac }) : '—';
+  const pnlStr = (v) => Number.isFinite(Number(v))
+    ? `${Number(v) >= 0 ? '+' : '−'}₹${Math.abs(Math.round(Number(v))).toLocaleString('en-IN')}` : '—';
+
+  const lines = ['📍 <b>OPEN POSITIONS — Both Desks</b>', '━━━━━━━━━━━━━━━━━━━━━━━━━'];
+
+  // ---- ₿ CoinDCX desk (journal: CRYPTO spot / USDT perps / USDC equity / INDIA-broker) ----
+  lines.push('₿ <b>CoinDCX Desk</b>');
+  if (!cxView) {
+    lines.push(`  ⚠️ ${cxErr}`);
+  } else {
+    const open = (cxView.positions || []).filter(p => p.status === 'OPEN' || p.status === 'UNKNOWN');
+    if (open.length === 0) lines.push('  <i>no open positions — desk flat ✅</i>');
+    for (const p of open.slice(0, 12)) {
+      const usd = p.market === 'FUTURES' || p.market === 'GLOBALFUTURES';
+      const cur = usd ? '$' : '₹';
+      lines.push(
+        `  • <b>${p.pair || p.symbol}</b> ${p.side}${p.leverage > 1 ? ` ${p.leverage}x` : ''} ` +
+        `${cur}${fmtNum(p.entryPrice, 4)} → <b>${cur}${fmtNum(p.ltp, 4)}</b> · ${pnlStr(p.unrealizedPnlINR)}`,
+      );
+    }
+    if (open.length > 12) lines.push(`  <i>…+${open.length - 12} more — app ke Positions panel me dekho</i>`);
+  }
+
+  // ---- 🇮🇳 India Intraday desk (paper book) ----
+  lines.push('🇮🇳 <b>India Intraday Desk</b> <i>(paper)</i>');
+  if (!paper) {
+    lines.push(`  ⚠️ ${paperErr}`);
+  } else {
+    const open = (paper.open || []).filter(t => t.status === 'OPEN' || t.status === 'PARTIAL');
+    if (open.length === 0) lines.push('  <i>no open paper trades ✅</i>');
+    for (const t of open.slice(0, 10)) {
+      lines.push(
+        `  • <b>${t.label || t.symbol}</b> ${t.direction} ₹${fmtNum(t.entry)} → <b>₹${fmtNum(t.lastPrice)}</b> · ${pnlStr(t.unrealizedPnl)}${t.status === 'PARTIAL' ? ' · partial' : ''}`,
+      );
+    }
+    if (open.length > 10) lines.push(`  <i>…+${open.length - 10} more</i>`);
+  }
+  lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━', '<i>SL/target touch hote hi instant push aa jayega (5s watcher). Executor fill-message ≤60s.</i>');
+  await safeSend(chatId, lines.join('\n'));
+});
+
+// ---- COMMAND: /pnl [today|week] — realized P&L per desk ----
+bot.onText(/^\/pnl(?:@\w+)?(?:\s+(today|week|aaj|hafta|weekly))?$/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  const scopeRaw = (match?.[1] || 'today').toLowerCase();
+  const isWeek = ['week', 'hafta', 'weekly'].includes(scopeRaw);
+  if (!siteAgents.siteBridgeReady()) {
+    return safeSend(chatId, '⚠️ <b>Site bridge down</b> — /pnl ko site server chahiye (API_TOKEN + running web app).');
+  }
+
+  if (!isWeek) {
+    await safeSend(chatId, '💰 <b>Computing today ka P&L (dono desks)…</b>');
+    const [cxRes, paperRes] = await Promise.allSettled([
+      siteAgents.siteFetch('/api/ai/positions', { timeoutMs: 20000 }),
+      siteAgents.siteFetch('/api/intraday-paper', { timeoutMs: 15000 }),
+    ]);
+    const cxView = cxRes.status === 'fulfilled' && cxRes.value?.ok ? cxRes.value.data : null;
+    const paper = paperRes.status === 'fulfilled' && paperRes.value?.ok ? paperRes.value.data : null;
+    const cxStats = cxView?.stats || null;
+    const cxOpen = (cxView?.positions || []).filter(p => p.status === 'OPEN' || p.status === 'UNKNOWN');
+    const cxUnreal = cxOpen.reduce((a, p) => a + (Number(p.unrealizedPnlINR) || 0), 0);
+    const pStats = paper?.stats || null;
+
+    const inr = (v) => Number.isFinite(Number(v)) ? `₹${Math.round(Number(v)).toLocaleString('en-IN')}` : '—';
+    const sign = (v) => Number.isFinite(Number(v)) ? (Number(v) >= 0 ? '+' : '−') : '';
+    const lines = [
+      `💰 <b>P&amp;L — TODAY</b> (${new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' })})`,
+      '━━━━━━━━━━━━━━━━━━━━━━━━━',
+      '₿ <b>CoinDCX Desk</b>',
+      `  Realized: ${sign(cxStats?.realizedPnlINR)}${inr(cxStats?.realizedPnlINR)} · Trades: ${cxStats?.tradesCount ?? '—'}`,
+      `  Open uP&amp;L: ${sign(cxUnreal)}${inr(cxUnreal)} (${cxOpen.length} open)`,
+      '🇮🇳 <b>India Intraday Desk</b> <i>(paper)</i>',
+      `  Realized: ${sign(pStats?.dayRealizedPnl)}${inr(pStats?.dayRealizedPnl)} · Open uP&amp;L: ${sign(pStats?.dayUnrealizedPnl)}${inr(pStats?.dayUnrealizedPnl)}`,
+      `  Lifetime: ${sign(pStats?.totalRealizedPnl)}${inr(pStats?.totalRealizedPnl)} · W/L: ${pStats?.wins ?? 0}/${pStats?.losses ?? 0}`,
+      '━━━━━━━━━━━━━━━━━━━━━━━━━',
+      `<b>Combined realized: ${sign((Number(cxStats?.realizedPnlINR) || 0) + (Number(pStats?.dayRealizedPnl) || 0))}${inr((Number(cxStats?.realizedPnlINR) || 0) + (Number(pStats?.dayRealizedPnl) || 0))}</b>`,
+      '<i>Poora trade-by-trade: /weeklyreview ya app ka Ledger panel.</i>',
+    ];
+    return safeSend(chatId, lines.join('\n'));
+  }
+
+  // ---- week view: the SAME weekly-review quant numbers ----
+  await safeSend(chatId, '💰 <b>Computing week ka P&amp;L digest…</b>');
+  const wr = await siteAgents.siteWeeklyReview({ timeoutMs: 40000 });
+  if (!wr.ok) {
+    return safeSend(chatId, `⚠️ <b>Weekly review:</b> ${String(wr.error || 'unavailable').slice(0, 160)}`);
+  }
+  const ai = wr.data?.quant?.ai;
+  const ind = wr.data?.quant?.intraday;
+  const lines = [
+    `💰 <b>P&amp;L — THIS WEEK</b> (${wr.data?.weekKey || ''})`,
+    '━━━━━━━━━━━━━━━━━━━━━━━━━',
+    '₿ <b>CoinDCX Desk (settled)</b>',
+    `  Trades: ${ai?.trades ?? 0} · W/L: ${ai?.wins ?? 0}/${ai?.losses ?? 0} · Win-rate: ${ai?.winRate != null ? `${ai.winRate}%` : '—'}`,
+    `  Net: <b>${Number(ai?.netPnlINR) >= 0 ? '+' : '−'}₹${Math.abs(Math.round(Number(ai?.netPnlINR) || 0)).toLocaleString('en-IN')}</b> · Avg/trade: ₹${Math.round(Number(ai?.avgPnlINR) || 0).toLocaleString('en-IN')}`,
+  ];
+  if (ai?.best?.pair) lines.push(`  Best: <b>${ai.best.pair}</b> ${ai.best.pnlINR >= 0 ? '+' : ''}${Math.round(ai.best.pnlINR)}₹`);
+  if (ai?.worst?.pair) lines.push(`  Worst: <b>${ai.worst.pair}</b> ${ai.worst.pnlINR >= 0 ? '+' : ''}${Math.round(ai.worst.pnlINR)}₹`);
+  if (ind && ind.count > 0) {
+    lines.push(
+      '🇮🇳 <b>India Intraday Desk (paper, 7d)</b>',
+      `  Trades: ${ind.count} · W/L: ${ind.wins}/${ind.losses} · Net: ${ind.netPnl >= 0 ? '+' : '−'}₹${Math.abs(Math.round(ind.netPnl)).toLocaleString('en-IN')}${ind.avgR != null ? ` · Avg ${ind.avgR}R` : ''}`,
+    );
+  }
+  lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━', '<i>AI narration ke liye: /weeklyreview</i>');
+  await safeSend(chatId, lines.join('\n'));
+});
+
+// ---- COMMAND: /nse <symbol> — India-Intraday-desk deep-dive (the intraday agent, NOT generic /ai) ----
+bot.onText(/^\/nse(?:@\w+)?\s+([A-Za-z0-9.&_-]+)/i, async (msg, match) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  const sym = String(match?.[1] || '').trim().toUpperCase();
+  if (!sym) return safeSend(chatId, 'Usage: <code>/nse RELIANCE</code>');
+  if (!siteAgents.siteBridgeReady()) {
+    return safeSend(chatId, '⚠️ <b>Site bridge down</b> — /nse ko site ka intraday agent chahiye (API_TOKEN + running web app).');
+  }
+  await safeSend(chatId, `🇮🇳 <b>NSE desk deep-dive: ${sym}…</b>\n<i>(ProTrader agent — setups, levels, regime, paper positions)</i>`);
+  const out = await siteAgents.siteAgentQuery(
+    `${sym} ka intraday deep-dive do: abhi ka setup, entry/SL/target levels, today ka regime read, aur ye symbol koi open paper position hai to uska status.`,
+    'intraday',
+    { timeoutMs: 90000 },
+  );
+  if (!out.ok) {
+    // fallback: the deterministic deep ticket (no AI keys needed)
+    const deep = await siteAgents.siteDeepScan(sym, { timeoutMs: 30000 });
+    if (deep.ok && deep.deep) {
+      return safeSend(chatId, siteAgents.formatDeepTicket({ deep: deep.deep, market: deep.market || 'INDIA', symbol: sym }));
+    }
+    return safeSend(chatId, `⚠️ <b>${sym}:</b> ${String(out.error || 'intraday agent unavailable').slice(0, 160)}`);
+  }
+  await safeSend(chatId, `<b>🇮🇳 ${sym} — Intraday Desk</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━\n${out.text}${out.engine ? `\n\n<i>engine: ${out.engine}${out.tools?.length ? ` · tools: ${out.tools.slice(0, 4).join(', ')}</i>` : '</i>'}` : ''}`);
+});
+
+// ---- COMMAND: /selftest — runtime data-path health audit (admin = configured chat) ----
+// Turns "kaunsa command mara hua hai" from a guess into a data-backed table:
+// every check runs the command's ACTUAL data fetch once, 5s budget each.
+bot.onText(/^\/selftest(@\w+)?$/i, async (msg) => {
+  if (!isAuthorized(msg)) return;
+  const chatId = msg.chat.id;
+  await safeSend(chatId, '🔧 <b>Running data-path self-test…</b>\n<i>(5s budget per check — live sources, real calls)</i>');
+
+  const rows = [];
+  const SELFTEST_BUDGET_MS = 5000;
+  const withBudget = async (fn) => {
+    let timer;
+    const bail = new Promise((_, rej) => {
+      timer = setTimeout(() => rej(new Error('timeout (>5s)')), SELFTEST_BUDGET_MS);
+      if (typeof timer.unref === 'function') timer.unref();
+    });
+    try { return await Promise.race([fn(), bail]); }
+    finally { clearTimeout(timer); }
+  };
+  const check = async (label, cmds, fn, { isOk, warnIf } = {}) => {
+    const t0 = Date.now();
+    try {
+      const out = await withBudget(fn);
+      const ms = Date.now() - t0;
+      const warn = warnIf ? warnIf(out) : null;
+      if (warn) rows.push(`⚠️ ${label} — ${warn} (${ms}ms) <i>/${cmds}</i>`);
+      else if (isOk ? isOk(out) : true) rows.push(`✅ ${label} — ${ms}ms <i>/${cmds}</i>`);
+      else rows.push(`❌ ${label} — no data (${ms}ms) <i>/${cmds}</i>`);
+    } catch (e) {
+      rows.push(`❌ ${label} — ${String(e?.message || e).slice(0, 60)} <i>/${cmds}</i>`);
+    }
+  };
+
+  // ---- direct market fetchers (the bot's own paths) ----
+  await check('CoinDCX INR tickers', 'crypto · live', () => fetchCryptoPricesINR(), { isOk: (r) => Array.isArray(r) && r.length > 0 });
+  await check('TradingView crypto scan', 'crypto (fallback)', () => fetchCryptoPrices(), { isOk: (r) => Array.isArray(r) && r.length > 0 });
+  await check('TradingView symbol scan', 'scan · exact · compare', () => fetchSingleSymbol('RELIANCE'), { isOk: (r) => r && Number(r.price) > 0 });
+  await check('Market intelligence', 'market · digest', () => fetchMarketIntelligence(), { isOk: (r) => !!r });
+  await check('Bond yields', 'live', () => fetchBondYields(), { isOk: (r) => Array.isArray(r) && r.length > 0 });
+  await check('Forex USD/INR', 'forex', () => fetchForexRate(), { isOk: (r) => Number(r) > 50 && Number(r) < 150 });
+  if (isTavilyAvailable) {
+    await check('FII/DII flow (Tavily)', 'fiidii', () => fetchFIIDIIData(TAVILY_API_KEY), { isOk: (r) => !!r });
+    await check('IPO tracker (Tavily)', 'ipo', () => fetchIPOData(TAVILY_API_KEY), { isOk: (r) => !!r });
+  } else {
+    rows.push('⚠️ FII/DII + IPO — Tavily key missing <i>/fiidii /ipo</i>');
+  }
+
+  // ---- AI engines (chat layer) ----
+  const aiHealth = getAIHealthStatus();
+  const aiUp = Object.entries(aiHealth || {}).filter(([, v]) => v?.available).length;
+  rows.push(`${aiUp > 0 ? '✅' : '⚠️'} AI engines — ${aiUp}/6 configured <i>/ai /chat /pro</i>`);
+
+  // ---- site bridge (the SAME endpoints the desk commands use) ----
+  if (!siteAgents.siteBridgeReady()) {
+    rows.push('⚠️ Site bridge — API_TOKEN not configured <i>/positions /pnl /nse /screener /regime local-fallback mode me hain</i>');
+  } else {
+    await check('Site: crypto board', 'screener', () => siteAgents.siteBoard('CRYPTO', { timeoutMs: SELFTEST_BUDGET_MS }), { isOk: (r) => !!r?.ok });
+    await check('Site: NSE board', 'screener', () => siteAgents.siteBoard('INDIA', { timeoutMs: SELFTEST_BUDGET_MS }), { isOk: (r) => !!r?.ok });
+    await check('Site: deep scan RELIANCE', 'scan · consensus', () => siteAgents.siteDeepScan('RELIANCE', { timeoutMs: SELFTEST_BUDGET_MS }), { isOk: (r) => !!r?.ok });
+    await check('Site: regime view', 'regime', () => siteAgents.siteRegimeView({ timeoutMs: SELFTEST_BUDGET_MS }), { isOk: (r) => !!r?.ok });
+    await check('Site: insta-push pipeline', 'positions alerts', () => siteAgents.siteInstaPushStatus({ timeoutMs: SELFTEST_BUDGET_MS }), { isOk: (r) => !!r?.ok });
+  }
+
+  const okN = rows.filter(r => r.startsWith('✅')).length;
+  const warnN = rows.filter(r => r.startsWith('⚠️')).length;
+  const failN = rows.filter(r => r.startsWith('❌')).length;
+  const table = [
+    '🔧 <b>SELF-TEST — data paths</b> (v10.14)',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━',
+    ...rows,
+    '━━━━━━━━━━━━━━━━━━━━━━━━━',
+    `📊 <b>${okN} healthy · ${failN} fail · ${warnN} warn</b>`,
+    '<i>❌ wale commands abhi live-data issue me hain (code sahi hai) — khud remove karne se pehle do baar chalake dekho. ⚠️ wale key/config maangte hain.</i>',
+  ].join('\n');
+  await safeSend(chatId, table);
+});
+
 
 // ========================================
 // COMMAND: /hidden — list removed (hidden) portfolio assets

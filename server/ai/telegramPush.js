@@ -28,6 +28,10 @@
 import { getPositionsWithPnl, loadConfig } from './coindcxOrders.js';
 import { sendTelegramMessage, telegramConfig } from './secrets.js';
 import { pairCorrelation } from './correlation.js';
+// v10.14 (deep-recheck S4): the India Intraday desk's OPEN paper positions
+// get the SAME instant level-touch push the CoinDCX desk has. Import graph
+// is acyclic (paperTrading → store/time/engine/journal — none import ai/*).
+import { getPaperSummary } from '../intraday/paperTrading.js';
 
 const TICK_ACTIVE_MS = 5000;   // open positions on the book
 const TICK_IDLE_MS = 15000;    // nothing open — watch for agent-opened entries
@@ -50,6 +54,7 @@ const _status = {
   lastOkAt: null,     // last successful poll — the pipeline heartbeat
   lastPushAt: null,
   slTpPushes: 0,
+  paperPushes: 0,     // v10.14: India-desk paper level-touch pushes
   signalPushes: 0,
   lastError: null,
 };
@@ -100,7 +105,40 @@ function _touch(p, kind, level, ltp) {
     kind, level, ltp,
     unrealizedPnlINR: Number.isFinite(Number(p.unrealizedPnlINR)) ? p.unrealizedPnlINR : null,
     leverage: p.leverage || 1,
+    ...(p.paper ? { paper: true } : {}),
   };
+}
+
+/** v10.14 (deep-recheck S4): India Intraday desk → CoinDCX position shape.
+ *  The paper store's rows (symbol/direction/lastPrice/stopLoss/target1/2,
+ *  INR-denominated P&L) map 1:1 onto detectLevelTouches' contract, so the
+ *  SAME pure detector + cooldown path serves both desks. Only INDIA-market
+ *  paper rows are watched (crypto paper rows live on the intraday-crypto
+ *  scanner desk; real CoinDCX crypto is already covered above). */
+export function paperTradesToPositionRows(summary) {
+  const rows = [];
+  for (const t of (Array.isArray(summary?.open) ? summary.open : [])) {
+    if (!t || (t.status !== 'OPEN' && t.status !== 'PARTIAL')) continue;
+    if (String(t.market || '').toUpperCase() !== 'INDIA') continue;
+    rows.push({
+      id: `paper:${t.id}`,
+      pair: t.label || t.symbol,
+      market: 'INDIA',
+      side: t.direction === 'SHORT' ? 'SHORT' : 'LONG',
+      status: 'OPEN',
+      ltp: Number(t.lastPrice),
+      sl: t.stopLoss,
+      tp: t.target1,
+      tp2: t.target2,
+      tp1Hit: !!t.t1Hit,
+      tp2Hit: false,
+      liquidation: null,
+      leverage: 1,
+      unrealizedPnlINR: t.unrealizedPnl,
+      paper: true,
+    });
+  }
+  return rows;
 }
 
 /** Cooldown gate — pure. */
@@ -129,9 +167,10 @@ export function formatLevelTouch(t) {
   const LABEL = { SL: 'STOP-LOSS TOUCHED', LIQ: 'LIQUIDATION ZONE', TP1: 'TARGET-1 TOUCHED', TP2: 'TARGET-2 TOUCHED' };
   const pnl = t.unrealizedPnlINR != null ? ` · unrealized ₹${Math.round(t.unrealizedPnlINR).toLocaleString('en-IN')}` : '';
   const lev = t.leverage > 1 ? ` · ${t.leverage}x` : '';
+  const paperTag = t.paper ? ' · <b>PAPER</b> (India Intraday desk)' : '';
   return [
     `⚡${EMOJI[t.kind] || '⚠️'} <b>INSTANT — ${LABEL[t.kind] || 'LEVEL TOUCH'}</b>`,
-    `<b>${t.pair || t.id}</b> ${t.side}${lev} · LTP <b>${_fmt(t.ltp, t.market)}</b> vs ${t.kind} ${_fmt(t.level, t.market)}${pnl}`,
+    `<b>${t.pair || t.id}</b> ${t.side}${lev} · LTP <b>${_fmt(t.ltp, t.market)}</b> vs ${t.kind} ${_fmt(t.level, t.market)}${pnl}${paperTag}`,
     `🤖 executor watcher ka fill-confirmed message ≤60s me aayega — ye level-touch early warning hai.`,
   ].join('\n');
 }
@@ -281,6 +320,23 @@ async function _tick() {
     }
     nextDelay = open.length > 0 ? TICK_ACTIVE_MS : TICK_IDLE_MS;
 
+    // --- 1b) v10.14 (deep-recheck S4): India Intraday desk paper positions
+    //     get the SAME instant level-touch push (SL/T1/T2, INR P&L, PAPER
+    //     tagged). Paper-store failures are contained — the CoinDCX desk
+    //     keeps flowing even if the intraday store is unavailable.
+    try {
+      const paperOpen = paperTradesToPositionRows(getPaperSummary());
+      for (const t of detectLevelTouches(paperOpen)) {
+        const pushed = await _pushIfFresh(_touchAlerts, `${t.id}:${t.kind}`, formatLevelTouch(t), TOUCH_COOLDOWN_MS, send);
+        if (pushed) {
+          _status.paperPushes++;
+          _status.lastPushAt = Date.now();
+          console.log(`[insta-push] paper ${t.kind} touch ${t.pair} @ ${t.ltp} (India desk)`);
+        }
+      }
+      if (paperOpen.length > 0) nextDelay = TICK_ACTIVE_MS; // paper desk open → stay at the 5s cadence
+    } catch { /* paper desk optional — never break the crypto path */ }
+
     // --- 2) fresh STRONG signals (every ~30s; board cache + single-
     //     flight keeps the underlying compute at its own cadence) ---
     _tickN++;
@@ -355,12 +411,13 @@ export function instaPushStatus() {
     lastOkAt: _status.lastOkAt,
     lastPushAt: _status.lastPushAt,
     slTpPushes: _status.slTpPushes,
+    paperPushes: _status.paperPushes,
     signalPushes: _status.signalPushes,
     lastError: _status.lastError,
     // healthy = a poll succeeded within the last 3 minutes. The legacy
     // bot's 10-min cron uses this to decide backup vs silence.
     healthy: !!(_status.lastOkAt && Date.now() - _status.lastOkAt < 3 * 60 * 1000 && instantPushEnabled()),
-    note: 'Instant push = early warning (level touch). Watcher = executor + fill truth. Legacy cron = backup heartbeat only.',
+    note: 'Instant push = early warning (level touch, CoinDCX + India paper desks). Watcher = executor + fill truth. Legacy cron = backup heartbeat only.',
   };
 }
 
@@ -378,6 +435,6 @@ export function __resetInstaPushForTests() {
   _strongAlerts.clear();
   Object.assign(_status, {
     started: false, enabled: true, startedAt: null, lastOkAt: null,
-    lastPushAt: null, slTpPushes: 0, signalPushes: 0, lastError: null,
+    lastPushAt: null, slTpPushes: 0, paperPushes: 0, signalPushes: 0, lastError: null,
   });
 }

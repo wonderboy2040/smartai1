@@ -69,10 +69,24 @@ let _bnFut = { at: 0, byBase: null }; // { at, byBase: Map<BASE, row> }
 // ---- v10.11 CoinDCX futures WebSocket (docs.coindcx.com) ----
 const DCX_WS_URL = 'wss://stream.coindcx.com/socket.io/?EIO=3&transport=websocket';
 const WS_TICK_FRESH_MS = 30_000;      // a landed tick within 30s proves the WS contract works
-const WS_SILENT_KILL_MS = 120_000;    // ns-connected but ZERO attributable ticks → contract mismatch
+const WS_SILENT_KILL_MS = 120_000;    // ns-connected but ZERO attributable ticks → contract mismatch (crypto domain)
 const WS_FAIL_LIMIT = 3;              // consecutive handshake failures → cooldown
 const WS_COOLDOWN_MS = 10 * 60_000;   // then stop hammering the socket for 10 min
 const WS_RECONNECT_MS = 3_000;        // base reconnect delay (backoff ×2 → 24s cap)
+// v10.14 (deep-recheck S2) DOMAIN-AWARE LIVENESS: crypto USDT perps tick
+// sub-second — 2 min of total silence really IS a broken contract. But
+// USDC equity perps (AAPL/MU/SPCX synthetics) legitimately go minutes
+// without a print, ESPECIALLY in US premarket (04:00–09:30 ET) when the
+// underlying market itself hasn't opened. The old flat 120s watchdog
+// mistook a quiet-but-healthy GLOB-only session for a docs mismatch →
+// killed the socket → benched the accelerator for 10 min = the
+// "ultra-fast feel gone in premarket" regression. GLOB-only sessions
+// now get a 5-min budget (7.5-min in premarket) and a shorter 3-min
+// cooldown when the quiet-kill does fire; FUT-subscribed sessions keep
+// the strict crypto thresholds unchanged.
+const GLOB_SILENT_KILL_MS = 300_000;
+const GLOB_PREMARKET_SILENT_KILL_MS = 450_000;
+const GLOB_QUIET_COOLDOWN_MS = 3 * 60_000;
 
 // ---- per-domain state (same shape as cryptoStream's spot book) ----
 const _futSubscribed = new Set();      // BASE (BTC, ETH, …)
@@ -91,15 +105,18 @@ let _wsFactory = null;                 // test injection
 let _wsEnabled = true;                 // production ON; _resetCxRtForTest disables (hermetic suites)
 let _wsFailStreak = 0;                 // consecutive handshake failures
 let _wsDisabledUntil = 0;              // circuit-breaker cooldown
+let _wsCooldownReason = null;          // v10.14: 'handshake-streak' | 'silent-contract' | 'glob-quiet'
 let _wsReconnectTimer = null;
 let _wsLastTickAt = 0;                 // last ATTRIBUTABLE WS tick epoch (the proof)
 let _wsOpenedAt = 0;                   // ns-connect epoch (silent-contract watchdog)
 
 // test injection
 let _nowFn = () => Date.now();
+let _usPremarketFn = null;             // v10.14: injectable premarket clock (hermetic tests)
 export function _setCxRtNowForTest(fn) { _nowFn = fn || (() => Date.now()); }
 export function _setDcxWsFactoryForTest(fn) { _wsFactory = fn; }
 export function _setDcxWsEnabledForTest(v) { _wsEnabled = !!v; }
+export function _setUsPremarketForTest(fn) { _usPremarketFn = fn; }
 
 const _num = (v) => { const n = typeof v === 'number' ? v : parseFloat(String(v ?? '')); return Number.isFinite(n) ? n : 0; };
 
@@ -478,6 +495,7 @@ function _registerWsFailure() {
   _wsFailStreak += 1;
   if (_wsFailStreak >= WS_FAIL_LIMIT) {
     _wsDisabledUntil = _nowFn() + WS_COOLDOWN_MS;
+    _wsCooldownReason = 'handshake-streak';
     _wsFailStreak = 0;
   }
 }
@@ -492,16 +510,50 @@ function _scheduleWsReconnect() {
   if (_wsReconnectTimer.unref) _wsReconnectTimer.unref();
 }
 
-/** ns-connected for 2 minutes with ZERO attributable ticks → the event
- *  payload's attribution shape differs from our best-effort parse. Kill
- *  the socket + cooldown (10 min); the 2s REST poller owns both desks
- *  meanwhile. This is why a docs mismatch can never freeze prices. */
+/** US premarket window — Mon–Fri 04:00–09:30 America/New_York
+ *  (equity-perp synthetic flow is sparsest exactly here). Timezone
+ *  math via Intl so the server's own TZ is irrelevant; ANY parse failure
+ *  conservatively says "regular hours" (the shorter budget). */
+function _isUsPremarketDefault(nowMs) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false,
+    }).formatToParts(new Date(nowMs));
+    const get = (t) => (parts.find(p => p.type === t) || {}).value || '';
+    const wd = get('weekday');
+    if (wd === 'Sat' || wd === 'Sun') return false;
+    const h = parseInt(get('hour'), 10) % 24;
+    const m = parseInt(get('minute'), 10);
+    const mins = (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+    return mins >= 4 * 60 && mins < 9 * 60 + 30;
+  } catch { return false; }
+}
+function _isUsPremarket(nowMs) {
+  return _usPremarketFn ? !!_usPremarketFn(nowMs) : _isUsPremarketDefault(nowMs);
+}
+
+/** v10.14: the silence budget for a GLOB-only session (no FUT symbols).
+ *  Regular hours: 5 min. US premarket: 7.5 min. */
+function _globSilentBudgetMs(now) {
+  return _isUsPremarket(now) ? GLOB_PREMARKET_SILENT_KILL_MS : GLOB_SILENT_KILL_MS;
+}
+
+/** ns-connected with ZERO attributable ticks → either the event payload's
+ *  attribution shape differs from our best-effort parse (a real contract
+ *  mismatch — crypto proves itself within seconds) or a quiet equity-perp
+ *  session (GLOB-only). Kill the socket + cooldown; the 2s REST poller owns
+ *  both desks meanwhile. This is why a docs mismatch can never freeze
+ *  prices. v10.14: the budget + cooldown are DOMAIN-AWARE (see S2 note). */
 function _wsSilentContractWatchdog(now) {
   if (!_io || !_io.state().connected) return;
   if (_wsLastTickAt > 0) return;                 // ticks ARE landing — healthy
-  if (!_wsOpenedAt || (now - _wsOpenedAt) < WS_SILENT_KILL_MS) return;
-  _closeWs('silent-contract');
-  _wsDisabledUntil = now + WS_COOLDOWN_MS;       // stop re-probing for 10 min
+  const hasFut = _futSubscribed.size > 0;
+  const budgetMs = hasFut ? WS_SILENT_KILL_MS : _globSilentBudgetMs(now);
+  if (!_wsOpenedAt || (now - _wsOpenedAt) < budgetMs) return;
+  const quietGlob = !hasFut;
+  _closeWs(quietGlob ? 'glob-quiet' : 'silent-contract');
+  _wsCooldownReason = quietGlob ? 'glob-quiet' : 'silent-contract';
+  _wsDisabledUntil = now + (quietGlob ? GLOB_QUIET_COOLDOWN_MS : WS_COOLDOWN_MS);
 }
 
 /** One price-change event → liveFeed, IF it can be attributed to a
@@ -597,8 +649,10 @@ export function _resetCxRtForTest() {
   _wsEnabled = false; // hermetic default — WS suites opt back in via _setDcxWsEnabledForTest(true)
   _wsFailStreak = 0;
   _wsDisabledUntil = 0;
+  _wsCooldownReason = null;
   _wsLastTickAt = 0;
   _wsOpenedAt = 0;
+  _usPremarketFn = null;
 }
 
 /** Direct poll invocation for the regression suite (the interval itself
@@ -613,8 +667,32 @@ export function _cxRtStateForTest() {
     ws: _io ? _io.state() : { socket: false, connected: false, channels: [] },
     wsHealthy: _wsHealthy(),
     wsDisabledUntil: _wsDisabledUntil,
+    wsCooldownReason: _wsCooldownReason,
     fut: [..._futSubscribed],
     glob: [..._globSubscribed],
     fallbackAt: _fallbackAt,
+  };
+}
+
+/** v10.14 (deep-recheck S2 #3): PUBLIC WS health for the SSE `status`
+ *  frame + /api/feed-status — the UI can now say WHY the ultra-fast
+ *  badge degraded ("GLOB feed quiet — cooling down 2m") instead of
+ *  silently reverting to REST. Pure snapshot, no side effects. */
+export function cxRtWsStatus() {
+  const now = _nowFn();
+  const cooling = now < _wsDisabledUntil;
+  return {
+    enabled: _wsEnabled,
+    connected: !!_io && _io.state().connected,
+    healthy: _wsHealthy(),
+    lastTickAt: _wsLastTickAt || null,
+    openedAt: _wsOpenedAt || null,
+    failStreak: _wsFailStreak,
+    cooldownActive: cooling,
+    cooldownRemainMs: cooling ? Math.max(0, _wsDisabledUntil - now) : 0,
+    cooldownReason: cooling ? _wsCooldownReason : null,
+    domains: { fut: _futSubscribed.size, glob: _globSubscribed.size },
+    premarketBudget: _futSubscribed.size === 0 && _globSubscribed.size > 0
+      ? _globSilentBudgetMs(now) : null, // the live GLOB-only silence budget
   };
 }

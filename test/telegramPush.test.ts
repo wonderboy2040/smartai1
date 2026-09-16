@@ -12,11 +12,18 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const mockPositions = vi.fn(async () => ({ positions: [] }));
 const mockConfig = vi.fn(() => ({ killSwitch: false }));
 const mockSend = vi.fn(async () => ({ ok: true }));
+const mockPaperSummary = vi.fn(() => ({ open: [] }));
 let pairRCalls = [];
 
 vi.mock('../server/ai/coindcxOrders.js', () => ({
   getPositionsWithPnl: () => mockPositions(),
   loadConfig: () => mockConfig(),
+}));
+
+// v10.14 (deep-recheck S4): the India Intraday paper desk is mocked at the
+// store boundary — the adapter + detection + push path stays real.
+vi.mock('../server/intraday/paperTrading.js', () => ({
+  getPaperSummary: () => mockPaperSummary(),
 }));
 
 vi.mock('../server/ai/secrets.js', () => ({
@@ -36,7 +43,8 @@ vi.mock('../server/ai/correlation.js', () => ({
 import {
   detectLevelTouches, cooldownOk, formatLevelTouch, formatStrongSignal, formatStrongBundle,
   groupCorrelatedSignals, scanStrongSignalsBackup, instaPushStatus, instantPushEnabled,
-  __mapsForTests, __resetInstaPushForTests,
+  paperTradesToPositionRows,
+  __mapsForTests, __resetInstaPushForTests, __tickForTests, __statusForTests,
 } from '../server/ai/telegramPush.js';
 
 const P = (o) => ({
@@ -50,6 +58,8 @@ beforeEach(() => {
   mockSend.mockClear();
   mockPositions.mockClear();
   mockConfig.mockClear();
+  mockPaperSummary.mockClear();
+  mockPaperSummary.mockImplementation(() => ({ open: [] }));
   pairRCalls = [];
 });
 
@@ -212,6 +222,70 @@ describe('scanStrongSignalsBackup (the shared scan)', () => {
     const out = await scanStrongSignalsBackup(mkDeps([strong('BTC')], []));
     expect(out.pushed).toBe(0);
     expect(mockSend).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================
+// v10.14 (deep-recheck S4) — India Intraday paper desk push parity
+// ============================================================
+describe('India Intraday paper desk — instant push parity', () => {
+  const PT = (o = {}) => ({
+    id: 7, symbol: 'RELIANCE', market: 'INDIA', direction: 'LONG',
+    entry: 2500, stopLoss: 2450, target1: 2550, target2: 2600, status: 'OPEN',
+    t1Hit: false, lastPrice: 2440, unrealizedPnl: -600, ...o,
+  });
+
+  it('paperTradesToPositionRows maps INDIA open rows onto the detector shape (crypto/closed skipped)', () => {
+    const rows = paperTradesToPositionRows({
+      open: [
+        PT(),
+        PT({ market: 'CRYPTO', symbol: 'BTC', lastPrice: 60000 }), // not the India desk
+        PT({ status: 'CLOSED' }),
+        PT({ status: 'PARTIAL', t1Hit: true }), // partial still watched
+      ],
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ id: 'paper:7', pair: 'RELIANCE', side: 'LONG', sl: 2450, tp: 2550, paper: true });
+    expect(rows[1].tp1Hit).toBe(true);
+  });
+
+  it('an SL touch on an India paper trade fires the SAME push path (PAPER tagged)', async () => {
+    mockPaperSummary.mockImplementationOnce(() => ({ open: [PT()] })); // lastPrice 2440 <= sl 2450
+    await __tickForTests();
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const txt = mockSend.mock.calls[0][0];
+    expect(txt).toMatch(/STOP-LOSS TOUCHED/);
+    expect(txt).toMatch(/RELIANCE/);
+    expect(txt).toMatch(/PAPER/);
+    expect(txt).toMatch(/India Intraday desk/);
+    expect(__statusForTests().paperPushes).toBe(1);
+    // dedupe: the 30-min cooldown makes the next tick silent
+    mockPaperSummary.mockImplementationOnce(() => ({ open: [PT()] }));
+    await __tickForTests();
+    expect(mockSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('TP1 on the India desk pushes too (target1 mapping, option label as pair)', async () => {
+    mockPaperSummary.mockImplementationOnce(() => ({
+      open: [PT({ lastPrice: 2560, label: 'Nifty50 16Sep 23400 CE' })],
+    }));
+    await __tickForTests();
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const txt = mockSend.mock.calls[0][0];
+    expect(txt).toMatch(/TARGET-1 TOUCHED/);
+    expect(txt).toMatch(/23400 CE/);
+  });
+
+  it('a broken paper store NEVER breaks the CoinDCX push path', async () => {
+    mockPaperSummary.mockImplementationOnce(() => { throw new Error('paper store gone'); });
+    mockPositions.mockImplementationOnce(async () => ({
+      positions: [P({ ltp: 90, sl: 92 })], // CoinDCX SL touch — must still push
+    }));
+    await __tickForTests();
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(mockSend.mock.calls[0][0]).toMatch(/BTCUSDT/);
+    expect(__statusForTests().slTpPushes).toBe(1);
+    expect(__statusForTests().lastError).toBeNull(); // contained — not a tick-level error
   });
 });
 
