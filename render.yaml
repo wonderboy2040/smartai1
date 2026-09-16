@@ -1,0 +1,164 @@
+services:
+  - type: web
+    name: wealth-ai-pro
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: node server/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: APP_PIN
+        sync: false
+      # FIX (audit H-4): API_TOKEN was missing from the blueprint while the
+      # server REQUIRES it for /api/cloud/* — every cloud-sync call returned
+      # 503 out of the box and the frontend silently fell back to the
+      # (leaked, now removed) client-side hardcoded token.
+      - key: API_TOKEN
+        sync: false
+      # SECURITY FIX (v10.13 deep-recheck H-1): VITE_API_TOKEN and
+      # VITE_ENCRYPTION_KEY are REMOVED from the blueprint. Build-time VITE_*
+      # vars are INLINED INTO THE PUBLIC BROWSER BUNDLE — a VITE_API_TOKEN
+      # equal to API_TOKEN would hand every anonymous visitor a valid master
+      # bearer token (requireAuth treats API_TOKEN as a service master key
+      # for EVERY endpoint). Cloud sync auth now comes from the runtime
+      # localStorage override (WEALTH_AI_CLOUD_TOKEN) only. The server also
+      # refuses to boot if API_TOKEN === VITE_API_TOKEN is detected in its
+      # own runtime env (belt and braces for non-Render deploys).
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: HF_API_KEY
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: TG_TOKEN
+        sync: false
+      - key: TG_CHAT_ID
+        sync: false
+      - key: API_URL
+        sync: false
+      # DURABLE PAPER-TRADE HISTORY (optional but recommended on the
+      # free plan): Render wipes server/data/ on every restart, so the
+      # engine mirrors paper-trades.json to this GitHub repo/branch.
+      # Fine-grained PAT with Contents: Read+Write on the repo.
+      - key: GITHUB_BACKUP_TOKEN
+        sync: false
+      - key: GITHUB_BACKUP_REPO
+        sync: false
+      - key: GITHUB_BACKUP_BRANCH
+        sync: false
+      - key: FINNHUB_API_KEY
+        sync: false
+      - key: DHAN_CLIENT_ID
+        sync: false
+      - key: DHAN_ACCESS_TOKEN
+        sync: false
+      # ---- v10.5 UPGRADE FLAGS (4-upgrade plan) ----
+      # META-ENSEMBLE (Upgrade 4): route the 14-model votes through the
+      # trained LightGBM meta-learner on the ml-service. Default OFF —
+      # the in-process weighted ensemble stays authoritative until the
+      # walk-forward backtest (backtest.py --strategy meta_ensemble)
+      # proves the meta-learner wins.
+      - key: AI_ENABLE_META_ENSEMBLE
+        sync: false
+      # Where the ml-service (FastAPI) lives, if deployed. The Node
+      # server proxies /api/ml/meta-ensemble to it and falls back to
+      # the weighted ensemble when unreachable.
+      - key: ML_SERVICE_URL
+        sync: false
+      # MTF CONFLUENCE (Upgrade 1): 5m/15m/1h time-frame confluence
+      # engine on the India intraday desk (IntradayTapeMTF, weight
+      # 1.6, replaces the plain 15m tape when ON).
+      - key: AI_ENABLE_MTF_CONFLUENCE
+        sync: false
+      # ---- v10.6 PRO ACCURACY UPGRADES ----
+      # REGIME-AWARE REWEIGHTING (Pro #4): TRENDING/CHOPPY/HIGH_VOL/
+      # LOW_VOL multiplier layer on the weighted-average path (±25%
+      # max). Default OFF — A/B via backtest strategy=regime_weighted
+      # first (Node runBacktest + ml-service backtest.py both support
+      # the side-by-side comparison).
+      - key: AI_ENABLE_REGIME_WEIGHTS
+        sync: false
+      # KELLY-LITE SIZING (Pro #2): riskPerTradePct becomes the ceiling;
+      # the confidence bucket's realized win-rate (trust calibration)
+      # sizes at half-Kelly. Negative edge → entry skipped.
+      - key: AI_ENABLE_KELLY_SIZING
+        sync: false
+      # AI COUNCIL DEBATE (v10.8 Pro #1): bull advocate → bear advocate
+      # → PM verdict — 3 grounded LLM steps instead of single-shot.
+      # Default ON; set 0/off to fall back to the legacy prompt.
+      - key: AI_COUNCIL_DEBATE
+        sync: false
+      # WICK FILTER (Pro #3): cross-exchange price validation against
+      # Binance. ON by default — set 1 to disable; thresholds tunable
+      # via AI_WICK_THRESHOLD_PCT / AI_WICK_ALT_THRESHOLD_PCT.
+      - key: AI_DISABLE_WICK_FILTER
+        sync: false
+      # SLIPPAGE-AWARE EXECUTION (Pro #6): TWAP-lite child-order split
+      # when the L2 depth walk expects more than this % of slippage.
+      - key: AI_SLIPPAGE_THRESHOLD_PCT
+        sync: false
+      # ---- v10.17 INDIA FULL UNIVERSE SCAN ----
+      # ON by default. Tiered cadence: T1 (base + hot) every cycle,
+      # T2 (top ~220 NSE names by TV turnover) in rotating quarter
+      # slices; hot T2 names ride T1 for 20 min. Set "off" to revert
+      # to the static ~45-name F&O base (legacy byte-identical).
+      - key: AI_INDIA_FULL_UNIVERSE
+        sync: false
+      # Discovery depth in NSE names (60-500). Default 220.
+      - key: AI_INDIA_FULL_UNIVERSE_SIZE
+        sync: false
+      # OPTIONS SCANNER: stock-option underlyings scanned alongside
+      # the 3 indices on GET /api/ai/options-scan (0-10). Default 6.
+      - key: AI_OPTIONS_SCAN_STOCKS
+        sync: false
+      # ---- v10.9 TELEGRAM UPGRADES ----
+      # #2 INSTANT PUSH: price-driven sink (5s SL/TP touches, 30s STRONG
+      # scan with correlation bundling). Default ON; set off for
+      # watcher-only alerts.
+      - key: AI_INSTANT_PUSH
+        sync: false
+      # #3 WEEKLY REVIEW: Sunday 19:00 IST auto-push (journal + calibration).
+      - key: AI_WEEKLY_REVIEW_PUSH
+        sync: false
+      # #6 MULTI-USER ROLES: "chatid:role,..." — configured chat is
+      # always admin; viewers get read-only bot access.
+      - key: TELEGRAM_ROLES
+        sync: false
+      # #4 CONTROLLED ORDER APPROVAL (all default OFF — opt-in on the
+      # user's own env): /trade → Approve button → PIN (4-12 digits) →
+      # the same executeSignal gauntlet as the website's Execute button.
+      # Daily cap + 5-min TTL enforced server-side.
+      - key: AI_TELEGRAM_APPROVALS
+        sync: false
+      - key: AI_APPROVAL_PIN
+        sync: false
+      - key: AI_APPROVAL_MAX_PER_DAY
+        sync: false
+
+  # ---- v10.5 META-ENSEMBLE WEEKLY RETRAIN (Upgrade 4) ----
+  # Refreshes meta_ensemble.pkl weekly so the stacked learner never
+  # trains on stale market data. One-shot job: python -m
+  # models.retrain_scheduler --once (fetches fresh OHLCV, retrains,
+  # saves the pkl; a failed run keeps the previous artifact — the
+  # inference side degrades to weighted-average, never crashes).
+  - type: cron
+    name: meta-ensemble-retrain
+    runtime: python
+    schedule: "0 3 * * 1"   # Mondays 03:00 UTC (post-weekend data)
+    buildCommand: pip install -r ml-service/requirements.txt
+    startCommand: python -m models.retrain_scheduler --once
+    rootDir: ml-service
