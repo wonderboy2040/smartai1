@@ -140,7 +140,16 @@ async function _flush(filename) {
   })();
   _inflight.set(filename, p);
   // If another write landed mid-push, flush it after this one ends.
-  p.then(() => { if (_pending.has(filename)) _queueFlush(filename); }).catch(() => {});
+  // v10.18 (deep-recheck #3): _lastPush was READ for the per-file 60s
+  // gap but NEVER written — PUSH_MIN_GAP_MS was dead code, so state
+  // churn could hammer the GitHub Contents API ~20×/min per file and
+  // trip the secondary rate limit → 403 → backups silently stop. Arm
+  // the gap ONLY after a successful push (a failed push retried early
+  // is the correct behavior — the remote copy is still stale).
+  p.then((pushed) => {
+    if (pushed) _lastPush.set(filename, Date.now());
+    if (_pending.has(filename)) _queueFlush(filename);
+  }).catch(() => {});
 }
 
 // ------------------------------------------------------------

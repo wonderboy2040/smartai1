@@ -139,10 +139,16 @@ export const IndiaAgentPanel = memo(function IndiaAgentPanel() {
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const viewRef = useRef<IndiaAgentView | null>(null);
   viewRef.current = view;
+  // v10.18 (deep-recheck #3): toast timer ref (see notify)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
   const notify = useCallback((ok: boolean, text: string) => {
     setToast({ ok, text });
-    setTimeout(() => setToast(null), 6000);
+    // v10.18 (deep-recheck #3): timer-ref toast — the first timer used to
+    // erase a newer message early (two actions within 6s).
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 6000);
   }, []);
 
   const poll = useCallback(async () => {
@@ -159,7 +165,10 @@ export const IndiaAgentPanel = memo(function IndiaAgentPanel() {
 
   useEffect(() => {
     poll();
-    const id = setInterval(poll, POLL_MS);
+    // v10.18 (deep-recheck #3): hidden tabs skip the poll — every sibling
+    // poller already gates on document.hidden; a backgrounded India tab
+    // used to fire a 12s-timeout API call every 15s forever.
+    const id = setInterval(() => { if (!document.hidden) poll(); }, POLL_MS);
     return () => clearInterval(id);
   }, [poll]);
 

@@ -6,7 +6,7 @@
 // mirrored to the encrypted backup, and NEVER read back raw —
 // only a masked tail (…abcd) confirms what's saved.
 // ============================================================
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { AlertsStatus, MaskedSecret } from './types';
 
 function StatusChip({ label, s }: { label: string; s?: MaskedSecret }) {
@@ -40,10 +40,15 @@ export const AlertsPanel = memo(function AlertsPanel({ fetchAlertsStatus, saveAl
 
   useEffect(() => { reload(); }, [reload]);
 
+  // v10.18 (deep-recheck #3): timer-ref message (a stale timer wiped a
+  // newer save message early).
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (flashTimer.current) clearTimeout(flashTimer.current); }, []);
   const flash = (ok: boolean, text: string) => {
     setMsg({ ok, text });
     notify(ok, text);
-    setTimeout(() => setMsg(null), 5000);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setMsg(null), 5000);
   };
 
   const save = async (patch: Record<string, string | null>) => {

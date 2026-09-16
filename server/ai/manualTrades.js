@@ -489,21 +489,37 @@ function _fmtPx(v, market) {
 
 /** Cooldown-guarded push (the insta-push pattern, self-contained).
  *  Guards: _mon may be null when alerts are evaluated outside the
- *  monitor (tests / future callers) — never crash on bookkeeping. */
+ *  monitor (tests / future callers) — never crash on bookkeeping.
+ *  v10.18 (deep-recheck #3): the FULL cooldown arms only on a
+ *  successful send — one transient Telegram blip used to suppress
+ *  the EXIT-NOW push for its whole window (30 min). A failed send
+ *  reserves a short 30s failure-retry hold instead, so the next
+ *  30s conviction sweep re-attempts. The return is now honest too
+ *  (false when nothing went out — callers journal what actually left). */
+const ALERT_FAIL_RETRY_MS = 30_000;
 async function _push(kind, id, text, cooldownMs, send) {
   const key = `${kind}:${id}`;
   const now = Date.now();
   const last = _alerts.get(key) || 0;
   if (now - last < cooldownMs) return false;
-  _alerts.set(key, now);
+  // reserve with the failure-retry window (blocks concurrent double-send)
+  _alerts.set(key, now - cooldownMs + ALERT_FAIL_RETRY_MS);
+  if (_alerts.size > 200) { // same hygiene as telegramPush
+    const cutoff = now - cooldownMs;
+    for (const [k, ts] of _alerts) if (ts < cutoff) _alerts.delete(k);
+  }
   const r = typeof send === 'function'
     ? await send(text).catch(() => ({ ok: false }))
     : { ok: false };
-  if (r?.ok !== false && _mon) {
-    _mon.status.pushes++;
-    _mon.status.lastPushAt = now;
+  if (r?.ok !== false) {
+    _alerts.set(key, now); // the full cooldown — it actually went out
+    if (_mon) {
+      _mon.status.pushes++;
+      _mon.status.lastPushAt = now;
+    }
+    return true;
   }
-  return true;
+  return false;
 }
 
 /**

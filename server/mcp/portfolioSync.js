@@ -464,9 +464,31 @@ export async function syncNow({ force = true, reason = 'manual', sources } = {})
     }
 
     // ---------------- merge + persist ----------------
-    const assets = [...indmAssets, ...cdcxAssets];
     const anyError = indmError || cdcxError;
     const anyFresh = (wantIndm && indmConnected && !indmError) || (wantCdcx && cdcxConnected && !cdcxError);
+
+    // v10.18 (deep-recheck #3): MID-SYNC DISCONNECT race. `indmConnected`
+    // / `cdcxConnected` were captured 30-60s of awaits ago at sync start.
+    // If the user disconnected a source during that window,
+    // clearSourceAssets() already wrote a snapshot WITHOUT that source's
+    // rows — and this still-running sync would then write them right
+    // back (resurrect + durable-put, surviving restarts until the next
+    // sync). Re-check connectivity in the same no-await window as the
+    // hidden re-read below and drop the now-disconnected source's rows,
+    // mirroring clearSourceAssets exactly (summary/positions/coindcx
+    // residue dropped along with them).
+    const indmStill = getStatus().connected;
+    const cdcxStill = coindcxConnected();
+    const dropIndm = indmConnected && !indmStill;
+    const dropCdcx = cdcxConnected && !cdcxStill;
+    if (dropIndm) { indmSummary = null; indmOfficial = false; indmPositions = []; }
+    if (dropCdcx) { cdcxInfo = null; }
+    const assets = (dropIndm || dropCdcx)
+      ? [...indmAssets, ...cdcxAssets].filter(a => {
+          const src = a.source || 'indmoney';
+          return !((dropIndm && src === 'indmoney') || (dropCdcx && src === 'coindcx'));
+        })
+      : [...indmAssets, ...cdcxAssets];
     const anyUsable = assets.length > 0;
 
     // Re-read hidden RIGHT BEFORE the merge write: a hide/unhide landing
@@ -505,7 +527,7 @@ export async function syncNow({ force = true, reason = 'manual', sources } = {})
         live: assets.filter(a => !a.noLive).length,
         noLive: assets.filter(a => a.noLive).length,
         resolved: assets.filter(a => a.symbol).length,
-        coindcx: cdcxAssets.length,
+        coindcx: assets.filter(a => a.source === 'coindcx').length,
       },
       lastError: indmError || cdcxError || null,
       failedAt: indmError || cdcxError ? Date.now() : null,

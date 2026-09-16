@@ -222,12 +222,20 @@ export function useCxLivePrices(active: boolean, spot: string[], fut: string[], 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, spotKey, futKey, globKey]);
 
-  /** Live tick lookup for a signal: market → key namespace. */
+  /** Live tick lookup for a signal: market → key namespace.
+   *  v10.18 (deep-recheck #3): a stale tick is NOT live — when the board
+   *  re-ranks and a symbol drops out of the watched key set, its last
+   *  tick used to keep rendering with the ⚡ live marker (a frozen price
+   *  presented as realtime, the exact "wrong signal" complaint v10.10
+   *  fixed). Older than 30s → null → the card falls back to its board
+   *  snapshot honestly. */
   const forSignal = useCallback((market: string, symbol: string): CxLiveTick | null => {
     const sym = String(symbol || '').trim().toUpperCase();
     if (!sym) return null;
     const key = market === 'FUTURES' ? `FUT_${sym}` : market === 'GLOBALFUTURES' ? `GLOB_${sym}` : `IN_${sym}`;
-    return ticks[key] || null;
+    const t = ticks[key] || null;
+    if (t && typeof t.time === 'number' && Date.now() - t.time > 30_000) return null;
+    return t;
   }, [ticks]);
 
   return { ticks, status, lastAt, forSignal, wsHealth };

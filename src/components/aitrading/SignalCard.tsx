@@ -295,6 +295,10 @@ function IndiaTradeSlip({ signal }: { signal: AISignal }) {
   // impossible to clear/edit. Clamp now happens on blur only.
   const [budgetRaw, setBudgetRaw] = useState<string>(String(loadRiskBudget()));
   const [copied, setCopied] = useState(false);
+  // v10.18 (deep-recheck #3): timer-ref copied chip (stale timer wiped a
+  // newer copy flash early).
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (copiedTimer.current) clearTimeout(copiedTimer.current); }, []);
   const budgetNum = Number(budgetRaw);
   const typedOk = budgetRaw.trim() !== '' && Number.isFinite(budgetNum);
   const budget = typedOk ? budgetNum : 0;
@@ -343,7 +347,8 @@ function IndiaTradeSlip({ signal }: { signal: AISignal }) {
   const copy = useCallback(() => {
     navigator.clipboard?.writeText(slipText).then(() => {
       setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 2500);
     }).catch(() => { /* clipboard blocked */ });
   }, [slipText]);
 
@@ -497,6 +502,15 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
   const [marginRaw, setMarginRaw] = useState<string>(String(defaultMargin));
   const [lev, setLev] = useState<number>(futures || global ? 3 : 1);
   const [result, setResult] = useState<{ ok: boolean; text: string; pending?: boolean } | null>(null);
+  // v10.18 (deep-recheck #3): timer-ref result banner — a pending→verdict
+  // sequence and rapid retries used to let an older timer clear the
+  // newer verdict early (the 8s banner vanished mid-read).
+  const resultTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const armResultTimer = () => {
+    if (resultTimer.current) clearTimeout(resultTimer.current);
+    resultTimer.current = setTimeout(() => setResult(null), 8000);
+  };
+  useEffect(() => () => { if (resultTimer.current) clearTimeout(resultTimer.current); }, []);
   const approxUsdInr = 84; // display-only conversion (server uses the live rate)
 
   const marginNum = Number(marginRaw);
@@ -553,7 +567,7 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
     if (!handler) return;
     if (invalid) {
       setResult({ ok: false, text: `⚠ Pehle amount daalo — minimum ${usdDenominated ? `${lo} ${unit} margin` : `₹${lo}`}${orderCap != null ? ` (server cap ${futures || global ? '' : '₹'}${orderCap.toLocaleString('en-IN')})` : ''}. Box khali/clear karke apna amount type karo, blur par apne aap valid ho jayega.` });
-      setTimeout(() => setResult(null), 8000);
+      armResultTimer();
       return;
     }
     const sendMargin = clampMargin(marginRaw); // final safety clamp (cap incl.)
@@ -579,7 +593,7 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
           ? `🔔 NOTIFY-only — gauntlet chala, alert + journal audit likha. Koi order/position NAHI bana.`
           : `🧪 PAPER position khula — ${qty < 1 ? qty.toFixed(6) : qty} ${global ? 'shares' : futures ? 'contracts' : crypto ? 'units' : 'shares'} @ ${usdDenominated ? `${plan.entry} ${unit}` : `₹${plan.entry}`}${leveraged && lev > 1 ? ` · ${lev}x margin` : ''} · watcher SL/TP manage karega` });
     }
-    setTimeout(() => setResult(null), 8000);
+    armResultTimer();
   };
 
   const canLiveHere = global ? canLive : futures ? canLive : crypto ? canLive : canLiveIndia;

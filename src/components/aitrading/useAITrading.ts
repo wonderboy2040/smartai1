@@ -99,6 +99,15 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
   const [positionsEpoch, setPositionsEpoch] = useState(0);
   const activeRef = useRef(active);
   activeRef.current = active;
+  // v10.18 (deep-recheck #3): positions request sequence guard. Up to four
+  // uncoordinated callers race through loadPositions (the 45s SSE-live
+  // reconciliation poll, the 5s fallback poll, closePos/executeSignal
+  // refreshes, the visibility refresh) — a slow REST response landing
+  // AFTER a newer one used to wholesale-revert the panel (and a poll
+  // started BEFORE a close that resolved AFTER closePos's own refresh
+  // resurrected the just-closed position as OPEN for up to 45s). Only
+  // the LATEST request's response applies.
+  const posSeqRef = useRef(0);
 
   const loadBoards = useCallback(async () => {
     const jobs: Array<Promise<void>> = [];
@@ -129,10 +138,12 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
   }, []);
 
   const loadPositions = useCallback(async () => {
+    const seq = ++posSeqRef.current;
     try {
       const r = await apiFetch(`${getProxyBase()}/api/ai/positions?t=${Date.now()}`, { signal: AbortSignal.timeout(15000) });
       if (r.ok) {
         const j = await r.json();
+        if (seq !== posSeqRef.current) return; // stale response — a newer load already landed
         setPositions(Array.isArray(j.positions) ? j.positions : []);
         setEntries(Array.isArray(j.entries) ? j.entries : []);
       }

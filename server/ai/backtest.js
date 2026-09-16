@@ -281,6 +281,10 @@ const DEFAULT_CRYPTO = ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'DOGE'];
 const DEFAULT_INDIA = ['RELIANCE', 'HDFCBANK', 'ICICIBANK', 'INFY', 'TCS', 'SBIN'];
 const _cache = new Map();
 const CACHE_TTL = 10 * 60_000;
+// v10.18 (deep-recheck #3): the cache key embeds the caller's symbol
+// list — an authed user iterating combos grew this map with full
+// backtest payloads forever. Bounded like every other repo cache.
+const CACHE_CAP = 24;
 
 export async function runBacktest({ market = 'CRYPTO', symbols, minGrade = 'ACTION', capitalPerTradeINR = 1000, maxRiskPct = 5, currentMinConfidence = 75, strategy = 'weighted' }) {
   const mkt = String(market).toUpperCase() === 'INDIA' ? 'INDIA' : 'CRYPTO';
@@ -354,6 +358,13 @@ export async function runBacktest({ market = 'CRYPTO', symbols, minGrade = 'ACTI
     generatedAt: Date.now(),
   };
   _cache.set(key, { at: Date.now(), payload });
+  // v10.18: bounded — the key embeds the caller's symbol list, so an
+  // authed user iterating combos grew this map with full backtest
+  // payloads forever (same discipline as every other repo cache).
+  if (_cache.size > CACHE_CAP) {
+    const entries = [..._cache.entries()].sort((a, b) => a[1].at - b[1].at);
+    for (const [k] of entries.slice(0, _cache.size - CACHE_CAP)) _cache.delete(k);
+  }
   return payload;
 }
 

@@ -249,17 +249,28 @@ export function formatStrongBundle(cluster, mkt, rMax) {
 }
 
 // ---------------- shared send path ----------------
+/** Failed-send retry hold — short, so a transient Telegram blip
+ *  re-attempts on the next sink tick instead of suppressing the alert
+ *  for the FULL cooldown window (v10.18 deep-recheck #3: the old
+ *  arm-before-send lost the EXIT-NOW/SL/TP push for 30 min on one
+ *  5-second network hiccup). */
+const SEND_FAIL_RETRY_MS = 30_000;
+
 /** Dedupe + send. @returns {Promise<boolean>} true when pushed. */
 async function _pushIfFresh(map, key, text, cooldownMs, send) {
   if (!cooldownOk(map, key, Date.now(), cooldownMs)) return false;
-  map.set(key, Date.now());
+  // RESERVE the key with a timestamp that expires after the failure-retry
+  // window (blocks concurrent ticks from double-sending), then arm the
+  // FULL cooldown only once the send actually succeeded.
+  map.set(key, Date.now() - cooldownMs + SEND_FAIL_RETRY_MS);
   // prune so the maps can't grow unbounded (same hygiene as routes.js)
   if (map.size > 200) {
     const cutoff = Date.now() - cooldownMs;
     for (const [k, ts] of map) if (ts < cutoff) map.delete(k);
   }
   const r = await send(text);
-  return !!r?.ok;
+  if (r?.ok) { map.set(key, Date.now()); return true; }
+  return false;
 }
 
 // ---------------- shared STRONG scan (sink + backup, one code path) ----------------

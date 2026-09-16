@@ -114,11 +114,15 @@ export function _resetGlobalRiskForTest() { _cache = { at: 0, view: null }; _fet
 
 async function _marketRead() {
   const f = _fetchImpl || globalThis.fetch;
-  // VIX + BTC daily closes in ONE pass (Yahoo chart API, 1mo daily)
+  // VIX + BTC daily closes in ONE pass (Yahoo chart API, 1mo daily).
+  // v10.18 (deep-recheck #3): 8s deadlines — the gauntlet awaits this
+  // read on entry ticks; a black-holed Yahoo route used to stall the
+  // whole entry path (undici's default headers timeout is minutes).
+  const opts = { signal: AbortSignal.timeout(8000) };
   const [vix, btc] = await Promise.all([
-    f('https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=1mo&interval=1d')
+    f('https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=1mo&interval=1d', opts)
       .then(r => r.json()).catch(() => null),
-    f('https://query1.finance.yahoo.com/v8/finance/chart/BTC-USD?range=1mo&interval=1d')
+    f('https://query1.finance.yahoo.com/v8/finance/chart/BTC-USD?range=1mo&interval=1d', opts)
       .then(r => r.json()).catch(() => null),
   ]);
   const closesOf = (j) => {

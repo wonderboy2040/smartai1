@@ -100,6 +100,17 @@ async function yahooQuoteSummary(symbol) {
 }
 
 // ---------------- per-symbol cache ----------------
+// v10.18 (deep-recheck #3): the symbol key space is user-controlled
+// (deep-analysis of arbitrary tickers) — bounded now, like every
+// other repo cache. Successful entries win eviction over error rows.
+const DATA_CAP = 300;
+function _capData() {
+  if (_data.size <= DATA_CAP) return;
+  const entries = [..._data.entries()].sort((a, b) =>
+    (a[1].err ? 0 : 1) - (b[1].err ? 0 : 1) || a[1].at - b[1].at);
+  for (const [k] of entries.slice(0, _data.size - DATA_CAP)) _data.delete(k);
+}
+
 function dataGet(symbol) {
   const d = _data.get(symbol);
   return d && Date.now() - d.at < TTL ? d : null;
@@ -115,11 +126,13 @@ async function refreshOne(symbol) {
       if (fresh && (fresh.pe != null || fresh.earnGrowth != null)) {
         const entry = { at: Date.now(), symbol, ...fresh };
         _data.set(symbol, entry);
+        _capData();
         return entry;
       }
       // remember the failure briefly so deep scans don't hammer a
       // dead path on every click (10-min backoff, still honest)
       _data.set(symbol, { at: Date.now() - TTL + 10 * 60_000, symbol, err: 'unreachable' });
+      _capData();
       return null;
     } catch { return null; }
     finally { _inflight.delete(symbol); }

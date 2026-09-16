@@ -634,6 +634,77 @@ describe('syncNow e2e (mocked OAuth + MCP + Groww + forex)', () => {
     expect(hit).toBe(0);
   });
 
+  it('v10.18: a MID-SYNC disconnect is not reverted by the still-running sync (no resurrect)', async () => {
+    // THE RACE: `indmConnected` is captured at sync start; the sync then
+    // sits in 30-60s of awaits. If the user disconnects INDMoney during
+    // that window, clearSourceAssets() writes a snapshot WITHOUT the
+    // indmoney rows — and the still-running sync used to write them
+    // right back (resurrect + durable-put, surviving restarts).
+    const HOLDINGS = {
+      holdings: [{ investment: 'HDFC Flexi Cap Fund', invested_amount: 50000, market_value: 55000, total_pnl: 5000, pnl_per: 10, total_units: 100, unit_price: 550 }],
+      asset_summary: null,
+    };
+    const mcpTools = () => [{ name: 'networth_holdings', description: 'x', inputSchema: { type: 'object', properties: { asset_type: { type: 'string' } }, required: ['asset_type'] } }];
+    const mcpRes = (body, payload) => jsonRes({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify(payload) }] } });
+
+    // 1) connect + first sync primes ONE indmoney asset
+    vi.stubGlobal('fetch', async (url, init = {}) => {
+      const u = String(url);
+      if (u === RATE_URL) return jsonRes({ rates: { INR: 80 } });
+      if (u === indm.INDM.REGISTER_URL) return jsonRes({ client_id: 'c-race' });
+      if (u === indm.INDM.TOKEN_URL) return jsonRes({ access_token: 'AT-RACE', refresh_token: 'RT-RACE', expires_in: 3600 });
+      if (u === indm.INDM.REVOKE_URL) return jsonRes({});
+      if (u === indm.INDM.MCP_URL) {
+        const body = JSON.parse(String(init.body || '{}'));
+        if (body.method === 'initialize') return jsonRes({ jsonrpc: '2.0', id: body.id, result: {} }, { headers: { 'mcp-session-id': 'race-1' } });
+        if (body.method === 'tools/list') return jsonRes({ jsonrpc: '2.0', id: body.id, result: { tools: mcpTools() } });
+        if (body.method === 'tools/call') return mcpRes(body, HOLDINGS);
+        return jsonRes('', { status: 202 });
+      }
+      throw new Error(`unexpected ${u}`);
+    });
+    __setFetchForTests(async () => groww([]));
+    const { state } = await indm.startConnect('https://race.example.com');
+    await indm.completeConnect({ code: 'race', state });
+    const first = await syncNow({ force: true });
+    expect(first.ok).toBe(true);
+    expect(getAssetsSnapshot().assets).toHaveLength(1);
+
+    // 2) second sync whose tools/call HANGS on a gate — the disconnect
+    //    lands while it is in flight
+    let callHit = false;
+    let release;
+    const gate = new Promise(r => { release = r; });
+    vi.stubGlobal('fetch', async (url, init = {}) => {
+      const u = String(url);
+      if (u === RATE_URL) return jsonRes({ rates: { INR: 80 } });
+      if (u === indm.INDM.REVOKE_URL) return jsonRes({});
+      if (u === indm.INDM.MCP_URL) {
+        const body = JSON.parse(String(init.body || '{}'));
+        if (body.method === 'tools/call') { callHit = true; await gate; return mcpRes(body, HOLDINGS); }
+        if (body.method === 'tools/list') return jsonRes({ jsonrpc: '2.0', id: body.id, result: { tools: mcpTools() } });
+        return jsonRes('', { status: 202 });
+      }
+      throw new Error(`unexpected ${u}`);
+    });
+    const p = syncNow({ force: true });
+    for (let i = 0; i < 200 && !callHit; i++) await new Promise(r => setTimeout(r, 10));
+    expect(callHit).toBe(true); // the sync is now parked inside its awaits
+
+    // 3) the user disconnects mid-sync (exactly what the route does)
+    await indm.disconnect();
+    syncMod.clearSourceAssets('indmoney');
+    expect(getAssetsSnapshot().assets).toHaveLength(0); // cleared by the disconnect
+
+    // 4) release the hanging call — the sync finishes AFTER the disconnect
+    release();
+    const out = await p;
+    expect(out.ok).toBe(false); // honest: nothing usable remains
+    const snap = getAssetsSnapshot();
+    expect(snap.assets || []).toHaveLength(0);       // THE FIX: no resurrect
+    expect(snap.summary ?? null).toBeNull();          // residue dropped (clearSourceAssets parity)
+  });
+
   it('maybeBackgroundSync fires only when connected + stale', async () => {
     expect(maybeBackgroundSync()).toBe(false); // not connected
     // connect…

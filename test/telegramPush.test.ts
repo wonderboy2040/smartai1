@@ -241,6 +241,34 @@ describe('scanStrongSignalsBackup (the shared scan)', () => {
     expect(out.pushed).toBe(0);
     expect(mockSend).not.toHaveBeenCalled();
   });
+
+  it('v10.18: a FAILED send does not arm the full cooldown — the alert retries after the failure window', async () => {
+    // One transient Telegram blip at the moment a STRONG fires used to
+    // suppress that push for the whole STRONG_COOLDOWN window. Now the
+    // full cooldown arms ONLY on success; a failure reserves a short
+    // 30s retry hold instead.
+    mockSend.mockImplementationOnce(async () => ({ ok: false, error: 'telegram blip' }));
+    const deps = mkDeps([strong('ADA')], []);
+    const out1 = await scanStrongSignalsBackup(deps);
+    expect(out1.pushed).toBe(0);             // send failed — honestly not pushed
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const { _strongAlerts } = __mapsForTests();
+    const reserved = _strongAlerts.get('CRYPTO:ADA:LONG');
+    expect(reserved).toBeTruthy();           // reserved (no concurrent double-send)
+    // immediate retry is held back by the reservation
+    const out2 = await scanStrongSignalsBackup(deps);
+    expect(out2.pushed).toBe(0);
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    // after the 30s failure window the scan re-attempts — and now succeeds
+    const nowSpy = vi.spyOn(Date, 'now');
+    const base = Date.now();
+    nowSpy.mockReturnValue(base + 31_000);
+    const out3 = await scanStrongSignalsBackup(deps);
+    expect(out3.pushed).toBe(1);             // the alert was never lost
+    expect(mockSend).toHaveBeenCalledTimes(2);
+    expect(_strongAlerts.get('CRYPTO:ADA:LONG')).toBeGreaterThanOrEqual(base + 31_000); // FULL cooldown armed by the success
+    nowSpy.mockRestore();
+  });
 });
 
 // ============================================================

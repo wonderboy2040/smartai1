@@ -481,13 +481,42 @@ describe('evaluateManualTradeAlerts — the push ladder', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it('a send failure is contained (cooldown consumed, no crash, no status bump)', async () => {
+  it('a send failure is contained and RETRYABLE (no full-cooldown suppression, honest pushed flag)', async () => {
+    // v10.18 contract: the FULL cooldown arms only on a successful send —
+    // one transient Telegram blip must not eat the EXIT-NOW push for 30
+    // minutes. A failed send reserves a short 30s failure-retry hold, and
+    // the pushed flag honestly reports that nothing went out.
     const t = mkTrade({ __ltp: 1240 });
     const send = vi.fn(async () => { throw new Error('telegram down'); });
     const pushed = await evaluateManualTradeAlerts(t, {
       send, conviction: { state: 'FLIPPED', currentScore: 80 }, freshSignal: null,
     });
-    expect(pushed).toContain('flip'); // attempted + cooldown consumed
+    expect(pushed).not.toContain('flip'); // nothing actually went out
+    expect(send).toHaveBeenCalledTimes(1); // attempted, no crash
+    // immediate re-evaluation is still held back (no double-send hammer)
+    const pushed2 = await evaluateManualTradeAlerts(t, {
+      send, conviction: { state: 'FLIPPED', currentScore: 80 }, freshSignal: null,
+    });
+    expect(pushed2).not.toContain('flip');
+    expect(send).toHaveBeenCalledTimes(1);
+    // after the 30s failure-retry window the alert fires again — and
+    // once Telegram is healthy the FULL cooldown arms
+    const nowSpy = vi.spyOn(Date, 'now');
+    const base = Date.now();
+    nowSpy.mockReturnValue(base + 31_000);
+    const sendOk = vi.fn(async () => ({ ok: true }));
+    const pushed3 = await evaluateManualTradeAlerts(t, {
+      send: sendOk, conviction: { state: 'FLIPPED', currentScore: 80 }, freshSignal: null,
+    });
+    expect(pushed3).toContain('flip'); // recovered — the alert was never lost
+    expect(sendOk).toHaveBeenCalledTimes(1);
+    // full cooldown now armed: a 4th evaluation inside 30 min does not re-send
+    const pushed4 = await evaluateManualTradeAlerts(t, {
+      send: sendOk, conviction: { state: 'FLIPPED', currentScore: 80 }, freshSignal: null,
+    });
+    expect(pushed4).not.toContain('flip');
+    expect(sendOk).toHaveBeenCalledTimes(1);
+    nowSpy.mockRestore();
   });
 });
 

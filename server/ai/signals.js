@@ -240,6 +240,18 @@ function tvToInd(row, ltp) {
 // Yahoo for dead symbols AND the null keys evicted live entries
 // from the bounded 80-key cache).
 const _ltfMiss = new Map();
+// v10.18 (deep-recheck #3): the miss map is user-keyed (deep-analysis
+// symbols) and was unbounded — cap it with the same hygiene as the
+// positive cache (drop expired entries, then oldest).
+function _capMissMap(map, cap = 200) {
+  if (map.size <= cap) return;
+  const now = Date.now();
+  for (const [k, ts] of map) if (now - ts >= 60_000) map.delete(k);
+  if (map.size > cap) {
+    const entries = [...map.entries()].sort((a, b) => a[1] - b[1]);
+    for (const [k] of entries.slice(0, map.size - cap)) map.delete(k);
+  }
+}
 export async function fetchYahooIntradayCandles(symbol, market) {
   const mkt = String(market || 'INDIA').toUpperCase();
   const key = `ltf:${mkt}:${symbol}`;
@@ -282,7 +294,7 @@ export async function fetchYahooIntradayCandles(symbol, market) {
     }
   } catch { out = null; }
   if (out) cacheSet(key, out);
-  else _ltfMiss.set(key, Date.now());
+  else { _ltfMiss.set(key, Date.now()); _capMissMap(_ltfMiss); }
   return out;
 }
 
@@ -490,7 +502,7 @@ export async function fetchYahoo5mCandles(symbol) {
     }
   } catch { out = null; }
   if (out) cacheSet(key, out);
-  else _ltf5mMiss.set(key, Date.now());
+  else { _ltf5mMiss.set(key, Date.now()); _capMissMap(_ltf5mMiss); }
   return out;
 }
 

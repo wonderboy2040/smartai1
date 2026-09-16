@@ -46,6 +46,9 @@ function OptionSignalCardView({ c, onOpened }: { c: OptionSignalCard; onOpened?:
   // v9.5 F&O PAPER: one-click option paper trade (1 lot) from the card.
   const [paperBusy, setPaperBusy] = useState(false);
   const [paperMsg, setPaperMsg] = useState<string | null>(null);
+  // v10.18 (deep-recheck #3): timer-ref toast — two rapid paper trades
+  // used to let the FIRST timer erase the SECOND message early.
+  const paperMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onPaper = useCallback(async () => {
     if (paperBusy) return;
     setPaperBusy(true); setPaperMsg(null);
@@ -60,8 +63,10 @@ function OptionSignalCardView({ c, onOpened }: { c: OptionSignalCard; onOpened?:
       : `⛔ ${r.error || 'option paper trade failed'}`;
     setPaperMsg(msg);
     onOpened?.(msg, r.ok);
-    setTimeout(() => setPaperMsg(null), 8000);
+    if (paperMsgTimer.current) clearTimeout(paperMsgTimer.current);
+    paperMsgTimer.current = setTimeout(() => setPaperMsg(null), 8000);
   }, [c, paperBusy, onOpened]);
+  useEffect(() => () => { if (paperMsgTimer.current) clearTimeout(paperMsgTimer.current); }, []);
   return (
     <div className={`quantum-panel rounded-2xl p-4 ${bull ? 'border-l-2 border-l-emerald-500/60' : 'border-l-2 border-l-red-500/60'}`} data-testid="option-signal-card">
       <div className="flex items-center gap-2 flex-wrap">
@@ -219,6 +224,11 @@ function OptionSignalCardsStrip() {
   const [view, setView] = useState<OptionSignalsView | null>(null);
   const [err, setErr] = useState(false);
   const seqRef = useRef(0);
+  // v10.18 (deep-recheck #3): viewRef — the `else if (!view)` check below
+  // captured the MOUNT-time view (always null), so every failed poll set
+  // err=true even with data on screen (render masked it, but it was a
+  // latent trap). The ref reads the CURRENT data state.
+  const viewRef = useRef<OptionSignalsView | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -226,16 +236,18 @@ function OptionSignalCardsStrip() {
       const seq = ++seqRef.current;
       const v = await fetchOptionSignals(force);
       if (!alive || seq !== seqRef.current) return;
-      if (v) { setView(v); setErr(false); }
-      else if (!view) setErr(true);
+      if (v) { viewRef.current = v; setView(v); setErr(false); }
+      else if (!viewRef.current) setErr(true);
     };
     run(true);
     // v9.7: 30s poll — the strip label ("30s re-rank") aur the server's
     // 30s cards cache dono se aligned (pehle 60s poll chal raha tha,
     // label jhooth bolta tha).
-    const iv = setInterval(() => run(false), 30_000);
+    // v10.18: hidden tabs skip the poll (every sibling poller gates on
+    // document.hidden — a backgrounded options tab no longer burns a
+    // 12s-timeout API call every 30s).
+    const iv = setInterval(() => { if (!document.hidden) run(false); }, 30_000);
     return () => { alive = false; clearInterval(iv); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const desks = view?.desks || [];
@@ -595,6 +607,11 @@ export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
     ? desk.rows.reduce((best, r) => (Math.abs(r.strike - spot) < Math.abs(best.strike - spot) ? r : best), desk.rows[0])
     : null;
   const gex = desk?.analytics?.gex ?? null;
+  // v10.18 (deep-recheck #3): maxOI computed ONCE per render — it used
+  // to live INSIDE the per-row .map(), re-scanning the whole 100-250
+  // strike chain per row (O(n²) on every repaint — the same jank class
+  // the v10.17 render-storm fix killed elsewhere).
+  const maxOI = Math.max(1, ...(desk?.rows || []).map(x => Math.max(x.callOI, x.putOI)));
 
   return (
     <section className="space-y-3" aria-label="India options desk">
@@ -725,7 +742,6 @@ export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
             <tbody>
               {(desk?.rows || []).map(r => {
                 const isATM = atm?.strike === r.strike;
-                const maxOI = Math.max(...(desk?.rows || []).map(x => Math.max(x.callOI, x.putOI)), 1);
                 return (
                   <tr key={r.strike} className={`border-t border-white/[0.03] hover:bg-white/[0.03] ${isATM ? 'bg-cyan-500/10' : ''}`}>
                     <td className="px-2 py-1.5 text-right relative">

@@ -54,6 +54,20 @@ const _cryptoBooks = new Map();
 // symbol → { at, snap, negUntil, inflight }
 const _indiaBooks = new Map();
 
+/** v10.18 (deep-recheck #3): user-keyed book caches are bounded — the
+ *  /api/ai/depth route lets a caller grow the key space forever
+ *  (~10-20KB retained per slot on a Render free dyno). Evict the
+ *  stalest slots past the cap (same MAX_CACHE_KEYS discipline the
+ *  board caches already use). */
+const BOOK_CACHE_CAP = 200;
+function _evictBooks(map, keepKey) {
+  if (map.size <= BOOK_CACHE_CAP) return;
+  const stale = [...map.entries()]
+    .filter(([k, s]) => k !== keepKey && !s.inflight)
+    .sort((a, b) => (a[1].at || 0) - (b[1].at || 0));
+  for (const [k] of stale.slice(0, map.size - BOOK_CACHE_CAP)) map.delete(k);
+}
+
 // ---------------- CoinDCX public depth (spot INR book) ----------------
 /** Tolerant level normalizer (same shapes swing.js handles). */
 export function normalizeLevels(arr) {
@@ -90,6 +104,7 @@ export async function getCoinDcxDepth(base, { maxAgeMs = DEPTH_TTL_MS, levels = 
   if (!sym) return null;
   const slot = _cryptoBooks.get(sym) || { at: 0, snap: null, negUntil: 0, inflight: null };
   _cryptoBooks.set(sym, slot);
+  _evictBooks(_cryptoBooks, sym);
   if (slot.snap && Date.now() - slot.at < maxAgeMs) return slot.snap;
   if (Date.now() < slot.negUntil) return slot.snap; // endpoint down — stale beats hammering
   if (slot.inflight) return slot.inflight;
@@ -139,6 +154,7 @@ export async function getIndiaDepth(symbol, { maxAgeMs = DHAN_DEPTH_TTL_MS } = {
   if (!sym || !dhanConnected()) return null;
   const slot = _indiaBooks.get(sym) || { at: 0, snap: null, negUntil: 0, inflight: null, secId: null };
   _indiaBooks.set(sym, slot);
+  _evictBooks(_indiaBooks, sym);
   if (slot.snap && Date.now() - slot.at < maxAgeMs) return slot.snap;
   if (Date.now() < slot.negUntil) return slot.snap;
   if (slot.inflight) return slot.inflight;
@@ -262,6 +278,11 @@ function _pushRing(base, walls, now) {
   const ring = (_rings.get(base) || []).filter(r => now - r.ts < 60_000);
   ring.unshift({ ts: now, walls });
   _rings.set(base, ring.slice(0, RING_KEEP));
+  // v10.18: velocity rings are user-keyed too — cap them the same way
+  // (a ring is tiny, but the key space was unbounded).
+  if (_rings.size > BOOK_CACHE_CAP) {
+    for (const k of [..._rings.keys()].slice(0, _rings.size - BOOK_CACHE_CAP)) _rings.delete(k);
+  }
 }
 
 // ---------------- the unified reader ----------------

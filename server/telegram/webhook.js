@@ -517,7 +517,7 @@ export function registerTelegramWebhook(app, deps = {}) {
     try {
       const cfgTG = telegramConfig({ token: deps.TG?.token || process.env.TG_TOKEN || '', chatId: deps.TG?.chatId || process.env.TG_CHAT_ID || '' });
       if (!cfgTG?.token) return res.status(400).json({ ok: false, error: 'telegram not configured' });
-      const r = await fetch(`https://api.telegram.org/bot${cfgTG.token}/deleteWebhook`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const r = await fetch(`https://api.telegram.org/bot${cfgTG.token}/deleteWebhook`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(10_000) });
       const j = await r.json().catch(() => ({}));
       res.json({ ok: !!j?.ok, result: j?.result ?? null });
     } catch (e) {

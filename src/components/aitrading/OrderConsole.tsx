@@ -92,6 +92,9 @@ function ConfigEditor({ config, busy, onSave, state, venue }: {
   const [phrase, setPhrase] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null); // v7.0.2: mid-edit resync guard
+  // v10.18 (deep-recheck #3): timer-ref toast — a stale timer used to wipe
+  // a newer save message early (two SET clicks inside 4s).
+  const msgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // v6.2: resync the number boxes whenever the SERVER config changes (60s
   // state poll, kill-switch auto-disarm, another device's SET) — the boxes
@@ -130,9 +133,12 @@ function ConfigEditor({ config, busy, onSave, state, venue }: {
   const save = async (patch: Record<string, unknown>) => {
     const r = await onSave(patch);
     setMsg({ ok: r.ok, text: r.ok ? 'Saved ✓' : (r.error || 'failed') });
-    setTimeout(() => setMsg(null), 4000);
+    if (msgTimer.current) clearTimeout(msgTimer.current);
+    msgTimer.current = setTimeout(() => setMsg(null), 4000);
     return r;
   };
+
+  useEffect(() => () => { if (msgTimer.current) clearTimeout(msgTimer.current); }, []);
 
   return (
     <div ref={rootRef} className="quantum-panel rounded-2xl p-4 space-y-3">
@@ -253,11 +259,16 @@ function DhanPanel({ busy, onSave, dhan, indiaMode, onConnect, onDisconnect, onR
   const [phrase, setPhrase] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const connected = !!dhan?.connected;
+  // v10.18 (deep-recheck #3): timer-ref toast (stale timers wiped newer
+  // connect/disconnect messages early).
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flash = (ok: boolean, text: string) => {
     setMsg({ ok, text });
-    setTimeout(() => setMsg(null), 5000);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setMsg(null), 5000);
   };
+  useEffect(() => () => { if (flashTimer.current) clearTimeout(flashTimer.current); }, []);
 
   const connect = useCallback(async () => {
     const r = await onConnect(clientId.trim(), accessToken.trim());
@@ -379,6 +390,8 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
   // the permanent audit trail). Spinner + result chip while it runs.
   const [sweeping, setSweeping] = useState(false);
   const [sweepNote, setSweepNote] = useState<string | null>(null);
+  // v10.18 (deep-recheck #3): timer-ref result chip (same toast-wipe fix)
+  const sweepNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onClearClosed = useCallback(async () => {
     if (sweeping) return;
     setSweeping(true);
@@ -391,8 +404,10 @@ export const OrderConsole = memo(function OrderConsole({ state, positions, entri
     } else {
       setSweepNote(`⛔ ${r.error || 'clear-closed failed'}`);
     }
-    setTimeout(() => setSweepNote(null), 6000);
+    if (sweepNoteTimer.current) clearTimeout(sweepNoteTimer.current);
+    sweepNoteTimer.current = setTimeout(() => setSweepNote(null), 6000);
   }, [sweeping, onPositionsChanged]);
+  useEffect(() => () => { if (sweepNoteTimer.current) clearTimeout(sweepNoteTimer.current); }, []);
   // v6.9: desk-scoped positions — India desk sees NSE rows only, CoinDCX
   // desk sees spot + futures rows only. Journal stays the FULL audit trail.
   const shown = venue === 'INDIA'

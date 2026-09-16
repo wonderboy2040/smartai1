@@ -5031,7 +5031,11 @@ bot.on('photo', async (msg) => {
     const fileUrl = `https://api.telegram.org/file/bot${TG_TOKEN}/${file.file_path}`;
 
     // Download image to buffer
-    const imgRes = await fetch(fileUrl);
+    // v10.18 (deep-recheck #3): 30s deadline — a black-holed Telegram CDN
+    // route used to stall this handler forever AND leak the typing
+    // indicator's 4s interval (stopTyping sits in `finally`, which a hung
+    // await never reaches). The voice handler below already had this.
+    const imgRes = await fetch(fileUrl, { signal: AbortSignal.timeout(30_000) });
     if (!imgRes.ok) throw new Error('Could not download chart photo');
     const arrayBuffer = await imgRes.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString('base64');

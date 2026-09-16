@@ -248,18 +248,30 @@ export function ManualTradeMonitor({ desk, notify }: Props) {
   const [showClosed, setShowClosed] = useState(false);
   const activeRef = useRef(true);
   const tradesRef = useRef<ManualTradeView[] | null>(null);
+  // v10.18 (deep-recheck #3): response sequence guard — the scheduled
+  // timer's load() and the close() path's load() could interleave, and
+  // the OLDER response landing last resurrected the just-closed row.
+  const loadSeqRef = useRef(0);
 
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     try {
       const r = await apiFetch(`${getProxyBase()}/api/manual-trades`, { signal: AbortSignal.timeout(20000) })
         .then(x => x.json()).catch(() => null);
+      if (seq !== loadSeqRef.current) return; // stale — a newer load already landed
       if (!r?.ok) { setError(true); return; }
       setError(false);
       let list: ManualTradeView[] = r.trades || [];
       if (desk === 'INDIA') list = list.filter(t => t.market === 'INDIA');
       else if (desk === 'CRYPTO') list = list.filter(t => t.market !== 'INDIA');
+      // v10.18: sync the ref INSIDE load — the cadence scheduler reads it
+      // right after `await load()`, but the separate `useEffect(() => {
+      // tradesRef.current = trades })` only commits AFTER the next render,
+      // so the FIRST refresh after mount always waited 30s even with open
+      // trades (the "LIVE 5s" badge lied until the second poll).
+      tradesRef.current = list;
       setTrades(list);
-    } catch { setError(true); }
+    } catch { if (seq === loadSeqRef.current) setError(true); }
   }, [desk]);
 
   // 5s refresh while open trades exist (the plan's T1-tier cadence —

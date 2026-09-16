@@ -151,10 +151,15 @@ export default memo(function IndiaIntradayTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board?.generatedAt]);
 
+  // v10.18 (deep-recheck #3): timer-ref toast — a stale timer used to
+  // wipe a newer execution message early (two actions inside 6s).
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notify = useCallback((ok: boolean, text: string) => {
     setToast({ ok, text });
-    setTimeout(() => setToast(null), 6000);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 6000);
   }, []);
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
   const onExecuteIndia = useCallback(async (signal: AISignal, mode: 'paper' | 'live' | 'notify', opts?: { qtyINR?: number; leverage?: number }) => {
     const r = await executeIndia(signal, mode, opts);
