@@ -401,10 +401,12 @@ describe('cxRtStream — WEBSOCKET accelerator (CoinDCX futures socket)', () => 
     cxRtClientUp();
     await vi.waitFor(() => expect(sockets.length).toBe(1));
     const sock = sockets[0];
-    // EIO=3 handshake: '40' ns-connect → '40{sid}' ack → join frames
+    // EIO=4 handshake: '40' ns-connect → '40{sid}' ack → join frames
+    // v11.3: ONE book channel (currentPrices@futures@rt) replaces the
+    // per-pair FUT joins — attributable pair keys in every book row.
     await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(1));
     expect(sock.sent.find(f => f === '40')).toBeTruthy();
-    expect(sock.sent.find(f => f.startsWith('42["join"'))).toContain('B-BTC_USDT@prices-futures');
+    expect(sock.sent.find(f => f.startsWith('42["join"'))).toContain('currentPrices@futures@rt');
 
     // the server pushes a price-change — the tick lands SYNCHRONOUSLY
     sock.serverMessage(pcFrame('B-BTC_USDT@prices-futures', { p: '61000.5', pc: 1.1, T: Date.now() }));
@@ -427,12 +429,15 @@ describe('cxRtStream — WEBSOCKET accelerator (CoinDCX futures socket)', () => 
     cxRtClientUp();
     await vi.waitFor(() => expect(sockets.length).toBe(1));
     const sock = sockets[0];
-    await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(3));
-    // server ping '2' → client must pong '3' (EIO=3 liveness)
+    // v11.3: book channel (always) + per-pair GLOB channels — 2 joins
+    await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(2));
+    // server ping '2' → client must pong '3' (Engine.IO liveness)
     sock.serverMessage('2');
     expect(sock.sent.filter(f => f === '3').length).toBe(1);
     // GLOB channels use the USDC pair shape
     expect(sock.sent.find(f => f.includes('B-AAPL_USDC@prices-futures'))).toBeTruthy();
+    // the FUT domain rides the single book channel
+    expect(sock.sent.find(f => f.includes('currentPrices@futures@rt'))).toBeTruthy();
     cxRtClientDown();
   });
 
@@ -472,6 +477,7 @@ describe('cxRtStream — WEBSOCKET accelerator (CoinDCX futures socket)', () => 
       cxRtClientUp();
       await vi.waitFor(() => expect(sockets.length).toBe(1));
       const sock = sockets[0];
+      // v11.3: ONE book-channel join for the single FUT subscription
       await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(1));
 
       // connected but SILENT — REST must stay at the full 2s (no fake health)
@@ -592,7 +598,8 @@ describe('cxRtStream — WEBSOCKET accelerator (CoinDCX futures socket)', () => 
     cxRtClientUp();
     await vi.waitFor(() => expect(sockets.length).toBe(1));
     const sock = sockets[0];
-    await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(2));
+    // v11.3: the two FUT subscriptions share ONE book-channel join
+    await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(1));
 
     sock.serverMessage(`42["price-change",${JSON.stringify({ prices: {
       'B-BTC_USDT': { ls: 61100, pc: 1.2, h: 61500, l: 60800, v: 900, T: Date.now() },
@@ -614,7 +621,8 @@ describe('cxRtStream — WEBSOCKET accelerator (CoinDCX futures socket)', () => 
     cxRtClientUp();
     await vi.waitFor(() => expect(sockets.length).toBe(1));
     const sock = sockets[0];
-    await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(1));
+    // v11.3: book channel + the AAPL USDC channel = 2 joins
+    await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(2));
     expect(sock.sent.find(f => f.includes('B-AAPL_USDC@prices-futures'))).toBeTruthy();
 
     sock.serverMessage(pcFrame('B-AAPL_USDC@prices-futures', { p: '333.75', pc: 0.42, T: Date.now() }));
@@ -865,7 +873,8 @@ describe('cxRtStream — v10.14 GLOB-aware silent-kill thresholds', () => {
       cxRtClientUp();
       await vi.waitFor(() => expect(sockets.length).toBe(1));
       const sock = sockets[0];
-      await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(2));
+      // v11.3: book channel + 2 USDC channels = 3 joins
+      await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(3));
 
       fake = t0 + 121_000; // past the OLD 2-min kill point
       await _pollOnceForTest();
@@ -893,7 +902,8 @@ describe('cxRtStream — v10.14 GLOB-aware silent-kill thresholds', () => {
       cxRtClientUp();
       await vi.waitFor(() => expect(sockets.length).toBe(1));
       const sock = sockets[0];
-      await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(1));
+      // v11.3: book channel + 1 USDC channel = 2 joins
+      await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(2));
 
       fake = t0 + 301_000;
       await _pollOnceForTest();
@@ -925,7 +935,8 @@ describe('cxRtStream — v10.14 GLOB-aware silent-kill thresholds', () => {
       cxRtClientUp();
       await vi.waitFor(() => expect(sockets.length).toBe(1));
       const sock = sockets[0];
-      await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(1));
+      // v11.3: book channel + 1 USDC channel = 2 joins
+      await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(2));
 
       fake = t0 + 301_000; // would die at regular-hours budget
       await _pollOnceForTest();
@@ -969,5 +980,134 @@ describe('cxRtStream — v10.14 GLOB-aware silent-kill thresholds', () => {
       _setCxRtNowForTest(null);
       cxRtClientDown();
     }
+  });
+});
+
+// ============================================================
+// v11.3 — THE FUTURES BOOK CHANNEL (currentPrices@futures@rt)
+// ------------------------------------------------------------
+// LIVE-VERIFIED (2026-09-17, wss://stream.coindcx.com EIO=4): the
+// channel pushes FULL book updates ~1/sec with ATTRIBUTABLE pair keys:
+//   42["currentPrices@futures#update", {"event":"…","data":"<JSON string>"}]
+//   data = { vs, ts, pr:"futures", prices: { "B-BTC_USDT":
+//            { ls?, pc?, v?, mp?, bmST?, cmRT? } } }
+// The old per-pair "@prices-futures" price-change events carry NO pair
+// identity (payload = {T, p, pr}) — the book channel is the only
+// attributable stream. Locked here: string-payload parse, ls-tick
+// landing + honest label + health proof, mp keep-alive semantics,
+// heartbeat health proof, and the shared book state (futures.js's
+// fetchFuturesPrices fallback leg).
+// ============================================================
+describe('cxRtStream — v11.3 FUTURES BOOK CHANNEL (attributable book updates)', () => {
+  function armWs(sockets: FakeDcxWs[]) {
+    _setDcxWsEnabledForTest(true);
+    _setDcxWsFactoryForTest((url: string) => {
+      const s = new FakeDcxWs(url);
+      sockets.push(s);
+      return s;
+    });
+  }
+
+  /** A live book update frame — data is a JSON-encoded STRING. */
+  const bookFrame = (prices: Record<string, Record<string, unknown>>, ts?: number) =>
+    `42["currentPrices@futures#update",${JSON.stringify({
+      event: 'currentPrices@futures#update',
+      data: JSON.stringify({ vs: 1, ts: ts ?? Date.now(), pr: 'futures', prices }),
+    })}]`;
+
+  afterEach(() => { cxRtClientDown(); });
+
+  it('a book update (data-as-STRING) lands the ls tick IMMEDIATELY with the honest label + proves health → REST 10s floor', async () => {
+    routeFetch(() => null); // REST fully dark
+    const sockets: FakeDcxWs[] = [];
+    armWs(sockets);
+    ensureCxRtSubscribed({ fut: ['BTC'] });
+    cxRtClientUp();
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    const sock = sockets[0];
+    await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(1));
+    // the ONE join is the book channel
+    expect(sock.sent.find(f => f.startsWith('42["join"'))).toContain('currentPrices@futures@rt');
+
+    sock.serverMessage(bookFrame({ 'B-BTC_USDT': { ls: 76_421.4, pc: 1.1, v: 2_100.5, mp: 76_420.9 } }));
+    const t = getTick('FUT_BTC');
+    expect(t).toBeTruthy();
+    expect(t!.price).toBeCloseTo(76_421.4, 6);
+    expect(t!.source).toBe('coindcx-fut-ws'); // honest label
+    expect(t!.change).toBeCloseTo(1.1, 6);
+    expect(t!.volume).toBeCloseTo(2_100.5, 6);
+    // attributable tick landed → health proven → REST slowed to the 10s floor
+    expect(_cxRtStateForTest().wsHealthy).toBe(true);
+    expect(_cxRtStateForTest().restMs).toBe(10_000);
+    // the shared book state carries the row for futures.js's fallback
+    expect(_cxRtStateForTest().book.pairs).toBe(1);
+    expect(_cxRtStateForTest().book.fresh).toBe(1);
+  });
+
+  it('unsubscribed pairs merge into the BOOK but land NO tick (refcount contract)', async () => {
+    routeFetch(() => null);
+    const sockets: FakeDcxWs[] = [];
+    armWs(sockets);
+    ensureCxRtSubscribed({ fut: ['BTC'] });
+    cxRtClientUp();
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    const sock = sockets[0];
+    await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(1));
+
+    sock.serverMessage(bookFrame({
+      'B-BTC_USDT': { ls: 76_421.4, pc: 1.1, v: 100 },
+      'B-SOL_USDT': { ls: 148.55, pc: 4.1, v: 700 },
+    }));
+    expect(getTick('FUT_BTC')!.price).toBeCloseTo(76_421.4, 6);
+    expect(getTick('FUT_SOL')).toBeNull(); // NOT subscribed → no tick
+    expect(_cxRtStateForTest().book.pairs).toBe(2); // both rows in the book
+  });
+
+  it('mp-only rows are a KEEP-ALIVE: they land only when the current tick is stale, never displacing a fresh ls', async () => {
+    routeFetch(() => null);
+    const sockets: FakeDcxWs[] = [];
+    armWs(sockets);
+    ensureCxRtSubscribed({ fut: ['BTC'] });
+    cxRtClientUp();
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    const sock = sockets[0];
+    await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(1));
+
+    // controllable clock — the 8s staleness budget rides _nowFn()
+    let fake = Date.now();
+    _setCxRtNowForTest(() => fake);
+    try {
+      // ls tick first
+      sock.serverMessage(bookFrame({ 'B-BTC_USDT': { ls: 76_421.4, pc: 1.1, v: 100 } }));
+      expect(getTick('FUT_BTC')!.price).toBeCloseTo(76_421.4, 6);
+      // a FRESHER mp-only row must NOT displace the fresh ls tick
+      fake += 1_000;
+      sock.serverMessage(bookFrame({ 'B-BTC_USDT': { mp: 99_999.9 } }));
+      expect(getTick('FUT_BTC')!.price).toBeCloseTo(76_421.4, 6); // unchanged
+      // …but once the tick ages out (8s), an mp row lands as the keep-alive
+      fake += 9_000;
+      sock.serverMessage(bookFrame({ 'B-BTC_USDT': { mp: 77_000.5 } }));
+      expect(getTick('FUT_BTC')!.price).toBeCloseTo(77_000.5, 6);
+    } finally {
+      _setCxRtNowForTest(null);
+    }
+  });
+
+  it('a heartbeat-only row (no ls/mp) for a SUBSCRIBED symbol proves health without landing a tick', async () => {
+    routeFetch(() => null);
+    const sockets: FakeDcxWs[] = [];
+    armWs(sockets);
+    ensureCxRtSubscribed({ fut: ['BTC'] });
+    cxRtClientUp();
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    const sock = sockets[0];
+    await vi.waitFor(() => expect(sock.sent.filter(f => f.startsWith('42["join"'))).toHaveLength(1));
+    expect(_cxRtStateForTest().wsHealthy).toBe(false); // nothing proven yet
+    // liveFeed carries no reset hook — capture whatever tick a previous
+    // suite left and assert the heartbeat changes NOTHING
+    const before = getTick('FUT_BTC');
+    sock.serverMessage(bookFrame({ 'B-BTC_USDT': { bmST: Date.now(), cmRT: Date.now() } }));
+    expect(_cxRtStateForTest().wsHealthy).toBe(true);  // alive channel proven
+    expect(getTick('FUT_BTC')).toEqual(before);        // but no price landed
   });
 });

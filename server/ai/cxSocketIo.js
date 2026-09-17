@@ -1,31 +1,42 @@
 // ============================================================
-// server/ai/cxSocketIo.js — v10.11 CoinDCX futures WS client
+// server/ai/cxSocketIo.js — CoinDCX socket.io WS client (EIO=4)
 // ------------------------------------------------------------
-// docs.coindcx.com "Futures Sockets" (researched 2026-09, task #5):
-//   • endpoint : wss://stream.coindcx.com      (futures domain)
-//                wss://stream-spot.coindcx.com (spot domain — NOT used here:
-//                the spot REST anchor @2s + Binance WS accelerator already
-//                beat the spot channel's own @10s cadence)
-//   • protocol : Socket.IO v2 = Engine.IO 3 ("Need to use V2 Socket.io-client")
-//   • channels : one per instrument — "B-<BASE>_USDT@prices-futures" (and the
-//                USDC equity perps the same way: "B-<SYM>_USDC@prices-futures")
-//   • join     : socket.emit('join', { channelName: "<pair>@prices-futures" })
-//   • event    : socket.on('price-change', response => response.data)
+// docs.coindcx.com "Sockets" (re-verified LIVE 2026-09-17):
+//   • endpoints : wss://stream.coindcx.com      (futures domain)
+//                wss://stream-spot.coindcx.com (spot domain)
+//   • protocol  : Socket.IO v4 = Engine.IO 4 — the URL pins
+//                ?EIO=4&transport=websocket. PRODUCTION INCIDENT
+//                (v11.3): the old EIO=3 URL completed the handshake
+//                but the server KILLED the socket ~1s after the
+//                ns-connect ack — the futures WS never delivered a
+//                single tick. EIO=4 flows (live-verified, 270 events
+//                in 40s + 90s survival with the app-level ping).
+//   • channels  : book-style   "currentPrices@futures@rt" / "currentPrices@spot@1s"
+//                 per-pair     "B-<PAIR>@prices-futures" / "B-<PAIR>@prices"
+//   • join     : socket.emit('join', { channelName })
+//   • event    : socket.on(name, payload) — payload.data is a
+//                JSON-encoded STRING on the book channels
 //   • keepalive: app-level ping every 25s — emit('ping', {data:'Ping message'})
+//                + Engine.IO liveness: SERVER sends '2', client must
+//                answer '3'. The client must NEVER send its own '2'
+//                ping on these sockets (live-verified: a client '2'
+//                kills the connection within ~200ms).
 //   • auth     : market-data channels need NONE ("order book and market data
 //                is available without authentication")
 //
-// WHY RAW 'ws' AND NOT socket.io-client@2.4.0: the v2 client is legacy CJS
-// with known advisories — the repo keeps `npm audit` at 0 vulnerabilities,
-// so the EIO=3 framing is hand-rolled here instead (~60 lines, fully unit-
-// tested via an injected ws factory). Engine.IO 3 framing on the websocket
-// transport is plain text frames:
+// WHY RAW 'ws' AND NOT socket.io-client@4.x: the v4 client pulls a
+// sizeable dependency tree the repo does not otherwise carry, and the
+// repo keeps `npm audit` at 0 vulnerabilities — the EIO=4 framing is
+// hand-rolled here instead (~60 lines, fully unit-tested via an
+// injected ws factory). Engine.IO 4 framing on the websocket transport
+// is plain text frames and IDENTICAL to v3 for the ops we use:
 //     server→client : '0{sid…}' open · '2' ping · '40{sid…}' ns-ack ·
 //                     '42["event",data]' event · '41' ns-disconnect
-//     client→server : '40' ns-connect · '3' pong · '42["join",{…}]'
+//     client→server : '40' ns-connect · '3' pong · '42["join",{…}]' ·
 //                     '42["leave",{…}]' · '42["ping",{…}]'
-// The URL carries ?EIO=3&transport=websocket which pins the protocol
-// revision regardless of any server default drift.
+// (EIO4's own client-ping op — a bare '2' from the client — is NOT
+// sent: CoinDCX's servers treat it as a protocol violation and drop
+// the socket, live-verified 2026-09-17.)
 // ============================================================
 import WebSocket from 'ws';
 

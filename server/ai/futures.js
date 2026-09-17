@@ -41,6 +41,7 @@ import { computeTrailSl, maxSaneLeverage, fitPlanToRiskCap, evaluateExecutionGat
 import { pRound } from './lib/priceRound.js';
 import { withJournalLock, pushEntry, todayIST, dailyStats, ratchetSl, exitStageOf, loadProTraderConfig } from './coindcxOrders.js';
 import { validateTick, wickJournalEntry } from './wickFilter.js';
+import { futBookSnapshot } from './cxBookState.js';
 
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(String(v ?? '')); return Number.isFinite(n) ? n : null; };
@@ -89,51 +90,175 @@ const inrOfUsdt = (usdt, usdInr) => (Number.isFinite(usdt) ? Math.round(usdt * u
 // ---------------- PUBLIC: RT prices ----------------
 let _pricesCache = null, _pricesAt = 0;
 let _pricesInflight = null; // v10.10: single-flight — the 2s RT stream + board compute share ONE round-trip
+// v11.3: deep-stale window — the LAST resort before throwing. A
+// 3-min-old official book keeps the futures board alive (and honest —
+// rows keep their real ts) while REST heals.
+const PRICES_DEEP_STALE_MS = 180_000;
+// v11.3: negative cache for the Binance/Bybit synth leg — when the leg
+// returns nothing (blocked / empty), hold off 30s instead of hammering
+// fapi on every 2s stream beat while CoinDCX REST is dark. A SUCCESS
+// never arms it (the synth becomes the serving source).
+const SYNTH_NEG_MS = 30_000;
+let _synthDownUntil = 0;
 /**
  * Live futures prices. Returns [{ pair, base, last, mark, changePct,
  * high, low, volume }] — one row per active USDT perp. 20s default cache
  * (the SSE crypto stream pattern: one shared round-trip, nobody hits the
  * upstream per-request); the v10.10 ultra-fast stream passes maxAgeMs≈1.3s
  * and joins the in-flight fetch instead of stacking a second one.
+ * v11.3 RESILIENCE CHAIN (the "futures board dead on Render" fix):
+ *   REST RT (public.coindcx.com) → official WS book (cxBookState — the
+ *   stream's currentPrices@futures@rt socket) → Binance fapi 24h tickers
+ *   (same USDT-perp domain, honest 'binance-fut' source) → deep-stale
+ *   cache serve → throw. Every fallback row carries `source`.
  */
 export async function fetchFuturesPrices({ maxAgeMs = 20_000 } = {}) {
   if (_pricesCache && Date.now() - _pricesAt < maxAgeMs) return _pricesCache;
   if (_pricesInflight) return _pricesInflight;
   const probe = (async () => {
-    const r = await fetch(PRICES_URL, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) });
-    if (!ok(r)) throw new Error(`futures prices HTTP ${r?.status}`);
-    const j = await r.json();
-    const map = j?.prices && typeof j.prices === 'object' ? j.prices : null;
-    if (!map) throw new Error('futures prices: unexpected payload');
-    const rows = [];
-    // v10.13 (deep-recheck M3): normalize the payload epoch to MILLISECONDS.
-    // CoinDCX's top-level `ts` is seconds; consumers (cxRtStream's WS
-    // out-of-order guard, liveFeed freshness) compare against ms values —
-    // mixed units made correctness luck-dependent.
-    const rawTs = num(j?.ts);
-    const tsMs = rawTs > 0 ? (rawTs < 1e12 ? rawTs * 1000 : rawTs) : Date.now();
-    for (const [pair, p] of Object.entries(map)) {
-      if (!p || typeof p !== 'object') continue;
-      const last = num(p.ls);
-      if (!(last > 0)) continue; // dark/illiquid rows carry ls=0
-      rows.push({
-        pair: String(pair),
-        base: baseOfFuturesPair(pair),
-        last,
-        mark: num(p.mp) || last,
-        changePct: num(p.pc),
-        high: num(p.h),
-        low: num(p.l),
-        volume: num(p.v),
-        ts: tsMs,
-      });
+    try {
+      const r = await fetch(PRICES_URL, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) });
+      if (!ok(r)) throw new Error(`futures prices HTTP ${r?.status}`);
+      const j = await r.json();
+      const map = j?.prices && typeof j.prices === 'object' ? j.prices : null;
+      if (!map) throw new Error('futures prices: unexpected payload');
+      const rows = _rowsFromRtPayload(j, map);
+      if (rows.length === 0) throw new Error('futures prices: empty');
+      _pricesCache = rows; _pricesAt = Date.now();
+      return rows;
+    } catch {
+      // v11.3 leg 2 — the official futures WS book (fresh ≤5s rows from
+      // the stream socket; happens to be FASTER than REST when healthy).
+      const book = futBookSnapshot(5_000);
+      if (book.size > 0) {
+        const rows = [...book.values()];
+        _pricesCache = rows; _pricesAt = Date.now();
+        return rows;
+      }
+      // v11.3 leg 3 — Binance fapi / Bybit linear USDT-perp tickers (1:1
+      // domain), rate-limited by the negative cache so a dead CoinDCX
+      // never turns into a 2s fapi hammer.
+      if (Date.now() >= _synthDownUntil) {
+        const synth = await _binanceFutRows().catch(() => null);
+        if (synth && synth.length > 0) {
+          _pricesCache = synth; _pricesAt = Date.now();
+          return synth;
+        }
+        _synthDownUntil = Date.now() + SYNTH_NEG_MS;
+      }
+      // v11.3 leg 4 — deep-stale serve.
+      if (_pricesCache && Date.now() - _pricesAt < PRICES_DEEP_STALE_MS) return _pricesCache;
+      throw new Error('futures prices: all legs failed');
     }
-    if (rows.length === 0) throw new Error('futures prices: empty');
-    _pricesCache = rows; _pricesAt = Date.now();
-    return rows;
   })();
   _pricesInflight = probe;
   try { return await probe; } finally { _pricesInflight = null; }
+}
+
+/** RT payload → rows (shared by the REST leg; extracted v11.3 so the
+ *  fallback legs produce the identical shape). */
+function _rowsFromRtPayload(j, map) {
+  const rows = [];
+  // v10.13 (deep-recheck M3): normalize the payload epoch to MILLISECONDS.
+  // CoinDCX's top-level `ts` is seconds; consumers (cxRtStream's WS
+  // out-of-order guard, liveFeed freshness) compare against ms values —
+  // mixed units made correctness luck-dependent.
+  const rawTs = num(j?.ts);
+  const tsMs = rawTs > 0 ? (rawTs < 1e12 ? rawTs * 1000 : rawTs) : Date.now();
+  for (const [pair, p] of Object.entries(map)) {
+    if (!p || typeof p !== 'object') continue;
+    const last = num(p.ls);
+    if (!(last > 0)) continue; // dark/illiquid rows carry ls=0
+    rows.push({
+      pair: String(pair),
+      base: baseOfFuturesPair(pair),
+      last,
+      mark: num(p.mp) || last,
+      changePct: num(p.pc),
+      high: num(p.h),
+      low: num(p.l),
+      volume: num(p.v),
+      ts: tsMs,
+    });
+  }
+  return rows;
+}
+
+/** v11.3 leg 3 — Binance fapi / Bybit linear 24h ticker book →
+ *  CoinDCX-shaped rows. Same USDT-perp domain (zero projection risk);
+ *  source: 'binance-fut' / 'bybit-fut'. */
+async function _binanceFutRows() {
+  try {
+    const r = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr', {
+      headers: { 'User-Agent': UA },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (ok(r)) {
+      const raw = await r.json();
+      if (Array.isArray(raw) && raw.length > 0) {
+        const rows = _rowsFromBinanceFut(raw, 'binance-fut');
+        if (rows.length > 0) return rows;
+      }
+    }
+  } catch { /* next leg */ }
+  try {
+    const r = await fetch('https://api.bybit.com/v5/market/tickers?category=linear', {
+      headers: { 'User-Agent': UA },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (ok(r)) {
+      const j = await r.json();
+      const list = j?.result?.list;
+      if (Array.isArray(list) && list.length > 0) {
+        const rows = [];
+        const now = Date.now();
+        for (const x of list) {
+          if (!x || typeof x.symbol !== 'string' || !x.symbol.endsWith('USDT')) continue;
+          const base = x.symbol.slice(0, -4);
+          const last = parseFloat(x.lastPrice);
+          if (!base || !(last > 0)) continue;
+          rows.push({
+            pair: `B-${base}_USDT`,
+            base,
+            last,
+            mark: parseFloat(x.markPrice) || last,
+            changePct: (parseFloat(x.price24hPcnt) || 0) * 100,
+            high: parseFloat(x.highPrice24h) || 0,
+            low: parseFloat(x.lowPrice24h) || 0,
+            volume: parseFloat(x.volume24h) || 0,
+            ts: now,
+            source: 'bybit-fut',
+          });
+        }
+        if (rows.length > 0) return rows;
+      }
+    }
+  } catch { /* give up honestly */ }
+  return null;
+}
+
+function _rowsFromBinanceFut(raw, source) {
+  const rows = [];
+  const now = Date.now();
+  for (const x of raw) {
+    if (!x || typeof x.symbol !== 'string' || !x.symbol.endsWith('USDT')) continue;
+    const base = x.symbol.slice(0, -4);
+    const last = parseFloat(x.lastPrice);
+    if (!base || !(last > 0)) continue;
+    rows.push({
+      pair: `B-${base}_USDT`,
+      base,
+      last,
+      mark: parseFloat(x.markPrice) || last,
+      changePct: parseFloat(x.priceChangePercent) || 0,
+      high: parseFloat(x.highPrice) || 0,
+      low: parseFloat(x.lowPrice) || 0,
+      volume: parseFloat(x.volume) || 0,
+      ts: now,
+      source,
+    });
+  }
+  return rows;
 }
 export async function fetchFuturesLtpMap() {
   const rows = await fetchFuturesPrices().catch(() => []);
@@ -1300,6 +1425,7 @@ export async function futuresMarketsView(limit = 24) {
 // ---------------- test hooks ----------------
 export function __resetFuturesForTests() {
   _pricesCache = null; _pricesAt = 0; _pricesInflight = null;
+  _synthDownUntil = 0; // v11.3: the Binance/Bybit synth negative cache
   _instrumentsCache = null; _instrumentsAt = 0;
   _instrumentMetaCache = new Map();
   _walletsTransport.mode = null;

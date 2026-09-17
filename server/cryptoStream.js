@@ -18,13 +18,29 @@
 // 2026 perf audit (H2): ONE shared cached round-trip (fetchCoinDcxTickers,
 //   in-flight deduped) serves both the SSE poller and /api/crypto-prices;
 //   the parsed by-market Map is reused between polls.
+//
+// v11.3 — THE PERMANENT FIX for "502 Failed to fetch crypto prices" on
+//   Render: api.coindcx.com REST is Cloudflare-fronted and times out from
+//   datacenter IPs. The official SPOT WEBSOCKET (stream-spot.coindcx.com
+//   — different host, different protocol, datacenter-reachable; live-
+//   verified 2026-09-17) now backs the whole chain:
+//     fetchCoinDcxTickers() = REST → spot-WS book (official, cxSpotWs)
+//                             → Binance 24h tickers × live USDINR fx
+//                             → deep-stale serve (3 min) → throw
+//   The SSE poller re-anchors Binance projection from the WS book when
+//   REST is dark, so INR ticks never stop while ANY official source lives.
 // ---------------------------------------------------------------
 import WebSocket from 'ws';
 import { setTick } from './liveFeed.js';
+import { spotWsDemand, spotWsStatus, spotWsTickerArray, spotWsPrice, _resetSpotWsForTest } from './ai/cxSpotWs.js';
 
 const POLL_MS = 2000;             // 2s CoinDCX anchor poll (SSE push)
 const UPSTREAM_CACHE_MS = 2000;   // shared fetch cache window
 const UPSTREAM_STALE_MS = 30000;  // serve-stale window when upstream errors
+// v11.3: deep-stale serve — the LAST resort before a 502. A 3-min-old
+// official ticker array keeps every board/poller alive (prices drift a
+// little; a dead board drifts everything).
+const UPSTREAM_DEEP_STALE_MS = 180_000;
 const EVICT_GRACE_MS = 90000;     // unsubscribes wait for SSE auto-reconnect
 
 // Binance accelerator tuning
@@ -55,19 +71,28 @@ export function cryptoStreamEnabled() { return true; }
 
 // ---------------------------------------------------------------
 // Shared upstream fetch — used by the SSE poller AND /api/crypto-prices
+// v11.3 chain: REST → official spot-WS book → Binance×fx synth →
+// deep-stale. `_tsource` records which leg served (observability header).
 // ---------------------------------------------------------------
 const _upstream = { inFlight: null, at: 0, tickers: null };
 const _byMarket = { src: null, map: null };
 let _cryptoFetchImpl = null; // test injection
+let _tsource = 'coindcx-rest';
 const _cfetch = (url, opts) => (_cryptoFetchImpl || globalThis.fetch)(url, opts);
 
 export function _setCryptoFetchForTest(fn) { _cryptoFetchImpl = fn; }
+
+/** Which leg served the last fetchCoinDcxTickers() — surfaced as the
+ *  X-Price-Source header on /api/crypto-prices + server logs. */
+export function lastTickerSource() { return _tsource; }
 
 export async function fetchCoinDcxTickers() {
   const now = Date.now();
   if (_upstream.tickers && (now - _upstream.at) < UPSTREAM_CACHE_MS) return _upstream.tickers;
   if (_upstream.inFlight) return _upstream.inFlight;
   const p = (async () => {
+    // heartbeat: any ticker consumer keeps the official spot-WS armed
+    spotWsDemand();
     try {
       const r = await _cfetch(`https://api.coindcx.com/exchange/ticker?t=${Date.now()}`, {
         headers: {
@@ -82,11 +107,33 @@ export async function fetchCoinDcxTickers() {
       if (!Array.isArray(tickers)) throw new Error('bad payload');
       _upstream.tickers = tickers;
       _upstream.at = Date.now();
+      _tsource = 'coindcx-rest';
       return tickers;
     } catch (e) {
       // Transient upstream failure: serve the stale cache briefly instead of
       // failing every consumer at once.
       if (_upstream.tickers && (Date.now() - _upstream.at) < UPSTREAM_STALE_MS) {
+        _tsource = 'coindcx-rest-stale';
+        return _upstream.tickers;
+      }
+      // v11.3 leg 2 — the OFFICIAL spot WebSocket book (different CoinDCX
+      // host + protocol; datacenter-reachable when REST is not).
+      const wsArr = spotWsStatus().servable ? spotWsTickerArray() : [];
+      if (wsArr.length > 0) {
+        _tsource = 'coindcx-spot-ws';
+        return wsArr;
+      }
+      // v11.3 leg 3 — Binance/Bybit USDT 24h tickers projected to INR at
+      // the live fx rate (honest approximation: no India premium, marked
+      // __synthetic on every row).
+      const synth = await _binanceTickerSynth().catch(() => null);
+      if (synth && synth.length > 0) {
+        _tsource = 'binance-fx-synth';
+        return synth;
+      }
+      // v11.3 leg 4 — deep stale: 3-min-old official data beats a dead board.
+      if (_upstream.tickers && (Date.now() - _upstream.at) < UPSTREAM_DEEP_STALE_MS) {
+        _tsource = 'coindcx-rest-deep-stale';
         return _upstream.tickers;
       }
       throw e;
@@ -94,6 +141,100 @@ export async function fetchCoinDcxTickers() {
   })();
   _upstream.inFlight = p;
   try { return await p; } finally { _upstream.inFlight = null; }
+}
+
+// ---------------------------------------------------------------
+// v11.3 leg 3 — Binance spot 24h tickers → CoinDCX-shaped INR rows.
+// api.binance.com → data-api.binance.vision mirror → Bybit v5 spot.
+// A local USDINR fx cache (Yahoo chart, 84 fallback) mirrors futures.js
+// logic without an import cycle. Every row is marked __synthetic.
+// ---------------------------------------------------------------
+let _usdInr = { rate: 0, at: 0 };
+const FX_CACHE_MS = 10 * 60_000;
+const FX_FALLBACK = 84;
+
+async function _fetchUsdInr() {
+  if (_usdInr.rate > 0 && Date.now() - _usdInr.at < FX_CACHE_MS) return _usdInr.rate;
+  try {
+    const r = await _cfetch('https://query1.finance.yahoo.com/v8/finance/chart/USDINR%3DX?interval=1d&range=1d', {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36' },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (r.ok) {
+      const j = await r.json();
+      const v = parseFloat(j?.chart?.result?.[0]?.meta?.regularMarketPrice);
+      if (v > 40 && v < 150) { _usdInr = { rate: v, at: Date.now() }; return v; }
+    }
+  } catch { /* fall through to the static estimate */ }
+  return _usdInr.rate > 0 ? _usdInr.rate : FX_FALLBACK;
+}
+
+async function _binanceTickerSynth() {
+  const fx = await _fetchUsdInr();
+  if (!(fx > 0)) return null;
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+  // Leg A/B: Binance spot 24h tickers (full book) + the keyless mirror.
+  for (const host of ['https://api.binance.com', 'https://data-api.binance.vision']) {
+    try {
+      const r = await _cfetch(`${host}/api/v3/ticker/24hr`, {
+        headers: { 'User-Agent': UA },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!r.ok) continue;
+      const raw = await r.json();
+      if (!Array.isArray(raw) || raw.length === 0) continue;
+      const out = [];
+      for (const x of raw) {
+        if (!x || typeof x.symbol !== 'string' || !x.symbol.endsWith('USDT')) continue;
+        const base = x.symbol.slice(0, -4);
+        const last = parseFloat(x.lastPrice);
+        if (!base || !(last > 0)) continue;
+        const pc = parseFloat(x.priceChangePercent) || 0;
+        out.push({
+          market: `${base}INR`,
+          last_price: String(last * fx),
+          change_24_hour: String(pc),
+          high: String((parseFloat(x.highPrice) || last) * fx),
+          low: String((parseFloat(x.lowPrice) || last) * fx),
+          volume: String(parseFloat(x.volume) || 0),
+          timestamp: Date.now(),
+          __synthetic: 'binance-fx',
+        });
+      }
+      if (out.length > 0) return out;
+    } catch { /* next leg */ }
+  }
+  // Leg C: Bybit v5 spot tickers (newest-first, quoteVolume in USDT).
+  try {
+    const r = await _cfetch('https://api.bybit.com/v5/market/tickers?category=spot', {
+      headers: { 'User-Agent': UA },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (r.ok) {
+      const j = await r.json();
+      const list = j?.result?.list;
+      if (Array.isArray(list) && list.length > 0) {
+        const out = [];
+        for (const x of list) {
+          if (!x || typeof x.symbol !== 'string' || !x.symbol.endsWith('USDT')) continue;
+          const base = x.symbol.slice(0, -4);
+          const last = parseFloat(x.lastPrice);
+          if (!base || !(last > 0)) continue;
+          const pc = ((parseFloat(x.price24hPcnt) || 0) * 100);
+          out.push({
+            market: `${base}INR`,
+            last_price: String(last * fx),
+            change_24_hour: String(pc),
+            volume: String(parseFloat(x.volume24h) || 0),
+            timestamp: Date.now(),
+            __synthetic: 'binance-fx',
+          });
+        }
+        if (out.length > 0) return out;
+      }
+    }
+  } catch { /* give up honestly */ }
+  return null;
 }
 
 /** Parsed market -> ticker Map, rebuilt only when the upstream array changes. */
@@ -108,7 +249,7 @@ function _getByMarket(tickers) {
 }
 
 // Call when an SSE client connects / disconnects
-export function cryptoClientUp() { _activeClients++; _startIfNeeded(); }
+export function cryptoClientUp() { _activeClients++; spotWsDemand(); _startIfNeeded(); }
 export function cryptoClientDown() { _activeClients = Math.max(0, _activeClients - 1); _stopIfIdle(); }
 
 function _startIfNeeded() {
@@ -163,9 +304,44 @@ async function pollOnce() {
         time: Date.now(),
         // 24h-ago price (crypto "today" = rolling 24h window)
         prevClose: (chg > -100) ? price / (1 + chg / 100) : undefined,
-      }, 'coindcx-live');
+      }, t.feed === 'coindcx-spot-ws' ? 'coindcx-spot-ws' : 'coindcx-live');
     }
-  } catch { /* transient — retry next tick */ }
+  } catch {
+    // v11.3: REST dark AND the chain empty — the official spot-WS book
+    // can still own the INR anchor (keeps the Binance projection honest
+    // and INR ticks flowing at the WS's own cadence).
+    _anchorFromSpotWs();
+  }
+}
+
+/** v11.3: re-anchor from the official spot-WS book when the REST chain
+ *  threw — INR ticks keep landing (source 'coindcx-spot-ws') and the
+ *  Binance projection ratio stays fresh instead of silently expiring. */
+function _anchorFromSpotWs() {
+  for (const base of _subscribed) {
+    const price = spotWsPrice(`${base}INR`);
+    if (!(price > 0)) continue;
+    const prev = _cdcxLast.get(base);
+    _cdcxLast.set(base, {
+      price,
+      change: prev?.change || 0,
+      high: Math.max(prev?.high || price, price),
+      low: Math.min(prev?.low || price, price),
+      volume: prev?.volume || 0,
+      at: Date.now(),
+    });
+    const b = _binanceLast.get(base);
+    if (b && b.price > 0 && price > 0) _anchorRatio.set(base, price / b.price);
+    setTick(`IN_${base}`, {
+      price,
+      change: prev?.change || 0,
+      high: Math.max(prev?.high || price, price),
+      low: Math.min(prev?.low || price, price),
+      volume: prev?.volume || 0,
+      time: Date.now(),
+      prevClose: (prev?.change > -100) ? price / (1 + (prev?.change || 0) / 100) : undefined,
+    }, 'coindcx-spot-ws');
+  }
 }
 
 // ---------------------------------------------------------------
@@ -417,4 +593,7 @@ export function _resetCryptoStreamForTest() {
   _cdcxLast.clear(); _anchorRatio.clear(); _binanceLast.clear();
   _binanceFailStreak = 0; _binanceDisabledUntil = 0; _binanceGotData = false;
   _cryptoFetchImpl = null;
+  _tsource = 'coindcx-rest';
+  _usdInr = { rate: 0, at: 0 };
+  _resetSpotWsForTest(); // v11.3: the spot-WS tier resets with its host
 }

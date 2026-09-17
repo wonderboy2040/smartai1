@@ -15,7 +15,7 @@ import express from 'express';
 import { subscribe as feedSubscribe, snapshot as feedSnapshot, feedStatus } from './liveFeed.js';
 import { ensureUsSubscribed, usClientUp, usClientDown, usMarketOpen, isStaleUsQuote, getUsSessionQuote, releaseUsSubscribed } from './usStream.js';
 import { initInStream, ensureInSubscribed, inClientUp, inClientDown, releaseInSubscribed } from './inStream.js';
-import { ensureCryptoSubscribed, cryptoClientUp, cryptoClientDown, releaseCryptoSubscribed, fetchCoinDcxTickers } from './cryptoStream.js';
+import { ensureCryptoSubscribed, cryptoClientUp, cryptoClientDown, releaseCryptoSubscribed, fetchCoinDcxTickers, lastTickerSource } from './cryptoStream.js';
 // v10.10: CoinDCX DIRECT ultra-fast RT — USDT perps (FUT_) + USDC global
 // equity perps (GLOB_) pushed straight into the shared liveFeed at 2s.
 import { ensureCxRtSubscribed, cxRtClientUp, cxRtClientDown, releaseCxRtSubscribed, cxRtWsStatus } from './ai/cxRtStream.js';
@@ -953,6 +953,13 @@ app.get('/api/crypto-prices', async (_req, res) => {
   res.set('Cache-Control', 'no-store, max-age=0');
   try {
     const tickers = await fetchCoinDcxTickers();
+    // v11.3: honest observability — which leg served (REST / spot-WS /
+    // Binance-fx synth / stale). The header rides every response so a
+    // degraded feed is visible without server access.
+    res.set('X-Price-Source', lastTickerSource());
+    if (lastTickerSource() !== 'coindcx-rest') {
+      console.log(`[crypto-prices] serving via ${lastTickerSource()} (CoinDCX REST unreachable)`);
+    }
     return res.json(tickers);
   } catch (e) {
     return jsonError(res, 502, 'Failed to fetch crypto prices.', e);

@@ -22,7 +22,15 @@
 // ============================================================
 const PUSH_DEBOUNCE_MS = 5000;   // coalesce bursts (watcher ticks)
 const PUSH_MIN_GAP_MS = 60_000;  // GitHub abuse safety per file
-const FETCH_TIMEOUT_MS = 10_000;
+// v11.3: 10s → 15s + one retry on the sha HEAD. The production log
+// showed boot-time "[backup] head council-nearmiss.json failed: The
+// operation was aborted due to timeout" — api.github.com's first TLS
+// handshake from a cold Render container can exceed 10s. Backup is
+// best-effort, but a boot-time state push failing on a transient
+// handshake wastes the whole cycle (the remote copy stays a deploy
+// older than it needs to be).
+const FETCH_TIMEOUT_MS = 15_000;
+const HEAD_RETRIES = 2;
 
 const _log = (msg) => console.log(`[backup] ${msg}`);
 
@@ -74,20 +82,30 @@ async function _gh(url, opts = {}) {
 // ------------------------------------------------------------
 async function _doPush(filename, data) {
   const path = _filePath(filename);
-  // 1) Resolve the existing blob's sha (create-on-404).
+  // 1) Resolve the existing blob's sha (create-on-404). v11.3: retried
+  //    once — a cold-boot TLS handshake to api.github.com can blow a
+  //    single 15s budget; the second attempt rides the warmed connection.
   let sha = null;
-  try {
-    const head = await _gh(`${_apiBase()}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(_branch())}`);
-    if (head.ok) {
-      const j = await head.json();
-      sha = j?.sha || null;
-    } else if (head.status !== 404) {
-      _log(`head ${filename} -> HTTP ${head.status}, skipping push`);
-      return false;
+  for (let attempt = 1; attempt <= HEAD_RETRIES; attempt++) {
+    try {
+      const head = await _gh(`${_apiBase()}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(_branch())}`);
+      if (head.ok) {
+        const j = await head.json();
+        sha = j?.sha || null;
+        break;
+      } else if (head.status !== 404) {
+        if (attempt < HEAD_RETRIES) { await new Promise(r => setTimeout(r, 400)); continue; }
+        _log(`head ${filename} -> HTTP ${head.status}, skipping push`);
+        return false;
+      }
+      break; // 404 — create-on-missing, no retry needed
+    } catch (e) {
+      if (attempt >= HEAD_RETRIES) {
+        _log(`head ${filename} failed: ${e?.message || e}`);
+        return false;
+      }
+      await new Promise(r => setTimeout(r, 400));
     }
-  } catch (e) {
-    _log(`head ${filename} failed: ${e?.message || e}`);
-    return false;
   }
 
   // 2) Create or update the blob on the branch.

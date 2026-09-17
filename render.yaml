@@ -146,6 +146,11 @@ services:
         sync: false
       # SENSEX structural AI-score discount (model-only cards; default 8)
       # — BSE blocks datacenter IPs, no live cross-check possible.
+      # v11.3: CoinDCX official spot-WebSocket price layer (default ON;
+      # '0' kills it). Backs the crypto price chain when Cloudflare-fronted
+      # REST times out from datacenter IPs.
+      - key: AI_CX_SPOT_WS
+        value: "1"
       - key: AI_SENSEX_MODEL_DISCOUNT
         sync: false
       # ---- v11.0 SUPERINTELLIGENCE — GLOBAL MARKET COUNCIL ----

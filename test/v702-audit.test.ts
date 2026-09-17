@@ -69,7 +69,7 @@ import {
   watchPositions, closePosition, loadJournal, __resetForTests,
   __setJournalForTests, loadProTraderConfig,
 } from '../server/ai/coindcxOrders.js';
-import { closeFuturesPosition } from '../server/ai/futures.js';
+import { closeFuturesPosition, __resetFuturesForTests } from '../server/ai/futures.js';
 import { recordExecution, verifyLedger, settlePositionOutcome, __setLedgerForTests, __ledgerRaw } from '../server/ai/ledger.js';
 import { saveJSON, loadJSON as loadJSONOrig } from '../server/lib/store.js';
 
@@ -181,10 +181,23 @@ describe('v7.0.2 manual close — live price required', () => {
   it('futures: RT feed dead → honest reject', async () => {
     __setJournalForTests({ entries: [], positions: [futuresPaperPosition()] });
     _futRows = [];
-    const out = await closeFuturesPosition('pos-f702');
-    expect(out.ok).toBe(false);
-    expect(/No live futures price/.test(String(out.error))).toBe(true);
-    expect(loadJournal().positions[0].status).toBe('OPEN');
+    // v11.3: fetchFuturesPrices now has fallback legs (WS book →
+    // Binance/Bybit → deep-stale) — closeFuturesPosition exercises the
+    // REAL chain. Stub the network DEAD so this stays hermetic: every
+    // leg fails → "No live futures price" → the honest reject. (Without
+    // the stub the sandbox's REACHABLE Binance would rescue the close —
+    // exactly what production SHOULD do during a CoinDCX outage.)
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => ({ ok: false, status: 403, json: async () => ({}) })) as any;
+    try {
+      __resetFuturesForTests();
+      const out = await closeFuturesPosition('pos-f702');
+      expect(out.ok).toBe(false);
+      expect(/No live futures price/.test(String(out.error))).toBe(true);
+      expect(loadJournal().positions[0].status).toBe('OPEN');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
   });
 
   it('spot LIVE + creds revoked → honest error (no paper close for real coins)', async () => {

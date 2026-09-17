@@ -22,10 +22,14 @@
 //
 // THE v10.11 UPGRADE (user plan #1/#3/#5):
 //   • WEBSOCKET ACCELERATOR — CoinDCX's documented futures socket
-//     (wss://stream.coindcx.com, Socket.IO v2 / Engine.IO 3, channel
-//     "B-<PAIR>@prices-futures", event "price-change") pushes ticks
-//     EVENT-DRIVEN — no 2s ceiling while it flows. The REST poller
-//     becomes the degrade path + the illiquidity floor:
+//     (wss://stream.coindcx.com). v11.3 (live-verified): the protocol
+//     is Socket.IO v4 / Engine.IO 4 and the attributable stream is the
+//     FULL-BOOK channel "currentPrices@futures@rt" (~500 USDT perps,
+//     ~1/sec, ls/pc/v/mp rows with pair keys) — the old per-pair
+//     "@prices-futures" price-change events carry NO pair identity.
+//     The socket pushes ticks EVENT-DRIVEN — no 2s ceiling while it
+//     flows. The REST poller becomes the degrade path + the
+//     illiquidity floor:
 //       WS healthy (attributable ticks < 30s old)  → REST @ 10s floor
 //       WS down / unproven / silent-contract       → REST @ 2s (v10.10)
 //     The "healthy" proof is an ACTUAL landed tick — a socket that
@@ -60,6 +64,7 @@ import { setTick, getTick } from '../liveFeed.js';
 import { fetchFuturesPrices } from './futures.js';
 import { fetchGlobalFuturesRt, fetchGlobalQuotes, syntheticPriceAt, GLOBAL_FUTURES_UNIVERSE } from './globalFutures.js';
 import { createCxSocketIo } from './cxSocketIo.js';
+import { mergeFutBook, futBookStats, _resetFutBookForTest } from './cxBookState.js';
 import {
   syncBinanceFutAccelerator, binanceFutHealthy, binanceFutStatus, setBinanceFutOnLand,
   _setBinanceFutWsFactoryForTest, _resetBinanceFutWsForTest, _setBinanceFutNowForTest, _setBinanceFutWsEnabledForTest,
@@ -70,6 +75,12 @@ const REST_HEARTBEAT_MS = 10_000;  // REST floor cadence (WS healthy + writing)
 const RT_MAX_AGE_MS = 1300;        // ask the shared caches for ≤1.3s-old rows
 const FALLBACK_MS = 10_000;        // Finnhub/Yahoo fallback cadence (rate-polite)
 const EVICT_GRACE_MS = 90_000;     // unsubscribes wait for SSE auto-reconnect
+// v11.3: the futures socket's FULL-BOOK channel — one join covers every
+// USDT perp (~500 pairs, ~1/sec, ATTRIBUTABLE pair keys: ls/pc/v/mp in
+// each row). The old per-pair "@prices-futures" price-change events carry
+// NO pair identity, so they could never be attributed when more than one
+// channel was joined — the book channel fixes that structurally.
+const FUT_BOOK_CHANNEL = 'currentPrices@futures@rt';
 // Binance perp fallback (the SAME chain the futures board itself uses when
 // CoinDCX RT goes dark — 1:1 USDT domain, zero projection risk). Cached 5s
 // so a WAF blip on CoinDCX never stalls the stream longer than one beat.
@@ -78,7 +89,10 @@ const BINANCE_FUT_CACHE_MS = 5_000;
 let _bnFut = { at: 0, byBase: null }; // { at, byBase: Map<BASE, row> }
 
 // ---- v10.11 CoinDCX futures WebSocket (docs.coindcx.com) ----
-const DCX_WS_URL = 'wss://stream.coindcx.com/socket.io/?EIO=3&transport=websocket';
+// v11.3 (live-verified 2026-09-17): EIO=4 — the EIO=3 URL completes the
+// handshake but the server kills the socket ~1s after the ns-ack, so the
+// accelerator NEVER delivered a tick in production. EIO=4 flows.
+const DCX_WS_URL = 'wss://stream.coindcx.com/socket.io/?EIO=4&transport=websocket';
 const WS_TICK_FRESH_MS = 30_000;      // a landed tick within 30s proves the WS contract works
 const WS_SILENT_KILL_MS = 120_000;    // ns-connected but ZERO attributable ticks → contract mismatch (crypto domain)
 const WS_FAIL_LIMIT = 3;              // consecutive handshake failures → cooldown
@@ -234,6 +248,8 @@ export function ensureCxRtSubscribed({ fut, glob } = {}) {
     _futRefcounts.set(base, (_futRefcounts.get(base) || 0) + 1);
     if (!_futSubscribed.has(base)) { _futSubscribed.add(base); newFut.push(base); }
   }
+  // v11.3: live socket → nothing to join for FUT (the book channel is
+  // already joined once per socket); only GLOB grows the join list.
   for (const s of glob || []) {
     const sym = String(s).trim().toUpperCase();
     if (!sym) continue;
@@ -241,9 +257,9 @@ export function ensureCxRtSubscribed({ fut, glob } = {}) {
     _globRefcounts.set(sym, (_globRefcounts.get(sym) || 0) + 1);
     if (!_globSubscribed.has(sym)) { _globSubscribed.add(sym); newGlob.push(sym); }
   }
-  // live socket → join the NEW channels immediately (no reconnect needed)
+  // live socket → join the NEW GLOB channels immediately (no reconnect
+  // needed; FUT rides the always-joined book channel)
   if (_io && _io.state().connected) {
-    for (const base of newFut) _io.join(_futChannel(base));
     for (const sym of newGlob) _io.join(_globChannel(sym));
   }
   // a fresh universe while clients are live → immediate poll so the
@@ -261,7 +277,9 @@ export function releaseCxRtSubscribed({ fut, glob } = {}) {
     const n = (_futRefcounts.get(base) || 1) - 1;
     if (n > 0) { _futRefcounts.set(base, n); continue; }
     _futRefcounts.delete(base);
-    _scheduleEviction('FUT', base, () => { _futSubscribed.delete(base); _leaveChannel(_futChannel(base)); });
+    // v11.3: no per-pair FUT channel to leave — the book channel serves
+    // all pairs and stays joined while ANY subscription exists.
+    _scheduleEviction('FUT', base, () => { _futSubscribed.delete(base); });
   }
   for (const s of glob || []) {
     const sym = String(s).trim().toUpperCase();
@@ -316,6 +334,14 @@ async function _pollOnce() {
   _syncBinanceFutTier();
 }
 
+/** v11.3: map a fetchFuturesPrices row's `source` to the liveFeed
+ *  source label — honest per-tick attribution across ALL legs. */
+function _futRowSource(r) {
+  if (r?.source === 'ws-book') return 'coindcx-fut-ws';
+  if (r?.source === 'binance-fut' || r?.source === 'bybit-fut') return 'binance-fut-rt';
+  return 'coindcx-fut-rt';
+}
+
 async function _pollFutures(_now) {
   const covered = new Set();
   try {
@@ -327,6 +353,10 @@ async function _pollFutures(_now) {
         const r = byBase.get(base);
         if (!r || !(r.last > 0)) continue;
         covered.add(base);
+        // v11.3 HONEST LABEL: fetchFuturesPrices now has fallback legs
+        // (WS book / Binance-fut / Bybit-fut) — the tick must say which
+        // feed ACTUALLY served it, never blanket-'coindcx-fut-rt'.
+        const src = _futRowSource(r);
         const chg = Number(r.changePct) || 0;
         setTick(`FUT_${base}`, {
           price: r.last,
@@ -336,7 +366,7 @@ async function _pollFutures(_now) {
           volume: r.volume || 0,
           time: r.ts > 0 ? r.ts : _nowFn(),
           prevClose: chg > -100 ? r.last / (1 + chg / 100) : undefined,
-        }, 'coindcx-fut-rt');
+        }, src);
       }
     }
   } catch { /* transient upstream failure — fallback below + liveFeed serves the last good tick */ }
@@ -492,7 +522,6 @@ async function _pollGlobal(now) {
 // mirrors cryptoStream's Binance accelerator: handshake watchdog,
 // fail-streak circuit breaker, reconnect backoff, idle-close.
 // ---------------------------------------------------------------
-const _futChannel = (base) => `B-${base}_USDT@prices-futures`;
 const _globChannel = (sym) => `B-${sym}_USDC@prices-futures`;
 
 function _ensureWs() {
@@ -531,7 +560,11 @@ function _ensureWs() {
   _io = io;
   io.connect();
   // queue the joins (cxSocketIo holds them until the ns-connect ack)
-  for (const base of _futSubscribed) io.join(_futChannel(base));
+  // v11.3: ONE book channel covers EVERY USDT perp (attributable pair
+  // keys) — the per-pair FUT joins are gone. GLOB (USDC equity perps)
+  // is NOT carried by the book channel (live-verified: zero _USDC keys
+  // in 45s of book updates) — its per-pair channels stay joined.
+  io.join(FUT_BOOK_CHANNEL);
   for (const sym of _globSubscribed) io.join(_globChannel(sym));
   _syncBinanceFutTier(); // cx socket (re)arming — the tier re-evaluates
 }
@@ -617,10 +650,21 @@ function _wsSilentContractWatchdog(now) {
   _wsDisabledUntil = now + (quietGlob ? GLOB_QUIET_COOLDOWN_MS : WS_COOLDOWN_MS);
 }
 
-/** One price-change event → liveFeed, IF it can be attributed to a
- *  subscribed instrument. Tolerant to every plausible payload shape
- *  (the docs' own sample for this event is empty — repo discipline:
- *  never trust one key shape):
+/** One socket event → liveFeed / book state.
+ *  v11.3 PRIMARY PATH — the book channel (currentPrices@futures@rt):
+ *    42["currentPrices@futures#update", {"event":"…","data":"<JSON string>"}]
+ *    data (once parsed) = { vs, ts, pr, pST, prices: { "B-BTC_USDT":
+ *      { ls?, pc?, v?, mp?, bmST?, cmRT? }, … } } — ~500 ATTRIBUTABLE
+ *    pair rows ~1/sec. `ls` rows land ticks immediately (event-driven
+ *    freshness, no 2s REST ceiling); `mp`-only rows land ONLY when the
+ *    symbol has no fresh tick (mark price is a keep-alive, never a
+ *    replacement for a fresher last price). EVERY row merges into the
+ *    shared book state (cxBookState) — futures.js serves it as the
+ *    fetchFuturesPrices fallback when public.coindcx.com REST is
+ *    WAF-blocked.
+ *  Legacy path kept verbatim (below) for the per-pair
+ *  "@prices-futures" price-change events — tolerant to every payload
+ *  shape the docs have ever shown:
  *    {channelName:'B-BTC_USDT@prices-futures', data:{…}}
  *    {channelName:'…', p:'…'}          (fields inline)
  *    {pair:'B-BTC_USDT', data:{…}}
@@ -628,6 +672,10 @@ function _wsSilentContractWatchdog(now) {
  *  Price fields: p | ls | price | last_price; change: pc | change | dp;
  *  time: T | ts | btST; high/low/volume: h | l | v. */
 function _onWsEvent(name, payload) {
+  if (name === 'currentPrices@futures#update' || name === 'currentPrices@futures#snapshot') {
+    _onFutBookEvent(payload);
+    return;
+  }
   if (name !== 'price-change') return; // only the documented price channel event
   if (!payload || typeof payload !== 'object') return;
 
@@ -691,6 +739,52 @@ function _landWsTick(domain, sym, d) {
   if (domain === 'FUT') _syncBinanceFutTier(); // cx owns FUT again → tier stands down
 }
 
+/** v11.3 book-channel event → book state + liveFeed ticks. */
+function _onFutBookEvent(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  // payload.data is a JSON-encoded STRING on the live wire (verified):
+  // {"event":"…","data":"{\"pr\":\"futures\",\"prices\":{…}}"}
+  let d = payload.data;
+  if (typeof d === 'string') {
+    try { d = JSON.parse(d); } catch { return; }
+  }
+  if (!d || typeof d !== 'object' || !d.prices || typeof d.prices !== 'object') return;
+  mergeFutBook(d.prices, _num(d.ts));
+  for (const [rawPair, row] of Object.entries(d.prices)) {
+    if (!row || typeof row !== 'object') continue;
+    const m = String(rawPair).toUpperCase().match(/^B-([A-Z0-9.]+)_(USDT|USDC)$/);
+    if (!m) continue;
+    const domain = m[2] === 'USDC' ? 'GLOB' : 'FUT';
+    const sym = m[1];
+    const last = _num(row.ls);
+    const mark = _num(row.mp);
+    if (last > 0) {
+      _landWsTick(domain, sym, row);           // true last price — always lands
+    } else if (mark > 0) {
+      _landMarkIfStale(domain, sym, row);      // mark price — keep-alive only
+    } else {
+      _proveWsHealth(domain, sym);             // heartbeat row — liveness proof
+    }
+  }
+}
+
+/** Mark-price keep-alive: land mp ONLY when the symbol's current tick
+ *  is stale (>8s) — a mark price is an index-weighted estimate, never
+ *  a replacement for a fresher last price. */
+function _landMarkIfStale(domain, sym, row) {
+  const key = `${domain}_${sym}`;
+  const last = getTick(key);
+  if (last && (_nowFn() - (last.time || 0)) < 8_000) return;
+  _landWsTick(domain, sym, { ...row, ls: row.mp });
+}
+
+/** A heartbeat-only book row (no ls/mp) still proves the socket is
+ *  delivering OUR channels — the REST floor may engage. */
+function _proveWsHealth(domain, sym) {
+  if (domain === 'FUT' ? !_futSubscribed.has(sym) : !_globSubscribed.has(sym)) return;
+  _wsLastTickAt = _nowFn();
+  _syncRestCadence();
+}
 // ---------------------------------------------------------------
 // Test hooks
 // ---------------------------------------------------------------
@@ -716,6 +810,7 @@ export function _resetCxRtForTest() {
   _wsOpenedAt = 0;
   _usPremarketFn = null;
   _resetBinanceFutWsForTest(); // v10.15: the accelerator tier resets with its host
+  _resetFutBookForTest();      // v11.3: the shared book state resets with its writer
 }
 
 /** Direct poll invocation for the regression suite (the interval itself
@@ -735,6 +830,7 @@ export function _cxRtStateForTest() {
     glob: [..._globSubscribed],
     fallbackAt: _fallbackAt,
     binanceFut: binanceFutStatus(), // v10.15: the accelerator tier's state
+    book: futBookStats(),           // v11.3: the shared WS book state
   };
 }
 

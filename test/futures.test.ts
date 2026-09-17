@@ -146,7 +146,8 @@ describe('fetchFuturesPrices (RT payload)', () => {
   });
   it('rejects garbage payloads (empty / wrong shape)', async () => {
     routeFetch({ 'current_prices/futures/rt': { prices: {} } });
-    await expect(fetchFuturesPrices({ maxAgeMs: 0 })).rejects.toThrow(/empty|unexpected/i);
+    // v11.3: the chain's final honest error once every fallback leg is dead
+    await expect(fetchFuturesPrices({ maxAgeMs: 0 })).rejects.toThrow(/empty|unexpected|all legs failed/i);
   });
 });
 
