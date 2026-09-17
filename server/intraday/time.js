@@ -111,7 +111,13 @@ export function freshEntriesAllowedFor(market = 'INDIA') {
  */
 export function sessionElapsedShare(market = 'INDIA', date = new Date()) {
   const m = String(market || 'INDIA').toUpperCase();
-  if (m === 'CRYPTO') return 1;
+  if (m === 'CRYPTO') {
+    const d = new Date(date);
+    const utcMins = d.getUTCHours() * 60 + d.getUTCMinutes();
+    // 24h UTC candle day (00:00-24:00 UTC = 1440 min). Floored at 0.12 so the
+    // first ~2.8 hours cannot over-amplify low early volume.
+    return Math.max(0.12, Math.min(1, utcMins / 1440));
+  }
   const { weekday } = getISTParts(date);
   if (weekday === 'Sat' || weekday === 'Sun') return 1;
   const mins = istMinutes(date);

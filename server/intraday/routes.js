@@ -48,6 +48,7 @@ import { loadJSON, saveJSON } from './store.js';
 // SAME tiered universe the Signal Board uses (T1 every cycle, T2
 // rotating slices, hot promotion). One truth, three consumers.
 import { tieredScanUniverse, absorbScanRows, fullIndiaUniverseEnabled } from '../ai/indiaUniverse.js';
+import { TV_SCAN_HEADERS } from '../lib/tvHeaders.js';
 
 // ------------------------------------------------------------
 // Custom universe / watchlist (persisted) — PER MARKET (2026-09):
@@ -336,7 +337,7 @@ export function registerIntradayRoutes(app, deps) {
     try {
       const res = await fetch(`https://scanner.tradingview.com/india/scan?t=${Date.now()}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        headers: TV_SCAN_HEADERS,
         body: JSON.stringify({
           symbols: { tickers: Object.keys(_INDEX_TV) },
           columns: ['close', 'change', 'VWAP', 'RSI'],

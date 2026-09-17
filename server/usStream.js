@@ -34,6 +34,7 @@
 // ---------------------------------------------------------------
 import WebSocket from 'ws';
 import { setTick } from './liveFeed.js';
+import { TV_SCAN_HEADERS } from './lib/tvHeaders.js';
 
 // FIX (audit L-1): do NOT fall back to VITE_* vars — those are browser-exposed
 // at build time. Server-side processes must read server-side names only.
@@ -389,7 +390,7 @@ async function _fetchTvUsBatch(symbols) {
     }
     const r = await _fetch('https://scanner.tradingview.com/america/scan', {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8', 'User-Agent': 'Mozilla/5.0 (WealthAI US batch stream)' },
+      headers: TV_SCAN_HEADERS,
       body: JSON.stringify({ symbols: { tickers }, columns: TV_BATCH_COLUMNS }),
       signal: AbortSignal.timeout(TV_TIMEOUT_MS),
     });

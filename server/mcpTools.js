@@ -5,6 +5,7 @@
 // ============================================================
 
 import { getMLPrediction, getRegime, getAllSignals } from './mlEngine.js';
+import { TV_SCAN_HEADERS } from './lib/tvHeaders.js';
 
 // ============================================
 // 1. SUPERSCORE v6.0 PURE CALCULATION ENGINE
@@ -632,7 +633,7 @@ export async function executeServerMCPTool(name, args = {}, context = {}) {
           try {
             const res = await fetch(`https://scanner.tradingview.com/india/scan?t=${Date.now()}`, {
               method: 'POST',
-              headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+              headers: TV_SCAN_HEADERS,
               body: JSON.stringify({
                 symbols: { tickers },
                 columns: TV_INTRADAY_COLS,
@@ -738,7 +739,7 @@ export async function executeServerMCPTool(name, args = {}, context = {}) {
         try {
           const res = await fetch(`https://scanner.tradingview.com/india/scan?t=${Date.now()}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+            headers: TV_SCAN_HEADERS,
             body: JSON.stringify({
               symbols: { tickers: [`NSE:${rawSym}`, `BSE:${rawSym}`] },
               columns: TV_INTRADAY_COLS,

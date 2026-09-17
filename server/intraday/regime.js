@@ -9,6 +9,7 @@
 // no penalty, never blocks the scan).
 // ============================================================
 import { istMinutes } from './time.js';
+import { TV_SCAN_HEADERS } from '../lib/tvHeaders.js';
 
 let _regimeCache = { data: null, ts: 0 };
 const REGIME_CACHE_MS = 60 * 1000;
@@ -18,7 +19,7 @@ const REGIME_TV_COLUMNS = ['close', 'change', 'VWAP', 'EMA20', 'RSI'];
 async function fetchRegimeFromTV() {
   const res = await fetch(`https://scanner.tradingview.com/india/scan?t=${Date.now()}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+    headers: TV_SCAN_HEADERS,
     body: JSON.stringify({
       symbols: { tickers: ['NSE:NIFTY', 'NSE:INDIAVIX'] },
       columns: REGIME_TV_COLUMNS,
@@ -95,7 +96,7 @@ let _cryptoRegimeCache = { data: null, ts: 0 };
 async function fetchCryptoRegimeFromTV() {
   const res = await fetch(`https://scanner.tradingview.com/crypto/scan?t=${Date.now()}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+    headers: TV_SCAN_HEADERS,
     body: JSON.stringify({
       symbols: { tickers: ['BINANCE:BTCUSDT'] },
       columns: ['close', 'change', 'VWAP', 'EMA20', 'RSI'],

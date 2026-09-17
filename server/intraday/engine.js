@@ -37,6 +37,7 @@
 import { istMinutes, marketPhaseFor, paceRelVolume } from './time.js';
 // v11.1 GAP 2 — circuit-limit guard (pure helpers, no fetch)
 import { entryCircuitRisk } from '../ai/circuitGuard.js';
+import { TV_SCAN_HEADERS } from '../lib/tvHeaders.js';
 
 export const INTRADAY_MIN_CONFIDENCE = 75;
 export const INTRADAY_TOP_N = 5;
@@ -168,7 +169,7 @@ export async function fetchIntradayDataBatch(symbols, fetchGrowwNseQuote, opts =
       try {
         const res = await fetch(`https://scanner.tradingview.com/india/scan?t=${Date.now()}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+          headers: TV_SCAN_HEADERS,
           body: JSON.stringify({
             symbols: { tickers: [...new Set(tickers)] },
             columns: TV_INTRADAY_COLUMNS,
@@ -255,7 +256,7 @@ async function fetchCryptoIntradayDataBatch(symbols, fetchCoinDcxTickers, fallba
       try {
         const res = await fetch(`https://scanner.tradingview.com/crypto/scan?t=${Date.now()}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+          headers: TV_SCAN_HEADERS,
           body: JSON.stringify({
             symbols: { tickers: [...new Set(tvTickers)] },
             columns: TV_INTRADAY_COLUMNS,
@@ -450,7 +451,9 @@ export function analyzeIntradayFromScanner(symbol, tv, groww, opts = {}) {
   // ---- v4 HARD VOLUME FLOOR ----
   // Only reject on KNOWN low relative volume — an absent feed value
   // (null/0 from TV) must not disqualify a symbol on missing data.
-  if (relVolumeKnown && relVolume < MIN_REL_VOLUME) return null;
+  // Crypto trades 24/7 across global sessions — floor is 0.7x (NSE is 1.2x).
+  const volFloor = isCrypto ? 0.7 : MIN_REL_VOLUME;
+  if (relVolumeKnown && relVolume < volFloor) return null;
 
   // Derived metrics
   const gapPct = prevClose > 0 ? ((open - prevClose) / prevClose) * 100 : 0;

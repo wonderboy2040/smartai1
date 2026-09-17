@@ -28,6 +28,8 @@
 // the legacy static universe (byte-identical scan behavior).
 // ============================================================
 
+import { TV_SCAN_HEADERS } from '../lib/tvHeaders.js';
+
 // ---------------- configuration ----------------
 /** Full-universe size (discovery depth). Env-tunable. */
 const FULL_SIZE = Math.max(60, Math.min(500, parseInt(process.env.AI_INDIA_FULL_UNIVERSE_SIZE, 10) || 220));
@@ -260,7 +262,7 @@ async function _fetchDiscovery() {
   };
   const res = await fetch(`https://scanner.tradingview.com/india/scan?t=${Date.now()}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+    headers: TV_SCAN_HEADERS,
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(DISCOVER_TIMEOUT_MS),
   });

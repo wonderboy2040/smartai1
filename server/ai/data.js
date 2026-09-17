@@ -19,6 +19,7 @@
 // ============================================================
 import { computeIndicatorsFromCandles } from './lib/indicators.js';
 import { fetchCoinDcxTickers } from '../cryptoStream.js';
+import { TV_SCAN_HEADERS } from '../lib/tvHeaders.js';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36';
 
@@ -70,7 +71,7 @@ export async function fetchTVIndiaBatch(symbols) {
     try {
       const res = await fetch(`https://scanner.tradingview.com/india/scan?t=${Date.now()}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        headers: TV_SCAN_HEADERS,
         body: JSON.stringify({ symbols: { tickers: [...new Set(tickers)] }, columns }),
         signal: AbortSignal.timeout(12000),
       });
@@ -149,7 +150,7 @@ export async function fetchTVCryptoBatch(symbols) {
     try {
       const res = await fetch(`https://scanner.tradingview.com/crypto/scan?t=${Date.now()}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        headers: TV_SCAN_HEADERS,
         body: JSON.stringify({ symbols: { tickers }, columns }),
         signal: AbortSignal.timeout(12000),
       });
