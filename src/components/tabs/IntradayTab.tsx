@@ -518,9 +518,13 @@ function OutcomeToast({ ev, onClose }: { ev: OutcomeEvent & { id: number }; onCl
     PAPER_CLOSE: 'border-purple-500/40 bg-purple-500/10 text-purple-300',
     FLIP: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
     OPEN: 'border-cyan-500/40 bg-cyan-500/10 text-cyan-300',
+    // v11.1 GAP 2 — the URGENT adverse-circuit alert styling (rose, loud).
+    CIRCUIT_RISK: 'border-rose-500/50 bg-rose-500/15 text-rose-200',
   }[ev.type] || 'border-white/20 bg-white/5 text-slate-300';
-  const icon = { T1_HIT: '🎯', T2_HIT: '🏆', SL_HIT: '🛑', BE_TRAIL_EXIT: '🔒', EOD_EXIT: '🌙', PAPER_CLOSE: '📝', FLIP: '🔄', OPEN: '⚡' }[ev.type] || 'ℹ️';
-  const pnl = ev.pnl != null ? ` • ${ev.pnl >= 0 ? '+' : '−'}₹${Math.abs(ev.pnl).toFixed(0)}${ev.type.startsWith('PAPER') ? '' : '/₹1L'}` : '';
+  const icon = { T1_HIT: '🎯', T2_HIT: '🏆', SL_HIT: '🛑', BE_TRAIL_EXIT: '🔒', EOD_EXIT: '🌙', PAPER_CLOSE: '📝', FLIP: '🔄', OPEN: '⚡', CIRCUIT_RISK: '🚨' }[ev.type] || 'ℹ️';
+  // v11.1 GAP 3: post-cost P&L takes the headline when present.
+  const pnlVal = ev.pnlNet != null ? ev.pnlNet : ev.pnl;
+  const pnl = pnlVal != null ? ` • ${pnlVal >= 0 ? '+' : '−'}₹${Math.abs(pnlVal).toFixed(0)}${ev.type.startsWith('PAPER') ? (ev.pnlNet != null ? ' net' : '') : '/₹1L'}` : '';
   return (
     <button
       onClick={onClose}

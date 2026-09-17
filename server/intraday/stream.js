@@ -23,7 +23,7 @@
 import { istMinutes, getISTParts, istDayKey, dayKeyFor } from './time.js';
 import { isCryptoSymbolBase } from './engine.js';
 import { evaluateTracked, watcherSymbolsByMarket } from './trackRecord.js';
-import { evaluatePaper, paperSymbolsByMarket, injectOptionPaperQuotes, optionUnderlyingsForWatcher } from './paperTrading.js';
+import { evaluatePaper, paperSymbolsByMarket, injectOptionPaperQuotes, optionUnderlyingsForWatcher, paperCircuitWatch } from './paperTrading.js';
 import { getMarketRegime, getCryptoRegime } from './regime.js';
 
 const POLL_MS = 5000;
@@ -170,7 +170,13 @@ async function _fetchQuotes(symMarket) {
       await Promise.allSettled(batch.map(async (sym) => {
         try {
           const q = await _deps.fetchGrowwNseQuote(sym);
-          if (q && q.price > 0) out[sym] = { price: q.price, change: q.change ?? 0, ts: Date.now(), src: 'groww-live' };
+          // v11.1 GAP 2: Groww's day price band (upper/lower circuit) rides
+          // the quote through to the circuit-limit watch — same fetch,
+          // zero extra upstream cost. Absent bands → fields simply omitted.
+          if (q && q.price > 0) out[sym] = {
+            price: q.price, change: q.change ?? 0, ts: Date.now(), src: 'groww-live',
+            ...(q.upperCircuit > 0 && q.lowerCircuit > 0 ? { upperCircuit: q.upperCircuit, lowerCircuit: q.lowerCircuit } : {}),
+          };
         } catch { /* skip */ }
       }));
     }
@@ -280,6 +286,12 @@ async function _tick() {
     const events = [];
     try { evaluateTracked(quotes, events); } catch (e) { console.warn('[intraday-stream] track eval:', e?.message); }
     try { evaluatePaper(quotes, events); } catch (e) { console.warn('[intraday-stream] paper eval:', e?.message); }
+    // v11.1 GAP 2: circuit-limit watch — open equity paper positions
+    // drifting toward an ADVERSE circuit (LONG→lower / SHORT→upper)
+    // emit URGENT CIRCUIT_RISK events (10-min per-symbol cooldown).
+    // Rides the SAME quotes the watcher already fetched — zero extra
+    // upstream cost; inert when Groww serves no bands for a symbol.
+    try { paperCircuitWatch(quotes, events); } catch (e) { console.warn('[intraday-stream] circuit watch:', e?.message); }
 
     _broadcast('quotes', quotes);
     for (const ev of events) {

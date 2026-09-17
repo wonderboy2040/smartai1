@@ -125,6 +125,29 @@ services:
       # the 3 indices on GET /api/ai/options-scan (0-10). Default 6.
       - key: AI_OPTIONS_SCAN_STOCKS
         sync: false
+      # ---- v11.1 INDIA DESK DEEP-GAPS ----
+      # GAP 2 circuit-limit guard: proximity threshold % (default 1.5)
+      # and same-direction entry penalty (default 18). Bands ride the
+      # existing Groww quote fetch — no extra upstream calls.
+      - key: AI_CIRCUIT_PROXIMITY_PCT
+        sync: false
+      - key: AI_CIRCUIT_PENALTY
+        sync: false
+      # GAP 3 real transaction costs: brokerage mode/flat/pct + crypto
+      # taker fee (per-instrument STT/txn overrides documented in
+      # .env.example). Net P&L becomes the paper desk's headline.
+      - key: AI_TC_BROKERAGE_MODE
+        sync: false
+      - key: AI_TC_BROKERAGE_FLAT
+        sync: false
+      - key: AI_TC_BROKERAGE_PCT
+        sync: false
+      - key: AI_TC_CRYPTO_FEE_PCT
+        sync: false
+      # SENSEX structural AI-score discount (model-only cards; default 8)
+      # — BSE blocks datacenter IPs, no live cross-check possible.
+      - key: AI_SENSEX_MODEL_DISCOUNT
+        sync: false
       # ---- v11.0 SUPERINTELLIGENCE — GLOBAL MARKET COUNCIL ----
       # MASTER SWITCH (default OFF): top-5 board candidates go to the
       # 6 specialist LLM seats -> calibrated consensus -> precision

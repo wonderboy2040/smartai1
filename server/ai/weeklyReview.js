@@ -340,6 +340,15 @@ function _quantPromptBlock(q) {
   lines.push('NSE INTRADAY PAPER DESK (this week):');
   if (intraday && intraday.count > 0) {
     lines.push(`${intraday.count} trades, ${intraday.wins}W/${intraday.losses}L, net ₹${intraday.netPnl}, avg ${intraday.avgR ?? 'n/a'}R`);
+    // v11.1 GAP 3: the gross-vs-net gap — "costs ate ₹X this week, Y% of
+    // gross profit" is the number that reveals whether a strategy is
+    // real-money viable or only paper-viable.
+    const costs = Number(intraday.costs) || 0;
+    if ((intraday.tradesWithCosts || 0) > 0 && costs > 0) {
+      const grossWin = Number(intraday.grossWin) || 0;
+      const pct = grossWin > 0 ? ` (${Math.round((costs / grossWin) * 1000) / 10}% of gross profit)` : '';
+      lines.push(`costs ate ₹${costs.toFixed(2)} this week${pct} — net ₹${intraday.netPnlAfterCosts} vs gross ₹${intraday.netPnl} (brokerage + STT + exchange txn + SEBI + GST + stamp)`);
+    }
   } else {
     lines.push('no closed paper trades this week');
   }
@@ -384,6 +393,14 @@ export function quantHeaderBlock(q) {
   }
   if (calibration.sufficient) {
     lines.push(`🎯 <b>Calibration</b>: claimed ${calibration.overall?.avgConfidence}% → realized ${calibration.overall?.winRate}% · Brier ${calibration.brier}`);
+  }
+  // v11.1 GAP 3: the intraday paper desk's gross-vs-net cost drag — the
+  // "costs ate ₹X this week" line (visible with or without the LLM).
+  const inr = q.intraday;
+  if (inr && (inr.tradesWithCosts || 0) > 0 && Number(inr.costs) > 0) {
+    const gw = Number(inr.grossWin) || 0;
+    const pctTxt = gw > 0 ? ` · ${Math.round((Number(inr.costs) / gw) * 1000) / 10}% of gross profit` : '';
+    lines.push(`💸 <b>Costs ate ₹${Number(inr.costs).toLocaleString('en-IN')}</b> this week${pctTxt} — paper net ₹${Number(inr.netPnl).toLocaleString('en-IN')} → post-cost ₹${Number(inr.netPnlAfterCosts).toLocaleString('en-IN')}`);
   }
   // v11.0: the council header line — seats + precision + auto-tighten.
   const c = q.council;

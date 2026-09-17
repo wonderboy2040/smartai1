@@ -148,6 +148,14 @@ async function _growwFetchOnce(sym) {
     // runs the normal failure path: quick retry, then honest Yahoo fallback
     // in the callers.
     if (_isStaleGrowwRow(lastTradeMs, Date.now())) return null;
+    // v11.1 GAP 2 (circuit guard): Groww's payload carries the day's
+    // price band natively — highPriceRange/lowPriceRange = the upper/
+    // lower circuit (±band on prev close) the broker enforces. Same
+    // fetch, two extra fields — zero upstream cost. Validated numbers
+    // only; absent/garbage bands degrade to null (guard stays inert).
+    const bandOf = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0) ? v : null;
+    const upperCircuit = bandOf(j.highPriceRange);
+    const lowerCircuit = bandOf(j.lowPriceRange);
     return {
       price,
       change: typeof j.dayChangePerc === 'number' ? j.dayChangePerc : 0,
@@ -156,6 +164,7 @@ async function _growwFetchOnce(sym) {
       volume: j.volume || 0,
       prevClose: (j.ltp && j.dayChange != null) ? (j.ltp - j.dayChange) : price,
       time: (lastTradeMs || Date.now()),
+      ...(upperCircuit && lowerCircuit && upperCircuit > lowerCircuit ? { upperCircuit, lowerCircuit } : {}),
       source: 'groww-nse-realtime',
     };
   } catch { return null; }

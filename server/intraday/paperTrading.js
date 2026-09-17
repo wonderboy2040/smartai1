@@ -19,6 +19,10 @@ import { recordTradeClose } from './journal.js';
 import { scheduleBackup, restoreBackup, backupConfigured } from './backup.js';
 import { pRound } from '../ai/lib/priceRound.js';
 import { bsPrice, yearsToExpiry } from '../ai/lib/blackScholes.js';
+// v11.1 GAP 3 — real transaction costs (brokerage/STT/txn/GST/SEBI/stamp)
+import { costsForPaperTrade } from '../ai/tradingCosts.js';
+// v11.1 GAP 2 — adverse-circuit risk for open equity positions
+import { adverseCircuitRisk } from '../ai/circuitGuard.js';
 
 const FILE = 'paper-trades.json';
 const MAX_TRADES = 500;
@@ -242,6 +246,25 @@ function _closePart(trade, qty, price, reason) {
   trade.remainingQty -= use;
   trade.realizedPnl += use * (price - trade.entry) * sign * mult;
   trade.parts.push({ qty: use, exitPrice: pRound(price), ts: Date.now(), reason });
+  // v11.1 GAP 3: re-annotate gross/costs/net on every part close — the
+  // numbers are derived deterministically from (qty, entry, parts), so
+  // recomputing is idempotent and works for restored/legacy trades too.
+  try {
+    const costs = costsForPaperTrade(trade);
+    if (costs && costs.total != null) {
+      trade.grossPnl = +(+trade.realizedPnl).toFixed(2);
+      trade.costs = +(costs.total).toFixed(2);
+      trade.netPnl = +(trade.realizedPnl - costs.total).toFixed(2);
+      trade.costsBreakdown = {
+        instrumentType: costs.instrumentType,
+        brokerage: costs.brokerage ?? 0, stt: costs.stt ?? 0,
+        exchangeTxn: costs.exchangeTxn ?? 0, sebi: costs.sebi ?? 0,
+        gst: costs.gst ?? 0, stampDuty: costs.stampDuty ?? 0,
+        takerFee: costs.takerFee ?? null, orders: costs.orders ?? null,
+        ...(costs.note ? { note: costs.note } : {}),
+      };
+    }
+  } catch { /* costs optional — gross stays the honest fallback */ }
   if (trade.remainingQty <= 0) {
     trade.status = 'CLOSED';
     trade.closedAt = Date.now();
@@ -281,12 +304,12 @@ export function evaluatePaper(quotes, events) {
     if (t.status === 'OPEN') {
       if (hitSL) {
         _closePart(t, t.remainingQty, t.stopLoss, 'SL_HIT');
-        events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.stopLoss, pnl: t.realizedPnl, note: 'Paper trade SL hit' });
+        events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.stopLoss, pnl: t.realizedPnl, pnlNet: t.netPnl ?? null, note: 'Paper trade SL hit' });
         changed = true; continue;
       }
       if (hitT2) {
         _closePart(t, t.remainingQty, t.target2, 'T2_HIT');
-        events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.target2, pnl: t.realizedPnl, note: 'Paper trade T2 hit' });
+        events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.target2, pnl: t.realizedPnl, pnlNet: t.netPnl ?? null, note: 'Paper trade T2 hit' });
         changed = true; continue;
       }
       if (hitT1) {
@@ -297,31 +320,31 @@ export function evaluatePaper(quotes, events) {
           : Math.ceil(t.qty / 2);
         _closePart(t, half, t.target1, 'T1_BOOK');
         if (t.status !== 'CLOSED') t.status = 'PARTIAL';
-        events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.target1, pnl: t.realizedPnl, note: 'Paper: booked 50% at T1, trail to entry' });
+        events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.target1, pnl: t.realizedPnl, pnlNet: t.netPnl ?? null, note: 'Paper: booked 50% at T1, trail to entry' });
         changed = true; continue;
       }
     } else if (t.status === 'PARTIAL') {
       if (hitSL) {
         _closePart(t, t.remainingQty, t.stopLoss, 'SL_TRAIL_HIT');
-        events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.stopLoss, pnl: t.realizedPnl, note: 'Paper trade trail-stop hit' });
+        events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.stopLoss, pnl: t.realizedPnl, pnlNet: t.netPnl ?? null, note: 'Paper trade trail-stop hit' });
         changed = true; continue;
       }
       if (hitT2) {
         _closePart(t, t.remainingQty, t.target2, 'T2_HIT');
-        events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.target2, pnl: t.realizedPnl, note: 'Paper trade T2 hit' });
+        events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.target2, pnl: t.realizedPnl, pnlNet: t.netPnl ?? null, note: 'Paper trade T2 hit' });
         changed = true; continue;
       }
       const hitTrail = isLong ? p <= t.entry : p >= t.entry;
       if (hitTrail) {
         _closePart(t, t.remainingQty, t.entry, 'BE_TRAIL');
-        events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.entry, pnl: t.realizedPnl, note: 'Paper: breakeven trail exit' });
+        events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.entry, pnl: t.realizedPnl, pnlNet: t.netPnl ?? null, note: 'Paper: breakeven trail exit' });
         changed = true; continue;
       }
     }
 
     if (afterSqOff && t.status !== 'CLOSED') {
       _closePart(t, t.remainingQty, p, 'EOD_SQOFF');
-      events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: p, pnl: t.realizedPnl, note: 'Paper: 15:10 auto square-off' });
+      events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: p, pnl: t.realizedPnl, pnlNet: t.netPnl ?? null, note: 'Paper: 15:10 auto square-off' });
       changed = true;
     }
   }
@@ -335,6 +358,47 @@ export function evaluatePaper(quotes, events) {
   }
   if (changed) _persist();
   return changed;
+}
+
+// ------------------------------------------------------------
+// v11.1 GAP 2 — CIRCUIT-LIMIT WATCH for open equity paper positions.
+// Called by the stream watcher on every tick (after evaluatePaper):
+// a LONG drifting into the LOWER circuit / a SHORT into the UPPER
+// circuit is approaching a state where the EXIT itself cannot fill —
+// the usual "tighten the stop" playbook is useless there. Emits
+// URGENT CIRCUIT_RISK events (distinct from SL-approach warnings)
+// with a per-symbol 10-min cooldown. NSE equities only — crypto has
+// no circuits and option premiums are not band-bound.
+// ------------------------------------------------------------
+const _circuitAlertAt = new Map(); // `${symbol}:${direction}` → last-alert ts
+export function paperCircuitWatch(quotes, events, opts = {}) {
+  const cooldownMs = Number(opts.cooldownMs) > 0 ? Number(opts.cooldownMs) : 10 * 60 * 1000;
+  const now = Date.now();
+  let fired = 0;
+  for (const t of _state.trades) {
+    if (t.status === 'CLOSED') continue;
+    if (_marketOfTrade(t) !== 'INDIA') continue;
+    if (_isOptionTrade(t)) continue;
+    const q = quotes?.[t.symbol];
+    if (!q || !(Number(q.price) > 0)) continue;
+    const risk = adverseCircuitRisk({ side: t.direction }, q);
+    if (!risk || !risk.adverse) continue;
+    const key = `${t.symbol}:${t.direction}`;
+    if (now - (_circuitAlertAt.get(key) || 0) < cooldownMs) continue;
+    _circuitAlertAt.set(key, now);
+    events.push({
+      type: 'CIRCUIT_RISK',
+      symbol: t.symbol,
+      direction: t.direction,
+      price: Number(q.price),
+      band: risk.band,
+      frozen: !!risk.frozen,
+      distPct: risk.distPct,
+      note: risk.note,
+    });
+    fired++;
+  }
+  return fired;
 }
 
 export function closePaperTrade(id, quotes) {
@@ -372,6 +436,11 @@ export function getPaperSummary() {
   const closedToday = _state.trades.filter(t => t.dayKey === today && t.status === 'CLOSED');
   const allClosed = _state.trades.filter(t => t.status === 'CLOSED');
   const sum = (arr, f) => arr.reduce((s, t) => s + (f(t) || 0), 0);
+  // v11.1 GAP 3: costs are derived per trade (pure, deterministic) — the
+  // same numbers _publicTrade serves, so summary and rows always agree.
+  const costsOf = (t) => {
+    try { return costsForPaperTrade(t)?.total ?? 0; } catch { return 0; }
+  };
 
   return {
     open: open.map(_publicTrade),
@@ -383,11 +452,21 @@ export function getPaperSummary() {
       totalRealizedPnl: +sum(allClosed, t => t.realizedPnl).toFixed(2),
       wins: allClosed.filter(t => t.realizedPnl > 0).length,
       losses: allClosed.filter(t => t.realizedPnl < 0).length,
+      // v11.1 GAP 3: net-of-costs variants (costs = brokerage + STT +
+      // exchange txn + SEBI + GST + stamp — env-tunable to your broker)
+      dayCosts: +sum(closedToday, costsOf).toFixed(2),
+      dayNetPnl: +sum(closedToday, t => t.realizedPnl - costsOf(t)).toFixed(2),
+      totalCosts: +sum(allClosed, costsOf).toFixed(2),
+      totalNetPnl: +sum(allClosed, t => t.realizedPnl - costsOf(t)).toFixed(2),
     },
   };
 }
 
 function _publicTrade(t) {
+  // v11.1 GAP 3: live-derived cost annotation — works for legacy and
+  // restored trades too (pure function of qty/entry/parts).
+  let costs = null;
+  try { costs = costsForPaperTrade(t); } catch { /* gross fallback */ }
   return {
     id: t.id, symbol: t.symbol, market: _marketOfTrade(t), direction: t.direction,
     entry: t.entry, qty: t.qty, remainingQty: t.remainingQty,
@@ -397,6 +476,18 @@ function _publicTrade(t) {
     lastPrice: t.lastPrice, realizedPnl: +(+t.realizedPnl).toFixed(2),
     unrealizedPnl: +(+t.unrealizedPnl).toFixed(2),
     parts: t.parts, capital: t.capital,
+    ...(costs && costs.total != null ? {
+      grossPnl: +(+t.realizedPnl).toFixed(2),
+      costs: +(costs.total).toFixed(2),
+      netPnl: +(t.realizedPnl - costs.total).toFixed(2),
+      costsBreakdown: {
+        instrumentType: costs.instrumentType,
+        brokerage: costs.brokerage ?? 0, stt: costs.stt ?? 0,
+        exchangeTxn: costs.exchangeTxn ?? 0, sebi: costs.sebi ?? 0,
+        gst: costs.gst ?? 0, stampDuty: costs.stampDuty ?? 0,
+        takerFee: costs.takerFee ?? null, orders: costs.orders ?? null,
+      },
+    } : {}),
     // v9.5 F&O option identity (absent on equity/crypto rows). iv is
     // included — the device-mirror restore needs it to re-price.
     ...(t.assetKind === 'OPTION' ? {
@@ -472,12 +563,19 @@ export function getPaperHistory(days = 90) {
   const groups = [...byDay.entries()].map(([dayKey, list]) => {
     const wins = list.filter(t => t.realizedPnl > 0).length;
     const losses = list.filter(t => t.realizedPnl < 0).length;
+    const dayCosts = list.reduce((s, t) => {
+      try { return s + (costsForPaperTrade(t)?.total ?? 0); } catch { return s; }
+    }, 0);
+    const dayGross = +list.reduce((s, t) => s + (t.realizedPnl || 0), 0).toFixed(2);
     return {
       dayKey,
       trades: list.length,
       wins, losses,
       winRate: list.length ? +((wins / list.length) * 100).toFixed(1) : 0,
-      realizedPnl: +list.reduce((s, t) => s + (t.realizedPnl || 0), 0).toFixed(2),
+      realizedPnl: dayGross,
+      // v11.1 GAP 3: the honest net line (costs deducted)
+      costs: +dayCosts.toFixed(2),
+      netPnl: +(dayGross - dayCosts).toFixed(2),
     };
   }).sort((a, b) => (a.dayKey < b.dayKey ? 1 : -1));
 
@@ -486,6 +584,11 @@ export function getPaperHistory(days = 90) {
   const grossWin = wins.reduce((s, t) => s + t.realizedPnl, 0);
   const grossLoss = Math.abs(losses.reduce((s, t) => s + t.realizedPnl, 0));
   const totalPnl = +(grossWin - grossLoss).toFixed(2);
+  // v11.1 GAP 3: all-time net + total costs (the "is this strategy
+  // real-money viable or only paper-viable" number)
+  const totalCosts = +closed.reduce((s, t) => {
+    try { return s + (costsForPaperTrade(t)?.total ?? 0); } catch { return s; }
+  }, 0).toFixed(2);
 
   let bestDay = null, worstDay = null;
   for (const g of groups) {
@@ -506,6 +609,10 @@ export function getPaperHistory(days = 90) {
       avgLoss: losses.length ? +(-grossLoss / losses.length).toFixed(2) : 0,
       profitFactor: grossLoss > 0 ? +(grossWin / grossLoss).toFixed(2) : (grossWin > 0 ? null : 0),
       totalPnl,
+      // v11.1 GAP 3: net-of-costs view
+      totalCosts,
+      totalNetPnl: +(totalPnl - totalCosts).toFixed(2),
+      costsPctOfGrossProfit: grossWin > 0 ? +((totalCosts / grossWin) * 100).toFixed(1) : null,
       bestDay, worstDay,
     },
     // Full closed-trade list (newest first) — the client mirrors this
@@ -642,4 +749,5 @@ export function restorePaperTrades(input) {
 export function _resetForTests(seed) {
   if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
   _state = structuredClone(seed || { trades: [], nextId: 1, dayKey: istDayKey() });
+  _circuitAlertAt.clear();
 }

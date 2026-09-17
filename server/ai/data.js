@@ -389,6 +389,138 @@ export async function fetchNSEOptionChain(symbol) {
   return null;
 }
 
+// ---------------- BSE option chain (SENSEX — best-effort, honest) ----------------
+// v11.1 NSE+SENSEX addendum. RESEARCH-SPIKE VERDICT (17 Sep 2026 live
+// probe from this host): bseindia.com AND api.bseindia.com both serve
+// HTTP 403 Access Denied (Akamai CDN) to datacenter IPs — this sandbox
+// CAN reach NSE's chain but NOT BSE's, so a Render deployment has no
+// path either. The block is STRUCTURAL, not a transient outage.
+//
+// This fetch still exists (NSE pattern: cookie bootstrap + direct
+// JSON GET, tolerant parsing) so SENSEX gets FULL parity the day it
+// becomes reachable (different host/IP, CDN posture change). A
+// negative cache (10 min after each failed probe cycle) keeps the
+// dead probe nearly free; optionsDesk labels the SENSEX fallback
+// 'bs-model-sensex-always' (permanent limitation) instead of the
+// recoverable 'bs-model-nifty-fallback' framing — honesty by design.
+const BSE_HEADERS = {
+  'User-Agent': UA,
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Referer': 'https://www.bseindia.com/option-chain',
+};
+let _bseCookie = null, _bseCookieAt = 0;
+const BSE_COOKIE_TTL = 8 * 60 * 1000;
+const BSE_NEG_CACHE_MS = 10 * 60 * 1000;
+let _bseNegUntil = 0;
+
+async function bseBootstrapCookies() {
+  if (_bseCookie && Date.now() - _bseCookieAt < BSE_COOKIE_TTL) return _bseCookie;
+  try {
+    const r = await fetch('https://www.bseindia.com/option-chain', {
+      headers: BSE_HEADERS,
+      signal: AbortSignal.timeout(8000),
+    });
+    const raw = r.headers.getSetCookie?.() || [];
+    if (raw.length) {
+      _bseCookie = raw.map(c => c.split(';')[0]).join('; ');
+      _bseCookieAt = Date.now();
+    }
+    return _bseCookie;
+  } catch { return _bseCookie; }
+}
+
+/** Normalize a BSE-ish expiry string ('17 Sep 2026' | '2026-09-17') to YYYY-MM-DD. */
+function _bseExpiryNorm(s) {
+  const t = String(s || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const m = t.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})$/);
+  if (m) {
+    const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const mi = MON.findIndex(x => x.toLowerCase() === m[2].toLowerCase());
+    if (mi >= 0) return `${m[3]}-${String(mi + 1).padStart(2, '0')}-${String(parseInt(m[1], 10)).padStart(2, '0')}`;
+  }
+  return null;
+}
+
+/**
+ * REAL BSE option chain for SENSEX — best-effort attempt following the
+ * exact fetchNSEOptionChain pattern. Returns null when BSE blocks the
+ * request (the documented datacenter case) or the payload doesn't
+ * sanity-check. Callers MUST treat null as the expected outcome on
+ * cloud hosts and label the fallback honestly (bs-model-sensex-always).
+ */
+export async function fetchBSEOptionChain(symbol = 'SENSEX') {
+  const sym = String(symbol || 'SENSEX').toUpperCase();
+  if (sym !== 'SENSEX') return null; // only the BSE flagship index is wired
+  if (Date.now() < _bseNegUntil) return null; // blocked recently — hold
+  // Two candidate endpoints (community-known shapes). Neither is
+  // verifiable from a datacenter IP today — both are attempted once.
+  const paths = [
+    `https://www.bseindia.com/OptionChain/GetOptionChain?symbol=${encodeURIComponent(sym)}`,
+    `https://api.bseindia.com/BseIndiaAPI/api/OptionChain?symbol=${encodeURIComponent(sym)}`,
+  ];
+  for (const url of paths) {
+    try {
+      const cookie = await bseBootstrapCookies();
+      const r = await fetch(url, {
+        headers: { ...BSE_HEADERS, ...(cookie ? { Cookie: cookie } : {}) },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!r.ok) continue;
+      const j = await r.json();
+      // Tolerant parsing: accept NSE-like {records:{data:[…]}} OR a
+      // top-level {data:[…]} / array of CE/PE rows.
+      const records = j?.records || j;
+      const rowsRaw = Array.isArray(records?.data) ? records.data
+        : Array.isArray(j?.data) ? j.data
+        : Array.isArray(j) ? j : null;
+      if (!rowsRaw || rowsRaw.length === 0) continue;
+      const rows = [];
+      for (const x of rowsRaw) {
+        const ce = x?.CE || x?.call || null;
+        const pe = x?.PE || x?.put || null;
+        if (!ce && !pe) continue;
+        const expiry = _bseExpiryNorm(x?.expiryDate || x?.expiry || '');
+        rows.push({
+          strike: Number(x?.strikePrice ?? x?.strike),
+          expiry: expiry || String(x?.expiryDate || x?.expiry || ''),
+          callOI: Number(ce?.openInterest ?? ce?.oi) || 0,
+          callOIChange: Number(ce?.changeinOpenInterest ?? ce?.chgOi) || 0,
+          callIV: Number(ce?.impliedVolatility ?? ce?.iv) || null,
+          callLTP: Number(ce?.lastPrice ?? ce?.ltp) || 0,
+          callVolume: Number(ce?.totalTradedVolume ?? ce?.volume) || 0,
+          putOI: Number(pe?.openInterest ?? pe?.oi) || 0,
+          putOIChange: Number(pe?.changeinOpenInterest ?? pe?.chgOi) || 0,
+          putIV: Number(pe?.impliedVolatility ?? pe?.iv) || null,
+          putLTP: Number(pe?.lastPrice ?? pe?.ltp) || 0,
+          putVolume: Number(pe?.totalTradedVolume ?? pe?.volume) || 0,
+        });
+      }
+      const clean = rows.filter(r => Number.isFinite(r.strike) && r.strike > 0 && /^\d{4}-\d{2}-\d{2}$/.test(r.expiry));
+      if (clean.length < 5) continue;
+      const expiries = [...new Set(clean.map(r => r.expiry))].sort();
+      _bseNegUntil = 0; // reached & parsed — clear any stale hold
+      return {
+        symbol: sym,
+        spot: Number(records?.underlyingValue ?? j?.underlyingValue) || null,
+        expiryDates: expiries,
+        rows: clean,
+        source: 'bse',
+        fetchedAt: Date.now(),
+      };
+    } catch { /* next candidate */ }
+  }
+  // Structurally blocked (the documented datacenter case) — hold off
+  // for 10 minutes so SENSEX desks stay fast while the probe heals
+  // itself the day BSE becomes reachable.
+  _bseNegUntil = Date.now() + BSE_NEG_CACHE_MS;
+  return null;
+}
+
+export function __bseNegForTests() { return { negUntil: _bseNegUntil, cookie: _bseCookie }; }
+export function __resetBseForTests() { _bseNegUntil = 0; _bseCookie = null; _bseCookieAt = 0; }
+
 // ---------------- time / market-hours (IST) ----------------
 export function istNow(now = new Date()) {
   return new Date(now.getTime() + (330 + now.getTimezoneOffset()) * 60000);

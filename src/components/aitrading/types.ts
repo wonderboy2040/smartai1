@@ -444,6 +444,17 @@ export interface Strategy {
  * LONG → BUY the ATM CE · SHORT → BUY the ATM PE. Target/SL are the
  * option re-priced at the index plan's target1/stopLoss (BS, IV+expiry
  * held fixed) — the premium translation of the desk's index levels. */
+
+/** v11.1 NSE+SENSEX addendum — chain/premium source honesty:
+ *  'nse' / 'bse'                 live exchange chain premiums
+ *  'bs-model'                    legacy tag (kept for back-compat)
+ *  'bs-model-nifty-fallback'     NIFTY-family model mode — RECOVERABLE
+ *                                (NSE temporarily blocked from this host)
+ *  'bs-model-sensex-always'      SENSEX model mode — PERMANENT/structural
+ *                                (BSE blocks datacenter IPs by design) */
+export type OptionSource = 'nse' | 'bse' | 'bs-model' | 'bs-model-nifty-fallback' | 'bs-model-sensex-always';
+export const isLiveOptionSource = (s: string | null | undefined): boolean => s === 'nse' || s === 'bse';
+
 export interface OptionSignalCard {
   kind: 'option-signal';
   /** "Nifty50 15Sep 23400 CE" — display name + DDMon + strike + type */
@@ -489,7 +500,11 @@ export interface OptionSignalCard {
   tradeable: boolean;
   basis: { target: string; stopLoss: string };
   indexLevels: { spot: number; target1?: number; stopLoss?: number };
-  source: 'nse' | 'bs-model';
+  source: OptionSource;
+  /** v11.1: raw score + the SENSEX structural haircut when the card is
+   *  model-only with no live-market cross-check possible. */
+  aiScoreRaw?: number;
+  structuralDiscount?: number;
   note: string;
 }
 
@@ -510,7 +525,7 @@ export interface OptionSignalsView {
     expiry?: string;
     expiryLabel?: string | null;
     lotSize?: number;
-    source?: 'nse' | 'bs-model';
+    source?: OptionSource;
     consensus?: { side: string; confidence: number; grade: string };
     cards: OptionSignalCard[];
     noCardReason?: string | null;
@@ -528,7 +543,7 @@ export interface OptionsScanRow {
   dte?: number | null;
   expiry?: string;
   expiryLabel?: string | null;
-  source?: 'nse' | 'bs-model';
+  source?: OptionSource;
   synthetic?: boolean;
   lotSize?: number;
   atmIV?: number | null;
@@ -578,7 +593,7 @@ export interface OptionsDesk {
   expiry: string;
   /** v6.13: days to expiry (0 = expiry-day) */
   dte?: number | null;
-  source: 'nse' | 'bs-model';
+  source: OptionSource;
   syntheticNote?: string | null;
   lotSize: number;
   analytics: {

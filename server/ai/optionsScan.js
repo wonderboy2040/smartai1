@@ -116,7 +116,8 @@ export function scanScoreOf(row) {
   }
   const em = row?.expectedMovePct;
   if (typeof em === 'number' && Number.isFinite(em)) s += Math.min(15, em * 5);
-  if (row?.source === 'nse') s += 5;
+  // v11.1: live-chain bonus covers BOTH exchanges ('nse' | 'bse').
+  if (row?.source === 'nse' || row?.source === 'bse') s += 5;
   if ((row?.dte ?? 0) > 8) s -= 5;
   return Math.round(s);
 }
@@ -145,8 +146,8 @@ export function optionScanRow(desk, kind) {
     dte: desk.dte,
     expiry: desk.expiry,
     expiryLabel: expiryLabel(desk.expiry),
-    source: desk.source, // 'nse' | 'bs-model'
-    synthetic: desk.source !== 'nse',
+    source: desk.source, // 'nse' | 'bse' (live) | 'bs-model-*' (honest model)
+    synthetic: !['nse', 'bse'].includes(desk.source),
     lotSize: desk.lotSize || 1,
     // analytics surface (all null-safe)
     atmIV: a.atmIV ?? null,
@@ -237,8 +238,8 @@ export async function scanOptionsUniverse(opts = {}) {
         }
       }
 
-      const live = rows.filter(r => r.ok && r.source === 'nse');
-      const model = rows.filter(r => r.ok && r.source !== 'nse');
+      const live = rows.filter(r => r.ok && (r.source === 'nse' || r.source === 'bse'));
+      const model = rows.filter(r => r.ok && r.source !== 'nse' && r.source !== 'bse');
       const failed = rows.filter(r => !r.ok);
       const ranked = rows.filter(r => r.ok).sort((a, b) => (b.scanScore ?? 0) - (a.scanScore ?? 0));
       const data = {
@@ -254,7 +255,7 @@ export async function scanOptionsUniverse(opts = {}) {
         note: live.length === 0 && model.length > 0
           ? 'NSE is server se reachable nahi — sab rows Black-Scholes model-chain par hain (premiums estimates, OI reads unavailable).'
           : model.length > 0
-            ? `${model.length} row(s) model-chain par hain (live NSE chain unreachable for un) — tagged, ranked with the honesty penalty.`
+            ? `${model.length} row(s) model-chain par hain (live exchange chain unreachable for un) — tagged, ranked with the honesty penalty.`
             : null,
       };
       _cache = { at: Date.now(), data };

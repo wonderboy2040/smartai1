@@ -18,6 +18,9 @@ interface JournalEntry {
   direction: string;
   closeReason: string;
   realizedPnl: number;
+  /** v11.1 GAP 3: net-of-costs pair on new entries (legacy stays gross). */
+  costs?: number;
+  netPnl?: number;
   rMultiple: number | null;
   holdMinutes: number | null;
   t1Hit: boolean;
@@ -194,8 +197,8 @@ export const JournalPanel = memo(function JournalPanel({ refreshKey }: { refresh
                     <span className="text-slate-200 font-bold">{e.symbol}</span>
                     <span className={e.direction === 'LONG' ? 'text-emerald-400' : 'text-red-400'}>{e.direction === 'LONG' ? '▲' : '▼'}</span>
                     <span className="text-slate-400">{REASON_LABEL[e.closeReason] || e.closeReason}</span>
-                    <span className={`text-right font-bold ${e.realizedPnl > 0 ? 'text-emerald-400' : e.realizedPnl < 0 ? 'text-red-400' : 'text-slate-400'}`}>
-                      {e.realizedPnl >= 0 ? '+' : '−'}₹{Math.abs(e.realizedPnl).toFixed(0)}
+                    <span className={`text-right font-bold ${(e.netPnl ?? e.realizedPnl) > 0 ? 'text-emerald-400' : (e.netPnl ?? e.realizedPnl) < 0 ? 'text-red-400' : 'text-slate-400'}`} title={e.costs != null ? `gross ₹${e.realizedPnl} − costs ₹${e.costs} (brokerage/STT/txn/GST/SEBI/stamp)` : undefined}>
+                      {(e.netPnl ?? e.realizedPnl) >= 0 ? '+' : '−'}₹{Math.abs(e.netPnl ?? e.realizedPnl).toFixed(0)}{e.costs != null && <span className="ml-0.5 text-[8px] font-black text-amber-500/70">net</span>}
                     </span>
                     <span className={`text-right ${e.rMultiple != null && e.rMultiple > 0 ? 'text-emerald-400/80' : 'text-slate-500'}`}>
                       {e.rMultiple != null ? `${e.rMultiple >= 0 ? '+' : ''}${e.rMultiple}R` : '—'}

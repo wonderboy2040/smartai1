@@ -51,6 +51,10 @@ import { v2ModelsEnabled } from './models.js';
 import {
   convictionEnabled, convictionOfPosition, weakeningShouldTighten,
 } from './positionConviction.js';
+// v11.1 GAP 2 — circuit-limit risk for open India positions (pure
+// classification + the Groww quote that carries the day's price band).
+import { adverseCircuitRisk } from './circuitGuard.js';
+import { fetchGrowwNseQuote } from './growwQuote.js';
 // v10.15 GAP 2: Event Guard — earnings/RBI/CPI/IIP awareness on the
 // India entry gauntlet (T-30m blackout · T-2h sizing haircut).
 import { eventGuardCheck } from './eventGuard.js';
@@ -525,6 +529,33 @@ async function _tick(deps, sendTelegram) {
     }
     if (convictionTightened.length > 0) {
       log('exit', `CONVICTION WEAKENING ×${convictionTightened.length} — ${convictionTightened.map(c => `${c.symbol} (delta ${c.delta})`).join(', ')} → SL ratcheted to breakeven (positions kept)`);
+    }
+  }
+
+  // ---- v11.1 GAP 2: CIRCUIT-LIMIT SWEEP (open India positions) ----
+  // A position drifting toward an ADVERSE circuit gets an URGENT,
+  // distinct alert — different from a normal SL-approach warning,
+  // because the usual "tighten the stop" playbook is useless when the
+  // stock is about to stop trading entirely. Groww's quote carries the
+  // day's band; 10-min per-symbol cooldown; ANALYSIS-ONLY (never an
+  // auto-exit — exits stay inside the gauntlet below).
+  if (openAgent.length > 0 && nseOpen) {
+    const circuitAlerts = [];
+    _state.circuitAlerts = _state.circuitAlerts || {};
+    for (const p of openAgent) {
+      try {
+        const q = await fetchGrowwNseQuote(p.symbol);
+        const risk = adverseCircuitRisk({ side: p.side }, q);
+        if (!risk || !risk.adverse) continue;
+        const key = `circuit:${p.symbol}`;
+        if (Date.now() - Number(_state.circuitAlerts[key] || 0) < 10 * 60 * 1000) continue;
+        _state.circuitAlerts[key] = Date.now();
+        circuitAlerts.push({ symbol: p.symbol, side: p.side, note: risk.note });
+        log('exit', `CIRCUIT RISK ${p.symbol} (${p.side}) — ${risk.frozen ? 'FROZEN at' : 'approaching'} ${risk.band} circuit, ${risk.distPct.toFixed(1)}% door — exit liquidity danger`);
+      } catch { /* quote optional — skip this symbol this tick */ }
+    }
+    if (circuitAlerts.length > 0) {
+      await notify(sendTelegram, `🚨 <b>INDIA AGENT circuit-limit risk</b> — exit liquidity danger\n${circuitAlerts.map(a => `• <b>${a.symbol}</b> (${a.side}): ${a.note}`).join('\n')}\nUsual SL playbook yahan kaam nahi karta — jo nikal sakte ho abhi nikalo.`);
     }
   }
 

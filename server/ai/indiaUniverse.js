@@ -98,9 +98,12 @@ export function validNSESymbol(s) {
 /**
  * PURE: TV filter-query rows → validated liquidity rows.
  * Input: [{ name, exchange, close, change, volume, value_traded,
- *           relative_volume_10d_calc, market_cap_basic }]
+ *           relative_volume_10d_calc, market_cap_basic, sector? }]
  * Output: [{ symbol, ltp, changePct, volume, valueTraded, relVolume,
- *            marketCap }] — NSE-only, deduped, value_traded-desc.
+ *            marketCap, sector }] — NSE-only, deduped, value_traded-desc.
+ * v11.1 GAP 1: `sector` (d[8], appended LAST so the locked column
+ * contract indices are stable) carries TV's own sector taxonomy —
+ * the sector desk buckets the FULL 220-name universe with it.
  */
 export function parseDiscoveryRows(raw) {
   const out = [];
@@ -109,7 +112,7 @@ export function parseDiscoveryRows(raw) {
     const d = item?.d;
     if (!Array.isArray(d)) continue;
     // column contract: [name, exchange, close, change, volume,
-    // value_traded, rel_volume_10d_calc, market_cap_basic]
+    // value_traded, rel_volume_10d_calc, market_cap_basic, sector?]
     const symbol = String(d[0] || '').trim().toUpperCase();
     const exchange = String(d[1] || '').trim().toUpperCase();
     const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -119,6 +122,7 @@ export function parseDiscoveryRows(raw) {
     if (!(ltp > 0)) continue;
     if (seen.has(symbol)) continue;
     seen.add(symbol);
+    const tvSector = typeof d[8] === 'string' ? d[8].trim().slice(0, 60) : null;
     out.push({
       symbol,
       ltp: Math.round(ltp * 100) / 100,
@@ -127,6 +131,7 @@ export function parseDiscoveryRows(raw) {
       valueTraded: num(d[5]) ?? 0,
       relVolume: num(d[6]) != null && d[6] > 0 ? Math.round(d[6] * 100) / 100 : null,
       marketCap: num(d[7]) ?? 0,
+      sector: tvSector && tvSector.length > 0 ? tvSector : null,
     });
   }
   // liquidity order: turnover first, volume as tiebreak (already
@@ -244,6 +249,10 @@ async function _fetchDiscovery() {
     columns: [
       'name', 'exchange', 'close', 'change', 'volume',
       'value_traded', 'relative_volume_10d_calc', 'market_cap_basic',
+      // v11.1 GAP 1: TV's own sector taxonomy — lets the sector desk
+      // bucket the FULL discovered universe, not just the base 45.
+      // Appended last: the locked column-contract indices stay stable.
+      'sector',
     ],
     sort: { sortBy: 'value_traded', sortOrder: 'desc' },
     options: { lang: 'en' },

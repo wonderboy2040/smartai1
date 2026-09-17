@@ -140,6 +140,9 @@ function TradeRow({ t, live, onClose, closing }: {
   const livePrice = live?.price ?? t.lastPrice;
   const isClosed = t.status === 'CLOSED';
   const isOption = t.assetKind === 'OPTION';
+  // v11.1 GAP 3: entry-side costs already locked in (brokerage buy order +
+  // stamp/txn/SEBI/GST) ride as an honest small chip under the gross number.
+  const openCosts = !isClosed && t.costs != null && t.costs > 0 ? t.costs : null;
   return (
     <tr className="border-b border-white/5 hover:bg-white/[0.03]">
       <td className="px-2 py-1.5">
@@ -161,7 +164,10 @@ function TradeRow({ t, live, onClose, closing }: {
         {px(livePrice)}{live && <span className="ml-0.5 text-[7px] text-cyan-500 animate-pulse">●</span>}
       </td>
       <td className="px-2 py-1.5 text-center text-slate-400">{t.remainingQty}/{t.qty}</td>
-      <td className={`px-2 py-1.5 text-center font-bold ${pnlColor(livePnl)}`}>{fmtPnl(livePnl)}</td>
+      <td className={`px-2 py-1.5 text-center font-bold ${pnlColor(livePnl)}`} title={openCosts != null ? `gross ${fmtPnl(livePnl)} — entry-side costs ${fmtPnl(openCosts)} abhi tak lage hain (brokerage/STT/txn/GST/SEBI/stamp)` : undefined}>
+        {fmtPnl(livePnl)}
+        {openCosts != null && <span className="ml-1 text-[8px] font-black text-amber-500/80" title="costs so far (entry side)">−{fmtPnl(openCosts).replace('₹', '₹')}c</span>}
+      </td>
       <td className="px-2 py-1.5 text-center">
         {isClosed ? (
           <span className="text-[9px] font-bold text-slate-500">{t.closeReason}</span>
@@ -197,13 +203,23 @@ function HistorySection({ history }: { history: PaperHistory }) {
             {overall.winRate.toFixed(1)}% win
           </span>
           {overall.profitFactor != null && <span className="text-slate-500">PF {overall.profitFactor.toFixed(2)}</span>}
-          <b className={pnlColor(overall.totalPnl)}>{fmtPnl(overall.totalPnl)}</b>
+          <b className={pnlColor(overall.totalNetPnl ?? overall.totalPnl)} title={`gross ${fmtPnl(overall.totalPnl)} − costs ${fmtPnl(overall.totalCosts ?? 0)}`}>
+            {fmtPnl(overall.totalNetPnl ?? overall.totalPnl)} net
+          </b>
+          {overall.totalPnl !== (overall.totalNetPnl ?? overall.totalPnl) && (
+            <span className="text-slate-600">gross {fmtPnl(overall.totalPnl)}</span>
+          )}
         </div>
       </div>
       <div className="text-[9px] font-mono text-slate-500 px-1 flex gap-3 flex-wrap">
         <span>Avg W <b className="text-emerald-400/80">{fmtPnl(overall.avgWin)}</b></span>
         <span>Avg L <b className="text-red-400/80">{fmtPnl(overall.avgLoss)}</b></span>
         {overall.bestDay && <span>Best <b className="text-emerald-400/80">{overall.bestDay.dayKey} {fmtPnl(overall.bestDay.pnl)}</b></span>}
+        {(overall.totalCosts ?? 0) > 0 && (
+          <span className="text-amber-500/80" title="brokerage + STT + exchange txn + SEBI + GST + stamp (env-tunable to your broker)">
+            Costs ate {fmtPnl(overall.totalCosts ?? 0)}{overall.costsPctOfGrossProfit != null ? ` · ${overall.costsPctOfGrossProfit}% of gross profit` : ''}
+          </span>
+        )}
       </div>
       <div className="max-h-56 overflow-y-auto">
         {groups.map((g: PaperDayStats) => {
@@ -223,7 +239,7 @@ function HistorySection({ history }: { history: PaperHistory }) {
                   <span className={`px-1 rounded font-black ${g.winRate >= 50 ? 'bg-emerald-500/10 text-emerald-300' : 'bg-red-500/10 text-red-300'}`}>
                     {g.winRate.toFixed(0)}%
                   </span>
-                  <b className={pnlColor(g.realizedPnl)}>{fmtPnl(g.realizedPnl)}</b>
+                  <b className={pnlColor(g.netPnl ?? g.realizedPnl)} title={`gross ${fmtPnl(g.realizedPnl)} − costs ${fmtPnl(g.costs ?? 0)}`}>{fmtPnl(g.netPnl ?? g.realizedPnl)}</b>
                 </span>
               </button>
               {open && dayTrades.length > 0 && (
@@ -244,7 +260,10 @@ function HistorySection({ history }: { history: PaperHistory }) {
                           <td className="px-2 py-1 text-center text-cyan-200/80">{px(t.entry)}</td>
                           <td className="px-2 py-1 text-center text-slate-400">{px(exit)}</td>
                           <td className="px-2 py-1 text-center text-slate-500">{t.qty}</td>
-                          <td className={`px-2 py-1 text-center font-bold ${pnlColor(t.realizedPnl)}`}>{fmtPnl(t.realizedPnl)}</td>
+                          <td className={`px-2 py-1 text-center font-bold ${pnlColor(t.netPnl ?? t.realizedPnl)}`} title={`gross ${fmtPnl(t.realizedPnl)} − costs ${fmtPnl(t.costs ?? 0)} (brokerage/STT/txn/GST/SEBI/stamp)`}>
+                            {fmtPnl(t.netPnl ?? t.realizedPnl)}
+                            {(t.costs ?? 0) > 0 && <span className="ml-0.5 text-[8px] font-black text-amber-500/70">net</span>}
+                          </td>
                           <td className="px-2 py-1 text-center text-[8px] text-slate-600">{t.closeReason}</td>
                         </tr>
                       );
@@ -373,9 +392,12 @@ export function PaperTradePanel({ livePrices, refreshKey, onOpenSymbolsChange }:
             VIRTUAL
           </span>
           <span className="text-[10px] font-mono text-slate-400">
-            Open {stats.openCount} • Day P&L <b className={pnlColor(stats.dayRealizedPnl + stats.dayUnrealizedPnl)}>
-              {fmtPnl(stats.dayRealizedPnl + stats.dayUnrealizedPnl)}
-            </b> • Total <b className={pnlColor(stats.totalRealizedPnl)}>{fmtPnl(stats.totalRealizedPnl)}</b>
+            Open {stats.openCount} • Day P&L <b className={pnlColor((stats.dayNetPnl ?? stats.dayRealizedPnl) + stats.dayUnrealizedPnl)}>
+              {fmtPnl((stats.dayNetPnl ?? stats.dayRealizedPnl) + stats.dayUnrealizedPnl)}
+            </b> • Total <b className={pnlColor(stats.totalNetPnl ?? stats.totalRealizedPnl)}>{fmtPnl(stats.totalNetPnl ?? stats.totalRealizedPnl)}</b>
+            {(stats.totalCosts ?? 0) > 0 && (
+              <span className="text-amber-500/70" title="brokerage + STT + exchange txn + SEBI + GST + stamp — env-tunable (AI_TC_*) to match your broker"> · costs {fmtPnl(stats.totalCosts ?? 0)}</span>
+            )}
           </span>
         </div>
         <span className="text-slate-500 text-xs">{expanded ? '▾' : '▸'}</span>
@@ -435,7 +457,10 @@ export function PaperTradePanel({ livePrices, refreshKey, onOpenSymbolsChange }:
                         <td className="px-2 py-1.5 text-center text-cyan-200">{px(t.entry)}</td>
                         <td className="px-2 py-1.5 text-center text-slate-300">{px(exit)}</td>
                         <td className="px-2 py-1.5 text-center text-slate-400">{t.qty}</td>
-                        <td className={`px-2 py-1.5 text-center font-bold ${pnlColor(t.realizedPnl)}`}>{fmtPnl(t.realizedPnl)}</td>
+                        <td className={`px-2 py-1.5 text-center font-bold ${pnlColor(t.netPnl ?? t.realizedPnl)}`} title={`gross ${fmtPnl(t.realizedPnl)} − costs ${fmtPnl(t.costs ?? 0)} (brokerage/STT/txn/GST/SEBI/stamp)`}>
+                          {fmtPnl(t.netPnl ?? t.realizedPnl)}
+                          {(t.costs ?? 0) > 0 && <span className="ml-0.5 text-[8px] font-black text-amber-500/70">net</span>}
+                        </td>
                         <td className="px-2 py-1.5 text-center text-[9px] text-slate-500">{t.closeReason}</td>
                       </tr>
                     );
@@ -451,6 +476,7 @@ export function PaperTradePanel({ livePrices, refreshKey, onOpenSymbolsChange }:
           <p className="text-[9px] text-slate-600 font-mono text-center pt-1 border-t border-white/5">
             Virtual trades only — no real money. Auto-managed: T1 → 50% book + breakeven trail • SL/T2 hit → close • 15:10 IST square-off.
             History server + device mirror me durable hai.
+            P&L numbers NET hain — brokerage + STT + exchange txn + SEBI + GST + stamp deduct ho chuke hain (AI_TC_* env se apne broker ke rates pin karo); gross tooltip me.
           </p>
         </div>
       )}

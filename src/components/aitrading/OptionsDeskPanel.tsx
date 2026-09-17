@@ -36,7 +36,24 @@ const prem = (v: number | null | undefined): string => {
 // ------------------------------------------------------------
 function OptionSignalCardView({ c, onOpened }: { c: OptionSignalCard; onOpened?: (msg: string, ok: boolean) => void }) {
   const bull = c.direction === 'LONG';
-  const srcLabel = c.source === 'nse' ? 'LIVE NSE PREMIUM' : 'BS MODEL PREMIUM';
+  // v11.1 NSE+SENSEX addendum — three-way source honesty: live NSE /
+  // live BSE / model. SENSEX model mode is PERMANENT (BSE blocks
+  // datacenter IPs — spike-verified), so its chip + persistent banner
+  // say so explicitly instead of the generic amber "sometimes down"
+  // framing NIFTY's recoverable fallback uses.
+  const srcLabel = c.source === 'nse' ? 'LIVE NSE PREMIUM'
+    : c.source === 'bse' ? 'LIVE BSE PREMIUM'
+      : c.source === 'bs-model-sensex-always' ? 'SENSEX MODEL · NO LIVE FEED'
+        : 'BS MODEL PREMIUM';
+  const srcCls = c.source === 'nse' ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25'
+    : c.source === 'bse' ? 'bg-teal-500/10 text-teal-300 border-teal-500/25'
+      : c.source === 'bs-model-sensex-always' ? 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+        : 'bg-amber-500/10 text-amber-300 border-amber-500/30';
+  const srcTitle = c.source === 'nse' ? 'Live NSE chain premiums'
+    : c.source === 'bse' ? 'Live BSE chain premiums'
+      : c.source === 'bs-model-sensex-always'
+        ? 'PERMANENT LIMITATION: BSE blocks datacenter IPs — these premiums are Black-Scholes model estimates, ALWAYS. Cross-check your broker for live SENSEX option prices.'
+        : 'NSE chain temporarily blocked from this server — Black-Scholes model premiums (IV anchored to India VIX). Recoverable: next successful NSE fetch restores live data.';
   // v9.6 superintelligence tier styling (AI score 85+ ELITE · 75+ STRONG · 65+ ACTION)
   const tier = (c.tier as string) || 'WATCH';
   const tierCls = tier === 'ELITE' ? 'bg-violet-500/15 text-violet-300 border-violet-500/40'
@@ -80,7 +97,7 @@ function OptionSignalCardView({ c, onOpened }: { c: OptionSignalCard; onOpened?:
         <span className={`px-1.5 py-0.5 rounded text-[9px] font-black border ${bull ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-red-500/15 text-red-300 border-red-500/30'}`}>
           {c.trendTag || `${bull ? '▲ BULLISH' : '▼ BEARISH'} INDEX`}{c.consensus?.confidence != null ? ` · ${c.consensus.confidence}% conf` : ''}
         </span>
-        <span className={`px-1.5 py-0.5 rounded text-[9px] font-black border ${c.source === 'nse' ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25' : 'bg-amber-500/10 text-amber-300 border-amber-500/30'}`} title={c.source === 'nse' ? 'Live NSE chain premiums' : 'NSE/BSE chain is server-blocked — Black-Scholes model premiums (IV anchored to India VIX)'}>
+        <span className={`px-1.5 py-0.5 rounded text-[9px] font-black border ${srcCls}`} title={srcTitle}>
           {srcLabel}
         </span>
         {c.dte != null && (
@@ -89,6 +106,17 @@ function OptionSignalCardView({ c, onOpened }: { c: OptionSignalCard; onOpened?:
           </span>
         )}
       </div>
+
+      {/* v11.1 NSE+SENSEX addendum — the PERSISTENT (non-dismissible)
+          limitation banner every SENSEX model card must carry: BSE does
+          not expose a public real-time option feed usable from this
+          server, so these premiums can never be live here. */}
+      {c.source === 'bs-model-sensex-always' && (
+        <div className="mt-2 rounded-lg bg-rose-500/[0.07] border border-rose-500/30 px-2.5 py-1.5 text-[9px] text-rose-200/90 leading-relaxed" data-testid="sensex-model-banner">
+          ⚠ SENSEX premiums are model-estimated — BSE does not expose a public real-time option feed usable from this server. For live SENSEX option prices, cross-check your broker.
+          {c.structuralDiscount ? ` AI score pe −${c.structuralDiscount} structural discount laga hai (no live-market cross-check possible).` : ''}
+        </div>
+      )}
 
       {/* THE card — user's exact format */}
       <div className="mt-2.5 rounded-xl bg-black/40 border border-cyan-500/20 p-3 font-mono">
@@ -525,8 +553,8 @@ function ScanRow({ r, council, onRequestCouncil, councilBusy }: { r: OptionsScan
             {r.dte === 0 ? 'EXPIRY DAY' : `${r.dte}d`}
           </span>
         )}
-        <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${r.source === 'nse' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/15 text-amber-300'}`} title={r.source === 'nse' ? 'real NSE option chain' : 'NSE unreachable — Black-Scholes model chain (premiums estimates)'}>
-          {r.source === 'nse' ? 'LIVE NSE' : 'BS MODEL'}
+        <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${r.source === 'nse' ? 'bg-emerald-500/15 text-emerald-300' : r.source === 'bse' ? 'bg-teal-500/15 text-teal-300' : r.source === 'bs-model-sensex-always' ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300'}`} title={r.source === 'nse' ? 'real NSE option chain' : r.source === 'bse' ? 'real BSE option chain' : r.source === 'bs-model-sensex-always' ? 'PERMANENT: BSE blocks datacenter IPs — Black-Scholes model chain, always (cross-check broker)' : 'exchange chain unreachable — Black-Scholes model chain (premiums estimates)'}>
+          {r.source === 'nse' ? 'LIVE NSE' : r.source === 'bse' ? 'LIVE BSE' : r.source === 'bs-model-sensex-always' ? 'SENSEX MODEL' : 'BS MODEL'}
         </span>
         <span className="ml-auto flex items-center gap-2">
           <span className="text-[10px] font-black font-mono text-cyan-300" title="scan score = conviction + OI flow + movement potential + data quality">{r.scanScore ?? 0}</span>
@@ -684,8 +712,11 @@ export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
           <span className={loading ? 'inline-block animate-spin' : ''}>🔄</span> Refresh
         </button>
         {!scanMode && desk?.source && (
-          <span className={`px-2 py-1 rounded-lg text-[10px] font-black border ${desk.source === 'nse' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-amber-500/15 text-amber-300 border-amber-500/30'}`}>
-            {desk.source === 'nse' ? 'LIVE NSE CHAIN' : 'BS MODEL CHAIN'}
+          <span className={`px-2 py-1 rounded-lg text-[10px] font-black border ${desk.source === 'nse' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+            : desk.source === 'bse' ? 'bg-teal-500/15 text-teal-300 border-teal-500/30'
+              : desk.source === 'bs-model-sensex-always' ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                : 'bg-amber-500/15 text-amber-300 border-amber-500/30'}`}>
+            {desk.source === 'nse' ? 'LIVE NSE CHAIN' : desk.source === 'bse' ? 'LIVE BSE CHAIN' : desk.source === 'bs-model-sensex-always' ? 'SENSEX MODEL CHAIN — ALWAYS' : 'BS MODEL CHAIN — NSE BLOCKED'}
           </span>
         )}
         {!scanMode && desk?.consensus && (
@@ -703,7 +734,7 @@ export const OptionsDeskPanel = memo(function OptionsDeskPanel() {
       ) : (
       <>
       {desk?.syntheticNote && (
-        <div className="quantum-panel rounded-xl px-4 py-2.5 text-[11px] text-amber-200/80 leading-relaxed border border-amber-500/20">
+        <div className={`quantum-panel rounded-xl px-4 py-2.5 text-[11px] leading-relaxed border ${desk.source === 'bs-model-sensex-always' ? 'text-rose-200/80 border-rose-500/30' : 'text-amber-200/80 border-amber-500/20'}`} data-testid={desk.source === 'bs-model-sensex-always' ? 'sensex-model-banner' : undefined}>
           ⚠️ {desk.syntheticNote}
         </div>
       )}
@@ -941,7 +972,7 @@ function IncomeRanker() {
               <span className="px-1.5 py-0.5 rounded text-[8px] font-black bg-emerald-500/10 text-emerald-300">POP {r.pop ?? '—'}%</span>
               <span className="text-[9px] font-mono text-slate-500">credit ₹{r.credit}</span>
               {r.riskReward != null && <span className="text-[9px] font-mono text-slate-600">c/l {r.riskReward}</span>}
-              <span className={`ml-auto text-[8px] font-black ${r.source === 'bs-model' ? 'text-amber-400/70' : 'text-slate-600'}`}>{r.source === 'bs-model' ? 'model' : 'live'}</span>
+              <span className={`ml-auto text-[8px] font-black ${r.source === 'nse' || r.source === 'bse' ? 'text-slate-600' : 'text-amber-400/70'}`}>{r.source === 'nse' || r.source === 'bse' ? 'live' : 'model'}</span>
             </div>
           ))}
           <div className="text-[8px] text-slate-600 leading-relaxed">{view.methodology} · {view.note}</div>

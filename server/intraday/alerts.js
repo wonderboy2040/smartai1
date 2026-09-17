@@ -132,7 +132,7 @@ export async function dispatchOutcomeAlert(event, deps) {
 
   const esc = escapeHtml || (x => String(x));
   const fmtINR = n => `₹${(+n).toFixed(2)}`;
-  const icon = { T1_HIT: '🎯', T2_HIT: '🏆', SL_HIT: '🛑', BE_TRAIL_EXIT: '🔒', EOD_EXIT: '🌙', PAPER_CLOSE: '📝', FLIP: '🔄' }[event.type] || 'ℹ️';
+  const icon = { T1_HIT: '🎯', T2_HIT: '🏆', SL_HIT: '🛑', BE_TRAIL_EXIT: '🔒', EOD_EXIT: '🌙', PAPER_CLOSE: '📝', FLIP: '🔄', CIRCUIT_RISK: '🚨' }[event.type] || 'ℹ️';
   const label = {
     T1_HIT: 'TARGET 1 HIT — book 50%, trail SL to entry',
     T2_HIT: 'TARGET 2 HIT — full target achieved',
@@ -141,16 +141,30 @@ export async function dispatchOutcomeAlert(event, deps) {
     EOD_EXIT: 'EOD SQUARE-OFF — position closed at market',
     PAPER_CLOSE: 'PAPER TRADE CLOSED',
     FLIP: 'SIGNAL REVERSED — direction flipped',
+    CIRCUIT_RISK: 'CIRCUIT-LIMIT RISK — adverse price band approaching',
   }[event.type] || event.type;
 
   // event.pnl is the SIGNED P&L per ₹1L capital (watcher computes it).
+  // v11.1 GAP 3: pnlNet (post-cost) takes the headline when present;
+  // gross stays visible as the secondary figure.
   const pnl = event.pnl != null ? +event.pnl : null;
+  const pnlNet = event.pnlNet != null ? +event.pnlNet : null;
   let msg = `${icon} <b>OUTCOME — ${esc(event.symbol)}</b>\n${label}\n`;
-  if (event.price != null) msg += `Price: <b>${fmtINR(event.price)}</b>\n`;
-  if (pnl != null) {
-    msg += `P&L (per ₹1L capital): <b>${pnl >= 0 ? '+' : '−'}₹${Math.abs(pnl).toFixed(2)}</b>\n`;
+  if (event.type === 'CIRCUIT_RISK') {
+    // v11.1 GAP 2: the URGENT distinct alert — a position nearing an
+    // adverse circuit is NOT an SL-approach warning: if the stock
+    // freezes at the band, the EXIT itself stops filling.
+    if (event.price != null) msg += `Price: <b>${fmtINR(event.price)}</b>${event.frozen ? ' — <b>FROZEN AT CIRCUIT</b>' : ` · ${event.band} circuit ${event.distPct != null ? event.distPct.toFixed(1) + '%' : ''} door`}\n`;
+    if (event.note) msg += `${esc(event.note)}\n`;
+  } else {
+    if (event.price != null) msg += `Price: <b>${fmtINR(event.price)}</b>\n`;
+    if (pnlNet != null) {
+      msg += `P&L (net of costs): <b>${pnlNet >= 0 ? '+' : '−'}₹${Math.abs(pnlNet).toFixed(2)}</b> (gross ${pnl != null ? `${pnl >= 0 ? '+' : '−'}₹${Math.abs(pnl).toFixed(2)}` : '—'})\n`;
+    } else if (pnl != null) {
+      msg += `P&L (per ₹1L capital): <b>${pnl >= 0 ? '+' : '−'}₹${Math.abs(pnl).toFixed(2)}</b>\n`;
+    }
+    if (event.note) msg += `${esc(event.note)}\n`;
   }
-  if (event.note) msg += `${esc(event.note)}\n`;
   msg += `\n⏰ ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST • Auto-tracked — not investment advice.`;
 
   try {

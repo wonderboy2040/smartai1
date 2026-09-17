@@ -49,6 +49,12 @@ export interface IntradaySignal {
   counterTrend?: boolean;
   slippage?: number;
   effRR?: number;
+  /** v11.1 GAP 2 (circuit guard): the day's price band from the live
+   *  Groww quote — present only when the band is known. `nearCircuit`
+   *  flags the same-direction entry-risk case (LONG→upper / SHORT→
+   *  lower circuit), which is also pushed into `reasons`. */
+  circuitRisk?: { band: 'UPPER' | 'LOWER' | null; distPct: number | null; upper: number; lower: number } | null;
+  nearCircuit?: boolean;
   // v4 DUAL-AI EXPERT additions
   grade?: 'A+' | 'A' | 'B';
   tradeType?: 'SCALP' | 'MOMENTUM' | 'SWING' | null;
@@ -129,18 +135,29 @@ export interface LiveQuote {
    *  Rendered as the Groww·live / Yahoo·delayed / CoinDCX·RT pill by
    *  LiveSourceBadge on the signal cards. */
   src?: string;
+  /** v11.1 GAP 2: the day's price band (upper/lower circuit) when the
+   *  upstream serves it (Groww equity quotes). Absent → guard inert. */
+  upperCircuit?: number;
+  lowerCircuit?: number;
 }
 
 export interface OutcomeEvent {
-  type: 'OPEN' | 'FLIP' | 'T1_HIT' | 'T2_HIT' | 'SL_HIT' | 'BE_TRAIL_EXIT' | 'EOD_EXIT' | 'PAPER_CLOSE';
+  type: 'OPEN' | 'FLIP' | 'T1_HIT' | 'T2_HIT' | 'SL_HIT' | 'BE_TRAIL_EXIT' | 'EOD_EXIT' | 'PAPER_CLOSE' | 'CIRCUIT_RISK';
   symbol: string;
   direction?: 'LONG' | 'SHORT';
   price?: number;
   pnl?: number;
+  /** v11.1 GAP 3: post-cost P&L (brokerage + STT + txn + GST + SEBI +
+   *  stamp deducted) — present when the cost model ran. */
+  pnlNet?: number | null;
   rMultiple?: number;
   qty?: number;
   note?: string;
   confidence?: number;
+  /** v11.1 GAP 2 (CIRCUIT_RISK events): the adverse band + proximity. */
+  band?: 'UPPER' | 'LOWER';
+  frozen?: boolean;
+  distPct?: number;
 }
 
 export interface PaperTrade {
@@ -165,6 +182,25 @@ export interface PaperTrade {
   unrealizedPnl: number;
   parts: { qty: number; exitPrice: number; ts: number; reason: string }[];
   capital: number;
+  /** v11.1 GAP 3 — real transaction-cost model: gross stays available
+   *  as the secondary figure, NET (post brokerage + STT + exchange txn
+   *  + SEBI + GST + stamp) is the displayed headline. Derived live by
+   *  the server (works for legacy/restored trades too). */
+  grossPnl?: number;
+  costs?: number;
+  netPnl?: number;
+  costsBreakdown?: {
+    instrumentType: string;
+    brokerage: number;
+    stt: number;
+    exchangeTxn: number;
+    sebi: number;
+    gst: number;
+    stampDuty: number;
+    takerFee?: number | null;
+    orders?: number | null;
+    note?: string;
+  };
   /** v9.5 F&O option rows — present only on option paper trades. */
   assetKind?: 'OPTION';
   underlying?: string;
@@ -186,6 +222,11 @@ export interface PaperSummary {
     totalRealizedPnl: number;
     wins: number;
     losses: number;
+    /** v11.1 GAP 3: net-of-costs variants. */
+    dayCosts?: number;
+    dayNetPnl?: number;
+    totalCosts?: number;
+    totalNetPnl?: number;
   };
 }
 
@@ -196,6 +237,9 @@ export interface PaperDayStats {
   losses: number;
   winRate: number;
   realizedPnl: number;
+  /** v11.1 GAP 3: the honest net line. */
+  costs?: number;
+  netPnl?: number;
 }
 
 export interface PaperHistory {
@@ -213,6 +257,10 @@ export interface PaperHistory {
     totalPnl: number;
     bestDay: { dayKey: string; pnl: number } | null;
     worstDay: { dayKey: string; pnl: number } | null;
+    /** v11.1 GAP 3: the "real-money viable or only paper-viable" view. */
+    totalCosts?: number;
+    totalNetPnl?: number;
+    costsPctOfGrossProfit?: number | null;
   };
   trades: PaperTrade[];
 }

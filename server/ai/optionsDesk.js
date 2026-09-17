@@ -17,7 +17,7 @@
 //      directionals / iron condor) with max P&L, breakevens, net
 //      Greeks and lot sizes.
 // ============================================================
-import { fetchNSEOptionChain, fetchYahooQuotes } from './data.js';
+import { fetchNSEOptionChain, fetchBSEOptionChain, fetchYahooQuotes } from './data.js';
 import { bsPrice, bsGreeks, impliedVol, yearsToExpiry, nextWeeklyExpiry, normCdf } from './lib/blackScholes.js';
 import { aggregateVotes } from './ensemble.js';
 import { sessionPhase } from './probrain.js';
@@ -26,6 +26,34 @@ const RISK_FREE = 0.069; // ~RBI repo-ish risk-free for NSE pricing
 const STRIKE_STEPS = { NIFTY: 50, BANKNIFTY: 100, FINNIFTY: 50, MIDCPNIFTY: 25, NIFTYNXT50: 100, SENSEX: 100 };
 const LOT_SIZES = { NIFTY: 75, BANKNIFTY: 35, FINNIFTY: 65, MIDCPNIFTY: 140, NIFTYNXT50: 25, SENSEX: 20 };
 const IV_FLOOR = 0.10, IV_CAP = 0.60;
+
+// ------------------------------------------------------------
+// v11.1 NSE+SENSEX ADDENDUM — source honesty for model chains.
+// Two fundamentally different "bs-model" cases existed under ONE
+// label:
+//   'bs-model-nifty-fallback' — NIFTY/BANKNIFTY/… when NSE is
+//       TEMPORARILY blocked from this host (recoverable: the next
+//       successful NSE fetch restores live premiums).
+//   'bs-model-sensex-always' — SENSEX on BSE, which blocks
+//       datacenter IPs STRUCTURALLY (research-spike-verified live:
+//       bseindia.com + api.bseindia.com both 403 Akamai, even from
+//       hosts that CAN reach NSE). Not an outage — a permanent
+//       limitation. SENSEX premiums are therefore ALWAYS model
+//       estimates here, and its signal cards carry an additional
+//       STRUCTURAL confidence discount (no live-market cross-check
+//       is ever possible for this underlying).
+// ------------------------------------------------------------
+export const SENSEX_MODEL_SOURCE = 'bs-model-sensex-always';
+export const NIFTY_MODEL_SOURCE = 'bs-model-nifty-fallback';
+/** The persistent (non-dismissible) banner text the SENSEX desk and
+ *  its option cards must ALWAYS carry in model mode. */
+export const SENSEX_MODEL_BANNER = 'SENSEX premiums are model-estimated — BSE does not expose a public real-time option feed usable from this server. For live SENSEX option prices, cross-check your broker.';
+/** Structural AI-score discount for SENSEX model cards (no live
+ *  cross-check possible — beyond the model-uncertainty handling). */
+export function sensexStructuralDiscount() {
+  const v = parseFloat(process.env.AI_SENSEX_MODEL_DISCOUNT);
+  return Number.isFinite(v) && v >= 0 && v <= 30 ? v : 8;
+}
 
 // ------------------------------------------------------------
 // v9.4 — F&O OPTION SIGNAL CARDS. The user's exact requested
@@ -285,7 +313,7 @@ export function computeGex(chain, spot, atmIVFallback) {
 }
 
 // ---------------- synthetic BS chain (the honest fallback) ----------------
-export function buildSyntheticChain(symbol, spot, iv, expiryDate, strikeCount = 21) {
+export function buildSyntheticChain(symbol, spot, iv, expiryDate, strikeCount = 21, sourceTag = 'bs-model') {
   const step = STRIKE_STEPS[symbol] || Math.max(1, Math.round(spot * 0.005));
   const atm = Math.round(spot / step) * step;
   const T = yearsToExpiry(`${expiryDate}T15:30:00+05:30`);
@@ -328,35 +356,40 @@ export function buildSyntheticChain(symbol, spot, iv, expiryDate, strikeCount = 
       putOI: 0, putOIChange: 0, putIV: r2(putIV * 100), putLTP: r2(put), putVolume: 0,
     });
   }
-  return { symbol, spot: r2(spot), expiry: expiryDate, rows, source: 'bs-model', synthetic: true, atmStrike: atm, fetchedAt: Date.now() };
+  return { symbol, spot: r2(spot), expiry: expiryDate, rows, source: sourceTag, synthetic: true, atmStrike: atm, fetchedAt: Date.now() };
 }
 
 // ---------------- assemble the full options desk payload ----------------
 export async function getOptionsDesk(symbol = 'NIFTY') {
   const sym = String(symbol || 'NIFTY').toUpperCase();
-  const [nse, quotes] = await Promise.all([
-    fetchNSEOptionChain(sym).catch(() => null),
+  // v11.1 NSE+SENSEX addendum: SENSEX is a BSE index — there IS no NSE
+  // chain for it (the old code used to hammer NSE's equities endpoint,
+  // which can never answer). Route it through the best-effort BSE
+  // fetch; every other underlying keeps the proven NSE path.
+  const isBseIndex = sym === 'SENSEX';
+  const [chain, quotes] = await Promise.all([
+    (isBseIndex ? fetchBSEOptionChain(sym) : fetchNSEOptionChain(sym)).catch(() => null),
     fetchYahooQuotes([sym, 'INDIAVIX']).catch(() => ({})),
   ]);
-  const spot = nse?.spot ?? quotes[sym]?.price ?? null;
+  const spot = chain?.spot ?? quotes[sym]?.price ?? null;
   const vix = quotes['INDIAVIX']?.price ?? null;
 
-  let chain = null, analytics = null;
-  if (nse && spot) {
-    // Pick the nearest weekly expiry from NSE's own list. Compare against
+  let outChain = null, analytics = null;
+  if (chain && spot) {
+    // Pick the nearest weekly expiry from the exchange's own list. Compare against
     // the IST calendar date (before 05:30 IST the UTC date is yesterday —
     // an already-passed expiry would otherwise still be selectable).
     const today = (() => {
       try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date()); }
       catch { return new Date().toISOString().slice(0, 10); }
     })();
-    const exp = (nse.expiryDates || []).map(d => String(d))
+    const exp = (chain.expiryDates || []).map(d => String(d))
       .filter(d => d >= today).sort()[0]
       || nextWeeklyExpiryFor(sym);
-    const rows = nse.rows.filter(r => r.expiry === exp);
+    const rows = chain.rows.filter(r => r.expiry === exp);
     if (rows.length > 5) {
-      chain = { symbol: sym, spot: r2(spot), expiry: exp, rows, source: 'nse', fetchedAt: nse.fetchedAt };
-      analytics = analyzeChain(chain, spot);
+      outChain = { symbol: sym, spot: r2(spot), expiry: exp, rows, source: chain.source, fetchedAt: chain.fetchedAt };
+      analytics = analyzeChain(outChain, spot);
       // IV percentile approximated from ATM IV vs VIX level.
       if (analytics?.atmIV != null && vix) {
         analytics.ivPercentile = r1(Math.max(0, Math.min(100, 50 + (analytics.atmIV - vix) * 6)));
@@ -364,18 +397,25 @@ export async function getOptionsDesk(symbol = 'NIFTY') {
     }
   }
   let syntheticNote = null;
-  if (!chain && spot) {
+  if (!outChain && spot) {
     // BS-synthetic fallback: IV anchored to India VIX (or 13% floor).
     const iv = vix ? Math.min(IV_CAP, Math.max(IV_FLOOR, vix / 100)) : 0.13;
     const expiry = nextWeeklyExpiryFor(sym);
-    chain = buildSyntheticChain(sym, spot, iv, expiry);
-    if (chain) {
-      syntheticNote = `NSE chain unreachable from this server — showing a Black-Scholes model chain (IV anchored to India VIX ${vix ? r1(vix) : 'n/a'} + India put-skew). Premiums are model estimates, NOT live quotes; OI/PCR unavailable in model mode.`;
+    // v11.1 source honesty — two DIFFERENT kinds of "model chain":
+    //   SENSEX (BSE datacenter-blocked, spike-verified) → PERMANENT,
+    //   structural: its own tag + the persistent-limitation banner.
+    //   NIFTY-family (NSE usually reachable) → RECOVERABLE outage.
+    const sourceTag = isBseIndex ? SENSEX_MODEL_SOURCE : NIFTY_MODEL_SOURCE;
+    outChain = buildSyntheticChain(sym, spot, iv, expiry, 21, sourceTag);
+    if (outChain) {
+      syntheticNote = isBseIndex
+        ? `${SENSEX_MODEL_BANNER} Premiums below are Black-Scholes estimates (IV anchored to India VIX ${vix ? r1(vix) : 'n/a'} + India put-skew) — OI/PCR/GEX unavailable in model mode.`
+        : `NSE chain temporarily unreachable from this server — showing a Black-Scholes model chain (IV anchored to India VIX ${vix ? r1(vix) : 'n/a'} + India put-skew). Premiums are model estimates, NOT live quotes; OI/PCR unavailable in model mode. NSE usually serves this host — the next successful fetch restores live data.`;
       analytics = null; // honest: no real OI → no PCR/max-pain
     }
   }
 
-  if (!chain) {
+  if (!outChain) {
     return { ok: false, symbol: sym, reason: 'No spot price or chain data available right now', spot, vix };
   }
 
@@ -388,21 +428,21 @@ export async function getOptionsDesk(symbol = 'NIFTY') {
   return {
     ok: true,
     symbol: sym,
-    spot: chain.spot,
+    spot: outChain.spot,
     spotChangePct: r2(quotes[sym]?.changePct ?? null),
     vix: r1(vix),
-    expiry: chain.expiry,
+    expiry: outChain.expiry,
     // v6.13: days-to-expiry (0 = expiry-day) for the ticket UI
-    dte: daysToExpiry(chain.expiry),
-    source: chain.source,
+    dte: daysToExpiry(outChain.expiry),
+    source: outChain.source,
     syntheticNote,
     lotSize: LOT_SIZES[sym] || 1,
     analytics,
     optionsCtx,
     // ATM ± 6 strikes for the UI table.
-    rows: chain.rows
-      .filter(r => Math.abs(r.strike - (chain.atmStrike ?? Math.round(spot / (STRIKE_STEPS[sym] || 50)) * (STRIKE_STEPS[sym] || 50))) <= (STRIKE_STEPS[sym] || 50) * 6)
-      .map(r => ({ ...r, callGreeks: greeksFor(spot, r.strike, chain.expiry, r.callIV, 'CE'), putGreeks: greeksFor(spot, r.strike, chain.expiry, r.putIV, 'PE') })),
+    rows: outChain.rows
+      .filter(r => Math.abs(r.strike - (outChain.atmStrike ?? Math.round(spot / (STRIKE_STEPS[sym] || 50)) * (STRIKE_STEPS[sym] || 50))) <= (STRIKE_STEPS[sym] || 50) * 6)
+      .map(r => ({ ...r, callGreeks: greeksFor(spot, r.strike, outChain.expiry, r.callIV, 'CE'), putGreeks: greeksFor(spot, r.strike, outChain.expiry, r.putIV, 'PE') })),
     fetchedAt: Date.now(),
   };
 }
@@ -993,9 +1033,16 @@ export function buildOptionSignalCards(desk, deep) {
     const conf = Math.max(0, Math.min(100, Number(sig?.confidence ?? 50)));
     const rrScore = rr != null ? Math.max(0, Math.min(1, rr / 2.5)) * 100 : 0;
     const deltaFit = g.delta != null ? Math.max(0, 100 - (Math.abs(Math.abs(g.delta) - 0.5) / 0.5) * 100) : 50;
-    const aiScore = Math.round(
+    // v11.1 NSE+SENSEX addendum — STRUCTURAL discount: a SENSEX model
+    // card can NEVER be cross-checked against a live market (BSE blocks
+    // datacenter IPs by design), so its score carries an additional
+    // haircut BEYOND the model-uncertainty handling. NIFTY's occasional
+    // model mode is recoverable and carries no such discount.
+    const aiScoreRaw = Math.round(
       0.35 * conf + 0.20 * (pop ?? 40) + 0.15 * rrScore + 0.15 * deltaFit + 0.15 * gradeBonus,
     );
+    const structuralDiscount = desk.source === SENSEX_MODEL_SOURCE ? sensexStructuralDiscount() : 0;
+    const aiScore = Math.max(0, Math.round(aiScoreRaw - structuralDiscount));
     const tier = aiScore >= 85 ? 'ELITE' : aiScore >= 75 ? 'STRONG' : aiScore >= 65 ? 'ACTION' : 'WATCH';
 
     const expectedMovePct = plan ? r1(Math.abs((plan.target1 - spot) / spot) * 100) : null;
@@ -1024,6 +1071,7 @@ export function buildOptionSignalCards(desk, deep) {
       rr,
       // ---- v9.6 SUPERINTELLIGENCE pro layer ----
       aiScore, tier,
+      ...(structuralDiscount > 0 ? { aiScoreRaw, structuralDiscount } : {}),
       pop,
       breakeven,
       expectedMovePct,
@@ -1047,11 +1095,11 @@ export function buildOptionSignalCards(desk, deep) {
         spot: r2(spot),
         target1: r2(plan.target1), stopLoss: r2(plan.stopLoss),
       } : { spot: r2(spot) },
-      source: desk.source,        // 'nse' (live premiums) | 'bs-model'
+      source: desk.source,        // 'nse' | 'bse' (live premiums) | 'bs-model-*' (honest model)
       note: plan
-        ? `Index plan se bana hai: ${symbol} ${r2(plan.target1)} pe premium target, ${r2(plan.stopLoss)} pe stop (BS re-price, IV/dte constant).`
-        : `Premium-based levels (index plan nahi mila): +30% target / −25% SL discipline.`,
-      machineNote: `🧠 AI ${aiScore}/100 (${tier}) — ${bias} strike · Δ ${g.delta != null ? g.delta.toFixed(2) : '—'} · POP ${pop != null ? `${pop}%` : '—'} · R:R ${rr != null ? `${rr}R` : '—'}${bias === 'OTM' ? ' · sasta par POP kam' : bias === 'ITM' ? ' · mehenga par POP zyada' : ' · peak liquidity + gamma'}.`,
+        ? `Index plan se bana hai: ${symbol} ${r2(plan.target1)} pe premium target, ${r2(plan.stopLoss)} pe stop (BS re-price, IV/dte constant).${structuralDiscount > 0 ? ` SENSEX model-mode: AI score pe −${structuralDiscount} structural discount (no live-market cross-check possible).` : ''}`
+        : `Premium-based levels (index plan nahi mila): +30% target / −25% SL discipline.${structuralDiscount > 0 ? ` SENSEX model-mode: AI score pe −${structuralDiscount} structural discount (no live-market cross-check possible).` : ''}`,
+      machineNote: `🧠 AI ${aiScore}/100 (${tier}) — ${bias} strike · Δ ${g.delta != null ? g.delta.toFixed(2) : '—'} · POP ${pop != null ? `${pop}%` : '—'} · R:R ${rr != null ? `${rr}R` : '—'}${bias === 'OTM' ? ' · sasta par POP kam' : bias === 'ITM' ? ' · mehenga par POP zyada' : ' · peak liquidity + gamma'}${structuralDiscount > 0 ? ` · ⚠ SENSEX model-only (−${structuralDiscount} structural, ${SENSEX_MODEL_SOURCE})` : ''}.`,
     };
   });
 
@@ -1173,9 +1221,9 @@ export async function rankIncomeSetups() {
     methodology: 'score = POP × credit%-of-spot (expected credit capture). Credit-only setups; directional spreads ranked alag se Options Desk me.',
     note: loaded.length === 0
       ? 'koi options desk load nahi hui — thodi der baad retry karo'
-      : rows.some(r => r.source === 'bs-model')
-        ? '⚠️ model-chain (bs-model) desks — premiums estimates hain, live quotes nahi (NSE is host se unreachable).'
-        : 'sab desks live NSE chain par.',
+      : rows.some(r => r.source && r.source !== 'nse' && r.source !== 'bse')
+        ? '⚠️ model-chain desks — premiums estimates hain, live quotes nahi (exchange chain is host se unreachable).'
+        : 'sab desks live exchange chain par.',
   };
 }
 

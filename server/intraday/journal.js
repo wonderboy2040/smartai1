@@ -68,6 +68,11 @@ export function recordTradeClose(trade) {
     target2: trade.target2,
     closeReason: trade.closeReason || 'UNKNOWN',
     realizedPnl: +(trade.realizedPnl || 0).toFixed(2),
+    // v11.1 GAP 3: the net-of-costs pair — present only when the cost
+    // model ran (legacy entries honestly lack it; stats fall back gross).
+    ...(Number.isFinite(Number(trade.costs)) ? { costs: +(Number(trade.costs)).toFixed(2) } : {}),
+    ...(Number.isFinite(Number(trade.netPnl)) ? { netPnl: +(Number(trade.netPnl)).toFixed(2) } : {}),
+    ...(trade.costsBreakdown?.instrumentType ? { costInstrument: trade.costsBreakdown.instrumentType } : {}),
     rMultiple: trade.stopLoss != null && Math.abs(trade.entry - trade.stopLoss) > 0
       ? +((trade.realizedPnl || 0) / (trade.qty * Math.abs(trade.entry - trade.stopLoss))).toFixed(2)
       : null,
@@ -154,7 +159,17 @@ function _dayStats(trades) {
   const netPnl = +trades.reduce((s, t) => s + t.realizedPnl, 0).toFixed(2);
   const rs = trades.filter(t => t.rMultiple != null).map(t => t.rMultiple);
   const avgR = rs.length ? +(rs.reduce((s, r) => s + r, 0) / rs.length).toFixed(2) : null;
-  return { wins, losses, netPnl, avgR, count: trades.length };
+  // v11.1 GAP 3: cost aggregation — only entries that CARRY the cost
+  // pair contribute (legacy entries stay gross, counted honestly).
+  const withCosts = trades.filter(t => Number.isFinite(Number(t.costs)));
+  const costs = +withCosts.reduce((s, t) => s + Number(t.costs), 0).toFixed(2);
+  const netPnlAfterCosts = +trades.reduce((s, t) =>
+    s + (Number.isFinite(Number(t.netPnl)) ? Number(t.netPnl) : Number(t.realizedPnl) || 0), 0).toFixed(2);
+  const grossWin = +trades.filter(t => t.realizedPnl > 0).reduce((s, t) => s + t.realizedPnl, 0).toFixed(2);
+  return {
+    wins, losses, netPnl, avgR, count: trades.length,
+    costs, netPnlAfterCosts, grossWin, tradesWithCosts: withCosts.length,
+  };
 }
 
 // ------------------------------------------------------------

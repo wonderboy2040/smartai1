@@ -35,6 +35,8 @@
 //   • Signal GRADES: A+ / A / B (watch-only) via gradeSignal().
 // ============================================================
 import { istMinutes, marketPhaseFor, paceRelVolume } from './time.js';
+// v11.1 GAP 2 — circuit-limit guard (pure helpers, no fetch)
+import { entryCircuitRisk } from '../ai/circuitGuard.js';
 
 export const INTRADAY_MIN_CONFIDENCE = 75;
 export const INTRADAY_TOP_N = 5;
@@ -568,6 +570,21 @@ export function analyzeIntradayFromScanner(symbol, tv, groww, opts = {}) {
   // CRYPTO 24/7: N/A.
   const deadZone = !isCrypto && inDeadZone(_istMins);
   if (deadZone) { quantConfidence -= 15; reasons.push('Dead-zone timing (14:30-15:00)'); }
+
+  // ---------- v11.1 GAP 2: CIRCUIT-LIMIT GUARD (NSE price bands) ----------
+  // Same-direction entry near the adverse band (LONG→upper / SHORT→lower
+  // circuit) gets a HEAVY penalty + a distinct reason flag — chasing into
+  // a freeze is the classic retail trap, and at a frozen band the entry
+  // literally cannot fill in that direction. Bands come from the Groww
+  // quote already riding this scan (highPriceRange/lowPriceRange).
+  // CRYPTO / no-band quotes → guard inert (honest, never invented).
+  const circuitRisk = !isCrypto
+    ? entryCircuitRisk(direction, ltp, groww?.upperCircuit, groww?.lowerCircuit)
+    : { risk: false, penalty: 0, reason: null, prox: null, clampLong: null, clampShort: null };
+  if (circuitRisk.risk) {
+    quantConfidence -= circuitRisk.penalty;
+    reasons.push(circuitRisk.reason);
+  }
   quantConfidence = Math.max(0, Math.min(100, quantConfidence));
 
   // ---------- PRO-DESK RISK ARCHITECTURE ----------
@@ -594,8 +611,21 @@ export function analyzeIntradayFromScanner(symbol, tv, groww, opts = {}) {
 
   // R-multiple targets off ACTUAL risk (targets scale with the real stop).
   const risk = Math.abs(entry - stopLoss);
-  const target1 = +(isLong ? entry + 1.6 * risk : entry - 1.6 * risk).toFixed(2);
-  const target2 = +(isLong ? entry + 2.6 * risk : entry - 2.6 * risk).toFixed(2);
+  let target1 = +(isLong ? entry + 1.6 * risk : entry - 1.6 * risk).toFixed(2);
+  let target2 = +(isLong ? entry + 2.6 * risk : entry - 2.6 * risk).toFixed(2);
+  // v11.1 GAP 2: circuit-band clamp — a LONG target printed ABOVE the
+  // upper circuit can never fill (price cannot exceed the band), and a
+  // SHORT target below the lower circuit likewise. Clamp to the band
+  // BEFORE R:R math so the published RR stays physically achievable.
+  if (circuitRisk.prox) {
+    if (isLong && circuitRisk.prox.upper > 0) {
+      if (target1 > circuitRisk.prox.upper) target1 = +circuitRisk.prox.upper.toFixed(2);
+      if (target2 > circuitRisk.prox.upper) target2 = +circuitRisk.prox.upper.toFixed(2);
+    } else if (!isLong && circuitRisk.prox.lower > 0) {
+      if (target1 < circuitRisk.prox.lower) target1 = +circuitRisk.prox.lower.toFixed(2);
+      if (target2 < circuitRisk.prox.lower) target2 = +circuitRisk.prox.lower.toFixed(2);
+    }
+  }
   const trailingSL = +(isLong ? entry - 0.8 * atr : entry + 0.8 * atr).toFixed(2);
   const trailAfterT1 = +entry.toFixed(2); // breakeven lock once T1 books — discipline rule
   const rr = risk > 0 ? Math.abs(target1 - entry) / risk : 0;
@@ -641,6 +671,19 @@ export function analyzeIntradayFromScanner(symbol, tv, groww, opts = {}) {
     marketPhase: phase, orbMode, counterTrend,
     slippage, effRR,
     reasons,
+    // v11.1 GAP 2: circuit-band proximity (null = bands unknown — guard
+    // inert). nearCircuit flags the same-direction entry-risk case.
+    circuitRisk: circuitRisk.risk ? {
+      band: circuitRisk.prox.upper != null && isLong ? 'UPPER' : 'LOWER',
+      distPct: isLong ? circuitRisk.prox.distUpperPct : circuitRisk.prox.distLowerPct,
+      upper: circuitRisk.prox.upper,
+      lower: circuitRisk.prox.lower,
+    } : (circuitRisk.prox ? {
+      band: null, distPct: null,
+      upper: circuitRisk.prox.upper,
+      lower: circuitRisk.prox.lower,
+    } : null),
+    nearCircuit: !!circuitRisk.risk,
     _rrOk: rr >= HIGH_CONV_RR_FLOOR, // v4: 1.5 floor (was 1.25)
     _momentumPct: changePct,
     _deadZone: deadZone,
