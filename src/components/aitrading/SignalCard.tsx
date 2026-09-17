@@ -845,6 +845,68 @@ interface Props {
   liveSrc?: string | null;
 }
 
+// ---------------- v11.0: GLOBAL MARKET COUNCIL strip ----------------
+/** The 6-seat verdict row: stamp chip (gate decision) + per-agent
+ *  mini confidence bars; expanded cards get per-agent reasons + the
+ *  bull/bear debate trail. Renders NOTHING when the council is OFF
+ *  (the stamp is absent — honest degrade, zero clutter). */
+function CouncilStrip({ council, expanded }: { council: NonNullable<AISignal['council']>; expanded: boolean }) {
+  const bull = (council.agents || []).filter(a => a.direction === 'LONG').length;
+  const bear = (council.agents || []).filter(a => a.direction === 'SHORT').length;
+  const passed = council.gate === 'PASSED';
+  const reasonByRole = new Map((council.agentReasons || []).map(r => [r.role, r]));
+  return (
+    <div className="bg-black/25 rounded-lg border border-white/5 px-2.5 py-2 space-y-1.5">
+      <div className="flex items-center gap-1.5 flex-wrap text-[9px] font-mono font-black">
+        <span className="text-slate-400">🏛️ COUNCIL {council.quorum}/6</span>
+        <span className={council.direction === 'LONG' ? 'text-emerald-300' : council.direction === 'SHORT' ? 'text-red-300' : 'text-slate-500'}>
+          {council.direction === 'LONG' ? '▲' : council.direction === 'SHORT' ? '▼' : '—'} {council.direction} {Math.round(council.confidence)}
+        </span>
+        <span className="text-slate-600">{bull}▲ {bear}▼ · agree {Math.round(council.agreement * 100)}%</span>
+        <span
+          className={`px-1.5 py-0.5 rounded border ${passed
+            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+            : 'bg-amber-500/15 text-amber-300 border-amber-500/30'}`}
+          title={(council.gateReasons || []).join(' · ') || 'precision gate pass'}
+        >
+          {passed ? '✓ GATE PASSED' : '⊘ SUPPRESSED'}
+        </span>
+        <span className="ml-auto text-slate-600">{council.freshness === 'model' ? 'MODEL' : council.model || ''}</span>
+      </div>
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1">
+        {(council.agents || []).map(a => (
+          <div key={a.role} className="bg-black/30 rounded px-1.5 py-1" title={`${a.name}: ${a.direction} ${Math.round(a.confidence)}${reasonByRole.get(a.role)?.reasons?.length ? '\n' + reasonByRole.get(a.role)!.reasons.join('\n') : ''}`}>
+            <div className="text-[8px] text-slate-500 truncate font-black tracking-wide">{a.name.split(' ')[0].toUpperCase()}</div>
+            <div className="flex items-center gap-1">
+              <span className={`text-[9px] font-black ${a.direction === 'LONG' ? 'text-emerald-300' : a.direction === 'SHORT' ? 'text-red-300' : 'text-slate-600'}`}>{a.direction === 'LONG' ? '▲' : a.direction === 'SHORT' ? '▼' : '—'}</span>
+              <div className="flex-1 h-1 bg-black/40 rounded overflow-hidden">
+                <div className={`h-full ${a.direction === 'LONG' ? 'bg-emerald-500/60' : a.direction === 'SHORT' ? 'bg-red-500/60' : 'bg-slate-600/60'}`} style={{ width: `${Math.min(100, a.confidence)}%` }} />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {expanded && (council.agentReasons || []).length > 0 && (
+        <div className="space-y-0.5 text-[9px] leading-relaxed text-slate-500">
+          {(council.agentReasons || []).map(r => (
+            <div key={r.role} className="flex gap-1.5">
+              <span className="text-slate-400 font-black w-[86px] shrink-0 truncate">{r.role}</span>
+              <span className="truncate" title={(r.reasons || []).join(' · ')}>{(r.reasons || []).join(' · ') || '—'}{r.veto ? ` · VETO: ${r.veto}` : ''}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {expanded && council.debate && (council.debate.bull || council.debate.bear) && (
+        <div className="grid gap-1 sm:grid-cols-2 text-[9px] leading-relaxed">
+          {council.debate.bull && <div className="bg-emerald-500/5 border border-emerald-500/15 rounded px-1.5 py-1 text-emerald-200/80"><b className="text-emerald-300">BULL:</b> {council.debate.bull}</div>}
+          {council.debate.bear && <div className="bg-red-500/5 border border-red-500/15 rounded px-1.5 py-1 text-red-200/80"><b className="text-red-300">BEAR:</b> {council.debate.bear}</div>}
+          {council.debate.judge && <div className="sm:col-span-2 bg-cyan-500/5 border border-cyan-500/15 rounded px-1.5 py-1 text-cyan-200/80"><b className="text-cyan-300">JUDGE:</b> {council.debate.judge}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, onExecuteIndia, onExecuteFutures, onExecuteGlobal, onDeep, canLive, canLiveIndia, isNew, orderBudgetINR, riskCapPct, maxLeverage, indiaBudgetINR, onPaperTrade, paperOpenForSymbol, liveLtp, liveSrc }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [slipOpen, setSlipOpen] = useState(false);
@@ -1019,6 +1081,11 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
           </span>
         </div>
       )}
+
+      {/* v11.0 GLOBAL MARKET COUNCIL — the 6 specialist seats' verdict
+          + precision-gate chip (renders only when AI_ENABLE_GLOBAL_COUNCIL
+          stamped this signal; suppressed verdicts carry their reasons). */}
+      {signal.council && <div className="mt-1.5"><CouncilStrip council={signal.council} expanded={expanded} /></div>}
 
       {/* v10.6 ORDER-FLOW DEPTH (Pro Upgrade #1) — the L2 ladder the
           VolumeFlow seat read: top-5 book, two-band imbalance, walls,

@@ -256,5 +256,114 @@ export function modelPerformanceWindows({ windows = [30, 90], now = Date.now() }
   };
 }
 
+// ---------------- v11.0: per-COUNCIL-AGENT accountability ----------------
+/**
+ * Per-agent attribution from ledger entries that carry a `council`
+ * stamp (v11.0 recordExecution stamps it whenever the Global Market
+ * Council attached a verdict to the executed signal). An agent whose
+ * recorded direction matched the trade side gets win/loss credit from
+ * the settled outcome — EXACTLY the modelStats() rule, one seat over.
+ * NEUTRAL votes abstain; absent seats don't count.
+ */
+export function councilAgentStats() {
+  const settled = settledEntries().filter(e => e.council && e.council.agents);
+  const stats = {};
+  for (const e of settled) {
+    const win = (e.outcome.r ?? 0) > 0;
+    const tradeLong = !/^(S|SELL)/i.test(String(e.side || ''));
+    for (const [role, v] of Object.entries(e.council.agents || {})) {
+      if (!v || v.dir === 0) continue;
+      const s = stats[role] = stats[role] || { role, aligned: 0, wins: 0, losses: 0, longWins: 0, longN: 0, shortWins: 0, shortN: 0 };
+      const alignedWithSide = (v.dir > 0) === tradeLong;
+      s.aligned++;
+      if ((v.dir > 0) === tradeLong) {
+        if (tradeLong) { s.longN++; if (win) s.longWins++; } else { s.shortN++; if (win) s.shortWins++; }
+      }
+      const calledItRight = alignedWithSide === win;
+      if (calledItRight) s.wins++; else s.losses++;
+    }
+  }
+  for (const s of Object.values(stats)) {
+    s.n = s.wins + s.losses;
+    s.hitRate = s.n > 0 ? Math.round((s.wins / s.n) * 1000) / 10 : null;
+    // direction split (the "kuch agents LONG me acche, SHORT me average" lens)
+    s.directionSplit = {
+      LONG: { n: s.longN, winRate: s.longN > 0 ? Math.round((s.longWins / s.longN) * 1000) / 10 : null },
+      SHORT: { n: s.shortN, winRate: s.shortN > 0 ? Math.round((s.shortWins / s.shortN) * 1000) / 10 : null },
+    };
+  }
+  return Object.values(stats).sort((a, b) => b.n - a.n);
+}
+
+/**
+ * Calibration MULTIPLIERS for council weights (the adaptive.js
+ * Bayesian rule, one seat over): posterior = Beta(wins+1, losses+1),
+ * mul = clamp(2×posterior, 0.7, 1.3), n < 8 → 1.0 (refuse to tune
+ * on noise). A NEW agent starts at 0.5× for its 30-day paper
+ * probation (weeklyReview promotes/demotes) — probation flag rides
+ * on the record, not here.
+ */
+export function councilCalibrationMultipliers() {
+  const out = {};
+  for (const s of councilAgentStats()) {
+    if (s.n < 8) { out[s.role] = { mul: 1.0, n: s.n, posterior: null, hitRate: s.hitRate ?? null }; continue; }
+    const alpha = (s.wins || 0) + 1, beta = (s.losses || 0) + 1;
+    const posterior = alpha / (alpha + beta);
+    out[s.role] = {
+      mul: Math.max(0.7, Math.min(1.3, 2 * posterior)),
+      n: s.n,
+      posterior: Math.round(posterior * 100) / 100,
+      hitRate: s.hitRate ?? null,
+    };
+  }
+  return out;
+}
+
+/** The dashboard COUNCIL block: per-agent track records + Brier +
+ *  published-precision funnel over council-stamped settled entries. */
+export function councilCalibration() {
+  const settled = settledEntries().filter(e => e.council && e.council.agents);
+  const base = { ok: true, settled: settled.length, asOf: Date.now() };
+  if (settled.length < MIN_SETTLED) {
+    return {
+      ...base,
+      sufficient: false,
+      note: `Insufficient data — ${settled.length}/${MIN_SETTLED} council-stamped settled signals. Agents earn their calibrated weight ONLY on settled outcomes (chhoti sample par tuning = noise).`,
+      agents: councilAgentStats(),
+      weights: councilCalibrationMultipliers(),
+      brier: null, precision: null,
+    };
+  }
+  // published-precision (wins / published) + per-agent Brier
+  const wins = settled.filter(e => (e.outcome.r ?? 0) > 0).length;
+  const precision = Math.round((wins / settled.length) * 1000) / 10;
+  let brierSum = 0;
+  for (const e of settled) {
+    const p = Math.min(1, Math.max(0, (Number(e.council?.confidence) || 50) / 100));
+    const y = (e.outcome.r ?? 0) > 0 ? 1 : 0;
+    brierSum += (p - y) ** 2;
+  }
+  const brier = Math.round((brierSum / settled.length) * 10000) / 10000;
+  // 90-day rolling precision (the honest window — 30-day n is noise)
+  const since90 = Date.now() - 90 * 86400_000;
+  const recent = settled.filter(e => (e.outcome.ts || e.ts || 0) >= since90);
+  const recentWins = recent.filter(e => (e.outcome.r ?? 0) > 0).length;
+  return {
+    ...base,
+    sufficient: true,
+    precision,
+    precision90d: recent.length > 0 ? Math.round((recentWins / recent.length) * 1000) / 10 : null,
+    n90d: recent.length,
+    brier,
+    brierVerdict: brier <= 0.15 ? 'sharp — council confidence trustable'
+      : brier <= 0.20 ? 'theek — mild miscalibration'
+      : brier <= 0.25 ? 'weak — confidence/outcome gap bada'
+      : 'coin-flip worse — confidence labels par bharosa mat karo',
+    agents: councilAgentStats(),
+    weights: councilCalibrationMultipliers(),
+    note: 'Per-COUNCIL-agent accountability: hit-rate, direction split, Brier, calibrated weight — sirf settled outcomes se. 95% is a precision TARGET (publish kam, quality zyada), guarantee nahi.',
+  };
+}
+
 // ---------------- test hooks ----------------
 export const __testables = { normalCdf, binomPValueAtLeast, BUCKETS, MIN_SETTLED };

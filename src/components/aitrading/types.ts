@@ -163,6 +163,102 @@ export interface SuperIntelMeta {
   scored?: number;
 }
 
+// ---------------- v11.0 GLOBAL MARKET COUNCIL ----------------
+/** One specialist seat's vote on the wire (compact). */
+export interface CouncilAgentVote {
+  role: string;
+  name: string;
+  direction: 'LONG' | 'SHORT' | 'NEUTRAL' | string;
+  confidence: number;
+}
+
+/** The per-signal council stamp (board + deep paths). */
+export interface CouncilStamp {
+  model: string | null;
+  freshness: 'live' | 'cached' | 'model' | string;
+  direction: 'LONG' | 'SHORT' | 'NEUTRAL' | string;
+  confidence: number;
+  agreement: number;
+  quorum: number;
+  gate: 'PASSED' | 'SUPPRESSED' | string | null;
+  gateReasons: string[];
+  eventHaircut?: number | null;
+  agents: CouncilAgentVote[];
+  agentReasons?: { role: string; reasons: string[]; veto?: string | null }[];
+  levels?: { entry: number | null; stop: number | null; t1: number | null } | null;
+  weightsUsed?: Record<string, number> | null;
+  divergence?: { symbol: string; spreadPct: number; agents: string[]; degraded: boolean } | null;
+  debate?: { bull: string | null; bear: string | null; judge: string | null; favours?: string | null } | null;
+  nearMiss?: boolean;
+  generatedAt: number;
+}
+
+/** Board-level council meta (payload.council). */
+export interface CouncilBoardMeta {
+  enabled: boolean;
+  flag?: string;
+  model?: string | null;
+  stamped?: number;
+  passed?: number;
+  suppressed?: number;
+  gate?: Record<string, number>;
+  note?: string;
+}
+
+/** GET /api/ai/council/status view. */
+export interface CouncilStatusView {
+  ok: boolean;
+  enabled: boolean;
+  flag: string;
+  debateRounds: number;
+  roles: { id: string; name: string; baseWeight: number }[];
+  gate: Record<string, number>;
+  verdictCache: { entries: number; ttl: number; cap: number };
+  nearMiss?: { total: number; last24h: number; byReason: [string, number][] };
+  note?: string;
+}
+
+/** GET /api/ai/council/near-miss entry. */
+export interface NearMissEntry {
+  id: string;
+  ts: number;
+  market: string;
+  symbol: string;
+  side: string;
+  score: number;
+  confidence: number;
+  agreement: number;
+  quorum: number;
+  gateReasons: string[];
+  voters: CouncilAgentVote[];
+  levels?: { entry: number | null; stop: number | null; t1: number | null } | null;
+  plan?: { entry: number | null; stopLoss: number | null; target1: number | null } | null;
+  regime?: string | null;
+  model?: string | null;
+}
+
+/** GET /api/ai/council/calibration view (per-agent rows). */
+export interface CouncilCalibrationView {
+  ok: boolean;
+  settled: number;
+  sufficient: boolean;
+  precision?: number | null;
+  precision90d?: number | null;
+  n90d?: number | null;
+  brier?: number | null;
+  brierVerdict?: string;
+  agents?: {
+    role: string;
+    n: number;
+    hitRate: number | null;
+    wins: number;
+    losses: number;
+    directionSplit?: { LONG: { n: number; winRate: number | null }; SHORT: { n: number; winRate: number | null } };
+  }[];
+  weights?: Record<string, { mul: number; n: number; posterior: number | null; hitRate: number | null }>;
+  note?: string;
+}
+
 export interface AISignal {
   symbol: string;
   market: MarketKind;
@@ -199,6 +295,10 @@ export interface AISignal {
     blocked?: boolean;
     haircut?: number | null;
   } | null;
+  /** v11.0 GLOBAL MARKET COUNCIL stamp (AI_ENABLE_GLOBAL_COUNCIL):
+   *  6 specialist seats' weighted verdict + precision-gate decision.
+   *  Analysis layer — execution authority stays with the gauntlets. */
+  council?: CouncilStamp | null;
   votes: ModelVote[];
   summary: string;
   aiNote: AINote | null;
@@ -243,6 +343,8 @@ export interface SignalBoard {
   superIntelMeta?: SuperIntelMeta;
   /** v6.9: full-universe composite TOP-5 (ranked, scored, reason'd). */
   topFive?: TopPick[];
+  /** v11.0: council meta — enabled/model/stamped + gate thresholds. */
+  council?: CouncilBoardMeta | null;
   /** v6.4: the user's max-stop% the board plans were built within. */
   riskCap?: number;
   scanned?: number;

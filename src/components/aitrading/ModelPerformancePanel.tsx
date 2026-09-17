@@ -19,8 +19,8 @@
 // desk hook's fetchTrust(); no new backend call from this panel.
 // ============================================================
 import { memo, useCallback, useEffect, useState } from 'react';
-import { fetchTrust } from './useAITrading';
-import type { ModelPerfRow, RegimeReweightState, TrustView } from './types';
+import { fetchTrust, fetchCouncilCalibration } from './useAITrading';
+import type { CouncilCalibrationView, ModelPerfRow, RegimeReweightState, TrustView } from './types';
 
 function ModelWinRateBars({ rows, label }: { rows: ModelPerfRow[]; label: string }) {
   if (!rows || rows.length === 0) {
@@ -153,6 +153,44 @@ function DirectionSplit({ view }: { view: TrustView }) {
   );
 }
 
+/** v11.0: per-COUNCIL-AGENT track records — the 6 specialist seats'
+ *  claimed confidence vs realized outcomes (hit-rate, direction split,
+ *  calibrated weight). n small = honest 'insufficient data'. */
+function CouncilAgentsBlock({ cal }: { cal: CouncilCalibrationView | null }) {
+  if (!cal || (cal.settled ?? 0) === 0) {
+    return <div className="text-[10px] text-slate-600 py-1">Council-stamped settled trades abhi nahi — agents apna track record EXECUTED trades se banate hain (calibrated weights n≥8 pe engage).</div>;
+  }
+  return (
+    <div className="space-y-1">
+      {(cal.agents || []).map(a => {
+        const w = cal.weights?.[a.role];
+        return (
+          <div key={a.role} className="flex items-center gap-2 text-[10px] font-mono" title={`${a.role}: ${a.wins}W/${a.losses}L · LONG ${a.directionSplit?.LONG?.winRate ?? '—'}% (n=${a.directionSplit?.LONG?.n ?? 0}) · SHORT ${a.directionSplit?.SHORT?.winRate ?? '—'}% (n=${a.directionSplit?.SHORT?.n ?? 0})`}>
+            <span className="text-slate-400 w-[92px] truncate">{a.role}</span>
+            <span className="text-slate-600 w-8 text-right">n={a.n}</span>
+            <div className="flex-1 h-2 bg-black/40 rounded overflow-hidden relative">
+              <div
+                className={`h-full ${(a.hitRate ?? 0) >= 55 ? 'bg-emerald-500/50' : (a.hitRate ?? 0) >= 45 ? 'bg-amber-500/50' : 'bg-red-500/50'}`}
+                style={{ width: `${Math.min(100, a.hitRate ?? 0)}%` }}
+              />
+              <div className="absolute top-0 bottom-0 w-px bg-slate-500" style={{ left: '50%' }} title="50% line" />
+            </div>
+            <span className={`w-12 text-right font-black ${(a.hitRate ?? 0) >= 55 ? 'text-emerald-300' : (a.hitRate ?? 0) >= 45 ? 'text-amber-300' : 'text-red-300'}`}>
+              {a.hitRate != null ? `${a.hitRate}%` : '—'}
+            </span>
+            <span className={`w-14 text-right font-black ${w && w.mul > 1.02 ? 'text-emerald-300' : w && w.mul < 0.98 ? 'text-red-300' : 'text-slate-500'}`} title="calibrated weight multiplier (Bayesian, ±30% bound, n≥8)">
+              ×{w ? w.mul.toFixed(2) : '1.00'}
+            </span>
+          </div>
+        );
+      })}
+      <div className="text-[9px] text-slate-600 pt-0.5">
+        published precision {(cal as { precision?: number | null }).precision ?? '—'}% · 90d {(cal as { precision90d?: number | null }).precision90d ?? '—'}% (n={(cal as { n90d?: number | null }).n90d ?? 0}) · Brier {cal.brier ?? '—'} — {cal.brierVerdict || ''}
+      </div>
+    </div>
+  );
+}
+
 interface Props {
   /** which desk's regime tilt to highlight (kept for the panel contract —
    *  both desks' tilts always render side-by-side in the grid) */
@@ -163,10 +201,13 @@ export const ModelPerformancePanel = memo(function ModelPerformancePanel(_props:
   const [view, setView] = useState<TrustView | null>(null);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  // v11.0: council per-agent calibration rides the same refresh.
+  const [council, setCouncil] = useState<CouncilCalibrationView | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setView(await fetchTrust());
+    setCouncil(await fetchCouncilCalibration());
     setLoading(false);
   }, []);
 
@@ -227,6 +268,12 @@ export const ModelPerformancePanel = memo(function ModelPerformancePanel(_props:
           <div className="bg-black/20 rounded-xl p-2.5">
             <div className="text-[9px] font-black text-slate-500 tracking-wider mb-1.5">DIRECTION SPLIT — LONG vs SHORT (kis side pe dimaag hai)</div>
             <DirectionSplit view={view || ({} as TrustView)} />
+          </div>
+
+          {/* v11.0: per-COUNCIL-agent accountability — the 6 seats' own track records */}
+          <div className="bg-black/20 rounded-xl p-2.5">
+            <div className="text-[9px] font-black text-slate-500 tracking-wider mb-1.5">COUNCIL AGENTS — 6 seats ka apna track record (v11.0)</div>
+            <CouncilAgentsBlock cal={council} />
           </div>
 
           <p className="text-[9px] text-slate-600 leading-relaxed">

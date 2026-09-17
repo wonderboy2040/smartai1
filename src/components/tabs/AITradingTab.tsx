@@ -23,6 +23,10 @@ import { BacktestPanel } from '../aitrading/BacktestPanel';
 import { AlertsPanel } from '../aitrading/AlertsPanel';
 import { MorningBriefPanel, SwingDeskPanel, WhaleRadarPanel, SignalLedgerPanel, OrderbookPanel } from '../aitrading/ProPanels';
 import { AgentPanel } from '../aitrading/AgentPanel';
+// v11.0 GLOBAL MARKET COUNCIL — the 6-seat verdict surface + the
+// precision gate's near-miss journal (both desks).
+import { CouncilVerdictPanel } from '../aitrading/CouncilVerdictPanel';
+import { NearMissPanel } from '../aitrading/NearMissPanel';
 import type { AISignal, DhanStatus, MarketKind, SignalBoard } from '../aitrading/types';
 
 const REFRESH_MS = 30_000;
@@ -451,6 +455,15 @@ export default memo(function AITradingTab() {
               <div className="text-[10px] text-slate-500 mt-1">Try ALL — the board re-ranks every 30s.</div>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* ============ 01.4 · GLOBAL MARKET COUNCIL (v11.0) ============ */}
+      <div>
+        <SectionLabel num="01c" title="Global Market Council" sub="6 specialist AI seats · calibrated consensus · precision gate · 10-agent MCP mesh — har STRONG signal ke peeche poora expert-panel discussion" />
+        <div className="mt-2.5 space-y-3">
+          <CouncilVerdictPanel board={board} />
+          <NearMissPanel />
         </div>
       </div>
 

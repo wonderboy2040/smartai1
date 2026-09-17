@@ -125,6 +125,49 @@ services:
       # the 3 indices on GET /api/ai/options-scan (0-10). Default 6.
       - key: AI_OPTIONS_SCAN_STOCKS
         sync: false
+      # ---- v11.0 SUPERINTELLIGENCE — GLOBAL MARKET COUNCIL ----
+      # MASTER SWITCH (default OFF): top-5 board candidates go to the
+      # 6 specialist LLM seats -> calibrated consensus -> precision
+      # gate; verdicts stamp both desks' boards (A/B-able vs baseline).
+      - key: AI_ENABLE_GLOBAL_COUNCIL
+        sync: false
+      # Bull/bear debate rounds in DEEP mode (0-2, default 1).
+      - key: AI_COUNCIL_DEBATE_ROUNDS
+        sync: false
+      # Precision-gate publish bars: confidence (default 78) + agreement
+      # (default 0.70). Auto-tighten on 3-week <75% streaks (+5, cap +10).
+      - key: AI_PRECISION_GATE_CONF
+        sync: false
+      - key: AI_PRECISION_GATE_AGREEMENT
+        sync: false
+      - key: AI_PRECISION_GATE_AUTO_TIGHTEN
+        sync: false
+      # MCP mesh: per-agent deadline ms (default 8000) + hot cache
+      # seconds (default 30; warm 5min / cold 60min fixed).
+      - key: AI_MCP_MESH_TIMEOUT_MS
+        sync: false
+      - key: AI_MCP_MESH_CACHE_HOT_SEC
+        sync: false
+      # MCP data agents (missing key = agent honestly absent):
+      # AV world quotes/fundamentals, CoinGecko crypto, TradingCentral
+      # news sentiment, Quiver alt-data, Massive quant, CoinAPI ticks,
+      # Alpaca US quotes/news.
+      - key: ALPHAVANTAGE_API_KEY
+        sync: false
+      - key: COINGECKO_API_KEY
+        sync: false
+      - key: TRADINGCENTRAL_API_KEY
+        sync: false
+      - key: QUIVER_API_KEY
+        sync: false
+      - key: MASSIVE_API_KEY
+        sync: false
+      - key: COINAPI_API_KEY
+        sync: false
+      - key: ALPACA_API_KEY
+        sync: false
+      - key: ALPACA_API_SECRET
+        sync: false
       # ---- v10.9 TELEGRAM UPGRADES ----
       # #2 INSTANT PUSH: price-driven sink (5s SL/TP touches, 30s STRONG
       # scan with correlation bundling). Default ON; set off for

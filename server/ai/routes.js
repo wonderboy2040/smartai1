@@ -88,10 +88,15 @@ import { wickFilterStatus } from './wickFilter.js';
 import { ledgerStatus, recentEntries, verifyLedger } from './ledger.js';
 import { adaptiveStatus } from './adaptive.js';
 import { regimeReweightView } from './ensemble.js';
-import { trustReport, governance, modelPerformanceWindows } from './trust.js';
+import { trustReport, governance, modelPerformanceWindows, councilCalibration } from './trust.js';
 import { perfReport } from './perf.js';
 import { correlationMatrix, pairCorrelation } from './correlation.js';
+// v10.15 GAP 2: Event Guard — the board attaches the next scheduled
+// event per signal (the signal-card ⚠ chip a manual trader sees).
 import { eventGuardStatus } from './eventGuard.js';
+// v11.0 GLOBAL MARKET COUNCIL — status/deep-verdict/near-miss routes.
+import { councilStatus, runCouncilDeep, councilStampOf } from './council.js';
+import { nearMissList, nearMissStats } from './consensus.js';
 import { sectorDesk } from './sectors.js';
 import { rankIncomeSetups } from './optionsDesk.js';
 // v10.17 OPTIONS SCANNER — multi-underlying chain scan (indices + top
@@ -905,6 +910,58 @@ export function registerAITradingRoutes(app, deps) {
       res.json(eventGuardStatus({ desk }));
     } catch (e) {
       jsonError(res, 500, 'event guard status failed', e);
+    }
+  });
+
+  // ---------------- v11.0: GLOBAL MARKET COUNCIL ----------------
+  //  GET /api/ai/council/status           flag + seats + gate + cache
+  //  GET /api/ai/council/near-miss        suppressed verdicts (learning)
+  //  GET /api/ai/council/calibration      per-agent track records + weights
+  //  GET /api/ai/council/verdict/:symbol  DEEP verdict (6 seats + debate
+  //                                      + judge, 90s-cached; user-initiated)
+  app.get('/api/ai/council/status', (_req, res) => {
+    try {
+      res.json({ ...councilStatus(), nearMiss: nearMissStats() });
+    } catch (e) {
+      jsonError(res, 500, 'council status failed', e);
+    }
+  });
+
+  app.get('/api/ai/council/near-miss', (req, res) => {
+    try {
+      const limit = Math.min(60, Math.max(5, parseInt(req.query.limit, 10) || 25));
+      res.json({ ok: true, entries: nearMissList(limit), stats: nearMissStats() });
+    } catch (e) {
+      jsonError(res, 500, 'council near-miss failed', e);
+    }
+  });
+
+  app.get('/api/ai/council/calibration', (_req, res) => {
+    try { res.json(councilCalibration()); } catch (e) { jsonError(res, 500, 'council calibration failed', e); }
+  });
+
+  app.get('/api/ai/council/verdict/:symbol', async (req, res) => {
+    try {
+      const symbol = String(req.params.symbol || '').toUpperCase().slice(0, 16);
+      const market = normMarket(req.query.market);
+      const force = req.query.fresh === '1' || req.query.fresh === 'true';
+      if (!symbol) return jsonError(res, 400, 'symbol required');
+      // the deep council rides a FRESH single-symbol ensemble run so the
+      // feature matrix is honest (getDeepSignal is 30s-cached itself)
+      const deep = await getDeepSignal(symbol, market, depsForSignals()).catch(() => null);
+      const verdict = await runCouncilDeep({
+        market, symbol, sig: deep?.signal || null,
+        regime: await buildRegime(market).catch(() => ({})),
+        deps: depsForSignals(), force,
+      });
+      if (!verdict) return jsonError(res, 502, 'council verdict unavailable (no signal context)');
+      return res.json({
+        ok: true,
+        stamp: councilStampOf(verdict),
+        verdict,
+      });
+    } catch (e) {
+      jsonError(res, 500, 'council verdict failed', e);
     }
   });
 

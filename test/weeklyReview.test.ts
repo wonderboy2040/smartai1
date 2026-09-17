@@ -56,6 +56,10 @@ vi.mock('../server/ai/coindcxOrders.js', () => ({
 }));
 vi.mock('../server/ai/trust.js', () => ({
   trustReport: () => mockTrust(),
+  // v11.0 council exports (computeCouncilWeek reads these — honest
+  // neutral mocks: no settled council data in this suite's ledger)
+  councilAgentStats: () => [],
+  councilCalibrationMultipliers: () => ({}),
 }));
 vi.mock('../server/intraday/agent.js', () => ({
   askLLM: (...a) => mockAskLLM(...a),

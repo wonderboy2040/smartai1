@@ -46,6 +46,10 @@ import { computeSuperScore, buildSuperBlueprint } from './superIntel.js';
 // v10.15 GAP 2: Event Guard — the board attaches the next scheduled
 // event per signal (the signal-card ⚠ chip a manual trader sees).
 import { eventGuardCheck } from './eventGuard.js';
+// v11.0 GLOBAL MARKET COUNCIL — 6 specialist LLM seats + precision
+// gate as an ANALYSIS layer over the board (flag-gated, default OFF;
+// execution gauntlets untouched — safety-critical boundary).
+import { councilEnabled, runCouncilBoard, runCouncilDeep, councilStampOf, gateThresholds } from './council.js';
 
 // v9: how many coins the Superintelligence Signal Board scans for the
 // dynamic desks (spot + futures). 40 = every liquid CoinDCX book by
@@ -1496,6 +1500,49 @@ async function _computeBoard(mkt, deps, opts = {}) {
   // SAME ranking the server would execute against).
   const topFive = computeTopFive(signals, regime, mkt, 5);
 
+  // v11.0 GLOBAL MARKET COUNCIL HOOK (AI_ENABLE_GLOBAL_COUNCIL, default
+  // OFF). Board mode: the top-5 candidates go to the 6-seat council in
+  // SIX batched persona calls (verdicts cached 90s per symbol — repeated
+  // board polls never multiply LLM cost). Soft deadline 12s: unresolved
+  // verdicts keep warming in the council cache and stamp the NEXT cycle
+  // (the warmDepthBatch honest-degrade pattern). The council NEVER
+  // touches grades/plans/execution — it ATTACHES its verdict stamp.
+  let councilMeta = null;
+  if (councilEnabled()) {
+    try {
+      // feature matrix needs the RAW ctx (ind/vwap/ema) — the wire
+      // signal picks only display fields, so re-join the ctx here.
+      const ctxMap = new Map(contexts.map(c => [c.symbol, c]));
+      const councilCandidates = topFive.map(s => {
+        const c = ctxMap.get(s.symbol);
+        return c ? { ...s, ind: c.ind, __ltfInd: c.__ltfInd || null } : s;
+      });
+      const councilRan = await Promise.race([
+        runCouncilBoard({ market: mkt, signals: councilCandidates, regime, deps: depsSafe }),
+        new Promise((res) => { const t = setTimeout(() => res(null), 12_000); t.unref?.(); }),
+      ]);
+      if (councilRan) {
+        let stamped = 0;
+        for (const s of signals) {
+          const v = councilRan.bySymbol[s.symbol];
+          if (v) { s.council = councilStampOf(v); stamped += 1; }
+        }
+        councilMeta = {
+          enabled: true, model: councilRan.model, stamped,
+          gate: gateThresholds(),
+          passed: signals.filter(s => s.council?.gate === 'PASSED').length,
+          suppressed: signals.filter(s => s.council?.gate === 'SUPPRESSED').length,
+        };
+      } else {
+        councilMeta = { enabled: true, model: 'warming', stamped: 0, note: 'council verdicts in-flight — next board cycle pe stamp honge (90s cache)' };
+      }
+    } catch {
+      councilMeta = { enabled: true, model: 'error', stamped: 0, note: 'council degraded — board unaffected' };
+    }
+  } else {
+    councilMeta = { enabled: false, flag: 'AI_ENABLE_GLOBAL_COUNCIL' };
+  }
+
   // v6.12: session phase — the intraday desk must KNOW when it is
   // safe to fire (opening noise / square-off window / market closed).
   const ses = sessionPhaseOf(mkt, Date.now());
@@ -1515,6 +1562,9 @@ async function _computeBoard(mkt, deps, opts = {}) {
       scored: signals.filter(s => !!s.superIntel).length,
     },
     topFive,
+    // v11.0: the Global Market Council meta — enabled/model/stamped +
+    // gate thresholds (suppressed counts flow to the near-miss panel).
+    council: councilMeta,
     riskCap: riskCapFor(depsSafe),
     scanned: contexts.length,
     signals,
@@ -1882,6 +1932,18 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
   // v6.11 (glama explain_ticker): rule-based regime narrative — the
   // indicator stack translated into a Hinglish story for the deep modal.
   const narrative = explainTicker(built, ctx.ind);
+  // v11.0: DEEP council verdict (user-initiated deep-dive: 6 personas +
+  // bull/bear debate + judge, ~9 LLM calls, 90s-cached). Attached to the
+  // deep modal's signal — same stamp shape as the board.
+  if (councilEnabled()) {
+    try {
+      const deepCouncil = await runCouncilDeep({
+        market: mkt, symbol: sym, sig: { ...built, ind: ctx.ind, __ltfInd: ltfInd || null },
+        regime, deps: depsSafe,
+      });
+      if (deepCouncil) built.council = councilStampOf(deepCouncil);
+    } catch { /* deep council optional — modal unaffected */ }
+  }
   const payload = {
     ok: true,
     signal: built,

@@ -5,10 +5,10 @@
 // (Greeks per strike) · ensemble-driven strategy cards with full
 // P&L math. Clearly labels bs-model vs live NSE data.
 // ============================================================
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { fetchOptionsDesk, fetchIncomeSetups, fetchOptionSignals, fetchOptionsScan } from './useAITrading';
+import { memo, useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
+import { fetchOptionsDesk, fetchIncomeSetups, fetchOptionSignals, fetchOptionsScan, fetchCouncilVerdict } from './useAITrading';
 import { openOptionPaperTrade } from '../intraday/PaperTradePanel';
-import type { OptionsDesk, Strategy, GexProfile, IncomeView, OrderTicket, OptionSignalsView, OptionSignalCard, OptionsScanView, OptionsScanRow } from './types';
+import type { OptionsDesk, Strategy, GexProfile, IncomeView, OrderTicket, OptionSignalsView, OptionSignalCard, OptionsScanView, OptionsScanRow, CouncilStamp } from './types';
 
 const INDICES = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX'];
 
@@ -471,7 +471,39 @@ const dirChip = (d?: string) => d === 'BULLISH'
     ? 'bg-red-500/15 text-red-300 border-red-500/30'
     : 'bg-slate-600/20 text-slate-300 border-slate-600/30';
 
-function ScanRow({ r }: { r: OptionsScanRow }) {
+function ScanRow({ r, council, onRequestCouncil, councilBusy }: { r: OptionsScanRow; council?: CouncilStamp | null; onRequestCouncil?: (sym: string) => void; councilBusy?: boolean }) {
+  // v11.0: the council cross-check chip — scanner's deterministic read
+  // vs the 6-seat council verdict. ALIGN (green) / CONTRADICT (red) /
+  // no-data (grey honesty tag). On-demand only (deep verdict = ~9 LLM
+  // calls when uncached — never auto-fired for 10 scanner rows).
+  let councilChip: ReactElement | null = null;
+  if (council) {
+    const scanDir = r.direction === 'BULLISH' ? 'LONG' : r.direction === 'BEARISH' ? 'SHORT' : 'NEUTRAL';
+    const align = council.direction === scanDir && scanDir !== 'NEUTRAL';
+    const contradict = council.direction !== 'NEUTRAL' && scanDir !== 'NEUTRAL' && council.direction !== scanDir;
+    councilChip = (
+      <span
+        className={`px-1.5 py-0.5 rounded text-[9px] font-black border ${align
+          ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+          : contradict ? 'bg-red-500/15 text-red-300 border-red-500/30'
+            : 'bg-slate-600/20 text-slate-400 border-slate-600/30'}`}
+        title={`Council ${council.direction} ${Math.round(council.confidence)} · agree ${Math.round(council.agreement * 100)}% · gate ${council.gate || '—'}${(council.gateReasons || []).length ? ' — ' + council.gateReasons.join(' · ') : ''}`}
+      >
+        🏛 {align ? 'COUNCIL ALIGNS' : contradict ? 'COUNCIL CONTRADICTS' : `COUNCIL ${council.direction}`}
+      </span>
+    );
+  } else {
+    councilChip = (
+      <button
+        onClick={() => onRequestCouncil?.(r.symbol)}
+        disabled={councilBusy}
+        className="px-1.5 py-0.5 rounded text-[9px] font-black border bg-slate-600/20 text-slate-500 border-slate-600/30 hover:text-slate-300 disabled:opacity-50"
+        title="6-seat council cross-check (deep verdict, ~15-25s pehli baar — 90s cached)"
+      >
+        🏛 cross-check
+      </button>
+    );
+  }
   return (
     <div className="px-4 py-3 border-b border-white/[0.03] hover:bg-white/[0.02]">
       <div className="flex items-center gap-2 flex-wrap">
@@ -518,6 +550,7 @@ function ScanRow({ r }: { r: OptionsScanRow }) {
         <span className="text-slate-600">{r.expiryLabel || r.expiry}</span>
       </div>
       {r.verdict && <div className="text-[10px] text-slate-300 mt-1">{r.verdict}</div>}
+      <div className="mt-1">{councilChip}</div>
       {(r.directionWhy?.length ?? 0) > 0 && (
         <div className="text-[9px] text-slate-500 mt-0.5 leading-relaxed">{r.directionWhy!.join(' · ')}</div>
       )}
@@ -527,6 +560,17 @@ function ScanRow({ r }: { r: OptionsScanRow }) {
 
 function OptionsScannerView({ scan, loading, err, onRefresh }: { scan: OptionsScanView | null; loading: boolean; err: boolean; onRefresh: () => void }) {
   const rows = scan?.rows || [];
+  // v11.0: per-symbol council cross-checks — on-demand, 90s client cache.
+  const [councilMap, setCouncilMap] = useState<Record<string, CouncilStamp | null>>({});
+  const [councilBusy, setCouncilBusy] = useState<string | null>(null);
+  const onRequestCouncil = useCallback(async (sym: string) => {
+    if (councilBusy) return;
+    setCouncilBusy(sym);
+    try {
+      const stamp = await fetchCouncilVerdict(sym, 'INDIA');
+      setCouncilMap(m => ({ ...m, [sym]: stamp }));
+    } finally { setCouncilBusy(null); }
+  }, [councilBusy]);
   return (
     <div className="quantum-panel rounded-2xl overflow-hidden">
       <div className="px-4 py-2.5 border-b border-white/5 flex items-center justify-between flex-wrap gap-2">
@@ -549,7 +593,7 @@ function OptionsScannerView({ scan, loading, err, onRefresh }: { scan: OptionsSc
         <div className="p-6 text-center text-[11px] text-slate-500">koi chain load nahi hui</div>
       )}
       <div className="max-h-[28rem] overflow-y-auto">
-        {rows.map(r => <ScanRow key={`${r.kind}-${r.symbol}`} r={r} />)}
+        {rows.map(r => <ScanRow key={`${r.kind}-${r.symbol}`} r={r} council={councilMap[r.symbol] ?? null} onRequestCouncil={onRequestCouncil} councilBusy={councilBusy === r.symbol} />)}
       </div>
       {(scan?.failed?.length ?? 0) > 0 && (
         <div className="px-4 py-2 text-[9px] text-slate-600 border-t border-white/5">

@@ -19,10 +19,16 @@
 // Telegram bot's /weeklyreview command.
 // ============================================================
 import { loadJournal } from './coindcxOrders.js';
-import { trustReport } from './trust.js';
+import { trustReport, councilAgentStats, councilCalibrationMultipliers } from './trust.js';
 import { askLLM } from '../intraday/agent.js';
 import { getJournal, getWeekKey } from '../intraday/journal.js';
 import { sendTelegramMessage, telegramConfig } from './secrets.js';
+// v11.0 Phase 4 — the COUNCIL calibration section: per-agent week
+// stats, weight deltas, near-miss analysis + the auto-tighten loop.
+import { nearMissList, nearMissStats, gateOverrideView, autoTightenGate, resetGateTighten } from './consensus.js';
+import { __ledgerRaw } from './ledger.js';
+import { fetchYahooQuotes } from './data.js';
+import { meshQuery } from '../mcp/mesh.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -154,14 +160,142 @@ export function weeklyQuantView({ now = Date.now() } = {}) {
     const j = getJournal(7);
     intraday = j?.stats || null;
   } catch { /* intraday journal optional */ }
-  return { ai, calibration, intraday, weekKey: getWeekKey(new Date(now)), asOf: now };
+  // v11.0: the council week — per-agent accountability + gate state.
+  const council = computeCouncilWeek({ now });
+  return { ai, calibration, intraday, council, weekKey: getWeekKey(new Date(now)), asOf: now };
+}
+
+// ---------------- v11.0: COUNCIL calibration week ----------------
+/**
+ * The 6 seats' week: per-agent win/loss attribution over settled
+ * council-stamped ledger entries, the CURRENT calibrated weights (the
+ * Bayesian multipliers ARE the re-learning — recomputed from settled
+ * outcomes on every read, so Render restarts can't lose them), the
+ * week's proposed DIRECTION of drift (reporting, bounded ±15% framing),
+ * the near-miss counts, and the precision-streak auto-tighten state.
+ * PURE (except autoTightenGate's durable write, which fires only on a
+ * genuine 3-week breach streak — idempotent, capped +10).
+ */
+export function computeCouncilWeek({ now = Date.now() } = {}) {
+  const since = now - 7 * DAY_MS;
+  const entries = (__ledgerRaw()?.entries || []).filter(e => e.council && e.outcome);
+  const weekEntries = entries.filter(e => (e.outcome.ts || e.ts || 0) >= since);
+
+  // ---- per-agent week attribution (the modelStats() rule, seat-over) ----
+  const agents = {};
+  for (const e of weekEntries) {
+    const win = (e.outcome.r ?? 0) > 0;
+    const tradeLong = !/^(S|SELL)/i.test(String(e.side || ''));
+    for (const [role, v] of Object.entries(e.council.agents || {})) {
+      if (!v || v.dir === 0) continue;
+      const s = agents[role] = agents[role] || { role, wins: 0, losses: 0 };
+      const calledItRight = ((v.dir > 0) === tradeLong) === win;
+      if (calledItRight) s.wins++; else s.losses++;
+    }
+  }
+  for (const s of Object.values(agents)) {
+    s.n = s.wins + s.losses;
+    s.hitRate = s.n > 0 ? Math.round((s.wins / s.n) * 1000) / 10 : null;
+  }
+
+  // ---- published-precision by ISO week (the 3-week streak ladder) ----
+  const byWeek = new Map();
+  for (const e of entries) {
+    const wk = getWeekKey(new Date(e.outcome.ts || e.ts || now));
+    const b = byWeek.get(wk) || { week: wk, n: 0, wins: 0 };
+    b.n += 1;
+    if ((e.outcome.r ?? 0) > 0) b.wins += 1;
+    byWeek.set(wk, b);
+  }
+  const weeks = [...byWeek.values()].sort((a, b) => (a.week < b.week ? -1 : 1)).slice(-4);
+  for (const w of weeks) w.precision = w.n > 0 ? Math.round((w.wins / w.n) * 1000) / 10 : null;
+  // the streak: last 3 weeks, each with n≥3 settled, each precision < 75%
+  const last3 = weeks.slice(-3);
+  const breachStreak = last3.length === 3 && last3.every(w => w.n >= 3 && (w.precision ?? 100) < 75);
+  const recovered = last3.length > 0 && (last3[last3.length - 1].n ?? 0) >= 3 && (last3[last3.length - 1].precision ?? 0) >= 85;
+  let gateAction = null;
+  if (breachStreak) gateAction = autoTightenGate(`3-week precision breach (${last3.map(w => `${w.precision}%`).join(', ')})`);
+  else if (recovered) gateAction = resetGateTighten(`precision recovered to ${last3[last3.length - 1].precision}%`);
+
+  // ---- weights: current calibrated multipliers + all-time seat stats ----
+  const weights = councilCalibrationMultipliers();
+  const seatStats = councilAgentStats();
+
+  // ---- near-miss analysis (counts + reasons; outcomes are the
+  //      approximate scan below — reported, never claimed exact) ----
+  const nm = nearMissStats();
+  const nearMissWeek = nearMissList(60, { sinceMs: since });
+
+  return {
+    ok: true,
+    settledCouncilTrades: weekEntries.length,
+    agents: Object.values(agents).sort((a, b) => b.n - a.n),
+    seatStats,
+    weights,
+    precisionByWeek: weeks,
+    gate: gateOverrideView(),
+    ...(gateAction ? { gateAction } : {}),
+    nearMiss: {
+      total: nm.total,
+      last24h: nm.last24h,
+      thisWeek: nearMissWeek.length,
+      byReason: nm.byReason,
+    },
+    note: 'Council seats earn calibrated weight ONLY on settled outcomes (Bayesian, ±30% bound, n≥8). 95% = precision TARGET (publish kam, quality zyada) — guarantee nahi. Auto-tighten: 3-week <75% streak → conf bar +5 (cap +10); ≥85% recovery → reset.',
+  };
+}
+
+/**
+ * The near-miss APPROXIMATE outcome scan: for suppressed verdicts older
+ * than 24h that carried levels, check where price sits NOW vs the
+ * side/entry/stop/t1. Honest labels: price-at-review-time, no exit
+ * assumptions, no slippage — a rough "gate sahi tha ya over-strict?"
+ * signal, not a backtest. Caps at 15 symbols (Yahoo for India, mesh
+ * crypto.price for crypto desks).
+ */
+export async function nearMissOutcomeScan({ now = Date.now() } = {}) {
+  const cutoff = now - 24 * 60 * 60_000;
+  const rows = nearMissList(40).filter(e => Number(e.ts) < cutoff && e.plan?.entry && (e.side === 'LONG' || e.side === 'SHORT')).slice(0, 15);
+  if (rows.length === 0) return { checked: 0, wouldWin: 0, wouldLose: 0, inFlight: 0, unknown: 0 };
+  const prices = new Map();
+  const india = rows.filter(r => r.market === 'INDIA').map(r => r.symbol);
+  const crypto = [...new Set(rows.filter(r => r.market !== 'INDIA').map(r => String(r.symbol).toUpperCase()))];
+  try {
+    if (india.length > 0) {
+      const q = await fetchYahooQuotes(india);
+      for (const [k, v] of Object.entries(q || {})) prices.set(String(k).toUpperCase(), Number(v.price) || null);
+    }
+    if (crypto.length > 0) {
+      const m = await meshQuery({ capabilities: ['crypto.price'], symbols: crypto });
+      const px = m?.results?.['crypto.price']?.data?.prices || {};
+      for (const [k, v] of Object.entries(px || {})) if (v?.usd) prices.set(String(k).toUpperCase(), Number(v.usd));
+    }
+  } catch { /* prices are best-effort */ }
+  let wouldWin = 0, wouldLose = 0, inFlight = 0, unknown = 0;
+  for (const r of rows) {
+    const base = String(r.symbol).toUpperCase().replace(/USDT$|INR$/, '');
+    const p = prices.get(r.symbol.toUpperCase()) ?? prices.get(base) ?? null;
+    if (p == null) { unknown += 1; continue; }
+    const entry = Number(r.plan.entry), stop = Number(r.plan.stopLoss), t1 = Number(r.plan.target1);
+    if (!Number.isFinite(entry)) { unknown += 1; continue; }
+    const long = r.side === 'LONG';
+    if (Number.isFinite(stop) && (long ? p <= stop : p >= stop)) wouldLose += 1;
+    else if (Number.isFinite(t1) && (long ? p >= t1 : p <= t1)) wouldWin += 1;
+    else inFlight += 1;
+  }
+  return {
+    checked: rows.length,
+    wouldWin, wouldLose, inFlight, unknown,
+    method: 'approximate — price at review time vs recorded entry/stop/T1; no exit/slippage assumptions. Rough gate-honesty signal, not a backtest.',
+  };
 }
 
 const WEEKLY_SYSTEM = `You are the DESK PERFORMANCE COACH writing the WEEKLY trade-performance digest for a multi-desk retail trader (crypto spot/futures + NSE intraday paper + global desks). Use ONLY the numbers below — never invent trades. Be brutally specific, name pairs, credit repeatable wins.
 
-Output (STRICT, Hinglish, max 250 words):
+Output (STRICT, Hinglish, max 280 words):
 **Week Scorecard** — trades, win-rate, net P&L across the AI desk
 **Direction Read** — LONG vs SHORT win-rate split + entry-hour buckets (agar ek side systematically galat hai, naam lo)
+**Council Read** — the 6 seats' hit-rates, calibrated weights, near-miss count, precision ladder (kaun seat earn kar raha hai apna vote)
 **Calibration Read** — claimed confidence vs realized win-rate, Brier verdict, monthly drift (kya keh raha hai)
 **Best & Worst** — name the trades and why
 **Discipline Audit** — SL discipline, booking behaviour, overtrading check
@@ -209,6 +343,29 @@ function _quantPromptBlock(q) {
   } else {
     lines.push('no closed paper trades this week');
   }
+  // v11.0: the COUNCIL read — per-seat accountability + precision ladder.
+  const c = q.council;
+  if (c) {
+    lines.push('');
+    lines.push(`GLOBAL MARKET COUNCIL (settled council-stamped this week: ${c.settledCouncilTrades}):`);
+    if ((c.agents || []).length > 0) {
+      lines.push(`seats: ${c.agents.map(a => `${a.role} ${a.wins}W/${a.losses}L${a.hitRate != null ? ` (${a.hitRate}%)` : ''}`).join(' · ')}`);
+    } else {
+      lines.push('no settled council-stamped trades this week — seats apna record EXECUTED trades se banate hain');
+    }
+    if ((c.precisionByWeek || []).length > 0) {
+      lines.push(`published precision by week: ${c.precisionByWeek.map(w => `${w.week} ${w.precision != null ? w.precision + '%' : 'n/a'} (n=${w.n})`).join(' · ')}`);
+    }
+    if (c.gate?.confAdd > 0) lines.push(`⚠️ GATE AUTO-TIGHTENED +${c.gate.confAdd} (reason: ${c.gate.reason || 'precision streak'}) — publish bar ab aur upar`);
+    if (c.gateAction && c.gateAction.confAdd > 0) lines.push(`this week: auto-tighten FIRED → conf bar +${c.gateAction.confAdd}`);
+    if (c.gateAction && c.gateAction.confAdd === 0 && c.gateAction.reason === 'precision-recovered') lines.push('this week: auto-tighten RESET (precision recovered ≥85%)');
+    if (c.nearMiss?.thisWeek > 0 || c.nearMiss?.total > 0) {
+      lines.push(`near-miss (suppressed): ${c.nearMiss.thisWeek} this week · ${c.nearMiss.total} total${(c.nearMiss.byReason || []).slice(0, 3).map(([k, n]) => `, ${k} x${n}`).join('')}`);
+    }
+    const w = c.weights || {};
+    const learned = Object.entries(w).filter(([, m]) => m && m.mul != null && m.mul !== 1 && (m.n || 0) >= 8);
+    if (learned.length > 0) lines.push(`calibrated weights engaged: ${learned.map(([role, m]) => `${role} ×${m.mul}`).join(' · ')} (Bayesian, settled outcomes se)`);
+  }
   return lines.join('\n');
 }
 
@@ -228,6 +385,14 @@ export function quantHeaderBlock(q) {
   if (calibration.sufficient) {
     lines.push(`🎯 <b>Calibration</b>: claimed ${calibration.overall?.avgConfidence}% → realized ${calibration.overall?.winRate}% · Brier ${calibration.brier}`);
   }
+  // v11.0: the council header line — seats + precision + auto-tighten.
+  const c = q.council;
+  if (c) {
+    const seats = (c.agents || []).slice(0, 3).map(a => `${a.role} ${a.hitRate != null ? a.hitRate + '%' : '—'}`).join(' · ');
+    if (seats) lines.push(`🏛️ <b>Council</b>: ${c.settledCouncilTrades} settled · ${seats}${(c.agents || []).length > 3 ? ' …' : ''}`);
+    if (c.gate?.confAdd > 0) lines.push(`⚠️ <b>Gate auto-tightened +${c.gate.confAdd}</b> — ${c.gate.reason || 'precision streak'}`);
+    if (c.nearMiss?.thisWeek > 0) lines.push(`⊘ Near-miss: ${c.nearMiss.thisWeek} suppressed this week (${c.nearMiss.total} total)`);
+  }
   return lines.join('\n');
 }
 
@@ -246,9 +411,12 @@ export async function runWeeklyPerformanceReview(deps = {}, { now = Date.now(), 
 async function _runWeekly(deps, weekKey, now) {
   const { KEYS, OPENAI_COMPAT } = deps || {};
   const q = weeklyQuantView({ now });
+  // v11.0: the near-miss approximate outcome scan rides the SAME run
+  // (bounded 15 symbols, best-effort prices, honest method label).
+  try { q.councilNearMissScan = await nearMissOutcomeScan({ now }); } catch { /* optional */ }
 
-  if (!q.ai.hadActivity && !(q.intraday?.count > 0)) {
-    return { ok: false, error: 'Is hafte koi settled trade nahi — AI desk bhi, intraday paper desk bhi. Review ke liye data hi nahi. Trades hone do, phir /weeklyreview.' };
+  if (!q.ai.hadActivity && !(q.intraday?.count > 0) && !((q.council?.settledCouncilTrades || 0) > 0)) {
+    return { ok: false, error: 'Is hafte koi settled trade nahi — AI desk bhi, intraday paper desk bhi, council bhi. Review ke liye data hi nahi. Trades hone do, phir /weeklyreview.' };
   }
 
   const r = await askLLM(WEEKLY_SYSTEM, `WEEK OF: ${weekKey}\n\n${_quantPromptBlock(q)}`, { KEYS, OPENAI_COMPAT }, { temperature: 0.4, maxTokens: 1600, timeout: 45000 });

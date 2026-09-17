@@ -58,6 +58,11 @@ import type { LiveQuote } from '../intraday/types';
 //   • IndiaAgentPanel — the NSE auto-trade agent console (/api/india/agent)
 import { ProTraderAgentPanel } from '../intraday/ProTraderAgentPanel';
 import { IndiaAgentPanel } from '../aitrading/IndiaAgentPanel';
+// v11.0 GLOBAL MARKET COUNCIL — 6-seat verdict surface + near-miss
+// journal (India desk: onchain seat structurally abstains, options-flow
+// seat rides the NSE chain read).
+import { CouncilVerdictPanel } from '../aitrading/CouncilVerdictPanel';
+import { NearMissPanel } from '../aitrading/NearMissPanel';
 import {
   SectionLabel, RegimeChips, BreadthStrip, FilterChips, RefreshCountdown, BoardSummary, DeskStatsStrip,
   filterSignals, countSignals, IndiaHowToTrade, useDeskViewMode, ViewModeToggle, ProSectionsNote, type BoardFilter,
@@ -408,6 +413,15 @@ export default memo(function IndiaIntradayTab() {
               <div className="text-[10px] text-slate-500 mt-1">Try ALL — the board re-ranks every 30s.</div>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* ============ 01a · GLOBAL MARKET COUNCIL (v11.0) ============ */}
+      <div>
+        <SectionLabel num="01a" title="Global Market Council" sub="6 specialist AI seats (India: Technical · Macro · Sentiment · Options-Flow · Risk) · calibrated consensus · precision gate · 10-agent MCP mesh" />
+        <div className="mt-2.5 space-y-3">
+          <CouncilVerdictPanel board={board} />
+          <NearMissPanel />
         </div>
       </div>
 

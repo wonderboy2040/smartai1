@@ -25,6 +25,8 @@ import {
 } from './mlEngine.js';
 import { SERVER_MCP_TOOLS_OPENAI, SERVER_MCP_TOOLS_GEMINI, executeServerMCPTool } from './mcpTools.js';
 import indmMcpRoutes from './mcp/routes.js';
+// v11.0 MCP DATA AGENT MESH — 10 market-data agents + orchestrator routes.
+import { registerMeshRoutes } from './mcp/mesh.js';
 import { registerAITradingRoutes } from './ai/routes.js';
 import { registerIntradayRoutes } from './intraday/routes.js';
 import { registerTelegramWebhook } from './telegram/webhook.js';
@@ -734,6 +736,20 @@ registerTelegramWebhook(app, { KEYS, OPENAI_COMPAT, TG, jsonError });
 // ============================================================
 app.use(indmMcpRoutes);
 try { startIndmPortfolioScheduler(); } catch (e) { console.warn('[mcp/portfolioSync] scheduler failed to start:', e?.message || e); }
+
+// ============================================================
+// v11.0 MCP DATA AGENT MESH (server/mcp/mesh.js)
+// 10 market-data agents (Alpha Vantage, CoinGecko, CCXT-style,
+// TradingView, TradingCentral, Quiver, Massive, CoinAPI, Finnhub,
+// Alpaca) behind one capability-routed query surface:
+//   GET  /api/mcp/agents        registry + live health
+//   GET  /api/mcp/mesh/status   cache + breakers + budgets
+//   POST /api/mcp/mesh/query    { capabilities, symbols }
+// Registration is pure (zero network at import); agents fetch only
+// when the council/mesh query invokes them. Missing key = agent
+// honestly absent — never fake data.
+// ============================================================
+try { registerMeshRoutes(app); } catch (e) { console.warn('[mcp/mesh] route registration failed:', e?.message || e); }
 
 // ------------------------------------------------------------
 // GET /api/quote  â†’ REAL-TIME last-traded price for one or many symbols

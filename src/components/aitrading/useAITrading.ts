@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, getProxyBase, getSessionToken } from '../../utils/api';
 import { createTickBatcher } from '../../utils/tickBatcher';
-import type { AISignal, OptionsDesk, OptionSignalsView, OptionsScanView, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, StrategyLabResult, AlertsStatus, DhanStatus, SwingBoard, WhaleRadar, LedgerView, MorningBrief, OrderbookView, AgentView, WalletView, FuturesMarketsView, MarketKind, TrustView, PerfView, CorrView, SectorView, IncomeView, NextActionsView, NarrativeView, EdgeStats, LtfSnapshot } from './types';
+import type { AISignal, OptionsDesk, OptionSignalsView, OptionsScanView, SignalBoard, TradingState, JournalPosition, JournalEntry, BacktestResult, StrategyLabResult, AlertsStatus, DhanStatus, SwingBoard, WhaleRadar, LedgerView, MorningBrief, OrderbookView, AgentView, WalletView, FuturesMarketsView, MarketKind, TrustView, PerfView, CorrView, SectorView, IncomeView, NextActionsView, NarrativeView, EdgeStats, LtfSnapshot, CouncilStatusView, CouncilStamp, CouncilCalibrationView, NearMissEntry } from './types';
 
 export interface DeepSignalResult {
   ok: boolean;
@@ -564,6 +564,72 @@ export async function clearClosedPositions(): Promise<{ ok: boolean; removed?: n
   } catch (e) {
     return { ok: false, error: String((e as Error)?.message || e) };
   }
+}
+
+// ---------------- v11.0: GLOBAL MARKET COUNCIL fetchers ----------------
+// Module-level + client-cached (the fetchOptionsDesk pattern): the
+// stamps themselves ride the signal BOARD (30s poll, zero extra cost);
+// these fetchers cover status / near-miss / deep verdicts / calibration.
+// Panels poll them on 60s+ cadences with document.hidden gates.
+let _councilStatusCache: { at: number; data: CouncilStatusView } | null = null;
+export async function fetchCouncilStatus(force = false): Promise<CouncilStatusView | null> {
+  if (!force && _councilStatusCache && Date.now() - _councilStatusCache.at < 60_000) return _councilStatusCache.data;
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/council/status?t=${Date.now()}`, { signal: AbortSignal.timeout(15000) });
+    if (!r.ok) return _councilStatusCache?.data || null;
+    const data = await r.json();
+    _councilStatusCache = { at: Date.now(), data };
+    return data;
+  } catch { return _councilStatusCache?.data || null; }
+}
+
+let _nearMissCache: { at: number; data: { ok: boolean; entries: NearMissEntry[]; stats: { total: number; last24h: number; byReason: [string, number][] } } } | null = null;
+export async function fetchCouncilNearMiss(force = false, limit = 25): Promise<NearMissEntry[]> {
+  if (!force && _nearMissCache && Date.now() - _nearMissCache.at < 60_000) return _nearMissCache.data?.entries || [];
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/council/near-miss?limit=${limit}&t=${Date.now()}`, { signal: AbortSignal.timeout(15000) });
+    if (!r.ok) return _nearMissCache?.data?.entries || [];
+    const data = await r.json();
+    _nearMissCache = { at: Date.now(), data };
+    return Array.isArray(data?.entries) ? data.entries : [];
+  } catch { return _nearMissCache?.data?.entries || []; }
+}
+
+/** DEEP council verdict for ONE symbol (6 seats + debate + judge;
+ *  user-initiated deep-dives only — ~9 LLM calls when uncached). */
+export async function fetchCouncilVerdict(symbol: string, market: string, force = false): Promise<CouncilStamp | null> {
+  const cacheKey = `v:${market}:${symbol}`;
+  const hit = _verdictCache.get(cacheKey);
+  if (!force && hit && Date.now() - hit.at < 90_000) return hit.data;
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/council/verdict/${encodeURIComponent(symbol)}?market=${encodeURIComponent(market)}${force ? '&fresh=1' : ''}`, { signal: AbortSignal.timeout(45000) });
+    if (!r.ok) return hit?.data || null;
+    const j = await r.json();
+    const stamp = j?.stamp || null;
+    if (stamp) _verdictCache.set(cacheKey, { at: Date.now(), data: stamp });
+    return stamp;
+  } catch { return hit?.data || null; }
+}
+
+let _councilCalCache: { at: number; data: CouncilCalibrationView } | null = null;
+export async function fetchCouncilCalibration(force = false): Promise<CouncilCalibrationView | null> {
+  if (!force && _councilCalCache && Date.now() - _councilCalCache.at < 60_000) return _councilCalCache.data;
+  try {
+    const r = await apiFetch(`${getProxyBase()}/api/ai/council/calibration?t=${Date.now()}`, { signal: AbortSignal.timeout(15000) });
+    if (!r.ok) return _councilCalCache?.data || null;
+    const data = await r.json();
+    _councilCalCache = { at: Date.now(), data };
+    return data;
+  } catch { return _councilCalCache?.data || null; }
+}
+
+const _verdictCache = new Map<string, { at: number; data: CouncilStamp }>();
+if (typeof setInterval === 'function') {
+  const t = setInterval(() => {
+    const cutoff = Date.now() - 10 * 60_000;
+    for (const [k, v] of _verdictCache) if (v.at < cutoff) _verdictCache.delete(k);
+  }, 5 * 60_000);
+  t.unref?.();
 }
 
 // ---------------- v6.7: swing · whales · ledger · brief · orderbook ----------------

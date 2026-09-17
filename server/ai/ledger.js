@@ -112,6 +112,22 @@ export function recordExecution(signal, meta = {}) {
     votes: Object.fromEntries((signal.votes || [])
       .filter(v => v && v.id)
       .map(v => [v.id, { dir: v.dir || 0, conf: v.conf || 0 }])),
+    // v11.0: the Global Market Council stamp — per-AGENT attribution
+    // rides the SAME tamper-evident chain (trust.js councilAgentStats
+    // reads exactly this shape). Abstaining seats are absent keys.
+    ...(signal.council && Array.isArray(signal.council.agents) ? {
+      council: {
+        confidence: signal.council.confidence ?? null,
+        agreement: signal.council.agreement ?? null,
+        gate: signal.council.gate ?? null,
+        agents: Object.fromEntries(signal.council.agents
+          .filter(a => a && a.role)
+          .map(a => [a.role, {
+            dir: a.direction === 'LONG' ? 1 : a.direction === 'SHORT' ? -1 : 0,
+            conf: a.confidence ?? 0,
+          }])),
+      },
+    } : {}),
     summary: signal.summary || null,
     outcome: null,
     prevHash,
