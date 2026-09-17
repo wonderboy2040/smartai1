@@ -14,8 +14,12 @@ import path from 'node:path';
 // hermetic data dir (the risk/pnl tools read the journal + config)
 process.env.SMARTAI_DATA_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../.test-data-crypto-agent');
 
+// v11.4 recheck: controllable connection state (was hardcoded false —
+// the connected branch of get_wallet had zero coverage, which is exactly
+// how the wrong walletSnapshot key mapping survived).
+const cxConnected = vi.hoisted(() => ({ on: false }));
 vi.mock('../server/mcp/coindcx.js', () => ({
-  coindcxConnected: () => false,
+  coindcxConnected: () => cxConnected.on,
   coindcxPrivate: vi.fn(),
   coindcxStatus: () => ({ connected: false }),
 }));
@@ -204,6 +208,36 @@ describe('executeCryptoTool', () => {
     const out = await executeCryptoTool('get_wallet', {}, DEPS);
     expect(out.connected).toBe(false);
     expect(out.note).toMatch(/not connected/i);
+  });
+
+  it('v11.4: get_wallet maps the REAL walletSnapshot shape (nested spot.inr / futures.usdt)', async () => {
+    cxConnected.on = true;
+    try {
+      // the exact shape futures.js walletSnapshot returns (v10.14+)
+      mockWalletSnapshot.mockResolvedValueOnce({
+        ok: true, connected: true, usdInr: 86.4, fxStale: false,
+        spot: { inr: { free: 8400, locked: 100, total: 8500 }, usdt: { free: 10, locked: 0, total: 10 }, error: null, rows: [] },
+        futures: { usdt: { free: 6.17, locked: 1.2, total: 7.37, crossUserMargin: 0 }, error: null },
+        equityINR: 14_950, deployableSpotINR: 8400, deployableFuturesUSDT: 6.17,
+        fetchedAt: 1_758_000_000_000,
+      });
+      const out = await executeCryptoTool('get_wallet', {}, DEPS);
+      // the old tool read w.spotINR / w.futuresUSDT / w.marginUsedUSDT — keys
+      // that don't exist — and answered null balances with CoinDCX connected.
+      expect(out.connected).toBe(true);
+      expect(out.spot.balanceINR).toBe(8500);
+      expect(out.spot.freeINR).toBe(8400);
+      expect(out.spot.balanceUSDT).toBe(10);
+      expect(out.spot.deployableINR).toBe(8400);
+      expect(out.futures.balanceUSDT).toBe(7.37);
+      expect(out.futures.freeUSDT).toBe(6.17);
+      expect(out.futures.marginUsedUSDT).toBe(1.2);
+      expect(out.futures.deployableUSDT).toBe(6.17);
+      expect(out.equityINR).toBe(14_950);
+      expect(out.fetchedAt).toBe(1_758_000_000_000);
+    } finally {
+      cxConnected.on = false;
+    }
   });
 
   it('calculate_position_size computes qty, R-targets and MAX SANE LEVERAGE', async () => {

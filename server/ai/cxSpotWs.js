@@ -47,6 +47,12 @@ const SPOT_WS_DEMAND_IDLE_MS = 120_000;  // no demand for 2 min → close
 const SPOT_WS_FAIL_LIMIT = 3;            // consecutive handshake failures → cooldown
 const SPOT_WS_COOLDOWN_MS = 30 * 60_000;
 const SPOT_WS_RECONNECT_MS = 3_000;      // base delay, ×2 backoff → 24s cap
+/** v11.4 recheck: a socket can be protocol-alive (engine.io pings answered)
+ *  yet stop delivering book updates. cxRtStream has a silent-contract
+ *  watchdog for exactly this; the spot layer had none — a silent zombie
+ *  kept leg 2 of the ticker chain dark until the socket happened to drop.
+ *  Kill + reconnect after this long without a single book update. */
+const SPOT_WS_SILENT_KILL_MS = 120_000;
 /** A market's price row is SERVABLE for this long after its last tick.
  *  INR pairs refresh in ~10s bursts on the live wire; 45s rides out a
  *  burst gap without serving dust. */
@@ -65,6 +71,8 @@ let _failStreak = 0;
 let _disabledUntil = 0;
 let _reconnectTimer = null;
 let _idleTimer = null;
+let _dataWatchdog = null;    // v11.4 recheck: silent-socket killer
+let _connectedAt = 0;        // v11.4 recheck: ns-connect epoch (zombie budget anchor)
 let _lastUpdateAt = 0;       // last book update (socket liveness)
 // Enable matrix (the cxRtStream hermetic pattern):
 //   AI_CX_SPOT_WS=0  → always off
@@ -200,7 +208,7 @@ function _ensure() {
       wsFactory: _wsFactory || undefined,
       nowFn: _nowFn,
       onEvent: _onEvent,
-      onOpen: () => { _failStreak = 0; },
+      onOpen: () => { _failStreak = 0; _connectedAt = _nowFn(); },
       onClose: (wasNs) => {
         if (!wasNs) _registerFailure();
         _io = null;
@@ -215,6 +223,7 @@ function _ensure() {
   io.connect();
   io.join(PRICE_CHANNEL);
   io.join(STATS_CHANNEL);
+  _armDataWatchdog();
 }
 
 function _registerFailure() {
@@ -247,10 +256,32 @@ function _armIdleWatchdog() {
   if (typeof _idleTimer.unref === 'function') _idleTimer.unref();
 }
 
+/** v11.4 recheck: silent-socket watchdog — a connected socket that has
+ *  delivered NO book update for SPOT_WS_SILENT_KILL_MS (or never delivered
+ *  anything since connect) is a zombie: engine.io keeps it protocol-alive
+ *  forever while every price row ages past PRICE_FRESH_MS. Kill it; the
+ *  onClose handler schedules the reconnect. NOT counted as a handshake
+ *  failure (the handshake worked). */
+function _armDataWatchdog() {
+  if (_dataWatchdog) return;
+  _dataWatchdog = setInterval(() => {
+    if (!_io || !_io.state().connected) return;
+    const now = _nowFn();
+    const silentFor = _lastUpdateAt
+      ? now - _lastUpdateAt
+      : (_connectedAt ? now - _connectedAt : 0);
+    if (silentFor > SPOT_WS_SILENT_KILL_MS) {
+      _close('silent');
+    }
+  }, 30_000);
+  if (typeof _dataWatchdog.unref === 'function') _dataWatchdog.unref();
+}
+
 function _close(reason) {
-  if (reason === 'idle' || reason === 'test-reset') {
+  if (reason === 'idle' || reason === 'test-reset' || reason === 'silent') {
     // keep the book (stale rows age out naturally) — only the socket goes
   }
+  if (_dataWatchdog) { clearInterval(_dataWatchdog); _dataWatchdog = null; }
   if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
   if (_io) {
     try { _io.close(); } catch { /* already dead */ }
@@ -266,6 +297,7 @@ export function _resetSpotWsForTest() {
   _failStreak = 0;
   _disabledUntil = 0;
   _demandAt = 0;
+  _connectedAt = 0;
   _lastUpdateAt = 0;
   _wsFactory = null;
   _enabled = false; // hermetic default — WS suites opt back in via _setSpotWsEnabledForTest(true)

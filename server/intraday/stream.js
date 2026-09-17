@@ -98,8 +98,11 @@ export function setScanSymbols(symbols, market = 'INDIA') {
     _scanCrypto = new Set(list);
   } else {
     _scanIndia = new Set(list.filter(s => !isCryptoSymbolBase(s)));
+    // v11.4 recheck: UNION, not replace — assigning `new Set(strays)` here
+    // evicted the real crypto scan set whenever an INDIA scan carried stray
+    // crypto names (the exact bug class the v10.13 M4 note above forbids).
     const strays = list.filter(s => isCryptoSymbolBase(s));
-    if (strays.length) _scanCrypto = new Set(strays);
+    if (strays.length) _scanCrypto = new Set([..._scanCrypto, ...strays]);
   }
 }
 
@@ -131,13 +134,20 @@ function _watchSet() {
   // (NIFTY/SENSEX) for the BS premium re-pricing below. Indices skip
   // the Groww equity feed, so _fetchQuotes routes them to Yahoo.
   optionUnderlyingsForWatcher().forEach(s => mark(s, false));
+  // v11.4 recheck: TRACKED rows come BEFORE the scan set. _fetchQuotes
+  // slices to MAX_WATCH_NSE (34) — with tracked LAST, a busy day (10 paper
+  // + 5 scan + 40 tracked) starved the last ~21 tracked rows of quotes,
+  // so their SL/T1/T2 outcomes were never evaluated and the rows turned
+  // into reconcile zombies. A tracked row is an open accountability
+  // position — same priority class as a paper trade; the scan set is a
+  // signal-refresh nicety and can absorb the cut.
+  const tracked = watcherSymbolsByMarket();
+  tracked.india.forEach(s => mark(s, false));
+  tracked.crypto.forEach(s => mark(s, true));
   // v10.13 (M4): union of BOTH markets' scan sets — neither scan evicts the
   // other's symbols any more.
   _scanIndia.forEach(s => mark(s, false));
   _scanCrypto.forEach(s => mark(s, true));
-  const tracked = watcherSymbolsByMarket();
-  tracked.india.forEach(s => mark(s, false));
-  tracked.crypto.forEach(s => mark(s, true));
   return symMarket;
 }
 

@@ -483,6 +483,14 @@ function popFor({ spot, expiry, atmIV, breakevens, bias, kind }) {
     // profit BETWEEN the breakevens: P(low < S_T < high)
     const [lo, hi] = [...breakevens].sort((a, b) => a - b);
     p = pAbove(lo) - pAbove(hi);
+  } else if (kind === 'breakout' && breakevens.length >= 2) {
+    // v11.4 recheck: LONG STRADDLE — profit OUTSIDE both breakevens:
+    // P(S_T > hi) + P(S_T < lo). It previously fell into the debit
+    // branch's bearish arm (bias 'BREAKOUT' !== 'BULLISH') computing
+    // P(S ≤ hi) — counting the whole between-BE loss zone as "profit"
+    // and systematically overstating the straddle's POP.
+    const [lo, hi] = [...breakevens].sort((a, b) => a - b);
+    p = pAbove(hi) + (1 - pAbove(lo));
   } else if (kind === 'debit') {
     const b = breakevens[0];
     p = bias === 'BULLISH' ? pAbove(b) : 1 - pAbove(b);
@@ -723,7 +731,7 @@ export function buildStrategies(desk, consensus) {
     const debit = lc.premium + lp.premium;
     if (debit > 0) {
       out.push({
-        id: 'long-straddle', name: 'Long Straddle (ATM)', _popKind: 'debit',
+        id: 'long-straddle', name: 'Long Straddle (ATM)', _popKind: 'breakout',
         bias: 'BREAKOUT', conviction: 'WATCH',
         rationale: `Split committee (${conf}%) + cheap vol (IV percentile ${ivPct ?? 'n/a'}) — buy the ATM straddle: any move beyond ±${r1((debit / spot) * 100)}% at expiry pays. Theta bleeds daily — this is a coiled-spring bet, not a hold.`,
         legs: [lc, lp],

@@ -643,12 +643,16 @@ export function analyzeIntradayFromScanner(symbol, tv, groww, opts = {}) {
   // capital deployed. Quantity uses slip-adjusted risk (conservative).
   // CRYPTO: fractional units (you can buy 0.0027 BTC) — round to 4 dp;
   // NSE equities stay whole-share (integer floor).
-  const qtyRisk = effRisk > 0 ? Math.floor(1000 / effRisk) : 0;
-  const qtyCap = Math.floor(25000 / entry);
+  // v11.4 recheck: the old code Math.floor'ed qtyRisk/qtyCap BEFORE the
+  // crypto branch — for BTC (entry ≈ ₹43.5L) both floors hit 0, so every
+  // major-coin signal published the 0.0001 dust minimum (~50–90× undersize).
+  // Floor ONLY for NSE; crypto keeps the fraction.
+  const qtyRisk = effRisk > 0 ? 1000 / effRisk : 0;
+  const qtyCap = 25000 / entry;
   const qtyRaw = Math.max(0, Math.min(qtyRisk, qtyCap));
   const qtyPerLakh = isCrypto
-    ? (qtyRaw >= 1 ? Math.floor(qtyRaw) : Math.max(0.0001, +qtyRaw.toFixed(4)))
-    : qtyRaw;
+    ? Math.max(0.0001, +qtyRaw.toFixed(4))
+    : Math.floor(qtyRaw);
 
   // ADX regime label
   const trendStrength = adx >= 28 ? 'STRONG' : adx >= 20 ? 'BUILDING' : 'WEAK-RANGE';

@@ -1,7 +1,13 @@
 // FIX M14: previously hardcoded `/api/ml` and ignored VITE_API_PROXY, so any
 // cross-origin deployment (frontend on a different host than the Node proxy)
 // got 404s for ML calls. Use the same PROXY_BASE convention as the rest of api.ts.
-const ML_SERVICE_URL = `${(import.meta.env.VITE_API_PROXY as string) || ''}/api/ml`;
+// v11.4 recheck: the base was still BAKED AT MODULE LOAD — every other REST
+// call resolves getProxyBase() LIVE so the Portfolio tab's runtime Backend
+// URL override applies everywhere; ML calls kept hitting the old (dead)
+// backend after a switch. Resolve per-call now, same as api.ts v10.13.
+import { getProxyBase } from './api';
+
+const mlServiceUrl = () => `${getProxyBase()}/api/ml`;
 
 export interface MLPrediction {
   symbol: string;
@@ -47,7 +53,7 @@ export interface MLBacktestResult {
 
 async function mlFetch<T>(path: string, options?: RequestInit): Promise<T> {
   try {
-    const res = await fetch(`${ML_SERVICE_URL}${path}`, {
+    const res = await fetch(`${mlServiceUrl()}${path}`, {
       ...options,
       signal: AbortSignal.timeout(15000),
       headers: { 'Content-Type': 'application/json', ...options?.headers },

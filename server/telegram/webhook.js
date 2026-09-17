@@ -236,7 +236,7 @@ async function handleTradeCommand({ query, chatKey, role, send }) {
 }
 
 /** callback_query handler — the ONLY place an Approve tap is interpreted. */
-async function handleApprovalCallback({ callbackQuery, send }) {
+async function handleApprovalCallback({ callbackQuery, send, cfgTG }) {
   const data = String(callbackQuery?.data || '');
   const cb = parseApprovalCallback(data);
   // answerCallbackQuery is fire-safe (never throws) — it just stops the
@@ -244,7 +244,7 @@ async function handleApprovalCallback({ callbackQuery, send }) {
   const answerCb = (text) => telegramApiCall('answerCallbackQuery', {
     callback_query_id: callbackQuery?.id,
     ...(text ? { text: String(text).slice(0, 190) } : {}),
-  }, {});
+  }, { token: cfgTG?.token || process.env.TG_TOKEN || '' });
   if (!cb) { await answerCb('Unknown request'); return { ok: true }; }
 
   if (cb.action === 'reject') {
@@ -430,7 +430,11 @@ export function registerTelegramWebhook(app, deps = {}) {
       }
       const send0 = (t) => sendTelegramMessageTo(cqChatId, t, { token: cfgTG0.token });
       setImmediate(() => {
-        handleApprovalCallback({ callbackQuery, send: send0 })
+        // v11.4 recheck: token rides along — answerCb used to resolve the
+        // token from app-secrets ONLY (empty env), so in TG_TOKEN-env
+        // deployments every Approve/Reject tap left the button's loading
+        // clock spinning to timeout (the answer silently failed).
+        handleApprovalCallback({ callbackQuery, send: send0, cfgTG: cfgTG0 })
           .catch(async (e) => { await send0(`⚠️ Approval error: ${String(e?.message || e).slice(0, 160)}`).catch(() => {}); });
       });
       return respond(true, { accepted: true });

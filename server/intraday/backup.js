@@ -31,13 +31,23 @@ const PUSH_MIN_GAP_MS = 60_000;  // GitHub abuse safety per file
 // older than it needs to be).
 const FETCH_TIMEOUT_MS = 15_000;
 const HEAD_RETRIES = 2;
+// v11.4 recheck: a FAILED push was dropped outright — the v10.18 comment
+// claimed "a failed push retried early is the correct behavior" but no
+// retry path existed, so a transient network blip left rarely-written
+// files (gate override, near-miss list) stale indefinitely. Bounded
+// retry of the SAME payload: 3 attempts, 65s apart (just past the 60s
+// success-gap), then honest give-up until the next write re-arms.
+const FAIL_RETRY_MS = 65_000;
+const FAIL_RETRY_MAX = 3;
 
 const _log = (msg) => console.log(`[backup] ${msg}`);
 
 const _pending = new Map();      // filename -> latest data object
 const _lastPush = new Map();     // filename -> ts
 const _inflight = new Map();     // filename -> promise
+const _failTries = new Map();    // filename -> consecutive failed attempts
 let _lastAttempt = 0;            // module-wide circuit breaker
+let _branchEnsured = false;      // v11.4: data-backup branch exists (bootstrap cache)
 
 export function backupConfigured() {
   const token = process.env.GITHUB_BACKUP_TOKEN;
@@ -77,6 +87,44 @@ async function _gh(url, opts = {}) {
   return r;
 }
 
+/** v11.4 recheck: nothing in the repo ever CREATED the data-backup
+ *  branch (docs only mention the env var). On a repo where it doesn't
+ *  exist: HEAD 404 → sha null → PUT create → GitHub 422 "Reference does
+ *  not exist" → the old code logged "(race), remote is fresh" and
+ *  returned false — every push failed forever while the logs claimed
+ *  the opposite. Bootstrap: create the branch from the default branch
+ *  head (cached — one successful check lasts the process lifetime). */
+async function _ensureBranch() {
+  if (_branchEnsured) return true;
+  try {
+    const ref = await _gh(`${_apiBase()}/git/ref/heads/${encodeURIComponent(_branch())}`);
+    if (ref.ok) { _branchEnsured = true; return true; }
+    if (ref.status !== 404) { _log(`ensure-branch: ref -> HTTP ${ref.status}`); return false; }
+    const repo = await _gh(`${_apiBase()}`);
+    if (!repo.ok) { _log(`ensure-branch: repo -> HTTP ${repo.status}`); return false; }
+    const def = (await repo.json())?.default_branch;
+    if (!def) { _log('ensure-branch: no default_branch'); return false; }
+    const defRef = await _gh(`${_apiBase()}/git/ref/heads/${encodeURIComponent(def)}`);
+    if (!defRef.ok) { _log(`ensure-branch: ${def} ref -> HTTP ${defRef.status}`); return false; }
+    const sha = (await defRef.json())?.object?.sha;
+    if (!sha) { _log('ensure-branch: default head has no sha'); return false; }
+    const create = await _gh(`${_apiBase()}/git/refs`, {
+      method: 'POST',
+      body: JSON.stringify({ ref: `refs/heads/${_branch()}`, sha }),
+    });
+    if (create.ok || create.status === 422) {
+      _log(`ensure-branch: ${_branch()} ready (from ${def}@${String(sha).slice(0, 7)})`);
+      _branchEnsured = true;
+      return true;
+    }
+    _log(`ensure-branch: create -> HTTP ${create.status}`);
+    return false;
+  } catch (e) {
+    _log(`ensure-branch failed: ${e?.message || e}`);
+    return false;
+  }
+}
+
 // ------------------------------------------------------------
 // PUSH — one serialized, coalesced upload per file.
 // ------------------------------------------------------------
@@ -109,18 +157,36 @@ async function _doPush(filename, data) {
   }
 
   // 2) Create or update the blob on the branch.
-  const body = JSON.stringify({
+  const _putBody = (bsha) => JSON.stringify({
     message: `backup: ${filename} (${new Date().toISOString()})`,
     content: Buffer.from(JSON.stringify(data), 'utf8').toString('base64'),
     branch: _branch(),
-    ...(sha ? { sha } : {}),
+    ...(bsha ? { sha: bsha } : {}),
   });
-  const put = await _gh(`${_apiBase()}/contents/${encodeURIComponent(path)}`, { method: 'PUT', body });
+  const _put = (bsha) => _gh(`${_apiBase()}/contents/${encodeURIComponent(path)}`, { method: 'PUT', body: _putBody(bsha) });
+  let put = await _put(sha);
   if (put.status === 409 || put.status === 422) {
-    // Lost a sha race (another instance pushed first). Non-fatal —
-    // the remote copy is at least as fresh as ours.
-    _log(`push ${filename} -> ${put.status} (race), remote is fresh`);
-    return false;
+    // v11.4 recheck: the old comment called EVERY 409/422 a lost sha
+    // race with "remote is fresh" — false twice over: (a) with sha === null
+    // a 422 is usually "Reference does not exist" (the branch was never
+    // created — see _ensureBranch); (b) a genuine race means the remote is
+    // a DIFFERENT instance's state, not "ours, fresher". Handle both:
+    // bootstrap the branch on create-legs, then re-HEAD and retry once.
+    if (sha == null && await _ensureBranch()) {
+      put = await _put(null);
+    }
+    if (put.status === 409 || put.status === 422) {
+      let freshSha = null;
+      try {
+        const head = await _gh(`${_apiBase()}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(_branch())}`);
+        if (head.ok) freshSha = (await head.json())?.sha || null;
+      } catch { /* re-HEAD failed — try create-leg once */ }
+      put = await _put(freshSha);
+    }
+    if (put.status === 409 || put.status === 422) {
+      _log(`push ${filename} -> ${put.status} after branch-bootstrap + re-HEAD retry (lost race), remote is fresh`);
+      return false;
+    }
   }
   if (!put.ok) {
     _log(`push ${filename} -> HTTP ${put.status}`);
@@ -165,8 +231,26 @@ async function _flush(filename) {
   // the gap ONLY after a successful push (a failed push retried early
   // is the correct behavior — the remote copy is still stale).
   p.then((pushed) => {
-    if (pushed) _lastPush.set(filename, Date.now());
-    if (_pending.has(filename)) _queueFlush(filename);
+    if (pushed) {
+      _lastPush.set(filename, Date.now());
+      _failTries.delete(filename);
+      if (_pending.has(filename)) _queueFlush(filename);
+      return;
+    }
+    // v11.4 recheck: FAILED pushes were dropped when no newer data waited
+    // — retry the SAME payload (bounded) so a transient blip can't leave
+    // rarely-written files stale forever.
+    if (_pending.has(filename)) { _queueFlush(filename); return; }
+    const tries = (_failTries.get(filename) || 0) + 1;
+    if (tries > FAIL_RETRY_MAX) {
+      _failTries.delete(filename);
+      _log(`push ${filename}: giving up after ${FAIL_RETRY_MAX} retries — next write re-arms`);
+      return;
+    }
+    _failTries.set(filename, tries);
+    _pending.set(filename, data);
+    const t = setTimeout(() => { _queueFlush(filename); }, FAIL_RETRY_MS);
+    if (typeof t.unref === 'function') t.unref();
   }).catch(() => {});
 }
 

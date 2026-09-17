@@ -107,19 +107,30 @@ export function recordSignals(signals) {
   if (_state.dayKey !== today) _state.dayKey = today;
 
   const todayRows = _state.signals.filter(s => s.dayKey === dayKeyFor(_marketOf(s)));
-  if (todayRows.filter(s => s.status === 'OPEN').length >= MAX_PER_DAY) return [];
+  // v11.4 recheck: count OPEN *and* PARTIAL — a PARTIAL row is still one
+  // live tracked trade and must consume a MAX_PER_DAY slot (previously
+  // uncapped once every row had booked T1).
+  if (todayRows.filter(s => s.status === 'OPEN' || s.status === 'PARTIAL').length >= MAX_PER_DAY) return [];
 
   for (const sig of signals) {
     const market = _marketOf(sig);
     const sigDay = dayKeyFor(market);
+    // v11.4 recheck: dedup must match PARTIAL rows too — once a row booked
+    // T1 it escaped the OPEN-only lookup and the next scan opened a SECOND
+    // row with the SAME id (symbol:dayKey), double-counting the trade.
     const existing = _state.signals.find(
-      s => s.symbol === sig.symbol && s.dayKey === sigDay && s.status === 'OPEN'
+      s => s.symbol === sig.symbol && s.dayKey === sigDay && (s.status === 'OPEN' || s.status === 'PARTIAL')
     );
     if (existing) {
       if (existing.direction !== sig.direction) {
         // Direction flip — close the old row at current LTP, open a fresh one.
         _closeRow(existing, sig.ltp, 'FLIP', events);
         _openRow(sig, sigDay, events, true);
+      } else if (existing.status === 'PARTIAL') {
+        // T1 already booked against the OLD levels — refreshing entry/target1
+        // would rewrite booked P&L retroactively. Confidence/last-price only.
+        existing.confidence = sig.confidence;
+        existing.lastPrice = sig.ltp;
       } else {
         // Refresh levels so the tracker follows the engine's latest plan.
         existing.entry = sig.entry; existing.stopLoss = sig.stopLoss;
@@ -216,6 +227,15 @@ function _computePnl(row) {
 export function evaluateTracked(quotes, events) {
   const m = istMinutes();
 
+  // v11.4 recheck: RUNTIME reconcile — reconcileStale used to run at BOOT
+  // ONLY, so on a long-lived process every row that crossed its day
+  // boundary while still OPEN/PARTIAL (crypto at UTC midnight — the common
+  // case for a 24/7 market; NSE rows left open when quotes stopped) turned
+  // into a permanent zombie: skipped by this loop, never counted, and
+  // `openCount` grew forever. The loop below is ≤ MAX_ROWS (800) string
+  // compares — cheap enough for every watcher tick, idempotent.
+  reconcileStale(events);
+
   for (const row of _state.signals) {
     if (row.status !== 'OPEN' && row.status !== 'PARTIAL') continue;
     const market = _marketOf(row);
@@ -243,7 +263,12 @@ export function evaluateTracked(quotes, events) {
       }
     } else if (row.status === 'PARTIAL') {
       // Trail at breakeven once T1 booked.
-      if (hitSL) { _closeRow(row, row.stopLoss, 'SL_HIT', events); continue; }
+      // v11.4 recheck: the original-SL check used to run FIRST — a tick
+      // that gapped straight through entry to ≤ stopLoss closed the
+      // remainder at the ORIGINAL SL (a full-risk loss on the runner)
+      // instead of the documented breakeven floor. For a long, any price
+      // ≤ stopLoss is also ≤ entry, so the BE trail subsumes it; T2 stays
+      // first so a gap UP still books the win.
       if (hitT2) { _closeRow(row, row.target2, 'T2_HIT', events); continue; }
       const hitTrail = isLong ? price <= row.entry : price >= row.entry;
       if (hitTrail) { _closeRow(row, row.entry, 'BE_TRAIL_EXIT', events); continue; }

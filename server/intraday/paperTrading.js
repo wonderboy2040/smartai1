@@ -431,9 +431,14 @@ export function paperSymbolsByMarket() {
 }
 
 export function getPaperSummary() {
-  const today = istDayKey();
+  // v11.4 recheck: compare each trade against ITS OWN market day — INDIA
+  // rows bucket on the IST day, CRYPTO rows on the UTC day. The old
+  // single IST-day filter dropped every crypto trade opened (and closed)
+  // in the 00:00–05:30 IST window from closedToday/dayRealizedPnl/dayNetPnl.
   const open = _state.trades.filter(t => t.status === 'OPEN' || t.status === 'PARTIAL');
-  const closedToday = _state.trades.filter(t => t.dayKey === today && t.status === 'CLOSED');
+  const closedToday = _state.trades.filter(
+    t => t.dayKey === dayKeyFor(_marketOfTrade(t)) && t.status === 'CLOSED'
+  );
   const allClosed = _state.trades.filter(t => t.status === 'CLOSED');
   const sum = (arr, f) => arr.reduce((s, t) => s + (f(t) || 0), 0);
   // v11.1 GAP 3: costs are derived per trade (pure, deterministic) — the

@@ -24,6 +24,7 @@
 import {
   BASE_UNIVERSE, CRYPTO_UNIVERSE, INTRADAY_MIN_CONFIDENCE, INTRADAY_TOP_N, gradeSignal, inDeadZone,
   fetchIntradayDataBatch, analyzeIntradayFromScanner, aiVerifySignals, registerCryptoBases,
+  isCryptoSymbolBase,
 } from './engine.js';
 // v9 SUPERINTELLIGENCE PRO TRADER ENGINE — dynamic full-universe crypto
 // scan + AI SCORE (0-100) + the complete trade blueprint (entry timing /
@@ -253,7 +254,18 @@ export function registerIntradayRoutes(app, deps) {
   });
 
   app.post('/api/intraday-paper', (req, res) => {
-    const result = openPaperTrade(req.body || {});
+    const body = req.body || {};
+    // v11.4 recheck: NSE paper entries need a LIVE session — an entry
+    // outside 09:15–15:00 IST (or on a weekend/holiday) previously either
+    // insta-closed on the next 5s watcher tick (15:10 square-off) or sat
+    // unmanaged at a stale quote until Monday. CRYPTO stays 24/7. Manual
+    // close is always allowed — this gate is for NEW positions only.
+    const pmkt = String(body.market || '').toUpperCase();
+    const isCryptoPaper = pmkt === 'CRYPTO' || (!pmkt && isCryptoSymbolBase(String(body.symbol || '')));
+    if (!isCryptoPaper && !(isNseMarketOpen() && freshEntriesAllowedFor('INDIA'))) {
+      return jsonError(res, 409, 'NSE market closed (or past the 15:00 fresh-entry cutoff) — crypto paper trades stay available 24×7.');
+    }
+    const result = openPaperTrade(body);
     if (result.error) return jsonError(res, 400, result.error);
     res.json({ ok: true, trade: result.trade });
   });
@@ -592,12 +604,14 @@ export function registerIntradayRoutes(app, deps) {
                 sig.rr = +((Math.abs(sig.target1 - sig.entry) / risk)).toFixed(2);
                 const slip = sig.entry * (isCrypto ? 0.12 : 0.07) / 100; // CRYPTO 12bps / NSE 7bps
                 sig.effRR = +(((Math.abs(sig.target1 - sig.entry) - 2 * slip) / (risk + 2 * slip))).toFixed(2);
-                const qtyRisk = Math.floor(1000 / (risk + 2 * slip));
-                const qtyCap = Math.floor(25000 / sig.entry);
+                // v11.4 recheck: no premature Math.floor for crypto (see
+                // engine.js — floors collapsed BTC/ETH sizing to 0.0001).
+                const qtyRisk = 1000 / (risk + 2 * slip);
+                const qtyCap = 25000 / sig.entry;
                 const qtyRaw = Math.max(0, Math.min(qtyRisk, qtyCap));
                 sig.qtyPerLakh = isCrypto
-                  ? (qtyRaw >= 1 ? Math.floor(qtyRaw) : Math.max(0.0001, +qtyRaw.toFixed(4)))
-                  : qtyRaw;
+                  ? Math.max(0.0001, +qtyRaw.toFixed(4))
+                  : Math.floor(qtyRaw);
               }
             }
           }

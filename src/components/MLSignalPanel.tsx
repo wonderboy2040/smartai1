@@ -35,11 +35,39 @@ export function MLSignalPanel({ symbol, market, price, change }: Props) {
   // FIX H6: refetch on symbol/market change OR when price moves >1% from
   // last fetch — keeps ML signal fresh without hammering the backend on
   // every tick.
+  // v11.4 recheck (two gate bugs): (1) the ref was seeded from `price ?? 0`
+  // BEFORE the live price landed — once seeded at 0, `moved` computed as 0
+  // forever (division guard `last > 0`), so the panel NEVER refetched and
+  // kept the first symbol's prediction under every later symbol header
+  // while the server's old `price || 100` fallback fabricated ₹100 levels.
+  // (2) the ref was never reset on symbol/market change, so switching to a
+  // same-priced symbol kept the OLD symbol's prediction. Now: the anchor
+  // only ever seeds from a REAL price (>0), resets per target, and the
+  // first real price triggers one price-true fetch.
   const lastFetchPriceRef = useRef<number | null>(null);
+  const lastFetchTargetRef = useRef<string | null>(null);
+  const zeroPriceFetchedRef = useRef(false);
   useEffect(() => {
     if (!symbol) return;
+    const target = `${market}:${symbol}`;
+    if (lastFetchTargetRef.current !== target) {
+      lastFetchTargetRef.current = target;
+      lastFetchPriceRef.current = null;
+      zeroPriceFetchedRef.current = false;
+    }
     const curPrice = price ?? 0;
     if (lastFetchPriceRef.current === null) {
+      if (!(curPrice > 0)) {
+        // No live price yet: fetch ONCE per target (server may derive a
+        // price from candles; since v11.4 it refuses rather than inventing
+        // ₹100 levels). Never seed the 1% anchor from 0.
+        if (!zeroPriceFetchedRef.current) {
+          zeroPriceFetchedRef.current = true;
+          load();
+        }
+        return;
+      }
+      // First REAL price for this target — anchor it and fetch price-true.
       lastFetchPriceRef.current = curPrice;
       load();
       return;

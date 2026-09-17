@@ -338,10 +338,24 @@ async function executeCryptoTool(name, args, deps) {
         }
         const w = await walletSnapshot().catch(e => ({ error: String(e?.message || e) }));
         if (w?.error) return { error: w.error };
+        // v11.4 recheck: this tool read w.spotINR / w.futuresUSDT /
+        // w.marginUsedUSDT — keys walletSnapshot never returns (the real
+        // shape is nested: spot.inr{total,free,locked}, futures.usdt{...}).
+        // Balances were ALWAYS null even with CoinDCX fully connected.
         return {
-          connected: true, equityINR: w.equityINR, usdInr: w.usdInr,
-          spot: { balanceINR: w.spotINR ?? null, deployableINR: w.deployableSpotINR ?? null },
-          futures: { balanceUSDT: w.futuresUSDT ?? null, deployableUSDT: w.deployableFuturesUSDT ?? null, marginUsedUSDT: w.marginUsedUSDT ?? null },
+          connected: true, equityINR: w.equityINR, usdInr: w.usdInr, fxStale: w.fxStale ?? null,
+          spot: {
+            balanceINR: w.spot?.inr?.total ?? null,
+            freeINR: w.spot?.inr?.free ?? null,
+            balanceUSDT: w.spot?.usdt?.total ?? null,
+            deployableINR: w.deployableSpotINR ?? null,
+          },
+          futures: {
+            balanceUSDT: w.futures?.usdt?.total ?? null,
+            freeUSDT: w.futures?.usdt?.free ?? null,
+            marginUsedUSDT: w.futures?.usdt?.locked ?? null,
+            deployableUSDT: w.deployableFuturesUSDT ?? null,
+          },
           fetchedAt: w.fetchedAt ?? null,
         };
       }
@@ -662,7 +676,12 @@ async function _runOpenAICompatLoop(model, cfg, { systemPrompt, messages, deps, 
   let data = null;
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     const body = { model, messages: reqMessages, temperature: 0.4, max_completion_tokens: 4000 };
-    if (round === 0) body.tools = CRYPTO_AGENT_TOOLS;
+    // v11.4 recheck: tools were sent on round 0 ONLY — after the first tool
+    // call the request carried role:'tool' messages with NO tools declaration,
+    // so the model could never emit another tool call (and several OpenAI-
+    // compat providers 400 on tool-messages without tools). The documented
+    // "up to 6 tool rounds" was impossible on the Groq/Cerebras chain.
+    body.tools = CRYPTO_AGENT_TOOLS;
 
     const res = await fetch(cfg.url, {
       method: 'POST',

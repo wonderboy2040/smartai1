@@ -920,9 +920,15 @@ export async function watchGlobalPositions({ sendTelegram } = {}) {
       };
 
       // ---- v7.0 PRO TRADER: 3-tier partial take-profit (agent positions) ----
-      if (pro.enabled && p.source === 'agent' && !p.tp1Hit && p.tp != null && p.tp > 0) {
+      // v11.4 recheck: gate was `pro.enabled` — a key loadProTraderConfig
+      // never returns — so partial-TP NEVER fired on the Global desk.
+      if (pro.partialTpEnabled && p.source === 'agent' && !p.tp1Hit && p.tp != null && p.tp > 0) {
         if (long ? price >= p.tp : price <= p.tp) {
-          const closeQty = r2(Math.max(0, (p.qty / (1 - (Number(p.tp1ClosePctOverride) || pro.tp1ClosePct) / 100)) * ((Number(p.tp1ClosePctOverride) || pro.tp1ClosePct) / 100)));
+          // v11.4 recheck: old formula divided the fraction back out of the
+          // CURRENT qty (treating it as a post-T1 remainder) — at T1 nothing
+          // has closed yet, so 40% booked 66.7% and 50% closed the WHOLE
+          // position. p.qty here IS the original qty → plain pct of it.
+          const closeQty = r2(Math.max(0, p.qty * ((Number(p.tp1ClosePctOverride) || pro.tp1ClosePct) / 100)));
           const partialQty = Math.min(p.qty, closeQty || p.qty);
           if (partialQty > 0 && partialQty < p.qty) {
             const pnlUSD = (long ? p.tp - p.entryPrice : p.entryPrice - p.tp) * partialQty;
@@ -931,7 +937,7 @@ export async function watchGlobalPositions({ sendTelegram } = {}) {
             p.bookedPnlINR = inrOfUsd(p.bookedPnlUSDT, usdInr);
             p.tp1Hit = true;
             if (pro.breakEvenAfterTp1 && p.sl != null) {
-              p.sl = pRound(Math.max(p.entryPrice, Number(p.sl) || 0) === p.entryPrice ? p.entryPrice : p.entryPrice);
+              p.sl = pRound(p.entryPrice);
               p.trailing = 'breakeven';
             }
             try { markPartialOutcome(p, 1); } catch { /* best-effort */ }
@@ -941,7 +947,7 @@ export async function watchGlobalPositions({ sendTelegram } = {}) {
             await closeAt(p.tp, 'TARGET-1 (full — small position)');
           }
         }
-      } else if (pro.enabled && p.source === 'agent' && p.tp1Hit && !p.tp2Hit && p.tp2 != null && p.tp2 > 0) {
+      } else if (pro.partialTpEnabled && p.source === 'agent' && p.tp1Hit && !p.tp2Hit && p.tp2 != null && p.tp2 > 0) {
         if (long ? price >= p.tp2 : price <= p.tp2) {
           const closeQty = r2(p.qty * (pro.tp2ClosePct / (100 - pro.tp1ClosePct)));
           const partialQty = Math.min(p.qty, Math.max(0, closeQty));

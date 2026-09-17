@@ -79,7 +79,11 @@ async function _cachedUniverse(key, ttlMs, fn) {
 }
 
 // Live USD→INR (Yahoo, 1h cache — one rate for the whole scan).
-let _usdInr = { at: 0, val: 95 };
+// v11.4 recheck: static fallback was 95 while every money-layer module
+// (futures.js, coindcxOrders.js, manualTrades.js, globalRisk.js) uses 84 —
+// during a Yahoo FX outage the analysis layer priced coins ~13% above what
+// the execution/wallet layer assumed. ONE static estimate everywhere: 84.
+let _usdInr = { at: 0, val: 84 };
 export async function fetchUsdInr() {
   if (Date.now() - _usdInr.at < 3600_000) return _usdInr.val;
   try {
@@ -92,7 +96,7 @@ export async function fetchUsdInr() {
       const p = Number(j?.chart?.result?.[0]?.meta?.regularMarketPrice);
       if (p > 50 && p < 200) { _usdInr = { at: Date.now(), val: p }; return p; }
     }
-  } catch { /* keep last/95 */ }
+  } catch { /* keep last/84 */ }
   return _usdInr.val;
 }
 

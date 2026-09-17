@@ -186,11 +186,17 @@ Output (STRICT, Hinglish, max 250 words):
 End with: "Week Verdict: GREEN/AMBER/RED" (green = profitable + disciplined).`;
 
 export function getWeekKey(date = new Date()) {
-  const d = new Date(date);
-  const ist = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-  const day = (ist.getDay() + 6) % 7; // Mon=0
-  ist.setDate(ist.getDate() - day);
-  return ist.toISOString().slice(0, 10); // Monday date = week key
+  // v11.4 recheck: the old body re-parsed the IST wall clock in the HOST's
+  // timezone (`new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))`)
+  // and then re-converted to UTC — on any non-UTC host (an IST VPS, the
+  // repo's own local start script) timestamps in the 00:00–05:29 IST window
+  // mapped to the previous UTC day, landing weekly buckets on the WRONG
+  // (previous) week. IST has a fixed +5:30 offset (no DST): shift the epoch
+  // and read UTC parts — host-timezone-proof by construction.
+  const shifted = new Date(new Date(date).getTime() + 5.5 * 60 * 60 * 1000);
+  const day = (shifted.getUTCDay() + 6) % 7; // Mon=0
+  shifted.setUTCDate(shifted.getUTCDate() - day);
+  return shifted.toISOString().slice(0, 10); // Monday date = week key
 }
 
 export async function runWeeklyReport(deps, weekKeyOverride) {

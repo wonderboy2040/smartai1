@@ -948,7 +948,8 @@ app.get('/api/quote', async (req, res) => {
 // 2026 perf audit (H2): now shares ONE cached in-flight-deduped round-trip
 // with the cryptoStream SSE poller — previously both polled the full
 // ~0.5-1MB upstream independently (double CPU + GC churn).
-// ------------------------------------------------------------
+// v11.4 recheck: module-level so the transition log survives across requests
+let _lastTickerSourceLogged = null;
 app.get('/api/crypto-prices', async (_req, res) => {
   res.set('Cache-Control', 'no-store, max-age=0');
   try {
@@ -956,9 +957,17 @@ app.get('/api/crypto-prices', async (_req, res) => {
     // v11.3: honest observability — which leg served (REST / spot-WS /
     // Binance-fx synth / stale). The header rides every response so a
     // degraded feed is visible without server access.
-    res.set('X-Price-Source', lastTickerSource());
-    if (lastTickerSource() !== 'coindcx-rest') {
-      console.log(`[crypto-prices] serving via ${lastTickerSource()} (CoinDCX REST unreachable)`);
+    // v11.4 recheck: log on SOURCE TRANSITION only — the frontend polls this
+    // endpoint every 3s per tab, so per-request logging flooded Render logs
+    // with ~1,200 identical lines/hour exactly during CoinDCX incidents.
+    const _src = lastTickerSource();
+    res.set('X-Price-Source', _src);
+    if (_src !== _lastTickerSourceLogged && _src !== 'coindcx-rest') {
+      _lastTickerSourceLogged = _src;
+      console.log(`[crypto-prices] serving via ${_src} (CoinDCX REST unreachable)`);
+    } else if (_src === 'coindcx-rest' && _lastTickerSourceLogged !== null) {
+      console.log(`[crypto-prices] REST recovered (${_lastTickerSourceLogged} -> coindcx-rest)`);
+      _lastTickerSourceLogged = null;
     }
     return res.json(tickers);
   } catch (e) {
@@ -1179,7 +1188,10 @@ app.get('/api/stream', (req, res) => {
     unsub();
     // Notify streams this client left — pauses polling when no clients remain
     inClientDown();
-    usClientDown();
+    // v11.4 recheck: mirror the up-gate — a crypto/India-only session must
+    // NOT decrement the US refcount it never incremented (it killed the
+    // Finnhub feed for OTHER still-connected US sessions).
+    if (usSyms.length) usClientDown();
     cryptoClientDown();
     if (futSyms.length || globSyms.length) cxRtClientDown();
     // Refcount release (2026 perf audit M2): the LAST client that wanted a
@@ -1897,7 +1909,22 @@ app.post('/api/ml/predict', (req, res) => {
   if (mlGuard(req, res)) return;
   const { symbol, market, price, change, candles } = req.body || {};
   if (!symbol) return res.status(400).json({ error: 'symbol required' });
-  const result = getMLPrediction(symbol, market || 'IN', price || 100, change || 0, candles);
+  // v11.4 recheck: `price || 100` fabricated ₹100-anchored entry/SL/target
+  // levels whenever the client mounted before its live price landed — the
+  // Dashboard ML card then showed absurd levels (₹1,250 stock → Entry ₹97)
+  // and the panel's broken refetch gate (fixed alongside) never corrected
+  // them. Derive the anchor from the last candle when possible; otherwise
+  // refuse honestly — never invent a price.
+  let mlPrice = Number(price);
+  if (!(mlPrice > 0) && Array.isArray(candles) && candles.length) {
+    const c = candles[candles.length - 1];
+    const lastClose = Number(c?.close ?? c?.c);
+    if (lastClose > 0) mlPrice = lastClose;
+  }
+  if (!(mlPrice > 0)) {
+    return res.status(400).json({ error: 'live price required — ML levels are price-anchored (no candles to derive one from)' });
+  }
+  const result = getMLPrediction(symbol, market || 'IN', mlPrice, Number(change) || 0, candles);
   res.json(result);
 });
 
@@ -2519,6 +2546,19 @@ function validateEnv() {
 function startBot() {
   if (!TG.token) {
     console.log('[wealth-ai] TG_TOKEN not configured. Telegram Bot not started.');
+    return;
+  }
+  // v11.4 recheck: WEBHOOK vs POLLING conflict. The forked poller's
+  // getUpdates 409s the moment a webhook is registered, and the
+  // node-telegram-bot-api library's 409 handler then silently calls
+  // deleteWebHook() and resumes polling — killing the role-based webhook
+  // surface ~300ms after POST /api/telegram/setup-webhook, with no error
+  // anywhere. A deployment that sets TELEGRAM_WEBHOOK_SECRET intends
+  // WEBHOOK mode (setup-webhook refuses to register without it), so the
+  // poller is NOT forked. Escape hatch: TG_MODE=polling forces the
+  // poller back on (then don't call setup-webhook).
+  if (process.env.TELEGRAM_WEBHOOK_SECRET && process.env.TG_MODE !== 'polling') {
+    console.log('[wealth-ai] TELEGRAM_WEBHOOK_SECRET set — webhook mode: Telegram long-poll bot NOT forked (it would 409 and auto-delete the webhook). Call POST /api/telegram/setup-webhook once, or set TG_MODE=polling to use the poller instead.');
     return;
   }
   try {

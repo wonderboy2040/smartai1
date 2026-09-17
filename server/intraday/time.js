@@ -26,9 +26,44 @@ export function istMinutes(date = new Date()) {
   return hour * 60 + minute;
 }
 
+// ------------------------------------------------------------
+// NSE HOLIDAY CALENDAR (v11.4 recheck)
+// ------------------------------------------------------------
+// Fixed-date national closures — the NSE shuts on these dates EVERY
+// year with no historical exceptions, so they are safe to hard-code:
+// Republic Day, Maharashtra Day, Independence Day, Gandhi Jayanti,
+// Christmas. Movable-feast closures (Holi, Diwali, Eid, Ganesh
+// Chaturthi…) shift every year — supply them via the NSE_HOLIDAYS env
+// (comma-separated YYYY-MM-DD, e.g. "2026-11-08,2026-11-09"; see
+// RENDER_ENV_SETUP.md). Deliberately FAIL-OPEN: an unknown date is a
+// trading day (a missed holiday shows the flat closed tape — the
+// pre-v11.4 behavior — instead of wrongly blocking a live session).
+const NSE_FIXED_HOLIDAYS = new Set(['01-26', '05-01', '08-15', '10-02', '12-25']);
+const _nseEnvHolidayCache = { raw: null, set: null };
+function _nseEnvHolidays() {
+  const raw = String(process.env.NSE_HOLIDAYS || '');
+  if (_nseEnvHolidayCache.raw === raw) return _nseEnvHolidayCache.set;
+  const list = raw.split(',').map(x => x.trim()).filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x));
+  _nseEnvHolidayCache.raw = raw;
+  _nseEnvHolidayCache.set = list.length ? new Set(list) : null;
+  return _nseEnvHolidayCache.set;
+}
+
+/** True when the IST calendar date is a known NSE holiday. */
+export function isNseHoliday(date = new Date()) {
+  const iso = istDayKey(date);      // YYYY-MM-DD in IST
+  if (NSE_FIXED_HOLIDAYS.has(iso.slice(5))) return true;
+  const env = _nseEnvHolidays();
+  return !!(env && env.has(iso));
+}
+
 export function isNseMarketOpen(date = new Date()) {
   const { hour, minute, weekday } = getISTParts(date);
   if (weekday === 'Sat' || weekday === 'Sun') return false;
+  // v11.4 recheck: weekday holidays (Republic Day, Diwali, …) previously
+  // passed — the scanner published "live" signals off a flat closed tape
+  // and paper trades took fake EOD exits.
+  if (isNseHoliday(date)) return false;
   const mins = hour * 60 + minute;
   return mins >= 9 * 60 + 15 && mins <= 15 * 60 + 30; // 09:15 - 15:30 IST
 }
@@ -122,7 +157,12 @@ export function sessionElapsedShare(market = 'INDIA', date = new Date()) {
   if (weekday === 'Sat' || weekday === 'Sun') return 1;
   const mins = istMinutes(date);
   const OPEN = 9 * 60 + 15, CLOSE = 15 * 60 + 30, SESSION_MIN = 375;
-  if (mins <= OPEN || mins >= CLOSE) return 1;
+  // v11.4 recheck: `mins <= OPEN` handed the ENTIRE first session minute
+  // (09:15:00–09:15:59) share=1 instead of the 0.12 floor — during the
+  // exact ORB minute a genuine opening surge computed as raw relVol and
+  // was rejected by the hard `relVolume < 1.2` gate. Pre-open stays 1
+  // (outside the session, pace == raw by contract).
+  if (mins < OPEN || mins >= CLOSE) return 1;
   const elapsed = mins - OPEN;
   return Math.max(0.12, Math.min(1, (elapsed / SESSION_MIN) * 1.3));
 }

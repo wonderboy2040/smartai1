@@ -439,6 +439,12 @@ function _openBinanceWs(streams) {
     ws.on('error', () => {
       clearTimeout(connectTimeout); // v10.13 (L4): the 8s connect timer now clears on every terminal path
       if (_binanceWs !== ws) return;
+      // v11.4 recheck: the ws lib emits BOTH error and close for a failed
+      // handshake — nulling here makes the close handler's stale-guard
+      // return early, so one failed attempt counts ONE strike (it was
+      // counting two, arming the 3-strike breaker after just 2 attempts).
+      _binanceWs = null;
+      _binanceStreams = '';
       _registerBinanceFailure(!_binanceGotData);
       try { ws.close(); } catch { /* noop */ }
     });

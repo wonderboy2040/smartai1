@@ -7,6 +7,13 @@
 
 import TelegramBot from 'node-telegram-bot-api';
 import cron from 'node-cron';
+
+// v11.4 recheck: wall-clock schedules are written in IST and MUST carry
+// the timezone option — node-cron defaults to the HOST timezone, so bare
+// UTC-encoded crons drifted 5.5h on any non-UTC host (IST VPS, local
+// start_server.vbs). Interval crons (*/N) are timezone-agnostic and stay
+// on cron.schedule directly.
+const cronIST = (expr, fn) => cron.schedule(expr, fn, { timezone: 'Asia/Kolkata' });
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -596,7 +603,12 @@ console.log('');
 
 const bot = new TelegramBot(TG_TOKEN, {
   polling: {
-    params: { timeout: 30, allowed_updates: ['message'] }
+    // v11.4 recheck: allowed_updates was ['message'] ONLY — Telegram then
+    // filters callback_query out of getUpdates, so every inline keyboard
+    // button (/model, /pro, /super, refresh, AI-narrate) rendered in chat
+    // but its tap NEVER arrived: the whole bot.on('callback_query')
+    // dispatcher below was dead code in production.
+    params: { timeout: 30, allowed_updates: ['message', 'callback_query'] }
   }
 });
 console.log('Telegram Bot polling started.');
@@ -3427,9 +3439,9 @@ cron.schedule('*/3 * * * *', refreshIntel);
 // AUTO ALERTS — Market Hours Only
 // ────────────────────────────────────────
 
-// Daily Health Digest: 8:00 AM IST (2:30 UTC) — Weekends only
-// Weekdays: the comprehensive Daily Digest (~line 3274) already fires at 30 2 * * 1-5
-cron.schedule('30 2 * * 0,6', async () => {
+// Daily Health Digest: 8:00 AM IST — Weekends only
+// Weekdays: the comprehensive Daily Digest (~line 3274) already fires at 0 8 * * 1-5
+cronIST('0 8 * * 0,6', async () => {
   if (!autoAlerts || portfolio.length === 0) return;
   console.log('📨 Sending daily health digest...');
   await smartRefreshPrices();
@@ -3479,8 +3491,9 @@ cron.schedule('30 2 * * 0,6', async () => {
   await safeSend(TG_CHAT_ID, msg);
 });
 
-// India Pre-Market Briefing: 9:00 AM IST (3:30 UTC)
-cron.schedule('30 3 * * 1-5', async () => {
+// India Pre-Market Briefing: 9:00 AM IST (v11.4: cron now speaks IST directly —
+// the old UTC-encoded schedules drifted 5.5h on any non-UTC host)
+cronIST('0 9 * * 1-5', async () => {
   if (!autoAlerts) return;
   console.log('📨 Sending India pre-market briefing...');
   await smartRefreshPrices();
@@ -3507,8 +3520,8 @@ cron.schedule('30 3 * * 1-5', async () => {
   await safeSend(TG_CHAT_ID, msg);
 });
 
-// India Market Open Scan: 9:20 AM IST (3:50 UTC)
-cron.schedule('50 3 * * 1-5', async () => {
+// India Market Open Scan: 9:20 AM IST
+cronIST('20 9 * * 1-5', async () => {
   if (!autoAlerts || portfolio.length === 0) return;
   console.log('📨 India market open scan...');
   await smartRefreshPrices();
@@ -3516,8 +3529,8 @@ cron.schedule('50 3 * * 1-5', async () => {
   await safeSend(TG_CHAT_ID, report);
 });
 
-// India Mid-Day Scan: 12:00 PM IST (6:30 UTC)
-cron.schedule('30 6 * * 1-5', async () => {
+// India Mid-Day Scan: 12:00 PM IST
+cronIST('0 12 * * 1-5', async () => {
   if (!autoAlerts || portfolio.length === 0) return;
   if (!isIndiaMarketOpen()) return;
   console.log('📨 India mid-day scan...');
@@ -3530,8 +3543,8 @@ cron.schedule('30 6 * * 1-5', async () => {
 // NOTE: Duplicate removed — a richer close summary already fires at 10:15 UTC (3:45 PM IST).
 // Only the P&L recording cron below remains at this time slot.
 
-// US Market Open Scan: 7:05 PM IST (13:35 UTC)
-cron.schedule('35 13 * * 1-5', async () => {
+// US Market Open Scan: 7:05 PM IST
+cronIST('5 19 * * 1-5', async () => {
   if (!autoAlerts || portfolio.length === 0) return;
   const hasUS = portfolio.some(p => p.market === 'US');
   if (!hasUS) return;
@@ -3923,7 +3936,7 @@ bot.onText(/^\/ipo(@\w+)?$/i, async (msg) => {
 // ========================================
 
 // 🌅 8:45 AM IST India Pre-Market — DEEP analysis, ~30 min before 9:15 open
-cron.schedule('15 3 * * 1-5', async () => {
+cronIST('45 8 * * 1-5', async () => {
   if (!TG_CHAT_ID) return;
   console.log(`🌅 India Pre-Market triggered at ${getISTTime()} IST`);
   try {
@@ -3937,7 +3950,7 @@ cron.schedule('15 3 * * 1-5', async () => {
 });
 
 // 🌆 6:30 PM IST US Pre-Market — DEEP analysis, ~30 min before 7:00 PM IST (9:30 ET) open
-cron.schedule('0 13 * * 1-5', async () => {
+cronIST('30 18 * * 1-5', async () => {
   if (!TG_CHAT_ID) return;
   console.log(`🌆 US Pre-Market triggered at ${getISTTime()} IST`);
   try {
@@ -3951,9 +3964,8 @@ cron.schedule('0 13 * * 1-5', async () => {
 });
 
 // 🌅 8:00 AM IST Daily Digest — Morning Brief
-cron.schedule('30 2 * * 1-5', async () => {
+cronIST('0 8 * * 1-5', async () => {
   if (!TG_CHAT_ID) return;
-  // 2:30 UTC = 8:00 AM IST
   console.log(`🌅 Daily Digest triggered at ${getISTTime()} IST`);
   try {
     await smartRefreshPrices();
@@ -3987,8 +3999,8 @@ cron.schedule('30 2 * * 1-5', async () => {
 // Duplicate pre-market cron removed — already handled at line 1026
 
 // 🔔 3:45 PM IST Market Close Summary
-cron.schedule('15 10 * * 1-5', async () => {
-  // 10:15 UTC = 3:45 PM IST (after India close)
+cronIST('45 15 * * 1-5', async () => {
+  // 15:45 IST (after India close)
   if (!autoAlerts || portfolio.length === 0) return;
   try {
     await smartRefreshPrices();
@@ -4007,8 +4019,8 @@ cron.schedule('15 10 * * 1-5', async () => {
 
 
 
-// Record daily P&L at India market close
-cron.schedule('10 10 * * 1-5', async () => {
+// Record daily P&L at India market close — 3:40 PM IST
+cronIST('40 15 * * 1-5', async () => {
   if (!TG_CHAT_ID) return;
   if (portfolio.length === 0) return;
   await smartRefreshPrices();
@@ -4032,14 +4044,26 @@ cron.schedule('10 10 * * 1-5', async () => {
 // ========================================
 // ERROR HANDLING
 // ========================================
+let _pollErrLast = {};   // v11.4: polling_error log throttle state (per code)
 bot.on('polling_error', (error) => {
-  console.error('❌ Polling error:', error.code, '-', error.message);
-  if (error.code === 'ETELEGRAM' && error.message?.includes('409')) {
-    console.error('⚠️  CONFLICT: Another bot instance is already polling with this token!');
-    console.error('   Stop the other instance first, or use webhooks.');
+  // v11.4 recheck: the library retries getUpdates every ~300ms by default
+  // and this handler logged EVERY failure — a network outage (or a dead
+  // token → 401) printed ~200 console.error lines/min for the whole
+  // outage on Render's capped logs. Throttle to one line/min per code,
+  // and on a PERMANENT 401 exit so the parent's capped restart backoff
+  // can engage instead of spinning forever.
+  const code = String(error?.code || '?');
+  const now = Date.now();
+  if (!_pollErrLast[code] || now - _pollErrLast[code] > 60_000) {
+    _pollErrLast[code] = now;
+    console.error(`❌ Polling error (${code}):`, error.message);
+    if (code === 'ETELEGRAM' && String(error.message || '').includes('409')) {
+      console.error('⚠️  CONFLICT: webhook is registered for this token (or another poller runs). Use TG_MODE + webhook setup consistently.');
+    }
   }
-  if (error.code === 'ETELEGRAM' && error.message?.includes('401')) {
-    console.error('⚠️  UNAUTHORIZED: Bot token is invalid! Check TG_TOKEN in config.');
+  if (code === 'ETELEGRAM' && String(error.message || '').includes('401')) {
+    console.error('⚠️  UNAUTHORIZED: bot token invalid — exiting so the supervisor backoff can engage.');
+    process.exit(1);
   }
 });
 

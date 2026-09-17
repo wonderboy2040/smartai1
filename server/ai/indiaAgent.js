@@ -911,7 +911,11 @@ async function managePartialTp(openAgent, cfg, sendTelegram) {
 /**
  * SL ratchet on an agent position (BE-lock / T1-lock) — journal-locked,
  * LIVE broker SL cancel+replaced (same discipline as the venue watcher).
+ * v11.4: exposed for the ratchet regression suite only — production
+ * callers use the internal name.
  */
+export const __adjustAgentPositionSlForTest = (positionId, newSl, note, cachedPos) =>
+  adjustAgentPositionSl(positionId, newSl, note, cachedPos);
 async function adjustAgentPositionSl(positionId, newSl, note, cachedPos) {
   if (!(Number(newSl) > 0)) return { ok: false, error: 'invalid SL' };
   return withJournalLock(async () => {
@@ -919,8 +923,18 @@ async function adjustAgentPositionSl(positionId, newSl, note, cachedPos) {
     const p = j.positions.find(x => x.id === positionId || (cachedPos && x.id === cachedPos.id));
     if (!p || p.market !== 'INDIA' || (p.status !== 'OPEN' && p.status !== 'UNKNOWN')) return { ok: false, error: 'not open' };
     const long = p.side === 'LONG';
-    // ratchet only tightens (same discipline as computeTrailSl users)
-    if (p.sl > 0 && (long ? newSl <= p.sl : newSl >= p.sl)) { /* keep — tighter or equal */ }
+    // ratchet only tightens (same discipline as computeTrailSl users).
+    // v11.4 recheck: this guard's body was EMPTY and `p.sl = r2(newSl)` ran
+    // unconditionally — a conviction-weakening sweep (or a T1 BE-lock after
+    // the venue watcher had trailed higher) could drag the stop back DOWN,
+    // and in LIVE mode cancel+re-place the broker SL at the WORSE level.
+    // Now a looser SL is rejected outright; equal is a no-op.
+    if (p.sl > 0) {
+      if (long ? newSl < p.sl : newSl > p.sl) {
+        return { ok: false, error: `ratchet: new SL ${r2(newSl)} is looser than current ${p.sl}`, position: p };
+      }
+      if (r2(newSl) === p.sl) return { ok: true, position: p, unchanged: true };
+    }
     p.sl = r2(newSl);
     // LIVE: broker SL follows (cancel + replace at the remainder qty)
     if (p.mode === 'live' && dhanConnected()) {

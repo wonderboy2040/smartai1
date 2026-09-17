@@ -1976,8 +1976,12 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
   if (councilEnabled()) {
     try {
       const deepCouncil = await runCouncilDeep({
+        // v11.4 recheck: this used to pass the board-scoped safe-deps ALIAS
+        // (defined inside _computeBoard) — the ReferenceError was swallowed
+        // by this catch, silently killing the deep-council verdict on every
+        // deep dive since v11.0. The function's OWN deps param is correct.
         market: mkt, symbol: sym, sig: { ...built, ind: ctx.ind, __ltfInd: ltfInd || null },
-        regime, deps: depsSafe,
+        regime, deps: deps || {},
       });
       if (deepCouncil) built.council = councilStampOf(deepCouncil);
     } catch { /* deep council optional — modal unaffected */ }

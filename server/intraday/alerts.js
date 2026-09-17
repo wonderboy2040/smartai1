@@ -41,6 +41,12 @@ function _resetDailyCounter() {
   if (_intradayAlerts.dayKey !== today) {
     _intradayAlerts.dayKey = today;
     _intradayAlerts.sentToday = 0;
+    // v11.4 recheck: sentBySymbol persisted across days, so a symbol
+    // alerted Monday never re-qualified on Tuesday (isNew false, isFlip
+    // false, isUpgrade needs ≥+2 conf) — the alert engine went quieter
+    // every day it stayed up. The documented semantics are a per-symbol
+    // cooldown + same-day dedup; a new trading day starts fresh.
+    _intradayAlerts.sentBySymbol.clear();
   }
 }
 

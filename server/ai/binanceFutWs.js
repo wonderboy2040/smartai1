@@ -225,6 +225,11 @@ function _openBinanceFutWs(streams) {
     ws.on('error', () => {
       clearTimeout(connectTimeout);
       if (_ws !== ws) return;
+      // v11.4 recheck: ws emits BOTH error and close for failed handshakes —
+      // nulling here makes the close handler's stale-guard skip the second
+      // _registerFailure (one failed attempt = ONE strike, not two).
+      _ws = null;
+      _streams = '';
       _registerFailure(!_gotData);
       try { ws.close(); } catch { /* noop */ }
     });

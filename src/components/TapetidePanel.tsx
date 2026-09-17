@@ -84,6 +84,10 @@ export const TapetidePanel = memo(function TapetidePanel() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [openCat, setOpenCat] = useState<string | null>(null);
+  // v11.4 recheck: stable mirror of openCat for loadTools (keeps the
+  // callback identity stable — see the loadTools note below).
+  const openCatRef = useRef<string | null>(null);
+  useEffect(() => { openCatRef.current = openCat; }, [openCat]);
   const [selectedTool, setSelectedTool] = useState<TptTool | null>(null);
   const [argValues, setArgValues] = useState<Record<string, string | boolean>>({});
   const [running, setRunning] = useState(false);
@@ -106,16 +110,20 @@ export const TapetidePanel = memo(function TapetidePanel() {
       const data = await res.json() as ToolsResponse;
       if (mountedRef.current) {
         setToolsResp(data);
-        // auto-open the first category (AI analysis first — the most useful)
+        // auto-open the first category (AI analysis first — the most useful).
+        // v11.4 recheck: `openCat` was a DEP of this callback → every category
+        // expand/collapse produced a new loadTools identity → the boot effect
+        // re-ran → a full catalog re-fetch (+ loading flash) on EVERY toggle,
+        // plus a double-fetch right after connect. Read it via ref instead.
         const cats = data?.catalog;
-        if (cats && cats.length > 0 && openCat == null) setOpenCat(cats[0].key);
+        if (cats && cats.length > 0 && openCatRef.current == null) setOpenCat(cats[0].key);
       }
     } catch (e) {
       if (mountedRef.current) setToolsError(e instanceof Error ? e.message : 'Failed to load Tapetide tools');
     } finally {
       if (mountedRef.current) setToolsLoading(false);
     }
-  }, [openCat]);
+  }, []);
 
   // Boot: status + OAuth redirect params (?tpt=ok|error&reason=…).
   useEffect(() => {

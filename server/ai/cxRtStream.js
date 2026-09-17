@@ -122,6 +122,7 @@ const _evictTimers = new Map();        // "FUT:BTC" / "GLOB:AAPL" → timer
 let _timer = null;
 let _timerMs = 0;                      // current REST interval (2s or 10s floor)
 let _activeClients = 0;
+// (v11.4 poll coalescing state lives at _pollOnce itself)
 let _fallbackAt = 0;                   // last Finnhub/Yahoo fallback fetch epoch
 
 // ---- WS state ----
@@ -258,8 +259,12 @@ export function ensureCxRtSubscribed({ fut, glob } = {}) {
     if (!_globSubscribed.has(sym)) { _globSubscribed.add(sym); newGlob.push(sym); }
   }
   // live socket → join the NEW GLOB channels immediately (no reconnect
-  // needed; FUT rides the always-joined book channel)
-  if (_io && _io.state().connected) {
+  // needed; FUT rides the always-joined book channel).
+  // v11.4 recheck: was gated on `.connected` — a GLOB symbol subscribed
+  // during the ~8s handshake window never entered io._channels (join()
+  // queues safely until the ns-connect ack), so it silently lost WS ticks
+  // for the socket's LIFETIME and rode the 10s REST floor instead.
+  if (_io) {
     for (const sym of newGlob) _io.join(_globChannel(sym));
   }
   // a fresh universe while clients are live → immediate poll so the
@@ -316,22 +321,37 @@ function _cancelEviction(key) {
 // tick so the browser gets a coherent snapshot per beat. This is
 // now the degrade path + the illiquidity floor under the WS.
 // ---------------------------------------------------------------
-async function _pollOnce() {
-  if (_activeClients === 0) return;
-  const now = _nowFn();
-  const jobs = [];
-  if (_futSubscribed.size > 0) jobs.push(_pollFutures(now));
-  if (_globSubscribed.size > 0) jobs.push(_pollGlobal(now));
-  await Promise.allSettled(jobs);
-  _wsSilentContractWatchdog(now);
-  _syncRestCadence();
-  // post-cooldown recovery: a watchdog kill / circuit-breaker arms NO
-  // reconnect timer (by design), so the next REST beat retries the WS
-  // once the cooldown has expired. Without this, a single silent-contract
-  // kill would keep the accelerator off for the whole process lifetime.
-  _ensureWs();
-  // v10.15: the Binance tier follows the (possibly changed) cx WS health.
-  _syncBinanceFutTier();
+// v11.4 recheck: COALESCING re-entrancy guard (same discipline as usStream
+// _fallbackPoll / inStream _tick) — a slow beat must never overlap the next
+// one; overlapping requests stack exactly when upstreams are unhealthy.
+// A beat that arrives while one is running JOINS it (awaiting the in-flight
+// promise) instead of being dropped — callers like the test hook (and the
+// subscribe-triggered immediate poll) then observe the beat they asked for.
+let _pollInflight = null;
+function _pollOnce() {
+  if (_activeClients === 0) return Promise.resolve();
+  if (_pollInflight) return _pollInflight;
+  _pollInflight = (async () => {
+    try {
+      const now = _nowFn();
+      const jobs = [];
+      if (_futSubscribed.size > 0) jobs.push(_pollFutures(now));
+      if (_globSubscribed.size > 0) jobs.push(_pollGlobal(now));
+      await Promise.allSettled(jobs);
+      _wsSilentContractWatchdog(now);
+      _syncRestCadence();
+      // post-cooldown recovery: a watchdog kill / circuit-breaker arms NO
+      // reconnect timer (by design), so the next REST beat retries the WS
+      // once the cooldown has expired. Without this, a single silent-contract
+      // kill would keep the accelerator off for the whole process lifetime.
+      _ensureWs();
+      // v10.15: the Binance tier follows the (possibly changed) cx WS health.
+      _syncBinanceFutTier();
+    } finally {
+      _pollInflight = null;
+    }
+  })();
+  return _pollInflight;
 }
 
 /** v11.3: map a fetchFuturesPrices row's `source` to the liveFeed
@@ -402,34 +422,55 @@ async function _pollFutures(_now) {
  *  Test-injectable via _setBinanceFutFetchForTest. */
 let _bnFutFetchImpl = null;
 export function _setBinanceFutFetchForTest(fn) { _bnFutFetchImpl = fn; }
+// v11.4 recheck: in-flight dedup + negative cache — on failure nothing
+// was cached, so during a CoinDCX-dark + slow-Binance episode every 2s
+// beat stacked ANOTHER full ~1-2MB fapi/ticker/24hr fetch while the
+// previous was still pending (the exact rate-limit/ban vector the
+// usStream/inStream guards exist for).
+let _bnFutInflight = null;
+let _bnFutNegUntil = 0;
 async function _binanceFutBook() {
   const now = _nowFn();
   if (_bnFut.byBase && (now - _bnFut.at) < BINANCE_FUT_CACHE_MS) return _bnFut.byBase;
-  const f = _bnFutFetchImpl || globalThis.fetch;
-  const r = await f(BINANCE_FUT_URL, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-    signal: AbortSignal.timeout(6000),
-  });
-  if (!r.ok) throw new Error(`binance fut HTTP ${r.status}`);
-  const j = await r.json();
-  if (!Array.isArray(j)) throw new Error('binance fut: bad payload');
-  const byBase = new Map();
-  for (const x of j) {
-    if (!x || typeof x.symbol !== 'string' || !x.symbol.endsWith('USDT')) continue;
-    const base = x.symbol.slice(0, -4);
-    const last = parseFloat(x.lastPrice);
-    if (!base || !(last > 0)) continue;
-    byBase.set(base, {
-      last,
-      changePct: parseFloat(x.priceChangePercent) || 0,
-      high: parseFloat(x.highPrice) || 0,
-      low: parseFloat(x.lowPrice) || 0,
-      volume: parseFloat(x.volume) || 0,
+  if (now < _bnFutNegUntil) throw new Error('binance fut: negative cache');
+  if (_bnFutInflight) return _bnFutInflight;
+  _bnFutInflight = (async () => {
+    const f = _bnFutFetchImpl || globalThis.fetch;
+    const r = await f(BINANCE_FUT_URL, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      signal: AbortSignal.timeout(6000),
     });
+    if (!r.ok) throw new Error(`binance fut HTTP ${r.status}`);
+    const j = await r.json();
+    if (!Array.isArray(j)) throw new Error('binance fut: bad payload');
+    const byBase = new Map();
+    for (const x of j) {
+      if (!x || typeof x.symbol !== 'string' || !x.symbol.endsWith('USDT')) continue;
+      const base = x.symbol.slice(0, -4);
+      const last = parseFloat(x.lastPrice);
+      if (!base || !(last > 0)) continue;
+      byBase.set(base, {
+        last,
+        changePct: parseFloat(x.priceChangePercent) || 0,
+        high: parseFloat(x.highPrice) || 0,
+        low: parseFloat(x.lowPrice) || 0,
+        volume: parseFloat(x.volume) || 0,
+      });
+    }
+    if (byBase.size === 0) throw new Error('binance fut: empty');
+    _bnFut = { at: _nowFn(), byBase };
+    return byBase;
+  })();
+  try {
+    return await _bnFutInflight;
+  } catch (e) {
+    // 10s negative cache — the poll cadence keeps ticking but the fetch
+    // backs off instead of stacking.
+    _bnFutNegUntil = _nowFn() + 10_000;
+    throw e;
+  } finally {
+    _bnFutInflight = null;
   }
-  if (byBase.size === 0) throw new Error('binance fut: empty');
-  _bnFut = { at: now, byBase };
-  return byBase;
 }
 
 /** v10.15: is FUT_<base> currently served by the Binance WS accelerator

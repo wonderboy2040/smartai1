@@ -340,7 +340,13 @@ export async function fetchYahooQuotes(keys) {
       const res = j?.chart?.result?.[0];
       const meta = res?.meta;
       if (!meta) return;
-      const prev = meta.chartPreviousClose ?? meta.previousClose;
+      // v11.4 recheck: with range=5d, `chartPreviousClose` is the close
+      // BEFORE the 5-session window — a ~5-day change masquerading as the
+      // daily move every consumer (regime classifier, btcChangePct24h,
+      // top-5 regime alignment, macro bias) assumes. `previousClose` is
+      // Yahoo's true prior-session close — prefer it, keep the 5d window
+      // (meta is always populated there) as a last-resort fallback.
+      const prev = meta.previousClose ?? meta.chartPreviousClose;
       const price = meta.regularMarketPrice;
       if (!(price > 0)) return;
       out[k] = {

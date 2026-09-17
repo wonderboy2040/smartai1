@@ -157,9 +157,13 @@ export function registerAITradingRoutes(app, deps) {
     try {
       const risk = getRiskState();
       const [board, cryptoBoard, futuresBoard] = await Promise.all([
-        getSignals('INDIA', depsForSignals()).catch(() => null),
-        getSignals('CRYPTO', depsForSignals()).catch(() => null),
-        getSignals('FUTURES', depsForSignals()).catch(() => null),
+        // v11.4 recheck: warmOnly — a status poll must answer in
+        // milliseconds (v9.2.1 latency contract); the default opts ran
+        // THREE full multi-desk scans on every cold cache (post-boot,
+        // Render wake) → "Agent status unavailable" timeouts.
+        getSignals('INDIA', depsForSignals(), { warmOnly: true }).catch(() => null),
+        getSignals('CRYPTO', depsForSignals(), { warmOnly: true }).catch(() => null),
+        getSignals('FUTURES', depsForSignals(), { warmOnly: true }).catch(() => null),
       ]);
       res.json({
         ok: true,
@@ -954,20 +958,29 @@ export function registerAITradingRoutes(app, deps) {
       // double-spends), so the honest 503 says "try again", not "lost".
       // runCouncilDeep returns null when there is no signal context →
       // the honest 502 (never a verdict built on an empty matrix).
+      let _verdictTimer = null;
       const out = await Promise.race([
         (async () => {
           // the deep council rides a FRESH single-symbol ensemble run so the
           // feature matrix is honest (getDeepSignal is 30s-cached itself)
           const deep = await getDeepSignal(symbol, market, depsForSignals()).catch(() => null);
+          // v11.4 recheck: buildSignal emits NO `ind` — the council feature
+          // matrix (rsi/adx/atr/relVolume/vwap/ema20/ema50) ran all-null on
+          // this refresh path. getDeepSignal's payload carries the indicator
+          // object at top level — re-attach it the same way signals.js does.
           const verdict = await runCouncilDeep({
-            market, symbol, sig: deep?.signal || null,
+            market, symbol,
+            sig: deep?.signal ? { ...deep.signal, ind: deep.indicators ?? null } : null,
             regime: await buildRegime(market).catch(() => ({})),
             deps: depsForSignals(), force,
           });
           return verdict;
         })(),
-        new Promise((resolve) => { const t = setTimeout(() => resolve('timeout'), 25_000); t.unref?.(); }),
-      ]);
+        // v11.4 recheck: clearTimeout on settle — the losing leg's timer
+        // used to linger 25s past every success (unref'd, but still the
+        // "timer never cleared" anti-pattern).
+        new Promise((resolve) => { _verdictTimer = setTimeout(() => resolve('timeout'), 25_000); _verdictTimer.unref?.(); }),
+      ]).finally(() => { if (_verdictTimer) clearTimeout(_verdictTimer); });
       if (out === 'timeout') {
         return jsonError(res, 503, 'council verdict still computing — retry in a few seconds (result caches for 90s)');
       }
