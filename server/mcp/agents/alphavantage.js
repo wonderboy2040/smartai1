@@ -86,7 +86,8 @@ registerAgent({
       fn: async ({ symbols }) => {
         const s = String(Array.isArray(symbols) ? symbols[0] : symbols || '').toUpperCase();
         if (!s) return null;
-        const j = await fetchJSON(`${BASE}?function=CURRENCY_EXCHANGE_RATE&from_currency=${s}&to_currency=USD&apikey=${key()}`);
+        // v11.0.1: encode — a raw '&' in the symbol used to inject query params
+        const j = await fetchJSON(`${BASE}?function=CURRENCY_EXCHANGE_RATE&from_currency=${encodeURIComponent(s)}&to_currency=USD&apikey=${key()}`);
         const rate = Number(j?.['Realtime Currency Exchange Rate']?.['5. Exchange Rate']);
         if (!Number.isFinite(rate) || rate <= 0) return null;
         return { symbol: s, usdRate: rate, source: 'alphavantage' };

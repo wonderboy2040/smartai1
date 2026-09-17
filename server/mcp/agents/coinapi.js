@@ -37,8 +37,10 @@ registerAgent({
         if (!Array.isArray(j) || j.length === 0) return null;
         return {
           symbol: s,
+          // v11.0.1: non-finite prices/qty are dropped, not leaked as NaN
           trades: j.slice(0, 10).map(t => ({
-            price: Number(t.price), qty: Number(t.size),
+            price: Number.isFinite(Number(t.price)) ? Number(t.price) : null,
+            qty: Number.isFinite(Number(t.size)) ? Number(t.size) : null,
             ts: t.time || null,
           })),
           lastPrice: Number(j[j.length - 1]?.price) || null,

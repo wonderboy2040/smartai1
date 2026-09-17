@@ -34,26 +34,37 @@ vi.mock('../server/ai/llmChain.js', () => ({
 }));
 
 // ---- controllable mesh (council only needs funding + price) ----
-const _mesh = vi.hoisted(() => ({ bundle: {} }));
+// v11.0.1: `handler` is optional — set it per-test to serve funding per
+// requested symbol (the per-symbol funding query contract) or prices.
+const _mesh = vi.hoisted(() => ({ handler: null as null | ((q: any) => any), calls: 0 as number, seen: [] as any[] }));
 vi.mock('../server/mcp/mesh.js', () => ({
-  meshQuery: async () => ({ ok: false, results: {}, gaps: [] }),
-  crossValidatePrices: (pricesBySymbol) => {
-    const out = [];
+  meshQuery: async (q: any) => {
+    _mesh.calls += 1;
+    _mesh.seen.push(q);
+    if (!_mesh.handler) return { ok: false, results: {}, gaps: [] };
+    return _mesh.handler(q);
+  },
+  crossValidatePrices: (pricesBySymbol: any) => {
+    const out: any[] = [];
     for (const [symbol, list] of Object.entries(pricesBySymbol || {})) {
-      const rows = (list || []).filter(p => Number.isFinite(Number(p.price)));
+      const rows = (list || []).filter((p: any) => Number.isFinite(Number(p.price)));
       if (rows.length < 2) continue;
-      const prices = rows.map(r => Number(r.price));
+      const prices = rows.map((r: any) => Number(r.price));
       const mid = (Math.min(...prices) + Math.max(...prices)) / 2;
       const spreadPct = mid > 0 ? Math.round(((Math.max(...prices) - Math.min(...prices)) / mid) * 10000) / 100 : null;
-      if (spreadPct != null && spreadPct > 1.5) out.push({ symbol, spreadPct, agents: rows.map(r => `${r.agent}:${r.price}`), degraded: true });
+      if (spreadPct != null && spreadPct > 1.5) out.push({ symbol, spreadPct, agents: rows.map((r: any) => `${r.agent}:${r.price}`), degraded: true });
     }
     return out;
   },
 }));
 
 // ---- deterministic guards ----
+// v11.0.1: globalRiskView records its ARGS so the honest-capitals test
+// can assert what the council actually passed.
+const _risk = vi.hoisted(() => ({ args: null as any }));
 vi.mock('../server/ai/globalRisk.js', () => ({
-  globalRiskView: async () => ({ heatPct: 12, riskOff: { riskOff: false } }),
+  globalRiskView: async (a: any) => { _risk.args = a; return { heatPct: 12, riskOff: { riskOff: false } }; },
+  globalRiskGate: async (a: any) => { _risk.args = a; return { veto: false, reason: null, sizeMul: 1, riskOff: false, heatPct: 12, heatCapPct: 60 }; },
 }));
 vi.mock('../server/ai/eventGuard.js', () => ({
   eventGuardCheck: () => ({ action: 'allow', event: null }),
@@ -61,11 +72,18 @@ vi.mock('../server/ai/eventGuard.js', () => ({
 vi.mock('../server/ai/sentiment.js', () => ({
   sentimentContextFor: () => null,
 }));
+// v11.0.1: riskContextFor dynamically imports the India config — mock
+// it (cycle-safe in prod, controllable in test) instead of pulling the
+// whole indiaAgent graph into this suite.
+vi.mock('../server/ai/indiaAgent.js', () => ({
+  loadIndiaAgentConfig: () => ({ equityINR: 25_000 }),
+}));
 
 import {
   availableRoles, buildFeatureMatrix, parseVerdict, deterministicVerdicts,
   runCouncilBoard, runCouncilDeep, councilStampOf, councilEnabled, priceDivergence,
-  __resetCouncilForTests,
+  councilMeshBundle,
+  __resetCouncilForTests, __testables,
 } from '../server/ai/council.js';
 
 // A board signal with the RAW ctx fields the feature matrix reads.
@@ -84,6 +102,10 @@ beforeEach(() => {
   _llm.on = false;
   _llm.calls = 0;
   _llm.handler = null;
+  _mesh.handler = null;
+  _mesh.calls = 0;
+  _mesh.seen = [];
+  _risk.args = null;
   delete process.env.AI_ENABLE_GLOBAL_COUNCIL;
   delete process.env.AI_PRECISION_GATE_CONF;
 });
@@ -287,5 +309,147 @@ describe('v11.0 council — runCouncilDeep (debate + judge) + the wire stamp', (
     expect(councilEnabled()).toBe(true);
     process.env.AI_ENABLE_GLOBAL_COUNCIL = '0';
     expect(councilEnabled()).toBe(false);
+  });
+});
+
+// ============================================================
+// v11.0.1 recheck locks — the 4 defects this audit fixed
+// ============================================================
+describe('v11.0.1 — mesh bundle funding coverage (the blind on-chain seat)', () => {
+  it('funding is fetched PER SYMBOL: every board candidate gets a fundingRate, not just symbols[0]', async () => {
+    _mesh.handler = (q) => {
+      if (q.capabilities.includes('crypto.funding')) {
+        const s = String(q.symbols[0] || '');
+        return { ok: true, results: { 'crypto.funding': { data: { symbol: s, fundingRate: s === 'ETHUSDT' ? 0.0002 : 0.0005 }, agent: 'ccxt', ts: Date.now(), stale: false } }, gaps: [] };
+      }
+      return {
+        ok: true,
+        results: { 'crypto.price': { data: { prices: { BTC: { usd: 68000 }, ETH: { usd: 3500 }, SOL: { usd: 150 } } }, agent: 'coingecko', ts: Date.now(), stale: false } },
+        gaps: [],
+      };
+    };
+    const bundle = await councilMeshBundle('CRYPTO', ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']);
+    expect(bundle.BTCUSDT.fundingRate).toBe(0.0005);
+    expect(bundle.ETHUSDT.fundingRate).toBe(0.0002); // the OLD single-call code left this null
+    expect(bundle.SOLUSDT.fundingRate).toBe(0.0005);
+    expect(bundle.BTCUSDT.price.price).toBe(68000);
+    // exactly ONE price query + one funding query per symbol
+    const fundingQs = _mesh.seen.filter(q => q.capabilities.includes('crypto.funding'));
+    const priceQs = _mesh.seen.filter(q => q.capabilities.includes('crypto.price'));
+    expect(fundingQs).toHaveLength(3);
+    expect(fundingQs.map(q => q.symbols[0]).sort()).toEqual(['BTCUSDT', 'ETHUSDT', 'SOLUSDT'].sort());
+    expect(priceQs).toHaveLength(1);
+  });
+
+  it('funding honest-null: a symbol the mesh cannot serve stays null (never guessed)', async () => {
+    _mesh.handler = (q) => {
+      if (q.capabilities.includes('crypto.funding')) {
+        const s = String(q.symbols[0] || '');
+        if (s === 'SOLUSDT') return { ok: false, results: {}, gaps: [{ cap: 'crypto.funding', reason: 'all-agents-failed' }] };
+        return { ok: true, results: { 'crypto.funding': { data: { symbol: s, fundingRate: 0.0005 }, agent: 'ccxt', ts: Date.now(), stale: false } }, gaps: [] };
+      }
+      return { ok: false, results: {}, gaps: [] };
+    };
+    const bundle = await councilMeshBundle('CRYPTO', ['BTCUSDT', 'SOLUSDT']);
+    expect(bundle.BTCUSDT.fundingRate).toBe(0.0005);
+    expect(bundle.SOLUSDT.fundingRate).toBeNull();
+  });
+});
+
+describe('v11.0.1 — the weak-side bar raise (dead feature revived)', () => {
+  // Seed settled council-stamped ledger entries so the calibration shows
+  // LONG strongly profitable and SHORT losing → the SHORT side is the
+  // statistically weak side and its gate bar must rise +5.
+  function seedLedgerSplit() {
+    const mk = (i, side, r, dir) => ({
+      id: `e${i}`, ts: 1700000000000 + i, market: 'CRYPTO', symbol: `T${i}`, side,
+      grade: 'STRONG', confidence: 80, agreement: 0.8, mode: 'paper', source: 'manual',
+      votes: {}, council: {
+        confidence: 80, agreement: 0.8, gate: 'PASSED',
+        agents: {
+          technical: { dir, conf: 80 }, macro: { dir, conf: 80 },
+          sentiment: { dir, conf: 80 }, onchain: { dir, conf: 80 },
+          risk: { dir: 0, conf: 70 },
+        },
+      },
+      summary: null, outcome: { r, ts: 1700000001000 + i }, prevHash: null, hash: 'h',
+    });
+    const entries = [];
+    for (let i = 0; i < 10; i++) entries.push(mk(i, 'LONG', 1.5, 1));      // 10 winning LONG calls
+    for (let i = 10; i < 20; i++) entries.push(mk(i, 'SHORT', -1.2, -1));  // 10 losing SHORT calls
+    _disk.set('ai-signal-ledger.json', { entries });
+  }
+
+  it('a SHORT consensus at conf 80 (above the 78 base bar) is SUPPRESSED once the weak-side bar rises to 83', async () => {
+    seedLedgerSplit();
+    _llm.on = true;
+    _llm.handler = personaHandler({ technical: { direction: 'SHORT', confidence: 80 }, macro: { direction: 'SHORT', confidence: 80 }, sentiment: { direction: 'SHORT', confidence: 80 }, 'on-chain': { direction: 'SHORT', confidence: 80 } });
+    // regime stays ALIGNED with the ensemble's own LONG side — the only
+    // suppress reason left to fire is the weak-side bar itself
+    const out = await runCouncilBoard({ market: 'CRYPTO', signals: [SIG()], regime: { btcChange: 1.5 }, deps: { KEYS: { gemini: 'k' } } });
+    const v = out.bySymbol.BTC;
+    expect(v.consensus.direction).toBe('SHORT');
+    expect(v.consensus.confidence).toBeGreaterThanOrEqual(80); // clears the BASE bar...
+    expect(v.gate.gate).toBe('SUPPRESSED');                      // ...but not the raised one
+    expect(v.gate.reasons.join(' ')).toContain('weak-side bar raised to 83');
+  });
+
+  it('the same board with a clean ledger PASSES at conf 80 (the raise only fires on a real split)', async () => {
+    _llm.on = true;
+    _llm.handler = personaHandler({ technical: { direction: 'SHORT', confidence: 80 }, macro: { direction: 'SHORT', confidence: 80 }, sentiment: { direction: 'SHORT', confidence: 80 }, 'on-chain': { direction: 'SHORT', confidence: 80 } });
+    const out = await runCouncilBoard({ market: 'CRYPTO', signals: [SIG()], regime: { btcChange: 1.5 }, deps: { KEYS: { gemini: 'k' } } });
+    expect(out.bySymbol.BTC.gate.gate).toBe('PASSED');
+  });
+});
+
+describe('v11.0.1 — honest capitals + deep single-flight + null-sig honesty', () => {
+  it('riskContextFor passes the PERSISTED wallet equity + India config capital to globalRiskView (nominal 10k was a guess)', async () => {
+    _disk.set('ai-agent-state.json', { lastWallet: { equityINR: 50_000, usdInr: 84, at: Date.now() } });
+    const ctx = await __testables.riskContextFor('CRYPTO');
+    expect(ctx.heatPct).toBe(12);
+    expect(_risk.args).toEqual({ cryptoEquityINR: 50_000, indiaCapitalINR: 25_000 });
+  });
+
+  it('falls back to the honest ₹10k paper defaults when no persisted wallet exists', async () => {
+    const ctx = await __testables.riskContextFor('CRYPTO');
+    expect(ctx).toEqual({ heatPct: 12, riskOff: false });
+    expect(_risk.args).toEqual({ cryptoEquityINR: 10_000, indiaCapitalINR: 25_000 });
+  });
+
+  it('runCouncilDeep with NO signal ctx → honest null (the 502 path), never a verdict built on an empty matrix', async () => {
+    _llm.on = true;
+    _llm.handler = personaHandler();
+    const out = await runCouncilDeep({ market: 'CRYPTO', symbol: 'BTC', sig: null, regime: {}, deps: { KEYS: { gemini: 'k' } }, force: true });
+    expect(out).toBeNull();
+    expect(_llm.calls).toBe(0); // no LLM burn on an unanswerable question
+  });
+
+  it('single-flight: two CONCURRENT deep runs for the same symbol share ONE LLM pass (no double-spend)', async () => {
+    _llm.on = true;
+    let release = () => {};
+    const gate = new Promise((res) => { release = res; });
+    _llm.handler = async (prompt) => {
+      await gate; // hold the first seat call until both HTTP callers have joined
+      return personaHandler()(prompt);
+    };
+    const p1 = runCouncilDeep({ market: 'CRYPTO', symbol: 'BTC', sig: SIG(), regime: { btcChange: 1 }, deps: { KEYS: { gemini: 'k' } }, force: true });
+    const p2 = runCouncilDeep({ market: 'CRYPTO', symbol: 'BTC', sig: SIG(), regime: { btcChange: 1 }, deps: { KEYS: { gemini: 'k' } }, force: true });
+    release();
+    const [a, b] = await Promise.all([p1, p2]);
+    expect(a).toEqual(b); // both callers got the SAME result object
+    expect(_llm.calls).toBe(8); // 5 seats + 3 debate — NOT 16
+  });
+
+  it('councilStampOf carries the REAL gate bar (gateBar) so the UI marker never lies', async () => {
+    _llm.on = true;
+    _llm.handler = personaHandler();
+    const out = await runCouncilBoard({ market: 'CRYPTO', signals: [SIG()], regime: { btcChange: 1 }, deps: { KEYS: { gemini: 'k' } } });
+    const stamp = councilStampOf(out.bySymbol.BTC);
+    expect(stamp.gateBar).toBe(78); // the default bar
+    process.env.AI_PRECISION_GATE_CONF = '85';
+    const out2 = await runCouncilBoard({ market: 'CRYPTO', signals: [SIG({ symbol: 'ETH' })], regime: { btcChange: 1 }, deps: { KEYS: { gemini: 'k' } } });
+    const stamp2 = councilStampOf(out2.bySymbol.ETH);
+    expect(stamp2.gateBar).toBe(85); // env-tuned bar rides the stamp
+    delete process.env.AI_PRECISION_GATE_CONF;
   });
 });

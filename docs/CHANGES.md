@@ -1,5 +1,30 @@
 # Changelog
 
+## v11.0.1 — FULL-SITE DEEP RECHECK: 14 fixes over the v11.0 baseline (2026-09-17)
+
+**The v11.0 recheck pass (user: "full site code ek baar recheck karo") — line-audit of every v11.0 engine + wiring + both Explore-agent sweeps. 4 production-grade defects (2 silent-failure class, 1 dead-feature class, 1 coverage class) + hardening + honesty fixes. All test-locked: +14 tests → 1941 total, 5 consecutive greens.**
+
+### COUNCIL (the 4 real defects)
+- `council.js` **WEAK-SIDE BAR WAS DEAD CODE** — `gateContextFor` keyed the direction split by seat ROLE and then read `split.LONG`/`split.SHORT` (always undefined → n:0), so the precision gate's +5 weak-side raise could NEVER fire no matter how badly one direction underperformed. Now aggregates LONG/SHORT across all calibrated seats (n-weighted winRates) exactly as consensus.js's gate expects — the "SHORT side systematically galat" guard finally works. Locked end-to-end: a seeded 100%/0% split suppresses a conf-80 SHORT that the base bar would pass.
+- `council.js` **ON-CHAIN SEAT BLIND FOR 4/5 BOARD SYMBOLS** — `councilMeshBundle` fetched `crypto.funding` ONCE for the whole symbol set while the ccxt funding cap serves exactly one symbol per call: only symbols[0] ever got a funding rate, the rest honest-null → the on-chain persona + its deterministic fallback both voted blind on most of the board (the same blind-seat class the validation pass fixed in buildFeatureMatrix). Now: one price query (coingecko serves all symbols per call) + one funding query PER SYMBOL, all riding the mesh's own single-flight + warm 5-min cache — steady-state cost ~1 upstream call/symbol/5min.
+- `council.js` **NOMINAL-CAPITAL HEAT READ** — `riskContextFor` hardcoded ₹10k/₹10k into `globalRiskView` while both desks' own gauntlets use real capital (agent.js passes live wallet equity, indiaAgent its configured equityINR). The risk guardian's heatPct context (and its heat_cap veto read) was computed against paper numbers whenever actual capital differed. Now reads the persisted wallet snapshot (`ai-agent-state.json lastWallet.equityINR`) + the India config (cycle-safe dynamic import), falling back to ₹10k exactly like the gauntlets.
+- `council.js` + `routes.js` **DEEP ENDPOINT: HANG + DOUBLE-SPEND + EMPTY-MATRIX VERDICTS** — `/api/ai/council/verdict/:symbol` chained a fresh ensemble run + 6 personas + debate + judge with NO route deadline (a slow provider chain could hang the HTTP handler for minutes) and NO single-flight (a double-click / remount+poll overlap fired TWO full ~9-call deep runs inside the 90s cache window). Also: with the ensemble run failed, `runCouncilDeep` still produced an all-NEUTRAL verdict over an EMPTY feature matrix — noise wearing a council badge. Now: 25s route deadline → honest 503 "still computing, caches for 90s"; per-market:symbol single-flight (concurrent callers JOIN the in-flight run); `sig:null` → honest null → the route's 502.
+
+### MESH + AGENTS (hardening — the audit's query-injection sweep)
+- `mesh.js` **INPUT SANITIZATION AT THE ENGINE BOUNDARY** — symbols/keys/pairs are charset-filtered (A-Z0-9.-, ≤20 chars, upper-cased), `limit` clamped 1..500 (negative/huge passed through raw before), `timeframe` whitelisted {5m,15m,1h,4h,1d}. No agent downstream can now receive a raw query-string payload from ANY caller (public route included).
+- Agent adapters (defense-in-depth, 5 files): `alphavantage` `crypto.rate` from_currency URL-encoded; `quiver` congress/insider ticker encoded; `tradingcentral` news symbols encoded; `massive` company PATH segment encoded (BRK/A-style traversal) + `quant.greeks` kind whitelisted to call|put + NaN delta guard; `coinapi` NaN price/qty guards; **`alpaca` market-wide news mode was DEAD** — the empty-symbols URL built `.../news&limit=10` (the `&` without `?` put limit in the PATH → always 404); also symbols encoded now.
+- `finnhubAgent.js` + `alpaca.js` **SEQUENTIAL QUOTE LOOPS vs THE 8s MESH DEADLINE** — 5 sequential 5s fetches guaranteed partial-discard + a breaker fail under the single 8s deadline; both now fan out with `Promise.allSettled` (bounded ≤5).
+- `server/index.js` — route-registration warn prefix typo fixed (`cp/mesh]` → `[mcp/mesh]`).
+
+### UI honesty
+- `councilStampOf` now carries `gateBar` (the gate's ACTUAL confidence bar — env-tuned + auto-tighten aware) and `CouncilVerdictPanel`'s consensus-bar marker rides it instead of the hardcoded 78 (which lied whenever `AI_PRECISION_GATE_CONF` or the +10 auto-tighten moved the bar); `types.ts` extended.
+
+### Validation
+- tsc clean · 107 files / **1941 tests** (1927 + 14 new locks: funding per-symbol coverage ×2, weak-side raise ×2, honest capitals ×2, null-sig 502, deep single-flight, gateBar, mesh sanitization ×5) · vite build 5.4s · npm audit 0/0 both trees · `node --check` all 13 touched files · smoke_v1100.mjs 47/47 (SMARTAI_DATA_DIR-isolated, LIVE Binance probe included).
+- Known-and-accepted (unchanged): null payloads still count as breaker failures (load-bearing — fetchJSON collapses all network errors to null, so null is the only failure signal the mesh sees); a half-open probe that is routed-but-not-called keeps its half-open flag (standard semantics).
+
+---
+
 ## v11.0 — SUPERINTELLIGENCE: GLOBAL MARKET COUNCIL + MCP AGENT MESH (2026-09-17)
 
 **The superintelligence upgrade: 10 MCP data agents + 6 specialist LLM seats + a calibrated precision gate, wired as an ANALYSIS layer over both desks (execution gauntlets untouched). Everything flag-gated default OFF (`AI_ENABLE_GLOBAL_COUNCIL`) for clean A/B against v10.18. 95% is engineered as a PRECISION TARGET (publish fewer, highest-confluence tickets) — never a claimed win-rate; realized numbers stay measurable via the tamper-evident ledger.**

@@ -37,10 +37,13 @@ registerAgent({
         const syms = (symbols || []).map(normSym).filter(Boolean).slice(0, 5);
         if (syms.length === 0) return null;
         const out = {};
-        for (const sym of syms) {
+        // v11.0.1: parallel (Promise.allSettled) — the sequential loop
+        // used to burn up to 5×5s against the mesh's single 8s deadline
+        // and discard ALL partial results on timeout
+        await Promise.allSettled(syms.map(async (sym) => {
           const j = await fetchJSON(`${DATA_BASE}/v2/stocks/${encodeURIComponent(sym)}/quotes/latest?feed=iex`, { headers: headers() });
           const q = j?.quote;
-          if (!q || !Number.isFinite(Number(q.ap))) continue;
+          if (!q || !Number.isFinite(Number(q.ap))) return;
           const bid = Number(q.bp) || null, ask = Number(q.ap) || null;
           out[sym] = {
             price: ask,
@@ -49,7 +52,7 @@ registerAgent({
             ts: q.t || null,
             source: 'alpaca-iex',
           };
-        }
+        }));
         if (Object.keys(out).length === 0) return null;
         return { quotes: out, source: 'alpaca' };
       },
@@ -59,7 +62,13 @@ registerAgent({
       fn: async ({ symbols }) => {
         if (!authed()) return null;
         const syms = (symbols || []).map(normSym).filter(Boolean).slice(0, 3);
-        const url = `${DATA_BASE}/v1beta1/news${syms.length ? `?symbols=${syms.join(',')}` : ''}&limit=10`;
+        // v11.0.1 FIX (dead feature): with NO symbols the URL used to
+        // build ".../v1beta1/news&limit=10" — the "&" without a "?" put
+        // limit=10 in the PATH, so market-wide news mode ALWAYS 404'd.
+        // Also: symbols are encoded now (raw join was injectable).
+        const url = syms.length
+          ? `${DATA_BASE}/v1beta1/news?symbols=${syms.map(encodeURIComponent).join(',')}&limit=10`
+          : `${DATA_BASE}/v1beta1/news?limit=10`;
         const j = await fetchJSON(url, { headers: headers() });
         if (!Array.isArray(j?.news)) return null;
         return {

@@ -31,7 +31,8 @@ registerAgent({
       tier: 'cold', cost: 1,
       fn: async ({ symbols }) => {
         const syms = (symbols || []).map(normSym).filter(Boolean);
-        const path = syms.length > 0 ? `/live/congresstrading?ticker=${syms[0]}` : '/live/congresstrading';
+        // v11.0.1: encode the ticker — raw '&' used to inject query params
+        const path = syms.length > 0 ? `/live/congresstrading?ticker=${encodeURIComponent(syms[0])}` : '/live/congresstrading';
         const j = await fetchJSON(`${BASE}${path}`, { headers: authHeaders() });
         if (!Array.isArray(j)) return null;
         return {
@@ -51,7 +52,7 @@ registerAgent({
       fn: async ({ symbols }) => {
         const syms = (symbols || []).map(normSym).filter(Boolean);
         if (syms.length === 0) return null;
-        const j = await fetchJSON(`${BASE}/live/insidertrading?ticker=${syms[0]}`, { headers: authHeaders() });
+        const j = await fetchJSON(`${BASE}/live/insidertrading?ticker=${encodeURIComponent(syms[0])}`, { headers: authHeaders() });
         if (!Array.isArray(j)) return null;
         return {
           transactions: j.slice(0, 10).map(t => ({

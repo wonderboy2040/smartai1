@@ -154,7 +154,13 @@ export const CouncilVerdictPanel = memo(function CouncilVerdictPanel({ board }: 
                 className={`h-full ${c.direction === 'LONG' ? 'bg-emerald-500/50' : c.direction === 'SHORT' ? 'bg-red-500/50' : 'bg-slate-600/50'}`}
                 style={{ width: `${Math.min(100, c.confidence)}%` }}
               />
-              <div className="absolute top-0 bottom-0 w-px bg-amber-400/70" style={{ left: '78%' }} title="precision-gate bar (78)" />
+              {/* v11.0.1: the marker rides the stamp's REAL gate bar
+                  (env-tuned / auto-tighten aware) — was hardcoded 78 */}
+              <div
+                className="absolute top-0 bottom-0 w-px bg-amber-400/70"
+                style={{ left: `${Math.min(97, Math.max(50, c.gateBar || 78))}%` }}
+                title={`precision-gate bar (${c.gateBar ?? 78}${c.gateBar == null ? ' default' : ''})`}
+              />
             </div>
             {/* seats grid */}
             <div className="grid gap-x-3 gap-y-1 sm:grid-cols-2">

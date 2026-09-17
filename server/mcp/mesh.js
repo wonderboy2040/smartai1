@@ -212,11 +212,26 @@ async function resolveCapability(cap, args, { force = false } = {}) {
 }
 
 // ---------------- THE query surface ----------------
-/**
- * Fan out one query across capabilities (parallel, ≤6 at a time).
- * @param {{capabilities: string[], symbols?: string[], keys?: string[],
- *          pairs?: string[], limit?: number, timeframe?: string, force?: boolean}} q
- */
+/** v11.0.1 HARDENING: every caller-facing input is normalized at the
+ *  engine boundary so NO agent downstream can receive a raw query-
+ *  string payload (the audit found 5 agents interpolating symbols
+ *  into URLs unencoded — alphavantage/quiver/tradingcentral/massive/
+ *  alpaca; the mesh now guarantees clean input for ALL of them):
+ *    • symbols/keys/pairs → A-Z0-9.- only, ≤20 chars, dropped otherwise
+ *    • limit → clamped 1..500 (negative/huge values passed through raw
+ *      before)
+ *    • timeframe → whitelist {5m,15m,1h,4h,1d} else '1h'
+ *  Internal callers (council, weeklyReview) pass already-clean symbols
+ *  and are unaffected. */
+const SAFE_SYM = /^[A-Z0-9.-]{1,20}$/;
+const SAFE_TF = new Set(['5m', '15m', '1h', '4h', '1d']);
+function sanitizeList(list, max) {
+  if (!Array.isArray(list)) return [];
+  return list.map(s => String(s || '').toUpperCase().trim())
+    .filter(s => SAFE_SYM.test(s))
+    .slice(0, max);
+}
+
 export async function meshQuery(q = {}) {
   const capabilities = Array.isArray(q.capabilities)
     ? q.capabilities.map(c => String(c)).filter(Boolean)
@@ -225,12 +240,13 @@ export async function meshQuery(q = {}) {
     return { ok: false, results: {}, gaps: [], reason: 'no capabilities requested' };
   }
   _stats.queries += 1;
+  const limitRaw = Number(q.limit);
   const args = {
-    symbols: q.symbols || [],
-    keys: q.keys || q.symbols || [],
-    pairs: q.pairs || [],
-    limit: q.limit || 20,
-    timeframe: q.timeframe || '1h',
+    symbols: sanitizeList(q.symbols, 20),
+    keys: sanitizeList(q.keys ?? q.symbols, 20),
+    pairs: sanitizeList(q.pairs, 10),
+    limit: Number.isFinite(limitRaw) ? Math.max(1, Math.min(500, Math.round(limitRaw))) : 20,
+    timeframe: SAFE_TF.has(String(q.timeframe || '')) ? String(q.timeframe) : '1h',
   };
   const limit = plimit(FANOUT_CONCURRENCY);
   const settled = await Promise.all(
@@ -333,11 +349,13 @@ export function registerMeshRoutes(app) {
       if (!Array.isArray(body.capabilities) || body.capabilities.length === 0) {
         return res.status(400).json({ ok: false, error: '`capabilities` (string[]) required — e.g. ["crypto.ohlcv","crypto.funding"]' });
       }
+      // meshQuery itself sanitizes symbols/keys/pairs/limit/timeframe
+      // (the v11.0.1 hardening) — the route keeps only the arity caps.
       const out = await meshQuery({
-        capabilities: body.capabilities.slice(0, 8),
-        symbols: Array.isArray(body.symbols) ? body.symbols.slice(0, 10).map(String) : [],
-        keys: Array.isArray(body.keys) ? body.keys.slice(0, 10).map(String) : [],
-        pairs: Array.isArray(body.pairs) ? body.pairs.slice(0, 5).map(String) : [],
+        capabilities: body.capabilities.slice(0, 8).map(String),
+        symbols: body.symbols,
+        keys: body.keys,
+        pairs: body.pairs,
         limit: body.limit, timeframe: body.timeframe,
         force: body.force === true,
       });
@@ -359,4 +377,4 @@ export function __resetMeshForTests() {
 
 export function __meshStatsForTests() { return { ..._stats, cacheSize: _cache.size, inflight: _inflight.size, negativeSize: _negative.size }; }
 
-export const __testables = { resolveCapability, callAgent, cacheGet, cacheSet, negativeGet, plimit, withDeadline };
+export const __testables = { resolveCapability, callAgent, cacheGet, cacheSet, negativeGet, plimit, withDeadline, sanitizeList, SAFE_TF };

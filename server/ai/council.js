@@ -36,6 +36,7 @@ import { councilCalibration } from './trust.js';
 import { sentimentContextFor } from './sentiment.js';
 import { eventGuardCheck } from './eventGuard.js';
 import { globalRiskView } from './globalRisk.js';
+import { loadJSON } from '../lib/store.js';
 
 // ---------------- flag ----------------
 export function councilEnabled() {
@@ -63,6 +64,7 @@ export function availableRoles(market) {
 const VERDICT_TTL = 90_000;
 const VERDICT_MAX = 200;
 const _verdicts = new Map(); // `mkt:SYM` → { at, result }
+const _deepInflight = new Map(); // `mkt:SYM` → running deep promise (single-flight)
 
 function cacheKey(market, symbol) {
   return `${String(market || '').toUpperCase()}:${String(symbol || '').toUpperCase()}`;
@@ -292,11 +294,27 @@ function gateContextFor({ market, symbol, features, calibration }) {
   const regimeAligned = !Number.isFinite(macroChg) || !side ? null
     : (macroChg > 0.1 && side === 'LONG') || (macroChg < -0.1 && side === 'SHORT');
   const ev = features?.risk?.event;
-  // direction split from calibration (weak-side bar raise)
-  const split = {};
+  // direction split from calibration (weak-side bar raise). v11.0.1
+  // FIX: aggregate ACROSS seats into ONE {LONG,SHORT} view — the
+  // original code keyed `split` by seat ROLE and then read
+  // `split.LONG`/`split.SHORT` (always undefined), so the +5 weak-side
+  // bar could never fire (dead feature, test-locked now). winRates
+  // are n-weighted so a 2-trade seat can't outvote a 30-trade one.
+  let longN = 0, longWins = 0, shortN = 0, shortWins = 0;
   for (const s of calibration?.agents || []) {
-    if (s?.directionSplit) split[s.role] = { n: s.directionSplit.LONG?.n || 0, winRate: s.directionSplit.LONG?.winRate ?? null };
+    const ds = s?.directionSplit;
+    if (!ds) continue;
+    const ln = Number(ds.LONG?.n) || 0;
+    const sn = Number(ds.SHORT?.n) || 0;
+    longN += ln;
+    shortN += sn;
+    longWins += Math.round(ln * ((Number(ds.LONG?.winRate) || 0) / 100));
+    shortWins += Math.round(sn * ((Number(ds.SHORT?.winRate) || 0) / 100));
   }
+  const split = (longN + shortN) > 0 ? {
+    LONG: { n: longN, winRate: longN > 0 ? Math.round((longWins / longN) * 1000) / 10 : null },
+    SHORT: { n: shortN, winRate: shortN > 0 ? Math.round((shortWins / shortN) * 1000) / 10 : null },
+  } : null;
   return {
     market: mkt,
     symbol,
@@ -304,10 +322,7 @@ function gateContextFor({ market, symbol, features, calibration }) {
     event: { blocked: ev?.action === 'blackout', haircut: ev?.action === 'haircut' ? 0.5 : null },
     riskOff: !!features?.risk?.riskOff,
     riskVeto: null, // filled from the risk persona's verdict in evaluate
-    directionSplit: Object.keys(split).length > 0 ? {
-      LONG: split.LONG || { n: 0, winRate: null },
-      SHORT: split.SHORT || { n: 0, winRate: null },
-    } : null,
+    directionSplit: split,
     levels: features?.ta ? { entry: features.ltp, stop: features.plan?.stopLoss ?? null, t1: features.plan?.target1 ?? null } : null,
     plan: features?.plan || null,
     regime: features?.macro?.regimeLabel || null,
@@ -333,12 +348,26 @@ export async function councilMeshBundle(market, symbols) {
   if (syms.length === 0) return {};
   try {
     if (mkt === 'CRYPTO' || mkt === 'FUTURES') {
-      const q = await meshQuery({ capabilities: ['crypto.funding', 'crypto.price'], symbols: syms });
+      // v11.0.1 FIX: crypto.funding serves ONE symbol per mesh call
+      // (the ccxt cap contract), but the bundle used to fetch it ONCE
+      // for the whole symbol set — so only symbols[0] ever got funding
+      // and the on-chain seat was BLIND for the other board candidates
+      // (honest-null, never a crash — exactly the blind-seat defect
+      // class the validation pass fixed in buildFeatureMatrix). Now:
+      // one price query (coingecko serves ALL symbols per call) + one
+      // funding query PER SYMBOL, all riding the mesh's own single-
+      // flight + warm 5-min cache — steady-state cost stays ~1 upstream
+      // call per symbol per 5 minutes.
+      const [priceQ, ...fundQs] = await Promise.all([
+        meshQuery({ capabilities: ['crypto.price'], symbols: syms }),
+        ...syms.map(s => meshQuery({ capabilities: ['crypto.funding'], symbols: [s] })),
+      ]);
       const bundle = {};
-      for (const s of syms) {
-        const fund = q.results?.['crypto.funding']?.data;
+      for (let i = 0; i < syms.length; i++) {
+        const s = syms[i];
+        const fund = fundQs[i]?.results?.['crypto.funding']?.data;
         const base = String(s).replace(/USDT$|INR$/, '');
-        const prices = q.results?.['crypto.price']?.data?.prices?.[base];
+        const prices = priceQ.results?.['crypto.price']?.data?.prices?.[base];
         bundle[s] = {
           fundingRate: fund && String(fund.symbol || '').startsWith(base) ? Number(fund.fundingRate) || null : null,
           price: prices ? { price: prices.usd, agent: 'coingecko' } : null,
@@ -361,9 +390,28 @@ export async function councilMeshBundle(market, symbols) {
 }
 
 // ---------------- risk context (shared across symbols) ----------------
+/** v11.0.1 FIX: the capital base is now HONEST — the crypto desk's
+ *  last persisted wallet equity (ai-agent-state.json lastWallet, the
+ *  agent.js persistState() snapshot) and the India desk's configured
+ *  equityINR (dynamic import — cycle-safe, the agent.js pattern).
+ *  Both fall back to the ₹10k paper default, exactly like both
+ *  desks' own gauntlets do; heatPct feeds the risk guardian's prompt
+ *  + deterministic veto context, so a nominal-10k read used to
+ *  understate real heat whenever actual capital differed. */
 async function riskContextFor(market) {
   try {
-    const v = await globalRiskView({ cryptoEquityINR: 10_000, indiaCapitalINR: 10_000 });
+    let cryptoEquityINR = 10_000;
+    let indiaCapitalINR = 10_000;
+    try {
+      const st = loadJSON('ai-agent-state.json', null);
+      if (st && Number(st.lastWallet?.equityINR) > 0) cryptoEquityINR = Number(st.lastWallet.equityINR);
+    } catch { /* paper default */ }
+    try {
+      const { loadIndiaAgentConfig } = await import('./indiaAgent.js');
+      const c = loadIndiaAgentConfig?.() || {};
+      if (Number(c.equityINR) > 0) indiaCapitalINR = Number(c.equityINR);
+    } catch { /* paper default */ }
+    const v = await globalRiskView({ cryptoEquityINR, indiaCapitalINR });
     return { heatPct: v.heatPct ?? null, riskOff: !!v.riskOff?.riskOff };
   } catch { return { heatPct: null, riskOff: false }; }
 }
@@ -494,6 +542,19 @@ export async function runCouncilDeep({ market, symbol, sig, regime, deps, force 
     const hit = verdictCacheGet(mkt, sym);
     if (hit) return hit;
   }
+  // v11.0.1 FIX (honesty): without a signal ctx the feature matrix has
+  // no ta/ensemble/plan — a verdict built on that is all-NEUTRAL noise
+  // wearing a council badge. The route treats null as an honest 502
+  // ("no signal context") — that is the truthful answer.
+  if (!sig) return null;
+  // v11.0.1 FIX (double-spend): single-flight per market:symbol — a
+  // user double-click / panel remount + poll overlap used to fire TWO
+  // full deep runs (~18 LLM calls) for the same symbol inside the 90s
+  // cache window; concurrent callers now JOIN the in-flight run.
+  const inflightKey = `${mkt}:${sym}`;
+  const running = _deepInflight.get(inflightKey);
+  if (running) return running;
+  const p = (async () => {
   const [meshBundle, riskCtx, calibration] = await Promise.all([
     councilMeshBundle(mkt, [sym]),
     riskContextFor(mkt),
@@ -568,6 +629,9 @@ export async function runCouncilDeep({ market, symbol, sig, regime, deps, force 
   };
   verdictCacheSet(mkt, sym, result);
   return result;
+  })();
+  _deepInflight.set(inflightKey, p);
+  try { return await p; } finally { _deepInflight.delete(inflightKey); }
 }
 
 // ---------------- debate + judge ----------------
@@ -618,6 +682,7 @@ export function councilStampOf(v) {
     agreement: v.consensus.agreement,
     quorum: v.consensus.quorum,
     gate: v.gate?.gate || null,
+    gateBar: Number.isFinite(Number(v.gate?.thresholds?.minConfidence)) ? Number(v.gate.thresholds.minConfidence) : null,
     gateReasons: (v.gate?.reasons || []).slice(0, 4),
     eventHaircut: v.gate?.eventHaircut ?? null,
     agents: voters,
@@ -651,6 +716,6 @@ export function councilStatus() {
 }
 
 // ---------------- test hooks ----------------
-export function __resetCouncilForTests() { _verdicts.clear(); }
-export function __councilCacheForTests() { return { size: _verdicts.size, ttl: VERDICT_TTL }; }
-export const __testables = { personaPrompt, verdictCacheGet, verdictCacheSet, cacheKey };
+export function __resetCouncilForTests() { _verdicts.clear(); _deepInflight.clear(); }
+export function __councilCacheForTests() { return { size: _verdicts.size, ttl: VERDICT_TTL, inflight: _deepInflight.size }; }
+export const __testables = { personaPrompt, verdictCacheGet, verdictCacheSet, cacheKey, gateContextFor, riskContextFor };

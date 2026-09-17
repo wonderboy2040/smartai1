@@ -27,10 +27,12 @@ registerAgent({
         const syms = (symbols || []).map(s => String(s || '').toUpperCase()).filter(Boolean);
         if (syms.length === 0) return null;
         const out = {};
-        for (const sym of syms.slice(0, 5)) {
+        // v11.0.1: parallel (Promise.allSettled) — the sequential loop
+        // used to burn up to 5×5s against the mesh's single 8s deadline
+        await Promise.allSettled(syms.slice(0, 5).map(async (sym) => {
           const q = await fetchFinnhubQuote(sym);
           if (q) out[sym] = q;
-        }
+        }));
         if (Object.keys(out).length === 0) return null;
         return { quotes: out, source: 'finnhub' };
       },

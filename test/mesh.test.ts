@@ -240,3 +240,53 @@ describe('v11.0 mesh — fan-out + status', () => {
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
   });
 });
+
+// ============================================================
+// v11.0.1 recheck locks — input hardening at the engine boundary
+// ============================================================
+describe('v11.0.1 — meshQuery input hardening (the query-injection guard)', () => {
+  it('junk symbols (query-param payloads) are DROPPED before any upstream fetch', async () => {
+    stubFetch(() => KLINES);
+    const out = await mesh.meshQuery({ capabilities: ['crypto.ohlcv'], symbols: ['BTC&limit=999', 'BTCUSDT'] });
+    // only the clean symbol reached the upstream — never the injected one
+    expect(_calls.length).toBe(1);
+    expect(_calls[0].url).toContain('BTCUSDT');
+    expect(_calls[0].url).not.toContain('&limit=999');
+    expect(out.ok).toBe(true);
+    mesh.__resetMeshForTests();
+  });
+
+  it('a symbol that is ALL junk → honest gap with zero upstream calls', async () => {
+    stubFetch(() => KLINES);
+    const out = await mesh.meshQuery({ capabilities: ['crypto.ohlcv'], symbols: ['BTC&x=1#frag'] });
+    expect(_calls.length).toBe(0);
+    expect(out.ok).toBe(false);
+    expect(out.gaps[0].cap).toBe('crypto.ohlcv');
+    mesh.__resetMeshForTests();
+  });
+
+  it('limit is clamped to 1..500 (negative and huge both pass through raw before)', async () => {
+    stubFetch(() => KLINES);
+    await mesh.meshQuery({ capabilities: ['crypto.ohlcv'], symbols: ['BTCUSDT'], limit: -5 });
+    expect(_calls[0].url).toContain('limit=1');
+    await mesh.meshQuery({ capabilities: ['crypto.ohlcv'], symbols: ['ETHUSDT'], limit: 999999 });
+    // binance cap: Math.min(500, limit) → 500
+    expect(_calls[1].url).toContain('limit=500');
+    mesh.__resetMeshForTests();
+  });
+
+  it('timeframe is whitelisted — junk intervals fall back to 1h, never reach the URL raw', async () => {
+    stubFetch(() => KLINES);
+    await mesh.meshQuery({ capabilities: ['crypto.ohlcv'], symbols: ['BTCUSDT'], timeframe: '15x&evil=1' });
+    expect(_calls[0].url).toContain('interval=1h');
+    expect(_calls[0].url).not.toContain('evil');
+    mesh.__resetMeshForTests();
+  });
+
+  it('lowercase symbols are normalized to UPPER (charset-safe, case-insensitive callers)', async () => {
+    stubFetch(() => KLINES);
+    await mesh.meshQuery({ capabilities: ['crypto.ohlcv'], symbols: ['btcusdt'] });
+    expect(_calls[0].url).toContain('BTCUSDT');
+    mesh.__resetMeshForTests();
+  });
+});

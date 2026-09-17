@@ -32,7 +32,9 @@ registerAgent({
       fn: async ({ symbols }) => {
         const sym = normSym(Array.isArray(symbols) ? symbols[0] : symbols);
         if (!sym) return null;
-        const j = await fetchJSON(`${BASE}/company/${sym}`, { headers: { 'X-API-Key': key() } });
+        // v11.0.1: encode the PATH segment — raw '/'-bearing tickers
+        // (BRK/A style) used to traverse to other endpoints
+        const j = await fetchJSON(`${BASE}/company/${encodeURIComponent(sym)}`, { headers: { 'X-API-Key': key() } });
         if (!j || (!j.symbol && !j.ticker)) return null;
         return {
           symbol: j.symbol || j.ticker || sym,
@@ -51,10 +53,15 @@ registerAgent({
       fn: async ({ spot, strike, rate, vol, expiryDays, kind = 'call' }) => {
         const S = Number(spot), K = Number(strike), r = Number(rate), v = Number(vol), T = Number(expiryDays) / 365;
         if (![S, K, r, v, T].every(Number.isFinite) || S <= 0 || K <= 0 || v <= 0 || T <= 0) return null;
-        const j = await fetchJSON(`${BASE}/quant/greeks?spot=${S}&strike=${K}&rate=${r}&vol=${v}&expiry=${T}&kind=${kind}`, { headers: { 'X-API-Key': key() } });
+        // v11.0.1: whitelist `kind` — it used to flow into the URL raw
+        const k = kind === 'put' ? 'put' : 'call';
+        const j = await fetchJSON(`${BASE}/quant/greeks?spot=${S}&strike=${K}&rate=${r}&vol=${v}&expiry=${T}&kind=${k}`, { headers: { 'X-API-Key': key() } });
         if (!j || j.delta == null) return null;
+        // v11.0.1: NaN guard — a non-numeric delta used to leak NaN
+        const delta = Number(j.delta);
+        if (!Number.isFinite(delta)) return null;
         return {
-          delta: Number(j.delta), gamma: Number(j.gamma) || null,
+          delta, gamma: Number(j.gamma) || null,
           theta: Number(j.theta) || null, vega: Number(j.vega) || null,
           source: 'massive',
         };

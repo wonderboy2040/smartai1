@@ -181,6 +181,9 @@ export interface CouncilStamp {
   agreement: number;
   quorum: number;
   gate: 'PASSED' | 'SUPPRESSED' | string | null;
+  /** v11.0.1: the gate's ACTUAL confidence bar (env-tuned + auto-tighten
+   *  aware) — the UI marker used to hardcode 78 and could lie. */
+  gateBar?: number | null;
   gateReasons: string[];
   eventHaircut?: number | null;
   agents: CouncilAgentVote[];

@@ -946,19 +946,36 @@ export function registerAITradingRoutes(app, deps) {
       const market = normMarket(req.query.market);
       const force = req.query.fresh === '1' || req.query.fresh === 'true';
       if (!symbol) return jsonError(res, 400, 'symbol required');
-      // the deep council rides a FRESH single-symbol ensemble run so the
-      // feature matrix is honest (getDeepSignal is 30s-cached itself)
-      const deep = await getDeepSignal(symbol, market, depsForSignals()).catch(() => null);
-      const verdict = await runCouncilDeep({
-        market, symbol, sig: deep?.signal || null,
-        regime: await buildRegime(market).catch(() => ({})),
-        deps: depsForSignals(), force,
-      });
-      if (!verdict) return jsonError(res, 502, 'council verdict unavailable (no signal context)');
+      // v11.0.1: route-level 25s deadline — the deep path chains a fresh
+      // single-symbol ensemble run + 6 personas + debate + judge, and a
+      // slow provider chain used to hang the HTTP handler for minutes.
+      // On timeout the verdict KEEPS warming in the 90s council cache
+      // (single-flight — a retry joins the in-flight run, never
+      // double-spends), so the honest 503 says "try again", not "lost".
+      // runCouncilDeep returns null when there is no signal context →
+      // the honest 502 (never a verdict built on an empty matrix).
+      const out = await Promise.race([
+        (async () => {
+          // the deep council rides a FRESH single-symbol ensemble run so the
+          // feature matrix is honest (getDeepSignal is 30s-cached itself)
+          const deep = await getDeepSignal(symbol, market, depsForSignals()).catch(() => null);
+          const verdict = await runCouncilDeep({
+            market, symbol, sig: deep?.signal || null,
+            regime: await buildRegime(market).catch(() => ({})),
+            deps: depsForSignals(), force,
+          });
+          return verdict;
+        })(),
+        new Promise((resolve) => { const t = setTimeout(() => resolve('timeout'), 25_000); t.unref?.(); }),
+      ]);
+      if (out === 'timeout') {
+        return jsonError(res, 503, 'council verdict still computing — retry in a few seconds (result caches for 90s)');
+      }
+      if (!out) return jsonError(res, 502, 'council verdict unavailable (no signal context)');
       return res.json({
         ok: true,
-        stamp: councilStampOf(verdict),
-        verdict,
+        stamp: councilStampOf(out),
+        verdict: out,
       });
     } catch (e) {
       jsonError(res, 500, 'council verdict failed', e);

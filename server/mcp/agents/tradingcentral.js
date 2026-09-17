@@ -29,7 +29,8 @@ registerAgent({
       fn: async ({ symbols }) => {
         const syms = (symbols || []).map(s => String(s || '').toUpperCase()).filter(Boolean);
         if (syms.length === 0) return null;
-        const j = await fetchJSON(`${BASE}/v1/news/sentiment?symbols=${syms.slice(0, 5).join(',')}`, {
+        // v11.0.1: encode each symbol — raw join used to inject query params
+        const j = await fetchJSON(`${BASE}/v1/news/sentiment?symbols=${syms.slice(0, 5).map(encodeURIComponent).join(',')}`, {
           headers: { Authorization: `Bearer ${key()}` },
         });
         if (!j || !Array.isArray(j.items)) return null;
@@ -48,7 +49,7 @@ registerAgent({
       tier: 'warm', cost: 1,
       fn: async ({ symbols }) => {
         const syms = (symbols || []).map(s => String(s || '').toUpperCase()).filter(Boolean);
-        const j = await fetchJSON(`${BASE}/v1/news/buzzing${syms.length ? `?symbols=${syms.slice(0, 5).join(',')}` : ''}`, {
+        const j = await fetchJSON(`${BASE}/v1/news/buzzing${syms.length ? `?symbols=${syms.slice(0, 5).map(encodeURIComponent).join(',')}` : ''}`, {
           headers: { Authorization: `Bearer ${key()}` },
         });
         if (!j || !Array.isArray(j.items)) return null;
