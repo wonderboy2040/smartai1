@@ -742,8 +742,13 @@ async function reconcileLivePosition(p) {
     if (order) return mapOrderToPositionState(order);
   } catch { /* fall through to the list endpoint */ }
   try {
-    const resp = await coindcxPrivate('/exchange/v1/orders/list', creds.apiKey, creds.secret, {
-      page: '1', size: '50', statuses: ['open', 'partially_filled', 'filled', 'complete', 'cancelled', 'rejected'],
+    // v11.2 FIX: /exchange/v1/orders/list 404s (endpoint removed from the
+    // CoinDCX API — verified against docs.coindcx.com 2026-09-17). The
+    // live board is /exchange/v1/orders/active_orders (page/size/statuses).
+    // Still-open orders are the reconciliation case that matters here;
+    // terminal states stay covered by the primary orders/status call above.
+    const resp = await coindcxPrivate('/exchange/v1/orders/active_orders', creds.apiKey, creds.secret, {
+      page: '1', size: '50', statuses: ['open', 'partially_filled'],
     });
     const order = find(resp);
     if (order) return mapOrderToPositionState(order);
@@ -1306,7 +1311,7 @@ export async function listExchangeOrders(statuses = ['open']) {
   if (!coindcxConnected()) return { ok: false, orders: [] };
   const creds = loadCredsForOrder();
   try {
-    const resp = await coindcxPrivate('/exchange/v1/orders/list', creds.apiKey, creds.secret, {
+    const resp = await coindcxPrivate('/exchange/v1/orders/active_orders', creds.apiKey, creds.secret, {
       page: '1', size: '50', statuses,
     });
     return { ok: true, orders: Array.isArray(resp) ? resp : (resp?.orders || []) };

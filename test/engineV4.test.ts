@@ -133,11 +133,12 @@ describe('analyzeIntradayFromScanner — v4 factors', () => {
     expect(slow).toBeNull();
   });
 
-  it('SESSION-PACE fix: CRYPTO raw stands (24/7 rolling window, no session share)', () => {
+  it('SESSION-PACE fix: CRYPTO follows the 24h UTC candle day (7e452c6 semantics)', () => {
     const r = analyzeIntradayFromScanner('BTC', {
       ...bullTv, relVolume: 1.8, exchange: 'BINANCE',
     }, { price: 812, prevClose: 800, change: 1.5, high: 816, low: 795, volume: 5e6 }, { market: 'CRYPTO', now: MON_1015_IST });
-    expect(r.volumeRatio).toBe(1.8); // crypto pace == raw at any clock
+    // 04:45 UTC = 285/1440 elapsed of the UTC candle day → pace = 1.8 / 0.1979 ≈ 9.09
+    expect(r.volumeRatio).toBeCloseTo(1.8 / (285 / 1440), 1);
   });
 
   it('paceRelVolume / sessionElapsedShare unit math', () => {
@@ -146,11 +147,14 @@ describe('analyzeIntradayFromScanner — v4 factors', () => {
     expect(sessionElapsedShare('INDIA', new Date('2026-08-31T03:50:00Z'))).toBe(0.12); // 09:20 IST — floored
     expect(sessionElapsedShare('INDIA', MON_2000_IST)).toBe(1);      // post-close
     expect(sessionElapsedShare('INDIA', SAT_NOON_IST)).toBe(1);      // weekend
-    expect(sessionElapsedShare('CRYPTO', MON_1015_IST)).toBe(1);     // crypto always full
+    // v11.2 (7e452c6): CRYPTO rides the 24h UTC candle day — 04:45 UTC = 285/1440,
+    // early-UTC floored at 0.12 (no over-amplification of thin first hours)
+    expect(sessionElapsedShare('CRYPTO', MON_1015_IST)).toBeCloseTo(285 / 1440, 4);
+    expect(sessionElapsedShare('CRYPTO', new Date('2026-08-31T01:00:00Z'))).toBe(0.12); // 01:00 UTC — floored
     // pace math + unknown-value semantics
     expect(paceRelVolume(0.22, 'INDIA', MON_1015_IST)).toBeCloseTo(0.22 / 0.208, 2);
     expect(paceRelVolume(null, 'INDIA', MON_1015_IST)).toBe(null);
-    expect(paceRelVolume(1.8, 'CRYPTO', MON_1015_IST)).toBe(1.8);
+    expect(paceRelVolume(1.8, 'CRYPTO', MON_1015_IST)).toBeCloseTo(1.8 / (285 / 1440), 1);
     expect(paceRelVolume(1.8, 'INDIA', SAT_NOON_IST)).toBe(1.8);
   });
 

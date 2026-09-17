@@ -220,6 +220,62 @@ export async function fetchCoinDcxCandles(base, tf = '1h', opts = {}) {
   return null;
 }
 
+// ---------------- v11.2 Binance/Bybit public USDT klines (crypto candle fallback) ----------------
+// Render/datacenter reality (verified 2026-09-17 live): public.coindcx.com candles
+// AND the TV crypto scanner can both be IP-blocked while api.binance.com,
+// data-api.binance.vision and api.bybit.com stay reachable. The crypto board's
+// old candle chain (CoinDCX → Yahoo) died with them; this native crypto-OHLC
+// source keeps the board alive. Output shape matches fetchCoinDcxCandles
+// exactly (oldest-first {time ms, open, high, low, close, volume}, >=30 rows).
+const BINANCE_KL_INTERVAL = { '1d': '1d', '4h': '4h', '1h': '1h', '15m': '15m' };
+const BYBIT_KL_INTERVAL = { '1d': 'D', '4h': '240', '1h': '60', '15m': '15' };
+export async function fetchBinanceKlines(base, tf = '1h') {
+  const sym = `${String(base || '').toUpperCase()}USDT`;
+  if (!/^[A-Z0-9]{2,15}USDT$/.test(sym)) return null;
+  const interval = BINANCE_KL_INTERVAL[tf] || '1h';
+  const limit = tf === '15m' ? 400 : 300;
+  // Leg 1 + 2: Binance spot klines + the public market-data mirror
+  // (data-api.binance.vision is Binance's keyless mirror — no geo-block).
+  for (const host of ['https://api.binance.com', 'https://data-api.binance.vision']) {
+    try {
+      const r = await fetch(`${host}/api/v3/klines?symbol=${sym}&interval=${interval}&limit=${limit}`, {
+        headers: { 'User-Agent': UA },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!r.ok) continue;
+      const raw = await r.json();
+      if (!Array.isArray(raw) || raw.length < 30) continue;
+      const candles = raw.map(k => ({
+        time: Number(k[0]),
+        open: Number(k[1]), high: Number(k[2]), low: Number(k[3]),
+        close: Number(k[4]), volume: Number(k[5]) || 0,
+      })).filter(c => Number.isFinite(c.close) && c.close > 0);
+      if (candles.length >= 30) return candles; // already oldest-first
+    } catch { /* next leg */ }
+  }
+  // Leg 3: Bybit public spot klines (newest-first → re-sort).
+  try {
+    const r = await fetch(`https://api.bybit.com/v5/market/kline?category=spot&symbol=${sym}&interval=${BYBIT_KL_INTERVAL[tf] || '60'}&limit=200`, {
+      headers: { 'User-Agent': UA },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (r.ok) {
+      const j = await r.json();
+      const list = j?.result?.list;
+      if (Array.isArray(list) && list.length >= 30) {
+        const candles = list.map(k => ({
+          time: Number(k[0]),
+          open: Number(k[1]), high: Number(k[2]), low: Number(k[3]),
+          close: Number(k[4]), volume: Number(k[5]) || 0,
+        })).filter(c => Number.isFinite(c.close) && c.close > 0)
+          .sort((a, b) => a.time - b.time);
+        if (candles.length >= 30) return candles;
+      }
+    }
+  } catch { /* give up honestly */ }
+  return null;
+}
+
 /** Crypto indicator snapshot: TV USD indicators re-scaled to INR via the live CoinDCX ticker. */
 export async function fetchCryptoSnapshot(base) {
   const [tv, tickers] = await Promise.all([

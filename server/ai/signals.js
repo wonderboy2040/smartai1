@@ -14,7 +14,7 @@
 import { computeIndicatorsFromCandles } from './lib/indicators.js';
 import {
   INDIA_UNIVERSE, CRYPTO_UNIVERSE, fetchTVIndiaBatch, fetchTVIndiaBatchChunked, fetchTVCryptoBatch,
-  fetchCoinDcxCandles, fetchYahooQuotes, isNseOpen,
+  fetchCoinDcxCandles, fetchBinanceKlines, fetchYahooQuotes, isNseOpen,
 } from './data.js';
 // v10.17 FULL UNIVERSE SCAN — TV filter-query discovery + tiered
 // cadence (T1 base∪hot every cycle · T2 rotating slices) + hot
@@ -1079,19 +1079,37 @@ async function _computeBoard(mkt, deps, opts = {}) {
       superMeta.priceSource = 'coindcx-inr';
     }
     const tv = await fetchTVCryptoChunked(universe);
-    // Candle chain: CoinDCX INR 1h primary → Yahoo USD 1h fallback
-    // RESCALED onto the coin's INR anchor (the fallback keeps the
-    // revival alive when the CoinDCX public candle feed is WAF-blocked,
+    // Candle chain: CoinDCX INR 1h primary → Binance/Bybit USDT 1h klines
+    // → Yahoo USD 1h — every fallback RESCALED onto the coin's INR anchor
+    // (the fallbacks keep the revival alive when the CoinDCX public candle
+    // feed AND/OR the TV crypto scanner are IP-blocked from this server,
     // while keeping every price field in the INR trading domain).
+    // v11.2 FIX (2026-09-17 live incident): the TV-blocked case used to pass
+    // expectedScale=null into the rescale guard, whose no-reference sanity
+    // bound (0.2–5) rejected EVERY USD→INR rescale (≈85×) → zero contexts →
+    // the whole board died with a misleading "TV + CoinDCX both unavailable"
+    // while CoinDCX INR prices were fine. Now the LIVE USDINR fx (one fetch
+    // per board, shared by every coin) anchors the guard when the TV row is
+    // missing, and Binance/Bybit USDT klines are the crypto-native fallback.
+    const fxLive = await fetchUsdInr().catch(() => null);
+    const fxAnchor = (fxLive > 50 && fxLive < 200) ? fxLive : null;
+    superMeta.candleChain = 'coindcx-inr → binance-bybit-usdt-rescaled → yahoo-usd-rescaled';
     const candleMap = await loadCandlesBounded(universe, (b) => (async () => {
       const ltp = inrMap.get(b);
       if (!(ltp > 0)) return null;
       const c = await fetchCoinDcxCandles(b, '1h').catch(() => null);
       if (Array.isArray(c) && c.length >= 30) return c;
-      const y = await fetchYahooIntradayCandles(b, 'CRYPTO').catch(() => null);
-      // INR domain: expected scale = ltp / tv.usdPrice (live fx ratio)
+      // INR domain: expected scale = ltp / tv.usdPrice (coin-specific live
+      // fx ratio) when TV answered; else the board's live USDINR anchor.
       const usd = tv?.[b]?.usdPrice;
-      return rescaleCandlesToLtp(y, ltp, usd > 0 ? ltp / usd : null);
+      const expected = usd > 0 ? ltp / usd : fxAnchor;
+      const bk = await fetchBinanceKlines(b, '1h').catch(() => null);
+      if (Array.isArray(bk) && bk.length >= 30) {
+        const r = rescaleCandlesToLtp(bk, ltp, expected);
+        if (r) return r;
+      }
+      const y = await fetchYahooIntradayCandles(b, 'CRYPTO').catch(() => null);
+      return rescaleCandlesToLtp(y, ltp, expected);
     })());
     // v10.6 WICK GUARD (Pro Upgrade #3): validate every base's LTP
     // against the Binance cross-venue reference BEFORE it may generate
@@ -1113,7 +1131,7 @@ async function _computeBoard(mkt, deps, opts = {}) {
   if (contexts.length === 0) {
     const payload = {
       ok: false, market: mkt, reason: mkt === 'CRYPTO'
-        ? 'No crypto data reachable right now (TV + CoinDCX both unavailable)'
+        ? 'No crypto data reachable right now (every leg of the chain is down: CoinDCX INR prices + Binance/Bybit + TV scanner + Yahoo candles)'
         : mkt === 'FUTURES'
           ? 'No futures data reachable right now (TV + CoinDCX futures RT unavailable)'
           : 'No India market data reachable right now (TV scanner unavailable)',
@@ -1706,13 +1724,33 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
     ctx = gf.buildGlobalCtxSync(sym, quotes?.get(sym) || null, candles, regime);
   } else if (mkt === 'CRYPTO') {
     const { fetchCoinDcxTickers } = await import('../cryptoStream.js');
-    const [tv, tickers, candles] = await Promise.all([
+    // v11.2: tv + INR price first, THEN the candle chain — the rescale
+    // fallbacks need the INR anchor (t.last_price) to linear-scale the
+    // USDT/USD-domain fallback klines. Old code fetched raw CoinDCX candles
+    // with NO fallback: TV-blocked + public.coindcx-blocked (the 2026-09-17
+    // Render incident) → every crypto deep dive answered "No data for X".
+    const [tv, tickers] = await Promise.all([
       fetchTVCryptoBatch([sym]).catch(() => ({})),
       fetchCoinDcxTickers().catch(() => []),
-      fetchCoinDcxCandles(sym, '1h').catch(() => null),
     ]);
     const t = (Array.isArray(tickers) ? tickers : []).find(x => x?.market === `${sym}INR`);
-    ctx = buildCryptoCtxSync(sym, tv[sym], t ? parseFloat(t.last_price) : null, regime, candles);
+    const inrLtp = t ? parseFloat(t.last_price) : null;
+    const candles = await (async () => {
+      const c = await fetchCoinDcxCandles(sym, '1h').catch(() => null);
+      if (Array.isArray(c) && c.length >= 30) return c;
+      if (!(inrLtp > 0)) return null;
+      const usd = tv?.[sym]?.usdPrice;
+      const fxLive = await fetchUsdInr().catch(() => null);
+      const expected = usd > 0 ? inrLtp / usd : (fxLive > 50 && fxLive < 200 ? fxLive : null);
+      const bk = await fetchBinanceKlines(sym, '1h').catch(() => null);
+      if (Array.isArray(bk) && bk.length >= 30) {
+        const r = rescaleCandlesToLtp(bk, inrLtp, expected);
+        if (r) return r;
+      }
+      const y = await fetchYahooIntradayCandles(sym, 'CRYPTO').catch(() => null);
+      return rescaleCandlesToLtp(y, inrLtp, expected);
+    })();
+    ctx = buildCryptoCtxSync(sym, tv[sym], inrLtp, regime, candles);
   } else {
     const tv = await fetchTVIndiaBatch([sym]).catch(() => ({}));
     if (tv[sym]) {
