@@ -684,7 +684,9 @@ export async function executeFuturesSignal(opts) {
   if (wantMode === 'live' && !coindcxConnected()) return reject('CoinDCX not connected');
 
   // --- gate 5: fresh STRONG futures signal ---
-  const signal = await getFreshSignal(pair);
+  // v11.5: mode flows into the fresh-signal source — paper/notify may use
+  // the board-cached fallback when the deep path is down; LIVE never does.
+  const signal = await getFreshSignal(pair, { mode: wantMode });
   if (!signal) return reject('No fresh ensemble signal available for this futures pair');
 
   const gates = { minConfidence: cfg.minConfidence, minAgreement: cfg.minAgreement };

@@ -406,7 +406,10 @@ export async function executeSignal(opts) {
   }
 
   // --- gate 5: fresh STRONG signal (server-side, never client-trusted) ---
-  const signal = await getFreshSignal(pair);
+  // v11.5: the gauntlet's mode flows into the fresh-signal source —
+  // paper/notify may fall back to the 60s board cache when the deep path
+  // is down; LIVE keeps the strict fresh-deep-run contract.
+  const signal = await getFreshSignal(pair, { mode: wantMode });
   if (!signal) {
     return reject('No fresh ensemble signal available for this pair');
   }

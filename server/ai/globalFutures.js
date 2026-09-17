@@ -643,7 +643,10 @@ export async function executeGlobalSignal(opts) {
   if (wantAuto && cfg.mode !== 'live') return { ok: false, error: 'Auto-execution only runs in LIVE mode' };
 
   // --- gate 3: fresh signal (venue GLOBALFUTURES) ---
-  const signal = await getFreshSignal(pair);
+  // v11.5: mode flows into the fresh-signal source — paper/notify may use
+  // the board-cached fallback when the deep path is down (LIVE is rejected
+  // at gate 0 on this SIM desk, so the fallback can never touch money).
+  const signal = await getFreshSignal(pair, { mode: wantMode });
   if (!signal) return reject('No fresh ensemble signal available for this global symbol');
 
   const gates = { minConfidence: cfg.minConfidence, minAgreement: cfg.minAgreement };

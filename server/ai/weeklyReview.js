@@ -29,6 +29,10 @@ import { nearMissList, nearMissStats, gateOverrideView, autoTightenGate, resetGa
 import { __ledgerRaw } from './ledger.js';
 import { fetchYahooQuotes } from './data.js';
 import { meshQuery } from '../mcp/mesh.js';
+// v11.6 Phase 4: the mesh-backed seats' contribution report — the
+// number that answers "did adding Quiver/TradingCentral/etc. actually
+// help?" with settled outcomes, not hope.
+import { meshModelWeek } from './meshModels.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -162,7 +166,9 @@ export function weeklyQuantView({ now = Date.now() } = {}) {
   } catch { /* intraday journal optional */ }
   // v11.0: the council week — per-agent accountability + gate state.
   const council = computeCouncilWeek({ now });
-  return { ai, calibration, intraday, council, weekKey: getWeekKey(new Date(now)), asOf: now };
+  // v11.6: the mesh-model week — shadow/voting seats' contribution.
+  const mesh = meshModelWeek({ now });
+  return { ai, calibration, intraday, council, mesh, weekKey: getWeekKey(new Date(now)), asOf: now };
 }
 
 // ---------------- v11.0: COUNCIL calibration week ----------------
@@ -296,6 +302,7 @@ Output (STRICT, Hinglish, max 280 words):
 **Week Scorecard** — trades, win-rate, net P&L across the AI desk
 **Direction Read** — LONG vs SHORT win-rate split + entry-hour buckets (agar ek side systematically galat hai, naam lo)
 **Council Read** — the 6 seats' hit-rates, calibrated weights, near-miss count, precision ladder (kaun seat earn kar raha hai apna vote)
+**Mesh Seats Read** — the v11.6 mesh-backed seats (InstFlowPro/TechConsensus/FundaProPlus/CryptoOnChainPro): shadow ya voting, when-voted vs when-abstained win-rates, correlation guard (kya naya data asal mein help kar raha hai — numbers se batao)
 **Calibration Read** — claimed confidence vs realized win-rate, Brier verdict, monthly drift (kya keh raha hai)
 **Best & Worst** — name the trades and why
 **Discipline Audit** — SL discipline, booking behaviour, overtrading check
@@ -375,6 +382,23 @@ function _quantPromptBlock(q) {
     const learned = Object.entries(w).filter(([, m]) => m && m.mul != null && m.mul !== 1 && (m.n || 0) >= 8);
     if (learned.length > 0) lines.push(`calibrated weights engaged: ${learned.map(([role, m]) => `${role} ×${m.mul}`).join(' · ')} (Bayesian, settled outcomes se)`);
   }
+  // v11.6 Phase 4: the MESH-MODEL CONTRIBUTION report — each seat's own
+  // win-rate when it voted vs the baseline when it abstained. This is
+  // the honest answer to "did more MCP data raise real accuracy?".
+  const mm = q.mesh;
+  if (mm) {
+    lines.push('');
+    lines.push(`MESH-BACKED SEATS (v11.6, meshModelWeek):`);
+    const rows = (mm.allTime?.models || []).map(m => {
+      const wk = mm.week?.[m.id];
+      const wkBit = wk && wk.n > 0 ? `, this week ${wk.n} attributed (${wk.hitRate}%)` : ', no attributed outcomes this week';
+      const edgeBit = m.edge != null ? `edge ${m.edge > 0 ? '+' : ''}${m.edge}pts (voted ${m.whenVotedWR}% vs abstained ${m.whenAbstainedWR}%)` : 'insufficient paired data';
+      const corrBit = m.corr != null ? `, corr ${m.corr} vs ${m.vs}` : '';
+      return `${m.name} [${m.mode}] n=${m.n}${wkBit} · ${edgeBit}${corrBit}`;
+    });
+    if (rows.length > 0) lines.push(rows.join('\n'));
+    lines.push('seats earn voting weight ONLY on settled outcomes — shadow = journaled but weight 0 (honest proving period)');
+  }
   return lines.join('\n');
 }
 
@@ -409,6 +433,14 @@ export function quantHeaderBlock(q) {
     if (seats) lines.push(`🏛️ <b>Council</b>: ${c.settledCouncilTrades} settled · ${seats}${(c.agents || []).length > 3 ? ' …' : ''}`);
     if (c.gate?.confAdd > 0) lines.push(`⚠️ <b>Gate auto-tightened +${c.gate.confAdd}</b> — ${c.gate.reason || 'precision streak'}`);
     if (c.nearMiss?.thisWeek > 0) lines.push(`⊘ Near-miss: ${c.nearMiss.thisWeek} suppressed this week (${c.nearMiss.total} total)`);
+  }
+  // v11.6: the mesh-backed seats header — shadow/voting + edges, one line.
+  const mm = q.mesh;
+  if (mm && (mm.allTime?.models || []).length > 0) {
+    const voting = mm.allTime.models.filter(m => m.mode === 'voting');
+    const shadow = mm.allTime.models.filter(m => m.mode !== 'voting');
+    const bit = (m) => `${m.name} ${m.mode === 'voting' && m.edge != null ? (m.edge > 0 ? '+' : '') + m.edge + 'pts' : m.mode}`;
+    lines.push(`🕸️ <b>Mesh seats</b>: ${voting.length}/${voting.length + shadow.length} voting · ${[...voting, ...shadow].slice(0, 4).map(bit).join(' · ')}`);
   }
   return lines.join('\n');
 }

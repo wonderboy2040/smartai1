@@ -36,6 +36,9 @@ import { v2ModelsEnabled } from './models.js';
 import { sentimentStatus } from './sentiment.js';
 import { instFlowStatus } from './instFlow.js';
 import { fundamentalsStatus } from './fundamentals.js';
+// v11.6 MESH-BACKED SEATS — status + accountability views (the mesh
+// finally votes; Phase 4 makes it VISIBLE).
+import { meshModelsStatusView, meshModelAccountability, meshCorrelationView } from './meshModels.js';
 // v10.1 crypto desk AI chatbot (mirror of the intraday ProTrader agent)
 import { runCryptoAgent } from './cryptoAgent.js';
 import { getExpertPicks } from './expertPicks.js';
@@ -79,7 +82,7 @@ import { runWeeklyPerformanceReview, weeklyReviewStatus, scheduleWeeklyReviewPus
 // same live tracking + conviction intelligence the desk gives its own.
 import {
   recordManualTrade, listManualTrades, getManualTrade, closeManualTrade,
-  ltpForManualTrade, manualTradeView, manualConvictionOf,
+  ltpForManualTrade, manualTradeView, manualConvictionOf, lastKnownConvictionForView,
   startManualTradeMonitor, manualMonitorStatus, flushManualState,
 } from './manualTrades.js';
 import { getSwingBoard, scanWhales, getOrderbook } from './swing.js';
@@ -180,6 +183,10 @@ export function registerAITradingRoutes(app, deps) {
           instFlow: instFlowStatus(),
           fundamentals: fundamentalsStatus(),
         },
+        // v11.6: mesh-backed seats — shadow/voting state + the T3 warm
+        // view (which caps served, which gapped — budget exhaustion is
+        // VISIBLE, never silent).
+        meshModels: meshModelsStatusView(),
         // v6.7: self-correcting ensemble + tamper-evident ledger status
         adaptive: adaptiveStatus(),
         ledger: ledgerStatus(),
@@ -328,7 +335,7 @@ export function registerAITradingRoutes(app, deps) {
         // v6.6: leverage is CLAMPED server-side to config.cryptoLeverage —
         // a client payload can never widen the ceiling
         leverage: leverage != null ? Number(leverage) : undefined,
-        getFreshSignal: (pair) => getFreshSignalForExec(pair, depsForSignals()),
+        getFreshSignal: (pair, o) => getFreshSignalForExec(pair, depsForSignals(), o),
         wantAuto: false,
         source: 'manual',
         sendTelegram, // v6.11: notify-mode alert sender
@@ -351,7 +358,7 @@ export function registerAITradingRoutes(app, deps) {
         qtyINR: qtyINR != null ? Number(qtyINR) : undefined,
         marginUSDT: marginUSDT != null ? Number(marginUSDT) : undefined,
         leverage: leverage != null ? Number(leverage) : undefined,
-        getFreshSignal: (pair) => getFreshFuturesSignalForExec(pair, depsForSignals()),
+        getFreshSignal: (pair, o) => getFreshFuturesSignalForExec(pair, depsForSignals(), o),
         wantAuto: false,
         source: 'manual',
         sendTelegram, // v6.11: notify-mode alert sender
@@ -374,7 +381,7 @@ export function registerAITradingRoutes(app, deps) {
         qtyINR: qtyINR != null ? Number(qtyINR) : undefined,
         marginUSDT: marginUSDT != null ? Number(marginUSDT) : undefined,
         leverage: leverage != null ? Number(leverage) : undefined,
-        getFreshSignal: (pair) => getFreshGlobalSignalForExec(pair, depsForSignals()),
+        getFreshSignal: (pair, o) => getFreshGlobalSignalForExec(pair, depsForSignals(), o),
         wantAuto: false,
         source: 'manual',
         sendTelegram,
@@ -551,22 +558,45 @@ export function registerAITradingRoutes(app, deps) {
       let usdInr = 84;
       try { usdInr = (await fetchUsdInr()) || 84; } catch { /* default */ }
       const views = [];
+      // v11.5: bound the on-demand deep re-votes — one slow/hung deep call
+      // (upstream CoinDCX futures API / TradingView outage) must never drag
+      // the whole tracker API into its own timeout ("tracker fetch fail").
+      // Per-trade 10s cap + a shared 25s budget; once the budget is spent,
+      // remaining trades go straight to the last-known conviction below.
+      const DEEP_VOTE_TIMEOUT_MS = 10_000;
+      const DEEP_VOTE_BUDGET_MS = 25_000;
+      const deepDeadline = Date.now() + DEEP_VOTE_BUDGET_MS;
       for (const t of trades) {
         if (t.status !== 'OPEN') { views.push(t); continue; }
         const ltp = await ltpForManualTrade(t, { fetchIndiaQuotes, fetchIndexSpot });
         // conviction: the monitor's fresh re-vote if present; on-demand
         // (cached deep path) when stale — the UI never shows a dead bar.
         let conviction = (Date.now() - (t.__conviction?.at || 0) < 90_000) ? t.__conviction : null;
-        if (!conviction) {
+        if (!conviction && Date.now() < deepDeadline) {
           try {
-            const deep = await getDeepSignal(t.symbol, t.market === 'GLOBALFUTURES' ? 'GLOBALFUTURES' : t.market, depsForSignals());
+            // v11.5: raced against a 10s timer — the losing deep call keeps
+            // running in the background and lands in its 30s cache either way
+            // (self-healing for the NEXT request), but THIS response returns.
+            const deep = await Promise.race([
+              getDeepSignal(t.symbol, t.market === 'GLOBALFUTURES' ? 'GLOBALFUTURES' : t.market, depsForSignals()),
+              new Promise((_, rej) => {
+                const tm = setTimeout(() => rej(new Error('deep re-vote timeout')), DEEP_VOTE_TIMEOUT_MS);
+                if (typeof tm.unref === 'function') tm.unref();
+              }),
+            ]);
             if (deep?.ok && deep.signal) {
               const c = manualConvictionOf(t, deep.signal);
               conviction = { ...c, side: String(deep.signal.side || '').toUpperCase(), at: Date.now() };
               t.__conviction = conviction;
             }
-          } catch { /* honest null — banner falls back to STALE */ }
+          } catch { /* honest degrade — falls through to last-known below */ }
         }
+        // v11.5 LAST-KNOWN FALLBACK: a transient upstream failure must not
+        // blank a real conviction into "STALE — conviction data missing".
+        // If this trade ever got a successful vote, keep showing it (age-
+        // honest: `at` carries the vote's own stamp). UNKNOWN rows (never
+        // voted) still degrade to the honest STALE banner.
+        if (!conviction) conviction = lastKnownConvictionForView(t);
         views.push(manualTradeView(t, { ltp, usdInr, conviction }));
       }
       return res.json({
@@ -889,6 +919,14 @@ export function registerAITradingRoutes(app, deps) {
           INDIA: regimeReweightView(regimeIndia, 'INDIA'),
           CRYPTO: regimeReweightView(regimeCrypto, 'CRYPTO'),
         },
+        // v11.6 Phase 4: the mesh-backed seats join the SAME calibration
+        // display — shadow/voting mode, when-voted vs when-abstained
+        // win-rates, edge, and the false-diversity correlation guard,
+        // right alongside the original models.
+        meshModels: {
+          accountability: meshModelAccountability(),
+          correlation: meshCorrelationView(),
+        },
       });
     } catch (e) {
       jsonError(res, 500, 'trust report failed', e);
@@ -1091,7 +1129,7 @@ export function registerAITradingRoutes(app, deps) {
     mode: mode === 'live' ? 'live' : mode === 'notify' ? 'notify' : 'paper',
     qtyINR: qtyINR != null ? Number(qtyINR) : undefined,
     leverage: leverage != null ? Number(leverage) : undefined,
-    getFreshSignal: (pair) => getFreshSignalForExec(pair, depsForSignals()),
+    getFreshSignal: (pair, o) => getFreshSignalForExec(pair, depsForSignals(), o),
     wantAuto: false,
     source: 'telegram-approval',
     sendTelegram,
@@ -1325,7 +1363,7 @@ export function registerAITradingRoutes(app, deps) {
       if (!strong) return;
       const out = await executeSignal({
         symbol: strong.symbol, side: strong.side, mode: 'live',
-        getFreshSignal: (pair) => getFreshSignalForExec(pair, depsForSignals()),
+        getFreshSignal: (pair, o) => getFreshSignalForExec(pair, depsForSignals(), o),
         wantAuto: true, source: 'auto',
       });
       if (out.ok) {

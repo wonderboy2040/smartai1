@@ -1333,6 +1333,117 @@ export interface TrustView {
   windows?: ModelPerfWindows;
   /** v10.6 Pro Upgrade #4: live regime reweight state per desk. */
   regimeReweight?: { INDIA?: RegimeReweightState; CRYPTO?: RegimeReweightState };
+  /** v11.6: mesh-backed seats — accountability + correlation guard. */
+  meshModels?: MeshModelsTrustView;
+}
+
+// ---------------- v11.6 mesh-backed seats ----------------
+export interface MeshSeatAccountabilityRow {
+  id: string;
+  name: string;
+  meshCaps: string[];
+  markets: string[];
+  baseWeight: number;
+  mode: 'shadow' | 'voting' | 'retired';
+  effectiveWeight: number;
+  n: number;
+  hitRate: number | null;
+  whenVotedWR: number | null;
+  whenAbstainedWR: number | null;
+  edge: number | null;
+  note: string;
+}
+
+export interface MeshCorrelationRow {
+  corr: number | null;
+  vs: string | null;
+  overlapN: number;
+  discount: number;
+  verdict: 'independent' | 'insufficient-overlap' | 'partially-redundant' | 'redundant';
+  note: string;
+}
+
+export interface MeshModelsTrustView {
+  accountability: {
+    ok: boolean;
+    minSettled: number;
+    retireN: number;
+    settledTotal: number;
+    models: MeshSeatAccountabilityRow[];
+    note: string;
+  };
+  correlation: {
+    ok: boolean;
+    minOverlap: number;
+    hard: number;
+    soft: number;
+    seats: Record<string, MeshCorrelationRow>;
+    note: string;
+  };
+}
+
+export interface MeshAgentCard {
+  id: string;
+  name: string;
+  kind: string;
+  capabilities: { cap: string; tier: string }[];
+  envKey: string | null;
+  authRequired: boolean;
+  authed: boolean;
+  priority: number;
+  budget: { perDay: number; perMinute: number };
+  health: {
+    state: 'closed' | 'open' | 'half-open';
+    consecutiveFails: number;
+    lastOkAt: number | null;
+    lastFailAt: number | null;
+    lastError: string | null;
+    breakerProbes: number;
+    backoffMs: number | null;
+  };
+  budgetUsed: { perDay: number; usedToday: number; perMinute: number; usedMinute: number };
+  note: string;
+}
+
+export interface MeshStatusView {
+  ok: boolean;
+  agents: MeshAgentCard[];
+  agentCount: number;
+  authedAgents: number;
+  cache: {
+    entries: number;
+    cap: number;
+    inflight: number;
+    negative: number;
+    stats: { queries: number; cacheHits: number; upstream: number; negativeHits: number; gaps: number };
+  };
+  timeoutMs: number;
+  note: string;
+}
+
+export interface MeshSeatsStatusView {
+  enabled: boolean;
+  flag: string;
+  seats: {
+    id: string;
+    name: string;
+    mode: 'shadow' | 'voting' | 'retired';
+    baseWeight: number;
+    effectiveWeight: number;
+    markets: string[];
+    meshCaps: string[];
+    n: number;
+    hitRate: number | null;
+    edge: number | null;
+  }[];
+  warm: {
+    topN: number;
+    batchPerTick: number;
+    requeryGaps: { hot: string; warm: string; cold: string };
+    stats: { warmTicks: number; queriesIssued: number; capsServed: number; gaps: number };
+    byMarket: Record<string, { symbols: number; capsServed: number; capsGapped: number; staleCapped: number }>;
+    note: string;
+  };
 }
 
 export interface PerfView {

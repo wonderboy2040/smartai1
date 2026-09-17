@@ -84,6 +84,20 @@ services:
       # 1.6, replaces the plain 15m tape when ON).
       - key: AI_ENABLE_MTF_CONFLUENCE
         sync: false
+      # ---- v11.6 MESH-BACKED ENSEMBLE SEATS ----
+      # The MCP data-agent mesh finally VOTES: 4 new seats
+      # (InstFlowPro / TechConsensus / FundaProPlus / CryptoOnChainPro)
+      # backed by Quiver/TradingCentral/AlphaVantage/Massive/CoinGecko/
+      # CoinAPI data. Shadow-mode until settled outcomes prove an edge;
+      # honesty-gated abstention on stale data; T3-only budget-aware
+      # warm. Observe via /api/ai/status meshModels + the MCP Data Mesh
+      # panel + weekly review's Mesh Seats section.
+      - key: AI_ENABLE_MESH_MODELS
+        sync: false
+      - key: AI_MESH_T3_TOP_N
+        sync: false
+      - key: AI_MESH_T3_BATCH
+        sync: false
       # ---- v10.6 PRO ACCURACY UPGRADES ----
       # REGIME-AWARE REWEIGHTING (Pro #4): TRENDING/CHOPPY/HIGH_VOL/
       # LOW_VOL multiplier layer on the weighted-average path (±25%

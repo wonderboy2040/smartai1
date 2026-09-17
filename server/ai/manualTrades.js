@@ -444,6 +444,9 @@ export function manualTradeView(t, { ltp, usdInr, conviction } = {}) {
         state: conviction.state, delta: conviction.delta ?? null,
         currentScore: conviction.currentScore ?? null,
         entryScore: conviction.entryScore ?? _num(t.origin?.aiScore),
+        // v11.5: the vote's own stamp — the UI can show how old the read
+        // is (the last-known fallback serves convictions older than 90s).
+        at: conviction.at ?? null,
       } : { state: null, delta: null, currentScore: null, entryScore: _num(t.origin?.aiScore) },
       banner,
     },
@@ -606,6 +609,32 @@ export async function evaluateManualTradeAlerts(t, { send, conviction, freshSign
   return pushed;
 }
 
+/**
+ * v11.5: on a failed/thrown deep re-vote, KEEP the last-known conviction
+ * (any real state — HOLDING/STRENGTHENING/WEAKENING/FLIPPED) with its
+ * ORIGINAL `at` stamp — age-honest, and the route's 90s freshness check
+ * keeps retrying the deep path so the data self-heals when upstream
+ * recovers. UNKNOWN only when the trade never had a successful vote at
+ * all (the honest STALE banner). Prevents the monitor from repeatedly
+ * wiping GOOD data on transient upstream failures.
+ */
+function _preserveConvictionOnDeepFailure(prev, now) {
+  if (prev && prev.state && prev.state !== 'UNKNOWN') return prev;
+  return { state: 'UNKNOWN', delta: null, currentScore: null, side: null, at: now };
+}
+
+/**
+ * v11.5 (route-level twin): the /api/manual-trades view builder's
+ * last-known fallback — when the on-demand deep re-vote fails AND no
+ * fresh conviction exists, the trade's last REAL vote beats a dead
+ * "STALE — conviction data missing" bar. Returns null when the trade
+ * never had a usable vote (honest STALE). PURE.
+ */
+export function lastKnownConvictionForView(trade) {
+  const c = trade?.__conviction;
+  return (c && c.state && c.state !== 'UNKNOWN') ? c : null;
+}
+
 async function _monitorTick() {
   if (!_mon || _mon.ticking) return;
   _mon.ticking = true;
@@ -639,13 +668,18 @@ async function _monitorTick() {
           await evaluateManualTradeAlerts(t, { send, conviction: t.__conviction, freshSignal: deep.signal, usdInr });
           if (t.lastState !== c.state) { t.lastState = c.state; _persist(); }
         } else {
-          t.__conviction = { state: 'UNKNOWN', delta: null, currentScore: null, side: null, at: now };
+          // v11.5: transient deep failure — PRESERVE the last-known
+          // conviction instead of wiping to UNKNOWN on every tick. A
+          // 5-min-old THESIS_INTACT read beats a dead STALE bar; the
+          // vote's own `at` stamp keeps the age honest. UNKNOWN only
+          // when this trade NEVER had a successful vote.
+          t.__conviction = _preserveConvictionOnDeepFailure(t.__conviction, now);
         }
       } catch (e) {
         _mon.status.lastError = String(e?.message || e).slice(0, 140);
         // a THROWN deep call degrades exactly like an ok:false one —
-        // UNKNOWN conviction (honest STALE banner), never a stale bar.
-        t.__conviction = { state: 'UNKNOWN', delta: null, currentScore: null, side: null, at: now };
+        // last-known conviction preserved, UNKNOWN only if never voted.
+        t.__conviction = _preserveConvictionOnDeepFailure(t.__conviction, now);
       }
     }
     _mon.lastTickAt = Date.now();

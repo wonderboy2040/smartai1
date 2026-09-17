@@ -19,6 +19,9 @@ import { SignalCard } from '../aitrading/SignalCard';
 import { OptionsDeskPanel } from '../aitrading/OptionsDeskPanel';
 import { OrderConsole } from '../aitrading/OrderConsole';
 import { ModelRegistry } from '../aitrading/ModelRegistry';
+// v11.6 — the MCP mesh ops view: agent health, free-tier budgets +
+// the mesh-backed ensemble seats (shadow/voting state).
+import { MeshStatusPanel } from '../aitrading/MeshStatusPanel';
 import { BacktestPanel } from '../aitrading/BacktestPanel';
 import { AlertsPanel } from '../aitrading/AlertsPanel';
 import { MorningBriefPanel, SwingDeskPanel, WhaleRadarPanel, SignalLedgerPanel, OrderbookPanel } from '../aitrading/ProPanels';
@@ -540,6 +543,14 @@ export default memo(function AITradingTab() {
         <SectionLabel num={market === 'INDIA' ? '06' : '05'} title="Model Registry" sub="the superintelligence bus — every analyst, weight & status" />
         <div className="mt-2.5">
           <ModelRegistry models={models} />
+        </div>
+      </div>
+
+      {/* ============ 07 · MCP DATA MESH (v11.6) ============ */}
+      <div>
+        <SectionLabel num={market === 'INDIA' ? '07' : '06'} title="MCP Data Mesh" sub="10 data agents — health, free-tier budgets & the mesh-backed ensemble seats" />
+        <div className="mt-2.5">
+          <MeshStatusPanel />
         </div>
       </div>
 

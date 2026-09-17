@@ -20,7 +20,7 @@
 // ============================================================
 import { memo, useCallback, useEffect, useState } from 'react';
 import { fetchTrust, fetchCouncilCalibration } from './useAITrading';
-import type { CouncilCalibrationView, ModelPerfRow, RegimeReweightState, TrustView } from './types';
+import type { CouncilCalibrationView, MeshCorrelationRow, MeshSeatAccountabilityRow, ModelPerfRow, RegimeReweightState, TrustView } from './types';
 
 function ModelWinRateBars({ rows, label }: { rows: ModelPerfRow[]; label: string }) {
   if (!rows || rows.length === 0) {
@@ -191,6 +191,62 @@ function CouncilAgentsBlock({ cal }: { cal: CouncilCalibrationView | null }) {
   );
 }
 
+/** v11.6: the MESH-BACKED SEATS block — shadow/voting mode, the
+ *  when-voted vs when-abstained edge, and the false-diversity
+ *  correlation guard. The answer to "did more MCP data actually
+ *  help?" — in the same calibration display as the original 14. */
+function MeshModelsBlock({ view }: { view: TrustView }) {
+  const mm = view.meshModels;
+  if (!mm?.accountability?.models?.length) {
+    return <div className="text-[10px] text-slate-600 py-1">Mesh-backed seats (v11.6) ka accountability data nahi — AI_ENABLE_MESH_MODELS on karke settled trades hone do.</div>;
+  }
+  const modeBadge = (mode: string) => mode === 'voting'
+    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+    : mode === 'retired'
+      ? 'bg-red-500/15 text-red-300 border-red-500/30'
+      : 'bg-slate-500/15 text-slate-400 border-slate-500/30';
+  const corrOf = (id: string): MeshCorrelationRow | undefined => mm.correlation?.seats?.[id];
+  return (
+    <div className="space-y-1">
+      {mm.accountability.models.map((m: MeshSeatAccountabilityRow) => {
+        const c = corrOf(m.id);
+        return (
+          <div key={m.id} className="flex items-center gap-2 text-[10px] font-mono" title={`${m.note}${c ? `\n${c.note}` : ''}`}>
+            <span className="text-slate-400 w-[92px] truncate">{m.name}</span>
+            <span className={`px-1.5 py-0.5 rounded text-[8px] font-black border ${modeBadge(m.mode)}`}>{m.mode.toUpperCase()}</span>
+            <span className="text-slate-600 w-8 text-right">n={m.n}</span>
+            <div className="flex-1 h-2 bg-black/40 rounded overflow-hidden relative">
+              <div
+                className={`h-full ${(m.hitRate ?? 0) >= 55 ? 'bg-emerald-500/50' : (m.hitRate ?? 0) >= 45 ? 'bg-amber-500/50' : 'bg-red-500/50'}`}
+                style={{ width: `${Math.min(100, m.hitRate ?? 0)}%` }}
+              />
+              <div className="absolute top-0 bottom-0 w-px bg-slate-500" style={{ left: '50%' }} title="50% line" />
+            </div>
+            <span className={`w-12 text-right font-black ${(m.hitRate ?? 0) >= 55 ? 'text-emerald-300' : (m.hitRate ?? 0) >= 45 ? 'text-amber-300' : 'text-red-300'}`}>
+              {m.hitRate != null ? `${m.hitRate}%` : '—'}
+            </span>
+            <span
+              className={`w-16 text-right font-black ${m.edge == null ? 'text-slate-600' : m.edge > 0 ? 'text-emerald-300' : 'text-red-300'}`}
+              title={`trades with this seat voting won ${m.whenVotedWR ?? '—'}% vs ${m.whenAbstainedWR ?? '—'}% when it abstained`}
+            >
+              {m.edge != null ? `${m.edge > 0 ? '+' : ''}${m.edge}pts` : 'no data'}
+            </span>
+            <span
+              className={`w-14 text-right font-black ${c && c.discount < 1 ? 'text-amber-300' : 'text-slate-600'}`}
+              title={c?.note || 'cross-correlation vs TrendMatrix/MomentumQuant'}
+            >
+              {c && c.discount < 1 ? `×${c.discount}` : 'indep'}
+            </span>
+          </div>
+        );
+      })}
+      <div className="text-[9px] text-slate-600 pt-0.5 leading-relaxed">
+        edge = trades where the seat VOTED (win-rate) minus trades where it ABSTAINED — promotion needs n≥{mm.accountability.minSettled} settled outcomes with a positive edge (Phase-2 proving rule). ×0.5/×0.75 = false-diversity discount (votes correlate with TrendMatrix/MomentumQuant, corr guard &gt;{' '}0.70/0.85). Shadow = journaled, weight 0.
+      </div>
+    </div>
+  );
+}
+
 interface Props {
   /** which desk's regime tilt to highlight (kept for the panel contract —
    *  both desks' tilts always render side-by-side in the grid) */
@@ -274,6 +330,13 @@ export const ModelPerformancePanel = memo(function ModelPerformancePanel(_props:
           <div className="bg-black/20 rounded-xl p-2.5">
             <div className="text-[9px] font-black text-slate-500 tracking-wider mb-1.5">COUNCIL AGENTS — 6 seats ka apna track record (v11.0)</div>
             <CouncilAgentsBlock cal={council} />
+          </div>
+
+          {/* v11.6: mesh-backed seats — the MCP data agents finally VOTE;
+              shadow/voting + edge + correlation guard, same display */}
+          <div className="bg-black/20 rounded-xl p-2.5">
+            <div className="text-[9px] font-black text-slate-500 tracking-wider mb-1.5">MESH-BACKED SEATS — Quiver/TradingCentral/AlphaVantage/CoinGecko data ka apna track record (v11.6)</div>
+            <MeshModelsBlock view={view || ({} as TrustView)} />
           </div>
 
           <p className="text-[9px] text-slate-600 leading-relaxed">

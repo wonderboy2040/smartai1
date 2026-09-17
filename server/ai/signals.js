@@ -21,7 +21,11 @@ import {
 // promotion. Flag AI_INDIA_FULL_UNIVERSE=off reverts to the static base.
 import { tieredScanUniverse, absorbScanRows, fullIndiaUniverseEnabled } from './indiaUniverse.js';
 import { FUTURES_UNIVERSE, futuresPairFor, fetchFuturesPrices, fetchFuturesCandles } from './futures.js';
-import { MODELS, runQuantModels, aiCouncilVoteFromVerdict, v2ModelsEnabled, mtfConfluenceEnabled, tapeVote } from './models.js';
+import { MODELS, runQuantModels, aiCouncilVoteFromVerdict, v2ModelsEnabled, mtfConfluenceEnabled, tapeVote, meshModelsEnabled } from './models.js';
+// v11.6 MESH-BACKED SEATS — the MCP mesh finally votes on trade
+// decisions (Phase 1A), shadow-gated (Phase 2) + honesty-gated (1B)
+// + correlation-discounted (1C), warmed at T3 cadence only (Phase 3).
+import { warmMeshModels, applyMeshModelGating } from './meshModels.js';
 // v2 signal-accuracy upgrade: sentiment (news/F&G/funding), institutional
 // flow (FII/DII + orderbook), fundamentals (India swing-only deep path)
 import { refreshSentiment, sentimentContextFor, absorbCouncilSentiment } from './sentiment.js';
@@ -917,6 +921,14 @@ async function _computeBoard(mkt, deps, opts = {}) {
   // nothing (honest abstain, never blocks the board).
   const _v2Warms = v2ModelsEnabled() ? [refreshSentiment(mkt === 'INDIA' ? 'INDIA' : 'CRYPTO').catch(() => {})] : [];
   if (v2ModelsEnabled() && mkt === 'INDIA') _v2Warms.push(refreshFiiDii().catch(() => {}));
+  // v11.6 Phase 3: mesh seats warm at T3 cadence for the TOP slice
+  // only (never the full universe at board cadence — free-tier
+  // budgets would be gone in minutes). The warm is budget-aware
+  // (per-cap re-query gaps aligned with the mesh's cache tiers) and
+  // joins the bounded wait below with a 4s soft deadline — whatever
+  // resolved in time votes THIS cycle; the rest keeps warming in the
+  // background store for the next one (the depth-warm pattern).
+  const _meshWarms = [];
   const regime = await buildRegime(mkt);
   // v9 SUPERINTELLIGENCE board meta (scanned universe + price chain).
   const superMeta = { engine: 'SUPERINTELLIGENCE PRO TRADER ENGINE v9', universeSize: 0, universeMode: 'static', priceSource: null };
@@ -985,6 +997,7 @@ async function _computeBoard(mkt, deps, opts = {}) {
     ]);
     const universe = Array.isArray(uni) && uni.length > 0 ? uni : [...FUTURES_UNIVERSE];
     if (v2ModelsEnabled()) _v2Warms.push(warmInstFlow(universe.slice(0, 8))); // v2 InstFlow: poll the most-liquid books
+    if (meshModelsEnabled()) _meshWarms.push(warmMeshModels('FUTURES', universe.slice(0, 12)).catch(() => {})); // v11.6 mesh seats: T3 slice
     superMeta.universeSize = universe.length;
     superMeta.universeMode = Array.isArray(uni) && uni.length > 0 ? 'dynamic' : 'static-fallback';
     const futMap = new Map((Array.isArray(futRows) ? futRows : []).map(x => [x.base, x]));
@@ -1049,6 +1062,12 @@ async function _computeBoard(mkt, deps, opts = {}) {
       const ctx = gf.buildGlobalCtxSync(u.symbol, q, candles, regime);
       if (ctx) { attachSuperCtx(ctx, { ltp: ctx.ltp, usdPrice: ctx.ltp }, candles); contexts.push(ctx); }
     }
+    // v11.6 mesh seats: the whole global universe IS the T3 slice —
+    // Quiver/AlphaVantage/TradingCentral ride the mesh's own cache +
+    // token buckets (honest gaps → honest abstentions).
+    if (meshModelsEnabled()) {
+      _meshWarms.push(warmMeshModels('GLOBALFUTURES', gf.GLOBAL_FUTURES_UNIVERSE.map(u => u.symbol)).catch(() => {}));
+    }
   } else {
     // CRYPTO — v9 SUPERINTELLIGENCE: the FULL DYNAMIC spot universe.
     // Every liquid CoinDCX INR pair by 24h turnover, live discovered
@@ -1061,6 +1080,7 @@ async function _computeBoard(mkt, deps, opts = {}) {
     ]);
     const universe = Array.isArray(uni) && uni.length > 0 ? uni : [...CRYPTO_UNIVERSE];
     if (v2ModelsEnabled()) _v2Warms.push(warmInstFlow(universe.slice(0, 8))); // v2 InstFlow: poll the most-liquid books
+    if (meshModelsEnabled()) _meshWarms.push(warmMeshModels('CRYPTO', universe.slice(0, 12)).catch(() => {})); // v11.6 mesh seats: T3 slice
     superMeta.universeSize = universe.length;
     superMeta.universeMode = Array.isArray(uni) && uni.length > 0 ? 'dynamic' : 'static-fallback';
     const inrMap = new Map((Array.isArray(tickers) ? tickers : [])
@@ -1147,7 +1167,13 @@ async function _computeBoard(mkt, deps, opts = {}) {
   // v6.7: each vote's weight is scaled by its LIVE hit-rate multiplier
   // (ledger outcomes → Beta posterior; n<8 keeps the base weight —
   // we refuse to tune on noise). Computed ONCE per board run.
-  await (v2ModelsEnabled() ? Promise.allSettled(_v2Warms) : Promise.resolve()); // v2: warms already ran parallel to the data fetches
+  // v2: warms already ran parallel to the data fetches; the v11.6
+  // mesh warm gets a 4s SOFT deadline (the mesh's own per-call
+  // deadline is 8s — a cold T3 warm must never hold the board).
+  await Promise.race([
+    Promise.allSettled([..._v2Warms, ..._meshWarms]),
+    new Promise((res) => { const t = setTimeout(() => res(null), 4000); t.unref?.(); }),
+  ]);
   // v10.6 ORDER-FLOW DEPTH (Pro Upgrade #1): warm L2 ladders for the
   // top-turnover slice — the VolumeFlow seat folds the read in
   // (ctx.depth). Soft-deadline 2.5s: whatever the reader resolved in
@@ -1173,7 +1199,13 @@ async function _computeBoard(mkt, deps, opts = {}) {
   const breadth = { bull: 0, bear: 0, flat: 0, avgConf: 0 };
   let confSum = 0;
   for (const ctx of contexts) {
-    let votes = applyRegimeWeights(applyAdaptiveWeights(runQuantModels(ctx), adaptiveMul), regimeLabel);
+    // v11.6: mesh-seat gating FIRST (shadow weight-0 + correlation
+    // discount), then the live-outcome adaptive multipliers and the
+    // regime tilt on top — the mesh seats are subject to the SAME
+    // calibration ladder as every other seat, never exempt from it.
+    let votes = applyMeshModelGating(
+      applyRegimeWeights(applyAdaptiveWeights(runQuantModels(ctx), adaptiveMul), regimeLabel),
+    );
     // v9 UNIVERSAL PASS-2 REVIVAL: every scanned coin that carries LTF
     // candles gets the full revival treatment HERE — the SMC model
     // comes alive on intraday structure AND the pattern/sr/volume/
@@ -1808,11 +1840,26 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
     await attachFundamentals(ctx).catch(() => {});
   }
 
+  // v11.6 MESH SEATS (deep path): the single-symbol dive IS the T3
+  // cadence — the mesh warms THIS symbol now (bounded 2.5s soft
+  // deadline, the depth-warm pattern; a late result lands in the store
+  // for the next deep dive). INDIA deep dives get the AlphaVantage/
+  // Massive fundamental warm (the .BSE suffix is added inside);
+  // crypto/global dives get their own cap sets.
+  if (meshModelsEnabled()) {
+    await Promise.race([
+      warmMeshModels(mkt, [sym]).catch(() => {}),
+      new Promise((res) => { const t = setTimeout(() => res(null), 2500); t.unref?.(); }),
+    ]);
+  }
+
   // v10.6: deep dive votes get the SAME regime tilt as the board (flag
   // OFF → static weights, byte-identical legacy deep path).
-  const votes = applyRegimeWeights(
-    applyAdaptiveWeights(runQuantModels(ctx), adaptiveMultipliers(_ledgerModelStats())),
-    regimeWeightsEnabled() ? classifyRegimeFor(regime, mkt) : null,
+  const votes = applyMeshModelGating(
+    applyRegimeWeights(
+      applyAdaptiveWeights(runQuantModels(ctx), adaptiveMultipliers(_ledgerModelStats())),
+      regimeWeightsEnabled() ? classifyRegimeFor(regime, mkt) : null,
+    ),
   );
   // ---------------- v6.12 pass-2 deep enrichment ----------------
   // LTF candles: 15m (India) / 1h (crypto) — SMC + MTF + structure
@@ -2008,27 +2055,83 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
 /**
  * The execute-gauntlet's fresh signal source — a single-symbol ensemble
  * run with a STRICT 90s freshness (no board cache reuse).
+ *
+ * v11.5 BOARD FALLBACK (paper/notify only): getDeepSignal() answers
+ * {ok:false} (30s-cached) whenever an upstream leg is down — CoinDCX
+ * futures API unreachable, TradingView blocked, the whole chain that
+ * fed the 2026-09-17-style incident. The board refreshes every 60s and
+ * may still hold a recent valid signal for the SAME symbol, so the
+ * practice desks (paper/notify — signal is used for plan generation,
+ * not live order safety) get that instead of a dead "No fresh ensemble
+ * signal available" rejection. LIVE keeps the strict fresh-deep-run
+ * contract: a live order NEVER executes off a board-cached signal.
+ * Staleness cap 10 minutes — matching the paper gate's own 600s
+ * freshness window, and the row carries its own generatedAt so the
+ * execution path knows exactly how old it is.
  */
-export async function getFreshSignalForExec(pairOrSymbol, deps) {
+export async function getFreshSignalForExec(pairOrSymbol, deps, opts = {}) {
   // Accept "BTCINR" or "BTC".
   const sym = String(pairOrSymbol || '').toUpperCase().replace(/INR$/, '').replace(/USDT$/, '');
   const deep = await getDeepSignal(sym, 'CRYPTO', deps);
-  return deep?.ok ? deep.signal : null;
+  if (deep?.ok && deep.signal) return deep.signal;
+  return _boardFallbackForExec('CRYPTO', sym, opts);
 }
 
 /** v6.8: the FUTURES gauntlet's fresh signal source ("B-BTC_USDT" | "BTC"). */
-export async function getFreshFuturesSignalForExec(pairOrSymbol, deps) {
+export async function getFreshFuturesSignalForExec(pairOrSymbol, deps, opts = {}) {
   const sym = String(pairOrSymbol || '').toUpperCase()
     .replace(/^B-/, '').replace(/_USDT$/, '').replace(/USDT$/, '');
   const deep = await getDeepSignal(sym, 'FUTURES', deps);
-  return deep?.ok ? deep.signal : null;
+  if (deep?.ok && deep.signal) return deep.signal;
+  return _boardFallbackForExec('FUTURES', sym, opts);
 }
 
 /** v10.4: the GLOBAL FUTURES gauntlet's fresh signal source ("NVDA-USD" | "NVDA"). */
-export async function getFreshGlobalSignalForExec(pairOrSymbol, deps) {
+export async function getFreshGlobalSignalForExec(pairOrSymbol, deps, opts = {}) {
   const sym = String(pairOrSymbol || '').toUpperCase().replace(/-USD$/, '');
   const deep = await getDeepSignal(sym, 'GLOBALFUTURES', deps);
-  return deep?.ok ? deep.signal : null;
+  if (deep?.ok && deep.signal) return deep.signal;
+  return _boardFallbackForExec('GLOBALFUTURES', sym, opts);
+}
+
+// ---------------- v11.5: board fallback internals ----------------
+/** 10-minute staleness cap for exec board fallbacks (== paper gate's 600s window). */
+export const EXEC_BOARD_FALLBACK_MAX_AGE_MS = 600_000;
+
+/** Normalise any pair/symbol spelling ("B-BTC_USDT", "BTCINR", "NVDA-USD") to the board's base key. */
+function _execFallbackKey(s) {
+  return String(s || '').toUpperCase()
+    .replace(/^B-/, '')
+    .replace(/_USDT$/, '')
+    .replace(/-USD$/, '')
+    .replace(/INR$/, '')
+    .replace(/USDT$/, '');
+}
+
+/**
+ * Look up a symbol in the 60s-refreshed board cache. Paper/notify only —
+ * opts.mode 'live' (or anything unrecognized, fail-safe) gets NO fallback.
+ * @returns the board signal row (with __execSource + __signalAgeMs honesty
+ * markers) or null when the board has nothing fresh enough.
+ */
+function _boardFallbackForExec(mkt, sym, opts = {}) {
+  // FAIL-SAFE default: no explicit paper/notify mode → no fallback. A live
+  // order must only ever run on a fresh deep-path ensemble run.
+  const mode = String(opts?.mode || '').toLowerCase();
+  if (mode !== 'paper' && mode !== 'notify') return null;
+  const hit = _cache.get(`board:${mkt}`);
+  if (!hit || !hit.payload || hit.payload.ok === false) return null;
+  const sigs = Array.isArray(hit.payload.signals) ? hit.payload.signals : null;
+  if (!sigs) return null;
+  const want = _execFallbackKey(sym);
+  if (!want) return null;
+  const row = sigs.find(s => _execFallbackKey(s?.symbol) === want);
+  if (!row) return null;
+  const age = Date.now() - (Number(row.generatedAt) || Number(hit.payload.generatedAt) || hit.at || 0);
+  if (!(age >= 0) || age > EXEC_BOARD_FALLBACK_MAX_AGE_MS) return null;
+  // Provenance is stamped on the returned copy — the journal and the UI can
+  // always see this plan came from the board cache, and exactly how stale.
+  return { ...row, __execSource: 'board', __signalAgeMs: age };
 }
 
 // ---------------- test hooks ----------------

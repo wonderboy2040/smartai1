@@ -35,6 +35,23 @@
 //  14. FundaCheck        0.5  V2 Phase 3 — P/E vs sector avg + earnings
 //                           surprise proxy (India SWING path only; the
 //                           intraday board never attaches its data)
+//  15. InstFlowPro       0.8  v11.6 MESH seat — Quiver congressional /
+//                           insider flow (GLOBALFUTURES desk; US tickers)
+//  16. TechConsensus     0.7  v11.6 MESH seat — TradingCentral's
+//                           INDEPENDENT read (different methodology than
+//                           this whole stack — real diversification when
+//                           it agrees, a flag when it doesn't)
+//  17. FundaProPlus     0.55  v11.6 MESH seat — AlphaVantage OVERVIEW +
+//                           Massive profile (India swing/deep + global)
+//  18. CryptoOnChainPro  0.6  v11.6 MESH seat — CoinGecko on-chain /
+//                           dev / community context + CoinAPI tick drift
+//                           (crypto desks)
+//
+// The v11.6 mesh seats ride the MCP Data Agent Mesh (server/mcp/*) —
+// the FIRST time mesh data actually VOTES on a trade decision. They
+// ship shadow-mode (weight 0 until settled outcomes prove an edge —
+// meshModels.js applyMeshModelGating) and abstain on stale mesh data
+// (the Phase-1B honesty gate). Gated by AI_ENABLE_MESH_MODELS.
 //
 // The ensemble aggregator (ensemble.js) turns these votes into ONE
 // consensus: side, confidence, agreement and the STRONG grade that
@@ -63,12 +80,18 @@ function vote(dir, conf, reasons) {
 import { sentimentVote } from './sentiment.js';
 import { instFlowVote } from './instFlow.js';
 import { fundamentalsVote } from './fundamentals.js';
+// v11.6 MESH-BACKED SEATS — the MCP mesh finally votes (Phase 1A).
+import {
+  instFlowProVote, techConsensusVote, fundaProPlusVote, cryptoOnChainProVote,
+  meshModelsEnabled, MESH_MODEL_IDS,
+} from './meshModels.js';
 
 export function v2ModelsEnabled() {
   return ['true', '1', 'on', 'yes'].includes(String(process.env.AI_ENABLE_V2_MODELS || '').trim().toLowerCase());
 }
 
 export const V2_MODEL_IDS = ['sentiment', 'instflow', 'fundamentals'];
+export { meshModelsEnabled, MESH_MODEL_IDS };
 
 // ------------------------------------------------------------
 // 1. TrendMatrix — the trend engine
@@ -621,6 +644,18 @@ export const MODELS = [
     { id: 'sentiment', name: 'SentimentPulse', role: 'News headlines + Fear&Greed/funding sentiment', weight: 0.7, fn: sentimentVote },
     { id: 'instflow', name: 'InstFlow', role: 'FII/DII net (India) · orderbook imbalance (crypto)', weight: 0.8, fn: instFlowVote },
     { id: 'fundamentals', name: 'FundaCheck', role: 'P/E vs sector avg + earnings surprise (India swing only)', weight: 0.5, fn: fundamentalsVote },
+  ] : []),
+  // ---- v11.6 MESH SEATS (Superintelligence MCP upgrade, Phase 1A).
+  // Real mesh data finally VOTES. Shadow-mode until settled outcomes
+  // prove an edge (applyMeshModelGating in signals.js sets weight 0
+  // until meshModelAccountability promotes the seat); honesty-gated
+  // abstention on stale data is inside each vote fn. Weights stay
+  // deliberately modest — they must be EARNED, not assumed.
+  ...(meshModelsEnabled() ? [
+    { id: 'instflowpro', name: 'InstFlowPro', role: 'Quiver congressional + insider flow (US/global desk, mesh alt-data)', weight: 0.8, fn: instFlowProVote },
+    { id: 'techconsensus', name: 'TechConsensus', role: 'TradingCentral independent vendor consensus (mesh)', weight: 0.7, fn: techConsensusVote },
+    { id: 'fundaproplus', name: 'FundaProPlus', role: 'AlphaVantage + Massive deep fundamentals (mesh, swing/global)', weight: 0.55, fn: fundaProPlusVote },
+    { id: 'cryptoonchain', name: 'CryptoOnChainPro', role: 'CoinGecko on-chain/dev context + CoinAPI tick drift (mesh)', weight: 0.6, fn: cryptoOnChainProVote },
   ] : []),
 ];
 
