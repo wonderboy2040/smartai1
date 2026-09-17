@@ -267,8 +267,17 @@ export function _closeBinanceFutWs(reason) {
   if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
   if (_resubTimer) { clearTimeout(_resubTimer); _resubTimer = null; }
   if (_ws) {
-    try { _ws.removeAllListeners(); _ws.close(); } catch { /* noop */ }
+    const ws = _ws;
     _ws = null;
+    try {
+      ws.removeAllListeners();
+      ws.on('error', () => {});
+      if (ws.readyState === 0 /* CONNECTING */ && typeof ws.terminate === 'function') {
+        ws.terminate();
+      } else {
+        ws.close();
+      }
+    } catch { /* noop */ }
   }
   _streams = '';
 }

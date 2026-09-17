@@ -167,7 +167,15 @@ export function createCxSocketIo({
     _nsConnected = false;
     _clearTimers();
     if (ws) {
-      try { ws.removeAllListeners(); ws.close(); } catch { /* already dead */ }
+      try {
+        ws.removeAllListeners();
+        ws.on('error', () => {});
+        if (ws.readyState === 0 /* CONNECTING */ && typeof ws.terminate === 'function') {
+          ws.terminate();
+        } else {
+          ws.close();
+        }
+      } catch { /* already dead */ }
     }
   }
 

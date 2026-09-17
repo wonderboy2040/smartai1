@@ -310,8 +310,18 @@ function _closeBinanceWs(reason) {
   if (_binanceReconnectTimer) { clearTimeout(_binanceReconnectTimer); _binanceReconnectTimer = null; }
   if (_binanceResubTimer) { clearTimeout(_binanceResubTimer); _binanceResubTimer = null; }
   if (_binanceWs) {
-    try { _binanceWs.removeAllListeners(); _binanceWs.close(); } catch { /* noop */ }
+    const ws = _binanceWs;
     _binanceWs = null;
+    try {
+      ws.removeAllListeners();
+      ws.on('error', () => {}); // swallow close-before-connected nextTick error
+      if (ws.readyState === WebSocket.CONNECTING) {
+        if (typeof ws.terminate === 'function') ws.terminate();
+        else ws.close();
+      } else {
+        ws.close();
+      }
+    } catch { /* noop */ }
   }
   _binanceStreams = '';
 }
