@@ -17,7 +17,9 @@
 //      coindcx-inr
 //   3. tvWebsocket (browser TV socket) → every update tagged 'tv-ws'
 //   4. liveSourceBadge maps all three to the honest pills
-//   5. intraday SignalCard renders the pill ONLY beside a live LTP
+//   (5. the SignalCard pill-gating contract lives in liveSourceBadge.test.tsx,
+//      which renders the LIVE aitrading/SignalCard — the v11.7 cleanup removed
+//      the dead intraday/SignalCard this file used to import)
 // Hermetic: no network — fetch/WebSocket are injected doubles.
 // ============================================================
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -37,9 +39,7 @@ vi.mock('../server/intraday/trackRecord.js', () => ({
 
 import { initIntradayStream, setScanSymbols, getLatestQuotes } from '../server/intraday/stream.js';
 import { liveSourceBadge } from '../src/components/aitrading/LiveSourceBadge';
-import { SignalCard } from '../src/components/intraday/SignalCard';
 import { subscribeToPrices, handleParsedMessage, disconnectPrices } from '../src/utils/tvWebsocket';
-import type { IntradaySignal } from '../src/components/intraday/types';
 
 // ============================================================
 // 2. intraday quotes stream — per-path src tagging
@@ -175,64 +175,5 @@ describe('liveSourceBadge — India label → pill mapping', () => {
   });
   it('coindcx-inr (intraday crypto watch) → CoinDCX·RT', () => {
     expect(liveSourceBadge('coindcx-inr').label).toBe('CoinDCX·RT');
-  });
-});
-
-// ============================================================
-// 5. intraday SignalCard — the pill renders ONLY beside a live LTP
-// ============================================================
-describe('intraday SignalCard — source pill next to the live LTP', () => {
-  const baseSignal = {
-    symbol: 'RELIANCE', direction: 'LONG', market: 'INDIA', exchange: 'NSE',
-    ltp: 2900, changePct: 0.4, confidence: 82, quantConfidence: 80,
-    entry: 2905, stopLoss: 2880, target1: 2940, target2: 2980,
-    grade: 'A', freshEntriesAllowed: true, reasons: [],
-  } as unknown as IntradaySignal;
-  const noop = () => { /* test double */ };
-
-  it('live Groww quote → ● LIVE + the Groww·live pill', () => {
-    render(
-      <SignalCard
-        s={baseSignal}
-        live={{ price: 2925.5, change: 0.43, src: 'groww-live' }}
-        freshEntriesAllowed
-        paperOpenForSymbol={false}
-        onChart={noop}
-        onPaper={noop}
-      />,
-    );
-    expect(screen.getByText('● LIVE')).toBeTruthy();
-    expect(screen.getByText('Groww·live')).toBeTruthy();
-  });
-
-  it('live Yahoo index quote → the Yahoo·delayed pill (amber fallback, honestly labeled)', () => {
-    render(
-      <SignalCard
-        s={{ ...baseSignal, symbol: 'NIFTY' } as unknown as IntradaySignal}
-        live={{ price: 24800, change: -0.4, src: 'yahoo-delayed' }}
-        freshEntriesAllowed
-        paperOpenForSymbol={false}
-        onChart={noop}
-        onPaper={noop}
-      />,
-    );
-    expect(screen.getByText('Yahoo·delayed')).toBeTruthy();
-  });
-
-  it('NO live quote → NO pill (snapshot LTP shows no provenance)', () => {
-    render(
-      <SignalCard
-        s={baseSignal}
-        live={undefined}
-        freshEntriesAllowed
-        paperOpenForSymbol={false}
-        onChart={noop}
-        onPaper={noop}
-      />,
-    );
-    expect(screen.queryByText('● LIVE')).toBeNull();
-    expect(screen.queryByText('Groww·live')).toBeNull();
-    expect(screen.queryByText('Yahoo·delayed')).toBeNull();
-    expect(screen.queryByText('LIVE')).toBeNull();
   });
 });

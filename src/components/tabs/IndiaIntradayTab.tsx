@@ -33,6 +33,10 @@ import { ManualTradeMonitor } from '../aitrading/ManualTradeMonitor';
 import { ModelRegistry } from '../aitrading/ModelRegistry';
 import { BacktestPanel } from '../aitrading/BacktestPanel';
 import { ModelPerformancePanel } from '../aitrading/ModelPerformancePanel';
+// v11.6 → v11.7 FIX: the MCP mesh ops view was originally wired only into the
+// DEAD tabs/AITradingTab.tsx (unreachable from App.tsx since the v6.9 desk
+// split) — users could never see it. Re-wired here onto the LIVE India desk.
+import { MeshStatusPanel } from '../aitrading/MeshStatusPanel';
 import { AlertsPanel } from '../aitrading/AlertsPanel';
 import { MorningBriefPanel, SwingDeskPanel, SignalLedgerPanel, TrustLayerPanel, PerfAnalyticsPanel, SectorMapPanel } from '../aitrading/ProPanels';
 // v9.1 PAPER DESK (Phase-1 merge of the orphaned v4 intraday tree — the
@@ -497,6 +501,11 @@ export default memo(function IndiaIntradayTab() {
               30/90d win-rates + calibration chart + regime tilt state. */}
           <div className="mt-2.5">
             <ModelPerformancePanel desk="INDIA" />
+          </div>
+          {/* v11.6 MCP mesh ops — 10 data agents' health, free-tier budgets
+              and the mesh-backed ensemble seats (shadow/voting state). */}
+          <div className="mt-2.5">
+            <MeshStatusPanel />
           </div>
         </div>
       )}

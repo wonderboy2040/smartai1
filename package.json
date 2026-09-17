@@ -18,6 +18,7 @@
     "audit:all": "npm audit --omit=dev && npm --prefix telegram-bot audit --omit=dev"
   },
   "dependencies": {
+    "compression": "^1.8.2",
     "dotenv": "^17.4.2",
     "express": "^4.21.2",
     "lightweight-charts": "^5.2.0",

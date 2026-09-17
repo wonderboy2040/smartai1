@@ -53,10 +53,11 @@ function normalize(raw) {
 }
 
 // KNOWN ORPHANS — pre-existing debt this check SURFACED on its first run
-// (2026-09 v9.1): ResearchLabTab.tsx is an unimported experiment whose
-// backend routes were never built. Until it is either wired up with a
-// real backend or deleted, its calls are allowlisted here so the gate
-// stays green for REGRESSIONS (a NEW call to a missing route still fails).
+// (2026-09 v9.1): ResearchLabTab.tsx was an unimported experiment whose
+// backend routes were never built. v11.7 cleanup DELETED that tab, so these
+// routes no longer have any frontend caller at all — they are allowlisted
+// here (backend routes with no frontend) so the gate stays green for
+// REGRESSIONS (a NEW call to a missing route still fails).
 const KNOWN_ORPHANS = new Set([
   '/api/journal/analyze',
   '/api/patterns/detect',
@@ -173,7 +174,7 @@ if (warnings.length) {
 }
 
 if (orphaned.length) {
-  console.log(`\n\x1b[33m◐ KNOWN ORPHANED calls (${orphaned.length}) — allowlisted pre-existing debt (ResearchLabTab, unimported + backend-less):\x1b[0m`);
+  console.log(`\n\x1b[33m◐ KNOWN ORPHANED calls (${orphaned.length}) — allowlisted backend routes with no frontend caller (v11.7 cleanup deleted their last callers):\x1b[0m`);
   for (const o of orphaned) console.log(`  ◐ ${o.path}  ← ${o.hits[0]?.file}`);
 }
 

@@ -28,6 +28,11 @@ import { ManualTradeMonitor } from '../aitrading/ManualTradeMonitor';
 import { ModelRegistry } from '../aitrading/ModelRegistry';
 import { BacktestPanel } from '../aitrading/BacktestPanel';
 import { ModelPerformancePanel } from '../aitrading/ModelPerformancePanel';
+// v11.6 → v11.7 FIX: the MCP mesh ops view was originally wired only into the
+// DEAD tabs/AITradingTab.tsx (unreachable from App.tsx since the v6.9 desk
+// split) — users could never see it. Re-wired here onto the LIVE crypto desk
+// (mesh is shared infra — same 10 agents feed both desks' T3 seats).
+import { MeshStatusPanel } from '../aitrading/MeshStatusPanel';
 import { AlertsPanel } from '../aitrading/AlertsPanel';
 import { AgentPanel } from '../aitrading/AgentPanel';
 import { MorningBriefPanel, SwingDeskPanel, WhaleRadarPanel, SignalLedgerPanel, OrderbookPanel, TrustLayerPanel, PerfAnalyticsPanel, CorrelationPanel } from '../aitrading/ProPanels';
@@ -555,6 +560,11 @@ export default memo(function CoinDcxTab() {
               30/90d win-rates + calibration chart + regime tilt state. */}
           <div className="mt-2.5">
             <ModelPerformancePanel desk="CRYPTO" />
+          </div>
+          {/* v11.6 MCP mesh ops — 10 data agents' health, free-tier budgets
+              and the mesh-backed ensemble seats (shadow/voting state). */}
+          <div className="mt-2.5">
+            <MeshStatusPanel />
           </div>
         </div>
       )}

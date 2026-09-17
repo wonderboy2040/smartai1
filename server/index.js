@@ -42,13 +42,40 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fork } from 'node:child_process';
 import crypto from 'node:crypto';
+// v11.7 PERF: gzip responses (JS/CSS/JSON/HTML/SVG). The built bundle ships
+// ~1.9MB of text assets across ~25 chunks — without transfer compression
+// every visit re-downloaded all of it raw (e.g. vendor-react 192KB → ~60KB
+// gzipped). Battle-tested middleware, zero hand-rolled stream edge cases.
+import compression from 'compression';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 8080;
 const DEFAULT_USD_INR = 83.5;
 
+// v11.7 PERF: hide the Express fingerprint (minor hygiene).
+app.disable('x-powered-by');
+
 app.use(express.json({ limit: '1mb' }));
+
+// v11.7 PERF #1 — TRANSFER COMPRESSION.
+// gzip every compressible response ≥1KB (default filter + threshold).
+// Belt-and-braces on top of the package defaults: NEVER touch SSE streams
+// (text/event-stream) — zlib buffering there would delay live ticks — and
+// never touch anything a route already marked Cache-Control: no-transform
+// (the SSE endpoints already send that, this filter keeps them untouched even
+// if a future endpoint forgets the header). API JSON boards (the /api/ai/board
+// payloads are regularly 100-400KB) get compressed too — big win on Render's
+// free-tier network path.
+app.use(compression({
+  filter: (req, res) => {
+    const ct = String(res.getHeader('Content-Type') || '');
+    if (ct.includes('text/event-stream')) return false;
+    const cc = String(res.getHeader('Cache-Control') || '');
+    if (cc.includes('no-transform')) return false;
+    return compression.filter(req, res);
+  },
+}));
 
 // NOTE: CORS is handled by a single strict middleware further down
 // (ALLOWED_ORIGINS allowlist + Vary: Origin). A previous looser
@@ -263,9 +290,9 @@ const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
 // alongside `Access-Control-Allow-Credentials: true` -- the session cookie is
 // SameSite=None, so reflecting any origin equals full cross-origin account
 // takeover (portfolio reads, cloud-state overwrites, AI-key burn).
-// v7.0.2 FIX: the guard used to fail open when NODE_ENV was UNSET — but the
-// repo's own start paths (start_server.vbs, plain `node server/index.js` on a
-// VPS) run exactly that way, silently echoing any origin with credentials.
+// v7.0.2 FIX: the guard used to fail open when NODE_ENV was UNSET — but
+// bare `node server/index.js` start paths (VPS, containers) run exactly
+// that way, silently echoing any origin with credentials.
 // Now it fails closed in EVERY mode except an explicit NODE_ENV=development.
 const _corsFailClosed = !ALLOWED_ORIGINS
   && String(process.env.NODE_ENV || '').toLowerCase() !== 'development';
@@ -2216,7 +2243,30 @@ app.get('/api/inflation', async (_req, res) => {
 // Static frontend (built by `vite build` â†’ dist/)
 // ------------------------------------------------------------
 const distDir = path.resolve(__dirname, '..', 'dist');
-app.use(express.static(distDir));
+// v11.7 PERF #2 — REAL BROWSER CACHING FOR HASHED ASSETS.
+// express.static's default was `Cache-Control: public, max-age=0` — a
+// content-hashed build (index-C2rax6Rt.js etc.) re-downloaded ALL ~1.9MB
+// of chunks on EVERY visit. Vite content-hashes every /assets/* filename,
+// so those responses are immutable by construction: cache them for a year.
+// index.html / sw.js / manifest.json must NEVER be long-cached (a deploy
+// must be picked up immediately — stale HTML is what breaks deploys).
+app.use(express.static(distDir, {
+  setHeaders: (res, filePath) => {
+    if (filePath.split(path.sep).includes('assets')) {
+      res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    } else {
+      const base = path.basename(filePath);
+      if (base === 'sw.js' || base === 'widget.html' || base === 'manifest.json') {
+        // service worker + widget page + manifest must always revalidate
+        // (spec-safe SW updates depend on revalidating the SW file itself)
+        res.set('Cache-Control', 'no-cache');
+      } else if (/\.html?$/i.test(base)) {
+        // the app shell: always revalidate so deploys land immediately
+        res.set('Cache-Control', 'no-store');
+      }
+    }
+  },
+}));
 
 // SPA fallback for any non-/api, non-/health route.
 // FIX C8: When a code-split chunk (e.g. /assets/vendor-charts-abc.js) is
@@ -2231,6 +2281,10 @@ app.get(/^(?!\/api\/|\/health).*/, (req, res) => {
   const isAsset = req.path.startsWith('/assets/')
     || /\.(js|mjs|css|map|ico|svg|png|jpe?g|webp|woff2?|ttf|otf|json|wasm)$/i.test(req.path);
   if (isAsset) return res.status(404).send('Not found');
+  // v11.7 PERF #2 (continued): the SPA shell served through this fallback
+  // must never be heuristically cached by the browser — a stale index.html
+  // after a deploy is the classic "site looks unchanged / chunk 404" bug.
+  res.set('Cache-Control', 'no-store');
   res.sendFile(path.join(distDir, 'index.html'));
 });
 
