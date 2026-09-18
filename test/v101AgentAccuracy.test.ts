@@ -41,6 +41,11 @@ vi.mock('../server/ai/futures.js', async (importOriginal) => {
     executeFuturesSignal: (...a) => mockExecuteFutures(...a),
     closeFuturesPosition: (...a) => mockCloseFutures(...a),
     fetchUsdInr: vi.fn(async () => 84),
+    // v11.8.2 flake killer: getPositionsWithPnl prices FUTURES positions
+    // through the REAL feed (8s timeout) — same live-network hazard the
+    // orderFlowDepth mock below removes. Empty rows = prices unknown,
+    // the honest degrade the code already handles.
+    fetchFuturesPrices: vi.fn(async () => []),
   };
 });
 
@@ -50,6 +55,18 @@ vi.mock('../server/ai/signals.js', () => ({
   getFreshFuturesSignalForExec: vi.fn(async () => null),
   getFreshSignalForExec: vi.fn(async () => null),
 }));
+
+// v11.8.2 FLAKE KILLER: readDepth does REAL CoinDCX→Binance fetches on
+// the entry path (6s chain). Under a slow sandbox route the tick blows
+// the 5s vitest budget, and the still-running zombie holds the agent's
+// single-flight guard (`_ticking`) so every later test's agentTick
+// no-ops — the "expected 1 times, got 0 times" cascade seen in 2 of 4
+// full-suite runs. The depth layer has its own suites; here it degrades
+// instantly (null → single-order honest path).
+vi.mock('../server/ai/orderFlowDepth.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, readDepth: vi.fn(async () => null) };
+});
 
 // B4: correlation fetch fully mocked (network has no place here)
 const mockPairCorrelation = vi.fn();

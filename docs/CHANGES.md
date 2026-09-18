@@ -1,5 +1,39 @@
 # Changelog
 
+## v11.8.2 — Deep recheck: the intermittent agent-suite flake (12→24 test failures), root-caused and killed (2026-09-18)
+
+**User ask: "ek baar full site code recheck karo deep me aur koi issues hai tho fix kardo." Full-suite runs were flipping between clean (2115/2116) and 12-24 failures across agent.test.ts / v101AgentAccuracy / nearMissAutoTrade — 2 of 4 runs failed with a "timeout + expected 1 times, got 0 times" cascade. Root cause (empirically verified): the agent-family suites never mocked `readDepth` — the entry path's CoinDCX→Binance depth fetch is TWO SERIAL 6s timeouts (12s worst case) vs vitest's 5s per-test budget. When a sandbox route stalls, the tick blows the budget; the still-running zombie holds the agent's single-flight guard (`_ticking`) for up to 12s, so every subsequent agentTick in the file no-ops instantly — exactly the 0-call cascade observed. Same hazard class: `pairCorrelation` (2 real Yahoo fetches, 12s timeouts) on open-position fixtures and `fetchFuturesPrices` (8s timeout) inside getPositionsWithPnl.**
+
+### The fixes
+- **Production — depth chain shares ONE 6s budget (orderFlowDepth.js)**: the Binance fallback now gets the REMAINING time (`max(750ms floor, deadline - elapsed)`) instead of a fresh 6s. Worst-case stall halves: 12s → ~6.75s. A live agentTick entry decision (30s cadence) can no longer black out for 12s.
+- **Tests — the agent-family suites now own their network boundary**: `orderFlowDepth.readDepth → null` (the depth layer keeps its own suites), `pairCorrelation → null` ("unknown → allow", the guard's documented contract) in agent.test.ts + nearMissAutoTrade, and `fetchFuturesPrices → []` added to the existing futures.js partial mocks in all three suites. Zero live network remains in the agent suites — deterministic regardless of sandbox route conditions.
+- **No agent.js change needed**: the single-flight guard was already correct production design (never overlap cycles) — the flake was the UNMOCKED network stall, not the guard.
+
+### Also verified during the recheck (no issues found)
+- v11.8 applicable-quorum math, board tape fallback, India index option-chain ctx (single-flight + TTL + real-chain gate), Binance depth fallback labeling, na marks — all reviewed, byte-level display artifact on meshModels.js line 347 (`[massive.ok` renders as `assive.ok` through ANSI-eating display paths; od + node --check confirm the file is correct).
+- tsc CLEAN · npm audit 0/0 · route audit PASS · build 4.96s · smoke 15/15 · **full suite ×2 back-to-back: 2115/2116 each** (the 1 = the documented BSE live-network geo-block, unchanged).
+
+## v11.8.1 — Mesh agent free-key pass: live-verified key availability + the Massive domain bug (2026-09-18)
+
+**User ask: "Mesh keys (6 agents unauthed): QUIVER / TRADINGCENTRAL / ALPHAVANTAGE / MASSIVE / COINAPI / COINGECKO — free API key milega kya?" Every endpoint was probed LIVE (2026-09-18) before answering, and one real bug surfaced: the `massive` agent was pointed at `api.massive.dev`, a domain that DOES NOT RESOLVE (DNS failure) — a free key would have connected to nothing. Massive is the rebrand of Polygon.io and its REST surface still lives at `api.polygon.io` (probed: 401 = alive, key-gated).**
+
+### Free-key verdict (live-verified)
+| Env var | Free? | Where | Limits vs our agent budget |
+|---|---|---|---|
+| ALPHAVANTAGE_API_KEY | ✅ FREE | alphavantage.co/support/#api-key | 25 req/day, 5/min (budget 20/day) |
+| COINGECKO_API_KEY | ✅ FREE Demo | coingecko.com/en/api | 10k calls/mo, 30/min (keyless works NOW — key stops 429 breaker trips) |
+| COINAPI_API_KEY | ✅ FREE | coinapi.io → "Get Free API Key" | 100 req/day (budget 60/day) |
+| MASSIVE_API_KEY | ✅ FREE Basic | massive.com (formerly polygon.io) | 5 req/min, EOD/reference (budget 5/min) |
+| QUIVER_API_KEY | ✅ free tier | api.quiverquant.com (account → API key) | limited free requests (budget 50/day; full history paid) |
+| TRADINGCENTRAL_API_KEY | ❌ no self-serve | enterprise B2B only | leave unset — TechConsensus honestly absent by design |
+
+### The fix
+- **massive.js retargeted to the live API**: `BASE = MASSIVE_API_BASE || 'https://api.polygon.io'` (env-overridable — if Massive migrates domains again, no redeploy needed), auth switched to Polygon's documented `Authorization: Bearer` header. `fundamentals.profile` now reads `/v3/reference/tickers/{sym}` (`results.ticker/name/sic_description`); the free Basic tier serves no valuation ratios, so `marketCap/peRatio/dividendYield/beta` return honestly null — the FundaProPlus seat cross-reads AlphaVantage for the numbers, and if NO source yields usable fields the seat abstains with the reason (unchanged honesty gate). The `quant.greeks` cap was REMOVED: no consumer existed anywhere (mesh seats, agent tools, routes) and the real free tier has no BS-greeks REST endpoint — advertising a dead cap is its own small dishonesty.
+- **.env.example**: the v11.8 checklist now carries the per-key free-tier table above (registration links + limits vs budgets) + the new `MASSIVE_API_BASE` documented var.
+
+### Validation
+- tsc CLEAN · agent/mesh test files green (mcpAgents ID-list lock unchanged — 'massive' stays registered) · live probes: api.polygon.io 401 (alive), api.quiverquant.com 401, rest.coinapi.io 401, api.coingecko.com keyless 200, api.tradingcentral.com 403 (no self-serve), api.massive.dev DNS-dead.
+
 ## v11.8 — FULL COMMITTEE: why only 3-4 of 14 models were responding, fixed (2026-09-18)
 
 **User ask: "Intraday TAB & CoinDCX TAB — 14 models me sirf 3-4 ka response aa raha hai, isliye signal accuracy high nahi hai — deep advance pro level pe check karo, Render env bhi bolo, live check karo." Live-render diagnosis (login + /api/ai/signals + /api/ai/status + /api/mcp/mesh/status on smartai-e954.onrender.com, 2026-09-18): the committee was losing voters to FIVE separate causes, four of them code bugs and one an env gap. This release fixes the code side and documents the exact env checklist. Verified locally end-to-end: the INDIA board went from 3-4 voters / conf 7-28 / all-NEUTRAL to 8/11 voters · conf 78 · STRONG (ACE, tape-MTF voting with real 5m/15m/1h confluence); the CRYPTO board went from "6/17 models voting · 47% quorum · conf 34" to "6/10 applicable models voting · 66% quorum · conf 42-45" on the SAME votes.**

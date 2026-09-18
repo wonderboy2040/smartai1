@@ -41,6 +41,15 @@ const DEPTH_URL = 'https://public.coindcx.com/market_data/v3/orders';
 const DEPTH_TTL_MS = 2000;          // fast tier (positionsStream class)
 const DHAN_DEPTH_TTL_MS = 3000;     // L2 quote cadence
 const NEG_TTL_MS = 60_000;          // endpoint down → retry at most 1/min
+const DEPTH_FETCH_TIMEOUT_MS = 6000; // per-endpoint cap (unchanged)
+// v11.8.2: the CoinDCX→Binance fallback chain used to be able to stall
+// a caller for TWO full 6s timeouts back-to-back (12s worst case) — a
+// live agentTick entry decision can black out for 12s and the agent's
+// single-flight guard then skips every cycle in the window. The chain
+// now shares ONE 6s budget: the Binance fallback gets whatever remains
+// (floor 750ms so it is still a real attempt, not an instant abort).
+const DEPTH_CHAIN_BUDGET_MS = 6000;
+const FALLBACK_FLOOR_MS = 750;
 const RING_KEEP = 3;                // velocity ring (spoof detection)
 const WALL_X = 4;                   // level ≥ 4× side median = wall
 const WALL_VANISH_FACTOR = 1.5;     // wall "gone" when back under this × median
@@ -81,10 +90,10 @@ export function normalizeLevels(arr) {
   return out;
 }
 
-async function _fetchCoinDcxDepth(base, levels) {
+async function _fetchCoinDcxDepth(base, levels, timeoutMs = DEPTH_FETCH_TIMEOUT_MS) {
   const pair = `B-${base}_INR`;
   const r = await fetch(`${DEPTH_URL}?pair=${encodeURIComponent(pair)}&limit=${levels}`, {
-    signal: AbortSignal.timeout(6000),
+    signal: AbortSignal.timeout(timeoutMs),
     headers: { 'User-Agent': 'Mozilla/5.0 (SmartAI depth reader)' },
   });
   if (!r.ok) throw new Error(`depth HTTP ${r.status}`);
@@ -106,9 +115,9 @@ async function _fetchCoinDcxDepth(base, levels) {
 // and datacenter-friendly; the ladder comes back in the USDT domain and
 // readDepth rescales it onto the caller's INR anchor before analysis
 // (wall distances / slippage stay in the trading domain).
-async function _fetchBinanceDepth(base, levels) {
+async function _fetchBinanceDepth(base, levels, timeoutMs = DEPTH_FETCH_TIMEOUT_MS) {
   const r = await fetch(`https://api.binance.com/api/v3/depth?symbol=${encodeURIComponent(`${base}USDT`)}&limit=${Math.min(100, Math.max(5, levels))}`, {
-    signal: AbortSignal.timeout(6000),
+    signal: AbortSignal.timeout(timeoutMs),
     headers: { 'User-Agent': 'Mozilla/5.0 (SmartAI depth reader)' },
   });
   if (!r.ok) throw new Error(`binance depth HTTP ${r.status}`);
@@ -132,6 +141,8 @@ export async function getCoinDcxDepth(base, { maxAgeMs = DEPTH_TTL_MS, levels = 
   if (Date.now() < slot.negUntil) return slot.snap; // endpoint down — stale beats hammering
   if (slot.inflight) return slot.inflight;
   slot.inflight = (async () => {
+    // v11.8.2: ONE 6s budget across the whole chain (see consts above).
+    const deadline = Date.now() + DEPTH_CHAIN_BUDGET_MS;
     try {
       const snap = await _fetchCoinDcxDepth(sym, levels);
       slot.snap = snap; slot.at = Date.now(); slot.negUntil = 0;
@@ -141,7 +152,7 @@ export async function getCoinDcxDepth(base, { maxAgeMs = DEPTH_TTL_MS, levels = 
       // to the INR anchor by readDepth). Only when BOTH fail do we go
       // negative-cache + stale/null (honest degrade as before).
       try {
-        const bSnap = await _fetchBinanceDepth(sym, levels);
+        const bSnap = await _fetchBinanceDepth(sym, levels, Math.max(FALLBACK_FLOOR_MS, deadline - Date.now()));
         slot.snap = bSnap; slot.at = Date.now(); slot.negUntil = 0;
         return bSnap;
       } catch {
