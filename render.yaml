@@ -1,0 +1,117 @@
+services:
+  - type: web
+    name: wealth-ai-pro
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: node server/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: APP_PIN
+        sync: false
+      # FIX (audit H-4): API_TOKEN was missing from the blueprint while the
+      # server REQUIRES it for /api/cloud/* — every cloud-sync call returned
+      # 503 out of the box and the frontend silently fell back to the
+      # (leaked, now removed) client-side hardcoded token.
+      - key: API_TOKEN
+        sync: false
+      - key: VITE_API_TOKEN
+        sync: false
+      - key: VITE_ENCRYPTION_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: HF_API_KEY
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: TG_TOKEN
+        sync: false
+      - key: TG_CHAT_ID
+        sync: false
+      - key: API_URL
+        sync: false
+      # DURABLE PAPER-TRADE HISTORY (optional but recommended on the
+      # free plan): Render wipes server/data/ on every restart, so the
+      # engine mirrors paper-trades.json to this GitHub repo/branch.
+      # Fine-grained PAT with Contents: Read+Write on the repo.
+      - key: GITHUB_BACKUP_TOKEN
+        sync: false
+      - key: GITHUB_BACKUP_REPO
+        sync: false
+      - key: GITHUB_BACKUP_BRANCH
+        sync: false
+      - key: FINNHUB_API_KEY
+        sync: false
+      - key: DHAN_CLIENT_ID
+        sync: false
+      - key: DHAN_ACCESS_TOKEN
+        sync: false
+      # ---- v10.5 UPGRADE FLAGS (4-upgrade plan) ----
+      # META-ENSEMBLE (Upgrade 4): route the 14-model votes through the
+      # trained LightGBM meta-learner on the ml-service. Default OFF —
+      # the in-process weighted ensemble stays authoritative until the
+      # walk-forward backtest (backtest.py --strategy meta_ensemble)
+      # proves the meta-learner wins.
+      - key: AI_ENABLE_META_ENSEMBLE
+        sync: false
+      # Where the ml-service (FastAPI) lives, if deployed. The Node
+      # server proxies /api/ml/meta-ensemble to it and falls back to
+      # the weighted ensemble when unreachable.
+      - key: ML_SERVICE_URL
+        sync: false
+      # MTF CONFLUENCE (Upgrade 1): 5m/15m/1h time-frame confluence
+      # engine on the India intraday desk (IntradayTapeMTF, weight
+      # 1.6, replaces the plain 15m tape when ON).
+      - key: AI_ENABLE_MTF_CONFLUENCE
+        sync: false
+      # ---- v10.6 PRO ACCURACY UPGRADES ----
+      # REGIME-AWARE REWEIGHTING (Pro #4): TRENDING/CHOPPY/HIGH_VOL/
+      # LOW_VOL multiplier layer on the weighted-average path (±25%
+      # max). Default OFF — A/B via backtest strategy=regime_weighted
+      # first (Node runBacktest + ml-service backtest.py both support
+      # the side-by-side comparison).
+      - key: AI_ENABLE_REGIME_WEIGHTS
+        sync: false
+      # KELLY-LITE SIZING (Pro #2): riskPerTradePct becomes the ceiling;
+      # the confidence bucket's realized win-rate (trust calibration)
+      # sizes at half-Kelly. Negative edge → entry skipped.
+      - key: AI_ENABLE_KELLY_SIZING
+        sync: false
+      # WICK FILTER (Pro #3): cross-exchange price validation against
+      # Binance. ON by default — set 1 to disable; thresholds tunable
+      # via AI_WICK_THRESHOLD_PCT / AI_WICK_ALT_THRESHOLD_PCT.
+      - key: AI_DISABLE_WICK_FILTER
+        sync: false
+      # SLIPPAGE-AWARE EXECUTION (Pro #6): TWAP-lite child-order split
+      # when the L2 depth walk expects more than this % of slippage.
+      - key: AI_SLIPPAGE_THRESHOLD_PCT
+        sync: false
+
+  # ---- v10.5 META-ENSEMBLE WEEKLY RETRAIN (Upgrade 4) ----
+  # Refreshes meta_ensemble.pkl weekly so the stacked learner never
+  # trains on stale market data. One-shot job: python -m
+  # models.retrain_scheduler --once (fetches fresh OHLCV, retrains,
+  # saves the pkl; a failed run keeps the previous artifact — the
+  # inference side degrades to weighted-average, never crashes).
+  - type: cron
+    name: meta-ensemble-retrain
+    runtime: python
+    schedule: "0 3 * * 1"   # Mondays 03:00 UTC (post-weekend data)
+    buildCommand: pip install -r ml-service/requirements.txt
+    startCommand: python -m models.retrain_scheduler --once
+    rootDir: ml-service

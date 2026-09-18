@@ -1,0 +1,87 @@
+import { PriceData } from '../types';
+import { getSessionToken, getProxyBase } from './api';
+
+// ============================================================
+// liveStream — browser EventSource client for /api/stream (SSE)
+// ------------------------------------------------------------
+// Receives server-pushed real-time ticks (SSE from server — NSE/Finnhub/CoinDCX)
+// and feeds them into the SAME price pipeline the pollers use.
+// This replaces 2-second polling with instant push. If SSE drops, EventSource
+// auto-reconnects, and the existing pollers still run as a safety net.
+// ============================================================
+
+// v6.2: resolve the backend the SAME way apiFetch does (localStorage
+// WEALTH_AI_BACKEND_URL override → env → mirror-host detection). The raw
+// env-only read could point SSE at a different backend than every REST
+// call (custom backend → 404 reconnect loop, no live ticks).
+const SSE_BASE = getProxyBase();
+
+export interface LiveStreamOpts {
+  inSymbols: string[];
+  usSymbols: string[];
+  cryptoSymbols: string[];
+  onTick: (serverKey: string, data: Partial<PriceData>) => void;
+  onStatus?: (status: Record<string, boolean>) => void;
+}
+
+function toPriceData(t: Record<string, unknown>): Partial<PriceData> {
+  return {
+    price: Number(t.price) || 0,
+    change: typeof t.change === 'number' ? (t.change as number) : 0,
+    high: t.high != null ? Number(t.high) : undefined,
+    low: t.low != null ? Number(t.low) : undefined,
+    volume: t.volume != null ? Number(t.volume) : undefined,
+    time: Number(t.time) || Date.now(),
+    prevClose: t.prevClose != null ? Number(t.prevClose) : undefined,
+    isRealtime: true,
+  };
+}
+
+export function connectLiveStream(opts: LiveStreamOpts): () => void {
+  let es: EventSource | null = null;
+  let closed = false;
+
+  (async () => {
+    if (closed) return;
+    const params = new URLSearchParams();
+    if (opts.inSymbols.length) params.set('in', opts.inSymbols.join(','));
+    if (opts.usSymbols.length) params.set('us', opts.usSymbols.join(','));
+    if (opts.cryptoSymbols.length) params.set('crypto', opts.cryptoSymbols.join(','));
+
+    // SECURITY: EventSource (SSE) cannot reliably send cookies cross-origin
+    // (Vercel frontend → Render backend). The server's requireAuth middleware
+    // accepts a ?session=<token> query param as a fallback. We append it here
+    // so the SSE stream authenticates correctly.
+    const sessionToken = getSessionToken();
+    if (sessionToken) params.set('session', sessionToken);
+    if (![...params.keys()].length) return;
+
+    try {
+      es = new EventSource(`${SSE_BASE}/api/stream?${params.toString()}`);
+    } catch {
+      return; // EventSource unsupported → pollers keep the app live
+    }
+
+    es.addEventListener('snapshot', (e: MessageEvent) => {
+      try {
+        const map = JSON.parse(e.data) as Record<string, Record<string, unknown>>;
+        Object.keys(map).forEach(k => opts.onTick(k, toPriceData(map[k])));
+      } catch { /* ignore */ }
+    });
+
+    es.addEventListener('tick', (e: MessageEvent) => {
+      try {
+        const t = JSON.parse(e.data) as Record<string, unknown>;
+        if (t.key) opts.onTick(String(t.key), toPriceData(t));
+      } catch { /* ignore */ }
+    });
+
+    es.addEventListener('status', (e: MessageEvent) => {
+      if (!opts.onStatus) return;
+      try { opts.onStatus(JSON.parse(e.data)); } catch { /* ignore */ }
+    });
+    // EventSource reconnects automatically on transient errors.
+  })();
+
+  return () => { closed = true; if (es) { try { es.close(); } catch { /* noop */ } } };
+}
