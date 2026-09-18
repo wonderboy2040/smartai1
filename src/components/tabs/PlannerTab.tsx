@@ -1,0 +1,665 @@
+import React, { useMemo, useState } from 'react';
+import { useApp } from '../../hooks/AppContext';
+import { RiskLevel } from '../../types';
+import { formatCurrency } from '../../utils/constants';
+import { MCPAgentAllocationPanel } from '../MCPAgentAllocationPanel';
+import { SmartDipSizer } from '../SmartDipSizer';
+import { WhatIfSIPOptimizer } from '../WhatIfSIPOptimizer';
+import { MonteCarloSimulator } from '../MonteCarloSimulator';
+import { TaxOptimizationSuite } from '../TaxOptimizationSuite';
+import { InflationAdjustedReturns } from '../InflationAdjustedReturns';
+import { MonthlyAnalyticsPanel } from '../MonthlyAnalyticsPanel';
+import { exportMonthlyAnalyticsCSV } from '../../utils/exportData';
+import {
+  calculateWealthMilestones,
+  analyzeGoals, analyzeRebalancing, calculatePortfolioXIRR,
+  calculateFireVariants, planCryptoDCA,
+  DEFAULT_GOALS, type InvestmentGoal
+} from '../../utils/wealthEngine';
+
+export default React.memo(function PlannerTab() {
+  const {
+    portfolio, livePrices, usdInrRate, metrics, transactions,
+    indiaSIP, setIndiaSIP, usSIP, setUsSIP, btcSIP, setBtcSIP, ethSIP, setEthSIP,
+    emergencyFund, setEmergencyFund, investYears, setInvestYears, riskLevel, setRiskLevel,
+    monthlyExpenses, setMonthlyExpenses, currentAge, setCurrentAge,
+    totalSIP, cagr,
+    fireNumber, yearsToFire, fireProgress,
+    indmSource,
+  } = useApp();
+
+  // v5.0 dedupe: fvMed/fvWorst/fvBest/multiplier/totalInvestedPlanner (the
+  // deterministic "fake Monte Carlo" summary) were ONLY rendered by the
+  // removed inline panel below — the REAL 10k-path MonteCarloSimulator +
+  // WhatIfSIPOptimizer cover this properly. Planner projections that still
+  // need the corpus trajectory compute it locally from totalSIP/cagr.
+
+  // --- Goals State (localStorage persisted) ---
+  const [goals, setGoals] = useState<InvestmentGoal[]>(() => {
+    try { const s = localStorage.getItem('wealth_goals'); return s ? JSON.parse(s) : DEFAULT_GOALS; } catch { return DEFAULT_GOALS; }
+  });
+  const [showAddGoal, setShowAddGoal] = useState(false);
+  const [newGoalName, setNewGoalName] = useState('');
+  const [newGoalAmount, setNewGoalAmount] = useState('');
+  const [newGoalYear, setNewGoalYear] = useState('2035');
+  const [newGoalEmoji, setNewGoalEmoji] = useState('🎯');
+
+  // Persist goals
+  // FIX M15: wrap in try/catch — Safari private mode / quota-exceeded throws
+  // on setItem, which would otherwise crash the effect.
+  React.useEffect(() => {
+    try { localStorage.setItem('wealth_goals', JSON.stringify(goals)); } catch { /* quota / private mode */ }
+  }, [goals]);
+
+  // --- Computed: Wealth Milestones ---
+  const milestones = useMemo(() =>
+    calculateWealthMilestones(metrics.totalValue, totalSIP, cagr, 10),
+    [metrics.totalValue, totalSIP, cagr]
+  );
+
+  // --- Computed: Goal Analysis ---
+  const goalAnalysis = useMemo(() =>
+    analyzeGoals(goals, metrics.totalValue, totalSIP, cagr),
+    [goals, metrics.totalValue, totalSIP, cagr]
+  );
+
+  // --- Computed: Rebalancing ---
+  // 2026 perf audit (H3/M1): snapshot-key memo pattern — recompute only
+  // when a relevant price changes, not when the livePrices object identity
+  // changes on every flush.
+  const plannerPriceKey = useMemo(() =>
+    portfolio.map(p => (livePrices[`${p.market}_${p.symbol}`]?.price ?? 0).toFixed(2)).join('|') + `@${usdInrRate.toFixed(2)}`,
+    [portfolio, livePrices, usdInrRate]);
+  const rebalanceItems = useMemo(() =>
+    analyzeRebalancing(portfolio, livePrices, usdInrRate),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [portfolio, plannerPriceKey]
+  );
+  const needsRebalance = rebalanceItems.filter(r => r.action !== 'OK');
+
+  // --- Computed: XIRR / Real Returns / FIRE Variants / Crypto DCA ---
+  const xirrData = useMemo(() =>
+    calculatePortfolioXIRR(portfolio, livePrices, usdInrRate),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [portfolio, plannerPriceKey]
+  );
+  const fireVariants = useMemo(() =>
+    calculateFireVariants(monthlyExpenses, metrics.totalValue, currentAge, 60, cagr),
+    [monthlyExpenses, metrics.totalValue, currentAge, cagr]
+  );
+  const cryptoDCA = useMemo(() => planCryptoDCA(btcSIP, ethSIP, investYears), [btcSIP, ethSIP, investYears]);
+
+  const addGoal = () => {
+    const amt = parseFloat(newGoalAmount);
+    const yr = parseInt(newGoalYear);
+    if (!newGoalName || isNaN(amt) || amt <= 0 || isNaN(yr)) return;
+    setGoals(prev => [...prev, { id: Date.now().toString(), name: newGoalName, emoji: newGoalEmoji, targetAmount: amt, targetYear: yr, priority: 'MEDIUM' }]);
+    setNewGoalName(''); setNewGoalAmount(''); setNewGoalYear('2035'); setShowAddGoal(false);
+  };
+  const removeGoal = (id: string) => setGoals(prev => prev.filter(g => g.id !== id));
+
+  return (
+    <div className="space-y-5 animate-fade-in">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-2xl font-black gradient-text-cyan font-display">
+          🎯 Wealth Planner
+        </h2>
+        <button
+          onClick={() => exportMonthlyAnalyticsCSV(transactions, usdInrRate)}
+          className="quantum-btn-ghost px-4 py-2 rounded-xl font-semibold text-sm text-emerald-300 border border-emerald-500/20"
+          title="Export monthly investment analytics to CSV"
+        >
+          ⬇️ Export Analytics
+        </button>
+      </div>
+
+      {/* ============ DEEP DATA ANALYTICS (monthly buy activity) ============ */}
+      <MonthlyAnalyticsPanel />
+
+      {/* SIP Config */}
+      <div className="quantum-panel rounded-2xl p-5 animate-fade-in-up">
+        <div className="text-[10px] text-cyan-500/70 font-bold uppercase tracking-wider mb-4">Monthly SIP Configuration</div>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
+          <div className="bg-blue-500/5 border border-blue-500/15 p-4 rounded-xl">
+            <div className="text-xs font-bold text-blue-400 mb-2">🇮🇳 India SIP</div>
+            <div className="flex items-center gap-2 quantum-input p-2 rounded-lg">
+              <span className="text-lg text-blue-500/50">₹</span>
+              <input type="number" value={indiaSIP} onChange={e => setIndiaSIP(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
+            </div>
+          </div>
+          <div className="bg-emerald-500/5 border border-emerald-500/15 p-4 rounded-xl">
+            <div className="text-xs font-bold text-emerald-400 mb-2">🌍 US/Global SIP</div>
+            <div className="flex items-center gap-2 quantum-input p-2 rounded-lg">
+              <span className="text-lg text-emerald-500/50">₹</span>
+              <input type="number" value={usSIP} onChange={e => setUsSIP(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
+            </div>
+          </div>
+          <div className="bg-orange-500/5 border border-orange-500/15 p-4 rounded-xl">
+            <div className="text-xs font-bold text-orange-400 mb-2">₿ Bitcoin SIP</div>
+            <div className="flex items-center gap-2 quantum-input p-2 rounded-lg">
+              <span className="text-lg text-orange-500/50">₹</span>
+              <input type="number" value={btcSIP} onChange={e => setBtcSIP(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
+            </div>
+          </div>
+          <div className="bg-indigo-500/5 border border-indigo-500/15 p-4 rounded-xl">
+            <div className="text-xs font-bold text-indigo-400 mb-2">🪙 Ethereum SIP</div>
+            <div className="flex items-center gap-2 quantum-input p-2 rounded-lg">
+              <span className="text-lg text-indigo-500/50">₹</span>
+              <input type="number" value={ethSIP} onChange={e => setEthSIP(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
+            </div>
+          </div>
+          <div className="bg-purple-500/5 border border-purple-500/15 p-4 rounded-xl">
+            <div className="text-xs font-bold text-purple-400 mb-2">💵 Emergency Fund</div>
+            <div className="flex items-center gap-2 quantum-input p-2 rounded-lg">
+              <span className="text-lg text-purple-500/50">₹</span>
+              <input type="number" value={emergencyFund} onChange={e => setEmergencyFund(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
+            </div>
+          </div>
+        </div>
+        <div className="grid md:grid-cols-2 gap-5">
+          <div>
+            <label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider block mb-2">Investment Horizon</label>
+            <select value={investYears} onChange={e => setInvestYears(parseInt(e.target.value))} className="w-full px-4 py-3 quantum-input rounded-xl text-white">
+              {[3, 5, 10, 15, 20, 25, 30].map(y => (<option key={y} value={y}>{y} Years</option>))}
+            </select>
+          </div>
+          <div>
+            <label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider block mb-2">Risk Appetite</label>
+            <div className="flex gap-1.5">
+              {(['low', 'medium', 'high'] as RiskLevel[]).map(r => (
+                <button key={r} onClick={() => setRiskLevel(r)} className={`flex-1 py-2.5 rounded-xl font-semibold text-xs transition-all ${riskLevel === r ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/20' : 'quantum-input text-slate-500'}`}>
+                  {r === 'low' && '🛡️ Safe'}{r === 'medium' && '⚖️ Balanced'}{r === 'high' && '🚀 Aggressive'}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ============ MCP AI AGENT WEALTH ALLOCATION ENGINE ============ */}
+      <MCPAgentAllocationPanel />
+
+      {/* v5.0 dedupe: the inline "Monte Carlo Simulator" summary panel (a
+          deterministic CAGR±8 calc mislabeled as Monte Carlo) was removed —
+          the REAL MonteCarloSimulator below runs 10,000 stochastic paths
+          with p10/p50/p90 + hit probability + real (inflation-adjusted)
+          corpus. Same for the duplicate step-up mini-panels: the What-If
+          SIP Optimizer + real Monte Carlo below cover both. */}
+
+      {/* What-If SIP Optimizer — Regime-Aware (with Step-Up comparison + inflation) */}
+      <WhatIfSIPOptimizer currentSIP={totalSIP} investYears={investYears} />
+
+      {/* FEATURE 1: Monte Carlo SIP Simulator — 10,000 simulation distribution */}
+      <MonteCarloSimulator currentSIP={totalSIP} investYears={investYears} />
+
+      {/* FEATURE 9: Inflation-Adjusted Real Returns widget */}
+      <InflationAdjustedReturns
+        portfolioValue={metrics.totalValue}
+        nominalCagr={cagr}
+        years={investYears}
+        monthlyExpense={monthlyExpenses}
+      />
+
+      {/* FEATURE 7: Tax Optimization Suite */}
+      <TaxOptimizationSuite
+        portfolio={portfolio}
+        transactions={transactions}
+        livePrices={livePrices}
+        usdInrRate={usdInrRate}
+      />
+
+      {/* FIRE */}
+      <div className="quantum-panel rounded-2xl p-5 border-orange-500/10 animate-fade-in-up delay-200">
+        <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+          <span className="w-7 h-7 rounded-lg bg-orange-500/10 flex items-center justify-center text-sm">🔥</span>
+          FIRE Calculator
+        </h3>
+        <div className="grid md:grid-cols-2 gap-3 mb-4">
+          <div className="bg-black/20 p-4 rounded-xl">
+            <label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider block mb-2">Monthly Expenses</label>
+            <div className="flex items-center gap-2 quantum-input p-2 rounded-lg">
+              <span className="text-lg text-slate-600">₹</span>
+              <input type="number" value={monthlyExpenses} onChange={e => setMonthlyExpenses(parseFloat(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
+            </div>
+          </div>
+          <div className="bg-black/20 p-4 rounded-xl">
+            <label className="text-slate-500 text-[10px] font-bold uppercase tracking-wider block mb-2">Current Age</label>
+            <div className="flex items-center gap-2 quantum-input p-2 rounded-lg">
+              <span className="text-lg">🎂</span>
+              <input type="number" value={currentAge} onChange={e => setCurrentAge(parseInt(e.target.value) || 0)} className="w-full bg-transparent outline-none text-lg font-bold text-white" />
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="stat-card bg-orange-500/5 border border-orange-500/15 p-3 rounded-xl text-center">
+            <div className="text-[10px] text-orange-400/80 font-bold uppercase tracking-wider mb-1">FIRE Number</div>
+            <div className="text-lg font-black text-orange-400 font-mono">₹{Math.round(fireNumber).toLocaleString('en-IN')}</div>
+          </div>
+          <div className="stat-card bg-emerald-500/5 border border-emerald-500/15 p-3 rounded-xl text-center">
+            <div className="text-[10px] text-emerald-400/80 font-bold uppercase tracking-wider mb-1">Years to FIRE</div>
+            <div className="text-lg font-black text-emerald-400">{yearsToFire} yrs</div>
+          </div>
+          <div className="stat-card bg-cyan-500/5 border border-cyan-500/15 p-3 rounded-xl text-center">
+            <div className="text-[10px] text-cyan-400/80 font-bold uppercase tracking-wider mb-1">Retire At</div>
+            <div className="text-lg font-black text-cyan-400">{currentAge + yearsToFire} yrs</div>
+          </div>
+          <div className="stat-card bg-purple-500/5 border border-purple-500/15 p-3 rounded-xl text-center">
+            <div className="text-[10px] text-purple-400/80 font-bold uppercase tracking-wider mb-1">Passive Income</div>
+            <div className="text-lg font-black text-purple-400 font-mono">₹{Math.round(fireNumber * 0.04 / 12).toLocaleString('en-IN')}/mo</div>
+          </div>
+        </div>
+        <div className="mt-4">
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-[10px] text-orange-400/80 font-bold uppercase tracking-wider">Progress to FIRE</span>
+            <span className="text-sm font-black text-orange-400">{fireProgress.toFixed(1)}%</span>
+          </div>
+          <div className="w-full bg-black/40 rounded-full h-2.5 overflow-hidden border border-orange-500/10">
+            <div className="bg-gradient-to-r from-orange-600 via-amber-400 to-emerald-400 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, fireProgress)}%` }} />
+          </div>
+        </div>
+        {/* FIRE Variants — Lean / Standard / Fat / Coast (inflation-adjusted to age 60) */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+          <div className="bg-black/20 p-3 rounded-xl text-center border border-white/5">
+            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">🌱 Lean FIRE (20x)</div>
+            <div className="text-sm font-black text-slate-200 font-mono">{formatCurrency(fireVariants.leanFire)}</div>
+          </div>
+          <div className="bg-black/20 p-3 rounded-xl text-center border border-white/5">
+            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">🔥 Standard (25x)</div>
+            <div className="text-sm font-black text-orange-300 font-mono">{formatCurrency(fireVariants.standardFire)}</div>
+          </div>
+          <div className="bg-black/20 p-3 rounded-xl text-center border border-white/5">
+            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">👑 Fat FIRE (33x)</div>
+            <div className="text-sm font-black text-purple-300 font-mono">{formatCurrency(fireVariants.fatFire)}</div>
+          </div>
+          <div className={`p-3 rounded-xl text-center border ${fireVariants.coastAchieved ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-black/20 border-white/5'}`}>
+            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">🏖️ Coast FIRE</div>
+            <div className={`text-sm font-black font-mono ${fireVariants.coastAchieved ? 'text-emerald-400' : 'text-cyan-300'}`}>{formatCurrency(fireVariants.coastFire)}</div>
+            {fireVariants.coastAchieved && <div className="text-[9px] text-emerald-400 font-bold mt-0.5">✅ ACHIEVED</div>}
+          </div>
+        </div>
+        <div className="text-[9px] text-slate-600 mt-2 italic">Targets are inflation-adjusted (6%) to age-60 expenses. Coast FIRE = corpus needed today to reach Standard FIRE with zero further SIP.</div>
+      </div>
+
+      {/* ============ PORTFOLIO XIRR (TRUE ANNUALIZED RETURN) ============ */}
+      {/* v6.2: hide for synced portfolios — INDMoney syncs carry no
+          per-asset buy dates (dateAdded = the SYNC date), so XIRR treated
+          every position as bought TODAY at live-FX prices and a +0.5% move
+          annualized to absurd percentages presented as a "PRO METRIC".
+          The Portfolio tab already guards its XIRR the same way. */}
+      {portfolio.length > 0 && indmSource !== 'indmoney' && indmSource !== 'coindcx' && (
+        <div className="quantum-panel rounded-2xl p-5 border-emerald-500/10 animate-fade-in-up">
+          <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+            <span className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center text-sm">📐</span>
+            True Annualized Return (XIRR)
+            <span className="ml-auto badge bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px]">PRO METRIC</span>
+          </h3>
+          <div className="flex items-center justify-between p-4 bg-black/20 rounded-xl border border-emerald-500/15 mb-3">
+            <div>
+              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Overall Portfolio XIRR</div>
+              <div className="text-[9px] text-slate-600">Time-weighted annualized return (all assets, INR)</div>
+            </div>
+            <div className={`text-2xl font-black font-mono ${(xirrData.overallXIRR || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              {xirrData.overallXIRR !== null ? `${xirrData.overallXIRR >= 0 ? '+' : ''}${xirrData.overallXIRR.toFixed(1)}%` : 'N/A'}
+            </div>
+          </div>
+          <div className="grid md:grid-cols-2 gap-2">
+            {xirrData.perAsset.map((a, i) => (
+              <div key={i} className="flex items-center justify-between bg-black/20 rounded-lg px-3 py-2 border border-white/5">
+                <div>
+                  <span className="text-xs font-bold text-white">{a.symbol.replace('.NS', '')}</span>
+                  <span className="text-[9px] text-slate-600 ml-2">{a.holdingDays}d held</span>
+                </div>
+                <span className={`text-xs font-black font-mono ${(a.xirr || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {a.xirr !== null ? `${a.xirr >= 0 ? '+' : ''}${a.xirr.toFixed(1)}%` : 'N/A'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ============ CRYPTO DCA PLANNER ============ */}
+      {cryptoDCA.length > 0 && (
+        <div className="quantum-panel rounded-2xl p-5 border-orange-500/10 animate-fade-in-up">
+          <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+            <span className="w-7 h-7 rounded-lg bg-orange-500/10 flex items-center justify-center text-sm">🪙</span>
+            Crypto DCA Planner (BTC/ETH HODL)
+            <span className="ml-auto text-[10px] text-slate-500 font-mono">{investYears}yr horizon</span>
+          </h3>
+          <div className="grid md:grid-cols-2 gap-3">
+            {cryptoDCA.map((c, i) => (
+              <div key={i} className={`rounded-xl p-4 border ${c.asset === 'BTC' ? 'bg-orange-500/5 border-orange-500/15' : 'bg-indigo-500/5 border-indigo-500/15'}`}>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="font-bold text-white text-sm">{c.asset === 'BTC' ? '₿ Bitcoin' : 'Ξ Ethereum'}</span>
+                  <span className="text-[10px] text-slate-500 font-mono">₹{c.monthlySIP.toLocaleString('en-IN')}/mo</span>
+                </div>
+                <div className="space-y-2 text-[11px]">
+                  <div className="flex justify-between"><span className="text-slate-500">Total Invested</span><span className="font-mono text-slate-300">{formatCurrency(c.totalInvested)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Conservative ({c.conservativeCagr}% CAGR)</span><span className="font-mono text-amber-400">{formatCurrency(c.conservative)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Expected ({c.expectedCagr}% CAGR)</span><span className="font-mono text-emerald-400 font-bold">{formatCurrency(c.expected)}</span></div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="text-[9px] text-slate-600 mt-3 italic">⚠️ Crypto is high-volatility (50-80% drawdowns possible). DCA + long HODL horizon required. Keep crypto ≤10% of net worth.</div>
+        </div>
+      )}
+
+      {/* Smart Buy-on-Dip Position Sizing */}
+      <div className="quantum-panel rounded-2xl p-5 border-emerald-500/15 animate-fade-in-up">
+        <SmartDipSizer
+          portfolio={portfolio}
+          livePrices={livePrices}
+          monthlyBudget={indiaSIP + usSIP}
+        />
+      </div>
+
+          {/* Quantum Compound Growth Projection Panel */}
+          <div className="bg-black/20 rounded-xl p-4 border border-blue-500/15 col-span-1 md:col-span-2 mt-4">
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center gap-2">
+                <span className="text-lg">📈</span> Quantum Compound Growth Projection
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-white/5 text-slate-500">
+                    <th className="py-2">Horizon</th>
+                    <th className="py-2">Invested</th>
+                    <th className="py-2 text-emerald-400">@ 15% CAGR</th>
+                    <th className="py-2 text-emerald-400">@ 20% CAGR</th>
+                    <th className="py-2 text-emerald-400">@ 25% CAGR</th>
+                  </tr>
+                </thead>
+                <tbody className="text-slate-300">
+                  {[5, 10, 15, 20].map(y => {
+                    const inv = totalSIP * 12 * y;
+                    // FIX L37: division by `rate/100` → div by 0 when rate=0.
+                    // Currently only called with 15/20/25, but defensive.
+                    const calc = (rate: number) => rate === 0
+                      ? totalSIP * 12 * y
+                      : totalSIP * 12 * ((Math.pow(1 + rate/100, y) - 1) / (rate/100));
+                    return (
+                      <tr key={y} className="border-b border-white/5 last:border-0 hover:bg-white/5">
+                        <td className="py-2 font-bold">{y} Years</td>
+                        <td className="py-2 font-mono">₹{formatCurrency(inv, '')}</td>
+                        <td className="py-2 font-mono text-emerald-400/70">₹{formatCurrency(calc(15), '')}</td>
+                        <td className="py-2 font-mono text-emerald-400/85">₹{formatCurrency(calc(20), '')}</td>
+                        <td className="py-2 font-mono text-emerald-400 font-bold">₹{formatCurrency(calc(25), '')}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Advanced Asset Allocation Strategy */}
+          <div className="bg-black/20 rounded-xl p-4 border border-cyan-500/15 mt-4">
+            <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+              <span className="text-lg">🎯</span> Core-Satellite Allocation Strategy
+            </div>
+            <div className="space-y-3 text-sm text-slate-300">
+              <div className="flex justify-between items-center p-2 bg-white/5 rounded">
+                <span>Rule of 100 (Eq/Debt)</span>
+                <span className="font-mono text-cyan-400">{100 - currentAge}% / {currentAge}%</span>
+              </div>
+              <div className="flex justify-between items-center p-2 bg-white/5 rounded">
+                <span>Core (Index/Large Cap)</span>
+                <span className="font-mono text-emerald-400">50-60%</span>
+              </div>
+              <div className="flex justify-between items-center p-2 bg-white/5 rounded">
+                <span>Satellite (Mid/Small/Alpha)</span>
+                <span className="font-mono text-orange-400">30-40%</span>
+              </div>
+              <div className="flex justify-between items-center p-2 bg-white/5 rounded">
+                <span>Moonshot (Crypto/BTC/ETH)</span>
+                <span className="font-mono text-purple-400">5-10%</span>
+              </div>
+            </div>
+          </div>
+
+          {/* v5.0 dedupe: "10% Annual SIP Step-Up Magic" mini-calculator
+              removed — hardcoded 15% CAGR single-scenario variant of the
+              same math; the What-If SIP Optimizer's Step-Up Power
+              Comparison strip above covers this with live inflation +
+              the app's actual SIP values. */}
+
+      {/* ============ WEALTH MILESTONE TRACKER ============ */}
+      <div className="quantum-panel rounded-2xl p-5 border-amber-500/10 animate-fade-in-up">
+        <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+          <span className="w-7 h-7 rounded-lg bg-amber-500/10 flex items-center justify-center text-sm">🏆</span>
+          Wealth Milestone Tracker
+          <span className="ml-auto badge bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px]">JOURNEY</span>
+        </h3>
+        <div className="space-y-3">
+          {milestones.map((m, i) => (
+            <div key={i} className={`rounded-xl p-3 border transition-all ${
+              m.reached ? 'bg-emerald-500/10 border-emerald-500/30' :
+              m.progress > 50 ? 'bg-amber-500/5 border-amber-500/20' :
+              'bg-black/20 border-white/5'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">{m.emoji}</span>
+                  <div>
+                    <span className="font-bold text-white text-sm">{m.label}</span>
+                    {m.reached && <span className="ml-2 text-[10px] text-emerald-400 font-bold">✅ ACHIEVED!</span>}
+                  </div>
+                </div>
+                <div className="text-right">
+                  {m.reached ? (
+                    <div className="text-sm font-black text-emerald-400">Done!</div>
+                  ) : (
+                    <>
+                      <div className="text-sm font-black text-amber-400">{m.estimatedDate}</div>
+                      <div className="text-[10px] text-slate-500">{m.yearsToReach ? `${m.yearsToReach} years` : '50+ yrs'}</div>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="w-full bg-slate-800/60 rounded-full h-2 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ${
+                    m.reached ? 'bg-gradient-to-r from-emerald-500 to-cyan-400' :
+                    m.progress > 50 ? 'bg-gradient-to-r from-amber-500 to-yellow-400' :
+                    'bg-gradient-to-r from-cyan-600 to-blue-500'
+                  }`}
+                  style={{ width: `${m.progress}%` }}
+                />
+              </div>
+              <div className="flex justify-between mt-1 text-[10px] text-slate-500">
+                <span>{m.progress.toFixed(0)}%</span>
+                <span>{!m.reached ? `₹${Math.round(m.target - metrics.totalValue).toLocaleString('en-IN')} remaining` : ''}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* v5.0 dedupe: standalone "SIP Step-Up Power Comparison" table removed
+          — the identical flat/5/10/15/20% comparison (with inflation toggle +
+          bar visualization) already renders inside the What-If SIP Optimizer
+          above, so the tab showed the same numbers twice. */}
+
+      {/* ============ GOAL-BASED PLANNER ============ */}
+      <div className="quantum-panel rounded-2xl p-5 border-teal-500/10 animate-fade-in-up">
+        <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+          <span className="w-7 h-7 rounded-lg bg-teal-500/10 flex items-center justify-center text-sm">🎯</span>
+          Goal-Based Investment Planner
+          <button onClick={() => setShowAddGoal(!showAddGoal)} className="ml-auto quantum-btn-primary px-3 py-1.5 bg-gradient-to-r from-teal-600 to-cyan-600 rounded-lg text-[10px] font-bold text-white">+ Add Goal</button>
+        </h3>
+
+        {/* Add Goal Form */}
+        {showAddGoal && (
+          <div className="mb-4 p-4 bg-black/20 rounded-xl border border-teal-500/20 animate-fade-in">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <label className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Goal Name</label>
+                <input type="text" value={newGoalName} onChange={e => setNewGoalName(e.target.value)} placeholder="e.g. Dream House" className="w-full px-3 py-2 quantum-input rounded-lg text-xs text-white" />
+              </div>
+              <div>
+                <label className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Target (₹)</label>
+                <input type="number" value={newGoalAmount} onChange={e => setNewGoalAmount(e.target.value)} placeholder="3000000" className="w-full px-3 py-2 quantum-input rounded-lg text-xs text-white font-mono" />
+              </div>
+              <div>
+                <label className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Target Year</label>
+                <input type="number" value={newGoalYear} onChange={e => setNewGoalYear(e.target.value)} className="w-full px-3 py-2 quantum-input rounded-lg text-xs text-white font-mono" />
+              </div>
+              <div>
+                <label className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Emoji</label>
+                <div className="flex gap-1.5">
+                  {['🎯', '🏠', '🎓', '🚗', '✈️', '🏖️', '💍', '🏥'].map(e => (
+                    <button key={e} onClick={() => setNewGoalEmoji(e)} className={`w-8 h-8 rounded-lg flex items-center justify-center text-base transition-all ${
+                      newGoalEmoji === e ? 'bg-teal-500/20 border border-teal-500/40 scale-110' : 'bg-black/30 border border-white/5'
+                    }`}>{e}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <button onClick={addGoal} className="mt-3 quantum-btn-primary px-5 py-2 bg-gradient-to-r from-teal-600 to-emerald-600 rounded-lg text-xs font-bold text-white">✅ Add Goal</button>
+          </div>
+        )}
+
+        {/* Goal Cards */}
+        <div className="space-y-3">
+          {goalAnalysis.map(g => (
+            <div key={g.id} className={`rounded-xl p-4 border transition-all ${
+              g.feasibility === 'ON_TRACK' ? 'bg-emerald-500/5 border-emerald-500/20' :
+              g.feasibility === 'NEEDS_MORE' ? 'bg-amber-500/5 border-amber-500/20' :
+              'bg-red-500/5 border-red-500/20'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">{g.emoji}</span>
+                  <div>
+                    <span className="font-bold text-white text-sm">{g.name}</span>
+                    <div className="text-[10px] text-slate-500 font-mono">
+                      Target: {formatCurrency(g.targetAmount)} by {g.targetYear} ({g.yearsLeft}yr left)
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`px-2 py-1 rounded-lg text-[9px] font-bold border ${
+                    g.feasibility === 'ON_TRACK' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                    g.feasibility === 'NEEDS_MORE' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                    'bg-red-500/10 text-red-400 border-red-500/20'
+                  }`}>
+                    {g.feasibility === 'ON_TRACK' ? '🟢 ON TRACK' : g.feasibility === 'NEEDS_MORE' ? '🟡 NEEDS MORE' : '🔴 AT RISK'}
+                  </span>
+                  <button onClick={() => removeGoal(g.id)} className="text-slate-600 hover:text-red-400 transition-colors text-xs">✕</button>
+                </div>
+              </div>
+              <div className="w-full bg-slate-800/60 rounded-full h-1.5 mb-2 overflow-hidden">
+                <div className={`h-full rounded-full transition-all ${
+                  g.feasibility === 'ON_TRACK' ? 'bg-gradient-to-r from-emerald-500 to-cyan-400' :
+                  g.feasibility === 'NEEDS_MORE' ? 'bg-gradient-to-r from-amber-500 to-yellow-400' :
+                  'bg-gradient-to-r from-red-500 to-orange-400'
+                }`} style={{ width: `${Math.min(100, g.progress)}%` }} />
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-[10px]">
+                <div>
+                  <span className="text-slate-500">Monthly Needed: </span>
+                  <span className="text-cyan-400 font-mono font-bold">₹{g.monthlyNeeded.toLocaleString('en-IN')}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500">Progress: </span>
+                  <span className="text-white font-bold">{g.progress}%</span>
+                </div>
+                <div>
+                  {g.gap > 0 ? (
+                    <><span className="text-slate-500">Gap: </span><span className="text-red-400 font-mono font-bold">₹{g.gap.toLocaleString('en-IN')}/mo</span></>
+                  ) : (
+                    <span className="text-emerald-400 font-bold">✅ SIP Covers This!</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ============ REBALANCING ALERTS ============ */}
+      {portfolio.length > 1 && (
+        <div className="quantum-panel rounded-2xl p-5 border-rose-500/10 animate-fade-in-up">
+          <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+            <span className="w-7 h-7 rounded-lg bg-rose-500/10 flex items-center justify-center text-sm">⚖️</span>
+            Portfolio Rebalancing
+            {needsRebalance.length > 0 && (
+              <span className="ml-2 px-2 py-0.5 bg-red-500/20 text-red-400 text-[9px] font-bold rounded-md border border-red-500/30 animate-pulse">
+                {needsRebalance.length} ACTIONS NEEDED
+              </span>
+            )}
+          </h3>
+
+          <div className="space-y-2">
+            {rebalanceItems.map((r, i) => (
+              <div key={i} className={`rounded-xl p-3 border flex flex-wrap items-center gap-2 sm:gap-3 transition-all ${
+                r.action === 'BUY_MORE' ? 'bg-emerald-500/5 border-emerald-500/15' :
+                r.action === 'TRIM' ? 'bg-red-500/5 border-red-500/15' :
+                'bg-black/20 border-white/5'
+              }`}>
+                <div className="w-full sm:w-28">
+                  <div className="font-bold text-white text-sm">{r.symbol.replace('.NS', '')}</div>
+                  <div className="text-[9px] text-slate-500">{r.market === 'IN' ? '🇮🇳' : '🦅'} {r.market}</div>
+                </div>
+
+                {/* Weight Bars */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-[9px] text-slate-500 w-12 sm:w-14 flex-shrink-0">Current</span>
+                    <div className="flex-1 bg-slate-800/60 rounded-full h-1.5 overflow-hidden min-w-0">
+                      <div className="bg-cyan-500 h-full rounded-full transition-all" style={{ width: `${Math.min(100, r.currentWeight)}%` }} />
+                    </div>
+                    <span className="text-[10px] text-cyan-400 font-mono w-10 text-right flex-shrink-0">{r.currentWeight}%</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] text-slate-500 w-12 sm:w-14 flex-shrink-0">Target</span>
+                    <div className="flex-1 bg-slate-800/60 rounded-full h-1.5 overflow-hidden min-w-0">
+                      <div className="bg-amber-500/50 h-full rounded-full transition-all" style={{ width: `${Math.min(100, r.targetWeight)}%` }} />
+                    </div>
+                    <span className="text-[10px] text-amber-400 font-mono w-10 text-right flex-shrink-0">{r.targetWeight}%</span>
+                  </div>
+                </div>
+
+                {/* Drift */}
+                <div className="w-12 sm:w-16 text-center flex-shrink-0">
+                  <div className={`text-xs font-black font-mono ${
+                    Math.abs(r.drift) > 5 ? (r.drift > 0 ? 'text-red-400' : 'text-emerald-400') : 'text-slate-400'
+                  }`}>
+                    {r.drift > 0 ? '+' : ''}{r.drift}%
+                  </div>
+                  <div className="text-[8px] text-slate-600">drift</div>
+                </div>
+
+                {/* Action */}
+                <div className="w-full sm:w-24 sm:text-right">
+                  {r.action !== 'OK' ? (
+                    <>
+                      <div className={`text-[10px] font-bold ${r.action === 'BUY_MORE' ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {r.action === 'BUY_MORE' ? '🟢 BUY' : '🔴 TRIM'}
+                      </div>
+                      <div className="text-[10px] font-mono text-slate-400">
+                        ₹{Math.abs(r.adjustAmount).toLocaleString('en-IN')}
+                      </div>
+                    </>
+                  ) : (
+                    <span className="text-[10px] text-slate-500">✅ OK</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {needsRebalance.length === 0 && (
+            <div className="mt-3 p-3 bg-emerald-500/5 border border-emerald-500/15 rounded-xl text-xs text-emerald-400 text-center">
+              ✅ Portfolio is well-balanced! No rebalancing needed.
+            </div>
+          )}
+        </div>
+      )}
+
+     </div>
+   );
+ });
