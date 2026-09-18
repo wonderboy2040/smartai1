@@ -1,0 +1,175 @@
+import React, { useState, useCallback } from 'react';
+import { useApp } from '../hooks/AppContext';
+import { apiFetch } from '../utils/api';
+
+const PROXY_BASE = import.meta.env.VITE_API_PROXY || '';
+
+interface NewsItem {
+  title: string;
+  sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  impact: 'HIGH' | 'MEDIUM' | 'LOW';
+  source: string;
+  time: string;
+  tickers: string[];
+}
+
+export const NewsSentimentFeed = React.memo(() => {
+  const { portfolio } = useApp();
+  const [news, setNews] = useState<NewsItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const analyzeNews = useCallback(async () => {
+    setLoading(true);
+    setError('');
+
+    try {
+      const symbols = portfolio.map(p => p.symbol).join(', ');
+      // v5.0 dedupe: the LLM-hallucinated "earnings" array was removed from
+      // the prompt and the UI — the calendar-based earnings feed in the
+      // Exact Buy Price panel (earningsCalendar.ts) is the trustworthy one.
+      const prompt = `Analyze current market news for these stocks: ${symbols}.
+Return JSON with:
+"news": array of {title, sentiment (BULLISH/BEARISH/NEUTRAL), impact (HIGH/MEDIUM/LOW), source, tickers[]}
+
+Focus on:
+- Recent earnings surprises or guidance changes
+- Macro events affecting these sectors
+- FI/DII activity news
+- Any regulatory changes
+
+Return ONLY valid JSON, no markdown.`;
+
+      // Route through proxy to avoid exposing API key in browser
+      const res = await apiFetch(`${PROXY_BASE}/api/groq`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [
+            { role: 'system', content: 'You are a financial news analyst. Return JSON only, no markdown formatting.' },
+            { role: 'user', content: prompt },
+          ],
+          model: 'openai/gpt-oss-120b',
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+
+      if (!res.ok) throw new Error(`AI proxy error: ${res.status}`);
+      const data = await res.json();
+      const content = data.choices?.[0]?.message?.content || data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+      // Extract JSON from response (may be wrapped in markdown fences / prose).
+      // FIX M22: greedy `\{[\s\S]*\}` over-captures when the LLM wraps JSON in
+      // prose containing stray braces. Strip markdown fences first, then try
+      // strict JSON.parse, then fall back to a balanced-brace scan.
+      let jsonText = content.trim();
+      // Strip ```json ... ``` fences if present
+      const fence = jsonText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+      if (fence) jsonText = fence[1].trim();
+
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(jsonText);
+      } catch {
+        // Balanced-brace scan: find the first complete top-level object.
+        let depth = 0, start = -1;
+        for (let i = 0; i < jsonText.length; i++) {
+          const c = jsonText[i];
+          if (c === '{') { if (depth === 0) start = i; depth++; }
+          else if (c === '}') {
+            depth--;
+            if (depth === 0 && start >= 0) {
+              try { parsed = JSON.parse(jsonText.slice(start, i + 1)); break; }
+              catch { start = -1; }
+            }
+          }
+        }
+      }
+
+      if (parsed) {
+        setNews(parsed.news || []);
+      } else {
+        throw new Error('Could not parse AI response');
+      }
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [portfolio]);
+
+  const sentimentColor: Record<string, string> = {
+    BULLISH: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
+    BEARISH: 'text-red-400 bg-red-500/10 border-red-500/30',
+    NEUTRAL: 'text-amber-400 bg-amber-500/10 border-amber-500/30',
+  };
+
+  const impactColor: Record<string, string> = {
+    HIGH: 'text-red-400',
+    MEDIUM: 'text-amber-400',
+    LOW: 'text-slate-400',
+  };
+
+  return (
+    <div className="quantum-panel rounded-2xl p-5 animate-fade-in-up">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <span className="w-6 h-6 rounded-lg bg-blue-500/10 flex items-center justify-center text-xs">📰</span>
+          <span className="text-[10px] text-blue-500/70 font-bold uppercase tracking-wider">News Sentiment</span>
+        </div>
+        <div className="flex gap-1">
+          <button
+            onClick={analyzeNews}
+            disabled={loading}
+            className="px-3 py-1 bg-blue-500/10 border border-blue-500/30 rounded-lg text-[10px] font-bold text-blue-400 hover:bg-blue-500/20 transition-all disabled:opacity-50 ml-2"
+          >
+            {loading ? '⏳ Analyzing...' : '🧠 Groq Analyze'}
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="mb-3 px-3 py-1.5 bg-red-500/10 border border-red-500/20 rounded-lg text-[10px] text-red-300">{error}</div>
+      )}
+
+      <div className="space-y-2">
+        {news.length === 0 && !loading && (
+          <div className="text-center py-6 text-[10px] text-slate-600">
+            Click "Groq Analyze" to fetch AI-powered news sentiment
+          </div>
+        )}
+        {news.map(item => (
+            <div key={item.title} className="bg-black/30 rounded-xl p-3 border border-white/5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1">
+                  <div className="text-xs font-bold text-white mb-1">{item.title}</div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold border ${sentimentColor[item.sentiment]}`}>
+                      {item.sentiment}
+                    </span>
+                    <span className={`text-[8px] font-bold ${impactColor[item.impact]}`}>
+                      {item.impact} Impact
+                    </span>
+                    <span className="text-[8px] text-slate-600">{item.source}</span>
+                    {item.tickers?.length > 0 && (
+                      <div className="flex gap-1">
+                        {item.tickers.map(t => (
+                          <span key={t} className="px-1 py-0.5 bg-cyan-500/10 text-cyan-400 text-[8px] rounded font-mono">{t}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+      </div>
+
+      <div className="mt-3 text-[9px] text-slate-600">
+        Powered by Groq LLM (llama-3.3-70b). News sentiment is AI-processed, not investment advice.
+      </div>
+    </div>
+  );
+});
+
+NewsSentimentFeed.displayName = 'NewsSentimentFeed';
