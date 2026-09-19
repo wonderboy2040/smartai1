@@ -188,16 +188,16 @@ describe('futuresOrderBody', () => {
 });
 
 describe('futures wallets + snapshot', () => {
-  it('v10.3.2 TRANSPORT: GET(seconds) is the primary wallets call — POST never fires when GET answers', async () => {
+  it('v12.3 TRANSPORT: the DOCUMENTED GET-with-body call is the primary wallets transport — POST never fires when it answers', async () => {
     const rows = await fetchFuturesWallets();
     expect(mockPrivateGET).toHaveBeenCalledTimes(1);
     expect(mockPrivateGET.mock.calls[0][0]).toBe('/exchange/v1/derivatives/futures/wallets');
-    // v12.1 auth ladder: rung 1 = GET seconds + STRING timestamp
-    expect(mockPrivateGET.mock.calls[0][4]).toEqual({ unit: 's', tsType: 'str' });
+    // v12.3 auth ladder: rung 1 = GET body-mode + ms + INT timestamp
+    expect(mockPrivateGET.mock.calls[0][4]).toEqual({ unit: 'ms', tsType: 'num', mode: 'body' });
     expect(mockPrivate).not.toHaveBeenCalledWith('/exchange/v1/derivatives/futures/wallets', expect.anything(), expect.anything(), expect.anything());
     expect(rows.find(r => r.currency === 'USDT')).toBeTruthy();
   });
-  it('v12.1/v12.2 AUTH LADDER: GET rungs fall through in order before the legacy POST (the live [401]/[404] case)', async () => {
+  it('v12.3 AUTH LADDER: GET rungs fall through in order before the legacy POST (the live [401]/[404] case)', async () => {
     mockPrivateGET.mockImplementation(async () => {
       const e = new Error('[401] Invalid credentials'); e.status = 401; throw e;
     });
@@ -208,29 +208,28 @@ describe('futures wallets + snapshot', () => {
       throw new Error(`unexpected ${path}`);
     });
     const rows = await fetchFuturesWallets();
-    // all seven GET rungs tried before the POST fallback (the 4 compact
-    // permutations + the 2 v12.2 spaced-JSON rungs + the page/size rung)
-    expect(mockPrivateGET).toHaveBeenCalledTimes(7);
+    // all six GET rungs tried before the POST fallback (the 3 documented
+    // body-mode rungs + the 3 legacy query-mode rungs)
+    expect(mockPrivateGET).toHaveBeenCalledTimes(6);
     expect(mockPrivateGET.mock.calls.map(c => c[4])).toEqual([
-      { unit: 's', tsType: 'str' },
+      { unit: 'ms', tsType: 'num', mode: 'body' },   // the doc sample
+      { unit: 's', tsType: 'num', mode: 'body' },    // table "epoch seconds"
+      { unit: 'ms', tsType: 'str', mode: 'body' },   // string-ts insurance
+      { unit: 's', tsType: 'str' },                   // legacy query rungs
       { unit: 'ms', tsType: 'num' },
-      { unit: 's', tsType: 'num' },
-      { unit: 'ms', tsType: 'str' },
-      { unit: 's', tsType: 'str', sep: 'spaced' }, // v12.2 spaced rung 1
-      { unit: 'ms', tsType: 'num', sep: 'spaced' }, // v12.2 spaced rung 2
-      { unit: 's', tsType: 'str' }, // pgsz rung (params differ below)
+      { unit: 's', tsType: 'str' },                   // pgsz rung (params differ below)
     ]);
     // the page/size rung signs page+size into the payload
-    expect(mockPrivateGET.mock.calls[6][3]).toEqual({ page: '1', size: '100' });
+    expect(mockPrivateGET.mock.calls[5][3]).toEqual({ page: '1', size: '100' });
     expect(mockPrivate).toHaveBeenCalledWith('/exchange/v1/derivatives/futures/wallets', expect.anything(), expect.anything(), expect.anything());
     expect(rows.find(r => r.currency === 'USDT')?.free).toBeCloseTo(6.17, 1);
   });
-  it('v12.1 AUTH LADDER: a failing variant goes STICKY — later polls retry just that rung first', async () => {
+  it('v12.1/v12.3 AUTH LADDER: a failing variant goes STICKY — later polls retry just that rung first', async () => {
     let calls = 0;
     mockPrivateGET.mockImplementation(async (_path, _k, _s, _params, opts) => {
       calls++;
-      // rung 1 (GET-s/str) 401s; rung 2 (GET-ms/num) answers
-      if (opts && opts.tsType === 'num') return [
+      // rung 1 (GET-body/ms/num) 401s; rung 2 (GET-body/s/num) answers
+      if (opts && opts.mode === 'body' && opts.unit === 's') return [
         { id: 'w1', currency_short_name: 'USDT', balance: '2.5', locked_balance: '0', cross_order_margin: '0', cross_user_margin: '0' },
       ];
       const e = new Error('[401] Invalid credentials'); e.status = 401; throw e;
@@ -241,9 +240,9 @@ describe('futures wallets + snapshot', () => {
     // next poll: sticky rung 2 answers immediately, one call only
     await fetchFuturesWallets();
     expect(calls).toBe(3);
-    expect(mockPrivateGET.mock.calls[2][4]).toEqual({ unit: 'ms', tsType: 'num' });
+    expect(mockPrivateGET.mock.calls[2][4]).toEqual({ unit: 's', tsType: 'num', mode: 'body' });
   });
-  it('v12.1/v12.2 AUTH LADDER: every rung failing throws the FULL variant trace + key guidance', async () => {
+  it('v12.1/v12.3 AUTH LADDER: every rung failing throws the FULL variant trace + key guidance', async () => {
     mockPrivateGET.mockImplementation(async () => {
       const e = new Error('[401] Invalid credentials'); e.status = 401; throw e;
     });
@@ -254,16 +253,16 @@ describe('futures wallets + snapshot', () => {
     expect(err).toBeInstanceOf(Error);
     const msg = String(err?.message || err);
     // the exact live-observed failure shape: 401 on every GET rung
-    // (compact AND spaced), 404 on POST
-    expect(msg).toContain('[auth-ladder GET-s/str:401 · GET-ms/num:401 · GET-s/num:401 · GET-ms/str:401 · GET-s/str-sp:401 · GET-ms/num-sp:401 · GET-s/pgsz:401 · POST:404]');
+    // (body AND query mode), 404 on POST
+    expect(msg).toContain('[auth-ladder GET-body/ms/num:401 · GET-body/s/num:401 · GET-body/ms/str:401 · GET-s/str:401 · GET-ms/num:401 · GET-s/pgsz:401 · POST:404]');
     // all-GET-401 with a spot-working key → the Global-Futures-permission guidance
     expect(msg).toContain('GLOBAL FUTURES permission');
     // the sweep armed the probe cooldown — the next poll fails FAST on one rung
     const t0 = Date.now();
     const err2 = await fetchFuturesWallets().catch(e => e);
     expect(Date.now() - t0).toBeLessThan(2000);
-    expect(String(err2?.message || err2)).toContain('[auth-ladder GET-s/str:401]');
-    expect(mockPrivateGET).toHaveBeenCalledTimes(8); // 7 full sweep + 1 cooldown probe
+    expect(String(err2?.message || err2)).toContain('[auth-ladder GET-body/ms/num:401]');
+    expect(mockPrivateGET).toHaveBeenCalledTimes(7); // 6 full sweep + 1 cooldown probe
   });
   it('v10.3.2 TRANSPORT: the working transport sticks — no per-poll re-probing', async () => {
     await fetchFuturesWallets(); // GET-s wins
@@ -360,8 +359,8 @@ describe('futures wallets + snapshot', () => {
     });
     const snap = await walletSnapshot();
     expect(snap.ok).toBe(true);
-    expect(snap.futures.error).toContain('[auth-ladder GET-s/str:401');
-    expect(snap.futures.error).toContain('GET-s/str-sp:401'); // v12.2 spaced rung in the trace
+    expect(snap.futures.error).toContain('[auth-ladder GET-body/ms/num:401');
+    expect(snap.futures.error).toContain('GET-body/ms/str:401'); // v12.3 body rung in the trace
     expect(snap.futures.error).toContain('POST:404]');
     expect(snap.futures.error).toContain('GLOBAL FUTURES permission');
     expect(String(snap.futures.error).length).toBeGreaterThan(140); // not amputated
@@ -409,10 +408,11 @@ describe('futures wallets + snapshot', () => {
     mockPrivate.mockRejectedValue(new Error('[502] gateway'));
     await fetchFuturesWallets().catch(() => {});
     const firstSweep = mockPrivateGET.mock.calls.length + mockPrivate.mock.calls.length;
-    // v12.2: the 8-rung auth ladder — 7 GET variants + the legacy POST.
+    // v12.3: the 7-rung auth ladder — 6 GET variants (3 documented body
+    // rungs + 3 legacy query rungs) + the legacy POST.
     // No scope probe here: 'T' (timeout/unknown-status) traces are NOT
     // strict 401s — a network stall is not an auth rejection.
-    expect(firstSweep).toBe(8);
+    expect(firstSweep).toBe(7);
     mockPrivateGET.mockClear(); mockPrivate.mockClear();
     // inside the 5-min cooldown: only the first mode is retried (fail fast)
     await fetchFuturesWallets().catch(() => {});
@@ -477,13 +477,13 @@ describe('futures wallets + snapshot', () => {
       expect(msg).toContain('Global Futures permission nahi hai');
       expect(msg).toContain('NAYI key banao');
       expect(msg).toContain('same key spot par chalti hai');
-      expect(msg).toContain('[auth-ladder GET-s/str:401');
+      expect(msg).toContain('[auth-ladder GET-body/ms/num:401');
       expect(lastFuturesKeyScope()).toMatchObject({ verdict: 'no_scope', status: 401 });
       // walletSnapshot surfaces the verdict for UI badging
       const snap = await walletSnapshot();
       expect(snap.futures.scope).toBe('no_scope');
     });
-    it('scope ok (positions 422 — auth passed) → the verdict says auth-drift, NOT permission', async () => {
+    it('scope ok (positions 422 — auth passed) → the verdict says GET-with-body fix, NOT permission', async () => {
       allGet401();
       mockPrivate.mockImplementation(async (path) => {
         if (path === '/exchange/v1/derivatives/futures/positions') throw statusErr(422, '[422] market is required');
@@ -492,8 +492,7 @@ describe('futures wallets + snapshot', () => {
       const err = await fetchFuturesWallets().catch(e => e);
       const msg = String(err?.message || err);
       expect(msg).toContain('futures-key-scope: OK');
-      expect(msg).toContain('auth-format drift');
-      expect(msg).toContain('Spaced-JSON rungs');
+      expect(msg).toContain('GET-with-body rungs');
       // NOT the permission guidance — the key is fine
       expect(msg).not.toContain('NAYI key banao');
       expect(lastFuturesKeyScope()).toMatchObject({ verdict: 'ok', status: 422 });
@@ -522,7 +521,7 @@ describe('futures wallets + snapshot', () => {
       // full sweep again even inside the old cooldown window
       mockPrivateGET.mockClear();
       await fetchFuturesWallets().catch(() => {});
-      expect(mockPrivateGET.mock.calls.length).toBe(7);
+      expect(mockPrivateGET.mock.calls.length).toBe(6);
     });
     it('non-401 failures (gateway 502) never fire the probe — no misleading verdict', async () => {
       mockPrivateGET.mockRejectedValue(statusErr(502, '[502] gateway'));

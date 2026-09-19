@@ -521,7 +521,7 @@ describe('v9.7 FUTURES-margin viability filter', () => {
     // + the one-step fix, not just the ladder trace.
     mockWalletSnapshot.mockResolvedValue({
       ...WALLET, deployableFuturesUSDT: 0, equityINR: 400, deployableSpotINR: 400,
-      futures: { usdt: { free: 0, locked: 0, total: 0, crossUserMargin: 0 }, error: '[401] Invalid credentials · futures-key-scope: MISSING — API key me Global Futures permission nahi hai (derivatives positions auth bhi 401 — same key spot par chalti hai). CoinDCX app → API Dashboard → Futures permission ON karke NAYI key banao → site me CoinDCX reconnect karo [auth-ladder GET-s/str:401 · GET-ms/num:401 · GET-s/num:401 · GET-ms/str:401 · GET-s/str-sp:401 · GET-ms/num-sp:401 · GET-s/pgsz:401 · POST:404]' },
+      futures: { usdt: { free: 0, locked: 0, total: 0, crossUserMargin: 0 }, error: '[401] Invalid credentials · futures-key-scope: MISSING — API key me Global Futures permission nahi hai (derivatives positions auth bhi 401 — same key spot par chalti hai). CoinDCX app → API Dashboard → Futures permission ON karke NAYI key banao → site me CoinDCX reconnect karo [auth-ladder GET-body/ms/num:401 · GET-body/s/num:401 · GET-body/ms/str:401 · GET-s/str:401 · GET-ms/num:401 · GET-s/pgsz:401 · POST:404]' },
     });
     await agentTick({}, vi.fn());
     expect(mockExecuteFutures).not.toHaveBeenCalled();

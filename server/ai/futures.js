@@ -432,7 +432,20 @@ function credGuard() {
  *     key itself is rejected on derivatives (Global-Futures permission
  *     missing) — the error then LEADS with that verdict so the blocker
  *     panel tells the user the exact one-step fix. Cached 10 min,
- *     single-flight, only fired when every GET rung 401s. */
+ *     single-flight, only fired when every GET rung 401s.
+ *
+ * v12.3 THE VERDICT-BACKED FIX (same incident, round 3 — the live
+ *   scope probe ANSWERED): the key's scope is OK (the positions POST
+ *   auth PASSES with the same key that 401s on the wallets GET). The
+ *   official docs.coindcx.com Slate capture (1.1MB, "Wallet Details"
+ *   + "Wallet Transactions" samples) settles it: the derivatives
+ *   wallets GET carries the SIGNED {"timestamp":<int ms>} JSON AS THE
+ *   REQUEST BODY (requests.get(url, data=json_body)) — params like
+ *   page/size ride the query string UNSIGNED. Our GETs were sending
+ *   the signed payload as QUERY PARAMS with an EMPTY BODY, so the
+ *   server's body-based verification could never pass → 401 on every
+ *   permutation, forever. coindcxPrivateGET now defaults to the
+ *   documented body mode; the ladder leads with the body rungs. */
 const WALLET_PROBE_COOLDOWN_MS = 5 * 60_000;
 const _walletsTransport = { mode: null, coolUntil: 0 };
 function _walletList(resp) {
@@ -442,21 +455,23 @@ function _walletList(resp) {
   if (Array.isArray(resp?.balances)) return resp.balances;
   return null; // error-shaped / unknown wrapper → try the next transport
 }
-// The v12.1 ladder — order matters: rung 1 is the 2025-verified contract
-// (keeps working deployments unchanged), rung 2 is the docs-canonical
-// INT-ms form (the most likely fix for the 2026-09-19 401s), then the
-// remaining permutations, then the v12.2 spaced-JSON rungs (Python
-// json.dumps canonical rebuild — the GET-family drift candidate), then
-// the page/size-signed GET (some CoinDCX GET families require the
-// documented params inside the signature), and POST last (currently
-// [404], kept as the legacy canary).
+// The v12.3 ladder — order matters: rungs 1-3 are THE DOCUMENTED
+// GET-with-body contract (docs.coindcx.com Wallet Details sample —
+// requests.get(url, data=json_body)): the compact {"timestamp":<int>}
+// JSON is BOTH signed AND sent as the GET request body. This is the
+// transport the live scope-OK verdict demands (key CAN auth derivatives
+// — POSTs pass, every query-param GET 401'd because the server verifies
+// the signature against the REQUEST BODY, which was empty). Rung 1 is
+// the exact doc sample (ms + int); rung 2 covers the Request-Definitions
+// table's "epoch seconds" wording; rung 3 the string-ts variant. Then
+// the legacy query-transport rungs (2025-verified family) as fallbacks,
+// and POST last (the [404] legacy canary).
 const WALLET_AUTH_LADDER = [
+  { id: 'GET-body/ms/num', method: 'GET', mode: 'body', unit: 'ms', tsType: 'num', params: {} },
+  { id: 'GET-body/s/num', method: 'GET', mode: 'body', unit: 's', tsType: 'num', params: {} },
+  { id: 'GET-body/ms/str', method: 'GET', mode: 'body', unit: 'ms', tsType: 'str', params: {} },
   { id: 'GET-s/str', method: 'GET', unit: 's', tsType: 'str', params: {} },
   { id: 'GET-ms/num', method: 'GET', unit: 'ms', tsType: 'num', params: {} },
-  { id: 'GET-s/num', method: 'GET', unit: 's', tsType: 'num', params: {} },
-  { id: 'GET-ms/str', method: 'GET', unit: 'ms', tsType: 'str', params: {} },
-  { id: 'GET-s/str-sp', method: 'GET', unit: 's', tsType: 'str', params: {}, sep: 'spaced' },
-  { id: 'GET-ms/num-sp', method: 'GET', unit: 'ms', tsType: 'num', params: {}, sep: 'spaced' },
   { id: 'GET-s/pgsz', method: 'GET', unit: 's', tsType: 'str', params: { page: '1', size: '100' } },
   { id: 'POST', method: 'POST' },
 ];
@@ -464,7 +479,9 @@ async function _walletTransportAttempt(variant, apiKey, secret) {
   if (variant.method === 'POST') return coindcxPrivate(WALLETS_PATH, apiKey, secret, {});
   const { coindcxPrivateGET } = await import('../mcp/coindcx.js');
   return coindcxPrivateGET(WALLETS_PATH, apiKey, secret, variant.params, {
-    unit: variant.unit, tsType: variant.tsType, ...(variant.sep ? { sep: variant.sep } : {}),
+    unit: variant.unit, tsType: variant.tsType,
+    ...(variant.mode ? { mode: variant.mode } : {}),
+    ...(variant.sep ? { sep: variant.sep } : {}),
   });
 }
 // ---------------- v12.2: futures key-scope probe ----------------
@@ -524,12 +541,16 @@ export async function fetchFuturesWallets() {
   const { apiKey, secret } = credGuard();
   const probeCooling = Date.now() < _walletsTransport.coolUntil;
   // sticky rung first; a legacy pre-v12.1 sticky value maps onto the
-  // ladder ('GET-s' → 'GET-s/str', 'GET-ms' → 'GET-ms/str')
+  // ladder ('GET-s' → 'GET-s/str', 'GET-ms' → 'GET-ms/str'). v12.3: the
+  // resolved rung is what gets filtered out of the tail (a stale id that
+  // no longer exists resolves to ladder rung 1 — never duplicated).
   const stickyId = _walletsTransport.mode === 'GET-s' ? 'GET-s/str'
     : _walletsTransport.mode === 'GET-ms' ? 'GET-ms/str' : _walletsTransport.mode;
-  let order = stickyId
-    ? [WALLET_AUTH_LADDER.find(v => v.id === stickyId) || WALLET_AUTH_LADDER[0],
-       ...WALLET_AUTH_LADDER.filter(v => v.id !== stickyId)]
+  const stickyRung = stickyId
+    ? (WALLET_AUTH_LADDER.find(v => v.id === stickyId) || WALLET_AUTH_LADDER[0])
+    : null;
+  let order = stickyRung
+    ? [stickyRung, ...WALLET_AUTH_LADDER.filter(v => v.id !== stickyRung.id)]
     : [...WALLET_AUTH_LADDER];
   // v10.14: during the post-sweep-failure cooldown the alternates are
   // NOT re-probed — one sticky-mode round-trip bounds the failure path.
@@ -587,7 +608,7 @@ export async function fetchFuturesWallets() {
       guidance = ' — API key me Global Futures permission nahi hai (derivatives positions auth bhi 401 — same key spot par chalti hai). CoinDCX app → API Dashboard → Futures permission ON karke NAYI key banao → site me CoinDCX reconnect karo';
     } else if (probe?.verdict === 'ok') {
       verdictTag = ' · futures-key-scope: OK';
-      guidance = ' — key derivatives-auth pass karti hai (positions readable) — sirf wallets-GET reject ho raha (auth-format drift). Spaced-JSON rungs try ho rahe hain; agar phir bhi 401 rahe to CoinDCX API changelog dekho';
+      guidance = ' — key derivatives-auth pass karti hai (positions readable) — sirf wallets-GET reject ho raha. v12.3 GET-with-body rungs ab ladder me HEAD par hain (documented contract); agar phir bhi 401 rahe to CoinDCX API changelog dekho';
     }
   }
   if (!guidance && allGet401) {

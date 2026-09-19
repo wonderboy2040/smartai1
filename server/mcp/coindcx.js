@@ -26,6 +26,7 @@
 // view/balance (read-only) permissions — we never place orders.
 // ============================================================
 import crypto from 'node:crypto';
+import https from 'node:https';
 import { loadJSON, saveJSON } from '../lib/store.js';
 import { fetchCoinDcxTickers } from '../cryptoStream.js';
 import { durablePut } from './durable.js';
@@ -185,40 +186,82 @@ export async function coindcxPrivate(path, apiKey, secret, body = {}) {
   return json;
 }
 
-// ---------------- signed private REST call (GET, query-param auth) ----------------
-// 2025 FUTURES API: the derivatives wallet routes are GET-only — a POST
-// to the same path dies with `[404] not_found` (Express routes by method,
-// so the route "doesn't exist" for POST). The GET auth mirrors the POST
-// contract but the signed payload travels as QUERY params:
-//   • timestamp unit: SECONDS (string) — the derivatives wallet route
-//     family expects the 10-digit epoch; the ms variant is kept as a
-//     fallback (`unit: 'ms'`) in case the route drifts back.
-//   • signature = HMAC-SHA256(secret, JSON.stringify({...params, timestamp}))
-//     — the server rebuilds the same JSON from the query string to verify.
-//   • params are serialized in insertion order so the rebuilt payload
-//     matches the signed string byte-for-byte.
-//   • v12.1 `tsType: 'num'` — the timestamp is emitted as a JSON NUMBER
-//     ({"timestamp":1789824123}) instead of a string. Why: the official
-//     futures-API doc samples build the signed body with an INT
-//     timestamp (`timeStamp = int(round(time.time() * 1000))` →
-//     {"timestamp":1612345678000}), and on 2026-09-19 the live smartai1
-//     deployment gets `[401] Invalid credentials` from BOTH string
-//     variants while the SAME key signs spot POSTs fine — the server's
-//     canonical rebuild almost certainly types the timestamp as a
-//     number. The wallets transport ladder (futures.js v12.1) probes
-//     every variant and sticks with whichever the server accepts.
-//   • v12.2 `sep: 'spaced'` — the signature is computed over the PYTHON
-//     json.dumps canonical form ({"timestamp": 1789824123} — `, ` / `: `
-//     separators) instead of JSON.stringify's compact form. Why: for GET
-//     the server must REBUILD the payload from the query string, and if
-//     that rebuild walks Python defaults the compact signature can never
-//     verify. POSTs are immune (the raw body is compared byte-for-byte)
-//     which is exactly the live symptom: spot POST signs fine, every
-//     compact-GET rung 401s. The ladder carries two spaced rungs.
-export async function coindcxPrivateGET(path, apiKey, secret, params = {}, { unit = 's', tsType = 'str', sep = 'compact' } = {}) {
+// ---------------- signed private REST call (GET, REQUEST-BODY auth) ----------------
+// v12.3 THE DOCUMENTED CONTRACT (docs.coindcx.com "Wallet Details" +
+// "Wallet Transactions" samples — extracted from the official 1.1MB
+// Slate docs capture, 2026-09-19):
+//   Python: response = requests.get(url, data=json_body, headers=headers)
+//     url     = https://api.coindcx.com/exchange/v1/derivatives/futures/wallets
+//     body    = {"timestamp": <int ms>}   (json.dumps, separators=(',', ':'))
+//   Node:    request.get({ url, headers, json: true, body: {timestamp} })
+// i.e. THE SIGNED COMPACT JSON TRAVELS AS THE GET REQUEST **BODY** —
+// NOT as query params. page/size-style params ride the QUERY STRING
+// UNSIGNED (transactions sample: ?page=1&size=1000 + {"timestamp":...}
+// body); the timestamp NEVER goes in the query string in body mode.
+//
+// THIS was the live 2026-09-19 401 root cause: every query-param variant
+// (v10.3.2 seconds-string -> v12.1 int permutations -> v12.2 spaced-JSON)
+// 401'd with "Invalid credentials" because the server verifies the
+// signature against the REQUEST BODY — an empty body can never verify.
+// Meanwhile the SAME key POSTs fine (POSTs sign the body they send),
+// which is why the v12.2 scope probe correctly reported scope OK.
+//
+// Legacy `mode: 'query'` (the v10.3.2-v12.2 wire form — params +
+// timestamp all in the query string, nothing in the body) is kept for
+// ladder fallback rungs in case the route family ever reverts to it.
+//   • v12.1 `tsType: 'num'` — timestamp as a JSON NUMBER (the doc
+//     samples: int(round(time.time() * 1000)) / Math.floor(Date.now())).
+//   • v12.2 `sep: 'spaced'` — Python json.dumps default spacing (", "
+//     and ": ") as a canonical-rebuild insurance variant.
+// v12.3: GET-with-body transport. The Fetch spec (and Node's undici
+// `fetch`) FORBIDS a body on GET — "Request with GET/HEAD method cannot
+// have body" — while the official CoinDCX Python samples send exactly
+// that (requests.get(url, data=json_body); Python's requests is a raw
+// HTTP client with no Fetch-spec restriction). The body-mode GET
+// therefore rides Node's native `https` module, which happily writes a
+// GET body onto the socket. Same URL, same headers, same signed JSON.
+const API_HOST = new URL(API_BASE).hostname;
+function _httpsGetJson(path, headers, bodyStr) {
+  return new Promise((resolve, reject) => {
+    const bodyBuf = bodyStr ? Buffer.from(bodyStr, 'utf8') : null;
+    const req = https.request({
+      hostname: API_HOST,
+      path,
+      method: 'GET',
+      headers: {
+        ...headers,
+        ...(bodyBuf ? { 'Content-Length': bodyBuf.length } : {}),
+      },
+      timeout: REQUEST_TIMEOUT_MS,
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let json = null;
+        try { json = JSON.parse(text); } catch { /* error body may be plain */ }
+        resolve({
+          ok: res.statusCode >= 200 && res.statusCode < 300,
+          status: res.statusCode,
+          json,
+          text,
+        });
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('CoinDCX API timeout')));
+    req.on('error', (e) => reject(e));
+    if (bodyBuf) req.write(bodyBuf);
+    req.end();
+  });
+}
+
+export async function coindcxPrivateGET(path, apiKey, secret, params = {}, { unit = 'ms', tsType = 'num', sep = 'compact', mode = 'body' } = {}) {
   const tsNum = unit === 'ms' ? Date.now() : Math.floor(Date.now() / 1000);
   const timestamp = tsType === 'num' ? tsNum : String(tsNum);
-  const payload = { ...params, timestamp };
+  const bodyMode = mode !== 'query';
+  // body mode signs {timestamp} only (the documented wallet GET body);
+  // query mode signs {...params, timestamp} (the legacy wire form).
+  const payload = bodyMode ? { timestamp } : { ...params, timestamp };
   // v12.2: exact Python json.dumps default rendering — `, ` between
   // items, `: ` after each key, values JSON-escaped the same way. Built
   // by hand (never a regex on the compact string) so a param VALUE
@@ -227,27 +270,44 @@ export async function coindcxPrivateGET(path, apiKey, secret, params = {}, { uni
     ? '{' + Object.entries(payload).map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(', ') + '}'
     : JSON.stringify(payload);
   const signature = crypto.createHmac('sha256', secret).update(payloadStr).digest('hex');
-  const qs = new URLSearchParams(
-    Object.entries(payload).map(([k, v]) => [k, String(v)]),
-  ).toString();
-  const r = await fetch(`${API_BASE}${path}?${qs}`, {
-    method: 'GET',
-    headers: {
-      'X-AUTH-APIKEY': apiKey,
-      'X-AUTH-SIGNATURE': signature,
-    },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  const text = await r.text();
-  let json = null;
-  try { json = JSON.parse(text); } catch { /* error body may be plain */ }
+  // body mode: params ride the query UNSIGNED (transactions sample:
+  // ?page=1&size=1000 + {"timestamp":...} body) and the timestamp NEVER
+  // goes in the query; query mode: the full signed object rides the query.
+  const qsEntries = bodyMode ? Object.entries(params) : Object.entries(payload);
+  const qs = qsEntries.length
+    ? '?' + new URLSearchParams(qsEntries.map(([k, v]) => [k, String(v)])).toString()
+    : '';
+  const headers = {
+    // body mode carries JSON — the Python sample sets this header and
+    // the Node `request({json:true})` form sets it implicitly.
+    ...(bodyMode ? { 'Content-Type': 'application/json' } : {}),
+    'X-AUTH-APIKEY': apiKey,
+    'X-AUTH-SIGNATURE': signature,
+  };
+  // THE v12.3 FIX (transport): body mode rides the native https module
+  // with the signed JSON as the GET request BODY (undici fetch forbids
+  // GET bodies); query mode keeps the legacy fetch wire unchanged.
+  let r;
+  if (bodyMode) {
+    r = await _httpsGetJson(path + qs, headers, payloadStr);
+  } else {
+    r = await fetch(`${API_BASE}${path}${qs}`, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const text = await r.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch { /* error body may be plain */ }
+    r = { ok: r.ok, status: r.status, json, text };
+  }
   if (!r.ok) {
-    const msg = (json && (json.message || json.error || json.error_description)) || `CoinDCX API ${r.status}`;
+    const msg = (r.json && (r.json.message || r.json.error || r.json.error_description)) || `CoinDCX API ${r.status}`;
     const err = new Error(`[${r.status}] ${String(msg).slice(0, 180)}`);
     err.status = r.status;
     throw err;
   }
-  return json;
+  return r.json;
 }
 
 // ---------------- balances fetch with pagination ----------------
