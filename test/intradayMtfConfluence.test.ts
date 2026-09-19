@@ -66,6 +66,31 @@ function driftSeries(minutes: number, n: number, driftPct: number, startPx = 124
 const FALL_5M = () => driftSeries(5, 1200, -0.0016);
 const RISE_5M = () => driftSeries(5, 1200, 0.0016);
 
+// v12.4: a REALISTIC falling 15m tape (trend down + periodic pullback
+// bars — LTF RSI lands ~41, inside the 30-70 band). The board test below
+// asserts a full-bearish-confluence ACTION/STRONG SHORT; a MONOTONIC
+// decline would compute RSI ≈ 0 and the new OVERSOLD trust guard would
+// (correctly) cap it to WATCH — the chase-suppression is locked in
+// signalTrust.test.ts + intradayTapeAlignment.test.ts instead.
+function falling15mWithPullbacks(n = 90) {
+  const out = [];
+  const minutes = 15;
+  const align = minutes * 60_000;
+  const t0 = Math.floor((Date.now() - n * align) / align) * align;
+  let px = 1290;
+  for (let i = 0; i < n; i++) {
+    const bounce = i % 4 === 3;
+    px = px * (bounce ? 1.0045 : 0.998);
+    const c = +px.toFixed(2);
+    out.push({
+      time: t0 + i * align,
+      open: +(px * (bounce ? 1.0004 : 0.9996)).toFixed(2), high: +(px * 1.0015).toFixed(2),
+      low: +(px * 0.9985).toFixed(2), close: c, volume: 120_000 + (i % 7) * 9_000,
+    });
+  }
+  return out;
+}
+
 function yahooChartReply(candles) {
   const ts = candles.map(c => Math.floor(c.time / 1000));
   const quote = {
@@ -313,7 +338,7 @@ describe('v10.5 board — MTF confluence live on the India desk', () => {
   afterAll(() => { vi.useRealTimers(); });
 
   it('tape-mtf vote in the committee + mtf payload on the signal (all TFs bearish)', async () => {
-    serve15m = driftSeries(15, 90, -0.0016); // falling 15m
+    serve15m = falling15mWithPullbacks(); // realistic falling 15m (RSI ~41 — not oversold)
     serve5m = FALL_5M();                    // falling 5m → h1 resamples bear too
     const board = await getSignals('INDIA', {}, { limit: 10, noCache: true });
     expect(board.ok).toBe(true);

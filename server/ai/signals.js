@@ -43,6 +43,10 @@ import { simulateSymbol } from './backtest.js';
 // v9 SUPERINTELLIGENCE PRO TRADER ENGINE — the Signal Board upgrade:
 // dynamic full-universe scan + AI SCORE (0-100) + complete trade
 // blueprint (entry timing / leverage / exit time) on every signal.
+// v12.4 SIGNAL CONTINUITY ENGINE — age/flips tracking, OB/OS + flip
+// trust guards (board AND deep paths — the LIVE gate reads the deep
+// one), and open-position pinning (traded symbols never vanish).
+import { applySignalTrustGuards, remember, pinHoldingOnBoard, __resetSignalMemoryForTests } from './signalMemory.js';
 import { discoverSpotUniverse, discoverFuturesUniverse, binancePriceMap, fetchUsdInr, expertScoreFactors } from './expertPicks.js';
 import { validateTick } from './wickFilter.js';
 import { readDepth, warmDepthBatch } from './orderFlowDepth.js';
@@ -1315,7 +1319,14 @@ async function _computeBoard(mkt, deps, opts = {}) {
     else if (consensus.dir < 0) breadth.bear++;
     else breadth.flat++;
     confSum += consensus.confidence;
-    if (consensus.dir === 0) continue;
+    // v12.4 CONTINUITY: FLAT views are remembered too — a symbol going
+    // neutral is exactly when its last directional view must stay
+    // queryable (the pinned holding card's "AI abhi neutral hai" read)
+    // and when a later opposite-direction view must count as a FLIP.
+    if (consensus.dir === 0) {
+      remember(mkt, ctx.symbol, { side: 'FLAT', confidence: consensus.confidence, grade: consensus.grade, ltp: ctx.ltp });
+      continue;
+    }
     const plan = buildTradePlan(consensus, ctx, mkt, { maxRiskPct: riskCapFor(depsSafe) });
     // v9: the 7-factor EXPERT score for this coin (domain-correct ltp
     // injected — spot INR / futures USDT / India INR) + the PRE-super
@@ -1550,6 +1561,21 @@ async function _computeBoard(mkt, deps, opts = {}) {
     } else {
       plan2 = c.plan;
     }
+    // v12.4 SIGNAL TRUST GUARDS — the pro-trader entry discipline layer:
+    //   • OVERBOUGHT (RSI ≥ 70) LONG / OVERSOLD (RSI ≤ 30) SHORT can no
+    //     longer wear ACTION/STRONG (chase protection — the WLD class)
+    //   • a side that JUST flipped (< 5m) is capped to WATCH (whipsaw
+    //     protection) and every card now carries its true AGE
+    //   • the observation is remembered for continuity (age/flips)
+    // Runs on BOTH directional and FLAT finals; never throws; never
+    // touches side/ltp (plan2 stays valid).
+    {
+      const guarded = applySignalTrustGuards({
+        market: mkt, symbol: c.ctx.symbol, consensus: consensus2,
+        ctx: c.ctx, ltf: enr?.ltfInd ?? c.ctx.__ltfInd ?? null,
+      });
+      if (guarded) consensus2 = guarded;
+    }
     const sig = buildSignal({
       symbol: c.ctx.symbol, market: mkt, ctx: c.ctx, votes, consensus: consensus2, plan: plan2, aiNote, quality,
     });
@@ -1650,6 +1676,20 @@ async function _computeBoard(mkt, deps, opts = {}) {
   // v9.3: the India pass built 2× the board — cut to the display limit
   // AFTER the tape-aware re-rank (crypto/futures already match the cut).
   if (signals.length > boardLimit) signals.length = boardLimit;
+
+  // -----------------------------------------------------------------
+  // v12.4 SIGNAL PERSISTENCE — traded symbols NEVER vanish from the
+  // board. A WLD entry at 0.4385 used to leave the board entirely the
+  // moment its consensus went FLAT or it fell under the top-N cut —
+  // the user was left with a live position and zero AI context. Now:
+  //   • cards for symbols with OPEN positions (journal + manual
+  //     tracker) carry a 🎯 HOLDING stamp (side/entry/age)
+  //   • held symbols missing from the cut get a PINNED card (the AI's
+  //     current view or an honest "AI abhi neutral hai") — bounded to
+  //     4 pins so a full book can't flood the board
+  // Never throws — pinning is context, never a blocker.
+  // -----------------------------------------------------------------
+  try { pinHoldingOnBoard(signals, mkt, { maxPinned: 4 }); } catch { /* pinning degrades */ }
 
   // v10.15 GAP 2: the EVENT CHIP — every signal carries the next
   // scheduled event for its symbol/desk (⚠ Earnings in 2h / ⚠ FOMC
@@ -2132,6 +2172,19 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
       }
     } catch { /* edge stats are optional context */ }
   }
+  // v12.4 SIGNAL TRUST GUARDS (deep path) — THE LIVE ENTRY DISCIPLINE.
+  // getFresh*SignalForExec feeds the execution gauntlets from THIS
+  // consensus, so the guards here are what actually stop a live LONG
+  // on an overbought perp or a freshly-flipped whipsaw at gate 5
+  // (grade WATCH can never satisfy requireStrong). Same honesty as
+  // the board path: FLAT views remembered, side/ltp untouched (the
+  // plan below stays valid), never throws.
+  {
+    const guarded = applySignalTrustGuards({
+      market: mkt, symbol: sym, consensus, ctx, ltf: ltfInd ?? ctx.__ltfInd ?? null,
+    });
+    if (guarded) consensus = guarded;
+  }
   const plan = buildTradePlan(consensus, ctx, mkt, {
     maxRiskPct: riskCapFor(deps),
     ...(structureStopOpt && consensus.dir !== 0 ? { structureStop: structureStopOpt } : {}),
@@ -2330,7 +2383,15 @@ function _boardFallbackForExec(mkt, sym, opts = {}) {
 }
 
 // ---------------- test hooks ----------------
-export function __clearSignalCaches() { _cache.clear(); _boardInflight.clear(); }
+export function __clearSignalCaches() {
+  _cache.clear();
+  _boardInflight.clear();
+  // v12.4: board tests expect a CLEAN slate between cases — the signal
+  // continuity memory (age/flip history) is part of that slate now
+  // (a prior test's consensus for the same symbol would otherwise
+  // trip the flip-cooldown guard on the next one).
+  try { __resetSignalMemoryForTests(); } catch { /* memory-only mode */ }
+}
 /** v9.2.1: inject a board cache entry of a given age (ms) — resilience tests. */
 export function __setBoardCacheForTests(mkt, payload, ageMs = 0) {
   _cache.set(`board:${mkt}`, { at: Date.now() - Math.max(0, Number(ageMs) || 0), payload });

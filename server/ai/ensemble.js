@@ -538,6 +538,14 @@ export function buildSignal({ symbol, market, ctx, votes, consensus, plan, aiNot
     summary: consensus.summary,
     aiNote: aiNote || null,
     executable: (market === 'CRYPTO' || market === 'FUTURES' || market === 'GLOBALFUTURES') && consensus.grade === 'STRONG' && !!plan,
+    // v12.4 SIGNAL TRUST wire fields (attached by applySignalTrustGuards
+    // on both the board and deep paths — see signalMemory.js):
+    //   signalAge — when this direction FIRST appeared + last confirm
+    //   obOs      — the overbought/oversold suppression verdict
+    //   freshFlip — the anti-whipsaw verdict (side just flipped)
+    ...(consensus.signalAge ? { signalAge: consensus.signalAge } : {}),
+    ...(consensus.obOs ? { obOs: consensus.obOs } : {}),
+    ...(consensus.freshFlip ? { freshFlip: consensus.freshFlip } : {}),
     generatedAt: Date.now(),
   };
 }

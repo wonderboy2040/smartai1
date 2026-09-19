@@ -125,7 +125,7 @@ AI-powered portfolio analytics for Indian and US markets, crypto tracking, risk 
 - 🔓 **CRITICAL login fix** — the PIN input had `maxLength={4}`: any strong PIN (5+ chars, as `.env.example` recommends) could NEVER be entered and the terminal stayed permanently locked. Now 4-32 chars.
 - ✅ All checks pass — TypeScript clean, 851/851 tests (43 files), build OK, 0 npm audit vulnerabilities, live API + browser E2E verified.
 
-See [`docs/UPGRADE_REPORT_v18.md`](docs/UPGRADE_REPORT_v18.md) for the v18 audit & fix list.
+See [`docs/CHANGES.md`](docs/CHANGES.md) for the running changelog (the v18 audit & fix list is in the v18.0/v18.0.1 entries).
 
 ## What's New in v18.0 (Advance Pro Intelligence)
 
@@ -141,7 +141,7 @@ See [`docs/UPGRADE_REPORT_v18.md`](docs/UPGRADE_REPORT_v18.md) for the v18 audit
 - 🧠 **Unified branding** — All version strings now consistent (`v18.0`)
 - ✅ **All checks pass** — TypeScript clean, 54/54 tests pass, build OK
 
-See [`docs/UPGRADE_REPORT_v18.md`](docs/UPGRADE_REPORT_v18.md) for the full audit & fix list.
+See [`docs/CHANGES.md`](docs/CHANGES.md) for the running changelog (the full v18 audit & fix list is in the v18.0/v18.0.1 entries).
 
 ## Requirements
 
@@ -231,10 +231,10 @@ npm run start:telegram
 
 ## Upgrade status
 
-See [`docs/UPGRADE_REPORT.md`](docs/UPGRADE_REPORT.md) for the checks performed, fixes applied, dependency/security status, and known environment-dependent limitations.
+See [`docs/CHANGES.md`](docs/CHANGES.md) for the running changelog — checks performed, fixes applied, and dependency/security status per release.
 
 ## v18.0.1 patch (audit & fix)
 
 - Fixed 6 TypeScript errors in `src/components/tabs/AITradingTab.tsx` — the three `onExecute*` wrappers now accept the `notify` mode that `SignalCard` dispatches (`npm run check` passes again).
 - Security: `qs` pinned to `^6.16.0` via npm `overrides` (express transitive dep, GHSA-x5fp-wj9c-mxmx / GHSA-4mjr-xmp4-gh2g); dev-dep + telegram-bot advisories patched. `npm audit` → 0 vulnerabilities.
-- Full audit details: [`docs/AUDIT_FIX_REPORT_v1801.md`](docs/AUDIT_FIX_REPORT_v1801.md)
+- Full v18.0.1 audit details: the `docs/CHANGES.md` v18.0.1 entry (the one-off audit report files were consolidated into the changelog in the v12.4 cleanup).

@@ -987,6 +987,67 @@ function CouncilStrip({ council, expanded }: { council: NonNullable<AISignal['co
   );
 }
 
+// ---------------- v12.4 SIGNAL TRUST CHIPS ----------------
+// The WLD incident, closed at the card level: the age of the signal
+// (kitna purana hai), the OB/OS suppression verdict, the fresh-flip
+// whipsaw warning, and the HOLDING stamp for money already on the
+// line. Each chip is context the pro trader needs BEFORE entering.
+
+/** Ticking clock for live age display (15s granularity is plenty). */
+function useNowTicked(intervalMs = 15_000) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(t);
+  }, [intervalMs]);
+  return now;
+}
+
+function fmtAge(ms: number): string {
+  if (!(ms >= 0)) return '—';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h}h ${m % 60}m` : `${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
+/**
+ * ⏱ SIGNAL AGE — "AI model ne ye direction kab pakda?" The age is
+ * recomputed LIVE from firstSeenAt (not a frozen server snapshot), so
+ * the chip keeps ticking between board refreshes.
+ *   < 2m  → cyan FRESH (unstable — signal abhi bana hai)
+ *   2-10m → emerald (confirmed young)
+ *   10-30m→ amber (aging)
+ *   > 30m → red STALE (entry se pehle re-check karo)
+ * Title carries the full truth: age · last confirm · 24h flips.
+ */
+function SignalAgeChip({ age }: { age: NonNullable<AISignal['signalAge']> }) {
+  const now = useNowTicked();
+  const ageMs = Number(age.firstSeenAt) > 0 ? now - Number(age.firstSeenAt) : Number(age.ageMs) || 0;
+  const lastConfirmMs = Number(age.lastSeenAt) > 0 ? now - Number(age.lastSeenAt) : null;
+  const flips = Number(age.flips24h) || 0;
+  const fresh = ageMs < 2 * 60_000;
+  const stale = ageMs > 30 * 60_000;
+  const cls = fresh
+    ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40'
+    : stale
+      ? 'bg-red-500/15 text-red-300 border-red-500/40'
+      : ageMs > 10 * 60_000
+        ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+        : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
+  const label = fresh ? 'FRESH' : stale ? 'STALE' : 'AGE';
+  return (
+    <span
+      className={`px-1.5 py-0.5 rounded text-[9px] font-black border font-mono ${cls}`}
+      title={`AI ne ye direction ${fmtAge(ageMs)} pehle pakda hai · last board confirm ${lastConfirmMs != null ? `${fmtAge(lastConfirmMs)} pehle` : '—'} · 24h me ${flips} flip${flips === 1 ? '' : 's'}${fresh ? ' · signal abhi bana hai — confirmation ka wait karo' : ''}${stale ? ' · entry se pehle deep re-check karo' : ''}`}
+    >
+      ⏱ {fmtAge(ageMs)} {label}{flips > 0 ? ` · ${flips}↺` : ''}
+    </span>
+  );
+}
+
 export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, onExecuteIndia, onExecuteFutures, onExecuteGlobal, onDeep, canLive, canLiveIndia, isNew, orderBudgetINR, riskCapPct, maxLeverage, indiaBudgetINR, onPaperTrade, paperOpenForSymbol, liveLtp, liveSrc }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [slipOpen, setSlipOpen] = useState(false);
@@ -1004,6 +1065,7 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
     <div id={`sig-${signal.market}-${signal.symbol}`} className={`quantum-panel rounded-2xl p-4 transition-colors hover:border-cyan-500/20 border-l-4 ${long ? 'border-l-emerald-500/60' : 'border-l-red-500/60'} scroll-mt-24
       ${signal.grade === 'STRONG' ? 'ring-1 ring-emerald-500/40' : ''}
       ${(si?.aiScore ?? 0) >= 80 ? 'ring-1 ring-cyan-400/40' : ''}
+      ${signal.holdingOnly ? 'ring-2 ring-fuchsia-500/50' : signal.holding ? 'ring-1 ring-fuchsia-500/30' : ''}
       ${isNew ? 'ring-2 ring-cyan-400/60 animate-pulse' : ''}`}>
       {/* Header row */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -1038,6 +1100,32 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
             )}
             {signal.market === 'INDIA' && signal.grade === 'STRONG' && (
               <span className="px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 text-[9px] font-bold border border-violet-500/30">🎯 OPTIONS STRATEGY</span>
+            )}
+            {/* v12.4 SIGNAL TRUST chips — age / OB-OS / flip / holding.
+                Context the pro trader needs BEFORE entering: kitna purana
+                signal hai, kya RSI guard lagi hai, side abhi flip to
+                nahi hua, aur kya position already open hai. */}
+            {signal.signalAge && <SignalAgeChip age={signal.signalAge} />}
+            {signal.obOs && (
+              <span
+                className={`px-1.5 py-0.5 rounded text-[9px] font-black border font-mono ${signal.obOs.extreme ? 'bg-red-500/15 text-red-300 border-red-500/40' : 'bg-amber-500/15 text-amber-300 border-amber-500/40'}`}
+                title={`${signal.obOs.tag} — RSI ${signal.obOs.rsi}${signal.obOs.tag === 'OVERBOUGHT' ? ` ≥ 70: LONG entry SUPPRESSED hai (grade WATCH cap, chase protection)` : ` ≤ 30: SHORT entry SUPPRESSED hai (grade WATCH cap, chase protection)`}. Pullback ka wait karo ya counter setup dekho.`}>
+                ⛔ {signal.obOs.tag} RSI {Math.round(signal.obOs.rsi)}
+              </span>
+            )}
+            {signal.freshFlip && (
+              <span
+                className="px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-300 text-[9px] font-black border border-orange-500/40 font-mono"
+                title={`Signal ${Math.round((signal.freshFlip.ageSec || 0) / 60)}m pehle FLIP hua tha (${signal.freshFlip.from} → ${signal.freshFlip.to}) — whipsaw window me hai, grade WATCH cap laga hai. Confirmation (2-3 board cycles) ka wait karo.`}>
+                🔄 FLIP {signal.freshFlip.from}→{signal.freshFlip.to} {fmtAge((signal.freshFlip.ageSec || 0) * 1000)} pehle
+              </span>
+            )}
+            {signal.holding && (
+              <span
+                className="px-1.5 py-0.5 rounded bg-fuchsia-500/15 text-fuchsia-300 text-[9px] font-black border border-fuchsia-500/40 font-mono"
+                title={`OPEN POSITION already hai: ${signal.holding.side} ${signal.holding.qty > 0 ? `${signal.holding.qty} qty ` : ''}${signal.holding.entryPrice != null && signal.holding.entryPrice > 0 ? `@ ${signal.holding.entryPrice} ` : ''}${signal.holding.openedAt ? `· opened ${fmtAge(Date.now() - signal.holding.openedAt)} pehle ` : ''}(${signal.holding.via === 'manual' ? 'manual tracker' : signal.holding.mode || 'journal'})${signal.holdingOnly ? ' · ye card board se nikal gaya tha — position open hai isliye PIN kiya gaya' : ''}`}>
+                🎯 HOLDING {signal.holding.side}{signal.holding.entryPrice != null && signal.holding.entryPrice > 0 ? ` @${signal.holding.entryPrice}` : ''}
+              </span>
             )}
           </div>
           <div className="flex items-center gap-3 mt-1 text-xs text-slate-400 flex-wrap">

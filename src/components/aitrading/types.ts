@@ -351,6 +351,43 @@ export interface AISignal {
    *  6 specialist seats' weighted verdict + precision-gate decision.
    *  Analysis layer — execution authority stays with the gauntlets. */
   council?: CouncilStamp | null;
+  /** v12.4 SIGNAL AGE — how long ago the AI FIRST called this
+   *  direction (firstSeenAt, client-computed live) + last board
+   *  confirmation + 24h flip count. Answers "ye signal kitna purana
+   *  hai?" before you enter on it. */
+  signalAge?: {
+    /** epoch ms when this side's signal first appeared */
+    firstSeenAt: number;
+    /** epoch ms of the last board cycle that confirmed this side */
+    lastSeenAt: number;
+    /** server-computed age snapshot (ms) — client recomputes from firstSeenAt for a live tick */
+    ageMs: number;
+    /** direction flips in the last 24h (whipsaw thermometer) */
+    flips24h: number;
+  } | null;
+  /** v12.4 OB/OS GUARD — the overbought/oversold suppression verdict:
+   *  a LONG card at RSI ≥ 70 (SHORT at RSI ≤ 30) is grade-capped to
+   *  WATCH and confidence-floored — chase protection. */
+  obOs?: { tag: 'OVERBOUGHT' | 'OVERSOLD'; rsi: number; extreme?: boolean } | null;
+  /** v12.4 FLIP COOLDOWN — the side JUST flipped (< 5m): unstable,
+   *  grade capped to WATCH. The anti-whipsaw verdict. */
+  freshFlip?: { from: string; to: string; ageSec: number } | null;
+  /** v12.4 HOLDING — an OPEN position exists on this symbol (journal
+   *  auto/desk trades + manual tracker): the card is the live context
+   *  for money already on the line. */
+  holding?: {
+    side: string;
+    entryPrice: number | null;
+    qty: number;
+    mode: string | null;
+    source: string | null;
+    openedAt: number | null;
+    via: string;
+    ageMs?: number;
+  } | null;
+  /** v12.4 — true when this card EXISTS only because an open position
+   *  pinned it back onto the board (it fell out of the top-N cut). */
+  holdingOnly?: boolean;
   votes: ModelVote[];
   summary: string;
   aiNote: AINote | null;

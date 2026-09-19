@@ -68,6 +68,9 @@ function risingTapeCandles(n = 90) {
 }
 
 // A FALLING 15m series — same bearish daily, but the tape CONFIRMS.
+// (Monotonic by construction — RSI computes to ~0. Kept for the v12.4
+// OVERSOLD-guard lock below: a deeply oversold tape must NOT hand out
+// an actionable SHORT badge.)
 function fallingTapeCandles(n = 90) {
   const out = [];
   const t0 = Date.now() - n * 15 * 60_000;
@@ -78,6 +81,27 @@ function fallingTapeCandles(n = 90) {
     out.push({
       time: t0 + i * 15 * 60_000,
       open: +(px * 1.0004).toFixed(2), high: +(px * 1.0015).toFixed(2),
+      low: +(px * 0.9985).toFixed(2), close: c, volume: 120_000 + (i % 7) * 9_000,
+    });
+  }
+  return out;
+}
+
+// v12.4: a REALISTIC falling tape — trend down with periodic pullback
+// bars (RSI lands ~41, safely inside the 30-70 band): the shape a real
+// bearish intraday tape has. This is the fixture under which a
+// CONFIRMING tape still earns the desk its STRONG/ACTION SHORT.
+function fallingWithPullbacks(n = 90) {
+  const out = [];
+  const t0 = Date.now() - n * 15 * 60_000;
+  let px = 1290;
+  for (let i = 0; i < n; i++) {
+    const bounce = i % 4 === 3; // every 4th bar a pullback up-bar
+    px = px * (bounce ? 1.0045 : 0.998);
+    const c = +px.toFixed(2);
+    out.push({
+      time: t0 + i * 15 * 60_000,
+      open: +(px * (bounce ? 1.0004 : 0.9996)).toFixed(2), high: +(px * 1.0015).toFixed(2),
       low: +(px * 0.9985).toFixed(2), close: c, volume: 120_000 + (i % 7) * 9_000,
     });
   }
@@ -308,7 +332,7 @@ describe('v9.3 board — bearish daily + rising 15m tape (THE screenshot bug)', 
   }, 30_000);
 
   it('the SAME daily data with a CONFIRMING 15m tape still earns STRONG/ACTION SHORT (desk stays alive)', async () => {
-    tapeSeries = fallingTapeCandles();
+    tapeSeries = fallingWithPullbacks(); // realistic bearish tape (RSI ~41 — not oversold)
     const board = await getSignals('INDIA', {}, { limit: 10, noCache: true });
     expect(board.ok).toBe(true);
     const sig = board.signals.find(s => s.symbol === 'RELIANCE');
@@ -319,6 +343,28 @@ describe('v9.3 board — bearish daily + rising 15m tape (THE screenshot bug)', 
     expect(sig.quality?.counterTape).toBeUndefined();
     const tapeVote = (sig.votes || []).find(v => v.id === 'tape');
     expect(tapeVote?.dir).toBe(-1);
+  }, 30_000);
+
+  // v12.4 SIGNAL TRUST GUARD — the OB/OS lock: a MONOTONIC decline (RSI
+  // pinned at ~0, deeply oversold) is a chase zone, not an entry zone.
+  // The SHORT card still SHOWS (honest — side, tape vote, alignment all
+  // intact) but it can never wear ACTION/STRONG, and the suppression is
+  // stamped on the payload (obOs) so the card can say WHY.
+  it('v12.4 OVERSOLD guard: a deeply-oversold confirming tape caps the SHORT to WATCH + stamps obOs', async () => {
+    tapeSeries = fallingTapeCandles(); // monotonic → LTF RSI ≈ 0
+    const board = await getSignals('INDIA', {}, { limit: 10, noCache: true });
+    expect(board.ok).toBe(true);
+    const sig = board.signals.find(s => s.symbol === 'RELIANCE');
+    expect(sig).toBeTruthy();
+    expect(sig.side).toBe('SHORT'); // the view itself is untouched
+    const tapeVote = (sig.votes || []).find(v => v.id === 'tape');
+    expect(tapeVote?.dir).toBe(-1); // the tape still voted bearish
+    expect(sig.grade).toBe('WATCH'); // ...but the badge is disciplined
+    expect(sig.obOs).toMatchObject({ tag: 'OVERSOLD' });
+    expect(sig.obOs?.rsi).toBeLessThanOrEqual(30);
+    // the age payload rides every directional card now
+    expect(sig.signalAge).toBeTruthy();
+    expect(sig.signalAge?.firstSeenAt).toBeGreaterThan(0);
   }, 30_000);
 
   it('board cut + re-rank: signals length never exceeds the limit', async () => {
