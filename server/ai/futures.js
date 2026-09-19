@@ -416,7 +416,23 @@ function credGuard() {
  * (`GET-s/str:401 · GET-ms/num:401 · …`) so the next probe pinpoints
  * exactly which auth the server speaks — and, if all GETs answer 401
  * with a key that works on spot, the guidance says what to check (a
- * Global-Futures-permission API key). */
+ * Global-Futures-permission API key).
+ *
+ * v12.2 SCOPE PROBE + SPACED RUNGS (same incident, round 2): the 6
+ * compact-GET permutations ALL 401'd live while an independent public
+ * CoinDCX SDK signs the wallets GET exactly like rung 1 — so either
+ * the key lacks derivatives permission, or the server rebuilds the
+ * canonical string with PYTHON json.dumps spacing. Two additions:
+ *   • rungs GET-s/str-sp / GET-ms/num-sp — signature over the spaced
+ *     canonical form (see coindcxPrivateGET v12.2).
+ *   • probeFuturesKeyScope() — THE discriminator: POST
+ *     /derivatives/futures/positions (a documented POST route) with
+ *     the SAME key. 2xx/4xx-shape → auth PASSED on the derivatives
+ *     family (scope OK, wallets-GET auth is the fault). 401/403 → the
+ *     key itself is rejected on derivatives (Global-Futures permission
+ *     missing) — the error then LEADS with that verdict so the blocker
+ *     panel tells the user the exact one-step fix. Cached 10 min,
+ *     single-flight, only fired when every GET rung 401s. */
 const WALLET_PROBE_COOLDOWN_MS = 5 * 60_000;
 const _walletsTransport = { mode: null, coolUntil: 0 };
 function _walletList(resp) {
@@ -429,21 +445,80 @@ function _walletList(resp) {
 // The v12.1 ladder — order matters: rung 1 is the 2025-verified contract
 // (keeps working deployments unchanged), rung 2 is the docs-canonical
 // INT-ms form (the most likely fix for the 2026-09-19 401s), then the
-// remaining permutations, then the page/size-signed GET (some CoinDCX
-// GET families require the documented params inside the signature), and
-// POST last (currently [404], kept as the legacy canary).
+// remaining permutations, then the v12.2 spaced-JSON rungs (Python
+// json.dumps canonical rebuild — the GET-family drift candidate), then
+// the page/size-signed GET (some CoinDCX GET families require the
+// documented params inside the signature), and POST last (currently
+// [404], kept as the legacy canary).
 const WALLET_AUTH_LADDER = [
   { id: 'GET-s/str', method: 'GET', unit: 's', tsType: 'str', params: {} },
   { id: 'GET-ms/num', method: 'GET', unit: 'ms', tsType: 'num', params: {} },
   { id: 'GET-s/num', method: 'GET', unit: 's', tsType: 'num', params: {} },
   { id: 'GET-ms/str', method: 'GET', unit: 'ms', tsType: 'str', params: {} },
+  { id: 'GET-s/str-sp', method: 'GET', unit: 's', tsType: 'str', params: {}, sep: 'spaced' },
+  { id: 'GET-ms/num-sp', method: 'GET', unit: 'ms', tsType: 'num', params: {}, sep: 'spaced' },
   { id: 'GET-s/pgsz', method: 'GET', unit: 's', tsType: 'str', params: { page: '1', size: '100' } },
   { id: 'POST', method: 'POST' },
 ];
 async function _walletTransportAttempt(variant, apiKey, secret) {
   if (variant.method === 'POST') return coindcxPrivate(WALLETS_PATH, apiKey, secret, {});
   const { coindcxPrivateGET } = await import('../mcp/coindcx.js');
-  return coindcxPrivateGET(WALLETS_PATH, apiKey, secret, variant.params, { unit: variant.unit, tsType: variant.tsType });
+  return coindcxPrivateGET(WALLETS_PATH, apiKey, secret, variant.params, {
+    unit: variant.unit, tsType: variant.tsType, ...(variant.sep ? { sep: variant.sep } : {}),
+  });
+}
+// ---------------- v12.2: futures key-scope probe ----------------
+// THE discriminator for the live 401 incident: POST
+// /derivatives/futures/positions is a documented POST route on the
+// SAME derivatives family — one harmless read with the SAME key tells
+// us whether the key can authenticate derivatives AT ALL:
+//   • 2xx            → scope OK (and the route works)
+//   • 400/422        → scope OK — auth PASSED, the request merely failed
+//                      validation (a validation error is past the auth
+//                      middleware by definition)
+//   • 401/403        → scope MISSING — the key is rejected on the whole
+//                      derivatives family (spot works, futures doesn't:
+//                      a SPOT-scoped API key)
+//   • 404/5xx/net    → UNKNOWN — route moved or gateway trouble; the
+//                      verdict stays honest rather than guessing.
+// Cached 10 min (verdicts don't flap per-minute), single-flight.
+let _scopeProbe = null; // { verdict: 'ok'|'no_scope'|'unknown', status, at }
+let _scopeProbeInflight = null;
+const SCOPE_PROBE_TTL_MS = 10 * 60_000;
+export async function probeFuturesKeyScope({ force = false } = {}) {
+  if (_scopeProbe && !force && Date.now() - _scopeProbe.at < SCOPE_PROBE_TTL_MS) return _scopeProbe;
+  if (_scopeProbeInflight) return _scopeProbeInflight;
+  _scopeProbeInflight = (async () => {
+    let out;
+    try {
+      const { apiKey, secret } = credGuard();
+      await coindcxPrivate(POSITIONS_PATH, apiKey, secret, {
+        page: '1', size: '10', margin_currency_short_name: ['USDT'],
+      });
+      out = { verdict: 'ok', status: 200, at: Date.now() }; // 2xx — full pass
+    } catch (e) {
+      const s = Number(e?.status);
+      if (s === 401 || s === 403) out = { verdict: 'no_scope', status: s, at: Date.now() };
+      else if (s === 400 || s === 422) out = { verdict: 'ok', status: s, at: Date.now() }; // auth passed, shape rejected
+      else out = { verdict: 'unknown', status: Number.isFinite(s) ? s : null, at: Date.now() };
+    }
+    _scopeProbe = out;
+    return out;
+  })();
+  try { return await _scopeProbeInflight; } finally { _scopeProbeInflight = null; }
+}
+/** Last scope verdict (null before the first probe) — walletSnapshot
+ *  exposes it as futures.scope so the UI can badge the exact cause. */
+export function lastFuturesKeyScope() { return _scopeProbe ? { ..._scopeProbe } : null; }
+/** v12.2: a fresh CoinDCX connect (new key) resets the wallet transport
+ *  ladder + cooldown AND this probe's cached verdict — the old key's
+ *  state must never mask the new key's behavior (called from
+ *  coindcxConnect via dynamic import). */
+export function resetWalletTransportForReconnect() {
+  _walletsTransport.mode = null;
+  _walletsTransport.coolUntil = 0;
+  _scopeProbe = null;
+  _scopeProbeInflight = null;
 }
 export async function fetchFuturesWallets() {
   const { apiKey, secret } = credGuard();
@@ -498,10 +573,31 @@ export async function fetchFuturesWallets() {
   // GET verdict.)
   const getTraces = trace.filter(t => !t.startsWith('POST:'));
   const allGet401 = getTraces.length > 0 && getTraces.every(t => t.endsWith(':401') || t.endsWith(':T'));
-  const guidance = allGet401
-    ? ' — key spot par kaam karta hai par derivatives wallet reject kar raha hai: CoinDCX app → API Dashboard me GLOBAL FUTURES permission wali key bana ke reconnect karo'
-    : '';
-  const err = new Error(`${String(lastErr?.message || lastErr).slice(0, 90)} [auth-ladder ${trace.join(' · ')}]${guidance}`);
+  // v12.2: STRICT 401s only (no 'T' timeouts — a network stall is not an
+  // auth rejection) → run the key-scope probe and let its verdict LEAD
+  // the error text, so the agent blocker's 200-char slice carries the
+  // definitive cause + fix, not just the ladder trace.
+  let verdictTag = '';
+  let guidance = '';
+  const strict401 = getTraces.length > 0 && getTraces.every(t => t.endsWith(':401'));
+  if (strict401) {
+    const probe = await probeFuturesKeyScope().catch(() => null);
+    if (probe?.verdict === 'no_scope') {
+      verdictTag = ' · futures-key-scope: MISSING';
+      guidance = ' — API key me Global Futures permission nahi hai (derivatives positions auth bhi 401 — same key spot par chalti hai). CoinDCX app → API Dashboard → Futures permission ON karke NAYI key banao → site me CoinDCX reconnect karo';
+    } else if (probe?.verdict === 'ok') {
+      verdictTag = ' · futures-key-scope: OK';
+      guidance = ' — key derivatives-auth pass karti hai (positions readable) — sirf wallets-GET reject ho raha (auth-format drift). Spaced-JSON rungs try ho rahe hain; agar phir bhi 401 rahe to CoinDCX API changelog dekho';
+    }
+  }
+  if (!guidance && allGet401) {
+    guidance = ' — key spot par kaam karta hai par derivatives wallet reject kar raha hai: CoinDCX app → API Dashboard me GLOBAL FUTURES permission wali key bana ke reconnect karo';
+  }
+  // Order: verdict → guidance → trace LAST. The user-facing surfaces
+  // (agent blocker 260 · log 300 · Telegram 200 · snapshot 420) slice
+  // from the FRONT — the verdict + the one-step fix must land inside
+  // every budget; the ladder trace is tail diagnostic for the logs.
+  const err = new Error(`${String(lastErr?.message || lastErr).slice(0, 90)}${verdictTag}${guidance} [auth-ladder ${trace.join(' · ')}]`);
   err.status = lastErr?.status;
   throw err;
 }
@@ -552,10 +648,11 @@ export async function walletSnapshot() {
   const [usdInr, fut, spot] = await Promise.all([
     fetchUsdInr().catch(() => _usdInr || 84), // belt & braces — never let FX break the snapshot
     _withDeadline(
-      // v12.1: 300 chars (was 140) — the auth-ladder variant trace +
-      // guidance must survive to the UI so the user sees WHICH rung the
-      // server answered and what to do about it.
-      fetchFuturesWallets().catch(e => ({ error: String(e?.message || e).slice(0, 300) })),
+      // v12.2: 420 chars (was 300) — the scope verdict LEADS, then the
+      // 8-rung ladder trace, then the guidance; the whole diagnostic
+      // sentence must survive to the UI so the user sees WHICH fault it
+      // is (key permission vs auth drift) and the one-step fix.
+      fetchFuturesWallets().catch(e => ({ error: String(e?.message || e).slice(0, 420) })),
       _walletLegBudgetMs, 'futures wallets slow'),
     _withDeadline(
       fetchSpotWallets().catch(e => ({ error: String(e?.message || e).slice(0, 140) })),
@@ -587,6 +684,11 @@ export async function walletSnapshot() {
     futures: {
       usdt: futUSDT,
       error: Array.isArray(fut) ? null : fut?.error || 'unavailable',
+      // v12.2: the key-scope verdict from the last probe (null before
+      // the first probe / on non-401 faults) — 'no_scope' = the API key
+      // itself is futures-less, 'ok' = only the wallets-GET auth is at
+      // fault. The UI badges this next to the error text.
+      scope: lastFuturesKeyScope()?.verdict || null,
     },
     equityINR,
     // what the AGENT may deploy right now (futures margin first, spot INR as the fallback venue)
@@ -1485,10 +1587,21 @@ export function __resetFuturesForTests() {
   _instrumentMetaCache = new Map();
   _walletsTransport.mode = null;
   _walletsTransport.coolUntil = 0;
+  _scopeProbe = null; // v12.2: the cached key-scope verdict
+  _scopeProbeInflight = null;
   _walletLegBudgetMs = WALLET_LEG_BUDGET_MS;
   _usdInr = null; _usdInrAt = 0;
 }
 export function __setUsdInrForTests(v) { _usdInr = v; _usdInrAt = Date.now(); }
 /** v10.14 test hook: shrink the wallet-leg deadline so budget tests run in ms. */
 export function __setWalletLegBudgetForTests(ms) { _walletLegBudgetMs = Math.max(1, Number(ms) || WALLET_LEG_BUDGET_MS); }
+/** v12.2 test hook: the wallet-transport probe state (sticky rung,
+ *  cooldown armed?, last key-scope verdict) for reconnect-reset locks. */
+export function __walletTransportStateForTests() {
+  return {
+    mode: _walletsTransport.mode,
+    cooling: Date.now() < _walletsTransport.coolUntil,
+    scopeVerdict: _scopeProbe?.verdict || null,
+  };
+}
 export { inrOfUsdt };

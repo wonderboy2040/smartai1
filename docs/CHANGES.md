@@ -1,5 +1,26 @@
 # Changelog
 
+## v12.2 — FUTURES KEY-SCOPE PROBE: the definitive verdict on the wallets-401 (2026-09-19)
+
+**User report: "FUTURES WALLET READ FAILED — [401] Invalid credentials [auth-ladder GET-s/str:401] — key spot par kaam karta hai par derivatives wallet reject kar raha hai." The v12.1 ladder fired exactly as designed and its trace proved all five compact-GET permutations 401 with a spot-working key — but that evidence alone cannot distinguish the two candidate root causes: (a) the API key lacks Global-Futures permission, or (b) CoinDCX's GET canonicalization drifted. Cross-checked an independent public CoinDCX SDK (@nemesis-oss/coindcx-sdk — signs the wallets GET exactly like rung 1: GET + query params + seconds-string timestamp + compact JSON), which keeps (b) alive but makes (a) the prime suspect. v12.2 makes the app itself run the discriminator and lead every error with the verdict.**
+
+### The key-scope probe — `probeFuturesKeyScope()` (futures.js)
+One harmless POST read of `/exchange/v1/derivatives/futures/positions` (the documented POST route on the SAME derivatives family) with the SAME key settles it: **2xx / 400 / 422 → scope OK** (a validation error is past the auth middleware — auth PASSED), **401/403 → scope MISSING** (the key is rejected on the whole derivatives family — a SPOT-scoped key), **404/5xx/network → UNKNOWN** (honest, never guesses). Fired only when every GET rung answers a strict 401 (timeouts/gateway blips never trigger it), cached 10 min, single-flight, cooldown-safe.
+
+### Verdict-led errors — every surface names the exact cause + the one-step fix
+`MISSING` → `[401] … · futures-key-scope: MISSING — API key me Global Futures permission nahi hai (derivatives positions auth bhi 401 — same key spot par chalti hai). CoinDCX app → API Dashboard → Futures permission ON karke NAYI key banao → site me CoinDCX reconnect karo`. `OK` → the verdict says auth-format drift and points at the spaced rungs instead — the permission fix is deliberately NOT suggested when the key is fine. Ordering: verdict → guidance → ladder trace last, so the agent blocker (260 chars), the agent log (300), Telegram (200) and the wallet card (420) all carry the verdict + fix inside their budgets. `walletSnapshot.futures.scope` exposes the machine verdict; the CoinDCX wallet card turns the error **red + ⛔** when scope = no_scope so the fix can't hide in amber noise.
+
+### Spaced-JSON ladder rungs — the (b)-path fix, in case the drift is real
+Two new rungs (`GET-s/str-sp`, `GET-ms/num-sp`) sign the **Python json.dumps canonical form** (`{"timestamp": 1789824123}` — `, `/`: ` separators). Rationale: POSTs verify against the raw body byte-for-byte (immune — which is why spot works), but a GET server must REBUILD the payload from the query string; if that rebuild walks Python defaults, a compact signature can never verify no matter the timestamp typing. `coindcxPrivateGET` gained `sep: 'spaced'` (hand-built canonical string — never a regex on the compact form, so values containing `,`/`:` can't corrupt it). Ladder is now 8 rungs: 4 compact permutations → 2 spaced → page/size → legacy POST.
+
+### Reconnect = clean slate
+`coindcxConnect` now calls `resetWalletTransportForReconnect()` (dynamic import — no static cycle): the sticky rung, the 5-min probe cooldown and the cached scope verdict all belonged to the PREVIOUS key — a fresh futures-permission key re-probes the FULL ladder immediately instead of failing one stale rung for 5 minutes and flashing the old verdict.
+
+### Validation
+- New locks: futures.test.ts scope-probe block (verdict classification 2xx/400/422→ok · 401/403→no_scope · 404/5xx/net→unknown; verdict-led error text; probe caching; reconnect reset; non-401 never probes) + 8-rung ladder order with spaced rungs + snapshot 420-char budget + `futures.scope` exposure; coindcxGet.test.ts spaced-signature block (4); agent.test.ts blocker verdict+fix survival lock.
+- **tsc clean · full suite 2204/2205** (the 1 = the documented pre-existing BSE live-network geo-block, unchanged) · build 5.14s · route audit PASS · npm audit 0/0.
+- Expected live outcome after deploy: within one wallet poll the agent log/blocker will say which world we're in — `futures-key-scope: MISSING` → create the futures-permission key (CoinDCX app → API Dashboard) and reconnect; `futures-key-scope: OK` → the spaced rungs have a live shot at fixing the read outright; either way the panel states the cause, not a guess.
+
 ## v12.1 — LIVE AUTO-TRADE UNBLOCK: the three walls every live entry was hitting (2026-09-19)
 
 **User ask: "site code me smartai-e954.onrender.com ki jagah smartai1.onrender.com daalo · Global Futures wallet me amount hai par koi auto trade lag hi nahi raha — accurately theek karo · min trade score 75+ aur conf 70+ rakho · auto entry + auto close high accuracy maintain karo." Live diagnosis on the NEW deployment (login → /api/ai/agent → /api/ai/wallet → journal entries) found the agent FIRING but dying at three separate walls — all three fixed.**

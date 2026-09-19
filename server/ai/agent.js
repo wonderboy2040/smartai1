@@ -887,7 +887,7 @@ async function _tick(deps, sendTelegram) {
   if (futWalletErr) {
     if (_state.lastFutWalletErr !== futWalletErr.slice(0, 60)) {
       _state.lastFutWalletErr = futWalletErr.slice(0, 60);
-      log('error', `FUTURES WALLET READ FAILED — ${futWalletErr.slice(0, 220)}`);
+      log('error', `FUTURES WALLET READ FAILED — ${futWalletErr.slice(0, 300)}`);
       await alertOnce(sendTelegram, `fut_wallet_${futWalletErr.slice(0, 40)}`,
         `🤖 <b>Futures wallet read fail</b> — Global Futures margin ko site na padh pa rahi (spot keys theek hain):
 <code>${futWalletErr.slice(0, 200)}</code>
@@ -1945,7 +1945,7 @@ export async function agentStatus(deps) {
       // trace + the key-permission guidance) right on the panel.
       const futReadErr = _state.lastWallet?.futuresError || null;
       if (futReadErr) {
-        blockers.push({ key: 'futures_wallet_read', text: `⚡ Futures wallet READ FAILED — ${String(futReadErr).slice(0, 140)}` });
+        blockers.push({ key: 'futures_wallet_read', text: `⚡ Futures wallet READ FAILED — ${String(futReadErr).slice(0, 260)}` });
       } else if ((_state.lastWallet?.deployableFuturesUSDT ?? 0) < 2) {
         blockers.push({ key: 'futures_margin', soft: true, text: '⚡ Futures margin < 2 USDT — sirf SPOT desk se entry hoga' });
       }

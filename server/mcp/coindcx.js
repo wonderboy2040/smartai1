@@ -207,11 +207,25 @@ export async function coindcxPrivate(path, apiKey, secret, body = {}) {
 //     canonical rebuild almost certainly types the timestamp as a
 //     number. The wallets transport ladder (futures.js v12.1) probes
 //     every variant and sticks with whichever the server accepts.
-export async function coindcxPrivateGET(path, apiKey, secret, params = {}, { unit = 's', tsType = 'str' } = {}) {
+//   • v12.2 `sep: 'spaced'` — the signature is computed over the PYTHON
+//     json.dumps canonical form ({"timestamp": 1789824123} — `, ` / `: `
+//     separators) instead of JSON.stringify's compact form. Why: for GET
+//     the server must REBUILD the payload from the query string, and if
+//     that rebuild walks Python defaults the compact signature can never
+//     verify. POSTs are immune (the raw body is compared byte-for-byte)
+//     which is exactly the live symptom: spot POST signs fine, every
+//     compact-GET rung 401s. The ladder carries two spaced rungs.
+export async function coindcxPrivateGET(path, apiKey, secret, params = {}, { unit = 's', tsType = 'str', sep = 'compact' } = {}) {
   const tsNum = unit === 'ms' ? Date.now() : Math.floor(Date.now() / 1000);
   const timestamp = tsType === 'num' ? tsNum : String(tsNum);
   const payload = { ...params, timestamp };
-  const payloadStr = JSON.stringify(payload);
+  // v12.2: exact Python json.dumps default rendering — `, ` between
+  // items, `: ` after each key, values JSON-escaped the same way. Built
+  // by hand (never a regex on the compact string) so a param VALUE
+  // containing ',' or ':' can't corrupt the canonical form.
+  const payloadStr = sep === 'spaced'
+    ? '{' + Object.entries(payload).map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(', ') + '}'
+    : JSON.stringify(payload);
   const signature = crypto.createHmac('sha256', secret).update(payloadStr).digest('hex');
   const qs = new URLSearchParams(
     Object.entries(payload).map(([k, v]) => [k, String(v)]),
@@ -312,6 +326,16 @@ export async function coindcxConnect(apiKey, secret) {
     lastError: null,
     // preserve nothing else — fresh credentials
   });
+  // v12.2: a fresh key must be probed with a CLEAN slate — the futures
+  // wallet transport's sticky rung + 5-min probe cooldown and the cached
+  // key-scope verdict all belong to the PREVIOUS key. Dynamic import:
+  // futures.js statically imports this module, so a static back-import
+  // would create a cycle; the runtime indirection keeps both directions
+  // loadable. Non-fatal on failure (the cooldown would simply lapse).
+  try {
+    const fut = await import('../ai/futures.js');
+    if (typeof fut.resetWalletTransportForReconnect === 'function') fut.resetWalletTransportForReconnect();
+  } catch { /* non-fatal */ }
   return { connected: true, balanceCount: balances.length, validated: true };
 }
 

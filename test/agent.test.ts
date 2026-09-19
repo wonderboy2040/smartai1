@@ -513,13 +513,15 @@ describe('v9.7 FUTURES-margin viability filter', () => {
     expect(st.blockers.some(b => b.key === 'futures_wallet_read')).toBe(false);
   });
 
-  it('v12.1: a FAILED futures wallet read is a FAULT blocker (not "low margin") — the auth trace surfaces', async () => {
+  it('v12.1/v12.2: a FAILED futures wallet read is a FAULT blocker (not "low margin") — the auth trace + scope verdict surface', async () => {
     // the exact live 2026-09-19 incident: Global Futures wallet HAS funds
     // but the read 401s — the panel must show the read failure + guidance,
-    // never a misleading "margin < 2 USDT".
+    // never a misleading "margin < 2 USDT". v12.2: the scope verdict LEADS
+    // the error text — the blocker's 260-char slice must carry the verdict
+    // + the one-step fix, not just the ladder trace.
     mockWalletSnapshot.mockResolvedValue({
       ...WALLET, deployableFuturesUSDT: 0, equityINR: 400, deployableSpotINR: 400,
-      futures: { usdt: { free: 0, locked: 0, total: 0, crossUserMargin: 0 }, error: '[401] Invalid credentials [auth-ladder GET-s/str:401 · GET-ms/num:401 · POST:404] — key spot par kaam karta hai par derivatives wallet reject kar raha hai' },
+      futures: { usdt: { free: 0, locked: 0, total: 0, crossUserMargin: 0 }, error: '[401] Invalid credentials · futures-key-scope: MISSING — API key me Global Futures permission nahi hai (derivatives positions auth bhi 401 — same key spot par chalti hai). CoinDCX app → API Dashboard → Futures permission ON karke NAYI key banao → site me CoinDCX reconnect karo [auth-ladder GET-s/str:401 · GET-ms/num:401 · GET-s/num:401 · GET-ms/str:401 · GET-s/str-sp:401 · GET-ms/num-sp:401 · GET-s/pgsz:401 · POST:404]' },
     });
     await agentTick({}, vi.fn());
     expect(mockExecuteFutures).not.toHaveBeenCalled();
@@ -527,7 +529,12 @@ describe('v9.7 FUTURES-margin viability filter', () => {
     const fault = st.blockers.find(b => b.key === 'futures_wallet_read');
     expect(fault).toBeTruthy();
     expect(fault.soft).toBeUndefined(); // a FAULT, not a soft note
-    expect(String(fault.text)).toContain('auth-ladder');
+    // v12.2: the verdict + the user's one-step fix survive the 260-char
+    // blocker slice (the ladder trace rides the tail of the string — it
+    // stays visible in the wallet error card, the agent log and Telegram;
+    // the futures.test.ts suite locks it inside the error itself).
+    expect(String(fault.text)).toContain('futures-key-scope: MISSING');
+    expect(String(fault.text)).toContain('NAYI key banao');
     // the misleading soft margin blocker must NOT also fire
     expect(st.blockers.some(b => b.key === 'futures_margin')).toBe(false);
   });

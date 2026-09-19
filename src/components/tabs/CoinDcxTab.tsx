@@ -134,7 +134,14 @@ const WalletCard = memo(function WalletCard() {
           <div className="text-[9px] text-slate-600">spot + futures @ live USD/₹</div>
         </div>
       </div>
-      {err && <div className="text-[9px] text-amber-500/80 mt-1.5 font-mono">⚠ {err}</div>}
+      {/* v12.2: when the futures key-scope probe has spoken, the error is
+          the DEFINITIVE one — red + ⛔ so "permission wali key banao"
+          can't be missed inside the amber noise. */}
+      {err && (
+        <div className={`text-[9px] mt-1.5 font-mono ${(w?.futures?.error && w?.futures?.scope === 'no_scope') ? 'text-red-400/90 font-bold' : 'text-amber-500/80'}`}>
+          {(w?.futures?.error && w?.futures?.scope === 'no_scope') ? '⛔ ' : '⚠ '}{err}
+        </div>
+      )}
     </div>
   );
 });

@@ -101,6 +101,53 @@ describe('coindcxPrivateGET (2025 futures GET auth)', () => {
     expect(opts.headers['X-AUTH-SIGNATURE']).toBe(expected);
   });
 
+  // v12.2 — the SPACED canonical form (Python json.dumps defaults: ", "
+  // item separator + ": " key separator). If the server rebuilds the GET
+  // payload through Python defaults, the compact signature can NEVER
+  // verify — these rungs sign the spaced string instead.
+  it('sep spaced signs {"timestamp": "<ts>"} with a space after the colon (str ts)', async () => {
+    fetchMock.mockImplementationOnce(async () => okJson([]));
+    await coindcxPrivateGET('/x', 'K', 'S', {}, { unit: 's', tsType: 'str', sep: 'spaced' });
+    const [url, opts] = fetchMock.mock.calls[0];
+    const ts = new URL(String(url)).searchParams.get('timestamp');
+    // signature = HMAC-SHA256(S, {"timestamp": "<ts>"}) — SPACE after the colon
+    const expected = crypto.createHmac('sha256', 'S')
+      .update(`{"timestamp": "${ts}"}`).digest('hex');
+    expect(opts.headers['X-AUTH-SIGNATURE']).toBe(expected);
+    // the wire itself is unchanged — same query string, same headers
+    expect(ts).toMatch(/^\d{10}$/);
+  });
+  it('sep spaced + num ts signs {"timestamp": <int>} with the space (ms)', async () => {
+    fetchMock.mockImplementationOnce(async () => okJson([]));
+    await coindcxPrivateGET('/x', 'K', 'S', {}, { unit: 'ms', tsType: 'num', sep: 'spaced' });
+    const [url, opts] = fetchMock.mock.calls[0];
+    const ts = new URL(String(url)).searchParams.get('timestamp');
+    const expected = crypto.createHmac('sha256', 'S')
+      .update(`{"timestamp": ${Number(ts)}}`).digest('hex');
+    expect(opts.headers['X-AUTH-SIGNATURE']).toBe(expected);
+    expect(ts).toMatch(/^\d{13}$/);
+  });
+  it('sep spaced signs MULTIPLE params with ", " separators exactly like json.dumps', async () => {
+    fetchMock.mockImplementationOnce(async () => okJson([]));
+    await coindcxPrivateGET('/x', 'K', 'S', { page: '1', size: '100' }, { unit: 's', tsType: 'str', sep: 'spaced' });
+    const [url, opts] = fetchMock.mock.calls[0];
+    const u = new URL(String(url));
+    const ts = u.searchParams.get('timestamp');
+    // {"page": "1", "size": "100", "timestamp": "<ts>"} — comma-space AND
+    // colon-space, insertion order preserved
+    const expected = crypto.createHmac('sha256', 'S')
+      .update(`{"page": "1", "size": "100", "timestamp": "${ts}"}`).digest('hex');
+    expect(opts.headers['X-AUTH-SIGNATURE']).toBe(expected);
+  });
+  it('sep compact (default) is byte-identical to the pre-v12.2 contract', async () => {
+    fetchMock.mockImplementationOnce(async () => okJson([]));
+    await coindcxPrivateGET('/x', 'K', 'S', { page: '1' }, { unit: 's', tsType: 'str', sep: 'compact' });
+    const [url, opts] = fetchMock.mock.calls[0];
+    const ts = new URL(String(url)).searchParams.get('timestamp');
+    const expected = crypto.createHmac('sha256', 'S').update(JSON.stringify({ page: '1', timestamp: ts })).digest('hex');
+    expect(opts.headers['X-AUTH-SIGNATURE']).toBe(expected);
+  });
+
   it('surfaces [status] message errors like the POST transport (the [404] not_found case)', async () => {
     fetchMock.mockImplementationOnce(async () => ({
       ok: false, status: 404,
