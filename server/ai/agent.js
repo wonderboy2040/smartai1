@@ -83,11 +83,12 @@ export const AGENT_DEFAULTS = {
   desks: { futures: true, spot: true, india: true, global: true }, // v7.0 spot ON · v10.4 GLOBAL equity-futures SIM desk ON
   maxTradesPerDay: 3,         // USER SPEC: daily ke 3 trades
   minAiScore: 75,             // v9.6 USER SPEC: 75+ AI score → auto entry
-  // v10.16 SUPERINTEL PLAN S3: USER SPEC conf=60. Path B (STRONG grade
-  // + conf + agreement) was unreachable at 80/0.75 — 60/0.65 makes it
-  // a realistic second route to qualification (quality still guarded
-  // by the STRONG-grade + executable + quorum-honesty caps).
-  minConfidence: 60,
+  // v12.1 USER SPEC (2026-09-19): "min trade score 75+ aur conf 70+" —
+  // the confidence floor rises 60 → 70. Path B (STRONG grade + conf +
+  // agreement) gets stricter; Path A (75+ AI score) is already the
+  // score bar the user asked for. Saved configs at the OLD default 60
+  // migrate up (user-customized values ≠ 60 stay untouched).
+  minConfidence: 70,
   minAgreement: 0.65,
   // v10.16 S3: quorum penalty is now the CAP of a PROPORTIONAL penalty
   // (see effectiveScoreBar) — a 4-voter committee pays +1.5, not +10.
@@ -190,6 +191,15 @@ export function loadAgentConfig() {
     if (saved.minAgreement == null || Number(saved.minAgreement) === 0.75) saved.minAgreement = AGENT_DEFAULTS.minAgreement;
     if (saved.quorumPenalty == null || Number(saved.quorumPenalty) === 10) saved.quorumPenalty = AGENT_DEFAULTS.quorumPenalty;
     saved.thresholdProfile = AGENT_DEFAULTS.thresholdProfile;
+  }
+  // v12.1 migration (USER SPEC "conf 70+"): a saved config still sitting
+  // at the v10.16 default of 60 rises to the new 70 floor. Anything the
+  // user deliberately set to a different value (≠ 60) is theirs and
+  // stays. NOTE: this TIGHTENS the bar — the mid-session mandate guard
+  // only blocks LOOSENING, so a running agent picks it up on the next
+  // tick without a restart.
+  if (saved.minConfidence == null || Number(saved.minConfidence) === 60) {
+    saved.minConfidence = AGENT_DEFAULTS.minConfidence;
   }
   return {
     ...AGENT_DEFAULTS,
@@ -299,6 +309,10 @@ function freshState() {
     // fires once when margin drops below 2 USDT, resets+notifies when
     // margin restores above 2 USDT.
     futuresMarginAlerted: false,
+    // v12.1: futures wallet READ-failure latch (last 60 chars of the
+    // error) — one Telegram alert per distinct failure, cleared when
+    // the read restores. Null/undefined = read healthy.
+    lastFutWalletErr: null,
     // v10.15 GAP 1: the LATEST conviction re-vote per open position —
     // persisted by the conviction sweep for the status payload's live
     // conviction bar (panel UI). { [pair]: { state, delta, currentScore,
@@ -543,7 +557,12 @@ async function moveAgentSlToBreakeven(posId) {
 function agentTradesToday(j) {
   const day = todayIST();
   // v6.11: NOTIFIED = alert-only — the 3-per-day TRADE quota counts real entries.
-  return (j?.entries || []).filter(e => e.day === day && e.kind === 'ORDER' && e.source === 'agent' && e.status !== 'REJECTED' && e.status !== 'NOTIFIED');
+  // v12.1: FAILED joins the exclusions (same fix as dailyStats): an order
+  // the exchange refused never traded — journal-proven 2026-09-18, when
+  // three [422] failures ate the whole day's quota and the agent stood
+  // down on trades that never existed.
+  return (j?.entries || []).filter(e => e.day === day && e.kind === 'ORDER' && e.source === 'agent'
+    && e.status !== 'REJECTED' && e.status !== 'NOTIFIED' && e.status !== 'FAILED');
 }
 /** Realized P&L (INR) of agent-sourced closes today. v7.0: PARTIAL_TP
  *  legs count the moment they fill (a booked winner is real money —
@@ -852,11 +871,31 @@ async function _tick(deps, sendTelegram) {
   if (coindcxConnected()) {
     const lw = _state.lastWallet;
     if (lw && Date.now() - (lw.at || 0) < 55_000) {
-      wallet = { equityINR: lw.equityINR, usdInr: lw.usdInr, deployableFuturesUSDT: lw.deployableFuturesUSDT, deployableSpotINR: lw.deployableSpotINR };
+      wallet = { equityINR: lw.equityINR, usdInr: lw.usdInr, deployableFuturesUSDT: lw.deployableFuturesUSDT, deployableSpotINR: lw.deployableSpotINR, futuresError: lw.futuresError || null };
     } else {
       wallet = await walletSnapshot().catch(e => { log('error', `wallet fetch failed: ${String(e?.message || e).slice(0, 120)}`); return null; });
-      if (wallet) _state.lastWallet = { equityINR: wallet.equityINR, usdInr: wallet.usdInr, deployableFuturesUSDT: wallet.deployableFuturesUSDT, deployableSpotINR: wallet.deployableSpotINR, at: wallet.fetchedAt };
+      if (wallet) _state.lastWallet = { equityINR: wallet.equityINR, usdInr: wallet.usdInr, deployableFuturesUSDT: wallet.deployableFuturesUSDT, deployableSpotINR: wallet.deployableSpotINR, futuresError: wallet?.futures?.error || null, at: wallet.fetchedAt };
     }
+  }
+  // v12.1: the futures wallet read failing is THE root cause of "wallet
+  // me amount hai par futures candidates skip" — surface it loudly (once
+  // per state change) instead of letting it hide behind "margin < 2".
+  // The auth-ladder trace rides inside the message, so this single log
+  // line + Telegram alert tells the user exactly which rung CoinDCX
+  // answered and what to do (key permission / auth drift).
+  const futWalletErr = wallet?.futures?.error || wallet?.futuresError || null;
+  if (futWalletErr) {
+    if (_state.lastFutWalletErr !== futWalletErr.slice(0, 60)) {
+      _state.lastFutWalletErr = futWalletErr.slice(0, 60);
+      log('error', `FUTURES WALLET READ FAILED — ${futWalletErr.slice(0, 220)}`);
+      await alertOnce(sendTelegram, `fut_wallet_${futWalletErr.slice(0, 40)}`,
+        `🤖 <b>Futures wallet read fail</b> — Global Futures margin ko site na padh pa rahi (spot keys theek hain):
+<code>${futWalletErr.slice(0, 200)}</code>
+Ye fix hote hi futures auto-entries phir se chalegi.`);
+    }
+  } else if (_state.lastFutWalletErr) {
+    _state.lastFutWalletErr = null; // read restored — clear the latch
+    await notify(sendTelegram, '🤖 <b>Futures wallet read restored</b> — Global Futures margin phir se padh raha hai. Futures desk active.');
   }
   const equityINR = wallet?.equityINR > 0 ? wallet.equityINR
     : (_state.lastWallet?.equityINR > 0 ? _state.lastWallet.equityINR : 10_000); // paper practice equity
@@ -1809,7 +1848,9 @@ export async function agentStatus(deps) {
   const rememberWallet = (w) => {
     if (!w) return;
     _lastWalletView = w;
-    _state.lastWallet = { equityINR: w.equityINR, usdInr: w.usdInr, deployableFuturesUSDT: w.deployableFuturesUSDT, deployableSpotINR: w.deployableSpotINR, at: w.fetchedAt };
+    // v12.1: futuresError rides along — the status blockers strip needs
+    // to tell "wallet read FAILED" apart from "margin genuinely < 2".
+    _state.lastWallet = { equityINR: w.equityINR, usdInr: w.usdInr, deployableFuturesUSDT: w.deployableFuturesUSDT, deployableSpotINR: w.deployableSpotINR, futuresError: w?.futures?.error || null, at: w.fetchedAt };
   };
 
   let wallet = null;
@@ -1897,8 +1938,17 @@ export async function agentStatus(deps) {
       const left = Math.max(1, Math.ceil(cfg.cooldownMin - (Date.now() - _state.lastEntryAt) / 60000));
       blockers.push({ key: 'cooldown', text: `⏳ Cooldown — ${left}m baadi next entry try` });
     }
-    if (coindcxConnected() && ((_state.lastWallet?.deployableFuturesUSDT ?? 0) < 2)) {
-      blockers.push({ key: 'futures_margin', soft: true, text: '⚡ Futures margin < 2 USDT — sirf SPOT desk se entry hoga' });
+    if (coindcxConnected()) {
+      // v12.1: a FAILED futures wallet read (auth/permission) is a FAULT,
+      // not "low margin" — the Global Futures desk is dead until the
+      // read works, and the user must see the real reason (auth-ladder
+      // trace + the key-permission guidance) right on the panel.
+      const futReadErr = _state.lastWallet?.futuresError || null;
+      if (futReadErr) {
+        blockers.push({ key: 'futures_wallet_read', text: `⚡ Futures wallet READ FAILED — ${String(futReadErr).slice(0, 140)}` });
+      } else if ((_state.lastWallet?.deployableFuturesUSDT ?? 0) < 2) {
+        blockers.push({ key: 'futures_margin', soft: true, text: '⚡ Futures margin < 2 USDT — sirf SPOT desk se entry hoga' });
+      }
     }
     // soft: latest wait reason (usually "no qualifying signal") — info, not a fault
     const ls = _state.lastSkip;

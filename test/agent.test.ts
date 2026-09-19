@@ -143,7 +143,7 @@ describe('agent config', () => {
     expect(cfg.mode).toBe('paper');
     expect(cfg.enabled).toBe(false);
     expect(cfg.riskPerTradePct).toBe(1.5);
-    expect(cfg.minConfidence).toBe(60); // v10.16 S3 USER SPEC: conf=60 (was 80)
+    expect(cfg.minConfidence).toBe(70); // v12.1 USER SPEC: conf 70+ (was 60)
     expect(cfg.minAiScore).toBe(75); // v9.6 USER SPEC: 75+ AI score → auto entry
     expect(cfg.quorumPenalty).toBe(5); // v10.16 S3: proportional-penalty cap (was flat 10)
     expect(cfg.thresholdProfile).toBe('proportional'); // v10.16 S3: one-flag A/B arm
@@ -499,15 +499,37 @@ describe('v9.7 FUTURES-margin viability filter', () => {
   });
 
   it('connected wallet with <2 USDT futures margin → futures candidates skipped pre-selection', async () => {
+    // v12.1: a HEALTHY wallet read with genuinely-low margin → the SOFT
+    // futures_margin blocker (spot desk still trades).
     mockWalletSnapshot.mockResolvedValue({
       ...WALLET, deployableFuturesUSDT: 0, equityINR: 400, deployableSpotINR: 400,
-      futures: { ...WALLET.futures, usdt: { free: 0, locked: 0, total: 0, crossUserMargin: 0 }, error: '[404] not_found' },
+      futures: { ...WALLET.futures, usdt: { free: 0, locked: 0, total: 0, crossUserMargin: 0 }, error: null },
     });
     await agentTick({}, vi.fn());
     expect(mockExecuteFutures).not.toHaveBeenCalled();
     const st = await agentStatus(null);
     // soft blocker surfaced: sirf SPOT desk se entry hoga
     expect(st.blockers.some(b => b.key === 'futures_margin' && b.soft)).toBe(true);
+    expect(st.blockers.some(b => b.key === 'futures_wallet_read')).toBe(false);
+  });
+
+  it('v12.1: a FAILED futures wallet read is a FAULT blocker (not "low margin") — the auth trace surfaces', async () => {
+    // the exact live 2026-09-19 incident: Global Futures wallet HAS funds
+    // but the read 401s — the panel must show the read failure + guidance,
+    // never a misleading "margin < 2 USDT".
+    mockWalletSnapshot.mockResolvedValue({
+      ...WALLET, deployableFuturesUSDT: 0, equityINR: 400, deployableSpotINR: 400,
+      futures: { usdt: { free: 0, locked: 0, total: 0, crossUserMargin: 0 }, error: '[401] Invalid credentials [auth-ladder GET-s/str:401 · GET-ms/num:401 · POST:404] — key spot par kaam karta hai par derivatives wallet reject kar raha hai' },
+    });
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).not.toHaveBeenCalled();
+    const st = await agentStatus(null);
+    const fault = st.blockers.find(b => b.key === 'futures_wallet_read');
+    expect(fault).toBeTruthy();
+    expect(fault.soft).toBeUndefined(); // a FAULT, not a soft note
+    expect(String(fault.text)).toContain('auth-ladder');
+    // the misleading soft margin blocker must NOT also fire
+    expect(st.blockers.some(b => b.key === 'futures_margin')).toBe(false);
   });
 
   it('unconnected practice wallet → futures stays viable (paper fallback)', async () => {

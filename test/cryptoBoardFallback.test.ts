@@ -1,7 +1,7 @@
 // ============================================================
 // test/cryptoBoardFallback.test.ts — v11.2 CRYPTO BOARD SURVIVOR
 // ------------------------------------------------------------
-// 2026-09-17 LIVE INCIDENT (Render, smartai-e954.onrender.com):
+// 2026-09-17 LIVE INCIDENT (Render, smartai1.onrender.com):
 // the crypto spot board answered
 //   "No crypto data reachable right now (TV + CoinDCX both unavailable)"
 // with ZERO signal cards while CoinDCX INR tickers were perfectly

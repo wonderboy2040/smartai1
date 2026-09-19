@@ -399,7 +399,24 @@ function credGuard() {
  * single transport blip was the only fault. After one full-sweep
  * failure the transport probe goes into a 5-min cooldown: only the
  * sticky mode is retried (one round-trip, fail fast) until it answers
- * again or the cooldown lapses. */
+ * again or the cooldown lapses.
+ *
+ * v12.1 AUTH LADDER (live incident 2026-09-19, smartai1.onrender.com):
+ * the user's Global-Futures wallet HAS funds, but every wallet poll
+ * returns `[401] Invalid credentials` while the SAME key signs spot
+ * POSTs fine — and POST on this route still answers `[404] not_found`
+ * (route stays GET-only). The 2025-era string-timestamp GET stopped
+ * authenticating: CoinDCX evidently drifted the canonical signed
+ * payload (the official doc samples type the timestamp as an INT, not
+ * a string). The sweep is now a 6-rung AUTH LADDER covering every
+ * plausible canonicalization — string/number × seconds/ms × bare
+ * params/page+size — plus the legacy POST. The FIRST rung the server
+ * accepts goes STICKY (zero per-poll cost after that). When every rung
+ * fails, the thrown error carries the FULL variant trace
+ * (`GET-s/str:401 · GET-ms/num:401 · …`) so the next probe pinpoints
+ * exactly which auth the server speaks — and, if all GETs answer 401
+ * with a key that works on spot, the guidance says what to check (a
+ * Global-Futures-permission API key). */
 const WALLET_PROBE_COOLDOWN_MS = 5 * 60_000;
 const _walletsTransport = { mode: null, coolUntil: 0 };
 function _walletList(resp) {
@@ -409,29 +426,48 @@ function _walletList(resp) {
   if (Array.isArray(resp?.balances)) return resp.balances;
   return null; // error-shaped / unknown wrapper → try the next transport
 }
-async function _walletTransportAttempt(mode, apiKey, secret) {
-  if (mode === 'POST') return coindcxPrivate(WALLETS_PATH, apiKey, secret, {});
+// The v12.1 ladder — order matters: rung 1 is the 2025-verified contract
+// (keeps working deployments unchanged), rung 2 is the docs-canonical
+// INT-ms form (the most likely fix for the 2026-09-19 401s), then the
+// remaining permutations, then the page/size-signed GET (some CoinDCX
+// GET families require the documented params inside the signature), and
+// POST last (currently [404], kept as the legacy canary).
+const WALLET_AUTH_LADDER = [
+  { id: 'GET-s/str', method: 'GET', unit: 's', tsType: 'str', params: {} },
+  { id: 'GET-ms/num', method: 'GET', unit: 'ms', tsType: 'num', params: {} },
+  { id: 'GET-s/num', method: 'GET', unit: 's', tsType: 'num', params: {} },
+  { id: 'GET-ms/str', method: 'GET', unit: 'ms', tsType: 'str', params: {} },
+  { id: 'GET-s/pgsz', method: 'GET', unit: 's', tsType: 'str', params: { page: '1', size: '100' } },
+  { id: 'POST', method: 'POST' },
+];
+async function _walletTransportAttempt(variant, apiKey, secret) {
+  if (variant.method === 'POST') return coindcxPrivate(WALLETS_PATH, apiKey, secret, {});
   const { coindcxPrivateGET } = await import('../mcp/coindcx.js');
-  return coindcxPrivateGET(WALLETS_PATH, apiKey, secret, {}, { unit: mode === 'GET-ms' ? 'ms' : 's' });
+  return coindcxPrivateGET(WALLETS_PATH, apiKey, secret, variant.params, { unit: variant.unit, tsType: variant.tsType });
 }
 export async function fetchFuturesWallets() {
   const { apiKey, secret } = credGuard();
-  const ALL = ['GET-s', 'GET-ms', 'POST'];
   const probeCooling = Date.now() < _walletsTransport.coolUntil;
-  let order = _walletsTransport.mode
-    ? [_walletsTransport.mode, ...ALL.filter(t => t !== _walletsTransport.mode)]
-    : [...ALL];
+  // sticky rung first; a legacy pre-v12.1 sticky value maps onto the
+  // ladder ('GET-s' → 'GET-s/str', 'GET-ms' → 'GET-ms/str')
+  const stickyId = _walletsTransport.mode === 'GET-s' ? 'GET-s/str'
+    : _walletsTransport.mode === 'GET-ms' ? 'GET-ms/str' : _walletsTransport.mode;
+  let order = stickyId
+    ? [WALLET_AUTH_LADDER.find(v => v.id === stickyId) || WALLET_AUTH_LADDER[0],
+       ...WALLET_AUTH_LADDER.filter(v => v.id !== stickyId)]
+    : [...WALLET_AUTH_LADDER];
   // v10.14: during the post-sweep-failure cooldown the alternates are
   // NOT re-probed — one sticky-mode round-trip bounds the failure path.
-  if (probeCooling && _walletsTransport.mode) order = [_walletsTransport.mode];
+  if (probeCooling && stickyId) order = [order[0]];
   else if (probeCooling) order = order.slice(0, 1);
+  const trace = [];
   let lastErr = null;
-  for (const mode of order) {
+  for (const variant of order) {
     try {
-      const resp = await _walletTransportAttempt(mode, apiKey, secret);
+      const resp = await _walletTransportAttempt(variant, apiKey, secret);
       const list = _walletList(resp);
-      if (!list) throw new Error(`wallets payload not array-shaped (${mode})`);
-      _walletsTransport.mode = mode;
+      if (!list) { trace.push(`${variant.id}:200?`); throw new Error(`wallets payload not array-shaped (${variant.id})`); }
+      _walletsTransport.mode = variant.id;
       _walletsTransport.coolUntil = 0; // health restored — full probing again
       return list.map(w => {
         const free = num(w.balance) || 0;
@@ -447,13 +483,27 @@ export async function fetchFuturesWallets() {
         };
       }).filter(w => w.currency && w.total > 0);
     } catch (e) {
+      const status = e?.status;
+      trace.push(`${variant.id}:${Number.isFinite(status) ? status : 'T'}`);
       lastErr = e;
     }
   }
-  // every mode failed → arm the probe cooldown (fail-fast on the next
-  // poll instead of another 3×10s sweep)
+  // every rung failed → arm the probe cooldown (fail-fast on the next
+  // poll instead of another full-ladder sweep)…
   if (!probeCooling) _walletsTransport.coolUntil = Date.now() + WALLET_PROBE_COOLDOWN_MS;
-  throw lastErr || new Error('futures wallets: every transport failed');
+  // …and throw the HONEST trace: which rungs answered what. All GET-401
+  // with a spot-working key = the key itself can't read the derivatives
+  // wallet family (Global Futures permission) — say exactly that. (POST's
+  // 404 is EXPECTED on this route family — it never counts against the
+  // GET verdict.)
+  const getTraces = trace.filter(t => !t.startsWith('POST:'));
+  const allGet401 = getTraces.length > 0 && getTraces.every(t => t.endsWith(':401') || t.endsWith(':T'));
+  const guidance = allGet401
+    ? ' — key spot par kaam karta hai par derivatives wallet reject kar raha hai: CoinDCX app → API Dashboard me GLOBAL FUTURES permission wali key bana ke reconnect karo'
+    : '';
+  const err = new Error(`${String(lastErr?.message || lastErr).slice(0, 90)} [auth-ladder ${trace.join(' · ')}]${guidance}`);
+  err.status = lastErr?.status;
+  throw err;
 }
 
 /** Spot wallet rows via the SAME /users/balances transport (free/locked). */
@@ -502,7 +552,10 @@ export async function walletSnapshot() {
   const [usdInr, fut, spot] = await Promise.all([
     fetchUsdInr().catch(() => _usdInr || 84), // belt & braces — never let FX break the snapshot
     _withDeadline(
-      fetchFuturesWallets().catch(e => ({ error: String(e?.message || e).slice(0, 140) })),
+      // v12.1: 300 chars (was 140) — the auth-ladder variant trace +
+      // guidance must survive to the UI so the user sees WHICH rung the
+      // server answered and what to do about it.
+      fetchFuturesWallets().catch(e => ({ error: String(e?.message || e).slice(0, 300) })),
       _walletLegBudgetMs, 'futures wallets slow'),
     _withDeadline(
       fetchSpotWallets().catch(e => ({ error: String(e?.message || e).slice(0, 140) })),

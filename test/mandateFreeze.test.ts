@@ -124,7 +124,7 @@ describe('mandateEffectiveCfg — mid-session only STRICTER', () => {
       cooldownMin: 1,             // was 20
       maxHoldMin: 480,             // was 90
       minAiScore: 55,             // was 75
-      minConfidence: 55,          // was 60 (v10.16 S3 user spec)
+      minConfidence: 55,          // was 70 (v12.1 user spec)
       minAgreement: 0.5,          // was 0.65 (v10.16 S3)
       minRollingWinRate: 10,      // was 35
       quorumPenalty: 0,           // was 5 (v10.16: proportional cap)
@@ -138,7 +138,7 @@ describe('mandateEffectiveCfg — mid-session only STRICTER', () => {
     expect(looser.cfg.cooldownMin).toBe(20);
     expect(looser.cfg.maxHoldMin).toBe(90);
     expect(looser.cfg.minAiScore).toBe(75);
-    expect(looser.cfg.minConfidence).toBe(60);
+    expect(looser.cfg.minConfidence).toBe(70);
     expect(looser.cfg.minAgreement).toBe(0.65);
     expect(looser.cfg.minRollingWinRate).toBe(35);
     expect(looser.cfg.quorumPenalty).toBe(5);

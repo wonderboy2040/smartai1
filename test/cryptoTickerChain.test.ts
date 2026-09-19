@@ -1,7 +1,7 @@
 // ============================================================
 // test/cryptoTickerChain.test.ts — v11.3 THE PERMANENT FIX
 // ------------------------------------------------------------
-// Production incident (2026-09-17, smartai-e954.onrender.com):
+// Production incident (2026-09-17, smartai1.onrender.com):
 //   [corr=…] 502 Failed to fetch crypto prices. The operation was
 //   aborted due to timeout
 // Root cause: /api/crypto-prices → fetchCoinDcxTickers() had ONE leg

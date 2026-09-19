@@ -155,6 +155,22 @@ describe('risk-limit gates', () => {
     expect(second.error).toMatch(/Daily trade cap/);
   });
 
+  it('v12.1: FAILED orders never consume the daily trade cap (live 2026-09-18 incident)', async () => {
+    // Journal-proven: three [422] "market is required" FAILED entries ate
+    // the whole day's budget → agent stood down on trades that never
+    // executed. An exchange-refused order is not a trade.
+    __setConfigForTests({ dailyMaxTrades: 1 });
+    const j = loadJournal();
+    const istDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+    j.entries.push({
+      id: 'f1', ts: Date.now(), kind: 'ORDER', day: istDay, pair: 'BNBINR',
+      status: 'FAILED', reason: '[422] market is required',
+    });
+    __setJournalForTests(j);
+    const out = await executeSignal({ symbol: 'BTC', mode: 'paper', getFreshSignal: freshSignal });
+    expect(out.ok).toBe(true); // the failed attempt left the budget untouched
+  });
+
   it('daily loss cap blocks trading after the realized-loss breach', async () => {
     const j = loadJournal();
     const istDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
@@ -196,8 +212,13 @@ describe('LIVE execution — signed order path', () => {
     const [path, apiKey, secret, body] = mockPrivate.mock.calls[0];
     expect(path).toBe('/exchange/v1/orders/create');
     expect(body.side).toBe('buy');
-    expect(body.pair).toBe('BTCINR');
-    expect(body.order_type).toBe('market');
+    // v12.1 LIVE-FIX contract: the SPOT pair travels in `market` (the
+    // journal-proven [422] "market is required" bug — `pair` is the
+    // margin/futures vocabulary) and the order_type vocabulary is
+    // `market_order`, not bare `market`.
+    expect(body.market).toBe('BTCINR');
+    expect(body.pair).toBeUndefined();
+    expect(body.order_type).toBe('market_order');
     expect(Number(body.total_quantity)).toBeCloseTo(10, 4);
     // NOTE: `timestamp` is injected INSIDE the real coindcxPrivate signer —
     // the caller body carries only the order fields.

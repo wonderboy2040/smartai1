@@ -197,8 +197,19 @@ export async function coindcxPrivate(path, apiKey, secret, body = {}) {
 //     — the server rebuilds the same JSON from the query string to verify.
 //   • params are serialized in insertion order so the rebuilt payload
 //     matches the signed string byte-for-byte.
-export async function coindcxPrivateGET(path, apiKey, secret, params = {}, { unit = 's' } = {}) {
-  const timestamp = unit === 'ms' ? String(Date.now()) : Math.floor(Date.now() / 1000).toString();
+//   • v12.1 `tsType: 'num'` — the timestamp is emitted as a JSON NUMBER
+//     ({"timestamp":1789824123}) instead of a string. Why: the official
+//     futures-API doc samples build the signed body with an INT
+//     timestamp (`timeStamp = int(round(time.time() * 1000))` →
+//     {"timestamp":1612345678000}), and on 2026-09-19 the live smartai1
+//     deployment gets `[401] Invalid credentials` from BOTH string
+//     variants while the SAME key signs spot POSTs fine — the server's
+//     canonical rebuild almost certainly types the timestamp as a
+//     number. The wallets transport ladder (futures.js v12.1) probes
+//     every variant and sticks with whichever the server accepts.
+export async function coindcxPrivateGET(path, apiKey, secret, params = {}, { unit = 's', tsType = 'str' } = {}) {
+  const tsNum = unit === 'ms' ? Date.now() : Math.floor(Date.now() / 1000);
+  const timestamp = tsType === 'num' ? tsNum : String(tsNum);
   const payload = { ...params, timestamp };
   const payloadStr = JSON.stringify(payload);
   const signature = crypto.createHmac('sha256', secret).update(payloadStr).digest('hex');

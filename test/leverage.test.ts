@@ -222,7 +222,9 @@ describe('executeSignal with leverage (LIVE margin order)', () => {
     expect(mockPrivate.mock.calls.find(c => c[0] === '/exchange/v1/margin/orders')).toBeUndefined();
     const spotCall = mockPrivate.mock.calls.find(c => c[0] === '/exchange/v1/orders/create');
     expect(spotCall).toBeDefined();
-    expect(spotCall![3].pair).toBe('BTCINR');
+    // v12.1 LIVE-FIX: spot contract = `market` field + `market_order`
+    expect(spotCall![3].market).toBe('BTCINR');
+    expect(spotCall![3].order_type).toBe('market_order');
     expect(out.position!.leverage).toBeUndefined();
   });
 

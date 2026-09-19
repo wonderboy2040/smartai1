@@ -70,6 +70,37 @@ describe('coindcxPrivateGET (2025 futures GET auth)', () => {
     expect(ts).toMatch(/^\d{13}$/);
   });
 
+  // v12.1 — the number-timestamp variants (the live 2026-09-19 [401] fix
+  // candidates): the signed JSON types the timestamp as a NUMBER, exactly
+  // like the official futures-API doc samples (int(round(time.time()*1000))).
+  it('tsType num signs {"timestamp":<int>} — the query stays the same digits', async () => {
+    fetchMock.mockImplementationOnce(async () => okJson([]));
+    await coindcxPrivateGET('/x', 'K', 'S', {}, { unit: 'ms', tsType: 'num' });
+    const [url, opts] = fetchMock.mock.calls[0];
+    const ts = new URL(String(url)).searchParams.get('timestamp');
+    expect(ts).toMatch(/^\d{13}$/);
+    // signature = HMAC-SHA256(S, {"timestamp":1789824123456}) — NUMBER, not string
+    const expected = crypto.createHmac('sha256', 'S').update(JSON.stringify({ timestamp: Number(ts) })).digest('hex');
+    expect(opts.headers['X-AUTH-SIGNATURE']).toBe(expected);
+  });
+  it('tsType num + seconds signs the 10-digit int form', async () => {
+    fetchMock.mockImplementationOnce(async () => okJson([]));
+    await coindcxPrivateGET('/x', 'K', 'S', {}, { unit: 's', tsType: 'num' });
+    const [url, opts] = fetchMock.mock.calls[0];
+    const ts = new URL(String(url)).searchParams.get('timestamp');
+    expect(ts).toMatch(/^\d{10}$/);
+    const expected = crypto.createHmac('sha256', 'S').update(JSON.stringify({ timestamp: Number(ts) })).digest('hex');
+    expect(opts.headers['X-AUTH-SIGNATURE']).toBe(expected);
+  });
+  it('default tsType stays string (the 2025-verified contract is unchanged)', async () => {
+    fetchMock.mockImplementationOnce(async () => okJson([]));
+    await coindcxPrivateGET('/x', 'K', 'S', {});
+    const [url, opts] = fetchMock.mock.calls[0];
+    const ts = new URL(String(url)).searchParams.get('timestamp');
+    const expected = crypto.createHmac('sha256', 'S').update(JSON.stringify({ timestamp: ts })).digest('hex');
+    expect(opts.headers['X-AUTH-SIGNATURE']).toBe(expected);
+  });
+
   it('surfaces [status] message errors like the POST transport (the [404] not_found case)', async () => {
     fetchMock.mockImplementationOnce(async () => ({
       ok: false, status: 404,

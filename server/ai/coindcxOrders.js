@@ -216,7 +216,14 @@ function dailyStats(j) {
   const day = todayIST();
   // v6.11: NOTIFIED (alert-only) entries are NOT trades — they must not
   // consume the daily trade budget. REJECTED likewise never counted.
-  const trades = j.entries.filter(e => e.day === day && e.kind === 'ORDER' && e.status !== 'REJECTED' && e.status !== 'NOTIFIED');
+  // v12.1: FAILED now joins them — journal-proven (2026-09-18): three
+  // `[422] market is required` rejections burned the ENTIRE daily cap,
+  // so the agent stood down for the day on orders that never executed.
+  // An order the exchange refused is not a trade; only entries that
+  // actually reached the book (FILLED/SUBMITTED/SUBMITTED_UNKNOWN)
+  // consume the budget.
+  const trades = j.entries.filter(e => e.day === day && e.kind === 'ORDER'
+    && e.status !== 'REJECTED' && e.status !== 'NOTIFIED' && e.status !== 'FAILED');
   // v7.0 PRO TRADER: PARTIAL_TP legs are REALIZED P&L the moment they
   // fill — they count toward the daily loss cap immediately (no
   // double-count: CLOSE entries carry only the final remaining leg).
@@ -656,10 +663,16 @@ export async function executeSignal(opts) {
         const resp = await coindcxPrivate('/exchange/v1/margin/orders', creds.apiKey, creds.secret, body);
         orderId = resp?.orders?.[0]?.id || resp?.order?.id || null;
       } else {
+        // v12.1 LIVE-FIX (journal-proven 2026-09-18: every live spot order
+        // died with CoinDCX `[422] market is required`): the SPOT
+        // /orders/create contract wants the pair in the `market` field
+        // (BTCINR) — `pair` is the MARGIN/futures vocabulary, spot ignores
+        // it — and the spot order_type vocabulary is `market_order`/
+        // `limit_order` (same as the margin API), not bare `market`.
         const body = {
           side: effectiveSignal.side === 'SHORT' ? 'sell' : 'buy',
-          pair,
-          order_type: 'market',
+          market: pair,
+          order_type: 'market_order',
           total_quantity: String(qty),
           hidden: true,
         };
@@ -1042,10 +1055,12 @@ export async function watchPositions({ sendTelegram } = {}) {
                 const mp = await getMarginPairName(p.pair, creds);
                 await coindcxPrivate('/exchange/v1/margin/orders/exit_positions', creds.apiKey, creds.secret, marginExitBody({ marginPair: mp.pair, side: p.side }));
               } else {
+                // v12.1 LIVE-FIX: `market` (not `pair`) + `market_order` —
+                // the spot order contract (see the entry-path note).
                 await coindcxPrivate('/exchange/v1/orders/create', creds.apiKey, creds.secret, {
                   side: long ? 'sell' : 'buy',
-                  pair: p.pair,
-                  order_type: 'market',
+                  market: p.pair,
+                  order_type: 'market_order',
                   total_quantity: String(p.qty),
                   hidden: true,
                 });
@@ -1205,10 +1220,12 @@ async function partialCloseSpotLeg(j, p, price, { stage, pct }) {
         });
         await coindcxPrivate('/exchange/v1/margin/orders', creds.apiKey, creds.secret, body);
       } else {
+        // v12.1 LIVE-FIX: `market` (not `pair`) + `market_order` — the
+        // spot order contract (see the entry-path note).
         await coindcxPrivate('/exchange/v1/orders/create', creds.apiKey, creds.secret, {
           side: long ? 'sell' : 'buy',
-          pair: p.pair,
-          order_type: 'market',
+          market: p.pair,
+          order_type: 'market_order',
           total_quantity: String(partialQty),
           hidden: true,
         });
@@ -1287,9 +1304,11 @@ export async function closePosition(positionId) {
           const mp = await getMarginPairName(p.pair, creds);
           await coindcxPrivate('/exchange/v1/margin/orders/exit_positions', creds.apiKey, creds.secret, marginExitBody({ marginPair: mp.pair, side: p.side }));
         } else {
+          // v12.1 LIVE-FIX: `market` (not `pair`) + `market_order` — the
+          // spot order contract (see the entry-path note).
           await coindcxPrivate('/exchange/v1/orders/create', creds.apiKey, creds.secret, {
             side: p.side === 'LONG' ? 'sell' : 'buy',
-            pair: p.pair, order_type: 'market', total_quantity: String(p.qty), hidden: true,
+            market: p.pair, order_type: 'market_order', total_quantity: String(p.qty), hidden: true,
           });
         }
       } catch (e) {

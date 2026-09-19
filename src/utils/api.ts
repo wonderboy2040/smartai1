@@ -24,7 +24,7 @@ export function getProxyBase(): string {
       // a dead service — every Vercel deploy without VITE_API_PROXY set
       // silently pointed at it and login failed. Set VITE_API_PROXY in
       // Vercel to override this default.
-      return 'https://smartai-e954.onrender.com';
+      return 'https://smartai1.onrender.com';
     }
   }
 

@@ -21,7 +21,7 @@
 // ============================================================
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-const REAL_APP_URL = 'https://smartai-e954.onrender.com';
+const REAL_APP_URL = 'https://smartai1.onrender.com';
 const PROBE_ATTEMPTS = [
   { timeout: 9000, backoff: 4000 },   // fast first try
   { timeout: 14000, backoff: 6000 },  // cold boot can be slow
