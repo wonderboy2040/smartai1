@@ -386,6 +386,13 @@ export interface AISignal {
     severity: 'HARD' | 'SOFT' | null;
     reason: string | null;
   } | null;
+  /** v12.6 entry-quality band — PULLBACK (boost) / EXTENDED (haircut) */
+  entryQuality?: {
+    band: 'PULLBACK' | 'EXTENDED';
+    extAtr: number | null;
+    ref: string | null;
+    note: string | null;
+  } | null;
   /** v12.4 HOLDING — an OPEN position exists on this symbol (journal
    *  auto/desk trades + manual tracker): the card is the live context
    *  for money already on the line. */

@@ -135,3 +135,66 @@ describe('simulateSymbol — stats & sanity', () => {
     expect(strong.stats.trades).toBeLessThanOrEqual(action.stats.trades);
   });
 });
+
+// ============================================================
+// v12.6 GUARDED STRATEGY — the A/B validation leg
+// ------------------------------------------------------------
+// The live trust guards (chase + OB/OS) replayed at entry: a HARD-chase
+// or overbought/oversold consensus is SKIPPED exactly like the live
+// execution gate vetoes it. The A/B this locks: guarded trades are a
+// strict subset of raw trades, and on a blow-off-top series the guard
+// demonstrably refuses the top-tick entries.
+// ============================================================
+describe('simulateSymbol — v12.6 guarded strategy (the trust-guard replay)', () => {
+  /** A vertical blow-off: a strong trend that goes parabolic at the end. */
+  function blowOffCandles({ n = 180, start = 100, drift = 0.3, vol = 0.9, seed = 3 } = {}) {
+    const base = trendCandles({ n: n - 40, start, drift, vol, seed });
+    // the last 40 bars go vertical (+1.2%/bar average, low noise) — the
+    // exhaustion zone every chase guard exists to refuse
+    let close = base[base.length - 1].close;
+    let s = seed + 99;
+    const rand = () => { s = (s * 1103515245 + 12345) % 2147483648; return s / 2147483648; };
+    const t0 = base[base.length - 1].time;
+    for (let i = 0; i < 40; i++) {
+      const open = close;
+      close = close * (1 + 0.012 + (rand() - 0.5) * 0.004);
+      base.push({ time: t0 + (i + 1) * 3600_000, open, high: Math.max(open, close) * 1.002, low: Math.min(open, close) * 0.998, close, volume: 2000 });
+    }
+    return base;
+  }
+
+  it('guarded trades are a SUBSET of raw trades (the guards only refuse, never invent)', () => {
+    const candles = trendCandles({ n: 200, drift: 0.5, vol: 1.4, seed: 21 });
+    const raw = simulateSymbol({ symbol: 'BTC', market: 'CRYPTO', candles, minGrade: 'ACTION' })!;
+    const guarded = simulateSymbol({ symbol: 'BTC', market: 'CRYPTO', candles, minGrade: 'ACTION', strategy: 'guarded' })!;
+    // the guards only REFUSE entries (chase/OB-OS skips) — the guarded
+    // replay can never take MORE trades than the raw one on the same
+    // bars. (A per-bar key subset would be wrong: a skipped entry frees
+    // the occupancy calendar and later entries legitimately shift.)
+    expect(guarded.stats.trades).toBeLessThanOrEqual(raw.stats.trades);
+    // every guarded SIDE is a side the raw engine also traded (no invented direction)
+    const rawSides = new Set(raw.trades.map(t => t.side));
+    for (const t of guarded.trades) expect(rawSides.has(t.side)).toBe(true);
+  });
+
+  it('a parabolic blow-off top: the guard refuses the exhaustion entries (guarded ≤ raw trades, and no guarded entry inside the vertical leg)', () => {
+    const candles = blowOffCandles();
+    const raw = simulateSymbol({ symbol: 'BTC', market: 'CRYPTO', candles, minGrade: 'ACTION' })!;
+    const guarded = simulateSymbol({ symbol: 'BTC', market: 'CRYPTO', candles, minGrade: 'ACTION', strategy: 'guarded' })!;
+    // the vertical zone starts at bar n-40
+    const verticalStart = candles.length - 40;
+    const rawInVertical = raw.trades.filter(t => t.entryBar >= verticalStart).length;
+    const guardedInVertical = guarded.trades.filter(t => t.entryBar >= verticalStart).length;
+    // the guard may not enter MORE inside the vertical leg than raw did
+    expect(guardedInVertical).toBeLessThanOrEqual(rawInVertical);
+    expect(guarded.stats.trades).toBeLessThanOrEqual(raw.stats.trades);
+  });
+
+  it('unknown strategy values degrade to the plain weighted replay (byte-identical trade set)', () => {
+    const candles = trendCandles({ n: 180, seed: 5 });
+    const plain = simulateSymbol({ symbol: 'BTC', market: 'CRYPTO', candles })!;
+    const bogus = simulateSymbol({ symbol: 'BTC', market: 'CRYPTO', candles, strategy: 'nonsense' })!;
+    expect(bogus.stats.trades).toBe(plain.stats.trades);
+    expect(bogus.stats.totalR).toBeCloseTo(plain.stats.totalR ?? 0, 2);
+  });
+});

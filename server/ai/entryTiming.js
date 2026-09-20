@@ -52,6 +52,26 @@ export const CHASE_RUN_ATR = 3.0;
 export const CHASE_HARD_CONF_CAP = 48;
 export const CHASE_SOFT_CONF_PENALTY = 7;
 
+// v12.6 ENTRY-QUALITY BANDS — the POSITIVE side of the timing read.
+// The v12.5 chase guard only SUPPRESSES bad entries; these bands also
+// REWARD good ones so the board's top cards become pullback-in-trend
+// setups instead of the most-extended movers (the 29%-win-rate
+// ranking disease: the highest aiScore sat on coins +2-13% into their
+// move because late trend confirmation reads as maximum conviction).
+//   PULLBACK  — extSigned ∈ [−0.6, +0.8]: price at/near its mean inside
+//               the trend — the classic low-risk entry zone.
+//   EXTENDED  — extSigned ∈ (1.5, 1.8): under the SOFT chase line but
+//               clearly stretched — light haircut, warning chip.
+// Quality never touches the side (same contract as the chase guard).
+export const QUALITY_PULLBACK_LO = -0.6;
+export const QUALITY_PULLBACK_HI = 0.8;
+export const QUALITY_EXTENDED_LO = 1.5;
+export const QUALITY_PULLBACK_CONF_BOOST = 4;   // capped at 100 by the caller
+export const QUALITY_EXTENDED_CONF_PENALTY = 4;
+export const QUALITY_PULLBACK_SCORE_MUL = 1.10; // board aiScore multiplier
+export const QUALITY_EXTENDED_SCORE_MUL = 0.93;
+export const QUALITY_HARD_SCORE_MUL = 0.85;     // chase HARD/SOFT cap multiplier
+
 /**
  * Structural entry-timing read for a DIRECTIONAL consensus.
  * @param {object} p { side, ltp, ema20, vwap, atr, rsi, candles, market }
@@ -59,7 +79,8 @@ export const CHASE_SOFT_CONF_PENALTY = 7;
  *   only the closes are read, any extra fields are ignored.
  * @returns {{side:string, extAtr:number|null, ref:string|null,
  *            runBars:number, runAtr:number|null,
- *            severity:'HARD'|'SOFT'|null, reason:string|null} | null}
+ *            severity:'HARD'|'SOFT'|null, reason:string|null,
+ *            quality:'PULLBACK'|'EXTENDED'|null, qualityNote:string|null} | null}
  *   null when the side is not directional or nothing is computable
  *   (missing price/ATR and no candle tail) — guards degrade silent.
  */
@@ -81,7 +102,7 @@ export function entryTimingRead(p) {
 
     const out = {
       side: s, extAtr: null, ref: null, runBars: 0, runAtr: null,
-      severity: null, reason: null,
+      severity: null, reason: null, quality: null, qualityNote: null,
     };
 
     // ---- extension from the mean, in ATR units ----
@@ -114,14 +135,27 @@ export function entryTimingRead(p) {
 
     // ---- verdict (positive = stretched IN the signal's direction) ----
     const dirSign = s === 'LONG' ? 1 : -1;
-    const extSigned = out.extAtr == null ? 0 : out.extAtr * dirSign;
+    const extSigned = out.extAtr == null ? null : out.extAtr * dirSign;
     const rsiN = Number(rsi);
     const rsiHot = Number.isFinite(rsiN)
       ? (s === 'LONG' ? rsiN >= CHASE_RSI_ASSIST_HI : rsiN <= CHASE_RSI_ASSIST_LO)
       : false;
     const above = s === 'LONG' ? 'above' : 'below';
 
-    if (extSigned >= CHASE_EXT_ATR_HARD) {
+    // ---- v12.6 ENTRY-QUALITY BAND (the positive side of the read) ----
+    // PULLBACK: at/near the mean in-trend — the entry zone the board
+    // should be RANKING to the top (conf boost + score multiplier).
+    if (extSigned != null && extSigned >= QUALITY_PULLBACK_LO && extSigned <= QUALITY_PULLBACK_HI) {
+      out.quality = 'PULLBACK';
+      out.qualityNote = `price ${Math.abs(out.extAtr)}×ATR ${out.extAtr >= 0 ? 'above' : 'below'} ${refTag} — pullback zone, acha entry (trend intact, timing fresh)`;
+    } else if (extSigned != null && extSigned > QUALITY_EXTENDED_LO && extSigned < CHASE_EXT_ATR_SOFT) {
+      out.quality = 'EXTENDED';
+      out.qualityNote = `price ${Math.abs(out.extAtr)}×ATR ${above} ${refTag} — stretched (retrace entry better)`;
+    } else {
+      out.quality = null;
+    }
+
+    if (extSigned != null && extSigned >= CHASE_EXT_ATR_HARD) {
       out.severity = 'HARD';
       out.reason = `price ${Math.abs(out.extAtr)}×ATR ${above} ${refTag} — chase entry (top-tick risk)`;
     } else if (rsiHot && extSigned >= CHASE_EXT_RSI_ASSIST) {

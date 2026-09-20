@@ -386,6 +386,8 @@ import {
   entryTimingRead,
   CHASE_EXT_ATR_HARD, CHASE_EXT_ATR_SOFT, CHASE_HARD_CONF_CAP, CHASE_SOFT_CONF_PENALTY,
   CHASE_RUN_BARS, CHASE_RUN_ATR,
+  QUALITY_PULLBACK_CONF_BOOST, QUALITY_EXTENDED_CONF_PENALTY,
+  QUALITY_PULLBACK_LO, QUALITY_PULLBACK_HI, QUALITY_EXTENDED_LO,
 } from '../server/ai/entryTiming.js';
 import { evaluateExecutionGate } from '../server/ai/ensemble.js';
 
@@ -496,7 +498,7 @@ describe('v12.5 applySignalTrustGuards — chase discipline on the consensus', (
     expect(out.chasing?.severity).toBe('SOFT');
   });
 
-  it('a calm consensus is untouched (no stamp, no haircut)', () => {
+  it('a calm consensus at the mean gets the v12.6 PULLBACK boost (no chase stamp)', () => {
     const out = applySignalTrustGuards({
       market: 'FUTURES', symbol: 'BTC',
       consensus: consensusOf({ side: 'LONG', dir: 1 }),
@@ -504,8 +506,37 @@ describe('v12.5 applySignalTrustGuards — chase discipline on the consensus', (
       ltf: { ltp: 100.8, ema20: 100, atr: 2, rsi: 52 },
     });
     expect(out.grade).toBe('STRONG');
-    expect(out.confidence).toBe(78);
+    // v12.6: extAtr = +0.4 → PULLBACK band → +4 confidence (78 → 82)
+    expect(out.confidence).toBe(78 + QUALITY_PULLBACK_CONF_BOOST);
     expect(out.chasing?.severity ?? null).toBeNull();
+    expect(out.entryQuality).toMatchObject({ band: 'PULLBACK', extAtr: 0.4, ref: 'EMA20' });
+    expect(out.summary).toContain('PULLBACK');
+  });
+
+  it('v12.6 EXTENDED band (1.5–1.8×ATR, under the SOFT line) takes the light haircut + stamp', () => {
+    const out = applySignalTrustGuards({
+      market: 'FUTURES', symbol: 'BTC',
+      consensus: consensusOf({ side: 'LONG', dir: 1 }),
+      ctx: { ltp: 103.3, candles: risingCandles(40, 100, 0.4) },
+      ltf: { ltp: 103.3, ema20: 100, atr: 2, rsi: 58 },
+    });
+    expect(out.grade).toBe('STRONG'); // under the SOFT chase line — grade intact
+    expect(out.chasing?.severity ?? null).toBeNull();
+    expect(out.entryQuality).toMatchObject({ band: 'EXTENDED', extAtr: 1.65 });
+    expect(out.confidence).toBe(78 - QUALITY_EXTENDED_CONF_PENALTY);
+  });
+
+  it('v12.6 PULLBACK never fires on a chased signal (HARD cap wins, no boost)', () => {
+    const out = applySignalTrustGuards({
+      market: 'FUTURES', symbol: 'HBAR',
+      consensus: consensusOf({ side: 'LONG', dir: 1 }),
+      ctx: { ltp: 112, candles: risingCandles() },
+      ltf: { ltp: 112, ema20: 100, atr: 4, rsi: 63 },
+    });
+    expect(out.grade).toBe('WATCH');
+    expect(out.confidence).toBeLessThanOrEqual(CHASE_HARD_CONF_CAP);
+    expect(out.chasing).toMatchObject({ severity: 'HARD', extAtr: 3 });
+    expect(out.entryQuality ?? null).toBeNull(); // 3×ATR is NOT in any quality band
   });
 
   it('buildSignal forwards the chasing verdict to the card', () => {
@@ -517,6 +548,17 @@ describe('v12.5 applySignalTrustGuards — chase discipline on the consensus', (
       plan: { entry: 112, stopLoss: 108, target1: 116, target2: 120, riskPct: 2 },
     });
     expect(sig.chasing).toMatchObject({ severity: 'HARD', extAtr: 3 });
+  });
+
+  it('buildSignal forwards the v12.6 entryQuality verdict to the card', () => {
+    const sig = buildSignal({
+      symbol: 'BTC', market: 'FUTURES',
+      ctx: { ltp: 100.8, changePct: 0.4 },
+      votes: [],
+      consensus: consensusOf({ side: 'LONG', dir: 1, grade: 'STRONG', confidence: 82, entryQuality: { band: 'PULLBACK', extAtr: 0.4, ref: 'EMA20', note: 'price 0.4×ATR above EMA20 — pullback zone' } }),
+      plan: { entry: 100.8, stopLoss: 98.8, target1: 102.8, target2: 104.8, riskPct: 2 },
+    });
+    expect(sig.entryQuality).toMatchObject({ band: 'PULLBACK', extAtr: 0.4 });
   });
 });
 

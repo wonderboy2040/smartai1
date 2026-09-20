@@ -28,7 +28,7 @@ import {
   watchFuturesPositions, closeFuturesPosition, __resetFuturesForTests,
   __setUsdInrForTests, inrOfUsdt, roundFuturesQty, __setWalletLegBudgetForTests,
   probeFuturesKeyScope, lastFuturesKeyScope, resetWalletTransportForReconnect,
-  __walletTransportStateForTests,
+  __walletTransportStateForTests, __clearFuturesCandleCacheForTest,
 } from '../server/ai/futures.js';
 import { __resetForTests, __setJournalForTests, loadJournal, __setConfigForTests, todayIST } from '../server/ai/coindcxOrders.js';
 import { saveJSON, loadJSON as loadJSONOrig } from '../server/lib/store.js';
@@ -154,6 +154,7 @@ describe('fetchFuturesPrices (RT payload)', () => {
 });
 
 describe('fetchFuturesCandles (pcode=f)', () => {
+  beforeEach(() => { __clearFuturesCandleCacheForTest(); });
   it('parses { s, data } oldest-first (≥30 rows → usable TA input)', async () => {
     routeFetch({ 'market_data/candlesticks': { s: 'ok', data: CANDLE_ROWS } });
     const out = await fetchFuturesCandles('B-MKR_USDT', '60', 40);

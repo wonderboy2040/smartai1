@@ -23,6 +23,11 @@ import { computeIndicatorsFromCandles } from './lib/indicators.js';
 import { fetchCoinDcxCandles } from './data.js';
 import { runQuantModels } from './models.js';
 import { aggregateVotes, buildTradePlan, applyRegimeWeights, classifyRegimeFromCandles } from './ensemble.js';
+// v12.6: the A/B validation leg — replay the SAME bars with the live
+// trust guards (chase + OB/OS) applied at entry, exactly what the board
+// and the execution gate now do. This is the proof layer: raw vs
+// guarded on identical data.
+import { entryTimingRead, CHASE_HARD_CONF_CAP, CHASE_SOFT_CONF_PENALTY } from './entryTiming.js';
 
 const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 const SLIPPAGE = 0.001; // 10 bps each side
@@ -103,6 +108,11 @@ export function simulateSymbol({ symbol, market, candles, minGrade = 'ACTION', m
 
   const gradeFloor = { STRONG: 4, ACTION: 3, WATCH: 2, NEUTRAL: 1 }[String(minGrade).toUpperCase()] || 3;
   if (gradeFloor < 3) { /* WATCH/NEUTRAL floors are allowed for experimentation */ }
+  // v12.6 GUARDED leg: the live entry discipline replayed — chase
+  // (structural extension) + OB/OS (RSI extreme) land on the consensus
+  // BEFORE the grade floor decides, mirroring applySignalTrustGuards +
+  // evaluateExecutionGate on the live path. Never flips the side.
+  const guarded = strategy === 'guarded';
 
   while (i < candles.length - 1) {
     if (!openTrade) {
@@ -122,7 +132,34 @@ export function simulateSymbol({ symbol, market, candles, minGrade = 'ACTION', m
         const votes = applyRegimeWeights(runQuantModels(ctx),
           strategy === 'regime_weighted' ? classifyRegimeFromCandles(hist, market) : null,
           { force: true });
-        const consensus = aggregateVotes(votes);
+        let consensus = aggregateVotes(votes);
+        // ---- v12.6 GUARDED: the live trust guards on the replay ----
+        if (guarded && consensus.dir !== 0) {
+          const rsi = ind.rsi ?? null;
+          let skip = false;
+          let confAdj = 0;
+          // OB/OS (v12.4 live rule)
+          if (consensus.side === 'LONG' && rsi != null && rsi >= 70) skip = true;
+          if (consensus.side === 'SHORT' && rsi != null && rsi <= 30) skip = true;
+          // CHASE (v12.5 live rule — same module, same thresholds)
+          const timing = entryTimingRead({
+            side: consensus.side,
+            ltp: candles[i].close,
+            ema20: ind.ema20 ?? null,
+            atr: ind.atr ?? null,
+            rsi,
+            candles: hist,
+            market,
+          });
+          if (timing) {
+            if (timing.severity === 'HARD') skip = true;
+            else if (timing.severity === 'SOFT') confAdj -= CHASE_SOFT_CONF_PENALTY;
+          }
+          if (confAdj !== 0) {
+            consensus = { ...consensus, confidence: Math.max(5, (Number(consensus.confidence) || 0) + confAdj) };
+          }
+          if (skip) { i += 1; continue; }
+        }
         const gf = { STRONG: 4, ACTION: 3, WATCH: 2, NEUTRAL: 1 }[consensus.grade] || 1;
         if (consensus.dir !== 0 && gf >= gradeFloor) {
           const plan = buildTradePlan(consensus, ctx, market, { maxRiskPct });

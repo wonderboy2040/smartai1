@@ -1130,6 +1130,19 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
                 🚀 {signal.chasing.severity === 'HARD' ? 'CHASE-LOCK' : 'EXTENDED'}{signal.chasing.extAtr != null ? ` ${signal.chasing.extAtr}×ATR` : ''}{signal.chasing.runBars >= 4 ? ` · ${signal.chasing.runBars}↑` : ''}
               </span>
             )}
+            {/* v12.6 ENTRY-QUALITY chips — the POSITIVE side of the timing
+                read: a pullback-in-trend entry (confidence boost + board
+                rank boost) vs a stretched one. The user asked "accurate
+                directions" — this shows WHERE the good entries live. */}
+            {signal.entryQuality && !signal.chasing?.severity && (
+              <span
+                className={`px-1.5 py-0.5 rounded text-[9px] font-black border font-mono ${signal.entryQuality.band === 'PULLBACK' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40' : 'bg-amber-500/15 text-amber-300 border-amber-500/40'}`}
+                title={signal.entryQuality.note || (signal.entryQuality.band === 'PULLBACK'
+                  ? `price ${signal.entryQuality.extAtr}×ATR from ${signal.entryQuality.ref} — pullback zone, trend intact. ACHHA entry location (confidence + rank boost mila hai).`
+                  : `price ${signal.entryQuality.extAtr}×ATR from ${signal.entryQuality.ref} — stretched; retrace entry better.`)}>
+                {signal.entryQuality.band === 'PULLBACK' ? '🌊 PULLBACK' : '📐 STRETCHED'}{signal.entryQuality.extAtr != null ? ` ${signal.entryQuality.extAtr}×ATR` : ''}
+              </span>
+            )}
             {signal.holding && (
               <span
                 className="px-1.5 py-0.5 rounded bg-fuchsia-500/15 text-fuchsia-300 text-[9px] font-black border border-fuchsia-500/40 font-mono"

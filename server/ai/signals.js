@@ -47,6 +47,8 @@ import { simulateSymbol } from './backtest.js';
 // trust guards (board AND deep paths — the LIVE gate reads the deep
 // one), and open-position pinning (traded symbols never vanish).
 import { applySignalTrustGuards, remember, pinHoldingOnBoard, __resetSignalMemoryForTests } from './signalMemory.js';
+// v12.6: the entry-quality multipliers drive the board's rank key.
+import { QUALITY_PULLBACK_SCORE_MUL, QUALITY_EXTENDED_SCORE_MUL, QUALITY_HARD_SCORE_MUL } from './entryTiming.js';
 import { discoverSpotUniverse, discoverFuturesUniverse, binancePriceMap, fetchUsdInr, expertScoreFactors } from './expertPicks.js';
 import { validateTick } from './wickFilter.js';
 import { readDepth, warmDepthBatch } from './orderFlowDepth.js';
@@ -444,6 +446,48 @@ function tapeFromCandles(candles, li, tvRow) {
     vwap: tvRow?.vwap ?? null, // session VWAP from the scanner row
     last3Pct,
   };
+}
+
+// ---------------- v12.6: CRYPTO/FUTURES 15m TAPE ----------------
+// THE DIRECTION-ACCURACY FIX (live ground truth 2026-09-20: the replay
+// engine measured the raw crypto ensemble at 29% win-rate / avgR −0.35
+// — "long bola tho short jaa raha hai" was the board confirming moves
+// 2-13% AFTER they happened). The 1h committee reads the SWING; this
+// 15m tape read is the ENTRY-TIMING counterweight the tape seat now
+// votes on (models.js v12.6 data-driven gate).
+//   CRYPTO spot: CoinDCX public 15m (INR domain) → Binance/Bybit 15m
+//   klines rescaled onto the coin's INR anchor (the board's own chain).
+//   FUTURES: CoinDCX futures 15m candles (USDT domain — 1:1 with the
+//   desk) → Binance 15m klines (USDT, no rescale needed).
+// Candle legs ride the v12.6 TTL candle cache (5 min) — ONE upstream
+// call per symbol per 5 minutes, negligible against the board budget.
+async function fetchCrypto15mTape(base, ltp, tvRow, mkt) {
+  try {
+    let candles = null;
+    if (mkt === 'FUTURES' || mkt === 'GLOBALFUTURES') {
+      candles = await fetchFuturesCandles(futuresPairFor(base), '15', 240).catch(() => null);
+      if (!Array.isArray(candles) || candles.length < 60) {
+        // Binance/Bybit USDT 15m klines are ALREADY the desk's domain.
+        candles = await fetchBinanceKlines(base, '15m').catch(() => null);
+      }
+    } else {
+      candles = await fetchCoinDcxCandles(base, '15m').catch(() => null);
+      if (!Array.isArray(candles) || candles.length < 60) {
+        const bk = await fetchBinanceKlines(base, '15m').catch(() => null);
+        if (Array.isArray(bk) && bk.length >= 60 && ltp > 0) {
+          const expected = tvRow?.usdPrice > 0 ? ltp / tvRow.usdPrice : null;
+          candles = rescaleCandlesToLtp(bk, ltp, expected);
+        }
+      }
+    }
+    if (!Array.isArray(candles) || candles.length < 60) return null;
+    const li = computeIndicatorsFromCandles(candles);
+    if (!li) return null;
+    const tape = tapeFromCandles(candles, li, tvRow || null);
+    return tape ? { tape, ltfInd: li, candles } : null;
+  } catch {
+    return null; // honest degrade — the seat abstains, board rides on
+  }
 }
 
 // ---------------- v10.5: MTF CONFLUENCE DATA LAYER ----------------
@@ -1389,6 +1433,26 @@ async function _computeBoard(mkt, deps, opts = {}) {
     } catch { /* honest degrade — quality layer skips MTF */ }
   }));
 
+  // ---------------- v12.6 CRYPTO/FUTURES 15m TAPE ENRICHMENT ----------------
+  // THE ENTRY-TIMING SEAT'S DATA: the top candidates (2× the board,
+  // cap 20 — the same slice the India tape enrichment covers) get a
+  // 15m tape read. One TTL-cached upstream call per symbol per 5 min;
+  // the vote is injected in the final loop below and re-ranks the
+  // board AFTER it weighs in (the India pattern). Without this data
+  // the tape seat abstains and the committee stays a pure 1h trend
+  // echo — the 29%-win-rate disease.
+  const tapeEnrichN = mkt === 'INDIA' ? 0 : Math.min(20, Math.max(10, (opts.limit || 10) * 2));
+  const tapeEnriched = new Map();
+  await Promise.all(candidates.slice(0, tapeEnrichN).map(async (c) => {
+    const key = c.ctx.symbol;
+    if (tapeEnriched.has(key)) return;
+    try {
+      const t = await fetchCrypto15mTape(c.ctx.symbol, c.ctx.ltp, c.ctx.__tv, mkt);
+      if (process.env.SMARTAI_TAPE_DEBUG) console.log('[tape-debug]', mkt, c.ctx.symbol, t ? 'OK tape rsi=' + t.tape?.rsi : 'NULL');
+      if (t) tapeEnriched.set(key, t);
+    } catch { /* honest degrade — the seat abstains */ }
+  }));
+
   // AI Council on the top candidates (toCouncilCandidate normalizes the
   // {ctx, votes, consensus, plan} board shape into the flat candidate
   // shape — symbol/side/confidence/ltp/indicators/plan).
@@ -1490,6 +1554,25 @@ async function _computeBoard(mkt, deps, opts = {}) {
           }
         }
       } catch { /* honest degrade — keep pass-1 votes */ }
+    }
+    // v12.6 CRYPTO/FUTURES TAPE VOTE — the 15m entry-timing seat on the
+    // crypto desks (same injection pattern as India's: replace the
+    // pass-1 abstain, carry the adaptive multiplier, vote only when the
+    // enrichment actually produced a tape). Deliberately OUTSIDE the
+    // `if (enr)` India block — the crypto tape enrichment has its OWN
+    // map. A stretched 15m tape now pulls the consensus OFF the late
+    // LONG; a pullback tape confirms it with timing weight.
+    if (mkt !== 'INDIA') {
+      const tEnr = tapeEnriched.get(c.ctx.symbol);
+      if (tEnr?.tape) {
+        const tapeReg = MODELS.find(m => m.id === 'tape' || m.id === 'tape-mtf');
+        const tapeV = tapeReg?.fn ? tapeReg.fn({ market: mkt, tape: tEnr.tape }) : null;
+        if (tapeV && tapeV.dir !== 0 && (tapeV.conf || 0) > 0) {
+          const tIdx = votes.findIndex(v => v.id === 'tape' || v.id === 'tape-mtf');
+          if (tIdx >= 0) votes.splice(tIdx, 1); // drop the pass-1 abstain
+          votes.push({ id: tapeReg.id, name: tapeReg.name, role: tapeReg.role, weight: tapeReg.weight * (_ad?.tape?.mul ?? 1), ...tapeV, revived: true });
+        }
+      }
     }
     let aiNote = null;
     let aiConf = null; // v9: the council's own confidence → the super score blend
@@ -1672,7 +1755,25 @@ async function _computeBoard(mkt, deps, opts = {}) {
 
   // v9: the board is ranked by the SUPERINTELLIGENCE AI score (the
   // 80+ bar the desk filters on), confidence as the tie-breaker.
-  signals.sort((a, b) => ((b.superIntel?.aiScore ?? b.confidence) - (a.superIntel?.aiScore ?? a.confidence)));
+  // v12.6 ENTRY-QUALITY-ADJUSTED RANKING: the raw aiScore crowned the
+  // most-EXTENDED movers (late trend confirmation reads as maximum
+  // conviction — the replay engine measured that ranking at 29%
+  // win-rate). The rank key now multiplies the score by the entry
+  // band: PULLBACK ×1.10, EXTENDED ×0.93, chase HARD/SOFT ×0.85.
+  // The card's displayed aiScore is untouched — rankScore rides the
+  // payload so the ranking is fully transparent.
+  for (const s of signals) {
+    const base = Number(s.superIntel?.aiScore ?? s.confidence) || 0;
+    const q = s.entryQuality?.band;
+    const chase = s.chasing?.severity;
+    const mul = q === 'PULLBACK' ? QUALITY_PULLBACK_SCORE_MUL
+      : (chase === 'HARD' || chase === 'SOFT') ? QUALITY_HARD_SCORE_MUL
+        : q === 'EXTENDED' ? QUALITY_EXTENDED_SCORE_MUL
+          : 1;
+    s.__rankScore = base * mul;
+    if (s.superIntel) s.superIntel.rankScore = Math.round(s.__rankScore * 10) / 10;
+  }
+  signals.sort((a, b) => ((b.__rankScore ?? b.superIntel?.aiScore ?? b.confidence) - (a.__rankScore ?? a.superIntel?.aiScore ?? a.confidence)));
   // v9.3: the India pass built 2× the board — cut to the display limit
   // AFTER the tape-aware re-rank (crypto/futures already match the cut).
   if (signals.length > boardLimit) signals.length = boardLimit;
@@ -2082,6 +2183,23 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
           if (tIdx >= 0) votes.splice(tIdx, 1);
           const _adT = adaptiveMultipliers(_ledgerModelStats());
           votes.push({ id: seatId, name: tapeReg.name, role: tapeReg.role, weight: tapeReg.weight * (_adT?.tape?.mul ?? 1), ...tapeV, revived: true });
+        }
+      }
+    } else {
+      // v12.6 CRYPTO/FUTURES TAPE VOTE (deep) — the same 15m entry-timing
+      // seat the board now votes, so the deep card == the board card (a
+      // deep dive disagreeing with the board's tape read was a silent
+      // source of "board ne LONG bola, deep SHORT nikala"). One
+      // TTL-cached 15m fetch; honest abstain when the legs are dark.
+      const tEnr = await fetchCrypto15mTape(sym, ctx.ltp, ctx.__tv || null, mkt).catch(() => null);
+      if (tEnr?.tape) {
+        const tapeReg = MODELS.find(m => m.id === 'tape' || m.id === 'tape-mtf');
+        const tapeV = tapeReg?.fn ? tapeReg.fn({ market: mkt, tape: tEnr.tape }) : null;
+        if (tapeV && tapeV.dir !== 0 && (tapeV.conf || 0) > 0) {
+          const tIdx = votes.findIndex(v => v.id === 'tape' || v.id === 'tape-mtf');
+          if (tIdx >= 0) votes.splice(tIdx, 1);
+          const _adT = adaptiveMultipliers(_ledgerModelStats());
+          votes.push({ id: tapeReg.id, name: tapeReg.name, role: tapeReg.role, weight: tapeReg.weight * (_adT?.tape?.mul ?? 1), ...tapeV, revived: true });
         }
       }
     }

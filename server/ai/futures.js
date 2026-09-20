@@ -333,6 +333,13 @@ export function roundFuturesQty(pair, qty) {
  * (also tolerates the legacy bare-array shape).
  */
 export async function fetchFuturesCandles(pair, resolution = '60', limit = 300) {
+  // v12.6 candle TTL cache — same rationale as data.js (the futures
+  // board re-fetches the full history every cycle; 299/300 bars are
+  // identical). 3 min for 15m bars, 5 min otherwise.
+  const cacheKey = `fut:${pair}:${resolution}`;
+  const ttl = resolution === '15' ? 180_000 : 300_000;
+  const hit = _futCandleCache.get(cacheKey);
+  if (hit && Date.now() - hit.at <= ttl) return hit.candles.slice();
   const to = Math.floor(Date.now() / 1000);
   const from = to - Math.max(1, Math.ceil(limit * resolutionSeconds(resolution) * 1.2 / 60)) * 60;
   const url = `${CANDLES_URL}?pair=${encodeURIComponent(String(pair).toLowerCase())}&from=${from}&to=${to}&resolution=${resolution}&pcode=f`;
@@ -347,8 +354,17 @@ export async function fetchFuturesCandles(pair, resolution = '60', limit = 300) 
     close: num(x.close), volume: num(x.volume) || 0,
   })).filter(c => c.close > 0 && c.open > 0)
     .sort((a, b) => a.time - b.time);
-  return candles.length >= 30 ? candles : null;
+  if (candles.length < 30) return null;
+  if (_futCandleCache.size >= 48) {
+    const entries = [..._futCandleCache.entries()].sort((a, b) => a[1].at - b[1].at);
+    for (let i = 0; i < 12; i++) _futCandleCache.delete(entries[i][0]);
+  }
+  _futCandleCache.set(cacheKey, { at: Date.now(), candles });
+  return candles.slice();
 }
+const _futCandleCache = new Map(); // key -> { at, candles } (v12.6 TTL cache)
+/** Test hook — hermetic suites clear the candle cache between cases. */
+export function __clearFuturesCandleCacheForTest() { _futCandleCache.clear(); }
 function resolutionSeconds(res) {
   const r = String(res);
   if (r === '1D') return 86400;

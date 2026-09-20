@@ -195,13 +195,22 @@ describe('v9.3 IntradayTape — the 15m committee seat', () => {
     expect(v.reasons.join(' ')).toContain('abstains');
   });
 
-  it('crypto/futures ctx → abstains (their committee already reads 1h candles — no double count)', () => {
+  it('v12.6: crypto/futures ctx WITH a tape payload now VOTES (the entry-timing seat — 1h reads the swing, 15m reads timing)', () => {
     const v = run({
       market: 'CRYPTO', symbol: 'BTC', ltp: 60000,
       tape: { ltp: 60000, ema10: 60100, ema20: 59900, rsi: 62, macdHist: 30, macdSlope: 5, vwap: 60000, last3Pct: 0.4 },
     });
+    // a rising 15m tape votes LONG — the committee is no longer a pure
+    // 1h trend echo (the 29%-win-rate disease)
+    expect(v.dir).toBe(1);
+    expect(v.conf).toBeGreaterThan(50);
+  });
+
+  it('v12.6: crypto/futures ctx WITHOUT tape data still abstains honestly (dir 0)', () => {
+    const v = run({ market: 'CRYPTO', symbol: 'BTC', ltp: 60000, ind: null, regime: null });
     expect(v.dir).toBe(0);
-    expect(v.reasons.join(' ')).toContain('no double count');
+    expect(v.conf).toBe(0);
+    expect(v.reasons.join(' ')).toContain('abstains');
   });
 
   it('a mild/coil tape abstains rather than voting noise (dir 0)', () => {

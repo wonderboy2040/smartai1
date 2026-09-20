@@ -153,10 +153,16 @@ describe('v10.5 registry — IntradayTapeMTF replaces the 15m seat when the flag
     expect(plain).toBeUndefined(); // same seat — never both
   });
 
-  it('crypto/futures ctx → honest abstain (no double-count with their 1h candles)', () => {
-    const v = runQuantModels({ market: 'CRYPTO', symbol: 'BTC', ltp: 60000, tapeMTF: { m15: { ltp: 60000, ema10: 1, ema20: 2, rsi: 60, macdHist: 1, vwap: 60000, last3Pct: 1 } } }).find(x => x.id === 'tape-mtf');
+  it('v12.6: crypto ctx WITH an m15 tapeMTF payload votes (data-driven gate — the entry-timing seat)', () => {
+    const v = runQuantModels({ market: 'CRYPTO', symbol: 'BTC', ltp: 60000, tapeMTF: { m15: { ltp: 60000, ema10: 60100, ema20: 59900, rsi: 60, macdHist: 30, macdSlope: 5, vwap: 60000, last3Pct: 1 } } }).find(x => x.id === 'tape-mtf');
+    // a rising 15m tape votes LONG — no longer parked on crypto desks
+    expect(v.dir).toBe(1);
+  });
+
+  it('crypto/futures ctx with NO tape payload → honest abstain', () => {
+    const v = runQuantModels({ market: 'CRYPTO', symbol: 'BTC', ltp: 60000 }).find(x => x.id === 'tape-mtf');
     expect(v.dir).toBe(0);
-    expect(v.reasons.join(' ')).toContain('no double count');
+    expect(v.reasons.join(' ')).toContain('abstain');
   });
 
   it('no MTF payload AND no plain tape → abstain', () => {

@@ -135,10 +135,12 @@ describe('evaluateExecutionGate — THE order gauntlet', () => {
     expect(g.reason).toMatch(/stale/i);
   });
 
-  it('rejects side mismatch — long signal, short request', () => {
+  it('rejects side mismatch — long signal, short request (v12.6 honest flip veto)', () => {
     const g = evaluateExecutionGate(strong, { side: 'SHORT' });
     expect(g.ok).toBe(false);
-    expect(g.reason).toMatch(/side/i);
+    // v12.6: the veto names BOTH sides + says the card must be re-confirmed
+    expect(g.reason).toMatch(/fresh consensus LONG hai, aapne SHORT/);
+    expect(g.reason).toMatch(/FLIP/);
   });
 
   it('rejects non-STRONG grades with the exact gate text', () => {

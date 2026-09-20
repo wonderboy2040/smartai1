@@ -550,6 +550,9 @@ export function buildSignal({ symbol, market, ctx, votes, consensus, plan, aiNot
     ...(consensus.obOs ? { obOs: consensus.obOs } : {}),
     ...(consensus.freshFlip ? { freshFlip: consensus.freshFlip } : {}),
     ...(consensus.chasing ? { chasing: consensus.chasing } : {}),
+    // v12.6 entryQuality — the PULLBACK / EXTENDED band (the positive
+    // side of the timing read; drives the board re-rank + the card chip).
+    ...(consensus.entryQuality ? { entryQuality: consensus.entryQuality } : {}),
     generatedAt: Date.now(),
   };
 }
@@ -591,8 +594,19 @@ export function evaluateExecutionGate(signal, { side, gates = DEFAULT_GATES, max
   const wantSide = SIDE_ALIAS[String(side || signal.side).toUpperCase()]
     || String(side || signal.side).toUpperCase();
   const sigSide = SIDE_ALIAS[String(signal.side).toUpperCase()] || String(signal.side);
-  if (sigSide !== wantSide) return { ok: false, reason: `signal side is ${signal.side}, requested ${wantSide}` };
+  // FLAT / planless vetoes FIRST (a FLAT signal is not a "flip" — saying
+  // so would mislead; the honest reason is there is no consensus side).
   if (signal.side === 'FLAT' || !signal.plan) return { ok: false, reason: 'no tradeable side/plan in the current consensus' };
+  if (sigSide !== wantSide) {
+    // v12.6: the honest reason a clicked side didn't execute — the card
+    // the user approved was built up to 60s ago; the FRESH consensus
+    // re-run at click time flipped. This veto is what keeps a LONG click
+    // from ever silently executing as SHORT (or vice versa).
+    return {
+      ok: false,
+      reason: `fresh consensus ${sigSide} hai, aapne ${wantSide} card pe trade maara tha — signal FLIP ho gaya (whipsaw window). Card refresh karke naya setup confirm karo; auto-flip execute kabhi nahi hota.`,
+    };
+  }
   // v12.5 CHASE GUARD — the honest journal reason for a suppressed
   // entry (the board already capped the grade to WATCH — a WATCH can
   // never satisfy requireStrong — this veto makes the WHY readable

@@ -226,7 +226,7 @@ describe('v9.5 — evaluateExecutionGate side-vocabulary aliases', () => {
   it('still rejects a genuine direction conflict (BUY vs SHORT)', () => {
     const v = evaluateExecutionGate(mkSignal('SHORT'), { side: 'BUY', venue: 'FUTURES', requireStrong: true });
     expect(v.ok).toBe(false);
-    expect(v.reason).toMatch(/signal side is SHORT, requested LONG/);
+    expect(v.reason).toMatch(/fresh consensus SHORT hai, aapne LONG/);
   });
 
   it('still rejects FLAT and cross-venue signals', () => {

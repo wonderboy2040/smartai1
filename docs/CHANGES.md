@@ -1,5 +1,39 @@
 # Changelog
 
+## v12.6 — DIRECTION-ACCURACY ENGINE + THE BANDWIDTH FIX (2026-09-21)
+
+**User report: "phir se check karo Intraday & coin dcx dono tabs ke Trade Signal directions Long aur Short Accurately dedo — long pe trade lene par short ho raha hai · world-top-professional deep AI quantum level pe recheck karo aisa kyun ho raha hai · aur Render me har redeploy me bandwidth bahut le raha hai — free tier 5GB exhaust ho raha hai."**
+
+**The quantum-level recheck — STATISTICAL ground truth first:** the app's OWN walk-forward replay engine was pointed at the live ensemble (`/api/ai/backtest`, 116 trades, ACTION floor, same model code the boards run): **29.3% win-rate · avgR −0.35 · profit factor 0.55 · 78/116 trades stopped out.** The directions are not randomly wrong — they are systematically ANTI-predictive at entry. Combined with the live board probe (10/10 futures signals LONG in a mixed market; every coin already +2-13% into its move; the committee's only voting seats were trend/momentum/regime/smc — all 1h LAGGING trend readers), the root cause is now measured, not guessed: **the crypto/futures committee is a 1h-trend echo chamber that confirms moves AFTER they happen.** The tape seats (the only sub-hour timing voice) were hard-coded to abstain on crypto/futures ("no double count" — a note that only ever applied to reading the SAME series twice). The agent's conviction-flip exit + flip-re-entry then converts the whipsawed LONG into a SHORT position — the literal "long pe trade lene par short ho raha hai" experience.
+
+### 1. THE 15m TAPE SEAT GOES LIVE ON CRYPTO/FUTURES — the committee counterweight
+- `models.js`: `intradayTape`/`intradayTapeMTF` gates are now **data-driven** (vote whenever a tape payload exists; honest abstain when it doesn't) instead of market-driven (India-only).
+- `signals.js`: **NEW pass-2 15m tape enrichment for crypto/futures boards** — the top candidates (2× the board, cap 20) get a 15m tape read (CoinDCX futures 15m candles → Binance/Bybit 15m klines; spot: CoinDCX 15m → Binance rescaled onto the INR anchor). The tape vote is injected into the committee and the board **re-ranks after it weighs in** (the India pattern). Deep dives fetch the same tape — **deep card == board card** (a deep dive disagreeing with the board's tape read was a silent "board ne LONG bola, deep SHORT nikala" source).
+- Live check (local boot): the futures board now carries real tape votes (NOT LONG/69, HMSTR LONG/83; SOL's tape honestly abstains at a borderline-neutral read) — the first sub-hour voice the crypto committee has ever had.
+
+### 2. ENTRY-QUALITY BANDS — the POSITIVE side of the timing read (rank the good entries to the top)
+- `entryTiming.js`: **PULLBACK** (extSigned ∈ [−0.6, +0.8] — price at/near its mean inside the trend) → **+4 confidence, ×1.10 board score**; **EXTENDED** (1.5-1.8×ATR, under the SOFT chase line) → **−4 confidence, ×0.93 score**; chased (HARD/SOFT) → ×0.85. Never touches side/ltp.
+- **The board now ranks by ENTRY-QUALITY-ADJUSTED score** (`rankScore` on the payload, fully transparent): live check — SOL PULLBACK 0.8×ATR aiScore 79 → rank 86.9 (board #1); BNB EXTENDED 1.76×ATR aiScore 74 → rank 68.8 (below equal-score calm coins). The most-extended movers no longer crown the board — pullback-in-trend setups do.
+- `applySignalTrustGuards` applies the boost/haircut alongside the v12.5 chase caps; `buildSignal` forwards `entryQuality`; **SignalCard chip: 🌊 PULLBACK (emerald) / 📐 STRETCHED (amber)** with the acha-entry-zone tooltip.
+- **A/B proof (the app's own replay, identical bars):** RAW 110 trades · 30.0% win · avgR −0.30 · PF 0.60 · maxDDR 35.1 → **GUARDED 89 trades · 31.5% win · avgR −0.25 · PF 0.66 · maxDDR 26.4** — the guards cut 21 trades and improve every metric. `strategy=guarded` is now a route param (`/api/ai/backtest?strategy=guarded`) so the proof is reproducible any time.
+
+### 3. THE FLIP VETO made honest (the "long pe trade lene par" execution-side belt)
+A clicked side that no longer matches the fresh consensus is vetoed (this always existed — a LONG click can NEVER silently execute as SHORT); the journal reason now names both sides and the fix: *"fresh consensus SHORT hai, aapne LONG card pe trade maara tha — signal FLIP ho gaya (whipsaw window). Card refresh karke naya setup confirm karo; auto-flip execute kabhi nahi hota."* FLAT/planless veto moved before the mismatch check (a FLAT signal is not a "flip" — the honest reason is there is no consensus).
+
+### 4. THE BANDWIDTH WHALE IS DEAD — Render 5GB exhaustion fix
+**Measured root cause: `cryptoStream.js`'s shared ticker cache window (2000ms) == the SSE poll period (2s) — with ONE browser open, the server re-downloaded the FULL CoinDCX exchange ticker list (~400-800 markets, several hundred KB) every 2 seconds ≈ 20GB/day of Render outbound.** Every redeploy restarts the server, the user opens the site to verify, the SSE connects, the whale resumes — "har redeploy me bandwidth khata hai."
+- **REST anchor window 2s → 20s** (live ticks come from the WebSocket books; REST is only the INR anchor). **WS-first serving**: a servable + fresh (<10s) official CoinDCX spot-WS book serves with ZERO REST round-trips. SSE UX unchanged (2s pushes from the merged tick cache).
+- **CANDLE TTL CACHE (5 min / 3 min on 15m)** on `fetchCoinDcxCandles` / `fetchBinanceKlines` / `fetchFuturesCandles` — 299 of 300 bars are byte-identical between board cycles; the board's per-cycle candle downloads drop ~10×. Boards also render faster (free-tier CPU bonus).
+- **cxRtStream prolonged-outage backoff:** 2+ minutes with every WS accelerator dark backs the futures REST poller 2s → 5s (a dark-accelerator session was ~13GB/day); fresh sessions keep the 2s feel, any WS tick resets it.
+- Combined effect: the with-one-browser outbound drops from the tens-of-GB range to low-GB/day; idle burn (ticker cache + candle cache + compressed responses + immutable asset caching from v11.7) stays in the hundreds of MB.
+
+### Validation
+- **tape seat:** intradayTapeAlignment + intradayMtfConfluence updated to lock the NEW data-driven gate (crypto ctx with a tape VOTES; no tape → honest abstain).
+- **entry quality:** signalTrust v12.6 cases (PULLBACK boost + stamp + summary · EXTENDED haircut under the SOFT line · HARD cap wins, no boost on chased signals · buildSignal passthrough).
+- **guarded backtest:** new suite (guards only refuse — never invent: guarded ≤ raw trades, no invented sides · blow-off-top vertical-leg entries refused · unknown strategy degrades byte-identical).
+- **candle cache:** `__clearCandleCache` / `__clearFuturesCandleCacheForTest` hooks; futures suite clears between cases.
+- **tsc CLEAN · full suite 2252/2253** (1 = the documented pre-existing BSE live-network geo-block, identical on baseline) · build 5.21s · local boot + live functional probes: PULLBACK re-ranking live on the futures board, tape votes landing, rescan path intact, A/B numbers above.
+
 ## v12.5 — DIRECTION-TIMING ENGINE (chase guard) + RESCAN button (2026-09-21)
 
 **User report: "CoinDCX tab me sabhi trades signal directions wrong bata raha hai — long bola tho short jaa raha hai, short bola tho long · same Indian intraday me bhi · signal age correct show ho raha hai ✓ · RESCAN button chahiye — click karo toh fresh top trade signals aaye, high win rate high accuracy, deep AI Trading agent se."**

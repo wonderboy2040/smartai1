@@ -72,6 +72,9 @@ import {
 
 const POLL_MS = 2000;              // full-speed REST cadence (WS down / unproven)
 const REST_HEARTBEAT_MS = 10_000;  // REST floor cadence (WS healthy + writing)
+// v12.6 BANDWIDTH: prolonged total-WS-outage backoff (see _restIntervalMs)
+const WS_LONG_DARK_BACKOFF_MS = 120_000; // 2 min of no WS ticks anywhere → slow down
+const WS_LONG_DARK_POLL_MS = 5000;      // the outage cadence (was 2s — ~13GB/day)
 const RT_MAX_AGE_MS = 1300;        // ask the shared caches for ≤1.3s-old rows
 const FALLBACK_MS = 10_000;        // Finnhub/Yahoo fallback cadence (rate-polite)
 const EVICT_GRACE_MS = 90_000;     // unsubscribes wait for SSE auto-reconnect
@@ -122,6 +125,7 @@ const _evictTimers = new Map();        // "FUT:BTC" / "GLOB:AAPL" → timer
 let _timer = null;
 let _timerMs = 0;                      // current REST interval (2s or 10s floor)
 let _activeClients = 0;
+let _sessionStartAt = 0;               // v12.6: darkness-window anchor (never-proven WS)
 // (v11.4 poll coalescing state lives at _pollOnce itself)
 let _fallbackAt = 0;                   // last Finnhub/Yahoo fallback fetch epoch
 
@@ -182,6 +186,7 @@ function _syncBinanceFutTier() {
 
 function _startIfNeeded() {
   if (_timer || (_futSubscribed.size === 0 && _globSubscribed.size === 0)) return;
+  _sessionStartAt = _nowFn(); // v12.6: the 2-min "fresh session" grace begins
   _pollOnce(); // instant first tick — a fresh page paints live prices NOW
   _timerMs = _restIntervalMs();
   _timer = setInterval(_pollOnce, _timerMs);
@@ -210,6 +215,16 @@ function _stopIfIdle() {
 function _restIntervalMs() {
   if (_wsHealthy()) return REST_HEARTBEAT_MS;
   if (_futSubscribed.size > 0 && _globSubscribed.size === 0 && binanceFutHealthy()) return REST_HEARTBEAT_MS;
+  // v12.6 BANDWIDTH: a PROLONGED total-WS outage (no cx WS, no Binance
+  // fut tier for 2+ minutes) backs the full REST poller off to 5s —
+  // the 2s cadence hammers the futures price map (~100-300KB/beat,
+  // ~13GB/day) exactly when every accelerator is dark; 5s halves that
+  // while keeping the RT feed honest. The first 2 minutes of a session
+  // stay at 2s (a blip must not feel slow); any WS tick resets the
+  // window (the latch releases on _syncRestCadence seeing health).
+  const _bnLastLand = Number(binanceFutStatus()?.lastTickAt) || 0;
+  const anchor = Math.max(_wsLastTickAt || 0, _bnLastLand || 0, _sessionStartAt || 0);
+  if (anchor > 0 && (_nowFn() - anchor) > WS_LONG_DARK_BACKOFF_MS) return WS_LONG_DARK_POLL_MS;
   return POLL_MS;
 }
 
@@ -837,6 +852,7 @@ export function _resetCxRtForTest() {
   if (_timer) { clearInterval(_timer); _timer = null; }
   _timerMs = 0;
   _activeClients = 0;
+  _sessionStartAt = 0; // v12.6
   _fallbackAt = 0;
   _bnFut = { at: 0, byBase: null };
   _bnFutFetchImpl = null;

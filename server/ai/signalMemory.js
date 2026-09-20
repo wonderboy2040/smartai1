@@ -46,6 +46,7 @@
 import { loadJSON, saveJSON } from '../lib/store.js';
 import {
   entryTimingRead, CHASE_HARD_CONF_CAP, CHASE_SOFT_CONF_PENALTY,
+  QUALITY_PULLBACK_CONF_BOOST, QUALITY_EXTENDED_CONF_PENALTY,
 } from './entryTiming.js';
 
 // ---------------- knobs (exported for tests) ----------------
@@ -291,6 +292,19 @@ export function applySignalTrustGuards({ market, symbol, consensus, ctx, ltf } =
       } else if (timing.severity === 'SOFT') {
         out.confidence = Math.max(5, (Number(out.confidence) || 0) - CHASE_SOFT_CONF_PENALTY);
         notes.push(`🚀 extended — ${timing.reason}`);
+      }
+      // ---- v12.6 ENTRY-QUALITY BANDS (the positive side) ----
+      // PULLBACK: conf boost (the entry zone the board should RANK top).
+      // EXTENDED: light haircut. Never touches side/ltp; only fires when
+      // the timing read actually computed an extension.
+      if (timing.quality === 'PULLBACK') {
+        out.entryQuality = { band: 'PULLBACK', extAtr: timing.extAtr, ref: timing.ref, note: timing.qualityNote };
+        out.confidence = Math.min(100, (Number(out.confidence) || 0) + QUALITY_PULLBACK_CONF_BOOST);
+        notes.push(`🌊 PULLBACK — ${timing.qualityNote}`);
+      } else if (timing.quality === 'EXTENDED') {
+        out.entryQuality = { band: 'EXTENDED', extAtr: timing.extAtr, ref: timing.ref, note: timing.qualityNote };
+        out.confidence = Math.max(5, (Number(out.confidence) || 0) - QUALITY_EXTENDED_CONF_PENALTY);
+        notes.push(`📐 extended — ${timing.qualityNote}`);
       }
     }
 

@@ -540,9 +540,18 @@ export function tapeVote(t, label = '15m') {
 }
 
 function intradayTape(ctx) {
-  if (ctx.market !== 'INDIA') {
-    return vote(0, 0, ['IntradayTape abstains — crypto/futures committee already reads live 1h candles (no double count)'], true);
-  }
+  // v12.6: DATA-DRIVEN GATE — the seat votes whenever a TAPE payload is
+  // present on the ctx, regardless of desk. The crypto/futures boards'
+  // new 15m enrichment (signals.js pass-2) supplies ctx.tape for the top
+  // candidates; the plain 1h candle path never sets it, so the abstain
+  // stays data-driven instead of market-driven. Different timeframe =
+  // different information: the 1h committee reads the SWING, the 15m
+  // tape reads ENTRY TIMING — the old "no double count" note only ever
+  // applied to reading the SAME series twice, which this never was.
+  // (Live 2026-09-20 ground truth: with the tape seat parked, the
+  // crypto/futures committee degenerated into 4 lagging 1h trend seats
+  // voting LONG together AFTER the move — the replay engine measured
+  // 29% win-rate / avgR −0.35. This seat is the counterweight.)
   const t = ctx.tape;
   if (!t || typeof t !== 'object') {
     return vote(0, 0, ['15m tape unavailable — model abstains (honest degrade)']);
@@ -568,9 +577,10 @@ export function mtfConfluenceEnabled() {
 }
 
 function intradayTapeMTF(ctx) {
-  if (ctx.market !== 'INDIA') {
-    return vote(0, 0, ['IntradayTapeMTF abstains — crypto/futures committee already reads live 1h candles (no double count)'], true);
-  }
+  // v12.6: same data-driven gate as the plain tape seat — the crypto/
+  // futures 15m enrichment supplies ctx.tape; the 5m/15m/1h tapeMTF
+  // payload stays India-only (its 5m base is a Yahoo India source).
+  // Without tapeMTF the fn degrades to the plain 15m read below.
   // graceful degrade: no MTF payload → the plain 15m tape logic
   const m = ctx.tapeMTF;
   if (!m || typeof m !== 'object' || !m.m15) {

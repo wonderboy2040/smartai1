@@ -191,8 +191,42 @@ const CANDLE_SOURCES = {
   '15m': { duration: '15m', limit: 400 }, // aggressive TA
 };
 
+// ---------------- v12.6 CANDLE TTL CACHE (the bandwidth + speed fix) ----
+// Every board cycle (60s, per market, 24+ symbols) used to re-download
+// the FULL candle history from CoinDCX/Binance/Bybit — 299 of 300 bars
+// are byte-identical between cycles (only the live bar moves). On
+// Render that is ~0.5-1GB/day of pure outbound waste, and on the free
+// tier it is a large slice of the 5GB quota. Cache per (source, base,
+// tf): 1h/4h/1d bars live 5 minutes, 15m bars 3 minutes (the tape read
+// wants fresher bars). Returns a COPY of the array (callers must never
+// see a later cycle's mutation). Bounded (≤64 entries, LRU-ish prune).
+const _candleCache = new Map(); // key -> { at, candles }
+const CANDLE_CACHE_TF_TTL_MS = { '15m': 180_000, '1h': 300_000, '4h': 300_000, '1d': 300_000 };
+const CANDLE_CACHE_MAX = 64;
+function _candleCacheGet(key, tf) {
+  const hit = _candleCache.get(key);
+  if (!hit) return null;
+  const ttl = CANDLE_CACHE_TF_TTL_MS[tf] ?? 300_000;
+  if (Date.now() - hit.at > ttl) { _candleCache.delete(key); return null; }
+  return hit.candles.slice(); // copy — callers never share the cache
+}
+function _candleCacheSet(key, candles) {
+  if (!Array.isArray(candles)) return;
+  if (_candleCache.size >= CANDLE_CACHE_MAX) {
+    // prune the oldest quarter — bounded, no unbounded growth
+    const entries = [..._candleCache.entries()].sort((a, b) => a[1].at - b[1].at);
+    for (let i = 0; i < Math.ceil(CANDLE_CACHE_MAX / 4); i++) _candleCache.delete(entries[i][0]);
+  }
+  _candleCache.set(key, { at: Date.now(), candles });
+}
+/** Test hook — hermetic suites clear the candle cache between cases. */
+export function __clearCandleCache() { _candleCache.clear(); }
+
 export async function fetchCoinDcxCandles(base, tf = '1h', opts = {}) {
   const cfg = CANDLE_SOURCES[tf] || CANDLE_SOURCES['1h'];
+  const cacheKey = `cdc:${base}:${tf}`;
+  const cached = opts.noCache ? null : _candleCacheGet(cacheKey, tf);
+  if (cached) return cached;
   const pair = `${base}INR`;
   const urls = [
     `https://public.coindcx.com/market_data/candles?pair=${pair}&duration=${cfg.duration}&limit=${cfg.limit}`,
@@ -214,7 +248,7 @@ export async function fetchCoinDcxCandles(base, tf = '1h', opts = {}) {
         close: Number(x.c), volume: Number(x.v) || 0,
       })).filter(c => Number.isFinite(c.close) && c.close > 0)
         .sort((a, b) => a.time - b.time); // oldest-first for the TA lib
-      if (candles.length >= 30) return candles;
+      if (candles.length >= 30) { _candleCacheSet(cacheKey, candles); return candles.slice(); }
     } catch { /* next source */ }
   }
   return null;
@@ -234,6 +268,9 @@ export async function fetchBinanceKlines(base, tf = '1h') {
   if (!/^[A-Z0-9]{2,15}USDT$/.test(sym)) return null;
   const interval = BINANCE_KL_INTERVAL[tf] || '1h';
   const limit = tf === '15m' ? 400 : 300;
+  const cacheKey = `bnk:${base}:${tf}`;
+  const cached = _candleCacheGet(cacheKey, tf);
+  if (cached) return cached;
   // Leg 1 + 2: Binance spot klines + the public market-data mirror
   // (data-api.binance.vision is Binance's keyless mirror — no geo-block).
   for (const host of ['https://api.binance.com', 'https://data-api.binance.vision']) {
@@ -250,7 +287,7 @@ export async function fetchBinanceKlines(base, tf = '1h') {
         open: Number(k[1]), high: Number(k[2]), low: Number(k[3]),
         close: Number(k[4]), volume: Number(k[5]) || 0,
       })).filter(c => Number.isFinite(c.close) && c.close > 0);
-      if (candles.length >= 30) return candles; // already oldest-first
+      if (candles.length >= 30) { _candleCacheSet(cacheKey, candles); return candles.slice(); } // already oldest-first
     } catch { /* next leg */ }
   }
   // Leg 3: Bybit public spot klines (newest-first → re-sort).
@@ -269,7 +306,7 @@ export async function fetchBinanceKlines(base, tf = '1h') {
           close: Number(k[4]), volume: Number(k[5]) || 0,
         })).filter(c => Number.isFinite(c.close) && c.close > 0)
           .sort((a, b) => a.time - b.time);
-        if (candles.length >= 30) return candles;
+        if (candles.length >= 30) { _candleCacheSet(cacheKey, candles); return candles.slice(); }
       }
     }
   } catch { /* give up honestly */ }

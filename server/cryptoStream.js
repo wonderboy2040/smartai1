@@ -34,9 +34,22 @@ import WebSocket from 'ws';
 import { setTick } from './liveFeed.js';
 import { spotWsDemand, spotWsStatus, spotWsTickerArray, spotWsPrice, _resetSpotWsForTest } from './ai/cxSpotWs.js';
 
-const POLL_MS = 2000;             // 2s CoinDCX anchor poll (SSE push)
-const UPSTREAM_CACHE_MS = 2000;   // shared fetch cache window
+const POLL_MS = 2000;             // 2s SSE push cadence (serves the CACHE — zero upstream cost)
+// v12.6 BANDWIDTH FIX (the 5GB-exhaustion whale): the shared upstream
+// cache window WAS 2000ms == the SSE poll period, so every 2s beat
+// re-downloaded the FULL CoinDCX exchange ticker list (~400-800
+// markets, several hundred KB) — ~20GB/day of Render outbound with
+// ONE open browser. Two changes:
+//   1. the REST anchor re-fetch window is now 20s (the live ticks come
+//      from the WS books — REST is only the INR anchor);
+//   2. when the official CoinDCX spot-WS book is servable AND fresh
+//      (<10s), it serves WITHOUT hitting REST at all (WS-first — the
+//      REST list is only fetched to re-anchor when the WS book ages).
+// SSE UX is unchanged: clients still get 2s pushes from the merged
+// tick cache (WS sub-second + the 20s REST re-anchor).
+const UPSTREAM_CACHE_MS = 20_000;  // REST anchor re-fetch window (was 2s — the bandwidth whale)
 const UPSTREAM_STALE_MS = 30000;  // serve-stale window when upstream errors
+const WS_FIRST_MAX_AGE_MS = 10_000; // WS book fresher than this serves without REST
 // v11.3: deep-stale serve — the LAST resort before a 502. A 3-min-old
 // official ticker array keeps every board/poller alive (prices drift a
 // little; a dead board drifts everything).
@@ -93,6 +106,19 @@ export async function fetchCoinDcxTickers() {
   const p = (async () => {
     // heartbeat: any ticker consumer keeps the official spot-WS armed
     spotWsDemand();
+    // v12.6 WS-FIRST: a servable + fresh official spot-WS book serves
+    // without a REST round-trip. REST stays the re-anchor: when the WS
+    // book ages past WS_FIRST_MAX_AGE_MS (or is not servable), the
+    // full list is fetched and the WS ratio re-syncs from it.
+    const _st = spotWsStatus();
+    const wsFresh = _st.servable && _st.ageMs != null && _st.ageMs >= 0 && _st.ageMs < WS_FIRST_MAX_AGE_MS;
+    if (wsFresh) {
+      const wsArr = spotWsTickerArray();
+      if (Array.isArray(wsArr) && wsArr.length > 0) {
+        _tsource = 'coindcx-spot-ws';
+        return wsArr;
+      }
+    }
     try {
       const r = await _cfetch(`https://api.coindcx.com/exchange/ticker?t=${Date.now()}`, {
         headers: {

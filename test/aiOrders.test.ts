@@ -385,7 +385,7 @@ describe('PAPER practice-plan synthesis (v9.0.2 — paper always starts)', () =>
       getFreshSignal: async () => ({ ...STRONG, side: 'FLAT', grade: 'NEUTRAL', confidence: 20, plan: null, dir: 0 }),
     });
     expect(out.ok).toBe(false);
-    expect(out.error).toMatch(/side is FLAT|no tradeable side\/plan/i);
+    expect(out.error).toMatch(/no tradeable side\/plan/i);
   });
 
   it('LIVE on a side-flip still rejects (strict gauntlet untouched)', async () => {
@@ -395,7 +395,7 @@ describe('PAPER practice-plan synthesis (v9.0.2 — paper always starts)', () =>
       getFreshSignal: async () => ({ ...STRONG, side: 'SHORT' }),
     });
     expect(out.ok).toBe(false);
-    expect(out.error).toMatch(/side is SHORT, requested LONG/i);
+    expect(out.error).toMatch(/fresh consensus SHORT hai, aapne LONG/i);
   });
 });
 

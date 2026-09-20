@@ -748,7 +748,8 @@ export function registerAITradingRoutes(app, deps) {
       // with the regime multiplier layer forced on + a side-by-side plain
       // leg per symbol (identical folds) — the A/B that decides whether
       // AI_ENABLE_REGIME_WEIGHTS goes live.
-      const strategy = String(req.query.strategy || '').toLowerCase() === 'regime_weighted' ? 'regime_weighted' : 'weighted';
+      const strategy = ['regime_weighted', 'guarded'].includes(String(req.query.strategy || '').toLowerCase())
+        ? String(req.query.strategy).toLowerCase() : 'weighted';
       const cfg = (() => { try { return loadConfig(); } catch { return {}; } })();
       const riskCap = Number(cfg.maxRiskPct) > 0 ? cfg.maxRiskPct : 5;
       const out = await runBacktest({ market, symbols, minGrade, capitalPerTradeINR: capital, maxRiskPct: riskCap, currentMinConfidence: Number(cfg.minConfidence) > 0 ? Number(cfg.minConfidence) : 75, strategy });
