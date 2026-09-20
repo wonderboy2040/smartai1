@@ -372,6 +372,20 @@ export interface AISignal {
   /** v12.4 FLIP COOLDOWN — the side JUST flipped (< 5m): unstable,
    *  grade capped to WATCH. The anti-whipsaw verdict. */
   freshFlip?: { from: string; to: string; ageSec: number } | null;
+  /** v12.5 CHASE GUARD — the structural extension verdict (the
+   *  "direction galat" fix): price stretched N×ATR from its mean
+   *  (EMA20 / session VWAP on India) and/or a vertical one-way candle
+   *  run. HARD → entry suppressed (grade WATCH + conf cap); SOFT →
+   *  haircut (retrace entry better). Never flips the side. */
+  chasing?: {
+    side: string;
+    extAtr: number | null;
+    ref: string | null;
+    runBars: number;
+    runAtr: number | null;
+    severity: 'HARD' | 'SOFT' | null;
+    reason: string | null;
+  } | null;
   /** v12.4 HOLDING — an OPEN position exists on this symbol (journal
    *  auto/desk trades + manual tracker): the card is the live context
    *  for money already on the line. */

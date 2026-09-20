@@ -372,3 +372,182 @@ describe('v12.4 pinHoldingOnBoard + buildHoldingCard — traded symbols never va
     expect(card.holding).toMatchObject({ side: 'SHORT', qty: 5000 });
   });
 });
+
+// ============================================================
+// v12.5 DIRECTION-TIMING ENGINE (chase guard) — the "long bola
+// tho short chala gaya" fix. The ensemble CONFIRMS a move that
+// already happened; the entry lands at local exhaustion; the
+// mean-reversion that follows reads as "direction galat". The
+// structural read (ATR-distance from the mean + one-way candle
+// run) suppresses those entries — RSI guard ke saath poora
+// coverage (RSI 63 on a +6% vertical run is still a top-tick).
+// ============================================================
+import {
+  entryTimingRead,
+  CHASE_EXT_ATR_HARD, CHASE_EXT_ATR_SOFT, CHASE_HARD_CONF_CAP, CHASE_SOFT_CONF_PENALTY,
+  CHASE_RUN_BARS, CHASE_RUN_ATR,
+} from '../server/ai/entryTiming.js';
+import { evaluateExecutionGate } from '../server/ai/ensemble.js';
+
+// rising tape with pullbacks (a REAL run — not a monotonic ramp:
+// every 4th candle breathes, RSI stays honest)
+function risingCandles(n = 40, start = 100, step = 1.2) {
+  const out = [];
+  let px = start;
+  for (let i = 0; i < n; i++) {
+    const breathe = i % 4 === 3 ? -step * 0.4 : step;
+    px = px + breathe;
+    out.push({ time: 1700000000 + i * 3600, open: px - breathe, high: px + 0.3, low: px - breathe - 0.3, close: px, volume: 1000 });
+  }
+  return out;
+}
+
+describe('v12.5 entryTimingRead — the structural chase verdict (pure)', () => {
+  it('flags a LONG stretched ≥ 2.5×ATR above EMA20 as HARD (the RSI-63 gap the OB/OS guard misses)', () => {
+    const r = entryTimingRead({ side: 'LONG', ltp: 112, ema20: 100, atr: 4, rsi: 63, candles: risingCandles() });
+    expect(r?.severity).toBe('HARD'); // (112-100)/4 = 3.0 ≥ 2.5
+    expect(r?.extAtr).toBe(3);
+    expect(r?.ref).toBe('EMA20');
+    expect(r?.reason).toContain('above');
+  });
+
+  it('flags the SHORT mirror: ≥ 2.5×ATR below the mean is HARD', () => {
+    const r = entryTimingRead({ side: 'SHORT', ltp: 88, ema20: 100, atr: 4, rsi: 37, candles: risingCandles().map(c => ({ ...c, close: 200 - c.close })) });
+    expect(r?.severity).toBe('HARD');
+    expect(r?.extAtr).toBe(-3);
+  });
+
+  it('RSI assist: 64+ with ≥1.9×ATR extension is HARD even below the 2.5 bar', () => {
+    const r = entryTimingRead({ side: 'LONG', ltp: 104, ema20: 100, atr: 2, rsi: 66, candles: risingCandles() });
+    expect(r?.severity).toBe('HARD'); // ext = 2.0 ≥ 1.9 with rsi 66 ≥ 64
+  });
+
+  it('six one-way candles covering ≥3 ATR is HARD even at a modest extension', () => {
+    // 6 straight up closes, each ~0.7 ATR → runAtr ≈ 4.2 ≥ 3, ext small
+    const cl = [];
+    for (let i = 0; i < 30; i++) cl.push({ time: i, open: 0, high: 0, low: 0, close: 100 + i * 0.6, volume: 1 });
+    const r = entryTimingRead({ side: 'LONG', ltp: 117.4, ema20: 109, atr: 1, rsi: 58, candles: cl });
+    expect(r?.runBars).toBeGreaterThanOrEqual(CHASE_RUN_BARS);
+    expect(r?.runAtr).toBeGreaterThanOrEqual(CHASE_RUN_ATR);
+    expect(r?.severity).toBe('HARD');
+  });
+
+  it('SOFT: 1.8–2.5×ATR extension (no RSI assist, no run) is a haircut, not a lock', () => {
+    const r = entryTimingRead({ side: 'LONG', ltp: 104, ema20: 100, atr: 2.2, rsi: 55, candles: risingCandles(40, 100, 0.5) });
+    expect(r?.severity).toBe('SOFT'); // ext = 1.82
+  });
+
+  it('a calm tape (price near the mean) carries NO verdict', () => {
+    const r = entryTimingRead({ side: 'LONG', ltp: 100.8, ema20: 100, atr: 2, rsi: 52, candles: risingCandles(40, 99, 0.05) });
+    expect(r?.severity).toBeNull();
+  });
+
+  it('India desk anchors to the session VWAP, not EMA20', () => {
+    const r = entryTimingRead({ side: 'LONG', market: 'INDIA', ltp: 112, ema20: 90, vwap: 100, atr: 4, rsi: 60 });
+    expect(r?.ref).toBe('VWAP');
+    expect(r?.extAtr).toBe(3);
+    expect(r?.severity).toBe('HARD');
+  });
+
+  it('degrades silently: no side / no data → null, never throws', () => {
+    expect(entryTimingRead({ side: 'FLAT', ltp: 100, ema20: 100, atr: 2 })).toBeNull();
+    expect(entryTimingRead({ side: 'LONG' })).toBeNull();
+    expect(entryTimingRead(null as never)).toBeNull();
+  });
+});
+
+describe('v12.5 applySignalTrustGuards — chase discipline on the consensus', () => {
+  it('a STRONG LONG on a +3×ATR extended leg (RSI 63 — under the OB/OS bar) is capped to WATCH with the chasing stamp', () => {
+    const out = applySignalTrustGuards({
+      market: 'FUTURES', symbol: 'HBAR',
+      consensus: consensusOf({ side: 'LONG', dir: 1 }),
+      ctx: { ltp: 112, candles: risingCandles() },
+      ltf: { ltp: 112, ema20: 100, atr: 4, rsi: 63 },
+    });
+    expect(out.grade).toBe('WATCH');
+    expect(out.confidence).toBeLessThanOrEqual(CHASE_HARD_CONF_CAP);
+    expect(out.chasing).toMatchObject({ severity: 'HARD', extAtr: 3 });
+    expect(out.summary).toContain('CHASING');
+    // never flips the side / ltp — the plan stays directionally valid
+    expect(out.side).toBe('LONG');
+  });
+
+  it('SHORT mirror: a STRONG SHORT on a −3×ATR dump is capped (knife-cut suppressed)', () => {
+    const out = applySignalTrustGuards({
+      market: 'CRYPTO', symbol: 'WLD',
+      consensus: consensusOf({ side: 'SHORT', dir: -1 }),
+      ctx: { ltp: 88, candles: risingCandles().map(c => ({ ...c, close: 200 - c.close })) },
+      ltf: { ltp: 88, ema20: 100, atr: 4, rsi: 35 },
+    });
+    expect(out.grade).toBe('WATCH');
+    expect(out.chasing).toMatchObject({ severity: 'HARD' });
+    expect(out.side).toBe('SHORT');
+  });
+
+  it('SOFT extension takes the confidence haircut without the grade cap', () => {
+    const out = applySignalTrustGuards({
+      market: 'FUTURES', symbol: 'BTC',
+      consensus: consensusOf({ side: 'LONG', dir: 1 }),
+      ctx: { ltp: 104, candles: risingCandles(40, 100, 0.5) },
+      ltf: { ltp: 104, ema20: 100, atr: 2.2, rsi: 55 },
+    });
+    expect(out.grade).toBe('STRONG');
+    expect(out.confidence).toBe(78 - CHASE_SOFT_CONF_PENALTY);
+    expect(out.chasing?.severity).toBe('SOFT');
+  });
+
+  it('a calm consensus is untouched (no stamp, no haircut)', () => {
+    const out = applySignalTrustGuards({
+      market: 'FUTURES', symbol: 'BTC',
+      consensus: consensusOf({ side: 'LONG', dir: 1 }),
+      ctx: { ltp: 100.8, candles: risingCandles(40, 99, 0.05) },
+      ltf: { ltp: 100.8, ema20: 100, atr: 2, rsi: 52 },
+    });
+    expect(out.grade).toBe('STRONG');
+    expect(out.confidence).toBe(78);
+    expect(out.chasing?.severity ?? null).toBeNull();
+  });
+
+  it('buildSignal forwards the chasing verdict to the card', () => {
+    const sig = buildSignal({
+      symbol: 'HBAR', market: 'FUTURES',
+      ctx: { ltp: 112, changePct: 6.4 },
+      votes: [],
+      consensus: consensusOf({ side: 'LONG', dir: 1, grade: 'WATCH', confidence: 48, chasing: { side: 'LONG', extAtr: 3, ref: 'EMA20', runBars: 5, runAtr: 3.6, severity: 'HARD', reason: 'price 3×ATR above EMA20' } }),
+      plan: { entry: 112, stopLoss: 108, target1: 116, target2: 120, riskPct: 2 },
+    });
+    expect(sig.chasing).toMatchObject({ severity: 'HARD', extAtr: 3 });
+  });
+});
+
+describe('v12.5 execution gate — the chase veto (honest journal reason)', () => {
+  const baseSignal = {
+    side: 'LONG', market: 'FUTURES', generatedAt: T0, grade: 'STRONG', confidence: 82, agreement: 0.9,
+    plan: { entry: 112, stopLoss: 108, target1: 116, target2: 120, riskPct: 2 },
+  };
+  const chasingHard = { ...baseSignal, chasing: { side: 'LONG', extAtr: 3, ref: 'EMA20', runBars: 5, runAtr: 3.6, severity: 'HARD', reason: 'price 3×ATR above EMA20 — chase entry (top-tick risk)' } };
+
+  it('refuses a HARD-chasing entry with the readable reason (live path)', () => {
+    const v = evaluateExecutionGate(chasingHard, { side: 'LONG', venue: 'FUTURES', requireStrong: true });
+    expect(v.ok).toBe(false);
+    expect(v.reason).toContain('chasing guard');
+    expect(v.reason).toContain('pullback');
+  });
+
+  it('refuses it for PRACTICE too — rehearsing a top-tick chase is the same bad habit', () => {
+    const v = evaluateExecutionGate(chasingHard, { side: 'LONG', venue: 'FUTURES', requireStrong: false, practice: true });
+    expect(v.ok).toBe(false);
+    expect(v.reason).toContain('chasing guard');
+  });
+
+  it('a SOFT-chasing (extended) signal is NOT vetoed — haircut already applied on the board', () => {
+    const v = evaluateExecutionGate({ ...baseSignal, chasing: { side: 'LONG', extAtr: 2, ref: 'EMA20', runBars: 3, runAtr: 2, severity: 'SOFT', reason: '2×ATR above EMA20' } }, { side: 'LONG', venue: 'FUTURES', requireStrong: true });
+    expect(v.ok).toBe(true);
+  });
+
+  it('a clean signal with no chasing stamp passes exactly as before', () => {
+    const v = evaluateExecutionGate(baseSignal, { side: 'LONG', venue: 'FUTURES', requireStrong: true });
+    expect(v.ok).toBe(true);
+    expect(v.reason).toContain('STRONG');
+  });
+});

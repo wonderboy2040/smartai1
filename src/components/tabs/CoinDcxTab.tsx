@@ -150,7 +150,7 @@ export default memo(function CoinDcxTab() {
   // v6.9: CoinDCX-scoped loading — spot + futures boards only.
   // v10.4: + GLOBAL equity futures SIM board (AAPL/GOOGL/NVDA/…/SPACEX).
   const t = useAITrading(true, { markets: ['CRYPTO', 'FUTURES', 'GLOBALFUTURES'] });
-  const { crypto, futures, globalFut, state, positions, entries, loading, busy, refresh, refreshPositions, executeSignal, executeFutures, executeGlobal, updateConfig, closePos, fetchDeep, boardError, positionsLive } = t;
+  const { crypto, futures, globalFut, state, positions, entries, loading, busy, refresh, refreshPositions, executeSignal, executeFutures, executeGlobal, updateConfig, closePos, fetchDeep, boardError, positionsLive, rescan, rescanning } = t;
   const { runBacktest, runStrategyLab, fetchAlertsStatus, saveAlertsConfig, testAlert } = t;
   const [desk, setDesk] = useState<'CRYPTO' | 'FUTURES' | 'GLOBAL'>('CRYPTO');
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
@@ -348,7 +348,19 @@ export default memo(function CoinDcxTab() {
             <FreshnessBadge board={board} />
             <RefreshCountdown board={board} loading={loading} />
             <ViewModeToggle mode={viewMode} onSet={setViewMode} />
-            <button onClick={refresh} disabled={loading}
+            {/* v12.5 RESCAN — full fresh universe scan (server-side cache
+                bypass): naye prices → naya consensus → fresh top signals.
+                The normal refresh reads the 60s cache; THIS re-runs the
+                deep ensemble scan (single-flight server-side). */}
+            <button onClick={() => rescan()} disabled={rescanning || loading}
+              title="RESCAN — pura universe DObara fresh scan (deep AI ensemble, cache bypass). Naye top trade signals — fresh prices, fresh consensus, fresh guards. Cold scan me kuch second lag sakte hain."
+              className={`px-3 py-2 rounded-xl text-xs font-black border transition-all disabled:opacity-50 ${rescanning
+                ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400/50 animate-pulse'
+                : 'bg-gradient-to-r from-cyan-600/30 to-violet-600/30 text-cyan-200 border-cyan-500/40 hover:from-cyan-500/40 hover:to-violet-500/40'}`}>
+              <span className={rescanning ? 'inline-block animate-spin' : ''}>🔁</span>
+              {rescanning ? 'SCANNING…' : 'RESCAN'}
+            </button>
+            <button onClick={() => refresh()} disabled={loading}
               className="quantum-btn-ghost px-3 py-2 rounded-xl text-xs font-bold disabled:opacity-50">
               <span className={loading ? 'inline-block animate-spin' : ''}>🔄</span>
             </button>

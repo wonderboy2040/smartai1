@@ -208,11 +208,17 @@ export function registerAITradingRoutes(app, deps) {
   });
 
   // ---------------- signal board ----------------
+  // v12.5 RESCAN: ?rescan=1 → noCache — a FULL fresh universe scan
+  // (single-flight protected; the 60s board cache is bypassed exactly
+  // once for this request). The board's own 30s client cadence keeps
+  // using the cache; the RESCAN button is for "abhi ka fresh top-signal
+  // view chahiye" moments (post-news, post-sleep, post-pullback).
   app.get('/api/ai/signals', async (req, res) => {
     try {
       const market = normMarket(req.query.market);
       const limit = Math.min(15, Math.max(3, parseInt(req.query.limit, 10) || 10));
-      const board = await getSignals(market, depsForSignals(), { limit });
+      const rescan = ['1', 'true', 'yes'].includes(String(req.query.rescan || '').trim().toLowerCase());
+      const board = await getSignals(market, depsForSignals(), { limit, ...(rescan ? { noCache: true } : {}) });
       res.json(board);
     } catch (e) {
       jsonError(res, 500, 'ai signals failed', e);

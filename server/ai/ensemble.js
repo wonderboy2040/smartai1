@@ -543,9 +543,13 @@ export function buildSignal({ symbol, market, ctx, votes, consensus, plan, aiNot
     //   signalAge — when this direction FIRST appeared + last confirm
     //   obOs      — the overbought/oversold suppression verdict
     //   freshFlip — the anti-whipsaw verdict (side just flipped)
+    //   chasing   — v12.5 structural extension verdict (ATR-distance
+    //               from the mean + one-way candle run — the "signals
+    //               direction galat" chase fix; see entryTiming.js)
     ...(consensus.signalAge ? { signalAge: consensus.signalAge } : {}),
     ...(consensus.obOs ? { obOs: consensus.obOs } : {}),
     ...(consensus.freshFlip ? { freshFlip: consensus.freshFlip } : {}),
+    ...(consensus.chasing ? { chasing: consensus.chasing } : {}),
     generatedAt: Date.now(),
   };
 }
@@ -589,6 +593,19 @@ export function evaluateExecutionGate(signal, { side, gates = DEFAULT_GATES, max
   const sigSide = SIDE_ALIAS[String(signal.side).toUpperCase()] || String(signal.side);
   if (sigSide !== wantSide) return { ok: false, reason: `signal side is ${signal.side}, requested ${wantSide}` };
   if (signal.side === 'FLAT' || !signal.plan) return { ok: false, reason: 'no tradeable side/plan in the current consensus' };
+  // v12.5 CHASE GUARD — the honest journal reason for a suppressed
+  // entry (the board already capped the grade to WATCH — a WATCH can
+  // never satisfy requireStrong — this veto makes the WHY readable
+  // instead of a bare "grade WATCH" line). Buying a +2.5×ATR vertical
+  // leg is the WLD class of loss; practice entries are refused TOO —
+  // rehearsing a bad habit is still a bad habit.
+  if (signal.chasing && signal.chasing.severity === 'HARD') {
+    const c = signal.chasing;
+    return {
+      ok: false,
+      reason: `chasing guard — ${c.reason || `price ${c.extAtr}×ATR extended`}; entry suppressed (pullback ka wait karo, top-tick chase mat karo)`,
+    };
+  }
   if (requireStrong) {
     if (signal.grade !== 'STRONG') return { ok: false, reason: `grade ${signal.grade} — live orders need STRONG (${gates.minConfidence}% conf + ${Math.round(gates.minAgreement * 100)}% agreement)` };
     if ((signal.confidence ?? 0) < gates.minConfidence) return { ok: false, reason: `confidence ${signal.confidence}% < ${gates.minConfidence}% gate` };

@@ -109,26 +109,47 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
   // the LATEST request's response applies.
   const posSeqRef = useRef(0);
 
-  const loadBoards = useCallback(async () => {
+  const loadBoards = useCallback(async (opts?: { rescan?: boolean }) => {
+    // v12.5 RESCAN: ?rescan=1 → server-side noCache — a FULL fresh
+    // universe scan (single-flight on the server). Cold scans are
+    // heavier than the 60s-cache read — the timeout widens so a slow
+    // universe (India 500+ names / 100+ pairs) can never race the abort.
+    const rescan = !!opts?.rescan;
+    const timeoutMs = rescan ? 90_000 : 30_000;
+    const qs = (m: string) => `market=${m}&limit=10&t=${Date.now()}${rescan ? '&rescan=1' : ''}`;
     const jobs: Array<Promise<void>> = [];
     let anyOk = false;
     const markOk = () => { anyOk = true; };
-    if (markets.includes('INDIA')) jobs.push(apiFetch(`${getProxyBase()}/api/ai/signals?market=INDIA&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) })
+    if (markets.includes('INDIA')) jobs.push(apiFetch(`${getProxyBase()}/api/ai/signals?${qs('INDIA')}`, { signal: AbortSignal.timeout(timeoutMs) })
       .then(r => r.ok ? r.json() : null).catch(() => null)
       .then(j => { if (j) { setIndia(j); markOk(); } }));
-    if (markets.includes('CRYPTO')) jobs.push(apiFetch(`${getProxyBase()}/api/ai/signals?market=CRYPTO&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) })
+    if (markets.includes('CRYPTO')) jobs.push(apiFetch(`${getProxyBase()}/api/ai/signals?${qs('CRYPTO')}`, { signal: AbortSignal.timeout(timeoutMs) })
       .then(r => r.ok ? r.json() : null).catch(() => null)
       .then(j => { if (j) { setCrypto(j); markOk(); } }));
-    if (markets.includes('FUTURES')) jobs.push(apiFetch(`${getProxyBase()}/api/ai/signals?market=FUTURES&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) })
+    if (markets.includes('FUTURES')) jobs.push(apiFetch(`${getProxyBase()}/api/ai/signals?${qs('FUTURES')}`, { signal: AbortSignal.timeout(timeoutMs) })
       .then(r => r.ok ? r.json() : null).catch(() => null)
       .then(j => { if (j) { setFutures(j); markOk(); } }));
-    if (markets.includes('GLOBALFUTURES')) jobs.push(apiFetch(`${getProxyBase()}/api/ai/signals?market=GLOBALFUTURES&limit=10&t=${Date.now()}`, { signal: AbortSignal.timeout(30000) })
+    if (markets.includes('GLOBALFUTURES')) jobs.push(apiFetch(`${getProxyBase()}/api/ai/signals?${qs('GLOBALFUTURES')}`, { signal: AbortSignal.timeout(timeoutMs) })
       .then(r => r.ok ? r.json() : null).catch(() => null)
       .then(j => { if (j) { setGlobalFut(j); markOk(); } }));
     await Promise.allSettled(jobs);
     setBoardError(!anyOk); // v7.0.2: every requested board failed
     setLoading(false);
   }, [markets.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // v12.5 RESCAN — the user's "button click → fresh top trade signals"
+  // lever: busts the 60s server cache for every desk this hook serves
+  // and re-runs the FULL ensemble scan (deep-AI agent, fresh prices,
+  // fresh consensus, fresh guards). Guarded against double-fire (the
+  // button disables itself while a scan runs — a cold India scan can
+  // take tens of seconds).
+  const [rescanning, setRescanning] = useState(false);
+  const rescan = useCallback(async () => {
+    if (rescanning) return;
+    setRescanning(true);
+    try { await loadBoards({ rescan: true }); }
+    finally { setRescanning(false); }
+  }, [rescanning, loadBoards]);
 
   const loadState = useCallback(async () => {
     try {
@@ -500,6 +521,9 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
     /** v10.5.3: 'stream' = SSE live push, 'poll' = REST fallback, null = flat. */
     positionsLive,
     refresh: loadBoards, executeSignal, updateConfig, killSwitch, closePos, fetchDeep,
+    /** v12.5: RESCAN — full fresh universe scan (server cache bypassed);
+     *  rescanning = a cold scan is in flight (button's busy state). */
+    rescan, rescanning,
     /** v10.17: explicit positions/entries refetch (clear-closed button etc). */
     refreshPositions: loadPositions,
     executeIndia, runBacktest, runStrategyLab, fetchAlertsStatus, saveAlertsConfig, testAlert,

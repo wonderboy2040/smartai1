@@ -34,8 +34,19 @@
 // Design rules: never throws (guards degrade honestly), bounded
 // memory (400 records LRU), file persistence is debounced + optional
 // (read-only FS ⇒ memory-only), no imports from signals.js (cycles).
+//
+// v12.5 CHASE GUARD (see entryTiming.js — the "long bola tho short
+// chala gaya" fix): the RSI-only OB/OS guard misses the vertical
+// run (RSI 63 on a +6% leg is still a top-tick entry). The
+// structural read — ATR-distance from the mean + the one-way candle
+// run — is now applied with the same discipline ladder (HARD →
+// WATCH cap + conf cap; SOFT → haircut), on BOTH the board and the
+// deep path the execution gate reads.
 // ============================================================
 import { loadJSON, saveJSON } from '../lib/store.js';
+import {
+  entryTimingRead, CHASE_HARD_CONF_CAP, CHASE_SOFT_CONF_PENALTY,
+} from './entryTiming.js';
 
 // ---------------- knobs (exported for tests) ----------------
 export const OB_RSI = 70;          // LONG suppressed at/above
@@ -253,6 +264,34 @@ export function applySignalTrustGuards({ market, symbol, consensus, ctx, ltf } =
       if ((GRADE_RANK[out.grade] ?? 0) > GRADE_RANK.WATCH) out.grade = 'WATCH';
       out.obOs = obOs;
       notes.push(`⛔ ${obOs.tag} RSI ${obOs.rsi} — ${side} entry suppressed (chase hi hota hai ye)`);
+    }
+
+    // ---- v12.5 CHASE GUARD (structural extension) ----
+    // Catches what RSI alone misses: a +6% vertical run printing RSI
+    // 63 (under the OB/OS bar) is STILL a top-tick LONG. Distance
+    // from the mean in ATR units + the one-way candle run decide.
+    // Same rules as OB/OS: never flips the side, never touches ltp
+    // — the ENTRY is suppressed (grade/conf), the card stays honest.
+    const timing = entryTimingRead({
+      side,
+      ltp: ctx?.ltp ?? ltf?.ltp,
+      ema20: ltf?.ema20 ?? ctx?.ind?.ema20,
+      vwap: ltf?.vwap,
+      atr: ltf?.atr ?? ctx?.ind?.atr,
+      rsi,
+      candles: ctx?.candles,
+      market,
+    });
+    if (timing && (timing.severity || timing.extAtr != null || timing.runBars > 0)) {
+      out.chasing = timing;
+      if (timing.severity === 'HARD') {
+        out.confidence = Math.min(Number(out.confidence) || 0, CHASE_HARD_CONF_CAP);
+        if ((GRADE_RANK[out.grade] ?? 0) > GRADE_RANK.WATCH) out.grade = 'WATCH';
+        notes.push(`🚀 CHASING — ${timing.reason} — ${side} entry suppressed (pullback ka wait karo)`);
+      } else if (timing.severity === 'SOFT') {
+        out.confidence = Math.max(5, (Number(out.confidence) || 0) - CHASE_SOFT_CONF_PENALTY);
+        notes.push(`🚀 extended — ${timing.reason}`);
+      }
     }
 
     // ---- FLIP COOLDOWN (anti-whipsaw) ----

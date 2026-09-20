@@ -1,5 +1,37 @@
 # Changelog
 
+## v12.5 — DIRECTION-TIMING ENGINE (chase guard) + RESCAN button (2026-09-21)
+
+**User report: "CoinDCX tab me sabhi trades signal directions wrong bata raha hai — long bola tho short jaa raha hai, short bola tho long · same Indian intraday me bhi · signal age correct show ho raha hai ✓ · RESCAN button chahiye — click karo toh fresh top trade signals aaye, high win rate high accuracy, deep AI Trading agent se."**
+
+**Root-cause discipline (audit first):** the ENTIRE execution chain (signal → order side → position record → display) was re-verified line-by-line — LONG→buy / SHORT→sell is correct everywhere (spot /orders/create, margin /margin/orders, futures /derivatives/futures/orders — plus every exit path). The live board was then probed against the real market: the board said LONG across the board WHILE the market had ALREADY risen +0.9% to +6.5% over 14h. **The signals are not inverted — they are LATE.** The lagging ensemble (EMA stacks, momentum, trend seats) CONFIRMS the move that already happened, the entry lands at local exhaustion, and the mean-reversion that follows reads to the trader as "direction galat bola". Same mechanism on the India intraday desk (shared ensemble). The v12.4 RSI-only OB/OS guard misses this: a +6% vertical run prints RSI 63 — under the 70 bar, still a top-tick entry.
+
+### 1. DIRECTION-TIMING ENGINE — `server/ai/entryTiming.js` (NEW, pure)
+The structural entry-timing read, computed on the trading timeframe every consensus already carries:
+- **extAtr** — signed distance of price from its mean (EMA20; session **VWAP** on the India intraday desk), in ATR units. ATR-normalized so the same thresholds mean the same thing on a ₹2 smallcap and $80k BTC.
+- **runBars / runAtr** — consecutive one-way closes at the END of the tape + how many ATR that leg covered (the news/liquidation vertical).
+- **Verdict:** HARD when extAtr ≥ **2.5** in the signal's direction, OR RSI ≥ 64 / ≤ 36 with extAtr ≥ **1.9** (the RSI-assist band the OB/OS guard misses), OR ≥ **6 one-way candles covering ≥ 3 ATR**; SOFT at extAtr ≥ **1.8**. Never flips the side (entries are suppressed, not redirected — counter-knife-catching is the same disease). Never throws; silent-degrades when price/ATR/candles are missing.
+
+### 2. CHASE GUARD wired into the trust ladder — `applySignalTrustGuards` (board + deep paths)
+HARD → grade capped WATCH + confidence capped **48** (entry gate dead — a WATCH can never satisfy `requireStrong`/ACTION floors); SOFT → **−7** haircut. Stamped `chasing: { severity, extAtr, runBars, runAtr, ref, reason }` rides the wire through `buildSignal`; summary says "🚀 CHASING — price 2.6×ATR above EMA20 — LONG entry suppressed (pullback ka wait karo)". **Both desks inherit automatically** — the guard runs on the shared consensus layer (crypto spot / USDT futures / global equity SIM / India intraday), and the deep path the execution gauntlets read is the same one.
+
+### 3. EXECUTION GATE chase veto — honest journal reasons
+`evaluateExecutionGate` now refuses a HARD-chasing entry with a readable reason (`chasing guard — price 2.6×ATR extended; entry suppressed (pullback ka wait karo…)`) — **practice entries too** (rehearsing a top-tick chase is the same bad habit). Belt-and-suspenders over the grade cap: the journal now names the disease instead of a bare "grade WATCH".
+
+### 4. SignalCard v12.5 chip
+**🚀 CHASE-LOCK / EXTENDED chip** — rose (HARD) / amber (SOFT), "2.6×ATR · 5↑" live on the card; tooltip explains: move already ho chuka hai — ab entry = chase (top-tick risk), pullback ka wait karo; signal side wahi rahega, entry timing improve karo.
+
+### 5. RESCAN button — fresh top signals on demand (the explicit ask)
+- **Server:** `GET /api/ai/signals?rescan=1` → `noCache` — a FULL fresh universe scan, single-flight protected (concurrent rescan clicks join the same in-flight scan; the 60s board cache is untouched for the normal 30s cadence).
+- **Client:** `useAITrading.rescan()` widens the timeout to 90s (cold universe scans), double-fire guarded (`rescanning` state disables the button); the board header of BOTH desks (CoinDCX + India Intraday) carries a **🔁 RESCAN** button — cyan-violet, live "SCANNING…" pulse while the deep ensemble re-runs (fresh prices → fresh consensus → fresh guards → re-ranked top signals).
+- Normal refresh (🔄) unchanged: 60s-cache read, instant.
+
+### Validation
+- **NEW v12.5 suite (17 tests) in `test/signalTrust.test.ts`** (39 total): pure verdict table (HARD at 2.5×ATR both sides · RSI-assist band · 6-candle vertical leg · SOFT band · calm tape clean · India VWAP anchoring · null-degrade) · consensus discipline (STRONG→WATCH cap + conf 48 + stamp + side untouched, both directions · SOFT haircut without grade cap · clean signal untouched · wire passthrough) · gate veto table (live refusal with reason · practice refusal · SOFT passes · clean passes as before).
+- **Live functional probe (local boot):** the futures board surfaced `NOT extAtr=2.6 → chase=HARD, conf 48, WATCH` and `BNB extAtr=1.92 (RSI-assist) → chase=HARD` while calm coins (extAtr 0.64-1.45) ride untouched — the guard fires on real market geometry, not just fixtures. The rescan endpoint re-scanned fresh (new generatedAt, re-ranked board) while the cached path answered instantly.
+- **tsc clean · full suite 2244/2245** (1 = the documented pre-existing BSE live-network geo-block, identical on clean baseline; mandateFreeze parallel-load flake passes 9/9 × 3 in isolation) · build 5.4s · `node --check` on every touched file.
+
+
 ## v12.4 — SIGNAL TRUST ENGINE: signal age, OB/OS discipline, anti-whipsaw, board pinning + site cleanup (2026-09-20)
 
 **User report: "WLD USDT Futures me trade liya (qty 692 @ 0.4385) long signal tha but lagane ke baad short me chala gaya, stock negative chala gaya — ye nhi hona chahiye · overbought aur oversold ko dhyan rakho · AI signals high accuracy badhao · trade lene ke baad wo Superintelligence Signal Board se gayab ho gaya · signal ka AGE batao (AI model ne kab dekha, kitna time hua) · site cleanup karo, lag-free, bugs-free."** The WLD incident decomposed into four distinct gaps, each closed at the source this release.

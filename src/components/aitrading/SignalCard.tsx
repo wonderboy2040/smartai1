@@ -1120,6 +1120,16 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
                 🔄 FLIP {signal.freshFlip.from}→{signal.freshFlip.to} {fmtAge((signal.freshFlip.ageSec || 0) * 1000)} pehle
               </span>
             )}
+            {/* v12.5 CHASE GUARD — the structural extension verdict. RSI
+                guard ke saath ye dono milke "LONG bola tha par top pe
+                entry karwa di" class ka poora coverage dete hain. */}
+            {signal.chasing && signal.chasing.severity && (
+              <span
+                className={`px-1.5 py-0.5 rounded text-[9px] font-black border font-mono ${signal.chasing.severity === 'HARD' ? 'bg-rose-500/15 text-rose-300 border-rose-500/40' : 'bg-amber-500/15 text-amber-300 border-amber-500/40'}`}
+                title={`${signal.chasing.severity === 'HARD' ? 'ENTRY SUPPRESSED' : 'EXTENDED (light haircut)'} — ${signal.chasing.reason || `price ${signal.chasing.extAtr}×ATR from ${signal.chasing.ref}`}${signal.chasing.runBars >= 4 ? ` · ${signal.chasing.runBars} one-way candles` : ''}. Move already ho chuka hai — ab entry = chase (top-tick risk). Pullback/retrace ka wait karo; signal side wahi rahega, entry timing improve karo.`}>
+                🚀 {signal.chasing.severity === 'HARD' ? 'CHASE-LOCK' : 'EXTENDED'}{signal.chasing.extAtr != null ? ` ${signal.chasing.extAtr}×ATR` : ''}{signal.chasing.runBars >= 4 ? ` · ${signal.chasing.runBars}↑` : ''}
+              </span>
+            )}
             {signal.holding && (
               <span
                 className="px-1.5 py-0.5 rounded bg-fuchsia-500/15 text-fuchsia-300 text-[9px] font-black border border-fuchsia-500/40 font-mono"
