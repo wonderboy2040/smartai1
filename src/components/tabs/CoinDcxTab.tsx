@@ -25,6 +25,8 @@ import { QuickNav } from '../aitrading/QuickNav';
 import { OrderConsole } from '../aitrading/OrderConsole';
 // v10.16 S2: the manual-trade tracking section (user's own trades)
 import { ManualTradeMonitor } from '../aitrading/ManualTradeMonitor';
+// v12.8 SUPERINTELLIGENCE REVERSAL RECOVERY — ₹-cycle board (self-contained fetch)
+import { ReversalPanel } from '../aitrading/ReversalPanel';
 import { ModelRegistry } from '../aitrading/ModelRegistry';
 import { BacktestPanel } from '../aitrading/BacktestPanel';
 import { ModelPerformancePanel } from '../aitrading/ModelPerformancePanel';
@@ -59,6 +61,8 @@ const NAV = [
   { id: 'cx-expert', label: 'EXPERT', emoji: '🧠', pro: false },
   { id: 'cx-top5', label: 'TOP 5', emoji: '🏆', pro: false },
   { id: 'cx-signals', label: 'SIGNALS', emoji: '📡', pro: false },
+  // v12.8: the user's flagship ₹-cycle reversal desk (section 02f)
+  { id: 'cx-reversal', label: 'REVERSAL', emoji: '🔄', pro: false },
   { id: 'cx-execute', label: 'EXECUTE', emoji: '⚙️', pro: false },
   { id: 'cx-brief', label: 'BRIEF', emoji: '📰', pro: true },
   { id: 'cx-whales', label: 'WHALES', emoji: '🐋', pro: true },
@@ -559,6 +563,14 @@ export default memo(function CoinDcxTab() {
         <SectionLabel num="02e" title="Manual Trade Tracker" sub="aapke REAL trades (crypto + global) — live LTP (5s) · P&L ₹/USDT · R-multiple + peak MFE capture · SL/T distances · ensemble conviction re-vote vs entry snapshot · EXIT NOW banner on flip · exit-quality report card" />
         <div className="mt-2.5">
           <ManualTradeMonitor desk="CRYPTO" notify={notify} />
+        </div>
+      </div>
+
+      {/* ============ 02f · SUPERINTELLIGENCE REVERSAL AI (v12.8) ============ */}
+      <div id="cx-reversal">
+        <SectionLabel num="02f" title="Superintelligence Reversal AI" sub="₹ loss-cap CUT → ulta-side FLIP → ₹ target BOOK → confirmed re-entry — failed signals net-positive cycles me badalte hain · leg budget / cooldown / cycle-stop / ensemble gate · CoinDCX futures desk pe AUTO, manual trades pe advisory banner" />
+        <div className="mt-2.5">
+          <ReversalPanel notify={notify} />
         </div>
       </div>
 

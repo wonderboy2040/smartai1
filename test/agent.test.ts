@@ -163,6 +163,38 @@ describe('agent config', () => {
     expect(cfg.dailyLossCapPct).toBe(0.5);
   });
 
+  it('v12.9 USER SPEC: reversal knobs are NO-CAP — saved VERBATIM (positive sanity only)', () => {
+    // "koi threshold tweak cap nahi — editable manually hamare hisaab se"
+    const cfg = updateAgentConfig({
+      reversalLossCapINR: 12000, reversalProfitTargetINR: 75000, reversalMaxLegs: 10,
+      reversalCooldownMin: 0.5, reversalCycleStopINR: 99, reversalReentryWindowMin: 600,
+      reversalMinReentryConf: 20,
+    });
+    expect(cfg.reversalLossCapINR).toBe(12000); // NOT clamped to 5000
+    expect(cfg.reversalProfitTargetINR).toBe(75000); // NOT clamped to 50000
+    expect(cfg.reversalMaxLegs).toBe(10); // NOT clamped to 6
+    expect(cfg.reversalCooldownMin).toBe(0.5); // NOT clamped to [1,60]
+    expect(cfg.reversalCycleStopINR).toBe(99); // NOT lifted above the cap
+    expect(cfg.reversalReentryWindowMin).toBe(600); // NOT clamped to [5,240]
+    expect(cfg.reversalMinReentryConf).toBe(20); // NOT clamped to [50,90]
+  });
+
+  it('v12.9: reversal knob sanity — non-positive / garbage values are ignored, never crash', () => {
+    const before = loadAgentConfig();
+    const cfg = updateAgentConfig({
+      reversalLossCapINR: -50, reversalProfitTargetINR: 0, reversalMaxLegs: 'abc',
+      reversalCooldownMin: null, reversalCycleStopINR: -1, reversalReentryWindowMin: 'x',
+      reversalMinReentryConf: -10,
+    });
+    expect(cfg.reversalLossCapINR).toBe(before.reversalLossCapINR ?? 150);
+    expect(cfg.reversalProfitTargetINR).toBe(before.reversalProfitTargetINR ?? 500);
+    expect(cfg.reversalMaxLegs).toBe(before.reversalMaxLegs ?? 3);
+    expect(cfg.reversalCooldownMin).toBe(before.reversalCooldownMin ?? 3);
+    expect(cfg.reversalCycleStopINR).toBe(before.reversalCycleStopINR ?? 300);
+    expect(cfg.reversalReentryWindowMin).toBe(before.reversalReentryWindowMin ?? 45);
+    expect(cfg.reversalMinReentryConf).toBe(before.reversalMinReentryConf ?? 60);
+  });
+
   it('desk toggles accept only booleans', () => {
     const cfg = updateAgentConfig({ desks: { futures: 'yes', spot: 1, india: false } });
     expect(cfg.desks.futures).toBe(true); // truthy coercion NOT applied — 'yes' is truthy

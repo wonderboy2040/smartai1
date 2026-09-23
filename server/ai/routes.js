@@ -53,8 +53,14 @@ import {
 } from './coindcxOrders.js';
 import {
   executeFuturesSignal, watchFuturesPositions, closeFuturesPosition,
-  walletSnapshot, futuresMarketsView, fetchUsdInr,
+  walletSnapshot, futuresMarketsView, fetchUsdInr, fetchFuturesPrices,
 } from './futures.js';
+// v12.8 SUPERINTELLIGENCE REVERSAL RECOVERY — ₹ loss-cap → flip →
+// booking cycles (config echo + live cycle board for the UI).
+import { loadReversalConfig, reversalCyclesView } from './reversalEngine.js';
+// v12.9: manual trades are ENGINE-CONNECTED — their ₹ cycles ride the
+// same board (manualReversalCycles groups trades by t.reversal.cycleId).
+import { manualReversalCycles } from './manualTrades.js';
 import {
   executeGlobalSignal, watchGlobalPositions, closeGlobalPosition,
   globalFuturesMarketsView,
@@ -644,6 +650,9 @@ export function registerAITradingRoutes(app, deps) {
       return res.json({
         ok: true,
         trades: views,
+        // v12.9: the client-side realtime P&L recompute (SSE live ticks)
+        // needs the SAME fx the server used — send it once per response.
+        usdInr,
         monitor: manualMonitorStatus(),
         // v12.0: the tracker's own track-record — R win-rate, avg R,
         // capture efficiency, exit-quality counts.
@@ -685,6 +694,59 @@ export function registerAITradingRoutes(app, deps) {
   // `tick` (per-position LTP/PnL deltas, price-driven). The REST GET
   // above stays as the fallback + reconciliation path.
   app.get('/api/ai/positions/stream', positionsStreamHandler);
+
+  // ---------------- v12.8 REVERSAL RECOVERY AI (opt-in) ----------------
+  // GET — config echo + the live cycle board (legs, net ₹, guards).
+  // Prices/USDINR are the 20s/10m cached fetchers — cheap poll.
+  // v12.9: MANUAL cycles ride the same board (the engine connection —
+  // manual trades ACTIVATE a ₹ cycle at the thresholds).
+  app.get('/api/ai/reversal', async (_req, res) => {
+    try {
+      const j = loadJournal();
+      const [usdInr, prices] = await Promise.all([
+        fetchUsdInr().catch(() => 84),
+        fetchFuturesPrices().catch(() => []),
+      ]);
+      const byPair = new Map((Array.isArray(prices) ? prices : []).map(p => [p.pair, p.last]));
+      const view = reversalCyclesView(j, { usdInr, byPair });
+      const manualCycles = manualReversalCycles(listManualTrades(), { usdInr });
+      res.json({
+        ...view,
+        manualCycles,
+        activeCycles: view.activeCycles + manualCycles.filter(c => c.state !== 'ENDED').length,
+      });
+    } catch (e) { jsonError(res, 500, 'reversal view failed', e); }
+  });
+
+  // PUT — the opt-in knobs (same clamp table as the agent-config
+  // route; force-refreshes the engine's 60s TTL cache so the next
+  // watcher pass picks it up immediately).
+  app.put('/api/ai/reversal/config', (req, res) => {
+    try {
+      const body = req.body || {};
+      const patch = {};
+      for (const k of [
+        'reversalEnabled', 'reversalLossCapINR', 'reversalProfitTargetINR', 'reversalMaxLegs',
+        'reversalCooldownMin', 'reversalCycleStopINR', 'reversalReentryWindowMin',
+        'reversalMinReentryConf', 'reversalRequireEnsembleConfirm',
+      ]) {
+        if (body[k] != null) patch[k] = body[k];
+      }
+      if (Object.keys(patch).length === 0) return res.status(400).json({ ok: false, error: 'koi reversal key nahi mili' });
+      updateAgentConfig(patch);
+      const cfg = loadReversalConfig(null, { force: true });
+      if (patch.reversalEnabled != null) {
+        sendTelegram([
+          `🔄 <b>REVERSAL AI ${cfg.enabled ? 'ON' : 'OFF'}</b>`,
+          cfg.enabled
+            ? `Loss-cap ₹${cfg.lossCapINR} · Target ₹${cfg.profitTargetINR} · Max ${cfg.maxLegs} legs · Cycle-stop ₹${cfg.cycleStopINR}\nFutures desk ke OPEN positions ab ₹-cycle discipline me manage honge (loss-cap cut → flip → booking).`
+            : 'Reversal cycles band — normal SL/TP/trailing discipline wapas.',
+        ].join('\n')).catch(() => {});
+      }
+      res.json({ ok: true, config: cfg });
+    } catch (e) { jsonError(res, 500, 'reversal config failed', e); }
+  });
+
 
   app.post('/api/ai/positions/close', async (req, res) => {
     try {
@@ -1300,7 +1362,12 @@ export function registerAITradingRoutes(app, deps) {
   // reconcile (native TP/SL closes) + paper simulation, every 60s.
   const futuresWatcher = setInterval(async () => {
     try {
-      const closures = await watchFuturesPositions({ sendTelegram });
+      const closures = await watchFuturesPositions({
+        sendTelegram,
+        // v12.8: the reversal engine's ensemble gate reads the 30s-cached
+        // deep path — injected here so the engine never imports signals.js.
+        getDeepSignal: (sym) => getDeepSignal(sym, 'FUTURES', depsForSignals()),
+      });
       if (closures.length > 0) {
         console.log(`[ai] futures watcher closed ${closures.length} position(s): ${closures.map(c => `${c.pair} ${c.pnlINR}`).join(', ')}`);
       }

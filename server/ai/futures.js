@@ -1224,7 +1224,7 @@ function saveJournalFresh(j) {
  *     (paper closes simulated, live exits via /positions/exit).
  *   • watch errors persist — a dead stop never looks healthy.
  */
-export async function watchFuturesPositions({ sendTelegram } = {}) {
+export async function watchFuturesPositions({ sendTelegram, getDeepSignal } = {}) {
   return withJournalLock(async () => {
     const j = loadJournalFresh();
     const closures = [];
@@ -1233,11 +1233,35 @@ export async function watchFuturesPositions({ sendTelegram } = {}) {
     const cfg = await import('./coindcxOrders.js').then(m => m.loadConfig());
     const pro = loadProTraderConfig(); // v7.0 partial-TP settings
 
+    // v12.8 SUPERINTELLIGENCE REVERSAL RECOVERY — ₹ loss-cap cut →
+    // stop-and-reverse → ₹ target booking (opt-in; guards inside
+    // reversalEngine.js). Deps injected → zero import cycles.
+    const rev = await import('./reversalEngine.js');
+    const revCfg = rev.loadReversalConfig();
+    const revDeps = { exitFuturesPosition, createFuturesOrder, createFuturesTpsl, roundFuturesQty, coindcxConnected };
+    const revCtxBase = { cfg: revCfg, getDeepSignal, deps: revDeps, sendTelegram };
+
     let openFut = j.positions.filter(p => p.market === 'FUTURES' && (p.status === 'OPEN' || p.status === 'UNKNOWN'));
-    if (openFut.length === 0) return closures;
+    if (openFut.length === 0) {
+      // v12.8: waiting windows STILL need their pass when flat (the last
+      // leg closed — re-entry window is exactly the interesting part).
+      // Prices are 20s-cached → this flat-pass is free.
+      if (revCfg.enabled) {
+        try {
+          const prices0 = await fetchFuturesPrices().catch(() => null);
+          const byPair0 = new Map((prices0 || []).map(p => [p.pair, p.last]));
+          const rr = await rev.processReversalWaiting(j, byPair0, revCtxBase);
+          if (rr?.dirty) saveJournalFresh(j);
+        } catch { /* non-fatal */ }
+      }
+      return closures;
+    }
 
     const prices = await fetchFuturesPrices().catch(() => null);
     const byPair = new Map((prices || []).map(p => [p.pair, p.last]));
+    // v12.8: the reversal pass needs INR twins — resolve once per pass
+    // (10-min cached) so loss-cap ₹ math is consistent within the sweep.
+    const revCtx = revCfg.enabled ? { ...revCtxBase, usdInr: await fetchUsdInr().catch(() => 84) } : null;
 
     // --- LIVE reconcile against the exchange's own position list ---
     if (coindcxConnected() && openFut.some(p => p.mode === 'live')) {
@@ -1364,6 +1388,26 @@ export async function watchFuturesPositions({ sendTelegram } = {}) {
         }
       }
 
+      // v12.8 SUPERINTELLIGENCE REVERSAL RECOVERY — ₹-denominated loss-cap
+      // cut + stop-and-reverse + ₹ profit booking. Runs BEFORE trail/SL/TP
+      // (the ₹ thresholds ARE the position's discipline when enabled; the
+      // stamped price SL/TP below stays as redundant second guard). The
+      // engine sends its own Telegram — closures array untouched (no
+      // double push), LIVE honesty per v7.0.2 inside closeLeg().
+      if (revCtx && (p.status === 'OPEN' || p.status === 'UNKNOWN')) {
+        try {
+          const rres = await rev.evaluateReversalForPosition(j, p, price, revCtx);
+          if (rres?.dirty) dirty = true;
+          if (rres?.closed) {
+            console.log(`[ai] reversal: ${rres.closed.pair} leg cut — ${rres.closed.reason} → ₹${rres.closed.pnlINR}${rres.opened ? ` · FLIP leg-${rres.opened.reversal?.leg} ${rres.opened.side}` : ''}`);
+          }
+        } catch (e) {
+          pushEntry(j, { kind: 'WATCH_ERROR', day: todayIST(), pair: p.pair, market: 'FUTURES', reason: `reversal pass error: ${String(e?.message || e).slice(0, 160)}` });
+          dirty = true;
+        }
+        if (p.status !== 'OPEN' && p.status !== 'UNKNOWN') continue;
+      }
+
       // trailing SL (USDT domain, same ratchet math)
       if (cfg.trailEnabled && p.sl != null && p.sl > 0) {
         const prevPeak = Number(p.peakPrice);
@@ -1480,6 +1524,18 @@ export async function watchFuturesPositions({ sendTelegram } = {}) {
       dirty = true;
       pushEntry(j, { kind: 'CLOSE', day: todayIST(), pair: p.pair, market: 'FUTURES', mode: p.mode, source: p.source, qty: p.qty, entryPrice: p.entryPrice, closePrice: price, pnlUSDT: p.pnlUSDT, pnlINR: p.pnlINR, reason: close.reason });
       closures.push({ pair: p.pair, mode: p.mode, pnlINR: p.pnlINR, reason: close.reason });
+    }
+
+    // v12.8 REVERSAL: waiting windows — confirmed re-entry legs open
+    // here, expired windows END the cycle (both journal-persisted).
+    if (revCfg.enabled) {
+      try {
+        const rr = await rev.processReversalWaiting(j, byPair, revCtx);
+        if (rr?.dirty) dirty = true;
+      } catch (e) {
+        pushEntry(j, { kind: 'WATCH_ERROR', day: todayIST(), market: 'FUTURES', reason: `reversal waiting pass error: ${String(e?.message || e).slice(0, 160)}` });
+        dirty = true;
+      }
     }
 
     if (dirty) saveJournalFresh(j);

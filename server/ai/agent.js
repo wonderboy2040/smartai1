@@ -190,6 +190,23 @@ export const AGENT_DEFAULTS = {
   // signals enter immediately exactly as today. Unfilled windows
   // journal missed-pullback — "didn't chase" counts as a win.
   patientEntry: false,
+  // ---- v12.8 SUPERINTELLIGENCE REVERSAL RECOVERY (user spec: XRP ----
+  // story — "long me minimal loss ₹100-150 accept karke close, phir
+  // SHORT me ₹500+ profit book, reversal LONG pe long laga ke phir
+  // profit book"). OPT-IN: default OFF. When ON the engine manages
+  // OPEN futures-desk positions in ₹-denominated CYCLES: loss-cap cut
+  // → stop-and-reverse → ₹ target booking → confirmed re-entry.
+  // reversalEngine.js owns the logic; these are the knobs (mirror
+  // clamps in reversalEngine.loadReversalConfig — change together).
+  reversalEnabled: false,
+  reversalLossCapINR: 150,        // max adverse ₹ per leg → CUT + flip candidate
+  reversalProfitTargetINR: 500,  // booking bar per leg (+₹)
+  reversalMaxLegs: 3,            // cycle leg budget (LONG→SHORT→LONG = 3)
+  reversalCooldownMin: 3,        // min gap between legs (whipsaw guard)
+  reversalCycleStopINR: 300,     // cycle net ≤ −₹ → cycle END, no more legs
+  reversalReentryWindowMin: 45,  // post-close window to await a confirmed reversal
+  reversalMinReentryConf: 60,    // ensemble confidence bar for re-entry
+  reversalRequireEnsembleConfirm: true, // flip vetoed while ensemble still STRONGLY backs the original side
 };
 
 export function loadAgentConfig() {
@@ -254,7 +271,18 @@ const NUM_CLAMPS = {
   convictionThreshold: [3, 25],
   // v12.7 direction-accuracy: per-pair opposite-side re-entry block
   flipReentryBlockMin: [0, 1440],
+  // v12.9: reversal-recovery knobs are NO-CAP (user spec: "koi threshold
+  // tweak cap nahi — hamare hisaab se") — they moved to NUM_FREE below
+  // and pass through VERBATIM (positive-number sanity only).
 };
+/** v12.9: unclamped numeric knobs — saved EXACTLY as typed (rounded to
+ *  2dp); only sanity is enforced (finite + > 0). The reversal panel's
+ *  ₹ thresholds are the user's own calculations now. */
+const NUM_FREE = new Set([
+  'reversalLossCapINR', 'reversalProfitTargetINR', 'reversalMaxLegs',
+  'reversalCooldownMin', 'reversalCycleStopINR', 'reversalReentryWindowMin',
+  'reversalMinReentryConf',
+]);
 export function updateAgentConfig(patch = {}) {
   const cfg = loadAgentConfig();
   const next = { ...cfg };
@@ -262,6 +290,13 @@ export function updateAgentConfig(patch = {}) {
     if (patch[key] != null) {
       const n = Number(patch[key]);
       if (Number.isFinite(n)) next[key] = Math.round(Math.max(lo, Math.min(hi, n)) * 100) / 100;
+    }
+  }
+  // v12.9: no-cap reversal knobs — verbatim (positive sanity only)
+  for (const key of NUM_FREE) {
+    if (patch[key] != null) {
+      const n = Number(patch[key]);
+      if (Number.isFinite(n) && n > 0) next[key] = Math.round(n * 100) / 100;
     }
   }
   if (patch.desks && typeof patch.desks === 'object') {
@@ -289,6 +324,9 @@ export function updateAgentConfig(patch = {}) {
   if (patch.convictionExit != null) next.convictionExit = !!patch.convictionExit;
   // v10.15 patient-entry toggle
   if (patch.patientEntry != null) next.patientEntry = !!patch.patientEntry;
+  // v12.8 reversal-recovery toggles
+  if (patch.reversalEnabled != null) next.reversalEnabled = !!patch.reversalEnabled;
+  if (patch.reversalRequireEnsembleConfirm != null) next.reversalRequireEnsembleConfirm = !!patch.reversalRequireEnsembleConfirm;
   // v10.16 S3 toggles — the one-flag A/B arm + abstention diagnostics
   if (patch.thresholdProfile === 'proportional' || patch.thresholdProfile === 'flat') next.thresholdProfile = patch.thresholdProfile;
   if (patch.abstentionDiagnostics != null) next.abstentionDiagnostics = !!patch.abstentionDiagnostics;

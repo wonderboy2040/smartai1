@@ -134,7 +134,7 @@ function toTick(t: Record<string, unknown>): CxLiveTick | null {
   };
 }
 
-export function useCxLivePrices(active: boolean, spot: string[], fut: string[], glob: string[]) {
+export function useCxLivePrices(active: boolean, spot: string[], fut: string[], glob: string[], india?: string[]) {
   const [ticks, setTicks] = useState<Record<string, CxLiveTick>>({});
   const [status, setStatus] = useState<CxLiveStatus>('connecting');
   const [lastAt, setLastAt] = useState(0);
@@ -144,15 +144,19 @@ export function useCxLivePrices(active: boolean, spot: string[], fut: string[], 
   const spotKey = cleanList(spot).join(',');
   const futKey = cleanList(fut).join(',');
   const globKey = cleanList(glob).join(',');
+  // v12.9: NSE equities ride the SAME SSE via the in= param (Groww/Yahoo
+  // IN_ namespace) — the manual-trade tracker's realtime LTP source.
+  const indiaKey = cleanList(india).join(',');
 
   useEffect(() => {
     if (!active) return;
-    if (!spotKey && !futKey && !globKey) return; // nothing to watch yet
+    if (!spotKey && !futKey && !globKey && !indiaKey) return; // nothing to watch yet
 
     const params = new URLSearchParams();
     if (spotKey) params.set('crypto', spotKey);
     if (futKey) params.set('fut', futKey);
     if (globKey) params.set('glob', globKey);
+    if (indiaKey) params.set('in', indiaKey);
     // SECURITY: EventSource can't send headers cross-origin — the server's
     // auth middleware accepts ?session=<token> as the SSE fallback.
     const session = getSessionToken();
@@ -220,7 +224,7 @@ export function useCxLivePrices(active: boolean, spot: string[], fut: string[], 
       try { src.close(); } catch { /* noop */ }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, spotKey, futKey, globKey]);
+  }, [active, spotKey, futKey, globKey, indiaKey]);
 
   /** Live tick lookup for a signal: market → key namespace.
    *  v10.18 (deep-recheck #3): a stale tick is NOT live — when the board

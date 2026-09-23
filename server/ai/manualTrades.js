@@ -46,6 +46,13 @@ import { durablePut, decryptJSON } from '../mcp/durable.js';
 import { getTick } from '../liveFeed.js';
 import { bsPrice, yearsToExpiry } from './lib/blackScholes.js';
 import { sideOf, classifyConviction, quorumOfSignal } from './positionConviction.js';
+// v12.8 REVERSAL AI — the ₹ loss-cap advisory banner reads the same
+// clamped config the futures-desk engine uses (60s TTL cache inside).
+// v12.9: full ENGINE connection — manual trades now ACTIVATE a reversal
+// cycle at the ₹ thresholds (loss-cap cut plan / ₹ target BOOK plan,
+// exact flip levels stamped), advance on close, and auto-link the
+// follow-up entry as the next cycle leg.
+import { loadReversalConfig, priceLevelsForLeg } from './reversalEngine.js';
 
 const FILE = 'manual-trades.json';
 const MAX_TRADES = 300;
@@ -314,7 +321,7 @@ export function manualStats(trades) {
  * @param {object} a { convictionState, ltp, trade }
  * @returns {'THESIS_INTACT'|'WEAKENING'|'EXIT_NOW'|'TARGET_HIT'|'STALE'}
  */
-export function stateOfManualTrade({ convictionState, ltp, trade }) {
+export function stateOfManualTrade({ convictionState, ltp, trade, reversal }) {
   const px = _num(ltp);
   const o = trade?.origin?.plan || trade?.plan || {};
   const dir = sideOf(trade?.side) === 'SELL' ? -1 : 1;
@@ -324,10 +331,172 @@ export function stateOfManualTrade({ convictionState, ltp, trade }) {
     const reached = (lv) => lv > 0 && ((px - lv) * dir >= 0);
     if (reached(t1) || reached(t2)) return 'TARGET_HIT';
   }
+  // v12.9 REVERSAL AI (engine-connected): the ₹ states of the ACTIVE
+  // cycle win over the conviction states — a reversal plan in flight is
+  // the loudest thing that can be said about this trade.
+  if (reversal?.enabled) {
+    if (reversal.state === 'PROFIT_TARGET') return 'REVERSAL_BOOK';
+    if (reversal.pnlINR != null && reversal.pnlINR <= -Math.abs(_num(reversal.lossCapINR) || 150)) return 'LOSS_CAP';
+  }
   if (convictionState === 'FLIPPED') return 'EXIT_NOW';
   if (convictionState === 'WEAKENING') return 'WEAKENING';
   if (convictionState === 'UNKNOWN' || convictionState == null) return 'STALE';
   return 'THESIS_INTACT';
+}
+
+// ---------------- v12.9 REVERSAL ENGINE CONNECTION (manual cycles) ----------------
+// User spec: "isko Superintelligence Reversal AI Engine se connect karo —
+// jo bhi trade long/short reversal me jata hai to ye ACTIVATE hona
+// chahiye." The engine watches every OPEN manual trade against the SAME
+// ₹ thresholds the futures-desk cycles use, stamps a MANUAL cycle with
+// the exact actionable plan (flip qty/SL/TP derived from the ₹ numbers),
+// and Telegram-pushes on every threshold crossing. The site never
+// auto-closes a manual trade (v12.7 rule) — the plan is the activation.
+
+/**
+ * Activate/advance the ₹ reversal cycle on ONE open manual trade.
+ * Price-based (rides the 5s LTP sweep — capital protection is a stop,
+ * it must not wait for the 30s conviction pass). Stamps t.reversal on
+ * every THRESHOLD CROSSING (the flip plan carries exact levels); the
+ * in-band state is 'ACTIVE' (cycle tracked, thresholds armed).
+ * @returns {{from:string|null, to:string, trade:object, cycleId:string, leg:number, pnlINR:number, price:number, flip:object|null}|null} the transition, or null when nothing changed.
+ */
+export function activateReversalOnManualTrade(t, price, { usdInr = 84, cfg } = {}) {
+  if (!cfg?.enabled || t?.status !== 'OPEN') return null;
+  if (t.assetKind === 'OPTION') return null; // premium/IV domain — conviction tracking only
+  const px = _num(price);
+  if (!(px > 0)) return null;
+  const pnl = manualPnlOf(t, px, { usdInr });
+  const pnlINR = _num(pnl.pnlINR);
+  if (pnlINR == null) return null;
+  let to = null;
+  if (pnlINR <= -Math.abs(cfg.lossCapINR)) to = 'LOSS_CAP';
+  else if (pnlINR >= Math.abs(cfg.profitTargetINR)) to = 'PROFIT_TARGET';
+  const from = t.reversal?.state || null;
+  const cycleId = t.reversal?.cycleId || `mrv-${t.symbol}-${t.id}`;
+  const leg = t.reversal?.leg || 1;
+  if (to == null) {
+    // in-band: a live cycle degrades to ACTIVE (plan preserved, no push);
+    // no cycle yet → nothing to stamp (thresholds only arm on a crossing)
+    if (t.reversal && from !== 'ACTIVE') {
+      t.reversal = { ...t.reversal, state: 'ACTIVE', pnlINR: Math.round(pnlINR * 100) / 100 };
+      return { from, to: 'ACTIVE', trade: t, cycleId, leg, pnlINR, price: px, flip: t.reversal.flip || null };
+    }
+    return null;
+  }
+  if (from === to) return null; // already in this state — quiet
+  const opposite = t.side === 'BUY' ? 'SHORT' : 'LONG';
+  // the exact flip plan — ₹ thresholds → price levels at the LIVE price
+  // (the same math the futures-desk engine stamps on its legs)
+  const { sl, tp } = priceLevelsForLeg({
+    side: opposite, entry: px, qty: t.qty,
+    lossCapINR: cfg.lossCapINR, profitTargetINR: cfg.profitTargetINR, usdInr,
+  });
+  t.reversal = {
+    ...(t.reversal || {}),
+    cycleId, leg, engine: 'v12.9',
+    state: to,
+    activatedAt: Date.now(),
+    lossCapINR: cfg.lossCapINR, profitTargetINR: cfg.profitTargetINR,
+    pnlINR: Math.round(pnlINR * 100) / 100,
+    ...(to === 'LOSS_CAP' ? {
+      flip: { side: opposite, qty: t.qty, entry: px, sl, tp },
+    } : {}),
+  };
+  return { from, to, trade: t, cycleId, leg, pnlINR, price: px, flip: t.reversal.flip || null };
+}
+
+/** The activation telegram text — the full actionable plan in the
+ *  trade's NATIVE currency (USDT perps show $ P&L, never a ₹-converted
+ *  price amount; the ₹ numbers stay on the user's own thresholds). */
+export function reversalActivationText(tr, { usdInr = 84 } = {}) {
+  const t = tr.trade;
+  const isUsd = t.market === 'FUTURES' || t.market === 'GLOBALFUTURES';
+  const pnlNative = isUsd
+    ? `$${Math.round(Math.abs(tr.pnlINR / (usdInr || 84)) * 100) / 100}`
+    : `₹${Math.round(Math.abs(tr.pnlINR))}`;
+  const side = t.side === 'BUY' ? 'LONG' : 'SHORT';
+  if (tr.to === 'PROFIT_TARGET') {
+    return [
+      `✅ <b>REVERSAL AI — ₹ TARGET hit (MANUAL cycle ACTIVE)</b>`,
+      `<b>${t.symbol}</b> ${side} @ ${_fmtPx(t.entryPrice, t.market)} → live <b>${_fmtPx(tr.price, t.market)}</b> · P&L <b>+${pnlNative}</b> (target ₹${tr.trade.reversal.profitTargetINR})`,
+      `BOOK karo — profit realized karo.`,
+      `Re-entry window: price wapas ulat jaye to ensemble confirm hone par opp <b>${side === 'LONG' ? 'SHORT' : 'LONG'}</b> entry ka plan milega.`,
+      `<i>Cycle ${tr.cycleId} · leg ${tr.leg}. (Manual trade — execute aap karo.)</i>`,
+    ].join('\n');
+  }
+  const f = tr.flip || {};
+  const fSide = f.side || (side === 'LONG' ? 'SHORT' : 'LONG');
+  return [
+    `🛑 <b>REVERSAL AI — LOSS-CAP hit (MANUAL cycle ACTIVATED)</b>`,
+    `<b>${t.symbol}</b> ${side} @ ${_fmtPx(t.entryPrice, t.market)} → live <b>${_fmtPx(tr.price, t.market)}</b> · P&L <b>−${pnlNative}</b> (cap ₹${tr.trade.reversal.lossCapINR})`,
+    `Reversal plan (₹-cycle):`,
+    `• 1) Ye position CLOSE karo — minimal loss accept`,
+    `• 2) FLIP <b>${fSide}</b> qty ${f.qty ?? t.qty} @ ~${_fmtPx(tr.price, t.market)}${f.sl != null ? ` · SL ${_fmtPx(f.sl, t.market)} (₹${tr.trade.reversal.lossCapINR}) / TP ${_fmtPx(f.tp, t.market)} (₹${tr.trade.reversal.profitTargetINR})` : ''}`,
+    `• 3) +₹${tr.trade.reversal.profitTargetINR} target pe profit BOOK karo`,
+    `<i>Cycle ${tr.cycleId} · leg ${tr.leg}. (Manual trade — execute aap karo.)</i>`,
+  ].join('\n');
+}
+
+/** All MANUAL reversal cycles (the /api/ai/reversal board's manual
+ *  section): trades grouped by t.reversal.cycleId, legs in openedAt
+ *  order, live ₹ P&L off the monitor's own 5s-fresh __ltp. PURE. */
+export function manualReversalCycles(trades, { usdInr = 84, now = Date.now() } = {}) {
+  const byCycle = new Map();
+  for (const t of (trades || [])) {
+    const rv = t?.reversal;
+    if (!rv?.cycleId) continue;
+    if (!byCycle.has(rv.cycleId)) byCycle.set(rv.cycleId, []);
+    byCycle.get(rv.cycleId).push(t);
+  }
+  let windowMs = 45 * 60_000, maxLegs = 3;
+  try {
+    const rcfg = loadReversalConfig();
+    windowMs = rcfg.reentryWindowMs; maxLegs = rcfg.maxLegs;
+  } catch { /* defaults */ }
+  const cycles = [];
+  for (const [cycleId, list] of byCycle) {
+    list.sort((a, b) => (a.openedAt || 0) - (b.openedAt || 0));
+    const openT = list.find(x => x.status === 'OPEN') || null;
+    const closed = list.filter(x => x.status === 'CLOSED');
+    const netINR = Math.round(closed.reduce((s, x) => s + (_num(x.exitPnlINR) || 0), 0) * 100) / 100;
+    const lastClosedAt = closed.length ? Math.max(...closed.map(x => x.closedAt || 0)) : null;
+    let state = 'ENDED';
+    if (openT) state = 'ACTIVE';
+    else if (lastClosedAt != null && now - lastClosedAt < windowMs && list.length < maxLegs) state = 'WAITING';
+    const legs = list.map(x => ({
+      leg: x.reversal?.leg ?? null,
+      side: x.side === 'BUY' ? 'LONG' : 'SHORT',
+      qty: x.qty, entryPrice: x.entryPrice,
+      status: x.status,
+      closePrice: x.exitPrice ?? null,
+      pnlINR: x.status === 'CLOSED' ? (_num(x.exitPnlINR) ?? null) : null,
+      closeReason: x.closeReason ?? null,
+      openedAt: x.openedAt, closedAt: x.closedAt ?? null,
+    }));
+    let live = null;
+    if (openT) {
+      const px = _num(openT.__ltp);
+      if (px > 0) {
+        live = {
+          leg: openT.reversal?.leg ?? null,
+          side: openT.side === 'BUY' ? 'LONG' : 'SHORT',
+          price: px,
+          pnlINR: manualPnlOf(openT, px, { usdInr }).pnlINR,
+          state: openT.reversal?.state || 'ACTIVE',
+        };
+      }
+    }
+    cycles.push({
+      cycleId, pair: list[0].symbol, mode: 'manual', legs, legCount: list.length,
+      openLeg: openT ? { leg: openT.reversal?.leg ?? null, side: openT.side === 'BUY' ? 'LONG' : 'SHORT', qty: openT.qty, entryPrice: openT.entryPrice } : null,
+      netINR, state, lastClosedAt, live,
+      plan: openT?.reversal?.flip || [...list].reverse().find(x => x.reversal?.flip)?.reversal?.flip || null,
+    });
+  }
+  const rank = (c) => c.state === 'ACTIVE' ? 0 : c.state === 'WAITING' ? 1 : 2;
+  cycles.sort((a, b) => rank(a) - rank(b) || (b.lastClosedAt || 0) - (a.lastClosedAt || 0));
+  return cycles;
 }
 
 /**
@@ -458,6 +627,28 @@ export function recordManualTrade(input = {}) {
     // honest warn — recorded anyway (a real fill can be legitimately off)
     console.warn(`[manual-trades] entry ${entryPrice} is ${check.deviationPct}% away from live ${ltp} (${symbol}) — recorded with warning`);
   }
+  // v12.9 REVERSAL auto-link: a NEW trade on a symbol with a recently-
+  // closed reversal cycle (inside the re-entry window, legs remaining)
+  // becomes the NEXT LEG of that cycle — following the engine's plan
+  // paints the full cycle on the Reversal board automatically.
+  let revLink = null;
+  try {
+    const rcfg = loadReversalConfig();
+    if (rcfg.enabled) {
+      const prior = [..._state.trades]
+        .filter(x => x.symbol === symbol && x.status === 'CLOSED' && x.reversal?.cycleId)
+        .sort((a, b) => (b.closedAt || 0) - (a.closedAt || 0))[0];
+      if (prior && Date.now() - (prior.closedAt || 0) < rcfg.reentryWindowMs
+        && (prior.reversal.leg || 1) < rcfg.maxLegs) {
+        revLink = {
+          cycleId: prior.reversal.cycleId,
+          leg: (prior.reversal.leg || 1) + 1,
+          rootId: prior.reversal.rootId ?? prior.id,
+          engine: 'v12.9', linkedAt: Date.now(),
+        };
+      }
+    }
+  } catch { /* link is best-effort — never blocks a record */ }
   const sig = input.signal || {};
   const plan = sig.plan || input.plan || null;
   const t = {
@@ -479,6 +670,8 @@ export function recordManualTrade(input = {}) {
     } : {}),
     status: 'OPEN',
     lastState: null,
+    // v12.9: the reversal-cycle link (leg > 1 when following the plan)
+    ...(revLink ? { reversal: revLink } : {}),
     // ---- THE SNAPSHOT (Section 2B: the baseline) ----
     origin: {
       aiScore: _num(sig.superIntel?.aiScore) ?? _num(sig.confidence) ?? null,
@@ -545,6 +738,23 @@ export function closeManualTrade(id, { exitPrice, reason } = {}) {
   t.closeReason = String(reason || 'manual').slice(0, 60);
   t.exitPnlINR = pnl.pnlINR;
   t.exitPnlPct = pnl.pnlPct;
+  // v12.9 REVERSAL cycle advance — closing a reversal-active trade is
+  // the leg's CUT/BOOK; the closeReason carries the cycle context and
+  // the record keeps the plan for the board's WAITING state.
+  if (t.reversal?.cycleId) {
+    const rv = t.reversal;
+    const st = rv.state || 'ACTIVE';
+    t.reversal = {
+      ...rv, closedAt: Date.now(), closedState: st,
+      followUp: st === 'LOSS_CAP' ? 'FLIP' : st === 'PROFIT_TARGET' ? 'REVERSAL_WATCH' : null,
+    };
+    if (!reason || !String(reason).toUpperCase().startsWith('REVERSAL')) {
+      const tag = st === 'LOSS_CAP' ? `REVERSAL leg-${rv.leg || 1} CUT (loss-cap ₹${rv.lossCapINR ?? ''})`
+        : st === 'PROFIT_TARGET' ? `REVERSAL leg-${rv.leg || 1} BOOKED (₹ target)`
+        : `REVERSAL leg-${rv.leg || 1} closed`;
+      t.closeReason = `${tag} · ${String(reason || 'manual').slice(0, 30)}`.slice(0, 60);
+    }
+  }
   _persist();
   return { ok: true, trade: t, pnl, r: rFinal };
 }
@@ -608,7 +818,25 @@ export async function ltpForManualTrade(t, { fetchIndiaQuotes, fetchIndexSpot } 
 export function manualTradeView(t, { ltp, usdInr, conviction } = {}) {
   const pnl = manualPnlOf(t, ltp, { usdInr });
   const dist = manualLevelDistances(t, ltp);
-  const banner = stateOfManualTrade({ convictionState: conviction?.state, ltp, trade: t });
+  // v12.9: the ₹ reversal states ride the engine connection — LIVE
+  // pnlINR vs thresholds (LOSS_CAP / REVERSAL_BOOK banners) + the
+  // stamped cycle context (cycleId/leg/flip plan) for the plan line.
+  let reversal = null;
+  try {
+    const rcfg = loadReversalConfig();
+    if (rcfg.enabled && pnl.pnlINR != null) {
+      const liveState = pnl.pnlINR <= -Math.abs(rcfg.lossCapINR) ? 'LOSS_CAP'
+        : pnl.pnlINR >= Math.abs(rcfg.profitTargetINR) ? 'PROFIT_TARGET'
+        : (t.reversal?.state === 'PROFIT_TARGET' ? 'PROFIT_TARGET' : (t.reversal?.state || null));
+      reversal = {
+        enabled: true, lossCapINR: rcfg.lossCapINR, profitTargetINR: rcfg.profitTargetINR,
+        pnlINR: pnl.pnlINR, state: liveState,
+        ...(t.reversal?.cycleId ? { cycleId: t.reversal.cycleId, leg: t.reversal.leg ?? null } : {}),
+        ...(t.reversal?.flip ? { flip: t.reversal.flip } : {}),
+      };
+    }
+  } catch { /* banner only when the config is readable */ }
+  const banner = stateOfManualTrade({ convictionState: conviction?.state, ltp, trade: t, reversal });
   const ageMin = t.openedAt ? Math.round((Date.now() - t.openedAt) / 60000) : null;
   // v12.0: the R-multiple view (rNow / peak MFE / trough MAE / capture)
   const r = manualRStats(t, ltp);
@@ -668,7 +896,12 @@ function _curOf(market) { return market === 'FUTURES' || market === 'GLOBALFUTUR
 function _fmtPx(v, market) {
   const n = _num(v);
   if (n == null) return '—';
-  return `${_curOf(market)}${n >= 1000 ? Math.round(n).toLocaleString('en-IN') : Math.round(n * 100) / 100}`;
+  // v12.9: precision-aware — XRP-style sub-$1 levels (the reversal FLIP
+  // plans) used to collapse to "$0.5"; 4-6 decimals below $1 keep the
+  // actual SL/TP level readable on telegram.
+  const dp = n >= 1000 ? 0 : n >= 1 ? 2 : n >= 0.01 ? 4 : 6;
+  const s = n >= 1000 ? Math.round(n).toLocaleString('en-IN') : String(Number(n.toFixed(dp)));
+  return `${_curOf(market)}${s}`;
 }
 
 /** Cooldown-guarded push (the insta-push pattern, self-contained).
@@ -710,16 +943,47 @@ async function _push(kind, id, text, cooldownMs, send) {
  * The alert evaluation for ONE trade — PURE-ish (send injected), tested
  * through the loop. Exported for tests.
  */
-export async function evaluateManualTradeAlerts(t, { send, conviction, freshSignal, usdInr }) {
+export async function evaluateManualTradeAlerts(t, { send, conviction, freshSignal, usdInr, reversal }) {
   const pushed = [];
   const ltp = _num(t.__ltp);
   const plan = t.origin?.plan || {};
   const o = plan.entry ?? t.entryPrice;
   const dir = sideOf(t.side) === 'SELL' ? -1 : 1;
-  const banner = stateOfManualTrade({ convictionState: conviction?.state, ltp, trade: t });
+  const banner = stateOfManualTrade({ convictionState: conviction?.state, ltp, trade: t, reversal });
   const pnl = manualPnlOf(t, ltp, { usdInr });
   const dist = manualLevelDistances(t, ltp);
   const why = freshSignal ? flipSummary(t, freshSignal) : null;
+
+  // ---- 0) v12.9 REVERSAL — the ₹ states of the engine-connected
+  //      cycle (LOSS_CAP plan / ₹ target BOOK). The activation push
+  //      fired on the crossing (5s sweep); THIS is the periodic
+  //      reminder while the state persists (15m cooldown). ----
+  if (banner === 'LOSS_CAP' || banner === 'REVERSAL_BOOK') {
+    const opposite = t.side === 'BUY' ? 'SHORT' : 'LONG';
+    const cap = _num(reversal?.lossCapINR) || 150;
+    const tgt = _num(reversal?.profitTargetINR) || 500;
+    const f = reversal?.flip || null;
+    const pnlTxt = pnl.currency === 'USDT'
+      ? `${pnl.pnlUSDT != null ? `${pnl.pnlUSDT >= 0 ? '+' : '−'}$${Math.abs(pnl.pnlUSDT)}` : '—'}`
+      : `${pnl.pnlINR >= 0 ? '+' : '−'}₹${Math.abs(Math.round(pnl.pnlINR))}`;
+    const text = banner === 'REVERSAL_BOOK'
+      ? [
+        `✅ <b>REVERSAL AI — ₹ TARGET hit (cycle ${reversal?.cycleId || '—'} · leg ${reversal?.leg || 1})</b>`,
+        `<b>${t.symbol}</b> ${t.side === 'BUY' ? 'LONG' : 'SHORT'} @ ${_fmtPx(o, t.market)} → live <b>${_fmtPx(ltp, t.market)}</b> · P&L <b>${pnlTxt}</b> (target ₹${tgt})`,
+        `BOOK karo — profit realized karo. Reversal-window me opp side confirm hone par next leg ka plan milega.`,
+        `<i>/manualclose ${t.id} se close. (Manual cycle — execute aap karo.)</i>`,
+      ].join('\n')
+      : [
+        `🛑 <b>REVERSAL AI — LOSS-CAP hit (cycle ${reversal?.cycleId || '—'} · leg ${reversal?.leg || 1} ACTIVATED)</b>`,
+        `<b>${t.symbol}</b> ${t.side === 'BUY' ? 'LONG' : 'SHORT'} @ ${_fmtPx(o, t.market)} → live <b>${_fmtPx(ltp, t.market)}</b> · P&L <b>${pnlTxt}</b> (cap ₹${cap})`,
+        `Reversal plan (₹-cycle):`,
+        `• 1) Ye position CLOSE karo — minimal loss accept`,
+        `• 2) Opposite <b>${f?.side || opposite}</b> entry${f ? ` qty ${f.qty} @ ~${_fmtPx(f.entry ?? ltp, t.market)} · SL ${_fmtPx(f.sl, t.market)} (₹${cap}) / TP ${_fmtPx(f.tp, t.market)} (₹${tgt})` : ' — reversal ko ride karo'}`,
+        `• 3) +₹${tgt} target pe profit BOOK karo`,
+        `<i>/manualclose ${t.id} se close. (Manual cycle — execute aap karo.)</i>`,
+      ].join('\n');
+    if (await _push(banner === 'REVERSAL_BOOK' ? 'book' : 'losscap', t.id, text, 15 * 60_000, send)) pushed.push(banner === 'REVERSAL_BOOK' ? 'book' : 'losscap');
+  }
 
   // ---- 1) EXIT NOW — conviction flip: IMMEDIATE, highest priority ----
   if (banner === 'EXIT_NOW') {
@@ -837,7 +1101,32 @@ async function _monitorTick() {
       const px = await ltpForManualTrade(t, { fetchIndiaQuotes, fetchIndexSpot });
       if (px > 0) { t.__ltp = px; updateExcursion(t, px); }
     }
+    // 1b) v12.9 REVERSAL ENGINE — price-based activation on EVERY 5s
+    //     sweep (capital protection is a stop; it must not wait for the
+    //     30s conviction pass). Threshold crossings stamp the MANUAL
+    //     cycle + push the actionable plan (native-currency P&L, exact
+    //     flip SL/TP levels). The 15m 'losscap'/'book' cooldowns make
+    //     the later conviction-pass reminders exactly that — reminders.
+    let _revCfg = null;
+    try { _revCfg = loadReversalConfig(); } catch { _revCfg = null; }
+    if (_revCfg?.enabled) {
+      for (const t of open) {
+        const px = _num(t.__ltp);
+        if (!(px > 0)) continue;
+        try {
+          const tr = activateReversalOnManualTrade(t, px, { usdInr, cfg: _revCfg });
+          if (tr) {
+            _persist();
+            if ((tr.to === 'LOSS_CAP' || tr.to === 'PROFIT_TARGET') && typeof send === 'function') {
+              await _push(tr.to === 'LOSS_CAP' ? 'losscap' : 'book', t.id, reversalActivationText(tr, { usdInr }), 15 * 60_000, send);
+            }
+          }
+        } catch { /* one trade's reversal pass never kills the sweep */ }
+      }
+    }
     // 2) conviction re-vote (30s throttle per trade; cached deep path)
+    //    v12.8: the ₹ loss-cap advisory rides the same 30s sweep — the
+    //    reversal config is 60s-cached, so this adds zero I/O per tick.
     for (const t of open) {
       const now = Date.now();
       if (now - (t.__convictionAt || 0) < CONVICTION_EVERY_MS) continue;
@@ -848,7 +1137,17 @@ async function _monitorTick() {
         if (deep?.ok && deep.signal) {
           const c = manualConvictionOf(t, deep.signal);
           t.__conviction = { ...c, side: sideOf(deep.signal.side), at: now };
-          await evaluateManualTradeAlerts(t, { send, conviction: t.__conviction, freshSignal: deep.signal, usdInr });
+          let reversal = null;
+          if (_revCfg?.enabled) {
+            const pnlNow = manualPnlOf(t, t.__ltp, { usdInr });
+            if (pnlNow.pnlINR != null) {
+              const liveState = pnlNow.pnlINR <= -Math.abs(_revCfg.lossCapINR) ? 'LOSS_CAP'
+                : pnlNow.pnlINR >= Math.abs(_revCfg.profitTargetINR) ? 'PROFIT_TARGET'
+                : (t.reversal?.state === 'PROFIT_TARGET' ? 'PROFIT_TARGET' : (t.reversal?.state || null));
+              reversal = { enabled: true, lossCapINR: _revCfg.lossCapINR, profitTargetINR: _revCfg.profitTargetINR, pnlINR: pnlNow.pnlINR, state: liveState, ...(t.reversal?.flip ? { flip: t.reversal.flip } : {}), ...(t.reversal?.cycleId ? { cycleId: t.reversal.cycleId, leg: t.reversal.leg ?? null } : {}) };
+            }
+          }
+          await evaluateManualTradeAlerts(t, { send, conviction: t.__conviction, freshSignal: deep.signal, usdInr, ...(reversal ? { reversal } : {}) });
           if (t.lastState !== c.state) { t.lastState = c.state; _persist(); }
         } else {
           // v11.5: transient deep failure — PRESERVE the last-known

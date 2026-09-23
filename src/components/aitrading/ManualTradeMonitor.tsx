@@ -16,8 +16,13 @@
 // trades exist, 30s idle), so the tabs need zero wiring beyond
 // dropping the section in.
 // ============================================================
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch, getProxyBase } from '../../utils/api';
+// v12.9 REALTIME: the tracker rides the SAME SSE tick stream the signal
+// cards do (~1s pushes) — LTP + P&L repaint instantly between the 5s
+// reconciliation polls.
+import { useCxLivePrices } from './useCxLivePrices';
+import { mergeLiveTicks, liveKeyFor } from './manualLiveMerge';
 
 interface ManualTradeView {
   id: number;
@@ -63,7 +68,8 @@ interface ManualTradeView {
     r?: { riskPct: number | null; rNow: number | null; rPeak: number | null; rTrough: number | null; mfePct: number | null; maePct: number | null; capturePct: number | null };
     exitQuality?: string | null;
     conviction: { state: string | null; delta: number | null; currentScore: number | null; entryScore: number | null };
-    banner: 'THESIS_INTACT' | 'WEAKENING' | 'EXIT_NOW' | 'TARGET_HIT' | 'STALE';
+    banner: 'THESIS_INTACT' | 'WEAKENING' | 'EXIT_NOW' | 'TARGET_HIT' | 'STALE' | 'LOSS_CAP' | 'REVERSAL_BOOK';
+    reversal?: { enabled: boolean; lossCapINR: number; profitTargetINR: number; pnlINR: number; state?: string | null; cycleId?: string | null; leg?: number | null; flip?: { side: string; qty: number; entry: number; sl: number | null; tp: number | null } | null } | null;
   };
 }
 
@@ -106,6 +112,10 @@ const BANNER_STYLE: Record<string, { chip: string; label: string; icon: string }
   EXIT_NOW: { chip: 'bg-red-500/20 border-red-500/60 text-red-300', label: 'EXIT NOW — ensemble FLIPPED', icon: '🚨' },
   TARGET_HIT: { chip: 'bg-sky-500/15 border-sky-500/40 text-sky-300', label: 'TARGET HIT', icon: '🎯' },
   STALE: { chip: 'bg-slate-500/15 border-slate-500/40 text-slate-400', label: 'STALE — conviction data missing', icon: '⏸' },
+  // v12.8/v12.9 REVERSAL AI (engine-connected): the ₹ states of the
+  // manual cycle — the loss-cap plan + the ₹ target BOOK call.
+  LOSS_CAP: { chip: 'bg-violet-500/20 border-violet-500/60 text-violet-300', label: 'LOSS-CAP hit — Reversal cycle ACTIVE', icon: '🛑' },
+  REVERSAL_BOOK: { chip: 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300', label: '₹ TARGET hit — BOOK karo', icon: '✅' },
 };
 
 const pxFmt = (v: number | null | undefined, usd = false): string => {
@@ -169,7 +179,7 @@ const ManualRow = memo(function ManualRow({ t, onClose, busy }: { t: ManualTrade
   const long = t.side === 'BUY';
   return (
     <div className={`rounded-xl border p-3 space-y-2.5 transition-all
-      ${banner === 'EXIT_NOW' ? 'border-red-500/50 bg-red-950/30 animate-pulse' : 'border-slate-700/50 bg-slate-900/40'}`}>
+      ${banner === 'EXIT_NOW' ? 'border-red-500/50 bg-red-950/30 animate-pulse' : banner === 'LOSS_CAP' ? 'border-violet-500/50 bg-violet-950/20' : banner === 'REVERSAL_BOOK' ? 'border-emerald-500/50 bg-emerald-950/20' : 'border-slate-700/50 bg-slate-900/40'}`}>
       {/* line 1: identity + banner */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2 min-w-0">
@@ -259,6 +269,23 @@ const ManualRow = memo(function ManualRow({ t, onClose, busy }: { t: ManualTrade
           Telegram pe <b>kyon</b> (kaunse models flip hue) ka push already gaya hai.
         </div>
       )}
+      {banner === 'LOSS_CAP' && (
+        <div className="text-[11px] text-violet-300 bg-violet-500/10 border border-violet-500/30 rounded-lg px-2.5 py-1.5">
+          🛑 <b>Reversal cycle ACTIVE</b> (leg {v?.reversal?.leg ?? 1}): minimal loss accept karke <b>CLOSE karo</b> → ulta <b>{v?.reversal?.flip?.side || (long ? 'SHORT' : 'LONG')}</b> entry → target pe profit <b>BOOK</b>.
+          {v?.reversal?.flip && (
+            <span className="block mt-1 font-mono text-[10px] text-violet-200/90">
+              FLIP plan — qty {v.reversal.flip.qty} @ ~{pxFmt(v.reversal.flip.entry, usd)}{v.reversal.flip.sl != null ? ` · SL ${pxFmt(v.reversal.flip.sl, usd)} (₹${Math.round(v.reversal?.lossCapINR ?? 0)}) / TP ${pxFmt(v.reversal.flip.tp, usd)} (₹${Math.round(v.reversal?.profitTargetINR ?? 0)})` : ''}
+            </span>
+          )}
+          <span className="block mt-0.5 text-violet-400/70 text-[10px]">(Manual trade — execute aap karo; Telegram pe full plan push ho chuka hai.)</span>
+        </div>
+      )}
+      {banner === 'REVERSAL_BOOK' && (
+        <div className="text-[11px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-2.5 py-1.5">
+          ✅ <b>Reversal cycle — ₹ TARGET hit</b> (leg {v?.reversal?.leg ?? 1}, +₹{Math.round(v?.reversal?.profitTargetINR ?? 0)}): profit <b>BOOK karo</b> — realized karo.
+          Price wapas ult jaye to re-entry window me opp side confirm hone par next leg ka plan milega.
+        </div>
+      )}
       {banner === 'WEAKENING' && (
         <div className="text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2.5 py-1.5">
           🟡 Conviction decay ho rahi hai — SL ko breakeven/T1 ki taraf tighten karna consider karo (noise se churn nahi, sirf protect).
@@ -305,6 +332,7 @@ const ClosedRow = memo(function ClosedRow({ t }: { t: ManualTradeView }) {
 export function ManualTradeMonitor({ desk, notify }: Props) {
   const [trades, setTrades] = useState<ManualTradeView[] | null>(null);
   const [stats, setStats] = useState<ManualStatsView | null>(null);
+  const [usdInr, setUsdInr] = useState(84);
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [showClosed, setShowClosed] = useState(false);
@@ -328,6 +356,8 @@ export function ManualTradeMonitor({ desk, notify }: Props) {
       else if (desk === 'CRYPTO') list = list.filter(t => t.market !== 'INDIA');
       // v12.0: the tracker's own track-record (R win-rate · avg R · capture)
       if (r.stats) setStats(r.stats as ManualStatsView);
+      // v12.9: the server's OWN fx for the realtime P&L recompute
+      if (Number(r.usdInr) > 0) setUsdInr(Number(r.usdInr));
       // v10.18: sync the ref INSIDE load — the cadence scheduler reads it
       // right after `await load()`, but the separate `useEffect(() => {
       // tradesRef.current = trades })` only commits AFTER the next render,
@@ -360,6 +390,43 @@ export function ManualTradeMonitor({ desk, notify }: Props) {
 
   useEffect(() => { tradesRef.current = trades; }, [trades]);
 
+  // ---- v12.9 REALTIME PRICES: the tracker's own SSE subscription ----
+  // The OPEN trades' symbols ride the SAME /api/stream the signal cards
+  // use (~1s pushes; snapshot + tick + 30s-freshness). LTP + P&L repaint
+  // instantly between the 5s reconciliation polls; banner/conviction
+  // stay server-computed (the 5s poll refreshes them).
+  const openTrades = (trades || []).filter(t => t.status === 'OPEN');
+  const rtLists = useMemo(() => {
+    const fut: string[] = [], glob: string[] = [], spot: string[] = [], india: string[] = [];
+    for (const t of openTrades) {
+      const sym = String(t.symbol || '').trim().toUpperCase();
+      if (!sym) continue;
+      if (t.market === 'FUTURES') fut.push(sym);
+      else if (t.market === 'GLOBALFUTURES') glob.push(sym);
+      else if (t.market === 'CRYPTO') spot.push(sym);
+      else india.push(sym);
+    }
+    return { fut, glob, spot, india };
+    // openTrades identity changes per poll — the symbol SETS are what
+    // the subscription keys on; keep this memo on the joined strings.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTrades.map(t => `${t.market}:${t.symbol}`).join('|')]);
+  const { ticks, status: rtStatus } = useCxLivePrices(
+    openTrades.length > 0,
+    rtLists.spot, rtLists.fut, rtLists.glob, rtLists.india,
+  );
+  // the LIVE merge — pure helper (unit-tested); re-renders land at the
+  // hook's 800ms batched cadence, never per tick
+  const liveTrades = useMemo(
+    () => mergeLiveTicks(trades || [], ticks as Record<string, { price: number; time: number }>, usdInr),
+    [trades, ticks, usdInr],
+  );
+  const anyLive = openTrades.some(t => {
+    const k = liveKeyFor(String(t.market || ''), String(t.symbol || ''));
+    const tick = k ? (ticks as Record<string, { price: number; time: number }>)[k] : null;
+    return !!tick && Date.now() - tick.time <= 30_000;
+  });
+
   const close = useCallback(async (t: ManualTradeView) => {
     if (busy) return;
     setBusy(true);
@@ -375,10 +442,10 @@ export function ManualTradeMonitor({ desk, notify }: Props) {
     } finally { setBusy(false); }
   }, [busy, notify, load]);
 
-  const open = (trades || []).filter(t => t.status === 'OPEN');
+  const open = (liveTrades || []).filter(t => t.status === 'OPEN');
   const closed = (trades || []).filter(t => t.status === 'CLOSED');
-  const exitNow = open.filter(t => t.__view?.banner === 'EXIT_NOW');
-  const rest = open.filter(t => t.__view?.banner !== 'EXIT_NOW');
+  const exitNow = open.filter(t => t.__view?.banner === 'EXIT_NOW' || t.__view?.banner === 'LOSS_CAP' || t.__view?.banner === 'REVERSAL_BOOK');
+  const rest = open.filter(t => t.__view?.banner !== 'EXIT_NOW' && t.__view?.banner !== 'LOSS_CAP' && t.__view?.banner !== 'REVERSAL_BOOK');
 
   if (trades && open.length === 0 && closed.length === 0) {
     // No trades yet — the section stays collapsed to a single hint line
@@ -399,7 +466,7 @@ export function ManualTradeMonitor({ desk, notify }: Props) {
             {open.length > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">{open.length} open</span>}
           </div>
           <div className="text-[10px] text-slate-500 mt-0.5">
-            aapke REAL trades — live LTP (5s) · P&L · SL/T distances · <span className="text-cyan-400">ensemble conviction re-vote (30s)</span> vs entry snapshot
+            aapke REAL trades — <span className="text-cyan-400">REALTIME prices (SSE ~1s)</span> · P&L · SL/T distances · <span className="text-cyan-400">ensemble conviction re-vote (30s)</span> · <span className="text-violet-400">Reversal ₹-cycle engine-connected</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -410,9 +477,9 @@ export function ManualTradeMonitor({ desk, notify }: Props) {
             </button>
           )}
           <span className={`text-[9px] px-1.5 py-0.5 rounded border flex items-center gap-1
-            ${error ? 'text-red-400 border-red-500/30 bg-red-500/10' : 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${error ? 'bg-red-400' : 'bg-emerald-400 animate-pulse'}`} />
-            {error ? 'LIVE OFF' : 'LIVE 5s'}
+            ${error ? 'text-red-400 border-red-500/30 bg-red-500/10' : anyLive && rtStatus === 'live' ? 'text-cyan-300 border-cyan-500/30 bg-cyan-500/10' : 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${error ? 'bg-red-400' : anyLive && rtStatus === 'live' ? 'bg-cyan-400 animate-pulse' : 'bg-emerald-400 animate-pulse'}`} />
+            {error ? 'LIVE OFF' : anyLive && rtStatus === 'live' ? 'REALTIME ⚡' : 'LIVE 5s'}
           </span>
         </div>
       </div>

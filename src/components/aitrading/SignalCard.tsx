@@ -591,7 +591,6 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
     resultTimer.current = setTimeout(() => setResult(null), 8000);
   };
   useEffect(() => () => { if (resultTimer.current) clearTimeout(resultTimer.current); }, []);
-  const approxUsdInr = 84; // display-only conversion (server uses the live rate)
 
   const marginNum = Number(marginRaw);
   const typedValid = marginRaw.trim() !== '' && Number.isFinite(marginNum);
@@ -640,7 +639,11 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
   const fmtU = (n: number, dp = 0) => usdDenominated
     ? `${n.toLocaleString('en-US', { maximumFractionDigits: dp || 2 })} ${unit}`
     : fmt(n, dp);
-  const fmtINRapprox = (n: number) => `₹${Math.round(n * approxUsdInr).toLocaleString('en-IN')}`;
+  // v12.9 USER SPEC: the ≈₹ INR conversion hints are REMOVED from the
+  // USDT desk — "USDT ke price point pe trade lete vo theek hai, qty
+  // bhi theek hai, but indian INR price amount add karne mat karo."
+  // The USDT domain stays pure USDT; the ₹ lives only on the server's
+  // own risk caps and the Reversal ₹-thresholds (the user's config).
 
   const exec = async (mode: 'paper' | 'live' | 'notify') => {
     const handler = global ? onExecuteGlobal : futures ? onExecuteFutures : crypto ? onExecute : onExecuteIndia;
@@ -701,10 +704,8 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
             placeholder={usdDenominated ? unit : '₹'}
             className={`quantum-input px-2 py-1 rounded-lg text-[11px] font-mono font-bold text-white w-28 ${invalid ? 'border-amber-500/50' : ''}`}
             aria-label={usdDenominated ? `margin in ${unit} — apna amount type karo` : 'budget in rupees — apna amount type karo'} />
-          {/* v10.5.3: the ≈ ₹ conversion hint stays on the REAL CoinDCX perp
-              desk (USDT = actual wallet money). The global SIM desk shows a
-              pure USD domain — a ₹ hint there re-conflates the two desks. */}
-          {futures && typedValid && <span className="text-[9px] text-slate-600 font-mono">≈ {fmtINRapprox(margin)}</span>}
+          {/* v12.9: the ≈ ₹ conversion hint is GONE (user spec) — the USDT
+              desk shows pure USDT; no INR price amounts are added. */}
           {invalid && <span className="text-[9px] font-black text-amber-400">amount daalo (min {usdDenominated ? `${lo} ${unit}` : `₹${lo}`})</span>}
         </label>
         {/* v7.0.1 quick-amount chips — one-tap sizing, no typing needed */}
@@ -770,9 +771,8 @@ function SimpleTradeTicket({ signal, busy, onExecute, onExecuteIndia, onExecuteF
           </div>
         ))}
       </div>
-      {futures && (
-        <div className="text-[9px] text-slate-600 font-mono mt-1">USDT ≈ ₹ conversion display-only (×{approxUsdInr}) — server live USDINR use karta hai</div>
-      )}
+      {/* v12.9: the "USDT ≈ ₹ conversion display-only" footnote removed —
+          the USDT desk carries no INR price amounts (user spec). */}
       <div className="flex items-center gap-3 mt-1.5 text-[10px] font-mono font-bold flex-wrap">
         <span className="text-slate-500">ENTRY <span className="text-cyan-300">{px(plan.entry, cur)}</span></span>
         <span className="text-slate-500">SL <span className="text-red-300">{px(plan.stopLoss, cur)}</span> (−{slDistPct.toFixed(2)}%)</span>
