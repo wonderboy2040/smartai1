@@ -211,6 +211,83 @@ export function governance() {
   };
 }
 
+// ---------------- accuracy-plan Phase 2.1: the MTF A/B verdict ----------------
+/**
+ * IntradayTapeMTF (w1.6, 5m/15m/1h confluence) vs the plain 15m tape
+ * (w1.3) — measured on the SAME settled executions. Both arms share the
+ * vote DIRECTION (the 15m anchor carries it), so hit-rate is identical
+ * BY DESIGN; the honest A/B metric is CONFIDENCE QUALITY on the votes
+ * that aligned with the taken trade:
+ *   · separation = avg conf on wins − avg conf on losses (higher = the
+ *     conf number actually separates winners from losers)
+ *   · brier = mean (conf/100 − win)^2 over aligned votes (lower = sharper)
+ * The ledger journals both arms since Phase 2.1 (ledger 'ab_tape15m'
+ * shadow key, stamped by models.js only when the MTF payload ran —
+ * degraded fallbacks ARE the plain seat, no double-count).
+ * @returns the A/B report block for /api/ai/trust + weekly review.
+ */
+export function mtfABReport() {
+  const settled = settledEntries();
+  const MTF_KEY = 'tape-mtf';
+  const AB_KEY = 'ab_tape15m';
+  const armOf = (key) => {
+    // aligned rows: the arm's dir matched the trade actually taken
+    const rows = settled.filter(e => {
+      const v = e.votes?.[key];
+      return v && Number(v.dir) !== 0 && (Number(v.dir) > 0) === (e.side !== 'SHORT');
+    });
+    const wins = rows.filter(e => (e.outcome.r ?? 0) > 0);
+    const losses = rows.filter(e => (e.outcome.r ?? 0) <= 0);
+    const confs = (list) => list.map(e => Number(e.votes[key].conf)).filter(Number.isFinite);
+    const avg = (a) => a.length ? Math.round((a.reduce((s, x) => s + x, 0) / a.length) * 10) / 10 : null;
+    const confW = avg(confs(wins));
+    const confL = avg(confs(losses));
+    const brierRows = rows.map(e => {
+      const p = Math.min(1, Math.max(0, (Number(e.votes[key].conf) || 50) / 100));
+      const y = (e.outcome.r ?? 0) > 0 ? 1 : 0;
+      return (p - y) ** 2;
+    });
+    return {
+      n: rows.length,
+      wins: wins.length,
+      hitRate: rows.length ? Math.round((wins.length / rows.length) * 1000) / 10 : null,
+      avgConfWins: confW,
+      avgConfLosses: confL,
+      separation: confW != null && confL != null ? Math.round((confW - confL) * 10) / 10 : null,
+      brier: brierRows.length ? Math.round((brierRows.reduce((s, x) => s + x, 0) / brierRows.length) * 10000) / 10000 : null,
+    };
+  };
+  const mtf = armOf(MTF_KEY);
+  const plain = armOf(AB_KEY);
+  const pairs = Math.min(mtf.n, plain.n); // settled entries carrying BOTH arms
+  let verdict = 'NEEDS DATA';
+  let delta = null;
+  if (pairs >= MIN_SETTLED && mtf.brier != null && plain.brier != null) {
+    delta = Math.round((plain.brier - mtf.brier) * 10000) / 10000; // >0 → MTF sharper
+    const sepDelta = mtf.separation != null && plain.separation != null
+      ? Math.round((mtf.separation - plain.separation) * 10) / 10 : null;
+    verdict = delta > 0.005 ? 'MTF SHARPER'
+      : delta < -0.005 ? 'PLAIN 15m SHARPER'
+        : 'NO MEASURABLE DIFFERENCE';
+    if (sepDelta != null && Math.abs(delta) <= 0.005) {
+      verdict = sepDelta >= 3 ? 'MTF SHARPER (separation)' : sepDelta <= -3 ? 'PLAIN 15m SHARPER (separation)' : verdict;
+    }
+  }
+  return {
+    ok: true,
+    question: 'Is the IntradayTapeMTF w1.6 upgrade genuinely better than the plain 15m tape w1.3?',
+    method: 'Same settled executions, both arms journaled per entry (ledger ab_tape15m shadow). Directions are identical by design (15m anchor) — the honest metric is confidence quality on aligned votes: separation (avg conf wins − losses) and Brier (lower = sharper).',
+    pairs,
+    mtf: { seat: 'IntradayTapeMTF (w1.6)', ...mtf },
+    plain: { seat: 'IntradayTape plain 15m (w1.3, A/B shadow)', ...plain },
+    brierDeltaPlainMinusMtf: delta,
+    verdict,
+    note: pairs < MIN_SETTLED
+      ? `Insufficient paired data — ${pairs}/${MIN_SETTLED} settled executions carry both arms. Track record gather hone do.`
+      : 'Verdict is calibration-grade (confidence quality), not direction-grade — directions are identical by design.',
+  };
+}
+
 // ---------------- v10.6: windowed per-model performance (Pro Upgrade #5) ----------------
 /**
  * Per-model win/loss attribution over ROLLING windows (30d + 90d) —

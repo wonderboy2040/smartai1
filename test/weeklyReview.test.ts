@@ -60,6 +60,15 @@ vi.mock('../server/ai/trust.js', () => ({
   // neutral mocks: no settled council data in this suite's ledger)
   councilAgentStats: () => [],
   councilCalibrationMultipliers: () => ({}),
+  // accuracy-plan Phase 2.1: the MTF A/B verdict block rides the quant
+  // view — honest neutral mock (no paired settled data in this suite)
+  mtfABReport: () => ({
+    ok: true, pairs: 0, verdict: 'NEEDS DATA',
+    mtf: { seat: 'IntradayTapeMTF (w1.6)', n: 0, wins: 0, hitRate: null, separation: null, brier: null },
+    plain: { seat: 'IntradayTape plain 15m (w1.3, A/B shadow)', n: 0, wins: 0, hitRate: null, separation: null, brier: null },
+    brierDeltaPlainMinusMtf: null,
+    note: 'Insufficient paired data — mock.',
+  }),
 }));
 vi.mock('../server/intraday/agent.js', () => ({
   askLLM: (...a) => mockAskLLM(...a),

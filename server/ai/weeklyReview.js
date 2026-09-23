@@ -19,7 +19,7 @@
 // Telegram bot's /weeklyreview command.
 // ============================================================
 import { loadJournal } from './coindcxOrders.js';
-import { trustReport, councilAgentStats, councilCalibrationMultipliers } from './trust.js';
+import { trustReport, councilAgentStats, councilCalibrationMultipliers, mtfABReport } from './trust.js';
 import { askLLM } from '../intraday/agent.js';
 import { getJournal, getWeekKey } from '../intraday/journal.js';
 import { sendTelegramMessage, telegramConfig } from './secrets.js';
@@ -168,7 +168,11 @@ export function weeklyQuantView({ now = Date.now() } = {}) {
   const council = computeCouncilWeek({ now });
   // v11.6: the mesh-model week — shadow/voting seats' contribution.
   const mesh = meshModelWeek({ now });
-  return { ai, calibration, intraday, council, mesh, weekKey: getWeekKey(new Date(now)), asOf: now };
+  // accuracy-plan Phase 2.1: the MTF-vs-plain-15m A/B verdict — both
+  // arms journaled per settled execution; the weekly review narrates
+  // the measured calibration delta (never a guess).
+  const mtfAB = mtfABReport();
+  return { ai, calibration, intraday, council, mesh, mtfAB, weekKey: getWeekKey(new Date(now)), asOf: now };
 }
 
 // ---------------- v11.0: COUNCIL calibration week ----------------
@@ -441,6 +445,15 @@ export function quantHeaderBlock(q) {
     const shadow = mm.allTime.models.filter(m => m.mode !== 'voting');
     const bit = (m) => `${m.name} ${m.mode === 'voting' && m.edge != null ? (m.edge > 0 ? '+' : '') + m.edge + 'pts' : m.mode}`;
     lines.push(`🕸️ <b>Mesh seats</b>: ${voting.length}/${voting.length + shadow.length} voting · ${[...voting, ...shadow].slice(0, 4).map(bit).join(' · ')}`);
+  }
+  // accuracy-plan Phase 2.1: the MTF A/B header — one honest line.
+  const ab = q.mtfAB;
+  if (ab && (ab.pairs || 0) > 0) {
+    const sepBit = ab.mtf.separation != null && ab.plain.separation != null
+      ? `separation ${ab.mtf.separation} vs ${ab.plain.separation}` : 'separation —';
+    const brierBit = ab.mtf.brier != null && ab.plain.brier != null
+      ? `Brier ${ab.mtf.brier} vs ${ab.plain.brier}` : 'Brier —';
+    lines.push(`📊 <b>MTF A/B</b> (${ab.pairs} paired): ${ab.verdict} · ${sepBit} · ${brierBit} · <i>${ab.pairs < 10 ? 'pairs chhote hain — sakhti se mat padho' : 'calibration-grade verdict'}</i>`);
   }
   return lines.join('\n');
 }

@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [meta-retrain] %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [mmeta-retrain] %(message)s")
 logger = logging.getLogger("meta-retrain")
 
 RETRAIN_INTERVAL_HOURS = float(os.getenv("META_RETRAIN_INTERVAL_HOURS", "168") or 168)
@@ -85,6 +85,43 @@ def _schedule_loop():
         while True:
             time.sleep(interval_s)
             retrain_now(fetch_fresh=True)
+
+
+def start_retrain_daemon() -> bool:
+    """ACCURACY-PLAN PHASE 5: the non-blocking background-worker mode.
+    The FastAPI service (app/main.py) calls this at startup — the weekly
+    retrain then rides the SAME container (Render single-service deploy),
+    no separate cron service needed. META_RETRAIN_DAEMON=false disables
+    (e.g. when a dedicated `python -m models.retrain_scheduler --once`
+    cron job owns the cadence instead). A failed retrain NEVER kills the
+    API — the thread is a daemon and retrain_now itself never raises.
+    """
+    import threading
+    flag = os.getenv("META_RETRAIN_DAEMON", "true").strip().lower()
+    if flag in ("0", "false", "off", "no"):
+        logger.info("retrain daemon disabled (META_RETRAIN_DAEMON=false)")
+        return False
+    if os.getenv("META_RETRAIN_ON_BOOT", "true").strip().lower() in ("0", "false", "off", "no"):
+        # skip the immediate boot-train; only the weekly interval arms
+        threading.Thread(
+            target=lambda: (time.sleep(60), _schedule_loop_bootless()),
+            name="meta-retrain", daemon=True,
+        ).start()
+        logger.info("meta-retrain daemon armed (weekly only — boot train skipped)")
+        return True
+    t = threading.Thread(target=_schedule_loop, name="meta-retrain", daemon=True)
+    t.start()
+    logger.info("meta-retrain daemon thread started (boot train + every %sh)", RETRAIN_INTERVAL_HOURS)
+    return True
+
+
+def _schedule_loop_bootless():
+    """The interval loop without the immediate boot-train (for containers
+    that redeploy frequently and only want the weekly cadence)."""
+    interval_s = RETRAIN_INTERVAL_HOURS * 3600
+    while True:
+        time.sleep(interval_s)
+        retrain_now(fetch_fresh=True)
 
 
 if __name__ == "__main__":

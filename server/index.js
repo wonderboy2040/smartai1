@@ -27,6 +27,10 @@ import { SERVER_MCP_TOOLS_OPENAI, SERVER_MCP_TOOLS_GEMINI, executeServerMCPTool 
 import indmMcpRoutes from './mcp/routes.js';
 // v11.0 MCP DATA AGENT MESH — 10 market-data agents + orchestrator routes.
 import { registerMeshRoutes } from './mcp/mesh.js';
+// Accuracy-plan Phase 1: boot-time mesh health visibility — the Render
+// log now states exactly which agents are authed vs honestly absent
+// (missing key), so a key-gap is visible without hitting the API.
+import { allCards } from './mcp/agents/registry.js';
 import { registerAITradingRoutes } from './ai/routes.js';
 import { registerIntradayRoutes } from './intraday/routes.js';
 import { registerTelegramWebhook } from './telegram/webhook.js';
@@ -797,6 +801,23 @@ try { startIndmPortfolioScheduler(); } catch (e) { console.warn('[mcp/portfolioS
 // honestly absent — never fake data.
 // ============================================================
 try { registerMeshRoutes(app); } catch (e) { console.warn('[mcp/mesh] route registration failed:', e?.message || e); }
+
+// ------------------------------------------------------------
+// Accuracy-plan Phase 1: MCP MESH BOOT HEALTH — one line in the
+// Render log on every deploy: usable/total agents + the missing-key
+// list. A "missing key" agent is honestly absent (never fakes data);
+// free-key links for every env var live in .env.example's v11.8 block.
+// ------------------------------------------------------------
+try {
+  const cards = allCards();
+  const unauthed = cards.filter(c => !c.authed);
+  const keyless = unauthed.filter(c => c.authRequired === false);
+  const missing = unauthed.filter(c => c.authRequired !== false);
+  const usable = cards.length - missing.length;
+  console.log(`[mesh] BOOT HEALTH — ${usable}/${cards.length} agents usable (authed ${cards.length - unauthed.length} · keyless ${keyless.length})${
+    missing.length ? ` · MISSING KEYS: ${missing.map(c => `${c.id}→${c.envKey || 'no-env-key'}`).join(', ')}` : ' · full mesh — no missing keys'
+  }`);
+} catch { /* visibility only — never blocks boot */ }
 
 // ------------------------------------------------------------
 // GET /api/quote  â†’ REAL-TIME last-traded price for one or many symbols

@@ -43,6 +43,11 @@ import { runCryptoAgent } from '../ai/cryptoAgent.js';
 import { agentStatus, loadAgentConfig } from '../ai/agent.js';
 import { getSignals } from '../ai/signals.js';
 import { runWeeklyPerformanceReview } from '../ai/weeklyReview.js';
+// accuracy-plan Phase 4: the /portfolio two-way command — net-worth
+// digest + the red-flag engine (concentration × regime × AI views).
+import { buildPortfolioDigestText } from '../ai/portfolioNarrative.js';
+import { netWorthSnapshot, getAssetsSnapshot } from '../mcp/portfolioSync.js';
+import { buildRegime } from '../ai/signals.js';
 import { transcribeVoiceNote, voiceMimeOf } from '../ai/voiceNotes.js';
 import {
   approvalEnabled, createTradeApproval, beginPinPhase, rejectTradeApproval,
@@ -126,6 +131,7 @@ const HELP_TEXT = [
   '',
   '<b>/crypto</b> &lt;question&gt; — CoinDCX desk agent (spot + futures setups, wallet, positions, sizing, track record)',
   '<b>/intraday</b> &lt;question&gt; — NSE intraday desk agent (setups, deep scans, regime, paper positions)',
+  '<b>/portfolio</b> — net-worth digest + red flags (concentration × regime × holdings ke AI views)',
   '<b>/status</b> — dono desks ka snapshot (agent state + top signals)',
   '<b>/weeklyreview</b> — weekly trade-performance digest (journal + calibration)',
   '🎤 <b>Voice note bhejo</b> — transcribe hoke wahi desk agent chalta hai',
@@ -557,6 +563,46 @@ async function handleTelegramCommand({ text, chatKey, role, cfgTG, aiDeps, send 
     if (!out.ok) { await send(`📭 ${esc(out.error || 'review unavailable')}`); return; }
     for (const c of chunkForTelegram(out.text)) await send(c);
     if (out.cached) await send('♻️ <i>Ye is hafte ka cached review hai — naya data settle hone par refresh hoga.</i>');
+    return;
+  }
+  // accuracy-plan Phase 4: the /portfolio two-way digest — the same
+  // red-flag engine the site's Portfolio AI overlay runs, answered in
+  // chat (net-worth by class + concentration × regime × AI-view flags).
+  if (cmd === 'portfolio') {
+    await send('💼 <i>Portfolio digest bana raha hoon — net worth + red flags…</i>');
+    try {
+      const nw = netWorthSnapshot();
+      const snap = getAssetsSnapshot();
+      const hidden = Array.isArray(snap?.hidden) ? snap.hidden : [];
+      const assets = (Array.isArray(snap?.assets) ? snap.assets : []).filter(a => a && !hidden.includes(a.key));
+      const total = Number(nw?.totalValueINR) || 0;
+      const topHoldings = assets
+        .filter(a => typeof a.value === 'number' && a.value > 0 && total > 0)
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 6)
+        .map(a => ({
+          label: String(a.symbol || a.name || a.key || '').slice(0, 24),
+          // coindcx rows are crypto; indmoney rows ride the INDMoney
+          // asset taxonomy (equity/mf/etc → the India/US split the site
+          // itself renders; digest-level granularity: india-vs-crypto)
+          group: (a?.source === 'coindcx' || a?.kind === 'crypto') ? 'crypto' : 'india',
+          weightPct: Math.round((a.value / total) * 1000) / 10,
+          plPct: null,
+        }));
+      const [regimeIndia, regimeCrypto] = await Promise.all([
+        buildRegime('INDIA').catch(() => null),
+        buildRegime('CRYPTO').catch(() => null),
+      ]);
+      const text = await buildPortfolioDigestText({
+        netWorth: nw,
+        topHoldings,
+        regimes: { INDIA: regimeIndia, CRYPTO: regimeCrypto },
+        aiViews: {}, // digest-level: views fetched by the site overlay; here regime flags suffice
+      });
+      for (const c of chunkForTelegram(text)) await send(c);
+    } catch (e) {
+      await send(`📭 Portfolio digest unavailable: ${esc(String(e?.message || e))} — INDMoney/CoinDCX sync pehle karo (site ke Portfolio tab se).`);
+    }
     return;
   }
   if (cmd === 'trade') {

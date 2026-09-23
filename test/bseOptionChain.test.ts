@@ -48,6 +48,16 @@ const nextThursday = () => {
   return d.toISOString().slice(0, 10);
 };
 
+// Phase-0 fix (2026-09-23): the fixtures below used a HARDCODED '2026-09-17'
+// expiry — once the IST calendar rolled past it, chain.expiryDates had no
+// d >= today row left, getOptionsDesk correctly honest-fell-back to
+// 'bs-model-sensex-always', and the parity test failed as a STALE FIXTURE
+// (production logic was right). Both fixtures are now SELF-HEALING: the
+// expiry is always the next (future) Thursday, computed at run time.
+const THU_ISO = nextThursday();
+const MONS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const THU_DMY = (() => { const [y, m, d] = THU_ISO.split('-'); return `${Number(d)} ${MONS[Number(m) - 1]} ${y}`; })();
+
 // A deep-signal payload like getDeepSignal returns for a LONG consensus.
 const mkDeep = (side: string) => ({
   ok: true,
@@ -71,12 +81,12 @@ describe('fetchBSEOptionChain (real module, stubbed fetch)', () => {
         records: {
           underlyingValue: 82350.5,
           data: [
-            { strikePrice: 82000, expiryDate: '17 Sep 2026', CE: { openInterest: 1200, changeinOpenInterest: 80, impliedVolatility: 12.4, lastPrice: 410.2, totalTradedVolume: 9000 }, PE: { openInterest: 3000, changeinOpenInterest: 200, impliedVolatility: 13.1, lastPrice: 85.4, totalTradedVolume: 21000 } },
-            { strikePrice: 82100, expiryDate: '17 Sep 2026', CE: { openInterest: 1500, changeinOpenInterest: 90, impliedVolatility: 12.1, lastPrice: 355.1, totalTradedVolume: 8000 }, PE: { openInterest: 2600, changeinOpenInterest: 120, impliedVolatility: 12.8, lastPrice: 120.6, totalTradedVolume: 15000 } },
-            { strikePrice: 82200, expiryDate: '17 Sep 2026', CE: { openInterest: 2100, changeinOpenInterest: 110, impliedVolatility: 11.9, lastPrice: 305.0, totalTradedVolume: 12000 }, PE: { openInterest: 1900, changeinOpenInterest: 60, impliedVolatility: 12.5, lastPrice: 170.3, totalTradedVolume: 11000 } },
-            { strikePrice: 82300, expiryDate: '17 Sep 2026', CE: { openInterest: 2600, changeinOpenInterest: 130, impliedVolatility: 11.7, lastPrice: 255.4, totalTradedVolume: 14000 }, PE: { openInterest: 1500, changeinOpenInterest: 40, impliedVolatility: 12.2, lastPrice: 230.1, totalTradedVolume: 9000 } },
-            { strikePrice: 82400, expiryDate: '17 Sep 2026', CE: { openInterest: 2900, changeinOpenInterest: 150, impliedVolatility: 11.6, lastPrice: 210.9, totalTradedVolume: 16000 }, PE: { openInterest: 1100, changeinOpenInterest: 30, impliedVolatility: 12.0, lastPrice: 295.2, totalTradedVolume: 7000 } },
-            { strikePrice: 82500, expiryDate: '17 Sep 2026', CE: { openInterest: 3200, changeinOpenInterest: 170, impliedVolatility: 11.5, lastPrice: 170.2, totalTradedVolume: 18000 }, PE: { openInterest: 900, changeinOpenInterest: 20, impliedVolatility: 11.9, lastPrice: 360.8, totalTradedVolume: 6000 } },
+            { strikePrice: 82000, expiryDate: THU_DMY, CE: { openInterest: 1200, changeinOpenInterest: 80, impliedVolatility: 12.4, lastPrice: 410.2, totalTradedVolume: 9000 }, PE: { openInterest: 3000, changeinOpenInterest: 200, impliedVolatility: 13.1, lastPrice: 85.4, totalTradedVolume: 21000 } },
+            { strikePrice: 82100, expiryDate: THU_DMY, CE: { openInterest: 1500, changeinOpenInterest: 90, impliedVolatility: 12.1, lastPrice: 355.1, totalTradedVolume: 8000 }, PE: { openInterest: 2600, changeinOpenInterest: 120, impliedVolatility: 12.8, lastPrice: 120.6, totalTradedVolume: 15000 } },
+            { strikePrice: 82200, expiryDate: THU_DMY, CE: { openInterest: 2100, changeinOpenInterest: 110, impliedVolatility: 11.9, lastPrice: 305.0, totalTradedVolume: 12000 }, PE: { openInterest: 1900, changeinOpenInterest: 60, impliedVolatility: 12.5, lastPrice: 170.3, totalTradedVolume: 11000 } },
+            { strikePrice: 82300, expiryDate: THU_DMY, CE: { openInterest: 2600, changeinOpenInterest: 130, impliedVolatility: 11.7, lastPrice: 255.4, totalTradedVolume: 14000 }, PE: { openInterest: 1500, changeinOpenInterest: 40, impliedVolatility: 12.2, lastPrice: 230.1, totalTradedVolume: 9000 } },
+            { strikePrice: 82400, expiryDate: THU_DMY, CE: { openInterest: 2900, changeinOpenInterest: 150, impliedVolatility: 11.6, lastPrice: 210.9, totalTradedVolume: 16000 }, PE: { openInterest: 1100, changeinOpenInterest: 30, impliedVolatility: 12.0, lastPrice: 295.2, totalTradedVolume: 7000 } },
+            { strikePrice: 82500, expiryDate: THU_DMY, CE: { openInterest: 3200, changeinOpenInterest: 170, impliedVolatility: 11.5, lastPrice: 170.2, totalTradedVolume: 18000 }, PE: { openInterest: 900, changeinOpenInterest: 20, impliedVolatility: 11.9, lastPrice: 360.8, totalTradedVolume: 6000 } },
           ],
         },
       }),
@@ -85,10 +95,10 @@ describe('fetchBSEOptionChain (real module, stubbed fetch)', () => {
     expect(out).toBeTruthy();
     expect(out.source).toBe('bse');
     expect(out.spot).toBeCloseTo(82350.5, 1);
-    expect(out.expiryDates).toEqual(['2026-09-17']);
+    expect(out.expiryDates).toEqual([THU_ISO]);
     expect(out.rows.length).toBe(6);
     expect(out.rows[0]).toMatchObject({
-      strike: 82000, expiry: '2026-09-17',
+      strike: 82000, expiry: THU_ISO,
       callOI: 1200, callOIChange: 80, callIV: 12.4, callLTP: 410.2, callVolume: 9000,
       putOI: 3000, putOIChange: 200, putIV: 13.1, putLTP: 85.4, putVolume: 21000,
     });
@@ -131,12 +141,12 @@ describe('fetchBSEOptionChain (real module, stubbed fetch)', () => {
 // ============================================================
 describe('getOptionsDesk — SENSEX source honesty', () => {
   const bseChain = () => ({
-    symbol: 'SENSEX', spot: 82350, expiryDates: ['2026-09-17'],
+    symbol: 'SENSEX', spot: 82350, expiryDates: [THU_ISO],
     source: 'bse', fetchedAt: Date.now(),
     rows: Array.from({ length: 13 }, (_, i) => {
       const strike = 82300 + (i - 6) * 100;
       return {
-        strike, expiry: '2026-09-17',
+        strike, expiry: THU_ISO,
         callOI: 2000 - i * 50, callOIChange: 60, callIV: 12, callLTP: Math.max(5, 300 - Math.abs(i - 6) * 45), callVolume: 9000,
         putOI: 1500 + i * 50, putOIChange: 40, putIV: 12.5, putLTP: Math.max(5, 180 - Math.abs(i - 6) * 30), putVolume: 7000,
       };

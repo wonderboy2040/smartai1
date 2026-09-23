@@ -60,7 +60,7 @@ export const PRO_TRADER_AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'get_live_intraday_signals',
-      description: 'Live top high-conviction NSE intraday setups from the quant scanner (EMA/VWAP/RSI/ADX/ORB-15/pivot scoring + AI consensus). Each setup includes direction, confidence, entry zone, stop-loss, target1/target2, R:R, qty per ₹1L, trend strength, and engine reasons. Use this FIRST when the user asks for setups, briefing, or market overview.',
+      description: 'Live top high-conviction NSE intraday setups from the quant scanner (EMA/VWAP/RSI/ADX/ORB-15/pivot scoring + AI consensus). The ensemble committee includes the MTF tape seat (5m/15m/1h confluence) and, when enabled, the V2 accuracy seats — SentimentPulse (news/F&G sentiment), InstFlow (FII/DII flows) — plus per-stock REAL option-chain reads (PCR/max-pain/OI) on the top F&O names, and mesh-backed seats in SHADOW mode (InstFlowPro/TechConsensus/FundaProPlus — journaled context votes at weight 0). Each setup includes direction, confidence, entry zone, stop-loss, target1/target2, R:R, qty per ₹1L, trend strength, and engine reasons. Use this FIRST when the user asks for setups, briefing, or market overview.',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -214,13 +214,17 @@ STATISTICAL EDGE AWARENESS (v4):
 - Dual-AI consensus REJECTS any setup where either expert votes AVOID or they disagree on direction — a signal that survives is already doubly vetted.
 - Dead zone 14:30–15:00 IST: fresh setups are statistically weak — no new entries recommended there.
 
-CORE METHODOLOGY (your trading edge — v4):
+CORE METHODOLOGY (your trading edge — v4 + the accuracy-plan seats):
 - EMA10/20 stack + VWAP bias + Supertrend(7) alignment defines directional control
 - SMA50 multi-timeframe confluence = higher-conviction trend trades
 - Relative volume ≥1.2x minimum for ANY signal; ≥1.5x for A+ grade
 - ADX ≥22 required for trend trades; ADX <18 = range regime, avoid breakout chasing
 - ORB-15 (opening range breakout) is highest-probability in first 90 minutes
 - NIFTY/VIX regime gates everything: counter-regime setups are penalized -10 and rarely survive
+- MTF TAPE CONFLUENCE: the 5m/15m/1h tape seat is the entry-timing voice — a setup whose timeframes conflict (agreement <2/3) is penalized and can never be STRONG; mention timeframe alignment when you see it
+- SENTIMENT + FLOWS (V2 seats, when live): SentimentPulse (news/F&G/funding) and InstFlow (FII/DII + depth imbalance) vote in the committee — their contrarian extremes are context, and when they DISAGREE with a technical setup, say so honestly
+- STOCK OPTION CHAINS: top F&O names carry real PCR/max-pain/OI reads — extreme PCR is contrarian, OI walls act as magnets
+- MESH SHADOW SEATS (InstFlowPro/TechConsensus/FundaProPlus): context-only reads at weight 0 until edge-proven — never cite them as the deciding conviction
 - RSI 52-68 sweet zone for longs, 32-48 for shorts; >78/<22 = exhaustion, do not chase
 - Minimum 1:1.5 R:R for high-conviction trades (A grade floor)
 

@@ -419,7 +419,12 @@ async function buildIndiaStockCtx(row, regime) {
   return {
     market: 'INDIA', symbol: row.symbol, ltp, changePct: row.changePct ?? 0,
     volume: row.volume ?? 0, exchange: row.exchange || 'NSE',
-    ind: tvToInd(row, ltp), candles: null, options: null, regime,
+    // accuracy-plan Phase 2.2: per-stock REAL option-chain ctx (PCR /
+    // max-pain / IV / OI-skew) for the top-F&O turnover names — the
+    // cached snapshot (10-min TTL, nse/bse chains only); absent names
+    // honestly abstain exactly as before.
+    ind: tvToInd(row, ltp), candles: null,
+    options: _stockOptionsSnapshot(row.symbol), regime,
   };
 }
 
@@ -991,6 +996,54 @@ const _INDEX_OPTIONS_TTL = 5 * 60_000;
 const _indexOptions = { at: 0, inflight: null, ctx: { NIFTY: null, BANKNIFTY: null } };
 const REAL_CHAIN_RE = /^(nse|bse)(-|$)/;
 
+// ---------------- accuracy-plan Phase 2.2: PER-STOCK option ctx ----------------
+// FEASIBILITY VERDICT (checked before building): Massive/Polygon and
+// AlphaVantage serve US options only — NO NSE stock chains (the plan's
+// suggested mesh sources are infeasible for India stocks). The RIGHT
+// source was already in the repo: getOptionsDesk(sym) fetches + analyzes
+// ANY NSE F&O underlying (the v10.17 options scanner already runs it on
+// 6 stock names). So OptionsFlow's per-stock granularity rides the SAME
+// real-chain machinery: the board warms the TOP turnover names' chains
+// (bounded slice, 10-min TTL — OI drifts slowly, chain fetches aren't
+// free), REAL exchange chains only, honest absent on outage. The seat's
+// structural-abstain comment ("single stocks have no option chain") was
+// true for the OLD data path — the F&O universe's chains are fetchable.
+const _STOCK_OPTIONS_TTL = 10 * 60_000;
+const _STOCK_OPTIONS_TOP_N = Math.max(0, Math.min(10, parseInt(process.env.AI_STOCK_OPTIONS_TOP_N, 10) || 6));
+const _stockOptions = { at: 0, inflight: null, ctx: new Map() };
+
+function _stockOptionsSnapshot(sym) {
+  if (Date.now() - _stockOptions.at > _STOCK_OPTIONS_TTL) return null;
+  return _stockOptions.ctx.get(sym) || null;
+}
+
+/** Warm per-stock option chains for the TOP slice (fire-and-forget:
+ *  this cycle attaches whatever is cached, the refresh lands for the
+ *  next — the index-ctx pattern). REAL nse/bse chains only. */
+async function _refreshStockOptionsCtx(symbols) {
+  const list = (symbols || []).filter(s => typeof s === 'string' && s && s !== 'NIFTY' && s !== 'BANKNIFTY' && s !== 'SENSEX').slice(0, _STOCK_OPTIONS_TOP_N);
+  if (list.length === 0) return _stockOptions.ctx;
+  if (_stockOptions.inflight) return _stockOptions.inflight;
+  _stockOptions.inflight = (async () => {
+    await Promise.allSettled(list.map(async (sym) => {
+      const desk = await getOptionsDesk(sym).catch(() => null);
+      if (!desk?.ok || !desk.optionsCtx) { _stockOptions.ctx.delete(sym); return; }
+      const src = String(desk.source || '');
+      if (!REAL_CHAIN_RE.test(src)) { _stockOptions.ctx.delete(sym); return; } // model chain — never votes
+      _stockOptions.ctx.set(sym, { ...desk.optionsCtx, __source: src, __at: Date.now() });
+    }));
+    // symbols no longer in the top slice age out on the next warm
+    for (const key of [..._stockOptions.ctx.keys()]) {
+      if (!list.includes(key) && Date.now() - (_stockOptions.ctx.get(key)?.__at || 0) > _STOCK_OPTIONS_TTL) {
+        _stockOptions.ctx.delete(key);
+      }
+    }
+    _stockOptions.at = Date.now();
+    return _stockOptions.ctx;
+  })();
+  try { return await _stockOptions.inflight; } finally { _stockOptions.inflight = null; }
+}
+
 function _indexOptionsSnapshot() {
   if (Date.now() - _indexOptions.at > _INDEX_OPTIONS_TTL) return null;
   return _indexOptions.ctx;
@@ -1087,6 +1140,10 @@ async function _computeBoard(mkt, deps, opts = {}) {
     // Feed the fresh rows into the hot engine — promoted names join
     // T1 from the NEXT cycle (this cycle already has its scan set).
     if (tieredLive) absorbScanRows(Object.values(tv));
+    // accuracy-plan Phase 2.2: warm the TOP-slice stock option chains
+    // (the turnover-ranked T1 head). Fire-and-forget — this cycle
+    // attaches the cached ctx, the refresh lands for the next board.
+    _refreshStockOptionsCtx((tiered?.scan || INDIA_UNIVERSE)).catch(() => {});
     for (const row of Object.values(tv)) {
       const ctx = await buildIndiaStockCtx(row, regime);
       if (ctx) { attachSuperCtx(ctx, row, null); contexts.push(ctx); }
@@ -2095,6 +2152,14 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
         };
       })();
     }
+    // accuracy-plan Phase 2.2: a deep dive on an F&O STOCK gets the same
+    // per-stock option ctx the board attaches (cached snapshot; the deep
+    // path itself never triggers a chain fetch — the board's warm owns
+    // the budget). Absent → stays the honest structural abstain.
+    if (ctx && !ctx.isIndex && !ctx.options) {
+      const stkOpt = _stockOptionsSnapshot(ctx.symbol);
+      if (stkOpt) ctx.options = stkOpt;
+    }
   }
   if (!ctx) {
     const payload = { ok: false, reason: `No data for ${sym} on ${mkt}` };
@@ -2535,5 +2600,16 @@ export function __clearSignalCaches() {
 /** v9.2.1: inject a board cache entry of a given age (ms) — resilience tests. */
 export function __setBoardCacheForTests(mkt, payload, ageMs = 0) {
   _cache.set(`board:${mkt}`, { at: Date.now() - Math.max(0, Number(ageMs) || 0), payload });
+}
+/** accuracy-plan Phase 2.2 test hook: inject/inspect the per-stock
+ *  option-ctx store (symbols → optionsCtx) + read the top-N knob. */
+export function __stockOptionsForTests() {
+  return {
+    store: _stockOptions,
+    snapshot: _stockOptionsSnapshot,
+    topN: _STOCK_OPTIONS_TOP_N,
+    setCtx: (sym, ctx) => { _stockOptions.ctx.set(sym, ctx); _stockOptions.at = Date.now(); },
+    clear: () => { _stockOptions.ctx.clear(); _stockOptions.at = 0; _stockOptions.inflight = null; },
+  };
 }
 

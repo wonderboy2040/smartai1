@@ -9,10 +9,16 @@
 //   • Diversification health — HHI + top-1/top-3 concentration,
 //     pro-advisor Hinglish note
 //   • Market split bar (India / USA / Crypto)
-// Zero server calls — re-renders on every live tick snapshot.
+// ACCURACY-PLAN PHASE 4 — the AI OVERLAY: the same quant payload
+// POSTs to /api/ai/portfolio-narrative, where the server adds the
+// layers the client cannot compute (live MacroRegime seats + top
+// holdings' fresh ensemble views), raises RED FLAGS (concentration
+// × regime × "top holding's AI view flipped bearish") and narrates
+// the whole thing in plain Hinglish (quant-computes, LLM-narrates).
 // ============================================================
-import { memo, useMemo } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { computePortfolioInsights, type InsightAsset } from '../../utils/portfolioInsights';
+import { apiFetch } from '../../utils/api';
 
 export interface InsightsPanelAsset {
   label: string;
@@ -59,6 +65,9 @@ function MiniList({ title, titleCls, rows, field }: {
   );
 }
 
+interface RedFlag { level: 'high' | 'warn'; code: string; title: string; detail: string }
+interface NarrativeState { narrative: string; redFlags: RedFlag[]; source: string | null }
+
 export const PortfolioInsights = memo(function PortfolioInsights({ assets, totalValueINR }: {
   assets: InsightsPanelAsset[]; totalValueINR: number;
 }) {
@@ -66,6 +75,33 @@ export const PortfolioInsights = memo(function PortfolioInsights({ assets, total
     () => computePortfolioInsights(assets, totalValueINR),
     [assets, totalValueINR],
   );
+
+  // ---- accuracy-plan Phase 4: the AI overlay call ----
+  const [ai, setAi] = useState<NarrativeState | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiErr, setAiErr] = useState(false);
+  const explain = useCallback(async () => {
+    if (aiBusy) return;
+    setAiBusy(true); setAiErr(false);
+    try {
+      // the client's OWN quant numbers are the payload — the server
+      // cross-checks them against live regimes + ensemble views.
+      const holdings = [...assets].sort((a, b) => b.valINR - a.valINR).slice(0, 12).map(a => ({
+        label: a.label, group: a.group, valINR: a.valINR,
+        weightPct: totalValueINR > 0 ? (a.valINR / totalValueINR) * 100 : 0,
+        plPct: a.plPct,
+      }));
+      const res = await apiFetch('/api/ai/portfolio-narrative', {
+        method: 'POST',
+        body: JSON.stringify({ insights: result, holdings, totalValueINR }),
+      });
+      const r = await res.json().catch(() => null);
+      if (r?.ok && typeof r.narrative === 'string') {
+        setAi({ narrative: r.narrative, redFlags: Array.isArray(r.redFlags) ? r.redFlags : [], source: r.source || null });
+      } else setAiErr(true);
+    } catch { setAiErr(true); }
+    finally { setAiBusy(false); }
+  }, [aiBusy, assets, result, totalValueINR]);
 
   if (assets.length === 0) return null;
 
@@ -145,6 +181,48 @@ export const PortfolioInsights = memo(function PortfolioInsights({ assets, total
             INR-home bias: {marketSplit.india > 70 ? 'heavy India tilt — US/crypto thoda add karke FX diversify karein' : marketSplit.india < 30 ? 'India exposure kam — home-market opportunities miss ho rahe hain' : 'balanced spread hai'}
           </p>
         </div>
+      </div>
+
+      {/* ---- accuracy-plan Phase 4: the AI overlay (red flags + coach) ---- */}
+      <div className="mt-3 rounded-xl bg-black/40 border border-white/5 px-3 py-2.5">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">AI Overlay</span>
+            <span className="text-[9px] text-slate-600 font-mono">MacroRegime × concentration × holdings ke ensemble views</span>
+          </div>
+          <button
+            onClick={explain}
+            disabled={aiBusy}
+            className="px-3 py-1.5 rounded-xl text-[10px] font-black bg-cyan-600/90 text-white border border-cyan-500 hover:bg-cyan-500 disabled:opacity-50"
+          >
+            {aiBusy ? '🧠 SOCH RAHA HU…' : ai ? '🧠 REFRESH' : '🧠 AI EXPLAIN'}
+          </button>
+        </div>
+        {aiErr && <div className="text-[10px] text-red-400 font-mono mt-2">AI overlay unavailable — thodi der baad try karo (LLM/regime feed down hai).</div>}
+        {ai && (
+          <div className="mt-2 space-y-2">
+            {ai.redFlags.length > 0 && (
+              <div className="space-y-1.5">
+                {ai.redFlags.map((f, i) => (
+                  <div key={`${f.code}-${i}`} className={`text-[10px] rounded-lg px-2.5 py-1.5 border ${
+                    f.level === 'high' ? 'bg-red-500/10 border-red-500/40 text-red-300' : 'bg-amber-500/10 border-amber-500/30 text-amber-300'}`}>
+                    <b>{f.level === 'high' ? '🔴' : '🟠'} {f.title}</b>
+                    <span className="block text-[9px] mt-0.5 opacity-80">{f.detail}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="text-[11px] leading-relaxed text-slate-300 whitespace-pre-wrap border-l-2 border-cyan-500/40 pl-3">
+              {ai.narrative}
+            </div>
+            {ai.source && <div className="text-[8px] text-slate-600 font-mono">source: {ai.source} · Telegram pe /portfolio se bhi digest milta hai</div>}
+          </div>
+        )}
+        {!ai && !aiErr && (
+          <div className="text-[9px] text-slate-600 font-mono mt-1.5">
+            AI EXPLAIN dabao — server live regime seats + aapke top holdings ke fresh ensemble views se red flags nikaalke poora X-Ray plain Hinglish me samjhayega.
+          </div>
+        )}
       </div>
     </div>
   );

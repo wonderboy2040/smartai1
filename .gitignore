@@ -39,3 +39,8 @@ server/data/mcp-indmoney.json
 .verify-*
 .e2e-*
 tsconfig.tsbuildinfo
+
+# ML Service generated stores and models
+ml-service/store/
+
+

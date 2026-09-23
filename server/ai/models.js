@@ -627,7 +627,22 @@ function intradayTapeMTF(ctx) {
     pts.push('2 of 3 timeframes aligned — partial confluence');
   }
 
-  return vote(anchor.dir, clamp(conf), pts.filter(Boolean));
+  const out = vote(anchor.dir, clamp(conf), pts.filter(Boolean));
+  // ACCURACY-PLAN PHASE 2.1 — the A/B SHADOW arm: the byte-identical
+  // plain 15m read (the v9.3 seat, NO agreement boost/penalty) rides
+  // the vote so the ledger journals BOTH arms on every executed signal.
+  // Settled outcomes then measure the MTF upgrade's calibration delta
+  // (Brier + conf separation) vs the plain 15m seat — the "is w1.6
+  // genuinely better than w1.3" question answered by data, not guesses.
+  // Only stamped when the MTF payload actually ran (degraded fallbacks
+  // are the plain seat already — no arm to compare).
+  try {
+    const abPlain = tapeVote(m.m15, '15m');
+    if (abPlain && abPlain.dir !== 0) {
+      out.__abShadow = { id: 'ab_tape15m', dir: abPlain.dir, conf: abPlain.conf, weight: 1.3 };
+    }
+  } catch { /* shadow is best-effort — the MTF vote itself is the product */ }
+  return out;
 }
 
 // ------------------------------------------------------------

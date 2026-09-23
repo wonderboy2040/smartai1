@@ -326,8 +326,8 @@ def train_meta_ensemble(all_symbols_df: pd.DataFrame = None) -> dict:
     if len(dist) < 2:
         return {"error": f"Degenerate label distribution: {dist}"}
 
-    print(f"[meta-ensemble] training on {len(X)} samples, {X.shape[1]} vote-features")
-    print(f"[meta-ensemble] label distribution: {dist}")
+    print(f"[mmeta-ensemble] training on {len(X)} samples, {X.shape[1]} vote-features")
+    print(f"[mmeta-ensemble] label distribution: {dist}")
 
     try:
         import lightgbm as lgb
@@ -357,7 +357,7 @@ def train_meta_ensemble(all_symbols_df: pd.DataFrame = None) -> dict:
     joblib.dump(clf, META_ENSEMBLE_PATH)
     joblib.dump(meta_feature_names(), META_FEATURE_COLS_PATH)
 
-    print(f"[meta-ensemble] saved {META_ENSEMBLE_PATH} · walk-forward weighted-F1: {avg_f1:.3f}")
+    print(f"[mmeta-ensemble] saved {META_ENSEMBLE_PATH} · walk-forward weighted-F1: {avg_f1:.3f}")
     return {
         "status": "trained",
         "samples": int(len(X)),

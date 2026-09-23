@@ -70,23 +70,36 @@ services:
       - key: DHAN_ACCESS_TOKEN
         sync: false
       # ---- v10.5 UPGRADE FLAGS (4-upgrade plan) ----
+      # ACCURACY-PLAN PHASE 1 (2026-09-23): the three proven-safe accuracy
+      # flags now ship ON in the blueprint — V2 models (SentimentPulse/
+      # InstFlow/FundaCheck, all keyless free feeds, honest-abstain on
+      # outage), MESH seats (SHADOW weight-0 until edge-proven) and MTF
+      # confluence (5m/15m/1h tape vote). REGIME_WEIGHTS and KELLY_SIZING
+      # stay OFF (backtest-gated per plan Phase 6).
+      - key: AI_ENABLE_V2_MODELS
+        value: "true"
       # META-ENSEMBLE (Upgrade 4): route the 14-model votes through the
-      # trained LightGBM meta-learner on the ml-service. Default OFF —
-      # the in-process weighted ensemble stays authoritative until the
-      # walk-forward backtest (backtest.py --strategy meta_ensemble)
-      # proves the meta-learner wins.
+      # trained LightGBM meta-learner on the ml-service.
+      # ACCURACY-PLAN PHASE 5: ON — the baseline artifacts ship in the
+      # repo (ml-service/store/models, 6,630 samples · 29 vote-features)
+      # and the Node side honest-degrades to the in-process weighted
+      # ensemble whenever the ml-service is unreachable — flag ON is
+      # safe in every deploy shape.
       - key: AI_ENABLE_META_ENSEMBLE
-        sync: false
+        value: "true"
       # Where the ml-service (FastAPI) lives, if deployed. The Node
       # server proxies /api/ml/meta-ensemble to it and falls back to
-      # the weighted ensemble when unreachable.
+      # the weighted ensemble when unreachable. The ml-service itself
+      # now arms the WEEKLY retrain worker at FastAPI startup
+      # (META_RETRAIN_INTERVAL_HOURS=168) — deploy it from
+      # ml-service/Dockerfile; set META_RETRAIN_* knobs there.
       - key: ML_SERVICE_URL
         sync: false
       # MTF CONFLUENCE (Upgrade 1): 5m/15m/1h time-frame confluence
       # engine on the India intraday desk (IntradayTapeMTF, weight
       # 1.6, replaces the plain 15m tape when ON).
       - key: AI_ENABLE_MTF_CONFLUENCE
-        sync: false
+        value: "true"
       # ---- v11.6 MESH-BACKED ENSEMBLE SEATS ----
       # The MCP data-agent mesh finally VOTES: 4 new seats
       # (InstFlowPro / TechConsensus / FundaProPlus / CryptoOnChainPro)
@@ -95,8 +108,10 @@ services:
       # honesty-gated abstention on stale data; T3-only budget-aware
       # warm. Observe via /api/ai/status meshModels + the MCP Data Mesh
       # panel + weekly review's Mesh Seats section.
+      # ACCURACY-PLAN PHASE 1: ON in the blueprint (shadow seats are
+      # weight-0 safe; missing agent keys = honest abstain, never fake).
       - key: AI_ENABLE_MESH_MODELS
-        sync: false
+        value: "true"
       - key: AI_MESH_T3_TOP_N
         sync: false
       - key: AI_MESH_T3_BATCH

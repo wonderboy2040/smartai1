@@ -58,6 +58,10 @@ import {
 // v12.8 SUPERINTELLIGENCE REVERSAL RECOVERY — ₹ loss-cap → flip →
 // booking cycles (config echo + live cycle board for the UI).
 import { loadReversalConfig, reversalCyclesView } from './reversalEngine.js';
+// accuracy-plan Phase 4: the PORTFOLIO AI OVERLAY — red-flag engine
+// (concentration × MacroRegime × top-holding ensemble views) + the
+// quant-computes/LLM-narrates portfolio coach.
+import { portfolioRedFlags, narratePortfolio } from './portfolioNarrative.js';
 // v12.9: manual trades are ENGINE-CONNECTED — their ₹ cycles ride the
 // same board (manualReversalCycles groups trades by t.reversal.cycleId).
 import { manualReversalCycles } from './manualTrades.js';
@@ -102,7 +106,7 @@ import { wickFilterStatus } from './wickFilter.js';
 import { ledgerStatus, recentEntries, verifyLedger } from './ledger.js';
 import { adaptiveStatus } from './adaptive.js';
 import { regimeReweightView } from './ensemble.js';
-import { trustReport, governance, modelPerformanceWindows, councilCalibration } from './trust.js';
+import { trustReport, governance, modelPerformanceWindows, councilCalibration, mtfABReport } from './trust.js';
 import { perfReport } from './perf.js';
 import { correlationMatrix, pairCorrelation } from './correlation.js';
 // v10.15 GAP 2: Event Guard — the board attaches the next scheduled
@@ -893,6 +897,67 @@ export function registerAITradingRoutes(app, deps) {
     }
   });
 
+  // ---------------- accuracy-plan Phase 4: PORTFOLIO AI OVERLAY ----------------
+  // POST /api/ai/portfolio-narrative — the client's OWN computed
+  // insights (sync-truth quant) cross-checked against the live
+  // MacroRegime seats + the top holdings' fresh ensemble views, red
+  // flags raised, and ONE LLM narration in plain Hinglish. The client
+  // stays the quant source of truth; the server adds the AI layer it
+  // cannot compute client-side (regime + ensemble views).
+  app.post('/api/ai/portfolio-narrative', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const insights = body.insights && typeof body.insights === 'object' ? body.insights : {};
+      const holdings = Array.isArray(body.holdings)
+        ? body.holdings.slice(0, 12).map(h => ({
+            label: String(h?.label || '').slice(0, 24),
+            group: ['india', 'usa', 'crypto'].includes(h?.group) ? h.group : 'crypto',
+            weightPct: Number(h?.weightPct) || 0,
+            plPct: Number.isFinite(Number(h?.plPct)) ? Number(h.plPct) : null,
+            valINR: Number(h?.valINR) || 0,
+          })).filter(h => h.label)
+        : [];
+      const totalValueINR = Number(body.totalValueINR) || 0;
+      if (holdings.length === 0 && !insights.health) {
+        return jsonError(res, 400, 'insights/holdings required (client quant payload)');
+      }
+      // the server-side layers the client cannot compute: live regimes
+      // + fresh ensemble views on the top holdings.
+      const [regimeIndia, regimeCrypto] = await Promise.all([
+        buildRegime('INDIA').catch(() => null),
+        buildRegime('CRYPTO').catch(() => null),
+      ]);
+      const mkOf = { india: 'INDIA', usa: 'CRYPTO', crypto: 'CRYPTO' };
+      const aiViews = {};
+      await Promise.allSettled(holdings.slice(0, 8).map(async (h) => {
+        const board = await getSignals(mkOf[h.group] || 'CRYPTO', depsForSignals(), { limit: 40 }).catch(() => null);
+        const row = (board?.signals || []).find(s => String(s?.symbol || '').toUpperCase() === h.label.toUpperCase());
+        if (row) aiViews[h.label.toUpperCase()] = { side: row.side, confidence: row.confidence, grade: row.grade };
+      }));
+      const redFlags = portfolioRedFlags(
+        { marketSplit: insights.marketSplit, health: insights.health, topWeight: insights.topWeight, holdings },
+        { regimes: { INDIA: regimeIndia, CRYPTO: regimeCrypto }, aiViews },
+      );
+      let usdInr = 84;
+      try { usdInr = (await fetchUsdInr()) || 84; } catch { /* default */ }
+      const narration = await narratePortfolio({ insights, redFlags, holdings, totalValueINR, usdInr }, { KEYS: depsForSignals()?.KEYS });
+      res.set('Cache-Control', 'no-store');
+      res.json({
+        ok: true,
+        redFlags,
+        narrative: narration.narrative,
+        source: narration.source,
+        regime: {
+          INDIA: regimeIndia ? { label: regimeIndia.label || regimeIndia.regime || null } : null,
+          CRYPTO: regimeCrypto ? { label: regimeCrypto.label || regimeCrypto.regime || null } : null,
+        },
+        aiViews,
+      });
+    } catch (e) {
+      jsonError(res, 500, 'portfolio narrative failed', e);
+    }
+  });
+
   // ---------------- v10.1: crypto desk AI agent (chat) ----------------
   // The CoinDCX tab's conversational agent — same pattern as
   // POST /api/intraday-agent (messages[] in, tool-calling ReAct loop,
@@ -1035,6 +1100,11 @@ export function registerAITradingRoutes(app, deps) {
           accountability: meshModelAccountability(),
           correlation: meshCorrelationView(),
         },
+        // accuracy-plan Phase 2.1: the MTF-vs-plain-15m A/B verdict —
+        // both arms journaled on every settled execution since this
+        // release; this block answers "is w1.6 genuinely better than
+        // w1.3" with measured separation + Brier, never guesses.
+        mtfAB: mtfABReport(),
       });
     } catch (e) {
       jsonError(res, 500, 'trust report failed', e);

@@ -103,6 +103,25 @@ class TrainRequest(BaseModel):
     symbols: Optional[List[str]] = None
 
 
+# ============================================================
+# ACCURACY-PLAN PHASE 5: the meta-ensemble retrain rides THIS process.
+# The weekly background worker (models/retrain_scheduler.py — boot train
+# + META_RETRAIN_INTERVAL_HOURS cadence, default 168h/weekly) starts as
+# a daemon thread at FastAPI startup: a single Render service carries
+# the API AND the retrain loop, no separate cron needed. A failed
+# retrain keeps the previous pkl in place (graceful degrade) and never
+# kills the API. META_RETRAIN_DAEMON=false hands the cadence to an
+# external `python -m models.retrain_scheduler --once` cron instead.
+# ============================================================
+@app.on_event("startup")
+async def _start_retrain_worker():
+    try:
+        from models.retrain_scheduler import start_retrain_daemon
+        start_retrain_daemon()
+    except Exception as _e:  # noqa: BLE001 — the API must boot regardless
+        print(f"ml-service] retrain daemon not started: {_e}")
+
+
 @app.get("/health")
 async def health():
     from app.llm_router import get_provider_status

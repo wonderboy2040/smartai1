@@ -109,9 +109,20 @@ export function recordExecution(signal, meta = {}) {
       riskPct: signal.plan.riskPct, rewardRisk: signal.plan.rewardRisk,
     } : null,
     // per-model dir map (the attribution input for modelStats)
+    // accuracy-plan Phase 2.1: a vote carrying __abShadow (the MTF
+    // seat's plain-15m A/B arm) journals BOTH — settled outcomes then
+    // attribute each arm separately and trust.js mtfABReport() can
+    // say whether the MTF confidence layer is genuinely sharper.
     votes: Object.fromEntries((signal.votes || [])
       .filter(v => v && v.id)
-      .map(v => [v.id, { dir: v.dir || 0, conf: v.conf || 0 }])),
+      .flatMap(v => {
+        const rows = [[v.id, { dir: v.dir || 0, conf: v.conf || 0 }]];
+        const ab = v.__abShadow;
+        if (ab && ab.id && Number(ab.dir) !== 0) {
+          rows.push([ab.id, { dir: Number(ab.dir), conf: Number(ab.conf) || 0, shadow: true }]);
+        }
+        return rows;
+      })),
     // v11.0: the Global Market Council stamp — per-AGENT attribution
     // rides the SAME tamper-evident chain (trust.js councilAgentStats
     // reads exactly this shape). Abstaining seats are absent keys.

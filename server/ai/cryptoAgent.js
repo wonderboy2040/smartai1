@@ -220,6 +220,25 @@ export const CRYPTO_AGENT_TOOLS = [
       },
     },
   },
+  // accuracy-plan Phase 3.3: TOOL PARITY with the intraday Pro Trader
+  // agent — the crypto desk gets the SAME live news search (Tavily)
+  // the India desk has: "why is BTC moving" / regulation catalysts /
+  // altcoin news all ground the answer in real headlines instead of
+  // guesses.
+  {
+    type: 'function',
+    function: {
+      name: 'search_market_news',
+      description: 'Live financial news search (Tavily). Use for crypto market catalysts, regulation news, coin-specific headlines ("why is X pumping"), macro/Fed/ETF flows, or any "why is this moving" question.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query, e.g. "Bitcoin ETF flows today" or "SOL network upgrade news"' },
+        },
+        required: ['query'],
+      },
+    },
+  },
 ];
 
 function geminiTools() {
@@ -237,7 +256,7 @@ function geminiTools() {
 // ------------------------------------------------------------
 export function buildCryptoSystemPrompt(ctx) {
   const { utcTime, btcRegime, fng, funding, connected, aiOnline } = ctx;
-  return `You are "CRYPTO DESK PRO" — an elite crypto trading desk head (15+ years, CoinDCX India + global perps) running a 14-model superintelligence ensemble with an AI Council (LLM) verification layer.
+  return `You are "CRYPTO DESK PRO" — an elite crypto trading desk head (15+ years, CoinDCX India + global perps) running the superintelligence ensemble: 14 core models (trend/momentum/volatility/volume/pattern/SR/options/regime/SMC/MTF-tape/AI-Council) + the V2 accuracy seats when enabled (SentimentPulse news+Fear&Greed+funding sentiment, InstFlow orderbook depth imbalance, FundaCheck valuation) + mesh-backed seats in SHADOW mode (InstFlowPro, TechConsensus, FundaProPlus, CryptoOnChainPro — journaled votes at weight 0 until settled outcomes prove their edge; treat their reads as CONTEXT, not conviction). The AI Council (LLM) verification layer sits on top.
 
 CURRENT DESK CONTEXT (auto-injected, always trust this over assumptions):
 - UTC time: ${utcTime} (crypto trades 24/7 — no market-closed excuses)
@@ -253,6 +272,7 @@ HOW YOU WORK (agentic protocol):
 - Perp hold > 1 day → get_funding_rate (funding is a real carrying cost)
 - ANY futures entry → get_perp_intel first (positioning check: OI build direction, taker aggression, crowding) — positioning AGAINST the signal = fuel missing, size down or skip
 - "kitni probability hai / pakka hai / should I take this" → get_win_probability (P(win) vs breakeven + EV in R) — cite BOTH numbers in the answer
+- "why is X moving" / regulation / ETF flows / catalyst news → search_market_news (real headlines, never guesses)
 - Risk / "kitna bura gaya" / losing day → get_risk_status (kill-switch + caps + blockers)
 - P&L questions → get_pnl (period: today/7d/30d/all)
 - Track-record / accuracy questions → get_track_record
@@ -659,6 +679,34 @@ async function executeCryptoTool(name, args, deps) {
           perSymbol: (out.perSymbol || []).map(p => ({ symbol: p.symbol, ok: p.ok, trades: p.stats?.trades ?? 0, winRate: p.stats?.winRate ?? null, avgR: p.stats?.avgR ?? null })),
           recentTrades: (out.trades || []).slice(0, 8).map(t => ({ symbol: t.symbol, side: t.side, r: t.r, reason: t.reason, holdBars: t.holdBars })),
           disclaimer: out.disclaimer,
+        };
+      }
+
+      // accuracy-plan Phase 3.3: the parity news tool — same Tavily
+      // search the intraday agent has (crypto flavor of the query).
+      case 'search_market_news': {
+        const query = String(args.query || '').trim();
+        if (!query) return { error: 'query required' };
+        const tavilyKey = KEYS?.tavily;
+        if (!tavilyKey) return { error: 'News search not configured (no Tavily key on server).' };
+        const res = await fetch('https://api.tavily.com/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            api_key: tavilyKey,
+            query: `${query} crypto market latest`,
+            search_depth: 'basic', include_answer: true, max_results: 4, topic: 'finance',
+          }),
+          signal: AbortSignal.timeout(9000),
+        });
+        if (!res.ok) return { error: `news search failed (${res.status})` };
+        const d = await res.json();
+        return {
+          query,
+          aiSummary: d.answer || 'No summary',
+          results: (d.results || []).slice(0, 3).map(r => ({
+            title: r.title, content: (r.content || '').substring(0, 200), url: r.url,
+          })),
         };
       }
 
