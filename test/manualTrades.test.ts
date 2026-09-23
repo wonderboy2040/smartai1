@@ -30,8 +30,19 @@ vi.mock('../server/lib/store.js', () => ({
   saveJSON: (f, v) => { _disk.set(f, v); },
 }));
 // ---- no backup IO ----
+// v12.7: manualTrades now imports restoreBackup + backupConfigured (the
+// encrypted durable boot restore) and durablePut/decryptJSON — the mock
+// factory must provide them or the module-eval boot-restore guard throws.
 vi.mock('../server/intraday/backup.js', () => ({
   scheduleBackup: vi.fn(),
+  restoreBackup: vi.fn(async () => null),
+  backupConfigured: vi.fn(() => false),
+  flushBackupNow: vi.fn(),
+}));
+vi.mock('../server/mcp/durable.js', () => ({
+  durablePut: vi.fn(() => false),
+  decryptJSON: vi.fn(() => null),
+  durableConfigured: vi.fn(() => false),
 }));
 // ---- controllable live tick store ----
 const _ticks = vi.hoisted(() => new Map());

@@ -21,4 +21,5 @@ export {
   backupConfigured,
   scheduleBackup,
   restoreBackup,
+  flushBackupNow, // v12.7: shutdown flush rides the same shared instance
 } from '../intraday/backup.js';

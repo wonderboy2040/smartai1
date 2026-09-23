@@ -116,7 +116,13 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
     // universe (India 500+ names / 100+ pairs) can never race the abort.
     const rescan = !!opts?.rescan;
     const timeoutMs = rescan ? 90_000 : 30_000;
-    const qs = (m: string) => `market=${m}&limit=10&t=${Date.now()}${rescan ? '&rescan=1' : ''}`;
+    // v12.7 BANDWIDTH: the `t=${Date.now()}` cache-buster is GONE — every
+    // 30s poll used to force a full re-download of the (identical)
+    // 100-400KB board inside the server's 60s cache window. Without the
+    // buster, Express's weak ETag answers 304 for the byte-identical
+    // cached board (zero body transfer). RESCAN keeps a distinct URL
+    // (&rescan=1) so it always bypasses caches — by design.
+    const qs = (m: string) => `market=${m}&limit=10${rescan ? '&rescan=1' : ''}`;
     const jobs: Array<Promise<void>> = [];
     let anyOk = false;
     const markOk = () => { anyOk = true; };

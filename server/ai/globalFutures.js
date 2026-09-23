@@ -655,7 +655,13 @@ export async function executeGlobalSignal(opts) {
   // PAPER practice fallback (the futures desk's honesty model)
   let effectiveSignal = signal;
   let synthNote = null;
-  const reqSide = String(side || '').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
+  // v12.7 (recheck R1-#9): an ABSENT side no longer silently defaults
+  // LONG — an unspecified request inherits the fresh signal's side (the
+  // client always sends side; a missing side is a malformed call, and
+  // minting a LONG from nothing was a free directional bias).
+  const _reqRaw = String(side || '').toUpperCase();
+  const reqSide = _reqRaw === 'SHORT' || _reqRaw === 'LONG' ? _reqRaw
+    : (signal.side === 'SHORT' || signal.side === 'LONG' ? signal.side : 'LONG');
   const sideConflict = signal.side !== 'FLAT' && signal.side !== reqSide;
   if (sideConflict || signal.side === 'FLAT' || !signal.plan) {
     const { buildTradePlan } = await import('./ensemble.js');

@@ -81,12 +81,13 @@ describe('futures.js — v11.3 fetchFuturesPrices resilience chain', () => {
     expect(btc.mark).toBeCloseTo(76_099.9, 6);
   });
 
-  it('leg 3 — REST dead + book empty + Binance reachable: same-domain synth rows (source binance-fut)', async () => {
-    routeFetch(url => (url === BINANCE_FUT
-      ? { ok: true, status: 200, json: async () => ([
+  it('leg 3 — REST dead + book empty + Binance reachable: same-domain synth rows (source binance-fut) + the v12.7 ?symbols= universe filter', async () => {
+    let fapiUrl = '';
+    routeFetch(url => (url.startsWith(BINANCE_FUT)
+      ? (() => { fapiUrl = url; return { ok: true, status: 200, json: async () => ([
         { symbol: 'BTCUSDT', lastPrice: '61000.5', priceChangePercent: '1.1', highPrice: '61500', lowPrice: '60200', volume: '21000.5', markPrice: '60999.1' },
         { symbol: 'ETHUSDT', lastPrice: '3120.75', priceChangePercent: '-0.4', highPrice: '3150', lowPrice: '3080', volume: '15000.2' },
-      ]) }
+      ]) }; })()
       : restDead()));
     const rows = await fetchFuturesPrices();
     const btc = rows.find(r => r.pair === 'B-BTC_USDT')!;
@@ -94,6 +95,15 @@ describe('futures.js — v11.3 fetchFuturesPrices resilience chain', () => {
     expect(btc.source).toBe('binance-fut');
     expect(btc.changePct).toBeCloseTo(1.1, 6);
     expect(rows.find(r => r.pair === 'B-ETH_USDT')!.last).toBeCloseTo(3_120.75, 6);
+    // v12.7 BANDWIDTH LOCK: the dark-fallback fapi leg must request ONLY the
+    // board's universe (FUTURES_UNIVERSE) via Binance's ?symbols= JSON-array
+    // param — never the full ~500-symbol 1-2MB book.
+    expect(fapiUrl.startsWith(`${BINANCE_FUT}?symbols=`)).toBe(true);
+    const symbols = JSON.parse(decodeURIComponent(fapiUrl.slice(`${BINANCE_FUT}?symbols=`.length)));
+    expect(Array.isArray(symbols)).toBe(true);
+    expect(symbols).toContain('BTCUSDT');
+    expect(symbols).toContain('ETHUSDT');
+    expect(symbols.length).toBeLessThanOrEqual(20); // the static universe, never the ~500-symbol book
   });
 
   it('leg 3′ — Bybit linear serves when Binance fapi is dark (source bybit-fut)', async () => {
@@ -112,7 +122,7 @@ describe('futures.js — v11.3 fetchFuturesPrices resilience chain', () => {
   it('the synth leg is negative-cached — an empty Binance book is NOT re-hammered on the next immediate call', async () => {
     let fapiHits = 0;
     routeFetch(url => {
-      if (url === BINANCE_FUT) { fapiHits++; return { ok: true, status: 200, json: async () => [] }; }
+      if (url.startsWith(BINANCE_FUT)) { fapiHits++; return { ok: true, status: 200, json: async () => [] }; }
       return restDead();
     });
     await expect(fetchFuturesPrices()).rejects.toThrow(); // empty book → all legs dead → throw
@@ -129,7 +139,7 @@ describe('futures.js — v11.3 fetchFuturesPrices resilience chain', () => {
     await fetchFuturesPrices();
     // step 2: EVERYTHING goes dark (REST, Binance, Bybit) — no synth leg
     // can answer (fapi returns an empty array), no book
-    routeFetch(url => (url === BINANCE_FUT
+    routeFetch(url => (url.startsWith(BINANCE_FUT)
       ? { ok: true, status: 200, json: async () => [] }
       : restDead()));
     const rows = await fetchFuturesPrices();

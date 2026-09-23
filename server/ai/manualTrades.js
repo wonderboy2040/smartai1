@@ -36,7 +36,13 @@
 // mirrored to the GitHub backup branch — the paper-desk pattern).
 // ============================================================
 import { loadJSON, saveJSON } from '../lib/store.js';
-import { scheduleBackup } from '../intraday/backup.js';
+// v12.7 (recheck R3-HIGH-1): manual-trade state rides the ENCRYPTED durable
+// channel (AES-256-GCM envelope) — the plaintext scheduleBackup push put
+// holdings on a public repo branch. Boot restore added at the same time:
+// the plaintext remote existed but was NEVER read back — restarts lost
+// the manual tracker silently (recheck R3: "dead weight + data loss").
+import { restoreBackup, backupConfigured } from '../intraday/backup.js';
+import { durablePut, decryptJSON } from '../mcp/durable.js';
 import { getTick } from '../liveFeed.js';
 import { bsPrice, yearsToExpiry } from './lib/blackScholes.js';
 import { sideOf, classifyConviction, quorumOfSignal } from './positionConviction.js';
@@ -54,15 +60,48 @@ function _persist() {
   _saveTimer = setTimeout(() => {
     _saveTimer = null;
     saveJSON(FILE, _state);
-    try { scheduleBackup(FILE, _state); } catch { /* backup optional */ }
+    // v12.7: ENCRYPTED durable mirror (was plaintext scheduleBackup).
+    try { durablePut(FILE, _state); } catch { /* backup optional */ }
   }, 1000);
   if (typeof _saveTimer.unref === 'function') _saveTimer.unref();
 }
 
-/** v9.1-parity: synchronous flush for graceful shutdown. */
+/** v9.1-parity: synchronous flush for graceful shutdown.
+ *  v12.7 (recheck R3-#4): also re-arms the encrypted durable push so the
+ *  remote copy rides index.js's flushBackupNow() in the same shutdown. */
 export function flushManualState() {
   if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
   saveJSON(FILE, _state);
+  try { durablePut(FILE, _state); } catch { /* backup optional */ }
+}
+
+/** v12.7: boot restore (paper-desk parity) — pull the last remote backup
+ *  (encrypted envelope OR legacy plaintext) when the local state came up
+ *  empty, so a Render restart no longer wipes the manual tracker. */
+let _manualBootRestoring = false;
+async function _bootRestore() {
+  if (_manualBootRestoring) return;
+  _manualBootRestoring = true;
+  try {
+    const remote = await restoreBackup(FILE);
+    const remoteState = remote && remote.alg === 'aes-256-gcm' ? decryptJSON(remote) : remote;
+    const remoteTrades = Array.isArray(remoteState?.trades) ? remoteState.trades : [];
+    if (remoteTrades.length > ((_state.trades || []).length)
+      && Number.isFinite(remoteState?.nextId)) {
+      _state = { ...remoteState, trades: remoteTrades };
+      saveJSON(FILE, _state);
+      console.log(`[manual-trades] boot-restore: recovered ${remoteTrades.length} trades from remote backup`);
+    }
+  } catch (e) {
+    console.warn('[manual-trades] boot-restore failed:', e?.message || e);
+  } finally {
+    _manualBootRestoring = false;
+  }
+}
+// fire-and-forget at module eval (best-effort; never blocks the route
+// mount — the first write merges whatever landed)
+if ((_state.trades || []).length === 0 && backupConfigured()) {
+  _bootRestore().catch(() => {});
 }
 
 export function __resetManualStoreForTests() {

@@ -518,3 +518,38 @@ describe('v6.4 fitPlanToRiskCap — execute-time auto-fit', () => {
     expect(fitPlanToRiskCap({ ...mk(8), plan: null }, 5).note).toBeNull();
   });
 });
+
+// ============================================================
+// v12.7 — EXACT TIE HONESTY (recheck R1-#5)
+// ------------------------------------------------------------
+// `bull >= bear` used to mint a LONG call on a committee that was
+// EXACTLY split — a silent directional bias on every desk that shares
+// this aggregator. An exact weight tie is now an honest FLAT.
+// ============================================================
+describe('v12.7 aggregateVotes — exact bull/bear weight tie → honest FLAT', () => {
+  it('a perfect tie returns FLAT/NEUTRAL with the split summary (never a minted LONG)', () => {
+    const votes = [
+      { id: 'a', name: 'A', role: 'trend', weight: 1.2, dir: 1, conf: 80 },
+      { id: 'b', name: 'B', role: 'momentum', weight: 1.2, dir: -1, conf: 80 },
+    ];
+    const out = aggregateVotes(votes);
+    expect(out.side).toBe('FLAT');
+    expect(out.dir).toBe(0);
+    expect(out.grade).toBe('NEUTRAL');
+    expect(out.confidence).toBe(0);
+    expect(out.tie).toBe(true);
+    expect(out.summary).toContain('exactly split');
+    expect(out.voters).toBe(2);
+  });
+
+  it('one-sided votes still resolve LONG/SHORT normally (no regression)', () => {
+    const votes = [
+      { id: 'a', name: 'A', role: 'trend', weight: 1.2, dir: 1, conf: 80 },
+      { id: 'b', name: 'B', role: 'momentum', weight: 1.2, dir: -1, conf: 80 },
+      { id: 'c', name: 'C', role: 'volume', weight: 0.6, dir: 1, conf: 70 },
+    ];
+    const out = aggregateVotes(votes);
+    expect(out.side).toBe('LONG');
+    expect(out.tie).toBeUndefined();
+  });
+});

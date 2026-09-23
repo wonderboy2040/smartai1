@@ -49,7 +49,21 @@ vi.mock('../server/lib/store.js', () => ({
   loadJSON: (f, d) => d,
   saveJSON: vi.fn(),
 }));
-vi.mock('../server/intraday/backup.js', () => ({ scheduleBackup: vi.fn() }));
+// v12.7: manualTrades (imported via importOriginal below) now reads
+// restoreBackup + backupConfigured at module eval (the encrypted durable
+// boot restore) and durablePut/decryptJSON — the mock factory must
+// provide them or the real module body throws on import.
+vi.mock('../server/intraday/backup.js', () => ({
+  scheduleBackup: vi.fn(),
+  restoreBackup: vi.fn(async () => null),
+  backupConfigured: vi.fn(() => false),
+  flushBackupNow: vi.fn(),
+}));
+vi.mock('../server/mcp/durable.js', () => ({
+  durablePut: vi.fn(() => false),
+  decryptJSON: vi.fn(() => null),
+  durableConfigured: vi.fn(() => false),
+}));
 vi.mock('../server/liveFeed.js', () => ({ getTick: () => null }));
 vi.mock('../server/ai/manualTrades.js', async (importOriginal) => {
   const actual = await importOriginal();

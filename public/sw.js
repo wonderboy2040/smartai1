@@ -11,15 +11,23 @@
  *  5. Widget data endpoint — cached prices for instant widget render
  * ============================================================ */
 
-const CACHE_VERSION = 'wealth-ai-v18.1'; // v18.1: SW security/caching fixes (see fetch handler notes)
+const CACHE_VERSION = 'wealth-ai-v18.2'; // v18.2: SW allowlist caching (see fetch handler notes)
 const SHELL = ['/', '/index.html', '/manifest.json', '/icon.svg'];
 const WIDGET_CACHE = 'wealth-ai-widget-data';
-const API_CACHE = 'wealth-ai-api-cache-v18';
+// v12.7: bumped v18 → v19 so the activate pass EVICTS every private API
+// entry the old denylist let land in CacheStorage (positions/wallet/
+// journal/holdings snapshots from before this fix).
+const API_CACHE = 'wealth-ai-api-cache-v19';
 
-// FIX (audit M-2): private/sensitive API paths must NEVER be written to
-// CacheStorage (unencrypted, readable by any XSS on the origin, persists
-// across SW updates): cloud state, auth, telegram, broker data.
-const SENSITIVE_API = /\/api\/(cloud|auth|telegram|broker|state|vision|chat)\b/;
+// v12.7 (recheck R3-HIGH-2 — inverted): private API data must NEVER be
+// written to (unencrypted) CacheStorage. The OLD sensitive-DENYLIST
+// (cloud|auth|telegram|broker|state|vision|chat) still let /api/ai/*,
+// /api/mcp/*, /api/manual-trades etc. — positions, wallet, journal,
+// holdings — get cached to disk. A denylist can never win the race
+// against new private endpoints; the ALLOWLIST below names every path
+// that is PUBLIC MARKET DATA (safe to replay offline). Everything else
+// under /api/ is network-only.
+const PUBLIC_API = /\/api\/(quote|crypto-prices|forex|feed-status|ai-status|chart|fundamentals|inflation|ml)\b/;
 // Never-ending SSE stream — cloning + cache.put() on it buffers forever
 // (backpressure breaker) and it can never be replayed from cache anyway.
 const STREAM_API = /\/api\/stream\b/;
@@ -87,18 +95,25 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // API endpoints — network-first with an offline cache for PUBLIC data only.
-  // FIX (audit M-2):
+  // API endpoints — network-first with an offline cache for PUBLIC MARKET
+  // DATA ONLY (v12.7 allowlist inversion):
   //   - /api/stream (SSE) is passed straight through — never intercepted,
   //     never cloned/cached (tee-buffering breaks the stream).
-  //   - Sensitive endpoints (cloud/auth/telegram/...) are network-only.
+  //   - Only PUBLIC_API paths (quote/crypto-prices/forex/feed-status/
+  //     ai-status/chart/fundamentals/inflation/ml) may touch the offline
+  //     cache. EVERYTHING else under /api/ — ai boards, positions, wallet,
+  //     journal, manual trades, cloud, auth — is network-only: private data
+  //     never lands in unencrypted CacheStorage again (an XSS on the origin
+  //     or a shared machine could read it; it also persisted across SW
+  //     updates).
   //   - Cache keys are normalized (query string stripped) so `?session=`
   //     tokens don't persist in cache keys.
   //   - Offline fallback is now 503 + JSON — previously a fake 200 made
   //     stale data indistinguishable from live data in the UI.
   if (req.url.includes('/api/')) {
     if (STREAM_API.test(url.pathname)) return; // pass through untouched
-    if (SENSITIVE_API.test(url.pathname)) {
+    if (!PUBLIC_API.test(url.pathname)) {
+      // not explicitly public → private → network-only, never cached
       event.respondWith(fetch(req));
       return;
     }

@@ -218,6 +218,14 @@ export function registerAITradingRoutes(app, deps) {
       const market = normMarket(req.query.market);
       const limit = Math.min(15, Math.max(3, parseInt(req.query.limit, 10) || 10));
       const rescan = ['1', 'true', 'yes'].includes(String(req.query.rescan || '').trim().toLowerCase());
+      // v12.7 BANDWIDTH: `no-cache` (revalidate) instead of the old
+      // implicit no-header + the client's ?t= buster — the client polls
+      // every 30s while the board cache holds 60s, so ~half the polls
+      // were re-downloading a byte-identical 100-400KB body. Express's
+      // automatic weak ETag now answers 304 for those (zero body
+      // transfer). RESCAN requests carry &rescan=1 (fresh compute →
+      // new body → full 200, as they should).
+      res.set('Cache-Control', 'no-cache');
       const board = await getSignals(market, depsForSignals(), { limit, ...(rescan ? { noCache: true } : {}) });
       res.json(board);
     } catch (e) {

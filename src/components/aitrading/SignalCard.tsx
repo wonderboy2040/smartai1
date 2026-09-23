@@ -1150,6 +1150,17 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
                 🎯 HOLDING {signal.holding.side}{signal.holding.entryPrice != null && signal.holding.entryPrice > 0 ? ` @${signal.holding.entryPrice}` : ''}
               </span>
             )}
+            {/* v12.7 AI-VIEW chip — on pinned holding cards the card's side
+                is the POSITION side; the AI's CURRENT view (which may be
+                the OPPOSITE side) shows HERE so a held LONG never renders
+                as a SHORT card. It reads as context, never as a call. */}
+            {signal.holdingOnly && signal.aiView && signal.aiView.side !== signal.holding?.side && (
+              <span
+                className={`px-1.5 py-0.5 rounded text-[9px] font-black border font-mono ${signal.aiView.side === 'LONG' ? 'bg-sky-500/15 text-sky-300 border-sky-500/40' : 'bg-amber-500/15 text-amber-300 border-amber-500/40'}`}
+                title={`AI ka CURRENT view is pair pe ${signal.aiView.side} hai (${signal.aiView.grade || '—'}${signal.aiView.conf != null ? ` · conf ${signal.aiView.conf}%` : ''}${signal.aiView.fresh ? '' : ' · stale'}) — ye sirf CONTEXT hai, trade call NAHI. Aapki ${signal.holding?.side} position khud decide karo: exit / hold / average.`}>
+                👁 AI abhi {signal.aiView.side} dekh raha hai
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-3 mt-1 text-xs text-slate-400 flex-wrap">
             <span className="font-mono font-bold text-slate-200 flex items-center gap-1.5">

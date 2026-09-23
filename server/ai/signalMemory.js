@@ -396,8 +396,11 @@ export function holdingPositions(market) {
  * Build the PINNED board card for an open position whose symbol fell
  * out of the board (consensus FLAT / below the top-N cut / wick-suppressed).
  * Honest by construction: grade never above WATCH, no plan, no votes,
- * executable=false, and the AI's CURRENT view (or "neutral hai") in
- * the summary — this card is CONTEXT, not a fresh trade call.
+ * executable=false. v12.7 (recheck R1-#4): the card's TOP-LEVEL side is
+ * now the POSITION's side (it used to headline the AI's current view —
+ * a held LONG rendered under a SHORT-labeled card, which the user
+ * fairly read as "direction galat"). The AI's CURRENT view rides the
+ * new `aiView` sub-chip ("AI abhi SHORT dekh raha hai") + the summary.
  */
 export function buildHoldingCard(h, market) {
   const mkt = String(market || '').toUpperCase();
@@ -405,7 +408,11 @@ export function buildHoldingCard(h, market) {
   const now = Date.now();
   const viewFresh = cont && cont.lastSeenAt && (now - cont.lastSeenAt) < HOLDING_VIEW_STALE_MS;
   const viewSide = viewFresh ? (cont.side || cont.lastDirSide) : (cont?.lastDirSide || null);
-  const side = viewSide || h.side;
+  // v12.7: the POSITION side headlines — the card is the position's
+  // context, not a fresh trade call. The AI's live view (which can be
+  // the OPPOSITE side) moved to `aiView` + summary so a held LONG can
+  // never render as a SHORT card again.
+  const side = h.side;
   const grade = viewFresh && cont.lastGrade && (GRADE_RANK[cont.lastGrade] ?? 0) > GRADE_RANK.WATCH
     ? 'WATCH' : 'NEUTRAL';
   const viewNote = viewFresh
@@ -418,6 +425,9 @@ export function buildHoldingCard(h, market) {
     symbol: h.symbol,
     market: mkt,
     side,
+    // v12.7: the AI's CURRENT directional view (position-opposite reads
+    // possible) — rendered as a sub-chip, never as the card's side.
+    ...(viewSide ? { aiView: { side: viewSide, grade: cont?.lastGrade || null, conf: Number.isFinite(Number(cont?.lastConf)) ? Number(cont.lastConf) : null, fresh: !!viewFresh } } : {}),
     grade,
     confidence: viewFresh && Number.isFinite(Number(cont?.lastConf)) ? Math.min(Number(cont.lastConf), 55) : 0,
     agreement: 0,
@@ -431,7 +441,7 @@ export function buildHoldingCard(h, market) {
     quality: null,
     votes: [],
     abstentions: [],
-    summary: `🎯 OPEN POSITION PIN — board se nikal gaya tha, position open hai isliye pinned · ${viewNote}${ageMin != null ? ` · position ${ageMin}m purani` : ''}`,
+    summary: `🎯 OPEN POSITION PIN (aapki ${h.side} position) — board se nikal gaya tha, position open hai isliye pinned · ${viewNote}${ageMin != null ? ` · position ${ageMin}m purani` : ''}`,
     aiNote: null,
     executable: false,
     generatedAt: now,

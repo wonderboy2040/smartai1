@@ -116,6 +116,20 @@ export const AGENT_DEFAULTS = {
   // agent's own. Time-exit/partial-TP stay agent-owned — a manual
   // swing holder sirf trend-flip se protect hota hai.
   manageManualPositions: true,
+  // ---- v12.7 DIRECTION-ACCURACY (full-site recheck R1-#1) ----
+  // The v9.7 trend-flip sweep used to MARKET-CLOSE a MANUAL LONG the
+  // moment the board printed a qualifying opposite signal, and the
+  // candidate flow could then re-enter the FLIP side after the bare
+  // 20-min global cooldown — the literal "long pe trade liya, short me
+  // chala gaya". Defaults now: (a) MANUAL positions get flip ALERTS
+  // (Telegram + log), never auto-closes — manualFlipAction:'close'
+  // restores the old behavior (and even then demands a STRONG-grade
+  // opposite signal); (b) after ANY flip exit/alert on a pair, the
+  // agent refuses to enter the OPPOSITE side of that pair for
+  // flipReentryBlockMin minutes (per-pair flip memory — the global
+  // cooldown never knew WHICH side it was flipping FROM).
+  manualFlipAction: 'notify',   // 'notify' (default — user's positions are the user's) | 'close'
+  flipReentryBlockMin: 240,     // 4h per-pair opposite-side re-entry block
   // ---- v10.1 ACCURACY UPGRADE (Track B) ----
   // B2: ATR-adaptive time-exit — fast movers (high ATR%) get a SHORTER
   // window (signal goes stale faster), slow movers get a LONGER one
@@ -238,6 +252,8 @@ const NUM_CLAMPS = {
   winnerExtendMax: [0, 4],
   // v10.15 conviction knobs
   convictionThreshold: [3, 25],
+  // v12.7 direction-accuracy: per-pair opposite-side re-entry block
+  flipReentryBlockMin: [0, 1440],
 };
 export function updateAgentConfig(patch = {}) {
   const cfg = loadAgentConfig();
@@ -258,6 +274,9 @@ export function updateAgentConfig(patch = {}) {
   if (patch.breakEvenAfterTp1 != null) next.breakEvenAfterTp1 = !!patch.breakEvenAfterTp1;
   // v9.7: trend-flip exit on manual positions (user spec default ON)
   if (patch.manageManualPositions != null) next.manageManualPositions = !!patch.manageManualPositions;
+  // v12.7: manual flip discipline — 'notify' (default: Telegram alert, no
+  // close) | 'close' (restores the v9.7 auto-close, STRONG-grade demanded)
+  if (patch.manualFlipAction === 'notify' || patch.manualFlipAction === 'close') next.manualFlipAction = patch.manualFlipAction;
   // v10.1 Track-B toggles
   if (patch.dynamicTimeExit != null) next.dynamicTimeExit = !!patch.dynamicTimeExit;
   if (patch.correlationGuard != null) next.correlationGuard = !!patch.correlationGuard;
@@ -321,6 +340,17 @@ function freshState() {
     // v10.15 GAP 3: the ONE resting patient order (null = none).
     // { symbol, market, pair, side, level, basis, createdAt, expiresAt }
     patient: null,
+    // v12.7 FLIP MEMORY: { [pair]: { side, at } } stamped whenever a
+    // position (manual OR agent) is flip-closed / flip-alerted. Blocks
+    // the agent from entering the OPPOSITE side of that pair for
+    // flipReentryBlockMin — the agent must never convert the book
+    // LONG→SHORT on the same pair (the measured whipsaw-churn path).
+    // Pruned to 24h.
+    flipBlock: {},
+    // v12.7: manual flip-ALERT dedup — { [pair]: { side, at } } so the
+    // notify-only alert fires ONCE per flip episode (re-arms when the
+    // opposite side changes or after 60 min of continuous flip).
+    flipAlert: {},
     // v10.8 PRO #4: the frozen mandate — captured at START, immutable
     // for the session, released on STOP (the journal MANDATE entry is
     // the permanent audit record).
@@ -339,8 +369,21 @@ let _state = loadState();
  * quota/log/exposure state instead of a blank one. */
 export function __reloadStateForBoot() { _state = loadState(); }
 function persistState() {
+  try { _pruneFlipMemory(); } catch { /* best-effort bound */ }
   saveJSON(AGENT_STATE_FILE, _state);
   try { durablePut(AGENT_STATE_FILE, _state); } catch { /* best-effort */ }
+}
+
+/** v12.7: bound the flip memory maps (24h retention — the block window
+ * itself is 4h; anything older can never gate an entry). */
+function _pruneFlipMemory() {
+  const now = Date.now();
+  for (const map of [_state.flipBlock, _state.flipAlert]) {
+    if (!map || typeof map !== 'object') continue;
+    for (const [k, v] of Object.entries(map)) {
+      if (!v || typeof v !== 'object' || now - (Number(v.at) || 0) > 24 * 3600_000) delete map[k];
+    }
+  }
 }
 
 function log(level, text) {
@@ -1093,6 +1136,11 @@ Ye fix hote hi futures auto-entries phir se chalegi.`);
           const totalPnl = (out.position?.pnlINR ?? 0) + (out.position?.bookedPnlINR ?? 0);
           convictionClosures.push({ pair: p.pair, pnlINR: totalPnl, score: c.currentScore });
           convictionExited.add(p.id);
+          // v12.7: conviction-flip is ALSO a flip — stamp the per-pair
+          // opposite-side block so the candidate flow can't instantly
+          // re-enter the side the thesis just flipped away from.
+          _state.flipBlock = _state.flipBlock || {};
+          _state.flipBlock[p.pair] = { side: /^(L|B)/i.test(String(p.side || '')) ? 'LONG' : 'SHORT', at: Date.now() };
           log('exit', `CONVICTION-FLIP EXIT ${p.pair} — ensemble flipped ${c.side} (score ${c.currentScore}, entry ${Number.isFinite(entryScore) ? entryScore : '?'}) → cut at ₹${r2(totalPnl)} BEFORE the stop (thesis invalidated)`);
           if (_state.entryMeta) delete _state.entryMeta[p.pair];
           if (_state.conviction) delete _state.conviction[p.pair];
@@ -1195,20 +1243,61 @@ ${convictionTightened.map(c => `• ${c.pair} — delta ${c.delta}, in profit: r
   }
 
   // ---- v9.6 TREND-FLIP auto-exit ("auto exit as per market trend"):
-  // the board now prints a QUALIFYING signal on the OPPOSITE side of
-  // a held pair → the position is cut immediately. v9.7: this now
+  // the board now prints a QUALIFYING signal on the OPPOSITE side of a
+  // held pair → the position is cut immediately. v9.7: this now
   // protects MANUAL positions too when manageManualPositions (user
-  // spec, default ON) — a manual swing holder exits the moment the
-  // trend flips against them. A cooldown is stamped so the flip side
-  // can only re-enter after cooldownMin — no whipsaw churn.
-  // v10.8: flipped-signal detection reads the shared oppositeQualifying
-  // map computed above — same truth, one pass. ----
+  // spec, default ON). v10.8: flipped-signal detection reads the shared
+  // oppositeQualifying map — same truth, one pass.
+  // v12.7 DIRECTION-ACCURACY REWORK (the #1 "long pe trade liya, short
+  // me chala gaya" root cause): AGENT positions still auto-close (the
+  // agent's own book, its own discipline), but MANUAL positions are
+  // notify-only by default — a Telegram ALERT, never a market close
+  // (manualFlipAction:'close' restores it, STRONG-grade demanded).
+  // AND every flip (exit OR alert) stamps the per-pair flipBlock so the
+  // agent cannot enter the OPPOSITE side of that pair for 4h — the
+  // account can no longer be silently converted LONG→SHORT by the
+  // agent re-entering the flip side after the old 20-min cooldown. ----
   const managed = openManagedPositions(j, cfg);
+  const flipAlerted = [];
   for (const p of managed) {
     if (timeExited.has(p.id)) continue;
     if (convictionExited.has(p.id)) continue; // v10.15: conviction-flip already closed it
     const flipped = oppositeQualifying.get(String(p.pair || '')) || null;
     if (!flipped) continue;
+    const pair = String(p.pair || '');
+    const posSideLong = /^(L|B)/i.test(String(p.side || ''));
+    const posSide = posSideLong ? 'LONG' : 'SHORT';
+    // v12.7: stamp the per-pair flip memory BEFORE any branch — the
+    // opposite-side re-entry block applies whether we close, alert, or
+    // skip (the guard must never depend on the close succeeding).
+    _state.flipBlock = _state.flipBlock || {};
+    _state.flipBlock[pair] = { side: posSide, at: Date.now() };
+    const manual = p.source !== 'agent';
+    if (manual && String(cfg.manualFlipAction || 'notify') !== 'close') {
+      // v12.7 NOTIFY-ONLY: the user's manual position stays OPEN. One
+      // alert per flip episode (side change or 60-min re-arm) — never a
+      // per-tick Telegram storm while the board keeps printing the
+      // opposite side.
+      const flipSide = String(flipped.side || '').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
+      const lastAlert = _state.flipAlert?.[pair];
+      const episodeArmed = !lastAlert
+        || lastAlert.side !== flipSide
+        || (Date.now() - (Number(lastAlert.at) || 0)) > 60 * 60_000;
+      if (episodeArmed) {
+        _state.flipAlert = _state.flipAlert || {};
+        _state.flipAlert[pair] = { side: flipSide, at: Date.now() };
+        flipAlerted.push({ pair, side: posSide, flipSide, score: signalOf(flipped) || flipped.confidence });
+        log('exit', `TREND-FLIP ALERT (manual-held, notify-only) ${pair} — board flipped ${flipped.side} (AI ${signalOf(flipped) || flipped.confidence}%) — position OPEN rakhi gayi (manual auto-close OFF). Agent is pair par ${posSide === 'LONG' ? 'SHORT' : 'LONG'} entry ${cfg.flipReentryBlockMin}m tak NAHI karega (flip-churn guard).`);
+      }
+      continue; // the user's position is the user's — alert, don't touch
+    }
+    if (manual && String(flipped.grade || '').toUpperCase() !== 'STRONG') {
+      // manualFlipAction:'close' mode still demands STRONG opposite
+      // conviction — a bare score-bar qualifier is a late, lagging flip
+      // that used to churn manual swings (the exact whipsaw disease).
+      maybeLogSkip('manual-flip-grade', `trend-flip close SKIPPED (manual ${pair}) — opposite signal grade ${flipped.grade || '—'} hai, STRONG nahi (close-mode demands STRONG)`);
+      continue;
+    }
     const out = p.market === 'FUTURES'
       ? await closeFuturesPosition(p.id).catch(e => ({ ok: false, error: String(e?.message || e) }))
       : p.market === 'GLOBALFUTURES'
@@ -1223,12 +1312,14 @@ ${convictionTightened.map(c => `• ${c.pair} — delta ${c.delta}, in profit: r
     if (out?.ok) {
       _state.lastEntryAt = Date.now(); // the flip side re-enters only after cooldown
       const totalPnl = (out.position?.pnlINR ?? 0) + (out.position?.bookedPnlINR ?? 0);
-      const manual = p.source !== 'agent';
-      log('exit', `TREND-FLIP EXIT${manual ? ' (manual-held)' : ''} ${p.pair} — board flipped ${flipped.side} (AI ${signalOf(flipped) || flipped.confidence}%) → cut at ₹${r2(totalPnl)} total`);
-      await notify(sendTelegram, `🤖 <b>AGENT trend-flip exit</b>${manual ? ' (manual position)' : ''} — ${p.pair}\nBoard ab ${flipped.side} side pe ${signalOf(flipped) || flipped.confidence}% conviction: position ₹${r2(totalPnl)} pe cut. Re-entry cooldown (${cfg.cooldownMin}m) ke baad.`);
+      log('exit', `TREND-FLIP EXIT${manual ? ' (manual-held, close-mode)' : ''} ${p.pair} — board flipped ${flipped.side} (AI ${signalOf(flipped) || flipped.confidence}%) → cut at ₹${r2(totalPnl)} total`);
+      await notify(sendTelegram, `🤖 <b>AGENT trend-flip exit</b>${manual ? ' (manual position, close-mode)' : ''} — ${p.pair}\nBoard ab ${flipped.side} side pe ${signalOf(flipped) || flipped.confidence}% conviction: position ₹${r2(totalPnl)} pe cut. Agent is pair par ${posSide === 'LONG' ? 'SHORT' : 'LONG'} entry ${cfg.flipReentryBlockMin}m ke liye BLOCKED hai (flip-churn guard).`);
     } else {
       log('error', `trend-flip close failed for ${p.pair}: ${String(out?.error || '').slice(0, 100)}`);
     }
+  }
+  if (flipAlerted.length > 0) {
+    await notify(sendTelegram, `🤖 <b>AGENT trend-flip ALERT</b> (manual positions — auto-close OFF, khud decide karo)\n${flipAlerted.map(a => `• ${a.pair} — aapki ${a.side} position OPEN hai, board ab ${a.flipSide} (${a.score}%) bole raha hai`).join('\n')}\nAgent in pairs par opposite-side entry ${cfg.flipReentryBlockMin}m se BLOCK kar di gayi hai.`);
   }
 
   // ---- 3-trade daily cap ----
@@ -1262,6 +1353,24 @@ ${convictionTightened.map(c => `• ${c.pair} — delta ${c.delta}, in profit: r
       if ((s.plan.riskPct ?? 0) > (trading.maxRiskPct || 5)) continue;
       // already positioned on this pair? skip (one-per-pair anyway)
       if ((j.positions || []).some(p => p.pair === pairOfSignal(s) && (p.status === 'OPEN' || p.status === 'UNKNOWN'))) continue;
+      // v12.7 FLIP-CHURN GUARD: a pair whose position was flip-closed
+      // or flip-alerted within flipReentryBlockMin refuses an
+      // OPPOSITE-side entry — the agent never converts the book
+      // LONG→SHORT (or SHORT→LONG) on the same pair inside the window.
+      // Same-side re-entry stays allowed (a fresh LONG after a
+      // flip-closed SHORT is a normal new signal, not a churn).
+      {
+        const fbPair = pairOfSignal(s);
+        const fb = _state.flipBlock?.[fbPair];
+        const fbWindowMs = (Number(cfg.flipReentryBlockMin) || 240) * 60_000;
+        if (fb && (Date.now() - (Number(fb.at) || 0)) < fbWindowMs) {
+          const candSide = String(s.side || '').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
+          if (candSide !== fb.side) {
+            maybeLogSkip('flip-block', `${fbPair} opposite-side (${candSide}) entry BLOCKED — ${Math.ceil((fbWindowMs - (Date.now() - fb.at)) / 60_000)}m baaki (flip-churn guard, v12.7)`);
+            continue;
+          }
+        }
+      }
       if (qualifies(s)) { candidates.push(s); continue; }
       const nm = nearMissEntryGate(cfg, s);
       if (nm) nearMissPool.push({ signal: s, nm });
@@ -2037,6 +2146,18 @@ export async function agentStatus(deps) {
       tickSec: AGENT_TICK_SEC,
       nextScanInSec,
       lastSkip: _state.lastSkip,
+      // v12.7: per-pair flip-churn guard state — pairs whose OPPOSITE-side
+      // entry is currently blocked (with the remaining window) + the
+      // manual-flip discipline mode. The panel shows exactly why the
+      // agent refuses to convert a flip-closed LONG into a SHORT.
+      flipDiscipline: {
+        manualFlipAction: cfg.manualFlipAction || 'notify',
+        reentryBlockMin: cfg.flipReentryBlockMin ?? 240,
+        activeBlocks: Object.entries(_state.flipBlock || {})
+          .filter(([, v]) => v && (Date.now() - (Number(v.at) || 0)) < (Number(cfg.flipReentryBlockMin) || 240) * 60_000)
+          .map(([pair, v]) => ({ pair, closedSide: v.side, minutesLeft: Math.ceil(((Number(cfg.flipReentryBlockMin) || 240) * 60_000 - (Date.now() - (Number(v.at) || 0))) / 60_000) }))
+          .slice(0, 8),
+      },
       log: (_state.log || []).slice(-40).reverse(),
     },
     today: {

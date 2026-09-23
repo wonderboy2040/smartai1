@@ -202,6 +202,34 @@ export function scheduleBackup(filename, data) {
   _queueFlush(filename);
 }
 
+/** v12.7 SHUTDOWN FLUSH — synchronously kick every pending push NOW,
+ * bypassing the debounce, the per-file 60s gap, and the global 3s
+ * attempt spacing exactly ONCE (the process is about to die; the GitHub
+ * Contents API can absorb one final burst). Returns immediately — the
+ * pushes ride their own promises inside the SIGTERM drain window
+ * (best-effort by construction: anything that misses the window was
+ * already pushed ≤60s ago, so the remote is at worst one minute stale).
+ * Without this, the four shutdown flush functions only wrote the
+ * EPHEMERAL disk — the remote backup stayed a full debounce+gap behind
+ * on every deploy (recheck R3-#4). */
+export function flushBackupNow() {
+  try {
+    for (const filename of [..._pending.keys()]) {
+      if (_inflight.has(filename)) continue; // already riding a push
+      const data = _pending.get(filename);
+      if (!data) continue;
+      _pending.delete(filename);
+      _lastAttempt = Date.now();
+      const p = (async () => {
+        try { return await _doPush(filename, data); }
+        catch (e) { _log(`shutdown push ${filename} error: ${e?.message || e}`); return false; }
+        finally { _inflight.delete(filename); }
+      })();
+      _inflight.set(filename, p);
+    }
+  } catch { /* best-effort — shutdown must never throw */ }
+}
+
 function _queueFlush(filename) {
   const t = setTimeout(() => { _flush(filename); }, PUSH_DEBOUNCE_MS);
   if (typeof t.unref === 'function') t.unref();

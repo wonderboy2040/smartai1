@@ -99,7 +99,24 @@ export function aggregateVotes(votes, gates = DEFAULT_GATES, opts = {}) {
 
   const bull = valid.filter(v => v.dir > 0).reduce((a, v) => a + v.weight, 0);
   const bear = valid.filter(v => v.dir < 0).reduce((a, v) => a + v.weight, 0);
-  const side = bull >= bear ? 'LONG' : 'SHORT';
+  // v12.7 (recheck R1-#5): an EXACT bull/bear weight tie is an honest
+  // NO-EDGE — it used to default LONG (`bull >= bear`), which minted a
+  // directional call the committee never actually made. Ties are rare
+  // (float weights), but a tie breaking LONG is a silent directional
+  // bias on every desk that shares this aggregator.
+  if (bull === bear) {
+    return {
+      side: 'FLAT', dir: 0, confidence: 0, agreement: 0.5,
+      participation: Math.round((votingWeight / (allWeight > 0 ? allWeight : votingWeight)) * 100) / 100,
+      grade: 'NEUTRAL', participating: valid.length, totalModels: applicable.length || (votes || []).length,
+      applicableModels: applicable.length,
+      structuralAbsent: (votes || []).filter(v => v?.na).length,
+      bullWeight: r2(bull), bearWeight: r2(bear), tie: true,
+      voters: valid.length,
+      summary: `Committee exactly split (bull weight ${r2(bull)} = bear weight ${r2(bear)}) — no edge`,
+    };
+  }
+  const side = bull > bear ? 'LONG' : 'SHORT';
   const dir = side === 'LONG' ? 1 : -1;
   const winWeight = Math.max(bull, bear);
   const loseWeight = Math.min(bull, bear);

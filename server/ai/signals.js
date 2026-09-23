@@ -957,17 +957,25 @@ export async function getSignals(market, deps, opts = {}) {
     _warmBoardInBackground(mkt, deps);
     return staleHit ? staleHit.payload : null;
   }
-  if (opts.noCache) return _computeBoard(mkt, deps, opts);
-
-  // single-flight: join the scan that is already running
-  const running = _boardInflight.get(mkt);
-  if (running) return running;
-  const p = (async () => {
-    try { return await _computeBoard(mkt, deps, opts); }
-    finally { _boardInflight.delete(mkt); }
-  })();
-  _boardInflight.set(mkt, p);
-  return p;
+  // v12.7 (recheck R3-#3): RESCAN/noCache computes now REGISTER in the
+  // same single-flight map — the route comment always claimed "single-
+  // flight protected" but a noCache return bypassed _boardInflight, so
+  // a RESCAN could stack on the 15s warmOnly poll AND the 30s board
+  // poll (three concurrent full-universe scans — the v9.2.1 latency
+  // disease). A normal poll joining a running RESCAN gets that fresh
+  // compute (fresher than the cache it was about to serve — fine); a
+  // RESCAN joining a running normal compute gets that fresh compute
+  // (it only started because the 60s cache was already expired).
+  {
+    const running = _boardInflight.get(mkt);
+    if (running) return running;
+    const p = (async () => {
+      try { return await _computeBoard(mkt, deps, opts); }
+      finally { _boardInflight.delete(mkt); }
+    })();
+    _boardInflight.set(mkt, p);
+    return p;
+  }
 }
 
 // ---------------- v11.8: India index option-chain ctx (board path) ----------------
@@ -2011,6 +2019,11 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
     ]);
     const row = (Array.isArray(futRows) ? futRows : []).find(x => x.base === sym);
     ctx = buildFuturesCtxSync(sym, tv[sym], row, candles, regime);
+    // v12.7 (recheck R1-#2): attach the raw TV row on the FUTURES deep
+    // ctx too — the 15m tape fetch below reads ctx.__tv for its
+    // cross-domain fallback anchor (board parity: the board path always
+    // passes c.ctx.__tv; the deep path used to send null).
+    if (tv?.[sym]) ctx.__tv = tv[sym];
   } else if (mkt === 'GLOBALFUTURES') {
     // v10.4: the deep dive on a global name — quotes + candles from the
     // desk's own feed (Yahoo for the real names, synthetic for SPACEX).
@@ -2049,6 +2062,15 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
       return rescaleCandlesToLtp(y, inrLtp, expected);
     })();
     ctx = buildCryptoCtxSync(sym, tv[sym], inrLtp, regime, candles);
+    // v12.7 (recheck R1-#2 — THE board-vs-gate asymmetry): the deep
+    // CRYPTO branch never set ctx.__tv, so fetchCrypto15mTape got
+    // tvRow=null → the Binance 15m fallback rescale lost its expected
+    // scale anchor (INR/usdPrice) → sanity-bound rejection → the tape
+    // seat ABSTAINED on the fresh exec re-run while the clicked board
+    // card HAD the tape vote (board passes c.ctx.__tv). Degraded candle
+    // conditions = board ≠ gate = vetoes the user reads as "direction
+    // galat". The board card and the deep card now vote identically.
+    if (tv?.[sym]) ctx.__tv = tv[sym];
   } else {
     const tv = await fetchTVIndiaBatch([sym]).catch(() => ({}));
     if (tv[sym]) {

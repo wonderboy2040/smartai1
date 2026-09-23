@@ -716,11 +716,13 @@ describe('cxRtStream — v10.15 BINANCE FUTURES WS ACCELERATOR (the tier between
   });
 
   it('both CoinDCX AND Binance WS dark → the Binance REST 5s path still takes over (tier below)', async () => {
+    let fapiUrl = '';
     routeFetch(url => {
       if (url.includes('current_prices/futures/rt') && !url.includes('margin_currency')) {
         return { ok: false, status: 403, json: async () => ({}) };
       }
       if (url.includes('fapi.binance.com')) {
+        fapiUrl = url;
         return { ok: true, status: 200, json: async () => ([
           { symbol: 'BTCUSDT', lastPrice: '62000.25', priceChangePercent: '0.9', highPrice: '62500', lowPrice: '61500', volume: '9000' },
         ]) };
@@ -738,6 +740,13 @@ describe('cxRtStream — v10.15 BINANCE FUTURES WS ACCELERATOR (the tier between
     await vi.waitFor(() => expect(sockets.length).toBe(1));
     await vi.waitFor(() => expect(getTick('FUT_BTC')?.source).toBe('binance-fut-rt'), { timeout: 15_000 });
     expect(getTick('FUT_BTC')!.price).toBeCloseTo(62000.25, 6);
+    // v12.7 BANDWIDTH LOCK: the REST fallback requested ONLY the missing
+    // subscribed bases via Binance's ?symbols= param — never the full
+    // ~500-symbol 1-2MB book (the outage-mode whale).
+    expect(fapiUrl).toContain('?symbols=');
+    const symbols = JSON.parse(decodeURIComponent(fapiUrl.slice(fapiUrl.indexOf('?symbols=') + '?symbols='.length)));
+    expect(symbols).toContain('BTCUSDT');
+    expect(symbols.length).toBeLessThanOrEqual(100);
   }, 25_000);
 
   it('the cx socket recovers → the accelerator STANDS DOWN (hot-standby closes; CoinDCX owns the key again)', async () => {

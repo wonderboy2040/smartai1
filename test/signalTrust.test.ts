@@ -371,6 +371,40 @@ describe('v12.4 pinHoldingOnBoard + buildHoldingCard — traded symbols never va
     expect(card.summary).toContain('stale');
     expect(card.holding).toMatchObject({ side: 'SHORT', qty: 5000 });
   });
+
+  it('v12.7: a held LONG with a fresh OPPOSITE AI view — the card side STAYS LONG (the AI view rides the aiView sub-chip, never the card)', () => {
+    // THE perception bug this locks out: the old buildHoldingCard headlined
+    // the AI's CURRENT view — a held LONG rendered under a SHORT-labeled
+    // card after the consensus flipped, which the user fairly read as
+    // "direction galat / long pe trade liya par short dikha raha hai".
+    _disk.set('ai-trading-journal.json', {
+      entries: [],
+      positions: [{ pair: 'WLD-USDT', symbol: 'WLD', market: 'FUTURES', side: 'LONG', status: 'OPEN', entryPrice: 0.4385, qty: 692, mode: 'live', source: 'manual', openedAt: T0 - 1800_000 }],
+    });
+    // fresh OPPOSITE view — SHORT conviction while the user holds LONG
+    remember('FUTURES', 'WLD', { side: 'SHORT', confidence: 78, grade: 'ACTION', ltp: 0.4102 });
+    const board: object[] = [];
+    pinHoldingOnBoard(board as never, 'FUTURES');
+    const card = board[0] as Record<string, unknown>;
+    expect(card.side).toBe('LONG'); // the POSITION headlines, not the AI view
+    expect(card.aiView).toMatchObject({ side: 'SHORT', fresh: true }); // the view demoted to a sub-chip
+    expect(card.holding).toMatchObject({ side: 'LONG' });
+    expect(card.executable).toBe(false); // still context, never a trade call
+    expect(String(card.summary)).toContain('aapki LONG position');
+  });
+
+  it('v12.7: held SHORT + fresh SAME-side AI view — aiView mirrors the position (no confusing chip)', () => {
+    _disk.set('ai-trading-journal.json', {
+      entries: [],
+      positions: [{ pair: 'HBAR-USDT', symbol: 'HBAR', market: 'FUTURES', side: 'SHORT', status: 'OPEN', entryPrice: 0.22, qty: 1000, openedAt: T0 - 900_000 }],
+    });
+    remember('FUTURES', 'HBAR', { side: 'SHORT', confidence: 66, grade: 'WATCH', ltp: 0.2150 });
+    const board: object[] = [];
+    pinHoldingOnBoard(board as never, 'FUTURES');
+    const card = board[0] as Record<string, unknown>;
+    expect(card.side).toBe('SHORT');
+    expect(card.aiView).toMatchObject({ side: 'SHORT' });
+  });
 });
 
 // ============================================================

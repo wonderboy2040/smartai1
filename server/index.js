@@ -36,6 +36,11 @@ import { flushPaperState } from './intraday/paperTrading.js';
 import { flushManualState } from './ai/manualTrades.js';
 import { flushTrackRecordState } from './intraday/trackRecord.js';
 import { flushJournalState } from './intraday/journal.js';
+// v12.7 (recheck R3-#4): the shutdown flush's REMOTE leg — pushes every
+// pending durable backup immediately (the four flushers above re-arm
+// their durable pushes; this fires them inside the drain window).
+import { flushBackupNow } from './intraday/backup.js';
+import { filterTickersBySymbols } from './lib/tickerFilter.js';
 import { startScheduler as startIndmPortfolioScheduler } from './mcp/portfolioSync.js';
 import { durableBootRestoreAll } from './mcp/durable.js';
 import path from 'node:path';
@@ -55,6 +60,21 @@ const DEFAULT_USD_INR = 83.5;
 
 // v11.7 PERF: hide the Express fingerprint (minor hygiene).
 app.disable('x-powered-by');
+
+// v12.7 SECURITY (recheck R3-#5): the full header set existed only in the
+// nginx.conf Docker path — the LIVE Render path shipped none of it. Safe
+// subset (nothing that can break the SPA): nosniff, frame denial,
+// referrer trimming, permissions lockdown, and a CSP limited to
+// frame-ancestors/object-src/base-uri (a full script-src policy needs a
+// per-build audit of inline scripts — deliberately not attempted blind).
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  res.set('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
+  next();
+});
 
 app.use(express.json({ limit: '1mb' }));
 
@@ -977,10 +997,21 @@ app.get('/api/quote', async (req, res) => {
 // ~0.5-1MB upstream independently (double CPU + GC churn).
 // v11.4 recheck: module-level so the transition log survives across requests
 let _lastTickerSourceLogged = null;
-app.get('/api/crypto-prices', async (_req, res) => {
-  res.set('Cache-Control', 'no-store, max-age=0');
+// v12.7 BANDWIDTH (recheck R2-#1 — the biggest pure-egress lever): the
+// client used to download the FULL ~400-market ticker array (~300KB raw)
+// every 30s while only reading its own ~20-symbol watchlist. ?symbols=
+// (comma list, e.g. BTC,SOL,DOGE) slices the cached array server-side to
+// exactly the requested markets (~8KB) — a ~97% egress cut on this
+// endpoint. No param = full array (backward-compatible for tests/tools).
+// The filter itself lives in lib/tickerFilter.js (unit-tested there).
+app.get('/api/crypto-prices', async (req, res) => {
+  // v12.7: ?symbols= responses may be revalidated (the upstream cache is
+  // 20s; a repeat poll inside the window gets a byte-identical body →
+  // Express's weak ETag answers 304 → zero body transfer).
+  res.set('Cache-Control', 'no-cache');
   try {
     const tickers = await fetchCoinDcxTickers();
+    const served = filterTickersBySymbols(tickers, req.query.symbols);
     // v11.3: honest observability — which leg served (REST / spot-WS /
     // Binance-fx synth / stale). The header rides every response so a
     // degraded feed is visible without server access.
@@ -996,7 +1027,7 @@ app.get('/api/crypto-prices', async (_req, res) => {
       console.log(`[crypto-prices] REST recovered (${_lastTickerSourceLogged} -> coindcx-rest)`);
       _lastTickerSourceLogged = null;
     }
-    return res.json(tickers);
+    return res.json(served);
   } catch (e) {
     return jsonError(res, 502, 'Failed to fetch crypto prices.', e);
   }
@@ -1191,12 +1222,27 @@ app.get('/api/stream', (req, res) => {
     req.on('close', () => clearTimeout(late));
   }
 
+  // v12.7 BANDWIDTH (recheck R2-#3): per-symbol SSE throttle 400ms→1000ms
+  // + a dead-tick filter (|Δprice| < 0.05% vs the last SENT price pushes
+  // nothing). ~33 subscribed keys × ~200B/frame at ~1Hz was ~0.3-0.4GB/day
+  // of pure egress for price noise the UI's 800ms batcher smoothed away
+  // anyway. A REAL move (>0.05%) still lands within its 1s slot.
   const lastSent = {};
   const unsub = feedSubscribe((key, tick) => {
     if (_dead || !keys.has(key)) return;
     const now = Date.now();
-    if (lastSent[key] && (now - lastSent[key]) < 400) return; // â‰¤2.5 updates/sec/symbol
-    lastSent[key] = now;
+    const prev = lastSent[key];
+    if (prev) {
+      if ((now - prev.at) < 1000) return; // ≤1 update/sec/symbol
+      const prevPrice = Number(prev.price);
+      const price = Number(tick?.price);
+      if (Number.isFinite(prevPrice) && prevPrice > 0 && Number.isFinite(price)
+        && Math.abs(price - prevPrice) / prevPrice < 0.0005) {
+        lastSent[key] = { at: now, price }; // refresh the clock, push nothing
+        return;
+      }
+    }
+    lastSent[key] = { at: now, price: Number(tick?.price) || null };
     _sseWrite(`event: tick\ndata: ${JSON.stringify({ key, ...tick })}\n\n`);
   });
 
@@ -2514,6 +2560,11 @@ function _gracefulShutdown(signal) {
   ]) {
     try { flush(); } catch (e) { console.warn(`[wealth-ai] shutdown flush ${name}:`, e?.message); }
   }
+  // v12.7: the flushers above wrote the EPHEMERAL disk + queued their
+  // durable pushes — fire them NOW (bypassing the debounce/gap once) so
+  // the remote GitHub backup leaves the shutdown at most seconds stale,
+  // not a full debounce+60s-gap window behind.
+  try { flushBackupNow(); } catch { /* best-effort */ }
   // v10.13 (deep-recheck L-8): drain in-flight HTTP responses before exit —
   // the old immediate process.exit() cut responses (SSE frames, API calls)
   // mid-write on every deploy. server.close() stops NEW connections; a

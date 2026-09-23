@@ -16,7 +16,13 @@ import { loadJSON, saveJSON } from './store.js';
 import { istDayKey, istMinutes, dayKeyFor } from './time.js';
 import { isCryptoSymbolBase } from './engine.js';
 import { recordTradeClose } from './journal.js';
-import { scheduleBackup, restoreBackup, backupConfigured } from './backup.js';
+import { restoreBackup, backupConfigured } from './backup.js';
+// v12.7 (recheck R3-HIGH-1): paper-trade state rides the ENCRYPTED durable
+// channel (AES-256-GCM envelope → GitHub backup branch). The plaintext
+// scheduleBackup push put symbols/qty/entries/P&L on a public repo branch
+// while every other state file already rode durable.js's promise that "a
+// public repo backup branch can never leak keys or holdings".
+import { durablePut, decryptJSON } from '../mcp/durable.js';
 import { pRound } from '../ai/lib/priceRound.js';
 import { bsPrice, yearsToExpiry } from '../ai/lib/blackScholes.js';
 // v11.1 GAP 3 — real transaction costs (brokerage/STT/txn/GST/SEBI/stamp)
@@ -54,19 +60,23 @@ function _persist() {
     _saveTimer = null;
     saveJSON(FILE, _state);
     // DURABLE HISTORY: Render's free plan wipes server/data/ on every
-    // restart — mirror the state to the GitHub backup branch so the
-    // paper-trading track record survives (see backup.js).
-    try { scheduleBackup(FILE, _state); } catch { /* backup optional */ }
+    // restart — mirror the state (ENCRYPTED, v12.7) to the GitHub backup
+    // branch so the paper-trading track record survives (see backup.js
+    // + mcp/durable.js).
+    try { durablePut(FILE, _state); } catch { /* backup optional */ }
   }, 1000);
   if (typeof _saveTimer.unref === 'function') _saveTimer.unref();
 }
 
 /** v9.1: synchronous flush for graceful shutdown — the 1s debounce loses
  *  the very last state change (an open/close, a T1 partial book) if the
- *  process dies inside the window (deploy/restart races). */
+ *  process dies inside the window (deploy/restart races).
+ *  v12.7 (recheck R3-#4): the flush ALSO re-arms the durable push so the
+ *  REMOTE copy rides index.js's flushBackupNow() in the same shutdown. */
 export function flushPaperState() {
   if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
   saveJSON(FILE, _state);
+  try { durablePut(FILE, _state); } catch { /* backup optional */ }
 }
 
 function _validateSym(sym) {
@@ -531,9 +541,13 @@ async function _bootRestore() {
   _bootRestoring = true;
   try {
     const remote = await restoreBackup(FILE);
-    const remoteTrades = Array.isArray(remote?.trades) ? remote.trades : [];
+    // v12.7: the remote copy is now an AES-256-GCM durable envelope; a
+    // legacy plaintext blob still restores (migration grace — whichever
+    // form the branch holds, the fresher trades win).
+    const remoteState = remote && remote.alg === 'aes-256-gcm' ? decryptJSON(remote) : remote;
+    const remoteTrades = Array.isArray(remoteState?.trades) ? remoteState.trades : [];
     if (remoteTrades.length > _state.trades.length) {
-      _mergeRestoredState(remote);
+      _mergeRestoredState(remoteState);
       _persist();
       console.log(`[paper] boot-restore: recovered ${remoteTrades.length} trades from remote backup`);
     }

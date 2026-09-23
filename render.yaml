@@ -3,7 +3,10 @@ services:
     name: wealth-ai-pro
     runtime: node
     plan: free
-    buildCommand: npm install && npm run build
+    # v12.7 BANDWIDTH: npm ci is deterministic (exact lockfile) — Render's
+    # build cache hits far more often than npm install's resolver churn,
+    # so cold installs (and their download traffic) shrink on redeploys.
+    buildCommand: npm ci && npm run build
     startCommand: node server/index.js
     healthCheckPath: /health
     envVars:

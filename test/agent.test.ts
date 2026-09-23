@@ -81,7 +81,7 @@ function mockConnected() { return _connected; }
 
 import {
   loadAgentConfig, updateAgentConfig, agentStart, agentStop, agentTick,
-  agentStatus, __resetAgentForTests, AGENT_DEFAULTS,
+  agentStatus, __resetAgentForTests, __setAgentStateForTests, AGENT_DEFAULTS,
 } from '../server/ai/agent.js';
 import { __resetForTests, __setJournalForTests, loadJournal, todayIST, __setConfigForTests } from '../server/ai/coindcxOrders.js';
 import { saveJSON, loadJSON as loadJSONOrig } from '../server/lib/store.js';
@@ -441,12 +441,12 @@ describe('v9.7 agentStatus BLOCKERS — the "entry kyun nahi ho raha" strip', ()
   });
 });
 
-describe('v9.7 TREND-FLIP on MANUAL positions (user spec: auto exit per trend)', () => {
+describe('v9.7 TREND-FLIP on MANUAL positions + v12.7 FLIP DISCIPLINE (notify-only default + per-pair re-entry block)', () => {
   beforeEach(async () => {
     await agentStart({ mode: 'paper' });
   });
 
-  it('manual-held position + qualifying OPPOSITE board → cut (default ON)', async () => {
+  it('v12.7 DEFAULT: manual-held position + qualifying OPPOSITE board → ALERT, position NOT cut (notify-only)', async () => {
     const j = loadJournal();
     j.positions.push({
       id: 'man1', pair: 'B-BTC_USDT', market: 'FUTURES', side: 'LONG', mode: 'paper',
@@ -458,8 +458,126 @@ describe('v9.7 TREND-FLIP on MANUAL positions (user spec: auto exit per trend)',
       ...FUTURES_BOARD,
       signals: [{ ...STRONG_CAND, side: 'SHORT', superIntel: { aiScore: 84 } }],
     });
+    const tg = vi.fn();
+    await agentTick({}, tg);
+    // the user's manual position is the user's — an ALERT, never a close
+    expect(mockCloseFutures).not.toHaveBeenCalledWith('man1');
+    expect(tg.mock.calls.some(c => String(c[0]).includes('trend-flip ALERT'))).toBe(true);
+    // and the per-pair flip memory armed (the re-entry guard) — visible in status
+    const st = await agentStatus({});
+    const blocks = st.state.flipDiscipline.activeBlocks as Array<{ pair: string; closedSide: string }>;
+    expect(blocks.some(b => b.pair === 'B-BTC_USDT' && b.closedSide === 'LONG')).toBe(true);
+    expect(st.state.flipDiscipline.manualFlipAction).toBe('notify');
+  });
+
+  it('v12.7 notify-only: the alert fires ONCE per flip episode (no per-tick Telegram storm)', async () => {
+    const j = loadJournal();
+    j.positions.push({
+      id: 'man1b', pair: 'B-BTC_USDT', market: 'FUTURES', side: 'LONG', mode: 'paper',
+      source: 'manual', status: 'OPEN', qty: 0.01, entryPrice: 50000,
+      openedAt: Date.now() - 5 * 60_000,
+    });
+    __setJournalForTests(j);
+    mockGetSignals.mockResolvedValue({
+      ...FUTURES_BOARD,
+      signals: [{ ...STRONG_CAND, side: 'SHORT', superIntel: { aiScore: 84 } }],
+    });
+    const tg = vi.fn();
+    await agentTick({}, tg);
+    await agentTick({}, tg);
+    await agentTick({}, tg);
+    const alertCalls = tg.mock.calls.filter(c => String(c[0]).includes('trend-flip ALERT'));
+    expect(alertCalls.length).toBe(1); // one episode, one ping
+    expect(mockCloseFutures).not.toHaveBeenCalled();
+  });
+
+  it('v12.7 OPT-IN close-mode + STRONG opposite signal → cut (restores the v9.7 behavior)', async () => {
+    updateAgentConfig({ manualFlipAction: 'close' });
+    const j = loadJournal();
+    j.positions.push({
+      id: 'man4', pair: 'B-BTC_USDT', market: 'FUTURES', side: 'LONG', mode: 'paper',
+      source: 'manual', status: 'OPEN', qty: 0.01, entryPrice: 50000,
+      openedAt: Date.now() - 5 * 60_000,
+    });
+    __setJournalForTests(j);
+    mockGetSignals.mockResolvedValue({
+      ...FUTURES_BOARD,
+      signals: [{ ...STRONG_CAND, side: 'SHORT', grade: 'STRONG', superIntel: { aiScore: 84 } }],
+    });
     await agentTick({}, vi.fn());
-    expect(mockCloseFutures).toHaveBeenCalledWith('man1');
+    expect(mockCloseFutures).toHaveBeenCalledWith('man4');
+  });
+
+  it('v12.7 close-mode still demands STRONG — a score-bar qualifier (ACTION grade) does NOT cut a manual position', async () => {
+    updateAgentConfig({ manualFlipAction: 'close' });
+    const j = loadJournal();
+    j.positions.push({
+      id: 'man5', pair: 'B-BTC_USDT', market: 'FUTURES', side: 'LONG', mode: 'paper',
+      source: 'manual', status: 'OPEN', qty: 0.01, entryPrice: 50000,
+      openedAt: Date.now() - 5 * 60_000,
+    });
+    __setJournalForTests(j);
+    mockGetSignals.mockResolvedValue({
+      ...FUTURES_BOARD,
+      signals: [{ ...STRONG_CAND, side: 'SHORT', grade: 'ACTION', superIntel: { aiScore: 84 } }],
+    });
+    await agentTick({}, vi.fn());
+    expect(mockCloseFutures).not.toHaveBeenCalledWith('man5');
+  });
+
+  it('v12.7 FLIP-CHURN GUARD: after a flip on a pair, the OPPOSITE-side candidate is refused (no LONG→SHORT conversion)', async () => {
+    // a LONG was flip-alerted 30 min ago on B-BTC_USDT; the position is
+    // closed now, the board prints a qualifying SHORT — the agent must
+    // NOT enter it (the account never flips sides on the same pair).
+    const j = loadJournal();
+    __setJournalForTests(j);
+    __setAgentStateForTests({
+      flipBlock: { 'B-BTC_USDT': { side: 'LONG', at: Date.now() - 30 * 60_000 } },
+    });
+    mockGetSignals.mockResolvedValue({
+      ...FUTURES_BOARD,
+      signals: [{ ...STRONG_CAND, side: 'SHORT', superIntel: { aiScore: 84 } }],
+    });
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).not.toHaveBeenCalled();
+    // the refusal is recorded in the agent log ring (lastSkip may be
+    // overwritten by the later no_candidates skip — the ring is the truth)
+    const st = await agentStatus({});
+    const logTexts = ((st.state.log as Array<{ text: string }>) || []).map(l => String(l.text));
+    expect(logTexts.some(t => t.includes('entry BLOCKED') && t.includes('B-BTC_USDT'))).toBe(true);
+  });
+
+  it('v12.7 flip-churn guard: SAME-side re-entry is allowed (a fresh LONG after a flip-closed SHORT is a new signal, not churn)', async () => {
+    const j = loadJournal();
+    __setJournalForTests(j);
+    __setAgentStateForTests({
+      flipBlock: { 'B-BTC_USDT': { side: 'LONG', at: Date.now() - 30 * 60_000 } },
+    });
+    // same side as the blocked-from side (LONG) → NOT blocked
+    mockGetSignals.mockResolvedValue({
+      ...FUTURES_BOARD,
+      signals: [{ ...STRONG_CAND, side: 'LONG', superIntel: { aiScore: 84 } }],
+    });
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).toHaveBeenCalled();
+  });
+
+  it('v12.7 flip-churn guard: the block EXPIRES after flipReentryBlockMin', async () => {
+    const j = loadJournal();
+    __setJournalForTests(j);
+    __setAgentStateForTests({
+      // 5h-old block on the default 4h window — expired, entry may fire
+      flipBlock: { 'B-BTC_USDT': { side: 'LONG', at: Date.now() - 5 * 60 * 60_000 } },
+    });
+    mockGetSignals.mockResolvedValue({
+      ...FUTURES_BOARD,
+      signals: [{ ...STRONG_CAND, side: 'SHORT', superIntel: { aiScore: 84 } }],
+    });
+    await agentTick({}, vi.fn());
+    expect(mockExecuteFutures).toHaveBeenCalled();
+    const st = await agentStatus({});
+    const logTexts = ((st.state.log as Array<{ text: string }>) || []).map(l => String(l.text));
+    expect(logTexts.some(t => t.includes('entry BLOCKED'))).toBe(false); // expired — no block line this tick
   });
 
   it('manageManualPositions=false → manual position left alone (agent-only guard)', async () => {

@@ -1014,7 +1014,11 @@ export function useAppState() {
             .map(p => p.symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase()),
         ])];
         try {
-          const res = await apiFetch(`${proxyBase}/api/crypto-prices?t=${Date.now()}`, {
+          // v12.7 BANDWIDTH: ?symbols= asks the server to slice the cached
+          // ticker array to exactly this watchlist (~8KB vs the full
+          // ~400-market ~300KB download every 30s — the biggest egress
+          // lever on the free tier).
+          const res = await apiFetch(`${proxyBase}/api/crypto-prices?t=${Date.now()}&symbols=${encodeURIComponent(cryptoSymbols.join(','))}`, {
             signal: AbortSignal.timeout(5000)
           });
           if (res.ok) {

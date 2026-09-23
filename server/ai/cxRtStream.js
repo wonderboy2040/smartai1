@@ -87,9 +87,15 @@ const FUT_BOOK_CHANNEL = 'currentPrices@futures@rt';
 // Binance perp fallback (the SAME chain the futures board itself uses when
 // CoinDCX RT goes dark — 1:1 USDT domain, zero projection risk). Cached 5s
 // so a WAF blip on CoinDCX never stalls the stream longer than one beat.
+// v12.7 BANDWIDTH (recheck R2-#4 — the 17-35GB/day whale): the FULL
+// ~500-symbol fapi/ticker/24hr book is 1-2MB per beat while CoinDCX is
+// dark; the stream only ever reads the SUBSCRIBED bases. ?symbols=
+// (Binance JSON-array param) cuts the payload to exactly those (~2-40KB,
+// and a fraction of the request weight). Cache is signature-keyed so a
+// symbol-set change never serves a stale slice.
 const BINANCE_FUT_URL = 'https://fapi.binance.com/fapi/v1/ticker/24hr';
 const BINANCE_FUT_CACHE_MS = 5_000;
-let _bnFut = { at: 0, byBase: null }; // { at, byBase: Map<BASE, row> }
+let _bnFut = { at: 0, sig: '', byBase: null }; // { at, sig, byBase: Map<BASE, row> }
 
 // ---- v10.11 CoinDCX futures WebSocket (docs.coindcx.com) ----
 // v11.3 (live-verified 2026-09-17): EIO=4 — the EIO=3 URL completes the
@@ -412,7 +418,9 @@ async function _pollFutures(_now) {
   // is the accelerator tier, REST 5s is only the tier BELOW it.
   const missing = [..._futSubscribed].filter(b => !covered.has(b) && !_binanceWsFreshFor(b));
   if (missing.length > 0) {
-    const byBase = await _binanceFutBook().catch(() => null);
+    // v12.7: only the MISSING bases ride the Binance fallback — the
+    // full ~500-symbol book was the outage-mode bandwidth whale.
+    const byBase = await _binanceFutBook(missing).catch(() => null);
     if (byBase) {
       for (const base of missing) {
         const r = byBase.get(base);
@@ -444,14 +452,32 @@ export function _setBinanceFutFetchForTest(fn) { _bnFutFetchImpl = fn; }
 // usStream/inStream guards exist for).
 let _bnFutInflight = null;
 let _bnFutNegUntil = 0;
-async function _binanceFutBook() {
+/** v12.7: canonical signature of a bases request (sorted, upper, joined) —
+ * empty string = the full-book request. */
+function _bnFutSig(bases) {
+  return Array.isArray(bases) && bases.length > 0
+    ? [...new Set(bases.map(b => String(b || '').toUpperCase()).filter(Boolean))].sort().join(',')
+    : '';
+}
+/** v12.7: Binance fapi `symbols` query param — URL-encoded JSON array of
+ * BASEUSDT symbols, capped at 100 (the documented limit). Null when the
+ * caller wants the full book. */
+function _bnFutSymbolsParam(sig) {
+  if (!sig) return null;
+  const symbols = sig.split(',').map(b => `${b}USDT`).slice(0, 100);
+  return symbols.length > 0 ? `?symbols=${encodeURIComponent(JSON.stringify(symbols))}` : null;
+}
+async function _binanceFutBook(bases) {
   const now = _nowFn();
-  if (_bnFut.byBase && (now - _bnFut.at) < BINANCE_FUT_CACHE_MS) return _bnFut.byBase;
+  const sig = _bnFutSig(bases);
+  if (_bnFut.byBase && (now - _bnFut.at) < BINANCE_FUT_CACHE_MS && _bnFut.sig === sig) return _bnFut.byBase;
   if (now < _bnFutNegUntil) throw new Error('binance fut: negative cache');
-  if (_bnFutInflight) return _bnFutInflight;
-  _bnFutInflight = (async () => {
+  if (_bnFutInflight && _bnFutInflight.sig === sig) return _bnFutInflight.p;
+  const inflight = { sig, p: null };
+  inflight.p = (async () => {
     const f = _bnFutFetchImpl || globalThis.fetch;
-    const r = await f(BINANCE_FUT_URL, {
+    const symParam = _bnFutSymbolsParam(sig);
+    const r = await f(symParam ? `${BINANCE_FUT_URL}${symParam}` : BINANCE_FUT_URL, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
       signal: AbortSignal.timeout(6000),
     });
@@ -473,18 +499,19 @@ async function _binanceFutBook() {
       });
     }
     if (byBase.size === 0) throw new Error('binance fut: empty');
-    _bnFut = { at: _nowFn(), byBase };
+    _bnFut = { at: _nowFn(), sig, byBase };
     return byBase;
   })();
+  _bnFutInflight = inflight;
   try {
-    return await _bnFutInflight;
+    return await inflight.p;
   } catch (e) {
     // 10s negative cache — the poll cadence keeps ticking but the fetch
     // backs off instead of stacking.
     _bnFutNegUntil = _nowFn() + 10_000;
     throw e;
   } finally {
-    _bnFutInflight = null;
+    if (_bnFutInflight === inflight) _bnFutInflight = null;
   }
 }
 
@@ -854,7 +881,7 @@ export function _resetCxRtForTest() {
   _activeClients = 0;
   _sessionStartAt = 0; // v12.6
   _fallbackAt = 0;
-  _bnFut = { at: 0, byBase: null };
+  _bnFut = { at: 0, sig: '', byBase: null };
   _bnFutFetchImpl = null;
   _closeWs('test-reset');
   if (_wsReconnectTimer) { clearTimeout(_wsReconnectTimer); _wsReconnectTimer = null; }

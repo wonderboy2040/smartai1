@@ -409,6 +409,16 @@ export interface AISignal {
   /** v12.4 — true when this card EXISTS only because an open position
    *  pinned it back onto the board (it fell out of the top-N cut). */
   holdingOnly?: boolean;
+  /** v12.7 — the AI's CURRENT directional view on a pinned holding card
+   *  (can be the OPPOSITE of the position side — the card's own side is
+   *  the POSITION side; this view renders as a sub-chip so a held LONG
+   *  can never display as a SHORT card). */
+  aiView?: {
+    side: 'LONG' | 'SHORT';
+    grade: string | null;
+    conf: number | null;
+    fresh: boolean;
+  } | null;
   votes: ModelVote[];
   summary: string;
   aiNote: AINote | null;

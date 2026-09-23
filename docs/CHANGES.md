@@ -1,5 +1,36 @@
 # Changelog
 
+## v12.7 — FULL-SITE DEEP RECHECK: flip-discipline engine + egress diet + security hardening (2026-09-21)
+
+**User report: "full site code recheck karo."** Three independent deep audits ran over the whole codebase (direction-chain / bandwidth / general QA, findings ranked with file:line evidence), every finding fixed, and every fix locked by tests. Baseline before the work: tsc clean · 2252/2253 (the 1 = documented pre-existing BSE live-network geo-block, identical after).
+
+### 1. DIRECTION — the LITERAL "long pe trade liya, short me chala gaya" mechanism is dead
+The audit found NO wire-level inversion anywhere (all four order desks, all exits, all position recording verified again). What it DID find — and what this release fixes:
+- **Manual-position flip discipline (`agent.js`)**: the v9.7 trend-flip sweep used to MARKET-CLOSE the user's MANUAL LONG the moment the board printed a qualifying opposite signal — and the candidate flow could then re-enter the FLIP side after a bare 20-min global cooldown. That was the only code path that literally converted the user's LONG into a SHORT. Now: **manual positions are notify-only by default** (one Telegram ALERT per flip episode — `manualFlipAction:'close'` restores the auto-close, and even close-mode demands a STRONG-grade opposite signal).
+- **Per-pair flip-churn guard (`agent.js`)**: every flip (exit OR alert) stamps `flipBlock[pair] = {side, at}` — the agent refuses to enter the **OPPOSITE side of that pair for 4h** (`flipReentryBlockMin`, clamped 0-1440). Same-side re-entries stay allowed. The block window + active blocks surface in `agentStatus().state.flipDiscipline` (panel-ready).
+- **Board-vs-gate asymmetry fixed (`signals.js`)**: the deep CRYPTO/FUTURES path never set `ctx.__tv`, so in degraded candle conditions the fresh exec re-run's 15m tape seat ABSTAINED while the clicked board card HAD the tape vote → vetoes the user read as "direction galat". The deep ctx now carries the TV row — board card == deep card, always.
+- **Pinned holding cards headline the POSITION (`signalMemory.js` + `SignalCard.tsx`)**: a held LONG whose AI view flipped used to render under a SHORT-labeled card. The card's side is now the position's side; the AI's current view rides a new `aiView` sub-chip ("👁 AI abhi SHORT dekh raha hai" — context, never a call). Summary leads with "aapki LONG position".
+- **Exact committee ties → honest FLAT (`ensemble.js`)**: `bull >= bear` used to mint a LONG on an exactly-split committee. A perfect weight tie is now FLAT/NEUTRAL with a `tie: true` marker and the split summary.
+- **Paper-synth side default (`coindcxOrders/futures/indiaOrders/globalFutures`)**: an ABSENT side in an execute request no longer silently defaults LONG — it inherits the fresh signal's side.
+
+### 2. BANDWIDTH — the free-tier egress diet (recheck R2's ranked levers, all four)
+- **`/api/crypto-prices ?symbols=` (the biggest pure-egress lever)**: the client re-downloaded the FULL ~400-market ticker array (~300KB raw) every 30s while reading only its ~20-symbol watchlist. The server now slices the CACHED array to the requested bases (~8KB, ~97% cut); the client sends its watchlist. Filter extracted to `lib/tickerFilter.js`, locked by `test/cryptoPricesFilter.test.ts` (6), verified live in the boot smoke (2 rows for BTC,ETH).
+- **Boards are 304-able**: the client's `?t=` cache-buster is gone and the signals route sets `Cache-Control: no-cache` — Express's weak ETag now answers 304 for the byte-identical board inside the 60s server cache (the client polls every 30s → ~half the polls were full re-downloads of 100-400KB).
+- **SSE tick diet (`index.js`)**: per-symbol throttle 400ms→1000ms + a dead-tick filter (|Δprice| < 0.05% pushes nothing) — ~0.3-0.4GB/day of price noise the UI's own 800ms batcher smoothed away anyway.
+- **The fapi full-book whale is dead**: BOTH Binance `ticker/24hr` fetch sites now request ONLY the symbols they actually read via the documented `?symbols=` JSON-array param — `cxRtStream._binanceFutBook(missing)` (the outage-mode REST fallback, was 1-2MB every beat, worst-case 17-35GB/day) and `futures.js` leg 3 (the board's dark fallback, now FUTURES_UNIVERSE-only ~5KB). Cache is signature-keyed so a symbol-set change never serves a stale slice.
+- **Deploy side**: `render.yaml` buildCommand `npm install` → `npm ci` (deterministic — Render's build cache hits far more often, cold installs shrink).
+
+### 3. SECURITY / HYGIENE (recheck R3's top findings)
+- **Paper + manual trades ride the ENCRYPTED durable channel**: both stores used plaintext `scheduleBackup` pushes to the public GitHub backup branch (symbols/qty/entries/P&L) while every other state file rode durable.js's AES-256-GCM promise. Both now `durablePut`; boot restores are decrypt-aware with legacy-plaintext migration grace — and manual-trades got a boot restore it NEVER had (restarts silently wiped the tracker).
+- **Shutdown remote flush**: the four graceful-shutdown flushers only wrote Render's EPHEMERAL disk; the remote backup stayed a debounce+60s-gap window behind on every deploy. New `flushBackupNow()` fires every pending push inside the SIGTERM drain (bounded bypass, once).
+- **Service-worker allowlist inversion**: the old sensitive-DENYLIST still cached `/api/ai/*`, positions, wallet, journal, holdings into unencrypted CacheStorage. Now only PUBLIC market-data paths (`quote|crypto-prices|forex|feed-status|ai-status|chart|fundamentals|inflation|ml`) may touch the offline cache; everything else is network-only. API cache bumped v18→v19 so the activate pass evicts every previously-cached private entry.
+- **Security headers on the LIVE Render path**: nosniff / X-Frame-Options DENY / Referrer-Policy / Permissions-Policy / CSP (frame-ancestors 'none'; object-src 'none'; base-uri 'self') — the safe subset, verified live in the boot smoke.
+- **RESCAN single-flight fixed**: `?rescan=1` used to bypass `_boardInflight` (the route comment claimed "single-flight protected" — it wasn't): a RESCAN could stack with the 15s warmOnly poll + the 30s board poll. All computes now share the one single-flight map.
+- **Site cleanup re-applied**: the dead files the v12.4 cleanup removed and later user commits resurrected are gone again (UPGRADE_REPORT*.md, AUDIT_FIX_REPORT_v1801.md, smoke_v113.mjs, oldcode.gs).
+
+### Validation
+tsc CLEAN · full suite **2268/2269** (baseline 2252/2253 + 16 net new locks: agent flip-discipline 6, pinned-card aiView 2, exact-tie 2, ticker filter 6, fapi symbols locks in futuresResilience + cxRtStream, futures leg-3 universe-filter lock; the 1 failure = the documented pre-existing BSE live-network geo-block, identical on baseline) · build 5.43s · route audit PASS · boot smoke 9/9 (headers, symbols slice, auth gates, health) · `node --check` all touched files · ml-service pytest untouched/11-11.
+
 ## v12.6 — DIRECTION-ACCURACY ENGINE + THE BANDWIDTH FIX (2026-09-21)
 
 **User report: "phir se check karo Intraday & coin dcx dono tabs ke Trade Signal directions Long aur Short Accurately dedo — long pe trade lene par short ho raha hai · world-top-professional deep AI quantum level pe recheck karo aisa kyun ho raha hai · aur Render me har redeploy me bandwidth bahut le raha hai — free tier 5GB exhaust ho raha hai."**

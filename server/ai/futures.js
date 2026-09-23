@@ -138,8 +138,12 @@ export async function fetchFuturesPrices({ maxAgeMs = 20_000 } = {}) {
       // v11.3 leg 3 — Binance fapi / Bybit linear USDT-perp tickers (1:1
       // domain), rate-limited by the negative cache so a dead CoinDCX
       // never turns into a 2s fapi hammer.
+      // v12.7 BANDWIDTH: the fapi leg now requests ONLY the board's
+      // universe symbols (?symbols= JSON-array param) instead of the
+      // full ~500-symbol 1-2MB book — the futures board scans
+      // FUTURES_UNIVERSE, so the synth leg only ever needs those rows.
       if (Date.now() >= _synthDownUntil) {
-        const synth = await _binanceFutRows().catch(() => null);
+        const synth = await _binanceFutRows(FUTURES_UNIVERSE).catch(() => null);
         if (synth && synth.length > 0) {
           _pricesCache = synth; _pricesAt = Date.now();
           return synth;
@@ -186,10 +190,22 @@ function _rowsFromRtPayload(j, map) {
 
 /** v11.3 leg 3 — Binance fapi / Bybit linear 24h ticker book →
  *  CoinDCX-shaped rows. Same USDT-perp domain (zero projection risk);
- *  source: 'binance-fut' / 'bybit-fut'. */
-async function _binanceFutRows() {
+ *  source: 'binance-fut' / 'bybit-fut'.
+ *  v12.7 BANDWIDTH: `bases` (optional array) adds Binance's ?symbols=
+ *  JSON-array filter so a dark-CoinDCX board fetch pulls ~12 rows
+ *  (~5KB) instead of the full ~500-symbol 1-2MB book — the
+ *  dark-fallback leg's payload drops ~99% and the request weight
+ *  falls with it. No bases = full book (legacy callers/tests). */
+async function _binanceFutRows(bases) {
+  const symParam = Array.isArray(bases) && bases.length > 0
+    ? (() => {
+        const symbols = [...new Set(bases.map(b => String(b || '').toUpperCase()).filter(Boolean))]
+          .map(b => `${b}USDT`).slice(0, 100);
+        return symbols.length > 0 ? `?symbols=${encodeURIComponent(JSON.stringify(symbols))}` : null;
+      })()
+    : null;
   try {
-    const r = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr', {
+    const r = await fetch(symParam ? `https://fapi.binance.com/fapi/v1/ticker/24hr${symParam}` : 'https://fapi.binance.com/fapi/v1/ticker/24hr', {
       headers: { 'User-Agent': UA },
       signal: AbortSignal.timeout(8000),
     });
@@ -889,7 +905,13 @@ export async function executeFuturesSignal(opts) {
   // (the "paper trading start hi nhi ho raha" fix).
   let effectiveSignal = signal;
   let synthNote = null;
-  const reqSide = String(side || '').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
+  // v12.7 (recheck R1-#9): an ABSENT side no longer silently defaults
+  // LONG — an unspecified request inherits the fresh signal's side (the
+  // client always sends side; a missing side is a malformed call, and
+  // minting a LONG from nothing was a free directional bias).
+  const _reqRaw = String(side || '').toUpperCase();
+  const reqSide = _reqRaw === 'SHORT' || _reqRaw === 'LONG' ? _reqRaw
+    : (signal.side === 'SHORT' || signal.side === 'LONG' ? signal.side : 'LONG');
   const sideConflict = signal.side !== 'FLAT' && signal.side !== reqSide;
   const belowFloor = signal.grade !== 'STRONG' && signal.grade !== 'ACTION';
   if (wantMode !== 'live' && (sideConflict || signal.side === 'FLAT' || !signal.plan)) {
