@@ -225,7 +225,7 @@ export function saveCustomCloudConfig(cloudUrl: string, backendUrl?: string, clo
  */
 async function fetchCoinDcxTickers(): Promise<CoinDcxTicker[] | null> {
   try {
-    const res = await apiFetch(`/api/crypto-prices?t=${Date.now()}`, {
+    const res = await apiFetch('/api/crypto-prices', {
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;
@@ -428,7 +428,7 @@ export async function batchFetchIndianPrices(
   const realtimeReq = (async (): Promise<Record<string, PriceData>> => {
     const out: Record<string, PriceData> = {};
     try {
-      const url = `/api/quote?market=IN&symbols=${encodeURIComponent(cleanSyms.join(','))}&t=${Date.now()}`;
+      const url = `/api/quote?market=IN&symbols=${encodeURIComponent(cleanSyms.join(','))}`;
       const res = await apiFetch(url, { signal: AbortSignal.timeout(6000) });
       if (!res.ok) return out;
       const json = await res.json();
@@ -594,7 +594,7 @@ export async function batchFetchUSPrices(
   const realtimeReq = (async (): Promise<Record<string, PriceData>> => {
     const out: Record<string, PriceData> = {};
     try {
-      const url = `/api/quote?market=US&symbols=${encodeURIComponent(cleanSyms.join(','))}&t=${Date.now()}`;
+      const url = `/api/quote?market=US&symbols=${encodeURIComponent(cleanSyms.join(','))}`;
       const res = await apiFetch(url, { signal: AbortSignal.timeout(6000) });
       if (!res.ok) return out;
       const json = await res.json();
@@ -944,7 +944,7 @@ export async function batchFetchPrices(
           // froze the backend at bundle load, so a runtime backend switch
           // (WEALTH_AI_BACKEND_URL) left these batch quotes hitting the OLD
           // server while every apiFetch call used the new one.
-          const url = `${getProxyBase()}/api/quote?market=IN&symbols=${encodeURIComponent(allInSyms.join(','))}&t=${Date.now()}`;
+          const url = `${getProxyBase()}/api/quote?market=IN&symbols=${encodeURIComponent(allInSyms.join(','))}`;
           const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
           if (!res.ok) return;
           const json = await res.json();
@@ -969,7 +969,7 @@ export async function batchFetchPrices(
     if (allUsSyms.length > 0) {
       tasks.push((async () => {
         try {
-          const url = `${getProxyBase()}/api/quote?market=US&symbols=${encodeURIComponent(allUsSyms.join(','))}&t=${Date.now()}`;
+          const url = `${getProxyBase()}/api/quote?market=US&symbols=${encodeURIComponent(allUsSyms.join(','))}`;
           const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
           if (!res.ok) return;
           const json = await res.json();
@@ -1113,7 +1113,7 @@ export async function batchFetchPrices(
 export async function fetchForexRate(): Promise<number> {
   // Primary: server-side proxy (cached, no CORS issues, fastest)
   try {
-    const res = await apiFetch(`/api/forex?t=${Date.now()}`, {
+    const res = await apiFetch('/api/forex', {
       signal: AbortSignal.timeout(4000)
     });
     if (res.ok) {

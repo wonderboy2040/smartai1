@@ -62,10 +62,12 @@ let _scanCrypto = new Set();    // latest CRYPTO scan's published signal symbols
 let _latestQuotes = { data: {}, ts: 0, day: '', utcDay: '' };
 let _clients = new Set();       // SSE response writers
 let _timer = null;
+let _currentPollMs = POLL_MS;
 let _failureStreak = 0;
 let _lastRegimePush = 0;
 let _lastCryptoRegimePush = 0;
 let _ticking = false; // v10.13 (deep-recheck L1): poll re-entrancy guard
+let _lastSentQuotes = {}; // v12.10 BANDWIDTH: per-symbol dead-tick filter
 
 function _debug() { return process.env.INTRADAY_DEBUG === '1'; }
 
@@ -249,6 +251,7 @@ async function _tick() {
       if (_failureStreak >= FAILURE_STREAK_LIMIT) {
         // Back off: clear the timer and retry slowly until success.
         clearInterval(_timer);
+        _currentPollMs = BACKOFF_MS;
         _timer = setInterval(_tick, BACKOFF_MS);
         if (typeof _timer.unref === 'function') _timer.unref();
       }
@@ -257,10 +260,27 @@ async function _tick() {
     if (_failureStreak >= FAILURE_STREAK_LIMIT) {
       // Recovered — restore fast cadence.
       clearInterval(_timer);
+      _currentPollMs = POLL_MS;
       _timer = setInterval(_tick, POLL_MS);
       if (typeof _timer.unref === 'function') _timer.unref();
     }
     _failureStreak = 0;
+
+    // Idle backoff: when no SSE clients are listening and NSE window is closed,
+    // slow down watcher to 30s so 24/7 crypto doesn't hammer outbound bandwidth when unused
+    if (_clients.size === 0 && !_inWindow() && _failureStreak === 0) {
+      if (_currentPollMs !== BACKOFF_MS) {
+        clearInterval(_timer);
+        _currentPollMs = BACKOFF_MS;
+        _timer = setInterval(_tick, BACKOFF_MS);
+        if (typeof _timer.unref === 'function') _timer.unref();
+      }
+    } else if ((_clients.size > 0 || _inWindow()) && _currentPollMs !== POLL_MS && _failureStreak === 0) {
+      clearInterval(_timer);
+      _currentPollMs = POLL_MS;
+      _timer = setInterval(_tick, POLL_MS);
+      if (typeof _timer.unref === 'function') _timer.unref();
+    }
 
     // v9.5 F&O: re-price open OPTION paper trades (BS model on the live
     // underlying spot) and inject their premiums into this tick's quotes
@@ -275,6 +295,7 @@ async function _tick() {
     const utcDay = dayKeyFor('CRYPTO');
     if (_latestQuotes.day !== today || _latestQuotes.utcDay !== utcDay) {
       _latestQuotes = { data: {}, ts: 0, day: today, utcDay };
+      _lastSentQuotes = {};
     }
     _latestQuotes = { data: { ..._latestQuotes.data, ...quotes }, ts: Date.now(), day: today, utcDay };
     // v10.13 (deep-recheck L7): prune departed symbols. The map was
@@ -303,7 +324,23 @@ async function _tick() {
     // upstream cost; inert when Groww serves no bands for a symbol.
     try { paperCircuitWatch(quotes, events); } catch (e) { console.warn('[intraday-stream] circuit watch:', e?.message); }
 
-    _broadcast('quotes', quotes);
+    // v12.10 BANDWIDTH: Only broadcast quotes that changed (|Δprice| ≥ 0.05% or new).
+    // The client merges incoming updates into its livePrices map, so sending only changed
+    // rows cuts ~95% of egress on this 5s stream.
+    if (_clients.size > 0) {
+      const changed = {};
+      for (const [sym, q] of Object.entries(quotes)) {
+        const prev = _lastSentQuotes[sym];
+        const price = Number(q?.price);
+        if (!prev || !Number.isFinite(prev.price) || (Number.isFinite(price) && Math.abs(price - prev.price) / (prev.price || 1) >= 0.0005)) {
+          changed[sym] = q;
+          _lastSentQuotes[sym] = { price, ts: Date.now() };
+        }
+      }
+      if (Object.keys(changed).length > 0) {
+        _broadcast('quotes', changed);
+      }
+    }
     for (const ev of events) {
       _broadcast('outcome', ev);
       if (typeof _deps.dispatchOutcomeAlert === 'function') {
@@ -365,6 +402,13 @@ export function intradayStreamHandler(req, res) {
     }
   };
   _clients.add(write);
+  // Restore fast 5s cadence if watcher was in idle backoff
+  if (_currentPollMs !== POLL_MS && _failureStreak === 0) {
+    clearInterval(_timer);
+    _currentPollMs = POLL_MS;
+    _timer = setInterval(_tick, POLL_MS);
+    if (typeof _timer.unref === 'function') _timer.unref();
+  }
 
   // Initial snapshot so a fresh client paints instantly.
   try {

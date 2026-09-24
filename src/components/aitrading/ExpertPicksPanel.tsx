@@ -320,13 +320,13 @@ export const ExpertPicksPanel = memo(function ExpertPicksPanel({ active, market,
 
   const load = useCallback(async () => {
     try {
-      const r = await apiFetch(`${getProxyBase()}/api/ai/expert-picks?market=${market}&minScore=${minScore}&limit=12&t=${Date.now()}`, { signal: AbortSignal.timeout(45000) });
+      const r = await apiFetch(`${getProxyBase()}/api/ai/expert-picks?market=${market}&minScore=${minScore}&limit=12`, { signal: AbortSignal.timeout(45000) });
       if (!r.ok) throw new Error(String(r.status));
       let j = await r.json();
       // v9.2: 0 STRONG picks + a scanned universe → one honest retry at 65+.
       if (Array.isArray(j?.picks) && j.picks.length === 0 && Number(j?.scanned) > 0 && minScore > 65) {
         try {
-          const r2 = await apiFetch(`${getProxyBase()}/api/ai/expert-picks?market=${market}&minScore=65&limit=12&t=${Date.now()}`, { signal: AbortSignal.timeout(45000) });
+          const r2 = await apiFetch(`${getProxyBase()}/api/ai/expert-picks?market=${market}&minScore=65&limit=12`, { signal: AbortSignal.timeout(45000) });
           if (r2.ok) {
             const j2 = await r2.json();
             if (Array.isArray(j2?.picks) && j2.picks.length > 0) {
@@ -350,7 +350,7 @@ export const ExpertPicksPanel = memo(function ExpertPicksPanel({ active, market,
   useEffect(() => {
     if (!active) return;
     load();
-    const t = setInterval(() => { if (activeRef.current && !document.hidden) load(); }, 60_000);
+    const t = setInterval(() => { if (activeRef.current && !document.hidden) load(); }, 120_000);
     return () => clearInterval(t);
   }, [active, load]);
 

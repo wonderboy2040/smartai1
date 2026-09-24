@@ -25,7 +25,7 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { fetchAgentStatus, startAgent, stopAgent, saveAgentConfig, fetchWallet } from './useAITrading';
 import type { AgentView, AgentLogLine, AgentPick, AgentSizingPreview, WalletView } from './types';
 
-const POLL_MS = 15_000;
+const POLL_MS = 30_000;
 
 const fmtINR = (n: number | null | undefined, dp = 0) => {
   if (n == null || !Number.isFinite(n)) return '—';

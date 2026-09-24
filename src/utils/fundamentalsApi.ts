@@ -24,7 +24,7 @@ export async function fetchFundamentals(
   }
 
   try {
-    const url = `${PROXY_BASE}/api/fundamentals/${encodeURIComponent(symbol)}?market=${market}&t=${Date.now()}`;
+    const url = `${PROXY_BASE}/api/fundamentals/${encodeURIComponent(symbol)}?market=${market}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
     if (!res.ok) {
       _cache.set(key, { data: null, ts: Date.now() });

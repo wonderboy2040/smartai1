@@ -159,7 +159,7 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
 
   const loadState = useCallback(async () => {
     try {
-      const r = await apiFetch(`${getProxyBase()}/api/ai/trading/state?t=${Date.now()}`, { signal: AbortSignal.timeout(10000) });
+      const r = await apiFetch(`${getProxyBase()}/api/ai/trading/state`, { signal: AbortSignal.timeout(10000) });
       if (r.ok) setState(await r.json());
     } catch { /* skip */ }
   }, []);
@@ -167,7 +167,7 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
   const loadPositions = useCallback(async () => {
     const seq = ++posSeqRef.current;
     try {
-      const r = await apiFetch(`${getProxyBase()}/api/ai/positions?t=${Date.now()}`, { signal: AbortSignal.timeout(15000) });
+      const r = await apiFetch(`${getProxyBase()}/api/ai/positions`, { signal: AbortSignal.timeout(15000) });
       if (r.ok) {
         const j = await r.json();
         if (seq !== posSeqRef.current) return; // stale response — a newer load already landed
@@ -187,7 +187,9 @@ export function useAITrading(active: boolean, scope?: { markets?: Array<'INDIA' 
   }, [active, loadBoards, loadState, loadPositions]);
   useEffect(() => {
     if (!active) return;
-    const b = setInterval(() => { if (activeRef.current && !document.hidden) loadBoards(); }, 30_000);
+    // v12.10 BANDWIDTH: 60s board polling (was 30s) cuts AI signal egress in half.
+    // Instant scan is available on demand via the RESCAN button.
+    const b = setInterval(() => { if (activeRef.current && !document.hidden) loadBoards(); }, 60_000);
     const s = setInterval(() => { if (activeRef.current && !document.hidden) loadState(); }, 60_000);
     return () => { clearInterval(b); clearInterval(s); };
   }, [active, loadBoards, loadState]);

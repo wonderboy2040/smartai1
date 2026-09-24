@@ -66,7 +66,7 @@ export const PerpIntelPanel = memo(function PerpIntelPanel() {
 
   const load = useCallback(async () => {
     try {
-      const r = await apiFetch(`/api/ai/perp-intel?limit=12&t=${Date.now()}`, { signal: AbortSignal.timeout(30_000) });
+      const r = await apiFetch('/api/ai/perp-intel?limit=12', { signal: AbortSignal.timeout(30_000) });
       if (r.ok) {
         const data = (await r.json()) as PerpIntelView;
         setView(data);
@@ -81,7 +81,7 @@ export const PerpIntelPanel = memo(function PerpIntelPanel() {
 
   useEffect(() => {
     load();
-    const t = setInterval(() => { if (!document.hidden) load(); }, 60_000);
+    const t = setInterval(() => { if (!document.hidden) load(); }, 90_000);
     return () => clearInterval(t);
   }, [load]);
 

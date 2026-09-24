@@ -163,7 +163,7 @@ async function fetchMarketSnapshot(): Promise<MarketSnapshot> {
   // Crypto via server proxy
   tasks.push((async () => {
     try {
-      const r = await apiFetch(`${PROXY_BASE}/api/crypto-prices?t=${Date.now()}`, {
+      const r = await apiFetch(`${PROXY_BASE}/api/crypto-prices`, {
         signal: AbortSignal.timeout(5000),
       });
       if (r.ok) {
@@ -181,7 +181,7 @@ async function fetchMarketSnapshot(): Promise<MarketSnapshot> {
   // Forex
   tasks.push((async () => {
     try {
-      const r = await apiFetch(`${PROXY_BASE}/api/forex?t=${Date.now()}`, { signal: AbortSignal.timeout(4000) });
+      const r = await apiFetch(`${PROXY_BASE}/api/forex`, { signal: AbortSignal.timeout(4000) });
       if (r.ok) { const j = await r.json(); snap.usdInr = j.usdInr; }
     } catch { /* noop */ }
   })());
@@ -189,7 +189,7 @@ async function fetchMarketSnapshot(): Promise<MarketSnapshot> {
   // Inflation
   tasks.push((async () => {
     try {
-      const r = await apiFetch(`${PROXY_BASE}/api/inflation?t=${Date.now()}`, { signal: AbortSignal.timeout(4000) });
+      const r = await apiFetch(`${PROXY_BASE}/api/inflation`, { signal: AbortSignal.timeout(4000) });
       if (r.ok) {
         const j = await r.json();
         snap.indiaInflation = j.india;
@@ -685,7 +685,7 @@ async function fetchIntradaySignals(): Promise<NonNullable<SuperintelligenceCont
   const markets: ('INDIA' | 'CRYPTO')[] = ['INDIA', 'CRYPTO'];
   await Promise.allSettled(markets.map(async (mkt) => {
     try {
-      const r = await apiFetch(`${PROXY_BASE}/api/ai/signals?market=${mkt}&limit=5&t=${Date.now()}`, {
+      const r = await apiFetch(`${PROXY_BASE}/api/ai/signals?market=${mkt}&limit=5`, {
         signal: AbortSignal.timeout(15000),
       });
       if (!r.ok) return;

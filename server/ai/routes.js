@@ -256,7 +256,7 @@ export function registerAITradingRoutes(app, deps) {
       const minScore = Math.min(99, Math.max(1, parseInt(req.query.minScore, 10) || 80));
       const limit = Math.min(15, Math.max(1, parseInt(req.query.limit, 10) || 12));
       const picks = await getExpertPicks(market, { minScore, limit });
-      res.set('Cache-Control', 'no-store');
+      res.set('Cache-Control', 'no-cache');
       res.json(picks);
     } catch (e) {
       jsonError(res, 500, 'expert picks failed', e);
@@ -275,7 +275,7 @@ export function registerAITradingRoutes(app, deps) {
       }
       const limit = Math.min(25, Math.max(5, parseInt(req.query.limit, 10) || 12));
       const view = await perpIntelBoardView(limit);
-      res.set('Cache-Control', 'no-store');
+      res.set('Cache-Control', 'no-cache');
       res.json(view);
     } catch (e) {
       jsonError(res, 500, 'perp intel failed', e);
@@ -344,7 +344,10 @@ export function registerAITradingRoutes(app, deps) {
 
   // ---------------- trading state / config ----------------
   app.get('/api/ai/trading/state', (_req, res) => {
-    try { res.json({ ok: true, ...getRiskState() }); } catch (e) { jsonError(res, 500, 'state failed', e); }
+    try {
+      res.set('Cache-Control', 'no-cache');
+      res.json({ ok: true, ...getRiskState() });
+    } catch (e) { jsonError(res, 500, 'state failed', e); }
   });
 
   app.post('/api/ai/trading/config', (req, res) => {
@@ -689,7 +692,10 @@ export function registerAITradingRoutes(app, deps) {
 
   // ---------------- positions / journal ----------------
   app.get('/api/ai/positions', async (_req, res) => {
-    try { res.json({ ok: true, ...(await getPositionsWithPnl()) }); }
+    try {
+      res.set('Cache-Control', 'no-cache');
+      res.json({ ok: true, ...(await getPositionsWithPnl()) });
+    }
     catch (e) { jsonError(res, 500, 'positions failed', e); }
   });
 

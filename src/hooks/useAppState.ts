@@ -1014,11 +1014,9 @@ export function useAppState() {
             .map(p => p.symbol.replace('.NS', '').replace('.BO', '').trim().toUpperCase()),
         ])];
         try {
-          // v12.7 BANDWIDTH: ?symbols= asks the server to slice the cached
-          // ticker array to exactly this watchlist (~8KB vs the full
-          // ~400-market ~300KB download every 30s — the biggest egress
-          // lever on the free tier).
-          const res = await apiFetch(`${proxyBase}/api/crypto-prices?t=${Date.now()}&symbols=${encodeURIComponent(cryptoSymbols.join(','))}`, {
+          // v12.10 BANDWIDTH: ?symbols= slices the cached ticker array server-side.
+          // Removed ?t= cache-buster so browser can revalidate via ETag 304 Not Modified.
+          const res = await apiFetch(`${proxyBase}/api/crypto-prices?symbols=${encodeURIComponent(cryptoSymbols.join(','))}`, {
             signal: AbortSignal.timeout(5000)
           });
           if (res.ok) {
@@ -1108,18 +1106,29 @@ export function useAppState() {
     pollCrypto();
     // v5.0: the SSE stream pushes coindcx-live ticks every 1-2s — this HTTP
     // poller is only a WATCHDOG now: 30s while the crypto SSE feed is
-    // healthy, 3s when it is dark. (Was a flat 3s = ~20 req/min that
-    // duplicated every SSE tick and re-triggered the render pipeline.)
+    // healthy, 3s when it is dark.
     let cryptoStopped = false;
     let cryptoTimer: number | null = null;
     const scheduleCrypto = () => {
-      if (cryptoStopped) return;
+      if (cryptoStopped || document.hidden) return;
       const feeds = feedStatusRef.current || {};
       const cryptoSseLive = Object.keys(feeds).some(s => feeds[s] && /coindcx/i.test(s));
       cryptoTimer = window.setTimeout(() => { pollCrypto().finally(scheduleCrypto); }, cryptoSseLive ? 30000 : 3000);
     };
     scheduleCrypto();
-    return () => { cryptoStopped = true; if (cryptoTimer) clearTimeout(cryptoTimer); };
+
+    const handleCryptoVis = () => {
+      if (!document.hidden && !cryptoStopped) {
+        if (cryptoTimer) clearTimeout(cryptoTimer);
+        pollCrypto().finally(scheduleCrypto);
+      }
+    };
+    document.addEventListener('visibilitychange', handleCryptoVis);
+    return () => {
+      cryptoStopped = true;
+      document.removeEventListener('visibilitychange', handleCryptoVis);
+      if (cryptoTimer) clearTimeout(cryptoTimer);
+    };
   }, [isAuthenticated, hasCrypto, flushPricesToStorage]);
 
   // --- NSE / BSE Realtime Streaming (HTTP) -----------------------------------
@@ -1154,27 +1163,45 @@ export function useAppState() {
     let stopped = false;
     let timer: number | null = null;
 
+    const scheduleNext = () => {
+      if (stopped || document.hidden) return;
+      const feeds = feedStatusRef.current || {};
+      const inSseLive = Object.keys(feeds).some(s => feeds[s] && /groww-live|yahoo-delayed/i.test(s));
+      // v12.10 BANDWIDTH: SSE push already streams India ticks live. While SSE is active,
+      // poll only at 30s as a fallback watchdog instead of hammering every 3s.
+      const delay = inSseLive ? 30000 : getIndiaPollInterval();
+      timer = window.setTimeout(pollIndia, delay);
+    };
+
     const pollIndia = async () => {
-      if (stopped) return;
-      if (document.hidden) {
-        timer = window.setTimeout(pollIndia, 10000); // Slow down polling when tab hidden
-        return;
-      }
+      if (stopped || document.hidden) return;
       try {
         await batchFetchIndianPrices(buildIndianPositions(), (key, data) => {
           pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData;
         });
         flushPricesToStorage();
-        if (isIndiaMarketOpen()) setLiveStatus('\u25cf \ud83c\uddee\ud83c\uddf3 NSE LIVE \u26a1');
+        if (isIndiaMarketOpen()) setLiveStatus('● 🇮🇳 NSE LIVE ⚡');
       } catch (e) {
         console.warn('NSE realtime stream failed:', e);
       } finally {
-        if (!stopped) timer = window.setTimeout(pollIndia, getIndiaPollInterval());
+        scheduleNext();
       }
     };
 
+    const handleVisibility = () => {
+      if (!document.hidden && !stopped) {
+        if (timer) clearTimeout(timer);
+        pollIndia();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
     pollIndia();
-    return () => { stopped = true; if (timer) clearTimeout(timer); };
+    return () => {
+      stopped = true;
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (timer) clearTimeout(timer);
+    };
   }, [isAuthenticated, hasIndianEquity, flushPricesToStorage]);
 
   // --- US Market Realtime Streaming (HTTP) ------------------------------------
@@ -1208,12 +1235,17 @@ export function useAppState() {
     let stopped = false;
     let timer: number | null = null;
 
+    const scheduleNext = () => {
+      if (stopped || document.hidden) return;
+      const feeds = feedStatusRef.current || {};
+      const usSseLive = Object.keys(feeds).some(s => feeds[s] && /finnhub|us-fallback|tv-us-batch/i.test(s));
+      // v12.10 BANDWIDTH: SSE push streams US ticks. While SSE is active, poll at 30s watchdog.
+      const delay = usSseLive ? 30000 : getUSPollInterval();
+      timer = window.setTimeout(pollUS, delay);
+    };
+
     const pollUS = async () => {
-      if (stopped) return;
-      if (document.hidden) {
-        timer = window.setTimeout(pollUS, 10000); // Slow down polling when tab hidden
-        return;
-      }
+      if (stopped || document.hidden) return;
       try {
         await batchFetchUSPrices(buildUSPositions(), (key, data) => {
           pendingPricesRef.current[key] = { ...(pendingPricesRef.current[key] || {}), ...data } as PriceData;
@@ -1223,12 +1255,24 @@ export function useAppState() {
       } catch (e) {
         console.warn('US realtime stream failed:', e);
       } finally {
-        if (!stopped) timer = window.setTimeout(pollUS, getUSPollInterval());
+        scheduleNext();
       }
     };
 
+    const handleVisibility = () => {
+      if (!document.hidden && !stopped) {
+        if (timer) clearTimeout(timer);
+        pollUS();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
     pollUS();
-    return () => { stopped = true; if (timer) clearTimeout(timer); };
+    return () => {
+      stopped = true;
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (timer) clearTimeout(timer);
+    };
   }, [isAuthenticated, hasUSEquity, flushPricesToStorage]);
 
   // --- Real-time SSE push (NSE ws + Finnhub US ws + CoinDCX crypto) --
@@ -1308,6 +1352,7 @@ export function useAppState() {
     let syncTimer: number | null = null;
     let syncStopped = false;
     const sync = async () => {
+      if (document.hidden) return;
       // 2026-09 ultra-fast pass: the crypto SSE source ticks 24/7 every 1-2s,
       // which previously masked the WHOLE batch loop (anySseLive → skip) —
       // even when the US or India feed specifically was dark. Gate PER
@@ -1334,10 +1379,18 @@ export function useAppState() {
     // at whatever getBatchInterval() returned when the effect ran, so an app
     // left open across market open/close never adapted its cadence.
     const scheduleSync = () => {
-      if (syncStopped) return;
+      if (syncStopped || document.hidden) return;
       syncTimer = window.setTimeout(() => { sync().finally(scheduleSync); }, getBatchInterval());
     };
     scheduleSync();
+
+    const handleSyncVis = () => {
+      if (!document.hidden && !syncStopped) {
+        if (syncTimer) clearTimeout(syncTimer);
+        sync().finally(scheduleSync);
+      }
+    };
+    document.addEventListener('visibilitychange', handleSyncVis);
     let statusCounter = 0;
     let lastFlushTime = 0;
     let flushTimer: number | null = null;
@@ -1372,6 +1425,7 @@ export function useAppState() {
     });
     return () => {
       syncStopped = true;
+      document.removeEventListener('visibilitychange', handleSyncVis);
       if (syncTimer) clearTimeout(syncTimer);
       if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
       if (flushTimer) clearTimeout(flushTimer);
@@ -1535,7 +1589,7 @@ export function useAppState() {
         console.log('☁️ Cloud Sync: periodic auto-load from Google Sheets…');
         mergeCloudData();
       }
-    }, 120000); // 120 seconds (2 mins)
+    }, 300000); // 300 seconds (5 mins) — saves Render egress while preserving freshness
     return () => { if (cloudLoadTimerRef.current) clearInterval(cloudLoadTimerRef.current); };
   }, [isAuthenticated, mergeCloudData]);
 

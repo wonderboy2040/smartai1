@@ -994,9 +994,14 @@ app.get('/api/quote', async (req, res) => {
     }
   }));
 
-  // no-cache so polling always gets the freshest tick
-  res.set('Cache-Control', 'no-store, max-age=0');
-  return res.json({ quotes, ts: Date.now() });
+  // v12.10 BANDWIDTH: Use Cache-Control: no-cache so clients revalidate via ETag.
+  // When prices haven't changed, Express answers 304 Not Modified (zero body transfer).
+  // Round snapshot ts to 3s window or max quote timestamp so JSON payload is byte-identical
+  // between consecutive polls when prices are unchanged.
+  const maxQuoteTime = Math.max(0, ...Object.values(quotes).map(q => q.time || 0));
+  const snapTs = maxQuoteTime || Math.floor(Date.now() / 3000) * 3000;
+  res.set('Cache-Control', 'no-cache');
+  return res.json({ quotes, ts: snapTs });
 });
 
 // ------------------------------------------------------------
@@ -2328,8 +2333,8 @@ app.use(express.static(distDir, {
         // (spec-safe SW updates depend on revalidating the SW file itself)
         res.set('Cache-Control', 'no-cache');
       } else if (/\.html?$/i.test(base)) {
-        // the app shell: always revalidate so deploys land immediately
-        res.set('Cache-Control', 'no-store');
+        // the app shell: revalidate via ETag so deploys land immediately while 304 avoids re-downloading unchanged HTML
+        res.set('Cache-Control', 'no-cache');
       }
     }
   },
@@ -2348,10 +2353,8 @@ app.get(/^(?!\/api\/|\/health).*/, (req, res) => {
   const isAsset = req.path.startsWith('/assets/')
     || /\.(js|mjs|css|map|ico|svg|png|jpe?g|webp|woff2?|ttf|otf|json|wasm)$/i.test(req.path);
   if (isAsset) return res.status(404).send('Not found');
-  // v11.7 PERF #2 (continued): the SPA shell served through this fallback
-  // must never be heuristically cached by the browser — a stale index.html
-  // after a deploy is the classic "site looks unchanged / chunk 404" bug.
-  res.set('Cache-Control', 'no-store');
+  // v12.10 BANDWIDTH: revalidate via ETag — ensures fresh deploy lands immediately without transferring unchanged HTML
+  res.set('Cache-Control', 'no-cache');
   res.sendFile(path.join(distDir, 'index.html'));
 });
 
