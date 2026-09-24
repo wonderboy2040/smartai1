@@ -23,6 +23,8 @@
 import { istMinutes, getISTParts, istDayKey, dayKeyFor } from './time.js';
 import { isCryptoSymbolBase } from './engine.js';
 import { evaluateTracked, watcherSymbolsByMarket } from './trackRecord.js';
+// v13.2 B6: SSE frame byte telemetry
+import { trackSseWrite } from '../ai/bandwidth.js';
 import { evaluatePaper, paperSymbolsByMarket, injectOptionPaperQuotes, optionUnderlyingsForWatcher, paperCircuitWatch } from './paperTrading.js';
 import { getMarketRegime, getCryptoRegime } from './regime.js';
 
@@ -387,7 +389,7 @@ export function intradayStreamHandler(req, res) {
   if (res.flushHeaders) res.flushHeaders();
   res.write('retry: 3000\n\n');
 
-  const write = (payload) => {
+  const write = trackSseWrite('sse:intraday', (payload) => {
     // 2026 perf audit (H1): backpressure guard — a stalled client (phone
     // sleep / zero-window TCP) makes Node buffer every SSE write forever.
     // Kill the connection once the socket buffer exceeds 128KB; the browser
@@ -400,7 +402,7 @@ export function intradayStreamHandler(req, res) {
     } catch {
       return false;
     }
-  };
+  });
   _clients.add(write);
   // Restore fast 5s cadence if watcher was in idle backoff
   if (_currentPollMs !== POLL_MS && _failureStreak === 0) {

@@ -9,8 +9,12 @@
 //   event: regime        → NIFTY/VIX regime (India market)
 //   event: crypto-regime → BTC regime (crypto market)
 //   event: status        → watcher heartbeat (keepalive)
-// Auto-reconnects (native EventSource). Falls back silently when
-// the stream is unavailable — the tab still works via 60s polling.
+// Auto-reconnects (native EventSource + capped manual backoff after a
+// sustained error streak). Falls back silently when the stream is
+// unavailable — the tab still works via 60s polling.
+// v13.2 (bandwidth plan B2): HIDDEN-PARK — a tab hidden ≥30s closes its
+// EventSource (the server watcher idles to 30s at zero clients); visible
+// again → instant reconnect. Live quotes keep flowing for brief switches.
 // ============================================================
 import { useEffect, useRef, useState } from 'react';
 import { getSessionToken, getProxyBase } from '../../utils/api';
@@ -57,6 +61,8 @@ export function useIntradayStream(enabled: boolean, onOutcome?: (ev: OutcomeEven
     let closed = false;
     let errStreak = 0;
     let manualRetryTimer: ReturnType<typeof setTimeout> | null = null;
+    let parkTimer: ReturnType<typeof setTimeout> | null = null;
+    let parked = false;
 
     const buildUrl = () => {
       // SECURITY: EventSource cannot send the Bearer header, and httpOnly
@@ -144,11 +150,37 @@ export function useIntradayStream(enabled: boolean, onOutcome?: (ev: OutcomeEven
       };
     };
 
+    // v13.2 B2: hidden ≥30s → park the stream (zero egress for a tab
+    // nobody is watching); visible → reconnect immediately.
+    const onVis = () => {
+      if (document.hidden) {
+        if (parkTimer) return;
+        parkTimer = setTimeout(() => {
+          parkTimer = null;
+          if (closed || parked) return;
+          parked = true;
+          try { es?.close(); } catch { /* noop */ }
+          es = null;
+          setConnected(false);
+        }, 30_000);
+      } else {
+        if (parkTimer) { clearTimeout(parkTimer); parkTimer = null; }
+        if (parked || (!es && !manualRetryTimer)) {
+          parked = false;
+          errStreak = 0; // user is waiting — give native reconnect a fresh chance
+          connect();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+
     connect();
 
     return () => {
       closed = true;
       if (manualRetryTimer) clearTimeout(manualRetryTimer);
+      if (parkTimer) clearTimeout(parkTimer);
+      document.removeEventListener('visibilitychange', onVis);
       try { es?.close(); } catch { /* noop */ }
       es = null;
     };

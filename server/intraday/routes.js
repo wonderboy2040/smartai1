@@ -49,6 +49,8 @@ import { loadJSON, saveJSON } from './store.js';
 // SAME tiered universe the Signal Board uses (T1 every cycle, T2
 // rotating slices, hot promotion). One truth, three consumers.
 import { tieredScanUniverse, absorbScanRows, fullIndiaUniverseEnabled } from '../ai/indiaUniverse.js';
+// v13.2 A5: get_model_consensus — per-model vote breakdown from the AI-trading deep ensemble
+import { getDeepSignal as getAiDeepSignal } from '../ai/signals.js';
 import { TV_SCAN_HEADERS } from '../lib/tvHeaders.js';
 
 // ------------------------------------------------------------
@@ -863,6 +865,9 @@ export function registerIntradayRoutes(app, deps) {
     getPaperSummary,
     analyzeSymbol,
     getMarketRegime,
+    // v13.2 A5: the 14-model superintelligence deep ensemble (per-model
+    // votes) — powers get_model_consensus on the India desk.
+    getDeepSignal: (symbol) => getAiDeepSignal(symbol, 'INDIA', { KEYS, OPENAI_COMPAT }, {}),
   };
 
   app.post('/api/intraday-agent', async (req, res) => {

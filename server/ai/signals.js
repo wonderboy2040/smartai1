@@ -71,6 +71,8 @@ import { eventGuardCheck } from './eventGuard.js';
 // execution gauntlets untouched — safety-critical boundary).
 import { councilEnabled, runCouncilBoard, runCouncilDeep, councilStampOf, gateThresholds } from './council.js';
 import { verifySignal, verificationWire } from './signalVerifier.js';
+// v13.2 A2: LLM second-opinion validator (borderline band, candle-cached)
+import { llmValidateSignal, llmValidateCached, llmValidatorEnabled, inBorderlineBand } from './llmValidator.js';
 
 // v9: how many coins the Superintelligence Signal Board scans for the
 // dynamic desks (spot + futures). 40 = every liquid CoinDCX book by
@@ -1822,6 +1824,13 @@ async function _computeBoard(mkt, deps, opts = {}) {
         // moves). Wire-compact — the deep path + agent tool carry the
         // full checklist.
         try { s.verify = verificationWire(verifySignal(s)); } catch { /* never breaks the board */ }
+        // v13.2 A2: the LLM second opinion rides ALONG when a deep dive in
+        // this 15m candle already produced one (cache read only — the board
+        // NEVER triggers an LLM call; borderline asks are deep-path only).
+        try {
+          const llmV = llmValidateCached(s.symbol, s.market);
+          if (llmV) s.verify = { ...(s.verify || {}), llm: llmV };
+        } catch { /* cache read only */ }
       }
     } catch { /* win-prob never breaks the board */ }
   }
@@ -2473,10 +2482,21 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
         const wireD = perpIntelWire(intelD);
         if (wireD) built.superIntel.perp = wireD;
       }
-      // v13.1 SVA-v1 on the DEEP path — the full checklist verdict
-      // (deep modal + crypto agent's verify_signal tool read this).
-      try { built.verify = verifySignal(built); } catch { /* best-effort */ }
     } catch { /* superintel on the deep card is best-effort */ }
+    // v13.1 SVA-v1 on the DEEP path — the full checklist verdict
+    // (deep modal + crypto agent's verify_signal tool read this).
+    // v13.2: moved OUT of the superintel try — a superintel failure must
+    // never cost the user the FINAL verdict (verify is pure + cheap).
+    try { built.verify = verifySignal(built); } catch { /* best-effort */ }
+    // v13.2 A2: the LLM SECOND OPINION — only when the ensemble itself is
+    // unsure (borderline 45-60% confidence). One live chain ask per symbol
+    // per 15m candle; the board inherits it via the passive cache read.
+    try {
+      if (llmValidatorEnabled() && inBorderlineBand(built.confidence)) {
+        const llmV = await llmValidateSignal(built, deps || {});
+        if (llmV) built.verify = { ...(built.verify || {}), llm: llmV };
+      }
+    } catch { /* the second opinion never breaks the first one */ }
   }
   // v6.11 (glama explain_ticker): rule-based regime narrative — the
   // indicator stack translated into a Hinglish story for the deep modal.

@@ -23,8 +23,18 @@
 //     → ≤1.25 renders/sec for the WHOLE desk instead of 10-20/sec
 //   • document.hidden → flushes pause (zero background renders);
 //     visibilitychange → instant flush so the tab paints live again
-//   • EventSource auto-reconnects; status: 'live' | 'connecting' |
-//     'down' for the command-bar honesty chip
+//   • status: 'live' | 'connecting' | 'down' for the command-bar honesty chip
+//
+// v13.2 (bandwidth plan B2+B4):
+//   • HIDDEN-PARK: a tab hidden ≥30s CLOSES its EventSource — the server's
+//     refcounted pollers park at zero clients (zero upstream + zero egress
+//     for a tab nobody is looking at). Visible again → instant reconnect
+//     + snapshot repaint. A briefly-switched-away tab (≤30s) keeps its
+//     connection — the flush gate already renders nothing.
+//   • EXPONENTIAL BACKOFF: errors close the socket and retry at
+//     1s→2s→4s→…→30s cap (reset on a clean open). A Render cold-start or
+//     network blip can no longer stampede N tabs into a fixed-3s
+//     reconnect-each-refetch-full-snapshot loop.
 // ============================================================
 import { useCallback, useEffect, useState } from 'react';
 import { getProxyBase, getSessionToken } from '../../utils/api';
@@ -105,6 +115,9 @@ function toWsHealth(raw: Record<string, unknown> | null | undefined): CxWsHealth
 
 const FLUSH_MS = 800;
 const MAX_SYMS_PER_DOMAIN = 40; // parseSyms server-cap is 60; stay polite
+const HIDDEN_PARK_MS = 30_000;  // v13.2 B2: hidden ≥30s → close the socket
+const BACKOFF_MIN_MS = 1_000;   // v13.2 B4: 1s → 2s → 4s → … 
+const BACKOFF_MAX_MS = 30_000;  // … capped at 30s, reset on clean open
 
 function cleanList(list: string[] | undefined | null): string[] {
   if (!Array.isArray(list)) return [];
@@ -163,13 +176,11 @@ export function useCxLivePrices(active: boolean, spot: string[], fut: string[], 
     if (session) params.set('session', session);
 
     let es: EventSource | null = null;
-    try {
-      es = new EventSource(`${getProxyBase()}/api/stream?${params.toString()}`);
-    } catch {
-      setStatus('down');
-      return;
-    }
-    const src = es;
+    let disposed = false;
+    let backoffMs = BACKOFF_MIN_MS;
+    let backoffTimer: ReturnType<typeof setTimeout> | undefined;
+    let parkTimer: ReturnType<typeof setTimeout> | undefined;
+    let parked = false;
 
     // ---- buffered ingestion (the render-storm guard) ----
     const buffer = new Map<string, CxLiveTick>();
@@ -186,8 +197,6 @@ export function useCxLivePrices(active: boolean, spot: string[], fut: string[], 
       setLastAt(Date.now());
     };
     const flushTimer = setInterval(flush, FLUSH_MS);
-    const onVis = () => { if (!document.hidden) flush(); };
-    document.addEventListener('visibilitychange', onVis);
 
     const ingest = (key: string, raw: Record<string, unknown>) => {
       const t = toTick(raw);
@@ -196,32 +205,96 @@ export function useCxLivePrices(active: boolean, spot: string[], fut: string[], 
       dirty = true;
     };
 
-    src.onopen = () => setStatus('live');
-    src.onerror = () => setStatus('down');
-    src.addEventListener('status', (e: MessageEvent) => {
+    const url = `${getProxyBase()}/api/stream?${params.toString()}`;
+
+    const attach = (src: EventSource) => {
+      src.onopen = () => { setStatus('live'); backoffMs = BACKOFF_MIN_MS; };
+      // v13.2 B4: WE own the retry cadence — close before native retry fires,
+      // then back off exponentially. Cold-start storms die in ≤2 rounds.
+      src.onerror = () => {
+        setStatus('down');
+        try { src.close(); } catch { /* already gone */ }
+        if (es === src) es = null;
+        if (!disposed && !parked) scheduleReconnect();
+      };
+      src.addEventListener('status', (e: MessageEvent) => {
+        try {
+          const frame = JSON.parse(e.data) as Record<string, unknown>;
+          setWsHealth(toWsHealth(frame?.cxRt as Record<string, unknown> | undefined));
+        } catch { /* malformed frame */ }
+      });
+      src.addEventListener('snapshot', (e: MessageEvent) => {
+        try {
+          const map = JSON.parse(e.data) as Record<string, Record<string, unknown>>;
+          for (const [k, v] of Object.entries(map)) ingest(k, v);
+          flush(); // first paint — don't wait the 800ms
+        } catch { /* malformed frame */ }
+      });
+      src.addEventListener('tick', (e: MessageEvent) => {
+        try {
+          const t = JSON.parse(e.data) as Record<string, unknown>;
+          if (t && typeof t.key === 'string') ingest(t.key, t as Record<string, unknown>);
+        } catch { /* malformed frame */ }
+      });
+    };
+
+    const connect = () => {
+      if (disposed || es) return;
       try {
-        const frame = JSON.parse(e.data) as Record<string, unknown>;
-        setWsHealth(toWsHealth(frame?.cxRt as Record<string, unknown> | undefined));
-      } catch { /* malformed frame */ }
-    });
-    src.addEventListener('snapshot', (e: MessageEvent) => {
-      try {
-        const map = JSON.parse(e.data) as Record<string, Record<string, unknown>>;
-        for (const [k, v] of Object.entries(map)) ingest(k, v);
-        flush(); // first paint — don't wait the 800ms
-      } catch { /* malformed frame */ }
-    });
-    src.addEventListener('tick', (e: MessageEvent) => {
-      try {
-        const t = JSON.parse(e.data) as Record<string, unknown>;
-        if (t && typeof t.key === 'string') ingest(t.key, t as Record<string, unknown>);
-      } catch { /* malformed frame */ }
-    });
+        es = new EventSource(url);
+        attach(es);
+      } catch {
+        setStatus('down');
+        scheduleReconnect();
+      }
+    };
+
+    const scheduleReconnect = () => {
+      if (disposed || parked || backoffTimer) return;
+      const wait = backoffMs;
+      backoffMs = Math.min(BACKOFF_MAX_MS, backoffMs * 2);
+      backoffTimer = setTimeout(() => {
+        backoffTimer = undefined;
+        connect();
+      }, wait);
+    };
+
+    // v13.2 B2: hidden ≥30s → park (close; server pollers go idle at zero
+    // clients). Visible → reconnect NOW (no backoff — the user is waiting)
+    // + flush whatever arrived while briefly hidden.
+    const onVis = () => {
+      if (document.hidden) {
+        if (parkTimer) return;
+        parkTimer = setTimeout(() => {
+          parkTimer = undefined;
+          if (disposed || parked) return;
+          parked = true;
+          try { es?.close(); } catch { /* noop */ }
+          es = null;
+          setStatus('down');
+        }, HIDDEN_PARK_MS);
+      } else {
+        if (parkTimer) { clearTimeout(parkTimer); parkTimer = undefined; }
+        if (parked || !es) {
+          parked = false;
+          connect(); // user came back — immediate, snapshot repaints the desk
+        } else {
+          flush();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+
+    connect();
 
     return () => {
+      disposed = true;
       clearInterval(flushTimer);
+      if (backoffTimer) { clearTimeout(backoffTimer); backoffTimer = undefined; }
+      if (parkTimer) { clearTimeout(parkTimer); parkTimer = undefined; }
       document.removeEventListener('visibilitychange', onVis);
-      try { src.close(); } catch { /* noop */ }
+      try { es?.close(); } catch { /* noop */ }
+      es = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, spotKey, futKey, globKey, indiaKey]);

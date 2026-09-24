@@ -6,6 +6,8 @@ import { getCustomCloudConfig, saveCustomCloudConfig, setCoindcxManualBasis, cle
 import { calculatePortfolioXIRR } from '../../utils/wealthEngine';
 import { syncedAssetPnl } from '../../utils/assetPnl';
 import { PortfolioInsights, type InsightsPanelAsset } from '../portfolio/PortfolioInsights';
+// v13.2 A4: server-computed real risk analytics (Sharpe/Sortino/correlation/rebalance)
+import { RiskAnalyticsCard } from '../portfolio/RiskAnalyticsCard';
 import { AssetChartModal, type AssetChartTarget } from '../portfolio/AssetChartModal';
 import { MonthlyReturnReport } from '../MonthlyReturnReport';
 import { MonthlyPlanTracker } from '../MonthlyPlanTracker';
@@ -777,6 +779,11 @@ const PortfolioTab = React.memo(function PortfolioTab() {
       {insightAssets.length > 0 && (
         <PortfolioInsights assets={insightAssets} totalValueINR={metrics.totalValue} />
       )}
+
+      {/* v13.2 A4: RISK ANALYTICS — server-computed REAL Sharpe/Sortino
+          (downside deviation), correlation heatmap, vol-parity rebalance
+          drift. Renders its own load/refresh lifecycle. */}
+      <RiskAnalyticsCard />
 
       {/* XIRR + Portfolio Intelligence (manual mode only — INDMoney syncs
           don't carry per-asset buy dates, so XIRR would be meaningless) */}

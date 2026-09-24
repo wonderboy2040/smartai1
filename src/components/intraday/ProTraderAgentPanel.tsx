@@ -199,7 +199,7 @@ export const ProTraderAgentPanel = memo(function ProTraderAgentPanel({ onOpen }:
             <Bot size={14} className="text-purple-400" /> PRO TRADER MCP AGENT
           </span>
           <span className="px-2 py-0.5 rounded-md text-[9px] font-black font-mono border bg-purple-500/15 text-purple-300 border-purple-500/30">
-            8 TOOLS • AGENTIC
+            10 TOOLS • AGENTIC
           </span>
           {busy && (
             <span className="px-2 py-0.5 rounded-md text-[9px] font-black font-mono border bg-cyan-500/15 text-cyan-300 border-cyan-500/30 animate-pulse">

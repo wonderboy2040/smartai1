@@ -68,7 +68,7 @@ const DEPS = { KEYS: {}, OPENAI_COMPAT: {} };
 //  positioning + calibrated win-probability tools)
 // ============================================================
 describe('crypto agent registry', () => {
-  it('exposes exactly the 17 planned tools (15 + accuracy-plan news tool + v13.1 SVA verify_signal)', () => {
+  it('exposes exactly the 18 planned tools (15 + news tool + v13.1 SVA verify_signal + v13.2 A5 get_model_consensus)', () => {
     const names = CRYPTO_AGENT_TOOLS.map(t => t.function.name);
     expect(names).toEqual([
       'get_live_crypto_signals', 'analyze_global_stock', 'analyze_coin', 'get_wallet', 'get_open_positions',
@@ -79,6 +79,9 @@ describe('crypto agent registry', () => {
       // v13.1 SIGNAL VERIFICATION AGENT — the pro-trader final verdict
       // ("XRP long ya short?" ka auditable answer)
       'verify_signal',
+      // v13.2 A5 MCP standardization — per-model vote breakdown (the
+      // "why did this signal fire" explanation for the chatbot)
+      'get_model_consensus',
     ]);
     for (const t of CRYPTO_AGENT_TOOLS) {
       expect(t.type).toBe('function');
@@ -380,5 +383,61 @@ describe('v10.5 gap tools — get_funding_rate / get_risk_status / get_pnl', () 
     const all = await executeCryptoTool('get_pnl', { period: 'all' }, DEPS);
     expect(all.closedLegs).toBe(2);
     expect(all.realizedPnlINR).toBe(4700);
+  });
+});
+
+// ============================================================
+// v13.2 A5 — get_model_consensus (per-model vote breakdown tool)
+// ============================================================
+describe('get_model_consensus tool (v13.2 A5)', () => {
+  const DEEP_XRP = {
+    ok: true,
+    signal: {
+      symbol: 'XRP', market: 'FUTURES', side: 'LONG', grade: 'WATCH',
+      confidence: 52, agreement: 0.43, voters: 6, totalModels: 14,
+      ltp: 1.62, aiNote: { note: 'weighted 52% LONG' },
+      meta: { model: 'meta_ensemble', p: 0.61 },
+      votes: [
+        { id: 'trend', name: 'TrendMatrix', dir: 1, conf: 64, weight: 1.4, reasons: ['EMA stack bullish'] },
+        { id: 'momentum', name: 'MomentumQuant', dir: 1, conf: 58, weight: 1.3, reasons: ['RSI 54 rising'] },
+        { id: 'volatility', name: 'VolatilityScope', dir: 0, conf: 0, weight: 0.9, reasons: ['squeeze'] },
+        { id: 'sr', name: 'SRMatrix', dir: -1, conf: 51, weight: 1.1, reasons: ['pivot resistance overhead'] },
+      ],
+      verify: {
+        agent: 'SVA-v1', finalCall: 'LONG', action: 'CAUTION', score: 55,
+        llm: { verdict: 'CONFIRM', confidence: 78, reason: 'clean pullback', model: 'gemini', ts: 1 },
+      },
+    },
+  };
+
+  it('per-model vote breakdown + tally + verifier + LLM second opinion', async () => {
+    mockGetDeepSignal.mockReset().mockResolvedValue(DEEP_XRP);
+    const out = await executeCryptoTool('get_model_consensus', { symbol: 'XRP' }, DEPS);
+    expect(out.symbol).toBe('XRP');
+    expect(out.consensus.side).toBe('LONG');
+    expect(out.tally).toEqual({ bull: 2, bear: 1, abstain: 1 });
+    expect(out.perModel).toHaveLength(4);
+    expect(out.perModel[0]).toMatchObject({ model: 'TrendMatrix', dir: 'BULL', conf: 64 });
+    expect(out.perModel[3]).toMatchObject({ model: 'SRMatrix', dir: 'BEAR' });
+    expect(out.verifier).toEqual({ finalCall: 'LONG', action: 'CAUTION', score: 55 });
+    expect(out.llmSecondOpinion.verdict).toBe('CONFIRM');
+    expect(out.metaEnsemble.model).toBe('meta_ensemble');
+  });
+
+  it('SPOT param routes to the CRYPTO desk', async () => {
+    mockGetDeepSignal.mockReset().mockResolvedValue(DEEP_XRP);
+    await executeCryptoTool('get_model_consensus', { symbol: 'XRP', market: 'SPOT' }, DEPS);
+    expect(mockGetDeepSignal).toHaveBeenCalledWith('XRP', 'CRYPTO', DEPS, {});
+  });
+
+  it('cold deep ensemble → honest error, no crash', async () => {
+    mockGetDeepSignal.mockReset().mockResolvedValue(null);
+    const out = await executeCryptoTool('get_model_consensus', { symbol: 'NOPE' }, DEPS);
+    expect(out.error).toContain('No live ensemble run');
+  });
+
+  it('missing symbol → validation error', async () => {
+    const out = await executeCryptoTool('get_model_consensus', {}, DEPS);
+    expect(out.error).toContain('symbol required');
   });
 });

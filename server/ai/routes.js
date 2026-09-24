@@ -125,6 +125,13 @@ import {
 } from './secrets.js';
 import { dhanConnect, dhanDisconnect, dhanConnected, dhanProfile, scripMasterStatus } from './dhan.js';
 import { isNseOpen, fetchYahooQuotes, fetchTVIndiaBatch } from './data.js';
+// v13.2 B6: bandwidth telemetry view
+import { bandwidthView } from './bandwidth.js';
+// v13.2 A5: MCP tool-call audit view
+import { mcpAuditView } from './mcpAudit.js';
+// v13.2 A4: real portfolio risk analytics (Sharpe/Sortino/correlation/rebalance)
+import { computePortfolioRiskAnalytics } from './riskAnalytics.js';
+import { getAssetsSnapshot } from '../mcp/portfolioSync.js';
 
 // ------------------------------------------------------------
 // v10.9 CONTROLLED TRADE APPROVAL — the Telegram webhook's SINGLE
@@ -1115,6 +1122,50 @@ export function registerAITradingRoutes(app, deps) {
       });
     } catch (e) {
       jsonError(res, 500, 'trust report failed', e);
+    }
+  });
+
+  // ---------------- v13.2 B6: bandwidth telemetry ----------------
+  // Rolling-24h wire accounting (REST socket deltas + SSE frame bytes),
+  // 30-day projection vs the Render free-tier cap, per-scope breakdown.
+  // The "measure before/after" instrument for every bandwidth fix.
+  app.get('/api/ai/bandwidth', (_req, res) => {
+    try {
+      res.json(bandwidthView());
+    } catch (e) {
+      jsonError(res, 500, 'bandwidth view failed', e);
+    }
+  });
+
+  // ---------------- v13.2 A5: MCP tool-call governance ----------------
+  // Rate-limit state + the bounded audit ring for EVERY desk-agent tool
+  // call (crypto + intraday + telegram). placeOrder-class flags included.
+  app.get('/api/ai/mcp-audit', (_req, res) => {
+    try {
+      res.json(mcpAuditView());
+    } catch (e) {
+      jsonError(res, 500, 'mcp audit view failed', e);
+    }
+  });
+
+  // ---------------- v13.2 A4: portfolio risk analytics ----------------
+  // REAL Sharpe/Sortino (downside deviation, not sharpe×1.3) per holding
+  // + portfolio, correlation matrix on aligned daily returns, vol-parity
+  // rebalance drift — computed server-side where the candle history lives,
+  // cached 1h. Assets come from the portfolioSync snapshot (INDMoney +
+  // CoinDCX legs, hidden rows already excluded).
+  app.get('/api/ai/portfolio-risk', async (req, res) => {
+    try {
+      const snap = getAssetsSnapshot() || {};
+      const assets = Array.isArray(snap.assets) ? snap.assets : [];
+      if (assets.length === 0) {
+        return res.json({ ok: false, reason: 'no synced assets — Portfolio tab me Sync Now karke dobara try karo' });
+      }
+      const rfAnnualPct = Number(req.query.rfPct) > 0 ? Number(req.query.rfPct) : undefined;
+      const out = await computePortfolioRiskAnalytics(assets, { rfAnnualPct });
+      res.json(out);
+    } catch (e) {
+      jsonError(res, 500, 'portfolio risk analytics failed', e);
     }
   });
 

@@ -173,13 +173,14 @@ function VerifyBadge({ v, side }: { v: SignalVerification; side: string }) {
     v.proNote || null,
     v.veto ? 'PRO VETO: chase+RSI-extreme combo — top-tick entry class.' : null,
     v.sizeHint != null ? `Size hint: ${v.sizeHint === 1 ? 'full risk' : v.sizeHint === 0.5 ? 'half risk' : 'NO entry'}` : null,
+    v.llm ? `LLM second opinion (${v.llm.model || 'chain'}): ${v.llm.verdict} ${v.llm.confidence}% — ${v.llm.reason}` : null,
   ].filter(Boolean).join('\n\n');
   return (
     <span
       className={`px-2 py-0.5 rounded-md text-[10px] font-black tracking-wider border font-mono ${cls}`}
       title={tip}
     >
-      {label} {v.score}
+      {label} {v.score}{v.llm ? <span className="ml-1 opacity-75" title={`LLM: ${v.llm.verdict}`}>·{v.llm.verdict === 'CONFIRM' ? '🤖✓' : v.llm.verdict === 'REJECT' ? '🤖✕' : '🤖⇄'}</span> : null}
     </span>
   );
 }
@@ -199,6 +200,14 @@ function VerifyChecklist({ v }: { v: SignalVerification }) {
         <span className="text-[10px] font-mono font-black text-slate-200">{v.score}/100</span>
       </div>
       {v.proNote && <div className="text-[10px] text-slate-300/90 leading-relaxed border-l-2 border-cyan-500/40 pl-2">{v.proNote}</div>}
+      {v.llm && (
+        <div className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-[10px] font-mono ${v.llm.verdict === 'CONFIRM' ? 'bg-violet-500/10 border-violet-500/30' : v.llm.verdict === 'FLIP' ? 'bg-rose-500/10 border-rose-500/30' : 'bg-slate-500/10 border-slate-500/30'}`}>
+          <span className="font-black text-violet-300 shrink-0">🤖 LLM SECOND OPINION</span>
+          <span className={`font-black shrink-0 ${v.llm.verdict === 'CONFIRM' ? 'text-emerald-300' : v.llm.verdict === 'FLIP' ? 'text-rose-300' : 'text-amber-300'}`}>{v.llm.verdict} {v.llm.confidence}%</span>
+          <span className="text-slate-400 truncate flex-1" title={v.llm.reason}>{v.llm.reason}</span>
+          <span className="text-slate-500 shrink-0" title="provider chain: Gemini → Groq → Cerebras → OpenRouter">{v.llm.model || 'chain'}</span>
+        </div>
+      )}
       <div className="grid gap-1">
         {list.map(c => (
           <div key={c.id} className="flex items-center gap-2 text-[10px] font-mono">

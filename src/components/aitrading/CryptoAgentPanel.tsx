@@ -4,7 +4,7 @@
 // The CoinDCX tab's conversational agent — the mirror of the proven
 // intraday ProTraderAgentPanel: same chat shell, tool-trace chips,
 // quick prompts (crypto-flavoured). Backend: POST /api/crypto-agent
-// (17 tools: signals, deep coin scan, global stocks, wallet,
+// (18 tools: signals, deep coin scan, global stocks, wallet,
 // positions, regime, track-record, sizing, agent status + v10.5
 // funding-rate, risk-status and P&L + v12.0 perp-positioning and
 // win-probability + accuracy-plan Phase 3.3 news search + v13.1
@@ -150,7 +150,7 @@ export const CryptoAgentPanel = memo(function CryptoAgentPanel() {
             <Bot size={14} className="text-cyan-400" /> CRYPTO DESK AI AGENT
           </span>
           <span className="px-2 py-0.5 rounded-md text-[9px] font-black font-mono border bg-cyan-500/15 text-cyan-300 border-cyan-500/30">
-            17 TOOLS • VERIFY + P(WIN) + EV TICKETS + NEWS
+            18 TOOLS • VERIFY + CONSENSUS + P(WIN) + EV TICKETS + NEWS
           </span>
           {busy && (
             <span className="px-2 py-0.5 rounded-md text-[9px] font-black font-mono border bg-emerald-500/15 text-emerald-300 border-emerald-500/30 animate-pulse">

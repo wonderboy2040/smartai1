@@ -34,6 +34,8 @@ import { buildDeterministicCryptoAnswer } from './superIntelFallback.js';
 import { getPerpIntel, perpIntelWire, perpIntelEnabled } from './perpIntel.js';
 // v13.1 SIGNAL VERIFICATION AGENT — the pro-trader final-verdict layer
 import { verifySignal } from './signalVerifier.js';
+// v13.2 A5: MCP governance — every tool call is rate-limited + audit-logged
+import { withMcpAudit } from './mcpAudit.js';
 
 const MAX_TOOL_ROUNDS = 6;
 const PER_ROUND_TIMEOUT_MS = 30000;
@@ -255,6 +257,21 @@ export const CRYPTO_AGENT_TOOLS = [
         type: 'object',
         properties: {
           symbol: { type: 'string', description: 'Coin symbol, e.g. XRP, BTC, SOL, DOGE' },
+          market: { type: 'string', description: '"SPOT" (CoinDCX INR spot) or "FUTURES" (USDT perp) — default FUTURES' },
+        },
+        required: ['symbol'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_model_consensus',
+      description: 'PER-MODEL VOTE BREAKDOWN for one symbol — the "why did this signal fire" answer. Lists every ensemble model\'s individual vote (TrendMatrix, MomentumQuant, VolatilityScope, VolumeFlow, PatternNeural, SRMatrix, OptionsFlow, MacroRegime, SmartMoneyICT, IntradayTape/MTF, AI Council + V2 seats) with direction, confidence and reason, the weighted consensus side/confidence/agreement, the meta-ensemble ML stamp when active, and the SVA + LLM verifier verdicts. Use for "consensus kya bol raha hai", "kaun se models agree kar rahe hain", "signal ka reason kya hai" — a lighter, vote-focused read than analyze_coin.',
+      parameters: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'Coin symbol, e.g. XRP, BTC, SOL' },
           market: { type: 'string', description: '"SPOT" (CoinDCX INR spot) or "FUTURES" (USDT perp) — default FUTURES' },
         },
         required: ['symbol'],
@@ -765,6 +782,38 @@ async function executeCryptoTool(name, args, deps) {
         };
       }
 
+      case 'get_model_consensus': {
+        const symbol = String(args.symbol || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (!symbol) return { error: 'symbol required (e.g. XRP, BTC)' };
+        const market = String(args.market || 'FUTURES').toUpperCase() === 'SPOT' ? 'CRYPTO' : 'FUTURES';
+        const d = await getDeepSignal(symbol, market, deps, {}).catch(() => null);
+        if (!d?.ok || !d.signal) return { error: `No live ensemble run for ${symbol} (feed down ya symbol galat).` };
+        const s = d.signal;
+        const votes = Array.isArray(s.votes) ? s.votes : [];
+        const bull = votes.filter(v => v.dir > 0);
+        const bear = votes.filter(v => v.dir < 0);
+        const flat = votes.filter(v => v.dir === 0);
+        return {
+          symbol, market,
+          consensus: {
+            side: s.side, grade: s.grade, confidence: s.confidence,
+            agreement: s.agreement, voters: s.voters ?? votes.filter(v => v.dir !== 0).length,
+            totalSeats: s.totalModels ?? votes.length,
+            weighted: s.aiNote?.note ?? null,
+          },
+          tally: { bull: bull.length, bear: bear.length, abstain: flat.length },
+          perModel: votes.map(v => ({
+            model: v.name || v.id, dir: v.dir > 0 ? 'BULL' : v.dir < 0 ? 'BEAR' : 'ABSTAIN',
+            conf: v.conf, weight: v.weight,
+            reason: Array.isArray(v.reasons) ? v.reasons[0] : (v.reason || null),
+          })),
+          metaEnsemble: s.meta ?? null,
+          verifier: s.verify ? { finalCall: s.verify.finalCall, action: s.verify.action, score: s.verify.score } : null,
+          llmSecondOpinion: s.verify?.llm ?? null,
+          note: 'Vote breakdown from the live deep ensemble run. Weighted consensus ≠ raw tally — model weights + regime tilt + quorum caps shape the final side. Verdicts cite karke explain karo.',
+        };
+      }
+
       default:
         return { error: `Unknown tool: ${name}` };
     }
@@ -892,7 +941,7 @@ async function _runOpenAICompatLoop(model, cfg, { systemPrompt, messages, deps, 
       let parsed = {};
       try { parsed = JSON.parse(tc.function?.arguments || '{}'); } catch { /* keep {} */ }
       toolTrace.push({ tool: tc.function?.name, ts: Date.now() });
-      const result = await executeCryptoTool(tc.function?.name, parsed, deps);
+      const result = await withMcpAudit('crypto', tc.function?.name, parsed, () => executeCryptoTool(tc.function?.name, parsed, deps));
       reqMessages.push({ role: 'tool', tool_call_id: tc.id, name: tc.function?.name, content: JSON.stringify(result) });
     }
   }

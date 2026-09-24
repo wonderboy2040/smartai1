@@ -697,3 +697,59 @@ describe('v9.7 FUTURES-margin viability filter', () => {
     _connected = true;
   });
 });
+
+// ============================================================
+// v13.2 A3 — PER-STRATEGY WIN-RATE SELF-DOWNGRADE (size weight)
+// ============================================================
+describe('strategy win-rate self-downgrade (v13.2 A3)', () => {
+  const mkClosed = (pair, wins, total) => Array.from({ length: total }, (_, i) => ({
+    source: 'agent', pair, status: 'CLOSED',
+    pnlINR: i < wins ? 120 : -80,
+    closedAt: 1700000000000 - i * 60000,
+  }));
+
+  it('strategyWinRate: null under 20 settled trades, exact above', async () => {
+    const { strategyWinRate } = await import('../server/ai/agent.js');
+    expect(strategyWinRate({ positions: mkClosed('XRPINR', 5, 19) }, 'XRPINR')).toBeNull();
+    expect(strategyWinRate({ positions: mkClosed('XRPINR', 5, 20) }, 'XRPINR')).toEqual({ winRate: 25, trades: 20 });
+    expect(strategyWinRate({ positions: mkClosed('BTCINR', 12, 20) }, 'BTCINR')).toEqual({ winRate: 60, trades: 20 });
+  });
+
+  it('size multiplier ladder: ≥50% full · 40-50 ×0.75 · 30-40 ×0.5 · <30 ×0.25', async () => {
+    const { strategySizeMultiplier } = await import('../server/ai/agent.js');
+    expect(strategySizeMultiplier({ positions: mkClosed('A', 12, 20) }, 'A', {}).mul).toBe(1);      // 60%
+    expect(strategySizeMultiplier({ positions: mkClosed('B', 9, 20) }, 'B', {}).mul).toBe(0.75);    // 45%
+    expect(strategySizeMultiplier({ positions: mkClosed('C', 7, 20) }, 'C', {}).mul).toBe(0.5);     // 35%
+    expect(strategySizeMultiplier({ positions: mkClosed('D', 5, 20) }, 'D', {}).mul).toBe(0.25);    // 25%
+    expect(strategySizeMultiplier({ positions: mkClosed('E', 5, 19) }, 'E', {}).mul).toBe(1);       // no history
+  });
+
+  it('config kill-switch winRateSizeDowngrade=false → always full size', async () => {
+    const { strategySizeMultiplier } = await import('../server/ai/agent.js');
+    const out = strategySizeMultiplier({ positions: mkClosed('XRPINR', 5, 20) }, 'XRPINR', { winRateSizeDowngrade: false });
+    expect(out).toEqual({ mul: 1, reason: 'disabled' });
+  });
+
+  it('strategyDowngradeView lists ONLY the haircut pairs', async () => {
+    const { strategyDowngradeView } = await import('../server/ai/agent.js');
+    const j = { positions: [...mkClosed('XRPINR', 5, 20), ...mkClosed('BTCINR', 12, 20)] };
+    const view = strategyDowngradeView(j, {});
+    expect(view).toEqual([{ pair: 'XRPINR', mul: 0.25, winRate: 25, trades: 20 }]);
+  });
+
+  it('winRateSizeDowngrade config knob round-trips via updateAgentConfig', async () => {
+    await updateAgentConfig({ winRateSizeDowngrade: false });
+    expect(loadAgentConfig().winRateSizeDowngrade).toBe(false);
+    await updateAgentConfig({ winRateSizeDowngrade: true });
+    expect(loadAgentConfig().winRateSizeDowngrade).toBe(true);
+  });
+
+  it('only agent-sourced closed trades count (manual/paper noise excluded)', async () => {
+    const { strategyWinRate } = await import('../server/ai/agent.js');
+    const j = { positions: [
+      ...mkClosed('XRPINR', 0, 20),
+      ...mkClosed('XRPINR', 10, 10).map(p => ({ ...p, source: 'manual' })), // 10 manual WINS must not rescue
+    ] };
+    expect(strategyWinRate(j, 'XRPINR')).toEqual({ winRate: 0, trades: 20 });
+  });
+});

@@ -232,6 +232,16 @@ export interface SignalVerification {
   warns?: number;
   proNote?: string;
   checkedAt?: number;
+  /** v13.2 A2: the LLM second opinion — present ONLY on borderline
+   *  (45-60% conf) signals, one ask per symbol per 15m candle.
+   *  verdict CONFIRM / REJECT / FLIP + the provider's one-liner. */
+  llm?: {
+    verdict: 'CONFIRM' | 'REJECT' | 'FLIP' | string;
+    confidence: number;
+    reason: string;
+    model: string | null;
+    ts: number;
+  };
 }
 
 /** v9: board-level Superintelligence meta — what got scanned, through

@@ -142,6 +142,10 @@ export const AGENT_DEFAULTS = {
   // → soft self-downgrade LIVE→paper + Telegram alert.
   minRollingWinRate: 35,
   rollingWindow: 10,
+  // v13.2 A3: PER-STRATEGY win-rate self-downgrade — a pair whose own
+  // rolling 20-trade win rate has decayed gets its size weight cut
+  // (×0.75 / ×0.5 / ×0.25 ladder) while the rest of the book stays full.
+  winRateSizeDowngrade: true,
   // ---- v10.6 EDGE-ADAPTIVE SIZING (Pro Upgrade #2: Kelly-lite) ----
   // OFF by default — enable with AI_ENABLE_KELLY_SIZING=true or this
   // knob. When ON, riskPerTradePct becomes the CEILING: the realized
@@ -315,6 +319,7 @@ export function updateAgentConfig(patch = {}) {
   // v10.1 Track-B toggles
   if (patch.dynamicTimeExit != null) next.dynamicTimeExit = !!patch.dynamicTimeExit;
   if (patch.correlationGuard != null) next.correlationGuard = !!patch.correlationGuard;
+  if (patch.winRateSizeDowngrade != null) next.winRateSizeDowngrade = !!patch.winRateSizeDowngrade;
   // v10.6 Kelly-lite toggle
   if (patch.kellySizing != null) next.kellySizing = !!patch.kellySizing;
   // v10.8 near-miss auto-trade + winner-extension toggles
@@ -1688,7 +1693,15 @@ ${convictionTightened.map(c => `• ${c.pair} — delta ${c.delta}, in profit: r
   // v10.15 GAP 4: a global risk-off regime (VIX spike + BTC breakdown)
   // down-weights new entries across BOTH desks at once.
   const grMul = grGate?.riskOff ? grGate.sizeMul : 1;
-  const riskPct = (kelly?.mode === 'kelly' && kelly.pct > 0 ? kelly.pct : cfg.riskPerTradePct) * eventSizeMul * grMul;
+  // v13.2 A3: per-strategy win-rate self-downgrade — a decayed pair
+  // trades at reduced size while the rest of the book stays full.
+  const pair = pairOfSignal(best);
+  const strat = strategySizeMultiplier(j, pair, cfg);
+  const stratMul = strat.mul;
+  if (stratMul < 1) {
+    log('info', `STRATEGY SIZE-DOWNGRADE ${best.symbol}: risk ×${stratMul} (${strat.reason}) — last ${strat.trades} trades on ${pair}`);
+  }
+  const riskPct = (kelly?.mode === 'kelly' && kelly.pct > 0 ? kelly.pct : cfg.riskPerTradePct) * eventSizeMul * grMul * stratMul;
   if (eventSizeMul < 1) log('info', `EVENT GUARD SIZING ${best.symbol}: risk ×${eventSizeMul} → ${Math.round(riskPct * 100) / 100}% (${eg.reason})`);
   if (grMul < 1) log('info', `GLOBAL RISK-OFF SIZING ${best.symbol}: risk ×${grMul} → ${Math.round(riskPct * 100) / 100}% (VIX spike + BTC breakdown regime)`);
   const riskINR = equityINR * (riskPct / 100);
@@ -1922,6 +1935,56 @@ export function rollingAgentWinRate(j, n = 10) {
   return Math.round((wins / trades.length) * 1000) / 10;
 }
 
+// ------------------------------------------------------------
+// v13.2 A3 — WIN-RATE SELF-DOWNGRADE (per-strategy size weight)
+// ------------------------------------------------------------
+// The v10.1 B3 latch downgrades the WHOLE agent (LIVE→PAPER) on a
+// rotten GLOBAL record. The accuracy plan asks for the finer tool:
+// a STRATEGY (pair) whose own rolling 20-trade win rate has decayed
+// gets its position-size weight auto-reduced — the rest of the book
+// keeps trading at full size. Ladder (needs the full 20 settled
+// trades of THAT pair — we refuse to tune on noise):
+//   wr ≥ 50% → ×1.0 (healthy)
+//   40–50%   → ×0.75
+//   30–40%   → ×0.5
+//   < 30%    → ×0.25
+// ------------------------------------------------------------
+export function strategyWinRate(j, pair, n = 20) {
+  const closed = (j?.positions || [])
+    .filter(p => p.source === 'agent' && p.pair === pair
+      && String(p.status || '').toUpperCase() === 'CLOSED')
+    .sort((a, b) => (b.closedAt || b.updatedAt || 0) - (a.closedAt || a.updatedAt || 0))
+    .slice(0, Math.max(1, Number(n) || 20));
+  if (closed.length < n) return null; // not enough settled history for THIS pair
+  const wins = closed.filter(p => ((p.pnlINR ?? 0) + (p.bookedPnlINR ?? 0)) > 0).length;
+  return { winRate: Math.round((wins / closed.length) * 1000) / 10, trades: closed.length };
+}
+
+export function strategySizeMultiplier(j, pair, cfg, n = 20) {
+  if (cfg?.winRateSizeDowngrade === false) return { mul: 1, reason: 'disabled' };
+  const st = strategyWinRate(j, pair, n);
+  if (st == null) return { mul: 1, reason: 'no-history' };
+  const wr = st.winRate;
+  let mul = 1;
+  if (wr < 30) mul = 0.25;
+  else if (wr < 40) mul = 0.5;
+  else if (wr < 50) mul = 0.75;
+  return { mul, winRate: wr, trades: st.trades, reason: mul < 1 ? `rolling ${st.trades}-trade win-rate ${wr}%` : 'healthy' };
+}
+
+/** agentStatus view: the pairs currently carrying a size haircut. */
+export function strategyDowngradeView(j, cfg, n = 20) {
+  const pairs = [...new Set((j?.positions || [])
+    .filter(p => p.source === 'agent')
+    .map(p => p.pair))].slice(0, 24);
+  const out = [];
+  for (const pair of pairs) {
+    const st = strategySizeMultiplier(j, pair, cfg, n);
+    if (st.mul < 1) out.push({ pair, mul: st.mul, winRate: st.winRate, trades: st.trades });
+  }
+  return out;
+}
+
 function maybeLogSkip(key, text) {
   // v9.7: EVERY skip records the reason in state — the status view's
   // BLOCKERS strip shows the user WHY the agent isn't entering (the
@@ -2123,6 +2186,9 @@ export async function agentStatus(deps) {
     rollingWindow: cfg.rollingWindow,
     minRollingWinRate: cfg.minRollingWinRate,
     winRateDowngraded: _state.winRateDowngraded || null,
+    // v13.2 A3: the per-strategy size haircuts currently in force —
+    // { pair, mul, winRate, trades } for every decayed pair.
+    strategyDowngrades: strategyDowngradeView(j, cfg),
     correlationGuard: cfg.correlationGuard !== false, // B4
     // v10.2 Step 1: near-miss diagnostics + V2 model flag
     lastNearMisses: _state.lastNearMisses || [],

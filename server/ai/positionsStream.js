@@ -39,6 +39,8 @@
 //       reconciliation).
 // ============================================================
 import { getPositionsWithPnl } from './coindcxOrders.js';
+// v13.2 B6: SSE frame byte telemetry
+import { trackSseWrite } from './bandwidth.js';
 
 const TICK_FAST_MS = 1000;   // cached-feed domains (crypto/futures/global)
 const TICK_INDIA_MS = 5000;  // India open → uncached TV scanner cadence (old REST rate)
@@ -165,7 +167,8 @@ export function positionsStreamHandler(req, res) {
 
   // 2026 perf audit (H1) pattern: backpressure guard — a stalled client
   // (phone sleep / zero-window TCP) must not buffer SSE writes forever.
-  const write = (payload) => {
+  // v13.2 B6: wrapped for byte telemetry.
+  const write = trackSseWrite('sse:positions', (payload) => {
     try {
       const ok = res.write(payload);
       if (ok || !res.socket || res.socket.writableLength <= 128 * 1024) return true;
@@ -174,7 +177,7 @@ export function positionsStreamHandler(req, res) {
     } catch {
       return false;
     }
-  };
+  });
   _clients.add(write);
 
   // Fresh-enough view → paint instantly; otherwise the shared poller's

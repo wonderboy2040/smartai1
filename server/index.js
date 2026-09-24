@@ -36,6 +36,9 @@ import { registerIntradayRoutes } from './intraday/routes.js';
 import { registerTelegramWebhook } from './telegram/webhook.js';
 // v9.1: graceful-shutdown flushers for the debounced intraday writers.
 import { flushPaperState } from './intraday/paperTrading.js';
+// v13.2 B6: bandwidth telemetry — REST wire bytes + SSE frame bytes + alerts
+import { bandwidthMiddleware, trackBytes, initBandwidthAlerts } from './ai/bandwidth.js';
+import { sendTelegramMessage } from './ai/secrets.js';
 // v10.16 S2: manual-trade store — same shutdown-flush contract
 import { flushManualState } from './ai/manualTrades.js';
 import { flushTrackRecordState } from './intraday/trackRecord.js';
@@ -100,6 +103,11 @@ app.use(compression({
     return compression.filter(req, res);
   },
 }));
+
+// v13.2 B6: true-wire REST byte accounting (socket bytesWritten delta on
+// 'finish' — includes headers; SSE is counted at its own write sites).
+// Telemetry only — never in the response path's critical section.
+app.use(bandwidthMiddleware());
 
 // NOTE: CORS is handled by a single strict middleware further down
 // (ALLOWED_ORIGINS allowlist + Vary: Origin). A previous looser
@@ -725,6 +733,19 @@ registerAITradingRoutes(app, {
   jsonError,
 });
 
+// v13.2 B6: hourly bandwidth guard — ONE Telegram alert/day when the 30-day
+// projection crosses the alert threshold of the Render cap (default 70% of
+// 5GB). Never throws, unref'd — pure telemetry.
+initBandwidthAlerts({
+  send: sendTelegramMessage,
+  env: {
+    ...TG,
+    BANDWIDTH_MONTHLY_CAP_GB: process.env.BANDWIDTH_MONTHLY_CAP_GB,
+    BANDWIDTH_ALERT_PCT: process.env.BANDWIDTH_ALERT_PCT,
+  },
+  log: (...a) => console.log('[BANDWIDTH]', ...a),
+});
+
 // ============================================================
 // INTRADAY DESK (server/intraday/*)
 // ------------------------------------------------------------
@@ -1219,6 +1240,9 @@ app.get('/api/stream', (req, res) => {
     if (_dead) return false;
     try {
       const ok = res.write(payload);
+      // v13.2 B6: every frame that actually hit the socket counts
+      // (compression skips text/event-stream → byteLength IS the wire size).
+      trackBytes('sse:stream', typeof payload === 'string' ? Buffer.byteLength(payload) : (Buffer.isBuffer(payload) ? payload.length : 0));
       if (!ok && res.socket && res.socket.writableLength > 128 * 1024) {
         _dead = true;
         try { res.destroy(); } catch { /* noop */ }

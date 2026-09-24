@@ -134,6 +134,23 @@ services:
       # Default ON; set 0/off to fall back to the legacy prompt.
       - key: AI_COUNCIL_DEBATE
         sync: false
+      # ---- v13.2 FULL IMPLEMENTATION PLAN ----
+      # B6 BANDWIDTH TELEMETRY: rolling-24h wire accounting + 30d
+      # projection vs the Render free-tier cap; ONE Telegram alert/day
+      # past the threshold. View: GET /api/ai/bandwidth.
+      - key: BANDWIDTH_MONTHLY_CAP_GB
+        value: "5"
+      - key: BANDWIDTH_ALERT_PCT
+        value: "70"
+      # A2 LLM SECOND-OPINION VALIDATOR: borderline-confidence signals
+      # (45-60%) get ONE chain ask per symbol per 15m candle —
+      # CONFIRM/REJECT/FLIP rides s.verify.llm (cards + agent chat).
+      - key: AI_ENABLE_LLM_VALIDATOR
+        value: "true"
+      # A5 MCP TOOL GOVERNANCE: every desk-agent tool call rate-limited
+      # + audit-logged. View: GET /api/ai/mcp-audit.
+      - key: AI_MCP_RATE_PER_MIN
+        sync: false
       # WICK FILTER (Pro #3): cross-exchange price validation against
       # Binance. ON by default — set 1 to disable; thresholds tunable
       # via AI_WICK_THRESHOLD_PCT / AI_WICK_ALT_THRESHOLD_PCT.

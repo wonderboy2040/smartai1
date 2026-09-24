@@ -23,6 +23,9 @@ import { rememberChat, memoryContextFor } from '../ai/agentMemory.js';
 // full-ticket answers from the same tools the LLM loop would call.
 import { buildDeterministicIntradayAnswer } from '../ai/superIntelFallback.js';
 
+// v13.2 A5: MCP governance — rate-limit + audit-log every tool call
+import { withMcpAudit } from '../ai/mcpAudit.js';
+
 const MAX_TOOL_ROUNDS = 6;
 const PER_ROUND_TIMEOUT_MS = 30000;
 
@@ -163,6 +166,20 @@ export const PRO_TRADER_AGENT_TOOLS = [
           riskPercent: { type: 'number', description: 'Risk per trade as % of capital (default 1)' },
         },
         required: ['entry', 'stopLoss'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_model_consensus',
+      description: 'PER-MODEL VOTE BREAKDOWN for one NSE symbol from the 14-model superintelligence ensemble (TrendMatrix, MomentumQuant, VolatilityScope, VolumeFlow, PatternNeural, SRMatrix, OptionsFlow real chain, MacroRegime, SmartMoneyICT, IntradayTape/MTF, AI Council + V2 seats): every model\'s direction, confidence and reason + the weighted consensus side/confidence/agreement + SVA verifier verdict + LLM second opinion when borderline. Falls back to the scanner\'s quant+AI verdicts when the deep ensemble is cold. Use for "consensus kya bol raha hai", "kaun se models agree", "signal ka reason kya hai".',
+      parameters: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'NSE symbol, e.g. RELIANCE, TCS' },
+        },
+        required: ['symbol'],
       },
     },
   },
@@ -346,6 +363,7 @@ async function executeAgentTool(name, args, deps) {
   const {
     KEYS, getLastScan, triggerScan, fetchGrowwNseQuote,
     getTrackRecord, getPaperSummary, analyzeSymbol, getMarketRegime,
+    getDeepSignal,
   } = deps;
 
   try {
@@ -385,6 +403,50 @@ async function executeAgentTool(name, args, deps) {
             counterTrend: s.counterTrend, aiNote: s.aiNote,
             reasons: s.reasons,
           })),
+        };
+      }
+
+      case 'get_model_consensus': {
+        const symbol = String(args.symbol || '').trim().toUpperCase().replace(/[^A-Z0-9&-]/g, '');
+        if (!symbol) return { error: 'symbol required (e.g. RELIANCE)' };
+        // PRIMARY: the 14-model deep ensemble (per-model votes).
+        let d = null;
+        try { d = await getDeepSignal?.(symbol); } catch { /* cold */ }
+        if (d?.ok && d.signal) {
+          const s = d.signal;
+          const votes = Array.isArray(s.votes) ? s.votes : [];
+          const bull = votes.filter(v => v.dir > 0);
+          const bear = votes.filter(v => v.dir < 0);
+          return {
+            symbol, market: 'INDIA', source: 'superintelligence deep ensemble',
+            consensus: {
+              side: s.side, grade: s.grade, confidence: s.confidence,
+              agreement: s.agreement, voters: s.voters ?? votes.filter(v => v.dir !== 0).length,
+              totalSeats: s.totalModels ?? votes.length,
+            },
+            tally: { bull: bull.length, bear: bear.length, abstain: votes.length - bull.length - bear.length },
+            perModel: votes.map(v => ({
+              model: v.name || v.id, dir: v.dir > 0 ? 'BULL' : v.dir < 0 ? 'BEAR' : 'ABSTAIN',
+              conf: v.conf, weight: v.weight,
+              reason: Array.isArray(v.reasons) ? v.reasons[0] : (v.reason || null),
+            })),
+            metaEnsemble: s.meta ?? null,
+            verifier: s.verify ? { finalCall: s.verify.finalCall, action: s.verify.action, score: s.verify.score } : null,
+            llmSecondOpinion: s.verify?.llm ?? null,
+          };
+        }
+        // FALLBACK: scanner cache (quant + AI verdicts, no per-model votes).
+        const scan = getLastScan?.();
+        const s2 = scan?.signals?.find(x => x.symbol === symbol);
+        if (!s2) return { error: `No consensus data for ${symbol} — deep ensemble cold + scanner cache me nahi (market band?).` };
+        return {
+          symbol, market: 'INDIA', source: 'scanner fallback (deep ensemble unavailable)',
+          consensus: { direction: s2.direction, grade: s2.grade ?? 'B', quantConfidence: s2.quantConfidence, aiConfidence: s2.aiConfidence },
+          aiNote: s2.aiNote ?? null,
+          geminiVerdict: s2.geminiVerdict ?? null,
+          groqVerdict: s2.groqVerdict ?? null,
+          reasons: s2.reasons || [],
+          note: 'Per-model vote breakdown available sirf deep ensemble se — ye scanner summary hai.',
         };
       }
 
@@ -603,7 +665,7 @@ async function _runGeminiLoop(model, { systemPrompt, messages, deps, toolTrace }
     // sequential unbounded loop is what froze Ask-AI on cold scans).
     const responseParts = await Promise.all(fnCalls.map(async fn => {
       toolTrace.push({ tool: fn.name, ts: Date.now() });
-      const result = await withToolTimeout(executeAgentTool(fn.name, fn.args || {}, deps), fn.name);
+      const result = await withToolTimeout(withMcpAudit('intraday', fn.name, fn.args || {}, () => executeAgentTool(fn.name, fn.args || {}, deps)), fn.name);
       return { functionResponse: { name: fn.name, response: { result } } };
     }));
     contents.push({ role: 'user', parts: responseParts });
@@ -677,7 +739,7 @@ async function _runOpenAICompatLoop(model, cfg, { systemPrompt, messages, deps, 
       let args = {};
       try { args = JSON.parse(tc.function?.arguments || '{}'); } catch { /* keep {} */ }
       toolTrace.push({ tool: tc.function?.name, ts: Date.now() });
-      const result = await withToolTimeout(executeAgentTool(tc.function?.name, args, deps), tc.function?.name);
+      const result = await withToolTimeout(withMcpAudit('intraday', tc.function?.name, args, () => executeAgentTool(tc.function?.name, args, deps)), tc.function?.name);
       return {
         role: 'tool',
         tool_call_id: tc.id,

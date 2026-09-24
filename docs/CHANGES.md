@@ -1,5 +1,43 @@
 # Changelog
 
+## v13.2 — FULL IMPLEMENTATION PLAN (Accuracy Track A + Bandwidth Track B) + Site Cleanup (2026-09-25)
+
+**User spec: "latest github repo pull karo · ye implemention plan accurately apply karo · after implementation full site code cleanup kardo — unwanted files, broken files, temp files sab permanently delete"**
+
+**Gap analysis first (the discipline):** the plan was audited item-by-item against what earlier versions already shipped — A1's Sentiment/InstFlow/FundaCheck V2 seats + quorum caps + the votes-journaled ledger, A2's CoinDCX agent parity (17 tools), A3's ATR time-exit + correlation guard + orderbook depth split, A4's tax suite + net-worth card, A5's Telegram two-way (/crypto /intraday /portfolio /status /weeklyreview /trade-with-PIN-approval), B1's dead-tick filter + 1s/symbol throttle, B3's parseSyms caps, B5's immutable asset caching — all verified present. v13.2 implements the SIX real gaps that remained, in the plan's own rollout order, then cleans the site.
+
+### Phase 1 — B6 Bandwidth Telemetry (measure before changing)
+**NEW `server/ai/bandwidth.js`**: rolling-24h wire accounting with hourly buckets — REST responses counted as TRUE socket `bytesWritten` deltas on `finish` (real headers+compressed body, zero serialization cost), SSE frames counted at every write site (`sse:stream` / `sse:intraday` / `sse:positions`). `GET /api/ai/bandwidth` (auth'd) → rolling 24h + daily average + **30-day projection vs the Render cap** (default 5GB, `BANDWIDTH_MONTHLY_CAP_GB`) + per-scope top-12 breakdown + OK/ALERT/OVER_CAP status. **Hourly Telegram guard** (`initBandwidthAlerts`, wired in index.js with the shared `sendTelegramMessage`): ONE alert per UTC day when the projection crosses `BANDWIDTH_ALERT_PCT` (default 70%) — the "80% used" surprise can't happen again.
+
+### Phase 3 — B2+B4 SSE residuals (the remaining egress)
+- **HIDDEN-PARK (B2)**: a tab hidden ≥30s now CLOSES its EventSource — `useCxLivePrices` (the main /api/stream client) and `useIntradayStream` both park; the server's refcounted pollers go idle at zero clients (zero upstream + zero egress for a tab nobody watches). Visible again → **instant** reconnect (no backoff — the user is waiting) + snapshot repaint. Brief switches (≤30s) keep the connection; the flush gate already renders nothing in the background.
+- **EXPONENTIAL BACKOFF (B4)**: `useCxLivePrices` now OWNS the retry cadence — errors close the socket before native retry fires and retry at 1s→2s→4s→…→30s cap (reset on clean open). A Render cold-start can no longer stampede N tabs into the fixed-3s reconnect-each-refetch-full-snapshot loop.
+
+### Phase 2 residual — A2 LLM SECOND-OPINION VALIDATOR (the plan's borderline rule)
+**NEW `server/ai/llmValidator.js`**: when ensemble confidence sits in the **borderline band (45-60%, env-tunable)**, the provider chain (Gemini → Groq → Cerebras → OpenRouter, the same `councilAsk` the council rides) gets ONE strict-JSON second opinion — `CONFIRM / REJECT / FLIP` + confidence + one-line reason. **Cost guardrails per the plan**: one live call per symbol per **15-minute candle bucket** (a board refresh, deep dive, agent chat and Telegram /crypto in the same bucket share the SAME answer); board cards read the cache passively (never trigger calls); no keys → honest unavailable; `AI_ENABLE_LLM_VALIDATOR=false` kills it. Rides `s.verify.llm` → the 🛡 VerifyBadge shows a 🤖 marker (✓/✕/⇄) + the deep-card checklist gains the violet **🤖 LLM SECOND OPINION** row with verdict, confidence, reason and provider. The SVA rule engine stays the deterministic owner — the LLM validates, never replaces (the plan's explicit division of labour). Deep-path hardening: the verify attach moved OUT of the superintel try-catch — a superintel failure no longer costs the final verdict.
+
+### Phase 5 — A5 MCP Tool Standardization + Governance
+- **`get_model_consensus` tool** (crypto agent #18 + intraday agent #10): the per-model vote breakdown — every seat's direction/confidence/reason, bull/bear/abstain tally, weighted consensus, meta-ensemble stamp, SVA verdict + LLM second opinion. The chatbot can now explain **WHY a signal fired** ("consensus kya bol raha hai", "kaun se models agree"). India desk: wired to the 14-model deep ensemble via `getDeepSignal` (lazy, cached) with an honest scanner fallback when the ensemble is cold.
+- **NEW `server/ai/mcpAudit.js`**: EVERY desk-agent tool call (crypto + intraday + telegram) is now **rate-limited** (per-desk rolling-minute cap, default 60/min, `AI_MCP_RATE_PER_MIN` — a runaway LLM loop can't hammer the live stack; over-limit calls get a structured `rate-limited` answer the model can READ) and **audit-logged** (bounded 300-entry ring: tool, arg digest, ok/error, duration; **placeOrder-class flags**). `GET /api/ai/mcp-audit` → the governance view (recent 120 + per-tool aggregates). Panels updated: `18 TOOLS • VERIFY + CONSENSUS…` / `10 TOOLS • AGENTIC`.
+
+### Phase 6 — A4 Portfolio Risk Analytics (the REAL numbers)
+**NEW `server/ai/riskAnalytics.js` + `GET /api/ai/portfolio-risk`**: the client riskEngine's `sortino = sharpe × 1.3` placeholder and empty `correlationMatrix` are replaced server-side where the candle history lives:
+- **REAL Sortino** — target downside deviation over ALL n observations (the classic ÷downside-count footgun caught by its own test), per holding AND portfolio (value-weighted, trailing-aligned returns), with Sharpe (rf-aware, default 6.5%), annualized return/vol, max drawdown on the cumulative path.
+- **Correlation matrix** — Pearson on aligned 90d daily returns (Yahoo for IN/US equities+ETFs, Binance 1d for crypto) — rendered as the Portfolio tab's new **📊 Risk Analytics card heatmap** (r>0.7 rose "same bet twice", r<−0.6 emerald "diversification gold").
+- **Rebalance drift engine** — vol-parity × equal-weight blend targets (70/30), concrete "Trim A 8.3% → add to B" lines past 3% drift.
+- **Honesty**: fixed/EPF/bond rows land in a `skipped` list (no fake series); <10 points → null; whole snapshot cached 1h per asset signature; never throws.
+
+### Phase 7 — A3 Win-Rate Self-Downgrade (per-strategy size weight)
+The v10.1 latch downgraded the WHOLE agent on a rotten global record; the plan asks for the finer tool. **`strategyWinRate` / `strategySizeMultiplier`**: a PAIR whose own rolling **20 settled trades** win-rate has decayed gets its position-size weight cut on the sizing line (`riskPct × eventSizeMul × grMul × stratMul`) — ≥50% full · 40-50% ×0.75 · 30-40% ×0.5 · <30% ×0.25 — while the rest of the book trades full size. Only agent-sourced CLOSED trades count; config kill-switch `winRateSizeDowngrade` (default ON, round-trips via `updateAgentConfig`); the haircut pairs surface in `agentStatus.accuracy.strategyDowngrades` + a logged line per entry. (ATR time-exit, correlation guard and the orderbook depth-split were verified already shipped.)
+
+### Site cleanup (unwanted / broken / temp — permanently)
+- **Deleted (git-tracked)**: `scripts/smoke_v113.mjs`, `scripts/smoke_v120.mjs` — version-locked smoke scripts superseded by the current suite (v128/v131 smokes + the 2421-test vitest run). Kept: `check-api-routes.mjs` (active route regression guard), `backtest_ab_v2.mjs` (active A/B runner).
+- **Deleted (local temp, gitignored)**: all 6 `.test-data-*` runtime dirs, `ml-service/**/__pycache__`, `dist/` build output — regenerated as needed, never shipped.
+- **Verified clean**: every server JS passes `node --check`, every Python file passes `py_compile`, zero empty source files (`ml-service/tests/__init__.py` is the standard package marker), zero stray `.log/.tmp/.bak/.DS_Store`, zero tracked files >500KB, `telegram-bot/` confirmed an active wired sub-project (not junk).
+
+### Validation
+tsc CLEAN · **vitest 135 files / 2421 tests — 100% GREEN** (+57 over v13.1's 2364: bandwidth 10, LLM validator 13, MCP audit 8, risk analytics 16, strategy downgrade 6, get_model_consensus 4) · build 5.46s · ml-service pytest 11/11 · smokes v12.8 35/35 + v13.1 12/12 · env: `.env.example` + `render.yaml` carry BANDWIDTH_MONTHLY_CAP_GB / BANDWIDTH_ALERT_PCT / AI_ENABLE_LLM_VALIDATOR / AI_MCP_RATE_PER_MIN.
+
 ## v13.1 — SIGNAL VERIFICATION AGENT (SVA-v1) + Reversal AUTO-CUT (2026-09-24)
 
 **User spec: "CoinDCX TAB ko Signal Feature ko advance pro deep level pe Optimize karo · XRP long paper trade negative balance me ja raha hai · ek Aisa Agent ko add karo jo tab me Signal mila usse advance pro trader level pe check karke final result bole long jana hai ya short accurate and high accuracy ke sath"**
