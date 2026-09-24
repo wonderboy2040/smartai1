@@ -1228,6 +1228,10 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
                 👁 AI abhi {signal.aiView.side} dekh raha hai
               </span>
             )}
+            {/* v13.1 SIGNAL VERIFICATION AGENT — the SVA-v1 one-chip
+                verdict: CONFIRMED / CAUTION / FLIP / STAND ASIDE.
+                The user's FIRST read before acting on a signal. */}
+            {signal.verify && <VerifyBadge v={signal.verify} side={signal.side} />}
           </div>
           <div className="flex items-center gap-3 mt-1 text-xs text-slate-400 flex-wrap">
             <span className="font-mono font-bold text-slate-200 flex items-center gap-1.5">
@@ -1355,6 +1359,11 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
           + precision-gate chip (renders only when AI_ENABLE_GLOBAL_COUNCIL
           stamped this signal; suppressed verdicts carry their reasons). */}
       {signal.council && <div className="mt-1.5"><CouncilStrip council={signal.council} expanded={expanded} /></div>}
+
+      {/* v13.1 SIGNAL VERIFICATION AGENT — the full 10-point pro checklist
+          (deep payloads carry it; board-level compact wire has fails/warns
+          only, which renders the badge above but not the checklist). */}
+      {expanded && signal.verify && <VerifyChecklist v={signal.verify} />}
 
       {/* v10.6 ORDER-FLOW DEPTH (Pro Upgrade #1) — the L2 ladder the
           VolumeFlow seat read: top-5 book, two-band imbalance, walls,
