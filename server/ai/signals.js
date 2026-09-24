@@ -70,6 +70,7 @@ import { eventGuardCheck } from './eventGuard.js';
 // gate as an ANALYSIS layer over the board (flag-gated, default OFF;
 // execution gauntlets untouched — safety-critical boundary).
 import { councilEnabled, runCouncilBoard, runCouncilDeep, councilStampOf, gateThresholds } from './council.js';
+import { verifySignal, verificationWire } from './signalVerifier.js';
 
 // v9: how many coins the Superintelligence Signal Board scans for the
 // dynamic desks (spot + futures). 40 = every liquid CoinDCX book by
@@ -1814,6 +1815,13 @@ async function _computeBoard(mkt, deps, opts = {}) {
           const wire = perpIntelWire(intel);
           if (wire) s.superIntel.perp = wire;
         }
+        // v13.1 SIGNAL VERIFICATION AGENT (SVA-v1) — the senior pro
+        // trader's final LONG/SHORT/NO-TRADE verdict on every scored
+        // signal (chase/RSI/quorum/MTF/edge checklist; the XRP-class
+        // top-chase LONG flips or stands aside HERE, before money
+        // moves). Wire-compact — the deep path + agent tool carry the
+        // full checklist.
+        try { s.verify = verificationWire(verifySignal(s)); } catch { /* never breaks the board */ }
       }
     } catch { /* win-prob never breaks the board */ }
   }
@@ -2465,6 +2473,9 @@ export async function getDeepSignal(symbol, market, deps, opts = {}) {
         const wireD = perpIntelWire(intelD);
         if (wireD) built.superIntel.perp = wireD;
       }
+      // v13.1 SVA-v1 on the DEEP path — the full checklist verdict
+      // (deep modal + crypto agent's verify_signal tool read this).
+      try { built.verify = verifySignal(built); } catch { /* best-effort */ }
     } catch { /* superintel on the deep card is best-effort */ }
   }
   // v6.11 (glama explain_ticker): rule-based regime narrative — the

@@ -68,7 +68,7 @@ const DEPS = { KEYS: {}, OPENAI_COMPAT: {} };
 //  positioning + calibrated win-probability tools)
 // ============================================================
 describe('crypto agent registry', () => {
-  it('exposes exactly the 16 planned tools (15 + accuracy-plan parity news tool)', () => {
+  it('exposes exactly the 17 planned tools (15 + accuracy-plan news tool + v13.1 SVA verify_signal)', () => {
     const names = CRYPTO_AGENT_TOOLS.map(t => t.function.name);
     expect(names).toEqual([
       'get_live_crypto_signals', 'analyze_global_stock', 'analyze_coin', 'get_wallet', 'get_open_positions',
@@ -76,6 +76,9 @@ describe('crypto agent registry', () => {
       'get_funding_rate', 'get_perp_intel', 'get_win_probability', 'get_risk_status', 'get_pnl', 'backtest_custom_strategy',
       // accuracy-plan Phase 3.3: tool parity with the intraday Pro Trader agent
       'search_market_news',
+      // v13.1 SIGNAL VERIFICATION AGENT — the pro-trader final verdict
+      // ("XRP long ya short?" ka auditable answer)
+      'verify_signal',
     ]);
     for (const t of CRYPTO_AGENT_TOOLS) {
       expect(t.type).toBe('function');

@@ -32,6 +32,8 @@ import { buildDeterministicCryptoAnswer } from './superIntelFallback.js';
 // v12.0 PRO TRADER UPGRADE — perp positioning intelligence engine
 // (funding/OI/top-trader L-S/taker flow) for the two new pro tools.
 import { getPerpIntel, perpIntelWire, perpIntelEnabled } from './perpIntel.js';
+// v13.1 SIGNAL VERIFICATION AGENT — the pro-trader final-verdict layer
+import { verifySignal } from './signalVerifier.js';
 
 const MAX_TOOL_ROUNDS = 6;
 const PER_ROUND_TIMEOUT_MS = 30000;
@@ -239,6 +241,26 @@ export const CRYPTO_AGENT_TOOLS = [
       },
     },
   },
+  // v13.1 — THE SECOND-OPINION AGENT: the user asks "XRP long ya
+  // short?" and this tool returns the SVA-v1 pro-trader verdict —
+  // the 10-point checklist + FINAL call with score. The LLM then
+  // frames the answer around this verdict (it may NOT override the
+  // finalCall without stating the verifier's verdict too).
+  {
+    type: 'function',
+    function: {
+      name: 'verify_signal',
+      description: 'SIGNAL VERIFICATION AGENT (SVA-v1) — the senior pro-trader second opinion. Runs a 10-point weighted checklist (committee quorum, chase/ATR-extension, RSI extremes, MTF confluence, ledger win-edge P(win)-P(need), plan R:R, regime alignment, entry band, perp crowd/funding, side stability) on a symbol\'s LIVE signal and returns the FINAL call: CONFIRM LONG/SHORT (full risk), CAUTION (half risk), FLIP to the OPPOSITE side (top-chase/overbought trap), or STAND ASIDE (no trade) + score + every check\'s verdict. Use for EVERY "long ya short?" / "should I take this?" / "ye signal sahi hai?" question — and ALWAYS cite the verdict + score in the answer.',
+      parameters: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'Coin symbol, e.g. XRP, BTC, SOL, DOGE' },
+          market: { type: 'string', description: '"SPOT" (CoinDCX INR spot) or "FUTURES" (USDT perp) — default FUTURES' },
+        },
+        required: ['symbol'],
+      },
+    },
+  },
 ];
 
 function geminiTools() {
@@ -273,6 +295,7 @@ HOW YOU WORK (agentic protocol):
 - ANY futures entry → get_perp_intel first (positioning check: OI build direction, taker aggression, crowding) — positioning AGAINST the signal = fuel missing, size down or skip
 - "kitni probability hai / pakka hai / should I take this" → get_win_probability (P(win) vs breakeven + EV in R) — cite BOTH numbers in the answer
 - "why is X moving" / regulation / ETF flows / catalyst news → search_market_news (real headlines, never guesses)
+- "X long ya short?" / "ye signal pakka hai?" / "le lu isko?" → verify_signal FIRST — the SVA pro-trader verdict (final call + score + checklist) is the desk's official answer; frame the reply around it, never override it silently
 - Risk / "kitna bura gaya" / losing day → get_risk_status (kill-switch + caps + blockers)
 - P&L questions → get_pnl (period: today/7d/30d/all)
 - Track-record / accuracy questions → get_track_record
@@ -707,6 +730,38 @@ async function executeCryptoTool(name, args, deps) {
           results: (d.results || []).slice(0, 3).map(r => ({
             title: r.title, content: (r.content || '').substring(0, 200), url: r.url,
           })),
+        };
+      }
+
+      // v13.1 SVA-v1 — the SIGNAL VERIFICATION AGENT tool: the live
+      // deep signal for the symbol goes through the 10-point pro
+      // checklist and the FINAL call (CONFIRM/CAUTION/FLIP/STAND_ASIDE)
+      // comes back with the full audit trail. "XRP long ya short?"
+      // gets a deterministic, auditable answer — not an LLM vibe.
+      case 'verify_signal': {
+        const symbol = String(args.symbol || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (!symbol) return { error: 'symbol required (e.g. XRP, BTC)' };
+        const market = String(args.market || 'FUTURES').toUpperCase() === 'SPOT' ? 'CRYPTO' : 'FUTURES';
+        const d = await getDeepSignal(symbol, market, deps, {}).catch(() => null);
+        if (!d?.ok || !d.signal) return { error: `No live signal for ${symbol} (feed down ya symbol galat) — thodi der baad try karo.` };
+        const s = d.signal;
+        // deep path already stamps built.verify — recompute only when
+        // an older board-shaped payload slipped through (belt+suspenders).
+        const v = s.verify?.agent === 'SVA-v1' ? s.verify : verifySignal(s);
+        return {
+          symbol, market,
+          signalSays: { side: s.side, grade: s.grade, confidence: s.confidence, aiScore: s.superIntel?.aiScore ?? null },
+          VERIFIER_VERDICT: {
+            finalCall: v.finalCall,          // ← THE answer: LONG / SHORT / NO_TRADE
+            action: v.action,                // CONFIRM | CAUTION | FLIP | STAND_ASIDE
+            score: v.score, flipScore: v.flipScore ?? null, proVeto: v.veto,
+            sizeHint: v.sizeHint === 1 ? 'full risk' : v.sizeHint === 0.5 ? 'half risk' : 'NO entry',
+            verdict: v.verdict, proNote: v.proNote,
+          },
+          checklist: v.checklist,
+          ltp: s.ltp,
+          plan: s.plan ? { entry: s.plan.entry, stopLoss: s.plan.stopLoss, target1: s.plan.target1, target2: s.plan.target2, rewardRisk: s.plan.rewardRisk } : null,
+          note: 'SVA-v1 pro checklist — deterministic layer over the 14-model ensemble. Verdict ko cite karo; LLM apni marzi se FLIP/CONFIRM override mat karo (agar manna ho to verifier ka verdict bhi bolo).',
         };
       }
 

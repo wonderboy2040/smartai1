@@ -64,6 +64,7 @@ vi.mock('../server/ai/secrets.js', () => ({
   sendTelegramMessage: vi.fn(async () => ({ ok: true })),
 }));
 
+import { __resetReversalForTests as _resetRevCfg } from '../server/ai/reversalEngine.js';
 import {
   validateEntryVsLtp, manualPnlOf, manualLevelDistances, stateOfManualTrade,
   manualConvictionOf, flipSummary, manualTradesToPositionRows,
@@ -794,5 +795,123 @@ describe('manualTradeView — the v12.0 wire contract', () => {
     const v2 = manualTradeView(closed.trade, { ltp: null, conviction: null });
     expect(v2.__view.r.rNow).toBe(1.8);
     expect(v2.__view.exitQuality).toBe('CLEAN_WIN');
+  });
+});
+
+// ------------------------------------------------------------
+// v13.1 SIGNAL VERIFICATION AGENT — the open-time SVA stamp on every
+// manual trade + the OPT-IN reversal AUTO-CUT in the 5s sweep (the
+// live XRP fix: ₹150 cap crossed → trade CLOSED at the crossing
+// price, not left to bleed to −₹2,250).
+// ------------------------------------------------------------
+const XRP_BURN_SIGNAL = {
+  symbol: 'XRP', market: 'FUTURES', side: 'LONG', grade: 'WATCH',
+  confidence: 48, agreement: 1, voters: 3, totalModels: 11,
+  obOs: { tag: 'OVERBOUGHT', rsi: 70.4 },
+  chasing: { side: 'LONG', extAtr: 2.31, ref: 'EMA20', runBars: 4, runAtr: 2.8, severity: 'HARD', reason: 'stretched' },
+  plan: { entry: 1.62, stopLoss: 1.54, target1: 1.7, target2: 1.78, riskPct: 5, rewardRisk: 1.0 },
+  quality: { regime: { aligned: true, counterTrend: false } },
+  superIntel: { aiScore: 57, winProb: { pWin: 48, pNeed: 50, edgePts: -2 } },
+  summary: 'LONG 63% · 3/11 · ⛔ OVERBOUGHT RSI 70 — LONG entry suppressed',
+};
+
+const CLEAN_LONG_SIGNAL = {
+  ...SIGNAL_SNAPSHOT, market: 'FUTURES', symbol: 'BTC',
+  voters: 8, totalModels: 11,
+  entryQuality: { band: 'PULLBACK', extAtr: 0.02, ref: 'EMA20' },
+  mtf: { agreement: 0.8 },
+  plan: { entry: 60000, stopLoss: 59000, target1: 62000, target2: 63000, riskPct: 1.7, rewardRisk: 2.0 },
+  superIntel: { aiScore: 82, winProb: { pWin: 64, pNeed: 33.3, edgePts: 24 } },
+};
+
+describe('recordManualTrade — the v13.1 SVA open-time stamp', () => {
+  it('the XRP-class burn signal stamps a REJECT verdict (FLIP/STAND_ASIDE) on the trade', () => {
+    const out = recordManualTrade({
+      market: 'FUTURES', symbol: 'XRP', side: 'BUY',
+      entryPrice: 1.619, qty: 299.7, signal: XRP_BURN_SIGNAL,
+    });
+    expect(out.ok).toBe(true);
+    const v = out.trade.verify;
+    expect(v).toBeTruthy();
+    expect(v.agent).toBe('SVA-v1');
+    expect(['FLIP', 'STAND_ASIDE']).toContain(v.action);
+    expect(v.sizeHint).toBe(0);
+    // wire-compact stamp: no checklist bloat on the trade record
+    expect(v.checklist).toBeUndefined();
+    expect(Array.isArray(v.fails)).toBe(true);
+  });
+
+  it('a clean CONFIRM verdict stamps too (full-risk record)', () => {
+    const out = recordManualTrade({
+      market: 'FUTURES', symbol: 'BTC', side: 'BUY',
+      entryPrice: 60000, qty: 0.01, signal: CLEAN_LONG_SIGNAL,
+    });
+    expect(out.ok).toBe(true);
+    expect(out.trade.verify.action).toBe('CONFIRM');
+    expect(out.trade.verify.finalCall).toBe('LONG');
+    expect(out.trade.verify.sizeHint).toBe(1);
+  });
+
+  it('a pre-computed wire verdict passes through VERBATIM (no recompute drift)', () => {
+    const wire = { agent: 'SVA-v1', action: 'CAUTION', finalCall: 'LONG', score: 55, veto: false, sizeHint: 0.5, verdict: '⚠️ CAUTION LONG', fails: ['rr'], warns: 2 };
+    const out = recordManualTrade({
+      market: 'CRYPTO', symbol: 'SOL', side: 'BUY',
+      entryPrice: 20, qty: 3, signal: { side: 'LONG', grade: 'ACTION', confidence: 60, voters: 6, totalModels: 11 }, verify: wire,
+    });
+    expect(out.ok).toBe(true);
+    expect(out.trade.verify).toEqual(wire);
+  });
+
+  it('no signal → no stamp (honest absence, never a fake verdict)', () => {
+    const out = recordManualTrade({ market: 'INDIA', symbol: 'TCS', side: 'BUY', entryPrice: 100, qty: 1 });
+    expect(out.ok).toBe(true);
+    expect(out.trade.verify).toBeUndefined();
+  });
+});
+
+describe('the monitor sweep — v13.1 OPT-IN reversal AUTO-CUT at LOSS_CAP', () => {
+  it('autoCut ON: cap crossing CLOSES the trade at the crossing price with the AUTO-CUT reason', async () => {
+    _resetRevCfg(); // the 60s cfg cache must NOT leak the previous test's config
+    _disk.set('ai-agent-config.json', {
+      reversalEnabled: true, reversalLossCapINR: 150, reversalProfitTargetINR: 500,
+      reversalMaxLegs: 3, reversalReentryWindowMin: 45, reversalAutoCut: true,
+    });
+    const { trade } = recordManualTrade({
+      market: 'FUTURES', symbol: 'XRP', side: 'BUY',
+      entryPrice: 0.5, qty: 1000, signal: XRP_BURN_SIGNAL,
+    });
+    // 0.5 → 0.498: (0.498-0.5)*1000 = −2 USDT ×84 = −₹168 ≤ −₹150 cap
+    _ticks.set('FUT_XRP', { price: 0.498 });
+    const send = vi.fn(async () => ({ ok: true }));
+    startManualTradeMonitor({ send, usdInrOf: async () => 84, getDeepSignal: vi.fn(async () => ({ ok: false })) });
+    await __monitorTickForTests();
+    expect(trade.status).toBe('CLOSED');
+    expect(trade.closeReason).toContain('REVERSAL AUTO-CUT');
+    expect(trade.exitPrice).toBe(0.498);
+    expect(trade.exitPnlINR).toBeCloseTo(-168, 0);
+    // the cycle record survives for the board (flip plan intact)
+    expect(trade.reversal.state).toBe('LOSS_CAP');
+    expect(trade.reversal.flip.side).toBe('SHORT');
+    // the push fired (activation + auto-cut confirmation)
+    expect(send).toHaveBeenCalled();
+  });
+
+  it('autoCut OFF (default): the cap crossing stays ADVISORY (v12.7 rule preserved)', async () => {
+    _resetRevCfg();
+    _disk.set('ai-agent-config.json', {
+      reversalEnabled: true, reversalLossCapINR: 150, reversalProfitTargetINR: 500,
+      reversalMaxLegs: 3, reversalReentryWindowMin: 45,
+    });
+    const { trade } = recordManualTrade({
+      market: 'FUTURES', symbol: 'XRP', side: 'BUY',
+      entryPrice: 0.5, qty: 1000, signal: XRP_BURN_SIGNAL,
+    });
+    _ticks.set('FUT_XRP', { price: 0.498 });
+    startManualTradeMonitor({ send: vi.fn(async () => ({ ok: true })), usdInrOf: async () => 84, getDeepSignal: vi.fn(async () => ({ ok: false })) });
+    await __monitorTickForTests();
+    // stamped + pushed, but the trade STAYS OPEN (user executes)
+    expect(trade.status).toBe('OPEN');
+    expect(trade.reversal.state).toBe('LOSS_CAP');
+    expect(trade.reversal.flip.side).toBe('SHORT');
   });
 });

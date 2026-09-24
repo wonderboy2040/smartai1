@@ -38,6 +38,9 @@ export function ManualTradePrompt({ signal, liveLtp, notify, onDone }: Props) {
   const ltp = liveLtp ?? signal.ltp ?? null;
   const isUsd = signal.market === 'FUTURES' || signal.market === 'GLOBALFUTURES';
   const cur = isUsd ? (signal.market === 'GLOBALFUTURES' ? 'USDC' : 'USDT') : '₹';
+  // v13.1 SVA — the pro-trader verdict on the signal being traded.
+  const vfy = signal.verify ?? null;
+  const vfyReject = vfy && (vfy.action === 'FLIP' || vfy.action === 'STAND_ASIDE');
   const [entryPrice, setEntryPrice] = useState<string>(ltp != null ? String(ltp) : '');
   const [qty, setQty] = useState<string>('');
   const [entryTime, setEntryTime] = useState<string>(() => {
@@ -117,6 +120,9 @@ export function ManualTradePrompt({ signal, liveLtp, notify, onDone }: Props) {
           } : null,
           votes: (signal.votes || []).map(v => ({ id: v.id, name: v.name, dir: v.dir, conf: v.conf })),
           summary: signal.summary,
+          // v13.1: the SVA verdict rides the snapshot — the server stamps
+          // it on the trade (t.verify) as the open-time verdict.
+          ...(signal.verify ? { verify: signal.verify } : {}),
         },
       };
       const r = await apiFetch(`${getProxyBase()}/api/manual-trade`, {
@@ -145,6 +151,33 @@ export function ManualTradePrompt({ signal, liveLtp, notify, onDone }: Props) {
         Entry ke waqt ka <b>14-model snapshot</b> freeze ho jayega; phir ensemble har 30s re-vote karega —
         thesis flip hote hi <b className="text-red-400">EXIT NOW</b> banner + Telegram push (WHY ke saath).
       </div>
+
+      {/* v13.1 SVA PRE-TRADE VERDICT — the final gate before the user
+          records the trade. CONFIRM = green go; CAUTION = amber half-risk;
+          FLIP/STAND_ASIDE = RED — the verifier is telling them NOT to take
+          this trade (the exact XRP case: entered on a chase-suppressed
+          WATCH call and bled −5.5%). */}
+      {vfy && (
+        <div className={`rounded-lg px-2.5 py-2 text-[11px] leading-relaxed border ${
+          vfy.action === 'CONFIRM' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
+            : vfy.action === 'CAUTION' ? 'bg-amber-500/10 border-amber-500/30 text-amber-200'
+              : 'bg-rose-500/10 border-rose-500/40 text-rose-200'}`}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-black">🛡 SVA VERDICT: {vfy.action} — <b>{vfy.finalCall}</b></span>
+            <span className="font-mono font-bold">{vfy.score}/100</span>
+            {vfy.veto && <span className="px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-500/40 text-[9px] font-black">PRO VETO</span>}
+            {vfy.sizeHint != null && vfy.sizeHint < 1 && <span className="px-1.5 py-0.5 rounded bg-slate-600/30 border border-slate-500/40 text-[9px] font-black">SIZE: {vfy.sizeHint === 0.5 ? 'HALF' : 'SKIP'}</span>}
+          </div>
+          {(vfy.verdict || vfy.proNote) && (
+            <div className="mt-1 text-slate-300/90">{vfy.verdict || vfy.proNote}</div>
+          )}
+          {vfyReject && (
+            <div className="mt-1 font-bold">
+              ⛔ Verifier ne is {signal.side} entry ko REJECT kiya hai — agar phir bhi loge to size chhota rakho aur SL entry ke paas.
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-2.5">
         <div>

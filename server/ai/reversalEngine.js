@@ -76,6 +76,11 @@ export function loadReversalConfig(saved, { force = false } = {}) {
   const pos = (v, d) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d; };
   const cfg = {
     enabled: src.reversalEnabled === true,
+    // v13.1 OPT-IN auto-cut: loss-cap crossing pe the sweep CLOSES the
+    // manual leg itself (default OFF — v12.7's "never auto-close a
+    // manual trade" stays the shipped behavior until the user turns
+    // this on from the Reversal panel).
+    autoCut: src.reversalAutoCut === true,
     lossCapINR: Math.round(pos(src.reversalLossCapINR, 150) * 100) / 100,
     profitTargetINR: Math.round(pos(src.reversalProfitTargetINR, 500) * 100) / 100,
     maxLegs: Math.max(1, Math.round(pos(src.reversalMaxLegs, 3))),

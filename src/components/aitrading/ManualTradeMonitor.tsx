@@ -53,6 +53,18 @@ interface ManualTradeView {
     plan: { entry: number | null; stopLoss: number | null; target1: number | null; target2: number | null; riskPct: number | null; atr: number | null } | null;
     votes: Array<{ id: string; name: string; dir: number; conf: number | null }>;
   } | null;
+  /** v13.1: the SVA verdict FROZEN at open — did the pro-trader layer
+   *  confirm this entry, caution it, or reject it outright? */
+  verify?: {
+    agent: string;
+    action: string;
+    finalCall: string;
+    score: number;
+    veto?: boolean;
+    verdict?: string;
+    fails?: string[];
+    warns?: number;
+  } | null;
   __ltp?: number | null;
   /** v12.0: frozen at close — final R, peak R (MFE), exit-quality verdict. */
   exitR?: number | null;
@@ -255,6 +267,19 @@ const ManualRow = memo(function ManualRow({ t, onClose, busy }: { t: ManualTrade
           )}
           {t.origin?.regime && (
             <span className="text-[9px] text-slate-500 border border-slate-700/50 rounded px-1.5 py-0.5">{t.origin.regime}</span>
+          )}
+          {/* v13.1 SVA open-time verdict — the "kya verifier ne pehle hi
+              mana kiya tha?" stamp. Red when the trade was opened against
+              a FLIP/STAND_ASIDE verdict (the XRP class). */}
+          {t.verify && (
+            <span
+              className={`text-[9px] font-black border rounded px-1.5 py-0.5 font-mono ${
+                t.verify.action === 'CONFIRM' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                  : t.verify.action === 'CAUTION' ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                    : 'bg-rose-500/15 text-rose-300 border-rose-500/40'}`}
+              title={`SVA verdict @ open: ${t.verify.action} — ${t.verify.finalCall} (${t.verify.score}/100)${t.verify.verdict ? `\n${t.verify.verdict}` : ''}${t.verify.fails?.length ? `\nFAILs: ${t.verify.fails.join(', ')}` : ''}`}>
+              🛡 {t.verify.action} {t.verify.finalCall} {t.verify.score}
+            </span>
           )}
           <button onClick={() => onClose(t)} disabled={busy}
             className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600/60 text-slate-200 disabled:opacity-40">

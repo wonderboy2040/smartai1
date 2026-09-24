@@ -1,5 +1,33 @@
 # Changelog
 
+## v13.1 — SIGNAL VERIFICATION AGENT (SVA-v1) + Reversal AUTO-CUT (2026-09-24)
+
+**User spec: "CoinDCX TAB ko Signal Feature ko advance pro deep level pe Optimize karo · XRP long paper trade negative balance me ja raha hai · ek Aisa Agent ko add karo jo tab me Signal mila usse advance pro trader level pe check karke final result bole long jana hai ya short accurate and high accuracy ke sath"**
+
+**The live XRP postmortem (the why):** the trade record showed a LONG @ 1.619 taken on a signal whose OWN summary said "⛔ OVERBOUGHT RSI 70 + 🚀 CHASING — 2.31×ATR above EMA20 — LONG entry suppressed" (aiScore 57 · conf 48 · grade WATCH · 3/11 voters = 28% quorum). Price mean-reverted −5.52%, and the ₹150 loss-cap — stamped 44 MINUTES before the close — stayed advisory ("execute aap karo"), so the loss ballooned to **−₹2,250 (15× the cap)**. The information to reject that entry ALL existed; nothing aggregated it into ONE final call at the point of entry. v13.1 is that aggregation.
+
+### The SIGNAL VERIFICATION AGENT — `server/ai/signalVerifier.js` (NEW, pure)
+A senior pro-trader second opinion on EVERY signal — one auditable final call before money moves:
+- **10-point weighted checklist** (weights sum 100): committee quorum (14) · chase/ATR-extension (16) · RSI-extreme-vs-side (12) · MTF confluence (12) · ledger win-edge P(win)−P(need) (14) · plan R:R (8) · regime alignment (8) · entry band (6) · perp crowd/funding (6) · side stability (4). Every check carries PASS/WARN/FAIL + points + a human detail line — never a black box.
+- **The verdict ladder** (pro rules, not vibes): **CONFIRM** same side at full risk (score ≥68 AND zero CORE-check fails) · **CAUTION** same side half-risk · **FLIP → opposite side** (mean-reversion case ≥60: RSI-extreme + HARD chase + thin quorum + neg edge) · **STAND ASIDE** (hardVeto OR score <40 OR **negative-EV plan** — edge FAIL + R:R FAIL). HARD chase + RSI-extreme = **PRO VETO** (the exact XRP-class burn combo).
+- **`sizeHint`** 1 / 0.5 / 0 rides every verdict — the pro's sizing discipline.
+- **Hinglish verdict + proNote** on every payload; partial input degrades to neutral WARN bands (never throws, never silently zeros).
+- **Verified against the LIVE site**: the 24-Sep XRP deep signal (pullback zone · +23.7pt edge · R:R 2) → **CONFIRM LONG 84/100**; the burn snapshot the user actually traded → **FLIP → SHORT, veto**. The verifier answers "long hai ya short" with the checklist attached.
+
+### Wiring — every surface the user touches
+- **`signals.js`**: every directional board signal carries `s.verify` (compact wire — `verificationWire`), the deep path carries the FULL checklist (the deep modal's audit trail). Attached inside the winProb block, try/caught — the verifier can never break the board.
+- **`cryptoAgent.js` — tool #17 `verify_signal`**: the desk agent answers "XRP long ya short?" with the SVA verdict + full checklist; the system prompt makes it the FIRST call for every long/short question and forbids silently overriding the verdict. Quick prompt 🛡 added; panel chip → `17 TOOLS • VERIFY + P(WIN) + EV TICKETS + NEWS`.
+- **`SignalCard.tsx`**: the 🛡 **final-call badge** reads FIRST on every card — VERIFIED (emerald) / CAUTION (amber) / **FLIP → SHORT (rose, pulsing)** / STAND ASIDE — with the verdict + proNote tooltip, and the full 10-point checklist table on deep cards.
+- **`ManualTradePrompt.tsx`**: the PRE-TRADE verdict banner — CONFIRM green / CAUTION amber / **FLIP+STAND_ASIDE RED with the explicit "verifier ne reject kiya" warning** — before the record button.
+- **`recordManualTrade`**: every manual trade now FREEZES `t.verify` (the open-time verdict — wire passthrough verbatim, or computed from the signal snapshot). The confirmation Telegram push cites it; **`ManualTradeMonitor.tsx`** shows the 🛡 stamp per trade — "kya verifier ne pehle hi mana kiya tha?" is answered forever on the ticket.
+- **`deskShared.tsx` DeskStatsStrip**: new **VERIFIED** tile (CONFIRM count; caution/rejected in the tooltip) — the desk's honest "kitne pakke setups hain" number at one glance.
+
+### The Reversal AUTO-CUT (the negative-balance fix, OPT-IN)
+The ₹150→−₹2,250 bleed happened because the loss-cap was advisory-only. **`reversalAutoCut`** (agent-config key, PUT-able via `/api/ai/reversal/config`, default OFF — v12.7's "never auto-close a manual trade" stays shipped behavior): ON karo to the 5s sweep **CLOSES the manual leg AT the crossing price** with the `REVERSAL AUTO-CUT` close-reason + Telegram confirmation; the flip plan survives on the trade record + Reversal board for the next leg. **`ReversalPanel.tsx`** gets the ✂️ AUTO-CUT toggle (rose, with the full tooltip) alongside the ensemble gate.
+
+### Validation
+`tsc` CLEAN · **vitest 2364/2364 (100% green** — +23 new locks: 17 in `test/signalVerifier.test.ts` + 6 SVA/auto-cut locks in `test/manualTrades.test.ts`; registry lock updated to the 17-tool list**)** · build 6.14s · smoke v12.8 35/35 · **NEW smoke v13.1 12/12** (S1 the XRP burn → FLIP/veto · S2 clean pullback → CONFIRM · S3 checklist integrity · S4 wire idempotence · S5 verdict language) · `node --check` all touched server files.
+
 ## v13.0 — ACCURACY & DEEP-AI UPGRADE PLAN: full implementation (Phases 0-5) (2026-09-23)
 
 **User plan: "ye issues fixes aur implementation plan accurately implement kardo"** — the audited Accuracy & Deep-AI Upgrade Plan, implemented end-to-end: the CI-blocking stale test fixture fixed (suite now 100% green for the first time), the three proven-safe accuracy flags flipped ON in every deploy template, the MTF confluence A/B made MEASURABLE (both arms journaled per settled execution), OptionsFlow extended to per-stock REAL chains, both desk agents brought to full tool-parity + the new-seat context, the portfolio tab got its AI overlay (red-flag engine + coach narration + Telegram /portfolio), and the meta-ensemble is TRAINED, ACTIVATED and on a weekly retrain worker.

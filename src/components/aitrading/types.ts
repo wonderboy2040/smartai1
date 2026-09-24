@@ -200,6 +200,40 @@ export interface SuperIntel {
   perp?: PerpIntelWire | null;
 }
 
+// ---------------- v13.1 SIGNAL VERIFICATION AGENT (SVA-v1) ----------------
+/** The senior pro-trader second opinion on a signal: a 10-point
+ *  weighted checklist aggregated into ONE final call. Deep payloads
+ *  carry the full checklist; board/manual stamps carry the compact
+ *  wire (fails/warns instead of the array). */
+export interface SignalVerification {
+  agent: string;
+  /** CONFIRM | CAUTION | FLIP | STAND_ASIDE */
+  action: 'CONFIRM' | 'CAUTION' | 'FLIP' | 'STAND_ASIDE' | string;
+  /** THE answer: LONG / SHORT / NO_TRADE (FLIP → opposite of side). */
+  finalCall: 'LONG' | 'SHORT' | 'NO_TRADE' | string;
+  /** 0-100 verification score. */
+  score: number;
+  /** pro-veto: chase HARD + RSI-extreme combo (the XRP-class burn). */
+  veto?: boolean;
+  /** 0 = no entry · 0.5 = half risk · 1 = full risk. */
+  sizeHint?: number;
+  /** opposite-side case strength (only when meaningful, ≥50). */
+  flipScore?: number | null;
+  /** one-line verdict (Hinglish). */
+  verdict?: string;
+  /** full checklist — deep payloads only. */
+  checklist?: Array<{
+    id: string; name: string;
+    status: 'PASS' | 'WARN' | 'FAIL' | string;
+    weight: number; points: number; detail: string;
+  }>;
+  /** compact wire: FAIL check ids + WARN count. */
+  fails?: string[];
+  warns?: number;
+  proNote?: string;
+  checkedAt?: number;
+}
+
 /** v9: board-level Superintelligence meta — what got scanned, through
  * which price chain, how many signals cleared 80+/85+. */
 export interface SuperIntelMeta {
@@ -332,6 +366,9 @@ export interface AISignal {
   quality?: SignalQuality | null;
   /** v9 SUPERINTELLIGENCE: AI SCORE (0-100) + the full trade blueprint. */
   superIntel?: SuperIntel | null;
+  /** v13.1 SIGNAL VERIFICATION AGENT: the pro-trader final verdict
+   *  (compact on board signals, full checklist on deep payloads). */
+  verify?: SignalVerification | null;
   /** v10.5 MTF CONFLUENCE: the 5m/15m/1h tape read (India signals,
    *  AI_ENABLE_MTF_CONFLUENCE=true). agreement < 0.67 → the server
    *  already banned STRONG; the badge makes the conflict visible. */

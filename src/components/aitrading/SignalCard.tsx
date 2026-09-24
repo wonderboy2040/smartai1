@@ -22,7 +22,7 @@ import { MTFConfluenceBadge } from '../intraday/MTFConfluenceBadge';
 import { DepthLadder } from './DepthLadder';
 import { LiveSourceBadge } from './LiveSourceBadge';
 import { ManualTradePrompt } from './ManualTradePrompt';
-import type { AISignal, Side, SuperIntel } from './types';
+import type { AISignal, Side, SuperIntel, SignalVerification } from './types';
 
 const fmt = (n: number | null | undefined, dp = 2): string => {
   if (n == null || !Number.isFinite(n)) return '—';
@@ -149,6 +149,69 @@ const superTierBadge = (tier: string) => {
     default: return { cls: 'bg-slate-500/15 text-slate-400 border border-slate-500/30', label: 'NEUTRAL' };
   }
 };
+
+/** v13.1 SIGNAL VERIFICATION AGENT (SVA-v1) — THE final-call badge.
+ *  The senior pro-trader second opinion: CONFIRM (same side, full
+ *  risk) / CAUTION (half risk) / FLIP → opposite side (the XRP-class
+ *  top-chase trap) / STAND ASIDE (no trade). This is the chip the
+ *  user reads FIRST — "long jana hai ya short" ka seedha jawab. */
+function VerifyBadge({ v, side }: { v: SignalVerification; side: string }) {
+  const confirm = v.action === 'CONFIRM';
+  const caution = v.action === 'CAUTION';
+  const flip = v.action === 'FLIP';
+  const opp = side === 'LONG' ? 'SHORT' : 'LONG';
+  const label = confirm ? `🛡 VERIFIED ${side}`
+    : caution ? `🛡 CAUTION ${side}`
+      : flip ? `🛡 FLIP → ${v.finalCall === opp ? opp : v.finalCall}`
+        : '🛡 STAND ASIDE';
+  const cls = confirm ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/50 shadow-[0_0_10px_rgba(52,211,153,0.25)]'
+    : caution ? 'bg-amber-500/15 text-amber-300 border-amber-500/50'
+      : flip ? 'bg-rose-500/15 text-rose-300 border-rose-500/50 shadow-[0_0_10px_rgba(244,63,94,0.3)] animate-pulse'
+        : 'bg-slate-600/25 text-slate-300 border-slate-500/50';
+  const tip = [
+    v.verdict || `${v.action} — score ${v.score}/100`,
+    v.proNote || null,
+    v.veto ? 'PRO VETO: chase+RSI-extreme combo — top-tick entry class.' : null,
+    v.sizeHint != null ? `Size hint: ${v.sizeHint === 1 ? 'full risk' : v.sizeHint === 0.5 ? 'half risk' : 'NO entry'}` : null,
+  ].filter(Boolean).join('\n\n');
+  return (
+    <span
+      className={`px-2 py-0.5 rounded-md text-[10px] font-black tracking-wider border font-mono ${cls}`}
+      title={tip}
+    >
+      {label} {v.score}
+    </span>
+  );
+}
+
+/** v13.1 — the full SVA checklist table (deep payloads carry it):
+ *  every check's PASS/WARN/FAIL + points earned + the detail line.
+ *  Renders inside the expanded card — the audit trail behind the
+ *  final call. */
+function VerifyChecklist({ v }: { v: SignalVerification }) {
+  const list = v.checklist || [];
+  if (list.length === 0) return null;
+  const stBg = (s: string) => s === 'PASS' ? 'bg-emerald-500/15 border-emerald-500/30' : s === 'FAIL' ? 'bg-rose-500/15 border-rose-500/30' : 'bg-amber-500/15 border-amber-500/30';
+  return (
+    <div className="mt-2 rounded-xl border border-cyan-500/25 bg-cyan-500/[0.04] p-3 space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] font-black text-cyan-300 tracking-wider">🛡 SIGNAL VERIFICATION AGENT — 10-POINT PRO CHECKLIST</span>
+        <span className="text-[10px] font-mono font-black text-slate-200">{v.score}/100</span>
+      </div>
+      {v.proNote && <div className="text-[10px] text-slate-300/90 leading-relaxed border-l-2 border-cyan-500/40 pl-2">{v.proNote}</div>}
+      <div className="grid gap-1">
+        {list.map(c => (
+          <div key={c.id} className="flex items-center gap-2 text-[10px] font-mono">
+            <span className={`px-1.5 py-0.5 rounded border font-black w-12 text-center ${stBg(c.status)}`}>{c.status}</span>
+            <span className="text-slate-300 w-36 shrink-0 truncate" title={c.name}>{c.name}</span>
+            <span className="text-slate-500 w-12 shrink-0">{c.points}/{c.weight}pt</span>
+            <span className="text-slate-400 truncate flex-1" title={c.detail}>{c.detail}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /** v9 SUPERINTELLIGENCE BLUEPRINT STRIP — the complete pro-trader
  *  ticket in one row: entry window (timing), leverage (liquidation-aware
@@ -1079,6 +1142,10 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
             {isNew && <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 text-[9px] font-black border border-cyan-500/30">NEW</span>}
             <span className={`text-sm font-black ${sideColor(signal.side)}`}>{long ? '▲ LONG' : '▼ SHORT'}</span>
             <span className={`px-2 py-0.5 rounded-md text-[10px] font-black tracking-wider ${g.cls}`}>{g.label}</span>
+            {/* v13.1 SVA-v1 — THE final-call chip. Reads FIRST, before
+                every other badge: the pro-trader verdict (CONFIRM /
+                CAUTION / FLIP / STAND ASIDE + score). */}
+            {signal.verify && <VerifyBadge v={signal.verify} side={signal.side} />}
             {(() => {
               // v10.2.1: guard like TopPicksPanel — a stale/partial signal
               // without voters would render an "undefined/undefined votes"
@@ -1503,6 +1570,10 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
           )}
         </div>
       )}
+
+      {/* v13.1 SVA-v1 full checklist — the audit trail behind the final
+          call (deep payloads carry it; board stamps show the badge only). */}
+      {signal.verify?.checklist?.length ? <VerifyChecklist v={signal.verify} /> : null}
 
       {/* v10.16 SECTION 2: MANUAL TRACK — "Maine ye trade liya hai" (all
           desks). Self-contained: the prompt POSTs /api/manual-trade with

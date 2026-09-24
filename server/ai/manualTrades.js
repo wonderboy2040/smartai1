@@ -53,6 +53,11 @@ import { sideOf, classifyConviction, quorumOfSignal } from './positionConviction
 // exact flip levels stamped), advance on close, and auto-link the
 // follow-up entry as the next cycle leg.
 import { loadReversalConfig, priceLevelsForLeg } from './reversalEngine.js';
+// v13.1 SIGNAL VERIFICATION AGENT — every manual trade is stamped with
+// the SVA verdict it was opened under (the XRP-class lesson: the
+// signal's own warnings existed, nobody aggregated them into a final
+// call at the point of entry).
+import { verifySignal, verificationWire } from './signalVerifier.js';
 
 const FILE = 'manual-trades.json';
 const MAX_TRADES = 300;
@@ -651,6 +656,19 @@ export function recordManualTrade(input = {}) {
   } catch { /* link is best-effort — never blocks a record */ }
   const sig = input.signal || {};
   const plan = sig.plan || input.plan || null;
+  // v13.1 SVA stamp — the pro-trader verdict FROZEN at open time. The
+  // trade ticket forever answers "kya verifier ne mana kiya tha?".
+  // input.verify (the wire payload the UI passes) wins when present;
+  // otherwise the full signal re-verifies here (deep payloads already
+  // carry s.verify — the recompute is the belt+suspenders path for
+  // board-shaped partial signals).
+  let verifyStamp = null;
+  try {
+    verifyStamp = sig.verify?.agent === 'SVA-v1'
+      ? verificationWire(sig.verify)
+      : (input.verify?.agent === 'SVA-v1' ? verificationWire(input.verify) : null);
+    if (!verifyStamp && sig.side) verifyStamp = verificationWire(verifySignal(sig));
+  } catch { /* stamp is context, never a blocker */ }
   const t = {
     id: _state.nextId++,
     createdAt: Date.now(),
@@ -697,6 +715,7 @@ export function recordManualTrade(input = {}) {
       summary: sig.summary || null,
     },
     ...(input.note ? { note: String(input.note).slice(0, 200) } : {}),
+    ...(verifyStamp ? { verify: verifyStamp } : {}),
     ...(check.warn ? { entryWarn: `entry ${check.deviationPct}% off live ${ltp}` } : {}),
   };
   _state.trades.push(t);
@@ -1119,6 +1138,35 @@ async function _monitorTick() {
             _persist();
             if ((tr.to === 'LOSS_CAP' || tr.to === 'PROFIT_TARGET') && typeof send === 'function') {
               await _push(tr.to === 'LOSS_CAP' ? 'losscap' : 'book', t.id, reversalActivationText(tr, { usdInr }), 15 * 60_000, send);
+            }
+            // v13.1 REVERSAL AUTO-CUT (OPT-IN — reversalAutoCut in the
+            // agent config, default OFF): the live XRP case crossed its
+            // ₹150 loss-cap and bled to −₹2,250 because the plan was
+            // advisory-only ("execute aap karo") and the push went
+            // unread for 44 minutes. With autoCut ON the sweep CLOSES
+            // the leg AT the crossing price (the flip plan survives on
+            // the trade record + the Reversal board) — the cap actually
+            // caps. v12.7's "never auto-close" rule stays the default.
+            if (tr.to === 'LOSS_CAP' && _revCfg.autoCut) {
+              try {
+                const cut = closeManualTrade(t.id, {
+                  exitPrice: px,
+                  reason: `REVERSAL AUTO-CUT (loss-cap ₹${_revCfg.lossCapINR})`,
+                });
+                if (cut?.ok && typeof send === 'function') {
+                  const pnlN = t.market === 'FUTURES' || t.market === 'GLOBALFUTURES'
+                    ? `$${Math.round(Math.abs(_num(cut.trade?.exitPnlINR) || 0) / (usdInr || 84) * 100) / 100}`
+                    : `₹${Math.round(Math.abs(_num(cut.trade?.exitPnlINR) || 0))}`;
+                  await _push('autocut', t.id, [
+                    `✂️ <b>REVERSAL AUTO-CUT executed</b>`,
+                    `<b>${t.symbol}</b> ${t.side === 'BUY' ? 'LONG' : 'SHORT'} closed @ <b>${_fmtPx(px, t.market)}</b> · loss <b>−${pnlN}</b> (cap ₹${_revCfg.lossCapINR})`,
+                    `Flip plan board pe live hai: <b>${t.reversal?.flip?.side || 'opposite'}</b> @ ~${_fmtPx(px, t.market)} — SVA verify kake lo.`,
+                    `<i>reversalAutoCut ON hai — manual trades ab cap-cross pe khud cut hote hain.</i>`,
+                  ].join('\n'), 0, send);
+                }
+              } catch (e) {
+                _mon.status.lastError = String(e?.message || e).slice(0, 140);
+              }
             }
           }
         } catch { /* one trade's reversal pass never kills the sweep */ }

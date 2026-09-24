@@ -580,7 +580,8 @@ export function registerAITradingRoutes(app, deps) {
       const out = recordManualTrade(b);
       if (!out.ok) return res.status(400).json(out);
       // confirmation push (best-effort) — the baseline is now frozen
-      sendTelegram(`📝 <b>MANUAL TRADE recorded</b>\n<b>${out.trade.symbol}</b> ${out.trade.side === 'BUY' ? 'LONG' : 'SHORT'} @ ${out.trade.entryPrice} · qty ${out.trade.qty}${out.trade.assetKind === 'OPTION' ? ` (${out.trade.optType} ${out.trade.strike} exp ${out.trade.expiry})` : ''}\n${out.trade.origin?.aiScore != null ? `Entry AI score: ${out.trade.origin.aiScore} · conviction tracking ON` : 'Conviction tracking ON'}\n<i>Flip ho gaya to EXIT NOW push aa jayega — WHY ke saath.</i>`).catch(() => {});
+      const vStamp = out.trade?.verify;
+      sendTelegram(`📝 <b>MANUAL TRADE recorded</b>\n<b>${out.trade.symbol}</b> ${out.trade.side === 'BUY' ? 'LONG' : 'SHORT'} @ ${out.trade.entryPrice} · qty ${out.trade.qty}${out.trade.assetKind === 'OPTION' ? ` (${out.trade.optType} ${out.trade.strike} exp ${out.trade.expiry})` : ''}\n${out.trade.origin?.aiScore != null ? `Entry AI score: ${out.trade.origin.aiScore} · conviction tracking ON` : 'Conviction tracking ON'}${vStamp ? `\n🛡 <b>SVA verdict @ open: ${vStamp.action} — ${vStamp.finalCall} (${vStamp.score}/100)</b>${vStamp.action === 'FLIP' || vStamp.action === 'STAND_ASIDE' ? '\n⚠️ Verifier ne is entry ko reject kiya tha — small size / quick SL rakho.' : ''}` : ''}\n<i>Flip ho gaya to EXIT NOW push aa jayega — WHY ke saath.</i>`).catch(() => {});
       return res.json(out);
     } catch (e) {
       return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -732,7 +733,7 @@ export function registerAITradingRoutes(app, deps) {
       for (const k of [
         'reversalEnabled', 'reversalLossCapINR', 'reversalProfitTargetINR', 'reversalMaxLegs',
         'reversalCooldownMin', 'reversalCycleStopINR', 'reversalReentryWindowMin',
-        'reversalMinReentryConf', 'reversalRequireEnsembleConfirm',
+        'reversalMinReentryConf', 'reversalRequireEnsembleConfirm', 'reversalAutoCut',
       ]) {
         if (body[k] != null) patch[k] = body[k];
       }

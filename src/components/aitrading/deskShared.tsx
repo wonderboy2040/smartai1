@@ -85,15 +85,23 @@ export const DeskStatsStrip = memo(function DeskStatsStrip({ board, deskLabel }:
   const sigs = board?.signals || [];
   const strong = sigs.filter(s => s.grade === 'STRONG').length;
   const actionable = sigs.filter(s => s.grade === 'ACTION' || s.grade === 'STRONG').length;
+  // v13.1 SVA — the verifier's verdict tally on the board: how many
+  // signals did the pro-trader layer CONFIRM vs CAUTION vs reject
+  // (FLIP/STAND_ASIDE)? The desk's honest "kitne pakke setups hain"
+  // number — one glance, no scroll.
+  const vConfirmed = sigs.filter(s => s.verify?.action === 'CONFIRM').length;
+  const vCaution = sigs.filter(s => s.verify?.action === 'CAUTION').length;
+  const vRejected = sigs.filter(s => s.verify && (s.verify.action === 'FLIP' || s.verify.action === 'STAND_ASIDE')).length;
   const b = board?.breadth;
   const mood = b ? (b.bull - b.bear) : null;
   const moodTxt = mood == null ? '—' : mood > 25 ? 'RISK-ON' : mood < -25 ? 'RISK-OFF' : 'MIXED';
-  const moodCls = mood == null ? 'text-slate-400' : mood > 25 ? 'text-emerald-400' : mood < -25 ? 'text-red-400' : 'text-amber-400';
+  const moodCls = mood == null ? 'text-slate-400' : mood > 25 ? 'text-emerald-400' : mood < -25 ? 'text-red-400' : mood < 0 ? 'text-amber-400' : 'text-amber-400';
   const stats: { label: string; value: string; cls?: string; title: string }[] = [
     { label: 'SCANNED', value: board ? `${board.scanned ?? 0}` : '…', title: 'Universe symbols the ensemble scanned' },
     { label: 'SIGNALS', value: `${sigs.length}`, title: 'Rows on the board (any grade)' },
     { label: 'ACTIONABLE', value: `${actionable}`, cls: actionable > 0 ? 'text-cyan-300' : 'text-slate-400', title: 'STRONG + ACTION — tradeable consensus' },
     { label: 'STRONG', value: `${strong}`, cls: strong > 0 ? 'text-emerald-300' : 'text-slate-400', title: 'Full-committee agreement (75%+ conf)' },
+    { label: 'VERIFIED', value: sigs.some(s => s.verify) ? `${vConfirmed}` : '—', cls: vConfirmed > 0 ? 'text-emerald-300' : 'text-slate-400', title: `SVA pro-trader CONFIRM verdicts — full-risk setups${sigs.some(s => s.verify) ? ` (caution ${vCaution} · rejected ${vRejected})` : ''}` },
     { label: 'AVG CONF', value: b ? `${Math.round(b.avgConf ?? 0)}%` : '—', title: 'Average confidence across the board' },
     { label: 'MOOD', value: moodTxt, cls: moodCls, title: 'Breadth mood (bull − bear)' },
   ];
@@ -107,7 +115,7 @@ export const DeskStatsStrip = memo(function DeskStatsStrip({ board, deskLabel }:
           </span>
         )}
       </div>
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+      <div className="grid grid-cols-3 sm:grid-cols-7 gap-2">
         {stats.map(s => (
           <div key={s.label} className="bg-black/25 rounded-xl px-2 py-1.5 text-center" title={s.title}>
             <div className="text-[8px] font-black text-slate-500 tracking-wider">{s.label}</div>

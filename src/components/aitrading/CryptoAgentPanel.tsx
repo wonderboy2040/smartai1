@@ -4,11 +4,13 @@
 // The CoinDCX tab's conversational agent — the mirror of the proven
 // intraday ProTraderAgentPanel: same chat shell, tool-trace chips,
 // quick prompts (crypto-flavoured). Backend: POST /api/crypto-agent
-// (16 tools: signals, deep coin scan, global stocks, wallet,
+// (17 tools: signals, deep coin scan, global stocks, wallet,
 // positions, regime, track-record, sizing, agent status + v10.5
 // funding-rate, risk-status and P&L + v12.0 perp-positioning and
-// win-probability + accuracy-plan Phase 3.3 news search — full tool
-// parity with the intraday agent). Answers follow the strict FULL-TICKET format
+// win-probability + accuracy-plan Phase 3.3 news search + v13.1
+// verify_signal (SVA pro-trader final verdict — "XRP long ya short?"
+// ka auditable answer) — full tool parity with the intraday agent).
+// Answers follow the strict FULL-TICKET format
 // enforced server-side — now with P(win) + EV on every ticket.
 // ============================================================
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
@@ -28,6 +30,7 @@ interface AgentMessage {
 
 const QUICK_PROMPTS = [
   { icon: '📋', label: 'Desk Briefing', prompt: 'Aaj ka desk briefing do — BTC regime, top spot+futures setups risk notes ke saath.' },
+  { icon: '🛡', label: 'Verify Signal', prompt: 'XRP ka signal verify karo — SVA pro-trader checklist ke saath FINAL batao: long jana hai ya short?' },
   { icon: '💰', label: 'Wallet + Risk', prompt: 'Mera wallet, open positions aur risk status dikhao — kahan SL tighten karna chahiye?' },
   { icon: '🔍', label: 'Coin Deep-Dive', prompt: 'SOL ka deep analysis karo — entry, SL, leverage sab exact numbers me.' },
   { icon: '📈', label: 'P&L Review', prompt: 'Mera last 7 din ka P&L batao — realized + unrealized, win-rate ke saath.' },
@@ -147,7 +150,7 @@ export const CryptoAgentPanel = memo(function CryptoAgentPanel() {
             <Bot size={14} className="text-cyan-400" /> CRYPTO DESK AI AGENT
           </span>
           <span className="px-2 py-0.5 rounded-md text-[9px] font-black font-mono border bg-cyan-500/15 text-cyan-300 border-cyan-500/30">
-            16 TOOLS • P(WIN) + EV TICKETS + NEWS
+            17 TOOLS • VERIFY + P(WIN) + EV TICKETS + NEWS
           </span>
           {busy && (
             <span className="px-2 py-0.5 rounded-md text-[9px] font-black font-mono border bg-emerald-500/15 text-emerald-300 border-emerald-500/30 animate-pulse">

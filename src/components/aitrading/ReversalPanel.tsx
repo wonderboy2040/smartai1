@@ -49,6 +49,10 @@ interface ReversalCycleView {
 }
 interface ReversalConfigView {
   enabled: boolean;
+  /** v13.1: loss-cap crossing pe the sweep CLOSES the manual leg
+   *  itself (default OFF — the v12.7 "never auto-close a manual
+   *  trade" rule; ON = the ₹ cap actually caps). */
+  autoCut?: boolean;
   lossCapINR: number;
   profitTargetINR: number;
   maxLegs: number;
@@ -74,7 +78,7 @@ type Notify = ((good: boolean, msg: string) => void) | undefined;
 type ReversalPatch = Partial<Record<
   'reversalEnabled' | 'reversalLossCapINR' | 'reversalProfitTargetINR' | 'reversalMaxLegs' |
   'reversalCooldownMin' | 'reversalCycleStopINR' | 'reversalReentryWindowMin' |
-  'reversalMinReentryConf' | 'reversalRequireEnsembleConfirm',
+  'reversalMinReentryConf' | 'reversalRequireEnsembleConfirm' | 'reversalAutoCut',
   number | boolean
 >>;
 
@@ -315,6 +319,14 @@ export const ReversalPanel = memo(function ReversalPanel({ notify }: { notify?: 
             <input type="checkbox" checked={form.requireEnsembleConfirm} onChange={(e) => setForm(f => f ? { ...f, requireEnsembleConfirm: e.target.checked } : f)} className="accent-violet-500" />
             Ensemble gate — flip tabhi jab AI reversal confirm kare (pullback me vetoh)
           </label>
+          {/* v13.1 AUTO-CUT — the XRP lesson: ₹150 cap crossed but the
+              advisory plan went unread for 44 min → −₹2,250. ON = the
+              sweep closes the manual leg AT the crossing price itself. */}
+          <label className="flex items-center gap-2 text-[10px] text-slate-400 cursor-pointer select-none"
+            title="LOSS-CAP crossing pe manual trade AUTO-CLOSE ho jayega (crossing price par) + Telegram push + flip plan board pe. Default OFF hai (site manual trade kabhi auto-close nahi karti — v12.7 rule); ON karne par cap actually cap ban jata hai.">
+            <input type="checkbox" checked={!!form.autoCut} onChange={(e) => setForm(f => f ? { ...f, autoCut: e.target.checked } : f)} className="accent-rose-500" />
+            <b className={form.autoCut ? 'text-rose-300' : 'text-slate-500'}>✂️ AUTO-CUT manual legs at loss-cap</b>
+          </label>
           <button
             disabled={busy || !thresholdsSane(form)}
             onClick={() => form && save({
@@ -323,6 +335,7 @@ export const ReversalPanel = memo(function ReversalPanel({ notify }: { notify?: 
               reversalCycleStopINR: form.cycleStopINR, reversalReentryWindowMin: form.reentryWindowMin,
               reversalMinReentryConf: form.minReentryConf,
               reversalRequireEnsembleConfirm: form.requireEnsembleConfirm,
+              ...(form.autoCut != null ? { reversalAutoCut: form.autoCut } : {}),
             })}
             className="px-3 py-1.5 rounded-xl text-[11px] font-black bg-violet-600/90 text-white border border-violet-500 hover:bg-violet-500 disabled:opacity-50"
           >
