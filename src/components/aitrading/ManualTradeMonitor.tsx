@@ -130,12 +130,16 @@ const BANNER_STYLE: Record<string, { chip: string; label: string; icon: string }
   REVERSAL_BOOK: { chip: 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300', label: '₹ TARGET hit — BOOK karo', icon: '✅' },
 };
 
-const pxFmt = (v: number | null | undefined, usd = false): string => {
+const pxFmt = (v: number | null | undefined, cur: 'inr' | 'usdt' | 'usd' = 'inr'): string => {
   if (v == null || !Number.isFinite(v)) return '—';
   const a = Math.abs(v);
   const dp = a >= 1000 ? 2 : a >= 1 ? 2 : a >= 0.01 ? 4 : a >= 0.0001 ? 6 : 8;
   const s = v.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
-  return usd ? (a >= 1000 ? `$${s}` : `$${s}`) : `₹${s}`;
+  // v13.3: USDT-margined rows carry the USDT tag (SignalCard's curFor
+  // convention) — a bare $ prefix mislabels the perp desk's collateral.
+  if (cur === 'usd') return `$${s}`;
+  if (cur === 'usdt') return `${s} USDT`;
+  return `₹${s}`;
 };
 
 const pnlFmt = (n: number | null | undefined): string => {
@@ -184,6 +188,7 @@ const ConvictionBar = memo(function ConvictionBar({ view }: { view: NonNullable<
 const ManualRow = memo(function ManualRow({ t, onClose, busy }: { t: ManualTradeView; onClose: (t: ManualTradeView) => void; busy: boolean }) {
   const v = t.__view;
   const usd = t.market === 'FUTURES' || t.market === 'GLOBALFUTURES';
+  const cur: 'inr' | 'usdt' = usd ? 'usdt' : 'inr';
   const banner = v?.banner ?? 'STALE';
   const bs = BANNER_STYLE[banner] ?? BANNER_STYLE.STALE;
   const pnl = v?.pnl;
@@ -216,7 +221,7 @@ const ManualRow = memo(function ManualRow({ t, onClose, busy }: { t: ManualTrade
         <div>
           <div className="text-slate-500 text-[9px] uppercase tracking-wide font-bold">Entry → Live</div>
           <div className="font-mono text-slate-200">
-            {pxFmt(t.entryPrice, usd)} → <b className="text-cyan-300">{pxFmt(v?.ltp, usd)}</b>
+            {pxFmt(t.entryPrice, cur)} → <b className="text-cyan-300">{pxFmt(v?.ltp, cur)}</b>
           </div>
         </div>
         <div>
@@ -258,7 +263,12 @@ const ManualRow = memo(function ManualRow({ t, onClose, busy }: { t: ManualTrade
 
       {/* line 3: conviction bar + snapshot chips + close */}
       <div className="flex items-end justify-between gap-3 flex-wrap">
-        <ConvictionBar view={v!} />
+        {/* v13.3: optional view — an OPEN trade without a conviction
+            snapshot renders the STALE hint instead of crashing the whole
+            tab on view.conviction access. */}
+        {v ? <ConvictionBar view={v} /> : (
+          <span className="text-[9px] text-slate-600 border border-slate-700/50 rounded px-1.5 py-0.5">conviction data missing — STALE</span>
+        )}
         <div className="flex items-center gap-2 flex-wrap">
           {t.origin?.aiScore != null && (
             <span className="text-[9px] text-slate-500 border border-slate-700/50 rounded px-1.5 py-0.5">
@@ -299,7 +309,7 @@ const ManualRow = memo(function ManualRow({ t, onClose, busy }: { t: ManualTrade
           🛑 <b>Reversal cycle ACTIVE</b> (leg {v?.reversal?.leg ?? 1}): minimal loss accept karke <b>CLOSE karo</b> → ulta <b>{v?.reversal?.flip?.side || (long ? 'SHORT' : 'LONG')}</b> entry → target pe profit <b>BOOK</b>.
           {v?.reversal?.flip && (
             <span className="block mt-1 font-mono text-[10px] text-violet-200/90">
-              FLIP plan — qty {v.reversal.flip.qty} @ ~{pxFmt(v.reversal.flip.entry, usd)}{v.reversal.flip.sl != null ? ` · SL ${pxFmt(v.reversal.flip.sl, usd)} (₹${Math.round(v.reversal?.lossCapINR ?? 0)}) / TP ${pxFmt(v.reversal.flip.tp, usd)} (₹${Math.round(v.reversal?.profitTargetINR ?? 0)})` : ''}
+              FLIP plan — qty {v.reversal.flip.qty} @ ~{pxFmt(v.reversal.flip.entry, cur)}{v.reversal.flip.sl != null ? ` · SL ${pxFmt(v.reversal.flip.sl, cur)} (₹${Math.round(v.reversal?.lossCapINR ?? 0)}) / TP ${pxFmt(v.reversal.flip.tp, cur)} (₹${Math.round(v.reversal?.profitTargetINR ?? 0)})` : ''}
             </span>
           )}
           <span className="block mt-0.5 text-violet-400/70 text-[10px]">(Manual trade — execute aap karo; Telegram pe full plan push ho chuka hai.)</span>
@@ -324,6 +334,7 @@ const ManualRow = memo(function ManualRow({ t, onClose, busy }: { t: ManualTrade
 const ClosedRow = memo(function ClosedRow({ t }: { t: ManualTradeView }) {
   const won = (t.exitPnlPct ?? 0) >= 0;
   const usd = t.market === 'FUTURES' || t.market === 'GLOBALFUTURES';
+  const cur: 'inr' | 'usdt' = usd ? 'usdt' : 'inr';
   return (
     <div className="flex items-center justify-between gap-2 text-[11px] py-1.5 border-b border-slate-800/60 last:border-0">
       <div className="flex items-center gap-2 min-w-0">
@@ -332,7 +343,7 @@ const ClosedRow = memo(function ClosedRow({ t }: { t: ManualTradeView }) {
         {t.assetKind === 'OPTION' && <span className="text-[9px] text-violet-400">{t.optType} {t.strike}</span>}
       </div>
       <div className="flex items-center gap-3 text-slate-500 shrink-0">
-        <span className="font-mono">{pxFmt(t.entryPrice, usd)} → {pxFmt(t.exitPrice, usd)}</span>
+        <span className="font-mono">{pxFmt(t.entryPrice, cur)} → {pxFmt(t.exitPrice, cur)}</span>
         <span className={`font-mono font-bold ${won ? 'text-emerald-400' : 'text-red-400'}`}>
           {t.exitPnlPct != null ? `${won ? '+' : ''}${t.exitPnlPct.toFixed(2)}%` : '—'}
           {t.exitPnlINR != null && !usd && ` · ${pnlFmt(t.exitPnlINR)}`}

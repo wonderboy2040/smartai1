@@ -11,7 +11,9 @@
 import { memo, useCallback, useEffect, useState } from 'react';
 import type { MarketKind, SignalBoard } from './types';
 
-export const REFRESH_MS = 30_000;
+// v13.3: the board poll has been 60s since v12.10 (bandwidth) — the
+// countdown ring and every "every 30s" copy string lied about it.
+export const REFRESH_MS = 60_000;
 
 export function SectionLabel({ num, title, sub }: { num: string; title: string; sub?: string }) {
   return (

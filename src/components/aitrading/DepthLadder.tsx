@@ -81,7 +81,16 @@ export const DepthLadder = memo(function DepthLadder({ market, symbol, ltp, comp
         const l = ltpRef.current;
         if (l != null && Number.isFinite(l) && l > 0) q.set('ltp', String(l));
         const r = await apiFetch(`${getProxyBase()}/api/ai/depth?${q.toString()}`, { signal: AbortSignal.timeout(5000) });
-        if (!stopped) { setView(r); setMisses(0); }
+        // v13.3 FIX: apiFetch returns the RAW Response — the old code
+        // setView(r) with the Response object itself (Response.ok is true
+        // for 2xx, so the "unavailable" branch never fired either): the
+        // ladder was permanently dead on EVERY card while the 2s poll
+        // kept succeeding. Parse the JSON body; !ok counts as a miss.
+        const j = r && !r.ok ? null : await (r as Response).json().catch(() => null);
+        if (!stopped) {
+          if (j && j.ok) { setView(j as DepthView); setMisses(0); }
+          else setMisses(m => m + 1);
+        }
       } catch {
         if (!stopped) setMisses(m => m + 1);
       } finally {

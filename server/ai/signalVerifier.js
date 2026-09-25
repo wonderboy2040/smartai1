@@ -128,8 +128,11 @@ export function verifySignal(sig, { now = Date.now() } = {}) {
   })();
 
   const mtfC = (() => {
+    // v13.3 MTF-6: the wire now carries the FULL 1m/5m/15m/1h/4h/1d
+    // ladder on every desk (India + crypto/futures/global) — the check
+    // is no longer a permanent WARN for the crypto desks.
     if (mtfAg == null) return mk('mtf', 'WARN', 'MTF wire unavailable this cycle');
-    if (mtfAg >= 0.67) return mk('mtf', 'PASS', `5m/15m/1h ${Math.round(mtfAg * 100)}% aligned with ${side}`);
+    if (mtfAg >= 0.67) return mk('mtf', 'PASS', `1m/5m/15m/1h/4h/1d ladder ${Math.round(mtfAg * 100)}% aligned with ${side}`);
     if (mtfAg >= 0.4) return mk('mtf', 'WARN', `MTF ${Math.round(mtfAg * 100)}% — partially aligned`);
     return mk('mtf', 'FAIL', `MTF only ${Math.round(mtfAg * 100)}% aligned — timeframes disagree on ${side}`);
   })();

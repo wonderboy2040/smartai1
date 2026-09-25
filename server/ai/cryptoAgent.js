@@ -313,6 +313,7 @@ HOW YOU WORK (agentic protocol):
 - "kitni probability hai / pakka hai / should I take this" → get_win_probability (P(win) vs breakeven + EV in R) — cite BOTH numbers in the answer
 - "why is X moving" / regulation / ETF flows / catalyst news → search_market_news (real headlines, never guesses)
 - "X long ya short?" / "ye signal pakka hai?" / "le lu isko?" → verify_signal FIRST — the SVA pro-trader verdict (final call + score + checklist) is the desk's official answer; frame the reply around it, never override it silently
+- "chart kya bol raha hai" / timeframe / "multi-timeframe analysis do" → get_model_consensus — v13.3 se har signal 1m/5m/15m/1h/4h/1d ka FULL MTF-6 ladder carry karta hai (verify_signal ke checklist me bhi); the ladder's agreement % + the HTF tide (1h/4h/1d) vs the LTF ripple (1m/5m/15m) is the pro read — cite the per-timeframe directions in the answer
 - Risk / "kitna bura gaya" / losing day → get_risk_status (kill-switch + caps + blockers)
 - P&L questions → get_pnl (period: today/7d/30d/all)
 - Track-record / accuracy questions → get_track_record
@@ -354,7 +355,12 @@ Kabhi bhi bina in sab ke sirf "BUY kar do" mat bolo — an INCOMPLETE TICKET is 
 // ------------------------------------------------------------
 // 3. TOOL EXECUTION — wired to the live crypto stack
 // ------------------------------------------------------------
-async function executeCryptoTool(name, args, deps) {
+async function executeCryptoTool(name, args, deps, session = {}) {
+  // v13.3 DESK CONTEXT: the panel passes the ACTIVE desk down — a
+  // "XRP long ya short?" asked on the SPOT tab must verify the SPOT
+  // book, not the perp default (levels/plans differ between desks).
+  const _deskMarket = session.market === 'SPOT' || session.market === 'CRYPTO' ? 'CRYPTO'
+    : session.market === 'GLOBALFUTURES' ? 'FUTURES' : session.market === 'FUTURES' ? 'FUTURES' : null;
   const { KEYS } = deps || {};
   try {
     switch (name) {
@@ -758,7 +764,11 @@ async function executeCryptoTool(name, args, deps) {
       case 'verify_signal': {
         const symbol = String(args.symbol || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
         if (!symbol) return { error: 'symbol required (e.g. XRP, BTC)' };
-        const market = String(args.market || 'FUTURES').toUpperCase() === 'SPOT' ? 'CRYPTO' : 'FUTURES';
+        // v13.3: desk-aware default — the session's active desk wins,
+        // then the caller's explicit market arg, then SPOT (analyze_coin's
+        // convention — the old silent FUTURES default verified the perp
+        // book while the user stared at a spot card).
+        const market = _deskMarket || (String(args.market || 'SPOT').toUpperCase() === 'SPOT' ? 'CRYPTO' : 'FUTURES');
         const d = await getDeepSignal(symbol, market, deps, {}).catch(() => null);
         if (!d?.ok || !d.signal) return { error: `No live signal for ${symbol} (feed down ya symbol galat) — thodi der baad try karo.` };
         const s = d.signal;
@@ -768,6 +778,7 @@ async function executeCryptoTool(name, args, deps) {
         return {
           symbol, market,
           signalSays: { side: s.side, grade: s.grade, confidence: s.confidence, aiScore: s.superIntel?.aiScore ?? null },
+          MTF_LADDER: s.mtf ?? null, // v13.3: the full 1m/5m/15m/1h/4h/1d read + agreement %
           VERIFIER_VERDICT: {
             finalCall: v.finalCall,          // ← THE answer: LONG / SHORT / NO_TRADE
             action: v.action,                // CONFIRM | CAUTION | FLIP | STAND_ASIDE
@@ -785,7 +796,7 @@ async function executeCryptoTool(name, args, deps) {
       case 'get_model_consensus': {
         const symbol = String(args.symbol || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
         if (!symbol) return { error: 'symbol required (e.g. XRP, BTC)' };
-        const market = String(args.market || 'FUTURES').toUpperCase() === 'SPOT' ? 'CRYPTO' : 'FUTURES';
+        const market = _deskMarket || (String(args.market || 'SPOT').toUpperCase() === 'SPOT' ? 'CRYPTO' : 'FUTURES');
         const d = await getDeepSignal(symbol, market, deps, {}).catch(() => null);
         if (!d?.ok || !d.signal) return { error: `No live ensemble run for ${symbol} (feed down ya symbol galat).` };
         const s = d.signal;
@@ -825,14 +836,16 @@ async function executeCryptoTool(name, args, deps) {
 // ------------------------------------------------------------
 // 4. AGENTIC LOOP — Gemini → Groq → Cerebras (intraday pattern)
 // ------------------------------------------------------------
-async function runGeminiAgent({ systemPrompt, messages, deps, toolTrace }) {
+async function runGeminiAgent({ systemPrompt, messages, deps, toolTrace, session }) {
   const { KEYS } = deps;
   if (!KEYS?.gemini) return null;
-  const models = ['gemini-3.5-flash', 'gemini-2.5-flash'];
+  // v13.3: 'gemini-3.5-flash' does not exist — every first call 404'd
+  // before falling to 2.5-flash (one wasted round-trip per session).
+  const models = ['gemini-2.5-flash'];
   let lastErr = null;
   for (const model of models) {
     try {
-      return await _runGeminiLoop(model, { systemPrompt, messages, deps, toolTrace });
+      return await _runGeminiLoop(model, { systemPrompt, messages, deps, toolTrace, session });
     } catch (e) {
       lastErr = e;
       if (!/\b(404|400)\b/.test(String(e?.message))) break;
@@ -841,7 +854,7 @@ async function runGeminiAgent({ systemPrompt, messages, deps, toolTrace }) {
   throw lastErr || new Error('gemini failed');
 }
 
-async function _runGeminiLoop(model, { systemPrompt, messages, deps, toolTrace }) {
+async function _runGeminiLoop(model, { systemPrompt, messages, deps, toolTrace, session }) {
   const { KEYS } = deps;
   const contents = messages
     .filter(m => m.role !== 'system')
@@ -876,7 +889,7 @@ async function _runGeminiLoop(model, { systemPrompt, messages, deps, toolTrace }
     const responseParts = [];
     for (const fn of fnCalls) {
       toolTrace.push({ tool: fn.name, ts: Date.now() });
-      const result = await executeCryptoTool(fn.name, fn.args || {}, deps);
+      const result = await executeCryptoTool(fn.name, fn.args || {}, deps, session);
       responseParts.push({ functionResponse: { name: fn.name, response: { result } } });
     }
     contents.push({ role: 'user', parts: responseParts });
@@ -888,7 +901,7 @@ async function _runGeminiLoop(model, { systemPrompt, messages, deps, toolTrace }
   return { text, engine: model };
 }
 
-async function runOpenAICompatAgent({ systemPrompt, messages, deps, toolTrace, provider }) {
+async function runOpenAICompatAgent({ systemPrompt, messages, deps, toolTrace, provider, session }) {
   const { KEYS, OPENAI_COMPAT } = deps;
   if (!KEYS?.[provider] || !OPENAI_COMPAT?.[provider]) return null;
   const cfg = OPENAI_COMPAT[provider];
@@ -941,7 +954,7 @@ async function _runOpenAICompatLoop(model, cfg, { systemPrompt, messages, deps, 
       let parsed = {};
       try { parsed = JSON.parse(tc.function?.arguments || '{}'); } catch { /* keep {} */ }
       toolTrace.push({ tool: tc.function?.name, ts: Date.now() });
-      const result = await withMcpAudit('crypto', tc.function?.name, parsed, () => executeCryptoTool(tc.function?.name, parsed, deps));
+      const result = await withMcpAudit('crypto', tc.function?.name, parsed, () => executeCryptoTool(tc.function?.name, parsed, deps, session));
       reqMessages.push({ role: 'tool', tool_call_id: tc.id, name: tc.function?.name, content: JSON.stringify(result) });
     }
   }
@@ -954,7 +967,7 @@ async function _runOpenAICompatLoop(model, cfg, { systemPrompt, messages, deps, 
 // ------------------------------------------------------------
 // 5. PUBLIC ENTRY — runCryptoAgent(messages, deps)
 // ------------------------------------------------------------
-export async function runCryptoAgent(messages, deps) {
+export async function runCryptoAgent(messages, deps, session = {}) {
   const d = deps || {};
   // Live desk context for the system prompt (all best-effort — a dead
   // feed must never block the chat, it just shows as UNKNOWN).
@@ -979,9 +992,9 @@ export async function runCryptoAgent(messages, deps) {
   const toolTrace = [];
 
   const chain = [
-    { run: () => runGeminiAgent({ systemPrompt, messages, deps: d, toolTrace }) },
-    { run: () => runOpenAICompatAgent({ systemPrompt, messages, deps: d, toolTrace, provider: 'groq' }) },
-    { run: () => runOpenAICompatAgent({ systemPrompt, messages, deps: d, toolTrace, provider: 'cerebras' }) },
+    { run: () => runGeminiAgent({ systemPrompt, messages, deps: d, toolTrace, session }) },
+    { run: () => runOpenAICompatAgent({ systemPrompt, messages, deps: d, toolTrace, provider: 'groq', session }) },
+    { run: () => runOpenAICompatAgent({ systemPrompt, messages, deps: d, toolTrace, provider: 'cerebras', session }) },
   ];
 
   const errors = [];
@@ -1012,8 +1025,11 @@ export async function runCryptoAgent(messages, deps) {
   // (analyze_coin / signals / sizing / funding need NO LLM). The user
   // gets the exact-number FULL TICKET instead of "engines unavailable"
   // — the fix behind the SOL "[object Object]" report.
+  // v13.3: session binds via closure — the fallback module's runTool
+  // contract stays (name, args, deps) so every mock/test of the
+  // deterministic path keeps working unchanged.
   const det = await buildDeterministicCryptoAnswer(
-    messages, deps, executeCryptoTool, toolTrace,
+    messages, deps, (name, args, d) => executeCryptoTool(name, args, d, session), toolTrace,
   ).catch(() => null);
   if (det?.text) {
     const lastUser = [...(messages || [])].reverse().find(m => m?.role === 'user')?.content || '';

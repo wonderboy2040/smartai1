@@ -91,10 +91,13 @@ function buildPrompt(sig) {
   const ctx = [
     `symbol: ${sig?.symbol} (${sig?.market} desk)`,
     `ensemble call: ${side} · confidence ${num1(sig?.confidence)}% · grade ${sig?.grade || 'n/a'}`,
-    `quorum: ${v.voters ?? sig?.voters ?? 'n/a'} voters agree`,
+    // v13.3: read REAL wire fields — the old v.voters/plan.targets[0]
+    // reads never existed on the SVA wire payload, so every prompt
+    // fell back to 'n/a' quorum and 'T1 n/a'.
+    `quorum: ${sig?.voters ?? sig?.participating ?? 'n/a'} voters agree`,
     `SVA checklist score: ${num1(v.score)} → ${v.action || 'n/a'} (${v.finalCall || 'n/a'})${v.veto ? ' · HARD VETO' : ''}`,
     sig?.summary ? `summary: ${String(sig.summary).slice(0, 220)}` : '',
-    plan?.entry ? `plan: entry ${plan.entry} · SL ${plan.stopLoss ?? 'n/a'} · T1 ${plan?.targets?.[0] ?? 'n/a'} · R:R ${num1(plan?.rr ?? plan?.riskReward)}` : '',
+    plan?.entry ? `plan: entry ${plan.entry} · SL ${plan.stopLoss ?? 'n/a'} · T1 ${plan.target1 ?? 'n/a'} · R:R ${num1(plan?.rr ?? plan?.riskReward)}` : '',
     num1(si?.aiScore) != null ? `AI score: ${num1(si.aiScore)}` : '',
   ].filter(Boolean).join('\n');
   return [

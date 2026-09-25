@@ -1151,10 +1151,6 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
             {isNew && <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 text-[9px] font-black border border-cyan-500/30">NEW</span>}
             <span className={`text-sm font-black ${sideColor(signal.side)}`}>{long ? '▲ LONG' : '▼ SHORT'}</span>
             <span className={`px-2 py-0.5 rounded-md text-[10px] font-black tracking-wider ${g.cls}`}>{g.label}</span>
-            {/* v13.1 SVA-v1 — THE final-call chip. Reads FIRST, before
-                every other badge: the pro-trader verdict (CONFIRM /
-                CAUTION / FLIP / STAND ASIDE + score). */}
-            {signal.verify && <VerifyBadge v={signal.verify} side={signal.side} />}
             {(() => {
               // v10.2.1: guard like TopPicksPanel — a stale/partial signal
               // without voters would render an "undefined/undefined votes"
@@ -1343,9 +1339,9 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
       {/* v6.12 PRO TRADER BRAIN — quality chips: the honest WHY behind the grade */}
       {signal.quality && <QualityChips quality={signal.quality} voters={signal.voters ?? signal.participating} total={signal.totalModels} />}
 
-      {/* v10.5 MTF CONFLUENCE (Upgrade 1) — the 5m/15m/1h tape reads
-          + agreement % (India signals with the flag ON; renders nothing
-          when the payload is absent — honest degrade). */}
+      {/* v10.5 MTF CONFLUENCE → v13.3 MTF-6 — the FULL 1m/5m/15m/1h/4h/1d
+          ladder + agreement % (every desk's signals with the flag ON;
+          renders nothing when the payload is absent — honest degrade). */}
       {signal.mtf && <div className="mt-1.5"><MTFConfluenceBadge mtf={signal.mtf} /></div>}
 
       {/* v10.15 GAP 2 — the EVENT CHIP: ⚠ Earnings in 2h / ⚠ FOMC 30m.
@@ -1590,8 +1586,9 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
       )}
 
       {/* v13.1 SVA-v1 full checklist — the audit trail behind the final
-          call (deep payloads carry it; board stamps show the badge only). */}
-      {signal.verify?.checklist?.length ? <VerifyChecklist v={signal.verify} /> : null}
+          call. ONE render: the expanded-card slot above is the single
+          home (the old second unconditional render at the card footer
+          printed the whole 10-point table TWICE on deep cards). */}
 
       {/* v10.16 SECTION 2: MANUAL TRACK — "Maine ye trade liya hai" (all
           desks). Self-contained: the prompt POSTs /api/manual-trade with

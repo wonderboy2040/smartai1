@@ -156,11 +156,14 @@ export function aggregateVotes(votes, gates = DEFAULT_GATES, opts = {}) {
   // v10.5 MTF CONFLUENCE CAP (Upgrade 1): the plan's "confluence <
   // 0.67 → max MODERATE". This ladder's grade below STRONG is ACTION
   // (NEUTRAL < WATCH < ACTION < STRONG) — a high-score signal whose
-  // 5m/15m/1h timeframes disagree can no longer wear STRONG, whatever
-  // the weighted committee thinks (cap only ever TIGHTENS).
+  // timeframes disagree can no longer wear STRONG, whatever the weighted
+  // committee thinks (cap only ever TIGHTENS).
   // v10.5.1: "disagree" means FEWER than 2 of 3 timeframes aligned —
   // 2/3 itself PASSES (the plan's 0.67 ≈ 2/3; the float 2/3 = 0.666…
   // must not trip its own 2-of-3 case). Integer-exact via ×3.
+  // v13.3 MTF-6: agreement is now aligned/ACTIVE-VOTERS over the full
+  // 1m/5m/15m/1h/4h/1d ladder (neutral tapes abstain) — the SAME
+  // < 2/3 test generalizes to any N (6 voters: < 4 aligned trips it).
   const _rawMtf = opts?.mtfAgreement;
   const mtfAgreement = _rawMtf == null ? null : (Number.isFinite(Number(_rawMtf)) ? Number(_rawMtf) : null);
   let mtfCapped = false;

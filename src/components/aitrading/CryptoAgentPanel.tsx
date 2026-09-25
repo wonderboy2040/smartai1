@@ -77,12 +77,18 @@ const TOOL_LABEL: Record<string, string> = {
   get_win_probability: '🎯 Win Probability',
   get_risk_status: '🛑 Risk',
   get_pnl: '📈 P&L',
+  search_market_news: '📰 News',
+  verify_signal: '🛡 Verify',
+  get_model_consensus: '🗳 Consensus',
 };
 
 // Memoized — the CoinDCX tab re-renders on every board poll; this panel
 // takes no changing props so memo short-circuits the conversation
 // re-render + markdown re-parse (2026 perf audit M4 pattern).
-export const CryptoAgentPanel = memo(function CryptoAgentPanel() {
+// v13.3: optional `market` — the ACTIVE desk rides every POST so
+// verify_signal / get_model_consensus verify the book the user is
+// looking at (spot question → spot book, perp question → perp book).
+export const CryptoAgentPanel = memo(function CryptoAgentPanel({ market }: { market?: 'CRYPTO' | 'FUTURES' | 'GLOBAL' | 'GLOBALFUTURES' } = {}) {
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -107,7 +113,7 @@ export const CryptoAgentPanel = memo(function CryptoAgentPanel() {
       const res = await apiFetch('/api/crypto-agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: convo }),
+        body: JSON.stringify({ messages: convo, ...(market ? { market } : {}) }),
         signal: AbortSignal.timeout(90000),
       });
       const data = await res.json().catch(() => ({}));
@@ -131,7 +137,7 @@ export const CryptoAgentPanel = memo(function CryptoAgentPanel() {
     } finally {
       setBusy(false);
     }
-  }, [messages, busy]);
+  }, [messages, busy, market]);
 
   // Greeting hint on first expand.
   useEffect(() => {

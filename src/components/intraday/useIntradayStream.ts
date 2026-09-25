@@ -78,7 +78,10 @@ export function useIntradayStream(enabled: boolean, onOutcome?: (ev: OutcomeEven
     };
 
     const connect = () => {
-      if (closed || es) return;
+      // v13.3: `parked` guard — a pending manual-retry timer firing while
+      // hidden used to reconnect the EventSource and defeat the B2
+      // zero-egress park.
+      if (closed || parked || es) return;
       try {
         es = new EventSource(buildUrl());
       } catch {
@@ -159,6 +162,9 @@ export function useIntradayStream(enabled: boolean, onOutcome?: (ev: OutcomeEven
           parkTimer = null;
           if (closed || parked) return;
           parked = true;
+          // v13.3: kill a pending manual-retry timer too — otherwise it
+          // fires while hidden and reconnects (the park leak).
+          if (manualRetryTimer) { clearTimeout(manualRetryTimer); manualRetryTimer = null; }
           try { es?.close(); } catch { /* noop */ }
           es = null;
           setConnected(false);

@@ -238,7 +238,7 @@ CORE METHODOLOGY (your trading edge — v4 + the accuracy-plan seats):
 - ADX ≥22 required for trend trades; ADX <18 = range regime, avoid breakout chasing
 - ORB-15 (opening range breakout) is highest-probability in first 90 minutes
 - NIFTY/VIX regime gates everything: counter-regime setups are penalized -10 and rarely survive
-- MTF TAPE CONFLUENCE: the 5m/15m/1h tape seat is the entry-timing voice — a setup whose timeframes conflict (agreement <2/3) is penalized and can never be STRONG; mention timeframe alignment when you see it
+- MTF-6 SUPER INTELLIGENCE LADDER (v13.3): har signal ab 1m/5m/15m/1h/4h/1d ka FULL multi-timeframe read carry karta hai — the 15m trading TF is the anchor, the 1h/4h/1d tide is the trend filter (counter-tide = conviction haircut), agreement <2/3 = STRONG banned. Timeframe alignment ko answer me cite karo jab dikhe
 - SENTIMENT + FLOWS (V2 seats, when live): SentimentPulse (news/F&G/funding) and InstFlow (FII/DII + depth imbalance) vote in the committee — their contrarian extremes are context, and when they DISAGREE with a technical setup, say so honestly
 - STOCK OPTION CHAINS: top F&O names carry real PCR/max-pain/OI reads — extreme PCR is contrarian, OI walls act as magnets
 - MESH SHADOW SEATS (InstFlowPro/TechConsensus/FundaProPlus): context-only reads at weight 0 until edge-proven — never cite them as the deciding conviction
@@ -363,12 +363,40 @@ async function executeAgentTool(name, args, deps) {
   const {
     KEYS, getLastScan, triggerScan, fetchGrowwNseQuote,
     getTrackRecord, getPaperSummary, analyzeSymbol, getMarketRegime,
-    getDeepSignal,
+    getDeepSignal, getAiBoard,
   } = deps;
 
   try {
     switch (name) {
       case 'get_live_intraday_signals': {
+        // v13.3 BOARD-FIRST: this tool used to serve ONLY the legacy
+        // scanner cache — the agent's "top setups" could disagree with
+        // the Superintelligence Signal Board rendered on the same tab
+        // (two engines, one screen). The warm AI board (the exact cards
+        // the user sees) is now the PRIMARY source; the scanner stays
+        // the fallback + the market-hours context. Zero extra compute:
+        // warmOnly NEVER triggers a board scan.
+        const board = await (getAiBoard?.() ?? null);
+        if (board?.ok && Array.isArray(board.signals) && board.signals.length > 0) {
+          return {
+            marketOpen: board.marketOpen ?? null,
+            asOf: board.generatedAt ? new Date(board.generatedAt).toISOString() : new Date().toISOString(),
+            source: 'superintelligence signal board (warm cache — the same cards the tab renders)',
+            regime: board.regime ?? null,
+            signals: board.signals.slice(0, 10).map(s => ({
+              symbol: s.symbol, direction: s.side === 'LONG' ? 'LONG' : s.side === 'SHORT' ? 'SHORT' : 'FLAT',
+              side: s.side, confidence: s.confidence, grade: s.grade,
+              ltp: s.ltp, changePct: s.changePct,
+              plan: s.plan ? { entry: s.plan.entry, stopLoss: s.plan.stopLoss, target1: s.plan.target1, target2: s.plan.target2, rewardRisk: s.plan.rewardRisk } : null,
+              voters: s.voters ?? s.participating ?? null, totalSeats: s.totalModels ?? null,
+              aiScore: s.superIntel?.aiScore ?? null,
+              verifier: s.verify ? { finalCall: s.verify.finalCall, action: s.verify.action, score: s.verify.score } : null,
+              mtf: s.mtf ?? null,
+              reasons: (s.summary || '').split('·').map(x => x.trim()).filter(Boolean).slice(0, 4),
+            })),
+            note: 'Ye wahi Superintelligence board hai jo Intraday tab pe render ho raha hai — 14-model ensemble + SVA verdict + MTF confluence. Legacy scanner sirf fallback hai.',
+          };
+        }
         // v10.3.1 STALE-WHILE-REVALIDATE: the first question of every
         // boot used to BLOCK on a full cold scan (universe fetch + AI
         // consensus = 30-90s+) and die at the 90s frontend gate. Now a
@@ -431,6 +459,11 @@ async function executeAgentTool(name, args, deps) {
               reason: Array.isArray(v.reasons) ? v.reasons[0] : (v.reason || null),
             })),
             metaEnsemble: s.meta ?? null,
+            // v13.3: forward the MTF confluence payload — the deep path
+            // computes it (5m/15m/1h + 6-TF when live) but the tool used
+            // to drop it, so the LLM never saw the timeframe ladder the
+            // system prompt tells it to mention.
+            mtf: s.mtf ?? null,
             verifier: s.verify ? { finalCall: s.verify.finalCall, action: s.verify.action, score: s.verify.score } : null,
             llmSecondOpinion: s.verify?.llm ?? null,
           };

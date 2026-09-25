@@ -201,7 +201,8 @@ const CANDLE_SOURCES = {
 // wants fresher bars). Returns a COPY of the array (callers must never
 // see a later cycle's mutation). Bounded (≤64 entries, LRU-ish prune).
 const _candleCache = new Map(); // key -> { at, candles }
-const CANDLE_CACHE_TF_TTL_MS = { '15m': 180_000, '1h': 300_000, '4h': 300_000, '1d': 300_000 };
+// v13.3 MTF-6: 1m bars turn over fastest (60s TTL); 5m matches 15m.
+const CANDLE_CACHE_TF_TTL_MS = { '1m': 60_000, '5m': 180_000, '15m': 180_000, '1h': 300_000, '4h': 300_000, '1d': 900_000 };
 const CANDLE_CACHE_MAX = 64;
 function _candleCacheGet(key, tf) {
   const hit = _candleCache.get(key);
@@ -261,13 +262,14 @@ export async function fetchCoinDcxCandles(base, tf = '1h', opts = {}) {
 // old candle chain (CoinDCX → Yahoo) died with them; this native crypto-OHLC
 // source keeps the board alive. Output shape matches fetchCoinDcxCandles
 // exactly (oldest-first {time ms, open, high, low, close, volume}, >=30 rows).
-const BINANCE_KL_INTERVAL = { '1d': '1d', '4h': '4h', '1h': '1h', '15m': '15m' };
-const BYBIT_KL_INTERVAL = { '1d': 'D', '4h': '240', '1h': '60', '15m': '15' };
+// v13.3 MTF-6: the full ladder — 1m/5m/15m/1h/4h/1d klines, all keyless.
+const BINANCE_KL_INTERVAL = { '1d': '1d', '4h': '4h', '1h': '1h', '15m': '15m', '5m': '5m', '1m': '1m' };
+const BYBIT_KL_INTERVAL = { '1d': 'D', '4h': '240', '1h': '60', '15m': '15', '5m': '5', '1m': '1' };
 export async function fetchBinanceKlines(base, tf = '1h') {
   const sym = `${String(base || '').toUpperCase()}USDT`;
   if (!/^[A-Z0-9]{2,15}USDT$/.test(sym)) return null;
   const interval = BINANCE_KL_INTERVAL[tf] || '1h';
-  const limit = tf === '15m' ? 400 : 300;
+  const limit = tf === '15m' ? 400 : tf === '1m' || tf === '5m' ? 500 : 300;
   const cacheKey = `bnk:${base}:${tf}`;
   const cached = _candleCacheGet(cacheKey, tf);
   if (cached) return cached;

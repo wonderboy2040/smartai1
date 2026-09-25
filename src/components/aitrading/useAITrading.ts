@@ -3,8 +3,9 @@
 // ------------------------------------------------------------
 // Polls the /api/ai/* endpoints on a staggered cadence and exposes
 // execute / config / kill-switch / close actions with honest
-// loading + error states. Signals refresh every 30s (active tab
-// only), options desk on demand per index.
+// loading + error states. Signals refresh every 60s (active tab
+// only — the v12.10 bandwidth cadence), options desk on demand
+// per index.
 // v7.0.1: positions poll is now DYNAMIC — 10s while any position is
 // OPEN (realtime LTP + uPnL feel, server caches make it cheap), 45s
 // when flat. Open positions are exactly when the user is watching.

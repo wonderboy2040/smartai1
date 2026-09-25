@@ -578,9 +578,9 @@ export function mtfConfluenceEnabled() {
 
 function intradayTapeMTF(ctx) {
   // v12.6: same data-driven gate as the plain tape seat — the crypto/
-  // futures 15m enrichment supplies ctx.tape; the 5m/15m/1h tapeMTF
-  // payload stays India-only (its 5m base is a Yahoo India source).
-  // Without tapeMTF the fn degrades to the plain 15m read below.
+  // futures 15m enrichment supplies ctx.tape; the v13.3 MTF-6 enrichment
+  // supplies the FULL 6-TF tapeMTF on every desk. Without tapeMTF the fn
+  // degrades to the plain 15m read below.
   // graceful degrade: no MTF payload → the plain 15m tape logic
   const m = ctx.tapeMTF;
   if (!m || typeof m !== 'object' || !m.m15) {
@@ -588,6 +588,74 @@ function intradayTapeMTF(ctx) {
     return vote(0, 0, ['MTF tape unavailable — model abstains (honest degrade)']);
   }
 
+  // ---- v13.3 MTF-6 SUPER INTELLIGENCE LADDER ----
+  // The full 1m/5m/15m/1h/4h/1d read (user spec: final signal only after
+  // FULL multi-timeframe analysis). Anchor stays the 15m trading TF;
+  // the ladder shapes conviction via three rules:
+  //   • FULL STACK (all available TFs incl. 1m/4h/1d aligned) → +15
+  //   • HTF TIDE OPPOSITION (weighted 1h/4h/1d majority against the
+  //     anchor) → −12 "counter-tide" (timing must be perfect to pay)
+  //   • < 2/3 of AVAILABLE TFs aligned → −20 + STRONG banned (the
+  //     ensemble cap fires on the same agreement number)
+  const SIX_TFS = [['m1', '1m'], ['m5', '5m'], ['m15', '15m'], ['h1', '1h'], ['h4', '4h'], ['d1', '1d']];
+  const isSix = !!(m.m1 || m.h4 || m.d1); // 6-TF payload vs the legacy 3-TF one
+  if (isSix) {
+    const perTf = {};
+    for (const [tf, label] of SIX_TFS) {
+      const tape = m[tf];
+      if (!tape || typeof tape !== 'object') { perTf[tf] = null; continue; }
+      const v = tapeVote(tape, label);
+      perTf[tf] = v.dir !== 0 ? v : null;
+    }
+    const anchor = perTf.m15;
+    if (!anchor) {
+      return vote(0, 0, ['15m tape read is neutral/coil — MTF model abstains']);
+    }
+    const availKeys = SIX_TFS.map(([tf]) => tf).filter(tf => perTf[tf] != null); // active voters only (mirrors tapeMTFFromBase6)
+    const dirs = {};
+    for (const k of availKeys) dirs[k] = perTf[k]?.dir ?? 0;
+    const alignedCount = availKeys.filter(k => dirs[k] === anchor.dir).length;
+    const agreement = availKeys.length > 0 ? alignedCount / availKeys.length : null;
+    // HTF tide: weighted majority of the available HTF tapes.
+    const htfW = [['h1', 1.0], ['h4', 1.2], ['d1', 1.5]].filter(([k]) => perTf[k] != null);
+    let htfSum = 0, htfWsum = 0;
+    for (const [k, w] of htfW) { htfSum += perTf[k].dir * w; htfWsum += w; }
+    const htfDir = htfWsum > 0 ? Math.sign(htfSum) : 0;
+    const againstTide = htfDir !== 0 && htfDir !== anchor.dir;
+
+    let conf = anchor.conf;
+    const pts = [];
+    const label = (tf, lab) => `${lab} ${perTf[tf] != null ? (perTf[tf].dir > 0 ? '↑' : '↓') : '·'}`;
+    pts.push(`MTF-6 read — ${label('m1', '1m')} ${label('m5', '5m')} ${label('m15', '15m')} ${label('h1', '1h')} ${label('h4', '4h')} ${label('d1', '1d')}·${agreement != null ? ` ${Math.round(agreement * 100)}% aligned` : ''}`);
+    if (agreement != null && alignedCount === availKeys.length && availKeys.length >= 5) {
+      conf += 15;
+      pts.push(`FULL LADDER aligned (${availKeys.length}/${availKeys.length} timeframes) — maximum confluence boost`);
+    } else if (agreement != null && agreement < 2 / 3 - 1e-9) {
+      conf -= 20;
+      pts.push(`Timeframe conflict (${alignedCount}/${availKeys.length} aligned, < 2/3) — conviction penalized, STRONG banned`);
+    } else if (againstTide) {
+      pts.push('2/3+ aligned but the higher-TF tide (1h/4h/1d) leans the other way — partial confluence');
+    }
+    if (againstTide) {
+      conf -= 12;
+      pts.push('COUNTER-TIDE: the 15m anchor fights the 1h/4h/1d majority — counter-trend haircut (−12)');
+    }
+    for (const tf of ['m1', 'h4', 'd1']) {
+      if (perTf[tf]) pts.push(...(perTf[tf].reasons || []).slice(0, 1).map(r => `${tf === 'm1' ? '1m' : tf === 'h4' ? '4h' : '1d'}: ${r}`));
+    }
+
+    const out = vote(anchor.dir, clamp(conf), pts.filter(Boolean));
+    // A/B shadow arm (unchanged): the byte-identical plain 15m read.
+    try {
+      const abPlain = tapeVote(m.m15, '15m');
+      if (abPlain && abPlain.dir !== 0) {
+        out.__abShadow = { id: 'ab_tape15m', dir: abPlain.dir, conf: abPlain.conf, weight: 1.3 };
+      }
+    } catch { /* shadow is best-effort — the MTF vote itself is the product */ }
+    return out;
+  }
+
+  // ---- legacy 3-TF path (5m/15m/1h) — the v10.5 behaviour, byte-stable ----
   const perTf = {};
   for (const [tf, tape] of [['m5', m.m5], ['m15', m.m15], ['h1', m.h1]]) {
     if (!tape || typeof tape !== 'object') { perTf[tf] = null; continue; }
@@ -663,7 +731,7 @@ export const MODELS = [
   // exact v9.3 11-model board (plain IntradayTape w 1.3). Same seat —
   // no double-count, either flavour.
   ...(mtfConfluenceEnabled()
-    ? [{ id: 'tape-mtf', name: 'IntradayTapeMTF', role: '5m/15m/1h confluence vote (MTF tape — replaces 15m-only seat)', weight: 1.6, fn: intradayTapeMTF }]
+    ? [{ id: 'tape-mtf', name: 'IntradayTapeMTF', role: '1m/5m/15m/1h/4h/1d confluence vote (MTF-6 ladder — replaces 15m-only seat; every desk)', weight: 1.6, fn: intradayTapeMTF }]
     : [{ id: 'tape', name: 'IntradayTape', role: '15m EMA/MACD/RSI + session VWAP + 3-bar momentum (India tape)', weight: 1.3, fn: intradayTape }]),
   { id: 'aicouncil', name: 'AI Council (LLM)', role: 'Gemini → Groq → Cerebras verification chain', weight: 1.5, fn: null },
   // ---- V2 (Phase 1-3 of the signal-accuracy upgrade). Deliberately

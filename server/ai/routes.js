@@ -237,13 +237,37 @@ export function registerAITradingRoutes(app, deps) {
       const rescan = ['1', 'true', 'yes'].includes(String(req.query.rescan || '').trim().toLowerCase());
       // v12.7 BANDWIDTH: `no-cache` (revalidate) instead of the old
       // implicit no-header + the client's ?t= buster — the client polls
-      // every 30s while the board cache holds 60s, so ~half the polls
+      // every 60s while the board cache holds 60s, so ~half the polls
       // were re-downloading a byte-identical 100-400KB body. Express's
       // automatic weak ETag now answers 304 for those (zero body
       // transfer). RESCAN requests carry &rescan=1 (fresh compute →
       // new body → full 200, as they should).
       res.set('Cache-Control', 'no-cache');
       const board = await getSignals(market, depsForSignals(), { limit, ...(rescan ? { noCache: true } : {}) });
+      // v13.3 INTRADAY LIVE-WIRE FIX: the INDIA board's symbols now feed
+      // the SSE watcher (live-LTP overlay + Groww/Yahoo source pill on
+      // the cards) AND the signal Track Record — the same integration the
+      // legacy scanner had. Before this, the board cards rendered with
+      // NO live prices (setScanSymbols was only ever called from the
+      // scanner path the frontend stopped polling) and the Track Record
+      // stayed empty. Route-level (not inside _computeBoard) so tests
+      // and warmOnly status polls stay hermetic; VITEST guard for the
+      // same reason.
+      if (market === 'INDIA' && board?.ok && Array.isArray(board.signals) && board.signals.length > 0 && !process.env.VITEST) {
+        try {
+          const { setScanSymbols } = await import('../intraday/stream.js');
+          const { recordSignals } = await import('../intraday/trackRecord.js');
+          setScanSymbols(board.signals.map(s => s.symbol), 'INDIA');
+          recordSignals(board.signals.map(s => ({
+            symbol: s.symbol, market: 'INDIA', exchange: 'NSE',
+            direction: s.side === 'SHORT' ? 'SHORT' : s.side === 'LONG' ? 'LONG' : null,
+            entry: s.plan?.entry ?? null, stopLoss: s.plan?.stopLoss ?? null,
+            target1: s.plan?.target1 ?? null, target2: s.plan?.target2 ?? null,
+            ltp: s.ltp, confidence: s.confidence,
+            aiModel: s.superIntel?.tier ?? '', aiNote: (s.summary || '').slice(0, 160),
+          })).filter(s => s.direction && s.entry > 0 && s.stopLoss > 0 && s.target1 > 0));
+        } catch (e) { console.warn('[board-live-wire]', e?.message || e); }
+      }
       res.json(board);
     } catch (e) {
       jsonError(res, 500, 'ai signals failed', e);
@@ -988,7 +1012,11 @@ export function registerAITradingRoutes(app, deps) {
         role: ['user', 'assistant', 'system'].includes(m?.role) ? m.role : 'user',
         content: String(m?.content || '').slice(0, 6000),
       }));
-      const result = await runCryptoAgent(trimmed, depsForSignals());
+      const result = await runCryptoAgent(trimmed, depsForSignals(), {
+        // v13.3: the ACTIVE desk from the panel — verify_signal /
+        // get_model_consensus default to the book the user is viewing.
+        market: String(req.body?.market || '').toUpperCase() || undefined,
+      });
       if (!result.ok) return jsonError(res, 502, result.error);
       res.set('Cache-Control', 'no-store');
       res.json(result);

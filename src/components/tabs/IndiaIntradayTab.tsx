@@ -92,6 +92,10 @@ const NAV = [
   { id: 'in-models', label: 'MODELS', emoji: '🧠', pro: true },
   { id: 'in-ledger', label: 'LEDGER', emoji: '🔗', pro: true },
   { id: 'in-trust', label: 'TRUST', emoji: '🛡️', pro: true },
+  // v13.3: the two sections that RENDERED but never appeared in the
+  // quick-nav (Expert Picks + Manual Trade Tracker).
+  { id: 'in-expert', label: 'EXPERT', emoji: '⭐', pro: true },
+  { id: 'in-manual', label: 'MANUAL', emoji: '✍️', pro: true },
 ];
 
 export default memo(function IndiaIntradayTab() {
@@ -118,7 +122,14 @@ export default memo(function IndiaIntradayTab() {
   // the watcher isn't covering that symbol yet.
   const liveFor = useCallback((symbol: string): LiveQuote | null => {
     const q = stream.livePrices[String(symbol || '').toUpperCase()];
-    return q && q.price > 0 ? q : null;
+    // v13.3 STALENESS GATE: the watcher keeps the session's LAST quotes
+    // after the close (evening/weekend users saw 15:30 prices with a
+    // pulsing "live" dot). A quote older than 60s is NOT live — fall
+    // back to the board snapshot honestly.
+    if (!q || !(q.price > 0)) return null;
+    const ts = (q as { ts?: number }).ts ?? 0;
+    if (ts > 0 && Date.now() - ts > 60_000) return null;
+    return q;
   }, [stream.livePrices]);
   // bump → Paper/TrackRecord/Journal panels refetch (after open/close).
   const [paperRefresh, setPaperRefresh] = useState(0);
@@ -369,7 +380,17 @@ export default memo(function IndiaIntradayTab() {
         </div>
         <div className="mt-2.5 flex items-center justify-between flex-wrap gap-2">
           <FilterChips filter={filter} onChange={setFilter} counts={counts} />
-          <span className="text-[10px] text-slate-600 font-mono">🔥 80+ = super AI score · STRONG ≥75% conf + 70% agree · ACTION ≥55 · WATCH ≥35</span>
+          <div className="flex items-center gap-2">
+            {/* v13.3: stream honesty chip — a silently-dead SSE used to be
+                invisible (cards fell back to 60s-old snapshot prices with
+                no marker). LIVE pulse when connected, amber when down. */}
+            <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black border tracking-wider ${stream.connected
+              ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+              : 'bg-amber-500/15 text-amber-300 border-amber-500/30'}`}>
+              {stream.connected ? '⚡ LIVE QUOTES' : '⏸ QUOTES OFFLINE'}
+            </span>
+            <span className="text-[10px] text-slate-600 font-mono">🔥 80+ = super AI score · STRONG ≥75% conf + 70% agree · ACTION ≥55 · WATCH ≥35</span>
+          </div>
         </div>
         {/* v9 engine meta strip — what got scanned, how many cleared 80+ */}
         {board?.superIntelMeta && (
@@ -391,7 +412,7 @@ export default memo(function IndiaIntradayTab() {
             <div className="quantum-panel rounded-2xl p-6 col-span-full text-center">
               <div className="text-3xl mb-2">📡</div>
               <div className="text-sm text-red-400 font-bold">{board.reason || 'Data unavailable'}</div>
-              <div className="text-[11px] text-slate-500 mt-1">Will auto-retry every 30s</div>
+              <div className="text-[11px] text-slate-500 mt-1">Will auto-retry every 60s</div>
             </div>
           )}
           {/* v7.0.2: network/API failure used to render NOTHING here (silent
@@ -400,7 +421,7 @@ export default memo(function IndiaIntradayTab() {
             <div className="quantum-panel rounded-2xl p-6 col-span-full text-center border border-red-500/20">
               <div className="text-3xl mb-2">📡</div>
               <div className="text-sm text-red-400 font-bold">Signal board unreachable</div>
-              <div className="text-[11px] text-slate-500 mt-1">Network / API issue — har 30s me auto-retry ho raha hai. Top-5 picks bhi isi board se aate hain (refresh button bhi dabao).</div>
+              <div className="text-[11px] text-slate-500 mt-1">Network / API issue — har 60s me auto-retry ho raha hai. Top-5 picks bhi isi board se aate hain (refresh button bhi dabao).</div>
             </div>
           )}
           {visibleSignals.map(s => (
@@ -423,7 +444,7 @@ export default memo(function IndiaIntradayTab() {
             <div className="quantum-panel rounded-2xl p-6 col-span-full text-center">
               <div className="text-2xl mb-1">🔍</div>
               <div className="text-xs text-slate-400 font-bold">No signals match this filter right now</div>
-              <div className="text-[10px] text-slate-500 mt-1">Try ALL — the board re-ranks every 30s.</div>
+              <div className="text-[10px] text-slate-500 mt-1">Try ALL — the board re-ranks every 60s.</div>
             </div>
           )}
         </div>

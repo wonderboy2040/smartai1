@@ -154,12 +154,17 @@ export function useCxLivePrices(active: boolean, spot: string[], fut: string[], 
   // v10.14: WS accelerator health (null until the first status frame lands)
   const [wsHealth, setWsHealth] = useState<CxWsHealth | null>(null);
 
-  const spotKey = cleanList(spot).join(',');
-  const futKey = cleanList(fut).join(',');
-  const globKey = cleanList(glob).join(',');
+  // v13.3 STABLE KEY: the dynamic desks re-rank every 60s — the joined
+  // key used to change on any top-10 ORDER shuffle (9/10 symbols
+  // identical), tearing down the whole EventSource + snapshot repaint.
+  // SORT the symbols: the connection now only churns when the watched
+  // SET actually changes membership.
+  const spotKey = cleanList(spot).sort().join(',');
+  const futKey = cleanList(fut).sort().join(',');
   // v12.9: NSE equities ride the SAME SSE via the in= param (Groww/Yahoo
   // IN_ namespace) — the manual-trade tracker's realtime LTP source.
-  const indiaKey = cleanList(india).join(',');
+  const indiaKey = cleanList(india).sort().join(',');
+  const globKey = cleanList(glob).sort().join(',');
 
   useEffect(() => {
     if (!active) return;

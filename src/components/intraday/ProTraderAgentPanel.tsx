@@ -62,6 +62,10 @@ const TOOL_LABEL: Record<string, string> = {
   get_paper_positions: '📝 Positions',
   search_market_news: '📰 News',
   calculate_position_size: '🧮 Sizing',
+  // v13.3: the v13.0+ tools finally get their labels (raw snake_case
+  // used to render in the trace chips).
+  get_detailed_signal_analysis: '🔬 Detailed',
+  get_model_consensus: '🗳 Consensus',
 };
 
 // 2026 perf audit (M4): memoized — IntradayTab re-renders on every SSE quote

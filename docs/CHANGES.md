@@ -1,5 +1,40 @@
 # Changelog
 
+## v13.3 — MTF-6 SUPER INTELLIGENCE + INTRADAY/COINDCX TAB DEEP FIXES (2026-09-25)
+
+**User spec: "Intraday Tab & CoinDCX tab theek se kaam nhi kar raha — full code deep analysis karke issues fix karo · Chart deep analysis karke Super Intelligence improve karo · 1min/5min/15min/1hr/4hr/1d aisa FULL analysis karke hi final trade signal do · sab improvement kardo"**
+
+**Deep analysis first:** both tab chains (frontend + server + streams + agents) were audited end-to-end — 37 concrete findings, 24 fixed in this build. Validation: tsc clean · vitest 136 files / 2448 tests 100% GREEN (+27 new MTF-6 locks) · build 5.5s · smokes 35/35 + 12/12 + NEW v13.3 9/9 ON LIVE DATA (RELIANCE Yahoo ladder + BTC Binance ladder).
+
+### THE FEATURE — MTF-6 Super Intelligence (the user's core spec)
+The final trade signal now comes from a **FULL 6-timeframe chart analysis — 1m / 5m / 15m / 1h / 4h / 1d** — on EVERY desk (India + CoinDCX spot + futures + global), behind the same `AI_ENABLE_MTF_CONFLUENCE` flag:
+- **Data layer**: `tapeMTFFromBase6()` builds the ladder from TTL-cached legs — India: 1m (60s) / 5m / native 15m / native 1h (3mo, deep enough for a REAL 4h resample) / daily 1y via the new shared `_fetchYahooCandles` core (with the .BO BSE fallback — BSE-only names used to silently lose the whole MTF layer); crypto/futures: `fetchCryptoMTF6()` on keyless Binance/Bybit klines (native on all six TFs; 4h resamples the 1h base; spot legs rescale onto the INR anchor with a raw-leg fallback when the rescale guard has no reference — direction is scale-invariant, the ladder never dies on a TV-blocked day).
+- **Vote layer**: the IntradayTapeMTF seat (w 1.6) votes the 15m anchor direction shaped by the ladder — **FULL-LADDER aligned → +15 conviction; < 2/3 of active voters aligned → −20 + STRONG banned (the ensemble cap generalizes to any N); COUNTER-TIDE (the weighted 1h/4h/1d majority against the anchor) → −12 "timing must be perfect" haircut**. Neutral tapes ABSTAIN (never fake disagreement); the A/B shadow arm rides every vote for calibration. The 3-TF payload stays the byte-stable honest degrade (a dark leg only narrows the ladder).
+- **Final-signal gating**: `sig.mtf` (all six TF dirs + agreement% + HTF/LTF sub-agreements) attaches on every desk's board AND deep cards; `winProb.mtfAligned`, the SVA **mtf checklist check (was a PERMANENT WARN on crypto — now PASSes with the real ladder)**, and the < 2/3 STRONG-ban all read the same number — one truth across badge, vote, verifier and ensemble.
+- **UI**: `MTFConfluenceBadge` → the **MTF-6 chip ladder** — LTF group (1m trigger · 5m timing · 15m THE trading TF) | HTF group (1h · 4h · 1d tide) + agreement% + a **TIDE % · RIPPLE %** split line. Agents: `verify_signal` carries `MTF_LADDER`, `get_model_consensus` forwards the payload, both system prompts cite the ladder.
+- **Zero double-fetch**: board + deep + agent share the same TTL-cached legs; the deep path's badge reuses the ladder it already built for the vote.
+
+### CoinDCX tab fixes (the "not working" list)
+1. **✂️ AUTO-CUT dead wiring FIXED** — `PUT /reversal/config` accepted `reversalAutoCut`, `updateAgentConfig` silently dropped it: the toggle un-checked itself after every Save and the XRP-class ₹150-cap → ₹2,250-bleed guard could NEVER be enabled. One handler line + default, wired end-to-end (locked by a round-trip test).
+2. **DepthLadder JSON parse** — `setView(rawResponse)` left the L2 widget permanently dead on EVERY card while its 2s poll kept succeeding (Response.ok is true — the "unavailable" branch never fired either). Parsed + !ok→miss.
+3. **Crypto desks had ZERO multi-timeframe context** — the MTF layer was India-only (heaviest committee, no ladder, permanent SVA WARN). Fixed by the MTF-6 engine above.
+4. Duplicate VerifyBadge + duplicate VerifyChecklist renders removed (deep cards printed the 10-point table TWICE).
+5. Refresh honesty: REFRESH_MS 30s→60s + every "every 30s" copy string + the countdown ring now match the real v12.10 cadence.
+6. SSE: per-IP cap 3→6 (one tab legitimately holds TWO /api/stream connections — a second window 429'd into a loop); symbol keys SORTED so a 60s re-rank's ORDER shuffle no longer tears down the EventSource.
+7. GLOBAL desk: deep-modal cards now get `onExecuteGlobal` (the 🚀 TRADE button existed but was never passed); desk label + regime chips follow the ACTIVE desk.
+8. Agent: phantom `gemini-3.5-flash` first-model 404 removed; `verify_signal`/`get_model_consensus` default to the ACTIVE desk (panel → route → session — a spot-tab "XRP long ya short?" now verifies the SPOT book); 3 missing tool-trace labels.
+9. `llmValidator` prompt read non-existent wire fields (`v.voters`, `plan.targets[0]`) — every borderline prompt showed quorum "n/a" + "T1 n/a". Now reads `sig.voters` + `plan.target1`.
+10. Manual tracker: `ConvictionBar view={v!}` crash-guard (an OPEN trade without a snapshot killed the whole tab); USDT rows drop the fake `$` prefix (SignalCard's `cur` convention).
+
+### Intraday tab fixes
+1. **Board live-LTP overlay was DEAD** — `setScanSymbols` was only ever called from the legacy scanner path the frontend stopped polling: no board symbol was ever in the SSE watch-set, `liveFor()` returned null for every card. The GET /api/ai/signals route now feeds the board's symbols to the watcher (route-level, VITEST-guarded — tests stay hermetic).
+2. **Track Record saw nothing** — `recordSignals` (the accountability engine) was scanner-only too; the route now records the board's signals (dedup/flip-safe adapter).
+3. **Paper-desk PARTIAL runner closed at the ORIGINAL SL** instead of the documented breakeven floor (the trackRecord v11.4 fix, never applied to paperTrading) — T2 → breakeven-trail → SL ordering restored.
+4. **Closing prices served as "live"** — `liveFor` now freshness-gates (quote.ts older than 60s → honest snapshot fallback) + a ⚡ LIVE QUOTES / ⏸ QUOTES OFFLINE chip (a silently-dead stream was invisible).
+5. **Agent/board split-brain** — `get_live_intraday_signals` served the LEGACY scanner cache and could disagree with the Signal Board rendered above it. The warm AI board (warmOnly — never triggers a scan) is now the PRIMARY source; `get_model_consensus` forwards the MTF payload; 2 missing tool labels.
+6. Park leak: a pending manual-retry timer now clears when the tab parks (the hidden-tab zero-egress guarantee held a reconnect path open).
+7. QuickNav: EXPERT + MANUAL sections finally reachable (rendered but never in the nav).
+
 ## v13.2 — FULL IMPLEMENTATION PLAN (Accuracy Track A + Bandwidth Track B) + Site Cleanup (2026-09-25)
 
 **User spec: "latest github repo pull karo · ye implemention plan accurately apply karo · after implementation full site code cleanup kardo — unwanted files, broken files, temp files sab permanently delete"**

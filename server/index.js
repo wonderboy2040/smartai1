@@ -1154,7 +1154,11 @@ function parseSyms(v) {
 // v7.0.2 SECURITY: cap concurrent SSE connections per IP (public endpoint,
 // each connection drives upstream polling for up to 180 symbols).
 const _sseConns = new Map(); // ip → count
-const SSE_MAX_PER_IP = 3;
+// v13.3: 3 → 6 — one visible CoinDCX tab legitimately holds TWO /api/stream
+// connections (board prices + manual tracker); a second window or phone on
+// the same NAT pushed a 4th connection into a 429 loop against a cap that
+// only frees after the other tab parks 30s.
+const SSE_MAX_PER_IP = 6;
 function sseConnAllowed(ip) {
   const n = _sseConns.get(ip) || 0;
   return n < SSE_MAX_PER_IP;

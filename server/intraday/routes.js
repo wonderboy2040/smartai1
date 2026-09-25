@@ -50,7 +50,7 @@ import { loadJSON, saveJSON } from './store.js';
 // rotating slices, hot promotion). One truth, three consumers.
 import { tieredScanUniverse, absorbScanRows, fullIndiaUniverseEnabled } from '../ai/indiaUniverse.js';
 // v13.2 A5: get_model_consensus — per-model vote breakdown from the AI-trading deep ensemble
-import { getDeepSignal as getAiDeepSignal } from '../ai/signals.js';
+import { getDeepSignal as getAiDeepSignal, getSignals as getAiSignals } from '../ai/signals.js';
 import { TV_SCAN_HEADERS } from '../lib/tvHeaders.js';
 
 // ------------------------------------------------------------
@@ -868,6 +868,10 @@ export function registerIntradayRoutes(app, deps) {
     // v13.2 A5: the 14-model superintelligence deep ensemble (per-model
     // votes) — powers get_model_consensus on the India desk.
     getDeepSignal: (symbol) => getAiDeepSignal(symbol, 'INDIA', { KEYS, OPENAI_COMPAT }, {}),
+    // v13.3 BOARD-FIRST: the warm Superintelligence board (warmOnly —
+    // NEVER triggers a scan) so the agent's live-signals answer is the
+    // SAME list the tab renders (no more two-engine split-brain).
+    getAiBoard: () => getAiSignals('INDIA', { KEYS, OPENAI_COMPAT }, { warmOnly: true }),
   };
 
   app.post('/api/intraday-agent', async (req, res) => {

@@ -334,11 +334,13 @@ export function evaluatePaper(quotes, events) {
         changed = true; continue;
       }
     } else if (t.status === 'PARTIAL') {
-      if (hitSL) {
-        _closePart(t, t.remainingQty, t.stopLoss, 'SL_TRAIL_HIT');
-        events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.stopLoss, pnl: t.realizedPnl, pnlNet: t.netPnl ?? null, note: 'Paper trade trail-stop hit' });
-        changed = true; continue;
-      }
+      // v13.3 ORDER FIX (the trackRecord.js v11.4 fix, finally applied to
+      // the paper desk): after T1 books 50% the runner is trailed to
+      // BREAKEVEN — but the old branch checked the ORIGINAL stopLoss
+      // first, so any tick under the old SL closed the remaining half at
+      // stopLoss (a full-risk loss on the runner, 'SL_TRAIL_HIT') instead
+      // of the documented breakeven floor. T2 → breakeven trail → only
+      // then the (now-strictly-deeper) original SL.
       if (hitT2) {
         _closePart(t, t.remainingQty, t.target2, 'T2_HIT');
         events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.target2, pnl: t.realizedPnl, pnlNet: t.netPnl ?? null, note: 'Paper trade T2 hit' });
@@ -348,6 +350,11 @@ export function evaluatePaper(quotes, events) {
       if (hitTrail) {
         _closePart(t, t.remainingQty, t.entry, 'BE_TRAIL');
         events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.entry, pnl: t.realizedPnl, pnlNet: t.netPnl ?? null, note: 'Paper: breakeven trail exit' });
+        changed = true; continue;
+      }
+      if (hitSL) {
+        _closePart(t, t.remainingQty, t.stopLoss, 'SL_TRAIL_HIT');
+        events.push({ type: 'PAPER_CLOSE', symbol: t.symbol, direction: t.direction, price: t.stopLoss, pnl: t.realizedPnl, pnlNet: t.netPnl ?? null, note: 'Paper trade trail-stop hit' });
         changed = true; continue;
       }
     }

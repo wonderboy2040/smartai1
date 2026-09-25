@@ -338,7 +338,9 @@ export default memo(function CoinDcxTab() {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2 flex-wrap">
-            <RegimeChips board={board} market="CRYPTO" />
+            {/* v13.3: regime chips follow the ACTIVE desk (the GLOBAL
+                equity desk used to wear the spot-BTC chip). */}
+            <RegimeChips board={board} market={desk === 'GLOBAL' ? 'CRYPTO' : desk} />
             {/* v10.10: the direct-CoinDCX feed honesty chip — LIVE (2s direct
                 poll) / connecting / down, plus the newest tick's age. */}
             <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black border tracking-wider ${cxLive.status === 'live'
@@ -399,7 +401,7 @@ export default memo(function CoinDcxTab() {
       <QuickNav items={simple ? NAV.filter(n => !n.pro) : NAV} />
 
       {/* ============ 📊 DESK STATS (v6.10 — active desk one-glance) ============ */}
-      <DeskStatsStrip board={board} deskLabel={desk === 'FUTURES' ? '⚡ FUTURES DESK SNAPSHOT' : '₿ SPOT DESK SNAPSHOT'} />
+      <DeskStatsStrip board={board} deskLabel={desk === 'FUTURES' ? '⚡ FUTURES DESK SNAPSHOT' : desk === 'GLOBAL' ? '🌍 GLOBAL EQUITY SIM DESK' : '₿ SPOT DESK SNAPSHOT'} />
 
       {/* ============ 00 · SUPERINTELLIGENCE AUTO-AGENT ============ */}
       <div id="cx-agent">
@@ -413,7 +415,7 @@ export default memo(function CoinDcxTab() {
       <div id="cx-chat">
         <SectionLabel num="00b" title="Crypto Desk AI Agent" sub="conversational · 15 live tools (signals / deep scan / wallet / positions / regime / track-record / sizing / agent status / funding / PERP POSITIONING / WIN PROBABILITY / risk / P&L / strategy lab) — full-ticket answers with P(win) + EV, Telegram bot se bhi yahi engine" />
         <div className="mt-2.5">
-          <CryptoAgentPanel />
+          <CryptoAgentPanel market={desk} />
         </div>
       </div>
 
@@ -483,7 +485,7 @@ export default memo(function CoinDcxTab() {
             <div className="quantum-panel rounded-2xl p-6 col-span-full text-center">
               <div className="text-3xl mb-2">📡</div>
               <div className="text-sm text-red-400 font-bold">{board.reason || 'Data unavailable'}</div>
-              <div className="text-[11px] text-slate-500 mt-1">Will auto-retry every 30s</div>
+              <div className="text-[11px] text-slate-500 mt-1">Will auto-retry every 60s</div>
             </div>
           )}
           {/* v7.0.2: network/API failure used to render NOTHING here (silent
@@ -492,7 +494,7 @@ export default memo(function CoinDcxTab() {
             <div className="quantum-panel rounded-2xl p-6 col-span-full text-center border border-red-500/20">
               <div className="text-3xl mb-2">📡</div>
               <div className="text-sm text-red-400 font-bold">Signal board unreachable</div>
-              <div className="text-[11px] text-slate-500 mt-1">Network / API issue — har 30s me auto-retry ho raha hai. Desk switch ya refresh button se dobara try karo.</div>
+              <div className="text-[11px] text-slate-500 mt-1">Network / API issue — har 60s me auto-retry ho raha hai. Desk switch ya refresh button se dobara try karo.</div>
             </div>
           )}
           {visibleSignals.map(s => (
@@ -518,7 +520,7 @@ export default memo(function CoinDcxTab() {
             <div className="quantum-panel rounded-2xl p-6 col-span-full text-center">
               <div className="text-2xl mb-1">🔍</div>
               <div className="text-xs text-slate-400 font-bold">No signals match this filter right now</div>
-              <div className="text-[10px] text-slate-500 mt-1">Try ALL — the board re-ranks every 30s.</div>
+              <div className="text-[10px] text-slate-500 mt-1">Try ALL — the board re-ranks every 60s.</div>
             </div>
           )}
         </div>
@@ -677,6 +679,7 @@ export default memo(function CoinDcxTab() {
                   liveSrc={liveFor(deep.signal.market, deep.signal.symbol)?.src ?? null}
                   onExecute={deep.signal.market === 'CRYPTO' ? onExecute : undefined}
                   onExecuteFutures={deep.signal.market === 'FUTURES' ? onExecuteFutures : undefined}
+                  onExecuteGlobal={deep.signal.market === 'GLOBALFUTURES' ? onExecuteGlobal : undefined}
                   canLive={canLive} busy={busy}
                   orderBudgetINR={state?.config?.maxOrderINR} riskCapPct={board?.riskCap ?? state?.config?.maxRiskPct ?? 5}
                   maxLeverage={state?.config?.cryptoLeverage ?? 1} />

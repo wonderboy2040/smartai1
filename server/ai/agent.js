@@ -211,6 +211,13 @@ export const AGENT_DEFAULTS = {
   reversalReentryWindowMin: 45,  // post-close window to await a confirmed reversal
   reversalMinReentryConf: 60,    // ensemble confidence bar for re-entry
   reversalRequireEnsembleConfirm: true, // flip vetoed while ensemble still STRONGLY backs the original side
+  // v13.3: the ₹-cap CUT itself — OPT-IN (default OFF, Reversal panel
+  // toggle). routes.js PUT /reversal/config whitelists this key; the
+  // v13.1 build shipped the route + UI + engine read but FORGOT this
+  // config handler — the key was silently dropped on save and the
+  // toggle un-checked itself right after every Save (the XRP ₹150-cap
+  // → ₹2,250-bleed class). One line, wired end-to-end now.
+  reversalAutoCut: false,
 };
 
 export function loadAgentConfig() {
@@ -332,6 +339,10 @@ export function updateAgentConfig(patch = {}) {
   // v12.8 reversal-recovery toggles
   if (patch.reversalEnabled != null) next.reversalEnabled = !!patch.reversalEnabled;
   if (patch.reversalRequireEnsembleConfirm != null) next.reversalRequireEnsembleConfirm = !!patch.reversalRequireEnsembleConfirm;
+  // v13.3 FIX: the route whitelist accepted 'reversalAutoCut' but this
+  // handler didn't — every Save silently dropped the key (dead wiring,
+  // the loss-cap guard could never be enabled from the UI).
+  if (patch.reversalAutoCut != null) next.reversalAutoCut = !!patch.reversalAutoCut;
   // v10.16 S3 toggles — the one-flag A/B arm + abstention diagnostics
   if (patch.thresholdProfile === 'proportional' || patch.thresholdProfile === 'flat') next.thresholdProfile = patch.thresholdProfile;
   if (patch.abstentionDiagnostics != null) next.abstentionDiagnostics = !!patch.abstentionDiagnostics;

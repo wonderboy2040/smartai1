@@ -53,23 +53,33 @@ export interface SignalQuality {
   reasons?: string[];
 }
 
-/** v10.5 — one timeframe's compact tape read (5m / 15m / 1h). */
+/** v10.5 — one timeframe's compact tape read. */
 export interface MTFTapeRead {
   dir: 1 | 0 | -1;
   conf: number;
 }
 
-/** v10.5 MTF CONFLUENCE (Upgrade 1) — the 5m/15m/1h tape payload on
- *  India signals: per-TF direction + confidence and the 3-way
- *  agreement measured against the 15m trading timeframe.
- *  agreement < 0.67 → the server banned STRONG (grade cap). */
+/** v13.3 MTF-6 SUPER INTELLIGENCE — the FULL 1m/5m/15m/1h/4h/1d ladder
+ *  payload on EVERY desk's signals (India + crypto/futures/global):
+ *  per-TF direction + confidence, the agreement measured against the
+ *  15m trading-timeframe anchor (aligned / ACTIVE voters — a neutral
+ *  tape abstains), and the HTF/LTF sub-agreements (the tide vs the
+ *  ripple). agreement < 0.67 → the server banned STRONG (grade cap).
+ *  m1/h4/d1 are optional: a dark feed leg degrades to the 3-TF badge. */
 export interface MTFConfluence {
+  m1?: MTFTapeRead | null;
   m5: MTFTapeRead | null;
   m15: MTFTapeRead | null;
   h1: MTFTapeRead | null;
-  /** matching dirs / 3 (vs the 15m anchor); null when the 15m read
-   *  itself is neutral/coil. */
+  h4?: MTFTapeRead | null;
+  d1?: MTFTapeRead | null;
+  /** aligned / active voters (vs the 15m anchor); null when the 15m
+   *  read itself is neutral/coil. */
   agreement: number | null;
+  /** HTF tide agreement (1h/4h/1d vs their weighted majority). */
+  htfAgreement?: number | null;
+  /** LTF entry agreement (1m/5m/15m vs the anchor). */
+  ltfAgreement?: number | null;
 }
 
 /** v6.12: walk-forward edge stats (deep signal only) — the SAME

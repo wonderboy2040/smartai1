@@ -334,6 +334,11 @@ export function stateOfManualTrade({ convictionState, ltp, trade, reversal }) {
     const t1 = _num(o.target1 ?? o.t1);
     const t2 = _num(o.target2 ?? o.t2);
     const reached = (lv) => lv > 0 && ((px - lv) * dir >= 0);
+    // v13.3 note: a CURRENT-price target reach stays the "bookable
+    // truth" (first) — the reversal LOSS_CAP below fires when price has
+    // collapsed under the cap (reached() is false there, so the two
+    // branches can't fight in the realistic window; the locked
+    // TARGET_HIT-first priority is preserved).
     if (reached(t1) || reached(t2)) return 'TARGET_HIT';
   }
   // v12.9 REVERSAL AI (engine-connected): the ₹ states of the ACTIVE
