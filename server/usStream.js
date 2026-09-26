@@ -160,8 +160,6 @@ export function usDebugState() {
 const _fetch = (url, opts) => (_fetchImpl || globalThis.fetch)(url, opts);
 const _makeWs = (url) => (_wsFactory ? _wsFactory(url) : new WebSocket(url));
 
-export function usStreamEnabled() { return !!KEY; }
-
 export function usClientUp() {
   _activeClients++;
   _ensureConnected();

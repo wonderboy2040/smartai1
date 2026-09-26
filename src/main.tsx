@@ -3,14 +3,15 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { ToastProvider } from "./components/Toast";
+
+// v13.5 (full-site recheck): ToastProvider removed — the Toast system was
+// fully dead (zero useToast/addToast call sites; every error path used
+// alert()). src/components/Toast.tsx deleted with it.
 
 createRoot(document.getElementById("root")!).render(
 <StrictMode>
 <ErrorBoundary>
-<ToastProvider>
 <App />
-</ToastProvider>
 </ErrorBoundary>
 </StrictMode>
 );

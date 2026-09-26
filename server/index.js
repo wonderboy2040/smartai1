@@ -591,12 +591,6 @@ function stripHtml(str) {
   return String(str || '').replace(/<[^>]*>/g, '');
 }
 
-// Cap an array at a maximum length to prevent DoS via huge payloads.
-function capArray(arr, maxLen) {
-  if (!Array.isArray(arr)) return [];
-  return arr.slice(0, maxLen);
-}
-
 // ------------------------------------------------------------
 // v10.13 SECURITY (deep-recheck M-2): per-IP rate limits on the PUBLIC
 // market-data endpoints. /api/quote accepts 50 symbols/call and hits

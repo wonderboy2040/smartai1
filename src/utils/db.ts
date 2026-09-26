@@ -1,25 +1,17 @@
 // ============================================================
-// IndexedDB High-Capacity Storage Engine — Wealth AI v18
+// IndexedDB Storage Engine — Wealth AI (v13.5 cleanup)
 // ------------------------------------------------------------
-// Replaces 5-10MB localStorage limits with structured, indexed
-// storage for transactions, price history, AI chat memory,
-// offline queues, and user preferences.
+// v13.5 (full-site recheck): this file shipped 6 object stores but
+// only TWO were ever live — aiChatHistory (NeuralChat memory) and
+// userPreferences (paperMirror durability). The other four
+// (transactions, priceHistory, offlineQueue, portfolioSnapshots)
+// were never read: the ledger uses localStorage 'txn_history',
+// nothing ever wrote priceHistory, nothing ever drained the offline
+// queue, and portfolioSnapshots was WRITE-ONLY (App.tsx saved a
+// row per minute, nothing ever read it — unbounded accumulation).
+// DB_VERSION 2 deletes those stores from existing browsers (frees
+// the junk) and this module now exposes only the live surface.
 // ============================================================
-
-import { Transaction, Position, PriceData } from '../types';
-
-const DB_NAME = 'wealthai_idb_v18';
-const DB_VERSION = 1;
-
-export interface DBPriceRecord {
-  id: string; // `${symbol}_${timestamp}`
-  symbol: string;
-  market: string;
-  price: number;
-  change: number;
-  rsi?: number;
-  timestamp: number;
-}
 
 export interface DBChatMessage {
   id: string;
@@ -32,29 +24,8 @@ export interface DBChatMessage {
   sentiment?: string;
 }
 
-export interface DBPortfolioSnapshot {
-  id?: string;
-  date: string; // YYYY-MM-DD
-  timestamp: number;
-  totalValue?: number;
-  totalInvested?: number;
-  totalProfit?: number;
-  profitPercent?: number;
-  holdingsCount?: number;
-  totalValueINR?: number;
-  totalInvestedINR?: number;
-  totalPLINR?: number;
-  positions?: Position[];
-}
-
-export type PortfolioSnapshot = DBPortfolioSnapshot;
-
-export interface OfflineAction {
-  id: string;
-  type: 'ADD_POSITION' | 'EDIT_POSITION' | 'DELETE_POSITION' | 'ADD_TRANSACTION';
-  payload: any;
-  timestamp: number;
-}
+const DB_NAME = 'wealthai_idb_v18';
+const DB_VERSION = 2;
 
 class IndexedDBStorage {
   private dbPromise: Promise<IDBDatabase> | null = null;
@@ -76,18 +47,14 @@ class IndexedDBStorage {
         request.onupgradeneeded = (event) => {
           const db = (event.target as IDBOpenDBRequest).result;
 
-          // Transactions store
-          if (!db.objectStoreNames.contains('transactions')) {
-            const txStore = db.createObjectStore('transactions', { keyPath: 'id' });
-            txStore.createIndex('date', 'date', { unique: false });
-            txStore.createIndex('symbol', 'symbol', { unique: false });
-          }
-
-          // Price history store
-          if (!db.objectStoreNames.contains('priceHistory')) {
-            const priceStore = db.createObjectStore('priceHistory', { keyPath: 'id' });
-            priceStore.createIndex('symbol', 'symbol', { unique: false });
-            priceStore.createIndex('timestamp', 'timestamp', { unique: false });
+          // v13.5 cleanup: v1 created 6 stores; 4 were dead from day one.
+          // The v2 upgrade DELETES them from existing browsers so the
+          // write-only junk (a year of per-minute portfolioSnapshots on
+          // long-lived devices) is reclaimed.
+          for (const dead of ['transactions', 'priceHistory', 'offlineQueue', 'portfolioSnapshots']) {
+            if (db.objectStoreNames.contains(dead)) {
+              try { db.deleteObjectStore(dead); } catch { /* best-effort */ }
+            }
           }
 
           // AI Chat history store
@@ -99,17 +66,6 @@ class IndexedDBStorage {
           // User preferences & profile
           if (!db.objectStoreNames.contains('userPreferences')) {
             db.createObjectStore('userPreferences', { keyPath: 'key' });
-          }
-
-          // Portfolio daily snapshots
-          if (!db.objectStoreNames.contains('portfolioSnapshots')) {
-            db.createObjectStore('portfolioSnapshots', { keyPath: 'date' });
-          }
-
-          // Offline queue store
-          if (!db.objectStoreNames.contains('offlineQueue')) {
-            const offStore = db.createObjectStore('offlineQueue', { keyPath: 'id' });
-            offStore.createIndex('timestamp', 'timestamp', { unique: false });
           }
         };
 
@@ -133,65 +89,6 @@ class IndexedDBStorage {
     });
 
     return this.dbPromise;
-  }
-
-  // --- Transactions ---
-  async saveTransaction(txn: Transaction): Promise<void> {
-    try {
-      const db = await this.getDB();
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction('transactions', 'readwrite');
-        const store = tx.objectStore('transactions');
-        const req = store.put(txn);
-        req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error);
-      });
-    } catch {
-      // Fallback to localStorage
-      try {
-        const list = JSON.parse(localStorage.getItem('txn_history') || '[]');
-        const idx = list.findIndex((t: Transaction) => t.id === txn.id);
-        if (idx >= 0) list[idx] = txn; else list.push(txn);
-        localStorage.setItem('txn_history', JSON.stringify(list));
-      } catch {}
-    }
-  }
-
-  async getAllTransactions(): Promise<Transaction[]> {
-    try {
-      const db = await this.getDB();
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction('transactions', 'readonly');
-        const store = tx.objectStore('transactions');
-        const req = store.getAll();
-        req.onsuccess = () => resolve(req.result || []);
-        req.onerror = () => reject(req.error);
-      });
-    } catch {
-      try {
-        return JSON.parse(localStorage.getItem('txn_history') || '[]');
-      } catch {
-        return [];
-      }
-    }
-  }
-
-  async deleteTransaction(id: string): Promise<void> {
-    try {
-      const db = await this.getDB();
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction('transactions', 'readwrite');
-        const store = tx.objectStore('transactions');
-        const req = store.delete(id);
-        req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error);
-      });
-    } catch {
-      try {
-        const list = JSON.parse(localStorage.getItem('txn_history') || '[]');
-        localStorage.setItem('txn_history', JSON.stringify(list.filter((t: Transaction) => t.id !== id)));
-      } catch {}
-    }
   }
 
   // --- AI Chat History ---
@@ -254,30 +151,6 @@ class IndexedDBStorage {
     }
   }
 
-  // --- Price History Snapshots ---
-  async recordPriceSnapshot(symbol: string, market: string, priceData: PriceData): Promise<void> {
-    try {
-      const db = await this.getDB();
-      const id = `${market}_${symbol}_${Date.now()}`;
-      const record: DBPriceRecord = {
-        id,
-        symbol,
-        market,
-        price: priceData.price,
-        change: priceData.change,
-        rsi: priceData.rsi,
-        timestamp: Date.now(),
-      };
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction('priceHistory', 'readwrite');
-        const store = tx.objectStore('priceHistory');
-        const req = store.put(record);
-        req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error);
-      });
-    } catch {}
-  }
-
   // --- User Preferences & Profile Learning ---
   async setUserPreference<T>(key: string, value: T): Promise<void> {
     try {
@@ -319,111 +192,6 @@ class IndexedDBStorage {
       } catch {
         return defaultValue;
       }
-    }
-  }
-
-  // --- Portfolio Snapshots ---
-  async savePortfolioSnapshot(snapshot: PortfolioSnapshot): Promise<void> {
-    try {
-      const db = await this.getDB();
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction('portfolioSnapshots', 'readwrite');
-        const store = tx.objectStore('portfolioSnapshots');
-        const req = store.put(snapshot);
-        req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error);
-      });
-    } catch {
-      try {
-        const snaps = JSON.parse(localStorage.getItem('portfolio_snapshots') || '[]');
-        snaps.push(snapshot);
-        localStorage.setItem('portfolio_snapshots', JSON.stringify(snaps.slice(-30)));
-      } catch {}
-    }
-  }
-
-  async getPortfolioSnapshots(limit = 30): Promise<PortfolioSnapshot[]> {
-    try {
-      const db = await this.getDB();
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction('portfolioSnapshots', 'readonly');
-        const store = tx.objectStore('portfolioSnapshots');
-        const req = store.getAll();
-        req.onsuccess = () => {
-          const list = (req.result || []) as PortfolioSnapshot[];
-          list.sort((a, b) => a.timestamp - b.timestamp);
-          resolve(list.slice(-limit));
-        };
-        req.onerror = () => reject(req.error);
-      });
-    } catch {
-      try {
-        return JSON.parse(localStorage.getItem('portfolio_snapshots') || '[]');
-      } catch {
-        return [];
-      }
-    }
-  }
-
-  // --- Offline Action Queue ---
-  async enqueueOfflineAction(type: OfflineAction['type'], payload: any): Promise<void> {
-    const action: OfflineAction = {
-      id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      type,
-      payload,
-      timestamp: Date.now()
-    };
-    try {
-      const db = await this.getDB();
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction('offlineQueue', 'readwrite');
-        const store = tx.objectStore('offlineQueue');
-        const req = store.put(action);
-        req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error);
-      });
-    } catch {
-      try {
-        const q = JSON.parse(localStorage.getItem('offline_queue') || '[]');
-        q.push(action);
-        localStorage.setItem('offline_queue', JSON.stringify(q));
-      } catch {}
-    }
-  }
-
-  async getOfflineQueue(): Promise<OfflineAction[]> {
-    try {
-      const db = await this.getDB();
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction('offlineQueue', 'readonly');
-        const store = tx.objectStore('offlineQueue');
-        const req = store.getAll();
-        req.onsuccess = () => resolve(req.result || []);
-        req.onerror = () => reject(req.error);
-      });
-    } catch {
-      try {
-        return JSON.parse(localStorage.getItem('offline_queue') || '[]');
-      } catch {
-        return [];
-      }
-    }
-  }
-
-  async clearOfflineQueue(): Promise<void> {
-    try {
-      const db = await this.getDB();
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction('offlineQueue', 'readwrite');
-        const store = tx.objectStore('offlineQueue');
-        const req = store.clear();
-        req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error);
-      });
-    } catch {
-      try {
-        localStorage.removeItem('offline_queue');
-      } catch {}
     }
   }
 }

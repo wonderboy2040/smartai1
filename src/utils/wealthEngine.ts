@@ -521,10 +521,6 @@ export function generateWeeklyWealthReport(
 }
 
 // ========== INFLATION-ADJUSTED (REAL) VALUE ==========
-export function adjustForInflation(nominalValue: number, years: number, inflationPct: number = 6): number {
-  return nominalValue / Math.pow(1 + inflationPct / 100, years);
-}
-
 // ========== ADVANCED FIRE VARIANTS (Lean / Standard / Fat / Coast) ==========
 export interface FireVariants {
   leanFire: number;     // 20x annual expenses (frugal retirement)

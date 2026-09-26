@@ -3,6 +3,7 @@ import {
   createChart, IChartApi, ISeriesApi, IPriceLine,
   CandlestickSeries, HistogramSeries, CandlestickData, UTCTimestamp, LineStyle,
 } from 'lightweight-charts';
+import { apiFetch, getProxyBase } from '../utils/api';
 
 interface Candle {
   time: number; // unix seconds
@@ -28,7 +29,11 @@ interface LiveCandleChartProps {
   showTime?: boolean;            // show HH:MM on the time axis (intraday)
 }
 
-const PROXY = (import.meta.env.VITE_API_PROXY as string) || '';
+// v13.5 (full-site recheck): build-time PROXY const removed — getProxyBase()
+// resolves per call (runtime WEALTH_AI_BACKEND_URL override honored), and the
+// raw fetch() switched to apiFetch so the session token rides along (the
+// endpoint is public today, but apiFetch is harmless there and correct if
+// auth ever tightens).
 
 /**
  * Data-driven candlestick chart for symbols the TradingView embed widget can't
@@ -113,8 +118,7 @@ export const LiveCandleChart = React.memo(function LiveCandleChart({
     setStatus('loading');
     const load = async () => {
       try {
-        const url = `${PROXY}/api/chart?symbol=${encodeURIComponent(symbol)}&market=${encodeURIComponent(market)}&interval=${encodeURIComponent(interval)}`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+        const res = await apiFetch(`${getProxyBase()}/api/chart?symbol=${encodeURIComponent(symbol)}&market=${encodeURIComponent(market)}&interval=${encodeURIComponent(interval)}`, { signal: AbortSignal.timeout(10000) });
         if (!res.ok) throw new Error(`status ${res.status}`);
         const json = await res.json();
         const candles: Candle[] = json?.candles || [];

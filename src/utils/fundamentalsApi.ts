@@ -7,8 +7,10 @@
 // ============================================================
 
 import type { FundamentalData } from './qualityScorecard';
-
-const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
+// v13.5 (full-site recheck): build-time PROXY_BASE const removed —
+// getProxyBase() resolves per call (runtime override honored) and the
+// raw fetch() switched to apiFetch (session token rides along).
+import { apiFetch, getProxyBase } from './api';
 
 const _cache = new Map<string, { data: FundamentalData | null; ts: number }>();
 const CACHE_TTL = 6 * 60 * 60 * 1000;  // 6h client-side (server is 24h)
@@ -24,8 +26,8 @@ export async function fetchFundamentals(
   }
 
   try {
-    const url = `${PROXY_BASE}/api/fundamentals/${encodeURIComponent(symbol)}?market=${market}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    const url = `${getProxyBase()}/api/fundamentals/${encodeURIComponent(symbol)}?market=${market}`;
+    const res = await apiFetch(url, { signal: AbortSignal.timeout(10000) });
     if (!res.ok) {
       _cache.set(key, { data: null, ts: Date.now() });
       return null;
@@ -37,8 +39,4 @@ export async function fetchFundamentals(
     console.warn('Fundamentals fetch failed:', e);
     return null;
   }
-}
-
-export function clearFundamentalsCache() {
-  _cache.clear();
 }

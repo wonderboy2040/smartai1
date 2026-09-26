@@ -142,6 +142,3 @@ export function syncedAssetPnl(pos: Position, curPrice: number, rate: number, in
 }
 
 /** Live price for a position (seed/live quote with avgPrice fallback). */
-export function livePriceFor(pos: Position, data?: { price?: number } | null): number {
-  return data?.price || pos.avgPrice;
-}

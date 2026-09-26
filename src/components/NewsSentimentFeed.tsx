@@ -1,8 +1,9 @@
 import React, { useState, useCallback } from 'react';
 import { useApp } from '../hooks/AppContext';
-import { apiFetch } from '../utils/api';
+import { apiFetch, getProxyBase } from '../utils/api';
 
-const PROXY_BASE = import.meta.env.VITE_API_PROXY || '';
+// v13.5 (full-site recheck): build-time PROXY const removed — getProxyBase()
+// resolves per call (runtime override honored).
 
 interface NewsItem {
   title: string;
@@ -41,7 +42,7 @@ Focus on:
 Return ONLY valid JSON, no markdown.`;
 
       // Route through proxy to avoid exposing API key in browser
-      const res = await apiFetch(`${PROXY_BASE}/api/groq`, {
+      const res = await apiFetch(`${getProxyBase()}/api/groq`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -166,7 +167,7 @@ Return ONLY valid JSON, no markdown.`;
       </div>
 
       <div className="mt-3 text-[9px] text-slate-600">
-        Powered by Groq LLM (llama-3.3-70b). News sentiment is AI-processed, not investment advice.
+        Powered by Groq LLM (gpt-oss-120b). News sentiment is AI-processed, not investment advice.
       </div>
     </div>
   );

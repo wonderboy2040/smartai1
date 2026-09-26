@@ -151,10 +151,6 @@ function getCloudAuthToken(): string {
   return '';
 }
 
-export function isCloudSyncConfigured(): boolean {
-  return !!getCloudAuthToken();
-}
-
 // Runtime API_URL — tries localStorage, server config, then VITE build-time env var
 let _runtimeApiUrl: string | null | undefined = undefined;
 let _apiUrlPromise: Promise<string> | null = null;
@@ -1878,21 +1874,6 @@ export async function fetchMarketIntelligence(): Promise<MarketIntelligence> {
   intelligence.marketNarrative = narrative;
 
   return intelligence;
-}
-
-export function formatMarketIntelligenceForAI(intel: MarketIntelligence): string {
-  let ctx = `INTEL: `;
-  intel.globalIndices.forEach(i => {
-    ctx += `${i.name}:${i.price.toFixed(1)}(${i.change.toFixed(1)}%),`;
-  });
-  ctx += ` SECTORS: `;
-  intel.sectors.forEach(s => {
-    ctx += `${s.name}:${s.change.toFixed(1)}%,`;
-  });
-  ctx += ` F&G:${intel.fearGreedScore}/100 `;
-  ctx += `NARRATIVE:${intel.marketNarrative}\n`;
-
-  return ctx;
 }
 
 // ============================================================

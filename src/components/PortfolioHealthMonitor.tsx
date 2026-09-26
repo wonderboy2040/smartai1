@@ -78,10 +78,19 @@ export const PortfolioHealthMonitor = React.memo(({ portfolio, livePrices, metri
       }
 
       // Daily digest at 8 AM IST
+      // v13.5 (full-site recheck): the old toLocaleString→toISOString dance
+      // re-shifted the "today" key by the BROWSER's offset — East-Asian
+      // users' key landed a day off, so the digest fired only every ~2 days.
+      // Key AND hour now come from one en-CA/Asia-Kolkata formatter (the
+      // locked v10.13 pattern).
       const now = new Date();
-      const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-      const todayStr = ist.toISOString().split('T')[0];
-      const hour = ist.getHours();
+      const istParts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit',
+        day: '2-digit', hour: '2-digit', hourCycle: 'h23',
+      }).formatToParts(now);
+      const istNum = (t: string) => Number(istParts.find(p => p.type === t)?.value ?? 0);
+      const todayStr = `${istNum('year')}-${String(istNum('month')).padStart(2, '0')}-${String(istNum('day')).padStart(2, '0')}`;
+      const hour = istNum('hour');
 
       if (hour === 8 && lastDigestDateRef.current !== todayStr && currentHealth) {
         lastDigestDateRef.current = todayStr;

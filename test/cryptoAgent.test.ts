@@ -18,10 +18,12 @@ process.env.SMARTAI_DATA_DIR = path.join(path.dirname(fileURLToPath(import.meta.
 // the connected branch of get_wallet had zero coverage, which is exactly
 // how the wrong walletSnapshot key mapping survived).
 const cxConnected = vi.hoisted(() => ({ on: false }));
+const mockFetchAssets = vi.hoisted(() => vi.fn());
 vi.mock('../server/mcp/coindcx.js', () => ({
   coindcxConnected: () => cxConnected.on,
   coindcxPrivate: vi.fn(),
   coindcxStatus: () => ({ connected: false }),
+  fetchCoinDcxAssets: (...a) => mockFetchAssets(...a),
 }));
 
 const mockGetSignals = vi.fn();
@@ -68,10 +70,12 @@ const DEPS = { KEYS: {}, OPENAI_COMPAT: {} };
 //  positioning + calibrated win-probability tools)
 // ============================================================
 describe('crypto agent registry', () => {
-  it('exposes exactly the 18 planned tools (15 + news tool + v13.1 SVA verify_signal + v13.2 A5 get_model_consensus)', () => {
+  it('exposes exactly the 20 planned tools (18 + v13.5 CoinDCX mirror agent: get_exchange_holdings + get_exchange_orders)', () => {
     const names = CRYPTO_AGENT_TOOLS.map(t => t.function.name);
     expect(names).toEqual([
       'get_live_crypto_signals', 'analyze_global_stock', 'analyze_coin', 'get_wallet', 'get_open_positions',
+      // v13.5 COINDCX MIRROR AGENT — the REAL-exchange account mirror
+      'get_exchange_holdings', 'get_exchange_orders',
       'get_market_regime', 'get_track_record', 'calculate_position_size', 'get_agent_status',
       'get_funding_rate', 'get_perp_intel', 'get_win_probability', 'get_risk_status', 'get_pnl', 'backtest_custom_strategy',
       // accuracy-plan Phase 3.3: tool parity with the intraday Pro Trader agent
@@ -87,6 +91,24 @@ describe('crypto agent registry', () => {
       expect(t.type).toBe('function');
       expect(t.function.description.length).toBeGreaterThan(30);
     }
+  });
+
+  it('v13.5: the mirror tools declare the REAL-exchange semantics (journal nahi)', () => {
+    const hold = CRYPTO_AGENT_TOOLS.find(x => x.function.name === 'get_exchange_holdings');
+    expect(hold.function.description).toMatch(/REAL CoinDCX exchange account/i);
+    expect(hold.function.description).toMatch(/not the app journal/i);
+    const ord = CRYPTO_AGENT_TOOLS.find(x => x.function.name === 'get_exchange_orders');
+    expect(ord.function.description).toMatch(/OPEN orders/i);
+    expect(ord.function.description).toMatch(/REAL CoinDCX exchange account/i);
+  });
+
+  it('v13.5: the prompt routes REAL-account questions to the mirror tools and separates them from the journal', () => {
+    const p = buildCryptoSystemPrompt({ utcTime: '10:30 UTC', btcRegime: 'x', fng: 'x', funding: 'x', connected: true, aiOnline: false });
+    expect(p).toContain('get_exchange_holdings');
+    expect(p).toContain('get_exchange_orders');
+    expect(p).toMatch(/EXCHANGE ka live mirror/i);
+    // the connected context line advertises the mirror
+    expect(p).toContain('REAL exchange account mirror');
   });
 
   it('sizing tool description mandates max-sane-leverage (plan Part 1.1)', () => {
@@ -253,6 +275,112 @@ describe('executeCryptoTool', () => {
       expect(out.futures.deployableUSDT).toBe(6.17);
       expect(out.equityINR).toBe(14_950);
       expect(out.fetchedAt).toBe(1_758_000_000_000);
+    } finally {
+      cxConnected.on = false;
+    }
+  });
+
+  // ============================================================
+  // v13.5 COINDCX MIRROR AGENT — get_exchange_holdings /
+  // get_exchange_orders (the REAL-exchange account mirror)
+  // ============================================================
+  it('v13.5 get_exchange_holdings is honest when CoinDCX is not connected', async () => {
+    const out = await executeCryptoTool('get_exchange_holdings', {}, DEPS);
+    expect(out.connected).toBe(false);
+    expect(out.note).toMatch(/not connected/i);
+    expect(out.note).toMatch(/APP journal nahi/i);
+  });
+
+  it('v13.5 get_exchange_holdings mirrors the REAL asset table: coins, basis, totals, value-desc sort', async () => {
+    cxConnected.on = true;
+    try {
+      mockFetchAssets.mockResolvedValueOnce({
+        assets: [
+          { symbol: 'BTC', qty: 0.05, avgPrice: 5_200_000, lastPrice: 6_400_000, value: 320_000, invested: 260_000, pnl: 60_000, pnlPct: 23.1, oneDayChangePct: 1.4, basisSource: 'ledger' },
+          { symbol: 'SOL', qty: 10, avgPrice: 14_500, lastPrice: 12_000, value: 120_000, invested: 145_000, pnl: -25_000, pnlPct: -17.2, oneDayChangePct: -2.8, basisSource: 'ledger' },
+          { symbol: 'PEPE', qty: 9_000_000, avgPrice: null, lastPrice: 0.0012, value: 10_800, invested: null, pnl: null, pnlPct: null, oneDayChangePct: null, basisSource: null },
+        ],
+        balanceCount: 4,
+        basis: { BTC: { invested: 260_000 }, SOL: { invested: 145_000 } },
+      });
+      const out = await executeCryptoTool('get_exchange_holdings', {}, DEPS);
+      expect(out.connected).toBe(true);
+      expect(out.mirror).toMatch(/REAL CoinDCX exchange account/i);
+      expect(out.usdInr).toBe(84);
+      // totals: 320k + 120k + 10.8k = 450800 value; 405000 invested
+      expect(out.totalValueINR).toBe(450_800);
+      expect(out.totalInvestedINR).toBe(405_000);
+      expect(out.totalPnlINR).toBe(45_800);
+      expect(out.coins).toBe(3);
+      // value-desc sort: BTC first, PEPE last
+      expect(out.holdings.map(h => h.coin)).toEqual(['BTC', 'SOL', 'PEPE']);
+      expect(out.holdings[0].avgPriceINR).toBe(5_200_000);
+      expect(out.holdings[0].pnlPct).toBe(23.1);
+      // no-basis coin: honest null P&L, not a fake zero
+      expect(out.holdings[2].investedINR).toBeNull();
+      expect(out.holdings[2].pnlINR).toBeNull();
+      expect(out.basisInfo.ledgerCoins).toBe(2);
+    } finally {
+      cxConnected.on = false;
+      mockFetchAssets.mockReset();
+    }
+  });
+
+  it('v13.5 get_exchange_holdings degrades honestly when the asset fetch fails', async () => {
+    cxConnected.on = true;
+    try {
+      mockFetchAssets.mockRejectedValueOnce(new Error('401 invalid key'));
+      const out = await executeCryptoTool('get_exchange_holdings', {}, DEPS);
+      expect(out.connected).toBe(true);
+      expect(out.error).toMatch(/401 invalid key/);
+    } finally {
+      cxConnected.on = false;
+      mockFetchAssets.mockReset();
+    }
+  });
+
+  it('v13.5 get_exchange_orders is honest when CoinDCX is not connected', async () => {
+    const out = await executeCryptoTool('get_exchange_orders', {}, DEPS);
+    expect(out.connected).toBe(false);
+    expect(out.note).toMatch(/not connected/i);
+  });
+
+  it('v13.5 get_exchange_orders maps the REAL active_orders shape (filled qty, age, empty note)', async () => {
+    cxConnected.on = true;
+    try {
+      // write real creds into the hermetic data dir so loadCredsForOrder()
+      // resolves, then mock the signed call both order-shape variants
+      const { saveJSON } = await import('../server/lib/store.js');
+      saveJSON('mcp-coindcx.json', { apiKey: 'test-key', secret: 'test-secret' });
+      const { coindcxPrivate } = await import('../server/mcp/coindcx.js');
+      const ts = Date.now() - 30 * 60_000; // 30 min old
+      coindcxPrivate.mockResolvedValueOnce([
+        { id: 'o1', market: 'BTCINR', side: 'buy', order_type: 'limit_order', price: '6000000', total_quantity: '0.01', remaining_quantity: '0.004', status: 'partially_filled', timestamp: ts },
+        { id: 'o2', market: 'SOLUSDT', side: 'sell', order_type: 'limit_order', price: '125.5', total_quantity: '2', remaining_quantity: '2', status: 'open', timestamp: ts - 60 * 60_000 },
+      ]);
+      const out = await executeCryptoTool('get_exchange_orders', {}, DEPS);
+      expect(out.connected).toBe(true);
+      expect(out.mirror).toMatch(/REAL CoinDCX exchange open orders/i);
+      expect(out.count).toBe(2);
+      // age-DESC sort: the 90-min-old SOL sell rests on top, BTC 30-min second
+      expect(out.orders[0]).toMatchObject({ pair: 'SOLUSDT', side: 'sell', type: 'limit_order', price: 125.5, qty: 2, filledQty: 0, status: 'open', ageMin: 90 });
+      expect(out.orders[1]).toMatchObject({ pair: 'BTCINR', side: 'buy', price: 6_000_000, qty: 0.01, filledQty: 0.006, status: 'partially_filled', ageMin: 30 });
+      expect(out.note).toBeNull();
+      expect(out.orders[0].ageMin).toBeGreaterThan(out.orders[1].ageMin);
+    } finally {
+      cxConnected.on = false;
+    }
+  });
+
+  it('v13.5 get_exchange_orders: empty book → honest "koi order rest nahi" note', async () => {
+    cxConnected.on = true;
+    try {
+      const { coindcxPrivate } = await import('../server/mcp/coindcx.js');
+      coindcxPrivate.mockResolvedValueOnce({ orders: [] });
+      const out = await executeCryptoTool('get_exchange_orders', {}, DEPS);
+      expect(out.connected).toBe(true);
+      expect(out.count).toBe(0);
+      expect(out.note).toMatch(/Koi order exchange par rest nahi/i);
     } finally {
       cxConnected.on = false;
     }

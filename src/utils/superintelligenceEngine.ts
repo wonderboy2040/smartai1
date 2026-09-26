@@ -21,9 +21,8 @@
 
 import { Position, PriceData } from '../types';
 import { isCryptoSymbol } from './constants';
-import { apiFetch } from './api';
+import { apiFetch, getProxyBase } from './api';
 
-const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
 export interface MarketSnapshot {
   nifty?: number; niftyChange?: number;
@@ -163,7 +162,7 @@ async function fetchMarketSnapshot(): Promise<MarketSnapshot> {
   // Crypto via server proxy
   tasks.push((async () => {
     try {
-      const r = await apiFetch(`${PROXY_BASE}/api/crypto-prices`, {
+      const r = await apiFetch(`${getProxyBase()}/api/crypto-prices`, {
         signal: AbortSignal.timeout(5000),
       });
       if (r.ok) {
@@ -181,7 +180,7 @@ async function fetchMarketSnapshot(): Promise<MarketSnapshot> {
   // Forex
   tasks.push((async () => {
     try {
-      const r = await apiFetch(`${PROXY_BASE}/api/forex`, { signal: AbortSignal.timeout(4000) });
+      const r = await apiFetch(`${getProxyBase()}/api/forex`, { signal: AbortSignal.timeout(4000) });
       if (r.ok) { const j = await r.json(); snap.usdInr = j.usdInr; }
     } catch { /* noop */ }
   })());
@@ -189,7 +188,7 @@ async function fetchMarketSnapshot(): Promise<MarketSnapshot> {
   // Inflation
   tasks.push((async () => {
     try {
-      const r = await apiFetch(`${PROXY_BASE}/api/inflation`, { signal: AbortSignal.timeout(4000) });
+      const r = await apiFetch(`${getProxyBase()}/api/inflation`, { signal: AbortSignal.timeout(4000) });
       if (r.ok) {
         const j = await r.json();
         snap.indiaInflation = j.india;
@@ -439,7 +438,7 @@ async function fetchPortfolioNews(
 
 async function fetchTavilyNews(query: string): Promise<PortfolioNewsItem[]> {
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/tavily`, {
+    const res = await apiFetch(`${getProxyBase()}/api/tavily`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: [{ role: 'user', content: query }] }),
@@ -685,7 +684,7 @@ async function fetchIntradaySignals(): Promise<NonNullable<SuperintelligenceCont
   const markets: ('INDIA' | 'CRYPTO')[] = ['INDIA', 'CRYPTO'];
   await Promise.allSettled(markets.map(async (mkt) => {
     try {
-      const r = await apiFetch(`${PROXY_BASE}/api/ai/signals?market=${mkt}&limit=5`, {
+      const r = await apiFetch(`${getProxyBase()}/api/ai/signals?market=${mkt}&limit=5`, {
         signal: AbortSignal.timeout(15000),
       });
       if (!r.ok) return;

@@ -6,12 +6,14 @@ import {
   quantBrainSuperintelligence, type SuperintelligenceContext,
 } from '../utils/superintelligenceEngine';
 import type { Position, PriceData } from '../types';
-import { apiFetch } from '../utils/api';
+import { apiFetch, getProxyBase } from '../utils/api';
 import { runSuperScoreBacktest, formatSuperScoreReport } from '../utils/superScoreBacktest';
 import { analyzeAIResponse } from '../utils/sentimentAnalysis';
 import { appDB } from '../utils/db';
 
-const PROXY_BASE = import.meta.env.VITE_API_PROXY || '';
+// v13.5 (full-site recheck): build-time PROXY_BASE const removed — the
+// runtime getProxyBase() (localStorage WEALTH_AI_BACKEND_URL override →
+// env → deploy-shape default) is resolved per call now, same as apiFetch.
 let _proxyStatus: Promise<any> | null = null;
 let _proxyStatusTs = 0;
 const PROXY_STATUS_TTL = 30000;
@@ -21,7 +23,7 @@ async function getServerAIStatus() {
     _proxyStatusTs = Date.now();
     _proxyStatus = (async () => {
       try {
-        const res = await apiFetch(`${PROXY_BASE}/api/ai-status`, { signal: AbortSignal.timeout(3000) });
+        const res = await apiFetch(`${getProxyBase()}/api/ai-status`, { signal: AbortSignal.timeout(3000) });
         if (!res.ok) {
           _proxyStatus = null;
           _proxyStatusTs = 0; // FIX: reset timestamp so next call retries immediately
@@ -48,7 +50,7 @@ async function callAIProxy(endpoint: string, body: any, outerSignal?: AbortSigna
     else outerSignal.addEventListener('abort', () => timeoutCtrl.abort(), { once: true });
   }
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/${endpoint}`, {
+    const res = await apiFetch(`${getProxyBase()}/api/${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -72,7 +74,7 @@ async function fetchRealtimeSnapshot(): Promise<string> {
         body: JSON.stringify({ symbols: { tickers: ['NSE:NIFTY','BSE:SENSEX','NSE:BANKNIFTY','AMEX:SPY','NASDAQ:QQQ','CBOE:VIX','NSE:INDIAVIX','TVC:DXY','COMEX:GC1!','NYMEX:CL1!'] }, columns: ['name','close','change','Recommend.All'] }),
         signal: AbortSignal.timeout(5000)
       }),
-      apiFetch(`${PROXY_BASE}/api/crypto-prices`, { signal: AbortSignal.timeout(5000) }),
+      apiFetch(`${getProxyBase()}/api/crypto-prices`, { signal: AbortSignal.timeout(5000) }),
       fetch('https://scanner.tradingview.com/bond/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
@@ -125,7 +127,7 @@ async function fetchRealtimeSnapshot(): Promise<string> {
 
 async function fetchWebIntel(query: string): Promise<string> {
   try {
-    const res = await apiFetch(`${PROXY_BASE}/api/tavily`, {
+    const res = await apiFetch(`${getProxyBase()}/api/tavily`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: [{ role: 'user', content: `${query} latest market news 2026` }], model: '' }),
@@ -665,7 +667,7 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
     // Vision Analysis Dispatch
     if (currentImg) {
       try {
-        const res = await apiFetch(`${PROXY_BASE}/api/vision-analysis`, {
+        const res = await apiFetch(`${getProxyBase()}/api/vision-analysis`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ image: currentImg, query: userMessage }),
@@ -697,7 +699,7 @@ RESPONSE STYLE: Simple Hinglish. Short paragraphs. Bullet points for levels. Bol
     if (selectedEngine === 'consensus') {
       try {
         const start = Date.now();
-        const res = await apiFetch(`${PROXY_BASE}/api/ai-consensus`, {
+        const res = await apiFetch(`${getProxyBase()}/api/ai-consensus`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query: userMessage, context: portfolioContext }),

@@ -80,8 +80,6 @@ const _evictTimers = new Map();  // base -> pending eviction timer
 let _timer = null;
 let _activeClients = 0;
 
-export function cryptoStreamEnabled() { return true; }
-
 // ---------------------------------------------------------------
 // Shared upstream fetch — used by the SSE poller AND /api/crypto-prices
 // v11.3 chain: REST → official spot-WS book → Binance×fx synth →

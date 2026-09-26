@@ -1157,9 +1157,16 @@ export function registerAITradingRoutes(app, deps) {
   // Rolling-24h wire accounting (REST socket deltas + SSE frame bytes),
   // 30-day projection vs the Render free-tier cap, per-scope breakdown.
   // The "measure before/after" instrument for every bandwidth fix.
+  // v13.5 (full-site recheck): pass the CONFIGURED cap/alert env through —
+  // bandwidthView() fell back to hardcoded 5GB/70% while the Telegram
+  // alert used the real env, so the panel and the alert disagreed
+  // whenever the env vars deviated.
   app.get('/api/ai/bandwidth', (_req, res) => {
     try {
-      res.json(bandwidthView());
+      res.json(bandwidthView({
+        BANDWIDTH_MONTHLY_CAP_GB: process.env.BANDWIDTH_MONTHLY_CAP_GB,
+        BANDWIDTH_ALERT_PCT: process.env.BANDWIDTH_ALERT_PCT,
+      }));
     } catch (e) {
       jsonError(res, 500, 'bandwidth view failed', e);
     }

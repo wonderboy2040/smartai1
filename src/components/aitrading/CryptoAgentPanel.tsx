@@ -32,6 +32,8 @@ const QUICK_PROMPTS = [
   { icon: '📋', label: 'Desk Briefing', prompt: 'Aaj ka desk briefing do — BTC regime, top spot+futures setups risk notes ke saath.' },
   { icon: '🛡', label: 'Verify Signal', prompt: 'XRP ka signal verify karo — SVA pro-trader checklist ke saath FINAL batao: long jana hai ya short?' },
   { icon: '💰', label: 'Wallet + Risk', prompt: 'Mera wallet, open positions aur risk status dikhao — kahan SL tighten karna chahiye?' },
+  // v13.5 COINDCX MIRROR AGENT — real-exchange account mirror chip
+  { icon: '🪙', label: 'Account Mirror', prompt: 'Mera REAL CoinDCX account mirror karo — saare coin holdings avg cost + live P&L ke saath, total portfolio value, aur koi pending exchange orders bhi dikhao.' },
   { icon: '🔍', label: 'Coin Deep-Dive', prompt: 'SOL ka deep analysis karo — entry, SL, leverage sab exact numbers me.' },
   { icon: '📈', label: 'P&L Review', prompt: 'Mera last 7 din ka P&L batao — realized + unrealized, win-rate ke saath.' },
   { icon: '🎯', label: 'Win Probability', prompt: 'BTC ka win probability batao — P(win) vs breakeven, EV in R, aur positioning read ke saath.' },

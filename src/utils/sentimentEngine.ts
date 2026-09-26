@@ -4,9 +4,8 @@
 // Uses Groq/Claude API for NLP classification
 // ============================================
 
-import { apiFetch } from './api';
+import { apiFetch, getProxyBase } from './api';
 
-const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
 export interface SentimentResult {
   symbol: string;
@@ -103,7 +102,7 @@ ${headlines}
 Reply ONLY in this JSON format:
 {"overall":"BULLISH"/"BEARISH"/"NEUTRAL","score":-100 to 100,"confidence":0-100,"keyFactors":["factor1","factor2"],"institutionalFlow":"buying"/"selling"/"neutral"}`;
 
-    const res = await apiFetch(`${PROXY_BASE}/api/groq`, {
+    const res = await apiFetch(`${getProxyBase()}/api/groq`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -211,21 +210,4 @@ function createDefaultResult(symbol: string, newsItems: NewsItem[]): SentimentRe
     keyFactors: [],
     timestamp: Date.now()
   };
-}
-
-export function formatSentimentForTelegram(result: SentimentResult, _market: 'IN' | 'US'): string {
-  const emoji = result.overall === 'BULLISH' ? '🟢' : result.overall === 'BEARISH' ? '🔴' : '🟡';
-  let msg = `${emoji} <b>SENTIMENT: ${result.symbol}</b>\n`;
-  msg += `Score: <b>${result.score > 0 ? '+' : ''}${result.score}/100</b> | Conf: ${result.confidence}%\n`;
-  msg += `Overall: <b>${result.overall}</b>\n\n`;
-  if (result.keyFactors.length > 0) {
-    msg += `<b>Key Factors:</b>\n`;
-    result.keyFactors.forEach(f => { msg += `\u2022 ${f}\n`; });
-  }
-  if (result.sources.news.headlines.length > 0) {
-    msg += `\n<b>Recent Headlines:</b>\n`;
-    result.sources.news.headlines.slice(0, 3).forEach(h => { msg += `\u2022 ${h.substring(0, 80)}\n`; });
-  }
-  msg += `\n<i>AI Sentiment Engine</i>`;
-  return msg;
 }

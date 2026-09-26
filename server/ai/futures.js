@@ -276,11 +276,6 @@ function _rowsFromBinanceFut(raw, source) {
   }
   return rows;
 }
-export async function fetchFuturesLtpMap() {
-  const rows = await fetchFuturesPrices().catch(() => []);
-  return new Map((Array.isArray(rows) ? rows : []).map(x => [x.pair, x.last]));
-}
-
 // ---------------- PUBLIC: instruments ----------------
 let _instrumentsCache = null, _instrumentsAt = 0;
 export async function fetchFuturesActiveInstruments() {

@@ -112,28 +112,15 @@ class ShortcutsRegistry {
 }
 
 // Global registry instance
-export const shortcutsRegistry = new ShortcutsRegistry();
+const shortcutsRegistry = new ShortcutsRegistry();
 
-// React hook for keyboard shortcuts
-export function useKeyboardShortcut(
-  key: KeyCombo,
-  handler: KeyHandler,
-  description: string,
-  enabled = true
-): void {
-  const id = `shortcut_${Math.random().toString(36).slice(2, 9)}`;
-
-  useEffect(() => {
-    shortcutsRegistry.register(id, { key, handler, description, enabled });
-
-    return () => {
-      shortcutsRegistry.unregister(id);
-    };
-  }, [key, handler, description, enabled, id]);
-}
+// v13.5 (full-site recheck): ShortcutsHelp + useKeyboardShortcut (singular)
+// were deleted — the modal was never rendered anywhere and the singular
+// hook's only consumer was that dead modal. shortcutsRegistry and the
+// plural hook stay module-internal (only useAppShortcuts is public).
 
 // React hook for multiple shortcuts
-export function useKeyboardShortcuts(shortcuts: ShortcutConfig[]): void {
+function useKeyboardShortcuts(shortcuts: ShortcutConfig[]): void {
   // 2026 perf audit (M2): stable ids + latest-config ref — previously fresh
   // random ids per render re-registered every shortcut on EVERY parent
   // render (which during market hours is ~4x/sec).
@@ -168,77 +155,6 @@ export function useKeyboardShortcuts(shortcuts: ShortcutConfig[]): void {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);
 }
-
-// Shortcuts help modal component
-export const ShortcutsHelp: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
-  isOpen,
-  onClose
-}) => {
-  const shortcuts = shortcutsRegistry.getAll();
-
-  useKeyboardShortcut('escape', onClose, 'Close shortcuts help', isOpen);
-
-  if (!isOpen) return null;
-
-  // Group by category
-  const grouped: Record<string, Array<{ key: string; description: string }>> = {
-    Navigation: [],
-    Actions: [],
-    Other: []
-  };
-
-  shortcuts.forEach(({ config }) => {
-    const category = config.key.includes('ctrl') || config.key.includes('cmd')
-      ? 'Actions'
-      : 'Navigation';
-
-    grouped[category].push({
-      key: config.key,
-      description: config.description
-    });
-  });
-
-  return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-slate-900 rounded-2xl border border-cyan-500/20 p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-white">Keyboard Shortcuts</h2>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-white transition-colors"
-          >
-            ✕
-          </button>
-        </div>
-
-        {Object.entries(grouped).map(([category, items]) => (
-          items.length > 0 && (
-            <div key={category} className="mb-6">
-              <h3 className="text-lg font-semibold text-cyan-400 mb-3">{category}</h3>
-              <div className="space-y-2">
-                {items.map(({ key, description }, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center justify-between py-2 px-3 bg-slate-800/50 rounded-lg"
-                  >
-                    <span className="text-slate-300">{description}</span>
-                    <kbd className="px-3 py-1 text-xs font-mono bg-slate-700/50 text-cyan-400 rounded border border-slate-600">
-                      {key.toUpperCase()}
-                    </kbd>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )
-        ))}
-
-        <p className="text-xs text-slate-500 text-center mt-6">
-          Press <kbd className="px-2 py-1 bg-slate-800 rounded">ESC</kbd> to close
-        </p>
-      </div>
-    </div>
-  );
-};
 
 // Common shortcuts hook for the app
 export function useAppShortcuts(callbacks: {

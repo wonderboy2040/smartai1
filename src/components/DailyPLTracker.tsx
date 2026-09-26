@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { useApp } from '../hooks/AppContext';
 import {
   computeLiveDailyPL, buildMonthlyPLReport,
-  formatMonthlyPLForTelegram, getRecentDailyPL,
+  formatMonthlyPLForTelegram, getRecentDailyPL, todayKey,
   shouldAutoGenerateMonthlyReport, markMonthlyReportGenerated,
   exportDailyPLCSV,
   type MonthlyPLReport, type DailyPLEntry, type LiveDailyPL,
@@ -76,7 +76,10 @@ export const DailyPLTracker = React.memo(function DailyPLTracker() {
   const todayEntry: DailyPLEntry | null = useMemo(() => {
     if (portfolio.length === 0) return null;
     return {
-      date: new Date().toISOString().split('T')[0],
+      // v13.5: IST day key — the SAME key recordDailyPL/getRecentDailyPL
+      // bucket by (was raw UTC ISO date: 00:00–05:30 IST me "today" row
+      // yesterday-labeled hota tha + month-boundary misbucketing).
+      date: todayKey(),
       india: livePL.india,
       usa: livePL.usa,
       crypto: livePL.crypto,

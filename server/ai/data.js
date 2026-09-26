@@ -316,42 +316,6 @@ export async function fetchBinanceKlines(base, tf = '1h') {
 }
 
 /** Crypto indicator snapshot: TV USD indicators re-scaled to INR via the live CoinDCX ticker. */
-export async function fetchCryptoSnapshot(base) {
-  const [tv, tickers] = await Promise.all([
-    fetchTVCryptoBatch([base]),
-    fetchCoinDcxTickers().catch(() => []),
-  ]);
-  const tvRow = tv[base];
-  const ticker = (Array.isArray(tickers) ? tickers : []).find(t => t?.market === `${base}INR`);
-  const inrPrice = ticker ? parseFloat(ticker.last_price) : null;
-  if (!tvRow && inrPrice == null) return null;
-  const scale = (tvRow?.usdPrice && inrPrice) ? inrPrice / tvRow.usdPrice : 1;
-  return {
-    symbol: base,
-    pair: `${base}INR`,
-    ltp: inrPrice ?? (tvRow?.usdPrice ? tvRow.usdPrice * 84 : null),
-    changePct: tvRow?.changePct ?? (ticker ? parseFloat(ticker.change_24_hour) || null : null),
-    priceSource: inrPrice != null ? 'coindcx' : (tvRow ? 'tv-usd-approx' : null),
-    indicators: tvRow ? {
-      ...tvRow,
-      // Re-scale USD-dimensioned fields into INR so entry/SL/targets
-      // are in the currency the user actually trades.
-      usdPrice: tvRow.usdPrice,
-      atr: tvRow.atr != null ? tvRow.atr * scale : null,
-      ema10: tvRow.ema10 != null ? tvRow.ema10 * scale : null,
-      ema20: tvRow.ema20 != null ? tvRow.ema20 * scale : null,
-      ema50: tvRow.ema50 != null ? tvRow.ema50 * scale : null,
-      sma20: tvRow.sma20 != null ? tvRow.sma20 * scale : null,
-      sma50: tvRow.sma50 != null ? tvRow.sma50 * scale : null,
-      bbUpper: tvRow.bbUpper != null ? tvRow.bbUpper * scale : null,
-      bbLower: tvRow.bbLower != null ? tvRow.bbLower * scale : null,
-      macd: tvRow.macd != null ? tvRow.macd * scale : null,
-      macdSignal: tvRow.macdSignal != null ? tvRow.macdSignal * scale : null,
-    } : null,
-    candles: await fetchCoinDcxCandles(base, '1h').catch(() => null),
-  };
-}
-
 // ---------------- Yahoo index quotes (spot + regime) ----------------
 const YF_MAP = {
   NIFTY: '^NSEI', BANKNIFTY: '^NSEBANK', FINNIFTY: 'NIFTY_FIN_SERVICE.NS',

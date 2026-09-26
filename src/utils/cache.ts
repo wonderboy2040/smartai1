@@ -165,33 +165,4 @@ export async function cachedFetch<T>(
 }
 
 // Cache decorator for async functions
-export function cached(ttl?: number) {
-  return function (
-    _target: any,
-    propertyKey: string,
-    descriptor: PropertyDescriptor
-  ) {
-    const originalMethod = descriptor.value;
-
-    descriptor.value = async function (...args: any[]) {
-      const cacheKey = `${propertyKey}:${JSON.stringify(args)}`;
-
-      return cachedFetch(
-        cacheKey,
-        () => originalMethod.apply(this, args),
-        ttl
-      );
-    };
-
-    return descriptor;
-  };
-}
-
 // Preload cache with common queries
-export function preloadCache(entries: Array<{ key: string; fetcher: () => Promise<any>; ttl?: number }>) {
-  entries.forEach(({ key, fetcher, ttl }) => {
-    fetcher()
-      .then(data => responseCache.set(key, data, ttl))
-      .catch(err => console.warn(`[Cache] Preload failed for ${key}:`, err));
-  });
-}

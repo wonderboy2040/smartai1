@@ -14,17 +14,8 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 /** The allocation buckets the Portfolio tab's Net Worth card shows. */
 export type AssetClass = 'Equity' | 'Mutual Funds' | 'EPF' | 'Gold' | 'Crypto' | 'Fixed Income' | 'Other';
 
-export const ASSET_CLASS_ORDER: AssetClass[] = ['Equity', 'Mutual Funds', 'EPF', 'Gold', 'Crypto', 'Fixed Income', 'Other'];
-
-export const ASSET_CLASS_COLORS: Record<AssetClass, string> = {
-  Equity: '#34d399',
-  'Mutual Funds': '#22d3ee',
-  EPF: '#a78bfa',
-  Gold: '#fbbf24',
-  Crypto: '#f472b6',
-  'Fixed Income': '#94a3b8',
-  Other: '#64748b',
-};
+// v13.5 (full-site recheck): ASSET_CLASS_ORDER + ASSET_CLASS_COLORS deleted —
+// only assetAllocationBreakdown (also deleted) ever used them.
 
 /**
  * Classify ONE position row into an asset class. Works for BOTH the
@@ -75,33 +66,9 @@ export function assetClassWeights(
   return out;
 }
 
-/** The full allocation breakdown for the Net Worth card:
- * per-class value (INR) + pct + count. */
-export function assetAllocationBreakdown(
-  portfolio: Position[],
-  livePrices: Record<string, PriceData>,
-  usdInr: number = 85.5
-): { classes: Array<{ cls: AssetClass; valueINR: number; pct: number; count: number }>; totalINR: number } | null {
-  const values = new Map<AssetClass, { value: number; count: number }>();
-  let total = 0;
-  for (const p of portfolio) {
-    const d = livePrices[`${p.market}_${p.symbol}`];
-    const price = d?.price || p.avgPrice;
-    const value = price * p.qty * (p.market === 'US' ? usdInr : 1);
-    if (!(value > 0)) continue;
-    const cls = classifyAssetClass(p);
-    const cur = values.get(cls) || { value: 0, count: 0 };
-    cur.value += value;
-    cur.count += 1;
-    values.set(cls, cur);
-    total += value;
-  }
-  if (total <= 0) return null;
-  const classes = [...values.entries()]
-    .sort((a, b) => b[1].value - a[1].value)
-    .map(([cls, v]) => ({ cls, valueINR: Math.round(v.value * 100) / 100, pct: Math.round((v.value / total) * 1000) / 10, count: v.count }));
-  return { classes, totalINR: Math.round(total * 100) / 100 };
-}
+// v13.5 (full-site recheck): assetAllocationBreakdown deleted — zero call
+// sites (the Net Worth card computes its allocation through
+// allocationByAssetClass + classifyAssetClass, both live below).
 
 function monthKey(date: string): string {
   // date is YYYY-MM-DD → YYYY-MM

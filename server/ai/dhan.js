@@ -214,15 +214,7 @@ export async function dhanPlaceOrder({ symbol, side, quantity, kind = 'ENTRY', t
 }
 
 /** Day positions (for reconciliation). */
-export async function dhanPositions() {
-  return dhanPrivate('/positions', { method: 'POST', body: {} });
-}
-
 /** Order book entry for one id. */
-export async function dhanOrderStatus(orderId) {
-  return dhanPrivate(`/orders/${encodeURIComponent(String(orderId))}`, { method: 'GET' });
-}
-
 /** Cancel one open order (best-effort — used when the site closes a
  *  position at TP2/time and the protective broker SL must not linger). */
 export async function dhanCancelOrder(orderId) {

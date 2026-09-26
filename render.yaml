@@ -80,13 +80,17 @@ services:
         value: "true"
       # META-ENSEMBLE (Upgrade 4): route the 14-model votes through the
       # trained LightGBM meta-learner on the ml-service.
-      # ACCURACY-PLAN PHASE 5: ON — the baseline artifacts ship in the
-      # repo (ml-service/store/models, 6,630 samples · 29 vote-features)
-      # and the Node side honest-degrades to the in-process weighted
-      # ensemble whenever the ml-service is unreachable — flag ON is
-      # safe in every deploy shape.
+      # v13.5 (full-site recheck) HONEST-CONFIG FIX: OFF — this flag was
+      # advertised as ON, but (a) no FastAPI ml-service is deployed on
+      # Render (ML_SERVICE_URL defaults to 127.0.0.1:8000 where nothing
+      # listens), (b) the trained artifacts (ml-service/store/) are
+      # gitignored so they don't ship, and (c) the Node consumer
+      # (aggregateVotesWithMeta) is test-only — signals NEVER touched it.
+      # Flip back ON only after: deploy ml-service (its Dockerfile or a
+      # render.yaml service) + wire aggregateVotesWithMeta into
+      # signals.js consensus. Dead-flag-off > fake-feature-on.
       - key: AI_ENABLE_META_ENSEMBLE
-        value: "true"
+        value: "false"
       # Where the ml-service (FastAPI) lives, if deployed. The Node
       # server proxies /api/ml/meta-ensemble to it and falls back to
       # the weighted ensemble when unreachable. The ml-service itself
@@ -279,6 +283,13 @@ services:
     name: meta-ensemble-retrain
     runtime: python
     schedule: "0 3 * * 1"   # Mondays 03:00 UTC (post-weekend data)
-    buildCommand: pip install -r ml-service/requirements.txt
+    buildCommand: pip install -r requirements.txt
+    # v13.5 (full-site recheck): rootDir: ml-service makes Render run
+    # commands FROM ml-service/ — the old `pip install -r
+    # ml-service/requirements.txt` looked for
+    # ml-service/ml-service/requirements.txt (nonexistent) and the cron
+    # never built. NOTE: the retrained .pkl lands on the cron's ephemeral
+    # disk — nothing ships it to the inference side yet (same honest gap
+    # as the AI_ENABLE_META_ENSEMBLE flag above).
     startCommand: python -m models.retrain_scheduler --once
     rootDir: ml-service

@@ -383,33 +383,3 @@ export async function runBacktest(
 // ========================================
 // BACKTEST TELEGRAM FORMAT
 // ========================================
-export function formatBacktestForTelegram(result: BacktestResult, _market: 'IN' | 'US'): string {
-  const emoji = result.winRate > 60 ? '\uD83D\uDFE2' : result.winRate > 45 ? '\uD83D\uDFE1' : '\uD83D\uDD34';
-
-  let msg = `<b>BACKTEST: ${result.symbol}</b>\n`;
-  msg += `Period: ${result.period} | Strategy: RSI + SMA Crossover\n\n`;
-  // FIX (audit C1): synthetic-data backtests must NEVER be presented as real
-  // historical results. Label unconditionally when simulated.
-  if (result.isSimulated) {
-    msg += `\u26A0\uFE0F <b>SIMULATED DATA</b> — no real OHLC history was available; these numbers are synthetic and must NOT be used for decisions.\n\n`;
-  }
-  msg += `Total Trades: <b>${result.totalTrades}</b>\n`;
-  msg += `Win Rate: <b>${emoji} ${result.winRate}%</b>\n`;
-  msg += `Avg Return: <b>${result.avgReturn >= 0 ? '+' : ''}${result.avgReturn}%</b>/trade\n`;
-  msg += `Total Return: <b>${result.totalReturn >= 0 ? '+' : ''}${result.totalReturn}%</b>\n`;
-  msg += `Max Win: +${result.maxWin}% | Max Loss: ${result.maxLoss}%\n`;
-  msg += `Profit Factor: ${result.profitFactor}\n`;
-  msg += `Sharpe Ratio: ${result.sharpeRatio}\n`;
-  msg += `Avg Holding: ${result.avgHoldingDays} days\n\n`;
-
-  if (result.trades.length > 0) {
-    msg += `<b>Recent Trades:</b>\n`;
-    for (const t of result.trades.slice(-5)) {
-      const e = t.result === 'WIN' ? '\u2705' : t.result === 'LOSS' ? '\u274C' : '\u26AA';
-      msg += `${e} ${t.entryDate} -> ${t.exitDate} | ${t.returnPct >= 0 ? '+' : ''}${t.returnPct}%\n`;
-    }
-  }
-
-  msg += `\n<i>AI Backtest Engine</i>`;
-  return msg;
-}

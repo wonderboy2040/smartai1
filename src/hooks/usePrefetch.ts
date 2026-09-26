@@ -16,9 +16,12 @@ const PREFETCH_COOLDOWN = 3 * 60 * 1000; // 3 minutes
 
 export function usePrefetch(
   activeTab: TabType,
-  portfolio: Position[],
-  currentSymbol?: string
+  portfolio: Position[]
 ) {
+  // v13.5 (full-site recheck): the third `currentSymbol` param was removed —
+  // its fundamentals-prefetch block was unreachable (the only call site,
+  // App.tsx, never passed it, and no app-level selected-symbol state exists
+  // to pass). Dead path deleted instead of fake-wired.
   const lastPrefetchRef = useRef<Record<string, number>>({});
   const portfolioSymbolsKey = portfolio.map(p => p.symbol).join(',');
   const topAssetSymbol = portfolio[0]?.symbol;
@@ -87,21 +90,5 @@ export function usePrefetch(
         ).catch(() => {});
       }
     }
-
-    // 3. If user is inspecting a specific symbol -> prefetch fundamentals
-    if (currentSymbol && shouldPrefetch(`symbol_${currentSymbol}`)) {
-      // FIX (audit M-9): was /api/fundamentals?symbol=X — the server route is
-      // /api/fundamentals/:symbol (path segment, not query param).
-      queuedFetch(
-        () =>
-          cachedFetch(
-            generateCacheKey('/api/fundamentals', { symbol: currentSymbol }),
-            () => apiFetch(`/api/fundamentals/${encodeURIComponent(currentSymbol)}`).then(r => r.json()).catch(() => null),
-            15 * 60 * 1000
-          ),
-        Priority.LOW,
-        `prefetch_${currentSymbol}`
-      ).catch(() => {});
-    }
-  }, [activeTab, portfolioSymbolsKey, topAssetSymbol, currentSymbol]);
+  }, [activeTab, portfolioSymbolsKey, topAssetSymbol]);
 }

@@ -1,11 +1,10 @@
 // ============================================
 // EARNINGS CALENDAR + AI PRE-EARNINGS PREDICTION
 // Indian + US stock earnings tracking
+// v13.5 (full-site recheck): predictEarningsWithAI + formatEarningsForTelegram
+// deleted (zero call sites); the apiFetch import + PROXY_BASE const went
+// with them (pure client-side computation remains).
 // ============================================
-
-import { apiFetch } from './api';
-
-const PROXY_BASE = (import.meta.env.VITE_API_PROXY as string) || '';
 
 export interface EarningsEvent {
   symbol: string;
@@ -105,85 +104,11 @@ export function getUpcomingEarnings(market: 'IN' | 'US' | 'ALL', daysAhead: numb
 }
 
 // ========================================
-// AI PRE-EARNINGS PREDICTION
+// v13.5 (full-site recheck): AI PRE-EARNINGS PREDICTION deleted —
+// predictEarningsWithAI had zero call sites (the earnings panel never
+// wired the AI pre-earnings call).
 // ========================================
-export async function predictEarningsWithAI(
-  symbol: string,
-  market: 'IN' | 'US',
-  previousEPS: number,
-  estimatedEPS: number,
-  beatRate: number
-): Promise<{ direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL'; expectedMove: number; reasoning: string }> {
-  const defaults: { direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL'; expectedMove: number; reasoning: string } = {
-    direction: estimatedEPS > previousEPS ? 'BULLISH' : 'BEARISH',
-    expectedMove: Math.abs(estimatedEPS - previousEPS) / previousEPS * 100 * 2,
-    reasoning: `EPS expected: ${estimatedEPS} vs previous ${previousEPS}. Historical beat rate: ${beatRate}%.`
-  };
-
-  try {
-    const prompt = `Predict earnings outcome for ${symbol} (${market === 'IN' ? 'Indian' : 'US'} stock):
-Previous EPS: ${previousEPS}
-Estimated EPS: ${estimatedEPS}
-Historical Beat Rate: ${beatRate}%
-
-Reply ONLY in JSON:
-{"direction":"BULLISH"/"BEARISH"/"NEUTRAL","expectedMovePct":number,"reasoning":"2 lines"}`;
-
-    const res = await apiFetch(`${PROXY_BASE}/api/groq`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'openai/gpt-oss-120b',
-        messages: [
-          { role: 'system', content: 'You are an earnings analyst. Reply ONLY with valid JSON.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.3,
-        max_tokens: 300
-      }),
-      signal: AbortSignal.timeout(10000)
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      const text = data.choices?.[0]?.message?.content || '';
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        return {
-          direction: (['BULLISH', 'BEARISH', 'NEUTRAL'].includes(parsed.direction) ? parsed.direction : defaults.direction) as 'BULLISH' | 'BEARISH' | 'NEUTRAL',
-          expectedMove: typeof parsed.expectedMovePct === 'number' ? parsed.expectedMovePct : defaults.expectedMove,
-          reasoning: typeof parsed.reasoning === 'string' ? parsed.reasoning : defaults.reasoning
-        };
-      }
-    }
-  } catch { /* use defaults */ }
-
-  return defaults;
-}
 
 // ========================================
 // TELEGRAM FORMAT
 // ========================================
-export function formatEarningsForTelegram(events: EarningsEvent[]): string {
-  let msg = `<b>EARNINGS CALENDAR (Next 30 Days)</b>\n`;
-  msg += `━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-  if (events.length === 0) {
-    msg += `No major earnings in the next 30 days.\n`;
-    return msg;
-  }
-
-  for (const e of events.slice(0, 10)) {
-    const emoji = e.aiPrediction.direction === 'BULLISH' ? '\uD83D\uDFE2' : e.aiPrediction.direction === 'BEARISH' ? '\uD83D\uDD34' : '\uD83D\uDFE1';
-    const cur = e.market === 'IN' ? '\u20B9' : '$';
-    msg += `${emoji} <b>${e.symbol}</b> - ${e.name}\n`;
-    msg += `Date: ${e.date} (${e.daysUntil}d)\n`;
-    if (e.estimatedEPS) msg += `Est EPS: ${cur}${e.estimatedEPS} vs Prev: ${cur}${e.previousEPS}\n`;
-    msg += `Beat Prob: <b>${e.aiPrediction.beatProbability}%</b> | Move: ~${e.aiPrediction.expectedMove}%\n`;
-    msg += `${e.aiPrediction.reasoning}\n\n`;
-  }
-
-  msg += `<i>AI Earnings Predictor</i>`;
-  return msg;
-}

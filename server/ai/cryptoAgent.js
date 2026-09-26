@@ -18,11 +18,11 @@
 // ============================================================
 import { getSignals, getDeepSignal, buildRegime } from './signals.js';
 import { walletSnapshot, fetchUsdInr } from './futures.js';
-import { getPositionsWithPnl, loadConfig, getRiskState, loadJournal, todayIST } from './coindcxOrders.js';
+import { getPositionsWithPnl, loadConfig, getRiskState, loadJournal, todayIST, listExchangeOrders } from './coindcxOrders.js';
 import { trustReport, governance } from './trust.js';
 import { maxSaneLeverage } from './ensemble.js';
 import { loadAgentConfig, agentStatus } from './agent.js';
-import { coindcxConnected } from '../mcp/coindcx.js';
+import { coindcxConnected, fetchCoinDcxAssets } from '../mcp/coindcx.js';
 import { sentimentStatus } from './sentiment.js';
 // v10.8 PRO #3: persistent chat memory — the desk remembers past turns
 import { rememberChat, memoryContextFor } from './agentMemory.js';
@@ -100,6 +100,28 @@ export const CRYPTO_AGENT_TOOLS = [
     function: {
       name: 'get_open_positions',
       description: 'Open spot + futures positions with entry, qty, leverage, live P&L (INR + USDT), SL/TP state, age and exit stage. Use for position reviews and risk checks.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  // v13.5 COINDCX MIRROR AGENT — the REAL-exchange account mirror.
+  // get_wallet shows trading BALANCES; these two mirror what the user
+  // actually OWNS and what is resting on the book — the Portfolio tab's
+  // CoinDCX asset table + the /api/ai/orders surface, finally reachable
+  // from the desk chat. Journal/paper ≠ exchange: yahan seedha
+  // api.coindcx.com se aata hai.
+  {
+    type: 'function',
+    function: {
+      name: 'get_exchange_holdings',
+      description: 'Live mirror of the REAL CoinDCX exchange account: every spot coin holding with quantity, avg cost basis (trade-ledger or manual), live INR value, invested amount, P&L in ₹ and %, 24h change, plus total portfolio value. This is the ACTUAL exchange state — not the app journal/paper positions. Use for "mere paas kya coins hain", "mera portfolio P&L", "kya coin bechne layak hai" questions.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_exchange_orders',
+      description: 'Live mirror of OPEN orders resting on the REAL CoinDCX exchange account (spot + margin): pair, side, order type, price, quantity, filled/remaining, status, timestamp. Use for "koi pending order hai?", "resting orders dikhao", "order book pe kya latka hai" questions.',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -300,7 +322,7 @@ export function buildCryptoSystemPrompt(ctx) {
 CURRENT DESK CONTEXT (auto-injected, always trust this over assumptions):
 - UTC time: ${utcTime} (crypto trades 24/7 — no market-closed excuses)
 - BTC regime: ${btcRegime} | Sentiment: ${fng} | Perp funding: ${funding}
-- CoinDCX API: ${connected ? 'CONNECTED (live wallet/positions available)' : 'NOT CONNECTED (paper-context only — say so if asked to trade)'} | AI Council: ${aiOnline ? 'online' : 'offline'}
+- CoinDCX API: ${connected ? 'CONNECTED (live wallet/positions + REAL exchange account mirror — holdings & open orders — available)' : 'NOT CONNECTED (paper-context only — say so if asked to trade)'} | AI Council: ${aiOnline ? 'online' : 'offline'}
 
 HOW YOU WORK (agentic protocol):
 - ALWAYS call tools for live data — NEVER guess or hallucinate prices, levels or P&L
@@ -316,6 +338,7 @@ HOW YOU WORK (agentic protocol):
 - "chart kya bol raha hai" / timeframe / "multi-timeframe analysis do" → get_model_consensus — v13.3 se har signal 1m/5m/15m/1h/4h/1d ka FULL MTF-6 ladder carry karta hai (verify_signal ke checklist me bhi); the ladder's agreement % + the HTF tide (1h/4h/1d) vs the LTF ripple (1m/5m/15m) is the pro read — cite the per-timeframe directions in the answer
 - Risk / "kitna bura gaya" / losing day → get_risk_status (kill-switch + caps + blockers)
 - P&L questions → get_pnl (period: today/7d/30d/all)
+- REAL-account questions — "mere paas kya coins hain", "portfolio ka P&L", "kya bechna chahiye" → get_exchange_holdings FIRST (ye APP journal nahi, EXCHANGE ka live mirror hai — cost basis + real P&L ke saath). "Pending/resting orders" → get_exchange_orders. Journal positions (paper/manual/app-tracked) ke liye get_open_positions — dono ko confuse mat karo, aur answer me clarify karo kaunsa mirror dikhaya
 - Track-record / accuracy questions → get_track_record
 - "Agent kya kar raha hai" → get_agent_status
 - Strategy idea / "backtest this" → backtest_custom_strategy (describe the idea in plain English — the lab compiles + replays it honestly)
@@ -481,6 +504,80 @@ async function executeCryptoTool(name, args, deps, session = {}) {
             sl: x.sl ?? null, tp2: x.tp2 ?? null, ageMin: x.openedAt ? Math.round((Date.now() - x.openedAt) / 60000) : null,
             source: x.source ?? null, exitStage: x.exitStage ?? null, bookedPnlINR: x.bookedPnlINR ?? null,
           })),
+        };
+      }
+
+      // v13.5 COINDCX MIRROR AGENT — the REAL-exchange account mirror.
+      // (a) holdings: the Portfolio tab's CoinDCX asset table (balances +
+      //     live tickers + trade-ledger/manual cost basis), compacted for
+      //     the LLM. fetchCoinDcxAssets already dust-filters (<₹10) and
+      //     skips unpriceable coins — the mirror NEVER invents a value.
+      case 'get_exchange_holdings': {
+        if (!coindcxConnected()) {
+          return {
+            connected: false,
+            note: 'CoinDCX API not connected — real exchange holdings unavailable. Connect karo (Portfolio → CoinDCX) tab tak. (get_open_positions se alag: ye APP journal nahi, REAL account hai.)',
+          };
+        }
+        const usdInr = await fetchUsdInr().catch(() => 84);
+        const snap = await fetchCoinDcxAssets(usdInr).catch(e => ({ error: String(e?.message || e) }));
+        if (!snap || snap.error) return { connected: true, error: snap?.error || 'holdings fetch failed (CoinDCX API down?)' };
+        const rows = (snap.assets || []).map(a => ({
+          coin: a.symbol,
+          qty: a.qty,
+          avgPriceINR: a.avgPrice, lastPriceINR: a.lastPrice,
+          valueINR: a.value, investedINR: a.invested,
+          pnlINR: a.pnl, pnlPct: a.pnlPct,
+          change24hPct: a.oneDayChangePct,
+          basis: a.basisSource,
+        }));
+        const totalValue = rows.reduce((s, r) => s + (Number(r.valueINR) || 0), 0);
+        const totalInvested = rows.reduce((s, r) => s + (Number(r.investedINR) || 0), 0);
+        return {
+          connected: true,
+          mirror: 'REAL CoinDCX exchange account (spot holdings) — NOT app journal/paper',
+          usdInr,
+          totalValueINR: Math.round(totalValue * 100) / 100,
+          totalInvestedINR: Math.round(totalInvested * 100) / 100,
+          totalPnlINR: Math.round((totalValue - totalInvested) * 100) / 100,
+          coins: rows.length,
+          holdings: rows.sort((a, b) => (Number(b.valueINR) || 0) - (Number(a.valueINR) || 0)),
+          basisInfo: snap.basis ? { ledgerCoins: (snap.basis ? Object.keys(snap.basis) : []).length, note: 'avg cost from exchange trade ledger; coins without basis show null P&L — honest n/a, not zero' } : null,
+        };
+      }
+
+      // (b) open orders: what is actually RESTING on the exchange book.
+      //     Same listExchangeOrders() the (UI-unrouted) /api/ai/orders
+      //     surface uses — defensive field mapping, CoinDCX's doc shapes
+      //     vary between versions (the INDMoney lesson).
+      case 'get_exchange_orders': {
+        const out = await listExchangeOrders(['open', 'partially_filled']).catch(e => ({ ok: false, error: String(e?.message || e) }));
+        if (!out?.ok) {
+          if (!coindcxConnected()) {
+            return { connected: false, note: 'CoinDCX API not connected — open exchange orders unavailable.' };
+          }
+          return { connected: true, error: out.error || 'active-orders fetch failed' };
+        }
+        const orders = (out.orders || []).map(o => {
+          const qty = Number(o.total_quantity ?? o.quantity ?? 0) || 0;
+          const remaining = Number(o.remaining_quantity ?? qty) || 0;
+          return {
+            pair: o.market ?? o.pair ?? null,
+            side: o.side ?? null, // buy / sell
+            type: o.order_type ?? null,
+            price: Number(o.price ?? 0) || null,
+            avgFillPrice: Number(o.average_price ?? o.avg_price) || null,
+            qty, filledQty: qty > 0 ? Math.round((qty - remaining) * 1e8) / 1e8 : 0,
+            status: o.status ?? null,
+            ageMin: o.timestamp ? Math.max(0, Math.round((Date.now() - Number(o.timestamp)) / 60000)) : null,
+          };
+        }).sort((a, b) => (b.ageMin ?? 0) - (a.ageMin ?? 0));
+        return {
+          connected: true,
+          mirror: 'REAL CoinDCX exchange open orders (spot + margin) — NOT app journal',
+          count: orders.length,
+          orders,
+          note: orders.length === 0 ? 'Koi order exchange par rest nahi kar raha.' : null,
         };
       }
 

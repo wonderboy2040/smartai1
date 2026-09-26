@@ -3,10 +3,8 @@ import { ETFInfo } from '../types';
 export const DEFAULT_USD_INR = 83.5;
 export const API_URL = import.meta.env.VITE_API_URL || "";
 
-export const TAX_PAIRS: Record<string, string> = {
-  'ITBEES.NS': 'TATAIT.NS',
-  'SMH': 'SOXX'
-};
+// v13.5 (full-site recheck): TAX_PAIRS deleted — zero references anywhere
+// (a two-entry ETF ticker alias map nothing ever read).
 
 export const ALPHA_ETFS_IN: ETFInfo[] = [
   { sym: 'MOMENTUM50', name: 'Motilal Oswal Nifty 500 Momentum 50', cagr: 22.5, maxDD: 30, cat: 'Smart Beta', aum: '₹3k Cr', vol: 'Moderate', fixedAlloc: 0.30 },

@@ -368,6 +368,12 @@ function _pollOnce() {
       _ensureWs();
       // v10.15: the Binance tier follows the (possibly changed) cx WS health.
       _syncBinanceFutTier();
+    } catch (e) {
+      // v13.5 (full-site recheck): the interval fire-sites discard the
+      // returned promise — a throw in the post-poll recovery steps above
+      // surfaced as a repeating unhandledRejection every beat AND skipped
+      // the recovery itself. Settle it here (once per beat, bounded).
+      try { console.warn('[cxRtStream] poll post-step failed:', e?.message || e); } catch { /* noop */ }
     } finally {
       _pollInflight = null;
     }

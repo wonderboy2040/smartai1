@@ -9,7 +9,6 @@ import { Clock } from './components/Clock';
 import { InstallPWA } from './components/InstallPWA';
 import { usePrefetch } from './hooks/usePrefetch';
 import { useAppShortcuts } from './hooks/useKeyboardShortcuts';
-import { appDB } from './utils/db';
 import { WifiOff } from 'lucide-react';
 import { StaticMirrorBanner } from './components/StaticMirrorBanner';
 
@@ -147,29 +146,10 @@ export default function App() {
   neuralCtxRef.current = { portfolio, livePrices };
   const neuralContextGetter = useCallback(() => neuralCtxRef.current, []);
 
-  // Save portfolio snapshot to IndexedDB whenever portfolio or metrics update
-  // 2026 perf audit (H1): this effect used to fire on EVERY price flush
-  // (metrics.totalValue changes ~4x/sec while markets move) — an IndexedDB
-  // transaction commit per tick for the same-day row. Throttled to 1/min;
-  // same-day rows are updated in place by db.ts anyway.
-  const lastSnapRef = useRef(0);
-  useEffect(() => {
-    if (!isAuthenticated || portfolio.length === 0) return;
-    const now = Date.now();
-    if (now - lastSnapRef.current < 60_000) return;
-    lastSnapRef.current = now;
-    appDB.savePortfolioSnapshot({
-      // v10.13 (deep-recheck L12): IST calendar day (en-CA → YYYY-MM-DD) —
-      // UTC toISOString() labeled 18:30-24:00 IST snapshots as the NEXT day.
-      date: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date()),
-      totalValue: metrics.totalValue || 0,
-      totalInvested: metrics.totalInvested || 0,
-      totalProfit: metrics.totalPL || 0,
-      profitPercent: metrics.plPct || 0,
-      holdingsCount: portfolio.length,
-      timestamp: Date.now()
-    }).catch(() => {});
-  }, [isAuthenticated, portfolio.length, metrics.totalValue, metrics.totalPL]);
+  // v13.5 (full-site recheck): the portfolio-snapshot effect was REMOVED —
+  // appDB.savePortfolioSnapshot() was write-only (nothing in the app ever
+  // read the store; a minute-cadence IndexedDB commit accumulating junk
+  // forever). db.ts's v2 upgrade deletes the store from existing browsers.
 
   // Keyboard Shortcuts for Tabs (1-5)
   useEffect(() => {

@@ -88,9 +88,12 @@ interface MarketStats {
 }
 
 // ---------- Date helpers ----------
-function todayKey(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// v13.5 (full-site recheck): IST calendar day (en-CA → YYYY-MM-DD) — the
+// desk is India-first; the old browser-local key disagreed with the UTC
+// key the component's live entry used, duplicating/mislabelling the
+// "today" row between 00:00–05:30 IST. Same locked pattern as App.tsx.
+export function todayKey(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
 }
 
 function monthKeyOf(date: string): string {
