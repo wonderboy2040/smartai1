@@ -318,3 +318,38 @@ export function intradayExpertFactors(sig, regime = null) {
   ];
   return { score, factors, atrPct };
 }
+
+// ---------------- v13.4 live invalidation ----------------
+/**
+ * v13.4 LIVE-PRICE INVALIDATION CHECK — the cheap between-cycle sanity
+ * check. buildSuperBlueprint() freezes the plan once per board compute
+ * cycle from the LTP at that moment; the UI then overlays the LIVE
+ * streaming price on top. This answers, on EVERY tick (not just the
+ * ~60s recompute cadence): has the live price already moved materially
+ * against the thesis without waiting for the next full recompute?
+ *
+ *   LONG  → invalidated if liveLtp <= stopLoss (through the floor)
+ *   SHORT → invalidated if liveLtp >= stopLoss (through the ceiling)
+ *   Otherwise, if liveLtp has moved > 0.5×ATR beyond the FAR edge of
+ *   the entry zone (the pullback already ran past the intended entry
+ *   zone with no reversal), flag as 'weakening' rather than a hard SL
+ *   hit — honest degrade, informative, never a fake hard-block.
+ *
+ * Pure number-in → object-out (client twin: src/components/aitrading/
+ * liveInvalidation.ts — keep the two in sync).
+ *
+ * @returns {{ status: 'ok'|'weakening'|'invalidated', reason?: string }}
+ */
+export function liveInvalidationCheck({ side, liveLtp, stopLoss, entryZoneLow, entryZoneHigh, atr }) {
+  if (!(liveLtp > 0) || !Number.isFinite(stopLoss)) return { status: 'ok' };
+  const long = String(side).toUpperCase() !== 'SHORT';
+  if (long ? liveLtp <= stopLoss : liveLtp >= stopLoss) {
+    return { status: 'invalidated', reason: 'live price already through stop-loss — plan is stale, do not enter' };
+  }
+  const farEdge = long ? entryZoneLow : entryZoneHigh;
+  const a = atr > 0 ? atr : liveLtp * 0.012;
+  if (Number.isFinite(farEdge) && Math.abs(liveLtp - farEdge) > 0.5 * a) {
+    return { status: 'weakening', reason: 'price has moved well past the planned entry zone — re-check before entry' };
+  }
+  return { status: 'ok' };
+}

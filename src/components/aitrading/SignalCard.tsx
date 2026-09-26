@@ -21,6 +21,7 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { MTFConfluenceBadge } from '../intraday/MTFConfluenceBadge';
 import { DepthLadder } from './DepthLadder';
 import { LiveSourceBadge } from './LiveSourceBadge';
+import { liveInvalidationFor } from './liveInvalidation';
 import { ManualTradePrompt } from './ManualTradePrompt';
 import type { AISignal, Side, SuperIntel, SignalVerification } from './types';
 
@@ -286,6 +287,17 @@ function SuperIntelStrip({ signal, si }: { signal: AISignal; si: SuperIntel }) {
             </div>
           </div>
         </div>
+      )}
+      {/* v13.4 Fix 5 — PULLBACK SEMANTICS: a recovering/green candle run on
+          a SHORT (or a red run on a LONG) is NOT a reversal against the
+          signal — the bounce IS the entry trigger (the engine sells into
+          the rally / buys into the dip). One explicit line so the pullback
+          zone is never misread as the call being wrong. */}
+      {bp && bp.entryTiming?.mode === 'PULLBACK' && (
+        <p className="text-[10px] text-amber-300/80 mt-1.5 leading-relaxed"
+          title="Pullback entry mode: the engine SELLS into this rally / BUYS into this dip. The recovery sequence is the ENTRY TRIGGER, not a reversal against the signal — plan SL break hone tak thesis intact hai.">
+          ⓘ Ye bounce/recovery hi entry trigger hai ({signal.side === 'LONG' ? 'dip buy karna hai' : 'rally sell karna hai'}) — thesis SL ({px(bp.stopLoss)}) break hone tak intact hai.
+        </p>
       )}
       {/* v12.0 WIN PROBABILITY — the "kitni probability hai" answer:
           calibrated P(win) vs the R:R breakeven + EV in R + the verdict */}
@@ -1126,12 +1138,45 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
   const [ticketOpen, setTicketOpen] = useState(false);
   // v10.16 S2: manual-trade record panel ("Maine ye trade liya hai")
   const [manualOpen, setManualOpen] = useState(false);
+  // v13.4 Fix 3b — stale-signal confirm gate state: holds the deferred
+  // paper-trade action until the trader picks Recheck / Proceed-anyway.
+  const [staleConfirm, setStaleConfirm] = useState<{ proceed: () => void } | null>(null);
   const g = gradeBadge(signal.grade);
   const long = signal.side === 'LONG';
   const actionable = signal.grade === 'STRONG' || signal.grade === 'ACTION';
   const plan = signal.plan;
   const overCap = !!(plan && riskCapPct && plan.riskPct > riskCapPct);
   const si = signal.superIntel ?? null; // v9 SUPERINTELLIGENCE
+  // v13.4 Fix 3 — STALE SIGNALS GET TEETH. The SignalAgeChip was honest
+  // but purely cosmetic; now the same staleness truth (age since the
+  // board last re-CONFIRMED this direction) downgrades the visible grade
+  // badge and requires an explicit recheck/proceed choice before any
+  // quick PAPER TRADE. The 15s tick clock keeps the verdict live between
+  // board refreshes (same pattern SignalAgeChip already uses).
+  const nowTick = useNowTicked();
+  const staleAgeMs = signal.signalAge
+    ? (Number(signal.signalAge.lastSeenAt) > 0 ? nowTick - Number(signal.signalAge.lastSeenAt) : Number(signal.signalAge.ageMs) || 0)
+    : 0;
+  const lastConfirmAgeMs = Number(signal.signalAge?.lastSeenAt) > 0
+    ? nowTick - Number(signal.signalAge?.lastSeenAt)
+    : null;
+  const isStale = staleAgeMs > 30 * 60_000;
+  const gradeTxt = isStale && signal.grade === 'ACTION' ? 'ACTION · STALE' : g.label;
+  const gradeCls = isStale && signal.grade === 'ACTION'
+    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/40'
+    : g.cls;
+  // v13.4 Fix 3b — the gate every quick PAPER button passes through:
+  // fresh signal → straight through; stale → the confirm bar opens.
+  const gatePaper = (proceed: () => void) => {
+    if (isStale) { setStaleConfirm({ proceed }); return; }
+    proceed();
+  };
+  // v13.4 Fix 4 — LIVE-PRICE INVALIDATION between board cycles: the plan
+  // froze at compute time while liveLtp streams on top. This catches a
+  // price that already went through the SL (invalidated) or ran well
+  // past the entry zone (weakening) BEFORE the next 60s recompute —
+  // informative warn, never a hard block (honest degrade pattern).
+  const liveInv = liveInvalidationFor(signal, liveLtp);
 
   return (
     <div id={`sig-${signal.market}-${signal.symbol}`} className={`quantum-panel rounded-2xl p-4 transition-colors hover:border-cyan-500/20 border-l-4 ${long ? 'border-l-emerald-500/60' : 'border-l-red-500/60'} scroll-mt-24
@@ -1150,7 +1195,11 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
             <span className="text-base font-black text-white font-mono tracking-wide">{signal.symbol}</span>
             {isNew && <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 text-[9px] font-black border border-cyan-500/30">NEW</span>}
             <span className={`text-sm font-black ${sideColor(signal.side)}`}>{long ? '▲ LONG' : '▼ SHORT'}</span>
-            <span className={`px-2 py-0.5 rounded-md text-[10px] font-black tracking-wider ${g.cls}`}>{g.label}</span>
+            <span
+              className={`px-2 py-0.5 rounded-md text-[10px] font-black tracking-wider ${gradeCls}`}
+              title={gradeTxt !== g.label ? 'Signal 30+ min se board-confirm nahi hua — visible grade STALE mark carry karta hai (display-only; ranking staleness decay server-side already laga hai)' : undefined}>
+              {gradeTxt}
+            </span>
             {(() => {
               // v10.2.1: guard like TopPicksPanel — a stale/partial signal
               // without voters would render an "undefined/undefined votes"
@@ -1474,11 +1523,63 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
         </div>
       )}
 
+      {/* v13.4 Fix 4 — LIVE INVALIDATION STRIP: the plan froze at compute
+          time; the streaming price on top may already be through the SL
+          (invalidated) or > 0.5×ATR past the entry zone (weakening).
+          Runs on every live tick — catches fast moves between the ~60s
+          board recomputes. Informative: buttons stay clickable, warned. */}
+      {liveInv.status !== 'ok' && (
+        <div
+          className={`mt-2.5 px-2.5 py-2 rounded-xl border text-[10px] font-bold leading-relaxed ${liveInv.status === 'invalidated'
+            ? 'bg-red-500/[0.08] border-red-500/30 text-red-300'
+            : 'bg-amber-500/[0.08] border-amber-500/30 text-amber-300'}`}
+          title={liveInv.reason || ''}>
+          {liveInv.status === 'invalidated'
+            ? '⚠ PLAN INVALIDATED — live price already through the stop-loss; ye plan stale hai, enter mat karo'
+            : '⚠ WEAKENING — live price planned entry zone se kaafi door chala gaya hai; entry se pehle re-check karo'}
+        </div>
+      )}
+
+      {/* v13.4 Fix 3b — STALE PAPER-TRADE CONFIRM BAR: a 30+ min old signal
+          (no board re-confirm since) asks for an explicit choice before any
+          quick PAPER TRADE — 🔬 deep re-check ya proceed-anyway. */}
+      {staleConfirm && (
+        <div className="mt-2.5 rounded-xl border border-amber-500/40 bg-amber-950/20 px-3 py-2.5">
+          <div className="text-[10px] font-black text-amber-300 tracking-wide">
+            ⏱ STALE SIGNAL — direction {fmtAge(staleAgeMs)} se khada hai · last board confirm {lastConfirmAgeMs != null ? `${fmtAge(lastConfirmAgeMs)} pehle` : '—'}
+          </div>
+          <p className="text-[10px] text-amber-200/80 mt-0.5 leading-relaxed">
+            Signal purana hai — market aage badh chuka hai. Entry se pehle recheck karo.
+          </p>
+          <div className="flex flex-wrap gap-2 mt-2">
+            {onDeep && (
+              <button
+                onClick={() => { setStaleConfirm(null); onDeep(signal); }}
+                title="Deep analysis dobara chalao — fresh votes + fresh plan levels"
+                className="px-2.5 py-1 rounded-lg text-[10px] font-black border border-cyan-400/50 bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/25 transition-colors">
+                🔬 Recheck karo
+              </button>
+            )}
+            <button
+              onClick={() => { const c = staleConfirm; setStaleConfirm(null); c.proceed(); }}
+              title="Recheck ke bina hi paper trade kholo (practice money)"
+              className="px-2.5 py-1 rounded-lg text-[10px] font-black border border-amber-400/50 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25 transition-colors">
+              Proceed anyway
+            </button>
+            <button
+              onClick={() => setStaleConfirm(null)}
+              className="px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-slate-200">
+              ✕ Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Execution buttons (crypto — CoinDCX gauntlet) */}
       {signal.market === 'CRYPTO' && onExecute && !ticketOpen && (
         <div className="mt-3 flex flex-wrap gap-2">
           <button
-            onClick={() => onExecute(signal, 'paper')}
+            onClick={() => gatePaper(() => onExecute(signal, 'paper'))}
             disabled={busy}
             className="quantum-btn-primary px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-cyan-600 to-indigo-600 disabled:opacity-50">
             🧪 PAPER TRADE
@@ -1504,7 +1605,7 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
       {signal.market === 'FUTURES' && onExecuteFutures && !ticketOpen && (
         <div className="mt-3 flex flex-wrap gap-2">
           <button
-            onClick={() => onExecuteFutures(signal, 'paper')}
+            onClick={() => gatePaper(() => onExecuteFutures(signal, 'paper'))}
             disabled={busy}
             className="quantum-btn-primary px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-violet-600 to-fuchsia-600 disabled:opacity-50">
             🧪 PAPER TRADE
@@ -1527,7 +1628,7 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
       {signal.market === 'GLOBALFUTURES' && onExecuteGlobal && !ticketOpen && (
         <div className="mt-3 flex flex-wrap gap-2 items-center">
           <button
-            onClick={() => onExecuteGlobal(signal, 'paper')}
+            onClick={() => gatePaper(() => onExecuteGlobal(signal, 'paper'))}
             disabled={busy}
             title="Practice journal position on the SIM desk — watcher SL/TP + trailing + partial-TP se manage hota hai (Yahoo quotes; SPACEX synthetic)"
             className="quantum-btn-primary px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-sky-600 to-blue-600 disabled:opacity-50">
@@ -1553,7 +1654,7 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
       {signal.market === 'INDIA' && onExecuteIndia && !ticketOpen && (
         <div className="mt-3 flex flex-wrap gap-2">
           <button
-            onClick={() => onExecuteIndia(signal, 'paper')}
+            onClick={() => gatePaper(() => onExecuteIndia(signal, 'paper'))}
             disabled={busy}
             title="Practice journal position — watcher SL/TP + trailing se manage hota hai"
             className="quantum-btn-primary px-4 py-2 rounded-xl text-xs font-black bg-gradient-to-r from-orange-600 to-amber-600 disabled:opacity-50">
@@ -1561,7 +1662,7 @@ export const SignalCard = memo(function SignalCard({ signal, busy, onExecute, on
           </button>
           {onPaperTrade && plan && (
             <button
-              onClick={() => onPaperTrade(signal)}
+              onClick={() => gatePaper(() => onPaperTrade(signal))}
               disabled={busy || paperOpenForSymbol}
               title={paperOpenForSymbol
                 ? 'Is symbol par already ek Paper Desk trade khula hai — duplicate server-side blocked hai (08 PAPER DESK me dekho/close karo)'

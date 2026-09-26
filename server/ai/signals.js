@@ -1042,17 +1042,77 @@ Respond STRICT JSON only (no markdown):
 //   0.05 × momentum          — |24h change| tiebreak (capped at 3%)
 // Only actionable signals (STRONG/ACTION, non-neutral side, plan present)
 // are eligible. Fewer than 5 eligible → shorter list (honest, never padded).
-export function computeTopFive(signals, regime, market = 'INDIA', limit = 5) {
+//
+// v13.4 STALENESS & QUORUM FIX (the CL-SHORT board audit):
+//   • HARD QUORUM GATE — a signal now needs ≥ MIN_QUORUM_VOTES VOTING
+//     models to headline the top-5. This is the same <5 "capped" bar
+//     the card's "N/M votes" badge and QUORUM_CONF_CAPS already use
+//     (voters ≥ 5 = "real committee territory"), so a thin 4/9-vote
+//     signal stays on the full board with its quorum-capped chip but
+//     no longer competes as a headline pick against fully-voted ones.
+//     Env-tunable per market without a redeploy: AI_MIN_TOPFIVE_QUORUM.
+//   • STALENESS DECAY — age since the board last re-confirmed the
+//     direction (signalAge.lastSeenAt, falling back to firstSeenAt /
+//     generatedAt) now multiplies the ranking score: ≤30 min full
+//     weight · 30-60 min linear decay · >60 min floor ×0.15. A signal
+//     whose original conf/agreement was high can no longer pin rank
+//     #1-2 indefinitely when nothing has re-validated it for an hour.
+
+/** v13.4: minimum VOTING models for a top-5 headline slot (out of the
+ * committee — 5 of 9 on the crypto desks). Env-tunable: set
+ * AI_MIN_TOPFIVE_QUORUM to adjust per market without a redeploy. */
+export const MIN_QUORUM_VOTES = (() => {
+  const n = Number.parseInt(String(process.env.AI_MIN_TOPFIVE_QUORUM ?? ''), 10);
+  return Number.isFinite(n) && n > 0 ? n : 5;
+})();
+
+/** v13.4: the voting-model count of a signal — the SAME measure the
+ * card's "N/M votes" badge, QUORUM_CONF_CAPS and the superintel quorum
+ * penalty use. Abstaining / structurally-absent seats never count toward
+ * quorum, so the raw votes-array length (which includes abstains) is NOT
+ * the bar — the authoritative consensus `voters`/`participating` field
+ * wins, with a directional-count fallback for shapes that only carry the
+ * votes array (tests, deep paths). */
+export function votingModelsOf(s) {
+  const v = Number(s?.voters ?? s?.participating);
+  if (Number.isFinite(v) && v > 0) return v;
+  return (Array.isArray(s?.votes) ? s.votes : []).filter(x => x && (x.dir === 1 || x.dir === -1)).length;
+}
+
+/**
+ * v13.4 STALENESS DECAY — how much of its earned score a signal keeps,
+ * given how long ago the board last re-confirmed the direction.
+ *   0-30 min : ×1.00 (full weight)
+ *   30-60 min: linear decay ×1.00 → ×0.15
+ *   >60 min  : ×0.15 floor (never fully zero — an old-but-still-voting
+ *              signal shouldn't vanish instantly, it should VISIBLY
+ *              lose ranking priority)
+ * Pure: `now` arrives as a parameter (tests inject fixed clocks).
+ */
+export function stalenessFactor(s, now = Date.now()) {
+  const lastSeen = s?.signalAge?.lastSeenAt ?? s?.signalAge?.firstSeenAt ?? s?.generatedAt ?? now;
+  const ageMin = Math.max(0, (now - Number(lastSeen)) / 60000);
+  if (ageMin <= 30) return 1;
+  if (ageMin >= 60) return 0.15;
+  return 1 - 0.85 * ((ageMin - 30) / 30);
+}
+
+export function computeTopFive(signals, regime, market = 'INDIA', limit = 5, now = Date.now()) {
   if (!Array.isArray(signals) || signals.length === 0) return [];
   const mkt = String(market || 'INDIA').toUpperCase();
   // v10.4: GLOBALFUTURES regime = NDX (the tech-complex barometer)
   const rawRegime = mkt === 'INDIA' ? regime?.niftyChange : mkt === 'GLOBALFUTURES' ? regime?.ndxChange : regime?.btcChange;
   const regimeChange = rawRegime == null ? null : Number(rawRegime);
   const regimeLabel = mkt === 'INDIA' ? 'NIFTY' : mkt === 'GLOBALFUTURES' ? 'NASDAQ' : 'BTC';
+  // v13.4 Fix 2 — HARD QUORUM GATE: under-voted signals (below
+  // MIN_QUORUM_VOTES voting models, e.g. the 4/9 CL SHORT) are excluded
+  // from the headline ranking entirely, however high their raw score.
+  // They still render on the full board with the quorum-capped chip.
   const eligible = signals.filter(s =>
     s && (s.grade === 'STRONG' || s.grade === 'ACTION')
     && (s.side === 'LONG' || s.side === 'SHORT')
-    && s.plan && Number.isFinite(s.plan.entry));
+    && s.plan && Number.isFinite(s.plan.entry)
+    && votingModelsOf(s) >= MIN_QUORUM_VOTES);
   const scored = eligible.map(s => {
     const conf = Math.max(0, Math.min(100, Number(s.confidence) || 0));
     const agree = Math.max(0, Math.min(100, (Number(s.agreement) || 0) * 100));
@@ -1078,7 +1138,15 @@ export function computeTopFive(signals, regime, market = 'INDIA', limit = 5) {
       : `${regimeLabel} ke against (counter-trend)`;
     const rrTxt = Number.isFinite(s.plan?.rewardRisk) ? `R:R 1:${s.plan.rewardRisk.toFixed(1)}` : 'plan ready';
     const reason = `${totalVoted} models me se ${votesFor} ${s.side} side pe · conf ${Math.round(conf)}% · ${rrTxt} · ${regTxt} · ${s.grade === 'STRONG' ? 'FULL committee STRONG grade' : 'ACTION grade (tradeable)'}`;
-    return { ...s, rank: 0, score: Math.round(score * 10) / 10, rankReason: reason };
+    // v13.4 Fix 1 — STALENESS DECAY: the earned composite score is
+    // multiplied by how fresh the board's last re-confirm of this
+    // direction is. A 45-min-old unconfirmed signal visibly loses rank
+    // (reason carries the ×factor so the ranking stays explainable);
+    // 60+ min floors at ×0.15 — out of the headline slots unless
+    // nothing else is eligible.
+    const staleF = stalenessFactor(s, now);
+    const staleTxt = staleF < 1 ? ` · staleness ×${staleF.toFixed(2)}` : '';
+    return { ...s, rank: 0, score: Math.round(score * staleF * 10) / 10, rankReason: reason + staleTxt };
   });
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, Math.max(1, limit)).map((s, i) => ({ ...s, rank: i + 1 }));

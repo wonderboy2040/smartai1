@@ -1,5 +1,25 @@
 # Changelog
 
+## v13.4 — SUPERINTELLIGENCE BOARD: STALENESS & QUORUM FIX (2026-09-26)
+
+**Trigger case (the audit):** CoinDCX Global Futures `CL` — SHORT · ACTION · AI 76 · 4/9 votes (quorum-capped) · ⏱ 1h 7m STALE sat at the top of the board looking as actionable as a fresh, fully-voted pick. The direction itself was correct (PULLBACK short-the-rally + bearish OI) — but three structural weaknesses let a stale / under-quorum signal headline the board. All three get teeth now.
+
+### Fix 1 — Staleness decay in `computeTopFive()` ranking (`server/ai/signals.js`)
+- **NEW `stalenessFactor(s, now)`**: age since the board last re-CONFIRMED the direction (`signalAge.lastSeenAt` → `firstSeenAt` → `generatedAt` fallback chain) multiplies the earned composite score — **≤30 min ×1.00 · 30–60 min linear → ×0.15 · >60 min floor ×0.15** (never zero: an old-but-still-voting signal visibly loses priority, it doesn't vanish). rankReason carries `· staleness ×0.58` so the ranking stays explainable; `computeTopFive` gained an injectable `now` (pure, testable).
+### Fix 2 — Hard quorum gate on top-5 eligibility (`server/ai/signals.js`)
+- A signal needs **≥ `MIN_QUORUM_VOTES` (default 5, env `AI_MIN_TOPFIVE_QUORUM`) VOTING models** to headline the top-5 — the same <5 "capped" bar the card's vote badge and `QUORUM_CONF_CAPS` already use. **NEW `votingModelsOf(s)`**: the authoritative consensus `voters`/`participating` field wins, with a directional-count fallback — the raw `votes.length` trap (it counts dir=0 abstain seats) is locked by a test. A 4/9 CL-class signal stays on the full board with its capped chip but can never again out-rank fully-voted picks; a shorter honest list beats a padded one.
+### Fix 3 — the STALE badge gets teeth (`SignalCard.tsx`)
+- **3a**: >30 min since last board confirm + ACTION grade → the visible badge renders **`ACTION · STALE`** (amber), display-only (the underlying grade used by gates is untouched).
+- **3b**: every desk's quick **PAPER TRADE button** (crypto spot / futures / global / India journal + 📈 DESK PAPER) now passes a **stale gate** — fresh → straight through; stale → the inline **⏱ STALE SIGNAL confirm bar** with **🔬 Recheck karo** (fires the existing deep re-analysis) vs **Proceed anyway** vs ✕ Cancel. Verdict recomputes on the 15s tick clock (same pattern as SignalAgeChip).
+### Fix 4 — live-price invalidation between compute cycles
+- **NEW `liveInvalidationCheck()`** (`server/ai/superIntel.js`, pure) + **client twin `src/components/aitrading/liveInvalidation.ts`** (kept in sync, both pinned by tests): LONG `liveLtp ≤ SL` / SHORT `liveLtp ≥ SL` → **`invalidated`**; >0.5×ATR beyond the FAR edge of the entry zone → **`weakening`**; missing inputs → honest `ok`. Runs on EVERY live tick (not the ~60s recompute) — the card renders a **⚠ PLAN INVALIDATED / ⚠ WEAKENING** strip above the trade buttons; buttons stay clickable-but-warned (honest degrade, never a fake block).
+### Fix 5 — PULLBACK semantics copy (the exact misread of the trigger case)
+- `PULLBACK` entry windows now carry one explicit line: **"ⓘ Ye bounce/recovery hi entry trigger hai (rally sell / dip buy karna hai) — thesis SL (…) break hone tak intact hai"** — a recovering candle run can no longer be misread as the call being wrong.
+
+**Tests:** NEW `test/topFiveStaleQuorum.test.ts` (22) + `test/signalStaleGate.test.tsx` (16) — the decay curve & fallback chain, the quorum boundary (4/9 out · 5/9 in · env override · abstain-seat trap · STRONG doesn't bypass), the stale confirm bar (Proceed fires once · Recheck → onDeep · fresh passes through), the invalidation strips (button stays enabled), the client twin vs server verdicts, and the PULLBACK copy. Full suite: **2485/2486 green** (1 pre-existing flaky base64 assertion in durable.test.ts, passes on re-run). tsc clean.
+
+**Non-goals (deliberate):** direction/voting logic in models.js / council.js / ensemble.js (no sign-flip bug existed — the CL call was directionally consistent with its own pullback design), and buildSuperBlueprint's leverage/exit-clock math.
+
 ## v13.3 — MTF-6 SUPER INTELLIGENCE + INTRADAY/COINDCX TAB DEEP FIXES (2026-09-25)
 
 **User spec: "Intraday Tab & CoinDCX tab theek se kaam nhi kar raha — full code deep analysis karke issues fix karo · Chart deep analysis karke Super Intelligence improve karo · 1min/5min/15min/1hr/4hr/1d aisa FULL analysis karke hi final trade signal do · sab improvement kardo"**
